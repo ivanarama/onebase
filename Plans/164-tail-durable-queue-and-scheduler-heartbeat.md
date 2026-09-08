@@ -1,9 +1,10 @@
-# Этап 164 — Долговечная очередь TAIL и heartbeat планировщика
+# Этап 164 — Долговечная очередь TAIL, WIP-бюджет и heartbeat планировщика
 
 Дата проектирования: 2026-09-08.
 Статус: 📋 **проектирование**, код не начат.
-Уровень: **конвейер сопровождения** — discovery и recovery TAIL, внешний
-PromptPilot, диагностика `pipelinehealth` и операторская документация.
+Уровень: **конвейер сопровождения** — discovery и recovery TAIL, общий
+WIP-бюджет PLAN/FIX/REVIEW/MERGE, внешний PromptPilot, диагностика
+`pipelinehealth` и операторская документация.
 Заявка: [#1248](https://github.com/ivanarama/onebase/issues/1248).
 Выбранный вариант: **1** — сначала отдельный план, затем durable
 backlog/cursor, расписание TAIL и heartbeat всех scheduled stages. Вариант
@@ -38,6 +39,13 @@ Telegram означает пустую очередь, хотя `ИТОГ: ПУ�
 3. `pipelinehealth` читает безопасный snapshot PromptPilot и показывает
    backlog и свежесть запусков, но никогда не превращает диагностический cache
    в разрешение на GitHub-мутацию.
+
+Отдельно нужен общий WIP-бюджет служебного конвейера. Сейчас несколько задач с
+`area:pipeline` могут одновременно пройти PLAN, FIX, REVIEW и MERGE и вытеснить
+продуктовую очередь, хотя каждая по отдельности выбрана правильно. Нормальный
+предел — три активных служебных объекта суммарно на этих четырёх стадиях.
+`queue:p0` может начать аварийную работу сверх предела, но не исчезает из счётчика
+и создаёт видимый overdraft до завершения одного из активных объектов.
 
 Пользовательские БД, runtime OneBase и прикладные конфигурации не затрагиваются.
 
@@ -79,6 +87,33 @@ Telegram означает пустую очередь, хотя `ИТОГ: ПУ�
 один сигнал при переходе в `overdue/failed` и один recovery-сигнал после нового
 успеха; каждый tick не создаёт дубликат сообщения.
 
+### WIP-бюджет служебного конвейера
+
+- Служебным считается объект с точной меткой `area:pipeline`; PLAN, FIX, REVIEW
+  и MERGE используют один и тот же классификатор текущей стадии и один snapshot
+  GitHub. Backlog без branch/PR, `hold`, `needs-decision` и завершённые объекты не
+  считаются активным WIP.
+- Одновременно допускаются не более трёх активных служебных объектов суммарно на
+  четырёх стадиях. Проверка выполняется в транзакции `next` непосредственно
+  перед выдачей новой служебной цели; recovery уже начатой транзакции не
+  блокируется бюджетом и остаётся учтённой.
+- `queue:p0` обходит только запрет **начала** аварийной служебной работы. Такая
+  цель входит в `active`, может поднять его выше трёх и создаёт `overdraft`;
+  следующий обычный служебный объект не стартует, пока `active` снова не станет
+  меньше трёх. Исключение не превращает P0 в невидимую работу.
+- Избыток остаётся в исходной очереди. Ради лимита запрещено ставить или снимать
+  `hold`, `needs-decision`, `approved`, `ready-fix`, `reviewed` или `ship`: WIP-
+  бюджет не является человеческим решением и не меняет GitHub routing state.
+- Служебные `backlog`, `active`, `limit`, `overdraft` и возраст самого старого
+  элемента показываются отдельно от продуктовых backlog/WIP и в
+  `pipelinehealth`, и в PromptPilot UI. Сумма двух классов не публикуется как
+  единственная метрика.
+- При одновременном непустом служебном и продуктовом backlog действует
+  детерминированный lane-debt: после выбора служебной цели следующая доступная
+  non-recovery цель берётся из продуктовой полосы. P0 может обойти WIP-предел,
+  но не сбрасывает этот долг. Полный служебный WIP никогда не превращает запуск
+  в `ПУСТО`, если существует допустимая продуктовая цель.
+
 TAIL получает расписание раз в четыре часа. При лимите пять PR это даёт
 ёмкость 30 PR/сутки против зафиксированных в текущем контракте 244 merge за
 14 дней (примерно 17,5/сутки). Накопленный backlog остаётся видимым; повышение
@@ -107,7 +142,22 @@ TAIL получает расписание раз в четыре часа. Пр
       "last_success_at": "<RFC3339>",
       "next_due_at": "<RFC3339>"
     }
-  ]
+  ],
+  "pipeline_work": {
+    "service": {
+      "limit": 3,
+      "active": 3,
+      "overdraft": 0,
+      "backlog": 8,
+      "oldest_queued_at": "<RFC3339>"
+    },
+    "product": {
+      "active": 2,
+      "backlog": 11,
+      "oldest_queued_at": "<RFC3339>"
+    },
+    "next_lane": "product"
+  }
 }
 ```
 
@@ -128,12 +178,24 @@ PromptPilot хранит записи в своей транзакционной
   причина reconciliation;
 - `scheduled_run_v1`: task/run identity, planned/start/finish/success timestamps,
   parsed verdict, counters и alert transition.
+- `pipeline_wip_v1`: repository, canonical object identity, класс
+  `service|product`, стадия `plan|fix|review|merge`, active/queued state,
+  `queue:p0`, timestamps и generation lane-debt.
 
 Одна транзакция upsert-ит весь обнаруженный batch и только затем двигает cursor.
 Crash до commit оставляет старый cursor; повторный импорт идемпотентен по ключу.
 Два discovery worker сериализуются CAS по `(cursor SHA, generation)` либо одной
 DB lease. Проигравший перечитывает состояние, а не публикует собственную
 границу.
+
+`pipeline_wip_v1` — такой же восстанавливаемый индекс, а не источник полномочий.
+Перед каждым `next plan|fix|review|merge` PromptPilot перечитывает GitHub,
+классифицирует объекты одинаковым reducer и в одной транзакции обновляет WIP,
+проверяет limit/overdraft/lane-debt и выдаёт цель. Расхождение ledger с GitHub
+останавливает выдачу новой служебной цели и запускает reconciliation; уже
+начатый protocol recovery остаётся доступен. Нельзя освободить слот одним
+локальным timeout: объект перестаёт быть active только после подтверждённого
+GitHub-перехода либо явной durable reconciliation.
 
 Cursor — ускоритель, не единственная копия истины. Если сохранённый SHA больше
 не является предком текущего `main`, отсутствует либо ledger повреждён,
@@ -189,6 +251,12 @@ allowlist, но перед каждым GitHub POST повторяет все ca
 выданный allowlist действительно пуст. Несошедшийся итог оставляет запись для
 recovery и помечает run failed/blocked.
 
+Команды `next` остальных стадий возвращают раздельные `service_candidates` и
+`product_candidates`, точные `wip_generation`, `active_service`, `limit`,
+`overdraft` и `next_lane`. `complete` принимает generation только после
+stage-specific read-back. Это не меняет канонические label/proof gates: бюджет
+решает, можно ли **начать** новую цель, а не разрешает её мутации.
+
 ## Heartbeat и атомарный health snapshot
 
 PromptPilot обновляет `scheduled_run_v1` в той же транзакции, которая завершает
@@ -233,6 +301,11 @@ Grace задаётся рядом с желаемым расписанием в 
    schedule, cursor, lease TTL или health threshold.
 10. Все timestamps сравниваются как RFC3339 UTC, порядок GitHub lifecycle — по
     server-ordered GraphQL edges, не по числовым REST ids.
+11. `area:pipeline` имеет общий limit 3 на PLAN/FIX/REVIEW/MERGE; P0-overdraft
+    всегда считается и виден, а непоместившиеся элементы остаются queued без
+    маршрутных label-мутаций.
+12. WIP-бюджет не скрывает продуктовую очередь: lane-debt переживает restart и
+    гарантирует следующий non-recovery продуктовый выбор после служебного.
 
 ## Инвентаризация затронутых границ
 
@@ -242,22 +315,27 @@ Grace задаётся рядом с желаемым расписанием в 
 - `.agents/skills/tail-issues/SKILL.md`: только тонкий Codex-адаптер новой
   команды, без копирования логики.
 - `pipelinectl.json`: желаемое расписание TAIL, batch size, bootstrap boundary,
-  capability `tail-ledger-v1`, health grace и путь/команда snapshot.
+  capability `tail-ledger-v1`, общий `pipeline_service_wip_limit: 3`, правила
+  lane-debt, health grace и путь/команда snapshot.
+- `promptpilot.project_pipeline next/complete` для PLAN/FIX/REVIEW/MERGE: общий
+  reducer service/product, transactional WIP generation, P0-overdraft и
+  отдельные candidate lanes; stage-specific GitHub gates не ослабляются.
 - `tools/pipelinehealth/main.go`: tail backlog и scheduler health в JSON/тексте,
-  строгий reader versioned snapshot; существующая строка `scheduler` остаётся.
+  отдельные service/product backlog, active WIP, oldest age и строгий reader
+  versioned snapshot; существующая строка `scheduler` остаётся.
 - `tools/pipelinehealth/main_test.go`: offline fixtures backlog, cursor и
-  fresh/stale/failed/unknown heartbeat.
+  fresh/stale/failed/unknown heartbeat, WIP limit/P0-overdraft/lane-debt.
 - `internal/pipelinecontract/skills_test.go`: обязательность durable allowlist,
   запрет age-window как источника истины, сохранение UTF-8/trust/re-check gates
   и совпадение руководства.
 - `docs/maintenance-pipeline.md`: удалить обещания «тишина = пусто» и «окно не
   теряет», описать расписание, heartbeat, backlog и операторский recovery.
 - внешний `promptpilot.project_pipeline`: ledger migrations, discovery,
-  transactional claim/completion, recurring task TAIL, health reducer,
+  transactional claim/completion, recurring task TAIL, health/WIP reducers,
   snapshot и Telegram transitions. Исходники не входят в onebase; совместимый
   релиз обязателен до включения capability в конфиге.
 
-Общие grammar/reducer fixtures для `tail-ledger-v1` и
+Общие grammar/reducer fixtures для `tail-ledger-v1`, `pipeline-wip-v1` и
 `pp-scheduler-health-v1` хранятся в
 `internal/pipelinecontract/testdata/scheduler-v1/*.json` как JSON golden vectors.
 PromptPilot и `pipelinehealth` обязаны прогонять одни и те же vectors; текст
@@ -276,12 +354,16 @@ comments, refs и созданные issues не редактируются и �
    pending/done/blocked и отдельно показать все ambiguous записи;
 3. дважды прогнать reconciliation и получить одинаковые cursor/backlog hashes;
 4. включить read-only отображение в `pipelinehealth`, не меняя TAIL;
-5. создать recurring task TAIL раз в четыре часа и добиться первого успешного
+5. выполнить WIP reconciliation PLAN/FIX/REVIEW/MERGE, сверить вручную
+   service/product и включить `pipeline-wip-v1` сначала в observe-only;
+6. на fixtures подтвердить limit 3, видимый P0-overdraft и lane-debt, затем
+   включить gate начала новой служебной работы без label mutations;
+7. создать recurring task TAIL раз в четыре часа и добиться первого успешного
    heartbeat в dry-run без GitHub mutations;
-6. включить `tail-ledger-v1`, после чего skill принимает только выданный
+8. включить `tail-ledger-v1`, после чего skill принимает только выданный
    allowlist; 14-дневный запрос остаётся временным аварийным read-only
    сравнением и затем удаляется;
-7. включить overdue/recovery alerts после одного полного интервала наблюдения.
+9. включить overdue/recovery alerts после одного полного интервала наблюдения.
 
 Если PromptPilot старый либо snapshot недоступен, scheduled TAIL fail closed и
 не возвращается к истекающему окну как к доказательству пустоты. Человек может
@@ -292,7 +374,7 @@ comments, refs и созданные issues не редактируются и �
 
 ### Срез A — versioned contract и offline diagnostics
 
-В OneBase добавить JSON schema/golden fixtures cursor/backlog/heartbeat,
+В OneBase добавить JSON schema/golden fixtures cursor/backlog/heartbeat/WIP,
 расширить `pipelinehealth` fixture mode и contract tests. Обновить документы так,
 чтобы отсутствие snapshot было `unknown`, но пока не менять scheduled TAIL.
 
@@ -300,7 +382,19 @@ comments, refs и созданные issues не редактируются и �
 нулевой backlog, остаток после batch, просроченный stage, failed run и recovery;
 невалидный/частичный snapshot не даёт `green`.
 
-### Срез B — durable discovery и reconciliation в PromptPilot
+### Срез B — общий WIP-бюджет служебного конвейера
+
+Добавить `pipeline_wip_v1`, единый GitHub classifier для PLAN/FIX/REVIEW/MERGE,
+transactional generation в `next/complete`, limit 3, P0-overdraft и durable
+lane-debt. `pipelinehealth` и PromptPilot UI получают раздельные service/product
+backlog, active и oldest age. На этом срезе TAIL discovery ещё не меняется.
+
+Публичная приёмка: при трёх активных `area:pipeline` обычная четвёртая цель
+остаётся queued без `hold`/`needs-decision`; `queue:p0` становится четвёртой,
+показывает `overdraft=1`, а следующий non-recovery выбор при живой продуктовой
+очереди принадлежит продуктовой полосе. Restart не сбрасывает lane-debt.
+
+### Срез C — durable discovery и reconciliation в PromptPilot
 
 Добавить миграции ledger, first-parent/commit-association discovery,
 транзакционный cursor, full bootstrap от PR #1148 и команды `next/complete
@@ -311,7 +405,7 @@ discovery/claim сессии. GitHub mutations на этом срезе выкл
 `next tail`; crash до/после DB commit и второй worker приводят к одному backlog
 key и одному cursor. Утрата БД восстанавливается full reconciliation.
 
-### Срез C — scheduled TAIL и handoff существующему mutation protocol
+### Срез D — scheduled TAIL и handoff существующему mutation protocol
 
 Добавить recurring task раз в четыре часа, machine allowlist в PromptPilot
 prompt, проверяемый `complete tail` и обновить canonical skill/adapter.
@@ -321,7 +415,7 @@ prompt, проверяемый `complete tail` и обновить canonical ski
 пять, сообщает `remaining=1`, следующий run берёт шестой; crash после issue
 create восстанавливает item-done без второго issue.
 
-### Срез D — heartbeat, alerts и rollout
+### Срез E — heartbeat, alerts и rollout
 
 Включить run lifecycle для всех configured recurring tasks, atomic health
 snapshot, `pipelinehealth` findings и deduplicated Telegram overdue/recovery
@@ -349,8 +443,12 @@ alerts. Провести bootstrap/double reconciliation, dry-run и затем 
   protocol до exact read-back, включая fault injection перед каждой мутацией;
 - scheduler fake clock: first run, `ПУСТО`, timeout, malformed/no verdict,
   overdue boundary, disabled task, alert dedupe и recovery;
+- WIP reducer/integration: три active service, обычная четвёртая, P0-overdraft,
+  recovery поверх полного бюджета, запрет route-label mutations, durable
+  lane-debt и product selection при переполненном service backlog;
 - `pipelinehealth` fixtures и text/JSON golden output для `ok`, `unknown`,
-  `overdue`, backlog remainder и cursor rebuild;
+  `overdue`, backlog remainder, cursor rebuild и раздельных service/product
+  backlog/active/oldest-age;
 - contract tests canonical skill, Codex adapter и maintenance guide;
 - обязательные проверки репозиторных срезов:
   `go test ./tools/pipelinehealth ./internal/pipelinecontract`, затем
@@ -359,8 +457,8 @@ alerts. Провести bootstrap/double reconciliation, dry-run и затем 
   JSON golden vectors до объявления capability.
 
 Тест считается приёмочным только через публичный `pipelinehealth` или
-`project_pipeline next/complete tail` над fake GitHub и scheduler store. Прямой
-вызов приватного reducer не заменяет сквозную проверку.
+`project_pipeline next/complete <stage>` над fake GitHub и scheduler store.
+Прямой вызов приватного reducer не заменяет сквозную проверку.
 
 ## Риски и откат
 
@@ -380,6 +478,15 @@ alerts. Провести bootstrap/double reconciliation, dry-run и затем 
   используют grace и отдельный recovery, а не сообщение на каждый tick.
 - **Snapshot утёк/подменён.** В нём нет токенов и тел GitHub; schema и атомарная
   запись обязательны. Он диагностический и не даёт mutation authority.
+- **WIP ledger застрял или посчитал объект дважды.** Canonical identity и
+  stage-specific GitHub reconciliation исправляют индекс до новой выдачи; слот
+  не освобождается по одному timeout, а duplicate identity fail closed.
+- **P0 стал обходом любого ограничения.** Он обходит только limit начала,
+  остаётся в active/overdraft и сохраняет lane-debt; остальные service items не
+  стартуют до возврата ниже лимита.
+- **Служебная очередь вытеснила продуктовую.** Candidate lanes, durable debt и
+  тест «переполненный service backlog + живая product target» запрещают `ПУСТО`
+  и следующий service choice.
 - **Расходятся OneBase и PromptPilot.** Capability включается только после
   общих golden vectors и dry-run; неизвестная версия fail closed.
 
@@ -409,18 +516,25 @@ item-level recovery. Heartbeat monitor можно перевести в read-onl
 9. Сверить PromptPilot UI, Telegram transition и
    `go run ./tools/pipelinehealth -json` — task ids, timestamps, backlog и
    состояния совпадают.
-10. После одного dry-run интервала включить capability на реальном TAIL и
+10. Создать три active `area:pipeline`, оставить четвёртый обычный queued,
+    затем добавить `queue:p0`: CLI и UI показывают active=4/limit=3/overdraft=1,
+    а GitHub routing labels обычной цели не меняются.
+11. При непустых service/product очередях завершить служебный выбор и
+    перезапустить PromptPilot: следующий non-recovery выбор остаётся продуктовым,
+    то есть restart не сбрасывает lane-debt.
+12. После одного dry-run интервала включить capability на реальном TAIL и
     убедиться, что старейший backlog уменьшается, cursor продвигается, а
     `remaining` никогда не скрыт.
 
 ## Эстимейт
 
 - срез A: 2–3 дня;
-- срез B: 4–6 дней;
-- срез C: 2–3 дня;
-- срез D: 3–4 дня, включая staged rollout и наблюдение одного интервала.
+- срез B: 2–3 дня;
+- срез C: 4–6 дней;
+- срез D: 2–3 дня;
+- срез E: 3–4 дня, включая staged rollout и наблюдение одного интервала.
 
-Итого: 11–16 рабочих дней. Оценка включает внешний релиз PromptPilot,
+Итого: 13–19 рабочих дней. Оценка включает внешний релиз PromptPilot,
 миграцию состояния, fake-clock/fault-injection и совместный rollout.
 
 ## Готово, когда
@@ -431,6 +545,10 @@ item-level recovery. Heartbeat monitor можно перевести в read-onl
 - TAIL запускается каждые четыре часа и всегда публикует явный остаток;
 - `pipelinehealth` показывает durable TAIL backlog и свежесть всех configured
   scheduled stages, а отсутствие snapshot не выглядит зелёным;
+- PLAN/FIX/REVIEW/MERGE вместе не начинают больше трёх обычных активных
+  `area:pipeline`, а P0-overdraft и старейший service backlog видны отдельно;
+- переполненный служебный WIP не меняет routing labels, не скрывает product
+  backlog и не сбрасывает durable lane-debt после restart;
 - `ПУСТО` обновляет heartbeat, но тишина больше нигде не документирована как
   доказательство пустой очереди;
 - overdue/failed и recovery дают по одному согласованному сигналу;
