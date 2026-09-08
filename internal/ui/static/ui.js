@@ -2708,10 +2708,7 @@ function openItemPicker(payload, elementName, eventContext) {
   if (old) old.remove();
   var modal = document.createElement('div');
   modal.id = '_item-picker-modal';
-  // visibility:hidden до первого ответа: ширина диалога зависит от того, есть ли
-  // у справочника область просмотра, а знает об этом только ответ сервера.
-  // Показать сразу — значит показать окно 480px и тут же раздуть его до 900.
-  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center;visibility:hidden';
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
   var box = document.createElement('div');
   box.style.cssText = 'background:#fff;border-radius:10px;padding:20px;width:720px;max-width:96vw;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.18)';
   var head = document.createElement('div');
@@ -2949,6 +2946,27 @@ function openItemPicker(payload, elementName, eventContext) {
   });
 }
 
+// refContextForRequest собирает choice_context из ТЕКУЩИХ контролов формы.
+// В data-ref-context лежит карта «параметр → путь», а не значения серверного
+// рендера: пользователь мог поменять Филиал уже после открытия карточки.
+// Функция вызывается для каждого запроса подбора, поэтому поиск в уже открытом
+// диалоге тоже не отправляет устаревший снимок.
+function refContextForRequest(sel) {
+  var raw = sel.getAttribute('data-ref-context') || '';
+  if (!raw || !sel.form || !sel.form.elements) return '';
+  var paths;
+  try { paths = JSON.parse(raw); } catch (e) { return ''; }
+  if (!paths || typeof paths !== 'object' || Array.isArray(paths)) return '';
+  var context = Object.create(null);
+  Object.keys(paths).forEach(function (name) {
+    var parts = String(paths[name] == null ? '' : paths[name]).split('.');
+    var fieldName = parts[parts.length - 1];
+    var control = fieldName ? sel.form.elements.namedItem(fieldName) : null;
+    context[name] = control && control.value != null ? String(control.value) : '';
+  });
+  return JSON.stringify(context);
+}
+
 function openRefPicker(selOrId) {
   var sel = (typeof selOrId === 'string') ? document.getElementById(selOrId) : selOrId;
   if (!sel) return;
@@ -2958,7 +2976,6 @@ function openRefPicker(selOrId) {
   // Уезжает на сервер вместе с запросом строк — по нему конфигурация собирает
   // текст просмотра, который зависит не только от строки (памятка по
   // направлению у филиалов разная).
-  var refContext = sel.getAttribute('data-ref-context') || '';
   var allowCreate = sel.getAttribute('data-ref-allow-create') === '1';
   var localOpts = [];
   for (var i = 0; i < sel.options.length; i++) {
@@ -2969,7 +2986,9 @@ function openRefPicker(selOrId) {
   if (old) old.remove();
   var modal = document.createElement('div');
   modal.id = '_ref-picker-modal';
-  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
+  // Ширина зависит от preview в первом ответе. До него скрываем именно этот
+  // диалог, а не независимый openItemPicker; rpReveal покажет его после layout.
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center;visibility:hidden';
   var inner = '<div id="_rp-card" style="background:#fff;border-radius:10px;padding:20px;width:480px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.18)">';
   inner += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-weight:600;font-size:15px;color:#1e293b">Выбор из списка</div>';
   if (allowCreate && refEntity) {
@@ -3144,6 +3163,7 @@ function openRefPicker(selOrId) {
     var seq = ++requestSeq;
     if (status) status.textContent = 'Загрузка...';
     var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + encodeURIComponent(q || '');
+    var refContext = refContextForRequest(sel);
     if (refContext) url += '&ctx=' + encodeURIComponent(refContext);
     fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
       .then(function (resp) {

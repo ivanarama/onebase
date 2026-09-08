@@ -83,7 +83,7 @@ const tplManagedForm = `
     {{if $f}}
       {{if isRef (str $f.Type)}}
         <div style="display:flex;gap:6px;align-items:center">
-          <select id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if $el.ChoiceContext}} data-ref-context="{{choiceContextJSON $el $ctx.Values}}"{{end}}{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if and ($f.InlineCreateEnabled false) (refWriteAllowed $ctx.RefWriteAccess $f.RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+          <select id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if $el.ChoiceContext}} data-ref-context="{{choiceContextJSON $el}}"{{end}}{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if and ($f.InlineCreateEnabled false) (refWriteAllowed $ctx.RefWriteAccess $f.RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
             <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
             {{range index $ctx.RefOptions $fn}}
             <option value="{{index . "id"}}" {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
@@ -178,7 +178,7 @@ const tplManagedForm = `
              пустой select, теряющий текущее значение при записи. Нет опций —
              остаётся прежний текстовый ввод со значением. */}}
         <div style="display:flex;gap:6px;align-items:center">
-          <select id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{attrRefEntity $attr.TypeRef}}"{{if $el.ChoiceContext}} data-ref-context="{{choiceContextJSON $el $ctx.Values}}"{{end}}{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+          <select id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{attrRefEntity $attr.TypeRef}}"{{if $el.ChoiceContext}} data-ref-context="{{choiceContextJSON $el}}"{{end}}{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
             <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
             {{range index $ctx.RefOptions $fn}}
             <option value="{{index . "id"}}" {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>

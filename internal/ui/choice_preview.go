@@ -34,6 +34,23 @@ import (
 // быть не может, и подмены настоящего значения не выйдет.
 const choicePreviewKey = "_preview"
 
+// canonicalChoicePreviewField возвращает имя реквизита в том регистре, в
+// котором оно объявлено в metadata.Entity.Fields. Validate допускает ссылки на
+// реквизиты без учёта регистра, а строки результата индексируются каноничными
+// именами — отдавать исходное написание choice_preview клиенту нельзя.
+func canonicalChoicePreviewField(ent *metadata.Entity) string {
+	if ent == nil {
+		return ""
+	}
+	declared := strings.TrimSpace(ent.ChoicePreview)
+	for _, f := range ent.Fields {
+		if strings.EqualFold(f.Name, declared) {
+			return f.Name
+		}
+	}
+	return declared
+}
+
 // choiceContextFromRequest — контекст подбора из запроса: JSON-объект строк
 // («Филиал» → uuid). Чужой или битый параметр — пустой контекст, а не ошибка:
 // подбор обязан открыться в любом случае.

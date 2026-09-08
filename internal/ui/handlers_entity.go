@@ -966,7 +966,7 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 	// направлению собирается уже под него. Ошибка процедуры не валит подбор:
 	// выбирать элемент оператору нужно в любом случае, а текст справа —
 	// вспомогательный (что сломалось, видно в логе сервера).
-	previewField := ent.ChoicePreview
+	previewField := canonicalChoicePreviewField(ent)
 	if strings.TrimSpace(ent.ChoicePreviewProc) != "" {
 		if applied := s.applyChoicePreviewProc(r, ent, items); applied {
 			previewField = choicePreviewKey

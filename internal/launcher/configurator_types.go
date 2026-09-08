@@ -161,7 +161,9 @@ type saveEntity struct {
 	// что ключ принимает и строку, и список: зеркальный []string превратил бы
 	// `presentation: Артикул` в список из одного элемента, то есть переписал бы
 	// файл, которого автор не трогал.
-	Presentation yaml.Node `yaml:"presentation,omitempty"`
+	Presentation      yaml.Node `yaml:"presentation,omitempty"`
+	ChoicePreview     string    `yaml:"choice_preview,omitempty"`
+	ChoicePreviewProc string    `yaml:"choice_preview_proc,omitempty"`
 }
 
 type saveRegister struct {

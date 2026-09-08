@@ -75,6 +75,52 @@ func TestRefOptionsCarriesChoicePreviewField(t *testing.T) {
 	}
 }
 
+// Имена реквизитов метаданных регистронезависимы. API должен вернуть клиенту
+// каноническое имя поля: строки результата используют именно его как ключ.
+func TestRefOptionsCanonicalizesChoicePreviewField(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "preview-case.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ent := &metadata.Entity{
+		Name: "Направление", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: "Информация", Type: metadata.FieldTypeString},
+		},
+		ChoicePreview: "информация",
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{ent}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Upsert(ctx, ent.Name, uuid.New(), map[string]any{
+		"наименование": "Ремонт", "информация": "Канонический текст",
+	}, ent); err != nil {
+		t.Fatal(err)
+	}
+	reg := runtime.NewRegistry()
+	reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{ent}})
+	s := &Server{reg: reg, store: db}
+
+	rec := serveRefOptions(t, s, ent.Name, "limit=10", nil)
+	var resp struct {
+		Preview string           `json:"preview"`
+		Items   []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Preview != "Информация" {
+		t.Fatalf("preview = %q, want canonical field name Информация", resp.Preview)
+	}
+	if got := resp.Items[0][resp.Preview]; got != "Канонический текст" {
+		t.Fatalf("preview value by canonical key = %v", got)
+	}
+}
+
 // Сущность без choice_preview остаётся как была: области просмотра нет, и
 // клиент не должен догадываться, что показывать.
 func TestRefOptionsWithoutChoicePreviewSendsEmpty(t *testing.T) {
