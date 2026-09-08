@@ -221,6 +221,11 @@ type FormElement struct {
 	AccessKey string `yaml:"accesskey,omitempty"` // HTML accesskey для браузерной активации (Alt/Option+клавиша)
 	HotKey    string `yaml:"hotkey,omitempty"`    // runtime shortcut для кнопок формы (F2/F4/F7/F8/F9/F10)
 	Multiline bool   `yaml:"multiline,omitempty"` // обычное поле ввода рендерится как textarea
+	// ChoiceContext — что вызывающая форма передаёт в подбор: «имя параметра» →
+	// «путь к значению на форме» (Объект.Филиал, реквизит формы). Аналог
+	// параметров выбора в 1С: форма выбора и область просмотра в ней обязаны
+	// знать, ДЛЯ ЧЕГО выбирают, — памятка по направлению у филиалов разная.
+	ChoiceContext map[string]string `yaml:"choice_context,omitempty"`
 	// Language — язык подсветки для kind: ПолеКода. Пусто → plaintext.
 	// Значения совпадают с идентификаторами языков редактора: bsl, sql, json,
 	// xml, yaml, markdown, javascript, plaintext.

@@ -315,6 +315,34 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return infoRegisterDetailPanelJSONTranslated(ir, row, lang, periodTitle,
 				func(key string) string { return translate(lang, key) })
 		},
+		// choiceContextJSON — контекст подбора для data-ref-context: «имя параметра»
+		// → ЗНАЧЕНИЕ с формы (choice_context элемента задаёт путь, значения берём
+		// из уже отрисованных Values). Пустые значения не выкидываем: «филиал не
+		// выбран» — тоже ответ, и процедура превью должна его увидеть, а не
+		// получить контекст без ключа и гадать.
+		"choiceContextJSON": func(el *metadata.FormElement, values any) string {
+			if el == nil || len(el.ChoiceContext) == 0 {
+				return ""
+			}
+			vals := map[string]string{}
+			switch m := values.(type) {
+			case map[string]string:
+				vals = m
+			case map[string]any:
+				for k, v := range m {
+					vals[k] = fmt.Sprintf("%v", v)
+				}
+			}
+			out := make(map[string]string, len(el.ChoiceContext))
+			for name, path := range el.ChoiceContext {
+				out[name] = vals[dpFieldName(path)]
+			}
+			raw, err := json.Marshal(out)
+			if err != nil {
+				return ""
+			}
+			return string(raw)
+		},
 		"isRichText": func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
 		"isImage":    func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
 		"fieldNamesCSV": func(fields []metadata.Field) string {

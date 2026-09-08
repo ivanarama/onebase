@@ -2708,7 +2708,10 @@ function openItemPicker(payload, elementName, eventContext) {
   if (old) old.remove();
   var modal = document.createElement('div');
   modal.id = '_item-picker-modal';
-  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
+  // visibility:hidden до первого ответа: ширина диалога зависит от того, есть ли
+  // у справочника область просмотра, а знает об этом только ответ сервера.
+  // Показать сразу — значит показать окно 480px и тут же раздуть его до 900.
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center;visibility:hidden';
   var box = document.createElement('div');
   box.style.cssText = 'background:#fff;border-radius:10px;padding:20px;width:720px;max-width:96vw;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.18)';
   var head = document.createElement('div');
@@ -2951,6 +2954,11 @@ function openRefPicker(selOrId) {
   if (!sel) return;
   if (sel.disabled || sel.readOnly || sel.hasAttribute('readonly')) return;
   var refEntity = sel.getAttribute('data-ref-entity') || '';
+  // Контекст подбора (choice_context вызывающей формы): «для чего выбираем».
+  // Уезжает на сервер вместе с запросом строк — по нему конфигурация собирает
+  // текст просмотра, который зависит не только от строки (памятка по
+  // направлению у филиалов разная).
+  var refContext = sel.getAttribute('data-ref-context') || '';
   var allowCreate = sel.getAttribute('data-ref-allow-create') === '1';
   var localOpts = [];
   for (var i = 0; i < sel.options.length; i++) {
@@ -2962,20 +2970,38 @@ function openRefPicker(selOrId) {
   var modal = document.createElement('div');
   modal.id = '_ref-picker-modal';
   modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
-  var inner = '<div style="background:#fff;border-radius:10px;padding:20px;width:480px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.18)">';
+  var inner = '<div id="_rp-card" style="background:#fff;border-radius:10px;padding:20px;width:480px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.18)">';
   inner += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-weight:600;font-size:15px;color:#1e293b">Выбор из списка</div>';
   if (allowCreate && refEntity) {
     inner += '<button type="button" id="_rp-create" style="padding:5px 12px;border:1px solid #16a34a;border-radius:6px;background:#f0fdf4;cursor:pointer;font-size:12px;font-weight:600;color:#16a34a" title="Создать новый">+ Создать</button>';
   }
   inner += '</div>';
   inner += '<input id="_rp-search" type="text" placeholder="Поиск..." autocomplete="off" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;font-size:14px;margin-bottom:10px;outline:none">';
-  inner += '<div id="_rp-list" style="overflow-y:auto;flex:1;border:1px solid #e2e8f0;border-radius:7px"></div>';
+  // Список и область просмотра — РЯДОМ, и высота у обоих не зависит от того,
+  // есть ли у строки текст. Просмотр под списком не годился дважды: длинный
+  // список уводил его за нижний край, а появление и исчезновение текста при
+  // переводе курсора меняло высоту диалога — он прыгал под мышью.
+  inner += '<div id="_rp-body" style="display:flex;gap:12px;align-items:stretch;flex:1;min-height:0">';
+  inner += '<div id="_rp-list" style="overflow-y:auto;flex:1 1 auto;min-width:0;border:1px solid #e2e8f0;border-radius:7px"></div>';
+  // Колонки просмотра нет вовсе, пока сущность не объявила choice_preview:
+  // подбор по остальным справочникам остаётся ровно таким, каким был.
+  inner += '<div id="_rp-preview" style="display:none;flex:0 0 340px;padding:12px 14px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;font-size:13px;line-height:1.5;color:#334155;white-space:pre-wrap;overflow-y:auto"></div>';
+  inner += '</div>';
   inner += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px"><div id="_rp-status" style="font-size:12px;color:#94a3b8"></div><button type="button" id="_rp-cancel" style="padding:6px 18px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">Отмена</button></div>';
   inner += '</div>';
   modal.innerHTML = inner;
   document.body.appendChild(modal);
   var list = document.getElementById('_rp-list');
   var status = document.getElementById('_rp-status');
+  // rpReveal — показать диалог. Зовётся с первым отрисованным списком, а если
+  // сервер молчит — по таймауту: невидимый диалог хуже прыгающего.
+  var rpRevealed = false;
+  function rpReveal() {
+    if (rpRevealed) return;
+    rpRevealed = true;
+    modal.style.visibility = 'visible';
+  }
+  setTimeout(rpReveal, 400);
   // rpActive — подсвеченная строка списка. Форма выбора обязана работать с
   // клавиатуры целиком: ищем в поле, ↑/↓ ведут по найденному, Enter выбирает.
   // Раньше выбрать пункт можно было только мышью.
@@ -2985,12 +3011,60 @@ function openRefPicker(selOrId) {
     var items = rpItems();
     return (rpActive >= 0 && items[rpActive]) ? items[rpActive].getAttribute('data-id') : '';
   }
+  // rpPreviewField — имя реквизита области просмотра; приезжает вместе со
+  // строками (choice_preview сущности). Пусто — области просмотра нет.
+  var rpPreviewField = '';
+  // rpPreviewHtml — текст просмотра размечен (реквизит richtext). Разметку чистит
+  // сервер тем же санитайзером, что и остальной richtext платформы; клиент сам
+  // ничего не разрешает и в обычном режиме ставит текст, а не HTML.
+  var rpPreviewHtml = false;
+  function rpApplyPreviewLayout() {
+    var box = document.getElementById('_rp-preview');
+    var card = document.getElementById('_rp-card');
+    var body = document.getElementById('_rp-body');
+    if (!box || !card) return;
+    var on = !!rpPreviewField;
+    box.style.display = on ? 'block' : 'none';
+    // Диалог со списком — 480px и высота по содержимому, как был всегда. Диалог
+    // со списком И просмотром — шире и с фиксированной высотой: иначе текст под
+    // курсором тянул бы окно то вверх, то вниз. Справочник без choice_preview
+    // этой геометрии не видит вовсе.
+    card.style.width = on ? '900px' : '480px';
+    if (body && on) {
+      // Высота фиксированная, но карточка обязана уместиться в экран:
+      // flex-shrink оставлен, поэтому на низком окне тело сжимается вместе с
+      // карточкой. Дрожания от этого нет — высота зависит от размера окна, а не
+      // от того, на какой строке стоит курсор.
+      body.style.flex = '1 1 auto';
+      body.style.height = '52vh';
+      body.style.minHeight = '180px';
+    }
+  }
+  function rpPaintPreview() {
+    var box = document.getElementById('_rp-preview');
+    if (!box || !rpPreviewField) return;
+    var items = rpItems();
+    var text = (rpActive >= 0 && items[rpActive]) ? (items[rpActive].getAttribute('data-preview') || '') : '';
+    // Пустой текст — прочерк, а не исчезающая колонка: строка без пояснения не
+    // должна ни двигать вёрстку, ни оставлять на экране чужой текст.
+    if (rpPreviewHtml && text) {
+      box.innerHTML = text;
+    } else {
+      box.textContent = text || '—';
+    }
+    // Размеченный текст приносит свои абзацы и списки — переносы по пробелам
+    // ему только мешают; у обычного текста они, наоборот, единственный способ
+    // сохранить строки.
+    box.style.whiteSpace = rpPreviewHtml ? 'normal' : 'pre-wrap';
+    box.style.color = text ? '#334155' : '#cbd5e1';
+  }
   function rpPaint() {
     var items = rpItems();
     for (var i = 0; i < items.length; i++) items[i].style.background = (i === rpActive) ? '#eef2ff' : '';
     if (rpActive >= 0 && items[rpActive] && items[rpActive].scrollIntoView) {
       items[rpActive].scrollIntoView({ block: 'nearest' });
     }
+    rpPaintPreview();
   }
   // keepId — не сбрасывать подсветку на первую строку, когда список
   // перестраивается ответом серверного поиска, а не действием пользователя.
@@ -3010,6 +3084,7 @@ function openRefPicker(selOrId) {
       item.className = '_rp-item';
       item.setAttribute('data-id', opts[i].id);
       item.setAttribute('data-label', opts[i].label);
+      if (opts[i].preview) item.setAttribute('data-preview', opts[i].preview);
       item.style.cssText = 'padding:9px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:14px;color:#1e293b';
       item.textContent = opts[i].label;
       (function (idx) {
@@ -3035,6 +3110,7 @@ function openRefPicker(selOrId) {
     }
     renderItems(filtered);
     if (status) status.textContent = '';
+    rpReveal();
   }
   function selectItem(item) {
     if (!window._rpTarget) return;
@@ -3068,6 +3144,7 @@ function openRefPicker(selOrId) {
     var seq = ++requestSeq;
     if (status) status.textContent = 'Загрузка...';
     var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + encodeURIComponent(q || '');
+    if (refContext) url += '&ctx=' + encodeURIComponent(refContext);
     fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
       .then(function (resp) {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -3077,11 +3154,17 @@ function openRefPicker(selOrId) {
         if (seq !== requestSeq) return;
         var keep = rpActiveId();
         var rows = (data && data.items) || [];
+        rpPreviewField = (data && data.preview) || '';
+        rpPreviewHtml = !!(data && data.previewHtml);
+        rpApplyPreviewLayout();
         var opts = rows.map(function (row) {
           var id = row && row.id != null ? String(row.id) : '';
-          return { id: id, label: String((row && row._label) || id) };
+          var preview = '';
+          if (rpPreviewField && row && row[rpPreviewField] != null) preview = String(row[rpPreviewField]);
+          return { id: id, label: String((row && row._label) || id), preview: preview };
         }).filter(function (opt) { return opt.id !== ''; });
         renderItems(opts, keep);
+        rpReveal();
         if (status) {
           var total = data && typeof data.total === 'number' ? data.total : opts.length;
           status.textContent = total > opts.length ? 'Показано ' + opts.length + ' из ' + total : '';
