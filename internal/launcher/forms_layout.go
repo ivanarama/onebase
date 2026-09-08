@@ -1,7 +1,9 @@
 package launcher
 
 import (
+	"fmt"
 	"html"
+	"strings"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 )
@@ -21,6 +23,25 @@ func layoutStyleAttr(el *metadata.FormElement) string {
 // ограничивают саму картинку.
 func alignStyleAttr(el *metadata.FormElement) string {
 	return styleAttr(metadata.FormElementAlignCSS(el))
+}
+
+// pictureSizeStyleAttr — размер визуального прямоугольника ПолеКартинки.
+// Внешняя обёртка остаётся shrink-to-fit и получает только выравнивание:
+// width/height у этого вида исторически относятся к самой картинке, а не к
+// блоку элемента. Preview и canvas рисуют заглушку вместо настоящего img, но
+// обязаны занимать те же заданные пиксели.
+func pictureSizeStyleAttr(el *metadata.FormElement) string {
+	if el == nil {
+		return ""
+	}
+	var css strings.Builder
+	if width := metadata.NormalizeFormLayoutSize(el.Width); width > 0 {
+		fmt.Fprintf(&css, "width:%dpx;max-width:100%%;", width)
+	}
+	if height := metadata.NormalizeFormLayoutSize(el.Height); height > 0 {
+		fmt.Fprintf(&css, "height:%dpx;", height)
+	}
+	return styleAttr(css.String())
 }
 
 func styleAttr(css string) string {

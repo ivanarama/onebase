@@ -124,11 +124,14 @@ func TestRenderManagedFormPreview_AppliesLayout(t *testing.T) {
 	}
 	// У картинки width/height — размер самой картинки, поэтому в обёртке их быть
 	// не должно: иначе предпросмотр обещал бы не то, что нарисует рантайм.
-	if strings.Contains(out, `class="hint" style="width:64px`) {
+	if strings.Contains(out, `class="hint form-picture-preview" data-preview-picture="Логотип" style="width:64px`) {
 		t.Errorf("предпросмотр принял размер картинки за размер блока:\n%s", out)
 	}
-	if !strings.Contains(out, `class="hint" style="margin-left:auto;margin-right:auto;"`) {
+	if !strings.Contains(out, `class="hint form-picture-preview" data-preview-picture="Логотип" style="margin-left:auto;margin-right:auto;"`) {
 		t.Errorf("выравнивание картинки в предпросмотре потеряно:\n%s", out)
+	}
+	if !strings.Contains(out, `class="form-picture-placeholder" style="width:64px;max-width:100%;height:64px;"`) {
+		t.Errorf("предпросмотр не применил размер к самой картинке:\n%s", out)
 	}
 	// Правило растяжки должно быть в самом документе предпросмотра — класс без
 	// него ничего не меняет.

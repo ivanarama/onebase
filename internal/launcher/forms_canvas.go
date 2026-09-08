@@ -173,8 +173,8 @@ func renderCanvasElement(buf *bytes.Buffer, en *formdoc.ElementNode, selectedID 
 			elWrapClass("fc-btn", id, selectedID), id, kind, layoutStyleAttr(el), title)
 
 	case metadata.FormElementPicture:
-		fmt.Fprintf(buf, `<div class="%s fc-pick" data-node-id="%s" data-kind="%s"%s><div class="fc-pic">&#x1F5BC; %s</div></div>`,
-			elWrapClass("fc-pic-wrap", id, selectedID), id, kind, alignStyleAttr(el), title)
+		fmt.Fprintf(buf, `<div class="%s fc-pick" data-node-id="%s" data-kind="%s"%s><div class="fc-pic"%s>&#x1F5BC; %s</div></div>`,
+			elWrapClass("fc-pic-wrap", id, selectedID), id, kind, alignStyleAttr(el), pictureSizeStyleAttr(el), title)
 
 	case metadata.FormElementTable:
 		fmt.Fprintf(buf, `<div class="%s fc-pick" data-node-id="%s" data-kind="%s"%s><div class="fc-tp">▦ %s</div></div>`,
