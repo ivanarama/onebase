@@ -1,4 +1,4 @@
-package interpreter
+package interpreter_test
 
 import (
 	"testing"
@@ -10,24 +10,28 @@ import (
 // регистра уходил на 01.01.0001, правил там нет, и проверка, которая должна была
 // заблокировать запись, просто не находилась. Ошибки при этом не было.
 func TestEmptyDateIsNotFilled(t *testing.T) {
-	zero := time.Time{}
-	if !isBlankVal(zero) {
-		t.Error("нулевая дата считается заполненной")
+	localZone := time.FixedZone("UTC+3", 3*60*60)
+	tests := []struct {
+		name  string
+		value time.Time
+		want  string
+	}{
+		{name: "zero", value: time.Time{}, want: "false/true"},
+		{name: "database UTC", value: time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC), want: "false/true"},
+		{name: "local zone", value: time.Date(1, 1, 1, 0, 0, 0, 0, localZone), want: "false/true"},
+		{name: "time on first day", value: time.Date(1, 1, 1, 12, 0, 0, 0, time.UTC), want: "true/false"},
+		{name: "nanosecond on first day", value: time.Date(1, 1, 1, 0, 0, 0, 1, time.UTC), want: "true/false"},
+		{name: "real date", value: time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC), want: "true/false"},
 	}
-	// Дата из базы приходит в UTC — тот же ноль, другой конструктор.
-	if !isBlankVal(time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)) {
-		t.Error("01.01.0001 из базы считается заполненной")
-	}
-	if isBlankVal(time.Date(2026, 9, 8, 0, 0, 0, 0, time.UTC)) {
-		t.Error("настоящая дата считается пустой")
-	}
-	// Пустая дата в ЛОКАЛЬНОЙ зоне (разбор строки, драйвер БД) — тоже пустая:
-	// IsZero() на ней уже ложь, и проверка по нему снова бы молчала.
-	if !isBlankVal(time.Date(1, 1, 1, 0, 0, 0, 0, time.Local)) {
-		t.Error("пустая дата в локальной зоне считается заполненной")
-	}
-	// Указатель на дату не участвует: значения дат в DSL — time.Time.
-	if isBlankVal("2026-09-08") {
-		t.Error("строка с датой считается пустой")
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := evalWithVars(t, `Функция Тест()
+  Возврат Строка(ЗначениеЗаполнено(ДатаПроверки)) + "/" + Строка(Пустая(ДатаПроверки));
+КонецФункции`, map[string]any{"ДатаПроверки": tt.value})
+			if got != tt.want {
+				t.Errorf("ЗначениеЗаполнено/Пустая(%v) = %v, ожидалось %s", tt.value, got, tt.want)
+			}
+		})
 	}
 }
