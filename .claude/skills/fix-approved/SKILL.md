@@ -75,8 +75,8 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    выбери объединение меток `changes-requested` / `needs-decision`:
 
    ```
-   gh api --paginate "repos/ivanarama/onebase/pulls?state=open&per_page=100" \
-     --jq '.[] | {number,title,body,state,baseRefName:.base.ref,headRefName:.head.ref,headSha:.head.sha,labels:[.labels[].name]}'
+    gh api --paginate "repos/ivanarama/onebase/pulls?state=open&per_page=100" \
+      --jq '.[] | {number,title,body,state,baseRefName:.base.ref,headRepository:.head.repo.full_name,headRefName:.head.ref,headSha:.head.sha,maintainerCanModify:.maintainer_can_modify,labels:[.labels[].name]}'
    ```
 
    Затем оставь только `state == "open"`, `baseRefName == "main"` и исключи
@@ -167,7 +167,8 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    ```
 
    **До CAS-push** продолжать можно, только пока HEAD совпадает с исходной canonical completion,
-   PR всё ещё `open`, `baseRefName == "main"`,
+   PR всё ещё `open`, `baseRefName == "main"`, а зафиксированные
+   `headRepository`, `headRefName` и `maintainerCanModify` не изменились,
    эта же completion/decision остаётся последним валидным переходом с владельцем
    FIX, `changes-requested` присутствует, а `ship`, `hold`, `needs-decision`
    отсутствуют. Более поздний `pp:review-again` немедленно передаёт владельца
@@ -518,13 +519,35 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
      валидного `pp:fix-decision <SHA>` нет, текущая `changes-requested` — stale
      маршрутная подсказка: сними и сверь только её, код не меняй и REVIEW заново
      не запускай — аудит этого SHA уже зафиксирован;
-   - рабочее место привяжи к SHA завершённого review, а не к плавающей ветке PR:
+    - зафиксируй из REST-снимка `headRepository=.head.repo.full_name`,
+      `headRefName=.head.ref`, `headSha=.head.sha` и
+      `maintainerCanModify=.maintainer_can_modify`. `headRepository == null`,
+      отсутствующая head-ветка или несовпадение её remote SHA с completion
+      закрывают гейт. Значения передавай `git` только отдельными аргументами;
+      запрещены `eval`, `Invoke-Expression` и сборка shell-строки из данных PR;
+    - выбери источник head без изменения постоянных remotes. Для ветки в
+      `ivanarama/onebase` используй `origin`; для fork сформируй точный URL
+      `https://github.com/<headRepository>.git`. У fork обязательно требуется
+      `maintainerCanModify == true`. Поле `repos/<fork>.permissions.push` **не
+      является гейтом**: оно описывает права на репозиторий целиком и может быть
+      `false`, когда GitHub отдельно разрешает maintainer edits head-ветки этого
+      PR. Не отказывайся от fork только по этому полю;
+    - рабочее место привяжи к SHA завершённого review, а не к плавающей ветке PR:
 
-     ```
-     git fetch origin <ветка-PR>
-     git rev-parse FETCH_HEAD # обязан совпасть с SHA completion
-     git worktree add -B pp-rework-<M> ../pp-rework-<M> <SHA completion>
-     ```
+      ```
+      git ls-remote <origin-or-exact-fork-URL> refs/heads/<headRefName>
+      # remote SHA обязан совпасть с SHA completion
+      git fetch <origin-or-exact-fork-URL> refs/heads/<headRefName>
+      git rev-parse FETCH_HEAD # обязан совпасть с SHA completion
+      git worktree add -B pp-rework-<M> ../pp-rework-<M> <SHA completion>
+      ```
+
+      Если это fork и `maintainerCanModify != true`, до создания worktree
+      выполни crash-safe передачу из п. 1: объясни, что автору нужно включить
+      maintainer edits либо самому применить замечания, заверши комментарий
+      точным `<!-- pp:fix-handoff needs-decision head=<SHA completion> -->`,
+      поставь/сверь `needs-decision`, затем сними/сверь `changes-requested`.
+      Это ход человека, а не повторяемая ошибка FIX;
 
      Несовпадение `FETCH_HEAD` — чужой push: worktree не создавай. Сначала
      примени правило post-push recovery из п. 1: валидный `PP-Fix-Transition`
@@ -534,9 +557,13 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
      SHA завершённого review:
 
      ```
-     git push --force-with-lease=refs/heads/<ветка-PR>:<SHA completion> \
-       origin HEAD:refs/heads/<ветка-PR>
-     ```
+      git push --force-with-lease=refs/heads/<headRefName>:<SHA completion> \
+        <origin-or-exact-fork-URL> HEAD:refs/heads/<headRefName>
+      ```
+
+      Сразу после успеха отдельно сверь и remote ref, и `.head.sha` PR с
+      фактически отправленным SHA. Для fork повторно потребуй неизменные
+      `headRepository`, `headRefName` и `maintainerCanModify == true`.
 
       Lease failure означает чужой push: ничего не перезаписывай и удали
       worktree. Затем перечитай новый HEAD, его commit message, comments и labels.
@@ -544,7 +571,13 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
       completion и `changes-requested` ещё висит, **не** возвращай PR в REVIEW и
       не удаляй метку: победитель или recovery завершит post-push фазу. Только
       чужой HEAD без такой валидной транзакции допускает безопасный возврат в
-      REVIEW;
+      REVIEW. Если push завершился явным отказом authentication/permission,
+      remote ref по-прежнему равен SHA completion и полный гейт не изменился,
+      код не публикуй другим способом: выполни crash-safe `pp:fix-handoff` из
+      п. 1 с просьбой автору включить maintainer edits или применить исправление,
+      поставь/сверь `needs-decision`, затем сними/сверь `changes-requested`.
+      Сетевой, серверный или неоднозначный сбой не выдавай за отказ доступа:
+      закончи `НЕ СМОГ`, сохрани маршрутную метку и не публикуй комментарий;
 
    - правь **только по блокирующим** замечаниям. Пункты раздела «Хвост»
      (`[заявка]` / `[выброс]`) — не твоя работа: по ним после мержа заводит
