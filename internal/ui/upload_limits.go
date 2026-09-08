@@ -110,6 +110,23 @@ func richTextFieldCount(entity *metadata.Entity) int {
 	return n
 }
 
+// infoRegRichTextFieldCount counts richtext fields submitted by an information
+// register form. Both dimensions and resources share the same request body.
+func infoRegRichTextFieldCount(infoReg *metadata.InfoRegister) int {
+	if infoReg == nil {
+		return 0
+	}
+	n := 0
+	for _, fields := range [][]metadata.Field{infoReg.Dimensions, infoReg.Resources} {
+		for _, f := range fields {
+			if metadata.IsRichText(f.Type) {
+				n++
+			}
+		}
+	}
+	return n
+}
+
 // formBodyLimit — предел тела формы записи объекта. Обычная форма состоит из
 // коротких полей, ей хватает мегабайта; форме с richtext нужен запас, выведенный
 // из richtext.MaxBytes, чтобы два предела не разъезжались при правке одного из
@@ -117,6 +134,14 @@ func richTextFieldCount(entity *metadata.Entity) int {
 // обработчиков, включая формы входа и 2FA, где мегабайт осмыслен.
 func formBodyLimit(entity *metadata.Entity) int64 {
 	n := richTextFieldCount(entity)
+	return formBodyLimitForRichTextFields(n)
+}
+
+func infoRegFormBodyLimit(infoReg *metadata.InfoRegister) int64 {
+	return formBodyLimitForRichTextFields(infoRegRichTextFieldCount(infoReg))
+}
+
+func formBodyLimitForRichTextFields(n int) int64 {
 	if n == 0 {
 		return defaultFormMemoryBytes
 	}
@@ -145,11 +170,19 @@ func (s *Server) entityFormBodyLimit(r *http.Request, entity *metadata.Entity) i
 // формы с richtext называется именно тот предел, в который пользователь упёрся
 // по смыслу: сырое сообщение про тело запроса ничего ему не объясняет.
 func formBodyError(err error, entity *metadata.Entity) error {
+	return formBodyErrorForRichTextFields(err, richTextFieldCount(entity))
+}
+
+func infoRegFormBodyError(err error, infoReg *metadata.InfoRegister) error {
+	return formBodyErrorForRichTextFields(err, infoRegRichTextFieldCount(infoReg))
+}
+
+func formBodyErrorForRichTextFields(err error, richTextFields int) error {
 	var maxErr *http.MaxBytesError
 	if !errors.As(err, &maxErr) {
 		return err
 	}
-	if richTextFieldCount(entity) > 0 {
+	if richTextFields > 0 {
 		return i18nerr.Errorf("превышен размер данных формы: форматированный текст с картинками не должен превышать %d МБ в одном поле", int64(richtext.MaxBytes)>>20)
 	}
 	return i18nerr.Errorf("превышен размер данных формы (не более %d МБ)", defaultFormMemoryBytes>>20)
