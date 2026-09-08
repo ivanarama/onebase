@@ -281,3 +281,70 @@ func TestRefOptionsPlainPreviewIsNotHTML(t *testing.T) {
 		t.Errorf("текст изменён: %q", got)
 	}
 }
+
+// Тексты, собранные процедурой, показываются с оформлением, если объявленный
+// choice_preview — richtext: процедура поставляет значения из того же реквизита,
+// только выбирая нужное по контексту. И чистятся так же — источник тот же.
+func TestRefOptionsPreviewProcInheritsRichTextFormat(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "procrich.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	ent := &metadata.Entity{
+		Name: "Направление", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: "Информация", Type: metadata.FieldTypeRichText},
+		},
+		ChoicePreview:     "Информация",
+		ChoicePreviewProc: "Памятки.ДляПодбора",
+	}
+	if err := db.Migrate(ctx, []*metadata.Entity{ent}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Upsert(ctx, ent.Name, uuid.New(), map[string]any{"наименование": "Ремонт"}, ent); err != nil {
+		t.Fatal(err)
+	}
+	src := `
+Функция ДляПодбора(Ссылки, Контекст) Экспорт
+    Рез = Новый Соответствие;
+    Для Каждого Ид Из Ссылки Цикл
+        Рез.Вставить(Строка(Ид), "<p><b>Филиал МСК</b></p><script>alert(1)</script>");
+    КонецЦикла;
+    Возврат Рез;
+КонецФункции`
+	prog, err := parser.New(lexer.New(src, "памятки.module.os")).ParseProgram()
+	if err != nil {
+		t.Fatalf("parse module: %v", err)
+	}
+	reg := runtime.NewRegistry()
+	reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{ent}})
+	reg.LoadModules(map[string]*ast.Program{"Памятки": prog})
+	interp := interpreter.New()
+	interp.LookupProc = reg.GetModuleProc
+	interp.LookupModuleProc = reg.GetModuleNamespacedProc
+	s := &Server{reg: reg, store: db, interp: interp}
+
+	rec := serveRefOptions(t, s, ent.Name, "limit=10", nil)
+	var resp struct {
+		Preview     string           `json:"preview"`
+		PreviewHTML bool             `json:"previewHtml"`
+		Items       []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if !resp.PreviewHTML {
+		t.Fatalf("текст процедуры не унаследовал формат richtext: %s", rec.Body.String())
+	}
+	got, _ := resp.Items[0][choicePreviewKey].(string)
+	if !strings.Contains(got, "<b>Филиал МСК</b>") {
+		t.Errorf("оформление потеряно: %q", got)
+	}
+	if strings.Contains(got, "<script") {
+		t.Errorf("скрипт не вычищен: %q", got)
+	}
+}

@@ -129,16 +129,27 @@ func choicePreviewTexts(result any) map[string]string {
 }
 
 // choicePreviewIsRich — показывать ли текст просмотра с оформлением. Признак
-// берётся из ТИПА реквизита, а не из содержимого строки: «похоже на HTML» —
-// негодный критерий, по нему обычный текст с угловой скобкой стал бы разметкой.
-// Текст, собранный процедурой (choicePreviewKey), оформления не получает: она
-// возвращает строку, а не размеченный реквизит.
+// берётся из ТИПА объявленного реквизита, а не из содержимого строки: «похоже на
+// HTML» — негодный критерий, по нему обычный текст с угловой скобкой стал бы
+// разметкой.
+//
+// Тексты, собранные процедурой (choicePreviewKey), формат наследуют от того же
+// choice_preview: процедура обычно поставляет значения ИЗ НЕГО, только выбирая
+// нужное по контексту. Не объявлен choice_preview — оформления нет: обещать
+// разметку, глядя на строку, нельзя.
 func choicePreviewIsRich(ent *metadata.Entity, previewField string) bool {
-	if ent == nil || previewField == "" || previewField == choicePreviewKey {
+	if ent == nil || previewField == "" {
 		return false
 	}
+	declared := previewField
+	if previewField == choicePreviewKey {
+		declared = strings.TrimSpace(ent.ChoicePreview)
+		if declared == "" {
+			return false
+		}
+	}
 	for _, f := range ent.Fields {
-		if strings.EqualFold(f.Name, previewField) {
+		if strings.EqualFold(f.Name, declared) {
 			return f.Type == metadata.FieldTypeRichText
 		}
 	}
