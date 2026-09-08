@@ -82,7 +82,14 @@ cross-repository=<true|false>
 
 ### Versioned proof
 
-Новый протокол пишет только v2-маркеры:
+Новый протокол пишет только v2-маркеры. Заключение REVIEW перед строками
+`Reviewed-SHA:` и `Reviewed-Identity-SHA256:` содержит fenced `text` block с
+полной канонической записью `PRIdentityV1`. Это не диагностический дубль:
+неизменяемая запись нужна downstream-потребителям FIX и TAIL, чтобы после push,
+merge или удаления head-ref пересчитать digest и доказать историческую
+identity, а не пытаться восстановить её из текущих mutable-полей PR.
+
+Маркеры REVIEW:
 
 ```text
 <!-- pp:review-claim-v2 head=<SHA> identity-sha256=<64hex> review-comment=<id> epoch-sha256=<64hex> -->
@@ -93,6 +100,33 @@ cross-repository=<true|false>
 `Reviewed-Identity-SHA256:`. Base-sync intent/done также получают v2 и тот же
 `identity-sha256`; `to` меняет HEAD, поэтому done фиксирует новый identity digest,
 вычисленный после update и повторного снимка.
+
+FIX не переносит v2 proof на новый HEAD неявно. Коммит доработки и итоговый
+комментарий образуют отдельный identity-bound переход:
+
+```text
+PP-Fix-Transition-v2: from=<reviewed SHA> from-identity-sha256=<64hex> review-comment=<id> claim=<id> epoch-sha256=<64hex>
+<!-- pp:fix-pushed-v2 from=<reviewed SHA> from-identity-sha256=<64hex> head=<new SHA> identity-sha256=<64hex> review-comment=<id> claim=<id> epoch-sha256=<64hex> -->
+```
+
+`from-identity-sha256` обязан совпасть с записью в каноничном v2-заключении и
+claim-bound completion. Перед CAS-push FIX проверяет старую identity и proof.
+После push он строит новую `PRIdentityV1`: все поля, кроме `head-sha`, обязаны
+побайтно совпасть со старой, `head-sha` обязан равняться фактически
+отправленному commit, а его первый parent — `from`. Только затем разрешены
+`pp:fix-pushed-v2` и снятие `changes-requested`. Сам transition не считается
+новым REVIEW proof: новый HEAD снова проходит REVIEW и получает собственные
+claim/completion. Любая смена repo/ref/base, чужой commit, неоднозначный parent
+или несовпавший digest оставляет метку и закрывает recovery.
+
+TAIL принимает v2 proof только вместе с точной identity-записью из указанного
+review-comment. Он пересчитывает digest, проверяет review/earliest claim/
+completion в одной server-ordered epoch и требует
+`completion < MergedEvent(head-sha)`. Между anchor и merge запрещены изменения
+HEAD/base/identity; после merge сохраняется существующее узкое исключение для
+единственного конечного удаления head-ref без restore. Поэтому TAIL не зависит
+от текущего существования ветки, но не может приписать хвост другому PR,
+репозиторию или восстановленному ref.
 
 Метка `ship` остаётся человеческим действием и не пытается хранить SHA внутри
 GitHub label. Для v2 merge-authority возникает только у доверенного
@@ -138,6 +172,12 @@ authority.
 11. Ни v1 proof, ни `ship`, поставленный до v2 completion, не дают права на
     merge. После bridge человек заново ставит `ship`; только это событие связано
     наблюдаемым порядком с новой identity.
+12. FIX принимает владение только от каноничного v2 completion и связывает
+    старую и новую identity явным `PP-Fix-Transition-v2`; совпадение одного SHA
+    или имени ветки недостаточно для push и post-push recovery.
+13. TAIL извлекает хвост только из review-comment, на который ссылается
+    каноничный v2 completion merged HEAD, и проверяет сохранённую identity до
+    каждой pre-create мутации.
 
 ## Инвентаризация затронутых границ
 
@@ -146,13 +186,18 @@ authority.
 - `pipelinectl.json` — минимальная версия identity-протокола и политика fork:
   ожидаемый base repository, `base_branch`, разрешённый CLEAN fork merge и
   запрет локального исполнения/branch mutation для fork.
-- `.claude/skills/review-queue/SKILL.md` и
-  `.claude/skills/merge-shepherd/SKILL.md` — краткие обязательные инварианты
-  быстрого пути и условия fallback.
+- `.claude/skills/review-queue/SKILL.md`,
+  `.claude/skills/fix-approved/SKILL.md`,
+  `.claude/skills/merge-shepherd/SKILL.md` и
+  `.claude/skills/tail-issues/SKILL.md` — краткие обязательные инварианты
+  быстрого пути/потребителей proof и условия fallback.
 - `.claude/skills/*/references/legacy-protocol.md` — полный v2 snapshot,
-  exact-fetch, same-repo/fork маршруты, recovery и предмутационные гейты.
-- `.agents/skills/review-queue/SKILL.md` и
-  `.agents/skills/merge-shepherd/SKILL.md` — только тонкие Codex-адаптеры, без
+  exact-fetch, same-repo/fork маршруты, FIX transition, TAIL reconstruction,
+  recovery и предмутационные гейты.
+- `.agents/skills/review-queue/SKILL.md`,
+  `.agents/skills/fix-approved/SKILL.md`,
+  `.agents/skills/merge-shepherd/SKILL.md` и
+  `.agents/skills/tail-issues/SKILL.md` — только тонкие Codex-адаптеры, без
   копирования логики.
 - `tools/pipelinehealth/main.go` — чтение head/base repository identity и выдача
   её в `review_candidates`, `content_review_candidates`, `merge_candidates` и
@@ -207,7 +252,7 @@ events. Новые таблицы, миграции и generated artifacts не 
 
 Переход выполняется dual-read/single-write без переноса старого merge-authority:
 
-- v2-инструмент всегда пишет v2;
+- v2-инструмент и все четыре этапа REVIEW/FIX/MERGE/TAIL всегда пишут v2;
 - v1 SHA-bound completion временно читается только как доказательство уже
   выполненного содержательного аудита точного SHA для текущего same-repo PR;
   из него нельзя доказать прежние repository/ref, поэтому старый `ship` не
@@ -221,8 +266,16 @@ events. Новые таблицы, миграции и generated artifacts не 
 - неоднозначный bridge, отсутствующий repository ID, смена repo/ref при том же
   SHA до завершения bridge или любой edit/delete ведёт к новому REVIEW, а не к
   догадке;
+- FIX не начинает новую доработку от v1 completion: same-repo proof сначала
+  получает REVIEW bridge в v2. Уже опубликованный до cutover v1
+  `PP-Fix-Transition` не переименовывается и не достраивается выдуманным v2
+  digest; его новый HEAD безопасно возвращается в REVIEW. Незавершённая v2
+  post-push фаза восстанавливается только при точном совпадении обеих identity;
+- TAIL в течение релизного окна продолжает читать уже влитые каноничные v1
+  пары по прежнему строгому epoch-гейту. Для всех новых REVIEW он принимает
+  только v2 и сохранённую `PRIdentityV1`; bridge после merge не синтезируется;
 - после одного релизного окна и отсутствия v1-кандидатов fallback сохраняет
-  parser только для диагностики, но не как merge-authority.
+  parser только для диагностики, но не как authority FIX/MERGE/TAIL.
 
 Старые `pp:base-sync-*` цепочки не переписываются и не являются authority для
 v2 merge. Same-repo цепочка может использоваться как диагностическая история и
@@ -271,7 +324,37 @@ fail closed. Это сохраняет аудит, не редактирует �
   `bridge(B) → ship(B)` разрешает следующий MERGE;
 - сменившийся identity не публикует review comment/label.
 
-### Срез C — v2 MERGE и безопасные same-repo mutations
+### Срез C — v2-потребители FIX и TAIL
+
+1. Научить FIX читать каноничный v2 REVIEW proof, повторять полный identity/
+   epoch gate перед каждым внешним изменением и писать только
+   `PP-Fix-Transition-v2`/`pp:fix-pushed-v2`.
+2. Проверять CAS-переход `reviewed identity → новый HEAD identity`: неизменны
+   base/head repository, PR и ref, меняется только SHA, а первый parent нового
+   commit равен reviewed SHA.
+3. Научить TAIL реконструировать сохранённую `PRIdentityV1`, v2 completion и
+   merge edge перед каждым claim/create/done; сохранить ограниченный v1 drain
+   только для уже влитой истории.
+4. Обновить канонические процедуры FIX/TAIL, их fallback, PromptPilot handlers
+   и исполняемые contract fixtures одновременно с parser-ами v2.
+
+Публичные тесты среза:
+
+- сквозной fixture REVIEW(v2 changes-requested) → FIX transition v2 →
+  REVIEW(new HEAD) доказывает обе identity и не принимает старый completion за
+  аудит нового HEAD;
+- смена head repo/ref при прежнем SHA до CAS-push или post-push recovery
+  запрещает comment/label mutation;
+- чужой commit и transition с неверным parent/digest не снимают
+  `changes-requested`;
+- сквозной fixture REVIEW(v2 reviewed + tail) → MERGE → TAIL выбирает точный
+  review-comment и создаёт хвост, а другой PR/identity с тем же SHA — нет;
+- допустимый post-merge head delete не теряет хвост, restore и pre-merge
+  lifecycle event закрывают TAIL;
+- v1 in-flight FIX возвращается в REVIEW, а v1 merged TAIL drain остаётся
+  ограничен миграционным окном.
+
+### Срез D — v2 MERGE и безопасные same-repo mutations
 
 1. Включить identity digest в обычный merge proof и base-sync v2 chain.
 2. Перед update/push проверять `head-repository-id == base-repository-id`, точный
@@ -292,7 +375,7 @@ fail closed. Это сохраняет аудит, не редактирует �
   `git push origin ...`;
 - retarget `main → release → main` требует нового proof.
 
-### Срез D — Изолированный fork-маршрут
+### Срез E — Изолированный fork-маршрут
 
 1. Для fork запретить локальное исполнение и проверять обязательные GitHub-hosted
    checks ровно для `head-sha`.
@@ -310,7 +393,7 @@ fail closed. Это сохраняет аудит, не редактирует �
 - BEHIND/DIRTY fork получает один идемпотентный handoff и не захватывает
   интеграционную полосу.
 
-### Срез E — Включение и удаление переходного authority
+### Срез F — Включение и удаление переходного authority
 
 1. Выпустить PromptPilot с v2, затем поднять `minimum_version` в onebase.
 2. Обновить канонические skills, адаптеры и maintenance-документацию.
@@ -335,6 +418,10 @@ fail closed. Это сохраняет аудит, не редактирует �
 - base `release`, retarget и base ABA;
 - v1 → v2 bridge, crash после claim, повтор completion, stale `ship` до bridge
   и свежий `ship` после completion;
+- REVIEW→FIX→REVIEW с двумя identity, crash до/после `pp:fix-pushed-v2`, чужой
+  push и смена repo/ref при неизменном SHA;
+- REVIEW→MERGE→TAIL с сохранённой identity-записью, post-merge delete и
+  запрещённым restore;
 - CLEAN/BEHIND/DIRTY для same-repo и fork;
 - CI success/failure/pending, другой SHA и `pull_request_target`;
 - Windows/Linux byte-identical UTF-8 без BOM и LF canonical serialization,
@@ -349,7 +436,7 @@ fixture без внешних мутаций и `go run ./tools/plannum` при 
 - **Ложное ощущение sandbox.** Worktree не считается sandbox; fork-код либо
   исполняется GitHub-hosted `pull_request` CI, либо не исполняется автоматически.
 - **Расхождение tool/fallback.** Общая таблица golden fixtures и contract tests
-  обязательна для обеих реализаций.
+  обязательна для обеих реализаций и всех потребителей REVIEW/FIX/MERGE/TAIL.
 - **Поломка открытых PR.** Dual-read ограничен same-repo и имеет одноразовый v2
   bridge; fork v1 fail closed.
 - **Rename/transfer создаёт лишний повтор REVIEW.** Это намеренная цена: меняется
@@ -370,6 +457,9 @@ v1 не умеет проверить. Исторические comments и labe
 ## Критерии завершения
 
 - В fast и fallback пути lease/proof содержит один и тот же `identity-sha256`.
+- FIX и TAIL умеют независимо реконструировать тот же v2 proof: FIX связывает
+  две identity через проверяемый transition, TAIL связывает reviewed identity с
+  точным merged event.
 - Ни один путь не получает код по одному `headRefName` и не push-ит fork через
   `origin`.
 - Изменение repo/ref/SHA/base identity до любой мутации останавливает операцию.
@@ -389,7 +479,8 @@ v1 не умеет проверить. Исторические comments и labe
 - Срез B: 2–3 дня.
 - Срез C: 2–3 дня.
 - Срез D: 2–3 дня.
-- Срез E и миграционное наблюдение: 1–2 дня плюс одно релизное окно.
+- Срез E: 2–3 дня.
+- Срез F и миграционное наблюдение: 1–2 дня плюс одно релизное окно.
 
-Итого: 8–12 рабочих дней, без изменения продуктового кода и пользовательских
+Итого: 10–16 рабочих дней, без изменения продуктового кода и пользовательских
 данных.

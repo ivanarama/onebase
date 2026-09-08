@@ -428,7 +428,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 
 | № | Файл | Фича | Эстимейт | Статус |
 |---|---|---|---|---|
-| 162 | [162-pr-identity-and-fork-isolation.md](162-pr-identity-and-fork-isolation.md) | Identity-bound REVIEW/MERGE и безопасный fork-маршрут: repository/ref/SHA lease, exact fetch, доверенный CI без локального исполнения fork-кода (#1245) | ~8–12 дней | 📋 Проектирование |
+| 162 | [162-pr-identity-and-fork-isolation.md](162-pr-identity-and-fork-isolation.md) | Identity-bound REVIEW/FIX/MERGE/TAIL и безопасный fork-маршрут: repository/ref/SHA lease, exact fetch, доверенный CI без локального исполнения fork-кода (#1245) | ~10–16 дней | 📋 Проектирование |
 
 ## Граф зависимостей (архив)
 
