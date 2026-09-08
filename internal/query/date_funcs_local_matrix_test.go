@@ -6,8 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
-	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,11 +126,45 @@ func TestDateFunctionsUseApplicationLocalTime(t *testing.T) {
 	}
 }
 
+func TestDateFunctionUsesQualifiedSourceFieldType(t *testing.T) {
+	first := &metadata.Entity{
+		Name: "Первый",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Значение", Type: metadata.FieldTypeDate},
+		},
+	}
+	other := &metadata.Entity{
+		Name: "Другой",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Значение", Type: metadata.FieldTypeString},
+		},
+	}
+
+	compiled, err := query.Compile(`
+		ВЫБРАТЬ
+			День(Первый.Значение) КАК ДеньПервого,
+			День(Другой.Значение) КАК ДеньДругого
+		ИЗ Справочник.Первый КАК Первый
+			ЛЕВОЕ СОЕДИНЕНИЕ Справочник.Другой КАК Другой
+			ПО Первый.Ссылка = Другой.Ссылка`, query.CompileOpts{
+		Entities: []*metadata.Entity{first, other},
+		Dialect:  storage.SQLiteDialect{},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(compiled.SQL, "ob_local_datetime("), compiled.SQL)
+	require.Contains(t, compiled.SQL, "ob_local_datetime(первый.значение)", compiled.SQL)
+	require.NotContains(t, compiled.SQL, "ob_local_datetime(другой.значение)", compiled.SQL)
+}
+
 func loadLocationNamed(t *testing.T, name, zoneName string) *time.Location {
 	t.Helper()
-	zones, err := zip.OpenReader(filepath.Join(runtime.GOROOT(), "lib", "time", "zoneinfo.zip"))
+	zones, err := zip.OpenReader(filepath.Join(zoneinfoRoot(t), "lib", "time", "zoneinfo.zip"))
 	require.NoError(t, err, "открытие Go zoneinfo.zip")
-	defer zones.Close()
+	defer func() {
+		require.NoError(t, zones.Close(), "закрытие Go zoneinfo.zip")
+	}()
 	for _, file := range zones.File {
 		if file.Name != zoneName {
 			continue
@@ -146,6 +181,15 @@ func loadLocationNamed(t *testing.T, name, zoneName string) *time.Location {
 	}
 	t.Fatalf("зона %s не найдена в Go zoneinfo.zip", zoneName)
 	return nil
+}
+
+func zoneinfoRoot(t *testing.T) string {
+	t.Helper()
+	out, err := exec.Command("go", "env", "GOROOT").Output()
+	require.NoError(t, err, "определение GOROOT")
+	root := strings.TrimSpace(string(out))
+	require.NotEmpty(t, root, "go env GOROOT")
+	return root
 }
 
 func localBoundaryMoment(loc *time.Location, zoneName string, year int, month time.Month) time.Time {

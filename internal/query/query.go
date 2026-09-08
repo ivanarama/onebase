@@ -2789,6 +2789,118 @@ func buildColTypes(tokens []tok, opts CompileOpts) map[string]metadata.FieldType
 	return m
 }
 
+// buildQualifiedColTypes maps each unambiguous source qualifier to the field
+// types of that exact source. Scalar functions are rewritten before FROM is
+// emitted, so a qualified argument such as Other.Value cannot use colTypes:
+// that map intentionally describes only the first source of the query.
+func buildQualifiedColTypes(tokens []tok, opts CompileOpts) map[string]map[string]metadata.FieldType {
+	qualified := map[string]map[string]metadata.FieldType{}
+	ambiguous := map[string]bool{}
+
+	sameTypes := func(a, b map[string]metadata.FieldType) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for name, typ := range a {
+			if b[name] != typ {
+				return false
+			}
+		}
+		return true
+	}
+	addQualifier := func(name string, fields map[string]metadata.FieldType) {
+		name = lowerFast(name)
+		if name == "" || ambiguous[name] {
+			return
+		}
+		if current, ok := qualified[name]; ok {
+			if !sameTypes(current, fields) {
+				delete(qualified, name)
+				ambiguous[name] = true
+			}
+			return
+		}
+		qualified[name] = fields
+	}
+
+	for i := 0; i+2 < len(tokens); i++ {
+		if tokens[i].kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+			continue
+		}
+		typeUpper := upperFast(tokens[i].val)
+		if !isSourceType(typeUpper) {
+			continue
+		}
+		name := tokens[i+2].val
+		fields := sourceColTypes(typeUpper, name, opts)
+		if fields == nil {
+			continue
+		}
+		addQualifier(name, fields)
+		addQualifier(sourceToTable(typeUpper, name), fields)
+
+		// A regular source has its optional alias directly after the entity name.
+		aliasPos := i + 3
+		if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {
+			aliasUpper := upperFast(tokens[aliasPos].val)
+			if (aliasUpper == "КАК" || aliasUpper == "AS") && tokens[aliasPos+1].kind == tIdent {
+				addQualifier(tokens[aliasPos+1].val, fields)
+			}
+		}
+	}
+	return qualified
+}
+
+func sourceColTypes(typeUpper, name string, opts CompileOpts) map[string]metadata.FieldType {
+	fields := map[string]metadata.FieldType{}
+	add := func(items []metadata.Field) {
+		for _, field := range items {
+			fields[lowerFast(field.Name)] = field.Type
+		}
+	}
+	switch {
+	case isAccumRegType(typeUpper):
+		for _, reg := range opts.Registers {
+			if strings.EqualFold(reg.Name, name) {
+				add(reg.Dimensions)
+				add(reg.Resources)
+				add(reg.Attributes)
+				fields["period"] = metadata.FieldTypeDate
+				fields["период"] = metadata.FieldTypeDate
+				return fields
+			}
+		}
+	case isInfoRegType(typeUpper):
+		for _, reg := range opts.InfoRegs {
+			if strings.EqualFold(reg.Name, name) {
+				add(reg.Dimensions)
+				add(reg.Resources)
+				fields["period"] = metadata.FieldTypeDate
+				fields["период"] = metadata.FieldTypeDate
+				return fields
+			}
+		}
+	case isAccountRegType(typeUpper):
+		for _, reg := range opts.AccountRegs {
+			if strings.EqualFold(reg.Name, name) {
+				add(reg.Resources)
+				add(reg.Subconto)
+				fields["period"] = metadata.FieldTypeDate
+				fields["период"] = metadata.FieldTypeDate
+				return fields
+			}
+		}
+	default:
+		for _, entity := range opts.Entities {
+			if strings.EqualFold(entity.Name, name) {
+				add(entity.Fields)
+				return fields
+			}
+		}
+	}
+	return nil
+}
+
 // needsNumberCast — true, если колонку поля number нужно обернуть в
 // CAST(... AS NUMERIC): только на SQLite (там number хранится как TEXT) и только
 // в позициях сравнения/сортировки (WHERE/HAVING/ORDER BY). В ВЫБРАТЬ не кастим —
@@ -3692,10 +3804,11 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 	// исходная граница аргумента теряется, а локализовать можно только date-момент,
 	// не произвольную строку и не будущий localdate (#1243).
 	colTypes := buildColTypes(tokens, opts)
+	qualifiedColTypes := buildQualifiedColTypes(tokens, opts)
 	tokens = rewriteGroupingReferenceAliases(tokens)
 	// расширяем НачалоДня/Год/Месяц/ОКР/АБС/ЦЕЛ/... в SQL-эквиваленты
 	// до основной трансляции, чтобы остальные шаги ничего не знали о них.
-	tokens = rewriteScalarFuncs(tokens, dialectName(opts.Dialect), colTypes, opts.Params)
+	tokens = rewriteScalarFuncs(tokens, dialectName(opts.Dialect), colTypes, qualifiedColTypes, opts.Params)
 	tokens = rewriteStrftime(tokens, dialectName(opts.Dialect))
 	tr := &translator{
 		tokens:      tokens,
@@ -4341,7 +4454,7 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 // т.п., чтобы основной транслятор обработал внутренний аргумент через обычные
 // правила (resolve ref dims, параметры и т.п.). Рекурсивно для вложенных
 // вызовов: Месяц(НачалоМесяца(x)) и ОКР(СУММА(x), 0) тоже разворачиваются.
-func rewriteScalarFuncs(tokens []tok, dialect string, colTypes map[string]metadata.FieldType, params map[string]any) []tok {
+func rewriteScalarFuncs(tokens []tok, dialect string, colTypes map[string]metadata.FieldType, qualifiedColTypes map[string]map[string]metadata.FieldType, params map[string]any) []tok {
 	rewrites := scalarFuncRewrites(dialect)
 	var out []tok
 	for i := 0; i < len(tokens); i++ {
@@ -4372,12 +4485,12 @@ func rewriteScalarFuncs(tokens []tok, dialect string, colTypes map[string]metada
 					continue
 				}
 				rawInner := tokens[i+2 : end]
-				inner := rewriteScalarFuncs(rawInner, dialect, colTypes, params) // рекурсия
+				inner := rewriteScalarFuncs(rawInner, dialect, colTypes, qualifiedColTypes, params) // рекурсия
 				// SQLite хранит date как UTC-текст. Переводим момент в стенные
 				// часы приложения до календарной операции, но только когда тип
 				// аргумента это доказывает. Поэтому будущий localdate останется
 				// «как записан», а строка с похожим содержимым не сменит смысл.
-				if dialect == "sqlite" && isCalendarDateFunc(key) && dateArgumentIsMoment(rawInner, colTypes, params) {
+				if dialect == "sqlite" && isCalendarDateFunc(key) && dateArgumentIsMoment(rawInner, colTypes, qualifiedColTypes, params) {
 					wrapped := tokenizeFragment("ob_local_datetime(")
 					wrapped = append(wrapped, inner...)
 					wrapped = append(wrapped, tokenizeFragment(")")...)
@@ -4411,7 +4524,7 @@ func isCalendarDateFunc(name string) bool {
 // одноимённое прикладное поле сначала проверяется по метаданным. Сложные
 // выражения оставляем в прежней семантике fail-closed: угадывание их типа
 // локализовало бы будущий localdate или обычную строку.
-func dateArgumentIsMoment(tokens []tok, colTypes map[string]metadata.FieldType, params map[string]any) bool {
+func dateArgumentIsMoment(tokens []tok, colTypes map[string]metadata.FieldType, qualifiedColTypes map[string]map[string]metadata.FieldType, params map[string]any) bool {
 	for len(tokens) >= 2 && tokens[0].kind == tLParen && tokens[len(tokens)-1].kind == tRParen {
 		tokens = tokens[1 : len(tokens)-1]
 	}
@@ -4432,11 +4545,14 @@ func dateArgumentIsMoment(tokens []tok, colTypes map[string]metadata.FieldType, 
 		return false
 	}
 	if len(tokens) == 3 && tokens[0].kind == tIdent && tokens[1].kind == tDot && tokens[2].kind == tIdent {
-		name := lowerFast(tokens[2].val)
-		if typ, ok := colTypes[name]; ok {
+		fields, ok := qualifiedColTypes[lowerFast(tokens[0].val)]
+		if !ok {
+			return false
+		}
+		if typ, ok := fields[lowerFast(tokens[2].val)]; ok {
 			return typ == metadata.FieldTypeDate
 		}
-		return name == "период" || name == "period"
+		return false
 	}
 	return false
 }

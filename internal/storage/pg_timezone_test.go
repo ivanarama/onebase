@@ -3,8 +3,9 @@ package storage
 import (
 	"archive/zip"
 	"io"
+	"os/exec"
 	"path/filepath"
-	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -20,11 +21,15 @@ func TestApplicationTimeZoneNameKeepsUnnamedLocalDSTRules(t *testing.T) {
 
 func loadTestLocationNamed(t *testing.T, name, zoneName string) *time.Location {
 	t.Helper()
-	zones, err := zip.OpenReader(filepath.Join(runtime.GOROOT(), "lib", "time", "zoneinfo.zip"))
+	zones, err := zip.OpenReader(filepath.Join(testZoneinfoRoot(t), "lib", "time", "zoneinfo.zip"))
 	if err != nil {
 		t.Fatalf("open Go zoneinfo.zip: %v", err)
 	}
-	defer zones.Close()
+	defer func() {
+		if err := zones.Close(); err != nil {
+			t.Errorf("close Go zoneinfo.zip: %v", err)
+		}
+	}()
 	for _, file := range zones.File {
 		if file.Name != zoneName {
 			continue
@@ -49,4 +54,17 @@ func loadTestLocationNamed(t *testing.T, name, zoneName string) *time.Location {
 	}
 	t.Fatalf("zone %s not found in Go zoneinfo.zip", zoneName)
 	return nil
+}
+
+func testZoneinfoRoot(t *testing.T) string {
+	t.Helper()
+	out, err := exec.Command("go", "env", "GOROOT").Output()
+	if err != nil {
+		t.Fatalf("determine GOROOT: %v", err)
+	}
+	root := strings.TrimSpace(string(out))
+	if root == "" {
+		t.Fatal("go env GOROOT returned an empty path")
+	}
+	return root
 }
