@@ -428,7 +428,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 
 | № | Файл | Фича | Эстимейт | Статус |
 |---|---|---|---|---|
-| 164 | [164-tail-durable-queue-and-scheduler-heartbeat.md](164-tail-durable-queue-and-scheduler-heartbeat.md) | Durable backlog/cursor TAIL, расписание раз в четыре часа и heartbeat всех recurring tasks без ложного «тишина = пусто» (#1248) | ~11–16 дней | 📋 Проектирование |
+| 164 | [164-tail-durable-queue-and-scheduler-heartbeat.md](164-tail-durable-queue-and-scheduler-heartbeat.md) | Durable backlog/cursor TAIL, расписание раз в четыре часа и heartbeat всех recurring tasks без ложного «тишина = пусто» (#1248) | ~13–19 дней | 📋 Проектирование |
 
 ## Граф зависимостей (архив)
 
