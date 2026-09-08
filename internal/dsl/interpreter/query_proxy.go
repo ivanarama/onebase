@@ -10,6 +10,7 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/ivantit66/onebase/internal/typedempty"
 )
 
 // QueryDB is the minimal storage interface needed by queryProxy.
@@ -195,11 +196,55 @@ func (q *queryProxy) execute() *Array {
 	}
 	query.NormalizeColumns(&res, rows)
 	q.wrapRefColumns(res, rows)
+	q.materializeTypedColumns(res, rows)
 	arr := &Array{}
 	for _, row := range rows {
 		arr.items = append(arr.items, newQueryResultRow(row))
 	}
 	return arr
+}
+
+// materializeTypedColumns is deliberately DSL-only and runs after the host
+// guard. Generic query.Run consumers keep SQL NULL unchanged, while modules see
+// the canonical empty value of a proven direct projection.
+func (q *queryProxy) materializeTypedColumns(res query.Result, rows []map[string]any) {
+	if len(res.TypedColumns) == 0 || len(rows) == 0 {
+		return
+	}
+	entities := map[string]*metadata.Entity{}
+	if q.reg != nil {
+		for _, entity := range q.reg.Entities() {
+			if entity != nil {
+				entities[strings.ToLower(entity.Name)] = entity
+			}
+		}
+	}
+	for _, row := range rows {
+		for column, desc := range res.TypedColumns {
+			raw, exists := row[column]
+			if !exists {
+				// A hidden field is removed by the guard; do not recreate it as a
+				// plausible empty value after the security boundary.
+				continue
+			}
+			if desc.RefEntity != "" {
+				if raw != nil {
+					continue // non-empty references were wrapped by wrapRefColumns
+				}
+				entity := entities[strings.ToLower(desc.RefEntity)]
+				row[column] = &Ref{Type: desc.RefEntity, Kind: refKindFromMetadata(entity)}
+				continue
+			}
+			row[column] = typedempty.Normalize(desc, raw, nil)
+		}
+	}
+}
+
+func refKindFromMetadata(entity *metadata.Entity) metadata.Kind {
+	if entity == nil {
+		return ""
+	}
+	return entity.Kind
 }
 
 // wrapRefColumns оборачивает колонки-идентификаторы результата в *Ref, чтобы

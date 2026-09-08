@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
@@ -12,6 +13,7 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/shopspring/decimal"
 )
 
 // Присваивание константы обязано доезжать до базы.
@@ -42,6 +44,68 @@ func constantsFixture(t *testing.T) (*storage.DB, *runtime.Registry, context.Con
 	reg := runtime.NewRegistry()
 	reg.Load(runtime.LoadOptions{Constants: consts})
 	return db, reg, ctx
+}
+
+func TestКонстанты_ПустыеЗначенияТипизированыЧерезCommonBuild(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "typed-consts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	warehouse := &metadata.Entity{Name: "Склады", Kind: metadata.KindCatalog}
+	consts := []*metadata.Constant{
+		{Name: "Лимит", Type: metadata.FieldTypeNumber},
+		{Name: "Включено", Type: metadata.FieldTypeBool},
+		{Name: "Подпись", Type: metadata.FieldTypeString},
+		{Name: "ДатаЗапуска", Type: metadata.FieldTypeDate},
+		{Name: "ОсновнойСклад", Type: metadata.FieldType("reference:Склады"), RefEntity: "Склады"},
+	}
+	if err := db.MigrateConstants(ctx, consts); err != nil {
+		t.Fatal(err)
+	}
+	reg := runtime.NewRegistry()
+	reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{warehouse}, Constants: consts})
+	vars := Common{Ctx: ctx, Reg: reg, Store: db}.Build()
+
+	checks := []struct {
+		name string
+		src  string
+		ok   func(any) bool
+	}{
+		{"number", "Константы.Лимит", func(v any) bool { d, ok := v.(decimal.Decimal); return ok && d.IsZero() }},
+		{"bool", "Константы.Включено", func(v any) bool { b, ok := v.(bool); return ok && !b }},
+		{"string", "Константы.Подпись", func(v any) bool { s, ok := v.(string); return ok && s == "" }},
+		{"date", "Константы.ДатаЗапуска", func(v any) bool { d, ok := v.(time.Time); return ok && d.IsZero() }},
+		{"reference", "Константы.ОсновнойСклад", func(v any) bool {
+			ref, ok := v.(*interpreter.Ref)
+			return ok && ref.UUID == "" && ref.Type == "Склады" && ref.Kind == metadata.KindCatalog
+		}},
+	}
+	for _, tc := range checks {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.New(lexer.New("Функция Тест()\nВозврат "+tc.src+";\nКонецФункции", "typed.os")).ParseProgram()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result any
+			if err := interpreter.New().RunWithResult(prog.Procedures[0], runtime.NewObject("T", metadata.KindCatalog), &result, vars); err != nil {
+				t.Fatal(err)
+			}
+			if !tc.ok(result) {
+				t.Fatalf("%s returned %T(%v)", tc.src, result, result)
+			}
+		})
+	}
+
+	values, err := db.ListConstants(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 0 {
+		t.Fatalf("typed reads persisted values: %+v", values)
+	}
 }
 
 func runConstantsProc(t *testing.T, db *storage.DB, reg *runtime.Registry, ctx context.Context, src string) error {

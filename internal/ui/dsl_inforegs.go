@@ -111,7 +111,9 @@ func (r *infoRegRecord) Get(name string) any {
 		return *r.period
 	}
 	if f := infoRegField(r.ir, name); f != nil {
-		return r.values[f.Name]
+		meta := storage.InfoRegisterPredicateEntity(r.ir)
+		decisions := r.s.fieldDecisionsFor(r.ctx(), "inforeg", r.ir.Name, meta)
+		return newDeclaredRowThis(r.values, appendInfoRegFields(r.ir), r.s.newDSLRefAttrResolver(r.ctx()), decisions).Get(f.Name)
 	}
 	return nil
 }
@@ -339,7 +341,7 @@ func (rs *infoRegRecordSet) CallMethod(method string, args []any) any {
 			row[name] = v
 		}
 		rs.rows = append(rs.rows, row)
-		return &interpreter.MapThis{M: row}
+		return rs.rowThis(row)
 	case "количество", "count":
 		return float64(len(rs.rows))
 	case "получить", "get":
@@ -353,7 +355,7 @@ func (rs *infoRegRecordSet) CallMethod(method string, args []any) any {
 			interpreter.RaiseUserError(fmt.Sprintf(
 				"Получить(%s): индекс %d вне набора (строк %d)", rs.ir.Name, idx, len(rs.rows)))
 		}
-		return &interpreter.MapThis{M: rs.rows[idx]}
+		return rs.rowThis(rs.rows[idx])
 	case "записать", "write":
 		rs.write()
 		return nil
@@ -373,6 +375,35 @@ func (rs *infoRegRecordSet) CallMethod(method string, args []any) any {
 // Отдаётся тот же срез строк, что правит Добавить(): правка строки в цикле
 // должна попадать в Записать(), иначе перебор был бы обманчиво бесполезным.
 func (rs *infoRegRecordSet) IterateRows() []map[string]any { return rs.rows }
+
+// IterateThis makes the interpreter use the metadata-aware view while keeping
+// IterateRows for storage/write compatibility and existing Go callers.
+func (rs *infoRegRecordSet) IterateThis() []interpreter.This {
+	items := make([]interpreter.This, 0, len(rs.rows))
+	for _, row := range rs.rows {
+		items = append(items, rs.rowThis(row))
+	}
+	return items
+}
+
+func (rs *infoRegRecordSet) rowThis(row map[string]any) *declaredRowThis {
+	meta := storage.InfoRegisterPredicateEntity(rs.ir)
+	decisions := rs.s.fieldDecisionsFor(rs.ctx(), "inforeg", rs.ir.Name, meta)
+	return newDeclaredRowThis(row, appendInfoRegFields(rs.ir), rs.s.newDSLRefAttrResolver(rs.ctx()), decisions)
+}
+
+func appendInfoRegFields(ir *metadata.InfoRegister) []metadata.Field {
+	if ir == nil {
+		return nil
+	}
+	fields := make([]metadata.Field, 0, len(ir.Dimensions)+len(ir.Resources)+1)
+	fields = append(fields, ir.Dimensions...)
+	fields = append(fields, ir.Resources...)
+	if ir.Periodic {
+		fields = append(fields, metadata.Field{Name: "Период", Type: metadata.FieldTypeDate})
+	}
+	return fields
+}
 
 // write замещает содержимое по отбору: удаление и вставка в одной транзакции.
 //

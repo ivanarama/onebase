@@ -4,6 +4,8 @@ import (
 	"context"
 	"sort"
 	"strings"
+
+	"github.com/ivantit66/onebase/internal/typedempty"
 )
 
 // ConstantsDB — то, что нужно объекту Константы от хранилища.
@@ -26,26 +28,54 @@ type ConstantsDB interface {
 // уходит в базу сразу и обновляет снимок, поэтому в пределах прогона Get после
 // Set видит записанное.
 type ConstantsRoot struct {
-	ctx   context.Context
-	db    ConstantsDB
-	names map[string]string // нижний регистр → объявленное имя
-	cache map[string]any    // объявленное имя → значение
+	ctx              context.Context
+	db               ConstantsDB
+	names            map[string]string // нижний регистр → объявленное имя
+	cache            map[string]any    // объявленное имя → значение
+	descriptors      map[string]typedempty.Descriptor
+	referenceFactory func(typedempty.Descriptor) any
+}
+
+// DeclaredConstant is the immutable metadata needed by the DSL read boundary.
+// The full metadata.Constant stays owned by runtime.Registry.
+type DeclaredConstant struct {
+	Name       string
+	Descriptor typedempty.Descriptor
 }
 
 // NewConstantsRoot собирает объект Константы. declared — имена из конфигурации,
 // values — снимок значений из базы.
 func NewConstantsRoot(ctx context.Context, db ConstantsDB, declared []string, values map[string]any) *ConstantsRoot {
-	r := &ConstantsRoot{
-		ctx:   ctx,
-		db:    db,
-		names: make(map[string]string, len(declared)),
-		cache: make(map[string]any, len(values)),
+	typed := make([]DeclaredConstant, 0, len(declared))
+	for _, name := range declared {
+		typed = append(typed, DeclaredConstant{Name: name})
 	}
-	for _, n := range declared {
-		if n == "" {
+	return NewTypedConstantsRoot(ctx, db, typed, values, nil)
+}
+
+// NewTypedConstantsRoot builds the production constants object with declared
+// types. SQL NULL remains nil in cache and is materialized only by Get.
+func NewTypedConstantsRoot(
+	ctx context.Context,
+	db ConstantsDB,
+	declared []DeclaredConstant,
+	values map[string]any,
+	referenceFactory func(typedempty.Descriptor) any,
+) *ConstantsRoot {
+	r := &ConstantsRoot{
+		ctx:              ctx,
+		db:               db,
+		names:            make(map[string]string, len(declared)),
+		cache:            make(map[string]any, len(values)),
+		descriptors:      make(map[string]typedempty.Descriptor, len(declared)),
+		referenceFactory: referenceFactory,
+	}
+	for _, constant := range declared {
+		if constant.Name == "" {
 			continue
 		}
-		r.names[strings.ToLower(n)] = n
+		r.names[strings.ToLower(constant.Name)] = constant.Name
+		r.descriptors[constant.Name] = constant.Descriptor
 	}
 	for k, v := range values {
 		// Значение из базы может лежать под именем, которого в конфигурации уже
@@ -61,7 +91,27 @@ func NewConstantsRoot(ctx context.Context, db ConstantsDB, declared []string, va
 
 func (r *ConstantsRoot) Get(name string) any {
 	if canon, ok := r.names[strings.ToLower(name)]; ok {
-		return r.cache[canon]
+		raw := r.cache[canon]
+		desc, declared := r.descriptors[canon]
+		if !declared {
+			return raw
+		}
+		if desc.RefEntity != "" {
+			if r.referenceFactory == nil {
+				return raw
+			}
+			value := r.referenceFactory(desc)
+			ref, ok := value.(*Ref)
+			if !ok || ref == nil {
+				return raw
+			}
+			if raw != nil {
+				ref.UUID = strings.TrimSpace(MatchValueString(raw))
+				ref.Name = ref.UUID
+			}
+			return ref
+		}
+		return typedempty.Normalize(desc, raw, nil)
 	}
 	return nil
 }

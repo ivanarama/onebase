@@ -177,7 +177,7 @@ func requireMaskedCostRows(t *testing.T, value any, secrets []string) *interpret
 		t.Fatal("прокси не вернул подготовленные движения")
 	}
 	for i, item := range rows.Iterate() {
-		row, ok := item.(*interpreter.MapThis)
+		row, ok := item.(interpreter.This)
 		if !ok {
 			t.Fatalf("строка %d имеет тип %T", i, item)
 		}
@@ -350,7 +350,7 @@ func TestDSLAccumRegisterRejectsProtectedGroupingAndRecorderFilter(t *testing.T)
 		}
 		rows := value.(*interpreter.Array)
 		for _, item := range rows.Iterate() {
-			if got := item.(*interpreter.MapThis).Get("Товар"); got != "••••••" {
+			if got := item.(interpreter.This).Get("Товар"); got != "••••••" {
 				t.Fatalf("защищённое измерение = %v, ожидалась маска", got)
 			}
 		}
@@ -372,7 +372,7 @@ func TestDSLAccumRegisterRejectsProtectedGroupingAndRecorderFilter(t *testing.T)
 				t.Fatalf("select panic: %v", recovered)
 			}
 			rows := value.(*interpreter.Array)
-			if got := rows.Index(0).(*interpreter.MapThis).Get(protectedField); got != "••••••" {
+			if got := rows.Index(0).(interpreter.This).Get(protectedField); got != "••••••" {
 				t.Fatalf("защищённый %s = %v, ожидалась маска", protectedField, got)
 			}
 			_, recovered = callAccumReg(proxy, "selectbyrecorder", []any{&interpreter.Ref{UUID: f.recorderID.String(), Type: f.doc.Name}})
@@ -500,7 +500,7 @@ func TestDSLSelectByRecorderComposesRowAccessInSQL(t *testing.T) {
 	if len(rows.Iterate()) != 1 {
 		t.Fatalf("selectbyrecorder вернул %d строк, ожидалась одна разрешённая RLS", len(rows.Iterate()))
 	}
-	row := rows.Index(0).(*interpreter.MapThis)
+	row := rows.Index(0).(interpreter.This)
 	if got := row.Get("Метка"); got != "VISIBLE-MOVEMENT" {
 		t.Fatalf("вернулась не разрешённая RLS строка: Метка=%v", got)
 	}
