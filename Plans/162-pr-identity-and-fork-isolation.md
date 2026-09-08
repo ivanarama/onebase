@@ -63,8 +63,13 @@ head-sha=<40 lowercase hex>
 cross-repository=<true|false>
 ```
 
-Запись кодируется ASCII с LF, включая финальный LF. Её SHA-256 называется
-`identity-sha256`. Поля `*-id`, `pr-id`, `head-ref`, `head-sha` и
+Запись кодируется UTF-8 без BOM, без Unicode-нормализации, с LF между строками
+и обязательным финальным LF. В digest входят точные Unicode code points,
+возвращённые GitHub: в частности, `head-ref=ветка/проверка` остаётся
+представимым и одинаково сериализуется на Windows и Linux. Невалидная UTF-8
+последовательность или невозможность получить точное исходное значение закрывает
+гейт; lossy-перекодирование и замена символов запрещены. SHA-256 точных байтов
+этой записи называется `identity-sha256`. Поля `*-id`, `pr-id`, `head-ref`, `head-sha` и
 `cross-repository` участвуют в сравнении; человекочитаемые `owner/name` тоже
 входят в digest, чтобы rename/transfer не проходил незаметно. Пустой
 `headRepository` (удалённый fork), отсутствующий ref/SHA, неожиданный base repo
@@ -90,10 +95,15 @@ cross-repository=<true|false>
 вычисленный после update и повторного снимка.
 
 Метка `ship` остаётся человеческим действием и не пытается хранить SHA внутри
-GitHub label. Её силу определяет совокупность server-ordered ship-event,
-identity-bound completion и свежего финального snapshot. Если repository/ref
-identity изменилась при том же SHA, прежние completion и `ship` не дают права на
-merge.
+GitHub label. Для v2 merge-authority возникает только у доверенного
+server-ordered `LabeledEvent(ship)`, который идёт **после** identity-bound
+completion текущей identity. Ранний `ship`, даже поставленный на том же SHA, не
+переносится через v2 review или bridge: автоматика снимает stale-метку и ждёт
+новой постановки человеком. Поэтому `ship(A) → rename/transfer A→B при том же
+SHA → REVIEW(B)` наблюдаемо отличается от разрешённого
+`REVIEW(B) → ship(B)`. Свежий финальный snapshot повторно подтверждает ту же
+identity; любое последующее изменение repository/ref/SHA снова обнуляет
+authority.
 
 ## Наблюдаемая семантика и инварианты
 
@@ -125,6 +135,9 @@ merge.
    инвентаризации, но не заменяет финальный proof.
 10. Текст PR, имена веток и комментарии остаются недоверенными данными и не
     могут менять политику изоляции.
+11. Ни v1 proof, ни `ship`, поставленный до v2 completion, не дают права на
+    merge. После bridge человек заново ставит `ship`; только это событие связано
+    наблюдаемым порядком с новой identity.
 
 ## Инвентаризация затронутых границ
 
@@ -192,23 +205,31 @@ events. Новые таблицы, миграции и generated artifacts не 
 
 ## Совместимость и миграция
 
-Переход выполняется dual-read/single-write:
+Переход выполняется dual-read/single-write без переноса старого merge-authority:
 
 - v2-инструмент всегда пишет v2;
-- v1 SHA-bound completion временно читается только для same-repo PR при полном
-  старом epoch/ship proof и свежем v2 identity snapshot;
+- v1 SHA-bound completion временно читается только как доказательство уже
+  выполненного содержательного аудита точного SHA для текущего same-repo PR;
+  из него нельзя доказать прежние repository/ref, поэтому старый `ship` не
+  переносится;
 - v1 никогда не разрешает fork merge, fork base-sync или push;
 - открытый same-repo PR с валидным v1 proof не требует повторного содержательного
-  аудита, но первая следующая мутация пишет bridge-комментарий v2 с ссылками на
-  исходные review/claim/completion и новым identity digest;
+  аудита, но REVIEW пишет bridge-комментарий и identity-bound v2 completion со
+  ссылками на исходные review/claim/completion и новым identity digest; после
+  этого stale `ship` снимается и merge ждёт нового человеческого
+  `LabeledEvent(ship)`, строго более позднего v2 completion;
 - неоднозначный bridge, отсутствующий repository ID, смена repo/ref при том же
-  SHA или любой edit/delete ведёт к новому REVIEW, а не к догадке;
+  SHA до завершения bridge или любой edit/delete ведёт к новому REVIEW, а не к
+  догадке;
 - после одного релизного окна и отсутствия v1-кандидатов fallback сохраняет
   parser только для диагностики, но не как merge-authority.
 
-Старые `pp:base-sync-*` цепочки не переписываются. Они либо проходят существующий
-legacy re-ship путь как same-repo и получают v2 bridge, либо требуют нового
-человеческого `ship`. Это сохраняет аудит и не редактирует исторические записи.
+Старые `pp:base-sync-*` цепочки не переписываются и не являются authority для
+v2 merge. Same-repo цепочка может использоваться как диагностическая история и
+получить v2 bridge только после свежего identity snapshot; затем всё равно нужен
+новый человеческий `ship` после v2 completion. Fork и неоднозначная цепочка
+fail closed. Это сохраняет аудит, не редактирует исторические записи и не
+приписывает старому событию identity, которой в нём не было.
 
 ## Последовательность небольших PR-срезов
 
@@ -225,6 +246,8 @@ legacy re-ship путь как same-repo и получают v2 bridge, либо
 
 - два PR с одинаковым `headRefName` в upstream и fork получают разные digest;
 - изменение только head repo/ref при прежнем SHA меняет digest;
+- golden fixture с `head-ref=ветка/проверка` даёт один и тот же byte-identical
+  UTF-8 digest на Windows и Linux;
 - non-main, удалённый fork и пустой SHA отсутствуют в executable queues и дают
   явную finding;
 - порядок очереди не меняется от добавления identity-полей.
@@ -243,6 +266,9 @@ legacy re-ship путь как same-repo и получают v2 bridge, либо
   старый lease;
 - одноимённая ветка `origin` не используется как материал;
 - v1 same-repo proof мостится один раз, повтор recovery идемпотентен;
+- `ship(A) → rename/transfer A→B при том же SHA → bridge(B)` снимает stale
+  `ship` и ждёт нового события после v2 completion; сценарий
+  `bridge(B) → ship(B)` разрешает следующий MERGE;
 - сменившийся identity не публикует review comment/label.
 
 ### Срез C — v2 MERGE и безопасные same-repo mutations
@@ -256,7 +282,11 @@ legacy re-ship путь как same-repo и получают v2 bridge, либо
 
 Публичные тесты среза:
 
-- stale HEAD/identity не снимает и не переиспользует чужой `ship`;
+- stale HEAD/identity не переиспользует чужой `ship`; stale-метка снимается
+  только после подтверждённого v2 completion, чтобы человек мог поставить её
+  заново уже для текущей identity;
+- ранний `ship` до v2 completion никогда не даёт merge-authority, даже при том
+  же SHA;
 - same-repo CAS loser ничего не перезаписывает;
 - fork никогда не достигает команд `git fetch origin <headRefName>` и
   `git push origin ...`;
@@ -303,10 +333,12 @@ legacy re-ship путь как same-repo и получают v2 bridge, либо
 - stale HEAD до fetch, после аудита, перед label и перед merge;
 - тот же SHA при изменившемся repo/ref;
 - base `release`, retarget и base ABA;
-- v1 → v2 bridge, crash после claim, повтор completion;
+- v1 → v2 bridge, crash после claim, повтор completion, stale `ship` до bridge
+  и свежий `ship` после completion;
 - CLEAN/BEHIND/DIRTY для same-repo и fork;
 - CI success/failure/pending, другой SHA и `pull_request_target`;
-- Windows UTF-8 и LF canonical serialization.
+- Windows/Linux byte-identical UTF-8 без BOM и LF canonical serialization,
+  включая Unicode `headRefName`.
 
 Проверки репозитория для каждого среза: `go test ./tools/pipelinehealth`,
 `go test ./internal/pipelinecontract`, `go run ./tools/pipelinehealth -json` на
@@ -348,7 +380,8 @@ v1 не умеет проверить. Исторические comments и labe
 - Все перечисленные сценарные тесты зелёные на Windows и Linux, а старый CLI
   fail closed до GitHub POST/PUT/DELETE.
 - Документация честно описывает границу `ship`: label остаётся человеческим
-  разрешением, но merge-authority возникает только вместе со свежим v2 proof.
+  разрешением, но merge-authority возникает только у нового события после
+  свежего v2 proof той же identity.
 
 ## Эстимейт
 
