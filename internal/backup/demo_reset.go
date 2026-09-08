@@ -170,7 +170,12 @@ func DemoReset(ctx context.Context, db *storage.DB, backupPath string) (report *
 	var fkCleanup func() error
 	fkDisabled := false
 	defer func() {
-		if fkDisabled {
+		// SQLite PRAGMA foreign_keys is not transactional, so it must be
+		// restored after either commit or rollback. PostgreSQL FK changes are
+		// part of txCtx: rollback restores them itself, while the success path
+		// below restores and validates them before commit. Running the PG
+		// cleanup here would use txCtx after the later rollback defer closed it.
+		if !fkTransactional && fkDisabled {
 			resultErr = errors.Join(resultErr, fkCleanup())
 		}
 	}()
