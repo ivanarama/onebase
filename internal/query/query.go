@@ -3688,10 +3688,14 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 	}
 	projectionFields := projectionFieldNames(tokens)
 	projectionPlan := analyzeProjection(tokens)
+	// Типы нужно снять до раскрытия функций: после Год(Момент) → EXTRACT/strftime
+	// исходная граница аргумента теряется, а локализовать можно только date-момент,
+	// не произвольную строку и не будущий localdate (#1243).
+	colTypes := buildColTypes(tokens, opts)
 	tokens = rewriteGroupingReferenceAliases(tokens)
 	// расширяем НачалоДня/Год/Месяц/ОКР/АБС/ЦЕЛ/... в SQL-эквиваленты
 	// до основной трансляции, чтобы остальные шаги ничего не знали о них.
-	tokens = rewriteScalarFuncs(tokens, dialectName(opts.Dialect))
+	tokens = rewriteScalarFuncs(tokens, dialectName(opts.Dialect), colTypes, opts.Params)
 	tokens = rewriteStrftime(tokens, dialectName(opts.Dialect))
 	tr := &translator{
 		tokens:      tokens,
@@ -3699,7 +3703,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		paramValues: opts.Params,
 		opts:        opts,
 		colMap:      buildColMap(tokens, opts),
-		colTypes:    buildColTypes(tokens, opts),
+		colTypes:    colTypes,
 		mainTable:   preScanMainTable(tokens),
 		refDims:     preScanRefDims(tokens, opts),
 		mainRef:     preScanMainRefSource(tokens, opts),
@@ -4337,7 +4341,7 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 // т.п., чтобы основной транслятор обработал внутренний аргумент через обычные
 // правила (resolve ref dims, параметры и т.п.). Рекурсивно для вложенных
 // вызовов: Месяц(НачалоМесяца(x)) и ОКР(СУММА(x), 0) тоже разворачиваются.
-func rewriteScalarFuncs(tokens []tok, dialect string) []tok {
+func rewriteScalarFuncs(tokens []tok, dialect string, colTypes map[string]metadata.FieldType, params map[string]any) []tok {
 	rewrites := scalarFuncRewrites(dialect)
 	var out []tok
 	for i := 0; i < len(tokens); i++ {
@@ -4367,8 +4371,18 @@ func rewriteScalarFuncs(tokens []tok, dialect string) []tok {
 					out = append(out, t)
 					continue
 				}
-				inner := tokens[i+2 : end]
-				inner = rewriteScalarFuncs(inner, dialect) // рекурсия
+				rawInner := tokens[i+2 : end]
+				inner := rewriteScalarFuncs(rawInner, dialect, colTypes, params) // рекурсия
+				// SQLite хранит date как UTC-текст. Переводим момент в стенные
+				// часы приложения до календарной операции, но только когда тип
+				// аргумента это доказывает. Поэтому будущий localdate останется
+				// «как записан», а строка с похожим содержимым не сменит смысл.
+				if dialect == "sqlite" && isCalendarDateFunc(key) && dateArgumentIsMoment(rawInner, colTypes, params) {
+					wrapped := tokenizeFragment("ob_local_datetime(")
+					wrapped = append(wrapped, inner...)
+					wrapped = append(wrapped, tokenizeFragment(")")...)
+					inner = wrapped
+				}
 				out = append(out, rw.prefix...)
 				out = append(out, inner...)
 				out = append(out, rw.suffix...)
@@ -4379,6 +4393,52 @@ func rewriteScalarFuncs(tokens []tok, dialect string) []tok {
 		out = append(out, t)
 	}
 	return out
+}
+
+func isCalendarDateFunc(name string) bool {
+	switch name {
+	case "началодня", "startofday", "конецдня", "endofday",
+		"началомесяца", "startofmonth", "началогода", "startofyear",
+		"год", "year", "месяц", "month", "день", "day":
+		return true
+	default:
+		return false
+	}
+}
+
+// dateArgumentIsMoment распознаёт только аргумент, чей моментный тип доказан
+// метаданными/параметром. Системный Период регистра тоже является моментом;
+// одноимённое прикладное поле сначала проверяется по метаданным. Сложные
+// выражения оставляем в прежней семантике fail-closed: угадывание их типа
+// локализовало бы будущий localdate или обычную строку.
+func dateArgumentIsMoment(tokens []tok, colTypes map[string]metadata.FieldType, params map[string]any) bool {
+	for len(tokens) >= 2 && tokens[0].kind == tLParen && tokens[len(tokens)-1].kind == tRParen {
+		tokens = tokens[1 : len(tokens)-1]
+	}
+	if len(tokens) == 1 {
+		switch tokens[0].kind {
+		case tIdent:
+			name := lowerFast(tokens[0].val)
+			if typ, ok := colTypes[name]; ok {
+				return typ == metadata.FieldTypeDate
+			}
+			return name == "период" || name == "period"
+		case tParam:
+			switch params[tokens[0].val].(type) {
+			case time.Time, *time.Time:
+				return true
+			}
+		}
+		return false
+	}
+	if len(tokens) == 3 && tokens[0].kind == tIdent && tokens[1].kind == tDot && tokens[2].kind == tIdent {
+		name := lowerFast(tokens[2].val)
+		if typ, ok := colTypes[name]; ok {
+			return typ == metadata.FieldTypeDate
+		}
+		return name == "период" || name == "period"
+	}
+	return false
 }
 
 // momentTimeValue — контракт для DSL-значения «момент времени».

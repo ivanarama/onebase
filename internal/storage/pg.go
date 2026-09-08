@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -133,6 +134,7 @@ func ConnectWithPool(ctx context.Context, dsn string, pc PoolConfig) (*DB, error
 		return nil, fmt.Errorf("storage: parse dsn: %w", err)
 	}
 	applyPoolDefaults(cfg, dsn, pc)
+	applyPostgresApplicationTimeZone(cfg)
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("storage: connect: %w", err)
@@ -150,6 +152,47 @@ func ConnectWithPool(ctx context.Context, dsn string, pc PoolConfig) (*DB, error
 
 	filesDir := defaultFilesDir(dsn)
 	return &DB{pool: pool, filesDir: filesDir, dialect: PgDialect{}}, nil
+}
+
+// applyPostgresApplicationTimeZone прибивает каждое соединение пула к зоне
+// приложения. TIMESTAMPTZ хранит момент в UTC, но EXTRACT/date_trunc считают
+// календарные части в session TimeZone; без этого PostgreSQL расходился с
+// SQLite и DSL в зависимости от настройки внешнего сервера (#1243).
+// TIMESTAMP WITHOUT TIME ZONE (будущий localdate) от session TimeZone не
+// преобразуется и сохраняет стенные часы как записаны.
+func applyPostgresApplicationTimeZone(cfg *pgxpool.Config) {
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	cfg.ConnConfig.RuntimeParams["timezone"] = applicationTimeZoneName()
+}
+
+func applicationTimeZoneName() string {
+	name := time.Local.String()
+	if name != "" && name != "Local" {
+		if _, err := time.LoadLocation(name); err == nil {
+			return name
+		}
+		// FixedZone и платформенные имена, которых нет в IANA PostgreSQL,
+		// безопасно сводим к текущему числовому смещению.
+		return applicationTimeZoneOffset()
+	}
+	if envName := strings.TrimSpace(os.Getenv("TZ")); envName != "" {
+		if _, err := time.LoadLocation(envName); err == nil {
+			return envName
+		}
+	}
+	return applicationTimeZoneOffset()
+}
+
+func applicationTimeZoneOffset() string {
+	_, offset := time.Now().In(time.Local).Zone()
+	sign := '+'
+	if offset < 0 {
+		sign = '-'
+		offset = -offset
+	}
+	return fmt.Sprintf("%c%02d:%02d", sign, offset/3600, (offset%3600)/60)
 }
 
 // applyPoolDefaults sets pool sizing on cfg. ParseConfig has already applied
