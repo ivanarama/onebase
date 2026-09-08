@@ -99,8 +99,10 @@ query($owner:String!,$name:String!,$number:Int!,$endCursor:String) {
       author{login} category{name isAnswerable}
       comments(first:100, after:$endCursor) {
         totalCount
-        nodes { id author{login} createdAt updatedAt lastEditedAt deletedAt
-                isAnswer body }
+        edges { cursor node {
+          id author{login} createdAt updatedAt lastEditedAt deletedAt
+          isAnswer body
+        } }
         pageInfo { hasNextPage endCursor }
       }
     }
@@ -131,7 +133,7 @@ query($id:ID!,$endCursor:String) {
 честно дочитать тем же запросом, что `comments`: сначала собери **все** страницы
 верхнеуровневых комментариев, затем отдельно все страницы реплик каждого из них.
 Для `discussions`, `comments` и каждого `replies` сохрани все страницы, потребуй
-`hasNextPage=false` на последней и сверь сумму полученных `nodes` с
+`hasNextPage=false` на последней и сверь сумму полученных `nodes`/`edges` с
 `totalCount`. Неполная или неоднозначная выдача закрывает обработку: решение по
 усечённому треду не принимай.
 
@@ -231,10 +233,56 @@ gh api graphql \
    record и hash. Нельзя полагаться только на `discussion.updatedAt`: новое
    сообщение и edit могут попасть в ту же секунду.
 
+   **До любого человекочитаемого POST захвати single-writer claim источника.**
+   Claim нужен всем четырём маршрутам п. 4 и skip из п. 6; для маршрута с
+   заявкой он также обязан существовать до dedupe-ref, create-intent и
+   `gh issue create`. Без claim два параллельных worker на одном source могут
+   оба пройти последний gate и опубликовать два ответа.
+
+   Claim и его lease — только верхнеуровневые неизменяемые комментарии
+   `ivanarama` с точной отдельной строкой:
+
+   ```text
+   <!-- pp:discussion-claim-v1 discussion=<N> source-sha256=<64hex> owner=<uuid> -->
+   <!-- pp:discussion-lease-v1 claim=<GraphQL-id root> previous=<GraphQL-id active> owner=<uuid> -->
+   ```
+
+   Перед initial claim повтори полный source gate, создай случайный 128-bit
+   `owner`, опубликуй только root marker и сохрани `comment.id` собственного
+   POST. Побайтово сверь сохранённый body, снова полностью прочитай тред и
+   сопоставь root с `comments.edges[].node.id`. Для одного discussion/source
+   каноничен самый ранний валидный root по позиции `comments.edges`; более
+   поздние одновременные roots с теми же discussion/source — diagnostic losers.
+   Продолжает только процесс, чей **собственный возвращённый id** оказался
+   каноничным root, UUID совпал и lease не истекла. Нельзя считать наблюдаемый
+   чужой root своим владением.
+
+   Root — начальная lease на 30 минут. Renewal/takeover ссылается на текущую
+   активную вершину через `previous`; для одного `previous` каноничен самый
+   ранний валидный child по позиции `comments.edges`. До expiry продлевать lease
+   вправе только тот же owner и только когда осталось меньше пяти минут; после
+   expiry новый UUID может сделать takeover. Перед POST lease повтори полный
+   source/thread gate и докажи текущую вершину, после POST — byte read-back и
+   election заново. Мутировать может только процесс, чей собственный id —
+   активная вершина, owner совпадает и 30 минут ещё не истекли. При остатке
+   меньше пяти минут сначала renew.
+
+   Любой root/lease с edit или delete закрывает этот source человеку: новый
+   claim не создавай. Новый внешний source отменяет владение старым claim и
+   открывает обычную работу уже с новым hash. Обычный ручной ответ владельца
+   также закрывает source. Перед **каждой** последующей мутацией — ответом,
+   skip, answer mark/done, dedupe-ref, create-intent или issue create — заново
+   докажи неизменный source и собственную активную lease. Незавершённый
+   истёкший claim идёт в recovery раньше обычных кандидатов; чужую неистёкшую
+   lease исключи из очереди до лимита, чтобы занятый тред не съедал один из
+   трёх слотов.
+
    Служебными считай только точные отдельные строки в не редактированном и не
    удалённом комментарии или реплике `author.login == "ivanarama"`:
 
    ```text
+   <!-- pp:discussion-claim-v1 discussion=<N> source-sha256=<64hex> owner=<uuid> -->
+   <!-- pp:discussion-lease-v1 claim=<GraphQL-id root> previous=<GraphQL-id active> owner=<uuid> -->
    <!-- pp:discussion-source-v1 sha256=<64hex> -->
    <!-- pp:discussion -->
    <!-- pp:discussion-answer-v2 -->
@@ -320,9 +368,11 @@ gh api graphql \
    конкурентной реплики, не должен спрятать её.
 
    До подсчёта лимита исключи уже терминальные recovery-состояния: intent с
-   валидным done и долговечный human-unmark fence из отрицательной ветки выше.
+   валидным done, долговечный human-unmark fence из отрицательной ветки выше и
+   source с чужой неистёкшей single-writer lease.
    Возьми до **3** штук суммарно среди оставшихся активных recovery и обычных:
-   сначала recovery, затем обычные, старые вперёд. Лимит намеренно ниже, чем у
+   сначала истёкшие single-writer claims, затем answer recovery, затем обычные,
+   старые вперёд. Лимит намеренно ниже, чем у
    триажа: ответ человеку дороже разбора заявки, а плохой ответ хуже молчания.
 
 3. По каждому треду разберись по существу — так же, как триаж разбирает заявку:
@@ -337,6 +387,10 @@ gh api graphql \
    и приведи в ответе реальный текст сообщения, а не пересказ по коду.
 
 4. Дальше маршрут зависит от того, что нашёл. Их ровно четыре.
+
+   Непосредственно перед первой мутацией выбранного маршрута захвати или
+   восстанови single-writer claim из п. 2. Все последующие мутации этого
+   маршрута требуют той же собственной активной lease.
 
    **(а) Механизм уже есть → ответь, как им пользоваться.** Самый частый и самый
    ценный случай: человек просит то, что работает, но не описано. Ответ по форме

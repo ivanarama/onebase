@@ -144,6 +144,30 @@ func discussionSourceOutstanding(latestExternal string, laterHumanReply bool, co
 	return true
 }
 
+type modeledDiscussionWriterClaim struct {
+	sequence int
+	id       string
+	owner    string
+}
+
+func canonicalDiscussionWriterClaim(claims []modeledDiscussionWriterClaim) modeledDiscussionWriterClaim {
+	winner := claims[0]
+	for _, claim := range claims[1:] {
+		if claim.sequence < winner.sequence {
+			winner = claim
+		}
+	}
+	return winner
+}
+
+func ownsDiscussionWriterClaim(returnedID, owner string, claims []modeledDiscussionWriterClaim) bool {
+	if len(claims) == 0 {
+		return false
+	}
+	winner := canonicalDiscussionWriterClaim(claims)
+	return returnedID == winner.id && owner == winner.owner
+}
+
 type modeledDiscussionIssueRecovery struct {
 	exactIssues       int
 	corruptIssue      bool
@@ -191,6 +215,58 @@ func TestDiscussionsWatchBindsCompletionToExactExternalSource(t *testing.T) {
 	if discussionSourceOutstanding("source-b", true, "source-a") {
 		t.Fatal("a later non-protocol owner reply is a human answer")
 	}
+}
+
+func TestDiscussionsWatchElectsOneWriterBeforePublicReply(t *testing.T) {
+	discussions := skill(t, "discussions-watch")
+	requireAllCompact(t, discussions,
+		"До любого человекочитаемого POST захвати single-writer claim источника",
+		"<!-- pp:discussion-claim-v1 discussion=<N> source-sha256=<64hex> owner=<uuid> -->",
+		"<!-- pp:discussion-lease-v1 claim=<GraphQL-id root> previous=<GraphQL-id active> owner=<uuid> -->",
+		"каноничен самый ранний валидный root по позиции `comments.edges`",
+		"собственный возвращённый id",
+		"Нельзя считать наблюдаемый чужой root своим владением",
+		"Перед **каждой** последующей мутацией",
+	)
+
+	// Both workers passed the same source gate and published an initial claim.
+	// Server edge order, not local observation order, elects exactly one of them.
+	claims := []modeledDiscussionWriterClaim{
+		{sequence: 12, id: "worker-b-root", owner: "worker-b"},
+		{sequence: 11, id: "worker-a-root", owner: "worker-a"},
+	}
+	if !ownsDiscussionWriterClaim("worker-a-root", "worker-a", claims) {
+		t.Fatal("earliest root owner must be the single writer")
+	}
+	if ownsDiscussionWriterClaim("worker-b-root", "worker-b", claims) {
+		t.Fatal("concurrent diagnostic loser must not publish a second reply")
+	}
+	if ownsDiscussionWriterClaim("worker-a-root", "worker-b", claims) {
+		t.Fatal("observing the winning root must not transfer ownership")
+	}
+}
+
+func TestDiscussionsWatchDocumentsRequiredProviderRights(t *testing.T) {
+	discussions := skill(t, "discussions-watch")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	guide := repositoryFile(t, "CLAUDE.md")
+
+	requireAllCompact(t, discussions,
+		"repos/ivanarama/onebase/issues?state=all&per_page=100",
+		"gh api -X POST repos/ivanarama/onebase/git/refs",
+		"refs/heads/pp-discussion-dedupe/",
+	)
+	requireAllCompact(t, docs,
+		"Отдельный провайдер `claude-discussions` пока не установлен",
+		"read-only REST для полного списка и read-back issues",
+		"единственная REST-мутация — Create a reference строго в `refs/heads/pp-discussion-dedupe/`",
+		"перед созданием задачи PromptPilot её надо сверить с этим списком",
+	)
+	requireAllCompact(t, guide,
+		"`claude-discussions` пока не установлен",
+		"read-only REST-запросы и Create ref только в `refs/heads/pp-discussion-dedupe/`",
+	)
+	rejectAll(t, docs, "ни `gh api` по REST ему не дано")
 }
 
 func TestDiscussionsWatchCreatesIssueOnceAndRecoversByDirectREST(t *testing.T) {
