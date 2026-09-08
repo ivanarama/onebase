@@ -583,6 +583,8 @@ func KnownBuiltinNames() map[string]struct{} {
 		"фоновыезадания", "backgroundjobs",
 		"предопределённыезначения", "predefinedvalues",
 		"нумераторы", "numerators",
+		// сериализация объектов в XML формата 1С (internal/xdto)
+		"сериализаторxdto", "xdtoserializer",
 		"значениереквизитаобъекта", "objectattributevalue",
 		"значенияреквизитовобъектов", "objectattributevalues",
 		"выполнитькоманду", "executecommand",
