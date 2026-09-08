@@ -106,7 +106,11 @@ func (r *ConstantsRoot) Get(name string) any {
 				return raw
 			}
 			if raw != nil {
-				ref.UUID = strings.TrimSpace(MatchValueString(raw))
+				if uuid, ok := referenceUUID(raw); ok {
+					ref.UUID = uuid
+				} else {
+					ref.UUID = strings.TrimSpace(MatchValueString(raw))
+				}
 				ref.Name = ref.UUID
 			}
 			return ref
@@ -132,11 +136,25 @@ func (r *ConstantsRoot) Set(name string, v any) {
 		RaiseUserError("Константы: запись «" + canon + "» невозможна — нет соединения с базой")
 		return
 	}
-	if err := r.db.SetConstant(r.ctx, canon, v); err != nil {
+	stored := v
+	if desc, declared := r.descriptors[canon]; declared && desc.RefEntity != "" {
+		if uuid, ok := referenceUUID(v); ok {
+			stored = uuid
+		}
+	}
+	if err := r.db.SetConstant(r.ctx, canon, stored); err != nil {
 		RaiseUserError("Константы: запись «" + canon + "»: " + err.Error())
 		return
 	}
-	r.cache[canon] = v
+	r.cache[canon] = stored
+}
+
+func referenceUUID(value any) (string, bool) {
+	ref, ok := value.(interface{ GetRefUUID() string })
+	if !ok || value == nil {
+		return "", false
+	}
+	return strings.TrimSpace(ref.GetRefUUID()), true
 }
 
 // hint перечисляет объявленные константы: имя ошиблись почти всегда в регистре

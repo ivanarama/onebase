@@ -162,6 +162,70 @@ func TestКонстанты_ЧтениеПослеЗаписиВТомЖеПро
 	}
 }
 
+func TestКонстанты_СсылочнаяСохраняетUUIDПослеПрисваиванияИПерезапуска(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "reference-const.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	warehouse := &metadata.Entity{Name: "Склады", Kind: metadata.KindCatalog}
+	consts := []*metadata.Constant{{
+		Name:      "ОсновнойСклад",
+		Type:      metadata.FieldType("reference:Склады"),
+		RefEntity: "Склады",
+	}}
+	if err := db.MigrateConstants(ctx, consts); err != nil {
+		t.Fatal(err)
+	}
+	reg := runtime.NewRegistry()
+	reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{warehouse}, Constants: consts})
+
+	const warehouseID = "2c4be4b8-a41f-44ec-9170-b91afbe0b048"
+	read := func(t *testing.T, assign bool) *interpreter.Ref {
+		t.Helper()
+		source := "Функция Тест()\nВозврат Константы.ОсновнойСклад;\nКонецФункции"
+		vars := Common{Ctx: ctx, Reg: reg, Store: db}.Build()
+		if assign {
+			source = "Функция Тест()\nКонстанты.ОсновнойСклад = Склад;\nВозврат Константы.ОсновнойСклад;\nКонецФункции"
+			vars["Склад"] = &interpreter.Ref{
+				UUID: warehouseID,
+				Name: "Главный склад",
+				Type: "Склады",
+				Kind: metadata.KindCatalog,
+			}
+		}
+		prog, err := parser.New(lexer.New(source, "reference-const.os")).ParseProgram()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result any
+		if err := interpreter.New().RunWithResult(prog.Procedures[0], runtime.NewObject("T", metadata.KindCatalog), &result, vars); err != nil {
+			t.Fatal(err)
+		}
+		ref, ok := result.(*interpreter.Ref)
+		if !ok {
+			t.Fatalf("константа вернула %T(%v), ожидалась ссылка", result, result)
+		}
+		return ref
+	}
+
+	if got := read(t, true); got.UUID != warehouseID {
+		t.Fatalf("сразу после присваивания UUID = %q, ожидали %q", got.UUID, warehouseID)
+	}
+	stored, err := db.GetConstant(ctx, "ОсновнойСклад")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored != warehouseID {
+		t.Fatalf("в базе сохранено %#v, ожидался UUID %q", stored, warehouseID)
+	}
+	if got := read(t, false); got.UUID != warehouseID {
+		t.Fatalf("после нового Common.Build UUID = %q, ожидали %q", got.UUID, warehouseID)
+	}
+}
+
 // Опечатка в имени — ошибка, а не тихое заведение ключа в памяти: отличить
 // «выключил не ту константу» от «выключил несуществующую» иначе нечем.
 func TestКонстанты_НеизвестноеИмяЭтоОшибка(t *testing.T) {
