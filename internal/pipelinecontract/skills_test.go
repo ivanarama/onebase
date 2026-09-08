@@ -132,12 +132,113 @@ func modeledDiscussionQueue(recovery []modeledDiscussionAnswerRecovery, ordinary
 	return selected
 }
 
+func discussionSourceOutstanding(latestExternal string, laterHumanReply bool, completedSources ...string) bool {
+	if latestExternal == "" || laterHumanReply {
+		return false
+	}
+	for _, source := range completedSources {
+		if source == latestExternal {
+			return false
+		}
+	}
+	return true
+}
+
+type modeledDiscussionIssueRecovery struct {
+	exactIssues       int
+	corruptIssue      bool
+	globalRefExists   bool
+	globalRefWonByRun bool
+	intentWonByRun    bool
+}
+
+func discussionIssueAction(state modeledDiscussionIssueRecovery) string {
+	if state.corruptIssue || state.exactIssues > 1 {
+		return "human"
+	}
+	if state.exactIssues == 1 {
+		return "reuse"
+	}
+	if !state.globalRefExists {
+		return "claim-ref"
+	}
+	if state.globalRefWonByRun && !state.intentWonByRun {
+		return "publish-intent"
+	}
+	if state.globalRefWonByRun && state.intentWonByRun {
+		return "create-once"
+	}
+	return "human"
+}
+
+func TestDiscussionsWatchBindsCompletionToExactExternalSource(t *testing.T) {
+	discussions := skill(t, "discussions-watch")
+	requireAllCompact(t, discussions,
+		"pp-discussion-source-v1",
+		"last-edited=<RFC3339|none>",
+		"<!-- pp:discussion-source-v1 sha256=<64hex> -->",
+		"Completion другого источника не закрывает текущий",
+		"post, пришедший в окно `последний gate → POST ответа`, не теряется",
+		"protocol-ответ, опубликованный после конкурентной реплики, не должен спрятать её",
+	)
+
+	if discussionSourceOutstanding("source-a", false, "source-a") {
+		t.Fatal("an exact source-bound completion must finish its source")
+	}
+	if !discussionSourceOutstanding("source-b", false, "source-a") {
+		t.Fatal("a completion for the old source must not hide a concurrent external reply")
+	}
+	if discussionSourceOutstanding("source-b", true, "source-a") {
+		t.Fatal("a later non-protocol owner reply is a human answer")
+	}
+}
+
+func TestDiscussionsWatchCreatesIssueOnceAndRecoversByDirectREST(t *testing.T) {
+	discussions := skill(t, "discussions-watch")
+	requireAllCompact(t, discussions,
+		"repos/ivanarama/onebase/issues?state=all&per_page=100",
+		"select(.pull_request == null)",
+		"Search разрешён только как подсказка",
+		"refs/heads/pp-discussion-dedupe/<source-sha256>",
+		"Только фактический `201 Created` **собственного** вызова",
+		"<!-- pp:discussion-issue-intent-v1",
+		"<!-- pp:discussion-issue-v1",
+		"никогда автоматически не повторяет create",
+		"GitHub Issues нет idempotency key",
+	)
+
+	if got := discussionIssueAction(modeledDiscussionIssueRecovery{}); got != "claim-ref" {
+		t.Fatalf("fresh source action = %q, want atomic global ref", got)
+	}
+	if got := discussionIssueAction(modeledDiscussionIssueRecovery{
+		globalRefExists: true, globalRefWonByRun: true,
+	}); got != "publish-intent" {
+		t.Fatalf("global winner action = %q, want durable intent", got)
+	}
+	if got := discussionIssueAction(modeledDiscussionIssueRecovery{
+		globalRefExists: true, globalRefWonByRun: true, intentWonByRun: true,
+	}); got != "create-once" {
+		t.Fatalf("intent winner action = %q, want one create", got)
+	}
+	if got := discussionIssueAction(modeledDiscussionIssueRecovery{
+		globalRefExists: true, exactIssues: 1,
+	}); got != "reuse" {
+		t.Fatalf("post-create crash action = %q, want direct REST recovery", got)
+	}
+	if got := discussionIssueAction(modeledDiscussionIssueRecovery{
+		globalRefExists: true,
+	}); got != "human" {
+		t.Fatalf("orphan ref action = %q, want fail-closed human fence", got)
+	}
+}
+
 func TestDiscussionsWatchDoesNotUndoHumanUnmark(t *testing.T) {
 	discussions := skill(t, "discussions-watch")
 	requireAllCompact(t, discussions,
 		"answerChosenAt answerChosenBy{login}",
 		"<!-- pp:discussion-answer-v2 -->",
-		"<!-- pp:discussion-answer-done intent=<id> chosen-at=<RFC3339> -->",
+		"<!-- pp:discussion-answer-done intent=<id> source-sha256=<64hex> chosen-at=<RFC3339> -->",
+		"тот же каноничный внешний source record/hash",
 		"discussion.updatedAt == intent.createdAt",
 		"выжди не меньше двух секунд",
 		"answerChosenAt > intent.createdAt",
