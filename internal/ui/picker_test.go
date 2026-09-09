@@ -123,3 +123,76 @@ func TestParsePickResult(t *testing.T) {
 		t.Error("битый JSON должен давать nil")
 	}
 }
+
+// План 46 + одиночный выбор: конфиг «ОдинВыбор» доезжает до клиента флагом
+// single. Диалог писался под подбор номенклатуры (много строк с количествами);
+// там, где значение ровно одно, мультивыбор — лишний способ ошибиться.
+func TestPicker_SingleChoiceFlag(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ПодборНажатие()
+	Колонки = Новый Массив;
+	Колонки.Добавить(Новый Структура("Имя,Заголовок,Тип", "Номер", "Заявка №", "string"));
+	Данные = Новый Массив;
+	Данные.Добавить(Новый Структура("Идентификатор,Номер", "u-1", "ЗАЯ-000001"));
+	Конфиг = Новый Структура("Заголовок,ОдинВыбор", "Выберите заявку", Истина);
+	ПоказатьПодбор(Данные, Колонки, Конфиг);
+КонецПроцедуры
+`, nil, []*metadata.FormElement{
+		{
+			Kind: metadata.FormElementButton,
+			Name: "КнопкаПодбор",
+			Handlers: map[metadata.FormEventType]string{
+				metadata.FormEventOnClick: "ПодборНажатие",
+			},
+		},
+	})
+
+	body := url.Values{}
+	body.Set("_element", "КнопкаПодбор")
+	body.Set("_event", string(metadata.FormEventOnClick))
+
+	rec := executeFormEvent(t, srv, ent, body)
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	if resp.PickerData == nil {
+		t.Fatalf("ждали pickerData != nil; body=%s", rec.Body.String())
+	}
+	if !resp.PickerData.Config.Single {
+		t.Errorf("ждали single=true в конфиге диалога, получено %+v", resp.PickerData.Config)
+	}
+	if resp.PickerData.Config.Title != "Выберите заявку" {
+		t.Errorf("заголовок = %q", resp.PickerData.Config.Title)
+	}
+}
+
+// Без «ОдинВыбор» диалог остаётся прежним, мультивыборным.
+func TestPicker_MultiChoiceStaysDefault(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ПодборНажатие()
+	Колонки = Новый Массив;
+	Колонки.Добавить(Новый Структура("Имя,Заголовок,Тип", "Номер", "Заявка №", "string"));
+	Данные = Новый Массив;
+	Данные.Добавить(Новый Структура("Идентификатор,Номер", "u-1", "ЗАЯ-000001"));
+	ПоказатьПодбор(Данные, Колонки, Новый Структура("Заголовок", "Подбор"));
+КонецПроцедуры
+`, nil, []*metadata.FormElement{
+		{
+			Kind: metadata.FormElementButton,
+			Name: "КнопкаПодбор",
+			Handlers: map[metadata.FormEventType]string{
+				metadata.FormEventOnClick: "ПодборНажатие",
+			},
+		},
+	})
+
+	body := url.Values{}
+	body.Set("_element", "КнопкаПодбор")
+	body.Set("_event", string(metadata.FormEventOnClick))
+
+	resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, body).Body.Bytes())
+	if resp.PickerData == nil {
+		t.Fatal("ждали pickerData != nil")
+	}
+	if resp.PickerData.Config.Single {
+		t.Error("без «ОдинВыбор» диалог обязан остаться мультивыборным")
+	}
+}
