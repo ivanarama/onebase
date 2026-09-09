@@ -4188,7 +4188,7 @@ func complexProjectionTypeFields(tokens []tok, opts CompileOpts) []string {
 	if len(fields) == 0 {
 		return nil
 	}
-	types, hasEntitySource := queriedColumnTypes(tokens, opts)
+	types, hasReferenceSource := queriedColumnTypes(tokens, opts)
 	seen := map[string]bool{}
 	var out []string
 	for _, field := range fields {
@@ -4197,7 +4197,7 @@ func complexProjectionTypeFields(tokens []tok, opts CompileOpts) []string {
 		if byType := types[key]; byType != nil {
 			isTyped = byType[metadata.FieldTypeBool] || byType[metadata.FieldTypeDate]
 		}
-		if hasEntitySource && isReferenceName(key) {
+		if hasReferenceSource && isReferenceName(key) {
 			isTyped = true
 		}
 		if isTyped && !seen[key] {
@@ -4215,9 +4215,12 @@ func complexProjectionTypeFields(tokens []tok, opts CompileOpts) []string {
 // предупреждения.
 func queriedColumnTypes(tokens []tok, opts CompileOpts) (map[string]map[metadata.FieldType]bool, bool) {
 	out := map[string]map[metadata.FieldType]bool{}
-	hasEntitySource := false
+	hasReferenceSource := false
 	add := func(fields []metadata.Field) {
 		for _, field := range fields {
+			if field.RefEntity != "" {
+				hasReferenceSource = true
+			}
 			key := lowerFast(field.Name)
 			if out[key] == nil {
 				out[key] = map[metadata.FieldType]bool{}
@@ -4254,13 +4257,13 @@ func queriedColumnTypes(tokens []tok, opts CompileOpts) (map[string]map[metadata
 		default:
 			for _, entity := range opts.Entities {
 				if strings.EqualFold(entity.Name, name) {
-					hasEntitySource = true
+					hasReferenceSource = true
 					add(entity.Fields)
 				}
 			}
 		}
 	}
-	return out, hasEntitySource
+	return out, hasReferenceSource
 }
 
 // refOutputColumns отдаёт собранные транслятором колонки-ссылки, но только для

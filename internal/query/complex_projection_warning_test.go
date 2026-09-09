@@ -59,3 +59,36 @@ func TestComplexProjectionReportsUnconvertedTypedFields(t *testing.T) {
 		})
 	}
 }
+
+func TestComplexProjectionReportsRegisterReferenceField(t *testing.T) {
+	registers := []*metadata.Register{{
+		Name: "Партии",
+		Dimensions: []metadata.Field{{
+			Name:      "Номенклатура",
+			Type:      "reference:Номенклатура",
+			RefEntity: "Номенклатура",
+		}},
+	}}
+	entities := []*metadata.Entity{{
+		Name: "Номенклатура",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{{
+			Name: "Наименование",
+			Type: metadata.FieldTypeString,
+		}},
+	}}
+	text := `ВЫБРАТЬ Номенклатура.Ссылка ИЗ РегистрНакопления.Партии
+ОБЪЕДИНИТЬ ВСЕ
+ВЫБРАТЬ Номенклатура.Ссылка ИЗ РегистрНакопления.Партии`
+
+	result, err := query.Compile(text, query.CompileOpts{
+		Registers: registers,
+		Entities:  entities,
+	})
+	if err != nil {
+		t.Fatalf("Compile: %v", err)
+	}
+	if want := []string{"Ссылка"}; !reflect.DeepEqual(result.UnconvertedTypedFields, want) {
+		t.Fatalf("UnconvertedTypedFields = %v, want %v", result.UnconvertedTypedFields, want)
+	}
+}
