@@ -117,19 +117,22 @@ func fmtBuiltinBounded(args []any, maxDecimalPlaces int32) (string, error) {
 // extractFormatParam extracts a parameter value from a format string like "ЧДЦ=2; ЧРГ=' '"
 func extractFormatParam(fmtStr, key string) string {
 	// Ключ («дф=», «чдц=») ищем без учёта регистра, а значение отдаём из
-	// ИСХОДНОЙ строки: шаблон даты регистрозависим. Индексы нижнего регистра
-	// годятся для исходной строки, пока приведение не изменило длину (для
-	// латиницы и кириллицы это так); иначе честно работаем по нижнему регистру
-	// — прежнее поведение, регистр значения при этом теряется.
-	lowered := strings.ToLower(fmtStr)
-	if len(lowered) != len(fmtStr) {
-		fmtStr = lowered
+	// ИСХОДНОЙ строки: шаблон даты регистрозависим. Ищем по рунам, потому что
+	// Unicode-приведение регистра может менять число UTF-8-байтов (например,
+	// «İ»), и тогда байтовый индекс lower-case копии неприменим к оригиналу.
+	formatRunes := []rune(fmtStr)
+	keyRunes := []rune(key)
+	idx := -1
+	for i := 0; i+len(keyRunes) <= len(formatRunes); i++ {
+		if strings.EqualFold(string(formatRunes[i:i+len(keyRunes)]), key) {
+			idx = i
+			break
+		}
 	}
-	idx := strings.Index(lowered, key)
 	if idx < 0 {
 		return ""
 	}
-	rest := fmtStr[idx+len(key):]
+	rest := string(formatRunes[idx+len(keyRunes):])
 	// Skip optional quote
 	if len(rest) > 0 && rest[0] == '\'' {
 		rest = rest[1:]
