@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/fsmode"
@@ -15,25 +16,114 @@ import (
 	sqlite "modernc.org/sqlite"
 )
 
-// init регистрирует Unicode-aware функцию ob_lower для SQLite. Встроенная
-// SQLite LOWER() приводит к нижнему регистру только ASCII, поэтому отборы и
-// поиск по кириллице получались регистрозависимыми. ob_lower использует
-// strings.ToLower (полная таблица Unicode) и применяется в LowerLike SQLite-
-// диалекта. Регистрация глобальна и действует на все коннекты, открытые позже.
+// init регистрирует Unicode-aware функции SQLite. Встроенные LOWER()/UPPER()
+// приводят регистр только ASCII: upper('ленина') возвращает 'ленина' как есть,
+// поэтому отборы и поиск по кириллице получались регистрозависимыми. ob_lower и
+// ob_upper используют strings.ToLower/ToUpper (полная таблица Unicode);
+// ob_lower применяется в LowerLike SQLite-диалекта, обе — в трансляции
+// НРЕГ()/ВРЕГ() языка запросов.
+//
+// ob_left/ob_right — ЛЕВ()/ПРАВ() языка запросов. В SQLite нет left()/right(),
+// а substr() с нужным порядком аргументов из шаблона «префикс + аргументы +
+// суффикс» не собрать: substr(x, 1, n) требует вставки между аргументами.
+// Отсчёт в рунах, а не в байтах, — как substr() SQLite и left()/right() в PG.
+// Регистрация глобальна и действует на все коннекты, открытые позже.
 func init() {
-	sqlite.MustRegisterDeterministicScalarFunction("ob_lower", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
-		if len(args) != 1 || args[0] == nil {
+	registerStringFunc("ob_lower", 1, func(args []driver.Value) (driver.Value, error) {
+		s, ok := sqliteStringArg(args, 0)
+		if !ok {
+			return args[0], nil
+		}
+		return strings.ToLower(s), nil
+	})
+	registerStringFunc("ob_upper", 1, func(args []driver.Value) (driver.Value, error) {
+		s, ok := sqliteStringArg(args, 0)
+		if !ok {
+			return args[0], nil
+		}
+		return strings.ToUpper(s), nil
+	})
+	registerStringFunc("ob_left", 2, func(args []driver.Value) (driver.Value, error) {
+		return sqliteSideCut(args, true)
+	})
+	registerStringFunc("ob_right", 2, func(args []driver.Value) (driver.Value, error) {
+		return sqliteSideCut(args, false)
+	})
+}
+
+// registerStringFunc — общая обвязка: NULL в любом аргументе даёт NULL, как у
+// встроенных строковых функций SQLite и у их аналогов в PostgreSQL.
+func registerStringFunc(name string, nArg int32, fn func([]driver.Value) (driver.Value, error)) {
+	sqlite.MustRegisterDeterministicScalarFunction(name, nArg, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		if len(args) != int(nArg) {
 			return nil, nil
 		}
-		switch v := args[0].(type) {
-		case string:
-			return strings.ToLower(v), nil
-		case []byte:
-			return strings.ToLower(string(v)), nil
-		default:
-			return v, nil
+		for _, a := range args {
+			if a == nil {
+				return nil, nil
+			}
 		}
+		return fn(args)
 	})
+}
+
+// sqliteStringArg — строковое значение аргумента. SQLite отдаёт TEXT как string,
+// а BLOB как []byte; нестроковое значение возвращаем вызывающему как есть.
+func sqliteStringArg(args []driver.Value, i int) (string, bool) {
+	if i >= len(args) {
+		return "", false
+	}
+	switch v := args[i].(type) {
+	case string:
+		return v, true
+	case []byte:
+		return string(v), true
+	}
+	return "", false
+}
+
+// sqliteSideCut — общая реализация ob_left/ob_right. Отрицательная длина даёт
+// пустую строку (как left('abc', -1) в PostgreSQL — там это «всё, кроме
+// последних n», но отрицательная длина в ЛЕВ()/ПРАВ() бессмысленна, и пустая
+// строка честнее молчаливого сдвига).
+func sqliteSideCut(args []driver.Value, fromLeft bool) (driver.Value, error) {
+	s, ok := sqliteStringArg(args, 0)
+	if !ok {
+		return args[0], nil
+	}
+	n, ok := sqliteIntArg(args, 1)
+	if !ok || n <= 0 {
+		return "", nil
+	}
+	r := []rune(s)
+	if n >= len(r) {
+		return s, nil
+	}
+	if fromLeft {
+		return string(r[:n]), nil
+	}
+	return string(r[len(r)-n:]), nil
+}
+
+// sqliteIntArg — целочисленный аргумент. Число в SQLite приходит int64 или
+// float64; строка (наш number хранится TEXT) — разбирается как целое.
+func sqliteIntArg(args []driver.Value, i int) (int, bool) {
+	if i >= len(args) {
+		return 0, false
+	}
+	switch v := args[i].(type) {
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	case string:
+		n, err := strconv.Atoi(strings.TrimSpace(v))
+		return n, err == nil
+	case []byte:
+		n, err := strconv.Atoi(strings.TrimSpace(string(v)))
+		return n, err == nil
+	}
+	return 0, false
 }
 
 // ConnectSQLite opens (or creates) a SQLite database file at the given path

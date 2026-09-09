@@ -536,8 +536,14 @@ var kwMap = map[string]string{
 	"ПУСТО":         "NULL",
 	"В":             "IN",
 	"МЕЖДУ":         "BETWEEN",
-	"ОБЪЕДИНИТЬ":    "UNION",
-	"ВСЕ":           "ALL",
+	// ПОДОБНО — SQL LIKE. Регистр НЕ приводится ни на одной стороне: оператор
+	// отдаётся диалекту как есть, а регистронезависимое сравнение пишется явно
+	// через НРЕГ()/ВРЕГ() с обеих сторон — они работают одинаково на обоих
+	// диалектах, в том числе на кириллице (см. scalarFuncRewrites).
+	"ПОДОБНО":    "LIKE",
+	"СПЕЦСИМВОЛ": "ESCAPE",
+	"ОБЪЕДИНИТЬ": "UNION",
+	"ВСЕ":        "ALL",
 	// JOIN keywords (Russian)
 	"ВНУТРЕННЕЕ": "INNER",
 	"ЛЕВОЕ":      "LEFT",
@@ -569,6 +575,8 @@ var kwMap = map[string]string{
 	"NULL":     "NULL",
 	"IN":       "IN",
 	"BETWEEN":  "BETWEEN",
+	"LIKE":     "LIKE",
+	"ESCAPE":   "ESCAPE",
 	"UNION":    "UNION",
 	"ALL":      "ALL",
 	// JOIN keywords (English pass-through)
@@ -4285,6 +4293,19 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 		"естьnull": rw("COALESCE(", ")"),
 		"isnull":   rw("COALESCE(", ")"),
 		"coalesce": rw("COALESCE(", ")"),
+		// Строковые функции языка запросов 1С. substr/length/ltrim/rtrim/trim
+		// есть в обоих диалектах с одинаковой семантикой: позиция в ПОДСТРОКА
+		// считается с ЕДИНИЦЫ, длина — в символах, а не в байтах.
+		"подстрока":   rw("substr(", ")"),
+		"substring":   rw("substr(", ")"),
+		"длинастроки": rw("length(", ")"),
+		"length":      rw("length(", ")"),
+		"сокрл":       rw("ltrim(", ")"),
+		"ltrim":       rw("ltrim(", ")"),
+		"сокрп":       rw("rtrim(", ")"),
+		"rtrim":       rw("rtrim(", ")"),
+		"сокрлп":      rw("trim(", ")"),
+		"trim":        rw("trim(", ")"),
 	}
 	switch dialect {
 	case "sqlite":
@@ -4306,6 +4327,15 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 		m["month"] = rw("CAST(strftime('%m',", ") AS INTEGER)")
 		m["день"] = rw("CAST(strftime('%d',", ") AS INTEGER)")
 		m["day"] = rw("CAST(strftime('%d',", ") AS INTEGER)")
+		// ВРЕГ/НРЕГ и ЛЕВ/ПРАВ — через свои функции (init в storage/sqlite.go):
+		// встроенные UPPER/LOWER в SQLite меняют регистр только ASCII и молча
+		// возвращают кириллицу как есть, а left()/right() в SQLite нет вовсе.
+		m["врег"] = rw("ob_upper(", ")")
+		m["upper"] = rw("ob_upper(", ")")
+		m["нрег"] = rw("ob_lower(", ")")
+		m["lower"] = rw("ob_lower(", ")")
+		m["лев"] = rw("ob_left(", ")")
+		m["прав"] = rw("ob_right(", ")")
 	default: // pg
 		// Цел — усечение к нулю. В PG CAST(x AS INTEGER) округлял бы (half-even),
 		// поэтому берём TRUNC, которое усекает к нулю.
@@ -4327,6 +4357,13 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 		m["month"] = rw("CAST(EXTRACT(MONTH FROM", ") AS INTEGER)")
 		m["день"] = rw("CAST(EXTRACT(DAY FROM", ") AS INTEGER)")
 		m["day"] = rw("CAST(EXTRACT(DAY FROM", ") AS INTEGER)")
+		// В PostgreSQL upper/lower знают локаль, а left/right есть нативно.
+		m["врег"] = rw("upper(", ")")
+		m["upper"] = rw("upper(", ")")
+		m["нрег"] = rw("lower(", ")")
+		m["lower"] = rw("lower(", ")")
+		m["лев"] = rw("left(", ")")
+		m["прав"] = rw("right(", ")")
 	}
 	return m
 }
