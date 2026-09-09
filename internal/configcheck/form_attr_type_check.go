@@ -2,7 +2,6 @@ package configcheck
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -79,7 +78,7 @@ func formAttrTypeIssue(file, object, where, typeRef string) Issue {
 		Message: fmt.Sprintf(
 			"тип %s не распознан (%q): значение придёт в обработчик строкой",
 			where, typeRef),
-		SuggestedFix: "Названия типов латинские: string, string(N), number, decimal(P,S), date, dateTime, bool, " +
+		SuggestedFix: "Названия типов латинские: string, string(N), number, decimal(P), decimal(P,S), date, dateTime, bool, " +
 			"CatalogRef.<Справочник>, DocumentRef.<Документ>, EnumRef.<Перечисление>, " +
 			"ChartOfAccountsRef.<ПланСчетов>, AnyRef, ValueTable. " +
 			"Русские написания («Строка», «Дата», «Число») загрузчик не понимает.",
@@ -94,7 +93,7 @@ func formAttrFileLabel(owner string, form *metadata.FormModule) string {
 	return "forms/" + strings.ToLower(owner) + "/" + name + ".form.yaml"
 }
 
-// formAttrTypeKnown повторяет документированную грамматику реквизита формы.
+// formAttrTypeKnown повторяет фактическую грамматику реквизита формы.
 // ValueTable проверяется отдельно и только в точном написании: часть runtime
 // использует EqualFold, но formAttrIsScalar различает его регистрозависимо.
 func formAttrTypeKnown(typeRef string) bool {
@@ -102,23 +101,20 @@ func formAttrTypeKnown(typeRef string) bool {
 	return t == "ValueTable" || formValueTypeKnown(t)
 }
 
-// formValueTypeKnown проверяет скалярные реквизиты и колонки ValueTable.
-// Примитивы регистронезависимы, как typeFormAttrValue; ссылочные префиксы
-// регистрозависимы, как attrRefEntityName. Голый HasPrefix здесь намеренно не
-// используется: ValueTableExtra и numberish — это строки, а не объявленные
-// типы.
+// formValueTypeKnown повторяет фактическое распознавание типов формы.
+// Примитивы регистронезависимы и распознаются по префиксу, как
+// typeFormAttrValue и typedempty.FromFormType: в частности, decimal(15) из
+// канонического импорта 1С остаётся числом, а dateTime — датой. Ссылочные
+// префиксы регистрозависимы, как attrRefEntityName.
 func formValueTypeKnown(typeRef string) bool {
 	t := strings.TrimSpace(typeRef)
-	switch {
-	case strings.EqualFold(t, "string"),
-		strings.EqualFold(t, "number"),
-		strings.EqualFold(t, "date"),
-		strings.EqualFold(t, "datetime"),
-		strings.EqualFold(t, "bool"),
-		t == "AnyRef":
-		return true
-	case qualifiedPositiveInt(t, "string", 1),
-		qualifiedPositiveInt(t, "decimal", 2):
+	lower := strings.ToLower(t)
+	for _, prefix := range []string{"string", "number", "decimal", "date", "bool"} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	if t == "AnyRef" {
 		return true
 	}
 	for _, prefix := range []string{"CatalogRef.", "DocumentRef.", "EnumRef.", "ChartOfAccountsRef."} {
@@ -128,23 +124,4 @@ func formValueTypeKnown(typeRef string) bool {
 		}
 	}
 	return false
-}
-
-func qualifiedPositiveInt(typeRef, name string, count int) bool {
-	lower := strings.ToLower(typeRef)
-	prefix := name + "("
-	if !strings.HasPrefix(lower, prefix) || !strings.HasSuffix(typeRef, ")") {
-		return false
-	}
-	parts := strings.Split(typeRef[len(prefix):len(typeRef)-1], ",")
-	if len(parts) != count {
-		return false
-	}
-	for i, part := range parts {
-		value, err := strconv.Atoi(strings.TrimSpace(part))
-		if err != nil || value < 0 || (i == 0 && value == 0) {
-			return false
-		}
-	}
-	return true
 }

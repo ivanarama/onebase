@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/ivantit66/onebase/internal/onec_forms"
 	"github.com/ivantit66/onebase/internal/project"
 )
 
@@ -96,7 +97,7 @@ attributes:
       - { name: Количество, type: number }
       - { name: Цена, type: "decimal(15,2)" }
       - { name: Ссылка, type: CatalogRef.Товары }
-      - { name: Ошибка, type: numberExtra }
+      - { name: Ошибка, type: numericExtra }
 elements: []`)
 
 	proj, err := project.Load(dir)
@@ -106,22 +107,48 @@ elements: []`)
 	defer proj.Close()
 
 	issues := formAttrTypeIssues(CheckLintProject(dir, proj, nil))
-	if len(issues) != 2 {
-		t.Fatalf("ожидалось 2 предупреждения формы обработки, получено %d: %+v", len(issues), issues)
+	if len(issues) != 1 {
+		t.Fatalf("ожидалось 1 предупреждение формы обработки, получено %d: %+v", len(issues), issues)
 	}
-	for _, want := range []string{"Период", "Ошибка"} {
-		found := false
-		for _, got := range issues {
-			if strings.Contains(got.Message, want) {
-				found = true
-				if !strings.Contains(got.File, "forms/проверка/") {
-					t.Errorf("файл = %q, ожидался путь формы обработки", got.File)
-				}
-			}
-		}
-		if !found {
-			t.Errorf("нет предупреждения для %s: %+v", want, issues)
-		}
+	if !strings.Contains(issues[0].Message, "Ошибка") {
+		t.Errorf("предупреждение не относится к неизвестному типу: %+v", issues)
+	}
+	if !strings.Contains(issues[0].File, "forms/проверка/") {
+		t.Errorf("файл = %q, ожидался путь формы обработки", issues[0].File)
+	}
+	if strings.Contains(issues[0].Message, "Период") {
+		t.Errorf("dateSuffix типизируется runtime как дата и не должен считаться строкой: %+v", issues)
+	}
+}
+
+func TestCheckLintFormAttrTypes_AcceptsCanonicalImportedDecimal(t *testing.T) {
+	importedType := onec_forms.Type1CToOneBase("xs:decimal", 15, 0, "")
+	if importedType != "decimal(15)" {
+		t.Fatalf("канонический импорт xs:decimal = %q, ожидался decimal(15)", importedType)
+	}
+
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "processors", "проверка.yaml"), `name: Проверка
+params: []`)
+	mkFile(t, filepath.Join(dir, "forms", "проверка", "основная.form.yaml"), `schema: onebase.form/v1
+form:
+  name: Основная
+  kind: object
+  entity: Проверка
+attributes:
+  - name: Сумма
+    type: "`+importedType+`"
+    save: false
+elements: []`)
+
+	proj, err := project.Load(dir)
+	if err != nil {
+		t.Fatalf("project.Load: %v", err)
+	}
+	defer proj.Close()
+
+	if issues := formAttrTypeIssues(CheckLintProject(dir, proj, nil)); len(issues) != 0 {
+		t.Fatalf("канонический decimal(15) импорта ошибочно признан строкой: %+v", issues)
 	}
 }
 
