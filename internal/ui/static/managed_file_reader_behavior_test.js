@@ -287,6 +287,44 @@ test('immediate click waits for the current file read', async () => {
   assert.equal(new URLSearchParams(fetchBodies[0]).get('Upload'), 'instant contents');
 });
 
+test('saving a new managed form notifies the tab shell after history replacement', async () => {
+  resetDOM();
+  const originalFetch = global.fetch;
+  const originalHistory = global.history;
+  const originalLocation = global.location;
+  const originalParent = global.parent;
+  const messages = [];
+  const replacements = [];
+  global.location = {origin: 'http://127.0.0.1:8080', pathname: '/ui/document/purchase/new'};
+  global.history = {
+    replaceState(_state, _title, url) {
+      replacements.push(url);
+      global.location.pathname = url;
+    }
+  };
+  global.parent = {
+    postMessage(data, targetOrigin) { messages.push({data, targetOrigin}); }
+  };
+  global.fetch = async (_url, options) => {
+    fetchBodies.push(options.body.toString());
+    return {json: async () => ({savedId: '42', messages: []})};
+  };
+  try {
+    await window.obFire('Save', 'Нажатие');
+    assert.deepEqual(replacements, ['/ui/document/purchase/42']);
+    assert.deepEqual(messages, [{
+      data: {source: 'obFrameURLChanged', url: '/ui/document/purchase/42'},
+      targetOrigin: 'http://127.0.0.1:8080'
+    }]);
+  } finally {
+    global.fetch = originalFetch;
+    global.history = originalHistory;
+    global.location = originalLocation;
+    if (originalParent === undefined) delete global.parent;
+    else global.parent = originalParent;
+  }
+});
+
 test('obFire re-syncs grid state after waiting for FileReader', async () => {
   resetDOM();
   FakeFileReader.instances = [];

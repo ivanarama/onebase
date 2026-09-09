@@ -137,10 +137,10 @@ const tplAppShell = `{{define "page-app-shell"}}
     document.body.appendChild(m);
     setTimeout(function(){ document.addEventListener('click',function rm(){ m.remove(); document.removeEventListener('click',rm); }); },0);
   }
-  function syncFrameURL(t){
+  function syncFrameURL(t,href){
     var next='';
     try{
-      var current=new URL(String(t.frame.contentWindow.location.href||''),location.origin);
+      var current=new URL(String(href||t.frame.contentWindow.location.href||''),location.origin);
       if(current.origin!==location.origin)return;
       next=current.pathname+current.search+current.hash;
     }catch(e){return;}
@@ -180,6 +180,7 @@ const tplAppShell = `{{define "page-app-shell"}}
     var d=ev.data; if(!d||typeof d!=='object')return;
     if(d.source==='obOpenTab' && d.url){ var ou=String(d.url); if(!openable(ou))return; openTab(ou, d.title?String(d.title):'Форма', {allowDup:!!d.allowDup}); }
     else if(d.source==='obCloseTab'){ var ct=tabByWindow(ev.source); if(ct)closeTab(ct); }
+    else if(d.source==='obFrameURLChanged' && d.url){ var ut=tabByWindow(ev.source); if(ut)syncFrameURL(ut,String(d.url)); }
     else if(d.source==='obSetTitle' && active && d.title){ active.title=String(d.title); active.label.textContent=active.title; active.btn.title=active.title; persist(); }
     else if(d.source==='obDirty'){ var dt=tabByWindow(ev.source); if(dt){ dt.dirty=!!d.dirty; dt.btn.classList.toggle('dirty',dt.dirty); } } // фаза 3
   });

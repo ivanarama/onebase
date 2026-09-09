@@ -953,7 +953,13 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         var idInput = document.querySelector('#main-form [name="_id"]');
         if (idInput) idInput.value = DOC_ID;
         if (window.history && history.replaceState) {
-          history.replaceState(null, '', location.pathname.replace(/\/new$/, '/' + DOC_ID));
+          var savedURL = location.pathname.replace(/\/new$/, '/' + DOC_ID);
+          history.replaceState(null, '', savedURL);
+          try {
+            if (window.parent && window.parent !== window) {
+              window.parent.postMessage({source: 'obFrameURLChanged', url: savedURL}, location.origin);
+            }
+          } catch (_) {}
         }
         window._obFormDirty = false;
       }
