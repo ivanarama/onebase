@@ -1096,8 +1096,12 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   // ошибочно закрывали документ прямо из редактирования ячейки.
   document.addEventListener('keydown', function(e){
     if (e.key !== 'Escape' && e.keyCode !== 27) return;
-    var modal = document.getElementById('_item-picker-modal') || document.getElementById('_ref-picker-modal');
-    if (modal) { modal.remove(); e.preventDefault(); e.stopPropagation(); return; }
+    var modal = document.getElementById('_ref-create-modal') || document.getElementById('_item-picker-modal') || document.getElementById('_ref-picker-modal');
+    if (modal) {
+      if (typeof modal._obClose === 'function') modal._obClose();
+      else modal.remove();
+      e.preventDefault(); e.stopPropagation(); return;
+    }
     // Выпадающий список ячейки-ссылки закрываем ДО проверки editor-lock: этот
     // слушатель в фазе перехвата, и без отдельной ветки Esc из подбора отменял
     // бы всю правку ячейки, а не только список.
