@@ -439,15 +439,21 @@ pages из непустого `nav` и запрет `system:constants` вне р
 <!-- pp:plan-slice key=B next=C -->
 ### Срез B — runtime semantic menu и RBAC
 
-Перевести `buildNavForSubsystem` и scoped global nav на общий resolver. Расширить
-DTO/template до section → group → item, заменить title-based DOM identity на ID,
-сохранить collapsible behavior. Не добавлять storage и editor.
+Перевести `buildNavForSubsystem` и всю глобальную ветку `buildNav` на общий resolver.
+Для непустого `home_page.nav` передавать scoped allowed-set текущего
+`buildNavFromContents`, а для nil/пустого `nav` — flat allowed-set точного текущего
+`buildFlatNav`; ранний flat fallback не должен обходить `home_page.menu`.
+Расширить DTO/template до section → group → item, заменить title-based DOM
+identity на ID, сохранить collapsible behavior. Не добавлять storage и editor.
 
 Публичные HTTP/DOM-тесты: школьная fixture смешивает catalog/document/inforeg/
 processor в одной папке; register views ведут на разные URL; ru/en titles;
 обычная роль не видит закрытый object, admin видит; пустые родители исчезают;
 HTML в title экранируется; прямой URL по-прежнему проверяется старым RBAC. Проект
-без `menu` даёт прежние labels/URLs и не требует настройки.
+без `menu` даёт прежние labels/URLs и не требует настройки. Отдельные
+глобальные HTTP/DOM-сценарии с `home_page.menu` и (1) отсутствующим,
+(2) явно пустым `home_page.nav` доказывают, что runtime рендерит смысловое
+дерево на flat allowed-set, а не возвращает напрямую `buildFlatNav`.
 
 <!-- pp:plan-slice key=C next=D -->
 ### Срез C — визуальный редактор конфигурации
