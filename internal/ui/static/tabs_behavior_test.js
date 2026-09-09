@@ -188,6 +188,11 @@ function shell(storage, search = '') {
     click(index) { strip.children[index].dispatch('click'); },
     close(index) { strip.children[index].children[2].dispatch('click'); },
     duplicate(index) { strip.children[index].children[1].dispatch('click'); },
+    // Адрес сменился без перезагрузки фрейма (history.replaceState после записи
+    // нового объекта): location новый, события load нет.
+    silentNavigate(index, href) {
+      frames()[index].contentWindow.location = {href};
+    },
     navigate(index, href) {
       const frame = frames()[index];
       frame.contentWindow.location = {href};
@@ -451,5 +456,26 @@ test('a frame may close a tab by address, and without one still closes itself', 
 
   // Прежний контракт: без адреса закрывается вкладка-отправитель (крестик внутри формы).
   app.post({source: 'obCloseTab'}, 0);
+  assert.equal(app.count(), 0);
+});
+
+test('a form that has just saved a new object is closed by its new address', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/обращение/new', 'Обращение');
+  // Запись нового документа подменяет адрес через replaceState — load не приходит.
+  app.silentNavigate(0, 'http://127.0.0.1:8080/ui/document/обращение/42');
+
+  assert.equal(app.closeByURL('/ui/document/обращение/42'), 1);
+  assert.equal(app.count(), 0);
+});
+
+test('the same document written differently is still the same tab', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  // Так вкладку открывает ссылка из списка: имя сущности как в метаданных.
+  app.open('/ui/document/%d0%9e%d0%b1%d1%80%d0%b0%d1%89%d0%b5%d0%bd%d0%b8%d0%b5/7', 'Обращение');
+  // А так адрес строит formURL команды: encodeURIComponent от нижнего регистра.
+  assert.equal(app.closeByURL('/ui/document/%D0%BE%D0%B1%D1%80%D0%B0%D1%89%D0%B5%D0%BD%D0%B8%D0%B5/7'), 1);
   assert.equal(app.count(), 0);
 });

@@ -177,10 +177,23 @@ const tplAppShell = `{{define "page-app-shell"}}
   // dirty снимаем: команду шлёт серверный код, который только что записал объект,
   // и вопрос «есть несохранённые изменения» был бы про уже сохранённое. Крестик,
   // контекст-меню и уход со страницы спрашивают по-прежнему.
+  // Один и тот же документ пишется разными строками: ссылка в списке даёт
+  // /ui/document/%d0%9e%d0%b1.../<id> (имя сущности как в метаданных), а команда
+  // ui.открытьФорму — encodeURIComponent от имени в нижнем регистре. Сверяем
+  // раскодированный адрес без учёта регистра, иначе закрытие промахивается мимо
+  // вкладки, открытой из списка.
+  function sameURL(a,b){
+    function norm(v){ var s=String(v||''); try{ s=decodeURIComponent(s); }catch(e){} return s.toLowerCase(); }
+    return norm(a)===norm(b);
+  }
   function closeTabByURL(url){
     var u=String(url||''); if(!u)return 0;
     var n=0;
-    tabs.slice().forEach(function(t){ if(t.url===u){ t.dirty=false; closeTab(t); n++; } });
+    // syncFrameURL перед сверкой: форма, записавшая НОВЫЙ объект, меняет свой
+    // адрес /new → /<id> через history.replaceState, а событие load при этом не
+    // приходит — в оболочке остаётся адрес /new. Без опроса только что созданный
+    // документ нельзя было бы закрыть по его собственному адресу.
+    tabs.slice().forEach(function(t){ syncFrameURL(t); if(sameURL(t.url,u)){ t.dirty=false; closeTab(t); n++; } });
     return n;
   }
   window.obCloseTabByURL=closeTabByURL;
