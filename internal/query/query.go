@@ -60,6 +60,24 @@ type Result struct {
 	// такой строки уходило в текстовое: разделитель «T» больше пробела, и любой
 	// материал с сегодняшней датой оказывался «в будущем» (#1013).
 	DateColumns []string
+	// RefColumns — колонки результата (имя в нижнем регистре), значение которых
+	// является идентификатором ссылки, и имя сущности, на которую они
+	// ссылаются. Заполняются только для `Ссылка` и `Реквизит.Ссылка`: именно они
+	// доезжают до потребителя UUID'ом. Голый ссылочный реквизит (`Номенклатура`)
+	// сюда НЕ попадает — в списке выборки он разворачивается в наименование
+	// связанной сущности (см. refDimInfo.displayCol), то есть колонка несёт
+	// представление, а не ссылку.
+	//
+	// Потребитель — DSL: без обёртки ссылочная колонка приезжала строкой, и
+	// `ТипЗнч(Выборка.Ссылка)` отвечал «Строка» там, где руководство обещает
+	// квалифицированное имя типа (#1150). Отчёты и REST читают тот же Result и
+	// оборачивание не делают — им нужно печатное значение.
+	//
+	// Заполняется только для простой проекции (Projection.Simple): при
+	// ОБЪЕДИНИТЬ и подзапросах соответствие «элемент выборки ↔ колонка
+	// результата» неоднозначно, и молча приводить значения нельзя — то же
+	// правило, что у BoolColumns/DateColumns.
+	RefColumns map[string]string
 	// Projection — поэлементный разбор списка выборки (план 88E). Позволяет
 	// маскировать защищённые поля в колонках результата вместо отказа во всём
 	// запросе; при Projection.Simple == false действует прежний отказ по
@@ -641,6 +659,20 @@ type translator struct {
 	sourceCtx    sourceContext                 // scoped-типы источников для системных колонок регистра
 	unionDepths  map[int]bool                  // глубины SELECT с UNION для compound ORDER BY
 	unionOrders  map[int]bool                  // ORDER BY относится ко всему UNION, алиасы таблиц там недоступны
+	refCols      map[string]string             // колонка вывода (lower) → сущность, на которую она ссылается (#1150)
+	mainRef      mainRefSource                 // главный источник запроса: чья ссылка стоит за голым «Ссылка»
+}
+
+// mainRefSource — предсканированный главный источник запроса: имя сущности и
+// квалификаторы, под которыми на неё ссылаются в тексте («Документ.Приход КАК р»
+// → Entity=Приход, Qualifiers={приход, р}).
+//
+// Предсканирование нужно потому, что перевод идёт одним проходом слева направо:
+// список выборки эмитится ДО того, как разобран ИЗ, а голое «Ссылка» в выборке
+// уже обязано знать, чью ссылку оно вернёт.
+type mainRefSource struct {
+	Entity     string
+	Qualifiers map[string]bool
 }
 
 type sourceClass uint8
@@ -2612,6 +2644,93 @@ func buildColMap(tokens []tok, opts CompileOpts) map[string]string {
 	return m
 }
 
+// preScanMainRefSource находит первый источник запроса, у которого есть
+// собственная ссылка, — справочник или документ, — и квалификаторы, под которыми
+// на него ссылаются («ИЗ Документ.Приход КАК р» → Приход, {приход, р}).
+//
+// Регистр и виртуальная таблица собственной ссылки не имеют, поэтому для них
+// возвращается пустая сущность: `Ссылка` там либо не поле вовсе, либо приезжает
+// из подзапроса, и обещать её тип нельзя.
+func preScanMainRefSource(tokens []tok, opts CompileOpts) mainRefSource {
+	for i := 0; i+2 < len(tokens); i++ {
+		t := tokens[i]
+		if t.kind != tIdent {
+			continue
+		}
+		upper := upperFast(t.val)
+		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+			continue
+		}
+		// VT-источник (Тип.Имя.Остатки(...)) — не сущность.
+		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
+			return mainRefSource{}
+		}
+		if isAccumRegType(upper) || isInfoRegType(upper) || isAccountRegType(upper) {
+			return mainRefSource{}
+		}
+		name := tokens[i+2].val
+		for _, ent := range opts.Entities {
+			if !strings.EqualFold(ent.Name, name) {
+				continue
+			}
+			src := mainRefSource{
+				Entity:     ent.Name,
+				Qualifiers: map[string]bool{lowerFast(name): true, lowerFast(sourceToTable(upper, name)): true},
+			}
+			if i+4 < len(tokens) && tokens[i+3].kind == tIdent && tokens[i+4].kind == tIdent {
+				if kw := upperFast(tokens[i+3].val); kw == "КАК" || kw == "AS" {
+					src.Qualifiers[lowerFast(tokens[i+4].val)] = true
+				}
+			}
+			return src
+		}
+		return mainRefSource{}
+	}
+	return mainRefSource{}
+}
+
+// noteRefOutput запоминает, что только что эмитированная колонка-идентификатор
+// попадает в результат и ссылается на entity. Имя выходной колонки — явный алиас
+// «КАК X», иначе `id`: именно так называет её SQL (Ссылка → id, Реквизит.Ссылка →
+// ref_реквизит.id).
+func (tr *translator) noteRefOutput(entity string) {
+	if entity == "" || tr.section != sectionSelect || tr.parenDepth > 0 {
+		return
+	}
+	out := "id"
+	if p := upperFast(tr.peek(0).val); p == "КАК" || p == "AS" {
+		if n := tr.peek(1); n.kind == tIdent {
+			// `КАК Ссылка` — имя зарезервировано: SQL-алиасом становится всё тот
+			// же id (ветка prevAlias ниже), а не слово «ссылка».
+			if alias := lowerFast(n.val); !isReferenceName(alias) {
+				out = alias
+			}
+		}
+	}
+	if tr.refCols == nil {
+		tr.refCols = map[string]string{}
+	}
+	tr.refCols[out] = entity
+}
+
+// refEntityForQualifier определяет, чью ссылку вернёт `<квалификатор>.Ссылка`.
+// pos — позиция токена-квалификатора в потоке. Ссылочный реквизит даёт сущность,
+// на которую он ссылается; имя или алиас главного источника — сам источник.
+// Всё остальное (чужой алиас, неизвестное имя) — пусто: угадывать нельзя.
+func (tr *translator) refEntityForQualifier(pos int) string {
+	if pos < 0 || pos >= len(tr.tokens) || tr.tokens[pos].kind != tIdent {
+		return ""
+	}
+	lower := lowerFast(tr.tokens[pos].val)
+	if rd := tr.findRefDim(lower); rd != nil {
+		return rd.refEntity
+	}
+	if tr.mainRef.Qualifiers[lower] {
+		return tr.mainRef.Entity
+	}
+	return ""
+}
+
 // buildColTypes маппит имя поля (lowercase) → его тип для запрашиваемого
 // источника (справочник/документ ИЛИ регистр). В отличие от buildColMap (только
 // поля с переименованной колонкой), здесь — ВСЕ поля, чтобы:
@@ -3583,6 +3702,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		colTypes:    buildColTypes(tokens, opts),
 		mainTable:   preScanMainTable(tokens),
 		refDims:     preScanRefDims(tokens, opts),
+		mainRef:     preScanMainRefSource(tokens, opts),
 		sourceCtx:   preScanSourceContext(tokens),
 		aliases:     map[string]struct{}{},
 		unionDepths: map[int]bool{},
@@ -3875,10 +3995,14 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					// через qualifyReference — `AS таблица.id` невалиден.
 					tr.emit("id")
 				case prevDot:
+					// tr.pos-1 — сама «Ссылка», tr.pos-2 — точка, tr.pos-3 —
+					// квалификатор: ссылочный реквизит или имя/алиас источника.
+					tr.noteRefOutput(tr.refEntityForQualifier(tr.pos - 3))
 					tr.emit("id")
 				case tr.sourceCtx.isReferenceAliasAt(tr.pos-1, lower):
 					tr.emit("id")
 				default:
+					tr.noteRefOutput(tr.mainRef.Entity)
 					tr.emit(tr.qualifyReference("id"))
 				}
 				continue
@@ -4040,7 +4164,19 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		Projection:       expandProjectionRefDims(projectionPlan, tr.refDims),
 		BoolColumns:      boolOutputColumns(projectionPlan, tr.colTypes),
 		DateColumns:      typedOutputColumns(projectionPlan, tr.colTypes, metadata.FieldTypeDate),
+		RefColumns:       refOutputColumns(projectionPlan, tr.refCols),
 	}, nil
+}
+
+// refOutputColumns отдаёт собранные транслятором колонки-ссылки, но только для
+// простой проекции: при ОБЪЕДИНИТЬ и подзапросах имя колонки результата может
+// прийти из другой ветки, и обещать по нему тип нельзя. То же ограничение, что у
+// boolOutputColumns/typedOutputColumns, — и по той же причине.
+func refOutputColumns(p ProjectionPlan, cols map[string]string) map[string]string {
+	if !p.Simple || len(cols) == 0 {
+		return nil
+	}
+	return cols
 }
 
 // boolOutputColumns перечисляет колонки результата, читающие булево поле. Нужны

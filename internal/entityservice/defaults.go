@@ -444,13 +444,14 @@ func (s *Service) NewObject(ctx context.Context, req NewObjectRequest) (NewObjec
 		vars = make(map[string]any)
 	}
 	defer interpreter.RollbackTxExecution(txState)
-	// Имя параметра выбирает пользователь (Объект, ЭтотОбъект, Док…).
-	if len(proc.Params) > 0 {
-		vars[proc.Params[0].Literal] = obj
-	}
 	var thisVal interpreter.This = obj
 	if s.MakeThis != nil {
 		thisVal = s.MakeThis(hookCtx, txState, obj, entity)
+	}
+	// Имя параметра выбирает пользователь (Объект, ЭтотОбъект, Док…). Оно
+	// должно видеть ту же metadata-aware обёртку, что и неявный this.
+	if len(proc.Params) > 0 {
+		vars[proc.Params[0].Literal] = thisVal
 	}
 	runErr := s.runHook(hookCtx, proc, thisVal, vars)
 	if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
