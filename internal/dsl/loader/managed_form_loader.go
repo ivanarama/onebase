@@ -31,18 +31,24 @@ func NewManagedFormLoader() *ManagedFormLoader {
 
 // LoadEntityForms ищет управляемые формы сущности в каталоге
 //
-//	<projectRoot>/forms/<entityLower>/*.form.yaml
+//	<projectRoot>/forms/<entity>/*.form.yaml
 //
 // и возвращает их как FormModule с LayoutKind=managed.
 // Если папки нет — возвращает (nil, nil) (это нормально: сущность работает
-// в auto-generation-режиме).
+// в auto-generation-режиме). Имя каталога сопоставляется без учёта регистра,
+// но для чтения сохраняется фактический путь: конфигурация из БД должна
+// одинаково загружаться на case-sensitive и case-insensitive файловых системах.
 func (mfl *ManagedFormLoader) LoadEntityForms(projectRoot, entityName string) ([]*metadata.FormModule, error) {
-	entityDir := filepath.Join(projectRoot, "forms", strings.ToLower(entityName))
+	entityDir, err := entityFormsDir(projectRoot, entityName)
+	if err != nil {
+		return nil, err
+	}
+	if entityDir == "" {
+		return nil, nil
+	}
+
 	entries, err := os.ReadDir(entityDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return nil, nil
-		}
 		return nil, fmt.Errorf("read forms dir %s: %w", entityDir, err)
 	}
 
@@ -63,6 +69,53 @@ func (mfl *ManagedFormLoader) LoadEntityForms(projectRoot, entityName string) ([
 		out = append(out, form)
 	}
 	return out, nil
+}
+
+// entityFormsDir находит физический каталог форм по переносимому правилу
+// сравнения. Нельзя сначала приводить имя к нижнему регистру и собирать путь:
+// такой путь работает на Windows, но не на Linux после ExportToDir из configdb.
+// Несколько совпадений запрещены — выбор одного из них иначе снова зависел бы
+// от файловой системы и порядка обхода каталога.
+func entityFormsDir(projectRoot, entityName string) (string, error) {
+	formsDir := filepath.Join(projectRoot, "forms")
+	entries, err := os.ReadDir(formsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("read forms dir %s: %w", formsDir, err)
+	}
+
+	matches := make([]string, 0, 1)
+	for _, entry := range entries {
+		if !strings.EqualFold(entry.Name(), entityName) {
+			continue
+		}
+		candidate := filepath.Join(formsDir, entry.Name())
+		isDir := entry.IsDir()
+		if !isDir && entry.Type()&os.ModeSymlink != 0 {
+			info, statErr := os.Stat(candidate)
+			if statErr != nil {
+				return "", fmt.Errorf("stat forms dir %s: %w", candidate, statErr)
+			}
+			isDir = info.IsDir()
+		}
+		if isDir {
+			matches = append(matches, entry.Name())
+		}
+	}
+
+	switch len(matches) {
+	case 0:
+		return "", nil
+	case 1:
+		return filepath.Join(formsDir, matches[0]), nil
+	default:
+		return "", fmt.Errorf(
+			"ambiguous forms directories for entity %q (case-insensitive match): %s",
+			entityName, strings.Join(matches, ", "),
+		)
+	}
 }
 
 // LoadFormFile читает одиночный .form.yaml.

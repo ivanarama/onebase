@@ -3157,19 +3157,38 @@ function openRefCurrent(selOrId) {
 function openRefCreate(targetSelect, refEntity) {
   if (!targetSelect || !refEntity) return;
   var old = document.getElementById('_ref-create-modal');
-  if (old) old.remove();
+  if (old) {
+    if (typeof old._obCleanup === 'function') old._obCleanup();
+    else old.remove();
+  }
   var modal = document.createElement('div');
   modal.id = '_ref-create-modal';
   modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:10000;display:flex;align-items:center;justify-content:center';
   var box = document.createElement('div');
   box.style.cssText = 'background:#fff;border-radius:10px;width:780px;max-width:95vw;height:78vh;max-height:680px;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.22);overflow:hidden';
+  var toolbar = document.createElement('div');
+  toolbar.style.cssText = 'display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:8px 10px;border-bottom:1px solid #e2e8f0;background:#f8fafc';
+  var cancelBtn = document.createElement('button');
+  cancelBtn.type = 'button';
+  cancelBtn.setAttribute('data-ob-ref-create-cancel', '1');
+  cancelBtn.textContent = 'Отмена';
+  cancelBtn.style.cssText = 'padding:5px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#475569;cursor:pointer';
+  var closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.setAttribute('aria-label', 'Закрыть');
+  closeBtn.textContent = '×';
+  closeBtn.style.cssText = 'padding:1px 9px;border:0;background:transparent;color:#64748b;cursor:pointer;font-size:24px;line-height:1';
+  toolbar.appendChild(cancelBtn);
+  toolbar.appendChild(closeBtn);
   var iframe = document.createElement('iframe');
   iframe.src = '/ui/_ref-create/' + encodeURIComponent(refEntity);
   iframe.style.cssText = 'flex:1;border:0;width:100%';
+  box.appendChild(toolbar);
   box.appendChild(iframe);
   modal.appendChild(box);
   document.body.appendChild(modal);
 
+  var frameDocument = null;
   function handler(ev) {
     var d = ev.data;
     if (!d || typeof d !== 'object') return;
@@ -3196,10 +3215,34 @@ function openRefCreate(targetSelect, refEntity) {
       cleanup();
     }
   }
+  function confirmClose() {
+    if (typeof window.confirm === 'function' &&
+        !window.confirm('Данные были изменены и не записаны. Закрыть форму?')) return;
+    cleanup();
+  }
+  function closeOnEscape(ev) {
+    if (ev.key !== 'Escape' && ev.keyCode !== 27) return;
+    confirmClose();
+    ev.preventDefault();
+    ev.stopPropagation();
+  }
+  function bindFrameEscape() {
+    try {
+      if (frameDocument) frameDocument.removeEventListener('keydown', closeOnEscape, true);
+      frameDocument = iframe.contentDocument;
+      if (frameDocument) frameDocument.addEventListener('keydown', closeOnEscape, true);
+    } catch (e) { frameDocument = null; }
+  }
   function cleanup() {
     window.removeEventListener('message', handler);
+    if (frameDocument) frameDocument.removeEventListener('keydown', closeOnEscape, true);
     modal.remove();
   }
+  modal._obCleanup = cleanup;
+  modal._obClose = confirmClose;
+  cancelBtn.addEventListener('click', confirmClose);
+  closeBtn.addEventListener('click', confirmClose);
+  iframe.addEventListener('load', bindFrameEscape);
   window.addEventListener('message', handler);
 }
 
@@ -3216,17 +3259,17 @@ function openRefCreate(targetSelect, refEntity) {
 // Esc для managed-форм обрабатывает managed.js (в фазе перехвата, с отменой
 // правки ячейки грида и подтверждением «данные не записаны»); здесь — тот же
 // быстрый выход для автогенерируемых форм, которые грузят только ui.js.
-// Окно создания элемента (_ref-create-modal) сюда не входит намеренно: это
-// форма ввода внутри iframe, у неё свои «Отмена»/«×» и свой Esc с вопросом
-// о несохранённых данных.
+// У окна создания есть собственный cleanup: простое modal.remove() оставило бы
+// message-слушатель и позволило старому iframe изменить поле после закрытия.
 (function () {
   if (window.__obModalEsc) return;
   window.__obModalEsc = true;
   document.addEventListener('keydown', function (e) {
     if (e.key !== 'Escape' && e.keyCode !== 27) return;
-    var modal = document.getElementById('_item-picker-modal') || document.getElementById('_ref-picker-modal');
+    var modal = document.getElementById('_ref-create-modal') || document.getElementById('_item-picker-modal') || document.getElementById('_ref-picker-modal');
     if (!modal) return;
-    modal.remove();
+    if (typeof modal._obClose === 'function') modal._obClose();
+    else modal.remove();
     e.preventDefault();
     e.stopPropagation();
   });
