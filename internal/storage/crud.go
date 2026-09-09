@@ -831,11 +831,11 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 		for _, spec := range entity.OrderBy {
 			name, desc := metadata.SplitOrderSpec(spec)
 			col := ""
-			var fieldType metadata.FieldType
+			var field metadata.Field
 			for _, f := range entity.Fields {
 				if strings.EqualFold(f.Name, name) {
 					col = metadata.ColumnName(f)
-					fieldType = f.Type
+					field = f
 					break
 				}
 			}
@@ -848,12 +848,18 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 			// задан» это не «идёт первым». В SQLite NULL при ASC оказывается
 			// сверху, в PostgreSQL при DESC — тоже; поэтому признак пустоты
 			// выносим отдельным ключом сортировки.
-			parts = append(parts, "CASE WHEN "+col+" IS NULL THEN 1 ELSE 0 END ASC")
+			empty := col + " IS NULL"
+			if field.RefEntity == "" && (field.Type == metadata.FieldTypeString ||
+				field.Type == metadata.FieldTypeRichText || field.Type == metadata.FieldTypeImage ||
+				field.EnumName != "") {
+				empty = "(" + empty + " OR " + col + " = '')"
+			}
+			parts = append(parts, "CASE WHEN "+empty+" THEN 1 ELSE 0 END ASC")
 			expr := col
 			// Число на SQLite лежит ТЕКСТОМ (десятичная точность — decimal на
 			// стороне Go), и без приведения «100» сортируется раньше «20».
-			if fieldType == metadata.FieldTypeNumber && d.Name() == "sqlite" {
-				expr = "CAST(" + col + " AS REAL)"
+			if field.Type == metadata.FieldTypeNumber && d.Name() == "sqlite" {
+				expr = "CAST(" + col + " AS NUMERIC)"
 			}
 			dir := "ASC"
 			if desc {
