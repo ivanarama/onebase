@@ -545,6 +545,16 @@ func (i *Interpreter) assign(target ast.Expr, val any, e *env) {
 			o.SetIndex(int(toFloatOr0(idx)), val)
 		case *Map:
 			o.CallMethod("вставить", []any{idx, val})
+		case DynamicFieldAccessor:
+			name, ok := idx.(string)
+			if !ok {
+				RaiseUserError("Имя реквизита в индексной записи должно быть строкой")
+			}
+			if !o.SetDynamicField(name, val) {
+				RaiseUserError("Неизвестный реквизит «" + name + "» у объекта " + getTypeName(obj))
+			}
+		default:
+			RaiseUserError("Тип «" + getTypeName(obj) + "» не поддерживает индексную запись")
 		}
 	}
 }
@@ -558,6 +568,8 @@ func (i *Interpreter) evalExpr(expr ast.Expr, e *env) any {
 func (i *Interpreter) evalExprUnchecked(expr ast.Expr, e *env) any {
 	switch v := expr.(type) {
 	case *ast.StringLit:
+		return v.Value
+	case *ast.DateLit:
 		return v.Value
 	case *ast.NumberLit:
 		d, err := decimal.NewFromString(v.Value)
@@ -600,8 +612,19 @@ func (i *Interpreter) evalExprUnchecked(expr ast.Expr, e *env) any {
 			return protectReadOnly(e.ec, o.Index(int(toFloatOr0(idx))))
 		case *Map:
 			return protectReadOnly(e.ec, o.CallMethod("получить", []any{idx}))
+		case DynamicFieldAccessor:
+			name, ok := idx.(string)
+			if !ok {
+				RaiseUserError("Имя реквизита в индексном чтении должно быть строкой")
+			}
+			value, ok := o.GetDynamicField(name)
+			if !ok {
+				RaiseUserError("Неизвестный реквизит «" + name + "» у объекта " + getTypeName(obj))
+			}
+			return protectReadOnly(e.ec, value)
+		default:
+			RaiseUserError("Тип «" + getTypeName(obj) + "» не поддерживает индексное чтение")
 		}
-		return nil
 	case *ast.ArrayLit:
 		items := make([]any, 0, len(v.Elements))
 		for _, elem := range v.Elements {

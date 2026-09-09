@@ -72,6 +72,51 @@ func TestДатаИзЗапроса_Матрица(t *testing.T) {
 	})
 }
 
+// Полный круг для Формат: в MSK записанные 30.07 01:25 хранятся как
+// 29.07 22:25Z. До исправления PostgreSQL форматировал UTC-момент как 29 июля,
+// а SQLite вообще печатал строку хранения целиком; День над тем же результатом
+// запроса в обоих случаях уже возвращал 30.
+func TestДатаИзЗапроса_ФорматМатрица(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		закрепитьПояс(t, зона{"MSK", 3 * 3600})
+
+		ctx := context.Background()
+		ent := &metadata.Entity{
+			Name: "ФорматДаты",
+			Kind: metadata.KindCatalog,
+			Fields: []metadata.Field{
+				{Name: "Наименование", Type: metadata.FieldTypeString},
+				{Name: "Момент", Type: metadata.FieldTypeDate},
+			},
+		}
+		require.NoError(t, db.Migrate(ctx, []*metadata.Entity{ent}), "миграция")
+		require.NoError(t, db.Upsert(ctx, ent.Name, uuid.New(), map[string]any{
+			"Наименование": "ГраницаСуток",
+			"Момент":       time.Date(2026, 7, 30, 1, 25, 0, 0, time.Local),
+		}, ent), "запись")
+
+		прочитано := прочитатьЕдинственныйМомент(t, db, ent)
+		assert.Equal(t, "30.07.2026", форматДаты(t, прочитано),
+			"Формат над датой из запроса (%T)", прочитано)
+		assert.Equal(t, float64(30), частьДаты(t, "День", прочитано),
+			"Формат и День должны видеть один местный день")
+	})
+}
+
+func прочитатьЕдинственныйМомент(t *testing.T, db *storage.DB, ent *metadata.Entity) any {
+	t.Helper()
+	compiled, err := query.Compile(
+		`ВЫБРАТЬ Момент ИЗ Справочник.ФорматДаты`,
+		query.CompileOpts{Entities: []*metadata.Entity{ent}, Dialect: db.Dialect()},
+	)
+	require.NoError(t, err, "компиляция запроса")
+
+	rows, _, err := db.RunQuery(context.Background(), compiled.SQL, compiled.Args)
+	require.NoError(t, err, "исполнение запроса")
+	require.Len(t, rows, 1, "строк в результате")
+	return rows[0]["момент"]
+}
+
 // прочитатьМомент исполняет запрос тем же компилятором, что и прикладной слой,
 // и возвращает значения колонки «Момент» по наименованию — в том виде, в каком
 // они доезжают до модуля.

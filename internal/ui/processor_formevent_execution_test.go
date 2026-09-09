@@ -559,7 +559,7 @@ func TestHandleProcessorFormEvent_BoundHandlerRejectsQueryParamInjection(t *test
 	formProgram := mustParse(t, `
 Процедура RunCheck()
 	Сообщить("видимое:" + Объект.Visible);
-	Если Параметры.Hidden = Неопределено Тогда
+	Если Параметры.Hidden = "" Тогда
 		Сообщить("скрытое:нет");
 	Иначе
 		Сообщить("скрытое:" + Параметры.Hidden);
@@ -611,12 +611,12 @@ func TestHandleProcessorFormEvent_BoundHandlerRejectsReadOnlyAndUnrenderedParams
 	formProgram := mustParse(t, `
 Процедура RunCheck()
 	Сообщить("видимое:" + Объект.Visible);
-	Если Объект.ReadOnlyParam = Неопределено Тогда
+	Если Объект.ReadOnlyParam = "" Тогда
 		Сообщить("толькочтение:нет");
 	Иначе
 		Сообщить("толькочтение:" + Объект.ReadOnlyParam);
 	КонецЕсли;
-	Если Параметры.Hidden = Неопределено Тогда
+	Если Параметры.Hidden = "" Тогда
 		Сообщить("скрытое:нет");
 	Иначе
 		Сообщить("скрытое:" + Параметры.Hidden);

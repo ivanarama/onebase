@@ -26,6 +26,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/ivantit66/onebase/internal/dbtest"
+	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
 	"github.com/ivantit66/onebase/internal/dsl/parser"
@@ -48,6 +49,7 @@ func tpz1136Doc() *metadata.Entity {
 			Fields: []metadata.Field{
 				{Name: "Цена", Type: metadata.FieldTypeNumber},
 				{Name: "Количество", Type: metadata.FieldTypeNumber},
+				{Name: "ДатаПоставки", Type: metadata.FieldTypeDate},
 			},
 		}},
 	}
@@ -118,7 +120,7 @@ func tpz1136Rows(t *testing.T, db *storage.DB, doc *metadata.Entity, id uuid.UUI
 	return rows
 }
 
-// tpz1136ReadFromDSL возвращает «Цена=0/Цена>0/ЗначениеЗаполнено» для каждой
+// tpz1136ReadFromDSL возвращает «Цена=0/Цена>0/ЗначениеЗаполнено/ТипЗнч» для каждой
 // строки прочитанного объекта. Путь публичный: тот же, которым прикладной
 // модуль перебирает ТЧ существующего документа.
 func tpz1136ReadFromDSL(t *testing.T, s *Server, id uuid.UUID) string {
@@ -127,7 +129,7 @@ func tpz1136ReadFromDSL(t *testing.T, s *Server, id uuid.UUID) string {
   Об = Документы.%s.НайтиПоИдентификатору(Ид).ПолучитьОбъект();
   Рез = "";
   Для Каждого Стр Из Об.Товары Цикл
-    Рез = Рез + Строка(Стр.Цена = 0) + "/" + Строка(Стр.Цена > 0) + "/" + Строка(ЗначениеЗаполнено(Стр.Цена));
+    Рез = Рез + Строка(Стр.Цена = 0) + "/" + Строка(Стр.Цена > 0) + "/" + Строка(ЗначениеЗаполнено(Стр.Цена)) + "/" + ТипЗнч(Стр.Цена) + "/" + ТипЗнч(Стр.ДатаПоставки);
   КонецЦикла;
   Возврат Рез;
 КонецФункции`, tpz1136DocName)
@@ -154,10 +156,21 @@ func TestTablePartEmptyNumber_СравниваетсяСНулём_1136(t *testi
 		}
 		doc := tpz1136Doc()
 		ts, s := tpz1136Server(t, db, []*metadata.Entity{doc})
+		hook, err := parser.New(lexer.New(`Процедура ПриЗаписи()
+  Для Каждого Стр Из this.Товары Цикл
+    Если ТипЗнч(Стр.Цена) <> "Число" Или ТипЗнч(Стр.ДатаПоставки) <> "Дата" Тогда
+      ВызватьИсключение("ПриЗаписи получил нетипизированное пустое поле");
+    КонецЕсли;
+  КонецЦикла;
+КонецПроцедуры`, "typed-empty-hook.os")).ParseProgram()
+		if err != nil {
+			t.Fatalf("parse hook: %v", err)
+		}
+		s.reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{doc}, Programs: map[string]*ast.Program{doc.Name: hook}})
 
 		// Цена не введена — ровно случай из заявки: в колонке NULL, а модуль
 		// обязан увидеть ноль.
-		empty := tpz1136Write(t, ts, doc, db, map[string]any{"Цена": "", "Количество": "2"})
+		empty := tpz1136Write(t, ts, doc, db, map[string]any{"Цена": "", "Количество": "2", "ДатаПоставки": ""})
 		rows := tpz1136Rows(t, db, doc, empty)
 		if len(rows) != 1 {
 			t.Fatalf("[%s] строк в базе %d, ожидалась 1: %#v", dialect, len(rows), rows)
@@ -166,22 +179,25 @@ func TestTablePartEmptyNumber_СравниваетсяСНулём_1136(t *testi
 		if rows[0]["Цена"] != nil {
 			t.Errorf("[%s] в колонке цены %#v, ожидался NULL", dialect, rows[0]["Цена"])
 		}
-		if got := tpz1136ReadFromDSL(t, s, empty); got != "true/false/false" {
-			t.Errorf("[%s] пустая цена: «=0/>0/Заполнено» = %q, ожидалось \"true/false/false\"", dialect, got)
+		if rows[0]["ДатаПоставки"] != nil {
+			t.Errorf("[%s] в колонке даты %#v, ожидался NULL", dialect, rows[0]["ДатаПоставки"])
+		}
+		if got := tpz1136ReadFromDSL(t, s, empty); got != "true/false/false/Число/Дата" {
+			t.Errorf("[%s] пустая цена: «=0/>0/Заполнено/ТипЗнч/ТипДаты» = %q", dialect, got)
 		}
 
 		// Введённая цена не должна стать нулём заодно.
 		filled := tpz1136Write(t, ts, doc, db, map[string]any{"Цена": "10", "Количество": "2"})
-		if got := tpz1136ReadFromDSL(t, s, filled); got != "false/true/true" {
-			t.Errorf("[%s] введённая цена: «=0/>0/Заполнено» = %q, ожидалось \"false/true/true\"", dialect, got)
+		if got := tpz1136ReadFromDSL(t, s, filled); got != "false/true/true/Число/Дата" {
+			t.Errorf("[%s] введённая цена: «=0/>0/Заполнено/ТипЗнч/ТипДаты» = %q", dialect, got)
 		}
 
 		// Введённый ноль неотличим от пустоты — и был неотличим до правки:
 		// ЗначениеЗаполнено(0) в 1С тоже Ложь. Закрепляем, чтобы правку не
 		// прочитали как утрату различия, которого не было.
 		zero := tpz1136Write(t, ts, doc, db, map[string]any{"Цена": "0", "Количество": "2"})
-		if got := tpz1136ReadFromDSL(t, s, zero); got != "true/false/false" {
-			t.Errorf("[%s] введённый ноль: «=0/>0/Заполнено» = %q, ожидалось \"true/false/false\"", dialect, got)
+		if got := tpz1136ReadFromDSL(t, s, zero); got != "true/false/false/Число/Дата" {
+			t.Errorf("[%s] введённый ноль: «=0/>0/Заполнено/ТипЗнч/ТипДаты» = %q", dialect, got)
 		}
 	})
 }
@@ -194,7 +210,7 @@ func TestFormEventEmptyNumber_НоваяСтрокаВидитНоль_1136(t *t
 Процедура ТоварыПриИзмененииСтроки()
 	Для Каждого Стр Из Объект.Товары Цикл
 		Если Стр.Цена = 0 Тогда
-			Сообщить("подставляем цену");
+			Сообщить("подставляем цену:" + ТипЗнч(Стр.Цена) + ":" + ТипЗнч(Стр.ДатаПоставки));
 		КонецЕсли;
 	КонецЦикла;
 КонецПроцедуры
@@ -211,6 +227,7 @@ func TestFormEventEmptyNumber_НоваяСтрокаВидитНоль_1136(t *t
 		Fields: []metadata.Field{
 			{Name: "Цена", Type: metadata.FieldTypeNumber},
 			{Name: "Количество", Type: metadata.FieldTypeNumber},
+			{Name: "ДатаПоставки", Type: metadata.FieldTypeDate},
 		},
 	}}
 
@@ -221,14 +238,47 @@ func TestFormEventEmptyNumber_НоваяСтрокаВидитНоль_1136(t *t
 	body.Set("_tp", "Товары")
 	body.Set("_tp_row", "0")
 	body.Set("_tp_row_number", "1")
-	body.Set("tp_json.Товары", `[{"Цена":"","Количество":"2"}]`)
+	body.Set("tp_json.Товары", `[{"Цена":"","Количество":"2","ДатаПоставки":""}]`)
 
 	resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, body).Body.Bytes())
 	if !resp.OK {
 		t.Fatalf("ok=false, error=%q", resp.Error)
 	}
-	if len(resp.Messages) != 1 || resp.Messages[0] != "подставляем цену" {
-		t.Errorf("messages=%v, ожидалось [подставляем цену]", resp.Messages)
+	if len(resp.Messages) != 1 || resp.Messages[0] != "подставляем цену:Число:Дата" {
+		t.Errorf("messages=%v, ожидалось [подставляем цену:Число:Дата]", resp.Messages)
+	}
+}
+
+func TestFormEventTypedEmpty_FormAttributeAndValueTable_1274(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ПроверитьПустые()
+	Для Каждого Стр Из Объект.Подбор Цикл
+		Сообщить(ТипЗнч(Объект.Счетчик) + ":" + ТипЗнч(Стр.Количество) + ":" + Строка(Стр.Количество = 0));
+	КонецЦикла;
+КонецПроцедуры
+	`, nil, []*metadata.FormElement{
+		{Kind: metadata.FormElementField, Name: "ПолеСчетчик", DataPath: "Объект.Счетчик"},
+		{Kind: metadata.FormElementTablePart, Name: "ЭлементПодбор", DataPath: "Форма.Подбор"},
+		{Kind: metadata.FormElementButton, Name: "Проверить", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "ПроверитьПустые"}},
+	})
+	ent.Forms[0].Attributes = []*metadata.FormAttribute{
+		{Name: "Счетчик", TypeRef: "number"},
+		{Name: "Подбор", TypeRef: "ValueTable", Columns: []*metadata.FormAttributeColumn{
+			{Name: "Метка", TypeRef: "string"},
+			{Name: "Количество", TypeRef: "number"},
+		}},
+	}
+	body := url.Values{
+		"_element":               {"Проверить"},
+		"_event":                 {string(metadata.FormEventOnClick)},
+		"_kind":                  {"object"},
+		"vt.Подбор.0.Метка":      {"строка"},
+		"vt.Подбор.0.Количество": {""},
+		"_ob_present_Счетчик":    {"1"},
+	}
+	resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, body).Body.Bytes())
+	if !resp.OK || resp.Error != "" || len(resp.Messages) != 1 || resp.Messages[0] != "Число:Число:true" {
+		t.Fatalf("typed form empties: ok=%v error=%q messages=%v", resp.OK, resp.Error, resp.Messages)
 	}
 }
 

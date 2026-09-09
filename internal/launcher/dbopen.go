@@ -25,7 +25,7 @@ func OpenDB(ctx context.Context, b *Base) (*storage.DB, error) {
 			_ = lease.Close()
 		}
 	}()
-	if err := checkNoPendingRestoreReadOnly(ctx, b); err != nil {
+	if err := checkNoPendingRestoreBeforeOpen(ctx, b); err != nil {
 		return nil, err
 	}
 	state, err := probeBaseSchemaRevision(ctx, b)
@@ -49,7 +49,7 @@ func OpenDB(ctx context.Context, b *Base) (*storage.DB, error) {
 			return nil, fmt.Errorf("launcher: schema revision upgrade requires exclusive database access: %w", err)
 		}
 		ownedLease = true
-		if err := checkNoPendingRestoreReadOnly(ctx, b); err != nil {
+		if err := checkNoPendingRestoreBeforeOpen(ctx, b); err != nil {
 			return nil, err
 		}
 		state, err = probeBaseSchemaRevision(ctx, b)
@@ -76,7 +76,7 @@ func OpenDB(ctx context.Context, b *Base) (*storage.DB, error) {
 		// Downgrade may briefly release the primitive. Re-read both durable gates
 		// under the resulting shared lease before normal Connect can mutate the DB;
 		// a restore that replaced the generation in the gap repeats the transition.
-		if err := checkNoPendingRestoreReadOnly(ctx, b); err != nil {
+		if err := checkNoPendingRestoreBeforeOpen(ctx, b); err != nil {
 			return nil, err
 		}
 		state, err = probeBaseSchemaRevision(ctx, b)
@@ -206,18 +206,18 @@ func baseUsesInMemorySQLite(b *Base) bool {
 	return baseUsesSQLite(b) && storage.IsInMemorySQLitePath(b.DBPath)
 }
 
-func checkNoPendingRestoreReadOnly(ctx context.Context, b *Base) error {
-	pending, err := hasPendingRestoreReadOnly(ctx, b)
+func checkNoPendingRestoreBeforeOpen(ctx context.Context, b *Base) error {
+	pending, err := hasPendingRestoreBeforeOpen(ctx, b)
 	if err != nil {
-		return fmt.Errorf("launcher: inspect interrupted restore marker read-only: %w", err)
+		return fmt.Errorf("launcher: inspect restore marker before database open: %w", err)
 	}
 	if pending {
-		return fmt.Errorf("launcher: %w: interrupted restore marker exists", backup.ErrRestoreRecoveryRequired)
+		return fmt.Errorf("launcher: database has an interrupted restore: %w: interrupted restore marker exists", backup.ErrRestoreRecoveryRequired)
 	}
 	return nil
 }
 
-func hasPendingRestoreReadOnly(ctx context.Context, b *Base) (bool, error) {
+func hasPendingRestoreBeforeOpen(ctx context.Context, b *Base) (bool, error) {
 	if baseUsesSQLite(b) {
 		return backup.HasPendingRestoreSQLite(ctx, b.DBPath)
 	}
@@ -268,7 +268,7 @@ func openDBWithExclusiveSchemaGate(ctx context.Context, b *Base) (*storage.DB, e
 	if b == nil || !cfgDBExclusiveLeaseHeld(ctx, b.ID) {
 		return nil, fmt.Errorf("launcher: exclusive database open requires the configurator lease")
 	}
-	if err := checkNoPendingRestoreReadOnly(ctx, b); err != nil {
+	if err := checkNoPendingRestoreBeforeOpen(ctx, b); err != nil {
 		return nil, err
 	}
 	if err := publishBaseSchemaRevisionExclusive(ctx, b); err != nil {
@@ -322,7 +322,7 @@ func openDBForRestore(ctx context.Context, b *Base, allowedDestinations ...strin
 	if b == nil || !cfgDBExclusiveLeaseHeld(ctx, b.ID) {
 		return nil, fmt.Errorf("launcher: restore database open requires the exclusive configurator lease")
 	}
-	pending, err := hasPendingRestoreReadOnly(ctx, b)
+	pending, err := hasPendingRestoreBeforeOpen(ctx, b)
 	if err != nil {
 		return nil, fmt.Errorf("launcher: inspect restore marker before recovery open: %w", err)
 	}
