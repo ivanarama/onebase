@@ -36,6 +36,10 @@ func TestStringFuncsCompileByDialect(t *testing.T) {
 		{"длина-sqlite", storage.SQLiteDialect{}, `ВЫБРАТЬ ДЛИНАСТРОКИ(Наименование) ИЗ Справочник.КлиентТр`, "length("},
 		{"длина-pg", storage.PgDialect{}, `ВЫБРАТЬ ДЛИНАСТРОКИ(Наименование) ИЗ Справочник.КлиентТр`, "length("},
 		{"сокрлп-pg", storage.PgDialect{}, `ВЫБРАТЬ СОКРЛП(Наименование) ИЗ Справочник.КлиентТр`, "trim("},
+		{"stringlength-pg", storage.PgDialect{}, `ВЫБРАТЬ STRINGLENGTH(Наименование) ИЗ Справочник.КлиентТр`, "length("},
+		{"trimleft-pg", storage.PgDialect{}, `ВЫБРАТЬ TRIMLEFT(Наименование) ИЗ Справочник.КлиентТр`, "ltrim("},
+		{"trimright-pg", storage.PgDialect{}, `ВЫБРАТЬ TRIMRIGHT(Наименование) ИЗ Справочник.КлиентТр`, "rtrim("},
+		{"trimall-pg", storage.PgDialect{}, `ВЫБРАТЬ TRIMALL(Наименование) ИЗ Справочник.КлиентТр`, "trim("},
 
 		// Юникод-регистр: в SQLite через свою функцию, в PG — нативно.
 		{"врег-sqlite", storage.SQLiteDialect{}, `ВЫБРАТЬ ВРЕГ(Наименование) ИЗ Справочник.КлиентТр`, "ob_upper("},
@@ -46,8 +50,10 @@ func TestStringFuncsCompileByDialect(t *testing.T) {
 		// ЛЕВ/ПРАВ: в SQLite left()/right() нет вовсе.
 		{"лев-sqlite", storage.SQLiteDialect{}, `ВЫБРАТЬ ЛЕВ(Наименование, 3) ИЗ Справочник.КлиентТр`, "ob_left("},
 		{"лев-pg", storage.PgDialect{}, `ВЫБРАТЬ ЛЕВ(Наименование, 3) ИЗ Справочник.КлиентТр`, "left("},
+		{"leftstr-pg", storage.PgDialect{}, `ВЫБРАТЬ LEFTSTR(Наименование, 3) ИЗ Справочник.КлиентТр`, "left("},
 		{"прав-sqlite", storage.SQLiteDialect{}, `ВЫБРАТЬ ПРАВ(Наименование, 3) ИЗ Справочник.КлиентТр`, "ob_right("},
 		{"прав-pg", storage.PgDialect{}, `ВЫБРАТЬ ПРАВ(Наименование, 3) ИЗ Справочник.КлиентТр`, "right("},
+		{"rightstr-pg", storage.PgDialect{}, `ВЫБРАТЬ RIGHTSTR(Наименование, 3) ИЗ Справочник.КлиентТр`, "right("},
 
 		// ПОДОБНО и СПЕЦСИМВОЛ — ключевые слова, а не функции.
 		{"подобно-pg", storage.PgDialect{}, `ВЫБРАТЬ Наименование ИЗ Справочник.КлиентТр ГДЕ Наименование ПОДОБНО &П`, " LIKE "},

@@ -4296,16 +4296,20 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 		// Строковые функции языка запросов 1С. substr/length/ltrim/rtrim/trim
 		// есть в обоих диалектах с одинаковой семантикой: позиция в ПОДСТРОКА
 		// считается с ЕДИНИЦЫ, длина — в символах, а не в байтах.
-		"подстрока":   rw("substr(", ")"),
-		"substring":   rw("substr(", ")"),
-		"длинастроки": rw("length(", ")"),
-		"length":      rw("length(", ")"),
-		"сокрл":       rw("ltrim(", ")"),
-		"ltrim":       rw("ltrim(", ")"),
-		"сокрп":       rw("rtrim(", ")"),
-		"rtrim":       rw("rtrim(", ")"),
-		"сокрлп":      rw("trim(", ")"),
-		"trim":        rw("trim(", ")"),
+		"подстрока":    rw("substr(", ")"),
+		"substring":    rw("substr(", ")"),
+		"длинастроки":  rw("length(", ")"),
+		"length":       rw("length(", ")"),
+		"stringlength": rw("length(", ")"),
+		"сокрл":        rw("ltrim(", ")"),
+		"ltrim":        rw("ltrim(", ")"),
+		"trimleft":     rw("ltrim(", ")"),
+		"сокрп":        rw("rtrim(", ")"),
+		"rtrim":        rw("rtrim(", ")"),
+		"trimright":    rw("rtrim(", ")"),
+		"сокрлп":       rw("trim(", ")"),
+		"trim":         rw("trim(", ")"),
+		"trimall":      rw("trim(", ")"),
 	}
 	switch dialect {
 	case "sqlite":
@@ -4335,7 +4339,9 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 		m["нрег"] = rw("ob_lower(", ")")
 		m["lower"] = rw("ob_lower(", ")")
 		m["лев"] = rw("ob_left(", ")")
+		m["leftstr"] = rw("ob_left(", ")")
 		m["прав"] = rw("ob_right(", ")")
+		m["rightstr"] = rw("ob_right(", ")")
 	default: // pg
 		// Цел — усечение к нулю. В PG CAST(x AS INTEGER) округлял бы (half-even),
 		// поэтому берём TRUNC, которое усекает к нулю.
@@ -4363,7 +4369,9 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 		m["нрег"] = rw("lower(", ")")
 		m["lower"] = rw("lower(", ")")
 		m["лев"] = rw("left(", ")")
+		m["leftstr"] = rw("left(", ")")
 		m["прав"] = rw("right(", ")")
+		m["rightstr"] = rw("right(", ")")
 	}
 	return m
 }

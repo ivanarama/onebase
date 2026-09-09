@@ -82,20 +82,29 @@ func sqliteStringArg(args []driver.Value, i int) (string, bool) {
 	return "", false
 }
 
-// sqliteSideCut — общая реализация ob_left/ob_right. Отрицательная длина даёт
-// пустую строку (как left('abc', -1) в PostgreSQL — там это «всё, кроме
-// последних n», но отрицательная длина в ЛЕВ()/ПРАВ() бессмысленна, и пустая
-// строка честнее молчаливого сдвига).
+// sqliteSideCut — общая реализация ob_left/ob_right. При отрицательной длине
+// повторяет PostgreSQL: ob_left убирает последние |n| символов, ob_right —
+// первые |n|. Это сохраняет одинаковый результат запроса на обоих диалектах.
 func sqliteSideCut(args []driver.Value, fromLeft bool) (driver.Value, error) {
 	s, ok := sqliteStringArg(args, 0)
 	if !ok {
 		return args[0], nil
 	}
 	n, ok := sqliteIntArg(args, 1)
-	if !ok || n <= 0 {
+	if !ok || n == 0 {
 		return "", nil
 	}
 	r := []rune(s)
+	if n < 0 {
+		keep := len(r) + n
+		if keep <= 0 {
+			return "", nil
+		}
+		if fromLeft {
+			return string(r[:keep]), nil
+		}
+		return string(r[len(r)-keep:]), nil
+	}
 	if n >= len(r) {
 		return s, nil
 	}
