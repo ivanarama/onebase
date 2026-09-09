@@ -120,6 +120,12 @@ jobs:
           ldflags="-s -w"
           ldflags="$ldflags -X github.com/ivantit66/onebase/internal/version.Build=$BUILD_VER"
           ldflags="$ldflags -X github.com/ivantit66/onebase/internal/selfupdate.PublicKey=$RELEASE_PUBLIC_KEY"
+          # Жёсткий режим: релиз без .sig отвергается (#1195). Пока он был
+          # мягким, подпись обходилась её отсутствием — обладателю доступа к
+          # релизам не нужно подделывать подпись, достаточно не класть её.
+          # Без вшитого открытого ключа флаг не меняет ничего: проверка
+          # выключена целиком, и форк без ключей не задет.
+          ldflags="$ldflags -X github.com/ivantit66/onebase/internal/selfupdate.RequireSignature=1"
           go build "-ldflags=$ldflags" -o onebase${{ matrix.ext }} ./cmd/onebase
 
       # Гейт по goarch, а не только по goos: шаг требует CGO_ENABLED=1, то есть
@@ -137,6 +143,10 @@ jobs:
           $ldflags = "-s -w -H windowsgui"
           $ldflags += " -X github.com/ivantit66/onebase/internal/version.Build=$env:BUILD_VER"
           $ldflags += " -X github.com/ivantit66/onebase/internal/selfupdate.PublicKey=$env:RELEASE_PUBLIC_KEY"
+          # Тот же жёсткий режим, что и в CLI-бинаре (#1195). Оба обязаны идти
+          # с ним: на Windows лаунчер может быть запущен из любого из двух, и
+          # мягкий GUI-бинарь оставил бы дыру открытой на основной платформе.
+          $ldflags += " -X github.com/ivantit66/onebase/internal/selfupdate.RequireSignature=1"
           go build -tags webview "-ldflags=$ldflags" -o onebase-gui.exe ./cmd/onebase
 
       - name: Package (Windows)
@@ -306,11 +316,11 @@ jobs:
       - name: Sign checksums
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
-          # Открытый ключ передаётся не для подписи, а для сверки половин пары:
-          # приватный живёт в секретах, открытый в переменных, и перепутать их
-          # при ротации ничего не мешало. Рассинхрон давал зелёный релиз,
-          # который не принимает ни один установленный бинарь (#967).
-          RELEASE_PUBLIC_KEY: ${{ vars.RELEASE_PUBLIC_KEY }}
+          # Обычно подпись сверяется с тем же ключом, который вшит в бинарь.
+          # При плановой ротации переходный бинарь уже несёт новый ключ, но его
+          # архив обязан быть подписан старым: временная переменная отвязывает
+          # pair-check от ключа сборки без поддержки двух ключей в runtime.
+          RELEASE_SIGNING_PUBLIC_KEY: ${{ vars.RELEASE_SIGNING_PUBLIC_KEY || vars.RELEASE_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           if [ -z "${RELEASE_SIGNING_KEY:-}" ]; then
@@ -323,7 +333,7 @@ jobs:
             echo "::error::в dist нет ни одного файла .sha256 — подписывать нечего"
             exit 1
           fi
-          go run ./tools/relsign sign "${sums[@]}"
+          go run ./tools/relsign sign -pub "$RELEASE_SIGNING_PUBLIC_KEY" "${sums[@]}"
           ls -1 dist/*.sig
 
       - name: Compute commit subject
@@ -478,11 +488,11 @@ jobs:
       - name: Sign checksums
         env:
           RELEASE_SIGNING_KEY: ${{ secrets.RELEASE_SIGNING_KEY }}
-          # Открытый ключ передаётся не для подписи, а для сверки половин пары:
-          # приватный живёт в секретах, открытый в переменных, и перепутать их
-          # при ротации ничего не мешало. Рассинхрон давал зелёный релиз,
-          # который не принимает ни один установленный бинарь (#967).
-          RELEASE_PUBLIC_KEY: ${{ vars.RELEASE_PUBLIC_KEY }}
+          # Обычно подпись сверяется с тем же ключом, который вшит в бинарь.
+          # При плановой ротации переходный бинарь уже несёт новый ключ, но его
+          # архив обязан быть подписан старым: временная переменная отвязывает
+          # pair-check от ключа сборки без поддержки двух ключей в runtime.
+          RELEASE_SIGNING_PUBLIC_KEY: ${{ vars.RELEASE_SIGNING_PUBLIC_KEY || vars.RELEASE_PUBLIC_KEY }}
         run: |
           set -euo pipefail
           if [ -z "${RELEASE_SIGNING_KEY:-}" ]; then
@@ -495,7 +505,7 @@ jobs:
             echo "::error::в dist нет ни одного файла .sha256 — подписывать нечего"
             exit 1
           fi
-          go run ./tools/relsign sign "${sums[@]}"
+          go run ./tools/relsign sign -pub "$RELEASE_SIGNING_PUBLIC_KEY" "${sums[@]}"
           ls -1 dist/*.sig
 
       - name: Create Release

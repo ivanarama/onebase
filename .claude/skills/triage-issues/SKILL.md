@@ -21,32 +21,94 @@ description: Триаж открытых ишью ivanarama/onebase — клас
 `bug`/`enhancement`/`question`/`documentation`, `ready-fix`, `needs-decision`,
 `manual`. Всё.
 
-## Окружение: `gh` без `--json` не работает
+## UTF-8 — инвариант до первой мутации
 
-В рабочей копии стоит `gh` 2.4.0, а GitHub отключил Projects (classic). Команда,
-которая тянет объект целиком, падает с
-`GraphQL: Projects (classic) is being deprecated … (projectCards)` — ошибка в
-stderr, вывода нет. Пустой вывод при этом легко принять за «комментариев нет»,
-поэтому проверяй код возврата. Правило: **всегда называй поля через `--json`.**
+На Windows **до чтения любого файла** настрой PowerShell и только затем читай
+`CLAUDE.md`, этот скил и данные, из которых строится человекочитаемый текст:
 
-| Не работает | Работает |
-|---|---|
-| `gh issue view <N>`, `--comments` | `gh issue view <N> --json title,body,labels,comments,author` |
-| `gh pr view <N>` | `gh pr view <N> --json labels,body,…` |
-| `gh pr edit <N> --add-label X` | `echo '{"labels":["X"]}' \| gh api -X POST repos/ivanarama/onebase/issues/<N>/labels --input -` |
+```powershell
+$utf8 = [Text.UTF8Encoding]::new($false)
+[Console]::InputEncoding = $utf8
+[Console]::OutputEncoding = $utf8
+$OutputEncoding = $utf8
+Get-Content -LiteralPath <path> -Encoding UTF8 -Raw
+```
 
-`gh issue edit` (метки на **ишью**), `gh issue list`, `gh pr list`, `gh pr diff`,
-`gh issue comment` работают как есть.
+Голый `Get-Content` запрещён: Windows PowerShell может принять UTF-8 без BOM за
+Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. Перед POST проверь видимый
+текст обратным строгим преобразованием Windows-1251 → UTF-8; если оно даёт
+другой валидный текст, это mojibake — остановись **до любой GitHub-мутации**.
 
-**Метку после постановки сверь с ответом:** ответ POST содержит итоговый список
-меток объекта. `gh pr edit` ругался на неизвестное имя, REST — нет, поэтому
-опечатку в имени метки иначе не заметишь: узнаешь о ней только тем, что
-следующий этап не увидит объект.
+После POST человекочитаемого комментария запроси его `.body` через jq `@base64`,
+декодируй байты как UTF-8 и сравни байт-в-байт с отправленным телом. Пока точное
+совпадение не доказано, не меняй метки и не публикуй следующий protocol marker.
+Консольное отображение само по себе не считается проверкой.
+
+## GitHub CLI: проверяй возможность, а не номер версии
+
+Рабочая версия `gh` меняется независимо от репозитория, поэтому скилл не
+приписывает ей заранее известные поломки. В preflight выполни `gh --version` и
+`gh api user`; ненулевой exit code — ошибка, а не «пустой ответ». Используй
+точные `--json`-поля и REST-команды из самой процедуры: они одновременно
+задают минимальный контракт данных и не зависят от лишних полей CLI.
+
+После изменения метки всегда сверь ответ API или повторный GET. Если текущая
+версия отвергла использованный флаг либо поле, остановись до следующей мутации и
+сообщи точную ошибку; не переключайся молча на непроверенный обход.
 
 ## Процедура
 
-1. Синхронизация: `git fetch origin main`; если текущая ветка — `main`,
-   то `git merge --ff-only origin/main`. Иначе работай на том, что есть.
+1. **Изолированный снимок свежего `main` — до любого анализа.** Текущий
+   checkout считай недоверенным: он может отставать от `main`, содержать чужой
+   код или незакоммиченные изменения. Не обновляй, не переключай и не используй
+   его для чтения кода. Сначала зафиксируй immutable SHA только что полученного
+   `origin/main` и создай уникальный detached-worktree именно на нём:
+
+   ```powershell
+   git fetch origin main
+   if ($LASTEXITCODE -ne 0) { throw "git fetch origin main failed" }
+   $triageBase = (git rev-parse FETCH_HEAD).Trim()
+   if ($LASTEXITCODE -ne 0 -or $triageBase -notmatch '^[0-9a-f]{40}$') {
+     throw "cannot freeze fetched origin/main SHA"
+   }
+   $triageWorktree = [IO.Path]::GetFullPath((Join-Path (Get-Location) `
+     ("..\pp-triage-" + [guid]::NewGuid().ToString("N"))))
+   if (Test-Path -LiteralPath $triageWorktree) {
+     throw "triage worktree path already exists: $triageWorktree"
+   }
+   git worktree add --detach $triageWorktree $triageBase
+   if ($LASTEXITCODE -ne 0) { throw "detached triage worktree creation failed" }
+   $analysisHead = (git -C $triageWorktree rev-parse HEAD).Trim()
+   if ($LASTEXITCODE -ne 0) { throw "cannot read detached triage HEAD" }
+   $analysisDirty = @(git -C $triageWorktree status --porcelain=v1 --untracked-files=all)
+   if ($LASTEXITCODE -ne 0) { throw "cannot inspect detached triage worktree" }
+   if ($analysisHead -ne $triageBase -or $analysisDirty.Count -ne 0) {
+     throw "detached triage worktree does not match frozen origin/main"
+   }
+   ```
+
+   После сверки повторно полностью прочитай `CLAUDE.md` и
+   `.claude/skills/triage-issues/SKILL.md` через
+   `Get-Content -LiteralPath <path> -Encoding UTF8 -Raw` **из
+   `$triageWorktree`**; дальше действует эта свежая версия процедуры. Все
+   поиски по репозиторию, чтение кода, сборки и тесты выполняй только с рабочим
+   каталогом `$triageWorktree`. Текущий checkout, даже если он чист и указывает
+   на `main`, больше не является источником анализа.
+
+   Непосредственно перед **каждой GitHub-мутацией** снова получи
+   `git -C $triageWorktree rev-parse HEAD` и
+   `git -C $triageWorktree status --porcelain=v1 --untracked-files=all`:
+   обе команды обязаны завершиться с кодом 0, анализируемый HEAD — побайтно
+   равняться сохранённому `$triageBase`, а tracked/untracked изменения —
+   отсутствовать. Эта проверка идёт вместе с issue gate соответствующей фазы.
+   При сбое fetch, создании worktree,
+   несовпадении SHA или грязном analysis-worktree остановись без
+   comments/labels.
+
+   На любом выходе убери только зарегистрированный точный worktree командой
+   `git worktree remove $triageWorktree`; не удаляй каталог рекурсивно. Если
+   безопасная очистка не удалась, оставь путь в `ИТОГ` для человека. Уникальный
+   путь исключает захват или перезапись worktree другого запуска.
 
 2. Кандидаты получай прямым пагинированным REST, а не ограниченным первым
    экраном `gh issue list`. Repository Issues API возвращает также PR, поэтому
@@ -61,8 +123,23 @@ stderr, вывода нет. Пустой вывод при этом легко 
    валидного `pp:triage-route-done` для него. Такой issue не исключается из-за
    уже появившегося `<!-- pp:triage -->` или части маршрутных labels: crash между
    root-комментарием и labels обязан продолжить ту же транзакцию.
+   Сохрани номера всех issues, попавших в recovery-очередь, отдельным множеством.
 
-   Затем собери новые issues без route-claim. Отбрось у них метки
+   Затем собери новые issues без route-claim и явно вычти из второй выборки
+   сохранённое множество recovery-issues. Issue из recovery-очереди не может
+   одновременно или в следующем проходе той же выборки разбираться как новая:
+   она продолжает только уже начатую route-транзакцию.
+
+   Перед любым действием legacy-ветки выполни отдельный fail-closed guard для
+   каноничного комментария. Если в нём есть синтаксически полный
+   `pp:triage-route-claim`, запись `pp-triage-route-v1` полна, а её SHA-256
+   пересчитывается и совпадает с `fingerprint-sha256`, legacy-ветка запрещена
+   независимо от текущих labels: issue направляется только в recovery-очередь.
+   Похожая на route-claim, но повреждённая или непроверяемая строка тоже не
+   превращает комментарий в legacy — остановись для этой issue с
+   `НУЖЕН ЧЕЛОВЕК`.
+
+   У оставшихся новых issues отбрось метки
    `needs-decision`, `approved`, `ready-fix`, `in-work`, `hold`, `manual`, а
    также завершённый triage. Комментарии получай пагинированным REST; чужое или
    встроенное в текст упоминание не блокирует triage. Legacy-комментарий
