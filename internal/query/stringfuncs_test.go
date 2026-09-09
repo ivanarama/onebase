@@ -30,8 +30,8 @@ func TestStringFuncsCompileByDialect(t *testing.T) {
 		src     string
 		want    string
 	}{
-		// Общие для диалектов: substr/length/ltrim/rtrim/trim.
-		{"подстрока-sqlite", storage.SQLiteDialect{}, `ВЫБРАТЬ ПОДСТРОКА(Наименование, 1, 3) ИЗ Справочник.КлиентТр`, "substr("},
+		// SQLite использует UDF для PostgreSQL-совместимых границ ПОДСТРОКА.
+		{"подстрока-sqlite", storage.SQLiteDialect{}, `ВЫБРАТЬ ПОДСТРОКА(Наименование, 1, 3) ИЗ Справочник.КлиентТр`, "ob_substr("},
 		{"подстрока-pg", storage.PgDialect{}, `ВЫБРАТЬ ПОДСТРОКА(Наименование, 1, 3) ИЗ Справочник.КлиентТр`, "substr("},
 		{"длина-sqlite", storage.SQLiteDialect{}, `ВЫБРАТЬ ДЛИНАСТРОКИ(Наименование) ИЗ Справочник.КлиентТр`, "length("},
 		{"длина-pg", storage.PgDialect{}, `ВЫБРАТЬ ДЛИНАСТРОКИ(Наименование) ИЗ Справочник.КлиентТр`, "length("},

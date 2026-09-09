@@ -4293,9 +4293,10 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 		"естьnull": rw("COALESCE(", ")"),
 		"isnull":   rw("COALESCE(", ")"),
 		"coalesce": rw("COALESCE(", ")"),
-		// Строковые функции языка запросов 1С. substr/length/ltrim/rtrim/trim
-		// есть в обоих диалектах с одинаковой семантикой: позиция в ПОДСТРОКА
-		// считается с ЕДИНИЦЫ, длина — в символах, а не в байтах.
+		// Строковые функции языка запросов 1С. Позиция в ПОДСТРОКА считается с
+		// ЕДИНИЦЫ, длина — в символах, а не в байтах. SQLite обрабатывает
+		// неположительный start и отрицательную длину иначе, поэтому ниже для
+		// него используется UDF с семантикой PostgreSQL.
 		"подстрока":    rw("substr(", ")"),
 		"substring":    rw("substr(", ")"),
 		"длинастроки":  rw("length(", ")"),
@@ -4317,6 +4318,8 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 		// CAST(x AS INTEGER) усекает к нулю.
 		m["цел"] = rw("CAST(", " AS INTEGER)")
 		m["int"] = rw("CAST(", " AS INTEGER)")
+		m["подстрока"] = rw("ob_substr(", ")")
+		m["substring"] = rw("ob_substr(", ")")
 		m["началодня"] = rw("date(", ")")
 		m["startofday"] = rw("date(", ")")
 		m["конецдня"] = rw("datetime(date(", "), '+1 day', '-1 second')")

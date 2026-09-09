@@ -23,10 +23,10 @@ import (
 // ob_lower применяется в LowerLike SQLite-диалекта, обе — в трансляции
 // НРЕГ()/ВРЕГ() языка запросов.
 //
-// ob_left/ob_right — ЛЕВ()/ПРАВ() языка запросов. В SQLite нет left()/right(),
-// а substr() с нужным порядком аргументов из шаблона «префикс + аргументы +
-// суффикс» не собрать: substr(x, 1, n) требует вставки между аргументами.
-// Отсчёт в рунах, а не в байтах, — как substr() SQLite и left()/right() в PG.
+// ob_substr/ob_left/ob_right — ПОДСТРОКА()/ЛЕВ()/ПРАВ() языка запросов.
+// Встроенный substr() SQLite иначе обрабатывает неположительную начальную
+// позицию и отрицательную длину, чем PostgreSQL; left()/right() в SQLite нет.
+// Отсчёт в рунах, а не в байтах, — как у строковых функций обеих СУБД.
 // Регистрация глобальна и действует на все коннекты, открытые позже.
 func init() {
 	registerStringFunc("ob_lower", 1, func(args []driver.Value) (driver.Value, error) {
@@ -43,12 +43,58 @@ func init() {
 		}
 		return strings.ToUpper(s), nil
 	})
+	registerStringFunc("ob_substr", 3, sqliteSubstring)
 	registerStringFunc("ob_left", 2, func(args []driver.Value) (driver.Value, error) {
 		return sqliteSideCut(args, true)
 	})
 	registerStringFunc("ob_right", 2, func(args []driver.Value) (driver.Value, error) {
 		return sqliteSideCut(args, false)
 	})
+}
+
+// sqliteSubstring повторяет семантику PostgreSQL substr(text, start, count).
+// Позиции начинаются с единицы; если start меньше единицы, часть запрошенной
+// длины до начала строки не возвращается. Отрицательная длина является ошибкой.
+func sqliteSubstring(args []driver.Value) (driver.Value, error) {
+	s, ok := sqliteStringArg(args, 0)
+	if !ok {
+		return args[0], nil
+	}
+	start, ok := sqliteIntArg(args, 1)
+	if !ok {
+		return nil, fmt.Errorf("ПОДСТРОКА: начальная позиция должна быть целым числом")
+	}
+	count, ok := sqliteIntArg(args, 2)
+	if !ok {
+		return nil, fmt.Errorf("ПОДСТРОКА: длина должна быть целым числом")
+	}
+	if count < 0 {
+		return nil, fmt.Errorf("ПОДСТРОКА: отрицательная длина не допускается")
+	}
+
+	// PostgreSQL сначала вычисляет исключительную конечную позицию start+count,
+	// а фактическое начало ограничивает единицей. Поэтому (-2, 2) даёт пустую
+	// строку, а (0, 2) — первый символ.
+	end := start + count
+	if end <= 1 || count == 0 {
+		return "", nil
+	}
+	if start < 1 {
+		start = 1
+	}
+	r := []rune(s)
+	from := start - 1
+	if from >= len(r) {
+		return "", nil
+	}
+	to := end - 1
+	if to > len(r) {
+		to = len(r)
+	}
+	if to <= from {
+		return "", nil
+	}
+	return string(r[from:to]), nil
 }
 
 // registerStringFunc — общая обвязка: NULL в любом аргументе даёт NULL, как у

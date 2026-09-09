@@ -35,6 +35,7 @@ func seedStringFuncs(t *testing.T, ctx context.Context, db *storage.DB, ents []*
 	rows := []map[string]any{
 		{"Наименование": "Ленина", "Телефон": "+7 (999) 111-22-33"},
 		{"Наименование": "  Гагарина  ", "Телефон": "8 999 444-55-66"},
+		{"Наименование": "Скидка 10%", "Телефон": "служебный"},
 	}
 	for _, r := range rows {
 		if err := db.Upsert(ctx, e.Name, uuid.New(), r, e); err != nil {
@@ -63,6 +64,16 @@ func TestQueryStringFunctionsMatrix(t *testing.T) {
 				name: "ПОДСТРОКА",
 				src:  `ВЫБРАТЬ ПОДСТРОКА(К.Наименование, 1, 3) КАК Р ИЗ Справочник.КлиентСтр КАК К ГДЕ К.Наименование = "Ленина"`,
 				want: "Лен",
+			},
+			{
+				name: "ПОДСТРОКА нулевая позиция",
+				src:  `ВЫБРАТЬ ПОДСТРОКА(К.Наименование, 0, 2) КАК Р ИЗ Справочник.КлиентСтр КАК К ГДЕ К.Наименование = "Ленина"`,
+				want: "Л",
+			},
+			{
+				name: "ПОДСТРОКА отрицательная позиция",
+				src:  `ВЫБРАТЬ ПОДСТРОКА(К.Наименование, -2, 2) КАК Р ИЗ Справочник.КлиентСтр КАК К ГДЕ К.Наименование = "Ленина"`,
+				want: "",
 			},
 			{
 				name: "ДЛИНАСТРОКИ",
@@ -165,17 +176,17 @@ func TestQueryStringFunctionsMatrix(t *testing.T) {
 			},
 			{
 				name:   "НЕ ПОДОБНО",
-				src:    `ВЫБРАТЬ К.Телефон КАК Р ИЗ Справочник.КлиентСтр КАК К ГДЕ НЕ К.Наименование ПОДОБНО &Шаблон`,
+				src:    `ВЫБРАТЬ К.Телефон КАК Р ИЗ Справочник.КлиентСтр КАК К ГДЕ НЕ К.Наименование ПОДОБНО &Шаблон И К.Телефон <> "служебный"`,
 				params: map[string]any{"Шаблон": "%енин%"},
 				want:   "8 999 444-55-66",
 			},
 			{
-				// СПЕЦСИМВОЛ → ESCAPE: процент ищется как символ, а не как
-				// «любая последовательность».
+				// СПЕЦСИМВОЛ → ESCAPE: обратная косая черта делает процент
+				// обычным символом. Без ESCAPE шаблон совпал бы и с "Скидка 100".
 				name:   "СПЕЦСИМВОЛ",
-				src:    `ВЫБРАТЬ К.Наименование КАК Р ИЗ Справочник.КлиентСтр КАК К ГДЕ К.Телефон ПОДОБНО &Шаблон СПЕЦСИМВОЛ "\"`,
-				params: map[string]any{"Шаблон": "%(999)%"},
-				want:   "Ленина",
+				src:    `ВЫБРАТЬ К.Наименование КАК Р ИЗ Справочник.КлиентСтр КАК К ГДЕ К.Наименование ПОДОБНО &Шаблон СПЕЦСИМВОЛ "\"`,
+				params: map[string]any{"Шаблон": "%10\\%%"},
+				want:   "Скидка 10%",
 			},
 		}
 
@@ -215,6 +226,30 @@ func TestQueryStringFunctionsMatrix(t *testing.T) {
 					t.Errorf("ждали ровно одну строку\nSQL: %s", res.SQL)
 				}
 			})
+		}
+	})
+}
+
+func TestQuerySubstringRejectsNegativeLengthMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ents := stringFuncEntities()
+		if err := db.Migrate(ctx, ents); err != nil {
+			t.Fatalf("миграция: %v", err)
+		}
+		seedStringFuncs(t, ctx, db, ents)
+
+		res, err := query.Compile(
+			`ВЫБРАТЬ ПОДСТРОКА(К.Наименование, 1, -1) КАК Р ИЗ Справочник.КлиентСтр КАК К ГДЕ К.Наименование = "Ленина"`,
+			query.CompileOpts{Entities: ents, Dialect: db.Dialect()},
+		)
+		if err != nil {
+			t.Fatalf("компиляция: %v", err)
+		}
+		rows, err := db.Query(ctx, res.SQL, res.Args...)
+		if err == nil {
+			rows.Close()
+			t.Fatalf("отрицательная длина должна завершать запрос ошибкой; SQL: %s", res.SQL)
 		}
 	})
 }
