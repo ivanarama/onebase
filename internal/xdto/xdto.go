@@ -184,19 +184,33 @@ func Read(text string, resolve func(name string) *metadata.Entity) (*runtime.Obj
 		}
 		switch strings.ToLower(local) {
 		case "ref":
-			if id, err := uuid.Parse(val); err == nil {
-				obj.ID = id
+			id, err := uuid.Parse(val)
+			if err != nil {
+				return nil, opts, fmt.Errorf("xdto: поле %q: неверный UUID %q: %w", local, val, err)
 			}
+			obj.ID = id
 			continue
 		case "deletionmark":
-			opts.DeletionMark = val == "true"
+			parsed, err := parseXMLBool(val)
+			if err != nil {
+				return nil, opts, fmt.Errorf("xdto: поле %q: %w", local, err)
+			}
+			opts.DeletionMark = parsed
 			continue
 		case "posted":
-			opts.Posted = val == "true"
+			parsed, err := parseXMLBool(val)
+			if err != nil {
+				return nil, opts, fmt.Errorf("xdto: поле %q: %w", local, err)
+			}
+			opts.Posted = parsed
 			continue
 		}
 		if f := fieldForXMLName(ent, local); f != nil {
-			obj.Set(f.Name, parseValue(f, val))
+			parsed, err := parseValue(f, val)
+			if err != nil {
+				return nil, opts, fmt.Errorf("xdto: поле %q: %w", local, err)
+			}
+			obj.Set(f.Name, parsed)
 		}
 	}
 	return obj, opts, nil
@@ -342,7 +356,11 @@ func readRow(dec *xml.Decoder, fields []metadata.Field, start xml.StartElement) 
 			}
 			for i := range fields {
 				if strings.EqualFold(fields[i].Name, el.Name.Local) {
-					row[fields[i].Name] = parseValue(&fields[i], val)
+					parsed, err := parseValue(&fields[i], val)
+					if err != nil {
+						return nil, fmt.Errorf("xdto: поле %q: %w", start.Name.Local+"."+el.Name.Local, err)
+					}
+					row[fields[i].Name] = parsed
 					break
 				}
 			}
@@ -520,26 +538,43 @@ func scalarString(v any) string {
 	}
 }
 
-// parseValue разбирает текст в значение реквизита по его типу.
-func parseValue(f *metadata.Field, text string) any {
+// parseValue разбирает текст в значение реквизита по его типу. Типизированное
+// значение либо разбирается целиком, либо отклоняется: обмен не должен молча
+// подменять повреждённую дату/ссылку/булево пустым или ложным значением.
+func parseValue(f *metadata.Field, text string) (any, error) {
 	if f.RefEntity != "" {
 		if text == "" || text == EmptyRef {
-			return nil
+			return nil, nil
 		}
-		return text
+		id, err := uuid.Parse(text)
+		if err != nil {
+			return nil, fmt.Errorf("неверный UUID %q: %w", text, err)
+		}
+		return id.String(), nil
 	}
 	switch f.Type {
 	case metadata.FieldTypeBool:
-		return text == "true"
+		return parseXMLBool(text)
 	case metadata.FieldTypeDate:
 		if text == "" || text == EmptyDate {
-			return nil
+			return nil, nil
 		}
 		if t, ok := asTime(text); ok {
-			return t
+			return t, nil
 		}
-		return nil
+		return nil, fmt.Errorf("неверная дата %q, ожидается %s", text, dateLayout)
 	default:
-		return text
+		return text, nil
+	}
+}
+
+func parseXMLBool(text string) (bool, error) {
+	switch text {
+	case "true", "1":
+		return true, nil
+	case "false", "0":
+		return false, nil
+	default:
+		return false, fmt.Errorf("неверное логическое значение %q, ожидается true, false, 1 или 0", text)
 	}
 }
