@@ -4235,7 +4235,16 @@ func queriedColumnTypes(tokens []tok, opts CompileOpts) (map[string]map[metadata
 			continue
 		}
 		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
-			continue
+			if i+5 >= len(tokens) || tokens[i+4].kind != tIdent || tokens[i+5].kind != tLParen {
+				continue
+			}
+			vtUpper := upperFast(tokens[i+4].val)
+			_, isAccumVT := accumVTKinds[vtUpper]
+			_, isInfoVT := infoVTKinds[vtUpper]
+			if !(isAccumVT && (isAccumRegType(upper) || isAccountRegType(upper))) &&
+				!(isInfoVT && isInfoRegType(upper)) {
+				continue
+			}
 		}
 		name := tokens[i+2].val
 		switch {
