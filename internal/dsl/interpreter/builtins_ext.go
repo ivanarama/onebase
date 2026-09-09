@@ -73,10 +73,14 @@ func fmtBuiltinBounded(args []any, maxDecimalPlaces int32) (string, error) {
 			return "", fmt.Errorf("формат: число вне безопасного диапазона")
 		}
 	}
-	fmtStr := strings.ToLower(strArg(args, 1))
+	// Строку формата НЕ приводим к нижнему регистру: шаблон даты
+	// регистрозависим (MM — месяц, mm — минуты, HH — часы), а ключи «ДФ=»/
+	// «ЧДЦ=» ищет сам extractFormatParam, без учёта регистра.
+	fmtStr := strArg(args, 1)
+	fmtKeys := strings.ToLower(fmtStr)
 
 	// Date formatting
-	if strings.Contains(fmtStr, "дф=") || strings.Contains(fmtStr, "df=") {
+	if strings.Contains(fmtKeys, "дф=") || strings.Contains(fmtKeys, "df=") {
 		if t, ok := toTime(args, 0); ok {
 			pattern := extractFormatParam(fmtStr, "дф=")
 			if pattern == "" {
@@ -112,7 +116,16 @@ func fmtBuiltinBounded(args []any, maxDecimalPlaces int32) (string, error) {
 
 // extractFormatParam extracts a parameter value from a format string like "ЧДЦ=2; ЧРГ=' '"
 func extractFormatParam(fmtStr, key string) string {
-	idx := strings.Index(fmtStr, key)
+	// Ключ («дф=», «чдц=») ищем без учёта регистра, а значение отдаём из
+	// ИСХОДНОЙ строки: шаблон даты регистрозависим. Индексы нижнего регистра
+	// годятся для исходной строки, пока приведение не изменило длину (для
+	// латиницы и кириллицы это так); иначе честно работаем по нижнему регистру
+	// — прежнее поведение, регистр значения при этом теряется.
+	lowered := strings.ToLower(fmtStr)
+	if len(lowered) != len(fmtStr) {
+		fmtStr = lowered
+	}
+	idx := strings.Index(lowered, key)
 	if idx < 0 {
 		return ""
 	}
@@ -135,19 +148,64 @@ func extractFormatParam(fmtStr, key string) string {
 
 // formatDate converts a 1C-style date pattern to Go format and formats.
 //
-// Шаблон приходит сюда уже в нижнем регистре: fmtBuiltinBounded понижает регистр
-// ВСЕЙ строки формата, чтобы ключи «ДФ=»/«ЧДЦ=» распознавались в любом написании.
-// Поэтому месяц ищется как «mm» — верхнерегистровая «MM» до этой функции не доходит,
-// и отдельная замена для неё была бы мёртвым кодом. Порядок важен: «yyyy» заменяется
-// раньше «yy», иначе год превратился бы в «0606».
+// formatDate переводит шаблон 1С в раскладку Go. Токены РЕГИСТРОЗАВИСИМЫ, как в
+// 1С: «MM» — месяц, «mm» — минуты, «HH» — часы 24-часовые, «hh» — 12-часовые.
+// Русские написания («дд.ММ.гггг ЧЧ:мм:сс») понимаются наравне с латинскими.
+//
+// РАНЬШЕ ВРЕМЕНИ НЕ БЫЛО ВОВСЕ: строка формата приводилась к нижнему регистру
+// целиком, и в замене участвовали только yyyy/yy/mm/dd. Привычное
+// «ДФ=dd.MM.yyyy HH:mm» печатало «09.09.2026 hh:09» — «hh» уходило в вывод
+// литералом, а на месте минут оказывался МЕСЯЦ. Ошибки при этом не было, поэтому
+// такая метка времени спокойно доезжала до пользователя.
+//
+// СОВМЕСТИМОСТЬ. До этой правки строчное «mm» означало МЕСЯЦ (регистр не
+// различался), и конфигурации с «ДФ=dd.mm.yyyy» существуют. Прочитать его как
+// минуты значило бы молча заменить месяц минутами — ровно тот дефект, который
+// здесь и чинится. Поэтому строчное «mm»/«мм» читается минутами только там, где
+// в шаблоне ЕСТЬ часы: без часов минуты бессмысленны, а «дд.мм.гггг» продолжает
+// печатать месяц. Явное «MM» — всегда месяц, «HH:mm» — всегда часы и минуты.
 func formatDate(t time.Time, pattern string) string {
-	// Convert 1C patterns to Go
-	goFmt := pattern
-	goFmt = strings.ReplaceAll(goFmt, "yyyy", "2006")
-	goFmt = strings.ReplaceAll(goFmt, "yy", "06")
-	goFmt = strings.ReplaceAll(goFmt, "mm", "01")
-	goFmt = strings.ReplaceAll(goFmt, "dd", "02")
-	return t.Format(goFmt)
+	// Замены не перекрываются и не перечитывают уже подставленное, а порядок
+	// аргументов задаёт приоритет: «yyyy» пробуется раньше «yy», иначе год
+	// превратился бы в «0606».
+	minute := goLayoutMonth
+	if hasHourToken(pattern) {
+		minute = goLayoutMinute
+	}
+	return t.Format(strings.NewReplacer(
+		"yyyy", goLayoutYear4, "гггг", goLayoutYear4,
+		"yy", goLayoutYear2, "гг", goLayoutYear2,
+		"MM", goLayoutMonth, "ММ", goLayoutMonth,
+		"dd", goLayoutDay, "дд", goLayoutDay,
+		"HH", goLayoutHour24, "ЧЧ", goLayoutHour24,
+		"hh", goLayoutHour12, "чч", goLayoutHour12,
+		"ss", goLayoutSecond, "сс", goLayoutSecond,
+		"mm", minute, "мм", minute,
+	).Replace(pattern))
+}
+
+// Токены эталонного времени Go (Mon Jan 2 15:04:05 MST 2006) — именами, чтобы
+// таблица замен читалась как «год → год», а не как набор чисел.
+const (
+	goLayoutYear4  = "2006"
+	goLayoutYear2  = "06"
+	goLayoutMonth  = "01"
+	goLayoutDay    = "02"
+	goLayoutHour24 = "15"
+	goLayoutHour12 = "03"
+	goLayoutMinute = "04"
+	goLayoutSecond = "05"
+)
+
+// hasHourToken — есть ли в шаблоне часы. От этого зависит прочтение строчного
+// «mm»: минуты или (по совместимости) месяц.
+func hasHourToken(pattern string) bool {
+	for _, tok := range []string{"HH", "hh", "ЧЧ", "чч"} {
+		if strings.Contains(pattern, tok) {
+			return true
+		}
+	}
+	return false
 }
 
 // formatNumber formats a float with given decimal places and thousands separator.
