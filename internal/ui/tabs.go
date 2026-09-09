@@ -169,6 +169,21 @@ const tplAppShell = `{{define "page-app-shell"}}
     return t;
   }
   window.obOpenTab=openTab;
+  // Закрыть вкладку(и) по АДРЕСУ формы — команда ui.закрытьФорму (план 87).
+  // Адрес, а не «активная вкладка»: событие приходит в оболочку, и какая вкладка
+  // активна в момент доставки, зависит от порядка команд. Дубликаты одной формы
+  // (кнопка «новый экземпляр») закрываются все — форма-то одна.
+  //
+  // dirty снимаем: команду шлёт серверный код, который только что записал объект,
+  // и вопрос «есть несохранённые изменения» был бы про уже сохранённое. Крестик,
+  // контекст-меню и уход со страницы спрашивают по-прежнему.
+  function closeTabByURL(url){
+    var u=String(url||''); if(!u)return 0;
+    var n=0;
+    tabs.slice().forEach(function(t){ if(t.url===u){ t.dirty=false; closeTab(t); n++; } });
+    return n;
+  }
+  window.obCloseTabByURL=closeTabByURL;
 
   function tabByWindow(win){ for(var i=0;i<tabs.length;i++){ if(tabs[i].frame.contentWindow===win)return tabs[i]; } return null; }
   window.addEventListener('message',function(ev){
@@ -179,7 +194,7 @@ const tplAppShell = `{{define "page-app-shell"}}
     if(ev.origin!==location.origin)return;
     var d=ev.data; if(!d||typeof d!=='object')return;
     if(d.source==='obOpenTab' && d.url){ var ou=String(d.url); if(!openable(ou))return; openTab(ou, d.title?String(d.title):'Форма', {allowDup:!!d.allowDup}); }
-    else if(d.source==='obCloseTab'){ var ct=tabByWindow(ev.source); if(ct)closeTab(ct); }
+    else if(d.source==='obCloseTab'){ if(d.url){ closeTabByURL(String(d.url)); } else { var ct=tabByWindow(ev.source); if(ct)closeTab(ct); } }
     else if(d.source==='obSetTitle' && active && d.title){ active.title=String(d.title); active.label.textContent=active.title; active.btn.title=active.title; persist(); }
     else if(d.source==='obDirty'){ var dt=tabByWindow(ev.source); if(dt){ dt.dirty=!!d.dirty; dt.btn.classList.toggle('dirty',dt.dirty); } } // фаза 3
   });

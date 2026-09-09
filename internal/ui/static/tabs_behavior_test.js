@@ -141,6 +141,7 @@ function shell(storage, search = '') {
     }
   };
   let uuid = 0;
+  let confirms = 0;
   const context = {
     document,
     sessionStorage: storage,
@@ -154,7 +155,7 @@ function shell(storage, search = '') {
       }
     },
     setTimeout() { return 1; },
-    confirm() { return true; },
+    confirm() { confirms++; return true; },
     addEventListener(type, listener) {
       if (!windowListeners.has(type)) windowListeners.set(type, []);
       windowListeners.get(type).push(listener);
@@ -167,6 +168,20 @@ function shell(storage, search = '') {
   const frames = () => elements['ob-tabbody'].children.filter(element => element.tagName === 'IFRAME');
   return {
     open(url, title, options) { return context.obOpenTab(url, title, options); },
+    closeByURL(url) { return context.obCloseTabByURL(url); },
+    confirms() { return confirms; },
+    post(data, frameIndex) {
+      const source = frameIndex === undefined ? context : frames()[frameIndex].contentWindow;
+      for (const listener of windowListeners.get('message') || []) {
+        listener({origin: context.location.origin, source, data});
+      }
+    },
+    markDirty(index, dirty = true) {
+      const frame = frames()[index];
+      for (const listener of windowListeners.get('message') || []) {
+        listener({origin: context.location.origin, source: frame.contentWindow, data: {source: 'obDirty', dirty}});
+      }
+    },
     count() { return strip.children.length; },
     activeIndex() { return strip.children.findIndex(button => button.classList.contains('active')); },
     titles() { return strip.children.map(button => button.title); },
@@ -388,4 +403,53 @@ test('independent sessionStorage areas do not leak tab state', () => {
   assert.equal(savedActive(secondBase).url, '/ui/base-two');
   assert.equal(shell(firstBase).titles()[0], 'One');
   assert.equal(shell(secondBase).titles()[0], 'Two');
+});
+
+test('a form tab is closed by its address, not by whichever tab is active', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/обращение/1', 'Обращение');
+  // «Открой заявку, закрой звонок»: к моменту закрытия активна уже заявка,
+  // и закрытие «активной» унесло бы именно её.
+  app.open('/ui/document/заявка/2', 'Заявка');
+  assert.equal(app.activeIndex(), 1);
+
+  assert.equal(app.closeByURL('/ui/document/обращение/1'), 1);
+  assert.deepEqual(app.titles(), ['Заявка']);
+  assert.equal(app.activeIndex(), 0);
+  assert.equal(savedTabs(storage).length, 1);
+  // Повтор и неизвестный адрес безвредны: закрывать нечего.
+  assert.equal(app.closeByURL('/ui/document/обращение/1'), 0);
+  assert.equal(app.closeByURL(''), 0);
+  assert.equal(app.count(), 1);
+});
+
+test('a server-driven close keeps quiet about unsaved changes, the cross still asks', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/обращение/1', 'Обращение');
+  app.markDirty(0);
+  // Команду шлёт код, который только что записал объект, — переспрашивать не о чем.
+  assert.equal(app.closeByURL('/ui/document/обращение/1'), 1);
+  assert.equal(app.count(), 0);
+  assert.equal(app.confirms(), 0);
+
+  app.open('/ui/document/заявка/2', 'Заявка');
+  app.markDirty(0);
+  app.close(0);
+  assert.equal(app.confirms(), 1);
+});
+
+test('a frame may close a tab by address, and without one still closes itself', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/обращение/1', 'Обращение');
+  app.open('/ui/document/заявка/2', 'Заявка');
+
+  app.post({source: 'obCloseTab', url: '/ui/document/обращение/1'}, 1);
+  assert.deepEqual(app.titles(), ['Заявка']);
+
+  // Прежний контракт: без адреса закрывается вкладка-отправитель (крестик внутри формы).
+  app.post({source: 'obCloseTab'}, 0);
+  assert.equal(app.count(), 0);
 });

@@ -3471,6 +3471,28 @@ window.onebaseDevice = {
     // через window.open — иначе WebView2 откроет внешнее окно/браузер с базой.
     window.location.assign(url);
   }
+  // Закрыть вкладку формы по той же ссылке {вид, сущность, id}, какой её
+  // открывают. АДРЕС, А НЕ «АКТИВНАЯ ВКЛАДКА»: событие приходит в верхнее окно,
+  // и какая вкладка активна в этот момент — вопрос порядка доставки (команда
+  // «открой заявку, закрой звонок» закрыла бы только что открытую заявку).
+  //
+  // Несохранённое НЕ переспрашивается: команду шлёт серверный код, который
+  // только что записал объект, — это тот же смысл, что «НеСпрашиватьПриВыходе»
+  // в 1С перед ЭтаФорма.Закрыть(). Крестик и Ctrl+W по-прежнему спрашивают.
+  function closeFormTab(link) {
+    var url = formURL(link);
+    if (!url) return;
+    try {
+      // Вкладочная оболочка в этом окне.
+      if (typeof window.obCloseTabByURL === 'function') { window.obCloseTabByURL(url); return; }
+      // Мы во фрейме оболочки — просим родителя закрыть вкладку с этим адресом.
+      if (window.parent && window.parent !== window && typeof window.parent.obOpenTab === 'function') {
+        window.parent.postMessage({ source: 'obCloseTab', url: url }, window.location.origin);
+      }
+    } catch (_) {}
+    // Оболочки нет (нативное GUI-окно, отдельная вкладка браузера) — закрывать
+    // нечего: window.close() для не открытого скриптом окна браузер игнорирует.
+  }
   // Богатый тост (аналог ПоказатьОповещениеПользователя): заголовок/текст,
   // «важное» не исчезает само, клик по тосту со ссылкой открывает форму.
   function richToast(d) {
@@ -3512,6 +3534,7 @@ window.onebaseDevice = {
   if (!window.__obEmbedded) {
     window.addEventListener('onebase:ui.оповещение', function (ev) { richToast(ev.detail); });
     window.addEventListener('onebase:ui.открытьФорму', function (ev) { openFormTab(ev.detail); });
+    window.addEventListener('onebase:ui.закрытьФорму', function (ev) { closeFormTab(ev.detail); });
   }
   // BEGIN onebase-dev-system-handler (executed directly by the Node regression test)
   function obHandleDevSystem(msg, devEnabled, state, reload) {
