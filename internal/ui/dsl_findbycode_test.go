@@ -185,4 +185,8 @@ func TestFindByField_RefPresentationIsEntityLabel(t *testing.T) {
 	if byName != byCode {
 		t.Errorf("НайтиПоНаименованию дал %q, а НайтиПоКоду %q", byName, byCode)
 	}
+	safeMatch := call(`Справочники.Контрагенты.ПроверитьСовпадениеПоРеквизиту("Код", "К-000042").Ссылка`)
+	if safeMatch != byCode {
+		t.Errorf("ПроверитьСовпадениеПоРеквизиту дал %q, а НайтиПоКоду %q", safeMatch, byCode)
+	}
 }

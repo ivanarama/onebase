@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -521,8 +520,8 @@ func (db *DB) FindCatalogByField(ctx context.Context, entity *metadata.Entity, f
 	}
 	d := db.dialect
 	rows, err := db.Query(ctx,
-		fmt.Sprintf(`SELECT id, %s FROM %s WHERE %s = %s LIMIT 1`,
-			strings.Join(sel.columns, ", "), metadata.TableName(entity.Name), sel.searchColumn, d.Placeholder(1)),
+		fmt.Sprintf(`SELECT %s FROM %s WHERE %s = %s LIMIT 1`,
+			sel.selectList(), metadata.TableName(entity.Name), sel.searchColumn, d.Placeholder(1)),
 		value,
 	)
 	if err != nil {
@@ -580,39 +579,53 @@ func newLabelSelect(entity *metadata.Entity, fieldName string) (*labelSelect, er
 	for _, f := range metadata.LabelFields(entity) {
 		add(f)
 	}
-	// Запасной вариант — найденное поле: у справочника может не быть ни одного
-	// строкового реквизита, и тогда без него ссылка осталась бы вовсе безымянной.
-	add(*field)
+	// RowLabel строит синтетическую подпись документа из дат и чисел, если
+	// строкового представления нет. Выборка обязана дать ей те же данные, что
+	// полная строка в списках и пикерах; искомое ссылочное поле таким кандидатом
+	// не является.
+	if entity.Kind == metadata.KindDocument && len(entity.Presentation) == 0 {
+		for _, f := range entity.Fields {
+			if f.Type == metadata.FieldTypeDate || f.Type == metadata.FieldTypeNumber {
+				add(f)
+			}
+		}
+	}
 	return sel, nil
+}
+
+func (s *labelSelect) selectList() string {
+	if len(s.columns) == 0 {
+		return "id"
+	}
+	return "id, " + strings.Join(s.columns, ", ")
 }
 
 // scan читает строку выборки и собирает представление правилом RowLabel.
 func (s *labelSelect) scan(rows Rows) (string, string, error) {
+	return s.scanWithTail(rows)
+}
+
+// scanWithTail дополнительно читает служебные колонки после полей
+// представления (например, COUNT(*) в safe-match).
+func (s *labelSelect) scanWithTail(rows Rows, tail ...any) (string, string, error) {
 	values := make([]any, 0, len(s.columns)+1)
 	var idStr string
 	values = append(values, &idStr)
-	cells := make([]sql.NullString, len(s.columns))
+	cells := make([]any, len(s.columns))
 	for i := range cells {
 		values = append(values, &cells[i])
 	}
+	values = append(values, tail...)
 	if err := rows.Scan(values...); err != nil {
 		return "", "", err
 	}
 	row := map[string]any{"id": idStr}
 	for i, f := range s.fields {
-		if cells[i].Valid {
-			row[f.Name] = cells[i].String
+		if cells[i] != nil {
+			row[f.Name] = normalizeFieldValue(f, cells[i])
 		}
 	}
-	display := metadata.RowLabel(row, s.entity)
-	if strings.TrimSpace(display) == "" || display == idStr {
-		// RowLabel уходит в идентификатор, когда представлять нечем; для ссылки
-		// понятнее найденное значение, чем UUID.
-		if last := len(cells) - 1; last >= 0 && cells[last].Valid && strings.TrimSpace(cells[last].String) != "" {
-			display = cells[last].String
-		}
-	}
-	return idStr, display, nil
+	return idStr, metadata.RowLabel(row, s.entity), nil
 }
 
 // ListCatalogMatchesByField returns every matching row in deterministic order.
@@ -626,8 +639,8 @@ func (db *DB) ListCatalogMatchesByField(ctx context.Context, entity *metadata.En
 		return nil, nil, err
 	}
 	rows, err := db.Query(ctx,
-		fmt.Sprintf(`SELECT id, %s FROM %s WHERE %s = %s ORDER BY id`,
-			strings.Join(sel.columns, ", "), metadata.TableName(entity.Name), sel.searchColumn, db.dialect.Placeholder(1)),
+		fmt.Sprintf(`SELECT %s FROM %s WHERE %s = %s ORDER BY id`,
+			sel.selectList(), metadata.TableName(entity.Name), sel.searchColumn, db.dialect.Placeholder(1)),
 		value,
 	)
 	if err != nil {
@@ -657,17 +670,11 @@ func (db *DB) ListCatalogMatchesByField(ctx context.Context, entity *metadata.En
 // все совпадения (1 round-trip и 1 сканирование вместо прежних двух).
 // fieldName сопоставляется без учёта регистра.
 func (db *DB) MatchCatalogByField(ctx context.Context, entity *metadata.Entity, fieldName, value string) (string, string, int, error) {
-	var field *metadata.Field
-	for i := range entity.Fields {
-		if strings.EqualFold(entity.Fields[i].Name, fieldName) {
-			field = &entity.Fields[i]
-			break
-		}
+	sel, err := newLabelSelect(entity, fieldName)
+	if err != nil {
+		return "", "", 0, err
 	}
-	if field == nil {
-		return "", "", 0, fmt.Errorf("entity %s has no field %q", entity.Name, fieldName)
-	}
-	return db.matchCatalogByExpression(ctx, entity, metadata.ColumnName(*field), fieldName, value)
+	return db.matchCatalogByExpression(ctx, entity, sel, fieldName, value)
 }
 
 // MatchCatalogByPresentation ищет по фактическому явно заданному
@@ -738,7 +745,7 @@ func (db *DB) MatchCatalogByPresentation(ctx context.Context, entity *metadata.E
 	return "", "", count, nil
 }
 
-func (db *DB) matchCatalogByExpression(ctx context.Context, entity *metadata.Entity, expression, fieldLabel, value string) (string, string, int, error) {
+func (db *DB) matchCatalogByExpression(ctx context.Context, entity *metadata.Entity, sel *labelSelect, fieldLabel, value string) (string, string, int, error) {
 	table := metadata.TableName(entity.Name)
 	d := db.dialect
 	// Один запрос: LIMIT 1 берёт id/представление первой записи, а вложенный
@@ -747,8 +754,8 @@ func (db *DB) matchCatalogByExpression(ctx context.Context, entity *metadata.Ent
 	// Два плейсхолдера (а не повтор одного) — универсально для PostgreSQL ($1/$2)
 	// и SQLite (?, ?).
 	rows, err := db.Query(ctx,
-		fmt.Sprintf(`SELECT id, %s, (SELECT COUNT(*) FROM %s WHERE %s = %s) FROM %s WHERE %s = %s LIMIT 1`,
-			expression, table, expression, d.Placeholder(1), table, expression, d.Placeholder(2)),
+		fmt.Sprintf(`SELECT %s, (SELECT COUNT(*) FROM %s WHERE %s = %s) FROM %s WHERE %s = %s LIMIT 1`,
+			sel.selectList(), table, sel.searchColumn, d.Placeholder(1), table, sel.searchColumn, d.Placeholder(2)),
 		value, value,
 	)
 	if err != nil {
@@ -758,9 +765,9 @@ func (db *DB) matchCatalogByExpression(ctx context.Context, entity *metadata.Ent
 		rows.Close()
 		return "", "", 0, nil // 0 совпадений
 	}
-	var idStr, display string
 	cnt := 0
-	if err := rows.Scan(&idStr, &display, &cnt); err != nil {
+	idStr, display, err := sel.scanWithTail(rows, &cnt)
+	if err != nil {
 		rows.Close()
 		return "", "", 0, fmt.Errorf("match %s.%s scan: %w", entity.Name, fieldLabel, err)
 	}
