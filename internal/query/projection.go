@@ -82,6 +82,28 @@ func analyzeProjection(tokens []tok) ProjectionPlan {
 	return plan
 }
 
+// complexProjectionFields собирает поля именно из простых элементов каждого
+// SELECT сложного запроса. Поля из ГДЕ/СГРУППИРОВАТЬ и выражений намеренно не
+// входят: их значения не обещали приводить к типу результирующей колонки.
+func complexProjectionFields(tokens []tok) []string {
+	set := newFieldSet()
+	for i, token := range tokens {
+		if token.kind != tIdent {
+			continue
+		}
+		keyword, ok := sqlKW(token.val)
+		if !ok || keyword != "SELECT" {
+			continue
+		}
+		end := topLevelFrom(tokens, i)
+		for _, item := range splitProjectionItems(tokens[i+1 : end]) {
+			column, _ := parseProjectionItem(item)
+			set.addAll(column.Fields)
+		}
+	}
+	return set.list()
+}
+
 // allIdentifiers — все идентификаторы потока, кроме ключевых слов и имён
 // вызываемых функций.
 func allIdentifiers(tokens []tok) []string {
