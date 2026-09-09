@@ -45,9 +45,20 @@ type MethodLister interface {
 }
 
 // MapThis wraps map[string]any as a This (used for tablepart rows and register movement records).
-type MapThis struct{ M map[string]any }
+// Read/Write are optional metadata-aware hooks; retaining the concrete wrapper
+// keeps compatibility for callers that inspect M directly.
+type MapThis struct {
+	M     map[string]any
+	Read  func(name string) (value any, handled bool)
+	Write func(name string, value any) bool
+}
 
 func (m *MapThis) Get(name string) any {
+	if m.Read != nil {
+		if value, handled := m.Read(name); handled {
+			return value
+		}
+	}
 	low := strings.ToLower(name)
 	for k, v := range m.M {
 		if strings.ToLower(k) == low {
@@ -58,6 +69,9 @@ func (m *MapThis) Get(name string) any {
 }
 
 func (m *MapThis) Set(name string, v any) {
+	if m.Write != nil && m.Write(name, v) {
+		return
+	}
 	low := strings.ToLower(name)
 	for k := range m.M {
 		if strings.ToLower(k) == low {

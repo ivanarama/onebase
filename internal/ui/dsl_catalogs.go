@@ -154,6 +154,7 @@ type catWriter struct {
 	// assigned — реквизиты, присвоенные модулем в этой сессии: их чтение не
 	// маскируется, значение принадлежит текущей операции (план 88E).
 	assigned map[string]bool
+	resolver *dslRefAttrResolver
 }
 
 func (w *catWriter) ctx() context.Context {
@@ -163,20 +164,35 @@ func (w *catWriter) ctx() context.Context {
 	return context.Background()
 }
 
+func (w *catWriter) refResolver() *dslRefAttrResolver {
+	if w.resolver == nil && w.s != nil {
+		w.resolver = w.s.newDSLRefAttrResolver(w.ctx())
+		w.resolver.ctxSrc = w.ctxSrc
+		w.resolver.attachObject(w.entity, w.obj)
+	}
+	return w.resolver
+}
+
 // Get: имя табличной части → tpProxy, иначе значение поля шапки. Реквизит
 // прочитанного из БД объекта отдаётся по полевой политике роли (план 88E) —
 // значение, присвоенное самим модулем, возвращается как есть.
 func (w *catWriter) Get(name string) any {
-	for _, tp := range w.entity.TableParts {
+	for i := range w.entity.TableParts {
+		tp := &w.entity.TableParts[i]
 		if strings.EqualFold(tp.Name, name) {
-			return &tpProxy{obj: w.obj, tpName: tp.Name}
+			return &tpProxy{obj: w.obj, tpName: tp.Name, tp: tp, resolver: w.refResolver()}
 		}
 	}
 	v := w.obj.Get(name)
-	if !w.loaded || w.assigned[strings.ToLower(strings.TrimSpace(name))] {
+	field := findObjectAttributeField(w.entity, name)
+	if field == nil {
 		return v
 	}
-	return w.s.maskDSLValue(w.ctx(), w.entity, name, v)
+	maskStored := w.loaded && !w.assigned[strings.ToLower(strings.TrimSpace(name))]
+	if maskStored && w.s.dslFieldMasked(w.ctx(), w.entity, field.Name) {
+		return w.s.maskDSLValue(w.ctx(), w.entity, field.Name, v)
+	}
+	return w.s.declaredEntityFieldValue(field, v, w.refResolver())
 }
 
 func (w *catWriter) Set(name string, v any) {
