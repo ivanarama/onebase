@@ -573,6 +573,15 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		if _, ok := data["CanUnpost"]; !ok {
 			data["CanUnpost"] = s.can(r, kind, ent.Name, "unpost")
 		}
+		refWriteAccess, ok := data["RefWriteAccess"].(map[string]bool)
+		if !ok {
+			refWriteAccess = s.refWriteAccess(r, ent)
+			data["RefWriteAccess"] = refWriteAccess
+		}
+		// TPRefMeta feeds rows added by JavaScript. Rebuild it at the final
+		// render boundary so an earlier metadata-only value cannot re-enable
+		// inline creation for a user without write permission on the target.
+		data["TPRefMeta"] = tpRefMeta(ent, refWriteAccess)
 	}
 	// Same for info-register views, which key off "InfoReg" instead of "Entity".
 	if ir, ok := data["InfoReg"].(*metadata.InfoRegister); ok {
@@ -624,11 +633,40 @@ func (s *Server) allFunctions(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// refWriteAccess вычисляет права создания для всех сущностей, на которые
+// ссылаются поля формы. Отдельная карта позволяет шаблонам пересечь настройку
+// allow_inline_create с серверным RBAC, не передавая им request/user.
+func (s *Server) refWriteAccess(r *http.Request, entity *metadata.Entity) map[string]bool {
+	out := map[string]bool{}
+	if entity == nil {
+		return out
+	}
+	add := func(name string) {
+		if name == "" {
+			return
+		}
+		refEntity := s.reg.GetEntity(name)
+		out[name] = refEntity != nil && s.can(r, string(refEntity.Kind), refEntity.Name, "write")
+	}
+	for _, field := range entity.Fields {
+		add(field.RefEntity)
+	}
+	for _, tablePart := range entity.TableParts {
+		for _, field := range tablePart.Fields {
+			add(field.RefEntity)
+		}
+	}
+	return out
+}
+
 // tpRefMeta строит карту tpName → fieldName → {entity, allowCreate} для
-// JS-помощника addTpRow: динамически добавленные строки ТЧ рендерят кнопку
-// «+ Создать» с правильным целевым справочником, а allowCreate решает
-// показывать ли кнопку (дефолт в ТЧ — false, переопределяется в YAML).
-func tpRefMeta(entity *metadata.Entity) map[string]map[string]any {
+// JS-помощника addTpRow. Отсутствующая карта прав запрещает создание: прямой
+// вызов шаблона не должен становиться fail-open обходом HTTP render boundary.
+func tpRefMeta(entity *metadata.Entity, refWriteAccess ...map[string]bool) map[string]map[string]any {
+	writable := map[string]bool{}
+	if len(refWriteAccess) > 0 && refWriteAccess[0] != nil {
+		writable = refWriteAccess[0]
+	}
 	out := make(map[string]map[string]any, len(entity.TableParts))
 	for _, tp := range entity.TableParts {
 		m := map[string]any{}
@@ -636,7 +674,7 @@ func tpRefMeta(entity *metadata.Entity) map[string]map[string]any {
 			if f.RefEntity != "" {
 				m[f.Name] = map[string]any{
 					"entity":      f.RefEntity,
-					"allowCreate": f.InlineCreateEnabled(true),
+					"allowCreate": f.InlineCreateEnabled(true) && writable[f.RefEntity],
 				}
 			}
 		}
