@@ -82,8 +82,10 @@ func schedTestServer(t *testing.T, jobName, procBody string, enabled bool) *Serv
 	return srv
 }
 
-// runSchedDSL исполняет тело процедуры так же, как это делает обработка.
-func runSchedDSL(t *testing.T, s *Server, body string) ([]string, error) {
+// runDSLBody исполняет тело процедуры так же, как это делает обработка: DSL-код
+// поверх buildDSLVarsWithMessagesTx. Общий помощник пакета — им пользуются и
+// тесты глобала РегламентныеЗадания, и тесты методов менеджера документов.
+func runDSLBody(t *testing.T, s *Server, body string) ([]string, error) {
 	t.Helper()
 	prog, err := parser.New(lexer.New("Процедура Тест()\n"+body+"\nКонецПроцедуры", "тест.proc.os")).ParseProgram()
 	if err != nil {
@@ -105,7 +107,7 @@ func ждёмСтатус(t *testing.T, s *Server, runID string, want string) {
 	deadline := time.Now().Add(5 * time.Second)
 	var last string
 	for time.Now().Before(deadline) {
-		msgs, err := runSchedDSL(t, s, `Сообщить(РегламентныеЗадания.Прогон("`+runID+`").Статус);`)
+		msgs, err := runDSLBody(t, s, `Сообщить(РегламентныеЗадания.Прогон("`+runID+`").Статус);`)
 		if err != nil {
 			t.Fatalf("опрос прогона: %v", err)
 		}
@@ -124,7 +126,7 @@ func ждёмСтатус(t *testing.T, s *Server, runID string, want string) {
 func TestРегламентныеЗадания_ЗапускИОпросСтатуса(t *testing.T) {
 	s := schedTestServer(t, "ОбменСУзлами", `Сообщить("обмен выполнен");`, true)
 
-	msgs, err := runSchedDSL(t, s, `Сообщить(РегламентныеЗадания.Запустить("ОбменСУзлами"));`)
+	msgs, err := runDSLBody(t, s, `Сообщить(РегламентныеЗадания.Запустить("ОбменСУзлами"));`)
 	if err != nil {
 		t.Fatalf("Запустить: %v", err)
 	}
@@ -154,14 +156,14 @@ func TestРегламентныеЗадания_ЗапускИОпросСтат
 // Структура прогона отдаёт то, что обещано справкой.
 func TestРегламентныеЗадания_ПрогонОтдаётПоляЖурнала(t *testing.T) {
 	s := schedTestServer(t, "Отчёт", `Сообщить("готово");`, true)
-	msgs, err := runSchedDSL(t, s, `Сообщить(РегламентныеЗадания.Запустить("Отчёт"));`)
+	msgs, err := runDSLBody(t, s, `Сообщить(РегламентныеЗадания.Запустить("Отчёт"));`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	runID := msgs[0]
 	ждёмСтатус(t, s, runID, "success")
 
-	msgs, err = runSchedDSL(t, s, `
+	msgs, err = runDSLBody(t, s, `
   Прогон = РегламентныеЗадания.Прогон("`+runID+`");
   Сообщить(Прогон.Задание);
   Сообщить(Прогон.Статус);
@@ -189,11 +191,11 @@ func TestРегламентныеЗадания_ЗанятоеЗаданиеЛо
 	// таймаута задания и не оставлял крутящуюся горутину после себя.
 	s := schedTestServer(t, "Долгое", `Приостановить(3);`, true)
 
-	if _, err := runSchedDSL(t, s, `РегламентныеЗадания.Запустить("Долгое");`); err != nil {
+	if _, err := runDSLBody(t, s, `РегламентныеЗадания.Запустить("Долгое");`); err != nil {
 		t.Fatalf("первый запуск: %v", err)
 	}
 
-	msgs, err := runSchedDSL(t, s, `
+	msgs, err := runDSLBody(t, s, `
   Попытка
     РегламентныеЗадания.Запустить("Долгое");
     Сообщить("запустилось повторно");
@@ -213,7 +215,7 @@ func TestРегламентныеЗадания_ЗанятоеЗаданиеЛо
 
 func TestРегламентныеЗадания_НеизвестноеЗаданиеДаётИсключение(t *testing.T) {
 	s := schedTestServer(t, "Настоящее", `Сообщить("ок");`, true)
-	msgs, err := runSchedDSL(t, s, `
+	msgs, err := runDSLBody(t, s, `
   Попытка
     РегламентныеЗадания.Запустить("ТакогоНет");
   Исключение
@@ -235,7 +237,7 @@ func TestРегламентныеЗадания_НеизвестноеЗадан
 // подрезана, а id пережить её в прикладных данных.
 func TestРегламентныеЗадания_ЧужойИдентификаторДаётНеопределено(t *testing.T) {
 	s := schedTestServer(t, "Задание", `Сообщить("ок");`, true)
-	msgs, err := runSchedDSL(t, s, `
+	msgs, err := runDSLBody(t, s, `
   Прогон = РегламентныеЗадания.Прогон("6f1b6b7e-0000-4000-8000-000000000000");
   Если Прогон = Неопределено Тогда
     Сообщить("неопределено");
@@ -254,7 +256,7 @@ func TestРегламентныеЗадания_ЧужойИдентификат
 // иначе опечатка всплывёт только при разборе инцидента.
 func TestРегламентныеЗадания_МусорВместоИдентификатораДаётИсключение(t *testing.T) {
 	s := schedTestServer(t, "Задание", `Сообщить("ок");`, true)
-	msgs, err := runSchedDSL(t, s, `
+	msgs, err := runDSLBody(t, s, `
   Попытка
     РегламентныеЗадания.Прогон("не-идентификатор");
     Сообщить("принято молча");
@@ -273,7 +275,7 @@ func TestРегламентныеЗадания_МусорВместоИдент
 // «задание без расписания». Тест фиксирует поведение, чтобы его не «починили».
 func TestРегламентныеЗадания_ВыключенноеЗаданиеЗапускается(t *testing.T) {
 	s := schedTestServer(t, "ПоТребованию", `Сообщить("сработало");`, false)
-	msgs, err := runSchedDSL(t, s, `Сообщить(РегламентныеЗадания.Запустить("ПоТребованию"));`)
+	msgs, err := runDSLBody(t, s, `Сообщить(РегламентныеЗадания.Запустить("ПоТребованию"));`)
 	if err != nil {
 		t.Fatalf("выключенное задание не запустилось: %v", err)
 	}
@@ -283,14 +285,14 @@ func TestРегламентныеЗадания_ВыключенноеЗадан
 // Упавшее задание доезжает до инициатора статусом и текстом ошибки.
 func TestРегламентныеЗадания_УпавшееЗаданиеВидноВПрогоне(t *testing.T) {
 	s := schedTestServer(t, "Сломанное", `ВызватьИсключение "узел N-217 не ответил";`, true)
-	msgs, err := runSchedDSL(t, s, `Сообщить(РегламентныеЗадания.Запустить("Сломанное"));`)
+	msgs, err := runDSLBody(t, s, `Сообщить(РегламентныеЗадания.Запустить("Сломанное"));`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	runID := msgs[0]
 	ждёмСтатус(t, s, runID, "error")
 
-	msgs, err = runSchedDSL(t, s, `Сообщить(РегламентныеЗадания.Прогон("`+runID+`").Ошибка);`)
+	msgs, err = runDSLBody(t, s, `Сообщить(РегламентныеЗадания.Прогон("`+runID+`").Ошибка);`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -306,7 +308,7 @@ func TestРегламентныеЗадания_БезПланировщикаВ
 	s := schedTestServer(t, "Задание", `Сообщить("ок");`, true)
 	s.sched = nil // ровно то, что делает ui.NewOfflineServer
 
-	msgs, err := runSchedDSL(t, s, `
+	msgs, err := runDSLBody(t, s, `
   Попытка
     РегламентныеЗадания.Запустить("Задание");
     Сообщить("запустилось без планировщика");
@@ -326,7 +328,7 @@ func TestРегламентныеЗадания_БезПланировщикаВ
 // том виде, в каком пример приведён в справке.
 func TestРегламентныеЗадания_ДлительностьНеУходитВНаучнуюНотацию(t *testing.T) {
 	s := schedTestServer(t, "Длительное", `Сообщить("ок");`, true)
-	msgs, err := runSchedDSL(t, s, `Сообщить(РегламентныеЗадания.Запустить("Длительное"));`)
+	msgs, err := runDSLBody(t, s, `Сообщить(РегламентныеЗадания.Запустить("Длительное"));`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +340,7 @@ func TestРегламентныеЗадания_ДлительностьНеУх
 		`UPDATE _scheduled_runs SET duration_ms=3600000 WHERE id=?`, runID); err != nil {
 		t.Fatal(err)
 	}
-	msgs, err = runSchedDSL(t, s,
+	msgs, err = runDSLBody(t, s,
 		`Сообщить("Обмен занял " + РегламентныеЗадания.Прогон("`+runID+`").ДлительностьМс + " мс");`)
 	if err != nil {
 		t.Fatal(err)
@@ -353,7 +355,7 @@ func TestРегламентныеЗадания_ДлительностьНеУх
 // снаружи это выглядело бы зависшим сервером.
 func TestРегламентныеЗадания_ЗапускВТранзакцииОтвергается(t *testing.T) {
 	s := schedTestServer(t, "Задание", `Сообщить("ок");`, true)
-	msgs, err := runSchedDSL(t, s, `
+	msgs, err := runDSLBody(t, s, `
   НачатьТранзакцию();
   Попытка
     РегламентныеЗадания.Запустить("Задание");

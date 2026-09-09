@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/typedempty"
 )
 
 // Статусы safe-match API (ПроверитьСовпадениеПоРеквизиту): кладутся в поле
@@ -252,7 +253,7 @@ func (r *CatalogsRoot) Get(entityName string) any {
 	}
 	return &CatalogProxy{entity: entity, db: r.db, ctxSrc: r.ctxSrc, caller: r.caller,
 		access: r.access, fieldSearch: r.fieldSearch, registrar: r.registrar, objFactory: r.objFactory,
-		deleter: r.deleter}
+		deleter: r.deleter, lookup: r.lookup}
 }
 
 func (r *CatalogsRoot) Set(_ string, _ any) {}
@@ -272,6 +273,7 @@ type CatalogProxy struct {
 	registrar   ExchangeRegistrar
 	objFactory  CatalogObjectFactory
 	deleter     CatalogDeleter
+	lookup      EntityLookup
 }
 
 // NewCatalogProxy создаёт менеджера справочника для привязки к ссылкам,
@@ -314,6 +316,13 @@ func (p *CatalogProxy) WithExchangeRegistrar(reg ExchangeRegistrar) *CatalogProx
 // (менеджеру ссылки). Для цепочки.
 func (p *CatalogProxy) WithObjectFactory(f CatalogObjectFactory) *CatalogProxy {
 	p.objFactory = f
+	return p
+}
+
+// WithEntityLookup supplies metadata for typed empty reference values returned
+// by the legacy writer used outside the UI object factory.
+func (p *CatalogProxy) WithEntityLookup(lookup EntityLookup) *CatalogProxy {
+	p.lookup = lookup
 	return p
 }
 
@@ -399,6 +408,7 @@ func (p *CatalogProxy) CallMethod(method string, args []any) any {
 			access:    p.access,
 			registrar: p.registrar,
 			deleter:   p.deleter,
+			lookup:    p.lookup,
 			fields:    map[string]any{},
 		}
 	case "удалить", "delete":
@@ -481,6 +491,7 @@ func (p *CatalogProxy) LoadObject(uuidStr string) (any, error) {
 		access:    p.access,
 		registrar: p.registrar,
 		deleter:   p.deleter,
+		lookup:    p.lookup,
 		idStr:     uuidStr,
 		fields:    fields,
 	}, nil
@@ -661,6 +672,7 @@ type CatalogRecordWriter struct {
 	access    RowAccessChecker
 	registrar ExchangeRegistrar
 	deleter   CatalogDeleter // проносится в Manager возвращаемой ссылки
+	lookup    EntityLookup
 	idStr     string
 	fields    map[string]any
 }
@@ -686,15 +698,96 @@ func (w *CatalogRecordWriter) Get(name string) any {
 	low := strings.ToLower(name)
 	for k, v := range w.fields {
 		if strings.ToLower(k) == low {
-			return v
+			return w.declaredValue(name, v)
 		}
 	}
-	return nil
+	return w.declaredValue(name, nil)
+}
+
+func (w *CatalogRecordWriter) declaredValue(name string, raw any) any {
+	if w == nil || w.entity == nil {
+		return raw
+	}
+	for i := range w.entity.Fields {
+		field := &w.entity.Fields[i]
+		if !strings.EqualFold(field.Name, name) {
+			continue
+		}
+		desc, _ := typedempty.FromField(field)
+		if field.RefEntity == "" {
+			return typedempty.Normalize(desc, raw, nil)
+		}
+		var target *metadata.Entity
+		if w.lookup != nil {
+			target = w.lookup.GetEntity(field.RefEntity)
+		}
+		manager := RefManager(nil)
+		if target != nil && target.Kind == metadata.KindCatalog {
+			manager = &CatalogProxy{entity: target, db: w.db, ctxSrc: w.ctxSrc, access: w.access, registrar: w.registrar, deleter: w.deleter, lookup: w.lookup}
+		}
+		ref := &Ref{Type: field.RefEntity, Kind: refKindFromEntity(target), Manager: manager}
+		if raw != nil {
+			if existing, ok := raw.(*Ref); ok {
+				copy := *existing
+				if copy.Type == "" {
+					copy.Type = field.RefEntity
+				}
+				if copy.Kind == "" {
+					copy.Kind = ref.Kind
+				}
+				if copy.Manager == nil {
+					copy.Manager = manager
+				}
+				return &copy
+			}
+			ref.UUID = strings.TrimSpace(fmt.Sprint(raw))
+			ref.Name = ref.UUID
+		}
+		return ref
+	}
+	return raw
+}
+
+func refKindFromEntity(entity *metadata.Entity) metadata.Kind {
+	if entity == nil {
+		return ""
+	}
+	return entity.Kind
 }
 
 // Set — установка значения поля (Зап.Поле = значение).
 func (w *CatalogRecordWriter) Set(name string, v any) {
 	w.fields[strings.ToLower(name)] = v
+}
+
+// GetDynamicField reads a declared requisit through Object["Field"]. The bool
+// separates an unset known requisit from an unknown name.
+func (w *CatalogRecordWriter) GetDynamicField(name string) (any, bool) {
+	if !w.hasDynamicField(name) {
+		return nil, false
+	}
+	return w.Get(name), true
+}
+
+// SetDynamicField writes a declared requisit through Object["Field"].
+func (w *CatalogRecordWriter) SetDynamicField(name string, value any) bool {
+	if !w.hasDynamicField(name) {
+		return false
+	}
+	w.Set(name, value)
+	return true
+}
+
+func (w *CatalogRecordWriter) hasDynamicField(name string) bool {
+	if w == nil || w.entity == nil {
+		return false
+	}
+	for _, field := range w.entity.Fields {
+		if strings.EqualFold(field.Name, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // Fields — имена заполненных полей объекта. Позволяет использовать объект
@@ -740,7 +833,7 @@ func (w *CatalogRecordWriter) CallMethod(method string, args []any) any {
 		return &Ref{
 			UUID: id, Name: name, Type: w.entity.Name, Kind: w.entity.Kind,
 			Manager: &CatalogProxy{entity: w.entity, db: w.db, ctxSrc: w.ctxSrc, access: w.access,
-				registrar: w.registrar, deleter: w.deleter},
+				registrar: w.registrar, deleter: w.deleter, lookup: w.lookup},
 		}
 	case "установитьзначение", "setvalue":
 		if len(args) >= 2 {
