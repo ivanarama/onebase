@@ -594,6 +594,7 @@ func TestPublicCommandReportsRouteMismatchesAndUnfinishedHumanRoute(t *testing.T
 		t.Fatal(err)
 	}
 
+	//nolint:gosec // The executable and flags are fixed; variable arguments are test-owned temporary paths.
 	command := exec.Command("go", "run", ".", "-json", "-prs", prsPath, "-issues", issuesPath,
 		"-contract", filepath.Join("..", "..", ".claude", "skills", "review-queue", "SKILL.md"))
 	output, err := command.CombinedOutput()
