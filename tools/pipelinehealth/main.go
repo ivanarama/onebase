@@ -442,6 +442,10 @@ func analyze(prs []apiPull, owner string) report {
 			case currentCompletions > 0:
 				item.Stage = "merge"
 				result.MergeCandidates = append(result.MergeCandidates, item)
+			default:
+				result.HumanWaiting = append(result.HumanWaiting, item)
+				result.add("yellow", "ship_without_current_review_proof", pr.Number,
+					"ship есть, но доказательств ревью текущего HEAD нет при существующей истории протокола; нужен человек")
 			}
 			continue
 		}

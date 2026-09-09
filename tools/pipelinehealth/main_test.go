@@ -402,6 +402,20 @@ func TestShipOnUnmarkedAuthorPushIsNotCarriedIntoReview(t *testing.T) {
 	}
 }
 
+func TestShipWithProtocolHistoryButNoCompletionsIsVisible(t *testing.T) {
+	item := testPR(7, headA, "ship")
+	item = addComment(item, 40, syncIntent(headB, 20, 25, 30))
+	item = addComment(item, 41, syncDone(40, headB, headB))
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.HumanWaiting) != 1 || got.HumanWaiting[0].Number != 7 {
+		t.Fatalf("ship PR disappeared from every queue: %+v", got)
+	}
+	if !hasFinding(got, "ship_without_current_review_proof") {
+		t.Fatalf("ship PR disappeared without a finding: %+v", got)
+	}
+}
+
 func testIssue(number int, comments ...apiComment) apiIssue {
 	return apiIssue{Number: number, Title: "Issue", HTMLURL: "https://example.test/issue", CreatedAt: "2026-09-01T00:00:00Z", UpdatedAt: "2026-09-02T00:00:00Z", State: "open", Thread: comments}
 }
