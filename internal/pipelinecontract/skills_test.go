@@ -1033,6 +1033,39 @@ func TestFixAndMergeCheckoutExactlyReviewedHead(t *testing.T) {
 	)
 }
 
+func TestForkPullRequestsStayOutsideAutomaticWritePaths(t *testing.T) {
+	fixer := skill(t, "fix-approved")
+	merge := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+
+	requireAllCompact(t, fixer,
+		"headRepoFullName:(.head.repo.full_name // null)",
+		"headRepoFullName == \"ivanarama/onebase\"",
+		"PR из форка или с уже недоступным head repository не является кандидатом FIX",
+		"не меняй labels/comments и не пытайся делать `git fetch`/push",
+		"продолжи той же очередью с остальными same-repository PR",
+		"Форк-PR не должен навсегда блокировать продуктовую FIX-очередь",
+		"PR #<M> — доработка у автора",
+		"`maintainer_can_modify` не расширяет полномочия FIX",
+	)
+	requireAllCompact(t, merge,
+		"headRepoFullName:(.head.repo.full_name // null)",
+		"До `git fetch` повторно потребуй точный `headRepoFullName == \"ivanarama/onebase\"`",
+		"не создавай worktree, не fetch/push его ветку",
+		"не меняй comments/labels и сохрани `ship`",
+		"конфликт форк-PR: доработка у автора",
+		"`maintainer_can_modify` не разрешает автоматике переписывать чужую ветку",
+	)
+	requireAllCompact(t, docs,
+		"Автоматическая доработка разрешена только для веток `ivanarama/onebase`",
+		"PR из форка не блокирует остальную очередь",
+		"REST-путь по смене HEAD по-прежнему снимает устаревший `changes-requested`",
+		"FIX вообще не дорабатывает форк-PR",
+		"REST merge/update остаются пригодны для форков",
+		"останавливается без мутаций со статусом «доработка у автора»",
+	)
+}
+
 func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 	tail := skill(t, "tail-issues")
 	requireAllCompact(t, tail,

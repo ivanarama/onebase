@@ -76,11 +76,19 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 
    ```
    gh api --paginate "repos/ivanarama/onebase/pulls?state=open&per_page=100" \
-     --jq '.[] | {number,title,body,state,baseRefName:.base.ref,headRefName:.head.ref,headSha:.head.sha,labels:[.labels[].name]}'
+     --jq '.[] | {number,title,body,state,baseRefName:.base.ref,headRefName:.head.ref,headSha:.head.sha,headRepoFullName:(.head.repo.full_name // null),labels:[.labels[].name]}'
    ```
 
    Затем оставь только `state == "open"`, `baseRefName == "main"` и исключи
-   `ship` и `hold`.
+   `ship` и `hold`. Обычная доработка и recovery FIX дополнительно требуют
+   точный `headRepoFullName == "ivanarama/onebase"`. PR из форка или с уже
+   недоступным head repository не является кандидатом FIX: не читай его
+   замечания как задание на автоправку, не меняй labels/comments и не пытайся
+   делать `git fetch`/push. Добавь в сводку `PR #<M> — доработка у автора
+   (<headRepoFullName>:<headRefName>)` и продолжи той же очередью с остальными
+   same-repository PR, а при их отсутствии — с новой issue. Форк-PR не должен
+   навсегда блокировать продуктовую FIX-очередь. Если другой работы нет, точный
+   итог: `ИТОГ: ПУСТО (автоматических работ нет; PR #<M> — доработка у автора)`.
    FIX production-конвейера не изменяет PR в другую целевую ветку. Пагинация
    обязательна и для восстановления:
    припаркованные PR не должны навсегда скрывать более поздний crash-handoff.
@@ -160,7 +168,7 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    построй тот же единый поток переходов владельца:
 
    ```
-     gh api repos/ivanarama/onebase/pulls/<M> --jq '{sha:.head.sha,state,baseRefName:.base.ref}'
+     gh api repos/ivanarama/onebase/pulls/<M> --jq '{sha:.head.sha,state,baseRefName:.base.ref,headRepoFullName:(.head.repo.full_name // null)}'
    gh api --paginate "repos/ivanarama/onebase/issues/<M>/comments?per_page=100" \
      --jq '.[] | {id,node_id,created_at,updated_at,author:.user.login,body}'
    gh api repos/ivanarama/onebase/issues/<M> --jq '[.labels[].name]'
@@ -168,6 +176,7 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 
    **До CAS-push** продолжать можно, только пока HEAD совпадает с исходной canonical completion,
    PR всё ещё `open`, `baseRefName == "main"`,
+   `headRepoFullName == "ivanarama/onebase"`,
    эта же completion/decision остаётся последним валидным переходом с владельцем
    FIX, `changes-requested` присутствует, а `ship`, `hold`, `needs-decision`
    отсутствуют. Более поздний `pp:review-again` немедленно передаёт владельца
@@ -526,6 +535,11 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
      git worktree add -B pp-rework-<M> ../pp-rework-<M> <SHA completion>
      ```
 
+     Эти команды разрешены только после повторной REST-сверки точного
+     `headRepoFullName == "ivanarama/onebase"`. `maintainer_can_modify` не
+     расширяет полномочия FIX: ветку форка конвейер не fetch/push и оставляет
+     автору, даже когда GitHub технически разрешил бы запись мейнтейнеру.
+
      Несовпадение `FETCH_HEAD` — чужой push: worktree не создавай. Сначала
      примени правило post-push recovery из п. 1: валидный `PP-Fix-Transition`
      оставь финализации FIX, и только чужой HEAD без него безопасно верни в
@@ -757,7 +771,8 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 10. Финал: `ИТОГ: ГОТОВО (PR #<M> → ишью #<N>)` /
     `ИТОГ: ГОТОВО (доработан PR #<M> по ревью)` /
     `ИТОГ: НУЖЕН ЧЕЛОВЕК (#<N> — <вопрос в одну строку>)` /
-    `ИТОГ: НЕ СМОГ (<причина>)`.
+    `ИТОГ: НЕ СМОГ (<причина>)` /
+    `ИТОГ: ПУСТО (автоматических работ нет; PR #<M> — доработка у автора)`.
 
 Дальше по конвейеру: `/review-queue` пишет заключение и ставит `reviewed` либо
 возвращает PR тебе меткой `changes-requested`; `ship` после чтения заключения
