@@ -267,43 +267,55 @@ API из конфигурации либо отката всего среза, �
   runtime-формой, проверить DSL-результат/ошибку и неизменность исходного
   `FormModule`; параллельный race-тест создаёт независимые экземпляры.
 
-### Срез B — экземпляр и первичный серверный рендер
+### Срез B — безопасный экземпляр, authority gate и первичный рендер
 
-- Добавить lifecycle store, `_form_instance/_form_revision` и
-  `ПриСозданииНаСервере` для object/processor managed forms.
+- Добавить lifecycle store, `_form_instance/_form_revision`,
+  `runtimeRequired` и `ПриСозданииНаСервере` для object/processor managed
+  forms. Уже в этом срезе store получает per-instance mutex, проверку
+  owner/session/entity/form/record/base fingerprint, idle TTL, per-user cap и
+  количественные node/depth/op/response limits; ни одна из этих границ не
+  откладывается до появления event patch.
 - Рендерить HTML из snapshot экземпляра, сохранив fail-closed порядок
   `ПриЧтенииНаСервере` до инициализации.
-- Публичный тест: HTTP GET формы с реальным модулем добавляет поле до ответа,
-  второй пользователь его экземпляр не видит; ошибка/timeout возвращает отказ
-  без HTML и без оставленного instance-state.
+- До того как runtime-дерево впервые станет наблюдаемым, перевести на один
+  проверенный snapshot handler lookup, event eligibility, partial write,
+  required и processor/entity save/event paths. Для `runtimeRequired` запрос
+  без instance/revision, с чужим/истёкшим instance либо несовпавшим fingerprint
+  отклоняется до lookup handler и до DSL; fallback к `metadata.FormModule`
+  отсутствует. Структурные мутации после первичного рендера до среза C явно
+  отклоняются, чтобы серверное дерево не могло разойтись с ещё не умеющим
+  применять patch браузером.
+- Публичные тесты: HTTP GET формы с реальным модулем добавляет или удаляет поле
+  до ответа, второй пользователь его экземпляр не видит; ошибка/timeout
+  возвращает отказ без HTML и без оставленного instance-state. Отдельные
+  негативные HTTP-тесты доказывают, что удалённый или переназначенный handler
+  нельзя вызвать по статическим metadata, удалённое поле нельзя прислать в
+  save, а запросы без token и с чужим owner/fingerprint не запускают DSL.
+  Конкурентные события одного instance сериализуются; TTL, per-user cap и
+  количественные лимиты проверяются до мутации/исполнения.
 
 ### Срез C — patch round-trip для обычных узлов
 
 - Расширить `form-event` wire-контракт и добавить patch engine для input, label,
   button, group и pages; скрытые `hidden_when` узлы держать в адресуемой
   разметке, чтобы `false` действительно возвращал их без reload.
-- Добавить `eventNonce`, резервирование/потребление ревизии до DSL и ограниченный
-  replay-ledger точных terminal-ответов для успешных и ошибочных событий.
+- Поверх уже обязательных mutex, identity/fingerprint/TTL и resource gates среза
+  B добавить `eventNonce`, атомарное резервирование/потребление ревизии до DSL
+  и ограниченный replay-ledger точных terminal-ответов для успешных и ошибочных
+  событий. Ledger входит в per-instance limit; параллельный повтор ждёт
+  зарезервированную попытку, а не исполняет DSL второй раз.
 - Публичные тесты: POST `/form-event` добавляет/перемещает/удаляет узлы и отдаёт
   непрерывные ревизии; Node/DOM behavior-тест применяет настоящий JSON-ответ и
   сохраняет введённое значение, focus, dirty-state и обработчик клика. Сценарий
   «`Объект.Записать()` → исключение → потеря ответа → повтор с тем же nonce»
   доказывает одну запись и побайтово тот же terminal-ответ; повтор с другим nonce
-  на старой ревизии не исполняет DSL.
+  на старой ревизии не исполняет DSL. Два одновременных повтора одного
+  `(fromRevision, eventNonce, payload)` дают один запуск DSL и одинаковый
+  terminal-ответ; поддельный dynamic handler и stale revision также
+  отклоняются до DSL. Динамически размещённое writable поле записывается через
+  обычный HTTP submit, а удалённое поле не обнуляется.
 
-### Срез D — авторитет событий и записи
-
-- Перевести handler lookup, event eligibility, partial write, required и
-  processor/entity POST на один проверенный runtime snapshot.
-- Добавить per-instance serialization, stale revision conflict, TTL/owner/base
-  fingerprint gates и количественные лимиты.
-- Публичные тесты: поддельный dynamic handler/чужой instance/stale revision не
-  запускает DSL; у `runtimeRequired`-формы запрос без instance token не вызывает
-  удалённый либо переназначенный статический handler, тогда как старая статическая
-  форма сохраняет legacy-путь; динамически размещённое writable поле записывается
-  через обычный HTTP submit, а удалённое поле не обнуляется.
-
-### Срез E — таблицы и SlickGrid
+### Срез D — таблицы и SlickGrid
 
 - Поддержать динамические `Таблица`/`ТабличнаяЧасть`/`Колонка`, оба пути
   `no_grid` и SlickGrid, корректные init/destroy/move и ref/enum options.
@@ -311,7 +323,7 @@ API из конфигурации либо отката всего среза, �
   Node/DOM+SlickGrid harness редактирует её, перемещает без второго init,
   удаляет с destroy и отправляет изменённые строки следующим событием.
 
-### Срез F — статические проверки, converter и документация
+### Срез E — статические проверки, converter и документация
 
 - Добавить configcheck/langref/DEVELOPER/ai-guide, пример end-to-end и правила
   импорта/экспорта 1С без материализации runtime tree.
@@ -369,7 +381,7 @@ API из конфигурации либо отката всего среза, �
 
 ## Эстимейт
 
-Ориентир — 12–17 рабочих дней: A 2–3, B 2–3, C 3–4, D 2–3, E 2–3, F 1.
+Ориентир — 12–17 рабочих дней: A 2–3, B 4–5, C 3–4, D 2–3, E 1.
 Основная неопределённость — корректный lifecycle SlickGrid и сохранение
 несохранённого состояния при составных DOM-патчах; поэтому таблицы вынесены в
 отдельный срез после стабилизации авторитетного server contract.
