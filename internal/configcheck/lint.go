@@ -67,6 +67,7 @@ func CheckLintProject(dir string, proj *project.Project, roles []*auth.Role) []I
 	issues = append(issues, CheckLintRoles(dir, proj, roles)...)
 	issues = append(issues, CheckLintIndexes(proj)...)
 	issues = append(issues, CheckLintReports(proj)...)
+	issues = append(issues, CheckLintFormAttrTypes(proj)...)
 	return issues
 }
 
