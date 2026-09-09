@@ -164,6 +164,8 @@ func (l *Lexer) NextToken() token.Token {
 			return l.tok(token.GTE, ">=", line, col)
 		}
 		return l.tok(token.GT, ">", line, col)
+	case '\'':
+		return l.readDateLiteral(line, col)
 	case '"':
 		// "" inside a string literal is an escaped double-quote (1C convention).
 		// Multi-line strings: a newline followed by optional whitespace and '|'
@@ -211,6 +213,43 @@ func (l *Lexer) NextToken() token.Token {
 		}
 		return l.tok(token.ILLEGAL, string(r), line, col)
 	}
+}
+
+// readDateLiteral разбирает стандартный литерал даты 1С: 'YYYYMMDD' или
+// 'YYYYMMDDhhmmss'. Одинарные кавычки не являются альтернативными строковыми
+// кавычками: любая другая форма остаётся ILLEGAL и даёт синтаксическую ошибку.
+func (l *Lexer) readDateLiteral(line, col int) token.Token {
+	start := l.pos
+	for l.pos < len(l.input) && l.peek() != '\'' && l.peek() != '\n' {
+		l.next()
+	}
+
+	closed := l.pos < len(l.input) && l.peek() == '\''
+	lit := string(l.input[start:l.pos])
+	if closed {
+		l.next()
+	}
+	if closed && validDateLiteralDigits(lit) {
+		return l.tok(token.DATE, lit, line, col)
+	}
+
+	raw := "'" + lit
+	if closed {
+		raw += "'"
+	}
+	return l.tok(token.ILLEGAL, raw, line, col)
+}
+
+func validDateLiteralDigits(lit string) bool {
+	if len(lit) != 8 && len(lit) != 14 {
+		return false
+	}
+	for _, r := range lit {
+		if !isDigit(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func isLetter(r rune) bool {

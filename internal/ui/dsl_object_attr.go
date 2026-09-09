@@ -9,7 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
-	"github.com/shopspring/decimal"
+	"github.com/ivantit66/onebase/internal/typedempty"
 )
 
 // objectAttributeValue реализует DSL-функцию ЗначениеРеквизитаОбъекта(Ссылка,
@@ -431,31 +431,8 @@ func normalizeAttrValue(ft metadata.FieldType, v any) any {
 	if v == nil {
 		return nil
 	}
-	switch ft {
-	case metadata.FieldTypeNumber:
-		switch n := v.(type) {
-		case decimal.Decimal:
-			return n
-		case float64:
-			return decimal.NewFromFloat(n)
-		case int64:
-			return decimal.NewFromInt(n)
-		case int:
-			return decimal.NewFromInt(int64(n))
-		case string:
-			if d, err := decimal.NewFromString(strings.TrimSpace(n)); err == nil {
-				return d
-			}
-		}
-	case metadata.FieldTypeBool:
-		switch b := v.(type) {
-		case bool:
-			return b
-		case int64:
-			return b != 0
-		case string:
-			return b == "true" || b == "1" || strings.EqualFold(b, "да")
-		}
+	if text, ok := v.(string); ok && strings.TrimSpace(text) == "" {
+		return v
 	}
-	return v
+	return typedempty.Normalize(typedempty.Descriptor{Type: ft}, v, nil)
 }
