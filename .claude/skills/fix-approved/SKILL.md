@@ -76,11 +76,29 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 
    ```
    gh api --paginate "repos/ivanarama/onebase/pulls?state=open&per_page=100" \
-     --jq '.[] | {number,title,body,state,baseRefName:.base.ref,headRefName:.head.ref,headSha:.head.sha,labels:[.labels[].name]}'
+     --jq '.[] | {number,title,body,state,baseRefName:.base.ref,headRefName:.head.ref,headSha:.head.sha,headRepoFullName:(.head.repo.full_name // null),labels:[.labels[].name]}'
    ```
 
    Затем оставь только `state == "open"`, `baseRefName == "main"` и исключи
-   `ship` и `hold`.
+   `ship` и `hold`. До исключения форк-PR с `changes-requested` обязательно
+   прочитай его полный committed review proof и сверь текущий HEAD по правилам
+   п. 8. Если автор уже запушил новый HEAD, выполни существующую безопасную
+   REST-передачу stale `changes-requested` обратно в REVIEW: сними и сверь
+   только эту метку, затем оставь диагностический комментарий. Это не
+   доработка чужой ветки, а восстановление маршрута PR после авторского push.
+
+   Обычная правка кода и recovery FIX по `pp:fix-decision` дополнительно требуют
+   точный `headRepoFullName == "ivanarama/onebase"`. PR из форка или с уже
+   недоступным head repository не является кандидатом автоматической правки:
+   не создавай worktree и не пытайся делать `git fetch`/push. Если его текущий
+   HEAD всё ещё совпадает с завершённым review либо безопасная stale-HEAD
+   передача неприменима, не меняй labels/comments; добавь в сводку
+   `PR #<M> — доработка у автора (<headRepoFullName>:<headRefName>)` и продолжи
+   той же очередью с остальными same-repository PR, а при их отсутствии — с
+   новой issue. Только описанная выше REST-передача stale HEAD может менять
+   labels/comments форк-PR. Форк-PR не должен навсегда блокировать продуктовую
+   FIX-очередь. Если другой работы нет, точный итог:
+   `ИТОГ: ПУСТО (автоматических работ нет; PR #<M> — доработка у автора)`.
    FIX production-конвейера не изменяет PR в другую целевую ветку. Пагинация
    обязательна и для восстановления:
    припаркованные PR не должны навсегда скрывать более поздний crash-handoff.
@@ -160,7 +178,7 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    построй тот же единый поток переходов владельца:
 
    ```
-     gh api repos/ivanarama/onebase/pulls/<M> --jq '{sha:.head.sha,state,baseRefName:.base.ref}'
+     gh api repos/ivanarama/onebase/pulls/<M> --jq '{sha:.head.sha,state,baseRefName:.base.ref,headRepoFullName:(.head.repo.full_name // null)}'
    gh api --paginate "repos/ivanarama/onebase/issues/<M>/comments?per_page=100" \
      --jq '.[] | {id,node_id,created_at,updated_at,author:.user.login,body}'
    gh api repos/ivanarama/onebase/issues/<M> --jq '[.labels[].name]'
@@ -168,6 +186,7 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 
    **До CAS-push** продолжать можно, только пока HEAD совпадает с исходной canonical completion,
    PR всё ещё `open`, `baseRefName == "main"`,
+   `headRepoFullName == "ivanarama/onebase"`,
    эта же completion/decision остаётся последним валидным переходом с владельцем
    FIX, `changes-requested` присутствует, а `ship`, `hold`, `needs-decision`
    отсутствуют. Более поздний `pp:review-again` немедленно передаёт владельца
@@ -526,6 +545,11 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
      git worktree add -B pp-rework-<M> ../pp-rework-<M> <SHA completion>
      ```
 
+     Эти команды разрешены только после повторной REST-сверки точного
+     `headRepoFullName == "ivanarama/onebase"`. `maintainer_can_modify` не
+     расширяет полномочия FIX: ветку форка конвейер не fetch/push и оставляет
+     автору, даже когда GitHub технически разрешил бы запись мейнтейнеру.
+
      Несовпадение `FETCH_HEAD` — чужой push: worktree не создавай. Сначала
      примени правило post-push recovery из п. 1: валидный `PP-Fix-Transition`
      оставь финализации FIX, и только чужой HEAD без него безопасно верни в
@@ -757,7 +781,8 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 10. Финал: `ИТОГ: ГОТОВО (PR #<M> → ишью #<N>)` /
     `ИТОГ: ГОТОВО (доработан PR #<M> по ревью)` /
     `ИТОГ: НУЖЕН ЧЕЛОВЕК (#<N> — <вопрос в одну строку>)` /
-    `ИТОГ: НЕ СМОГ (<причина>)`.
+    `ИТОГ: НЕ СМОГ (<причина>)` /
+    `ИТОГ: ПУСТО (автоматических работ нет; PR #<M> — доработка у автора)`.
 
 Дальше по конвейеру: `/review-queue` пишет заключение и ставит `reviewed` либо
 возвращает PR тебе меткой `changes-requested`; `ship` после чтения заключения

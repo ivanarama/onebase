@@ -77,7 +77,7 @@ closing issues; qualified-ссылка на другой repository локаль
 
    ```
    gh api --paginate "repos/ivanarama/onebase/pulls?state=open&per_page=100" \
-     --jq '.[] | {number,title,state,baseRefName:.base.ref,labels:[.labels[].name]}'
+     --jq '.[] | {number,title,state,baseRefName:.base.ref,headRefName:.head.ref,headRepoFullName:(.head.repo.full_name // null),labels:[.labels[].name]}'
    ```
 
    Локально оставь только `state == "open"` и `baseRefName == "main"`: MERGE
@@ -122,7 +122,7 @@ closing issues; qualified-ссылка на другой repository локаль
    отревьюенному HEAD:
 
    ```
-     gh api repos/ivanarama/onebase/pulls/<N> --jq '{sha:.head.sha,state,baseRefName:.base.ref}'
+     gh api repos/ivanarama/onebase/pulls/<N> --jq '{sha:.head.sha,state,baseRefName:.base.ref,headRefName:.head.ref,headRepoFullName:(.head.repo.full_name // null)}'
    gh api --paginate "repos/ivanarama/onebase/issues/<N>/comments?per_page=100" \
      --jq '.[] | {id,node_id,created_at,updated_at,author:.user.login,body}'
    gh api --paginate "repos/ivanarama/onebase/issues/<N>/timeline?per_page=100" \
@@ -300,7 +300,13 @@ closing issues; qualified-ссылка на другой repository локаль
      REVIEW проверит новый HEAD, а при зелёном результате MERGE продолжит без
      второго клика человека. (`gh pr update-branch` в этой версии gh не работает.)
    - **DIRTY (конфликт)** → чинить в отдельном worktree, привязанном к SHA
-     последнего успешного гейта. Сначала обнови main
+     последнего успешного гейта. До `git fetch` повторно потребуй точный
+     `headRepoFullName == "ivanarama/onebase"`. Если head repository другой
+     либо уже недоступен, это форк-PR: не создавай worktree, не fetch/push его
+     ветку, не меняй comments/labels и сохрани `ship`. Закончи весь запуск
+     `ИТОГ: НУЖЕН ЧЕЛОВЕК (#<N> — конфликт форк-PR: доработка у автора)`;
+     `maintainer_can_modify` не разрешает автоматике переписывать чужую ветку.
+     Для same-repository PR сначала обнови main
      `git fetch origin main:refs/remotes/origin/main`, затем выполни
      `git fetch origin <ветка-PR>` и проверь,
      что `git rev-parse FETCH_HEAD` равен сохранённому SHA, и выполнить
