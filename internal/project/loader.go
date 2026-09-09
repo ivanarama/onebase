@@ -598,6 +598,9 @@ func (p *Project) loadProcessorForms() error {
 			return fmt.Errorf("load managed forms for processor %s: %w", proc.Name, err)
 		}
 		for _, form := range managed {
+			if err := metadata.ValidateFormPresentation(form, nil); err != nil {
+				return fmt.Errorf("validate managed form %s for processor %s: %w", form.Name, proc.Name, err)
+			}
 			if _, err := metadata.FormTableDefinitions(form, proc.TableParts); err != nil {
 				return fmt.Errorf("validate managed form %s for processor %s: %w", form.Name, proc.Name, err)
 			}
@@ -914,6 +917,9 @@ func (p *Project) loadFormModules() error {
 			return fmt.Errorf("load managed forms for %s: %w", ent.Name, err)
 		}
 		for _, form := range managed {
+			if err := metadata.ValidateFormPresentation(form, ent); err != nil {
+				return fmt.Errorf("validate managed form %s for %s: %w", form.Name, ent.Name, err)
+			}
 			if _, err := metadata.FormTableDefinitions(form, ent.TableParts); err != nil {
 				return fmt.Errorf("validate managed form %s for %s: %w", form.Name, ent.Name, err)
 			}

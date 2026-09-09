@@ -234,3 +234,26 @@ func TestSchemaFieldFlagsAreTyped(t *testing.T) {
 		}
 	}
 }
+
+func TestSchemaFieldMultilineIsLimitedToRenderedContexts(t *testing.T) {
+	doc := publishedSchema(t)
+	for name, tc := range map[string]struct {
+		path    []string
+		allowed bool
+	}{
+		"реквизит сущности":        {fieldObjectPaths["реквизит шапки"], true},
+		"ресурс регистра сведений": {fieldObjectPaths["ресурс регистра свед."], true},
+		"табличная часть":          {fieldObjectPaths["поле табличной части"], false},
+		"регистр накопления":       {fieldObjectPaths["измерение регистра"], false},
+		"бухгалтерский регистр":    {fieldObjectPaths["ресурс бухрегистра"], false},
+	} {
+		field := schemaAt(t, doc, tc.path...)
+		_, forbidden := field["not"]
+		if tc.allowed && forbidden {
+			t.Errorf("%s: multiline ошибочно запрещён", name)
+		}
+		if !tc.allowed && !forbidden {
+			t.Errorf("%s: multiline не запрещён контекстной JSON Schema", name)
+		}
+	}
+}

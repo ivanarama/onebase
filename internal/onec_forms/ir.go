@@ -51,6 +51,7 @@ type IRElement struct {
 	Choice     bool
 	Width      int
 	Height     int
+	Multiline  *bool
 	HAlign     string
 	VAlign     string
 	Hint       string

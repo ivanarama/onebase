@@ -45,11 +45,12 @@ fields:
 	}
 }
 
-// Тот же saveField обслуживает измерения, ресурсы и реквизиты регистра.
-func TestSaveRegisterFields_KeepsMultiline(t *testing.T) {
+// Тот же saveField обслуживает измерения и ресурсы регистра сведений — двух
+// разрешённых контекстов, где форму записи действительно можно отрисовать.
+func TestSaveInfoRegisterFields_KeepsMultiline(t *testing.T) {
 	h, cfgDir := newFileBaseHandler(t)
 	h.runner = NewRunner()
-	p := writeCfgFile(t, cfgDir, "registers", "правила.yaml", `name: Правила
+	p := writeCfgFile(t, cfgDir, "inforegs", "правила.yaml", `name: Правила
 dimensions:
   - id: f_aaa
     name: Условия
@@ -58,11 +59,6 @@ dimensions:
 resources:
   - id: f_bbb
     name: Описание
-    type: string
-    multiline: true
-attributes:
-  - id: f_ccc
-    name: Комментарий
     type: string
     multiline: true
 `)
@@ -75,14 +71,14 @@ attributes:
 	if data.Error != "" {
 		t.Fatalf("конфигурация не загрузилась: %s", data.Error)
 	}
-	form := browserSubmit(t, renderCfgTree(t, data), "/configurator/register-fields")
-	rec := postCfg(t, "test", "/bases/test/configurator/register-fields", form, h.configuratorSaveRegisterFields)
+	form := browserSubmit(t, renderCfgTree(t, data), "/configurator/inforeg-fields")
+	rec := postCfg(t, "test", "/bases/test/configurator/inforeg-fields", form, h.configuratorSaveInfoRegFields)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("код %d: %s", rec.Code, rec.Body.String())
 	}
 
 	got := readCfg(t, p)
-	if strings.Count(got, "multiline: true") != 3 {
+	if strings.Count(got, "multiline: true") != 2 {
 		t.Fatalf("multiline потерян у части полей регистра:\n%s", got)
 	}
 }

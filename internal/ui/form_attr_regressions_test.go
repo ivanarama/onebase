@@ -245,16 +245,17 @@ func TestManagedFormRendersDeclaredScalarAttrWithoutWarning(t *testing.T) {
 // его в поле объекта — то есть сохранив в базе то, что сохранять не нужно.
 // Высота берётся из height, в строках, как «Высота» текстового поля в 1С.
 func TestManagedFormRendersMultilineScalarAttrAsTextarea(t *testing.T) {
+	multiline := true
 	form := &metadata.FormModule{
 		Name: "ФормаОбъекта", Kind: "object", EntityName: "Обращение",
 		LayoutKind: metadata.FormLayoutManaged,
 		Attributes: []*metadata.FormAttribute{
-			{Name: "Памятка", TypeRef: "Строка"},
-			{Name: "Коротко", TypeRef: "Строка"},
+			{Name: "Памятка", TypeRef: "string"},
+			{Name: "Коротко", TypeRef: "string"},
 		},
 		Elements: []*metadata.FormElement{
 			{Kind: metadata.FormElementField, Name: "ПолеПамятка", DataPath: "Памятка",
-				Multiline: true, Height: 16, ReadOnly: true},
+				Multiline: &multiline, Height: 16, ReadOnly: true},
 			{Kind: metadata.FormElementField, Name: "ПолеКоротко", DataPath: "Коротко"},
 		},
 	}
@@ -280,18 +281,19 @@ func TestManagedFormRendersMultilineScalarAttrAsTextarea(t *testing.T) {
 }
 
 // Высота многострочного поля СУЩНОСТИ тоже берётся из height; без height —
-// прежние пять строк, а нелепо большое значение упирается в потолок.
+// прежние пять строк, а положительное значение используется без ограничения.
 func TestManagedFormMultilineRowsFromHeight(t *testing.T) {
+	multiline := true
 	for _, c := range []struct {
 		height int
 		want   string
-	}{{0, `rows="5"`}, {12, `rows="12"`}, {500, `rows="40"`}} {
+	}{{0, `rows="5"`}, {12, `rows="12"`}, {500, `rows="500"`}} {
 		form := &metadata.FormModule{
 			Name: "ФормаОбъекта", Kind: "object", EntityName: "Обращение",
 			LayoutKind: metadata.FormLayoutManaged,
 			Elements: []*metadata.FormElement{
 				{Kind: metadata.FormElementField, Name: "ПолеОписание", DataPath: "Объект.Описание",
-					Multiline: true, Height: c.height},
+					Multiline: &multiline, Height: c.height},
 			},
 		}
 		entity := &metadata.Entity{
@@ -302,6 +304,30 @@ func TestManagedFormMultilineRowsFromHeight(t *testing.T) {
 		if got := renderMultilineForm(t, entity, form, map[string]string{"Описание": ""}); !strings.Contains(got, c.want) {
 			t.Errorf("height=%d: ожидалось %s", c.height, c.want)
 		}
+	}
+}
+
+func TestManagedFormMultilineExplicitFalseOverridesEntityField(t *testing.T) {
+	disabled := false
+	form := &metadata.FormModule{
+		Name: "ФормаОбъекта", Kind: "object", EntityName: "Обращение",
+		LayoutKind: metadata.FormLayoutManaged,
+		Elements: []*metadata.FormElement{{
+			Kind: metadata.FormElementField, Name: "ПолеОписание", DataPath: "Объект.Описание",
+			Multiline: &disabled,
+		}},
+	}
+	entity := &metadata.Entity{
+		Name: "Обращение", Kind: metadata.KindDocument,
+		Fields: []metadata.Field{{Name: "Описание", Type: metadata.FieldTypeString, Multiline: true}},
+		Forms:  []*metadata.FormModule{form},
+	}
+	html := renderMultilineForm(t, entity, form, map[string]string{"Описание": "коротко"})
+	if strings.Contains(html, `<textarea name="Описание"`) {
+		t.Fatal("явное multiline: false не перекрыло признак поля сущности")
+	}
+	if !strings.Contains(html, `<input type="text" autocomplete="off" name="Описание"`) {
+		t.Fatal("явное multiline: false не вернуло однострочный input")
 	}
 }
 

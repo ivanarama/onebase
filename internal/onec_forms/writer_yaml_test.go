@@ -105,3 +105,53 @@ func TestRoundTrip_XML_to_YAML_to_FormModule(t *testing.T) {
 		t.Fatalf("loaded elements = %d, want 1", len(fm.Elements))
 	}
 }
+
+func TestRoundTrip_YAMLMultilinePreservesAbsentTrueAndFalse(t *testing.T) {
+	form, err := parseFormYAMLBytes([]byte(`schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Обращение
+elements:
+  - kind: ПолеВвода
+    name: Наследуемое
+    data_path: Объект.Наследуемое
+  - kind: ПолеВвода
+    name: Многострочное
+    data_path: Объект.Многострочное
+    multiline: true
+  - kind: ПолеВвода
+    name: Однострочное
+    data_path: Объект.Однострочное
+    multiline: false
+`))
+	if err != nil {
+		t.Fatalf("parseFormYAMLBytes: %v", err)
+	}
+	assertMultilineStates := func(stage string, elements []*IRElement) {
+		t.Helper()
+		if len(elements) != 3 {
+			t.Fatalf("%s: elements=%d, want 3", stage, len(elements))
+		}
+		if elements[0].Multiline != nil {
+			t.Fatalf("%s: отсутствие multiline превратилось в значение", stage)
+		}
+		if elements[1].Multiline == nil || !*elements[1].Multiline {
+			t.Fatalf("%s: multiline:true потерян", stage)
+		}
+		if elements[2].Multiline == nil || *elements[2].Multiline {
+			t.Fatalf("%s: multiline:false потерян", stage)
+		}
+	}
+	assertMultilineStates("read", form.Elements)
+
+	dst := filepath.Join(t.TempDir(), "формаобъекта.form.yaml")
+	if err := WriteFormYAML(form, dst); err != nil {
+		t.Fatalf("WriteFormYAML: %v", err)
+	}
+	roundTripped, err := ReadFormYAML(dst)
+	if err != nil {
+		t.Fatalf("ReadFormYAML: %v", err)
+	}
+	assertMultilineStates("round-trip", roundTripped.Elements)
+}

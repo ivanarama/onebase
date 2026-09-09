@@ -40,6 +40,9 @@ func TestAutoFormRendersMultilineFieldAsTextarea(t *testing.T) {
 	if !strings.Contains(html, `<textarea name="Информация"`) {
 		t.Error("многострочный реквизит в карточке отрисован не как textarea")
 	}
+	if !strings.Contains(html, `<textarea name="Информация" autocomplete="off" rows="5"`) {
+		t.Error("автоформа должна использовать согласованную высоту в пять строк")
+	}
 	if !strings.Contains(html, "НЕ ВЫПОЛНЯЕМ: промышленные машины</textarea>") {
 		t.Error("значение многострочного реквизита не попало в textarea")
 	}
@@ -79,6 +82,9 @@ func TestInfoRegFormRendersMultilineResourceAsTextarea(t *testing.T) {
 	html := buf.String()
 	if !strings.Contains(html, `<textarea name="Примечание"`) {
 		t.Error("многострочный ресурс регистра отрисован не как textarea")
+	}
+	if !strings.Contains(html, `<textarea name="Примечание" autocomplete="off" rows="5"`) {
+		t.Error("форма регистра должна использовать согласованную высоту в пять строк")
 	}
 	if !strings.Contains(html, `<textarea name="Условия"`) ||
 		!strings.Contains(html, "Только будни\nпосле 10:00</textarea>") {

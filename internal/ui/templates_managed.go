@@ -151,7 +151,7 @@ const tplManagedForm = `
           <button type="button" data-ob-file-trigger="file-pick-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;white-space:nowrap" title="Выбрать файл">…</button>
           {{end}}
         </div>
-      {{else if or $el.Multiline $f.Multiline}}
+      {{else if effectiveMultiline $ctx.Entity $ctx.Form $el}}
         <textarea name="{{$fn}}" autocomplete="off" rows="{{multilineRows $el}}" style="width:100%"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>{{index $ctx.Values $fn}}</textarea>
       {{else}}
         <input type="text" autocomplete="off" name="{{$fn}}" value="{{index $ctx.Values $fn}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if $el.Mask}} pattern="{{$el.Mask}}"{{end}}{{if $el.InputMask}} data-ob-input-mask="{{$el.InputMask}}"{{if inputMaskDigitsOnly $el.InputMask}} inputmode="numeric"{{end}}{{end}}{{if $el.Hint}} title="{{$el.Hint}}"{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
@@ -189,7 +189,7 @@ const tplManagedForm = `
           <button type="button" data-ob-ref-current="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
           {{end}}
         </div>
-      {{else if and $attr $el.Multiline}}
+      {{else if effectiveMultiline $ctx.Entity $ctx.Form $el}}
         {{/* Многострочный реквизит ФОРМЫ — textarea, как и у поля сущности. Без
              этой ветки multiline на реквизите формы молча игнорировался, и
              нехранимый текст (памятка из НСИ, инструкция, результат обработчика)

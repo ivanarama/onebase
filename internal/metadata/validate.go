@@ -77,6 +77,11 @@ func Validate(entities []*Entity, enums []*Enum) error {
 		if err := validateMultilineFields("entity "+e.Name+": реквизит", e.Fields); err != nil {
 			return err
 		}
+		for _, tp := range e.TableParts {
+			if err := rejectMultilineFields("entity "+e.Name+": табличная часть "+tp.Name+": реквизит", tp.Fields); err != nil {
+				return err
+			}
+		}
 		if err := validateFieldIDs(e); err != nil {
 			return err
 		}
@@ -142,13 +147,13 @@ func Validate(entities []*Entity, enums []*Enum) error {
 // ссылке.
 func ValidateRegisterFields(registers []*Register, inforegs []*InfoRegister) error {
 	for _, r := range registers {
-		if err := validateMultilineFields("регистр "+r.Name+": измерение", r.Dimensions); err != nil {
+		if err := rejectMultilineFields("регистр "+r.Name+": измерение", r.Dimensions); err != nil {
 			return err
 		}
-		if err := validateMultilineFields("регистр "+r.Name+": ресурс", r.Resources); err != nil {
+		if err := rejectMultilineFields("регистр "+r.Name+": ресурс", r.Resources); err != nil {
 			return err
 		}
-		if err := validateMultilineFields("регистр "+r.Name+": реквизит", r.Attributes); err != nil {
+		if err := rejectMultilineFields("регистр "+r.Name+": реквизит", r.Attributes); err != nil {
 			return err
 		}
 	}
@@ -167,6 +172,15 @@ func validateMultilineFields(scope string, fields []Field) error {
 	for _, f := range fields {
 		if f.Multiline && f.Type != FieldTypeString {
 			return fmt.Errorf("%s %s — multiline допустим только для строкового реквизита (сейчас %s)", scope, f.Name, f.Type)
+		}
+	}
+	return nil
+}
+
+func rejectMultilineFields(scope string, fields []Field) error {
+	for _, f := range fields {
+		if f.Multiline {
+			return fmt.Errorf("%s %s — multiline не поддерживается в этом контексте", scope, f.Name)
 		}
 	}
 	return nil

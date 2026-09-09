@@ -317,20 +317,18 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		// multilineRows — высота многострочного поля В СТРОКАХ (element.height, как
 		// «Высота» текстового поля в 1С). Без height — пять строк, как было зашито
-		// раньше. Потолок защищает вёрстку от опечатки вроде height: 500, которая
-		// растянула бы форму на несколько экранов.
+		// раньше. Положительное значение используется как есть; отрицательное
+		// отсекает ValidateFormPresentation до рендера.
 		"multilineRows": func(el *metadata.FormElement) int {
-			const defaultRows, maxRows = 5, 40
-			if el == nil || el.Height <= 0 {
+			const defaultRows = 5
+			if el == nil || el.Height == 0 {
 				return defaultRows
-			}
-			if el.Height > maxRows {
-				return maxRows
 			}
 			return el.Height
 		},
-		"isRichText": func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
-		"isImage":    func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
+		"effectiveMultiline": effectiveFormElementMultiline,
+		"isRichText":         func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
+		"isImage":            func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
 		"fieldNamesCSV": func(fields []metadata.Field) string {
 			names := make([]string, 0, len(fields))
 			for _, f := range fields {
@@ -2231,7 +2229,7 @@ const tplForm = `
     {{/* Строковый реквизит с multiline: в нём абзац, а не значение (памятка,
          инструкция, комментарий). Однострочный input показывает такой текст
          одной строкой с перемоткой стрелками — ни прочитать, ни отредактировать. */}}
-    <textarea name="{{$fn}}" autocomplete="off" rows="8" style="width:100%" placeholder="{{$flabel}}"{{if $ro}} readonly{{end}}>{{index $.Values $fn}}</textarea>
+    <textarea name="{{$fn}}" autocomplete="off" rows="5" style="width:100%" placeholder="{{$flabel}}"{{if $ro}} readonly{{end}}>{{index $.Values $fn}}</textarea>
   {{else}}
     <input type="text" autocomplete="off" name="{{$fn}}" value="{{index $.Values $fn}}" placeholder="{{$flabel}}"{{if $ro}} readonly{{end}}>
   {{end}}
@@ -3201,7 +3199,7 @@ const tplInfoReg = `
     </div>
     {{else}}
     {{if .Multiline}}
-    <textarea name="{{$dn}}" autocomplete="off" rows="8" style="width:100%">{{index $.Values $dn}}</textarea>
+    <textarea name="{{$dn}}" autocomplete="off" rows="5" style="width:100%">{{index $.Values $dn}}</textarea>
     {{else}}
     <input type="text" name="{{$dn}}" value="{{index $.Values $dn}}">
     {{end}}
@@ -3212,7 +3210,7 @@ const tplInfoReg = `
   <div class="form-row">
     <label>{{.DisplayName $.Lang}}</label>
     {{if .Multiline}}
-    <textarea name="{{.Name}}" autocomplete="off" rows="8" style="width:100%">{{index $.Values .Name}}</textarea>
+    <textarea name="{{.Name}}" autocomplete="off" rows="5" style="width:100%">{{index $.Values .Name}}</textarea>
     {{else}}
     <input type="text" name="{{.Name}}" value="{{index $.Values .Name}}">
     {{end}}

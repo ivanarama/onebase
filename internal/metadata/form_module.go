@@ -220,7 +220,10 @@ type FormElement struct {
 	InputMask string `yaml:"input_mask,omitempty"`
 	AccessKey string `yaml:"accesskey,omitempty"` // HTML accesskey для браузерной активации (Alt/Option+клавиша)
 	HotKey    string `yaml:"hotkey,omitempty"`    // runtime shortcut для кнопок формы (F2/F4/F7/F8/F9/F10)
-	Multiline bool   `yaml:"multiline,omitempty"` // обычное поле ввода рендерится как textarea
+	// Multiline — локальное tri-state переопределение многострочности обычного
+	// строкового поля. nil наследует Field.Multiline для Объект.* и означает
+	// однострочный ввод для Форма.*; указатель хранит явные true и false.
+	Multiline *bool `yaml:"multiline,omitempty"`
 	// Language — язык подсветки для kind: ПолеКода. Пусто → plaintext.
 	// Значения совпадают с идентификаторами языков редактора: bsl, sql, json,
 	// xml, yaml, markdown, javascript, plaintext.
@@ -715,6 +718,92 @@ func (fm *FormModule) Walk(fn func(*FormElement) bool) {
 	for _, el := range fm.Elements {
 		walkElement(el, fn)
 	}
+}
+
+// ValidateFormPresentation проверяет настройки представления, смысл которых
+// зависит от типа источника данных. Загрузчик YAML сам по себе видит только
+// FormElement, поэтому окончательная проверка выполняется после привязки формы
+// к сущности (либо к реквизитам формы обработки).
+func ValidateFormPresentation(form *FormModule, entity *Entity) error {
+	if form == nil {
+		return nil
+	}
+	var validationErr error
+	form.Walk(func(el *FormElement) bool {
+		if validationErr != nil || el == nil {
+			return false
+		}
+		if el.Height < 0 {
+			validationErr = fmt.Errorf("элемент формы %s: height не может быть отрицательным", el.Name)
+			return false
+		}
+		if el.Multiline == nil {
+			return true
+		}
+		if el.Kind != FormElementField {
+			validationErr = fmt.Errorf("элемент формы %s: multiline допустим только для ПолеВвода", el.Name)
+			return false
+		}
+
+		path := strings.TrimSpace(el.DataPath)
+		if field, ok := formPresentationEntityField(entity, path); ok {
+			if field.Type != FieldTypeString {
+				validationErr = fmt.Errorf("элемент формы %s: multiline допустим только для строкового реквизита", el.Name)
+				return false
+			}
+			return true
+		}
+		if attr := formPresentationAttribute(form, path); attr != nil {
+			if !strings.EqualFold(strings.TrimSpace(attr.TypeRef), string(FieldTypeString)) {
+				validationErr = fmt.Errorf("элемент формы %s: multiline допустим только для строкового реквизита формы", el.Name)
+				return false
+			}
+			return true
+		}
+		validationErr = fmt.Errorf("элемент формы %s: multiline задан для неизвестного data_path %q", el.Name, el.DataPath)
+		return false
+	})
+	return validationErr
+}
+
+func formPresentationEntityField(entity *Entity, path string) (Field, bool) {
+	if entity == nil || path == "" || strings.Count(path, ".") > 1 {
+		return Field{}, false
+	}
+	name := path
+	if dot := strings.Index(path, "."); dot >= 0 {
+		if !strings.EqualFold(strings.TrimSpace(path[:dot]), "Объект") {
+			return Field{}, false
+		}
+		name = path[dot+1:]
+	}
+	name = strings.TrimSpace(name)
+	for _, field := range entity.Fields {
+		if strings.EqualFold(field.Name, name) {
+			return field, true
+		}
+	}
+	return Field{}, false
+}
+
+func formPresentationAttribute(form *FormModule, path string) *FormAttribute {
+	if form == nil || path == "" || strings.Count(path, ".") > 1 {
+		return nil
+	}
+	name := path
+	if dot := strings.Index(path, "."); dot >= 0 {
+		if !strings.EqualFold(strings.TrimSpace(path[:dot]), "Форма") {
+			return nil
+		}
+		name = path[dot+1:]
+	}
+	name = strings.TrimSpace(name)
+	for _, attr := range form.Attributes {
+		if attr != nil && strings.EqualFold(attr.Name, name) {
+			return attr
+		}
+	}
+	return nil
 }
 
 func walkElement(el *FormElement, fn func(*FormElement) bool) {
