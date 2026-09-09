@@ -430,6 +430,18 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 |---|---|---|---|---|
 | 160 | [160-processor-permissions-fail-closed.md](160-processor-permissions-fail-closed.md) | Явные права на обработки: переходный lint и compatibility mode, затем fail-closed для отсутствующего `permissions.processors` (#1191) | ~3–4 дня в нескольких релизах | 📋 Проектирование |
 
+### Направление Т — надёжность конвейера сопровождения
+
+| № | Файл | Фича | Эстимейт | Статус |
+|---|---|---|---|---|
+| 163 | [163-next-slice-handoff.md](163-next-slice-handoff.md) | Crash-safe handoff между последовательными PR-срезами одной issue: committed merge boundary, уникальный branch-claim, recovery и наблюдаемость (#1379) | ~10–15 дней | 📋 Проектирование |
+
+### Направление У — надёжность развёртывания и восстановления
+
+| № | Файл | Фича | Эстимейт | Статус |
+|---|---|---|---|---|
+| 166 | [166-durable-files-and-clean-restore-rollback.md](166-durable-files-and-clean-restore-rollback.md) | Долговечный каталог файлов PostgreSQL без temp-fallback и чистый rollback/FK при ошибке `DemoReset`; независимая маршрутизация остальных регрессий #1268 | ~2–3 дня для ведущего среза | 📋 Проектирование |
+
 ## Граф зависимостей (архив)
 
 > Историческая секция: все перечисленные ниже планы (05–17) закрыты. Оставлена
