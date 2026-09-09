@@ -32,11 +32,17 @@ attributes:
   - name: ПоискСклад
     type: CatalogRef.Заявка
     save: false
+  - name: ОпечаткаСсылки
+    type: catalogref.Заявка
+    save: false
   - name: ПоискЧисло
     type: decimal(15,2)
     save: false
   - name: Строки
     type: ValueTable
+    save: false
+  - name: ПочтиТаблица
+    type: ValueTableExtra
     save: false
 elements:
   - kind: ПолеВвода
@@ -49,19 +55,73 @@ elements:
 	}
 	defer proj.Close()
 
-	issues := CheckLintFormAttrTypes(proj)
-	if len(issues) != 1 {
-		t.Fatalf("ожидалось 1 предупреждение (только «Дата»), получено %d: %+v", len(issues), issues)
+	issues := formAttrTypeIssues(CheckLintProject(dir, proj, nil))
+	if len(issues) != 3 {
+		t.Fatalf("ожидалось 3 предупреждения, получено %d: %+v", len(issues), issues)
 	}
-	got := issues[0]
-	if !strings.Contains(got.Message, "ПоискДатаС") || !strings.Contains(got.Message, "Дата") {
-		t.Errorf("сообщение должно называть реквизит и его тип, получено %q", got.Message)
+	for _, want := range []string{"ПоискДатаС", "ОпечаткаСсылки", "ПочтиТаблица"} {
+		found := false
+		for _, got := range issues {
+			if strings.Contains(got.Message, want) {
+				found = true
+				if !strings.Contains(got.File, "forms/заявка/") {
+					t.Errorf("файл = %q, ожидался путь формы", got.File)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("нет предупреждения для %s: %+v", want, issues)
+		}
 	}
-	if got.Code != "form.attr-type" {
-		t.Errorf("код = %q, ожидался form.attr-type", got.Code)
+}
+
+func TestCheckLintFormAttrTypes_ProcessorAndValueTableColumns(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "processors", "проверка.yaml"), `name: Проверка
+params: []`)
+	mkFile(t, filepath.Join(dir, "forms", "проверка", "основная.form.yaml"), `schema: onebase.form/v1
+form:
+  name: Основная
+  kind: object
+  entity: Проверка
+attributes:
+  - name: Период
+    type: dateSuffix
+    save: false
+  - name: Строки
+    type: ValueTable
+    save: false
+    columns:
+      - { name: Текст, type: string }
+      - { name: Количество, type: number }
+      - { name: Цена, type: "decimal(15,2)" }
+      - { name: Ссылка, type: CatalogRef.Товары }
+      - { name: Ошибка, type: numberExtra }
+elements: []`)
+
+	proj, err := project.Load(dir)
+	if err != nil {
+		t.Fatalf("project.Load: %v", err)
 	}
-	if !strings.Contains(got.File, "forms/заявка/") {
-		t.Errorf("файл = %q, ожидался путь формы", got.File)
+	defer proj.Close()
+
+	issues := formAttrTypeIssues(CheckLintProject(dir, proj, nil))
+	if len(issues) != 2 {
+		t.Fatalf("ожидалось 2 предупреждения формы обработки, получено %d: %+v", len(issues), issues)
+	}
+	for _, want := range []string{"Период", "Ошибка"} {
+		found := false
+		for _, got := range issues {
+			if strings.Contains(got.Message, want) {
+				found = true
+				if !strings.Contains(got.File, "forms/проверка/") {
+					t.Errorf("файл = %q, ожидался путь формы обработки", got.File)
+				}
+			}
+		}
+		if !found {
+			t.Errorf("нет предупреждения для %s: %+v", want, issues)
+		}
 	}
 }
 
@@ -92,7 +152,17 @@ elements:
 	}
 	defer proj.Close()
 
-	if issues := CheckLintFormAttrTypes(proj); len(issues) != 0 {
+	if issues := formAttrTypeIssues(CheckLintProject(dir, proj, nil)); len(issues) != 0 {
 		t.Fatalf("ожидалось 0 предупреждений, получено %d: %+v", len(issues), issues)
 	}
+}
+
+func formAttrTypeIssues(issues []Issue) []Issue {
+	var result []Issue
+	for _, issue := range issues {
+		if issue.Code == "form.attr-type" {
+			result = append(result, issue)
+		}
+	}
+	return result
 }
