@@ -86,30 +86,11 @@ elements:
   Плохой.Текст = "ВЫБРАТЬ НетТакогоПоля ИЗ Документ.Заказ";
 КонецПроцедуры`)
 
-	proj, err := project.Load(dir)
-	if err != nil {
-		t.Fatalf("project.Load: %v", err)
+	res := RunFull(dir)
+	if len(res.Issues) != 1 {
+		t.Fatalf("ожидалась 1 ошибка (только запрос с несуществующим полем), получено %d: %+v", len(res.Issues), res.Issues)
 	}
-	defer proj.Close()
-
-	ctx := context.Background()
-	dbPath := filepath.Join(dir, "schema.db")
-	db, err := storage.ConnectSQLite(ctx, dbPath)
-	if err != nil {
-		t.Fatalf("connect: %v", err)
-	}
-	defer func() { db.Close(); _ = os.Remove(dbPath) }()
-	if err := db.Migrate(ctx, proj.Entities); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-
-	issues := CheckModuleQueries(proj, func(sql string) error {
-		return db.ValidateQuery(ctx, sql)
-	})
-	if len(issues) != 1 {
-		t.Fatalf("ожидалась 1 ошибка (только запрос с несуществующим полем), получено %d: %+v", len(issues), issues)
-	}
-	got := issues[0]
+	got := res.Issues[0]
 	if !strings.Contains(got.File, "forms/заказ/формаобъекта.form.os") {
 		t.Errorf("ожидался файл модуля формы, получено %q", got.File)
 	}
