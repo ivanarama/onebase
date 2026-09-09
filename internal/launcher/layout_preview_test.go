@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -115,6 +116,71 @@ func TestLayoutPreview_RealData(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("HTML предпросмотра не содержит %q\n%s", want, body)
 		}
+	}
+}
+
+// Предпросмотр берёт последнюю запись по id, даже если сущность объявила другой
+// порядок списков по умолчанию. Иначе order_by перехватывает Dir: desc и макет
+// получает первую запись прикладного порядка вместо последней созданной.
+func TestLayoutPreview_LastRecordIgnoresEntityOrderBy(t *testing.T) {
+	h, b, dir := newLayoutTestBase(t)
+	docPath := filepath.Join(dir, "documents", "реализация.yaml")
+	doc := "name: Реализация\norder_by: Номер\nfields:\n  - name: Номер\n    type: string\n"
+	if err := os.WriteFile(docPath, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	proj, err := h.loadProjectFor(ctx, b)
+	if err != nil {
+		t.Fatalf("loadProjectFor: %v", err)
+	}
+	defer proj.Close()
+
+	dbPath := filepath.Join(dir, "last-record.db")
+	db, err := storage.ConnectSQLite(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("ConnectSQLite: %v", err)
+	}
+	if err := db.Migrate(ctx, proj.Entities); err != nil {
+		db.Close()
+		t.Fatalf("Migrate: %v", err)
+	}
+	ent := proj.Entities[0]
+	for _, row := range []struct {
+		id     uuid.UUID
+		number string
+	}{
+		{uuid.MustParse("00000000-0000-0000-0000-000000000001"), "А-ПЕРВАЯ-ПО-ORDER-BY"},
+		{uuid.MustParse("ffffffff-ffff-ffff-ffff-ffffffffffff"), "Я-ПОСЛЕДНЯЯ-ПО-ID"},
+	} {
+		if err := db.Upsert(ctx, ent.Name, row.id, map[string]any{"Номер": row.number}, ent); err != nil {
+			db.Close()
+			t.Fatalf("Upsert %s: %v", row.number, err)
+		}
+	}
+	db.Close()
+
+	b.DBType = "sqlite"
+	b.DBPath = dbPath
+	if err := h.store.Update(b); err != nil {
+		t.Fatalf("Update base: %v", err)
+	}
+
+	layout := `name: ПоследняяЗапись
+document: Реализация
+areas:
+  - name: Заголовок
+    rows:
+      - cells:
+          - parameter: Номер
+`
+	rec := postPreview(t, h, b, `{"yaml":`+jsonStr(layout)+`,"entity":"Реализация"}`, "html")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d, тело: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "Я-ПОСЛЕДНЯЯ-ПО-ID") || strings.Contains(body, "А-ПЕРВАЯ-ПО-ORDER-BY") {
+		t.Fatalf("предпросмотр выбрал не последнюю запись по id:\n%s", body)
 	}
 }
 
