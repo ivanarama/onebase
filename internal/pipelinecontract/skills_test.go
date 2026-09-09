@@ -693,6 +693,45 @@ func TestTriageAndFixShareDeterministicCanonicalCommentRule(t *testing.T) {
 	)
 }
 
+func TestTriageKeepsManualSplitHumanOwnedAndFixReportsStoppedWork(t *testing.T) {
+	triage := skill(t, "triage-issues")
+	fixer := skill(t, "fix-approved")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+
+	requireAllCompact(t, triage,
+		"TRIAGE не создаёт вторую issue: такого действия нет в его полномочиях",
+		"Текущую заявку считай кодовой частью",
+		"`route=needs-decision` и `manual=false`",
+		"<!-- pp:triage-manual-split -->",
+		"человека создать отдельную manual-заявку со ссылкой на текущую",
+		"не разрешает TRIAGE вызывать `gh issue create`",
+		"Заявка принята в очередь автоматической починки",
+		"PR будет привязан к этой заявке; если автоматическая починка остановится",
+	)
+	rejectAll(t, triage,
+		"Заводи такую заявку как обычную (её кодовую часть)",
+		"Заявка ушла в автоматическую починку",
+	)
+
+	requireAllCompact(t, fixer,
+		"Новый вопрос не обещает PR или закрытие заявки",
+		"Автоматическая починка остановлена: <точная причина>.",
+		"Нужен ответ мейнтейнера: <конкретный вопрос>.",
+		"Если автор issue не `ivanarama` и не `ivantit66`, добавь отдельную строку `<!-- pp:reply -->`",
+		"эта информационная строка разрешена post-root gate и не является отдельным control marker",
+		"уже опубликованный доверенный question-marker остаётся достаточным",
+	)
+
+	requireAllCompact(t, docs,
+		"его полномочия — комментарии и метки, но не `gh issue create`",
+		"<!-- pp:triage-manual-split -->",
+		"человек должен создать отдельную manual-заявку со ссылкой на текущую",
+		"PR и закрытие не гарантируются заранее",
+		"Автоматическая починка остановлена",
+		"для внешнего автора он также содержит `<!-- pp:reply -->`",
+	)
+}
+
 type modeledControlComment struct {
 	author string
 	body   string
