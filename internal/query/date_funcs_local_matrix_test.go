@@ -158,6 +158,53 @@ func TestDateFunctionUsesQualifiedSourceFieldType(t *testing.T) {
 	require.NotContains(t, compiled.SQL, "ob_local_datetime(другой.значение)", compiled.SQL)
 }
 
+func TestDateFunctionScopesQualifiedSourceTypesInNestedSelect(t *testing.T) {
+	dateEntity, stringEntity := dateFunctionScopeEntities()
+	compiled, err := query.Compile(`
+		ВЫБРАТЬ
+			День(Т.Значение) КАК ДеньСтроки,
+			(ВЫБРАТЬ День(Т.Значение) ИЗ Справочник.Даты КАК Т) КАК ДеньДаты
+		ИЗ Справочник.Строки КАК Т`, query.CompileOpts{
+		Entities: []*metadata.Entity{dateEntity, stringEntity},
+		Dialect:  storage.SQLiteDialect{},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(compiled.SQL, "ob_local_datetime("), compiled.SQL)
+	require.Contains(t, compiled.SQL, "ob_local_datetime(т.значение)", compiled.SQL)
+}
+
+func TestDateFunctionScopesQualifiedSourceTypesAcrossUnion(t *testing.T) {
+	dateEntity, stringEntity := dateFunctionScopeEntities()
+	compiled, err := query.Compile(`
+		ВЫБРАТЬ День(Т.Значение) ИЗ Справочник.Даты КАК Т
+		ОБЪЕДИНИТЬ ВСЕ
+		ВЫБРАТЬ День(Т.Значение) ИЗ Справочник.Строки КАК Т`, query.CompileOpts{
+		Entities: []*metadata.Entity{dateEntity, stringEntity},
+		Dialect:  storage.SQLiteDialect{},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, strings.Count(compiled.SQL, "ob_local_datetime("), compiled.SQL)
+	require.Contains(t, compiled.SQL, "ob_local_datetime(т.значение)", compiled.SQL)
+}
+
+func dateFunctionScopeEntities() (*metadata.Entity, *metadata.Entity) {
+	dateEntity := &metadata.Entity{
+		Name: "Даты",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Значение", Type: metadata.FieldTypeDate},
+		},
+	}
+	stringEntity := &metadata.Entity{
+		Name: "Строки",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Значение", Type: metadata.FieldTypeString},
+		},
+	}
+	return dateEntity, stringEntity
+}
+
 func loadLocationNamed(t *testing.T, name, zoneName string) *time.Location {
 	t.Helper()
 	zones, err := zip.OpenReader(filepath.Join(zoneinfoRoot(t), "lib", "time", "zoneinfo.zip"))
