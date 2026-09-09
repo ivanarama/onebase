@@ -163,6 +163,16 @@ func requireAllCompact(t *testing.T, text string, fragments ...string) {
 	}
 }
 
+func rejectAllCompact(t *testing.T, text string, fragments ...string) {
+	t.Helper()
+	compact := strings.Join(strings.Fields(text), " ")
+	for _, fragment := range fragments {
+		if strings.Contains(compact, strings.Join(strings.Fields(fragment), " ")) {
+			t.Errorf("pipeline contract still contains forbidden compact fragment %q", fragment)
+		}
+	}
+}
+
 func requireCompactInOrder(t *testing.T, text string, fragments ...string) {
 	t.Helper()
 	compact := strings.Join(strings.Fields(text), " ")
@@ -718,8 +728,12 @@ func TestTriageKeepsManualSplitHumanOwnedAndFixReportsStoppedWork(t *testing.T) 
 		"Автоматическая починка остановлена: <точная причина>.",
 		"Нужен ответ мейнтейнера: <конкретный вопрос>.",
 		"Если автор issue не `ivanarama` и не `ivantit66`, добавь отдельную строку `<!-- pp:reply -->`",
+		"На успешном пути его пишет триаж (`/triage-issues`) или человек; при остановке FIX-handoff его добавляет FIX в свой комментарий-вопрос по п. 9",
 		"эта информационная строка разрешена post-root gate и не является отдельным control marker",
 		"уже опубликованный доверенный question-marker остаётся достаточным",
+	)
+	rejectAllCompact(t, fixer,
+		"Ответ автору — отдельный комментарий с `<!-- pp:reply -->`, и пишет его триаж (`/triage-issues`) или человек",
 	)
 
 	requireAllCompact(t, docs,
