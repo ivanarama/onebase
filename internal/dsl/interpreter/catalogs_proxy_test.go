@@ -4,11 +4,45 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/shopspring/decimal"
 )
+
+func TestCatalogRecordWriter_DeclaredEmptyValuesAreTyped(t *testing.T) {
+	target := &metadata.Entity{Name: "Владельцы", Kind: metadata.KindCatalog}
+	entity := &metadata.Entity{Name: "Карточки", Kind: metadata.KindCatalog, Fields: []metadata.Field{
+		{Name: "Сумма", Type: metadata.FieldTypeNumber},
+		{Name: "Флаг", Type: metadata.FieldTypeBool},
+		{Name: "Текст", Type: metadata.FieldTypeString},
+		{Name: "Дата", Type: metadata.FieldTypeDate},
+		{Name: "Владелец", Type: "reference:Владельцы", RefEntity: "Владельцы"},
+	}}
+	lookup := &fakeEntityLookup{m: map[string]*metadata.Entity{entity.Name: entity, target.Name: target}}
+	w := &CatalogRecordWriter{entity: entity, lookup: lookup, fields: map[string]any{}}
+	if got, ok := w.Get("Сумма").(decimal.Decimal); !ok || !got.IsZero() {
+		t.Fatalf("Сумма = %T(%v)", w.Get("Сумма"), w.Get("Сумма"))
+	}
+	if got := w.Get("Флаг"); got != false {
+		t.Fatalf("Флаг = %T(%v)", got, got)
+	}
+	if got := w.Get("Текст"); got != "" {
+		t.Fatalf("Текст = %T(%v)", got, got)
+	}
+	if got, ok := w.Get("Дата").(time.Time); !ok || !got.IsZero() {
+		t.Fatalf("Дата = %T(%v)", w.Get("Дата"), w.Get("Дата"))
+	}
+	ref, ok := w.Get("Владелец").(*Ref)
+	if !ok || ref.UUID != "" || ref.Type != target.Name || ref.Kind != metadata.KindCatalog {
+		t.Fatalf("Владелец = %#v (%T)", ref, w.Get("Владелец"))
+	}
+	if len(w.fields) != 0 {
+		t.Fatalf("чтение изменило writer: %#v", w.fields)
+	}
+}
 
 // fakeCatalogsDB stubs storage for catalog/predefined lookups in tests.
 type fakeCatalogsDB struct {

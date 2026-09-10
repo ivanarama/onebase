@@ -12,7 +12,94 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/shopspring/decimal"
 )
+
+func TestFormObjectThis_DeclaredEmptyValuesAreTypedWithoutMutation(t *testing.T) {
+	target := &metadata.Entity{Name: "Контрагенты", Kind: metadata.KindCatalog}
+	entity := &metadata.Entity{
+		Name: "Заказ", Kind: metadata.KindDocument,
+		Fields: []metadata.Field{
+			{Name: "Сумма", Type: metadata.FieldTypeNumber},
+			{Name: "Флаг", Type: metadata.FieldTypeBool},
+			{Name: "Текст", Type: metadata.FieldTypeString},
+			{Name: "Дата", Type: metadata.FieldTypeDate},
+			{Name: "Статус", Type: "enum:Статусы", EnumName: "Статусы"},
+			{Name: "Контрагент", Type: "reference:Контрагенты", RefEntity: "Контрагенты"},
+			{Name: "Картинка", Type: metadata.FieldTypeImage},
+		},
+	}
+	form := &metadata.FormModule{Attributes: []*metadata.FormAttribute{
+		{Name: "Комментарий", TypeRef: "string(40)", Length: 40},
+		{Name: "ДатаФормы", TypeRef: "date"},
+		{Name: "Выбранный", TypeRef: "CatalogRef.Контрагенты"},
+	}}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{target, entity})
+	obj := runtime.NewObject(entity.Name, entity.Kind)
+	this := s.newFormObjectThis(ctx, obj, entity, form)
+
+	if got, ok := this.Get("Сумма").(decimal.Decimal); !ok || !got.IsZero() {
+		t.Fatalf("Сумма = %T(%v), ожидался decimal.Zero", this.Get("Сумма"), this.Get("Сумма"))
+	}
+	if got := this.Get("Флаг"); got != false {
+		t.Fatalf("Флаг = %T(%v)", got, got)
+	}
+	if got := this.Get("Текст"); got != "" {
+		t.Fatalf("Текст = %T(%v)", got, got)
+	}
+	if got := this.Get("Статус"); got != "" {
+		t.Fatalf("Статус = %T(%v)", got, got)
+	}
+	if got, ok := this.Get("Дата").(time.Time); !ok || !got.IsZero() {
+		t.Fatalf("Дата = %T(%v)", this.Get("Дата"), this.Get("Дата"))
+	}
+	ref, ok := this.Get("Контрагент").(*interpreter.Ref)
+	if !ok || ref.UUID != "" || ref.Type != target.Name || ref.Kind != metadata.KindCatalog {
+		t.Fatalf("Контрагент = %#v (%T), ожидалась типизированная пустая ссылка", ref, this.Get("Контрагент"))
+	}
+	if got := this.Get("Картинка"); got != nil {
+		t.Fatalf("Картинка = %T(%v), ожидалось Неопределено", got, got)
+	}
+	if got := this.Get("Комментарий"); got != "" {
+		t.Fatalf("Комментарий = %T(%v)", got, got)
+	}
+	if got, ok := this.Get("ДатаФормы").(time.Time); !ok || !got.IsZero() {
+		t.Fatalf("ДатаФормы = %T(%v)", this.Get("ДатаФормы"), this.Get("ДатаФормы"))
+	}
+	formRef, ok := this.Get("Выбранный").(*interpreter.Ref)
+	if !ok || formRef.Type != target.Name || formRef.Kind != metadata.KindCatalog || formRef.UUID != "" {
+		t.Fatalf("Выбранный = %#v (%T)", formRef, this.Get("Выбранный"))
+	}
+	if len(obj.Fields) != 0 {
+		t.Fatalf("чтение материализовало пустые значения в объекте: %#v", obj.Fields)
+	}
+}
+
+func TestFormObjectThis_ValueTableColumnsKeepTypeMetadata(t *testing.T) {
+	form := &metadata.FormModule{Attributes: []*metadata.FormAttribute{{
+		Name: "Подбор", TypeRef: "ValueTable",
+		Columns: []*metadata.FormAttributeColumn{
+			{Name: "Количество", TypeRef: "decimal(15,2)"},
+			{Name: "Дата", TypeRef: "date"},
+		},
+	}}}
+	obj := runtime.NewObject("Обработка", "")
+	this := &formObjectThis{obj: obj, form: form}
+	tp := this.Get("Подбор").(*formTpProxy)
+	if tp.tp.Fields[0].Type != metadata.FieldTypeNumber || tp.tp.Fields[0].Length != 15 || tp.tp.Fields[0].Scale != 2 {
+		t.Fatalf("metadata Количество = %+v", tp.tp.Fields[0])
+	}
+	row := tp.CallMethod("Добавить", nil).(*interpreter.MapThis)
+	if got, ok := row.Get("Количество").(decimal.Decimal); !ok || !got.IsZero() {
+		t.Fatalf("Количество = %T(%v)", row.Get("Количество"), row.Get("Количество"))
+	}
+	if got, ok := row.Get("Дата").(time.Time); !ok || !got.IsZero() {
+		t.Fatalf("Дата = %T(%v)", row.Get("Дата"), row.Get("Дата"))
+	}
+	if len(row.M) != 0 {
+		t.Fatalf("чтение создало значения в строке: %#v", row.M)
+	}
+}
 
 // План 37, этап 8: formObjectThis должен возвращать formTpProxy при Get
 // по имени ТЧ, чтобы DSL-выражение Объект.Товары.Добавить() реально
@@ -149,6 +236,68 @@ func TestFormObjectThis_DirectValueWritesToRegister(t *testing.T) {
 	}
 	if got := rows[0]["ДокументСсылка"]; got != id.String() {
 		t.Errorf("ДокументСсылка = %v, ожидалось %s", got, id)
+	}
+}
+
+// Сквозная регрессия для типизированного пустого значения ссылки: чтение
+// незаполненного реквизита в posting-модуле возвращает *interpreter.Ref, но
+// граница storage обязана записать его как SQL NULL, а не передать драйверу
+// внутренний DSL-тип.
+func TestFormObjectThis_EmptyReferenceWritesNullToMovement(t *testing.T) {
+	contractors := &metadata.Entity{Name: "Контрагенты", Kind: metadata.KindCatalog}
+	doc := &metadata.Entity{
+		Name:    "Сделка",
+		Kind:    metadata.KindDocument,
+		Posting: true,
+		Fields: []metadata.Field{
+			{Name: "Номер", Type: metadata.FieldTypeString},
+			{Name: "Контрагент", Type: "reference:Контрагенты", RefEntity: "Контрагенты"},
+		},
+	}
+	reg := &metadata.Register{
+		Name:       "СделкиПоКонтрагентам",
+		Dimensions: []metadata.Field{{Name: "Контрагент", Type: "reference:Контрагенты", RefEntity: "Контрагенты"}},
+		Resources:  []metadata.Field{{Name: "Количество", Type: metadata.FieldTypeNumber}},
+	}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{contractors, doc})
+	if err := s.store.MigrateRegisters(ctx, []*metadata.Register{reg}); err != nil {
+		t.Fatal(err)
+	}
+	posting := mustParse(t, `Процедура ОбработкаПроведения()
+	Дв = Движения.СделкиПоКонтрагентам.Добавить();
+	Дв.Контрагент = this.Контрагент;
+	Дв.Количество = 1;
+КонецПроцедуры`)
+	s.reg.Load(runtime.LoadOptions{
+		Entities:  []*metadata.Entity{contractors, doc},
+		Programs:  map[string]*ast.Program{doc.Name: posting},
+		Registers: []*metadata.Register{reg},
+	})
+
+	res, err := s.entitySvc.Save(ctx, entityservice.SaveRequest{
+		Entity: doc,
+		ID:     uuid.New(),
+		IsNew:  true,
+		Fields: map[string]any{"Номер": "СД-00001"},
+		Action: "post",
+	})
+	if err != nil {
+		t.Fatalf("проведение с пустой ссылкой вернуло техническую ошибку: %v", err)
+	}
+	if res.DSLError != "" {
+		t.Fatalf("проведение с пустой ссылкой вернуло DSL-ошибку: %s", res.DSLError)
+	}
+
+	rows, err := s.store.GetMovements(ctx, reg.Name, reg, storage.RegFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("ожидалось одно движение, получено %d", len(rows))
+	}
+	contractor := rows[0]["Контрагент"]
+	if contractor != nil {
+		t.Fatalf("пустая ссылка записана как %T(%v), ожидался SQL NULL", contractor, contractor)
 	}
 }
 
