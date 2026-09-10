@@ -651,7 +651,12 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		"then":  style,
 	})
 
-	return with(obj("schema", "entity", "name", "kind", "layout_kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button"), map[string]*yamlLintSchema{
+	// `ref_card_button` в этом списке НЕТ намеренно: загрузчик читает его только
+	// внутри блока `form:` (`internal/dsl/loader/managed_form_loader.go`, поле
+	// RefCardButton у тега yaml:"form"). Пока ключ был разрешён и в корне,
+	// конфигурация с ним проходила линт зелёно, а кнопка молча оставалась на
+	// месте — ровно та «тихая потеря», от которой этот линт и заведён (#1450).
+	return with(obj("schema", "entity", "name", "kind", "layout_kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll"), map[string]*yamlLintSchema{
 		"form":                   formHeader,
 		"title":                  freeMap(),
 		"events":                 freeMap(),
