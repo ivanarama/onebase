@@ -46,6 +46,7 @@ func NewOfflineServer(proj *project.Project, db *storage.DB) (*Server, *runtime.
 	})
 	reg.LoadModules(proj.Modules)
 	reg.LoadProcessors(proj.Processors)
+	reg.LoadExchangePlans(proj.ExchangePlans)
 	// Регистры бухгалтерии нужны, чтобы запросы РегистрБухгалтерии.X.Остатки()/
 	// .Обороты() и проведение документов с проводками работали в offline-режиме
 	// (procrun), как и на полном сервере (run.go).
