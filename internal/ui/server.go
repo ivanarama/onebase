@@ -70,6 +70,11 @@ type Config struct {
 	// New создаёт собственный, чтобы поле никогда не было пустым.
 	LoginLimit *auth.LoginLimiter
 	Limits     RuntimeLimits
+	// POSEnabled — приложение объявило рабочее место кассира (app.yaml:
+	// features.pos). Ложь по умолчанию: платформа умеет РМК, но показывать его
+	// каждому приложению нельзя — в неторговом домене это чужой пункт меню
+	// (issue #1331).
+	POSEnabled bool
 	Metrics    *metrics.Registry
 	// JobQueue — очередь фоновых заданий и её пул исполнителей (план 130).
 	// nil = режим без очереди (procrun, раннер конфигтестов, сервер, собранный
