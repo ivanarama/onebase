@@ -385,6 +385,14 @@ onebase describe --project <dir>                # вся структура ко
   расходиться им нельзя. Аварийное снятие — `gh api -X DELETE
   …/branches/main/protection`, возврат — `-X PUT … --input
   .github/branch-protection.json`.
+  - Машиночитаемую пару сторожит тест: `required_status_checks.contexts` из
+    `.github/branch-protection.json` обязан совпадать с `required_checks` в
+    `pipelinectl.json` (`internal/pipelinecontract`). Меняешь список — правь оба
+    файла, иначе `pipelinectl` ждёт не тот набор проверок, чем требует GitHub.
+    Три текстовые копии (этот файл, `docs/maintenance-pipeline.md`, скил
+    пастуха) остаются на честном слове намеренно: проверка «имя упомянуто» не
+    поймала бы #1192 — там имя было на месте, неверным было утверждение вокруг
+    него (#1346).
   - `test-windows` стал обязательным 20.08.2026 (#962, Р2): Windows — основная
     платформа продукта (лаунчер, WebView2, переименование запущенного `.exe` при
     самообновлении), а красный джоб на ней мёрж не останавливал. На критический
