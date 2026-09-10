@@ -1639,6 +1639,86 @@ function listActionsBtnClick(e, btn) {
   showListMenu(sel ? listMenuItems(sel) : listMenuNoSel(), r.left, r.bottom);
 }
 
+// BEGIN onebase-list-search-restore
+// Отложенный автосабмит строки поиска — полная навигация: старый документ
+// уничтожается вместе с фокусом и кареткой, поэтому на новой странице поиск
+// ничем не выделен, и следующие набранные буквы уходят уже не в поле, а в
+// горячие клавиши списка (Insert открывал форму создания). Перед самой
+// отправкой запоминаем каретку для текущего адреса, а на загрузке той же
+// страницы возвращаем её. Отметка одноразовая и привязана к pathname: обычный
+// переход по ссылке и возврат назад не должны сами забирать фокус в поиск.
+var OB_LIST_SEARCH_FOCUS = 'ob-list-search-focus';
+
+function obListSearchStorage() {
+  // В приватном режиме и при запрещённых сайту данных бросает сам доступ к
+  // свойству — потерянный фокус не повод ронять поиск целиком.
+  try {
+    return window.sessionStorage || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function obListSearchCaret(raw, max) {
+  var n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return max;
+  return Math.min(Math.floor(n), max);
+}
+
+function obSaveListSearchFocus(input) {
+  if (!input || input.id !== 'ob-list-search') return;
+  var store = obListSearchStorage();
+  if (!store) return;
+  var value = typeof input.value === 'string' ? input.value : '';
+  var start = obListSearchCaret(input.selectionStart, value.length);
+  var end = obListSearchCaret(input.selectionEnd, value.length);
+  try {
+    store.setItem(OB_LIST_SEARCH_FOCUS, JSON.stringify({
+      path: location.pathname,
+      start: start,
+      end: end < start ? start : end,
+    }));
+  } catch (e) {
+    // Переполненное хранилище не должно мешать самому поиску.
+  }
+}
+
+function obRestoreListSearchFocus() {
+  var store = obListSearchStorage();
+  if (!store) return null;
+  var raw = null;
+  try {
+    raw = store.getItem(OB_LIST_SEARCH_FOCUS);
+    // Снимаем отметку сразу: она действует ровно на одну загрузку страницы.
+    if (raw !== null) store.removeItem(OB_LIST_SEARCH_FOCUS);
+  } catch (e) {
+    return null;
+  }
+  if (!raw) return null;
+  var state = null;
+  try {
+    state = JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
+  if (!state || state.path !== location.pathname) return null;
+  var input = document.getElementById('ob-list-search');
+  if (!input) return null;
+  var value = typeof input.value === 'string' ? input.value : '';
+  var start = obListSearchCaret(state.start, value.length);
+  var end = obListSearchCaret(state.end, value.length);
+  if (typeof input.focus === 'function') input.focus();
+  if (typeof input.setSelectionRange === 'function') {
+    try {
+      input.setSelectionRange(start, end < start ? start : end);
+    } catch (e) {
+      // Не всякий тип поля умеет каретку; фокус уже возвращён, и этого хватает.
+    }
+  }
+  return input;
+}
+// END onebase-list-search-restore
+
 function obInitListDelegates() {
   if (window.__obListDelegates) return;
   window.__obListDelegates = true;
@@ -1683,6 +1763,8 @@ function obInitListDelegates() {
       // cannot disable the debounced search submission.
       var proto = window.HTMLFormElement && window.HTMLFormElement.prototype;
       var nativeSubmit = proto && typeof proto.submit === 'function' ? proto.submit : null;
+      // Строго до отправки: дальше страница уже уничтожается вместе с кареткой.
+      obSaveListSearchFocus(input);
       if (nativeSubmit) nativeSubmit.call(form);
       else if (typeof form.submit === 'function') form.submit();
     }, delay);
@@ -1767,6 +1849,7 @@ function obInitFeed() {
 
 obReady(function () {
   obInitListDelegates();
+  obRestoreListSearchFocus();
   obInitDOMTables();
   obInitKeyboardShortcuts();
   var firstListRow = obListRows()[0];
