@@ -74,7 +74,7 @@ function setup(options) {
     getElementById(id) { return walk(body, (candidate) => candidate.id === id); },
     querySelector(selector) { return selector === 'a.btn-cancel' ? parentCancel : null; },
   });
-  const window = eventTarget({confirm() { return true; }});
+  const window = eventTarget({confirm() { throw new Error('window.confirm must not be used'); }});
   global.document = document;
   global.window = window;
   if (options.managedEscape) new Function(managedEscapeSource)();
@@ -91,7 +91,15 @@ function escapeEvent() {
   };
 }
 
-test('external Cancel and close button safely release the modal', () => {
+function closeConfirmation(document) {
+  return document.getElementById('_ref-create-close-confirm');
+}
+
+function confirmationButtons(confirm) {
+  return confirm.children[0].children[1].children;
+}
+
+test('external Cancel and close button use an in-page confirmation', () => {
   const env = setup();
   const select = {options: [], value: '', appendChild() {}, dispatchEvent() {}};
   env.openRefCreate(select, 'Город');
@@ -103,21 +111,37 @@ test('external Cancel and close button safely release the modal', () => {
   assert.equal(cancel.textContent, 'Отмена');
   assert.equal(close.textContent, '×');
 
-  env.window.confirm = () => false;
   cancel.dispatch('click', {});
-  assert.equal(env.document.getElementById('_ref-create-modal'), modal, 'cancel bypassed the unsaved-data confirmation');
+  let confirm = closeConfirmation(env.document);
+  assert.ok(confirm, 'external Cancel did not open the in-page confirmation');
+  assert.equal(env.document.getElementById('_ref-create-modal'), modal);
+  assert.equal(confirm.children[0].children[0].textContent, 'Данные были изменены и не записаны. Закрыть форму?');
 
-  env.window.confirm = () => true;
+  let [closeWithoutSave, stay] = confirmationButtons(confirm);
+  assert.equal(closeWithoutSave.textContent, 'Закрыть');
+  assert.equal(stay.textContent, 'Отмена');
+  stay.dispatch('click', {});
+  assert.equal(closeConfirmation(env.document), null);
+  assert.equal(env.document.getElementById('_ref-create-modal'), modal, 'confirmation cancellation closed the create form');
+
   close.dispatch('click', {});
+  confirm = closeConfirmation(env.document);
+  assert.ok(confirm, 'close button bypassed the in-page confirmation');
+  [closeWithoutSave] = confirmationButtons(confirm);
+  closeWithoutSave.dispatch('click', {});
   assert.equal(env.document.getElementById('_ref-create-modal'), null);
+  assert.equal(closeConfirmation(env.document), null);
   assert.equal(env.window.listenerCount('message'), 0, 'closed modal leaked its message handler');
 });
 
-test('Escape closes from both parent document and same-origin error iframe', () => {
+test('Escape asks before closing from both parent document and same-origin error iframe', () => {
   const env = setup();
   const select = {options: [], value: '', appendChild() {}, dispatchEvent() {}};
   env.openRefCreate(select, 'Город');
   env.document.dispatch('keydown', escapeEvent());
+  let confirm = closeConfirmation(env.document);
+  assert.ok(confirm);
+  confirmationButtons(confirm)[0].dispatch('click', {});
   assert.equal(env.document.getElementById('_ref-create-modal'), null);
 
   env.openRefCreate(select, 'Город');
@@ -125,18 +149,28 @@ test('Escape closes from both parent document and same-origin error iframe', () 
   const iframe = modal.children[0].children[1];
   iframe.dispatch('load', {});
   iframe.contentDocument.dispatch('keydown', escapeEvent());
+  confirm = closeConfirmation(env.document);
+  assert.ok(confirm);
+  confirmationButtons(confirm)[0].dispatch('click', {});
   assert.equal(env.document.getElementById('_ref-create-modal'), null);
 });
 
-test('managed capture handler closes inline modal before the parent form', () => {
+test('managed capture handler opens confirmation before the parent form', () => {
   const env = setup({managedEscape: true});
   const select = {options: [], value: '', appendChild() {}, dispatchEvent() {}};
   env.openRefCreate(select, 'Город');
 
   env.document.dispatch('keydown', escapeEvent());
 
-  assert.equal(env.document.getElementById('_ref-create-modal'), null);
+  assert.ok(closeConfirmation(env.document));
+  assert.ok(env.document.getElementById('_ref-create-modal'));
   assert.equal(env.parentCancel.clicks, 0, 'Escape closed the managed parent form');
+  env.document.dispatch('keydown', escapeEvent());
+  assert.equal(closeConfirmation(env.document), null, 'second Escape did not cancel the confirmation');
+  assert.ok(env.document.getElementById('_ref-create-modal'), 'cancelling the confirmation closed the create form');
+  env.document.dispatch('keydown', escapeEvent());
+  confirmationButtons(closeConfirmation(env.document))[0].dispatch('click', {});
+  assert.equal(env.document.getElementById('_ref-create-modal'), null);
   assert.equal(env.window.listenerCount('message'), 0, 'managed Escape bypassed modal cleanup');
 });
 
@@ -145,9 +179,12 @@ test('reopening cleans the previous modal before installing a new handler', () =
   const select = {options: [], value: '', appendChild() {}, dispatchEvent() {}};
   env.openRefCreate(select, 'Город');
   const first = env.document.getElementById('_ref-create-modal');
+  first._obClose();
+  assert.ok(closeConfirmation(env.document));
   env.openRefCreate(select, 'Город');
   const second = env.document.getElementById('_ref-create-modal');
   assert.notEqual(second, first);
   assert.equal(first.parentElement, null);
+  assert.equal(closeConfirmation(env.document), null, 'reopening leaked the old confirmation');
   assert.equal(env.window.listenerCount('message'), 1);
 });
