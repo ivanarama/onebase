@@ -2090,6 +2090,16 @@ func modeledAdvanceTriageRoute(state modeledTriageRoute, ownedRoot, phases int) 
 }
 
 func TestTriageRouteRecoversAfterCommentAndStopsForLateHumanGate(t *testing.T) {
+	triage := skill(t, "triage-issues")
+	requireAllCompact(t, triage,
+		"Сохрани номера всех issues, попавших в recovery-очередь, отдельным множеством",
+		"явно вычти из второй выборки сохранённое множество recovery-issues",
+		"Issue из recovery-очереди не может одновременно или в следующем проходе той же выборки разбираться как новая",
+		"Перед любым действием legacy-ветки выполни отдельный fail-closed guard",
+		"legacy-ветка запрещена независимо от текущих labels: issue направляется только в recovery-очередь",
+		"Похожая на route-claim, но повреждённая или непроверяемая строка тоже не превращает комментарий в legacy",
+	)
+
 	rootOnly := modeledTriageRoute{canonicalRoot: 10, open: true, inputUnchanged: true}
 	if !modeledTriageRecoveryCandidate(rootOnly) {
 		t.Fatal("a canonical root without done must remain in the TRIAGE recovery queue")
