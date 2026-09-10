@@ -4,11 +4,82 @@ import (
 	"bytes"
 	"encoding/json"
 	"html"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 )
+
+func TestManagedTablePartColumnsUseFormElementTitlesThroughHandler(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		noGrid bool
+	}{
+		{name: "SlickGrid"},
+		{name: "no_grid", noGrid: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ent := &metadata.Entity{
+				Name: "Регион", Kind: metadata.KindCatalog,
+				Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+				TableParts: []metadata.TablePart{{Name: "Тарифы", Fields: []metadata.Field{
+					{
+						Name: "УровеньНапряжения", Type: metadata.FieldTypeString,
+						Title: "Заголовок реквизита",
+					},
+					{
+						Name: "Ставка", Type: metadata.FieldTypeNumber,
+						Title: "Ставка реквизита",
+					},
+				}}},
+			}
+			form := &metadata.FormModule{
+				Name: "ФормаОбъекта", Kind: "object", EntityName: ent.Name,
+				LayoutKind: metadata.FormLayoutManaged,
+				Elements: []*metadata.FormElement{{
+					Kind: metadata.FormElementTablePart, Name: "Тарифы", DataPath: "Объект.Тарифы",
+					NoGrid: tc.noGrid,
+					Children: []*metadata.FormElement{{
+						Kind: metadata.FormElementColumn, Name: "КолУровеньНапряжения",
+						DataPath: "Объект.Тарифы.УровеньНапряжения",
+						TitleMap: map[string]string{"ru": "ТУН"},
+					}, {
+						Kind: metadata.FormElementColumn, Name: "КолСтавка",
+						DataPath: "Объект.Тарифы.Ставка",
+					}},
+				}},
+			}
+			ent.Forms = []*metadata.FormModule{form}
+
+			s, _ := newSubmitTestServer(t, []*metadata.Entity{ent})
+			req := reqWithChi(http.MethodGet, "/ui/catalog/регион/new", nil, map[string]string{"entity": "регион"})
+			rec := httptest.NewRecorder()
+			s.form(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET формы: code = %d, body: %s", rec.Code, rec.Body.String())
+			}
+
+			if tc.noGrid {
+				if !strings.Contains(rec.Body.String(), `<th>ТУН</th>`) ||
+					!strings.Contains(rec.Body.String(), `<th>Ставка реквизита</th>`) {
+					t.Fatalf("no_grid нарушил приоритет заголовков элемента и реквизита: %s", rec.Body.String())
+				}
+				if strings.Contains(rec.Body.String(), `<th>Заголовок реквизита</th>`) {
+					t.Fatal("no_grid оставил заголовок реквизита старше title элемента")
+				}
+				return
+			}
+
+			cols := parseManagedTPColumns(t, rec.Body.String())
+			if len(cols) != 2 || cols[0].ID != "УровеньНапряжения" || cols[0].Name != "ТУН" ||
+				cols[1].ID != "Ставка" || cols[1].Name != "Ставка реквизита" {
+				t.Fatalf("SlickGrid потерял title элемента или идентификатор реквизита: %+v", cols)
+			}
+		})
+	}
+}
 
 // Колонки табличной части подписываются синонимом реквизита (`title`/`titles`),
 // как в автогенерируемой форме. Имя реквизита остаётся идентификатором: по нему
