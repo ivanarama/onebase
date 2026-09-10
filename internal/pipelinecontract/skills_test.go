@@ -1013,10 +1013,12 @@ func TestFixAndMergeCheckoutExactlyReviewedHead(t *testing.T) {
 	fixer := skill(t, "fix-approved")
 	merge := skill(t, "merge-shepherd")
 	requireAllCompact(t, fixer,
+		"git ls-remote <origin-or-exact-fork-URL> refs/heads/<headRefName>",
+		"git fetch <origin-or-exact-fork-URL> refs/heads/<headRefName>",
 		"git rev-parse FETCH_HEAD # обязан совпасть с SHA completion",
 		"git worktree add -B pp-rework-<M> ../pp-rework-<M> <SHA completion>",
-		"git push --force-with-lease=refs/heads/<ветка-PR>:<SHA completion>",
-		"origin HEAD:refs/heads/<ветка-PR>",
+		"git push --force-with-lease=refs/heads/<headRefName>:<SHA completion>",
+		"<origin-or-exact-fork-URL> HEAD:refs/heads/<headRefName>",
 		"Lease failure означает чужой push",
 	)
 	requireAllCompact(t, merge,
@@ -1030,6 +1032,21 @@ func TestFixAndMergeCheckoutExactlyReviewedHead(t *testing.T) {
 		"git push --force-with-lease=refs/heads/<ветка-PR>:<сохранённый SHA> origin HEAD:refs/heads/<ветка-PR>",
 		"Lease failure означает гонку",
 		"новый `.head.sha` равен локальному `git rev-parse HEAD`",
+	)
+}
+
+func TestFixRevalidatesForkIdentityBeforeEveryMutation(t *testing.T) {
+	fixer := skill(t, "fix-approved")
+	requireAllCompact(t, fixer,
+		"gh api repos/ivanarama/onebase/pulls/<M>",
+		"--jq '{headRepository:.head.repo.full_name,headRefName:.head.ref,headSha:.head.sha,maintainerCanModify:.maintainer_can_modify,state,baseRefName:.base.ref}'",
+		"непосредственно перед **каждым внешним изменением**",
+		"`headRepository`, `headRefName` и `maintainerCanModify` не изменились",
+		"Сразу после успеха отдельно сверь и remote ref, и `.head.sha` PR",
+		"Для fork повторно потребуй неизменные `headRepository`, `headRefName` и `maintainerCanModify == true`",
+	)
+	rejectAll(t, fixer,
+		"gh api repos/ivanarama/onebase/pulls/<M> --jq '{sha:.head.sha,state,baseRefName:.base.ref}'",
 	)
 }
 
