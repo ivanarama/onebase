@@ -18,8 +18,11 @@ const tplManagedForm = `
 {{define "managed-element"}}
 {{$el := .El}}{{$ctx := .Ctx}}
 {{/* $ro — нередактируемость элемента: собственный readonly (и item_form) ИЛИ
-     истинное условие readonly_when по полям записи. Скрытые по hidden_when не
-     отрисовываются вовсе — первой веткой цепочки. */}}
+     истинное условие readonly_when по полям записи. И то и другое приходит
+     унаследованным от контейнеров-предков: наследование статического считает
+     effectiveFormElementReadOnly, условного — карта ElReadOnly, которую строит
+     managedFormElementStates. Скрытые по hidden_when не отрисовываются вовсе —
+     первой веткой цепочки. */}}
 {{$ro := or (effectiveFormElementReadOnly $ctx.Form $el) (elReadOnly $ctx $el)}}
 {{$effectiveReq := effectiveFormElementRequired $ctx.Entity $el}}{{$req := nativeFormElementRequired $ctx.Entity $el}}
 {{if elHidden $ctx $el}}
@@ -40,7 +43,7 @@ const tplManagedForm = `
   <div class="managed-tabs" data-tabs="{{$el.Name}}">
     <div class="managed-tab-headers" style="display:flex;gap:2px;border-bottom:2px solid #e2e8f0;margin-bottom:12px">
       {{range $i, $page := $pages}}
-        <button type="button" class="managed-tab-btn{{if eq $i 0}} active{{end}}" data-tab-idx="{{$i}}">
+        <button type="button" class="managed-tab-btn{{if eq $i 0}} active{{end}}" data-tab-idx="{{$i}}" data-ob-readonly-navigation="1">
           {{fieldTitleRU $page.TitleMap $page.Name}}
         </button>
       {{end}}
@@ -98,7 +101,7 @@ const tplManagedForm = `
           <button type="button" data-ob-ref-picker="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
           {{end}}
           {{if and (or (not $ro) (index $ctx.Values $fn)) (not $ctx.HideRefCard)}}
-          <button type="button" data-ob-ref-current="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
+          <button type="button" data-ob-ref-current="ref-{{$fn}}" data-ob-readonly-navigation="1" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
           {{end}}
         </div>
       {{else if isEnum (str $f.Type)}}
@@ -186,7 +189,7 @@ const tplManagedForm = `
           </select>
           <button type="button" data-ob-ref-picker="ref-{{$fn}}"{{if $ro}} disabled{{end}} style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
           {{if and (or (not $ro) (index $ctx.Values $fn)) (not $ctx.HideRefCard)}}
-          <button type="button" data-ob-ref-current="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
+          <button type="button" data-ob-ref-current="ref-{{$fn}}" data-ob-readonly-navigation="1" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
           {{end}}
         </div>
       {{else if $attr}}
@@ -261,6 +264,14 @@ const tplManagedForm = `
   {{$tpEnum := index $ctx.TPEnumLabels $tpName}}
   {{$tpCmds := tpCommandButtons $el}}
   {{$tpReadOnly := or $ro (not $ctx.CanWrite)}}
+  {{/* data-ob-tp — граница табличной части для клиентского пересчёта условий:
+       её содержимое (грид, кнопки строк, командные кнопки) applyElementStates
+       не трогает. Состояние тут складывается не только из условий, но и из
+       права на запись, а его в карте состояний нет — сняв запрет «заодно» с
+       родительской группой, клиент включил бы добавление строк там, где сервер
+       его запретил. Каскад от группы табличную часть достаёт, но на отрисовке:
+       $ro уже содержит условие предка (#1184). */}}
+  <div class="managed-tp" data-ob-tp="{{$el.Name}}">
   <h3 style="margin:18px 0 8px;font-size:14px">{{fieldTitleRU $el.TitleMap (or (tablePartTitle $tpMeta) $tpName)}}</h3>
   {{if $tpMeta}}
   {{$tpVirtualCols := managedTPVirtualColumns $tpMeta.Fields $el.VirtualColumns}}
@@ -343,7 +354,7 @@ const tplManagedForm = `
                 {{end}}
               </select>
               <button type="button" data-ob-ref-picker="closest"{{if $tpReadOnly}} disabled{{end}} style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="Выбрать из списка">...</button>
-              <button type="button" data-ob-ref-current="closest" style="padding:4px 7px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="Открыть карточку">🔍</button>
+              <button type="button" data-ob-ref-current="closest" data-ob-readonly-navigation="1" style="padding:4px 7px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="Открыть карточку">🔍</button>
             </div>
           {{else if eq (str $f.Type) "number"}}
             <input type="number" step="any" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="{{$v}}" data-tp-num="{{$f.Name}}"{{if $tpReadOnly}} disabled{{else}} data-ob-recalc-tp-row{{end}}>
@@ -439,6 +450,7 @@ const tplManagedForm = `
   </div>
   {{end}}
   {{end}}
+  </div>
 {{else if eq (str $el.Kind) "ПолеДаты"}}
   {{/* Нативный выбор ДАТЫ без времени (issue #150). Браузер показывает дату
        по локали (в ru — дд.ММ.гггг). Значение круглим до YYYY-MM-DD, что

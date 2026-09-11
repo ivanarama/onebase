@@ -41,7 +41,12 @@ class Element {
   constructor(spec) {
     this.tagName = String(spec.tag).toUpperCase();
     this.attributes = new Map(Object.entries(spec.attrs || {}));
-    this.children = (spec.children || []).map((child) => new Element(child));
+    this.parentElement = null;
+    this.children = (spec.children || []).map((child) => {
+      const element = new Element(child);
+      element.parentElement = this;
+      return element;
+    });
     this.style = parseStyle(this.attributes.get('style'));
     this.disabled = this.attributes.has('disabled');
     this.readOnly = this.attributes.has('readonly');
@@ -49,6 +54,15 @@ class Element {
 
   getAttribute(name) {
     return this.attributes.has(String(name)) ? this.attributes.get(String(name)) : null;
+  }
+
+  closest(selector) {
+    const match = /^\[([a-z0-9-]+)\]$/.exec(String(selector));
+    if (!match) throw new Error('unsupported closest selector: ' + selector);
+    for (let node = this; node; node = node.parentElement) {
+      if (node.attributes.has(match[1])) return node;
+    }
+    return null;
   }
 
   descendants() {

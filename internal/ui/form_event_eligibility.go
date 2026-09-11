@@ -18,13 +18,22 @@ type browserFormElementVisit struct {
 	parentTablePart *metadata.FormElement
 	// effectiveReadOnly — нередактируемость по МЕТАДАННЫМ (своя и унаследованная).
 	// conditional — на отрисовку элемента влияет собственное
-	// readonly_when/hidden_when либо hidden_when контейнера-предка. Для такого
-	// элемента метаданные больше не говорят, что увидел браузер: условие могло не
-	// отрисовать его вовсе либо отрисовать нередактируемым, а по метаданным он
-	// остаётся размещённым и editable. readonly_when контейнеров раскладки
-	// запрещает configcheck и на дочерние элементы он не распространяется.
+	// readonly_when/hidden_when либо readonly_when/hidden_when контейнера-предка.
+	// Для такого элемента метаданные больше не говорят, что увидел браузер:
+	// условие могло не отрисовать его вовсе либо отрисовать нередактируемым, а по
+	// метаданным он остаётся размещённым и editable.
 	effectiveReadOnly bool
 	conditional       bool
+	// readOnlyWhenAncestors — предки, объявившие readonly_when, от корня к
+	// ближайшему родителю. Условная нередактируемость наследуется так же,
+	// как статическая: «после проведения вся группа замерзает» — это условие на
+	// группе, а не на каждом её реквизите по отдельности (#1184).
+	//
+	// Выражения предков здесь НЕ вычисляются: обход не знает значений записи и
+	// служит ещё и путям, где условие вычислять нельзя (право на событие,
+	// частичная запись). Вычисляет их managedFormElementStates — единственное
+	// место, где известны и значения, и вычислитель.
+	readOnlyWhenAncestors []*metadata.FormElement
 }
 
 // resolveBrowserFormEvent is the single fail-closed server-side model of what
@@ -125,8 +134,8 @@ func walkBrowserFormElements(form *metadata.FormModule, visit func(browserFormEl
 	if form == nil || visit == nil {
 		return
 	}
-	var walk func([]*metadata.FormElement, *metadata.FormElement, bool, bool)
-	walk = func(elements []*metadata.FormElement, parentTable *metadata.FormElement, parentReadOnly, parentConditional bool) {
+	var walk func([]*metadata.FormElement, *metadata.FormElement, bool, bool, []*metadata.FormElement)
+	walk = func(elements []*metadata.FormElement, parentTable *metadata.FormElement, parentReadOnly, parentConditional bool, roWhenAncestors []*metadata.FormElement) {
 		for _, element := range elements {
 			if element == nil {
 				continue
@@ -138,15 +147,25 @@ func walkBrowserFormElements(form *metadata.FormModule, visit func(browserFormEl
 			visit(browserFormElementVisit{
 				element: element, parentTablePart: parentTable,
 				effectiveReadOnly: effectiveReadOnly, conditional: conditional,
+				readOnlyWhenAncestors: roWhenAncestors,
 			})
 			nextTable := parentTable
 			if element.Kind == metadata.FormElementTablePart {
 				nextTable = element
 			}
-			walk(element.Children, nextTable, effectiveReadOnly, conditional)
+			// Своё условие видят только потомки. Список копируется, а не
+			// дописывается на месте: append по общему массиву склеил бы ветки
+			// соседних контейнеров — второй потомок затёр бы предка первого.
+			nextAncestors := roWhenAncestors
+			if strings.TrimSpace(element.ReadOnlyWhen) != "" {
+				nextAncestors = make([]*metadata.FormElement, 0, len(roWhenAncestors)+1)
+				nextAncestors = append(nextAncestors, roWhenAncestors...)
+				nextAncestors = append(nextAncestors, element)
+			}
+			walk(element.Children, nextTable, effectiveReadOnly, conditional, nextAncestors)
 		}
 	}
-	walk(form.Elements, nil, false, false)
+	walk(form.Elements, nil, false, false, nil)
 }
 
 func effectiveFormElementReadOnly(form *metadata.FormModule, target *metadata.FormElement) bool {
