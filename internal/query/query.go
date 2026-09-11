@@ -663,6 +663,7 @@ type translator struct {
 	mainRef         mainRefSource                 // главный источник запроса: чья ссылка стоит за голым «Ссылка»
 	joinedRefs      []joinedRefSource             // ссылочные поля присоединённых источников (#1385)
 	pendingRefJoins []string                      // авто-JOIN'ы присоединённого источника, ждущие конца его ПО
+	fromSourceAlias string                        // последняя source-алиас в секции ПО (для проверки dot-в ON)
 }
 
 // mainRefSource — предсканированный главный источник запроса: имя сущности и
@@ -4020,6 +4021,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					}
 				}
 			}
+			if tr.section == sectionFrom {
+				tr.fromSourceAlias = sourceAlias
+			}
 			if !isMain || tr.parenDepth > 0 {
 				filtered, ok, err := tr.rowFilteredSourceSQL(upper, entity.val, tableName, sourceAlias)
 				if err != nil {
@@ -4331,7 +4335,8 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					// Авто-JOIN для навигации нельзя безопасно дописать внутри
 					// собственного ON: его псевдоним оказался бы использован до
 					// объявления. Явно отклоняем такую форму вместо невалидного SQL.
-					if jrd != nil && nextIsDot && tr.section == sectionFrom {
+					qualifier := lowerFast(tr.tokens[tr.pos-3].val)
+					if jrd != nil && nextIsDot && tr.section == sectionFrom && qualifier == tr.fromSourceAlias {
 						return Result{}, i18nerr.Errorf(
 							"навигация по ссылке присоединённого источника внутри ПО не поддерживается; соедини %s явно через СОЕДИНЕНИЕ",
 							jrd.refEntity)
