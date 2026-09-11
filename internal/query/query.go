@@ -11,6 +11,7 @@ import (
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/ivantit66/onebase/internal/typedempty"
 	"github.com/shopspring/decimal"
 )
 
@@ -78,6 +79,14 @@ type Result struct {
 	// результата» неоднозначно, и молча приводить значения нельзя — то же
 	// правило, что у BoolColumns/DateColumns.
 	RefColumns map[string]string
+	// TypedColumns is a fail-closed semantic descriptor for direct projections
+	// of one declared source. It is consumed only by the DSL query boundary;
+	// generic query runners keep SQL NULL unchanged.
+	TypedColumns map[string]typedempty.Descriptor
+	// DSLColumnAliases maps the field name requested by a DSL projection to the
+	// actual key returned by the SQL driver when the compiler rewrites a system
+	// register field (Период -> period, ВидДвижения -> вид_движения).
+	DSLColumnAliases map[string]string
 	// Projection — поэлементный разбор списка выборки (план 88E). Позволяет
 	// маскировать защищённые поля в колонках результата вместо отказа во всём
 	// запросе; при Projection.Simple == false действует прежний отказ по
@@ -4337,6 +4346,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 	if err := tr.assertRowFiltersApplied(); err != nil {
 		return Result{}, err
 	}
+	typedColumns, dslColumnAliases := typedProjectionColumns(projectionPlan, tokens, opts, tr.sourceCtx, tr.refCols)
 	return Result{
 		SQL:              tr.build(),
 		Args:             tr.args,
@@ -4346,18 +4356,195 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		BoolColumns:      boolOutputColumns(projectionPlan, tr.colTypes),
 		DateColumns:      typedOutputColumns(projectionPlan, tr.colTypes, metadata.FieldTypeDate),
 		RefColumns:       refOutputColumns(projectionPlan, tr.refCols),
+		TypedColumns:     typedColumns,
+		DSLColumnAliases: dslColumnAliases,
 	}, nil
 }
 
 // refOutputColumns отдаёт собранные транслятором колонки-ссылки, но только для
 // простой проекции: при ОБЪЕДИНИТЬ и подзапросах имя колонки результата может
-// прийти из другой ветки, и обещать по нему тип нельзя. То же ограничение, что у
-// boolOutputColumns/typedOutputColumns, — и по той же причине.
+// прийти из другой ветки, и обещать по нему тип нельзя. Явный JOIN это не
+// запрещает: translator уже знает точный SQL-выход выбранной ссылки.
 func refOutputColumns(p ProjectionPlan, cols map[string]string) map[string]string {
 	if !p.Simple || len(cols) == 0 {
 		return nil
 	}
 	return cols
+}
+
+func singleProjectionSource(p ProjectionPlan, sourceCtx sourceContext) bool {
+	return p.Simple && len(sourceCtx.scopes) == 1 && sourceCtx.scopes[0].sourceCount == 1
+}
+
+type typedProjectionSource struct {
+	fields     map[string]typedempty.Descriptor
+	qualifiers map[string]bool
+	system     map[string]bool
+	self       typedempty.Descriptor
+}
+
+// typedProjectionColumns proves a result type only for a direct field of one
+// declared non-virtual source. JOIN, UNION, expressions and unresolved paths
+// deliberately keep SQL NULL as the general DSL Неопределено.
+func typedProjectionColumns(
+	p ProjectionPlan,
+	tokens []tok,
+	opts CompileOpts,
+	sourceCtx sourceContext,
+	refCols map[string]string,
+) (map[string]typedempty.Descriptor, map[string]string) {
+	if !singleProjectionSource(p, sourceCtx) {
+		return nil, nil
+	}
+	source, ok := projectionSource(tokens, opts, sourceCtx.scopes[0])
+	if !ok {
+		return nil, nil
+	}
+	out := make(map[string]typedempty.Descriptor)
+	aliases := make(map[string]string)
+	for _, col := range p.Columns {
+		if col.Star || col.Output == "" || len(col.Path) == 0 {
+			continue
+		}
+		path := append([]string(nil), col.Path...)
+		if len(path) > 1 && source.qualifiers[lowerFast(path[0])] {
+			path = path[1:]
+		}
+		if len(path) != 1 {
+			// Exact reference links are added from translator.refCols below: it
+			// knows the actual SQL output key after compiler rewriting.
+			continue
+		}
+		name := path[0]
+		if isReferenceName(lowerFast(name)) && source.self.RefEntity != "" {
+			continue
+		}
+		desc, exists := source.fields[lowerFast(name)]
+		if !exists {
+			continue
+		}
+		if desc.RefEntity != "" {
+			// A bare reference requisit is rewritten to its presentation.
+			desc = typedempty.Descriptor{Type: metadata.FieldTypeString}
+		}
+		output := col.Output
+		if col.Alias == "" && source.system[lowerFast(name)] {
+			if actual, system := systemColAlias(name); system && actual != output {
+				aliases[output] = actual
+				output = actual
+			}
+		}
+		out[output] = desc
+	}
+	for output, entity := range refCols {
+		out[output] = typedempty.Descriptor{
+			Type:      metadata.FieldType("reference:" + entity),
+			RefEntity: entity,
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	if len(aliases) == 0 {
+		aliases = nil
+	}
+	return out, aliases
+}
+
+func projectionSource(tokens []tok, opts CompileOpts, scope sourceScope) (typedProjectionSource, bool) {
+	source := typedProjectionSource{
+		fields:     map[string]typedempty.Descriptor{},
+		qualifiers: map[string]bool{},
+		system:     map[string]bool{},
+	}
+	for qualifier := range scope.qualifiers {
+		source.qualifiers[lowerFast(qualifier)] = true
+	}
+	addFields := func(fields []metadata.Field) {
+		for i := range fields {
+			if desc, ok := typedempty.FromField(&fields[i]); ok {
+				source.fields[lowerFast(fields[i].Name)] = desc
+			}
+		}
+	}
+	for i := 0; i+2 < len(tokens); i++ {
+		if tokens[i].kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+			continue
+		}
+		typeUpper := upperFast(tokens[i].val)
+		if !isSourceType(typeUpper) {
+			continue
+		}
+		// Virtual-table columns have derived names (НачОстаток/Оборот/etc.).
+		// They require their own exact descriptor map; do not guess from the
+		// underlying register fields.
+		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
+			return typedProjectionSource{}, false
+		}
+		name := tokens[i+2].val
+		switch {
+		case isAccumRegType(typeUpper):
+			for _, reg := range opts.Registers {
+				if reg != nil && strings.EqualFold(reg.Name, name) {
+					addFields(reg.Dimensions)
+					addFields(reg.Resources)
+					addFields(reg.Attributes)
+					addRegisterSystemFields(&source, true, true)
+					return source, true
+				}
+			}
+		case isInfoRegType(typeUpper):
+			for _, reg := range opts.InfoRegs {
+				if reg != nil && strings.EqualFold(reg.Name, name) {
+					addFields(reg.Dimensions)
+					addFields(reg.Resources)
+					if reg.Periodic {
+						addRegisterSystemFields(&source, true, false)
+					}
+					return source, true
+				}
+			}
+		case isAccountRegType(typeUpper):
+			for _, reg := range opts.AccountRegs {
+				if reg != nil && strings.EqualFold(reg.Name, name) {
+					addFields(reg.Resources)
+					addFields(reg.Subconto)
+					addRegisterSystemFields(&source, true, false)
+					return source, true
+				}
+			}
+		default:
+			for _, entity := range opts.Entities {
+				if entity != nil && strings.EqualFold(entity.Name, name) {
+					addFields(entity.Fields)
+					source.self = typedempty.Descriptor{
+						Type:      metadata.FieldType("reference:" + entity.Name),
+						RefEntity: entity.Name,
+					}
+					return source, true
+				}
+			}
+		}
+		return typedProjectionSource{}, false
+	}
+	return typedProjectionSource{}, false
+}
+
+func addRegisterSystemFields(source *typedProjectionSource, period, movement bool) {
+	if period {
+		desc := typedempty.Descriptor{Type: metadata.FieldTypeDate}
+		source.fields["period"] = desc
+		source.fields["период"] = desc
+		source.system["period"] = true
+		source.system["период"] = true
+	}
+	if movement {
+		desc := typedempty.Descriptor{Type: metadata.FieldTypeString}
+		source.fields["вид_движения"] = desc
+		source.fields["виддвижения"] = desc
+		source.system["вид_движения"] = true
+		source.system["виддвижения"] = true
+	}
 }
 
 // boolOutputColumns перечисляет колонки результата, читающие булево поле. Нужны

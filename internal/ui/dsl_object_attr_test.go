@@ -148,6 +148,31 @@ func TestObjectAttributeValue(t *testing.T) {
 		t.Errorf("DSL sample result = %v, ожидалось ООО Поставщик", result)
 	}
 
+	// Пустое значение найденного объявленного поля получает метаданный тип;
+	// отсутствие самой записи выше по-прежнему возвращает Неопределено.
+	пустойРеф := create("Номенклатура", map[string]any{"Наименование": "Без реквизитов"})
+	vars["ПустаяНом"] = пустойРеф
+	src = `Функция Тест()
+  Сумма = ЗначениеРеквизитаОбъекта(ПустаяНом, "СтавкаНДС");
+  Поставщик = ЗначениеРеквизитаОбъекта(ПустаяНом, "Поставщик");
+  Пакет = ЗначенияРеквизитовОбъектов([ПустаяНом], "Номенклатура", ["СтавкаНДС", "Поставщик"])[ПустаяНом];
+  Возврат ТипЗнч(Сумма) + "|" + Строка(Сумма = 0)
+    + "|" + ТипЗнч(Поставщик) + "|" + Строка(ПустаяСсылка(Поставщик))
+    + "|" + ТипЗнч(Пакет.СтавкаНДС) + "|" + Строка(Пакет.СтавкаНДС = 0)
+    + "|" + Строка(ПустаяСсылка(Пакет.Поставщик));
+КонецФункции`
+	prog, err = parser.New(lexer.New(src, "typed-empty.os")).ParseProgram()
+	if err != nil {
+		t.Fatalf("parse typed empty sample: %v", err)
+	}
+	result = nil
+	if err := interp.RunWithResult(prog.Procedures[0], nil, &result, vars); err != nil {
+		t.Fatalf("run typed empty sample: %v", err)
+	}
+	if result != "Число|true|СправочникСсылка.Контрагент|true|Число|true|true" {
+		t.Errorf("typed empty sample = %v", result)
+	}
+
 	doc := &metadata.Entity{
 		Name: "ЗаказПокупателя", Kind: metadata.KindDocument,
 		Fields: []metadata.Field{

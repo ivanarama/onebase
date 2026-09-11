@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/access"
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -384,12 +385,13 @@ func (s *Server) queryMaskPlan(ctx context.Context, res query.Result) access.Que
 // dslQueryGuard applies the query field gate to `Новый Запрос` inside modules:
 // без него обработка читает защищённые значения запросом в обход маски, которую
 // тот же пользователь видит в отчёте (план 88E).
-func (s *Server) dslQueryGuard(ctx context.Context, res query.Result, rows []map[string]any) error {
+func (s *Server) dslQueryGuard(ctx context.Context, res query.Result, rows []map[string]any) (interpreter.GuardedColumns, error) {
 	plan := s.queryMaskPlan(ctx, res)
 	if plan.Denied != "" {
-		return fmt.Errorf("нет доступа к защищённому полю: %s", plan.Denied)
+		return nil, fmt.Errorf("нет доступа к защищённому полю: %s", plan.Denied)
 	}
-	return plan.Apply(rows)
+	tracked, err := plan.ApplyTracked(rows)
+	return interpreter.GuardedColumns(tracked), err
 }
 
 // sourceMeta resolves the metadata of a query source object (entity/register/

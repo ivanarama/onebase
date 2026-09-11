@@ -55,8 +55,13 @@ type Ref struct {
 	AttrResolver RefAttrResolver
 }
 
-func (r *Ref) String() string     { return r.Name }
-func (r *Ref) GetRefUUID() string { return r.UUID }
+func (r *Ref) String() string { return r.Name }
+func (r *Ref) GetRefUUID() string {
+	if r == nil {
+		return ""
+	}
+	return r.UUID
+}
 
 // TypeName — «ДокументСсылка.ЗаказПокупателя» / «СправочникСсылка.Номенклатура»
 // для ТипЗнч() и отладчика. Ссылка без вида объекта (создана вне менеджера)

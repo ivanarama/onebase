@@ -32,6 +32,7 @@ func dslMaskEntities() (*metadata.Entity, *metadata.Entity) {
 		Fields: []metadata.Field{
 			{Name: "Наименование", Type: metadata.FieldTypeString},
 			{Name: "Телефон", Type: metadata.FieldTypeString},
+			{Name: "Сумма", Type: metadata.FieldTypeNumber},
 		},
 	}
 	order := &metadata.Entity{
@@ -203,7 +204,7 @@ func TestDSL_QueryGuardMasksAndDenies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.dslQueryGuard(uctx, res, rows); err != nil {
+	if _, err := s.dslQueryGuard(uctx, res, rows); err != nil {
 		t.Fatal(err)
 	}
 	if rows[0]["телефон"] != "••••••••4455" {
@@ -214,8 +215,48 @@ func TestDSL_QueryGuardMasksAndDenies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.dslQueryGuard(uctx, denied, nil); err == nil {
+	if _, err := s.dslQueryGuard(uctx, denied, nil); err == nil {
 		t.Fatal("отбор по защищённому полю из модуля должен отклоняться")
+	}
+}
+
+func TestDSL_QueryGuardНеТипизируетСкрытыеЧислаПослеМаски(t *testing.T) {
+	client, order := dslMaskEntities()
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{client, order})
+	if err := s.store.Upsert(ctx, "Клиент", uuid.New(), map[string]any{
+		"Наименование": "Без суммы",
+	}, client); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.Upsert(ctx, "Клиент", uuid.New(), map[string]any{
+		"Наименование": "С суммой", "Сумма": 42,
+	}, client); err != nil {
+		t.Fatal(err)
+	}
+
+	const src = `Функция Проверка() Экспорт
+		З = Новый Запрос;
+		З.Текст = "ВЫБРАТЬ Наименование, Сумма ИЗ Справочник.Клиент УПОРЯДОЧИТЬ ПО Наименование";
+		Р = З.Выполнить();
+		Возврат ТипЗнч(Р[0].Сумма) + "|" + ТипЗнч(Р[1].Сумма)
+			+ "|" + Строка(Р[0].Сумма) + "|" + Строка(Р[1].Сумма);
+	КонецФункции`
+
+	for _, tc := range []struct {
+		name     string
+		strategy string
+		want     string
+	}{
+		{name: "hide", strategy: "hide", want: "Неопределено|Неопределено|<nil>|<nil>"},
+		{name: "mask_all", strategy: "mask_all", want: "Строка|Строка||••••••"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			user := uiMaskUser([]string{"read"}, auth.FieldPolicies{"Сумма": {Read: tc.strategy}})
+			uctx := auth.ContextWithUser(ctx, user)
+			if got := runDSLRowAccessFunc(t, s, uctx, src); got != tc.want {
+				t.Fatalf("результат = %q, ожидался %q", got, tc.want)
+			}
+		})
 	}
 }
 
