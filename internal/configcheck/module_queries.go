@@ -28,17 +28,16 @@ type moduleQuery struct {
 }
 
 // CheckModuleQueries компилирует статические запросы вида `Запрос.Текст = "..."`
-// из .os-модулей (обработка проведения, заполнения и т.п.). CheckQueries
-// покрывает только виджеты/отчёты — запросы внутри модулей раньше не
-// проверялись вовсе (так в примере «закрытие месяца» прошёл незамеченным
+// из .os-модулей: src/*.os и модули управляемых форм forms/<сущность>/*.form.os.
+// CheckQueries покрывает только виджеты/отчёты — запросы внутри модулей раньше
+// не проверялись вовсе (так в примере «закрытие месяца» прошёл незамеченным
 // неподдерживаемый ПОДОБНО). Если validate != nil — дополнительно PREPARE
 // против in-memory схемы (как CheckQueriesExecutable). Динамически собранные
 // тексты (конкатенация с переменными) пропускаются — их статически не извлечь.
 func CheckModuleQueries(proj *project.Project, validate func(string) error) []Issue {
 	var issues []Issue
-	srcDir := filepath.Join(proj.Dir, "src")
-	entries, err := os.ReadDir(srcDir)
-	if err != nil {
+	files := moduleSourceFiles(proj.Dir)
+	if len(files) == 0 {
 		return nil
 	}
 	opts := query.CompileOpts{
@@ -50,12 +49,9 @@ func CheckModuleQueries(proj *project.Project, validate func(string) error) []Is
 	if validate != nil {
 		opts.Dialect = storage.SQLiteDialect{}
 	}
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(strings.ToLower(e.Name()), ".os") {
-			continue
-		}
-		label := "src/" + e.Name()
-		raw, rerr := os.ReadFile(filepath.Join(srcDir, e.Name()))
+	for _, f := range files {
+		label := f.label
+		raw, rerr := os.ReadFile(f.path)
 		if rerr != nil {
 			continue
 		}
@@ -99,6 +95,60 @@ func CheckModuleQueries(proj *project.Project, validate func(string) error) []Is
 		}
 	}
 	return issues
+}
+
+// moduleSource — файл модуля для проверки: путь на диске и метка для сообщения.
+type moduleSource struct{ label, path string }
+
+// moduleSourceFiles перечисляет .os-модули конфигурации: src/*.os и модули
+// управляемых форм forms/<сущность>/*.form.os.
+//
+// ФОРМЫ ДОБАВЛЕНЫ ОТДЕЛЬНО, потому что живут не в src/ и раньше не проверялись
+// вовсе: запрос в обработчике кнопки компилировался впервые уже при нажатии, у
+// пользователя. Это ровно тот класс, ради которого проверка и написана —
+// «no such column» на форме ничем не отличается от такой же ошибки в проведении,
+// кроме момента, когда её увидят.
+func moduleSourceFiles(dir string) []moduleSource {
+	var out []moduleSource
+	isModule := func(name string) bool {
+		return strings.HasSuffix(strings.ToLower(name), ".os")
+	}
+	srcDir := filepath.Join(dir, "src")
+	if entries, err := os.ReadDir(srcDir); err == nil {
+		for _, e := range entries {
+			if e.IsDir() || !isModule(e.Name()) {
+				continue
+			}
+			out = append(out, moduleSource{"src/" + e.Name(), filepath.Join(srcDir, e.Name())})
+		}
+	}
+	// forms/<сущность>/<форма>.form.os — на один уровень глубже; имена каталогов
+	// и файлов в нижнем регистре, но полагаться на это не нужно.
+	formsDir := filepath.Join(dir, "forms")
+	entityDirs, err := os.ReadDir(formsDir)
+	if err != nil {
+		return out
+	}
+	for _, d := range entityDirs {
+		if !d.IsDir() {
+			continue
+		}
+		sub := filepath.Join(formsDir, d.Name())
+		files, ferr := os.ReadDir(sub)
+		if ferr != nil {
+			continue
+		}
+		for _, f := range files {
+			if f.IsDir() || !isModule(f.Name()) {
+				continue
+			}
+			out = append(out, moduleSource{
+				label: "forms/" + d.Name() + "/" + f.Name(),
+				path:  filepath.Join(sub, f.Name()),
+			})
+		}
+	}
+	return out
 }
 
 // collectQueryVars собирает имена переменных, которым где-либо в теле присвоен
