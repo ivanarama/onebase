@@ -633,6 +633,18 @@ type navItem struct {
 	URL   string
 }
 
+// sortNavItems keeps navigation in the same order the user sees: first by the
+// final localized label (including suffixes), then by URL as a stable metadata
+// tie-breaker for equal labels.
+func sortNavItems(items []navItem) {
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Label != items[j].Label {
+			return items[i].Label < items[j].Label
+		}
+		return items[i].URL < items[j].URL
+	})
+}
+
 type navGroup struct {
 	Kind  string
 	Items []navItem
@@ -681,7 +693,6 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 		catSet := strSet(contents.Catalogs)
 		docSet := strSet(contents.Documents)
 		entities := s.reg.Entities()
-		sort.Slice(entities, func(i, j int) bool { return entities[i].Name < entities[j].Name })
 		var catalogs, documents []navItem
 		for _, e := range entities {
 			if !s.can(r, string(e.Kind), e.Name, "read") {
@@ -694,6 +705,8 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 				documents = append(documents, navItem{Label: e.DisplayName(lang), URL: url})
 			}
 		}
+		sortNavItems(catalogs)
+		sortNavItems(documents)
 		if len(catalogs) > 0 {
 			nav = append(nav, navGroup{Kind: s.tr(lang, "Справочники"), Items: catalogs, Open: true})
 		}
@@ -705,7 +718,6 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 	if len(contents.Registers) > 0 {
 		regSet := strSet(contents.Registers)
 		registers := s.reg.Registers()
-		sort.Slice(registers, func(i, j int) bool { return registers[i].Name < registers[j].Name })
 		var regItems []navItem
 		for _, reg := range registers {
 			if !regSet[reg.Name] {
@@ -723,6 +735,7 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 				URL:   "/ui/register/" + strings.ToLower(reg.Name) + "/balances" + q,
 			})
 		}
+		sortNavItems(regItems)
 		if len(regItems) > 0 {
 			nav = append(nav, navGroup{Kind: s.tr(lang, "Регистры"), Items: regItems})
 		}
@@ -731,7 +744,6 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 	if len(contents.InfoRegs) > 0 {
 		irSet := strSet(contents.InfoRegs)
 		inforegs := s.reg.InfoRegisters()
-		sort.Slice(inforegs, func(i, j int) bool { return inforegs[i].Name < inforegs[j].Name })
 		var irItems []navItem
 		for _, ir := range inforegs {
 			if !irSet[ir.Name] {
@@ -746,6 +758,7 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 			}
 			irItems = append(irItems, navItem{Label: label, URL: "/ui/inforeg/" + strings.ToLower(ir.Name) + q})
 		}
+		sortNavItems(irItems)
 		if len(irItems) > 0 {
 			nav = append(nav, navGroup{Kind: s.tr(lang, "Регистры сведений"), Items: irItems})
 		}
@@ -754,7 +767,6 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 	if len(contents.Reports) > 0 {
 		repSet := strSet(contents.Reports)
 		reps := s.reg.Reports()
-		sort.Slice(reps, func(i, j int) bool { return reps[i].Name < reps[j].Name })
 		var repItems []navItem
 		for _, rep := range reps {
 			if !repSet[rep.Name] {
@@ -769,6 +781,7 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 			}
 			repItems = append(repItems, navItem{Label: label, URL: "/ui/report/" + strings.ToLower(rep.Name) + q})
 		}
+		sortNavItems(repItems)
 		if len(repItems) > 0 {
 			nav = append(nav, navGroup{Kind: s.tr(lang, "Отчёты"), Items: repItems})
 		}
@@ -777,7 +790,6 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 	if len(contents.Processors) > 0 {
 		procSet := strSet(contents.Processors)
 		procs := s.reg.Processors()
-		sort.Slice(procs, func(i, j int) bool { return procs[i].Name < procs[j].Name })
 		var procItems []navItem
 		for _, proc := range procs {
 			if !procSet[proc.Name] {
@@ -792,6 +804,7 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 			}
 			procItems = append(procItems, navItem{Label: label, URL: "/ui/processor/" + strings.ToLower(proc.Name) + q})
 		}
+		sortNavItems(procItems)
 		if len(procItems) > 0 {
 			nav = append(nav, navGroup{Kind: s.tr(lang, "Обработки"), Items: procItems})
 		}
@@ -800,7 +813,6 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 	if len(contents.Journals) > 0 {
 		jSet := strSet(contents.Journals)
 		journals := s.reg.Journals()
-		sort.Slice(journals, func(i, j int) bool { return journals[i].Name < journals[j].Name })
 		var jItems []navItem
 		for _, j2 := range journals {
 			if !jSet[j2.Name] {
@@ -808,6 +820,7 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 			}
 			jItems = append(jItems, navItem{Label: j2.DisplayName(lang), URL: "/ui/journal/" + strings.ToLower(j2.Name) + q})
 		}
+		sortNavItems(jItems)
 		if len(jItems) > 0 {
 			nav = append(nav, navGroup{Kind: s.tr(lang, "Журналы"), Items: jItems})
 		}
@@ -816,7 +829,6 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 	if len(contents.Pages) > 0 {
 		pageSet := strSet(contents.Pages)
 		pages := s.reg.Pages()
-		sort.Slice(pages, func(i, j int) bool { return pages[i].Name < pages[j].Name })
 		var pageItems []navItem
 		for _, pg := range pages {
 			if !pageSet[pg.Name] || !s.canSeePage(r, pg) {
@@ -824,6 +836,7 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 			}
 			pageItems = append(pageItems, navItem{Label: pg.DisplayName(lang), URL: "/ui/page/" + pg.Name + q})
 		}
+		sortNavItems(pageItems)
 		if len(pageItems) > 0 {
 			nav = append(nav, navGroup{Kind: s.tr(lang, "Страницы"), Items: pageItems, Open: true})
 		}
@@ -835,7 +848,6 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 func (s *Server) buildFlatNav(r *http.Request) []navGroup {
 	lang := s.resolveLang(r)
 	entities := s.reg.Entities()
-	sort.Slice(entities, func(i, j int) bool { return entities[i].Name < entities[j].Name })
 
 	var catalogs, documents []navItem
 	for _, e := range entities {
@@ -850,9 +862,10 @@ func (s *Server) buildFlatNav(r *http.Request) []navGroup {
 			documents = append(documents, item)
 		}
 	}
+	sortNavItems(catalogs)
+	sortNavItems(documents)
 
 	registers := s.reg.Registers()
-	sort.Slice(registers, func(i, j int) bool { return registers[i].Name < registers[j].Name })
 	var regItems []navItem
 	for _, reg := range registers {
 		if !s.can(r, "register", reg.Name, "read") {
@@ -867,6 +880,7 @@ func (s *Server) buildFlatNav(r *http.Request) []navGroup {
 			URL:   "/ui/register/" + strings.ToLower(reg.Name) + "/balances",
 		})
 	}
+	sortNavItems(regItems)
 
 	var nav []navGroup
 	if len(catalogs) > 0 {
@@ -880,7 +894,6 @@ func (s *Server) buildFlatNav(r *http.Request) []navGroup {
 	}
 
 	inforegs := s.reg.InfoRegisters()
-	sort.Slice(inforegs, func(i, j int) bool { return inforegs[i].Name < inforegs[j].Name })
 	var inforegItems []navItem
 	for _, ir := range inforegs {
 		if !s.can(r, "inforeg", ir.Name, "read") {
@@ -895,12 +908,12 @@ func (s *Server) buildFlatNav(r *http.Request) []navGroup {
 			URL:   "/ui/inforeg/" + strings.ToLower(ir.Name),
 		})
 	}
+	sortNavItems(inforegItems)
 	if len(inforegItems) > 0 {
 		nav = append(nav, navGroup{Kind: s.tr(lang, "Регистры сведений"), Items: inforegItems})
 	}
 
 	reps := s.reg.Reports()
-	sort.Slice(reps, func(i, j int) bool { return reps[i].Name < reps[j].Name })
 	var repItems []navItem
 	for _, rep := range reps {
 		if !s.can(r, "report", rep.Name, "run") {
@@ -915,12 +928,12 @@ func (s *Server) buildFlatNav(r *http.Request) []navGroup {
 			URL:   "/ui/report/" + strings.ToLower(rep.Name),
 		})
 	}
+	sortNavItems(repItems)
 	if len(repItems) > 0 {
 		nav = append(nav, navGroup{Kind: s.tr(lang, "Отчёты"), Items: repItems})
 	}
 
 	procs := s.reg.Processors()
-	sort.Slice(procs, func(i, j int) bool { return procs[i].Name < procs[j].Name })
 	isAdmin := s.isAdmin(r)
 	var procItems []navItem
 	for _, proc := range procs {
@@ -940,16 +953,17 @@ func (s *Server) buildFlatNav(r *http.Request) []navGroup {
 			URL:   "/ui/processor/" + strings.ToLower(proc.Name),
 		})
 	}
+	sortNavItems(procItems)
 	if len(procItems) > 0 {
 		nav = append(nav, navGroup{Kind: s.tr(lang, "Обработки"), Items: procItems})
 	}
 
 	journals := s.reg.Journals()
-	sort.Slice(journals, func(i, j int) bool { return journals[i].Name < journals[j].Name })
 	var journalItems []navItem
 	for _, j := range journals {
 		journalItems = append(journalItems, navItem{Label: j.DisplayName(lang), URL: "/ui/journal/" + strings.ToLower(j.Name)})
 	}
+	sortNavItems(journalItems)
 	if len(journalItems) > 0 {
 		nav = append(nav, navGroup{Kind: s.tr(lang, "Журналы"), Items: journalItems})
 	}
