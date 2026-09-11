@@ -26,6 +26,20 @@ import (
 
 // ─── Query Console ──────────────────────────────────────────────────────────
 
+// coalesceEmptyWrap распознаёт служебную обёртку, которой компилятор запросов
+// окружает текстовое поле в сравнении, чтобы незаполненное значение сравнивалось
+// как пустая строка:
+//
+//	COALESCE(поле, '')
+//
+// Консоль определяет тип параметра текстом, по колонке перед плейсхолдером,
+// поэтому обёртку нужно развернуть обратно.
+//
+// Литерал пустой строки намеренно стоит блоком кода: в обычной строке
+// док-комментария gofmt заменяет две одиночные кавычки одной типографской, и
+// комментарий начинает описывать несуществующую конструкцию.
+var coalesceEmptyWrap = regexp.MustCompile(`(?i)COALESCE\(([^,()]+),\s*''\)`)
+
 func (s *Server) queryConsolePage(w http.ResponseWriter, r *http.Request) {
 	if !s.isAdmin(r) {
 		s.renderForbidden(w, r)
@@ -249,6 +263,12 @@ func (s *Server) queryConsoleAnalyze(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		before := strings.TrimSpace(parts[occ-1])
+		// Детект колонки текстовый — по последним словам перед плейсхолдером,
+		// поэтому служебную обёртку сравнения разворачиваем: компилятор пишет
+		// текстовое поле как COALESCE(поле, ''), чтобы незаполненное значение
+		// сравнивалось как пустая строка, и без разворота вместо имени колонки
+		// сюда попадал хвост обёртки.
+		before = coalesceEmptyWrap.ReplaceAllString(before, "$1")
 		tokens := strings.Fields(before)
 		if len(tokens) < 2 {
 			dbg.Type = "too_few_tokens→fallback"
