@@ -439,7 +439,12 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     var hidden = st.hidden || {};
     Object.keys(hidden).forEach(function (name) {
       var el = byName(name);
-      if (el) el.style.display = hidden[name] ? 'none' : '';
+      if (!el) return;
+      // Some managed elements keep their layout only in an inline display
+      // declaration (checkbox and command bar use flex). Remember that value
+      // before the first state update instead of erasing it on hidden=false.
+      if (!Object.prototype.hasOwnProperty.call(el, '_obDisplay')) el._obDisplay = el.style.display || '';
+      el.style.display = hidden[name] ? 'none' : el._obDisplay;
     });
     var ro = st.readonly || {};
     Object.keys(ro).forEach(function (name) {
