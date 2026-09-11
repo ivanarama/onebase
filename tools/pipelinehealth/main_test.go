@@ -359,6 +359,48 @@ func TestSingleFlightOwnerUsesNumberInsteadOfReviewDepth(t *testing.T) {
 	}
 }
 
+func TestSingleFlightOwnerDoesNotChangeAtMergeReadyStage(t *testing.T) {
+	result := report{
+		ReviewCandidates: []candidate{
+			{Number: 10, Stage: "integration-merge-ready", IntegrationAt: "2026-09-02T00:00:00Z"},
+			{Number: 20, Stage: "integration-review", IntegrationAt: "2026-09-01T00:00:00Z"},
+		},
+		MergeCandidates: []candidate{
+			{Number: 10, Stage: "integration-merge-ready"},
+		},
+	}
+	sortCandidates(result.ReviewCandidates)
+	applySingleFlight(&result)
+	setMergeExecutable(&result)
+
+	if result.IntegrationOwner == nil || result.IntegrationOwner.Number != 20 {
+		t.Fatalf("merge-ready phase stole the integration owner: %+v", result.IntegrationOwner)
+	}
+	if len(result.ReviewCandidates) != 1 || result.ReviewCandidates[0].Number != 20 {
+		t.Fatalf("REVIEW did not retain the stable owner: %+v", result.ReviewCandidates)
+	}
+	if len(result.MergeExecutable) != 0 {
+		t.Fatalf("MERGE bypassed the stable owner: %+v", result.MergeExecutable)
+	}
+
+	result = report{
+		ReviewCandidates: []candidate{
+			{Number: 10, Stage: "integration-review", IntegrationAt: "2026-09-02T00:00:00Z"},
+			{Number: 20, Stage: "integration-merge-ready", IntegrationAt: "2026-09-01T00:00:00Z"},
+		},
+		MergeCandidates: []candidate{
+			{Number: 20, Stage: "integration-merge-ready"},
+		},
+	}
+	sortCandidates(result.ReviewCandidates)
+	applySingleFlight(&result)
+	setMergeExecutable(&result)
+	if result.IntegrationOwner == nil || result.IntegrationOwner.Number != 20 ||
+		len(result.MergeExecutable) != 1 || result.MergeExecutable[0].Number != 20 {
+		t.Fatalf("stable owner did not advance to MERGE: %+v", result)
+	}
+}
+
 func TestOrdinaryCandidatesUsePriorityBeforeReviewDepth(t *testing.T) {
 	items := []candidate{
 		{Number: 10, Depth: 0, Stage: "review", Priority: 2},
