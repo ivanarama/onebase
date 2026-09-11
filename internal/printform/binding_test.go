@@ -32,6 +32,16 @@ func TestResolveExprSimpleField(t *testing.T) {
 	}
 }
 
+func TestResolveExprRootEntityQualifier(t *testing.T) {
+	ctx := &RenderContext{
+		EntityName: "Контрагент",
+		Document:   map[string]any{"Наименование": "ООО Ромашка"},
+	}
+	if got := ResolveExpr("контрагент.наименование", ctx, nil, 0); got != "ООО Ромашка" {
+		t.Fatalf("ResolveExpr root qualifier = %v, want ООО Ромашка", got)
+	}
+}
+
 func TestResolveExprRefDisplay(t *testing.T) {
 	ctx := newTestCtx()
 	// Покупатель — UUID-ссылка → должно вернуться наименование.

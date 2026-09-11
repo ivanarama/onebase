@@ -556,6 +556,7 @@ func (s *Server) Mount(r chi.Router) {
 	// план 64, этап 3. Старый /print-dsl/ оставлен как 301-редирект на /print/.
 	r.Get("/ui/{kind}/{entity}/{id}/print/{form}", s.printDocument)
 	r.Get("/ui/{kind}/{entity}/{id}/print/{form}/pdf", s.printDocumentPDF)
+	r.Get("/ui/{kind}/{entity}/{id}/print/{form}/xlsx", s.printDocumentXLSX)
 	r.Get("/ui/{kind}/{entity}/{id}/print-dsl/{pfName}", s.redirectDSLPrint)
 	r.Get("/ui/{kind}/{entity}/{id}/print-dsl/{pfName}/pdf", s.redirectDSLPrint)
 

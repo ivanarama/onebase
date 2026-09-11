@@ -24,6 +24,9 @@ binding:
 	if err := os.WriteFile(filepath.Join(dir, "накладная.layout.yaml"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "накладная.template.xlsx"), []byte("xlsx"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	forms, dslForms, layoutForms, err := LoadDir(dir)
 	if err != nil {
@@ -41,6 +44,9 @@ binding:
 	}
 	if lf.Layout == nil || lf.Layout.Area("Шапка") == nil {
 		t.Fatalf("layout not parsed: %+v", lf.Layout)
+	}
+	if string(lf.XLSXTemplate) != "xlsx" || lf.XLSXTemplatePath != filepath.Join(dir, "накладная.template.xlsx") {
+		t.Fatalf("xlsx template not loaded: path=%q data=%q", lf.XLSXTemplatePath, lf.XLSXTemplate)
 	}
 }
 

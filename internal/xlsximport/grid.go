@@ -88,7 +88,7 @@ func readGrid(f *excelize.File, name string, w *warnings) (*grid, error) {
 
 	readSizes(f, name, g)
 	g.Page = readPage(f, name, w)
-	g.Named, g.PrintTitles = readDefinedNames(f, name, g.Rows)
+	g.Named, g.PrintTitles = readDefinedNames(f, name, g.Rows, w)
 
 	if cfs, cerr := f.GetConditionalFormats(name); cerr == nil && len(cfs) > 0 {
 		w.add("Условное форматирование не переносится — цвета и правила придётся задать в макете.")
@@ -376,6 +376,10 @@ func cellBlank(g *grid, r, c int) bool {
 // (пункты → px). Высота пишется только там, где отличается от умолчания листа:
 // иначе height: попал бы в каждую строку макета.
 func readSizes(f *excelize.File, name string, g *grid) {
+	scale := 1.0
+	if layout, err := f.GetPageLayout(name); err == nil && layout.AdjustTo != nil && *layout.AdjustTo > 0 {
+		scale = float64(*layout.AdjustTo) / 100
+	}
 	g.ColW = make([]string, g.Cols)
 	for c := 0; c < g.Cols; c++ {
 		col, err := excelize.ColumnNumberToName(c + 1)
@@ -383,7 +387,7 @@ func readSizes(f *excelize.File, name string, g *grid) {
 			continue
 		}
 		if wch, werr := f.GetColWidth(name, col); werr == nil && wch > 0 {
-			g.ColW[c] = fmt.Sprintf("%dpx", int(math.Round(wch*7+5)))
+			g.ColW[c] = fmt.Sprintf("%dpx", int(math.Round((wch*7+5)*scale)))
 		}
 	}
 
@@ -452,7 +456,9 @@ func paperFormat(size int) string {
 // readDefinedNames собирает именованные диапазоны листа, сведённые к строкам.
 // Служебные имена Excel пропускаются — кроме «сквозных строк», которые как раз
 // и означают повтор шапки на каждой странице.
-func readDefinedNames(f *excelize.File, name string, rows int) (named, titles []namedRange) {
+func readDefinedNames(f *excelize.File, name string, rows int, w *warnings) (named, titles []namedRange) {
+	ignored := 0
+	fieldNameWorkbook := hasWorkbookFieldNames(f, name)
 	for _, dn := range f.GetDefinedName() {
 		// В одном имени может быть несколько диапазонов через запятую
 		// (у «сквозных строк» это строки плюс колонки — колонки нас не касаются).
@@ -473,11 +479,77 @@ func readDefinedNames(f *excelize.File, name string, rows int) (named, titles []
 			case strings.HasPrefix(dn.Name, "_xlnm."):
 				// Print_Area и прочая служебка областями не являются.
 			default:
-				named = append(named, nr)
+				if areaName, ok := layoutAreaName(dn.Name); ok {
+					nr.Name = areaName
+					named = append(named, nr)
+				} else if !fieldNameWorkbook && !singleCellRef(ref) {
+					// Исторически произвольное имя многоклеточного диапазона —
+					// явная область макета. Сохраняем совместимость, если книга
+					// не использует имена главным образом как карту полей.
+					named = append(named, nr)
+				} else {
+					ignored++
+				}
 			}
 		}
 	}
+	if ignored > 0 {
+		w.addf("Пропущены пользовательские именованные диапазоны (%d): книга использует их как поля Excel, а не области макета. Для явной области используйте Шапка, Строка, ШапкаТаблицы, Подвал или префикс OB_/ONEBASE_.", ignored)
+	}
 	return named, titles
+}
+
+func hasWorkbookFieldNames(f *excelize.File, sheet string) bool {
+	count := 0
+	for _, dn := range f.GetDefinedName() {
+		if strings.HasPrefix(dn.Name, "_xlnm.") {
+			continue
+		}
+		if _, explicitArea := layoutAreaName(dn.Name); explicitArea {
+			continue
+		}
+		for _, part := range strings.Split(dn.RefersTo, ",") {
+			name, ref, ok := splitRef(part)
+			if ok && strings.EqualFold(name, sheet) && singleCellRef(ref) {
+				count++
+				if count >= 3 {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func singleCellRef(ref string) bool {
+	ref = strings.ReplaceAll(strings.TrimSpace(ref), "$", "")
+	if strings.Contains(ref, ":") {
+		parts := strings.SplitN(ref, ":", 2)
+		return strings.EqualFold(parts[0], parts[1])
+	}
+	_, _, err := excelize.CellNameToCoordinates(ref)
+	return err == nil
+}
+
+func layoutAreaName(name string) (string, bool) {
+	for _, canonical := range []string{"Шапка", "Строка", "ШапкаТаблицы", "Подвал"} {
+		if strings.EqualFold(name, canonical) {
+			return canonical, true
+		}
+	}
+	for _, prefix := range []string{"OB_", "ONEBASE_"} {
+		if rest, ok := cutPrefixFoldLocal(name, prefix); ok && strings.TrimSpace(rest) != "" {
+			return strings.TrimSpace(rest), true
+		}
+	}
+	return "", false
+}
+
+func cutPrefixFoldLocal(s, prefix string) (string, bool) {
+	if len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix) {
+		return s[len(prefix):], true
+	}
+	return "", false
 }
 
 // splitRef разбирает ссылку вида «Лист1!$A$1:$D$3» или «'Мой лист'!$1:$3».

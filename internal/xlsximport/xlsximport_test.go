@@ -301,6 +301,60 @@ func TestImportBlank_Page(t *testing.T) {
 	}
 }
 
+func TestImportWideScaledSheetAndIgnoresNamedCells(t *testing.T) {
+	f := excelize.NewFile()
+	defer func() {
+		if err := f.Close(); err != nil {
+			t.Errorf("Close XLSX: %v", err)
+		}
+	}()
+	sh := f.GetSheetName(0)
+	if err := f.SetCellValue(sh, "A1", "{{Номер}}"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SetCellValue(sh, "CJ1", "край"); err != nil { // CJ = 88-я колонка
+		t.Fatal(err)
+	}
+	if err := f.SetColWidth(sh, "A", "CJ", 10); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SetPageLayout(sh, &excelize.PageLayoutOptions{AdjustTo: ptr(uint(60))}); err != nil {
+		t.Fatal(err)
+	}
+	for name, ref := range map[string]string{
+		"ПРОДАВЕЦ_НАИМ": "$A$1",
+		"ПРОДАВЕЦ_ИНН":  "$B$1",
+		"ПОКУПАТЕЛЬ":    "$C$1",
+		"TABLE":         "$A$1:$F$1",
+	} {
+		if err := f.SetDefinedName(&excelize.DefinedName{Name: name, RefersTo: sh + "!" + ref}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	buf, err := f.WriteToBuffer()
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := ImportBytes(buf.Bytes(), Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(res.Layout.Columns); got != 88 {
+		t.Fatalf("columns = %d, want 88", got)
+	}
+	if got := res.Layout.Columns[0].Width; got != "45px" {
+		t.Errorf("scaled width = %q, want 45px", got)
+	}
+	for _, area := range res.Layout.Areas {
+		if area.Name == "ПРОДАВЕЦ_НАИМ" || area.Name == "TABLE" {
+			t.Errorf("workbook field %q became a layout area", area.Name)
+		}
+	}
+	if !strings.Contains(strings.Join(res.Warnings, " "), "пользовательские именованные") {
+		t.Errorf("missing named-cell warning: %v", res.Warnings)
+	}
+}
+
 // Имена Excel — явная разметка, она перебивает автоматику Шапка/Строка/Подвал.
 func TestImport_DefinedNamesOverrideAutoAreas(t *testing.T) {
 	lt := importBlank(t, blankOpts{WithNames: true}, "Товары").Layout
