@@ -1176,7 +1176,15 @@ const tplHead = `
 <style>
 .ob-embedded .topbar,.ob-embedded .subsys-bar,.ob-embedded #ob-nav{display:none!important}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;min-height:100vh;background:#f5f5f5}
+/* height:100vh + overflow:hidden — окно приложения ровно по экрану. С одним лишь
+   min-height:100vh страницу растягивало САМОЕ ВЫСОКОЕ содержимое (обычно длинное
+   меню слева): при окне 908px тело становилось 1283px, вместе с ним росла
+   вкладка-iframe (.ob-tabbody iframe — height:100% растянутой области), и
+   диалог с position:fixed внутри неё центрировался по ФРЕЙМУ, а не по экрану —
+   то есть уезжал под нижний край. Прокрутка никуда не делась: меню и рабочая
+   область прокручиваются каждая сама (overflow-y:auto). На узком экране правило
+   снимается — там страница прокручивается целиком, см. media-запрос ниже. */
+body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;height:100vh;min-height:100vh;overflow:hidden;background:#f5f5f5}
 .topbar{background:#1e293b;color:#fff;padding:0 16px;display:flex;align-items:center;height:38px;flex-shrink:0;position:sticky;top:0;z-index:100}
 .topbar-title{font-size:14px;font-weight:600;color:#7dd3fc;flex:1}
 .sys-menu{position:relative}
@@ -1218,8 +1226,11 @@ body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;min-hei
 .report-composed.rep-lines-both td:last-child,.report-composed.rep-lines-both th:last-child{border-right:none}
 .report-composed.rep-lines-none td,.report-composed.rep-lines-none th{border-bottom:none}
 .report-composed.rep-zebra tbody tr:nth-child(even){background:#fafbfc}
-.app-body{display:flex;flex:1;overflow:hidden}
-aside{width:210px;background:#1e293b;color:#fff;padding:16px 0;flex-shrink:0;overflow-y:auto}
+/* min-height:0 у строки и её колонок: у flex-элемента min-height по умолчанию
+   auto, поэтому он не может стать ниже своего содержимого — и длинное меню
+   растягивало всю страницу, несмотря на overflow:hidden выше. */
+.app-body{display:flex;flex:1;overflow:hidden;min-height:0}
+aside{width:210px;background:#1e293b;color:#fff;padding:16px 0;flex-shrink:0;overflow-y:auto;min-height:0}
 aside .sec{font-size:11px;text-transform:uppercase;color:#94a3b8;margin:14px 12px 4px;letter-spacing:.05em}
 aside a{display:block;padding:6px 14px;color:#cbd5e1;text-decoration:none;font-size:14px;margin:1px 6px;border-radius:5px;line-height:1.3;overflow-wrap:break-word}
 aside a:hover{background:#334155;color:#fff}
@@ -1229,7 +1240,7 @@ aside details.navsec>summary::-webkit-details-marker{display:none}
 aside details.navsec>summary::before{content:"\25B8";display:inline-block;width:1em;color:#64748b}
 aside details.navsec[open]>summary::before{content:"\25BE"}
 aside details.navsec>summary:hover{color:#cbd5e1}
-main{flex:1;padding:28px;overflow-y:auto}
+main{flex:1;padding:28px;overflow-y:auto;min-height:0;min-width:0}
 h2{font-size:22px;font-weight:600;margin-bottom:20px;color:#1e293b}
 h3{font-size:16px;font-weight:600;margin:24px 0 10px;color:#1e293b}
 .card{background:#fff;border-radius:10px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,.1);max-width:1400px}
@@ -1313,6 +1324,9 @@ body{padding-bottom:32px}
   html.nav-collapsed #ob-nav{display:none}
 }
 @media (max-width:820px){
+  /* Мобильная раскладка прокручивает страницу целиком — возвращаем ей высоту по
+     содержимому, иначе низ формы стал бы недоступен. */
+  body{height:auto;overflow:visible}
   .app-body{display:block;overflow:visible}
   aside{position:fixed;left:0;top:0;bottom:0;width:78vw;max-width:300px;z-index:401;transform:translateX(-100%);transition:transform .2s ease;box-shadow:2px 0 16px rgba(0,0,0,.3)}
   body.nav-open aside{transform:translateX(0)}
