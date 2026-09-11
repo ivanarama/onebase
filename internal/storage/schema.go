@@ -52,6 +52,7 @@ func ConnectWithSchema(ctx context.Context, dsn, schema string) (*DB, error) {
 	// search_path применяется на старте соединения; несуществующая схема в
 	// списке не ошибка — резолв идёт при запросе, к тому времени схема создана.
 	cfg.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
+	applyPostgresApplicationTimeZone(cfg)
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

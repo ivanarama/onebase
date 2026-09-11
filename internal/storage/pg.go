@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -133,6 +134,7 @@ func ConnectWithPool(ctx context.Context, dsn string, pc PoolConfig) (*DB, error
 		return nil, fmt.Errorf("storage: parse dsn: %w", err)
 	}
 	applyPoolDefaults(cfg, dsn, pc)
+	applyPostgresApplicationTimeZone(cfg)
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("storage: connect: %w", err)
@@ -150,6 +152,161 @@ func ConnectWithPool(ctx context.Context, dsn string, pc PoolConfig) (*DB, error
 
 	filesDir := defaultFilesDir(dsn)
 	return &DB{pool: pool, filesDir: filesDir, dialect: PgDialect{}}, nil
+}
+
+// applyPostgresApplicationTimeZone прибивает каждое соединение пула к зоне
+// приложения. TIMESTAMPTZ хранит момент в UTC, но EXTRACT/date_trunc считают
+// календарные части в session TimeZone; без этого PostgreSQL расходился с
+// SQLite и DSL в зависимости от настройки внешнего сервера (#1243).
+// TIMESTAMP WITHOUT TIME ZONE (будущий localdate) от session TimeZone не
+// преобразуется и сохраняет стенные часы как записаны.
+func applyPostgresApplicationTimeZone(cfg *pgxpool.Config) {
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	cfg.ConnConfig.RuntimeParams["timezone"] = applicationTimeZoneName()
+}
+
+func applicationTimeZoneName() string {
+	return applicationTimeZoneNameFor(time.Local, strings.TrimSpace(os.Getenv("TZ")), time.Now())
+}
+
+func applicationTimeZoneNameFor(loc *time.Location, envName string, now time.Time) string {
+	name := loc.String()
+	if name != "" && name != "Local" {
+		if _, err := time.LoadLocation(name); err == nil {
+			return name
+		}
+		// FixedZone и платформенные имена, которых нет в IANA PostgreSQL,
+		// безопасно сводим к текущему числовому смещению.
+		return applicationTimeZoneOffsetAt(loc, now)
+	}
+	if envName != "" {
+		if _, err := time.LoadLocation(envName); err == nil {
+			return envName
+		}
+	}
+	if spec, ok := applicationTimeZonePOSIX(loc, now); ok {
+		return spec
+	}
+	return applicationTimeZoneOffsetAt(loc, now)
+}
+
+func applicationTimeZoneOffsetAt(loc *time.Location, at time.Time) string {
+	_, offset := at.In(loc).Zone()
+	sign := '+'
+	if offset < 0 {
+		sign = '-'
+		offset = -offset
+	}
+	return fmt.Sprintf("%c%02d:%02d", sign, offset/3600, (offset%3600)/60)
+}
+
+// applicationTimeZonePOSIX describes the recurring DST rules carried by an
+// unnamed system time.Local. Go uses that name on Windows even though the
+// Location contains standard/daylight transitions. PostgreSQL cannot resolve
+// "Local", while a numeric offset would freeze whichever side of DST is
+// active when the process starts.
+func applicationTimeZonePOSIX(loc *time.Location, at time.Time) (string, bool) {
+	type zoneTransition struct {
+		at           time.Time
+		beforeOffset int
+		afterOffset  int
+		toDST        bool
+	}
+
+	year := at.In(loc).Year()
+	start := time.Date(year, time.January, 1, 0, 0, 0, 0, loc)
+	end := time.Date(year+1, time.January, 1, 0, 0, 0, 0, loc)
+	var transitions []zoneTransition
+	for cursor := start; cursor.Before(end); {
+		_, boundary := cursor.ZoneBounds()
+		if boundary.IsZero() || !boundary.Before(end) {
+			break
+		}
+		if !boundary.After(cursor) {
+			return "", false
+		}
+		_, beforeOffset := boundary.Add(-time.Nanosecond).In(loc).Zone()
+		_, afterOffset := boundary.In(loc).Zone()
+		if beforeOffset != afterOffset {
+			transitions = append(transitions, zoneTransition{
+				at:           boundary,
+				beforeOffset: beforeOffset,
+				afterOffset:  afterOffset,
+				toDST:        boundary.In(loc).IsDST(),
+			})
+		}
+		cursor = boundary.Add(time.Nanosecond)
+	}
+	if len(transitions) != 2 {
+		return "", false
+	}
+
+	var dstStart, stdStart *zoneTransition
+	for i := range transitions {
+		transition := &transitions[i]
+		if transition.toDST {
+			if dstStart != nil {
+				return "", false
+			}
+			dstStart = transition
+		} else {
+			if stdStart != nil {
+				return "", false
+			}
+			stdStart = transition
+		}
+	}
+	if dstStart == nil || stdStart == nil ||
+		dstStart.beforeOffset != stdStart.afterOffset ||
+		dstStart.afterOffset != stdStart.beforeOffset {
+		return "", false
+	}
+
+	return fmt.Sprintf("<STD>%s<DST>%s,%s,%s",
+		postgresPOSIXOffset(dstStart.beforeOffset),
+		postgresPOSIXOffset(dstStart.afterOffset),
+		postgresPOSIXTransitionRule(dstStart.at, dstStart.beforeOffset),
+		postgresPOSIXTransitionRule(stdStart.at, stdStart.beforeOffset),
+	), true
+}
+
+func postgresPOSIXOffset(utcOffset int) string {
+	west := -utcOffset
+	sign := ""
+	if west < 0 {
+		sign = "-"
+		west = -west
+	}
+	hours := west / 3600
+	minutes := (west % 3600) / 60
+	seconds := west % 60
+	switch {
+	case seconds != 0:
+		return fmt.Sprintf("%s%d:%02d:%02d", sign, hours, minutes, seconds)
+	case minutes != 0:
+		return fmt.Sprintf("%s%d:%02d", sign, hours, minutes)
+	default:
+		return fmt.Sprintf("%s%d", sign, hours)
+	}
+}
+
+func postgresPOSIXTransitionRule(transition time.Time, offsetBefore int) string {
+	// POSIX records the local wall clock immediately before the transition.
+	wall := transition.UTC().Add(time.Duration(offsetBefore) * time.Second)
+	lastDay := time.Date(wall.Year(), wall.Month()+1, 0, 0, 0, 0, 0, time.UTC).Day()
+	week := (wall.Day()-1)/7 + 1
+	if wall.Day()+7 > lastDay {
+		week = 5
+	}
+	clock := fmt.Sprintf("%d", wall.Hour())
+	if wall.Second() != 0 {
+		clock = fmt.Sprintf("%d:%02d:%02d", wall.Hour(), wall.Minute(), wall.Second())
+	} else if wall.Minute() != 0 {
+		clock = fmt.Sprintf("%d:%02d", wall.Hour(), wall.Minute())
+	}
+	return fmt.Sprintf("M%d.%d.%d/%s", wall.Month(), week, wall.Weekday(), clock)
 }
 
 // applyPoolDefaults sets pool sizing on cfg. ParseConfig has already applied
