@@ -740,7 +740,7 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 			if !s.can(r, "inforeg", ir.Name, "read") {
 				continue
 			}
-			label := ir.Name
+			label := ir.DisplayName(lang)
 			if ir.Periodic {
 				label += " (" + s.tr(lang, "периодический") + ")"
 			}
@@ -763,10 +763,7 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 			if !s.can(r, "report", rep.Name, "run") {
 				continue
 			}
-			label := rep.Title
-			if label == "" {
-				label = rep.Name
-			}
+			label := rep.DisplayName(lang)
 			repItems = append(repItems, navItem{Label: label, URL: "/ui/report/" + strings.ToLower(rep.Name) + q})
 		}
 		if len(repItems) > 0 {
@@ -786,10 +783,7 @@ func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.Subsys
 			if !s.can(r, "processor", proc.Name, "run") {
 				continue
 			}
-			label := proc.Title
-			if label == "" {
-				label = proc.Name
-			}
+			label := proc.DisplayName(lang)
 			procItems = append(procItems, navItem{Label: label, URL: "/ui/processor/" + strings.ToLower(proc.Name) + q})
 		}
 		if len(procItems) > 0 {
