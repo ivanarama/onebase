@@ -532,6 +532,7 @@ func TestCLIReportsWhyOpenPullReferenceExcludesFixIssue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve repository root: %v", err)
 	}
+	// #nosec G204 -- executable and flags are fixed; variable arguments are test-owned paths from t.TempDir.
 	command := exec.Command("go", "run", "./tools/pipelinehealth", "-prs", pullPath, "-issues", issuePath, "-json")
 	command.Dir = repositoryRoot
 	output, err := command.CombinedOutput()
