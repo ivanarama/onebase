@@ -242,7 +242,10 @@ func TestCompile_RowFiltersSubqueryInFromScopedAliasAndWhere(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
-	if !strings.Contains(res.SQL, "FROM (SELECT * FROM товар WHERE owner = ?) AS т WHERE т.наименование <> ?") {
+	// COALESCE вокруг колонки — обёртка сравнения текстового поля: незаполненное
+	// значение сравнивается как пустая строка. Предмет теста другой — порядок:
+	// строковая политика обязана быть навешена на источник ДО локального ГДЕ.
+	if !strings.Contains(res.SQL, "FROM (SELECT * FROM товар WHERE owner = ?) AS т WHERE COALESCE(т.наименование, '') <> ?") {
 		t.Fatalf("restricted aliased source inside FROM subquery must be scoped before local WHERE, got:\n%s", res.SQL)
 	}
 	if len(res.Args) != 2 || res.Args[0] != "u" || res.Args[1] != "" {

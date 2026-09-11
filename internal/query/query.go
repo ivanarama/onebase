@@ -656,7 +656,7 @@ type translator struct {
 	rowGroupOpen bool                          // открыта скобка вокруг собственного условия ГДЕ после внедрённого фильтра
 	rowApplied   []SourceRef                   // источники, к которым RLS-предикат реально внедрён (для финальной сверки)
 	parenDepth   int                           // глубина незакрытых '(' в основном потоке (VT-аргументы считает parseVTArgs)
-	sourceCtx    sourceContext                 // scoped-типы источников для системных колонок регистра
+	sourceCtx    sourceContext                 // scoped-типы/классы источников для SELECT-кадров
 	unionDepths  map[int]bool                  // глубины SELECT с UNION для compound ORDER BY
 	unionOrders  map[int]bool                  // ORDER BY относится ко всему UNION, алиасы таблиц там недоступны
 	refCols      map[string]string             // колонка вывода (lower) → сущность, на которую она ссылается (#1150)
@@ -693,9 +693,11 @@ type sourceContext struct {
 type sourceScope struct {
 	main           sourceClass
 	mainTable      string
+	mainColTypes   map[string]metadata.FieldType
 	sourceCount    int
 	qualifiers     map[string]sourceClass
 	derivedAliases map[string]int
+	outputAliases  map[string]struct{}
 	refAliases     map[string]struct{}
 }
 
@@ -735,6 +737,24 @@ func (ctx sourceContext) isReferenceAliasAt(tokenPos int, lower string) bool {
 		return false
 	}
 	_, ok = scope.refAliases[lower]
+	return ok
+}
+
+// isOutputAliasAt reports an actual reference to an alias of the current
+// SELECT projection. An alias is visible only in the alias-aware clauses of
+// the same SELECT scope. In particular, WHERE resolves an identically named
+// identifier as an input column, and an alias from a nested or sibling SELECT
+// must not affect it.
+func (ctx sourceContext) isOutputAliasAt(tokenPos int, lower string) bool {
+	section := ctx.sectionAt(tokenPos)
+	if section != sectionGroupBy && section != sectionOrderBy && section != sectionHaving {
+		return false
+	}
+	scope, ok := ctx.scopeAt(tokenPos)
+	if !ok {
+		return false
+	}
+	_, ok = scope.outputAliases[lower]
 	return ok
 }
 
@@ -2739,12 +2759,6 @@ func (tr *translator) refEntityForQualifier(pos int) string {
 //   - п.49: на SQLite оборачивать number-колонки в CAST(... AS NUMERIC) в
 //     сравнениях/сортировке (number хранится как TEXT → иначе строковое сравнение).
 func buildColTypes(tokens []tok, opts CompileOpts) map[string]metadata.FieldType {
-	m := map[string]metadata.FieldType{}
-	add := func(fields []metadata.Field) {
-		for _, f := range fields {
-			m[lowerFast(f.Name)] = f.Type
-		}
-	}
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
 		if t.kind != tIdent {
@@ -2755,36 +2769,59 @@ func buildColTypes(tokens []tok, opts CompileOpts) map[string]metadata.FieldType
 			continue
 		}
 		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
-			return m // VT-источник: внешний запрос работает по логическим алиасам
+			return map[string]metadata.FieldType{} // VT: глобальные правила работают по логическим алиасам
 		}
-		name := tokens[i+2].val
-		switch {
-		case isAccumRegType(upper):
-			for _, reg := range opts.Registers {
-				if strings.EqualFold(reg.Name, name) {
-					add(reg.Dimensions)
-					add(reg.Resources)
-					add(reg.Attributes)
-					return m
-				}
-			}
-		case isInfoRegType(upper):
-			for _, ir := range opts.InfoRegs {
-				if strings.EqualFold(ir.Name, name) {
-					add(ir.Dimensions)
-					add(ir.Resources)
-					return m
-				}
-			}
-		default: // справочник / документ
-			for _, e := range opts.Entities {
-				if strings.EqualFold(e.Name, name) {
-					add(e.Fields)
-					return m
-				}
+		return sourceColumnTypes(upper, tokens[i+2].val, opts)
+	}
+	return map[string]metadata.FieldType{}
+}
+
+// sourceColumnTypes возвращает логические типы полей одного источника. В
+// отличие от buildColTypes, этот помощник применим и к виртуальной таблице:
+// имена её измерений и атрибутов сохраняются в сгенерированном подзапросе.
+// Производные имена ресурсов (например, СуммаОстаток) здесь не синтезируются.
+func sourceColumnTypes(typeUpper, name string, opts CompileOpts) map[string]metadata.FieldType {
+	m := map[string]metadata.FieldType{}
+	add := func(fields []metadata.Field) {
+		for _, f := range fields {
+			m[lowerFast(f.Name)] = f.Type
+		}
+	}
+	switch {
+	case isAccumRegType(typeUpper):
+		for _, reg := range opts.Registers {
+			if strings.EqualFold(reg.Name, name) {
+				add(reg.Dimensions)
+				add(reg.Resources)
+				add(reg.Attributes)
+				return m
 			}
 		}
-		return m
+	case isAccountRegType(typeUpper):
+		for _, reg := range opts.AccountRegs {
+			if strings.EqualFold(reg.Name, name) {
+				add(reg.Resources)
+				for i, subconto := range reg.Subconto {
+					m[lowerFast(metadata.SubcontoColumn(i+1))] = subconto.Type
+				}
+				return m
+			}
+		}
+	case isInfoRegType(typeUpper):
+		for _, ir := range opts.InfoRegs {
+			if strings.EqualFold(ir.Name, name) {
+				add(ir.Dimensions)
+				add(ir.Resources)
+				return m
+			}
+		}
+	default: // справочник / документ
+		for _, e := range opts.Entities {
+			if strings.EqualFold(e.Name, name) {
+				add(e.Fields)
+				return m
+			}
+		}
 	}
 	return m
 }
@@ -2945,20 +2982,157 @@ func (tr *translator) emitOwnColumn(col, lower string) {
 		tr.emit("CAST(" + col + " AS NUMERIC)")
 		return
 	}
-	tr.emit(col)
-}
-
-// emitQualifiedColumn эмитит колонку после точки (алиас.поле). Для number на
-// SQLite оборачивает весь `алиас.поле` в CAST, забирая уже эмитнутые алиас и "."
-// из tr.parts (build() не ставит пробелов вокруг точки).
-func (tr *translator) emitQualifiedColumn(col, lower string) {
-	if tr.needsNumberCast(lower) && len(tr.parts) >= 2 && tr.parts[len(tr.parts)-1] == "." {
-		alias := tr.parts[len(tr.parts)-2]
-		tr.parts = tr.parts[:len(tr.parts)-2]
-		tr.emit("CAST(" + alias + "." + col + " AS NUMERIC)")
+	if tr.needsEmptyTextCoalesce(lower, "") {
+		tr.emit("COALESCE(" + col + ", '')")
 		return
 	}
 	tr.emit(col)
+}
+
+// needsEmptyTextCoalesce — нужно ли трактовать незаполненное значение колонки как
+// ПУСТУЮ СТРОКУ в сравнении на равенство/неравенство.
+//
+// Незаполненный реквизит в прикладной модели — пустое значение, а не «неизвестно»:
+// `Состояние <> "Завершено"` для записи без состояния истинно. В SQL же
+// NULL <> 'Завершено' даёт NULL, и такие записи молча выпадали из отбора — ровно
+// те, ради которых пишут отчёты «что висит». Обёртка возвращает сравнению
+// ожидаемый смысл; заодно `Поле = ""` начинает находить незаполненные:
+//
+//	COALESCE(состояние, '') <> 'Завершено'
+//
+// (Литерал пустой строки стоит блоком кода намеренно: в обычной строке
+// док-комментария gofmt заменяет две одиночные кавычки одной типографской.)
+//
+// Границы намеренные:
+//   - только строка и перечисление. У числа пустое значение — 0, и текущее
+//     поведение (NULL не попадает в `<> 0`) уже совпадает с прикладным смыслом;
+//     COALESCE там только помешал бы индексу. Дата и булево — по той же причине.
+//   - только рядом с «=», «<>», «!=»: колонка в списке выборки, в ГРУППИРОВАТЬ и
+//     в УПОРЯДОЧИТЬ остаётся собой, и NULL в выводе не подменяется пустой строкой.
+//   - алиас вывода (КАК ...) не колонка, его не трогаем.
+//   - секцию ИЗ не трогаем: единственное сравнение там — условие соединения
+//     (ПО), а обёртка склеила бы в нём все незаполненные строки друг с другом.
+//     Неквалифицированная колонка в этой секции и так уходит в SQL как есть,
+//     так что правило одинаково для обеих записей.
+//   - только ОСНОВНОЙ источник запроса (см. isMainSourceColumn). Поле
+//     присоединённой таблицы обёртки не получает.
+//
+// Секция берётся из пред-скана (sourceCtx), а не из бегущей tr.section. Бегущая —
+// одно поле на весь запрос: подзапрос в ИЗ переключает её своим ГДЕ и обратно уже
+// не возвращает, поэтому все последующие ПО оказывались под обёрткой — ровно тот
+// склеенный JOIN, ради которого секция ИЗ и выведена из-под правила. Пред-скан
+// ведёт секцию отдельно для каждого SELECT-кадра и снимает кадр на закрывающей
+// скобке, так что после подзапроса секция снова ИЗ.
+//
+// qualifier — квалификатор колонки (алиас.поле), пустая строка для колонки без
+// него. Запись с квалификатором занимает три токена, поэтому оператор слева
+// стоит не вплотную к имени поля.
+func (tr *translator) needsEmptyTextCoalesce(lower, qualifier string) bool {
+	idx := tr.pos - 1
+	if tr.sourceCtx.isOutputAliasAt(idx, lower) {
+		return false
+	}
+	if tr.sourceCtx.sectionAt(idx) == sectionFrom {
+		return false
+	}
+	if !tr.isMainSourceColumn(idx, qualifier) {
+		return false
+	}
+	scope, ok := tr.sourceCtx.scopeAt(idx)
+	if !ok {
+		return false
+	}
+	t, known := scope.mainColTypes[lower]
+	if !known || (t != metadata.FieldTypeString && !metadata.IsEnum(t)) {
+		return false
+	}
+	left := idx - 1
+	if qualifier != "" {
+		left = idx - 3 // <оператор> алиас . поле
+	}
+	return tr.equalityOpAt(idx+1) || tr.equalityOpAt(left)
+}
+
+// isMainSourceColumn — принадлежит ли колонка ОСНОВНОМУ источнику своего
+// SELECT-scope.
+//
+// Граница нужна потому, что sourceScope.mainColTypes намеренно знает типы только
+// основного источника своего SELECT. Для колонки присоединённой таблицы поиск по
+// одному имени мог бы вернуть тип одноимённой колонки основного источника.
+// Второе хуже отсутствующего типа: `Заявка.Код` строка, `Клиент.Код` число, и
+// отбор `ГДЕ К.Код <> 0` уезжал бы в
+//
+//	COALESCE(к.код, '') <> 0
+//
+// На SQLite это безвредно (number хранится как TEXT), а на PostgreSQL number —
+// NUMERIC, нетипизированный литерал пустой строки приводится к нему, и запрос
+// падает на этапе плана: работавший до правила отбор переставал работать совсем.
+//
+// (Литерал пустой строки стоит блоком кода намеренно: в обычной строке
+// док-комментария gofmt заменяет две одиночные кавычки одной типографской.)
+//
+// Тем же ограничением снимается склейка в соединении, записанном запятой
+// (ИЗ A КАК Т, B КАК К ГДЕ Т.Поле = К.Поле): секция там ГДЕ, а не ИЗ, поэтому
+// по секции такое условие не отсекалось, и обёртка с обеих сторон приравнивала
+// незаполненное к незаполненному.
+//
+// Цена границы названа честно: отбор по текстовому полю ПРИСОЕДИНЁННОЙ таблицы
+// незаполненные значения по-прежнему теряет (#1183). Закрыть это можно только
+// типизацией колонок по алиасу источника — отдельная работа по компилятору,
+// которая заодно чинит ту же дырку в needsNumberCast.
+func (tr *translator) isMainSourceColumn(idx int, qualifier string) bool {
+	if qualifier == "" {
+		return true // колонка без квалификатора относится к основному источнику
+	}
+	scope, ok := tr.sourceCtx.scopeAt(idx)
+	if !ok || scope.mainTable == "" {
+		return false
+	}
+	return strings.EqualFold(qualifier, scope.mainTable)
+}
+
+func (tr *translator) equalityOpAt(idx int) bool {
+	if idx < 0 || idx >= len(tr.tokens) || tr.tokens[idx].kind != tOp {
+		return false
+	}
+	switch tr.tokens[idx].val {
+	case "=", "<>", "!=":
+		return true
+	default:
+		return false
+	}
+}
+
+// emitQualifiedColumn эмитит колонку после точки (алиас.поле). Для number на
+// SQLite оборачивает весь `алиас.поле` в CAST, для текстового поля в сравнении —
+// в COALESCE; в обоих случаях забирает уже эмитнутые алиас и "." из tr.parts
+// (build() не ставит пробелов вокруг точки).
+//
+// Обёртки обязаны совпадать с теми, что ставит emitOwnColumn для колонки ТОГО ЖЕ
+// источника: один и тот же отбор, записанный с алиасом основного источника и без
+// него, обязан возвращать один и тот же набор строк. Разойдись они — к потере
+// записей добавилась бы непоследовательность, а алиас в запросе с соединением
+// обязателен.
+func (tr *translator) emitQualifiedColumn(col, lower string) {
+	if len(tr.parts) >= 2 && tr.parts[len(tr.parts)-1] == "." {
+		if tr.needsNumberCast(lower) {
+			tr.emit("CAST(" + tr.takeQualifier() + col + " AS NUMERIC)")
+			return
+		}
+		if tr.needsEmptyTextCoalesce(lower, tr.parts[len(tr.parts)-2]) {
+			tr.emit("COALESCE(" + tr.takeQualifier() + col + ", '')")
+			return
+		}
+	}
+	tr.emit(col)
+}
+
+// takeQualifier снимает с вывода уже эмитнутые «алиас .» и возвращает их текстом:
+// обёртка ставится вокруг всего `алиас.поле`, а не вокруг одного имени поля.
+func (tr *translator) takeQualifier() string {
+	alias := tr.parts[len(tr.parts)-2]
+	tr.parts = tr.parts[:len(tr.parts)-2]
+	return alias + "."
 }
 
 // preScanMainTable заранее (до основного прохода) находит имя основной таблицы
@@ -2999,6 +3173,10 @@ func preScanMainTable(tokens []tok) string {
 // только к глубине скобок: Период внутри Год(Период) остаётся в родительском
 // SELECT, а SELECT-подзапрос получает собственный main/aliases.
 func preScanSourceContext(tokens []tok) sourceContext {
+	return preScanSourceContextWithOpts(tokens, CompileOpts{})
+}
+
+func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext {
 	ctx := sourceContext{
 		tokenScope:   make([]int, len(tokens)),
 		tokenSection: make([]querySection, len(tokens)),
@@ -3030,6 +3208,7 @@ func preScanSourceContext(tokens []tok) sourceContext {
 				ctx.scopes = append(ctx.scopes, sourceScope{
 					qualifiers:     map[string]sourceClass{},
 					derivedAliases: map[string]int{},
+					outputAliases:  map[string]struct{}{},
 					refAliases:     map[string]struct{}{},
 				})
 				sections = append(sections, sectionSelect)
@@ -3065,6 +3244,7 @@ func preScanSourceContext(tokens []tok) sourceContext {
 				if up := upperFast(t.val); (up == "КАК" || up == "AS") &&
 					i+1 < len(tokens) && tokens[i+1].kind == tIdent {
 					alias := lowerFast(tokens[i+1].val)
+					ctx.scopes[scopeID].outputAliases[alias] = struct{}{}
 					if isReferenceName(alias) {
 						ctx.scopes[scopeID].refAliases[alias] = struct{}{}
 					}
@@ -3152,6 +3332,7 @@ func preScanSourceContext(tokens []tok) sourceContext {
 			scope.main = class
 		}
 		if isMain {
+			scope.mainColTypes = sourceColumnTypes(typeUpper, tokens[i+2].val, opts)
 			// Виртуальная таблица эмитится как подзапрос со специальным алиасом,
 			// который здесь не вычисляем. Для обычного источника сохраняем имя,
 			// чтобы bare-Ссылка квалифицировалась в своём SELECT-scope.
@@ -3703,7 +3884,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		mainTable:   preScanMainTable(tokens),
 		refDims:     preScanRefDims(tokens, opts),
 		mainRef:     preScanMainRefSource(tokens, opts),
-		sourceCtx:   preScanSourceContext(tokens),
+		sourceCtx:   preScanSourceContextWithOpts(tokens, opts),
 		aliases:     map[string]struct{}{},
 		unionDepths: map[int]bool{},
 		unionOrders: map[int]bool{},
