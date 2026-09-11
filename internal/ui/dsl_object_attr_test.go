@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -168,9 +169,6 @@ func TestObjectAttributeValue(t *testing.T) {
   Рез = Объект.ОсновнаяНоменклатура.Артикул;
   Для Каждого Стр Из Объект.Товары Цикл
     Рез = Рез + "|" + Стр.Номенклатура.Артикул;
-    Если Стр.Номенклатура.Поставщик.ИНН <> Неопределено Тогда
-      Рез = "double-deref";
-    КонецЕсли;
   КонецЦикла;
   Возврат Рез;
 КонецФункции`
@@ -186,6 +184,30 @@ func TestObjectAttributeValue(t *testing.T) {
 	}
 	if result != "A-1|A-1" {
 		t.Errorf("DSL ref attr sample result = %v, ожидалось A-1|A-1", result)
+	}
+
+	// Resolver формы поддерживает безопасное одиночное чтение. Ссылочный
+	// результат этого чтения не получает неявной возможности делать следующий
+	// запрос: вместо прежнего тихого nil DSL должен назвать явную функцию.
+	src = `Функция Тест()
+  Возврат Объект.ОсновнаяНоменклатура.Поставщик.ИНН;
+КонецФункции`
+	prog, err = parser.New(lexer.New(src, "test.os")).ParseProgram()
+	if err != nil {
+		t.Fatalf("parse unsupported double dereference: %v", err)
+	}
+	result = nil
+	err = interp.RunWithResult(prog.Procedures[0], thisObj, &result, map[string]any{"Объект": thisObj})
+	if err == nil {
+		t.Fatal("двойное разыменование ссылки молча вернуло Неопределено")
+	}
+	for _, want := range []string{
+		"Реквизит ссылки «ИНН» недоступен через точку",
+		`ЗначениеРеквизитаОбъекта(Ссылка, "ИНН")`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ошибка двойного разыменования не содержит %q: %v", want, err)
+		}
 	}
 
 	// Неизвестный реквизит → ошибка, а не тихий nil.
