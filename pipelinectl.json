@@ -2,6 +2,7 @@
   "repository": "ivanarama/onebase",
   "trusted_account": "ivanarama",
   "base_branch": "main",
+  "sync_base_before_health": true,
   "health_command": ["go", "run", "./tools/pipelinehealth", "-json"],
   "merge_method": "merge",
   "priority": {
