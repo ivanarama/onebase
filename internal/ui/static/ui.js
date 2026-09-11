@@ -2734,11 +2734,13 @@ function openItemPicker(payload, elementName, eventContext) {
   table.style.cssText = 'width:100%;font-size:13px;margin:0';
   var thead = document.createElement('thead');
   var htr = document.createElement('tr');
+  var single = !!cfg.single;
   var thCb = document.createElement('th');
   thCb.style.width = '34px';
   var cbAll = document.createElement('input');
   cbAll.type = 'checkbox';
-  thCb.appendChild(cbAll);
+  // «Выбрать всё» в режиме одного выбора отмечать нечего.
+  if (!single) thCb.appendChild(cbAll);
   htr.appendChild(thCb);
   cols.forEach(function (c) {
     var th = document.createElement('th');
@@ -2761,11 +2763,22 @@ function openItemPicker(payload, elementName, eventContext) {
     var tdCb = document.createElement('td');
     tdCb.style.textAlign = 'center';
     var cb = document.createElement('input');
-    cb.type = 'checkbox';
+    cb.type = single ? 'radio' : 'checkbox';
+    if (single) cb.name = '_ip-choice';
     cb.className = '_ip-cb';
-    if (cfg.checkAll) cb.checked = true;
+    if (cfg.checkAll && !single) cb.checked = true;
     cb.onchange = updateCounter;
     tdCb.appendChild(cb);
+    // В одиночном выборе строка целиком работает как переключатель: попадать
+    // мышью в кружок диаметром 13 px посреди разговора с клиентом незачем.
+    if (single) {
+      tr.style.cursor = 'pointer';
+      tr.addEventListener('click', function (e) {
+        if (e.target === cb) return;
+        cb.checked = true;
+        updateCounter();
+      });
+    }
     tr.appendChild(tdCb);
     cols.forEach(function (c) {
       var td = document.createElement('td');
@@ -2825,7 +2838,9 @@ function openItemPicker(payload, elementName, eventContext) {
   basketBadge.style.cssText = 'font-size:12px;color:#64748b;font-weight:400';
   basketHead.appendChild(basketTitle);
   basketHead.appendChild(basketBadge);
-  box.appendChild(basketHead);
+  // Корзина — про «набрать позиций с количествами». Без колонки количества она
+  // всё равно всегда пуста, а в одиночном выборе не нужна по смыслу.
+  if (!single && cfg.qtyField) box.appendChild(basketHead);
   var basketScroll = document.createElement('div');
   basketScroll.style.cssText = 'overflow:auto;max-height:180px;margin-top:4px;border:1px solid #e2e8f0;border-radius:7px;display:none';
   var basketTable = document.createElement('table');
@@ -2845,7 +2860,7 @@ function openItemPicker(payload, elementName, eventContext) {
   var bTbody = document.createElement('tbody');
   basketTable.appendChild(bTbody);
   basketScroll.appendChild(basketTable);
-  box.appendChild(basketScroll);
+  if (!single && cfg.qtyField) box.appendChild(basketScroll);
   basketHead.addEventListener('click', function () {
     basketScroll.style.display = basketScroll.style.display === 'none' ? '' : 'none';
   });
@@ -2857,7 +2872,7 @@ function openItemPicker(payload, elementName, eventContext) {
   btnCancel.style.cssText = 'padding:7px 18px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px';
   var btnOk = document.createElement('button');
   btnOk.type = 'button';
-  btnOk.textContent = 'Перенести в документ';
+  btnOk.textContent = single ? 'Выбрать' : 'Перенести в документ';
   btnOk.style.cssText = 'padding:7px 18px;border:1px solid #2563eb;border-radius:7px;background:#2563eb;color:#fff;cursor:pointer;font-size:13px;font-weight:600';
   foot.appendChild(btnCancel);
   foot.appendChild(btnOk);
@@ -2869,7 +2884,9 @@ function openItemPicker(payload, elementName, eventContext) {
       return cb.checked && cb.closest('tr').style.display !== 'none';
     });
   }
-  function updateCounter() { counter.textContent = 'Выбрано: ' + checkedRows().length; }
+  function updateCounter() {
+    counter.textContent = single ? '' : ('Выбрано: ' + checkedRows().length);
+  }
   function updateBasket() {
     bTbody.innerHTML = '';
     var cnt = 0;
@@ -2910,6 +2927,7 @@ function openItemPicker(payload, elementName, eventContext) {
     updateBasket();
   });
   cbAll.addEventListener('change', function () {
+    if (single) return;
     Array.prototype.forEach.call(tbody.rows, function (tr) {
       if (tr.style.display === 'none') return;
       var cb = tr.querySelector('._ip-cb');
