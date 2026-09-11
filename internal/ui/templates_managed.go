@@ -24,7 +24,13 @@ const tplManagedForm = `
 {{$effectiveReq := effectiveFormElementRequired $ctx.Entity $el}}{{$req := nativeFormElementRequired $ctx.Entity $el}}
 {{if elHidden $ctx $el}}
 {{else if eq (str $el.Kind) "ГруппаФормы"}}
-  <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}" data-ob-el="{{$el.Name}}" style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px">
+  {{/* width группы — ширина колонки в px (аналог «Ширины» группы в 1С). Без неё
+       ширина колонки равна max-content её содержимого, и одно широкое поле или
+       длинная подсказка под ним забирают всю строку, вытесняя соседние колонки
+       на следующую — на форме это выглядит как «кнопки справа пропали».
+       min-width:0 обязателен: без него flex-элемент не сжимается ниже своего
+       max-content и вылезает за контейнер. */}}
+  <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}" data-ob-el="{{$el.Name}}" style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px{{if $el.Width}};flex:0 1 {{$el.Width}}px;min-width:0{{end}}">
     {{if $el.TitleMap}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
     <div class="managed-group-body">
       {{range $el.Children}}{{template "managed-element" (dict "El" . "Ctx" $ctx)}}{{end}}
@@ -501,6 +507,18 @@ const tplManagedForm = `
 /* Поле в горизонтальной группе не растягивается на всю строку: иначе одинокое
    поле уезжало во всю ширину, а кнопка рядом с ним — к правому краю экрана. */
 .managed-group-horizontal>.managed-group-body>.form-group{flex:0 1 260px;min-width:180px;margin-bottom:0}
+/* Колонка-группа внутри горизонтальной группы делит ширину строки: растягивается
+   вместе с окном и сжимается вместе с ним. min-width:0 — иначе флекс-элемент не
+   становится уже своего содержимого и выталкивает соседнюю колонку на следующую
+   строку. Без flex-grow колонки занимали ширину по содержимому, и на широком
+   экране справа от формы оставалось пустое место в половину окна.
+   Явная ширина группы (width, см. FormElement.Width) правило перебивает: там,
+   где ширина колонки задана, растягивать её не надо. */
+.managed-group-horizontal>.managed-group-body>.form-group-box{min-width:0;flex:1 1 auto}
+/* Управляемая форма — рабочий экран, а не статья: карточка занимает всю ширину
+   рабочей области, а не 1400px, иначе на широком мониторе половина экрана
+   пустует. Списки и прочие страницы ограничение сохраняют. */
+main>.card{max-width:none}
 .managed-group-horizontal>.managed-group-body>.form-decoration,.managed-group-horizontal>.managed-group-body>button{flex:0 0 auto}
 /* Кнопка формы: отступы задаются классом, а не inline-стилем — иначе правило
    выравнивания в горизонтальной группе ниже проигрывало бы по приоритету. */
