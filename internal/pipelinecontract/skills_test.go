@@ -176,6 +176,16 @@ func requireAllCompact(t *testing.T, text string, fragments ...string) {
 	}
 }
 
+func rejectAllCompact(t *testing.T, text string, fragments ...string) {
+	t.Helper()
+	compact := strings.Join(strings.Fields(text), " ")
+	for _, fragment := range fragments {
+		if strings.Contains(compact, strings.Join(strings.Fields(fragment), " ")) {
+			t.Errorf("pipeline contract still contains forbidden compact fragment %q", fragment)
+		}
+	}
+}
+
 func requireCompactInOrder(t *testing.T, text string, fragments ...string) {
 	t.Helper()
 	compact := strings.Join(strings.Fields(text), " ")
@@ -703,6 +713,49 @@ func TestTriageAndFixShareDeterministicCanonicalCommentRule(t *testing.T) {
 		"после удаления winner проигравший\n   sibling не должен воскреснуть",
 		"не считается одним из\n   пяти рабочих slots",
 		"<!-- pp:triage-author-reply claim=<canonical-root-id> fingerprint-sha256=<точный-root-fingerprint> -->",
+	)
+}
+
+func TestTriageKeepsManualSplitHumanOwnedAndFixReportsStoppedWork(t *testing.T) {
+	triage := skill(t, "triage-issues")
+	fixer := skill(t, "fix-approved")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+
+	requireAllCompact(t, triage,
+		"TRIAGE не создаёт вторую issue: такого действия нет в его полномочиях",
+		"Текущую заявку считай кодовой частью",
+		"`route=needs-decision` и `manual=false`",
+		"<!-- pp:triage-manual-split -->",
+		"человека создать отдельную manual-заявку со ссылкой на текущую",
+		"не разрешает TRIAGE вызывать `gh issue create`",
+		"Заявка принята в очередь автоматической починки",
+		"PR будет привязан к этой заявке; если автоматическая починка остановится",
+	)
+	rejectAll(t, triage,
+		"Заводи такую заявку как обычную (её кодовую часть)",
+		"Заявка ушла в автоматическую починку",
+	)
+
+	requireAllCompact(t, fixer,
+		"Новый вопрос не обещает PR или закрытие заявки",
+		"Автоматическая починка остановлена: <точная причина>.",
+		"Нужен ответ мейнтейнера: <конкретный вопрос>.",
+		"Если автор issue не `ivanarama` и не `ivantit66`, добавь отдельную строку `<!-- pp:reply -->`",
+		"На успешном пути его пишет триаж (`/triage-issues`) или человек; при остановке FIX-handoff его добавляет FIX в свой комментарий-вопрос по п. 9",
+		"эта информационная строка разрешена post-root gate и не является отдельным control marker",
+		"уже опубликованный доверенный question-marker остаётся достаточным",
+	)
+	rejectAllCompact(t, fixer,
+		"Ответ автору — отдельный комментарий с `<!-- pp:reply -->`, и пишет его триаж (`/triage-issues`) или человек",
+	)
+
+	requireAllCompact(t, docs,
+		"его полномочия — комментарии и метки, но не `gh issue create`",
+		"<!-- pp:triage-manual-split -->",
+		"человек должен создать отдельную manual-заявку со ссылкой на текущую",
+		"PR и закрытие не гарантируются заранее",
+		"Автоматическая починка остановлена",
+		"для внешнего автора он также содержит `<!-- pp:reply -->`",
 	)
 }
 
