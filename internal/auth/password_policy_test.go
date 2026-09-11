@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/auth"
@@ -23,6 +24,19 @@ func TestPasswordPolicyRejectsEmptyAndShortPasswordsByDefault(t *testing.T) {
 	}
 	if err := repo.UpdatePassword(ctx, user.ID, ""); !errors.Is(err, auth.ErrPasswordRequired) {
 		t.Fatalf("UpdatePassword(empty) error = %v, want ErrPasswordRequired", err)
+	}
+}
+
+func TestPasswordPolicyLimitsNonASCIIPasswordByUTF8Bytes(t *testing.T) {
+	repo, ctx := newTestRepo(t)
+
+	// Кириллическая «я» занимает два байта UTF-8: 36 символов ровно достигают
+	// предела bcrypt, а 37 уже превышают его, хотя символов всё ещё меньше 72.
+	if _, err := repo.Create(ctx, "unicode-boundary", strings.Repeat("я", 36), "", false); err != nil {
+		t.Fatalf("пароль ровно в 72 байта отвергнут: %v", err)
+	}
+	if _, err := repo.Create(ctx, "unicode-overflow", strings.Repeat("я", 37), "", false); !errors.Is(err, auth.ErrPasswordTooLong) {
+		t.Fatalf("пароль в 74 байта принят или дал неверную ошибку: %v", err)
 	}
 }
 

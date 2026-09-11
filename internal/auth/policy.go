@@ -43,6 +43,16 @@ type Policy struct {
 	// пользователя). Флаг включают там, где 2FA раздают массово и самопривязка
 	// удобнее. На вход через SSO не влияет: провайдер уже подтвердил личность.
 	SelfEnroll2FA bool `json:"self_enroll_2fa,omitempty"`
+	// PasswordMinLength — минимальная длина пароля этой базы. 0 = не задано,
+	// действует умолчание процесса (DefaultMinPasswordLength или
+	// ONEBASE_MIN_PASSWORD_LENGTH).
+	PasswordMinLength int `json:"password_min_length,omitempty"`
+	// AllowEmptyPasswords разрешает пустой пароль. Выключенная галка означает
+	// «не задано», а не «запретить»: иначе сохранение политики из интерфейса
+	// молча отменяло бы ONEBASE_ALLOW_EMPTY_PASSWORDS, которой стенд включает
+	// пустые пароли ещё до появления первого администратора. Снять разрешение,
+	// выданное переменной, можно только убрав саму переменную.
+	AllowEmptyPasswords bool `json:"allow_empty_passwords,omitempty"`
 }
 
 // Enabled сообщает, задана ли хоть одна политика. Пустая политика — это
