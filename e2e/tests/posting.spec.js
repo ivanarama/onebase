@@ -18,9 +18,11 @@ test('документ проводится, движения попадают �
   // Копия берёт все ссылки и табличную часть из демо-данных, но
   // сохраняется как новый непроведённый документ. Так предусловие теста не
   // зависит от состояния исходных демо-документов.
-  const source = page.locator('[data-ob-list-row][data-copy-url]').first();
+  // Ссылка копирования собирается на клиенте из опорных адресов контейнера,
+  // поэтому берём её тем же способом, что и интерфейс.
+  const source = page.locator('[data-ob-list-row][data-ob-id]').first();
   await expect(source).toBeVisible();
-  const copyURL = await source.getAttribute('data-copy-url');
+  const copyURL = await source.evaluate((row) => window.obRowUrl(row, 'copy'));
   expect(copyURL).toBeTruthy();
   await open(page, copyURL);
   await page.click(SAVE);
