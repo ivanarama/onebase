@@ -24,7 +24,7 @@ const tplManagedForm = `
 {{$effectiveReq := effectiveFormElementRequired $ctx.Entity $el}}{{$req := nativeFormElementRequired $ctx.Entity $el}}
 {{if elHidden $ctx $el}}
 {{else if eq (str $el.Kind) "ГруппаФормы"}}
-  <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}" data-ob-el="{{$el.Name}}" style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px">
+  <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}" data-ob-el="{{$el.Name}}" style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elLayout $el}}">
     {{if $el.TitleMap}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
     <div class="managed-group-body">
       {{range $el.Children}}{{template "managed-element" (dict "El" . "Ctx" $ctx)}}{{end}}
@@ -37,7 +37,7 @@ const tplManagedForm = `
        кнопки, ни содержимого, а нумерация оставшихся обязана быть сплошной —
        кнопка и содержимое связаны индексом, и активна всегда нулевая. */}}
   {{$pages := visibleFormPages $ctx $el}}
-  <div class="managed-tabs" data-tabs="{{$el.Name}}">
+  <div class="managed-tabs" data-tabs="{{$el.Name}}"{{with elLayout $el}} style="{{.}}"{{end}}>
     <div class="managed-tab-headers" style="display:flex;gap:2px;border-bottom:2px solid #e2e8f0;margin-bottom:12px">
       {{range $i, $page := $pages}}
         <button type="button" class="managed-tab-btn{{if eq $i 0}} active{{end}}" data-tab-idx="{{$i}}">
@@ -46,7 +46,7 @@ const tplManagedForm = `
       {{end}}
     </div>
     {{range $i, $page := $pages}}
-      <div class="managed-tab-content" data-tab-content="{{$i}}" style="display:{{if eq $i 0}}block{{else}}none{{end}}">
+      <div class="managed-tab-content" data-tab-content="{{$i}}" style="display:{{if eq $i 0}}block{{else}}none{{end}}{{with elLayout $page}};{{.}}{{end}}">
         {{range $page.Children}}{{template "managed-element" (dict "El" . "Ctx" $ctx)}}{{end}}
       </div>
     {{end}}
@@ -54,7 +54,7 @@ const tplManagedForm = `
 {{else if eq (str $el.Kind) "Страница"}}
   {{/* Отдельная страница вне набора СтраницыФормы (её можно добавить на холсте) —
        рендерим как именованный блок с детьми, а не «рендеринг не реализован». */}}
-  <fieldset class="form-group-box" data-ob-el="{{$el.Name}}" style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px">
+  <fieldset class="form-group-box" data-ob-el="{{$el.Name}}" style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elLayout $el}}">
     {{if $el.TitleMap}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
     {{range $el.Children}}{{template "managed-element" (dict "El" . "Ctx" $ctx)}}{{end}}
   </fieldset>
@@ -67,7 +67,7 @@ const tplManagedForm = `
        монтирования textarea скрыта, поэтому native required здесь не ставим:
        браузер не умеет сфокусировать скрытый invalid-контрол; соответствующая
        серверная проверка обязательности всё равно действует. */}}
-  <div class="form-group" data-ob-el="{{$el.Name}}">
+  <div class="form-group{{if elFill $el}} ob-el-fill{{end}}" data-ob-el="{{$el.Name}}"{{with elLayout $el}} style="{{.}}"{{end}}>
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}</label>
     <textarea name="{{$fn}}" autocomplete="off" class="code-field" rows="12" spellcheck="false"
       style="width:100%;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px"
@@ -78,12 +78,12 @@ const tplManagedForm = `
   {{$fn := dpField $el.DataPath}}
   {{$f := fieldByName $ctx.Entity $fn}}
   {{$hChg := hasHandler $el "ПриИзменении"}}
-  <div class="form-group" data-ob-el="{{$el.Name}}">
+  <div class="form-group{{if elFill $el}} ob-el-fill{{end}}" data-ob-el="{{$el.Name}}"{{with elLayout $el}} style="{{.}}"{{end}}>
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}</label>
     {{if $f}}
       {{if isRef (str $f.Type)}}
-        <div style="display:flex;gap:6px;align-items:center">
-          <select id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if and ($f.InlineCreateEnabled false) (refWriteAllowed $ctx.RefWriteAccess $f.RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+        <div class="managed-control-row" style="display:flex;gap:6px;align-items:center">
+          <select class="managed-fill-control" id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if and ($f.InlineCreateEnabled false) (refWriteAllowed $ctx.RefWriteAccess $f.RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
             <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
             {{range index $ctx.RefOptions $fn}}
             <option value="{{index . "id"}}" {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
@@ -143,8 +143,8 @@ const tplManagedForm = `
           {{end}}
         </div>
       {{else if eq (str $el.Type) "file"}}
-        <div style="display:flex;gap:6px;align-items:center">
-          <input type="text" name="{{$fn}}" id="file-path-{{$fn}}" placeholder="Путь к файлу или выберите …" style="flex:1"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}>
+        <div class="managed-control-row" style="display:flex;gap:6px;align-items:center">
+          <input class="managed-fill-control" type="text" name="{{$fn}}" id="file-path-{{$fn}}" placeholder="Путь к файлу или выберите …" style="flex:1"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}>
           {{if not $ro}}
           <textarea name="{{if $ctx.IsProcessor}}{{processorFileContentName $ctx.Processor $fn}}{{else}}_fc_{{$fn}}{{end}}" id="file-content-{{$fn}}" data-ob-file-content-for="{{$fn}}" style="display:none"></textarea>
           <input type="file" id="file-pick-{{$fn}}" style="display:none" data-ob-file-pick-path="file-path-{{$fn}}" data-ob-file-pick-content="file-content-{{$fn}}">
@@ -158,8 +158,8 @@ const tplManagedForm = `
       {{end}}
     {{else if eq (str $el.Type) "file"}}
       {{/* Поле не найдено в Entity, но элемент объявлен как file */}}
-      <div style="display:flex;gap:6px;align-items:center">
-        <input type="text" name="{{$fn}}" id="file-path-{{$fn}}" placeholder="Путь к файлу или выберите …" style="flex:1"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}>
+      <div class="managed-control-row" style="display:flex;gap:6px;align-items:center">
+        <input class="managed-fill-control" type="text" name="{{$fn}}" id="file-path-{{$fn}}" placeholder="Путь к файлу или выберите …" style="flex:1"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}>
         {{if not $ro}}
         <textarea name="{{if $ctx.IsProcessor}}{{processorFileContentName $ctx.Processor $fn}}{{else}}_fc_{{$fn}}{{end}}" id="file-content-{{$fn}}" data-ob-file-content-for="{{$fn}}" style="display:none"></textarea>
         <input type="file" id="file-pick-{{$fn}}" style="display:none" data-ob-file-pick-path="file-path-{{$fn}}" data-ob-file-pick-content="file-content-{{$fn}}">
@@ -177,8 +177,8 @@ const tplManagedForm = `
              (handlers_processors.go), и без этой проверки поле там превращалось в
              пустой select, теряющий текущее значение при записи. Нет опций —
              остаётся прежний текстовый ввод со значением. */}}
-        <div style="display:flex;gap:6px;align-items:center">
-          <select id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{attrRefEntity $attr.TypeRef}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+        <div class="managed-control-row" style="display:flex;gap:6px;align-items:center">
+          <select class="managed-fill-control" id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{attrRefEntity $attr.TypeRef}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
             <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
             {{range index $ctx.RefOptions $fn}}
             <option value="{{index . "id"}}" {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
@@ -211,7 +211,7 @@ const tplManagedForm = `
        может подгрузить связанные данные и вернуть их в values. */}}
   {{$fn := dpField $el.DataPath}}
   {{$hChg := hasHandler $el "ПриИзменении"}}
-  <div class="form-group" data-ob-el="{{$el.Name}}">
+  <div class="form-group{{if elFill $el}} ob-el-fill{{end}}" data-ob-el="{{$el.Name}}"{{with elLayout $el}} style="{{.}}"{{end}}>
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}</label>
     <select name="{{$fn}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if and (not $ro) (hasHandler $el "НачалоВыбора")}} data-el="{{$el.Name}}" data-ob-list-choice="{{$el.Name}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
@@ -224,7 +224,7 @@ const tplManagedForm = `
 {{else if eq (str $el.Kind) "Флажок"}}
   {{$fn := dpField $el.DataPath}}
   {{$hChg := hasHandler $el "ПриИзменении"}}
-  <div class="form-group managed-checkbox" data-ob-el="{{$el.Name}}" style="display:flex;align-items:center;gap:8px">
+  <div class="form-group managed-checkbox" data-ob-el="{{$el.Name}}" style="display:flex;align-items:center;gap:8px;{{elLayout $el}}">
     {{/* ПриИзменении у флажка работает так же, как у остальных полей: без
          data-ob-fire-change обработчик «поставил галку → выполнилось действие»
          молча не вызывался. */}}
@@ -234,21 +234,31 @@ const tplManagedForm = `
     <label for="cb-{{$fn}}" style="margin-bottom:0;cursor:pointer">{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}</label>
   </div>
 {{else if eq (str $el.Kind) "Надпись"}}
-  <div class="form-decoration" data-ob-el="{{$el.Name}}" style="padding:6px 0;color:#475569;font-size:13px">
+  <div class="form-decoration" data-ob-el="{{$el.Name}}" style="padding:6px 0;color:#475569;font-size:13px;{{elLayout $el}}">
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </div>
 {{else if eq (str $el.Kind) "Кнопка"}}
   {{$clickAction := or (hasHandler $el "Нажатие") (and $ctx.IsProcessor (processorExecuteFallbackButton $ctx.Form $el))}}
   {{$hotKey := ""}}{{if and (not $ro) $clickAction}}{{$hotKey = normalizedFormHotkey $el.HotKey}}{{end}}
-  <button type="button" class="btn btn-secondary managed-btn" data-ob-el="{{$el.Name}}"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $hotKey}} data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $clickAction}} data-ob-fire-click="{{$el.Name}}"{{end}}>
+  {{$buttonLayout := elLayout $el}}
+  {{if $buttonLayout}}<div class="managed-btn-layout" data-ob-el="{{$el.Name}}" style="{{$buttonLayout}}">{{end}}
+  <button type="button" class="btn btn-secondary managed-btn"{{if not $buttonLayout}} data-ob-el="{{$el.Name}}"{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $hotKey}} data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $clickAction}} data-ob-fire-click="{{$el.Name}}"{{end}}>
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </button>
+  {{if $buttonLayout}}</div>{{end}}
 {{else if eq (str $el.Kind) "ПолеКартинки"}}
+  {{/* width/height здесь ограничивают САМУ картинку — так было до общего
+       контракта раскладки (#1185), и менять смысл ключей значило бы перестроить
+       уже написанные формы. Общим остаётся выравнивание: блок-обёртка нужна
+       затем, что auto-margin на инлайновой картинке не работает. */}}
+  <div class="form-picture"{{with elAlign $el}} style="{{.}}"{{end}}>
   {{if $el.Picture}}
-    <img src="/static/forms/{{$el.Picture}}" alt="{{$el.Name}}" data-ob-el="{{$el.Name}}" style="max-width:{{if $el.Width}}{{$el.Width}}px{{else}}100px{{end}};max-height:{{if $el.Height}}{{$el.Height}}px{{else}}100px{{end}}">
+    {{$pictureWidth := elPictureSize $el.Width}}{{$pictureHeight := elPictureSize $el.Height}}
+    <img src="/static/forms/{{$el.Picture}}" alt="{{$el.Name}}" data-ob-el="{{$el.Name}}" style="max-width:{{if $pictureWidth}}{{$pictureWidth}}px{{else}}100px{{end}};max-height:{{if $pictureHeight}}{{$pictureHeight}}px{{else}}100px{{end}}">
   {{else}}
     <span data-ob-el="{{$el.Name}}" style="color:#cbd5e1">[Картинка: {{$el.Name}}]</span>
   {{end}}
+  </div>
 {{else if eq (str $el.Kind) "ТабличнаяЧасть"}}
   {{/* Табличная часть в managed-форме (план 37, этап 8). Имена name= совпадают
        с парсером parseTablePartRows: "tp.<TPName>.<idx>.<field>". obFire-JS
@@ -275,7 +285,7 @@ const tplManagedForm = `
     {{$cmdRO := or $tpReadOnly (effectiveFormElementReadOnly $ctx.Form .)}}
     {{$clickAction := hasHandler . "Нажатие"}}
     {{$hotKey := ""}}{{if and (not $cmdRO) $clickAction}}{{$hotKey = normalizedFormHotkey .HotKey}}{{end}}
-    <button type="button" class="btn btn-sm" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe"
+    <button type="button" class="btn btn-sm" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;{{elLayout .}}"
       {{if .AccessKey}}accesskey="{{.AccessKey}}" {{end}}{{if $hotKey}}data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}" {{end}}{{if $cmdRO}}disabled{{end}}{{if and (not $cmdRO) $clickAction}} data-ob-fire-click="{{.Name}}" data-ob-fire-tp="{{$tpName}}"{{end}}>
       {{fieldTitleRU .TitleMap .Name}}
     </button>
@@ -283,7 +293,9 @@ const tplManagedForm = `
   </div>
   {{end}}
   {{if not $el.NoGrid}}
-  <div id="sg-{{$tpName}}" class="ob-grid" style="height:{{if gt (len $tpRows) 8}}300{{else}}200{{end}}px;width:100%"
+  {{/* Высота сетки по умолчанию считается по числу строк; ключ height (#1185)
+       её перебивает — «покажи 15 строк» иначе задать нечем. */}}
+  <div id="sg-{{$tpName}}" class="ob-grid" style="{{tpGridCSS $el (len $tpRows)}}"
        data-sg-tp="{{$tpName}}"
        data-sg-el="{{$el.Name}}"
        {{if $tpReadOnly}}data-sg-ro="1"{{end}}
@@ -315,7 +327,7 @@ const tplManagedForm = `
      и удалив их все, браузер шлёт то же самое, что и форма, где таблицы вовсе
      не было (скрыта hidden_when). Различает эти случаи только маркер. */}}
 {{if not $tpReadOnly}}<input type="hidden" name="tp_present.{{$tpName}}" value="1">{{end}}
-<table class="tp-table" data-tp="{{$tpName}}" data-ob-dom-table="{{$tpName}}" data-ob-readonly="{{if $tpReadOnly}}1{{else}}0{{end}}"
+<table class="tp-table" data-tp="{{$tpName}}" data-ob-dom-table="{{$tpName}}" data-ob-readonly="{{if $tpReadOnly}}1{{else}}0{{end}}"{{with elLayout $el}} style="{{.}}"{{end}}
   data-ob-element="{{$el.Name}}"{{if and (not $tpReadOnly) (hasHandler $el "ПриДобавленииСтроки")}} data-ob-rowadd="1"{{end}}{{if and (not $tpReadOnly) (hasHandler $el "ПриУдаленииСтроки")}} data-ob-rowdel="1"{{end}}
   {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}>
     <thead>
@@ -388,6 +400,8 @@ const tplManagedForm = `
   {{if $vtCols}}
   {{$vtRows := index $ctx.TablePartRows $tpName}}
   {{$vtCmds := tpCommandButtons $el}}
+  {{$vtLayout := elLayout $el}}
+  {{if $vtLayout}}<div class="managed-vt-layout" data-ob-el="{{$el.Name}}" style="{{$vtLayout}}">{{end}}
   <h3 style="margin:18px 0 8px;font-size:14px">{{fieldTitleRU $el.TitleMap (or (tablePartTitle $tpMeta) $tpName)}}</h3>
   {{if $vtCmds}}
   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
@@ -395,7 +409,7 @@ const tplManagedForm = `
     {{$cmdRO := or $tpReadOnly (effectiveFormElementReadOnly $ctx.Form .)}}
     {{$clickAction := hasHandler . "Нажатие"}}
     {{$hotKey := ""}}{{if and (not $cmdRO) $clickAction}}{{$hotKey = normalizedFormHotkey .HotKey}}{{end}}
-    <button type="button" class="btn btn-sm" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe"
+    <button type="button" class="btn btn-sm" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;{{elLayout .}}"
       {{if .AccessKey}}accesskey="{{.AccessKey}}" {{end}}{{if $hotKey}}data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}" {{end}}{{if $cmdRO}}disabled{{else if $clickAction}}data-ob-fire-click="{{.Name}}" data-ob-fire-tp="{{$tpName}}"{{end}}>
       {{fieldTitleRU .TitleMap .Name}}
     </button>
@@ -433,6 +447,7 @@ const tplManagedForm = `
     data-ob-add-vt="{{$tpName}}"{{end}}>
     + Добавить строку
   </button>
+  {{if $vtLayout}}</div>{{end}}
   {{else}}
   <div style="background:#fef9c3;padding:8px;border-radius:6px;font-size:12px;color:#92400e">
     Табличная часть «{{$tpName}}» не найдена в метаданных сущности.
@@ -446,7 +461,7 @@ const tplManagedForm = `
   {{$fn := dpField $el.DataPath}}
   {{$hChg := hasHandler $el "ПриИзменении"}}
   {{$dv := index $ctx.Values $fn}}
-  <div class="form-group" data-ob-el="{{$el.Name}}">
+  <div class="form-group{{if elFill $el}} ob-el-fill{{end}}" data-ob-el="{{$el.Name}}"{{with elLayout $el}} style="{{.}}"{{end}}>
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}</label>
     <input type="date" name="{{$fn}}" value="{{if ge (len $dv) 10}}{{slice $dv 0 10}}{{else}}{{$dv}}{{end}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
   </div>
@@ -460,7 +475,7 @@ const tplManagedForm = `
   {{$cur := index $ctx.Values $fn}}
   {{$hChg := hasHandler $el "ПриИзменении"}}
   {{$enum := and $f (isEnum (str $f.Type))}}
-  <div class="form-group" data-ob-el="{{$el.Name}}">
+  <div class="form-group{{if elFill $el}} ob-el-fill{{end}}" data-ob-el="{{$el.Name}}"{{with elLayout $el}} style="{{.}}"{{end}}>
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}</label>
     {{if eq $el.View "select"}}
       <select name="{{$fn}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
@@ -501,15 +516,25 @@ const tplManagedForm = `
 /* Поле в горизонтальной группе не растягивается на всю строку: иначе одинокое
    поле уезжало во всю ширину, а кнопка рядом с ним — к правому краю экрана. */
 .managed-group-horizontal>.managed-group-body>.form-group{flex:0 1 260px;min-width:180px;margin-bottom:0}
-.managed-group-horizontal>.managed-group-body>.form-decoration,.managed-group-horizontal>.managed-group-body>button{flex:0 0 auto}
+.managed-group-horizontal>.managed-group-body>.form-decoration,.managed-group-horizontal>.managed-group-body>button,.managed-group-horizontal>.managed-group-body>.managed-btn-layout,.managed-group-horizontal>.managed-group-body>.form-picture{flex:0 0 auto}
 /* Кнопка формы: отступы задаются классом, а не inline-стилем — иначе правило
    выравнивания в горизонтальной группе ниже проигрывало бы по приоритету. */
 .managed-btn{margin:6px 4px 6px 0}
+/* У кнопки с layout внешний блок — именно эта обёртка. max-content оставляет
+   ей собственную ширину, поэтому auto-margin у center/right действительно
+   сдвигает кнопку и вне flex-группы; заданные width/stretch из inline-стиля
+   по приоритету перебивают это значение. */
+.managed-btn-layout{width:max-content;max-width:100%;margin:6px 4px 6px 0}
+.managed-btn-layout>.managed-btn{width:100%;height:100%;margin:0}
+/* Картинка, как и кнопка, выравнивается внешней обёрткой. Без собственной
+   ширины блочная обёртка занимает всю строку, и auto-margin визуально ничего
+   не меняет. */
+.form-picture{width:max-content;max-width:100%}
 /* Кнопка встаёт вровень с полем, а не с его меткой: метка занимает
    line-height 18px + margin-bottom 5px (см. label в общем стиле), а разницу
    высот кнопки (30px) и поля (39px) добираем до общей средней линии. */
 .managed-group-horizontal>.managed-group-body>.form-group>label{line-height:18px}
-.managed-group-horizontal>.managed-group-body>.managed-btn{align-self:flex-start;margin:27px 0 0 0}
+.managed-group-horizontal>.managed-group-body>.managed-btn,.managed-group-horizontal>.managed-group-body>.managed-btn-layout{align-self:flex-start;margin:27px 0 0 0}
 /* Флажок без метки сверху выравниваем по той же линии, что и поля рядом. */
 /* Флажок в горизонтальной группе занимает ширину СВОЕЙ подписи, а не общую
    колонку 260px: с ней «Причина обращения ☐СПАМ» уже не помещались в строку
@@ -522,6 +547,16 @@ const tplManagedForm = `
    и нередактируемая галка превращалась в подпись без индикатора. */
 .form-group input[readonly],.form-group input:disabled:not([type=checkbox]):not([type=radio]),.form-group select:disabled,.form-group textarea[readonly]{
   background:#f8fafc;border-color:#eef2f7;color:#334155;cursor:default;opacity:1;-webkit-appearance:none;appearance:none}
+/* Раскладка элемента (#1185): height задаёт высоту ВНЕШНЕГО блока, а тянуться
+   на остаток должен сам ввод — иначе «высота 200» растянула бы пустое место под
+   полем, оставив поле прежним. Подпись сверху сохраняет свою высоту. */
+.form-group.ob-el-fill{display:flex;flex-direction:column}
+.form-group.ob-el-fill>label{flex:0 0 auto}
+.form-group.ob-el-fill>input,.form-group.ob-el-fill>select,.form-group.ob-el-fill>textarea,.form-group.ob-el-fill>div{flex:1 1 auto;min-height:0}
+/* У ссылки и file-пути непосредственный flex-item — строка с кнопками. Она уже
+   получает остаток высоты правилом выше; это правило доводит его до самого
+   select/input, не растягивая соседние кнопки выбора. */
+.form-group.ob-el-fill>.managed-control-row>.managed-fill-control{height:100%;min-height:0}
 </style>
 {{if hasGridTP .Form}}
 <link rel="stylesheet" href="/vendor/slickgrid/slick.grid.css">
