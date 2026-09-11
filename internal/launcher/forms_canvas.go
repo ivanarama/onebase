@@ -253,6 +253,10 @@ type canvasElementInfo struct {
 	// Набор значений Переключателя/ПолеСписка (batch C1).
 	Options []canvasOption `json:"options"`
 	View    string         `json:"view"` // radio|select
+	// ChoiceFilter — связи параметров выбора: «реквизит выбираемого справочника»
+	// → «путь к значению на форме» (Договор только своего Контрагента). Панель
+	// свойств редактирует их построчно, поэтому карта нужна ей целиком.
+	ChoiceFilter map[string]string `json:"choiceFilter"`
 }
 
 // canvasOption — значение набора Переключателя для редактора опций (C1).
@@ -305,6 +309,12 @@ func canvasModel(doc *formdoc.Doc) (map[string]canvasElementInfo, error) {
 			}
 			for _, o := range el.Options {
 				info.Options = append(info.Options, canvasOption{Value: o.ValueStr(), Label: o.Label()})
+			}
+			if len(el.ChoiceFilter) > 0 {
+				info.ChoiceFilter = make(map[string]string, len(el.ChoiceFilter))
+				for k, v := range el.ChoiceFilter {
+					info.ChoiceFilter[k] = v
+				}
 			}
 			m[en.NodeID] = info
 			walk(en.Children)

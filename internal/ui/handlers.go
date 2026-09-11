@@ -169,20 +169,26 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 	return rows, nil
 }
 
-func (s *Server) referenceOptionsPage(ctx context.Context, refEntity *metadata.Entity, search string, limit, offset int) ([]map[string]any, int, error) {
+// referenceOptionsPageFiltered — страница строк для диалога подбора с готовым
+// отбором: подчинение справочника и связи параметров выбора приезжают из
+// base.Filters, и СЧЁТЧИК обязан считать по ним же — иначе «показано 50 из 1300»
+// врало бы про отобранный список. Без отбора (пустой base) — обычная страница.
+func (s *Server) referenceOptionsPageFiltered(ctx context.Context, refEntity *metadata.Entity, search string, limit, offset int, base storage.ListParams) ([]map[string]any, int, error) {
 	if refEntity == nil {
 		return nil, 0, nil
 	}
 	params := storage.ListParams{
-		Search: strings.TrimSpace(search),
-		Limit:  limit,
-		Offset: offset,
+		Filters: base.Filters,
+		Search:  strings.TrimSpace(search),
+		Limit:   limit,
+		Offset:  offset,
 	}
 	rows, err := s.referenceOptionsWithParams(ctx, refEntity, refOptionsChoice, params)
 	if err != nil {
 		return nil, 0, err
 	}
 	countParams := s.refListParamsForMode(refEntity, refOptionsChoice)
+	countParams.Filters = base.Filters
 	countParams.Search = strings.TrimSpace(search)
 	countParams, err = s.rowFilterFor(ctx, refEntity, "read", countParams)
 	if err != nil {
@@ -245,7 +251,15 @@ func (s *Server) loadInitialRefOptions(ctx context.Context, entity *metadata.Ent
 		if refEntity == nil {
 			continue
 		}
-		rows, err := s.initialReferenceOptions(ctx, refEntity, refOptionsChoice, []string{values[f.Name]})
+		// Подчинённый справочник (owner:) показывает только элементы своего
+		// владельца — значение владельца берём из этих же значений формы.
+		owner, asked := "", false
+		if strings.TrimSpace(refEntity.Owner) != "" {
+			if hf, ok := ownerHolderField(entity, refEntity.Owner); ok {
+				owner, asked = strings.TrimSpace(values[hf.Name]), true
+			}
+		}
+		rows, err := s.initialReferenceOptionsOwned(ctx, refEntity, refOptionsChoice, []string{values[f.Name]}, owner, asked)
 		if err != nil {
 			return nil, err
 		}
@@ -582,6 +596,15 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		// render boundary so an earlier metadata-only value cannot re-enable
 		// inline creation for a user without write permission on the target.
 		data["TPRefMeta"] = tpRefMeta(ent, refWriteAccess)
+		// Подчинённые справочники: «реквизит → справочник-владелец». Считаем
+		// здесь, в единственной точке отрисовки форм, а не в каждом обработчике:
+		// подчинение — свойство метаданных, и оно обязано доезжать до шаблона
+		// одинаково на карточке, на копии и на форме с ошибкой валидации.
+		if _, ok := data["RefFilter"]; !ok {
+			values, _ := data["Values"].(map[string]string)
+			form, _ := data["Form"].(*metadata.FormModule)
+			data["RefFilter"] = s.refFilterMap(ent, form, values)
+		}
 	}
 	// Same for info-register views, which key off "InfoReg" instead of "Entity".
 	if ir, ok := data["InfoReg"].(*metadata.InfoRegister); ok {

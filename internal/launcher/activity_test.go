@@ -20,7 +20,7 @@ func TestApplyFieldEdits_Activity(t *testing.T) {
 	target := &saveActivity{Field: "Активный", DefaultScope: "active", HideFromChoice: &hide}
 	activity := &target
 
-	applyFieldEdits(ent, metadata.KindCatalog, ent.Fields, nil, nil, nil, nil, nil, nil, activity, nil)
+	applyFieldEdits(ent, metadata.KindCatalog, ent.Fields, nil, nil, nil, nil, nil, nil, nil, activity, nil)
 	if ent.Activity == nil {
 		t.Fatal("Activity = nil after explicit set")
 	}
@@ -29,7 +29,7 @@ func TestApplyFieldEdits_Activity(t *testing.T) {
 	}
 
 	target = nil
-	applyFieldEdits(ent, metadata.KindCatalog, ent.Fields, nil, nil, nil, nil, nil, nil, activity, nil)
+	applyFieldEdits(ent, metadata.KindCatalog, ent.Fields, nil, nil, nil, nil, nil, nil, nil, activity, nil)
 	if ent.Activity != nil {
 		t.Fatalf("Activity was not cleared: %+v", ent.Activity)
 	}

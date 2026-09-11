@@ -2490,6 +2490,9 @@ function obInitFormDelegates() {
       var form = document.getElementById(submitInput.getAttribute('data-ob-submit-form') || '');
       if (form) form.submit();
     }
+    // Сменили владельца (контрагента, направление) — перестраиваем списки,
+    // которые по нему отбираются.
+    if (e.target.name) obRefreshDependentSelects(e.target);
   });
   document.addEventListener('submit', function (e) {
     var form = e.target;
@@ -2946,6 +2949,89 @@ function openItemPicker(payload, elementName, eventContext) {
   });
 }
 
+// ── Отбор подбора: подчинённые справочники и связи параметров выбора ──────────
+//
+// Разметка несёт на поле data-ref-filter вида
+//     {"Владелец":{"from":"Контрагент","value":"<uuid>"}}
+// «from» — имя поля-источника НА ЭТОЙ ЖЕ форме, «value» — его значение на момент
+// отрисовки. Живое поле важнее: пользователь мог сменить контрагента секунду
+// назад, до того как форма съездила на сервер. Значение из разметки — запасной
+// вариант для источника, которого на форме нет (реквизит объекта, не вынесенный
+// на форму).
+function obRefFilterValues(sel) {
+  if (!sel || !sel.getAttribute) return null;
+  var raw = sel.getAttribute('data-ref-filter');
+  if (!raw) return null;
+  var spec;
+  try { spec = JSON.parse(raw); } catch (e) { return null; }
+  var scope = (sel.closest && sel.closest('form')) || document;
+  var out = {};
+  var any = false;
+  for (var key in spec) {
+    if (!Object.prototype.hasOwnProperty.call(spec, key)) continue;
+    var item = spec[key] || {};
+    var value = item.value || '';
+    if (item.from) {
+      var src = scope.querySelector('[name="' + (window.CSS && CSS.escape ? CSS.escape(item.from) : item.from) + '"]');
+      if (src) value = src.value || '';
+    }
+    // Ключ кладём даже с пустым значением: сервер по нему отличает «владельца
+    // ещё не выбрали» (список пуст) от «на этой форме владельца не спрашивают»
+    // (список целиком).
+    out[key] = value;
+    any = true;
+  }
+  return any ? out : null;
+}
+
+// obRefFilterParam — тот же отбор строкой для запроса /ui/_ref-options.
+function obRefFilterParam(sel) {
+  var values = obRefFilterValues(sel);
+  if (!values) return '';
+  return '&flt=' + encodeURIComponent(JSON.stringify(values));
+}
+
+// obRefreshDependentSelects — сменили контрагента: списки, отобранные по нему,
+// перестраиваем сразу, не дожидаясь перерисовки формы. Значение, выпавшее из
+// нового отбора, очищаем: договор чужого контрагента в поле — это молча
+// сохранённая ошибка, а пустое поле человек видит.
+function obRefreshDependentSelects(sourceEl) {
+  if (!sourceEl || !sourceEl.name || !window.fetch) return;
+  var scope = (sourceEl.closest && sourceEl.closest('form')) || document;
+  var targets = scope.querySelectorAll('select[data-ref-filter]');
+  for (var i = 0; i < targets.length; i++) {
+    (function (sel) {
+      var raw = sel.getAttribute('data-ref-filter');
+      if (!raw || raw.indexOf('"' + sourceEl.name + '"') < 0) return;
+      var entity = sel.getAttribute('data-ref-entity') || '';
+      if (!entity) return;
+      var url = '/ui/_ref-options/' + encodeURIComponent(entity) + '?limit=50' + obRefFilterParam(sel);
+      fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+        .then(function (resp) { return resp.ok ? resp.json() : null; })
+        .then(function (data) {
+          if (!data) return;
+          var rows = data.items || [];
+          var current = sel.value;
+          var keep = false;
+          while (sel.options.length) sel.remove(0);
+          var empty = document.createElement('option');
+          empty.value = '';
+          empty.textContent = '— выбрать —';
+          sel.appendChild(empty);
+          for (var j = 0; j < rows.length; j++) {
+            var opt = document.createElement('option');
+            opt.value = rows[j].id;
+            opt.textContent = rows[j]._label != null ? rows[j]._label : rows[j].id;
+            if (String(opt.value) === String(current)) keep = true;
+            sel.appendChild(opt);
+          }
+          sel.value = keep ? current : '';
+        })
+        .catch(function () {});
+    })(targets[i]);
+  }
+}
+
 function openRefPicker(selOrId) {
   var sel = (typeof selOrId === 'string') ? document.getElementById(selOrId) : selOrId;
   if (!sel) return;
@@ -3068,6 +3154,8 @@ function openRefPicker(selOrId) {
     var seq = ++requestSeq;
     if (status) status.textContent = 'Загрузка...';
     var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + encodeURIComponent(q || '');
+    // Отбор подбора: владелец подчинённого справочника и связи параметров выбора.
+    url += obRefFilterParam(sel);
     fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
       .then(function (resp) {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);

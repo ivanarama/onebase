@@ -90,11 +90,13 @@ type rawEntity struct {
 	Numerator          *rawNumerator     `yaml:"numerator"`
 	// Presentation принимает и строку, и список: «одно поле» — частый случай,
 	// а список задаёт запасной вариант, если основной реквизит пуст.
-	Presentation  stringOrList    `yaml:"presentation"`
-	Predefined    []rawPredefined `yaml:"predefined"`
-	Hierarchical  bool            `yaml:"hierarchical"`
-	HierarchyKind string          `yaml:"hierarchy_kind"`
-	ListForm      []string        `yaml:"list_form"`
+	Presentation stringOrList    `yaml:"presentation"`
+	Predefined   []rawPredefined `yaml:"predefined"`
+	// Owner — справочник-владелец (1С: подчинённый справочник). См. Entity.Owner.
+	Owner         string   `yaml:"owner"`
+	Hierarchical  bool     `yaml:"hierarchical"`
+	HierarchyKind string   `yaml:"hierarchy_kind"`
+	ListForm      []string `yaml:"list_form"`
 	// ItemForm принимает и строку, и запись {name: X, readonly: true} —
 	// см. rawItemFormField.
 	ItemForm      []rawItemFormField `yaml:"item_form"`
@@ -358,6 +360,31 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 				ID:   StandardCodeFieldID,
 				Name: StandardCodeField,
 				Type: FieldTypeString,
+			}}, e.Fields...)
+		}
+	}
+	// Подчинённый справочник (1С: «Владелец»). Реквизит синтезируем, если его не
+	// объявили руками: подчинение задаётся ОДНОЙ строкой `owner:`, а не строкой
+	// плюс ссылочным реквизитом, который легко назвать иначе и потерять отбор.
+	// Объявленный явно реквизит «Владелец» не трогаем — у него могут быть свои
+	// подпись и обязательность, а тип всё равно проверит Validate.
+	if strings.TrimSpace(raw.Owner) != "" {
+		// Owner ставим независимо от вида: «owner у документа» должен падать на
+		// Validate с внятным текстом, а не молча ничего не делать.
+		e.Owner = strings.TrimSpace(raw.Owner)
+		hasOwner := kind != KindCatalog
+		for _, f := range e.Fields {
+			if strings.EqualFold(f.Name, StandardOwnerField) {
+				hasOwner = true
+				break
+			}
+		}
+		if !hasOwner {
+			e.Fields = append([]Field{{
+				ID:        StandardOwnerFieldID,
+				Name:      StandardOwnerField,
+				Type:      FieldType("reference:" + e.Owner),
+				RefEntity: e.Owner,
 			}}, e.Fields...)
 		}
 	}

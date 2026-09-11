@@ -2161,7 +2161,7 @@ const tplForm = `
   {{if isRef (str .Type)}}
     <div style="display:flex;gap:6px;align-items:center">
       {{if $ro}}<input type="hidden" name="{{$fn}}" value="{{index $.Values $fn}}">{{end}}
-      <select id="ref-{{$fn}}"{{if not $ro}} name="{{$fn}}"{{end}} style="flex:1" data-ref-entity="{{.RefEntity}}"{{if and (not $ro) (.InlineCreateEnabled false) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}>
+      <select id="ref-{{$fn}}"{{if not $ro}} name="{{$fn}}"{{end}} style="flex:1" data-ref-entity="{{.RefEntity}}"{{if $.RefFilter}}{{with index $.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and (not $ro) (.InlineCreateEnabled false) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}>
         <option value="">{{t $.Lang "— выбрать —"}}</option>
         {{range index $.RefOptions $fn}}
         <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
