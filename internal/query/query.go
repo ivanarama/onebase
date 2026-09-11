@@ -83,6 +83,11 @@ type Result struct {
 	// запросе; при Projection.Simple == false действует прежний отказ по
 	// ProjectionFields.
 	Projection ProjectionPlan
+	// UnconvertedTypedFields перечисляет поля простой колонки SELECT, для
+	// которых сложная проекция (ОБЪЕДИНИТЬ или подзапрос) отключила обычное
+	// приведение ссылок, булево и дат. SQL и runtime-поведение не меняются:
+	// поле нужно проверяющим потребителям, чтобы граница не оставалась тихой.
+	UnconvertedTypedFields []string
 }
 
 // SourceRef — объект-источник запроса (для проверки прав доступа).
@@ -3869,6 +3874,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 	}
 	projectionFields := projectionFieldNames(tokens)
 	projectionPlan := analyzeProjection(tokens)
+	unconvertedTypedFields := complexProjectionTypeFields(tokens, opts)
 	tokens = rewriteGroupingReferenceAliases(tokens)
 	// расширяем НачалоДня/Год/Месяц/ОКР/АБС/ЦЕЛ/... в SQL-эквиваленты
 	// до основной трансляции, чтобы остальные шаги ничего не знали о них.
@@ -4338,15 +4344,116 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		return Result{}, err
 	}
 	return Result{
-		SQL:              tr.build(),
-		Args:             tr.args,
-		Sources:          tr.sources,
-		ProjectionFields: expandReferenceProjection(projectionFields, tr.refDims),
-		Projection:       expandProjectionRefDims(projectionPlan, tr.refDims),
-		BoolColumns:      boolOutputColumns(projectionPlan, tr.colTypes),
-		DateColumns:      typedOutputColumns(projectionPlan, tr.colTypes, metadata.FieldTypeDate),
-		RefColumns:       refOutputColumns(projectionPlan, tr.refCols),
+		SQL:                    tr.build(),
+		Args:                   tr.args,
+		Sources:                tr.sources,
+		ProjectionFields:       expandReferenceProjection(projectionFields, tr.refDims),
+		Projection:             expandProjectionRefDims(projectionPlan, tr.refDims),
+		BoolColumns:            boolOutputColumns(projectionPlan, tr.colTypes),
+		DateColumns:            typedOutputColumns(projectionPlan, tr.colTypes, metadata.FieldTypeDate),
+		RefColumns:             refOutputColumns(projectionPlan, tr.refCols),
+		UnconvertedTypedFields: unconvertedTypedFields,
 	}, nil
+}
+
+// complexProjectionTypeFields называет простые колонки SELECT ссылочного,
+// булевого или датного типа, которые не будут приведены из-за второго SELECT.
+// Для диагностики достаточно доказать, что хотя бы один из источников запроса
+// объявляет поле с таким типом: неоднозначность и есть причина не угадывать тип
+// результата и оставить прежнее runtime-поведение.
+func complexProjectionTypeFields(tokens []tok, opts CompileOpts) []string {
+	if p := analyzeProjection(tokens); p.Simple {
+		return nil
+	}
+	fields := complexProjectionFields(tokens)
+	if len(fields) == 0 {
+		return nil
+	}
+	types, hasReferenceSource := queriedColumnTypes(tokens, opts)
+	seen := map[string]bool{}
+	var out []string
+	for _, field := range fields {
+		key := lowerFast(field)
+		isTyped := false
+		if byType := types[key]; byType != nil {
+			isTyped = byType[metadata.FieldTypeBool] || byType[metadata.FieldTypeDate]
+		}
+		if hasReferenceSource && isReferenceName(key) {
+			isTyped = true
+		}
+		if isTyped && !seen[key] {
+			seen[key] = true
+			out = append(out, field)
+		}
+	}
+	return out
+}
+
+// queriedColumnTypes собирает типы полей всех явно названных источников, а не
+// только первого, как runtime-карта buildColTypes. Это диагностический
+// fail-closed путь для ОБЪЕДИНИТЬ: одно и то же имя может иметь разные типы в
+// разных ветках, и наличие bool/date хотя бы в одной из них уже требует
+// предупреждения.
+func queriedColumnTypes(tokens []tok, opts CompileOpts) (map[string]map[metadata.FieldType]bool, bool) {
+	out := map[string]map[metadata.FieldType]bool{}
+	hasReferenceSource := false
+	add := func(fields []metadata.Field) {
+		for _, field := range fields {
+			if field.RefEntity != "" {
+				hasReferenceSource = true
+			}
+			key := lowerFast(field.Name)
+			if out[key] == nil {
+				out[key] = map[metadata.FieldType]bool{}
+			}
+			out[key][field.Type] = true
+		}
+	}
+	for i := 0; i+2 < len(tokens); i++ {
+		upper := upperFast(tokens[i].val)
+		if tokens[i].kind != tIdent || !isSourceType(upper) ||
+			tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+			continue
+		}
+		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
+			if i+5 >= len(tokens) || tokens[i+4].kind != tIdent || tokens[i+5].kind != tLParen {
+				continue
+			}
+			vtUpper := upperFast(tokens[i+4].val)
+			_, isAccumVT := accumVTKinds[vtUpper]
+			_, isInfoVT := infoVTKinds[vtUpper]
+			if !(isAccumVT && (isAccumRegType(upper) || isAccountRegType(upper))) &&
+				!(isInfoVT && isInfoRegType(upper)) {
+				continue
+			}
+		}
+		name := tokens[i+2].val
+		switch {
+		case isAccumRegType(upper):
+			for _, reg := range opts.Registers {
+				if strings.EqualFold(reg.Name, name) {
+					add(reg.Dimensions)
+					add(reg.Resources)
+					add(reg.Attributes)
+				}
+			}
+		case isInfoRegType(upper):
+			for _, reg := range opts.InfoRegs {
+				if strings.EqualFold(reg.Name, name) {
+					add(reg.Dimensions)
+					add(reg.Resources)
+				}
+			}
+		default:
+			for _, entity := range opts.Entities {
+				if strings.EqualFold(entity.Name, name) {
+					hasReferenceSource = true
+					add(entity.Fields)
+				}
+			}
+		}
+	}
+	return out, hasReferenceSource
 }
 
 // refOutputColumns отдаёт собранные транслятором колонки-ссылки, но только для

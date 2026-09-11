@@ -44,7 +44,9 @@ func RunFullWithOptions(dir string, opts Options) Result {
 
 	if proj, err := project.Load(dir); err == nil {
 		strictLexicalScope := appCfgErr == nil && appCfg != nil && appCfg.DSL != nil && appCfg.DSL.StrictLexicalScope
-		issues = append(issues, CheckQueries(proj)...)
+		queryIssues, queryWarnings := CheckQueries(proj)
+		issues = append(issues, queryIssues...)
+		warnings = append(warnings, queryWarnings...)
 		issues = append(issues, CheckReportComposition(proj)...)
 		issues = append(issues, CheckJournalConditional(proj)...)
 		issues = append(issues, CheckFormConditional(proj)...)
@@ -84,10 +86,14 @@ func RunFullWithOptions(dir string, opts Options) Result {
 		if db, closeDB, derr := BuildSchemaDB(proj); derr == nil {
 			validate := func(sql string) error { return db.ValidateQuery(context.Background(), sql) }
 			issues = append(issues, CheckQueriesExecutable(proj, validate)...)
-			issues = append(issues, CheckModuleQueries(proj, validate)...)
+			moduleIssues, moduleWarnings := CheckModuleQueries(proj, validate)
+			issues = append(issues, moduleIssues...)
+			warnings = append(warnings, moduleWarnings...)
 			closeDB()
 		} else {
-			issues = append(issues, CheckModuleQueries(proj, nil)...)
+			moduleIssues, moduleWarnings := CheckModuleQueries(proj, nil)
+			issues = append(issues, moduleIssues...)
+			warnings = append(warnings, moduleWarnings...)
 		}
 		proj.Close()
 	} else if !AlreadyReported(issues, err.Error()) {
