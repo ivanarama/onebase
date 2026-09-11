@@ -516,6 +516,25 @@ func TestIssueQueuesSeparatePlanFixAndHumanWork(t *testing.T) {
 	}
 }
 
+func TestIssueRouteConflictsAreReportedWithoutChangingRouting(t *testing.T) {
+	result := analyze(nil, "ivanarama")
+	analyzeIssues(&result, []apiIssue{
+		issueWithLabels(15, "ready-fix", "needs-decision"),
+		issueWithLabels(16, "manual", "approved"),
+		issueWithLabels(17, "approved", "needs-decision"),
+	}, nil, "ivanarama")
+
+	if !hasFinding(result, "issue_route_conflict") {
+		t.Fatalf("ready-fix/needs-decision conflict was not diagnosed: %+v", result.Findings)
+	}
+	if !hasFinding(result, "manual_route_conflict") {
+		t.Fatalf("manual/automatic route conflict was not diagnosed: %+v", result.Findings)
+	}
+	if len(result.FixCandidates) != 1 || result.FixCandidates[0].Number != 17 {
+		t.Fatalf("approved did not override needs-decision as specified: %+v", result.FixCandidates)
+	}
+}
+
 func TestFixQueueExcludesInWorkAndOpenPullReferences(t *testing.T) {
 	result := analyze(nil, "ivanarama")
 	issues := []apiIssue{

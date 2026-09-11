@@ -512,6 +512,14 @@ func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner strin
 		}
 
 		labels := labelSet(issue.Labels)
+		if labels["ready-fix"] && labels["needs-decision"] {
+			result.addIssue("yellow", "issue_route_conflict", issue.Number,
+				"ready-fix конфликтует с needs-decision: автоматический FIX остановлен до явного решения")
+		}
+		if labels["manual"] && (labels["approved"] || labels["ready-fix"] || labels["plan-needed"] || labels["in-work"]) {
+			result.addIssue("yellow", "manual_route_conflict", issue.Number,
+				"manual сочетается с автоматической маршрутной меткой, которая не будет исполнена")
+		}
 		priority, prioritySource := queuePriority(labels, issue.CreatedAt, now)
 		item := candidate{
 			Number: issue.Number, Title: issue.Title, URL: issue.HTMLURL,
