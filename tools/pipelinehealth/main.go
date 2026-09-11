@@ -5,6 +5,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -31,6 +32,7 @@ var (
 	baseSyncIntent    = regexp.MustCompile(`(?m)^<!-- pp:base-sync-intent from=([0-9a-f]{40}) base=([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) completion=([0-9]+) ship-event=([A-Za-z0-9_=-]+) previous=([0-9]+|none) -->$`)
 	baseSyncDone      = regexp.MustCompile(`(?m)^<!-- pp:base-sync-done intent=([0-9]+) from=([0-9a-f]{40}) to=([0-9a-f]{40}) base=([0-9a-f]{40}) previous=([0-9]+|none) ship-event=([A-Za-z0-9_=-]+) -->$`)
 	triageRouteClaim  = regexp.MustCompile(`(?m)^<!-- pp:triage-route-claim fingerprint-sha256=([0-9a-f]{64}) owner=[0-9a-fA-F-]{36} -->$`)
+	triageRouteRecord = regexp.MustCompile(`(?m)(^pp-triage-route-v1\nissue=([0-9]+)\nissue-updated=[^\n]+\ntitle-sha256=[0-9a-f]{64}\nbody-sha256=[0-9a-f]{64}\nanalysis-sha256=[0-9a-f]{64}\ncomments-sha256=[0-9a-f]{64}\nlabels-sha256=[0-9a-f]{64}\nevents-watermark=(?:[0-9]+|none)\nclass=(?:bug|enhancement|question|documentation)\nroute=(ready-fix|needs-decision)\nmanual=(?:true|false)\nreply=(required|none)\n)`)
 	triageRouteLabels = regexp.MustCompile(`(?m)^<!-- pp:triage-route-labels claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) .+ -->$`)
 	triageAuthorReply = regexp.MustCompile(`(?m)^<!-- pp:triage-author-reply claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) -->$`)
 	triageRouteDone   = regexp.MustCompile(`(?m)^<!-- pp:triage-route-done claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) -->$`)
@@ -512,6 +514,25 @@ func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner strin
 		}
 
 		labels := labelSet(issue.Labels)
+		route := inspectTriageRoute(issue, owner)
+		routeFinding := false
+		routeMismatch := false
+		if route.hasClaim && !route.ready {
+			result.addIssue("yellow", "fix_issue_not_executable", issue.Number, route.reason)
+			routeFinding = true
+		}
+		if route.hasClaim && route.ready {
+			switch {
+			case route.route == "ready-fix" && labels["needs-decision"] && !labels["approved"]:
+				routeMismatch = true
+				result.addIssue("yellow", "triage_route_label_mismatch", issue.Number,
+					"TRIAGE route=ready-fix, но issue помечена needs-decision без последующего approved")
+			case route.route == "needs-decision" && labels["ready-fix"] && !labels["approved"]:
+				routeMismatch = true
+				result.addIssue("yellow", "triage_route_label_mismatch", issue.Number,
+					"TRIAGE route=needs-decision, но issue помечена ready-fix без следов решения человека")
+			}
+		}
 		priority, prioritySource := queuePriority(labels, issue.CreatedAt, now)
 		item := candidate{
 			Number: issue.Number, Title: issue.Title, URL: issue.HTMLURL,
@@ -519,6 +540,11 @@ func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner strin
 			UpdatedAt: issue.UpdatedAt,
 		}
 		if labels["hold"] || labels["manual"] {
+			continue
+		}
+		if routeMismatch {
+			item.Stage = "human-decision"
+			result.HumanWaiting = append(result.HumanWaiting, item)
 			continue
 		}
 		switch {
@@ -534,9 +560,10 @@ func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner strin
 			if labels["in-work"] || issueReferencedByOpenPull(issue.Number, prs) {
 				continue
 			}
-			ready, reason := triageHandoffReady(issue, owner)
-			if !ready {
-				result.addIssue("yellow", "fix_issue_not_executable", issue.Number, reason)
+			if !route.ready {
+				if !routeFinding {
+					result.addIssue("yellow", "fix_issue_not_executable", issue.Number, route.reason)
+				}
 				continue
 			}
 			result.FixCandidates = append(result.FixCandidates, item)
@@ -560,10 +587,24 @@ func issueReferencedByOpenPull(number int, prs []apiPull) bool {
 	return false
 }
 
-func triageHandoffReady(issue apiIssue, owner string) (bool, string) {
+type triageRouteState struct {
+	hasClaim bool
+	ready    bool
+	route    string
+	reason   string
+}
+
+func inspectTriageRoute(issue apiIssue, owner string) triageRouteState {
+	thread := append([]apiComment(nil), issue.Thread...)
+	sort.SliceStable(thread, func(i, j int) bool {
+		if thread[i].CreatedAt == thread[j].CreatedAt {
+			return thread[i].ID < thread[j].ID
+		}
+		return thread[i].CreatedAt < thread[j].CreatedAt
+	})
 	var root *apiComment
-	for index := range issue.Thread {
-		comment := &issue.Thread[index]
+	for index := range thread {
+		comment := &thread[index]
 		if !trustedUnedited(*comment, owner) || !hasExactLine(comment.Body, "<!-- pp:triage -->") {
 			continue
 		}
@@ -573,20 +614,34 @@ func triageHandoffReady(issue apiIssue, owner string) (bool, string) {
 		}
 	}
 	if root == nil {
-		return false, "eligible FIX issue has no canonical trusted triage"
+		return triageRouteState{reason: "eligible FIX issue has no canonical trusted triage"}
 	}
 	if !strings.Contains(root.Body, "pp:triage-route-claim") {
-		return true, ""
+		return triageRouteState{ready: true}
 	}
+	state := triageRouteState{hasClaim: true}
+	normalized := strings.ReplaceAll(root.Body, "\r\n", "\n")
 	claims := triageRouteClaim.FindAllStringSubmatch(root.Body, -1)
 	if len(claims) != 1 {
-		return false, "canonical triage has a malformed route claim"
+		state.reason = "canonical triage has a malformed route claim"
+		return state
 	}
 	fingerprint := claims[0][1]
+	records := triageRouteRecord.FindAllStringSubmatch(normalized, -1)
+	if len(records) != 1 || fmt.Sprintf("%x", sha256.Sum256([]byte(records[0][1]))) != fingerprint {
+		state.reason = "canonical triage route record is malformed or its fingerprint does not match"
+		return state
+	}
+	recordIssue, err := strconv.Atoi(records[0][2])
+	if err != nil || recordIssue != issue.Number {
+		state.reason = "canonical triage route record names another issue"
+		return state
+	}
+	state.route = records[0][3]
 	claimID := strconv.FormatInt(root.ID, 10)
 	labelsCommitted, replyCommitted, done := false, false, false
-	replyRequired := hasExactLine(root.Body, "reply=required")
-	for _, comment := range issue.Thread {
+	replyRequired := records[0][4] == "required"
+	for _, comment := range thread {
 		if !trustedUnedited(comment, owner) || comment.CreatedAt < root.CreatedAt ||
 			(comment.CreatedAt == root.CreatedAt && comment.ID <= root.ID) {
 			continue
@@ -608,9 +663,11 @@ func triageHandoffReady(issue apiIssue, owner string) (bool, string) {
 		}
 	}
 	if !done {
-		return false, "TRIAGE route claim is unfinished; FIX must wait for matching labels/reply/done markers"
+		state.reason = "TRIAGE route claim is unfinished; FIX must wait for matching labels/reply/done markers"
+		return state
 	}
-	return true, ""
+	state.ready = true
+	return state
 }
 
 func hasExactLine(body, line string) bool {

@@ -1,7 +1,12 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -462,6 +467,23 @@ func issueComment(id int64, body string) apiComment {
 		User: apiUser{Login: "ivanarama"}, Body: body}
 }
 
+func triageRouteRoot(issue int, id int64, route string) (apiComment, string) {
+	record := fmt.Sprintf("pp-triage-route-v1\nissue=%d\nissue-updated=2026-09-01T00:00:00Z\ntitle-sha256=%s\nbody-sha256=%s\nanalysis-sha256=%s\ncomments-sha256=%s\nlabels-sha256=%s\nevents-watermark=1\nclass=bug\nroute=%s\nmanual=false\nreply=none\n",
+		issue, epoch, epoch, epoch, epoch, epoch, route)
+	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(record)))
+	body := fmt.Sprintf("<!-- pp:triage -->\n%s<!-- pp:triage-route-claim fingerprint-sha256=%s owner=11111111-1111-1111-1111-111111111111 -->", record, fingerprint)
+	return issueComment(id, body), fingerprint
+}
+
+func completedTriageRoute(issue int, route string) []apiComment {
+	root, fingerprint := triageRouteRoot(issue, 10, route)
+	return []apiComment{
+		root,
+		issueComment(11, "<!-- pp:triage-route-labels claim=10 fingerprint-sha256="+fingerprint+" events-through=1 labels-sha256="+epoch+" -->"),
+		issueComment(12, "<!-- pp:triage-route-done claim=10 fingerprint-sha256="+fingerprint+" -->"),
+	}
+}
+
 func TestMojibakeInTriageVisibleTextIsRed(t *testing.T) {
 	broken := issueComment(10, "**РўСЂРёР°Р¶.**\nРљРѕСЂРµРЅСЊ РЅР°Р№РґРµРЅ.\n<!-- pp:triage -->\npp-triage-route-v1")
 	result := analyze(nil, "ivanarama")
@@ -532,13 +554,13 @@ func TestFixQueueExcludesInWorkAndOpenPullReferences(t *testing.T) {
 }
 
 func TestFixQueueRequiresCompletedTriageRoute(t *testing.T) {
-	fingerprint := strings.Repeat("a", 64)
-	root := issueComment(10, "<!-- pp:triage -->\nreply=none\n<!-- pp:triage-route-claim fingerprint-sha256="+fingerprint+" owner=11111111-1111-1111-1111-111111111111 -->")
+	root, fingerprint := triageRouteRoot(30, 10, "ready-fix")
 	unfinished := testIssue(30, root)
 	unfinished.Labels = []apiLabel{{Name: "approved"}}
-	complete := testIssue(31, root,
-		issueComment(11, "<!-- pp:triage-route-labels claim=10 fingerprint-sha256="+fingerprint+" events-through=1 labels-sha256="+fingerprint+" -->"),
-		issueComment(12, "<!-- pp:triage-route-done claim=10 fingerprint-sha256="+fingerprint+" -->"))
+	completeRoot, completeFingerprint := triageRouteRoot(31, 10, "ready-fix")
+	complete := testIssue(31, completeRoot,
+		issueComment(11, "<!-- pp:triage-route-labels claim=10 fingerprint-sha256="+completeFingerprint+" events-through=1 labels-sha256="+fingerprint+" -->"),
+		issueComment(12, "<!-- pp:triage-route-done claim=10 fingerprint-sha256="+completeFingerprint+" -->"))
 	complete.Labels = []apiLabel{{Name: "approved"}}
 	result := analyze(nil, "ivanarama")
 	analyzeIssues(&result, []apiIssue{unfinished, complete}, nil, "ivanarama")
@@ -549,4 +571,94 @@ func TestFixQueueRequiresCompletedTriageRoute(t *testing.T) {
 	if !hasFinding(result, "fix_issue_not_executable") {
 		t.Fatalf("unfinished TRIAGE handoff was not diagnosed: %+v", result.Findings)
 	}
+}
+
+func TestIssueRouteDiagnosticsUseCommittedTriageForAllLabels(t *testing.T) {
+	readyRoute := testIssue(40, completedTriageRoute(40, "ready-fix")...)
+	readyRoute.Labels = []apiLabel{{Name: "needs-decision"}}
+	humanRoute := testIssue(41, completedTriageRoute(41, "needs-decision")...)
+	humanRoute.Labels = []apiLabel{{Name: "ready-fix"}}
+	unfinishedRoot, _ := triageRouteRoot(42, 10, "ready-fix")
+	unfinished := testIssue(42, unfinishedRoot)
+	unfinished.Labels = []apiLabel{{Name: "needs-decision"}}
+
+	result := analyze(nil, "ivanarama")
+	analyzeIssues(&result, []apiIssue{readyRoute, humanRoute, unfinished}, nil, "ivanarama")
+
+	for _, number := range []int{40, 41} {
+		if !hasIssueFinding(result, "triage_route_label_mismatch", number) {
+			t.Fatalf("route mismatch for issue #%d was not diagnosed: %+v", number, result.Findings)
+		}
+	}
+	if !hasIssueFinding(result, "fix_issue_not_executable", 42) {
+		t.Fatalf("unfinished route under needs-decision was hidden: %+v", result.Findings)
+	}
+	if len(result.FixCandidates) != 0 {
+		t.Fatalf("route mismatch leaked into the executable FIX allowlist: %+v", result.FixCandidates)
+	}
+	if len(result.HumanWaiting) != 3 {
+		t.Fatalf("route diagnostics did not preserve human-visible work: %+v", result.HumanWaiting)
+	}
+}
+
+func TestApprovedOverridesCompletedTriageRouteMismatch(t *testing.T) {
+	issue := testIssue(43, completedTriageRoute(43, "needs-decision")...)
+	issue.Labels = []apiLabel{{Name: "ready-fix"}, {Name: "approved"}}
+	result := analyze(nil, "ivanarama")
+	analyzeIssues(&result, []apiIssue{issue}, nil, "ivanarama")
+
+	if hasIssueFinding(result, "triage_route_label_mismatch", 43) ||
+		len(result.FixCandidates) != 1 || result.FixCandidates[0].Number != 43 {
+		t.Fatalf("approved did not override the triage route: %+v", result)
+	}
+}
+
+func TestPublicCommandReportsRouteMismatchesAndUnfinishedHumanRoute(t *testing.T) {
+	readyRoute := testIssue(50, completedTriageRoute(50, "ready-fix")...)
+	readyRoute.Labels = []apiLabel{{Name: "needs-decision"}}
+	humanRoute := testIssue(51, completedTriageRoute(51, "needs-decision")...)
+	humanRoute.Labels = []apiLabel{{Name: "ready-fix"}}
+	unfinishedRoot, _ := triageRouteRoot(52, 10, "ready-fix")
+	unfinished := testIssue(52, unfinishedRoot)
+	unfinished.Labels = []apiLabel{{Name: "needs-decision"}}
+
+	temp := t.TempDir()
+	issuesPath := filepath.Join(temp, "issues.json")
+	prsPath := filepath.Join(temp, "prs.json")
+	issuesJSON, err := json.Marshal([]apiIssue{readyRoute, humanRoute, unfinished})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(issuesPath, issuesJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(prsPath, []byte("[]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	//nolint:gosec // The executable and flags are fixed; variable arguments are test-owned temporary paths.
+	command := exec.Command("go", "run", ".", "-json", "-prs", prsPath, "-issues", issuesPath,
+		"-contract", filepath.Join("..", "..", ".claude", "skills", "review-queue", "SKILL.md"))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pipelinehealth failed: %v\n%s", err, output)
+	}
+	var got report
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode pipelinehealth output: %v\n%s", err, output)
+	}
+	if !hasIssueFinding(got, "triage_route_label_mismatch", 50) ||
+		!hasIssueFinding(got, "triage_route_label_mismatch", 51) ||
+		!hasIssueFinding(got, "fix_issue_not_executable", 52) {
+		t.Fatalf("public command hid route diagnostics: %+v", got.Findings)
+	}
+}
+
+func hasIssueFinding(result report, code string, issue int) bool {
+	for _, item := range result.Findings {
+		if item.Code == code && item.Issue == issue {
+			return true
+		}
+	}
+	return false
 }
