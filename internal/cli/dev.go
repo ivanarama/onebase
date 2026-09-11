@@ -308,6 +308,7 @@ func runDev(cmd *cobra.Command, _ []string) error {
 			uiCfg.AllowedTypes = appCfg.Attachments.AllowedTypes
 		}
 		uiCfg.Limits = runtimeLimitsFromApp(appCfg.Limits)
+		uiCfg.POSEnabled = appCfg.POSEnabled()
 		if appCfg.Email != nil {
 			m := mailer.New(mailer.Config{
 				SMTPHost:    appCfg.Email.SMTPHost,

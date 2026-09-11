@@ -547,6 +547,13 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	if _, ok := data["HasStages"]; !ok {
 		data["HasStages"] = s.hasStages()
 	}
+	// HasPOS — приложение объявило рабочее место кассира (app.yaml:
+	// features.pos, issue #1331). Как и HasStages, это признак КОНФИГУРАЦИИ, а
+	// не платформы: без него ссылка на РМК висела у каждого приложения, включая
+	// те, где кассы нет и не будет.
+	if _, ok := data["HasPOS"]; !ok {
+		data["HasPOS"] = s.cfg.POSEnabled
+	}
 	// Строка глобального поиска в шапке есть на каждой странице (план 82);
 	// на самой странице результатов она сохраняет введённый запрос.
 	if _, ok := data["SearchQuery"]; !ok {
