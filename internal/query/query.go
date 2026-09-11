@@ -635,32 +635,34 @@ func (rd refDimInfo) displayCol() string {
 }
 
 type translator struct {
-	tokens       []tok
-	pos          int
-	args         []any
-	params       map[string]int // param name → 1-based index in args (0 = NULL sentinel)
-	paramValues  map[string]any
-	opts         CompileOpts
-	parts        []string
-	prevWasDot   bool                          // true after emitting "." — used to resolve .Ссылка → .id
-	colMap       map[string]string             // lowercase field name → actual column name (for reference dims)
-	colTypes     map[string]metadata.FieldType // lowercase field name → type (для квалификации и CAST number)
-	refDims      []refDimInfo                  // reference dimensions with auto-JOIN info
-	mainTable    string                        // main FROM table/alias (set when source is emitted)
-	mainEmitted  bool                          // главная таблица FROM уже эмитирована (refDims авто-JOIN — только для неё)
-	section      querySection                  // current clause context
-	aliases      map[string]struct{}           // имена алиасов вывода (КАК ...) — их не квалифицируем и не CAST'им
-	sources      []SourceRef                   // объекты-источники запроса (для RBAC, план 54)
-	rowFilters   []pendingRowFilter            // RLS-фильтры обычных источников, внедряемые в WHERE
-	rowsScoped   bool                          // true после внедрения rowFilters в outer WHERE
-	rowGroupOpen bool                          // открыта скобка вокруг собственного условия ГДЕ после внедрённого фильтра
-	rowApplied   []SourceRef                   // источники, к которым RLS-предикат реально внедрён (для финальной сверки)
-	parenDepth   int                           // глубина незакрытых '(' в основном потоке (VT-аргументы считает parseVTArgs)
-	sourceCtx    sourceContext                 // scoped-типы источников для системных колонок регистра
-	unionDepths  map[int]bool                  // глубины SELECT с UNION для compound ORDER BY
-	unionOrders  map[int]bool                  // ORDER BY относится ко всему UNION, алиасы таблиц там недоступны
-	refCols      map[string]string             // колонка вывода (lower) → сущность, на которую она ссылается (#1150)
-	mainRef      mainRefSource                 // главный источник запроса: чья ссылка стоит за голым «Ссылка»
+	tokens          []tok
+	pos             int
+	args            []any
+	params          map[string]int // param name → 1-based index in args (0 = NULL sentinel)
+	paramValues     map[string]any
+	opts            CompileOpts
+	parts           []string
+	prevWasDot      bool                          // true after emitting "." — used to resolve .Ссылка → .id
+	colMap          map[string]string             // lowercase field name → actual column name (for reference dims)
+	colTypes        map[string]metadata.FieldType // lowercase field name → type (для квалификации и CAST number)
+	refDims         []refDimInfo                  // reference dimensions with auto-JOIN info
+	mainTable       string                        // main FROM table/alias (set when source is emitted)
+	mainEmitted     bool                          // главная таблица FROM уже эмитирована (refDims авто-JOIN — только для неё)
+	section         querySection                  // current clause context
+	aliases         map[string]struct{}           // имена алиасов вывода (КАК ...) — их не квалифицируем и не CAST'им
+	sources         []SourceRef                   // объекты-источники запроса (для RBAC, план 54)
+	rowFilters      []pendingRowFilter            // RLS-фильтры обычных источников, внедряемые в WHERE
+	rowsScoped      bool                          // true после внедрения rowFilters в outer WHERE
+	rowGroupOpen    bool                          // открыта скобка вокруг собственного условия ГДЕ после внедрённого фильтра
+	rowApplied      []SourceRef                   // источники, к которым RLS-предикат реально внедрён (для финальной сверки)
+	parenDepth      int                           // глубина незакрытых '(' в основном потоке (VT-аргументы считает parseVTArgs)
+	sourceCtx       sourceContext                 // scoped-типы источников для системных колонок регистра
+	unionDepths     map[int]bool                  // глубины SELECT с UNION для compound ORDER BY
+	unionOrders     map[int]bool                  // ORDER BY относится ко всему UNION, алиасы таблиц там недоступны
+	refCols         map[string]string             // колонка вывода (lower) → сущность, на которую она ссылается (#1150)
+	mainRef         mainRefSource                 // главный источник запроса: чья ссылка стоит за голым «Ссылка»
+	joinedRefs      []joinedRefSource             // ссылочные поля присоединённых источников (#1385)
+	pendingRefJoins []string                      // авто-JOIN'ы присоединённого источника, ждущие конца его ПО
 }
 
 // mainRefSource — предсканированный главный источник запроса: имя сущности и
@@ -2525,6 +2527,191 @@ func buildRefDimInfosWithEntities(dims []metadata.Field, entities []*metadata.En
 	return result
 }
 
+// joinedRefSource — источник, присоединённый явным СОЕДИНЕНИЕМ, и его
+// собственные ссылочные поля.
+//
+// Ссылочные поля разрешались по плоскому словарю главной таблицы: `refDims` и
+// `colMap` строятся по первому источнику `ИЗ`, поэтому у присоединённого
+// справочника имя реквизита не превращалось ни в физическую колонку `<поле>_id`,
+// ни в авто-JOIN — запрос падал `no such column: п.главныйузел` при любом
+// СОЕДИНЕНИИ (#1385). Здесь имя разрешается в пределах своего источника: по
+// квалификатору перед точкой видно, чьё это поле.
+type joinedRefSource struct {
+	alias      string          // алиас, которым источник эмитится в SQL
+	qualifiers map[string]bool // имена, под которыми на него ссылаются в тексте
+	dims       []refDimInfo    // ссылочные поля этого источника
+	navigated  map[string]bool // поля, использованные навигацией через точку
+	consumed   bool            // авто-JOIN'ы этого источника уже поставлены в очередь
+}
+
+// preScanJoinedRefSources заранее собирает ссылочные поля неглавных источников.
+// Пред-скан обязателен по той же причине, что и preScanRefDims: список выборки
+// транслируется раньше `ИЗ`, а `П.ГлавныйУзел` в нём уже обязан знать, чьё это
+// поле.
+//
+// Берём только источники верхнего уровня: внутри подзапроса свой SELECT-scope
+// со своим главным источником, и прежнее поведение там не трогаем.
+func preScanJoinedRefSources(tokens []tok, opts CompileOpts) []joinedRefSource {
+	var out []joinedRefSource
+	depth := 0
+	seenMain := false
+	for i := 0; i+2 < len(tokens); i++ {
+		switch tokens[i].kind {
+		case tLParen:
+			depth++
+			continue
+		case tRParen:
+			if depth > 0 {
+				depth--
+			}
+			continue
+		}
+		if tokens[i].kind != tIdent || depth > 0 {
+			continue
+		}
+		upper := upperFast(tokens[i].val)
+		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+			continue
+		}
+		isVT := i+3 < len(tokens) && tokens[i+3].kind == tDot
+		if !seenMain {
+			// Главный источник идёт прежним путём (tr.refDims): его авто-JOIN
+			// встаёт сразу за таблицей, а не после чужого ПО.
+			seenMain = true
+			continue
+		}
+		if isVT {
+			continue
+		}
+		var ent *metadata.Entity
+		for _, e := range opts.Entities {
+			if strings.EqualFold(e.Name, tokens[i+2].val) {
+				ent = e
+				break
+			}
+		}
+		if ent == nil {
+			continue
+		}
+		table := sourceToTable(upper, tokens[i+2].val)
+		alias := table
+		quals := map[string]bool{lowerFast(tokens[i+2].val): true, table: true}
+		if i+4 < len(tokens) && tokens[i+3].kind == tIdent {
+			if u := upperFast(tokens[i+3].val); u == "КАК" || u == "AS" {
+				if tokens[i+4].kind == tIdent {
+					alias = lowerFast(tokens[i+4].val)
+					quals[alias] = true
+				}
+			}
+		}
+		dims, navigated := qualifiedRefDims(buildRefDimInfosWithEntities(ent.Fields, opts.Entities), quals, alias, tokens)
+		if len(dims) == 0 {
+			continue
+		}
+		out = append(out, joinedRefSource{alias: alias, qualifiers: quals, dims: dims, navigated: navigated})
+	}
+	return out
+}
+
+// qualifiedRefDims оставляет ссылочные поля, использованные именно с этим
+// источником (`П.ГлавныйУзел`), и отмечает те, где за полем идёт навигация
+// (`П.ГлавныйУзел.Наименование`) — только им нужен авто-JOIN. Псевдоним JOIN'а
+// содержит алиас источника: `ref_<поле>` уже может занимать главная таблица.
+func qualifiedRefDims(dims []refDimInfo, quals map[string]bool, alias string, tokens []tok) ([]refDimInfo, map[string]bool) {
+	if len(dims) == 0 {
+		return nil, nil
+	}
+	used := map[string]bool{}
+	navigated := map[string]bool{}
+	for i := 0; i+2 < len(tokens); i++ {
+		if tokens[i].kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+			continue
+		}
+		if !quals[lowerFast(tokens[i].val)] {
+			continue
+		}
+		field := lowerFast(tokens[i+2].val)
+		used[field] = true
+		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
+			navigated[field] = true
+		}
+	}
+	var out []refDimInfo
+	for _, rd := range dims {
+		if !used[rd.fieldName] {
+			continue
+		}
+		rd.joinAlias = "ref_" + alias + "_" + rd.fieldName
+		out = append(out, rd)
+	}
+	return out, navigated
+}
+
+// findJoinedSource возвращает присоединённый источник по квалификатору перед
+// точкой и его ссылочное поле, если имя — ссылочный реквизит этого источника.
+func (tr *translator) findJoinedSource(qualifierPos int, name string) (*joinedRefSource, *refDimInfo) {
+	if qualifierPos < 0 || qualifierPos >= len(tr.tokens) || tr.tokens[qualifierPos].kind != tIdent {
+		return nil, nil
+	}
+	qualifier := lowerFast(tr.tokens[qualifierPos].val)
+	for i := range tr.joinedRefs {
+		if !tr.joinedRefs[i].qualifiers[qualifier] {
+			continue
+		}
+		for j := range tr.joinedRefs[i].dims {
+			if tr.joinedRefs[i].dims[j].fieldName == name {
+				return &tr.joinedRefs[i], &tr.joinedRefs[i].dims[j]
+			}
+		}
+		return &tr.joinedRefs[i], nil
+	}
+	return nil, nil
+}
+
+// queueJoinedRefJoins откладывает авто-JOIN'ы присоединённого источника: они
+// обязаны встать ПОСЛЕ его ПО, иначе SQL рвётся между таблицей и её ON
+// (план 143, п.50).
+func (tr *translator) queueJoinedRefJoins(alias string) error {
+	for i := range tr.joinedRefs {
+		src := &tr.joinedRefs[i]
+		if src.consumed || src.alias != alias {
+			continue
+		}
+		src.consumed = true
+		for _, rd := range src.dims {
+			if !src.navigated[rd.fieldName] {
+				// Без навигации через точку хватает физической колонки
+				// `<алиас>.<поле>_id`: лишний JOIN только плодит неоднозначные
+				// имена колонок.
+				continue
+			}
+			joinCond := fmt.Sprintf("%s.id = %s.%s", rd.joinAlias, alias, rd.idCol)
+			s, err := tr.rowFilterCondition(sourcePermKind(rd.refSrcType), rd.refEntity, tr.predicateEntityForSource(rd.refSrcType, rd.refEntity), rd.joinAlias)
+			if err != nil {
+				return err
+			}
+			if s != "" {
+				joinCond += " AND " + s
+			}
+			tr.pendingRefJoins = append(tr.pendingRefJoins, fmt.Sprintf("LEFT JOIN %s %s ON %s", rd.joinTable, rd.joinAlias, joinCond))
+			// #14: чтение наименования связанной сущности — источник для RBAC.
+			tr.addRefSource(rd)
+		}
+		return nil
+	}
+	return nil
+}
+
+// flushPendingRefJoins выводит отложенные авто-JOIN'ы: вызывается на границе
+// секции ПО — следующий СОЕДИНЕНИЕ, ГДЕ, СГРУППИРОВАТЬ, УПОРЯДОЧИТЬ, ИМЕЯ,
+// ОБЪЕДИНИТЬ или конец запроса.
+func (tr *translator) flushPendingRefJoins() {
+	for _, j := range tr.pendingRefJoins {
+		tr.emit(j)
+	}
+	tr.pendingRefJoins = nil
+}
+
 func (tr *translator) findRefDim(name string) *refDimInfo {
 	for i := range tr.refDims {
 		if tr.refDims[i].fieldName == name {
@@ -3703,6 +3890,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		mainTable:   preScanMainTable(tokens),
 		refDims:     preScanRefDims(tokens, opts),
 		mainRef:     preScanMainRefSource(tokens, opts),
+		joinedRefs:  preScanJoinedRefSources(tokens, opts),
 		sourceCtx:   preScanSourceContext(tokens),
 		aliases:     map[string]struct{}{},
 		unionDepths: map[int]bool{},
@@ -3854,6 +4042,12 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					return Result{}, err
 				}
 			}
+			if tr.section == sectionFrom && !isMain {
+				// Присоединённый источник: его авто-JOIN'ы ждут конца ПО (#1385).
+				if err := tr.queueJoinedRefJoins(sourceAlias); err != nil {
+					return Result{}, err
+				}
+			}
 			if tr.section == sectionFrom && isMain {
 				// ON ссылается на источник через tr.mainTable: это имя таблицы
 				// либо её алиас (КАК р). Использование сырого tableName при
@@ -3879,6 +4073,10 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		// Multi-word: СГРУППИРОВАТЬ ПО / УПОРЯДОЧИТЬ ПО
 		if t.kind == tIdent && (upper == "СГРУППИРОВАТЬ" || upper == "УПОРЯДОЧИТЬ") {
 			if tr.parenDepth == 0 {
+				// Русские multi-word границы обрабатываются до общей ветки
+				// ключевых слов ниже, поэтому отложенные авто-JOIN'ы нужно
+				// вывести здесь, пока они ещё могут стоять перед WHERE/GROUP/ORDER.
+				tr.flushPendingRefJoins()
 				tr.closeRowFilterGroup()
 				if err := tr.emitPendingRowFiltersAsWhere(); err != nil {
 					return Result{}, err
@@ -4017,6 +4215,14 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			if agg, ok := sqlAgg(t.val); ok && tr.peek(0).kind == tLParen {
 				tr.emit(agg)
 			} else if kw, ok := sqlKW(t.val); ok {
+				// Граница секции ПО: отложенные авто-JOIN'ы присоединённого
+				// источника выводим здесь, до следующего соединения или ГДЕ.
+				if tr.parenDepth == 0 {
+					switch kw {
+					case "LEFT", "INNER", "RIGHT", "FULL", "JOIN", "WHERE", "GROUP", "ORDER", "HAVING", "UNION":
+						tr.flushPendingRefJoins()
+					}
+				}
 				switch kw {
 				case "UNION":
 					// Каждая ветвь ОБЪЕДИНИТЬ — самостоятельный SELECT со своим
@@ -4116,6 +4322,31 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					}
 				} else if col, ok := tr.colMap[lower]; ok && !prevDot {
 					tr.emitOwnColumn(col, lower)
+				} else if src, jrd := tr.findJoinedSource(tr.pos-3, lower); prevDot && src != nil {
+					// Имя разрешается в пределах своего источника, а не по
+					// плоскому словарю главной таблицы: одноимённое поле
+					// присоединённого справочника иначе получало чужой суффикс
+					// `_id` либо не получало его вовсе (#1385).
+					//
+					// Авто-JOIN для навигации нельзя безопасно дописать внутри
+					// собственного ON: его псевдоним оказался бы использован до
+					// объявления. Явно отклоняем такую форму вместо невалидного SQL.
+					if jrd != nil && nextIsDot && tr.section == sectionFrom {
+						return Result{}, i18nerr.Errorf(
+							"навигация по ссылке присоединённого источника внутри ПО не поддерживается; соедини %s явно через СОЕДИНЕНИЕ",
+							jrd.refEntity)
+					}
+					switch {
+					case jrd != nil && nextIsDot && tr.dropSourceQualifier():
+						if err := tr.assertSingleHopNavigation(jrd); err != nil {
+							return Result{}, err
+						}
+						tr.emit(jrd.joinAlias)
+					case jrd != nil:
+						tr.emit(jrd.idCol)
+					default:
+						tr.emitQualifiedColumn(lower, lower)
+					}
 				} else if prevDot {
 					if rd := tr.findRefDim(lower); rd != nil {
 						// Двухуровневая навигация: Источник.Ссылка.Реквизит.
@@ -4149,6 +4380,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 
 		tr.advance()
 	}
+	tr.flushPendingRefJoins()
 	tr.closeRowFilterGroup()
 	if err := tr.emitPendingRowFiltersAsWhere(); err != nil {
 		return Result{}, err
