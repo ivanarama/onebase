@@ -1,7 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -523,11 +527,71 @@ func TestFixQueueExcludesInWorkAndOpenPullReferences(t *testing.T) {
 		issueWithLabels(21, "approved"),
 		issueWithLabels(22, "approved"),
 	}
-	prs := []apiPull{{Number: 100, State: "open", Title: "fix: issue #21", Body: "Fixes #21"}}
+	prs := []apiPull{
+		{Number: 101, State: "open", Title: "related work", Body: "See #21 for context"},
+		{Number: 100, State: "open", Title: "fix: issue #21", Body: "Fixes #21"},
+		{Number: 99, State: "closed", Title: "old fix #21"},
+	}
 	analyzeIssues(&result, issues, prs, "ivanarama")
 
 	if len(result.FixCandidates) != 1 || result.FixCandidates[0].Number != 22 {
 		t.Fatalf("FIX queue included work already owned by a PR: %+v", result.FixCandidates)
+	}
+	var diagnostic *finding
+	for index := range result.Findings {
+		if result.Findings[index].Code == "fix_issue_referenced_by_open_pull" {
+			diagnostic = &result.Findings[index]
+			break
+		}
+	}
+	if diagnostic == nil || diagnostic.Severity != "yellow" || diagnostic.Issue != 21 ||
+		!strings.Contains(diagnostic.Message, "#100, #101") {
+		t.Fatalf("open PR references were not diagnosed deterministically: %+v", result.Findings)
+	}
+}
+
+func TestCLIReportsWhyOpenPullReferenceExcludesFixIssue(t *testing.T) {
+	directory := t.TempDir()
+	writeFixture := func(name string, value any) string {
+		t.Helper()
+		path := filepath.Join(directory, name)
+		data, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("marshal %s: %v", name, err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		return path
+	}
+
+	issuePath := writeFixture("issues.json", []apiIssue{issueWithLabels(21, "approved")})
+	pullPath := writeFixture("pulls.json", []apiPull{
+		{Number: 101, State: "open", Title: "related work", Body: "See #21 for context"},
+		{Number: 100, State: "open", Title: "fix: issue #21", Body: "Fixes #21"},
+	})
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repository root: %v", err)
+	}
+	// #nosec G204 -- executable and flags are fixed; variable arguments are test-owned paths from t.TempDir.
+	command := exec.Command("go", "run", "./tools/pipelinehealth", "-prs", pullPath, "-issues", issuePath, "-json")
+	command.Dir = repositoryRoot
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pipelinehealth CLI failed: %v\n%s", err, output)
+	}
+	var result report
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("decode pipelinehealth output: %v\n%s", err, output)
+	}
+	if len(result.FixCandidates) != 0 {
+		t.Fatalf("referenced issue remained executable: %+v", result.FixCandidates)
+	}
+	if len(result.Findings) != 1 || result.Findings[0].Severity != "yellow" ||
+		result.Findings[0].Code != "fix_issue_referenced_by_open_pull" || result.Findings[0].Issue != 21 ||
+		!strings.Contains(result.Findings[0].Message, "#100, #101") {
+		t.Fatalf("CLI did not explain the exclusion: %+v", result.Findings)
 	}
 }
 
