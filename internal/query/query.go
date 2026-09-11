@@ -4073,6 +4073,10 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		// Multi-word: СГРУППИРОВАТЬ ПО / УПОРЯДОЧИТЬ ПО
 		if t.kind == tIdent && (upper == "СГРУППИРОВАТЬ" || upper == "УПОРЯДОЧИТЬ") {
 			if tr.parenDepth == 0 {
+				// Русские multi-word границы обрабатываются до общей ветки
+				// ключевых слов ниже, поэтому отложенные авто-JOIN'ы нужно
+				// вывести здесь, пока они ещё могут стоять перед WHERE/GROUP/ORDER.
+				tr.flushPendingRefJoins()
 				tr.closeRowFilterGroup()
 				if err := tr.emitPendingRowFiltersAsWhere(); err != nil {
 					return Result{}, err
@@ -4323,6 +4327,15 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					// плоскому словарю главной таблицы: одноимённое поле
 					// присоединённого справочника иначе получало чужой суффикс
 					// `_id` либо не получало его вовсе (#1385).
+					//
+					// Авто-JOIN для навигации нельзя безопасно дописать внутри
+					// собственного ON: его псевдоним оказался бы использован до
+					// объявления. Явно отклоняем такую форму вместо невалидного SQL.
+					if jrd != nil && nextIsDot && tr.section == sectionFrom {
+						return Result{}, i18nerr.Errorf(
+							"навигация по ссылке присоединённого источника внутри ПО не поддерживается; соедини %s явно через СОЕДИНЕНИЕ",
+							jrd.refEntity)
+					}
 					switch {
 					case jrd != nil && nextIsDot && tr.dropSourceQualifier():
 						if err := tr.assertSingleHopNavigation(jrd); err != nil {
