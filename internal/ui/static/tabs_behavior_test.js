@@ -178,6 +178,17 @@ function shell(storage, search = '') {
       frame.contentWindow.location = {href};
       frame.dispatch('load');
     },
+    replaceWithoutLoad(index, href) {
+      const frame = frames()[index];
+      frame.contentWindow.location = {href};
+      for (const listener of windowListeners.get('message') || []) {
+        listener({
+          origin: context.location.origin,
+          source: frame.contentWindow,
+          data: {source: 'obFrameURLChanged', url: href}
+        });
+      }
+    },
     denyLocation(index) {
       const frame = frames()[index];
       Object.defineProperty(frame.contentWindow, 'location', {
@@ -260,6 +271,27 @@ test('same-origin iframe navigation refreshes persistence, restore and URL dedup
   app.open(createURL, 'Purchase again');
   assert.equal(app.count(), 2);
   assert.deepEqual(savedTabs(storage).map(tab => tab.url), [listURL, createURL]);
+});
+
+test('history replacement refreshes persistence, restore and URL deduplication without iframe load', () => {
+  const storage = new FakeStorage();
+  const createURL = '/ui/document/purchase/new';
+  const cardURL = '/ui/document/purchase/42';
+  let app = shell(storage);
+  app.open(createURL, 'Purchase');
+
+  app.replaceWithoutLoad(0, cardURL);
+  assert.equal(savedTabs(storage)[0].url, cardURL);
+  assert.equal(savedActive(storage).url, cardURL);
+
+  app = shell(storage);
+  assert.equal(app.count(), 1);
+  assert.equal(app.activeIndex(), 0);
+  assert.equal(savedTabs(storage)[0].url, cardURL);
+
+  app.open(createURL, 'Purchase again');
+  assert.equal(app.count(), 2);
+  assert.deepEqual(savedTabs(storage).map(tab => tab.url), [cardURL, createURL]);
 });
 
 test('duplicate uses the refreshed URL and unsafe frame locations are ignored', () => {
