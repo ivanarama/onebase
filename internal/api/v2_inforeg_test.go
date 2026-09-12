@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"testing"
 	"time"
@@ -139,6 +140,60 @@ func TestInfoRegV2FiltersByDimension(t *testing.T) {
 			if row["Профиль"] != "Базовый" {
 				t.Errorf("в выдаче чужой профиль: %v", row)
 			}
+		}
+	})
+}
+
+// Значение date-измерения из JSON должно быть пригодно для точного повторного
+// отбора. На SQLite дата физически хранится не в RFC3339, поэтому сырая строка
+// из URL не совпадает с той же датой без типизации на границе API.
+func TestInfoRegV2FiltersByReturnedDateDimension(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ir := &metadata.InfoRegister{
+			Name: "ProbeMatrix",
+			Dimensions: []metadata.Field{
+				{Name: "Key", Type: metadata.FieldTypeDate},
+				{Name: "OtherKey", Type: metadata.FieldTypeString},
+			},
+		}
+		srv := matrixInfoRegAPI(t, db, ir)
+		when := time.Date(2026, 3, 15, 12, 34, 56, 0, time.UTC)
+		if err := db.InfoRegSet(context.Background(), ir,
+			map[string]any{"Key": when, "OtherKey": "row"}, nil, nil); err != nil {
+			t.Fatalf("InfoRegSet: %v", err)
+		}
+
+		w, all := getInfoReg(t, srv, "/api/v2/inforeg/ProbeMatrix", nil)
+		if w.Code != http.StatusOK || len(all.Data) != 1 {
+			t.Fatalf("чтение исходной строки: код %d, данные %v", w.Code, all.Data)
+		}
+		returned := toStr(all.Data[0]["Key"])
+		if _, err := time.Parse(time.RFC3339, returned); err != nil {
+			t.Fatalf("date-измерение %q не разбирается как RFC3339: %v", returned, err)
+		}
+
+		target := "/api/v2/inforeg/ProbeMatrix?filter[Key]=" + url.QueryEscape(returned)
+		w, filtered := getInfoReg(t, srv, target, nil)
+		if w.Code != http.StatusOK {
+			t.Fatalf("повторный отбор: код %d, тело %s", w.Code, w.Body.String())
+		}
+		if len(filtered.Data) != 1 || filtered.Meta.Total != 1 {
+			t.Fatalf("повторный отбор по %q вернул %d строк, total=%d",
+				returned, len(filtered.Data), filtered.Meta.Total)
+		}
+		if got := toStr(filtered.Data[0]["Key"]); got != returned {
+			t.Fatalf("date-измерение после отбора = %q, ожидалось %q", got, returned)
+		}
+
+		limited := apiUser("limited", auth.Permission{
+			InfoRegs: map[string][]string{"ProbeMatrix": {"read"}},
+			FieldAccess: auth.FieldAccess{InfoRegs: map[string]auth.FieldPolicies{
+				"ProbeMatrix": {"Key": {Read: "hide"}},
+			}},
+		})
+		w, _ = getInfoReg(t, srv, target, limited)
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("отбор по защищённому date-измерению должен давать 403, получен %d: %s", w.Code, w.Body.String())
 		}
 	})
 }

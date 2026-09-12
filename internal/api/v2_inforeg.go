@@ -108,14 +108,15 @@ func (h *handler) listInfoRegV2() http.HandlerFunc {
 
 // infoRegFilters — разобранный отбор: значения измерений и границы периода.
 type infoRegFilters struct {
-	dims   map[string]string // точное имя измерения → значение
-	from   *time.Time
-	to     *time.Time
-	period bool // задана хотя бы одна граница периода
+	dims      map[string]string // точное имя измерения → строковое значение
+	dimValues map[string]any    // точное имя измерения → типизированное значение
+	from      *time.Time
+	to        *time.Time
+	period    bool // задана хотя бы одна граница периода
 }
 
 func (f infoRegFilters) regFilter() storage.RegFilter {
-	return storage.RegFilter{Dims: f.dims, From: f.from, To: f.to}
+	return storage.RegFilter{Dims: f.dims, DimValues: f.dimValues, From: f.from, To: f.to}
 }
 
 // parseInfoRegFilters принимает только имена измерений самого регистра и
@@ -123,7 +124,7 @@ func (f infoRegFilters) regFilter() storage.RegFilter {
 // отбор: молча вернуть весь регистр на запрос с опечаткой хуже, чем отказать,
 // потому что клиент примет полную выдачу за отфильтрованную.
 func parseInfoRegFilters(r *http.Request, ir *metadata.InfoRegister) (infoRegFilters, error) {
-	out := infoRegFilters{dims: map[string]string{}}
+	out := infoRegFilters{dims: map[string]string{}, dimValues: map[string]any{}}
 	for key, vals := range r.URL.Query() {
 		if !strings.HasPrefix(key, inforegFilterPrefix) || !strings.HasSuffix(key, "]") || len(vals) == 0 {
 			continue
@@ -169,7 +170,15 @@ func parseInfoRegFilters(r *http.Request, ir *metadata.InfoRegister) (infoRegFil
 			return out, errInfoRegUnknownFilter(inner)
 		}
 		if value != "" {
-			out.dims[dim.Name] = value
+			if dim.Type == metadata.FieldTypeDate {
+				t, ok := parseInfoRegDate(value)
+				if !ok {
+					return out, errInfoRegBadDate(dim.Name)
+				}
+				out.dimValues[dim.Name] = t
+			} else {
+				out.dims[dim.Name] = value
+			}
 		}
 	}
 	return out, nil
@@ -191,6 +200,11 @@ func protectedInfoRegFilter(f infoRegFilters, decisions map[string]access.FieldD
 		return ""
 	}
 	for name := range f.dims {
+		if infoRegFieldMasked(decisions, name) {
+			return name
+		}
+	}
+	for name := range f.dimValues {
 		if infoRegFieldMasked(decisions, name) {
 			return name
 		}
