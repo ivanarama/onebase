@@ -124,7 +124,7 @@ class FakeStorage {
   }
 }
 
-function shell(storage, search = '') {
+function shell(storage, search = '', confirmClose = () => true) {
   const elements = {};
   for (const id of ['ob-tabstrip', 'ob-tabbody', 'ob-tabempty', 'ob-tabhome']) {
     elements[id] = new Element('div', id);
@@ -155,7 +155,7 @@ function shell(storage, search = '') {
       }
     },
     setTimeout() { return 1; },
-    confirm() { confirms++; return true; },
+    confirm() { confirms++; return confirmClose(); },
     addEventListener(type, listener) {
       if (!windowListeners.has(type)) windowListeners.set(type, []);
       windowListeners.get(type).push(listener);
@@ -429,20 +429,20 @@ test('a form tab is closed by its address, not by whichever tab is active', () =
   assert.equal(app.count(), 1);
 });
 
-test('a server-driven close keeps quiet about unsaved changes, the cross still asks', () => {
+test('server-driven close and the cross both protect unsaved changes', () => {
   const storage = new FakeStorage();
   const app = shell(storage);
   app.open('/ui/document/обращение/1', 'Обращение');
   app.markDirty(0);
-  // Команду шлёт код, который только что записал объект, — переспрашивать не о чем.
+  // Адрес не доказывает, что именно этот экземпляр формы уже записан.
   assert.equal(app.closeByURL('/ui/document/обращение/1'), 1);
   assert.equal(app.count(), 0);
-  assert.equal(app.confirms(), 0);
+  assert.equal(app.confirms(), 1);
 
   app.open('/ui/document/заявка/2', 'Заявка');
   app.markDirty(0);
   app.close(0);
-  assert.equal(app.confirms(), 1);
+  assert.equal(app.confirms(), 2);
 });
 
 test('a frame may close a tab by address, and without one still closes itself', () => {
@@ -497,4 +497,20 @@ test('server-driven close keeps dirty protection for another duplicate tab', () 
   assert.equal(app.closeByURL('/ui/document/обращение/1'), 2);
   assert.equal(app.count(), 0);
   assert.equal(app.confirms(), 1);
+});
+
+test('repeated server-driven close cannot bypass a rejected dirty confirmation', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage, '', () => false);
+  app.open('/ui/document/обращение/1', 'Обращение');
+  app.duplicate(0);
+  app.markDirty(1);
+
+  assert.equal(app.closeByURL('/ui/document/обращение/1'), 1);
+  assert.equal(app.count(), 1);
+  assert.equal(app.confirms(), 1);
+
+  assert.equal(app.closeByURL('/ui/document/обращение/1'), 0);
+  assert.equal(app.count(), 1);
+  assert.equal(app.confirms(), 2);
 });
