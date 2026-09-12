@@ -512,7 +512,7 @@ func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner strin
 		}
 
 		labels := labelSet(issue.Labels)
-		if labels["ready-fix"] && labels["needs-decision"] {
+		if labels["ready-fix"] && labels["needs-decision"] && !labels["approved"] {
 			result.addIssue("yellow", "issue_route_conflict", issue.Number,
 				"ready-fix конфликтует с needs-decision: автоматический FIX остановлен до явного решения")
 		}
