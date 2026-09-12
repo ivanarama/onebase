@@ -174,16 +174,25 @@ const tplAppShell = `{{define "page-app-shell"}}
   // активна в момент доставки, зависит от порядка команд. Дубликаты одной формы
   // (кнопка «новый экземпляр») закрываются все — форма-то одна.
   //
-  // dirty снимаем: команду шлёт серверный код, который только что записал объект,
-  // и вопрос «есть несохранённые изменения» был бы про уже сохранённое. Крестик,
-  // контекст-меню и уход со страницы спрашивают по-прежнему.
+  // Команду шлёт серверный код, который только что записал объект,
+  // поэтому для этой формы вопрос «есть несохранённые изменения» не нужен.
+  // Для других экземпляров вкладок защита от потери черновика остаётся: их dirty
+  // флаг не трогаем принудительно, closeTab сам спросит подтверждение.
   // Один и тот же документ пишется разными строками: ссылка в списке даёт
   // /ui/document/%d0%9e%d0%b1.../<id> (имя сущности как в метаданных), а команда
   // ui.открытьФорму — encodeURIComponent от имени в нижнем регистре. Сверяем
   // раскодированный адрес без учёта регистра, иначе закрытие промахивается мимо
   // вкладки, открытой из списка.
   function sameURL(a,b){
-    function norm(v){ var s=String(v||''); try{ s=decodeURIComponent(s); }catch(e){} return s.toLowerCase(); }
+    function norm(v){
+      var base = location.origin || 'http://127.0.0.1:8080';
+      var raw = String(v || '');
+      var url;
+      try{ url=new URL(raw,base); }catch(e){ return raw.toLowerCase(); }
+      var path = '';
+      try{ path=decodeURIComponent(url.pathname || ''); }catch(e){ path=url.pathname || ''; }
+      return path.toLowerCase();
+    }
     return norm(a)===norm(b);
   }
   function closeTabByURL(url){
@@ -193,7 +202,21 @@ const tplAppShell = `{{define "page-app-shell"}}
     // адрес /new → /<id> через history.replaceState, а событие load при этом не
     // приходит — в оболочке остаётся адрес /new. Без опроса только что созданный
     // документ нельзя было бы закрыть по его собственному адресу.
-    tabs.slice().forEach(function(t){ syncFrameURL(t); if(sameURL(t.url,u)){ t.dirty=false; closeTab(t); n++; } });
+    var matched = [];
+    var candidates = tabs.slice();
+    candidates.forEach(function(t){
+      syncFrameURL(t);
+      if(sameURL(t.url,u)){
+        matched.push(t);
+      }
+    });
+    if(matched.length === 1){
+      matched[0].dirty = false;
+    }
+    matched.forEach(function(t){
+      closeTab(t);
+      if(!tabs.includes(t))n++;
+    });
     return n;
   }
   window.obCloseTabByURL=closeTabByURL;

@@ -479,3 +479,22 @@ test('the same document written differently is still the same tab', () => {
   assert.equal(app.closeByURL('/ui/document/%D0%BE%D0%B1%D1%80%D0%B0%D1%89%D0%B5%D0%BD%D0%B8%D0%B5/7'), 1);
   assert.equal(app.count(), 0);
 });
+
+test('subsystem context does not prevent address-driven close', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/обращение/42?subsystem=%D0%9f%D1%80%D0%BE%D0%B4%D0%B0%D0%B6%D0%B8', 'Обращение');
+  assert.equal(app.closeByURL('/ui/document/обращение/42'), 1);
+  assert.equal(app.count(), 0);
+});
+
+test('server-driven close keeps dirty protection for another duplicate tab', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/обращение/1', 'Обращение');
+  app.duplicate(0);
+  app.markDirty(1);
+  assert.equal(app.closeByURL('/ui/document/обращение/1'), 2);
+  assert.equal(app.count(), 0);
+  assert.equal(app.confirms(), 1);
+});
