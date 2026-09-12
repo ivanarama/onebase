@@ -169,6 +169,54 @@ const tplAppShell = `{{define "page-app-shell"}}
     return t;
   }
   window.obOpenTab=openTab;
+  // Закрыть вкладку(и) по АДРЕСУ формы — команда ui.закрытьФорму (план 87).
+  // Адрес, а не «активная вкладка»: событие приходит в оболочку, и какая вкладка
+  // активна в момент доставки, зависит от порядка команд. Команда применяется
+  // ко всем экземплярам формы с тем же адресом.
+  //
+  // Чистые экземпляры закрываются сразу. Dirty-флаг нельзя сбрасывать даже у
+  // единственного совпадения: после отказа в первом вызове оно может оказаться
+  // несохранённым дубликатом. closeTab сохраняет обычное подтверждение для
+  // каждого такого экземпляра и при повторной серверной команде.
+  // Один и тот же документ пишется разными строками: ссылка в списке даёт
+  // /ui/document/%d0%9e%d0%b1.../<id> (имя сущности как в метаданных), а команда
+  // ui.открытьФорму — encodeURIComponent от имени в нижнем регистре. Сверяем
+  // раскодированный адрес без учёта регистра, иначе закрытие промахивается мимо
+  // вкладки, открытой из списка.
+  function sameURL(a,b){
+    function norm(v){
+      var base = location.origin || 'http://127.0.0.1:8080';
+      var raw = String(v || '');
+      var url;
+      try{ url=new URL(raw,base); }catch(e){ return raw.toLowerCase(); }
+      var path = '';
+      try{ path=decodeURIComponent(url.pathname || ''); }catch(e){ path=url.pathname || ''; }
+      return path.toLowerCase();
+    }
+    return norm(a)===norm(b);
+  }
+  function closeTabByURL(url){
+    var u=String(url||''); if(!u)return 0;
+    var n=0;
+    // syncFrameURL перед сверкой: форма, записавшая НОВЫЙ объект, меняет свой
+    // адрес /new → /<id> через history.replaceState, а событие load при этом не
+    // приходит — в оболочке остаётся адрес /new. Без опроса только что созданный
+    // документ нельзя было бы закрыть по его собственному адресу.
+    var matched = [];
+    var candidates = tabs.slice();
+    candidates.forEach(function(t){
+      syncFrameURL(t);
+      if(sameURL(t.url,u)){
+        matched.push(t);
+      }
+    });
+    matched.forEach(function(t){
+      closeTab(t);
+      if(!tabs.includes(t))n++;
+    });
+    return n;
+  }
+  window.obCloseTabByURL=closeTabByURL;
 
   function tabByWindow(win){ for(var i=0;i<tabs.length;i++){ if(tabs[i].frame.contentWindow===win)return tabs[i]; } return null; }
   window.addEventListener('message',function(ev){
@@ -179,7 +227,7 @@ const tplAppShell = `{{define "page-app-shell"}}
     if(ev.origin!==location.origin)return;
     var d=ev.data; if(!d||typeof d!=='object')return;
     if(d.source==='obOpenTab' && d.url){ var ou=String(d.url); if(!openable(ou))return; openTab(ou, d.title?String(d.title):'Форма', {allowDup:!!d.allowDup}); }
-    else if(d.source==='obCloseTab'){ var ct=tabByWindow(ev.source); if(ct)closeTab(ct); }
+    else if(d.source==='obCloseTab'){ if(d.url){ closeTabByURL(String(d.url)); } else { var ct=tabByWindow(ev.source); if(ct)closeTab(ct); } }
     else if(d.source==='obSetTitle' && active && d.title){ active.title=String(d.title); active.label.textContent=active.title; active.btn.title=active.title; persist(); }
     else if(d.source==='obDirty'){ var dt=tabByWindow(ev.source); if(dt){ dt.dirty=!!d.dirty; dt.btn.classList.toggle('dirty',dt.dirty); } } // фаза 3
   });
