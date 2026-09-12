@@ -1070,6 +1070,10 @@ func TestAPIV2_ReportRunsQueryEnvelope(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
 	}
+	resp = struct {
+		Data []map[string]any `json:"data"`
+		Meta restV2Meta       `json:"meta"`
+	}{}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
@@ -1080,7 +1084,7 @@ func TestAPIV2_ReportRunsQueryEnvelope(t *testing.T) {
 		t.Fatalf("bad report page=2 meta: %+v", resp.Meta)
 	}
 
-	for _, query := range []string{"page=0", "page=-1", "page=abc"} {
+	for _, query := range []string{"page=0", "page=-1", "page=abc", "limit=2&page=9223372036854775807"} {
 		r = reqWithEntity("GET", "/api/v2/report/СписокТоваров?"+query, nil, map[string]string{"name": "СписокТоваров"}, nil)
 		w = httptest.NewRecorder()
 		h.runReportV2().ServeHTTP(w, r)
@@ -1340,7 +1344,7 @@ func TestAPIV2_ReportCompositionEnvelope(t *testing.T) {
 		}
 	}
 
-	r := reqWithEntity("GET", "/api/v2/report/Свод?composition=1", nil, map[string]string{"name": "Свод"}, nil)
+	r := reqWithEntity("GET", "/api/v2/report/Свод?composition=1&limit=1&page=2", nil, map[string]string{"name": "Свод"}, nil)
 	w := httptest.NewRecorder()
 	h.runReportV2().ServeHTTP(w, r)
 
@@ -1373,6 +1377,9 @@ func TestAPIV2_ReportCompositionEnvelope(t *testing.T) {
 	}
 	if resp.Data.Result.RowCount != 2 || len(resp.Data.Result.Groups[0].Details) != 2 {
 		t.Fatalf("bad composition row/detail counts: %+v", resp.Data.Result)
+	}
+	if resp.Meta.Total != 2 || resp.Meta.Page != 1 || resp.Meta.Limit != 2 || resp.Meta.TotalPages != 1 || resp.Meta.Truncated {
+		t.Fatalf("composition must be unpaginated: %+v", resp.Meta)
 	}
 }
 
