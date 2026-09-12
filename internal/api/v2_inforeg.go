@@ -170,13 +170,20 @@ func parseInfoRegFilters(r *http.Request, ir *metadata.InfoRegister) (infoRegFil
 			return out, errInfoRegUnknownFilter(inner)
 		}
 		if value != "" {
-			if dim.Type == metadata.FieldTypeDate {
+			switch dim.Type {
+			case metadata.FieldTypeDate:
 				t, ok := parseInfoRegDate(value)
 				if !ok {
 					return out, errInfoRegBadDate(dim.Name)
 				}
 				out.dimValues[dim.Name] = t
-			} else {
+			case metadata.FieldTypeBool:
+				b, ok := metadata.ParseBoolLiteral(value)
+				if !ok {
+					return out, errInfoRegBadBool(dim.Name)
+				}
+				out.dimValues[dim.Name] = b
+			default:
 				out.dims[dim.Name] = value
 			}
 		}
@@ -275,6 +282,10 @@ func errInfoRegUnknownFilter(field string) error {
 
 func errInfoRegBadDate(field string) error {
 	return restBadRequest("invalid date filter: " + field)
+}
+
+func errInfoRegBadBool(field string) error {
+	return restBadRequest("invalid bool filter: " + field)
 }
 
 // restBadRequest — короткий конструктор ошибки разбора.

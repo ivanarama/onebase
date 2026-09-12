@@ -198,6 +198,50 @@ func TestInfoRegV2FiltersByReturnedDateDimension(t *testing.T) {
 	})
 }
 
+// Булевы значения из query string должны доходить до SQL типизированными:
+// SQLite хранит bool как INTEGER, и сравнение с сырыми строками "true"/"false"
+// не находит ни одну из существующих записей.
+func TestInfoRegV2FiltersByBoolDimension(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ir := &metadata.InfoRegister{
+			Name: "ReviewBooleanLiterals",
+			Dimensions: []metadata.Field{
+				{Name: "Flag", Type: metadata.FieldTypeBool},
+				{Name: "Key", Type: metadata.FieldTypeString},
+			},
+		}
+		srv := matrixInfoRegAPI(t, db, ir)
+		for _, flag := range []bool{false, true} {
+			if err := db.InfoRegSet(context.Background(), ir,
+				map[string]any{"Flag": flag, "Key": strconv.FormatBool(flag)}, nil, nil); err != nil {
+				t.Fatalf("InfoRegSet(%t): %v", flag, err)
+			}
+		}
+
+		for _, flag := range []bool{false, true} {
+			literal := strconv.FormatBool(flag)
+			target := "/api/v2/inforeg/ReviewBooleanLiterals?filter[Flag]=" + literal
+			w, filtered := getInfoReg(t, srv, target, nil)
+			if w.Code != http.StatusOK {
+				t.Fatalf("отбор по %s: код %d, тело %s", literal, w.Code, w.Body.String())
+			}
+			if len(filtered.Data) != 1 || filtered.Meta.Total != 1 {
+				t.Fatalf("отбор по %s вернул %d строк, total=%d",
+					literal, len(filtered.Data), filtered.Meta.Total)
+			}
+			if got := toStr(filtered.Data[0]["Key"]); got != literal {
+				t.Fatalf("отбор по %s вернул строку с Key=%q", literal, got)
+			}
+		}
+
+		w, _ := getInfoReg(t, srv,
+			"/api/v2/inforeg/ReviewBooleanLiterals?filter[Flag]=not-a-bool", nil)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("неверный bool должен давать 400, получен %d: %s", w.Code, w.Body.String())
+		}
+	})
+}
+
 // Опечатка в имени измерения не должна выглядеть как «отбор дал весь регистр»:
 // клиент принял бы полную выдачу за отфильтрованную.
 func TestInfoRegV2RejectsUnknownFilter(t *testing.T) {
