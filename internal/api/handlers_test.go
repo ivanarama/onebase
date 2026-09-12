@@ -1056,11 +1056,37 @@ func TestAPIV2_ReportRunsQueryEnvelope(t *testing.T) {
 	if len(resp.Data) != 1 || resp.Data[0]["наименование"] != "Дрель" {
 		t.Fatalf("bad report data: %#v", resp.Data)
 	}
-	if resp.Meta.Total != 2 || resp.Meta.Limit != 1 || resp.Meta.TotalPages != 2 || !resp.Meta.Truncated {
+	if resp.Meta.Total != 2 || resp.Meta.Limit != 1 || resp.Meta.Page != 1 || resp.Meta.TotalPages != 2 || !resp.Meta.Truncated {
 		t.Fatalf("bad report meta: %+v", resp.Meta)
 	}
 	if len(resp.Meta.Columns) != 1 || resp.Meta.Columns[0] != "наименование" {
 		t.Fatalf("columns = %#v", resp.Meta.Columns)
+	}
+
+	r = reqWithEntity("GET", "/api/v2/report/СписокТоваров?limit=1&page=2", nil, map[string]string{"name": "СписокТоваров"}, nil)
+	w = httptest.NewRecorder()
+	h.runReportV2().ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if len(resp.Data) != 1 || resp.Data[0]["наименование"] != "Молоток" {
+		t.Fatalf("bad report page=2 data: %#v", resp.Data)
+	}
+	if resp.Meta.Page != 2 || resp.Meta.Truncated {
+		t.Fatalf("bad report page=2 meta: %+v", resp.Meta)
+	}
+
+	for _, query := range []string{"page=0", "page=-1", "page=abc"} {
+		r = reqWithEntity("GET", "/api/v2/report/СписокТоваров?"+query, nil, map[string]string{"name": "СписокТоваров"}, nil)
+		w = httptest.NewRecorder()
+		h.runReportV2().ServeHTTP(w, r)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for %s, got %d: %s", query, w.Code, w.Body.String())
+		}
 	}
 }
 

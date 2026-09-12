@@ -396,6 +396,11 @@ func (h *handler) runReportV2() http.HandlerFunc {
 		if limit > restMaxLimit {
 			limit = restMaxLimit
 		}
+		page, err := parsePositiveInt(r.URL.Query().Get("page"), 1)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid page", "", 0)
+			return
+		}
 		params, err := reportParamsFromQuery(r.URL.Query(), rep)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error(), "", 0)
@@ -415,17 +420,33 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "masked field: "+maskPlan.Denied, "", 0)
 			return
 		}
-		rows, cols, truncated, err := query.RunLimit(r.Context(), h.store, &compiled, limit)
+		offset := (page - 1) * limit
+		fetchLimit := limit
+		if page > 1 {
+			fetchLimit = offset + limit
+		}
+		rows, cols, truncated, err := query.RunLimit(r.Context(), h.store, &compiled, fetchLimit)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
 			return
 		}
 		total := len(rows)
-		if truncated {
+		if page > 1 || truncated {
 			countQuery := fmt.Sprintf("SELECT COUNT(*) FROM (%s) AS total_rows", compiled.SQL)
 			if err := h.store.QueryRow(r.Context(), countQuery, compiled.Args...).Scan(&total); err != nil {
 				writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
 				return
+			}
+		}
+		if offset > 0 {
+			if offset >= len(rows) {
+				rows = nil
+			} else {
+				end := offset + limit
+				if end > len(rows) {
+					end = len(rows)
+				}
+				rows = rows[offset:end]
 			}
 		}
 		// Маска ПДн до компоновки (план 88E): в JSON и в группировки уходит уже
@@ -453,7 +474,7 @@ func (h *handler) runReportV2() http.HandlerFunc {
 				Data: data,
 				Meta: &restV2Meta{
 					Total:      total,
-					Page:       1,
+					Page:       page,
 					Limit:      limit,
 					TotalPages: totalPages(total, limit),
 					Columns:    cols,
@@ -469,7 +490,7 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			Data: rows,
 			Meta: &restV2Meta{
 				Total:      total,
-				Page:       1,
+				Page:       page,
 				Limit:      limit,
 				TotalPages: totalPages(total, limit),
 				Columns:    cols,
@@ -1110,6 +1131,12 @@ func reportPath(nameParam, okEnvelope map[string]any, errors map[string]any) map
 		"description": "Maximum rows to return; report parameters are also passed as query parameters by name.",
 		"schema":      map[string]any{"type": "integer", "minimum": 1, "maximum": restMaxLimit},
 	}
+	pageParam := map[string]any{
+		"name":        "page",
+		"in":          "query",
+		"description": "1-based page number.",
+		"schema":      map[string]any{"type": "integer", "minimum": 1},
+	}
 	compositionParam := map[string]any{
 		"name":        "composition",
 		"in":          "query",
@@ -1127,7 +1154,7 @@ func reportPath(nameParam, okEnvelope map[string]any, errors map[string]any) map
 			"operationId": "runReport",
 			"summary":     "Run report",
 			"tags":        []string{"report"},
-			"parameters":  []any{nameParam, limitParam, compositionParam, variantParam},
+			"parameters":  []any{nameParam, limitParam, pageParam, compositionParam, variantParam},
 			"responses":   mergeResponses(map[string]any{"200": okEnvelope}, errors),
 		},
 	}
