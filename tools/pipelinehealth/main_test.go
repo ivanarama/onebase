@@ -182,6 +182,29 @@ func TestNewIntentFromCurrentCompletedHeadStillRequiresRecovery(t *testing.T) {
 	}
 }
 
+func TestMultiHopRecoveryKeepsOriginalSingleFlightOwnership(t *testing.T) {
+	owner := testPR(1218, headC, "ship", "reviewed")
+	owner.HeadParents = []string{headB, headA}
+	owner = addComment(owner, 10,
+		fmt.Sprintf("<!-- pp:base-sync-intent from=%s base=%s review-comment=1 claim=2 completion=3 ship-event=LE_test previous=none -->", headA, headB))
+	owner = addComment(owner, 11,
+		fmt.Sprintf("<!-- pp:base-sync-done intent=10 from=%s to=%s base=%s previous=none ship-event=LE_test -->", headA, headB, headB))
+	owner = addComment(owner, 50,
+		fmt.Sprintf("<!-- pp:base-sync-intent from=%s base=%s review-comment=4 claim=5 completion=6 ship-event=LE_test previous=11 -->", headB, headA))
+
+	later := testPR(1220, headB, "ship", "reviewed")
+	later.HeadParents = []string{headA, headB}
+	later = addComment(later, 20, syncIntent(headA, 7, 8, 9))
+	later = addComment(later, 21, syncDone(20, headA, headB))
+
+	got := analyze([]apiPull{later, owner}, "ivanarama")
+	if got.IntegrationOwner == nil || got.IntegrationOwner.Number != 1218 ||
+		got.IntegrationOwner.Stage != "integration-merge-recovery" ||
+		len(got.MergeExecutable) != 1 || got.MergeExecutable[0].Number != 1218 {
+		t.Fatalf("multi-hop owner was overtaken by a later chain: %+v", got)
+	}
+}
+
 func TestCompletedIntegrationReviewKeepsBarrierUntilMerge(t *testing.T) {
 	owner := addComment(testPR(20, headB, "ship", "reviewed"), 30, syncIntent(headA, 10, 20, 25))
 	owner = addComment(owner, 31, syncDone(30, headA, headB))
