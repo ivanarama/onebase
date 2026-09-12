@@ -53,6 +53,12 @@
    `409 stale preview` до первой бизнес-правки.
 3. Dry-run не является блокировкой и не обещает, что execute пройдёт. Execute
    заново строит план уже под write barrier и сравнивает его с preview.
+   Обычная запись через OneBase перед каждым DML со ссылкой берёт общий
+   transaction-scoped guard пары «тип справочника + UUID», а уже под ним
+   повторно проверяет существование и `deletion_mark=false`. Поэтому writer,
+   ожидавший merge, после освобождения guard не продолжает со старым решением:
+   ссылка на поглощённый UUID отклоняется как stale reference. Неявное
+   перенаправление на target в первой версии запрещено.
 4. `target_id != duplicate_id`; оба элемента существуют, не помечены на
    удаление и не являются предопределёнными. Молчаливый успех для отсутствующего
    UUID запрещён.
@@ -61,8 +67,10 @@
    перечисляемые общим каталогом ссылочных мест. Поиск произвольных колонок по
    суффиксу `_id` запрещён.
 6. После последнего UPDATE повторный проход того же каталога ссылочных мест
-   обязан найти ноль ссылок на `duplicate_id`. Ошибка чтения или неизвестный
-   вид места ссылки откатывает всё.
+   обязан найти ноль ссылок на `duplicate_id`. До commit merge продолжает
+   удерживать guard duplicate, а все поддержанные writers валидируют ссылку
+   после получения этого же guard и держат его до своего commit. Ошибка чтения,
+   неизвестный вид места ссылки или writer без общего протокола откатывает всё.
 7. Конфликт уникального индекса сущности, первичного ключа регистра сведений или
    цикл иерархии не разрешается удалением/перезаписью строки. Preview показывает
    его без значений закрытых полей, execute отказывается и ничего не меняет.
@@ -77,8 +85,10 @@
     `deletion_mark=true`; физическое удаление и delete hooks не запускаются.
     Главный элемент остаётся не помеченным.
 11. Все SQL-изменения, пересчёт производных итогов, `_version`, регистрация
-    обмена и долговечная запись отчёта коммитятся одной транзакцией. Любая
-    ошибка, включая самый последний аудит/пересчёт, возвращает точный pre-image.
+    обмена (включая old/new identities самостоятельных записей регистра
+    сведений) и долговечная запись отчёта коммитятся одной транзакцией. Любая
+    ошибка, включая самый последний аудит/пересчёт/регистрацию обмена,
+    возвращает точный pre-image.
 12. Строки шапок с изменённой ссылкой получают новую `_version`. Для изменённой
     строки ТЧ продвигается `_version` её родительской сущности. Это делает
     изменения видимыми optimistic lock, обмену и live UI.
@@ -207,25 +217,51 @@ exchange log и FTS не считаются ссылками на элемент
 случайный UUID rewrite. Необходимые FTS/exchange изменения вызываются отдельными
 post-update шагами для реально изменённых владельцев.
 
-### Write barrier и порядок транзакции
+### Общий reference guard, write barrier и порядок транзакции
 
-Для execute нужен отдельный `WithMaintenanceTx`, а не серия вызовов `Exec`:
+Одного table lock недостаточно: statement, который уже проверил ссылку, может
+ждать commit merge, а затем записать старый UUID. Поэтому срез B сначала вводит
+общий `CatalogReferenceWriteGuard` для всех типизированных writers из
+`ReferenceSite`: шапок и `parent_id`, ТЧ, накопительных, информационных и
+бухгалтерских регистров. Writer собирает из входного payload все пары
+`catalog|uuid`, сортирует ASCII-ключи, внутри той же транзакции берёт для них
+PostgreSQL advisory xact locks (SQLite сериализуется writer-транзакцией), затем
+заново читает элементы и требует `deletion_mark=false`, и только после этого
+делает DML. Guard удерживается до commit/rollback. Для операции, которая пишет
+несколько частей объекта, union ключей берётся до первого бизнес-DML; вложенный
+writer не может расширить набор после начала записи без отката и повтора всей
+операции. Прямой административный SQL вне публичных writers остаётся вне
+гарантии, как и сегодня.
 
-1. таблицы из `ReferenceSite` сортируются по физическому имени;
-2. PostgreSQL берёт `LOCK TABLE ... IN SHARE ROW EXCLUSIVE MODE` в этом порядке,
-   затем строки target/duplicate `FOR UPDATE`; lock конфликтует с обычными
-   `INSERT/UPDATE/DELETE` и не допускает новую ссылку после финального scan;
-3. SQLite начинает writer-транзакцию до scan (`BEGIN IMMEDIATE` через выделенное
-   соединение); существующий deferred `WithTx` без такого барьера недостаточен;
-4. до изменения движений берутся нормализованные advisory keys
-   `register-totals|...` и `account-totals|...`;
-5. под barrier заново строится полный plan и сравнивается `preview_hash`;
-6. проверяются declared unique indexes, PK регистра сведений и иерархический
+`WithMaintenanceTx` использует тот же протокол, а не серию вызовов `Exec`:
+
+1. собираются и сортируются reference-keys, totals-keys и физические таблицы;
+2. PostgreSQL через `pg_try_advisory_xact_lock` без ожидания берёт guard
+   `catalog|duplicate_id`, затем все нормализованные
+   `register-totals|...`/`account-totals|...`; занятость любого ключа даёт
+   retryable `409 merge busy` и полный rollback до бизнес-изменений;
+3. PostgreSQL берёт отсортированные `LOCK TABLE ... IN SHARE ROW EXCLUSIVE MODE
+   NOWAIT`, затем target/duplicate `FOR UPDATE NOWAIT`. Любая занятость также
+   завершает только merge как `409 merge busy`: maintenance-транзакция никогда
+   не ждёт table/row lock, удерживая advisory lock, и потому не образует цикл с
+   обычным writer;
+4. SQLite начинает writer-транзакцию до guard-check/scan (`BEGIN IMMEDIATE`
+   через выделенное соединение); ожидавший SQLite writer после commit merge
+   выполняет проверку `deletion_mark` заново;
+5. обычные writers придерживаются порядка `reference guards → totals guards →
+   DML`. `WriteMovements` и `WriteAccountMovements` переносят сбор/проверку
+   ссылок перед существующим totals-lock; `Recalc*Totals`, у которого нет
+   входных ссылок, сохраняет `totals guard → DML`. Merge никогда не ждёт уже
+   занятый guard/table/row, поэтому старые транзакции безопасно заканчиваются,
+   а не становятся жертвой deadlock detector;
+6. под barrier заново строится полный plan и сравнивается `preview_hash`;
+7. проверяются declared unique indexes, PK регистра сведений и иерархический
    граф после замены; фактический DB constraint остаётся вторым fail-closed
    барьером;
-7. выполняются UPDATE в стабильном порядке, перепроверяется нулевой остаток
+8. выполняются UPDATE в стабильном порядке, перепроверяется нулевой остаток
    ссылок, обновляются target/duplicate и производные данные;
-8. записываются отчёт и обязательный audit, после чего transaction commit.
+9. записываются изменения exchange queue, отчёт и обязательный audit, после
+   чего transaction commit освобождает guard уже при `deletion_mark=true`.
 
 Для сущностей UPDATE имеет `WHERE id = ? AND _version = ?` и продвигает версию.
 Для ТЧ сначала фиксируется набор parent UUID, затем версия каждого родителя
@@ -247,8 +283,19 @@ post-update шагами для реально изменённых владел
   транзакционные `recalc*TotalsInTx` только для затронутых регистров под общими
   locks. Disabled totals таблицы не создаются.
 - Изменённые entity owners регистрируются в планах обмена и переиндексируются
-  существующим FTS chokepoint. Формат обмена не получает отдельный merge opcode:
-  наружу уходят обычные новые ревизии target/source/owners.
+  существующим FTS chokepoint. Для каждой затронутой самостоятельной записи
+  непериодического регистра сведений merge до UPDATE сохраняет точный старый
+  exchange `ObjectID` и после UPDATE вычисляет новый. Если ссылочное измерение
+  изменило PK, для каждого целевого узла в той же транзакции ставятся tombstone
+  старого ключа и публикация нового ключа; уже накопленная запись старого ключа
+  атомарно заменяется/схлопывается в deletion, чтобы `BuildPackage` не пытался
+  прочитать исчезнувшую строку. Если меняется только ссылочный ресурс, ключ не
+  меняется и регистрируется обычное обновление существующего ключа. Применение
+  пакета стабильно обрабатывает deletion old key до upsert new key. Периодические
+  регистры остаются вне обмена по текущему контракту `RegisterInfoRegOnSave` и
+  не получают ложного обещания синхронизации. Формат обмена не получает
+  отдельный merge opcode: наружу уходят обычные ревизии объектов и обычные
+  delete/upsert записи регистра сведений.
 
 ### Идемпотентный отчёт
 
@@ -282,10 +329,12 @@ JSON имеет версию схемы и стабильную сортиров
 | `internal/storage/deletion.go` | перевести `CheckRefs` на общий `ReferenceSite` inventory |
 | `internal/storage/reference_sites.go` (новый) | построение/сортировка мест, identities, scan и final zero-check |
 | `internal/storage/catalog_merge.go` (новый) | preview, conflict detection, write barrier, rewrite, idempotent report |
-| `internal/storage/tx.go` | безопасный PG/SQLite maintenance transaction (`BEGIN IMMEDIATE` не эмулировать SQL внутри уже начатого tx) |
-| `internal/storage/register_totals.go`, `account_totals.go` | узкий транзакционный rebuild затронутых итогов под общим lock order |
+| `internal/storage/tx.go` | безопасный PG/SQLite maintenance transaction (`BEGIN IMMEDIATE` не эмулировать SQL внутри уже начатого tx), try/NOWAIT rollback для merge |
+| `internal/storage/crud.go`, writers ТЧ и регистров | общий transaction-scoped reference guard и повторная проверка существования/`deletion_mark` непосредственно перед DML |
+| `internal/storage/register.go`, `accountreg.go`, `register_totals.go` | порядок reference guards → totals guards → DML и узкий rebuild итогов без инверсии locks |
 | `internal/storage/audit.go`, service schema | безусловный summary audit и `_catalog_merges` |
-| `internal/entityservice` | `PreviewCatalogMerge`/`MergeCatalog`: версии, final-state validation target, exchange/FTS callbacks, after-commit notifications |
+| `internal/entityservice` | `PreviewCatalogMerge`/`MergeCatalog`: версии, сбор полного write-set до первого DML, final-state validation target, exchange/FTS callbacks, after-commit notifications |
+| `internal/exchange` | атомарная регистрация old-key deletion/new-key upsert для записей регистра сведений и схлопывание уже накопленной очереди |
 | `internal/auth/roles.go` | документировать и валидировать catalog operation `merge`, default deny для ролей без неё |
 | `internal/api` | два REST v2 endpoint, строгий JSON, status mapping, idempotent response |
 | `internal/ui/server.go`, handlers/templates/static | действие списка справочника, wizard preview/resolve/confirm/result; CSRF и повторный permission gate |
@@ -331,10 +380,13 @@ physical table/column.
 
 ### Срез B — атомарный execute и отчёт (~4–6 дней)
 
-1. Добавить `WithMaintenanceTx`, lock order и повторный plan под barrier.
-2. Выполнить rewrite, CAS/version bumps, final zero-check и rebuild totals.
-3. Подключить exchange/FTS, `_catalog_merges`, unconditional audit и
-   after-commit event.
+1. Добавить общий reference guard для всех writers, `WithMaintenanceTx`,
+   try/NOWAIT lock protocol и повторный plan под barrier.
+2. Выполнить rewrite, CAS/version bumps, final zero-check и rebuild totals без
+   инверсии с `WriteMovements`/`WriteAccountMovements`/`Recalc*Totals`.
+3. Подключить exchange/FTS, включая old/new identities регистра сведений и
+   существующую очередь, `_catalog_merges`, unconditional audit и after-commit
+   event.
 4. Открыть REST execute с `operation_id`; DSL/CLI entry point не добавлять.
 
 Публичная приёмка: через HTTP preview→execute все поддержанные ссылки меняются,
@@ -397,11 +449,24 @@ pre-image.
    дают 409 до бизнес-UPDATE.
 5. Exact retry по `operation_id` возвращает byte-equivalent report; другой
    payload отвергается и не создаёт второй audit/event.
-6. Два подключения состязаются: PostgreSQL table barrier и SQLite immediate
-   writer не допускают commit новой ссылки на duplicate между scan и mark.
-7. Exchange/FTS тесты идут через публичный service и подтверждают обновление
+6. Два подключения состязаются через публичные writers: один writer начинает
+   запись ссылки до merge и ждёт barrier. После commit merge он заново проверяет
+   guard и получает stale-reference вместо записи `duplicate_id`; при обратном
+   порядке merge получает `409 merge busy`, не прерывая writer. Матрица повторяет
+   сценарий на SQLite и PostgreSQL и проверяет состояние после освобождения
+   barrier, а не только final scan внутри merge.
+7. Двухсоединенческие PostgreSQL-тесты запускают merge против
+   `WriteMovements`, `WriteAccountMovements` и `Recalc*Totals`: при каждом
+   порядке один участник завершается, merge либо проходит после чистого
+   приобретения locks, либо откатывается с `merge busy`; deadlock/частичный
+   результат запрещены.
+8. Exchange/FTS тесты идут через публичный service и подтверждают обновление
    owner revision/search result после commit и отсутствие события после rollback.
-8. DB constraint, которого нет в metadata, вызывает rollback с понятным
+   Отдельный двухузловой тест меняет ссылочное измерение регистра сведений при
+   уже накопленной old-key queue: пакет удаляет old key, публикует new key и
+   применяется идемпотентно; ссылочный ресурс публикует тот же key. Инъекция
+   ошибки регистрации доказывает rollback строки регистра и всей очереди.
+9. DB constraint, которого нет в metadata, вызывает rollback с понятным
    `conflict during execute`, а не частичный результат.
 
 ### Срез C
@@ -447,12 +512,18 @@ PostgreSQL-тесты запускаются с `TEST_DATABASE_URL`; локал�
 4. Изменить один затронутый документ другим сеансом: старый execute обязан
    вернуть 409 и предложить новый preview.
 5. Устранить конфликт, повторить preview, подтвердить owned data и выполнить
-   merge. Проверить ссылки, source mark, версии, остатки/обороты, поиск и обмен.
-6. Повторить execute с тем же `operation_id`: получить тот же отчёт без новых
+   merge. Проверить ссылки, source mark, версии, остатки/обороты, поиск и обмен,
+   включая удаление old key и появление new key регистра сведений на втором
+   узле.
+6. Пока merge удерживает barrier, начать обычную запись ссылки на duplicate;
+   после commit она обязана завершиться stale-reference, а не создать ссылку на
+   помеченный элемент. Повторить с уже идущей записью: merge обязан вернуть
+   `409 merge busy`, не оборвав writer.
+7. Повторить execute с тем же `operation_id`: получить тот же отчёт без новых
    изменений. Повторить с другим payload: получить 409.
-7. Открыть audit/report и сверить actor, UUID, counts и отсутствие значений
+8. Открыть audit/report и сверить actor, UUID, counts и отсутствие значений
    реквизитов. Перезапустить процесс и снова прочитать отчёт.
-8. На резервной копии внедрить ошибку перед audit/commit и убедиться, что ни одна
+9. На резервной копии внедрить ошибку перед audit/commit и убедиться, что ни одна
    ссылка, версия, итог или пометка не сохранилась.
 
 ## Риски и откат
@@ -460,14 +531,24 @@ PostgreSQL-тесты запускаются с `TEST_DATABASE_URL`; локал�
 - **Неполный inventory.** Самый опасный исход — пометить duplicate, оставив
   скрытую ссылку. Предохранители: один builder для delete/merge, полный registry,
   `parent_id` как явное место и final zero-scan под write barrier.
-- **Phantom write во время execute.** Одних row locks недостаточно без FK.
-  Предохранитель: детерминированный PG table lock и SQLite immediate writer,
-  проверенные двухсоединенческим тестом.
+- **Phantom/stale write во время execute.** Одних row/table locks недостаточно:
+  ожидающий statement способен продолжить после commit. Предохранитель: общий
+  transaction-scoped reference guard с повторной проверкой `deletion_mark`
+  после ожидания; merge держит тот же ключ до commit, а SQLite — immediate
+  writer. Двухсоединенческий тест проверяет результат ожидающего writer.
+- **Deadlock merge с totals writer.** Merge берёт reference/totals advisory
+  keys через try-lock, а table/row locks — NOWAIT, и откатывается как retryable
+  busy до первой бизнес-правки. Обычный writer не становится жертвой инверсии
+  `table → totals`; это закрепляет PG concurrency matrix.
 - **Конфликт ключей потеряет строку регистра.** Никакого upsert/last-write-wins:
   preview показывает конфликт, DB constraint остаётся вторым барьером, весь tx
   откатывается.
 - **Итоги разойдутся с движениями.** Все затронутые totals пересобираются под
   существующим lock order в той же транзакции и сравниваются матричным тестом.
+- **Обмен потеряет смену ключа регистра сведений.** Старый ObjectID
+  регистрируется как deletion, новый — как upsert в той же транзакции; уже
+  накопленная old-key запись схлопывается в tombstone. Двухузловой round-trip и
+  rollback-инъекция проверяют очередь и обе базы.
 - **Хуки повторно изменят исторический документ.** Reference rewrite объявлен
   maintenance-операцией без `ПриЗаписи`/проведения; он отдельно продвигает
   версии, exchange/FTS и аудит.
@@ -494,10 +575,11 @@ PostgreSQL-тесты запускаются с `TEST_DATABASE_URL`; локал�
 - preview read-only, stable и fail closed; execute требует его точный снимок,
   версии и idempotency UUID;
 - ни concurrent write, ни late error не оставляют ссылку на помеченный duplicate
-  или частично обновлённые данные;
+  или частично обновлённые данные; ожидающий writer перевалидирует ссылку после
+  guard, а занятый lock откатывает только merge как retryable busy;
 - unique/PK/hierarchy conflicts диагностируются без удаления или скрытого merge;
-- версии, FTS, обмен, totals, audit и after-commit notification согласованы с
-  основными таблицами;
+- версии, FTS, обмен (включая old/new keys регистра сведений), totals, audit и
+  after-commit notification согласованы с основными таблицами;
 - `merge` default-deny для обычных ролей, UI и API не обходят RLS/field masking;
 - операторский wizard разрешает реквизиты явно, показывает owned-data warning и
   долговечный отчёт, но не физически удаляет duplicate;
