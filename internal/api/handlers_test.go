@@ -1056,7 +1056,7 @@ func TestAPIV2_ReportRunsQueryEnvelope(t *testing.T) {
 	if len(resp.Data) != 1 || resp.Data[0]["наименование"] != "Дрель" {
 		t.Fatalf("bad report data: %#v", resp.Data)
 	}
-	if resp.Meta.Total != 1 || resp.Meta.Limit != 1 || !resp.Meta.Truncated {
+	if resp.Meta.Total != 2 || resp.Meta.Limit != 1 || resp.Meta.TotalPages != 2 || !resp.Meta.Truncated {
 		t.Fatalf("bad report meta: %+v", resp.Meta)
 	}
 	if len(resp.Meta.Columns) != 1 || resp.Meta.Columns[0] != "наименование" {

@@ -420,6 +420,14 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
 			return
 		}
+		total := len(rows)
+		if truncated {
+			countQuery := fmt.Sprintf("SELECT COUNT(*) FROM (%s) AS total_rows", compiled.SQL)
+			if err := h.store.QueryRow(r.Context(), countQuery, compiled.Args...).Scan(&total); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
+				return
+			}
+		}
 		// Маска ПДн до компоновки (план 88E): в JSON и в группировки уходит уже
 		// замаскированное значение.
 		if err := maskPlan.Apply(rows); err != nil {
@@ -444,10 +452,10 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			writeJSONV2(w, http.StatusOK, restV2Envelope{
 				Data: data,
 				Meta: &restV2Meta{
-					Total:      len(rows),
+					Total:      total,
 					Page:       1,
 					Limit:      limit,
-					TotalPages: 1,
+					TotalPages: totalPages(total, limit),
 					Columns:    cols,
 					Truncated:  truncated,
 					Composed:   true,
@@ -460,10 +468,10 @@ func (h *handler) runReportV2() http.HandlerFunc {
 		writeJSONV2(w, http.StatusOK, restV2Envelope{
 			Data: rows,
 			Meta: &restV2Meta{
-				Total:      len(rows),
+				Total:      total,
 				Page:       1,
 				Limit:      limit,
-				TotalPages: 1,
+				TotalPages: totalPages(total, limit),
 				Columns:    cols,
 				Truncated:  truncated,
 			},
