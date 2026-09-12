@@ -10,6 +10,7 @@ import (
 const (
 	headA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	headB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	headC = "cccccccccccccccccccccccccccccccccccccccc"
 	epoch = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 )
 
@@ -146,6 +147,38 @@ func TestBaseSyncIntentWithoutDoneIsMergeRecoveryNotReview(t *testing.T) {
 		!hasFinding(got, "base_sync_recovery") ||
 		!hasFinding(got, "single_flight_barrier") {
 		t.Fatalf("MERGE recovery incorrectly blocked content review: %+v", got)
+	}
+}
+
+func TestHistoricalUnfinishedIntentDoesNotOverrideCurrentCompletedSync(t *testing.T) {
+	item := testPR(1323, headC, "ship", "reviewed")
+	item.HeadParents = []string{headB, headA}
+	item = addComment(item, 20, syncIntent(headA, 10, 11, 12))
+	item = addComment(item, 21, syncIntent(headA, 10, 11, 12))
+	item = addComment(item, 30, syncIntent(headB, 13, 14, 15))
+	item = addComment(item, 31, syncDone(30, headB, headC))
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if got.IntegrationOwner == nil || got.IntegrationOwner.Number != 1323 ||
+		got.IntegrationOwner.Stage != "integration-review" ||
+		len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 1323 ||
+		hasFinding(got, "base_sync_recovery") ||
+		!hasFinding(got, "base_sync_waiting_review") {
+		t.Fatalf("old intents from superseded heads blocked current integration review: %+v", got)
+	}
+}
+
+func TestNewIntentFromCurrentCompletedHeadStillRequiresRecovery(t *testing.T) {
+	item := testPR(99, headC, "ship", "reviewed")
+	item.HeadParents = []string{headB, headA}
+	item = addComment(item, 30, syncIntent(headB, 10, 20, 25))
+	item = addComment(item, 31, syncDone(30, headB, headC))
+	item = addComment(item, 40, syncIntent(headC, 32, 33, 34))
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if got.IntegrationOwner == nil || got.IntegrationOwner.Stage != "integration-merge-recovery" ||
+		!hasFinding(got, "base_sync_recovery") {
+		t.Fatalf("open intent from the current head was not recoverable: %+v", got)
 	}
 }
 

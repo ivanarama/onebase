@@ -367,7 +367,7 @@ func analyze(prs []apiPull, owner string) report {
 		priority, prioritySource := queuePriority(labels, pr.CreatedAt, now)
 		item := candidate{Number: pr.Number, Title: pr.Title, URL: pr.HTMLURL, Head: pr.Head.SHA, Depth: depth, Stage: "review", Priority: priority, PrioritySource: prioritySource, UpdatedAt: pr.UpdatedAt}
 		currentCompletions, latestCompletion, latestOverride := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
-		carryDone, carryIntentOpen, baseAdvanced, protocolHistory, integrationAt := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA)
+		carryDone, carryIntentOpen, baseAdvanced, protocolHistory, integrationAt := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA, pr.HeadParents)
 		item.IntegrationAt = integrationAt
 		if baseAdvanced {
 			result.add("yellow", "base_sync_base_advanced", pr.Number,
@@ -858,7 +858,7 @@ type baseSyncIntentShape struct {
 // baseSyncRESTState is deliberately only an operational hint. The mutation
 // contracts still prove comment nodes, timeline edges and commit parents with
 // two stable GraphQL snapshots before changing GitHub state.
-func baseSyncRESTState(comments []apiComment, owner, head string) (doneCurrent, intentOpen, baseAdvanced, protocolHistory bool, integrationAt string) {
+func baseSyncRESTState(comments []apiComment, owner, head string, headParents []string) (doneCurrent, intentOpen, baseAdvanced, protocolHistory bool, integrationAt string) {
 	intents := map[int64]baseSyncIntentShape{}
 	doneIntents := map[int64]bool{}
 	for _, comment := range comments {
@@ -887,15 +887,30 @@ func baseSyncRESTState(comments []apiComment, owner, head string) (doneCurrent, 
 			}
 		}
 	}
-	for id := range intents {
-		if !doneIntents[id] {
-			intentOpen = true
-			if integrationAt == "" || intents[id].createdAt < integrationAt {
-				integrationAt = intents[id].createdAt
-			}
+	for id, intent := range intents {
+		if doneIntents[id] || !intentCanDescribeCurrentHead(intent, head, headParents) {
+			continue
+		}
+		// A valid done for the current merge commit completes this exact
+		// parent-to-head transition. Any other unmatched intent from the same
+		// first parent is a parallel/stale duplicate, not a new recovery owner.
+		if doneCurrent && len(headParents) == 2 && headParents[0] == intent.from {
+			continue
+		}
+		intentOpen = true
+		if integrationAt == "" || intent.createdAt < integrationAt {
+			integrationAt = intent.createdAt
 		}
 	}
 	return doneCurrent, intentOpen, baseAdvanced, protocolHistory, integrationAt
+}
+
+// intentCanDescribeCurrentHead limits recovery to a transaction that can still
+// be completed without rewriting history: update-branch has either not moved
+// the head yet, or it produced the current two-parent merge from intent.from.
+// Intents from older heads remain audit history but must not own single-flight.
+func intentCanDescribeCurrentHead(intent baseSyncIntentShape, head string, headParents []string) bool {
+	return intent.from == head || (len(headParents) == 2 && headParents[0] == intent.from)
 }
 
 func duplicateCompletionEpoch(comments []apiComment, owner, head string) bool {
