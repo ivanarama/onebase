@@ -55,10 +55,12 @@
    заново строит план уже под write barrier и сравнивает его с preview.
    Обычная запись через OneBase перед каждым DML со ссылкой берёт общий
    transaction-scoped guard пары «тип справочника + UUID», а уже под ним
-   повторно проверяет существование и `deletion_mark=false`. Поэтому writer,
-   ожидавший merge, после освобождения guard не продолжает со старым решением:
-   ссылка на поглощённый UUID отклоняется как stale reference. Неявное
-   перенаправление на target в первой версии запрещено.
+   повторно проверяет существование элемента и отсутствие долговечного признака
+   поглощения в `_catalog_merges`. Обычный `deletion_mark=true` без записи о
+   merge не запрещает ссылку и сохраняет прежний контракт записи. Поэтому
+   writer, ожидавший merge, после освобождения guard не продолжает со старым
+   решением: ссылка именно на поглощённый UUID отклоняется как stale reference.
+   Неявное перенаправление на target в первой версии запрещено.
 4. `target_id != duplicate_id`; оба элемента существуют, не помечены на
    удаление и не являются предопределёнными. Молчаливый успех для отсутствующего
    UUID запрещён.
@@ -226,12 +228,22 @@ post-update шагами для реально изменённых владел
 бухгалтерских регистров. Writer собирает из входного payload все пары
 `catalog|uuid`, сортирует ASCII-ключи, внутри той же транзакции берёт для них
 PostgreSQL advisory xact locks (SQLite сериализуется writer-транзакцией), затем
-заново читает элементы и требует `deletion_mark=false`, и только после этого
-делает DML. Guard удерживается до commit/rollback. Для операции, которая пишет
-несколько частей объекта, union ключей берётся до первого бизнес-DML; вложенный
-writer не может расширить набор после начала записи без отката и повтора всей
-операции. Прямой административный SQL вне публичных writers остаётся вне
-гарантии, как и сегодня.
+заново читает элементы и `_catalog_merges`. Writer требует существующий элемент
+нужного типа и отсутствие строки с теми же `catalog_name + duplicate_id`; сам
+по себе `deletion_mark=true` не является stale-reference. Только после этой
+проверки выполняется DML. Guard удерживается до commit/rollback. Для операции,
+которая пишет несколько частей объекта, union ключей берётся до первого
+бизнес-DML; вложенный writer не может расширить набор после начала записи без
+отката и повтора всей операции. Прямой административный SQL вне публичных
+writers остаётся вне гарантии, как и сегодня.
+
+`_catalog_merges` тем самым служит не только отчётом идемпотентности, но и
+долговечным absorption marker. Merge вставляет marker в той же транзакции до
+commit и удерживает reference guard до commit; ожидающий writer увидит либо
+полный marker, либо полный pre-image, но не промежуточное состояние. Уникальность
+`(catalog_name, duplicate_id)` запрещает две разные операции поглощения одного
+UUID. Обычная `MarkForDeletion`, не создающая marker, остаётся отличимой от
+merge и не меняет допустимость существующих или новых ссылок.
 
 `WithMaintenanceTx` использует тот же протокол, а не серию вызовов `Exec`:
 
@@ -247,7 +259,7 @@ writer не может расширить набор после начала з�
    обычным writer;
 4. SQLite начинает writer-транзакцию до guard-check/scan (`BEGIN IMMEDIATE`
    через выделенное соединение); ожидавший SQLite writer после commit merge
-   выполняет проверку `deletion_mark` заново;
+   выполняет проверку absorption marker заново;
 5. обычные writers придерживаются порядка `reference guards → totals guards →
    DML`. `WriteMovements` и `WriteAccountMovements` переносят сбор/проверку
    ссылок перед существующим totals-lock; `Recalc*Totals`, у которого нет
@@ -311,11 +323,16 @@ preview_sha256 TEXT NOT NULL,
 report_json TEXT NOT NULL,
 user_id TEXT NOT NULL DEFAULT '',
 user_login TEXT NOT NULL DEFAULT '',
-created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+UNIQUE (catalog_name, duplicate_id)
 ```
 
 Строка вставляется в той же транзакции последней бизнес-операцией. Exact retry
 читает её и возвращает `report_json`; несовпавший request hash отвергается.
+На `(catalog_name, duplicate_id)` создаётся переносимое UNIQUE-ограничение:
+эта пара является долговечным absorption marker, который проверяют writers под
+тем же reference guard. Конфликт этого ограничения трактуется как stale preview
+или exact retry после чтения существующей записи, а не как частичный успех.
 JSON имеет версию схемы и стабильную сортировку `sites`. Дополнительно в `_audit`
 пишутся безусловные summary-события `merge_duplicate` для target и duplicate с
 одним `operation_id`; выключение обычного audit не стирает privileged operation.
@@ -330,7 +347,7 @@ JSON имеет версию схемы и стабильную сортиров
 | `internal/storage/reference_sites.go` (новый) | построение/сортировка мест, identities, scan и final zero-check |
 | `internal/storage/catalog_merge.go` (новый) | preview, conflict detection, write barrier, rewrite, idempotent report |
 | `internal/storage/tx.go` | безопасный PG/SQLite maintenance transaction (`BEGIN IMMEDIATE` не эмулировать SQL внутри уже начатого tx), try/NOWAIT rollback для merge |
-| `internal/storage/crud.go`, writers ТЧ и регистров | общий transaction-scoped reference guard и повторная проверка существования/`deletion_mark` непосредственно перед DML |
+| `internal/storage/crud.go`, writers ТЧ и регистров | общий transaction-scoped reference guard и повторная проверка существования/absorption marker непосредственно перед DML; обычный `deletion_mark` не меняет контракт записи |
 | `internal/storage/register.go`, `accountreg.go`, `register_totals.go` | порядок reference guards → totals guards → DML и узкий rebuild итогов без инверсии locks |
 | `internal/storage/audit.go`, service schema | безусловный summary audit и `_catalog_merges` |
 | `internal/entityservice` | `PreviewCatalogMerge`/`MergeCatalog`: версии, сбор полного write-set до первого DML, final-state validation target, exchange/FTS callbacks, after-commit notifications |
@@ -355,8 +372,14 @@ physical table/column.
 - Схема прикладных таблиц не меняется. Миграция данных и автоматический поиск
   старых дублей при старте запрещены.
 - Старые ссылки не переписываются до явного execute с актуальным preview.
-- Понижение версии безопасно для базы: `_catalog_merges` остаётся неиспользуемой
-  служебной таблицей; уже выполненное объединение автоматически не разворачивается.
+- Обычная пометка элемента на удаление не создаёт `_catalog_merges` marker и не
+  запрещает запись ссылок на него: guard отвергает только UUID, действительно
+  поглощённый завершённой merge-операцией.
+- Понижение версии не меняет уже переписанные данные: `_catalog_merges` остаётся
+  неиспользуемой служебной таблицей, а выполненное объединение автоматически не
+  разворачивается. Однако старый бинарник не проверяет absorption marker, поэтому
+  после первого merge downgrade допускается только в режиме без записи до
+  возврата новой версии; иначе он может снова создать ссылку на поглощённый UUID.
 - Обмен с узлом старой версии получает обычные обновления объектов. До поддержки
   `merge` на всех узлах операция доступна только при документированном понимании,
   что duplicate останется помеченным, а не физически удалённым.
@@ -451,10 +474,12 @@ pre-image.
    payload отвергается и не создаёт второй audit/event.
 6. Два подключения состязаются через публичные writers: один writer начинает
    запись ссылки до merge и ждёт barrier. После commit merge он заново проверяет
-   guard и получает stale-reference вместо записи `duplicate_id`; при обратном
-   порядке merge получает `409 merge busy`, не прерывая writer. Матрица повторяет
-   сценарий на SQLite и PostgreSQL и проверяет состояние после освобождения
-   barrier, а не только final scan внутри merge.
+   guard, видит absorption marker и получает stale-reference вместо записи
+   `duplicate_id`; при обратном порядке merge получает `409 merge busy`, не
+   прерывая writer. Та же публичная матрица сначала делает обычную
+   `MarkForDeletion` без merge и доказывает, что Save/Upsert со ссылкой на такой
+   элемент по-прежнему проходит на SQLite и PostgreSQL. Тест проверяет состояние
+   после освобождения barrier, а не только final scan внутри merge.
 7. Двухсоединенческие PostgreSQL-тесты запускают merge против
    `WriteMovements`, `WriteAccountMovements` и `Recalc*Totals`: при каждом
    порядке один участник завершается, merge либо проходит после чистого
@@ -519,11 +544,14 @@ PostgreSQL-тесты запускаются с `TEST_DATABASE_URL`; локал�
    после commit она обязана завершиться stale-reference, а не создать ссылку на
    помеченный элемент. Повторить с уже идущей записью: merge обязан вернуть
    `409 merge busy`, не оборвав writer.
-7. Повторить execute с тем же `operation_id`: получить тот же отчёт без новых
+7. Отдельно пометить элемент обычной `MarkForDeletion`, не выполняя merge, и
+   сохранить через публичный writer объект со ссылкой на него: запись обязана
+   пройти, а `_catalog_merges` не должна получить absorption marker.
+8. Повторить execute с тем же `operation_id`: получить тот же отчёт без новых
    изменений. Повторить с другим payload: получить 409.
-8. Открыть audit/report и сверить actor, UUID, counts и отсутствие значений
+9. Открыть audit/report и сверить actor, UUID, counts и отсутствие значений
    реквизитов. Перезапустить процесс и снова прочитать отчёт.
-9. На резервной копии внедрить ошибку перед audit/commit и убедиться, что ни одна
+10. На резервной копии внедрить ошибку перед audit/commit и убедиться, что ни одна
    ссылка, версия, итог или пометка не сохранилась.
 
 ## Риски и откат
@@ -533,9 +561,11 @@ PostgreSQL-тесты запускаются с `TEST_DATABASE_URL`; локал�
   `parent_id` как явное место и final zero-scan под write barrier.
 - **Phantom/stale write во время execute.** Одних row/table locks недостаточно:
   ожидающий statement способен продолжить после commit. Предохранитель: общий
-  transaction-scoped reference guard с повторной проверкой `deletion_mark`
-  после ожидания; merge держит тот же ключ до commit, а SQLite — immediate
-  writer. Двухсоединенческий тест проверяет результат ожидающего writer.
+  transaction-scoped reference guard с повторной проверкой долговечного
+  absorption marker после ожидания; merge держит тот же ключ до commit, а
+  SQLite — immediate writer. Обычная пометка на удаление marker не создаёт и
+  потому не становится несовместимым запретом записи. Двухсоединенческий тест
+  проверяет оба случая через публичный writer.
 - **Deadlock merge с totals writer.** Merge берёт reference/totals advisory
   keys через try-lock, а table/row locks — NOWAIT, и откатывается как retryable
   busy до первой бизнес-правки. Обычный writer не становится жертвой инверсии
@@ -575,8 +605,9 @@ PostgreSQL-тесты запускаются с `TEST_DATABASE_URL`; локал�
 - preview read-only, stable и fail closed; execute требует его точный снимок,
   версии и idempotency UUID;
 - ни concurrent write, ни late error не оставляют ссылку на помеченный duplicate
-  или частично обновлённые данные; ожидающий writer перевалидирует ссылку после
-  guard, а занятый lock откатывает только merge как retryable busy;
+  после merge или частично обновлённые данные; ожидающий writer перевалидирует
+  absorption marker после guard, обычный `deletion_mark` остаётся допустимым, а
+  занятый lock откатывает только merge как retryable busy;
 - unique/PK/hierarchy conflicts диагностируются без удаления или скрытого merge;
 - версии, FTS, обмен (включая old/new keys регистра сведений), totals, audit и
   after-commit notification согласованы с основными таблицами;
