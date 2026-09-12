@@ -516,6 +516,31 @@ func TestIssueQueuesSeparatePlanFixAndHumanWork(t *testing.T) {
 	}
 }
 
+func TestIssueRouteConflictsAreReportedWithoutChangingRouting(t *testing.T) {
+	result := analyze(nil, "ivanarama")
+	analyzeIssues(&result, []apiIssue{
+		issueWithLabels(15, "ready-fix", "needs-decision"),
+		issueWithLabels(16, "manual", "approved"),
+		issueWithLabels(17, "approved", "needs-decision"),
+		issueWithLabels(18, "ready-fix", "needs-decision", "approved"),
+	}, nil, "ivanarama")
+
+	if !hasFinding(result, "issue_route_conflict") {
+		t.Fatalf("ready-fix/needs-decision conflict was not diagnosed: %+v", result.Findings)
+	}
+	if !hasFinding(result, "manual_route_conflict") {
+		t.Fatalf("manual/automatic route conflict was not diagnosed: %+v", result.Findings)
+	}
+	for _, item := range result.Findings {
+		if item.Code == "issue_route_conflict" && item.Issue == 18 {
+			t.Fatalf("approved ready-fix issue was falsely diagnosed as stopped: %+v", result.Findings)
+		}
+	}
+	if len(result.FixCandidates) != 2 || result.FixCandidates[0].Number != 17 || result.FixCandidates[1].Number != 18 {
+		t.Fatalf("approved did not override needs-decision as specified: %+v", result.FixCandidates)
+	}
+}
+
 func TestFixQueueExcludesInWorkAndOpenPullReferences(t *testing.T) {
 	result := analyze(nil, "ivanarama")
 	issues := []apiIssue{
