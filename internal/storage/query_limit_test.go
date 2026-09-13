@@ -64,6 +64,42 @@ func TestRunQueryLimit_Disabled(t *testing.T) {
 	}
 }
 
+func TestRunQueryPage_WrapsExplicitLimitAndTrailingSemicolon(t *testing.T) {
+	ctx := context.Background()
+	db, err := ConnectSQLite(ctx, filepath.Join(t.TempDir(), "q.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(ctx, `CREATE TABLE items(id INTEGER PRIMARY KEY, name TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a", "b", "c", "d"} {
+		if _, err := db.Exec(ctx, `INSERT INTO items(name) VALUES (?)`, name); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	query := `SELECT name FROM items WHERE name >= ? ORDER BY id LIMIT 3;`
+	total, err := db.CountQuery(ctx, query, []any{"a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != 3 {
+		t.Fatalf("total = %d, want 3", total)
+	}
+	rows, cols, err := db.RunQueryPage(ctx, query, []any{"a"}, 2, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0]["name"] != "c" {
+		t.Fatalf("rows = %#v, want c", rows)
+	}
+	if len(cols) != 1 || cols[0] != "name" {
+		t.Fatalf("cols = %#v, want [name]", cols)
+	}
+}
+
 func TestLimitedQuerySQL_AddsLimitWhenMissing(t *testing.T) {
 	got := limitedQuerySQL(`SELECT id FROM items ORDER BY id;`, 11)
 	want := `SELECT id FROM items ORDER BY id LIMIT 11`
