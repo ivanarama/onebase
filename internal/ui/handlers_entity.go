@@ -961,12 +961,37 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
+	// Тексты просмотра, зависящие от КОНТЕКСТА подбора (choice_preview_proc):
+	// вызывающая форма прислала, например, филиал звонка, и памятка по
+	// направлению собирается уже под него. Ошибка процедуры не валит подбор:
+	// выбирать элемент оператору нужно в любом случае, а текст справа —
+	// вспомогательный (что сломалось, видно в логе сервера).
+	previewField := canonicalChoicePreviewField(ent)
+	if strings.TrimSpace(ent.ChoicePreviewProc) != "" {
+		if applied := s.applyChoicePreviewProc(r, ent, items); applied {
+			previewField = choicePreviewKey
+		}
+	}
+	// Реквизит просмотра типа richtext показывается С ОФОРМЛЕНИЕМ: жирный,
+	// списки, абзацы. Разметка чистится тем же санитайзером, что и остальной
+	// richtext платформы, и только после этого объявляется клиенту как HTML —
+	// иначе область просмотра стала бы дырой для чужого скрипта.
+	previewHTML := choicePreviewIsRich(ent, previewField)
+	if previewHTML {
+		sanitizeChoicePreview(items, previewField)
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	// preview — имя реквизита, текст которого форма выбора показывает в области
+	// просмотра для строки под курсором. Отдаётся вместе со строками, а не
+	// отдельным запросом: значения уже здесь, в items, и прошли те же права,
+	// строковые политики и маску ПДн.
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"items":  items,
-		"total":  total,
-		"limit":  limit,
-		"offset": offset,
+		"items":       items,
+		"total":       total,
+		"limit":       limit,
+		"offset":      offset,
+		"preview":     previewField,
+		"previewHtml": previewHTML,
 	})
 }
 

@@ -71,6 +71,18 @@ func Validate(entities []*Entity, enums []*Enum) error {
 				return fmt.Errorf("entity %s: presentation реквизит %s должен быть строковым (сейчас %s)", e.Name, name, f.Type)
 			}
 		}
+		// choice_preview: имя реквизита проверяем здесь же. Опечатка иначе выглядит
+		// как «область просмотра в подборе пустая» — а это не отличить от «текст
+		// не заполнили».
+		if name := strings.TrimSpace(e.ChoicePreview); name != "" {
+			f := findEntityFieldFold(e, name)
+			if f == nil {
+				return fmt.Errorf("entity %s: choice_preview ссылается на несуществующий реквизит %s", e.Name, name)
+			}
+			if f.Type != FieldTypeString && f.Type != FieldTypeRichText {
+				return fmt.Errorf("entity %s: choice_preview реквизит %s должен быть текстовым (сейчас %s)", e.Name, name, f.Type)
+			}
+		}
 		if err := validateFieldIDs(e); err != nil {
 			return err
 		}

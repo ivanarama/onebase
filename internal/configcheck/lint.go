@@ -401,7 +401,7 @@ func entityYAMLSchema() *yamlLintSchema {
 	})
 	return with(obj(
 		"name", "title", "description", "posting", "hierarchical", "hierarchy_kind",
-		"presentation",
+		"presentation", "choice_preview", "choice_preview_proc",
 		"list_form", "item_form", "based_on", "list_mode", "notify_changes", "list_refresh_on",
 		"fulltext", "search_fields", "detail_panel",
 	), map[string]*yamlLintSchema{
@@ -616,6 +616,10 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	} {
 		element.keys[k] = nil
 	}
+	// choice_context — карта «параметр → путь к значению», а не скаляр: состав
+	// ключей свободный, поэтому freeMap, иначе линт ругался бы на каждое имя
+	// параметра.
+	element.keys["choice_context"] = freeMap()
 	element.keys["title"] = freeMap()
 	element.keys["events"] = freeMap()
 	element.keys["props"] = freeMap()
