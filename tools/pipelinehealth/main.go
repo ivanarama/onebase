@@ -855,12 +855,18 @@ type baseSyncIntentShape struct {
 	from, base, previous, shipEvent, createdAt string
 }
 
+type baseSyncDoneShape struct {
+	intentID                      int64
+	from, to, previous, shipEvent string
+}
+
 // baseSyncRESTState is deliberately only an operational hint. The mutation
 // contracts still prove comment nodes, timeline edges and commit parents with
 // two stable GraphQL snapshots before changing GitHub state.
 func baseSyncRESTState(comments []apiComment, owner, head string, headParents []string) (doneCurrent, intentOpen, baseAdvanced, protocolHistory bool, integrationAt string) {
 	intents := map[int64]baseSyncIntentShape{}
 	doneIntents := map[int64]bool{}
+	dones := map[int64]baseSyncDoneShape{}
 	for _, comment := range comments {
 		if !trustedUnedited(comment, owner) {
 			continue
@@ -878,11 +884,16 @@ func baseSyncRESTState(comments []apiComment, owner, head string, headParents []
 				continue
 			}
 			doneIntents[intentID] = true
+			dones[comment.ID] = baseSyncDoneShape{
+				intentID: intentID, from: match[2], to: match[3],
+				previous: match[5], shipEvent: match[6],
+			}
 			if match[3] == head {
 				doneCurrent = true
 				baseAdvanced = intent.base != match[4]
-				if integrationAt == "" || intent.createdAt < integrationAt {
-					integrationAt = intent.createdAt
+				startedAt := baseSyncIntegrationStart(intent, intents, dones)
+				if integrationAt == "" || startedAt < integrationAt {
+					integrationAt = startedAt
 				}
 			}
 		}
@@ -898,11 +909,41 @@ func baseSyncRESTState(comments []apiComment, owner, head string, headParents []
 			continue
 		}
 		intentOpen = true
-		if integrationAt == "" || intent.createdAt < integrationAt {
-			integrationAt = intent.createdAt
+		startedAt := baseSyncIntegrationStart(intent, intents, dones)
+		if integrationAt == "" || startedAt < integrationAt {
+			integrationAt = startedAt
 		}
 	}
 	return doneCurrent, intentOpen, baseAdvanced, protocolHistory, integrationAt
+}
+
+// baseSyncIntegrationStart preserves ownership across a multi-hop carry chain.
+// An updated PR may need another base-sync while it waits for merge. Its new
+// intent points at the previous done comment; using only the new comment time
+// would let a later PR overtake an already active single-flight owner.
+func baseSyncIntegrationStart(intent baseSyncIntentShape, intents map[int64]baseSyncIntentShape, dones map[int64]baseSyncDoneShape) string {
+	startedAt := intent.createdAt
+	seen := map[int64]bool{}
+	current := intent
+	for current.previous != "none" {
+		doneID, err := strconv.ParseInt(current.previous, 10, 64)
+		if err != nil || seen[doneID] {
+			break
+		}
+		seen[doneID] = true
+		done, ok := dones[doneID]
+		previous, previousOK := intents[done.intentID]
+		if !ok || !previousOK || done.to != current.from ||
+			done.from != previous.from || done.previous != previous.previous ||
+			done.shipEvent != current.shipEvent || previous.shipEvent != current.shipEvent {
+			break
+		}
+		if previous.createdAt < startedAt {
+			startedAt = previous.createdAt
+		}
+		current = previous
+	}
+	return startedAt
 }
 
 // intentCanDescribeCurrentHead limits recovery to a transaction that can still
