@@ -541,11 +541,34 @@ func (s *Server) aiActionRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	obj := runtime.NewObject(entity.Name, entity.Kind)
+	// Значения по умолчанию и ПриСозданииНового (план 153) — той же
+	// реализацией, что у формы, DSL и REST. Названные ассистентом значения
+	// кладутся ДО дефолтов, поэтому дефолт их не перетирает и хук видит их
+	// целиком, как на REST-создании.
+	//
+	// FormEntry не ставим: это программный путь, а не ручной ввод. Дата
+	// документа и признак активности подставляются только в форме — так же,
+	// как в DSL и REST (см. applyFormEntryDefaults).
+	aiFields := make(map[string]any, len(action.Fields))
 	for k, v := range action.Fields {
-		obj.Set(k, s.aiTypedValue(entity.Fields, k, v))
+		aiFields[k] = s.aiTypedValue(entity.Fields, k, v)
 	}
-	obj.TablePartRows = action.TPRows
+	newRes, err := s.entitySvc.NewObject(ctx, entityservice.NewObjectRequest{
+		Entity:        entity,
+		Fields:        aiFields,
+		TablePartRows: action.TPRows,
+	})
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"error": "Ошибка создания: " + err.Error()})
+		return
+	}
+	if newRes.DSLError != "" {
+		// Как в REST: хук отказал — объекта не будет. Молча записать документ,
+		// который конфигурация не смогла проинициализировать, хуже отказа.
+		writeJSON(w, http.StatusOK, map[string]any{"error": "Создание отклонено: " + newRes.DSLError})
+		return
+	}
+	obj := newRes.Object
 	var rowAccessErr error
 	result, err := s.entitySvc.Save(ctx, entityservice.SaveRequest{
 		Entity:        entity,
