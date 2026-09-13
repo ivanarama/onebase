@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/shopspring/decimal"
+
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 )
@@ -53,6 +55,50 @@ func TestXDTOSerializerRoundTripPreservesRecordFlags(t *testing.T) {
 	}
 }
 
+func TestXDTOSerializerReadPreservesNumbers(t *testing.T) {
+	ent := &metadata.Entity{
+		Name: "Заказ",
+		Kind: metadata.KindDocument,
+		Fields: []metadata.Field{
+			{Name: "Сумма", Type: metadata.FieldTypeNumber},
+		},
+		TableParts: []metadata.TablePart{{
+			Name: "Строки",
+			Fields: []metadata.Field{
+				{Name: "Количество", Type: metadata.FieldTypeNumber},
+			},
+		}},
+	}
+	serializer := NewXDTOSerializer(xdtoTestRegistry{entity: ent})
+	input := `<DocumentObject.Заказ xmlns="http://v8.1c.ru/8.1/data/enterprise/current-config">
+	<Ref>11111111-1111-1111-1111-111111111111</Ref>
+	<DeletionMark>false</DeletionMark>
+	<Posted>false</Posted>
+	<Сумма>12.50</Сумма>
+	<Строки><Количество>3.25</Количество></Строки>
+</DocumentObject.Заказ>`
+
+	obj, ok := serializer.CallMethod("ПрочитатьXML", []any{input}).(*runtime.Object)
+	if !ok {
+		t.Fatal("ПрочитатьXML не вернул объект конфигурации")
+	}
+	assertDecimal := func(name string, got any, want string) {
+		t.Helper()
+		value, ok := got.(decimal.Decimal)
+		if !ok {
+			t.Fatalf("%s: получен %T, ожидается decimal.Decimal", name, got)
+		}
+		if !value.Equal(decimal.RequireFromString(want)) {
+			t.Fatalf("%s: получено %s, ожидается %s", name, value, want)
+		}
+	}
+	assertDecimal("Сумма", obj.Get("Сумма"), "12.50")
+	if len(obj.TablePartRows["Строки"]) != 1 {
+		t.Fatalf("Строки: получено %d строк, ожидается 1", len(obj.TablePartRows["Строки"]))
+	}
+	assertDecimal("Строки.Количество", obj.TablePartRows["Строки"][0]["Количество"], "3.25")
+}
+
 func TestXDTOSerializerReadRejectsInvalidTypedValues(t *testing.T) {
 	ent := &metadata.Entity{
 		Name: "Заказ",
@@ -61,12 +107,14 @@ func TestXDTOSerializerReadRejectsInvalidTypedValues(t *testing.T) {
 			{Name: "Дата", Type: metadata.FieldTypeDate},
 			{Name: "Номер", Type: metadata.FieldTypeString},
 			{Name: "Активен", Type: metadata.FieldTypeBool},
+			{Name: "Сумма", Type: metadata.FieldTypeNumber},
 			{Name: "Контрагент", Type: metadata.FieldTypeString, RefEntity: "Контрагенты"},
 		},
 		TableParts: []metadata.TablePart{{
 			Name: "Строки",
 			Fields: []metadata.Field{
 				{Name: "ДатаСобытия", Type: metadata.FieldTypeDate},
+				{Name: "Количество", Type: metadata.FieldTypeNumber},
 			},
 		}},
 	}
@@ -78,8 +126,9 @@ func TestXDTOSerializerReadRejectsInvalidTypedValues(t *testing.T) {
 	<Number>000001</Number>
 	<Posted>true</Posted>
 	<Активен>true</Активен>
+	<Сумма>12.50</Сумма>
 	<Контрагент>22222222-2222-2222-2222-222222222222</Контрагент>
-	<Строки><ДатаСобытия>2026-09-09T08:15:00</ДатаСобытия></Строки>
+	<Строки><ДатаСобытия>2026-09-09T08:15:00</ДатаСобытия><Количество>3.25</Количество></Строки>
 </DocumentObject.Заказ>`
 
 	tests := []struct {
@@ -93,8 +142,10 @@ func TestXDTOSerializerReadRejectsInvalidTypedValues(t *testing.T) {
 		{name: "Date", old: "2026-09-08T12:30:00", bad: "вчера", want: `поле "Date"`},
 		{name: "Posted", old: "<Posted>true</Posted>", bad: "<Posted>да</Posted>", want: `поле "Posted"`},
 		{name: "boolean field", old: "<Активен>true</Активен>", bad: "<Активен>да</Активен>", want: `поле "Активен"`},
+		{name: "number field", old: "<Сумма>12.50</Сумма>", bad: "<Сумма>не-число</Сумма>", want: `поле "Сумма"`},
 		{name: "reference field", old: "22222222-2222-2222-2222-222222222222", bad: "не-ссылка", want: `поле "Контрагент"`},
 		{name: "table part date", old: "2026-09-09T08:15:00", bad: "31 февраля", want: `поле "Строки.ДатаСобытия"`},
+		{name: "table part number", old: "<Количество>3.25</Количество>", bad: "<Количество>много</Количество>", want: `поле "Строки.Количество"`},
 	}
 
 	for _, tc := range tests {
