@@ -102,7 +102,7 @@ func rejectAll(t *testing.T, text string, fragments ...string) {
 }
 
 func TestEveryMutatingSkillFailsClosedOnWindowsEncodingDamage(t *testing.T) {
-	for _, name := range []string{"triage-issues", "fix-approved", "review-queue", "merge-shepherd", "tail-issues"} {
+	for _, name := range []string{"triage-issues", "fix-approved", "review-queue", "merge-shepherd", "tail-issues", "discussions-watch"} {
 		t.Run(name, func(t *testing.T) {
 			requireAll(t, skill(t, name),
 				"**до чтения любого файла**",
@@ -113,6 +113,291 @@ func TestEveryMutatingSkillFailsClosedOnWindowsEncodingDamage(t *testing.T) {
 				"сравни байт-в-байт с отправленным телом",
 			)
 		})
+	}
+}
+
+type modeledDiscussionAnswerRecovery struct {
+	intentID       string
+	intentCreated  int
+	discussionTime int
+	answerID       string
+	isAnswered     bool
+	done           bool
+}
+
+func discussionAnswerAction(state modeledDiscussionAnswerRecovery) string {
+	if state.done {
+		return "complete"
+	}
+	if state.isAnswered {
+		if state.answerID == state.intentID && state.discussionTime > state.intentCreated {
+			return "publish-done"
+		}
+		return "stop"
+	}
+	if state.answerID != "" {
+		return "stop"
+	}
+	if state.discussionTime == state.intentCreated {
+		return "mark-once"
+	}
+	if state.discussionTime > state.intentCreated {
+		return "human-unmark"
+	}
+	return "stop"
+}
+
+func modeledDiscussionQueue(recovery []modeledDiscussionAnswerRecovery, ordinary, limit int) []string {
+	selected := make([]string, 0, limit)
+	for _, state := range recovery {
+		action := discussionAnswerAction(state)
+		if action == "complete" || action == "human-unmark" {
+			continue
+		}
+		selected = append(selected, "recovery")
+		if len(selected) == limit {
+			return selected
+		}
+	}
+	for range ordinary {
+		selected = append(selected, "ordinary")
+		if len(selected) == limit {
+			return selected
+		}
+	}
+	return selected
+}
+
+func discussionSourceOutstanding(latestExternal string, laterHumanReply bool, completedSources ...string) bool {
+	if latestExternal == "" || laterHumanReply {
+		return false
+	}
+	for _, source := range completedSources {
+		if source == latestExternal {
+			return false
+		}
+	}
+	return true
+}
+
+type modeledDiscussionWriterClaim struct {
+	sequence int
+	id       string
+	owner    string
+}
+
+func canonicalDiscussionWriterClaim(claims []modeledDiscussionWriterClaim) modeledDiscussionWriterClaim {
+	winner := claims[0]
+	for _, claim := range claims[1:] {
+		if claim.sequence < winner.sequence {
+			winner = claim
+		}
+	}
+	return winner
+}
+
+func ownsDiscussionWriterClaim(returnedID, owner string, claims []modeledDiscussionWriterClaim) bool {
+	if len(claims) == 0 {
+		return false
+	}
+	winner := canonicalDiscussionWriterClaim(claims)
+	return returnedID == winner.id && owner == winner.owner
+}
+
+type modeledDiscussionIssueRecovery struct {
+	exactIssues       int
+	corruptIssue      bool
+	globalRefExists   bool
+	globalRefWonByRun bool
+	intentWonByRun    bool
+}
+
+func discussionIssueAction(state modeledDiscussionIssueRecovery) string {
+	if state.corruptIssue || state.exactIssues > 1 {
+		return "human"
+	}
+	if state.exactIssues == 1 {
+		return "reuse"
+	}
+	if !state.globalRefExists {
+		return "claim-ref"
+	}
+	if state.globalRefWonByRun && !state.intentWonByRun {
+		return "publish-intent"
+	}
+	if state.globalRefWonByRun && state.intentWonByRun {
+		return "create-once"
+	}
+	return "human"
+}
+
+func TestDiscussionsWatchBindsCompletionToExactExternalSource(t *testing.T) {
+	discussions := skill(t, "discussions-watch")
+	requireAllCompact(t, discussions,
+		"pp-discussion-source-v1",
+		"last-edited=<RFC3339|none>",
+		"<!-- pp:discussion-source-v1 sha256=<64hex> -->",
+		"Completion другого источника не закрывает текущий",
+		"post, пришедший в окно `последний gate → POST ответа`, не теряется",
+		"protocol-ответ, опубликованный после конкурентной реплики, не должен спрятать её",
+	)
+
+	if discussionSourceOutstanding("source-a", false, "source-a") {
+		t.Fatal("an exact source-bound completion must finish its source")
+	}
+	if !discussionSourceOutstanding("source-b", false, "source-a") {
+		t.Fatal("a completion for the old source must not hide a concurrent external reply")
+	}
+	if discussionSourceOutstanding("source-b", true, "source-a") {
+		t.Fatal("a later non-protocol owner reply is a human answer")
+	}
+}
+
+func TestDiscussionsWatchElectsOneWriterBeforePublicReply(t *testing.T) {
+	discussions := skill(t, "discussions-watch")
+	requireAllCompact(t, discussions,
+		"До любого человекочитаемого POST захвати single-writer claim источника",
+		"<!-- pp:discussion-claim-v1 discussion=<N> source-sha256=<64hex> owner=<uuid> -->",
+		"<!-- pp:discussion-lease-v1 claim=<GraphQL-id root> previous=<GraphQL-id active> owner=<uuid> -->",
+		"каноничен самый ранний валидный root по позиции `comments.edges`",
+		"собственный возвращённый id",
+		"Нельзя считать наблюдаемый чужой root своим владением",
+		"Перед **каждой** последующей мутацией",
+	)
+
+	// Both workers passed the same source gate and published an initial claim.
+	// Server edge order, not local observation order, elects exactly one of them.
+	claims := []modeledDiscussionWriterClaim{
+		{sequence: 12, id: "worker-b-root", owner: "worker-b"},
+		{sequence: 11, id: "worker-a-root", owner: "worker-a"},
+	}
+	if !ownsDiscussionWriterClaim("worker-a-root", "worker-a", claims) {
+		t.Fatal("earliest root owner must be the single writer")
+	}
+	if ownsDiscussionWriterClaim("worker-b-root", "worker-b", claims) {
+		t.Fatal("concurrent diagnostic loser must not publish a second reply")
+	}
+	if ownsDiscussionWriterClaim("worker-a-root", "worker-b", claims) {
+		t.Fatal("observing the winning root must not transfer ownership")
+	}
+}
+
+func TestDiscussionsWatchDocumentsRequiredProviderRights(t *testing.T) {
+	discussions := skill(t, "discussions-watch")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	guide := repositoryFile(t, "CLAUDE.md")
+
+	requireAllCompact(t, discussions,
+		"repos/ivanarama/onebase/issues?state=all&per_page=100",
+		"gh api -X POST repos/ivanarama/onebase/git/refs",
+		"refs/heads/pp-discussion-dedupe/",
+	)
+	requireAllCompact(t, docs,
+		"Отдельный провайдер `claude-discussions` пока не установлен",
+		"read-only REST для полного списка и read-back issues",
+		"единственная REST-мутация — Create a reference строго в `refs/heads/pp-discussion-dedupe/`",
+		"перед созданием задачи PromptPilot её надо сверить с этим списком",
+	)
+	requireAllCompact(t, guide,
+		"`claude-discussions` пока не установлен",
+		"read-only REST-запросы и Create ref только в `refs/heads/pp-discussion-dedupe/`",
+	)
+	rejectAll(t, docs, "ни `gh api` по REST ему не дано")
+}
+
+func TestDiscussionsWatchCreatesIssueOnceAndRecoversByDirectREST(t *testing.T) {
+	discussions := skill(t, "discussions-watch")
+	requireAllCompact(t, discussions,
+		"repos/ivanarama/onebase/issues?state=all&per_page=100",
+		"select(.pull_request == null)",
+		"Search разрешён только как подсказка",
+		"refs/heads/pp-discussion-dedupe/<source-sha256>",
+		"Только фактический `201 Created` **собственного** вызова",
+		"<!-- pp:discussion-issue-intent-v1",
+		"<!-- pp:discussion-issue-v1",
+		"никогда автоматически не повторяет create",
+		"GitHub Issues нет idempotency key",
+	)
+
+	if got := discussionIssueAction(modeledDiscussionIssueRecovery{}); got != "claim-ref" {
+		t.Fatalf("fresh source action = %q, want atomic global ref", got)
+	}
+	if got := discussionIssueAction(modeledDiscussionIssueRecovery{
+		globalRefExists: true, globalRefWonByRun: true,
+	}); got != "publish-intent" {
+		t.Fatalf("global winner action = %q, want durable intent", got)
+	}
+	if got := discussionIssueAction(modeledDiscussionIssueRecovery{
+		globalRefExists: true, globalRefWonByRun: true, intentWonByRun: true,
+	}); got != "create-once" {
+		t.Fatalf("intent winner action = %q, want one create", got)
+	}
+	if got := discussionIssueAction(modeledDiscussionIssueRecovery{
+		globalRefExists: true, exactIssues: 1,
+	}); got != "reuse" {
+		t.Fatalf("post-create crash action = %q, want direct REST recovery", got)
+	}
+	if got := discussionIssueAction(modeledDiscussionIssueRecovery{
+		globalRefExists: true,
+	}); got != "human" {
+		t.Fatalf("orphan ref action = %q, want fail-closed human fence", got)
+	}
+}
+
+func TestDiscussionsWatchDoesNotUndoHumanUnmark(t *testing.T) {
+	discussions := skill(t, "discussions-watch")
+	requireAllCompact(t, discussions,
+		"answerChosenAt answerChosenBy{login}",
+		"<!-- pp:discussion-answer-v2 -->",
+		"<!-- pp:discussion-answer-done intent=<id> source-sha256=<64hex> chosen-at=<RFC3339> -->",
+		"тот же каноничный внешний source record/hash",
+		"discussion.updatedAt == intent.createdAt",
+		"выжди не меньше двух секунд",
+		"answerChosenAt > intent.createdAt",
+		"discussion.updatedAt > intent.createdAt",
+		"**никогда не ставь отметку повторно**",
+		"Это терминальный результат recovery",
+		"исключи тред из recovery-очереди **до применения общего лимита**",
+	)
+
+	crashedBeforeMark := modeledDiscussionAnswerRecovery{
+		intentID: "answer", intentCreated: 10, discussionTime: 10,
+	}
+	if got := discussionAnswerAction(crashedBeforeMark); got != "mark-once" {
+		t.Fatalf("crash before mark action = %q, want one recoverable mark", got)
+	}
+
+	markedBeforeDone := modeledDiscussionAnswerRecovery{
+		intentID: "answer", intentCreated: 10, discussionTime: 12,
+		answerID: "answer", isAnswered: true,
+	}
+	if got := discussionAnswerAction(markedBeforeDone); got != "publish-done" {
+		t.Fatalf("successful mark action = %q, want durable completion", got)
+	}
+
+	// The human unmarks after a successful delayed mark but before done is
+	// published. The later discussion timestamp is the durable evidence that
+	// this is not the original pre-mark crash state.
+	humanUnmarked := markedBeforeDone
+	humanUnmarked.discussionTime = 13
+	humanUnmarked.answerID = ""
+	humanUnmarked.isAnswered = false
+	if got := discussionAnswerAction(humanUnmarked); got != "human-unmark" {
+		t.Fatalf("post-mark human unmark action = %q, want no automatic re-mark", got)
+	}
+
+	got := modeledDiscussionQueue([]modeledDiscussionAnswerRecovery{
+		humanUnmarked,
+		humanUnmarked,
+		humanUnmarked,
+	}, 1, 3)
+	if len(got) != 1 || got[0] != "ordinary" {
+		t.Fatalf("queue with three human-unmark fences = %#v, want ordinary candidate", got)
+	}
+
+	humanUnmarked.done = true
+	if got := discussionAnswerAction(humanUnmarked); got != "complete" {
+		t.Fatalf("completed then unmarked action = %q, want immutable completion", got)
 	}
 }
 
