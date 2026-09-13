@@ -176,6 +176,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | ~~10~~ | ~~[10-subsystems.md](10-subsystems.md)~~ | ~~Подсистемы (разделы навигации)~~ | ~~2–3 дня~~ | ✅ |
 | ~~11~~ | ~~[11-account-register.md](11-account-register.md)~~ | ~~Регистр бухгалтерии (план счетов)~~ | ~~8–10 дней~~ | ✅ |
 | 44 | [44-account-subconto.md](44-account-subconto.md) | Субконто (аналитика на счетах) — продолжение 11.2 | 5–7 дней | ✅ Реализовано (тесты `accountreg_subconto`/`movements_subconto`) |
+| 177 | [177-catalog-duplicate-merge.md](177-catalog-duplicate-merge.md) | Безопасное объединение дубликатов справочника: dry-run, атомарное переприсвоение ссылок и операторский UI (#1440) | 14–20 дней | 📋 Проектирование |
 
 ### Направление Б — расширение DSL
 
