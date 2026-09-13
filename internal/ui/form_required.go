@@ -51,6 +51,39 @@ func managedFormElementEntityField(entity *metadata.Entity, element *metadata.Fo
 	return entityFieldByName(entity, strings.TrimSpace(dpFieldName(path)))
 }
 
+// effectiveFormElementMultiline resolves the tri-state form-local setting.
+// Entity fields inherit Field.Multiline only when the element did not specify
+// an override; scalar form attributes default to a one-line input.
+func effectiveFormElementMultiline(entity *metadata.Entity, form *metadata.FormModule, element *metadata.FormElement) bool {
+	if element == nil || element.Kind != metadata.FormElementField {
+		return false
+	}
+	if field, ok := managedFormElementEntityField(entity, element); ok {
+		if field.Type != metadata.FieldTypeString {
+			return false
+		}
+		if element.Multiline != nil {
+			return *element.Multiline
+		}
+		return field.Multiline
+	}
+
+	path := strings.TrimSpace(element.DataPath)
+	if path == "" || strings.Count(path, ".") > 1 {
+		return false
+	}
+	name := path
+	if dot := strings.Index(path, "."); dot >= 0 {
+		if !strings.EqualFold(strings.TrimSpace(path[:dot]), "Форма") {
+			return false
+		}
+		name = path[dot+1:]
+	}
+	attr := formAttributeByName(form, strings.TrimSpace(name))
+	return attr != nil && strings.EqualFold(strings.TrimSpace(attr.TypeRef), string(metadata.FieldTypeString)) &&
+		element.Multiline != nil && *element.Multiline
+}
+
 // validateManagedFormRequired enforces required fields at the managed-form
 // boundary. It intentionally remains in the UI layer: FormElement.required
 // protects this form's submit, while metadata.Field.required remains the

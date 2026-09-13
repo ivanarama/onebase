@@ -315,8 +315,20 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return infoRegisterDetailPanelJSONTranslated(ir, row, lang, periodTitle,
 				func(key string) string { return translate(lang, key) })
 		},
-		"isRichText": func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
-		"isImage":    func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
+		// multilineRows — высота многострочного поля В СТРОКАХ (element.height, как
+		// «Высота» текстового поля в 1С). Без height — пять строк, как было зашито
+		// раньше. Положительное значение используется как есть; отрицательное
+		// отсекает ValidateFormPresentation до рендера.
+		"multilineRows": func(el *metadata.FormElement) int {
+			const defaultRows = 5
+			if el == nil || el.Height == 0 {
+				return defaultRows
+			}
+			return el.Height
+		},
+		"effectiveMultiline": effectiveFormElementMultiline,
+		"isRichText":         func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
+		"isImage":            func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
 		"fieldNamesCSV": func(fields []metadata.Field) string {
 			names := make([]string, 0, len(fields))
 			for _, f := range fields {
@@ -2213,6 +2225,11 @@ const tplForm = `
       </div>
       {{end}}
     </div>
+  {{else if .Multiline}}
+    {{/* Строковый реквизит с multiline: в нём абзац, а не значение (памятка,
+         инструкция, комментарий). Однострочный input показывает такой текст
+         одной строкой с перемоткой стрелками — ни прочитать, ни отредактировать. */}}
+    <textarea name="{{$fn}}" autocomplete="off" rows="5" style="width:100%" placeholder="{{$flabel}}"{{if $ro}} readonly{{end}}>{{index $.Values $fn}}</textarea>
   {{else}}
     <input type="text" autocomplete="off" name="{{$fn}}" value="{{index $.Values $fn}}" placeholder="{{$flabel}}"{{if $ro}} readonly{{end}}>
   {{end}}
@@ -3181,14 +3198,22 @@ const tplInfoReg = `
       <button type="button" data-ob-ref-current="ird-{{$dn}}" style="padding:6px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
     </div>
     {{else}}
+    {{if .Multiline}}
+    <textarea name="{{$dn}}" autocomplete="off" rows="5" style="width:100%">{{index $.Values $dn}}</textarea>
+    {{else}}
     <input type="text" name="{{$dn}}" value="{{index $.Values $dn}}">
+    {{end}}
     {{end}}
   </div>
   {{end}}
   {{range .InfoReg.Resources}}
   <div class="form-row">
     <label>{{.DisplayName $.Lang}}</label>
+    {{if .Multiline}}
+    <textarea name="{{.Name}}" autocomplete="off" rows="5" style="width:100%">{{index $.Values .Name}}</textarea>
+    {{else}}
     <input type="text" name="{{.Name}}" value="{{index $.Values .Name}}">
+    {{end}}
   </div>
   {{end}}
   <div style="margin-top:20px;display:flex;gap:8px">

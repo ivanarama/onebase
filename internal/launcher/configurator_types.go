@@ -53,6 +53,10 @@ type saveField struct {
 	// открывается всем ролям, которые про него не высказались. Полноту
 	// вложенных ключей сторожит TestSaveField_CoversAllRawKeys.
 	PII bool `yaml:"pii,omitempty"`
+	// Multiline — признак многострочного представления обычной строки. Редактор
+	// реквизитов его пока не показывает, поэтому ключ переносится из прежнего
+	// состояния файла вместе с required и pii.
+	Multiline bool `yaml:"multiline,omitempty"`
 }
 
 type saveTP struct {

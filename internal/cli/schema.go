@@ -129,6 +129,7 @@ func allSchemas() map[string]map[string]any {
 			"label":               stringSchema("Алиас синонима"),
 			"titles":              stringMapSchema(),
 			"type":                stringSchema("string|number|date|bool|text|richtext|image|reference:<Объект>|enum:<Перечисление>|number(10,2)"),
+			"multiline":           map[string]any{"type": "boolean", "description": "Редактировать многострочным полем (только для строкового реквизита)"},
 			"allow_inline_create": map[string]any{"type": "boolean"},
 			"id":                  stringSchema("Устойчивый идентификатор реквизита: не меняется при переименовании, по нему миграция переименовывает колонку, а не заводит новую"),
 			"required":            boolSchema("Реквизит обязателен к заполнению; проверяется при записи"),
@@ -144,6 +145,15 @@ func allSchemas() map[string]map[string]any {
 			},
 		},
 	}
+	// rawField читает multiline во всех позициях, но исполняют его только поля
+	// сущности и dimensions/resources регистра сведений. Отдельная схема
+	// сохраняет полный словарь свойств для подсказок, одновременно запрещая
+	// присутствие ключа в контекстах без многострочного редактора.
+	fieldWithoutMultiline := make(map[string]any, len(field)+1)
+	for key, value := range field {
+		fieldWithoutMultiline[key] = value
+	}
+	fieldWithoutMultiline["not"] = map[string]any{"required": []string{"multiline"}}
 	tablePart := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -152,7 +162,7 @@ func allSchemas() map[string]map[string]any {
 			"name":   stringSchema("Имя табличной части"),
 			"title":  stringSchema("Синоним"),
 			"titles": stringMapSchema(),
-			"fields": arrayOf(field),
+			"fields": arrayOf(fieldWithoutMultiline),
 		},
 	}
 	param := map[string]any{
@@ -358,7 +368,7 @@ func allSchemas() map[string]map[string]any {
 				},
 			},
 		},
-		"register": fieldGroupSchema("OneBase accumulation register", field, []string{"dimensions", "resources", "attributes"}, map[string]any{"kind": stringSchema("balance|turnover")}),
+		"register": fieldGroupSchema("OneBase accumulation register", fieldWithoutMultiline, []string{"dimensions", "resources", "attributes"}, map[string]any{"kind": stringSchema("balance|turnover")}),
 		"inforeg": fieldGroupSchema("OneBase information register", field, []string{"dimensions", "resources"}, map[string]any{
 			"periodic": map[string]any{"type": "boolean"},
 			"recorder": map[string]any{"type": "boolean", "description": "регистр подчинён регистратору: строки формирует проведение документа, программная запись отклоняется"},
@@ -427,7 +437,7 @@ func allSchemas() map[string]map[string]any {
 		"journal":   looseNamedSchema("OneBase document journal"),
 		"scheduled": looseNamedSchema("OneBase scheduled job"),
 		"accounts":  looseNamedSchema("OneBase chart of accounts"),
-		"accountreg": fieldGroupSchema("OneBase accounting register", field, []string{"resources", "subconto"}, map[string]any{
+		"accountreg": fieldGroupSchema("OneBase accounting register", fieldWithoutMultiline, []string{"resources", "subconto"}, map[string]any{
 			"accounts": stringSchema("Имя плана счетов"),
 		}),
 		"home-page": looseNamedSchema("OneBase home page"),

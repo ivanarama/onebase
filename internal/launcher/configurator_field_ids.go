@@ -81,6 +81,9 @@ func carryFieldKeys(f, old saveField) saveField {
 	if !f.PII {
 		f.PII = old.PII
 	}
+	if !f.Multiline {
+		f.Multiline = old.Multiline
+	}
 	return f
 }
 

@@ -17,12 +17,11 @@ import (
 
 func managedRequiredFieldEntity(field metadata.Field, elementRequired bool) *metadata.Entity {
 	element := &metadata.FormElement{
-		Kind:      metadata.FormElementField,
-		Name:      "ПолеПроверки",
-		DataPath:  "Объект." + field.Name,
-		Required:  elementRequired,
-		TitleMap:  map[string]string{"ru": "Проверяемое поле"},
-		Multiline: field.Type == metadata.FieldTypeRichText,
+		Kind:     metadata.FormElementField,
+		Name:     "ПолеПроверки",
+		DataPath: "Объект." + field.Name,
+		Required: elementRequired,
+		TitleMap: map[string]string{"ru": "Проверяемое поле"},
 	}
 	return &metadata.Entity{
 		Name:   "ПроверкаОбязательнойФормы",

@@ -260,6 +260,47 @@ func TestReadFormXML_Minimal(t *testing.T) {
 	}
 }
 
+func TestRoundTrip_XMLMultilinePreservesAbsentTrueAndFalse(t *testing.T) {
+	const source = `<?xml version="1.0" encoding="UTF-8"?>
+<Form xmlns="http://v8.1c.ru/8.3/xcf/logform" version="2.20">
+  <ChildItems>
+    <InputField name="Наследуемое" id="1"><DataPath>Объект.Наследуемое</DataPath></InputField>
+    <InputField name="Многострочное" id="2"><DataPath>Объект.Многострочное</DataPath><MultiLine>true</MultiLine></InputField>
+    <InputField name="Однострочное" id="3"><DataPath>Объект.Однострочное</DataPath><MultiLine>false</MultiLine></InputField>
+  </ChildItems>
+</Form>`
+	assertStates := func(stage string, elements []*IRElement) {
+		t.Helper()
+		if len(elements) != 3 {
+			t.Fatalf("%s: elements=%d, want 3", stage, len(elements))
+		}
+		if elements[0].Multiline != nil {
+			t.Fatalf("%s: отсутствие MultiLine превратилось в значение", stage)
+		}
+		if elements[1].Multiline == nil || !*elements[1].Multiline {
+			t.Fatalf("%s: MultiLine=true потерян", stage)
+		}
+		if elements[2].Multiline == nil || *elements[2].Multiline {
+			t.Fatalf("%s: MultiLine=false потерян", stage)
+		}
+	}
+
+	form, _, err := ReadFormXML(writeFixture(t, "Form.xml", source))
+	if err != nil {
+		t.Fatalf("ReadFormXML: %v", err)
+	}
+	assertStates("read", form.Elements)
+	dst := filepath.Join(t.TempDir(), "Form.xml")
+	if err := WriteFormXML(form, dst); err != nil {
+		t.Fatalf("WriteFormXML: %v", err)
+	}
+	roundTripped, _, err := ReadFormXML(dst)
+	if err != nil {
+		t.Fatalf("ReadFormXML(round-trip): %v", err)
+	}
+	assertStates("round-trip", roundTripped.Elements)
+}
+
 func TestReadFormXML_RealFile(t *testing.T) {
 	realPath := `C:\Projects\АА5БП3\УТ11УТ11\ПереносДанныхУТ11УТ11_52\Forms\Форма\Ext\Form.xml`
 	if _, err := os.Stat(realPath); err != nil {
