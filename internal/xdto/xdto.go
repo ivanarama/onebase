@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -540,7 +541,8 @@ func scalarString(v any) string {
 
 // parseValue разбирает текст в значение реквизита по его типу. Типизированное
 // значение либо разбирается целиком, либо отклоняется: обмен не должен молча
-// подменять повреждённую дату/ссылку/булево пустым или ложным значением.
+// подменять повреждённую дату/ссылку/булево/число пустым, ложным или строковым
+// значением.
 func parseValue(f *metadata.Field, text string) (any, error) {
 	if f.RefEntity != "" {
 		if text == "" || text == EmptyRef {
@@ -563,6 +565,12 @@ func parseValue(f *metadata.Field, text string) (any, error) {
 			return t, nil
 		}
 		return nil, fmt.Errorf("неверная дата %q, ожидается %s", text, dateLayout)
+	case metadata.FieldTypeNumber:
+		value, err := decimal.NewFromString(text)
+		if err != nil {
+			return nil, fmt.Errorf("неверное число %q: %w", text, err)
+		}
+		return value, nil
 	default:
 		return text, nil
 	}

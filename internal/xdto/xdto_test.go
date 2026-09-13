@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -191,8 +192,11 @@ func TestReadRestoresObject(t *testing.T) {
 	if len(rows) != 1 {
 		t.Fatalf("строк ТЧ: %d, ожидалась 1", len(rows))
 	}
-	if rows[0]["Результат"] != "599.07" {
-		t.Errorf("строка ТЧ: %v", rows[0])
+	result, resultOK := rows[0]["Результат"].(decimal.Decimal)
+	days, daysOK := rows[0]["ОтработаноДней"].(decimal.Decimal)
+	if !resultOK || !result.Equal(decimal.RequireFromString("599.07")) ||
+		!daysOK || !days.Equal(decimal.RequireFromString("3")) {
+		t.Errorf("числа строки ТЧ: %v", rows[0])
 	}
 }
 
