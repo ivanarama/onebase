@@ -71,6 +71,10 @@ func (h *handler) mountV2(r chi.Router) {
 
 		r.Get("/report/{name}", h.runReportV2())
 
+		// Чтение регистра сведений (issue #1423). Только GET: запись,
+		// регистры накопления и виртуальные таблицы — отдельные решения.
+		r.Get("/inforeg/{name}", h.listInfoRegV2())
+
 		// Глобальный поиск (план 82) — те же права, что в списках объектов.
 		r.Get("/search", h.searchV2())
 
@@ -824,6 +828,17 @@ func buildOpenAPIV2(entities []*metadata.Entity, reports []*reportpkg.Report) ma
 		"type":  "array",
 		"items": map[string]any{"$ref": "#/components/schemas/DocumentObject"},
 	}, map[string]any{"$ref": "#/components/schemas/ListMeta"})
+	// Регистр сведений (issue #1423): состав колонок зависит от конкретного
+	// регистра, поэтому строка описана свободным объектом. Точные измерения и
+	// ресурсы клиент берёт из describe, а не из спецификации REST.
+	schemas["InfoRegRecord"] = map[string]any{
+		"type":                 "object",
+		"additionalProperties": true,
+	}
+	schemas["InfoRegListEnvelope"] = dataEnvelopeSchema(map[string]any{
+		"type":  "array",
+		"items": map[string]any{"$ref": "#/components/schemas/InfoRegRecord"},
+	}, map[string]any{"$ref": "#/components/schemas/ListMeta"})
 	schemas["SearchHit"] = map[string]any{
 		"type": "object",
 		"properties": map[string]any{
@@ -1039,6 +1054,7 @@ func openAPIV2Paths() map[string]any {
 		"/api/v2/document/{name}/{id}/post":        actionPath("postDocument", "Post document", nameParam, idParam, mutationEnvelope, errorResponses),
 		"/api/v2/document/{name}/{id}/unpost":      actionPath("unpostDocument", "Unpost document", nameParam, idParam, mutationEnvelope, errorResponses),
 		"/api/v2/report/{name}":                    reportPath(nameParam, reportEnvelope, errorResponses),
+		"/api/v2/inforeg/{name}":                   infoRegPath(nameParam, errorResponses),
 		"/api/v2/search":                           searchPath(errorResponses),
 		"/api/v2/openapi.json": map[string]any{
 			"get": map[string]any{
@@ -1047,6 +1063,44 @@ func openAPIV2Paths() map[string]any {
 				"tags":        []string{"openapi"},
 				"responses":   mergeResponses(map[string]any{"200": openAPIResponse}, errorResponses),
 			},
+		},
+	}
+}
+
+// infoRegPath — чтение регистра сведений (issue #1423). Отбор по измерениям
+// записан общим `filter[Измерение]`, как у списков объектов: конкретные имена
+// зависят от регистра, и перечислить их в статической спецификации нельзя.
+func infoRegPath(nameParam any, errors map[string]any) map[string]any {
+	return map[string]any{
+		"get": map[string]any{
+			"operationId": "listInfoRegister",
+			"summary":     "Read information-register records",
+			"tags":        []string{"inforeg"},
+			"parameters": []any{
+				nameParam,
+				map[string]any{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": restMaxLimit}},
+				map[string]any{"name": "page", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1}},
+				map[string]any{"name": "offset", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 0}},
+				map[string]any{
+					"name": "filter[Dimension]", "in": "query",
+					"description": "Exact match on a register dimension. " +
+						"An unknown name is rejected with 400 rather than ignored.",
+					"schema": map[string]any{"type": "string"},
+				},
+				map[string]any{
+					"name": "filter[period.from]", "in": "query",
+					"description": "Periodic registers only. ISO date or RFC3339 instant.",
+					"schema":      map[string]any{"type": "string"},
+				},
+				map[string]any{
+					"name": "filter[period.to]", "in": "query",
+					"description": "Periodic registers only; the whole day is included.",
+					"schema":      map[string]any{"type": "string"},
+				},
+			},
+			"responses": mergeResponses(map[string]any{
+				"200": responseWithSchema("OK", "#/components/schemas/InfoRegListEnvelope"),
+			}, errors),
 		},
 	}
 }
