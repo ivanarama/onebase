@@ -980,7 +980,6 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         if (window.history && history.replaceState) {
           history.replaceState(null, '', location.pathname.replace(/\/new$/, '/' + DOC_ID));
         }
-        window._obFormDirty = false;
       }
       // Обработчик, записавший объект, поднял его версию. Форма держит версию,
       // прочитанную при отрисовке, — без обновления следующая «Записать»
@@ -994,6 +993,13 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
           form.appendChild(verInput);
         }
         verInput.value = String(data.version);
+      }
+      // Обработчик записал объект — форма больше не «грязная». Состояние
+      // считает obFormWrittenByHandler (см. ниже), здесь только применяем.
+      var written = { dirty: window._obFormDirty, title: document.title, baseTitle: _obBaseTitle };
+      if (obFormWrittenByHandler(data, written)) {
+        window._obFormDirty = written.dirty;
+        document.title = written.title;
       }
       (data.messages || []).forEach(m => flash(m, 'ok'));
       if (data.error) flash(data.error, 'err');
@@ -1099,6 +1105,27 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     window._obFormDirty = true;
     if (document.title.charAt(0) !== '●') document.title = '● ' + _obBaseTitle;
   }
+  // BEGIN onebase-form-written-handler (executed directly by the Node regression test)
+  // Ответ события формы сообщает, что обработчик ЗАПИСАЛ объект: звёздочку и
+  // предупреждение «данные не записаны» снимаем — они уже неправда.
+  //
+  // Признак записи — `version`: сервер шлёт её только когда обработчик реально
+  // позвал Записать() (versionWrittenByHandler гейтит по this.saved), и откат
+  // транзакции этот признак снимает. `savedId` — тот же факт для формы, которая
+  // была новой; на пути с ошибкой он тоже приходит, и это верно: объект записан,
+  // а упало уже после.
+  //
+  // Раньше флаг сбрасывался ТОЛЬКО в ветке savedId, то есть при первой записи
+  // новой формы. У существующего документа команда, которая его записала,
+  // оставляла вкладку со звёздочкой и вопросом при закрытии — про изменения,
+  // давно лежащие в базе. Заголовок не возвращался и там: снимался только флаг.
+  function obFormWrittenByHandler(data, state) {
+    if (!data || (!data.version && !data.savedId)) return false;
+    state.dirty = false;
+    if (String(state.title).charAt(0) === '●') state.title = state.baseTitle;
+    return true;
+  }
+  // END onebase-form-written-handler
   document.addEventListener('input',  function(e){ if (e.target && e.target.closest && e.target.closest('#main-form')) _obMarkDirty(); }, true);
   document.addEventListener('change', function(e){ if (e.target && e.target.closest && e.target.closest('#main-form')) _obMarkDirty(); }, true);
   // «Грязный» флаг сбрасывает финальный submit-handler только после всех
