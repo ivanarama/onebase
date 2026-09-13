@@ -187,26 +187,38 @@ func (t *ValueTable) findRows(args []any) any {
 	return out
 }
 
-// sortRows — Сортировать("Колонка1 Убыв, Колонка2"). Стабильная многоключевая
-// сортировка; направление по умолчанию — по возрастанию.
-func (t *ValueTable) sortRows(spec string) {
-	type key struct {
-		col  string
-		desc bool
-	}
-	var keys []key
+// sortKey — одна ступень спецификации сортировки: имя поля и направление.
+type sortKey struct {
+	col  string
+	desc bool
+}
+
+// parseSortKeys разбирает "Колонка1 Убыв, Колонка2" в список ступеней.
+//
+// Общий на ТаблицаЗначений.Сортировать и Массив.СортироватьПоПолю намеренно:
+// разойдись разбор направления — и одни и те же данные сортировались бы в
+// массиве и в таблице значений по-разному (#1438).
+func parseSortKeys(spec string) []sortKey {
+	var keys []sortKey
 	for _, part := range splitComma(spec) {
 		fields := strings.Fields(part)
 		if len(fields) == 0 {
 			continue
 		}
-		k := key{col: strings.ToLower(fields[0])}
+		k := sortKey{col: strings.ToLower(fields[0])}
 		if len(fields) >= 2 {
 			d := strings.ToLower(fields[1])
 			k.desc = d == "убыв" || d == "desc"
 		}
 		keys = append(keys, k)
 	}
+	return keys
+}
+
+// sortRows — Сортировать("Колонка1 Убыв, Колонка2"). Стабильная многоключевая
+// сортировка; направление по умолчанию — по возрастанию.
+func (t *ValueTable) sortRows(spec string) {
+	keys := parseSortKeys(spec)
 	sort.SliceStable(t.rows, func(i, j int) bool {
 		for _, k := range keys {
 			c := compareAny(t.rows[i][k.col], t.rows[j][k.col])

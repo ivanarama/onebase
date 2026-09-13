@@ -210,6 +210,9 @@ func (a *Array) CallMethod(name string, args []any) any {
 			}
 			return c < 0
 		})
+	case "сортироватьпополю", "sortbyfield":
+		// СортироватьПоПолю("Поле Убыв, Поле2") — для массива структур.
+		a.sortByField(strArg(args, 0))
 	case "вставить", "insert":
 		if len(args) >= 2 {
 			idx := int(floatArg(args, 0))
@@ -257,6 +260,54 @@ func (m *Map) Get(key any) any {
 }
 func (s *Struct) Fields() []string { return s.keys }
 
+// sortByField — СортироватьПоПолю("Поле Убыв, Поле2"). Стабильная многоключевая
+// сортировка массива структур на месте, как и Сортировать: обе меняют сам
+// массив, а не возвращают копию.
+//
+// Разбор направления и сравнение значений — общие с ТаблицаЗначений.Сортировать
+// (parseSortKeys и compareAny), поэтому одни и те же данные упорядочиваются
+// одинаково в обеих коллекциях (#1438).
+//
+// Требования к элементам жёсткие и намеренно: сортировать по полю имеет смысл
+// только у записей, где поле есть. Элемент не Структура или Структура без
+// названного поля — ошибка с номером элемента, а не тихая подстановка
+// Неопределено: молчание здесь дало бы правдоподобный, но неверный порядок.
+// Само значение Неопределено законно и упорядочивается по общему правилу.
+func (a *Array) sortByField(spec string) {
+	keys := parseSortKeys(spec)
+	if len(keys) == 0 {
+		RaiseUserError("Массив.СортироватьПоПолю: не указано поле сортировки")
+	}
+	for i, item := range a.items {
+		st, ok := item.(*Struct)
+		if !ok {
+			RaiseUserError(fmt.Sprintf(
+				"Массив.СортироватьПоПолю: элемент %d не Структура, а %s", i, getTypeName(item)))
+		}
+		for _, k := range keys {
+			if !st.hasField(k.col) {
+				RaiseUserError(fmt.Sprintf(
+					"Массив.СортироватьПоПолю: у элемента %d нет поля «%s»", i, k.col))
+			}
+		}
+	}
+	sort.SliceStable(a.items, func(i, j int) bool {
+		li := a.items[i].(*Struct)
+		lj := a.items[j].(*Struct)
+		for _, k := range keys {
+			c := compareAny(li.Get(k.col), lj.Get(k.col))
+			if c == 0 {
+				continue
+			}
+			if k.desc {
+				return c > 0
+			}
+			return c < 0
+		}
+		return false
+	})
+}
+
 type Struct struct {
 	keys []string
 	vals map[string]any
@@ -293,6 +344,13 @@ func newStruct(args []any) *Struct {
 }
 
 func (s *Struct) Get(field string) any { return s.vals[strings.ToLower(field)] }
+
+// hasField отличает «поля нет» от «поле есть и равно Неопределено»: для
+// сортировки это разные случаи — второе законное значение, первое ошибка.
+func (s *Struct) hasField(field string) bool {
+	_, ok := s.vals[strings.ToLower(field)]
+	return ok
+}
 func (s *Struct) Set(field string, v any) {
 	key := strings.ToLower(field)
 	if _, exists := s.vals[key]; !exists {
