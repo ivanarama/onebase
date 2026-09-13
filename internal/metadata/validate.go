@@ -71,6 +71,18 @@ func Validate(entities []*Entity, enums []*Enum) error {
 				return fmt.Errorf("entity %s: presentation реквизит %s должен быть строковым (сейчас %s)", e.Name, name, f.Type)
 			}
 		}
+		// order_by меняет порядок СРАЗУ ВЕЗДЕ — список, подбор, REST. Опечатка иначе
+		// выглядит как «сортировка не применилась», а это не отличить от «значения
+		// не заполнены».
+		for _, spec := range e.OrderBy {
+			name, _ := splitOrderSpec(spec)
+			if name == "" {
+				return fmt.Errorf("entity %s: order_by содержит пустое имя реквизита", e.Name)
+			}
+			if findEntityFieldFold(e, name) == nil {
+				return fmt.Errorf("entity %s: order_by ссылается на несуществующий реквизит %s", e.Name, name)
+			}
+		}
 		if err := validateFieldIDs(e); err != nil {
 			return err
 		}

@@ -819,6 +819,58 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 	// sorting
 	if keyset {
 		query += " ORDER BY id ASC"
+	} else if params.Sort == "" && len(entity.OrderBy) > 0 {
+		// Порядок по умолчанию из метаданных (order_by): у значений бывает свой
+		// порядок, не алфавитный, — «порядок в отчётах» у направлений. Папки
+		// по-прежнему идут первыми: перемешать их с элементами значило бы сломать
+		// дерево.
+		parts := make([]string, 0, len(entity.OrderBy)+1)
+		if entity.Hierarchical {
+			parts = append(parts, "is_folder DESC")
+		}
+		for _, spec := range entity.OrderBy {
+			name, desc := metadata.SplitOrderSpec(spec)
+			col := ""
+			var field metadata.Field
+			for _, f := range entity.Fields {
+				if strings.EqualFold(f.Name, name) {
+					col = metadata.ColumnName(f)
+					field = f
+					break
+				}
+			}
+			if col == "" {
+				// Имя проверено metadata.Validate; сюда попадает только устаревшая
+				// конфигурация из БД — молча пропускаем, а не роняем список.
+				continue
+			}
+			// Незаполненное — В КОНЕЦ, независимо от направления: «порядок не
+			// задан» это не «идёт первым». В SQLite NULL при ASC оказывается
+			// сверху, в PostgreSQL при DESC — тоже; поэтому признак пустоты
+			// выносим отдельным ключом сортировки.
+			empty := col + " IS NULL"
+			if field.RefEntity == "" && (field.Type == metadata.FieldTypeString ||
+				field.Type == metadata.FieldTypeRichText || field.Type == metadata.FieldTypeImage ||
+				field.EnumName != "") {
+				empty = "(" + empty + " OR " + col + " = '')"
+			}
+			parts = append(parts, "CASE WHEN "+empty+" THEN 1 ELSE 0 END ASC")
+			expr := col
+			// Число на SQLite лежит ТЕКСТОМ (десятичная точность — decimal на
+			// стороне Go), и без приведения «100» сортируется раньше «20».
+			if field.Type == metadata.FieldTypeNumber && d.Name() == "sqlite" {
+				expr = "CAST(" + col + " AS NUMERIC)"
+			}
+			dir := "ASC"
+			if desc {
+				dir = "DESC"
+			}
+			parts = append(parts, expr+" "+dir)
+		}
+		if len(parts) == 0 {
+			parts = append(parts, "id ASC")
+		}
+		query += " ORDER BY " + strings.Join(parts, ", ")
 	} else if entity.Hierarchical && params.Sort == "" {
 		firstStrCol := "id"
 		for _, f := range entity.Fields {

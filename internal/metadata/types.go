@@ -331,6 +331,22 @@ type Entity struct {
 	// старое автоправило: картинка из image-поля, заголовок из первого поля,
 	// остальные реквизиты ниже.
 	TileView *TileView
+	// OrderBy — порядок ПО УМОЛЧАНИЮ: реквизиты, по которым сортируются список,
+	// подбор и выдача REST, пока пользователь не выбрал колонку сам. Пусто —
+	// прежнее поведение (иерархия: папки, потом наименование; плоский справочник:
+	// порядок появления).
+	//
+	// Нужен там, где у значений есть СВОЙ порядок, не алфавитный: направления в
+	// отчётах идут не по алфавиту, а как их читает руководитель («порядок в
+	// отчётах» — отдельный реквизит в 1С). Без него такой справочник приходится
+	// сортировать в каждом отчёте и каждом списке заново, а подбор всё равно
+	// показывает алфавит.
+	//
+	// Направление задаётся суффиксом: «Поле desc». Первым всегда идёт is_folder
+	// DESC у иерархического справочника — папки не должны перемешиваться с
+	// элементами.
+	OrderBy []string
+
 	// Presentation — реквизиты, которыми объект представляется в списках,
 	// пикерах, поиске, REST и DSL, в порядке предпочтения. Пусто — правило по
 	// именам (LabelFields).
@@ -464,6 +480,29 @@ func findEntityFieldFold(e *Entity, name string) *Field {
 		}
 	}
 	return nil
+}
+
+// SplitOrderSpec разбирает элемент order_by: «Поле» → («Поле», false),
+// «Поле desc» → («Поле», true). Регистр направления не важен, лишние пробелы
+// съедаются: список порядка пишут руками.
+func SplitOrderSpec(spec string) (field string, desc bool) {
+	return splitOrderSpec(spec)
+}
+
+func splitOrderSpec(spec string) (string, bool) {
+	s := strings.TrimSpace(spec)
+	lower := strings.ToLower(s)
+	for _, suffix := range []string{" desc", " убыв"} {
+		if strings.HasSuffix(lower, suffix) {
+			return strings.TrimSpace(s[:len(s)-len(suffix)]), true
+		}
+	}
+	for _, suffix := range []string{" asc", " возр"} {
+		if strings.HasSuffix(lower, suffix) {
+			return strings.TrimSpace(s[:len(s)-len(suffix)]), false
+		}
+	}
+	return s, false
 }
 
 // DetailPanel описывает состав боковой панели деталей списка (план 118C).

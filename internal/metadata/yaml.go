@@ -90,7 +90,10 @@ type rawEntity struct {
 	Numerator          *rawNumerator     `yaml:"numerator"`
 	// Presentation принимает и строку, и список: «одно поле» — частый случай,
 	// а список задаёт запасной вариант, если основной реквизит пуст.
-	Presentation  stringOrList    `yaml:"presentation"`
+	Presentation stringOrList `yaml:"presentation"`
+	// OrderBy — порядок списка по умолчанию (см. Entity.OrderBy). Принимает и
+	// строку, и список: «одно поле» — частый случай.
+	OrderBy       stringOrList    `yaml:"order_by"`
 	Predefined    []rawPredefined `yaml:"predefined"`
 	Hierarchical  bool            `yaml:"hierarchical"`
 	HierarchyKind string          `yaml:"hierarchy_kind"`
@@ -296,6 +299,7 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 		e.Stages = st
 	}
 	e.Presentation = raw.Presentation.values()
+	e.OrderBy = raw.OrderBy.values()
 	if raw.Numerator != nil {
 		n := &Numerator{
 			Prefix:     raw.Numerator.Prefix,
