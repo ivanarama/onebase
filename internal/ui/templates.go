@@ -1412,11 +1412,11 @@ const tplNav = `
           <a href="/ui/profile/2fa">{{t $.Lang "Второй фактор"}}</a>{{end}}
         </div>
       </details>
-      {{if not .IsAdmin}}
+      {{if and (not .IsAdmin) (or .HasPOS .HasStages)}}
       <details class="sys-group">
         <summary>{{t $.Lang "Платформенные возможности"}}</summary>
         <div class="sys-group-body">
-          <a href="/ui/pos">{{t $.Lang "Рабочее место кассира (РМК)"}}</a>
+          {{if .HasPOS}}<a href="/ui/pos">{{t $.Lang "Рабочее место кассира (РМК)"}}</a>{{end}}
           {{if .HasStages}}<a href="/ui/stages">{{t $.Lang "Этапы — где застряло"}}</a>{{end}}
         </div>
       </details>
