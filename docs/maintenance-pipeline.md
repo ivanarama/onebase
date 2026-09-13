@@ -1018,6 +1018,18 @@ python -m promptpilot.project_pipeline --config pipelinectl.json next merge
 merge` ещё раз проверяет стабильный timeline, proof, labels, CI и выполняет
 compare-and-merge по точному SHA.
 
+Перед каждым health snapshot параметр `sync_base_before_health` обновляет чистую
+служебную копию ветки `main` через `fetch` и `merge --ff-only`. Так repo-owned
+`pipelinehealth` и контракт очереди всегда запускаются из актуального `main`.
+Другая ветка, tracked-изменения или невозможность fast-forward считаются ошибкой
+preflight: PromptPilot откладывает запуск без провайдера, а не принимает решение
+устаревшим кодом и не подменяет сбой дорогим skill-fallback.
+
+Если после такого сбоя уже образовалось несколько интеграционных цепочек,
+single-flight-владелец восстанавливается по самому раннему доверенному
+`pp:base-sync-intent` и сохраняется при переходе REVIEW → MERGE. Поэтому более
+поздняя цепочка в готовой merge-фазе не может перехватить полосу.
+
 Перед необратимым вызовом merge CLI сохраняет доверенный неизменяемый
 `pp:merge-cleanup-intent` с exact HEAD, hash review-proof, hash raw UTF-8 тела
 PR и номерами closing issues только этого репозитория. После POST он повторяет

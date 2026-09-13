@@ -3,6 +3,7 @@ package pipelinecontract
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,18 @@ import (
 	"testing"
 	"unicode/utf8"
 )
+
+func TestPipelinectlRefreshesRepositoryOwnedHealthContract(t *testing.T) {
+	var config map[string]any
+	if err := json.Unmarshal([]byte(repositoryFile(t, "pipelinectl.json")), &config); err != nil {
+		t.Fatal(err)
+	}
+	if enabled, ok := config["sync_base_before_health"].(bool); !ok || !enabled {
+		t.Fatal("pipelinectl.json must enable sync_base_before_health")
+	}
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAll(t, docs, "sync_base_before_health", "merge --ff-only", "без провайдера")
+}
 
 func repositoryFile(t *testing.T, parts ...string) string {
 	t.Helper()
