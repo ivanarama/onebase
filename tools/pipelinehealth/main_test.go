@@ -205,6 +205,29 @@ func TestMultiHopRecoveryKeepsOriginalSingleFlightOwnership(t *testing.T) {
 	}
 }
 
+func TestDifferentShipEventDoesNotInheritSingleFlightLineageAge(t *testing.T) {
+	newAuthorization := testPR(10, headC, "ship", "reviewed")
+	newAuthorization.HeadParents = []string{headB, headA}
+	newAuthorization = addComment(newAuthorization, 10,
+		fmt.Sprintf("<!-- pp:base-sync-intent from=%s base=%s review-comment=1 claim=2 completion=3 ship-event=LE_old previous=none -->", headA, headB))
+	newAuthorization = addComment(newAuthorization, 11,
+		fmt.Sprintf("<!-- pp:base-sync-done intent=10 from=%s to=%s base=%s previous=none ship-event=LE_old -->", headA, headB, headB))
+	newAuthorization = addComment(newAuthorization, 50,
+		fmt.Sprintf("<!-- pp:base-sync-intent from=%s base=%s review-comment=4 claim=5 completion=6 ship-event=LE_new previous=11 -->", headB, headA))
+	newAuthorization = addComment(newAuthorization, 51,
+		fmt.Sprintf("<!-- pp:base-sync-done intent=50 from=%s to=%s base=%s previous=11 ship-event=LE_new -->", headB, headC, headA))
+
+	olderLineage := testPR(20, headB, "ship", "reviewed")
+	olderLineage = addComment(olderLineage, 30, syncIntent(headA, 7, 8, 9))
+	olderLineage = addComment(olderLineage, 31, syncDone(30, headA, headB))
+
+	got := analyze([]apiPull{newAuthorization, olderLineage}, "ivanarama")
+	if got.IntegrationOwner == nil || got.IntegrationOwner.Number != 20 ||
+		got.IntegrationOwner.Stage != "integration-review" {
+		t.Fatalf("a different ship event inherited the old lineage age: %+v", got)
+	}
+}
+
 func TestCompletedIntegrationReviewKeepsBarrierUntilMerge(t *testing.T) {
 	owner := addComment(testPR(20, headB, "ship", "reviewed"), 30, syncIntent(headA, 10, 20, 25))
 	owner = addComment(owner, 31, syncDone(30, headA, headB))
