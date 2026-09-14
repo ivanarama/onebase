@@ -246,9 +246,21 @@ func TestQuerySubstringRejectsNegativeLengthMatrix(t *testing.T) {
 		if err != nil {
 			t.Fatalf("компиляция: %v", err)
 		}
+		// database/sql не обязан отдавать серверную ошибку из Query: PostgreSQL
+		// присылает её при чтении результата, поэтому запрос надо довести до
+		// конца и спросить rows.Err(). Проверка только Query давала зелёный
+		// SQLite и красный postgres-integration на одном и том же контракте.
 		rows, err := db.Query(ctx, res.SQL, res.Args...)
 		if err == nil {
+			for rows.Next() {
+			}
 			rows.Close()
+			// Err() спрашиваем после Close(): pgx отдаёт ошибку чтения только
+			// закрытым набором, а database/sql возвращает ту же ошибку и до, и
+			// после закрытия.
+			err = rows.Err()
+		}
+		if err == nil {
 			t.Fatalf("отрицательная длина должна завершать запрос ошибкой; SQL: %s", res.SQL)
 		}
 	})
