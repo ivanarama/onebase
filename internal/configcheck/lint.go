@@ -618,6 +618,9 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	}
 	element.keys["title"] = freeMap()
 	element.keys["events"] = freeMap()
+	// props остаётся свободной картой: про ключи, которых не читает ни один
+	// потребитель, говорит CheckFormProps — там есть, кем именно ключ не
+	// используется, а здесь было бы только «неизвестный ключ» (#1492).
 	element.keys["props"] = freeMap()
 	element.keys["children"] = seq(element)
 	element.keys["choices"] = seq(with(obj("value"), map[string]*yamlLintSchema{"title": freeMap()}))
