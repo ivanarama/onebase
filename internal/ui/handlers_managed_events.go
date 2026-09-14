@@ -1082,6 +1082,17 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 			vars["ПодборРезультат"] = pr
 			vars["PickResult"] = pr
 		}
+		// Тот же ПодборЗапрос, что и в формах сущностей: серверный поиск обязан
+		// работать и в формах обработок, иначе платформенное поведение молча
+		// разное. Кладём ВСЕГДА при событии Поиск — очистка строки поиска это
+		// такой же запрос «покажи всё», и обработчику надо отличать его от
+		// первого открытия, где переменной нет вовсе.
+		if eventName == string(metadata.FormEventOnSearch) {
+			pickQuery, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_pick_query"))
+			q := strings.TrimSpace(pickQuery)
+			vars["ПодборЗапрос"] = q
+			vars["PickQuery"] = q
+		}
 		if err := addProcessorTPEventContext(r, proc, requestControls, eventTarget, obj, vars); err != nil {
 			opStatus = "error"
 			respondJSON(enc, formEventResponse{Error: err.Error()})
