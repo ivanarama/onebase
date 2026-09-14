@@ -480,7 +480,10 @@ func (r *Runner) runQuery(ctx context.Context, w *metadata.Widget) ([]map[string
 	for k, v := range w.Params {
 		params[k] = v
 	}
-	params = scheduler.ResolveParamTemplates(params)
+	params, err := scheduler.ResolveParamTemplates(params, scheduler.NewConstantResolver(ctx, r.Store, r.Reg))
+	if err != nil {
+		return nil, nil, err
+	}
 
 	rowFilters, err := access.QueryRowFiltersWithLookup(r.User, r.Reg.Entities(), r.Reg.Registers(), r.Reg.InfoRegisters(), r.Reg.AccountRegisters(), r.Reg)
 	if err != nil {
