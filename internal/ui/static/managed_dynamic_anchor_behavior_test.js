@@ -56,6 +56,10 @@ class Element {
     return this.attributes.has(String(name)) ? this.attributes.get(String(name)) : null;
   }
 
+  hasAttribute(name) {
+    return this.attributes.has(String(name));
+  }
+
   closest(selector) {
     const match = /^\[([a-z0-9-]+)\]$/.exec(String(selector));
     if (!match) throw new Error('unsupported closest selector: ' + selector);
@@ -78,11 +82,13 @@ class Element {
   }
 
   querySelectorAll(selector) {
-    const tags = String(selector).split(',').map((tag) => tag.trim().toUpperCase());
-    if (tags.some((tag) => !/^[A-Z]+$/.test(tag))) {
-      throw new Error('unsupported descendant selector: ' + selector);
-    }
-    return this.descendants().filter((node) => tags.includes(node.tagName));
+    const selectors = String(selector).split(',').map((part) => part.trim());
+    const matches = (node, part) => {
+      const match = /^([a-zA-Z][\w-]*)(?::not\(\[([\w-]+)\]\))?$/.exec(part);
+      if (!match) throw new Error('unsupported descendant selector: ' + selector);
+      return node.tagName === match[1].toUpperCase() && (!match[2] || !node.hasAttribute(match[2]));
+    };
+    return this.descendants().filter((node) => selectors.some((part) => matches(node, part)));
   }
 
   querySelector(selector) {
