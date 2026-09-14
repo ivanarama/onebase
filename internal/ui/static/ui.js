@@ -4031,3 +4031,110 @@ function initDetailPanel() {
     }, 0);
   }, true);
 })();
+
+// ─── Enter — навигация по полям формы (#1486) ──────────────────────────────
+//
+// Прежнее «Enter записывает объект» не было спроектированным контрактом: это
+// неявная отправка HTML-формы. В табличной части и в ссылочных редакторах Enter
+// уже вёл себя иначе, то есть поведение и так было непоследовательным, а
+// оператор, вводящий данные потоком, ожидает перевода фокуса — как в 1С.
+//
+// Умолчание платформы: Enter переводит фокус к следующему полю. Форма может
+// вернуть себе прежнее поведение ключом enter_submits_form — тогда на ней стоит
+// data-ob-enter-submits="1". Явные команды записи (Ctrl+S, Ctrl+Enter, кнопки
+// «Записать»/«Провести») этой правкой не затронуты вовсе.
+
+// obEnterOwnedByElement — элементы, у которых Enter имеет собственный смысл.
+function obEnterOwnedByElement(el) {
+  if (!el || el.nodeType !== 1) return false;
+  var tag = String(el.tagName || '').toLowerCase();
+  // textarea — перенос строки; кнопка/ссылка/summary — активация.
+  if (tag === 'textarea' || tag === 'button' || tag === 'a' || tag === 'summary') return true;
+  if (tag === 'input') {
+    var type = String(el.type || 'text').toLowerCase();
+    if (type === 'submit' || type === 'button' || type === 'reset' ||
+      type === 'file' || type === 'checkbox' || type === 'radio') return true;
+  }
+  if (el.isContentEditable) return true;
+  return false;
+}
+
+// obEnterFieldUsable — поле, на которое имеет смысл ставить фокус. Скрытые,
+// readonly и disabled пропускаются: по решению они не участвуют в переходе.
+function obEnterFieldUsable(el) {
+  if (!el || el.disabled || el.readOnly) return false;
+  if (String(el.type || '').toLowerCase() === 'hidden') return false;
+  if (typeof el.tabIndex === 'number' && el.tabIndex < 0) return false;
+  if (typeof obElementVisible === 'function' && !obElementVisible(el)) return false;
+  return true;
+}
+
+// obEnterStops — остановки маршрута Enter в порядке разметки: обычные поля и
+// табличные части целиком. Грид — одна остановка, а не набор полей: его ячейки
+// рисует SlickGrid, отдельных input'ов в разметке у них нет, и внутри грида
+// Enter обслуживает он сам.
+function obEnterStops(form) {
+  var out = [];
+  var nodes = form.querySelectorAll('input,select,textarea,.ob-grid[data-sg-tp]');
+  for (var i = 0; i < nodes.length; i++) {
+    var el = nodes[i];
+    if (el.classList && el.classList.contains('ob-grid')) { out.push(el); continue; }
+    if (el.closest && el.closest('.ob-grid[data-sg-tp]')) continue; // редактор ячейки грида
+    if (!obEnterFieldUsable(el)) continue;
+    out.push(el);
+  }
+  return out;
+}
+
+// obEnterNavigateFrom переводит фокус с поля target к следующей остановке.
+// Возвращает true, если нажатие обработано (и форму отправлять не нужно).
+function obEnterNavigateFrom(target) {
+  if (!target || obEnterOwnedByElement(target)) return false;
+  var form = target.form || (target.closest ? target.closest('form') : null);
+  if (!form) return false;
+  // Только форма объекта/обработки. Поиск в шапке, фильтр списка и прочие
+  // маленькие формы обязаны отправляться по Enter: там нажатие и есть команда,
+  // а не переход к следующему полю.
+  if (form.id !== 'main-form') return false;
+  // Прежнее поведение оставлено форме явным ключом конфигурации.
+  if (form.getAttribute && form.getAttribute('data-ob-enter-submits') === '1') return false;
+  // Внутри грида Enter обслуживает сам грид: коммит ячейки и переход вправо.
+  if (target.closest && target.closest('.ob-grid[data-sg-tp]')) return false;
+
+  var stops = obEnterStops(form);
+  var idx = -1;
+  for (var i = 0; i < stops.length; i++) {
+    if (stops[i] === target) { idx = i; break; }
+  }
+  if (idx < 0) return false;
+  for (var j = idx + 1; j < stops.length; j++) {
+    var next = stops[j];
+    if (next.classList && next.classList.contains('ob-grid')) {
+      // Из последнего поля шапки — в первую доступную ячейку табличной части.
+      if (typeof window.obGridFocusFirstCell === 'function' && window.obGridFocusFirstCell(next)) return true;
+      continue; // грид не принял фокус (пустой или только для чтения) — идём дальше
+    }
+    next.focus();
+    if (typeof next.select === 'function') {
+      try { next.select(); } catch (err) { /* select() есть не у всех типов */ }
+    }
+    return true;
+  }
+  // Конец формы: фокус остаётся на месте. Неявной записи не происходит — для
+  // неё есть Ctrl+S, Ctrl+Enter и кнопки формы.
+  return true;
+}
+
+(function () {
+  if (window.__obEnterNav) return;
+  window.__obEnterNav = true;
+  document.addEventListener('keydown', function (e) {
+    if (e.defaultPrevented) return;
+    if (e.key !== 'Enter' && e.keyCode !== 13) return;
+    if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+    // Активная IME-композиция: Enter подтверждает набранное, а не переходит.
+    if (e.isComposing === true || e.keyCode === 229) return;
+    if (typeof obHasBlockingModal === 'function' && obHasBlockingModal()) return;
+    if (obEnterNavigateFrom(e.target)) e.preventDefault();
+  });
+})();
