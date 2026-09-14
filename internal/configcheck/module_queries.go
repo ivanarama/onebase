@@ -34,12 +34,11 @@ type moduleQuery struct {
 // неподдерживаемый ПОДОБНО). Если validate != nil — дополнительно PREPARE
 // против in-memory схемы (как CheckQueriesExecutable). Динамически собранные
 // тексты (конкатенация с переменными) пропускаются — их статически не извлечь.
-func CheckModuleQueries(proj *project.Project, validate func(string) error) []Issue {
-	var issues []Issue
+func CheckModuleQueries(proj *project.Project, validate func(string) error) (issues, warnings []Issue) {
 	srcDir := filepath.Join(proj.Dir, "src")
 	entries, err := os.ReadDir(srcDir)
 	if err != nil {
-		return nil
+		return nil, nil
 	}
 	opts := query.CompileOpts{
 		Registers:   proj.Registers,
@@ -88,6 +87,7 @@ func CheckModuleQueries(proj *project.Project, validate func(string) error) []Is
 				})
 				continue
 			}
+			warnings = append(warnings, queryTypeWarnings(r, label, "", "Запрос модуля", q.line, q.col)...)
 			if validate != nil {
 				if verr := validate(r.SQL); verr != nil {
 					issues = append(issues, Issue{
@@ -98,7 +98,7 @@ func CheckModuleQueries(proj *project.Project, validate func(string) error) []Is
 			}
 		}
 	}
-	return issues
+	return issues, warnings
 }
 
 // collectQueryVars собирает имена переменных, которым где-либо в теле присвоен
