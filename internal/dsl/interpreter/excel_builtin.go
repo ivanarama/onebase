@@ -3,6 +3,7 @@ package interpreter
 import (
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"github.com/ivantit66/onebase/internal/excel"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
@@ -11,6 +12,47 @@ import (
 func init() {
 	builtins["выгрузитьвexcel"] = builtinExportExcel
 	builtins["exportexcel"] = builtinExportExcel
+	builtins["прочитатьexcel"] = builtinImportExcel
+	builtins["importexcel"] = builtinImportExcel
+}
+
+// builtinImportExcel(путь)
+// Читает первый лист книги .xlsx и возвращает Массив Массивов строк: внешний
+// элемент — строка книги, внутренний — ячейки. Заголовок (первая строка) НЕ
+// отделяется: где у файла шапка, знает прикладной код, а не платформа.
+//
+// Значения приходят текстом. У ячейки Excel формат и значение живут отдельно, и
+// автоматическое приведение молча портит ровно то, что чаще всего и грузят:
+// код с ведущими нулями, дату в чужом формате, число, записанное строкой.
+// Приводит прикладной код — он один знает, что за колонка перед ним (#1470).
+//
+// Путь проходит ту же файловую песочницу, что ЧтениеТекста: в demo-режиме
+// обработка не должна читать книгу за пределами каталога базы.
+func builtinImportExcel(args []any, file string, line int) (any, error) {
+	if len(args) < 1 {
+		return nil, i18nerr.New("ПрочитатьExcel: ожидается аргумент Путь (Строка)")
+	}
+	path, ok := args[0].(string)
+	if !ok {
+		return nil, i18nerr.New("ПрочитатьExcel: аргумент Путь должен быть Строкой")
+	}
+	if strings.TrimSpace(path) == "" {
+		return nil, i18nerr.New("ПрочитатьExcel: путь не задан")
+	}
+	safe := safePathOrRaise("ПрочитатьExcel", path)
+	rows, err := excel.ImportRows(safe)
+	if err != nil {
+		return nil, i18nerr.Wrapf(err, "ПрочитатьExcel")
+	}
+	out := &Array{}
+	for _, row := range rows {
+		cells := &Array{}
+		for _, cell := range row {
+			cells.items = append(cells.items, cell)
+		}
+		out.items = append(out.items, cells)
+	}
+	return out, nil
 }
 
 // builtinExportExcel(data, title)

@@ -284,3 +284,44 @@ func WriteList(w io.Writer, cols []string, rows [][]any) error {
 	}
 	return f.Write(w)
 }
+
+// ImportRows читает первый лист книги .xlsx и возвращает её строки как текст.
+//
+// Текст, а не типизированные значения, — осознанно: у ячейки Excel формат и
+// значение живут отдельно, и «01234» с ведущим нулём, дата в своём формате и
+// число, записанное строкой, при автоматическом приведении молча меняются.
+// Прикладной код знает, что за колонка перед ним, и приводит сам; платформа не
+// должна угадывать за него (#1470).
+//
+// Строки выравниваются по самой длинной: короткие дополняются пустыми ячейками,
+// чтобы обращение по индексу колонки не зависело от того, где в файле
+// закончились данные.
+func ImportRows(path string) ([][]string, error) {
+	f, err := excelize.OpenFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("excel: открыть %s: %w", path, err)
+	}
+	defer closeBook(f)
+
+	sheets := f.GetSheetList()
+	if len(sheets) == 0 {
+		return nil, fmt.Errorf("excel: в книге %s нет листов", path)
+	}
+	rows, err := f.GetRows(sheets[0])
+	if err != nil {
+		return nil, fmt.Errorf("excel: прочитать лист %q: %w", sheets[0], err)
+	}
+	width := 0
+	for _, row := range rows {
+		if len(row) > width {
+			width = len(row)
+		}
+	}
+	out := make([][]string, len(rows))
+	for i, row := range rows {
+		cells := make([]string, width)
+		copy(cells, row)
+		out[i] = cells
+	}
+	return out, nil
+}
