@@ -675,8 +675,11 @@ SHA с удалённым HEAD до создания worktree и ещё раз �
   unmerged-файлов (`git diff --name-only --diff-filter=U`). Ненулевой код с
   unmerged-файлами — настоящий конфликт; неизменившийся HEAD сам по себе не
   означает no-op, потому что при конфликте он остаётся прежним до commit.
-  Механические конфликты (`docs/features.md`, `internal/i18n/locales/*.json`,
-  `Plans/README.md`) разрешает сам, но пушит точным refspec и CAS-lease
+  Механические конфликты (`docs/features.md`, `CHANGELOG.md`,
+  `internal/i18n/locales/*.json`, `Plans/README.md`) разрешает сам, причём
+  «взять обе стороны» проверяет построчно перед commit: потерялась запись любой
+  стороны, или обе правят одну строку по-разному, или в конфликте есть файл вне
+  списка — эскалация, но пушит точным refspec и CAS-lease
   `git push --force-with-lease=refs/heads/<ветка-PR>:<проверенный SHA> origin HEAD:refs/heads/<ветка-PR>`,
   сверяет новый PR HEAD через REST, публикует ту же пару
   `pp:base-sync-intent`/`pp:base-sync-done` и сохраняет `ship`, возвращая новый

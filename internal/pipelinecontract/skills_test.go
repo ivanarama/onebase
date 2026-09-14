@@ -83,6 +83,46 @@ func TestMergeFastPathRecoversPostMergeCleanup(t *testing.T) {
 	)
 }
 
+// TestMergeMechanicalConflictAllowlist — список файлов, конфликт в которых
+// MERGE разрешает сам, и условия, на которых это вообще допустимо (#1497).
+//
+// CHANGELOG.md дописывает каждый влитый PR, поэтому при base-sync давно
+// открытого PR он конфликтует почти всегда. Пока его не было в списке, такой
+// конфликт останавливал мерж уже одобренного человеком PR и требовал ручного
+// разбора — так вышло на #1220, где обе стороны только дописывали свои записи.
+//
+// Разрешение при этом не «склеить и забыть»: проверяется, что в тексте
+// процедуры остаётся требование построчно доказать сохранность обеих сторон и
+// эскалировать всё, что под него не подходит. Без этой половины список
+// превратился бы в разрешение молча терять записи.
+func TestMergeMechanicalConflictAllowlist(t *testing.T) {
+	legacy := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	claude := repositoryFile(t, "CLAUDE.md")
+
+	requireAllCompact(t, legacy,
+		"`docs/features.md`, `CHANGELOG.md` и `internal/i18n/locales/*.json` — взять обе стороны",
+		"«Взять обе стороны» — проверяемое утверждение, а не намерение",
+		"сравни множества новых строк каждой стороны относительно merge-base с результатом",
+		"Записи не переписывай и не переупорядочивай",
+		"Общую строку, которую обе стороны правят по-разному, механически не своди",
+		"Файл вне списка в диффе конфликта — тоже эскалация",
+		"#1220",
+	)
+	rejectAll(t, legacy,
+		"`docs/features.md` и `internal/i18n/locales/*.json` — взять обе стороны",
+	)
+
+	requireAllCompact(t, docs,
+		"Механические конфликты (`docs/features.md`, `CHANGELOG.md`, `internal/i18n/locales/*.json`, `Plans/README.md`)",
+		"«взять обе стороны» проверяет построчно перед commit",
+	)
+	requireAllCompact(t, claude,
+		"`docs/features.md`, `CHANGELOG.md`, `Plans/README.md` и `internal/i18n/locales/*.json`",
+		"обязан проверить построчно, что ни одна запись не потерялась",
+	)
+}
+
 func requireAll(t *testing.T, text string, fragments ...string) {
 	t.Helper()
 	for _, fragment := range fragments {
