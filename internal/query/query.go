@@ -586,12 +586,16 @@ var aggFuncs = map[string]string{
 	"КОЛИЧЕСТВО": "COUNT",
 	"МИНИМУМ":    "MIN",
 	"МАКСИМУМ":   "MAX",
-	"СРЕДНЕЕ":    "AVG",
-	"SUM":        "SUM",
-	"COUNT":      "COUNT",
-	"MIN":        "MIN",
-	"MAX":        "MAX",
-	"AVG":        "AVG",
+	// Короткие формы 1С: МАКС/МИН пишут чаще полных, и отсутствие синонима
+	// выглядело как «функция не поддерживается» (#1436).
+	"МИН":     "MIN",
+	"МАКС":    "MAX",
+	"СРЕДНЕЕ": "AVG",
+	"SUM":     "SUM",
+	"COUNT":   "COUNT",
+	"MIN":     "MIN",
+	"MAX":     "MAX",
+	"AVG":     "AVG",
 }
 
 func sqlKW(ident string) (string, bool) {
@@ -690,10 +694,20 @@ type sourceContext struct {
 	tokenDepth   []int
 }
 
+// sourceEntity — то, что о источнике-объекте нужно знать области, чтобы решить
+// судьбу системного алиаса: документ ли это и есть ли у него СОБСТВЕННЫЙ
+// реквизит с таким именем. Решать по классу источника нельзя — класс не
+// отличает документ от справочника (#1436).
+type sourceEntity struct {
+	document bool
+	fields   map[string]metadata.FieldType
+}
+
 type sourceScope struct {
 	main           sourceClass
 	mainTable      string
 	mainColTypes   map[string]metadata.FieldType
+	entities       map[string]sourceEntity
 	sourceCount    int
 	qualifiers     map[string]sourceClass
 	derivedAliases map[string]int
@@ -3206,6 +3220,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 				}
 				scopeID := len(ctx.scopes)
 				ctx.scopes = append(ctx.scopes, sourceScope{
+					entities:       map[string]sourceEntity{},
 					qualifiers:     map[string]sourceClass{},
 					derivedAliases: map[string]int{},
 					outputAliases:  map[string]struct{}{},
@@ -3344,6 +3359,17 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 		entityName := lowerFast(tokens[i+2].val)
 		scope.qualifiers[entityName] = class
 		scope.qualifiers[sourceToTable(typeUpper, tokens[i+2].val)] = class
+		// Для источника-объекта запоминаем вид и собственные реквизиты: по ним
+		// решается системный алиас (#1436). Регистрам это не нужно — у них свой
+		// механизм по классу источника.
+		var entityInfo *sourceEntity
+		if class == sourceClassEntity {
+			if info, found := scopeEntityInfo(tokens[i+2].val, opts); found {
+				entityInfo = &info
+				scope.entities[entityName] = info
+				scope.entities[sourceToTable(typeUpper, tokens[i+2].val)] = info
+			}
+		}
 
 		// У обычного источника КАК/AS следует сразу за именем сущности.
 		aliasPos := i + 3
@@ -3352,6 +3378,9 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 			if (aliasUpper == "КАК" || aliasUpper == "AS") && tokens[aliasPos+1].kind == tIdent {
 				alias := lowerFast(tokens[aliasPos+1].val)
 				scope.qualifiers[alias] = class
+				if entityInfo != nil {
+					scope.entities[alias] = *entityInfo
+				}
 				if isMain {
 					scope.mainTable = alias
 				}
@@ -3574,7 +3603,9 @@ func (ctx sourceContext) systemColumnIdentifierAt(tokens []tok, tokenPos int, se
 		return false
 	}
 	name := tokens[tokenPos].val
-	if _, ok := systemColAlias(name); !ok {
+	_, registerAlias := systemColAlias(name)
+	_, _, objectAlias := entitySystemColAlias(name)
+	if !registerAlias && !objectAlias {
 		return false
 	}
 	scopeID, ok := ctx.scopeIDAt(tokenPos)
@@ -3585,7 +3616,11 @@ func (ctx sourceContext) systemColumnIdentifierAt(tokens []tok, tokenPos int, se
 	if tokenPos >= 2 && tokens[tokenPos-1].kind == tDot {
 		qualifier := lowerFast(tokens[tokenPos-2].val)
 		if class, known := scope.qualifiers[qualifier]; known {
-			return class == sourceClassRegister
+			if class == sourceClassRegister {
+				return registerAlias
+			}
+			_, resolved := scope.entitySystemColumn(qualifier, name)
+			return resolved
 		}
 		if childID, derived := scope.derivedAliases[qualifier]; derived {
 			return ctx.scopeProjectsSystemColumn(tokens, childID, name, seen)
@@ -3595,7 +3630,11 @@ func (ctx sourceContext) systemColumnIdentifierAt(tokens []tok, tokenPos int, se
 	if childID, derived := scope.derivedAliases[scope.mainTable]; derived {
 		return ctx.scopeProjectsSystemColumn(tokens, childID, name, seen)
 	}
-	return scope.main == sourceClassRegister
+	if registerAlias && scope.main == sourceClassRegister {
+		return true
+	}
+	_, resolved := scope.entitySystemColumn(scope.mainTable, name)
+	return resolved
 }
 
 // rewriteGroupingReferenceAliases разворачивает зарезервированный выходной
@@ -3706,6 +3745,32 @@ func copyGroupingAliasExpression(tokens []tok, ctx sourceContext, start, end int
 		expr = append(expr, t)
 	}
 	return expr
+}
+
+// entitySystemColumnAlias разрешает системную колонку документа или справочника.
+// Квалификатор берётся из текста запроса, а для неквалифицированного имени —
+// главный источник области. Когда источников в области больше одного, колонка
+// эмитится с префиксом: deletion_mark есть у каждой таблицы объекта, и голое
+// имя при соединении стало бы неоднозначным.
+func (tr *translator) entitySystemColumnAlias(name string, prevDot bool) (string, bool) {
+	if _, _, ok := entitySystemColAlias(name); !ok {
+		return "", false
+	}
+	scope, hasScope := tr.sourceCtx.scopeAt(tr.pos - 1)
+	if !hasScope {
+		return "", false
+	}
+	if prevDot && tr.pos >= 3 {
+		return scope.entitySystemColumn(lowerFast(tr.tokens[tr.pos-3].val), name)
+	}
+	col, ok := scope.entitySystemColumn(scope.mainTable, name)
+	if !ok {
+		return "", false
+	}
+	if scope.sourceCount > 1 && scope.mainTable != "" {
+		return scope.mainTable + "." + col, true
+	}
+	return col, true
 }
 
 // systemColumnAlias разрешает русское имя системной колонки только в контексте
@@ -4195,6 +4260,20 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 				tr.emit(col)
 				continue
 			}
+			// Системные колонки самого объекта (Проведен, ПометкаУдаления):
+			// разрешаются по метаданным источника, см. entitySystemColumn.
+			// Позиция имени решает так же, как у булевых литералов ниже: после
+			// КАК это объявляемый алиас вывода, перед точкой — квалификатор, а
+			// ссылка на уже объявленный алиас остаётся ссылкой на него.
+			// Иначе `Пуб.posted КАК Проведен` превращался в `AS posted`.
+			if !prevAlias && !nextIsDot {
+				if _, isAlias := tr.aliases[lower]; !isAlias {
+					if col, ok := tr.entitySystemColumnAlias(t.val, prevDot); ok {
+						tr.emit(col)
+						continue
+					}
+				}
+			}
 			if agg, ok := sqlAgg(t.val); ok && tr.peek(0).kind == tLParen {
 				tr.emit(agg)
 			} else if kw, ok := sqlKW(t.val); ok {
@@ -4623,6 +4702,56 @@ func (tr *translator) firstArgMoment(args []tok) momentTimeValue {
 // systemColAlias maps the PascalCase русский alias for register system columns
 // (period / вид_движения / recorder / line_number) to the actual DB column name.
 // Используется и в SELECT/WHERE верхнего уровня, и после точки (alias.Период).
+// entitySystemColAlias — системные колонки САМОГО объекта: в таблице они лежат
+// физическими именами, а в языке запросов пишутся по-русски, как у регистров
+// (#1436). documentOnly отмечает колонку, которой у справочника нет.
+func entitySystemColAlias(name string) (col string, documentOnly, ok bool) {
+	switch lowerFast(name) {
+	case "проведен":
+		return "posted", true, true
+	case "пометкаудаления":
+		return "deletion_mark", false, true
+	}
+	return "", false, false
+}
+
+// scopeEntityInfo собирает вид объекта и его собственные реквизиты.
+func scopeEntityInfo(name string, opts CompileOpts) (sourceEntity, bool) {
+	for _, e := range opts.Entities {
+		if !strings.EqualFold(e.Name, name) {
+			continue
+		}
+		fields := make(map[string]metadata.FieldType, len(e.Fields))
+		for _, f := range e.Fields {
+			fields[lowerFast(f.Name)] = f.Type
+		}
+		return sourceEntity{document: e.Kind == metadata.KindDocument, fields: fields}, true
+	}
+	return sourceEntity{}, false
+}
+
+// entitySystemColumn разрешает системную колонку объекта по ФАКТИЧЕСКИМ
+// метаданным источника, а не по классу: класс не отличает документ от
+// справочника. Собственный реквизит с тем же именем всегда важнее алиаса —
+// иначе правка молча поменяла бы смысл уже работающего запроса.
+func (s sourceScope) entitySystemColumn(qualifier, name string) (string, bool) {
+	col, documentOnly, ok := entitySystemColAlias(name)
+	if !ok {
+		return "", false
+	}
+	src, known := s.entities[lowerFast(qualifier)]
+	if !known {
+		return "", false
+	}
+	if _, own := src.fields[lowerFast(name)]; own {
+		return "", false
+	}
+	if documentOnly && !src.document {
+		return "", false
+	}
+	return col, true
+}
+
 func systemColAlias(name string) (string, bool) {
 	switch lowerFast(name) {
 	case "период":

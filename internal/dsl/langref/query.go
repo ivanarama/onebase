@@ -205,14 +205,14 @@ var queryDescriptors = []Descriptor{
 		Example:   "КОЛИЧЕСТВО(*) КАК ЧислоЗаписей",
 	},
 	{
-		Name: "минимум", Display: "МИНИМУМ()", Aliases: []string{"MIN"},
+		Name: "минимум", Display: "МИНИМУМ()", Aliases: []string{"МИН", "MIN"},
 		Kind: KindQuery, Group: "Агрегаты",
 		Signature: "МИНИМУМ(<поле>)",
 		Doc:       "Агрегатная функция — возвращает минимальное значение поля в группе.",
 		Example:   "МИНИМУМ(Цена) КАК МинЦена",
 	},
 	{
-		Name: "максимум", Display: "МАКСИМУМ()", Aliases: []string{"MAX"},
+		Name: "максимум", Display: "МАКСИМУМ()", Aliases: []string{"МАКС", "MAX"},
 		Kind: KindQuery, Group: "Агрегаты",
 		Signature: "МАКСИМУМ(<поле>)",
 		Doc:       "Агрегатная функция — возвращает максимальное значение поля в группе.",
