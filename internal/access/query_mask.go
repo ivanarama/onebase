@@ -27,6 +27,9 @@ type QueryMaskPlan struct {
 	// byField — решения по именам полей для проекции «*»: имена колонок
 	// результата там совпадают с колонками таблиц.
 	byField map[string]FieldDecision
+	// deniedReason уточняет причину отказа в тексте ошибки. Пусто — обычный
+	// отказ «поле под маской в отборе/агрегате».
+	deniedReason string
 }
 
 // Empty сообщает, что маскировать нечего и запрос разрешён.
@@ -88,6 +91,16 @@ func QueryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name str
 			return QueryMaskPlan{Denied: denied}
 		}
 	}
+	// Одно и то же имя выходной колонки у двух элементов выборки делает
+	// сопоставление «колонка → политика» неоднозначным. Движок разводит такие
+	// колонки по-своему: SQLite в обёртке пагинации переименовывает дубль в
+	// `телефон:1`, а карта строки схлопывает точный дубль в один ключ. Маска
+	// адресует одно имя и ложится на одну колонку — вторая уходит клиенту
+	// сырой. Частично замаскированную выдачу отдавать нельзя, поэтому
+	// отказываем до выполнения запроса.
+	if denied, ambiguous := ambiguousMaskedOutput(res.Projection, masked, columns); ambiguous {
+		return QueryMaskPlan{Denied: denied, deniedReason: "имя колонки встречается в выборке дважды"}
+	}
 	plan := QueryMaskPlan{}
 	for _, col := range res.Projection.Columns {
 		if col.Star {
@@ -121,15 +134,23 @@ func QueryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name str
 // (колонки, группировки, выгрузка) не должна меняться от роли читателя.
 func (p QueryMaskPlan) Apply(rows []map[string]any) error {
 	if p.Denied != "" {
+		if p.deniedReason != "" {
+			return fmt.Errorf("запрос отклонён: защищённое поле %q — %s", p.Denied, p.deniedReason)
+		}
 		return fmt.Errorf("запрос отклонён: защищённое поле %q", p.Denied)
 	}
 	if len(rows) == 0 || p.Empty() {
 		return nil
 	}
 	for column, dec := range p.byColumn {
-		key, ok := matchRowKey(rows[0], column)
-		if !ok {
+		key, count := matchRowKeyStrict(rows[0], column)
+		if count == 0 {
 			return fmt.Errorf("защищённая колонка %q не найдена в результате запроса", column)
+		}
+		if count > 1 {
+			// Два фактических ключа с одним именем: какой из них соответствует
+			// разобранной колонке, доказать нечем.
+			return fmt.Errorf("защищённая колонка %q встречается в результате запроса дважды", column)
 		}
 		for _, row := range rows {
 			applyDecision(row, key, dec)
@@ -186,6 +207,45 @@ func maskedSourceFields(u *auth.User, sources []query.SourceRef, lookup func(kin
 		return nil, nil
 	}
 	return byField, byColumn
+}
+
+// ambiguousMaskedOutput ищет защищённое имя выходной колонки, встречающееся в
+// списке выборки больше одного раза. «*» считается за все защищённые колонки
+// своих источников, поэтому «ВЫБРАТЬ *, Телефон» тоже попадает сюда. Дубль
+// НЕзащищённого имени к отказу не ведёт: маску он не трогает.
+func ambiguousMaskedOutput(p query.ProjectionPlan, masked, columns map[string]FieldDecision) (string, bool) {
+	counts := map[string]int{}
+	protected := map[string]bool{}
+	for _, col := range p.Columns {
+		if col.Star {
+			for name := range columns {
+				key := fieldKey(name)
+				counts[key]++
+				protected[key] = true
+			}
+			continue
+		}
+		if col.Output == "" {
+			continue
+		}
+		key := fieldKey(col.Output)
+		counts[key]++
+		if _, ok := mostRestrictive(masked, col.Fields); ok {
+			protected[key] = true
+		}
+	}
+	denied := ""
+	for key := range protected {
+		if counts[key] < 2 {
+			continue
+		}
+		// Имя выбирается детерминированно, чтобы текст отказа не плясал от
+		// обхода карты.
+		if denied == "" || key < denied {
+			denied = key
+		}
+	}
+	return denied, denied != ""
 }
 
 // firstMaskedField возвращает первое из полей, на которое стоит маска.

@@ -396,6 +396,11 @@ func (h *handler) runReportV2() http.HandlerFunc {
 		if limit > restMaxLimit {
 			limit = restMaxLimit
 		}
+		page, err := parsePositiveInt(r.URL.Query().Get("page"), 1)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid page", "", 0)
+			return
+		}
 		params, err := reportParamsFromQuery(r.URL.Query(), rep)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error(), "", 0)
@@ -415,18 +420,18 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "masked field: "+maskPlan.Denied, "", 0)
 			return
 		}
-		rows, cols, truncated, err := query.RunLimit(r.Context(), h.store, &compiled, limit)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
-			return
-		}
-		// Маска ПДн до компоновки (план 88E): в JSON и в группировки уходит уже
-		// замаскированное значение.
-		if err := maskPlan.Apply(rows); err != nil {
-			writeError(w, http.StatusForbidden, "masked field: "+err.Error(), "", 0)
-			return
-		}
 		if wantsReportComposition(r.URL.Query()) {
+			rows, cols, err := query.Run(r.Context(), h.store, &compiled)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
+				return
+			}
+			// Маска ПДн до компоновки (план 88E): в JSON и в группировки уходит уже
+			// замаскированное значение.
+			if err := maskPlan.Apply(rows); err != nil {
+				writeError(w, http.StatusForbidden, "masked field: "+err.Error(), "", 0)
+				return
+			}
 			variant := r.URL.Query().Get("variant")
 			if variant == "" {
 				variant = r.URL.Query().Get("__variant")
@@ -441,15 +446,15 @@ func (h *handler) runReportV2() http.HandlerFunc {
 				writeError(w, http.StatusBadRequest, "report composition error: "+err.Error(), "", 0)
 				return
 			}
+			total := len(rows)
 			writeJSONV2(w, http.StatusOK, restV2Envelope{
 				Data: data,
 				Meta: &restV2Meta{
-					Total:      len(rows),
+					Total:      total,
 					Page:       1,
-					Limit:      limit,
-					TotalPages: 1,
+					Limit:      total,
+					TotalPages: totalPages(total, total),
 					Columns:    cols,
-					Truncated:  truncated,
 					Composed:   true,
 					Variant:    variant,
 					Kind:       kind,
@@ -457,18 +462,48 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			})
 			return
 		}
+
+		offset, ok := reportPageOffset(page, limit)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "invalid page", "", 0)
+			return
+		}
+		total, err := h.store.CountQuery(r.Context(), compiled.SQL, compiled.Args)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
+			return
+		}
+		rows, cols, err := query.RunPage(r.Context(), h.store, &compiled, limit, offset)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
+			return
+		}
+		truncated := offset < total && len(rows) < total-offset
+		// Маска ПДн до компоновки (план 88E): в JSON и в группировки уходит уже
+		// замаскированное значение.
+		if err := maskPlan.Apply(rows); err != nil {
+			writeError(w, http.StatusForbidden, "masked field: "+err.Error(), "", 0)
+			return
+		}
 		writeJSONV2(w, http.StatusOK, restV2Envelope{
 			Data: rows,
 			Meta: &restV2Meta{
-				Total:      len(rows),
-				Page:       1,
+				Total:      total,
+				Page:       page,
 				Limit:      limit,
-				TotalPages: 1,
+				TotalPages: totalPages(total, limit),
 				Columns:    cols,
 				Truncated:  truncated,
 			},
 		})
 	}
+}
+
+func reportPageOffset(page, limit int) (int, bool) {
+	if page <= 0 || limit <= 0 || page-1 > int(^uint(0)>>1)/limit {
+		return 0, false
+	}
+	return (page - 1) * limit, true
 }
 
 func (h *handler) composeReportV2(rows []map[string]any, spec *reportpkg.Composition) (string, restV2ReportComposition, error) {
@@ -640,7 +675,7 @@ func totalPages(total, limit int) int {
 	if total <= 0 || limit <= 0 {
 		return 0
 	}
-	return (total + limit - 1) / limit
+	return 1 + (total-1)/limit
 }
 
 func reportParamsFromQuery(q url.Values, rep *reportpkg.Report) (map[string]any, error) {
@@ -1099,13 +1134,19 @@ func reportPath(nameParam, okEnvelope map[string]any, errors map[string]any) map
 	limitParam := map[string]any{
 		"name":        "limit",
 		"in":          "query",
-		"description": "Maximum rows to return; report parameters are also passed as query parameters by name.",
+		"description": "Maximum rows in a flat response page. Ignored when composition=true; report parameters are also passed as query parameters by name.",
 		"schema":      map[string]any{"type": "integer", "minimum": 1, "maximum": restMaxLimit},
+	}
+	pageParam := map[string]any{
+		"name":        "page",
+		"in":          "query",
+		"description": "1-based flat-response page number. Ignored when composition=true.",
+		"schema":      map[string]any{"type": "integer", "minimum": 1},
 	}
 	compositionParam := map[string]any{
 		"name":        "composition",
 		"in":          "query",
-		"description": "Set to 1/true to return the YAML report composition instead of a flat row array.",
+		"description": "Set to 1/true to return the complete, unpaginated YAML report composition instead of a flat row array.",
 		"schema":      map[string]any{"type": "boolean"},
 	}
 	variantParam := map[string]any{
@@ -1119,7 +1160,7 @@ func reportPath(nameParam, okEnvelope map[string]any, errors map[string]any) map
 			"operationId": "runReport",
 			"summary":     "Run report",
 			"tags":        []string{"report"},
-			"parameters":  []any{nameParam, limitParam, compositionParam, variantParam},
+			"parameters":  []any{nameParam, limitParam, pageParam, compositionParam, variantParam},
 			"responses":   mergeResponses(map[string]any{"200": okEnvelope}, errors),
 		},
 	}
