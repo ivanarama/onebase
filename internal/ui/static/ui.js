@@ -3215,10 +3215,55 @@ function openRefCreate(targetSelect, refEntity) {
       cleanup();
     }
   }
+  var closeConfirm = null;
+  function dismissCloseConfirm() {
+    if (!closeConfirm) return;
+    closeConfirm.remove();
+    closeConfirm = null;
+  }
   function confirmClose() {
-    if (typeof window.confirm === 'function' &&
-        !window.confirm('Данные были изменены и не записаны. Закрыть форму?')) return;
-    cleanup();
+    if (closeConfirm) return;
+    var overlay = document.createElement('div');
+    overlay.id = '_ref-create-close-confirm';
+    overlay.setAttribute('role', 'dialog');
+    overlay.setAttribute('aria-modal', 'true');
+    overlay.setAttribute('aria-labelledby', '_ref-create-close-confirm-message');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:10001;display:flex;align-items:center;justify-content:center';
+    var confirmBox = document.createElement('div');
+    confirmBox.style.cssText = 'background:#fff;padding:18px 22px;border-radius:8px;box-shadow:0 6px 28px rgba(0,0,0,.2);min-width:280px;font-size:13px';
+    var message = document.createElement('div');
+    message.id = '_ref-create-close-confirm-message';
+    message.textContent = 'Данные были изменены и не записаны. Закрыть форму?';
+    message.style.cssText = 'margin-bottom:14px';
+    var row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+    var closeWithoutSave = document.createElement('button');
+    closeWithoutSave.type = 'button';
+    closeWithoutSave.textContent = 'Закрыть';
+    closeWithoutSave.style.cssText = 'background:#c00;color:#fff;border:none;padding:5px 14px;border-radius:4px;cursor:pointer';
+    var stay = document.createElement('button');
+    stay.type = 'button';
+    stay.textContent = 'Отмена';
+    stay.style.cssText = 'background:#e2e8f0;color:#333;border:none;padding:5px 12px;border-radius:4px;cursor:pointer';
+    closeWithoutSave.addEventListener('click', function () {
+      dismissCloseConfirm();
+      cleanup();
+    });
+    stay.addEventListener('click', dismissCloseConfirm);
+    overlay.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Escape' && ev.keyCode !== 27) return;
+      dismissCloseConfirm();
+      ev.preventDefault();
+      ev.stopPropagation();
+    });
+    row.appendChild(closeWithoutSave);
+    row.appendChild(stay);
+    confirmBox.appendChild(message);
+    confirmBox.appendChild(row);
+    overlay.appendChild(confirmBox);
+    document.body.appendChild(overlay);
+    closeConfirm = overlay;
+    if (typeof stay.focus === 'function') stay.focus();
   }
   function closeOnEscape(ev) {
     if (ev.key !== 'Escape' && ev.keyCode !== 27) return;
@@ -3236,10 +3281,14 @@ function openRefCreate(targetSelect, refEntity) {
   function cleanup() {
     window.removeEventListener('message', handler);
     if (frameDocument) frameDocument.removeEventListener('keydown', closeOnEscape, true);
+    dismissCloseConfirm();
     modal.remove();
   }
   modal._obCleanup = cleanup;
-  modal._obClose = confirmClose;
+  modal._obClose = function () {
+    if (closeConfirm) dismissCloseConfirm();
+    else confirmClose();
+  };
   cancelBtn.addEventListener('click', confirmClose);
   closeBtn.addEventListener('click', confirmClose);
   iframe.addEventListener('load', bindFrameEscape);
