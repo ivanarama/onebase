@@ -1238,3 +1238,8 @@ func (c dslFieldSearch) IsFieldSearchDenied(ctx context.Context, entity *metadat
 }
 
 func (s *Server) dslFieldSearchChecker() interpreter.FieldSearchChecker { return dslFieldSearch{s: s} }
+
+// XDTOObject отдаёт внутреннее представление документа сериализатору XDTO:
+// шапку вместе с табличными частями. Без этого СериализаторXDTO.ЗаписатьXML
+// видел бы только Get/Set обёртки и не смог бы прочитать строки ТЧ.
+func (w *docWriter) XDTOObject() *runtime.Object { return w.obj }
