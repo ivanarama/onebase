@@ -528,6 +528,18 @@ const tplManagedForm = `
 /* Поле в горизонтальной группе не растягивается на всю строку: иначе одинокое
    поле уезжало во всю ширину, а кнопка рядом с ним — к правому краю экрана. */
 .managed-group-horizontal>.managed-group-body>.form-group{flex:0 1 260px;min-width:180px;margin-bottom:0}
+/* Колонка-группа внутри горизонтальной группы делит ширину строки: растягивается
+   вместе с окном и сжимается вместе с ним. min-width:0 — иначе флекс-элемент не
+   становится уже своего содержимого и выталкивает соседнюю колонку на следующую
+   строку. Без flex-grow колонки занимали ширину по содержимому, и на широком
+   экране справа от формы оставалось пустое место в половину окна.
+   Явная ширина группы (width, см. FormElement.Width) правило перебивает: там,
+   где ширина колонки задана, растягивать её не надо. */
+.managed-group-horizontal>.managed-group-body>.form-group-box{min-width:0;flex:1 1 auto}
+/* Управляемая форма — рабочий экран, а не статья: карточка занимает всю ширину
+   рабочей области, а не 1400px, иначе на широком мониторе половина экрана
+   пустует. Списки и прочие страницы ограничение сохраняют. */
+main>.card{max-width:none}
 .managed-group-horizontal>.managed-group-body>.form-decoration,.managed-group-horizontal>.managed-group-body>button,.managed-group-horizontal>.managed-group-body>.managed-btn-layout,.managed-group-horizontal>.managed-group-body>.form-picture{flex:0 0 auto}
 /* Кнопка формы: отступы задаются классом, а не inline-стилем — иначе правило
    выравнивания в горизонтальной группе ниже проигрывало бы по приоритету. */
