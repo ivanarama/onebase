@@ -296,7 +296,9 @@ FIX сохраняет fingerprint issue и выбранного решения:
 `id+updated_at+SHA-256(body)` и отдельно точный источник выбора
 (human-comment / `decision:N` / `pp:recommend`). Версия triage обязательна и
 для `ready-fix`, и для голой `decision:N`: именно triage определяет план и смысл
-номера. Fingerprint перечитывается перед branch-claim, final push, созданием PR,
+номера. Если развилки в triage нет вовсе — ни строки `**Развилка.**`, ни маркера
+`pp:options` — источником выбора служит сам план этой версии triage: выбирать не
+из чего, и отдельного подтверждения человека такой `ready-fix` не требует. Fingerprint перечитывается перед branch-claim, final push, созданием PR,
 `in-work` и комментарием. Поздний
 `hold`, закрытие, снятие eligibility, edit решения или смена `decision:N`
 останавливают все следующие мутации; уже созданный branch/PR не удаляется

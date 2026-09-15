@@ -259,7 +259,8 @@ onebase describe --project <dir>                # вся структура ко
   `pp:fix-decision <SHA>` возвращает PR в FIX crash-safe порядком.
   Для новой заявки FIX сохраняет issue-decision fingerprint: обязательную
   версию triage `id+updated_at+SHA-256(body)` плюс отдельный точный источник
-  выбора (human comment / `decision:N` / `pp:recommend`). Он перевалидирует
+  выбора (human comment / `decision:N` / `pp:recommend`, а при полном
+  отсутствии развилки в triage — сам его план). Он перевалидирует
   open-state/title/body/eligibility/hold/manual и обе части решения перед
   branch-claim, push, PR create, `in-work` и комментарием; edit triage или
   позднее решение человека всегда старше уже выполненной локальной работы.
