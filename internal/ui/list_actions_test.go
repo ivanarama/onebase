@@ -237,28 +237,28 @@ func TestPageList_EmbeddedOpenUsesShell(t *testing.T) {
 
 	for _, want := range []string{
 		`id="ob-list-config"`,
-		`data-open-url="/ui/document/`,
-		`11111111-1111-1111-1111-111111111111"`,
+		`data-ob-row-base="/ui/document/`,
+		`data-ob-id="11111111-1111-1111-1111-111111111111"`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("список не содержит embedded-open фрагмент %q", want)
 		}
 	}
-	if !strings.Contains(html, `data-folder-url="/ui/document/`) || !strings.Contains(html, `parent=11111111-1111-1111-1111-111111111111`) {
-		t.Error("строка списка не содержит data-folder-url для навигации по папкам")
+	if !strings.Contains(html, `data-ob-row-list-url="/ui/document/`) {
+		t.Error("контейнер списка не содержит опорный адрес для навигации по папкам")
 	}
 	js := string(uiJS)
 	for _, want := range []string{
 		`window.obOpenInShell && window.obOpenInShell(url, title || listTitle())`,
-		`window.location.href = tr.dataset.folderUrl`,
-		`else listOpen(tr.dataset.openUrl);`,
-		`fn: function () { listOpen(tr.dataset.openUrl); }`,
+		`window.location.href = obRowUrl(tr, 'folder')`,
+		`else listOpen(obRowUrl(tr, 'open'));`,
+		`fn: function () { listOpen(obRowUrl(tr, 'open')); }`,
 	} {
 		if !strings.Contains(js, want) {
 			t.Errorf("/static/ui.js не содержит embedded-open фрагмент %q", want)
 		}
 	}
-	if strings.Contains(js, `window.location.href = tr.dataset.openUrl`) {
+	if strings.Contains(js, `window.location.href = obRowUrl(tr, 'open')`) {
 		t.Error("открытие записи из списка по-прежнему заменяет текущий iframe вместо новой вкладки")
 	}
 }
@@ -299,7 +299,7 @@ func TestPageList_TilesView(t *testing.T) {
 	}
 	html := buf.String()
 
-	for _, want := range []string{"tile-grid", "tile-card", "Болт М6", "view-switch", "data-open-url=", "data-ob-list-row"} {
+	for _, want := range []string{"tile-grid", "tile-card", "Болт М6", "view-switch", "data-ob-row-base=", "data-ob-id=", "data-ob-list-row"} {
 		if !strings.Contains(html, want) {
 			t.Errorf("плиточный режим: в выводе нет ожидаемого фрагмента %q", want)
 		}
