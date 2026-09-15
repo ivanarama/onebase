@@ -50,6 +50,13 @@ const (
 	// а результат пользователь возвращает событием Выбор с переменной
 	// ПодборРезультат. Generic: годится для любого диалога мультивыбора.
 	FormEventOnChoice FormEventType = "Выбор" // OnChoice
+	// Поиск — та же фаза 1 диалога подбора, вызванная повторно из уже открытого
+	// окна (план 46). Строка поиска диалога фильтрует то, что уже приехало на
+	// клиент; когда строк больше окна выдачи или часть колонок под маской ПДн
+	// (план 88), фильтровать нечего — искать обязан сервер. Обработчик получает
+	// набранный текст в переменной ПодборЗапрос и снова зовёт ПоказатьПодбор;
+	// клиент заменяет строки в открытом окне, не открывая второго.
+	FormEventOnSearch FormEventType = "Поиск" // OnSearch
 )
 
 var knownFormEventTypes = map[FormEventType]bool{
@@ -63,6 +70,7 @@ var knownFormEventTypes = map[FormEventType]bool{
 	FormEventBeforeRowAdd: true, FormEventAfterRowAdd: true,
 	FormEventBeforeRowDelete: true, FormEventStartListChoice: true,
 	FormEventAutoComplete: true, FormEventExecuteCommand: true, FormEventOnChoice: true,
+	FormEventOnSearch: true,
 }
 
 // formTablePartContextVars — имена, которые платформа инжектирует в обработчик

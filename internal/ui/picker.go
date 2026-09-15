@@ -57,6 +57,11 @@ type pickerConfig struct {
 	SearchField string `json:"searchField"` // имя колонки для фильтра поиска
 	QtyField    string `json:"qtyField"`    // имя редактируемой колонки количества
 	CheckAll    bool   `json:"checkAll"`    // предвыбрать все строки
+	// ServerSearch — строка поиска диалога спрашивает СЕРВЕР (событие Поиск),
+	// а не фильтрует уже приехавшие строки. Нужен там, где клиентский фильтр
+	// бессилен: выдача обрезана пределом, а искомое за ним, либо колонка
+	// показана маской ПДн (план 88) и её текст искать бессмысленно.
+	ServerSearch bool `json:"serverSearch"`
 }
 
 // newPickerBuiltin создаёт билтин ПоказатьПодбор. Записывает собранный payload
@@ -109,10 +114,11 @@ func newPickerBuiltin(sink **pickerPayload) interpreter.BuiltinFunc {
 		// Конфиг (args[2]).
 		if len(args) > 2 && args[2] != nil {
 			p.Config = pickerConfig{
-				Title:       pickStr(dslField(args[2], "Заголовок", "Title")),
-				SearchField: pickStr(dslField(args[2], "ПолеПоиска", "SearchField")),
-				QtyField:    pickStr(dslField(args[2], "ПолеКоличества", "QtyField")),
-				CheckAll:    pickBool(dslField(args[2], "ВыбратьВсе", "CheckAll")),
+				Title:        pickStr(dslField(args[2], "Заголовок", "Title")),
+				SearchField:  pickStr(dslField(args[2], "ПолеПоиска", "SearchField")),
+				QtyField:     pickStr(dslField(args[2], "ПолеКоличества", "QtyField")),
+				CheckAll:     pickBool(dslField(args[2], "ВыбратьВсе", "CheckAll")),
+				ServerSearch: pickBool(dslField(args[2], "ПоискНаСервере", "ServerSearch")),
 			}
 		}
 		*sink = p

@@ -450,6 +450,7 @@ var processorServiceFields = []string{
 	"_kind",
 	"_id",
 	"_pick_result",
+	"_pick_query",
 	"_tp",
 	"_tp_selected",
 	"_tp_row",
