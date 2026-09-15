@@ -531,7 +531,16 @@ func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner strin
 		case labels["plan-in-review"]:
 			// The plan PR is visible in REVIEW; product FIX must wait for its merge.
 		case labels["approved"] || labels["ready-fix"] && !labels["needs-decision"]:
-			if labels["in-work"] || issueReferencedByOpenPull(issue.Number, prs) {
+			if labels["in-work"] {
+				continue
+			}
+			if references := openPullsReferencingIssue(issue.Number, prs); len(references) > 0 {
+				items := make([]string, 0, len(references))
+				for _, number := range references {
+					items = append(items, fmt.Sprintf("#%d", number))
+				}
+				result.addIssue("yellow", "fix_issue_referenced_by_open_pull", issue.Number,
+					"заявка исключена из FIX-очереди: её номер упомянут в открытых PR "+strings.Join(items, ", "))
 				continue
 			}
 			ready, reason := triageHandoffReady(issue, owner)
@@ -550,14 +559,16 @@ func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner strin
 	sortCandidates(result.HumanWaiting)
 }
 
-func issueReferencedByOpenPull(number int, prs []apiPull) bool {
+func openPullsReferencingIssue(number int, prs []apiPull) []int {
 	pattern := regexp.MustCompile(fmt.Sprintf(`(^|[^0-9])#%d([^0-9]|$)`, number))
+	references := []int{}
 	for _, pr := range prs {
 		if pr.State == "open" && pattern.MatchString(pr.Title+"\n"+pr.Body) {
-			return true
+			references = append(references, pr.Number)
 		}
 	}
-	return false
+	sort.Ints(references)
+	return references
 }
 
 func triageHandoffReady(issue apiIssue, owner string) (bool, string) {
