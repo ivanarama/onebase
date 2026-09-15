@@ -166,8 +166,11 @@ onebase describe --project <dir>                # вся структура ко
   `timelineItems.updatedAt` не используется как единственное доказательство
   стабильности. Completion хранит review id, earliest claim id и
   epoch hash; FIX/MERGE/TAIL реконструируют тот же proof. Поэтому same-second
-  edit/delete и окно после pre-POST gate не дают stale claim сменить outcome, а
-  future Git dates не влияют на anchor. MERGE тем же timeline snapshot отвергает
+  edit/delete и окно после pre-POST gate не дают stale claim сменить outcome.
+  Consumer не вправе подменять GraphQL edge order сравнением Git dates; при этом
+  producer base-sync обязан ставить author/committer dates между server-time
+  intent и done, потому что они могут определить позицию самого
+  `PullRequestCommit`. MERGE тем же timeline snapshot отвергает
   сохранённый epoch anchor и любой новый HEAD/lifecycle-anchor после proof,
   поэтому edit override-anchor, ABA `H → X → H` и
   `H → deleted → restored H` не возвращают старому proof силу. TAIL повторяет

@@ -208,6 +208,15 @@ closing issues; qualified-ссылка на другой repository локаль
    отменяется следующим push. Условия доказываются двумя стабильными GraphQL
    snapshot и REST parents.
 
+   Если `PullRequestCommit(to)` расположен **до** своего intent, reauthorization
+   выше неприменима: между intent и done нет требуемого перехода. Не проси
+   человека немедленно переставить `ship`. Выполни stale-ship передачу ниже,
+   оставь метку снятой и дай REVIEW провести полный содержательный аудит точного
+   текущего HEAD. Только после новой committed-пары человек ставит новый `ship`;
+   MERGE принимает его как обычное sticky-разрешение этого HEAD. Malformed done
+   не становится `previous`; следующий base-sync начинает исправленную цепочку с
+   `previous=none`.
+
    Base-sync carry состоит из точных отдельных строк:
 
    ```
@@ -301,9 +310,10 @@ closing issues; qualified-ссылка на другой repository локаль
      ```
 
      Если процесс упал после intent, следующий MERGE восстанавливает **самый
-     ранний** intent: при `HEAD == from` повторяет CAS update; при доказанном
-     `[from, base]` публикует отсутствующий done. Поэтому crash не превращается
-     во второй ручной `ship`. После подтверждённого done метку `ship` **не
+     ранний** intent: при `HEAD == from` повторяет тот же транспорт — CAS update
+     для `BEHIND` либо подготовку локального `--no-commit` merge для `DIRTY`;
+     при доказанном `[from, base]` публикует отсутствующий done. Поэтому crash не
+     превращается во второй ручной `ship`. После подтверждённого done метку `ship` **не
      снимай**; прекрати **весь запуск MERGE** со статусом «ожидает интеграционное REVIEW».
      REVIEW проверит новый HEAD, а при зелёном результате MERGE продолжит без
      второго клика человека. (`gh pr update-branch` в этой версии gh не работает.)
@@ -311,17 +321,32 @@ closing issues; qualified-ссылка на другой repository локаль
      последнего успешного гейта. Сначала обнови main
      `git fetch origin main:refs/remotes/origin/main`, затем выполни
      `git fetch origin <ветка-PR>` и проверь,
-     что `git rev-parse FETCH_HEAD` равен сохранённому SHA, и выполнить
-     `git worktree add -B pp-mrg-<N> ../pp-mrg-<N> <сохранённый SHA>`; там
-     `git merge origin/main`. Несовпадение FETCH_HEAD — stale-ship передача без
-     worktree. Сохрани HEAD до merge и различай результат команды явно:
-     - exit code 0 и HEAD изменился — merge создан, переходи к проверкам;
-     - exit code 0 и HEAD не изменился — это настоящий no-op: ничего не пушь и
-       `ship` не снимай, убери worktree, перечитай GitHub-состояние и
-       диагностируй, почему `DIRTY` не воспроизвёлся;
+     что `git rev-parse FETCH_HEAD` равен сохранённому SHA. Создай UUID запуска,
+     разреши уникальный абсолютный путь `../pp-mrg-<N>-<uuid>`, проверь, что он
+     ещё не существует и остаётся внутри ожидаемого automation-каталога, затем
+     выполни `git worktree add --detach ../pp-mrg-<N>-<uuid> <сохранённый SHA>`;
+     там
+     `git merge --no-commit --no-ff origin/main`. Несовпадение FETCH_HEAD —
+     stale-ship передача без worktree. Merge-коммит на этом шаге создавать
+     запрещено: сначала нужно проверить получившееся дерево, затем опубликовать
+     intent и только после него зафиксировать commit. Сохрани HEAD до merge и
+     различай результат команды явно:
+     - exit code 0, HEAD не изменился и `git rev-parse -q --verify MERGE_HEAD`
+       успешен — merge подготовлен; проверь, что полученный SHA равен
+       использованному tip `main`, и переходи к проверкам незакоммиченного
+       дерева;
+     - exit code 0, HEAD не изменился и `git rev-parse -q --verify MERGE_HEAD`
+       неуспешен — это настоящий no-op: ничего не пушь и `ship` не снимай, убери
+       worktree, перечитай GitHub-состояние и диагностируй, почему `DIRTY` не
+       воспроизвёлся;
+     - exit code 0 и HEAD изменился — команда вопреки `--no-commit` уже создала
+       commit: ничего не пушь, убери только worktree этого запуска и закончи
+       `НЕ СМОГ`;
      - ненулевой exit code и `git diff --name-only --diff-filter=U` непуст — это
-       настоящий конфликт: разреши допустимые файлы, выполни `git add` и commit,
-       затем обязательно проверь, что HEAD изменился;
+       настоящий конфликт: разреши допустимые файлы и выполни `git add`, но пока
+       не создавай commit; обязательно проверь, что unmerged-файлов больше нет,
+       HEAD всё ещё равен сохранённому SHA, а
+       `git rev-parse -q --verify MERGE_HEAD` возвращает tip `main`;
      - ненулевой exit code без unmerged-файлов — это ошибка команды, а не
        конфликт: ничего не пушь и `ship` не снимай, зафиксируй диагноз.
      Не классифицируй результат только по неизменившемуся HEAD: при обычном
@@ -335,18 +360,46 @@ closing issues; qualified-ссылка на другой repository локаль
      поставить через REST `needs-decision` и сверить ответ, перейти к следующему
      PR, в финале `НУЖЕН ЧЕЛОВЕК`. `ship` не снимай: решение человека о мерже
      остаётся, но `needs-decision` паркует попытки до разрешения конфликта.
-     После механического разрешения перед push ещё раз выполни полный
-     label+SHA-гейт, создай и выбери самый ранний `pp:base-sync-intent` по тем же
-     правилам, что для BEHIND, затем повтори гейт: механический merge тоже меняет
-     HEAD и обязан быть восстанавливаемым handoff. REST-сверка перед push не
-     атомарна, поэтому используй точный refspec вместе с compare-and-swap lease:
+     Все обязательные сборки и тесты выполни в незакоммиченном состоянии merge.
+     Затем потребуй `git diff --quiet` (нет незастейдженных tracked-изменений),
+     выполни `git diff --cached --check` и сохрани SHA подготовленного дерева из
+     `git write-tree`: именно это дерево должно быть проверено и закоммичено.
+     После них снова прочитай authoritative `refs/heads/main`: до публикации
+     intent он обязан точно совпадать с `MERGE_HEAD`. Если tip изменился, удали
+     только точный уникальный worktree этого запуска и начни DIRTY-подготовку и
+     проверки заново на свежем base; старое дерево не пушь.
+
+     После механического разрешения перед commit и push ещё раз
+     выполни полный label+SHA-гейт, создай (либо восстанови) и выбери самый ранний
+     `pp:base-sync-intent` по тем же правилам, что для BEHIND, затем повтори гейт:
+     механический merge тоже меняет HEAD и обязан быть восстанавливаемым handoff.
+     Из ответа POST intent сохрани server `created_at`. Только после стабильной
+     проверки intent создай merge-коммит. Чтобы GitHub не расположил
+     `PullRequestCommit` перед intent по секундным Git dates, задай этому
+     единственному commit и `GIT_AUTHOR_DATE`, и `GIT_COMMITTER_DATE` равными
+     `intent.created_at + 1 second`; не полагайся на локальные часы. Проверь, что
+     HEAD изменился, commit имеет ровно parents `[from, base]`, а его `%aI` и
+     `%cI` строго позже `intent.created_at`; `HEAD^{tree}` обязан совпасть с
+     сохранённым SHA подготовленного дерева.
+     Ошибка commit оставляет recoverable intent, но не разрешает push.
+
+     Перед push читай HTTP `Date` безопасного GitHub GET, пока server time не
+     станет строго позже обоих `%aI`/`%cI` (не дольше 30 секунд). Это не даёт
+     следующему `done.created_at` оказаться раньше дат commit. Если server-time
+     fence не подтвердился, ничего не пушь: intent остаётся recoverable.
+
+     REST-сверка перед push не атомарна, поэтому используй точный refspec вместе
+     с compare-and-swap lease:
      `git push --force-with-lease=refs/heads/<ветка-PR>:<сохранённый SHA> origin HEAD:refs/heads/<ветка-PR>`.
      Lease failure означает гонку: ничего не перезаписывай и `ship` не снимай.
      После успешного push перечитай PR через REST и проверь,
      что новый `.head.sha` равен локальному `git rev-parse HEAD`; иначе не
      снимай `ship`, зафиксируй ошибку доставки и закончи `НУЖЕН ЧЕЛОВЕК`.
-     Подтверждённый push меняет HEAD: проверь два parents `[from, base]`, единственный
-     `PullRequestCommit`, опубликуй `pp:base-sync-done`, убери worktree и прекрати
+     Подтверждённый push меняет HEAD: проверь два parents `[from, base]` и двумя
+     полными стабильными GraphQL snapshot докажи точный порядок
+     `intent → единственный PullRequestCommit(to)` без промежуточных HEAD/base
+     lifecycle events. Только затем опубликуй `pp:base-sync-done`, убери точный
+     уникальный worktree этого запуска и прекрати
      **весь запуск MERGE**, сохранив `ship`. Ждать CI и мержить новый SHA без
      интеграционного REVIEW нельзя; повторный человеческий `ship` при валидной
      carry-цепочке не нужен.

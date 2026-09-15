@@ -293,8 +293,11 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    gate. Restore начинает новую HEAD-эпоху даже при том же SHA, поэтому
    `H → deleted → restored H` не оживляет старый proof. Более поздний доверенный не редактированный `pp:review-again` может
    стать новым anchor. Epoch — edges **строго после** выбранного anchor, поэтому
-   одинаковая секунда не создаёт неоднозначности, а Git author/committer dates
-   вообще не участвуют. `epoch-sha256` — SHA-256 ASCII/LF записи
+   одинаковая секунда не создаёт неоднозначности. Consumer не сравнивает Git
+   author/committer dates напрямую и не переставляет ими GraphQL edges; однако
+   GitHub может расположить сам `PullRequestCommit` по этим датам, поэтому
+   producer base-sync обязан оградить их между intent и done. Авторитетным для
+   REVIEW остаётся только фактический edge order. `epoch-sha256` — SHA-256 ASCII/LF записи
    `pp-review-epoch-v1\nhead=<SHA>\nanchor-node=<GraphQL node id>\n`.
 
    В текущей epoch любой `COMMENT_DELETED_EVENT` либо любой комментарий
@@ -426,6 +429,15 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    без ещё одного клика; если нужен следующий base-sync, он начинает новую
    carry-цепочку с `previous=none`, используя этот recovery re-ship как
    authorization исходного `from`.
+
+   Если `PullRequestCommit(to)` расположен **до** своего intent, это не
+   protocol-recovery: обязательного перехода между intent и done нет. Немедленный
+   re-ship не исправляет порядок. MERGE обязан снять stale `ship` и оставить его
+   снятым; тогда текущий точный HEAD проходит обычное полное содержательное
+   REVIEW без переноса source proof. Только после новой каноничной committed-пары
+   человек заново ставит `ship`, и это уже обычное sticky-разрешение текущего
+   HEAD. Такой malformed done нельзя использовать как `previous`; следующий
+   base-sync начинает новую цепочку с `previous=none`.
 
    **Интеграционное REVIEW не повторяет содержательный аудит.** Валидный
    исходный committed-proof уже доказывает содержимое `from`. Проверь только
