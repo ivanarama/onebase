@@ -101,7 +101,14 @@ func runWidgetExplain(cmd *cobra.Command, args []string) error {
 		Query: w.Query,
 	}
 	params := map[string]any{}
-	for k, v := range scheduler.ResolveParamTemplates(copyStringMap(w.Params)) {
+	// Резолвер констант здесь nil: база на этом шаге ещё не открыта (её
+	// открывает только --sample ниже). Виджет с {{constant:Имя}} получит
+	// внятный отказ вместо подставленной пустоты.
+	resolved, terr := scheduler.ResolveParamTemplates(copyStringMap(w.Params), nil)
+	if terr != nil {
+		return terr
+	}
+	for k, v := range resolved {
 		params[k] = v
 	}
 	if len(params) > 0 {

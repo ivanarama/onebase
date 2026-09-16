@@ -396,7 +396,7 @@ func (h *handler) runReportV2() http.HandlerFunc {
 		if limit > restMaxLimit {
 			limit = restMaxLimit
 		}
-		params, err := reportParamsFromQuery(r.URL.Query(), rep)
+		params, err := reportParamsFromQuery(r.URL.Query(), rep, scheduler.NewConstantResolver(r.Context(), h.store, h.reg))
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error(), "", 0)
 			return
@@ -643,7 +643,7 @@ func totalPages(total, limit int) int {
 	return (total + limit - 1) / limit
 }
 
-func reportParamsFromQuery(q url.Values, rep *reportpkg.Report) (map[string]any, error) {
+func reportParamsFromQuery(q url.Values, rep *reportpkg.Report, res scheduler.ConstantResolver) (map[string]any, error) {
 	params := make(map[string]any, len(rep.Params))
 	for _, p := range rep.Params {
 		raw := q.Get(p.Name)
@@ -654,7 +654,11 @@ func reportParamsFromQuery(q url.Values, rep *reportpkg.Report) (map[string]any,
 			// необязательной датой приходит пустым, потому что «Срок < NULL» не
 			// выбирает ничего. Явно переданное пустое значение — выбор клиента,
 			// его умолчание не перебивает.
-			raw = scheduler.ResolveParamTemplateText(p.Default)
+			d, derr := scheduler.ResolveParamTemplateText(p.Default, res)
+			if derr != nil {
+				return nil, derr
+			}
+			raw = d
 		}
 		if raw == "" {
 			if p.Type == "bool" {

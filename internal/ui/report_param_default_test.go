@@ -31,7 +31,7 @@ func TestУмолчаниеПараметраОтчёта_Подставляет
 	}}
 	r := httptest.NewRequest("GET", "/ui/report/ПросроченныеЗадачи", nil)
 
-	values := reportParamValuesFromRequest(r, rep)
+	values := mustReportValues(t, r, rep)
 
 	сегодня := time.Now().Format("2006-01-02")
 	if got := values["НаДату"]; got != сегодня {
@@ -49,7 +49,7 @@ func TestУмолчаниеПараметраОтчёта_ЗначениеПол
 	}}
 	r := httptest.NewRequest("GET", "/ui/report/R?%D0%9D%D0%B0%D0%94%D0%B0%D1%82%D1%83=2026-01-31", nil)
 
-	if got := reportParamValuesFromRequest(r, rep)["НаДату"]; got != "2026-01-31" {
+	if got := mustReportValues(t, r, rep)["НаДату"]; got != "2026-01-31" {
 		t.Errorf("НаДату = %#v: умолчание затёрло выбор пользователя", got)
 	}
 }
@@ -63,7 +63,7 @@ func TestУмолчаниеПараметраОтчёта_ОчищенноеПо
 	form := url.Values{"НаДату": {""}}
 	r := reqWithChi("POST", "/ui/report/R", form, map[string]string{"name": "R"})
 
-	if got := reportParamValuesFromRequest(r, rep)["НаДату"]; got != nil {
+	if got := mustReportValues(t, r, rep)["НаДату"]; got != nil {
 		t.Errorf("НаДату = %#v: умолчание вернулось в очищенное поле", got)
 	}
 }
@@ -79,14 +79,14 @@ func TestУмолчаниеПараметраОтчёта_СнятыйФлажо
 	form := url.Values{"__has.ТолькоМои": {"1"}}
 	r := reqWithChi("POST", "/ui/report/R", form, map[string]string{"name": "R"})
 
-	if got := reportParamValuesFromRequest(r, rep)["ТолькоМои"]; got != nil {
+	if got := mustReportValues(t, r, rep)["ТолькоМои"]; got != nil {
 		t.Errorf("ТолькоМои = %#v: умолчание вернуло снятую галку", got)
 	}
 
 	// Поставленная галка приходит как обычно.
 	form2 := url.Values{"__has.ТолькоМои": {"1"}, "ТолькоМои": {"true"}}
 	r2 := reqWithChi("POST", "/ui/report/R", form2, map[string]string{"name": "R"})
-	if got := reportParamValuesFromRequest(r2, rep)["ТолькоМои"]; got != "true" {
+	if got := mustReportValues(t, r2, rep)["ТолькоМои"]; got != "true" {
 		t.Errorf("ТолькоМои = %#v, ожидалось \"true\"", got)
 	}
 }
@@ -169,7 +169,7 @@ func TestУмолчаниеПараметраОтчёта_НастройкиНе
 
 			// Дальше браузер идёт по редиректу, и reportForm при __run=1 собирает
 			// значения тем же путём.
-			values := reportParamValuesFromRequest(httptest.NewRequest("GET", loc, nil), rep)
+			values := mustReportValues(t, httptest.NewRequest("GET", loc, nil), rep)
 			if got := values["НаДату"]; got != nil {
 				t.Errorf("НаДату = %#v: умолчание вернулось в очищенное поле после сохранения (%s)", got, loc)
 			}
@@ -187,10 +187,10 @@ func TestУмолчаниеПараметраОтчёта_НастройкиНе
 func TestУмолчаниеПараметраОтчёта_ОбычнаяСтрокаНеРазворачивается(t *testing.T) {
 	// Умолчание без подстановки — просто значение.
 	p := reportpkg.Param{Name: "Состояние", Type: "string", Default: "ВРаботе"}
-	if got := reportParamDefault(p); got != "ВРаботе" {
+	if got := mustReportDefault(t, p); got != "ВРаботе" {
 		t.Errorf("= %q, ожидалось «ВРаботе»", got)
 	}
-	if got := reportParamDefault(reportpkg.Param{Name: "X"}); got != "" {
+	if got := mustReportDefault(t, reportpkg.Param{Name: "X"}); got != "" {
 		t.Errorf("= %q, у параметра без умолчания ожидалось пусто", got)
 	}
 }
@@ -271,4 +271,23 @@ func TestУмолчаниеПараметраОтчёта_СсылкаВыгру
 			t.Errorf("в ссылке выгрузки нет пустого параметра %q: %s", want, out)
 		}
 	}
+}
+
+// Помощники: умолчания без констант — резолвер nil, ошибки быть не должно.
+func mustReportValues(t *testing.T, r *http.Request, rep *reportpkg.Report) map[string]any {
+	t.Helper()
+	v, err := reportParamValuesFromRequest(r, rep, nil)
+	if err != nil {
+		t.Fatalf("reportParamValuesFromRequest: %v", err)
+	}
+	return v
+}
+
+func mustReportDefault(t *testing.T, p reportpkg.Param) string {
+	t.Helper()
+	v, err := reportParamDefault(p, nil)
+	if err != nil {
+		t.Fatalf("reportParamDefault(%s): %v", p.Name, err)
+	}
+	return v
 }
