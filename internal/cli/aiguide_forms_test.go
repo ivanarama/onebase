@@ -179,7 +179,7 @@ func TestAIGuide_ПеременныеКонтекстаТЧИзСловаря(t 
 		known[strings.ToLower(v)] = true
 	}
 	// Переменные вне словаря контекста ТЧ: их кладёт не addValidatedTPEventContext.
-	for _, extra := range []string{"объект", "этотобъект", "подборрезультат"} {
+	for _, extra := range []string{"объект", "этотобъект", "подборрезультат", "подборзапрос"} {
 		known[extra] = true
 	}
 	for _, name := range backquoted(section) {

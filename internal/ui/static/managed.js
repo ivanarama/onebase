@@ -963,6 +963,12 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         openItemPicker(data.pickerData, elementName, extraParams || null);
         return;
       }
+      // Поиск в уже открытом диалоге не дал строк: обработчик ограничился
+      // сообщением и ПоказатьПодбор не позвал. Прежнюю выдачу оставлять нельзя —
+      // её прочитают как ответ на новый запрос.
+      if (eventName === 'Поиск' && typeof window.obPickerSearchEmpty === 'function') {
+        window.obPickerSearchEmpty();
+      }
       if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
       applyElementStates(data.elementStates);
       window.obManagedApplyTablePartRefOptions(data.tpRefOptions);
