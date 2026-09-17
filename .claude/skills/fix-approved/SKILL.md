@@ -544,6 +544,22 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
       git worktree add -B pp-rework-<M> ../pp-rework-<M> <SHA completion>
       ```
 
+      С момента успешного `git worktree add` действует cleanup-инвариант для
+      **каждого** terminal exit этого PR, включая ошибку проверки/команды,
+      handoff, чужой push, lease/auth failure, успешный push и любой post-push
+      readback outcome. Перед удалением проверь через
+      `git worktree list --porcelain`, что exact `../pp-rework-<M>` принадлежит
+      этому common repository и локальной temporary branch `pp-rework-<M>`;
+      затем выполни `git worktree remove --force` именно для этого worktree и
+      удали только эту локальную temporary branch. Произвольный каталог и
+      remote ref не удаляй. Cleanup после branch mutation не откатывает push,
+      не снимает `changes-requested` и не закрывает открытый
+      `PP-Fix-Transition`: durable recovery живёт на remote, а не в worktree.
+      Ошибку cleanup укажи отдельно, не скрывая исходный outcome и не повторяя
+      мутацию; следующий запуск сначала безопасно разбирает только доказанный
+      orphan этого exact worktree, а не вызывает `git worktree add -B` поверх
+      него.
+
       Если это fork и `maintainerCanModify != true`, до создания worktree
       выполни crash-safe передачу из п. 1: объясни, что автору нужно включить
       maintainer edits либо самому применить замечания, заверши комментарий
@@ -563,12 +579,30 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
         <origin-or-exact-fork-URL> HEAD:refs/heads/<headRefName>
       ```
 
-      Сразу после успеха отдельно сверь и remote ref, и `.head.sha` PR с
-      фактически отправленным SHA. Для fork повторно потребуй неизменные
-      `headRepository`, `headRefName` и `maintainerCanModify == true`.
+      После успеха выполни независимый readback в строгом порядке remote → REST
+      → remote: обе проверки exact remote ref и `.head.sha` PR обязаны
+      подтверждать фактически отправленный SHA. Для fork повторно потребуй
+      неизменные `headRepository`, `headRefName` и
+      `maintainerCanModify == true`. Если обе remote-проверки уже подтверждают
+      отправленный SHA, а REST всё ещё возвращает ровно SHA completion, выполни
+      первую попытку сразу и максимум 5 повторов с ожиданием 5 секунд между
+      ними; каждый повтор заново выполняет весь цикл remote → REST → remote.
+      Жёсткий общий deadline — 30 секунд, включая ожидания и длительность
+      команд; сетевой вызов ограничивай оставшимся временем и после deadline
+      новых команд не запускай. Всего допускается не больше 6 попыток.
+      Любой отказ закрывает gate и запрещает только post-push финализацию
+      (`pp:fix-pushed` и снятие `changes-requested`); уже отправленный
+      commit/trailer остаётся открытой транзакцией для recovery. Ошибка
+      команды/JSON/API без полученного противоречащего значения либо исчерпание
+      окна, если каждая завершённая remote-проверка видела отправленный SHA, а
+      REST — только SHA completion, — восстановимый `НЕ СМОГ`: сохрани
+      `changes-requested`, следующий FIX продолжит recovery. Любой завершённый
+      remote SHA, не равный отправленному (включая возврат к SHA completion),
+      любой третий REST SHA либо смена repository/ref/permission доказывают
+      внешнюю гонку — закончи `НУЖЕН ЧЕЛОВЕК` с точным расхождением.
 
-      Lease failure означает чужой push: ничего не перезаписывай и удали
-      worktree. Затем перечитай новый HEAD, его commit message, comments и labels.
+      Lease failure означает чужой push: ничего не перезаписывай и выполни
+      cleanup-инвариант. Затем перечитай новый HEAD, его commit message, comments и labels.
       Если HEAD содержит валидный `PP-Fix-Transition` от той же canonical
       completion и `changes-requested` ещё висит, **не** возвращай PR в REVIEW и
       не удаляй метку: победитель или recovery завершит post-push фазу. Только
@@ -600,7 +634,7 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
      почему; в комментарий добавь точный `pp:fix-pushed`-маркер транзакции;
    - сними метку, чтобы ревью увидело PR снова:
      `gh api -X DELETE repos/ivanarama/onebase/issues/<M>/labels/changes-requested`;
-   - убери рабочее место.
+   - выполни cleanup-инвариант рабочего места.
 
    Замечание непонятно или ты с ним не согласен по существу — не спорь кругами:
    выполни восстанавливаемую передачу из п. 1 с аргументом и точным

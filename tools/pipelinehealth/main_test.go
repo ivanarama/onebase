@@ -155,6 +155,25 @@ func TestBaseSyncIntentWithoutDoneIsMergeRecoveryNotReview(t *testing.T) {
 	}
 }
 
+func TestOneParentSuccessorWithoutShipReleasesBrokenBaseSyncOwner(t *testing.T) {
+	// Live recovery for a malformed historical handoff: an old open intent may
+	// describe from or its two-parent merge, but it must not capture an ordinary
+	// one-parent successor after route labels are removed. The old comment stays
+	// as audit history while the new exact HEAD returns to full content REVIEW.
+	item := testPR(1443, headC)
+	item.HeadParents = []string{headB}
+	item = addComment(item, 30, syncIntent(headA, 10, 20, 25))
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if got.IntegrationOwner != nil || hasFinding(got, "base_sync_recovery") {
+		t.Fatalf("historical broken intent kept single-flight ownership: %+v", got)
+	}
+	if len(got.ContentReviewCandidates) != 1 || got.ContentReviewCandidates[0].Number != 1443 ||
+		got.ContentReviewCandidates[0].Head != headC || got.ContentReviewCandidates[0].Stage != "review" {
+		t.Fatalf("one-parent recovery head did not return to content review: %+v", got)
+	}
+}
+
 func TestHistoricalUnfinishedIntentDoesNotOverrideCurrentCompletedSync(t *testing.T) {
 	item := testPR(1323, headC, "ship", "reviewed")
 	item.HeadParents = []string{headB, headA}
