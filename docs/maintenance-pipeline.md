@@ -629,6 +629,11 @@ done; REVIEW доказывает exact
 последующих HEAD/base events. Это protocol-recovery reauthorization точного
 текущего HEAD. Следующий push его отменяет, а следующий base-sync начинает новую
 цепочку с `previous=none`.
+Если commit edge оказался до собственного intent, быстрый re-ship этот порядок
+не чинит. MERGE снимает старый `ship` и оставляет его снятым, REVIEW выполняет
+полный содержательный аудит текущего HEAD, и только после новой committed-пары
+человек снова ставит `ship`. Это новое обычное разрешение точного HEAD; malformed
+done никогда не используется как `previous`.
 Одновременно активен только один такой handoff. MERGE обновляет первый PR и
 останавливает весь запуск; REVIEW делает единственный интеграционный аудит этого
 PR и тоже останавливается; следующий MERGE сначала доводит владельца барьера до
@@ -741,16 +746,28 @@ SHA с удалённым HEAD до создания worktree и ещё раз �
   После `422` HEAD перечитывается: validation/rate-limit отказ при прежнем SHA не
   снимает `ship`, а изменившийся HEAD принимается только при полном доказательстве
   этой транзакции.
-- `DIRTY` → результат `git merge origin/main` разбирается по exit code и наличию
-  unmerged-файлов (`git diff --name-only --diff-filter=U`). Ненулевой код с
+- `DIRTY` → в уникальном detached worktree запуска сначала выполняется
+  `git merge --no-commit --no-ff origin/main`, а
+  результат разбирается по exit code, `git rev-parse -q --verify MERGE_HEAD` и
+  unmerged-файлам (`git diff --name-only --diff-filter=U`). Ненулевой код с
   unmerged-файлами — настоящий конфликт; неизменившийся HEAD сам по себе не
-  означает no-op, потому что при конфликте он остаётся прежним до commit.
+  означает no-op, потому что до commit он обязан оставаться прежним. Получившееся
+  дерево собирается и тестируется незакоммиченным; `git write-tree` закрепляет
+  exact проверенное дерево, которое затем обязан получить commit. Затем
+  публикуется и повторно проверяется
+  `pp:base-sync-intent`, и только после него создаётся merge-коммит с
+  `authoredDate`/`committedDate` строго позже server `intent.created_at`. Так
+  timeline всегда содержит переход в порядке
+  `intent → PullRequestCommit → done`. Перед intent текущий tip `main` обязан
+  совпасть с `MERGE_HEAD`, иначе дерево и тесты строятся заново. Перед push HTTP
+  `Date` GitHub обязан стать строго позже обеих дат commit, а до done два
+  стабильных GraphQL snapshot подтверждают порядок `intent → commit`.
   Механические конфликты (`docs/features.md`, `internal/i18n/locales/*.json`,
   `Plans/README.md`) разрешает сам, но пушит точным refspec и CAS-lease
   `git push --force-with-lease=refs/heads/<ветка-PR>:<проверенный SHA> origin HEAD:refs/heads/<ветка-PR>`,
-  сверяет новый PR HEAD через REST, публикует ту же пару
-  `pp:base-sync-intent`/`pp:base-sync-done` и сохраняет `ship`, возвращая новый
-  HEAD в интеграционное REVIEW;
+  сверяет новый PR HEAD через REST, дописывает `pp:base-sync-done` к уже
+  опубликованному intent и сохраняет `ship`, возвращая новый HEAD в
+  интеграционное REVIEW;
   содержательный конфликт не трогает — комментарий и эскалация.
 - Ждёт обязательные проверки: `build`, `lint`, `postgres-integration`, `vuln`,
   `smoke`, `e2e`, `test-windows`, `launcher-webview-build` — до 35 минут на PR.

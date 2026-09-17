@@ -1018,7 +1018,8 @@ func TestReviewCompletionIsRecoverableAndCannotConsumeNewerOverride(t *testing.T
 		"`updatedAt` имеет секундную точность",
 		"Epoch — edges **строго после** выбранного anchor",
 		"`H → deleted → restored H` не оживляет старый proof",
-		"Git author/committer dates\n   вообще не участвуют",
+		"Consumer не сравнивает Git author/committer dates напрямую и не переставляет ими GraphQL edges",
+		"Авторитетным для REVIEW остаётся только фактический edge order",
 		"`epoch-sha256` — SHA-256 ASCII/LF записи",
 		"same-second edit/delete earliest claim не воскрешает\n   stale sibling",
 		"Edit/delete в окне после последнего pre-POST gate",
@@ -1491,7 +1492,7 @@ func TestAutomaticBaseSyncCarriesHumanShipWithoutPingPong(t *testing.T) {
 		"<!-- pp:base-sync-done intent=<id> from=<40hex> to=<40hex> base=<40hex> previous=<done id|none> ship-event=<GraphQL node id> -->",
 		"самый ранний валидный intent",
 		"ровно двух родителей в порядке `[from, base]`",
-		"при `HEAD == from` повторяет CAS update",
+		"при `HEAD == from` повторяет тот же транспорт",
 		"метку `ship` **не снимай**",
 		"без второго клика человека",
 		"обычная stale-ship передача",
@@ -1564,6 +1565,56 @@ func TestMalformedProtocolCarryCanBeExplicitlyReauthorized(t *testing.T) {
 	)
 }
 
+type modeledProtocolRecovery struct {
+	intent, commit, done, freshShip int
+	exactHead, exactParents         bool
+	sourceProof, baseAncestor       bool
+}
+
+func protocolRecoveryReShipGate(state modeledProtocolRecovery) bool {
+	return state.exactHead && state.exactParents && state.sourceProof && state.baseAncestor &&
+		state.intent < state.commit && state.commit < state.done && state.done < state.freshShip
+}
+
+func TestCommitBeforeIntentRequiresFullReviewAndNewShip(t *testing.T) {
+	review := skill(t, "review-queue")
+	merge := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAllCompact(t, review,
+		"Если `PullRequestCommit(to)` расположен **до** своего intent, это не protocol-recovery",
+		"Consumer не сравнивает Git author/committer dates напрямую",
+		"GitHub может расположить сам `PullRequestCommit` по этим датам",
+		"MERGE обязан снять stale `ship` и оставить его снятым",
+		"обычное полное содержательное REVIEW",
+		"человек заново ставит `ship`",
+	)
+	requireAllCompact(t, merge,
+		"между intent и done нет требуемого перехода",
+		"оставь метку снятой",
+		"полный содержательный аудит точного текущего HEAD",
+		"Malformed done не становится `previous`",
+	)
+	requireAllCompact(t, docs,
+		"быстрый re-ship этот порядок не чинит",
+		"MERGE снимает старый `ship` и оставляет его снятым",
+		"только после новой committed-пары человек снова ставит `ship`",
+	)
+	requireAllCompact(t, repositoryFile(t, "CLAUDE.md"),
+		"Consumer не вправе подменять GraphQL edge order сравнением Git dates",
+		"producer base-sync обязан ставить author/committer dates между server-time intent и done",
+	)
+
+	valid := modeledProtocolRecovery{intent: 20, commit: 30, done: 40, freshShip: 50, exactHead: true, exactParents: true, sourceProof: true, baseAncestor: true}
+	if !protocolRecoveryReShipGate(valid) {
+		t.Fatal("ordered protocol recovery with fresh human ship must remain valid")
+	}
+	commitBeforeIntent := valid
+	commitBeforeIntent.commit = 10
+	if protocolRecoveryReShipGate(commitBeforeIntent) {
+		t.Fatal("commit before intent must never be accepted as protocol recovery")
+	}
+}
+
 func TestBaseTipComesFromAuthoritativeRefAndDriftIsVisible(t *testing.T) {
 	review := skill(t, "review-queue")
 	merge := skill(t, "merge-shepherd")
@@ -1600,8 +1651,8 @@ func TestFixAndMergeCheckoutExactlyReviewedHead(t *testing.T) {
 	requireAllCompact(t, merge,
 		"git fetch origin main:refs/remotes/origin/main",
 		"`git rev-parse FETCH_HEAD` равен сохранённому SHA",
-		"git worktree add -B pp-mrg-<N> ../pp-mrg-<N> <сохранённый SHA>",
-		"exit code 0 и HEAD не изменился — это настоящий no-op",
+		"git worktree add --detach ../pp-mrg-<N>-<uuid> <сохранённый SHA>",
+		"exit code 0, HEAD не изменился и `git rev-parse -q --verify MERGE_HEAD` неуспешен — это настоящий no-op",
 		"git diff --name-only --diff-filter=U",
 		"ненулевой exit code без unmerged-файлов — это ошибка команды, а не конфликт",
 		"Не классифицируй результат только по неизменившемуся HEAD",
@@ -1609,6 +1660,44 @@ func TestFixAndMergeCheckoutExactlyReviewedHead(t *testing.T) {
 		"Lease failure означает гонку",
 		"новый `.head.sha` равен локальному `git rev-parse HEAD`",
 	)
+}
+
+func TestDirtyMergePublishesIntentBeforeCreatingCommit(t *testing.T) {
+	merge := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAllCompact(t, merge,
+		"git merge --no-commit --no-ff origin/main",
+		"git rev-parse -q --verify MERGE_HEAD",
+		"уникальный абсолютный путь `../pp-mrg-<N>-<uuid>`",
+		"Merge-коммит на этом шаге создавать запрещено",
+		"Все обязательные сборки и тесты выполни в незакоммиченном состоянии merge",
+		"потребуй `git diff --quiet`",
+		"сохрани SHA подготовленного дерева из `git write-tree`",
+		"до публикации intent он обязан точно совпадать с `MERGE_HEAD`",
+		"Из ответа POST intent сохрани server `created_at`",
+		"`GIT_AUTHOR_DATE`, и `GIT_COMMITTER_DATE` равными `intent.created_at + 1 second`",
+		"его `%aI` и `%cI` строго позже `intent.created_at`",
+		"`HEAD^{tree}` обязан совпасть с сохранённым SHA подготовленного дерева",
+		"HTTP `Date` безопасного GitHub GET",
+		"server time не станет строго позже обоих `%aI`/`%cI`",
+		"`intent → единственный PullRequestCommit(to)`",
+	)
+	requireCompactInOrder(t, merge,
+		"git merge --no-commit --no-ff origin/main",
+		"создай (либо восстанови) и выбери самый ранний `pp:base-sync-intent`",
+		"Только после стабильной проверки intent создай merge-коммит",
+		"git push --force-with-lease=refs/heads/<ветка-PR>:<сохранённый SHA>",
+		"опубликуй `pp:base-sync-done`",
+	)
+	requireAllCompact(t, docs,
+		"git merge --no-commit --no-ff origin/main",
+		"уникальном detached worktree запуска",
+		"дерево собирается и тестируется незакоммиченным",
+		"`authoredDate`/`committedDate` строго позже server `intent.created_at`",
+		"`intent → PullRequestCommit → done`",
+		"HTTP `Date` GitHub обязан стать строго позже обеих дат commit",
+	)
+	rejectAll(t, merge, "там\n     `git merge origin/main`")
 }
 
 func TestFixRevalidatesForkIdentityBeforeEveryMutation(t *testing.T) {
