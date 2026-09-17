@@ -61,11 +61,7 @@ func CheckFormTablePartColumns(proj *project.Project) []Issue {
 	}
 	for _, p := range proj.Processors {
 		for _, form := range p.Forms {
-			name := form.Name
-			if name == "" {
-				name = "объекта"
-			}
-			label := "forms/" + strings.ToLower(p.Name) + "/" + name + ".form.yaml"
+			label := procFormFileLabel(p.Name, form)
 			report(label, p.Name, nil, form)
 		}
 	}
