@@ -53,10 +53,9 @@ type saveField struct {
 	// открывается всем ролям, которые про него не высказались. Полноту
 	// вложенных ключей сторожит TestSaveField_CoversAllRawKeys.
 	PII bool `yaml:"pii,omitempty"`
-	// Multiline — признак многострочного представления обычной строки. Редактор
-	// реквизитов его пока не показывает, поэтому ключ переносится из прежнего
-	// состояния файла вместе с required и pii.
-	Multiline bool `yaml:"multiline,omitempty"`
+	// nil сохраняет прежнее значение для старых клиентов; явный false снимает
+	// флажок в редакторе. Для нестрокового типа ключ удаляется при сохранении.
+	Multiline *bool `yaml:"multiline,omitempty"`
 }
 
 type saveTP struct {
@@ -331,6 +330,7 @@ type cfgField struct {
 	// FormItemReadOnly — реквизит показан в форме элемента, но только для
 	// просмотра (`item_form: [{name: X, readonly: true}]`, #1011).
 	FormItemReadOnly  bool
+	Multiline         bool
 	AllowInlineCreate *bool             // nil = дефолт контекста (true в шапке, false в ТЧ)
 	Titles            map[string]string // переводы синонима поля
 }

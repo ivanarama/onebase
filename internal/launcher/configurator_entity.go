@@ -510,12 +510,19 @@ func parseMapForm(r *http.Request, prefix string) map[string]string {
 	return out
 }
 
+// Маркер присутствия отличает снятый флажок от запроса старого редактора.
+func parseFieldMultiline(r *http.Request, prefix, typ string) *bool {
+	if typ != "string" || r.FormValue(prefix+".multiline_present") != "1" {
+		return nil
+	}
+	enabled := r.FormValue(prefix+".multiline") == "1"
+	return &enabled
+}
+
 // parseRegSection читает секцию полей регистра/плана счетов из формы. Существующие
-// строки приходят как <prefix>.<i>.{name,type,length,scale,ref} (обрыв на первом
-// пустом), добавленные кнопкой «+ Добавить» — как new_<prefix>.<idx>.* (пропуск
-// пустых, индексы из глобального счётчика). Тип числа кодируется number(L,P) через
-// numberTypeWithSpec; reference/enum → typ:ref — как в редакторе реквизитов
-// сущности. Раньше точность и добавленные строки терялись.
+// строки приходят как <prefix>.<i>.{name,type,length,scale,ref}, добавленные
+// кнопкой «+ Добавить» — как new_<prefix>.<idx>.* (пустые пропускаются).
+// Тип числа кодируется number(L,P); reference/enum — typ:ref.
 func parseRegSection(r *http.Request, prefix string) []saveField {
 	var fields []saveField
 	add := func(keyBase string) {
@@ -531,6 +538,7 @@ func parseRegSection(r *http.Request, prefix string) []saveField {
 		typ = numberTypeWithSpec(typ, r.FormValue(keyBase+".length"), r.FormValue(keyBase+".scale"))
 		sf := saveField{Name: name, Type: typ}
 		sf.Titles = parseMapForm(r, keyBase+".titles")
+		sf.Multiline = parseFieldMultiline(r, keyBase, typ)
 		fields = append(fields, sf)
 	}
 	for _, i := range formRowIndices(r, prefix) {
@@ -654,6 +662,7 @@ func (h *handler) configuratorSaveFields(w http.ResponseWriter, r *http.Request)
 		typ = numberTypeWithSpec(typ, r.FormValue(fmt.Sprintf("field.%d.length", i)), r.FormValue(fmt.Sprintf("field.%d.scale", i)))
 		sf := saveField{Name: name, Type: typ}
 		sf.Titles = parseMapForm(r, fmt.Sprintf("field.%d.titles", i))
+		sf.Multiline = parseFieldMultiline(r, fmt.Sprintf("field.%d", i), typ)
 		// allow_inline_create — пишем только если значение отличается от дефолта
 		// контекста (true в шапке). Шаблон отрисовывает hidden inline_present=1
 		// только для ссылочных полей, поэтому маркер косвенно фильтрует тип.
@@ -688,7 +697,7 @@ func (h *handler) configuratorSaveFields(w http.ResponseWriter, r *http.Request)
 			typ = typ + ":" + ref
 		}
 		typ = numberTypeWithSpec(typ, r.FormValue(fmt.Sprintf("new_field.%d.length", i)), r.FormValue(fmt.Sprintf("new_field.%d.scale", i)))
-		fields = append(fields, saveField{Name: name, Type: typ, Titles: parseMapForm(r, fmt.Sprintf("new_field.%d.titles", i))})
+		fields = append(fields, saveField{Name: name, Type: typ, Titles: parseMapForm(r, fmt.Sprintf("new_field.%d.titles", i)), Multiline: parseFieldMultiline(r, fmt.Sprintf("new_field.%d", i), typ)})
 	}
 
 	var activity **saveActivity

@@ -870,7 +870,7 @@ func toCfgField(f metadata.Field) cfgField {
 	} else if f.EnumName != "" {
 		typ = "enum"
 	}
-	return cfgField{Name: f.Name, Type: typ, RefEntity: f.RefEntity, EnumName: f.EnumName, Length: f.Length, Scale: f.Scale, AllowInlineCreate: f.AllowInlineCreate, Titles: f.Titles}
+	return cfgField{Name: f.Name, Type: typ, RefEntity: f.RefEntity, EnumName: f.EnumName, Length: f.Length, Scale: f.Scale, AllowInlineCreate: f.AllowInlineCreate, Titles: f.Titles, Multiline: f.Multiline}
 }
 
 func readOSSources(dir string) (sources, postingSources, managerSources map[string]string) {

@@ -2,7 +2,14 @@ package launcher
 
 // ── Tree tab ──────────────────────────────────────────────────────────────────
 
-const cfgTabTree = `{{define "tab-tree"}}
+const cfgTabTree = `{{define "cfg-multiline-field"}}
+<input type="hidden" name="{{.Prefix}}.multiline_present" value="1">
+<label data-cfg-multiline{{if ne .Field.Type "string"}} hidden{{end}}>
+  <input type="checkbox" name="{{.Prefix}}.multiline" value="1"{{if .Field.Multiline}} checked{{end}}{{if ne .Field.Type "string"}} disabled{{end}}>
+  {{t .Lang "Многострочный текст"}}
+</label>
+{{end}}
+{{define "tab-tree"}}
 <div class="cfg-split">
 
 {{/* ── Left panel ── */}}
@@ -342,13 +349,13 @@ const cfgTabTree = `{{define "tab-tree"}}
     {{$allEnums := $.AllEnumNames}}
     {{if .Dimensions}}
     <details open><summary class="section-hd" style="cursor:pointer">{{t $.Lang "Измерения"}} ({{len .Dimensions}})</summary>
-    <table class="fields-tbl" id="ir-dim-{{.Name}}">
+    <table class="fields-tbl" id="ir-dim-{{.Name}}" data-cfg-multiline-fields="1">
     <tr><th>{{t $.Lang "Поле"}}</th><th>{{t $.Lang "Тип"}}</th><th style="min-width:150px">{{t $.Lang "Объект"}}</th><th style="width:44px"></th></tr>
     {{range $i, $f := .Dimensions}}
     <tr>
       <td><input type="hidden" name="dim.{{$i}}.name" value="{{$f.Name}}">{{$f.Name}}</td>
       <td>
-        <select name="dim.{{$i}}.type" onchange="cfgToggleRef(this,'irdr-{{$ir.Name}}-{{$i}}');cfgToggleNum(this,'irdn-{{$ir.Name}}-{{$i}}')">
+        <select name="dim.{{$i}}.type" onchange="cfgToggleRef(this,'irdr-{{$ir.Name}}-{{$i}}');cfgToggleNum(this,'irdn-{{$ir.Name}}-{{$i}}');cfgToggleMultiline(this)">
           {{with unlistedFieldType "register" $f}}<option value="{{.}}" selected>{{.}}</option>{{end}}
           <option value="string"    {{if eq $f.Type "string"}}selected{{end}}>{{t $.Lang "строка"}}</option>
           <option value="number"    {{if eq $f.Type "number"}}selected{{end}}>{{t $.Lang "число"}}</option>
@@ -361,6 +368,7 @@ const cfgTabTree = `{{define "tab-tree"}}
           <input type="number" min="1" name="dim.{{$i}}.length" value="{{if $f.Length}}{{$f.Length}}{{end}}" placeholder="дл" style="width:46px;padding:2px 3px;border:1px solid #ccd0d8;border-radius:3px;font-size:11px">
           , <input type="number" min="0" name="dim.{{$i}}.scale" value="{{if $f.Length}}{{$f.Scale}}{{end}}" placeholder="точн" style="width:46px;padding:2px 3px;border:1px solid #ccd0d8;border-radius:3px;font-size:11px">
         </span>
+        {{template "cfg-multiline-field" (dict "Lang" $.Lang "Prefix" (printf "dim.%d" $i) "Field" $f)}}
       </td>
       <td>
         <select name="dim.{{$i}}.ref" id="irdr-{{$ir.Name}}-{{$i}}"{{if and (ne $f.Type "reference") (ne $f.Type "enum")}} style="display:none"{{end}}>
@@ -382,13 +390,13 @@ const cfgTabTree = `{{define "tab-tree"}}
     {{end}}
     {{if .Resources}}
     <details open><summary class="section-hd" style="cursor:pointer;margin-top:8px">{{t $.Lang "Ресурсы"}} ({{len .Resources}})</summary>
-    <table class="fields-tbl" id="ir-res-{{.Name}}">
+    <table class="fields-tbl" id="ir-res-{{.Name}}" data-cfg-multiline-fields="1">
     <tr><th>{{t $.Lang "Поле"}}</th><th>{{t $.Lang "Тип"}}</th><th style="min-width:150px">{{t $.Lang "Объект"}}</th><th style="width:44px"></th></tr>
     {{range $i, $f := .Resources}}
     <tr>
       <td><input type="hidden" name="res.{{$i}}.name" value="{{$f.Name}}">{{$f.Name}}</td>
       <td>
-        <select name="res.{{$i}}.type" onchange="cfgToggleRef(this,'irrr-{{$ir.Name}}-{{$i}}');cfgToggleNum(this,'irrn-{{$ir.Name}}-{{$i}}')">
+        <select name="res.{{$i}}.type" onchange="cfgToggleRef(this,'irrr-{{$ir.Name}}-{{$i}}');cfgToggleNum(this,'irrn-{{$ir.Name}}-{{$i}}');cfgToggleMultiline(this)">
           {{with unlistedFieldType "register" $f}}<option value="{{.}}" selected>{{.}}</option>{{end}}
           <option value="string"    {{if eq $f.Type "string"}}selected{{end}}>{{t $.Lang "строка"}}</option>
           <option value="number"    {{if eq $f.Type "number"}}selected{{end}}>{{t $.Lang "число"}}</option>
@@ -401,6 +409,7 @@ const cfgTabTree = `{{define "tab-tree"}}
           <input type="number" min="1" name="res.{{$i}}.length" value="{{if $f.Length}}{{$f.Length}}{{end}}" placeholder="дл" style="width:46px;padding:2px 3px;border:1px solid #ccd0d8;border-radius:3px;font-size:11px">
           , <input type="number" min="0" name="res.{{$i}}.scale" value="{{if $f.Length}}{{$f.Scale}}{{end}}" placeholder="точн" style="width:46px;padding:2px 3px;border:1px solid #ccd0d8;border-radius:3px;font-size:11px">
         </span>
+        {{template "cfg-multiline-field" (dict "Lang" $.Lang "Prefix" (printf "res.%d" $i) "Field" $f)}}
       </td>
       <td>
         <select name="res.{{$i}}.ref" id="irrr-{{$ir.Name}}-{{$i}}"{{if and (ne $f.Type "reference") (ne $f.Type "enum")}} style="display:none"{{end}}>
@@ -1598,13 +1607,13 @@ const cfgTabTree = `{{define "tab-tree"}}
 
 {{if $e.Fields}}
 <details open><summary class="section-hd" style="cursor:pointer">{{t $.Lang "Реквизиты"}} ({{len $e.Fields}})</summary>
-<table class="fields-tbl" id="ft-{{$e.Name}}">
+<table class="fields-tbl" id="ft-{{$e.Name}}" data-cfg-multiline-fields="1">
 <tr><th>{{t $.Lang "Поле"}}</th><th>{{t $.Lang "Тип"}}</th><th style="min-width:150px">{{t $.Lang "Объект"}}</th><th title="{{t $.Lang "Кнопка «+ Создать» в picker'е для ссылочного поля. По умолчанию включена для шапки документа."}}">{{t $.Lang "+ в picker'е"}}</th><th style="width:44px"></th></tr>
 {{range $i, $f := $e.Fields}}
 <tr>
   <td><input type="hidden" name="field.{{$i}}.name" value="{{$f.Name}}">{{$f.Name}}</td>
   <td>
-    <select name="field.{{$i}}.type" onchange="cfgToggleRef(this,'cfr-{{$e.Name}}-f{{$i}}');cfgToggleNum(this,'cfn-{{$e.Name}}-f{{$i}}')">
+    <select name="field.{{$i}}.type" onchange="cfgToggleRef(this,'cfr-{{$e.Name}}-f{{$i}}');cfgToggleNum(this,'cfn-{{$e.Name}}-f{{$i}}');cfgToggleMultiline(this)">
       {{with unlistedFieldType "entity" $f}}<option value="{{.}}" selected>{{.}}</option>{{end}}
       <option value="string"    {{if eq $f.Type "string"}}selected{{end}}>{{t $.Lang "строка"}}</option>
       <option value="number"    {{if eq $f.Type "number"}}selected{{end}}>{{t $.Lang "число"}}</option>
@@ -1619,6 +1628,7 @@ const cfgTabTree = `{{define "tab-tree"}}
       <input type="number" min="1" name="field.{{$i}}.length" value="{{if $f.Length}}{{$f.Length}}{{end}}" placeholder="дл" style="width:46px;padding:2px 3px;border:1px solid #ccd0d8;border-radius:3px;font-size:11px">
       , <input type="number" min="0" name="field.{{$i}}.scale" value="{{if $f.Length}}{{$f.Scale}}{{end}}" placeholder="точн" style="width:46px;padding:2px 3px;border:1px solid #ccd0d8;border-radius:3px;font-size:11px">
     </span>
+    {{template "cfg-multiline-field" (dict "Lang" $lang "Prefix" (printf "field.%d" $i) "Field" $f)}}
   </td>
   <td>
     <select name="field.{{$i}}.ref" id="cfr-{{$e.Name}}-f{{$i}}"{{if and (ne $f.Type "reference") (ne $f.Type "enum")}} style="display:none"{{end}}>
