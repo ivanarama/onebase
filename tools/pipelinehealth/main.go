@@ -27,10 +27,16 @@ import (
 var (
 	completionLine    = regexp.MustCompile(`(?m)^<!-- pp:head-reviewed ([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
 	claimLine         = regexp.MustCompile(`(?m)^<!-- pp:review-claim ([0-9a-f]{40}) review-comment=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
+	reviewedSHALine   = regexp.MustCompile(`(?m)^Reviewed-SHA: ([0-9a-f]{40})$`)
+	reviewMarkerLine  = regexp.MustCompile(`(?m)^<!-- pp:review pp:tail=[0-9]+ -->$`)
 	reviewAgain       = regexp.MustCompile(`(?m)^pp:review-again$`)
 	displayRepair     = regexp.MustCompile(`(?m)^<!-- pp:display-repair comment=([0-9]+) -->$`)
 	baseSyncIntent    = regexp.MustCompile(`(?m)^<!-- pp:base-sync-intent from=([0-9a-f]{40}) base=([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) completion=([0-9]+) ship-event=([A-Za-z0-9_=-]+) previous=([0-9]+|none) -->$`)
 	baseSyncDone      = regexp.MustCompile(`(?m)^<!-- pp:base-sync-done intent=([0-9]+) from=([0-9a-f]{40}) to=([0-9a-f]{40}) base=([0-9a-f]{40}) previous=([0-9]+|none) ship-event=([A-Za-z0-9_=-]+) -->$`)
+	preReviewIntent   = regexp.MustCompile(`(?m)^<!-- pp:pre-review-sync-intent from=([0-9a-f]{40}) base=([0-9a-f]{40}) identity-sha256=([0-9a-f]{64}) -->$`)
+	preReviewDone     = regexp.MustCompile(`(?m)^<!-- pp:pre-review-sync-done intent=([0-9]+) from=([0-9a-f]{40}) to=([0-9a-f]{40}) base=([0-9a-f]{40}) identity-sha256=([0-9a-f]{64}) -->$`)
+	preReviewBlocked  = regexp.MustCompile(`(?m)^<!-- pp:pre-review-sync-recovery-blocked intent=([0-9]+) head=([0-9a-f]{40}) reason=(?:post-intent-event|push-denied) -->$`)
+	preReviewResume   = regexp.MustCompile(`(?m)^<!-- pp:pre-review-sync-resume intent=([0-9]+) head=([0-9a-f]{40}) -->$`)
 	triageRouteClaim  = regexp.MustCompile(`(?m)^<!-- pp:triage-route-claim fingerprint-sha256=([0-9a-f]{64}) owner=[0-9a-fA-F-]{36} -->$`)
 	triageRouteRecord = regexp.MustCompile(`(?m)(^pp-triage-route-v1\nissue=([0-9]+)\nissue-updated=[^\n]+\ntitle-sha256=[0-9a-f]{64}\nbody-sha256=[0-9a-f]{64}\nanalysis-sha256=[0-9a-f]{64}\ncomments-sha256=[0-9a-f]{64}\nlabels-sha256=[0-9a-f]{64}\nevents-watermark=(?:[0-9]+|none)\nclass=(?:bug|enhancement|question|documentation)\nroute=(ready-fix|needs-decision)\nmanual=(?:true|false)\nreply=(required|none)\n)`)
 	triageRouteLabels = regexp.MustCompile(`(?m)^<!-- pp:triage-route-labels claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) .+ -->$`)
@@ -64,18 +70,36 @@ type apiPull struct {
 	State     string `json:"state"`
 	Draft     bool   `json:"draft"`
 	Head      struct {
-		SHA string `json:"sha"`
+		SHA  string `json:"sha"`
+		Ref  string `json:"ref"`
+		Repo *struct {
+			FullName string `json:"full_name"`
+		} `json:"repo"`
 	} `json:"head"`
 	Base struct {
 		Ref string `json:"ref"`
+		OID string `json:"oid,omitempty"`
 	} `json:"base"`
-	Labels   []apiLabel   `json:"labels"`
-	Comments []apiComment `json:"-"`
+	MaintainerCanModify bool              `json:"maintainer_can_modify"`
+	Mergeable           string            `json:"mergeable,omitempty"`
+	MergeStateStatus    string            `json:"merge_state_status,omitempty"`
+	AdmissionKnown      bool              `json:"admission_known,omitempty"`
+	AdmissionError      string            `json:"admission_error,omitempty"`
+	ChecksTruncated     bool              `json:"checks_truncated,omitempty"`
+	CheckContexts       []apiCheckContext `json:"check_contexts,omitempty"`
+	Labels              []apiLabel        `json:"labels"`
+	Comments            []apiComment      `json:"-"`
 	// HeadParents holds the parent SHAs of the head commit. An automatic
 	// base-sync always leaves a merge commit; an ordinary FIX push leaves a
 	// single-parent commit. Without this the integration lane cannot be told
 	// apart from a normal review round.
 	HeadParents []string `json:"head_parents,omitempty"`
+}
+
+type apiCheckContext struct {
+	Name       string `json:"name"`
+	Status     string `json:"status,omitempty"`
+	Conclusion string `json:"conclusion,omitempty"`
 }
 
 type apiIssue struct {
@@ -92,16 +116,32 @@ type apiIssue struct {
 }
 
 type candidate struct {
-	Number         int    `json:"number"`
-	Title          string `json:"title"`
-	URL            string `json:"url"`
-	Head           string `json:"head"`
-	Depth          int    `json:"review_depth"`
-	Stage          string `json:"stage"`
-	Priority       int    `json:"priority"`
-	PrioritySource string `json:"priority_source"`
-	UpdatedAt      string `json:"updated_at"`
-	IntegrationAt  string `json:"-"`
+	Number                  int                      `json:"number"`
+	Title                   string                   `json:"title"`
+	URL                     string                   `json:"url"`
+	Head                    string                   `json:"head"`
+	Depth                   int                      `json:"review_depth"`
+	Stage                   string                   `json:"stage"`
+	Priority                int                      `json:"priority"`
+	PrioritySource          string                   `json:"priority_source"`
+	UpdatedAt               string                   `json:"updated_at"`
+	PreReviewSyncValidation *preReviewSyncValidation `json:"pre_review_sync,omitempty"`
+	IntegrationAt           string                   `json:"-"`
+}
+
+// preReviewSyncValidation is an immutable handoff descriptor, not proof by
+// itself. REVIEW must bind these REST hints to two stable full GraphQL
+// snapshots plus the exact commit parents, trailer and timestamps before it
+// starts the ordinary full content audit.
+type preReviewSyncValidation struct {
+	IntentCommentID int64  `json:"intent_comment_id"`
+	DoneCommentID   int64  `json:"done_comment_id"`
+	From            string `json:"from"`
+	To              string `json:"to"`
+	Base            string `json:"base"`
+	IdentitySHA256  string `json:"identity_sha256"`
+	IntentCreatedAt string `json:"intent_created_at"`
+	DoneCreatedAt   string `json:"done_created_at"`
 }
 
 type finding struct {
@@ -128,6 +168,8 @@ type report struct {
 	MergeExecutable         []candidate `json:"merge_executable"`
 	PlanCandidates          []candidate `json:"plan_candidates"`
 	FixCandidates           []candidate `json:"fix_candidates"`
+	PreReviewSyncCandidates []candidate `json:"pre_review_sync_candidates"`
+	PreReviewWaitingCI      []candidate `json:"pre_review_waiting_ci"`
 	HumanWaiting            []candidate `json:"human_waiting"`
 	Findings                []finding   `json:"findings"`
 }
@@ -136,6 +178,7 @@ func main() {
 	repo := flag.String("repo", "ivanarama/onebase", "GitHub repository")
 	owner := flag.String("owner", "ivanarama", "trusted pipeline account")
 	contract := flag.String("contract", ".claude/skills/review-queue/SKILL.md", "active REVIEW contract")
+	protection := flag.String("protection", ".github/branch-protection.json", "branch protection contract")
 	fixture := flag.String("prs", "", "read a JSON fixture instead of GitHub")
 	issueFixture := flag.String("issues", "", "read an issue JSON fixture instead of GitHub")
 	asJSON := flag.Bool("json", false, "print machine-readable JSON")
@@ -149,7 +192,11 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	result := analyze(prs, *owner)
+	requiredChecks, err := loadRequiredChecks(*protection)
+	if err != nil {
+		fail(err)
+	}
+	result := analyzeWithRequiredChecks(prs, *owner, *repo, requiredChecks)
 	analyzeIssues(&result, issues, prs, *owner)
 	checkContract(&result, *contract)
 	result.finish()
@@ -244,7 +291,204 @@ func loadPulls(repo, fixture string) ([]apiPull, error) {
 			return nil, err
 		}
 	}
+	if err := loadPullAdmission(gh, repo, prs); err != nil {
+		return nil, err
+	}
 	return prs, nil
+}
+
+type graphQLAdmissionResponse struct {
+	Data struct {
+		Repository map[string]json.RawMessage `json:"repository"`
+	} `json:"data"`
+	Errors []struct {
+		Message string `json:"message"`
+	} `json:"errors"`
+}
+
+type graphQLAdmissionPull struct {
+	Number           int    `json:"number"`
+	HeadRefOID       string `json:"headRefOid"`
+	BaseRefOID       string `json:"baseRefOid"`
+	Mergeable        string `json:"mergeable"`
+	MergeStateStatus string `json:"mergeStateStatus"`
+	Commits          struct {
+		Nodes []struct {
+			Commit struct {
+				OID               string `json:"oid"`
+				StatusCheckRollup *struct {
+					Contexts struct {
+						Nodes []struct {
+							TypeName   string `json:"__typename"`
+							Name       string `json:"name"`
+							Status     string `json:"status"`
+							Conclusion string `json:"conclusion"`
+							Context    string `json:"context"`
+							State      string `json:"state"`
+						} `json:"nodes"`
+						PageInfo struct {
+							HasNextPage bool `json:"hasNextPage"`
+						} `json:"pageInfo"`
+					} `json:"contexts"`
+				} `json:"statusCheckRollup"`
+			} `json:"commit"`
+		} `json:"nodes"`
+	} `json:"commits"`
+}
+
+// loadPullAdmission batches the two facts needed to break the conflict/CI
+// deadlock. The REST pull list already supplies the immutable head identity;
+// GraphQL adds mergeability and the exact-head status rollup without one API
+// request per PR. The data is only an election hint: the FIX substage repeats
+// the full identity, timeline, ref and CAS gates before mutating a branch.
+func loadPullAdmission(gh, repo string, prs []apiPull) error {
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return fmt.Errorf("invalid repository %q", repo)
+	}
+	indexes := make([]int, 0, len(prs))
+	for index := range prs {
+		labels := labelSet(prs[index].Labels)
+		if prs[index].State == "open" && prs[index].Base.Ref == "main" && !prs[index].Draft &&
+			!labels["hold"] && !labels["needs-decision"] && prs[index].Head.SHA != "" {
+			indexes = append(indexes, index)
+		}
+	}
+	const batchSize = 20
+	for start := 0; start < len(indexes); start += batchSize {
+		end := start + batchSize
+		if end > len(indexes) {
+			end = len(indexes)
+		}
+		batch := indexes[start:end]
+		var selection strings.Builder
+		aliases := make(map[string]int, len(batch))
+		for offset, index := range batch {
+			alias := fmt.Sprintf("pr%d", offset)
+			aliases[alias] = index
+			_, _ = fmt.Fprintf(&selection, `%s:pullRequest(number:%d){number headRefOid baseRefOid mergeable mergeStateStatus commits(last:1){nodes{commit{oid statusCheckRollup{contexts(first:100){nodes{__typename ... on CheckRun{name status conclusion} ... on StatusContext{context state}} pageInfo{hasNextPage}}}}}}}`,
+				alias, prs[index].Number)
+		}
+		query := `query($owner:String!,$name:String!){repository(owner:$owner,name:$name){` + selection.String() + `}}`
+		//nolint:gosec // The executable is trusted configuration and all arguments bypass a shell.
+		cmd := exec.Command(gh, "api", "graphql", "-f", "query="+query, "-F", "owner="+owner, "-F", "name="+name)
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("read pull admission batch: %w: %s", err, strings.TrimSpace(string(output)))
+		}
+		var response graphQLAdmissionResponse
+		if err := json.Unmarshal(output, &response); err != nil {
+			return fmt.Errorf("decode pull admission batch: %w", err)
+		}
+		if len(response.Errors) > 0 {
+			messages := make([]string, 0, len(response.Errors))
+			for _, item := range response.Errors {
+				messages = append(messages, item.Message)
+			}
+			return fmt.Errorf("pull admission GraphQL: %s", strings.Join(messages, "; "))
+		}
+		if response.Data.Repository == nil {
+			return fmt.Errorf("pull admission GraphQL returned no repository")
+		}
+		applyPullAdmissionBatch(prs, aliases, response.Data.Repository)
+	}
+	return nil
+}
+
+// applyPullAdmissionBatch quarantines a PR whose head changed or disappeared
+// between the paginated REST snapshot and this GraphQL batch. That expected
+// concurrent activity must not turn one contributor PR into a global outage of
+// every pipeline lane; the next health refresh will read it again from scratch.
+func applyPullAdmissionBatch(prs []apiPull, aliases map[string]int, repository map[string]json.RawMessage) {
+	for alias, index := range aliases {
+		raw, exists := repository[alias]
+		if !exists || string(raw) == "null" {
+			prs[index].AdmissionError = fmt.Sprintf("GraphQL snapshot no longer contains PR #%d", prs[index].Number)
+			continue
+		}
+		var observed graphQLAdmissionPull
+		if err := json.Unmarshal(raw, &observed); err != nil {
+			prs[index].AdmissionError = fmt.Sprintf("decode GraphQL admission: %v", err)
+			continue
+		}
+		if observed.Number != prs[index].Number || observed.HeadRefOID != prs[index].Head.SHA {
+			prs[index].AdmissionError = fmt.Sprintf("head changed during snapshot: REST=%s GraphQL=%s",
+				prs[index].Head.SHA, observed.HeadRefOID)
+			continue
+		}
+		if len(observed.Commits.Nodes) == 0 || observed.Commits.Nodes[0].Commit.OID != observed.HeadRefOID {
+			prs[index].AdmissionError = "status rollup is not bound to exact head"
+			continue
+		}
+		prs[index].AdmissionKnown = true
+		prs[index].Mergeable = observed.Mergeable
+		prs[index].MergeStateStatus = observed.MergeStateStatus
+		prs[index].Base.OID = observed.BaseRefOID
+		rollup := observed.Commits.Nodes[0].Commit.StatusCheckRollup
+		if rollup == nil {
+			continue
+		}
+		prs[index].ChecksTruncated = rollup.Contexts.PageInfo.HasNextPage
+		for _, context := range rollup.Contexts.Nodes {
+			switch context.TypeName {
+			case "CheckRun":
+				prs[index].CheckContexts = append(prs[index].CheckContexts, apiCheckContext{
+					Name: context.Name, Status: context.Status, Conclusion: context.Conclusion,
+				})
+			case "StatusContext":
+				prs[index].CheckContexts = append(prs[index].CheckContexts, apiCheckContext{
+					Name: context.Context, Status: context.State,
+				})
+			}
+		}
+	}
+}
+
+func loadRequiredChecks(path string) ([]string, error) {
+	resolved, err := findRepositoryFile(path)
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(resolved)
+	if err != nil {
+		return nil, err
+	}
+	var contract struct {
+		RequiredStatusChecks struct {
+			Contexts []string `json:"contexts"`
+		} `json:"required_status_checks"`
+	}
+	if err := json.Unmarshal(data, &contract); err != nil {
+		return nil, fmt.Errorf("decode branch protection: %w", err)
+	}
+	if len(contract.RequiredStatusChecks.Contexts) == 0 {
+		return nil, fmt.Errorf("branch protection has no required status contexts")
+	}
+	return contract.RequiredStatusChecks.Contexts, nil
+}
+
+func findRepositoryFile(path string) (string, error) {
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	directory, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		candidate := filepath.Join(directory, path)
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate, nil
+		} else if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			break
+		}
+		directory = parent
+	}
+	return "", fmt.Errorf("repository file %q not found", path)
 }
 
 func loadIssues(repo, fixture string, skipLive bool) ([]apiIssue, error) {
@@ -346,11 +590,18 @@ func ghJSONLines(gh string, destination any, args ...string) error {
 }
 
 func analyze(prs []apiPull, owner string) report {
+	return analyzeWithRequiredChecks(prs, owner, owner+"/onebase", []string{
+		"build", "lint", "postgres-integration", "vuln", "smoke", "e2e", "test-windows", "launcher-webview-build",
+	})
+}
+
+func analyzeWithRequiredChecks(prs []apiPull, owner, repository string, requiredChecks []string) report {
 	result := report{
-		State: "green", Scope: "fast REST snapshot; mutation gates remain GraphQL",
-		Scheduler: "two-lane-safety-priority-aging-depth-number", Checked: len(prs),
+		State: "green", Scope: "REST + batched GraphQL admission; mutation gates remain full GraphQL",
+		Scheduler: "three-lane-pre-review-safety-priority-aging-depth-number", Checked: len(prs),
 		ReviewCandidates: []candidate{}, ContentReviewCandidates: []candidate{},
 		ReviewBacklog: []candidate{}, ReviewedWaitingShip: []candidate{}, MergeCandidates: []candidate{}, MergeExecutable: []candidate{}, PlanCandidates: []candidate{}, FixCandidates: []candidate{},
+		PreReviewSyncCandidates: []candidate{}, PreReviewWaitingCI: []candidate{},
 		HumanWaiting: []candidate{}, Findings: []finding{},
 	}
 	now := time.Now().UTC()
@@ -370,6 +621,7 @@ func analyze(prs []apiPull, owner string) report {
 		item := candidate{Number: pr.Number, Title: pr.Title, URL: pr.HTMLURL, Head: pr.Head.SHA, Depth: depth, Stage: "review", Priority: priority, PrioritySource: prioritySource, UpdatedAt: pr.UpdatedAt}
 		currentCompletions, latestCompletion, latestOverride := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
 		carryDone, carryIntentOpen, baseAdvanced, protocolHistory, integrationAt := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA, pr.HeadParents)
+		prep := preReviewSyncRESTState(pr.Comments, owner, pr.Head.SHA, pr.HeadParents)
 		item.IntegrationAt = integrationAt
 		if baseAdvanced {
 			result.add("yellow", "base_sync_base_advanced", pr.Number,
@@ -392,8 +644,143 @@ func analyze(prs []apiPull, owner string) report {
 			result.add("yellow", "unfinished_review_transaction", pr.Number,
 				"на текущем HEAD есть claim без committed completion; нужен recovery")
 		}
+		hasReviewActivity := currentCompletions > 0 || latestOverride > latestCompletion ||
+			currentClaimCount(pr.Comments, owner, pr.Head.SHA) > 0 ||
+			hasReviewComment(pr.Comments, owner, pr.Head.SHA)
+		if prep.resumed {
+			hasReviewActivity = hasReviewActivityAfter(
+				pr.Comments, owner, pr.Head.SHA, prep.resumeCommentID, true,
+			)
+		}
 
 		if pr.Draft || labels["hold"] {
+			continue
+		}
+		if pr.AdmissionError != "" {
+			result.add("yellow", "pull_admission_stale", pr.Number,
+				"PR изменился между REST и GraphQL snapshot; только он отложен до следующего refresh: "+pr.AdmissionError)
+			continue
+		}
+		if prep.blocked && !labels["needs-decision"] {
+			item.Stage = "pre-review-sync-recovery"
+			result.PreReviewSyncCandidates = append(result.PreReviewSyncCandidates, item)
+			result.FixCandidates = append(result.FixCandidates, item)
+			result.add("yellow", "pre_review_sync_handoff_recovery", pr.Number,
+				"blocked marker уже видим, но needs-decision ещё не поставлена; FIX завершает только fail-safe handoff")
+			continue
+		}
+		if prep.malformed || prep.orphaned || prep.cycled || prep.blocked {
+			item.Stage = "human-decision"
+			result.HumanWaiting = append(result.HumanWaiting, item)
+			if prep.malformed {
+				result.add("red", "pre_review_sync_malformed", pr.Number,
+					"pp:pre-review-sync-done текущего HEAD не совпадает с earliest intent или exact parents; автоматическая работа запрещена")
+			} else if prep.orphaned {
+				result.add("yellow", "pre_review_sync_orphaned", pr.Number,
+					"после earliest open pp:pre-review-sync-intent появился посторонний HEAD; требуется решение человека")
+			} else if prep.cycled {
+				result.add("yellow", "pre_review_sync_cycle", pr.Number,
+					"current HEAD вернулся к from уже завершённого pre-review-sync hop; автоматический новый цикл запрещён")
+			} else {
+				result.add("yellow", "pre_review_sync_recovery_blocked", pr.Number,
+					"stable post-intent event передал recovery человеку; PR больше не исполняемый FIX target")
+			}
+			continue
+		}
+		if prep.intentOpen || (currentCompletions == 0 && prep.validation != nil) {
+			expectedIdentity := ""
+			if prep.validation != nil {
+				expectedIdentity = prep.validation.IdentitySHA256
+			}
+			if prep.intentOpen {
+				expectedIdentity = prep.openIdentity
+			}
+			if reason := preReviewIdentityBlocker(pr, repository, expectedIdentity); reason != "" {
+				item.Stage = "human-decision"
+				result.HumanWaiting = append(result.HumanWaiting, item)
+				result.add("yellow", "pre_review_sync_identity_changed", pr.Number, reason)
+				continue
+			}
+		}
+		if prep.validation != nil && currentCompletions > 0 &&
+			!hasCanonicalCompletionAfter(pr.Comments, owner, pr.Head.SHA, prep.validation.DoneCommentID) {
+			item.Stage = "human-decision"
+			result.HumanWaiting = append(result.HumanWaiting, item)
+			result.add("red", "pre_review_validation_out_of_order", pr.Number,
+				"review proof текущего pre-review-sync HEAD создан до matching done и не доказывает provenance-validation")
+			continue
+		}
+		if prep.intentOpen {
+			if (labels["needs-decision"] && !prep.resumed) || labels["changes-requested"] || hasReviewActivity {
+				item.Stage = "human-decision"
+				result.HumanWaiting = append(result.HumanWaiting, item)
+				result.add("yellow", "pre_review_sync_recovery_blocked", pr.Number,
+					"earliest open pre-review-sync intent пересечён blocking route или REVIEW event; автоматический recovery запрещён")
+				continue
+			}
+			item.Stage = "pre-review-sync-recovery"
+			result.PreReviewSyncCandidates = append(result.PreReviewSyncCandidates, item)
+			result.FixCandidates = append(result.FixCandidates, item)
+			result.add("yellow", "pre_review_sync_recovery", pr.Number,
+				"есть pp:pre-review-sync-intent без done; FIX должен восстановить exact транзакцию до новой работы")
+			continue
+		}
+		prepForCurrentBase := prep.validation != nil && prep.validation.Base == pr.Base.OID && pr.Base.OID != ""
+		newPrepEligible := !hasReviewActivity && !labels["changes-requested"] &&
+			preReviewSyncAdmission(pr, requiredChecks, prepForCurrentBase)
+		if prep.validation != nil && currentCompletions == 0 && !newPrepEligible {
+			if labels["needs-decision"] || labels["changes-requested"] || hasReviewActivity {
+				item.Stage = "human-decision"
+				result.HumanWaiting = append(result.HumanWaiting, item)
+				result.add("yellow", "pre_review_validation_blocked", pr.Number,
+					"completed pre-review-sync пересечён blocking route или незавершённой REVIEW-транзакцией; автоматическая validation запрещена")
+				continue
+			}
+			switch requiredChecksState(pr, requiredChecks) {
+			case checksPending:
+				item.Stage = "pre-review-ci-wait"
+				result.PreReviewWaitingCI = append(result.PreReviewWaitingCI, item)
+				if preReviewCINeedsAttention(pr, prep.validation, requiredChecks, now) {
+					attention := item
+					attention.Stage = "ci-needs-attention"
+					result.HumanWaiting = append(result.HumanWaiting, attention)
+					result.add("yellow", "pre_review_sync_ci_needs_attention", pr.Number,
+						"после pre-review-sync required CI не появился за 30 минут; проверь approval workflow для fork или GitHub Actions")
+				} else {
+					result.add("yellow", "pre_review_sync_waiting_ci", pr.Number,
+						"pre-review-sync завершён; обязательный CI exact HEAD ещё не сформирован или выполняется")
+				}
+				continue
+			case checksUnknown:
+				result.add("yellow", "pre_review_sync_ci_unknown", pr.Number,
+					"pre-review-sync завершён, но status rollup exact HEAD неполон; мутация запрещена")
+				continue
+			case checksReady, checksFailed:
+				item.Stage = "pre-review-validation"
+				item.PreReviewSyncValidation = prep.validation
+				result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
+				result.add("yellow", "pre_review_sync_waiting_review", pr.Number,
+					"pre-review-sync завершён; exact handoff должен пройти validation, затем полное содержательное REVIEW без carry")
+				continue
+			}
+		}
+		if newPrepEligible {
+			item.Stage = "pre-review-sync"
+			if reason := preReviewSourceBlocker(pr, repository); reason != "" {
+				item.Stage = "human-decision"
+				result.HumanWaiting = append(result.HumanWaiting, item)
+				result.add("yellow", "pre_review_sync_source_blocked", pr.Number, reason)
+				continue
+			}
+			result.PreReviewSyncCandidates = append(result.PreReviewSyncCandidates, item)
+			result.FixCandidates = append(result.FixCandidates, item)
+			result.add("yellow", "pre_review_sync_required", pr.Number,
+				"DIRTY/CONFLICTING HEAD не получил обязательный CI; FIX должен выполнить безопасный pre-review-sync")
+			continue
+		}
+		if !hasReviewActivity && !labels["changes-requested"] && preReviewAdmissionPending(pr, requiredChecks) {
+			result.add("yellow", "pre_review_sync_admission_pending", pr.Number,
+				"mergeability/status rollup exact HEAD ещё не дают стабильного решения; PR временно исключён из REVIEW и FIX")
 			continue
 		}
 		if labels["ship"] {
@@ -412,6 +799,14 @@ func analyze(prs []apiPull, owner string) report {
 				result.MergeCandidates = append(result.MergeCandidates, item)
 				result.add("yellow", "base_sync_waiting_merge", pr.Number,
 					"интеграционное REVIEW готово; барьер остаётся у PR до фактического merge")
+			case prep.validation != nil && currentCompletions > 0:
+				// A pre-review-sync merge is content preparation, not a MERGE-owned
+				// integration commit. Once the new HEAD has its own full review and
+				// a fresh ship decision it must use the ordinary merge lane even
+				// though its two-parent shape and older review depth resemble a
+				// legacy base-sync.
+				item.Stage = "merge"
+				result.MergeCandidates = append(result.MergeCandidates, item)
 			case currentCompletions > 0 && depth > currentCompletions && headIsBaseSyncMerge(pr):
 				item.Stage = "legacy-integration-merge-ready"
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
@@ -458,6 +853,7 @@ func analyze(prs []apiPull, owner string) report {
 		case labels["needs-decision"] && !overrideOpen:
 			result.HumanWaiting = append(result.HumanWaiting, item)
 		case labels["changes-requested"] && !overrideOpen:
+			item.Stage = "fix-review"
 			result.FixCandidates = append(result.FixCandidates, item)
 		case labels["reviewed"] && currentCompletions > 0 && !overrideOpen:
 			// Valid-looking current review is waiting for the human ship decision.
@@ -482,7 +878,9 @@ func analyze(prs []apiPull, owner string) report {
 	sortCandidates(result.ReviewedWaitingShip)
 	sortMergeCandidates(result.MergeCandidates)
 	sortMergeCandidates(result.MergeExecutable)
-	sortCandidates(result.FixCandidates)
+	sortFixCandidates(result.FixCandidates)
+	sortFixCandidates(result.PreReviewSyncCandidates)
+	sortCandidates(result.PreReviewWaitingCI)
 	sortCandidates(result.HumanWaiting)
 	return result
 }
@@ -577,7 +975,7 @@ func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner strin
 		}
 	}
 	sortCandidates(result.PlanCandidates)
-	sortCandidates(result.FixCandidates)
+	sortFixCandidates(result.FixCandidates)
 	sortCandidates(result.HumanWaiting)
 }
 
@@ -739,7 +1137,7 @@ func checkContract(result *report, path string) {
 	}
 	for _, required := range []string{
 		"Полный health-election выполняется один раз в `next review`",
-		"обычная цель обязана входить в `content_review_candidates`",
+		"обычная `stage=review` либо специальная `stage=pre-review-validation` цель",
 		"review_completion_gate=target-v1",
 		"номер/HEAD цели, open/base/draft,",
 		"routing labels, review-depth и стабильную server timeline/epoch",
@@ -765,6 +1163,24 @@ func checkContract(result *report, path string) {
 		!strings.Contains(string(mergeData), "single-flight-барьер") {
 		result.add("red", "unsafe_base_sync_contract", 0,
 			"активные REVIEW/MERGE contracts не гарантируют перенос ship и single-flight через доказанный base-sync")
+		return
+	}
+	fixData, err := readContract(filepath.Join(skillsRoot, "fix-approved", "SKILL.md"))
+	if err != nil ||
+		!strings.Contains(string(fixData), "pre_review_sync_candidates") ||
+		!strings.Contains(string(fixData), "git merge --no-commit --no-ff <exact base SHA>") ||
+		!strings.Contains(string(fixData), "PP-Pre-Review-Sync: intent=<id>") ||
+		!strings.Contains(string(fixData), "pp:pre-review-sync-recovery-blocked") ||
+		!strings.Contains(string(fixData), "Ни один") ||
+		!strings.Contains(string(fixData), "файл из head fork нельзя запускать") ||
+		!strings.Contains(text, "pre_review_sync_candidates") ||
+		!strings.Contains(text, "target.stage=pre-review-validation") ||
+		!strings.Contains(text, "объектом **ровно** из восьми полей") ||
+		!strings.Contains(text, "содержательное REVIEW") ||
+		!strings.Contains(string(mergeData), "никогда не становится integration owner MERGE") ||
+		!strings.Contains(string(mergeData), "последний trusted ship-transition строго после") {
+		result.add("red", "unsafe_pre_review_sync_contract", 0,
+			"FIX/REVIEW/MERGE contracts не разделяют безопасную подготовку конфликтующего PR и человеческое разрешение merge")
 		return
 	}
 	for _, name := range []string{"triage-issues", "plan-approved", "fix-approved", "review-queue", "merge-shepherd", "tail-issues"} {
@@ -832,9 +1248,9 @@ func (result *report) finish() {
 		owner = fmt.Sprintf("#%d(%s)", result.IntegrationOwner.Number, result.IntegrationOwner.Stage)
 	}
 	result.Summary = fmt.Sprintf(
-		"PR: %d; issues: %d; REVIEW исполняемо: %d (следующие %s); всего ждут REVIEW: %d; содержательное: %d; интеграционный владелец: %s; ждут ship: %d; MERGE исполняемо: %d; всего MERGE: %d; PLAN: %d; FIX: %d; человек: %d; сигналов: %d",
+		"PR: %d; issues: %d; REVIEW исполняемо: %d (следующие %s); всего ждут REVIEW: %d; содержательное: %d; pre-review-sync: %d; ждут CI после sync: %d; интеграционный владелец: %s; ждут ship: %d; MERGE исполняемо: %d; всего MERGE: %d; PLAN: %d; FIX: %d; человек: %d; сигналов: %d",
 		result.Checked, result.IssuesChecked, len(result.ReviewCandidates), next,
-		len(result.ReviewBacklog), len(result.ContentReviewCandidates), owner, len(result.ReviewedWaitingShip), len(result.MergeExecutable), len(result.MergeCandidates), len(result.PlanCandidates), len(result.FixCandidates),
+		len(result.ReviewBacklog), len(result.ContentReviewCandidates), len(result.PreReviewSyncCandidates), len(result.PreReviewWaitingCI), owner, len(result.ReviewedWaitingShip), len(result.MergeExecutable), len(result.MergeCandidates), len(result.PlanCandidates), len(result.FixCandidates),
 		len(result.HumanWaiting), len(result.Findings))
 }
 
@@ -852,7 +1268,15 @@ func needsHeadParents(pr apiPull) bool {
 	if pr.State != "open" || pr.Base.Ref != "main" || pr.Draft || pr.Head.SHA == "" {
 		return false
 	}
-	return labelSet(pr.Labels)["ship"]
+	if labelSet(pr.Labels)["ship"] {
+		return true
+	}
+	for _, comment := range pr.Comments {
+		if preReviewIntent.MatchString(comment.Body) || preReviewDone.MatchString(comment.Body) {
+			return true
+		}
+	}
+	return false
 }
 
 // headIsBaseSyncMerge reports whether the head commit has the shape every
@@ -926,6 +1350,363 @@ func currentClaimCount(comments []apiComment, owner, head string) int {
 		}
 	}
 	return count
+}
+
+func hasReviewComment(comments []apiComment, owner, head string) bool {
+	return hasReviewActivityAfter(comments, owner, head, 0, false)
+}
+
+func hasReviewActivityAfter(comments []apiComment, owner, head string, afterID int64, includeCompletions bool) bool {
+	for _, comment := range comments {
+		if !trustedUnedited(comment, owner) || comment.ID <= afterID {
+			continue
+		}
+		if reviewAgain.MatchString(comment.Body) {
+			return true
+		}
+		for _, match := range claimLine.FindAllStringSubmatch(comment.Body, -1) {
+			if match[1] == head {
+				return true
+			}
+		}
+		if includeCompletions {
+			for _, match := range completionLine.FindAllStringSubmatch(comment.Body, -1) {
+				if match[1] == head {
+					return true
+				}
+			}
+		}
+		if reviewMarkerLine.MatchString(comment.Body) {
+			for _, match := range reviewedSHALine.FindAllStringSubmatch(comment.Body, -1) {
+				if match[1] == head {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func hasCanonicalCompletionAfter(comments []apiComment, owner, head string, afterID int64) bool {
+	for _, comment := range comments {
+		if !trustedUnedited(comment, owner) || comment.ID <= afterID {
+			continue
+		}
+		for _, match := range completionLine.FindAllStringSubmatch(comment.Body, -1) {
+			if match[1] != head {
+				continue
+			}
+			reviewID, reviewErr := strconv.ParseInt(match[2], 10, 64)
+			claimID, claimErr := strconv.ParseInt(match[3], 10, 64)
+			if reviewErr == nil && claimErr == nil && reviewID > afterID && claimID > afterID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type preReviewIntentShape struct {
+	from, base, identity string
+}
+
+type preReviewSyncState struct {
+	intentOpen      bool
+	openIdentity    string
+	malformed       bool
+	orphaned        bool
+	cycled          bool
+	blocked         bool
+	resumed         bool
+	resumeCommentID int64
+	validation      *preReviewSyncValidation
+}
+
+type preReviewTransitionMarker struct {
+	commentID int64
+	head      string
+}
+
+// preReviewSyncRESTState is an operational election hint only. The FIX skill
+// reconstructs the full server-ordered timeline, exact identity, parents,
+// trailer and timestamps before it changes a branch or publishes done.
+func preReviewSyncRESTState(comments []apiComment, owner, head string, headParents []string) preReviewSyncState {
+	intents := map[int64]preReviewIntentShape{}
+	intentCreatedAt := map[int64]string{}
+	canonicalIntent := map[preReviewIntentShape]int64{}
+	canonicalOrder := make([]int64, 0)
+	doneIntents := map[int64]bool{}
+	blockedIntents := map[int64]preReviewTransitionMarker{}
+	resumedIntents := map[int64]preReviewTransitionMarker{}
+	state := preReviewSyncState{}
+	for _, comment := range comments {
+		if !trustedUnedited(comment, owner) {
+			continue
+		}
+		if match := preReviewIntent.FindStringSubmatch(comment.Body); match != nil {
+			if comment.ID <= 0 {
+				continue
+			}
+			intent := preReviewIntentShape{from: match[1], base: match[2], identity: match[3]}
+			intents[comment.ID] = intent
+			intentCreatedAt[comment.ID] = comment.CreatedAt
+			if _, exists := canonicalIntent[intent]; !exists {
+				canonicalIntent[intent] = comment.ID
+				canonicalOrder = append(canonicalOrder, comment.ID)
+			}
+		}
+		if match := preReviewBlocked.FindStringSubmatch(comment.Body); match != nil {
+			intentID, err := strconv.ParseInt(match[1], 10, 64)
+			if err == nil && intentID > 0 && comment.ID > intentID {
+				blockedIntents[intentID] = preReviewTransitionMarker{commentID: comment.ID, head: match[2]}
+			}
+		}
+		if match := preReviewResume.FindStringSubmatch(comment.Body); match != nil {
+			intentID, err := strconv.ParseInt(match[1], 10, 64)
+			if err == nil && intentID > 0 && comment.ID > intentID {
+				resumedIntents[intentID] = preReviewTransitionMarker{commentID: comment.ID, head: match[2]}
+			}
+		}
+	}
+	var currentIntentID int64
+	for _, comment := range comments {
+		if !trustedUnedited(comment, owner) {
+			continue
+		}
+		if match := preReviewDone.FindStringSubmatch(comment.Body); match != nil {
+			intentID, err := strconv.ParseInt(match[1], 10, 64)
+			intent, ok := intents[intentID]
+			intentTime, intentTimeErr := time.Parse(time.RFC3339, intentCreatedAt[intentID])
+			doneTime, doneTimeErr := time.Parse(time.RFC3339, comment.CreatedAt)
+			if err != nil || !ok || intentID <= 0 || comment.ID <= 0 || intentID >= comment.ID || intent.from != match[2] ||
+				intent.base != match[4] || intent.identity != match[5] || canonicalIntent[intent] != intentID ||
+				intentTimeErr != nil || doneTimeErr != nil || !doneTime.After(intentTime) {
+				if match[3] == head {
+					state.malformed = true
+				}
+				continue
+			}
+			doneIntents[intentID] = true
+			if match[2] == head && match[3] != head {
+				state.cycled = true
+			}
+			if match[3] == head {
+				if len(headParents) != 2 || headParents[0] != match[2] || headParents[1] != match[4] ||
+					state.validation != nil && (state.validation.Base != match[4] || currentIntentID != intentID) {
+					state.malformed = true
+					continue
+				}
+				if state.validation == nil {
+					currentIntentID = intentID
+					state.validation = &preReviewSyncValidation{
+						IntentCommentID: intentID,
+						DoneCommentID:   comment.ID,
+						From:            match[2],
+						To:              match[3],
+						Base:            match[4],
+						IdentitySHA256:  match[5],
+						IntentCreatedAt: intentCreatedAt[intentID],
+						DoneCreatedAt:   comment.CreatedAt,
+					}
+				}
+			}
+		}
+	}
+	if state.validation != nil {
+		intent := intents[currentIntentID]
+		if resumedIntents[currentIntentID].commentID != 0 && blockedIntents[currentIntentID].commentID == 0 {
+			state.malformed = true
+		}
+		state.blocked, state.resumed = preReviewTransitionState(
+			intent, head, headParents, blockedIntents[currentIntentID], resumedIntents[currentIntentID],
+			state.validation.DoneCommentID,
+		)
+		if state.resumed {
+			state.resumeCommentID = resumedIntents[currentIntentID].commentID
+		}
+	}
+	for _, id := range canonicalOrder {
+		intent := intents[id]
+		if doneIntents[id] {
+			continue
+		}
+		state.intentOpen = true
+		state.openIdentity = intent.identity
+		if resumedIntents[id].commentID != 0 && blockedIntents[id].commentID == 0 {
+			state.malformed = true
+		}
+		blocked, resumed := preReviewTransitionState(
+			intent, head, headParents, blockedIntents[id], resumedIntents[id], 0,
+		)
+		state.blocked = state.blocked || blocked
+		state.resumed = resumed
+		if resumed {
+			state.resumeCommentID = resumedIntents[id].commentID
+		}
+		if state.validation != nil && intent.from == state.validation.From && intent.base == state.validation.Base {
+			state.malformed = true
+		}
+		state.orphaned = head != intent.from &&
+			(len(headParents) != 2 || headParents[0] != intent.from || headParents[1] != intent.base)
+		break
+	}
+	return state
+}
+
+// preReviewTransitionState keeps the durable human handoff authoritative over
+// a syntactically valid stale-worker done. A resume may name the original from
+// immediately before the expected commit, or the exact current [from, base]
+// merge after a crashed push. Full GraphQL provenance still proves the commit
+// edge and absence of other events.
+func preReviewTransitionState(intent preReviewIntentShape, head string, headParents []string,
+	blocked, resumed preReviewTransitionMarker, doneCommentID int64,
+) (isBlocked, isResumed bool) {
+	if blocked.commentID == 0 {
+		return false, false
+	}
+	if resumed.commentID <= blocked.commentID || doneCommentID > 0 && resumed.commentID >= doneCommentID {
+		return true, false
+	}
+	resumeMatches := resumed.head == head
+	if resumed.head == intent.from && len(headParents) == 2 &&
+		headParents[0] == intent.from && headParents[1] == intent.base {
+		resumeMatches = true
+	}
+	if !resumeMatches {
+		return true, false
+	}
+	return false, true
+}
+
+type checkState int
+
+const (
+	checksUnknown checkState = iota
+	checksPending
+	checksReady
+	checksFailed
+)
+
+func requiredChecksState(pr apiPull, required []string) checkState {
+	if !pr.AdmissionKnown || pr.ChecksTruncated || len(required) == 0 {
+		return checksUnknown
+	}
+	contexts := make(map[string][]apiCheckContext, len(pr.CheckContexts))
+	for _, context := range pr.CheckContexts {
+		contexts[context.Name] = append(contexts[context.Name], context)
+	}
+	pending := false
+	failed := false
+	for _, name := range required {
+		observed := contexts[name]
+		if len(observed) == 0 {
+			pending = true
+			continue
+		}
+		ready := false
+		contextPending := false
+		contextFailed := false
+		for _, context := range observed {
+			status := strings.ToUpper(context.Status)
+			conclusion := strings.ToUpper(context.Conclusion)
+			switch {
+			case status == "SUCCESS" || status == "COMPLETED" && conclusion == "SUCCESS":
+				ready = true
+			case status == "PENDING" || status == "EXPECTED" || status == "QUEUED" || status == "IN_PROGRESS" || status == "WAITING" || status == "REQUESTED":
+				contextPending = true
+			case status == "COMPLETED" && conclusion == "":
+				contextPending = true
+			default:
+				contextFailed = true
+			}
+		}
+		if contextPending {
+			pending = true
+		} else if ready {
+			continue
+		} else if contextFailed {
+			failed = true
+		}
+	}
+	if pending {
+		return checksPending
+	}
+	if failed {
+		return checksFailed
+	}
+	return checksReady
+}
+
+func requiredChecksPresent(pr apiPull, required []string) int {
+	set := make(map[string]bool, len(required))
+	for _, name := range required {
+		set[name] = true
+	}
+	present := map[string]bool{}
+	for _, context := range pr.CheckContexts {
+		if set[context.Name] {
+			present[context.Name] = true
+		}
+	}
+	return len(present)
+}
+
+func preReviewSyncAdmission(pr apiPull, required []string, doneForCurrentBase bool) bool {
+	return pr.AdmissionKnown && !pr.ChecksTruncated && !doneForCurrentBase &&
+		strings.EqualFold(pr.Mergeable, "CONFLICTING") &&
+		strings.EqualFold(pr.MergeStateStatus, "DIRTY") &&
+		requiredChecksPresent(pr, required) == 0
+}
+
+func preReviewAdmissionPending(pr apiPull, required []string) bool {
+	if !pr.AdmissionKnown || requiredChecksPresent(pr, required) != 0 {
+		return false
+	}
+	mergeableUnknown := pr.Mergeable == "" || strings.EqualFold(pr.Mergeable, "UNKNOWN")
+	mergeStateUnknown := pr.MergeStateStatus == "" || strings.EqualFold(pr.MergeStateStatus, "UNKNOWN")
+	conflictMismatch := strings.EqualFold(pr.Mergeable, "CONFLICTING") != strings.EqualFold(pr.MergeStateStatus, "DIRTY")
+	return pr.ChecksTruncated || mergeableUnknown || mergeStateUnknown || conflictMismatch
+}
+
+func preReviewCINeedsAttention(pr apiPull, validation *preReviewSyncValidation, required []string, now time.Time) bool {
+	if validation == nil || requiredChecksPresent(pr, required) >= len(required) {
+		return false
+	}
+	doneAt, err := time.Parse(time.RFC3339, validation.DoneCreatedAt)
+	return err == nil && now.Sub(doneAt) >= 30*time.Minute
+}
+
+func preReviewSourceBlocker(pr apiPull, repository string) string {
+	if pr.Head.Repo == nil || pr.Head.Repo.FullName == "" || pr.Head.Ref == "" {
+		return "head repository/ref отсутствует; безопасный pre-review-sync невозможен"
+	}
+	if !strings.EqualFold(pr.Head.Repo.FullName, repository) && !pr.MaintainerCanModify {
+		return "fork не разрешает maintainer edits; автор должен включить разрешение или синхронизировать ветку сам"
+	}
+	return ""
+}
+
+func preReviewIdentityBlocker(pr apiPull, repository, expected string) string {
+	if reason := preReviewSourceBlocker(pr, repository); reason != "" {
+		return reason
+	}
+	actual, ok := preReviewIdentitySHA(pr)
+	if !ok || actual != expected {
+		return "head repository/ref либо maintainer permission изменились после pre-review-sync intent; требуется решение человека"
+	}
+	return ""
+}
+
+func preReviewIdentitySHA(pr apiPull) (string, bool) {
+	if pr.Head.Repo == nil || pr.Head.Repo.FullName == "" || pr.Head.Ref == "" {
+		return "", false
+	}
+	record := "pp-pre-review-sync-identity-v1\n" +
+		"head-repository=" + pr.Head.Repo.FullName + "\n" +
+		"head-ref=" + pr.Head.Ref + "\n" +
+		"maintainer-can-modify=" + strconv.FormatBool(pr.MaintainerCanModify) + "\n"
+	sum := sha256.Sum256([]byte(record))
+	return fmt.Sprintf("%x", sum[:]), true
 }
 
 type baseSyncIntentShape struct {
@@ -1088,6 +1869,34 @@ func sortMergeCandidates(items []candidate) {
 		}
 		return items[i].Number < items[j].Number
 	})
+}
+
+func sortFixCandidates(items []candidate) {
+	sort.Slice(items, func(i, j int) bool {
+		left, right := fixStagePriority(items[i].Stage), fixStagePriority(items[j].Stage)
+		if left != right {
+			return left < right
+		}
+		if items[i].Priority != items[j].Priority {
+			return items[i].Priority < items[j].Priority
+		}
+		return items[i].Number < items[j].Number
+	})
+}
+
+func fixStagePriority(stage string) int {
+	switch stage {
+	case "pre-review-sync-recovery":
+		return 0
+	case "fix-review":
+		return 1
+	case "pre-review-sync":
+		return 2
+	case "fix-issue":
+		return 3
+	default:
+		return 4
+	}
 }
 
 func queuePriority(labels map[string]bool, createdAt string, now time.Time) (int, string) {

@@ -4,6 +4,7 @@
   "base_branch": "main",
   "sync_base_before_health": true,
   "review_completion_gate": "target-v1",
+  "fallback_handoff": "target-v1",
   "review_lease_seconds": 7200,
   "health_command": ["go", "run", "./tools/pipelinehealth", "-json"],
   "merge_method": "merge",

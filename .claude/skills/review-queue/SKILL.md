@@ -35,6 +35,16 @@ python -m promptpilot.project_pipeline --config pipelinectl.json next review
 Для `target.stage=review` выполняй полное содержательное ревью текущего HEAD.
 Для `integration-review` / `legacy-integration-review` не повторяй его: проверь
 только доказанную base-sync дельту, разрешение конфликтов и актуальные CI.
+`pre-review-sync` принадлежит FIX и никогда не исполняется REVIEW. Пока PR
+находится в `pre_review_sync_candidates` либо `pre_review_waiting_ci`, не
+подменяй его обычным аудитом. После валидного `pp:pre-review-sync-done` и
+завершения обязательного CI новый exact HEAD возвращается как content-only
+`target.stage=pre-review-validation` с exact объектом `target.pre_review_sync`.
+Этот stage никогда не является `integration_owner`: `pipelinectl` обязан выдать
+targeted `fallback`, а не fast-path `audit`. Полный протокол сначала доказывает
+provenance intent/done и commit, затем выполняет полное содержательное ревью
+всего текущего HEAD, а не integration-review. Прежние `ship`/review proof через
+такой merge не переносятся.
 
 ## Объём локальных проверок
 
@@ -78,7 +88,8 @@ python -m promptpilot.project_pipeline --config pipelinectl.json next review
 чужого интеграционного владельца или перестановка приоритетов не отменяют уже
 выполненный аудит; стопом остаётся только изменение собственного состояния
 цели. Полный health-election выполняется один раз в `next review`: в этот момент
-обычная цель обязана входить в `content_review_candidates`. При
+обычная `stage=review` либо специальная `stage=pre-review-validation` цель
+обязана входить в `content_review_candidates`. При
 `review_completion_gate=target-v1` последующий `complete review` не перечитывает
 чужую очередь, а заново доказывает только номер/HEAD цели, open/base/draft,
 routing labels, review-depth и стабильную server timeline/epoch. Передавай lease

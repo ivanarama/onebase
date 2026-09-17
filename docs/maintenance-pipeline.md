@@ -107,6 +107,8 @@ echo '{"labels":["ship"]}' | gh api -X POST repos/ivanarama/onebase/issues/1131/
           → исходная issue автоматически возвращается в FIX
           │
       фикс (авто, раз в 30 мин) → ветка, тесты, PR с «Fixes #N», на заявке in-work
+          │   конфликт с main до первого CI → FIX pre-review-sync
+          │   → механический merge без исполнения кода PR → дождаться CI
           ▼
       ревью (авто) → заключение в PR
           │
@@ -286,6 +288,124 @@ epoch-sha256=<64hex>`. Пока валидный trailer и
 Открытые PR для обычной доработки и восстановления handoff FIX получает одним
 пагинированным REST-списком, а не двумя `gh pr list` с лимитом по умолчанию:
 31-й припаркованный PR также обязан дойти до восстановления.
+
+Отдельная подстадия FIX `pre-review-sync` разрывает deadlock, когда новый либо
+post-FIX HEAD одновременно `DIRTY/CONFLICTING` и не имеет ни одного контекста
+обязательного CI: GitHub не запускает `pull_request` workflow для конфликтующей
+ветки, REVIEW остаётся read-only, а MERGE без `ship` ветку не трогает.
+`pipelinehealth` показывает такие PR отдельно в
+`pre_review_sync_candidates`; completed sync с ещё отсутствующим/pending CI —
+в `pre_review_waiting_ci`. Они не входят в исполняемый REVIEW. Порядок FIX:
+незавершённые FIX/pre-review recovery → `changes-requested` → новый
+pre-review-sync → новая issue.
+
+Admission требует `OPEN`, base `main`, не draft, без `hold`/
+`needs-decision`, без текущего review proof/orphan claim и незавершённого
+`PP-Fix-Transition`. Mergeability и status rollup exact HEAD читаются одним
+batched GraphQL snapshot: только `mergeable=CONFLICTING`,
+`mergeStateStatus=DIRTY` и ноль required contexts допускают новый sync. Для
+same-repository ветки используется `origin`; для fork — exact
+`https://github.com/<headRepository>.git` и только
+`maintainerCanModify == true`. Repository/ref/SHA/permission перечитываются до
+каждой мутации и передаются `git` отдельными аргументами.
+
+Код недоверенного PR при этом не исполняется с GitHub credentials: никаких
+build/test/generator/package scripts, hooks, submodule/LFS checkout или custom
+filter/merge drivers. Разрешаются только механические текстовые конфликты в
+`docs/features.md`, `internal/i18n/locales/*.json` и `Plans/README.md`.
+Для них обе Git-стороны обязаны быть regular blob `100644`, а путь и все предки
+в temporary worktree — не symlink/reparse/junction и после canonical resolve
+оставаться внутри worktree; проверка выполняется до первого чтения/записи.
+Конфликт в `.go`, `.os`, workflow, скрипте, build/test-файле либо необходимость
+совместить смысл двух реализаций получает `needs-decision` и человека.
+
+FIX сначала готовит `git merge --no-commit --no-ff <exact base>`: HEAD остаётся
+`from`, `MERGE_HEAD` равен base, а unmerged-файлов после механического решения
+нет. Только затем создаётся либо восстанавливается earliest immutable intent:
+
+```text
+<!-- pp:pre-review-sync-intent from=<H> base=<B> identity-sha256=<I> -->
+```
+
+Identity hash коммитит exact head repository/ref и maintainer permission.
+Новый intent обязан стать видимым после anchor исходного HEAD в двух
+последовательных одинаковых полных GraphQL snapshot до создания commit.
+Visibility barrier делает первую попытку сразу и до пяти повторов по 5 секунд с
+общим deadline 30 секунд. Recovery всегда переиспользует canonical earliest
+intent; второй поверх него не создаётся.
+
+Scheduling-only смена `queue:p0`…`queue:p3` не ломает recovery. Другой
+post-intent review/FIX/label/lifecycle event запрещает commit/push. После двух
+stable snapshot FIX публикует exact
+`pp:pre-review-sync-recovery-blocked ... reason=post-intent-event`, ставит
+`needs-decision`, а health переносит только этот PR в `human_waiting`; поэтому
+он не остаётся вечным priority-0 и не морит голодом остальную FIX-очередь.
+Blocked marker относится к intent, а не только к записанному в нём HEAD. Для
+возобновления человек пишет exact
+`pp:pre-review-sync-resume intent=<id> head=<current H>`; stable recovery
+использует его edge как новый anchor, снимает `needs-decision` и продолжает тот
+же intent. Новый event после resume снова паркует PR. Отмена — оставить
+`needs-decision`/`hold` либо закрыть PR; автоматика durable intent не забывает.
+Даже exact merge/done от запоздавшего worker не перекрывает unmatched blocked
+marker. Для допуска такого done нужен exact server-edge порядок
+`blocked < resume < commit < done`, когда resume фиксирует `from` перед
+ожидаемым merge. Если exact `[from, base]` HEAD уже доставлен после crash,
+resume фиксирует `to`, и порядок равен `blocked < resume < done`; в обоих
+случаях post-resume нарушение или новый blocked marker снова закрывает handoff.
+Resume после done не легализует работу задним числом.
+Стабильный Git-server отказ по permission/ruleset/protected source ref при всё
+ещё exact remote `from` использует второй закрытый reason
+`pp:pre-review-sync-recovery-blocked ... reason=push-denied` и тот же
+`needs-decision` handoff. Timeout, сеть, неясный ответ и lease race этим reason
+не маскируются.
+
+Merge commit получает parents строго `[from, base]`, trailer
+`PP-Pre-Review-Sync: intent=<id> from=<H> base=<B> identity-sha256=<I>` и
+author/committer timestamps в первый целый second строго позже server
+`intent.createdAt`. До CAS-push полный identity/timeline gate и visibility
+barrier повторяются. Push идёт в exact same-repo/fork ref через
+`--force-with-lease=refs/heads/<headRefName>:<from>`, затем bounded readback
+remote → REST → remote доказывает доставленный SHA. Parents, trailer и обе даты
+повторно проверяются через GitHub, после чего публикуется:
+
+```text
+<!-- pp:pre-review-sync-done intent=<id> from=<H> to=<T> base=<B> identity-sha256=<I> -->
+```
+
+До commit/push старый `ship` снимается: pre-review-sync не переносит ни
+человеческое разрешение, ни review proof и никогда не превращается в
+integration/base-sync carry. Done с failed либо готовыми required checks
+возвращает exact `to` одновременно в `content_review_candidates` и исполнимый
+`review_candidates` как content-only `stage=pre-review-validation`, никогда не
+как `integration_owner`. Target несёт подписанный объект `pre_review_sync`
+ровно из восьми полей: positive `intent_comment_id`/`done_comment_id`, lowercase
+40hex `from`/`to`/`base`, lowercase 64hex `identity_sha256` и RFC3339
+`intent_created_at`/`done_created_at`; `target.head == to`, intent строго раньше
+done. PromptPilot сохраняет весь объект в HMAC lease и на fresh gate требует
+точное равенство, после чего repository skill доказывает provenance и выполняет
+полное содержательное REVIEW всего diff с base. Fast-path audit и сокращённое
+integration-review для этого stage запрещены.
+
+Pending/отсутствующий CI ждёт без повторного sync. Если полный набор required
+contexts не появился за 30 минут после done, health добавляет
+`pre_review_sync_ci_needs_attention` и показывает PR человеку: для fork может
+требоваться approval запуска GitHub Actions. Если `main` позже ушёл вперёд и
+новый HEAD снова `DIRTY/CONFLICTING` без checks, допустим следующий hop уже от
+нового `from`; ancestry всегда растёт, поэтому цикл невозможен.
+Возврат ref ровно на `from` любого завершённого hop — явный rollback: health
+показывает `pre_review_sync_cycle` человеку и не ставит PR обратно в FIX.
+
+Crash до push восстанавливает тот же intent и exact base. Обычное продвижение
+`main` после durable intent старый hop не отменяет: FIX доказывает ancestry
+`intent.base → current main`, отсутствие force-push/base lifecycle events и
+сначала завершает exact старый base; новый tip станет отдельным следующим hop.
+Crash после push
+принимается только когда current HEAD имеет parents `[from, base]`, exact
+trailer, обе даты позже `intent.createdAt` и единственный commit edge после
+intent; тогда дописывается отсутствующий done. Любой другой HEAD, третий REST
+SHA, смена source identity либо semantic/executable conflict требует человека.
+Каждый terminal exit abort/remove делает только exact временный worktree;
+durable intent/done и уже отправленная remote-ветка cleanup не откатываются.
 
 FIX также просматривает сочетание `changes-requested` + `needs-decision`, но не
 работает по коду: он только завершает handoff с точным SHA-маркером. Машинный
@@ -1189,6 +1309,10 @@ OS-песочницей: локальный процесс с доступом �
 Integration-stage и полный fallback сохраняют повторный глобальный
 allowlist/owner gate перед мутацией: без общей durable lane lease ослаблять их
 нельзя.
+`fallback_handoff: "target-v1"` отдельно включает подписанную передачу exact
+target в полный repository skill. Без этого opt-in неизвестный специальный
+stage, включая `pre-review-validation`, обязан fail closed; чистая установка не
+может зависеть от локального override PromptPilot.
 На Windows preflight сначала ищет `gh` и `go` в `PATH`, затем проверяет
 стандартные `C:\Program Files\GitHub CLI\gh.exe` и
 `C:\Program Files\Go\bin\go.exe`. Путь к GitHub CLI передаётся через `GH_EXE`,
@@ -1204,6 +1328,16 @@ FIX-счётчик использует исполняемый предикат:
 горлышко. Проверка также
 показывает первые два PR в фактическом порядке
 `(priority, review-depth, number)`.
+Для provisional content PR тот же запуск пакетно читает GraphQL
+`mergeable`/`mergeStateStatus`, `baseRefOid` и status rollup точного HEAD. Поля
+`pre_review_sync_candidates` и `pre_review_waiting_ci` поэтому показывают
+отдельно устранимый conflict/CI deadlock и обычное ожидание checks, не раздувая
+исполняемый REVIEW и не запуская повторный merge.
+Завершённый sync после CI виден отдельным content-stage
+`pre-review-validation`; его lineage metadata проверяется до полного аудита, и
+он не занимает single-flight интеграционной полосы. Гонка одного PR между REST
+и GraphQL карантинит только этот PR до следующего refresh, а не останавливает
+все очереди.
 Проверка активного текста скилов входит в тот же запуск: если automation-копия
 снова окажется на старом контракте с сортировкой только по номеру либо без
 UTF-8 guard, состояние станет `red`. Это оперативный индикатор, а не замена

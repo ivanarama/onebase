@@ -66,9 +66,349 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 версия отвергла использованный флаг либо поле, остановись до следующей мутации и
 сообщи точную ошибку; не переключайся молча на непроверенный обход.
 
+## Pre-review sync конфликтующего PR
+
+Конфликтующий `DIRTY` PR не получает `pull_request` CI, поэтому обычный REVIEW
+не может завершить аудит, а MERGE не имеет права трогать его без `ship`. Этот
+deadlock разрывает отдельный substage `pre-review-sync`, владельцем которого
+является FIX. Это не содержательная доработка, не ревью и не разрешение на
+мерж: substage только механически подмешивает точный tip `main` в ещё не
+отревьюенный HEAD и возвращает новый HEAD в полное содержательное REVIEW.
+
+До выбора такой работы выполни `go run ./tools/pipelinehealth -json` из
+актуальной repository-owned копии. Поле `pre_review_sync_candidates` —
+исключительный allowlist: exact `number`, `head` и `stage` должны совпасть.
+`stage=pre-review-sync-recovery` старше обычной доработки;
+`stage=pre-review-sync` выполняется после recovery и `changes-requested`, но до
+новой issue. Нельзя подставить другой PR, если выбранный target протух.
+
+### Admission и разделение владельцев
+
+Новая транзакция допустима только при одновременном выполнении всех условий:
+
+- PR `OPEN`, target branch точно `main`, не draft, без `hold` и
+  `needs-decision`;
+- у текущего HEAD нет каноничного `pp:head-reviewed`, orphan review-comment,
+  `pp:review-claim`, непоглощённого `pp:review-again` или незавершённого
+  `PP-Fix-Transition`: активную REVIEW/FIX-транзакцию substage не перехватывает;
+- стабильный GraphQL snapshot возвращает одновременно
+  `mergeable=CONFLICTING` и `mergeStateStatus=DIRTY`, а status rollup точного
+  HEAD не содержит ни одного context из актуального списка обязательных
+  проверок `.github/branch-protection.json`;
+- нет завершённого `pp:pre-review-sync-done` текущего HEAD для того же
+  `baseRefOid`. После done отсутствующий либо pending CI означает только
+  ожидание: ветку повторно не синхронизируй. Новый hop разрешён, лишь когда tip
+  `main` уже другой и exact текущий HEAD снова `DIRTY/CONFLICTING` без checks;
+- head repository/ref существуют. Для `ivanarama/onebase` источник — `origin`;
+  для fork — точный `https://github.com/<headRepository>.git` и обязательный
+  `maintainerCanModify == true`. Repository-wide `permissions.push` это
+  разрешение конкретного PR не заменяет.
+
+REVIEW остаётся read-only и никогда не выполняет этот merge. MERGE по-прежнему
+обрабатывает только `ship`-PR и не считает pre-review-sync переносом прежнего
+review proof или `ship`.
+
+### Недоверенный код не исполняется
+
+GitHub token, SSH agent и сетевые credentials могут присутствовать только у
+процесса, который выполняет проверенные `gh`/`git` plumbing-команды. Ни один
+файл из head fork нельзя запускать, импортировать или загружать как
+конфигурацию: запрещены `go test`, `go build`, генераторы, package-manager
+scripts, repo-owned helpers, hooks и произвольные merge/filter drivers. Перед
+worktree проверь через `git show`/`git ls-tree` все tracked `.gitattributes`,
+`.gitmodules` и локальные `filter.*`/`merge.*.driver`; custom filter/driver,
+submodule-conflict или атрибут, который может вызвать внешнюю команду, требует
+человека. Worktree и commit создавай с trusted пустым `core.hooksPath`, без
+recursive submodule/LFS checkout.
+
+Allowlist пути не делает содержимое безопасным автоматически. **До checkout и
+до первого чтения/записи конфликта** проверь `git ls-tree` отдельно для exact
+`from` и `base`: каждый существующий разрешённый файл обязан быть обычным blob
+mode `100644`, каждый его предок — tree; mode `120000` (symlink), `160000`
+(gitlink), executable blob или другой mode запрещает automation. После создания
+worktree и непосредственно перед каждым разрешением проверь index stages через
+`git ls-files -s -- <path>`, затем no-follow свойства самого path и всех
+предков от exact temporary-worktree root: symlink, Windows reparse point или
+junction запрещены. Canonical resolved path обязан оставаться внутри этого
+проверенного root; не открывай файл даже для чтения до containment-проверки и
+повтори её после записи. Любое несоответствие — `needs-decision`, а не попытка
+«исправить» ссылку.
+
+Автоматически разрешимы только механические конфликты в данных/тексте:
+`docs/features.md`, `internal/i18n/locales/*.json` и `Plans/README.md`; для
+последнего обе стороны сохраняются и нумерация проверяется вручную. Конфликт в
+`.go`, `.os`, workflow, скрипте, build/toolchain-файле, тесте, исполняемом
+шаблоне либо любая ситуация, где надо совместить смысл двух реализаций, не
+решается. Опубликуй один комментарий с точной строкой
+`<!-- pp:pre-review-sync-needs-decision head=<HEAD> base=<base> identity-sha256=<hash> -->`,
+поставь и сверь `needs-decision`, удали temporary worktree и закончи
+`НУЖЕН ЧЕЛОВЕК`. Повторный запуск с уже существующим trusted unedited marker
+доводит только метку и не дублирует вопрос.
+
+### Immutable handoff
+
+Зафиксируй REST identity `headRepository`, `headRefName`, `headSha`,
+`maintainerCanModify`, а tip `main` прочитай через
+`repos/ivanarama/onebase/git/ref/heads/main`. Значения передавай `git` только
+отдельными аргументами; `eval`, `Invoke-Expression` и собранная из данных PR
+shell-строка запрещены. `identity-sha256` вычисляется из точной ASCII/LF записи
+с финальным LF (repository/ref — raw UTF-8, Git ref не допускает LF):
+
+```text
+pp-pre-review-sync-identity-v1
+head-repository=<exact full_name>
+head-ref=<exact ref>
+maintainer-can-modify=<true|false>
+```
+
+Получив exact remote SHA через `git ls-remote`, fetch exact head ref и exact
+base SHA. Создай detached temporary worktree из `from` и подготовь, но **не
+коммить**, merge командой:
+
+```text
+git merge --no-commit --no-ff <exact base SHA>
+```
+
+При clean preparation HEAD остаётся `from`, существует единственный
+`MERGE_HEAD == base`; после механического разрешения unmerged-файлов нет, HEAD
+всё ещё `from`, index содержит только ожидаемую merge-дельту. No-op без
+`MERGE_HEAD` не пушится. Ошибка команды без unmerged-файлов — `НЕ СМОГ`, а не
+«конфликт».
+
+Перед первой GitHub-мутацией и затем перед каждым comment/label/push заново
+получи два побайтово одинаковых полных server-ordered GraphQL timeline snapshot
+с `headRefOid`, `baseRefOid`, open/base/draft, всеми labels, commit/head/base
+lifecycle edges, `IssueComment.lastEditedAt` и `CommentDeletedEvent`.
+`labels.pageInfo.hasNextPage` и последняя timeline page обязаны быть false.
+HEAD/identity/admission/index должны совпадать, новый review/FIX event,
+edit/delete или lifecycle event закрывает gate. Scheduling-only transitions
+`queue:p0`…`queue:p3` разрешены, если это единственное изменение и exact target
+остаётся исполнимым; они не меняют код или полномочия. Любой другой новый label
+event закрывает branch-mutation gate.
+
+Для этих snapshot используй именно один канонический connection и exact набор
+`itemTypes` ниже; сокращённый `gh pr view`, REST order или выборочная страница
+не являются gate. Пройди `timelineItems` от `cursor=null` до
+`hasNextPage=false` два раза и сравни побайтово top-level поля, labels и каждый
+`(edge.cursor, __typename, все выбранные поля node)`. На каждой странице
+`labels.pageInfo.hasNextPage` и `statusCheckRollup.contexts.pageInfo.hasNextPage`
+обязаны быть false; единственный `commits(last:1)` node обязан иметь
+`commit.oid == headRefOid`. `mergeable`, `mergeStateStatus` и весь exact-head
+status rollup входят в побайтовое сравнение admission. `ClosedEvent`/
+`ReopenedEvent` и `ConvertToDraftEvent`/`ReadyForReviewEvent` не дают скрыть
+обратимый human stop текущими `OPEN`/`isDraft=false`: любой такой edge после
+intent закрывает branch mutation. REST `node_id` каждого
+используемого комментария обязан совпасть с GraphQL `IssueComment.id`, а
+decimal REST id — со строковым `fullDatabaseId`; порядок задают только edges,
+не числовое значение id.
+
+```graphql
+query($owner:String!,$name:String!,$number:Int!,$cursor:String){
+  repository(owner:$owner,name:$name){pullRequest(number:$number){
+    number headRefOid baseRefOid headRefName baseRefName state isDraft
+    maintainerCanModify headRepository{nameWithOwner} mergeable mergeStateStatus
+    labels(first:100){nodes{name} pageInfo{hasNextPage}}
+    commits(last:1){nodes{commit{oid statusCheckRollup{
+      contexts(first:100){
+        nodes{__typename
+          ... on CheckRun{name status conclusion}
+          ... on StatusContext{context state}
+        }
+        pageInfo{hasNextPage}
+      }
+    }}}}
+    timelineItems(first:100,after:$cursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,HEAD_REF_RESTORED_EVENT,BASE_REF_CHANGED_EVENT,BASE_REF_FORCE_PUSHED_EVENT,BASE_REF_DELETED_EVENT,CLOSED_EVENT,REOPENED_EVENT,CONVERT_TO_DRAFT_EVENT,READY_FOR_REVIEW_EVENT,MERGED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT]){
+      updatedAt pageInfo{hasNextPage endCursor}
+      edges{cursor node{__typename
+        ... on PullRequestCommit{id commit{oid authoredDate committedDate message}}
+        ... on HeadRefForcePushedEvent{id createdAt afterCommit{oid}}
+        ... on HeadRefDeletedEvent{id createdAt}
+        ... on HeadRefRestoredEvent{id createdAt}
+        ... on BaseRefChangedEvent{id createdAt previousRefName currentRefName}
+        ... on BaseRefForcePushedEvent{id createdAt beforeCommit{oid} afterCommit{oid}}
+        ... on BaseRefDeletedEvent{id createdAt baseRefName}
+        ... on ClosedEvent{id createdAt actor{login}}
+        ... on ReopenedEvent{id createdAt actor{login}}
+        ... on ConvertToDraftEvent{id createdAt actor{login}}
+        ... on ReadyForReviewEvent{id createdAt actor{login}}
+        ... on MergedEvent{id createdAt commit{oid}}
+        ... on IssueComment{id fullDatabaseId createdAt lastEditedAt author{login} body}
+        ... on CommentDeletedEvent{id createdAt}
+        ... on LabeledEvent{id createdAt actor{login} label{name}}
+        ... on UnlabeledEvent{id createdAt actor{login} label{name}}
+      }}
+    }
+  }}
+}
+```
+
+До публикации intent `baseRefOid` обязан совпадать с подготовленным `base`; если
+`main` успел сдвинуться, выбрось preparation и начни заново с нового tip. После
+видимого durable intent обычное продвижение `main` не отменяет recovery exact
+старого `base`: это единственное допустимое отличие admission snapshot. Докажи,
+что `intent.base` остаётся предком текущего authoritative `main`, а после intent
+нет `BaseRefForcePushedEvent`/смены или удаления base; prepared `MERGE_HEAD` и
+второй parent не заменяй новым tip молча. Заверши старый hop и done, а следующий
+hop при необходимости начнётся отдельно уже от нового HEAD. Не связанный
+ancestry или force-push требует человека.
+
+Каноничный intent — самый ранний trusted unedited комментарий для exact
+`from+base+identity`. Recovery переиспользует его `node_id`, `fullDatabaseId`,
+body и `createdAt`; второй intent не публикуй. Только при полном отсутствии
+такого open intent POST разрешён:
+
+```text
+<!-- pp:pre-review-sync-intent from=<H> base=<B> identity-sha256=<I> -->
+```
+
+Ответ REST create ещё не доказывает позицию. До commit/push visibility barrier
+должен получить два последовательных одинаковых полных GraphQL snapshot, где
+exact intent не редактирован, его edge строго после anchor `from`,
+`headRefOid == from`, identity и labels неизменны и после anchor нет другого
+HEAD/base lifecycle event. Первая попытка сразу, затем максимум пять повторов с
+паузой 5 секунд; общий deadline 30 секунд включает команды и ожидания. Невидимый
+intent/API timeout — восстановимый `НЕ СМОГ` без изменения ветки.
+
+Если на `from` уже был `ship`, он не переносится: после видимого intent сними и
+сверь его отсутствие до commit/push. Собственный подтверждённый
+`UnlabeledEvent(ship)` — ожидаемая фаза этой транзакции; любой более поздний
+`LabeledEvent(ship)` либо другой новый label event — ход человека и стоп, а не
+метка для автоматического удаления.
+
+Чтобы такой permanent stop не оставлял priority recovery вечным первым
+кандидатом, recovery выполняет отдельный fail-safe handoff. Двумя новыми
+одинаковыми полными GraphQL snapshot докажи exact earliest open intent,
+неизменный current HEAD/identity и конкретный post-intent event; branch commit
+или push при этом запрещены. Идемпотентно опубликуй trusted unedited marker:
+
+```text
+<!-- pp:pre-review-sync-recovery-blocked intent=<id> head=<H> reason=post-intent-event -->
+```
+
+Затем поставь и сверь `needs-decision`; если marker уже есть, доведи только
+метку. Crash между marker и label остаётся исполнимым
+`stage=pre-review-sync-recovery`, но разрешает только завершить этот handoff;
+после метки `pipelinehealth` переносит PR в `human_waiting` и больше не держит
+FIX-очередь. Перед marker и label каждый раз повтори этот отдельный stable
+handoff-gate; новый HEAD или ещё одно событие требуют нового snapshot, но не
+разрешают вернуться к branch mutation. После POST дождись двух snapshot, где
+exact marker видим, не редактирован, его edge следует после доказанного события
+и нет `CommentDeletedEvent`; только тогда меняй label. Marker блокирует сам
+canonical intent при любом последующем состоянии HEAD, которое этот intent мог
+описать, а `head=` остаётся audit-фактом момента handoff. После human resume и
+нового нарушения разрешён новый marker; без resume один и тот же unmatched
+handoff не дублируй.
+
+Возобновить именно этот intent может только явное решение человека — trusted
+unedited комментарий, который automation никогда не создаёт:
+
+```text
+<!-- pp:pre-review-sync-resume intent=<id> head=<current H> -->
+```
+
+Resume валиден, только если его server edge позже последнего unmatched blocked
+marker, comment не edit/delete и записанный `head` равен состоянию HEAD на этом
+edge. При recovery он равен current HEAD либо прежнему `from`, если после resume
+произошёл только ожидаемый exact `[from, base]` merge этого intent. Current HEAD
+сам обязан быть `from` либо этим exact merge. Два stable snapshot должны
+показать resume последним relevant event; его edge становится новым recovery
+anchor и явно поглощает более раннее нарушение, включая прежнюю REVIEW-
+активность. `changes-requested` resume не поглощает: человек обязан **сначала**
+снять эту содержательную route-метку и лишь затем опубликовать exact resume как
+последний relevant event. Тогда FIX снимает и сверяет
+`needs-decision` как собственную ожидаемую фазу и продолжает тот же earliest
+intent без создания нового. Exact commit `[from, base]` после resume — ожидаемая
+фаза; любой другой event после resume снова требует blocked handoff. Crash после
+этого commit, но до done восстанавливается с тем же resume, даже если в marker
+записан прежний `from`; полный GraphQL proof обязан показать единственный
+ожидаемый commit edge после resume. Чтобы отменить работу, человек оставляет
+`needs-decision`/`hold` либо закрывает PR; автоматика такой intent сама не
+забывает.
+
+`maintainerCanModify=true` не гарантирует, что fork ruleset или source-branch
+policy фактически разрешит push. Если после всех gate/CAS-проверок push получил
+явный стабильный отказ Git server именно по permission/ruleset/protected-ref,
+дважды прочитай remote ref и два полных snapshot: ref обязан всё ещё быть exact
+`from`, timeline/identity — неизменными. Тогда тот же fail-safe handoff использует
+закрытый reason:
+
+```text
+<!-- pp:pre-review-sync-recovery-blocked intent=<id> head=<H> reason=push-denied -->
+```
+
+Дальше marker/visibility/`needs-decision` выполняются точно как выше, и PR
+перестаёт занимать recovery priority. Network/DNS/TLS/timeout, потерянный ответ,
+неясный stderr, authentication outage, lease rejection или remote ref не равный
+`from` **не** являются `push-denied`: не маскируй неоднозначность handoff-маркером.
+
+Создай merge commit только после barrier. `GIT_AUTHOR_DATE` и
+`GIT_COMMITTER_DATE` установи в первый целый Unix-second, строго больший
+server `intent.createdAt`, и добавь точный trailer:
+
+```text
+PP-Pre-Review-Sync: intent=<id> from=<H> base=<B> identity-sha256=<I>
+```
+
+Локально докажи ровно два parent в порядке `[from, base]`, exact trailer и обе
+даты `> intent.createdAt`. Снова выполни полный gate/barrier, `git ls-remote`
+exact source ref должен всё ещё вернуть `from`, после чего отправь единственным
+CAS-push:
+
+```text
+git push --force-with-lease=refs/heads/<headRefName>:<from> \
+  <origin-or-exact-fork-URL> HEAD:refs/heads/<headRefName>
+```
+
+После успеха выполни readback remote → REST PR → remote, требуя везде exact
+отправленный SHA и неизменную identity/permission. Допустим только bounded REST
+lag со старым `from`: первая попытка сразу плюс максимум пять повторов по 5
+секунд, общий deadline 30 секунд. Третий REST SHA, любой remote SHA не равный
+отправленному или смена identity требуют человека; command/API timeout без
+противоречащего значения оставляет durable intent для recovery и даёт
+`НЕ СМОГ`. Затем через GitHub REST повторно докажи parents `[from, base]`, exact
+trailer и `authoredDate`/`committedDate > intent.createdAt`.
+
+Только после всех доказательств опубликуй exact done:
+
+```text
+<!-- pp:pre-review-sync-done intent=<id> from=<H> to=<T> base=<B> identity-sha256=<I> -->
+```
+
+Done не ставит `reviewed`, `changes-requested` или `ship` и не создаёт
+integration/base-sync carry. Exact `to` после завершения обязательного CI
+возвращается в content lane как `stage=pre-review-validation`, а не как обычный
+fast-path audit. Target содержит подписанный exact объект `pre_review_sync` из
+восьми полей: positive `intent_comment_id`/`done_comment_id`, lowercase
+`from`/`to`/`base`/`identity_sha256` и RFC3339
+`intent_created_at`/`done_created_at`; `head == to`, intent строго раньше done.
+REVIEW сначала доказывает весь handoff, затем выполняет полное содержательное
+ревью. Пока CI отсутствует или pending, конвейер не создаёт новый sync; если
+через 30 минут полный набор required contexts так и не появился, health
+эскалирует только наблюдаемость, не повторяя branch mutation.
+
+Recovery всегда выбирает earliest open intent. При `HEAD == from` он заново
+готовит exact `base` из intent (даже если authoritative `main` уже продвинулся
+по доказанной ancestry), создаёт commit после того же intent и делает тот же CAS.
+При `HEAD != from` допустим только exact двухродительский `[from, base]` HEAD с
+тем же trailer, identity, датами, единственным commit edge после intent и без
+чужих lifecycle events — тогда recovery публикует отсутствующий done. Любой
+другой HEAD требует человека. Более поздние concurrent intents — diagnostics и
+не переизбирают winner. Следующий hop может начаться только от уже нового HEAD
+после done и только для другого актуального `baseRefOid`; так цепочка строго
+движется по ancestry и не образует циклов. Current HEAD, равный `from` любого
+уже завершённого hop, доказывает rollback ref после durable done: не начинай
+новый sync, передай только этот PR человеку.
+
+С момента создания worktree действует cleanup-инвариант для каждого terminal
+exit: abort незавершённого merge, проверь exact path/branch через
+`git worktree list --porcelain`, удали только этот temporary worktree и его
+локальную ветку. Cleanup не откатывает remote push и не удаляет intent/done.
+
 ## Процедура
 
-1. **Сначала доработки.** Объедини два списка: PR с `changes-requested` и PR с
+1. **Сначала recovery и доработки.** До обычного списка восстанови валидную
+   незавершённую `PP-Fix-Transition` и earliest
+   `stage=pre-review-sync-recovery`. Объедини два списка: PR с `changes-requested` и PR с
    `needs-decision`; второй нужен только для восстановления явного human-handoff
    `pp:fix-decision <текущий SHA>`. Не используй два обрезанных по умолчанию
    `gh pr list`: получи **все** открытые PR пагинированным REST и локально
@@ -88,7 +428,8 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    принятое человеком решение о слиянии; FIX не должен пушить в эту ветку
    одновременно с MERGE, даже если старая `changes-requested` осталась. Есть
    кандидаты — сначала восстанови незавершённые handoff по правилам ниже, затем
-   возьми меньший обычный номер и иди в п. 8. Новую заявку в этом прогоне не бери.
+   возьми меньший обычный номер и иди в п. 8. Если доработок нет, выполни первый
+   `stage=pre-review-sync` из allowlist выше. Новую заявку в этом прогоне не бери.
 
    PR одновременно с `changes-requested` и `needs-decision` обычно припаркован,
    но может быть серединой транзакции. Получи текущий HEAD и все комментарии

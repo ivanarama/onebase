@@ -33,6 +33,17 @@ compare-and-merge он повторяет стабильный GraphQL snapshot,
 CI-гейты. Base-sync, carry, legacy re-ship, конфликт и recovery всегда уходят в
 полную процедуру.
 
+`pp:pre-review-sync-*` — handoff FIX → полное REVIEW, а не MERGE base-sync.
+Open intent принадлежит FIX/recovery; done не переносит старые `ship` или
+review proof. Завершённый handoff сначала имеет content-only
+`stage=pre-review-validation` с exact `pre_review_sync` и никогда не становится
+integration owner. MERGE может увидеть такой PR только после provenance-
+validation, нового полного каноничного content-review точного `to` и trusted
+`ship`, поставленного уже после anchor этого `to`. Claim, review-comment и
+completion этого content-review обязаны следовать после matching done и
+валидного blocked/resume lineage. Наличие старой метки само по себе не разрешает
+update/push/merge.
+
 До merge CLI публикует точный `pp:merge-cleanup-intent`. Если процесс оборвался
 после успешного merge, следующий запуск находит intent вне списка открытых PR и
 возвращает `action=cleanup`: проверяет серверный `MergedEvent`, снимает

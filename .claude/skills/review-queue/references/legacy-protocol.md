@@ -94,19 +94,22 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    `ИТОГ: НЕ СМОГ` без мутаций. Поле `review_candidates` — **исключительный
    allowlist для выбора новой цели**, а не подсказка: нельзя выбирать PR,
    которого в нём нет, или строить параллельный список только по
-   меткам/номерам. После выбора обычного `stage=review` сохрани номер, HEAD,
-   server epoch anchor/hash и стабильный GraphQL snapshot как lease этого
-   аудита. Перестановка других PR в очереди, новый приоритет или появление
-   single-flight-владельца сами по себе этот lease не отменяют.
+   меткам/номерам. После выбора обычного `stage=review` либо content-only
+   `stage=pre-review-validation` сохрани весь target, номер, HEAD, server epoch
+   anchor/hash и стабильный GraphQL snapshot как lease этого аудита. Для
+   special stage объект `pre_review_sync` сохраняется целиком и сравнивается
+   без нормализации. Перестановка других PR в очереди, новый приоритет или
+   появление single-flight-владельца сами по себе этот lease не отменяют.
 
    `single_flight_barrier` защищает только интеграционную полосу, а не всю
    очередь. Если первый элемент `review_candidates` имеет stage
    `integration-review` или `legacy-integration-review`, разрешена только
    короткая интеграционная проверка этого владельца и после неё запуск
    заканчивается. Если владелец из `integration_owner` уже ждёт MERGE/recovery,
-   обычное содержательное REVIEW не блокируется: бери до двух элементов stage
-   `review` из `review_candidates`. Следующий интеграционный PR при этом брать
-   нельзя.
+   обычное содержательное REVIEW не блокируется: бери до двух content-элементов
+   со stage `review` либо `pre-review-validation` из `review_candidates`.
+   Special stage не является integration owner. Следующий интеграционный PR при
+   этом брать нельзя.
 
    Если полный GraphQL gate не подтверждает интеграционного владельца, закончи
    запуск без мутаций с `НУЖЕН ЧЕЛОВЕК` или `НЕ СМОГ`; к обычной очереди в этом
@@ -115,21 +118,104 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    каждого выбранного PR повтори `pipelinehealth -json`. Для интеграционного аудита PR
    всё ещё обязан быть текущим `integration_owner` и входить в
    `review_candidates` с тем же integration-stage. Для обычного аудита он
-   обязан входить в `content_review_candidates` с `stage=review`; оставаться
-   первым или вообще присутствовать в сокращённом исполняемом
-   `review_candidates` не требуется. Во всех случаях заново докажи неизменность
-   именно выбранного PR: HEAD, open/base, отсутствие `hold`/`needs-decision`,
-   server epoch anchor/hash и полный стабильный timeline. Изменилось собственное
-   состояние цели — стоп без подстановки следующего PR. Изменились только чужие
-   PR, приоритеты, `main` или интеграционная полоса — закончи уже выполненный
-   содержательный аудит по сохранённому lease, затем новый запуск обслужит
-   свежий приоритет.
+   обязан входить в `content_review_candidates` с `stage=review`; special
+   handoff — с `stage=pre-review-validation` и побайтово тем же каноничным
+   `pre_review_sync`. Оставаться первым или вообще присутствовать в сокращённом
+   исполняемом `review_candidates` не требуется. Во всех случаях заново докажи
+   неизменность именно выбранного PR: HEAD, open/base, отсутствие
+   `hold`/`needs-decision`/`changes-requested`, server epoch anchor/hash и полный
+   стабильный timeline. Изменилось собственное состояние цели — стоп без
+   подстановки следующего PR. Изменились только чужие PR, приоритеты, `main` или
+   интеграционная полоса — закончи уже выполненный содержательный аудит по
+   сохранённому lease, затем новый запуск обслужит свежий приоритет.
 
    В обычном пути `pipelinectl next review` сам выполняет первоначальный полный
    health-election, а `complete review` с exact target-v1 lease повторяет только
    локальный гейт выбранного PR. Эти два пути не смешивай: попав сюда по
    `action=fallback`, сохрани глобальную перепроверку выше и не выдавай
    неподписанный base64 lease за полномочие.
+
+   `pre_review_sync_candidates` и `pre_review_waiting_ci` принадлежат FIX, а не
+   REVIEW. PR из первого поля нельзя подменить обычным аудитом: его
+   `DIRTY/CONFLICTING` HEAD ещё не получил обязательный CI. PR из второго поля
+   уже имеет завершённый mechanical sync, но точный новый HEAD только ждёт
+   обязательные checks. Оба списка исключаются из
+   `content_review_candidates`; ожидание CI не расходует слот REVIEW и не
+   создаёт повторный sync.
+
+   Завершённый handoff с failed либо готовыми required checks появляется
+   одновременно в `content_review_candidates` и, когда content lane исполнима,
+   в `review_candidates` как `stage=pre-review-validation`. Он категорически не
+   может быть `integration_owner` или `merge_executable`. Его
+   `pre_review_sync` обязан быть объектом **ровно** из восьми полей без
+   дополнительных ключей:
+
+   ```text
+   intent_comment_id=<positive int64>
+   done_comment_id=<positive int64>
+   from=<lowercase 40hex>
+   to=<lowercase 40hex>
+   base=<lowercase 40hex>
+   identity_sha256=<lowercase 64hex>
+   intent_created_at=<RFC3339>
+   done_created_at=<RFC3339>
+   ```
+
+   `target.head == pre_review_sync.to`, обе даты валидны и
+   `intent_created_at < done_created_at`. Missing/extra key, другой тип,
+   несовпадение exact target при fresh election или legacy PromptPilot без
+   поддержки stage — fail closed без аудита. Эти REST-поля лишь подписанный
+   locator: они не заменяют стабильный GraphQL proof ниже.
+
+   Handoff FIX → REVIEW задают только точные строки:
+
+   ```text
+   <!-- pp:pre-review-sync-intent from=<H> base=<B> identity-sha256=<I> -->
+   <!-- pp:pre-review-sync-done intent=<id> from=<H> to=<T> base=<B> identity-sha256=<I> -->
+   ```
+
+   Open earliest intent без matching done остаётся владением FIX/recovery;
+   REVIEW не комментирует PR и не меняет labels. Done учитывается только от
+   `ivanarama`, без edit/delete, после адресованного earliest intent той же
+   server epoch. Текущий `headRefOid` обязан равняться `to`, REST commit — иметь
+   ровно parents `[from, base]`, а message — exact trailer
+   `PP-Pre-Review-Sync: intent=<id> from=<H> base=<B> identity-sha256=<I>`.
+   Его `authoredDate` и `committedDate` строго позже
+   server `intent.createdAt`, между intent и `to` существует ровно один
+   `PullRequestCommit`, а HEAD/base lifecycle events отсутствуют. Все условия
+   докажи теми же двумя полными идентичными GraphQL snapshot. Malformed marker,
+   parents/trailer/date или чужой HEAD — `НУЖЕН ЧЕЛОВЕК`, а не обычный аудит.
+   Trusted `pp:pre-review-sync-recovery-blocked` для этого intent также
+   запрещает validation и не может быть перекрыт даже синтаксически правильным
+   done. Допустимо только точное более позднее, но предшествующее done
+   `pp:pre-review-sync-resume intent=<id> head=<H>` без нового blocked marker:
+   `H` равен `to` либо `from`, причём во втором случае единственный commit edge
+   `[from, base]` обязан следовать после resume. Для `H=from` server-edge порядок
+   обязан быть `blocked < resume < commit < done`; для `H=to` exact commit уже
+   существует и достаточно `blocked < resume < done`. В обоих вариантах никаких
+   иных post-resume events нет, а новый blocked после resume (в том числе после
+   done) снова закрывает handoff. Unmatched blocked/resume,
+   edit/delete или любое другое событие после resume — `НУЖЕН ЧЕЛОВЕК`.
+
+   Этот proof подтверждает только происхождение механического merge. Он **не**
+   является review proof, integration/base-sync carry или разрешением на merge.
+   Только после успешной provenance-validation exact `to` проходит в этом же
+   запуске обычное **полное содержательное REVIEW всего diff с base**, локальные
+   сборку/тесты и новую review epoch; сокращённая проверка одной merge-дельты
+   запрещена. Claim, review-comment и committed completion этой новой epoch
+   обязаны идти строго после matching done; proof, законченный между commit и
+   done, не мог проверить handoff и не допускается. Старый `ship`, поставленный
+   до `to`, не переносится; учитывать
+   можно только новый trusted ship-transition уже после anchor `to`. Красный
+   завершённый обязательный check не отправляет PR на повторный sync: REVIEW
+   диагностирует его как обычный CI failure.
+
+   Provenance, diff и все долгие сборка/тесты — read-only и выполняются **до**
+   mutation gate. Лишь когда заключение уже готово, непосредственно перед первой
+   comment/label mutation один раз выполни подписанный `gate-fallback`, затем
+   свежие два stable GraphQL snapshot exact target и без промежуточной долгой
+   работы начни штатную review transaction. Нельзя выполнить gate, потом долго
+   аудировать и публиковать результат по устаревшему окну.
 
 1. Первичный список получай целиком пагинированным REST — жёсткого cap быть не
    должно:

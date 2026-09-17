@@ -262,6 +262,29 @@ onebase describe --project <dir>                # вся структура ко
   перебить `needs-decision`. На PR это стоп по умолчанию: без точного handoff
   его снимает человек, но `pp:review-again` разрешает REVIEW снять парковку, а
   `pp:fix-decision <SHA>` возвращает PR в FIX crash-safe порядком.
+  Отдельный FIX-substage `pre-review-sync` разрывает исходный conflict/CI
+  deadlock: только ещё не отревьюенный `DIRTY/CONFLICTING` HEAD без required
+  check contexts механически получает exact `main`. Fork допускается лишь при
+  exact source identity и `maintainerCanModify`; код недоверенного PR с
+  credentials не исполняется, а semantic/executable conflict передаётся
+  человеку. Merge готовится через `--no-commit --no-ff`; earliest immutable
+  `pp:pre-review-sync-intent` обязан стать видимым после source HEAD anchor до
+  создания commit. Commit имеет parents `[from, base]`, trailer
+  `PP-Pre-Review-Sync`, обе даты позже server `intent.createdAt` и отправляется
+  exact CAS. `pp:pre-review-sync-done` не переносит `ship`/review proof. После
+  CI новый HEAD получает отдельный content-only
+  `stage=pre-review-validation` с подписанными exact intent/done/from/to/base/
+  identity/timestamps: он никогда не integration owner, принудительно проходит
+  stable provenance-validation и затем полное content REVIEW. Pending CI не
+  запускает sync повторно, а 30 минут без полного набора required contexts видны как
+  `ci_needs_attention`. Permanent post-intent event получает durable
+  `pp:pre-review-sync-recovery-blocked` + `needs-decision`, чтобы один PR не
+  удерживал FIX priority recovery бесконечно; только exact human
+  `pp:pre-review-sync-resume` после blocked marker создаёт новый recovery anchor.
+  Repository config обязан явно включать `fallback_handoff=target-v1`, иначе
+  PromptPilot fail closed на специальном stage; локальный override не считается
+  частью канонического конвейера.
+  REVIEW остаётся read-only, MERGE — ship-only.
   Для новой заявки FIX сохраняет issue-decision fingerprint: обязательную
   версию triage `id+updated_at+SHA-256(body)` плюс отдельный точный источник
   выбора (human comment / `decision:N` / `pp:recommend`). Он перевалидирует

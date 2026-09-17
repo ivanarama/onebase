@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -59,6 +60,50 @@ func withMergeHead(item apiPull) apiPull {
 	return item
 }
 
+func withAdmission(item apiPull, repository, ref, mergeable, mergeState, base string, maintainer bool, checks ...apiCheckContext) apiPull {
+	item.Head.Ref = ref
+	item.Head.Repo = &struct {
+		FullName string `json:"full_name"`
+	}{FullName: repository}
+	item.MaintainerCanModify = maintainer
+	item.AdmissionKnown = true
+	item.Mergeable = mergeable
+	item.MergeStateStatus = mergeState
+	item.Base.OID = base
+	item.CheckContexts = append(item.CheckContexts, checks...)
+	return item
+}
+
+func successfulRequiredChecks() []apiCheckContext {
+	names := []string{"build", "lint", "postgres-integration", "vuln", "smoke", "e2e", "test-windows", "launcher-webview-build"}
+	checks := make([]apiCheckContext, 0, len(names))
+	for _, name := range names {
+		checks = append(checks, apiCheckContext{Name: name, Status: "COMPLETED", Conclusion: "SUCCESS"})
+	}
+	return checks
+}
+
+func prepIntent(from, base string) string {
+	return prepIntentWithIdentity(from, base, testPreReviewIdentity("ivanarama/onebase", "feature/multiline", false))
+}
+
+func prepDone(intentID int64, from, to, base string) string {
+	return prepDoneWithIdentity(intentID, from, to, base, testPreReviewIdentity("ivanarama/onebase", "feature/multiline", false))
+}
+
+func prepIntentWithIdentity(from, base, identity string) string {
+	return fmt.Sprintf("<!-- pp:pre-review-sync-intent from=%s base=%s identity-sha256=%s -->", from, base, identity)
+}
+
+func prepDoneWithIdentity(intentID int64, from, to, base, identity string) string {
+	return fmt.Sprintf("<!-- pp:pre-review-sync-done intent=%d from=%s to=%s base=%s identity-sha256=%s -->", intentID, from, to, base, identity)
+}
+
+func testPreReviewIdentity(repository, ref string, maintainer bool) string {
+	record := fmt.Sprintf("pp-pre-review-sync-identity-v1\nhead-repository=%s\nhead-ref=%s\nmaintainer-can-modify=%t\n", repository, ref, maintainer)
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(record)))
+}
+
 func hasFinding(result report, code string) bool {
 	for _, item := range result.Findings {
 		if item.Code == code {
@@ -78,6 +123,744 @@ func TestFreshPRSortsBeforeOlderNumberWithReviewHistory(t *testing.T) {
 	}
 	if got.ReviewCandidates[0].Number != 99 || got.ReviewCandidates[0].Depth != 0 {
 		t.Fatalf("fresh PR was starved by an older number: %+v", got.ReviewCandidates)
+	}
+}
+
+func TestConflictingHeadWithoutRequiredChecksRoutesToPreReviewSync(t *testing.T) {
+	item := withAdmission(testPR(1394, headA), "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headB, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.PreReviewSyncCandidates) != 1 || got.PreReviewSyncCandidates[0].Number != 1394 ||
+		got.PreReviewSyncCandidates[0].Stage != "pre-review-sync" {
+		t.Fatalf("conflict did not enter pre-review sync: %+v", got)
+	}
+	if len(got.FixCandidates) != 1 || len(got.ContentReviewCandidates) != 0 || len(got.ReviewCandidates) != 0 {
+		t.Fatalf("deadlocked PR leaked to REVIEW or left FIX: %+v", got)
+	}
+}
+
+func TestPostFixConflictingHeadCanEnterPreReviewSync(t *testing.T) {
+	item := addComment(testPR(1553, headB), 20, completion(headA, 10, 15))
+	item = withAdmission(item, "ivanarama/onebase", "fix/1553", "CONFLICTING", "DIRTY", headC, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.PreReviewSyncCandidates) != 1 || got.PreReviewSyncCandidates[0].Number != 1553 {
+		t.Fatalf("post-FIX head was not prepared before review: %+v", got)
+	}
+}
+
+func TestReviewTransactionOwnsHeadBeforePreReviewSync(t *testing.T) {
+	claim := fmt.Sprintf("<!-- pp:review-claim %s review-comment=20 epoch-sha256=%s -->", headA, epoch)
+	item := addComment(testPR(1394, headA), 25, claim)
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headB, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.PreReviewSyncCandidates) != 0 || !hasFinding(got, "unfinished_review_transaction") {
+		t.Fatalf("pre-review sync stole an active REVIEW transaction: %+v", got)
+	}
+}
+
+func TestReviewOverrideOwnsHeadBeforePreReviewSync(t *testing.T) {
+	item := addComment(testPR(1394, headA), 25, "pp:review-again")
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headB, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.PreReviewSyncCandidates) != 0 || len(got.ReviewCandidates) != 1 {
+		t.Fatalf("pre-review sync stole an explicit REVIEW override: %+v", got)
+	}
+}
+
+func TestPreReviewSyncRequiresForkMaintainerPermission(t *testing.T) {
+	blocked := withAdmission(testPR(1408, headA), "contributor/onebase", "feature/owners", "CONFLICTING", "DIRTY", headB, false)
+	allowed := withAdmission(testPR(1409, headB), "contributor/onebase", "feature/search", "CONFLICTING", "DIRTY", headC, true)
+
+	got := analyze([]apiPull{blocked, allowed}, "ivanarama")
+	if len(got.PreReviewSyncCandidates) != 1 || got.PreReviewSyncCandidates[0].Number != 1409 ||
+		!hasFinding(got, "pre_review_sync_source_blocked") {
+		t.Fatalf("fork identity/permission gate failed: %+v", got)
+	}
+}
+
+func TestCompletedPreReviewSyncWaitsForCIWithoutRepeating(t *testing.T) {
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, prepDone(20, headA, headB, headC))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.PreReviewWaitingCI) != 1 || len(got.PreReviewSyncCandidates) != 0 || len(got.ReviewCandidates) != 0 {
+		t.Fatalf("pending CI repeated sync or started REVIEW: %+v", got)
+	}
+}
+
+func TestCompletedPreReviewSyncWaitsForPendingRequiredRerun(t *testing.T) {
+	checks := successfulRequiredChecks()
+	checks[0] = apiCheckContext{Name: "build", Status: "COMPLETED", Conclusion: "FAILURE"}
+	checks = append(checks, apiCheckContext{Name: "build", Status: "IN_PROGRESS"})
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, prepDone(20, headA, headB, headC))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, checks...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.PreReviewWaitingCI) != 1 || len(got.ReviewCandidates) != 0 {
+		t.Fatalf("pending required rerun started REVIEW too early: %+v", got)
+	}
+}
+
+func TestCompletedPreReviewSyncWaitsForPendingRerunAfterEarlierSuccess(t *testing.T) {
+	checks := successfulRequiredChecks()
+	checks = append(checks, apiCheckContext{Name: "build", Status: "IN_PROGRESS"})
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, prepDone(20, headA, headB, headC))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, checks...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.PreReviewWaitingCI) != 1 || len(got.ReviewCandidates) != 0 {
+		t.Fatalf("pending rerun after earlier success started validation too early: %+v", got)
+	}
+}
+
+func TestMissingPostSyncCIEventuallyNeedsAttention(t *testing.T) {
+	identity := testPreReviewIdentity("ivanarama/onebase", "feature/multiline", false)
+	intentAt := time.Now().UTC().Add(-61 * time.Minute).Truncate(time.Second)
+	doneAt := intentAt.Add(time.Minute)
+	item := testPR(1394, headB)
+	item.Comments = []apiComment{
+		{ID: 20, CreatedAt: intentAt.Format(time.RFC3339), UpdatedAt: intentAt.Format(time.RFC3339), User: apiUser{Login: "ivanarama"}, Body: prepIntentWithIdentity(headA, headC, identity)},
+		{ID: 21, CreatedAt: doneAt.Format(time.RFC3339), UpdatedAt: doneAt.Format(time.RFC3339), User: apiUser{Login: "ivanarama"}, Body: prepDoneWithIdentity(20, headA, headB, headC, identity)},
+	}
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_ci_needs_attention") || len(got.PreReviewWaitingCI) != 1 ||
+		len(got.HumanWaiting) != 1 || len(got.ReviewCandidates) != 0 {
+		t.Fatalf("missing fork CI stayed silently hidden forever: %+v", got)
+	}
+}
+
+func TestPartiallyMissingPostSyncCIEventuallyNeedsAttention(t *testing.T) {
+	identity := testPreReviewIdentity("ivanarama/onebase", "feature/multiline", false)
+	intentAt := time.Now().UTC().Add(-61 * time.Minute).Truncate(time.Second)
+	doneAt := intentAt.Add(time.Minute)
+	item := testPR(1394, headB)
+	item.Comments = []apiComment{
+		{ID: 20, CreatedAt: intentAt.Format(time.RFC3339), UpdatedAt: intentAt.Format(time.RFC3339), User: apiUser{Login: "ivanarama"}, Body: prepIntentWithIdentity(headA, headC, identity)},
+		{ID: 21, CreatedAt: doneAt.Format(time.RFC3339), UpdatedAt: doneAt.Format(time.RFC3339), User: apiUser{Login: "ivanarama"}, Body: prepDoneWithIdentity(20, headA, headB, headC, identity)},
+	}
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false,
+		apiCheckContext{Name: "build", Status: "COMPLETED", Conclusion: "SUCCESS"})
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_ci_needs_attention") || len(got.PreReviewWaitingCI) != 1 ||
+		len(got.HumanWaiting) != 1 || len(got.ReviewCandidates) != 0 {
+		t.Fatalf("partially missing required CI stayed silently hidden forever: %+v", got)
+	}
+}
+
+func TestCompletedPreReviewSyncReturnsExactHeadToFullReviewAfterCI(t *testing.T) {
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, prepDone(20, headA, headB, headC))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, successfulRequiredChecks()...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 1394 ||
+		got.ReviewCandidates[0].Stage != "pre-review-validation" || len(got.PreReviewSyncCandidates) != 0 {
+		t.Fatalf("synced head did not return to full content REVIEW: %+v", got)
+	}
+	proof := got.ReviewCandidates[0].PreReviewSyncValidation
+	if proof == nil || proof.IntentCommentID != 20 || proof.DoneCommentID != 21 ||
+		proof.From != headA || proof.To != headB || proof.Base != headC ||
+		proof.IdentitySHA256 != testPreReviewIdentity("ivanarama/onebase", "feature/multiline", false) ||
+		proof.IntentCreatedAt == "" || proof.DoneCreatedAt == "" {
+		t.Fatalf("validation target lost exact handoff identity: %+v", proof)
+	}
+	encoded, err := json.Marshal(got.ReviewCandidates[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatal(err)
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(wire["pre_review_sync"], &metadata); err != nil {
+		t.Fatal(err)
+	}
+	expectedKeys := []string{"intent_comment_id", "done_comment_id", "from", "to", "base", "identity_sha256", "intent_created_at", "done_created_at"}
+	if len(metadata) != len(expectedKeys) {
+		t.Fatalf("pre_review_sync metadata keys: %s", wire["pre_review_sync"])
+	}
+	for _, key := range expectedKeys {
+		if _, ok := metadata[key]; !ok {
+			t.Fatalf("pre_review_sync metadata is missing %q: %s", key, wire["pre_review_sync"])
+		}
+	}
+	for _, key := range []string{"intent_comment_id", "done_comment_id"} {
+		var id int64
+		if err := json.Unmarshal(metadata[key], &id); err != nil || id <= 0 {
+			t.Fatalf("%s is not a positive int64: %s (%v)", key, metadata[key], err)
+		}
+	}
+	hexPattern := regexp.MustCompile(`^[0-9a-f]+$`)
+	for key, length := range map[string]int{"from": 40, "to": 40, "base": 40, "identity_sha256": 64} {
+		var value string
+		if err := json.Unmarshal(metadata[key], &value); err != nil || len(value) != length || !hexPattern.MatchString(value) {
+			t.Fatalf("%s has invalid lowercase hex: %s (%v)", key, metadata[key], err)
+		}
+	}
+	var intentAtText, doneAtText string
+	if err := json.Unmarshal(metadata["intent_created_at"], &intentAtText); err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(metadata["done_created_at"], &doneAtText); err != nil {
+		t.Fatal(err)
+	}
+	intentAt, intentErr := time.Parse(time.RFC3339, intentAtText)
+	doneAt, doneErr := time.Parse(time.RFC3339, doneAtText)
+	if intentErr != nil || doneErr != nil || !doneAt.After(intentAt) || got.ReviewCandidates[0].Head != proof.To {
+		t.Fatalf("invalid timestamp/head wire invariants: candidate=%+v intentErr=%v doneErr=%v", got.ReviewCandidates[0], intentErr, doneErr)
+	}
+}
+
+func TestCompletedPreReviewSyncWithLateStopDoesNotEnterValidation(t *testing.T) {
+	item := addComment(testPR(1394, headB, "needs-decision"), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, prepDone(20, headA, headB, headC))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, successfulRequiredChecks()...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_validation_blocked") || len(got.HumanWaiting) != 1 || len(got.ReviewCandidates) != 0 {
+		t.Fatalf("late human stop entered pre-review validation: %+v", got)
+	}
+}
+
+func TestBlockedPreReviewSyncCannotBeClosedByStaleWorkerDone(t *testing.T) {
+	blockedMarker := fmt.Sprintf("<!-- pp:pre-review-sync-recovery-blocked intent=20 head=%s reason=post-intent-event -->", headA)
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, blockedMarker)
+	item = addComment(item, 22, prepDone(20, headA, headB, headC))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, successfulRequiredChecks()...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_handoff_recovery") || len(got.HumanWaiting) != 0 ||
+		len(got.ReviewCandidates) != 0 || len(got.FixCandidates) != 1 {
+		t.Fatalf("stale worker done bypassed durable human handoff: %+v", got)
+	}
+}
+
+func TestExactResumeAllowsBlockedPreReviewSyncDone(t *testing.T) {
+	blockedMarker := fmt.Sprintf("<!-- pp:pre-review-sync-recovery-blocked intent=20 head=%s reason=post-intent-event -->", headA)
+	resumeMarker := fmt.Sprintf("<!-- pp:pre-review-sync-resume intent=20 head=%s -->", headB)
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, blockedMarker)
+	item = addComment(item, 22, resumeMarker)
+	item = addComment(item, 23, prepDone(20, headA, headB, headC))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, successfulRequiredChecks()...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Stage != "pre-review-validation" ||
+		hasFinding(got, "pre_review_sync_recovery_blocked") {
+		t.Fatalf("exact human resume did not authorize matching done: %+v", got)
+	}
+}
+
+func TestResumeBeforeExpectedMergeAllowsBlockedPreReviewSyncDone(t *testing.T) {
+	blockedMarker := fmt.Sprintf("<!-- pp:pre-review-sync-recovery-blocked intent=20 head=%s reason=post-intent-event -->", headA)
+	resumeMarker := fmt.Sprintf("<!-- pp:pre-review-sync-resume intent=20 head=%s -->", headA)
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, blockedMarker)
+	item = addComment(item, 22, resumeMarker)
+	item = addComment(item, 23, prepDone(20, headA, headB, headC))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, successfulRequiredChecks()...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Stage != "pre-review-validation" ||
+		hasFinding(got, "pre_review_sync_recovery_blocked") {
+		t.Fatalf("resume immediately before the expected merge was lost: %+v", got)
+	}
+}
+
+func TestResumeAfterDoneCannotRetroactivelyAuthorizePreReviewSync(t *testing.T) {
+	blockedMarker := fmt.Sprintf("<!-- pp:pre-review-sync-recovery-blocked intent=20 head=%s reason=post-intent-event -->", headA)
+	resumeMarker := fmt.Sprintf("<!-- pp:pre-review-sync-resume intent=20 head=%s -->", headB)
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, blockedMarker)
+	item = addComment(item, 22, prepDone(20, headA, headB, headC))
+	item = addComment(item, 23, resumeMarker)
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, successfulRequiredChecks()...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_handoff_recovery") || len(got.ReviewCandidates) != 0 || len(got.FixCandidates) != 1 {
+		t.Fatalf("resume after done retroactively authorized stale work: %+v", got)
+	}
+}
+
+func TestNewBlockAfterResumeRejectsPreReviewSyncDone(t *testing.T) {
+	blockedMarker := fmt.Sprintf("<!-- pp:pre-review-sync-recovery-blocked intent=20 head=%s reason=post-intent-event -->", headA)
+	resumeMarker := fmt.Sprintf("<!-- pp:pre-review-sync-resume intent=20 head=%s -->", headB)
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, blockedMarker)
+	item = addComment(item, 22, resumeMarker)
+	item = addComment(item, 23, blockedMarker)
+	item = addComment(item, 24, prepDone(20, headA, headB, headC))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, successfulRequiredChecks()...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_handoff_recovery") || len(got.ReviewCandidates) != 0 || len(got.FixCandidates) != 1 {
+		t.Fatalf("new block after resume was ignored by done validation: %+v", got)
+	}
+}
+
+func TestUnmatchedResumeCannotAuthorizePreReviewSyncDone(t *testing.T) {
+	resumeMarker := fmt.Sprintf("<!-- pp:pre-review-sync-resume intent=20 head=%s -->", headB)
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, resumeMarker)
+	item = addComment(item, 22, prepDone(20, headA, headB, headC))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, successfulRequiredChecks()...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_malformed") || len(got.HumanWaiting) != 1 || len(got.ReviewCandidates) != 0 {
+		t.Fatalf("unmatched resume authorized pre-review validation: %+v", got)
+	}
+}
+
+func TestCompletedPreReviewSyncWithOrphanReviewClaimDoesNotEnterValidation(t *testing.T) {
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, prepDone(20, headA, headB, headC))
+	item = addComment(item, 22, fmt.Sprintf("<!-- pp:review-claim %s review-comment=19 epoch-sha256=%s -->", headB, epoch))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, successfulRequiredChecks()...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_validation_blocked") || len(got.HumanWaiting) != 1 || len(got.ReviewCandidates) != 0 {
+		t.Fatalf("orphan review transaction entered pre-review validation: %+v", got)
+	}
+}
+
+func TestUnknownConflictAdmissionDoesNotFallThroughToContentReview(t *testing.T) {
+	item := withAdmission(testPR(1394, headA), "ivanarama/onebase", "feature/multiline", "UNKNOWN", "UNKNOWN", headB, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_admission_pending") || len(got.ReviewCandidates) != 0 ||
+		len(got.ContentReviewCandidates) != 0 || len(got.FixCandidates) != 0 {
+		t.Fatalf("unknown mergeability escaped into executable work: %+v", got)
+	}
+}
+
+func TestMalformedPreReviewDoneFailsClosed(t *testing.T) {
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, prepDone(20, headA, headB, headC))
+	item.HeadParents = []string{headA, "dddddddddddddddddddddddddddddddddddddddd"}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, successfulRequiredChecks()...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_malformed") || len(got.ReviewCandidates) != 0 || len(got.FixCandidates) != 0 {
+		t.Fatalf("malformed done was treated as executable work: %+v", got)
+	}
+}
+
+func TestPreReviewSyncForeignHeadAfterIntentFailsClosed(t *testing.T) {
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item.HeadParents = []string{"dddddddddddddddddddddddddddddddddddddddd"}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headC, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_orphaned") || len(got.HumanWaiting) != 1 ||
+		len(got.PreReviewSyncCandidates) != 0 || len(got.FixCandidates) != 0 {
+		t.Fatalf("foreign push bypassed the earliest durable intent: %+v", got)
+	}
+}
+
+func TestForeignForkChangeQuarantinesOnlyThatPull(t *testing.T) {
+	blocked := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	blocked.HeadParents = []string{"dddddddddddddddddddddddddddddddddddddddd"}
+	blocked = withAdmission(blocked, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headC, false)
+	ordinary := testPR(1500, headC)
+
+	got := analyze([]apiPull{blocked, ordinary}, "ivanarama")
+	got.finish()
+	if got.State == "red" || len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 1500 {
+		t.Fatalf("one changed fork globally denied service to other PRs: %+v", got)
+	}
+}
+
+func TestAdmissionRaceQuarantinesOnlyChangedPull(t *testing.T) {
+	changed := testPR(1394, headA)
+	stable := testPR(1500, headB)
+	aliases := map[string]int{"pr0": 0, "pr1": 1}
+	response := map[string]json.RawMessage{
+		"pr0": json.RawMessage(fmt.Sprintf(`{"number":1394,"headRefOid":"%s"}`, headC)),
+		"pr1": json.RawMessage(fmt.Sprintf(`{"number":1500,"headRefOid":"%s","baseRefOid":"%s","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN","commits":{"nodes":[{"commit":{"oid":"%s","statusCheckRollup":null}}]}}`, headB, headC, headB)),
+	}
+	prs := []apiPull{changed, stable}
+
+	applyPullAdmissionBatch(prs, aliases, response)
+	if prs[0].AdmissionError == "" || prs[0].AdmissionKnown || !prs[1].AdmissionKnown || prs[1].AdmissionError != "" {
+		t.Fatalf("per-PR admission quarantine failed: %+v", prs)
+	}
+	got := analyze(prs, "ivanarama")
+	got.finish()
+	if got.State == "red" || len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 1500 {
+		t.Fatalf("admission race globally denied service: %+v", got)
+	}
+}
+
+func TestPreReviewSyncDoneMustReferenceEarliestExactIntent(t *testing.T) {
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, prepIntent(headA, headC))
+	item = addComment(item, 22, prepDone(21, headA, headB, headC))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, successfulRequiredChecks()...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_malformed") || len(got.ReviewCandidates) != 0 || len(got.FixCandidates) != 0 {
+		t.Fatalf("later duplicate intent displaced the earliest intent: %+v", got)
+	}
+}
+
+func TestCurrentDoneAndOpenIntentForSameTransitionAreAmbiguous(t *testing.T) {
+	otherIdentity := "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	item := addComment(testPR(1394, headB), 20, prepIntentWithIdentity(headA, headC, otherIdentity))
+	item = addComment(item, 21, prepIntent(headA, headC))
+	item = addComment(item, 22, prepDone(21, headA, headB, headC))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, successfulRequiredChecks()...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_malformed") || len(got.ReviewCandidates) != 0 || len(got.FixCandidates) != 0 {
+		t.Fatalf("ambiguous identity intents elected the wrong recovery winner: %+v", got)
+	}
+}
+
+func TestCompletedHopCanRecoverNextIntentFromCurrentHead(t *testing.T) {
+	nextBase := "dddddddddddddddddddddddddddddddddddddddd"
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, prepDone(20, headA, headB, headC))
+	item = addComment(item, 22, prepIntent(headB, nextBase))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", nextBase, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.FixCandidates) != 1 || got.FixCandidates[0].Stage != "pre-review-sync-recovery" ||
+		hasFinding(got, "pre_review_sync_malformed") {
+		t.Fatalf("valid next-hop recovery was mistaken for ambiguous history: %+v", got)
+	}
+}
+
+func TestPreReviewSyncDoneTimestampMustFollowIntent(t *testing.T) {
+	item := testPR(1394, headB)
+	item.Comments = []apiComment{
+		{ID: 20, CreatedAt: "2026-09-01T00:00:01Z", UpdatedAt: "2026-09-01T00:00:01Z", User: apiUser{Login: "ivanarama"}, Body: prepIntent(headA, headC)},
+		{ID: 21, CreatedAt: "2026-09-01T00:00:00Z", UpdatedAt: "2026-09-01T00:00:00Z", User: apiUser{Login: "ivanarama"}, Body: prepDone(20, headA, headB, headC)},
+	}
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, successfulRequiredChecks()...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_malformed") || len(got.ReviewCandidates) != 0 {
+		t.Fatalf("non-monotonic intent/done timestamps entered REVIEW: %+v", got)
+	}
+}
+
+func TestCompletedPreReviewSyncWithOldShipAndReviewDepthStillReturnsToFullReview(t *testing.T) {
+	item := addComment(testPR(1394, headB, "ship"), 10, completion(headA, 5, 7))
+	item = addComment(item, 20, prepIntent(headA, headC))
+	item = addComment(item, 21, prepDone(20, headA, headB, headC))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, successfulRequiredChecks()...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Stage != "pre-review-validation" ||
+		got.IntegrationOwner != nil || len(got.MergeCandidates) != 0 {
+		t.Fatalf("old ship/review proof escaped full post-sync review: %+v", got)
+	}
+}
+
+func TestReviewedPreReviewSyncHeadStaysInOrdinaryMergeLane(t *testing.T) {
+	item := addComment(testPR(1394, headB, "ship", "reviewed"), 10, completion(headA, 5, 7))
+	item = addComment(item, 20, prepIntent(headA, headC))
+	item = addComment(item, 21, prepDone(20, headA, headB, headC))
+	item = addComment(item, 30, completion(headB, 25, 29))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, successfulRequiredChecks()...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	got.finish()
+	if got.IntegrationOwner != nil || len(got.MergeCandidates) != 1 ||
+		got.MergeCandidates[0].Stage != "merge" || len(got.MergeExecutable) != 1 ||
+		got.MergeExecutable[0].Number != 1394 {
+		t.Fatalf("reviewed pre-review-sync head seized the integration lane: %+v", got)
+	}
+	if hasFinding(got, "legacy_ship_waiting_merge") {
+		t.Fatalf("pre-review-sync lineage was mistaken for legacy base-sync: %+v", got.Findings)
+	}
+}
+
+func TestReviewCompletedBeforePreReviewSyncDoneCannotAuthorizeMerge(t *testing.T) {
+	item := addComment(testPR(1394, headB, "ship", "reviewed"), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, completion(headB, 18, 19))
+	item = addComment(item, 22, prepDone(20, headA, headB, headC))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "MERGEABLE", "CLEAN", headC, false, successfulRequiredChecks()...)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_validation_out_of_order") || len(got.HumanWaiting) != 1 ||
+		len(got.MergeCandidates) != 0 || got.IntegrationOwner != nil {
+		t.Fatalf("review before matching done authorized a pre-review-sync merge: %+v", got)
+	}
+}
+
+func TestAdvancedBaseCanStartNextPreReviewSyncHop(t *testing.T) {
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, prepDone(20, headA, headB, headC))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", "dddddddddddddddddddddddddddddddddddddddd", false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.PreReviewSyncCandidates) != 1 || got.PreReviewSyncCandidates[0].Stage != "pre-review-sync" {
+		t.Fatalf("advanced base left a new conflict deadlocked: %+v", got)
+	}
+}
+
+func TestCompletedPreReviewSyncCannotCycleBackToFrom(t *testing.T) {
+	item := addComment(testPR(1394, headA), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, prepDone(20, headA, headB, headC))
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headC, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_cycle") || len(got.HumanWaiting) != 1 ||
+		len(got.FixCandidates) != 0 || len(got.ReviewCandidates) != 0 {
+		t.Fatalf("rollback to a completed hop from started an automatic cycle: %+v", got)
+	}
+}
+
+func TestCompletedPreReviewSyncChainCannotRollBackToIntermediateFrom(t *testing.T) {
+	headD := "dddddddddddddddddddddddddddddddddddddddd"
+	headE := "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, prepDone(20, headA, headB, headC))
+	item = addComment(item, 22, prepIntent(headB, headD))
+	item = addComment(item, 23, prepDone(22, headB, headE, headD))
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headD, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_cycle") || len(got.HumanWaiting) != 1 ||
+		len(got.FixCandidates) != 0 || len(got.ReviewCandidates) != 0 {
+		t.Fatalf("rollback to an intermediate completed-hop from escaped cycle quarantine: %+v", got)
+	}
+}
+
+func TestOpenPreReviewIntentIsRecoveryAndWinsFixQueue(t *testing.T) {
+	recovery := addComment(testPR(1394, headA), 20, prepIntent(headA, headB))
+	recovery = withAdmission(recovery, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headB, false)
+	rework := testPR(1200, headB, "changes-requested")
+
+	got := analyze([]apiPull{rework, recovery}, "ivanarama")
+	if len(got.FixCandidates) != 2 || got.FixCandidates[0].Number != 1394 ||
+		got.FixCandidates[0].Stage != "pre-review-sync-recovery" || got.FixCandidates[1].Stage != "fix-review" {
+		t.Fatalf("pre-review recovery did not precede ordinary rework: %+v", got.FixCandidates)
+	}
+}
+
+func TestOpenPreReviewIntentStillOwnsRecoveryAfterMainAdvances(t *testing.T) {
+	item := addComment(testPR(1394, headA), 20, prepIntent(headA, headB))
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headC, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.FixCandidates) != 1 || got.FixCandidates[0].Stage != "pre-review-sync-recovery" {
+		t.Fatalf("advanced main stranded durable recovery for its exact old base: %+v", got)
+	}
+}
+
+func TestOpenPreReviewIntentWithLateHumanStopIsNotExecutable(t *testing.T) {
+	item := addComment(testPR(1394, headA, "needs-decision"), 20, prepIntent(headA, headB))
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headB, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_recovery_blocked") || len(got.HumanWaiting) != 1 ||
+		len(got.PreReviewSyncCandidates) != 0 || len(got.FixCandidates) != 0 {
+		t.Fatalf("human stop remained an executable recovery and can starve FIX: %+v", got)
+	}
+}
+
+func TestPermanentlyBlockedRecoveryDoesNotStarveFixQueue(t *testing.T) {
+	blockedMarker := fmt.Sprintf("<!-- pp:pre-review-sync-recovery-blocked intent=20 head=%s reason=post-intent-event -->", headA)
+	blocked := addComment(testPR(1394, headA, "needs-decision"), 20, prepIntent(headA, headB))
+	blocked = addComment(blocked, 21, blockedMarker)
+	blocked = withAdmission(blocked, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headB, false)
+	rework := testPR(1500, headB, "changes-requested")
+
+	got := analyze([]apiPull{blocked, rework}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_recovery_blocked") || len(got.HumanWaiting) != 1 ||
+		len(got.FixCandidates) != 1 || got.FixCandidates[0].Number != 1500 {
+		t.Fatalf("permanently invalid recovery kept starving the FIX queue: %+v", got)
+	}
+}
+
+func TestBlockedIntentCannotBeReenabledByHeadTransition(t *testing.T) {
+	tests := []struct {
+		name       string
+		markerHead string
+		current    string
+		parents    []string
+	}{
+		{name: "marker on from then merge appears", markerHead: headA, current: headB, parents: []string{headA, headC}},
+		{name: "marker on merge then branch returns to from", markerHead: headB, current: headA},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			marker := fmt.Sprintf("<!-- pp:pre-review-sync-recovery-blocked intent=20 head=%s reason=post-intent-event -->", tt.markerHead)
+			item := addComment(testPR(1394, tt.current, "needs-decision"), 20, prepIntent(headA, headC))
+			item = addComment(item, 21, marker)
+			item.HeadParents = tt.parents
+			item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headC, false)
+
+			got := analyze([]apiPull{item}, "ivanarama")
+			if !hasFinding(got, "pre_review_sync_recovery_blocked") || len(got.HumanWaiting) != 1 || len(got.FixCandidates) != 0 {
+				t.Fatalf("head transition bypassed durable blocked intent: %+v", got)
+			}
+		})
+	}
+}
+
+func TestExactHumanResumeReenablesSameIntent(t *testing.T) {
+	blockedMarker := fmt.Sprintf("<!-- pp:pre-review-sync-recovery-blocked intent=20 head=%s reason=post-intent-event -->", headA)
+	resumeMarker := fmt.Sprintf("<!-- pp:pre-review-sync-resume intent=20 head=%s -->", headA)
+	item := addComment(testPR(1394, headA, "needs-decision"), 20, prepIntent(headA, headB))
+	item = addComment(item, 21, blockedMarker)
+	item = addComment(item, 22, resumeMarker)
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headB, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.FixCandidates) != 1 || got.FixCandidates[0].Stage != "pre-review-sync-recovery" || len(got.HumanWaiting) != 0 {
+		t.Fatalf("exact human resume did not restore the same durable intent: %+v", got)
+	}
+}
+
+func TestResumeBeforeExpectedMergeAllowsOpenRecoveryAfterPush(t *testing.T) {
+	blockedMarker := fmt.Sprintf("<!-- pp:pre-review-sync-recovery-blocked intent=20 head=%s reason=post-intent-event -->", headA)
+	resumeMarker := fmt.Sprintf("<!-- pp:pre-review-sync-resume intent=20 head=%s -->", headA)
+	item := addComment(testPR(1394, headB), 20, prepIntent(headA, headC))
+	item = addComment(item, 21, blockedMarker)
+	item = addComment(item, 22, resumeMarker)
+	item.HeadParents = []string{headA, headC}
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headC, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.FixCandidates) != 1 || got.FixCandidates[0].Stage != "pre-review-sync-recovery" ||
+		hasFinding(got, "pre_review_sync_recovery_blocked") {
+		t.Fatalf("valid resume before an exact merge did not survive a crash before done: %+v", got)
+	}
+}
+
+func TestNewBlockAfterResumeStopsRecoveryAgain(t *testing.T) {
+	blockedMarker := fmt.Sprintf("<!-- pp:pre-review-sync-recovery-blocked intent=20 head=%s reason=post-intent-event -->", headA)
+	resumeMarker := fmt.Sprintf("<!-- pp:pre-review-sync-resume intent=20 head=%s -->", headA)
+	item := addComment(testPR(1394, headA, "needs-decision"), 20, prepIntent(headA, headB))
+	item = addComment(item, 21, blockedMarker)
+	item = addComment(item, 22, resumeMarker)
+	item = addComment(item, 23, blockedMarker)
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headB, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_recovery_blocked") || len(got.HumanWaiting) != 1 || len(got.FixCandidates) != 0 {
+		t.Fatalf("later stable event did not block a resumed recovery: %+v", got)
+	}
+}
+
+func TestResumeAbsorbsEarlierReviewEventButNotLaterOne(t *testing.T) {
+	claim := func(id int64) string {
+		return fmt.Sprintf("<!-- pp:review-claim %s review-comment=%d epoch-sha256=%s -->", headA, id-1, epoch)
+	}
+	blockedMarker := fmt.Sprintf("<!-- pp:pre-review-sync-recovery-blocked intent=20 head=%s reason=post-intent-event -->", headA)
+	resumeMarker := fmt.Sprintf("<!-- pp:pre-review-sync-resume intent=20 head=%s -->", headA)
+	base := addComment(testPR(1394, headA, "needs-decision"), 20, prepIntent(headA, headB))
+	base = addComment(base, 21, claim(21))
+	base = addComment(base, 22, blockedMarker)
+	base = addComment(base, 23, resumeMarker)
+	base = withAdmission(base, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headB, false)
+
+	got := analyze([]apiPull{base}, "ivanarama")
+	if len(got.FixCandidates) != 1 || got.FixCandidates[0].Stage != "pre-review-sync-recovery" {
+		t.Fatalf("resume did not absorb an earlier review event: %+v", got)
+	}
+
+	withLateClaim := addComment(base, 24, claim(24))
+	got = analyze([]apiPull{withLateClaim}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_recovery_blocked") || len(got.FixCandidates) != 0 || len(got.HumanWaiting) != 1 {
+		t.Fatalf("review event after resume did not block recovery again: %+v", got)
+	}
+}
+
+func TestBlockedMarkerWithoutNeedsDecisionRecoversOnlyHandoff(t *testing.T) {
+	blockedMarker := fmt.Sprintf("<!-- pp:pre-review-sync-recovery-blocked intent=20 head=%s reason=post-intent-event -->", headA)
+	item := addComment(testPR(1394, headA), 20, prepIntent(headA, headB))
+	item = addComment(item, 21, blockedMarker)
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headB, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_handoff_recovery") || len(got.FixCandidates) != 1 ||
+		got.FixCandidates[0].Stage != "pre-review-sync-recovery" || len(got.HumanWaiting) != 0 {
+		t.Fatalf("crash between blocked marker and label was not recoverable: %+v", got)
+	}
+
+	item.Labels = append(item.Labels, apiLabel{Name: "needs-decision"})
+	got = analyze([]apiPull{item}, "ivanarama")
+	if len(got.FixCandidates) != 0 || len(got.HumanWaiting) != 1 || !hasFinding(got, "pre_review_sync_recovery_blocked") {
+		t.Fatalf("completed blocked handoff did not release FIX: %+v", got)
+	}
+}
+
+func TestStablePushDeniedMarkerReleasesRecoveryAfterHandoff(t *testing.T) {
+	blockedMarker := fmt.Sprintf("<!-- pp:pre-review-sync-recovery-blocked intent=20 head=%s reason=push-denied -->", headA)
+	item := addComment(testPR(1394, headA), 20, prepIntent(headA, headB))
+	item = addComment(item, 21, blockedMarker)
+	item = withAdmission(item, "contributor/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headB, true)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_handoff_recovery") || len(got.FixCandidates) != 1 {
+		t.Fatalf("push-denied handoff could not recover its missing label: %+v", got)
+	}
+
+	item.Labels = append(item.Labels, apiLabel{Name: "needs-decision"})
+	got = analyze([]apiPull{item}, "ivanarama")
+	if len(got.FixCandidates) != 0 || len(got.HumanWaiting) != 1 || !hasFinding(got, "pre_review_sync_recovery_blocked") {
+		t.Fatalf("completed push-denied handoff kept starving FIX: %+v", got)
+	}
+}
+
+func TestOpenPreReviewIntentCannotOverlapReviewTransaction(t *testing.T) {
+	item := addComment(testPR(1394, headA), 20, prepIntent(headA, headB))
+	item = addComment(item, 21, fmt.Sprintf("<!-- pp:review-claim %s review-comment=19 epoch-sha256=%s -->", headA, epoch))
+	item = withAdmission(item, "ivanarama/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headB, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_recovery_blocked") || len(got.FixCandidates) != 0 {
+		t.Fatalf("overlapping REVIEW event remained executable FIX recovery: %+v", got)
+	}
+}
+
+func TestPreReviewSyncForkPermissionChangeFailsClosed(t *testing.T) {
+	identity := testPreReviewIdentity("contributor/onebase", "feature/multiline", true)
+	item := addComment(testPR(1394, headA), 20, prepIntentWithIdentity(headA, headB, identity))
+	item = withAdmission(item, "contributor/onebase", "feature/multiline", "CONFLICTING", "DIRTY", headB, false)
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if !hasFinding(got, "pre_review_sync_identity_changed") || len(got.HumanWaiting) != 1 ||
+		len(got.PreReviewSyncCandidates) != 0 || len(got.FixCandidates) != 0 {
+		t.Fatalf("changed fork permission retained automatic recovery: %+v", got)
 	}
 }
 
@@ -515,7 +1298,7 @@ func TestContractRejectsIncompleteTargetReviewGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, fragment := range []string{
-		"обычная цель обязана входить в `content_review_candidates`",
+		"обычная `stage=review` либо специальная `stage=pre-review-validation` цель",
 		"routing labels, review-depth и стабильную server timeline/epoch",
 	} {
 		t.Run(fragment, func(t *testing.T) {

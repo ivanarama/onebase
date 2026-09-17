@@ -26,12 +26,40 @@ func TestPipelinectlRefreshesRepositoryOwnedHealthContract(t *testing.T) {
 	if gate, ok := config["review_completion_gate"].(string); !ok || gate != "target-v1" {
 		t.Fatal("pipelinectl.json must opt in to the target-v1 REVIEW completion gate")
 	}
+	if handoff, ok := config["fallback_handoff"].(string); !ok || handoff != "target-v1" {
+		t.Fatal("pipelinectl.json must opt in to signed target-v1 fallback handoffs")
+	}
 	if seconds, ok := config["review_lease_seconds"].(float64); !ok || seconds != 7200 {
 		t.Fatal("pipelinectl.json must bound target-v1 REVIEW leases to two hours")
 	}
+	var protection struct {
+		RequiredStatusChecks struct {
+			Contexts []string `json:"contexts"`
+		} `json:"required_status_checks"`
+	}
+	if err := json.Unmarshal([]byte(repositoryFile(t, ".github", "branch-protection.json")), &protection); err != nil {
+		t.Fatal(err)
+	}
+	configuredRaw, ok := config["required_checks"].([]any)
+	if !ok {
+		t.Fatal("pipelinectl.json required_checks must be an array")
+	}
+	configured := make([]string, 0, len(configuredRaw))
+	for _, value := range configuredRaw {
+		name, ok := value.(string)
+		if !ok {
+			t.Fatal("pipelinectl.json required_checks must contain only strings")
+		}
+		configured = append(configured, name)
+	}
+	sort.Strings(configured)
+	sort.Strings(protection.RequiredStatusChecks.Contexts)
+	if strings.Join(configured, "\x00") != strings.Join(protection.RequiredStatusChecks.Contexts, "\x00") {
+		t.Fatalf("pipelinectl required_checks must match branch protection: config=%v protection=%v", configured, protection.RequiredStatusChecks.Contexts)
+	}
 	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
 	requireAll(t, docs, "sync_base_before_health", "merge --ff-only", "без провайдера",
-		"review_completion_gate: \"target-v1\"")
+		"review_completion_gate: \"target-v1\"", "fallback_handoff: \"target-v1\"")
 }
 
 func repositoryFile(t *testing.T, parts ...string) string {
@@ -522,9 +550,9 @@ func TestReviewQueueUsesTwoLaneExecutableAllowlist(t *testing.T) {
 		"`single_flight_barrier` защищает только интеграционную полосу, а не всю очередь",
 		"обычное содержательное REVIEW не блокируется",
 		"Следующий интеграционный PR при этом брать нельзя",
-		"бери до двух элементов stage `review` из `review_candidates`",
+		"бери до двух content-элементов со stage `review` либо `pre-review-validation` из `review_candidates`",
 		"Полный health-election выполняется один раз в `next review`",
-		"обычная цель обязана входить в `content_review_candidates`",
+		"обычная `stage=review` либо специальная `stage=pre-review-validation` цель обязана входить в `content_review_candidates`",
 		"`review_completion_gate=target-v1` последующий `complete review` не перечитывает чужую очередь",
 		"номер/HEAD цели, open/base/draft, routing labels, review-depth и стабильную server timeline/epoch",
 		"target-v1 проверяет HMAC-целостность opaque-токена",
@@ -1448,6 +1476,162 @@ func TestAutomaticBaseSyncCarriesHumanShipWithoutPingPong(t *testing.T) {
 		"Сначала опубликуй exact intent",
 		"`git merge origin/main`",
 		"выполни `git add` и commit",
+	)
+}
+
+func TestPreReviewSyncBreaksConflictCIDeadlockWithoutCarryingAuthorization(t *testing.T) {
+	fixer := skill(t, "fix-approved")
+	review := skill(t, "review-queue")
+	merge := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	guide := repositoryFile(t, "CLAUDE.md")
+	health := repositoryFile(t, "tools", "pipelinehealth", "main.go")
+
+	requireAllCompact(t, fixer,
+		"substage `pre-review-sync`, владельцем которого является FIX",
+		"Поле `pre_review_sync_candidates` — исключительный allowlist",
+		"`stage=pre-review-sync-recovery` старше обычной доработки",
+		"`stage=pre-review-sync` выполняется после recovery и `changes-requested`, но до новой issue",
+		"`mergeable=CONFLICTING` и `mergeStateStatus=DIRTY`",
+		"не содержит ни одного context из актуального списка обязательных проверок",
+		"завершённого `pp:pre-review-sync-done` текущего HEAD для того же `baseRefOid`",
+		"Для `ivanarama/onebase` источник — `origin`",
+		"для fork — точный `https://github.com/<headRepository>.git`",
+		"`maintainerCanModify == true`",
+		"REVIEW остаётся read-only",
+		"MERGE по-прежнему обрабатывает только `ship`-PR",
+	)
+	requireAllCompact(t, fixer,
+		"Ни один файл из head fork нельзя запускать",
+		"запрещены `go test`, `go build`, генераторы, package-manager scripts, repo-owned helpers, hooks и произвольные merge/filter drivers",
+		"mode `120000` (symlink), `160000` (gitlink), executable blob или другой mode запрещает automation",
+		"symlink, Windows reparse point или junction запрещены",
+		"Canonical resolved path обязан оставаться внутри этого проверенного root",
+		"Конфликт в `.go`, `.os`, workflow, скрипте, build/toolchain-файле, тесте, исполняемом шаблоне",
+		"`<!-- pp:pre-review-sync-needs-decision head=<HEAD> base=<base> identity-sha256=<hash> -->`",
+		"pp-pre-review-sync-identity-v1",
+		"git merge --no-commit --no-ff <exact base SHA>",
+		"HEAD остаётся `from`",
+		"`MERGE_HEAD == base`",
+	)
+	requireAllCompact(t, fixer,
+		"<!-- pp:pre-review-sync-intent from=<H> base=<B> identity-sha256=<I> -->",
+		"Каноничный intent — самый ранний trusted unedited комментарий",
+		"второй intent не публикуй",
+		"два последовательных одинаковых полных GraphQL snapshot",
+		"timelineItems(first:100,after:$cursor,itemTypes:[PULL_REQUEST_COMMIT,HEAD_REF_FORCE_PUSHED_EVENT,HEAD_REF_DELETED_EVENT,HEAD_REF_RESTORED_EVENT,BASE_REF_CHANGED_EVENT,BASE_REF_FORCE_PUSHED_EVENT,BASE_REF_DELETED_EVENT,CLOSED_EVENT,REOPENED_EVENT,CONVERT_TO_DRAFT_EVENT,READY_FOR_REVIEW_EVENT,MERGED_EVENT,ISSUE_COMMENT,COMMENT_DELETED_EVENT,LABELED_EVENT,UNLABELED_EVENT])",
+		"... on ClosedEvent{id createdAt actor{login}}",
+		"... on ConvertToDraftEvent{id createdAt actor{login}}",
+		"number headRefOid baseRefOid headRefName baseRefName state isDraft",
+		"maintainerCanModify headRepository{nameWithOwner}",
+		"mergeable mergeStateStatus",
+		"commits(last:1){nodes{commit{oid statusCheckRollup",
+		"`commit.oid == headRefOid`",
+		"`statusCheckRollup.contexts.pageInfo.hasNextPage`",
+		"REST `node_id` каждого используемого комментария обязан совпасть",
+		"его edge строго после anchor `from`",
+		"общий deadline 30 секунд",
+		"`queue:p0`…`queue:p3` разрешены",
+		"<!-- pp:pre-review-sync-recovery-blocked intent=<id> head=<H> reason=post-intent-event -->",
+		"<!-- pp:pre-review-sync-recovery-blocked intent=<id> head=<H> reason=push-denied -->",
+		"Network/DNS/TLS/timeout, потерянный ответ",
+		"Crash между marker и label остаётся исполнимым `stage=pre-review-sync-recovery`",
+		"переносит PR в `human_waiting` и больше не держит FIX-очередь",
+		"Marker блокирует сам canonical intent",
+		"<!-- pp:pre-review-sync-resume intent=<id> head=<current H> -->",
+		"его edge становится новым recovery anchor",
+		"**сначала** снять эту содержательную route-метку и лишь затем опубликовать exact resume",
+		"прежнему `from`, если после resume произошёл только ожидаемый exact `[from, base]` merge",
+		"автоматика такой intent сама не забывает",
+		"Если на `from` уже был `ship`, он не переносится",
+		"первый целый Unix-second, строго больший server `intent.createdAt`",
+		"PP-Pre-Review-Sync: intent=<id> from=<H> base=<B> identity-sha256=<I>",
+		"ровно два parent в порядке `[from, base]`",
+		"git push --force-with-lease=refs/heads/<headRefName>:<from>",
+		"readback remote → REST PR → remote",
+		"<!-- pp:pre-review-sync-done intent=<id> from=<H> to=<T> base=<B> identity-sha256=<I> -->",
+		"Done не ставит `reviewed`, `changes-requested` или `ship`",
+		"content lane как `stage=pre-review-validation`",
+		"объект `pre_review_sync` из восьми полей",
+		"pending CI",
+		"обычное продвижение `main` не отменяет recovery exact старого `base`",
+		"Следующий hop может начаться только от уже нового HEAD",
+		"не образует циклов",
+		"Current HEAD, равный `from` любого уже завершённого hop",
+	)
+
+	requireAllCompact(t, review,
+		"`pre-review-sync` принадлежит FIX",
+		"`pre_review_sync_candidates` либо `pre_review_waiting_ci`",
+		"`target.stage=pre-review-validation`",
+		"`target.pre_review_sync`",
+		"никогда не является `integration_owner`",
+		"объектом **ровно** из восьми полей без дополнительных ключей",
+		"`target.head == pre_review_sync.to`",
+		"`intent_created_at < done_created_at`",
+		"обычное **полное содержательное REVIEW всего diff с base**",
+		"`blocked < resume < commit < done`",
+		"proof, законченный между commit и done, не мог проверить handoff",
+		"выполняются **до** mutation gate",
+		"непосредственно перед первой comment/label mutation один раз выполни подписанный `gate-fallback`",
+		"Open earliest intent без matching done остаётся владением FIX/recovery",
+		"ровно parents `[from, base]`",
+		"`authoredDate` и `committedDate` строго позже server `intent.createdAt`",
+		"review proof, integration/base-sync carry или разрешением на merge",
+		"только новый trusted ship-transition уже после anchor `to`",
+	)
+	requireAllCompact(t, merge,
+		"`pp:pre-review-sync-*` — handoff FIX → полное REVIEW",
+		"Open earliest intent принадлежит только FIX/recovery",
+		"никогда не становится integration owner MERGE",
+		"не переносит review proof или `ship`",
+		"`stage=pre-review-validation`",
+		"не являются integration owner/merge candidate",
+		"новый каноничный content-review",
+		"claim, review-comment и completion обязаны следовать после matching done",
+		"последний trusted ship-transition строго после anchor `to`",
+	)
+
+	requireAllCompact(t, docs,
+		"`pre_review_sync_candidates`",
+		"`pre_review_waiting_ci`",
+		"batched GraphQL snapshot",
+		"Код недоверенного PR при этом не исполняется с GitHub credentials",
+		"Visibility barrier",
+		"author/committer timestamps",
+		"не переносит ни человеческое разрешение, ни review proof",
+		"`pre_review_sync_ci_needs_attention`",
+		"никогда не как `integration_owner`",
+		"Гонка одного PR между REST и GraphQL карантинит только этот PR",
+		"не остаётся вечным priority-0 и не морит голодом остальную FIX-очередь",
+		"`pp:pre-review-sync-resume intent=<id> head=<current H>`",
+	)
+	requireAllCompact(t, guide,
+		"FIX-substage `pre-review-sync`",
+		"semantic/executable conflict передаётся человеку",
+		"Merge готовится через `--no-commit --no-ff`",
+		"`stage=pre-review-validation`",
+		"30 минут без полного набора required contexts",
+		"`fallback_handoff=target-v1`",
+		"`pp:pre-review-sync-recovery-blocked` + `needs-decision`",
+		"`pp:pre-review-sync-resume` после blocked marker",
+		"REVIEW остаётся read-only, MERGE — ship-only",
+	)
+	requireAllCompact(t, health,
+		"json:\"pre_review_sync_candidates\"",
+		"json:\"pre_review_waiting_ci\"",
+		"json:\"pre_review_sync,omitempty\"",
+		"mergeable mergeStateStatus",
+		"contexts(first:100)",
+		"pre-review-sync-recovery",
+		"pre_review_sync_waiting_ci",
+		"pre_review_sync_ci_needs_attention",
+		"pre-review-validation",
+		"preReviewBlocked",
+		"preReviewResume",
+		"pre_review_sync_cycle",
+		"applyPullAdmissionBatch",
+		"requiredChecksPresent(pr, required) == 0",
 	)
 }
 

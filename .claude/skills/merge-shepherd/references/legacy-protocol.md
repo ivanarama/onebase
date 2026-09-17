@@ -67,6 +67,27 @@ HEAD, SHA-256 review-proof и raw UTF-8 body, а также sorted same-reposito
 closing issues; qualified-ссылка на другой repository локальной issue не
 считается. Done адресует exact intent, HEAD и подтверждённый merge commit.
 
+Отдельно распознавай FIX-handoff до первого REVIEW:
+
+```text
+<!-- pp:pre-review-sync-intent from=<H> base=<B> identity-sha256=<I> -->
+<!-- pp:pre-review-sync-done intent=<id> from=<H> to=<T> base=<B> identity-sha256=<I> -->
+```
+
+Он никогда не становится integration owner MERGE и не участвует в
+`pp:base-sync-*` carry. Open earliest intent принадлежит только FIX/recovery:
+не обновляй, не пушь, не комментируй и не снимай его labels, даже если остался
+старый `ship`. Matching done доказывает лишь происхождение mechanical merge;
+он не переносит review proof или `ship`. Content-only
+`stage=pre-review-validation` и его exact `pre_review_sync` принадлежат REVIEW,
+не являются integration owner/merge candidate и требуют полного review после
+provenance-validation. Для exact `to` MERGE требует новый каноничный
+content-review: его claim, review-comment и completion обязаны следовать после
+matching done и доказанного blocked/resume lineage; последний trusted ship-transition строго после anchor `to` обязателен.
+Старый label до `to` — stale authorization и обрабатывается обычной безопасной
+передачей в REVIEW; следующий PR можно рассматривать только после того, как этот
+объект больше не является executable MERGE target.
+
 1. Очередь: получи **все** открытые PR пагинированным REST, затем локально
    оставь метку `ship`, исключи `hold` и `needs-decision`. После
    single-flight/recovery упорядочь обычные PR по effective priority, затем
