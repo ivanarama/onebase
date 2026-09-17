@@ -311,7 +311,86 @@ func (db *DB) InfoRegListWithKeyValues(ctx context.Context, ir *metadata.InfoReg
 	return db.infoRegList(ctx, ir, f, true)
 }
 
+// InfoRegPage — страница записей для машинных потребителей (REST, issue #1423).
+// От InfoRegList отличается двумя вещами, и обе существенны.
+//
+// Период возвращается как time.Time, а не строкой «02.01.2006»: тот формат
+// собран для HTML-списка и зависит от локальной зоны процесса, а клиент по
+// сети ждёт машинную дату. period_key здесь тоже не нужен — он адресует строку
+// на удаление в форме, а чтение через REST удалять не умеет.
+//
+// limit/offset уходят в SQL, а не режут уже вычитанный срез: регистр сведений
+// может быть большим, и страница в двадцать строк не повод поднимать в память
+// всю матрицу. При limit <= 0 ограничение не накладывается.
+func (db *DB) InfoRegPage(ctx context.Context, ir *metadata.InfoRegister, f RegFilter, limit, offset int) ([]map[string]any, error) {
+	return db.infoRegSelect(ctx, ir, f, false, limit, offset)
+}
+
+// InfoRegCount считает записи ровно тем же WHERE, что InfoRegPage, — включая
+// строковый предикат доступа. Иначе total в ответе обещал бы страницы, которых
+// пользователю не видно.
+func (db *DB) InfoRegCount(ctx context.Context, ir *metadata.InfoRegister, f RegFilter) (int, error) {
+	table := metadata.InfoRegTableName(ir.Name)
+	where, args, err := db.infoRegWhere(ir, f, table)
+	if err != nil {
+		return 0, err
+	}
+	sql := "SELECT COUNT(*) FROM " + table
+	if where != "" {
+		sql += " WHERE " + where
+	}
+	rows, err := db.Query(ctx, sql, args...)
+	if err != nil {
+		return 0, fmt.Errorf("info reg count %s: %w", ir.Name, err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return 0, fmt.Errorf("info reg count %s: empty result", ir.Name)
+	}
+	var total int64
+	if err := rows.Scan(&total); err != nil {
+		return 0, fmt.Errorf("info reg count %s: %w", ir.Name, err)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("info reg count %s: %w", ir.Name, err)
+	}
+	return int(total), nil
+}
+
+// infoRegWhere собирает условия отбора: измерения и период плюс строковый
+// предикат доступа. Вынесено отдельно, чтобы страница и счётчик не могли
+// разойтись условиями.
+func (db *DB) infoRegWhere(ir *metadata.InfoRegister, f RegFilter, table string) (string, []any, error) {
+	where, args, err := dimWhereClause(db.dialect, ir.Dimensions, f, 1, ir.Periodic, ir.Periodic)
+	if err != nil {
+		return "", nil, fmt.Errorf("info reg list %s: %w", ir.Name, err)
+	}
+	whereParts := make([]string, 0, 2)
+	if where != "" {
+		whereParts = append(whereParts, where)
+	}
+	if cond, condArgs, _, err := PredicateSQLQualified(
+		db.dialect, InfoRegisterPredicateEntity(ir), f.RowFilter, len(args)+1, table,
+	); err != nil {
+		return "", nil, fmt.Errorf("info reg list %s row filter: %w", ir.Name, err)
+	} else if cond != "" {
+		whereParts = append(whereParts, cond)
+		args = append(args, condArgs...)
+	}
+	return strings.Join(whereParts, " AND "), args, nil
+}
+
 func (db *DB) infoRegList(ctx context.Context, ir *metadata.InfoRegister, f RegFilter, withKeyValues bool) ([]map[string]any, error) {
+	raw, err := db.infoRegSelect(ctx, ir, f, withKeyValues, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	return infoRegListRows(ir, raw), nil
+}
+
+// infoRegSelect возвращает СЫРЫЕ строки: период остаётся time.Time. Оформление
+// под HTML-список делает infoRegListRows поверх результата.
+func (db *DB) infoRegSelect(ctx context.Context, ir *metadata.InfoRegister, f RegFilter, withKeyValues bool, limit, offset int) ([]map[string]any, error) {
 	table := metadata.InfoRegTableName(ir.Name)
 	var selCols []string
 	if ir.Periodic {
@@ -324,39 +403,29 @@ func (db *DB) infoRegList(ctx context.Context, ir *metadata.InfoRegister, f RegF
 		selCols = append(selCols, metadata.ColumnName(f))
 	}
 
-	where, args, err := dimWhereClause(db.dialect, ir.Dimensions, f, 1, ir.Periodic, ir.Periodic)
+	where, args, err := db.infoRegWhere(ir, f, table)
 	if err != nil {
-		return nil, fmt.Errorf("info reg list %s: %w", ir.Name, err)
-	}
-	whereParts := make([]string, 0, 2)
-	if where != "" {
-		whereParts = append(whereParts, where)
-	}
-	if cond, condArgs, _, err := PredicateSQLQualified(
-		db.dialect, InfoRegisterPredicateEntity(ir), f.RowFilter, len(args)+1, table,
-	); err != nil {
-		return nil, fmt.Errorf("info reg list %s row filter: %w", ir.Name, err)
-	} else if cond != "" {
-		whereParts = append(whereParts, cond)
-		args = append(args, condArgs...)
+		return nil, err
 	}
 	orderBy := strings.Join(pkCols(ir), ", ")
 	sql := fmt.Sprintf("SELECT %s FROM %s", strings.Join(selCols, ", "), table)
-	if len(whereParts) > 0 {
-		sql += " WHERE " + strings.Join(whereParts, " AND ")
+	if where != "" {
+		sql += " WHERE " + where
 	}
 	sql += " ORDER BY " + orderBy
+	// Порядок задан первичным ключом выше, поэтому страницы не перекрываются и
+	// не теряют строк между запросами. Числа подставляются текстом, как в
+	// List: это уже провалидированные целые, а не пользовательская строка.
+	if limit > 0 {
+		sql += fmt.Sprintf(" LIMIT %d OFFSET %d", limit, max(offset, 0))
+	}
 
 	rows, err := db.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("info reg list %s: %w", ir.Name, err)
 	}
 	defer rows.Close()
-	raw, err := scanInfoRegRowsMode(rows, ir, selCols, withKeyValues)
-	if err != nil {
-		return nil, err
-	}
-	return infoRegListRows(ir, raw), nil
+	return scanInfoRegRowsMode(rows, ir, selCols, withKeyValues)
 }
 
 // scanInfoRegRowsMode decodes the common storage projection used by InfoRegList
