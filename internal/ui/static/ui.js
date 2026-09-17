@@ -2705,20 +2705,20 @@ obReady(function () {
 // а не в замыкании openItemPicker: набранное, каретка, отмеченные строки и
 // признак «запрос в пути».
 var obPickerSearch = {
+  generation: 0,  // отдельное открытие диалога, включая повтор той же кнопки
   element: '',     // элемент, чей диалог открыт; пусто — диалога нет
   context: null,   // контекст события, с которым диалог открыли
   query: '',       // что набрано в строке поиска
   timer: null,     // таймер debounce
-  inFlight: false, // запрос отправлен, ответ ещё не применён
+  inFlight: null,  // конкретный запрос отправлен, ответ ещё не применён
   pending: null,   // запрос, набранный пока предыдущий в пути (строка) либо null
-  closed: false,   // диалог закрыли, пока запрос был в пути
   picked: {},      // выбранные строки по id — переживают смену выдачи
   order: []        // порядок выбора: «Перенести» отдаёт строки в нём
 };
 
 // obPickerForget — диалог закрыт. Гасим таймер, забываем набранное и выбор.
-// Если запрос в пути, помечаем closed: его ответ не имеет права открыть окно
-// заново — человек это окно закрыл.
+// Меняем поколение: ответы и завершение старых запросов больше не относятся
+// к этому открытию, даже если новый подбор вызван той же кнопкой.
 function obPickerForget() {
   if (obPickerSearch.timer) clearTimeout(obPickerSearch.timer);
   obPickerSearch.timer = null;
@@ -2728,38 +2728,52 @@ function obPickerForget() {
   obPickerSearch.query = '';
   obPickerSearch.picked = {};
   obPickerSearch.order = [];
-  if (obPickerSearch.inFlight) obPickerSearch.closed = true;
+  obPickerSearch.generation++;
+  obPickerSearch.inFlight = null;
 }
 window.obPickerForget = obPickerForget;
 
-// obPickerSendSearch — отправить запрос серверного поиска. В полёте всегда не
-// больше одного: иначе ответы применяются в порядке прихода, и запоздалый
-// старый затирает более новый. Набранное позже ждёт своей очереди в pending.
+// Контекст живёт только в браузере и не подмешивается в поля формы.
+window.obPickerRequest = function () {
+  return {generation: obPickerSearch.generation, search: false};
+};
+
+function obPickerRequestCurrent(request) {
+  return !!request && request.generation === obPickerSearch.generation &&
+    (!request.search || obPickerSearch.inFlight === request);
+}
+window.obPickerRequestCurrent = obPickerRequestCurrent;
+
+// obPickerSendSearch — отправить запрос серверного поиска. В одном открытии
+// диалога в полёте не больше одного: иначе старый ответ может затереть новый.
+// Набранное позже ждёт своей очереди в pending.
 function obPickerSendSearch(q) {
   if (!obPickerSearch.element) return;
   if (obPickerSearch.inFlight) { obPickerSearch.pending = q; return; }
   if (!document.getElementById('_item-picker-modal')) { obPickerForget(); return; }
   if (typeof obFire !== 'function') return;
-  obPickerSearch.inFlight = true;
+  var request = {generation: obPickerSearch.generation, search: true};
+  obPickerSearch.inFlight = request;
   var params = {};
   var ctx = obPickerSearch.context;
   if (ctx) Object.keys(ctx).forEach(function (key) { params[key] = ctx[key]; });
   params._pick_query = q;
-  obFire(obPickerSearch.element, 'Поиск', params);
+  obFire(obPickerSearch.element, 'Поиск', params, request);
 }
 
 // obPickerSearchApplied — ответ серверного поиска дошёл. Возвращает false, если
 // применять его уже некуда: диалог закрыли, пока запрос был в пути.
-function obPickerSearchApplied() {
-  if (!obPickerSearch.inFlight) return true;
-  obPickerSearch.inFlight = false;
-  if (obPickerSearch.closed) {
-    obPickerSearch.closed = false;
-    obPickerSearch.pending = null;
-    return false;
-  }
+function obPickerSearchApplied(request) {
+  if (!obPickerRequestCurrent(request)) return false;
+  if (request.search) obPickerSearch.inFlight = null;
   return true;
 }
+
+// finally в obFire закрывает также ошибку fetch/JSON и ранний выход до fetch.
+// Завершение старого запроса не может освободить очередь нового открытия.
+window.obPickerSearchFinished = function (request) {
+  if (request && request.search && obPickerSearchApplied(request)) obPickerFirePending();
+};
 
 // obPickerFirePending — набранное, пока предыдущий запрос был в пути.
 function obPickerFirePending() {
@@ -2773,8 +2787,8 @@ function obPickerFirePending() {
 // показал (обычно Сообщить и возврат). Окно и набранное оставляем — человек
 // правит запрос и ищет снова, — но строки чистим: прежняя выдача читается как
 // ответ на новый запрос.
-window.obPickerSearchEmpty = function () {
-  if (!obPickerSearchApplied()) return;
+window.obPickerSearchEmpty = function (request) {
+  if (!request || !request.search || !obPickerSearchApplied(request)) return;
   var modal = document.getElementById('_item-picker-modal');
   var tb = modal ? modal.querySelector('tbody') : null;
   if (!tb) { obPickerFirePending(); return; }
@@ -2789,12 +2803,13 @@ window.obPickerSearchEmpty = function () {
   obPickerFirePending();
 };
 
-function openItemPicker(payload, elementName, eventContext) {
+function openItemPicker(payload, elementName, eventContext, request) {
   if (!payload) return;
   // Ответ серверного поиска может прийти уже после «Отмена»/«Перенести»/Esc.
   // Открывать окно заново нельзя: человек его закрыл.
-  var searchResponse = obPickerSearch.inFlight;
-  if (!obPickerSearchApplied()) return;
+  var searchResponse = !!(request && request.search);
+  if (request && !obPickerSearchApplied(request)) return;
+  if (!searchResponse) obPickerForget();
   var cols = payload.columns || [];
   var rows = payload.rows || [];
   var cfg = payload.config || {};

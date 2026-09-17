@@ -7,38 +7,12 @@ const fs = require('node:fs');
 const test = require('node:test');
 
 const source = fs.readFileSync('static/ui.js', 'utf8');
-
-function block(from, start) {
-  let depth = 0;
-  for (let i = source.indexOf('{', start); i < source.length; i++) {
-    if (source[i] === '{') depth++;
-    else if (source[i] === '}') {
-      depth--;
-      if (depth === 0) return source.slice(from, i + 1);
-    }
-  }
-  throw new Error('не закрыт блок с позиции ' + start);
-}
-
-function extract(name) {
-  const start = source.indexOf('function ' + name);
-  if (start < 0) throw new Error('в ui.js нет функции ' + name);
-  return block(start, start);
-}
-
-// Состояние диалога живёт модульной переменной, а не в замыкании: подмена её
-// заглушкой скрыла бы ровно те дефекты, ради которых тест написан.
-function extractVar(name) {
-  const start = source.indexOf('var ' + name + ' = {');
-  if (start < 0) throw new Error('в ui.js нет переменной ' + name);
-  return block(start, start) + ';';
-}
-
-function extractWindowFn(name) {
-  const start = source.indexOf('window.' + name + ' = function');
-  if (start < 0) throw new Error('в ui.js нет window.' + name);
-  return 'var ' + name + ' = ' + block(source.indexOf('function', start), start) + ';';
-}
+const managedSource = fs.readFileSync('static/managed.js', 'utf8');
+// Исполняем состояние и весь диалог, а для сетевых регрессий — настоящую
+// публичную obFire. Подменены только DOM и внешние зависимости отправки формы.
+const pickerSource = source.slice(source.indexOf('var obPickerSearch = {'), source.indexOf('\nfunction openRefPicker('));
+const fireSource = managedSource.slice(managedSource.indexOf('  window.obFire = async function'), managedSource.indexOf('\n  // Отслеживание «грязной» формы'));
+assert.ok(pickerSource && fireSource, 'не найдены границы runtime');
 
 // Узел ровно того объёма, который трогает openItemPicker: дерево, атрибуты,
 // подписки и строки tbody. Настоящего DOM в тестах нет намеренно — проверяем
@@ -70,7 +44,8 @@ function node(tag) {
     style: {cssText: '', display: ''},
     value: '',
     textContent: '',
-    innerHTML: '',
+    set innerHTML(value) { this.children = []; this.rows = []; this.html = value; },
+    get innerHTML() { return this.html || ''; },
     checked: false,
     type: '',
     placeholder: '',
@@ -134,56 +109,83 @@ function findSearchInput(box) {
 // и клиент СОБИРАЕТ ДИАЛОГ ЗАНОВО. Состояние строки поиска обязано это пережить,
 // иначе набранное пропадает после первой же буквы — проверить это можно только
 // двумя вызовами в одном контексте.
-function pickerContext() {
+function pickerContext(managed = false) {
   const timers = [];
   const fired = [];
+  const requests = [];
+  const messages = [];
+  const applied = [];
   const body = node('body');
+  const form = {querySelectorAll() { return []; }, querySelector() { return null; }};
   const document = {
-    getElementById() { return null; },
+    getElementById(id) { return id === 'main-form' ? form : body.children.find((el) => el.id === id) || null; },
     createElement(tag) { return node(tag); },
     body,
   };
-  let modal = null;
-  document.getElementById = (id) => (id === '_item-picker-modal' ? modal : null);
+  const window = {obManagedApplyTablePartRefOptions() {}, applyTableParts() {}};
+  window.obFire = function (element, event, params, request) { fired.push({element, event, params, request}); };
   const api = new Function(
     'document', 'window', 'obFire', 'setTimeout', 'clearTimeout',
-    extractVar('obPickerSearch') + '\n' +
-      extract('obPickerForget') + '\n' +
-      extract('obPickerSendSearch') + '\n' +
-      extract('obPickerSearchApplied') + '\n' +
-      extract('obPickerFirePending') + '\n' +
-      extractWindowFn('obPickerSearchEmpty') + '\n' +
-      extract('openItemPicker') + '\n' +
-      'return {openItemPicker: openItemPicker, searchEmpty: obPickerSearchEmpty,' +
+    pickerSource + '\n' +
+      'return {openItemPicker: openItemPicker, searchEmpty: window.obPickerSearchEmpty,' +
       ' state: function () { return obPickerSearch; }};',
   )(
     document,
-    {},
-    function (element, event, params) { fired.push({element, event, params}); },
+    window,
+    (...args) => window.obFire(...args),
     function (fn) { timers.push(fn); return timers.length; },
     function () { timers.length = 0; },
   );
-  function box() { return modal ? modal.children[0] : null; }
+  if (managed) {
+    const deps = {
+      window, document, URLSearchParams,
+      FormData: class extends Map { constructor() { super(); } },
+      URL: '/ui/test/form-event', DOC_ID: '',
+      awaitCurrentFileReads: async () => true,
+      serviceField: (name) => name,
+      obManagedWritableTableBody: () => null,
+      openItemPicker: api.openItemPicker,
+      flash: (message) => messages.push(message),
+      applyFormConditionalCSS() {}, applyElementStates() {},
+      applyValues: (values) => applied.push(values),
+      applyChoiceList() {}, applyFormTables() {},
+      fetch(url, options) {
+        return new Promise((resolve, reject) => requests.push({url, options, resolve, reject}));
+      },
+    };
+    new Function(...Object.keys(deps), fireSource)(...Object.values(deps));
+  }
+  function modal() { return document.getElementById('_item-picker-modal'); }
+  function box() { return modal() ? modal().children[0] : null; }
   function foot() {
     const children = box().children;
     return children[children.length - 1];
   }
   return {
     fired,
+    requests, messages, applied, window,
+    fire: (...args) => window.obFire(...args),
+    async settle(index, data) {
+      requests[index].resolve({json: async () => data});
+      await this.tick();
+    },
+    tick: () => new Promise((resolve) => setImmediate(resolve)),
     state: api.state,
-    searchEmpty: api.searchEmpty,
-    modal() { return modal; },
+    searchEmpty() { api.searchEmpty(fired[fired.length - 1].request); },
+    modal,
     flush() { timers.splice(0).forEach((fn) => fn()); },
     rowsOf() { return box().children[2].children[0].children[1].rows; },
     cancel() { foot().children[0].dispatch('click'); },
     transfer() { foot().children[1].dispatch('click'); },
-    escape() { if (modal && modal._obClose) modal._obClose(); },
-    open(payload, elementName, eventContext) {
-      body.children.length = 0;
-      api.openItemPicker(payload, elementName, eventContext || null);
-      modal = body.children[0] || null;
-      if (!modal) return {search: null};
+    escape() { if (modal() && modal()._obClose) modal()._obClose(); },
+    search() { return box() && findSearchInput(box()); },
+    open(payload, elementName, eventContext, request) {
+      api.openItemPicker(payload, elementName, eventContext || null, request);
+      if (!modal()) return {search: null};
       return {search: findSearchInput(box())};
+    },
+    respond(payload, elementName, eventContext) {
+      return this.open(payload, elementName, eventContext, fired[fired.length - 1].request);
     },
   };
 }
@@ -230,7 +232,7 @@ test('ответ сервера пересобирает окно: набран�
   ctx.flush();
 
   // Сервер ответил своим pickerData — клиент открывает диалог заново.
-  const second = ctx.open({columns, rows: [], config}, 'КнопкаНайти', null);
+  const second = ctx.respond({columns, rows: [], config}, 'КнопкаНайти', null);
   assert.equal(second.search.value, '111222', 'набранное пропало при пересборке окна');
   assert.deepEqual(second.search.caret, [6, 6], 'каретка не поставлена в конец строки');
 });
@@ -281,7 +283,7 @@ test('ответ, пришедший после закрытия, не откр�
   assert.equal(ctx.fired.length, 1, 'запрос не ушёл');
   ctx.cancel();
 
-  const late = ctx.open({columns, rows, config}, 'КнопкаНайти', null);
+  const late = ctx.respond({columns, rows, config}, 'КнопкаНайти', null);
   assert.equal(late.search, null, 'запоздалый ответ заново открыл закрытое окно');
   assert.equal(ctx.modal(), null);
 });
@@ -303,7 +305,7 @@ test('два поиска подряд не идут параллельно: в�
   assert.equal(ctx.fired.length, 1, 'второй запрос ушёл параллельно первому');
 
   // Ответ на первый пришёл — только теперь уходит второй.
-  const second = ctx.open({columns, rows, config}, 'КнопкаНайти', null);
+  const second = ctx.respond({columns, rows, config}, 'КнопкаНайти', null);
   assert.ok(second.search, 'ответ не открыл диалог');
   assert.equal(ctx.fired.length, 2, 'отложенный запрос не ушёл после ответа');
   assert.equal(ctx.fired[1].params._pick_query, 'гай');
@@ -328,7 +330,7 @@ test('выбор переживает смену выдачи и уходит в
   ctx.flush();
 
   // Вторая выдача без первой строки: выбор по прежнему запросу обязан выжить.
-  ctx.open({columns, rows: [{id: 'u-2', data: {Номер: 'ЗАЯ-000002'}}], config}, 'КнопкаНайти', null);
+  ctx.respond({columns, rows: [{id: 'u-2', data: {Номер: 'ЗАЯ-000002'}}], config}, 'КнопкаНайти', null);
   const secondRows = ctx.rowsOf();
   assert.equal(secondRows.length, 1);
   const secondCb = secondRows[0].querySelector('._ip-cb');
@@ -380,3 +382,120 @@ test('пустой ответ поиска не держит очередь: с�
   assert.equal(ctx.fired.length, 2, 'после пустого ответа отложенный запрос не ушёл');
   assert.equal(ctx.fired[1].params._pick_query, 'гай');
 });
+
+const serverConfig = {title: 'Подбор', serverSearch: true};
+const pickerData = {columns, rows, config: serverConfig};
+
+async function openManaged(ctx, element = 'КнопкаНайти') {
+  const opening = ctx.fire(element, 'Нажатие');
+  await ctx.tick();
+  await ctx.settle(ctx.requests.length - 1, {pickerData});
+  await opening;
+  assert.ok(ctx.search(), 'obFire не открыл подбор');
+}
+
+async function searchManaged(ctx, query) {
+  ctx.search().value = query;
+  ctx.search().dispatch('input');
+  ctx.flush();
+  await ctx.tick();
+}
+
+for (const failure of ['fetch', 'json', 'server']) {
+  test('реальная obFire освобождает поиск после ошибки ' + failure, async () => {
+    const ctx = pickerContext(true);
+    await openManaged(ctx);
+    await searchManaged(ctx, 'первый');
+    await searchManaged(ctx, 'повтор');
+    assert.equal(ctx.requests.length, 2, 'поиски ушли параллельно');
+    const error = new Error('temporary failure');
+    if (failure === 'fetch') ctx.requests[1].reject(error);
+    else if (failure === 'server') ctx.requests[1].resolve({json: async () => ({error: error.message})});
+    else ctx.requests[1].resolve({json: async () => { throw error; }});
+    await ctx.tick();
+    assert.equal(ctx.requests.length, 3, 'ошибка навсегда заблокировала pending');
+    assert.equal(ctx.requests[2].options.body.get('_pick_query'), 'повтор');
+    assert.ok(ctx.messages.some((m) => m.includes('temporary failure')));
+    await ctx.settle(2, {pickerData});
+    assert.equal(ctx.search().value, 'повтор');
+  });
+}
+
+for (const failure of ['veto', 'throw']) {
+  test('реальная obFire освобождает неотправленный поиск: ' + failure, async () => {
+    const ctx = pickerContext(true);
+    await openManaged(ctx);
+    ctx.window.obGridSync = () => {
+      if (failure === 'throw') throw new Error('editor error');
+      return false;
+    };
+    await searchManaged(ctx, 'не отправлен');
+    assert.equal(ctx.requests.length, 1, 'veto не остановил отправку');
+    ctx.window.obGridSync = () => true;
+    await searchManaged(ctx, 'повтор');
+    assert.equal(ctx.requests.length, 2, 'ранний выход оставил поиск заблокированным');
+    assert.equal(ctx.requests[1].options.body.get('_pick_query'), 'повтор');
+    await ctx.settle(1, {pickerData});
+  });
+}
+
+test('закрытие во время подготовки obFire отменяет ещё не отправленный поиск', async () => {
+  const ctx = pickerContext(true);
+  await openManaged(ctx);
+  ctx.search().value = 'отменён';
+  ctx.search().dispatch('input');
+  ctx.flush(); // obFire приостановлена на awaitCurrentFileReads.
+  ctx.cancel();
+  await ctx.tick();
+  assert.equal(ctx.requests.length, 1, 'поиск ушёл после закрытия окна');
+  await openManaged(ctx);
+  await searchManaged(ctx, 'новый');
+  assert.equal(ctx.requests.length, 3);
+  await ctx.settle(2, {pickerData});
+});
+
+for (const element of ['КнопкаНайти', 'ДругаяКнопка']) {
+  for (const order of ['A-first', 'B-first']) {
+    for (const response of ['picker', 'empty', 'error']) {
+      test(`закрытый поиск A не меняет новое открытие B: ${element}, ${order}, ${response}`, async () => {
+        const ctx = pickerContext(true);
+        await openManaged(ctx);
+        await searchManaged(ctx, 'старый поиск A');
+        ctx.cancel();
+        const openingB = ctx.fire(element, 'Нажатие');
+        await ctx.tick();
+        assert.equal(ctx.requests.length, 3);
+        const dataB = {columns, rows: [{id: 'b-1', data: {Номер: 'B'}}], config: serverConfig};
+        async function lateA() {
+          if (response === 'error') {
+            ctx.requests[1].reject(new Error('late A'));
+            await ctx.tick();
+          } else {
+            await ctx.settle(1, response === 'picker' ? {pickerData} : {values: {stale: 'A'}});
+          }
+        }
+        if (order === 'A-first') {
+          await lateA();
+          assert.equal(ctx.modal(), null, 'ответ A заново открыл закрытое окно');
+        }
+        await ctx.settle(2, {pickerData: dataB});
+        await openingB;
+        assert.ok(ctx.search(), 'собственный ответ открытия B отброшен');
+        assert.equal(ctx.search().value, '', 'B унаследовал запрос A');
+        if (order === 'B-first') {
+          await searchManaged(ctx, 'поиск B');
+          await searchManaged(ctx, 'следующий B');
+          assert.equal(ctx.requests.length, 4);
+          await lateA();
+          assert.equal(ctx.requests.length, 4, 'ответ A освободил запрос B');
+          assert.equal(ctx.search().value, 'следующий B');
+          await ctx.settle(3, {pickerData: dataB});
+          assert.equal(ctx.requests.length, 5, 'поиск B перестал работать');
+          await ctx.settle(4, {pickerData: dataB});
+        }
+        assert.deepEqual(ctx.rowsOf().map((r) => r.getAttribute('data-id')), ['b-1']);
+        assert.deepEqual(ctx.applied, [], 'поздний пустой ответ A изменил форму B');
+      });
+    }
+  }
+}

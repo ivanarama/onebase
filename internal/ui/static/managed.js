@@ -845,7 +845,9 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   // obFire(elementName, eventName[, extraParams]) — extraParams (объект)
   // добавляются к телу запроса. Используется подбором (план 46): фаза 2
   // шлёт {_pick_result}, команды ТЧ — {_tp, _tp_selected}.
-  window.obFire = async function(elementName, eventName, extraParams){
+  // pickerRequest — локальный контекст открытия/поиска, не поле HTTP-запроса.
+  window.obFire = async function(elementName, eventName, extraParams, pickerRequest){
+   pickerRequest = pickerRequest || (window.obPickerRequest ? window.obPickerRequest() : null);
    try {
     // Зафиксировать активную правку и синхронизировать ТЧ. При невалидной
     // ссылке или исключении editor-lock отправлять старое tp_json нельзя.
@@ -922,6 +924,8 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     if (extraParams) {
       Object.keys(extraParams).forEach(k => body.append(serviceField(k), extraParams[k]));
     }
+    // Окно могли закрыть, пока obFire ждала чтения файла или синхронизации ТЧ.
+    if (pickerRequest && pickerRequest.search && !window.obPickerRequestCurrent(pickerRequest)) return;
     try {
       const res = await fetch(URL, {
         method: 'POST',
@@ -930,19 +934,21 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         credentials: 'same-origin'
       });
       const data = await res.json();
+      if (pickerRequest && pickerRequest.search && !window.obPickerRequestCurrent(pickerRequest)) return;
       // Подбор фазы 1: сервер вернул pickerData — открыть диалог, не трогая
       // ТЧ (её обновит фаза 2 после «Перенести»).
       if (data.pickerData) {
+        if (pickerRequest && !window.obPickerRequestCurrent(pickerRequest)) return;
         (data.messages || []).forEach(m => flash(m, 'ok'));
         if (data.error) flash(data.error, 'err');
-        openItemPicker(data.pickerData, elementName, extraParams || null);
+        openItemPicker(data.pickerData, elementName, extraParams || null, pickerRequest);
         return;
       }
       // Поиск в уже открытом диалоге не дал строк: обработчик ограничился
       // сообщением и ПоказатьПодбор не позвал. Прежнюю выдачу оставлять нельзя —
       // её прочитают как ответ на новый запрос.
-      if (eventName === 'Поиск' && typeof window.obPickerSearchEmpty === 'function') {
-        window.obPickerSearchEmpty();
+      if (eventName === 'Поиск' && !data.error && typeof window.obPickerSearchEmpty === 'function') {
+        window.obPickerSearchEmpty(pickerRequest);
       }
       if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
       applyElementStates(data.elementStates);
@@ -979,12 +985,15 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       (data.messages || []).forEach(m => flash(m, 'ok'));
       if (data.error) flash(data.error, 'err');
     } catch (e) {
+      if (pickerRequest && pickerRequest.search && !window.obPickerRequestCurrent(pickerRequest)) return;
       flash('Сетевая ошибка: ' + (e && e.message ? e.message : e), 'err');
     }
    } catch (e) {
       // Синхронные ошибки (obGridSync, сборка формы) больше не «глотаются»
       // как unhandled rejection — показываем баннер, чтобы причина была видна.
       flash('Ошибка формы: ' + (e && e.message ? e.message : e), 'err');
+   } finally {
+      if (typeof window.obPickerSearchFinished === 'function') window.obPickerSearchFinished(pickerRequest);
    }
   };
 
