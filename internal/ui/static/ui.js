@@ -277,6 +277,7 @@ function obInitFormDirty() {
   window._obFormDirty = false;
   var base = document.title;
   function mark() {
+    window._obFormEditVersion = (window._obFormEditVersion || 0) + 1;
     window._obFormDirty = true;
     if (document.title.charAt(0) !== '●') document.title = '● ' + base;
   }
@@ -1185,6 +1186,7 @@ function obDOMAddButton(table) {
 function obDOMFinishMutation(table, row, focusControl) {
   obDOMReindex(table);
   obDOMRefreshTotals(table);
+  window._obFormEditVersion = (window._obFormEditVersion || 0) + 1;
   window._obFormDirty = true;
   var body = table && table.tBodies && table.tBodies[0];
   if (!row || !body || row.parentElement !== body) {

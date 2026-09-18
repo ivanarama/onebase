@@ -23,8 +23,10 @@ func TestManagedFormDirtyBehaviorInNode(t *testing.T) {
 	for _, tc := range []struct {
 		name, code, value, stored            string
 		newRecord, dirty, noWrite, wantError bool
+		file                                 bool
 	}{
 		{name: "save", code: `Объект.Записать();`, value: "saved", stored: "saved"},
+		{name: "file_save", code: `Объект.Записать();`, value: "/old/path.csv", stored: "/old/path.csv", file: true},
 		{name: "save_then_edit", code: `Объект.Записать(); Объект.Наименование = "unsaved";`, value: "unsaved", stored: "saved", dirty: true},
 		{name: "save_then_edit_error", code: `Объект.Записать(); Объект.Наименование = "unsaved"; ВызватьИсключение "after write";`, value: "unsaved", stored: "saved", dirty: true, wantError: true},
 		{name: "save_then_error", code: `Объект.Записать(); ВызватьИсключение "after write";`, value: "saved", stored: "saved", wantError: true},
@@ -41,10 +43,14 @@ func TestManagedFormDirtyBehaviorInNode(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := setupFormCtxServer(t, "Процедура Тест()\n"+tc.code+"\nКонецПроцедуры", nil)
+			fieldType, input := "", "saved"
+			if tc.file {
+				fieldType, input = "file", "/old/path.csv"
+			}
 			f.entity.Forms[0].Elements = append(f.entity.Forms[0].Elements, &metadata.FormElement{
-				Kind: metadata.FormElementField, Name: "Наименование", DataPath: "Объект.Наименование",
+				Kind: metadata.FormElementField, Name: "Наименование", DataPath: "Объект.Наименование", Type: fieldType,
 			})
-			body := url.Values{"Наименование": {"saved"}, "_element": {"КнопкаТест"}, "_event": {"Нажатие"}, "_kind": {"object"}}
+			body := url.Values{"Наименование": {input}, "_element": {"КнопкаТест"}, "_event": {"Нажатие"}, "_kind": {"object"}}
 			if !tc.newRecord {
 				body.Set("_id", f.docID.String())
 			}
@@ -67,6 +73,7 @@ func TestManagedFormDirtyBehaviorInNode(t *testing.T) {
 			fixtures = append(fixtures, map[string]any{
 				"name": tc.name, "response": json.RawMessage(rec.Body.Bytes()), "id": body.Get("_id"),
 				"dirty": tc.dirty, "noWrite": tc.noWrite, "value": tc.value,
+				"input": input, "file": tc.file,
 			})
 		})
 	}

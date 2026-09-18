@@ -883,6 +883,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     // измениться уже после первого snapshot. Непосредственно перед FormData
     // повторяем commit/sync и при любом veto оставляем событие неотправленным.
     if (window.obGridSync && window.obGridSync() === false) return;
+    const formEditVersion = window._obFormEditVersion || 0;
     const body = new URLSearchParams();
     const fileHelperDisabled = fileHelpers.map(function(el){ return el.disabled; });
     let eventFD;
@@ -996,8 +997,10 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       }
       // version/savedId подтверждают запись, но после неё обработчик мог
       // снова изменить объект. Сервер отдельно сообщает итоговое состояние.
+      // Оно относится к отправленному FormData: правки клиента во время fetch
+      // (включая операции со строками ТЧ без input/change) ещё не сохранены.
       if (typeof data.formDirty === 'boolean') {
-        if (data.formDirty) _obMarkDirty();
+        if (data.formDirty || (window._obFormEditVersion || 0) !== formEditVersion) _obMarkDirty();
         else {
           window._obFormDirty = false;
           document.title = _obBaseTitle;
@@ -1104,6 +1107,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   window._obFormDirty = false;
   var _obBaseTitle = document.title;
   function _obMarkDirty(){
+    window._obFormEditVersion = (window._obFormEditVersion || 0) + 1;
     window._obFormDirty = true;
     if (document.title.charAt(0) !== '●') document.title = '● ' + _obBaseTitle;
   }
@@ -2377,6 +2381,7 @@ obManagedReady(obManagedInitDelegates);
     var cols = g.columnsMeta || [];
     for (var i = 0; i < cols.length; i++) item[cols[i].id] = "";
     g.dataView.addItem(item);
+    window._obFormEditVersion = (window._obFormEditVersion || 0) + 1;
     window._obFormDirty = true;
     g.grid.invalidate();
     // scrollRowIntoView ждёт ИНДЕКС отображаемой строки, не id записи —
@@ -2435,6 +2440,7 @@ obManagedReady(obManagedInitDelegates);
     }
     if (!toRemove.length) return false;
     for (var j = 0; j < toRemove.length; j++) g.dataView.deleteItem(toRemove[j].id);
+    window._obFormEditVersion = (window._obFormEditVersion || 0) + 1;
     window._obFormDirty = true;
     try { g.grid.invalidate(); } catch (e) {
       if (window.console) window.console.error("SlickGrid delete refresh error [" + tpName + "]:", e);
@@ -2487,6 +2493,7 @@ obManagedReady(obManagedInitDelegates);
     copy._obCellClasses = Object.assign({}, src._obCellClasses || {});
     g.dataView.addItem(copy);
     g.dataView.setItems(reindexOrd(byOrd(g)));
+    window._obFormEditVersion = (window._obFormEditVersion || 0) + 1;
     window._obFormDirty = true;
     g.grid.invalidate();
     var rowIdx = g.dataView.getRowById(nextId);
@@ -2521,6 +2528,7 @@ obManagedReady(obManagedInitDelegates);
     if (pos < 0 || to < 0 || to >= items.length) return;
     items.splice(to, 0, items.splice(pos, 1)[0]);
     g.dataView.setItems(reindexOrd(items));
+    window._obFormEditVersion = (window._obFormEditVersion || 0) + 1;
     window._obFormDirty = true;
     g.grid.invalidate();
     var rowIdx = g.dataView.getRowById(cur.id);
@@ -2833,6 +2841,7 @@ obManagedReady(obManagedInitDelegates);
     var colPrice = autoSum ? findColId(["цена", "price"]) : null;
     var colSum = autoSum ? findColId(["сумма", "amount", "sum"]) : null;
     grid.onCellChange.subscribe(function(e, args) {
+      window._obFormEditVersion = (window._obFormEditVersion || 0) + 1;
       window._obFormDirty = true;
       if (colQty && colPrice && colSum && args && args.item && args.cell != null) {
         var changed = columns[args.cell] && columns[args.cell].field;
