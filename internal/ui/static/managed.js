@@ -2541,6 +2541,58 @@ obManagedReady(obManagedInitDelegates);
     updateTotals(g);
   };
 
+  // gridFirstEditableCell — первая колонка строки, в которую можно встать.
+  // Служебные колонки (маркер выбора, номер) редактировать нельзя, и вставать
+  // на них оператору незачем.
+  function gridFirstEditableCell(g, row) {
+    var cols = g.grid.getColumns() || [];
+    for (var i = 0; i < cols.length; i++) {
+      if (g.grid.isCellEditable && !g.grid.isCellEditable(row, i)) continue;
+      return i;
+    }
+    return 0;
+  }
+
+  // gridEnterNavigate — коммит текущей ячейки и переход к следующей.
+  function gridEnterNavigate(g) {
+    if (!g || !g.grid) return false;
+    var grid = g.grid;
+    var lock = grid.getEditorLock && grid.getEditorLock();
+    if (lock && lock.isActive() && !lock.commitCurrentEdit()) {
+      // Значение не принято редактором — остаёмся в ячейке, чтобы человек
+      // увидел отказ там же, где ввёл.
+      return true;
+    }
+    var active = grid.getActiveCell();
+    var rows = (g.dataView && g.dataView.getLength) ? g.dataView.getLength() : 0;
+    if (!active) {
+      if (rows > 0) grid.setActiveCell(0, gridFirstEditableCell(g, 0));
+      return true;
+    }
+    var cols = (grid.getColumns() || []).length;
+    if (active.row >= rows - 1 && active.cell >= cols - 1) {
+      // Конец таблицы: ни новой строки, ни записи.
+      return true;
+    }
+    if (grid.navigateNext) grid.navigateNext();
+    return true;
+  }
+
+  // obGridFocusFirstCell — вход в табличную часть из шапки формы: фокус
+  // становится в первую доступную ячейку. Зовёт ui.js, когда следующей
+  // остановкой маршрута Enter оказывается грид.
+  window.obGridFocusFirstCell = function(host) {
+    var tpName = host && host.getAttribute ? (host.getAttribute("data-sg-tp") || "") : "";
+    var g = (window._obGrids || {})[tpName];
+    if (!g || !g.grid || g.readOnly) return false;
+    var rows = (g.dataView && g.dataView.getLength) ? g.dataView.getLength() : 0;
+    if (rows <= 0) return false;
+    g.grid.setActiveCell(0, gridFirstEditableCell(g, 0));
+    if (g.grid.focus) g.grid.focus();
+    rememberActiveGrid(tpName);
+    return true;
+  };
+
   function gridNameFromTarget(el) {
     var host = el && el.closest ? el.closest(".ob-grid[data-sg-tp]") : null;
     return host ? (host.getAttribute("data-sg-tp") || "") : "";
@@ -2649,6 +2701,16 @@ obManagedReady(obManagedInitDelegates);
       if (e.key === "Insert" && !e.ctrlKey) {
         take();
         if (window.obGridAddRow) window.obGridAddRow(tp);
+        return;
+      }
+      // Enter в табличной части — переход к следующей колонке, а из последней
+      // колонки к первой колонке следующей строки (#1486). На конце таблицы
+      // фокус остаётся на месте: строку не создаём и форму не записываем.
+      // Штатный Enter грида коммитит ячейку и остаётся в ней, поэтому берём
+      // клавишу себе в фазе перехвата и делаем оба шага явно.
+      if (e.key === "Enter" && !e.ctrlKey && direct) {
+        take();
+        gridEnterNavigate(active);
         return;
       }
       // Явный hotkey кнопки формы важнее встроенного значения клавиши.

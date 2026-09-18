@@ -41,6 +41,7 @@ func parseFormYAMLBytes(data []byte) (*IRForm, error) {
 		OriginalID:             doc.Form.OriginalID,
 		AutoSaveDataInSettings: doc.Form.AutoSaveDataInSettings,
 		VerticalScroll:         doc.Form.VerticalScroll,
+		EnterSubmitsForm:       doc.Form.EnterSubmitsForm,
 		Events:                 doc.Events,
 	}
 	for _, a := range doc.Attributes {
