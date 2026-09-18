@@ -3,10 +3,12 @@ package onec_forms
 import (
 	"encoding/xml"
 	"fmt"
-	"github.com/ivantit66/onebase/internal/fsmode"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/ivantit66/onebase/internal/fsmode"
+	"github.com/ivantit66/onebase/internal/metadata"
 )
 
 // WriteFormXML сериализует IRForm в Form.xml формата управляемой формы
@@ -191,16 +193,12 @@ func writeElement(buf *strings.Builder, indent string, el *IRElement, gen *idGen
 // Group, Behavior, …) как XML-элементы. Неизвестные props игнорируются —
 // они либо появятся при следующем round-trip в UnknownXML, либо просто
 // неактуальны для целевого формата.
+//
+// Список ключей и их порядок (нужный для стабильного diff'а выгрузки) берутся
+// из реестра metadata: там же записано, кто ещё ключ читает, и оттуда же
+// configcheck узнаёт, за какие props не надо предупреждать (#1492).
 func writeKnownProps(buf *strings.Builder, indent string, props map[string]any) {
-	// Перечислим в фиксированном порядке для стабильного diff'а.
-	keys := []string{
-		"Type", "Representation", "CommandName",
-		"Group", "Behavior", "ShowTitle",
-		"PagesRepresentation", "TitleLocation", "EditMode",
-		"ChoiceFoldersAndItems", "AutoInsertNewRow", "HeightInTableRows",
-		"HorizontalStretch", "VerticalStretch",
-	}
-	for _, k := range keys {
+	for _, k := range metadata.FormPropOneCXMLKeys() {
 		v, ok := props[k]
 		if !ok {
 			continue

@@ -67,7 +67,7 @@ func normalizeElement(el *IRElement, warns *Warnings) {
 		if el.Props == nil {
 			el.Props = map[string]any{}
 		}
-		el.Props["decoration"] = true
+		el.Props[metadata.FormPropKeyDecoration] = true
 		alreadyMapped = true
 	}
 
@@ -80,7 +80,7 @@ func normalizeElement(el *IRElement, warns *Warnings) {
 		if el.Props == nil {
 			el.Props = map[string]any{}
 		}
-		el.Props["popup"] = true
+		el.Props[metadata.FormPropKeyPopup] = true
 		alreadyMapped = true
 	}
 
@@ -88,11 +88,11 @@ func normalizeElement(el *IRElement, warns *Warnings) {
 	// внутри Button) — внутри обычной формы это не встречается на верхнем
 	// уровне ChildItems, но возможно во вложенных таблицах/группах.
 	if el.Kind == "Button" {
-		if t, ok := el.Props["Type"].(string); ok && t == "CommandBarButton" {
+		if t, ok := el.Props[metadata.FormPropKeyType].(string); ok && t == "CommandBarButton" {
 			if el.Props == nil {
 				el.Props = map[string]any{}
 			}
-			el.Props["in_command_bar"] = true
+			el.Props[metadata.FormPropKeyInCommandBar] = true
 		}
 	}
 
@@ -126,8 +126,9 @@ func normalizeElement(el *IRElement, warns *Warnings) {
 }
 
 // normalizeEventMap преобразует ключи мапы из 1С-имени в OneBase-канон.
-// Если для какого-то события нет 1:1 аналога — складываем в Props через
-// служебный ключ events_unmapped и эмитим W030.
+// Событие без 1:1 аналога остаётся под своим 1С-именем (рендерер просто не
+// вызовет такой обработчик) и получает W030. Отдельного ключа props для таких
+// событий нет — см. реестр metadata.FormPropRegistry.
 func normalizeEventMap(in map[string]string, ownerName string, warns *Warnings) map[string]string {
 	if len(in) == 0 {
 		return in
