@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -654,44 +653,15 @@ func reportParamsFromQuery(q url.Values, rep *reportpkg.Report) (map[string]any,
 			// необязательной датой приходит пустым, потому что «Срок < NULL» не
 			// выбирает ничего. Явно переданное пустое значение — выбор клиента,
 			// его умолчание не перебивает.
-			raw = scheduler.ResolveParamTemplateText(p.Default)
+			raw = scheduler.ResolveParamTemplateText(p.Default, p.Type)
 		}
-		if raw == "" {
-			if p.Type == "bool" {
-				params[p.Name] = false
-			} else {
-				params[p.Name] = nil
-			}
-			continue
-		}
-		v, err := parseReportParamValue(raw, p.Type)
+		v, err := reportpkg.ParseParamValue(raw, p, reportpkg.ParamParseAPI)
 		if err != nil {
 			return nil, fmt.Errorf("invalid report parameter %s: %w", p.Name, err)
 		}
 		params[p.Name] = v
 	}
 	return params, nil
-}
-
-func parseReportParamValue(raw, typ string) (any, error) {
-	switch strings.ToLower(strings.TrimSpace(typ)) {
-	case "date":
-		t, err := time.ParseInLocation("2006-01-02", raw, time.Local)
-		if err != nil {
-			return nil, errors.New("expected date YYYY-MM-DD")
-		}
-		return t, nil
-	case "bool", "boolean":
-		return parseReportBool(raw), nil
-	case "number":
-		n, err := strconv.ParseFloat(raw, 64)
-		if err != nil {
-			return nil, errors.New("expected number")
-		}
-		return n, nil
-	default:
-		return raw, nil
-	}
 }
 
 func parseReportBool(raw string) bool {

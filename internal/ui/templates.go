@@ -2504,6 +2504,10 @@ const tplReport = `
       <label>{{$p.Label}}</label>
       {{if $p.IsDate}}
         <input type="date" name="{{$pname}}" value="{{$pval}}">
+      {{else if $p.IsDateTime}}
+        {{/* step="1" обязателен: шаг поля по умолчанию — 60 секунд, а {{now}}
+             отдаёт секунды, и почти всякое умолчание получило бы stepMismatch. */}}
+        <input type="datetime-local" step="1" name="{{$pname}}" value="{{$pval}}">
       {{else if $p.IsNum}}
         <input type="number" name="{{$pname}}" value="{{$pval}}">
       {{else if $p.IsSel}}
