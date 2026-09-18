@@ -65,6 +65,10 @@ type formEventResponse struct {
 	// форма держала прочитанную при отрисовке — и следующая кнопка «Записать»
 	// упиралась в «объект изменён другим пользователем».
 	Version int64 `json:"version,omitempty"`
+	// FormDirty describes changes after the last successful handler write.
+	// Omitted when no write survived; version/savedId alone cannot prove that
+	// the final form values were saved.
+	FormDirty *bool `json:"formDirty,omitempty"`
 	// ChoiceList — динамический список значений для элемента ПолеСписка,
 	// сформированный обработчиком НачалоВыбора (билтин ДобавитьЗначениеСписка).
 	// Клиент заполняет им <select> того элемента, что инициировал событие.
@@ -420,6 +424,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// ошибкой процедуры, чтобы конфигурационная ошибка не оставалась незаметной.
 	runErr = finishDSLExecution(txState, runErr)
 	liveCtx := txState.Ctx()
+	formDirty := thisObj.dirtyAfterWrite()
 	// Перечитывать из базы имеет смысл только для записи, которая там есть:
 	// либо форма открыта по _id, либо обработчик записал новую (тогда нужен и он —
 	// номер от нумератора обязан приехать на экран «Создать» сразу). Гейт по
@@ -442,6 +447,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		// нужен клиенту, иначе повтор действия создаст второй документ.
 		resp.SavedID = savedFormID(thisObj)
 		resp.Version = s.versionWrittenByHandler(liveCtx, entity, obj, thisObj)
+		resp.FormDirty = formDirty
 		respondJSON(enc, resp)
 		return
 	}
@@ -452,6 +458,7 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	resp.ChoiceList = choiceItems
 	resp.SavedID = savedFormID(thisObj)
 	resp.Version = s.versionWrittenByHandler(liveCtx, entity, obj, thisObj)
+	resp.FormDirty = formDirty
 	respondJSON(enc, resp)
 }
 

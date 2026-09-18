@@ -50,6 +50,9 @@ type formObjectThis struct {
 	ctxSrc docsCtxSource
 	isNew  bool
 	saved  bool
+	// Immutable state at the last successful write in this event. A rollback
+	// restores it together with saved, including an earlier committed write.
+	savedState []byte
 	// writeBlocked prevents a form write lifecycle handler from recursively
 	// saving the same object and then letting the outer Save persist it again.
 	writeBlocked bool
@@ -158,13 +161,18 @@ func (f *formObjectThis) write() error {
 		return fmt.Errorf("%s", result.DSLError)
 	}
 	wasSaved := f.saved
+	previousState := f.savedState
 	f.saved = true
 	// Ссылка появляется только после записи — до неё её нет ни в объекте, ни
 	// у резолвера. Ставим здесь же, чтобы следующая строка обработчика могла
 	// сразу писать Модуль.Действие(Объект.Ссылка).
 	f.obj.Fields["ссылка"] = f.selfRef()
 	f.obj.Fields["reference"] = f.obj.Fields["ссылка"]
-	storage.DeferUntilTxRollback(ctx, func() { f.saved = wasSaved })
+	f.savedState = f.snapshotWriteState()
+	storage.DeferUntilTxRollback(ctx, func() {
+		f.saved = wasSaved
+		f.savedState = previousState
+	})
 	return nil
 }
 
