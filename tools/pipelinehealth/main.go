@@ -4,14 +4,12 @@
 package main
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -138,18 +136,45 @@ func main() {
 	contract := flag.String("contract", ".claude/skills/review-queue/SKILL.md", "active REVIEW contract")
 	fixture := flag.String("prs", "", "read a JSON fixture instead of GitHub")
 	issueFixture := flag.String("issues", "", "read an issue JSON fixture instead of GitHub")
+	transport := flag.String("transport", "graphql", "GitHub read transport: graphql or rest")
+	cacheDir := flag.String("cache-dir", os.Getenv("PIPELINEHEALTH_CACHE_DIR"), "persistent GitHub REST cache directory (default: user cache directory)")
 	asJSON := flag.Bool("json", false, "print machine-readable JSON")
 	flag.Parse()
 
-	prs, err := loadPulls(*repo, *fixture)
-	if err != nil {
-		fail(err)
+	selectedTransport := strings.ToLower(strings.TrimSpace(*transport))
+	var prs []apiPull
+	var issues []apiIssue
+	var err error
+	switch selectedTransport {
+	case "graphql":
+		prs, issues, err = loadPipelineInputsGraphQL(newGHPipelineGraphQLClient(), *repo, *fixture, *issueFixture)
+	case "rest":
+		var github *githubRESTClient
+		if *fixture == "" {
+			var resolvedCacheDir string
+			resolvedCacheDir, err = resolveCacheDir(*cacheDir)
+			if err == nil {
+				github, err = newGitHubRESTClient(resolvedCacheDir)
+			}
+		}
+		if err == nil {
+			prs, err = loadPulls(github, *repo, *fixture)
+		}
+		if err == nil {
+			issues, err = loadIssues(github, *repo, *issueFixture, *fixture != "")
+		}
+	default:
+		err = fmt.Errorf("unknown GitHub transport %q; expected graphql or rest", *transport)
 	}
-	issues, err := loadIssues(*repo, *issueFixture, *fixture != "")
 	if err != nil {
 		fail(err)
 	}
 	result := analyze(prs, *owner)
+	if selectedTransport == "graphql" {
+		result.Scope = "complete GraphQL queue snapshot; mutation gates remain independent GraphQL proofs"
+	} else {
+		result.Scope = "conditional REST queue snapshot; mutation gates remain GraphQL"
+	}
 	analyzeIssues(&result, issues, prs, *owner)
 	checkContract(&result, *contract)
 	result.finish()
@@ -173,7 +198,7 @@ func fail(err error) {
 	os.Exit(2)
 }
 
-func loadPulls(repo, fixture string) ([]apiPull, error) {
+func loadPulls(github *githubRESTClient, repo, fixture string) ([]apiPull, error) {
 	if fixture != "" {
 		data, err := os.ReadFile(fixture)
 		if err != nil {
@@ -186,14 +211,12 @@ func loadPulls(repo, fixture string) ([]apiPull, error) {
 		return prs, nil
 	}
 
-	gh := os.Getenv("GH_EXE")
-	if gh == "" {
-		gh = "gh"
+	if github == nil {
+		return nil, fmt.Errorf("GitHub REST client is required outside fixture mode")
 	}
-	var prs []apiPull
-	if err := ghJSONLines(gh, &prs, "api", "--paginate",
-		"repos/"+repo+"/pulls?state=open&per_page=100&sort=created&direction=asc",
-		"--jq", ".[]"); err != nil {
+	prs, err := getAllPages[apiPull](github,
+		"repos/"+repo+"/pulls?state=open&per_page=100&sort=created&direction=asc")
+	if err != nil {
 		return nil, fmt.Errorf("list pull requests: %w", err)
 	}
 
@@ -212,22 +235,26 @@ func loadPulls(repo, fixture string) ([]apiPull, error) {
 			defer wg.Done()
 			for index := range jobs {
 				path := fmt.Sprintf("repos/%s/issues/%d/comments?per_page=100", repo, prs[index].Number)
-				if err := ghJSONLines(gh, &prs[index].Comments, "api", "--paginate", path, "--jq", ".[]"); err != nil {
+				comments, err := getAllPages[apiComment](github, path)
+				if err != nil {
 					errs <- fmt.Errorf("comments for PR #%d: %w", prs[index].Number, err)
 					continue
 				}
+				prs[index].Comments = comments
 				if !needsHeadParents(prs[index]) {
 					continue
 				}
-				var parents []struct {
-					SHA string `json:"sha"`
+				var commitResponse struct {
+					Parents []struct {
+						SHA string `json:"sha"`
+					} `json:"parents"`
 				}
 				commit := fmt.Sprintf("repos/%s/commits/%s", repo, prs[index].Head.SHA)
-				if err := ghJSONLines(gh, &parents, "api", commit, "--jq", ".parents[]"); err != nil {
+				if err := github.getJSON(commit, &commitResponse); err != nil {
 					errs <- fmt.Errorf("head parents for PR #%d: %w", prs[index].Number, err)
 					continue
 				}
-				for _, parent := range parents {
+				for _, parent := range commitResponse.Parents {
 					prs[index].HeadParents = append(prs[index].HeadParents, parent.SHA)
 				}
 			}
@@ -247,7 +274,7 @@ func loadPulls(repo, fixture string) ([]apiPull, error) {
 	return prs, nil
 }
 
-func loadIssues(repo, fixture string, skipLive bool) ([]apiIssue, error) {
+func loadIssues(github *githubRESTClient, repo, fixture string, skipLive bool) ([]apiIssue, error) {
 	if fixture != "" {
 		data, err := os.ReadFile(fixture)
 		if err != nil {
@@ -265,14 +292,12 @@ func loadIssues(repo, fixture string, skipLive bool) ([]apiIssue, error) {
 		return []apiIssue{}, nil
 	}
 
-	gh := os.Getenv("GH_EXE")
-	if gh == "" {
-		gh = "gh"
+	if github == nil {
+		return nil, fmt.Errorf("GitHub REST client is required outside fixture mode")
 	}
-	var all []apiIssue
-	if err := ghJSONLines(gh, &all, "api", "--paginate",
-		"repos/"+repo+"/issues?state=open&per_page=100&sort=created&direction=asc",
-		"--jq", ".[]"); err != nil {
+	all, err := getAllPages[apiIssue](github,
+		"repos/"+repo+"/issues?state=open&per_page=100&sort=created&direction=asc")
+	if err != nil {
 		return nil, fmt.Errorf("list issues: %w", err)
 	}
 	issues := make([]apiIssue, 0, len(all))
@@ -295,9 +320,12 @@ func loadIssues(repo, fixture string, skipLive bool) ([]apiIssue, error) {
 			defer wg.Done()
 			for index := range jobs {
 				path := fmt.Sprintf("repos/%s/issues/%d/comments?per_page=100", repo, issues[index].Number)
-				if err := ghJSONLines(gh, &issues[index].Thread, "api", "--paginate", path, "--jq", ".[]"); err != nil {
+				comments, err := getAllPages[apiComment](github, path)
+				if err != nil {
 					errs <- fmt.Errorf("comments for issue #%d: %w", issues[index].Number, err)
+					continue
 				}
+				issues[index].Thread = comments
 			}
 		}()
 	}
@@ -315,39 +343,9 @@ func loadIssues(repo, fixture string, skipLive bool) ([]apiIssue, error) {
 	return issues, nil
 }
 
-func ghJSONLines(gh string, destination any, args ...string) error {
-	// GH_EXE is an explicit operator setting, and arguments are passed without a shell.
-	//nolint:gosec // The executable path is trusted configuration, not GitHub data.
-	cmd := exec.Command(gh, args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
-	}
-
-	// gh --paginate --jq '.[]' emits one JSON object per line. Decode into a
-	// temporary generic slice, then marshal once into the typed destination.
-	var values []json.RawMessage
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
-			values = append(values, json.RawMessage(line))
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-	data, err := json.Marshal(values)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, destination)
-}
-
 func analyze(prs []apiPull, owner string) report {
 	result := report{
-		State: "green", Scope: "fast REST snapshot; mutation gates remain GraphQL",
+		State: "green", Scope: "read-only queue snapshot; mutation gates remain GraphQL",
 		Scheduler: "two-lane-safety-priority-aging-depth-number", Checked: len(prs),
 		ReviewCandidates: []candidate{}, ContentReviewCandidates: []candidate{},
 		ReviewBacklog: []candidate{}, ReviewedWaitingShip: []candidate{}, MergeCandidates: []candidate{}, MergeExecutable: []candidate{}, PlanCandidates: []candidate{}, FixCandidates: []candidate{},
