@@ -425,6 +425,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 168 | [168-choice-preview-context.md](168-choice-preview-context.md) | Пояснение в форме выбора: статический реквизит, пакетная DSL-функция и ограниченный контекст вызывающей формы с RBAC (#1391) | ~5.5–8 дней | 📋 Проект 2026-09-08 |
 | 169 | [169-semantic-navigation-settings.md](169-semantic-navigation-settings.md) | Смысловое mixed-kind меню: YAML-база, общая настройка администратора и персональная дельта пользователя с безопасным наследованием (#1362) | ~13–19 дней после bootstrap плана 163 | 📋 Проект 2026-09-08 |
 | 170 | [170-dependent-reference-choice-filters.md](170-dependent-reference-choice-filters.md) | Зависимый отбор ссылочного picker: server-authoritative `eq`, `in_hierarchy`, `is_folder`, одинаковый `List`/`CountList` и защита от stale browser responses (#1303) | ~6–8 дней | 📋 Проектирование |
+| 172 | [172-managed-form-runtime-structure.md](172-managed-form-runtime-structure.md) | Динамическая структура managed-форм: `ЭтаФорма.Элементы`, серверный instance/revision, безопасные DOM-патчи и lifecycle SlickGrid (#1263) | ~12–17 дней | 📋 Проектирование |
 
 Повод — вопрос с внедрения «одна организация в базе, почему её не подставляют».
 Граница проведена так: в движок идёт механизм (объявление дефолта, его
