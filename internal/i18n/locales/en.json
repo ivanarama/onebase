@@ -1,4 +1,6 @@
 {
+  "Excel: превышен предел импорта (32 МиБ, 10000 строк, 256 колонок, 1000000 ячеек)": "Excel: import limit exceeded (32 MiB, 10000 rows, 256 columns, 1000000 cells)",
+  "Excel: повреждённая структура книги": "Excel: invalid workbook structure",
   "%-ширины не поддерживаются печатью (PDF). Используйте px или mm.": "% widths are not supported when printing (PDF). Use px or mm.",
   "+ Добавить": "+ Add",
   "+ Печатная форма (макет)": "+ Print form (layout)",
@@ -725,6 +727,10 @@
   "Процедура ПриФормировании": "OnCompose procedure",
   "Процедура диаграммы": "Chart procedure",
   "Процедура должна возвращать ТабличныйДокумент": "The procedure must return a SpreadsheetDocument",
+  "ПрочитатьExcel": "ImportExcel",
+  "ПрочитатьExcel: аргумент Путь должен быть Строкой": "ImportExcel: the Path argument must be a String",
+  "ПрочитатьExcel: ожидается аргумент Путь (Строка)": "ImportExcel: a Path argument (String) is required",
+  "ПрочитатьExcel: путь не задан": "ImportExcel: path is not specified",
   "Псевдоним": "Alias",
   "Псевдоним:": "Alias:",
   "Пустые пароли включаются переменной окружения ONEBASE_ALLOW_EMPTY_PASSWORDS=true перед запуском лаунчера.": "Empty passwords are enabled by the ONEBASE_ALLOW_EMPTY_PASSWORDS=true environment variable before the launcher starts.",

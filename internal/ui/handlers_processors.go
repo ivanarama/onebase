@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
+	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -218,12 +221,15 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
 		return
 	}
-	paramValues, err := processorParamValuesFromRequest(
+	paramValues, uploadTemps, err := processorParamValuesFromRequest(
 		r,
 		proc.Params,
 		maxSize,
 		requestControls,
 	)
+	// Временные файлы двоичных параметров живут ровно прогон: обработка
+	// получила путь, а после ответа файл платформе не нужен.
+	defer uploadTemps.Cleanup()
 	if err != nil {
 		opStatus = "error"
 		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
@@ -381,6 +387,80 @@ func (s *Server) getProcessor(w http.ResponseWriter, r *http.Request) *processor
 		return nil
 	}
 	return proc
+}
+
+// processorBinaryParamType — параметр обработки, чьё значение НЕ текст. Байты
+// сохраняются во временный файл, а DSL получает путь к нему — один смысл
+// аргумента, как у ПутьКВложению (#1470). Прежний `file` остаётся текстовым:
+// его значение — уже декодированное содержимое.
+const processorBinaryParamType = "binary"
+
+// isProcessorFileParam — параметр, который рисуется файловым полем и приходит
+// multipart-загрузкой. Отличаются они только тем, что попадает в значение.
+func isProcessorFileParam(typ string) bool {
+	return typ == "file" || typ == processorBinaryParamType
+}
+
+// processorTempFiles — временные файлы двоичных параметров одного прогона.
+// Жизненный цикл ровно такой: создать до запуска, удалить после — вызывающий
+// обязан отложить Cleanup сразу после получения значений.
+type processorTempFiles struct {
+	// Only save appends paths returned by os.CreateTemp, never request paths.
+	paths []string
+}
+
+func (t *processorTempFiles) Cleanup() {
+	if t == nil {
+		return
+	}
+	for _, path := range t.paths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) { //nolint:gosec // G703: paths contains only CreateTemp results; save rejects separators in the uploaded extension.
+			oblog.Component("processor").Warn("временный файл параметра не удалён", "path", path, "err", err)
+		}
+	}
+	t.paths = nil
+}
+
+// processorUploadTempDir — куда класть временный файл. В demo-режиме он обязан
+// лежать ВНУТРИ файловой песочницы: иначе обработка не сможет прочитать
+// собственный файл, потому что ПрочитатьExcel уважает ту же песочницу.
+func processorUploadTempDir() string {
+	if root := interpreter.FileSandboxRoot(); root != "" {
+		return filepath.Join(root, ".onebase-uploads")
+	}
+	return os.TempDir()
+}
+
+// saveProcessorUpload кладёт загруженные байты во временный файл и возвращает
+// путь. Расширение сохраняется: excelize открывает книгу по содержимому, но
+// человек, которому файл покажут в ошибке, читает имя.
+func (t *processorTempFiles) save(paramName, fileName string, data []byte) (string, error) {
+	dir := processorUploadTempDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("временный каталог загрузок: %w", err)
+	}
+	ext := strings.ToLower(filepath.Ext(fileName))
+	if len(ext) > 16 || strings.ContainsAny(ext, `/\`) {
+		ext = ""
+	}
+	f, err := os.CreateTemp(dir, "upload-*"+ext)
+	if err != nil {
+		return "", fmt.Errorf("временный файл параметра %s: %w", paramName, err)
+	}
+	path := f.Name()
+	_, writeErr := f.Write(data)
+	closeErr := f.Close()
+	if writeErr == nil {
+		writeErr = closeErr
+	}
+	if writeErr != nil {
+		if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) { //nolint:gosec // G703: path is f.Name() from CreateTemp in our temp directory; the uploaded extension cannot contain separators.
+			oblog.Component("processor").Warn("временный файл параметра не удалён", "path", path, "err", removeErr)
+		}
+		return "", fmt.Errorf("временный файл параметра %s: %w", paramName, writeErr)
+	}
+	t.paths = append(t.paths, path)
+	return path, nil
 }
 
 // decodeUploadText tries UTF-8; falls back to Windows-1251.
@@ -560,7 +640,7 @@ func processorRequestControlsForForm(proc *processorpkg.Processor, form *metadat
 			if p.Type == "bool" {
 				controls.boolPresence[key] = append(controls.boolPresence[key], processorParamPresenceName(params, p.Name))
 			}
-			if p.Type == "file" {
+			if isProcessorFileParam(p.Type) {
 				controls.fileInputs[key] = append(controls.fileInputs[key], p.Name)
 			}
 		}
@@ -595,7 +675,7 @@ func processorRequestControlsForForm(proc *processorpkg.Processor, form *metadat
 			controls.boolPresence[paramKey] = appendUniqueProcessorControl(
 				controls.boolPresence[paramKey], processorParamPresenceName(params, fieldName),
 			)
-		case p.Type == "file" && el.Kind == metadata.FormElementField && strings.EqualFold(el.Type, "file"):
+		case isProcessorFileParam(p.Type) && el.Kind == metadata.FormElementField && strings.EqualFold(el.Type, "file"):
 			controls.fileInputs[paramKey] = appendUniqueProcessorControl(
 				controls.fileInputs[paramKey], fieldName,
 			)
@@ -639,11 +719,55 @@ func processorParamValuesFromRequest(
 	params []processorpkg.Param,
 	maxFileSize int64,
 	controls processorRequestControls,
-) (map[string]any, error) {
+) (map[string]any, *processorTempFiles, error) {
 	values := make(map[string]any)
+	temps := &processorTempFiles{}
 	for _, p := range params {
 		paramKey := strings.ToLower(p.Name)
 		paramFields := controls.paramFields[paramKey]
+		if p.Type == processorBinaryParamType {
+			// Двоичный параметр приходит только настоящей multipart-загрузкой.
+			// Managed obFire преобразует FormData в urlencoded и передаёт уже
+			// прочитанное браузером содержимое обычной строкой — для zip-архива
+			// это порча. Отказываем явно: молча испорченный файл дороже отказа.
+			if r.MultipartForm == nil {
+				if _, present := processorControlText(r, controls.fileContent[paramKey]); present {
+					return nil, temps, fmt.Errorf(
+						"параметр %s принимает файл целиком и требует обычной отправки формы обработки; "+
+							"через управляемую форму (obFire) двоичный файл передать нельзя", p.Name)
+				}
+				if _, present := processorControlText(r, paramFields); present {
+					return nil, temps, fmt.Errorf(
+						"параметр %s принимает файл целиком и требует обычной отправки формы обработки; "+
+							"через управляемую форму (obFire) двоичный файл передать нельзя", p.Name)
+				}
+				continue
+			}
+			for _, fieldName := range controls.fileInputs[paramKey] {
+				file, header, err := r.FormFile(fieldName)
+				if err == nil {
+					data, readErr := readUploadedBytes(file, maxFileSize)
+					closeRead("загруженный файл параметра", file)
+					if readErr != nil {
+						return nil, temps, readErr
+					}
+					name := ""
+					if header != nil {
+						name = header.Filename
+					}
+					path, saveErr := temps.save(p.Name, name, data)
+					if saveErr != nil {
+						return nil, temps, saveErr
+					}
+					values[p.Name] = path
+					break
+				}
+				if !errors.Is(err, http.ErrMissingFile) {
+					return nil, temps, fmt.Errorf("файл-параметр %s: %w", p.Name, err)
+				}
+			}
+			continue
+		}
 		if p.Type == "file" {
 			// Обычная страница обработки отправляет настоящий multipart-файл.
 			// Managed obFire, напротив, преобразует FormData в urlencoded и
@@ -656,13 +780,13 @@ func processorParamValuesFromRequest(
 						data, readErr := readUploadedBytes(file, maxFileSize)
 						closeRead("загруженный файл параметра", file)
 						if readErr != nil {
-							return nil, readErr
+							return nil, temps, readErr
 						}
 						values[p.Name] = decodeUploadText(data)
 						break
 					}
 					if !errors.Is(err, http.ErrMissingFile) {
-						return nil, fmt.Errorf("файл-параметр %s: %w", p.Name, err)
+						return nil, temps, fmt.Errorf("файл-параметр %s: %w", p.Name, err)
 					}
 				}
 				if _, present := values[p.Name]; present {
@@ -682,7 +806,7 @@ func processorParamValuesFromRequest(
 				continue
 			}
 			if int64(len([]byte(text))) > maxFileSize {
-				return nil, errUploadTooLarge
+				return nil, temps, errUploadTooLarge
 			}
 			values[p.Name] = text
 			continue
@@ -703,7 +827,7 @@ func processorParamValuesFromRequest(
 		}
 		values[p.Name] = parseParamValue(text, p.Type)
 	}
-	return values, nil
+	return values, temps, nil
 }
 
 // processorPostFormText читает только тело запроса. r.Form объединяет body с

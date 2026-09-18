@@ -103,6 +103,20 @@ func (s *Server) RunProcessor(ctx context.Context, reg *runtime.Registry, procNa
 
 	paramValues := map[string]any{}
 	for _, p := range proc.Params {
+		if p.Type == processorBinaryParamType {
+			// Двоичный параметр — это путь. В CLI файл уже лежит на диске, и
+			// копировать его во временный незачем: обработка получает тот же
+			// вид значения, что и из формы.
+			path, ok := fileParams[p.Name]
+			if !ok {
+				continue
+			}
+			if _, statErr := os.Stat(path); statErr != nil {
+				return nil, nil, fmt.Errorf("файл параметра %s: %w", p.Name, statErr)
+			}
+			paramValues[p.Name] = path
+			continue
+		}
 		if p.Type == "file" {
 			path, ok := fileParams[p.Name]
 			if !ok {
