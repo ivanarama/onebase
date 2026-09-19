@@ -102,6 +102,54 @@ func TestMergeFastPathRecoversPostMergeCleanup(t *testing.T) {
 	)
 }
 
+// TestMergeMechanicalConflictAllowlist — список файлов, конфликт в которых
+// MERGE разрешает сам, и условия, на которых это вообще допустимо (#1497).
+//
+// CHANGELOG.md содержит сводку по версиям и изменения поведения существующих
+// конфигураций. Параллельные дополнения могут конфликтовать при base-sync.
+// Пока файл не входил в список, такой конфликт требовал ручного разбора —
+// так вышло на #1220, где обе стороны только дописывали свои записи.
+//
+// Разрешение при этом не «склеить и забыть»: проверяется, что в тексте
+// процедуры остаётся требование доказать сохранность блоков обеих сторон и
+// эскалировать всё, что под него не подходит. Без этой половины список
+// превратился бы в разрешение молча терять записи.
+func TestMergeMechanicalConflictAllowlist(t *testing.T) {
+	legacy := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	claude := repositoryFile(t, "CLAUDE.md")
+
+	requireAllCompact(t, legacy,
+		"`docs/features.md`, `CHANGELOG.md` и `internal/i18n/locales/*.json` — взять обе стороны",
+		"«Взять обе стороны» — проверяемое утверждение, а не намерение",
+		"проверь целые добавленные блоки с контекстом, порядком строк и числом вхождений",
+		"внутри каждого блока строки не переписывай и не переупорядочивай",
+		"go run ./tools/mergecheck -kind entries -base <base-file> -ours <ours-file> -theirs <theirs-file> -result <путь>",
+		"Для `Plans/README.md` разрешена перенумерация",
+		"можно менять только первый числовой столбец",
+		"Содержание, ссылки, порядок строк каждой стороны и число вхождений сохраняются",
+		"используй `-kind plans`",
+		"Общую строку, которую обе стороны правят по-разному, механически не своди",
+		"Файл вне списка в диффе конфликта — тоже эскалация",
+		"#1220",
+	)
+	rejectAll(t, legacy,
+		"`docs/features.md` и `internal/i18n/locales/*.json` — взять обе стороны",
+		"сравни множества новых строк каждой стороны",
+	)
+
+	requireAllCompact(t, docs,
+		"Механические конфликты (`docs/features.md`, `CHANGELOG.md`, `internal/i18n/locales/*.json`, `Plans/README.md`)",
+		"проверяет целые добавленные блоки с контекстом, порядком строк и числом вхождений",
+		"Для `Plans/README.md` разрешена перенумерация только первого числового столбца",
+	)
+	requireAllCompact(t, claude,
+		"`docs/features.md`, `CHANGELOG.md`, `Plans/README.md` и `internal/i18n/locales/*.json`",
+		"обязан проверить целые добавленные блоки с контекстом, порядком строк и числом вхождений",
+		"менять можно только первый числовой столбец, сохраняя содержание, ссылки, порядок и повторы",
+	)
+}
+
 func TestMergeFallbackUsesValidatedGateAsCleanupBarrier(t *testing.T) {
 	legacy := repositoryFile(t, ".claude", "skills", "merge-shepherd", "references", "legacy-protocol.md")
 	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
