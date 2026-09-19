@@ -778,12 +778,24 @@ func (e *refsExistError) Error() string {
 // после удаления в той же транзакции — он видит мир без объекта, и его ошибка
 // возвращает объект на место.
 func (s *Service) Delete(ctx context.Context, entity *metadata.Entity, id uuid.UUID) (DeleteResult, error) {
+	return s.delete(ctx, entity, id, nil)
+}
+
+// DeleteVersioned deletes the object only if it still has expectedVersion.
+// The comparison is repeated by the final DELETE, so a write racing with hooks
+// or reference checks cannot turn a decision about an old snapshot into a
+// deletion of the new state.
+func (s *Service) DeleteVersioned(ctx context.Context, entity *metadata.Entity, id uuid.UUID, expectedVersion int64) (DeleteResult, error) {
+	return s.delete(ctx, entity, id, &expectedVersion)
+}
+
+func (s *Service) delete(ctx context.Context, entity *metadata.Entity, id uuid.UUID, expectedVersion *int64) (DeleteResult, error) {
 	result := DeleteResult{ID: id}
 	lockCollector := runtime.NewLockCollector()
 	defer lockCollector.ReleaseAll()
 
 	err := s.Store.WithTxScope(ctx, func(txCtx context.Context) error {
-		return s.deleteInTx(txCtx, entity, id, &result.DSLMessages, lockCollector)
+		return s.deleteInTx(txCtx, entity, id, expectedVersion, &result.DSLMessages, lockCollector)
 	})
 	if err != nil {
 		var hookErr *hookRunError
@@ -808,6 +820,7 @@ func (s *Service) deleteInTx(
 	txCtx context.Context,
 	entity *metadata.Entity,
 	id uuid.UUID,
+	expectedVersion *int64,
 	messages *[]string,
 	lockCollector *runtime.LockCollector,
 ) error {
@@ -817,6 +830,15 @@ func (s *Service) deleteInTx(
 	obj, err := s.deleteHookObject(txCtx, entity, id)
 	if err != nil {
 		return err
+	}
+	if expectedVersion != nil {
+		if obj == nil {
+			return storage.ErrVersionConflict
+		}
+		actualVersion, ok := obj.Fields["_version"].(int64)
+		if !ok || actualVersion != *expectedVersion {
+			return storage.ErrVersionConflict
+		}
 	}
 	if err := s.runDeleteHook(txCtx, entity, id, "BeforeDelete", obj, messages, lockCollector); err != nil {
 		return err
@@ -865,7 +887,11 @@ func (s *Service) deleteInTx(
 			return err
 		}
 	}
-	if err := s.Store.Delete(txCtx, entity.Name, id); err != nil {
+	if expectedVersion == nil {
+		if err := s.Store.Delete(txCtx, entity.Name, id); err != nil {
+			return err
+		}
+	} else if err := s.Store.DeleteVersioned(txCtx, entity.Name, id, *expectedVersion); err != nil {
 		return err
 	}
 	return s.runDeleteHook(txCtx, entity, id, "AfterDelete", obj, messages, lockCollector)
