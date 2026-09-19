@@ -417,3 +417,7 @@ func shortObjectID(id string) string {
 	}
 	return id
 }
+
+// XDTOObject — см. одноимённый метод документа: сериализатору нужен объект
+// целиком, вместе с табличными частями.
+func (w *catWriter) XDTOObject() *runtime.Object { return w.obj }
