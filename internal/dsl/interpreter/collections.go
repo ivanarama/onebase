@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 )
@@ -371,17 +370,8 @@ type Map struct {
 }
 
 func (m *Map) findIdx(key any) int {
-	ks := refKey(key)
 	for i, k := range m.keys {
-		// Keep map-key identity consistent with the DSL equality operator:
-		// two time.Time values that describe the same instant are one key even
-		// when their locations (and therefore refKey strings) differ (#1034).
-		if kt, ok := k.(time.Time); ok {
-			if keyTime, ok := key.(time.Time); ok && kt.Equal(keyTime) {
-				return i
-			}
-		}
-		if refKey(k) == ks {
+		if equal(k, key) {
 			return i
 		}
 	}
@@ -428,6 +418,8 @@ func (m *Map) CallMethod(name string, args []any) any {
 				return m.vals[idx]
 			}
 		}
+	case "содержитключ", "containskey":
+		return len(args) >= 1 && m.findIdx(args[0]) >= 0
 	case "удалить", "delete":
 		if len(args) >= 1 {
 			if idx := m.findIdx(args[0]); idx >= 0 {

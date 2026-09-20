@@ -187,6 +187,7 @@ func sandboxBuiltinStringArg(operation string, args []any, index, maxBytes, line
 }
 
 func sandboxConcatValues(ec *execCtx, operation string, left, right any, line int) string {
+	left, right = ToHostValue(left), ToHostValue(right)
 	maxBytes := 0
 	maxDecimal := int32(0)
 	if ec != nil {

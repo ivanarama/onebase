@@ -199,7 +199,7 @@ func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p Sandbox
 				err = &DSLError{File: e.ec.curFile, Line: e.ec.curLine, Msg: s.Msg, Err: s.Err}
 			case dslReturn:
 				if result != nil {
-					*result = s.val
+					*result = ToHostValue(s.val)
 				}
 			default:
 				panic(r)
@@ -219,7 +219,7 @@ func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p Sandbox
 	e.ec.checkDeadline()
 	if i.StrictLexicalScope {
 		if result != nil {
-			*result = i.callEntryProc(proc, e, nil)
+			*result = ToHostValue(i.callEntryProc(proc, e, nil))
 		} else {
 			i.callEntryProc(proc, e, nil)
 		}
@@ -257,7 +257,7 @@ func (i *Interpreter) CallSandboxed(proc *ast.ProcedureDecl, this This, args []a
 	}
 	applySandboxVars(e, p)
 	e.ec.checkDeadline()
-	result = i.callUserProc(proc, e, args)
+	result = ToHostValue(i.callUserProc(proc, e, args))
 	return
 }
 

@@ -122,7 +122,7 @@ func New() *Interpreter { return &Interpreter{} }
 // Public for the debugger console and debug handlers.
 func (i *Interpreter) EvalExpr(expr ast.Expr, this This) any {
 	e := i.startEnv(this)
-	return i.evalExpr(expr, e)
+	return ToHostValue(i.evalExpr(expr, e))
 }
 
 // Call executes a procedure with positional arguments and captures the return
@@ -151,7 +151,7 @@ func (i *Interpreter) Call(proc *ast.ProcedureDecl, this This, args []any, extra
 			e.setLocal(k, v)
 		}
 	}
-	result = i.callUserProc(proc, e, args)
+	result = ToHostValue(i.callUserProc(proc, e, args))
 	return
 }
 
@@ -170,7 +170,7 @@ func (i *Interpreter) RunWithResult(proc *ast.ProcedureDecl, this This, result *
 				err = &DSLError{File: e.ec.curFile, Line: e.ec.curLine, Msg: s.Msg, Err: s.Err}
 			case dslReturn:
 				if result != nil {
-					*result = s.val
+					*result = ToHostValue(s.val)
 				}
 			default:
 				panic(r)
@@ -184,7 +184,7 @@ func (i *Interpreter) RunWithResult(proc *ast.ProcedureDecl, this This, result *
 	}
 	if i.StrictLexicalScope {
 		if result != nil {
-			*result = i.callEntryProc(proc, e, nil)
+			*result = ToHostValue(i.callEntryProc(proc, e, nil))
 		} else {
 			i.callEntryProc(proc, e, nil)
 		}
@@ -340,7 +340,8 @@ func (i *Interpreter) evalDebugExpr(expr string, e *env) (res any, err error) {
 			}
 		}
 	}()
-	return i.evaluateExprString(expr, e)
+	value, err := i.evaluateExprString(expr, e)
+	return ToHostValue(value), err
 }
 
 func stackDepth(e *env) int {
@@ -504,7 +505,7 @@ func (i *Interpreter) execStmt(s ast.Stmt, e *env) {
 			}
 		}
 	case *ast.ReturnStmt:
-		var val any
+		var val any = undefined
 		if v.Value != nil {
 			val = i.evalExpr(v.Value, e)
 		}
@@ -529,7 +530,7 @@ func (i *Interpreter) assign(target ast.Expr, val any, e *env) {
 		field := strings.ToLower(t.Field.Literal)
 		switch o := obj.(type) {
 		case This:
-			o.Set(field, val)
+			o.Set(field, ToHostValue(val))
 		case *Map:
 			// Симметрично чтению: запись по точке у Соответствия не работает —
 			// раньше тихо терялась, теперь явная ошибка с подсказкой.
@@ -539,18 +540,18 @@ func (i *Interpreter) assign(target ast.Expr, val any, e *env) {
 	case *ast.IndexExpr:
 		refuseReadOnly(e.ec, "изменение элемента коллекции")
 		obj := i.evalExpr(t.Object, e)
-		idx := i.evalExpr(t.Index, e)
+		idx := ToHostValue(i.evalExpr(t.Index, e))
 		switch o := obj.(type) {
 		case *Array:
-			o.SetIndex(int(toFloatOr0(idx)), val)
+			o.SetIndex(int(toFloatOr0(idx)), ToHostValue(val))
 		case *Map:
-			o.CallMethod("вставить", []any{idx, val})
+			o.CallMethod("вставить", []any{idx, ToHostValue(val)})
 		case DynamicFieldAccessor:
 			name, ok := idx.(string)
 			if !ok {
 				RaiseUserError("Имя реквизита в индексной записи должно быть строкой")
 			}
-			if !o.SetDynamicField(name, val) {
+			if !o.SetDynamicField(name, ToHostValue(val)) {
 				RaiseUserError("Неизвестный реквизит «" + name + "» у объекта " + getTypeName(obj))
 			}
 		default:
@@ -560,7 +561,7 @@ func (i *Interpreter) assign(target ast.Expr, val any, e *env) {
 }
 
 func (i *Interpreter) evalExpr(expr ast.Expr, e *env) any {
-	result := i.evalExprUnchecked(expr, e)
+	result := FromHostValue(i.evalExprUnchecked(expr, e))
 	e.ec.checkReadOnlyViolation()
 	return result
 }
@@ -606,7 +607,7 @@ func (i *Interpreter) evalExprUnchecked(expr ast.Expr, e *env) any {
 		return nil
 	case *ast.IndexExpr:
 		obj := i.evalExpr(v.Object, e)
-		idx := i.evalExpr(v.Index, e)
+		idx := ToHostValue(i.evalExpr(v.Index, e))
 		switch o := obj.(type) {
 		case *Array:
 			return protectReadOnly(e.ec, o.Index(int(toFloatOr0(idx))))
@@ -628,7 +629,7 @@ func (i *Interpreter) evalExprUnchecked(expr ast.Expr, e *env) any {
 	case *ast.ArrayLit:
 		items := make([]any, 0, len(v.Elements))
 		for _, elem := range v.Elements {
-			items = append(items, i.evalExpr(elem, e))
+			items = append(items, ToHostValue(i.evalExpr(elem, e)))
 		}
 		return NewArray(items)
 	case *ast.NewExpr:
@@ -776,13 +777,12 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 				requireSafeSandboxDecimalOperation(e.ec, b.Op.Literal, rd, b.Op.Line)
 				return safeSandboxDecimalResult(e.ec, b.Op.Literal, ld.Add(rd), b.Op.Line)
 			}
-			// nil-toleration: пустое число + N → N, иначе `Объект.Сумма + 100`
-			// при пустом поле дало бы concat «<nil>100», который потом ломает
-			// запись в numeric (SQLSTATE 22P02).
-			if l == nil && rok {
+			// Сохраняем арифметическую совместимость Неопределено с числом.
+			// Типизированные пустые поля уже прошли обычную decimal-ветку.
+			if IsUndefined(l) && rok {
 				return safeSandboxDecimalResult(e.ec, b.Op.Literal, rd, b.Op.Line)
 			}
-			if r == nil && lok {
+			if IsUndefined(r) && lok {
 				return safeSandboxDecimalResult(e.ec, b.Op.Literal, ld, b.Op.Line)
 			}
 		}
@@ -814,10 +814,10 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 		if lok && rok {
 			return safeSandboxDecimalResult(e.ec, b.Op.Literal, ld.Sub(rd), b.Op.Line)
 		}
-		if l == nil && rok {
+		if IsUndefined(l) && rok {
 			return safeSandboxDecimalResult(e.ec, b.Op.Literal, rd.Neg(), b.Op.Line)
 		}
-		if r == nil && lok {
+		if IsUndefined(r) && lok {
 			return safeSandboxDecimalResult(e.ec, b.Op.Literal, ld, b.Op.Line)
 		}
 	case token.STAR:
@@ -831,7 +831,7 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 			return safeSandboxDecimalResult(e.ec, b.Op.Literal, ld.Mul(rd), b.Op.Line)
 		}
 		// nil * число / число * nil → 0 (а не string concat).
-		if (l == nil && rok) || (r == nil && lok) {
+		if (IsUndefined(l) && rok) || (IsUndefined(r) && lok) {
 			return decimal.Zero
 		}
 	case token.PERCENT:
@@ -849,14 +849,14 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 		// Условие деления на ноль такое же, как у SLASH: ошибка возникает,
 		// только когда операция вообще применима — иначе «abc % 0» падал бы
 		// делением на ноль там, где обычное деление возвращает Неопределено.
-		if rok && rd.IsZero() && (lok || l == nil) {
+		if rok && rd.IsZero() && (lok || IsUndefined(l)) {
 			panic(userError{Msg: "Деление на ноль", Line: b.Op.Line, Err: ErrDivisionByZero})
 		}
 		if lok && rok {
 			requireSafeDecimalQuotient(ld, rd, b.Op.Line)
 			return safeSandboxDecimalResult(e.ec, b.Op.Literal, ld.Mod(rd), b.Op.Line)
 		}
-		if l == nil && rok {
+		if IsUndefined(l) && rok {
 			return decimal.Zero
 		}
 	case token.SLASH:
@@ -873,14 +873,14 @@ func (i *Interpreter) evalBinary(b *ast.BinaryExpr, e *env) any {
 		// Деление на ноль — исключение (как в 1С), а не молчаливый nil. Err несёт
 		// сентинел ErrDivisionByZero, чтобы компоновка отчётов отличила его от
 		// настоящей runtime-ошибки (там это «неопределённое значение» → пустая ячейка).
-		if rok && rd.IsZero() && (lok || l == nil) {
+		if rok && rd.IsZero() && (lok || IsUndefined(l)) {
 			panic(userError{Msg: "Деление на ноль", Line: b.Op.Line, Err: ErrDivisionByZero})
 		}
 		if lok && rok {
 			requireSafeDecimalQuotient(ld, rd, b.Op.Line)
 			return safeSandboxDecimalResult(e.ec, b.Op.Literal, ld.Div(rd), b.Op.Line)
 		}
-		if l == nil && rok {
+		if IsUndefined(l) && rok {
 			return decimal.Zero
 		}
 	}
@@ -1044,14 +1044,14 @@ func (i *Interpreter) evalCall(c *ast.CallExpr, e *env) any {
 		}
 		// Если object — идентификатор, не разрешившийся в значение,
 		// и это известный модуль — резолвим Module.Proc() (
-		if recv == nil && i.LookupModuleProc != nil {
+		if IsUndefined(recv) && i.LookupModuleProc != nil {
 			if objIdent, ok := callee.Object.(*ast.Ident); ok {
 				if proc := i.LookupModuleProc(objIdent.Tok.Literal, callee.Field.Literal); proc != nil {
 					return i.callUserProc(proc, e, userArgs)
 				}
 			}
 		}
-		if recv == nil {
+		if IsUndefined(recv) {
 			// Имя приёмника в тексте ошибки экономит поиск: «вызван у Неопределено»
 			// без него не отвечает на главный вопрос — ЧТО именно пустое. Чаще
 			// всего это ссылка ещё не записанного объекта.
@@ -1183,7 +1183,7 @@ func (i *Interpreter) moduleEnvFor(proc *ast.ProcedureDecl, root *env) *env {
 				continue
 			}
 			names[name] = true
-			vars[name] = nil
+			vars[name] = undefined
 		}
 	}
 	if len(names) == 0 {
@@ -1215,7 +1215,7 @@ func (i *Interpreter) callUserProcAtDepth(proc *ast.ProcedureDecl, callEnv *env,
 		if r := recover(); r != nil {
 			switch s := r.(type) {
 			case dslReturn:
-				retVal = s.val
+				retVal = FromHostValue(s.val)
 			default:
 				panic(r)
 			}
@@ -1259,7 +1259,7 @@ func (i *Interpreter) callUserProcAtDepth(proc *ast.ProcedureDecl, callEnv *env,
 		}
 	}
 	i.execBlock(proc.Body, child)
-	return nil
+	return undefined
 }
 
 // evalArgs — аргументы для всех, кроме пользовательской процедуры: пропуск
@@ -1285,35 +1285,29 @@ func (i *Interpreter) evalArgsKeepMissing(exprs []ast.Expr, e *env) []any {
 	return args
 }
 
-// clearMissingArgs заменяет sentinel пропуска на nil. Инвариант: за пределы
-// callUserProc sentinel не выходит — встроенная функция, метод объекта или
-// фабрика увидели бы вместо Неопределено внутренний тип интерпретатора и
-// свалились бы на нём непонятной ошибкой. Копия делается только когда пропуск
-// действительно есть: обычный вызов идёт прежним путём, без лишней аллокации,
-// и без риска, что нормализация отзеркалится в список для callUserProc.
+// clearMissingArgs converts only host-facing arguments. User procedures keep
+// missingNamedArg distinct from explicit Неопределено, so defaults still work.
+// Native collections store these host values too, including nested nil values.
 func clearMissingArgs(args []any) []any {
-	skipped := false
-	for _, a := range args {
-		if _, ok := a.(missingNamedArg); ok {
-			skipped = true
-			break
+	for _, value := range args {
+		switch value.(type) {
+		case missingNamedArg, undefinedValue:
+			out := append([]any(nil), args...)
+			for index, item := range out {
+				if _, missing := item.(missingNamedArg); missing {
+					out[index] = nil
+				} else {
+					out[index] = ToHostValue(item)
+				}
+			}
+			return out
 		}
 	}
-	if !skipped {
-		return args
-	}
-	out := make([]any, len(args))
-	copy(out, args)
-	for idx, a := range out {
-		if _, ok := a.(missingNamedArg); ok {
-			out[idx] = nil
-		}
-	}
-	return out
+	return args
 }
 
 func truthy(v any) bool {
-	if v == nil {
+	if IsUndefined(v) {
 		return false
 	}
 	switch t := v.(type) {
@@ -1332,37 +1326,24 @@ func truthy(v any) bool {
 	return true
 }
 
-// equalOperator и compareOperator — путь операторов «=», «<>», «<», «>», «<=»,
-// «>=». Подстановка нуля вместо незаполненного числа (#1136) живёт здесь, а не
-// внутри equalSandboxed/compareSandboxed, и это граница правки, а не деталь
-// оформления: тот же comparator обслуживает поиск и сортировку коллекций
-// (compareAny → Массив.Найти/Сортировать, ТаблицаЗначений.Найти/НайтиСтроки/
-// Сортировать). Просочись правило туда — ТЗ.НайтиСтроки(Новый Структура("Цена",
-// 0)) начал бы возвращать незаполненные строки, а отбор по Неопределено —
-// заполненные нули, то есть оба естественных способа разделить «пусто» и «ноль»
-// перестали бы работать разом. Соответствие при этом ищет своим путём (refKey) и
-// на подстановку не реагирует вовсе, так что платформа разошлась бы сама с собой:
-// Соответствие.Получить(0) пустой ключ не находит, а ТЗ.НайтиСтроки — находил бы.
+// Operators, assertions and collection lookup share the same absence rule.
+// Metadata-aware boundaries already materialize empty numbers as decimal.Zero.
 func equalOperator(a, b any, ec *execCtx, line int) bool {
-	a, b = nilAsNumericZero(a, b)
 	return equalSandboxed(a, b, ec, line)
 }
 
 func compareOperator(a, b any, ec *execCtx, line int) int {
-	a, b = nilAsNumericZero(a, b)
 	return compareSandboxed(a, b, ec, line)
 }
 
-// equal — равенство с семантикой оператора «=». Единственный вызывающий —
-// утверждения (Утверждать.Равно/НеРавно, МаскаПоля): проверка конфигурации
-// обязана видеть ровно то, что увидит модуль, иначе `Утверждать.Равно(Стр.Цена, 0)`
-// краснел бы там, где `Если Стр.Цена = 0` выбирает ветку. Поиск по коллекциям
-// сюда не ходит — он идёт через compare и refKey.
 func equal(a, b any) bool {
-	return equalOperator(a, b, nil, 0)
+	return equalSandboxed(a, b, nil, 0)
 }
 
 func equalSandboxed(a, b any, ec *execCtx, line int) bool {
+	if IsUndefined(a) || IsUndefined(b) {
+		return IsUndefined(a) && IsUndefined(b)
+	}
 	// Даты сравниваем хронологически — тем же правилом, что и «<»/«>» ниже.
 	// Через refKey один и тот же момент в разных зонах давал разные ключи:
 	// дата из запроса приходит в UTC (на SQLite она хранится строкой RFC3339),
@@ -1401,15 +1382,21 @@ func dateAddSeconds(t time.Time, sec float64) time.Time {
 	return safeDateResult(t.Add(time.Duration(sec * float64(time.Second))))
 }
 
-// compare — порядок БЕЗ подстановки нуля вместо незаполненного числа. Отсюда
-// работает compareAny, а через него поиск и сортировка коллекций: «нет значения»
-// остаётся значением, отличным от нуля, как и до #1136. Операторы ходят не сюда,
-// а через compareOperator.
+// compare supplies the same ordering to native collection search/sort.
 func compare(a, b any) int {
 	return compareSandboxed(a, b, nil, 0)
 }
 
 func compareSandboxed(a, b any, ec *execCtx, line int) int {
+	if IsUndefined(a) {
+		if IsUndefined(b) {
+			return 0
+		}
+		return -1
+	}
+	if IsUndefined(b) {
+		return 1
+	}
 	// Даты сравниваем хронологически, а не как строки.
 	if at, ok := a.(time.Time); ok {
 		if bt, ok2 := b.(time.Time); ok2 {
