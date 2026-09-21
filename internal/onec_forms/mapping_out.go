@@ -2,6 +2,8 @@ package onec_forms
 
 import (
 	"strings"
+
+	"github.com/ivantit66/onebase/internal/metadata"
 )
 
 // NormalizeForExport — обратная операция к NormalizeForImport:
@@ -47,16 +49,16 @@ func normalizeElementForExport(el *IRElement, warns *Warnings) {
 
 	// Restore decoration / command_bar_button special cases from props.
 	if el.Props != nil {
-		if dec, _ := el.Props["decoration"].(bool); dec && el.Kind == "Надпись" {
+		if dec, _ := el.Props[metadata.FormPropKeyDecoration].(bool); dec && el.Kind == "Надпись" {
 			el.Kind = "Decoration"
-			delete(el.Props, "decoration")
+			delete(el.Props, metadata.FormPropKeyDecoration)
 		}
-		if inBar, _ := el.Props["in_command_bar"].(bool); inBar && el.Kind == "Кнопка" {
+		if inBar, _ := el.Props[metadata.FormPropKeyInCommandBar].(bool); inBar && el.Kind == "Кнопка" {
 			// Кнопка остаётся Button, но с <Type>CommandBarButton</Type>
-			if _, exists := el.Props["Type"]; !exists {
-				el.Props["Type"] = "CommandBarButton"
+			if _, exists := el.Props[metadata.FormPropKeyType]; !exists {
+				el.Props[metadata.FormPropKeyType] = "CommandBarButton"
 			}
-			delete(el.Props, "in_command_bar")
+			delete(el.Props, metadata.FormPropKeyInCommandBar)
 		}
 	}
 
