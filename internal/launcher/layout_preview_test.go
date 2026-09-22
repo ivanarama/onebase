@@ -194,3 +194,72 @@ func jsonStr(s string) string {
 	b = append(b, '"')
 	return string(b)
 }
+
+// previewQualifiedLayoutYAML — тот же макет, но поле в шапке взято корневым
+// квалификатором: в реальной печати он разрешается через EntityName контекста
+// печати, в предпросмотре контекст имя не получал и поле оставалось пустым
+// (#1602).
+const previewQualifiedLayoutYAML = `name: Квалификатор
+document: Реализация
+areas:
+  - name: Заголовок
+    rows:
+      - cells:
+          - parameter: Реализация.Номер
+`
+
+// Корневой квалификатор в реальных данных: значение из последней записи.
+func TestLayoutPreview_RootQualifier_RealData(t *testing.T) {
+	h, b, dir := newLayoutTestBase(t)
+	seedRealizationDoc(t, h, b, dir)
+
+	rec := postPreview(t, h, b, `{"yaml":`+jsonStr(previewQualifiedLayoutYAML)+`,"entity":"Реализация"}`, "html")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d, тело: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "ПРОБА-777") {
+		t.Errorf("квалифицированный Реализация.Номер потерял значение в реальных данных\n%s", rec.Body.String())
+	}
+}
+
+// Корневой квалификатор на синтетике: значение заглушки Номер; имя корня
+// сравнивается без учёта регистра.
+func TestLayoutPreview_RootQualifier_Synthetic(t *testing.T) {
+	h, b, _ := newLayoutTestBase(t)
+
+	rec := postPreview(t, h, b, `{"yaml":`+jsonStr(previewQualifiedLayoutYAML)+`,"entity":"реализация"}`, "html")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d, тело: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "000000001") {
+		t.Errorf("квалифицированный Реализация.Номер потерял синтетическое значение\n%s", rec.Body.String())
+	}
+}
+
+// Имя сущности берётся из document: макета, когда entity в запросе пуст.
+func TestLayoutPreview_RootQualifier_NameFromLayoutDocument(t *testing.T) {
+	h, b, dir := newLayoutTestBase(t)
+	seedRealizationDoc(t, h, b, dir)
+
+	rec := postPreview(t, h, b, `{"yaml":`+jsonStr(previewQualifiedLayoutYAML)+`}`, "html")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d, тело: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "ПРОБА-777") {
+		t.Errorf("имя из document: макета не дошло до контекста предпросмотра\n%s", rec.Body.String())
+	}
+}
+
+// PDF с корневым квалификатором строится без ошибки.
+func TestLayoutPreview_RootQualifier_PDF(t *testing.T) {
+	h, b, dir := newLayoutTestBase(t)
+	seedRealizationDoc(t, h, b, dir)
+
+	rec := postPreview(t, h, b, `{"yaml":`+jsonStr(previewQualifiedLayoutYAML)+`,"entity":"Реализация"}`, "pdf")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d, тело: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.HasPrefix(rec.Body.String(), "%PDF") {
+		t.Errorf("тело не начинается с %%PDF: %.16q", rec.Body.String())
+	}
+}
