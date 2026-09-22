@@ -152,6 +152,9 @@ func writeElement(buf *strings.Builder, indent string, el *IRElement, gen *idGen
 	if el.Height > 0 {
 		fmt.Fprintf(buf, "%s<Height>%d</Height>\n", inner, el.Height)
 	}
+	if el.Multiline != nil {
+		fmt.Fprintf(buf, "%s<MultiLine>%t</MultiLine>\n", inner, *el.Multiline)
+	}
 	if el.Mask != "" {
 		fmt.Fprintf(buf, "%s<Mask>%s</Mask>\n", inner, escapeText(el.Mask))
 	}

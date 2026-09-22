@@ -1,4 +1,5 @@
 {
+  "Многострочный текст": "Multiline text",
   "%-ширины не поддерживаются печатью (PDF). Используйте px или mm.": "% widths are not supported when printing (PDF). Use px or mm.",
   "+ Добавить": "+ Add",
   "+ Печатная форма (макет)": "+ Print form (layout)",
