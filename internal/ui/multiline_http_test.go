@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -231,5 +232,144 @@ func TestMultilineHTTPTransientAttributeAndReadonly(t *testing.T) {
 	}
 	if _, exists := row["Памятка"]; exists {
 		t.Fatal("save:false attribute persisted as an object field")
+	}
+}
+
+// textareaValues возвращает текст всех контролов с данным name в порядке
+// появления в разметке: у Форма.* и Объект.* полей с одинаковым именем
+// name-атрибут совпадает, различать нужно по содержимому и атрибутам.
+func textareaValues(t *testing.T, page, name string) []*html.Node {
+	t.Helper()
+	doc, err := html.Parse(strings.NewReader(page))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []*html.Node
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && (n.Data == "textarea" || n.Data == "input") {
+			for _, a := range n.Attr {
+				if a.Key == "name" && a.Val == name {
+					out = append(out, n)
+					break
+				}
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			walk(c)
+		}
+	}
+	walk(doc)
+	return out
+}
+
+func textareaText(t *testing.T, n *html.Node) string {
+	t.Helper()
+	if n.FirstChild == nil {
+		return ""
+	}
+	return n.FirstChild.Data
+}
+
+// TestMultilineHTTPTextareaLeadingNewlineRoundTrip — начальная пустая строка
+// значения textarea обязана переживать повторное открытие и повторное
+// сохранение. HTML-парсер поглощает один перевод строки сразу после
+// открывающего тега, поэтому разметка без страховочного {{"" \n}} теряла его
+// при каждом GET, и обычное повторное сохранение записывало уже изменённый
+// текст (блокирующее замечание круга 4 PR #1394).
+func TestMultilineHTTPTextareaLeadingNewlineRoundTrip(t *testing.T) {
+	const value = "\nПервая непустая строка\nВторая"
+	for _, mode := range []string{"autoform", "managed"} {
+		t.Run(mode, func(t *testing.T) {
+			ent := &metadata.Entity{Name: "Заметки", Kind: metadata.KindCatalog, Fields: []metadata.Field{
+				{Name: "Текст", Type: metadata.FieldTypeString, Multiline: true},
+				{Name: "Код", Type: metadata.FieldTypeString},
+			}}
+			if mode == "managed" {
+				ent.Forms = []*metadata.FormModule{managedObjectForm(fieldEl("ПолеТекст", "Объект.Текст"), fieldEl("ПолеКод", "Объект.Код"))}
+			}
+			s, _ := newSubmitTestServer(t, []*metadata.Entity{ent})
+			params := map[string]string{"kind": "catalog", "entity": ent.Name}
+			rec := httptest.NewRecorder()
+			s.submit(rec, reqWithChi(http.MethodPost, "/ui/catalog/Заметки/new", url.Values{"Текст": {value}, "Код": {"A"}}, params))
+			if rec.Code != http.StatusSeeOther {
+				t.Fatalf("POST=%d: %s", rec.Code, rec.Body.String())
+			}
+			rows, err := s.store.List(context.Background(), ent.Name, ent, storage.ListParams{})
+			if err != nil || len(rows) != 1 {
+				t.Fatalf("rows=%v err=%v", rows, err)
+			}
+			id := fmt.Sprint(rows[0]["id"])
+			getEdit := func() string {
+				t.Helper()
+				rec := httptest.NewRecorder()
+				s.formEdit(rec, reqWithChi(http.MethodGet, "/ui/catalog/Заметки/"+id+"/edit", nil,
+					map[string]string{"kind": "catalog", "entity": ent.Name, "id": id}))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("GET=%d: %s", rec.Code, rec.Body.String())
+				}
+				return rec.Body.String()
+			}
+			ta := multilineHTTPControl(t, getEdit(), "Текст")
+			if ta.Data != "textarea" {
+				t.Fatalf("control=%s", ta.Data)
+			}
+			if got := textareaText(t, ta); got != value {
+				t.Fatalf("reloaded text=%q, want %q", got, value)
+			}
+			// Повторное сохранение с тем, что вернул GET: значение не должно
+			// обрастать или терять начальные переводы строки.
+			rec = httptest.NewRecorder()
+			s.submitEdit(rec, reqWithChi(http.MethodPost, "/ui/catalog/Заметки/"+id, url.Values{"Текст": {value}, "Код": {"A"}},
+				map[string]string{"kind": "catalog", "entity": ent.Name, "id": id}))
+			if rec.Code != http.StatusSeeOther && rec.Code != http.StatusFound {
+				t.Fatalf("re-POST=%d: %s", rec.Code, rec.Body.String())
+			}
+			if got := textareaText(t, multilineHTTPControl(t, getEdit(), "Текст")); got != value {
+				t.Fatalf("after re-save text=%q, want %q", got, value)
+			}
+			rowID, err := uuid.Parse(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			row, err := s.store.GetByID(context.Background(), ent.Name, rowID, ent)
+			if err != nil || row["Текст"] != value {
+				t.Fatalf("stored=%v err=%v", row["Текст"], err)
+			}
+		})
+	}
+}
+
+// TestMultilineHTTPFormRootEditorSelection — корень data_path выбирает источник
+// типа редактора: строковый реквизит формы Форма.Значение не должен
+// перехватываться числовой веткой одноимённого поля объекта (блокирующее
+// замечание круга 4 PR #1394).
+func TestMultilineHTTPFormRootEditorSelection(t *testing.T) {
+	f := setupFormCtxServer(t, "Процедура Тест()\nКонецПроцедуры\n", []*metadata.FormAttribute{{Name: "Значение", TypeRef: "string", Save: false}})
+	f.entity.Fields = append(f.entity.Fields, metadata.Field{Name: "Значение", Type: metadata.FieldTypeNumber})
+	enabled := true
+	form := f.entity.Forms[0]
+	form.Elements = append(form.Elements,
+		&metadata.FormElement{Kind: metadata.FormElementField, Name: "ПолеФормаЗначение", DataPath: "Форма.Значение", Multiline: &enabled, Height: 6},
+		&metadata.FormElement{Kind: metadata.FormElementField, Name: "ПолеОбъектЗначение", DataPath: "Объект.Значение"},
+	)
+	// Рендерим форму новой записи: выбор редактора происходит в разметке и не
+	// зависит от строки БД, а поле Значение не попало в миграцию фикстуры.
+	rec := httptest.NewRecorder()
+	f.srv.form(rec, reqWithChi(http.MethodGet, "/ui/catalog/Обращение/new", nil,
+		map[string]string{"kind": "catalog", "entity": f.entity.Name}))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET=%d: %s", rec.Code, rec.Body.String())
+	}
+	controls := textareaValues(t, rec.Body.String(), "Значение")
+	if len(controls) != 2 {
+		t.Fatalf("controls=%d, want 2", len(controls))
+	}
+	formAttr, objField := controls[0], controls[1]
+	if formAttr.Data != "textarea" || multilineHTTPAttr(formAttr, "rows") != "6" {
+		t.Fatalf("Форма.Значение rendered as %s %v, want textarea rows=6", formAttr.Data, formAttr.Attr)
+	}
+	if objField.Data != "input" || multilineHTTPAttr(objField, "inputmode") != "decimal" {
+		t.Fatalf("Объект.Значение rendered as %s %v, want numeric input", objField.Data, objField.Attr)
 	}
 }

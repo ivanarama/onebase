@@ -279,11 +279,14 @@ func TestManagedLayout_NoKeysNoStyle(t *testing.T) {
 // height растягивает сам ввод, а не пустое место под ним: внешний блок получает
 // класс растяжки, а правило для него лежит в стиле managed-формы.
 func TestManagedLayout_HeightStretchesControl(t *testing.T) {
+	// Multiline в FormElement — tri-state (*bool) после plan 167; для раскладки
+	// здесь важно лишь само наличие признака.
+	multiline := true
 	out := renderLayoutElement(t, &metadata.FormElement{
 		Kind:      metadata.FormElementField,
 		Name:      "ПолеКомментарий",
 		DataPath:  "Объект.Комментарий",
-		Multiline: true,
+		Multiline: &multiline,
 		Height:    180,
 	})
 	if !strings.Contains(out, metadata.FormLayoutFillClass) {

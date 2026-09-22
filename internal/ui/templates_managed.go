@@ -79,7 +79,7 @@ const tplManagedForm = `
   </div>
 {{else if eq (str $el.Kind) "ПолеВвода"}}
   {{$fn := dpField $el.DataPath}}
-  {{$f := fieldByName $ctx.Entity $fn}}
+  {{$f := managedElementEntityField $ctx.Entity $el}}
   {{$hChg := hasHandler $el "ПриИзменении"}}
   {{$choiceCtx := managedChoiceContext $ctx $el}}
   <div class="form-group{{if elFill $el}} ob-el-fill{{end}}" data-ob-el="{{$el.Name}}"{{with elLayout $el}} style="{{.}}"{{end}}>
@@ -156,7 +156,7 @@ const tplManagedForm = `
           {{end}}
         </div>
       {{else if effectiveMultiline $ctx.Entity $ctx.Form $el}}
-        <textarea name="{{$fn}}" autocomplete="off" rows="{{multilineRows $el}}" style="width:100%"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if $el.Hint}} title="{{$el.Hint}}"{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>{{index $ctx.Values $fn}}</textarea>
+        <textarea name="{{$fn}}" autocomplete="off" rows="{{multilineRows $el}}" style="width:100%"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if $el.Hint}} title="{{$el.Hint}}"{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>{{"\n"}}{{index $ctx.Values $fn}}</textarea>
       {{else}}
         <input type="text" autocomplete="off" name="{{$fn}}" value="{{index $ctx.Values $fn}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if $el.Mask}} pattern="{{$el.Mask}}"{{end}}{{if $el.InputMask}} data-ob-input-mask="{{$el.InputMask}}"{{if inputMaskDigitsOnly $el.InputMask}} inputmode="numeric"{{end}}{{end}}{{if $el.Hint}} title="{{$el.Hint}}"{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       {{end}}
@@ -200,7 +200,7 @@ const tplManagedForm = `
              рисовался однострочным вводом: показать его человеку можно было,
              только положив в поле объекта — то есть сохранив в базе то, что
              сохранять не нужно. */}}
-        <textarea name="{{$fn}}" autocomplete="off" rows="{{multilineRows $el}}" style="width:100%"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if $el.Hint}} title="{{$el.Hint}}"{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>{{index $ctx.Values $fn}}</textarea>
+        <textarea name="{{$fn}}" autocomplete="off" rows="{{multilineRows $el}}" style="width:100%"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if $el.Hint}} title="{{$el.Hint}}"{{end}}{{if and (not $ro) $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>{{"\n"}}{{index $ctx.Values $fn}}</textarea>
       {{else if $attr}}
         {{/* Объявленный скалярный реквизит формы — обычное поле ввода. Жёлтая
              подсветка ниже адресована ОПЕЧАТКЕ в data_path; штатный реквизит

@@ -326,9 +326,10 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return el.Height
 		},
-		"effectiveMultiline": effectiveFormElementMultiline,
-		"isRichText":         func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
-		"isImage":            func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
+		"effectiveMultiline":        effectiveFormElementMultiline,
+		"managedElementEntityField": managedElementEntityField,
+		"isRichText":                func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
+		"isImage":                   func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
 		"fieldNamesCSV": func(fields []metadata.Field) string {
 			names := make([]string, 0, len(fields))
 			for _, f := range fields {
@@ -2325,8 +2326,11 @@ const tplForm = `
   {{else if .Multiline}}
     {{/* Строковый реквизит с multiline: в нём абзац, а не значение (памятка,
          инструкция, комментарий). Однострочный input показывает такой текст
-         одной строкой с перемоткой стрелками — ни прочитать, ни отредактировать. */}}
-    <textarea name="{{$fn}}" autocomplete="off" rows="5" style="width:100%" placeholder="{{$flabel}}"{{if $ro}} readonly{{end}}>{{index $.Values $fn}}</textarea>
+         одной строкой с перемоткой стрелками — ни прочитать, ни отредактировать.
+         Страховочный перевод строки сразу после открывающего тега: HTML-парсер
+         поглощает один перевод в начале textarea, и без него значение с
+         ведущей пустой строкой терялось при каждом повторном открытии. */}}
+    <textarea name="{{$fn}}" autocomplete="off" rows="5" style="width:100%" placeholder="{{$flabel}}"{{if $ro}} readonly{{end}}>{{"\n"}}{{index $.Values $fn}}</textarea>
   {{else}}
     <input type="text" autocomplete="off" name="{{$fn}}" value="{{index $.Values $fn}}" placeholder="{{$flabel}}"{{if $ro}} readonly{{end}}>
   {{end}}
@@ -3302,7 +3306,7 @@ const tplInfoReg = `
     </div>
     {{else}}
     {{if .Multiline}}
-    <textarea name="{{$dn}}" autocomplete="off" rows="5" style="width:100%">{{index $.Values $dn}}</textarea>
+    <textarea name="{{$dn}}" autocomplete="off" rows="5" style="width:100%">{{"\n"}}{{index $.Values $dn}}</textarea>
     {{else}}
     <input type="text" name="{{$dn}}" value="{{index $.Values $dn}}">
     {{end}}
@@ -3321,7 +3325,7 @@ const tplInfoReg = `
     <textarea name="{{.Name}}" autocomplete="off" class="richtext-field" rows="8" style="width:100%">{{index $.Values .Name}}</textarea>
     <div class="richtext-editor"></div>
     {{else if .Multiline}}
-    <textarea name="{{.Name}}" autocomplete="off" rows="5" style="width:100%">{{index $.Values .Name}}</textarea>
+    <textarea name="{{.Name}}" autocomplete="off" rows="5" style="width:100%">{{"\n"}}{{index $.Values .Name}}</textarea>
     {{else}}
     <input type="text" name="{{.Name}}" value="{{index $.Values .Name}}">
     {{end}}

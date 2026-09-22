@@ -51,6 +51,18 @@ func managedFormElementEntityField(entity *metadata.Entity, element *metadata.Fo
 	return entityFieldByName(entity, strings.TrimSpace(dpFieldName(path)))
 }
 
+// managedElementEntityField — root-aware выбор поля сущности для managed-шаблона.
+// Поле объекта адресуют только «Имя» (legacy) и «Объект.Имя»; «Форма.Имя» и
+// «Список.Имя» не должны наследовать тип одноимённого поля шапки, иначе
+// числовой Объект.Значение превращал строковый реквизит формы Форма.Значение
+// в числовой ввод раньше, чем исполнение доходило до ветки multiline.
+func managedElementEntityField(entity *metadata.Entity, element *metadata.FormElement) *metadata.Field {
+	if field, ok := managedFormElementEntityField(entity, element); ok {
+		return &field
+	}
+	return nil
+}
+
 // effectiveFormElementMultiline resolves the tri-state form-local setting.
 // Entity fields inherit Field.Multiline only when the element did not specify
 // an override; scalar form attributes default to a one-line input.
