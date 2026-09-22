@@ -91,12 +91,31 @@ test('successful own password change explains the revoked session and opens logi
 
   const infoHTML = h.elements
     .filter((element) => element.tagName === 'div')
-    .map((element) => element.innerHTML || '')
+    .map((element) => element.textContent || '')
     .find((value) => value.includes('Configurator session has ended'));
   assert.match(infoHTML, /The Configurator session has ended — sign in again/);
   const infoButton = h.elements.filter((element) => element.tagName === 'button').at(-1);
   infoButton.onclick();
   assert.deepEqual(h.navigations, ['/bases/cfg-users-browser/configurator/login']);
+});
+
+// #1570: cfgInfo получает текст серверной ошибки и обязан показывать его
+// буквально — innerHTML интерпретировал <, >, & как разметку.
+test('cfgInfo renders the server message as literal text', async () => {
+  const h = createHarness();
+  let closed = 0;
+  h.context.cfgInfo('<b>Ошибка</b> & <img src=x onerror="alert(1)"> "кавычки"', function () { closed++; });
+
+  const message = h.elements
+    .filter((element) => element.tagName === 'div')
+    .find((element) => (element.textContent || '').includes('<b>Ошибка</b> & <img'));
+  assert.ok(message, 'div с литеральным текстом сообщения не найден');
+  assert.equal(message.children.length, 0, 'HTML внутри сообщения создал вложенные элементы');
+  assert.ok((message.textContent || '').includes('"кавычки"'));
+
+  const ok = h.elements.filter((element) => element.tagName === 'button').at(-1);
+  ok.onclick();
+  assert.equal(closed, 1, 'OK должен закрывать окно и звать callback ровно один раз');
 });
 
 test('cfgPost reports the localized configurator login redirect', async () => {
