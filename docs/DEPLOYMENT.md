@@ -143,6 +143,16 @@ C:\onebase\bin\onebase.exe service uninstall --name onebase-docflow
 > `service install --db "postgres://…" --port 8080 --name onebase-docflow`
 > или `service install --sqlite C:\onebase\data\docflow.db --project C:\onebase\project --config-source file --port 8080 --name onebase-docflow`.
 
+### Каталог файлов PostgreSQL
+
+В дисковом режиме вложения и блобы PostgreSQL по умолчанию лежат в
+`<home>/.onebase/files/<имя-базы>`. У системной учётной записи home должен
+существовать и быть каталогом. Если служба намеренно работает без home, задайте
+ей абсолютный путь к отдельному постоянному каталогу через
+`ONEBASE_FILES_DIR` и заранее выдайте учётной записи права на него. Временный
+каталог ОС для этой цели не используйте: его очистка оставит в БД метаданные без
+файлов.
+
 ### Параметры безопасности окружения
 
 Для production-службы задайте переменные на уровне машины до её запуска:

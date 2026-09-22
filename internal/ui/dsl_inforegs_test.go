@@ -121,6 +121,48 @@ func TestInfoRegDSL_WriteReadDeleteMatrix(t *testing.T) {
 	})
 }
 
+func TestInfoRegDSL_ПустойРесурсТипизированБезЗаписиМатериализации(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ir := stateInfoReg(false, false)
+		ctx := context.Background()
+		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := runInfoRegDSL(t, db, ir, `
+  Запись = РегистрыСведений.СостояниеУзлов.СоздатьМенеджерЗаписи();
+  Запись.Узел = "N1";
+  Запись.Состояние = "Готов";
+  Запись.Записать();`); err != nil {
+			t.Fatal(err)
+		}
+
+		msgs, err := runInfoRegDSL(t, db, ir, `
+  Запись = РегистрыСведений.СостояниеУзлов.СоздатьМенеджерЗаписи();
+  Запись.Узел = "N1";
+  Запись.Прочитать();
+  Сообщить(ТипЗнч(Запись.Попыток) + "|" + Строка(Запись.Попыток = 0));
+  Набор = РегистрыСведений.СостояниеУзлов.СоздатьНаборЗаписей();
+  Набор.Отбор.Узел = "N1";
+  Набор.Прочитать();
+  Для Каждого Стр Из Набор Цикл
+    Сообщить(ТипЗнч(Стр.Попыток) + "|" + Строка(Стр.Попыток = 0));
+  КонецЦикла;`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(msgs) != 2 || msgs[0] != "Число|true" || msgs[1] != "Число|true" {
+			t.Fatalf("typed info register messages = %v", msgs)
+		}
+		rows, err := db.InfoRegList(ctx, ir, storage.RegFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || rowValueFold(rows[0], "Попыток") != nil {
+			t.Fatalf("typed read changed stored row: %+v", rows)
+		}
+	})
+}
+
 // Повторная запись по тому же ключу заменяет ресурсы, а не плодит строки.
 func TestInfoRegDSL_UpsertByKeyMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
@@ -876,7 +918,7 @@ func TestInfoRegSet_ТипизированныйОтборМатрица(t *test
 		rs.filter.Set("Owner", ref1)
 		rs.filter.Set("Moment", moment)
 		rs.filter.Set("Seq", float64(7))
-		row := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+		row := rs.CallMethod("Добавить", nil).(interpreter.This)
 		row.Set("Value", "ok")
 		rs.write()
 
@@ -907,7 +949,7 @@ func TestInfoRegSet_ТипизированныйОтборМатрица(t *test
 		bad.filter.Set("Owner", ref1)
 		bad.filter.Set("Moment", moment)
 		bad.filter.Set("Seq", float64(7))
-		badRow := bad.CallMethod("Добавить", nil).(*interpreter.MapThis)
+		badRow := bad.CallMethod("Добавить", nil).(interpreter.This)
 		badRow.Set("Owner", ref2)
 		badRow.Set("Value", "escape")
 		var rejected any
@@ -978,7 +1020,7 @@ func TestInfoRegSet_ExchangeKeyСсылкиИспользуетUUID(t *testing.T
 	ref := &interpreter.Ref{UUID: uuid.NewString(), Name: "Витринное имя"}
 	rs := newInfoRegRecordSet(s, interpreter.NewTxState(ctx), ir)
 	rs.filter.Set("Owner", ref)
-	row := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+	row := rs.CallMethod("Добавить", nil).(interpreter.This)
 	row.Set("Value", "ok")
 	rs.write()
 
@@ -1097,7 +1139,7 @@ func TestInfoRegRecordSet_WritePreflightsObjectPermissionsMatrix(t *testing.T) {
 					rs := newInfoRegRecordSet(s, interpreter.NewTxState(auth.ContextWithUser(ctx, user)), ir)
 					rs.filter.Set("Key", target.key)
 					if target.addRow {
-						row := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+						row := rs.CallMethod("Добавить", nil).(interpreter.This)
 						row.Set("Value", "new")
 					}
 					caught := captureInfoRegRecordSetPanic(rs.write)
@@ -1181,7 +1223,7 @@ func TestInfoRegRecordSet_RowPolicyIsNoExistenceOracleMatrix(t *testing.T) {
 		// ON CONFLICT into an overwrite or an existence signal.
 		rs := newInfoRegRecordSet(s, interpreter.NewTxState(userCtx), ir)
 		rs.filter.Set("Slice", "exists")
-		row := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+		row := rs.CallMethod("Добавить", nil).(interpreter.This)
 		row.Set("Key", "K")
 		row.Set("Owner", "mine")
 		row.Set("Value", "overwrite")
@@ -1267,7 +1309,7 @@ func TestInfoRegRecordSet_ProposedNullUsesSQLThreeValuedPolicyMatrix(t *testing.
 				rs := newInfoRegRecordSet(s,
 					interpreter.NewTxState(auth.ContextWithUser(ctx, user)), ir)
 				rs.filter.Set("Slice", "S")
-				row := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+				row := rs.CallMethod("Добавить", nil).(interpreter.This)
 				row.Set("Key", "K")
 				row.Set("Value", "must-not-be-written")
 				// Owner is deliberately absent. SQL comparisons with NULL are
@@ -1298,7 +1340,7 @@ func TestInfoRegRecordSet_ProposedTypedValuesUseSQLPolicyMatrix(t *testing.T) {
 			name       string
 			ir         *metadata.InfoRegister
 			policy     auth.RowPolicy
-			fill       func(*interpreter.MapThis)
+			fill       func(interpreter.This)
 			wantDenied bool
 			sqlFilter  *storage.Predicate
 		}{
@@ -1315,7 +1357,7 @@ func TestInfoRegRecordSet_ProposedTypedValuesUseSQLPolicyMatrix(t *testing.T) {
 				policy: auth.RowPolicy{
 					Field: "period", Op: "eq", Value: auth.RowValue{Literal: instant},
 				},
-				fill: func(row *interpreter.MapThis) { row.Set("Период", offsetInstant) },
+				fill: func(row interpreter.This) { row.Set("Период", offsetInstant) },
 				sqlFilter: &storage.Predicate{
 					Field: "period", Op: "eq", Value: instant,
 				},
@@ -1333,7 +1375,7 @@ func TestInfoRegRecordSet_ProposedTypedValuesUseSQLPolicyMatrix(t *testing.T) {
 				policy: auth.RowPolicy{
 					Field: "period", Op: "ne", Value: auth.RowValue{Literal: instant},
 				},
-				fill:       func(row *interpreter.MapThis) { row.Set("Период", offsetInstant) },
+				fill:       func(row interpreter.This) { row.Set("Период", offsetInstant) },
 				wantDenied: true,
 			},
 			{
@@ -1352,7 +1394,7 @@ func TestInfoRegRecordSet_ProposedTypedValuesUseSQLPolicyMatrix(t *testing.T) {
 				policy: auth.RowPolicy{
 					Field: "Flag", Op: "eq", Value: auth.RowValue{Literal: true},
 				},
-				fill:       func(row *interpreter.MapThis) { row.Set("Flag", float64(2)) },
+				fill:       func(row interpreter.This) { row.Set("Flag", float64(2)) },
 				wantDenied: true,
 			},
 			{
@@ -1374,7 +1416,7 @@ func TestInfoRegRecordSet_ProposedTypedValuesUseSQLPolicyMatrix(t *testing.T) {
 				// The in-memory comparator deliberately does not reinterpret a
 				// string as a typed date. SQLite stores this exact canonical form,
 				// so the authoritative SQL postcheck must reject and roll it back.
-				fill: func(row *interpreter.MapThis) {
+				fill: func(row interpreter.This) {
 					row.Set("EventAt", instant.Format("2006-01-02 15:04:05-07:00"))
 				},
 				wantDenied: true,
@@ -1400,7 +1442,7 @@ func TestInfoRegRecordSet_ProposedTypedValuesUseSQLPolicyMatrix(t *testing.T) {
 				rs := newInfoRegRecordSet(s,
 					interpreter.NewTxState(auth.ContextWithUser(ctx, user)), tc.ir)
 				rs.filter.Set("Slice", "S")
-				row := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+				row := rs.CallMethod("Добавить", nil).(interpreter.This)
 				row.Set("Key", "K")
 				row.Set("Value", "candidate")
 				tc.fill(row)
@@ -1465,11 +1507,11 @@ func TestInfoRegRecordSet_ProposedTypedValuesUseSQLPolicyMatrix(t *testing.T) {
 			rs := newInfoRegRecordSet(s,
 				interpreter.NewTxState(auth.ContextWithUser(ctx, user)), ir)
 			rs.filter.Set("Slice", "S")
-			allowed := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+			allowed := rs.CallMethod("Добавить", nil).(interpreter.This)
 			allowed.Set("Key", "A")
 			allowed.Set("EventAt", instant.Add(time.Hour))
 			allowed.Set("Value", "allowed sibling")
-			denied := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+			denied := rs.CallMethod("Добавить", nil).(interpreter.This)
 			denied.Set("Key", "")
 			// The in-memory comparator deliberately leaves strings untyped, while
 			// SQLite compares this canonical form as the same stored timestamp.
@@ -1567,7 +1609,7 @@ func TestInfoRegRecordSet_PostgresConcurrentInsertCheckedByRLS(t *testing.T) {
 		rs := newInfoRegRecordSet(s,
 			interpreter.NewTxState(auth.ContextWithUser(ctx, user)), ir)
 		rs.filter.Set("Slice", "S")
-		row := rs.CallMethod("Добавить", nil).(*interpreter.MapThis)
+		row := rs.CallMethod("Добавить", nil).(interpreter.This)
 		row.Set("Key", "K")
 		row.Set("Owner", "mine")
 		row.Set("Value", "replacement")

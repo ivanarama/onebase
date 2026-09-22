@@ -150,6 +150,7 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 	params.Dir = extra.Dir
 	params.Limit = extra.Limit
 	params.Offset = extra.Offset
+	params.ChoicePredicates = extra.ChoicePredicates
 	var err error
 	params, err = s.rowFilterFor(ctx, refEntity, "read", params)
 	if err != nil {
@@ -159,7 +160,12 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 	if err != nil {
 		return nil, err
 	}
-	rows = filterOutFolders(rows)
+	// The legacy picker never offered catalog groups. An explicit is_folder
+	// choice condition is the opt-in exception from plan 170; storage already
+	// applies its true/false value and replaces the implicit folder scope.
+	if !hasChoiceFolderScope(params.ChoicePredicates) {
+		rows = filterOutFolders(rows)
+	}
 	// План 88: picker маскирует чувствительные поля до вычисления подписи и до
 	// сериализации строк — иначе замаскированное поле утекло бы в JSON выбора.
 	s.maskRecords(ctx, refEntity, rows)
@@ -169,21 +175,21 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 	return rows, nil
 }
 
-func (s *Server) referenceOptionsPage(ctx context.Context, refEntity *metadata.Entity, search string, limit, offset int) ([]map[string]any, int, error) {
+func (s *Server) referenceOptionsPageWithParams(ctx context.Context, refEntity *metadata.Entity, search string, limit, offset int, extra storage.ListParams) ([]map[string]any, int, error) {
 	if refEntity == nil {
 		return nil, 0, nil
 	}
-	params := storage.ListParams{
-		Search: strings.TrimSpace(search),
-		Limit:  limit,
-		Offset: offset,
-	}
+	params := extra
+	params.Search = strings.TrimSpace(search)
+	params.Limit = limit
+	params.Offset = offset
 	rows, err := s.referenceOptionsWithParams(ctx, refEntity, refOptionsChoice, params)
 	if err != nil {
 		return nil, 0, err
 	}
 	countParams := s.refListParamsForMode(refEntity, refOptionsChoice)
 	countParams.Search = strings.TrimSpace(search)
+	countParams.ChoicePredicates = extra.ChoicePredicates
 	countParams, err = s.rowFilterFor(ctx, refEntity, "read", countParams)
 	if err != nil {
 		return nil, 0, err
@@ -193,6 +199,15 @@ func (s *Server) referenceOptionsPage(ctx context.Context, refEntity *metadata.E
 		return nil, 0, err
 	}
 	return rows, total, nil
+}
+
+func hasChoiceFolderScope(predicates []storage.ChoicePredicate) bool {
+	for _, predicate := range predicates {
+		if strings.EqualFold(strings.TrimSpace(predicate.Field), "is_folder") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) initialReferenceOptions(ctx context.Context, refEntity *metadata.Entity, mode refOptionsMode, selected []string) ([]map[string]any, error) {
@@ -546,6 +561,13 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	// (план 121). Без него пункт меню «где застряло» вёл бы на пустую страницу.
 	if _, ok := data["HasStages"]; !ok {
 		data["HasStages"] = s.hasStages()
+	}
+	// HasPOS — приложение объявило рабочее место кассира (app.yaml:
+	// features.pos, issue #1331). Как и HasStages, это признак КОНФИГУРАЦИИ, а
+	// не платформы: без него ссылка на РМК висела у каждого приложения, включая
+	// те, где кассы нет и не будет.
+	if _, ok := data["HasPOS"]; !ok {
+		data["HasPOS"] = s.cfg.POSEnabled
 	}
 	// Строка глобального поиска в шапке есть на каждой странице (план 82);
 	// на самой странице результатов она сохраняет введённый запрос.

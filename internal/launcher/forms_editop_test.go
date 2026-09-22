@@ -3,13 +3,17 @@ package launcher
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/ivantit66/onebase/internal/dsl/loader"
 )
 
 // HTTP-уровень: маршрут /forms/edit-op доходит до handler'а, парсит форму,
@@ -59,6 +63,85 @@ func TestConfiguratorFormsEditOp_HTTP(t *testing.T) {
 	}
 	if _, ok := resp.Model["elements.0.children.0"]; !ok {
 		t.Errorf("в модели нет нового узла: %v", resp.Model)
+	}
+}
+
+// Публичный путь конструктора: setProp через HTTP -> синхронные YAML/model/
+// canvas -> сохранение через HTTP -> повторная загрузка metadata -> preview.
+// Это защищает не отдельный helper, а пользовательский round-trip background.
+func TestConfiguratorFormBackground_HTTPRoundTrip(t *testing.T) {
+	storeDir := t.TempDir()
+	configDir := t.TempDir()
+	s := &Store{path: filepath.Join(storeDir, "ibases.yaml")}
+	b := &Base{ID: "background-roundtrip", Path: configDir, ConfigSource: "file"}
+	if err := s.Add(b); err != nil {
+		t.Fatalf("Add base: %v", err)
+	}
+	h := &handler{store: s}
+
+	editForm := url.Values{
+		"op":    {"setProp"},
+		"node":  {"elements.0"},
+		"key":   {"background"},
+		"value": {"rgba(12, 34, 56, .5)"},
+		"yaml":  {canvasSample},
+	}
+	editReq := httptest.NewRequest(http.MethodPost, "/bases/"+b.ID+"/configurator/forms/edit-op", strings.NewReader(editForm.Encode()))
+	editReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	editCtx := chi.NewRouteContext()
+	editCtx.URLParams.Add("id", b.ID)
+	editReq = editReq.WithContext(context.WithValue(editReq.Context(), chi.RouteCtxKey, editCtx))
+	editRec := httptest.NewRecorder()
+	h.configuratorFormsEditOp(editRec, editReq)
+
+	if editRec.Code != http.StatusOK {
+		t.Fatalf("edit-op status %d: %s", editRec.Code, editRec.Body.String())
+	}
+	var edited editOpResponse
+	if err := json.Unmarshal(editRec.Body.Bytes(), &edited); err != nil {
+		t.Fatalf("разбор edit-op JSON: %v", err)
+	}
+	if !edited.OK {
+		t.Fatalf("edit-op ok=false: %v", edited.Errors)
+	}
+	if got := edited.Model["elements.0"].Background; got != "rgba(12, 34, 56, .5)" {
+		t.Fatalf("background модели = %q", got)
+	}
+	if !strings.Contains(edited.CanvasHTML, "background:rgba(12, 34, 56, .5);") {
+		t.Fatalf("canvas после edit-op не применил background:\n%s", edited.CanvasHTML)
+	}
+
+	saveForm := url.Values{
+		"entity": {"Звонок"},
+		"name":   {"ФормаОбъекта"},
+		"yaml":   {edited.YAML},
+		"os":     {""},
+	}
+	saveReq := httptest.NewRequest(http.MethodPost, "/bases/"+b.ID+"/configurator/forms/save", strings.NewReader(saveForm.Encode()))
+	saveReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	saveCtx := chi.NewRouteContext()
+	saveCtx.URLParams.Add("id", b.ID)
+	saveReq = saveReq.WithContext(context.WithValue(saveReq.Context(), chi.RouteCtxKey, saveCtx))
+	saveRec := httptest.NewRecorder()
+	h.configuratorFormsSave(saveRec, saveReq)
+	if saveRec.Code != http.StatusSeeOther {
+		t.Fatalf("save status %d: %s", saveRec.Code, saveRec.Body.String())
+	}
+
+	savedPath := filepath.Join(configDir, "forms", "звонок", "формаобъекта.form.yaml")
+	if _, err := os.Stat(savedPath); err != nil {
+		t.Fatalf("сохранённый YAML не найден: %v", err)
+	}
+	fm, err := loader.NewManagedFormLoader().LoadFormFile(savedPath, "Звонок")
+	if err != nil {
+		t.Fatalf("повторная загрузка YAML: %v", err)
+	}
+	if len(fm.Elements) != 1 || fm.Elements[0].Background != "rgba(12, 34, 56, .5)" {
+		t.Fatalf("background потерян после save/load: %+v", fm.Elements)
+	}
+	preview := renderManagedFormPreview(fm, nil)
+	if !strings.Contains(preview, "background:rgba(12, 34, 56, .5);") {
+		t.Fatalf("preview после round-trip не применил background:\n%s", preview)
 	}
 }
 

@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -76,10 +77,17 @@ type formEventResponse struct {
 	// TPRefOptions — подписи ссылок из строк табличных частей. Значения строк
 	// остаются UUID, а клиент обновляет этот словарь до перерисовки SlickGrid.
 	TPRefOptions map[string]map[string][]map[string]any `json:"tpRefOptions,omitempty"`
+	// Close присутствует только в ответе отдельного close-intent endpoint.
+	// Обычный /form-event не выдаёт разрешение уничтожить форму.
+	Close *formCloseDecision `json:"close,omitempty"`
 }
 
 // handleManagedFormEvent — единая точка обработки событий managed-форм.
 func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) {
+	s.handleManagedFormEventMode(w, r, nil)
+}
+
+func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Request, closeInv *formCloseInvocation) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
 
@@ -106,10 +114,61 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Предел конкурентности и дедлайн — как у обработок (#735). Событие формы
-	// исполняет такой же прикладной DSL, но шло мимо: без лимита параллельных
-	// запусков и без предела времени вовсе (#865). Один обработчик с
-	// Приостановить(300) занимал бы соединение и слот пять минут.
+	if closeInv != nil {
+		var cancel context.CancelFunc
+		r, cancel = s.withFormCloseOperationDeadline(r, opFormEvent)
+		defer cancel()
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, s.entityFormBodyLimit(r, entity))
+	var rawID, formKind string
+	var form *metadata.FormModule
+	parseFormState := func() error {
+		if err := parseBoundedForm(r, 32<<20); err != nil {
+			return err
+		}
+		// Every value describing browser form state comes from the POST body.
+		// Request.Form and FormValue normally merge the query string; using one
+		// normalized request prevents query-only ids, targets, fields and table rows
+		// from reaching any of the existing form parsers below.
+		r = postFormOnlyRequest(r)
+		rawID = strings.TrimSpace(r.FormValue("_id"))
+		formKind = strings.ToLower(strings.TrimSpace(r.FormValue("_kind")))
+		if formKind == "" {
+			formKind = "object"
+		}
+		form = pickManagedForm(entity, formKind)
+		return nil
+	}
+	if closeInv != nil {
+		// Replay/single-flight lookup intentionally precedes the shared processor
+		// semaphore. Otherwise an exact duplicate gets 429 while its original owns
+		// the sole slot instead of waiting for and replaying that result.
+		if err := parseFormState(); err != nil {
+			w.WriteHeader(uploadErrorStatus(err))
+			respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, entity))})
+			return
+		}
+		if form == nil {
+			respondJSON(enc, formEventResponse{Error: "managed form not found for " + entityName})
+			return
+		}
+		routeKey := "entity|" + entityKind + "|" + strings.ToLower(entity.Name) + "|" + strings.ToLower(form.Name) + "|" + rawID
+		if err := s.prepareFormCloseInvocation(r, closeInv, routeKey, r.FormValue); err != nil {
+			var closeErr *formCloseHTTPError
+			if errors.As(err, &closeErr) {
+				w.WriteHeader(closeErr.status)
+			}
+			respondJSON(enc, formEventResponse{Error: err.Error()})
+			return
+		}
+		if closeInv.replay != nil {
+			return
+		}
+	}
+
+	// Предел конкурентности и дедлайн — как у обработок (#735). Для close-intent
+	// он расположен после replay lookup; обычные события по-прежнему проверяют
+	// слот до разбора тела.
 	opCtx, finish, ok := s.beginOperation(r, opFormEvent, entity.Name)
 	if !ok {
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -129,27 +188,16 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	dslCtx, cancelDSL := context.WithCancel(opCtx)
 	defer cancelDSL()
 
-	r.Body = http.MaxBytesReader(w, r.Body, s.entityFormBodyLimit(r, entity))
-	if err := parseBoundedForm(r, 32<<20); err != nil {
-		opStatus = "error"
-		w.WriteHeader(uploadErrorStatus(err))
-		respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, entity))})
-		return
-	}
-	// Every value describing browser form state comes from the POST body.
-	// Request.Form and FormValue normally merge the query string; using one
-	// normalized request prevents query-only ids, targets, fields and table rows
-	// from reaching any of the existing form parsers below.
-	r = postFormOnlyRequest(r)
-	rawID := strings.TrimSpace(r.FormValue("_id"))
-	formKind := strings.ToLower(strings.TrimSpace(r.FormValue("_kind")))
-	if formKind == "" {
-		formKind = "object"
-	}
-	form := pickManagedForm(entity, formKind)
-	if form == nil {
-		respondJSON(enc, formEventResponse{Error: "managed form not found for " + entityName})
-		return
+	if closeInv == nil {
+		if err := parseFormState(); err != nil {
+			w.WriteHeader(uploadErrorStatus(err))
+			respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, entity))})
+			return
+		}
+		if form == nil {
+			respondJSON(enc, formEventResponse{Error: "managed form not found for " + entityName})
+			return
+		}
 	}
 	tableAuthorities, err := managedFormTableAuthorities(form, entity.TableParts, canWrite)
 	if err != nil {
@@ -197,8 +245,21 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	}
 	elementName := strings.TrimSpace(r.FormValue("_element"))
 	eventName := strings.TrimSpace(r.FormValue("_event"))
+	if closeInv != nil {
+		elementName = ""
+		eventName = string(metadata.FormEventBeforeClose)
+	}
 	progAny := form.ProgramAST
 	if progAny == nil {
+		if closeInv != nil {
+			if procName := resolveFormCloseHandler(form); procName != "" {
+				respondJSON(enc, formEventResponse{Error: "процедура «" + procName + "» не найдена в .form.os"})
+				return
+			}
+			opStatus = "ok"
+			respondJSON(enc, formEventResponse{OK: true})
+			return
+		}
 		// Preserve the historical no-op for forms without a loaded .form.os, but
 		// still enforce table authority: a missing AST must not turn a forged
 		// TP/ValueTable target into an accepted event for a read-only user.
@@ -226,11 +287,25 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Найти имя процедуры, которая привязана к событию.
-	procName, eventTarget, _, eligibilityErr := resolveBrowserFormEvent(form, elementName, eventName, false)
-	if eligibilityErr != nil {
-		respondJSON(enc, formEventResponse{Error: eligibilityErr.Error()})
-		return
+	// Найти имя процедуры, которая привязана к событию. Lifecycle-hook
+	// ПередЗакрытием разрешён только отдельному close-intent endpoint и никогда
+	// не проходит через browser event resolver.
+	var procName string
+	var eventTarget browserFormEventTarget
+	if closeInv != nil {
+		procName = resolveFormCloseHandler(form)
+		if procName == "" {
+			opStatus = "ok"
+			respondJSON(enc, formEventResponse{OK: true})
+			return
+		}
+	} else {
+		var eligibilityErr error
+		procName, eventTarget, _, eligibilityErr = resolveBrowserFormEvent(form, elementName, eventName, false)
+		if eligibilityErr != nil {
+			respondJSON(enc, formEventResponse{Error: eligibilityErr.Error()})
+			return
+		}
 	}
 	if err := validateManagedFormTableEventTarget(tableAuthorities, eventTarget); err != nil {
 		respondJSON(enc, formEventResponse{Error: err.Error()})
@@ -251,11 +326,23 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 	if decl == nil {
+		if closeInv != nil {
+			respondJSON(enc, formEventResponse{Error: "процедура «" + procName + "» не найдена в .form.os"})
+			return
+		}
 		opStatus = "ok"
 		respondJSON(enc, formEventResponse{OK: true, Messages: []string{
 			"⚠ Процедура «" + procName + "» не найдена в .form.os",
 		}})
 		return
+	}
+	var closeArgs []any
+	if closeInv != nil {
+		closeArgs, err = validateFormCloseProcedure(decl)
+		if err != nil {
+			respondJSON(enc, formEventResponse{Error: err.Error()})
+			return
+		}
 	}
 
 	// Лимит richtext проверяем по СЫРОМУ значению формы до санитайза, как в
@@ -357,6 +444,10 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 		formProcs[strings.ToLower(p.Name.Literal)] = p
 	}
 	vars["__form_procs__"] = formProcs
+	if closeInv != nil {
+		vars["ПричинаЗакрытия"] = closeInv.reason
+		vars["CloseReason"] = closeInv.reason
+	}
 
 	// Подбор (план 46). Фаза 1: билтин ПоказатьПодбор копит payload в sink —
 	// после Run он уйдёт в ответ как pickerData, и клиент откроет диалог.
@@ -408,7 +499,15 @@ func (s *Server) handleManagedFormEvent(w http.ResponseWriter, r *http.Request) 
 	// Выполнение процедуры. Ошибка DSL отдаётся в JSON, не как 500 —
 	// клиент покажет красный баннер и не закроет форму.
 	var runErr error
-	if timeout := interpreter.ClampWallClock(opCtx, s.operationTimeout(opFormEvent)); timeout > 0 {
+	timeout := interpreter.ClampWallClock(opCtx, s.operationTimeout(opFormEvent))
+	if closeInv != nil {
+		var entryResult interpreter.EntryCallResult
+		entryResult, runErr = s.interp.CallEntrySandboxedWithBindings(decl, thisObj, closeArgs,
+			interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, vars)
+		if runErr == nil {
+			closeInv.cancelled = formCloseBindingCancelled(decl, entryResult.Bindings)
+		}
+	} else if timeout > 0 {
 		runErr = s.interp.RunSandboxed(decl, thisObj,
 			interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, nil, vars)
 	} else {
@@ -912,6 +1011,10 @@ func serializeValue(v any) any {
 // Аналог handleManagedFormEvent, но вместо Entity использует виртуальную entity
 // из параметров обработки. Кнопка «Выполнить» запускает proc.os через interp.
 func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request) {
+	s.handleProcessorFormEventMode(w, r, nil)
+}
+
+func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Request, closeInv *formCloseInvocation) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
 
@@ -954,7 +1057,37 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		respondJSON(enc, formEventResponse{Error: requestControls.formTablesErr.Error()})
 		return
 	}
+	if closeInv != nil {
+		var cancel context.CancelFunc
+		r, cancel = s.withFormCloseOperationDeadline(r, opProcessorRun)
+		defer cancel()
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, processorFormBodyLimit(r, maxSize, requestControls))
+	if closeInv != nil {
+		// Parse and reserve before the processor semaphore so an exact duplicate
+		// joins the in-flight close instead of being rejected by its occupied slot.
+		if err := parseBoundedForm(r, 32<<20); err != nil {
+			w.WriteHeader(uploadErrorStatus(err))
+			respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, nil))})
+			return
+		}
+		value := func(name string) string {
+			v, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, name))
+			return v
+		}
+		routeKey := "processor|" + strings.ToLower(proc.Name) + "|" + strings.ToLower(form.Name)
+		if err := s.prepareFormCloseInvocation(r, closeInv, routeKey, value); err != nil {
+			var closeErr *formCloseHTTPError
+			if errors.As(err, &closeErr) {
+				w.WriteHeader(closeErr.status)
+			}
+			respondJSON(enc, formEventResponse{Error: err.Error()})
+			return
+		}
+		if closeInv.replay != nil {
+			return
+		}
+	}
 	opCtx, finish, ok := s.beginOperation(r, opProcessorRun, proc.Name)
 	if !ok {
 		w.WriteHeader(http.StatusTooManyRequests)
@@ -964,16 +1097,22 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 	opStatus := "ok"
 	defer func() { finish(opStatus, 0, false) }()
 
-	if err := parseBoundedForm(r, 32<<20); err != nil {
-		opStatus = "error"
-		w.WriteHeader(uploadErrorStatus(err))
-		respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, nil))})
-		return
+	if closeInv == nil {
+		if err := parseBoundedForm(r, 32<<20); err != nil {
+			opStatus = "error"
+			w.WriteHeader(uploadErrorStatus(err))
+			respondJSON(enc, formEventResponse{Error: s.errText(r, formBodyError(err, nil))})
+			return
+		}
 	}
 	elementValue, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_element"))
 	eventValue, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_event"))
 	elementName := strings.TrimSpace(elementValue)
 	eventName := strings.TrimSpace(eventValue)
+	if closeInv != nil {
+		elementName = ""
+		eventName = string(metadata.FormEventBeforeClose)
+	}
 	if eventName == "" {
 		opStatus = "error"
 		respondJSON(enc, formEventResponse{Error: "_event required"})
@@ -983,11 +1122,23 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 	// Явно привязанный обработчик имеет безусловный приоритет. Если его нет в
 	// .form.os, это ошибка конфигурации, а не разрешение незаметно выполнить
 	// глобальную процедуру Выполнить.
-	boundProcName, eventTarget, executeFallback, eligibilityErr := resolveBrowserFormEvent(form, elementName, eventName, true)
-	if eligibilityErr != nil {
-		opStatus = "error"
-		respondJSON(enc, formEventResponse{Error: eligibilityErr.Error()})
-		return
+	var boundProcName string
+	var eventTarget browserFormEventTarget
+	var executeFallback bool
+	if closeInv != nil {
+		boundProcName = resolveFormCloseHandler(form)
+		if boundProcName == "" {
+			respondJSON(enc, formEventResponse{OK: true})
+			return
+		}
+	} else {
+		var eligibilityErr error
+		boundProcName, eventTarget, executeFallback, eligibilityErr = resolveBrowserFormEvent(form, elementName, eventName, true)
+		if eligibilityErr != nil {
+			opStatus = "error"
+			respondJSON(enc, formEventResponse{Error: eligibilityErr.Error()})
+			return
+		}
 	}
 	if err := validateManagedFormTableEventTarget(requestControls.tableAuthorities, eventTarget); err != nil {
 		opStatus = "error"
@@ -1026,6 +1177,15 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 			respondJSON(enc, formEventResponse{Error: "процедура «" + boundProcName + "» не найдена в .form.os"})
 			return
 		}
+		var closeArgs []any
+		if closeInv != nil {
+			closeArgs, err = validateFormCloseProcedure(decl)
+			if err != nil {
+				opStatus = "error"
+				respondJSON(enc, formEventResponse{Error: err.Error()})
+				return
+			}
+		}
 		if proc.External {
 			s.auditExtProcRun(r, proc.Name)
 		}
@@ -1057,6 +1217,10 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 			formProcs[strings.ToLower(p.Name.Literal)] = p
 		}
 		vars["__form_procs__"] = formProcs
+		if closeInv != nil {
+			vars["ПричинаЗакрытия"] = closeInv.reason
+			vars["CloseReason"] = closeInv.reason
+		}
 
 		var picker *pickerPayload
 		pickerFn := newPickerBuiltin(&picker)
@@ -1078,7 +1242,15 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 		}
 
 		var runErr error
-		if timeout := processorSandboxTimeout(opCtx, s.operationTimeout(opProcessorRun)); timeout > 0 {
+		timeout := processorSandboxTimeout(opCtx, s.operationTimeout(opProcessorRun))
+		if closeInv != nil {
+			var entryResult interpreter.EntryCallResult
+			entryResult, runErr = s.interp.CallEntrySandboxedWithBindings(decl, thisObj, closeArgs,
+				interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, vars)
+			if runErr == nil {
+				closeInv.cancelled = formCloseBindingCancelled(decl, entryResult.Bindings)
+			}
+		} else if timeout > 0 {
 			runErr = s.interp.RunSandboxed(decl, thisObj,
 				interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, nil, vars)
 		} else {
