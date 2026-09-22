@@ -32,8 +32,24 @@ type XDTOEntityLookup interface {
 // XDTOObjectSource реализуют DSL-обёртки объектов (документ, элемент
 // справочника), отдавая сериализатору внутреннее представление. Без него
 // сериализатор видел бы только Get/Set и не смог бы прочитать табличные части.
+//
+// ⚠️ Отдаётся СЫРОЙ объект, каким он прочитан из базы: полевые маски обёртка
+// накладывает в Get(), а этот путь его минует. Поэтому источник, у которого
+// есть контекст пользователя, обязан реализовать и XDTOFieldMasker — иначе
+// выгрузка в XML станет обходом полевой политики.
 type XDTOObjectSource interface {
 	XDTOObject() *runtime.Object
+}
+
+// XDTOFieldMasker реализуют те же обёртки: применяет к значению реквизита
+// действующую полевую политику текущего пользователя, ту же самую, что
+// накладывается при чтении реквизита из прикладного кода.
+//
+// Интерфейс отдаёт функцию, а не значения: решения по полям считаются один раз
+// на объект, а применяются к каждому реквизиту. nil означает «маскировать
+// нечего» — админ, отсутствие политики или объект, созданный самим модулем.
+type XDTOFieldMasker interface {
+	XDTOMaskField() func(field string, v any) any
 }
 
 // XDTOSerializer — DSL-объект СериализаторXDTO.
@@ -69,7 +85,11 @@ func (s *XDTOSerializer) write(args []any) any {
 		panic(userError{Msg: fmt.Sprintf("СериализаторXDTO.ЗаписатьXML: %v — не объект конфигурации; сериализуются элементы справочников и документы", args[0])})
 	}
 	ent := s.entityOf(obj)
-	text, err := xdto.Write(ent, obj, optionsOf(obj))
+	opts := optionsOf(obj)
+	if m, ok := args[0].(XDTOFieldMasker); ok {
+		opts.MaskField = m.XDTOMaskField()
+	}
+	text, err := xdto.Write(ent, obj, opts)
 	if err != nil {
 		panic(userError{Msg: err.Error()})
 	}

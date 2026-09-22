@@ -57,6 +57,25 @@ const EmptyRef = "00000000-0000-0000-0000-000000000000"
 type Options struct {
 	DeletionMark bool
 	Posted       bool
+	// MaskField применяет к значению реквизита действующую полевую политику
+	// текущего пользователя: XML — путь чтения, и значения обязаны выгружаться
+	// такими, какими их видит тот же пользователь в форме. Пакет намеренно не
+	// знает ни про права, ни про сессию: политику накладывает вызывающий слой,
+	// у которого есть контекст пользователя, — здесь только точка вызова.
+	// nil означает «маскировать нечего» (системный вызов, тесты, админ).
+	MaskField func(field string, v any) any
+}
+
+// value отдаёт значение реквизита так, как его видит текущий пользователь.
+// Полностью недоступный реквизит приходит из политики как nil и выводится
+// пустым элементом — ровно как пустое поле в форме: состав XML от прав не
+// зависит, иначе приёмник на той стороне получал бы разный набор элементов
+// в зависимости от того, под кем выгружали.
+func (o Options) value(field string, v any) any {
+	if o.MaskField == nil {
+		return v
+	}
+	return o.MaskField(field, v)
 }
 
 // Write сериализует объект в XML формата СериализаторXDTO.
@@ -82,20 +101,20 @@ func Write(ent *metadata.Entity, obj *runtime.Object, opts Options) (string, err
 		return "", fmt.Errorf("xdto: DeletionMark: %w", err)
 	}
 	if ent.Kind == metadata.KindDocument {
-		if err := writeElem(&b, 1, "Date", dateText(objValue(obj, ent, stdDate)), ""); err != nil {
+		if err := writeElem(&b, 1, "Date", dateText(objValue(obj, ent, stdDate, opts)), ""); err != nil {
 			return "", fmt.Errorf("xdto: Date: %w", err)
 		}
-		if err := writeElem(&b, 1, "Number", plainText(objValue(obj, ent, stdNumber)), ""); err != nil {
+		if err := writeElem(&b, 1, "Number", plainText(objValue(obj, ent, stdNumber, opts)), ""); err != nil {
 			return "", fmt.Errorf("xdto: Number: %w", err)
 		}
 		if err := writeElem(&b, 1, "Posted", boolText(opts.Posted), ""); err != nil {
 			return "", fmt.Errorf("xdto: Posted: %w", err)
 		}
 	} else {
-		if err := writeElem(&b, 1, "Description", plainText(objValue(obj, ent, stdDescription)), ""); err != nil {
+		if err := writeElem(&b, 1, "Description", plainText(objValue(obj, ent, stdDescription, opts)), ""); err != nil {
 			return "", fmt.Errorf("xdto: Description: %w", err)
 		}
-		if err := writeElem(&b, 1, "Code", plainText(objValue(obj, ent, stdCode)), ""); err != nil {
+		if err := writeElem(&b, 1, "Code", plainText(objValue(obj, ent, stdCode, opts)), ""); err != nil {
 			return "", fmt.Errorf("xdto: Code: %w", err)
 		}
 	}
@@ -105,7 +124,7 @@ func Write(ent *metadata.Entity, obj *runtime.Object, opts Options) (string, err
 		if standardName(ent.Kind, f.Name) != "" {
 			continue // уже выведен выше под своим английским именем
 		}
-		if err := writeElem(&b, 1, f.Name, fieldText(f, obj.Get(f.Name)), ""); err != nil {
+		if err := writeElem(&b, 1, f.Name, fieldText(f, opts.value(f.Name, obj.Get(f.Name))), ""); err != nil {
 			return "", fmt.Errorf("xdto: %s: %w", f.Name, err)
 		}
 	}
@@ -289,12 +308,15 @@ func standardName(kind metadata.Kind, field string) string {
 }
 
 // objValue достаёт значение стандартного реквизита по любому из его имён.
-func objValue(obj *runtime.Object, ent *metadata.Entity, k stdKind) any {
+// objValue отдаёт значение стандартного реквизита через полевую политику:
+// Наименование, Код, Дата и Номер — такие же реквизиты объекта, и роль вправе
+// закрыть любой из них.
+func objValue(obj *runtime.Object, ent *metadata.Entity, k stdKind, opts Options) any {
 	for i := range ent.Fields {
 		low := strings.ToLower(ent.Fields[i].Name)
 		for _, a := range stdAliases[k] {
 			if low == a {
-				return obj.Get(ent.Fields[i].Name)
+				return opts.value(ent.Fields[i].Name, obj.Get(ent.Fields[i].Name))
 			}
 		}
 	}
