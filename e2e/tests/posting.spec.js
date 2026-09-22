@@ -20,7 +20,7 @@ test('документ проводится, движения попадают �
   // зависит от состояния исходных демо-документов.
   // Ссылка копирования собирается на клиенте из опорных адресов контейнера,
   // поэтому берём её тем же способом, что и интерфейс.
-  const source = page.locator('[data-ob-list-row][data-ob-id]').first();
+  const source = page.locator('[data-ob-list-row][data-ob-entity-id]').first();
   await expect(source).toBeVisible();
   const copyURL = await source.evaluate((row) => window.obRowUrl(row, 'copy'));
   expect(copyURL).toBeTruthy();

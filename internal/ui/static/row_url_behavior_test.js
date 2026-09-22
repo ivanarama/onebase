@@ -56,7 +56,7 @@ function container(over) {
 // ссылок в ней нет.
 function row(box, over, openUrl) {
   return {
-    dataset: Object.assign({ obId: ID }, over || {}),
+    dataset: Object.assign({ obEntityId: ID }, over || {}),
     closest(selector) {
       return selector === '[data-ob-row-base]' ? (box || null) : null;
     },
@@ -128,7 +128,7 @@ test('без права записи копирование недоступно
 });
 
 test('без идентификатора строки не собирается ни один адрес', () => {
-  const r = row(container(), { obId: '' });
+  const r = row(container(), { obEntityId: '' });
   ['open', 'mark', 'unmark', 'del', 'unpost', 'activityShow', 'activityHide',
     'detail', 'folder', 'copy'].forEach(function (kind) {
     assert.equal(api.rowUrl(r, kind), '', kind + ' без id должен быть пустым');
@@ -185,7 +185,7 @@ test('признак активности берётся со строки, ин
 
 test('ключ выделения — идентификатор, с откатом на собственную ссылку строки', () => {
   assert.equal(api.rowKey(row(container())), ID);
-  assert.equal(api.rowKey(row(container(), { obId: '' }, '/json/open')), '/json/open');
-  assert.equal(api.rowKey(row(container(), { obId: '' })), '');
+  assert.equal(api.rowKey(row(container(), { obEntityId: '' }, '/json/open')), '/json/open');
+  assert.equal(api.rowKey(row(container(), { obEntityId: '' })), '');
   assert.equal(api.rowKey(null), '');
 });

@@ -93,7 +93,7 @@ func TestPageList_ActivityControlsAndActions(t *testing.T) {
 		`data-ob-row-activity-enabled="1"`,
 		`data-activity-inactive="1"`,
 		`data-ob-row-base=`,
-		`data-ob-id="11111111-1111-1111-1111-111111111111"`,
+		`data-ob-entity-id="11111111-1111-1111-1111-111111111111"`,
 		"Скрыть из выбора",
 		"Вернуть в выбор",
 	} {
