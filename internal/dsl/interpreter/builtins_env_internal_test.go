@@ -52,7 +52,10 @@ func TestTempFileNameRejectsPathSyntaxAndUsesRandomToken(t *testing.T) {
 		if !ok {
 			t.Fatalf("результат %T, ожидалась строка", got)
 		}
-		if filepath.Dir(path) != os.TempDir() || !namePattern.MatchString(filepath.Base(path)) {
+		// Ожидание нормализовано: на macOS обычный TMPDIR заканчивается
+		// разделителем, а filepath.Dir его не возвращает — иначе один и тот же
+		// каталог не равен сам себе (#1578).
+		if filepath.Dir(path) != filepath.Clean(os.TempDir()) || !namePattern.MatchString(filepath.Base(path)) {
 			t.Fatalf("неожиданное временное имя %q", path)
 		}
 		if _, duplicate := seen[path]; duplicate {
