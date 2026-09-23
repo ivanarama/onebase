@@ -4264,6 +4264,11 @@ func queriedColumnTypes(tokens []tok, opts CompileOpts) (map[string]map[metadata
 					add(reg.Resources)
 				}
 			}
+		case isAccountRegType(upper):
+			// Регистры бухгалтерии предупреждением пока не покрываются (#1487):
+			// без этой ветки источник бухрегистра попадал в default и заимствовал
+			// типы одноимённой сущности — предупреждение срабатывало вопреки
+			// заявленному контракту.
 		default:
 			for _, entity := range opts.Entities {
 				if strings.EqualFold(entity.Name, name) {

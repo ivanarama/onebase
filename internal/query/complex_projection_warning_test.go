@@ -93,6 +93,56 @@ func TestComplexProjectionReportsRegisterReferenceField(t *testing.T) {
 	}
 }
 
+// Одноимённый документ не должен одалживать типы источнику бухрегистра: по
+// суженному контракту (решение по кругу 3) регистры бухгалтерии предупреждением
+// не покрываются. До исправления ветка default в queriedColumnTypes находила
+// сущность «Проводки» по совпадению имени, и date-поле Сумма документа
+// выдавало ложное предупреждение для number-ресурса бухрегистра.
+func TestComplexProjectionIgnoresAccountRegisterSources(t *testing.T) {
+	document := &metadata.Entity{
+		Name: "Проводки",
+		Kind: metadata.KindDocument,
+		Fields: []metadata.Field{
+			{Name: "Сумма", Type: metadata.FieldTypeDate},
+		},
+	}
+	accountRegister := &metadata.AccountRegister{
+		Name:      "Проводки",
+		Resources: []metadata.Field{{Name: "Сумма", Type: metadata.FieldTypeNumber}},
+	}
+	tests := []struct {
+		name string
+		text string
+	}{
+		{
+			name: "direct source",
+			text: `ВЫБРАТЬ Сумма ИЗ РегистрБухгалтерии.Проводки
+ОБЪЕДИНИТЬ ВСЕ
+ВЫБРАТЬ Сумма ИЗ РегистрБухгалтерии.Проводки`,
+		},
+		{
+			name: "virtual table source",
+			text: `ВЫБРАТЬ Сумма ИЗ РегистрБухгалтерии.Проводки.Остатки()
+ОБЪЕДИНИТЬ ВСЕ
+ВЫБРАТЬ Сумма ИЗ РегистрБухгалтерии.Проводки.Остатки()`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := query.Compile(tt.text, query.CompileOpts{
+				AccountRegs: []*metadata.AccountRegister{accountRegister},
+				Entities:    []*metadata.Entity{document},
+			})
+			if err != nil {
+				t.Fatalf("Compile: %v", err)
+			}
+			if len(result.UnconvertedTypedFields) != 0 {
+				t.Fatalf("UnconvertedTypedFields = %v, want empty", result.UnconvertedTypedFields)
+			}
+		})
+	}
+}
+
 func TestComplexProjectionReportsVirtualRegisterReferenceField(t *testing.T) {
 	register := &metadata.Register{
 		Name: "Партии",
