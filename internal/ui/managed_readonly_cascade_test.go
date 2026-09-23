@@ -391,6 +391,7 @@ type managedControlNode struct {
 	CheckboxPresence   bool     `json:"checkboxPresence"`
 	ReadOnlyNavigation bool     `json:"readOnlyNavigation"`
 	RefCurrent         bool     `json:"refCurrent"`
+	ROMirror           bool     `json:"roMirror"`
 	TabButton          bool     `json:"tabButton"`
 	Anchors            []string `json:"anchors"`
 	InTablePart        bool     `json:"inTablePart"`
@@ -457,11 +458,13 @@ func managedFormDOM(t *testing.T, rendered string) managedFormDOMModel {
 				_, readOnlyNavigation := managedHTMLAttr(n, "data-ob-readonly-navigation")
 				_, refCurrent := managedHTMLAttr(n, "data-ob-ref-current")
 				_, tabButton := managedHTMLAttr(n, "data-tab-idx")
+				roMirrorVal, _ := managedHTMLAttr(n, "data-ob-ro-mirror")
 				model.Controls = append(model.Controls, managedControlNode{
 					Tag: strings.ToUpper(n.Data), Name: name, Type: typeName, Value: value,
 					Checked: checked, Disabled: disabled, ReadOnly: readOnly,
 					CheckboxPresence: presence == "1", ReadOnlyNavigation: readOnlyNavigation,
 					RefCurrent: refCurrent, TabButton: tabButton, Anchors: anchors, InTablePart: inTP,
+					ROMirror: roMirrorVal == "1",
 				})
 			}
 		}
@@ -497,6 +500,12 @@ func сверитьДоступность(t *testing.T, до, после managed
 	}
 	for i, было := range до.Controls {
 		стало := после.Controls[i]
+		// Зеркало значения (#1672) намеренно переключает disabled вместе с
+		// запретом: активно только пока select не отправляется. Связку
+		// «запрет ↔ зеркало» сторожит behavior-тест managed_ro_mirror.
+		if было.ROMirror || стало.ROMirror {
+			continue
+		}
 		if было.ReadOnly != стало.ReadOnly || было.Disabled != стало.Disabled {
 			t.Errorf("контрол %q: до события readOnly=%v disabled=%v, после — readOnly=%v disabled=%v",
 				было.Name, было.ReadOnly, было.Disabled, стало.ReadOnly, стало.Disabled)

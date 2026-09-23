@@ -70,8 +70,8 @@ func TestMatchCatalogByField(t *testing.T) {
 		if id == "" {
 			t.Error("ожидался id найденной записи")
 		}
-		if display != "7701234567" {
-			t.Errorf("display=%q, want значение реквизита", display)
+		if display != "ООО Ромашка" {
+			t.Errorf("display=%q, want представление записи", display)
 		}
 	})
 

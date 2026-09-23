@@ -9,6 +9,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -153,5 +154,39 @@ func TestFindByCode_NoArgumentIsError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "не указано значение") {
 		t.Errorf("невнятное сообщение: %v", err)
+	}
+}
+
+// Представление ссылки ОДНО, каким бы поиском её ни получили. Раньше сюда
+// подставлялось найденное значение, и Строка() от ссылки печатала то, по чему
+// искали: НайтиПоКоду давал «К-000042», а та же ссылка из реквизита объекта —
+// «Альфа». Сравнение Строка(А) = Строка(Б) на этом молча не сходилось, а
+// сообщение оператору показывало код вместо наименования.
+func TestFindByField_RefPresentationIsEntityLabel(t *testing.T) {
+	s, ctx, _ := findByCodeServer(t)
+	call := func(expr string) string {
+		t.Helper()
+		got, err := runFindDSL(t, s, ctx, "Функция Тест()\n  Возврат Строка("+expr+");\nКонецФункции")
+		if err != nil {
+			t.Fatalf("%s: %v", expr, err)
+		}
+		return strings.TrimSpace(fmt.Sprintf("%v", got))
+	}
+
+	byCode := call(`Справочники.Контрагенты.НайтиПоКоду("К-000042")`)
+	if byCode != "Альфа" {
+		t.Errorf("НайтиПоКоду → Строка() = %q, ожидалось представление «Альфа»", byCode)
+	}
+	byField := call(`Справочники.Контрагенты.НайтиПоРеквизиту("Код", "К-000042")`)
+	if byField != byCode {
+		t.Errorf("НайтиПоРеквизиту дал %q, а НайтиПоКоду %q — представление у ссылки должно быть одно", byField, byCode)
+	}
+	byName := call(`Справочники.Контрагенты.НайтиПоНаименованию("Альфа")`)
+	if byName != byCode {
+		t.Errorf("НайтиПоНаименованию дал %q, а НайтиПоКоду %q", byName, byCode)
+	}
+	safeMatch := call(`Справочники.Контрагенты.ПроверитьСовпадениеПоРеквизиту("Код", "К-000042").Ссылка`)
+	if safeMatch != byCode {
+		t.Errorf("ПроверитьСовпадениеПоРеквизиту дал %q, а НайтиПоКоду %q", safeMatch, byCode)
 	}
 }

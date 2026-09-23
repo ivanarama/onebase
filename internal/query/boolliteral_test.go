@@ -17,6 +17,7 @@ func boolLiteralEntity() *metadata.Entity {
 		Fields: []metadata.Field{
 			{Name: "Наименование", Type: metadata.FieldTypeString},
 			{Name: "Активен", Type: metadata.FieldTypeBool},
+			{Name: "Создан", Type: metadata.FieldTypeDate},
 		},
 	}
 }
@@ -108,6 +109,27 @@ func TestBoolColumns(t *testing.T) {
 				t.Errorf("BoolColumns = %v, ожидалось %v\nSQL: %s", r.BoolColumns, c.want, r.SQL)
 			}
 		})
+	}
+}
+
+func TestLegacyTypedColumns_JoinKeepsBoolAndDateContracts(t *testing.T) {
+	ent := boolLiteralEntity()
+	res, err := query.Compile(
+		`ВЫБРАТЬ л.Активен, л.Создан ИЗ Справочник.ПрофилиИзвлечения КАК л `+
+			`ЛЕВОЕ СОЕДИНЕНИЕ Справочник.ПрофилиИзвлечения КАК п ПО 1 = 1`,
+		query.CompileOpts{Entities: []*metadata.Entity{ent}, Dialect: storage.SQLiteDialect{}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(res.BoolColumns, []string{"активен"}) {
+		t.Errorf("BoolColumns = %v, ожидалось [активен]", res.BoolColumns)
+	}
+	if !slices.Equal(res.DateColumns, []string{"создан"}) {
+		t.Errorf("DateColumns = %v, ожидалось [создан]", res.DateColumns)
+	}
+	if len(res.TypedColumns) != 0 {
+		t.Errorf("TypedColumns при JOIN = %v, ожидалась fail-closed пустая карта", res.TypedColumns)
 	}
 }
 

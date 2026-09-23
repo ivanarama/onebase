@@ -12,6 +12,9 @@ attributes:
     type: DocumentRef.Инвентаризация
     save: true
     main: true
+  - name: МестоХраненияВыбора
+    type: CatalogRef.МестоХранения
+    save: false
 commands:
   - name: РассчитатьОтклонения
     title:
@@ -57,6 +60,17 @@ elements:
                 data_path: Объект.Склад
                 required: true
                 choice: true
+              - id: inventory-storage-choice
+                kind: ПолеВвода
+                name: ПолеМестоХраненияВыбора
+                title:
+                  ru: "Место хранения (пример зависимого подбора)"
+                data_path: Форма.МестоХраненияВыбора
+                choice: true
+                choice_filter:
+                  - field: Склад
+                    op: eq
+                    from: Объект.Склад
               - kind: ПолеВвода
                 name: ПолеСтатус
                 title:
