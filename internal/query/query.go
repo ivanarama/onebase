@@ -2901,6 +2901,32 @@ func buildQualifiedColTypes(tokens []tok, opts CompileOpts, sourceCtx sourceCont
 		addQualifier(scopeID, name, fields)
 		addQualifier(scopeID, sourceToTable(typeUpper, name), fields)
 
+		// У виртуальной таблицы пользовательский алиас стоит после списка
+		// аргументов: Регистр.X.Остатки(...) КАК Р (та же логика, что в
+		// разборе областей FROM).
+		if i+5 < len(tokens) && tokens[i+3].kind == tDot && tokens[i+5].kind == tLParen {
+			depth := 0
+			for j := i + 5; j < len(tokens); j++ {
+				switch tokens[j].kind {
+				case tLParen:
+					depth++
+				case tRParen:
+					depth--
+					if depth == 0 {
+						aliasPos := j + 1
+						if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {
+							aliasUpper := upperFast(tokens[aliasPos].val)
+							if (aliasUpper == "КАК" || aliasUpper == "AS") && tokens[aliasPos+1].kind == tIdent {
+								addQualifier(scopeID, tokens[aliasPos+1].val, fields)
+							}
+						}
+						j = len(tokens)
+					}
+				}
+			}
+			continue
+		}
+
 		// A regular source has its optional alias directly after the entity name.
 		aliasPos := i + 3
 		if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {

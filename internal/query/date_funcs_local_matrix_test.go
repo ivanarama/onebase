@@ -239,6 +239,43 @@ func TestDateFunctionLeavesAmbiguousUnqualifiedFieldUnlocalized(t *testing.T) {
 	require.NotContains(t, compiled.SQL, "ob_local_datetime(", compiled.SQL)
 }
 
+// Алиас виртуальной таблицы стоит после списка аргументов: …Остатки() КАК Ост.
+// Доказанный date-тип измерения не должен теряться из-за такой формы алиаса —
+// до исправления День(Ост.Момент) компилировался без ob_local_datetime.
+func TestDateFunctionUsesVirtualTableAliasQualifiedSource(t *testing.T) {
+	reg := &metadata.Register{
+		Name: "События",
+		Dimensions: []metadata.Field{
+			{Name: "Момент", Type: metadata.FieldTypeDate},
+		},
+		Resources: []metadata.Field{
+			{Name: "Количество", Type: metadata.FieldTypeNumber},
+		},
+	}
+	tests := []struct {
+		name string
+		src  string
+	}{
+		{name: "alias after empty args", src: `
+			ВЫБРАТЬ День(Ост.Момент) КАК ДеньМомента
+			ИЗ РегистрНакопления.События.Остатки() КАК Ост`},
+		{name: "alias after arg list", src: `
+			ВЫБРАТЬ День(Ост.Момент) КАК ДеньМомента
+			ИЗ РегистрНакопления.События.Остатки(&Период) КАК Ост`},
+	}
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			compiled, err := query.Compile(tt.src, query.CompileOpts{
+				Registers: []*metadata.Register{reg},
+				Dialect:   storage.SQLiteDialect{},
+			})
+			require.NoError(t, err)
+			require.Contains(t, compiled.SQL, "ob_local_datetime(ост.момент)", compiled.SQL)
+		})
+	}
+}
+
 func dateFunctionScopeEntities() (*metadata.Entity, *metadata.Entity) {
 	dateEntity := &metadata.Entity{
 		Name: "Даты",
