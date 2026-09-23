@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -135,23 +136,31 @@ func (db *DB) syncPredefinedInTx(ctx context.Context, e *metadata.Entity) error 
 	}
 	table := metadata.TableName(e.Name)
 
-	// Шаг 1: для каждого predefined — собираем UUID. Если в БД уже есть
-	// запись с тем же _predefined_name — берём её UUID, иначе генерим.
+	// Шаг 1: для каждого predefined — собираем UUID. DSL приводит имена к
+	// нижнему регистру, поэтому и lookup, и sync используют одну семантику
+	// EqualFold: case-only rename переиспользует существующую строку, а
+	// неоднозначные legacy-данные останавливают sync вместо создания дубля.
 	nameToUUID := make(map[string]uuid.UUID, len(e.Predefined))
-	for _, item := range e.Predefined {
-		var idStr string
-		err := db.QueryRow(ctx, fmt.Sprintf(
-			`SELECT id FROM %s WHERE _predefined_name = %s AND _is_predefined = %s LIMIT 1`,
-			table, d.Placeholder(1), boolTrue),
-			item.Name,
-		).Scan(&idStr)
-		if err == nil {
-			if id, err := uuid.Parse(idStr); err == nil {
-				nameToUUID[item.Name] = id
-				continue
+	storedNames := make(map[string]string, len(e.Predefined))
+	for i, item := range e.Predefined {
+		for _, previous := range e.Predefined[:i] {
+			if strings.EqualFold(previous.Name, item.Name) {
+				return fmt.Errorf("sync predefined %s: имена %q и %q неоднозначны без учёта регистра: %w",
+					e.Name, previous.Name, item.Name, errPredefinedAmbiguous)
 			}
 		}
-		nameToUUID[item.Name] = uuid.New()
+
+		match, err := db.findPredefinedByName(ctx, table, e.Name, item.Name, boolTrue)
+		switch {
+		case err == nil:
+			nameToUUID[item.Name] = match.id
+			storedNames[item.Name] = match.name
+		case IsNotFound(err):
+			nameToUUID[item.Name] = uuid.New()
+			storedNames[item.Name] = item.Name
+		default:
+			return fmt.Errorf("sync predefined %s.%s: lookup existing: %w", e.Name, item.Name, err)
+		}
 	}
 
 	// Шаг 2: топологическая сортировка. Граф ориентирован: item → items на
@@ -191,7 +200,7 @@ func (db *DB) syncPredefinedInTx(ctx context.Context, e *metadata.Entity) error 
 
 		cols := []string{"id", "_predefined_name", "_is_predefined"}
 		phs := []string{d.Placeholder(1), d.Placeholder(2), boolTrue}
-		args := []any{idArg(d, nameToUUID[item.Name]), item.Name}
+		args := []any{idArg(d, nameToUUID[item.Name]), storedNames[item.Name]}
 		updates := []string{"_is_predefined = " + boolTrue}
 		incomingFields := make(map[string]any, len(item.Fields)+1)
 		argIdx := 3
@@ -200,7 +209,7 @@ func (db *DB) syncPredefinedInTx(ctx context.Context, e *metadata.Entity) error 
 		// решается, нужно ли синтетическое событие истории.
 		var stagePlan *predefinedStagePlan
 		if stageF != nil {
-			p, err := db.planPredefinedStage(ctx, e, *stageF, item)
+			p, err := db.planPredefinedStage(ctx, e, *stageF, item, storedNames[item.Name])
 			if err != nil {
 				return err
 			}
@@ -330,14 +339,14 @@ type predefinedStagePlan struct {
 // конфигурации, поэтому список объявленных переходов не проверяется — но
 // значение обязано быть объявленным этапом, иначе в базу приедет состояние, о
 // котором ни гейт, ни отчёт ничего не знают.
-func (db *DB) planPredefinedStage(ctx context.Context, e *metadata.Entity, f metadata.Field, item *metadata.PredefinedItem) (*predefinedStagePlan, error) {
+func (db *DB) planPredefinedStage(ctx context.Context, e *metadata.Entity, f metadata.Field, item *metadata.PredefinedItem, storedName string) (*predefinedStagePlan, error) {
 	s := e.Stages
 	declared, present := stageFieldValue(item.Fields, f.Name)
 	if present && declared != "" && !s.Known(declared) {
 		return nil, fmt.Errorf("предопределённый %s.%s: этап %q не объявлен в маршруте", e.Name, item.Name, declared)
 	}
 
-	prev, existed, err := db.predefinedStageValue(ctx, e, f, item.Name)
+	prev, existed, err := db.predefinedStageValue(ctx, e, f, storedName)
 	if err != nil {
 		return nil, err
 	}
@@ -483,20 +492,11 @@ func (db *DB) GetPredefinedID(ctx context.Context, entityName, predefinedName st
 		boolTrue = "1"
 	}
 	table := metadata.TableName(entityName)
-	var idStr string
-	err := db.QueryRow(ctx,
-		fmt.Sprintf(`SELECT id FROM %s WHERE _predefined_name = %s AND _is_predefined = %s`,
-			table, d.Placeholder(1), boolTrue),
-		predefinedName,
-	).Scan(&idStr)
+	match, err := db.findPredefinedByName(ctx, table, entityName, predefinedName, boolTrue)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("predefined %s.%s not found: %w", entityName, predefinedName, err)
+		return uuid.Nil, err
 	}
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("predefined %s.%s: bad uuid: %w", entityName, predefinedName, err)
-	}
-	return id, nil
+	return match.id, nil
 }
 
 // GetPredefinedIDStr is a string-returning variant of GetPredefinedID for the
@@ -511,24 +511,17 @@ func (db *DB) GetPredefinedIDStr(ctx context.Context, entityName, predefinedName
 
 // FindCatalogByField looks up a single catalog row by exact match of fieldName.
 // Returns (id, displayValue, true) on hit; ("", "", false, nil) when not found.
-// displayValue is the matched field's value — handy for building a *Ref.
-// fieldName lookup is case-insensitive against entity.Fields names.
+// displayValue is the row's PRESENTATION (metadata.RowLabel) — not the matched
+// field's value. fieldName lookup is case-insensitive against entity.Fields names.
 func (db *DB) FindCatalogByField(ctx context.Context, entity *metadata.Entity, fieldName, value string) (string, string, bool, error) {
-	var field *metadata.Field
-	for i := range entity.Fields {
-		if strings.EqualFold(entity.Fields[i].Name, fieldName) {
-			field = &entity.Fields[i]
-			break
-		}
+	sel, err := newLabelSelect(entity, fieldName)
+	if err != nil {
+		return "", "", false, err
 	}
-	if field == nil {
-		return "", "", false, fmt.Errorf("entity %s has no field %q", entity.Name, fieldName)
-	}
-	col := metadata.ColumnName(*field)
-	table := metadata.TableName(entity.Name)
 	d := db.dialect
 	rows, err := db.Query(ctx,
-		fmt.Sprintf(`SELECT id, %s FROM %s WHERE %s = %s LIMIT 1`, col, table, col, d.Placeholder(1)),
+		fmt.Sprintf(`SELECT %s FROM %s WHERE %s = %s LIMIT 1`,
+			sel.selectList(), metadata.TableName(entity.Name), sel.searchColumn, d.Placeholder(1)),
 		value,
 	)
 	if err != nil {
@@ -538,19 +531,30 @@ func (db *DB) FindCatalogByField(ctx context.Context, entity *metadata.Entity, f
 	if !rows.Next() {
 		return "", "", false, nil
 	}
-	var idStr, display string
-	if err := rows.Scan(&idStr, &display); err != nil {
-		return "", "", false, fmt.Errorf("find %s.%s scan: %w", entity.Name, fieldName, err)
+	idStr, display, serr := sel.scan(rows)
+	if serr != nil {
+		return "", "", false, fmt.Errorf("find %s.%s scan: %w", entity.Name, fieldName, serr)
 	}
 	return idStr, display, true, nil
 }
 
-// ListCatalogMatchesByField returns every matching row in deterministic order.
-// It is used when row-level access is active: callers must check each row
-// before deciding whether the result is absent, unique, or ambiguous. Returning
-// only LIMIT 1 or COUNT(*) would either hide a later visible row or disclose the
-// number of rows that the current user cannot read.
-func (db *DB) ListCatalogMatchesByField(ctx context.Context, entity *metadata.Entity, fieldName, value string) ([]string, []string, error) {
+// labelSelect — выборка «идентификатор + представление» для поиска по реквизиту.
+//
+// ПРЕДСТАВЛЕНИЕ, А НЕ НАЙДЕННОЕ ЗНАЧЕНИЕ. Раньше сюда подставлялась колонка, по
+// которой искали, и ссылка от НайтиПоРеквизиту("Код", …) печаталась КОДОМ, а та
+// же самая ссылка, прочитанная реквизитом объекта, — НАИМЕНОВАНИЕМ. Строка() от
+// одной и той же ссылки давала разное в зависимости от того, как её получили:
+// сравнение Строка(А) = Строка(Б) молча не сходилось, а сообщение оператору
+// печатало «TG-FRIDGE» вместо «Холодильники». Представление у ссылки одно, и
+// считает его metadata.RowLabel — тот же, что у списков и подбора.
+type labelSelect struct {
+	columns      []string         // колонки после id: кандидаты представления
+	fields       []metadata.Field // им соответствующие реквизиты (по порядку)
+	searchColumn string           // колонка условия поиска
+	entity       *metadata.Entity // для RowLabel
+}
+
+func newLabelSelect(entity *metadata.Entity, fieldName string) (*labelSelect, error) {
 	var field *metadata.Field
 	for i := range entity.Fields {
 		if strings.EqualFold(entity.Fields[i].Name, fieldName) {
@@ -559,12 +563,84 @@ func (db *DB) ListCatalogMatchesByField(ctx context.Context, entity *metadata.En
 		}
 	}
 	if field == nil {
-		return nil, nil, fmt.Errorf("entity %s has no field %q", entity.Name, fieldName)
+		return nil, fmt.Errorf("entity %s has no field %q", entity.Name, fieldName)
 	}
-	col := metadata.ColumnName(*field)
-	table := metadata.TableName(entity.Name)
+	sel := &labelSelect{searchColumn: metadata.ColumnName(*field), entity: entity}
+	seen := map[string]bool{}
+	add := func(f metadata.Field) {
+		col := metadata.ColumnName(f)
+		if seen[col] {
+			return
+		}
+		seen[col] = true
+		sel.columns = append(sel.columns, col)
+		sel.fields = append(sel.fields, f)
+	}
+	for _, f := range metadata.LabelFields(entity) {
+		add(f)
+	}
+	// RowLabel строит синтетическую подпись документа из дат и чисел, если
+	// строкового представления нет. Выборка обязана дать ей те же данные, что
+	// полная строка в списках и пикерах; искомое ссылочное поле таким кандидатом
+	// не является.
+	if entity.Kind == metadata.KindDocument && len(entity.Presentation) == 0 {
+		for _, f := range entity.Fields {
+			if f.Type == metadata.FieldTypeDate || f.Type == metadata.FieldTypeNumber {
+				add(f)
+			}
+		}
+	}
+	return sel, nil
+}
+
+func (s *labelSelect) selectList() string {
+	if len(s.columns) == 0 {
+		return "id"
+	}
+	return "id, " + strings.Join(s.columns, ", ")
+}
+
+// scan читает строку выборки и собирает представление правилом RowLabel.
+func (s *labelSelect) scan(rows Rows) (string, string, error) {
+	return s.scanWithTail(rows)
+}
+
+// scanWithTail дополнительно читает служебные колонки после полей
+// представления (например, COUNT(*) в safe-match).
+func (s *labelSelect) scanWithTail(rows Rows, tail ...any) (string, string, error) {
+	values := make([]any, 0, len(s.columns)+1)
+	var idStr string
+	values = append(values, &idStr)
+	cells := make([]any, len(s.columns))
+	for i := range cells {
+		values = append(values, &cells[i])
+	}
+	values = append(values, tail...)
+	if err := rows.Scan(values...); err != nil {
+		return "", "", err
+	}
+	row := map[string]any{"id": idStr}
+	for i, f := range s.fields {
+		if cells[i] != nil {
+			row[f.Name] = normalizeFieldValue(f, cells[i])
+		}
+	}
+	return idStr, metadata.RowLabel(row, s.entity), nil
+}
+
+// ListCatalogMatchesByField returns every matching row in deterministic order.
+// It is used when row-level access is active: callers must check each row
+// before deciding whether the result is absent, unique, or ambiguous. Returning
+// only LIMIT 1 or COUNT(*) would either hide a later visible row or disclose the
+// number of rows that the current user cannot read.
+func (db *DB) ListCatalogMatchesByField(ctx context.Context, entity *metadata.Entity, fieldName, value string) ([]string, []string, error) {
+	sel, err := newLabelSelect(entity, fieldName)
+	if err != nil {
+		return nil, nil, err
+	}
 	rows, err := db.Query(ctx,
-		fmt.Sprintf(`SELECT id, %s FROM %s WHERE %s = %s ORDER BY id`, col, table, col, db.dialect.Placeholder(1)),
+		fmt.Sprintf(`SELECT %s FROM %s WHERE %s = %s ORDER BY id`,
+			sel.selectList(), metadata.TableName(entity.Name), sel.searchColumn, db.dialect.Placeholder(1)),
 		value,
 	)
 	if err != nil {
@@ -573,9 +649,9 @@ func (db *DB) ListCatalogMatchesByField(ctx context.Context, entity *metadata.En
 	defer rows.Close()
 	var ids, displays []string
 	for rows.Next() {
-		var id, display string
-		if err := rows.Scan(&id, &display); err != nil {
-			return nil, nil, fmt.Errorf("list matches %s.%s scan: %w", entity.Name, fieldName, err)
+		id, display, serr := sel.scan(rows)
+		if serr != nil {
+			return nil, nil, fmt.Errorf("list matches %s.%s scan: %w", entity.Name, fieldName, serr)
 		}
 		ids = append(ids, id)
 		displays = append(displays, display)
@@ -594,17 +670,11 @@ func (db *DB) ListCatalogMatchesByField(ctx context.Context, entity *metadata.En
 // все совпадения (1 round-trip и 1 сканирование вместо прежних двух).
 // fieldName сопоставляется без учёта регистра.
 func (db *DB) MatchCatalogByField(ctx context.Context, entity *metadata.Entity, fieldName, value string) (string, string, int, error) {
-	var field *metadata.Field
-	for i := range entity.Fields {
-		if strings.EqualFold(entity.Fields[i].Name, fieldName) {
-			field = &entity.Fields[i]
-			break
-		}
+	sel, err := newLabelSelect(entity, fieldName)
+	if err != nil {
+		return "", "", 0, err
 	}
-	if field == nil {
-		return "", "", 0, fmt.Errorf("entity %s has no field %q", entity.Name, fieldName)
-	}
-	return db.matchCatalogByExpression(ctx, entity, metadata.ColumnName(*field), fieldName, value)
+	return db.matchCatalogByExpression(ctx, entity, sel, fieldName, value)
 }
 
 // MatchCatalogByPresentation ищет по фактическому явно заданному
@@ -675,7 +745,7 @@ func (db *DB) MatchCatalogByPresentation(ctx context.Context, entity *metadata.E
 	return "", "", count, nil
 }
 
-func (db *DB) matchCatalogByExpression(ctx context.Context, entity *metadata.Entity, expression, fieldLabel, value string) (string, string, int, error) {
+func (db *DB) matchCatalogByExpression(ctx context.Context, entity *metadata.Entity, sel *labelSelect, fieldLabel, value string) (string, string, int, error) {
 	table := metadata.TableName(entity.Name)
 	d := db.dialect
 	// Один запрос: LIMIT 1 берёт id/представление первой записи, а вложенный
@@ -684,8 +754,8 @@ func (db *DB) matchCatalogByExpression(ctx context.Context, entity *metadata.Ent
 	// Два плейсхолдера (а не повтор одного) — универсально для PostgreSQL ($1/$2)
 	// и SQLite (?, ?).
 	rows, err := db.Query(ctx,
-		fmt.Sprintf(`SELECT id, %s, (SELECT COUNT(*) FROM %s WHERE %s = %s) FROM %s WHERE %s = %s LIMIT 1`,
-			expression, table, expression, d.Placeholder(1), table, expression, d.Placeholder(2)),
+		fmt.Sprintf(`SELECT %s, (SELECT COUNT(*) FROM %s WHERE %s = %s) FROM %s WHERE %s = %s LIMIT 1`,
+			sel.selectList(), table, sel.searchColumn, d.Placeholder(1), table, sel.searchColumn, d.Placeholder(2)),
 		value, value,
 	)
 	if err != nil {
@@ -695,9 +765,9 @@ func (db *DB) matchCatalogByExpression(ctx context.Context, entity *metadata.Ent
 		rows.Close()
 		return "", "", 0, nil // 0 совпадений
 	}
-	var idStr, display string
 	cnt := 0
-	if err := rows.Scan(&idStr, &display, &cnt); err != nil {
+	idStr, display, err := sel.scanWithTail(rows, &cnt)
+	if err != nil {
 		rows.Close()
 		return "", "", 0, fmt.Errorf("match %s.%s scan: %w", entity.Name, fieldLabel, err)
 	}
@@ -710,4 +780,54 @@ func (db *DB) matchCatalogByExpression(ctx context.Context, entity *metadata.Ent
 		return idStr, display, 1, nil
 	}
 	return "", "", cnt, nil // cnt > 1 — несколько; точное число, id не отдаём (неоднозначно)
+}
+
+// errPredefinedAmbiguous — у предопределённых строк, различающихся только
+// регистром, нельзя выбрать запись молча.
+var errPredefinedAmbiguous = errors.New("имя предопределённого элемента неоднозначно без учёта регистра")
+
+type predefinedMatch struct {
+	id   uuid.UUID
+	name string
+}
+
+// findPredefinedByName ищет предопределённую запись совпадением без учёта
+// регистра. Единое сканирование важно не только для одинаковой семантики
+// SQLite/PostgreSQL: exact-hit не имеет права скрыть второй legacy-дубль,
+// отличающийся только регистром. Ошибки Query/Scan/Rows и повреждённый UUID
+// возвращаются как есть и никогда не превращаются в «not found».
+func (db *DB) findPredefinedByName(ctx context.Context, table, entityName, predefinedName, boolTrue string) (predefinedMatch, error) {
+	rows, err := db.Query(ctx,
+		fmt.Sprintf(`SELECT id, _predefined_name FROM %s WHERE _is_predefined = %s`, table, boolTrue))
+	if err != nil {
+		return predefinedMatch{}, fmt.Errorf("predefined %s.%s query: %w", entityName, predefinedName, err)
+	}
+	defer rows.Close()
+	var foundID, foundName string
+	count := 0
+	for rows.Next() {
+		var idStr, nm string
+		if err := rows.Scan(&idStr, &nm); err != nil {
+			return predefinedMatch{}, fmt.Errorf("predefined %s.%s scan: %w", entityName, predefinedName, err)
+		}
+		if strings.EqualFold(nm, predefinedName) {
+			count++
+			foundID, foundName = idStr, nm
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return predefinedMatch{}, fmt.Errorf("predefined %s.%s rows: %w", entityName, predefinedName, err)
+	}
+	switch count {
+	case 1:
+		id, err := uuid.Parse(foundID)
+		if err != nil {
+			return predefinedMatch{}, fmt.Errorf("predefined %s.%s: bad uuid: %w", entityName, predefinedName, err)
+		}
+		return predefinedMatch{id: id, name: foundName}, nil
+	case 0:
+		return predefinedMatch{}, fmt.Errorf("predefined %s.%s not found: %w", entityName, predefinedName, sql.ErrNoRows)
+	default:
+		return predefinedMatch{}, fmt.Errorf("predefined %s.%s: неоднозначное имя без учёта регистра (%d совпадений): %w", entityName, predefinedName, count, errPredefinedAmbiguous)
+	}
 }

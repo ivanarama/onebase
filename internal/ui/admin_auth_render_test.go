@@ -11,13 +11,31 @@ import (
 )
 
 func TestAdminAuthTemplate_PolicyAndProviders(t *testing.T) {
-	policy := auth.Policy{SSOOnly: true, Require2FAAdmins: true, Require2FARoles: []string{"Бухгалтерия"}}
+	policy := auth.Policy{
+		SSOOnly: true, Require2FAAdmins: true, Require2FARoles: []string{"Бухгалтерия"},
+		PasswordMinLength: 10, AllowEmptyPasswords: true,
+	}
 	var buf bytes.Buffer
 	err := adminTmpl.ExecuteTemplate(&buf, "admin-auth", map[string]any{
-		"Policy":         policy,
-		"Roles":          []*auth.Role{{Name: "Бухгалтерия"}, {Name: "Кладовщик"}},
-		"RoleSelected":   map[string]bool{"Бухгалтерия": true},
-		"RoleSelectSize": 3,
+		"Policy":                          policy,
+		"Roles":                           []*auth.Role{{Name: "Бухгалтерия"}, {Name: "Кладовщик"}},
+		"RoleSelected":                    map[string]bool{"Бухгалтерия": true},
+		"RoleSelectSize":                  3,
+		"PasswordPolicyTitle":             "Политика паролей",
+		"PasswordMinLengthLabel":          "Минимальная длина пароля",
+		"PasswordMinLength":               10,
+		"EffectivePasswordMinLength":      10,
+		"EffectivePasswordMinLengthLabel": "Действующее значение:",
+		"PasswordMinLengthSource":         "настройка базы",
+		"PasswordMinLengthRangeHint":      "Минимум — от 1 до 72 символов. Сам пароль — не более 72 байт UTF-8 из-за ограничения bcrypt.",
+		"PasswordMinLengthInheritHint":    "Пустое поле наследует умолчание процесса.",
+		"DefaultPasswordMinLength":        auth.DefaultMinPasswordLength,
+		"MaxPasswordLength":               auth.MaxPasswordLength,
+		"AllowEmptyPasswordsLabel":        "Разрешить пустые пароли",
+		"EmptyPasswordWarning":            "Учётная запись с пустым паролем защищена только логином.",
+		"EmptyPasswordEnvHint":            "",
+		"EmptyPasswordsByEnv":             false,
+		"SavePasswordPolicyLabel":         "Сохранить политику паролей",
 		"Providers": []*auth.OIDCProvider{
 			{ID: "keycloak", Name: "Корпоративный вход", Issuer: "https://id.example.com", Enabled: true},
 		},
@@ -33,6 +51,10 @@ func TestAdminAuthTemplate_PolicyAndProviders(t *testing.T) {
 		`<option value="Бухгалтерия" selected>`,
 		`/ui/admin/auth/providers/keycloak`,
 		"ONEBASE_ALLOW_PASSWORD_LOGIN",
+		`action="/ui/admin/auth/password-policy"`,
+		`name="password_min_length" min="1" max="72" value="10"`,
+		`name="allow_empty_passwords" value="1" checked`,
+		"72 байт UTF-8",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("в HTML нет %q", want)

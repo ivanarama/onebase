@@ -15,7 +15,9 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/exchange"
+	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/richtext"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/shopspring/decimal"
 )
@@ -426,17 +428,21 @@ func (s *Server) infoRegForm(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) infoRegSubmit(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	ir := s.getInfoReg(w, r)
 	if ir == nil {
 		return
 	}
+	formLimit := infoRegFormBodyLimit(ir)
+	r.Body = http.MaxBytesReader(w, r.Body, formLimit)
 	if !s.requirePerm(w, r, "inforeg", ir.Name, "write") {
 		return
 	}
-	s.limitMultipartRequest(w, r)
-	if err := parseBoundedForm(r, defaultFormMemoryBytes); err != nil {
-		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
+	if err := parseBoundedForm(r, formLimit); err != nil {
+		http.Error(w, s.errText(r, infoRegFormBodyError(err, ir)), uploadErrorStatus(err))
+		return
+	}
+	if err := checkInfoRegRichTextLimits(r, ir); err != nil {
+		http.Error(w, s.errText(r, err), http.StatusBadRequest)
 		return
 	}
 
@@ -696,9 +702,24 @@ func parseInfoRegFields(r *http.Request, fields []metadata.Field) map[string]any
 			result[f.Name] = nil
 			continue
 		}
+		if metadata.IsRichText(f.Type) {
+			result[f.Name] = richtext.Sanitize(val)
+			continue
+		}
 		result[f.Name] = parseInfoRegFieldValue(f, val)
 	}
 	return result
+}
+
+func checkInfoRegRichTextLimits(r *http.Request, infoReg *metadata.InfoRegister) error {
+	for _, fields := range [][]metadata.Field{infoReg.Dimensions, infoReg.Resources} {
+		for _, f := range fields {
+			if metadata.IsRichText(f.Type) && len(r.FormValue(f.Name)) > richtext.MaxBytes {
+				return i18nerr.Errorf("поле %s: превышен размер richtext (%d МБ)", f.Name, richtext.MaxBytes>>20)
+			}
+		}
+	}
+	return nil
 }
 
 func infoRegPolicyRow(ir *metadata.InfoRegister, dims, resources map[string]any, period *time.Time) map[string]any {

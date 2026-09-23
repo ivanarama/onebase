@@ -364,6 +364,20 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// entityHasRichText — есть ли среди реквизитов шапки сущности richtext-поле.
 		// Quill (vendor-ассеты + init) грузятся на форме только при true, чтобы не
 		// тянуть редактор на формы без richtext-полей.
+		// infoRegHasRichText — есть ли у регистра сведений richtext-ресурс. По нему
+		// форма записи решает, тянуть ли вендор-ассеты редактора: у большинства
+		// регистров их грузить незачем.
+		"infoRegHasRichText": func(ir *metadata.InfoRegister) bool {
+			if ir == nil {
+				return false
+			}
+			for _, f := range append(append([]metadata.Field{}, ir.Dimensions...), ir.Resources...) {
+				if metadata.IsRichText(f.Type) {
+					return true
+				}
+			}
+			return false
+		},
 		"entityHasRichText": func(e *metadata.Entity) bool {
 			if e == nil {
 				return false
@@ -403,6 +417,35 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return s[:i]
 			}
 			return s
+		},
+		// managedRefOptions keeps choice_filter options scoped to the stable
+		// element id. The same entity field may be rendered twice with different
+		// filters; falling back by field name is only for elements without the
+		// opt-in contract.
+		"managedRefOptions": func(ctx map[string]any, element *metadata.FormElement, field string) []map[string]any {
+			if element != nil {
+				if scoped, ok := ctx["ManagedChoiceOptions"].(map[string][]map[string]any); ok {
+					if rows, exists := scoped[element.ID]; exists {
+						return rows
+					}
+				}
+			}
+			if refs, ok := ctx["RefOptions"].(map[string][]map[string]any); ok {
+				return refs[field]
+			}
+			if refs, ok := ctx["RefOptions"].(map[string]any); ok {
+				if rows, ok := refs[field].([]map[string]any); ok {
+					return rows
+				}
+			}
+			return nil
+		},
+		"managedChoiceContext": func(ctx map[string]any, element *metadata.FormElement) string {
+			if element == nil {
+				return ""
+			}
+			contexts, _ := ctx["ManagedChoiceContexts"].(map[string]string)
+			return contexts[element.ID]
 		},
 		// itemFormVisible/itemFormHidden делят реквизиты по блоку `item_form:`
 		// (план 117, Д12). До этого ключ парсился, хранился, отдавался в
@@ -514,6 +557,9 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"elAlign": func(el *metadata.FormElement) template.CSS {
 			return template.CSS(metadata.FormElementAlignCSS(el)) //nolint:gosec // G203: стиль собран только из нормализованных значений словаря выравнивания
 		},
+		"elBackground": func(el *metadata.FormElement) template.CSS {
+			return template.CSS(metadata.FormElementBackgroundCSS(el)) //nolint:gosec // G203: значение прошло csssafe.Color, иначе пустая строка
+		},
 		"elFill": func(el *metadata.FormElement) bool {
 			return metadata.FormElementFillsHeight(el)
 		},
@@ -595,6 +641,15 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return false
 			}
 			return !*a.Visible
+		},
+		// formActionVisible — видимость стандартного действия managed-формы.
+		// Отсутствующий ключ и visible:nil сохраняют платформенное умолчание.
+		"formActionVisible": func(form *metadata.FormModule, name string) bool {
+			if form == nil || form.Actions == nil {
+				return true
+			}
+			a, ok := form.Actions[name]
+			return !ok || a == nil || a.Visible == nil || *a.Visible
 		},
 		// tablePartByName ищет metadata.TablePart в Entity по имени.
 		// Возвращает указатель на копию (или nil) — нужно managed-шаблону
@@ -1206,11 +1261,23 @@ const tplHead = `
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="onebase">
 <title>{{if .Cfg.AppName}}{{.Cfg.AppName}}{{else}}onebase{{end}}</title>
+<script type="application/json" id="ob-ui-messages">{{jsJSON (dict
+  "closeNotConfirmed" (t (or $.Lang "ru") "Форма не закрыта: сервер не подтвердил закрытие.")
+  "unsavedClose" (t (or $.Lang "ru") "Данные были изменены и не записаны. Закрыть форму?")
+)}}</script>
 <script src="/static/ui.js"></script>
 <style>
 .ob-embedded .topbar,.ob-embedded .subsys-bar,.ob-embedded #ob-nav{display:none!important}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;min-height:100vh;background:#f5f5f5}
+/* height:100vh + overflow:hidden — окно приложения ровно по экрану. С одним лишь
+   min-height:100vh страницу растягивало САМОЕ ВЫСОКОЕ содержимое (обычно длинное
+   меню слева): при окне 908px тело становилось 1283px, вместе с ним росла
+   вкладка-iframe (.ob-tabbody iframe — height:100% растянутой области), и
+   диалог с position:fixed внутри неё центрировался по ФРЕЙМУ, а не по экрану —
+   то есть уезжал под нижний край. Прокрутка никуда не делась: меню и рабочая
+   область прокручиваются каждая сама (overflow-y:auto). На узком экране правило
+   снимается — там страница прокручивается целиком, см. media-запрос ниже. */
+body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;height:100vh;min-height:100vh;overflow:hidden;background:#f5f5f5}
 .topbar{background:#1e293b;color:#fff;padding:0 16px;display:flex;align-items:center;height:38px;flex-shrink:0;position:sticky;top:0;z-index:100}
 .topbar-title{font-size:14px;font-weight:600;color:#7dd3fc;flex:1}
 .sys-menu{position:relative}
@@ -1252,8 +1319,11 @@ body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;min-hei
 .report-composed.rep-lines-both td:last-child,.report-composed.rep-lines-both th:last-child{border-right:none}
 .report-composed.rep-lines-none td,.report-composed.rep-lines-none th{border-bottom:none}
 .report-composed.rep-zebra tbody tr:nth-child(even){background:#fafbfc}
-.app-body{display:flex;flex:1;overflow:hidden}
-aside{width:210px;background:#1e293b;color:#fff;padding:16px 0;flex-shrink:0;overflow-y:auto}
+/* min-height:0 у строки и её колонок: у flex-элемента min-height по умолчанию
+   auto, поэтому он не может стать ниже своего содержимого — и длинное меню
+   растягивало всю страницу, несмотря на overflow:hidden выше. */
+.app-body{display:flex;flex:1;overflow:hidden;min-height:0}
+aside{width:210px;background:#1e293b;color:#fff;padding:16px 0;flex-shrink:0;overflow-y:auto;min-height:0}
 aside .sec{font-size:11px;text-transform:uppercase;color:#94a3b8;margin:14px 12px 4px;letter-spacing:.05em}
 aside a{display:block;padding:6px 14px;color:#cbd5e1;text-decoration:none;font-size:14px;margin:1px 6px;border-radius:5px;line-height:1.3;overflow-wrap:break-word}
 aside a:hover{background:#334155;color:#fff}
@@ -1263,7 +1333,7 @@ aside details.navsec>summary::-webkit-details-marker{display:none}
 aside details.navsec>summary::before{content:"\25B8";display:inline-block;width:1em;color:#64748b}
 aside details.navsec[open]>summary::before{content:"\25BE"}
 aside details.navsec>summary:hover{color:#cbd5e1}
-main{flex:1;padding:28px;overflow-y:auto}
+main{flex:1;padding:28px;overflow-y:auto;min-height:0;min-width:0}
 h2{font-size:22px;font-weight:600;margin-bottom:20px;color:#1e293b}
 h3{font-size:16px;font-weight:600;margin:24px 0 10px;color:#1e293b}
 .card{background:#fff;border-radius:10px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,.1);max-width:1400px}
@@ -1347,6 +1417,9 @@ body{padding-bottom:32px}
   html.nav-collapsed #ob-nav{display:none}
 }
 @media (max-width:820px){
+  /* Мобильная раскладка прокручивает страницу целиком — возвращаем ей высоту по
+     содержимому, иначе низ формы стал бы недоступен. */
+  body{height:auto;overflow:visible}
   .app-body{display:block;overflow:visible}
   aside{position:fixed;left:0;top:0;bottom:0;width:78vw;max-width:300px;z-index:401;transform:translateX(-100%);transition:transform .2s ease;box-shadow:2px 0 16px rgba(0,0,0,.3)}
   body.nav-open aside{transform:translateX(0)}
@@ -1446,11 +1519,11 @@ const tplNav = `
           <a href="/ui/profile/2fa">{{t $.Lang "Второй фактор"}}</a>{{end}}
         </div>
       </details>
-      {{if not .IsAdmin}}
+      {{if and (not .IsAdmin) (or .HasPOS .HasStages)}}
       <details class="sys-group">
         <summary>{{t $.Lang "Платформенные возможности"}}</summary>
         <div class="sys-group-body">
-          <a href="/ui/pos">{{t $.Lang "Рабочее место кассира (РМК)"}}</a>
+          {{if .HasPOS}}<a href="/ui/pos">{{t $.Lang "Рабочее место кассира (РМК)"}}</a>{{end}}
           {{if .HasStages}}<a href="/ui/stages">{{t $.Lang "Этапы — где застряло"}}</a>{{end}}
         </div>
       </details>
@@ -1556,7 +1629,13 @@ const tplIndex = `
 .dash-row > .w-card-list,.dash-row > .w-card-chart,.dash-row > .w-card-recent{flex:1 1 360px}
 .dash-grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
 .w-card{background:#fff;border-radius:10px;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.08);display:flex;flex-direction:column;min-height:120px}
-.w-title{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;font-weight:600;margin-bottom:8px}
+.w-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;min-height:24px}
+.w-title{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;font-weight:600;flex:1;min-width:0}
+.w-refresh{border:0;background:transparent;color:#64748b;border-radius:6px;padding:3px 5px;line-height:1;cursor:pointer;font-size:15px}
+.w-refresh:hover{background:#f1f5f9;color:#1d4ed8}.w-refresh:focus-visible{outline:2px solid #60a5fa;outline-offset:2px}
+.w-refresh[disabled]{cursor:wait;opacity:.55}.w-card.ob-widget-loading .w-refresh{animation:ob-widget-spin .8s linear infinite}
+@keyframes ob-widget-spin{to{transform:rotate(360deg)}}
+.w-refresh-status{font-size:12px;color:#b91c1c;margin-top:7px;min-height:0}
 .w-kpi-value{font-size:32px;font-weight:700;color:#0f172a;line-height:1.1;white-space:nowrap}
 .w-kpi-sub{font-size:12px;color:#94a3b8;margin-top:6px}
 /* Кликабельный счётчик: остаётся числом (тот же кегль и цвет), но ведёт себя
@@ -1615,8 +1694,33 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 {{end}}
 
 {{define "widget-card"}}
-<div class="w-card w-card-{{.Type}}">
-  {{if .Title}}<div class="w-title">{{.Title}}</div>{{end}}
+<div class="w-card w-card-{{.Type}}"{{if .PartialURL}} data-ob-widget-card data-widget-name="{{.Name}}" data-widget-url="{{.PartialURL}}" data-refresh-error="{{.RefreshError}}"{{if .RefreshOn}} data-ob-refresh-on="{{.RefreshOn}}" data-ob-live="widget/{{.Name}}"{{end}}{{end}}>
+  {{if or .Title .PartialURL}}
+  <div class="w-head">
+    {{if .Title}}<div class="w-title">{{.Title}}</div>{{end}}
+    {{if .PartialURL}}<button type="button" class="w-refresh" data-ob-widget-refresh title="{{.RefreshLabel}}" aria-label="{{.RefreshLabel}}">↻</button>{{end}}
+  </div>
+  {{end}}
+  {{if .Filters}}
+  <div class="w-filters">
+    {{range .Filters}}{{$f := .}}
+    <label class="w-filter"><span>{{$f.Label}}</span>
+    {{if or (eq $f.Kind "bool") (eq $f.Kind "select") (eq $f.Kind "reference")}}<select data-ob-filter="{{$f.Key}}">
+      {{range $f.Options}}<option value="{{.Value}}"{{if eq .Value $f.Current}} selected{{end}}>{{.Label}}</option>{{end}}
+    </select>{{else}}<input type="{{if eq $f.Kind "date"}}date{{else}}text{{end}}"{{if eq $f.Kind "number"}} inputmode="decimal"{{end}} data-ob-filter="{{$f.Key}}" value="{{$f.Current}}">{{end}}
+    </label>
+    {{end}}
+    <button type="button" class="w-filter-reset" data-ob-filter-reset>{{.ResetLabel}}</button>
+  </div>
+  {{end}}
+  <div data-ob-widget-body>
+  {{template "widget-body" .}}
+  </div>
+  {{if .PartialURL}}<div class="w-refresh-status" data-ob-widget-status role="status" aria-live="polite"></div>{{end}}
+</div>
+{{end}}
+
+{{define "widget-body"}}
   {{if .Error}}<div class="w-error">{{.Error}}</div>
   {{else if eq .Type "kpi"}}{{template "widget-kpi-body" .}}
   {{else if eq .Type "list"}}{{template "widget-list-body" .}}
@@ -1624,7 +1728,6 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
   {{else if eq .Type "actions"}}{{template "widget-actions-body" .}}
   {{else if eq .Type "recent"}}{{template "widget-recent-body" .}}
   {{end}}
-</div>
 {{end}}
 
 {{define "widget-kpi-body"}}
@@ -1645,7 +1748,7 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
     <tbody>
     {{range .Rows}}
       {{$row := .}}
-      <tr>
+      {{with index $row "_row_url"}}<tr class="ob-row-link" tabindex="0" data-ob-row-url="{{.}}">{{else}}<tr>{{end}}
         {{range $.Columns}}
         <td{{if eq .Align "right"}} class="right"{{end}}>{{wcell $row .Field .Format}}</td>
         {{end}}
@@ -1829,6 +1932,7 @@ const tplList = `
 {{range .TreeRows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}{{$depth := index $row "_depth"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
   data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
+  data-ob-entity-id="{{index $row "id"}}"
   data-tree-id="{{index $row "id"}}"
   data-tree-depth="{{$depth}}"
   data-tree-parent="{{index $row "parent_id"}}"
@@ -1886,6 +1990,7 @@ const tplList = `
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <div class="tile-card{{if index $row "deletion_mark"}} tile-deleted{{end}}"
   data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}" role="option"
+  data-ob-entity-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
   data-folder-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" (str (index $row "id"))}}"
@@ -1944,6 +2049,7 @@ const tplList = `
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
   data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
+  data-ob-entity-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
   data-folder-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" (str (index $row "id"))}}"
@@ -2013,6 +2119,7 @@ const tplList = `
   "canWrite" .CanWrite
   "canDelete" .CanDelete
   "canUnpost" .CanUnpost
+  "basedOn" .BasedOnActions
   "treeEntity" .Entity.Name
   "subsystem" (str $.CurrentSubsystem)
   "labels" (dict
@@ -2020,6 +2127,7 @@ const tplList = `
     "edit" (t $.Lang "Редактировать")
     "open" (t $.Lang "Открыть")
     "copy" (t $.Lang "Скопировать")
+    "basedOn" (t $.Lang "Ввести на основании")
     "enter" (t $.Lang "▶ Войти")
     "activityShow" (t $.Lang "Вернуть в выбор")
     "activityShowConfirm" (t $.Lang "Вернуть в выбор?")
@@ -2115,13 +2223,13 @@ const tplForm = `
       </div>
     </div>
     {{end}}
-    {{if .Receivers}}
+    {{if .BasedOnActions}}
     <div style="position:relative">
       <button type="button" class="btn btn-sm btn-secondary" data-ob-toggle-next>{{t $.Lang "Ввести на основании"}} ▾</button>
       <div style="display:none;position:absolute;top:100%;left:0;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);min-width:200px;z-index:50;margin-top:4px">
-        {{range .Receivers}}
-        <a href="/ui/{{lower (str .Kind)}}/{{.Name}}/new?based_on={{$.Entity.Name}}&based_on_id={{$.ID}}"
-           style="display:block;padding:9px 16px;color:#334155;text-decoration:none;font-size:13px;border-bottom:1px solid #f1f5f9">{{.DisplayName $.Lang}}</a>
+        {{range .BasedOnActions}}
+        <a href="{{.URL}}&based_on_id={{$.ID}}"
+           style="display:block;padding:9px 16px;color:#334155;text-decoration:none;font-size:13px;border-bottom:1px solid #f1f5f9">{{.Label}}</a>
         {{end}}
       </div>
     </div>
@@ -3192,6 +3300,12 @@ const tplInfoReg = `
 
 {{define "page-inforeg-form"}}
 {{template "head" .}}{{template "nav" .}}
+{{if infoRegHasRichText .InfoReg}}
+{{/* Вендор-ассеты редактора грузятся ТОЛЬКО когда у регистра есть richtext-
+     ресурс — как и на форме объекта. */}}
+<link rel="stylesheet" href="/vendor/quill/quill.snow.css">
+<script src="/vendor/quill/quill.js"></script>
+{{end}}
 <main>
 <h2>{{.InfoReg.DisplayName $.Lang}} — {{t $.Lang "новая запись"}}</h2>
 {{if .Error}}<div style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">{{.Error}}</div>{{end}}
@@ -3224,7 +3338,17 @@ const tplInfoReg = `
   {{range .InfoReg.Resources}}
   <div class="form-row">
     <label>{{.DisplayName $.Lang}}</label>
+    {{if isRichText (str .Type)}}
+    {{/* Тот же редактор, что и в карточке объекта: скрытая textarea хранит HTML
+         для записи, Quill монтируется на соседний .richtext-editor (см.
+         obInitRichText в /static/ui.js). Без этой ветки richtext-ресурс
+         редактировался однострочным вводом — оформление в регистре можно было
+         задать только правкой разметки руками. */}}
+    <textarea name="{{.Name}}" autocomplete="off" class="richtext-field" rows="8" style="width:100%">{{index $.Values .Name}}</textarea>
+    <div class="richtext-editor"></div>
+    {{else}}
     <input type="text" name="{{.Name}}" value="{{index $.Values .Name}}">
+    {{end}}
   </div>
   {{end}}
   <div style="margin-top:20px;display:flex;gap:8px">

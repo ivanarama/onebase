@@ -6,15 +6,18 @@ import (
 )
 
 var (
-	hexColorRe = regexp.MustCompile(`(?i)^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$`)
-	rgbColorRe = regexp.MustCompile(`^rgba?\(\s*[0-9.,%\s]+\)$`)
-	lengthRe   = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)?(?:px|pt|mm|cm|in|em|rem|%)$`)
+	hexColorRe    = regexp.MustCompile(`(?i)^#(?:[0-9a-f]{3}|[0-9a-f]{4}|[0-9a-f]{6}|[0-9a-f]{8})$`)
+	rgbFunctionRe = regexp.MustCompile(`(?is)^(rgb|rgba)\((.*)\)$`)
+	cssNumberRe   = regexp.MustCompile(`^[+-]?(?:[0-9]+(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$`)
+	namedColorRe  = regexp.MustCompile(`^[A-Za-z]+$`)
+	lengthRe      = regexp.MustCompile(`^[0-9]+(?:\.[0-9]+)?(?:px|pt|mm|cm|in|em|rem|%)$`)
 )
 
 var namedColors = map[string]bool{
 	"aliceblue": true, "antiquewhite": true, "aquamarine": true, "azure": true,
 	"beige": true, "bisque": true, "blanchedalmond": true,
 	"black": true, "white": true, "red": true, "green": true, "blue": true,
+	"blueviolet": true, "burlywood": true, "cadetblue": true, "chartreuse": true,
 	"yellow": true, "orange": true, "purple": true, "gray": true, "grey": true,
 	"silver": true, "maroon": true, "olive": true, "lime": true, "aqua": true,
 	"teal": true, "navy": true, "fuchsia": true, "magenta": true, "cyan": true,
@@ -62,12 +65,116 @@ func Color(v string) string {
 	switch {
 	case hexColorRe.MatchString(v):
 		return v
-	case rgbColorRe.MatchString(v):
+	case validRGBColor(v):
 		return v
-	case namedColors[strings.ToLower(v)]:
+	case namedColorRe.MatchString(v) && namedColors[strings.ToLower(v)]:
 		return v
 	}
 	return ""
+}
+
+// validRGBColor принимает безопасный поднабор синтаксиса CSS Color 4:
+// legacy-форму с запятыми и современную форму с пробелами и optional "/ alpha".
+// rgb() и rgba() — полные алиасы. Значения не ограничиваются диапазоном здесь:
+// CSS считает выходящие за диапазон компоненты валидными и ограничивает их при
+// вычислении цвета.
+func validRGBColor(v string) bool {
+	m := rgbFunctionRe.FindStringSubmatch(v)
+	if m == nil {
+		return false
+	}
+	body := trimCSSWhitespace(m[2])
+	if body == "" {
+		return false
+	}
+	if strings.Contains(body, ",") {
+		return validLegacyRGBBody(body)
+	}
+	return validModernRGBBody(body)
+}
+
+func validLegacyRGBBody(body string) bool {
+	parts := strings.Split(body, ",")
+	if len(parts) != 3 && len(parts) != 4 {
+		return false
+	}
+	firstKind := cssColorTokenInvalid
+	for i := 0; i < 3; i++ {
+		kind := cssColorToken(trimCSSWhitespace(parts[i]))
+		if kind == cssColorTokenInvalid {
+			return false
+		}
+		if i == 0 {
+			firstKind = kind
+		} else if kind != firstKind {
+			// В legacy-синтаксисе все три канала должны быть либо числами,
+			// либо процентами; смешение единиц браузер отвергает.
+			return false
+		}
+	}
+	return len(parts) == 3 || cssColorToken(trimCSSWhitespace(parts[3])) != cssColorTokenInvalid
+}
+
+func validModernRGBBody(body string) bool {
+	if strings.Count(body, "/") > 1 {
+		return false
+	}
+	channels, alpha, hasAlpha := body, "", false
+	if before, after, ok := strings.Cut(body, "/"); ok {
+		channels, alpha, hasAlpha = before, trimCSSWhitespace(after), true
+		if cssColorToken(alpha) == cssColorTokenInvalid {
+			return false
+		}
+	}
+	parts := strings.FieldsFunc(channels, isCSSWhitespace)
+	if len(parts) != 3 {
+		return false
+	}
+	for _, part := range parts {
+		if cssColorToken(part) == cssColorTokenInvalid {
+			return false
+		}
+	}
+	return !hasAlpha || alpha != ""
+}
+
+type cssColorTokenKind uint8
+
+const (
+	cssColorTokenInvalid cssColorTokenKind = iota
+	cssColorTokenNumber
+	cssColorTokenPercentage
+)
+
+// cssColorToken проверяет ровно один CSS <number> или <percentage>. Процент
+// обязан примыкать к числу: "1 %" не является одним percentage-token.
+func cssColorToken(s string) cssColorTokenKind {
+	if s == "" || trimCSSWhitespace(s) != s {
+		return cssColorTokenInvalid
+	}
+	if strings.HasSuffix(s, "%") {
+		if cssNumberRe.MatchString(strings.TrimSuffix(s, "%")) {
+			return cssColorTokenPercentage
+		}
+		return cssColorTokenInvalid
+	}
+	if cssNumberRe.MatchString(s) {
+		return cssColorTokenNumber
+	}
+	return cssColorTokenInvalid
+}
+
+func trimCSSWhitespace(s string) string {
+	return strings.TrimFunc(s, isCSSWhitespace)
+}
+
+func isCSSWhitespace(r rune) bool {
+	switch r {
+	case ' ', '\t', '\n', '\f', '\r':
+		return true
+	default:
+		return false
+	}
 }
 
 // Length returns v only when it is a simple CSS length used by layout previews.

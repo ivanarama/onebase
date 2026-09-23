@@ -22,8 +22,15 @@ func TestPipelinectlRefreshesRepositoryOwnedHealthContract(t *testing.T) {
 	if enabled, ok := config["sync_base_before_health"].(bool); !ok || !enabled {
 		t.Fatal("pipelinectl.json must enable sync_base_before_health")
 	}
+	if gate, ok := config["review_completion_gate"].(string); !ok || gate != "target-v1" {
+		t.Fatal("pipelinectl.json must opt in to the target-v1 REVIEW completion gate")
+	}
+	if seconds, ok := config["review_lease_seconds"].(float64); !ok || seconds != 7200 {
+		t.Fatal("pipelinectl.json must bound target-v1 REVIEW leases to two hours")
+	}
 	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
-	requireAll(t, docs, "sync_base_before_health", "merge --ff-only", "без провайдера")
+	requireAll(t, docs, "sync_base_before_health", "merge --ff-only", "без провайдера",
+		"review_completion_gate: \"target-v1\"")
 }
 
 func repositoryFile(t *testing.T, parts ...string) string {
@@ -60,6 +67,18 @@ func TestReviewAndMergeRouteThroughPipelinectlWithDiscoverableFallback(t *testin
 	}
 }
 
+func TestReviewAndMergePollTheOriginalPipelinectlProcess(t *testing.T) {
+	for _, name := range []string{"review-queue", "merge-shepherd"} {
+		entry := repositoryFile(t, ".claude", "skills", name, "SKILL.md")
+		requireAllCompact(t, entry,
+			"`next <stage>` запускай ровно один раз за прогон",
+			"session/cell ID",
+			"опрашивай/возобновляй только этот идентификатор до терминального результата",
+			"не разрешают запускать второй `next` параллельно",
+		)
+	}
+}
+
 func TestMergeFastPathRecoversPostMergeCleanup(t *testing.T) {
 	entry := repositoryFile(t, ".claude", "skills", "merge-shepherd", "SKILL.md")
 	legacy := skill(t, "merge-shepherd")
@@ -80,6 +99,55 @@ func TestMergeFastPathRecoversPostMergeCleanup(t *testing.T) {
 		"уже влитый PR получает `action=cleanup`",
 		"**никогда** не отправляется в merge API повторно",
 		"падение между merge и label cleanup видно сразу",
+	)
+}
+
+func TestMergeFallbackUsesValidatedGateAsCleanupBarrier(t *testing.T) {
+	legacy := repositoryFile(t, ".claude", "skills", "merge-shepherd", "references", "legacy-protocol.md")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+
+	for _, text := range []string{legacy, docs} {
+		requireAllCompact(t, text,
+			"`promptpilot-fallback-target-v1`",
+			"`gate-fallback merge`",
+			"`action=validated`",
+			"точном совпадении",
+			"queue-wide cleanup recovery barrier",
+			"Ручной/legacy fallback без такого envelope",
+			"во всём пагинированном потоке repository issue comments",
+			"GraphQL-, `ship`-, CI-, base-sync-, CAS- и exact-target-проверки",
+			"без повторного gate",
+			"без выбора другого PR",
+		)
+	}
+
+	requireCompactInOrder(t, legacy,
+		"Доверенный PromptPilot-handoff",
+		"Сначала выполни все обязательные read-only проверки этой цели, предусмотренные процедурой до первой мутации",
+		"Непосредственно перед первой внешней мутацией",
+		"`gate-fallback merge` ровно один раз",
+		"`action=validated`",
+		"**не выполняй** отдельный полный скан repository issue comments",
+		"первой следующей внешней операцией должна быть уже подготовленная мутация exact target",
+	)
+	requireCompactInOrder(t, legacy,
+		"Ручной/legacy fallback без такого envelope",
+		"Если быстрый путь вернул `fallback`",
+		"во всём пагинированном потоке repository issue comments",
+		"до выбора обычной очереди",
+	)
+	requireCompactInOrder(t, docs,
+		"все target-local GraphQL/ship/CI/base-sync/CAS-проверки, требуемые до первой мутации",
+		"непосредственно перед ней",
+		"`gate-fallback merge`",
+		"`action=validated`",
+		"первой внешней операцией идёт подготовленная мутация exact target",
+	)
+	requireAllCompact(t, legacy,
+		"все последующие повторные проверки выполняй в указанных процедурой контрольных точках",
+	)
+	requireAllCompact(t, docs,
+		"включая повторные проверки в последующих контрольных точках",
 	)
 }
 
@@ -409,6 +477,8 @@ func TestTriageUsesFrozenMainInsteadOfTheCurrentCheckout(t *testing.T) {
 	triage := skill(t, "triage-issues")
 	requireAllCompact(t, triage,
 		"Текущий checkout считай недоверенным: он может отставать от `main`, содержать чужой код или незакоммиченные изменения",
+		"Выбери ровно один блок для текущей ОС; оба блока реализуют один и тот же fail-closed контракт",
+		"Windows (PowerShell)",
 		"git fetch origin main",
 		"$triageBase = (git rev-parse FETCH_HEAD).Trim()",
 		"[guid]::NewGuid().ToString(\"N\")",
@@ -423,9 +493,24 @@ func TestTriageUsesFrozenMainInsteadOfTheCurrentCheckout(t *testing.T) {
 		"git worktree remove $triageWorktree",
 		"не удаляй каталог рекурсивно",
 	)
+	requireAllCompact(t, triage,
+		"POSIX shell (Linux/macOS)",
+		"triageBase=$(git rev-parse FETCH_HEAD)",
+		"grep -Eq '^[0-9a-f]{40}$'",
+		"TMPDIR must be absolute for a triage worktree",
+		"triageWorktree=$(mktemp -d \"${triageTmpRoot%/}/pp-triage.XXXXXXXXXX\")",
+		"rmdir \"$triageWorktree\"",
+		"git worktree add --detach \"$triageWorktree\" \"$triageBase\"",
+		"analysisHead=$(git -C \"$triageWorktree\" rev-parse HEAD)",
+		"analysisDirty=$(git -C \"$triageWorktree\" status --porcelain=v1 --untracked-files=all)",
+		"[ \"$analysisHead\" != \"$triageBase\" ] || [ -n \"$analysisDirty\" ]",
+		"cat \"$triageWorktree/<path>\"",
+		"git worktree remove \"$triageWorktree\"",
+	)
 	rejectAll(t, triage,
 		"git merge --ff-only origin/main",
 		"Иначе работай на том, что есть",
+		"rm -rf",
 	)
 
 	const frozenMain = "fresh-main"
@@ -457,6 +542,16 @@ func requireAllCompact(t *testing.T, text string, fragments ...string) {
 	for _, fragment := range fragments {
 		if !strings.Contains(compact, strings.Join(strings.Fields(fragment), " ")) {
 			t.Errorf("pipeline contract is missing compact fragment %q", fragment)
+		}
+	}
+}
+
+func rejectAllCompact(t *testing.T, text string, fragments ...string) {
+	t.Helper()
+	compact := strings.Join(strings.Fields(text), " ")
+	for _, fragment := range fragments {
+		if strings.Contains(compact, strings.Join(strings.Fields(fragment), " ")) {
+			t.Errorf("pipeline contract still contains forbidden compact fragment %q", fragment)
 		}
 	}
 }
@@ -505,9 +600,27 @@ func TestReviewQueueUsesTwoLaneExecutableAllowlist(t *testing.T) {
 		"обычное содержательное REVIEW не блокируется",
 		"Следующий интеграционный PR при этом брать нельзя",
 		"бери до двух элементов stage `review` из `review_candidates`",
-		"Непосредственно перед первой мутацией каждого выбранного PR повтори `pipelinehealth -json`",
-		"Для обычного аудита он обязан входить в `content_review_candidates`",
+		"Полный health-election выполняется один раз в `next review`",
+		"обычная цель обязана входить в `content_review_candidates`",
+		"`review_completion_gate=target-v1` последующий `complete review` не перечитывает чужую очередь",
+		"номер/HEAD цели, open/base/draft, routing labels, review-depth и стабильную server timeline/epoch",
+		"target-v1 проверяет HMAC-целостность opaque-токена",
+		"локальный процесс с доступом к ключу и GitHub-аккаунту входит в доверенную",
+		"Для integration-stage и любого fallback-протокола повторная глобальная проверка",
+		"неподписанный base64 lease за полномочие",
 		"Изменились только чужие PR, приоритеты, `main` или интеграционная полоса",
+	)
+	requireAllCompact(t, review,
+		"POSIX shell (Linux/macOS)",
+		"ghExe=$(command -v gh 2>/dev/null || true)",
+		"/opt/homebrew/bin/gh /usr/local/bin/gh /opt/local/bin/gh",
+		"GitHub CLI not found at an absolute executable path on POSIX",
+		"GH_EXE=$ghExe",
+		"export GH_EXE",
+		"goExe=$(command -v go 2>/dev/null || true)",
+		"/opt/homebrew/bin/go /usr/local/bin/go /opt/local/bin/go /usr/local/go/bin/go",
+		"Go not found at an absolute executable path on POSIX",
+		"\"$goExe\" run ./tools/pipelinehealth -json",
 	)
 }
 
@@ -521,6 +634,85 @@ func TestIntegrationReviewReusesContentProofAndChecksOnlyBaseSyncDelta(t *testin
 		"обязательные проверки CI",
 		"Если между доказанным `from` и `to` есть что-либо кроме валидного base-sync либо собственный код PR изменён, carry недействителен",
 	)
+}
+
+func TestReviewDefaultsToTargetedTestsAndGatesFullSuite(t *testing.T) {
+	entry := repositoryFile(t, ".claude", "skills", "review-queue", "SKILL.md")
+	legacy := repositoryFile(t, ".claude", "skills", "review-queue", "references", "legacy-protocol.md")
+	for name, text := range map[string]string{
+		"pipelinectl": entry,
+		"fallback":    legacy,
+	} {
+		t.Run(name, func(t *testing.T) {
+			requireAllCompact(t, text,
+				"затрагивает Go или прикладной слой",
+				"`go build ./...` обязателен",
+				"`go test -count=1` и `go vet` для затронутых пакетов",
+				"`go run ./cmd/onebase check --project examples/trade`",
+				"Зелёный CI точного HEAD не заменяет эти локальные проверки",
+				"актуальный обязательный CI точного HEAD остаётся обязательным гейтом",
+				"Не запускай `go test -count=1 ./...` по умолчанию",
+				"после успешных целевых тестов",
+				"отсутствует успешный обязательный CI",
+				"`go.mod`/`go.sum`",
+				"нельзя надёжно ограничить круг потребителей",
+				"репозиторный рефакторинг нескольких независимых подсистем",
+				"полный список затронутых пакетов и потребителей нельзя обоснованно перечислить",
+				"Само число изменённых файлов или пакетов не является триггером",
+				"если точный список затронутых пакетов и потребителей можно назвать, запускай только его",
+				"дополнительной диагностикой, а не новым обязательным гейтом",
+				"классифицируй каждую его ошибку",
+				"Зелёных целевых тестов и обязательного CI для вывода о шуме окружения недостаточно",
+				"известной задокументированной сигнатурой со ссылкой на документ или issue",
+				"контрольным прогоном воспроизводится на неизменённом base в той же среде",
+				"повтори точный падающий пакет/тест, а не весь набор",
+				"не одобряй PR, пока причина не классифицирована",
+				"Связанное с diff падение блокирует ревью",
+				"Полный набор из-за этой ошибки повторно не запускай",
+			)
+			rejectAll(t, text,
+				"`./onebase check --project examples/trade`",
+				"которого нет в целевом прогоне при зелёном обязательном CI",
+			)
+		})
+	}
+
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAllCompact(t, docs,
+		"затрагивает Go или прикладной слой",
+		"обязателен `go build ./...`",
+		"целевые `go test -count=1` и `go vet`",
+		"`go run ./cmd/onebase check --project examples/trade`",
+		"Полный `go test -count=1 ./...` не запускается «для уверенности»",
+		"репозиторный рефакторинг нескольких независимых подсистем",
+		"полным списком затронутых пакетов и потребителей, который нельзя обоснованно перечислить",
+		"Само число файлов или пакетов таким триггером не считается",
+		"Актуальный обязательный CI точного HEAD при этом остаётся обязательным гейтом",
+		"он остаётся дополнительной диагностикой",
+		"каждую его ошибку надо классифицировать до одобрения",
+		"Зелёные целевые тесты и обязательный CI сами по себе не доказывают шум окружения",
+		"известная задокументированная сигнатура со ссылкой на документ или issue",
+		"контрольное воспроизведение точного падающего пакета/теста на неизменённом base в той же среде",
+		"повторяется точный падающий пакет/тест, а не весь набор",
+		"REVIEW не одобряется до классификации причины",
+		"связанное с diff падение блокирует ревью",
+	)
+	rejectAll(t, docs,
+		"`./onebase check --project examples/trade`",
+		"блокирует REVIEW только при связи с diff",
+	)
+}
+
+func TestReviewUsesSupportedGhDiffArguments(t *testing.T) {
+	entry := repositoryFile(t, ".claude", "skills", "review-queue", "SKILL.md")
+	requireAllCompact(t, entry,
+		"gh pr view <M> --json title,body,headRefName,files,statusCheckRollup",
+		"gh pr diff <M>",
+		"`--stat` не является флагом `gh pr diff`",
+		"возьми `additions`/`deletions` из элементов поля `files`",
+		"отдельная диагностическая команда для этого не нужна",
+	)
+	rejectAll(t, entry, "gh pr diff <M> --stat")
 }
 
 func TestReviewQueueUsesPriorityThenBreadthFirstAndAging(t *testing.T) {
@@ -538,6 +730,61 @@ func TestReviewQueueUsesPriorityThenBreadthFirstAndAging(t *testing.T) {
 		"Single-flight/recovery всё равно старше priority",
 	)
 	rejectAll(t, review, "Просматривай PR по возрастанию номера")
+}
+
+func TestReviewHistoryNeverSynthesizesOldEpochFromCurrentTimeline(t *testing.T) {
+	review := skill(t, "review-queue")
+	requireAllCompact(t, review,
+		"Исторические круги проверяй только по неизменяемой структурной связи `review → claim → completion`",
+		"Для планировочного `review-depth` и номера нового обычного круга этого достаточно",
+		"не превращает историческую пару в текущий proof",
+		"не заменяет отдельный полный proof-gate исходного `from`",
+		"**Запрещено реконструировать историческую epoch** подменой текущего `headRefOid` старым SHA",
+		"срезом сегодняшнего timeline по старому completion",
+		"commit более позднего HEAD способен оказаться до старого review/completion",
+		"Для текущего обычного REVIEW полный epoch-safety",
+		"к **выбранной текущей epoch**",
+		"Опасный event после текущего anchor по-прежнему закрывает gate",
+	)
+
+	// #1426 had three structurally complete historical rounds. GitHub placed
+	// commit edges for later heads before old completion comments, so treating a
+	// prefix of today's timeline as an old snapshot rejected valid history.
+	pairs := []modeledHistoricalReview{
+		{reviewID: 101, claimReviewID: 101, completionReviewID: 101, trustedUnedited: true, fieldsMatch: true},
+		{reviewID: 201, claimReviewID: 201, completionReviewID: 201, trustedUnedited: true, fieldsMatch: true},
+		{reviewID: 301, claimReviewID: 301, completionReviewID: 301, trustedUnedited: true, fieldsMatch: true},
+	}
+	if got := modeledHistoricalReviewDepth(pairs); got != 3 {
+		t.Fatalf("historical review depth = %d, want 3", got)
+	}
+
+	const currentOverride = 40
+	laterHeadCommitsPlacedBeforeOverride := []reviewEpochEvent{
+		{sequence: 7, headMutation: true},
+		{sequence: 15, headMutation: true},
+	}
+	if !reviewEpochGate(currentOverride, laterHeadCommitsPlacedBeforeOverride) {
+		t.Fatal("head commits before the current override must not poison the selected current epoch")
+	}
+	if reviewEpochGate(currentOverride, append(laterHeadCommitsPlacedBeforeOverride,
+		reviewEpochEvent{sequence: 41, headMutation: true})) {
+		t.Fatal("a PullRequestCommit after the current anchor must remain fail-closed")
+	}
+}
+
+func TestMaintenanceDocsMatchEffectivePriorityOrder(t *testing.T) {
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAllCompact(t, docs,
+		"Очередь сортируется по `(priority, review-depth, number)`",
+		"Вливает только PR с `ship` и без `hold`/`needs-decision`, по `(priority, number)`",
+		"показывает первые два PR в фактическом порядке `(priority, review-depth, number)`",
+	)
+	rejectAll(t, docs,
+		"Очередь сортируется не только по номеру, а по `(review-depth, number)`",
+		"по возрастанию номера, не больше трёх за прогон",
+		"фактическом порядке `(review-depth, number)`",
+	)
 }
 
 func TestReviewMarkersCannotCollideWithTailMarker(t *testing.T) {
@@ -885,6 +1132,11 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"issue-decision fingerprint",
 		"**всегда** входят две независимые части",
 		"точная версия каноничного triage-комментария",
+		"когда\n     развилки в triage нет вовсе — сам план этой зафиксированной версии",
+		"**Развилки нет — выбирать не из чего, и это не повод для п. 9.**",
+		"ни строки `**Развилка.**`, ни\n   маркера `<!-- pp:options=… -->`",
+		"(в развилке нет рекомендации, номер не существует",
+		"`plan:<triage-id>@<triage-updated_at>` либо `invalid`",
 		"Голая\n   метка `decision:N` не фиксирует смысл номера",
 		"каноничен самый ранний по `created_at`,\n   затем по числовому `id`",
 		"комментарий автора `ivanarama` с точной отдельной строкой",
@@ -988,6 +1240,49 @@ func TestTriageAndFixShareDeterministicCanonicalCommentRule(t *testing.T) {
 		"после удаления winner проигравший\n   sibling не должен воскреснуть",
 		"не считается одним из\n   пяти рабочих slots",
 		"<!-- pp:triage-author-reply claim=<canonical-root-id> fingerprint-sha256=<точный-root-fingerprint> -->",
+	)
+}
+
+func TestTriageKeepsManualSplitHumanOwnedAndFixReportsStoppedWork(t *testing.T) {
+	triage := skill(t, "triage-issues")
+	fixer := skill(t, "fix-approved")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+
+	requireAllCompact(t, triage,
+		"TRIAGE не создаёт вторую issue: такого действия нет в его полномочиях",
+		"Текущую заявку считай кодовой частью",
+		"`route=needs-decision` и `manual=false`",
+		"<!-- pp:triage-manual-split -->",
+		"человека создать отдельную manual-заявку со ссылкой на текущую",
+		"не разрешает TRIAGE вызывать `gh issue create`",
+		"Заявка принята в очередь автоматической починки",
+		"PR будет привязан к этой заявке; если автоматическая починка остановится",
+	)
+	rejectAll(t, triage,
+		"Заводи такую заявку как обычную (её кодовую часть)",
+		"Заявка ушла в автоматическую починку",
+	)
+
+	requireAllCompact(t, fixer,
+		"Новый вопрос не обещает PR или закрытие заявки",
+		"Автоматическая починка остановлена: <точная причина>.",
+		"Нужен ответ мейнтейнера: <конкретный вопрос>.",
+		"Если автор issue не `ivanarama` и не `ivantit66`, добавь отдельную строку `<!-- pp:reply -->`",
+		"На успешном пути его пишет триаж (`/triage-issues`) или человек; при остановке FIX-handoff его добавляет FIX в свой комментарий-вопрос по п. 9",
+		"эта информационная строка разрешена post-root gate и не является отдельным control marker",
+		"уже опубликованный доверенный question-marker остаётся достаточным",
+	)
+	rejectAllCompact(t, fixer,
+		"Ответ автору — отдельный комментарий с `<!-- pp:reply -->`, и пишет его триаж (`/triage-issues`) или человек",
+	)
+
+	requireAllCompact(t, docs,
+		"его полномочия — комментарии и метки, но не `gh issue create`",
+		"<!-- pp:triage-manual-split -->",
+		"человек должен создать отдельную manual-заявку со ссылкой на текущую",
+		"PR и закрытие не гарантируются заранее",
+		"Автоматическая починка остановлена",
+		"для внешнего автора он также содержит `<!-- pp:reply -->`",
 	)
 }
 
@@ -1231,6 +1526,40 @@ func TestAutomaticBaseSyncCarriesHumanShipWithoutPingPong(t *testing.T) {
 	)
 }
 
+func TestMergeFallbackUsesPipelineHealthIntegrationOwnerOrder(t *testing.T) {
+	legacy := repositoryFile(t, ".claude", "skills", "merge-shepherd", "references", "legacy-protocol.md")
+	guide := repositoryFile(t, "CLAUDE.md")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	health := repositoryFile(t, "tools", "pipelinehealth", "main.go")
+
+	requireAllCompact(t, legacy,
+		"Для каждого intent-backed handoff вычисли начало интеграционной lineage",
+		"обратным проходом по `previous`",
+		"все связанные intent/done содержат ровно тот же `ship-event`",
+		"Разрыв `previous` или другой `ship-event` начинает новую lineage с текущего intent",
+		"`(lineage-start created_at, PR number)`",
+		"Остановка обратного прохода задаёт только порядок и не делает повреждённое звено валидным",
+		"Наличие хотя бы одной такой lineage имеет приоритет над любым legacy handoff",
+		"Только если intent-backed lineage отсутствуют, выбери минимальный номер PR среди настоящих legacy re-ship без валидного intent",
+	)
+	rejectAll(t, legacy, "самый ранний по номеру доказанный незавершённый handoff")
+	requireAllCompact(t, guide,
+		"владелец выбирается по самому раннему `pp:base-sync-intent`",
+		"`previous` переносит начало только через звенья с тем же `ship-event`",
+		"валидная intent-backed цепочка имеет приоритет над legacy-цепочками без intent",
+	)
+	requireAllCompact(t, docs,
+		"`previous` переносит начало только через звенья с тем же `ship-event`",
+		"Любая intent-backed lineage имеет приоритет над настоящим legacy re-ship без intent",
+		"номер PR разрешает ничью по времени и упорядочивает только legacy",
+	)
+	requireAll(t, health,
+		"The earliest base-sync intent owns the lane across",
+		"done.shipEvent != current.shipEvent || previous.shipEvent != current.shipEvent",
+		"return left.Number < right.Number",
+	)
+}
+
 func TestLegacyBaseSyncCanBeExplicitlyReauthorizedWithoutPingPong(t *testing.T) {
 	review := skill(t, "review-queue")
 	merge := skill(t, "merge-shepherd")
@@ -1426,11 +1755,46 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 	rejectAll(t, tail, "--json number,title,mergedAt,labels,url,comments")
 }
 
+func TestTailMergedWindowUsesNativeDateArithmeticOnEveryWorkerOS(t *testing.T) {
+	tail := skill(t, "tail-issues")
+	requireAllCompact(t, tail,
+		"Сначала вычисли календарную UTC-дату ровно средствами текущей ОС",
+		"ошибка вычисления или команды списка останавливает запуск, а не заменяется датой вручную",
+		"Windows (PowerShell)",
+		"$tailSince = (Get-Date).ToUniversalTime().AddDays(-14).ToString(\"yyyy-MM-dd\", [Globalization.CultureInfo]::InvariantCulture)",
+		"--search (\"merged:>=\" + $tailSince)",
+		"macOS (BSD `date`)",
+		"tail_since=$(date -u -v-14d +%F)",
+		"GNU/Linux",
+		"tail_since=$(date -u -d '14 days ago' +%F)",
+		"--search \"merged:>=$tail_since\"",
+	)
+	rejectAll(t, tail,
+		"--search \"merged:>=$(date -d '14 days ago' +%F)\"",
+		"на другой системе подставь дату руками",
+	)
+}
+
+func TestMaintenanceGuideDocumentsEquivalentWindowsAndMacOSPreparation(t *testing.T) {
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAllCompact(t, docs,
+		"Воркер может работать на Windows, Linux или macOS",
+		"ОС меняет только синтаксис локальной подготовки, но не выбор цели, полномочия или GitHub-гейты",
+		"Linux/macOS резервирует абсолютный путь через `mktemp -d`",
+		"очистка выполняется только `git worktree remove`, без рекурсивного удаления каталогов",
+		"На POSIX он использует `command -v`",
+		"стандартные пути Homebrew/MacPorts и `/usr/local/go/bin/go`",
+		"TAIL вычисляет 14-дневную UTC-границу без ручной подстановки",
+		"macOS — через BSD `date -u -v-14d`",
+	)
+}
+
 func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
 	requireAll(t, docs,
 		"`changes-requested`, но без `ship`/`hold`/`needs-decision`",
-		"Обычный PR с\n`ship` пропускается, но доказанный автоматический base-sync и узкий legacy\nre-ship после синхронизации старым протоколом — исключения",
+		"Метка `ship` сама\nпо себе не пропускает REVIEW",
+		"если текущий HEAD ещё не имеет канонического\ncommitted-review, обычный PR остаётся кандидатом",
 		"`changes-requested`/`needs-decision` обычно передают мяч дальше",
 		"маркером `pp:head-reviewed`",
 		"отдельная строка\nкоторого равна `pp:review-again`",
@@ -1494,6 +1858,7 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"Вливает только PR с `ship` и без `hold`,",
 		"не вливает PR без `ship` и не трогает такой PR вовсе",
 	)
+	rejectAll(t, docs, "Обычный PR с\n`ship` пропускается")
 }
 
 func TestTopLevelNeedsDecisionMatchesAutomaticHandoffs(t *testing.T) {
@@ -1614,11 +1979,12 @@ func recoveryTarget(orphans []orderedClaim, claims []orderedClaim) string {
 }
 
 type reviewEpochEvent struct {
-	sequence   int
-	wallSecond int
-	deleted    bool
-	trusted    bool
-	edited     bool
+	sequence     int
+	wallSecond   int
+	deleted      bool
+	trusted      bool
+	edited       bool
+	headMutation bool
 }
 
 func reviewEpochGate(anchorSequence int, events []reviewEpochEvent) bool {
@@ -1626,11 +1992,32 @@ func reviewEpochGate(anchorSequence int, events []reviewEpochEvent) bool {
 		if event.sequence <= anchorSequence {
 			continue
 		}
-		if event.deleted || (event.trusted && event.edited) {
+		if event.deleted || event.headMutation || (event.trusted && event.edited) {
 			return false
 		}
 	}
 	return true
+}
+
+type modeledHistoricalReview struct {
+	reviewID           int
+	claimReviewID      int
+	completionReviewID int
+	trustedUnedited    bool
+	fieldsMatch        bool
+	overrideBetween    bool
+}
+
+func modeledHistoricalReviewDepth(pairs []modeledHistoricalReview) int {
+	seen := map[int]bool{}
+	for _, pair := range pairs {
+		if !pair.trustedUnedited || !pair.fieldsMatch || pair.overrideBetween ||
+			pair.reviewID != pair.claimReviewID || pair.reviewID != pair.completionReviewID {
+			continue
+		}
+		seen[pair.reviewID] = true
+	}
+	return len(seen)
 }
 
 func reviewClaimsAfter(claims []orderedClaim, epochStart int) []orderedClaim {
