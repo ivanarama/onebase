@@ -5,6 +5,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -30,7 +31,9 @@ var (
 	displayRepair     = regexp.MustCompile(`(?m)^<!-- pp:display-repair comment=([0-9]+) -->$`)
 	baseSyncIntent    = regexp.MustCompile(`(?m)^<!-- pp:base-sync-intent from=([0-9a-f]{40}) base=([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) completion=([0-9]+) ship-event=([A-Za-z0-9_=-]+) previous=([0-9]+|none) -->$`)
 	baseSyncDone      = regexp.MustCompile(`(?m)^<!-- pp:base-sync-done intent=([0-9]+) from=([0-9a-f]{40}) to=([0-9a-f]{40}) base=([0-9a-f]{40}) previous=([0-9]+|none) ship-event=([A-Za-z0-9_=-]+) -->$`)
+	baseSyncV1Abort   = regexp.MustCompile(`(?m)^<!-- pp:base-sync-v1-aborted intent=([0-9]+) head=([0-9a-f]{40}) reason=commit-before-intent -->$`)
 	triageRouteClaim  = regexp.MustCompile(`(?m)^<!-- pp:triage-route-claim fingerprint-sha256=([0-9a-f]{64}) owner=[0-9a-fA-F-]{36} -->$`)
+	triageRouteRecord = regexp.MustCompile(`(?m)(^pp-triage-route-v1\nissue=([0-9]+)\nissue-updated=[^\n]+\ntitle-sha256=[0-9a-f]{64}\nbody-sha256=[0-9a-f]{64}\nanalysis-sha256=[0-9a-f]{64}\ncomments-sha256=[0-9a-f]{64}\nlabels-sha256=[0-9a-f]{64}\nevents-watermark=(?:[0-9]+|none)\nclass=(?:bug|enhancement|question|documentation)\nroute=(ready-fix|needs-decision)\nmanual=(?:true|false)\nreply=(required|none)\n)`)
 	triageRouteLabels = regexp.MustCompile(`(?m)^<!-- pp:triage-route-labels claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) .+ -->$`)
 	triageAuthorReply = regexp.MustCompile(`(?m)^<!-- pp:triage-author-reply claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) -->$`)
 	triageRouteDone   = regexp.MustCompile(`(?m)^<!-- pp:triage-route-done claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) -->$`)
@@ -367,11 +370,18 @@ func analyze(prs []apiPull, owner string) report {
 		priority, prioritySource := queuePriority(labels, pr.CreatedAt, now)
 		item := candidate{Number: pr.Number, Title: pr.Title, URL: pr.HTMLURL, Head: pr.Head.SHA, Depth: depth, Stage: "review", Priority: priority, PrioritySource: prioritySource, UpdatedAt: pr.UpdatedAt}
 		currentCompletions, latestCompletion, latestOverride := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
-		carryDone, carryIntentOpen, baseAdvanced, protocolHistory, integrationAt := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA, pr.HeadParents)
+		carryDone, carryIntentOpen, v1AbortCurrent, baseAdvanced, protocolHistory, integrationAt := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA, pr.HeadParents)
 		item.IntegrationAt = integrationAt
 		if baseAdvanced {
 			result.add("yellow", "base_sync_base_advanced", pr.Number,
 				"base сдвинулся между intent и done; GraphQL gate должен проверить actual parent и ancestry")
+		}
+		if v1AbortCurrent && !carryIntentOpen && !carryDone && currentCompletions == 0 {
+			result.add("yellow", "base_sync_v1_abort_waiting_review", pr.Number,
+				"v1 intent закрыт abort-marker; текущий HEAD ожидает полное содержательное REVIEW")
+		} else if v1AbortCurrent && !carryIntentOpen && !carryDone && currentCompletions > 0 && labels["ship"] {
+			result.add("yellow", "base_sync_v1_abort_reauthorized", pr.Number,
+				"v1 intent закрыт abort-marker; текущий HEAD прошёл полное REVIEW и ждёт обычный MERGE-гейт")
 		}
 
 		if labels["changes-requested"] && labels["needs-decision"] {
@@ -410,6 +420,14 @@ func analyze(prs []apiPull, owner string) report {
 				result.MergeCandidates = append(result.MergeCandidates, item)
 				result.add("yellow", "base_sync_waiting_merge", pr.Number,
 					"интеграционное REVIEW готово; барьер остаётся у PR до фактического merge")
+			case v1AbortCurrent && currentCompletions > 0:
+				// The aborted v1 transaction is audit history only. The current HEAD
+				// has a fresh full review and must use the ordinary exact-HEAD path;
+				// the mutation gate still proves the new human ship in GraphQL.
+				item.Stage = "merge"
+				result.MergeCandidates = append(result.MergeCandidates, item)
+			case v1AbortCurrent && currentCompletions == 0:
+				result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
 			case currentCompletions > 0 && depth > currentCompletions && headIsBaseSyncMerge(pr):
 				item.Stage = "legacy-integration-merge-ready"
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
@@ -444,6 +462,10 @@ func analyze(prs []apiPull, owner string) report {
 			case currentCompletions > 0:
 				item.Stage = "merge"
 				result.MergeCandidates = append(result.MergeCandidates, item)
+			default:
+				result.HumanWaiting = append(result.HumanWaiting, item)
+				result.add("yellow", "ship_without_current_review_proof", pr.Number,
+					"ship есть, но доказательств ревью текущего HEAD нет при существующей истории протокола; нужен человек")
 			}
 			continue
 		}
@@ -474,8 +496,8 @@ func analyze(prs []apiPull, owner string) report {
 	}
 	sortCandidates(result.ReviewBacklog)
 	sortCandidates(result.ReviewedWaitingShip)
-	sortCandidates(result.MergeCandidates)
-	sortCandidates(result.MergeExecutable)
+	sortMergeCandidates(result.MergeCandidates)
+	sortMergeCandidates(result.MergeExecutable)
 	sortCandidates(result.FixCandidates)
 	sortCandidates(result.HumanWaiting)
 	return result
@@ -512,6 +534,25 @@ func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner strin
 		}
 
 		labels := labelSet(issue.Labels)
+		route := inspectTriageRoute(issue, owner)
+		routeFinding := false
+		routeMismatch := false
+		if route.hasClaim && !route.ready {
+			result.addIssue("yellow", "fix_issue_not_executable", issue.Number, route.reason)
+			routeFinding = true
+		}
+		if route.hasClaim && route.ready {
+			switch {
+			case route.route == "ready-fix" && labels["needs-decision"] && !labels["approved"]:
+				routeMismatch = true
+				result.addIssue("yellow", "triage_route_label_mismatch", issue.Number,
+					"TRIAGE route=ready-fix, но issue помечена needs-decision без последующего approved")
+			case route.route == "needs-decision" && labels["ready-fix"] && !labels["approved"]:
+				routeMismatch = true
+				result.addIssue("yellow", "triage_route_label_mismatch", issue.Number,
+					"TRIAGE route=needs-decision, но issue помечена ready-fix без следов решения человека")
+			}
+		}
 		priority, prioritySource := queuePriority(labels, issue.CreatedAt, now)
 		item := candidate{
 			Number: issue.Number, Title: issue.Title, URL: issue.HTMLURL,
@@ -519,6 +560,11 @@ func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner strin
 			UpdatedAt: issue.UpdatedAt,
 		}
 		if labels["hold"] || labels["manual"] {
+			continue
+		}
+		if routeMismatch {
+			item.Stage = "human-decision"
+			result.HumanWaiting = append(result.HumanWaiting, item)
 			continue
 		}
 		switch {
@@ -531,12 +577,22 @@ func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner strin
 		case labels["plan-in-review"]:
 			// The plan PR is visible in REVIEW; product FIX must wait for its merge.
 		case labels["approved"] || labels["ready-fix"] && !labels["needs-decision"]:
-			if labels["in-work"] || issueReferencedByOpenPull(issue.Number, prs) {
+			if labels["in-work"] {
 				continue
 			}
-			ready, reason := triageHandoffReady(issue, owner)
-			if !ready {
-				result.addIssue("yellow", "fix_issue_not_executable", issue.Number, reason)
+			if references := openPullsReferencingIssue(issue.Number, prs); len(references) > 0 {
+				items := make([]string, 0, len(references))
+				for _, number := range references {
+					items = append(items, fmt.Sprintf("#%d", number))
+				}
+				result.addIssue("yellow", "fix_issue_referenced_by_open_pull", issue.Number,
+					"заявка исключена из FIX-очереди: её номер упомянут в открытых PR "+strings.Join(items, ", "))
+				continue
+			}
+			if !route.ready {
+				if !routeFinding {
+					result.addIssue("yellow", "fix_issue_not_executable", issue.Number, route.reason)
+				}
 				continue
 			}
 			result.FixCandidates = append(result.FixCandidates, item)
@@ -550,20 +606,36 @@ func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner strin
 	sortCandidates(result.HumanWaiting)
 }
 
-func issueReferencedByOpenPull(number int, prs []apiPull) bool {
+func openPullsReferencingIssue(number int, prs []apiPull) []int {
 	pattern := regexp.MustCompile(fmt.Sprintf(`(^|[^0-9])#%d([^0-9]|$)`, number))
+	references := []int{}
 	for _, pr := range prs {
 		if pr.State == "open" && pattern.MatchString(pr.Title+"\n"+pr.Body) {
-			return true
+			references = append(references, pr.Number)
 		}
 	}
-	return false
+	sort.Ints(references)
+	return references
 }
 
-func triageHandoffReady(issue apiIssue, owner string) (bool, string) {
+type triageRouteState struct {
+	hasClaim bool
+	ready    bool
+	route    string
+	reason   string
+}
+
+func inspectTriageRoute(issue apiIssue, owner string) triageRouteState {
+	thread := append([]apiComment(nil), issue.Thread...)
+	sort.SliceStable(thread, func(i, j int) bool {
+		if thread[i].CreatedAt == thread[j].CreatedAt {
+			return thread[i].ID < thread[j].ID
+		}
+		return thread[i].CreatedAt < thread[j].CreatedAt
+	})
 	var root *apiComment
-	for index := range issue.Thread {
-		comment := &issue.Thread[index]
+	for index := range thread {
+		comment := &thread[index]
 		if !trustedUnedited(*comment, owner) || !hasExactLine(comment.Body, "<!-- pp:triage -->") {
 			continue
 		}
@@ -573,20 +645,34 @@ func triageHandoffReady(issue apiIssue, owner string) (bool, string) {
 		}
 	}
 	if root == nil {
-		return false, "eligible FIX issue has no canonical trusted triage"
+		return triageRouteState{reason: "eligible FIX issue has no canonical trusted triage"}
 	}
 	if !strings.Contains(root.Body, "pp:triage-route-claim") {
-		return true, ""
+		return triageRouteState{ready: true}
 	}
+	state := triageRouteState{hasClaim: true}
+	normalized := strings.ReplaceAll(root.Body, "\r\n", "\n")
 	claims := triageRouteClaim.FindAllStringSubmatch(root.Body, -1)
 	if len(claims) != 1 {
-		return false, "canonical triage has a malformed route claim"
+		state.reason = "canonical triage has a malformed route claim"
+		return state
 	}
 	fingerprint := claims[0][1]
+	records := triageRouteRecord.FindAllStringSubmatch(normalized, -1)
+	if len(records) != 1 || fmt.Sprintf("%x", sha256.Sum256([]byte(records[0][1]))) != fingerprint {
+		state.reason = "canonical triage route record is malformed or its fingerprint does not match"
+		return state
+	}
+	recordIssue, err := strconv.Atoi(records[0][2])
+	if err != nil || recordIssue != issue.Number {
+		state.reason = "canonical triage route record names another issue"
+		return state
+	}
+	state.route = records[0][3]
 	claimID := strconv.FormatInt(root.ID, 10)
 	labelsCommitted, replyCommitted, done := false, false, false
-	replyRequired := hasExactLine(root.Body, "reply=required")
-	for _, comment := range issue.Thread {
+	replyRequired := records[0][4] == "required"
+	for _, comment := range thread {
 		if !trustedUnedited(comment, owner) || comment.CreatedAt < root.CreatedAt ||
 			(comment.CreatedAt == root.CreatedAt && comment.ID <= root.ID) {
 			continue
@@ -608,9 +694,11 @@ func triageHandoffReady(issue apiIssue, owner string) (bool, string) {
 		}
 	}
 	if !done {
-		return false, "TRIAGE route claim is unfinished; FIX must wait for matching labels/reply/done markers"
+		state.reason = "TRIAGE route claim is unfinished; FIX must wait for matching labels/reply/done markers"
+		return state
 	}
-	return true, ""
+	state.ready = true
+	return state
 }
 
 func hasExactLine(body, line string) bool {
@@ -669,11 +757,27 @@ func checkContract(result *report, path string) {
 		"Не сортируй очередь только по номеру PR",
 		"single_flight_barrier` защищает только интеграционную полосу",
 		"Интеграционное REVIEW не повторяет содержательный аудит",
-		"Для обычного аудита он обязан входить в `content_review_candidates`",
 	} {
 		if !strings.Contains(text, required) {
 			result.add("red", "unfair_review_contract", 0,
 				"активный REVIEW contract не гарантирует breadth-first порядок")
+			return
+		}
+	}
+	for _, required := range []string{
+		"Полный health-election выполняется один раз в `next review`",
+		"обычная цель обязана входить в `content_review_candidates`",
+		"review_completion_gate=target-v1",
+		"номер/HEAD цели, open/base/draft,",
+		"routing labels, review-depth и стабильную server timeline/epoch",
+		"HMAC",
+		"expires_at",
+		"Для integration-stage и любого fallback-протокола повторная глобальная",
+		"проверка перед мутацией остаётся обязательной",
+	} {
+		if !strings.Contains(text, required) {
+			result.add("red", "unsafe_target_review_contract", 0,
+				"активный REVIEW contract не связывает быстрый target-gate с выданной целью")
 			return
 		}
 	}
@@ -863,10 +967,11 @@ type baseSyncDoneShape struct {
 // baseSyncRESTState is deliberately only an operational hint. The mutation
 // contracts still prove comment nodes, timeline edges and commit parents with
 // two stable GraphQL snapshots before changing GitHub state.
-func baseSyncRESTState(comments []apiComment, owner, head string, headParents []string) (doneCurrent, intentOpen, baseAdvanced, protocolHistory bool, integrationAt string) {
+func baseSyncRESTState(comments []apiComment, owner, head string, headParents []string) (doneCurrent, intentOpen, v1AbortCurrent, baseAdvanced, protocolHistory bool, integrationAt string) {
 	intents := map[int64]baseSyncIntentShape{}
 	doneIntents := map[int64]bool{}
 	dones := map[int64]baseSyncDoneShape{}
+	abortCounts := map[int64]int{}
 	for _, comment := range comments {
 		if !trustedUnedited(comment, owner) {
 			continue
@@ -898,8 +1003,36 @@ func baseSyncRESTState(comments []apiComment, owner, head string, headParents []
 			}
 		}
 	}
+	// Parse aborts only after the complete intent/done pass. REST comment slices
+	// are normally ordered, but an operational safety decision must not depend on
+	// the caller preserving that order.
+	for _, comment := range comments {
+		if !trustedUnedited(comment, owner) {
+			continue
+		}
+		for _, match := range baseSyncV1Abort.FindAllStringSubmatch(comment.Body, -1) {
+			protocolHistory = true
+			intentID, err := strconv.ParseInt(match[1], 10, 64)
+			intent, ok := intents[intentID]
+			if err != nil || !ok || doneIntents[intentID] || intentID >= comment.ID || match[2] != head ||
+				len(headParents) != 2 || headParents[0] != intent.from || headParents[1] != intent.base {
+				continue
+			}
+			abortCounts[intentID]++
+		}
+	}
+	abortedIntents := map[int64]bool{}
+	for intentID, count := range abortCounts {
+		if count == 1 {
+			abortedIntents[intentID] = true
+			v1AbortCurrent = true
+		}
+	}
+	// A canonical done for the current HEAD remains authoritative. An abort is
+	// only the fail-closed tombstone for an otherwise unmatched v1 intent.
+	v1AbortCurrent = v1AbortCurrent && !doneCurrent
 	for id, intent := range intents {
-		if doneIntents[id] || !intentCanDescribeCurrentHead(intent, head, headParents) {
+		if doneIntents[id] || abortedIntents[id] || !intentCanDescribeCurrentHead(intent, head, headParents) {
 			continue
 		}
 		// A valid done for the current merge commit completes this exact
@@ -914,7 +1047,7 @@ func baseSyncRESTState(comments []apiComment, owner, head string, headParents []
 			integrationAt = startedAt
 		}
 	}
-	return doneCurrent, intentOpen, baseAdvanced, protocolHistory, integrationAt
+	return doneCurrent, intentOpen, v1AbortCurrent, baseAdvanced, protocolHistory, integrationAt
 }
 
 // baseSyncIntegrationStart preserves ownership across a multi-hop carry chain.
@@ -995,6 +1128,21 @@ func sortCandidates(items []candidate) {
 			return items[i].Number < items[j].Number
 		}
 		return items[i].Depth < items[j].Depth
+	})
+}
+
+func sortMergeCandidates(items []candidate) {
+	sort.Slice(items, func(i, j int) bool {
+		if candidatePriority(items[i].Stage) != candidatePriority(items[j].Stage) {
+			return candidatePriority(items[i].Stage) < candidatePriority(items[j].Stage)
+		}
+		if candidatePriority(items[i].Stage) <= 1 {
+			return items[i].Number < items[j].Number
+		}
+		if items[i].Priority != items[j].Priority {
+			return items[i].Priority < items[j].Priority
+		}
+		return items[i].Number < items[j].Number
 	})
 }
 

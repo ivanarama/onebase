@@ -199,6 +199,7 @@ type FormElement struct {
 	HorizontalAlign string            `yaml:"halign,omitempty"`         // left|center|right|stretch
 	VerticalAlign   string            `yaml:"valign,omitempty"`         // top|center|bottom
 	Orientation     string            `yaml:"orientation,omitempty"`    // vertical|horizontal для контейнеров
+	Background      string            `yaml:"background,omitempty"`     // фон контейнера; читается только у ГруппаФормы (#1547), цвет проверяет csssafe.Color
 	ReadOnly        bool              `yaml:"readonly,omitempty"`       // только чтение
 	// ReadOnlyWhen / HiddenWhen — условия по полям ЗАПИСИ (выражение того же
 	// языка, что `when` условного оформления): элемент становится нередактируемым
@@ -237,6 +238,12 @@ type FormElement struct {
 	DisplayFormat string `yaml:"display_format,omitempty"`
 	Type          string `yaml:"type,omitempty"`   // "file" для файлового поля, и т.п.
 	Choice        bool   `yaml:"choice,omitempty"` // включена кнопка выбора у InputField
+	// ChoiceFilter ограничивает варианты ссылочного поля декларативными
+	// условиями. Браузер передаёт только значения объявленных источников, а
+	// сервер восстанавливает Field/Op из этих метаданных; SQL-фрагменты в
+	// контракт не входят. Порядок условий сохраняется для стабильного YAML
+	// round-trip, семантика списка — AND.
+	ChoiceFilter []FormChoiceCondition `yaml:"choice_filter,omitempty"`
 	// Choices — декларативный список значений для выбора (аналог 1С СписокВыбора).
 	// Задаётся в .form.yaml на элементе kind: ПолеСписка; рендерер показывает
 	// <select> с этими значениями, а выбор дёргает событие ПриИзменении.
@@ -260,6 +267,25 @@ type FormElement struct {
 	// (FormAttributeColumn). Дочерний элемент kind: ПолеВвода тоже не подошёл —
 	// такая колонка выглядела бы редактируемой, а редактировать нечего.
 	VirtualColumns []FormVirtualColumn `yaml:"virtual_columns,omitempty"`
+}
+
+// FormChoiceOperator — закрытый набор операторов choice_filter v1.
+type FormChoiceOperator string
+
+const (
+	FormChoiceOpEqual       FormChoiceOperator = "eq"
+	FormChoiceOpInHierarchy FormChoiceOperator = "in_hierarchy"
+)
+
+// FormChoiceCondition описывает одно серверно проверяемое условие подбора.
+// Ровно одно из From и Value обязательно. В версии 1 Value допустим только
+// для служебного поля is_folder и имеет boolean-тип; указатель отличает
+// явное false от отсутствующего литерала.
+type FormChoiceCondition struct {
+	Field string             `yaml:"field"`
+	Op    FormChoiceOperator `yaml:"op"`
+	From  string             `yaml:"from,omitempty"`
+	Value *bool              `yaml:"value,omitempty"`
 }
 
 // FormVirtualColumn — объявление виртуальной колонки табличной части.
@@ -434,11 +460,10 @@ type FormModule struct {
 	Handlers   map[FormEventType]string  `yaml:"events,omitempty"`
 	Procedures map[string]*FormProcedure `yaml:"-"`
 
-	// Actions — переопределение стандартных действий формы объекта (issue #151).
-	// Пока поддерживается ключ "delete": actions.delete.visible=false скрывает
-	// платформенную кнопку «Удалить», чтобы конфиг мог увести удаление в свой
-	// процессор. Платформенное удаление и так пишется в _audit и закрыто правом
-	// delete — это про управление UI-кнопкой.
+	// Actions — переопределение стандартных действий формы объекта. Ключи
+	// delete/save/ok/close управляют видимостью платформенных кнопок, а
+	// attachments — панелью вложений (plan 181C, #1621); права и серверные
+	// проверки они не ослабляют.
 	Actions map[string]*FormAction `yaml:"actions,omitempty"`
 
 	// Conditional — декларативное условное оформление табличных частей формы.

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/formdoc"
+	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 )
 
@@ -537,5 +538,98 @@ elements:
 	}, nil)
 	if !strings.Contains(preview, "group-horizontal") {
 		t.Errorf("предпросмотр не получил класс горизонтальной группы:\n%s", preview)
+	}
+}
+
+// background проходит через ту же модель, панель и безопасный style-helper в
+// обоих представлениях конструктора. Сырое невалидное значение остаётся
+// редактируемым в модели, но не должно попадать в CSS canvas/preview.
+func TestRenderFormCanvas_GroupBackground(t *testing.T) {
+	src := `schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Счёт
+elements:
+  - kind: ГруппаФормы
+    name: Реквизиты
+    background: "rgba(12, 34, 56, .5)"
+    children: []
+`
+	doc, err := formdoc.Load([]byte(src))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	canvas, err := renderFormCanvas(doc, "")
+	if err != nil {
+		t.Fatalf("renderFormCanvas: %v", err)
+	}
+	if !strings.Contains(canvas, `style="background:rgba(12, 34, 56, .5);"`) {
+		t.Errorf("холст не применил фон группы:\n%s", canvas)
+	}
+	model, err := canvasModel(doc)
+	if err != nil {
+		t.Fatalf("canvasModel: %v", err)
+	}
+	if got := model["elements.0"].Background; got != "rgba(12, 34, 56, .5)" {
+		t.Errorf("background модели = %q", got)
+	}
+	preview := renderManagedFormPreview(&metadata.FormModule{Elements: []*metadata.FormElement{{
+		Kind: metadata.FormElementGroupBox, Name: "Реквизиты", Background: "rgba(12, 34, 56, .5)",
+	}}}, nil)
+	if !strings.Contains(preview, `style="background:rgba(12, 34, 56, .5);"`) {
+		t.Errorf("preview не применил фон группы:\n%s", preview)
+	}
+
+	bad := &metadata.FormElement{Kind: metadata.FormElementGroupBox, Name: "Реквизиты", Background: "rgb(,)"}
+	if got := groupStyleAttr(bad); got != "" {
+		t.Errorf("невалидный фон утёк в style canvas/preview: %q", got)
+	}
+
+	editor := renderFormsEditorHTML(t)
+	if !strings.Contains(editor, `"Фон (CSS-цвет)", 'background', info.background`) {
+		t.Error("панель свойств ГруппаФормы не предлагает локализованный background")
+	}
+}
+
+func TestFormsEditor_GroupBackgroundLabelLocalized(t *testing.T) {
+	saved := launcherBundle
+	t.Cleanup(func() { launcherBundle = saved })
+	bundle, err := i18n.Load(i18n.EmbeddedLocales, "")
+	if err != nil {
+		t.Fatalf("load i18n bundle: %v", err)
+	}
+	launcherBundle = bundle
+
+	editor := renderFormsEditorHTMLWithLang(t, "en")
+	if !strings.Contains(editor, `"Background (CSS color)", 'background', info.background`) {
+		t.Error("панель свойств ГруппаФормы не получила английский перевод background")
+	}
+	if strings.Contains(editor, `T("Фон (CSS-цвет)")`) {
+		t.Error("standalone-редактор не должен вызывать отсутствующий JS-хелпер T")
+	}
+}
+
+func TestFormsEditor_ChoiceFilterLabelsLocalized(t *testing.T) {
+	saved := launcherBundle
+	t.Cleanup(func() { launcherBundle = saved })
+	bundle, err := i18n.Load(i18n.EmbeddedLocales, "")
+	if err != nil {
+		t.Fatalf("load i18n bundle: %v", err)
+	}
+	launcherBundle = bundle
+
+	editor := renderFormsEditorHTMLWithLang(t, "en")
+	for _, want := range []string{
+		`"Stable element ID"`,
+		`"Dependent choice filter"`,
+		`"Conditions are evaluated in order and joined with AND. A unique element ID above is required for filtering."`,
+		`"Form field (from)"`,
+		`"Boolean (value)"`,
+		`"+ condition"`,
+	} {
+		if !strings.Contains(editor, want) {
+			t.Errorf("панель choice_filter не получила английский перевод %s", want)
+		}
 	}
 }

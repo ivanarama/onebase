@@ -120,29 +120,47 @@ func QueryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name str
 // Стратегия hide обнуляет значение, а не удаляет ключ: форма таблицы отчёта
 // (колонки, группировки, выгрузка) не должна меняться от роли читателя.
 func (p QueryMaskPlan) Apply(rows []map[string]any) error {
+	_, err := p.ApplyTracked(rows)
+	return err
+}
+
+// ApplyTracked маскирует строки результата и возвращает точные имена колонок,
+// к которым применено решение для каждой строки. Следующий слой обязан отличать
+// защищённый nil от обычного SQL NULL: повторная типизация после hide превратила
+// бы скрытое число в 0, а пустую ссылку — в правдоподобный объект ссылки.
+func (p QueryMaskPlan) ApplyTracked(rows []map[string]any) ([]map[string]struct{}, error) {
 	if p.Denied != "" {
-		return fmt.Errorf("запрос отклонён: защищённое поле %q", p.Denied)
+		return nil, fmt.Errorf("запрос отклонён: защищённое поле %q", p.Denied)
 	}
 	if len(rows) == 0 || p.Empty() {
-		return nil
+		return nil, nil
+	}
+	tracked := make([]map[string]struct{}, len(rows))
+	mark := func(row int, key string) {
+		if tracked[row] == nil {
+			tracked[row] = map[string]struct{}{}
+		}
+		tracked[row][key] = struct{}{}
 	}
 	for column, dec := range p.byColumn {
 		key, ok := matchRowKey(rows[0], column)
 		if !ok {
-			return fmt.Errorf("защищённая колонка %q не найдена в результате запроса", column)
+			return nil, fmt.Errorf("защищённая колонка %q не найдена в результате запроса", column)
 		}
-		for _, row := range rows {
+		for i, row := range rows {
 			applyDecision(row, key, dec)
+			mark(i, key)
 		}
 	}
 	for field, dec := range p.byField {
-		for _, row := range rows {
+		for i, row := range rows {
 			if key, ok := matchRowKey(row, field); ok {
 				applyDecision(row, key, dec)
+				mark(i, key)
 			}
 		}
 	}
-	return nil
+	return tracked, nil
 }
 
 func applyDecision(row map[string]any, key string, dec FieldDecision) {

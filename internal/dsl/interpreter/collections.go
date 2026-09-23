@@ -55,8 +55,13 @@ type Ref struct {
 	AttrResolver RefAttrResolver
 }
 
-func (r *Ref) String() string     { return r.Name }
-func (r *Ref) GetRefUUID() string { return r.UUID }
+func (r *Ref) String() string { return r.Name }
+func (r *Ref) GetRefUUID() string {
+	if r == nil {
+		return ""
+	}
+	return r.UUID
+}
 
 // TypeName — «ДокументСсылка.ЗаказПокупателя» / «СправочникСсылка.Номенклатура»
 // для ТипЗнч() и отладчика. Ссылка без вида объекта (создана вне менеджера)
@@ -113,25 +118,31 @@ func (r *Ref) CallMethod(method string, args []any) any {
 	return nil
 }
 
-// Get обеспечивает доступ к полям ссылки: ссылка.Наименование / ссылка.Имя
-// возвращают наименование объекта, ссылка.УникальныйИдентификатор — UUID.
-// Прочие реквизиты объекта недоступны без его загрузки (ссылка несёт только
-// UUID и наименование).
-func (r *Ref) Get(field string) any {
+// Lookup обеспечивает доступ к полям ссылки и отдельно сообщает, известен ли
+// реквизит. Это различие важно для DSL: существующий реквизит может законно
+// содержать Неопределено, а неизвестный раньше выглядел точно так же и скрывал
+// ошибку обращения через точку.
+func (r *Ref) Lookup(field string) (any, bool) {
 	switch strings.ToLower(field) {
 	case "наименование", "имя", "name":
-		return r.Name
+		return r.Name, true
 	case "ссылка", "ref":
-		return r
+		return r, true
 	case "уникальныйидентификатор", "уидентификатор", "uuid", "ид", "id":
-		return r.UUID
+		return r.UUID, true
 	}
 	if r.AttrResolver != nil {
-		if v, ok := r.AttrResolver.ResolveRefAttr(r, field); ok {
-			return v
-		}
+		return r.AttrResolver.ResolveRefAttr(r, field)
 	}
-	return nil
+	return nil, false
+}
+
+// Get сохраняет прежний host-side контракт для кода, который явно читает
+// оболочку ссылки. DSL-выражения используют Lookup и не смешивают неизвестный
+// реквизит с существующим значением Неопределено.
+func (r *Ref) Get(field string) any {
+	v, _ := r.Lookup(field)
+	return v
 }
 
 // refKey extracts the comparison key: UUID for Ref, string representation otherwise.
@@ -191,6 +202,17 @@ func (a *Array) CallMethod(name string, args []any) any {
 		if len(args) >= 2 {
 			a.SetIndex(int(floatArg(args, 0)), args[1])
 		}
+	case "выгрузить", "unload":
+		// Совместимость с 1С: там `Запрос.Выполнить().Выгрузить()` — канонический
+		// способ получить коллекцию строк, и переносимый код пишут именно так.
+		// У OneBase `Выполнить()` уже возвращает массив, поэтому `Выгрузить()`
+		// отдаёт его содержимое, а не строит другую структуру (issue #1364).
+		//
+		// Возвращается КОПИЯ, а не тот же массив: в 1С `Выгрузить()` выгружает
+		// данные в новую коллекцию, и код, который потом сортирует или чистит
+		// результат, не ждёт, что изменится исходный. Копия среза стоит дёшево,
+		// а совпадение с ожиданием — дорого.
+		return NewArray(append([]any(nil), a.items...))
 	case "вграница", "upperbound":
 		// Верхняя граница: Количество-1; для пустого массива -1.
 		return float64(len(a.items) - 1)
