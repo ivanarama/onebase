@@ -142,7 +142,7 @@ func main() {
 	asJSON := flag.Bool("json", false, "print machine-readable JSON")
 	flag.Parse()
 
-	prs, err := loadPulls(*repo, *fixture)
+	prs, err := loadPulls(*repo, *fixture, *owner)
 	if err != nil {
 		fail(err)
 	}
@@ -174,7 +174,7 @@ func fail(err error) {
 	os.Exit(2)
 }
 
-func loadPulls(repo, fixture string) ([]apiPull, error) {
+func loadPulls(repo, fixture, owner string) ([]apiPull, error) {
 	if fixture != "" {
 		data, err := os.ReadFile(fixture)
 		if err != nil {
@@ -217,7 +217,7 @@ func loadPulls(repo, fixture string) ([]apiPull, error) {
 					errs <- fmt.Errorf("comments for PR #%d: %w", prs[index].Number, err)
 					continue
 				}
-				if !needsHeadParents(prs[index]) {
+				if !needsHeadParents(prs[index]) && !abortMarkerWantsHeadParents(prs[index], owner) {
 					continue
 				}
 				var parents []struct {
@@ -880,6 +880,30 @@ func needsHeadParents(pr apiPull) bool {
 		return false
 	}
 	return labelSet(pr.Labels)["ship"]
+}
+
+// abortMarkerWantsHeadParents расширяет чтение родителей на PR, у которого
+// есть доверенный неотредактированный abort-маркер ровно для текущего HEAD.
+// В штатном состоянии после v1-abort метка ship уже снята, поэтому лимит
+// needsHeadParents оставлял диагностику base_sync_v1_abort_waiting_review
+// без данных — parents не загружались и abort не распознавался (#1605).
+// Сам маркер ничего не разрешает: форма двух родителей, связь с intent и
+// доверенный автор по-прежнему проверяются там, где abort распознаётся.
+func abortMarkerWantsHeadParents(pr apiPull, owner string) bool {
+	if pr.State != "open" || pr.Base.Ref != "main" || pr.Draft || pr.Head.SHA == "" {
+		return false
+	}
+	for _, comment := range pr.Comments {
+		if !trustedUnedited(comment, owner) {
+			continue
+		}
+		for _, match := range baseSyncV1Abort.FindAllStringSubmatch(comment.Body, -1) {
+			if match[2] == pr.Head.SHA {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // headIsBaseSyncMerge reports whether the head commit has the shape every
