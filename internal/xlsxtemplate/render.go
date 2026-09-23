@@ -22,17 +22,32 @@ type repeatRow struct {
 	values    []string
 }
 
+// unzipLimit — потолок распаковки для excelize (защита от zip-бомбы):
+// шаблон печатной формы может прийти из недоверенного источника.
+const unzipLimit = 64 << 20
+
 // RenderBytes возвращает копию XLSX-шаблона с подставленными значениями.
 // Строка, содержащая тег {{ТабличнаяЧасть.Поле}}, повторяется по числу строк
 // табличной части. Ссылки Excel в формулах и диаграммах excelize корректирует
 // лишь частично — это ограничение операции дублирования строк библиотеки.
-func RenderBytes(template []byte, ctx *printform.RenderContext) ([]byte, error) {
+func RenderBytes(template []byte, ctx *printform.RenderContext) (res []byte, err error) {
 	if len(template) == 0 {
 		return nil, fmt.Errorf("xlsx template is empty")
 	}
-	f, err := excelize.OpenReader(bytes.NewReader(template))
-	if err != nil {
-		return nil, fmt.Errorf("open xlsx template: %w", err)
+	// excelize обычно возвращает ошибку на битом вводе, но паника у неё на
+	// границе разбора (например, отрицательный индекс shared-строк) уронила бы
+	// весь сервер — страховка на границе пакета обязательна.
+	defer func() {
+		if rec := recover(); rec != nil {
+			res, err = nil, fmt.Errorf("xlsx template render panic: %v", rec)
+		}
+	}()
+	f, oerr := excelize.OpenReader(bytes.NewReader(template), excelize.Options{
+		UnzipSizeLimit:    unzipLimit,
+		UnzipXMLSizeLimit: unzipLimit,
+	})
+	if oerr != nil {
+		return nil, fmt.Errorf("open xlsx template: %w", oerr)
 	}
 	defer func() { _ = f.Close() }()
 

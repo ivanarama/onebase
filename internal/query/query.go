@@ -637,6 +637,11 @@ type refDimInfo struct {
 }
 
 func (rd refDimInfo) displayCol() string {
+	// Системная таблица учётных записей: колонки «наименование» у неё нет.
+	// Представление учётки — ПолноеИмя, а при пустом — логин (#1646).
+	if metadata.IsSystemRefTarget(rd.refEntity) {
+		return fmt.Sprintf("COALESCE(NULLIF(%s.full_name, ''), %s.login)", rd.joinAlias, rd.joinAlias)
+	}
 	if rd.refIsDoc {
 		return rd.joinAlias + ".номер"
 	}
@@ -790,6 +795,13 @@ func (tr *translator) addSource(typeUpper, name string) {
 // RBAC должен проверить право чтения на неё, а не только на главную таблицу.
 func (tr *translator) addRefSource(rd refDimInfo) {
 	if rd.refEntity == "" {
+		return
+	}
+	// Системная таблица учётных записей — не сущность конфигурации: прав на неё
+	// в ролях не существует, и регистрировать источник для RBAC/масок нечего.
+	// Ложная регистрация дала бы не-администратору denial по несуществующему
+	// объекту прав (#1646).
+	if metadata.IsSystemRefTarget(rd.refEntity) {
 		return
 	}
 	tr.addSource(rd.refSrcType, rd.refEntity)

@@ -243,6 +243,26 @@ type AppConfig struct {
 	// document.save/post/unpost/delete, catalog.save/delete. Токены в URL и
 	// заголовках задавайте через ${env:VAR} — секрет живёт в окружении.
 	Webhooks []webhook.Config `yaml:"webhooks,omitempty"`
+	// Features — доменные возможности платформы, которые приложение включает
+	// явно (issue #1331). Платформа умеет больше, чем нужно конкретному
+	// приложению: РМК, встроенный в каждый экземпляр, у казначейства или
+	// склада — чужой пункт меню, который пользователь читает как ошибку.
+	Features *FeaturesConfig `yaml:"features,omitempty"`
+}
+
+// FeaturesConfig — явный opt-in доменных возможностей. Умолчание у каждой —
+// «выключено»: показывать доменную функцию без явного намерения нельзя, иначе
+// её увидит каждое приложение на платформе.
+type FeaturesConfig struct {
+	// POS включает рабочее место кассира (`/ui/pos`) и его пункт в меню.
+	// Без ключа РМК не показывается и страница отдаёт 404.
+	POS bool `yaml:"pos"`
+}
+
+// POSEnabled — включено ли рабочее место кассира. nil-safe: конфигурация без
+// блока features означает «выключено».
+func (c *AppConfig) POSEnabled() bool {
+	return c != nil && c.Features != nil && c.Features.POS
 }
 
 // configFileNote — приписка к ошибке разбора файла конфигурации: когда файл

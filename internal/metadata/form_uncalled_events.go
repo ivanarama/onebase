@@ -31,6 +31,7 @@ var serverFormEventTypes = []FormEventType{
 	FormEventBeforeWrite,
 	FormEventOnWrite,
 	FormEventAfterWrite,
+	FormEventBeforeClose,
 }
 
 // ServerFormEvents возвращает копию перечня событий формы, которые запускает

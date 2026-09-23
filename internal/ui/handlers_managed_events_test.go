@@ -494,6 +494,45 @@ func decodeFormEventResponse(t *testing.T, b []byte) formEventResponse {
 	return resp
 }
 
+func TestManagedFormEventPublishesAuthoritativeDirtyForCommands(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		write     string
+		wantDirty bool
+		wantVer   int64
+	}{
+		{name: "unsaved mutation", wantDirty: true},
+		{name: "confirmed write", write: "\n\tОбъект.Записать();", wantDirty: false, wantVer: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv, ent := setupManagedEventsServer(t, `
+Процедура КомандаНажатие()
+	Объект.Наименование = "changed by command";`+tc.write+`
+КонецПроцедуры
+`, nil, []*metadata.FormElement{{
+				Kind: metadata.FormElementButton, Name: "Команда",
+				Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "КомандаНажатие"},
+			}})
+			id := uuid.New()
+			if err := srv.store.Upsert(context.Background(), ent.Name, id, map[string]any{"Наименование": "before"}, ent); err != nil {
+				t.Fatal(err)
+			}
+			body := url.Values{
+				"_element":     {"Команда"},
+				"_event":       {string(metadata.FormEventOnClick)},
+				"_kind":        {"object"},
+				"_id":          {id.String()},
+				"_version":     {"1"},
+				"Наименование": {"before"},
+			}
+			response := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, body).Body.Bytes())
+			if !response.OK || response.Dirty == nil || *response.Dirty != tc.wantDirty || response.Version != tc.wantVer {
+				t.Fatalf("command dirty/write result mismatch: %+v", response)
+			}
+		})
+	}
+}
+
 // #621: обработчик события управляемой формы оставил открытую DSL-транзакцию и
 // вышел с ошибкой. Граница выполнения обязана отменить её до перечитывания и
 // ответа: на SQLite пул — одно соединение, и иначе событие вешало бы всю базу

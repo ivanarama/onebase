@@ -110,8 +110,11 @@ type handler struct {
 	// (`/?sel=`) синхронно и последовательно било по всем базам, и список
 	// заметно тормозил (issue #596, регрессия c434500a). Мутирующие обработчики
 	// (start/stop/…) сбрасывают запись базы, чтобы статус обновился сразу.
-	statusMu    sync.Mutex
-	statusCache map[string]baseStatus
+	statusMu      sync.Mutex
+	statusCache   map[string]baseStatus
+	statusTimeout time.Duration
+	// statusReadAppYAML синхронизирует тест таймаута; в production всегда nil.
+	statusReadAppYAML func(context.Context, *Base, any) error
 	// updateMu serializes every selfupdate state mutation, including the quiet
 	// watcher, so a stale network result cannot erase restart recovery state.
 	updateMu sync.Mutex
@@ -138,7 +141,10 @@ type baseStatus struct {
 // быстрое переключение `/?sel=` укладывается в окно и не перепробует, а лаг
 // индикатора «запущена/остановлена» при этом незаметен (плюс мутирующие действия
 // сбрасывают кэш сразу).
-const baseStatusTTL = 3 * time.Second
+const (
+	baseStatusTTL          = 3 * time.Second
+	baseStatusProbeTimeout = 2 * time.Second
+)
 
 // baseVM — view-модель информационной базы для списка лаунчера: встраивает
 // *Base и дополняет рантайм-полями (запущена ли база, URL, данные из app.yaml).
@@ -202,15 +208,26 @@ func (h *handler) probeBase(b *Base) baseStatus {
 	gate := cfgAuthDBGate(b.ID)
 	gate.RLock()
 	defer gate.RUnlock()
+	timeout := h.statusTimeout
+	if timeout <= 0 {
+		timeout = baseStatusProbeTimeout
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
 	st := baseStatus{running: h.baseRunning(b), fetched: time.Now()}
 	var cfg struct {
 		Name    string `yaml:"name"`
 		Version string `yaml:"version"`
 		Logo    string `yaml:"logo"`
 	}
+	read := readAppYAML
+	if h.statusReadAppYAML != nil {
+		read = h.statusReadAppYAML
+	}
 	// Одна сломанная конфигурация не должна ломать весь список: строка остаётся
 	// пустой, причина уходит в журнал внутри readAppYAML.
-	if err := readAppYAML(context.Background(), b, &cfg); err == nil {
+	if err := read(ctx, b, &cfg); err == nil {
 		st.appName = cfg.Name
 		st.appVersion = cfg.Version
 		st.hasLogo = cfg.Logo != ""

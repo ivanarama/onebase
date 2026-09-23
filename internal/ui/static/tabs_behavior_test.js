@@ -11,6 +11,12 @@ const html = fs.readFileSync(htmlPath, 'utf8');
 const source = Array.from(html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi), match => match[1])
   .find(script => script.includes("var STORE='obTabs'"));
 assert.ok(source, 'rendered app shell must contain the tabs runtime');
+const uiSource = fs.readFileSync('static/ui.js', 'utf8');
+const bridgeMarker = '// Same-origin request/decision protocol shared by shell tabs and reference';
+const bridgeStart = uiSource.indexOf(bridgeMarker);
+const bridgeEnd = uiSource.indexOf('if (window.__obEmbedded)', bridgeStart);
+assert.ok(bridgeStart >= 0 && bridgeEnd > bridgeStart, 'form-close bridge slice not found');
+const bridgeSource = uiSource.slice(bridgeStart, bridgeEnd);
 
 class ClassList {
   constructor(element) {
@@ -49,7 +55,17 @@ class Element {
     this.textContent = '';
     this.title = '';
     this.src = '';
-    if (this.tagName === 'IFRAME') this.contentWindow = {};
+    if (this.tagName === 'IFRAME') {
+      this._posted = [];
+      this.contentDocument = {
+        readyState: 'complete',
+        getElementById() { return null; },
+      };
+      this.contentWindow = {
+        document: this.contentDocument,
+        postMessage: (data, origin) => { this._posted.push({data, origin}); },
+      };
+    }
   }
 
   set className(value) {
@@ -124,7 +140,8 @@ class FakeStorage {
   }
 }
 
-function shell(storage, search = '', confirmClose = () => true) {
+function shell(storage, search = '', confirmClose = () => true, requestFrameClose = null, finalizeFrameClose = null,
+  actualBridge = false) {
   const elements = {};
   for (const id of ['ob-tabstrip', 'ob-tabbody', 'ob-tabempty', 'ob-tabhome']) {
     elements[id] = new Element('div', id);
@@ -133,6 +150,7 @@ function shell(storage, search = '', confirmClose = () => true) {
   const windowListeners = new Map();
   const document = {
     body: new Element('body'),
+    readyState: 'complete',
     getElementById(id) { return elements[id] || null; },
     createElement(tagName) { return new Element(tagName); },
     addEventListener(type, listener) {
@@ -142,6 +160,7 @@ function shell(storage, search = '', confirmClose = () => true) {
   };
   let uuid = 0;
   let confirms = 0;
+  let alerts = 0;
   const context = {
     document,
     sessionStorage: storage,
@@ -155,13 +174,21 @@ function shell(storage, search = '', confirmClose = () => true) {
       }
     },
     setTimeout() { return 1; },
+    clearTimeout() {},
     confirm() { confirms++; return confirmClose(); },
+    alert() { alerts++; },
+    obUIMessage(name, fallback) { return fallback; },
     addEventListener(type, listener) {
       if (!windowListeners.has(type)) windowListeners.set(type, []);
       windowListeners.get(type).push(listener);
     }
   };
   context.window = context;
+  if (actualBridge) vm.runInNewContext(bridgeSource, context, {filename: 'form-close-bridge.js'});
+  else {
+    if (requestFrameClose) context.obRequestFrameClose = requestFrameClose;
+    if (finalizeFrameClose) context.obFinalizeFrameClose = finalizeFrameClose;
+  }
   vm.runInNewContext(source, context, {filename: 'rendered-tabs-runtime.js'});
 
   const strip = elements['ob-tabstrip'];
@@ -170,6 +197,7 @@ function shell(storage, search = '', confirmClose = () => true) {
     open(url, title, options) { return context.obOpenTab(url, title, options); },
     closeByURL(url) { return context.obCloseTabByURL(url); },
     confirms() { return confirms; },
+    alerts() { return alerts; },
     post(data, frameIndex) {
       const source = frameIndex === undefined ? context : frames()[frameIndex].contentWindow;
       for (const listener of windowListeners.get('message') || []) {
@@ -182,6 +210,41 @@ function shell(storage, search = '', confirmClose = () => true) {
         listener({origin: context.location.origin, source: frame.contentWindow, data: {source: 'obDirty', dirty}});
       }
     },
+    markManaged(index) {
+      const frame = frames()[index];
+      frame.contentDocument = {
+        readyState: 'complete',
+        getElementById(id) { return id === 'ob-managed-config' ? {} : null; }
+      };
+      frame.contentWindow.document = frame.contentDocument;
+    },
+    markLoading(index) {
+      const frame = frames()[index];
+      frame.contentDocument = {
+        readyState: 'loading',
+        getElementById() { return null; },
+      };
+      frame.contentWindow.document = frame.contentDocument;
+    },
+    installManagedDocument(index, token, onFinalize, dispatchLoad = false) {
+      const frame = frames()[index];
+      const child = frame.contentWindow;
+      frame.contentDocument = {
+        readyState: 'complete',
+        getElementById(id) { return id === 'ob-managed-config' ? {} : null; },
+      };
+      child.document = frame.contentDocument;
+      child.obFrameCloseDocumentToken = token;
+      child.obRequestFormClose = function () {};
+      child.obFinalizeFormClose = function () {
+        if (onFinalize) onFinalize();
+        return true;
+      };
+      if (dispatchLoad) frame.dispatch('load');
+      return child;
+    },
+    posted(index) { return frames()[index]._posted.slice(); },
+    frameWindow(index) { return frames()[index].contentWindow; },
     count() { return strip.children.length; },
     activeIndex() { return strip.children.findIndex(button => button.classList.contains('active')); },
     titles() { return strip.children.map(button => button.title); },
@@ -461,7 +524,7 @@ test('a form tab is closed by its address, not by whichever tab is active', () =
   assert.equal(app.count(), 1);
 });
 
-test('server-driven close and the cross both protect unsaved changes', () => {
+test('missing bridge keeps legacy dirty protection for non-managed forms', () => {
   const storage = new FakeStorage();
   const app = shell(storage);
   app.open('/ui/document/обращение/1', 'Обращение');
@@ -520,7 +583,7 @@ test('subsystem context does not prevent address-driven close', () => {
   assert.equal(app.count(), 0);
 });
 
-test('server-driven close keeps dirty protection for another duplicate tab', () => {
+test('missing bridge keeps dirty protection for another non-managed duplicate', () => {
   const storage = new FakeStorage();
   const app = shell(storage);
   app.open('/ui/document/обращение/1', 'Обращение');
@@ -531,7 +594,7 @@ test('server-driven close keeps dirty protection for another duplicate tab', () 
   assert.equal(app.confirms(), 1);
 });
 
-test('repeated server-driven close cannot bypass a rejected dirty confirmation', () => {
+test('repeated fallback close cannot bypass a rejected non-managed confirmation', () => {
   const storage = new FakeStorage();
   const app = shell(storage, '', () => false);
   app.open('/ui/document/обращение/1', 'Обращение');
@@ -545,4 +608,88 @@ test('repeated server-driven close cannot bypass a rejected dirty confirmation',
   assert.equal(app.closeByURL('/ui/document/обращение/1'), 0);
   assert.equal(app.count(), 1);
   assert.equal(app.confirms(), 2);
+});
+
+test('shell removes a form only after the correlated close decision allows it', async () => {
+  const storage = new FakeStorage();
+  const requests = [];
+  const finalizations = [];
+  let finish;
+  const app = shell(storage, '', () => true, (frame, reason) => {
+    requests.push({frame, reason});
+    return new Promise((resolve) => { finish = resolve; });
+  }, (frame, decision) => { finalizations.push({frame, decision}); return true; });
+  app.open('/ui/document/обращение/1', 'Обращение');
+  app.markDirty(0);
+
+  app.close(0);
+  app.close(0);
+  assert.equal(app.count(), 1, 'tab was destroyed before the server decision');
+  assert.equal(requests.length, 1, 'double click started a second close intent');
+  assert.equal(app.confirms(), 0, 'shell displayed a second, non-authoritative dirty confirmation');
+  assert.equal(requests[0].reason, 'cross');
+
+  finish({allowed: false, intentId: 'denied'});
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(app.count(), 1, 'denied close removed the tab');
+
+  app.post({source: 'obCloseTab', reason: 'escape'}, 0);
+  assert.equal(requests.length, 2);
+  assert.equal(app.confirms(), 0);
+  assert.equal(requests[1].reason, 'escape');
+  finish({allowed: true, intentId: 'allowed'});
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(finalizations.length, 1, 'allowed close was not finalized');
+  assert.equal(finalizations[0].decision.intentId, 'allowed');
+  assert.equal(app.count(), 0, 'allowed close kept the tab');
+});
+
+test('shell keeps a new Document when an old decision uses the same WindowProxy', async () => {
+  const app = shell(new FakeStorage(), '', () => true, null, null, true);
+  app.open('/ui/document/обращение/old', 'Обращение');
+  let finalizedNewDocument = 0;
+  app.installManagedDocument(0, 'shell-old-document');
+  const sourceWindowProxy = app.frameWindow(0);
+
+  app.close(0);
+  const request = app.posted(0)[0];
+  assert.ok(request);
+  const correlation = request.data.correlation;
+
+  app.installManagedDocument(0, 'shell-new-document', () => { finalizedNewDocument++; }, true);
+  assert.equal(app.frameWindow(0), sourceWindowProxy, 'test replaced WindowProxy');
+  app.post({
+    source: 'obFormCloseDecision', correlation, allowed: true, intentId: 'stale-shell',
+  }, 0);
+  await new Promise((resolve) => setImmediate(resolve));
+
+  assert.equal(app.count(), 1, 'stale decision removed the new iframe document');
+  assert.equal(finalizedNewDocument, 0, 'stale decision finalized the new iframe document');
+});
+
+test('managed tab without a bridge or finalizer remains open', async () => {
+  const noBridge = shell(new FakeStorage());
+  noBridge.open('/ui/document/обращение/1', 'Обращение');
+  noBridge.markManaged(0);
+  noBridge.close(0);
+  assert.equal(noBridge.count(), 1, 'managed tab was removed without a server bridge');
+  assert.equal(noBridge.alerts(), 1);
+
+  const noFinalize = shell(new FakeStorage(), '', () => true,
+    async () => ({allowed: true, intentId: 'managed-intent'}),
+    () => false);
+  noFinalize.open('/ui/document/обращение/2', 'Обращение');
+  noFinalize.close(0);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(noFinalize.count(), 1, 'managed tab was removed without dirty finalization');
+  assert.equal(noFinalize.alerts(), 1);
+});
+
+test('loading tab without a bridge is treated as managed and remains open', () => {
+  const app = shell(new FakeStorage());
+  app.open('/ui/document/обращение/3', 'Обращение');
+  app.markLoading(0);
+  app.close(0);
+  assert.equal(app.count(), 1, 'loading tab was classified as legacy and removed');
+  assert.equal(app.alerts(), 1);
 });
