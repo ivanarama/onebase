@@ -39,6 +39,7 @@ func TestAccumRegProxy_ReadSide(t *testing.T) {
 		Name:       "ОстаткиТоваров",
 		Dimensions: []metadata.Field{{Name: "Номенклатура", Type: metadata.FieldTypeString}},
 		Resources:  []metadata.Field{{Name: "Количество", Type: metadata.FieldTypeNumber}},
+		Attributes: []metadata.Field{{Name: "Резерв", Type: metadata.FieldTypeNumber}},
 	}
 	if err := db.Migrate(ctx, []*metadata.Entity{doc}); err != nil {
 		t.Fatal(err)
@@ -100,6 +101,31 @@ func TestAccumRegProxy_ReadSide(t *testing.T) {
 	byRec := rp.CallMethod("выбратьпорегистратору", []any{docRef}).(*interpreter.Array)
 	if got := byRec.CallMethod("количество", nil); got != float64(2) {
 		t.Errorf("ВыбратьПоРегистратору: ожидалось 2, got %v", got)
+	}
+
+	// Публичный DSL-путь видит NULL объявленного числового реквизита как 0,
+	// но чтение не меняет строку хранилища.
+	typedProgram := mustParse(t, `Функция Тест()
+  Стр = РегистрыНакопления.ОстаткиТоваров.Движения()[0];
+  Возврат ТипЗнч(Стр.Резерв) + "|" + Строка(Стр.Резерв = 0)
+    + "|" + ТипЗнч(Стр.Период)
+    + "|" + ТипЗнч(Стр.Регистратор)
+    + "|" + Стр.ВидДвижения;
+КонецФункции`)
+	var typedResult any
+	if err := interp.RunWithResult(typedProgram.Procedures[0], nil, &typedResult,
+		map[string]any{"РегистрыНакопления": regRoot}); err != nil {
+		t.Fatalf("typed register DSL: %v", err)
+	}
+	if typedResult != "Число|true|Дата|ДокументСсылка.ПоступлениеТоваров|Приход" {
+		t.Fatalf("typed register result = %v", typedResult)
+	}
+	rawRows, err := db.GetMovements(ctx, reg.Name, reg, storage.RegFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw := rowValueFold(rawRows[0], "Резерв"); raw != nil {
+		t.Fatalf("чтение материализовало Резерв в хранилище: %T(%v)", raw, raw)
 	}
 
 	// Неизвестный регистр → nil.

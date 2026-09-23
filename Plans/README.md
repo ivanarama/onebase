@@ -288,6 +288,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 80 | [80-register-totals.md](80-register-totals.md) | Итоги регистров (предрасчёт остатков вместо `SUM` на лету) — ключ к масштабу учёта | 6–9 дней | ✅ Реализовано (накопления + бухгалтерии): итоги в транзакции проводки, быстрый путь `query` (остатки/на-момент/обороты), CLI `recalc-totals`, бенч ~150×. Опц. остаток — `totals.period`/свёртка |
 | 81 | [81-schema-restructuring-safety.md](81-schema-restructuring-safety.md) | Безопасная реструктуризация схемы: устойчивые id полей, rename/retype/drop с данными, dry-run | 7–10 дней | ✅ Закрыт 2026-08-03 (`feature/81-schema-restructuring`): `id` у поля, карта `_schema_fields`, планировщик add/rename/retype/drop, `migrate --dry-run`/`--allow-destructive`, авто-`id` в конфигураторе. Не делалось: `id` у объектов (переименование таблиц) — отдельный сценарий |
 | 82 | [82-fulltext-search.md](82-fulltext-search.md) | Полнотекстовый / глобальный поиск (PG tsvector, SQLite FTS5) с учётом RBAC+RLS | 6–8 дней | ✅ Закрыт 2026-08-04 (`82planfulltextsearch`): таблица `_fts` + GIN-tsvector (PG) / FTS5 (SQLite), индексация в транзакции записи, `fulltext:` в метаданных, строка поиска в шапке, `GET /api/v2/search`, `ПолнотекстовыйПоиск()`, `onebase reindex`. Права — общий слой `internal/search` (RBAC + план 79 + маскирование). Не делалось: индексация табличных частей и представлений ссылок |
+| 175 | [175-table-part-search.md](175-table-part-search.md) | Единый путь `ТЧ.Поле` в `search_fields` и `fulltext`: поиск владельца по контактам без денормализации (#1372) | ~5.5–7 дней | 📋 Проектирование |
 | 83 | [83-secrets-management.md](83-secrets-management.md) | Управление секретами at-rest: единый резолвер `env:`/`file:`/`enc:`, шифрование, гигиена экспорта/бэкапа | 4–6 дней | ✅ Закрыт 2026-08-03 (`feature/83-secrets`): `internal/secrets` (AES-GCM, мастер-ключ вне базы), разыменование в момент использования, `onebase secret`, предупреждения `secret.plaintext` в `check` и об открытых секретах в `backup`. Ключ ИИ больше не ложится в `_settings` значением |
 | 84 | [84-enterprise-auth.md](84-enterprise-auth.md) | Enterprise-аутентификация: TOTP-2FA, SSO (OIDC), опц. LDAP — всё opt-in | 7–10 дней | ⬜ Не начато (перепроверено 2026-08-02: грепы `totp|otpauth|oidc|ldap|2fa` по `internal/`,`cmd/` пусты) |
 | 85 | [85-business-processes-tasks.md](85-business-processes-tasks.md) | Бизнес-процессы и задачи: карта маршрута, «Мои задачи», согласование документов | 30–45 дней (переоценка) | 🧊 **Заморожен 2026-08-12** — спроса нет (208 issue от 18 авторов, ни одного запроса), оценка 2–3 недели занижена вдвое (сквозные подсистемы), форма неудачна (маршрут в конфигурации = правка через релиз). Триггеры разморозки — в шапке плана. Ценную часть забирает план 121. Сделан только «заход 0»: прикладной маршрут в `examples/callcenter` (Go-тесты `ui/callcenter_validation_test.go`), у него нет пользовательской точки входа — каталога `forms/` в примере нет |
@@ -416,19 +417,42 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 155 | [155-excel-print-template.md](155-excel-print-template.md) | Excel как шаблон печатной формы: импорт `.xlsx` с тегами `{{...}}` в макет (обсуждение #1109); ступень 1 из трёх | ~4 дня | 🟡 В работе |
 | 156 | [156-cms-orders.md](156-cms-orders.md) | Заказ с сайта в `examples/cms`: корзина на куке, оформление в документ, страница заказа по ссылке, письма покупателю и менеджеру | ~3 дня | 🟡 В работе |
 | 157 | [157-nav-collapse.md](157-nav-collapse.md) | Схлопывание левой панели объектов на широком экране: гамбургер виден всегда, состояние в `localStorage`, класс ставится синхронно в `<head>` (#1122, обсуждение #1108) | ~1 день | 🟡 В работе |
-| 158 | [158-open-form-programmatically.md](158-open-form-programmatically.md) | Программное открытие формы из DSL (`ОткрытьФорму`) с предзаполнением и возвратом значения (`Оповещение`) поверх существующего popup-модала; срез 1 из трёх (заявка #1134) | ~4 дня | 📋 Проектирование |
+| 158 | [158-open-form-programmatically.md](158-open-form-programmatically.md) | Программное открытие форм из DSL: единый `ОписаниеОповещения` callback, предзаполнение через server store и одноразовый token, типизированная навигация и same-origin modal (#1531; связанные #1528, #1557, #1624) | ~8–11.5 дней | 📋 Проектирование |
+| 161 | [161-query-live-transaction-context.md](161-query-live-transaction-context.md) | Единый живой контекст для `Новый Запрос` внутри DSL-транзакции: read-your-writes без второго SQLite-соединения (#1216) | ~2–2,5 дня | 📋 Проектирование |
 | 159 | [159-undefined-and-typed-empty-values.md](159-undefined-and-typed-empty-values.md) | Разделить семантическое `Неопределено` и пустые реквизиты известных типов: `Неопределено <> 0`, пустое число `= 0`, без миграции SQL `NULL` (#1274) | ~5–6 дней | 📋 Проектирование |
+| 160 | [160-report-datetime-param.md](160-report-datetime-param.md) | Параметр отчёта со временем суток (`datetime`): сначала одна точка разбора значения вместо трёх копий (экран/выгрузка/API), затем сам тип и формат подстановки по типу (заявка #1204) | ~1–1,5 дня | 📋 Проектирование |
+| 165 | [165-standard-field-canonical-storage-and-id-recovery.md](165-standard-field-canonical-storage-and-id-recovery.md) | Каноничное хранение стандартных «Кода»/«Номера» в `numerator.field` и атомарное восстановление `std_code`/`std_number` без DDL (#1358, #1359) | ~6–8.5 дней | 📋 Проектирование |
+| 167 | [167-multiline-plain-text-fields.md](167-multiline-plain-text-fields.md) | Многострочный обычный `string`: field-level `multiline`, наследование и override в managed-форме, `height` в строках, автоформы сущности и регистра сведений (#1390) | ~4.5–6 дней | 📋 Проектирование |
+| 168 | [168-choice-preview-context.md](168-choice-preview-context.md) | Пояснение в форме выбора: статический реквизит, пакетная DSL-функция и ограниченный контекст вызывающей формы с RBAC (#1391) | ~5.5–8 дней | 📋 Проект 2026-09-08 |
+| 169 | [169-semantic-navigation-settings.md](169-semantic-navigation-settings.md) | Смысловое mixed-kind меню: YAML-база, общая настройка администратора и персональная дельта пользователя с безопасным наследованием (#1362) | ~13–19 дней после bootstrap плана 163 | 📋 Проект 2026-09-08 |
+| 170 | [170-dependent-reference-choice-filters.md](170-dependent-reference-choice-filters.md) | Зависимый отбор ссылочного picker: server-authoritative `eq`, `in_hierarchy`, `is_folder`, одинаковый `List`/`CountList` и защита от stale browser responses (#1303) | ~6–8 дней | 📋 Проектирование |
+| 181 | [181-managed-form-close-intent.md](181-managed-form-close-intent.md) | Единый async close-intent: `ПередЗакрытием(Отказ)`, fail-closed shell/standalone/popup, «Записать / ОК / Закрыть» и runtime `РазрешитьЗакрытие` (#1530, #1558, #1559, #1621) | ~8–12 дней + 1–2 дня после runtime-instance 172 | 📋 Проектирование |
+| 182 | [182-interactive-dashboard-widgets.md](182-interactive-dashboard-widgets.md) | Интерактивные виджеты: точечный fresh refresh и live-события для data-widget, безопасная навигация строк и типизированные фильтры list (#1617–#1620) | ~7.5–11.5 дней | 📋 Проектирование |
 
 Повод — вопрос с внедрения «одна организация в базе, почему её не подставляют».
 Граница проведена так: в движок идёт механизм (объявление дефолта, его
 применение, точка входа для кода), персональные настройки пользователя
 («основной склад Пети») остаются прикладными — как задачи (85) и правила (89).
 
-### Направление Т — целостность конвейера сопровождения
+### Направление С — надёжность конвейера сопровождения
 
 | № | Файл | Фича | Эстимейт | Статус |
 |---|---|---|---|---|
 | 162 | [162-pr-identity-and-fork-isolation.md](162-pr-identity-and-fork-isolation.md) | Identity-bound REVIEW/FIX/MERGE/TAIL и безопасный fork-маршрут: repository/ref/SHA lease, exact fetch, доверенный CI без локального исполнения fork-кода (#1245) | ~10–16 дней | 📋 Проектирование |
+| 163 | [163-next-slice-handoff.md](163-next-slice-handoff.md) | Crash-safe handoff между последовательными PR-срезами одной issue: committed merge boundary, уникальный branch-claim, recovery и наблюдаемость (#1379) | ~10–15 дней | 📋 Проектирование |
+| 180 | [180-base-sync-head-transition-proof.md](180-base-sync-head-transition-proof.md) | Доказательство перехода HEAD при base-sync без зависимости от даты commit: точный to, CAS, recovery и миграция carry (#1561) | ~7–11 дней | 📋 Проектирование |
+
+### Направление Т — надёжность развёртывания и восстановления
+
+| № | Файл | Фича | Эстимейт | Статус |
+|---|---|---|---|---|
+| 166 | [166-durable-files-and-clean-restore-rollback.md](166-durable-files-and-clean-restore-rollback.md) | Долговечный каталог файлов PostgreSQL без temp-fallback и чистый rollback/FK при ошибке `DemoReset`; независимая маршрутизация остальных регрессий #1268 | ~2–3 дня для ведущего среза | 📋 Проектирование |
+
+### Направление У — совместимость встроенного языка 1С
+
+| № | Файл | Фича | Эстимейт | Статус |
+|---|---|---|---|---|
+| 173 | [173-dynamic-new-constructor.md](173-dynamic-new-constructor.md) | Динамический конструктор `Новый(<Тип>, <Параметры>)`: явный AST, общий runtime-dispatch, массив параметров и сквозная regression #1366 | ~2.5–3.5 дня | 📋 Проектирование |
 
 ## Граф зависимостей (архив)
 

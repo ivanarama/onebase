@@ -8,10 +8,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/processor"
+	"github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/widget"
 )
@@ -161,6 +164,63 @@ func TestAppShell_HiddenSubsystem_Forbidden(t *testing.T) {
 	s.appShell(rec, reqWithUser("/ui/app?subsystem=Продажи", storekeeperUser()))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("оболочка вкладок тоже должна гейтить скрытый раздел, получено %d", rec.Code)
+	}
+}
+
+func TestIndex_SubsystemUsesSameLocalizedObjectTitlesAsGlobalHome(t *testing.T) {
+	s := newServerForFormMode(t)
+	s.cfg.Bundle = mustBundle(t, `"Save"`)
+	infoReg := &metadata.InfoRegister{
+		Name: "StockState", Title: "Состояние запасов",
+		Titles: map[string]string{"en": "Stock state"},
+	}
+	rep := &report.Report{
+		Name: "SalesReport", Title: "Отчёт о продажах",
+		Titles: map[string]string{"en": "Sales report"},
+	}
+	proc := &processor.Processor{
+		Name: "Reconcile", Title: "Сверка остатков",
+		Titles: map[string]string{"en": "Reconcile stock"},
+	}
+	s.reg.Load(runtime.LoadOptions{
+		InfoRegs: []*metadata.InfoRegister{infoReg},
+		Reports:  []*report.Report{rep},
+	})
+	s.reg.LoadProcessors([]*processor.Processor{proc})
+	s.reg.LoadSubsystems([]*metadata.Subsystem{{
+		Name: "Operations",
+		Contents: metadata.SubsystemContents{
+			InfoRegs:   []string{infoReg.Name},
+			Reports:    []string{rep.Name},
+			Processors: []string{proc.Name},
+		},
+	}})
+
+	tests := []struct {
+		name string
+		lang string
+		want []string
+	}{
+		{name: "base titles", lang: "ru", want: []string{"Состояние запасов", "Отчёт о продажах", "Сверка остатков"}},
+		{name: "localized titles", lang: "en", want: []string{"Stock state", "Sales report", "Reconcile stock"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			s.cfg.Lang = tc.lang
+			for _, target := range []string{"/ui/", "/ui/?subsystem=Operations"} {
+				rec := httptest.NewRecorder()
+				s.index(rec, httptest.NewRequest(http.MethodGet, target, nil))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("GET %s: status = %d, want 200", target, rec.Code)
+				}
+				body := rec.Body.String()
+				for _, label := range tc.want {
+					if !strings.Contains(body, `title="`+label+`"`) {
+						t.Errorf("GET %s: menu does not contain title %q", target, label)
+					}
+				}
+			}
+		})
 	}
 }
 

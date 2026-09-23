@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,6 +43,12 @@ func (h *handler) cfgAdminUsers(w http.ResponseWriter, r *http.Request) {
 		httpErrorDiv(w, "Не удалось прочитать список пользователей", err)
 		return
 	}
+	lang := resolveLang(r)
+	// JSON-литералы безопасно переживают кавычки, переводы строк и </script> в
+	// переводе; строковая конкатенация с одинарными кавычками этого не гарантирует.
+	sessionEndedJS, _ := json.Marshal(tr(lang, "Сессия конфигуратора завершена — войдите заново"))
+	unexpectedResponseJS, _ := json.Marshal(tr(lang, "Неожиданный ответ сервера"))
+	configuratorLoginURLJS, _ := json.Marshal("/bases/" + b.ID + "/configurator/login")
 
 	// Build language options for the user lang selector
 	langOpts := `<option value="">—</option>`
@@ -136,13 +143,36 @@ func (h *handler) cfgAdminUsers(w http.ResponseWriter, r *http.Request) {
 <script>
 function cfgUserNew(){document.getElementById('cfg-user-new').style.display='block';document.getElementById('cfg-un').focus()}
 function cfgUserRoles(id){cfgAdmin('users/roles?uid='+encodeURIComponent(id))}
+// cfgPost — POST в админку с честным разбором ответа. Ответ обработчика — JSON,
+// но при завершённой сессии до обработчика дело не доходит: middleware отдаёт
+// редирект на форму входа, fetch его проходит и приносит HTML. Раньше r.json()
+// на этом HTML бросал исключение, которое никто не ловил, — кнопка выглядела
+// мёртвой («нажимаю Сохранить, ничего не происходит»). Ошибку обработчика
+// (поле error) тоже превращаем в отказ, чтобы вызывающий не забыл её показать.
+function cfgPost(path, body){
+  return fetch('/bases/` + b.ID + `/configurator/admin/'+path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+    .then(function(r){
+      var ct=r.headers.get('content-type')||'';
+      if(ct.indexOf('json')<0){
+        throw new Error(r.redirected||(r.url||'').indexOf('/configurator/login')>=0
+          ? ` + string(sessionEndedJS) + `
+          : ` + string(unexpectedResponseJS) + `+' (HTTP '+r.status+')');
+      }
+      return r.json();
+    })
+    .then(function(d){
+      if(d&&d.error){throw new Error(d.error)}
+      return d;
+    });
+}
 function cfgUserCreate(){
   var d={login:document.getElementById('cfg-un').value,password:document.getElementById('cfg-up').value,fullName:document.getElementById('cfg-ufn').value,isAdmin:document.getElementById('cfg-ua').checked};
-  fetch('/bases/` + b.ID + `/configurator/admin/users/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)})
-    .then(function(r){return r.json()}).then(function(r){
-      if(r.error){document.getElementById('cfg-user-err').textContent=r.error;document.getElementById('cfg-user-err').style.display='block';return}
-      cfgAdmin('users')
-    })
+  cfgPost('users/create',d)
+    .then(function(){cfgAdmin('users')})
+    .catch(function(e){
+      var box=document.getElementById('cfg-user-err');
+      box.textContent=e.message;box.style.display='block';
+    });
 }
 // cfgConfirm — кастомный модал-подтверждение (WebView2 блокирует window.confirm).
 function cfgConfirm(text, onOk){
@@ -158,21 +188,26 @@ function cfgConfirm(text, onOk){
   cancel.onclick=function(){document.body.removeChild(ov)};
   row.appendChild(ok);row.appendChild(cancel);box.appendChild(row);ov.appendChild(box);document.body.appendChild(ov);
 }
-// cfgInfo — кастомный alert (WebView2 блокирует window.alert).
-function cfgInfo(text){
+// cfgInfo — кастомный alert (WebView2 блокирует window.alert). onClose нужен
+// после отзыва текущей сессии: сначала объясняем переход, затем открываем вход.
+function cfgInfo(text,onClose){
   var ov=document.createElement('div');
   ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:10001;display:flex;align-items:center;justify-content:center';
   var box=document.createElement('div');
   box.style.cssText='background:#fff;padding:18px 22px;border-radius:8px;box-shadow:0 6px 28px rgba(0,0,0,.2);min-width:240px;font-size:13px';
   box.innerHTML='<div style="margin-bottom:12px">'+text+'</div>';
   var ok=document.createElement('button');ok.textContent='OK';ok.style.cssText='background:#1a4a80;color:#fff;border:none;padding:5px 14px;border-radius:4px;cursor:pointer;float:right';
-  ok.onclick=function(){document.body.removeChild(ov)};
+  ok.onclick=function(){document.body.removeChild(ov);if(onClose){onClose()}};
   box.appendChild(ok);ov.appendChild(box);document.body.appendChild(ov);
 }
 function cfgUserDel(id){
   cfgConfirm('Удалить пользователя?', function(){
-    fetch('/bases/` + b.ID + `/configurator/admin/users/delete',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id})})
+    // Отказ здесь штатный (последний админ, последний пользователь), а раньше
+    // ответ вообще не читался: панель обновлялась и пользователь оставался на
+    // месте без единого слова о причине.
+    cfgPost('users/delete',{id:id})
       .then(function(){cfgAdmin('users')})
+      .catch(function(e){cfgInfo('Ошибка: '+e.message)});
   });
 }
 function cfgUserPasswd(id){
@@ -193,35 +228,39 @@ function cfgUserPasswd(id){
   ok.onclick=function(){
     var pw=i1.value, pw2=i2.value;
     if(pw!==pw2){err.textContent='Пароли не совпадают';return}
-    fetch('/bases/` + b.ID + `/configurator/admin/users/passwd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,password:pw})})
-      .then(function(r){return r.json()}).then(function(r){
-        if(r.error){err.textContent=r.error;return}
+    err.textContent='';
+    cfgPost('users/passwd',{id:id,password:pw})
+      .then(function(d){
         document.body.removeChild(ov);
+        if(d.currentSessionEnded){
+          cfgInfo(` + string(sessionEndedJS) + `,function(){window.location.assign(` + string(configuratorLoginURLJS) + `)});
+          return;
+        }
         cfgInfo('Пароль изменён');
       })
+      .catch(function(e){err.textContent=e.message});
   };
   row.appendChild(ok);row.appendChild(cancel);
   box.appendChild(i1);box.appendChild(i2);box.appendChild(err);box.appendChild(row);
   ov.appendChild(box);document.body.appendChild(ov);
   setTimeout(function(){i1.focus()},50);
 }
+// Переключатели ниже сообщали об ошибке через window.alert, который WebView2
+// не показывает: под лаунчером отказ был не виден вовсе.
 function cfgUserDenyPasswd(id,current){
-  fetch('/bases/` + b.ID + `/configurator/admin/users/deny-passwd',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,deny:!current})})
-    .then(function(r){return r.json()}).then(function(r){
-      if(r.error){alert('Ошибка: '+r.error)}else{cfgAdmin('users')}
-    })
+  cfgPost('users/deny-passwd',{id:id,deny:!current})
+    .then(function(){cfgAdmin('users')})
+    .catch(function(e){cfgInfo('Ошибка: '+e.message)});
 }
 function cfgUserShowInList(id,current){
-  fetch('/bases/` + b.ID + `/configurator/admin/users/show-in-list',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,show:!current})})
-    .then(function(r){return r.json()}).then(function(r){
-      if(r.error){alert('Ошибка: '+r.error)}else{cfgAdmin('users')}
-    })
+  cfgPost('users/show-in-list',{id:id,show:!current})
+    .then(function(){cfgAdmin('users')})
+    .catch(function(e){cfgInfo('Ошибка: '+e.message)});
 }
 function cfgUserAIData(id,current){
-  fetch('/bases/` + b.ID + `/configurator/admin/users/ai-data',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,allow:!current})})
-    .then(function(r){return r.json()}).then(function(r){
-      if(r.error){alert('Ошибка: '+r.error)}else{cfgAdmin('users')}
-    })
+  cfgPost('users/ai-data',{id:id,allow:!current})
+    .then(function(){cfgAdmin('users')})
+    .catch(function(e){cfgInfo('Ошибка: '+e.message)});
 }
 function cfgUserLang(id,current){
   var sel=document.createElement('select');
@@ -242,10 +281,9 @@ function cfgUserLang(id,current){
   btnCancel.onclick=close;bg.onclick=close;
   btnOK.onclick=function(){
     var lang=sel.value;close();
-    fetch('/bases/` + b.ID + `/configurator/admin/users/lang',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:id,lang:lang})})
-      .then(function(r){return r.json()}).then(function(r){
-        if(r.error){alert('Error: '+r.error)}else{cfgAdmin('users')}
-      })
+    cfgPost('users/lang',{id:id,lang:lang})
+      .then(function(){cfgAdmin('users')})
+      .catch(function(e){cfgInfo('Ошибка: '+e.message)});
   }
 }
 </script>`
@@ -297,7 +335,7 @@ func (h *handler) cfgAdminUserCreate(w http.ResponseWriter, r *http.Request) {
 		if isPasswordPolicyError(err) {
 			status = http.StatusBadRequest
 		}
-		writeJSON(w, status, map[string]any{"error": err.Error()})
+		writeJSON(w, status, map[string]any{"error": passwordPolicyMessage(lang, err)})
 		return
 	}
 	// До создания первого пользователя текущая страница была открыта без
@@ -371,12 +409,14 @@ func (h *handler) cfgAdminUserPasswd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo := auth.NewRepo(db)
+	currentUser := cfgUserFromContext(r.Context())
+	currentSessionEnded := currentUser != nil && currentUser.ID == req.ID
 	if err := repo.UpdatePassword(r.Context(), req.ID, req.Password); err != nil {
 		status := http.StatusInternalServerError
 		if isPasswordPolicyError(err) {
 			status = http.StatusBadRequest
 		}
-		writeJSON(w, status, map[string]any{"error": err.Error()})
+		writeJSON(w, status, map[string]any{"error": passwordPolicyMessage(lang, err)})
 		return
 	}
 	// Политика плана 78: смена пароля из конфигуратора — админское действие,
@@ -399,13 +439,27 @@ func (h *handler) cfgAdminUserPasswd(w http.ResponseWriter, r *http.Request) {
 		targetLogin = u.Login
 	}
 	logCfgSessionAudit(r, db, "password_change_sessions_revoked", targetLogin, req.ID)
-	writeJSON(w, 200, map[string]any{"ok": true})
+	writeJSON(w, 200, map[string]any{"ok": true, "currentSessionEnded": currentSessionEnded})
 }
 
 func isPasswordPolicyError(err error) bool {
 	return errors.Is(err, auth.ErrPasswordRequired) ||
 		errors.Is(err, auth.ErrPasswordTooShort) ||
 		errors.Is(err, auth.ErrPasswordTooLong)
+}
+
+// passwordPolicyMessage добавляет к отказу политики паролей способ её смягчить.
+// Сам текст ошибки говорит только «пароль не может быть пустым» — из
+// конфигуратора не видно, что пустые пароли вообще включаются, и на тестовом
+// стенде это тупик: админ упирается в запрет, о котором знает лишь исходный код.
+func passwordPolicyMessage(lang string, err error) string {
+	switch {
+	case errors.Is(err, auth.ErrPasswordRequired):
+		return err.Error() + ". " + tr(lang, "Пустые пароли включаются переменной окружения ONEBASE_ALLOW_EMPTY_PASSWORDS=true перед запуском лаунчера.")
+	case errors.Is(err, auth.ErrPasswordTooShort):
+		return err.Error() + ". " + tr(lang, "Минимальная длина задаётся переменной окружения ONEBASE_MIN_PASSWORD_LENGTH перед запуском лаунчера.")
+	}
+	return err.Error()
 }
 
 // logCfgSessionAudit пишет событие сессионного аудита от имени администратора
@@ -842,6 +896,82 @@ func (h *handler) cfgAdminSettings(w http.ResponseWriter, r *http.Request) {
 	if db.GetExecEnabled(r.Context()) {
 		execChecked = "checked"
 	}
+	// Политика паролей — свойство базы (_settings), а не лаунчера. Сохранённое
+	// и действующее значения различаются намеренно: пустое поле оставляет базе
+	// наследование, а подсказка показывает, откуда пришёл текущий минимум.
+	repo := auth.NewRepo(db)
+	stored := repo.AuthPolicy(r.Context())
+	pwPolicy := repo.EffectivePasswordPolicy(r.Context())
+	lang := resolveLang(r)
+	jsText := func(s string) string {
+		s = strings.ReplaceAll(s, `\`, `\\`)
+		s = strings.ReplaceAll(s, `'`, `\'`)
+		s = strings.ReplaceAll(s, "\r", `\r`)
+		return strings.ReplaceAll(s, "\n", `\n`)
+	}
+	storedMinLength := ""
+	if stored.PasswordMinLength != 0 {
+		storedMinLength = strconv.Itoa(stored.PasswordMinLength)
+	}
+	pwEmptyChecked, pwEmptyHint := "", ""
+	if stored.AllowEmptyPasswords {
+		pwEmptyChecked = "checked"
+	}
+	if pwPolicy.AllowEmpty && !stored.AllowEmptyPasswords {
+		pwEmptyHint = " " + escHTML(tr(lang, "Сейчас пустые пароли разрешены переменной окружения ONEBASE_ALLOW_EMPTY_PASSWORDS: снятая галка их не запретит, уберите переменную у процесса базы.")) //nolint:gosec // G101: это подсказка администратору с именем переменной окружения, а не учётные данные
+	}
+	passwordSection := fmt.Sprintf(`<div style="font-size:13px;font-weight:600;margin:16px 0 8px">%s</div>
+	  <label style="font-size:12px;display:flex;align-items:center;gap:10px">
+	    %s:
+	    <input type="number" id="st-pwlen" min="1" max="%d" value="%s" placeholder="%d" style="width:90px;padding:3px 6px;border:1px solid #cbd5e1;border-radius:3px;font-size:12px">
+	  </label>
+	  <div style="font-size:11px;color:#666;margin-top:6px">%s %s <strong><span id="st-pweffective">%d</span></strong> (<span id="st-pwsource">%s</span>). %s</div>
+	  <label style="font-size:12px;display:flex;align-items:center;gap:8px;margin-top:12px">
+	    <input type="checkbox" id="st-pwempty" %s>
+	    %s
+	  </label>
+	  <div style="font-size:11px;color:#666;margin-top:6px">%s%s</div>
+	  <button onclick="cfgSettingsSave()" style="margin-top:12px;background:#16a34a;color:#fff;border:none;padding:5px 14px;border-radius:3px;cursor:pointer;font-size:12px">%s</button>
+	  <span id="st-msg" style="font-size:11px;margin-left:8px"></span>`,
+		escHTML(tr(lang, "Пароли")),
+		escHTML(tr(lang, "Минимальная длина пароля")), auth.MaxPasswordLength,
+		storedMinLength, pwPolicy.MinLength,
+		escHTML(fmt.Sprintf(tr(lang, "Минимум — от 1 до %d символов. Сам пароль — не более %d байт UTF-8 из-за ограничения bcrypt, поэтому для не-ASCII фактический максимум символов меньше."), auth.MaxPasswordLength, auth.MaxPasswordLength)),
+		escHTML(tr(lang, "Действующее значение:")), pwPolicy.MinLength,
+		escHTML(passwordMinLengthSourceText(lang, pwPolicy.MinLengthSource)),
+		escHTML(tr(lang, "Оставьте поле пустым, чтобы наследовать умолчание процесса и удалить сохранённое переопределение.")),
+		pwEmptyChecked, escHTML(tr(lang, "Разрешить пустые пароли")),
+		escHTML(tr(lang, "Учётная запись с пустым паролем защищена только логином. Режим стенда и киоска, не рабочей базы.")), pwEmptyHint,
+		escHTML(tr(lang, "Сохранить политику паролей")))
+	settingsScript := fmt.Sprintf(`<script>
+function cfgSettingsSave(){
+  var n=parseInt(document.getElementById('st-pagesize').value,10);
+  var c=document.getElementById('st-collapsenav').checked;
+  var net=document.getElementById('st-net').checked;
+  var exec=document.getElementById('st-exec').checked;
+  var fm=document.getElementById('form_open_mode').value;
+  var pwlen=document.getElementById('st-pwlen').value;
+  var pwempty=document.getElementById('st-pwempty').checked;
+  fetch('/bases/%s/configurator/admin/settings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({list_page_size:n,collapsible_nav:c,network_enabled:net,exec_enabled:exec,form_open_mode:fm,password_min_length:pwlen,allow_empty_passwords:pwempty})})
+    .then(function(r){return r.json()})
+    .then(function(d){
+      var m=document.getElementById('st-msg');
+      if(d.ok){
+        m.textContent='%s';m.style.color='#16a34a';
+        if(d.value){document.getElementById('st-pagesize').value=d.value;}
+        if(Object.prototype.hasOwnProperty.call(d,'password_min_length_stored')){
+          var pw=document.getElementById('st-pwlen');
+          pw.value=d.password_min_length_stored||'';
+          pw.placeholder=d.password_min_length_effective;
+          document.getElementById('st-pweffective').textContent=d.password_min_length_effective;
+          document.getElementById('st-pwsource').textContent=d.password_min_length_source_label;
+        }
+      }
+      else{m.textContent=(d.error||'%s');m.style.color='#c00';}
+    })
+    .catch(function(){var m=document.getElementById('st-msg');m.textContent='%s';m.style.color='#c00';});
+}
+</script>`, jsText(b.ID), jsText(tr(lang, "Сохранено")), jsText(tr(lang, "Ошибка")), jsText(tr(lang, "Ошибка сети")))
 	formMode := db.GetFormOpenMode(r.Context())
 	pagesSel, tabsSel := "", ""
 	if formMode == storage.FormModeTabs {
@@ -883,27 +1013,11 @@ func (h *handler) cfgAdminSettings(w http.ResponseWriter, r *http.Request) {
 	    Разрешить выполнение команд ОС
 	  </label>
 	  <div style="font-size:11px;color:#666;margin-top:6px">Опасно: DSL-функция <code>ВыполнитьКоманду</code> запускает процессы на сервере (исполнение кода). Включайте только на доверенной/локальной базе. По умолчанию и после восстановления из бэкапа — выключено.</div>
-	  <button onclick="cfgSettingsSave()" style="margin-top:12px;background:#16a34a;color:#fff;border:none;padding:5px 14px;border-radius:3px;cursor:pointer;font-size:12px">Сохранить</button>
-	  <span id="st-msg" style="font-size:11px;margin-left:8px"></span>
+	  %s
 	</div>
 </div>
-<script>
-function cfgSettingsSave(){
-  var n=parseInt(document.getElementById('st-pagesize').value,10);
-  var c=document.getElementById('st-collapsenav').checked;
-  var net=document.getElementById('st-net').checked;
-  var exec=document.getElementById('st-exec').checked;
-  var fm=document.getElementById('form_open_mode').value;
-  fetch('/bases/%s/configurator/admin/settings/save',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({list_page_size:n,collapsible_nav:c,network_enabled:net,exec_enabled:exec,form_open_mode:fm})})
-    .then(function(r){return r.json()})
-    .then(function(d){
-      var m=document.getElementById('st-msg');
-      if(d.ok){m.textContent='Сохранено';m.style.color='#16a34a';if(d.value){document.getElementById('st-pagesize').value=d.value;}}
-      else{m.textContent=(d.error||'Ошибка');m.style.color='#c00';}
-    })
-    .catch(function(){var m=document.getElementById('st-msg');m.textContent='Ошибка сети';m.style.color='#c00';});
-}
-</script>`, storage.MaxListPageSize, pageSize, storage.MaxListPageSize, navChecked, pagesSel, tabsSel, netChecked, execChecked, b.ID)
+%s`, storage.MaxListPageSize, pageSize, storage.MaxListPageSize, navChecked, pagesSel, tabsSel, netChecked, execChecked,
+		passwordSection, settingsScript)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	writeBody(w, []byte(html))
 }
@@ -918,14 +1032,25 @@ func (h *handler) cfgAdminSettingsSave(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		ListPageSize   int    `json:"list_page_size"`
-		CollapsibleNav *bool  `json:"collapsible_nav"`
-		NetworkEnabled *bool  `json:"network_enabled"`
-		ExecEnabled    *bool  `json:"exec_enabled"`
-		FormOpenMode   string `json:"form_open_mode"`
+		ListPageSize        int             `json:"list_page_size"`
+		CollapsibleNav      *bool           `json:"collapsible_nav"`
+		NetworkEnabled      *bool           `json:"network_enabled"`
+		ExecEnabled         *bool           `json:"exec_enabled"`
+		FormOpenMode        string          `json:"form_open_mode"`
+		PasswordMinLength   json.RawMessage `json:"password_min_length"`
+		AllowEmptyPasswords *bool           `json:"allow_empty_passwords"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeJSON(w, 400, map[string]any{"error": err.Error()})
+		return
+	}
+	// Валидация всего запроса обязана закончиться до первой записи. RawMessage
+	// отличает отсутствующее поле старого клиента от явного JSON null. Новый
+	// клиент отправляет исходную строку (пустая снимает override), а null не
+	// считается сбросом и не должен разрешать частичное сохранение настроек.
+	passwordMinLength, err := parsePasswordMinLength(req.PasswordMinLength)
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": passwordMinLengthInputError(resolveLang(r))})
 		return
 	}
 	db, err := getAuthDB(r.Context(), b)
@@ -961,7 +1086,112 @@ func (h *handler) cfgAdminSettingsSave(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	writeJSON(w, 200, map[string]any{"ok": true, "value": db.GetListPageSize(r.Context())})
+	// Политика паролей живёт не в настройках лаунчера, а в политике
+	// аутентификации базы (_settings, план 84) — там же, где её правит
+	// Предприятие. Читаем и меняем только свои поля, чтобы не затереть
+	// требование второго фактора и sso_only.
+	if passwordMinLength.Present || req.AllowEmptyPasswords != nil {
+		if err := savePasswordPolicy(r, db, passwordMinLength, req.AllowEmptyPasswords); err != nil {
+			status := http.StatusInternalServerError
+			if errors.Is(err, errPasswordMinLengthRange) {
+				status = http.StatusBadRequest
+			}
+			message := err.Error()
+			if status == http.StatusBadRequest {
+				message = passwordMinLengthInputError(resolveLang(r))
+			}
+			writeJSON(w, status, map[string]any{"error": message})
+			return
+		}
+	}
+	repo := auth.NewRepo(db)
+	storedPolicy := repo.AuthPolicy(r.Context())
+	effectivePolicy := repo.EffectivePasswordPolicy(r.Context())
+	lang := resolveLang(r)
+	writeJSON(w, 200, map[string]any{
+		"ok":                               true,
+		"value":                            db.GetListPageSize(r.Context()),
+		"password_min_length_stored":       storedPolicy.PasswordMinLength,
+		"password_min_length_effective":    effectivePolicy.MinLength,
+		"password_min_length_source":       effectivePolicy.MinLengthSource,
+		"password_min_length_source_label": passwordMinLengthSourceText(lang, effectivePolicy.MinLengthSource),
+	})
+}
+
+// errPasswordMinLengthRange — длина вне допустимого диапазона. Отдельной
+// ошибкой, чтобы обработчик отличил ввод администратора от сбоя базы.
+var errPasswordMinLengthRange = errors.New("минимальная длина пароля вне допустимого диапазона")
+
+type passwordMinLengthUpdate struct {
+	Present bool
+	Value   int // 0 means remove the database override and inherit the process default.
+}
+
+// parsePasswordMinLength проверяет присутствующее JSON-поле до любых записей.
+// Отсутствие поля сохраняет совместимость со старыми клиентами экрана настроек;
+// пустая строка снимает override. Целая строка нужна браузерной форме, чтобы
+// дробь и экспонента дошли до сервера без потерь; null и иная JSON-форма —
+// ошибка ввода.
+func parsePasswordMinLength(raw json.RawMessage) (passwordMinLengthUpdate, error) {
+	if len(raw) == 0 {
+		return passwordMinLengthUpdate{}, nil
+	}
+	text := string(raw)
+	if raw[0] == '"' {
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return passwordMinLengthUpdate{}, fmt.Errorf("%w: допустимо от 1 до %d", errPasswordMinLengthRange, auth.MaxPasswordLength)
+		}
+		text = strings.TrimSpace(text)
+		if text == "" {
+			return passwordMinLengthUpdate{Present: true}, nil
+		}
+	}
+	for _, char := range text {
+		if char < '0' || char > '9' {
+			return passwordMinLengthUpdate{}, fmt.Errorf("%w: допустимо от 1 до %d", errPasswordMinLengthRange, auth.MaxPasswordLength)
+		}
+	}
+	n, err := strconv.Atoi(text)
+	if err != nil || n < 1 || n > auth.MaxPasswordLength {
+		return passwordMinLengthUpdate{}, fmt.Errorf("%w: допустимо от 1 до %d", errPasswordMinLengthRange, auth.MaxPasswordLength)
+	}
+	return passwordMinLengthUpdate{Present: true, Value: n}, nil
+}
+
+// savePasswordPolicy обновляет в политике аутентификации базы только поля
+// паролей, оставляя остальные (второй фактор, sso_only) как есть.
+func savePasswordPolicy(r *http.Request, db *storage.DB, minLength passwordMinLengthUpdate, allowEmpty *bool) error {
+	repo := auth.NewRepo(db)
+	policy := repo.AuthPolicy(r.Context())
+	if minLength.Present {
+		if minLength.Value != 0 && (minLength.Value < 1 || minLength.Value > auth.MaxPasswordLength) {
+			return fmt.Errorf("%w: допустимо от 1 до %d", errPasswordMinLengthRange, auth.MaxPasswordLength)
+		}
+		policy.PasswordMinLength = minLength.Value
+	}
+	if allowEmpty != nil {
+		policy.AllowEmptyPasswords = *allowEmpty
+	}
+	if err := repo.SaveAuthPolicy(r.Context(), policy); err != nil {
+		return err
+	}
+	logCfgSessionAudit(r, db, "password_policy_saved", "", "")
+	return nil
+}
+
+func passwordMinLengthInputError(lang string) string {
+	return fmt.Sprintf(tr(lang, "Минимальная длина пароля должна быть целым числом от 1 до %d или пустой для наследования"), auth.MaxPasswordLength)
+}
+
+func passwordMinLengthSourceText(lang string, source auth.PasswordMinLengthSource) string {
+	switch source {
+	case auth.PasswordMinLengthSourceDatabase:
+		return tr(lang, "настройка базы")
+	case auth.PasswordMinLengthSourceEnvironment:
+		return tr(lang, "переменная ONEBASE_MIN_PASSWORD_LENGTH")
+	default:
+		return tr(lang, "умолчание процесса")
+	}
 }
 
 func (h *handler) cfgAdminAbout(w http.ResponseWriter, r *http.Request) {

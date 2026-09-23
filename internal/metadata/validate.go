@@ -21,7 +21,7 @@ func ValidateConstants(constants []*Constant, entities []*Entity, enums []*Enum)
 		enumNames[en.Name] = true
 	}
 	for _, c := range constants {
-		if c.RefEntity != "" && !entityNames[c.RefEntity] {
+		if c.RefEntity != "" && !entityNames[c.RefEntity] && !IsSystemRefTarget(c.RefEntity) {
 			return fmt.Errorf("constant %s references unknown entity %s", c.Name, c.RefEntity)
 		}
 		if c.EnumName != "" && !enumNames[c.EnumName] {
@@ -42,7 +42,7 @@ func Validate(entities []*Entity, enums []*Enum) error {
 	}
 	for _, e := range entities {
 		for _, f := range e.Fields {
-			if f.RefEntity != "" && !entityNames[f.RefEntity] {
+			if f.RefEntity != "" && !entityNames[f.RefEntity] && !IsSystemRefTarget(f.RefEntity) {
 				return fmt.Errorf("entity %s: field %s references unknown entity %s", e.Name, f.Name, f.RefEntity)
 			}
 			if f.EnumName != "" && len(enums) > 0 && !enumNames[f.EnumName] {

@@ -16,3 +16,15 @@ func TestManagedRefCreateBehavior(t *testing.T) {
 		t.Fatalf("node ref-editor inline-create behavior test: %v\n%s", err, output)
 	}
 }
+
+func TestRefCreateModalBehavior(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required for the ref-create modal regression test")
+	}
+	cmd := exec.Command(node, "--test", "static/ref_create_modal_behavior_test.js") //nolint:gosec // test-only executable resolved by exec.LookPath
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("node ref-create modal behavior test: %v\n%s", err, output)
+	}
+}

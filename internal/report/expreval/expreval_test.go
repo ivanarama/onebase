@@ -221,6 +221,30 @@ func TestEvaluator_ОпасныеКонструкцииОтклоняютсяД�
 	}
 }
 
+func TestEvaluator_ПропущенныйАргументНазванНаЯзыкеПользователя(t *testing.T) {
+	ev := New(interpreter.New(), DefaultProfile())
+	_, _, err := ev.EvalNum(`Строка(1,,2)`, compose.Row{})
+	if err == nil {
+		t.Fatal("формула с пропущенным аргументом принята")
+	}
+	if !strings.Contains(err.Error(), "пропущенный аргумент") {
+		t.Fatalf("ошибка не называет конструкцию языка: %v", err)
+	}
+	if strings.Contains(err.Error(), "MissingArg") || strings.Contains(err.Error(), "*ast.") {
+		t.Fatalf("ошибка раскрывает внутренний тип AST: %v", err)
+	}
+}
+
+func TestForbiddenFormulaExprDescription_НеРаскрываетНеизвестныйТип(t *testing.T) {
+	got := forbiddenFormulaExprDescription(&ast.Ident{})
+	if got != "неподдерживаемое выражение" {
+		t.Fatalf("fallback = %q", got)
+	}
+	if strings.Contains(got, "Ident") || strings.Contains(got, "*ast.") {
+		t.Fatalf("fallback раскрывает внутренний тип AST: %q", got)
+	}
+}
+
 func TestEvaluator_ОшибкаПравилаНеМеняетПорядокСледующихПравил(t *testing.T) {
 	ev := New(interpreter.New(), DefaultProfile())
 	row := compose.Row{"Сумма": float64(150)}

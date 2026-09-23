@@ -35,6 +35,7 @@ func TestAppShell_Render(t *testing.T) {
 		`'obTabs'`,                 // ключ sessionStorage для restore
 		`source==='obOpenTab'`,     // приём запросов из iframe
 		`source==='obCloseTab'`,    // закрытие вкладки по крестику внутри формы
+		`window.obCloseTabByURL`,   // команда ui.закрытьФорму закрывает вкладку по адресу формы
 		`<header class="topbar">`,  // переиспользован nav (хром оболочки)
 		`ob-tab-dup`,               // кнопка «новый экземпляр» (#130)
 		`{allowDup:true}`,          // дубликат = новый экземпляр

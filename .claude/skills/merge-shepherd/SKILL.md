@@ -17,9 +17,17 @@ description: Безопасное слияние PR ivanarama/onebase через
 python -m promptpilot.project_pipeline --config pipelinectl.json next merge
 ```
 
+Команду `next <stage>` запускай ровно один раз за прогон. Если средство
+исполнения вернуло идентификатор продолжающегося процесса (session/cell ID),
+исходный процесс уже работает: опрашивай/возобновляй только этот идентификатор
+до терминального результата. Пустой вывод или истечение локального окна ожидания
+не разрешают запускать второй `next` параллельно.
+
 Разбери поле `action`:
 
 - `merge` — выполни показанную команду `complete merge` с неизменённым `lease`;
+- `cleanup` — merge уже подтверждён GitHub; выполни показанную команду
+  `complete merge-cleanup` с неизменённым `lease`, не вызывая merge повторно;
 - `wait` или `empty` — ничего не меняй и закончи `ИТОГ: ПУСТО`;
 - `fallback` — полностью прочитай
   [references/legacy-protocol.md](references/legacy-protocol.md) и продолжи по нему;
@@ -30,6 +38,15 @@ review-proof, новым trusted `ship` и зелёными обязательн
 compare-and-merge он повторяет стабильный GraphQL snapshot, HEAD/label/proof и
 CI-гейты. Base-sync, carry, legacy re-ship, конфликт и recovery всегда уходят в
 полную процедуру.
+
+До merge CLI публикует точный `pp:merge-cleanup-intent`. Если процесс оборвался
+после успешного merge, следующий запуск находит intent вне списка открытых PR и
+возвращает `action=cleanup`: проверяет серверный `MergedEvent`, снимает
+`in-work` только с закрытых same-repository issues, идемпотентно завершает
+PLAN-handoff, снимает `ship` и последним пишет `pp:merge-cleanup-done`.
+Обычная очередь не продолжается, пока самый ранний intent не завершён или не
+передан человеку как неоднозначный. Это recovery служебной транзакции, а не
+повторное содержательное ревью и не второй merge.
 
 После успешного merge `pipelinectl` также распознаёт plan-PR с соседними
 строками `Plan-Issue: #N` и `Plan-Path: Plans/NNN-slug.md`. Он проверяет, что

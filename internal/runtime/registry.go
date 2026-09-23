@@ -540,6 +540,7 @@ type PrintFormRef struct {
 	Document string
 	Kind     PrintFormKind
 	External bool // форма из внешнего контура (только для Legacy)
+	HasXLSX  bool // рядом с макетом есть исходный <имя>.template.xlsx
 	Decl     *printform.LayoutForm
 	DSL      *printform.DSLPrintForm
 	Legacy   *printform.PrintForm
@@ -564,7 +565,7 @@ func (r *Registry) GetAllPrintForms(entityName string) []PrintFormRef {
 			continue
 		}
 		seen[ln] = true
-		refs = append(refs, PrintFormRef{Name: lf.Name, Document: lf.Document, Kind: PrintFormDeclarative, Decl: lf})
+		refs = append(refs, PrintFormRef{Name: lf.Name, Document: lf.Document, Kind: PrintFormDeclarative, HasXLSX: len(lf.XLSXTemplate) > 0, Decl: lf})
 	}
 	for _, df := range r.dslPrintForms[key] {
 		ln := strings.ToLower(df.Name)
@@ -598,7 +599,7 @@ func (r *Registry) GetAllPrintForms(entityName string) []PrintFormRef {
 			continue
 		}
 		seen[ln] = true
-		refs = append(refs, PrintFormRef{Name: lf.Name, Document: lf.Document, Kind: PrintFormDeclarative, External: true, Decl: lf})
+		refs = append(refs, PrintFormRef{Name: lf.Name, Document: lf.Document, Kind: PrintFormDeclarative, External: true, HasXLSX: len(lf.XLSXTemplate) > 0, Decl: lf})
 	}
 	return refs
 }

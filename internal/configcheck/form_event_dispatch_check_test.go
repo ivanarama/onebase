@@ -30,7 +30,7 @@ func projWithFormHandlers(formHandlers map[metadata.FormEventType]string, el *me
 
 func TestCheckFormEventDispatch_НевызываемоеСобытиеФормыПредупреждает(t *testing.T) {
 	warns := CheckFormEventDispatch(projWithFormHandlers(map[metadata.FormEventType]string{
-		metadata.FormEventBeforeClose: "ПередЗакрытиемФормы",
+		metadata.FormEventOnClose: "ПриЗакрытииФормы",
 	}, nil))
 	if len(warns) != 1 {
 		t.Fatalf("ожидалось 1 предупреждение, получено %d: %+v", len(warns), warns)
@@ -44,7 +44,7 @@ func TestCheckFormEventDispatch_НевызываемоеСобытиеФормы
 	}
 	// Сообщение обязано называть и событие, и процедуру: конфигуратор ищет в
 	// .form.os именно процедуру, а событие — в .form.yaml.
-	if !strings.Contains(w.Message, "ПередЗакрытием") || !strings.Contains(w.Message, "ПередЗакрытиемФормы") {
+	if !strings.Contains(w.Message, "ПриЗакрытии") || !strings.Contains(w.Message, "ПриЗакрытииФормы") {
 		t.Errorf("сообщение не называет событие и процедуру: %q", w.Message)
 	}
 }
@@ -156,12 +156,12 @@ elements:
     data_path: Объект.Наименование
 events:
   ПриОткрытии: ПриОткрытииФормы
-  ПередЗакрытием: ПередЗакрытиемФормы
+  ПриЗакрытии: ПриЗакрытииФормы
 `)
 	mkFile(t, filepath.Join(dir, "forms", "контрагент", "объекта.form.os"), `Процедура ПриОткрытииФормы()
 КонецПроцедуры
 
-Процедура ПередЗакрытиемФормы()
+Процедура ПриЗакрытииФормы()
 	Сообщить("Прощай");
 КонецПроцедуры
 `)
@@ -181,7 +181,7 @@ events:
 	if found == nil {
 		t.Fatalf("нет предупреждения о невызываемом событии: %+v", res.Warnings)
 	}
-	if !strings.Contains(found.Message, "ПередЗакрытием") {
+	if !strings.Contains(found.Message, "ПриЗакрытии") {
 		t.Errorf("предупреждение не называет событие: %q", found.Message)
 	}
 	if strings.Contains(found.Message, "ПриОткрытии") {

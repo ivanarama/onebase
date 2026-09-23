@@ -37,7 +37,17 @@ func (s *Server) eventRefOptions(ctx context.Context, form *metadata.FormModule,
 		if _, err := uuid.Parse(id); err != nil {
 			continue
 		}
-		refEntity := s.reg.GetEntity(eventRefEntityName(form, entity, key))
+		refName := eventRefEntityName(form, entity, key)
+		// Учётные записи — не сущность конфигурации: <option> для присвоенного
+		// обработчиком значения строится напрямую по учётке, иначе присвоенная
+		// скрытая (show_in_list=false) учётка выпадала бы из <select> (#1646).
+		if metadata.IsSystemRefTarget(refName) {
+			if row := s.userSelectionRow(ctx, id); row != nil {
+				out[key] = []map[string]any{row}
+			}
+			continue
+		}
+		refEntity := s.reg.GetEntity(refName)
 		if refEntity == nil {
 			continue
 		}
@@ -59,10 +69,8 @@ func (s *Server) eventRefOptions(ctx context.Context, form *metadata.FormModule,
 // реквизита формы ничем не связано с именами полей сущности и вполне может
 // совпасть, а шаблон в этом случае рисует поле сущности.
 //
-// Служебное `_users` отсеивается само: это не сущность конфигурации, GetEntity
-// её не знает. Отдельного лечения оно и не требует — usersForSelection отдаёт
-// всех пользователей без предела, поэтому текущее значение из списка не
-// выпадает.
+// Служебное `_users` — не сущность конфигурации, GetEntity её не знает:
+// <option> присвоенной учётки строится напрямую (userSelectionRow), см. #1646.
 func eventRefEntityName(form *metadata.FormModule, entity *metadata.Entity, key string) string {
 	if f, ok := entityFieldByName(entity, key); ok {
 		return f.RefEntity
