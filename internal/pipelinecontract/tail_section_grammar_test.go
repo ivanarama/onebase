@@ -137,10 +137,21 @@ func TestTailSectionDashOnlyWithEmptyTail(t *testing.T) {
 
 // Грамматика обязана быть описана в ОБЕИХ процедурах: контракт, записанный
 // только у одной стороны, — ровно та поломка, из-за которой заведена #1360.
+//
+// Основной SKILL.md и references/legacy-protocol.md загружаются исполнителем
+// РАЗДЕЛЬНО, поэтому каждый producer-файл проверяется своим requireAll:
+// объединённый текст хелпера `skill` маскировал пропуск правила в одном из
+// файлов — «записано где-то» вместо «записано везде, куда читает
+// исполнитель» (#1610). Сам хелпер не менялся: его объединение нужно другим
+// контрактным тестам.
 func TestTailSectionGrammarStatedByBothSides(t *testing.T) {
 	consumer := repositoryFile(t, ".claude", "skills", "tail-issues", "SKILL.md")
 	requireAll(t, consumer, "[выброс]", "fail closed", "с отступа", "Вердикт:")
 
-	producer := skill(t, "review-queue")
-	requireAll(t, producer, "Хвост:", "с отступом", "pp:tail=0", "Свободный абзац")
+	requireAll(t,
+		repositoryFile(t, ".claude", "skills", "review-queue", "SKILL.md"),
+		"Хвост:", "с отступом", "pp:tail=0", "Свободный абзац")
+	requireAll(t,
+		repositoryFile(t, ".claude", "skills", "review-queue", "references", "legacy-protocol.md"),
+		"Хвост:", "с отступом", "pp:tail=0", "Свободный абзац")
 }
