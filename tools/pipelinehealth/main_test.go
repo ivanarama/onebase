@@ -1001,3 +1001,199 @@ func hasIssueFinding(result report, code string, issue int) bool {
 	}
 	return false
 }
+
+// #1605: после штатного v1-abort метка ship уже снята, а диагностика
+// base_sync_v1_abort_waiting_review требует родителей HEAD. Гейт загрузки
+// родителей проверяется таблицей, публичный путь загрузки — прогоном команды
+// с офлайн-заглушкой gh.
+func TestAbortMarkerWantsHeadParentsGate(t *testing.T) {
+	comment := func(body string, edited bool) apiComment {
+		stamp := "2026-09-01T00:00:00Z"
+		later := stamp
+		if edited {
+			later = "2026-09-02T00:00:00Z"
+		}
+		return apiComment{ID: 35, CreatedAt: stamp, UpdatedAt: later, User: apiUser{Login: "ivanarama"}, Body: body}
+	}
+	marker := syncV1Abort(30, headC)
+
+	pr := func(comments ...apiComment) apiPull {
+		item := testPR(1464, headC, "reviewed")
+		item.Comments = comments
+		return item
+	}
+	cases := []struct {
+		name string
+		pr   apiPull
+		want bool
+	}{
+		{"trusted marker for current head", pr(comment(marker, false)), true},
+		{"foreign author is not trusted", pr(func() apiComment { c := comment(marker, false); c.User.Login = "someone"; return c }()), false},
+		{"edited marker is not trusted", pr(comment(marker, true)), false},
+		{"marker for another head", pr(comment(syncV1Abort(30, headA), false)), false},
+		{"no marker", pr(comment(completion(headA, 10, 15), false)), false},
+	}
+	for _, c := range cases {
+		if got := abortMarkerWantsHeadParents(c.pr, "ivanarama"); got != c.want {
+			t.Errorf("%s: wants parents = %v, want %v", c.name, got, c.want)
+		}
+	}
+
+	draft := pr(comment(marker, false))
+	draft.Draft = true
+	if abortMarkerWantsHeadParents(draft, "ivanarama") {
+		t.Error("draft pull requested head parents")
+	}
+	offBase := pr(comment(marker, false))
+	offBase.Base.Ref = "release"
+	if abortMarkerWantsHeadParents(offBase, "ivanarama") {
+		t.Error("non-main base requested head parents")
+	}
+}
+
+// buildGhStub собирает офлайн-заглушку gh и возвращает путь к бинарю.
+func buildGhStub(t *testing.T) string {
+	t.Helper()
+	stubPath := filepath.Join(t.TempDir(), "ghstub.exe")
+	//nolint:gosec // G204: fixed package path, test-owned output directory.
+	build := exec.Command("go", "build", "-o", stubPath, "./tools/pipelinehealth/internal/ghstub")
+	build.Dir = repoRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build ghstub: %v\n%s", err, out)
+	}
+	return stubPath
+}
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// writeGhStubFixture пишет построчные JSON-объекты в каталог данных заглушки.
+func writeGhStubFixture(t *testing.T, dir, name string, objects ...any) {
+	t.Helper()
+	var b strings.Builder
+	for _, object := range objects {
+		data, err := json.Marshal(object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.Write(data)
+		b.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestV1AbortWithoutShipLoadsHeadParentsAndStaysOrdinaryReview(t *testing.T) {
+	stub := buildGhStub(t)
+	dataDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "requests.log")
+
+	stamp := "2026-09-01T00:00:00Z"
+	trusted := func(id int64, body string) apiComment {
+		return apiComment{ID: id, CreatedAt: stamp, UpdatedAt: stamp, User: apiUser{Login: "ivanarama"}, Body: body}
+	}
+	writeGhStubFixture(t, dataDir, "pulls.json", testPR(1464, headC, "reviewed"))
+	writeGhStubFixture(t, dataDir, "comments.json",
+		trusted(20, completion(headA, 10, 15)),
+		trusted(30, syncIntent(headA, 10, 15, 20)),
+		trusted(35, syncV1Abort(30, headC)))
+	writeGhStubFixture(t, dataDir, "commit.json",
+		map[string]any{"parents": []map[string]string{{"sha": headA}, {"sha": headB}}})
+	issuesPath := filepath.Join(t.TempDir(), "issues.json")
+	if err := os.WriteFile(issuesPath, []byte("[]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	//nolint:gosec // G204: fixed executable and flags, test-owned temporary paths.
+	command := exec.Command("go", "run", ".", "-json", "-issues", issuesPath,
+		"-contract", filepath.Join("..", "..", ".claude", "skills", "review-queue", "SKILL.md"))
+	command.Env = append(os.Environ(),
+		"GH_EXE="+stub,
+		"GHSTUB_DATA="+dataDir,
+		"GHSTUB_LOG="+logPath)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pipelinehealth failed: %v\n%s", err, output)
+	}
+	var got report
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode pipelinehealth output: %v\n%s", err, output)
+	}
+
+	// Родители запрошены и без ship: диагностика увидела abort.
+	requests, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(requests), "/commits/"+headC) {
+		t.Fatalf("head parents were not requested without ship:\n%s", requests)
+	}
+	if !hasFinding(got, "base_sync_v1_abort_waiting_review") {
+		t.Fatalf("abort waiting-review stayed invisible: %+v", got.Findings)
+	}
+	// PR остаётся обычным содержательным REVIEW: не владелец интеграционной
+	// полосы и не кандидат MERGE.
+	if got.IntegrationOwner != nil {
+		t.Fatalf("aborted PR became the integration owner: %+v", got.IntegrationOwner)
+	}
+	if len(got.MergeCandidates) != 0 {
+		t.Fatalf("aborted PR became a merge candidate: %+v", got.MergeCandidates)
+	}
+	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 1464 ||
+		got.ReviewCandidates[0].Stage != "review" {
+		t.Fatalf("aborted PR did not return to ordinary review: %+v", got.ReviewCandidates)
+	}
+}
+
+func TestHeadParentsReadFailureFailsPublicRun(t *testing.T) {
+	stub := buildGhStub(t)
+	dataDir := t.TempDir()
+
+	stamp := "2026-09-01T00:00:00Z"
+	trusted := func(id int64, body string) apiComment {
+		return apiComment{ID: id, CreatedAt: stamp, UpdatedAt: stamp, User: apiUser{Login: "ivanarama"}, Body: body}
+	}
+	writeGhStubFixture(t, dataDir, "pulls.json", testPR(1464, headC, "reviewed"))
+	writeGhStubFixture(t, dataDir, "comments.json",
+		trusted(20, completion(headA, 10, 15)),
+		trusted(30, syncIntent(headA, 10, 15, 20)),
+		trusted(35, syncV1Abort(30, headC)))
+	issuesPath := filepath.Join(t.TempDir(), "issues.json")
+	if err := os.WriteFile(issuesPath, []byte("[]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	//nolint:gosec // G204: fixed executable and flags, test-owned temporary paths.
+	command := exec.Command("go", "run", ".", "-json", "-issues", issuesPath,
+		"-contract", filepath.Join("..", "..", ".claude", "skills", "review-queue", "SKILL.md"))
+	command.Env = append(os.Environ(),
+		"GH_EXE="+stub,
+		"GHSTUB_DATA="+dataDir,
+		"GHSTUB_FAIL_COMMIT=1")
+	if output, err := command.CombinedOutput(); err == nil {
+		t.Fatalf("head parents read failure was hidden by a successful result:\n%s", output)
+	}
+}
+
+func TestBaseSyncV1AbortWithoutMergeShapeIsNotDiagnosed(t *testing.T) {
+	item := testPR(1464, headC, "reviewed")
+	item.HeadParents = []string{headA} // обычный одно-родительский push, не base-sync
+	item = addComment(item, 20, completion(headA, 10, 15))
+	item = addComment(item, 30, syncIntent(headA, 10, 15, 20))
+	item = addComment(item, 35, syncV1Abort(30, headC))
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if hasFinding(got, "base_sync_v1_abort_waiting_review") {
+		t.Fatalf("abort recognised without the two-parent merge shape: %+v", got.Findings)
+	}
+	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 1464 {
+		t.Fatalf("ordinary review candidate lost: %+v", got.ReviewCandidates)
+	}
+}
