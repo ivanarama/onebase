@@ -2274,6 +2274,27 @@ function listActionsBtnClick(e, btn) {
 // переход по ссылке и возврат назад не должны сами забирать фокус в поиск.
 var OB_LIST_SEARCH_FOCUS = 'ob-list-search-focus';
 
+// Ключ отметки привязан к вкладке оболочки. Вкладки — same-origin iframe с
+// общим sessionStorage, и один общий ключ позволял вкладкам глотать отметку
+// друг друга: A читал отметку B, расходовал её и отклонял по pathname, B
+// оставался без ничего (#1599). Имя фрейма «ob-tab-<id>» ставит оболочка
+// (tabs.go): оно переживает навигацию внутри iframe, восстанавливается вместе
+// с вкладками после перезапуска оболочки и различает два экземпляра одного
+// URL. Страница без оболочки (открыта напрямую) продолжает пользоваться общим
+// ключом — в окне без вкладок глотать отметку некому.
+function obListSearchKey() {
+  var frame = null;
+  try {
+    frame = window.frameElement;
+  } catch (e) {
+    frame = null;
+  }
+  if (frame && typeof frame.name === 'string' && frame.name.indexOf('ob-tab-') === 0) {
+    return OB_LIST_SEARCH_FOCUS + ':' + frame.name;
+  }
+  return OB_LIST_SEARCH_FOCUS;
+}
+
 function obListSearchStorage() {
   // В приватном режиме и при запрещённых сайту данных бросает сам доступ к
   // свойству — потерянный фокус не повод ронять поиск целиком.
@@ -2298,7 +2319,7 @@ function obSaveListSearchFocus(input) {
   var start = obListSearchCaret(input.selectionStart, value.length);
   var end = obListSearchCaret(input.selectionEnd, value.length);
   try {
-    store.setItem(OB_LIST_SEARCH_FOCUS, JSON.stringify({
+    store.setItem(obListSearchKey(), JSON.stringify({
       path: location.pathname,
       start: start,
       end: end < start ? start : end,
@@ -2313,9 +2334,9 @@ function obRestoreListSearchFocus() {
   if (!store) return null;
   var raw = null;
   try {
-    raw = store.getItem(OB_LIST_SEARCH_FOCUS);
+    raw = store.getItem(obListSearchKey());
     // Снимаем отметку сразу: она действует ровно на одну загрузку страницы.
-    if (raw !== null) store.removeItem(OB_LIST_SEARCH_FOCUS);
+    if (raw !== null) store.removeItem(obListSearchKey());
   } catch (e) {
     return null;
   }
@@ -2329,6 +2350,15 @@ function obRestoreListSearchFocus() {
   if (!state || state.path !== location.pathname) return null;
   var input = document.getElementById('ob-list-search');
   if (!input) return null;
+  // Скрытая вкладка (display:none в оболочке) не должна забирать активный
+  // фокус оболочки: отметку расходуем, фокус не трогаем (#1599).
+  var hidden = false;
+  try {
+    hidden = document.hidden === true;
+  } catch (e) {
+    hidden = false;
+  }
+  if (hidden) return null;
   var value = typeof input.value === 'string' ? input.value : '';
   var start = obListSearchCaret(state.start, value.length);
   var end = obListSearchCaret(state.end, value.length);

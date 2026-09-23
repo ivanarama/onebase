@@ -220,6 +220,11 @@ const tplAppShell = `{{define "page-app-shell"}}
     var cl=document.createElement('span'); cl.className='ob-tab-close'; cl.textContent='✕'; cl.title='Закрыть'; btn.appendChild(cl);
     var frame=document.createElement('iframe'); frame.src=url;
     var t={id:uniqueTabID(opts.id),url:url,title:title,btn:btn,frame:frame,label:lab};
+    // Стабильное имя фрейма «ob-tab-<id>»: страница внутри iframe читает его
+    // через window.frameElement.name и различает себя от других вкладок
+    // (изоляция отметки фокуса поиска, #1599). id сохраняется оболочкой и
+    // переживает навигацию внутри фрейма и перезапуск оболочки.
+    frame.name='ob-tab-'+t.id;
     frame.addEventListener('load',function(){ syncFrameURL(t); });
     btn.addEventListener('click',function(e){ if(e.target===cl||e.target===dup)return; setActive(t); });
     btn.addEventListener('mousedown',function(e){ if(e.button===1){ e.preventDefault(); closeTab(t,'cross'); } });
