@@ -662,8 +662,16 @@ type translator struct {
 	refCols         map[string]string             // колонка вывода (lower) → сущность, на которую она ссылается (#1150)
 	mainRef         mainRefSource                 // главный источник запроса: чья ссылка стоит за голым «Ссылка»
 	joinedRefs      []joinedRefSource             // ссылочные поля присоединённых источников (#1385)
-	pendingRefJoins []string                      // авто-JOIN'ы присоединённого источника, ждущие конца его ПО
+	pendingRefJoins []pendingRefJoin              // авто-JOIN'ы присоединённого источника, ждущие конца его ПО
 	fromSourceAlias string                        // последняя source-алиас в секции ПО (для проверки dot-в ON)
+}
+
+// pendingRefJoin — отложенный авто-JOIN с глубиной скобок своего SELECT-scope:
+// JOIN производной таблицы обязан выйти внутри её скобок и не может быть
+// выведен на чужой границе внешнего запроса.
+type pendingRefJoin struct {
+	sql   string
+	depth int
 }
 
 // mainRefSource — предсканированный главный источник запроса: имя сущности и
@@ -2538,6 +2546,7 @@ func buildRefDimInfosWithEntities(dims []metadata.Field, entities []*metadata.En
 // СОЕДИНЕНИИ (#1385). Здесь имя разрешается в пределах своего источника: по
 // квалификатору перед точкой видно, чьё это поле.
 type joinedRefSource struct {
+	scopeID    int             // SELECT-scope, к которому относится источник
 	alias      string          // алиас, которым источник эмитится в SQL
 	qualifiers map[string]bool // имена, под которыми на него ссылаются в тексте
 	dims       []refDimInfo    // ссылочные поля этого источника
@@ -2550,16 +2559,19 @@ type joinedRefSource struct {
 // транслируется раньше `ИЗ`, а `П.ГлавныйУзел` в нём уже обязан знать, чьё это
 // поле.
 //
-// Берём только источники верхнего уровня: внутри подзапроса свой SELECT-scope
-// со своим главным источником, и прежнее поведение там не трогаем.
-func preScanJoinedRefSources(tokens []tok, opts CompileOpts) []joinedRefSource {
+// Собираем источники каждого SELECT-scope: у производной таблицы свой main и
+// свои присоединённые источники, и их ссылочные поля разрешаются так же, как
+// на верхнем уровне (круг 5 #1385: прежний пред-скан пропускал любую глубину
+// больше нуля, и дефект выживал внутри производной таблицы).
+func preScanJoinedRefSources(tokens []tok, opts CompileOpts, sourceCtx sourceContext) []joinedRefSource {
 	var out []joinedRefSource
 	depth := 0
-	seenMain := false
+	mainSeen := map[int]bool{} // первый источник скобочной группы — её main; на верхнем уровне main один
 	for i := 0; i+2 < len(tokens); i++ {
 		switch tokens[i].kind {
 		case tLParen:
 			depth++
+			mainSeen[depth] = false
 			continue
 		case tRParen:
 			if depth > 0 {
@@ -2567,7 +2579,7 @@ func preScanJoinedRefSources(tokens []tok, opts CompileOpts) []joinedRefSource {
 			}
 			continue
 		}
-		if tokens[i].kind != tIdent || depth > 0 {
+		if tokens[i].kind != tIdent {
 			continue
 		}
 		upper := upperFast(tokens[i].val)
@@ -2575,13 +2587,18 @@ func preScanJoinedRefSources(tokens []tok, opts CompileOpts) []joinedRefSource {
 			continue
 		}
 		isVT := i+3 < len(tokens) && tokens[i+3].kind == tDot
-		if !seenMain {
-			// Главный источник идёт прежним путём (tr.refDims): его авто-JOIN
-			// встаёт сразу за таблицей, а не после чужого ПО.
-			seenMain = true
+		if !mainSeen[depth] {
+			// Главный источник идёт прежним путём (tr.refDims на верхнем
+			// уровне): его авто-JOIN встаёт сразу за таблицей, а не после
+			// чужого ПО. У вложенного scope — прежнее поведение подзапроса.
+			mainSeen[depth] = true
 			continue
 		}
 		if isVT {
+			continue
+		}
+		scopeID, ok := sourceCtx.scopeIDAt(i)
+		if !ok {
 			continue
 		}
 		var ent *metadata.Entity
@@ -2605,20 +2622,21 @@ func preScanJoinedRefSources(tokens []tok, opts CompileOpts) []joinedRefSource {
 				}
 			}
 		}
-		dims, navigated := qualifiedRefDims(buildRefDimInfosWithEntities(ent.Fields, opts.Entities), quals, alias, tokens)
+		dims, navigated := qualifiedRefDims(buildRefDimInfosWithEntities(ent.Fields, opts.Entities), quals, alias, tokens, sourceCtx, scopeID)
 		if len(dims) == 0 {
 			continue
 		}
-		out = append(out, joinedRefSource{alias: alias, qualifiers: quals, dims: dims, navigated: navigated})
+		out = append(out, joinedRefSource{scopeID: scopeID, alias: alias, qualifiers: quals, dims: dims, navigated: navigated})
 	}
 	return out
 }
 
 // qualifiedRefDims оставляет ссылочные поля, использованные именно с этим
-// источником (`П.ГлавныйУзел`), и отмечает те, где за полем идёт навигация
-// (`П.ГлавныйУзел.Наименование`) — только им нужен авто-JOIN. Псевдоним JOIN'а
-// содержит алиас источника: `ref_<поле>` уже может занимать главная таблица.
-func qualifiedRefDims(dims []refDimInfo, quals map[string]bool, alias string, tokens []tok) ([]refDimInfo, map[string]bool) {
+// источником (`П.ГлавныйУзел`) в его SELECT-scope, и отмечает те, где за полем
+// идёт навигация (`П.ГлавныйУзел.Наименование`) — только им нужен авто-JOIN.
+// Псевдоним JOIN'а содержит алиас источника: `ref_<поле>` уже может занимать
+// главная таблица.
+func qualifiedRefDims(dims []refDimInfo, quals map[string]bool, alias string, tokens []tok, sourceCtx sourceContext, scopeID int) ([]refDimInfo, map[string]bool) {
 	if len(dims) == 0 {
 		return nil, nil
 	}
@@ -2629,6 +2647,11 @@ func qualifiedRefDims(dims []refDimInfo, quals map[string]bool, alias string, to
 			continue
 		}
 		if !quals[lowerFast(tokens[i].val)] {
+			continue
+		}
+		// Одноимённый квалификатор чужого scope — другой источник: его
+		// использование не помечает поля этого.
+		if sid, ok := sourceCtx.scopeIDAt(i); !ok || sid != scopeID {
 			continue
 		}
 		field := lowerFast(tokens[i+2].val)
@@ -2650,13 +2673,19 @@ func qualifiedRefDims(dims []refDimInfo, quals map[string]bool, alias string, to
 
 // findJoinedSource возвращает присоединённый источник по квалификатору перед
 // точкой и его ссылочное поле, если имя — ссылочный реквизит этого источника.
+// Источник сопоставляется в пределах своего SELECT-scope: одноимённый
+// квалификатор вложенного или внешнего запроса — другой источник.
 func (tr *translator) findJoinedSource(qualifierPos int, name string) (*joinedRefSource, *refDimInfo) {
 	if qualifierPos < 0 || qualifierPos >= len(tr.tokens) || tr.tokens[qualifierPos].kind != tIdent {
 		return nil, nil
 	}
+	qualifierScope, ok := tr.sourceCtx.scopeIDAt(qualifierPos)
+	if !ok {
+		return nil, nil
+	}
 	qualifier := lowerFast(tr.tokens[qualifierPos].val)
 	for i := range tr.joinedRefs {
-		if !tr.joinedRefs[i].qualifiers[qualifier] {
+		if tr.joinedRefs[i].scopeID != qualifierScope || !tr.joinedRefs[i].qualifiers[qualifier] {
 			continue
 		}
 		for j := range tr.joinedRefs[i].dims {
@@ -2671,11 +2700,11 @@ func (tr *translator) findJoinedSource(qualifierPos int, name string) (*joinedRe
 
 // queueJoinedRefJoins откладывает авто-JOIN'ы присоединённого источника: они
 // обязаны встать ПОСЛЕ его ПО, иначе SQL рвётся между таблицей и её ON
-// (план 143, п.50).
-func (tr *translator) queueJoinedRefJoins(alias string) error {
+// (план 143, п.50). Сопоставление — по алиасу в пределах своего SELECT-scope.
+func (tr *translator) queueJoinedRefJoins(alias string, scopeID int) error {
 	for i := range tr.joinedRefs {
 		src := &tr.joinedRefs[i]
-		if src.consumed || src.alias != alias {
+		if src.consumed || src.scopeID != scopeID || src.alias != alias {
 			continue
 		}
 		src.consumed = true
@@ -2694,7 +2723,10 @@ func (tr *translator) queueJoinedRefJoins(alias string) error {
 			if s != "" {
 				joinCond += " AND " + s
 			}
-			tr.pendingRefJoins = append(tr.pendingRefJoins, fmt.Sprintf("LEFT JOIN %s %s ON %s", rd.joinTable, rd.joinAlias, joinCond))
+			tr.pendingRefJoins = append(tr.pendingRefJoins, pendingRefJoin{
+				sql:   fmt.Sprintf("LEFT JOIN %s %s ON %s", rd.joinTable, rd.joinAlias, joinCond),
+				depth: tr.parenDepth,
+			})
 			// #14: чтение наименования связанной сущности — источник для RBAC.
 			tr.addRefSource(rd)
 		}
@@ -2703,12 +2735,27 @@ func (tr *translator) queueJoinedRefJoins(alias string) error {
 	return nil
 }
 
-// flushPendingRefJoins выводит отложенные авто-JOIN'ы: вызывается на границе
-// секции ПО — следующий СОЕДИНЕНИЕ, ГДЕ, СГРУППИРОВАТЬ, УПОРЯДОЧИТЬ, ИМЕЯ,
-// ОБЪЕДИНИТЬ или конец запроса.
+// flushRefJoinsAtDepth выводит отложенные авто-JOIN'ы текущего SELECT-scope:
+// вызывается на границе секции ПО — следующий СОЕДИНЕНИЕ, ГДЕ, СГРУППИРОВАТЬ,
+// УПОРЯДОЧИТЬ, ИМЕЯ, ОБЪЕДИНИТЬ — и на закрывающей скобке производной таблицы.
+// Отложенные JOIN внешнего scope не трогает: их граница позже.
+func (tr *translator) flushRefJoinsAtDepth(depth int) {
+	kept := tr.pendingRefJoins[:0]
+	for _, j := range tr.pendingRefJoins {
+		if j.depth == depth {
+			tr.emit(j.sql)
+			continue
+		}
+		kept = append(kept, j)
+	}
+	tr.pendingRefJoins = kept
+}
+
+// flushPendingRefJoins выводит все оставшиеся отложенные авто-JOIN'ы — конец
+// запроса.
 func (tr *translator) flushPendingRefJoins() {
 	for _, j := range tr.pendingRefJoins {
-		tr.emit(j)
+		tr.emit(j.sql)
 	}
 	tr.pendingRefJoins = nil
 }
@@ -3881,6 +3928,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 	// до основной трансляции, чтобы остальные шаги ничего не знали о них.
 	tokens = rewriteScalarFuncs(tokens, dialectName(opts.Dialect))
 	tokens = rewriteStrftime(tokens, dialectName(opts.Dialect))
+	sctx := preScanSourceContext(tokens)
 	tr := &translator{
 		tokens:      tokens,
 		params:      map[string]int{},
@@ -3891,8 +3939,8 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		mainTable:   preScanMainTable(tokens),
 		refDims:     preScanRefDims(tokens, opts),
 		mainRef:     preScanMainRefSource(tokens, opts),
-		joinedRefs:  preScanJoinedRefSources(tokens, opts),
-		sourceCtx:   preScanSourceContext(tokens),
+		joinedRefs:  preScanJoinedRefSources(tokens, opts, sctx),
+		sourceCtx:   sctx,
 		aliases:     map[string]struct{}{},
 		unionDepths: map[int]bool{},
 		unionOrders: map[int]bool{},
@@ -3986,6 +4034,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			}
 
 			// Regular source: TypeName.EntityName → table_name [+ КАК alias] [+ auto-JOINs]
+			sourcePos := tr.pos
 			tr.advance()
 			tr.advance()
 			entity := tr.advance()
@@ -4048,8 +4097,10 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			}
 			if tr.section == sectionFrom && !isMain {
 				// Присоединённый источник: его авто-JOIN'ы ждут конца ПО (#1385).
-				if err := tr.queueJoinedRefJoins(sourceAlias); err != nil {
-					return Result{}, err
+				if scopeID, ok := tr.sourceCtx.scopeIDAt(sourcePos); ok {
+					if err := tr.queueJoinedRefJoins(sourceAlias, scopeID); err != nil {
+						return Result{}, err
+					}
 				}
 			}
 			if tr.section == sectionFrom && isMain {
@@ -4076,11 +4127,13 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 
 		// Multi-word: СГРУППИРОВАТЬ ПО / УПОРЯДОЧИТЬ ПО
 		if t.kind == tIdent && (upper == "СГРУППИРОВАТЬ" || upper == "УПОРЯДОЧИТЬ") {
+			// Граница секции ПО своего scope: отложенные авто-JOIN'ы выводим
+			// здесь и внутри производной таблицы тоже.
+			tr.flushRefJoinsAtDepth(tr.parenDepth)
 			if tr.parenDepth == 0 {
 				// Русские multi-word границы обрабатываются до общей ветки
-				// ключевых слов ниже, поэтому отложенные авто-JOIN'ы нужно
-				// вывести здесь, пока они ещё могут стоять перед WHERE/GROUP/ORDER.
-				tr.flushPendingRefJoins()
+				// ключевых слов ниже, поэтому отложенные фильтры строк нужно
+				// внедрить здесь, пока они ещё могут стоять перед WHERE/GROUP/ORDER.
 				tr.closeRowFilterGroup()
 				if err := tr.emitPendingRowFiltersAsWhere(); err != nil {
 					return Result{}, err
@@ -4142,6 +4195,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			if t.kind == tLParen {
 				tr.parenDepth++
 			} else if t.kind == tRParen && tr.parenDepth > 0 {
+				// Авто-JOIN'ы закрывающегося scope обязаны остаться внутри его
+				// скобок: после ")" они рвали бы внешний запрос.
+				tr.flushRefJoinsAtDepth(tr.parenDepth)
 				delete(tr.unionDepths, tr.parenDepth)
 				delete(tr.unionOrders, tr.parenDepth)
 				tr.parenDepth--
@@ -4219,13 +4275,12 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			if agg, ok := sqlAgg(t.val); ok && tr.peek(0).kind == tLParen {
 				tr.emit(agg)
 			} else if kw, ok := sqlKW(t.val); ok {
-				// Граница секции ПО: отложенные авто-JOIN'ы присоединённого
-				// источника выводим здесь, до следующего соединения или ГДЕ.
-				if tr.parenDepth == 0 {
-					switch kw {
-					case "LEFT", "INNER", "RIGHT", "FULL", "JOIN", "WHERE", "GROUP", "ORDER", "HAVING", "UNION":
-						tr.flushPendingRefJoins()
-					}
+				// Граница секции ПО своего scope: отложенные авто-JOIN'ы
+				// присоединённого источника выводим здесь, до следующего
+				// соединения или ГДЕ, — и внутри производной таблицы тоже.
+				switch kw {
+				case "LEFT", "INNER", "RIGHT", "FULL", "JOIN", "WHERE", "GROUP", "ORDER", "HAVING", "UNION":
+					tr.flushRefJoinsAtDepth(tr.parenDepth)
 				}
 				switch kw {
 				case "UNION":
