@@ -2866,7 +2866,7 @@ function repAddParam(tableId) {
   var tr = document.createElement('tr');
   tr.innerHTML = '<td><input type="text" name="param.' + i + '.name" value="" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px" placeholder="ИмяПараметра"></td>'
     + '<td><select name="param.' + i + '.type" style="padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">'
-    + '<option value="string">'+T("строка")+'</option><option value="date">'+T("дата")+'</option><option value="number">'+T("число")+'</option><option value="select">'+T("список")+'</option>'
+    + '<option value="string">'+T("строка")+'</option><option value="date">'+T("дата")+'</option><option value="datetime">'+T("Дата и время")+'</option><option value="number">'+T("число")+'</option><option value="select">'+T("список")+'</option>'
     + window.__cfg.entityNames.map(function(n){return '<option value="reference:'+n+'">ссылка: '+n+'</option>';}).join('')
     + '</select></td>'
     + '<td><input type="text" name="param.' + i + '.label" value="" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px" placeholder="Заголовок"></td>'
