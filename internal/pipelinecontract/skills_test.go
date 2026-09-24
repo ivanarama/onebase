@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"sort"
 	"strings"
@@ -1127,6 +1128,19 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"Непосредственно перед push перечитай HEAD, все comments и labels, пересчитай владельца",
 		"При `pp:review-again`, новой completion или чужом push ничего не",
 		"Lease failure означает чужой push",
+		"независимый readback в строгом порядке remote → REST → remote",
+		"обе проверки exact remote ref и `.head.sha` PR обязаны подтверждать фактически отправленный SHA",
+		"обе remote-проверки уже подтверждают отправленный SHA, а REST всё ещё возвращает ровно SHA completion",
+		"максимум 5 повторов с ожиданием 5 секунд между ними",
+		"каждый повтор заново выполняет весь цикл remote → REST → remote",
+		"Жёсткий общий deadline — 30 секунд, включая ожидания и длительность команд",
+		"сетевой вызов ограничивай оставшимся временем",
+		"Всего допускается не больше 6 попыток",
+		"Ошибка команды/JSON/API без полученного противоречащего значения либо исчерпание окна, если каждая завершённая remote-проверка видела отправленный SHA, а REST — только SHA completion, — восстановимый `НЕ СМОГ`",
+		"сохрани `changes-requested`, следующий FIX продолжит recovery",
+		"Любой завершённый remote SHA, не равный отправленному (включая возврат к SHA completion)",
+		"любой третий REST SHA либо смена repository/ref/permission доказывают внешнюю гонку",
+		"закончи `НУЖЕН ЧЕЛОВЕК` с точным расхождением",
 		"**не** возвращай PR в REVIEW",
 		"Для устаревшего ревью сними `changes-requested`, сверь удаление и только затем оставь диагностический комментарий",
 		"issue-decision fingerprint",
@@ -1507,6 +1521,43 @@ func TestAutomaticBaseSyncCarriesHumanShipWithoutPingPong(t *testing.T) {
 		"<!-- pp:base-sync-intent from=<40hex> base=<40hex> review-comment=<id> claim=<id> completion=<id> ship-event=<GraphQL node id> previous=<done id|none> -->",
 		"<!-- pp:base-sync-done intent=<id> from=<40hex> to=<40hex> base=<40hex> previous=<done id|none> ship-event=<GraphQL node id> -->",
 		"самый ранний валидный intent",
+		"recovery переиспользует именно его неизменные `node_id`, `fullDatabaseId` и body",
+		"второй intent не публикуй",
+		"Новый POST разрешён только когда такого intent нет",
+		"следующий recovery снова берёт earliest, а не создаёт третий",
+		"Ответ REST create ещё не доказывает место комментария в server-ordered timeline",
+		"До update/push обязательна visibility barrier",
+		"два последовательных побайтово одинаковых полных raw GraphQL snapshot",
+		"exact unedited **выбранный canonical intent**",
+		"для нового — по возвращённому `node_id`, для ранее существовавшего — по сохранённым `node_id`/`fullDatabaseId` и exact body",
+		"его edge строго после anchor исходного HEAD",
+		"`headRefOid == from`",
+		"не больше 5 повторов с паузой 5 секунд и жёстким общим deadline 30 секунд",
+		"после deadline новых вызовов не начинай",
+		"невидимый intent — восстановимый `НЕ СМОГ` без update/push",
+		"повтори тот же GraphQL visibility barrier",
+		"существующий earliest open intent переиспользуй, новый POST выполняй только при его отсутствии",
+		"git merge --no-commit --no-ff origin/main",
+		"С момента успешного `git worktree add` действует общий cleanup-инвариант",
+		"включая command error, `needs-decision`, visibility/full-gate failure, lease failure, успешный push и любой post-push readback outcome",
+		"`git worktree list --porcelain`",
+		"`git worktree remove --force`",
+		"Cleanup выполняется и после branch mutation",
+		"следующий запуск сначала безопасно разбирает только доказанный orphan",
+		"До публикации intent запрещено создавать merge-коммит",
+		"HEAD равен `from` и существует ровно один `MERGE_HEAD`",
+		"но пока не делай commit",
+		"единственный `MERGE_HEAD` — точному planned base",
+		"После механического разрешения и тестов, но **до commit**",
+		"`intent.base` обязан равняться planned base",
+		"`intent.base` — предок planned base",
+		"`GIT_AUTHOR_DATE` и `GIT_COMMITTER_DATE`",
+		"`intent.createdAt + 1 second`",
+		"его `authoredDate` и `committedDate` при повторном чтении metadata",
+		"После commit снова выполни полный label+SHA/identity-гейт",
+		"exact remote ref должен всё ещё равняться `from`",
+		"authoritative `main` должен по-прежнему соответствовать подготовленному второму parent",
+		"выполняет общий cleanup-инвариант",
 		"ровно двух родителей в порядке `[from, base]`",
 		"при `HEAD == from` повторяет CAS update",
 		"метку `ship` **не снимай**",
@@ -1523,6 +1574,28 @@ func TestAutomaticBaseSyncCarriesHumanShipWithoutPingPong(t *testing.T) {
 		"outcome `reviewed` сохраняет `ship`",
 		"`changes-requested` требует снять `ship`",
 		"второй клик не нужен",
+	)
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAllCompact(t, docs,
+		"Перед любым update/push выбранный новый либо переиспользованный canonical intent",
+		"два последовательных одинаковых полных GraphQL snapshot должны видеть exact unedited intent после anchor исходного HEAD",
+		"первой попыткой и пятью повторами с паузой 5 секунд, общий deadline — 30 секунд",
+		"завершает запуск `НЕ СМОГ` без изменения ветки",
+		"`PullRequestCommit` не получает `committedDate` раньше своего intent",
+		"Recovery не создаёт новый intent поверх старого",
+		"переиспользует canonical earliest open intent и его `node_id`/`fullDatabaseId`/exact body",
+		"POST разрешён только при отсутствии такого intent",
+		"`git merge --no-commit --no-ff` сначала только готовит index/worktree",
+		"`intent.createdAt + 1 second`",
+		"полный гейт и barrier повторяются до CAS-push",
+		"Любой исход выполняет общий cleanup-инвариант",
+		"Любой созданный FIX/MERGE temporary worktree имеет cleanup-инвариант",
+		"не даёт фиксированным `pp-mrg-<N>`/`pp-rework-<N>` заблокировать повтор",
+	)
+	rejectAll(t, merge,
+		"Сначала опубликуй exact intent",
+		"`git merge origin/main`",
+		"выполни `git add` и commit",
 	)
 }
 
@@ -1639,27 +1712,138 @@ func TestBaseTipComesFromAuthoritativeRefAndDriftIsVisible(t *testing.T) {
 func TestFixAndMergeCheckoutExactlyReviewedHead(t *testing.T) {
 	fixer := skill(t, "fix-approved")
 	merge := skill(t, "merge-shepherd")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
 	requireAllCompact(t, fixer,
 		"git ls-remote <origin-or-exact-fork-URL> refs/heads/<headRefName>",
 		"git fetch <origin-or-exact-fork-URL> refs/heads/<headRefName>",
 		"git rev-parse FETCH_HEAD # обязан совпасть с SHA completion",
 		"git worktree add -B pp-rework-<M> ../pp-rework-<M> <SHA completion>",
+		"С момента успешного `git worktree add` действует cleanup-инвариант",
+		"включая ошибку проверки/команды, handoff, чужой push, lease/auth failure, успешный push и любой post-push readback outcome",
+		"exact `../pp-rework-<M>` принадлежит этому common repository",
+		"`git worktree remove --force`",
+		"durable recovery живёт на remote, а не в worktree",
+		"следующий запуск сначала безопасно разбирает только доказанный orphan",
 		"git push --force-with-lease=refs/heads/<headRefName>:<SHA completion>",
 		"<origin-or-exact-fork-URL> HEAD:refs/heads/<headRefName>",
 		"Lease failure означает чужой push",
+		"выполни cleanup-инвариант",
 	)
 	requireAllCompact(t, merge,
+		"gh api repos/ivanarama/onebase/pulls/<N>",
+		"headRepository:.head.repo.full_name,headRefName:.head.ref,headSha:.head.sha,maintainerCanModify:.maintainer_can_modify",
+		"`headRepository == null` либо отсутствующая remote head-ветка закрывают гейт",
+		"Значения из снимка передавай `git` только отдельными аргументами",
+		"запрещены `eval`, `Invoke-Expression` и сборка shell-строки из данных PR",
 		"git fetch origin main:refs/remotes/origin/main",
+		"для `headRepository == \"ivanarama/onebase\"` используй `origin`",
+		"для fork — точный URL `https://github.com/<headRepository>.git`",
+		"git ls-remote <origin-or-exact-fork-URL> refs/heads/<headRefName>",
+		"git fetch <origin-or-exact-fork-URL> refs/heads/<headRefName>",
 		"`git rev-parse FETCH_HEAD` равен сохранённому SHA",
 		"git worktree add -B pp-mrg-<N> ../pp-mrg-<N> <сохранённый SHA>",
-		"exit code 0 и HEAD не изменился — это настоящий no-op",
+		"exit code 0, HEAD не изменился и `MERGE_HEAD` отсутствует — это настоящий no-op",
 		"git diff --name-only --diff-filter=U",
 		"ненулевой exit code без unmerged-файлов — это ошибка команды, а не конфликт",
 		"Не классифицируй результат только по неизменившемуся HEAD",
-		"git push --force-with-lease=refs/heads/<ветка-PR>:<сохранённый SHA> origin HEAD:refs/heads/<ветка-PR>",
+		"git push --force-with-lease=refs/heads/<headRefName>:<сохранённый SHA>",
+		"<origin-or-exact-fork-URL> HEAD:refs/heads/<headRefName>",
 		"Lease failure означает гонку",
-		"новый `.head.sha` равен локальному `git rev-parse HEAD`",
+		"обычный label+proof gate не заменяет identity head-репозитория",
+		"Непосредственно до push сохрани `<отправленный SHA> = git rev-parse HEAD`",
+		"обязан вернуть ровно exact ref с SHA, равным `<отправленный SHA>`",
+		"`.head.sha == <отправленный SHA>`",
+		"первую попытку сразу и максимум 5 повторов с ожиданием 5 секунд между ними",
+		"Жёсткий общий deadline — 30 секунд, включая ожидания и длительность команд",
+		"Всего не больше 6 попыток",
+		"На каждой попытке порядок readback строгий: remote → REST → remote",
+		"обе remote-проверки обязаны вернуть `<отправленный SHA>`",
+		"Ошибка команды/JSON/API без полученного противоречащего значения либо исчерпание окна, если каждая завершённая remote-проверка видела отправленный SHA, а REST — только сохранённый pre-push SHA, — восстановимый `НЕ СМОГ`",
+		"intent и `ship` сохраняются, следующий MERGE продолжит recovery",
+		"Любой завершённый remote SHA, не равный отправленному (включая возврат к pre-push)",
+		"любой третий REST SHA либо смена repository/ref/permission доказывают внешнюю гонку",
+		"закончи `НУЖЕН ЧЕЛОВЕК` с точным расхождением",
+		"не публикуй `pp:base-sync-done`",
+		"для fork, всё ещё `maintainerCanModify == true`",
 	)
+	if got := strings.Count(merge, "maintainerCanModify == true"); got < 3 {
+		t.Errorf("merge fork gate must check maintainerCanModify initially, before push and after push; got %d checks", got)
+	}
+	rejectAll(t, merge,
+		"git fetch origin <ветка-PR>",
+		"origin HEAD:refs/heads/<ветка-PR>",
+	)
+	requireAllCompact(t, docs,
+		"headRepository`, `headRefName`, `headSha`, `maintainerCanModify`",
+		"Для ветки `ivanarama/onebase` источник — `origin`",
+		"для fork — точный `https://github.com/<headRepository>.git`",
+		"`maintainerCanModify == true` обязателен",
+		"Значения identity передаются `git` отдельными аргументами",
+		"точный `git ls-remote` и затем fetch `refs/heads/<headRefName>` из выбранного источника",
+		"Непосредственно перед push REST обязан подтвердить неизменные repository/ref/SHA и разрешение fork",
+		"`--force-with-lease=refs/heads/<headRefName>:<проверенный SHA>`",
+		"два независимых readback — exact remote ref через `git ls-remote` и `.head.sha` PR через REST",
+		"обязаны равняться сохранённому локальному отправленному SHA",
+		"REST ещё возвращает ровно старый pre-push SHA",
+		"максимум 5 повторов с паузой 5 секунд",
+		"жёстким общим deadline 30 секунд, включающим ожидания и длительность команд",
+		"Каждый цикл идёт remote → REST → remote",
+		"обе remote-проверки обязаны видеть отправленный SHA",
+		"Ошибка команды/API без противоречащего значения либо исчерпание окна, когда remote всё время подтверждал отправленный SHA, а REST оставался на старом, закрывает gate как восстановимый `НЕ СМОГ`",
+		"следующий запуск продолжает durable recovery без снятия маршрутной метки",
+		"Любой remote SHA, не равный отправленному (включая возврат к старому), третий REST SHA либо смена repository/ref/permission требуют человека",
+		"`pp:base-sync-done`/post-push финализация не публикуются",
+		"Если ещё **до собственного CAS-push** удалённый HEAD отличается от SHA review",
+		"не содержит валидной незавершённой `PP-Fix-Transition` той же committed-пары",
+		"После собственного успешного push маршрутная метка сохраняется до штатной post-push финализации или recovery",
+		"head fetch выполняется из выбранного выше same-repo/fork-источника",
+	)
+	rejectAll(t, docs,
+		"git push --force-with-lease=refs/heads/<ветка-PR>:<проверенный SHA> origin HEAD:refs/heads/<ветка-PR>",
+		"Если HEAD уже другой, устаревший `changes-requested` снимается",
+	)
+}
+
+func TestReviewUsesSupportedDiffCommands(t *testing.T) {
+	review := skill(t, "review-queue")
+	requireAllCompact(t, review,
+		"`gh pr diff` не имеет флага `--stat`",
+		"`gh pr diff <M>`",
+		"JSON-полем `files` команды `gh pr view`",
+		"Отсутствие красивой сводки не является причиной останавливать REVIEW",
+	)
+	rejectAll(t, review,
+		"gh pr diff <M> --stat",
+		"gh pr diff --stat",
+	)
+	unsupported := regexp.MustCompile("(?m)gh[ \\t]+pr[ \\t]+diff[ \\t]+[^\\r\\n`]*--stat\\b")
+	if command := unsupported.FindString(review); command != "" {
+		t.Errorf("review contract contains unsupported diff command %q", command)
+	}
+}
+
+func TestReviewAndMergeUseNarrowPreMutationStaleVerdict(t *testing.T) {
+	for _, name := range []string{"review-queue", "merge-shepherd"} {
+		contract := skill(t, name)
+		requireAllCompact(t, contract,
+			"ИТОГ: УСТАРЕЛО (gate-fallback: <точный error/reason>)",
+			"trusted targeted-fallback envelope",
+			"единственный структурированный `gate-fallback` доказал смену exact target",
+			"истечение target lease",
+			"ошибка команды",
+			"не `УСТАРЕЛО`",
+		)
+	}
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	requireAllCompact(t, docs,
+		"ИТОГ: УСТАРЕЛО (gate-fallback: …)",
+		"до первой мутации изменились exact target, HEAD или executable-позиция либо истёк target lease",
+		"ошибки среды, API и команд сюда не относятся",
+		"Тишина в Telegram означает, что вмешательство не требуется",
+		"очередь пуста либо REVIEW/MERGE безопасно отбросил протухшую цель до первой мутации",
+		"состояние очередей смотри в статистике конвейера",
+	)
+	rejectAll(t, docs, "Тишина в Telegram означает «очереди пусты»")
 }
 
 func TestFixRevalidatesForkIdentityBeforeEveryMutation(t *testing.T) {
@@ -1669,7 +1853,7 @@ func TestFixRevalidatesForkIdentityBeforeEveryMutation(t *testing.T) {
 		"--jq '{headRepository:.head.repo.full_name,headRefName:.head.ref,headSha:.head.sha,maintainerCanModify:.maintainer_can_modify,state,baseRefName:.base.ref}'",
 		"непосредственно перед **каждым внешним изменением**",
 		"`headRepository`, `headRefName` и `maintainerCanModify` не изменились",
-		"Сразу после успеха отдельно сверь и remote ref, и `.head.sha` PR",
+		"После успеха выполни независимый readback в строгом порядке remote → REST → remote",
 		"Для fork повторно потребуй неизменные `headRepository`, `headRefName` и `maintainerCanModify == true`",
 	)
 	rejectAll(t, fixer,
@@ -1808,10 +1992,10 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"После `422` HEAD перечитывается",
 		"полный label+SHA-гейт непосредственно перед единственным\n  перезапуском",
 		"Валидна только первая completion-ссылка на\nэтот id",
-		"SHA с удалённым HEAD до создания worktree и ещё раз непосредственно перед push",
+		"Перед worktree точный `git ls-remote` и затем fetch\n`refs/heads/<headRefName>` из выбранного источника обязаны вернуть сохранённый\nSHA",
 		"REST-запросом compare-and-merge с полем\n`sha=<проверенный HEAD>`",
-		"Оба этапа отправляют изменения атомарным CAS-push",
-		"--force-with-lease=refs/heads/<ветка-PR>:<проверенный SHA>",
+		"Оба этапа отправляют изменения в\nвыбранный источник атомарным CAS-push",
+		"--force-with-lease=refs/heads/<headRefName>:<проверенный SHA>",
 		"последняя каноничная committed-пара merged HEAD после последнего поглощённого\noverride",
 		"Открытые PR для обычной доработки и восстановления handoff FIX получает одним\nпагинированным REST-списком",
 		"Начальный список MERGE также читается целиком пагинированным REST",

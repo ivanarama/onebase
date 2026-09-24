@@ -319,9 +319,23 @@ qualified-ссылка на другой repository локальной issue н�
    успешного SHA+authorization-гейта недопустимы.
 
 2. Очередь при `strict: true` строго последовательна — работай с одним PR до
-   конца, потом следующий. Состояние: `gh pr view <N> --json
-   mergeStateStatus,mergeable,statusCheckRollup,body` (тело нужно в п. 5 —
-   по нему снимается `in-work`).
+   конца, потом следующий. Состояние и проверки читай точными JSON-полями (тело
+   нужно в п. 5 — по нему снимается `in-work`):
+
+   ```
+   gh pr view <N> --json mergeStateStatus,mergeable,statusCheckRollup,body
+   ```
+
+   Отдельным REST-снимком зафиксируй identity head-ветки:
+
+   ```
+   gh api repos/ivanarama/onebase/pulls/<N> \
+     --jq '{headRepository:.head.repo.full_name,headRefName:.head.ref,headSha:.head.sha,maintainerCanModify:.maintainer_can_modify,state,baseRefName:.base.ref}'
+   ```
+
+   `headRepository == null` либо отсутствующая remote head-ветка закрывают
+   гейт. Значения из снимка передавай `git` только отдельными аргументами;
+   запрещены `eval`, `Invoke-Expression` и сборка shell-строки из данных PR.
 
 3. По состоянию:
    - **BEHIND** → после полного label+SHA+authorization-гейта (включая допустимое
@@ -332,17 +346,36 @@ qualified-ссылка на другой repository локальной issue н�
      done остаётся только доказанным anchor reauthorization. Authoritative tip
      целевой ветки получи только прямым REST-чтением
      `gh api repos/ivanarama/onebase/git/ref/heads/main --jq .object.sha`;
-     `PullRequest.baseRefOid` не используй как tip `main`. Сначала опубликуй exact intent:
+     `PullRequest.baseRefOid` не используй как tip `main`. Затем выбери intent.
+     Если для той же пары `from` + authorization уже существует валидный
+     earliest open intent, recovery переиспользует именно его неизменные
+     `node_id`, `fullDatabaseId` и body; второй intent не публикуй. Новый POST
+     разрешён только когда такого intent нет:
 
      ```
      <!-- pp:base-sync-intent from=<SHA> base=<authoritative main ref SHA> review-comment=<id> claim=<id> completion=<id> ship-event=<node id> previous=<done id|none> -->
      ```
 
-     Перечитай полный timeline. Продолжает только самый ранний валидный intent
-     для этой пары `from` + authorization; параллельный worker, создавший более
-     поздний intent, останавливается. Непосредственно перед update ещё раз
-     прочитай `refs/heads/main`; затем ещё раз выполни полный гейт и вызови
-     compare-and-update:
+     Перечитай полный timeline. Выбранным остаётся только самый ранний валидный
+     intent для этой пары `from` + authorization; параллельный worker, успевший
+     создать более поздний intent, останавливается, а следующий recovery снова
+     берёт earliest, а не создаёт третий. Ответ REST create ещё не доказывает место
+     комментария в server-ordered timeline. До update/push обязательна
+     visibility barrier: два последовательных побайтово одинаковых полных raw GraphQL snapshot
+     должны одновременно показать exact unedited **выбранный canonical intent**:
+     для нового — по возвращённому `node_id`, для ранее существовавшего — по
+     сохранённым `node_id`/`fullDatabaseId` и exact body; его edge строго после
+     anchor исходного HEAD, `headRefOid == from`
+     и отсутствие HEAD/base lifecycle events после anchor. Первый snapshot
+     выполняй сразу, затем не больше 5 повторов с паузой 5 секунд и жёстким
+     общим deadline 30 секунд, включающим ожидания и длительность команд. Каждый
+     GraphQL-вызов ограничивай оставшимся временем; после deadline новых вызовов
+     не начинай. API/timeout либо невидимый intent — восстановимый
+     `НЕ СМОГ` без update/push; intent остаётся для следующего MERGE. Смена HEAD,
+     identity, labels/authorization или новый lifecycle event закрывает gate по
+     обычным правилам. Непосредственно перед update ещё раз прочитай
+     `refs/heads/main`; затем ещё раз выполни полный гейт с этой visibility
+     barrier и вызови compare-and-update:
 
      ```
      echo '{"expected_head_sha":"<проверенный SHA>"}' | \
@@ -382,19 +415,53 @@ qualified-ссылка на другой repository локальной issue н�
      второго клика человека. (`gh pr update-branch` в этой версии gh не работает.)
    - **DIRTY (конфликт)** → чинить в отдельном worktree, привязанном к SHA
      последнего успешного гейта. Сначала обнови main
-     `git fetch origin main:refs/remotes/origin/main`, затем выполни
-     `git fetch origin <ветка-PR>` и проверь,
-     что `git rev-parse FETCH_HEAD` равен сохранённому SHA, и выполнить
+     `git fetch origin main:refs/remotes/origin/main`. Затем выбери источник
+     head без изменения постоянных remotes: для `headRepository ==
+     "ivanarama/onebase"` используй `origin`, для fork — точный URL
+     `https://github.com/<headRepository>.git`. У fork обязательно требуется
+     `maintainerCanModify == true`; поле repository-wide `permissions.push` не
+     заменяет это разрешение конкретного PR. Проверь remote ref до worktree:
+
+     ```
+     git ls-remote <origin-or-exact-fork-URL> refs/heads/<headRefName>
+     # remote SHA обязан совпасть с сохранённым SHA
+     git fetch <origin-or-exact-fork-URL> refs/heads/<headRefName>
+     ```
+
+     Проверь, что `git rev-parse FETCH_HEAD` равен сохранённому SHA, и выполни
      `git worktree add -B pp-mrg-<N> ../pp-mrg-<N> <сохранённый SHA>`; там
-     `git merge origin/main`. Несовпадение FETCH_HEAD — stale-ship передача без
-     worktree. Сохрани HEAD до merge и различай результат команды явно:
-     - exit code 0 и HEAD изменился — merge создан, переходи к проверкам;
-     - exit code 0 и HEAD не изменился — это настоящий no-op: ничего не пушь и
-       `ship` не снимай, убери worktree, перечитай GitHub-состояние и
-       диагностируй, почему `DIRTY` не воспроизвёлся;
+     только подготовь merge командой `git merge --no-commit --no-ff origin/main`.
+     С момента успешного `git worktree add` действует общий cleanup-инвариант
+     для **каждого** выхода из этой ветки, включая command error,
+     `needs-decision`, visibility/full-gate failure, lease failure, успешный
+     push и любой post-push readback outcome: если существует `MERGE_HEAD`,
+     выполни `git merge --abort`, затем удали именно зарегистрированный exact
+     temporary worktree через `git worktree remove --force` и удали только
+     локальную temporary branch `pp-mrg-<N>`. Перед удалением проверь по
+     `git worktree list --porcelain`, что exact path принадлежит этому common
+     repository и этой temporary branch; произвольный каталог либо remote ref
+     не удаляй. Cleanup выполняется и после branch mutation — он никогда не
+     откатывает remote push и не трогает durable intent. Ошибку cleanup укажи
+     отдельно, не скрывая исходный outcome и не повторяя мутацию; следующий
+     запуск сначала безопасно разбирает только доказанный orphan этого exact
+     temporary worktree, а не вызывает `git worktree add -B` поверх него.
+     До публикации intent запрещено создавать merge-коммит: иначе его
+     `committedDate` может поместить `PullRequestCommit` перед intent в
+     server-ordered timeline, даже если push выполнен позже. Несовпадение
+     FETCH_HEAD — stale-ship передача без worktree. Сохрани HEAD до merge и
+     различай результат команды явно:
+     - exit code 0, HEAD равен `from` и существует ровно один `MERGE_HEAD` —
+       clean merge подготовлен в index/worktree без commit, переходи к проверкам;
+     - exit code 0, HEAD не изменился и `MERGE_HEAD` отсутствует — это настоящий
+       no-op: ничего не пушь и `ship` не снимай, убери worktree, перечитай
+       GitHub-состояние и диагностируй, почему `DIRTY` не воспроизвёлся;
+     - exit code 0 и HEAD изменился — нарушение `--no-commit --no-ff`: ничего не
+       пушь, убери worktree и закончи `НЕ СМОГ` с диагностикой;
      - ненулевой exit code и `git diff --name-only --diff-filter=U` непуст — это
-       настоящий конфликт: разреши допустимые файлы, выполни `git add` и commit,
-       затем обязательно проверь, что HEAD изменился;
+       настоящий конфликт: разреши допустимые файлы и выполни `git add`, но пока
+       не делай commit; после разрешения unmerged-файлов быть не должно, HEAD
+       обязан всё ещё равняться `from`, а единственный `MERGE_HEAD` — точному
+       planned base, с которым подготовлен merge;
      - ненулевой exit code без unmerged-файлов — это ошибка команды, а не
        конфликт: ничего не пушь и `ship` не снимай, зафиксируй диагноз.
      Не классифицируй результат только по неизменившемуся HEAD: при обычном
@@ -408,16 +475,67 @@ qualified-ссылка на другой repository локальной issue н�
      поставить через REST `needs-decision` и сверить ответ, перейти к следующему
      PR, в финале `НУЖЕН ЧЕЛОВЕК`. `ship` не снимай: решение человека о мерже
      остаётся, но `needs-decision` паркует попытки до разрешения конфликта.
-     После механического разрешения перед push ещё раз выполни полный
-     label+SHA-гейт, создай и выбери самый ранний `pp:base-sync-intent` по тем же
-     правилам, что для BEHIND, затем повтори гейт: механический merge тоже меняет
-     HEAD и обязан быть восстанавливаемым handoff. REST-сверка перед push не
+     После механического разрешения и тестов, но **до commit**, сохрани exact
+     planned base из единственного `MERGE_HEAD` и ещё раз выполни полный
+     label+SHA-гейт, выбери либо создай `pp:base-sync-intent` по тем же правилам,
+     что для BEHIND: существующий earliest open intent переиспользуй, новый POST
+     выполняй только при его отсутствии. `intent.base` обязан равняться planned
+     base. Разрешено только явно доказанное продвижение base: `intent.base` —
+     предок planned base, planned base — предок текущего authoritative `main`;
+     во всех иных случаях abort/remove worktree и восстановимый `НЕ СМОГ` без
+     branch mutation. Затем повтори тот же GraphQL visibility barrier и полный
+     гейт. Из стабильного GraphQL snapshot возьми серверный
+     `createdAt` выбранного canonical intent, строго проверь RFC3339 UTC и создай
+     финальный merge-коммит с двумя parents `[from, base]`. Оба Git timestamp —
+     `GIT_AUTHOR_DATE` и `GIT_COMMITTER_DATE` — передай отдельно и установи ровно
+     в `intent.createdAt + 1 second`; локальные часы для этого не используй.
+     Проверь, что HEAD изменился, commit имеет ровно двух parents в указанном
+     порядке, его `authoredDate` и `committedDate` при повторном чтении metadata
+     строго позже `intent.createdAt`, а index и worktree чисты. После commit
+     снова выполни полный label+SHA/identity-гейт и
+     ту же visibility barrier: между intent и push не должно появиться нового
+     lifecycle event, exact remote ref должен всё ещё равняться `from`, а
+     authoritative `main` должен по-прежнему соответствовать подготовленному
+     второму parent либо той же доказанной ancestry-цепочке. Любой отказ
+     оставляет branch неизменной, выполняет общий cleanup-инвариант и
+     заканчивается `НЕ СМОГ`; worktree заново
+     создаётся в следующем recovery,
+     который переиспользует canonical earliest intent. Только после этой второй
+     проверки механический merge становится восстанавливаемым handoff.
+     Непосредственно перед push
+     повторно потребуй из REST неизменные `headRepository`, `headRefName`,
+     `headSha` и, для fork, `maintainerCanModify == true`; обычный label+proof
+     gate не заменяет identity head-репозитория. REST-сверка перед push не
      атомарна, поэтому используй точный refspec вместе с compare-and-swap lease:
-     `git push --force-with-lease=refs/heads/<ветка-PR>:<сохранённый SHA> origin HEAD:refs/heads/<ветка-PR>`.
+
+     ```
+     git push --force-with-lease=refs/heads/<headRefName>:<сохранённый SHA> \
+       <origin-or-exact-fork-URL> HEAD:refs/heads/<headRefName>
+     ```
+
+     Непосредственно до push сохрани `<отправленный SHA> = git rev-parse HEAD`.
      Lease failure означает гонку: ничего не перезаписывай и `ship` не снимай.
-     После успешного push перечитай PR через REST и проверь,
-     что новый `.head.sha` равен локальному `git rev-parse HEAD`; иначе не
-     снимай `ship`, зафиксируй ошибку доставки и закончи `НУЖЕН ЧЕЛОВЕК`.
+     После успешного push выполни два независимых readback. На каждой попытке
+     `git ls-remote <origin-or-exact-fork-URL> refs/heads/<headRefName>` обязан
+     вернуть ровно exact ref с SHA, равным `<отправленный SHA>`. Затем
+     REST-снимок PR обязан иметь `.head.sha == <отправленный SHA>`, неизменные
+     `headRepository`/`headRefName` и, для fork, всё ещё
+     `maintainerCanModify == true`. GitHub REST может коротко возвращать именно
+     сохранённый pre-push SHA после уже подтверждённого remote readback: только
+     этот случай разрешает первую попытку сразу и максимум 5 повторов с
+     ожиданием 5 секунд между ними. Жёсткий общий deadline — 30 секунд, включая
+     ожидания и длительность команд; сетевой вызов ограничивай оставшимся
+     временем и после deadline новых команд не запускай. Всего не больше 6
+     попыток. На каждой попытке порядок readback строгий: remote → REST → remote; обе
+     remote-проверки обязаны вернуть `<отправленный SHA>`. Любой отказ закрывает
+     gate: не публикуй `pp:base-sync-done` и не снимай `ship`. Ошибка
+     команды/JSON/API без полученного противоречащего значения либо исчерпание
+     окна, если каждая завершённая remote-проверка видела отправленный SHA, а
+     REST — только сохранённый pre-push SHA, — восстановимый `НЕ СМОГ`: intent и
+     `ship` сохраняются, следующий MERGE продолжит recovery. Любой завершённый
+     remote SHA, не равный отправленному (включая возврат к pre-push), любой
+     третий REST SHA либо смена repository/ref/permission доказывают внешнюю
+     гонку — закончи `НУЖЕН ЧЕЛОВЕК` с точным расхождением.
      Подтверждённый push меняет HEAD: проверь два parents `[from, base]`, единственный
      `PullRequestCommit`, опубликуй `pp:base-sync-done`, убери worktree и прекрати
      **весь запуск MERGE**, сохранив `ship`. Ждать CI и мержить новый SHA без
@@ -597,4 +715,11 @@ qualified-ссылка на другой repository локальной issue н�
 8. Финал — сводка (что влито, что и почему отложено) и строка:
    `ИТОГ: ГОТОВО (влиты #a, #b)` /
    `ИТОГ: НУЖЕН ЧЕЛОВЕК (#c — <причина в одну строку>)` /
-   `ИТОГ: НЕ СМОГ (<причина>)`.
+   `ИТОГ: НЕ СМОГ (<причина>)` /
+   `ИТОГ: УСТАРЕЛО (gate-fallback: <точный error/reason>)`. `УСТАРЕЛО`
+   разрешено только для trusted targeted-fallback envelope, где `next` уже
+   выполнен, а единственный структурированный `gate-fallback` доказал смену
+   exact target, HEAD, executable-позиции либо истечение target lease до первой
+   внешней мутации. Любая ошибка команды,
+   авторизации, JSON, API/лимита, CI или частично начатая intent/done/cleanup-
+   транзакция обязана сохранить настоящий `НЕ СМОГ`/`НУЖЕН ЧЕЛОВЕК`.

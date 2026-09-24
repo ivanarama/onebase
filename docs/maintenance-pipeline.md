@@ -696,6 +696,26 @@ ship-event. Следующие звенья ссылаются через `previ
 правилу earliest-wins, поэтому два параллельных пастуха не обновляют ветку
 дважды. Crash до update безопасно повторяет CAS, crash после update проверяет
 parents/timeline и дописывает done.
+Перед любым update/push выбранный новый либо переиспользованный canonical intent
+подтверждается visibility barrier: два последовательных одинаковых полных
+GraphQL snapshot должны видеть exact unedited intent после anchor исходного
+HEAD, прежний `headRefOid` и отсутствие более новых lifecycle events. Проверка
+ограничена первой попыткой и пятью повторами с паузой 5 секунд, общий deadline —
+30 секунд, включая длительность команд; каждый вызов ограничивается оставшимся
+временем, после deadline новые вызовы не начинаются. Невидимый intent или временный
+API-сбой оставляет durable intent для recovery и завершает запуск `НЕ СМОГ` без
+изменения ветки. Для конфликтного merge этого недостаточно само по себе:
+`git merge --no-commit --no-ff` сначала только готовит index/worktree, intent
+публикуется и проходит barrier, и лишь затем создаётся merge-коммит. Его
+`GIT_AUTHOR_DATE` и `GIT_COMMITTER_DATE` задаются по серверному времени
+`intent.createdAt + 1 second`, после чего полный гейт и barrier повторяются до
+CAS-push. Поэтому `PullRequestCommit` не получает `committedDate` раньше своего
+intent даже при рассинхронизированных часах worker.
+Recovery не создаёт новый intent поверх старого: для той же пары
+`from` + authorization он переиспользует canonical earliest open intent и его
+`node_id`/`fullDatabaseId`/exact body. POST разрешён только при отсутствии
+такого intent; поздние параллельные intents проигрывают earliest и не блокируют
+следующий recovery.
 
 У старого v1-протокола есть один недоказуемый порядок: локальный merge-коммит
 может попасть в GitHub timeline раньше, чем опубликованный перед push intent.
@@ -743,17 +763,52 @@ false.
 Именно `fullDatabaseId: BigInt`, а не старый `databaseId: Int`, сравнивается как
 строка с REST comment id: реальные идентификаторы уже не помещаются в 32 бита.
 
-FIX использует замечания только для SHA из committed-пары. Он сравнивает этот
-SHA с удалённым HEAD до создания worktree и ещё раз непосредственно перед push.
-После fetch `FETCH_HEAD` обязан равняться этому SHA, а worktree создаётся из
-самого сохранённого SHA, не из плавающей ветки. Тот же контракт действует для
-конфликтного worktree MERGE.
-Оба этапа отправляют изменения атомарным CAS-push:
-`--force-with-lease=refs/heads/<ветка-PR>:<проверенный SHA>` и точным refspec
-`HEAD:refs/heads/<ветка-PR>`. Поэтому чужой push в окне после REST-сверки
-отклоняет операцию, а не перезаписывается локальным результатом.
-Если HEAD уже другой, устаревший `changes-requested` снимается и PR возвращается
-в REVIEW без применения замечаний к новому коду.
+FIX использует замечания только для SHA из committed-пары. FIX и конфликтный
+MERGE сначала фиксируют через REST полную identity head-ветки:
+`headRepository`, `headRefName`, `headSha`, `maintainerCanModify`. Отсутствующий
+repository или remote ref закрывает gate. Для ветки `ivanarama/onebase`
+источник — `origin`; для fork — точный
+`https://github.com/<headRepository>.git`, причём
+`maintainerCanModify == true` обязателен. Значения identity передаются `git`
+отдельными аргументами, без shell-строк, `eval` и `Invoke-Expression`.
+
+Перед worktree точный `git ls-remote` и затем fetch
+`refs/heads/<headRefName>` из выбранного источника обязаны вернуть сохранённый
+SHA; `FETCH_HEAD` сверяется ещё раз, а worktree создаётся из самого SHA, не из
+плавающей ветки. Непосредственно перед push REST обязан подтвердить неизменные
+repository/ref/SHA и разрешение fork. Оба этапа отправляют изменения в
+выбранный источник атомарным CAS-push:
+`--force-with-lease=refs/heads/<headRefName>:<проверенный SHA>` и точным refspec
+`HEAD:refs/heads/<headRefName>`. Поэтому чужой push в окне после REST-сверки
+отклоняет операцию, а не перезаписывается локальным результатом. После успеха
+два независимых readback — exact remote ref через `git ls-remote` и `.head.sha`
+PR через REST — обязаны равняться сохранённому локальному отправленному SHA;
+identity и разрешение fork не должны измениться. Если remote уже подтверждён,
+но REST ещё возвращает ровно старый pre-push SHA, первая попытка выполняется
+сразу, затем разрешены максимум 5 повторов с паузой 5 секунд и жёстким общим
+deadline 30 секунд, включающим ожидания и длительность команд. Каждый цикл идёт
+remote → REST → remote, и обе remote-проверки обязаны видеть отправленный SHA.
+Ошибка команды/API без противоречащего значения либо исчерпание окна, когда
+remote всё время подтверждал отправленный SHA, а REST оставался на старом,
+закрывает gate как восстановимый `НЕ СМОГ`; следующий запуск продолжает durable
+recovery без снятия маршрутной метки. Любой remote SHA, не равный отправленному
+(включая возврат к старому), третий REST SHA либо смена
+repository/ref/permission требуют человека. В обоих случаях
+`pp:base-sync-done`/post-push финализация не публикуются.
+Любой созданный FIX/MERGE temporary worktree имеет cleanup-инвариант: на каждом
+выходе, включая ошибку команды, эскалацию, отказ pre-push gate/lease, успешный
+push и post-push readback failure, незавершённый merge abort-ится, затем по
+проверенной записи `git worktree list --porcelain` удаляются exact temporary
+worktree и только его локальная temporary branch. Remote ref и durable intent
+cleanup не трогает. Ошибка уборки сообщается отдельно и не вызывает повторной
+мутации; следующий recovery может разобрать только доказанный orphan exact
+temporary worktree. Это не даёт фиксированным `pp-mrg-<N>`/`pp-rework-<N>`
+заблокировать повтор и не оставляет накопление на диске.
+Если ещё **до собственного CAS-push** удалённый HEAD отличается от SHA review и
+не содержит валидной незавершённой `PP-Fix-Transition` той же committed-пары,
+устаревший `changes-requested` снимается и PR возвращается в REVIEW без
+применения замечаний к новому коду. После собственного успешного push маршрутная
+метка сохраняется до штатной post-push финализации или recovery.
 
 - `BEHIND` → перед `update-branch` создаётся неизменяемый
   `pp:base-sync-intent`, затем API вызывается с `expected_head_sha` проверенного
@@ -765,14 +820,24 @@ SHA с удалённым HEAD до создания worktree и ещё раз �
   После `422` HEAD перечитывается: validation/rate-limit отказ при прежнем SHA не
   снимает `ship`, а изменившийся HEAD принимается только при полном доказательстве
   этой транзакции.
-- `DIRTY` → результат `git merge origin/main` разбирается по exit code и наличию
+- `DIRTY` → head fetch выполняется из выбранного выше same-repo/fork-источника,
+  а результат `git merge --no-commit --no-ff origin/main` разбирается по exit code и наличию
   unmerged-файлов (`git diff --name-only --diff-filter=U`). Ненулевой код с
   unmerged-файлами — настоящий конфликт; неизменившийся HEAD сам по себе не
-  означает no-op, потому что при конфликте он остаётся прежним до commit.
+  означает no-op: готовность clean/conflict merge до commit подтверждает
+  ровно один `MERGE_HEAD`, равный planned base, а его отсутствие означает
+  настоящий no-op. До intent commit
+  запрещён. После разрешения, staging и локальных тестов публикуется/reuse-ится
+  earliest intent, planned base связывается с `intent.base` напрямую либо
+  доказанной ancestry-цепочкой, проходит visibility barrier, затем создаётся
+  merge-коммит с обоими timestamp строго позже server `intent.createdAt`;
+  metadata перечитывается, а перед push полный gate/barrier и exact remote
+  `HEAD == from` повторяются. Любой исход выполняет общий cleanup-инвариант,
+  оставляя durable intent следующему recovery.
   Механические конфликты (`docs/features.md`, `internal/i18n/locales/*.json`,
-  `Plans/README.md`) разрешает сам, но пушит точным refspec и CAS-lease
-  `git push --force-with-lease=refs/heads/<ветка-PR>:<проверенный SHA> origin HEAD:refs/heads/<ветка-PR>`,
-  сверяет новый PR HEAD через REST, публикует ту же пару
+  `Plans/README.md`) разрешает сам, но пушит точным refspec и CAS-lease в тот же
+  выбранный источник, затем независимо сверяет exact remote ref и новый PR HEAD
+  с локальным отправленным SHA, публикует ту же пару
   `pp:base-sync-intent`/`pp:base-sync-done` и сохраняет `ship`, возвращая новый
   HEAD в интеграционное REVIEW;
   содержательный конфликт не трогает — комментарий и эскалация.
@@ -1071,8 +1136,11 @@ curl -s -H "Authorization: Bearer $PP_API_TOKEN" http://127.0.0.1:8420/api/tasks
 | `ИТОГ: НУЖЕН ЧЕЛОВЕК (…)` | застряло, нужна ваша реакция |
 | `ИТОГ: НЕ СМОГ (…)` | этап не отработал (среда, доступы) |
 | `ИТОГ: ПУСТО (…)` | делать было нечего — **тихий**, уведомление не шлётся |
+| `ИТОГ: УСТАРЕЛО (gate-fallback: …)` | узкий тихий исход REVIEW/MERGE: после выбора, но до первой мутации изменились exact target, HEAD или executable-позиция либо истёк target lease; ошибки среды, API и команд сюда не относятся |
 
-Тишина в Telegram означает «очереди пусты», а не «планировщик умер».
+Тишина в Telegram означает, что вмешательство не требуется: очередь пуста либо
+REVIEW/MERGE безопасно отбросил протухшую цель до первой мутации. Текущее
+состояние очередей смотри в статистике конвейера.
 
 ### Кодировка — часть транзакции
 
