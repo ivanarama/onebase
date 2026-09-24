@@ -2797,7 +2797,10 @@ window.obPickerSearchEmpty = function (request) {
   var td = document.createElement('td');
   td.colSpan = 99;
   td.style.cssText = 'padding:14px;text-align:center;color:#94a3b8;font-size:13px';
-  td.textContent = 'Ничего не найдено';
+  // Словарь страницы (tplHead рендерит его на языке пользователя); без него —
+  // ключ, то есть русский текст.
+  var dict = (typeof window.OB_I18N === 'object' && window.OB_I18N) || {};
+  td.textContent = dict['Ничего не найдено'] || 'Ничего не найдено';
   tr.appendChild(td);
   tb.appendChild(tr);
   obPickerFirePending();

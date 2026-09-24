@@ -1172,6 +1172,7 @@ const tplHead = `
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="onebase">
 <title>{{if .Cfg.AppName}}{{.Cfg.AppName}}{{else}}onebase{{end}}</title>
+{{with $.Lang}}<script>window.OB_I18N = {"Ничего не найдено": {{t . "Ничего не найдено"}}};</script>{{end}}
 <script src="/static/ui.js"></script>
 <style>
 .ob-embedded .topbar,.ob-embedded .subsys-bar,.ob-embedded #ob-nav{display:none!important}

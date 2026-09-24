@@ -383,6 +383,31 @@ test('пустой ответ поиска не держит очередь: с�
   assert.equal(ctx.fired[1].params._pick_query, 'гай');
 });
 
+test('пустой ответ использует словарь страницы OB_I18N', () => {
+  const config = {title: 'Подбор', serverSearch: true};
+
+  // Язык пользователя английский: tplHead отдал словарь, сообщение переводится.
+  const ctx = pickerContext();
+  ctx.window.OB_I18N = {'Ничего не найдено': 'No matches found'};
+  const picker = ctx.open({columns, rows, config}, 'КнопкаНайти', null);
+  picker.search.value = 'гай';
+  picker.search.dispatch('input');
+  ctx.flush();
+  ctx.searchEmpty();
+  const td = ctx.modal().querySelectorAll('td').find((el) => el.textContent);
+  assert.equal(td.textContent, 'No matches found');
+
+  // Без словаря — ключ, то есть русский текст.
+  const ctx2 = pickerContext();
+  const picker2 = ctx2.open({columns, rows, config}, 'КнопкаНайти', null);
+  picker2.search.value = 'гай';
+  picker2.search.dispatch('input');
+  ctx2.flush();
+  ctx2.searchEmpty();
+  const td2 = ctx2.modal().querySelectorAll('td').find((el) => el.textContent);
+  assert.equal(td2.textContent, 'Ничего не найдено');
+});
+
 const serverConfig = {title: 'Подбор', serverSearch: true};
 const pickerData = {columns, rows, config: serverConfig};
 
