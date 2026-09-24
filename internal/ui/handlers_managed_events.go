@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/entityservice"
@@ -59,6 +60,9 @@ type formEventResponse struct {
 	// Question != nil — обработчик фазы 1 вызвал ПоказатьВопрос: клиент
 	// рисует модал вопроса, ответ возвращается событием Ответ (#1528).
 	Question *questionPayload `json:"question,omitempty"`
+	// Navigation != nil — обработчик вызвал ОткрытьФорму: клиент переходит
+	// по серверно построенному адресу, только если форма не «грязная» (#1557).
+	Navigation *navigationPayload `json:"navigation,omitempty"`
 	// PickerData != nil — обработчик фазы 1 вызвал ПоказатьПодбор: клиент
 	// открывает модальный диалог мультивыбора вместо применения ТЧ (план 46).
 	PickerData *pickerPayload `json:"pickerData,omitempty"`
@@ -1166,6 +1170,13 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	vars["ПоказатьПодбор"] = pickerFn
 	vars["ShowPicker"] = pickerFn
 
+	// Навигация (#1557, план 158 срез B): ОткрытьФорму(Ссылка) кладёт в ответ
+	// canonical URL; доставляется только инициировавшей вкладке, с recheck прав.
+	var navigation *navigationPayload
+	navFn := newNavigationBuiltin(&navigation, s.reg, s.store, auth.UserFromContext(r.Context()))
+	vars["ОткрытьФорму"] = navFn
+	vars["OpenForm"] = navFn
+
 	// Вопрос (#1528): билтин ПоказатьВопрос копит payload в sink — после Run
 	// он уйдёт в ответ как question, и клиент откроет модал.
 	var question questionPayload
@@ -1366,6 +1377,9 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	if question.Variants != nil {
 		q := question
 		resp.Question = &q
+	}
+	if navigation != nil {
+		resp.Navigation = navigation
 	}
 	resp.ChoiceList = choiceItems
 	resp.SavedID = savedFormID(thisObj)
