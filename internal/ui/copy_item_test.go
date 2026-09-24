@@ -612,9 +612,10 @@ func TestListAndCardOfferCopy(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("список: code = %d, body: %s", rec.Code, rec.Body.String())
 	}
-	// Имя сущности шаблон отдаёт percent-encoded, поэтому сверяем хвост ссылки.
-	// Опорная ссылка копирования объявлена один раз на контейнер, а клиент
-	// добавляет к ней идентификатор строки параметром copy через URLSearchParams.
+	// Готовой ссылки копирования в строке больше нет: контейнер объявляет опорный
+	// адрес один раз, а идентификатор строки клиент добавляет к нему параметром
+	// copy через obRowParamURL()/URLSearchParams. Поэтому здесь проверяются
+	// опорные данные, из которых ссылка собирается, а не сам адрес.
 	if !strings.Contains(rec.Body.String(), "data-ob-row-copy-url=") ||
 		!strings.Contains(rec.Body.String(), `data-ob-row-can-copy="1"`) ||
 		!strings.Contains(rec.Body.String(), `data-ob-entity-id="`+srcID.String()+`"`) {
