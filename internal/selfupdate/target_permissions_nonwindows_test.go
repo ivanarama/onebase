@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/ivantit66/onebase/internal/installtest"
 )
 
 func TestSharedWritableTargetIsExplicitlyRejected(t *testing.T) {
@@ -30,14 +32,10 @@ func TestSharedWritableTargetIsExplicitlyRejected(t *testing.T) {
 }
 
 func TestPublicReadOnlySystemStyleTargetCannotSelfUpdate(t *testing.T) {
-	target, err := os.MkdirTemp(os.TempDir(), "onebase-public-install-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(target) })
-	if err := os.Chmod(target, 0o755); err != nil { //nolint:gosec // G302: intentionally model a public system-style install target
-		t.Fatal(err)
-	}
+	// Фикстура не зависит от приватности системного TMPDIR (#1577, #1608):
+	// на macOS приватный TMPDIR легитимно давал установке приватную границу
+	// на предке, и тест получал «можно обновлять» вместо ErrTargetNotPrivate.
+	target := installtest.SharedInstallDir(t)
 	if _, err := targetCoordinationPermissions(target); !errors.Is(err, ErrTargetNotPrivate) {
 		t.Fatalf("public system-style target error = %v, want ErrTargetNotPrivate", err)
 	}
