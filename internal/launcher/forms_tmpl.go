@@ -268,10 +268,20 @@ const tplFormsEditor = `
 .fc-pick:hover{background:#f5f8ff}
 .fc-group{border:1px solid #e2e8f0;padding:5px 9px;margin:1px 0}
 .fc-group>legend{font-weight:600;color:#475569;padding:0 5px;font-size:12px}
-.fc-group-horizontal>.fc-children{flex-direction:row;flex-wrap:wrap;gap:8px;align-items:flex-start}
-.fc-group-horizontal>.fc-children>.fc-drop{width:8px;height:auto;align-self:stretch;min-height:32px}
+/* Раскладка горизонтальной группы на холсте повторяет рантайм
+   (managed-group-horizontal в internal/ui/templates_managed.go): те же flex,
+   min-width и gap — иначе форма с шириной 400 у полей переносилась в
+   конструкторе, но стояла в один ряд в «Предприятии» (#1575). */
+.fc-group-horizontal>.fc-children{flex-direction:row;flex-wrap:wrap;gap:12px;align-items:flex-start}
+/* Зоны вставки не должны менять измеряемую раскладку: в покое они нулевой
+   ширины, видимой зона становится только на время перетаскивания
+   (класс ob-dragging вешает document-level dragstart ниже). */
+.fc-group-horizontal>.fc-children>.fc-drop{width:0;height:auto;align-self:stretch;min-height:32px}
+body.ob-dragging .fc-group-horizontal>.fc-children>.fc-drop{width:8px}
 .fc-group-horizontal>.fc-children>.fc-drop.fc-drop-over{width:16px;height:auto}
-.fc-group-horizontal>.fc-children>.fc-el{flex:1 1 220px;min-width:180px}
+.fc-group-horizontal>.fc-children>.fc-el{flex:0 1 260px;min-width:180px}
+/* Колонка-группа делит ширину строки, как form-group-box в рантайме. */
+.fc-group-horizontal>.fc-children>.fc-el.fc-group{flex:1 1 auto;min-width:0}
 .fc-pages{border:1px dashed #c7d8f5;border-radius:6px;padding:4px}
 .fc-page{border:1px solid #eef0f5;border-radius:6px;margin:3px 0;padding:4px 6px}
 .fc-tab{font-size:11px;color:#1a4a80;font-weight:600;margin-bottom:3px}
@@ -972,6 +982,12 @@ function renderCanvasHTML(html) {
     e.stopPropagation();
     selectNode(el.getAttribute('data-node-id'));
   });
+  // На время любого перетаскивания на странице зоны вставки раскрываются
+  // (body.ob-dragging): в покое они нулевой ширины и не сдвигают раскладку
+  // холста относительно рантайма (#1575). dragend срабатывает всегда, даже
+  // если бросили мимо цели.
+  document.addEventListener('dragstart', function () { document.body.classList.add('ob-dragging'); });
+  document.addEventListener('dragend', function () { document.body.classList.remove('ob-dragging'); });
   // Перетаскивание элемента холста — для переноса в другой контейнер. Свой mime
   // text/onebase-node, чтобы не путать с палитрами (attr/struct/tablepart).
   host.addEventListener('dragstart', function (e) {
@@ -1713,7 +1729,11 @@ h2{margin:0 0 14px;color:#1a4a80;font-size:16px;display:flex;align-items:center;
 fieldset{border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:12px}
 legend{font-weight:600;color:#475569;padding:0 6px;font-size:12px}
 .group-horizontal>.group-body{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
-.group-horizontal>.group-body>.fg{flex:1 1 220px;min-width:180px;margin-bottom:0}
+/* Flex, min-width и вложенные группы — как в рантайме
+   (managed-group-horizontal в internal/ui/templates_managed.go), иначе
+   предпросмотр переносил поля там, где «Предприятие» стоит в один ряд (#1575). */
+.group-horizontal>.group-body>.fg{flex:0 1 260px;min-width:180px;margin-bottom:0}
+.group-horizontal>.group-body>fieldset{flex:1 1 auto;min-width:0;margin-bottom:0}
 .tabs{margin-bottom:10px}
 .tabs-hd{display:flex;border-bottom:2px solid #e2e8f0;margin-bottom:10px;gap:2px;flex-wrap:wrap}
 .tab{padding:6px 12px;font-size:12px;color:#64748b;border-bottom:2px solid transparent;margin-bottom:-2px;cursor:pointer;user-select:none;background:none;border-left:none;border-right:none;border-top:none;font-family:inherit}
