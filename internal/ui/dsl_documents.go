@@ -1240,3 +1240,14 @@ func (c dslFieldSearch) IsFieldSearchDenied(ctx context.Context, entity *metadat
 }
 
 func (s *Server) dslFieldSearchChecker() interpreter.FieldSearchChecker { return dslFieldSearch{s: s} }
+
+// XDTOObject отдаёт внутреннее представление документа сериализатору XDTO:
+// шапку вместе с табличными частями. Без этого СериализаторXDTO.ЗаписатьXML
+// видел бы только Get/Set обёртки и не смог бы прочитать строки ТЧ.
+func (w *docWriter) XDTOObject() *runtime.Object { return w.obj }
+
+// XDTOMaskField — полевая политика для СериализаторXDTO.ЗаписатьXML: XDTOObject()
+// отдаёт сырой объект, минуя маскирование в Get().
+func (w *docWriter) XDTOMaskField() func(string, any) any {
+	return w.s.xdtoFieldMask(w.ctx(), w.entity, w.loaded, w.assigned)
+}
