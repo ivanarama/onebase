@@ -112,11 +112,112 @@ func TestAPIV2_ReportMaskDuplicateColumnsMatrix(t *testing.T) {
 				if len(response.Data) != 1 {
 					t.Fatalf("%s/%s: строк %d, ожидалась одна", policy.Read, c.report, len(response.Data))
 				}
-				for key, value := range response.Data[0] {
-					if text, ok := value.(string); ok && strings.Contains(text, raw) {
-						t.Fatalf("%s/%s: колонка %q отдала исходное значение %q",
-							policy.Read, c.report, key, text)
-					}
+			for key, value := range response.Data[0] {
+				if text, ok := value.(string); ok && strings.Contains(text, raw) {
+					t.Fatalf("%s/%s: колонка %q отдала исходное значение %q",
+						policy.Read, c.report, key, text)
+				}
+			}
+		}
+		}
+	})
+}
+
+// Ссылочный вариант того же дефекта (круг 4 #1428): защищённая ссылка выводится
+// под логическим именем (`секрет`), а «*» и авто-JOIN адресуют ту же колонку по
+// физическому имени (`секрет_id`), поэтому сопоставление имён их дубль не
+// видело: явная Секрет рядом со «*» ставила авто-JOIN связанного справочника, и
+// обёртка пагинации отдавала его колонки как id:1/наименование:1 — сырую ссылку
+// и имя скрытой записи при HTTP 200. Неоднозначная выдача теперь отклоняется
+// целиком. Тест матричный по той же причине: раскладка дублей — поведение
+// обёртки конкретного диалекта.
+func TestAPIV2_ReportMaskDuplicateReferenceColumnsMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		secret := &metadata.Entity{
+			Name: "Тайны",
+			Kind: metadata.KindCatalog,
+			Fields: []metadata.Field{
+				{Name: "Наименование", Type: metadata.FieldTypeString},
+			},
+		}
+		source := &metadata.Entity{
+			Name: "Скрытые",
+			Kind: metadata.KindCatalog,
+			Fields: []metadata.Field{
+				{Name: "Наименование", Type: metadata.FieldTypeString},
+				{Name: "Секрет", Type: "reference:Тайны", RefEntity: "Тайны"},
+			},
+		}
+		if err := db.Migrate(ctx, []*metadata.Entity{secret, source}); err != nil {
+			t.Fatalf("миграция: %v", err)
+		}
+		secretID := uuid.New()
+		if err := db.Upsert(ctx, secret.Name, secretID,
+			map[string]any{"Наименование": "Тайна-1"}, secret); err != nil {
+			t.Fatalf("запись %s: %v", secret.Name, err)
+		}
+		if err := db.Upsert(ctx, source.Name, uuid.New(),
+			map[string]any{"Наименование": "Строка", "Секрет": secretID}, source); err != nil {
+			t.Fatalf("запись %s: %v", source.Name, err)
+		}
+
+		reports := []*reportpkg.Report{
+			{Name: "СсылкаОдна", Query: `ВЫБРАТЬ Секрет ИЗ Справочник.Скрытые`},
+			{Name: "ЗвёздочкаСсылки", Query: `ВЫБРАТЬ * ИЗ Справочник.Скрытые`},
+			{Name: "ЗвёздочкаИСсылка", Query: `ВЫБРАТЬ *, Секрет ИЗ Справочник.Скрытые`},
+		}
+		registry := runtime.NewRegistry()
+		registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{secret, source}, Reports: reports})
+		h := &handler{reg: registry, store: db, interp: interpreter.New()}
+		router := chi.NewRouter()
+		h.mountV2(router)
+
+		runNames := map[string][]string{}
+		for _, rep := range reports {
+			runNames[rep.Name] = []string{"run"}
+		}
+		user := apiUser("reader", auth.Permission{
+			Reports:  runNames,
+			Catalogs: map[string][]string{secret.Name: {"read"}, source.Name: {"read"}},
+			FieldAccess: auth.FieldAccess{Catalogs: map[string]auth.FieldPolicies{
+				source.Name: {"Секрет": {Read: "hide"}},
+			}},
+		})
+
+		for _, c := range []struct {
+			report     string
+			wantStatus int
+		}{
+			// Однозначная выдача обслуживается, ссылка под маской обнуляется.
+			{"СсылкаОдна", http.StatusOK},
+			{"ЗвёздочкаСсылки", http.StatusOK},
+			// «*» и явная ссылка — дубль одной защищённой колонки: отказ до
+			// выполнения запроса, а не частично замаскированный ответ с id:1.
+			{"ЗвёздочкаИСсылка", http.StatusForbidden},
+		} {
+			target := "/api/v2/report/" + url.PathEscape(c.report) + "?limit=1"
+			req := withUser(httptest.NewRequest(http.MethodGet, target, nil), user)
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			if rec.Code != c.wantStatus {
+				t.Fatalf("%s: код %d, ожидался %d; тело %s", c.report, rec.Code, c.wantStatus, rec.Body.String())
+			}
+			if rec.Code != http.StatusOK {
+				continue
+			}
+			var response struct {
+				Data []map[string]any `json:"data"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+				t.Fatalf("%s: разбор ответа: %v", c.report, err)
+			}
+			if len(response.Data) != 1 {
+				t.Fatalf("%s: строк %d, ожидалась одна", c.report, len(response.Data))
+			}
+			for key, value := range response.Data[0] {
+				if text, ok := value.(string); ok && (text == secretID.String() || text == "Тайна-1") {
+					t.Fatalf("%s: колонка %q отдала скрытое значение %q", c.report, key, text)
 				}
 			}
 		}
