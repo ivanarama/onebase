@@ -60,6 +60,7 @@ func run() error {
 	}
 	// diff3 keeps the common suffix inside BOTH additions. --union can lose
 	// that suffix from one record; --zdiff3 can move it outside the conflict.
+	//nolint:gosec // G204: фиксированный git, аргументы — пути файлов из флагов самого mergecheck; shell не запускается.
 	cmd := exec.Command("git", "merge-file", "-p", "--diff3", "--marker-size=32",
 		"-L", "ours", "-L", "base", "-L", "theirs", "--", *ours, *base, *theirs)
 	var stderr bytes.Buffer

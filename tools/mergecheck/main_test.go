@@ -11,6 +11,7 @@ import (
 // Exercise the command used by MERGE, including Git's actual diff3 output.
 func TestMergecheckCLI(t *testing.T) {
 	binary := filepath.Join(t.TempDir(), "mergecheck.exe")
+	//nolint:gosec // G204: фиксированный go и литеральные аргументы в тесте; shell не используется.
 	if output, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
 		t.Fatalf("build mergecheck: %v\n%s", err, output)
 	}
@@ -60,6 +61,7 @@ func TestMergecheckCLI(t *testing.T) {
 				}
 			}
 			if tt.union {
+				//nolint:gosec // G204: фиксированный git и пути фикстур, построенные в тесте; shell не используется.
 				output, err := exec.Command("git", "merge-file", "-p", "--union", filepath.Join(dir, "ours"), filepath.Join(dir, "base"), filepath.Join(dir, "theirs")).Output()
 				if err != nil {
 					t.Fatal(err)
@@ -71,6 +73,7 @@ func TestMergecheckCLI(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			//nolint:gosec // G204: бинарь собран самим тестом во временном каталоге, аргументы заданы тестом; shell не используется.
 			output, err := exec.Command(binary, "-kind", tt.kind, "-base", filepath.Join(dir, "base"), "-ours", filepath.Join(dir, "ours"),
 				"-theirs", filepath.Join(dir, "theirs"), "-result", filepath.Join(dir, "result")).CombinedOutput()
 			if tt.failure == "" {
