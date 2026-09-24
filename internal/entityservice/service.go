@@ -53,7 +53,7 @@ func SetPeriodFromFields(mc *runtime.MovementsCollector, entity *metadata.Entity
 
 // Service выполняет сохранение объектов вместе с побочными эффектами.
 type Service struct {
-	// Store — порт хранилища (ports.go), а не *storage.DB: сервису нужны 22
+	// Store — порт хранилища (ports.go), а не *storage.DB: сервису нужны 25
 	// метода из 314, и объявлены здесь только они.
 	Store  Storage
 	Reg    *runtime.Registry
@@ -379,6 +379,13 @@ type SaveRequest struct {
 	// that must see the assigned number without consuming it on rejection.
 	Preflight func(ctx context.Context, obj *runtime.Object) error
 
+	// FinalPreflight runs after every write-side effect (including service fields
+	// such as posted) but before the transaction/savepoint is released. It may
+	// read the authoritative row through ctx; returning an error rolls the whole
+	// save back. This is intended for invariants that must hold for the exact
+	// final persisted result (for example, that a close-save remains readable).
+	FinalPreflight func(ctx context.Context, obj *runtime.Object) error
+
 	// Action: "" (просто Записать) | "post" | "post_and_close".
 	// Для документов с Posting=true и Action=post* запускается OnPost вместо
 	// OnWrite и в конце сохранения выставляется posted=true.
@@ -388,11 +395,27 @@ type SaveRequest struct {
 	// lock (поведение совместимо с прежним Upsert). Не-nil ⇒ UpsertVersioned
 	// вернёт storage.ErrVersionConflict при несовпадении версии.
 	ExpectedVersion *int64
+
+	// OnPersisted runs immediately after the save scope succeeds. In an ambient
+	// outer transaction this means after its savepoint, before the outer commit;
+	// callers may expose the provisional identity/version inside that same DSL
+	// transaction when they also register rollback restoration.
+	OnPersisted func(SaveResult)
+
+	// OnCommitted runs after the storage transaction has committed, with the
+	// exact durable identity/version, and before fallible post-commit delivery
+	// such as webhooks or live-list notifications. Exactly-once callers can
+	// preserve the committed result even if a downstream publisher panics.
+	OnCommitted func(SaveResult)
 }
 
 // SaveResult — результат Service.Save.
 type SaveResult struct {
-	ID          uuid.UUID
+	ID uuid.UUID
+	// Version is the committed optimistic-lock version. It is derived from
+	// the successful write itself, so callers retain a safe token even when a
+	// subsequent canonical reload fails.
+	Version     int64
 	DSLError    string                      // если не пусто — хук вернул ошибку, БД не изменена
 	DSLMessages []string                    // сообщения из builtin Сообщить
 	Movements   *runtime.MovementsCollector // для отладки/инспекции (заполняется хуком OnPost)
@@ -469,6 +492,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	// шапка, ТЧ, движения и проведение. Для нового объекта сначала вставляется
 	// полноценная шапка: FK-ссылки из создаваемых хуком объектов уже валидны, но
 	// при любой последующей ошибке откатываются вместе с родителем.
+	var persistedVersion int64
 	err := s.Store.WithTxScope(ctx, func(txCtx context.Context) error {
 		// Единая реализация для формы, ИИ, REST v1/v2 и DSL-объектов. Номер
 		// выдаётся внутри транзакции записи и до provisional/hook: хук его
@@ -565,7 +589,6 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 		if msg := storage.ValidateRequiredObjectValues(req.Entity, obj.Fields, obj.TablePartRows, req.IsNew); msg != "" {
 			return &hookRunError{err: errors.New(msg)}
 		}
-
 		if err := s.Store.AdvisoryXactLock(txCtx, lockCollector.Keys()); err != nil {
 			return err
 		}
@@ -623,16 +646,32 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 		}
 		if req.Entity.Posting {
 			if isPosting {
-				return s.Store.SetPosted(txCtx, req.Entity.Name, req.ID, true)
-			}
-			// Обычная запись существующего проводимого документа сохраняет
-			// прежнюю семантику: это полноценная отмена проведения. Поэтому
-			// недостаточно снять флаг и очистить движения — должен выполниться
-			// OnUnpost в той же транзакции.
-			if !req.IsNew && wasPosted {
+				if err := s.Store.SetPosted(txCtx, req.Entity.Name, req.ID, true); err != nil {
+					return err
+				}
+			} else if !req.IsNew && wasPosted {
+				// Обычная запись существующего проводимого документа сохраняет
+				// прежнюю семантику: это полноценная отмена проведения. Поэтому
+				// недостаточно снять флаг и очистить движения — должен выполниться
+				// OnUnpost в той же транзакции.
 				unpostMovements := runtime.NewMovementsCollector(req.Entity.Name, req.ID)
 				SetPeriodFromFields(unpostMovements, req.Entity, obj.Fields)
-				return s.unpostInTx(txCtx, req.Entity, req.ID, unpostMovements, &msgs, lockCollector)
+				if err := s.unpostInTx(txCtx, req.Entity, req.ID, unpostMovements, &msgs, lockCollector); err != nil {
+					return err
+				}
+			}
+		}
+		// Read the authoritative token before this transaction/savepoint is
+		// released. In particular an existing write with ExpectedVersion=nil
+		// cannot derive it as 1: Upsert increments whatever version was durable.
+		version, err := s.Store.EntityVersion(txCtx, req.Entity.Name, req.ID)
+		if err != nil {
+			return err
+		}
+		persistedVersion = version
+		if req.FinalPreflight != nil {
+			if err := req.FinalPreflight(txCtx, obj); err != nil {
+				return err
 			}
 		}
 		return nil
@@ -645,10 +684,32 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 		return SaveResult{}, err
 	}
 
+	result := SaveResult{ID: req.ID, Version: persistedVersion, DSLMessages: msgs, Movements: mc}
+	if req.OnPersisted != nil {
+		req.OnPersisted(result)
+	}
+	observer := saveObserverFromContext(ctx)
+	if req.OnCommitted != nil || observer != nil {
+		notifyCommitted := func() {
+			if req.OnCommitted != nil {
+				req.OnCommitted(result)
+			}
+			if observer != nil {
+				observer(req.Entity, result)
+			}
+		}
+		// WithTxScope may have released only a nested savepoint. Register before
+		// webhook/change delivery so an ambient outer transaction invokes the
+		// durable callback first, and invoke immediately only when no tx exists.
+		if !storage.DeferUntilTxCommit(ctx, notifyCommitted) {
+			notifyCommitted()
+		}
+	}
+
 	s.dispatchSaved(ctx, req, isPosting)
 	s.publishChange(ctx, req, isPosting, changeBefore)
 
-	return SaveResult{ID: req.ID, DSLMessages: msgs, Movements: mc}, nil
+	return result, nil
 }
 
 // hookRunError distinguishes a user-facing save rejection (DSL hook or a
@@ -969,7 +1030,15 @@ func (s *Service) Unpost(ctx context.Context, entity *metadata.Entity, id uuid.U
 	defer lockCollector.ReleaseAll()
 
 	err := s.Store.WithTxScope(ctx, func(txCtx context.Context) error {
-		return s.unpostInTx(txCtx, entity, id, result.Movements, &result.DSLMessages, lockCollector)
+		if err := s.unpostInTx(txCtx, entity, id, result.Movements, &result.DSLMessages, lockCollector); err != nil {
+			return err
+		}
+		version, err := s.Store.EntityVersion(txCtx, entity.Name, id)
+		if err != nil {
+			return err
+		}
+		result.Version = version
+		return nil
 	})
 	if err != nil {
 		var hookErr *hookRunError
@@ -979,6 +1048,7 @@ func (s *Service) Unpost(ctx context.Context, entity *metadata.Entity, id uuid.U
 		}
 		return SaveResult{}, err
 	}
+	NotifySaveObserver(ctx, entity, result)
 	return result, nil
 }
 

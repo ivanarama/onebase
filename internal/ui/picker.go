@@ -62,6 +62,12 @@ type pickerConfig struct {
 	// бессилен: выдача обрезана пределом, а искомое за ним, либо колонка
 	// показана маской ПДн (план 88) и её текст искать бессмысленно.
 	ServerSearch bool `json:"serverSearch"`
+	// Single — «выбрать ОДНУ строку»: переключатели вместо флажков, без
+	// «выбрать всё» и без корзины. Диалог писался под подбор номенклатуры, где
+	// строк отмечают много; там же, где значение ровно одно (подставить в
+	// ссылочный реквизит), мультивыбор — не гибкость, а лишний способ ошибиться:
+	// отметить две строки можно, а сделать с ними обеими нечего.
+	Single bool `json:"single"`
 }
 
 // newPickerBuiltin создаёт билтин ПоказатьПодбор. Записывает собранный payload
@@ -74,7 +80,9 @@ type pickerConfig struct {
 //	"ID") с UUID и значения колонок (по их Имени).
 //
 // Колонки — Массив структур {Имя, Заголовок, Тип, Редактируемое}.
-// Конфиг  — Структура {Заголовок, ПолеПоиска, ПолеКоличества, ВыбратьВсе}
+// Конфиг  — Структура {Заголовок, ПолеПоиска, ПолеКоличества, ВыбратьВсе,
+//
+//	ОдинВыбор}
 //
 //	(опционально).
 func newPickerBuiltin(sink **pickerPayload) interpreter.BuiltinFunc {
@@ -119,6 +127,7 @@ func newPickerBuiltin(sink **pickerPayload) interpreter.BuiltinFunc {
 				QtyField:     pickStr(dslField(args[2], "ПолеКоличества", "QtyField")),
 				CheckAll:     pickBool(dslField(args[2], "ВыбратьВсе", "CheckAll")),
 				ServerSearch: pickBool(dslField(args[2], "ПоискНаСервере", "ServerSearch")),
+				Single:       pickBool(dslField(args[2], "ОдинВыбор", "Single")),
 			}
 		}
 		*sink = p

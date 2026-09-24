@@ -11,8 +11,9 @@ const managedSource = fs.readFileSync('static/managed.js', 'utf8');
 // Исполняем состояние и весь диалог, а для сетевых регрессий — настоящую
 // публичную obFire. Подменены только DOM и внешние зависимости отправки формы.
 const pickerSource = source.slice(source.indexOf('var obPickerSearch = {'), source.indexOf('\nfunction openRefPicker('));
-const fireSource = managedSource.slice(managedSource.indexOf('  window.obFire = async function'), managedSource.indexOf('\n  // Отслеживание «грязной» формы'));
-assert.ok(pickerSource && fireSource, 'не найдены границы runtime');
+// После слияния с конвейером очереди событий (#1557/#1528) настоящий obFire
+// тянет за собой snapshot/dispatch и close-контроллер: вырезаем весь домен.
+const fireSource = managedSource.slice(managedSource.indexOf('  // obFire(elementName'), managedSource.indexOf('\n  // Отслеживание'));
 
 // Узел ровно того объёма, который трогает openItemPicker: дерево, атрибуты,
 // подписки и строки tbody. Настоящего DOM в тестах нет намеренно — проверяем
@@ -120,12 +121,15 @@ function pickerContext(managed = false) {
   const document = {
     getElementById(id) { return id === 'main-form' ? form : body.children.find((el) => el.id === id) || null; },
     createElement(tag) { return node(tag); },
+    // close-контроллер подписывается на submit/keydown при инициализации.
+    listeners: {},
+    addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
     body,
   };
   const window = {obManagedApplyTablePartRefOptions() {}, applyTableParts() {}};
   window.obFire = function (element, event, params, request) { fired.push({element, event, params, request}); };
   const api = new Function(
-    'document', 'window', 'obFire', 'setTimeout', 'clearTimeout',
+    'document', 'window', 'obFire', 'setTimeout', 'clearTimeout', 'obReady',
     pickerSource + '\n' +
       'return {openItemPicker: openItemPicker, searchEmpty: window.obPickerSearchEmpty,' +
       ' state: function () { return obPickerSearch; }};',
@@ -135,6 +139,8 @@ function pickerContext(managed = false) {
     (...args) => window.obFire(...args),
     function (fn) { timers.push(fn); return timers.length; },
     function () { timers.length = 0; },
+    // main вынес инициализацию диалога под obReady; в песочнице DOM готов всегда.
+    (fn) => fn(),
   );
   if (managed) {
     const deps = {
@@ -152,6 +158,8 @@ function pickerContext(managed = false) {
       fetch(url, options) {
         return new Promise((resolve, reject) => requests.push({url, options, resolve, reject}));
       },
+      // close-контроллер читает конфигурацию на инициализации.
+      cfg: {},
     };
     new Function(...Object.keys(deps), fireSource)(...Object.values(deps));
   }
@@ -166,7 +174,8 @@ function pickerContext(managed = false) {
     requests, messages, applied, window,
     fire: (...args) => window.obFire(...args),
     async settle(index, data) {
-      requests[index].resolve({json: async () => data});
+      // Контракт конвейера: HTTP 200 и обязательный ok:true в конверте.
+      requests[index].resolve({ok: true, json: async () => Object.assign({ok: true}, data)});
       await this.tick();
     },
     tick: () => new Promise((resolve) => setImmediate(resolve)),
@@ -435,7 +444,7 @@ for (const failure of ['fetch', 'json', 'server']) {
     assert.equal(ctx.requests.length, 2, 'поиски ушли параллельно');
     const error = new Error('temporary failure');
     if (failure === 'fetch') ctx.requests[1].reject(error);
-    else if (failure === 'server') ctx.requests[1].resolve({json: async () => ({error: error.message})});
+    else if (failure === 'server') ctx.requests[1].resolve({ok: true, json: async () => ({ok: false, error: error.message})});
     else ctx.requests[1].resolve({json: async () => { throw error; }});
     await ctx.tick();
     assert.equal(ctx.requests.length, 3, 'ошибка навсегда заблокировала pending');

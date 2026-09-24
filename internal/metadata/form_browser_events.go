@@ -25,25 +25,25 @@ type browserFormEventRule struct {
 var browserFormEventRules = []browserFormEventRule{
 	{
 		kinds:  []FormElementType{FormElementButton},
-		events: []FormEventType{FormEventOnClick, FormEventOnSearch, FormEventOnChoice},
+		events: []FormEventType{FormEventOnClick, FormEventOnSearch, FormEventOnChoice, FormEventOnAnswer},
 	},
 	{
 		kinds: []FormElementType{
 			FormElementField, FormElementCodeField, FormElementCheckbox,
 			FormElementDatePicker, FormElementSwitch,
 		},
-		events: []FormEventType{FormEventOnChange, FormEventOnChoice},
+		events: []FormEventType{FormEventOnChange, FormEventOnChoice, FormEventOnAnswer},
 	},
 	{
 		kinds:  []FormElementType{FormElementInputList},
-		events: []FormEventType{FormEventOnChange, FormEventStartChoice, FormEventOnChoice},
+		events: []FormEventType{FormEventOnChange, FormEventStartChoice, FormEventOnChoice, FormEventOnAnswer},
 	},
 	{
 		kinds: []FormElementType{FormElementTablePart},
 		events: []FormEventType{
 			FormEventOnChange, FormEventOnRowAdded, FormEventOnRowDeleted,
 			FormEventOnChoice, FormEventOnRowActivated, FormEventOnRowChanged,
-			FormEventAfterRowAdd,
+			FormEventAfterRowAdd, FormEventOnAnswer,
 		},
 	},
 	{
@@ -61,8 +61,8 @@ var browserFormEventRules = []browserFormEventRule{
 // команда автопанели ровно так же, как кнопка, и строка серверного поиска
 // отправляет событие той же цели. Без него диалог, открытый командой, получал
 // fail-closed отказ «команда формы X не отправляет событие "Поиск"», хотя
-// руководство обещает все три события.
-var browserFormCommandEvents = []FormEventType{FormEventOnClick, FormEventOnSearch, FormEventOnChoice}
+// руководство обещает все события выбора.
+var browserFormCommandEvents = []FormEventType{FormEventOnClick, FormEventOnSearch, FormEventOnChoice, FormEventOnAnswer}
 
 // browserFormLevelEvents — события, приходящие без имени элемента, на форму
 // целиком. Остальные события уровня формы серверные: их запускает сервер на

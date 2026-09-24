@@ -65,6 +65,7 @@ type TotalSpec struct {
 
 // RenderContext holds all data needed to render a print form.
 type RenderContext struct {
+	EntityName string                      // имя сущности; разрешает {{Сущность.Поле}} для корневой записи
 	Document   map[string]any              // fields of the document/catalog record
 	TableParts map[string][]map[string]any // table part name → rows
 	Constants  map[string]any              // global constants

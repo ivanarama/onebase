@@ -98,6 +98,22 @@ func TestQueryMaskPlan_HideBlanksValueKeepsColumn(t *testing.T) {
 	}
 }
 
+func TestQueryMaskPlan_ApplyTrackedMarksAlreadyEmptyProtectedValue(t *testing.T) {
+	u := maskUser(auth.FieldPolicies{"Паспорт": {Read: "hide"}})
+	plan := access.QueryMaskPlanFor(u, compileForMask(t, `ВЫБРАТЬ Паспорт ИЗ Справочник.Клиент`), lookupClient)
+	rows := []map[string]any{{"паспорт": nil}}
+	tracked, err := plan.ApplyTracked(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tracked) != 1 {
+		t.Fatalf("след маскирования содержит %d строк, ожидалась 1", len(tracked))
+	}
+	if _, ok := tracked[0]["паспорт"]; !ok {
+		t.Fatalf("hide над исходным nil обязан оставаться видимым следующему слою: %v", tracked)
+	}
+}
+
 func TestQueryMaskPlan_NoPolicyNoAdminNoWork(t *testing.T) {
 	res := compileForMask(t, `ВЫБРАТЬ Телефон ИЗ Справочник.Клиент`)
 	if plan := access.QueryMaskPlanFor(nil, res, lookupClient); !plan.Empty() {

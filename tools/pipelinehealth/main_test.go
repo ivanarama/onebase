@@ -1,7 +1,12 @@
 package main
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +16,7 @@ const (
 	headA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	headB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 	headC = "cccccccccccccccccccccccccccccccccccccccc"
+	headD = "dddddddddddddddddddddddddddddddddddddddd"
 	epoch = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 )
 
@@ -45,6 +51,10 @@ func syncIntent(from string, reviewID, claimID, completionID int64) string {
 func syncDone(intentID int64, from, to string) string {
 	return fmt.Sprintf("<!-- pp:base-sync-done intent=%d from=%s to=%s base=%s previous=none ship-event=LE_test -->",
 		intentID, from, to, headB)
+}
+
+func syncV1Abort(intentID int64, head string) string {
+	return fmt.Sprintf("<!-- pp:base-sync-v1-aborted intent=%d head=%s reason=commit-before-intent -->", intentID, head)
 }
 
 // withMergeHead gives the pull request the two-parent head commit every
@@ -150,6 +160,125 @@ func TestBaseSyncIntentWithoutDoneIsMergeRecoveryNotReview(t *testing.T) {
 	}
 }
 
+func TestBaseSyncV1AbortReturnsCurrentHeadToFullReview(t *testing.T) {
+	item := testPR(1464, headC, "reviewed")
+	item.HeadParents = []string{headA, headB}
+	item = addComment(item, 20, completion(headA, 10, 15))
+	item = addComment(item, 30, syncIntent(headA, 10, 15, 20))
+	item = addComment(item, 35, syncV1Abort(30, headC))
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if got.IntegrationOwner != nil || len(got.ContentReviewCandidates) != 1 ||
+		len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 1464 ||
+		got.ReviewCandidates[0].Stage != "review" || hasFinding(got, "base_sync_recovery") ||
+		!hasFinding(got, "base_sync_v1_abort_waiting_review") {
+		t.Fatalf("aborted v1 intent did not return the exact HEAD to full review: %+v", got)
+	}
+}
+
+func TestBaseSyncV1AbortUsesOrdinaryMergeAfterFreshReviewAndShip(t *testing.T) {
+	item := testPR(1464, headC, "reviewed", "ship")
+	item.HeadParents = []string{headA, headB}
+	item = addComment(item, 20, completion(headA, 10, 15))
+	item = addComment(item, 30, syncIntent(headA, 10, 15, 20))
+	item = addComment(item, 35, syncV1Abort(30, headC))
+	item = addComment(item, 45, completion(headC, 40, 42))
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if got.IntegrationOwner != nil || len(got.MergeCandidates) != 1 ||
+		got.MergeCandidates[0].Number != 1464 || got.MergeCandidates[0].Stage != "merge" ||
+		len(got.MergeExecutable) != 1 || got.MergeExecutable[0].Number != 1464 ||
+		hasFinding(got, "base_sync_recovery") || hasFinding(got, "legacy_ship_waiting_merge") ||
+		!hasFinding(got, "base_sync_v1_abort_reauthorized") {
+		t.Fatalf("fresh review and ship did not restore the ordinary merge path: %+v", got)
+	}
+}
+
+func TestBaseSyncV1AbortCannotStealAnotherIntegrationOwner(t *testing.T) {
+	aborted := testPR(1464, headC, "reviewed", "ship")
+	aborted.HeadParents = []string{headA, headB}
+	aborted = addComment(aborted, 20, completion(headA, 10, 15))
+	aborted = addComment(aborted, 30, syncIntent(headA, 10, 15, 20))
+	aborted = addComment(aborted, 35, syncV1Abort(30, headC))
+	aborted = addComment(aborted, 45, completion(headC, 40, 42))
+
+	owner := testPR(1500, headD, "reviewed", "ship")
+	owner.HeadParents = []string{headC, headB}
+	owner = addComment(owner, 50, syncIntent(headC, 46, 47, 48))
+	owner = addComment(owner, 51, syncDone(50, headC, headD))
+
+	got := analyze([]apiPull{aborted, owner}, "ivanarama")
+	if got.IntegrationOwner == nil || got.IntegrationOwner.Number != 1500 ||
+		got.IntegrationOwner.Stage != "integration-review" || len(got.ReviewCandidates) != 1 ||
+		got.ReviewCandidates[0].Number != 1500 || hasFinding(got, "base_sync_recovery") {
+		t.Fatalf("aborted v1 intent stole the live integration owner: %+v", got)
+	}
+}
+
+func TestInvalidBaseSyncV1AbortDoesNotCloseRecovery(t *testing.T) {
+	makeItem := func() apiPull {
+		item := testPR(1464, headC, "reviewed", "ship")
+		item.HeadParents = []string{headA, headB}
+		item = addComment(item, 20, completion(headA, 10, 15))
+		item = addComment(item, 30, syncIntent(headA, 10, 15, 20))
+		return addComment(item, 35, syncV1Abort(30, headC))
+	}
+	tests := []struct {
+		name   string
+		mutate func(*apiPull)
+	}{
+		{name: "wrong actor", mutate: func(item *apiPull) { item.Comments[2].User.Login = "app" }},
+		{name: "edited marker", mutate: func(item *apiPull) { item.Comments[2].UpdatedAt = "2026-09-01T00:00:00Z" }},
+		{name: "wrong head", mutate: func(item *apiPull) { item.Comments[2].Body = syncV1Abort(30, headB) }},
+		{name: "wrong intent", mutate: func(item *apiPull) { item.Comments[2].Body = syncV1Abort(29, headC) }},
+		{name: "wrong second parent", mutate: func(item *apiPull) { item.HeadParents = []string{headA, headC} }},
+		{name: "duplicate marker", mutate: func(item *apiPull) { *item = addComment(*item, 36, syncV1Abort(30, headC)) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			item := makeItem()
+			tt.mutate(&item)
+			got := analyze([]apiPull{item}, "ivanarama")
+			if got.IntegrationOwner == nil || got.IntegrationOwner.Stage != "integration-merge-recovery" ||
+				!hasFinding(got, "base_sync_recovery") || hasFinding(got, "base_sync_v1_abort_waiting_review") {
+				t.Fatalf("invalid abort marker closed recovery: %+v", got)
+			}
+		})
+	}
+}
+
+func TestBaseSyncV1AbortDoesNotHideAnotherOpenIntentOnSamePR(t *testing.T) {
+	item := testPR(1464, headC, "reviewed", "ship")
+	item.HeadParents = []string{headA, headB}
+	item = addComment(item, 20, completion(headA, 10, 15))
+	item = addComment(item, 30, syncIntent(headA, 10, 15, 20))
+	item = addComment(item, 35, syncV1Abort(30, headC))
+	item = addComment(item, 40, syncIntent(headA, 10, 15, 20))
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if got.IntegrationOwner == nil || got.IntegrationOwner.Stage != "integration-merge-recovery" ||
+		!hasFinding(got, "base_sync_recovery") || hasFinding(got, "base_sync_v1_abort_waiting_review") ||
+		hasFinding(got, "base_sync_v1_abort_reauthorized") {
+		t.Fatalf("one aborted intent hid another open transaction: %+v", got)
+	}
+}
+
+func TestBaseSyncV1AbortCannotOverrideCompletedIntent(t *testing.T) {
+	item := testPR(1464, headC, "reviewed", "ship")
+	item.HeadParents = []string{headA, headB}
+	item = addComment(item, 20, completion(headA, 10, 15))
+	item = addComment(item, 30, syncIntent(headA, 10, 15, 20))
+	item = addComment(item, 31, syncDone(30, headA, headC))
+	item = addComment(item, 35, syncV1Abort(30, headC))
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if got.IntegrationOwner == nil || got.IntegrationOwner.Stage != "integration-review" ||
+		!hasFinding(got, "base_sync_waiting_review") || hasFinding(got, "base_sync_v1_abort_waiting_review") ||
+		hasFinding(got, "base_sync_v1_abort_reauthorized") {
+		t.Fatalf("abort marker overrode a completed intent/done handoff: %+v", got)
+	}
+}
+
 func TestHistoricalUnfinishedIntentDoesNotOverrideCurrentCompletedSync(t *testing.T) {
 	item := testPR(1323, headC, "ship", "reviewed")
 	item.HeadParents = []string{headB, headA}
@@ -202,6 +331,29 @@ func TestMultiHopRecoveryKeepsOriginalSingleFlightOwnership(t *testing.T) {
 		got.IntegrationOwner.Stage != "integration-merge-recovery" ||
 		len(got.MergeExecutable) != 1 || got.MergeExecutable[0].Number != 1218 {
 		t.Fatalf("multi-hop owner was overtaken by a later chain: %+v", got)
+	}
+}
+
+func TestDifferentShipEventDoesNotInheritSingleFlightLineageAge(t *testing.T) {
+	newAuthorization := testPR(10, headC, "ship", "reviewed")
+	newAuthorization.HeadParents = []string{headB, headA}
+	newAuthorization = addComment(newAuthorization, 10,
+		fmt.Sprintf("<!-- pp:base-sync-intent from=%s base=%s review-comment=1 claim=2 completion=3 ship-event=LE_old previous=none -->", headA, headB))
+	newAuthorization = addComment(newAuthorization, 11,
+		fmt.Sprintf("<!-- pp:base-sync-done intent=10 from=%s to=%s base=%s previous=none ship-event=LE_old -->", headA, headB, headB))
+	newAuthorization = addComment(newAuthorization, 50,
+		fmt.Sprintf("<!-- pp:base-sync-intent from=%s base=%s review-comment=4 claim=5 completion=6 ship-event=LE_new previous=11 -->", headB, headA))
+	newAuthorization = addComment(newAuthorization, 51,
+		fmt.Sprintf("<!-- pp:base-sync-done intent=50 from=%s to=%s base=%s previous=11 ship-event=LE_new -->", headB, headC, headA))
+
+	olderLineage := testPR(20, headB, "ship", "reviewed")
+	olderLineage = addComment(olderLineage, 30, syncIntent(headA, 7, 8, 9))
+	olderLineage = addComment(olderLineage, 31, syncDone(30, headA, headB))
+
+	got := analyze([]apiPull{newAuthorization, olderLineage}, "ivanarama")
+	if got.IntegrationOwner == nil || got.IntegrationOwner.Number != 20 ||
+		got.IntegrationOwner.Stage != "integration-review" {
+		t.Fatalf("a different ship event inherited the old lineage age: %+v", got)
 	}
 }
 
@@ -469,6 +621,68 @@ func TestOrdinaryCandidatesUsePriorityBeforeReviewDepth(t *testing.T) {
 	}
 }
 
+func TestOrdinaryMergeCandidatesIgnoreReviewDepth(t *testing.T) {
+	items := []candidate{
+		{Number: 20, Depth: 0, Stage: "merge", Priority: 2},
+		{Number: 10, Depth: 8, Stage: "merge", Priority: 2},
+		{Number: 30, Depth: 9, Stage: "merge", Priority: 1},
+	}
+	sortMergeCandidates(items)
+	if items[0].Number != 30 || items[1].Number != 10 || items[2].Number != 20 {
+		t.Fatalf("MERGE order must be priority then number: %+v", items)
+	}
+}
+
+func TestContractRejectsIncompleteTargetReviewGate(t *testing.T) {
+	current, err := os.ReadFile(filepath.Join("..", "..", ".claude", "skills", "review-queue", "SKILL.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := os.ReadFile(filepath.Join("..", "..", ".claude", "skills", "review-queue", "references", "legacy-protocol.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fragment := range []string{
+		"обычная цель обязана входить в `content_review_candidates`",
+		"routing labels, review-depth и стабильную server timeline/epoch",
+	} {
+		t.Run(fragment, func(t *testing.T) {
+			incomplete := strings.Replace(string(current), fragment, "", 1)
+			if incomplete == string(current) {
+				t.Fatalf("test fragment is absent from the active contract: %q", fragment)
+			}
+			path := filepath.Join(t.TempDir(), "review-queue", "SKILL.md")
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, []byte(incomplete), 0o600); err != nil { //nolint:gosec // G703: test-owned path below t.TempDir
+				t.Fatal(err)
+			}
+			legacyPath := filepath.Join(filepath.Dir(path), "references", "legacy-protocol.md")
+			if err := os.MkdirAll(filepath.Dir(legacyPath), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(legacyPath, legacy, 0o600); err != nil { //nolint:gosec // G703: test-owned path below t.TempDir
+				t.Fatal(err)
+			}
+			got := report{State: "green"}
+			checkContract(&got, path)
+			if !hasFinding(got, "unsafe_target_review_contract") {
+				t.Fatalf("incomplete target gate stayed green: %+v", got.Findings)
+			}
+		})
+	}
+}
+
+func TestActiveContractPassesHealthCheck(t *testing.T) {
+	path := filepath.Join("..", "..", ".claude", "skills", "review-queue", "SKILL.md")
+	got := report{State: "green"}
+	checkContract(&got, path)
+	if len(got.Findings) != 0 || got.State != "green" {
+		t.Fatalf("active pipeline contract is unhealthy: %+v", got.Findings)
+	}
+}
+
 func TestQueuePriorityUsesManualLabelAndAging(t *testing.T) {
 	now := time.Date(2026, 9, 2, 0, 0, 0, 0, time.UTC)
 	priority, source := queuePriority(map[string]bool{"bug": true, "queue:p3": true}, "2026-09-02T00:00:00Z", now)
@@ -500,6 +714,20 @@ func TestShipOnUnmarkedAuthorPushIsNotCarriedIntoReview(t *testing.T) {
 	}
 }
 
+func TestShipWithProtocolHistoryButNoCompletionsIsVisible(t *testing.T) {
+	item := testPR(7, headA, "ship")
+	item = addComment(item, 40, syncIntent(headB, 20, 25, 30))
+	item = addComment(item, 41, syncDone(40, headB, headB))
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.HumanWaiting) != 1 || got.HumanWaiting[0].Number != 7 {
+		t.Fatalf("ship PR disappeared from every queue: %+v", got)
+	}
+	if !hasFinding(got, "ship_without_current_review_proof") {
+		t.Fatalf("ship PR disappeared without a finding: %+v", got)
+	}
+}
+
 func testIssue(number int, comments ...apiComment) apiIssue {
 	return apiIssue{Number: number, Title: "Issue", HTMLURL: "https://example.test/issue", CreatedAt: "2026-09-01T00:00:00Z", UpdatedAt: "2026-09-02T00:00:00Z", State: "open", Thread: comments}
 }
@@ -516,6 +744,23 @@ func issueComment(id int64, body string) apiComment {
 	timestamp := fmt.Sprintf("2026-09-01T10:%02d:00Z", id%60)
 	return apiComment{ID: id, CreatedAt: timestamp, UpdatedAt: timestamp,
 		User: apiUser{Login: "ivanarama"}, Body: body}
+}
+
+func triageRouteRoot(issue int, id int64, route string) (apiComment, string) {
+	record := fmt.Sprintf("pp-triage-route-v1\nissue=%d\nissue-updated=2026-09-01T00:00:00Z\ntitle-sha256=%s\nbody-sha256=%s\nanalysis-sha256=%s\ncomments-sha256=%s\nlabels-sha256=%s\nevents-watermark=1\nclass=bug\nroute=%s\nmanual=false\nreply=none\n",
+		issue, epoch, epoch, epoch, epoch, epoch, route)
+	fingerprint := fmt.Sprintf("%x", sha256.Sum256([]byte(record)))
+	body := fmt.Sprintf("<!-- pp:triage -->\n%s<!-- pp:triage-route-claim fingerprint-sha256=%s owner=11111111-1111-1111-1111-111111111111 -->", record, fingerprint)
+	return issueComment(id, body), fingerprint
+}
+
+func completedTriageRoute(issue int, route string) []apiComment {
+	root, fingerprint := triageRouteRoot(issue, 10, route)
+	return []apiComment{
+		root,
+		issueComment(11, "<!-- pp:triage-route-labels claim=10 fingerprint-sha256="+fingerprint+" events-through=1 labels-sha256="+epoch+" -->"),
+		issueComment(12, "<!-- pp:triage-route-done claim=10 fingerprint-sha256="+fingerprint+" -->"),
+	}
 }
 
 func TestMojibakeInTriageVisibleTextIsRed(t *testing.T) {
@@ -579,22 +824,82 @@ func TestFixQueueExcludesInWorkAndOpenPullReferences(t *testing.T) {
 		issueWithLabels(21, "approved"),
 		issueWithLabels(22, "approved"),
 	}
-	prs := []apiPull{{Number: 100, State: "open", Title: "fix: issue #21", Body: "Fixes #21"}}
+	prs := []apiPull{
+		{Number: 101, State: "open", Title: "related work", Body: "See #21 for context"},
+		{Number: 100, State: "open", Title: "fix: issue #21", Body: "Fixes #21"},
+		{Number: 99, State: "closed", Title: "old fix #21"},
+	}
 	analyzeIssues(&result, issues, prs, "ivanarama")
 
 	if len(result.FixCandidates) != 1 || result.FixCandidates[0].Number != 22 {
 		t.Fatalf("FIX queue included work already owned by a PR: %+v", result.FixCandidates)
 	}
+	var diagnostic *finding
+	for index := range result.Findings {
+		if result.Findings[index].Code == "fix_issue_referenced_by_open_pull" {
+			diagnostic = &result.Findings[index]
+			break
+		}
+	}
+	if diagnostic == nil || diagnostic.Severity != "yellow" || diagnostic.Issue != 21 ||
+		!strings.Contains(diagnostic.Message, "#100, #101") {
+		t.Fatalf("open PR references were not diagnosed deterministically: %+v", result.Findings)
+	}
+}
+
+func TestCLIReportsWhyOpenPullReferenceExcludesFixIssue(t *testing.T) {
+	directory := t.TempDir()
+	writeFixture := func(name string, value any) string {
+		t.Helper()
+		path := filepath.Join(directory, name)
+		data, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("marshal %s: %v", name, err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		return path
+	}
+
+	issuePath := writeFixture("issues.json", []apiIssue{issueWithLabels(21, "approved")})
+	pullPath := writeFixture("pulls.json", []apiPull{
+		{Number: 101, State: "open", Title: "related work", Body: "See #21 for context"},
+		{Number: 100, State: "open", Title: "fix: issue #21", Body: "Fixes #21"},
+	})
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repository root: %v", err)
+	}
+	// #nosec G204 -- executable and flags are fixed; variable arguments are test-owned paths from t.TempDir.
+	command := exec.Command("go", "run", "./tools/pipelinehealth", "-prs", pullPath, "-issues", issuePath, "-json")
+	command.Dir = repositoryRoot
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pipelinehealth CLI failed: %v\n%s", err, output)
+	}
+	var result report
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("decode pipelinehealth output: %v\n%s", err, output)
+	}
+	if len(result.FixCandidates) != 0 {
+		t.Fatalf("referenced issue remained executable: %+v", result.FixCandidates)
+	}
+	if len(result.Findings) != 1 || result.Findings[0].Severity != "yellow" ||
+		result.Findings[0].Code != "fix_issue_referenced_by_open_pull" || result.Findings[0].Issue != 21 ||
+		!strings.Contains(result.Findings[0].Message, "#100, #101") {
+		t.Fatalf("CLI did not explain the exclusion: %+v", result.Findings)
+	}
 }
 
 func TestFixQueueRequiresCompletedTriageRoute(t *testing.T) {
-	fingerprint := strings.Repeat("a", 64)
-	root := issueComment(10, "<!-- pp:triage -->\nreply=none\n<!-- pp:triage-route-claim fingerprint-sha256="+fingerprint+" owner=11111111-1111-1111-1111-111111111111 -->")
+	root, fingerprint := triageRouteRoot(30, 10, "ready-fix")
 	unfinished := testIssue(30, root)
 	unfinished.Labels = []apiLabel{{Name: "approved"}}
-	complete := testIssue(31, root,
-		issueComment(11, "<!-- pp:triage-route-labels claim=10 fingerprint-sha256="+fingerprint+" events-through=1 labels-sha256="+fingerprint+" -->"),
-		issueComment(12, "<!-- pp:triage-route-done claim=10 fingerprint-sha256="+fingerprint+" -->"))
+	completeRoot, completeFingerprint := triageRouteRoot(31, 10, "ready-fix")
+	complete := testIssue(31, completeRoot,
+		issueComment(11, "<!-- pp:triage-route-labels claim=10 fingerprint-sha256="+completeFingerprint+" events-through=1 labels-sha256="+fingerprint+" -->"),
+		issueComment(12, "<!-- pp:triage-route-done claim=10 fingerprint-sha256="+completeFingerprint+" -->"))
 	complete.Labels = []apiLabel{{Name: "approved"}}
 	result := analyze(nil, "ivanarama")
 	analyzeIssues(&result, []apiIssue{unfinished, complete}, nil, "ivanarama")
@@ -605,4 +910,94 @@ func TestFixQueueRequiresCompletedTriageRoute(t *testing.T) {
 	if !hasFinding(result, "fix_issue_not_executable") {
 		t.Fatalf("unfinished TRIAGE handoff was not diagnosed: %+v", result.Findings)
 	}
+}
+
+func TestIssueRouteDiagnosticsUseCommittedTriageForAllLabels(t *testing.T) {
+	readyRoute := testIssue(40, completedTriageRoute(40, "ready-fix")...)
+	readyRoute.Labels = []apiLabel{{Name: "needs-decision"}}
+	humanRoute := testIssue(41, completedTriageRoute(41, "needs-decision")...)
+	humanRoute.Labels = []apiLabel{{Name: "ready-fix"}}
+	unfinishedRoot, _ := triageRouteRoot(42, 10, "ready-fix")
+	unfinished := testIssue(42, unfinishedRoot)
+	unfinished.Labels = []apiLabel{{Name: "needs-decision"}}
+
+	result := analyze(nil, "ivanarama")
+	analyzeIssues(&result, []apiIssue{readyRoute, humanRoute, unfinished}, nil, "ivanarama")
+
+	for _, number := range []int{40, 41} {
+		if !hasIssueFinding(result, "triage_route_label_mismatch", number) {
+			t.Fatalf("route mismatch for issue #%d was not diagnosed: %+v", number, result.Findings)
+		}
+	}
+	if !hasIssueFinding(result, "fix_issue_not_executable", 42) {
+		t.Fatalf("unfinished route under needs-decision was hidden: %+v", result.Findings)
+	}
+	if len(result.FixCandidates) != 0 {
+		t.Fatalf("route mismatch leaked into the executable FIX allowlist: %+v", result.FixCandidates)
+	}
+	if len(result.HumanWaiting) != 3 {
+		t.Fatalf("route diagnostics did not preserve human-visible work: %+v", result.HumanWaiting)
+	}
+}
+
+func TestApprovedOverridesCompletedTriageRouteMismatch(t *testing.T) {
+	issue := testIssue(43, completedTriageRoute(43, "needs-decision")...)
+	issue.Labels = []apiLabel{{Name: "ready-fix"}, {Name: "approved"}}
+	result := analyze(nil, "ivanarama")
+	analyzeIssues(&result, []apiIssue{issue}, nil, "ivanarama")
+
+	if hasIssueFinding(result, "triage_route_label_mismatch", 43) ||
+		len(result.FixCandidates) != 1 || result.FixCandidates[0].Number != 43 {
+		t.Fatalf("approved did not override the triage route: %+v", result)
+	}
+}
+
+func TestPublicCommandReportsRouteMismatchesAndUnfinishedHumanRoute(t *testing.T) {
+	readyRoute := testIssue(50, completedTriageRoute(50, "ready-fix")...)
+	readyRoute.Labels = []apiLabel{{Name: "needs-decision"}}
+	humanRoute := testIssue(51, completedTriageRoute(51, "needs-decision")...)
+	humanRoute.Labels = []apiLabel{{Name: "ready-fix"}}
+	unfinishedRoot, _ := triageRouteRoot(52, 10, "ready-fix")
+	unfinished := testIssue(52, unfinishedRoot)
+	unfinished.Labels = []apiLabel{{Name: "needs-decision"}}
+
+	temp := t.TempDir()
+	issuesPath := filepath.Join(temp, "issues.json")
+	prsPath := filepath.Join(temp, "prs.json")
+	issuesJSON, err := json.Marshal([]apiIssue{readyRoute, humanRoute, unfinished})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(issuesPath, issuesJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(prsPath, []byte("[]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	//nolint:gosec // The executable and flags are fixed; variable arguments are test-owned temporary paths.
+	command := exec.Command("go", "run", ".", "-json", "-prs", prsPath, "-issues", issuesPath,
+		"-contract", filepath.Join("..", "..", ".claude", "skills", "review-queue", "SKILL.md"))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pipelinehealth failed: %v\n%s", err, output)
+	}
+	var got report
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode pipelinehealth output: %v\n%s", err, output)
+	}
+	if !hasIssueFinding(got, "triage_route_label_mismatch", 50) ||
+		!hasIssueFinding(got, "triage_route_label_mismatch", 51) ||
+		!hasIssueFinding(got, "fix_issue_not_executable", 52) {
+		t.Fatalf("public command hid route diagnostics: %+v", got.Findings)
+	}
+}
+
+func hasIssueFinding(result report, code string, issue int) bool {
+	for _, item := range result.Findings {
+		if item.Code == code && item.Issue == issue {
+			return true
+		}
+	}
+	return false
 }

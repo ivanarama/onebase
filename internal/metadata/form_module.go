@@ -57,6 +57,10 @@ const (
 	// набранный текст в переменной ПодборЗапрос и снова зовёт ПоказатьПодбор;
 	// клиент заменяет строки в открытом окне, не открывая второго.
 	FormEventOnSearch FormEventType = "Поиск" // OnSearch
+	// Ответ — вторая фаза диалога вопроса (#1528): обработчик показывает
+	// вопрос билтином ПоказатьВопрос (фаза 1, например Нажатие), ответ
+	// пользователя приезжает событием Ответ с переменной ВопросОтвет.
+	FormEventOnAnswer FormEventType = "Ответ" // OnAnswer
 )
 
 var knownFormEventTypes = map[FormEventType]bool{
@@ -71,6 +75,7 @@ var knownFormEventTypes = map[FormEventType]bool{
 	FormEventBeforeRowDelete: true, FormEventStartListChoice: true,
 	FormEventAutoComplete: true, FormEventExecuteCommand: true, FormEventOnChoice: true,
 	FormEventOnSearch: true,
+	FormEventOnAnswer: true,
 }
 
 // formTablePartContextVars — имена, которые платформа инжектирует в обработчик
@@ -202,17 +207,22 @@ type FormElement struct {
 	DataPath        string            `yaml:"data_path,omitempty"`      // "Объект.Контрагент", "Список.Цена"
 	Picture         string            `yaml:"picture,omitempty"`        // "_resources/.../Picture.png" или "stdpic:Post"
 	ValuesPicture   string            `yaml:"values_picture,omitempty"` // палитра выбора (для PictureField/InputField)
-	Width           int               `yaml:"width,omitempty"`          // ширина в условных единицах
+	Width           int               `yaml:"width,omitempty"`          // ширина в пикселях
 	Height          int               `yaml:"height,omitempty"`         // высота
 	HorizontalAlign string            `yaml:"halign,omitempty"`         // left|center|right|stretch
 	VerticalAlign   string            `yaml:"valign,omitempty"`         // top|center|bottom
 	Orientation     string            `yaml:"orientation,omitempty"`    // vertical|horizontal для контейнеров
+	Background      string            `yaml:"background,omitempty"`     // фон контейнера; читается только у ГруппаФормы (#1547), цвет проверяет csssafe.Color
 	ReadOnly        bool              `yaml:"readonly,omitempty"`       // только чтение
 	// ReadOnlyWhen / HiddenWhen — условия по полям ЗАПИСИ (выражение того же
 	// языка, что `when` условного оформления): элемент становится нередактируемым
 	// либо вовсе не показывается, пока условие истинно. Нужны там, где запрет
 	// живёт в бизнес-логике: без них форма показывает поле активным, а отказ
 	// прилетает исключением уже при записи.
+	//
+	// Оба каскадят на потомков контейнера, как и постоянный ReadOnly (#1184).
+	// Складывается это по «ИЛИ»: ложное условие предка не отпирает потомка с
+	// собственным ReadOnly.
 	ReadOnlyWhen string `yaml:"readonly_when,omitempty"`
 	HiddenWhen   string `yaml:"hidden_when,omitempty"`
 	UseGrid      bool   `yaml:"use_grid,omitempty"` // (устар.) SlickGrid теперь включён по умолчанию
@@ -241,6 +251,12 @@ type FormElement struct {
 	DisplayFormat string `yaml:"display_format,omitempty"`
 	Type          string `yaml:"type,omitempty"`   // "file" для файлового поля, и т.п.
 	Choice        bool   `yaml:"choice,omitempty"` // включена кнопка выбора у InputField
+	// ChoiceFilter ограничивает варианты ссылочного поля декларативными
+	// условиями. Браузер передаёт только значения объявленных источников, а
+	// сервер восстанавливает Field/Op из этих метаданных; SQL-фрагменты в
+	// контракт не входят. Порядок условий сохраняется для стабильного YAML
+	// round-trip, семантика списка — AND.
+	ChoiceFilter []FormChoiceCondition `yaml:"choice_filter,omitempty"`
 	// Choices — декларативный список значений для выбора (аналог 1С СписокВыбора).
 	// Задаётся в .form.yaml на элементе kind: ПолеСписка; рендерер показывает
 	// <select> с этими значениями, а выбор дёргает событие ПриИзменении.
@@ -264,6 +280,25 @@ type FormElement struct {
 	// (FormAttributeColumn). Дочерний элемент kind: ПолеВвода тоже не подошёл —
 	// такая колонка выглядела бы редактируемой, а редактировать нечего.
 	VirtualColumns []FormVirtualColumn `yaml:"virtual_columns,omitempty"`
+}
+
+// FormChoiceOperator — закрытый набор операторов choice_filter v1.
+type FormChoiceOperator string
+
+const (
+	FormChoiceOpEqual       FormChoiceOperator = "eq"
+	FormChoiceOpInHierarchy FormChoiceOperator = "in_hierarchy"
+)
+
+// FormChoiceCondition описывает одно серверно проверяемое условие подбора.
+// Ровно одно из From и Value обязательно. В версии 1 Value допустим только
+// для служебного поля is_folder и имеет boolean-тип; указатель отличает
+// явное false от отсутствующего литерала.
+type FormChoiceCondition struct {
+	Field string             `yaml:"field"`
+	Op    FormChoiceOperator `yaml:"op"`
+	From  string             `yaml:"from,omitempty"`
+	Value *bool              `yaml:"value,omitempty"`
 }
 
 // FormVirtualColumn — объявление виртуальной колонки табличной части.
@@ -438,11 +473,10 @@ type FormModule struct {
 	Handlers   map[FormEventType]string  `yaml:"events,omitempty"`
 	Procedures map[string]*FormProcedure `yaml:"-"`
 
-	// Actions — переопределение стандартных действий формы объекта (issue #151).
-	// Пока поддерживается ключ "delete": actions.delete.visible=false скрывает
-	// платформенную кнопку «Удалить», чтобы конфиг мог увести удаление в свой
-	// процессор. Платформенное удаление и так пишется в _audit и закрыто правом
-	// delete — это про управление UI-кнопкой.
+	// Actions — переопределение стандартных действий формы объекта. Ключи
+	// delete/save/ok/close управляют видимостью платформенных кнопок, а
+	// attachments — панелью вложений (plan 181C, #1621); права и серверные
+	// проверки они не ослабляют.
 	Actions map[string]*FormAction `yaml:"actions,omitempty"`
 
 	// Conditional — декларативное условное оформление табличных частей формы.

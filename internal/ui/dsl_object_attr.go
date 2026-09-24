@@ -17,8 +17,9 @@ import (
 // Ссылка несёт только UUID и наименование, поэтому остальные реквизиты
 // доступны только так. Ссылочный реквизит возвращается как ссылка (Ref) —
 // чтобы работали цепочки ЗначениеРеквизитаОбъекта(ЗначениеРеквизитаОбъекта(…)).
-// Пустая ссылка / отсутствующая запись → nil; неверное имя реквизита →
-// ошибка (иначе вернулся бы тихий nil — та самая боль).
+// Пустая входная ссылка / отсутствующая запись → nil; найденный пустой
+// реквизит получает объявленный DSL-тип. Неверное имя реквизита → ошибка
+// (иначе вернулся бы тихий nil — та самая боль).
 func (s *Server) objectAttributeValue(ctx context.Context, args []any) (any, error) {
 	if len(args) < 2 {
 		return nil, fmt.Errorf("ЗначениеРеквизитаОбъекта: ожидаются ссылка и имя реквизита")
@@ -67,13 +68,16 @@ func (s *Server) objectAttributeValue(ctx context.Context, args []any) (any, err
 	// подчиняться полевой политике роли. Без маски обработка обходит её одной
 	// строкой: Сообщить(ЗначениеРеквизитаОбъекта(Ссылка, "Телефон")).
 	val := row[field.Name]
-	var out any
-	if field.RefEntity != "" {
-		out = s.refFromValue(ctx, field.RefEntity, val)
-	} else {
-		out = normalizeAttrValue(field.Type, val)
+	if s.dslFieldMasked(ctx, entity, field.Name) {
+		var out any
+		if field.RefEntity != "" {
+			out = s.refFromValue(ctx, field.RefEntity, val)
+		} else {
+			out = normalizeAttrValue(field.Type, val)
+		}
+		return s.maskDSLValue(ctx, entity, field.Name, out), nil
 	}
-	return s.maskDSLValue(ctx, entity, field.Name, out), nil
+	return s.declaredEntityFieldValue(field, val, s.newDSLRefAttrResolver(ctx)), nil
 }
 
 type bulkObjectRef struct {
@@ -129,20 +133,24 @@ func (s *Server) objectAttributeValues(ctx context.Context, args []any) (any, er
 			ref.key.Name = s.maskedRecordLabel(ctx, entity, row)
 		}
 		vals := make(map[string]any, len(fields))
+		resolver := s.newDSLRefAttrResolver(ctx)
 		for _, f := range fields {
 			raw := row[f.Name]
 			var v any
-			if f.RefEntity != "" {
-				v = s.refFromValueCached(ctx, f.RefEntity, raw, refNames[f.RefEntity])
-			} else {
-				v = normalizeAttrValue(f.Type, raw)
+			if s.dslFieldMasked(ctx, entity, f.Name) {
+				if f.RefEntity != "" {
+					v = s.refFromValueCached(ctx, f.RefEntity, raw, refNames[f.RefEntity])
+				} else {
+					v = normalizeAttrValue(f.Type, raw)
+				}
+				vals[f.Name] = s.maskDSLValue(ctx, entity, f.Name, v)
+				continue
 			}
-			// Маска здесь, а не побочно: единственным гейтом был
-			// maskedRecordLabel строкой выше, который маскирует row на месте и
-			// вызывается ТОЛЬКО когда у ссылки ещё нет наименования. Ссылка с
-			// уже заполненным именем (обычный случай из формы или запроса)
-			// уносила реальные значения.
-			vals[f.Name] = s.maskDSLValue(ctx, entity, f.Name, v)
+			v = s.declaredEntityFieldValue(&f, raw, resolver)
+			// Незащищённое поле типизируется только после явной проверки маски
+			// выше. maskedRecordLabel отвечает лишь за представление ключа-ссылки
+			// и не заменяет field-level gate для значений строки.
+			vals[f.Name] = v
 		}
 		out.CallMethod("вставить", []any{ref.key, interpreter.NewStructFromMap(vals)})
 	}

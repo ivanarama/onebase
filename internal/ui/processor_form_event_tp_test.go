@@ -217,7 +217,7 @@ func TestHandleProcessorFormEventRejectsTablePartValueTableNameCollision(t *test
 func TestPickerPhaseTwoPreservesTablePartContext(t *testing.T) {
 	managed := string(managedJS)
 	uiSource := string(uiJS)
-	if !strings.Contains(managed, "openItemPicker(data.pickerData, elementName, extraParams || null, pickerRequest)") {
+	if !strings.Contains(managed, "openItemPicker(data.pickerData, elementName, extraParams || null, snapshot.pickerRequest)") {
 		t.Fatal("managed.js drops TP context when opening picker phase two")
 	}
 	if !strings.Contains(managed, "canonicalItems") || !strings.Contains(managed, "getItem(displayIndex)") {
