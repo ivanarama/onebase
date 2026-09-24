@@ -1103,6 +1103,9 @@ func (s *Scheduler) buildDSLVars(ctx context.Context, mc *runtime.MovementsColle
 		Mailer:    schedulerMailer,
 		Movements: mc,
 		Interp:    s.interp, // hook-правило конфликта в ПланыОбмена.ЗагрузитьПакет
+		// Подписи ссылочных констант по общим правилам RowLabel: регламентное
+		// задание — доверенный серверный код без ролевой политики (#1536).
+		ConstantRefPresenter: dslvars.StoreRefPresenter(s.db, s.reg),
 		// Предохранитель сети (план 62): регламентные задания тоже инициируют
 		// HTTP/email из конфигурации — гейтим тем же флагом.
 		NetGuard: func() error {
