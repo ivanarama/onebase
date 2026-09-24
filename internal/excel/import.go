@@ -198,16 +198,50 @@ func validateImportWorkbook(data []byte) error {
 	if sheetPart == nil {
 		return errImportXML
 	}
+	shared, err := countImportSharedStrings(parts)
+	if err != nil {
+		return err
+	}
 	r, err := sheetPart.Open()
 	if err != nil {
 		return err
 	}
-	err = validateImportSheet(r)
+	err = validateImportSheet(r, shared)
 	closeErr := r.Close()
 	if err != nil {
 		return err
 	}
 	return closeErr
+}
+
+// countImportSharedStrings counts <si> entries of the shared strings table
+// (0 when the part is absent) so shared-string indexes can be validated
+// against the real table instead of excelize's swallowed lookup errors.
+func countImportSharedStrings(parts map[string]*zip.File) (int, error) {
+	part := parts["xl/sharedStrings.xml"]
+	if part == nil {
+		return 0, nil
+	}
+	r, err := part.Open()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = r.Close() }() // чтение; ошибка закрытия не влияет на результат подсчёта
+	decoder := xml.NewDecoder(r)
+	decoder.CharsetReader = charset.NewReaderLabel
+	count := 0
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			return count, nil
+		}
+		if err != nil {
+			return 0, fmt.Errorf("%w: %v", errImportXML, err)
+		}
+		if el, ok := token.(xml.StartElement); ok && el.Name.Local == "si" {
+			count++
+		}
+	}
 }
 
 type importRelationships struct {
@@ -259,12 +293,13 @@ func decodeImportPart(part *zip.File, dst any) error {
 	return closeErr
 }
 
-func validateImportSheet(r io.Reader) error {
+func validateImportSheet(r io.Reader, sharedStrings int) error {
 	decoder := xml.NewDecoder(r)
 	decoder.CharsetReader = charset.NewReaderLabel
 	var stack []string
 	row, col, width := 0, 0, 0
 	seenWorksheet, seenData := false, false
+	cellType, cellValue := "", ""
 	for {
 		token, err := decoder.Token()
 		if err == io.EOF {
@@ -313,23 +348,54 @@ func validateImportSheet(r io.Reader) error {
 					return errImportXML
 				}
 				next := col + 1
+				cellType, cellValue = "", ""
 				for _, attr := range el.Attr {
-					if attr.Name.Local == "r" {
+					switch attr.Name.Local {
+					case "r":
 						var cellRow int
 						next, cellRow, err = excelize.CellNameToCoordinates(attr.Value)
 						if err != nil || cellRow != row || next <= col {
 							return errImportXML
 						}
+					case "s":
+						// excelize's row iterator swallows this attribute parse
+						// error and silently loses the cell value; reject the
+						// book instead (#1470, круг 3).
+						if _, perr := strconv.ParseInt(attr.Value, 10, 64); perr != nil {
+							return errImportXML
+						}
+					case "t":
+						cellType = attr.Value
 					}
 				}
 				col, width = next, max(width, next)
+			case "v":
+				if parent != "c" {
+					return errImportXML
+				}
+				cellValue = ""
 			}
 			if row > importMaxRows || width > importMaxCols || row*width > importMaxCells {
 				return errImportLimit
 			}
 		case xml.EndElement:
+			if el.Name.Local == "c" {
+				if cellType == "s" {
+					// Shared-string lookup is where excelize's getValueFrom error
+					// goes unreported: an out-of-range index read as an empty
+					// value. Fail the whole book rather than import a lossy copy.
+					idx, perr := strconv.Atoi(strings.TrimSpace(cellValue))
+					if perr != nil || idx < 0 || idx >= sharedStrings {
+						return errImportXML
+					}
+				}
+				cellType, cellValue = "", ""
+			}
 			stack = stack[:len(stack)-1]
 		case xml.CharData:
+			if len(stack) > 0 && stack[len(stack)-1] == "v" {
+				cellValue += string(el)
+			}
 			if len(stack) == 0 && strings.TrimSpace(string(el)) != "" {
 				return errImportXML
 			}

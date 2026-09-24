@@ -19,6 +19,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
+	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
@@ -395,6 +396,9 @@ func (s *Server) getProcessor(w http.ResponseWriter, r *http.Request) *processor
 // его значение — уже декодированное содержимое.
 const processorBinaryParamType = "binary"
 
+// processorBinaryViaObFireMessage — ключ i18n: русский шаблон и есть ключ.
+const processorBinaryViaObFireMessage = "параметр %s принимает файл целиком и требует обычной отправки формы обработки; через управляемую форму (obFire) двоичный файл передать нельзя"
+
 // isProcessorFileParam — параметр, который рисуется файловым полем и приходит
 // multipart-загрузкой. Отличаются они только тем, что попадает в значение.
 func isProcessorFileParam(typ string) bool {
@@ -732,14 +736,10 @@ func processorParamValuesFromRequest(
 			// это порча. Отказываем явно: молча испорченный файл дороже отказа.
 			if r.MultipartForm == nil {
 				if _, present := processorControlText(r, controls.fileContent[paramKey]); present {
-					return nil, temps, fmt.Errorf(
-						"параметр %s принимает файл целиком и требует обычной отправки формы обработки; "+
-							"через управляемую форму (obFire) двоичный файл передать нельзя", p.Name)
+					return nil, temps, i18nerr.Errorf(processorBinaryViaObFireMessage, p.Name)
 				}
 				if _, present := processorControlText(r, paramFields); present {
-					return nil, temps, fmt.Errorf(
-						"параметр %s принимает файл целиком и требует обычной отправки формы обработки; "+
-							"через управляемую форму (obFire) двоичный файл передать нельзя", p.Name)
+					return nil, temps, i18nerr.Errorf(processorBinaryViaObFireMessage, p.Name)
 				}
 				continue
 			}

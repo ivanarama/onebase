@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"mime/multipart"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -21,6 +22,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/excel"
+	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -210,5 +212,82 @@ func TestProcessorBinaryParam_ManagedPathRejectsBinary(t *testing.T) {
 	}
 	if !strings.Contains(page, "двоичный файл передать нельзя") {
 		t.Fatalf("нет внятного отказа: код %d, тело %s", resp.StatusCode, page)
+	}
+}
+
+// Отказ binary-параметра — ключ i18n: пользователь английского интерфейса
+// обязан получить английский текст. Тест бьёт в настоящий managed-маршрут
+// (/form-event требует managed-форму обработки) со штатным словарём и
+// Accept-Language: en (круг 3 #1470).
+func TestProcessorBinaryParam_RefusalLocalizedOnFormEvent(t *testing.T) {
+	cat := &metadata.Entity{
+		Name: "Ученики",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Код", Type: metadata.FieldTypeString},
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+		},
+	}
+	s, _ := newSubmitTestServer(t, []*metadata.Entity{cat})
+	form := &metadata.FormModule{
+		Name:       "Форма",
+		LayoutKind: metadata.FormLayoutManaged,
+		Elements: []*metadata.FormElement{
+			{Name: "Файл", Kind: metadata.FormElementField, DataPath: "Файл",
+				Handlers: map[metadata.FormEventType]string{metadata.FormEventOnChange: "Отказ"}},
+		},
+	}
+	proc := &processor.Processor{
+		Name:  "ЗагрузкаУчеников",
+		Title: "Загрузка учеников",
+		Params: []processor.Param{
+			{Name: "Файл", Type: "binary", Label: "Файл Excel"},
+		},
+		Forms: []*metadata.FormModule{form},
+	}
+	s.reg.LoadProcessors([]*processor.Processor{proc})
+	s.reg.Load(runtime.LoadOptions{
+		Entities: []*metadata.Entity{cat},
+		Programs: map[string]*ast.Program{proc.Name: mustParse(t, binaryImportProgram)},
+	})
+	bundle, err := i18n.Load(i18n.EmbeddedLocales, "")
+	if err != nil {
+		t.Fatalf("загрузка словаря: %v", err)
+	}
+	s.cfg.Bundle = bundle
+
+	r := chi.NewRouter()
+	s.Mount(r)
+	ts := httptest.NewServer(r)
+	t.Cleanup(ts.Close)
+
+	formValues := url.Values{
+		"Файл":     {"PK" + "\x03\x04" + " испорченный zip"},
+		"_fc_Файл": {"PK" + "\x03\x04" + " испорченный zip"},
+		"_element": {"Файл"},
+		"_event":   {string(metadata.FormEventOnChange)},
+	}
+	req, err := http.NewRequest(http.MethodPost,
+		ts.URL+"/ui/processor/"+url.PathEscape("ЗагрузкаУчеников")+"/form-event",
+		strings.NewReader(formValues.Encode()))
+	if err != nil {
+		t.Fatalf("запрос: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded; charset=utf-8")
+	req.Header.Set("Accept-Language", "en")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST: %v", err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // тело читается ниже
+	page, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("чтение ответа: %v", err)
+	}
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("код %d, ожидался 400: %s", resp.StatusCode, page)
+	}
+	if !strings.Contains(string(page), "a binary file cannot be passed through the managed form") {
+		t.Fatalf("отказ не переведён на английский: код %d, тело %s", resp.StatusCode, page)
 	}
 }

@@ -590,6 +590,7 @@
   "Параметры запроса": "Query parameters",
   "Пароли не совпадают": "Passwords do not match",
   "Пароль": "Password",
+  "параметр %s принимает файл целиком и требует обычной отправки формы обработки; через управляемую форму (obFire) двоичный файл передать нельзя": "parameter %s accepts a whole file and requires a regular processor form submission; a binary file cannot be passed through the managed form (obFire)",
   "Пароль должен содержать минимум 4 символа": "Password must be at least 4 characters",
   "Пароль изменён": "Password changed",
   "Пароль изменён, но сессии пользователя не завершены": "Password changed, but the user's sessions were not terminated",
