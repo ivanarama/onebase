@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -1032,7 +1033,13 @@ func (s *Scheduler) runProcessor(ctx context.Context, job *metadata.ScheduledJob
 		return "", fmt.Errorf("procedure Выполнить not found in processor %s", proc.Name)
 	}
 
-	resolvedParams := resolveParamTemplates(job.Params)
+	// Фоновый запуск обязан понимать {{constant:Имя}} так же, как интерактивный:
+	// иначе один и тот же отчёт по расписанию и из интерфейса давал бы разные
+	// числа, и объяснить это было бы нечем.
+	resolvedParams, tmplErr := resolveParamTemplates(job.Params, NewConstantResolver(ctx, s.db, s.reg))
+	if tmplErr != nil {
+		return "", tmplErr
+	}
 	s.mu.Lock()
 	msgSink := s.msgSink
 	varsBuilder := s.varsBuilder
@@ -1123,16 +1130,87 @@ func (s *Scheduler) buildDSLVars(ctx context.Context, mc *runtime.MovementsColle
 	}.Build()
 }
 
+// ConstantResolver отдаёт значение константы конфигурации по имени. nil
+// означает, что у вызывающего контекста констант нет — тогда подстановка
+// {{constant:Имя}} не проходит молча, а отказывает (см. resolveTemplate).
+type ConstantResolver func(name string) (any, error)
+
+// NewConstantResolver собирает резолвер поверх базы и реестра: имя сверяется с
+// объявленными константами конфигурации, значение читается из базы и приводится
+// к объявленному типу: миграция default и форма сохраняют JSON-строки.
+//
+// Сверка с реестром нужна затем, чтобы опечатка в имени отказывала сразу и
+// называла причину, а не превращалась в пустое значение параметра отчёта.
+func NewConstantResolver(ctx context.Context, db *storage.DB, reg *runtime.Registry) ConstantResolver {
+	if db == nil {
+		return nil
+	}
+	return func(name string) (any, error) {
+		var constant *metadata.Constant
+		if reg != nil {
+			constant = reg.GetConstantMeta(name)
+			if constant == nil {
+				return nil, fmt.Errorf("константа «%s» не объявлена в конфигурации", name)
+			}
+		}
+		v, err := db.GetConstant(ctx, name)
+		if err != nil {
+			return nil, fmt.Errorf("константа «%s»: %w", name, err)
+		}
+		return typedConstantValue(constant, v)
+	}
+}
+
+func typedConstantValue(constant *metadata.Constant, value any) (any, error) {
+	if constant == nil || value == nil {
+		return value, nil
+	}
+	switch constant.Type {
+	case metadata.FieldTypeBool, "boolean":
+		switch v := value.(type) {
+		case bool:
+			return v, nil
+		case string:
+			if b, ok := metadata.ParseBoolLiteral(v); ok {
+				return b, nil
+			}
+		}
+	case metadata.FieldTypeNumber:
+		switch v := value.(type) {
+		case float64:
+			return v, nil
+		case string:
+			n, err := strconv.ParseFloat(strings.ReplaceAll(strings.TrimSpace(v), ",", "."), 64)
+			if err == nil && !math.IsNaN(n) && !math.IsInf(n, 0) {
+				return n, nil
+			}
+		}
+	case metadata.FieldTypeDate:
+		switch v := value.(type) {
+		case time.Time:
+			return v, nil
+		case string:
+			if date, ok := storage.ParseRegPeriod(v); ok {
+				return date, nil
+			}
+		}
+	default:
+		// Строки, ссылки и значения перечислений сохраняют исходное значение.
+		return value, nil
+	}
+	return nil, fmt.Errorf("константа «%s»: значение не соответствует типу %s", constant.Name, constant.Type)
+}
+
 // resolveParamTemplates replaces template expressions like {{today}} with actual values.
-func resolveParamTemplates(params map[string]any) map[string]any {
-	return resolveParamTemplatesAt(params, time.Now())
+func resolveParamTemplates(params map[string]any, res ConstantResolver) (map[string]any, error) {
+	return resolveParamTemplatesAt(params, time.Now(), res)
 }
 
 // ResolveParamTemplates is the exported entry point used by other subsystems
 // (widgets, ad-hoc query callers) that need the same {{today|...}} grammar
 // as scheduled jobs.
-func ResolveParamTemplates(params map[string]any) map[string]any {
-	return resolveParamTemplatesAt(params, time.Now())
+func ResolveParamTemplates(params map[string]any, res ConstantResolver) (map[string]any, error) {
+	return resolveParamTemplatesAt(params, time.Now(), res)
 }
 
 // ResolveParamTemplateText раскрывает подстановку в ОДИНОЧНОМ значении и отдаёт
@@ -1140,60 +1218,96 @@ func ResolveParamTemplates(params map[string]any) map[string]any {
 // дата — YYYY-MM-DD. Нужен там, где значение параметра хранится текстом
 // (умолчание параметра отчёта), а не в карте any: без него каждый вызывающий
 // заводил бы свою карту из одного ключа и своё форматирование даты.
-func ResolveParamTemplateText(raw string) string {
-	return resolveParamTemplateTextAt(raw, time.Now())
+func ResolveParamTemplateText(raw string, res ConstantResolver) (string, error) {
+	return resolveParamTemplateTextAt(raw, time.Now(), res)
 }
 
-func resolveParamTemplateTextAt(raw string, now time.Time) string {
+func resolveParamTemplateTextAt(raw string, now time.Time, res ConstantResolver) (string, error) {
 	if strings.TrimSpace(raw) == "" {
-		return ""
+		return "", nil
 	}
-	switch v := resolveTemplate(raw, now).(type) {
+	v, err := resolveTemplate(raw, now, res)
+	if err != nil {
+		return "", err
+	}
+	switch v := v.(type) {
+	case nil:
+		return "", nil
 	case string:
-		return v
+		return v, nil
 	case time.Time:
-		return v.Format("2006-01-02")
+		return v.Format("2006-01-02"), nil
 	default:
-		return fmt.Sprint(v)
+		return fmt.Sprint(v), nil
 	}
 }
 
-func resolveParamTemplatesAt(params map[string]any, now time.Time) map[string]any {
+func resolveParamTemplatesAt(params map[string]any, now time.Time, res ConstantResolver) (map[string]any, error) {
 	if len(params) == 0 {
-		return params
+		return params, nil
 	}
 	result := make(map[string]any, len(params))
 	for k, v := range params {
 		if s, ok := v.(string); ok {
-			result[k] = resolveTemplate(s, now)
+			rv, err := resolveTemplate(s, now, res)
+			if err != nil {
+				return nil, fmt.Errorf("параметр %s: %w", k, err)
+			}
+			result[k] = rv
 		} else {
 			result[k] = v
 		}
 	}
-	return result
+	return result, nil
 }
 
-func resolveTemplate(s string, now time.Time) any {
+func resolveTemplate(s string, now time.Time, res ConstantResolver) (any, error) {
 	s = strings.TrimSpace(s)
 	if !strings.HasPrefix(s, "{{") || !strings.HasSuffix(s, "}}") {
-		return s
+		return s, nil
 	}
 	expr := strings.TrimSpace(s[2 : len(s)-2])
 	parts := strings.SplitN(expr, "|", 2)
 	base := strings.TrimSpace(parts[0])
 
 	var t time.Time
-	switch base {
-	case "now":
+	switch {
+	case base == "now":
 		t = now
-	case "today":
+	case base == "today":
 		t = time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	case strings.HasPrefix(base, constantPrefix):
+		name := strings.TrimSpace(strings.TrimPrefix(base, constantPrefix))
+		if name == "" {
+			return nil, errors.New("{{constant:}} — не указано имя константы")
+		}
+		// Fail closed. Молчаливый возврат самого шаблона отдал бы в параметр
+		// запроса строку «{{constant:УчетСНДС}}» и тихо изменил результат
+		// отчёта — то есть ровно то, ради чего заявка и заведена.
+		if res == nil {
+			return nil, fmt.Errorf("{{constant:%s}}: в этом контексте константы недоступны", name)
+		}
+		v, err := res(name)
+		if err != nil {
+			return nil, err
+		}
+		// Дата-константу можно продолжить обычным конвейером сдвигов; для
+		// прочих типов преобразование не определено, и молчать об этом нельзя.
+		ct, isTime := v.(time.Time)
+		if len(parts) == 1 {
+			return v, nil
+		}
+		if !isTime {
+			return nil, fmt.Errorf("{{constant:%s}}: преобразование «%s» применимо только к дате",
+				name, strings.TrimSpace(parts[1]))
+		}
+		t = ct
 	default:
-		return s
+		return s, nil
 	}
 
 	if len(parts) == 1 {
-		return t
+		return t, nil
 	}
 
 	transform := strings.TrimSpace(parts[1])
@@ -1210,15 +1324,18 @@ func resolveTemplate(s string, now time.Time) any {
 
 	switch op {
 	case "minus_days":
-		return t.AddDate(0, 0, -n)
+		return t.AddDate(0, 0, -n), nil
 	case "minus_hours":
-		return t.Add(-time.Duration(n) * time.Hour)
+		return t.Add(-time.Duration(n) * time.Hour), nil
 	case "minus_months":
-		return t.AddDate(0, -n, 0)
+		return t.AddDate(0, -n, 0), nil
 	case "start_of_month":
-		return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
+		return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location()), nil
 	case "end_of_month":
-		return time.Date(t.Year(), t.Month()+1, 0, 23, 59, 59, 0, t.Location())
+		return time.Date(t.Year(), t.Month()+1, 0, 23, 59, 59, 0, t.Location()), nil
 	}
-	return t
+	return t, nil
 }
+
+// constantPrefix — префикс подстановки значения константы конфигурации.
+const constantPrefix = "constant:"

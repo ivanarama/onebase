@@ -1,12 +1,62 @@
 package cli
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 )
+
+func TestWidgetExplainSampleWithConstant(t *testing.T) {
+	projectDir := t.TempDir()
+	writeProcrunFixture(t, projectDir, "config/app.yaml", "name: constant-explain\nversion: \"1.0\"\n")
+	writeProcrunFixture(t, projectDir, "constants/settings.yaml", "constants:\n  - name: УчетСНДС\n    type: bool\n    default: 'true'\n")
+	writeProcrunFixture(t, projectDir, "widgets/probe.yaml", `name: Probe
+type: list
+params:
+  СНДС: "{{constant:УчетСНДС}}"
+query: "ВЫБРАТЬ &СНДС КАК СНДС"
+`)
+	dbPath := filepath.Join(t.TempDir(), "explain.db")
+	migrate := &cobra.Command{Use: "migrate", RunE: migrateCmd.RunE}
+	addBaseFlags(migrate)
+	migrate.SetArgs([]string{"--project", projectDir, "--sqlite", dbPath})
+	if err := migrate.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	for _, sample := range []string{"5", "0"} {
+		t.Run("sample="+sample, func(t *testing.T) {
+			cmd := &cobra.Command{Use: widgetExplainCmd.Use, Args: widgetExplainCmd.Args, RunE: widgetExplainCmd.RunE,
+				SilenceErrors: true, SilenceUsage: true}
+			addBaseFlags(cmd)
+			cmd.Flags().Int("sample", 0, "")
+			cmd.Flags().Bool("json", false, "")
+			cmd.SetArgs([]string{"Probe", "--project", projectDir, "--sqlite", dbPath, "--sample", sample, "--json"})
+			output, err := captureStdout(t, cmd.Execute)
+			if sample == "0" {
+				if err == nil || !strings.Contains(err.Error(), "константы недоступны") {
+					t.Fatalf("без --sample ожидался отказ источника констант: %v; %s", err, output)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("widget explain --sample: %v", err)
+			}
+			var result explainOutput
+			if err := json.Unmarshal([]byte(output), &result); err != nil {
+				t.Fatal(err)
+			}
+			if result.Error != "" || result.SQL == "" || len(result.Rows) != 1 || result.Params["СНДС"] != true {
+				t.Fatalf("explain не выполнил виджет с булевой константой: %s", output)
+			}
+			if len(result.Args) != 1 || result.Args[0] != true {
+				t.Fatalf("SQL получил нетипизированный параметр: %s", output)
+			}
+		})
+	}
+}
 
 // TestReportExplainSampleSQLiteWithParams — регрессия на issue #473:
 // `report explain --sample N` с переданными значениями параметров на SQLite

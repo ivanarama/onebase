@@ -100,16 +100,10 @@ func runWidgetExplain(cmd *cobra.Command, args []string) error {
 		Type:  string(w.Type),
 		Query: w.Query,
 	}
-	params := map[string]any{}
-	for k, v := range scheduler.ResolveParamTemplates(copyStringMap(w.Params)) {
-		params[k] = v
-	}
-	if len(params) > 0 {
-		out.Params = params
-	}
 	// Открываем БД заранее, если запрошен --sample: её диалект нужен и для
 	// исполнения виджета, и чтобы показанный SQL совпадал с фактическим (иначе
-	// на SQLite генерятся Postgres-плейсхолдеры $N::text). См. issue #473.
+	// на SQLite генерятся Postgres-плейсхолдеры $N::text). Она нужна и для
+	// раскрытия констант до компиляции запроса. См. issues #473, #1433.
 	sample, _ := cmd.Flags().GetInt("sample")
 	var db *storage.DB
 	if sample > 0 {
@@ -118,6 +112,14 @@ func runWidgetExplain(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		defer db.Close()
+	}
+	reg := buildRuntimeRegistry(proj)
+	params, err := scheduler.ResolveParamTemplates(copyStringMap(w.Params), scheduler.NewConstantResolver(context.Background(), db, reg))
+	if err != nil {
+		return err
+	}
+	if len(params) > 0 {
+		out.Params = params
 	}
 	if strings.TrimSpace(w.Query) != "" {
 		opts := querylang.CompileOpts{
@@ -138,7 +140,6 @@ func runWidgetExplain(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if sample > 0 {
-		reg := buildRuntimeRegistry(proj)
 		res := widget.New(reg, db).Run(context.Background(), w)
 		if res.Error != "" {
 			out.Error = res.Error
