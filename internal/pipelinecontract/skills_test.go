@@ -2577,6 +2577,47 @@ func TestTailCrashAfterIssueCreateDoesNotCreateDuplicate(t *testing.T) {
 	}
 }
 
+func TestTailBatchRegistryMergesOnlyProvenIdenticalWork(t *testing.T) {
+	tail := skill(t, "tail-issues")
+	requireAllCompact(t, tail,
+		"Локальный реестр batch и семантический дубль внутри одного прогона",
+		"локальный реестр batch** (в памяти)",
+		"после подтверждённого POST `gh issue create`",
+		"перед каждым следующим create сверяй кандидата и с REST-снимком, и с реестром",
+		"корень дефекта, наблюдаемое поведение и весь объём исправления**",
+		"Схожесть заголовка сама по себе объединением не считается",
+		"разные работы с одним заголовком заводятся раздельно",
+		"item-done этого item со ссылкой на каноничную issue",
+		"только после item-done публикуй общий tail-done",
+		"Реестр в памяти не переживает crash",
+		"его восстанавливает прямой пагинированный REST-список",
+	)
+
+	// Разные точные ключи одной работы внутри одного batch: вторая issue не создаётся.
+	if tailBatchCreatesSecondIssue(true, false, true) {
+		t.Fatal("proven identical work in the same batch must reuse the canonical issue via item-done")
+	}
+	// Первый item batch'а: реестр пуст, create законен.
+	if !tailBatchCreatesSecondIssue(true, false, false) {
+		t.Fatal("first item of a batch has nothing to merge into and still needs its own issue")
+	}
+	// Одинаковый заголовок при разной работе: объединение запрещено.
+	if !tailBatchCreatesSecondIssue(false, true, true) {
+		t.Fatal("same title with different work must stay a separate issue")
+	}
+	// Сомнение в объёме при отсутствии совпадения по сути: отдельная issue.
+	if !tailBatchCreatesSecondIssue(false, false, true) {
+		t.Fatal("work that is not proven identical must not be silently merged")
+	}
+}
+
+func tailBatchCreatesSecondIssue(sameCanonicalWork, sameTitleOnly, registryHasFirst bool) bool {
+	if registryHasFirst && sameCanonicalWork {
+		return false
+	}
+	return true
+}
+
 type modeledTailLease struct {
 	id       int
 	previous int
