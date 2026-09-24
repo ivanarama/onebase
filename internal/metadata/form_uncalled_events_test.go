@@ -34,17 +34,16 @@ func TestUncalledFormEvents_РазбиваютСловарьБезОстатка
 	}
 }
 
-// Четыре события, с которых заявка началась: словарь их знает, конвертер 1С
-// отображает, редактор подсказывает — а вызывающей стороны нет ни на клиенте,
-// ни на сервере. Если какое-то из них реализуют, тест обязан упасть: тогда его
-// надо убрать отсюда, а предупреждение `onebase check` исчезнет само.
+// Три оставшихся события из исходной заявки: словарь их знает, конвертер 1С
+// отображает, редактор подсказывает — а вызывающей стороны пока нет ни на
+// клиенте, ни на сервере. ПередЗакрытием уже получило отдельный серверный путь.
 func TestUncalledFormEvents_СодержатСобытияЗаявки(t *testing.T) {
 	uncalled := map[FormEventType]bool{}
 	for _, event := range UncalledFormEvents() {
 		uncalled[event] = true
 	}
 	for _, event := range []FormEventType{
-		FormEventBeforeClose, FormEventOnClose, FormEventOnActivate, FormEventOnCreate,
+		FormEventOnClose, FormEventOnActivate, FormEventOnCreate,
 	} {
 		if !uncalled[event] {
 			t.Errorf("событие %q числится вызываемым, хотя диспетчера у него не было", event)

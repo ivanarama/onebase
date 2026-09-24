@@ -32,6 +32,15 @@ func formAttrIsScalar(a *metadata.FormAttribute) bool {
 	return a != nil && a.Name != "" && a.TypeRef != "ValueTable"
 }
 
+func entityServiceFieldName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "parent_id", "is_folder", "posted", "deletion_mark", "_version", "id":
+		return true
+	default:
+		return false
+	}
+}
+
 // typeFormAttrValue приводит строку из формы к типу реквизита. Разбор совпадает
 // с formToFields для полей сущности: пустая строка — nil, дата в трёх раскладках,
 // число через parseFormNumber, «true» для булева.
@@ -78,6 +87,9 @@ func (s *Server) mergeFormAttrValues(
 			continue
 		}
 		if _, isEntityField := entityFieldByName(entity, a.Name); isEntityField {
+			continue
+		}
+		if entityServiceFieldName(a.Name) {
 			continue
 		}
 		if !formKeySubmitted(submitted, a.Name) {
@@ -130,6 +142,9 @@ func addFormAttrVars(form *metadata.FormModule, entity *metadata.Entity, this *f
 		if _, isEntityField := entityFieldByName(entity, a.Name); isEntityField {
 			continue
 		}
+		if entityServiceFieldName(a.Name) {
+			continue
+		}
 		vars[a.Name] = this.Get(a.Name)
 	}
 }
@@ -141,6 +156,13 @@ func addFormAttrVars(form *metadata.FormModule, entity *metadata.Entity, this *f
 // обработчик увидит Неопределено и скажет об этом явно.
 func setFormSelfRef(r *http.Request, entity *metadata.Entity, obj *runtime.Object) {
 	if entity == nil || obj == nil || strings.TrimSpace(r.FormValue("_id")) == "" {
+		return
+	}
+	setPersistedFormSelfRef(entity, obj)
+}
+
+func setPersistedFormSelfRef(entity *metadata.Entity, obj *runtime.Object) {
+	if entity == nil || obj == nil || obj.ID == uuid.Nil {
 		return
 	}
 	if obj.Fields == nil {

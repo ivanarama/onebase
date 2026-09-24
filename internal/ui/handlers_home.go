@@ -4,12 +4,14 @@ package ui
 // Выделено из handlers.go (план 55, этап 1) — перенос as-is.
 
 import (
+	"bytes"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/auth"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -170,12 +172,7 @@ func (s *Server) hiddenHomeRedirect(r *http.Request, base string) (string, bool)
 }
 
 func (s *Server) homeDashboardData(r *http.Request) map[string]any {
-	hp := s.reg.HomePage()
-	if sub := r.URL.Query().Get("subsystem"); sub != "" {
-		if ss := s.reg.GetSubsystem(sub); ss != nil && ss.HomePage != nil {
-			hp = ss.HomePage
-		}
-	}
+	hp := s.effectiveHomePage(r.URL.Query().Get("subsystem"))
 	// Соблюдение настроенных рядов (WYSIWYG) включается явно через layout: rows.
 	honor := hp != nil && hp.Layout == "rows"
 	groups, defaulted := homePageWidgetGroups(hp, s.reg, honor)
@@ -201,8 +198,12 @@ func (s *Server) homeDashboardData(r *http.Request) map[string]any {
 				Error: s.tr(lang, "виджет не найден:") + " " + wMeta.Name,
 			}
 		}
-		res := runner.Run(r.Context(), wMeta)
+		// Фильтры полной страницы (план 182D): URL-значения применяются к данным
+		// толерантно — мусор трактуется как пустой отбор, страница не ломается.
+		// Иначе после F5 контролы заполнены, а строки неотфильтрованы.
+		res := runner.RunWithOptions(r.Context(), wMeta, widget.RunOptions{Params: lenientWidgetFilterParams(r, wMeta)})
 		res.Title = wMeta.DisplayTitle(lang)
+		s.decorateRefreshResult(r, wMeta, &res, runner)
 		return res
 	}
 	for _, group := range groups {
@@ -237,6 +238,156 @@ func (s *Server) homeDashboardData(r *http.Request) map[string]any {
 		"WidgetResults": flat,
 		"DefaultedHome": defaulted,
 	}
+}
+
+func (s *Server) effectiveHomePage(subsystem string) *metadata.HomePage {
+	hp := s.reg.HomePage()
+	if subsystem != "" {
+		if ss := s.reg.GetSubsystem(subsystem); ss != nil && ss.HomePage != nil {
+			hp = ss.HomePage
+		}
+	}
+	return hp
+}
+
+func refreshableWidgetType(t metadata.WidgetType) bool {
+	switch t {
+	case metadata.WidgetTypeKPI, metadata.WidgetTypeList, metadata.WidgetTypeChart, metadata.WidgetTypeRecent:
+		return true
+	default:
+		return false
+	}
+}
+
+func (s *Server) decorateRefreshResult(r *http.Request, wMeta *metadata.Widget, res *widget.Result, runner *widget.Runner) {
+	if res == nil || !refreshableWidgetType(metadata.WidgetType(res.Type)) {
+		return
+	}
+	subsystem := r.URL.Query().Get("subsystem")
+	rawValues := map[string]string{}
+	if wMeta != nil {
+		rawValues = widgetFilterRawValues(r, wMeta)
+	}
+	if wMeta == nil {
+		res.PartialURL = widgetPartialURL(res.Name, nil, subsystem, nil)
+	} else {
+		res.PartialURL = widgetPartialURL(res.Name, wMeta, subsystem, rawValues)
+	}
+	lang := s.resolveLang(r)
+	res.RefreshLabel = s.tr(lang, "Обновить")
+	res.RefreshError = s.tr(lang, "Не удалось обновить виджет")
+	res.ResetLabel = s.tr(lang, "Сбросить")
+	if wMeta != nil && len(wMeta.RefreshOn) > 0 {
+		res.RefreshOn = strings.Join(wMeta.RefreshOn, " ")
+	}
+	if wMeta != nil && runner != nil {
+		if controls, err := s.filterControls(r.Context(), lang, wMeta, rawValues, runner); err == nil {
+			res.Filters = controls
+		}
+		// Ошибка сборки контролов (недоступные опции) не ломает страницу:
+		// карточка остаётся без фильтров, данные рендерятся как раньше.
+	}
+}
+
+func (s *Server) dashboardWidget(r *http.Request, name string) *metadata.Widget {
+	subsystem := r.URL.Query().Get("subsystem")
+	if subsystem != "" && s.reg.GetSubsystem(subsystem) == nil {
+		return nil
+	}
+	hp := s.effectiveHomePage(subsystem)
+	honorRows := hp != nil && hp.Layout == "rows"
+	groups, _ := homePageWidgetGroups(hp, s.reg, honorRows)
+	for _, group := range groups {
+		for _, candidate := range group {
+			if strings.EqualFold(candidate.Name, name) {
+				return candidate
+			}
+		}
+	}
+	return nil
+}
+
+type widgetPartialResponse struct {
+	HTML  string         `json:"html"`
+	Chart map[string]any `json:"chart"`
+}
+
+// widgetPartial re-renders one card body through the same Runner and named
+// templates as the full dashboard. The route accepts only server-resolved
+// widget/layout identity plus this widget's declared namespaced filter values
+// (план 182D); any other query parameter is rejected with 400.
+func (s *Server) widgetPartial(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "private, no-store")
+	wMeta := s.dashboardWidget(r, chi.URLParam(r, "name"))
+	if wMeta == nil || !refreshableWidgetType(wMeta.Type) {
+		http.NotFound(w, r)
+		return
+	}
+	allowed := map[string]bool{"subsystem": true}
+	for key := range widgetFilterKeys(wMeta) {
+		allowed[key] = true
+	}
+	for key := range r.URL.Query() {
+		if !allowed[key] {
+			http.Error(w, "unsupported widget parameter", http.StatusBadRequest)
+			return
+		}
+	}
+	filterParams, err := parseWidgetFilterParams(r, wMeta)
+	if err != nil {
+		http.Error(w, "unsupported widget parameter", http.StatusBadRequest)
+		return
+	}
+	if !s.requireSubsystemVisible(w, r) {
+		return
+	}
+
+	user := auth.UserFromContext(r.Context())
+	runner := widget.New(s.reg, s.store)
+	if user != nil {
+		runner.CurrentUser = user.Login
+	}
+	runner.User = user
+	runner.Cache = s.widgetCache
+	// reference-значение фильтра проверяется на чтение и RLS до исполнения:
+	// недоступное и несуществующее значения дают одинаковый отказ.
+	for _, f := range wMeta.Filters {
+		if f.ReferenceEntity() == "" {
+			continue
+		}
+		if v, ok := filterParams[f.Param]; ok {
+			if id, ok := v.(string); ok && id != "" && !runner.ReferenceAllowed(r.Context(), f.ReferenceEntity(), id) {
+				http.Error(w, "unsupported widget parameter", http.StatusBadRequest)
+				return
+			}
+		}
+	}
+	res := runner.RunWithOptions(r.Context(), wMeta, widget.RunOptions{Params: filterParams, Fresh: true})
+	res.Title = wMeta.DisplayTitle(s.resolveLang(r))
+	if res.AccessDenied {
+		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+		return
+	}
+	if res.Error != "" {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	t := s.tmpl
+	if t == nil {
+		t = tmpl
+	}
+	var body bytes.Buffer
+	if err := t.ExecuteTemplate(&body, "widget-body", res); err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	response := widgetPartialResponse{HTML: body.String()}
+	if res.Chart != nil {
+		response.Chart = widget.EChartsOption(res.Chart)
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	respondJSONTo(w, response)
 }
 
 // homePageWidgetGroups resolves the dashboard layout into ordered groups of

@@ -190,6 +190,34 @@ func TestHandleProcessorFormEvent_FallbackReadsBrowserFileContent(t *testing.T) 
 	}
 }
 
+func TestHandleProcessorFormEvent_CommandPublishesDirtyMutation(t *testing.T) {
+	program := mustParse(t, `
+Процедура Изменить()
+	Объект.Имя = "after";
+КонецПроцедуры
+`)
+	form := processorExecutionForm(
+		&metadata.FormElement{Kind: metadata.FormElementField, Name: "Name", DataPath: "Объект.Имя"},
+		&metadata.FormElement{
+			Kind: metadata.FormElementButton, Name: "Change",
+			Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Изменить"},
+		},
+	)
+	form.ProgramAST = program
+	proc := &processor.Processor{
+		Name: "ProcessorCommandDirty", Params: []processor.Param{{Name: "Имя", Type: "string"}}, Forms: []*metadata.FormModule{form},
+	}
+	srv, _ := newProcessorFormEventExecutionServer(t, proc, program)
+	body := processorClickBody("Change")
+	body.Set("Имя", "before")
+	recorder := postProcessorFormEventExecution(t, srv, proc.Name,
+		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
+	response := decodeFormEventResponse(t, recorder.Body.Bytes())
+	if !response.OK || response.Dirty == nil || !*response.Dirty || response.Values["Имя"] != "after" {
+		t.Fatalf("processor command mutation was not published dirty: %+v", response)
+	}
+}
+
 func TestHandleProcessorFormEvent_ReadsMultipartFile(t *testing.T) {
 	form := processorExecutionForm(
 		&metadata.FormElement{

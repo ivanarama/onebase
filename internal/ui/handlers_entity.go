@@ -680,20 +680,7 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 		return
 	}
 
-	if entity.Hierarchical {
-		// Только если ключи реально пришли в теле. Авто-форма их рендерит
-		// (templates.go), управляемая — нет: безусловное чтение выбрасывало
-		// элемент в корень и снимало признак группы при каждой записи из
-		// managed-формы. Не пришли — восстановятся из БД вместе с прочими
-		// неприсланными полями.
-		submitted := submittedFormKeys(r)
-		if formKeySubmitted(submitted, "parent_id") {
-			fields["parent_id"] = r.FormValue("parent_id") //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
-		}
-		if formKeySubmitted(submitted, "is_folder") {
-			fields["is_folder"] = r.FormValue("is_folder") == "true" //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
-		}
-	}
+	mergeSubmittedEntityServiceFields(r, entity, fields)
 
 	// Объект для new строится через NewObject+Set (ключи нормализуются в lowercase
 	// — историческое поведение submit). Для existing — прямое присваивание Fields,
@@ -722,6 +709,23 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 	}
 	ok = true
 	return
+}
+
+// mergeSubmittedEntityServiceFields keeps the HTML-submit and close-intent
+// object builders in parity for platform-owned fields which are not declared
+// in entity.Fields. Missing keys remain missing and are restored from storage
+// for an existing partial managed form.
+func mergeSubmittedEntityServiceFields(r *http.Request, entity *metadata.Entity, fields map[string]any) {
+	if r == nil || entity == nil || fields == nil || !entity.Hierarchical {
+		return
+	}
+	submitted := submittedFormKeys(r)
+	if formKeySubmitted(submitted, "parent_id") {
+		fields["parent_id"] = r.FormValue("parent_id") //nolint:gosec // caller applies the entity-specific body limit
+	}
+	if formKeySubmitted(submitted, "is_folder") {
+		fields["is_folder"] = r.FormValue("is_folder") == "true" //nolint:gosec // caller applies the entity-specific body limit
+	}
 }
 
 // renderObjectFormError перерисовывает форму объекта с баннером ошибки — когда
@@ -769,6 +773,10 @@ func (s *Server) renderObjectFormError(w http.ResponseWriter, r *http.Request, e
 		"TPRefMeta":     tpRefMeta(entity),
 		"TablePartRows": tablePartRows,
 		"CopySourceID":  copySourceIDForRender(r),
+		// A failed native submit renders a new document, but its values are still
+		// unsaved. Bootstrap the managed dirty guard so Close cannot discard them
+		// silently merely because the browser navigation reset JS state.
+		"InitialDirty": true,
 	}
 	if entity.Hierarchical {
 		data["FolderOptions"] = s.loadFolderOptions(r.Context(), entity, values["parent_id"])
@@ -789,6 +797,24 @@ func (s *Server) renderObjectFormBadRequest(w http.ResponseWriter, r *http.Reque
 	s.renderObjectFormError(w, r, entity, isNew, errMsg, nil, tpRows)
 }
 
+func (s *Server) renderManagedObjectSaveFailure(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, isNew bool, obj *runtime.Object, messages []string, saveErr error) {
+	var failure *managedCloseSaveError
+	if !errors.As(saveErr, &failure) {
+		s.serverError(w, r, saveErr)
+		return
+	}
+	switch failure.kind {
+	case managedSaveForbidden:
+		s.renderForbidden(w, r)
+	case managedSaveConflict:
+		s.renderVersionConflict(w, r, entity, obj.ID)
+	case managedSaveValidation:
+		s.renderObjectFormBadRequest(w, r, entity, isNew, failure.message, obj.TablePartRows)
+	default:
+		s.renderObjectFormError(w, r, entity, isNew, failure.message, messages, obj.TablePartRows)
+	}
+}
+
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	entity := s.getEntity(w, r)
 	if entity == nil {
@@ -804,6 +830,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	managedForm := pickManagedForm(entity, "object")
 	if managedForm != nil {
+		s.mergeFormAttrValues(r.Context(), r, managedForm, entity, obj)
 		if strings.TrimSpace(r.FormValue(copySourceFormField)) != "" {
 			if failed := s.restoreManagedCopyState(
 				w, r, entity, managedForm, fields, obj.Fields, obj.TablePartRows,
@@ -816,6 +843,23 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// Managed HTML submit and close-intent share one result-returning save
+		// layer. Transport differs (redirect/render vs JSON), write semantics do not.
+		hookMsgs, _, saveErr := s.saveManagedObject(r, entity, managedForm, obj, true, action, false, nil)
+		if saveErr != nil {
+			s.renderManagedObjectSaveFailure(w, r, entity, true, obj, hookMsgs, saveErr)
+			return
+		}
+		if r.FormValue("_popup") == "1" {
+			s.renderPopupSaved(w, obj.ID.String(), firstStringField(fields, entity))
+			return
+		}
+		if action == "post_and_close" {
+			http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/ui/"+strings.ToLower(string(entity.Kind))+"/"+entity.Name+"/"+obj.ID.String(), http.StatusSeeOther)
+		return
 	}
 	if err := s.validateManagedFormRequired(r, entity, managedForm, obj.Fields); err != nil {
 		s.renderObjectFormBadRequest(w, r, entity, true, err.Error(), obj.TablePartRows)
@@ -967,6 +1011,11 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "forbidden", http.StatusForbidden)
 		return
 	}
+	choice, err := s.resolveChoiceRequest(r, ent)
+	if err != nil {
+		http.Error(w, "invalid choice context: "+err.Error(), http.StatusBadRequest)
+		return
+	}
 	limit := refPickerDefaultLimit
 	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
 		n, err := strconv.Atoi(raw)
@@ -988,18 +1037,38 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 		}
 		offset = n
 	}
-	items, total, err := s.referenceOptionsPage(r.Context(), ent, r.URL.Query().Get("q"), limit, offset)
-	if err != nil {
-		s.serverError(w, r, err)
-		return
+	items := make([]map[string]any, 0)
+	total := 0
+	if choice == nil || !choice.Empty {
+		extra := storage.ListParams{}
+		if choice != nil {
+			extra.ChoicePredicates = choice.Predicates
+		}
+		items, total, err = s.referenceOptionsPageWithParams(r.Context(), ent, r.URL.Query().Get("q"), limit, offset, extra)
+		if err != nil {
+			s.serverError(w, r, err)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	response := map[string]any{
 		"items":  items,
 		"total":  total,
 		"limit":  limit,
 		"offset": offset,
-	})
+	}
+	if choice != nil && choice.Selected != nil {
+		allowed := false
+		if !choice.Empty {
+			allowed, err = s.choiceSelectedAllowed(r.Context(), ent, *choice.Selected, choice.Predicates)
+			if err != nil {
+				s.serverError(w, r, err)
+				return
+			}
+		}
+		response["selected_allowed"] = allowed
+	}
+	_ = json.NewEncoder(w).Encode(response)
 }
 
 type treeChildrenResponse struct {
@@ -1470,7 +1539,18 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 			s.serverError(w, r, err)
 			return
 		}
-		tpRows = obj.TablePartRows
+		s.mergeFormAttrValues(r.Context(), r, managedForm, entity, obj)
+		hookMsgs, _, saveErr := s.saveManagedObject(r, entity, managedForm, obj, false, action, false, nil)
+		if saveErr != nil {
+			s.renderManagedObjectSaveFailure(w, r, entity, false, obj, hookMsgs, saveErr)
+			return
+		}
+		if action == "post_and_close" {
+			http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/ui/"+strings.ToLower(string(entity.Kind))+"/"+entity.Name+"/"+id.String(), http.StatusSeeOther)
+		return
 	}
 	// План 88: не дать пользователю, видящему поле лишь замаскированным,
 	// перезаписать реальное значение маской/подделкой — восстанавливаем
@@ -1741,35 +1821,46 @@ func (s *Server) clearMovements(ctx context.Context, entityName string, id uuid.
 // markForDeletion помечает/снимает пометку на удаление. При пометке проведённого
 // документа сперва отменяет проведение (чистит движения по всем регистрам и
 // снимает posted) — пометка и проведённость взаимоисключающи (как в 1С). Снятие
-// пометки проведение НЕ возвращает. Транзакцию метод не открывает: HTTP-вызовы
-// оборачивают его в store.WithTx, DSL-путь использует живой ctx (как DeleteRef).
+// пометки проведение НЕ возвращает. Весь переход, точный version token и
+// отложенные уведомления объединены WithTxScope: открытая DSL-транзакция
+// переиспользуется, а автономный HTTP/DSL-вызов получает собственную.
 func (s *Server) markForDeletion(ctx context.Context, entity *metadata.Entity, id uuid.UUID, mark bool) error {
-	if mark && entity.Posting {
-		row, err := s.store.GetByID(ctx, entity.Name, id, entity)
+	return s.store.WithTxScope(ctx, func(txCtx context.Context) error {
+		if mark && entity.Posting {
+			row, err := s.store.GetByID(txCtx, entity.Name, id, entity)
+			if err != nil {
+				return err
+			}
+			if asBool(row["posted"]) {
+				if err := s.clearMovements(txCtx, entity.Name, id); err != nil {
+					return err
+				}
+				if err := s.store.SetPosted(txCtx, entity.Name, id, false); err != nil {
+					return err
+				}
+			}
+		}
+		if err := s.store.MarkForDeletion(txCtx, entity.Name, id, mark); err != nil {
+			return err
+		}
+		// Read and publish the token in the same transaction as the mutation.
+		// A post-commit SELECT could observe an unrelated writer and turn its
+		// version into authority for this stale lifecycle.
+		version, err := s.store.EntityVersion(txCtx, entity.Name, id)
 		if err != nil {
 			return err
 		}
-		if asBool(row["posted"]) {
-			if err := s.clearMovements(ctx, entity.Name, id); err != nil {
-				return err
-			}
-			if err := s.store.SetPosted(ctx, entity.Name, id, false); err != nil {
-				return err
-			}
+		entityservice.NotifySaveObserver(txCtx, entity, entityservice.SaveResult{ID: id, Version: version})
+		// Регистрация изменения для планов обмена (план 86): пометка/снятие пометки
+		// на удаление — изменение объекта, распространяем его узлам-получателям.
+		if err := exchange.RegisterOnSave(txCtx, s.store, s.reg.ExchangePlans(), entity, id, mark); err != nil {
+			return err
 		}
-	}
-	if err := s.store.MarkForDeletion(ctx, entity.Name, id, mark); err != nil {
-		return err
-	}
-	// Регистрация изменения для планов обмена (план 86): пометка/снятие пометки
-	// на удаление — изменение объекта, распространяем его узлам-получателям.
-	if err := exchange.RegisterOnSave(ctx, s.store, s.reg.ExchangePlans(), entity, id, mark); err != nil {
-		return err
-	}
-	// Живой список (план 87): пометка меняет вид строки (зачёркивание) → список
-	// перечитывается. Смены владельца нет, before не нужен.
-	s.publishDocChange(ctx, entity, id, "записан", nil)
-	return nil
+		// Живой список (план 87): пометка меняет вид строки (зачёркивание) → список
+		// перечитывается. Смены владельца нет, before не нужен.
+		s.publishDocChange(txCtx, entity, id, "записан", nil)
+		return nil
+	})
 }
 
 // unpostDocument clears movements, sets posted=false and runs

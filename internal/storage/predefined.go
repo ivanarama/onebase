@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -135,23 +136,31 @@ func (db *DB) syncPredefinedInTx(ctx context.Context, e *metadata.Entity) error 
 	}
 	table := metadata.TableName(e.Name)
 
-	// Шаг 1: для каждого predefined — собираем UUID. Если в БД уже есть
-	// запись с тем же _predefined_name — берём её UUID, иначе генерим.
+	// Шаг 1: для каждого predefined — собираем UUID. DSL приводит имена к
+	// нижнему регистру, поэтому и lookup, и sync используют одну семантику
+	// EqualFold: case-only rename переиспользует существующую строку, а
+	// неоднозначные legacy-данные останавливают sync вместо создания дубля.
 	nameToUUID := make(map[string]uuid.UUID, len(e.Predefined))
-	for _, item := range e.Predefined {
-		var idStr string
-		err := db.QueryRow(ctx, fmt.Sprintf(
-			`SELECT id FROM %s WHERE _predefined_name = %s AND _is_predefined = %s LIMIT 1`,
-			table, d.Placeholder(1), boolTrue),
-			item.Name,
-		).Scan(&idStr)
-		if err == nil {
-			if id, err := uuid.Parse(idStr); err == nil {
-				nameToUUID[item.Name] = id
-				continue
+	storedNames := make(map[string]string, len(e.Predefined))
+	for i, item := range e.Predefined {
+		for _, previous := range e.Predefined[:i] {
+			if strings.EqualFold(previous.Name, item.Name) {
+				return fmt.Errorf("sync predefined %s: имена %q и %q неоднозначны без учёта регистра: %w",
+					e.Name, previous.Name, item.Name, errPredefinedAmbiguous)
 			}
 		}
-		nameToUUID[item.Name] = uuid.New()
+
+		match, err := db.findPredefinedByName(ctx, table, e.Name, item.Name, boolTrue)
+		switch {
+		case err == nil:
+			nameToUUID[item.Name] = match.id
+			storedNames[item.Name] = match.name
+		case IsNotFound(err):
+			nameToUUID[item.Name] = uuid.New()
+			storedNames[item.Name] = item.Name
+		default:
+			return fmt.Errorf("sync predefined %s.%s: lookup existing: %w", e.Name, item.Name, err)
+		}
 	}
 
 	// Шаг 2: топологическая сортировка. Граф ориентирован: item → items на
@@ -191,7 +200,7 @@ func (db *DB) syncPredefinedInTx(ctx context.Context, e *metadata.Entity) error 
 
 		cols := []string{"id", "_predefined_name", "_is_predefined"}
 		phs := []string{d.Placeholder(1), d.Placeholder(2), boolTrue}
-		args := []any{idArg(d, nameToUUID[item.Name]), item.Name}
+		args := []any{idArg(d, nameToUUID[item.Name]), storedNames[item.Name]}
 		updates := []string{"_is_predefined = " + boolTrue}
 		incomingFields := make(map[string]any, len(item.Fields)+1)
 		argIdx := 3
@@ -200,7 +209,7 @@ func (db *DB) syncPredefinedInTx(ctx context.Context, e *metadata.Entity) error 
 		// решается, нужно ли синтетическое событие истории.
 		var stagePlan *predefinedStagePlan
 		if stageF != nil {
-			p, err := db.planPredefinedStage(ctx, e, *stageF, item)
+			p, err := db.planPredefinedStage(ctx, e, *stageF, item, storedNames[item.Name])
 			if err != nil {
 				return err
 			}
@@ -330,14 +339,14 @@ type predefinedStagePlan struct {
 // конфигурации, поэтому список объявленных переходов не проверяется — но
 // значение обязано быть объявленным этапом, иначе в базу приедет состояние, о
 // котором ни гейт, ни отчёт ничего не знают.
-func (db *DB) planPredefinedStage(ctx context.Context, e *metadata.Entity, f metadata.Field, item *metadata.PredefinedItem) (*predefinedStagePlan, error) {
+func (db *DB) planPredefinedStage(ctx context.Context, e *metadata.Entity, f metadata.Field, item *metadata.PredefinedItem, storedName string) (*predefinedStagePlan, error) {
 	s := e.Stages
 	declared, present := stageFieldValue(item.Fields, f.Name)
 	if present && declared != "" && !s.Known(declared) {
 		return nil, fmt.Errorf("предопределённый %s.%s: этап %q не объявлен в маршруте", e.Name, item.Name, declared)
 	}
 
-	prev, existed, err := db.predefinedStageValue(ctx, e, f, item.Name)
+	prev, existed, err := db.predefinedStageValue(ctx, e, f, storedName)
 	if err != nil {
 		return nil, err
 	}
@@ -483,20 +492,11 @@ func (db *DB) GetPredefinedID(ctx context.Context, entityName, predefinedName st
 		boolTrue = "1"
 	}
 	table := metadata.TableName(entityName)
-	var idStr string
-	err := db.QueryRow(ctx,
-		fmt.Sprintf(`SELECT id FROM %s WHERE _predefined_name = %s AND _is_predefined = %s`,
-			table, d.Placeholder(1), boolTrue),
-		predefinedName,
-	).Scan(&idStr)
+	match, err := db.findPredefinedByName(ctx, table, entityName, predefinedName, boolTrue)
 	if err != nil {
-		return uuid.Nil, fmt.Errorf("predefined %s.%s not found: %w", entityName, predefinedName, err)
+		return uuid.Nil, err
 	}
-	id, err := uuid.Parse(idStr)
-	if err != nil {
-		return uuid.Nil, fmt.Errorf("predefined %s.%s: bad uuid: %w", entityName, predefinedName, err)
-	}
-	return id, nil
+	return match.id, nil
 }
 
 // GetPredefinedIDStr is a string-returning variant of GetPredefinedID for the
@@ -780,4 +780,54 @@ func (db *DB) matchCatalogByExpression(ctx context.Context, entity *metadata.Ent
 		return idStr, display, 1, nil
 	}
 	return "", "", cnt, nil // cnt > 1 — несколько; точное число, id не отдаём (неоднозначно)
+}
+
+// errPredefinedAmbiguous — у предопределённых строк, различающихся только
+// регистром, нельзя выбрать запись молча.
+var errPredefinedAmbiguous = errors.New("имя предопределённого элемента неоднозначно без учёта регистра")
+
+type predefinedMatch struct {
+	id   uuid.UUID
+	name string
+}
+
+// findPredefinedByName ищет предопределённую запись совпадением без учёта
+// регистра. Единое сканирование важно не только для одинаковой семантики
+// SQLite/PostgreSQL: exact-hit не имеет права скрыть второй legacy-дубль,
+// отличающийся только регистром. Ошибки Query/Scan/Rows и повреждённый UUID
+// возвращаются как есть и никогда не превращаются в «not found».
+func (db *DB) findPredefinedByName(ctx context.Context, table, entityName, predefinedName, boolTrue string) (predefinedMatch, error) {
+	rows, err := db.Query(ctx,
+		fmt.Sprintf(`SELECT id, _predefined_name FROM %s WHERE _is_predefined = %s`, table, boolTrue))
+	if err != nil {
+		return predefinedMatch{}, fmt.Errorf("predefined %s.%s query: %w", entityName, predefinedName, err)
+	}
+	defer rows.Close()
+	var foundID, foundName string
+	count := 0
+	for rows.Next() {
+		var idStr, nm string
+		if err := rows.Scan(&idStr, &nm); err != nil {
+			return predefinedMatch{}, fmt.Errorf("predefined %s.%s scan: %w", entityName, predefinedName, err)
+		}
+		if strings.EqualFold(nm, predefinedName) {
+			count++
+			foundID, foundName = idStr, nm
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return predefinedMatch{}, fmt.Errorf("predefined %s.%s rows: %w", entityName, predefinedName, err)
+	}
+	switch count {
+	case 1:
+		id, err := uuid.Parse(foundID)
+		if err != nil {
+			return predefinedMatch{}, fmt.Errorf("predefined %s.%s: bad uuid: %w", entityName, predefinedName, err)
+		}
+		return predefinedMatch{id: id, name: foundName}, nil
+	case 0:
+		return predefinedMatch{}, fmt.Errorf("predefined %s.%s not found: %w", entityName, predefinedName, sql.ErrNoRows)
+	default:
+		return predefinedMatch{}, fmt.Errorf("predefined %s.%s: неоднозначное имя без учёта регистра (%d совпадений): %w", entityName, predefinedName, count, errPredefinedAmbiguous)
+	}
 }

@@ -68,6 +68,18 @@ func TestReviewAndMergeRouteThroughPipelinectlWithDiscoverableFallback(t *testin
 	}
 }
 
+func TestReviewAndMergePollTheOriginalPipelinectlProcess(t *testing.T) {
+	for _, name := range []string{"review-queue", "merge-shepherd"} {
+		entry := repositoryFile(t, ".claude", "skills", name, "SKILL.md")
+		requireAllCompact(t, entry,
+			"`next <stage>` запускай ровно один раз за прогон",
+			"session/cell ID",
+			"опрашивай/возобновляй только этот идентификатор до терминального результата",
+			"не разрешают запускать второй `next` параллельно",
+		)
+	}
+}
+
 func TestMergeFastPathRecoversPostMergeCleanup(t *testing.T) {
 	entry := repositoryFile(t, ".claude", "skills", "merge-shepherd", "SKILL.md")
 	legacy := skill(t, "merge-shepherd")
@@ -1134,6 +1146,11 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"issue-decision fingerprint",
 		"**всегда** входят две независимые части",
 		"точная версия каноничного triage-комментария",
+		"когда\n     развилки в triage нет вовсе — сам план этой зафиксированной версии",
+		"**Развилки нет — выбирать не из чего, и это не повод для п. 9.**",
+		"ни строки `**Развилка.**`, ни\n   маркера `<!-- pp:options=… -->`",
+		"(в развилке нет рекомендации, номер не существует",
+		"`plan:<triage-id>@<triage-updated_at>` либо `invalid`",
 		"Голая\n   метка `decision:N` не фиксирует смысл номера",
 		"каноничен самый ранний по `created_at`,\n   затем по числовому `id`",
 		"комментарий автора `ivanarama` с точной отдельной строкой",
@@ -1579,6 +1596,40 @@ func TestAutomaticBaseSyncCarriesHumanShipWithoutPingPong(t *testing.T) {
 		"Сначала опубликуй exact intent",
 		"`git merge origin/main`",
 		"выполни `git add` и commit",
+	)
+}
+
+func TestMergeFallbackUsesPipelineHealthIntegrationOwnerOrder(t *testing.T) {
+	legacy := repositoryFile(t, ".claude", "skills", "merge-shepherd", "references", "legacy-protocol.md")
+	guide := repositoryFile(t, "CLAUDE.md")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	health := repositoryFile(t, "tools", "pipelinehealth", "main.go")
+
+	requireAllCompact(t, legacy,
+		"Для каждого intent-backed handoff вычисли начало интеграционной lineage",
+		"обратным проходом по `previous`",
+		"все связанные intent/done содержат ровно тот же `ship-event`",
+		"Разрыв `previous` или другой `ship-event` начинает новую lineage с текущего intent",
+		"`(lineage-start created_at, PR number)`",
+		"Остановка обратного прохода задаёт только порядок и не делает повреждённое звено валидным",
+		"Наличие хотя бы одной такой lineage имеет приоритет над любым legacy handoff",
+		"Только если intent-backed lineage отсутствуют, выбери минимальный номер PR среди настоящих legacy re-ship без валидного intent",
+	)
+	rejectAll(t, legacy, "самый ранний по номеру доказанный незавершённый handoff")
+	requireAllCompact(t, guide,
+		"владелец выбирается по самому раннему `pp:base-sync-intent`",
+		"`previous` переносит начало только через звенья с тем же `ship-event`",
+		"валидная intent-backed цепочка имеет приоритет над legacy-цепочками без intent",
+	)
+	requireAllCompact(t, docs,
+		"`previous` переносит начало только через звенья с тем же `ship-event`",
+		"Любая intent-backed lineage имеет приоритет над настоящим legacy re-ship без intent",
+		"номер PR разрешает ничью по времени и упорядочивает только legacy",
+	)
+	requireAll(t, health,
+		"The earliest base-sync intent owns the lane across",
+		"done.shipEvent != current.shipEvent || previous.shipEvent != current.shipEvent",
+		"return left.Number < right.Number",
 	)
 }
 

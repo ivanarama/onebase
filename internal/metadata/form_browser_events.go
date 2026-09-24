@@ -25,25 +25,25 @@ type browserFormEventRule struct {
 var browserFormEventRules = []browserFormEventRule{
 	{
 		kinds:  []FormElementType{FormElementButton},
-		events: []FormEventType{FormEventOnClick, FormEventOnChoice},
+		events: []FormEventType{FormEventOnClick, FormEventOnChoice, FormEventOnAnswer},
 	},
 	{
 		kinds: []FormElementType{
 			FormElementField, FormElementCodeField, FormElementCheckbox,
 			FormElementDatePicker, FormElementSwitch,
 		},
-		events: []FormEventType{FormEventOnChange, FormEventOnChoice},
+		events: []FormEventType{FormEventOnChange, FormEventOnChoice, FormEventOnAnswer},
 	},
 	{
 		kinds:  []FormElementType{FormElementInputList},
-		events: []FormEventType{FormEventOnChange, FormEventStartChoice, FormEventOnChoice},
+		events: []FormEventType{FormEventOnChange, FormEventStartChoice, FormEventOnChoice, FormEventOnAnswer},
 	},
 	{
 		kinds: []FormElementType{FormElementTablePart},
 		events: []FormEventType{
 			FormEventOnChange, FormEventOnRowAdded, FormEventOnRowDeleted,
 			FormEventOnChoice, FormEventOnRowActivated, FormEventOnRowChanged,
-			FormEventAfterRowAdd,
+			FormEventAfterRowAdd, FormEventOnAnswer,
 		},
 	},
 	{
@@ -57,7 +57,7 @@ var browserFormEventRules = []browserFormEventRule{
 
 // browserFormCommandEvents — события команды формы, не размещённой на ней
 // элементом: вида элемента у неё нет, поэтому в таблицу выше она не попадает.
-var browserFormCommandEvents = []FormEventType{FormEventOnClick, FormEventOnChoice}
+var browserFormCommandEvents = []FormEventType{FormEventOnClick, FormEventOnChoice, FormEventOnAnswer}
 
 // browserFormLevelEvents — события, приходящие без имени элемента, на форму
 // целиком. Остальные события уровня формы серверные: их запускает сервер на
