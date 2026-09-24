@@ -10,6 +10,10 @@
 
 [Сайт проекта](https://onebase.ivantitov.tech) · [Живое демо](https://demo.ivantitov.tech) · [Telegram](https://t.me/IvanTitovTech) · [Документация](QUICKSTART.md)
 
+[Сообщить об ошибке или участвовать в разработке](CONTRIBUTING.md) — для обратной
+связи достаточно пары слов или скриншота; самостоятельная разработка начинается
+с Draft PR.
+
 <!-- Подписи бейджей закодированы в percent-encoding: shields.io отвечает 400 на
      кириллицу в URL как есть. %D1%80%D0%B5%D0%BB%D0%B8%D0%B7 = «релиз»,
      %D0%BB%D0%B8%D1%86%D0%B5%D0%BD%D0%B7%D0%B8%D1%8F = «лицензия». -->

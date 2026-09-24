@@ -1,10 +1,14 @@
 name: Ошибка
-description: Сообщить о неправильной работе платформы
+description: Сообщить о неправильной работе — достаточно пары слов или скриншота
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
+        Спасибо за любую обратную связь. **Достаточно пары слов или скриншота.**
+        Версию, СУБД и шаги указывайте, только если они известны — мы поможем
+        дособрать остальное.
+
         **Аккаунт GitHub нужен не всем.** Если вам неудобно заводить его,
         нажмите в программе «Сообщить об ошибке» (меню «Система» в Предприятии,
         кнопка в панели лаунчера или `onebase support` в консоли) — платформа
@@ -19,8 +23,6 @@ body:
         Что делал: провёл реализацию товаров.
         Что ожидал: документ проведён.
         Что получилось: красная плашка «no such column: цена».
-    validations:
-      required: true
 
   - type: textarea
     id: report
@@ -36,10 +38,8 @@ body:
     id: version
     attributes:
       label: Версия платформы
-      description: Экран «О программе» или `onebase --version`.
-      placeholder: build-689
-    validations:
-      required: true
+      description: "Если знаете: экран «О программе» или `onebase --version`."
+      placeholder: Необязательно, например build-689
 
   - type: dropdown
     id: db
@@ -49,5 +49,3 @@ body:
         - SQLite
         - PostgreSQL
         - Не знаю
-    validations:
-      required: true
