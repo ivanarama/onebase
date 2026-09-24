@@ -438,6 +438,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 
 | № | Файл | Фича | Эстимейт | Статус |
 |---|---|---|---|---|
+| 162 | [162-pr-identity-and-fork-isolation.md](162-pr-identity-and-fork-isolation.md) | Identity-bound REVIEW/FIX/MERGE/TAIL и безопасный fork-маршрут: repository/ref/SHA lease, exact fetch, доверенный CI без локального исполнения fork-кода (#1245) | ~10–16 дней | 📋 Проектирование |
 | 163 | [163-next-slice-handoff.md](163-next-slice-handoff.md) | Crash-safe handoff между последовательными PR-срезами одной issue: committed merge boundary, уникальный branch-claim, recovery и наблюдаемость (#1379) | ~10–15 дней | 📋 Проектирование |
 | 180 | [180-base-sync-head-transition-proof.md](180-base-sync-head-transition-proof.md) | Доказательство перехода HEAD при base-sync без зависимости от даты commit: точный to, CAS, recovery и миграция carry (#1561) | ~7–11 дней | 📋 Проектирование |
 
