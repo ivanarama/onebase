@@ -35,6 +35,7 @@ var (
 	triageRouteLabels = regexp.MustCompile(`(?m)^<!-- pp:triage-route-labels claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) .+ -->$`)
 	triageAuthorReply = regexp.MustCompile(`(?m)^<!-- pp:triage-author-reply claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) -->$`)
 	triageRouteDone   = regexp.MustCompile(`(?m)^<!-- pp:triage-route-done claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) -->$`)
+	triageRouteVoid   = regexp.MustCompile(`(?m)^<!-- pp:triage-route-void claim=([0-9]+) -->$`)
 )
 
 type apiUser struct {
@@ -668,7 +669,7 @@ func inspectTriageRoute(issue apiIssue, owner string) triageRouteState {
 	}
 	state.route = records[0][3]
 	claimID := strconv.FormatInt(root.ID, 10)
-	labelsCommitted, replyCommitted, done := false, false, false
+	labelsCommitted, replyCommitted, done, voided := false, false, false, false
 	replyRequired := records[0][4] == "required"
 	for _, comment := range thread {
 		if !trustedUnedited(comment, owner) || comment.CreatedAt < root.CreatedAt ||
@@ -690,6 +691,17 @@ func inspectTriageRoute(issue apiIssue, owner string) triageRouteState {
 				done = true
 			}
 		}
+		for _, match := range triageRouteVoid.FindAllStringSubmatch(comment.Body, -1) {
+			if match[1] == claimID {
+				voided = true
+			}
+		}
+	}
+	// Право объявить транзакцию мёртвой — у человека, и только точной строкой:
+	// TRIAGE не может ни завершить чужой label POST, ни доказать его владельца.
+	// После void маршрутной записи больше нет — FIX идёт по фактическим меткам.
+	if voided {
+		return triageRouteState{ready: true}
 	}
 	if !done {
 		state.reason = "TRIAGE route claim is unfinished; FIX must wait for matching labels/reply/done markers"

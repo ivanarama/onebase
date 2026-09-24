@@ -912,6 +912,49 @@ func TestFixQueueRequiresCompletedTriageRoute(t *testing.T) {
 	}
 }
 
+func TestTrustedHumanVoidReleasesUnfinishedTriageRoute(t *testing.T) {
+	root, _ := triageRouteRoot(44, 10, "needs-decision")
+	released := testIssue(44, root, issueComment(11, "Решение принято, claim мёртв.\n<!-- pp:triage-route-void claim=10 -->"))
+	released.Labels = []apiLabel{{Name: "bug"}, {Name: "ready-fix"}}
+	result := analyze(nil, "ivanarama")
+	analyzeIssues(&result, []apiIssue{released}, nil, "ivanarama")
+
+	if len(result.FixCandidates) != 1 || result.FixCandidates[0].Number != 44 {
+		t.Fatalf("trusted void did not release the issue to FIX by its actual labels: %+v", result.FixCandidates)
+	}
+	if hasFinding(result, "fix_issue_not_executable") {
+		t.Fatalf("voided route is still diagnosed as unfinished: %+v", result.Findings)
+	}
+}
+
+func TestVoidMustBeTrustedExactLineForThisClaim(t *testing.T) {
+	root, _ := triageRouteRoot(45, 10, "needs-decision")
+	foreign := issueComment(11, "<!-- pp:triage-route-void claim=10 -->")
+	foreign.User = apiUser{Login: "someone-else"}
+	wrongClaim := issueComment(12, "<!-- pp:triage-route-void claim=99 -->")
+	edited := issueComment(13, "<!-- pp:triage-route-void claim=10 -->")
+	edited.UpdatedAt = "2026-09-02T00:00:00Z"
+	insideParagraph := issueComment(14, "Текст абзаца <!-- pp:triage-route-void claim=10 --> продолжает мысль.")
+	cases := map[string]apiComment{
+		"foreign author":    foreign,
+		"wrong claim":       wrongClaim,
+		"edited comment":    edited,
+		"inline not a line": insideParagraph,
+	}
+	for name, void := range cases {
+		issue := testIssue(45, root, void)
+		issue.Labels = []apiLabel{{Name: "approved"}}
+		result := analyze(nil, "ivanarama")
+		analyzeIssues(&result, []apiIssue{issue}, nil, "ivanarama")
+		if len(result.FixCandidates) != 0 {
+			t.Fatalf("%s: void released the issue to FIX: %+v", name, result.FixCandidates)
+		}
+		if !hasFinding(result, "fix_issue_not_executable") {
+			t.Fatalf("%s: unfinished route lost its diagnosis: %+v", name, result.Findings)
+		}
+	}
+}
+
 func TestIssueRouteDiagnosticsUseCommittedTriageForAllLabels(t *testing.T) {
 	readyRoute := testIssue(40, completedTriageRoute(40, "ready-fix")...)
 	readyRoute.Labels = []apiLabel{{Name: "needs-decision"}}
