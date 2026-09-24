@@ -23,10 +23,12 @@ type DSLPrintForm struct {
 // .os (план 64, этап 3). Рендерится движком BuildSheet по Layout.Binding.
 // Document берётся из поля document макета или из имени папки-сущности.
 type LayoutForm struct {
-	Name     string          // имя формы (имя файла без .layout.yaml)
-	Document string          // имя сущности
-	Layout   *LayoutTemplate // макет v2 + binding
-	Path     string          // путь к .layout.yaml
+	Name             string          // имя формы (имя файла без .layout.yaml)
+	Document         string          // имя сущности
+	Layout           *LayoutTemplate // макет v2 + binding
+	Path             string          // путь к .layout.yaml
+	XLSXTemplate     []byte          // исходный Excel-шаблон (<имя>.template.xlsx), если есть
+	XLSXTemplatePath string          // путь к исходному Excel-шаблону
 }
 
 // LoadFile parses a single YAML print form file.
@@ -181,12 +183,20 @@ func loadLayoutForm(path, folderDoc string) (*LayoutForm, error) {
 	if doc == "" {
 		doc = folderDoc
 	}
-	return &LayoutForm{
+	lf := &LayoutForm{
 		Name:     strings.TrimSuffix(filepath.Base(path), ".layout.yaml"),
 		Document: doc,
 		Layout:   lt,
 		Path:     path,
-	}, nil
+	}
+	templatePath := strings.TrimSuffix(path, ".layout.yaml") + ".template.xlsx"
+	if data, readErr := os.ReadFile(templatePath); readErr == nil {
+		lf.XLSXTemplate = data
+		lf.XLSXTemplatePath = templatePath
+	} else if !os.IsNotExist(readErr) {
+		return nil, fmt.Errorf("printform: read %s: %w", templatePath, readErr)
+	}
+	return lf, nil
 }
 
 // bindingPrefixes — префиксы первой строки-комментария .os-формы, задающие

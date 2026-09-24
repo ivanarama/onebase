@@ -706,9 +706,15 @@ jobs:
           go-version-file: '.go-version'
           cache: true
       - name: govulncheck
+        # Пайп через tools/govulnpolicy: GO-2026-6452 (excelize, CVE-2026-59162)
+        # в vulndb записан без fixed-версии, поэтому голый govulncheck считает
+        # уязвимой ЛЮБУЮ версию — даже запиненный коммит с исправлением. Фильтр
+        # гасит ТОЛЬКО этот advisory и только при точном совпадении версии с
+        # пином из go.mod; любой другой достижимый OSV, откат пина или оборванный
+        # запуск роняют проверку. Условие снятия записи — в комментарии там же.
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
-          govulncheck ./...
+          govulncheck -json ./... | go run ./tools/govulnpolicy
 
   bench:
     # Контроль регрессий производительности: гоняем микробенчмарки горячих путей

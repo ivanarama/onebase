@@ -58,6 +58,27 @@ func IsUniqueViolation(err error) bool {
 	return false
 }
 
+// IsForeignKeyViolation распознаёт нарушение внешнего ключа по коду драйвера —
+// тем же кодами, что classifyConstraintErr, но для сырых ошибок с путей записи
+// и удаления, где обёртывание не выполняется (например, удаление учётной
+// записи, на которую ссылаются реквизиты reference:_users, #1646).
+func IsForeignKeyViolation(err error) bool {
+	if err == nil {
+		return false
+	}
+	var sqErr *sqlite.Error
+	if errors.As(err, &sqErr) {
+		if sqErr.Code() == sqliteConstraintForeignKey {
+			return true
+		}
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == pgForeignKeyViolation {
+		return true
+	}
+	return false
+}
+
 // classifyConstraintErr оборачивает ошибку драйвера в типизированную
 // ErrForeignKeyViolation, если это нарушение внешнего ключа. Остальные ошибки
 // (включая другие нарушения ограничений) возвращаются без изменений — их текст

@@ -2,84 +2,256 @@ package configcheck
 
 import (
 	"fmt"
-	"sort"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/project"
+	"gopkg.in/yaml.v3"
 )
 
-// CheckFormChoiceFilter проверяет связи параметров выбора (`choice_filter`) на
-// формах: «реквизит выбираемого справочника → путь к значению на форме».
-//
-// Проверка БЛОКИРУЮЩАЯ, и это не строгость ради строгости. Опечатка в имени
-// реквизита не видна ничем: отбор просто не применяется, подбор показывает весь
-// справочник, и это неотличимо от «связь ещё не настроили». Ошибка же при сборке
-// показывает и файл, и поле.
-//
-// Что проверяем:
-//   - поле с choice_filter само ссылочное (отбирать нечего у строки или числа);
-//   - реквизит-приёмник существует у справочника, на который поле ссылается;
-//   - источник значения существует на форме: реквизит объекта, реквизит формы
-//     или поле табличной части.
+// CheckFormChoiceFilterYAML validates the small part of the public YAML
+// contract that yaml.v3 would otherwise silently discard before Project.Load:
+// unknown keys inside choice_filter conditions. Shape errors are reported here
+// as well so they retain the stable form.choice-filter code even when the
+// typed project loader cannot decode the file.
+func CheckFormChoiceFilterYAML(dir string) []Issue {
+	formsDir := filepath.Join(dir, "forms")
+	formsRoot, err := os.OpenRoot(formsDir)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = formsRoot.Close() }()
+
+	var issues []Issue
+	_ = fs.WalkDir(formsRoot.FS(), ".", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil || entry == nil || entry.IsDir() || !strings.HasSuffix(strings.ToLower(entry.Name()), ".form.yaml") {
+			return nil
+		}
+		data, err := formsRoot.ReadFile(path)
+		if err != nil || len(strings.TrimSpace(string(data))) == 0 {
+			return nil
+		}
+		var doc yaml.Node
+		if err := yaml.Unmarshal(data, &doc); err != nil || len(doc.Content) == 0 {
+			return nil // syntax/type diagnostics are emitted by the normal loader
+		}
+		rootNode := doc.Content[0]
+		elements := yamlMapValue(rootNode, "elements")
+		fullPath := filepath.Join(formsDir, filepath.FromSlash(path))
+		walkChoiceFilterYAML(elements, "elements", relLabel(dir, fullPath), &issues)
+		return nil
+	})
+	return issues
+}
+
+func walkChoiceFilterYAML(elements *yaml.Node, path, file string, issues *[]Issue) {
+	if elements == nil || elements.Kind != yaml.SequenceNode {
+		return
+	}
+	for index, element := range elements.Content {
+		if element == nil || element.Kind != yaml.MappingNode {
+			continue
+		}
+		elementPath := fmt.Sprintf("%s[%d]", path, index)
+		for i := 0; i+1 < len(element.Content); i += 2 {
+			key, value := element.Content[i], element.Content[i+1]
+			switch key.Value {
+			case "choice_filter":
+				validateChoiceFilterYAML(value, elementPath+".choice_filter", file, issues)
+			case "children":
+				walkChoiceFilterYAML(value, elementPath+".children", file, issues)
+			}
+		}
+	}
+}
+
+func validateChoiceFilterYAML(node *yaml.Node, path, file string, issues *[]Issue) {
+	add := func(at *yaml.Node, message string) {
+		issue := Issue{File: file, Kind: "Управляемая форма", Code: "form.choice-filter", Message: message}
+		if at != nil {
+			issue.Line, issue.Column = at.Line, at.Column
+		}
+		*issues = append(*issues, issue)
+	}
+	if node == nil || node.Kind != yaml.SequenceNode {
+		add(node, fmt.Sprintf("%s должен быть списком условий", path))
+		return
+	}
+	allowed := map[string]bool{"field": true, "op": true, "from": true, "value": true}
+	for index, condition := range node.Content {
+		conditionPath := fmt.Sprintf("%s[%d]", path, index)
+		if condition == nil || condition.Kind != yaml.MappingNode {
+			add(condition, conditionPath+" должен быть объектом")
+			continue
+		}
+		for i := 0; i+1 < len(condition.Content); i += 2 {
+			key, value := condition.Content[i], condition.Content[i+1]
+			if !allowed[key.Value] {
+				add(key, fmt.Sprintf("%s: неизвестный ключ %q", conditionPath, key.Value))
+				continue
+			}
+			switch key.Value {
+			case "field", "op", "from":
+				if value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
+					add(value, fmt.Sprintf("%s.%s должен быть строкой", conditionPath, key.Value))
+				}
+			case "value":
+				if value.Kind != yaml.ScalarNode || value.Tag != "!!bool" {
+					add(value, fmt.Sprintf("%s.value должен быть boolean", conditionPath))
+				}
+			}
+		}
+	}
+}
+
+// CheckFormChoiceFilter validates the closed, server-authoritative
+// choice_filter contract from plan 170. The check is blocking: accepting an
+// ambiguous or mistyped condition would either expose the full catalog or make
+// a picker silently empty at runtime.
 func CheckFormChoiceFilter(proj *project.Project) []Issue {
 	if proj == nil {
 		return nil
 	}
-	entities := map[string]*metadata.Entity{}
-	for _, e := range proj.Entities {
-		entities[strings.ToLower(e.Name)] = e
+	entities := make(map[string]*metadata.Entity, len(proj.Entities))
+	for _, entity := range proj.Entities {
+		if entity != nil {
+			entities[strings.ToLower(entity.Name)] = entity
+		}
 	}
+
 	var issues []Issue
-	for _, ent := range proj.Entities {
-		for _, form := range ent.Forms {
-			label := formFileLabel(ent, form)
-			add := func(msg, fix string) {
-				issues = append(issues, Issue{
-					File:         label,
-					Object:       ent.Name,
-					Kind:         "Управляемая форма",
-					Code:         "form.choice-filter",
-					Message:      msg,
-					SuggestedFix: fix,
-				})
+	for _, owner := range proj.Entities {
+		if owner == nil {
+			continue
+		}
+		for _, form := range owner.Forms {
+			if form == nil {
+				continue
 			}
+			idCount := make(map[string]int)
 			form.Walk(func(el *metadata.FormElement) bool {
-				if el == nil || len(el.ChoiceFilter) == 0 {
+				if el != nil && strings.TrimSpace(el.ID) != "" {
+					idCount[strings.TrimSpace(el.ID)]++
+				}
+				return true
+			})
+
+			form.Walk(func(el *metadata.FormElement) bool {
+				if el == nil || el.ChoiceFilter == nil {
 					return true
 				}
+				label := formFileLabel(owner, form)
 				name := formElementName(el)
-				target := choiceFilterTargetEntity(entities, ent, form, el)
-				if target == nil {
-					add(fmt.Sprintf("поле %q задаёт choice_filter, но не ссылается на справочник — отбирать нечего", name),
-						"Уберите choice_filter или свяжите поле со справочником (data_path на ссылочный реквизит).")
+				add := func(format string, args ...any) {
+					issues = append(issues, Issue{
+						File:    label,
+						Object:  owner.Name,
+						Kind:    "Управляемая форма",
+						Code:    "form.choice-filter",
+						Message: fmt.Sprintf("поле %q: %s", name, fmt.Sprintf(format, args...)),
+					})
+				}
+
+				if el.Kind != metadata.FormElementField {
+					add("choice_filter допустим только у kind: %s", metadata.FormElementField)
+				}
+				id := strings.TrimSpace(el.ID)
+				if id == "" {
+					add("для choice_filter обязателен непустой стабильный id элемента")
+				} else if id != el.ID {
+					add("id %q содержит пробелы по краям", el.ID)
+				} else if idCount[id] != 1 {
+					add("id %q не уникален в форме", el.ID)
+				}
+				if len(el.ChoiceFilter) < 1 || len(el.ChoiceFilter) > 8 {
+					add("choice_filter содержит %d условий; допустимо от 1 до 8", len(el.ChoiceFilter))
+					if len(el.ChoiceFilter) == 0 {
+						return true
+					}
+				}
+
+				target, ok := formChoiceRefSource(owner, form, el.DataPath, entities)
+				if !ok || target == nil || target.Kind != metadata.KindCatalog {
+					add("data_path %q не выбирает ссылку на справочник", el.DataPath)
 					return true
 				}
-				// Порядок ключей карты в Go случайный: сортируем, чтобы одна и та
-				// же конфигурация давала один и тот же список ошибок.
-				keys := make([]string, 0, len(el.ChoiceFilter))
-				for k := range el.ChoiceFilter {
-					keys = append(keys, k)
-				}
-				sort.Strings(keys)
-				for _, key := range keys {
-					if !entityHasFieldFold(target, key) {
-						add(fmt.Sprintf("поле %q: choice_filter отбирает по реквизиту %q, которого нет у справочника %s",
-							name, key, target.Name),
-							fmt.Sprintf("Укажите существующий реквизит %s (у подчинённого справочника это «%s»).",
-								target.Name, metadata.StandardOwnerField))
+
+				seenFields := make(map[string]bool, len(el.ChoiceFilter))
+				for i, cond := range el.ChoiceFilter {
+					where := fmt.Sprintf("choice_filter[%d]", i)
+					fieldName := strings.TrimSpace(cond.Field)
+					if fieldName == "" {
+						add("%s: field обязателен", where)
 						continue
 					}
-					src := formDataPathField(el.ChoiceFilter[key])
-					if src == "" {
-						add(fmt.Sprintf("поле %q: choice_filter для %q не задаёт источник значения", name, key),
-							"Укажите путь к значению: choice_filter: { "+key+": Объект.Контрагент }.")
+					fieldKey := strings.ToLower(fieldName)
+					if seenFields[fieldKey] {
+						add("%s: field %q повторяется", where, fieldName)
 						continue
 					}
-					if !formHasValueSource(ent, form, src) {
-						add(fmt.Sprintf("поле %q: choice_filter берёт значение из %q, но такого реквизита нет ни у %s, ни у формы",
-							name, src, ent.Name),
-							"Проверьте написание: источником бывает реквизит объекта (Объект.Контрагент) или реквизит формы.")
+					seenFields[fieldKey] = true
+
+					hasFrom := strings.TrimSpace(cond.From) != ""
+					hasValue := cond.Value != nil
+					if hasFrom == hasValue {
+						add("%s: требуется ровно одно из from и value", where)
+						continue
+					}
+
+					isFolder := strings.EqualFold(fieldName, "is_folder")
+					var targetField *metadata.Field
+					if !isFolder {
+						targetField = entityFieldFold(target, fieldName)
+						if targetField == nil {
+							add("%s: у справочника %s нет реквизита %q", where, target.Name, fieldName)
+							continue
+						}
+					}
+
+					switch cond.Op {
+					case metadata.FormChoiceOpEqual:
+						if isFolder {
+							if !target.Hierarchical {
+								add("%s: is_folder допустим только у иерархического справочника", where)
+							}
+							if !hasValue {
+								add("%s: is_folder требует boolean value, а не from", where)
+							}
+							continue
+						}
+						if hasValue {
+							add("%s: литерал value допустим только для is_folder", where)
+							continue
+						}
+						source, sourceOK := formChoiceRefSource(owner, form, cond.From, entities)
+						if !sourceOK || source == nil {
+							add("%s: from %q не является явной ссылкой Объект.* или Форма.*", where, cond.From)
+							continue
+						}
+						if targetField.RefEntity == "" || !strings.EqualFold(targetField.RefEntity, source.Name) {
+							add("%s: eq сравнивает несовместимые ссылки %s.%s и %q", where, target.Name, targetField.Name, cond.From)
+						}
+
+					case metadata.FormChoiceOpInHierarchy:
+						if isFolder || hasValue {
+							add("%s: in_hierarchy требует ссылочный field и from", where)
+							continue
+						}
+						hierarchy := entities[strings.ToLower(targetField.RefEntity)]
+						source, sourceOK := formChoiceRefSource(owner, form, cond.From, entities)
+						if targetField.RefEntity == "" || hierarchy == nil || hierarchy.Kind != metadata.KindCatalog || !hierarchy.Hierarchical {
+							add("%s: %s.%s не ссылается на иерархический справочник", where, target.Name, targetField.Name)
+							continue
+						}
+						if !sourceOK || source == nil || !strings.EqualFold(source.Name, hierarchy.Name) {
+							add("%s: from %q должен ссылаться на тот же иерархический справочник %s", where, cond.From, hierarchy.Name)
+						}
+
+					default:
+						add("%s: неизвестный оператор %q", where, cond.Op)
 					}
 				}
 				return true
@@ -89,68 +261,59 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 	return issues
 }
 
-// choiceFilterTargetEntity — справочник, элементы которого выбирает поле: либо
-// по реквизиту объекта, либо по реквизиту формы (save:false).
-func choiceFilterTargetEntity(entities map[string]*metadata.Entity, ent *metadata.Entity, form *metadata.FormModule, el *metadata.FormElement) *metadata.Entity {
-	field := formDataPathField(el.DataPath)
-	if field == "" {
-		return nil
+// formChoiceRefSource resolves an explicit two-segment form path to the entity
+// referenced by that value. Bare names and deeper paths are intentionally
+// rejected so future syntax cannot reinterpret an existing configuration.
+func formChoiceRefSource(owner *metadata.Entity, form *metadata.FormModule, path string, entities map[string]*metadata.Entity) (*metadata.Entity, bool) {
+	parts := strings.Split(strings.TrimSpace(path), ".")
+	if len(parts) != 2 || strings.TrimSpace(parts[1]) == "" {
+		return nil, false
 	}
-	if ent != nil {
-		for _, f := range ent.Fields {
-			if strings.EqualFold(f.Name, field) && f.RefEntity != "" {
-				return entities[strings.ToLower(f.RefEntity)]
+	prefix, name := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	var ref string
+	switch {
+	case strings.EqualFold(prefix, "Объект"):
+		if field := entityFieldFold(owner, name); field != nil {
+			ref = field.RefEntity
+		}
+	case strings.EqualFold(prefix, "Форма"):
+		for _, attr := range form.Attributes {
+			if attr != nil && strings.EqualFold(attr.Name, name) {
+				ref = formChoiceTypeRefEntity(attr.TypeRef)
+				break
 			}
 		}
+	default:
+		return nil, false
 	}
-	if form != nil {
-		for _, a := range form.Attributes {
-			if a == nil || !strings.EqualFold(a.Name, field) {
-				continue
-			}
-			ref := strings.TrimPrefix(a.TypeRef, "CatalogRef.")
-			ref = strings.TrimPrefix(ref, "DocumentRef.")
-			if ref == a.TypeRef {
-				return nil
-			}
-			return entities[strings.ToLower(ref)]
+	if strings.TrimSpace(ref) == "" {
+		return nil, false
+	}
+	entity := entities[strings.ToLower(ref)]
+	return entity, entity != nil
+}
+
+func formChoiceTypeRefEntity(typeRef string) string {
+	typeRef = strings.TrimSpace(typeRef)
+	separator := strings.Index(typeRef, ".")
+	if separator <= 0 || separator == len(typeRef)-1 {
+		return ""
+	}
+	prefix := typeRef[:separator]
+	if strings.EqualFold(prefix, "CatalogRef") || strings.EqualFold(prefix, "DocumentRef") {
+		return strings.TrimSpace(typeRef[separator+1:])
+	}
+	return ""
+}
+
+func entityFieldFold(entity *metadata.Entity, name string) *metadata.Field {
+	if entity == nil {
+		return nil
+	}
+	for i := range entity.Fields {
+		if strings.EqualFold(entity.Fields[i].Name, name) {
+			return &entity.Fields[i]
 		}
 	}
 	return nil
-}
-
-// formHasValueSource — есть ли на форме источник значения с таким именем.
-func formHasValueSource(ent *metadata.Entity, form *metadata.FormModule, name string) bool {
-	if entityHasFieldFold(ent, name) {
-		return true
-	}
-	if ent != nil {
-		for _, tp := range ent.TableParts {
-			for _, f := range tp.Fields {
-				if strings.EqualFold(f.Name, name) {
-					return true
-				}
-			}
-		}
-	}
-	if form != nil {
-		for _, a := range form.Attributes {
-			if a != nil && strings.EqualFold(a.Name, name) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func entityHasFieldFold(ent *metadata.Entity, name string) bool {
-	if ent == nil {
-		return false
-	}
-	for _, f := range ent.Fields {
-		if strings.EqualFold(f.Name, name) {
-			return true
-		}
-	}
-	return false
 }

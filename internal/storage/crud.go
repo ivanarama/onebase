@@ -17,8 +17,10 @@ import (
 
 // ListParams controls filtering, search, sorting and pagination for List queries.
 type ListParams struct {
-	Filters   map[string]FilterValue
-	RowFilter *Predicate // additional SQL-side row-level access predicate
+	Filters map[string]FilterValue
+	// ChoicePredicates are trusted, metadata-derived choice_filter conditions.
+	ChoicePredicates []ChoicePredicate
+	RowFilter        *Predicate // additional SQL-side row-level access predicate
 	// RowFilterEvaluated — строковый доступ был вычислен для этого списка (план
 	// 79F): хендлер прошёл через applyRowFilter/rowFilterFor (даже если политика
 	// неограничивающая — RowFilter при этом nil). Используется strict-RLS
@@ -674,6 +676,131 @@ func ListEntityColumns(entity *metadata.Entity) []string {
 	return cols
 }
 
+// listWhere builds the complete predicate shared by List and CountList. Count
+// deliberately omits keyset cursors because its public contract reports the
+// total before pagination; every other filter must be byte-for-byte identical.
+func (db *DB) listWhere(entity *metadata.Entity, params ListParams, includeKeyset bool) (string, []any, error) {
+	d := db.dialect
+	var whereParts []string
+	var args []any
+	argIdx := 1
+
+	if entity.Hierarchical && params.ParentStr != "" {
+		if params.ParentStr == "root" {
+			whereParts = append(whereParts, "parent_id IS NULL")
+		} else if parentID, err := uuid.Parse(params.ParentStr); err == nil {
+			whereParts = append(whereParts, fmt.Sprintf("parent_id = %s", d.Placeholder(argIdx)))
+			args = append(args, idArg(d, parentID))
+			argIdx++
+		}
+	}
+	if cond := activityWhere(d, entity, params.ActivityScope); cond != "" {
+		whereParts = append(whereParts, cond)
+	}
+	// An explicit is_folder choice condition replaces the picker's implicit
+	// ExcludeFolders/OnlyFolders scope. Applying both could make a valid request
+	// contradictory (notably is_folder:true plus ExcludeFolders:true).
+	if !hasExplicitChoiceFolderScope(params.ChoicePredicates) {
+		if cond := folderScopeWhere(d, entity, params.OnlyFolders, params.ExcludeFolders); cond != "" {
+			whereParts = append(whereParts, cond)
+		}
+	}
+	if cond := deletionMarkWhere(d, params.ExcludeMarked); cond != "" {
+		whereParts = append(whereParts, cond)
+	}
+
+	for _, field := range entity.Fields {
+		filter, ok := params.Filters[field.Name]
+		if !ok {
+			continue
+		}
+		column := metadata.ColumnName(field)
+		switch {
+		case field.Type == metadata.FieldTypeDate:
+			if filter.From != "" {
+				whereParts = append(whereParts, fmt.Sprintf("%s >= %s", column, d.Placeholder(argIdx)))
+				args = append(args, filter.From)
+				argIdx++
+			}
+			if filter.To != "" {
+				// Include the whole selected day: a day-only upper bound is
+				// translated to the start of the following day.
+				bound, op := dateUpperBound(filter.To)
+				whereParts = append(whereParts, fmt.Sprintf("%s %s %s", column, op, d.Placeholder(argIdx)))
+				args = append(args, bound)
+				argIdx++
+			}
+		case field.RefEntity != "":
+			if filter.Value != "" {
+				whereParts = append(whereParts, fmt.Sprintf("%s = %s", column, d.Placeholder(argIdx)))
+				if id, err := uuid.Parse(filter.Value); err == nil {
+					args = append(args, idArg(d, id))
+				} else {
+					args = append(args, filter.Value)
+				}
+				argIdx++
+			}
+		default:
+			if filter.Value != "" {
+				whereParts = append(whereParts, d.LowerLike(column)+" LIKE "+d.LowerLike(d.Placeholder(argIdx)))
+				args = append(args, "%"+filter.Value+"%")
+				argIdx++
+			}
+		}
+	}
+
+	if params.Search != "" {
+		var searchParts []string
+		pattern := "%" + params.Search + "%"
+		// SQLite placeholders are positional, so bind the pattern once per
+		// searchable field rather than reusing a numbered placeholder.
+		for _, field := range metadata.SearchFields(entity) {
+			column := metadata.ColumnName(field)
+			searchParts = append(searchParts, d.LowerLike(column)+" LIKE "+d.LowerLike(d.Placeholder(argIdx)))
+			args = append(args, pattern)
+			argIdx++
+		}
+		if len(searchParts) > 0 {
+			whereParts = append(whereParts, "("+strings.Join(searchParts, " OR ")+")")
+		} else {
+			// A non-empty search with no searchable fields is an empty result,
+			// not an accidental unfiltered list.
+			whereParts = append(whereParts, "1=0")
+		}
+	}
+
+	if cond, condArgs, next, err := choicePredicateSQL(d, entity, params.ChoicePredicates, argIdx); err != nil {
+		return "", nil, fmt.Errorf("choice filter: %w", err)
+	} else if cond != "" {
+		whereParts = append(whereParts, cond)
+		args = append(args, condArgs...)
+		argIdx = next
+	}
+	if cond, condArgs, next, err := PredicateSQL(d, entity, params.RowFilter, argIdx); err != nil {
+		return "", nil, fmt.Errorf("row filter: %w", err)
+	} else if cond != "" {
+		whereParts = append(whereParts, cond)
+		args = append(args, condArgs...)
+		argIdx = next
+	}
+	if includeKeyset {
+		if params.AfterID != nil {
+			whereParts = append(whereParts, fmt.Sprintf("id > %s", d.Placeholder(argIdx)))
+			args = append(args, idArg(d, *params.AfterID))
+			argIdx++
+		}
+		if params.ThroughID != nil {
+			whereParts = append(whereParts, fmt.Sprintf("id <= %s", d.Placeholder(argIdx)))
+			args = append(args, idArg(d, *params.ThroughID))
+		}
+	}
+
+	if len(whereParts) == 0 {
+		return "", args, nil
+	}
+	return " WHERE " + strings.Join(whereParts, " AND "), args, nil
+}
+
 func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Entity, params ListParams) ([]map[string]any, error) {
 	// План 79F (defense-in-depth, по умолчанию выключен): если у сущности есть
 	// строковая политика, но список запрошен без вычисления строкового доступа
@@ -694,127 +821,14 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 			return nil, fmt.Errorf("list %s: keyset pagination requires ascending order", entityName)
 		}
 	}
-	d := db.dialect
 	table := metadata.TableName(entityName)
 	cols := ListEntityColumns(entity)
 	hasPredefined := entity.Kind == metadata.KindCatalog && len(entity.Predefined) > 0
-
-	var whereParts []string
-	var args []any
-	argIdx := 1
-
-	// Parent filter for hierarchical catalogs
-	if entity.Hierarchical && params.ParentStr != "" {
-		if params.ParentStr == "root" {
-			whereParts = append(whereParts, "parent_id IS NULL")
-		} else if pID, err := uuid.Parse(params.ParentStr); err == nil {
-			whereParts = append(whereParts, fmt.Sprintf("parent_id = %s", d.Placeholder(argIdx)))
-			args = append(args, idArg(d, pID))
-			argIdx++
-		}
+	whereClause, args, err := db.listWhere(entity, params, true)
+	if err != nil {
+		return nil, fmt.Errorf("list %s: %w", entityName, err)
 	}
-	if cond := activityWhere(d, entity, params.ActivityScope); cond != "" {
-		whereParts = append(whereParts, cond)
-	}
-	if cond := folderScopeWhere(d, entity, params.OnlyFolders, params.ExcludeFolders); cond != "" {
-		whereParts = append(whereParts, cond)
-	}
-	if cond := deletionMarkWhere(d, params.ExcludeMarked); cond != "" {
-		whereParts = append(whereParts, cond)
-	}
-
-	for _, f := range entity.Fields {
-		fv, ok := params.Filters[f.Name]
-		if !ok {
-			continue
-		}
-		col := metadata.ColumnName(f)
-		switch {
-		case f.Type == metadata.FieldTypeDate:
-			if fv.From != "" {
-				whereParts = append(whereParts, fmt.Sprintf("%s >= %s", col, d.Placeholder(argIdx)))
-				args = append(args, fv.From)
-				argIdx++
-			}
-			if fv.To != "" {
-				// Включаем весь выбранный день: для суточного «по дату» сравниваем
-				// «< следующего дня», иначе документы этого дня с временем > 00:00
-				// выпадали бы (а на SQLite, где дата хранится как RFC3339-строка,
-				// исключался весь граничный день).
-				bound, op := dateUpperBound(fv.To)
-				whereParts = append(whereParts, fmt.Sprintf("%s %s %s", col, op, d.Placeholder(argIdx)))
-				args = append(args, bound)
-				argIdx++
-			}
-		case f.RefEntity != "":
-			if fv.Value != "" {
-				whereParts = append(whereParts, fmt.Sprintf("%s = %s", col, d.Placeholder(argIdx)))
-				if id, err := uuid.Parse(fv.Value); err == nil {
-					args = append(args, idArg(d, id))
-				} else {
-					args = append(args, fv.Value)
-				}
-				argIdx++
-			}
-		default:
-			if fv.Value != "" {
-				whereParts = append(whereParts, d.LowerLike(col)+" LIKE "+d.LowerLike(d.Placeholder(argIdx)))
-				args = append(args, "%"+fv.Value+"%")
-				argIdx++
-			}
-		}
-	}
-
-	// Поиск подстроки по реквизитам объекта (состав — см. metadata.SearchFields).
-	// SQLite '?' placeholders are positional with no repetition; for each
-	// field we allocate a fresh placeholder and bind the pattern again.
-	if params.Search != "" {
-		var searchParts []string
-		pattern := "%" + params.Search + "%"
-		// Состав полей задаёт metadata.SearchFields: по умолчанию все строковые
-		// реквизиты (как было всегда), а блок search_fields в YAML позволяет
-		// перечислить свои — например артикул или штрихкод, которые часто хранят
-		// числом и в поиск не попадали. Приведение к тексту делает LowerLike.
-		for _, f := range metadata.SearchFields(entity) {
-			col := metadata.ColumnName(f)
-			searchParts = append(searchParts, d.LowerLike(col)+" LIKE "+d.LowerLike(d.Placeholder(argIdx)))
-			args = append(args, pattern)
-			argIdx++
-		}
-		if len(searchParts) > 0 {
-			whereParts = append(whereParts, "("+strings.Join(searchParts, " OR ")+")")
-		} else {
-			// Искать не по чему (пустой search_fields или объект без текстовых
-			// реквизитов). Выдача обязана быть пустой: полный список в ответ на
-			// запрос пользователь принимает за результат поиска.
-			whereParts = append(whereParts, "1=0")
-		}
-	}
-	if cond, condArgs, next, err := PredicateSQL(d, entity, params.RowFilter, argIdx); err != nil {
-		return nil, fmt.Errorf("list %s row filter: %w", entityName, err)
-	} else if cond != "" {
-		whereParts = append(whereParts, cond)
-		args = append(args, condArgs...)
-		argIdx = next
-	}
-	if params.AfterID != nil {
-		whereParts = append(whereParts, fmt.Sprintf("id > %s", d.Placeholder(argIdx)))
-		args = append(args, idArg(d, *params.AfterID))
-		argIdx++
-	}
-	if params.ThroughID != nil {
-		whereParts = append(whereParts, fmt.Sprintf("id <= %s", d.Placeholder(argIdx)))
-		args = append(args, idArg(d, *params.ThroughID))
-		argIdx++
-	}
-	_ = argIdx
-
-	baseQuery := fmt.Sprintf("SELECT %s FROM %s", strings.Join(cols, ", "), table)
-	whereClause := ""
-	if len(whereParts) > 0 {
-		whereClause = " WHERE " + strings.Join(whereParts, " AND ")
-	}
-	query := baseQuery + whereClause
+	query := fmt.Sprintf("SELECT %s FROM %s%s", strings.Join(cols, ", "), table, whereClause)
 
 	// sorting
 	if keyset {
@@ -895,113 +909,47 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 // CountList returns the total number of rows matching the given params
 // (ignoring pagination: Limit, Offset, AfterID and ThroughID).
 func (db *DB) CountList(ctx context.Context, entityName string, entity *metadata.Entity, params ListParams) (int, error) {
-	d := db.dialect
 	table := metadata.TableName(entityName)
-	var whereParts []string
-	var args []any
-	argIdx := 1
-
-	if entity.Hierarchical && params.ParentStr != "" {
-		if params.ParentStr == "root" {
-			whereParts = append(whereParts, "parent_id IS NULL")
-		} else if pID, err := uuid.Parse(params.ParentStr); err == nil {
-			whereParts = append(whereParts, fmt.Sprintf("parent_id = %s", d.Placeholder(argIdx)))
-			args = append(args, idArg(d, pID))
-			argIdx++
-		}
+	whereClause, args, err := db.listWhere(entity, params, false)
+	if err != nil {
+		return 0, fmt.Errorf("count %s: %w", entityName, err)
 	}
-	if cond := activityWhere(d, entity, params.ActivityScope); cond != "" {
-		whereParts = append(whereParts, cond)
-	}
-	if cond := folderScopeWhere(d, entity, params.OnlyFolders, params.ExcludeFolders); cond != "" {
-		whereParts = append(whereParts, cond)
-	}
-	if cond := deletionMarkWhere(d, params.ExcludeMarked); cond != "" {
-		whereParts = append(whereParts, cond)
-	}
-
-	for _, f := range entity.Fields {
-		fv, ok := params.Filters[f.Name]
-		if !ok {
-			continue
-		}
-		col := metadata.ColumnName(f)
-		switch {
-		case f.Type == metadata.FieldTypeDate:
-			if fv.From != "" {
-				whereParts = append(whereParts, fmt.Sprintf("%s >= %s", col, d.Placeholder(argIdx)))
-				args = append(args, fv.From)
-				argIdx++
-			}
-			if fv.To != "" {
-				// Включаем весь выбранный день: для суточного «по дату» сравниваем
-				// «< следующего дня», иначе документы этого дня с временем > 00:00
-				// выпадали бы (а на SQLite, где дата хранится как RFC3339-строка,
-				// исключался весь граничный день).
-				bound, op := dateUpperBound(fv.To)
-				whereParts = append(whereParts, fmt.Sprintf("%s %s %s", col, op, d.Placeholder(argIdx)))
-				args = append(args, bound)
-				argIdx++
-			}
-		case f.RefEntity != "":
-			if fv.Value != "" {
-				whereParts = append(whereParts, fmt.Sprintf("%s = %s", col, d.Placeholder(argIdx)))
-				if id, err := uuid.Parse(fv.Value); err == nil {
-					args = append(args, idArg(d, id))
-				} else {
-					args = append(args, fv.Value)
-				}
-				argIdx++
-			}
-		default:
-			if fv.Value != "" {
-				whereParts = append(whereParts, d.LowerLike(col)+" LIKE "+d.LowerLike(d.Placeholder(argIdx)))
-				args = append(args, "%"+fv.Value+"%")
-				argIdx++
-			}
-		}
-	}
-
-	if params.Search != "" {
-		var searchParts []string
-		pattern := "%" + params.Search + "%"
-		// Состав полей задаёт metadata.SearchFields: по умолчанию все строковые
-		// реквизиты (как было всегда), а блок search_fields в YAML позволяет
-		// перечислить свои — например артикул или штрихкод, которые часто хранят
-		// числом и в поиск не попадали. Приведение к тексту делает LowerLike.
-		for _, f := range metadata.SearchFields(entity) {
-			col := metadata.ColumnName(f)
-			searchParts = append(searchParts, d.LowerLike(col)+" LIKE "+d.LowerLike(d.Placeholder(argIdx)))
-			args = append(args, pattern)
-			argIdx++
-		}
-		if len(searchParts) > 0 {
-			whereParts = append(whereParts, "("+strings.Join(searchParts, " OR ")+")")
-		} else {
-			// Искать не по чему (пустой search_fields или объект без текстовых
-			// реквизитов). Выдача обязана быть пустой: полный список в ответ на
-			// запрос пользователь принимает за результат поиска.
-			whereParts = append(whereParts, "1=0")
-		}
-	}
-	if cond, condArgs, next, err := PredicateSQL(d, entity, params.RowFilter, argIdx); err != nil {
-		return 0, fmt.Errorf("count %s row filter: %w", entityName, err)
-	} else if cond != "" {
-		whereParts = append(whereParts, cond)
-		args = append(args, condArgs...)
-		argIdx = next
-	}
-	_ = argIdx
-
-	q := fmt.Sprintf("SELECT COUNT(*) FROM %s", table)
-	if len(whereParts) > 0 {
-		q += " WHERE " + strings.Join(whereParts, " AND ")
-	}
+	q := fmt.Sprintf("SELECT COUNT(*) FROM %s%s", table, whereClause)
 	var count int
 	if err := db.QueryRow(ctx, q, args...).Scan(&count); err != nil {
 		return 0, fmt.Errorf("count %s: %w", entityName, err)
 	}
 	return count, nil
+}
+
+// ListContainsID reports whether id belongs to the same filtered set as List
+// and CountList. It deliberately ignores search and pagination at the caller's
+// discretion; the method itself applies every predicate present in params,
+// including choice_filter and row-level access, through the shared WHERE
+// builder. Reference pickers use it to validate a selected value without
+// inferring membership from the current page.
+func (db *DB) ListContainsID(ctx context.Context, entityName string, entity *metadata.Entity, id uuid.UUID, params ListParams) (bool, error) {
+	if db.rlsGuard != nil && !params.RowFilterEvaluated && db.rlsGuard(strings.ToLower(entityName)) {
+		return false, fmt.Errorf("strict RLS: membership of %q requested without row access evaluation (fail-closed, plan 79F)", entityName)
+	}
+	table := metadata.TableName(entityName)
+	whereClause, args, err := db.listWhere(entity, params, false)
+	if err != nil {
+		return false, fmt.Errorf("list contains %s: %w", entityName, err)
+	}
+	idCondition := fmt.Sprintf("id = %s", db.dialect.Placeholder(len(args)+1))
+	if whereClause == "" {
+		whereClause = " WHERE " + idCondition
+	} else {
+		whereClause += " AND " + idCondition
+	}
+	args = append(args, idArg(db.dialect, id))
+	var exists bool
+	query := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s%s)", table, whereClause)
+	if err := db.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+		return false, fmt.Errorf("list contains %s: %w", entityName, err)
+	}
+	return exists, nil
 }
 
 // GetTablePartRows returns rows of a tablepart for a given parent id, ordered by строка.

@@ -54,18 +54,43 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 
 ## Процедура
 
-Перед ручной очередью проверь, не вернул ли `pipelinectl next merge`
-`action=cleanup`: такой lease всегда заверши через `complete merge-cleanup`, не
-вызывая merge API повторно. Если быстрый путь вернул `fallback`, отдельно найди
-доверенные неизменённые пары
-`pp:merge-cleanup-intent`/`pp:merge-cleanup-done` во всём пагинированном потоке
-repository issue comments. Незавершённый intent старше обычной очереди: уже
-merged PR можно только передать обратно в `complete merge-cleanup`, а открытый
-PR с изменившимся HEAD/body/proof/ship или неоднозначной timeline требует
-человека. Не обходи такой intent выбором следующего PR. Intent содержит exact
-HEAD, SHA-256 review-proof и raw UTF-8 body, а также sorted same-repository
-closing issues; qualified-ссылка на другой repository локальной issue не
-считается. Done адресует exact intent, HEAD и подтверждённый merge commit.
+Перед ручной очередью определи, как именно был передан fallback:
+
+- **Доверенный PromptPilot-handoff.** Если запуск получил неизменённый envelope
+  формата `promptpilot-fallback-target-v1`, используй только его exact target:
+  не вызывай `next merge` повторно и не выбирай другой PR. Сначала выполни все
+  обязательные read-only проверки этой цели, предусмотренные процедурой до
+  первой мутации. Непосредственно перед первой внешней мутацией выполни
+  указанный в envelope `gate-fallback merge` ровно один раз. Сохрани stdout и
+  exit code раздельно и разбери stdout как JSON даже при ненулевом коде.
+  Продолжать разрешено только при
+  `action=validated` и точном совпадении `repository`, `stage` и `target` с
+  envelope. Такой успешно проверенный gate является queue-wide cleanup recovery
+  barrier: **не выполняй** отдельный полный скан repository issue comments для
+  повторного поиска `pp:merge-cleanup-intent`/`pp:merge-cleanup-done`; первой
+  следующей внешней операцией должна быть уже подготовленная мутация exact
+  target. Ошибка команды, невалидный JSON, иной action либо несовпадение цели —
+  остановка без мутаций, без повторного gate, `next`, без выбора другого PR и
+  без перехода к ручной ветке.
+- **Ручной/legacy fallback без такого envelope.** Здесь исключения нет. Проверь,
+  не вернул ли `pipelinectl next merge` `action=cleanup`: такой lease всегда
+  заверши через `complete merge-cleanup`, не вызывая merge API повторно. Если
+  быстрый путь вернул `fallback`, отдельно найди доверенные неизменённые пары
+  `pp:merge-cleanup-intent`/`pp:merge-cleanup-done` во всём пагинированном
+  потоке repository issue comments до выбора обычной очереди.
+
+Успешный scheduling gate заменяет только повторное глобальное discovery.
+Все GraphQL-, `ship`-, CI-, base-sync-, CAS- и exact-target-проверки этой
+процедуры остаются обязательными: проверки, разрешающие первую мутацию,
+заверши до вызова gate, а все последующие повторные проверки выполняй в
+указанных процедурой контрольных точках. В ручной ветке действует прежнее
+правило. Незавершённый intent старше обычной очереди. Уже merged PR можно только
+передать обратно в `complete merge-cleanup`, а открытый PR с изменившимся
+HEAD/body/proof/ship или неоднозначной timeline требует человека. Не обходи
+такой intent выбором следующего PR. Intent содержит exact HEAD, SHA-256
+review-proof и raw UTF-8 body, а также sorted same-repository closing issues;
+qualified-ссылка на другой repository локальной issue не считается. Done
+адресует exact intent, HEAD и подтверждённый merge commit.
 
 1. Очередь: получи **все** открытые PR пагинированным REST, затем локально
    оставь метку `ship`, исключи `hold` и `needs-decision`. После
@@ -90,18 +115,70 @@ closing issues; qualified-ссылка на другой repository локаль
    За один прогон вливай не больше **3** PR.
 
    Перед обычной сортировкой примени глобальный single-flight-барьер. Среди всех
-   `ship`-PR найди самый ранний по номеру доказанный незавершённый handoff:
-   открытый `pp:base-sync-intent`, текущий `to` валидного done либо legacy
-   re-ship текущего HEAD — как без нового proof, так и с уже готовым
-   интеграционным proof. Только этот PR является
-   владельцем барьера. Если он ждёт REVIEW, не меняй **ни один** PR и закончи
-   весь MERGE. Если его текущий `to` уже получил каноничный proof `reviewed`,
-   обрабатывай владельца раньше всей обычной очереди: proof передаёт ход MERGE,
-   но не освобождает барьер; его освобождает только merge/закрытие владельца.
-   При нескольких legacy
-   re-ship выбери только минимальный номер; остальные сохраняют `ship`, но ждут
-   своей очереди. Нельзя заранее обновлять или мержить следующий PR: это изменит
-   `main` и заставит повторно ревьюить владельца барьера.
+   `ship`-PR восстанови доказанные незавершённые handoff: открытый
+   `pp:base-sync-intent`, текущий `to` валидного done либо legacy re-ship
+   текущего HEAD — как без нового proof, так и с уже готовым интеграционным
+   proof.
+
+   Для каждого intent-backed handoff вычисли начало интеграционной lineage:
+   `created_at` самого раннего валидного `pp:base-sync-intent`, достижимого от
+   текущего звена обратным проходом по `previous`. Переход по `previous` допустим
+   только через адресованный валидный done, когда `done.to` равен `from`
+   следующего intent и все связанные intent/done содержат ровно тот же
+   `ship-event`. Разрыв `previous` или другой `ship-event` начинает новую
+   lineage с текущего intent и не наследует возраст старой. Из всех
+   intent-backed lineage владелец — минимальный по кортежу
+   `(lineage-start created_at, PR number)` независимо от текущей фазы
+   REVIEW/MERGE. Остановка обратного прохода задаёт только порядок и не делает
+   повреждённое звено валидным: все полные GraphQL-гейты ниже остаются
+   обязательными. Наличие хотя бы одной такой lineage имеет приоритет над любым
+   legacy handoff. Только если intent-backed lineage отсутствуют, выбери
+   минимальный номер PR среди настоящих legacy re-ship без валидного intent.
+
+   Только выбранный таким образом PR является владельцем барьера. Если он ждёт
+   REVIEW, не меняй **ни один** PR и закончи весь MERGE. Если его текущий `to`
+   уже получил каноничный proof `reviewed`, обрабатывай владельца раньше всей
+   обычной очереди: proof передаёт ход MERGE, но не освобождает барьер; его
+   освобождает только merge/закрытие владельца. Остальные handoff сохраняют
+   `ship`, но ждут своей очереди. Нельзя заранее обновлять или мержить следующий
+   PR: это изменит `main` и заставит повторно ревьюить владельца барьера.
+
+   Intent считается открытым для recovery только если текущий HEAD всё ещё
+   равен его `from` либо является непосредственным двухродительским merge-коммитом
+   с первым parent, равным этому `from`. Незавершённый intent от более старого
+   HEAD остаётся частью аудита, но не владеет single-flight и не перекрывает
+   более позднюю завершённую intent/done-цепочку. Если текущий HEAD уже является
+   `to` валидного done, другие unmatched intent с тем же первым parent считаются
+   параллельными stale-дубликатами этой завершённой транзакции.
+
+   Отдельно распознавай безопасно прерванный v1-handoff по точной отдельной строке:
+
+   ```
+   <!-- pp:base-sync-v1-aborted intent=<id> head=<40hex> reason=commit-before-intent -->
+   ```
+
+   Это только tombstone незавершённого intent, а не proof и не разрешение на
+   merge. Маркер валиден лишь от `ivanarama`, без редактирования, для текущего
+   `head` и существующего trusted intent с указанным числовым id. До маркера
+   должен находиться trusted `UnlabeledEvent` метки `ship`; сам HEAD обязан быть
+   непосредственным merge-коммитом с parents `[intent.from, base]`. Между
+   source anchor и текущим snapshot не допускаются другие HEAD/base lifecycle
+   events, а единственный соответствующий `PullRequestCommit` расположен
+   **до** intent. Все условия, включая каноничный source proof, точных parents и
+   порядок edges, докажи двумя полными одинаковыми GraphQL snapshot и REST.
+   Такой intent не владеет single-flight и не восстанавливается повторно.
+   Изменённый, чужой, неоднозначный, адресованный другому HEAD маркер или
+   последующий push ничего не закрывает и не даёт полномочий.
+
+   Если обнаружена именно эта v1-сигнатура, но trusted abort-маркера ещё нет,
+   не публикуй вымышленный `pp:base-sync-done` и не повторяй update/push. После
+   стабильного полного гейта сними `ship` через REST, перечитай PR и докажи, что
+   метки больше нет; только затем опубликуй точный abort-маркер. Если снять или
+   проверить снятие не удалось, маркер не пиши. После успешного tombstone
+   закончи запуск `НУЖЕН ЧЕЛОВЕК`: текущий HEAD должен пройти обычное полное
+   REVIEW, после чего человек заново поставит `ship`. Новый trusted
+   `LabeledEvent` после anchor текущего HEAD вместе с его каноничным proof
+   `reviewed` использует обычный sticky-путь; старые intent и `ship` не оживают.
 
    Фильтр списка не является достаточным гейтом: метки могут измениться, пока ты
    работаешь с PR или ждёшь CI. Перед **каждым внешним изменением PR**
@@ -183,8 +260,9 @@ closing issues; qualified-ссылка на другой repository локаль
 
    Legacy reauthorization валидна только если текущий HEAD `to` — merge-коммит
    ровно с двумя parents `[from, base]`; `from` имеет каноничный proof `reviewed`
-   и trusted `ship` после него; между этим ship и `to` есть ровно один
-   `PullRequestCommit` и нет иных HEAD/base lifecycle events; `base` — предок
+   и trusted `ship` после него; по графу единственный новый после этого ship
+   `PullRequestCommit` — сам `to`, и нет иных HEAD/base lifecycle events
+   (позиция в таймлайне не проверяется — #1561); `base` — предок
    текущего `main`; а последний ship-transition — новый trusted `LabeledEvent`
    от `ivanarama` после anchor `to`. Старое снятие `ship` между `to` и новым
    label допустимо. Докажи условия двумя стабильными полными GraphQL snapshot и
@@ -193,8 +271,9 @@ closing issues; qualified-ссылка на другой repository локаль
 
    Protocol-recovery reauthorization требует trusted не редактированные
    intent/done, exact parents `[from, base]`, каноничный source proof `from`,
-   ровно один `PullRequestCommit` между intent и done, `base` как предка
-   текущего `main` и последний trusted `ship` от `ivanarama` после edge done.
+   ровно один новый `PullRequestCommit` между intent и done — по графу, без
+   опоры на позицию таймлайна (#1561), `base` как предка текущего `main` и
+   последний trusted `ship` от `ivanarama` после edge done.
    После done не допускаются HEAD/base lifecycle events. Исходный stale
    `ship-event` не оживает: новый label разрешает только точный текущий HEAD и
    отменяется следующим push. Условия доказываются двумя стабильными GraphQL
@@ -216,10 +295,13 @@ closing issues; qualified-ссылка на другой repository локаль
    доказанным legacy reauthorization после anchor `from`. Для следующего
    `previous` указывает на
    предыдущий done, его `to` равен новому `from`, а новый intent адресует
-   каноничный proof этого `from`. Каждый переход после intent — ровно один
-   `PullRequestCommit` без force-push/delete/restore/base-change; commit `to`
-   имеет ровно двух родителей в порядке `[from, base]`, а `base` — предок
-   текущего `main`. Проверяй parents через
+   каноничный proof этого `from`. Каждый переход после intent доказывается
+   графом, а не позицией в таймлайне: GitHub упорядочивает `PullRequestCommit`
+   по дате локального коммита, поэтому позиция «после intent» ничего не
+   доказывает (#1561). Полный набор `PullRequestCommit` ветки — прежние
+   коммиты плюс ровно один новый `to`, без force-push/delete/restore/
+   base-change; commit `to` имеет ровно двух родителей в порядке
+   `[from, base]`, а `base` — предок текущего `main`. Проверяй parents через
    `repos/ivanarama/onebase/commits/<to>` и адресуй все intent/done по node id в
    обоих полных GraphQL snapshot. Последний переход `ship` во всей цепочке обязан
    оставаться исходным trusted `LabeledEvent`: снятие/повторная постановка,
@@ -294,7 +376,12 @@ closing issues; qualified-ссылка на другой repository локаль
 
      Если процесс упал после intent, следующий MERGE восстанавливает **самый
      ранний** intent: при `HEAD == from` повторяет CAS update; при доказанном
-     `[from, base]` публикует отсутствующий done. Поэтому crash не превращается
+     по графу `[from, base]` (единственный новый `PullRequestCommit` — `to`;
+     позиция в таймлайне не важна, #1561) публикует отсутствующий done. Если
+     граф не доказывает переход — parents иные, лишние коммиты или чужой
+     lifecycle event, — примени описанный выше `pp:base-sync-v1-aborted` и
+     полный REVIEW; такой порядок нельзя «исправлять» повтором или ложным done.
+     Поэтому обычный crash не превращается
      во второй ручной `ship`. После подтверждённого done метку `ship` **не
      снимай**; прекрати **весь запуск MERGE** со статусом «ожидает интеграционное REVIEW».
      REVIEW проверит новый HEAD, а при зелёном результате MERGE продолжит без

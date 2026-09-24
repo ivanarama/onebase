@@ -802,6 +802,19 @@ func (e *Entity) DisplayName(lang string) string {
 	return e.Name
 }
 
+// SystemUsersEntity — системная таблица учётных записей (_users), разрешённая
+// как цель ссылки наравне с сущностями конфигурации: `type: reference:_users`
+// валидна в YAML, storage строит на неё настоящий внешний ключ, а формы
+// подставляют в выбор учётные записи с признаком show_in_list (issue #1646).
+const SystemUsersEntity = "_users"
+
+// IsSystemRefTarget сообщает, что имя цели ссылки — служебная системная
+// таблица, а не сущность конфигурации: валидатор и проверки целостности
+// обязаны пропускать её мимо реестра сущностей.
+func IsSystemRefTarget(name string) bool {
+	return strings.EqualFold(name, SystemUsersEntity)
+}
+
 func IsReference(ft FieldType) bool {
 	return strings.HasPrefix(string(ft), "reference:")
 }

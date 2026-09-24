@@ -49,6 +49,10 @@ func ConnectWithSchema(ctx context.Context, dsn, schema string) (*DB, error) {
 	if cfg.ConnConfig.RuntimeParams == nil {
 		cfg.ConnConfig.RuntimeParams = map[string]string{}
 	}
+	filesDir, err := defaultFilesDirForConfig(cfg)
+	if err != nil {
+		return nil, err
+	}
 	// search_path применяется на старте соединения; несуществующая схема в
 	// списке не ошибка — резолв идёт при запросе, к тому времени схема создана.
 	cfg.ConnConfig.RuntimeParams["search_path"] = schema + ",public"
@@ -66,7 +70,7 @@ func ConnectWithSchema(ctx context.Context, dsn, schema string) (*DB, error) {
 	_, _ = pool.Exec(ctx, `DROP CAST IF EXISTS (uuid AS text)`)
 	_, _ = pool.Exec(ctx, `CREATE CAST (uuid AS text) WITH INOUT AS IMPLICIT`)
 
-	return &DB{pool: pool, filesDir: defaultFilesDir(dsn), dialect: PgDialect{}}, nil
+	return &DB{pool: pool, filesDir: filesDir, dialect: PgDialect{}}, nil
 }
 
 // CreateSchema создаёт схему (идемпотентно). Только PostgreSQL.

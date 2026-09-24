@@ -208,27 +208,3 @@ func TestRefFilterSkipsAmbiguousOwnerSource(t *testing.T) {
 		t.Fatalf("при двух ссылках на владельца отбор собран автоматически: %v", got)
 	}
 }
-
-// Явная связь параметров выбора (choice_filter) задаёт источник сама — в том
-// числе реквизит формы, которого у объекта нет.
-func TestRefFilterFromChoiceFilter(t *testing.T) {
-	f := newOwnerFixture(t)
-	form := &metadata.FormModule{
-		Elements: []*metadata.FormElement{{
-			Kind:         metadata.FormElementField,
-			Name:         "ПолеДоговор",
-			DataPath:     "Объект.Договор",
-			ChoiceFilter: map[string]string{metadata.StandardOwnerField: "КонтрагентВыбор"},
-		}},
-	}
-	values := map[string]string{"КонтрагентВыбор": f.other.String()}
-	got := f.server.refFilterMap(f.holder, form, values)
-	var spec map[string]refFilterSource
-	if err := json.Unmarshal([]byte(got["Договор"]), &spec); err != nil {
-		t.Fatalf("отбор не собран: %v (%v)", got, err)
-	}
-	src := spec[metadata.StandardOwnerField]
-	if src.From != "КонтрагентВыбор" || src.Value != f.other.String() {
-		t.Fatalf("явная связь не победила автоматику: %+v", src)
-	}
-}

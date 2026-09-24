@@ -115,6 +115,63 @@ func (s *Server) usersForSelection(ctx context.Context) []map[string]any {
 	return rows
 }
 
+// usersForSelectionIncluding — варианты выбора учётных записей для поля типа
+// reference:_users, дополненные выбранными значениями (issue #1646).
+//
+// usersForSelection отдаёт только show_in_list: флаг прячет служебные учётки
+// из подбора. Но ссылка на скрытого пользователя может уже стоять в объекте —
+// например, автор документа. Без догрузки такой <option> в <select> нет, и
+// клиентский applyValues ставит selectedIndex=-1: поле выглядит пустым, а
+// следующая запись молча затирает ссылку (тот же механизм, что #615).
+func (s *Server) usersForSelectionIncluding(ctx context.Context, selected []string) []map[string]any {
+	rows := s.usersForSelection(ctx)
+	if s.authRepo == nil {
+		return rows
+	}
+	seen := make(map[string]bool, len(rows)+len(selected))
+	for _, row := range rows {
+		if id := refValueString(row["id"]); id != "" {
+			seen[id] = true
+		}
+	}
+	for _, idStr := range selected {
+		idStr = strings.TrimSpace(idStr)
+		if idStr == "" || seen[idStr] {
+			continue
+		}
+		if row := s.userSelectionRow(ctx, idStr); row != nil {
+			rows = append(rows, row)
+			seen[refValueString(row["id"])] = true
+		}
+	}
+	return rows
+}
+
+// userSelectionRow — один <option> учётной записи по идентификатору: нужен,
+// когда выбранная учётка скрыта флагом show_in_list и в общем списке подбора
+// её нет (см. usersForSelectionIncluding). Неизвестный идентификатор → nil.
+func (s *Server) userSelectionRow(ctx context.Context, idStr string) map[string]any {
+	if s.authRepo == nil {
+		return nil
+	}
+	idStr = strings.TrimSpace(idStr)
+	if idStr == "" {
+		return nil
+	}
+	if _, err := uuid.Parse(idStr); err != nil {
+		return nil
+	}
+	u, err := s.authRepo.GetByID(ctx, idStr)
+	if err != nil || u == nil {
+		return nil
+	}
+	label := u.Login
+	if u.FullName != "" {
+		label = u.FullName
+	}
+	return map[string]any{"id": u.ID, "_label": label}
+}
+
 type refOptionsMode int
 
 const (
@@ -150,6 +207,7 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 	params.Dir = extra.Dir
 	params.Limit = extra.Limit
 	params.Offset = extra.Offset
+	params.ChoicePredicates = extra.ChoicePredicates
 	var err error
 	params, err = s.rowFilterFor(ctx, refEntity, "read", params)
 	if err != nil {
@@ -159,7 +217,12 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 	if err != nil {
 		return nil, err
 	}
-	rows = filterOutFolders(rows)
+	// The legacy picker never offered catalog groups. An explicit is_folder
+	// choice condition is the opt-in exception from plan 170; storage already
+	// applies its true/false value and replaces the implicit folder scope.
+	if !hasChoiceFolderScope(params.ChoicePredicates) {
+		rows = filterOutFolders(rows)
+	}
 	// План 88: picker маскирует чувствительные поля до вычисления подписи и до
 	// сериализации строк — иначе замаскированное поле утекло бы в JSON выбора.
 	s.maskRecords(ctx, refEntity, rows)
@@ -169,27 +232,22 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 	return rows, nil
 }
 
-// referenceOptionsPageFiltered — страница строк для диалога подбора с готовым
-// отбором: подчинение справочника и связи параметров выбора приезжают из
-// base.Filters, и СЧЁТЧИК обязан считать по ним же — иначе «показано 50 из 1300»
-// врало бы про отобранный список. Без отбора (пустой base) — обычная страница.
-func (s *Server) referenceOptionsPageFiltered(ctx context.Context, refEntity *metadata.Entity, search string, limit, offset int, base storage.ListParams) ([]map[string]any, int, error) {
+func (s *Server) referenceOptionsPageWithParams(ctx context.Context, refEntity *metadata.Entity, search string, limit, offset int, extra storage.ListParams) ([]map[string]any, int, error) {
 	if refEntity == nil {
 		return nil, 0, nil
 	}
-	params := storage.ListParams{
-		Filters: base.Filters,
-		Search:  strings.TrimSpace(search),
-		Limit:   limit,
-		Offset:  offset,
-	}
+	params := extra
+	params.Search = strings.TrimSpace(search)
+	params.Limit = limit
+	params.Offset = offset
 	rows, err := s.referenceOptionsWithParams(ctx, refEntity, refOptionsChoice, params)
 	if err != nil {
 		return nil, 0, err
 	}
 	countParams := s.refListParamsForMode(refEntity, refOptionsChoice)
-	countParams.Filters = base.Filters
+	countParams.Filters = extra.Filters
 	countParams.Search = strings.TrimSpace(search)
+	countParams.ChoicePredicates = extra.ChoicePredicates
 	countParams, err = s.rowFilterFor(ctx, refEntity, "read", countParams)
 	if err != nil {
 		return nil, 0, err
@@ -199,6 +257,15 @@ func (s *Server) referenceOptionsPageFiltered(ctx context.Context, refEntity *me
 		return nil, 0, err
 	}
 	return rows, total, nil
+}
+
+func hasChoiceFolderScope(predicates []storage.ChoicePredicate) bool {
+	for _, predicate := range predicates {
+		if strings.EqualFold(strings.TrimSpace(predicate.Field), "is_folder") {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Server) initialReferenceOptions(ctx context.Context, refEntity *metadata.Entity, mode refOptionsMode, selected []string) ([]map[string]any, error) {
@@ -244,7 +311,7 @@ func (s *Server) loadInitialRefOptions(ctx context.Context, entity *metadata.Ent
 			continue
 		}
 		if f.RefEntity == "_users" {
-			opts[f.Name] = s.usersForSelection(ctx)
+			opts[f.Name] = s.usersForSelectionIncluding(ctx, []string{values[f.Name]})
 			continue
 		}
 		refEntity := s.reg.GetEntity(f.RefEntity)
@@ -274,6 +341,10 @@ func (s *Server) loadInitialRefFilterOptions(ctx context.Context, entity *metada
 		if f.RefEntity == "" {
 			continue
 		}
+		if f.RefEntity == "_users" {
+			opts[f.Name] = s.usersForSelectionIncluding(ctx, []string{params.Filters[f.Name].Value})
+			continue
+		}
 		refEntity := s.reg.GetEntity(f.RefEntity)
 		if refEntity == nil {
 			continue
@@ -296,6 +367,10 @@ func (s *Server) loadInitialTPRefOptions(ctx context.Context, entity *metadata.E
 				continue
 			}
 			tpOpts[f.Name] = []map[string]any{}
+			if f.RefEntity == "_users" {
+				tpOpts[f.Name] = s.usersForSelectionIncluding(ctx, selectedTPRefIDs(tpRows[tp.Name], f.Name))
+				continue
+			}
 			refEntity := s.reg.GetEntity(f.RefEntity)
 			if refEntity == nil {
 				continue
@@ -560,6 +635,13 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	// (план 121). Без него пункт меню «где застряло» вёл бы на пустую страницу.
 	if _, ok := data["HasStages"]; !ok {
 		data["HasStages"] = s.hasStages()
+	}
+	// HasPOS — приложение объявило рабочее место кассира (app.yaml:
+	// features.pos, issue #1331). Как и HasStages, это признак КОНФИГУРАЦИИ, а
+	// не платформы: без него ссылка на РМК висела у каждого приложения, включая
+	// те, где кассы нет и не будет.
+	if _, ok := data["HasPOS"]; !ok {
+		data["HasPOS"] = s.cfg.POSEnabled
 	}
 	// Строка глобального поиска в шапке есть на каждой странице (план 82);
 	// на самой странице результатов она сохраняет введённый запрос.
