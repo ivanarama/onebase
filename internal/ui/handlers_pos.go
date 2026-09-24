@@ -20,5 +20,13 @@ func (s *Server) agentSettings(w http.ResponseWriter, r *http.Request) {
 // фискализации и поле сканера обращаются к локальному агенту из браузера через
 // onebaseDevice. Сервер onebase к агенту не ходит — страница статична.
 func (s *Server) posPage(w http.ResponseWriter, r *http.Request) {
+	// Приложение, не объявившее features.pos, этой страницы не имеет — прямой
+	// адрес обязан отвечать так же, как любой несуществующий (issue #1331).
+	// Иначе спрятанный пункт меню оставался бы доступен по ссылке, и «в этом
+	// приложении РМК нет» было бы неправдой.
+	if !s.cfg.POSEnabled {
+		http.NotFound(w, r)
+		return
+	}
 	s.render(w, r, "page-pos", map[string]any{})
 }

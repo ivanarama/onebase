@@ -14,6 +14,286 @@ try {
 // Вкладочная оболочка (issue #129/#130): когда страница открыта во фрейме
 // оболочки /ui/app, прячем хром (топбар/подсистемы) — навигация идёт из оболочки.
 window.__obEmbedded = window.self !== window.top;
+
+window.obUIMessage = function (name, fallback) {
+  try {
+    var node = document.getElementById('ob-ui-messages');
+    var messages = node ? JSON.parse(node.textContent || '{}') : {};
+    var value = messages && messages[name];
+    if (value != null && value !== '') return String(value);
+  } catch (_) {}
+  return String(fallback || '');
+};
+
+// Same-origin request/decision protocol shared by shell tabs and reference
+// popups. The parent owns the final DOM removal; the child owns the server
+// close-intent. Correlation plus exact source/origin/document generation prevent
+// a late response from one iframe document from closing another.
+(function () {
+  var pending = Object.create(null);
+  var seq = 0;
+  var earlyCloseLink = null;
+
+  // ui.js is loaded from <head>, while the managed controller and its config
+  // are rendered near the end of <body>. A close link can therefore become
+  // clickable before its lifecycle controller exists. Hold that click until
+  // parsing has completed, then replay it through the normal managed/shell
+  // delegate. If parsing never completes, navigation remains fail-closed.
+  document.addEventListener('click', function (ev) {
+    if (!ev.target || !ev.target.closest) return;
+    var link = ev.target.closest('[data-ob-close-tab]');
+    if (!link) return;
+    if (document.readyState === 'loading') {
+      ev.preventDefault();
+      if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
+      else if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+      if (earlyCloseLink) return;
+      earlyCloseLink = link;
+      document.addEventListener('DOMContentLoaded', function () {
+        var replay = earlyCloseLink;
+        earlyCloseLink = null;
+        if (!replay || replay.isConnected === false || typeof replay.click !== 'function') return;
+        replay.click();
+      }, {once: true});
+      return;
+    }
+    // A managed document whose bottom runtime failed to load must not fall
+    // through to ordinary anchor navigation after parsing has completed.
+    if (document.getElementById('ob-managed-config') && typeof window.obRequestFormClose !== 'function') {
+      ev.preventDefault();
+      if (typeof ev.stopImmediatePropagation === 'function') ev.stopImmediatePropagation();
+      else if (typeof ev.stopPropagation === 'function') ev.stopPropagation();
+      if (window.alert) window.alert(window.obUIMessage
+        ? window.obUIMessage('closeNotConfirmed', 'Форма не закрыта: сервер не подтвердил закрытие.')
+        : 'Форма не закрыта: сервер не подтвердил закрытие.');
+    }
+  }, true);
+
+  function correlationID() {
+    try { if (window.crypto && typeof window.crypto.randomUUID === 'function') return 'close:' + window.crypto.randomUUID(); } catch (_) {}
+    seq++;
+    return 'close:' + Date.now().toString(36) + ':' + seq.toString(36) + ':' + Math.random().toString(36).slice(2);
+  }
+  // Captured by managed.js once per Document. Unlike WindowProxy, this value
+  // changes on navigation and lets an unsolicited popup decision prove which
+  // document produced it.
+  window.obFrameCloseDocumentToken = correlationID();
+  function frameDocument(frame) {
+    try {
+      if (!frame || !frame.contentWindow) return null;
+      return frame.contentDocument || frame.contentWindow.document || null;
+    } catch (_) {
+      return null;
+    }
+  }
+  function settlePending(correlation, decision) {
+    var slot = pending[correlation];
+    if (!slot) return false;
+    clearTimeout(slot.timer);
+    delete pending[correlation];
+    slot.resolve(decision);
+    return true;
+  }
+  function invalidateFrame(frame) {
+    Object.keys(pending).forEach(function (correlation) {
+      var slot = pending[correlation];
+      if (slot && slot.frame === frame) {
+        settlePending(correlation, {allowed: false, error: 'frame-navigated'});
+      }
+    });
+  }
+  function ensureFrameTracker(frame) {
+    var currentDocument = frameDocument(frame);
+    var tracker = frame._obCloseTracker;
+    if (!tracker) {
+      tracker = {generation: 0, document: currentDocument};
+      frame._obCloseTracker = tracker;
+      if (typeof frame.addEventListener === 'function') {
+        frame.addEventListener('load', function () {
+          var loadedDocument = frameDocument(frame);
+          // The initial load of the already captured document is not a
+          // navigation. A real navigation replaces Document while retaining
+          // the same WindowProxy, which advances the generation and makes all
+          // decisions from the old document unusable.
+          if (loadedDocument === tracker.document) return;
+          tracker.generation++;
+          tracker.document = loadedDocument;
+          invalidateFrame(frame);
+        });
+      }
+    } else if (currentDocument !== tracker.document) {
+      // Navigation can replace Document before its load event. Detect that
+      // interval too, so an old response cannot win the race with `load`.
+      tracker.generation++;
+      tracker.document = currentDocument;
+      invalidateFrame(frame);
+    }
+    return tracker;
+  }
+  function frameBindingMatches(binding) {
+    if (!binding || !binding.frame || binding.frame.contentWindow !== binding.source) return false;
+    var tracker = ensureFrameTracker(binding.frame);
+    return tracker === binding.tracker &&
+      tracker.generation === binding.generation &&
+      tracker.document === binding.document &&
+      frameDocument(binding.frame) === binding.document;
+  }
+  function bindDecision(decision, binding) {
+    try {
+      Object.defineProperty(decision, '_obFrameCloseBinding', {
+        value: binding, enumerable: false, configurable: false, writable: false
+      });
+    } catch (_) {
+      // If metadata cannot be attached, the decision must remain fail-closed.
+      decision.allowed = false;
+      decision.error = 'frame-binding';
+    }
+    return decision;
+  }
+  window.obBindFrameCloseDecision = function (frame, decision, documentToken) {
+    if (!frame || !decision || !documentToken) return null;
+    var tracker = ensureFrameTracker(frame);
+    var currentToken = '';
+    try { currentToken = String(frame.contentWindow.obFrameCloseDocumentToken || ''); } catch (_) { return null; }
+    if (!tracker.document || String(documentToken) !== currentToken) return null;
+    return bindDecision(decision, {
+      frame: frame,
+      source: frame.contentWindow,
+      tracker: tracker,
+      generation: tracker.generation,
+      document: tracker.document
+    });
+  };
+  window.obRequestFrameClose = function (frame, reason, mode) {
+    if (!frame || !frame.contentWindow) return Promise.resolve({allowed: false, error: 'frame-missing'});
+    if (frame._obClosePromise) return frame._obClosePromise;
+    var tracker = ensureFrameTracker(frame);
+    if (!tracker.document) return Promise.resolve({allowed: false, error: 'frame-document-unavailable'});
+    var binding = {
+      frame: frame,
+      source: frame.contentWindow,
+      tracker: tracker,
+      generation: tracker.generation,
+      document: tracker.document
+    };
+    var correlation = correlationID();
+    var promise = new Promise(function (resolve) {
+      var timer = setTimeout(function () {
+        settlePending(correlation, {allowed: false, error: 'timeout'});
+      }, 135000);
+      pending[correlation] = {
+        frame: frame, source: binding.source, tracker: tracker,
+        generation: binding.generation, document: binding.document,
+        resolve: resolve, timer: timer
+      };
+      try {
+        binding.source.postMessage({
+          source: 'obRequestFormClose', correlation: correlation,
+          reason: reason || 'close', mode: mode || ''
+        }, window.location.origin);
+      } catch (_) {
+        settlePending(correlation, {allowed: false, error: 'post-message'});
+      }
+    });
+    frame._obClosePromise = promise.finally(function () { frame._obClosePromise = null; });
+    return frame._obClosePromise;
+  };
+  window.obFinalizeFrameClose = function (frame, decision) {
+    if (!decision || decision.allowed !== true) return false;
+    var binding = decision._obFrameCloseBinding;
+    if (!binding || binding.frame !== frame || !frameBindingMatches(binding)) return false;
+    // A managed answer is not consumable unless its exact child can clear dirty
+    // state immediately before destruction. Autogenerated pages also clear
+    // their local dirty reporter after the accepted child-owned confirmation,
+    // avoiding a second browser beforeunload prompt during iframe removal.
+    try {
+      var child = frame && frame.contentWindow;
+      var doc = child && child.document;
+      var managed = !doc || doc.readyState === 'loading' ||
+        typeof child.obRequestFormClose === 'function' ||
+        !!(doc.getElementById && doc.getElementById('ob-managed-config'));
+      if (!decision.intentId) {
+        if (managed) return false;
+        if (typeof child.obSetAutoFormDirty === 'function') child.obSetAutoFormDirty(false);
+        else child._obFormDirty = false;
+        return true;
+      }
+      var finalize = child && child.obFinalizeFormClose;
+      return typeof finalize === 'function' && finalize.call(frame.contentWindow) !== false;
+    } catch (_) {
+      return false;
+    }
+  };
+  function answerCloseRequest(requester, requesterOrigin, data) {
+    var fn = window.obRequestFormClose;
+    var result;
+    if (typeof fn === 'function') result = fn({
+      reason: String(data.reason || 'close'),
+      mode: data.mode ? String(data.mode) : undefined
+    });
+    else if (document.getElementById('ob-managed-config')) result = {allowed: false, error: 'controller-not-ready'};
+    // Autogenerated forms do not load managed.js, but still own their dirty
+    // decision. Keeping this fallback in the exact child avoids both data loss
+    // and a second shell-level confirmation.
+    else if (window._obFormDirty && typeof window.confirm === 'function' &&
+        !window.confirm(window.obUIMessage('unsavedClose', 'Данные были изменены и не записаны. Закрыть форму?'))) {
+      result = {allowed: false, intentId: '', error: 'user-cancelled'};
+    } else result = {allowed: true, intentId: ''};
+    Promise.resolve(result).catch(function (err) {
+      return {allowed: false, error: err && err.message ? err.message : String(err)};
+    }).then(function (decision) {
+      try {
+        requester.postMessage({
+          source: 'obFormCloseDecision', correlation: String(data.correlation),
+          allowed: !!(decision && decision.allowed),
+          intentId: decision && decision.intentId ? String(decision.intentId) : '',
+		  mode: decision && decision.mode ? String(decision.mode) : '',
+		  terminal: !!(decision && decision.terminal),
+          error: decision && decision.error ? String(decision.error) : ''
+        }, requesterOrigin);
+      } catch (_) {}
+    });
+  }
+  window.addEventListener('message', function (ev) {
+    if (ev.origin !== window.location.origin) return;
+    var data = ev.data;
+    if (!data || typeof data !== 'object') return;
+    if (data.source === 'obFormCloseDecision') {
+      var responseCorrelation = String(data.correlation || '');
+      var slot = pending[responseCorrelation];
+      if (!slot || ev.source !== slot.source) return;
+      if (!frameBindingMatches(slot)) {
+        settlePending(responseCorrelation, {allowed: false, error: 'frame-navigated'});
+        return;
+      }
+      settlePending(responseCorrelation, bindDecision({
+        allowed: data.allowed === true,
+        intentId: String(data.intentId || ''),
+		mode: String(data.mode || ''),
+		terminal: data.terminal === true,
+        error: data.error || ''
+      }, {
+        frame: slot.frame,
+        source: slot.source,
+        tracker: slot.tracker,
+        generation: slot.generation,
+        document: slot.document
+      }));
+      return;
+    }
+    if (data.source !== 'obRequestFormClose' || !data.correlation || !ev.source) return;
+    var requester = ev.source;
+    var requesterOrigin = ev.origin;
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', function () {
+        answerCloseRequest(requester, requesterOrigin, data);
+      }, {once: true});
+      return;
+    }
+    answerCloseRequest(requester, requesterOrigin, data);
+  });
+})();
+
 if (window.__obEmbedded) {
   document.documentElement.className += ' ob-embedded';
   // #481: заголовок вкладки = представление записи. Сервер рендерит на карточке
@@ -56,15 +336,23 @@ if (window.__obEmbedded) {
     } catch (_) {}
     return true;
   };
-  window.obCloseInShell = function () {
+  window.obCloseInShell = function (reason) {
     var shell = null;
     try {
       if (window.parent && window.parent.obOpenTab) shell = window.parent;
     } catch (_) {}
     if (!shell) return false;
+    var beganManagedHandoff = false;
+    if (typeof window.obBeginManagedCloseHandoff === 'function') {
+      window.obBeginManagedCloseHandoff();
+      beganManagedHandoff = true;
+    }
     try {
-      shell.postMessage({ source: 'obCloseTab' }, window.location.origin);
+      shell.postMessage({ source: 'obCloseTab', reason: reason || 'cross' }, window.location.origin);
     } catch (_) {
+      if (beganManagedHandoff && typeof window.obCancelManagedCloseHandoff === 'function') {
+        window.obCancelManagedCloseHandoff();
+      }
       return false;
     }
     return true;
@@ -73,7 +361,7 @@ if (window.__obEmbedded) {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     var a = e.target.closest ? e.target.closest('a[href]') : null;
     if (!a || a.target === '_blank') return;
-    if (a.hasAttribute('data-ob-close-tab') && window.obCloseInShell()) {
+    if (a.hasAttribute('data-ob-close-tab') && window.obCloseInShell((a.dataset && a.dataset.obCloseReason) || 'cross')) {
       e.preventDefault();
       return;
     }
@@ -87,6 +375,7 @@ if (window.__obEmbedded) {
   (function () {
     var dirty = false;
     function report(d) {
+	  d = !!d;
       if (d === dirty) return;
       dirty = d;
       try {
@@ -99,9 +388,19 @@ if (window.__obEmbedded) {
     }
     document.addEventListener('input', onEdit, true);
     document.addEventListener('change', onEdit, true);
-    document.addEventListener('submit', function () {
-      report(false);
+    document.addEventListener('submit', function (e) {
+      // Managed forms own validation and synchronously report clean only in
+      // their final accepted-submit handler. Autogenerated forms have no
+      // later managed veto and can report before native navigation.
+      if (typeof window.obSetManagedFormDirty === 'function') return;
+      Promise.resolve().then(function () {
+        if (!e.defaultPrevented) report(false);
+      });
     }, true);
+	// Managed close-intent saves do not submit/navigate the document. Expose
+	// the same stateful reporter so clearing dirty also resets this closure;
+	// the next edit must be able to publish true again to the shell.
+	window.obSetEmbeddedDirty = report;
   })();
 }
 
@@ -247,6 +546,264 @@ function obInitMappedCharts(jsonID, selector, attrName, errorText, formatValueAx
   }
 }
 
+// BEGIN onebase-widget-refresh
+function obDisposeWidgetChart(card) {
+  if (!card || !window.echarts || !window.echarts.getInstanceByDom) return;
+  var node = card.querySelector('.w-chart-canvas[data-widget]');
+  if (!node) return;
+  var previous = window.echarts.getInstanceByDom(node);
+  if (previous && previous.dispose) previous.dispose();
+}
+
+function obInitWidgetChart(card, option) {
+  if (!card || !option || !window.echarts) return;
+  var node = card.querySelector('.w-chart-canvas[data-widget]');
+  if (!node) return;
+  try {
+    var previous = window.echarts.getInstanceByDom ? window.echarts.getInstanceByDom(node) : null;
+    if (previous && previous.dispose) previous.dispose();
+    var chart = window.echarts.init(node);
+    option.animation = false;
+    obApplyValueAxisFormatter(option);
+    chart.setOption(option);
+    node.setAttribute('data-ob-init', '1');
+    window.addEventListener('resize', function () {
+      if (!chart.isDisposed || !chart.isDisposed()) chart.resize();
+    });
+  } catch (e) {
+    console.error('chart init failed', e);
+  }
+}
+
+function obWidgetController(card) {
+  if (!card || card._obWidgetController) return card && card._obWidgetController;
+  var body = card.querySelector('[data-ob-widget-body]');
+  var button = card.querySelector('[data-ob-widget-refresh]');
+  var status = card.querySelector('[data-ob-widget-status]');
+  if (!body || !button) return null;
+
+  var state = { sequence: 0, abort: null, fingerprint: '' };
+  var controller = {
+    refresh: function () {
+      var endpoint = card.getAttribute('data-widget-url') || '';
+      if (!endpoint) return Promise.resolve(false);
+      state.sequence += 1;
+      var sequence = state.sequence;
+      state.fingerprint = endpoint;
+      if (state.abort) state.abort.abort();
+      state.abort = window.AbortController ? new AbortController() : null;
+      var options = { credentials: 'same-origin', headers: { Accept: 'application/json' } };
+      if (state.abort) options.signal = state.abort.signal;
+      button.disabled = true;
+      button.setAttribute('aria-busy', 'true');
+      card.classList.add('ob-widget-loading');
+      if (status) status.textContent = '';
+
+      return fetch(endpoint, options).then(function (response) {
+        var contentType = response.headers && response.headers.get ? response.headers.get('Content-Type') || '' : '';
+        if (!response.ok || contentType.toLowerCase().indexOf('application/json') !== 0) {
+          throw new Error('widget refresh failed');
+        }
+        return response.json();
+      }).then(function (payload) {
+        if (sequence !== state.sequence || endpoint !== state.fingerprint) return false;
+        if (!payload || typeof payload.html !== 'string') throw new Error('invalid widget response');
+        obDisposeWidgetChart(card);
+        body.innerHTML = payload.html;
+        if (payload.chart) obInitWidgetChart(card, payload.chart);
+        return true;
+      }).catch(function (error) {
+        if (error && error.name === 'AbortError') return false;
+        if (sequence === state.sequence && status) {
+          status.textContent = card.getAttribute('data-refresh-error') || 'Не удалось обновить виджет';
+        }
+        return false;
+      }).finally(function () {
+        if (sequence !== state.sequence) return;
+        button.disabled = false;
+        button.removeAttribute('aria-busy');
+        card.classList.remove('ob-widget-loading');
+        state.abort = null;
+      });
+    },
+    state: state
+  };
+  button.addEventListener('click', function () { controller.refresh(); });
+  card._obWidgetController = controller;
+  return controller;
+}
+
+function obInitWidgetControllers() {
+  var cards = document.querySelectorAll('[data-ob-widget-card]');
+  for (var i = 0; i < cards.length; i++) obWidgetController(cards[i]);
+}
+
+window.obRefreshWidgetCard = function (card) {
+  var controller = obWidgetController(card);
+  return controller ? controller.refresh() : Promise.resolve(false);
+};
+// END onebase-widget-refresh
+
+// BEGIN onebase-widget-row-nav
+/* План 182C (#1617): строка list-виджета с data-ob-row-url открывает карточку
+   записи. Клик и Enter. Клик не срабатывает при выделении текста и на
+   ссылках/кнопках внутри ячеек; Enter работает, только когда фокус на самой
+   строке. Делегирование на document: partial-refresh подменяет тело карточки,
+   обработчик его переживает. */
+(function () {
+  if (window.__obWidgetRowNavInit) return;
+  window.__obWidgetRowNavInit = true;
+  function rowOf(target) {
+    return target && target.closest ? target.closest('[data-ob-row-url]') : null;
+  }
+  function go(el) {
+    var url = el.getAttribute('data-ob-row-url');
+    if (url) window.location.assign(url);
+  }
+  document.addEventListener('click', function (ev) {
+    var el = rowOf(ev.target);
+    if (!el) return;
+    if (ev.target.closest('a, button, select, input, textarea, label')) return;
+    try {
+      var sel = window.getSelection && window.getSelection();
+      if (sel && String(sel).length > 0) return;
+    } catch (e) {}
+    go(el);
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Enter' && ev.key !== ' ') return;
+    var el = rowOf(ev.target);
+    if (!el || ev.target !== el) return;
+    ev.preventDefault();
+    go(el);
+  });
+})();
+// END onebase-widget-row-nav
+
+// BEGIN onebase-widget-filters
+/* План 182D (#1620): интерактивные фильтры list-виджета. Изменение контрола
+   пересобирает адрес карточки из её именаосванных ключей w.<виджет>.<фильтр>
+   (чужие ключи в адрес карточки не попадают — сервер отвергает их с 400),
+   синхронизирует адрес строки (pushState — F5 и Back/Forward восстанавливают
+   отбор; ключи других карточек в адресе сохраняются) и перечитывает карточку
+   существующим контроллером: abort/sequence защищают от поздних ответов,
+   свежий запрос идёт мимо кеша. Сброс очищает контролы карточки; popstate
+   восстанавливает значения контролов из адреса и перечитывает карточки,
+   чей адрес изменился. */
+(function () {
+  if (window.__obWidgetFiltersInit) return;
+  window.__obWidgetFiltersInit = true;
+
+  function filterCard(el) {
+    return el && el.closest ? el.closest('[data-ob-widget-card]') : null;
+  }
+
+  function filterNodes(card) {
+    return card.querySelectorAll('[data-ob-filter]');
+  }
+
+  // Пар ключ→значение контролов карточки.
+  function collectFilters(card) {
+    var out = [];
+    var nodes = filterNodes(card);
+    for (var i = 0; i < nodes.length; i++) {
+      out.push({ key: nodes[i].getAttribute('data-ob-filter'), value: nodes[i].value || '' });
+    }
+    return out;
+  }
+
+  // Адрес карточки: subsystem + только её собственные непустые ключи.
+  function rebuildEndpoint(card, filters) {
+    var base = (card.getAttribute('data-widget-url') || '').split('?')[0];
+    var params = new URLSearchParams(window.location.search);
+    var sub = params.get('subsystem');
+    if (sub) params.set('subsystem', sub); else params.delete('subsystem');
+    var own = new URLSearchParams();
+    if (sub) own.set('subsystem', sub);
+    for (var i = 0; i < filters.length; i++) {
+      if (filters[i].value !== '') own.set(filters[i].key, filters[i].value);
+    }
+    var qs = own.toString();
+    return qs ? base + '?' + qs : base;
+  }
+
+  // Адрес строки: текущий поиск с заменой ключей ЭТОЙ карточки — ключи
+  // остальных карточек и subsystem сохраняются.
+  function mergedSearch(filters) {
+    var params = new URLSearchParams(window.location.search);
+    for (var i = 0; i < filters.length; i++) {
+      if (filters[i].value !== '') params.set(filters[i].key, filters[i].value);
+      else params.delete(filters[i].key);
+    }
+    return params.toString();
+  }
+
+  function applyEndpoint(card, endpoint, search) {
+    var previous = card.getAttribute('data-widget-url') || '';
+    if (previous !== endpoint) {
+      card.setAttribute('data-widget-url', endpoint);
+      if (window.obRefreshWidgetCard) window.obRefreshWidgetCard(card);
+    }
+    if (search !== null && window.history && window.history.pushState &&
+        (window.location.search || '') !== '?' + search) {
+      window.history.pushState({}, '', search ? '?' + search : window.location.pathname);
+    }
+  }
+
+  document.addEventListener('change', function (ev) {
+    var el = ev.target;
+    if (!el || !el.hasAttribute || !el.hasAttribute('data-ob-filter')) return;
+    var card = filterCard(el);
+    if (!card) return;
+    var filters = collectFilters(card);
+    applyEndpoint(card, rebuildEndpoint(card, filters), mergedSearch(filters));
+  });
+
+  // Enter в текстовом поле применяет отбор сразу, не дожидаясь blur.
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key !== 'Enter') return;
+    var el = ev.target;
+    if (!el || !el.hasAttribute || !el.hasAttribute('data-ob-filter')) return;
+    ev.preventDefault();
+    var card = filterCard(el);
+    if (!card) return;
+    var filters = collectFilters(card);
+    applyEndpoint(card, rebuildEndpoint(card, filters), mergedSearch(filters));
+  });
+
+  document.addEventListener('click', function (ev) {
+    var el = ev.target;
+    if (!el || !el.closest || !el.closest('[data-ob-filter-reset]')) return;
+    var card = filterCard(el);
+    if (!card) return;
+    var nodes = filterNodes(card);
+    for (var i = 0; i < nodes.length; i++) nodes[i].value = '';
+    var filters = collectFilters(card);
+    applyEndpoint(card, rebuildEndpoint(card, filters), mergedSearch(filters));
+  });
+
+  // Back/Forward: значения контролов восстанавливаются из адреса, карточки
+  // перечитываются. Сервер отрисовывает полную страницу по адресу сам.
+  window.addEventListener('popstate', function () {
+    var params = new URLSearchParams(window.location.search);
+    var cards = document.querySelectorAll('[data-ob-widget-card]');
+    for (var i = 0; i < cards.length; i++) {
+      var card = cards[i];
+      if (!filterNodes(card).length) continue;
+      var nodes = filterNodes(card);
+      for (var j = 0; j < nodes.length; j++) {
+        nodes[j].value = params.get(nodes[j].getAttribute('data-ob-filter')) || '';
+      }
+      var endpoint = rebuildEndpoint(card, collectFilters(card));
+      if ((card.getAttribute('data-widget-url') || '') !== endpoint) {
+        card.setAttribute('data-widget-url', endpoint);
+        if (window.obRefreshWidgetCard) window.obRefreshWidgetCard(card);
+      }
+    }
+  });
+})();
+// END onebase-widget-filters
+
 function obInitReportChart() {
   if (!window.echarts) return;
   var node = document.getElementById('ob-chart');
@@ -269,6 +826,7 @@ obReady(function () {
   obInitMappedCharts('ob-widget-charts', '.w-chart-canvas[data-widget]', 'data-widget', 'chart init failed', true);
   obInitMappedCharts('ob-page-charts', '.w-chart-canvas[data-pagechart]', 'data-pagechart', 'page chart init failed', false);
   obInitReportChart();
+  obInitWidgetControllers();
 });
 
 function obInitFormDirty() {
@@ -276,13 +834,22 @@ function obInitFormDirty() {
   if (!f) return;
   window._obFormDirty = false;
   var base = document.title;
-  function mark() {
-    window._obFormDirty = true;
-    if (document.title.charAt(0) !== '●') document.title = '● ' + base;
+	function setDirty(dirty) {
+	  dirty = !!dirty;
+	  window._obFormDirty = dirty;
+	  document.title = dirty ? ('● ' + base) : base;
+	  if (typeof window.obSetEmbeddedDirty === 'function') window.obSetEmbeddedDirty(dirty);
   }
+	function mark() { setDirty(true); }
+	window.obSetAutoFormDirty = setDirty;
   f.addEventListener('input', mark, true);
   f.addEventListener('change', mark, true);
-  f.addEventListener('submit', function () { window._obFormDirty = false; });
+	f.addEventListener('submit', function (e) {
+	  if (typeof window.obSetManagedFormDirty === 'function') return;
+	  Promise.resolve().then(function () {
+		if (!e.defaultPrevented) setDirty(false);
+	  });
+	});
   window.addEventListener('beforeunload', function (e) {
     if (window._obFormDirty) {
       e.preventDefault();
@@ -296,14 +863,16 @@ function obInitFormDirty() {
     if (e.defaultPrevented || (e.key !== 'Escape' && e.keyCode !== 27) || obHasBlockingModal()) return;
     var cancel = document.querySelector('[data-ob-popup-cancel], [data-ob-close-tab], a.btn-cancel');
     if (!cancel) return;
-    if (window._obFormDirty && !confirm('Данные были изменены и не записаны. Закрыть форму?')) {
+    if (!window.__obEmbedded && window._obFormDirty && !confirm(window.obUIMessage('unsavedClose', 'Данные были изменены и не записаны. Закрыть форму?'))) {
       e.preventDefault();
       e.stopPropagation();
       return;
     }
     e.preventDefault();
     e.stopPropagation();
+    if (cancel.dataset) cancel.dataset.obCloseReason = 'escape';
     cancel.click();
+    if (cancel.dataset) delete cancel.dataset.obCloseReason;
   }, true);
 }
 obReady(obInitFormDirty);
@@ -884,6 +1453,14 @@ function listActivateRow(tr) {
 // Ctrl+S приходит как «ы», и проверка по e.key просто не сработала бы.
 function obFormActionButton(values) {
   for (var i = 0; i < values.length; i++) {
+    if (values[i] === 'post_and_close') {
+      var closeBtn = document.querySelector('button[data-ob-form-close="post"]');
+      if (closeBtn && !closeBtn.disabled) return closeBtn;
+    }
+	if (values[i] === '') {
+	  var popupSave = document.querySelector('button[data-ob-form-close="save_and_select"]');
+	  if (popupSave && !popupSave.disabled) return popupSave;
+	}
     var btn = document.querySelector('button[name="_action"][value="' + values[i] + '"]');
     if (btn && !btn.disabled) return btn;
   }
@@ -903,7 +1480,8 @@ function obIsInteractiveTarget(el) {
 }
 
 function obHasBlockingModal() {
-  return !!(document.getElementById('_ref-picker-modal') ||
+  return !!(document.getElementById('ob-managed-close-confirm') ||
+    document.getElementById('_ref-picker-modal') ||
     document.getElementById('_item-picker-modal') ||
     document.getElementById('_ref-create-modal'));
 }
@@ -1185,7 +1763,9 @@ function obDOMAddButton(table) {
 function obDOMFinishMutation(table, row, focusControl) {
   obDOMReindex(table);
   obDOMRefreshTotals(table);
-  window._obFormDirty = true;
+	if (typeof window.obSetAutoFormDirty === 'function') window.obSetAutoFormDirty(true);
+	else if (typeof window.obSetManagedFormDirty === 'function') window.obSetManagedFormDirty(true);
+	else window._obFormDirty = true;
   var body = table && table.tBodies && table.tBodies[0];
   if (!row || !body || row.parentElement !== body) {
     obDOMSetCurrentRow(table, null, false);
@@ -1684,6 +2264,86 @@ function listActionsBtnClick(e, btn) {
   showListMenu(sel ? listMenuItems(sel) : listMenuNoSel(), r.left, r.bottom);
 }
 
+// BEGIN onebase-list-search-restore
+// Отложенный автосабмит строки поиска — полная навигация: старый документ
+// уничтожается вместе с фокусом и кареткой, поэтому на новой странице поиск
+// ничем не выделен, и следующие набранные буквы уходят уже не в поле, а в
+// горячие клавиши списка (Insert открывал форму создания). Перед самой
+// отправкой запоминаем каретку для текущего адреса, а на загрузке той же
+// страницы возвращаем её. Отметка одноразовая и привязана к pathname: обычный
+// переход по ссылке и возврат назад не должны сами забирать фокус в поиск.
+var OB_LIST_SEARCH_FOCUS = 'ob-list-search-focus';
+
+function obListSearchStorage() {
+  // В приватном режиме и при запрещённых сайту данных бросает сам доступ к
+  // свойству — потерянный фокус не повод ронять поиск целиком.
+  try {
+    return window.sessionStorage || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function obListSearchCaret(raw, max) {
+  var n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return max;
+  return Math.min(Math.floor(n), max);
+}
+
+function obSaveListSearchFocus(input) {
+  if (!input || input.id !== 'ob-list-search') return;
+  var store = obListSearchStorage();
+  if (!store) return;
+  var value = typeof input.value === 'string' ? input.value : '';
+  var start = obListSearchCaret(input.selectionStart, value.length);
+  var end = obListSearchCaret(input.selectionEnd, value.length);
+  try {
+    store.setItem(OB_LIST_SEARCH_FOCUS, JSON.stringify({
+      path: location.pathname,
+      start: start,
+      end: end < start ? start : end,
+    }));
+  } catch (e) {
+    // Переполненное хранилище не должно мешать самому поиску.
+  }
+}
+
+function obRestoreListSearchFocus() {
+  var store = obListSearchStorage();
+  if (!store) return null;
+  var raw = null;
+  try {
+    raw = store.getItem(OB_LIST_SEARCH_FOCUS);
+    // Снимаем отметку сразу: она действует ровно на одну загрузку страницы.
+    if (raw !== null) store.removeItem(OB_LIST_SEARCH_FOCUS);
+  } catch (e) {
+    return null;
+  }
+  if (!raw) return null;
+  var state = null;
+  try {
+    state = JSON.parse(raw);
+  } catch (e) {
+    return null;
+  }
+  if (!state || state.path !== location.pathname) return null;
+  var input = document.getElementById('ob-list-search');
+  if (!input) return null;
+  var value = typeof input.value === 'string' ? input.value : '';
+  var start = obListSearchCaret(state.start, value.length);
+  var end = obListSearchCaret(state.end, value.length);
+  if (typeof input.focus === 'function') input.focus();
+  if (typeof input.setSelectionRange === 'function') {
+    try {
+      input.setSelectionRange(start, end < start ? start : end);
+    } catch (e) {
+      // Не всякий тип поля умеет каретку; фокус уже возвращён, и этого хватает.
+    }
+  }
+  return input;
+}
+// END onebase-list-search-restore
+
 function obInitListDelegates() {
   if (window.__obListDelegates) return;
   window.__obListDelegates = true;
@@ -1728,6 +2388,8 @@ function obInitListDelegates() {
       // cannot disable the debounced search submission.
       var proto = window.HTMLFormElement && window.HTMLFormElement.prototype;
       var nativeSubmit = proto && typeof proto.submit === 'function' ? proto.submit : null;
+      // Строго до отправки: дальше страница уже уничтожается вместе с кареткой.
+      obSaveListSearchFocus(input);
       if (nativeSubmit) nativeSubmit.call(form);
       else if (typeof form.submit === 'function') form.submit();
     }, delay);
@@ -1812,6 +2474,7 @@ function obInitFeed() {
 
 obReady(function () {
   obInitListDelegates();
+  obRestoreListSearchFocus();
   obInitDOMTables();
   obInitKeyboardShortcuts();
   var firstListRow = obListRows()[0];
@@ -2403,7 +3066,12 @@ function obImageClear(btn) {
   var wrap = btn.closest('.img-field');
   if (!wrap) return;
   var hidden = wrap.querySelector('input[type=hidden]');
+  var changed = !!(hidden && hidden.value !== '');
   if (hidden) hidden.value = '';
+	if (changed) {
+	  if (typeof window.obSetManagedFormDirty === 'function') window.obSetManagedFormDirty(true);
+	  else if (typeof window.obSetAutoFormDirty === 'function') window.obSetAutoFormDirty(true);
+	}
   var prev = wrap.querySelector('.img-preview');
   if (prev) {
     prev.style.display = 'none';
@@ -2423,9 +3091,22 @@ function obClosestSelect(btn) {
 }
 
 function obSendPopupCancel() {
+  if (window._obFormDirty && typeof window.confirm === 'function' &&
+      !window.confirm(window.obUIMessage('unsavedClose', 'Данные были изменены и не записаны. Закрыть форму?'))) {
+    return false;
+  }
   try {
-    if (window.parent) window.parent.postMessage({ source: 'obRefCancel' }, '*');
-  } catch (e) {}
+    if (!window.parent) return false;
+    window.parent.postMessage({ source: 'obRefCancel' }, '*');
+    // The parent will now destroy this exact iframe. Clear only after the
+    // message was accepted so beforeunload cannot show a second native prompt;
+    // a failed post remains dirty and fail-closed.
+    if (typeof window.obSetAutoFormDirty === 'function') window.obSetAutoFormDirty(false);
+    else window._obFormDirty = false;
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 function obInitFormDelegates() {
@@ -3009,6 +3690,281 @@ function openItemPicker(payload, elementName, eventContext) {
   });
 }
 
+// BEGIN onebase-question-modal
+/* ПоказатьВопрос (#1528, план 158 срез A): модал вопроса фазы 1. Ответ
+   пользователя уходит событием Ответ с _question_answer — сервер кладёт его
+   в переменную ВопросОтвет и вызывает обработчик Ответ того же элемента.
+   Диалог неблокирующий: клик мимо закрывает модал без ответа (обработчик фазы 1
+   сам решает, что делать без второй фазы). */
+function obOpenQuestion(payload, elementName) {
+  if (!payload || !payload.variants || !payload.variants.length) return;
+  var old = document.getElementById('_question-modal');
+  if (old) old.remove();
+  var modal = document.createElement('div');
+  modal.id = '_question-modal';
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
+  var box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:10px;padding:20px;width:460px;max-width:94vw;box-shadow:0 8px 32px rgba(0,0,0,.18)';
+  if (payload.title) {
+    var title = document.createElement('div');
+    title.style.cssText = 'font-weight:600;font-size:15px;color:#1e293b;margin-bottom:8px';
+    title.textContent = payload.title;
+    box.appendChild(title);
+  }
+  var text = document.createElement('div');
+  text.style.cssText = 'font-size:14px;color:#1e293b;white-space:pre-line;margin-bottom:16px';
+  text.textContent = payload.text;
+  box.appendChild(text);
+  var row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+  payload.variants.forEach(function (variant) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = variant;
+    btn.style.cssText = 'padding:8px 16px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:14px';
+    btn.addEventListener('click', function () {
+      modal.remove();
+      if (typeof obFire === 'function') obFire(elementName, 'Ответ', { _question_answer: variant });
+    });
+    row.appendChild(btn);
+  });
+  box.appendChild(row);
+  modal.appendChild(box);
+  modal.addEventListener('click', function (ev) {
+    if (ev.target === modal) modal.remove();
+  });
+  document.body.appendChild(modal);
+}
+window.obOpenQuestion = obOpenQuestion;
+// END onebase-question-modal
+
+/* Live refresh for managed-form choice_filter controls (plan 170/C).
+   The server remains authoritative: the browser only snapshots declared
+   source values and never reconstructs field/operator predicates. */
+function obRefChoiceSnapshot(sel) {
+  if (!sel) return null;
+  var raw = sel.getAttribute('data-ref-choice-context') || '';
+  if (!raw) return null;
+  var ctx;
+  try { ctx = JSON.parse(raw); } catch (e) { return null; }
+  if (!ctx || !ctx.form_entity || !ctx.form || !ctx.element) return null;
+  var values = {};
+  var declared = ctx.sources || {};
+  var paths = Object.keys(declared).sort();
+  paths.forEach(function (path) {
+    var name = declared[path];
+    var control = null;
+    if (sel.form && sel.form.elements && name) control = sel.form.elements.namedItem(name);
+    if (!control && name) {
+      var controls = document.getElementsByName(name);
+      if (controls && controls.length) control = controls[0];
+    }
+    values[path] = control && control.value != null ? String(control.value) : '';
+  });
+  var query = '&form_entity=' + encodeURIComponent(ctx.form_entity) +
+    '&form=' + encodeURIComponent(ctx.form) +
+    '&element=' + encodeURIComponent(ctx.element) +
+    '&sources=' + encodeURIComponent(JSON.stringify(values));
+  if (sel.value) query += '&selected_id=' + encodeURIComponent(sel.value);
+  var fingerprintParts = paths.map(function (path) { return [path, values[path]]; });
+  return {
+    query: query,
+    fingerprint: JSON.stringify([ctx.form_entity, ctx.form, ctx.element, fingerprintParts]),
+    selected: sel.value == null ? '' : String(sel.value)
+  };
+}
+
+function obRefChoiceQuery(sel) {
+  if (!sel || !sel.getAttribute || !sel.getAttribute('data-ref-choice-context')) return '';
+  var snapshot = obRefChoiceSnapshot(sel);
+  // A malformed opt-in context must fail closed at the endpoint, not silently
+  // turn into the legacy unfiltered request.
+  return snapshot ? snapshot.query : '&form_entity=';
+}
+
+function obChoiceSelectIsLive(sel) {
+  if (!sel) return false;
+  if (typeof sel.isConnected === 'boolean') return sel.isConnected;
+  return !document.documentElement || !document.documentElement.contains || document.documentElement.contains(sel);
+}
+
+function obChoiceDispatchChange(sel) {
+  try {
+    sel.dispatchEvent(new Event('change', { bubbles: true }));
+  } catch (e) {
+    try {
+      var ev = document.createEvent('Event');
+      ev.initEvent('change', true, false);
+      sel.dispatchEvent(ev);
+    } catch (_) {}
+  }
+}
+
+function obChoiceApplyResponse(sel, data, selectedAtRequest) {
+  var rows = data && Array.isArray(data.items) ? data.items : [];
+  var selectedAllowed = null;
+  if (selectedAtRequest) {
+    if (!data || typeof data.selected_allowed !== 'boolean') {
+      throw new Error('choice_filter response has no selected_allowed');
+    }
+    selectedAllowed = data.selected_allowed;
+  }
+
+  var blankLabel = '— выбрать —';
+  var selectedLabel = selectedAtRequest;
+  for (var i = 0; i < sel.options.length; i++) {
+    var current = sel.options[i];
+    if (!current.value && current.textContent) blankLabel = current.textContent;
+    if (String(current.value) === selectedAtRequest) selectedLabel = current.textContent || selectedAtRequest;
+  }
+  while (sel.options.length) sel.remove(0);
+  var blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = blankLabel;
+  sel.appendChild(blank);
+
+  var selectedPresent = false;
+  rows.forEach(function (row) {
+    var id = row && row.id != null ? String(row.id) : '';
+    if (!id) return;
+    var opt = document.createElement('option');
+    opt.value = id;
+    opt.textContent = String((row && row._label) || id);
+    if (id === selectedAtRequest) selectedPresent = true;
+    sel.appendChild(opt);
+  });
+  if (selectedAtRequest && selectedAllowed === true && !selectedPresent) {
+    // The exact server-side EXISTS is independent of the first page. Keep the
+    // current value even when its row is not present in items.
+    var selected = document.createElement('option');
+    selected.value = selectedAtRequest;
+    selected.textContent = selectedLabel || selectedAtRequest;
+    sel.appendChild(selected);
+  }
+
+  var cleared = !!selectedAtRequest && selectedAllowed === false;
+  sel.value = cleared ? '' : selectedAtRequest;
+  sel.removeAttribute('data-ob-choice-error');
+  sel.removeAttribute('data-ob-choice-loading');
+  sel.removeAttribute('aria-busy');
+  if (cleared) obChoiceDispatchChange(sel);
+}
+
+function obChoiceRefreshState(sel) {
+  if (!sel._obChoiceRefreshState) {
+    sel._obChoiceRefreshState = {
+      seq: 0,
+      appliedFingerprint: '',
+      pendingFingerprint: '',
+      pendingSelected: '',
+      controller: null,
+      promise: null
+    };
+  }
+  return sel._obChoiceRefreshState;
+}
+
+function obRefreshChoiceSelect(sel, force) {
+  if (!sel || !sel.getAttribute || !sel.getAttribute('data-ref-choice-context') || !window.fetch) {
+    return Promise.resolve();
+  }
+  var snapshot = obRefChoiceSnapshot(sel);
+  if (!snapshot) return Promise.resolve();
+  var state = obChoiceRefreshState(sel);
+
+  if (state.pendingFingerprint &&
+      (state.pendingFingerprint !== snapshot.fingerprint || state.pendingSelected !== snapshot.selected || force)) {
+    if (state.controller) state.controller.abort();
+    state.seq++;
+    state.pendingFingerprint = '';
+    state.pendingSelected = '';
+    state.controller = null;
+    state.promise = null;
+  }
+  if (!force && state.appliedFingerprint === snapshot.fingerprint) return Promise.resolve();
+  if (!force && state.pendingFingerprint === snapshot.fingerprint && state.pendingSelected === snapshot.selected) {
+    return state.promise || Promise.resolve();
+  }
+
+  var seq = ++state.seq;
+  var controller = window.AbortController ? new window.AbortController() : null;
+  state.controller = controller;
+  state.pendingFingerprint = snapshot.fingerprint;
+  state.pendingSelected = snapshot.selected;
+  sel.setAttribute('data-ob-choice-loading', '1');
+  sel.setAttribute('aria-busy', 'true');
+  sel.removeAttribute('data-ob-choice-error');
+
+  var refEntity = sel.getAttribute('data-ref-entity') || '';
+  var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + snapshot.query;
+  var options = { credentials: 'same-origin', headers: { 'Accept': 'application/json' } };
+  if (controller) options.signal = controller.signal;
+  state.promise = window.fetch(url, options)
+    .then(function (resp) {
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      return resp.json();
+    })
+    .then(function (data) {
+      if (seq !== state.seq || !obChoiceSelectIsLive(sel)) return;
+      var current = obRefChoiceSnapshot(sel);
+      if (!current || current.fingerprint !== snapshot.fingerprint || current.selected !== snapshot.selected) {
+        state.pendingFingerprint = '';
+        state.pendingSelected = '';
+        state.controller = null;
+        state.promise = null;
+        return obRefreshChoiceSelect(sel, false);
+      }
+      state.appliedFingerprint = snapshot.fingerprint;
+      state.pendingFingerprint = '';
+      state.pendingSelected = '';
+      state.controller = null;
+      state.promise = null;
+      obChoiceApplyResponse(sel, data, snapshot.selected);
+    })
+    .catch(function (err) {
+      if (seq !== state.seq) return;
+      state.pendingFingerprint = '';
+      state.pendingSelected = '';
+      state.controller = null;
+      state.promise = null;
+      var current = obRefChoiceSnapshot(sel);
+      if (!current || current.fingerprint !== snapshot.fingerprint) {
+        return obRefreshChoiceSelect(sel, false);
+      }
+      if (err && err.name === 'AbortError') return;
+      // Fail closed: keep the previously rendered options and current value.
+      // The red state is visible, while no local full-list fallback is used.
+      sel.removeAttribute('data-ob-choice-loading');
+      sel.removeAttribute('aria-busy');
+      sel.setAttribute('data-ob-choice-error', '1');
+    });
+
+  var picker = document.getElementById('_ref-picker-modal');
+  if (picker && window._rpTarget === sel && typeof picker._obChoiceReload === 'function') {
+    picker._obChoiceReload();
+  }
+  return state.promise;
+}
+
+window.obRefreshChoiceFilters = function () {
+  if (!document.querySelectorAll) return Promise.resolve([]);
+  var selects = document.querySelectorAll('select[data-ref-choice-context]');
+  var pending = [];
+  for (var i = 0; i < selects.length; i++) pending.push(obRefreshChoiceSelect(selects[i], false));
+  return Promise.all(pending);
+};
+
+function obInitChoiceFilterRefresh() {
+  if (!document.querySelectorAll) return;
+  var selects = document.querySelectorAll('select[data-ref-choice-context]');
+  for (var i = 0; i < selects.length; i++) {
+    var snapshot = obRefChoiceSnapshot(selects[i]);
+    if (snapshot) obChoiceRefreshState(selects[i]).appliedFingerprint = snapshot.fingerprint;
+  }
+  document.addEventListener('change', function () { window.obRefreshChoiceFilters(); });
+}
+obReady(obInitChoiceFilterRefresh);
+
 function openRefPicker(selOrId) {
   var sel = (typeof selOrId === 'string') ? document.getElementById(selOrId) : selOrId;
   if (!sel) return;
@@ -3018,10 +3974,17 @@ function openRefPicker(selOrId) {
   var localOpts = [];
   for (var i = 0; i < sel.options.length; i++) {
     var o = sel.options[i];
-    if (o.value) localOpts.push({ id: o.value, label: o.text });
+    // A saved legacy value outside choice_filter stays visible in the field,
+    // but must not become a candidate merely because it is an <option>.
+    if (o.value && o.getAttribute('data-ob-choice-outside-filter') !== '1') {
+      localOpts.push({ id: o.value, label: o.text });
+    }
   }
   var old = document.getElementById('_ref-picker-modal');
-  if (old) old.remove();
+  if (old) {
+    if (typeof old._obClose === 'function') old._obClose();
+    else old.remove();
+  }
   var modal = document.createElement('div');
   modal.id = '_ref-picker-modal';
   modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
@@ -3122,6 +4085,7 @@ function openRefPicker(selOrId) {
     } catch (e) {}
   }
   var requestSeq = 0;
+  var requestController = null;
   var searchTimer = null;
   function loadServer(q) {
     if (!refEntity || refEntity === '_users' || !window.fetch) {
@@ -3129,15 +4093,26 @@ function openRefPicker(selOrId) {
       return;
     }
     var seq = ++requestSeq;
+    if (requestController) requestController.abort();
+    requestController = window.AbortController ? new window.AbortController() : null;
     if (status) status.textContent = 'Загрузка...';
-    var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + encodeURIComponent(q || '');
-    fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+    var choiceSnapshot = obRefChoiceSnapshot(sel);
+    var choiceQuery = choiceSnapshot ? choiceSnapshot.query : obRefChoiceQuery(sel);
+    var choiceFingerprint = choiceSnapshot ? choiceSnapshot.fingerprint : '';
+    var choiceSelected = sel.value == null ? '' : String(sel.value);
+    var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + encodeURIComponent(q || '') + choiceQuery;
+    var fetchOptions = { credentials: 'same-origin', headers: { 'Accept': 'application/json' } };
+    if (requestController) fetchOptions.signal = requestController.signal;
+    fetch(url, fetchOptions)
       .then(function (resp) {
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         return resp.json();
       })
       .then(function (data) {
-        if (seq !== requestSeq) return;
+        var currentSnapshot = obRefChoiceSnapshot(sel);
+        if (seq !== requestSeq || !obChoiceSelectIsLive(sel) || !obChoiceSelectIsLive(modal)) return;
+        if (choiceSnapshot && (!currentSnapshot || currentSnapshot.fingerprint !== choiceFingerprint ||
+            (sel.value == null ? '' : String(sel.value)) !== choiceSelected)) return;
         var keep = rpActiveId();
         var rows = (data && data.items) || [];
         var opts = rows.map(function (row) {
@@ -3150,13 +4125,29 @@ function openRefPicker(selOrId) {
           status.textContent = total > opts.length ? 'Показано ' + opts.length + ' из ' + total : '';
         }
       })
-      .catch(function () {
+      .catch(function (err) {
         if (seq !== requestSeq) return;
+        if (err && err.name === 'AbortError') return;
+        // A form-scoped picker is server-authoritative. Falling back to an
+        // untrusted or stale full list would bypass choice_filter; retain the
+        // already rendered filtered options and surface the failure instead.
+        if (sel.getAttribute('data-ref-choice-context')) {
+          if (status) status.textContent = 'Ошибка загрузки';
+          return;
+        }
         renderLocal(q);
       });
   }
   window._rpTarget = sel;
   var search = document.getElementById('_rp-search');
+  function closePicker() {
+    requestSeq++;
+    if (requestController) requestController.abort();
+    if (window._rpTarget === sel) window._rpTarget = null;
+    modal.remove();
+  }
+  modal._obClose = closePicker;
+  modal._obChoiceReload = function () { loadServer(search ? search.value : ''); };
   search.focus();
   search.addEventListener('input', function () {
     var q = this.value;
@@ -3177,12 +4168,12 @@ function openRefPicker(selOrId) {
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (rpActive >= 0 && items[rpActive]) { selectItem(items[rpActive]); modal.remove(); }
+      if (rpActive >= 0 && items[rpActive]) { selectItem(items[rpActive]); closePicker(); }
       return;
     }
     // Esc закрываем здесь же: глобальный обработчик живёт в managed.js, а форма
     // выбора открывается и на автогенерируемых страницах, где его нет.
-    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); modal.remove(); }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); closePicker(); }
   });
   renderItems(localOpts);
   loadServer('');
@@ -3190,16 +4181,16 @@ function openRefPicker(selOrId) {
     var item = e.target.closest('._rp-item');
     if (!item) return;
     selectItem(item);
-    modal.remove();
+    closePicker();
   });
   var createBtn = document.getElementById('_rp-create');
   if (createBtn) {
     createBtn.addEventListener('click', function () {
-      modal.remove();
+      closePicker();
       openRefCreate(sel, refEntity);
     });
   }
-  document.getElementById('_rp-cancel').addEventListener('click', function () { modal.remove(); });
+  document.getElementById('_rp-cancel').addEventListener('click', closePicker);
 }
 
 function openRefCurrent(selOrId) {
@@ -3220,10 +4211,10 @@ function openRefCurrent(selOrId) {
 function openRefCreate(targetSelect, refEntity) {
   if (!targetSelect || !refEntity) return;
   var old = document.getElementById('_ref-create-modal');
-  if (old) {
-    if (typeof old._obCleanup === 'function') old._obCleanup();
-    else old.remove();
-  }
+  // A repeated picker command must not destroy an already open managed iframe
+  // without its close-intent. Keep the existing popup; its own Cancel/cross/Esc
+  // paths own the asynchronous close handshake.
+  if (old) return;
   var modal = document.createElement('div');
   modal.id = '_ref-create-modal';
   modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:10000;display:flex;align-items:center;justify-content:center';
@@ -3252,10 +4243,47 @@ function openRefCreate(targetSelect, refEntity) {
   document.body.appendChild(modal);
 
   var frameDocument = null;
+  function closeFailure() {
+    if (window.alert) window.alert(window.obUIMessage
+      ? window.obUIMessage('closeNotConfirmed', 'Форма не закрыта: сервер не подтвердил закрытие.')
+      : 'Форма не закрыта: сервер не подтвердил закрытие.');
+  }
+  function popupFrameIsManaged() {
+    try {
+      var child = iframe.contentWindow;
+      var doc = child && child.document;
+      return !doc || doc.readyState === 'loading' ||
+        typeof child.obRequestFormClose === 'function' ||
+        !!(doc.getElementById && doc.getElementById('ob-managed-config'));
+    } catch (_) {
+      return true;
+    }
+  }
   function handler(ev) {
+    if (ev.origin !== window.location.origin || ev.source !== iframe.contentWindow) return;
     var d = ev.data;
     if (!d || typeof d !== 'object') return;
     if (d.source === 'obRefCreate' && d.id) {
+	  var managedCreate = popupFrameIsManaged();
+	  // Any intent-bearing result belongs to one exact managed Document even
+	  // if the iframe has since navigated to an error/autogenerated page.
+	  // Legacy no-intent create is accepted only from a current non-managed page.
+	  if (d.intentId || managedCreate) {
+        var savedDecision = {
+          allowed: d.allowed === true,
+          intentId: d.intentId ? String(d.intentId) : '',
+          error: d.error ? String(d.error) : ''
+        };
+        if (savedDecision.allowed && savedDecision.intentId && typeof window.obBindFrameCloseDecision === 'function') {
+          savedDecision = window.obBindFrameCloseDecision(iframe, savedDecision, d.documentToken);
+        }
+        if (!savedDecision || !savedDecision.allowed || !savedDecision.intentId ||
+            typeof window.obFinalizeFrameClose !== 'function' ||
+            !window.obFinalizeFrameClose(iframe, savedDecision)) {
+          closeFailure();
+          return;
+        }
+      }
       var exists = false;
       for (var i = 0; i < targetSelect.options.length; i++) {
         if (targetSelect.options[i].value === d.id) {
@@ -3275,26 +4303,85 @@ function openRefCreate(targetSelect, refEntity) {
       } catch (e) {}
       cleanup();
     } else if (d.source === 'obRefCancel') {
-      cleanup();
+      if (!popupFrameIsManaged() && !d.intentId) {
+        cleanup();
+        return;
+      }
+      var decision = {
+        allowed: d.allowed === true,
+        intentId: d.intentId ? String(d.intentId) : '',
+        error: d.error ? String(d.error) : ''
+      };
+      if (decision.allowed && decision.intentId && typeof window.obBindFrameCloseDecision === 'function') {
+        decision = window.obBindFrameCloseDecision(iframe, decision, d.documentToken);
+      }
+      if (decision && decision.allowed && decision.intentId &&
+          typeof window.obFinalizeFrameClose === 'function' &&
+          window.obFinalizeFrameClose(iframe, decision)) {
+        cleanup();
+        return;
+      }
+      closeFailure();
     }
   }
-  function confirmClose() {
-    if (typeof window.confirm === 'function' &&
-        !window.confirm('Данные были изменены и не записаны. Закрыть форму?')) return;
-    cleanup();
+  var popupClosePending = null;
+  var popupAwaitingSaveResult = false;
+  function requestPopupClose() {
+    // save_and_select has committed ownership of this popup. Until its exact
+    // obRefCreate result arrives, another Cancel/cross must not start discard
+    // and remove the popup (and therefore lose the committed selection).
+    if (popupAwaitingSaveResult) return Promise.resolve(false);
+    if (popupClosePending) return popupClosePending;
+    if (typeof window.obRequestFrameClose !== 'function') {
+      closeFailure();
+      return Promise.resolve(false);
+    }
+    cancelBtn.disabled = true;
+    closeBtn.disabled = true;
+    popupClosePending = Promise.resolve(window.obRequestFrameClose(iframe, 'popup_cancel')).then(function(decision){
+      if (!decision || !decision.allowed) return false;
+	  // A child Save-and-select may already own the shared single-flight
+	  // promise. Its own adapter must publish obRefCreate; Cancel must not
+	  // consume the same allowed intent and remove the popup first.
+	  if (decision.mode === 'save_and_select' && decision.terminal !== true) {
+	    popupAwaitingSaveResult = true;
+	    return false;
+	  }
+      if (typeof window.obFinalizeFrameClose === 'function' && window.obFinalizeFrameClose(iframe, decision)) {
+        cleanup();
+        return true;
+      }
+      closeFailure();
+      return false;
+    }, function(){ return false; }).finally(function(){
+      popupClosePending = null;
+      cancelBtn.disabled = popupAwaitingSaveResult;
+      closeBtn.disabled = popupAwaitingSaveResult;
+    });
+    return popupClosePending;
   }
   function closeOnEscape(ev) {
-    if (ev.key !== 'Escape' && ev.keyCode !== 27) return;
-    confirmClose();
+    if (ev.defaultPrevented || (ev.key !== 'Escape' && ev.keyCode !== 27)) return;
+    requestPopupClose();
     ev.preventDefault();
     ev.stopPropagation();
   }
   function bindFrameEscape() {
+    var previousDocument = frameDocument;
     try {
       if (frameDocument) frameDocument.removeEventListener('keydown', closeOnEscape, true);
       frameDocument = iframe.contentDocument;
       if (frameDocument) frameDocument.addEventListener('keydown', closeOnEscape, true);
     } catch (e) { frameDocument = null; }
+    // The save-and-select lock belongs to one exact iframe Document. If that
+    // Document navigated before publishing obRefCreate, its stale result is
+    // rejected by the bridge and must not leave Cancel/close disabled forever
+    // for the newly loaded form.
+    if (popupAwaitingSaveResult && previousDocument && frameDocument !== previousDocument) {
+      popupAwaitingSaveResult = false;
+      cancelBtn.disabled = false;
+      closeBtn.disabled = false;
+    }
   }
   function cleanup() {
     window.removeEventListener('message', handler);
@@ -3302,9 +4389,9 @@ function openRefCreate(targetSelect, refEntity) {
     modal.remove();
   }
   modal._obCleanup = cleanup;
-  modal._obClose = confirmClose;
-  cancelBtn.addEventListener('click', confirmClose);
-  closeBtn.addEventListener('click', confirmClose);
+  modal._obClose = requestPopupClose;
+  cancelBtn.addEventListener('click', requestPopupClose);
+  closeBtn.addEventListener('click', requestPopupClose);
   iframe.addEventListener('load', bindFrameEscape);
   window.addEventListener('message', handler);
 }
@@ -3539,9 +4626,10 @@ window.onebaseDevice = {
   // и какая вкладка активна в этот момент — вопрос порядка доставки (команда
   // «открой заявку, закрой звонок» закрыла бы только что открытую заявку).
   //
-  // Чистые совпавшие вкладки закрываются сразу. Для каждой вкладки с
-  // несохранёнными изменениями остаётся обычное подтверждение: серверная
-  // команда не доказывает, что независимый дубликат формы уже записан.
+  // Для каждой совпавшей вкладки оболочка сначала запрашивает её lifecycle-
+  // решение. Для несохранённых изменений перед ним остаётся обычное
+  // подтверждение: серверная команда не доказывает, что независимый дубликат
+  // формы уже записан.
   function closeFormTab(link) {
     var url = formURL(link);
     if (!url) return;
@@ -3663,6 +4751,7 @@ window.onebaseDevice = {
   }
 })();
 
+// BEGIN onebase-live-list
 /* План 87, ступень A — «Живой список». Контейнер списка помечается
    data-ob-refresh-on="имя1 имя2" (+ data-ob-live="ключ" для сопоставления при
    перечитывании). Универсальный слушатель ловит window-событие onebase:<имя>,
@@ -3693,6 +4782,13 @@ window.onebaseDevice = {
   }
 
   function doRefresh(el, key) {
+    // Карточка виджета (план 182B) перечитывается своим partial-endpoint'ом
+    // через контроллер карточки: debounce/склейка/hidden-tab здесь, свежие
+    // данные и нетронутые фильтры — там. Атрибуты контейнера не меняются.
+    if (el.hasAttribute && el.hasAttribute('data-ob-widget-card')) {
+      if (window.obRefreshWidgetCard) window.obRefreshWidgetCard(el);
+      return;
+    }
     var src = el.getAttribute('data-ob-refresh-src') || window.location.href;
     fetch(src, { credentials: 'same-origin', headers: { 'X-Requested-With': 'obLiveList' } })
       .then(function (r) { return r.ok ? r.text() : Promise.reject(r.status); })
@@ -3788,6 +4884,7 @@ window.onebaseDevice = {
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();
+// END onebase-live-list
 
 /* ===== Боковая панель деталей активной записи (план 118B, issue #670) =====
 

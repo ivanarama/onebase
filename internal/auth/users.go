@@ -67,6 +67,9 @@ var (
 	ErrFirstUserMustBeAdmin = errors.New("первый пользователь должен быть администратором")
 	ErrLastAdmin            = errors.New("нельзя удалить или разжаловать последнего администратора")
 	ErrLastUser             = errors.New("нельзя удалить последнего пользователя; авторизация должна отключаться отдельным действием")
+	// ErrUserReferenced — на учётную запись ссылаются объекты базы через
+	// реквизиты типа reference:_users (#1646); удалению мешает внешний ключ.
+	ErrUserReferenced = errors.New("нельзя удалить учётную запись: на неё ссылаются объекты базы (реквизиты со ссылкой на _users) — сначала отвяжите или очистите эти ссылки")
 )
 
 // NewRepo wires the auth repository to the storage layer. Internally Exec/
@@ -385,6 +388,13 @@ func (r *Repo) Delete(ctx context.Context, id string) error {
 		}
 		q := fmt.Sprintf(`DELETE FROM _users WHERE id = %s`, d.Placeholder(1))
 		_, err := r.db.Exec(txCtx, q, id)
+		if err != nil && storage.IsForeignKeyViolation(err) {
+			// Реквизиты типа reference:_users ссылаются на учётку настоящим
+			// внешним ключом (issue #1646): удалять её нельзя, пока ссылки живы.
+			// Сырой текст драйвера («FOREIGN KEY constraint failed») не называет
+			// ни причины, ни лечения — объясняем сами.
+			return ErrUserReferenced
+		}
 		return err
 	})
 }

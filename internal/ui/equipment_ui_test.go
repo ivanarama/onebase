@@ -9,7 +9,7 @@ import (
 // renderPage исполняет шаблон страницы с минимальным набором данных, которые
 // иначе инжектит render() (Cfg/Nav/Subsystems/IsAdmin). Заодно ловит ошибки
 // разбора всего набора шаблонов (template.Must в init).
-func renderPage(t *testing.T, name string) string {
+func renderPage(t *testing.T, name string, extra ...map[string]any) string {
 	t.Helper()
 	var buf bytes.Buffer
 	data := map[string]any{
@@ -19,6 +19,11 @@ func renderPage(t *testing.T, name string) string {
 		"Subsystems":       nil,
 		"CurrentSubsystem": "",
 		"IsAdmin":          true,
+	}
+	for _, add := range extra {
+		for k, v := range add {
+			data[k] = v
+		}
 	}
 	if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
 		t.Fatalf("render %s: %v", name, err)
@@ -81,23 +86,28 @@ func TestUI_WidgetActionNewTab(t *testing.T) {
 	}
 }
 
-// РМК — платформенная функция: администратор открывает её через «Все
-// функции», но прежний доступ обычного кассира не пропадает. Настройки агента
-// остаются в системной группе администратора.
+// РМК — доменная возможность приложения, а не платформы (issue #1331): она
+// показывается только там, где объявлена (app.yaml: features.pos → HasPOS).
+// Внутри включённого приложения расклад прежний: администратор открывает РМК
+// через «Все функции», обычный кассир — из меню «Система». Настройки агента
+// остаются в системной группе администратора независимо от РМК: оборудование
+// бывает и без кассы.
 func TestUI_PlatformLinks(t *testing.T) {
-	html := renderPage(t, "page-index")
+	pos := map[string]any{"HasPOS": true}
+
+	html := renderPage(t, "page-index", pos)
 	if !strings.Contains(html, `href="/ui/settings/agent"`) {
 		t.Error("в меню нет настроек агента оборудования")
 	}
 	if strings.Contains(html, `href="/ui/pos"`) {
 		t.Error("у администратора РМК не должен оставаться отдельным пунктом меню «Система»")
 	}
-	userNav := renderNav(t, false)
+	userNav := renderNav(t, false, pos)
 	if !strings.Contains(userNav, `href="/ui/pos"`) || !strings.Contains(userNav, "Платформенные возможности") {
 		t.Error("обычный пользователь потерял доступ к РМК после переноса в «Все функции» администратора")
 	}
 
-	allFunctions := renderPage(t, "page-all-functions")
+	allFunctions := renderPage(t, "page-all-functions", pos)
 	for _, want := range []string{"Платформенные возможности", `href="/ui/pos"`, "Рабочее место кассира (РМК)"} {
 		if !strings.Contains(allFunctions, want) {
 			t.Errorf("в «Все функции» нет %q", want)

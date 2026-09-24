@@ -4,14 +4,12 @@
 package main
 
 import (
-	"bufio"
 	"crypto/sha256"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -31,6 +29,7 @@ var (
 	displayRepair     = regexp.MustCompile(`(?m)^<!-- pp:display-repair comment=([0-9]+) -->$`)
 	baseSyncIntent    = regexp.MustCompile(`(?m)^<!-- pp:base-sync-intent from=([0-9a-f]{40}) base=([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) completion=([0-9]+) ship-event=([A-Za-z0-9_=-]+) previous=([0-9]+|none) -->$`)
 	baseSyncDone      = regexp.MustCompile(`(?m)^<!-- pp:base-sync-done intent=([0-9]+) from=([0-9a-f]{40}) to=([0-9a-f]{40}) base=([0-9a-f]{40}) previous=([0-9]+|none) ship-event=([A-Za-z0-9_=-]+) -->$`)
+	baseSyncV1Abort   = regexp.MustCompile(`(?m)^<!-- pp:base-sync-v1-aborted intent=([0-9]+) head=([0-9a-f]{40}) reason=commit-before-intent -->$`)
 	triageRouteClaim  = regexp.MustCompile(`(?m)^<!-- pp:triage-route-claim fingerprint-sha256=([0-9a-f]{64}) owner=[0-9a-fA-F-]{36} -->$`)
 	triageRouteRecord = regexp.MustCompile(`(?m)(^pp-triage-route-v1\nissue=([0-9]+)\nissue-updated=[^\n]+\ntitle-sha256=[0-9a-f]{64}\nbody-sha256=[0-9a-f]{64}\nanalysis-sha256=[0-9a-f]{64}\ncomments-sha256=[0-9a-f]{64}\nlabels-sha256=[0-9a-f]{64}\nevents-watermark=(?:[0-9]+|none)\nclass=(?:bug|enhancement|question|documentation)\nroute=(ready-fix|needs-decision)\nmanual=(?:true|false)\nreply=(required|none)\n)`)
 	triageRouteLabels = regexp.MustCompile(`(?m)^<!-- pp:triage-route-labels claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) .+ -->$`)
@@ -138,18 +137,45 @@ func main() {
 	contract := flag.String("contract", ".claude/skills/review-queue/SKILL.md", "active REVIEW contract")
 	fixture := flag.String("prs", "", "read a JSON fixture instead of GitHub")
 	issueFixture := flag.String("issues", "", "read an issue JSON fixture instead of GitHub")
+	transport := flag.String("transport", "graphql", "GitHub read transport: graphql or rest")
+	cacheDir := flag.String("cache-dir", os.Getenv("PIPELINEHEALTH_CACHE_DIR"), "persistent GitHub REST cache directory (default: user cache directory)")
 	asJSON := flag.Bool("json", false, "print machine-readable JSON")
 	flag.Parse()
 
-	prs, err := loadPulls(*repo, *fixture)
-	if err != nil {
-		fail(err)
+	selectedTransport := strings.ToLower(strings.TrimSpace(*transport))
+	var prs []apiPull
+	var issues []apiIssue
+	var err error
+	switch selectedTransport {
+	case "graphql":
+		prs, issues, err = loadPipelineInputsGraphQL(newGHPipelineGraphQLClient(), *repo, *fixture, *issueFixture)
+	case "rest":
+		var github *githubRESTClient
+		if *fixture == "" {
+			var resolvedCacheDir string
+			resolvedCacheDir, err = resolveCacheDir(*cacheDir)
+			if err == nil {
+				github, err = newGitHubRESTClient(resolvedCacheDir)
+			}
+		}
+		if err == nil {
+			prs, err = loadPulls(github, *repo, *fixture)
+		}
+		if err == nil {
+			issues, err = loadIssues(github, *repo, *issueFixture, *fixture != "")
+		}
+	default:
+		err = fmt.Errorf("unknown GitHub transport %q; expected graphql or rest", *transport)
 	}
-	issues, err := loadIssues(*repo, *issueFixture, *fixture != "")
 	if err != nil {
 		fail(err)
 	}
 	result := analyze(prs, *owner)
+	if selectedTransport == "graphql" {
+		result.Scope = "complete GraphQL queue snapshot; mutation gates remain independent GraphQL proofs"
+	} else {
+		result.Scope = "conditional REST queue snapshot; mutation gates remain GraphQL"
+	}
 	analyzeIssues(&result, issues, prs, *owner)
 	checkContract(&result, *contract)
 	result.finish()
@@ -173,7 +199,7 @@ func fail(err error) {
 	os.Exit(2)
 }
 
-func loadPulls(repo, fixture string) ([]apiPull, error) {
+func loadPulls(github *githubRESTClient, repo, fixture string) ([]apiPull, error) {
 	if fixture != "" {
 		data, err := os.ReadFile(fixture)
 		if err != nil {
@@ -186,14 +212,12 @@ func loadPulls(repo, fixture string) ([]apiPull, error) {
 		return prs, nil
 	}
 
-	gh := os.Getenv("GH_EXE")
-	if gh == "" {
-		gh = "gh"
+	if github == nil {
+		return nil, fmt.Errorf("GitHub REST client is required outside fixture mode")
 	}
-	var prs []apiPull
-	if err := ghJSONLines(gh, &prs, "api", "--paginate",
-		"repos/"+repo+"/pulls?state=open&per_page=100&sort=created&direction=asc",
-		"--jq", ".[]"); err != nil {
+	prs, err := getAllPages[apiPull](github,
+		"repos/"+repo+"/pulls?state=open&per_page=100&sort=created&direction=asc")
+	if err != nil {
 		return nil, fmt.Errorf("list pull requests: %w", err)
 	}
 
@@ -212,22 +236,26 @@ func loadPulls(repo, fixture string) ([]apiPull, error) {
 			defer wg.Done()
 			for index := range jobs {
 				path := fmt.Sprintf("repos/%s/issues/%d/comments?per_page=100", repo, prs[index].Number)
-				if err := ghJSONLines(gh, &prs[index].Comments, "api", "--paginate", path, "--jq", ".[]"); err != nil {
+				comments, err := getAllPages[apiComment](github, path)
+				if err != nil {
 					errs <- fmt.Errorf("comments for PR #%d: %w", prs[index].Number, err)
 					continue
 				}
+				prs[index].Comments = comments
 				if !needsHeadParents(prs[index]) {
 					continue
 				}
-				var parents []struct {
-					SHA string `json:"sha"`
+				var commitResponse struct {
+					Parents []struct {
+						SHA string `json:"sha"`
+					} `json:"parents"`
 				}
 				commit := fmt.Sprintf("repos/%s/commits/%s", repo, prs[index].Head.SHA)
-				if err := ghJSONLines(gh, &parents, "api", commit, "--jq", ".parents[]"); err != nil {
+				if err := github.getJSON(commit, &commitResponse); err != nil {
 					errs <- fmt.Errorf("head parents for PR #%d: %w", prs[index].Number, err)
 					continue
 				}
-				for _, parent := range parents {
+				for _, parent := range commitResponse.Parents {
 					prs[index].HeadParents = append(prs[index].HeadParents, parent.SHA)
 				}
 			}
@@ -247,7 +275,7 @@ func loadPulls(repo, fixture string) ([]apiPull, error) {
 	return prs, nil
 }
 
-func loadIssues(repo, fixture string, skipLive bool) ([]apiIssue, error) {
+func loadIssues(github *githubRESTClient, repo, fixture string, skipLive bool) ([]apiIssue, error) {
 	if fixture != "" {
 		data, err := os.ReadFile(fixture)
 		if err != nil {
@@ -265,14 +293,12 @@ func loadIssues(repo, fixture string, skipLive bool) ([]apiIssue, error) {
 		return []apiIssue{}, nil
 	}
 
-	gh := os.Getenv("GH_EXE")
-	if gh == "" {
-		gh = "gh"
+	if github == nil {
+		return nil, fmt.Errorf("GitHub REST client is required outside fixture mode")
 	}
-	var all []apiIssue
-	if err := ghJSONLines(gh, &all, "api", "--paginate",
-		"repos/"+repo+"/issues?state=open&per_page=100&sort=created&direction=asc",
-		"--jq", ".[]"); err != nil {
+	all, err := getAllPages[apiIssue](github,
+		"repos/"+repo+"/issues?state=open&per_page=100&sort=created&direction=asc")
+	if err != nil {
 		return nil, fmt.Errorf("list issues: %w", err)
 	}
 	issues := make([]apiIssue, 0, len(all))
@@ -295,9 +321,12 @@ func loadIssues(repo, fixture string, skipLive bool) ([]apiIssue, error) {
 			defer wg.Done()
 			for index := range jobs {
 				path := fmt.Sprintf("repos/%s/issues/%d/comments?per_page=100", repo, issues[index].Number)
-				if err := ghJSONLines(gh, &issues[index].Thread, "api", "--paginate", path, "--jq", ".[]"); err != nil {
+				comments, err := getAllPages[apiComment](github, path)
+				if err != nil {
 					errs <- fmt.Errorf("comments for issue #%d: %w", issues[index].Number, err)
+					continue
 				}
+				issues[index].Thread = comments
 			}
 		}()
 	}
@@ -315,39 +344,9 @@ func loadIssues(repo, fixture string, skipLive bool) ([]apiIssue, error) {
 	return issues, nil
 }
 
-func ghJSONLines(gh string, destination any, args ...string) error {
-	// GH_EXE is an explicit operator setting, and arguments are passed without a shell.
-	//nolint:gosec // The executable path is trusted configuration, not GitHub data.
-	cmd := exec.Command(gh, args...)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("%w: %s", err, strings.TrimSpace(string(output)))
-	}
-
-	// gh --paginate --jq '.[]' emits one JSON object per line. Decode into a
-	// temporary generic slice, then marshal once into the typed destination.
-	var values []json.RawMessage
-	scanner := bufio.NewScanner(strings.NewReader(string(output)))
-	scanner.Buffer(make([]byte, 64*1024), 16*1024*1024)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
-			values = append(values, json.RawMessage(line))
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return err
-	}
-	data, err := json.Marshal(values)
-	if err != nil {
-		return err
-	}
-	return json.Unmarshal(data, destination)
-}
-
 func analyze(prs []apiPull, owner string) report {
 	result := report{
-		State: "green", Scope: "fast REST snapshot; mutation gates remain GraphQL",
+		State: "green", Scope: "read-only queue snapshot; mutation gates remain GraphQL",
 		Scheduler: "two-lane-safety-priority-aging-depth-number", Checked: len(prs),
 		ReviewCandidates: []candidate{}, ContentReviewCandidates: []candidate{},
 		ReviewBacklog: []candidate{}, ReviewedWaitingShip: []candidate{}, MergeCandidates: []candidate{}, MergeExecutable: []candidate{}, PlanCandidates: []candidate{}, FixCandidates: []candidate{},
@@ -369,11 +368,18 @@ func analyze(prs []apiPull, owner string) report {
 		priority, prioritySource := queuePriority(labels, pr.CreatedAt, now)
 		item := candidate{Number: pr.Number, Title: pr.Title, URL: pr.HTMLURL, Head: pr.Head.SHA, Depth: depth, Stage: "review", Priority: priority, PrioritySource: prioritySource, UpdatedAt: pr.UpdatedAt}
 		currentCompletions, latestCompletion, latestOverride := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
-		carryDone, carryIntentOpen, baseAdvanced, protocolHistory, integrationAt := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA, pr.HeadParents)
+		carryDone, carryIntentOpen, v1AbortCurrent, baseAdvanced, protocolHistory, integrationAt := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA, pr.HeadParents)
 		item.IntegrationAt = integrationAt
 		if baseAdvanced {
 			result.add("yellow", "base_sync_base_advanced", pr.Number,
 				"base сдвинулся между intent и done; GraphQL gate должен проверить actual parent и ancestry")
+		}
+		if v1AbortCurrent && !carryIntentOpen && !carryDone && currentCompletions == 0 {
+			result.add("yellow", "base_sync_v1_abort_waiting_review", pr.Number,
+				"v1 intent закрыт abort-marker; текущий HEAD ожидает полное содержательное REVIEW")
+		} else if v1AbortCurrent && !carryIntentOpen && !carryDone && currentCompletions > 0 && labels["ship"] {
+			result.add("yellow", "base_sync_v1_abort_reauthorized", pr.Number,
+				"v1 intent закрыт abort-marker; текущий HEAD прошёл полное REVIEW и ждёт обычный MERGE-гейт")
 		}
 
 		if labels["changes-requested"] && labels["needs-decision"] {
@@ -412,6 +418,14 @@ func analyze(prs []apiPull, owner string) report {
 				result.MergeCandidates = append(result.MergeCandidates, item)
 				result.add("yellow", "base_sync_waiting_merge", pr.Number,
 					"интеграционное REVIEW готово; барьер остаётся у PR до фактического merge")
+			case v1AbortCurrent && currentCompletions > 0:
+				// The aborted v1 transaction is audit history only. The current HEAD
+				// has a fresh full review and must use the ordinary exact-HEAD path;
+				// the mutation gate still proves the new human ship in GraphQL.
+				item.Stage = "merge"
+				result.MergeCandidates = append(result.MergeCandidates, item)
+			case v1AbortCurrent && currentCompletions == 0:
+				result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
 			case currentCompletions > 0 && depth > currentCompletions && headIsBaseSyncMerge(pr):
 				item.Stage = "legacy-integration-merge-ready"
 				result.ReviewCandidates = append(result.ReviewCandidates, item)
@@ -561,7 +575,16 @@ func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner strin
 		case labels["plan-in-review"]:
 			// The plan PR is visible in REVIEW; product FIX must wait for its merge.
 		case labels["approved"] || labels["ready-fix"] && !labels["needs-decision"]:
-			if labels["in-work"] || issueReferencedByOpenPull(issue.Number, prs) {
+			if labels["in-work"] {
+				continue
+			}
+			if references := openPullsReferencingIssue(issue.Number, prs); len(references) > 0 {
+				items := make([]string, 0, len(references))
+				for _, number := range references {
+					items = append(items, fmt.Sprintf("#%d", number))
+				}
+				result.addIssue("yellow", "fix_issue_referenced_by_open_pull", issue.Number,
+					"заявка исключена из FIX-очереди: её номер упомянут в открытых PR "+strings.Join(items, ", "))
 				continue
 			}
 			if !route.ready {
@@ -581,14 +604,16 @@ func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner strin
 	sortCandidates(result.HumanWaiting)
 }
 
-func issueReferencedByOpenPull(number int, prs []apiPull) bool {
+func openPullsReferencingIssue(number int, prs []apiPull) []int {
 	pattern := regexp.MustCompile(fmt.Sprintf(`(^|[^0-9])#%d([^0-9]|$)`, number))
+	references := []int{}
 	for _, pr := range prs {
 		if pr.State == "open" && pattern.MatchString(pr.Title+"\n"+pr.Body) {
-			return true
+			references = append(references, pr.Number)
 		}
 	}
-	return false
+	sort.Ints(references)
+	return references
 }
 
 type triageRouteState struct {
@@ -940,10 +965,11 @@ type baseSyncDoneShape struct {
 // baseSyncRESTState is deliberately only an operational hint. The mutation
 // contracts still prove comment nodes, timeline edges and commit parents with
 // two stable GraphQL snapshots before changing GitHub state.
-func baseSyncRESTState(comments []apiComment, owner, head string, headParents []string) (doneCurrent, intentOpen, baseAdvanced, protocolHistory bool, integrationAt string) {
+func baseSyncRESTState(comments []apiComment, owner, head string, headParents []string) (doneCurrent, intentOpen, v1AbortCurrent, baseAdvanced, protocolHistory bool, integrationAt string) {
 	intents := map[int64]baseSyncIntentShape{}
 	doneIntents := map[int64]bool{}
 	dones := map[int64]baseSyncDoneShape{}
+	abortCounts := map[int64]int{}
 	for _, comment := range comments {
 		if !trustedUnedited(comment, owner) {
 			continue
@@ -975,8 +1001,36 @@ func baseSyncRESTState(comments []apiComment, owner, head string, headParents []
 			}
 		}
 	}
+	// Parse aborts only after the complete intent/done pass. REST comment slices
+	// are normally ordered, but an operational safety decision must not depend on
+	// the caller preserving that order.
+	for _, comment := range comments {
+		if !trustedUnedited(comment, owner) {
+			continue
+		}
+		for _, match := range baseSyncV1Abort.FindAllStringSubmatch(comment.Body, -1) {
+			protocolHistory = true
+			intentID, err := strconv.ParseInt(match[1], 10, 64)
+			intent, ok := intents[intentID]
+			if err != nil || !ok || doneIntents[intentID] || intentID >= comment.ID || match[2] != head ||
+				len(headParents) != 2 || headParents[0] != intent.from || headParents[1] != intent.base {
+				continue
+			}
+			abortCounts[intentID]++
+		}
+	}
+	abortedIntents := map[int64]bool{}
+	for intentID, count := range abortCounts {
+		if count == 1 {
+			abortedIntents[intentID] = true
+			v1AbortCurrent = true
+		}
+	}
+	// A canonical done for the current HEAD remains authoritative. An abort is
+	// only the fail-closed tombstone for an otherwise unmatched v1 intent.
+	v1AbortCurrent = v1AbortCurrent && !doneCurrent
 	for id, intent := range intents {
-		if doneIntents[id] || !intentCanDescribeCurrentHead(intent, head, headParents) {
+		if doneIntents[id] || abortedIntents[id] || !intentCanDescribeCurrentHead(intent, head, headParents) {
 			continue
 		}
 		// A valid done for the current merge commit completes this exact
@@ -991,7 +1045,7 @@ func baseSyncRESTState(comments []apiComment, owner, head string, headParents []
 			integrationAt = startedAt
 		}
 	}
-	return doneCurrent, intentOpen, baseAdvanced, protocolHistory, integrationAt
+	return doneCurrent, intentOpen, v1AbortCurrent, baseAdvanced, protocolHistory, integrationAt
 }
 
 // baseSyncIntegrationStart preserves ownership across a multi-hop carry chain.

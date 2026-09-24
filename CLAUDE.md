@@ -209,6 +209,13 @@ onebase describe --project <dir>                # вся структура ко
   воскресает от чужого re-label. ID комментариев
   в snapshot читаются как `fullDatabaseId: BigInt`, а не устаревший 32-битный
   `databaseId`, и строкой сравниваются с REST id.
+  Если исторический v1 merge-коммит уже появился в timeline **до** своего
+  intent, доказуемый `done` невозможен: MERGE не повторяет recovery и не
+  синтезирует proof. Он один раз снимает `ship`, после стабильной проверки
+  фиксирует точный `pp:base-sync-v1-aborted` и исключает этот intent из
+  single-flight. Маркер ничего не авторизует. Текущий HEAD проходит полное
+  содержательное REVIEW, затем требуется новый человеческий `ship` после его
+  anchor; любой следующий push отменяет этот аварийный путь.
   Base-sync работает single-flight только в интеграционной полосе: MERGE
   обновляет один первый PR, REVIEW проверяет его интеграционную дельту, затем
   MERGE обязан влить владельца до следующего base-sync. Обычные содержательные
@@ -217,7 +224,10 @@ onebase describe --project <dir>                # вся структура ко
   Если после старого сбоя одновременно видны несколько интеграционных цепочек,
   владелец выбирается по самому раннему `pp:base-sync-intent` независимо от
   текущей фазы REVIEW/MERGE и не меняется при переходе между этими фазами;
-  legacy-цепочки без intent упорядочиваются по номеру PR.
+  `previous` переносит начало только через звенья с тем же `ship-event`, а
+  разрыв или новая человеческая авторизация начинает новую цепочку. Любая
+  валидная intent-backed цепочка имеет приоритет над legacy-цепочками без
+  intent; только последние упорядочиваются по номеру PR.
   REVIEW обязан начинать с `go run ./tools/pipelinehealth -json` и считать
   `review_candidates` исключительным allowlist **выбора новой цели**. После
   выбора обычного PR его HEAD/epoch snapshot становится lease запуска:
@@ -264,7 +274,8 @@ onebase describe --project <dir>                # вся структура ко
   `pp:fix-decision <SHA>` возвращает PR в FIX crash-safe порядком.
   Для новой заявки FIX сохраняет issue-decision fingerprint: обязательную
   версию triage `id+updated_at+SHA-256(body)` плюс отдельный точный источник
-  выбора (human comment / `decision:N` / `pp:recommend`). Он перевалидирует
+  выбора (human comment / `decision:N` / `pp:recommend`, а при полном
+  отсутствии развилки в triage — сам его план). Он перевалидирует
   open-state/title/body/eligibility/hold/manual и обе части решения перед
   branch-claim, push, PR create, `in-work` и комментарием; edit triage или
   позднее решение человека всегда старше уже выполненной локальной работы.
@@ -425,6 +436,14 @@ onebase describe --project <dir>                # вся структура ко
   расходиться им нельзя. Аварийное снятие — `gh api -X DELETE
   …/branches/main/protection`, возврат — `-X PUT … --input
   .github/branch-protection.json`.
+  - Машиночитаемую пару сторожит тест: `required_status_checks.contexts` из
+    `.github/branch-protection.json` обязан совпадать с `required_checks` в
+    `pipelinectl.json` (`internal/pipelinecontract`). Меняешь список — правь оба
+    файла, иначе `pipelinectl` ждёт не тот набор проверок, чем требует GitHub.
+    Три текстовые копии (этот файл, `docs/maintenance-pipeline.md`, скил
+    пастуха) остаются на честном слове намеренно: проверка «имя упомянуто» не
+    поймала бы #1192 — там имя было на месте, неверным было утверждение вокруг
+    него (#1346).
   - `test-windows` стал обязательным 20.08.2026 (#962, Р2): Windows — основная
     платформа продукта (лаунчер, WebView2, переименование запущенного `.exe` при
     самообновлении), а красный джоб на ней мёрж не останавливал. На критический

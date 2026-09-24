@@ -199,14 +199,32 @@ func (s *Server) restoreManagedCopyState(
 	objectFields map[string]any,
 	tablePartRows map[string][]map[string]any,
 ) bool {
-	sourceID := strings.TrimSpace(r.FormValue(copySourceFormField)) //nolint:gosec // G120: submit ставит MaxBytesReader и parseSubmitForm уже выполнил ограниченный ParseForm
-	if sourceID == "" {
-		return false
-	}
-	snapshot, err := s.loadAuthorizedCopySource(r, entity, sourceID)
+	err := s.restoreManagedCopyStateResult(r, entity, form, fields, objectFields, tablePartRows)
 	if err != nil {
 		writeCopySourceError(w, err)
 		return true
+	}
+	return false
+}
+
+// restoreManagedCopyStateResult is the transport-independent copy-state gate.
+// HTML submit renders its error while close-intent serializes the same error;
+// both paths must authorize and restore the identical source snapshot.
+func (s *Server) restoreManagedCopyStateResult(
+	r *http.Request,
+	entity *metadata.Entity,
+	form *metadata.FormModule,
+	fields map[string]any,
+	objectFields map[string]any,
+	tablePartRows map[string][]map[string]any,
+) error {
+	sourceID := strings.TrimSpace(r.FormValue(copySourceFormField)) //nolint:gosec // G120: submit ставит MaxBytesReader и parseSubmitForm уже выполнил ограниченный ParseForm
+	if sourceID == "" {
+		return nil
+	}
+	snapshot, err := s.loadAuthorizedCopySource(r, entity, sourceID)
+	if err != nil {
+		return err
 	}
 
 	editable := managedFormEditableEntityFields(form, entity)
@@ -247,10 +265,9 @@ func (s *Server) restoreManagedCopyState(
 
 	authorities, err := managedFormTableAuthorities(form, entity.TableParts, true)
 	if err != nil {
-		writeCopySourceError(w, &copySourceLoadError{
+		return &copySourceLoadError{
 			status: http.StatusBadRequest, message: err.Error(),
-		})
-		return true
+		}
 	}
 	for _, tablePart := range entity.TableParts {
 		if authorities[tablePart.Name].source != 0 {
@@ -263,7 +280,7 @@ func (s *Server) restoreManagedCopyState(
 		}
 		tablePartRows[tablePart.Name] = cloneTablePartRows(snapshot.tablePartRows[tablePart.Name])
 	}
-	return false
+	return nil
 }
 
 func clearCanonicalCopyField(
