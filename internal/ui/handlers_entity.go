@@ -74,7 +74,9 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := r.URL.Query().Get("view")
-	if view != "list" && view != "tiles" {
+	// tree проходит мимо нормализации: иерархический вид открывается по
+	// ?view=tree, но персистентно не сохраняется — его выбирают заново.
+	if view != "list" && view != "tiles" && view != "tree" {
 		view = "" // неизвестное значение трактуем как отсутствие выбора
 	}
 	// Явный выбор вида запоминается по пользователю и сущности (#1485);

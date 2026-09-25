@@ -121,3 +121,37 @@ func TestListViewPersistence1485_NoUserNoPersistence(t *testing.T) {
 		t.Fatal("без авторизации не должно быть персистентности")
 	}
 }
+
+// Регрессия иерархического вида: нормализация вида съедала ?view=tree, и кнопка
+// «Дерево» открывала плоский список. Дерево обязано открываться и при этом НЕ
+// запоминаться в настройки — его выбирают заново.
+func TestListViewPersistence1485_TreeViewOpensAndIsNotSaved(t *testing.T) {
+	ent := &metadata.Entity{
+		Name:         "Проект",
+		Kind:         metadata.KindCatalog,
+		Hierarchical: true,
+		Fields:       []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+	}
+	s, _ := newSubmitTestServer(t, []*metadata.Entity{ent})
+	if err := s.store.Upsert(context.Background(), ent.Name, uuidMust("33333333-3333-3333-3333-333333333333"),
+		map[string]any{"Наименование": "Проект №1"}, ent); err != nil {
+		t.Fatalf("запись строки: %v", err)
+	}
+
+	req := httptest.NewRequest("GET", "/ui/catalog/проект?view=tree", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("entity", "проект")
+	ctx := auth.ContextWithUser(context.Background(), user1485("u1"))
+	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	s.list(rec, req)
+	if rec.Code != 200 {
+		t.Fatalf("список не открылся: %d", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), "data-tree-id") {
+		t.Fatal("явный ?view=tree не открыл дерево: нормализация съела tree")
+	}
+	if savedView1485(t, s, "u1", "Проект") != "" {
+		t.Fatal("дерево не должно сохраняться в настройки вида")
+	}
+}
