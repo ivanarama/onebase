@@ -3425,8 +3425,120 @@ obReady(function () {
   });
 });
 
-function openItemPicker(payload, elementName, eventContext) {
+// obPickerSearch — состояние диалога подбора при СЕРВЕРНОМ поиске. Диалог
+// пересобирается на каждый ответ сервера (ответ приходит тем же pickerData, что
+// и первое открытие), поэтому всё, что обязано пережить пересборку, живёт здесь,
+// а не в замыкании openItemPicker: набранное, каретка, отмеченные строки и
+// признак «запрос в пути».
+var obPickerSearch = {
+  generation: 0,  // отдельное открытие диалога, включая повтор той же кнопки
+  element: '',     // элемент, чей диалог открыт; пусто — диалога нет
+  context: null,   // контекст события, с которым диалог открыли
+  query: '',       // что набрано в строке поиска
+  timer: null,     // таймер debounce
+  inFlight: null,  // конкретный запрос отправлен, ответ ещё не применён
+  pending: null,   // запрос, набранный пока предыдущий в пути (строка) либо null
+  picked: {},      // выбранные строки по id — переживают смену выдачи
+  order: []        // порядок выбора: «Перенести» отдаёт строки в нём
+};
+
+// obPickerForget — диалог закрыт. Гасим таймер, забываем набранное и выбор.
+// Меняем поколение: ответы и завершение старых запросов больше не относятся
+// к этому открытию, даже если новый подбор вызван той же кнопкой.
+function obPickerForget() {
+  if (obPickerSearch.timer) clearTimeout(obPickerSearch.timer);
+  obPickerSearch.timer = null;
+  obPickerSearch.pending = null;
+  obPickerSearch.element = '';
+  obPickerSearch.context = null;
+  obPickerSearch.query = '';
+  obPickerSearch.picked = {};
+  obPickerSearch.order = [];
+  obPickerSearch.generation++;
+  obPickerSearch.inFlight = null;
+}
+window.obPickerForget = obPickerForget;
+
+// Контекст живёт только в браузере и не подмешивается в поля формы.
+window.obPickerRequest = function () {
+  return {generation: obPickerSearch.generation, search: false};
+};
+
+function obPickerRequestCurrent(request) {
+  return !!request && request.generation === obPickerSearch.generation &&
+    (!request.search || obPickerSearch.inFlight === request);
+}
+window.obPickerRequestCurrent = obPickerRequestCurrent;
+
+// obPickerSendSearch — отправить запрос серверного поиска. В одном открытии
+// диалога в полёте не больше одного: иначе старый ответ может затереть новый.
+// Набранное позже ждёт своей очереди в pending.
+function obPickerSendSearch(q) {
+  if (!obPickerSearch.element) return;
+  if (obPickerSearch.inFlight) { obPickerSearch.pending = q; return; }
+  if (!document.getElementById('_item-picker-modal')) { obPickerForget(); return; }
+  if (typeof obFire !== 'function') return;
+  var request = {generation: obPickerSearch.generation, search: true};
+  obPickerSearch.inFlight = request;
+  var params = {};
+  var ctx = obPickerSearch.context;
+  if (ctx) Object.keys(ctx).forEach(function (key) { params[key] = ctx[key]; });
+  params._pick_query = q;
+  obFire(obPickerSearch.element, 'Поиск', params, request);
+}
+
+// obPickerSearchApplied — ответ серверного поиска дошёл. Возвращает false, если
+// применять его уже некуда: диалог закрыли, пока запрос был в пути.
+function obPickerSearchApplied(request) {
+  if (!obPickerRequestCurrent(request)) return false;
+  if (request.search) obPickerSearch.inFlight = null;
+  return true;
+}
+
+// finally в obFire закрывает также ошибку fetch/JSON и ранний выход до fetch.
+// Завершение старого запроса не может освободить очередь нового открытия.
+window.obPickerSearchFinished = function (request) {
+  if (request && request.search && obPickerSearchApplied(request)) obPickerFirePending();
+};
+
+// obPickerFirePending — набранное, пока предыдущий запрос был в пути.
+function obPickerFirePending() {
+  if (obPickerSearch.pending === null) return;
+  var q = obPickerSearch.pending;
+  obPickerSearch.pending = null;
+  obPickerSendSearch(q);
+}
+
+// obPickerSearchEmpty — серверный поиск не вернул диалога: обработчик ничего не
+// показал (обычно Сообщить и возврат). Окно и набранное оставляем — человек
+// правит запрос и ищет снова, — но строки чистим: прежняя выдача читается как
+// ответ на новый запрос.
+window.obPickerSearchEmpty = function (request) {
+  if (!request || !request.search || !obPickerSearchApplied(request)) return;
+  var modal = document.getElementById('_item-picker-modal');
+  var tb = modal ? modal.querySelector('tbody') : null;
+  if (!tb) { obPickerFirePending(); return; }
+  tb.innerHTML = '';
+  var tr = document.createElement('tr');
+  var td = document.createElement('td');
+  td.colSpan = 99;
+  td.style.cssText = 'padding:14px;text-align:center;color:#94a3b8;font-size:13px';
+  // Словарь страницы (tplHead рендерит его на языке пользователя); без него —
+  // ключ, то есть русский текст.
+  var dict = (typeof window.OB_I18N === 'object' && window.OB_I18N) || {};
+  td.textContent = dict['Ничего не найдено'] || 'Ничего не найдено';
+  tr.appendChild(td);
+  tb.appendChild(tr);
+  obPickerFirePending();
+};
+
+function openItemPicker(payload, elementName, eventContext, request) {
   if (!payload) return;
+  // Ответ серверного поиска может прийти уже после «Отмена»/«Перенести»/Esc.
+  // Открывать окно заново нельзя: человек его закрыл.
+  var searchResponse = !!(request && request.search);
+  if (request && !obPickerSearchApplied(request)) return;
+  if (!searchResponse) obPickerForget();
   var cols = payload.columns || [];
   var rows = payload.rows || [];
   var cfg = payload.config || {};
@@ -3452,6 +3564,22 @@ function openItemPicker(payload, elementName, eventContext) {
   search.placeholder = 'Поиск...';
   search.autocomplete = 'off';
   search.style.cssText = 'padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;font-size:14px;margin-bottom:10px;outline:none';
+  // Серверный поиск (Конфиг.ПоискНаСервере): строка спрашивает обработчик
+  // события Поиск, а не фильтрует уже приехавшие строки. Нужен там, где
+  // фильтровать нечего: выдача обрезана пределом, а искомое за ним, либо
+  // колонка показана маской ПДн и её текст искать бессмысленно.
+  var serverSearch = !!cfg.serverSearch && typeof obFire === 'function';
+  if (serverSearch) {
+    if (!searchResponse || obPickerSearch.element !== elementName) {
+      // Новое открытие, а не ответ на поиск: прежний выбор не наследуется.
+      obPickerSearch.query = '';
+      obPickerSearch.picked = {};
+      obPickerSearch.order = [];
+    }
+    obPickerSearch.element = elementName;
+    obPickerSearch.context = eventContext || null;
+    search.value = obPickerSearch.query;
+  }
   box.appendChild(search);
   var scroll = document.createElement('div');
   scroll.style.cssText = 'overflow:auto;flex:1;min-height:120px;border:1px solid #e2e8f0;border-radius:7px';
@@ -3493,7 +3621,10 @@ function openItemPicker(payload, elementName, eventContext) {
     if (single) cb.name = '_ip-choice';
     cb.className = '_ip-cb';
     if (cfg.checkAll && !single) cb.checked = true;
-    cb.onchange = updateCounter;
+    cb.onchange = function () {
+      if (serverSearch) rememberRow(tr);
+      updateCounter();
+    };
     tdCb.appendChild(cb);
     // В одиночном выборе строка целиком работает как переключатель: попадать
     // мышью в кружок диаметром 13 px посреди разговора с клиентом незачем.
@@ -3526,16 +3657,44 @@ function openItemPicker(payload, elementName, eventContext) {
     });
     tbody.appendChild(tr);
   });
+  if (serverSearch) {
+    // Выдача сменилась ответом сервера: вернуть отметки и правленые значения
+    // строкам, выбранным по прежнему запросу. Без этого мультивыбор по
+    // нескольким запросам невозможен, а «Перенести» отдаёт только последнюю
+    // выдачу.
+    Array.prototype.forEach.call(tbody.rows, function (tr) {
+      var id = tr.getAttribute('data-id') || '';
+      var cb = tr.querySelector('._ip-cb');
+      if (!id || !cb) return;
+      var saved = Object.prototype.hasOwnProperty.call(obPickerSearch.picked, id)
+        ? obPickerSearch.picked[id] : null;
+      if (saved) {
+        cb.checked = true;
+        cols.forEach(function (c) {
+          if (!c.editable) return;
+          var inp = tr.querySelector('._ip-val[data-col="' + c.name + '"]');
+          if (inp && Object.prototype.hasOwnProperty.call(saved, c.name)) inp.value = saved[c.name];
+        });
+        return;
+      }
+      // Строки, отмеченные конфигом checkAll, тоже часть выбора.
+      if (cb.checked) rememberRow(tr);
+    });
+  }
   tbody.addEventListener('input', function (e) {
     var inp = e.target;
     if (!inp.classList.contains('_ip-val')) return;
-    if (cfg.qtyField && inp.getAttribute('data-col') !== cfg.qtyField) return;
     var tr = inp.closest('tr');
     if (!tr) return;
+    if (cfg.qtyField && inp.getAttribute('data-col') !== cfg.qtyField) {
+      if (serverSearch) rememberRow(tr);
+      return;
+    }
     var cb = tr.querySelector('._ip-cb');
     if (!cb) return;
     var val = parseFloat(inp.value);
     cb.checked = (!isNaN(val) && val > 0);
+    if (serverSearch) rememberRow(tr);
     updateCounter();
     updateBasket();
   });
@@ -3610,8 +3769,40 @@ function openItemPicker(payload, elementName, eventContext) {
       return cb.checked && cb.closest('tr').style.display !== 'none';
     });
   }
+  // rowObject — строка в том виде, в каком она уходит обработчику события Выбор.
+  function rowObject(tr) {
+    var obj = { id: tr.getAttribute('data-id') };
+    cols.forEach(function (c) {
+      if (c.editable) {
+        var inp = tr.querySelector('._ip-val[data-col="' + c.name + '"]');
+        obj[c.name] = inp ? inp.value : '';
+      } else {
+        var td = tr.querySelector('td[data-col="' + c.name + '"]');
+        obj[c.name] = td ? td.textContent : '';
+      }
+    });
+    return obj;
+  }
+  // rememberRow — запомнить или забыть строку в выборе, переживающем смену
+  // выдачи. Строка без id между выдачами неузнаваема, её не запоминаем.
+  function rememberRow(tr) {
+    var id = tr.getAttribute('data-id') || '';
+    if (!id) return;
+    var cb = tr.querySelector('._ip-cb');
+    var known = Object.prototype.hasOwnProperty.call(obPickerSearch.picked, id);
+    if (cb && cb.checked) {
+      if (!known) obPickerSearch.order.push(id);
+      obPickerSearch.picked[id] = rowObject(tr);
+      return;
+    }
+    if (!known) return;
+    delete obPickerSearch.picked[id];
+    var at = obPickerSearch.order.indexOf(id);
+    if (at >= 0) obPickerSearch.order.splice(at, 1);
+  }
   function updateCounter() {
-    counter.textContent = single ? '' : ('Выбрано: ' + checkedRows().length);
+    var n = serverSearch ? obPickerSearch.order.length : checkedRows().length;
+    counter.textContent = single ? '' : ('Выбрано: ' + n);
   }
   function updateBasket() {
     bTbody.innerHTML = '';
@@ -3644,7 +3835,23 @@ function openItemPicker(payload, elementName, eventContext) {
   updateCounter();
   updateBasket();
   search.focus();
+  if (serverSearch && search.value) {
+    // Каретка в конец: окно пересобрано ответом сервера, а человек продолжает
+    // набирать — без этого следующая буква уехала бы в начало строки.
+    try { search.setSelectionRange(search.value.length, search.value.length); } catch (e) { /* старый браузер */ }
+  }
+  function scheduleServerSearch(q) {
+    obPickerSearch.query = q;
+    if (obPickerSearch.timer) clearTimeout(obPickerSearch.timer);
+    // 250 мс: меньше — запрос на каждую букву, больше — задержка заметна.
+    obPickerSearch.timer = setTimeout(function () {
+      obPickerSearch.timer = null;
+      obPickerSendSearch(q);
+    }, 250);
+  }
+  if (serverSearch) obPickerFirePending();
   search.addEventListener('input', function () {
+    if (serverSearch) { scheduleServerSearch(this.value); return; }
     var q = this.value.toLowerCase();
     Array.prototype.forEach.call(tbody.rows, function (tr) {
       tr.style.display = (tr.getAttribute('data-search') || '').indexOf(q) >= 0 ? '' : 'none';
@@ -3658,26 +3865,32 @@ function openItemPicker(payload, elementName, eventContext) {
       if (tr.style.display === 'none') return;
       var cb = tr.querySelector('._ip-cb');
       if (cb) cb.checked = cbAll.checked;
+      if (serverSearch) rememberRow(tr);
     });
     updateCounter();
     updateBasket();
   });
-  btnCancel.addEventListener('click', function () { modal.remove(); });
+  // Esc закрывает диалог тем же путём, что «Отмена»: общий обработчик Escape
+  // зовёт modal._obClose, если он есть.
+  modal._obClose = function () {
+    obPickerForget();
+    modal.remove();
+  };
+  btnCancel.addEventListener('click', function () {
+    obPickerForget();
+    modal.remove();
+  });
   btnOk.addEventListener('click', function () {
-    var result = checkedRows().map(function (cb) {
-      var tr = cb.closest('tr');
-      var obj = { id: tr.getAttribute('data-id') };
-      cols.forEach(function (c) {
-        if (c.editable) {
-          var inp = tr.querySelector('._ip-val[data-col="' + c.name + '"]');
-          obj[c.name] = inp ? inp.value : '';
-        } else {
-          var td = tr.querySelector('td[data-col="' + c.name + '"]');
-          obj[c.name] = td ? td.textContent : '';
-        }
+    var result;
+    if (serverSearch) {
+      // Выбор собран по всем запросам, а не только по последней выдаче.
+      result = obPickerSearch.order.map(function (id) { return obPickerSearch.picked[id]; });
+    } else {
+      result = checkedRows().map(function (cb) {
+        return rowObject(cb.closest('tr'));
       });
-      return obj;
-    });
+    }
+    obPickerForget();
     modal.remove();
     if (typeof obFire === 'function') {
       var params = {};

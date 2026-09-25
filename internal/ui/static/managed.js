@@ -936,7 +936,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	return legacySelected.join(',');
   }
 
-  async function snapshotFormEvent(elementName, eventName, extraParams, triggerSelection){
+  async function snapshotFormEvent(elementName, eventName, extraParams, triggerSelection, pickerRequest){
     // Зафиксировать активную правку и синхронизировать ТЧ. При невалидной
     // ссылке или исключении editor-lock отправлять старое tp_json нельзя.
     if (window.obGridSync && window.obGridSync() === false) return;
@@ -978,7 +978,8 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     }
     return {
 	  body: body, form: form, elementName: elementName,
-	  extraParams: extraParams, wasNew: !DOC_ID
+	  extraParams: extraParams, wasNew: !DOC_ID,
+	  eventName: eventName, pickerRequest: pickerRequest
 	};
   }
 
@@ -1003,6 +1004,9 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	  formEventWriteUnknown = true;
 	  setManagedFormDirty(true);
 	}
+	// Окно могли закрыть, пока событие ждало своей очереди или чтения файлов:
+	// диалог уже не тот — ответ некуда применять.
+	if (snapshot.pickerRequest && snapshot.pickerRequest.search && !window.obPickerRequestCurrent(snapshot.pickerRequest)) return;
     try {
       const res = await fetch(URL, {
         method: 'POST',
@@ -1011,6 +1015,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         credentials: 'same-origin'
       });
       const data = await res.json();
+      if (snapshot.pickerRequest && snapshot.pickerRequest.search && !window.obPickerRequestCurrent(snapshot.pickerRequest)) return;
 	  // A JSON proxy/error page is not a trusted application envelope. `ok` is
 	  // mandatory in every formEventResponse, including server-side failures.
       if (!data || typeof data !== 'object' || typeof data.ok !== 'boolean') {
@@ -1037,10 +1042,17 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // Подбор фазы 1: сервер вернул pickerData — открыть диалог, не трогая
       // ТЧ (её обновит фаза 2 после «Перенести»).
       if (data.pickerData) {
+        if (snapshot.pickerRequest && !window.obPickerRequestCurrent(snapshot.pickerRequest)) return;
         (data.messages || []).forEach(m => flash(m, 'ok'));
         if (data.error) flash(data.error, 'err');
-        openItemPicker(data.pickerData, elementName, extraParams || null);
+        openItemPicker(data.pickerData, elementName, extraParams || null, snapshot.pickerRequest);
         return;
+      }
+      // Поиск в уже открытом диалоге не дал строк: обработчик ограничился
+      // сообщением и ПоказатьПодбор не позвал. Прежнюю выдачу оставлять нельзя —
+      // её прочитают как ответ на новый запрос.
+      if (snapshot.eventName === 'Поиск' && !data.error && typeof window.obPickerSearchEmpty === 'function') {
+        window.obPickerSearchEmpty(snapshot.pickerRequest);
       }
       // Вопрос фазы 1 (#1528): открыть модал; ответ вернётся событием Ответ
       // через _question_answer — сервер положит его в ВопросОтвет.
@@ -1072,12 +1084,17 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // there is no identity with which to issue another safe write. Fence all
       // write-capable actions for this document; the user can leave the form,
       // but this page must never guess and create a duplicate.
-      if (!responseKnown && snapshot.wasNew && !DOC_ID) fenceUnknownResult();
+      if (snapshot.pickerRequest && snapshot.pickerRequest.search && !window.obPickerRequestCurrent(snapshot.pickerRequest)) return;
+      // Серверный поиск открытого диалога подбора — исключение: его обработчик
+      // не пишет документ (фаза 1 того же диалога), а вечный фенс делал бы
+      // ошибку поиска фатальной для всей формы.
+      if (!responseKnown && snapshot.wasNew && !DOC_ID && !(snapshot.pickerRequest && snapshot.pickerRequest.search)) fenceUnknownResult();
       flash('Сетевая ошибка: ' + (e && e.message ? e.message : e), 'err');
     }
   }
 
-  window.obFire = function(elementName, eventName, extraParams){
+  window.obFire = function(elementName, eventName, extraParams, pickerRequest){
+	pickerRequest = pickerRequest || (window.obPickerRequest ? window.obPickerRequest() : null);
 	if (formEventWriteUnknown || manualReconcileRequired) {
 	  flash(closeMessage('unknownResult', 'Исход операции неизвестен. Проверьте данные в отдельной вкладке и перезагрузите форму; повторная запись заблокирована.'), 'err');
 	  return Promise.resolve();
@@ -1110,21 +1127,19 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	var snapshotPromise = null;
 	var deferSnapshot = formEventPendingCount > 0;
 	if (!deferSnapshot) {
-	  try { snapshotPromise = snapshotFormEvent(capturedElement, capturedEvent, capturedExtra, capturedSelection); }
+	  try { snapshotPromise = snapshotFormEvent(capturedElement, capturedEvent, capturedExtra, capturedSelection, pickerRequest); }
 	  catch (e) {
 		flash('Ошибка формы: ' + (e && e.message ? e.message : e), 'err');
 		return Promise.resolve();
 	  }
 	}
-	formEventPendingCount++;
-	formEventPending = true;
-	var queued = formEventQueue.catch(function(){}).then(async function(){
+	var runEvent = async function(){
 	  var snapshot;
 	  if (reloadRequired || formEventWriteUnknown || manualReconcileRequired) return;
 	  try {
 		snapshot = snapshotPromise
 		  ? await snapshotPromise
-		  : await snapshotFormEvent(capturedElement, capturedEvent, capturedExtra, capturedSelection);
+		  : await snapshotFormEvent(capturedElement, capturedEvent, capturedExtra, capturedSelection, pickerRequest);
 	  }
 	  catch (e) {
 		flash('Ошибка формы: ' + (e && e.message ? e.message : e), 'err');
@@ -1132,9 +1147,24 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	  }
 	  if (!snapshot || reloadRequired || formEventWriteUnknown || manualReconcileRequired) return;
 	  return dispatchFormEvent(snapshot);
-	});
-	formEventQueue = queued.catch(function(){});
+	};
+	// Серверный поиск диалога не пишет документ: гоняем его вне общей очереди
+	// записи, чтобы он не ждал обычные события формы и не блокировал их.
+	var standaloneSearch = !!(pickerRequest && pickerRequest.search);
+	var queued;
+	if (standaloneSearch) {
+	  queued = runEvent();
+	} else {
+	  formEventPendingCount++;
+	  formEventPending = true;
+	  queued = formEventQueue.catch(function(){}).then(runEvent);
+	  formEventQueue = queued.catch(function(){});
+	}
+	if (standaloneSearch && typeof window.obPickerSearchFinished === 'function') {
+	  queued = queued.finally(function(){ window.obPickerSearchFinished(pickerRequest); });
+	}
 	return queued.finally(function(){
+	  if (standaloneSearch) return;
 	  formEventPendingCount = Math.max(0, formEventPendingCount - 1);
 	  formEventPending = formEventPendingCount > 0;
 	});

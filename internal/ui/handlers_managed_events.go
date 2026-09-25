@@ -1204,6 +1204,17 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		vars["PickResult"] = pr
 	}
 
+	// Повторная фаза 1: набранное в строке поиска открытого диалога приходит как
+	// _pick_query → переменная ПодборЗапрос для обработчика события Поиск.
+	// Кладём ВСЕГДА, а не только для непустой строки: очистка строки поиска —
+	// такой же запрос («покажи всё»), и обработчику нужно уметь его отличить от
+	// первого открытия, где переменной нет вовсе.
+	if eventName == string(metadata.FormEventOnSearch) {
+		q := strings.TrimSpace(r.FormValue("_pick_query"))
+		vars["ПодборЗапрос"] = q
+		vars["PickQuery"] = q
+	}
+
 	// Фаза 2 вопроса (#1528): ответ пользователя — переменная ВопросОтвет
 	// (строка, подпись нажатой кнопки) для обработчика события Ответ.
 	if qa := strings.TrimSpace(r.FormValue("_question_answer")); qa != "" {
@@ -2489,6 +2500,17 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		if pr := parsePickResult(pickResult); pr != nil {
 			vars["ПодборРезультат"] = pr
 			vars["PickResult"] = pr
+		}
+		// Тот же ПодборЗапрос, что и в формах сущностей: серверный поиск обязан
+		// работать и в формах обработок, иначе платформенное поведение молча
+		// разное. Кладём ВСЕГДА при событии Поиск — очистка строки поиска это
+		// такой же запрос «покажи всё», и обработчику надо отличать его от
+		// первого открытия, где переменной нет вовсе.
+		if eventName == string(metadata.FormEventOnSearch) {
+			pickQuery, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_pick_query"))
+			q := strings.TrimSpace(pickQuery)
+			vars["ПодборЗапрос"] = q
+			vars["PickQuery"] = q
 		}
 		if err := addProcessorTPEventContext(r, proc, requestControls, eventTarget, obj, vars); err != nil {
 			opStatus = "error"
