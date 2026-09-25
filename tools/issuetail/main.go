@@ -76,6 +76,139 @@ var (
 	mentionRe = regexp.MustCompile(`#(\d+)`)
 )
 
+// stripCode убирает из Markdown код, чтобы ключевое слово закрытия внутри
+// примера не считалось заявленным закрытием (#1540): влитой PR #1374 писал
+// «намеренно нет `Fixes #1274`», а сверка уверенно рапортовала хвост.
+//
+// Убирается ровно то, что Markdown считает кодом:
+//   - fenced-блоки: строки-разделители из трёх и более backtick'ов или тильд,
+//     закрывающий не короче открывающего, содержимое между ними целиком;
+//   - строчные code spans: backtick-разделители равной длины (двойной backtick
+//     закрывается двойным, одиночный внутри его не закрывает).
+//
+// Границы намеренные: строчный span не переходит через перевод строки, а fenced
+// внутри элемента списка (отступ 4+) не распознаётся — такие места ведут себя
+// как прежде, то есть поиск работает по сырому тексту. Блокquot-семантику не
+// трогаем: доказанный дефект — только кодовые примеры.
+func stripCode(text string) string {
+	var b strings.Builder
+	inFence := false
+	var fenceChar byte
+	fenceLen := 0
+	for _, line := range strings.Split(text, "\n") {
+		if inFence {
+			if run, ok := fenceRun(line); ok && run.ch == fenceChar && run.n >= fenceLen {
+				inFence = false
+			}
+			continue // строка кода в отчёт не попадает
+		}
+		if run, ok := fenceRun(line); ok && run.n >= 3 {
+			inFence = true
+			fenceChar, fenceLen = run.ch, run.n
+			continue
+		}
+		stripCodeSpans(&b, line)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// fenceRun проверяет, начинается ли строка (до трёх пробелов отступа) с
+// последовательности из трёх и более одинаковых backtick'ов или тильд.
+// Открывающая последовательность backtick'ов, после которой в строке есть ещё
+// backtick'и, по CommonMark — строчный code span, а не разделитель, поэтому
+// fenceRun её разделителем не считает.
+type fenceRunInfo struct {
+	ch byte
+	n  int
+}
+
+func fenceRun(line string) (fenceRunInfo, bool) {
+	indented := strings.TrimLeft(line, " ")
+	if len(line)-len(indented) > 3 {
+		return fenceRunInfo{}, false // отступ 4+ — уже не разделитель верхнего уровня
+	}
+	if indented == "" {
+		return fenceRunInfo{}, false
+	}
+	ch := indented[0]
+	if ch != '`' && ch != '~' {
+		return fenceRunInfo{}, false
+	}
+	n := 1
+	for n < len(indented) && indented[n] == ch {
+		n++
+	}
+	if n < 3 {
+		return fenceRunInfo{}, false
+	}
+	rest := indented[n:]
+	if ch == '`' && strings.ContainsRune(rest, '`') {
+		return fenceRunInfo{}, false // `` ` `` — code span, не разделитель
+	}
+	// Закрывающий разделитель допускает после себя только пробелы; открывающий —
+	// информационную строку. Для поиска закрытия этой разницы достаточно:
+	// обе ситуации означают «строка кода» и обе выкидываются.
+	return fenceRunInfo{ch: ch, n: n}, true
+}
+
+// stripCodeSpans пишет в b строку без строчных code spans: span из n backtick'ов
+// закрывается следующей последовательностью ровно из n backtick'ов и заменяется
+// пробелом (не пустой строкой — чтобы соседние слова не склеивались в новую
+// фразу). Непарный разделитель остаётся как есть.
+func stripCodeSpans(b *strings.Builder, line string) {
+	i := 0
+	for i < len(line) {
+		if line[i] != '`' {
+			j := strings.IndexByte(line[i:], '`')
+			if j < 0 {
+				b.WriteString(line[i:])
+				return
+			}
+			b.WriteString(line[i : i+j])
+			i += j
+			continue
+		}
+		n := 1
+		for i+n < len(line) && line[i+n] == '`' {
+			n++
+		}
+		if end := closingSpan(line, i+n, n); end >= 0 {
+			b.WriteByte(' ')
+			i = end + n
+			continue
+		}
+		b.WriteString(line[i : i+n])
+		i += n
+	}
+}
+
+// closingSpan ищет первую последовательность ровно n backtick'ов начиная с from
+// (более длинные последовательности пропускаются целиком — по CommonMark они
+// строчный span не закрывают). Возвращает индекс начала закрывающей
+// последовательности или -1.
+func closingSpan(line string, from, n int) int {
+	for i := from; i < len(line); {
+		if line[i] != '`' {
+			j := strings.IndexByte(line[i:], '`')
+			if j < 0 {
+				return -1
+			}
+			i += j
+			continue
+		}
+		m := 1
+		for i+m < len(line) && line[i+m] == '`' {
+			m++
+		}
+		if m == n {
+			return i
+		}
+		i += m
+	}
+	return -1
+}
+
 func main() {
 	var (
 		limit      = flag.Int("limit", 200, "сколько влитых PR просмотреть")
@@ -188,12 +321,14 @@ func analyze(issues []issue, prs []pull) (declared, mentioned []finding) {
 	seen := make(map[int]bool, len(issues))
 	for i := len(prs) - 1; i >= 0; i-- {
 		pr := prs[i]
-		text := pr.Title + "\n" + pr.Body
+		// Закрытие ищем по тексту без кода: ключевое слово внутри примера —
+		// не заявление (#1540). Упоминания ниже считаем по сырому тексту.
+		prose := stripCode(pr.Title + "\n" + pr.Body)
 
-		for _, m := range englishRe.FindAllStringSubmatch(text, -1) {
+		for _, m := range englishRe.FindAllStringSubmatch(prose, -1) {
 			add(&declared, seen, open, pr, m[0], m[3], true)
 		}
-		for _, m := range russianRe.FindAllStringSubmatch(text, -1) {
+		for _, m := range russianRe.FindAllStringSubmatch(prose, -1) {
 			add(&declared, seen, open, pr, m[0], m[2], false)
 		}
 	}

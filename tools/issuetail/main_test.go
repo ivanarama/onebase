@@ -126,3 +126,112 @@ func TestRussianVariantsRecognized(t *testing.T) {
 		}
 	}
 }
+
+func TestCodeSpanIsNotADeclaredClosure(t *testing.T) {
+	// Фикстура тела влитого PR #1374 (#1540): фраза внутри code span —
+	// намеренная отговорка, а не заявление. GitHub такие слова игнорирует и
+	// заявка осталась открытой — сверка обязана показать то же.
+	issues := []issue{{Number: 1274, Title: "Доработки обмена", URL: "u/1274"}}
+	prs := []pull{{
+		Number: 1374,
+		Title:  "feat(exchange): обработка)",
+		Body:   "Здесь намеренно нет `Fixes #1274`. Part of #1274: это шаг большой работы.",
+		URL:    "u/pr/1374",
+	}}
+
+	declared, mentioned := analyze(issues, prs)
+	if len(declared) != 0 {
+		t.Fatalf("пример кода принят за заявление о закрытии: %+v", declared)
+	}
+	// Корзина обычных упоминаний сохраняется: Part of остаётся упоминанием.
+	if len(mentioned) != 1 || mentioned[0].issue.Number != 1274 {
+		t.Fatalf("ожидалось одно упоминание #1274, получено %+v", mentioned)
+	}
+}
+
+func TestFencedCodeIsNotADeclaredClosure(t *testing.T) {
+	// Оба языка маркеров фильтруются: ключевые слова в fenced-блоках — примеры,
+	// а не заявления.
+	issues := []issue{{Number: 1274, Title: "Доработки обмена", URL: "u/1274"}}
+	prs := []pull{{
+		Number: 1375,
+		Title:  "feat(exchange): очередной шаг",
+		Body: "Пример формулировки:\n" +
+			"```text\n" +
+			"Fixes #1274\n" +
+			"```\n" +
+			"И русская в тильдовом блоке:\n" +
+			"~~~\n" +
+			"Закрывает #1274\n" +
+			"~~~\n" +
+			"Part of #1274.",
+		URL: "u/pr/1375",
+	}}
+
+	declared, mentioned := analyze(issues, prs)
+	if len(declared) != 0 {
+		t.Fatalf("fenced-пример принят за заявление: %+v", declared)
+	}
+	if len(mentioned) != 1 || mentioned[0].issue.Number != 1274 {
+		t.Fatalf("ожидалось одно упоминание #1274, получено %+v", mentioned)
+	}
+}
+
+func TestFenceLengthRules(t *testing.T) {
+	// Четыре backtick'а открывают блок, три внутрь него — ещё код: закрывающий
+	// разделитель обязан быть не короче открывающего. Двойной code span закрывается
+	// только двойным: одиночный backtick внутри его не разрывает.
+	issues := []issue{{Number: 1274, Title: "Доработки обмена", URL: "u/1274"}}
+	prs := []pull{{
+		Number: 1376,
+		Title:  "docs: примеры",
+		Body: "````md\n" +
+			"```text\n" +
+			"Fixes #1274\n" +
+			"```\n" +
+			"````\n" +
+			"Слова ``Fixes #1274`` в двойном span — тоже код. Part of #1274.",
+		URL: "u/pr/1376",
+	}}
+
+	declared, mentioned := analyze(issues, prs)
+	if len(declared) != 0 {
+		t.Fatalf("код внутри блока большей длины принят за заявление: %+v", declared)
+	}
+	if len(mentioned) != 1 || mentioned[0].issue.Number != 1274 {
+		t.Fatalf("ожидалось одно упоминание #1274, получено %+v", mentioned)
+	}
+}
+
+func TestRealClosureSurvivesCodeExamples(t *testing.T) {
+	// Фильтрация не должна съесть настоящую фразу вне кода: английскую и русскую,
+	// в том числе когда рядом лежат примеры с чужими номерами.
+	issues := []issue{
+		{Number: 611, Title: "TOTP", URL: "u/611"},
+		{Number: 826, Title: "Аудит", URL: "u/826"},
+	}
+	prs := []pull{{
+		Number: 830,
+		Title:  "fix(storage): bestEffort",
+		Body: "Пример из документации:\n" +
+			"```text\nFixes #999999\n```\n" +
+			"Fixes #611, исправляет #826.\n" +
+			"Снова пример: `Закрывает #999999`.",
+		URL: "u/pr/830",
+	}}
+
+	declared, mentioned := analyze(issues, prs)
+	if len(declared) != 2 {
+		t.Fatalf("ожидались настоящие закрытия #611 и #826, получено %+v", declared)
+	}
+	if len(mentioned) != 0 {
+		t.Fatalf("фантомный номер из примера протёк в упоминания: %+v", mentioned)
+	}
+	byIssue := map[int]finding{}
+	for _, f := range declared {
+		byIssue[f.issue.Number] = f
+	}
+	if !byIssue[611].english || byIssue[826].english {
+		t.Fatalf("флаги языков перепутаны: %+v %+v", byIssue[611], byIssue[826])
+	}
+}
