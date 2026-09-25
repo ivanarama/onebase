@@ -113,12 +113,16 @@ func allSchemas() map[string]map[string]any {
 	// забытый здесь, редактор подчёркивает как ошибку в корректном YAML.
 	//
 	// Объект переиспользуется для полей табличной части (tablePart.fields) и
-	// измерений/ресурсов регистров. Признак pii движок принимает не везде: в
-	// табличной части его отвергает metadata.Validate, у ресурсов и субконто
-	// регистра бухгалтерии — LoadAccountRegisterFile. Разводить отдельный
-	// объект ради одного ключа не стали: расхождение здесь в безопасную
-	// сторону — схема разрешает больше, чем движок, ложной ошибки в редакторе
-	// это не даёт, а отказ приходит из `onebase check`.
+	// измерений/ресурсов регистров накопления и сведений. Признак pii движок
+	// принимает не везде: в табличной части его отвергает metadata.Validate.
+	// Разводить отдельный объект ради одного ключа не стали: расхождение здесь
+	// в безопасную сторону — схема разрешает больше, чем движок, ложной ошибки
+	// в редакторе это не даёт, а отказ приходит из `onebase check`.
+	//
+	// У ресурсов и субконто регистра бухгалтерии переиспользования больше нет
+	// (#1567): их читает отдельная структура metadata.rawAccountRegField без
+	// id/required/default/label/allow_inline_create, и переиспользование
+	// общего field обещало в схеме ключи, которые загрузчик молча игнорирует.
 	field := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -153,6 +157,24 @@ func allSchemas() map[string]map[string]any {
 			"title":  stringSchema("Синоним"),
 			"titles": stringMapSchema(),
 			"fields": arrayOf(field),
+		},
+	}
+	// Ресурс/субконто бухрегистра — собственный объект (metadata.rawAccountRegField,
+	// #1567): состав обязан совпадать с его yaml-тегами в обе стороны. Сторож —
+	// TestSchemaAccountRegField_CoversAllRawAccountRegKeys. pii включён явно,
+	// хотя исполнение его не читает: LoadAccountRegisterFile отвергает ключ с
+	// внятным отказом, и схема должна описывать это, а не делать вид, что
+	// ключа нет.
+	accountRegField := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"name", "type"},
+		"properties": map[string]any{
+			"name":   stringSchema("Имя ресурса или субконто"),
+			"title":  stringSchema("Синоним"),
+			"titles": stringMapSchema(),
+			"type":   stringSchema("string|number|date|bool|text|richtext|image|reference:<Объект>|enum:<Перечисление>|number(10,2)"),
+			"pii":    boolSchema("Персональные данные в бухрегистре не поддерживаются: check отвергает ключ с объяснением"),
 		},
 	}
 	param := map[string]any{
@@ -429,7 +451,7 @@ func allSchemas() map[string]map[string]any {
 		"journal":   looseNamedSchema("OneBase document journal"),
 		"scheduled": looseNamedSchema("OneBase scheduled job"),
 		"accounts":  looseNamedSchema("OneBase chart of accounts"),
-		"accountreg": fieldGroupSchema("OneBase accounting register", field, []string{"resources", "subconto"}, map[string]any{
+		"accountreg": fieldGroupSchema("OneBase accounting register", accountRegField, []string{"resources", "subconto"}, map[string]any{
 			"accounts": stringSchema("Имя плана счетов"),
 		}),
 		"home-page": looseNamedSchema("OneBase home page"),
