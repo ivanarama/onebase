@@ -322,6 +322,19 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return infoRegisterDetailPanelJSONTranslated(ir, row, lang, periodTitle,
 				func(key string) string { return translate(lang, key) })
 		},
+		// choiceContextJSON — карта «имя параметра → путь к контролу» для
+		// data-ref-context. Значения намеренно не подставляются при серверном
+		// рендере: браузер читает текущие контролы перед каждым запросом подбора.
+		"choiceContextJSON": func(el *metadata.FormElement) string {
+			if el == nil || len(el.ChoiceContext) == 0 {
+				return ""
+			}
+			raw, err := json.Marshal(el.ChoiceContext)
+			if err != nil {
+				return ""
+			}
+			return string(raw)
+		},
 		"isRichText": func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
 		"isImage":    func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
 		"fieldNamesCSV": func(fields []metadata.Field) string {
@@ -446,6 +459,21 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			contexts, _ := ctx["ManagedChoiceContexts"].(map[string]string)
 			return contexts[element.ID]
+		},
+		// hasRefFilter distinguishes an absent picker contract from a present
+		// owner contract whose current value deliberately yields zero options.
+		// The latter must still render as a <select> so a later owner change can
+		// refresh it in place (not as an inert text input on save:false forms).
+		"hasRefFilter": func(ctx map[string]any, field string) bool {
+			if filters, ok := ctx["RefFilter"].(map[string]string); ok {
+				_, exists := filters[field]
+				return exists
+			}
+			if filters, ok := ctx["RefFilter"].(map[string]any); ok {
+				_, exists := filters[field]
+				return exists
+			}
+			return false
 		},
 		// itemFormVisible/itemFormHidden делят реквизиты по блоку `item_form:`
 		// (план 117, Д12). До этого ключ парсился, хранился, отдавался в

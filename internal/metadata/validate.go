@@ -111,6 +111,29 @@ func Validate(entities []*Entity, enums []*Enum) error {
 				return fmt.Errorf("entity %s: order_by ссылается на несуществующий реквизит %s", e.Name, name)
 			}
 		}
+		// choice_preview: имя реквизита проверяем здесь же. Опечатка иначе выглядит
+		// как «область просмотра в подборе пустая» — а это не отличить от «текст
+		// не заполнили».
+		if name := strings.TrimSpace(e.ChoicePreview); name != "" {
+			f := findEntityFieldFold(e, name)
+			if f == nil {
+				return fmt.Errorf("entity %s: choice_preview ссылается на несуществующий реквизит %s", e.Name, name)
+			}
+			if f.Type != FieldTypeString && f.Type != FieldTypeRichText {
+				return fmt.Errorf("entity %s: choice_preview реквизит %s должен быть текстовым (сейчас %s)", e.Name, name, f.Type)
+			}
+		}
+		// choice_preview_proc: строго квалифицированное имя экспортной функции
+		// общего модуля вида `Модуль.Функция` (план 168). Короткое имя позволил бы
+		// вызов обработчика формы, а опечатка в модуле выглядела бы как
+		// «область просмотра пустая».
+		if proc := strings.TrimSpace(e.ChoicePreviewProc); proc != "" {
+			mod, fn, ok := strings.Cut(proc, ".")
+			if !ok || strings.TrimSpace(mod) == "" || strings.TrimSpace(fn) == "" || strings.Contains(fn, ".") || strings.ContainsAny(mod, " 	") || strings.ContainsAny(fn, " 	") {
+				return fmt.Errorf("entity %s: choice_preview_proc должен быть вида Модуль.Функция (сейчас %q)", e.Name, proc)
+			}
+			_ = fn
+		}
 		if err := validateFieldIDs(e); err != nil {
 			return err
 		}

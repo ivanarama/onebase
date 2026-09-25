@@ -395,6 +395,9 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/_ref-open/{entity}/{id}", s.refOpenRedirect)
 	// JSON-поиск ссылочных значений для server-side picker'а.
 	r.Get("/ui/_ref-options/{entity}", s.refOptionsJSON)
+	// Страница подбора с динамическим preview (план 168): POST — значения
+	// незаписанной формы не должны попадать в URL и access log.
+	r.Post("/ui/_ref-options/{entity}/page", s.choicePreviewPageHandler)
 	// Lazy-load детей узла иерархического справочника для tree-view.
 	r.Get("/ui/_tree-children/{entity}", s.treeChildrenJSON)
 	r.Get("/ui/{kind}/{entity}/{id}", s.formEdit)

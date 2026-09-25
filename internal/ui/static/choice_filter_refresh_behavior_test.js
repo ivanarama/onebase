@@ -20,22 +20,28 @@ function response(data) {
   return {ok: true, status: 200, json: async () => data};
 }
 
-function runtime(fetchImpl, selected) {
+function runtime(fetchImpl, selected, options = {}) {
   const listeners = {};
   const sourceControl = {value: 'warehouse-a'};
-  const ownerControl = {value: 'owner-a'};
+  const ownerControl = {name: 'Контрагент', value: 'owner-a'};
   const attrs = {
-    'data-ref-choice-context': JSON.stringify({
-      form_entity: 'Инвентаризация',
-      form: 'ФормаОбъекта',
-      element: 'inventory-storage-choice',
-      sources: {'Объект.Склад': 'Склад'},
-    }),
     'data-ref-filter': JSON.stringify({
       'Владелец': {from: 'Контрагент', value: 'owner-a'},
     }),
     'data-ref-entity': 'МестоХранения',
   };
+  if (options.previewOnly) {
+    delete attrs['data-ref-filter'];
+    attrs['data-ref-context'] = JSON.stringify({Branch: 'Object.Склад'});
+  }
+  if (options.choice !== false) {
+    attrs['data-ref-choice-context'] = JSON.stringify({
+      form_entity: 'Инвентаризация',
+      form: 'ФормаОбъекта',
+      element: 'inventory-storage-choice',
+      sources: {'Объект.Склад': 'Склад'},
+    });
+  }
   const select = {
     options: [
       {value: '', textContent: '— выбрать —'},
@@ -64,7 +70,11 @@ function runtime(fetchImpl, selected) {
   const document = {
     documentElement: {contains() { return true; }},
     querySelectorAll(selector) {
-      return selector === 'select[data-ref-choice-context],select[data-ref-filter]' ? [select] : [];
+      if (selector === 'select[data-ref-choice-context],select[data-ref-filter]') {
+        return attrs['data-ref-choice-context'] || attrs['data-ref-filter'] ? [select] : [];
+      }
+      if (selector === 'select[data-ref-filter]') return attrs['data-ref-filter'] ? [select] : [];
+      return [];
     },
     querySelector(selector) {
       if (selector === '[name="Контрагент"]') return ownerControl;
@@ -72,7 +82,7 @@ function runtime(fetchImpl, selected) {
       return null;
     },
     getElementsByName(name) { return name === 'Склад' ? [sourceControl] : []; },
-    getElementById() { return null; },
+    getElementById(id) { return id === '_ref-picker-modal' ? (options.pickerModal || null) : null; },
     createElement(tag) { return {tagName: String(tag).toUpperCase(), value: '', textContent: ''}; },
     createEvent() { return {initEvent() {}}; },
     addEventListener(name, listener) { listeners[name] = listener; },
@@ -169,4 +179,36 @@ test('network failure is visible and preserves the previously filtered options a
   assert.deepEqual(env.select.options.map((option) => [option.value, option.textContent]), before);
   assert.equal(env.attrs['data-ob-choice-error'], '1');
   assert.equal(env.attrs['data-ob-choice-loading'], undefined);
+});
+
+test('owner-only empty picker refreshes after the save:false owner changes', async () => {
+  const calls = [];
+  const env = runtime(async (url) => {
+    calls.push(url);
+    return response({items: [{id: 'contract-b', _label: 'Contract B'}], total: 1});
+  }, '', {choice: false});
+
+  env.ownerControl.value = 'owner-b';
+  env.api.obRefreshDependentSelects(env.ownerControl);
+  await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(calls.length, 1);
+  assert.match(decodeURIComponent(calls[0]), /owner-b/);
+  assert.doesNotMatch(calls[0], /form_entity=/);
+  assert.deepEqual(env.select.options.map(option => option.value), ['', 'contract-b']);
+});
+
+test('global refresh notifies an active preview-only picker after form values change', async () => {
+  let reloads = 0;
+  const pickerModal = {_obChoiceReloadIfChanged() { reloads++; }};
+  const env = runtime(async () => response({items: []}), '', {
+    choice: false,
+    previewOnly: true,
+    pickerModal,
+  });
+
+  await env.api.window.obRefreshChoiceFilters();
+
+  assert.equal(reloads, 1);
 });

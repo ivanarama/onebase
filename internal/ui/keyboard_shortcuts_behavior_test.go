@@ -687,6 +687,7 @@ dynamicTbody = {
 dynamicTable.tBodies = [dynamicTbody];
 function obTPRefOpts() { return {}; }
 function obTPRefMeta() { return {}; }
+function obTPRefFilter() { return {}; }
 function obTPEnumLabels() { return {}; }
 function obTPEnumOrder() { return {}; }
 eval(source.slice(addTpStart, addTpEnd));

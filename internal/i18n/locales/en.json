@@ -1463,5 +1463,6 @@
   "Владелец": "Owner",
   "Как «Владелец» в 1С: у элемента появляется реквизит": "Like “Owner” in 1C: each item gets the field",
   "а подбор этого справочника везде сам показывает только элементы владельца — договоры своего контрагента, товарные группы своего направления. Настраивать отбор на формах не нужно. После включения требуется миграция БД:": "and this catalog's picker automatically shows only items for that owner — contracts for the selected counterparty, product groups for the selected direction. No form-level filter setup is required. Enabling this requires a database migration:",
-  "появится колонка": "a column will be added"
+  "появится колонка": "a column will be added",
+  "Пояснение недоступно: повторите запрос": "Preview unavailable: retry the request"
 }
