@@ -43,10 +43,24 @@ func TestDSL_ВременныйФайл_ИмяУникальноИЛежитВК
 	assert.NotEqual(t, parts[0], parts[1], "имена временных файлов должны различаться")
 	for _, p := range parts {
 		assert.Equal(t, ".xml", filepath.Ext(p), "расширение не применилось: %s", p)
-		assert.Equal(t, os.TempDir(), filepath.Dir(p), "файл не во временном каталоге: %s", p)
+		// Clean — потому что TMPDIR на macOS приходит с завершающим
+		// разделителем, а filepath.Dir его не возвращает (#1578).
+		assert.Equal(t, filepath.Clean(os.TempDir()), filepath.Dir(p), "файл не во временном каталоге: %s", p)
 	}
 	// Сам файл не создаётся — как в 1С: возвращается только имя.
 	assert.NoFileExists(t, parts[0])
+}
+
+// Обе формы TMPDIR — с завершающим разделителем (обычный macOS) и без —
+// обязаны давать один и тот же ожидаемый каталог: боевой путь строится через
+// filepath.Join, который разделитель поглощает, поэтому сравнение валится
+// только на необработанном ожидании (#1578).
+func TestTempDirExpectationIgnoresTrailingSeparator(t *testing.T) {
+	base := filepath.Clean(os.TempDir())
+	for _, raw := range []string{base, base + string(os.PathSeparator)} {
+		assert.Equal(t, base, filepath.Dir(filepath.Join(raw, "x.xml")),
+			"форма TMPDIR %q изменила ожидаемый каталог", raw)
+	}
 }
 
 // Расширение принимается и с точкой, и без: в переносимом коде встречаются оба.
