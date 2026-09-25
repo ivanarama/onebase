@@ -1037,6 +1037,37 @@ func (tr *translator) peek(offset int) tok {
 	return tr.tokens[i]
 }
 
+// nullCheckTripleAhead проверяет, что за уже пройденным «НЕ» (tr.pos-1) идут
+// «ЕСТЬ ПУСТО» (или английские IS NULL) — составной оператор отрицания
+// пустоты, а не префиксное отрицание выражения.
+func (tr *translator) nullCheckTripleAhead() bool {
+	p1, p2 := tr.peek(0), tr.peek(1)
+	if p1.kind != tIdent || p2.kind != tIdent {
+		return false
+	}
+	u1, u2 := upperFast(p1.val), upperFast(p2.val)
+	return (u1 == "ЕСТЬ" || u1 == "IS") && (u2 == "ПУСТО" || u2 == "NULL")
+}
+
+// prevEndsOperand — предыдущий токен закончил операнд выражения: число,
+// строка, параметр, закрывающая скобка или имя, не являющееся ключевым словом
+// (ключевое слово после себя операнд начинает, а не продолжает).
+func (tr *translator) prevEndsOperand() bool {
+	if tr.pos < 2 {
+		return false
+	}
+	prev := tr.tokens[tr.pos-2]
+	switch prev.kind {
+	case tNum, tStr, tRParen, tParam:
+		return true
+	case tIdent:
+		_, isKW := sqlKW(prev.val)
+		_, isAgg := sqlAgg(prev.val)
+		return !isKW && !isAgg
+	}
+	return false
+}
+
 func (tr *translator) advance() tok {
 	t := tr.tokens[tr.pos]
 	tr.pos++
@@ -4219,6 +4250,18 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			if agg, ok := sqlAgg(t.val); ok && tr.peek(0).kind == tLParen {
 				tr.emit(agg)
 			} else if kw, ok := sqlKW(t.val); ok {
+				// Составной постфиксный оператор «НЕ ЕСТЬ ПУСТО» — форма, которую
+				// предлагает конструктор отбора консоли. Пословная трансляция
+				// давала «NOT IS NULL»: постфиксная запись, которую не парсит ни
+				// одна СУБД (#1542). Разворачиваем тройку на месте. Префиксное
+				// отрицание не задето: у него после «НЕ» стоит выражение, а не
+				// пара «ЕСТЬ ПУСТО».
+				if kw == "NOT" && tr.nullCheckTripleAhead() {
+					tr.advance()
+					tr.advance()
+					tr.emit("IS NOT NULL")
+					continue
+				}
 				switch kw {
 				case "UNION":
 					// Каждая ветвь ОБЪЕДИНИТЬ — самостоятельный SELECT со своим
@@ -4281,6 +4324,15 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					tr.emit(lower)
 				} else if tr.section == sectionFrom && !prevDot {
 					tr.emit(lower)
+				} else if lower == "подобно" && tr.prevEndsOperand() && (tr.section == sectionWhere || tr.section == sectionHaving) {
+					// «ПОДОБНО» в позиции оператора сравнения — шаблон LIKE,
+					// который предлагает конструктор отбора (#1542). Имя не
+					// резервируется глобально: в позиции операнда (после ГДЕ,
+					// И, НЕ, скобки, запятой) слово уходит в ветки поля ниже,
+					// поэтому существующее поле или алиас «Подобно» работает
+					// как раньше — в том числе рядом с оператором:
+					// «ГДЕ Подобно ПОДОБНО "а%"».
+					tr.emit("LIKE")
 				} else if rd := tr.findRefDim(lower); rd != nil && !prevDot {
 					if nextIsDot {
 						if err := tr.assertSingleHopNavigation(rd); err != nil {
