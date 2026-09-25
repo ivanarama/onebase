@@ -180,15 +180,17 @@ func extractFormatParam(fmtStr, key string) string {
 // СОВМЕСТИМОСТЬ. До этой правки строчное «mm» означало МЕСЯЦ (регистр не
 // различался), и конфигурации с «ДФ=dd.mm.yyyy» существуют. Прочитать его как
 // минуты значило бы молча заменить месяц минутами — ровно тот дефект, который
-// здесь и чинится. Поэтому строчное «mm»/«мм» читается минутами только там, где
-// в шаблоне ЕСТЬ часы: без часов минуты бессмысленны, а «дд.мм.гггг» продолжает
-// печатать месяц. Явное «MM» — всегда месяц, «HH:mm» — всегда часы и минуты.
+// здесь и чинится. Поэтому строчное «mm»/«мм» читается минутами, когда шаблон
+// говорит временем: ЕСТЬ часы, ЛИБО есть секунды и при этом нет ни года, ни
+// дня — «мм:сс» это минуты:секунды, а «месяц:секунды» не осмысленный шаблон
+// (#1541). Шаблон с годом или днём («дд.мм.гггг») продолжает печатать месяц.
+// Явное «MM» — всегда месяц, «HH:mm» — всегда часы и минуты.
 func formatDate(t time.Time, pattern string) string {
 	// Замены не перекрываются и не перечитывают уже подставленное, а порядок
 	// аргументов задаёт приоритет: «yyyy» пробуется раньше «yy», иначе год
 	// превратился бы в «0606».
 	minute := goLayoutMonth
-	if hasHourToken(pattern) {
+	if hasHourToken(pattern) || isMinutesSecondsPattern(pattern) {
 		minute = goLayoutMinute
 	}
 	return t.Format(strings.NewReplacer(
@@ -225,6 +227,21 @@ func hasHourToken(pattern string) bool {
 		}
 	}
 	return false
+}
+
+// isMinutesSecondsPattern — шаблон вида «мм:сс»: есть секунды и нет ни года,
+// ни дня. «Месяц:секунды» не осмысленный шаблон, поэтому в этом контексте
+// строчное «mm»/«мм» читается минутами (#1541). Год или день возвращают
+// старое прочтение-совместимость: «дд.мм.гггг» существующих конфигураций
+// печатает месяц, как и раньше.
+func isMinutesSecondsPattern(pattern string) bool {
+	if !strings.Contains(pattern, "ss") && !strings.Contains(pattern, "сс") {
+		return false
+	}
+	if strings.Contains(pattern, "yy") || strings.Contains(pattern, "гг") {
+		return false
+	}
+	return !strings.Contains(pattern, "dd") && !strings.Contains(pattern, "дд")
 }
 
 // formatNumber formats a float with given decimal places and thousands separator.
