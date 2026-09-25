@@ -141,10 +141,13 @@ func (h *handler) buildPreviewContext(r *http.Request, b *Base, entityName strin
 	// Однократная загрузка проекта.
 	proj, err := h.loadProjectFor(ctx, b)
 	if err != nil {
-		// нет метаданных — минимальная синтетика без структуры.
+		// нет метаданных — минимальная синтетика без структуры. Имя сущности
+		// из запроса/макета сохраняем: корневой квалификатор
+		// ({{Реализация.Номер}}) должен резолвиться и без структуры (#1602).
 		return &printform.RenderContext{
 			Document:   map[string]any{"Номер": "000000001", "Дата": "01.01.2025"},
 			TableParts: map[string][]map[string]any{},
+			EntityName: entityName,
 		}
 	}
 	defer proj.Close()
@@ -161,10 +164,12 @@ func (h *handler) buildPreviewContext(r *http.Request, b *Base, entityName strin
 		ent = refEntities[strings.ToLower(entityName)]
 	}
 	if ent == nil {
-		// нет метаданных — минимальная синтетика без структуры.
+		// нет метаданных — минимальная синтетика без структуры; имя из
+		// запроса/макета сохраняем (см. выше).
 		return &printform.RenderContext{
 			Document:   map[string]any{"Номер": "000000001", "Дата": "01.01.2025"},
 			TableParts: map[string][]map[string]any{},
+			EntityName: entityName,
 		}
 	}
 
@@ -209,6 +214,7 @@ func (h *handler) loadLastRecordContext(ctx context.Context, b *Base, ent *metad
 		TableParts:     tpRows,
 		Constants:      constants,
 		Refs:           refs,
+		EntityName:     ent.Name,
 		RichTextFields: printform.RichTextFields(ent),
 	}
 }
@@ -287,6 +293,7 @@ func syntheticContext(ent *metadata.Entity) *printform.RenderContext {
 		Document:       doc,
 		TableParts:     tpRows,
 		Constants:      map[string]any{},
+		EntityName:     ent.Name,
 		RichTextFields: printform.RichTextFields(ent),
 	}
 }
