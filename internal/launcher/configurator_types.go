@@ -162,6 +162,12 @@ type saveEntity struct {
 	// `presentation: Артикул` в список из одного элемента, то есть переписал бы
 	// файл, которого автор не трогал.
 	Presentation yaml.Node `yaml:"presentation,omitempty"`
+	// OrderBy — порядок списка по умолчанию. Как и presentation, принимает
+	// строку или список, поэтому сырой узел сохраняет исходную форму YAML при
+	// любом редактировании реквизитов в конфигураторе.
+	OrderBy           yaml.Node `yaml:"order_by,omitempty"`
+	ChoicePreview     string    `yaml:"choice_preview,omitempty"`
+	ChoicePreviewProc string    `yaml:"choice_preview_proc,omitempty"`
 }
 
 type saveRegister struct {

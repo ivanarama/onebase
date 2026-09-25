@@ -22,6 +22,8 @@ list_mode: tiles
 list_refresh_on:
   - ПоступлениеТоваров
 notify_changes: true
+choice_preview: Информация
+choice_preview_proc: Памятки.ДляПодбора
 indexes:
   - fields: [Артикул]
     unique: true
@@ -43,6 +45,8 @@ fields:
     type: string
   - name: Фото
     type: image
+  - name: Информация
+    type: richtext
 `)
 
 	form := url.Values{}
@@ -54,6 +58,8 @@ fields:
 	form.Set("field.1.type", "string")
 	form.Set("field.2.name", "Фото")
 	form.Set("field.2.type", "image")
+	form.Set("field.3.name", "Информация")
+	form.Set("field.3.type", "richtext")
 	// пользователь добавил реквизит — ровно то действие, после которого ключи и пропадали
 	form.Set("new_field.1.name", "Поставщик")
 	form.Set("new_field.1.type", "string")
@@ -69,6 +75,8 @@ fields:
 		"list_mode: tiles",
 		"ПоступлениеТоваров", // list_refresh_on
 		"notify_changes: true",
+		"choice_preview: Информация",
+		"choice_preview_proc: Памятки.ДляПодбора",
 		"unique: true", // indexes
 		"image: Фото",  // tile_view
 		"detail_panel:",

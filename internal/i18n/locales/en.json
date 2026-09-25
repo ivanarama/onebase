@@ -1457,4 +1457,6 @@
   "Команда формы ещё выполняется. Дождитесь её завершения.": "A form command is still running. Wait for it to finish.",
   "Сначала завершите или восстановите проверку закрытия формы.": "Finish or recover the pending close check first.",
   "Результат уже сохранён. Скопируйте текущие правки и перезагрузите форму перед продолжением.": "The result has already been saved. Copy your current edits and reload the form before continuing.",
-  "Исход операции неизвестен. Проверьте данные в отдельной вкладке и перезагрузите форму; повторная запись заблокирована.": "The operation outcome is unknown. Check the data in another tab and reload the form; further writes are blocked."}
+  "Исход операции неизвестен. Проверьте данные в отдельной вкладке и перезагрузите форму; повторная запись заблокирована.": "The operation outcome is unknown. Check the data in another tab and reload the form; further writes are blocked.",
+  "Пояснение недоступно: повторите запрос": "Preview unavailable: retry the request"
+}

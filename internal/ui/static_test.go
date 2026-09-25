@@ -309,3 +309,36 @@ func TestStaticJSRevalidates(t *testing.T) {
 		}
 	}
 }
+
+// TestPickerDialogIsVisible сторожит класс потерь, на который уже наступили в
+// ветке: диалог подбора (ПоказатьПодбор) создаётся синхронно — строки и колонки
+// целиком приезжают в payload, — и показать его обратно в openItemPicker нечем.
+// Стоит там появиться visibility:hidden (например, при переносе отложенного
+// показа с формы выбора по ссылке, где ширина окна зависит от ответа сервера),
+// и окно откроется невидимым: сервер отвечает, клиент честно строит диалог, на
+// экране не происходит ничего, а кнопка подбора выглядит неработающей. Именно
+// так это и выглядело двое суток на ветке области просмотра (#1395), пока
+// скрытие не сняли.
+func TestPickerDialogIsVisible(t *testing.T) {
+	src := string(uiJS)
+	const anchor = "modal.id = '_item-picker-modal'"
+	at := strings.Index(src, anchor)
+	if at < 0 {
+		t.Fatal("ui.js: не найдено создание диалога подбора _item-picker-modal")
+	}
+	// Смотрим ИМЕННО стиль окна, а не текст рядом: комментарий над строкой
+	// объясняет, почему диалог не прячут, и слово из него ложно роняло проверку.
+	const style = "modal.style.cssText = '"
+	off := strings.Index(src[at:], style)
+	if off < 0 {
+		t.Fatal("ui.js: у диалога подбора не найдено присвоение modal.style.cssText")
+	}
+	css := src[at+off+len(style):]
+	if end := strings.Index(css, "'"); end >= 0 {
+		css = css[:end]
+	}
+	if strings.Contains(css, "visibility:hidden") {
+		t.Error("ui.js: диалог подбора создаётся скрытым, а показать его обратно в openItemPicker нечем — " +
+			"окно откроется невидимым, и любой ПоказатьПодбор выглядит как неработающая кнопка")
+	}
+}

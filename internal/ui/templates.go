@@ -315,6 +315,19 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return infoRegisterDetailPanelJSONTranslated(ir, row, lang, periodTitle,
 				func(key string) string { return translate(lang, key) })
 		},
+		// choiceContextJSON — карта «имя параметра → путь к контролу» для
+		// data-ref-context. Значения намеренно не подставляются при серверном
+		// рендере: браузер читает текущие контролы перед каждым запросом подбора.
+		"choiceContextJSON": func(el *metadata.FormElement) string {
+			if el == nil || len(el.ChoiceContext) == 0 {
+				return ""
+			}
+			raw, err := json.Marshal(el.ChoiceContext)
+			if err != nil {
+				return ""
+			}
+			return string(raw)
+		},
 		"isRichText": func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
 		"isImage":    func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
 		"fieldNamesCSV": func(fields []metadata.Field) string {
