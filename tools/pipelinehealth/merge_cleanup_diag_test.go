@@ -63,7 +63,7 @@ func dropFromMergeShepherd(t *testing.T, skillsRoot, dropFragment string) {
 		if !strings.Contains(string(data), dropFragment) {
 			continue
 		}
-		clean := strings.Replace(string(data), dropFragment, "фрагмент-убран-тестом", -1)
+		clean := strings.ReplaceAll(string(data), dropFragment, "фрагмент-убран-тестом")
 		if err := os.WriteFile(path, []byte(clean), 0o600); err != nil { //nolint:gosec // G703: test-owned path below t.TempDir
 			t.Fatal(err)
 		}
