@@ -2642,9 +2642,18 @@ require(['vs/editor/editor.main'], function() {
     }
     return matches.length===1 ? matches[0] : null;
   }
-  function _lrScanCalls(text){
-    var stack=[];
-    var quoted=false;
+  // _lrEachSignificant идёт по тексту так же, как лексер DSL: пропускает
+  // строковые литералы (с удвоенными кавычками), комментарии «//» до конца
+  // строки и строки директив «#», вызывая cb(символ, индекс) для остальных
+  // символов. Скобка или запятая в комментарии не должны ни прятать активный
+  // вызов, ни сдвигать номер параметра (#1562), поэтому подсказка сигнатуры
+  // смотрит только на значимые символы.
+  //
+  // «#» — директива только в начале строки (до него на строке пробелы/табы) —
+  // то же правило, что directiveLineStart в internal/dsl/lexer; в середине
+  // выражения «#» значим. «//» и «#» внутри строки остаются текстом.
+  function _lrEachSignificant(text, cb){
+    var quoted=false, lineIndent=true;
     for(var i=0;i<text.length;i++){
       var ch=text[i];
       if(quoted){
@@ -2653,25 +2662,34 @@ require(['vs/editor/editor.main'], function() {
         continue;
       }
       if(ch==='"'){quoted=true;continue;}
+      if(ch==='/' && text[i+1]==='/'){
+        while(i<text.length && text[i] !== '\n')i++;
+        continue; // сам перевод строки обработается следующей итерацией
+      }
+      if(ch==='#' && lineIndent){
+        while(i<text.length && text[i] !== '\n')i++;
+        continue;
+      }
+      if(ch==='\n')lineIndent=true;
+      else if(ch!==' ' && ch!=='\t' && ch!=='\r')lineIndent=false;
+      cb(ch,i);
+    }
+  }
+  function _lrScanCalls(text){
+    var stack=[];
+    _lrEachSignificant(text,function(ch,i){
       if(ch==='(')stack.push(i);
       else if(ch===')' && stack.length)stack.pop();
-    }
+    });
     return stack.length ? stack[stack.length-1] : -1;
   }
   function _lrActiveParameter(args){
-    var depth=0,quoted=false,active=0;
-    for(var i=0;i<args.length;i++){
-      var ch=args[i];
-      if(quoted){
-        if(ch==='"' && args[i+1]==='"'){i++;continue;}
-        if(ch==='"')quoted=false;
-        continue;
-      }
-      if(ch==='"'){quoted=true;continue;}
+    var depth=0,active=0;
+    _lrEachSignificant(args,function(ch){
       if(ch==='(')depth++;
       else if(ch===')' && depth>0)depth--;
       else if(ch===',' && depth===0)active++;
-    }
+    });
     return active;
   }
   function _lrCallContext(text,data){
