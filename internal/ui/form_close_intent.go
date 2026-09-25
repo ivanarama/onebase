@@ -276,7 +276,17 @@ func (s *Server) prepareFormCloseInvocationWithPayload(r *http.Request, inv *for
 	issuedAtMS, issuedErr := strconv.ParseInt(strings.TrimSpace(value("_close_issued_at")), 10, 64)
 	issuedAt := time.UnixMilli(issuedAtMS)
 	now := time.Now()
-	allowNew := strings.TrimSpace(value("_close_epoch")) == formCloseProcessEpoch &&
+	// #1685: after a server restart the in-memory replay ledger cannot tell
+	// "never executed" from "executed, response lost", so every close from a
+	// stale-epoch page was fenced as reconcile. The browser knows it never sent
+	// this intent before and marks the FIRST attempt; such a marked intent may
+	// open a new ledger entry even on a foreign epoch. A retry after an
+	// unknown outcome never carries the mark, so unknown-outcome replays stay
+	// fenced exactly as before. The server trusts the mark deliberately: a
+	// lying client costs one close execution that never happened in the
+	// previous process — the accepted trade-off of triage variant 1.
+	firstAttempt := strings.TrimSpace(value("_close_first_attempt")) == "1"
+	allowNew := (strings.TrimSpace(value("_close_epoch")) == formCloseProcessEpoch || firstAttempt) &&
 		issuedErr == nil && issuedAtMS > 0 &&
 		!issuedAt.Before(now.Add(-formCloseReplayTTL)) &&
 		!issuedAt.After(now.Add(5*time.Minute))
@@ -416,7 +426,11 @@ func formCloseRequestFingerprint(r *http.Request) ([sha256.Size]byte, error) {
 	// Lifecycle metadata lives in fixed headers, not in form fields: entity
 	// fields and form attributes are allowed to use `_close_*` names. Bind the
 	// envelope to the payload hash so the same UUID cannot be replayed with a
-	// different mode, process proof, timestamp or route identity.
+	// different mode, process proof, timestamp or route identity. The
+	// first-attempt mark of #1685 is deliberately NOT hashed: an unknown-outcome
+	// retry strips the mark, and a stripped mark must still match the original
+	// entry for exact replay; the in-process ledger decides by entry existence,
+	// not by allowNew.
 	for _, name := range []string{
 		"_close_intent_id", "_close_epoch", "_close_issued_at",
 		"_close_reason", "_close_mode", "_close_client", "_close_schema", "_kind", "_id",

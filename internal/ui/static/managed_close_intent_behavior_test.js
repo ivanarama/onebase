@@ -466,6 +466,26 @@ test('network failure is fail-closed and its unknown result keeps the intent id'
 	}
 });
 
+test('first attempt carries the mark and its unknown-outcome retry is stripped of it (#1685)', async () => {
+  const calls = [];
+  const app = runtime(async (url, options) => {
+    calls.push({
+      intent: options.headers['X-OneBase-Close-Intent'],
+      first: options.headers['X-OneBase-Close-First-Attempt'],
+    });
+    if (calls.length === 1) throw new Error('response lost');
+    return response({ok: true, close: {intentId: calls[calls.length - 1].intent, allowed: true}});
+  });
+
+  assert.equal((await app.context.obRequestFormClose({reason: 'close'})).allowed, false);
+  app.advanceClock(5000);
+  assert.equal((await app.context.obRequestFormClose({reason: 'close'})).allowed, true);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].first, '1', 'fresh attempt must carry the first-attempt mark');
+  assert.equal(calls[1].first, '', 'unknown-outcome retry must not carry the first-attempt mark');
+  assert.equal(calls[1].intent, calls[0].intent, 'retry must reuse the exactly-once intent id');
+});
+
 test('unknown discard cannot authorize a later explicit save request', async () => {
   const calls = [];
   const app = runtime(async (url, options) => {
