@@ -24,6 +24,59 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 )
 
+// reconcileOwnerField приводит список, собранный HTML-редактором, к контракту
+// owner:. Синтетический реквизит существует в загруженной metadata.Entity, но
+// его может не быть в saveEntity (исходном YAML), поэтому обычного переноса id
+// по предыдущему файлу недостаточно: поле получало случайный f_*.
+func reconcileOwnerField(prev, next []saveField, owner string) []saveField {
+	owner = strings.TrimSpace(owner)
+	var previous saveField
+	hasPrevious := false
+	for _, field := range prev {
+		if strings.EqualFold(strings.TrimSpace(field.Name), metadata.StandardOwnerField) {
+			previous = field
+			hasPrevious = true
+			break
+		}
+	}
+	systemField := !hasPrevious || previous.ID == metadata.StandardOwnerFieldID
+
+	if owner == "" {
+		// Поле, материализованное предыдущим round-trip с std_owner, остаётся
+		// системным. При снятии owner оно не должно превращаться в случайный
+		// пользовательский реквизит. Поле с собственным id, напротив, явно
+		// объявлено конфигурацией и удаляется только обычной кнопкой редактора.
+		if systemField {
+			out := make([]saveField, 0, len(next))
+			for _, field := range next {
+				if !strings.EqualFold(strings.TrimSpace(field.Name), metadata.StandardOwnerField) {
+					out = append(out, field)
+				}
+			}
+			return out
+		}
+		return next
+	}
+
+	wantType := "reference:" + owner
+	for i := range next {
+		if !strings.EqualFold(strings.TrimSpace(next[i].Name), metadata.StandardOwnerField) {
+			continue
+		}
+		next[i].Name = metadata.StandardOwnerField
+		next[i].Type = wantType
+		if systemField {
+			next[i].ID = metadata.StandardOwnerFieldID
+		}
+		return next
+	}
+	return append([]saveField{{
+		ID:   metadata.StandardOwnerFieldID,
+		Name: metadata.StandardOwnerField,
+		Type: wantType,
+	}}, next...)
+}
+
 // ensureFieldIDs возвращает next с проставленными id: перенесёнными из prev по
 // имени реквизита либо сгенерированными. Заодно переносит ключи, которых
 // редактор не знает и потому не прислал бы обратно, — их список в

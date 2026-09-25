@@ -3216,6 +3216,9 @@ function obInitFormDelegates() {
       var form = document.getElementById(submitInput.getAttribute('data-ob-submit-form') || '');
       if (form) form.submit();
     }
+    // Сменили владельца (контрагента, направление) — перестраиваем списки,
+    // которые по нему отбираются.
+    if (e.target.name) obRefreshDependentSelects(e.target);
   });
   document.addEventListener('submit', function (e) {
     var form = e.target;
@@ -3234,6 +3237,13 @@ function obTPRefOpts() {
 function obTPRefMeta() {
   if (!window._tpRefMeta) window._tpRefMeta = obReadJSONScript('ob-tp-ref-meta', {});
   return window._tpRefMeta || {};
+}
+
+function obTPRefFilter() {
+  if (!window._tpRefFilter) {
+    window._tpRefFilter = (typeof obReadJSONScript === 'function') ? obReadJSONScript('ob-tp-ref-filter', {}) : {};
+  }
+  return window._tpRefFilter || {};
 }
 
 // Подписи и порядок значений перечислений колонок ТЧ (#1010). На managed-форме
@@ -3259,6 +3269,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
   var tr = document.createElement('tr');
   var refOpts = (obTPRefOpts()[tpName]) || {};
   var refMeta = (obTPRefMeta()[tpName]) || {};
+  var refFilter = (obTPRefFilter()[tpName]) || {};
   var enumLabels = (obTPEnumLabels()[tpName]) || {};
   var enumOrder = (obTPEnumOrder()[tpName]) || {};
   var bools = Array.isArray(boolFields) ? boolFields : [];
@@ -3284,6 +3295,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
         sel.setAttribute('data-ref-entity', meta.entity);
         if (meta.allowCreate) sel.setAttribute('data-ref-allow-create', '1');
       }
+      if (refFilter[fn]) sel.setAttribute('data-ref-filter', refFilter[fn]);
       var defOpt = document.createElement('option');
       defOpt.value = '';
       defOpt.textContent = '— выбрать —';
@@ -3690,6 +3702,69 @@ function openItemPicker(payload, elementName, eventContext) {
   });
 }
 
+// ── Отбор подбора: подчинённые справочники и связи параметров выбора ──────────
+//
+// Разметка несёт на поле data-ref-filter вида
+//     {"Владелец":{"from":"Контрагент","value":"<uuid>"}}
+// «from» — имя поля-источника НА ЭТОЙ ЖЕ форме, «value» — его значение на момент
+// отрисовки. Живое поле важнее: пользователь мог сменить контрагента секунду
+// назад, до того как форма съездила на сервер. Значение из разметки — запасной
+// вариант для источника, которого на форме нет (реквизит объекта, не вынесенный
+// на форму).
+function obRefFilterValues(sel) {
+  if (!sel || !sel.getAttribute) return null;
+  var raw = sel.getAttribute('data-ref-filter');
+  if (!raw) return null;
+  var spec;
+  try { spec = JSON.parse(raw); } catch (e) { return null; }
+  var scope = (sel.closest && sel.closest('form')) || document;
+  var out = {};
+  var any = false;
+  for (var key in spec) {
+    if (!Object.prototype.hasOwnProperty.call(spec, key)) continue;
+    var item = spec[key] || {};
+    var value = item.value || '';
+    if (item.from) {
+      var src = scope.querySelector('[name="' + (window.CSS && CSS.escape ? CSS.escape(item.from) : item.from) + '"]');
+      if (src) value = src.value || '';
+    }
+    // Ключ кладём даже с пустым значением: сервер по нему отличает «владельца
+    // ещё не выбрали» (список пуст) от «на этой форме владельца не спрашивают»
+    // (список целиком).
+    out[key] = value;
+    any = true;
+  }
+  return any ? out : null;
+}
+
+// obRefFilterParam — тот же отбор строкой для запроса /ui/_ref-options.
+function obRefFilterParam(sel) {
+  var values = obRefFilterValues(sel);
+  if (!values) return '';
+  return '&flt=' + encodeURIComponent(JSON.stringify(values));
+}
+window.obRefFilterParam = obRefFilterParam;
+window.obRefFilterValues = obRefFilterValues;
+
+// obRefreshDependentSelects — сменили контрагента: списки, отобранные по нему,
+// перестраиваем сразу, не дожидаясь перерисовки формы. Значение, выпавшее из
+// нового отбора, очищаем: договор чужого контрагента в поле — это молча
+// сохранённая ошибка, а пустое поле человек видит.
+function obRefreshDependentSelects(sourceEl) {
+  if (!sourceEl || !sourceEl.name || !window.fetch) return;
+  var scope = (sourceEl.closest && sourceEl.closest('form')) || document;
+  var targets = scope.querySelectorAll('select[data-ref-filter]');
+  for (var i = 0; i < targets.length; i++) {
+    var sel = targets[i];
+    var raw = sel.getAttribute('data-ref-filter');
+    if (!raw || raw.indexOf('"' + sourceEl.name + '"') < 0) continue;
+    // Один sequenced-запрос обслуживает одновременно owner: и choice_filter.
+    // Второй независимый fetch здесь создавал гонку: поздний ответ одного
+    // контракта перетирал уже применённый ответ второго.
+    obRefreshChoiceSelect(sel, false);
+  }
+}
+
 // refContextForRequest собирает choice_context из ТЕКУЩИХ контролов формы.
 // В data-ref-context лежит карта «параметр → путь», а не значения серверного
 // рендера: пользователь мог поменять Филиал уже после открытия карточки.
@@ -3702,7 +3777,7 @@ function refContextForRequest(sel) {
   try { paths = JSON.parse(raw); } catch (e) { return ''; }
   if (!paths || typeof paths !== 'object' || Array.isArray(paths)) return '';
   var context = Object.create(null);
-  Object.keys(paths).forEach(function (name) {
+  Object.keys(paths).sort().forEach(function (name) {
     var parts = String(paths[name] == null ? '' : paths[name]).split('.');
     var fieldName = parts[parts.length - 1];
     var control = fieldName ? sel.form.elements.namedItem(fieldName) : null;
@@ -3792,7 +3867,55 @@ function obRefChoiceSnapshot(sel) {
   return {
     query: query,
     fingerprint: JSON.stringify([ctx.form_entity, ctx.form, ctx.element, fingerprintParts]),
-    selected: sel.value == null ? '' : String(sel.value)
+    selected: sel.value == null ? '' : String(sel.value),
+    sources: values
+  };
+}
+
+// obRefRequestSnapshot объединяет автоматический owner: и явный choice_filter
+// в один запрос, один fingerprint и одну последовательность ответов. Сервер
+// соединяет Filters и ChoicePredicates через AND; браузер больше не может
+// применить половину контекста отдельным поздним ответом.
+function obRefRequestSnapshot(sel) {
+  if (!sel || !sel.getAttribute) return null;
+  var hasChoice = !!sel.getAttribute('data-ref-choice-context');
+  var choice = hasChoice ? obRefChoiceSnapshot(sel) : null;
+  var filters = obRefFilterValues(sel);
+  if (!hasChoice && !filters) return null;
+
+  var filterParts = [];
+  if (filters) {
+    Object.keys(filters).sort().forEach(function (key) {
+      filterParts.push([key, filters[key] == null ? '' : String(filters[key])]);
+    });
+  }
+  var query = hasChoice ? (choice ? choice.query : '&form_entity=') : '';
+  if (filters) query += '&flt=' + encodeURIComponent(JSON.stringify(filters));
+  var selected = sel.value == null ? '' : String(sel.value);
+  if (!choice && selected) query += '&selected_id=' + encodeURIComponent(selected);
+  return {
+    query: query,
+    fingerprint: JSON.stringify([choice ? choice.fingerprint : '', filterParts]),
+    selected: selected,
+    filters: filters || {},
+    choiceSources: choice ? choice.sources : {}
+  };
+}
+
+// The picker POST sends preview context in addition to the owner/choice-filter
+// snapshot. Keep one exact fingerprint for everything that is actually sent so
+// an older response can never repaint a picker after a form event changes a
+// preview source value.
+function obRefPickerRequestSnapshot(sel) {
+  if (!sel || !sel.getAttribute) return null;
+  var base = obRefRequestSnapshot(sel);
+  var contextRaw = sel.getAttribute('data-ref-context') ? refContextForRequest(sel) : '';
+  var selected = sel.value == null ? '' : String(sel.value);
+  return {
+    base: base,
+    contextRaw: contextRaw,
+    selected: selected,
+    fingerprint: JSON.stringify([base ? base.fingerprint : '', contextRaw, selected])
   };
 }
 
@@ -3887,10 +4010,11 @@ function obChoiceRefreshState(sel) {
 }
 
 function obRefreshChoiceSelect(sel, force) {
-  if (!sel || !sel.getAttribute || !sel.getAttribute('data-ref-choice-context') || !window.fetch) {
+  if (!sel || !sel.getAttribute ||
+      (!sel.getAttribute('data-ref-choice-context') && !sel.getAttribute('data-ref-filter')) || !window.fetch) {
     return Promise.resolve();
   }
-  var snapshot = obRefChoiceSnapshot(sel);
+  var snapshot = obRefRequestSnapshot(sel);
   if (!snapshot) return Promise.resolve();
   var state = obChoiceRefreshState(sel);
 
@@ -3928,7 +4052,7 @@ function obRefreshChoiceSelect(sel, force) {
     })
     .then(function (data) {
       if (seq !== state.seq || !obChoiceSelectIsLive(sel)) return;
-      var current = obRefChoiceSnapshot(sel);
+      var current = obRefRequestSnapshot(sel);
       if (!current || current.fingerprint !== snapshot.fingerprint || current.selected !== snapshot.selected) {
         state.pendingFingerprint = '';
         state.pendingSelected = '';
@@ -3949,7 +4073,7 @@ function obRefreshChoiceSelect(sel, force) {
       state.pendingSelected = '';
       state.controller = null;
       state.promise = null;
-      var current = obRefChoiceSnapshot(sel);
+      var current = obRefRequestSnapshot(sel);
       if (!current || current.fingerprint !== snapshot.fingerprint) {
         return obRefreshChoiceSelect(sel, false);
       }
@@ -3962,25 +4086,32 @@ function obRefreshChoiceSelect(sel, force) {
     });
 
   var picker = document.getElementById('_ref-picker-modal');
-  if (picker && window._rpTarget === sel && typeof picker._obChoiceReload === 'function') {
-    picker._obChoiceReload();
+  if (picker && window._rpTarget === sel && typeof picker._obChoiceReloadIfChanged === 'function') {
+    picker._obChoiceReloadIfChanged();
   }
   return state.promise;
 }
 
 window.obRefreshChoiceFilters = function () {
   if (!document.querySelectorAll) return Promise.resolve([]);
-  var selects = document.querySelectorAll('select[data-ref-choice-context]');
+  var selects = document.querySelectorAll('select[data-ref-choice-context],select[data-ref-filter]');
   var pending = [];
   for (var i = 0; i < selects.length; i++) pending.push(obRefreshChoiceSelect(selects[i], false));
+  // A preview-only picker has data-ref-context but no choice/filter GET
+  // contract, so it is intentionally absent from selects above. It still has
+  // to follow both native changes and values applied by an async form event.
+  var picker = document.getElementById('_ref-picker-modal');
+  if (picker && typeof picker._obChoiceReloadIfChanged === 'function') {
+    picker._obChoiceReloadIfChanged();
+  }
   return Promise.all(pending);
 };
 
 function obInitChoiceFilterRefresh() {
   if (!document.querySelectorAll) return;
-  var selects = document.querySelectorAll('select[data-ref-choice-context]');
+  var selects = document.querySelectorAll('select[data-ref-choice-context],select[data-ref-filter]');
   for (var i = 0; i < selects.length; i++) {
-    var snapshot = obRefChoiceSnapshot(selects[i]);
+    var snapshot = obRefRequestSnapshot(selects[i]);
     if (snapshot) obChoiceRefreshState(selects[i]).appliedFingerprint = snapshot.fingerprint;
   }
   document.addEventListener('change', function () { window.obRefreshChoiceFilters(); });
@@ -4190,10 +4321,11 @@ function openRefPicker(selOrId) {
     if (requestController) requestController.abort();
     requestController = window.AbortController ? new window.AbortController() : null;
     if (status) status.textContent = 'Загрузка...';
-    var choiceSnapshot = obRefChoiceSnapshot(sel);
-    var choiceQuery = choiceSnapshot ? choiceSnapshot.query : obRefChoiceQuery(sel);
-    var choiceFingerprint = choiceSnapshot ? choiceSnapshot.fingerprint : '';
-    var choiceSelected = sel.value == null ? '' : String(sel.value);
+    var exactSnapshot = obRefPickerRequestSnapshot(sel);
+    var requestSnapshot = exactSnapshot ? exactSnapshot.base : null;
+    var requestQuery = requestSnapshot ? requestSnapshot.query : obRefChoiceQuery(sel);
+    var requestFingerprint = exactSnapshot ? exactSnapshot.fingerprint : '';
+    modal._obLastRequestFingerprint = requestFingerprint;
     // План 168: у элемента с choice_context страница запрашивается POST-ом
     // /_ref-options/{entity}/page — значения незаписанной формы не попадают в
     // URL и access log, а allowlist контекста сервер восстанавливает сам.
@@ -4201,7 +4333,7 @@ function openRefPicker(selOrId) {
     // тихий откат к списку без просмотра запрещён.
     var refContextRaw = sel.getAttribute('data-ref-context') || '';
     var usePreviewPage = !!refContextRaw;
-    var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + encodeURIComponent(q || '') + choiceQuery;
+    var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + encodeURIComponent(q || '') + requestQuery;
     var fetchOptions = { credentials: 'same-origin', headers: { 'Accept': 'application/json' } };
     if (requestController) fetchOptions.signal = requestController.signal;
     if (usePreviewPage) {
@@ -4209,39 +4341,48 @@ function openRefPicker(selOrId) {
       fetchOptions.method = 'POST';
       fetchOptions.headers['Content-Type'] = 'application/json';
       var sourceElement = sel.getAttribute('data-ref-element') || '';
+      var sourceEntity = sel.getAttribute('data-ref-source-entity') || '';
+      var sourceForm = sel.getAttribute('data-ref-source-form') || '';
       var contextValues = {};
       try {
-        var bindings = JSON.parse(refContextRaw);
-        Object.keys(bindings).forEach(function (name) {
-          var parts = String(bindings[name]).split('.');
-          var control = sel.form && sel.form.elements ? sel.form.elements.namedItem(parts[parts.length - 1]) : null;
-          contextValues[name] = control && control.value != null ? String(control.value) : '';
-        });
+        contextValues = JSON.parse(exactSnapshot && exactSnapshot.contextRaw ? exactSnapshot.contextRaw : '{}');
       } catch (e) {}
       fetchOptions.body = JSON.stringify({
         q: q || '', limit: 50, offset: 0,
-        source: { entity: refEntity, element: sourceElement },
-        context: contextValues
+        source: { entity: sourceEntity, form: sourceForm, element: sourceElement },
+        context: contextValues,
+        filters: requestSnapshot ? requestSnapshot.filters : {},
+        choice_sources: requestSnapshot ? requestSnapshot.choiceSources : {}
       });
+    }
+    function requestIsCurrent() {
+      if (seq !== requestSeq || !obChoiceSelectIsLive(sel) || !obChoiceSelectIsLive(modal)) return false;
+      var current = obRefPickerRequestSnapshot(sel);
+      if (!current || current.fingerprint !== requestFingerprint) {
+        loadServer(search ? search.value : q);
+        return false;
+      }
+      return true;
     }
     fetch(url, fetchOptions)
       .then(function (resp) {
+        if (!requestIsCurrent()) {
+          var stale = new Error('stale picker request');
+          stale.name = 'AbortError';
+          throw stale;
+        }
         if (resp.status === 422) {
-          // Пояснение недоступно: блокируем выбор (fail-closed, инвариант 10).
-          rpPreviewField = '';
-          rpReveal();
-          renderItems([], '');
-          if (status) status.textContent = 'Пояснение недоступно: повторите запрос';
-          throw new Error('preview-unavailable');
+          // DOM is changed only in catch, after the sequence and exact context
+          // guards. Otherwise an old A=422 could erase newer B=200 rows.
+          var unavailable = new Error('preview-unavailable');
+          unavailable.previewUnavailable = true;
+          throw unavailable;
         }
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         return resp.json();
       })
       .then(function (data) {
-        var currentSnapshot = obRefChoiceSnapshot(sel);
-        if (seq !== requestSeq || !obChoiceSelectIsLive(sel) || !obChoiceSelectIsLive(modal)) return;
-        if (choiceSnapshot && (!currentSnapshot || currentSnapshot.fingerprint !== choiceFingerprint ||
-            (sel.value == null ? '' : String(sel.value)) !== choiceSelected)) return;
+        if (!requestIsCurrent()) return;
         var keep = rpActiveId();
         var rows = (data && data.items) || [];
         rpPreviewField = (data && data.preview) || '';
@@ -4260,12 +4401,27 @@ function openRefPicker(selOrId) {
         }
       })
       .catch(function (err) {
-        if (seq !== requestSeq) return;
+        if (seq !== requestSeq || !obChoiceSelectIsLive(sel) || !obChoiceSelectIsLive(modal)) return;
+        var current = obRefPickerRequestSnapshot(sel);
+        if (!current || current.fingerprint !== requestFingerprint) {
+          loadServer(search ? search.value : q);
+          return;
+        }
         if (err && err.name === 'AbortError') return;
+        // choice_preview is an authoritative POST path. Any transport, access
+        // or server failure must clear even previously rendered rows: falling
+        // back to local <option>s would allow a pick without preview/RBAC.
+        if (usePreviewPage) {
+          rpPreviewField = '';
+          renderItems([], '');
+          rpReveal();
+          if (status) status.textContent = 'Пояснение недоступно: повторите запрос';
+          return;
+        }
         // A form-scoped picker is server-authoritative. Falling back to an
         // untrusted or stale full list would bypass choice_filter; retain the
         // already rendered filtered options and surface the failure instead.
-        if (sel.getAttribute('data-ref-choice-context')) {
+        if (sel.getAttribute('data-ref-choice-context') || sel.getAttribute('data-ref-filter')) {
           if (status) status.textContent = 'Ошибка загрузки';
           return;
         }
@@ -4282,6 +4438,11 @@ function openRefPicker(selOrId) {
   }
   modal._obClose = closePicker;
   modal._obChoiceReload = function () { loadServer(search ? search.value : ''); };
+  modal._obChoiceReloadIfChanged = function () {
+    var current = obRefPickerRequestSnapshot(sel);
+    if (!current || current.fingerprint === modal._obLastRequestFingerprint) return;
+    loadServer(search ? search.value : '');
+  };
   search.focus();
   search.addEventListener('input', function () {
     var q = this.value;

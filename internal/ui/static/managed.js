@@ -230,6 +230,8 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   }
 
   window._tpRefOpts = obManagedReadJSON('ob-managed-tp-ref-opts', window._tpRefOpts || {}) || {};
+  window._tpRefMeta = obManagedReadJSON('ob-tp-ref-meta', window._tpRefMeta || {}) || {};
+  window._tpRefFilter = obManagedReadJSON('ob-tp-ref-filter', window._tpRefFilter || {}) || {};
   window._tpEnumLabels = obManagedReadJSON('ob-managed-tp-enum-labels', window._tpEnumLabels || {}) || {};
   window._tpEnumOrder = obManagedReadJSON('ob-managed-tp-enum-order', window._tpEnumOrder || {}) || {};
 
@@ -552,6 +554,8 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       const hiddenNames = obManagedHiddenColumnNames(tbody);
       const rows = tps[tpName] || [];
       const refOpts = (window._tpRefOpts && window._tpRefOpts[tpName]) || {};
+      const refMeta = (window._tpRefMeta && window._tpRefMeta[tpName]) || {};
+      const refFilter = (window._tpRefFilter && window._tpRefFilter[tpName]) || {};
       const tpEnumLabels = (window._tpEnumLabels && window._tpEnumLabels[tpName]) || {};
       const tpEnumOrder = (window._tpEnumOrder && window._tpEnumOrder[tpName]) || {};
       const hasCmd = tbody.getAttribute('data-tp-cmd') === '1';
@@ -591,16 +595,23 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
           const v = row[f.name];
           const isRef = f.type === 'reference' || f.type.indexOf('reference') === 0;
           const isEnum = f.type === 'enum' || f.type.indexOf('enum') === 0;
-          if (isRef && refOpts[f.name]) {
+          if (isRef && (refOpts[f.name] !== undefined || refMeta[f.name])) {
+            const wrapper = document.createElement('div');
+            wrapper.style.cssText = 'display:flex;gap:4px;align-items:center';
             const sel = document.createElement('select');
             sel.name = 'tp.' + tpName + '.' + idx + '.' + f.name;
+            sel.style.flex = '1';
+            const meta = refMeta[f.name] || {};
+            if (meta.entity) sel.setAttribute('data-ref-entity', meta.entity);
+            if (meta.allowCreate) sel.setAttribute('data-ref-allow-create', '1');
+            if (refFilter[f.name]) sel.setAttribute('data-ref-filter', refFilter[f.name]);
             const empty = document.createElement('option');
             empty.value = ''; empty.textContent = '— выбрать —';
             sel.appendChild(empty);
             // v приходит сериализованным как UUID-string (serializeTablePartRows),
             // но на всякий случай учитываем и legacy-формат с GetRefUUID-методом.
             const cur = (v && typeof v === 'object' && v.GetRefUUID) ? v.GetRefUUID() : (v == null ? '' : String(v));
-            refOpts[f.name].forEach(function(opt){
+            (refOpts[f.name] || []).forEach(function(opt){
               const o = document.createElement('option');
               o.value = opt.id;
               o.textContent = opt._label;
@@ -608,7 +619,28 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
               sel.appendChild(o);
             });
             sel.disabled = readOnly;
-            td.appendChild(sel);
+            wrapper.appendChild(sel);
+
+            const pickBtn = document.createElement('button');
+            pickBtn.type = 'button';
+            pickBtn.textContent = '...';
+            pickBtn.title = 'Выбрать из списка';
+            pickBtn.style.cssText = 'padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0';
+            pickBtn.setAttribute('data-ob-ref-picker', 'closest');
+            pickBtn.disabled = readOnly;
+            wrapper.appendChild(pickBtn);
+
+            if (meta.entity) {
+              const openBtn = document.createElement('button');
+              openBtn.type = 'button';
+              openBtn.textContent = '🔍';
+              openBtn.title = 'Открыть карточку';
+              openBtn.style.cssText = 'padding:4px 7px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0';
+              openBtn.setAttribute('data-ob-ref-current', 'closest');
+              openBtn.setAttribute('data-ob-readonly-navigation', '1');
+              wrapper.appendChild(openBtn);
+            }
+            td.appendChild(wrapper);
           } else if (isEnum && tpEnumLabels[f.name]) {
             const enumLabMap = tpEnumLabels[f.name];
             const sel = document.createElement('select');
@@ -2412,10 +2444,24 @@ obManagedReady(obManagedInitDelegates);
     var wrapper, input, dropBtn, list;
     var isOpen = false, selectedId = '', defaultValue = '';
     var refEntity = (args.column && args.column.refEntity) || '';
+    var refFilter = (args.column && args.column.refFilter) || '';
     var serverRows = [];   // последний ответ серверного поиска
     var shown = [];        // что сейчас отрисовано в списке (для ↑/↓ и Enter)
     var activeIdx = -1;    // подсвеченный пункт списка, -1 — нет подсветки
     var searchTimer = null, searchSeq = 0;
+
+    function refFilterCarrier() {
+      if (!refFilter) return null;
+      var carrier = document.createElement('select');
+      carrier.setAttribute('data-ref-filter', refFilter);
+      return carrier;
+    }
+
+    function refFilterQuery() {
+      var carrier = refFilterCarrier();
+      if (!carrier || typeof window.obRefFilterParam !== 'function') return '';
+      return window.obRefFilterParam(carrier);
+    }
 
     function label(id) {
       for (var k = 0; k < refOptsList.length; k++) {
@@ -2449,7 +2495,13 @@ obManagedReady(obManagedInitDelegates);
         seen[key] = true;
         out.push({id: o.id, _label: lbl});
       }
-      for (var i = 0; i < refOptsList.length; i++) push(refOptsList[i]);
+      // У owner:-колонки предзагруженный список относится к снимку шапки при
+      // рендере. После смены владельца он устаревает, поэтому кандидаты берём
+      // только из свежего серверного ответа; старый массив нужен лишь для
+      // подписи уже записанного значения.
+      if (!refFilter) {
+        for (var i = 0; i < refOptsList.length; i++) push(refOptsList[i]);
+      }
       for (var j = 0; j < serverRows.length; j++) push(serverRows[j]);
       return out;
     }
@@ -2546,7 +2598,7 @@ obManagedReady(obManagedInitDelegates);
       if (!refEntity || !window.fetch) return;
       var seq = ++searchSeq;
       var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) +
-                '?limit=50&q=' + encodeURIComponent(q || '');
+                '?limit=50&q=' + encodeURIComponent(q || '') + refFilterQuery();
       fetch(url, {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
         .then(function(resp) { if (!resp.ok) throw new Error('HTTP ' + resp.status); return resp.json(); })
         .then(function(data) {
@@ -2594,6 +2646,7 @@ obManagedReady(obManagedInitDelegates);
       if (typeof window.openRefPicker !== 'function') return;
       var selEl = document.createElement('select');
       selEl.setAttribute('data-ref-entity', refEntity);
+      if (refFilter) selEl.setAttribute('data-ref-filter', refFilter);
       // «+ Создать» в форме подбора включается тем же признаком колонки, что и
       // в автоформе (allow_inline_create у поля ТЧ). Без переноса на временный
       // select подбор из ячейки не давал создать элемент НИКОГДА, даже когда
@@ -2697,6 +2750,7 @@ obManagedReady(obManagedInitDelegates);
 
       input.focus();
       input.select();
+      if (refFilter) searchServer('');
     };
 
     this.destroy = function() {
@@ -2937,7 +2991,7 @@ obManagedReady(obManagedInitDelegates);
   }
 
   // Build SlickGrid columns from metadata with editors (plan 48, phase 3).
-  function buildColumns(colsMeta, refOpts, enumLabels, enumOrder) {
+  function buildColumns(colsMeta, refOpts, refFilters, enumLabels, enumOrder) {
     var columns = [];
     for (var i = 0; i < colsMeta.length; i++) {
       var c = colsMeta[i];
@@ -2984,6 +3038,7 @@ obManagedReady(obManagedInitDelegates);
         // него в ячейке были видны только предзагруженные опции, а модалка
         // подбора уходила в локальный фильтр вместо /ui/_ref-options.
         col.refEntity = c.ref;
+        col.refFilter = (refFilters && refFilters[c.id]) || '';
         // allowCreate приходит из allow_inline_create поля ТЧ (сервер кладёт
         // его в data-sg-cols только когда создание разрешено).
         col.allowCreate = !!c.allowCreate;
@@ -3546,6 +3601,7 @@ obManagedReady(obManagedInitDelegates);
       return !(c && c.virtual && obManagedIsReservedVirtualColumnName(c.id));
     });
     var embeddedRefOpts = JSON.parse(div.getAttribute("data-sg-ref") || "null") || {};
+    var refFilters = JSON.parse(div.getAttribute("data-sg-ref-filter") || "null") || {};
     window._tpRefOpts = window._tpRefOpts || {};
     var refOpts = window._tpRefOpts[tpName];
     if (!refOpts || typeof refOpts !== "object") {
@@ -3559,7 +3615,7 @@ obManagedReady(obManagedInitDelegates);
     // applyTableParts для DOM-таблиц): в data-sg-enum порядок ключей JSON
     // алфавитный, а список должен идти в порядке объявления values:.
     var enumOrder = (window._tpEnumOrder && window._tpEnumOrder[tpName]) || {};
-    var columns = buildColumns(colsRaw, refOpts, enumLabels, enumOrder);
+    var columns = buildColumns(colsRaw, refOpts, refFilters, enumLabels, enumOrder);
     // _ord — исходный порядок строки. Клиентская сортировка меняет ПОРЯДОК
     // ОТОБРАЖЕНИЯ (dataView.sort), но при сохранении (obGridSync) строки
     // сериализуются по _ord — чтобы сортировка «для просмотра» не переставляла

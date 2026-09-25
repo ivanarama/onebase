@@ -38,7 +38,7 @@ fields:
 		{Name: "Наименование", Type: "string"},
 		{Name: "Телефон", Type: "string"},
 	}
-	if err := saveEntityFieldsToFile(dir, "Клиент", fields, nil, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
+	if err := saveEntityFieldsToFile(dir, "Клиент", fields, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("сохранение: %v", err)
 	}
 
@@ -93,7 +93,7 @@ fields:
 `)
 
 	fields := []saveField{{Name: "Наименование", Type: "string"}}
-	if err := saveEntityFieldsToFile(dir, "Склад", fields, nil, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
+	if err := saveEntityFieldsToFile(dir, "Склад", fields, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("сохранение: %v", err)
 	}
 

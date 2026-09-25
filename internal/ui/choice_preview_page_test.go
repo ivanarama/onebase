@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -115,7 +116,7 @@ func previewPageBody(element string, ctxVals map[string]string) map[string]any {
 	}
 	return map[string]any{
 		"q": "", "limit": 10, "offset": 0,
-		"source":  map[string]string{"entity": "Заявка", "element": element},
+		"source":  map[string]string{"entity": "Заявка", "form": "ФормаОбъекта", "element": element},
 		"context": ctxVals,
 	}
 }
@@ -175,6 +176,133 @@ func TestChoicePreviewMissingKeyKeepsStaticFallback(t *testing.T) {
 	_ = id
 }
 
+// Dynamic preview uses POST instead of the ordinary GET picker endpoint. The
+// transport change must not drop owner or choice_filter: all three constraints
+// still describe one server-side page and are combined with AND.
+func TestChoicePreviewPageComposesOwnerAndChoiceFilter(t *testing.T) {
+	f := newChoiceHTTPFixture(t)
+	element := f.owner.Forms[0].Elements[1]
+	element.ChoiceContext = map[string]string{"Направление": "Объект.Направление"}
+	f.target.Owner = "Организация"
+	f.target.Fields = append(f.target.Fields, metadata.Field{
+		Name: metadata.StandardOwnerField, ID: metadata.StandardOwnerFieldID,
+		Type: metadata.FieldType("reference:Организация"), RefEntity: "Организация",
+	})
+	if err := f.server.store.Migrate(context.Background(), []*metadata.Entity{f.target}); err != nil {
+		t.Fatalf("migrate owner field: %v", err)
+	}
+
+	ownerA, ownerB := uuid.New(), uuid.New()
+	allowed, wrongOwner, wrongChoice := uuid.New(), uuid.New(), uuid.New()
+	for _, row := range []struct {
+		id        uuid.UUID
+		direction uuid.UUID
+		owner     uuid.UUID
+		name      string
+	}{
+		{allowed, f.rootA, ownerA, "preview intersection allowed"},
+		{wrongOwner, f.rootA, ownerB, "preview intersection wrong owner"},
+		{wrongChoice, f.rootB, ownerA, "preview intersection wrong choice"},
+	} {
+		if err := f.server.store.Upsert(context.Background(), f.target.Name, row.id, map[string]any{
+			"Наименование":              row.name,
+			"Направление":               row.direction.String(),
+			"Аудитория":                 "anna",
+			metadata.StandardOwnerField: row.owner.String(),
+		}, f.target); err != nil {
+			t.Fatalf("seed combined preview row %q: %v", row.name, err)
+		}
+	}
+
+	body := map[string]any{
+		"q": "preview intersection", "limit": 100, "offset": 0,
+		"source": map[string]string{
+			"entity": f.owner.Name, "form": f.owner.Forms[0].Name, "element": element.Name,
+		},
+		"context": map[string]string{},
+		"filters": map[string]string{metadata.StandardOwnerField: ownerA.String()},
+		"choice_sources": map[string]string{
+			"Объект.Направление": f.rootA.String(),
+		},
+	}
+	recorder := postPreviewPage(t, f.server, f.target.Name, body, f.user)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	response := decodeChoiceHTTP(t, recorder)
+	if response.Total != 1 || len(response.Items) != 1 || fmt.Sprint(response.Items[0]["id"]) != allowed.String() {
+		t.Fatalf("preview owner and choice_filter are not ANDed: %#v", response)
+	}
+}
+
+func TestChoicePreviewPageResolvesElementInsideNamedForm(t *testing.T) {
+	f := newChoiceHTTPFixture(t)
+	formA := f.owner.Forms[0]
+	elementA := formA.Elements[1]
+	elementA.ChoiceContext = map[string]string{"НаправлениеA": "Объект.Направление"}
+	f.owner.Fields = append(f.owner.Fields, metadata.Field{
+		Name: "ДругоеНаправление", Type: metadata.FieldType("reference:" + f.direction.Name), RefEntity: f.direction.Name,
+	})
+	elementB := &metadata.FormElement{
+		ID: "fault-picker-second", Name: elementA.Name, Kind: elementA.Kind, DataPath: elementA.DataPath,
+		ChoiceContext: map[string]string{"НаправлениеB": "Объект.ДругоеНаправление"},
+		ChoiceFilter: []metadata.FormChoiceCondition{{
+			Field: "Направление", Op: metadata.FormChoiceOpInHierarchy, From: "Объект.ДругоеНаправление",
+		}},
+	}
+	formB := &metadata.FormModule{
+		Name: "ФормаОбъектаВторая", EntityName: f.owner.Name, Kind: "object",
+		LayoutKind: metadata.FormLayoutManaged, Elements: []*metadata.FormElement{elementB},
+	}
+	f.owner.Forms = append(f.owner.Forms, formB)
+
+	if got := findPreviewElementByName(formA, elementA.Name); got != elementA || got.ChoiceContext["НаправлениеA"] == "" || got.ChoiceFilter[0].From != "Объект.Направление" {
+		t.Fatalf("first form resolved foreign metadata: %#v", got)
+	}
+	if got := findPreviewElementByName(formB, elementB.Name); got != elementB || got.ChoiceContext["НаправлениеB"] == "" || got.ChoiceFilter[0].From != "Объект.ДругоеНаправление" {
+		t.Fatalf("second form resolved foreign metadata: %#v", got)
+	}
+
+	request := func(form *metadata.FormModule, sourcePath string, source uuid.UUID) choiceHTTPResponse {
+		body := map[string]any{
+			"q": "needle", "limit": 100, "offset": 0,
+			"source": map[string]string{
+				"entity": f.owner.Name, "form": form.Name, "element": elementA.Name,
+			},
+			"context":        map[string]string{},
+			"choice_sources": map[string]string{sourcePath: source.String()},
+		}
+		recorder := postPreviewPage(t, f.server, f.target.Name, body, f.user)
+		if recorder.Code != http.StatusOK {
+			t.Fatalf("form %q: status=%d body=%s", form.Name, recorder.Code, recorder.Body.String())
+		}
+		return decodeChoiceHTTP(t, recorder)
+	}
+
+	first := request(formA, "Объект.Направление", f.rootA)
+	if first.Total != 2 {
+		t.Fatalf("first form used wrong choice_filter: %#v", first)
+	}
+	for _, item := range first.Items {
+		if id := fmt.Sprint(item["id"]); id == f.legacySelected.String() || id == f.foreignOther.String() {
+			t.Fatalf("first form returned root-B row: %#v", first.Items)
+		}
+	}
+	second := request(formB, "Объект.ДругоеНаправление", f.rootB)
+	if second.Total != 2 || len(second.Items) != 2 {
+		t.Fatalf("second form used wrong choice_filter: %#v", second)
+	}
+	for _, id := range []uuid.UUID{f.legacySelected, f.foreignOther} {
+		found := false
+		for _, item := range second.Items {
+			found = found || fmt.Sprint(item["id"]) == id.String()
+		}
+		if !found {
+			t.Fatalf("second form did not return %s: %#v", id, second.Items)
+		}
+	}
+}
+
 // Ошибка функции — контролируемый 422 (fail-closed, инвариант 10), а не тихий
 // откат к списку без просмотра.
 func TestChoicePreviewProcErrorIs422(t *testing.T) {
@@ -195,6 +323,14 @@ func TestChoicePreviewProcErrorIs422(t *testing.T) {
 // Подмена source: неизвестная форма/элемент/не-контекстный элемент — 400.
 func TestChoicePreviewPageRejectsForeignSource(t *testing.T) {
 	s, _, _, _ := previewFixture(t, "")
+	t.Run("unknown form", func(t *testing.T) {
+		body := previewPageBody("ПолеНаправление", nil)
+		body["source"].(map[string]string)["form"] = "Подмена"
+		rec := postPreviewPage(t, s, "НаправлениеОбслуживания", body, nil)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("code = %d, ожидался 400: %s", rec.Code, rec.Body.String())
+		}
+	})
 	cases := []struct {
 		name    string
 		element string

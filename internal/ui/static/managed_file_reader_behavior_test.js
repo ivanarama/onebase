@@ -534,6 +534,11 @@ test('table round-trip keeps readonly controls display-only and guarded', () => 
     Товары: {Номенклатура: [{id: 'ref-1', _label: 'Товар'}]},
     Редактируемые: {Номенклатура: [{id: 'ref-2', _label: 'Другой'}]}
   };
+  window._tpRefMeta = {
+    Товары: {Номенклатура: {entity: 'Товар', allowCreate: false}},
+    Редактируемые: {Номенклатура: {entity: 'Товар', allowCreate: false}}
+  };
+  window._tpRefFilter = {};
   window._tpEnumLabels = {};
   window._tpEnumOrder = {};
 
@@ -546,8 +551,10 @@ test('table round-trip keeps readonly controls display-only and guarded', () => 
   const tpRow = tpBody.children[0];
   assert.equal(tpRow.children[0].children[0].disabled, true, 'selection remained enabled');
   const refCell = tpRow.children[1];
-  assert.equal(refCell.children[0].disabled, true, 'reference select remained enabled');
-  assert.equal(refCell.children.length, 1, 'readonly reference regained a successful hidden mirror');
+  const refWrapper = refCell.children[0];
+  assert.equal(refWrapper.children[0].disabled, true, 'reference select remained enabled');
+  assert.equal(refWrapper.children[1].disabled, true, 'readonly picker remained enabled');
+  assert.notEqual(refWrapper.children[2].disabled, true, 'readonly navigation was disabled');
   assert.equal(tpRow.children[2].children[0].disabled, true, 'number input remained successful');
   const tpDelete = tpRow.children[3].children[0];
   assert.equal(tpDelete.disabled, true);
@@ -569,8 +576,8 @@ test('table round-trip keeps readonly controls display-only and guarded', () => 
   });
   window.applyTableParts({Редактируемые: [{Номенклатура: 'ref-2', Количество: 4}]});
   const editableRow = editableBody.children[0];
-  assert.equal(editableRow.children[0].children.length, 1, 'editable ref unexpectedly got hidden mirror');
-  assert.equal(editableRow.children[0].children[0].disabled, false);
+  assert.equal(editableRow.children[0].children[0].children.length, 3, 'editable ref lost picker/current controls');
+  assert.equal(editableRow.children[0].children[0].children[0].disabled, false);
   assert.equal(editableRow.children[1].children[0].disabled, false);
   assert.equal(editableRow.children[2].children[0].disabled, false);
   assert.equal(editableRow.children[2].children[0].onclick, undefined,
@@ -587,6 +594,30 @@ test('table round-trip keeps readonly controls display-only and guarded', () => 
   window.obGridAddRow('Закрытые');
   window.obGridDelRow('Закрытые');
   assert.equal(mutated, false, 'exported grid mutators bypassed readonly');
+});
+
+test('NoGrid event repaint preserves owner reference picker contract', () => {
+  resetDOM();
+  const ownerFilter = JSON.stringify({Владелец: {from: 'Контрагент', value: ''}});
+  window._tpRefOpts = {Строки: {Договор: []}};
+  window._tpRefMeta = {Строки: {Договор: {entity: 'Договор', allowCreate: true}}};
+  window._tpRefFilter = {Строки: {Договор: ownerFilter}};
+  window._tpEnumLabels = {};
+  window._tpEnumOrder = {};
+  const body = installTableBody('tp-body-Строки', {
+    'data-tp-fields': 'Договор|reference:Договор'
+  });
+
+  window.applyTableParts({Строки: [{Договор: ''}]});
+
+  const wrapper = body.children[0].children[0].children[0];
+  const select = wrapper.children[0];
+  assert.equal(select.tagName, 'SELECT');
+  assert.equal(select.getAttribute('data-ref-entity'), 'Договор');
+  assert.equal(select.getAttribute('data-ref-filter'), ownerFilter);
+  assert.equal(select.getAttribute('data-ref-allow-create'), '1');
+  assert.equal(wrapper.children[1].getAttribute('data-ob-ref-picker'), 'closest');
+  assert.equal(wrapper.children[2].getAttribute('data-ob-ref-current'), 'closest');
 });
 
 for (const order of ['readonly-first', 'writable-first']) {

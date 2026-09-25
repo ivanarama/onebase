@@ -8,6 +8,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
+	"golang.org/x/net/html"
 )
 
 // refAttrForm — форма с одним ссылочным реквизитом формы, показанным через
@@ -27,6 +28,12 @@ func refAttrForm(save bool) *metadata.FormModule {
 
 // renderRefAttrForm рендерит page-managed-form с заданными RefOptions.
 func renderRefAttrForm(t *testing.T, form *metadata.FormModule, refOpts map[string][]map[string]any) string {
+	return renderRefAttrFormState(t, form, refOpts, nil, map[string]string{"Причина": "ref-42"})
+}
+
+func renderRefAttrFormState(t *testing.T, form *metadata.FormModule, refOpts map[string][]map[string]any,
+	refFilter map[string]string, values map[string]string,
+) string {
 	t.Helper()
 	ent := &metadata.Entity{
 		Name: "Заявка", Kind: metadata.KindCatalog,
@@ -37,8 +44,9 @@ func renderRefAttrForm(t *testing.T, form *metadata.FormModule, refOpts map[stri
 		"Entity":        ent,
 		"Form":          form,
 		"IsNew":         true,
-		"Values":        map[string]string{"Причина": "ref-42"},
+		"Values":        values,
 		"RefOptions":    refOpts,
+		"RefFilter":     refFilter,
 		"EnumOptions":   map[string]any{},
 		"ChoiceOptions": loadChoiceOptions(form, "ru"),
 		"TPRefOptions":  map[string]any{},
@@ -91,6 +99,27 @@ func TestRefAttrKeepsTextInputWithoutOptions(t *testing.T) {
 				t.Error("текущее значение реквизита потеряно при рендере")
 			}
 		})
+	}
+}
+
+func TestSaveFalseOwnerReferenceKeepsEmptyPickerContract(t *testing.T) {
+	form := refAttrForm(false)
+	rawFilter := `{"Владелец":{"from":"Контрагент","value":""}}`
+	rendered := renderRefAttrFormState(t, form, map[string][]map[string]any{"Причина": {}},
+		map[string]string{"Причина": rawFilter}, map[string]string{"Причина": "", "Контрагент": ""})
+	doc, err := html.Parse(strings.NewReader(rendered))
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectNode := findSelectByName(doc, "Причина")
+	if selectNode == nil {
+		t.Fatal("save:false owner reference with an empty owner became an inert text input")
+	}
+	if entity, _ := htmlAttribute(selectNode, "data-ref-entity"); entity != "ПричинаОтказа" {
+		t.Fatalf("data-ref-entity = %q", entity)
+	}
+	if filter, _ := htmlAttribute(selectNode, "data-ref-filter"); filter != rawFilter {
+		t.Fatalf("data-ref-filter = %q, want %q", filter, rawFilter)
 	}
 }
 

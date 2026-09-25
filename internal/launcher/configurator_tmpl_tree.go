@@ -1522,6 +1522,21 @@ const cfgTabTree = `{{define "tab-tree"}}
     После включения требуется миграция БД: появятся колонки <code>is_folder</code> и <code>parent_id</code>.
   </div>
 </div>
+<div style="margin-bottom:10px">
+  <input type="hidden" name="owner_present" value="1">
+  <label style="display:block;font-size:13px;margin-bottom:4px">{{t $.Lang "Подчинён справочнику (владелец)"}}</label>
+  <select name="owner" style="padding:5px 6px;border:1px solid #ccd0d8;border-radius:3px;font-size:13px;min-width:260px">
+    <option value="">{{t $.Lang "— самостоятельный —"}}</option>
+    {{range $c := $.Catalogs}}{{if ne $c.Name $e.Name}}
+    <option value="{{$c.Name}}" {{if eq $e.Owner $c.Name}}selected{{end}}>{{$c.Name}}</option>
+    {{end}}{{end}}
+  </select>
+  <div style="color:#94a3b8;font-size:11px;margin-top:2px">
+    {{t $.Lang "Как «Владелец» в 1С: у элемента появляется реквизит"}} <code>{{t $.Lang "Владелец"}}</code>,
+    {{t $.Lang "а подбор этого справочника везде сам показывает только элементы владельца — договоры своего контрагента, товарные группы своего направления. Настраивать отбор на формах не нужно. После включения требуется миграция БД:"}}
+    {{t $.Lang "появится колонка"}} <code>владелец_id</code>.
+  </div>
+</div>
 <details {{if $e.Activity}}open{{end}} style="margin-bottom:10px">
   <summary class="section-hd" style="cursor:pointer">Активность</summary>
   <input type="hidden" name="activity_present" value="1">

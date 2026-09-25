@@ -800,7 +800,7 @@ func TestLoadInitialTPRefOptionsIncludesSelectedOutsideFirstPage(t *testing.T) {
 	reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{refEnt, doc}})
 	s := &Server{reg: reg, store: db}
 
-	opts, err := s.loadInitialTPRefOptions(ctx, doc, map[string][]map[string]any{
+	opts, err := s.loadInitialTPRefOptions(ctx, doc, nil, map[string][]map[string]any{
 		"Товары": {{"Товар": selected.String()}},
 	})
 	if err != nil {

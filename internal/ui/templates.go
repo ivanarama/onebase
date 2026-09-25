@@ -180,6 +180,13 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 	}
 	return template.FuncMap{
 		"refWriteAllowed": refWriteAllowed,
+		"tpRefFilter": func(value any, tablePart string) map[string]string {
+			filters, _ := value.(map[string]map[string]string)
+			if filters == nil {
+				return nil
+			}
+			return filters[tablePart]
+		},
 		"lower":           strings.ToLower,
 		"infoRegKeyValue": infoRegKeyValue,
 		"processorParamPresenceName": func(proc *processorpkg.Processor, name string) string {
@@ -452,6 +459,21 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			contexts, _ := ctx["ManagedChoiceContexts"].(map[string]string)
 			return contexts[element.ID]
+		},
+		// hasRefFilter distinguishes an absent picker contract from a present
+		// owner contract whose current value deliberately yields zero options.
+		// The latter must still render as a <select> so a later owner change can
+		// refresh it in place (not as an inert text input on save:false forms).
+		"hasRefFilter": func(ctx map[string]any, field string) bool {
+			if filters, ok := ctx["RefFilter"].(map[string]string); ok {
+				_, exists := filters[field]
+				return exists
+			}
+			if filters, ok := ctx["RefFilter"].(map[string]any); ok {
+				_, exists := filters[field]
+				return exists
+			}
+			return false
 		},
 		// itemFormVisible/itemFormHidden делят реквизиты по блоку `item_form:`
 		// (план 117, Д12). До этого ключ парсился, хранился, отдавался в
@@ -2311,7 +2333,7 @@ const tplForm = `
   {{if isRef (str .Type)}}
     <div style="display:flex;gap:6px;align-items:center">
       {{if $ro}}<input type="hidden" name="{{$fn}}" value="{{index $.Values $fn}}">{{end}}
-      <select id="ref-{{$fn}}"{{if not $ro}} name="{{$fn}}"{{end}} style="flex:1" data-ref-entity="{{.RefEntity}}"{{if and (not $ro) (.InlineCreateEnabled false) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}>
+      <select id="ref-{{$fn}}"{{if not $ro}} name="{{$fn}}"{{end}} style="flex:1" data-ref-entity="{{.RefEntity}}"{{if $.RefFilter}}{{with index $.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and (not $ro) (.InlineCreateEnabled false) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}>
         <option value="">{{t $.Lang "— выбрать —"}}</option>
         {{range index $.RefOptions $fn}}
         <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
@@ -2369,7 +2391,7 @@ const tplForm = `
 </div>
 {{end}}
 
-{{range .Entity.TableParts}}{{$tp := .}}{{$tpName := .Name}}{{$tpRef := index $.TPRefOptions $tpName}}{{$tpReadOnly := not $.CanWrite}}
+{{range .Entity.TableParts}}{{$tp := .}}{{$tpName := .Name}}{{$tpRef := index $.TPRefOptions $tpName}}{{$tpFilter := tpRefFilter $.TPRefFilter $tpName}}{{$tpReadOnly := not $.CanWrite}}
 <h3>{{$tp.DisplayName $.Lang}}</h3>
 <table class="tp-table" data-ob-dom-table="{{$tpName}}" data-ob-readonly="{{if $tpReadOnly}}1{{else}}0{{end}}"
   {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}>
@@ -2385,7 +2407,7 @@ const tplForm = `
         <td>
         {{if isRef (str .Type)}}
           <div style="display:flex;gap:4px;align-items:center">
-            <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}" style="flex:1" data-ref-entity="{{.RefEntity}}"{{if and (.InlineCreateEnabled true) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
+            <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}" style="flex:1" data-ref-entity="{{.RefEntity}}"{{with index $tpFilter $fn}} data-ref-filter="{{.}}"{{end}}{{if and (.InlineCreateEnabled true) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
               <option value="">{{t $.Lang "— выбрать —"}}</option>
               {{range index $tpRef $fn}}
               <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID (index $row $fn))}}selected{{end}}>{{index . "_label"}}</option>
@@ -2492,6 +2514,7 @@ const tplForm = `
 {{end}}
 <script type="application/json" id="ob-tp-ref-opts">{{jsJSON .TPRefOptions}}</script>
 <script type="application/json" id="ob-tp-ref-meta">{{jsJSON .TPRefMeta}}</script>
+<script type="application/json" id="ob-tp-ref-filter">{{jsJSON .TPRefFilter}}</script>
 {{/* Перечисления колонок ТЧ — для строк, которые добавляет JS (#1010): сервер
      их не рендерит, а без вариантов и порядка addTpRow снова поставил бы
      текстовое поле. Порядок отдельно от подписей: JSON-карта приезжает с

@@ -376,7 +376,9 @@ func (s *Server) mergeFormLocalRefOptions(ctx context.Context, form *metadata.Fo
 		if refEntity == nil {
 			continue
 		}
-		rows, err := s.initialReferenceOptions(ctx, refEntity, refOptionsChoice, nil)
+		ownerID, asked := ownerFilterForTarget(entity, refEntity, data["Values"])
+		selected := formValueForPath(data["Values"], "Форма."+a.Name)
+		rows, err := s.initialReferenceOptionsOwned(ctx, refEntity, refOptionsChoice, []string{selected}, ownerID, asked)
 		if err != nil {
 			continue
 		}

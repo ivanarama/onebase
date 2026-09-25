@@ -49,13 +49,15 @@ func TestRefPickerChoiceContextReadsCurrentControl(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var rawContext string
+	var rawContext, sourceEntity, sourceForm string
 	var walk func(*html.Node)
 	walk = func(node *html.Node) {
 		if node.Type == html.ElementNode && node.Data == "select" {
 			id, _ := htmlAttribute(node, "id")
 			if id == "ref-Направление" {
 				rawContext, _ = htmlAttribute(node, "data-ref-context")
+				sourceEntity, _ = htmlAttribute(node, "data-ref-source-entity")
+				sourceForm, _ = htmlAttribute(node, "data-ref-source-form")
 			}
 		}
 		for child := node.FirstChild; child != nil; child = child.NextSibling {
@@ -73,6 +75,9 @@ func TestRefPickerChoiceContextReadsCurrentControl(t *testing.T) {
 	if strings.Contains(rawContext, "old-branch") {
 		t.Fatal("choice_context содержит снимок значения серверного рендера")
 	}
+	if sourceEntity != ent.Name || sourceForm != form.Name {
+		t.Fatalf("источник preview = %q/%q, ожидался %q/%q", sourceEntity, sourceForm, ent.Name, form.Name)
+	}
 
 	js := string(uiJS)
 	start := strings.Index(js, "function refContextForRequest(sel)")
@@ -84,6 +89,10 @@ func TestRefPickerChoiceContextReadsCurrentControl(t *testing.T) {
 	for _, want := range []string{
 		"sel.form.elements.namedItem(fieldName)",
 		"var refContextRaw = sel.getAttribute('data-ref-context') || '';",
+		"var sourceEntity = sel.getAttribute('data-ref-source-entity') || '';",
+		"source: { entity: sourceEntity, form: sourceForm, element: sourceElement }",
+		"filters: requestSnapshot ? requestSnapshot.filters : {}",
+		"choice_sources: requestSnapshot ? requestSnapshot.choiceSources : {}",
 		"fetchOptions.method = 'POST';",
 		"'/ui/_ref-options/' + encodeURIComponent(refEntity) + '/page'",
 	} {

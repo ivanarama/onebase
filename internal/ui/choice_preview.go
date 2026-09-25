@@ -139,10 +139,12 @@ func choicePreviewTexts(result any) (map[string]string, error) {
 
 // choicePreviewPageBody — тело POST /ui/_ref-options/{entity}/page.
 type choicePreviewPageBody struct {
-	Q      string `json:"q"`
-	Limit  int    `json:"limit"`
-	Offset int    `json:"offset"`
-	Source struct {
+	Q             string            `json:"q"`
+	Limit         int               `json:"limit"`
+	Offset        int               `json:"offset"`
+	Filters       map[string]string `json:"filters,omitempty"`
+	ChoiceSources map[string]string `json:"choice_sources,omitempty"`
+	Source        struct {
 		Entity  string `json:"entity"`
 		Form    string `json:"form"`
 		Element string `json:"element"`
@@ -191,7 +193,12 @@ func (s *Server) choicePreviewPage(w http.ResponseWriter, r *http.Request, ent *
 		http.Error(w, "unknown form entity", http.StatusBadRequest)
 		return
 	}
-	element := findPreviewElementByName(owner, body.Source.Element)
+	form := findManagedFormByName(owner, body.Source.Form)
+	if form == nil {
+		http.Error(w, "unknown preview form", http.StatusBadRequest)
+		return
+	}
+	element := findPreviewElementByName(form, body.Source.Element)
 	if element == nil {
 		http.Error(w, "unknown preview element", http.StatusBadRequest)
 		return
@@ -230,7 +237,7 @@ func (s *Server) choicePreviewPage(w http.ResponseWriter, r *http.Request, ent *
 			}
 			// Ссылка требует object read и допуска строки (инвариант 7) —
 			// тот же гейт, что и selected_allowed у choice.
-			okAllowed, aerr := s.choiceSelectedAllowed(r.Context(), refEnt, id, nil)
+			okAllowed, aerr := s.choiceSelectedAllowed(r.Context(), refEnt, id, storage.ListParams{})
 			if aerr != nil {
 				s.serverError(w, r, aerr)
 				return
@@ -245,9 +252,34 @@ func (s *Server) choicePreviewPage(w http.ResponseWriter, r *http.Request, ent *
 		ctxVals[alias] = raw
 	}
 
+	// Owner и choice_filter обязаны сужать ту же страницу, что и динамический
+	// preview. Иначе переход GET → POST при появлении choice_context незаметно
+	// открывал полный список и обходил оба отбора.
+	rawFilters, err := json.Marshal(body.Filters)
+	if err != nil {
+		http.Error(w, "invalid filters", http.StatusBadRequest)
+		return
+	}
+	params, filtersOK := refOptionsFilters(ent, string(rawFilters), storage.ListParams{})
+	choiceEmpty := false
+	if len(element.ChoiceFilter) > 0 {
+		params.ChoicePredicates, choiceEmpty, err = choicePredicates(element, body.ChoiceSources)
+		if err != nil {
+			http.Error(w, "invalid choice context: "+err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else if len(body.ChoiceSources) > 0 {
+		http.Error(w, "choice_filter is not declared", http.StatusBadRequest)
+		return
+	}
+
 	// Страница — тем же путём, что и обычный подбор: object read → row filter →
 	// field mask → _label (инварианты 2 и 11). Только затем вызывается функция.
-	items, total, err := s.referenceOptionsPageWithParams(r.Context(), ent, body.Q, limit, body.Offset, storage.ListParams{})
+	items := make([]map[string]any, 0)
+	total := 0
+	if filtersOK && !choiceEmpty {
+		items, total, err = s.referenceOptionsPageWithParams(r.Context(), ent, body.Q, limit, body.Offset, params)
+	}
 	if err != nil {
 		s.serverError(w, r, err)
 		return
@@ -278,9 +310,10 @@ func (s *Server) choicePreviewPage(w http.ResponseWriter, r *http.Request, ent *
 	})
 }
 
-// findPreviewElementByName — элемент с choice_context по имени среди ВСЕХ форм
-// сущности; для preview годится только ссылочное ПолеВвода. Найдено больше
-// одного — неоднозначно: fail-closed, а не «возьмём первую попавшуюся связь».
+// findPreviewElementByName — элемент с choice_context по имени внутри уже
+// проверенной формы; для preview годится только ссылочное ПолеВвода. Имя формы
+// — часть server-resolved identity: одинаковые имена элементов в разных формах
+// не должны ни конфликтовать, ни позволять подменить ChoiceContext/ChoiceFilter.
 // formChoicePathName — имя реквизита из пути `Объект.<Реквизит>`.
 func formChoicePathName(path string) string {
 	root, fieldName, ok := formChoicePath(path)
@@ -290,22 +323,17 @@ func formChoicePathName(path string) string {
 	return fieldName
 }
 
-func findPreviewElementByName(owner *metadata.Entity, name string) *metadata.FormElement {
-	if owner == nil || strings.TrimSpace(name) == "" {
+func findPreviewElementByName(form *metadata.FormModule, name string) *metadata.FormElement {
+	if form == nil || strings.TrimSpace(name) == "" {
 		return nil
 	}
 	var matches []*metadata.FormElement
-	for _, form := range owner.Forms {
-		if form == nil {
-			continue
+	form.Walk(func(el *metadata.FormElement) bool {
+		if el != nil && strings.EqualFold(el.Name, name) && el.Kind == "ПолеВвода" && len(el.ChoiceContext) > 0 {
+			matches = append(matches, el)
 		}
-		form.Walk(func(el *metadata.FormElement) bool {
-			if el != nil && strings.EqualFold(el.Name, name) && el.Kind == "ПолеВвода" && len(el.ChoiceContext) > 0 {
-				matches = append(matches, el)
-			}
-			return true
-		})
-	}
+		return true
+	})
 	if len(matches) == 1 {
 		return matches[0]
 	}
