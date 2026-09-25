@@ -2619,15 +2619,16 @@ func missingFormCloseValue(r *http.Request, name string) string {
 		return ""
 	}
 	headers := map[string]string{
-		"_close_intent_id": "X-OneBase-Close-Intent",
-		"_close_epoch":     "X-OneBase-Close-Epoch",
-		"_close_issued_at": "X-OneBase-Close-Issued-At",
-		"_close_reason":    "X-OneBase-Close-Reason",
-		"_close_mode":      "X-OneBase-Close-Mode",
-		"_close_client":    "X-OneBase-Close-Client",
-		"_close_schema":    "X-OneBase-Close-Schema",
-		"_kind":            "X-OneBase-Form-Kind",
-		"_id":              "X-OneBase-Record-ID",
+		"_close_intent_id":     "X-OneBase-Close-Intent",
+		"_close_epoch":         "X-OneBase-Close-Epoch",
+		"_close_issued_at":     "X-OneBase-Close-Issued-At",
+		"_close_first_attempt": "X-OneBase-Close-First-Attempt",
+		"_close_reason":        "X-OneBase-Close-Reason",
+		"_close_mode":          "X-OneBase-Close-Mode",
+		"_close_client":        "X-OneBase-Close-Client",
+		"_close_schema":        "X-OneBase-Close-Schema",
+		"_kind":                "X-OneBase-Form-Kind",
+		"_id":                  "X-OneBase-Record-ID",
 	}
 	return strings.TrimSpace(r.Header.Get(headers[name]))
 }
