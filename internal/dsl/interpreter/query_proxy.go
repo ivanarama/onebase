@@ -111,6 +111,15 @@ func NewQueryFactoryGuardedSource(ctxSrc CtxSource, db QueryDB, reg QueryRegistr
 	}
 }
 
+// NewQueryFactorySource is the source-aware counterpart of NewQueryFactory:
+// same direct compilation and no guard, but the execution context is taken
+// from ctxSrc at the moment of Выполнить(). План 161, срез 1 — для callers,
+// которым живой транзакционный контекст нужен без compiler/guard; новый код
+// сходится в ту же реализацию queryProxy, а не копирует execute.
+func NewQueryFactorySource(ctxSrc CtxSource, db QueryDB, reg QueryRegistry) func(args []any) any {
+	return NewQueryFactoryGuardedSource(ctxSrc, db, reg, nil, nil)
+}
+
 func (q *queryProxy) context() context.Context {
 	if q.ctxSrc != nil {
 		return q.ctxSrc.Ctx()
