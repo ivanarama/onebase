@@ -666,7 +666,16 @@ func (i *Interpreter) evalExprUnchecked(expr ast.Expr, e *env) any {
 
 func (i *Interpreter) evalNew(n *ast.NewExpr, e *env) any {
 	args := i.evalArgs(n.Args, e)
-	typeName := strings.ToLower(n.TypeName.Literal)
+	// План 173, срез A: dispatch вынесен в construct, чтобы динамическая форма
+	// Новый(<Тип>, <Параметры>) в срезе B пошла через ту же точку создания.
+	return i.construct(strings.ToLower(n.TypeName.Literal), args, e, n.TypeName.Literal)
+}
+
+// construct создаёт объект по нормализованному имени типа и готовым аргументам.
+// typeName ожидается в нижнем регистре (единственная нормализация —
+// normalizeTypeName для публичных имён типов значений); displayName — имя так,
+// как его написал автор модуля, для текстов ошибок.
+func (i *Interpreter) construct(typeName string, args []any, e *env, displayName string) any {
 	switch typeName {
 	case "массив", "array":
 		return &Array{}
@@ -688,11 +697,11 @@ func (i *Interpreter) evalNew(n *ast.NewExpr, e *env) any {
 	// Расширяемые типы через env: "__factory_<ИмяТипа>"
 	if factory, ok := e.get("__factory_" + typeName); ok {
 		if fn, ok := factory.(func([]any) any); ok {
-			refuseReadOnly(e.ec, "создание объекта «"+n.TypeName.Literal+"» через внешнюю фабрику")
+			refuseReadOnly(e.ec, "создание объекта «"+displayName+"» через внешнюю фабрику")
 			return fn(args)
 		}
 	}
-	panic(userError{Msg: "Новый: неизвестный тип " + n.TypeName.Literal})
+	panic(userError{Msg: "Новый: неизвестный тип " + displayName})
 }
 
 func (i *Interpreter) evalUnary(u *ast.UnaryExpr, e *env) any {
