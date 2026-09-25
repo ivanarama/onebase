@@ -564,7 +564,7 @@ func TestRawRestore_ПоврежденнаяБаза_НейтральнаяДи�
 	file := makeBackup(t, h, b)
 
 	// Портим текущую базу: проба маркера упадёт, «file is not a database».
-	original, err := os.ReadFile(dbPath)
+	original, err := os.ReadFile(dbPath) //nolint:gosec // G703: test-owned path below t.TempDir
 	if err != nil {
 		t.Fatalf("read database: %v", err)
 	}
@@ -587,7 +587,7 @@ func TestRawRestore_ПоврежденнаяБаза_НейтральнаяДи�
 	if !strings.Contains(msg, "inspect restore marker") {
 		t.Fatalf("вложенная причина пробы потеряна из диагностики: %s", msg)
 	}
-	after, err := os.ReadFile(dbPath)
+	after, err := os.ReadFile(dbPath) //nolint:gosec // G703: test-owned path below t.TempDir
 	if err != nil {
 		t.Fatalf("reread database: %v", err)
 	}
@@ -663,7 +663,7 @@ func TestRawFullImport_ПоврежденнаяБаза_НейтральнаяД
 	if strings.Contains(msg, "universal recovery is pending") {
 		t.Fatalf("raw full-import утверждает pending recovery без доказательств: %s", msg)
 	}
-	after, err := os.ReadFile(dbPath)
+	after, err := os.ReadFile(dbPath) //nolint:gosec // G703: test-owned path below t.TempDir
 	if err != nil {
 		t.Fatalf("reread database: %v", err)
 	}
