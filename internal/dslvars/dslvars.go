@@ -56,6 +56,12 @@ type Common struct {
 	// DSL (ЗагрузитьПакет). nil → hook на DSL-пути откатывается к by_time (как
 	// прежде); остальные DSL-переменные от Interp не зависят.
 	Interp *interpreter.Interpreter
+	// TxState — живое состояние транзакций исполнения (#1272). Фабрика запросов
+	// использует его только для обнаружения self-deadlock: запрос с контекстом,
+	// снятым до НачатьТранзакцию, возвращает управляемую ошибку вместо
+	// фатального ожидания. nil → прежнее поведение. Живое ЧТЕНИЕ через
+	// транзакцию даёт CtxSource/план 161, не это поле.
+	TxState *interpreter.TxState
 }
 
 // Build возвращает map с пересечением DSL-переменных, общих для UI и scheduler.
@@ -92,7 +98,16 @@ func (c Common) Build() map[string]any {
 		}
 		return ref
 	}
-	queryFactory := interpreter.NewQueryFactory(c.Ctx, c.Store, c.Reg)
+	// #1272: при известном живом состоянии транзакций фабрика запросов
+	// получает страховку от self-deadlock — контекст всё ещё снимается здесь,
+	// но Выполнить() с рассогласованным контекстом даёт управляемую ошибку,
+	// а не фатальное ожидание собственного соединения SQLite.
+	var queryFactory func(args []any) any
+	if c.TxState != nil {
+		queryFactory = interpreter.NewQueryFactoryWithTxState(c.Ctx, c.Store, c.Reg, c.TxState)
+	} else {
+		queryFactory = interpreter.NewQueryFactory(c.Ctx, c.Store, c.Reg)
+	}
 	predefined := interpreter.NewPredefinedRoot(c.Ctx, c.Store)
 
 	vars := map[string]any{
