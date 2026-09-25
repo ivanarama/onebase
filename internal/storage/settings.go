@@ -768,3 +768,40 @@ func reportPresetBoolLit(d Dialect, v bool) string {
 	}
 	return "FALSE"
 }
+
+// listViewSettingsKey — ключ настройки вида списка (Список/Плитка) отдельно
+// для пользователя и сущности (#1485).
+func listViewSettingsKey(entity, user string) string {
+	return fmt.Sprintf("listview.%d:%s.%d:%s", len(entity), entity, len(user), user)
+}
+
+// GetListViewUserSettings возвращает сохранённый вид списка пользователя для
+// сущности. Отсутствие ключа/таблицы — не ошибка, возвращается пустая строка.
+func (db *DB) GetListViewUserSettings(ctx context.Context, entity, user string) (string, error) {
+	d := db.dialect
+	var v string
+	err := db.QueryRow(ctx,
+		`SELECT value FROM _settings WHERE key = `+d.Placeholder(1),
+		listViewSettingsKey(entity, user)).Scan(&v)
+	if err != nil {
+		return "", nil
+	}
+	return v, nil
+}
+
+// SaveListViewUserSettings сохраняет вид списка пользователя для сущности
+// одним upsert. Конфигурацию (YAML) не трогает.
+func (db *DB) SaveListViewUserSettings(ctx context.Context, entity, user, view string) error {
+	if err := db.EnsureSettingsSchema(ctx); err != nil {
+		return err
+	}
+	d := db.dialect
+	q := fmt.Sprintf(
+		`INSERT INTO _settings (key, value) VALUES (%s, %s)
+		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+		d.Placeholder(1), d.Placeholder(2))
+	if _, err := db.Exec(ctx, q, listViewSettingsKey(entity, user), view); err != nil {
+		return fmt.Errorf("settings: save list view: %w", err)
+	}
+	return nil
+}
