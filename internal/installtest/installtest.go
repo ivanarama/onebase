@@ -116,7 +116,7 @@ func PrivateHome(t *testing.T) string {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		t.Fatalf("создание приватного дома: %v", err)
 	}
-		if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // G302: 0700 — смысл приватного дома
+	if err := os.Chmod(dir, 0o700); err != nil { //nolint:gosec // G302: 0700 — смысл приватного дома
 		t.Fatalf("права приватного дома: %v", err)
 	}
 	return dir
