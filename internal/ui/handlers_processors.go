@@ -44,7 +44,7 @@ func (s *Server) processorForm(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		refOpts, _ := s.loadInitialRefOptions(r.Context(), virtEntity, paramValues)
-		tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), virtEntity, tablePartRows)
+		tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), virtEntity, paramValues, tablePartRows)
 		enumOpts := s.loadEnumOptions(virtEntity, s.resolveLang(r))
 		for k, v := range processorEnumOptions(proc) {
 			enumOpts[k] = v
@@ -329,7 +329,7 @@ func (s *Server) renderProcessorManagedResult(w http.ResponseWriter, r *http.Req
 		strValues[k] = fmt.Sprintf("%v", v)
 	}
 	refOpts, _ := s.loadInitialRefOptions(r.Context(), virtEntity, strValues)
-	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), virtEntity, tablePartRows)
+	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), virtEntity, strValues, tablePartRows)
 	enumOpts := s.loadEnumOptions(virtEntity, s.resolveLang(r))
 	for k, v := range processorEnumOptions(proc) {
 		enumOpts[k] = v

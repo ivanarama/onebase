@@ -2412,10 +2412,24 @@ obManagedReady(obManagedInitDelegates);
     var wrapper, input, dropBtn, list;
     var isOpen = false, selectedId = '', defaultValue = '';
     var refEntity = (args.column && args.column.refEntity) || '';
+    var refFilter = (args.column && args.column.refFilter) || '';
     var serverRows = [];   // последний ответ серверного поиска
     var shown = [];        // что сейчас отрисовано в списке (для ↑/↓ и Enter)
     var activeIdx = -1;    // подсвеченный пункт списка, -1 — нет подсветки
     var searchTimer = null, searchSeq = 0;
+
+    function refFilterCarrier() {
+      if (!refFilter) return null;
+      var carrier = document.createElement('select');
+      carrier.setAttribute('data-ref-filter', refFilter);
+      return carrier;
+    }
+
+    function refFilterQuery() {
+      var carrier = refFilterCarrier();
+      if (!carrier || typeof window.obRefFilterParam !== 'function') return '';
+      return window.obRefFilterParam(carrier);
+    }
 
     function label(id) {
       for (var k = 0; k < refOptsList.length; k++) {
@@ -2449,7 +2463,13 @@ obManagedReady(obManagedInitDelegates);
         seen[key] = true;
         out.push({id: o.id, _label: lbl});
       }
-      for (var i = 0; i < refOptsList.length; i++) push(refOptsList[i]);
+      // У owner:-колонки предзагруженный список относится к снимку шапки при
+      // рендере. После смены владельца он устаревает, поэтому кандидаты берём
+      // только из свежего серверного ответа; старый массив нужен лишь для
+      // подписи уже записанного значения.
+      if (!refFilter) {
+        for (var i = 0; i < refOptsList.length; i++) push(refOptsList[i]);
+      }
       for (var j = 0; j < serverRows.length; j++) push(serverRows[j]);
       return out;
     }
@@ -2546,7 +2566,7 @@ obManagedReady(obManagedInitDelegates);
       if (!refEntity || !window.fetch) return;
       var seq = ++searchSeq;
       var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) +
-                '?limit=50&q=' + encodeURIComponent(q || '');
+                '?limit=50&q=' + encodeURIComponent(q || '') + refFilterQuery();
       fetch(url, {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
         .then(function(resp) { if (!resp.ok) throw new Error('HTTP ' + resp.status); return resp.json(); })
         .then(function(data) {
@@ -2594,6 +2614,7 @@ obManagedReady(obManagedInitDelegates);
       if (typeof window.openRefPicker !== 'function') return;
       var selEl = document.createElement('select');
       selEl.setAttribute('data-ref-entity', refEntity);
+      if (refFilter) selEl.setAttribute('data-ref-filter', refFilter);
       // «+ Создать» в форме подбора включается тем же признаком колонки, что и
       // в автоформе (allow_inline_create у поля ТЧ). Без переноса на временный
       // select подбор из ячейки не давал создать элемент НИКОГДА, даже когда
@@ -2697,6 +2718,7 @@ obManagedReady(obManagedInitDelegates);
 
       input.focus();
       input.select();
+      if (refFilter) searchServer('');
     };
 
     this.destroy = function() {
@@ -2937,7 +2959,7 @@ obManagedReady(obManagedInitDelegates);
   }
 
   // Build SlickGrid columns from metadata with editors (plan 48, phase 3).
-  function buildColumns(colsMeta, refOpts, enumLabels, enumOrder) {
+  function buildColumns(colsMeta, refOpts, refFilters, enumLabels, enumOrder) {
     var columns = [];
     for (var i = 0; i < colsMeta.length; i++) {
       var c = colsMeta[i];
@@ -2984,6 +3006,7 @@ obManagedReady(obManagedInitDelegates);
         // него в ячейке были видны только предзагруженные опции, а модалка
         // подбора уходила в локальный фильтр вместо /ui/_ref-options.
         col.refEntity = c.ref;
+        col.refFilter = (refFilters && refFilters[c.id]) || '';
         // allowCreate приходит из allow_inline_create поля ТЧ (сервер кладёт
         // его в data-sg-cols только когда создание разрешено).
         col.allowCreate = !!c.allowCreate;
@@ -3546,6 +3569,7 @@ obManagedReady(obManagedInitDelegates);
       return !(c && c.virtual && obManagedIsReservedVirtualColumnName(c.id));
     });
     var embeddedRefOpts = JSON.parse(div.getAttribute("data-sg-ref") || "null") || {};
+    var refFilters = JSON.parse(div.getAttribute("data-sg-ref-filter") || "null") || {};
     window._tpRefOpts = window._tpRefOpts || {};
     var refOpts = window._tpRefOpts[tpName];
     if (!refOpts || typeof refOpts !== "object") {
@@ -3559,7 +3583,7 @@ obManagedReady(obManagedInitDelegates);
     // applyTableParts для DOM-таблиц): в data-sg-enum порядок ключей JSON
     // алфавитный, а список должен идти в порядке объявления values:.
     var enumOrder = (window._tpEnumOrder && window._tpEnumOrder[tpName]) || {};
-    var columns = buildColumns(colsRaw, refOpts, enumLabels, enumOrder);
+    var columns = buildColumns(colsRaw, refOpts, refFilters, enumLabels, enumOrder);
     // _ord — исходный порядок строки. Клиентская сортировка меняет ПОРЯДОК
     // ОТОБРАЖЕНИЯ (dataView.sort), но при сохранении (obGridSync) строки
     // сериализуются по _ord — чтобы сортировка «для просмотра» не переставляла

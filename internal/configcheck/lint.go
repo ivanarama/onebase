@@ -404,9 +404,7 @@ func entityYAMLSchema() *yamlLintSchema {
 		"name", "title", "description", "posting", "hierarchical", "hierarchy_kind",
 		// owner — справочник-владелец (подчинённый справочник, 1С «Владелец»).
 		"owner",
-		// owner — справочник-владелец (подчинённый справочник, 1С «Владелец»).
-		"owner",
-		"presentation",
+		"presentation", "order_by",
 		"list_form", "item_form", "based_on", "list_mode", "notify_changes", "list_refresh_on",
 		"fulltext", "search_fields", "detail_panel",
 	), map[string]*yamlLintSchema{

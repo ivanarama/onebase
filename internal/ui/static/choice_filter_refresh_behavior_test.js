@@ -4,7 +4,7 @@ const test = require('node:test');
 const vm = require('node:vm');
 
 const source = fs.readFileSync('static/ui.js', 'utf8');
-const start = source.indexOf('function obRefChoiceSnapshot(sel)');
+const start = source.indexOf('function obRefFilterValues(sel)');
 const end = source.indexOf('function openRefPicker(selOrId)', start);
 if (start < 0 || end < 0) throw new Error('choice_filter refresh block is absent from ui.js');
 const refreshSource = source.slice(start, end);
@@ -23,12 +23,16 @@ function response(data) {
 function runtime(fetchImpl, selected) {
   const listeners = {};
   const sourceControl = {value: 'warehouse-a'};
+  const ownerControl = {value: 'owner-a'};
   const attrs = {
     'data-ref-choice-context': JSON.stringify({
       form_entity: 'Инвентаризация',
       form: 'ФормаОбъекта',
       element: 'inventory-storage-choice',
       sources: {'Объект.Склад': 'Склад'},
+    }),
+    'data-ref-filter': JSON.stringify({
+      'Владелец': {from: 'Контрагент', value: 'owner-a'},
     }),
     'data-ref-entity': 'МестоХранения',
   };
@@ -60,7 +64,12 @@ function runtime(fetchImpl, selected) {
   const document = {
     documentElement: {contains() { return true; }},
     querySelectorAll(selector) {
-      return selector === 'select[data-ref-choice-context]' ? [select] : [];
+      return selector === 'select[data-ref-choice-context],select[data-ref-filter]' ? [select] : [];
+    },
+    querySelector(selector) {
+      if (selector === '[name="Контрагент"]') return ownerControl;
+      if (selector === '[name="Склад"]') return sourceControl;
+      return null;
     },
     getElementsByName(name) { return name === 'Склад' ? [sourceControl] : []; },
     getElementById() { return null; },
@@ -87,30 +96,46 @@ function runtime(fetchImpl, selected) {
   vm.createContext(sandbox);
   vm.runInContext(refreshSource, sandbox, {filename: 'ui.js#choice-filter-refresh'});
   ready();
-  return {api: sandbox, attrs, select, sourceControl};
+  return {api: sandbox, attrs, select, sourceControl, ownerControl};
 }
 
-test('a slower stale source response cannot overwrite the latest source', async () => {
+test('owner and choice_filter share one sequenced A-B-A request', async () => {
   const first = deferred();
   const second = deferred();
+  const third = deferred();
   const calls = [];
   const env = runtime((url) => {
     calls.push(url);
-    return calls.length === 1 ? first.promise : second.promise;
+    return [first.promise, second.promise, third.promise][calls.length - 1];
   });
 
-  const oldRequest = env.api.obRefreshChoiceSelect(env.select, true);
+  const oldARequest = env.api.obRefreshChoiceSelect(env.select, true);
   env.sourceControl.value = 'warehouse-b';
-  const latestRequest = env.api.obRefreshChoiceSelect(env.select, false);
-
+  env.ownerControl.value = 'owner-b';
+  const bRequest = env.api.obRefreshChoiceSelect(env.select, false);
   second.resolve(response({items: [{id: 'b-location', _label: 'B location'}], total: 1}));
-  await latestRequest;
+  await bRequest;
+  env.sourceControl.value = 'warehouse-a';
+  env.ownerControl.value = 'owner-a';
+  const latestARequest = env.api.obRefreshChoiceSelect(env.select, false);
+  third.resolve(response({items: [{id: 'latest-a-location', _label: 'Latest A location'}], total: 1}));
+  await latestARequest;
   first.resolve(response({items: [{id: 'a-location', _label: 'A location'}], total: 1}));
-  await oldRequest;
+  await oldARequest;
 
-  assert.equal(calls.length, 2);
-  assert.deepEqual(env.select.options.map((option) => option.value), ['', 'b-location']);
+  assert.equal(calls.length, 3);
+  calls.forEach((url) => {
+    assert.match(url, /form_entity=/);
+    assert.match(url, /sources=/);
+    assert.match(url, /flt=/);
+  });
+  assert.match(decodeURIComponent(calls[1]), /warehouse-b/);
+  assert.match(decodeURIComponent(calls[1]), /owner-b/);
+  assert.match(decodeURIComponent(calls[2]), /warehouse-a/);
+  assert.match(decodeURIComponent(calls[2]), /owner-a/);
+  assert.deepEqual(env.select.options.map((option) => option.value), ['', 'latest-a-location']);
   assert.equal(env.select.options.some((option) => option.value === 'a-location'), false);
+  assert.equal(env.select.options.some((option) => option.value === 'b-location'), false);
 });
 
 test('server selected_allowed keeps a value outside the page and clears only an incompatible value', async () => {

@@ -1132,7 +1132,6 @@ function renderProps() {
       addTextProp(panel, {{jsString (t $.Lang "Устойчивый id элемента")}}, 'id', info.id || '');
       addChoiceFilterEditor(panel, info);
     }
-    addChoiceFilterEditor(panel, info);
   }
   if (info.kind === 'ГруппаФормы') {
     addTextProp(panel, {{jsString (t $.Lang "Фон (CSS-цвет)")}}, 'background', info.background || '');

@@ -318,6 +318,110 @@ func TestRefOptionsSelectedAllowedIgnoresPageAndSearchButKeepsChoiceAndRLS(t *te
 	}
 }
 
+func TestRefOptionsOwnerAndChoiceFilterAreANDed(t *testing.T) {
+	f := newChoiceHTTPFixture(t)
+	f.target.Owner = "Организация"
+	f.target.Fields = append(f.target.Fields, metadata.Field{
+		Name: metadata.StandardOwnerField, ID: metadata.StandardOwnerFieldID,
+		Type: metadata.FieldType("reference:Организация"), RefEntity: "Организация",
+	})
+	if err := f.server.store.Migrate(context.Background(), []*metadata.Entity{f.target}); err != nil {
+		t.Fatalf("migrate owner field: %v", err)
+	}
+
+	ownerA, ownerB := uuid.New(), uuid.New()
+	allowed, wrongOwner, wrongChoice := uuid.New(), uuid.New(), uuid.New()
+	for _, row := range []struct {
+		id        uuid.UUID
+		direction uuid.UUID
+		owner     uuid.UUID
+		name      string
+	}{
+		{allowed, f.rootA, ownerA, "intersection allowed"},
+		{wrongOwner, f.rootA, ownerB, "intersection wrong owner"},
+		{wrongChoice, f.rootB, ownerA, "intersection wrong choice"},
+	} {
+		if err := f.server.store.Upsert(context.Background(), f.target.Name, row.id, map[string]any{
+			"Наименование":              row.name,
+			"Направление":               row.direction.String(),
+			"Аудитория":                 "anna",
+			metadata.StandardOwnerField: row.owner.String(),
+		}, f.target); err != nil {
+			t.Fatalf("seed combined row %q: %v", row.name, err)
+		}
+	}
+
+	query := f.contextQuery(f.rootA)
+	filter, _ := json.Marshal(map[string]string{metadata.StandardOwnerField: ownerA.String()})
+	query.Set("flt", string(filter))
+	query.Set("q", "intersection")
+	query.Set("limit", "100")
+	response := decodeChoiceHTTP(t, f.serveRefOptions(t, f.target, query))
+	if response.Total != 1 || len(response.Items) != 1 || fmt.Sprint(response.Items[0]["id"]) != allowed.String() {
+		t.Fatalf("owner and choice_filter are not ANDed: %#v", response)
+	}
+
+	for name, selected := range map[string]uuid.UUID{
+		"matching row": allowed, "wrong owner": wrongOwner, "wrong choice": wrongChoice,
+	} {
+		t.Run(name, func(t *testing.T) {
+			selectedQuery := f.contextQuery(f.rootA)
+			selectedQuery.Set("flt", string(filter))
+			selectedQuery.Set("selected_id", selected.String())
+			got := decodeChoiceHTTP(t, f.serveRefOptions(t, f.target, selectedQuery))
+			want := selected == allowed
+			if got.SelectedAllowed == nil || *got.SelectedAllowed != want {
+				t.Fatalf("selected_allowed=%v, want %v", got.SelectedAllowed, want)
+			}
+		})
+	}
+}
+
+func TestManagedInitialOptionsComposeOwnerAndChoiceFilter(t *testing.T) {
+	f := newChoiceHTTPFixture(t)
+	f.target.Owner = "Организация"
+	f.target.Fields = append(f.target.Fields, metadata.Field{
+		Name: metadata.StandardOwnerField, ID: metadata.StandardOwnerFieldID,
+		Type: metadata.FieldType("reference:Организация"), RefEntity: "Организация",
+	})
+	f.owner.Fields = append(f.owner.Fields, metadata.Field{
+		Name: "Организация", Type: metadata.FieldType("reference:Организация"), RefEntity: "Организация",
+	})
+	if err := f.server.store.Migrate(context.Background(), []*metadata.Entity{f.target, f.owner}); err != nil {
+		t.Fatalf("migrate owner fields: %v", err)
+	}
+	ownerA, ownerB := uuid.New(), uuid.New()
+	allowed := uuid.New()
+	for _, row := range []struct {
+		id        uuid.UUID
+		direction uuid.UUID
+		owner     uuid.UUID
+		name      string
+	}{
+		{allowed, f.rootA, ownerA, "initial intersection allowed"},
+		{uuid.New(), f.rootA, ownerB, "initial wrong owner"},
+		{uuid.New(), f.rootB, ownerA, "initial wrong choice"},
+	} {
+		if err := f.server.store.Upsert(context.Background(), f.target.Name, row.id, map[string]any{
+			"Наименование":              row.name,
+			"Направление":               row.direction.String(),
+			"Аудитория":                 "anna",
+			metadata.StandardOwnerField: row.owner.String(),
+		}, f.target); err != nil {
+			t.Fatalf("seed initial row %q: %v", row.name, err)
+		}
+	}
+
+	data := map[string]any{"Values": map[string]string{
+		"Направление": f.rootA.String(), "Организация": ownerA.String(), "Неисправность": "",
+	}}
+	f.server.applyManagedChoiceFilters(context.Background(), f.owner, f.owner.Forms[0], data)
+	options := data["ManagedChoiceOptions"].(map[string][]map[string]any)["fault-picker"]
+	if len(options) != 1 || fmt.Sprint(options[0]["id"]) != allowed.String() {
+		t.Fatalf("initial owner and choice_filter are not ANDed: %#v", options)
+	}
+}
+
 func htmlAttribute(node *html.Node, name string) (string, bool) {
 	for _, attr := range node.Attr {
 		if attr.Key == name {

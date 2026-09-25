@@ -99,6 +99,18 @@ func Validate(entities []*Entity, enums []*Enum) error {
 				return fmt.Errorf("entity %s: реквизит %s ссылается на %s, а owner — на %s", e.Name, StandardOwnerField, f.RefEntity, owner)
 			}
 		}
+		// order_by меняет порядок СРАЗУ ВЕЗДЕ — список, подбор, REST. Опечатка иначе
+		// выглядит как «сортировка не применилась», а это не отличить от «значения
+		// не заполнены».
+		for _, spec := range e.OrderBy {
+			name, _ := splitOrderSpec(spec)
+			if name == "" {
+				return fmt.Errorf("entity %s: order_by содержит пустое имя реквизита", e.Name)
+			}
+			if findEntityFieldFold(e, name) == nil {
+				return fmt.Errorf("entity %s: order_by ссылается на несуществующий реквизит %s", e.Name, name)
+			}
+		}
 		if err := validateFieldIDs(e); err != nil {
 			return err
 		}

@@ -366,7 +366,7 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 		folderOpts = s.loadFolderOptions(r.Context(), entity, values["parent_id"])
 	}
 	refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
-	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows)
+	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, values, tablePartRows)
 	s.renderEntityForm(w, r, "object", map[string]any{
 		"Entity":        entity,
 		"IsNew":         true,
@@ -757,7 +757,7 @@ func (s *Server) renderObjectFormError(w http.ResponseWriter, r *http.Request, e
 	}
 	tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, managedForm)
 	refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
-	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows)
+	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, values, tablePartRows)
 	lang := s.resolveLang(r)
 	data := map[string]any{
 		"Entity":        entity,
@@ -913,7 +913,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		values := formValues(r, entity)
 		tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, pickManagedForm(entity, "object"))
 		refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
-		tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows)
+		tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, values, tablePartRows)
 		langErr := s.resolveLang(r)
 		var fOpts []map[string]any
 		if entity.Hierarchical {
@@ -1043,13 +1043,37 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 	// контрагент, потом договор. Связи параметров выбора (план 170) едут своим
 	// контрактом choice и в flt не попадают.
 	base, fltOK := refOptionsFilters(ent, r.URL.Query().Get("flt"), storage.ListParams{})
+	selected := (*uuid.UUID)(nil)
+	if choice != nil {
+		selected = choice.Selected
+	} else if _, ownerContext := r.URL.Query()["flt"]; ownerContext {
+		// selected_id by itself remains a backwards-compatible ignored parameter.
+		// An explicit owner context opts into the same exact server-side check as
+		// choice_filter, so a live owner change can safely retain or clear the
+		// current value without trusting the first page of picker results.
+		selectedRaw, selectedErr := oneQueryValue(r.URL.Query(), "selected_id", false)
+		if selectedErr != nil {
+			http.Error(w, "invalid owner context: "+selectedErr.Error(), http.StatusBadRequest)
+			return
+		}
+		if selectedRaw != "" {
+			selectedID, parseErr := uuid.Parse(selectedRaw)
+			if parseErr != nil || selectedID == uuid.Nil {
+				http.Error(w, "invalid owner context: invalid selected_id", http.StatusBadRequest)
+				return
+			}
+			selected = &selectedID
+		}
+	}
 	items := make([]map[string]any, 0)
 	total := 0
+	var selectedParams storage.ListParams
 	if fltOK && (choice == nil || !choice.Empty) {
 		extra := base
 		if choice != nil {
 			extra.ChoicePredicates = choice.Predicates
 		}
+		selectedParams = extra
 		items, total, err = s.referenceOptionsPageWithParams(r.Context(), ent, r.URL.Query().Get("q"), limit, offset, extra)
 		if err != nil {
 			s.serverError(w, r, err)
@@ -1063,10 +1087,10 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 		"limit":  limit,
 		"offset": offset,
 	}
-	if choice != nil && choice.Selected != nil {
+	if selected != nil {
 		allowed := false
-		if !choice.Empty {
-			allowed, err = s.choiceSelectedAllowed(r.Context(), ent, *choice.Selected, choice.Predicates)
+		if fltOK && (choice == nil || !choice.Empty) {
+			allowed, err = s.choiceSelectedAllowed(r.Context(), ent, *selected, selectedParams)
 			if err != nil {
 				s.serverError(w, r, err)
 				return
@@ -1447,7 +1471,7 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, vals)
-	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tpRows)
+	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, vals, tpRows)
 
 	editUser := auth.UserFromContext(r.Context())
 	editIsAdmin := editUser == nil || editUser.IsAdmin
@@ -1617,7 +1641,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 		values := formValues(r, entity)
 		tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, pickManagedForm(entity, "object"))
 		refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
-		tpRefOpts2, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows)
+		tpRefOpts2, _ := s.loadInitialTPRefOptions(r.Context(), entity, values, tablePartRows)
 		values["_version"] = r.FormValue("_version")
 		langSubmit := s.resolveLang(r)
 		var fOpts []map[string]any

@@ -62,6 +62,36 @@ func ownerHolderField(holder *metadata.Entity, ownerEntity string) (metadata.Fie
 	return found, true
 }
 
+// ownerFilterForTarget находит единый источник владельца в шапке объекта и
+// возвращает его текущее значение. values допускает оба формата, которыми
+// живёт форма: map[string]string на первичном рендере и map[string]any после
+// серверного события.
+func ownerFilterForTarget(holder, target *metadata.Entity, values any) (string, bool) {
+	if holder == nil || target == nil || strings.TrimSpace(target.Owner) == "" {
+		return "", false
+	}
+	field, ok := ownerHolderField(holder, target.Owner)
+	if !ok {
+		return "", false
+	}
+	return formValueForPath(values, "Объект."+field.Name), true
+}
+
+func ownerFilterJSON(holder, target *metadata.Entity, values any) (string, bool) {
+	ownerID, asked := ownerFilterForTarget(holder, target, values)
+	if !asked {
+		return "", false
+	}
+	field, _ := ownerHolderField(holder, target.Owner)
+	raw, err := json.Marshal(map[string]refFilterSource{
+		metadata.StandardOwnerField: {From: field.Name, Value: ownerID},
+	})
+	if err != nil {
+		return "", false
+	}
+	return string(raw), true
+}
+
 // refFilterMap — отбор подбора для каждого поля формы: «имя поля» → JSON вида
 // {"Владелец":{"from":"Контрагент","value":"<uuid>"}}. Уезжает в разметку
 // атрибутом data-ref-filter, а дальше живёт на клиенте.
@@ -69,7 +99,7 @@ func ownerHolderField(holder *metadata.Entity, ownerEntity string) (metadata.Fie
 // Собирается в ЕДИНСТВЕННОЙ точке отрисовки форм: подчинение — свойство
 // метаданных, и оно обязано доезжать одинаково на карточку, на копию и на форму
 // с ошибкой валидации.
-func (s *Server) refFilterMap(holder *metadata.Entity, form *metadata.FormModule, values map[string]string) map[string]string {
+func (s *Server) refFilterMap(holder *metadata.Entity, form *metadata.FormModule, values any) map[string]string {
 	if s.reg == nil {
 		return nil
 	}
@@ -93,14 +123,12 @@ func (s *Server) refFilterMap(holder *metadata.Entity, form *metadata.FormModule
 				continue
 			}
 			target := s.reg.GetEntity(f.RefEntity)
-			if target == nil || strings.TrimSpace(target.Owner) == "" {
+			ownerID, asked := ownerFilterForTarget(holder, target, values)
+			if !asked {
 				continue
 			}
-			hf, ok := ownerHolderField(holder, target.Owner)
-			if !ok {
-				continue
-			}
-			add(f.Name, metadata.StandardOwnerField, refFilterSource{From: hf.Name, Value: strings.TrimSpace(values[hf.Name])})
+			hf, _ := ownerHolderField(holder, target.Owner)
+			add(f.Name, metadata.StandardOwnerField, refFilterSource{From: hf.Name, Value: ownerID})
 		}
 	}
 
@@ -116,14 +144,12 @@ func (s *Server) refFilterMap(holder *metadata.Entity, form *metadata.FormModule
 				continue
 			}
 			target := s.reg.GetEntity(refName)
-			if target == nil || strings.TrimSpace(target.Owner) == "" {
+			ownerID, asked := ownerFilterForTarget(holder, target, values)
+			if !asked {
 				continue
 			}
-			hf, ok := ownerHolderField(holder, target.Owner)
-			if !ok {
-				continue
-			}
-			add(a.Name, metadata.StandardOwnerField, refFilterSource{From: hf.Name, Value: strings.TrimSpace(values[hf.Name])})
+			hf, _ := ownerHolderField(holder, target.Owner)
+			add(a.Name, metadata.StandardOwnerField, refFilterSource{From: hf.Name, Value: ownerID})
 		}
 	}
 
@@ -137,6 +163,37 @@ func (s *Server) refFilterMap(holder *metadata.Entity, form *metadata.FormModule
 			continue
 		}
 		out[field] = string(raw)
+	}
+	return out
+}
+
+// tpRefFilterMap — тот же owner-контракт для ссылочных колонок табличных
+// частей. Источник владельца остаётся в шапке объекта; фильтр уезжает в каждый
+// DOM-select и в редактор SlickGrid, чтобы первая отрисовка, поиск и picker
+// использовали один и тот же контекст.
+func (s *Server) tpRefFilterMap(holder *metadata.Entity, values any) map[string]map[string]string {
+	if s.reg == nil || holder == nil {
+		return nil
+	}
+	out := make(map[string]map[string]string)
+	for _, tablePart := range holder.TableParts {
+		for _, field := range tablePart.Fields {
+			if field.RefEntity == "" || field.RefEntity == "_users" {
+				continue
+			}
+			target := s.reg.GetEntity(field.RefEntity)
+			raw, ok := ownerFilterJSON(holder, target, values)
+			if !ok {
+				continue
+			}
+			if out[tablePart.Name] == nil {
+				out[tablePart.Name] = map[string]string{}
+			}
+			out[tablePart.Name][field.Name] = raw
+		}
+	}
+	if len(out) == 0 {
+		return nil
 	}
 	return out
 }

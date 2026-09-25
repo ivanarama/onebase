@@ -159,6 +159,16 @@ func (h *handler) findEntityConfigFile(ctx context.Context, b *Base, entityName 
 }
 
 func applyFieldEdits(ent *saveEntity, kind metadata.Kind, fields []saveField, tpFields map[string][]saveField, posting *bool, postCaption *string, postAndCloseHidden *bool, hierarchical *bool, owner *string, basedOn *[]string, activity **saveActivity, numerator **saveNumerator) {
+	effectiveOwner := strings.TrimSpace(ent.Owner)
+	if owner != nil {
+		effectiveOwner = strings.TrimSpace(*owner)
+	}
+	// «Владелец» загружается в редактор как обычный реквизит, хотя при owner:
+	// он синтезирован metadata.LoadFile и может отсутствовать в исходном YAML.
+	// Нормализуем его ДО выдачи id: включение owner создаёт стандартное поле,
+	// смена владельца меняет его ссылочный тип, снятие owner убирает именно
+	// системное поле. Явно объявленный пользователем реквизит с иным id остаётся.
+	fields = reconcileOwnerField(ent.Fields, fields, effectiveOwner)
 	// Устойчивые id (план 81) переносим из прежнего состояния файла и выдаём
 	// новым реквизитам — иначе редактор стирал бы их при каждом сохранении.
 	// Стандартное поле («Код» справочника, «Номер» документа) в файле не лежит,
@@ -209,7 +219,7 @@ func applyFieldEdits(ent *saveEntity, kind metadata.Kind, fields []saveField, tp
 	if owner != nil {
 		// Подчинение справочника (1С «Владелец»). Пустая строка снимает его:
 		// omitempty убирает ключ из YAML целиком.
-		ent.Owner = strings.TrimSpace(*owner)
+		ent.Owner = effectiveOwner
 	}
 	if basedOn != nil {
 		// nil-slice → based_on удаляется из YAML (omitempty); пустой

@@ -1457,4 +1457,11 @@
   "Команда формы ещё выполняется. Дождитесь её завершения.": "A form command is still running. Wait for it to finish.",
   "Сначала завершите или восстановите проверку закрытия формы.": "Finish or recover the pending close check first.",
   "Результат уже сохранён. Скопируйте текущие правки и перезагрузите форму перед продолжением.": "The result has already been saved. Copy your current edits and reload the form before continuing.",
-  "Исход операции неизвестен. Проверьте данные в отдельной вкладке и перезагрузите форму; повторная запись заблокирована.": "The operation outcome is unknown. Check the data in another tab and reload the form; further writes are blocked."}
+  "Исход операции неизвестен. Проверьте данные в отдельной вкладке и перезагрузите форму; повторная запись заблокирована.": "The operation outcome is unknown. Check the data in another tab and reload the form; further writes are blocked.",
+  "Подчинён справочнику (владелец)": "Subordinate to catalog (owner)",
+  "— самостоятельный —": "— standalone —",
+  "Владелец": "Owner",
+  "Как «Владелец» в 1С: у элемента появляется реквизит": "Like “Owner” in 1C: each item gets the field",
+  "а подбор этого справочника везде сам показывает только элементы владельца — договоры своего контрагента, товарные группы своего направления. Настраивать отбор на формах не нужно. После включения требуется миграция БД:": "and this catalog's picker automatically shows only items for that owner — contracts for the selected counterparty, product groups for the selected direction. No form-level filter setup is required. Enabling this requires a database migration:",
+  "появится колонка": "a column will be added"
+}

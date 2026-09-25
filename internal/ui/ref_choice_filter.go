@@ -272,9 +272,10 @@ func (s *Server) resolveChoiceRequest(r *http.Request, target *metadata.Entity) 
 	return resolved, nil
 }
 
-func (s *Server) choiceSelectedAllowed(ctx context.Context, target *metadata.Entity, id uuid.UUID, predicates []storage.ChoicePredicate) (bool, error) {
+func (s *Server) choiceSelectedAllowed(ctx context.Context, target *metadata.Entity, id uuid.UUID, extra storage.ListParams) (bool, error) {
 	params := s.refListParamsForMode(target, refOptionsChoice)
-	params.ChoicePredicates = predicates
+	params.Filters = extra.Filters
+	params.ChoicePredicates = extra.ChoicePredicates
 	var err error
 	params, err = s.rowFilterFor(ctx, target, "read", params)
 	if err != nil {
@@ -319,17 +320,17 @@ func markOutsideChoice(rows []map[string]any, selected string) {
 	}
 }
 
-func (s *Server) initialChoiceOptions(ctx context.Context, target *metadata.Entity, element *metadata.FormElement, sources map[string]string, selected string) ([]map[string]any, error) {
-	predicates, empty, err := choicePredicates(element, sources)
+func (s *Server) initialChoiceOptions(ctx context.Context, target *metadata.Entity, element *metadata.FormElement, sources map[string]string, selected, ownerID string, ownerAsked bool) ([]map[string]any, error) {
+	predicates, choiceEmpty, err := choicePredicates(element, sources)
 	if err != nil {
 		return nil, err
 	}
+	params, ownerOK := ownerFilterParams(target, ownerID, ownerAsked, storage.ListParams{Limit: refPickerDefaultLimit})
+	params.ChoicePredicates = predicates
+	empty := choiceEmpty || !ownerOK
 	var rows []map[string]any
 	if !empty {
-		rows, err = s.referenceOptionsWithParams(ctx, target, refOptionsChoice, storage.ListParams{
-			Limit:            refPickerDefaultLimit,
-			ChoicePredicates: predicates,
-		})
+		rows, err = s.referenceOptionsWithParams(ctx, target, refOptionsChoice, params)
 		if err != nil {
 			return nil, err
 		}
@@ -341,7 +342,7 @@ func (s *Server) initialChoiceOptions(ctx context.Context, target *metadata.Enti
 	allowed := false
 	if !empty {
 		if id, parseErr := uuid.Parse(selected); parseErr == nil && id != uuid.Nil {
-			allowed, err = s.choiceSelectedAllowed(ctx, target, id, predicates)
+			allowed, err = s.choiceSelectedAllowed(ctx, target, id, params)
 			if err != nil {
 				return nil, err
 			}
@@ -378,7 +379,8 @@ func (s *Server) applyManagedChoiceFilters(ctx context.Context, owner *metadata.
 			sources[path] = formValueForPath(data["Values"], path)
 		}
 		selected := formValueForPath(data["Values"], element.DataPath)
-		rows, err := s.initialChoiceOptions(ctx, target, element, sources, selected)
+		ownerID, ownerAsked := ownerFilterForTarget(owner, target, data["Values"])
+		rows, err := s.initialChoiceOptions(ctx, target, element, sources, selected, ownerID, ownerAsked)
 		if err == nil {
 			options[element.ID] = rows
 		} else {

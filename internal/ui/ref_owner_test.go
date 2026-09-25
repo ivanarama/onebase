@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"path/filepath"
@@ -132,6 +133,29 @@ func TestRefOptionsFiltersBySubordinationOwner(t *testing.T) {
 	}
 }
 
+func TestRefOptionsOwnerContextChecksSelectedOutsidePage(t *testing.T) {
+	f := newOwnerFixture(t)
+	flt, _ := json.Marshal(map[string]string{metadata.StandardOwnerField: f.contractor.String()})
+	initial := serveRefOptions(t, f.server, f.subordinate.Name, "limit=1&flt="+url.QueryEscape(string(flt)), nil)
+	response := decodeChoiceHTTP(t, initial)
+	if len(response.Items) != 1 {
+		t.Fatalf("initial owner page: %#v", response)
+	}
+	selected := fmt.Sprint(response.Items[0]["id"])
+	query := "limit=1&q=no-such-label&flt=" + url.QueryEscape(string(flt)) + "&selected_id=" + url.QueryEscape(selected)
+	got := decodeChoiceHTTP(t, serveRefOptions(t, f.server, f.subordinate.Name, query, nil))
+	if got.SelectedAllowed == nil || !*got.SelectedAllowed || len(got.Items) != 0 {
+		t.Fatalf("owner-compatible selected value was lost outside the page: %#v", got)
+	}
+
+	foreign, _ := json.Marshal(map[string]string{metadata.StandardOwnerField: f.other.String()})
+	query = "limit=1&flt=" + url.QueryEscape(string(foreign)) + "&selected_id=" + url.QueryEscape(selected)
+	got = decodeChoiceHTTP(t, serveRefOptions(t, f.server, f.subordinate.Name, query, nil))
+	if got.SelectedAllowed == nil || *got.SelectedAllowed {
+		t.Fatalf("foreign-owner selected value was retained: %#v", got)
+	}
+}
+
 // Владельца спросили, но не выбрали — список ПУСТ, а не полон: «сначала
 // контрагент, потом договор». Полный список в ответ на невыбранного контрагента
 // пользователь принимает за отсутствие отбора.
@@ -193,6 +217,47 @@ func TestRefFilterMapFromSubordination(t *testing.T) {
 	}
 	if _, ok := got["Контрагент"]; ok {
 		t.Fatal("у самостоятельного справочника отбора быть не должно")
+	}
+}
+
+func TestOwnerFilteringCoversFormLocalAndTablePartReferences(t *testing.T) {
+	f := newOwnerFixture(t)
+	values := map[string]string{"Контрагент": f.contractor.String()}
+	form := &metadata.FormModule{Attributes: []*metadata.FormAttribute{{
+		Name: "ДоговорФормы", TypeRef: "CatalogRef.Договор", Save: false,
+	}}}
+	data := map[string]any{"Entity": f.holder, "Values": values}
+	f.server.mergeFormLocalRefOptions(context.Background(), form, data)
+	refOptions := data["RefOptions"].(map[string][]map[string]any)
+	if got := len(refOptions["ДоговорФормы"]); got != 2 {
+		t.Fatalf("save:false owner options=%d, want 2: %#v", got, refOptions["ДоговорФормы"])
+	}
+	if raw := f.server.refFilterMap(f.holder, form, values)["ДоговорФормы"]; raw == "" {
+		t.Fatal("save:false owner filter is absent from live picker contract")
+	}
+
+	f.holder.TableParts = []metadata.TablePart{{
+		Name:   "Строки",
+		Fields: []metadata.Field{{Name: "Договор", Type: "reference:Договор", RefEntity: "Договор"}},
+	}}
+	tpOptions, err := f.server.loadInitialTPRefOptions(context.Background(), f.holder, values, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(tpOptions["Строки"]["Договор"]); got != 2 {
+		t.Fatalf("table-part owner options=%d, want 2: %#v", got, tpOptions)
+	}
+	filterMap := f.server.tpRefFilterMap(f.holder, values)
+	if raw := filterMap["Строки"]["Договор"]; raw == "" {
+		t.Fatalf("table-part owner filter is absent: %#v", filterMap)
+	}
+
+	emptyOptions, err := f.server.loadInitialTPRefOptions(context.Background(), f.holder, map[string]string{"Контрагент": ""}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := len(emptyOptions["Строки"]["Договор"]); got != 0 {
+		t.Fatalf("table-part options with an empty owner=%d, want 0", got)
 	}
 }
 
