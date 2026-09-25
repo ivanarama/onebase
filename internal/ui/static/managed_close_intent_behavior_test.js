@@ -1114,7 +1114,7 @@ test('queued event snapshots form after the previous handler response is applied
   await first;
   await second;
   assert.equal(bodies.length, 2);
-  assert.equal(bodies[1].get('Status'), 'Approved', 'TRACE>> '+JSON.stringify(app.applied.filter(function(e){return e[0]==='TRACE'||e[0]==='values';})));
+  assert.equal(bodies[1].get('Status'), 'Approved', 'queued event resent the pre-handler Draft value');
   assert.equal(bodies[1].get('_version'), '2', 'queued event did not use the handler write version');
   assert.equal(bodies[1].get('_id'), 'existing-row');
 });
