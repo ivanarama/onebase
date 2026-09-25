@@ -1329,7 +1329,10 @@ body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;height:
    auto, поэтому он не может стать ниже своего содержимого — и длинное меню
    растягивало всю страницу, несмотря на overflow:hidden выше. */
 .app-body{display:flex;flex:1;overflow:hidden;min-height:0}
-aside{width:210px;background:#1e293b;color:#fff;padding:16px 0;flex-shrink:0;overflow-y:auto;min-height:0}
+/* Оформление меню привязано к #ob-nav, а не к голому aside: детальная панель —
+   тоже <aside> с белым фоном, и унаследованный color:#fff делал её значения
+   белыми на белом (#1670). */
+#ob-nav{width:210px;background:#1e293b;color:#fff;padding:16px 0;flex-shrink:0;overflow-y:auto;min-height:0}
 aside .sec{font-size:11px;text-transform:uppercase;color:#94a3b8;margin:14px 12px 4px;letter-spacing:.05em}
 aside a{display:block;padding:6px 14px;color:#cbd5e1;text-decoration:none;font-size:14px;margin:1px 6px;border-radius:5px;line-height:1.3;overflow-wrap:break-word}
 aside a:hover{background:#334155;color:#fff}
@@ -1427,8 +1430,8 @@ body{padding-bottom:32px}
      содержимому, иначе низ формы стал бы недоступен. */
   body{height:auto;overflow:visible}
   .app-body{display:block;overflow:visible}
-  aside{position:fixed;left:0;top:0;bottom:0;width:78vw;max-width:300px;z-index:401;transform:translateX(-100%);transition:transform .2s ease;box-shadow:2px 0 16px rgba(0,0,0,.3)}
-  body.nav-open aside{transform:translateX(0)}
+  #ob-nav{position:fixed;left:0;top:0;bottom:0;width:78vw;max-width:300px;z-index:401;transform:translateX(-100%);transition:transform .2s ease;box-shadow:2px 0 16px rgba(0,0,0,.3)}
+  body.nav-open #ob-nav{transform:translateX(0)}
   body.nav-open::before{content:"";position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:400}
   main{padding:14px;overflow-y:visible}
   h2{font-size:19px;margin-bottom:14px}

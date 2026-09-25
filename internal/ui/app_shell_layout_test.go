@@ -21,7 +21,9 @@ func TestAppShellIsCappedToViewport(t *testing.T) {
 	}
 	// min-height:auto у flex-элемента не даёт ему стать ниже содержимого —
 	// без явного нуля меню и рабочая область снова растянут страницу.
-	for _, rule := range []string{".app-body{", "aside{width:210px", "main{flex:1"} {
+	// Меню адресуется по #ob-nav, а не по голому aside: у детальной панели
+	// другой фон, и наследование от общего правила красило её значения белым (#1670).
+	for _, rule := range []string{".app-body{", "#ob-nav{width:210px", "main{flex:1"} {
 		got := cssRule(t, src, rule)
 		if !strings.Contains(got, "min-height:0") {
 			t.Errorf("в правиле %q нет min-height:0: %s", rule, got)
