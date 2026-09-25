@@ -784,12 +784,18 @@ func checkContract(result *report, path string) {
 	if err != nil || !strings.Contains(text, "pp:base-sync-done") ||
 		!strings.Contains(text, "single-flight-барьер") ||
 		!strings.Contains(string(mergeData), "pp:base-sync-intent") ||
-		!strings.Contains(string(mergeData), "pp:merge-cleanup-intent") ||
-		!strings.Contains(string(mergeData), "complete merge-cleanup") ||
 		!strings.Contains(string(mergeData), "повторный человеческий `ship` при валидной") ||
 		!strings.Contains(string(mergeData), "single-flight-барьер") {
 		result.add("red", "unsafe_base_sync_contract", 0,
 			"активные REVIEW/MERGE contracts не гарантируют перенос ship и single-flight через доказанный base-sync")
+		return
+	}
+	// Гарантии merge-cleanup отвечают за отдельный шаг — их поломка не должна
+	// маскироваться под проблему переноса ship/base-sync (#1524).
+	if !strings.Contains(string(mergeData), "pp:merge-cleanup-intent") ||
+		!strings.Contains(string(mergeData), "complete merge-cleanup") {
+		result.add("red", "unsafe_merge_cleanup_contract", 0,
+			"в merge-shepherd contract нет гарантий merge-cleanup (pp:merge-cleanup-intent / complete merge-cleanup)")
 		return
 	}
 	for _, name := range []string{"triage-issues", "plan-approved", "fix-approved", "review-queue", "merge-shepherd", "tail-issues"} {
