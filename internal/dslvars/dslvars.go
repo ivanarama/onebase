@@ -56,6 +56,12 @@ type Common struct {
 	// DSL (ЗагрузитьПакет). nil → hook на DSL-пути откатывается к by_time (как
 	// прежде); остальные DSL-переменные от Interp не зависят.
 	Interp *interpreter.Interpreter
+	// ConstantRefPresenter достаёт подпись ссылочной константы (entity, uuid).
+	// Хост решает правила чтения: права, маскирование, живой контекст транзакции.
+	// nil → ссылочная константа остаётся без подписи: UUID, выданный за
+	// наименование, молча уезжал в письма и печатные формы (#1536), и пустое
+	// представление честнее.
+	ConstantRefPresenter func(ctx context.Context, entityName, uuid string) string
 }
 
 // Build возвращает map с пересечением DSL-переменных, общих для UI и scheduler.
@@ -92,6 +98,10 @@ func (c Common) Build() map[string]any {
 		}
 		return ref
 	}
+	constants := interpreter.NewTypedConstantsRoot(c.Ctx, c.Store, declaredConsts, constsMap, constantRef)
+	if c.ConstantRefPresenter != nil {
+		constants = constants.WithRefPresenter(c.ConstantRefPresenter).WithRefCtxSource(ctxSource)
+	}
 	queryFactory := interpreter.NewQueryFactory(c.Ctx, c.Store, c.Reg)
 	predefined := interpreter.NewPredefinedRoot(c.Ctx, c.Store)
 
@@ -101,7 +111,7 @@ func (c Common) Build() map[string]any {
 		// Не MapThis: тот писал бы присвоенное значение только в память
 		// процесса, и `Константы.Имя = Значение` молча не доезжало до базы
 		// (#719). ConstantsRoot пишет сквозь.
-		"Константы":                interpreter.NewTypedConstantsRoot(c.Ctx, c.Store, declaredConsts, constsMap, constantRef),
+		"Константы":                constants,
 		"__factory_Запрос":         queryFactory,
 		"__factory_Query":          queryFactory,
 		"ПредопределённыеЗначения": predefined,
