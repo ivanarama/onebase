@@ -215,6 +215,34 @@ func TestSchemaFieldDefaultAcceptsEveryScalar(t *testing.T) {
 	}
 }
 
+// Описание `default` обязано перечислять ВСЕ источники, которые принимает
+// metadata.ParseDefault, в обеих языковых формах: контракт читают редакторы и
+// ИИ-клиенты, и половина принимаемого синтаксиса не должна быть невидимой
+// (#1568).
+func TestSchemaFieldDefaultDescriptionListsEverySource(t *testing.T) {
+	props := schemaAt(t, publishedSchema(t),
+		"$defs", "entity", "properties", "fields", "items", "properties")
+	def, ok := props["default"].(map[string]any)
+	if !ok {
+		t.Fatalf("default = %#v", props["default"])
+	}
+	description, _ := def["description"].(string)
+	for _, source := range []string{
+		"сегодня", "today",
+		"сейчас", "now",
+		"текущийпользователь", "currentuser",
+		"единственный", "single",
+		"константа.<Имя>", "constant.<Имя>",
+	} {
+		if !strings.Contains(description, source) {
+			t.Errorf("описание default не называет источник %q: %s", source, description)
+		}
+	}
+	if !strings.Contains(description, "регистр") {
+		t.Errorf("описание default не оговаривает независимость от регистра: %s", description)
+	}
+}
+
 // Типы новых ключей проверяются отдельно: описать ключ мало — `required: true`
 // на схеме со "type": "string" подчёркивается ровно так же, как неописанный.
 func TestSchemaFieldFlagsAreTyped(t *testing.T) {
