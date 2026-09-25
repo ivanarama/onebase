@@ -2481,6 +2481,20 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		pickerFn := newPickerBuiltin(&picker)
 		vars["ПоказатьПодбор"] = pickerFn
 		vars["ShowPicker"] = pickerFn
+
+		// Вопрос и список значений (#1683): формы обработок получают те же
+		// билтины диалогов, что и формы сущностей — иначе check пропускает
+		// вызов, а рантайм отвечает unknown function.
+		var question questionPayload
+		questionFn := newQuestionBuiltin(&question)
+		vars["ПоказатьВопрос"] = questionFn
+		vars["ShowQuestion"] = questionFn
+
+		var choiceItems []choiceListItem
+		choiceFn := newChoiceListBuiltin(&choiceItems)
+		vars["ДобавитьЗначениеСписка"] = choiceFn
+		vars["AddChoiceItem"] = choiceFn
+
 		condRuntime := newFormConditionalRuntime(form)
 		for k, v := range condRuntime.builtins() {
 			vars[k] = v
@@ -2489,6 +2503,12 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		if pr := parsePickResult(pickResult); pr != nil {
 			vars["ПодборРезультат"] = pr
 			vars["PickResult"] = pr
+		}
+		// Фаза 2 вопроса (#1683): ответ пользователя — переменная ВопросОтвет
+		// для обработчика события Ответ.
+		if qa, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_question_answer")); strings.TrimSpace(qa) != "" {
+			vars["ВопросОтвет"] = qa
+			vars["QuestionAnswer"] = qa
 		}
 		if err := addProcessorTPEventContext(r, proc, requestControls, eventTarget, obj, vars); err != nil {
 			opStatus = "error"
@@ -2517,6 +2537,10 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(false)
 			resp.Error = interpreter.FormatUserError(runErr)
 			resp.PickerData = picker
+			if question.Variants != nil {
+				q := question
+				resp.Question = &q
+			}
 			resp.Dirty = boolPtr(transientManagedStateDirty(obj, fieldsBefore, tablesBefore))
 			compactFormCloseDelta(&resp, closeInv)
 			respondJSON(enc, resp)
@@ -2525,6 +2549,11 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 
 		resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(true)
 		resp.PickerData = picker
+		if question.Variants != nil {
+			q := question
+			resp.Question = &q
+		}
+		resp.ChoiceList = choiceItems
 		resp.Dirty = boolPtr(transientManagedStateDirty(obj, fieldsBefore, tablesBefore))
 		compactFormCloseDelta(&resp, closeInv)
 		respondJSON(enc, resp)
