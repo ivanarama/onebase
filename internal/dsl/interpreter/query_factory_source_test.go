@@ -33,6 +33,15 @@ func (s *mutableSource) switchTo(ctx context.Context) {
 	s.ctx = ctx
 }
 
+// ctxTag — ключ маркера в тестовых контекстах: ctxA и ctxB несут разные
+// значения, поэтому сравнение по Value различает их, а не проходит вакуумно
+// на структурном равенстве двух свежих cancelCtx.
+type ctxTag struct{}
+
+func taggedCtx(tag string) context.Context {
+	return context.WithValue(context.Background(), ctxTag{}, tag)
+}
+
 // ctxSpyDB — spy QueryDB: фиксирует контекст каждого вызова.
 type ctxSpyDB struct {
 	t    *testing.T
@@ -93,9 +102,9 @@ func runQuery(t *testing.T, q queryObject) *interpreter.Array {
 // Живой источник: фабрика и объект созданы на A, до Выполнить() источник
 // переключён на B — compiler, SQL и guard обязаны наблюдать B.
 func TestQueryFactorySourceObservesLiveContext(t *testing.T) {
-	ctxA, cancelA := context.WithCancel(context.Background())
+	ctxA, cancelA := context.WithCancel(taggedCtx("A"))
 	defer cancelA()
-	ctxB, cancelB := context.WithCancel(context.Background())
+	ctxB, cancelB := context.WithCancel(taggedCtx("B"))
 	defer cancelB()
 
 	src := &mutableSource{ctx: ctxA}
@@ -114,20 +123,23 @@ func TestQueryFactorySourceObservesLiveContext(t *testing.T) {
 	q, ok := factory(nil).(queryObject)
 	require.True(t, ok, "фабрика вернула не объект Запроса")
 
+	// Заявленный сценарий: источник переключён на B ДО Выполнить().
+	src.switchTo(ctxB)
+
 	res := runQuery(t, q)
 	require.Equal(t, 1, len(res.Iterate()), "строка результата потеряна")
-	assert.Equal(t, ctxB, db.only(), "SQL выполнился не на живом контексте источника")
-	assert.Equal(t, ctxB, compilerCtx.only(), "compiler видел контекст сборки, а не Выполнить()")
-	assert.Equal(t, ctxB, guardCtx.only(), "guard видел контекст сборки, а не Выполнить()")
+	assert.Equal(t, "B", db.only().Value(ctxTag{}), "SQL выполнился не на живом контексте источника")
+	assert.Equal(t, "B", compilerCtx.only().Value(ctxTag{}), "compiler видел контекст сборки, а не Выполнить()")
+	assert.Equal(t, "B", guardCtx.only().Value(ctxTag{}), "guard видел контекст сборки, а не Выполнить()")
 }
 
 // Новый convenience-конструктор сходится в ту же реализацию: без compiler
 // запрос компилируется напрямую, и контекст так же берётся в момент
 // Выполнить().
 func TestQueryFactorySourceConvenienceObservesLiveContext(t *testing.T) {
-	ctxA, cancelA := context.WithCancel(context.Background())
+	ctxA, cancelA := context.WithCancel(taggedCtx("A"))
 	defer cancelA()
-	ctxB, cancelB := context.WithCancel(context.Background())
+	ctxB, cancelB := context.WithCancel(taggedCtx("B"))
 	defer cancelB()
 
 	src := &mutableSource{ctx: ctxA}
@@ -136,15 +148,17 @@ func TestQueryFactorySourceConvenienceObservesLiveContext(t *testing.T) {
 	q, ok := factory(nil).(queryObject)
 	require.True(t, ok, "фабрика вернула не объект Запроса")
 
+	src.switchTo(ctxB)
+
 	res := runQuery(t, q)
 	require.Equal(t, 1, len(res.Iterate()), "строка результата потеряна")
-	assert.Equal(t, ctxB, db.only())
+	assert.Equal(t, "B", db.only().Value(ctxTag{}))
 }
 
 // Статический конструктор остаётся статическим: контекст фиксируется при
 // сборке фабрики/объекта и не переключается после.
 func TestQueryFactoryStaticStaysOnConstructionContext(t *testing.T) {
-	ctxA, cancelA := context.WithCancel(context.Background())
+	ctxA, cancelA := context.WithCancel(taggedCtx("A"))
 	defer cancelA()
 
 	db := &ctxSpyDB{t: t}
@@ -159,6 +173,6 @@ func TestQueryFactoryStaticStaysOnConstructionContext(t *testing.T) {
 
 	res := runQuery(t, q)
 	require.Equal(t, 1, len(res.Iterate()), "строка результата потеряна")
-	assert.Equal(t, ctxA, db.only())
-	assert.Equal(t, ctxA, compilerCtx.only())
+	assert.Equal(t, "A", db.only().Value(ctxTag{}))
+	assert.Equal(t, "A", compilerCtx.only().Value(ctxTag{}))
 }
