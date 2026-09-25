@@ -38,6 +38,26 @@ var (
 	ErrPasswordTooLong  = errors.New("пароль слишком длинный")
 )
 
+// PasswordTooShortError — отказ «слишком короткий» с фактически применённым
+// минимумом (#1571): настройки базы уточняют глобальное умолчание, и граница
+// HTTP обязана называть реальный предел, а не подставлять глобальный.
+type PasswordTooShortError struct{ Min int }
+
+func (e *PasswordTooShortError) Error() string {
+	return fmt.Sprintf("пароль слишком короткий: минимум %d символов", e.Min)
+}
+
+func (e *PasswordTooShortError) Unwrap() error { return ErrPasswordTooShort }
+
+// PasswordTooLongError — отказ «слишком длинный» с байтовым пределом bcrypt.
+type PasswordTooLongError struct{ Max int }
+
+func (e *PasswordTooLongError) Error() string {
+	return fmt.Sprintf("пароль слишком длинный: максимум %d байта", e.Max)
+}
+
+func (e *PasswordTooLongError) Unwrap() error { return ErrPasswordTooLong }
+
 // PasswordPolicy is process-wide authentication policy captured when a Repo
 // is created. Empty passwords are disabled by default and require an explicit
 // kiosk-mode opt-in through ONEBASE_ALLOW_EMPTY_PASSWORDS=true.
@@ -97,10 +117,10 @@ func (p PasswordPolicy) validate(password string) error {
 		return ErrPasswordRequired
 	}
 	if utf8.RuneCountInString(password) < p.MinLength {
-		return fmt.Errorf("%w: минимум %d символов", ErrPasswordTooShort, p.MinLength)
+		return &PasswordTooShortError{Min: p.MinLength}
 	}
 	if byteLen > maxBcryptPasswordBytes {
-		return fmt.Errorf("%w: максимум %d байта", ErrPasswordTooLong, maxBcryptPasswordBytes)
+		return &PasswordTooLongError{Max: maxBcryptPasswordBytes}
 	}
 	return nil
 }

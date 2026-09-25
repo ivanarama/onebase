@@ -452,12 +452,32 @@ func isPasswordPolicyError(err error) bool {
 // Сам текст ошибки говорит только «пароль не может быть пустым» — из
 // конфигуратора не видно, что пустые пароли вообще включаются, и на тестовом
 // стенде это тупик: админ упирается в запрет, о котором знает лишь исходный код.
+//
+// Пользовательское представление трёх отказов локализуется здесь, на границе
+// HTTP (#1571): auth отдаёт типизированные ошибки с фактическими пределами
+// (настройки базы уточняют глобальный минимум), разбор русского err.Error()
+// строковыми заменами не используется. Неизвестная ошибка возвращается как
+// есть — это не отказ политики.
 func passwordPolicyMessage(lang string, err error) string {
 	switch {
 	case errors.Is(err, auth.ErrPasswordRequired):
-		return err.Error() + ". " + tr(lang, "Пустые пароли включаются переменной окружения ONEBASE_ALLOW_EMPTY_PASSWORDS=true перед запуском лаунчера.")
+		return tr(lang, "Пароль не может быть пустым") + ". " +
+			tr(lang, "Пустые пароли включаются переменной окружения ONEBASE_ALLOW_EMPTY_PASSWORDS=true перед запуском лаунчера.")
 	case errors.Is(err, auth.ErrPasswordTooShort):
-		return err.Error() + ". " + tr(lang, "Минимальная длина задаётся переменной окружения ONEBASE_MIN_PASSWORD_LENGTH перед запуском лаунчера.")
+		minLen := auth.DefaultMinPasswordLength
+		var short *auth.PasswordTooShortError
+		if errors.As(err, &short) {
+			minLen = short.Min
+		}
+		return fmt.Sprintf(tr(lang, "пароль слишком короткий: минимум %d символов"), minLen) + ". " +
+			tr(lang, "Минимальная длина задаётся переменной окружения ONEBASE_MIN_PASSWORD_LENGTH перед запуском лаунчера.")
+	case errors.Is(err, auth.ErrPasswordTooLong):
+		maxBytes := auth.MaxPasswordLength
+		var long *auth.PasswordTooLongError
+		if errors.As(err, &long) {
+			maxBytes = long.Max
+		}
+		return fmt.Sprintf(tr(lang, "пароль слишком длинный: максимум %d байта"), maxBytes)
 	}
 	return err.Error()
 }
