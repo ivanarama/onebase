@@ -261,3 +261,68 @@ func mustUUID(t *testing.T, s string) uuid.UUID {
 func urlEscape(s string) string { return url.PathEscape(s) }
 
 func urlQueryEscape(s string) string { return url.QueryEscape(s) }
+
+// Классы отборов обязаны иметь правила в таблице стилей страницы.
+//
+// Разметка рисовала .w-filters/.w-filter с самого появления отборов, а правил
+// для них не было вовсе: <label> инлайновый, поэтому подпись и контрол текли
+// в строку и переносились как придётся, а ширина <select> равнялась самому
+// длинному значению списка — один длинный логин растягивал карточку и ломал
+// ряд. Тест держит связь «класс нарисован → класс оформлен»: краснеет и если
+// правила убрать, и если в разметке появится новый класс отбора без оформления.
+func TestWidgetFiltersDashboard_ClassesAreStyled(t *testing.T) {
+	router := newFiltersFixture(t)
+	req := httptest.NewRequest(http.MethodGet, "/ui/", nil)
+	rec := httptest.NewRecorder()
+	router.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("дашборд не отдан: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	// Блоков <style> на странице несколько, дашбордный — не первый: берём все.
+	стили := styleBlocks(body)
+
+	for _, класс := range []string{"w-filters", "w-filter", "w-filter-reset"} {
+		if !strings.Contains(body, `class="`+класс+`"`) {
+			t.Fatalf("класс %q не нарисован — тест потерял предмет проверки", класс)
+		}
+		if !strings.Contains(стили, "."+класс+"{") {
+			t.Errorf("класс %q нарисован, но правил для него нет: ряд отборов не оформлен", класс)
+		}
+	}
+
+	// Ряд: контейнер — флексбокс, каждый отбор занимает равную долю.
+	if r := cssRule(t, стили, ".w-filters{"); !strings.Contains(r, "display:flex") {
+		t.Errorf(".w-filters не флексбокс (%s) — отборы не выстроятся в ряд", r)
+	}
+	if r := cssRule(t, стили, ".w-filter{"); !strings.Contains(r, "flex:1 1 0") {
+		t.Errorf(".w-filter без flex:1 1 0 (%s) — доли строки будут разными", r)
+	}
+	// Без min-width:0 у самого контрола flex-элемент не становится уже своего
+	// содержимого, и длинное значение списка снова растянет карточку.
+	if r := cssRule(t, стили, ".w-filter select"); !strings.Contains(r, "min-width:0") {
+		t.Errorf("контрол отбора без min-width:0 (%s) — длинное значение растянет ряд", r)
+	}
+}
+
+// styleBlocks склеивает содержимое всех <style> страницы: дашбордные правила
+// лежат не в первом блоке, и поиск только по нему ничего бы не нашёл.
+func styleBlocks(body string) string {
+	var b strings.Builder
+	rest := body
+	for {
+		i := strings.Index(rest, "<style")
+		if i < 0 {
+			break
+		}
+		rest = rest[i:]
+		j := strings.Index(rest, ">")
+		k := strings.Index(rest, "</style>")
+		if j < 0 || k < 0 {
+			break
+		}
+		b.WriteString(rest[j+1 : k])
+		rest = rest[k+len("</style>"):]
+	}
+	return b.String()
+}

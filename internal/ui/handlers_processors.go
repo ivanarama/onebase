@@ -62,6 +62,11 @@ func (s *Server) processorForm(w http.ResponseWriter, r *http.Request) {
 			"TPRefMeta":     map[string]map[string]any{},
 			"TablePartRows": tablePartRows,
 		}
+		// Кнопка «Открыть карточку» (🔍) у ссылочного поля: форма обработки
+		// выключает её тем же ключом ref_card_button, что и форма сущности.
+		// Раньше признак ставился только в handlers_managed.go, и на формах
+		// обработок ключ молча не работал.
+		s.applyHideRefCard(r, mf, data)
 		s.setProcessorManagedContext(r, data, proc)
 		s.prepareManagedFormData(r.Context(), data, mf)
 		s.render(w, r, "page-managed-form", data)
@@ -350,6 +355,7 @@ func (s *Server) renderProcessorManagedResult(w http.ResponseWriter, r *http.Req
 		"RunError":      runErr,
 		"Ran":           true,
 	}
+	s.applyHideRefCard(r, proc.ManagedForm(), data)
 	s.setProcessorManagedContext(r, data, proc)
 	s.prepareManagedFormData(r.Context(), data, proc.ManagedForm())
 	s.render(w, r, "page-managed-form", data)
@@ -849,6 +855,13 @@ func processorVirtualEntity(proc *processorpkg.Processor) *metadata.Entity {
 			enumName := "_" + p.Name + "_choice"
 			f.Type = metadata.FieldType("enum:" + enumName)
 			f.EnumName = enumName
+		case strings.HasPrefix(p.Type, "enum:"):
+			// Параметр-ПЕРЕЧИСЛЕНИЕ: без этой ветки тип уходил в default и
+			// становился строкой, EnumName терялся, и список значений на форме
+			// оставался пустым — Переключатель рисовал один «— выбрать —».
+			enumName := strings.TrimPrefix(p.Type, "enum:")
+			f.Type = metadata.FieldType("enum:" + enumName)
+			f.EnumName = enumName
 		case strings.HasPrefix(p.Type, "reference:"):
 			f.Type = metadata.FieldType("reference:" + strings.TrimPrefix(p.Type, "reference:"))
 			f.RefEntity = strings.TrimPrefix(p.Type, "reference:")
@@ -925,5 +938,21 @@ func parseParamValue(s, typ string) any {
 		return s
 	default:
 		return s
+	}
+}
+
+// applyHideRefCard переносит на форму ОБРАБОТКИ те же правила кнопки
+// «Открыть карточку», что действуют на форме сущности: ref_card_button:false
+// выключает её всем, ref_card_button_admin_only — всем, кроме администратора.
+func (s *Server) applyHideRefCard(r *http.Request, form *metadata.FormModule, data map[string]any) {
+	if form == nil || data == nil {
+		return
+	}
+	if form.RefCardButton != nil && !*form.RefCardButton {
+		data["HideRefCard"] = true
+		return
+	}
+	if form.RefCardButtonAdminOnly && !s.isAdmin(r) {
+		data["HideRefCard"] = true
 	}
 }

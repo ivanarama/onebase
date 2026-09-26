@@ -29,6 +29,9 @@ type resolvedChoiceRequest struct {
 	Predicates []storage.ChoicePredicate
 	Empty      bool
 	Selected   *uuid.UUID
+	// Folders — элемент объявил choice_folders: группы иерархического
+	// справочника участвуют в подборе наравне с элементами.
+	Folders bool
 }
 
 func findManagedFormByName(owner *metadata.Entity, name string) *metadata.FormModule {
@@ -58,12 +61,29 @@ func findChoiceElementByID(form *metadata.FormModule, id string) *metadata.FormE
 }
 
 func formChoicePath(path string) (root, name string, ok bool) {
+	root, name, _, ok = formChoiceDeepPath(path)
+	return root, name, ok
+}
+
+// formChoiceDeepPath разбирает источник условия. Кроме двух звеньев
+// («Объект.Поле») допускается одно разыменование: «Объект.Направление.Группа».
+// Браузер и в этом случае шлёт значение ПЕРВОГО поля — оно единственное, что
+// есть на форме контролом, — а последний шаг делает сервер: читает запись по
+// ссылке и берёт из неё нужный реквизит. Без этого нельзя было отобрать по
+// признаку, живущему не в самой форме, а в связанном объекте.
+func formChoiceDeepPath(path string) (root, name, deref string, ok bool) {
 	parts := strings.Split(strings.TrimSpace(path), ".")
-	if len(parts) != 2 {
-		return "", "", false
+	if len(parts) < 2 || len(parts) > 3 {
+		return "", "", "", false
 	}
 	root, name = strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
-	return root, name, root != "" && name != ""
+	if len(parts) == 3 {
+		deref = strings.TrimSpace(parts[2])
+		if deref == "" {
+			return "", "", "", false
+		}
+	}
+	return root, name, deref, root != "" && name != ""
 }
 
 func formChoiceTypeEntity(typeRef string) string {
@@ -126,7 +146,7 @@ func choiceSourceControls(element *metadata.FormElement) map[string]string {
 // choicePredicates converts only server-owned metadata into storage
 // predicates. Missing known source values fail closed with Empty=true;
 // unknown source names and malformed UUIDs are request errors.
-func choicePredicates(element *metadata.FormElement, sources map[string]string) ([]storage.ChoicePredicate, bool, error) {
+func choicePredicates(target *metadata.Entity, element *metadata.FormElement, sources map[string]string) ([]storage.ChoicePredicate, bool, error) {
 	if element == nil || len(element.ChoiceFilter) == 0 {
 		return nil, false, fmt.Errorf("choice_filter is not declared")
 	}
@@ -145,10 +165,29 @@ func choicePredicates(element *metadata.FormElement, sources map[string]string) 
 			predicates = append(predicates, predicate)
 			continue
 		}
+		if literal := strings.TrimSpace(condition.Ref); literal != "" {
+			id, err := uuid.Parse(literal)
+			if err != nil || id == uuid.Nil {
+				return nil, false, fmt.Errorf("invalid literal ref %q", literal)
+			}
+			predicate.Value = id
+			predicates = append(predicates, predicate)
+			continue
+		}
 		path := strings.TrimSpace(condition.From)
 		raw := strings.TrimSpace(sources[path])
 		if raw == "" {
 			return nil, true, nil
+		}
+		// Источник не обязан быть ссылкой: разыменованный путь может дать
+		// строковый реквизит (ВладелецКод дома хранит ИД улицы, а не ссылку).
+		// Решает тип реквизита-цели: у строкового значение едет строкой, у
+		// ссылочного по-прежнему обязано быть корректным UUID — иначе мусор
+		// в источнике получил бы 500 вместо внятного 400.
+		if choiceTargetFieldIsString(target, condition.Field) {
+			predicate.Value = raw
+			predicates = append(predicates, predicate)
+			continue
 		}
 		id, err := uuid.Parse(raw)
 		if err != nil || id == uuid.Nil {
@@ -158,6 +197,20 @@ func choicePredicates(element *metadata.FormElement, sources map[string]string) 
 		predicates = append(predicates, predicate)
 	}
 	return predicates, false, nil
+}
+
+// choiceTargetFieldIsString сообщает, что реквизит справочника-цели строковый:
+// тогда значение источника едет строкой, а не UUID.
+func choiceTargetFieldIsString(target *metadata.Entity, name string) bool {
+	if target == nil {
+		return false
+	}
+	for i := range target.Fields {
+		if strings.EqualFold(target.Fields[i].Name, strings.TrimSpace(name)) {
+			return target.Fields[i].Type == metadata.FieldTypeString
+		}
+	}
+	return false
 }
 
 func decodeChoiceSources(raw string) (map[string]string, error) {
@@ -256,12 +309,13 @@ func (s *Server) resolveChoiceRequest(r *http.Request, target *metadata.Entity) 
 	if err != nil {
 		return nil, err
 	}
-	predicates, empty, err := choicePredicates(element, sources)
+	sources = s.resolveDeepChoiceSources(r.Context(), owner, form, sources)
+	predicates, empty, err := choicePredicates(target, element, sources)
 	if err != nil {
 		return nil, err
 	}
 
-	resolved := &resolvedChoiceRequest{Predicates: predicates, Empty: empty}
+	resolved := &resolvedChoiceRequest{Predicates: predicates, Empty: empty, Folders: element.ChoiceFolders}
 	if selectedRaw != "" {
 		id, parseErr := uuid.Parse(selectedRaw)
 		if parseErr != nil || id == uuid.Nil {
@@ -272,8 +326,11 @@ func (s *Server) resolveChoiceRequest(r *http.Request, target *metadata.Entity) 
 	return resolved, nil
 }
 
-func (s *Server) choiceSelectedAllowed(ctx context.Context, target *metadata.Entity, id uuid.UUID, predicates []storage.ChoicePredicate) (bool, error) {
+func (s *Server) choiceSelectedAllowed(ctx context.Context, target *metadata.Entity, id uuid.UUID, predicates []storage.ChoicePredicate, folders bool) (bool, error) {
 	params := s.refListParamsForMode(target, refOptionsChoice)
+	if folders {
+		params.ExcludeFolders = false
+	}
 	params.ChoicePredicates = predicates
 	var err error
 	params, err = s.rowFilterFor(ctx, target, "read", params)
@@ -320,7 +377,7 @@ func markOutsideChoice(rows []map[string]any, selected string) {
 }
 
 func (s *Server) initialChoiceOptions(ctx context.Context, target *metadata.Entity, element *metadata.FormElement, sources map[string]string, selected string) ([]map[string]any, error) {
-	predicates, empty, err := choicePredicates(element, sources)
+	predicates, empty, err := choicePredicates(target, element, sources)
 	if err != nil {
 		return nil, err
 	}
@@ -329,6 +386,7 @@ func (s *Server) initialChoiceOptions(ctx context.Context, target *metadata.Enti
 		rows, err = s.referenceOptionsWithParams(ctx, target, refOptionsChoice, storage.ListParams{
 			Limit:            refPickerDefaultLimit,
 			ChoicePredicates: predicates,
+			IncludeFolders:   element.ChoiceFolders,
 		})
 		if err != nil {
 			return nil, err
@@ -341,7 +399,7 @@ func (s *Server) initialChoiceOptions(ctx context.Context, target *metadata.Enti
 	allowed := false
 	if !empty {
 		if id, parseErr := uuid.Parse(selected); parseErr == nil && id != uuid.Nil {
-			allowed, err = s.choiceSelectedAllowed(ctx, target, id, predicates)
+			allowed, err = s.choiceSelectedAllowed(ctx, target, id, predicates, element.ChoiceFolders)
 			if err != nil {
 				return nil, err
 			}
@@ -378,6 +436,7 @@ func (s *Server) applyManagedChoiceFilters(ctx context.Context, owner *metadata.
 			sources[path] = formValueForPath(data["Values"], path)
 		}
 		selected := formValueForPath(data["Values"], element.DataPath)
+		sources = s.resolveDeepChoiceSources(ctx, owner, form, sources)
 		rows, err := s.initialChoiceOptions(ctx, target, element, sources, selected)
 		if err == nil {
 			options[element.ID] = rows
@@ -399,4 +458,70 @@ func (s *Server) applyManagedChoiceFilters(ctx context.Context, owner *metadata.
 		data["ManagedChoiceOptions"] = options
 		data["ManagedChoiceContexts"] = contexts
 	}
+}
+
+// resolveDeepChoiceSources доводит значения источников с разыменованием до
+// конечного реквизита. Браузер прислал идентификатор промежуточной записи
+// (например направления), а условие сравнивает с её реквизитом — читаем запись
+// и подменяем значение. Нечитаемая или отсутствующая запись обнуляет источник:
+// подбор в этом случае честно показывает пустоту, а не весь справочник.
+func (s *Server) resolveDeepChoiceSources(ctx context.Context, owner *metadata.Entity, form *metadata.FormModule, sources map[string]string) map[string]string {
+	if len(sources) == 0 {
+		return sources
+	}
+	out := make(map[string]string, len(sources))
+	for path, raw := range sources {
+		root, name, deref, ok := formChoiceDeepPath(path)
+		if !ok || deref == "" || strings.TrimSpace(raw) == "" {
+			out[path] = raw
+			continue
+		}
+		refEntityName := ""
+		switch {
+		case strings.EqualFold(root, "Объект"):
+			if owner != nil {
+				for i := range owner.Fields {
+					if strings.EqualFold(owner.Fields[i].Name, name) {
+						refEntityName = owner.Fields[i].RefEntity
+						break
+					}
+				}
+			}
+		case strings.EqualFold(root, "Форма"):
+			if form != nil {
+				for _, attr := range form.Attributes {
+					if attr != nil && strings.EqualFold(attr.Name, name) {
+						refEntityName = formChoiceTypeEntity(attr.TypeRef)
+						break
+					}
+				}
+			}
+		}
+		refEntity := s.reg.GetEntity(refEntityName)
+		if refEntity == nil {
+			out[path] = ""
+			continue
+		}
+		id, err := uuid.Parse(strings.TrimSpace(raw))
+		if err != nil {
+			out[path] = ""
+			continue
+		}
+		decision, err := s.rowDecision(ctx, refEntity, "read")
+		if err != nil || !decision.Allowed || s.dslFieldMasked(ctx, refEntity, deref) {
+			out[path] = ""
+			continue
+		}
+		row, err := s.store.GetByID(ctx, refEntity.Name, id, refEntity)
+		if err != nil || row == nil || (!decision.Unrestricted && !s.matchRowPredicate(ctx, row, decision.Predicate)) {
+			out[path] = ""
+			continue
+		}
+		key, _ := rowKeyByName(row, deref)
+		out[path] = fmt.Sprint(row[key])
+		if out[path] == "<nil>" {
+			out[path] = ""
+		}
+	}
+	return out
 }

@@ -46,6 +46,84 @@ func (s *Server) applyRowFilter(w http.ResponseWriter, r *http.Request, entity *
 	return params, true
 }
 
+// applyListFormFilter добавляет к отбору списка постоянные условия формы
+// (ключ `filter` блока form:). Это правило ИНТЕРФЕЙСА, а не прав: записи,
+// не прошедшие условие, в этом списке не показываются, но остаются доступны
+// по ссылке, в отчётах и через API — иначе это был бы row_access.
+//
+// Условие с @ТекущийПользователь при неизвестном пользователе (фоновые
+// задания, анонимные пути) не применяется вовсе: подставить туда нечего,
+// а отбор «по никому» показал бы пустой список и выглядел бы поломкой.
+func (s *Server) applyListFormFilter(r *http.Request, entity *metadata.Entity, params storage.ListParams) storage.ListParams {
+	form := pickManagedForm(entity, "list")
+	if form == nil || len(form.ListFilter) == 0 {
+		return params
+	}
+	user := auth.UserFromContext(r.Context())
+	var extra []storage.Predicate
+	for _, cond := range form.ListFilter {
+		pred, ok := s.listFilterPredicate(entity, cond, user)
+		if !ok {
+			continue
+		}
+		extra = append(extra, pred)
+	}
+	if len(extra) == 0 {
+		return params
+	}
+	if params.RowFilter != nil {
+		extra = append(extra, *params.RowFilter)
+	}
+	combined := storage.Predicate{All: extra}
+	params.RowFilter = &combined
+	return params
+}
+
+// listFilterPredicate переводит одно условие формы списка в предикат хранилища.
+// Поле допускает одно разыменование: «Инициатор.УчётнаяЗапись» проверяет
+// реквизит связанной записи.
+func (s *Server) listFilterPredicate(entity *metadata.Entity, cond metadata.FormListCondition, user *auth.User) (storage.Predicate, bool) {
+	field := strings.TrimSpace(cond.Field)
+	if field == "" {
+		return storage.Predicate{}, false
+	}
+	op := strings.TrimSpace(cond.Op)
+	if op == "" {
+		op = "eq"
+	}
+	value := any(cond.Value)
+	if cond.Value == metadata.ListFilterCurrentUser {
+		if user == nil || user.ID == "" {
+			return storage.Predicate{}, false
+		}
+		// Администратора правило «мои записи» не касается: он разбирает чужие
+		// документы, и список, показывающий ему только своё, мешал бы работе.
+		// Та же логика, что у маскирования ПДн.
+		if user.IsAdmin {
+			return storage.Predicate{}, false
+		}
+		value = user.ID
+	}
+
+	head, attr, nested := strings.Cut(field, ".")
+	if !nested {
+		return storage.Predicate{Field: head, Op: op, Value: value}, true
+	}
+	refField, ok := entityFieldByName(entity, head)
+	if !ok || refField.RefEntity == "" {
+		return storage.Predicate{}, false
+	}
+	target := s.reg.GetEntity(refField.RefEntity)
+	if target == nil {
+		return storage.Predicate{}, false
+	}
+	return storage.Predicate{
+		Field:        head,
+		RefEntity:    target,
+		RefPredicate: &storage.Predicate{Field: attr, Op: op, Value: value},
+	}, true
+}
+
 func (s *Server) rowAllowed(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, op string, row map[string]any) bool {
 	dec, err := s.rowDecision(r.Context(), entity, op)
 	return s.renderRowDecision(w, r, dec, err, row)

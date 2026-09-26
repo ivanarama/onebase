@@ -37,6 +37,7 @@ type ListParams struct {
 	AfterID            *uuid.UUID            // exclusive keyset cursor; requires id ASC and Offset=0
 	ThroughID          *uuid.UUID            // inclusive keyset high-water mark; requires id ASC and Offset=0
 	ExcludeFolders     bool                  // for hierarchical catalogs: only non-folder elements
+	IncludeFolders     bool                  // choice_folders у элемента формы: группы наравне с элементами (обрабатывается слоем UI)
 	OnlyFolders        bool                  // for hierarchical catalogs: only folder elements
 	// ExcludeMarked отбрасывает помеченные на удаление строки (план 153).
 	// Нужен источнику дефолта `единственный`: помеченный элемент — кандидат

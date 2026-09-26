@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/project"
 	"gopkg.in/yaml.v3"
@@ -80,7 +81,7 @@ func validateChoiceFilterYAML(node *yaml.Node, path, file string, issues *[]Issu
 		add(node, fmt.Sprintf("%s должен быть списком условий", path))
 		return
 	}
-	allowed := map[string]bool{"field": true, "op": true, "from": true, "value": true}
+	allowed := map[string]bool{"field": true, "op": true, "from": true, "value": true, "ref": true}
 	for index, condition := range node.Content {
 		conditionPath := fmt.Sprintf("%s[%d]", path, index)
 		if condition == nil || condition.Kind != yaml.MappingNode {
@@ -196,14 +197,70 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 
 					hasFrom := strings.TrimSpace(cond.From) != ""
 					hasValue := cond.Value != nil
-					if hasFrom == hasValue {
-						add("%s: требуется ровно одно из from и value", where)
+					hasRef := strings.TrimSpace(cond.Ref) != ""
+					указано := 0
+					for _, есть := range []bool{hasFrom, hasValue, hasRef} {
+						if есть {
+							указано++
+						}
+					}
+					if указано != 1 {
+						add("%s: требуется ровно одно из from, value и ref", where)
 						continue
 					}
 
 					isFolder := strings.EqualFold(fieldName, "is_folder")
+					isRoot := strings.EqualFold(fieldName, "is_root")
+					// «ТЧ.Поле» — отбор по табличной части справочника-цели.
+					tpName, tpField, isTablePart := strings.Cut(fieldName, ".")
+					// parent_id — собственная иерархия справочника-цели, а не его
+					// реквизит: отбирает по месту самой записи в дереве.
+					isParent := strings.EqualFold(fieldName, "parent_id")
+					if isTablePart {
+						var tp *metadata.TablePart
+						for i := range target.TableParts {
+							if strings.EqualFold(target.TableParts[i].Name, tpName) {
+								tp = &target.TableParts[i]
+								break
+							}
+						}
+						if tp == nil {
+							add("%s: у справочника %s нет табличной части %q", where, target.Name, tpName)
+							continue
+						}
+						var поле *metadata.Field
+						for i := range tp.Fields {
+							if strings.EqualFold(tp.Fields[i].Name, tpField) {
+								поле = &tp.Fields[i]
+								break
+							}
+						}
+						if поле == nil || strings.TrimSpace(поле.RefEntity) == "" {
+							add("%s: в табличной части %q нет ссылочного реквизита %q", where, tpName, tpField)
+							continue
+						}
+						if cond.Op != metadata.FormChoiceOpEqual {
+							add("%s: отбор по табличной части поддерживает только eq", where)
+							continue
+						}
+						source, sourceOK := formChoiceRefSource(owner, form, cond.From, entities)
+						if !hasFrom || !sourceOK || source == nil || !strings.EqualFold(source.Name, поле.RefEntity) {
+							add("%s: from %q должен ссылаться на %s", where, cond.From, поле.RefEntity)
+						}
+						continue
+					}
+					// Service fields have no metadata.Field. Validate their grammar
+					// before entering branches that dereference an ordinary field.
+					if (isFolder || isRoot) && cond.Op != metadata.FormChoiceOpEqual {
+						add("%s: %s поддерживает только eq", where, fieldName)
+						continue
+					}
+					if isParent && cond.Op != metadata.FormChoiceOpInHierarchy && cond.Op != metadata.FormChoiceOpNotInHierarchy {
+						add("%s: parent_id поддерживает только in_hierarchy и not_in_hierarchy", where)
+						continue
+					}
 					var targetField *metadata.Field
-					if !isFolder {
+					if !isFolder && !isRoot && !isParent {
 						targetField = entityFieldFold(target, fieldName)
 						if targetField == nil {
 							add("%s: у справочника %s нет реквизита %q", where, target.Name, fieldName)
@@ -213,6 +270,21 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 
 					switch cond.Op {
 					case metadata.FormChoiceOpEqual:
+						if isRoot {
+							if !target.Hierarchical {
+								add("%s: is_root допустим только у иерархического справочника", where)
+							}
+							if !hasValue {
+								add("%s: is_root требует boolean value", where)
+							}
+							continue
+						}
+						if targetField != nil && targetField.Type == metadata.FieldTypeBool {
+							if !hasValue {
+								add("%s: булев реквизит %q сравнивается с value, а не from", where, fieldName)
+							}
+							continue
+						}
 						if isFolder {
 							if !target.Hierarchical {
 								add("%s: is_folder допустим только у иерархического справочника", where)
@@ -226,6 +298,20 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 							add("%s: литерал value допустим только для is_folder", where)
 							continue
 						}
+						// Строковый реквизит сравнивается со строковым же
+						// значением по разыменованному пути: так связан дом с
+						// улицей в адресном классификаторе — ВладелецКод хранит
+						// ИД записи иерархии, а не ссылку. Без этого подбор
+						// умел сравнивать только ссылку со ссылкой.
+						// Разрешаем только корректную пару «строка ↔ строка».
+						// Всё остальное падает в прежние проверки: строковый
+						// реквизит со ссылочным источником по-прежнему ошибка,
+						// и сообщение у неё прежнее.
+						if targetField != nil && targetField.Type == metadata.FieldTypeString &&
+							cond.Op == metadata.FormChoiceOpEqual &&
+							formChoiceStringSource(owner, form, cond.From, entities) {
+							continue
+						}
 						source, sourceOK := formChoiceRefSource(owner, form, cond.From, entities)
 						if !sourceOK || source == nil {
 							add("%s: from %q не является явной ссылкой Объект.* или Форма.*", where, cond.From)
@@ -235,9 +321,26 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 							add("%s: eq сравнивает несовместимые ссылки %s.%s и %q", where, target.Name, targetField.Name, cond.From)
 						}
 
-					case metadata.FormChoiceOpInHierarchy:
+					case metadata.FormChoiceOpInHierarchy, metadata.FormChoiceOpNotInHierarchy:
 						if isFolder || hasValue {
-							add("%s: in_hierarchy требует ссылочный field и from", where)
+							add("%s: %s требует field и from", where, cond.Op)
+							continue
+						}
+						if isParent {
+							if !target.Hierarchical {
+								add("%s: parent_id допустим только у иерархического справочника", where)
+								continue
+							}
+							if hasRef {
+								if _, err := uuid.Parse(strings.TrimSpace(cond.Ref)); err != nil {
+									add("%s: ref %q не является идентификатором", where, cond.Ref)
+								}
+								continue
+							}
+							source, sourceOK := formChoiceRefSource(owner, form, cond.From, entities)
+							if !sourceOK || source == nil || !strings.EqualFold(source.Name, target.Name) {
+								add("%s: from %q должен ссылаться на сам справочник %s", where, cond.From, target.Name)
+							}
 							continue
 						}
 						hierarchy := entities[strings.ToLower(targetField.RefEntity)]
@@ -264,12 +367,55 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 // formChoiceRefSource resolves an explicit two-segment form path to the entity
 // referenced by that value. Bare names and deeper paths are intentionally
 // rejected so future syntax cannot reinterpret an existing configuration.
+// formChoiceStringSource проверяет, что путь вида Объект.Ссылка.Реквизит
+// приводит к СТРОКОВОМУ реквизиту промежуточной записи. Такой источник
+// сравнивается со строковым реквизитом справочника-цели.
+func formChoiceStringSource(owner *metadata.Entity, form *metadata.FormModule, path string, entities map[string]*metadata.Entity) bool {
+	parts := strings.Split(strings.TrimSpace(path), ".")
+	if len(parts) != 3 {
+		return false
+	}
+	prefix, name, deref := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1]), strings.TrimSpace(parts[2])
+	if name == "" || deref == "" {
+		return false
+	}
+	var ref string
+	switch {
+	case strings.EqualFold(prefix, "Объект"):
+		if field := entityFieldFold(owner, name); field != nil {
+			ref = field.RefEntity
+		}
+	case strings.EqualFold(prefix, "Форма"):
+		for _, attr := range form.Attributes {
+			if attr != nil && strings.EqualFold(attr.Name, name) {
+				ref = formChoiceTypeRefEntity(attr.TypeRef)
+				break
+			}
+		}
+	default:
+		return false
+	}
+	entity := entities[strings.ToLower(strings.TrimSpace(ref))]
+	if entity == nil {
+		return false
+	}
+	field := entityFieldFold(entity, deref)
+	return field != nil && field.Type == metadata.FieldTypeString
+}
+
 func formChoiceRefSource(owner *metadata.Entity, form *metadata.FormModule, path string, entities map[string]*metadata.Entity) (*metadata.Entity, bool) {
 	parts := strings.Split(strings.TrimSpace(path), ".")
-	if len(parts) != 2 || strings.TrimSpace(parts[1]) == "" {
+	if len(parts) < 2 || len(parts) > 3 || strings.TrimSpace(parts[1]) == "" {
 		return nil, false
 	}
 	prefix, name := strings.TrimSpace(parts[0]), strings.TrimSpace(parts[1])
+	deref := ""
+	if len(parts) == 3 {
+		deref = strings.TrimSpace(parts[2])
+		if deref == "" {
+			return nil, false
+		}
+	}
 	var ref string
 	switch {
 	case strings.EqualFold(prefix, "Объект"):
@@ -290,7 +436,20 @@ func formChoiceRefSource(owner *metadata.Entity, form *metadata.FormModule, path
 		return nil, false
 	}
 	entity := entities[strings.ToLower(ref)]
-	return entity, entity != nil
+	if entity == nil {
+		return nil, false
+	}
+	// Разыменование в одно звено: берём реквизит промежуточной записи. Он
+	// обязан быть ссылкой — сравнивать подбор умеет только ссылки.
+	if deref != "" {
+		field := entityFieldFold(entity, deref)
+		if field == nil || strings.TrimSpace(field.RefEntity) == "" {
+			return nil, false
+		}
+		entity = entities[strings.ToLower(field.RefEntity)]
+		return entity, entity != nil
+	}
+	return entity, true
 }
 
 func formChoiceTypeRefEntity(typeRef string) string {

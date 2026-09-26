@@ -19,6 +19,7 @@ function domNode(tagName) {
     appendChild(child) {
       this.children.push(child);
       child.parentElement = this;
+      child.parentNode = this;
       return child;
     },
     remove() {
@@ -798,4 +799,49 @@ test('NoGrid command selection comes from writable duplicate', async () => {
   await window.obFire('Command', 'Нажатие', {_tp: 'Строки'});
   assert.equal(fetchBodies.length, 1);
   assert.equal(new URLSearchParams(fetchBodies[0]).get('_tp_selected'), '0');
+});
+
+test('ValueTable activation follows replaced rows and separate table instances', () => {
+  resetDOM();
+  const attributes = {
+    'data-vt-fields': 'Name|string', 'data-vt-editable': '0',
+    'data-ob-vt-activate': 'Results', 'data-ob-vt-name': 'Results'
+  };
+  const first = installTableBody('vt-body-Results', attributes);
+  const second = installTableBody('vt-body-Results', attributes);
+  const previousFire = window.obFire;
+  const calls = [];
+  window.obFire = (...args) => calls.push(args);
+  const clickRow = row => {
+    const event = {target: {closest(selector) { return selector === 'tr[data-ob-vt-row]' ? row : null; }}};
+    for (const listener of documentListeners.get('click') || []) listener(event);
+  };
+  try {
+    window.applyFormTables({Results: [{Name: 'old'}]});
+    clickRow(first.children[0]);
+    clickRow(first.children[0]);
+    assert.equal(calls.length, 1, 'same live row should activate once');
+    clickRow(second.children[0]);
+    assert.equal(calls.length, 2, 'another table instance shares no active row');
+    window.applyFormTables({Results: [{Name: 'new'}]});
+    clickRow(first.children[0]);
+    clickRow(first.children[0]);
+    assert.equal(calls.length, 3, 'replacement at row zero must activate');
+    assert.deepEqual(calls[2], ['Results', 'ПриАктивизацииСтроки', {_tp: 'Results', _tp_row: '0'}]);
+  } finally {window.obFire = previousFire;}
+});
+
+test('ValueTable repaint preserves server column order, types and hidden values', () => {
+  resetDOM();
+  const tbody = installTableBody('vt-body-Results', {
+    'data-vt-fields': 'B|number,A|string,ID|string',
+    'data-vt-flags': 'B:r,A:r,ID:rh', 'data-vt-editable': '0'
+  });
+  window.applyFormTables({Results: [{A: 'alpha', B: 42, ID: 'hidden-id'}]});
+  const cells = tbody.children[0].children;
+  assert.deepEqual(cells.map(cell => cell.children[0].value), [42, 'alpha', 'hidden-id']);
+  assert.equal(cells[0].children[0].type, 'number');
+  assert.equal(cells[1].children[0].readOnly, true);
+  assert.equal(cells[2].style.display, 'none');
+  assert.equal(cells[2].children[0].name, 'vt.Results.0.ID');
 });

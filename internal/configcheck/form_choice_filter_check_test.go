@@ -367,3 +367,30 @@ func TestFormChoiceConditionYAMLRoundTripKeepsFalseAndOrder(t *testing.T) {
 		t.Fatalf("round-trip changed conditions: %+v", decoded.ChoiceFilter)
 	}
 }
+
+func TestRunFullChoiceFilterRejectsIncompatibleServiceOperators(t *testing.T) {
+	for _, tc := range []struct{ field, op, want string }{
+		{"parent_id", "eq", "parent_id"},
+		{"is_root", "in_hierarchy", "is_root"},
+		{"is_root", "not_in_hierarchy", "is_root"},
+		{"is_folder", "in_hierarchy", "is_folder"},
+	} {
+		t.Run(tc.field+"/"+tc.op, func(t *testing.T) {
+			dir := t.TempDir()
+			writeChoiceFilterCheckProject(t, dir, true, fmt.Sprintf(`  - id: fault
+    kind: ПолеВвода
+    data_path: Объект.Неисправность
+    choice_filter: [{field: %s, op: %s, from: Объект.Направление}]`, tc.field, tc.op))
+			result := RunFullWithOptions(dir, Options{Lint: true})
+			if result.OK {
+				t.Fatal("invalid service operator accepted")
+			}
+			for _, issue := range choiceFilterIssues(result) {
+				if strings.Contains(issue.Message, tc.want) {
+					return
+				}
+			}
+			t.Fatalf("missing choice_filter diagnostic: %+v", result.Issues)
+		})
+	}
+}

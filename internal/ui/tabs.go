@@ -330,6 +330,25 @@ const tplAppShell = `{{define "page-app-shell"}}
     openTab(href,(a.getAttribute('title')||a.textContent||'').replace(/\s+/g,' ').trim()||'Форма');
   });
 
+  // Аварийный сброс: ?tabs=reset открывает оболочку с чистой панелью.
+  // Нужен, когда вкладки восстанавливаются битыми — страница пережила
+  // перезапуск сервера (её поколение процесса устарело, и закрытие через
+  // подтверждение не проходит) или указывает на удалённый документ, который
+  // отдаёт 404 и в протоколе закрытия вообще не участвует. Крестиком такую
+  // вкладку не убрать, а лезть в консоль браузера за sessionStorage —
+  // не дело пользователя.
+  try{
+    var q=new URLSearchParams(location.search||'');
+    if(String(q.get('tabs')||'')==='reset'){
+      try{ sessionStorage.removeItem(STORE); sessionStorage.removeItem(STORE_ACTIVE); }catch(e){}
+      // Убираем параметр из адреса: иначе перезагрузка страницы чистила бы
+      // панель снова и снова, а вкладки, открытые после сброса, пропадали бы.
+      q.delete('tabs');
+      var qs=q.toString();
+      if(history.replaceState)history.replaceState(null,'',location.pathname+(qs?'?'+qs:'')+location.hash);
+    }
+  }catch(e){}
+
   // Снимок читаем ДО openTab: восстановление само создаёт вкладки и не должно
   // успеть заменить сохранённый выбор последней добавленной вкладкой.
   var savedActive=readSavedActive();

@@ -126,7 +126,7 @@ func TestСостоянияЭлементов_СодержатЛожныеУсл
 	})
 	s := &Server{interp: interpreter.New(), reg: runtime.NewRegistry()}
 
-	st := s.formElementStates(form, ent, map[string]any{"СтадияОформления": "НаОформлении"})
+	st := s.formElementStates(context.Background(), form, ent, map[string]any{"СтадияОформления": "НаОформлении"})
 	if st == nil {
 		t.Fatal("состояния не рассчитаны, ожидалась карта с ложным условием")
 	}
@@ -134,7 +134,7 @@ func TestСостоянияЭлементов_СодержатЛожныеУсл
 		t.Errorf("ReadOnly[ПолеУлица] = (%v, есть=%v), ожидалось (false, есть=true)", v, есть)
 	}
 
-	st = s.formElementStates(form, ent, map[string]any{"СтадияОформления": "Принята"})
+	st = s.formElementStates(context.Background(), form, ent, map[string]any{"СтадияОформления": "Принята"})
 	if !st.ReadOnly["ПолеУлица"] {
 		t.Errorf("на принятой заявке ожидалось ReadOnly[ПолеУлица]=true")
 	}
@@ -845,7 +845,7 @@ func TestУсловныйЗапретБезПостоянного_ВсёЕщёС
 	ent.Forms[0].Elements[0].ReadOnly = false
 
 	s := &Server{interp: interpreter.New(), reg: runtime.NewRegistry()}
-	st := s.formElementStates(ent.Forms[0], ent, map[string]any{"СтадияОформления": "НаОформлении"})
+	st := s.formElementStates(context.Background(), ent.Forms[0], ent, map[string]any{"СтадияОформления": "НаОформлении"})
 	if st == nil {
 		t.Fatal("состояния не рассчитаны, ожидалась карта с ложным условием")
 	}

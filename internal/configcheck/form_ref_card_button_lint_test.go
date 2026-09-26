@@ -101,3 +101,26 @@ elements:
 		t.Errorf("lint-находка попала в обычный check; находки: %+v %+v", res.Issues, res.Warnings)
 	}
 }
+
+// ref_card_button_admin_only внутри блока form: — наш ключ (лупа только
+// администратору). Загрузчик и модель его знают, а в белом списке линта его не
+// было: `check --lint` ругался «неизвестный ключ» на конфигурацию, которую
+// платформа исполняет правильно. Ложная тревога дороже молчания — она учит
+// не верить линту.
+func TestLint_RefCardButtonAdminOnlyInsideFormAccepted(t *testing.T) {
+	dir := refCardButtonProject(t, `schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Заказ
+  ref_card_button_admin_only: true
+elements:
+  - kind: ПолеВвода
+    name: Номер
+    data_path: Объект.Номер
+`)
+	res := RunFullWithOptions(dir, Options{Lint: true})
+	if unvalidatedKeyMentions(res, "ref_card_button_admin_only") {
+		t.Errorf("ключ внутри form: назван неизвестным; находки: %+v %+v", res.Issues, res.Warnings)
+	}
+}

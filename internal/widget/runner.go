@@ -216,6 +216,23 @@ func (r *Runner) RunWithOptions(ctx context.Context, w *metadata.Widget, opts Ru
 	for k, v := range opts.Params {
 		params[k] = v
 	}
+	// Служебные параметры «кто смотрит»: без них список-виджет не может
+	// показать «мои» записи — статический запрос не знает о пользователе, а
+	// отбор в адресе страницы у каждого свой. Конфигурация связывает учётку
+	// со своим справочником сотрудников сама, например
+	//   ГДЕ Исполнитель.УчётнаяЗапись = &ТекущийПользователь
+	// Заданный в виджете параметр с тем же именем не перекрываем: явное
+	// значение автора конфигурации важнее умолчания.
+	if r.User != nil {
+		if _, ok := params["ТекущийПользователь"]; !ok {
+			params["ТекущийПользователь"] = r.User.ID
+		}
+	}
+	if r.CurrentUser != "" {
+		if _, ok := params["ТекущийЛогин"]; !ok {
+			params["ТекущийЛогин"] = r.CurrentUser
+		}
+	}
 
 	if r.Cache != nil && w.Type != metadata.WidgetTypeActions {
 		security, cacheable := securityFingerprint(r.User)

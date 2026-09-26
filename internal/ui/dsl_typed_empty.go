@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/access"
+	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -158,7 +159,21 @@ func (s *Server) declaredEntityFieldValue(
 
 func (s *Server) dslFieldMasked(ctx context.Context, entity *metadata.Entity, field string) bool {
 	decision, ok := s.fieldDecisions(ctx, entity)[canonicalDSLField(entity, field)]
-	return ok && decision.Masked()
+	if !ok || !decision.Masked() {
+		return false
+	}
+	// Право disclose снимает маску в КОДЕ: обработка переносит значение из
+	// документа в документ (копия адреса, повторная заявка), и маска вместо
+	// телефона означала бы не защиту, а испорченные данные — звёздочки уехали
+	// бы в новую заявку. Тому, кто вправе раскрыть значение кнопкой, показывать
+	// его коду не опаснее.
+	//
+	// В интерфейсе маска остаётся: форму, список и виджет маскирует свой
+	// чокпоинт, этот путь только про DSL.
+	if u := auth.UserFromContext(ctx); u != nil && entity != nil && u.Has(string(entity.Kind), entity.Name, "disclose") {
+		return false
+	}
+	return true
 }
 
 func formAttributeDescriptor(attr *metadata.FormAttribute) (typedempty.Descriptor, bool) {

@@ -615,12 +615,12 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		"id", "name", "kind", "field", "table_part", "visible", "enabled", "required",
 		"original_id", "data_path", "picture", "values_picture", "width", "height",
 		"halign", "valign", "readonly", "readonly_when", "hidden_when", "use_grid", "no_grid", "auto_sum", "hint", "mask",
-		"accesskey", "hotkey", "multiline", "format", "display_format", "type", "choice", "unknown_xml", "view",
+		"accesskey", "hotkey", "multiline", "format", "display_format", "type", "choice", "choice_dropdown", "choice_folders", "editable_admin_only", "primary", "ref_card_button", "ref_card_button_admin_only", "unknown_xml", "view",
 		// Ключи, поддержанные загрузчиком, но забытые здесь: линт объявлял их
 		// неизвестными, а гейт CI считает предупреждение ошибкой — то есть
 		// документированный «language» у kind: ПолеКода не давал примеру
 		// пройти собственную проверку (#1014).
-		"orientation", "background", "input_mask", "language", "virtual_columns",
+		"orientation", "background", "scroll_x", "input_mask", "language", "virtual_columns",
 	} {
 		element.keys[k] = nil
 	}
@@ -634,7 +634,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	element.keys["children"] = seq(element)
 	element.keys["choices"] = seq(with(obj("value"), map[string]*yamlLintSchema{"title": freeMap()}))
 	element.keys["options"] = seq(with(obj("value"), map[string]*yamlLintSchema{"label": freeMap()}))
-	element.keys["choice_filter"] = seq(obj("field", "op", "from", "value"))
+	element.keys["choice_filter"] = seq(obj("field", "op", "from", "value", "ref"))
 
 	attrColumn := with(obj("id", "original_id", "name", "type", "length", "precision"), map[string]*yamlLintSchema{
 		"title": freeMap(),
@@ -655,8 +655,15 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	commandBar := obj("id", "original_id", "name", "visible")
 	commandBar.keys["buttons"] = seq(button)
 
-	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button"), map[string]*yamlLintSchema{
-		"title": freeMap(),
+	// ref_card_button_admin_only — как и ref_card_button, читается загрузчиком
+	// только внутри блока form: (поле RefCardButtonAdminOnly). Без него в этом
+	// списке рабочая конфигурация получала «неизвестный ключ» на ключ, который
+	// платформа исправно исполняет, — ложная тревога вместо тихой потери.
+	// filter — постоянный отбор формы списка (поле ListFilter), читается
+	// загрузчиком там же, внутри блока form:.
+	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button", "ref_card_button_admin_only"), map[string]*yamlLintSchema{
+		"title":  freeMap(),
+		"filter": seq(obj("field", "op", "value")),
 	})
 	style := obj("color", "background", "bold", "italic")
 	conditional := with(obj("when", "target", "element", "table_part", "field"), map[string]*yamlLintSchema{
@@ -675,6 +682,10 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		"save":   action,
 		"ok":     action,
 		"close":  action,
+		// copy.visible:false убирает «Скопировать» у документа, который
+		// копировать нельзя по смыслу: звонок и заявка — свидетельства
+		// конкретного обращения, их заводят заново, а не размножают.
+		"copy": action,
 		// attachments.visible:false скрывает панель вложений выбранной
 		// managed-формы (план 181C, #1621); attachment endpoint не меняется.
 		"attachments": action,
@@ -782,6 +793,13 @@ var commonDSLGlobals = map[string]bool{
 	// Контекст форм/страниц/заданий/сервисов.
 	"объект": true, "форма": true, "элементы": true, "элементыформы": true,
 	"отказ": true, "параметры": true, "параметрысеанса": true, "запрос_": true,
+	// Контекст диалогов формы: ответ пользователя и значения полей (#1528),
+	// результат подбора, причина закрытия. Платформа кладёт их в переменные
+	// обработчика — без этого списка линтер зовёт их «неизвестным именем».
+	"вопросответ": true, "questionanswer": true,
+	"диалогполя": true, "dialogfields": true,
+	"подборрезультат": true, "pickresult": true,
+	"причиназакрытия": true, "closereason": true,
 }
 
 // formTPContextGlobals — контекст события табличной части, доступный только

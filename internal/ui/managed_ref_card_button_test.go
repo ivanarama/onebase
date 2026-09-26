@@ -20,12 +20,22 @@ import (
 // не замечает.
 func TestManagedRefCardButtonThroughHTTP(t *testing.T) {
 	for _, tc := range []struct {
-		name        string
-		formSetting string
-		wantButton  bool
+		name           string
+		formSetting    string
+		elementSetting string
+		wantButton     bool
 	}{
 		{name: "ключ отсутствует", wantButton: true},
 		{name: "явный false", formSetting: "  ref_card_button: false\n", wantButton: false},
+		// Ключ элемента точечнее ключа формы и перекрывает его: бывает нужно
+		// убрать карточку у одного поля, а не у всех сразу.
+		{name: "выключено у элемента", elementSetting: "    ref_card_button: false\n", wantButton: false},
+		// «Только администратору»: без настроенной авторизации isAdmin
+		// возвращает истину, поэтому кнопка остаётся. Случай закрывает разбор
+		// ключа и его путь до рендера; разделение по ролям проверяется на живой
+		// базе — поднять здесь полноценную авторизацию дороже пользы.
+		{name: "только администратору", formSetting: "  ref_card_button_admin_only: true\n", wantButton: true},
+		{name: "элемент включает вопреки форме", formSetting: "  ref_card_button: false\n", elementSetting: "    ref_card_button: true\n", wantButton: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -64,7 +74,7 @@ form:
   - kind: ПолеВвода
     name: ПолеКлиент
     data_path: Объект.Клиент
-`
+` + tc.elementSetting
 			if err := os.WriteFile(filepath.Join(dir, "forms", "заказ", "объекта.form.yaml"), []byte(formYAML), 0o644); err != nil {
 				t.Fatalf("запись формы: %v", err)
 			}

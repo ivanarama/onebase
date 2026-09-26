@@ -171,8 +171,8 @@ func TestManagedTabs_FormHandlerFramesContentBeforeFollowingFields(t *testing.T)
 	for _, want := range []string{
 		"border:1px solid #e2e8f0",
 		"border-radius:8px",
-		"padding:12px 14px",
-		"margin-bottom:14px",
+		"padding:8px 10px",
+		"margin-bottom:8px",
 		"width:500px",
 		"max-width:100%",
 		"flex:0 0 auto",

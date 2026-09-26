@@ -58,6 +58,7 @@ func QueryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name str
 	// его не защищает — значение либо перебирается условием, либо уже свёрнуто.
 	// Хвост запроса ссылается на колонку и по выходному алиасу, и по номеру —
 	// оба варианта дают тот же оракул, что и ссылка по имени поля.
+	searchable := searchableMaskedFields(u, res.Sources, lookup)
 	aliasFields := map[string][]string{}
 	for _, col := range res.Projection.Columns {
 		if col.Output != "" && len(col.Fields) > 0 {
@@ -65,11 +66,11 @@ func QueryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name str
 		}
 	}
 	for _, name := range res.Projection.UnmaskableFields {
-		if _, ok := masked[fieldKey(name)]; ok {
+		if _, ok := masked[fieldKey(name)]; ok && !searchable[fieldKey(name)] {
 			return QueryMaskPlan{Denied: name}
 		}
 		if fields, ok := aliasFields[fieldKey(name)]; ok {
-			if denied, hit := firstMaskedField(masked, fields); hit {
+			if denied, hit := firstMaskedField(masked, fields); hit && !searchable[fieldKey(denied)] {
 				return QueryMaskPlan{Denied: denied}
 			}
 		}
@@ -84,7 +85,7 @@ func QueryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name str
 			// первой, разбор не знает — путь fail-closed.
 			return QueryMaskPlan{Denied: anyMaskedName(masked)}
 		}
-		if denied, hit := firstMaskedField(masked, col.Fields); hit {
+		if denied, hit := firstMaskedField(masked, col.Fields); hit && !searchable[fieldKey(denied)] {
 			return QueryMaskPlan{Denied: denied}
 		}
 	}
@@ -204,6 +205,42 @@ func maskedSourceFields(u *auth.User, sources []query.SourceRef, lookup func(kin
 		return nil, nil
 	}
 	return byField, byColumn
+}
+
+// searchableMaskedFields — поля под маской, по которым пользователю ВСЁ РАВНО
+// можно отбирать: у его роли есть право disclose на этот источник.
+//
+// Запрет отбора по защищённому полю защищает от подбора значения по ответу
+// («оракул»). Но тому, кто и так вправе запросить полное значение кнопкой
+// «показать» (право disclose, план 88 + CC-SEC-004), подбор ничего нового не
+// даёт — зато без отбора он не может сделать свою работу: оператор ищет заявку
+// по номеру телефона, который ему только что назвал клиент.
+//
+// Вывод при этом остаётся замаскированным: право разрешает ИСКАТЬ, а не
+// ЧИТАТЬ столбцом.
+func searchableMaskedFields(u *auth.User, sources []query.SourceRef, lookup func(kind, name string) *metadata.Entity) map[string]bool {
+	if u == nil {
+		return nil
+	}
+	out := map[string]bool{}
+	for _, src := range sources {
+		canDisclose := u.Has(src.Kind, src.Name, "disclose")
+		var meta *metadata.Entity
+		if lookup != nil {
+			meta = lookup(src.Kind, src.Name)
+		}
+		for field := range FieldDecisions(u, src.Kind, src.Name, meta) {
+			key := fieldKey(field)
+			// Projection fields have no source qualifier. Require permission on
+			// every protected occurrence, regardless of JOIN/source order.
+			previous, exists := out[key]
+			out[key] = canDisclose && (!exists || previous)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 // firstMaskedField возвращает первое из полей, на которое стоит маска.

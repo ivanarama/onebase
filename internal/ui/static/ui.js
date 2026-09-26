@@ -3737,16 +3737,67 @@ function obOpenQuestion(payload, elementName) {
   text.style.cssText = 'font-size:14px;color:#1e293b;white-space:pre-line;margin-bottom:16px';
   text.textContent = payload.text;
   box.appendChild(text);
+  // Строки данных: итог операции (номер записанного документа, клиент, дата)
+  // и, при необходимости, поле ввода. Значения редактируемых уезжают обратно
+  // в обработчик вместе с нажатой кнопкой.
+  var inputs = {};
+  (payload.fields || []).forEach(function (field) {
+    if (!field || !field.name) return;
+    var line = document.createElement('div');
+    line.style.cssText = 'margin-bottom:10px';
+    if (field.label) {
+      var label = document.createElement('div');
+      label.style.cssText = 'font-size:12px;color:#64748b;margin-bottom:3px';
+      label.textContent = field.label;
+      line.appendChild(label);
+    }
+    if (field.editable) {
+      var input = document.createElement('input');
+      input.type = 'text';
+      input.value = field.value == null ? '' : String(field.value);
+      input.style.cssText = 'width:100%;padding:8px 10px;border:1px solid #e2e8f0;border-radius:7px;font-size:14px;outline:none';
+      line.appendChild(input);
+      inputs[field.name] = input;
+    } else {
+      var value = document.createElement('div');
+      value.style.cssText = field.strong
+        ? 'font-size:15px;font-weight:650;color:#0f172a'
+        : 'font-size:14px;color:#1e293b';
+      value.textContent = field.value == null ? '' : String(field.value);
+      line.appendChild(value);
+    }
+    box.appendChild(line);
+  });
+  if (payload.fields && payload.fields.length) {
+    var gap = document.createElement('div');
+    gap.style.cssText = 'height:8px';
+    box.appendChild(gap);
+  }
   var row = document.createElement('div');
-  row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+  // Два-три варианта («Да / Нет / Отмена») кладём в ряд справа, как привычную
+  // пару кнопок. Списком выбора — четыре и больше («укажите причину жалобы») —
+  // столбиком во всю ширину: в ряд они не помещались и вылезали за окно,
+  // потому что перенос не был разрешён вовсе.
+  var manyVariants = payload.variants.length > 3;
+  row.style.cssText = manyVariants
+    ? 'display:flex;flex-direction:column;gap:6px;align-items:stretch;max-height:50vh;overflow-y:auto'
+    : 'display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end';
   payload.variants.forEach(function (variant) {
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = variant;
-    btn.style.cssText = 'padding:8px 16px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:14px';
+    btn.style.cssText = 'padding:8px 16px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:14px;white-space:normal'
+      + (manyVariants ? ';text-align:left;width:100%' : ';max-width:100%');
     btn.addEventListener('click', function () {
       modal.remove();
-      if (typeof obFire === 'function') obFire(elementName, 'Ответ', { _question_answer: variant });
+      var extra = { _question_answer: variant };
+      var names = Object.keys(inputs);
+      if (names.length) {
+        var values = {};
+        names.forEach(function (name) { values[name] = inputs[name].value; });
+        extra._question_fields = JSON.stringify(values);
+      }
+      if (typeof obFire === 'function') obFire(elementName, 'Ответ', extra);
     });
     row.appendChild(btn);
   });
@@ -3774,13 +3825,7 @@ function obRefChoiceSnapshot(sel) {
   var declared = ctx.sources || {};
   var paths = Object.keys(declared).sort();
   paths.forEach(function (path) {
-    var name = declared[path];
-    var control = null;
-    if (sel.form && sel.form.elements && name) control = sel.form.elements.namedItem(name);
-    if (!control && name) {
-      var controls = document.getElementsByName(name);
-      if (controls && controls.length) control = controls[0];
-    }
+    var control = obChoiceSourceControl(sel, declared[path]);
     values[path] = control && control.value != null ? String(control.value) : '';
   });
   var query = '&form_entity=' + encodeURIComponent(ctx.form_entity) +
@@ -3794,6 +3839,40 @@ function obRefChoiceSnapshot(sel) {
     fingerprint: JSON.stringify([ctx.form_entity, ctx.form, ctx.element, fingerprintParts]),
     selected: sel.value == null ? '' : String(sel.value)
   };
+}
+
+// obChoiceSourceControl — контрол поля-источника отбора по имени.
+//
+// Одно имя носят ДВА элемента, если у поля есть readonly_when: сам контрол и
+// скрытое зеркало значения (data-ob-ro-mirror). form.elements.namedItem в этом
+// случае отдаёт RadioNodeList, а у него .value пуст, когда это не радиокнопки —
+// источник уезжал пустым, и зависимый подбор показывал пустой список: поле
+// разблокировано, а выбирать не из чего.
+//
+// Берём тот элемент, который браузер и отправил бы: не выключенный и со
+// значением. Под запретом это зеркало, после разблокировки — сам контрол.
+function obChoiceSourceControl(sel, name) {
+  if (!name) return null;
+  var list = [];
+  if (sel && sel.form && sel.form.elements) {
+    var found = sel.form.elements.namedItem(name);
+    if (found) {
+      if (found.tagName) list = [found];
+      else if (typeof found.length === 'number') list = Array.prototype.slice.call(found);
+    }
+  }
+  if (!list.length) {
+    var byName = document.getElementsByName(name);
+    if (byName && byName.length) list = Array.prototype.slice.call(byName);
+  }
+  if (!list.length) return null;
+  for (var i = 0; i < list.length; i++) {
+    if (!list[i].disabled && list[i].value) return list[i];
+  }
+  for (var j = 0; j < list.length; j++) {
+    if (list[j].value) return list[j];
+  }
+  return list[0];
 }
 
 function obRefChoiceQuery(sel) {
@@ -4194,6 +4273,10 @@ function openRefPicker(selOrId) {
     var choiceQuery = choiceSnapshot ? choiceSnapshot.query : obRefChoiceQuery(sel);
     var choiceFingerprint = choiceSnapshot ? choiceSnapshot.fingerprint : '';
     var choiceSelected = sel.value == null ? '' : String(sel.value);
+    // Предел выборки 1000, а не 50 (наша правка поверх плана 168): форма
+    // подбора показывает справочник одной страницей, и «показано 50 из 56»
+    // оператор читает как «остальных нет».
+    //
     // План 168: у элемента с choice_context страница запрашивается POST-ом
     // /_ref-options/{entity}/page — значения незаписанной формы не попадают в
     // URL и access log, а allowlist контекста сервер восстанавливает сам.
@@ -4201,7 +4284,7 @@ function openRefPicker(selOrId) {
     // тихий откат к списку без просмотра запрещён.
     var refContextRaw = sel.getAttribute('data-ref-context') || '';
     var usePreviewPage = !!refContextRaw;
-    var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + encodeURIComponent(q || '') + choiceQuery;
+    var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=1000&q=' + encodeURIComponent(q || '') + choiceQuery;
     var fetchOptions = { credentials: 'same-origin', headers: { 'Accept': 'application/json' } };
     if (requestController) fetchOptions.signal = requestController.signal;
     if (usePreviewPage) {

@@ -230,7 +230,10 @@ func (s *Server) choicePreviewPage(w http.ResponseWriter, r *http.Request, ent *
 			}
 			// Ссылка требует object read и допуска строки (инвариант 7) —
 			// тот же гейт, что и selected_allowed у choice.
-			okAllowed, aerr := s.choiceSelectedAllowed(r.Context(), refEnt, id, nil)
+			// Последний аргумент — наш ключ choice_folders: здесь проверяется
+			// ссылка контекста, а не выбор пользователя, поэтому группы
+			// допускаются как обычные записи.
+			okAllowed, aerr := s.choiceSelectedAllowed(r.Context(), refEnt, id, nil, true)
 			if aerr != nil {
 				s.serverError(w, r, aerr)
 				return

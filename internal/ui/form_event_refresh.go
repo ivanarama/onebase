@@ -14,6 +14,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // Возврат в форму полей, которые обработчик записал НЕ через себя.
@@ -375,6 +376,19 @@ func tpCellNorm(f metadata.Field, v any) string {
 		case string:
 			if x, err := strconv.ParseFloat(strings.TrimSpace(t), 64); err == nil {
 				return strconv.FormatFloat(x, 'f', -1, 64)
+			}
+		}
+	case metadata.FieldTypeDate:
+		// Форма отдаёт локальное настенное время («2026-09-26T00:00»), база —
+		// UTC («2026-09-25T21:00:00Z»). Без приведения к одному моменту любая
+		// заполненная дата делает форму «изменённой»: при закрытии выскакивает
+		// «Данные были изменены. Сохранить?» сразу после успешной записи.
+		switch t := v.(type) {
+		case time.Time:
+			return t.UTC().Format(time.RFC3339)
+		case string:
+			if parsed, ok := storage.ParseRegPeriod(t); ok {
+				return parsed.UTC().Format(time.RFC3339)
 			}
 		}
 	case metadata.FieldTypeBool:

@@ -184,3 +184,23 @@ func managedTPColumnEvents(plan []managedTPColumn, readOnly bool) map[string]str
 	}
 	return events
 }
+
+// managedTPEditable сообщает, есть ли в плане табличной части хоть одна
+// колонка, доступная для правки. Таблица, у которой все колонки объявлены
+// readonly, — это ВЫДАЧА (результаты поиска, итоги): строки в ней появляются
+// из обработчика, и «+ Добавить строку» с «− Удалить строку» под ней обещают
+// действие, которого нет.
+//
+// Отдельно от readonly самой ТАБЛИЦЫ: её закрывать нельзя, если нужен щелчок
+// по строке — платформа не пускает события к нередактируемому элементу.
+func managedTPEditable(plan []managedTPColumn) bool {
+	for _, column := range plan {
+		if column.Hidden {
+			continue
+		}
+		if column.Element == nil || !column.Element.ReadOnly {
+			return true
+		}
+	}
+	return false
+}

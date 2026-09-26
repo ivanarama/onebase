@@ -105,3 +105,40 @@ test('пустой payload модал не создаёт', () => {
   app.window.obOpenQuestion({ text: 'x', variants: [] }, 'Команда');
   assert.equal(app.__modalNode(), undefined);
 });
+
+// Список выбора (четыре варианта и больше) кладётся СТОЛБИКОМ: в ряд такие
+// кнопки не помещались и вылезали за края окна — перенос не был разрешён вовсе.
+test('много вариантов выкладываются столбиком и не выходят за окно', () => {
+  const app = setup();
+  app.window.obOpenQuestion({
+    text: 'Укажите причину жалобы',
+    variants: ['Неявка', 'Стоимость ремонта', 'Некачественный ремонт/диагностика',
+      'Срок ремонта', 'Отказ мастера от ремонта', 'Грубость/пьяный', 'Другое', 'Отмена'],
+  }, 'Команда');
+  const modal = app.__modalNode();
+  const buttons = [];
+  let row = null;
+  (function walk(n) {
+    if (n.tag === 'button') { buttons.push(n); if (!row) row = n.parent; }
+    (n.children || []).forEach(walk);
+  })(modal);
+  assert.equal(buttons.length, 8);
+  assert.ok(String(row.style.cssText).includes('flex-direction:column'), 'ряд не стал столбиком');
+  buttons.forEach((b) => {
+    assert.ok(String(b.style.cssText).includes('width:100%'), 'кнопка не во всю ширину');
+    assert.ok(String(b.style.cssText).includes('white-space:normal'), 'длинная подпись не переносится');
+  });
+});
+
+// Пара кнопок остаётся в ряд справа, но теперь с переносом.
+test('два-три варианта остаются рядом справа', () => {
+  const app = setup();
+  app.window.obOpenQuestion({ text: 'Продолжить?', variants: ['Да', 'Нет', 'Отмена'] }, 'Команда');
+  let row = null;
+  (function walk(n) {
+    if (n.tag === 'button' && !row) row = n.parent;
+    (n.children || []).forEach(walk);
+  })(app.__modalNode());
+  assert.ok(String(row.style.cssText).includes('justify-content:flex-end'));
+  assert.ok(String(row.style.cssText).includes('flex-wrap:wrap'));
+});
