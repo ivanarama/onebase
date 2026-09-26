@@ -1,0 +1,7 @@
+name: ОчисткаКорзин
+title: Ежедневная очистка брошенных корзин
+schedule: "30 3 * * *"
+processor: ОчисткаКорзин
+enabled: true
+on_error: continue
+timeout: 300

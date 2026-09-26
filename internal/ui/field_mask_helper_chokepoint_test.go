@@ -77,7 +77,7 @@ var maskHelperExempt = map[string]maskHelperExemption{
 	"Server.markForDeletion":             {reason: "путь записи: читает признак проведения, чтобы очистить движения"},
 	"Server.setRecordActivity":           {reason: "путь записи: полный снимок нужен OnWrite/Save; маска испортила бы данные, клиенту поля не идут"},
 	"docProxy.DeleteRef":                 {reason: "путь удаления: pre-образ только для адресации живого списка"},
-	"dslCatalogDeleter.DeleteCatalogRef": {reason: "путь удаления справочника из DSL (#854): pre-образ только для адресации живого списка"},
+	"dslCatalogDeleter.deleteCatalogRef": {reason: "путь удаления справочника из DSL (#854): pre-образ только для адресации живого списка"},
 	"docWriter.writeInContextForAction":  {reason: "путь записи: pre-образ только для адресации живого списка"},
 
 	// ── Отдаются только идентификаторы.
@@ -102,6 +102,9 @@ var maskHelperExempt = map[string]maskHelperExemption{
 	"Server.loadRuntimeObject": {reason: "строит Объект для DSL-обёрток (catWriter/docWriter маскируют в Get) и для " +
 		"серверных хуков формы, где действует контракт «this не маскируется»: значение принадлежит текущей операции, " +
 		"а не чужой записи (field_access.go, доккомментарий maskDSLValue)"},
+	"catFactory.LoadCatalogObject": {reason: "та же загрузка Объекта для DSL-обёрток со согласованными полями и " +
+		"_version в одном чтении (#1321): раздельные чтения оставляли окно удаления оформленной корзины; " +
+		"маскирует catWriter.Get", maskedBy: "catWriter.Get"},
 }
 
 // maskHelperFuncName — «Тип.Метод» для метода, «Имя» для функции. Квалификация
