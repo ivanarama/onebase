@@ -24,9 +24,25 @@ type Permission struct {
 	InfoRegs     map[string][]string `yaml:"inforegs"`
 	Reports      map[string][]string `yaml:"reports"`
 	Processors   map[string][]string `yaml:"processors"`
-	RowAccess    RowAccess           `yaml:"row_access"`
-	FieldAccess  FieldAccess         `yaml:"field_access"`
+	// ProcessorsDefault — осознанный compatibility-режим плана 162: ровно
+	// значение "allow", сохраняющее роли доступ ко всем обработкам. Разрешено
+	// только при отсутствующей/null-секции processors; сочетание с любой картой
+	// (включая {}) — ошибка конфигурации, её отвергает разбор роли.
+	ProcessorsDefault string    `yaml:"processors_default"`
+	RowAccess         RowAccess `yaml:"row_access"`
+	FieldAccess       FieldAccess `yaml:"field_access"`
 }
+
+// Processor permission modes returned by ProcessorPermissionMode (план 162).
+const (
+	// ProcessorModeMap — явная секция processors: разрешено перечисленное.
+	ProcessorModeMap = "map"
+	// ProcessorModeExplicitAllowAll — processors_default: allow.
+	ProcessorModeExplicitAllowAll = "explicit-allow-all"
+	// ProcessorModeImplicitAllowAll — секции нет; переходный срез A плана 162
+	// сохраняет allow-all, срез C сменит его на запрет.
+	ProcessorModeImplicitAllowAll = "implicit-allow-all"
+)
 
 // Role is a named set of permissions.
 type Role struct {
@@ -41,6 +57,14 @@ func (p *Permission) UnmarshalYAML(value *yaml.Node) error {
 	var canonical plain
 	if err := value.Decode(&canonical); err != nil {
 		return err
+	}
+	if d := strings.TrimSpace(canonical.ProcessorsDefault); d != "" {
+		if d != "allow" {
+			return fmt.Errorf("processors_default: %q — допустимо ровно значение allow; явный запрет записывается как processors: {}", canonical.ProcessorsDefault)
+		}
+		if canonical.Processors != nil {
+			return fmt.Errorf("processors_default: allow несовместим с явной секцией processors (включая {}) — уберите одно из двух")
+		}
 	}
 	parsed := normalizePermission(Permission(canonical))
 	if value.Kind == yaml.MappingNode {
@@ -57,20 +81,12 @@ func (u *User) Has(kind, entity, op string) bool {
 	if u.IsAdmin {
 		return true
 	}
-	// Обработки используют opt-in семантику ради обратной совместимости: роль,
-	// которая НЕ объявляет секцию `processors` (map == nil), разрешает все
-	// обработки (прежнее поведение, когда прав на обработки не существовало).
-	// Роль с объявленной секцией ограничивает доступ перечисленными. Пустой
-	// `processors: {}` (non-nil) запрещает все обработки.
 	if kind == "processor" {
+		// Права на обработки решает единый helper (план 162): раньше здесь и в
+		// PermissionHas жили две расходящиеся копии allow-all ветки.
 		for _, r := range u.Roles {
-			if r.Permissions.Processors == nil {
+			if processorAllows(r.Permissions, entity, op) {
 				return true
-			}
-			for _, allowed := range r.Permissions.Processors[entity] {
-				if permissionOpMatches(allowed, op) {
-					return true
-				}
 			}
 		}
 		return false
@@ -81,6 +97,38 @@ func (u *User) Has(kind, entity, op string) bool {
 		}
 	}
 	return false
+}
+
+// ProcessorPermissionMode возвращает эффективный режим прав на обработки
+// одной роли (план 162): явная карта, осознанный compatibility allow-all или
+// неявное allow-all отсутствующей секции. В переходном срезе A последние два
+// дают одинаковый доступ; различает их только диагностика lint.
+func ProcessorPermissionMode(p Permission) string {
+	if p.Processors != nil {
+		return ProcessorModeMap
+	}
+	if strings.TrimSpace(p.ProcessorsDefault) == "allow" {
+		return ProcessorModeExplicitAllowAll
+	}
+	return ProcessorModeImplicitAllowAll
+}
+
+// processorAllows — единая точка решения по обработкам: User.Has и
+// PermissionHas обязаны давать одинаковый ответ для отсутствующей, пустой,
+// явной и compatibility-конфигурации роли.
+func processorAllows(p Permission, entity, op string) bool {
+	if p.Processors != nil {
+		for _, allowed := range p.Processors[entity] {
+			if permissionOpMatches(allowed, op) {
+				return true
+			}
+		}
+		return false
+	}
+	// Переходный срез A плана 162: отсутствие секции пока разрешает все
+	// обработки — и неявно, и через осознанный processors_default: allow.
+	// Срез C в объявленном минорном релизе сменит неявное умолчание на запрет.
+	return true
 }
 
 func PermissionHas(p Permission, kind, entity, op string) bool {
@@ -97,10 +145,7 @@ func PermissionHas(p Permission, kind, entity, op string) bool {
 	case "report":
 		m = p.Reports
 	case "processor":
-		if p.Processors == nil {
-			return true
-		}
-		m = p.Processors
+		return processorAllows(p, entity, op)
 	}
 	for _, allowed := range m[entity] {
 		if permissionOpMatches(allowed, op) {
@@ -153,15 +198,16 @@ func splitPermissionOps(raw string) []string {
 
 func normalizePermission(p Permission) Permission {
 	return Permission{
-		AIDataAccess: p.AIDataAccess,
-		Catalogs:     normalizePermissionMap(p.Catalogs),
-		Documents:    normalizePermissionMap(p.Documents),
-		Registers:    normalizePermissionMap(p.Registers),
-		InfoRegs:     normalizePermissionMap(p.InfoRegs),
-		Reports:      normalizePermissionMap(p.Reports),
-		Processors:   normalizePermissionMap(p.Processors),
-		RowAccess:    normalizeRowAccess(p.RowAccess),
-		FieldAccess:  normalizeFieldAccess(p.FieldAccess),
+		AIDataAccess:      p.AIDataAccess,
+		Catalogs:          normalizePermissionMap(p.Catalogs),
+		Documents:         normalizePermissionMap(p.Documents),
+		Registers:         normalizePermissionMap(p.Registers),
+		InfoRegs:          normalizePermissionMap(p.InfoRegs),
+		Reports:           normalizePermissionMap(p.Reports),
+		Processors:        normalizePermissionMap(p.Processors),
+		ProcessorsDefault: strings.TrimSpace(p.ProcessorsDefault),
+		RowAccess:         normalizeRowAccess(p.RowAccess),
+		FieldAccess:       normalizeFieldAccess(p.FieldAccess),
 	}
 }
 
@@ -188,6 +234,9 @@ func normalizePermissionMap(m map[string][]string) map[string][]string {
 func mergePermissions(dst, src Permission) Permission {
 	if src.AIDataAccess {
 		dst.AIDataAccess = true
+	}
+	if strings.TrimSpace(src.ProcessorsDefault) != "" {
+		dst.ProcessorsDefault = src.ProcessorsDefault
 	}
 	dst.Catalogs = mergePermissionMap(dst.Catalogs, src.Catalogs)
 	dst.Documents = mergePermissionMap(dst.Documents, src.Documents)
@@ -529,15 +578,16 @@ func LoadRolesYAML(dir string) ([]*Role, error) {
 func marshalPermissions(p Permission) (string, error) {
 	p = normalizePermission(p)
 	type permJSON struct {
-		AIDataAccess bool                `json:"ai_data_access,omitempty"`
-		Catalogs     map[string][]string `json:"catalogs,omitempty"`
-		Documents    map[string][]string `json:"documents,omitempty"`
-		Registers    map[string][]string `json:"registers,omitempty"`
-		InfoRegs     map[string][]string `json:"inforegs,omitempty"`
-		Reports      map[string][]string `json:"reports,omitempty"`
-		Processors   map[string][]string `json:"processors"`
-		RowAccess    RowAccess           `json:"row_access,omitempty"`
-		FieldAccess  FieldAccess         `json:"field_access,omitempty"`
+		AIDataAccess      bool                `json:"ai_data_access,omitempty"`
+		Catalogs          map[string][]string `json:"catalogs,omitempty"`
+		Documents         map[string][]string `json:"documents,omitempty"`
+		Registers         map[string][]string `json:"registers,omitempty"`
+		InfoRegs          map[string][]string `json:"inforegs,omitempty"`
+		Reports           map[string][]string `json:"reports,omitempty"`
+		Processors        map[string][]string `json:"processors"`
+		ProcessorsDefault string              `json:"processors_default,omitempty"`
+		RowAccess         RowAccess           `json:"row_access,omitempty"`
+		FieldAccess       FieldAccess         `json:"field_access,omitempty"`
 	}
 	b, err := jsonMarshal(permJSON(p))
 	if err != nil {
@@ -566,6 +616,11 @@ func permissionFromJSONMap(raw map[string]json.RawMessage) Permission {
 			var b bool
 			if err := json.Unmarshal(value, &b); err == nil && b {
 				p.AIDataAccess = true
+			}
+		case processorsDefaultJSONKey(key):
+			var d string
+			if err := json.Unmarshal(value, &d); err == nil {
+				p.ProcessorsDefault = d
 			}
 		case permissionWrapperKey(key):
 			var nested map[string]json.RawMessage
@@ -639,6 +694,12 @@ func setPermissionMap(p *Permission, kind string, m map[string][]string) {
 	case "processor":
 		p.Processors = mergePermissionMap(p.Processors, m)
 	}
+}
+
+// processorsDefaultJSONKey опознаёт ключ compatibility-режима обработок в
+// JSON-представлении прав (таблица _roles) — плоская строка, а не карта.
+func processorsDefaultJSONKey(key string) bool {
+	return strings.EqualFold(strings.TrimSpace(key), "processors_default")
 }
 
 func permissionBoolKey(key string) bool {
