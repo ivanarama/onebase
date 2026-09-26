@@ -288,15 +288,15 @@ func (db *DB) tableColumns(ctx context.Context, table string) (map[string]string
 	return out, nil
 }
 
-// standardFieldProvenance can only be produced from an entire numbered entity.
-// A field ID and name alone do not prove that a table column is its standard
-// code or number (table parts and registers can use those names too).
+// standardFieldProvenance can only be produced from an entire entity. Its
+// standard code or number keeps the same ID after numbering is disabled;
+// table parts and registers cannot provide this provenance.
 type standardFieldProvenance struct {
 	id, name string
 }
 
 func standardProvenance(e *metadata.Entity) standardFieldProvenance {
-	if e == nil || e.Numerator == nil {
+	if e == nil {
 		return standardFieldProvenance{}
 	}
 	var p standardFieldProvenance

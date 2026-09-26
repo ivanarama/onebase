@@ -166,9 +166,10 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 			}
 		}
 		standardID := ""
-		if e.Kind == metadata.KindCatalog {
+		switch e.Kind {
+		case metadata.KindCatalog:
 			standardID = metadata.StandardCodeFieldID
-		} else if e.Kind == metadata.KindDocument {
+		case metadata.KindDocument:
 			standardID = metadata.StandardNumberFieldID
 		}
 		for _, f := range e.Fields {

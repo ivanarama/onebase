@@ -119,6 +119,63 @@ func TestStandardFieldRebindMatrix(t *testing.T) {
 	})
 }
 
+// Disabling numbering materializes the standard field in fields with its
+// stable ID. A database whose schema map still names the legacy owner must
+// permit the same non-destructive rebind after that transition.
+func TestStandardFieldRebindAfterNumberingDisabledMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		for _, tc := range []struct {
+			kind metadata.Kind
+			name string
+		}{
+			{metadata.KindCatalog, "RebindDisabledCatalog"},
+			{metadata.KindDocument, "RebindDisabledDocument"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				field, standardID := metadata.StandardCodeField, metadata.StandardCodeFieldID
+				legacyID := "f_old_" + tc.name
+				var before, after *metadata.Entity
+				if tc.kind == metadata.KindCatalog {
+					before = writeCatalogProject(t, "name: Ученики\nnumerator: {length: 6}\nfields:\n  - {id: "+legacyID+", name: Код, type: string}\n")
+					after = writeCatalogProject(t, "name: Ученики\nfields:\n  - {id: std_code, name: Код, type: string}\n")
+				} else {
+					field, standardID = metadata.StandardNumberField, metadata.StandardNumberFieldID
+					before = docEntity(t, writeDocProject(t, "name: Реализация\nnumerator: {length: 6}\nfields:\n  - {id: "+legacyID+", name: Номер, type: string}\n"))
+					after = docEntity(t, writeDocProject(t, "name: Реализация\nfields:\n  - {id: std_number, name: Номер, type: string}\n"))
+				}
+				if after.Numerator != nil || len(after.Fields) != 1 || after.Fields[0].ID != standardID {
+					t.Fatalf("disabled numbering did not yield standard field: %+v", after)
+				}
+				if err := db.Migrate(ctx, []*metadata.Entity{before}); err != nil {
+					t.Fatal(err)
+				}
+				rowID := uuid.New()
+				if err := db.Upsert(ctx, before.Name, rowID, map[string]any{field: "000123"}, before); err != nil {
+					t.Fatal(err)
+				}
+				table, column := metadata.TableName(before.Name), metadata.ColumnName(before.Fields[0])
+				rewriteStandardMapID(t, db, table, standardID, legacyID, "string")
+
+				plan, err := db.PlanMigration(ctx, []*metadata.Entity{after}, nil, nil)
+				if err != nil || len(plan) != 1 || plan[0].Kind != storage.ChangeRebindFieldID || plan[0].From != legacyID || plan[0].FieldID != standardID || plan[0].Destructive() {
+					t.Fatalf("dry-run after disabling numbering = %+v, %v", plan, err)
+				}
+				if err := db.Migrate(ctx, []*metadata.Entity{after}); err != nil {
+					t.Fatal(err)
+				}
+				if owners := schemaMapOwners(t, db, table, column); len(owners) != 1 || owners[0] != standardID {
+					t.Fatalf("owners after rebind = %v", owners)
+				}
+				row, err := db.GetByID(ctx, after.Name, rowID, after)
+				if err != nil || row[field] != "000123" {
+					t.Fatalf("value after rebind = %v, %v", row, err)
+				}
+			})
+		}
+	})
+}
+
 func TestStandardFieldRebindRejectsAmbiguousMapMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		ctx := context.Background()
