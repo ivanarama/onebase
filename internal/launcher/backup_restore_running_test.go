@@ -569,7 +569,7 @@ func TestRawRestore_ПоврежденнаяБаза_НейтральнаяДи�
 		t.Fatalf("read database: %v", err)
 	}
 	corrupted := append([]byte("это точно не SQLite"), original...)
-	if err := os.WriteFile(dbPath, corrupted, 0o600); err != nil {
+	if err := os.WriteFile(dbPath, corrupted, 0o600); err != nil { //nolint:gosec // G703: test-owned path below t.TempDir
 		t.Fatalf("corrupt database: %v", err)
 	}
 
