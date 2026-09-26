@@ -470,7 +470,7 @@ func TestJobsReturnsDefensiveCopies(t *testing.T) {
 
 func TestResolveTemplate_Today(t *testing.T) {
 	now := time.Date(2026, 5, 5, 12, 0, 0, 0, time.UTC)
-	result := resolveTemplate("{{today}}", now)
+	result := mustResolveTemplate(t, "{{today}}", now)
 	got, ok := result.(time.Time)
 	assert.True(t, ok)
 	assert.Equal(t, 2026, got.Year())
@@ -481,7 +481,7 @@ func TestResolveTemplate_Today(t *testing.T) {
 
 func TestResolveTemplate_MinusDays(t *testing.T) {
 	now := time.Date(2026, 5, 10, 0, 0, 0, 0, time.UTC)
-	result := resolveTemplate("{{today | minus_days:7}}", now)
+	result := mustResolveTemplate(t, "{{today | minus_days:7}}", now)
 	got, ok := result.(time.Time)
 	assert.True(t, ok)
 	assert.Equal(t, time.May, got.Month())
@@ -490,7 +490,7 @@ func TestResolveTemplate_MinusDays(t *testing.T) {
 
 func TestResolveTemplate_MinusMonths(t *testing.T) {
 	now := time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC)
-	result := resolveTemplate("{{today | minus_months:1}}", now)
+	result := mustResolveTemplate(t, "{{today | minus_months:1}}", now)
 	got, ok := result.(time.Time)
 	assert.True(t, ok)
 	assert.Equal(t, time.April, got.Month())
@@ -498,7 +498,7 @@ func TestResolveTemplate_MinusMonths(t *testing.T) {
 
 func TestResolveTemplate_StartOfMonth(t *testing.T) {
 	now := time.Date(2026, 5, 15, 0, 0, 0, 0, time.UTC)
-	result := resolveTemplate("{{today | start_of_month}}", now)
+	result := mustResolveTemplate(t, "{{today | start_of_month}}", now)
 	got, ok := result.(time.Time)
 	assert.True(t, ok)
 	assert.Equal(t, 1, got.Day())
@@ -506,7 +506,7 @@ func TestResolveTemplate_StartOfMonth(t *testing.T) {
 
 func TestResolveTemplate_NoTemplate(t *testing.T) {
 	now := time.Now()
-	result := resolveTemplate("просто строка", now)
+	result := mustResolveTemplate(t, "просто строка", now)
 	assert.Equal(t, "просто строка", result)
 }
 
@@ -516,12 +516,12 @@ func TestResolveTemplate_NoTemplate(t *testing.T) {
 // 00:00:00 +0000 UTC» и браузер покажет пустое поле даты.
 func TestResolveParamTemplateText(t *testing.T) {
 	now := time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC)
-	assert.Equal(t, "2026-05-05", resolveParamTemplateTextAt("{{today}}", now))
-	assert.Equal(t, "2026-04-28", resolveParamTemplateTextAt("{{today | minus_days:7}}", now))
-	assert.Equal(t, "ВРаботе", resolveParamTemplateTextAt("ВРаботе", now))
-	assert.Equal(t, "", resolveParamTemplateTextAt("   ", now))
+	assert.Equal(t, "2026-05-05", mustResolveText(t, "{{today}}", now))
+	assert.Equal(t, "2026-04-28", mustResolveText(t, "{{today | minus_days:7}}", now))
+	assert.Equal(t, "ВРаботе", mustResolveText(t, "ВРаботе", now))
+	assert.Equal(t, "", mustResolveText(t, "   ", now))
 	// Нераспознанная подстановка остаётся текстом — прежний контракт грамматики.
-	assert.Equal(t, "{{неизвестно}}", resolveParamTemplateTextAt("{{неизвестно}}", now))
+	assert.Equal(t, "{{неизвестно}}", mustResolveText(t, "{{неизвестно}}", now))
 }
 
 func TestResolveParamTemplates_Mixed(t *testing.T) {
@@ -531,11 +531,39 @@ func TestResolveParamTemplates_Mixed(t *testing.T) {
 		"Процент":  float64(10),
 		"Название": "тест",
 	}
-	result := resolveParamTemplatesAt(params, now)
+	result := mustResolveParams(t, params, now)
 	got, ok := result["Дата"].(time.Time)
 	assert.True(t, ok)
 	assert.Equal(t, 28, got.Day()) // 2026-05-05 minus 7 days = April 28
 	assert.Equal(t, time.April, got.Month())
 	assert.Equal(t, float64(10), result["Процент"])
 	assert.Equal(t, "тест", result["Название"])
+}
+
+// Помощники тестов: подстановки без констант — резолвер nil, ошибки быть не должно.
+func mustResolveTemplate(t *testing.T, s string, now time.Time) any {
+	t.Helper()
+	v, err := resolveTemplate(s, now, nil)
+	if err != nil {
+		t.Fatalf("resolveTemplate(%q): %v", s, err)
+	}
+	return v
+}
+
+func mustResolveText(t *testing.T, raw string, now time.Time) string {
+	t.Helper()
+	v, err := resolveParamTemplateTextAt(raw, now, nil)
+	if err != nil {
+		t.Fatalf("resolveParamTemplateTextAt(%q): %v", raw, err)
+	}
+	return v
+}
+
+func mustResolveParams(t *testing.T, params map[string]any, now time.Time) map[string]any {
+	t.Helper()
+	v, err := resolveParamTemplatesAt(params, now, nil)
+	if err != nil {
+		t.Fatalf("resolveParamTemplatesAt: %v", err)
+	}
+	return v
 }
