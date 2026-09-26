@@ -256,6 +256,8 @@ numerator:
   prefix: "ПРИ-"
   length: 5
   period: year                   # автонумерация: ПРИ-00001
+  field:
+    title: Номер приходной       # подпись стандартного поля; в fields его нет
 fields:
   - name: Дата
     type: date

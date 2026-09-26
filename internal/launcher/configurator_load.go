@@ -165,8 +165,20 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 				HideFromChoice: e.Activity.HideFromChoice,
 			}
 		}
+		standardID := ""
+		if e.Kind == metadata.KindCatalog {
+			standardID = metadata.StandardCodeFieldID
+		} else if e.Kind == metadata.KindDocument {
+			standardID = metadata.StandardNumberFieldID
+		}
 		for _, f := range e.Fields {
-			ev.Fields = append(ev.Fields, toCfgField(f))
+			view := toCfgField(f)
+			if standardID != "" && f.ID == standardID {
+				ev.StandardFieldTitle = f.Title
+				ev.StandardFieldTitles = f.Titles
+				view.Standard = e.Numerator != nil
+			}
+			ev.Fields = append(ev.Fields, view)
 		}
 		for _, tp := range e.TableParts {
 			tpv := cfgTablePart{Name: tp.Name}

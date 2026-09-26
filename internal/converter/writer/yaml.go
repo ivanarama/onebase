@@ -66,7 +66,7 @@ func WriteCatalogs(cats []*parser1c.CatalogMeta, outDir string, notes *Conversio
 			Title:        synonymTitle(cat.Name, cat.Synonym),
 			Hierarchical: cat.Hierarchical,
 			Numerator:    catalogNumeratorFrom(cat.Code),
-			Fields:       withStandardCatalogFields(convertFields(cat.Attributes, notes)),
+			Fields:       withStandardCatalogFields(convertFields(cat.Attributes, notes), cat.Code.Auto),
 		}
 		// Числовой код переносится строковым — как и числовой номер документа.
 		// Об этом сказать надо: сортировка «10» < «9» удивляет тех, кто в 1С
@@ -97,14 +97,24 @@ func WriteCatalogs(cats []*parser1c.CatalogMeta, outDir string, notes *Conversio
 }
 
 // WriteDocuments записывает документы в out/documents/*.yaml.
-// withStandardDocumentFields добавляет «Номер» и «Дату» — стандартные реквизиты
+// withStandardDocumentFields добавляет «Дату» и, без автонумерации, «Номер» — стандартные реквизиты
 // документа в 1С, которых у импортированного объекта не было вовсе. Из-за этого
 // документ приезжал без номера и даты, и жалоба «в документах нет НОМЕРА»
 // (issue #658) относилась к конвертеру, а не к движку: автонумерацию платформа
 // умеет (план 117, Д6).
 //
-// Порядок как в 1С: сначала стандартные, потом пользовательские.
-func withStandardDocumentFields(fields []yamlField) []yamlField {
+// При автонумерации «Номер» синтезируется загрузчиком из numerator и не
+// материализуется повторно. Порядок оставшихся полей: стандартные, затем пользовательские.
+func withStandardDocumentFields(fields []yamlField, autoNumber bool) []yamlField {
+	if autoNumber {
+		filtered := fields[:0]
+		for _, f := range fields {
+			if !strings.EqualFold(f.Name, "Номер") {
+				filtered = append(filtered, f)
+			}
+		}
+		fields = filtered
+	}
 	has := func(name string) bool {
 		for _, f := range fields {
 			if strings.EqualFold(f.Name, name) {
@@ -114,7 +124,7 @@ func withStandardDocumentFields(fields []yamlField) []yamlField {
 		return false
 	}
 	var std []yamlField
-	if !has("Номер") {
+	if !autoNumber && !has("Номер") {
 		std = append(std, yamlField{Name: "Номер", Type: "string"})
 	}
 	if !has("Дата") {
@@ -172,7 +182,7 @@ func WriteDocuments(docs []*parser1c.DocumentMeta, outDir string, notes *Convers
 			Title:     synonymTitle(doc.Name, doc.Synonym),
 			Posting:   doc.Posting,
 			Numerator: numeratorFrom(doc.Number),
-			Fields:    withStandardDocumentFields(convertFields(doc.Attributes, notes)),
+			Fields:    withStandardDocumentFields(convertFields(doc.Attributes, notes), doc.Number.Auto),
 		}
 		if doc.Number.Auto && strings.EqualFold(doc.Number.Type, "Number") {
 			notes.TypeWarnings = append(notes.TypeWarnings,
@@ -404,11 +414,20 @@ func synonymTitle(name, synonym string) string {
 	return synonym
 }
 
-// withStandardCatalogFields добавляет стандартные реквизиты справочника 1С
-// (Код и Наименование) в начало списка полей. В выгрузке 1С они хранятся вне
+// withStandardCatalogFields добавляет «Наименование» и, без автонумерации,
+// «Код» в начало списка полей. В выгрузке 1С они хранятся вне
 // секции <Attributes>, поэтому при конвертации терялись (issue #26 п.2).
 // Если пользовательский реквизит уже носит такое имя — не дублируем.
-func withStandardCatalogFields(fields []yamlField) []yamlField {
+func withStandardCatalogFields(fields []yamlField, autoCode bool) []yamlField {
+	if autoCode {
+		filtered := fields[:0]
+		for _, f := range fields {
+			if !strings.EqualFold(f.Name, "Код") {
+				filtered = append(filtered, f)
+			}
+		}
+		fields = filtered
+	}
 	has := func(name string) bool {
 		for _, f := range fields {
 			if strings.EqualFold(f.Name, name) {
@@ -418,7 +437,7 @@ func withStandardCatalogFields(fields []yamlField) []yamlField {
 		return false
 	}
 	var std []yamlField
-	if !has("Код") {
+	if !autoCode && !has("Код") {
 		std = append(std, yamlField{Name: "Код", Type: "string"})
 	}
 	if !has("Наименование") {
