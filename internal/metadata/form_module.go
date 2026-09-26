@@ -498,6 +498,12 @@ type FormModule struct {
 	// становится втрое шире и перестаёт быть узнаваемой — там её выключают одним
 	// ключом на форму.
 	RefCardButton *bool `yaml:"ref_card_button,omitempty"`
+	// EnterSubmitsForm возвращает ПРЕЖНЕЕ поведение клавиши Enter: обычное
+	// нажатие может отправить форму (неявный HTML-submit). По умолчанию платформа
+	// переводит Enter в навигацию по полям — как в 1С и как ожидает оператор,
+	// вводящий данные потоком (#1486). Ctrl+S, Ctrl+Enter и кнопки записи
+	// работают всегда, независимо от этого ключа.
+	EnterSubmitsForm bool `yaml:"enter_submits_form,omitempty"`
 	// OneCMeta — служебный блок, используемый только конвертером 1С,
 	// рантайм его игнорирует. Может содержать version, unknown_xml и т.п.
 	OneCMeta map[string]any `yaml:"oneC_meta,omitempty"`
