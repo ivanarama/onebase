@@ -165,19 +165,16 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 				HideFromChoice: e.Activity.HideFromChoice,
 			}
 		}
-		standardID := ""
-		switch e.Kind {
-		case metadata.KindCatalog:
-			standardID = metadata.StandardCodeFieldID
-		case metadata.KindDocument:
-			standardID = metadata.StandardNumberFieldID
-		}
+		standardName, standardID := standardFieldIdentity(e.Kind, true)
 		for _, f := range e.Fields {
 			view := toCfgField(f)
-			if standardID != "" && f.ID == standardID {
+			// Before numbering is first enabled, Код/Номер is still an ordinary
+			// field with its own ID. Pre-fill the numerator editor from that field
+			// so the form does not submit an empty title and erase its label.
+			if standardID != "" && (f.ID == standardID || e.Numerator == nil && strings.EqualFold(strings.TrimSpace(f.Name), standardName)) {
 				ev.StandardFieldTitle = f.Title
 				ev.StandardFieldTitles = f.Titles
-				view.Standard = e.Numerator != nil
+				view.Standard = e.Numerator != nil && f.ID == standardID
 			}
 			ev.Fields = append(ev.Fields, view)
 		}

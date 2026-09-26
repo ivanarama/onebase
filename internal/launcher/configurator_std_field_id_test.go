@@ -265,6 +265,90 @@ func TestSaveFields_DatabaseModeMovesLegacyCode(t *testing.T) {
 	}
 }
 
+// При первом включении нумерации Код/Номер ещё хранится как обычное поле с
+// пользовательским ID. Страница должна перенести его подпись в редактор
+// нумерации до отправки формы, иначе пустое поле формы затрёт её при сохранении.
+func TestSaveFields_FirstNumberingPreservesStandardFieldProperties(t *testing.T) {
+	cases := []struct {
+		name, dir, entity, field, sourceYAML string
+		shownTitle, wantTitle, wantLabel     string
+		wantEnglish, wantID                  string
+		kind                                 metadata.Kind
+	}{
+		{
+			name: "catalog code", dir: "catalogs", entity: "Клиенты", field: metadata.StandardCodeField,
+			kind: metadata.KindCatalog, shownTitle: "Код клиента", wantTitle: "Код клиента",
+			wantEnglish: "Customer code", wantID: metadata.StandardCodeFieldID,
+			sourceYAML: `name: Клиенты
+fields:
+  - id: f_old_code
+    name: Код
+    type: string
+    title: Код клиента
+    titles: {en: Customer code}
+    required: true
+    default: PREFIX
+    pii: true
+`,
+		},
+		{
+			name: "document number", dir: "documents", entity: "Приказ", field: metadata.StandardNumberField,
+			kind: metadata.KindDocument, shownTitle: "Номер приказа", wantLabel: "Номер приказа",
+			wantEnglish: "Order number", wantID: metadata.StandardNumberFieldID,
+			sourceYAML: `name: Приказ
+fields:
+  - id: f_old_number
+    name: Номер
+    type: string
+    label: Номер приказа
+    titles: {en: Order number}
+    required: true
+    default: PREFIX
+    pii: true
+`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h, cfgDir := newFileBaseHandler(t)
+			h.runner = NewRunner()
+			path := writeCfgFile(t, cfgDir, tc.dir, tc.entity+".yaml", tc.sourceYAML)
+			b, err := h.store.Get("test")
+			if err != nil {
+				t.Fatal(err)
+			}
+			data := h.loadCfgData(context.Background(), b, "tree")
+			if data.Error != "" {
+				t.Fatal(data.Error)
+			}
+			form := browserSubmitForEntity(t, renderCfgTree(t, data), tc.entity)
+			if !formHasFieldNamed(form, tc.field) || form.Get("numerator_field_title") != tc.shownTitle {
+				t.Fatalf("standard field missing from editor or its title was not pre-filled: %v", form)
+			}
+			form.Set("numerator_enabled", "1")
+			if ok, errText := cfgResponse(t, postCfg(t, "test", "/bases/test/configurator/fields", form, h.configuratorSaveFields)); !ok {
+				t.Fatal(errText)
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var saved saveEntity
+			if err := yaml.Unmarshal(raw, &saved); err != nil {
+				t.Fatal(err)
+			}
+			if saved.Numerator == nil || saved.Numerator.Field == nil {
+				t.Fatalf("numbering or field properties missing:\n%s", raw)
+			}
+			f := saved.Numerator.Field
+			if f.Title != tc.wantTitle || f.Label != tc.wantLabel || f.Titles["en"] != tc.wantEnglish || !f.Required || f.Default != "PREFIX" || !f.PII {
+				t.Fatalf("field properties changed: %+v\n%s", f, raw)
+			}
+			assertStandardFieldSaved(t, path, tc.kind, tc.field, tc.wantID)
+		})
+	}
+}
+
 // Снятие автонумерации материализует «Код» в fields как обычный реквизит с
 // прежним std_code: колонка и её данные не меняются.
 func TestSaveFields_CodeKeepsStandardIDWhenNumeratorTurnedOff(t *testing.T) {

@@ -99,7 +99,13 @@ func applyStandardFieldEdits(ent *saveEntity, kind metadata.Kind, fields []saveF
 		if nextStandard.Type != "" && nextStandard.Type != "string" {
 			return fmt.Errorf("standard field %s must have type string", name)
 		}
+		previousTitles := standard.Titles
 		standard = carryFieldKeys(*nextStandard, standard)
+		if standard.Titles == nil {
+			// With no configured UI languages, the ordinary field row has no
+			// title inputs. Keep its translations during first numbering.
+			standard.Titles = previousTitles
+		}
 	}
 	standard.Name, standard.ID, standard.Type = name, id, "string"
 	if willNumerator {
