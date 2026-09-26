@@ -554,3 +554,120 @@ func TestBackupFullImport_IncompleteArchiveRejectedBeforeStopping(t *testing.T) 
 		})
 	}
 }
+
+// Диагностика отказа raw restore не имеет права утверждать «universal recovery
+// is pending», когда проба маркера упала на повреждённой базе: наличие маркера
+// в этом случае не доказано (#1563). Отказ обязан остаться, база — неизменной.
+func TestRawRestore_ПоврежденнаяБаза_НейтральнаяДиагностика(t *testing.T) {
+	h, b, dbPath := adoptedBase(t, "restore-corrupted", false)
+	stubExePath(t)
+	file := makeBackup(t, h, b)
+
+	// Портим текущую базу: проба маркера упадёт, «file is not a database».
+	original, err := os.ReadFile(dbPath) //nolint:gosec // G703: test-owned path below t.TempDir
+	if err != nil {
+		t.Fatalf("read database: %v", err)
+	}
+	corrupted := append([]byte("это точно не SQLite"), original...)
+	if err := os.WriteFile(dbPath, corrupted, 0o600); err != nil { //nolint:gosec // G703: test-owned path below t.TempDir
+		t.Fatalf("corrupt database: %v", err)
+	}
+
+	resp := postRestore(t, h, b, file)
+	if resp["ok"] != false {
+		t.Fatalf("восстановление поверх повреждённой базы не отклонено: %v", resp)
+	}
+	msg, _ := resp["error"].(string)
+	if !strings.Contains(msg, "raw database restore refused:") {
+		t.Fatalf("ожидался нейтральный префикс отказа, получено: %s", msg)
+	}
+	if strings.Contains(msg, "universal recovery is pending") {
+		t.Fatalf("недоказанное наличие маркера опять выдано за pending recovery: %s", msg)
+	}
+	if !strings.Contains(msg, "inspect restore marker") {
+		t.Fatalf("вложенная причина пробы потеряна из диагностики: %s", msg)
+	}
+	after, err := os.ReadFile(dbPath) //nolint:gosec // G703: test-owned path below t.TempDir
+	if err != nil {
+		t.Fatalf("reread database: %v", err)
+	}
+	if !bytes.Equal(after, corrupted) {
+		t.Fatal("отклонённое восстановление изменило файл базы")
+	}
+	if !h.runner.lifecycleMu.TryLock() {
+		t.Fatal("failed restore leaked lifecycle gate")
+	}
+	h.runner.lifecycleMu.Unlock()
+}
+
+// При НАЙДЕННОМ маркере вложенная диагностика по-прежнему объясняет, почему
+// нужен universal recovery, — нейтральный префикс не должен её стирать.
+func TestRawRestore_НайденныйМаркер_ОбъясняетRecovery(t *testing.T) {
+	h, b, dbPath := adoptedBase(t, "restore-marker", false)
+	stubExePath(t)
+	file := makeBackup(t, h, b)
+
+	marker, err := storage.ConnectSQLite(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("open database: %v", err)
+	}
+	if _, err := marker.Exec(context.Background(),
+		`CREATE TABLE IF NOT EXISTS _settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`); err != nil {
+		t.Fatalf("create settings table: %v", err)
+	}
+	if _, err := marker.Exec(context.Background(),
+		`INSERT INTO _settings(key,value) VALUES ('onebase.internal.restore.intent.v1','{}')`); err != nil {
+		t.Fatalf("insert restore marker: %v", err)
+	}
+	marker.Close()
+
+	resp := postRestore(t, h, b, file)
+	if resp["ok"] != false {
+		t.Fatalf("восстановление поверх pending-маркера не отклонено: %v", resp)
+	}
+	msg, _ := resp["error"].(string)
+	if !strings.Contains(msg, "interrupted restore marker exists") {
+		t.Fatalf("диагностика обязана объяснить необходимость recovery: %s", msg)
+	}
+	if !h.runner.lifecycleMu.TryLock() {
+		t.Fatal("failed restore leaked lifecycle gate")
+	}
+	h.runner.lifecycleMu.Unlock()
+}
+
+// Второй вход raw-восстановления — full-import с сырым дампом — отвечает той же
+// нейтральной диагностикой на повреждённую базу.
+func TestRawFullImport_ПоврежденнаяБаза_НейтральнаяДиагностика(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "corrupt-raw-import.db")
+	original := []byte("this is not a sqlite database")
+	if err := os.WriteFile(dbPath, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store := newTestStore(t)
+	b := &Base{
+		ID: "raw-import-corrupted", Name: "Corrupt import", ConfigSource: "file",
+		Path: t.TempDir(), DBType: "sqlite", DBPath: dbPath, Port: freePort(t),
+	}
+	if err := store.Add(b); err != nil {
+		t.Fatal(err)
+	}
+	h := &handler{store: store, runner: NewRunner()}
+
+	resp := postFullImport(t, h, b, []fullImportTestEntry{
+		{name: "database.db", data: []byte("raw sqlite dump bytes")},
+	})
+	if resp["ok"] != false {
+		t.Fatalf("raw full-import поверх повреждённой базы не отклонён: %v", resp)
+	}
+	msg, _ := resp["error"].(string)
+	if strings.Contains(msg, "universal recovery is pending") {
+		t.Fatalf("raw full-import утверждает pending recovery без доказательств: %s", msg)
+	}
+	after, err := os.ReadFile(dbPath) //nolint:gosec // G703: test-owned path below t.TempDir
+	if err != nil {
+		t.Fatalf("reread database: %v", err)
+	}
+	if !bytes.Equal(after, original) {
+		t.Fatal("отклонённый raw full-import изменил файл базы")
+	}
+}

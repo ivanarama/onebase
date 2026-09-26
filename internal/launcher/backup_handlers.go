@@ -307,7 +307,12 @@ func resetBasePrefixAfterRestore(ctx context.Context, b *Base) (string, error) {
 // journal, so they must never overwrite the database that contains its marker.
 func checkRawRestoreAllowed(ctx context.Context, b *Base) error {
 	if err := checkNoPendingRestoreBeforeOpen(ctx, b); err != nil {
-		return fmt.Errorf("raw database restore refused while universal recovery is pending: %w", err)
+		// Формулировка нейтральная: проба маркера могла упасть на ошибке чтения
+		// или повреждённой базе, и тогда наличие pending recovery не доказано —
+		// внешнее сообщение не имеет права утверждать обратное (#1563).
+		// Вложенная ошибка различает «маркер найден» и «проба не прошла»;
+		// отказ в любом случае fail-closed.
+		return fmt.Errorf("raw database restore refused: %w", err)
 	}
 	return nil
 }
