@@ -162,7 +162,7 @@ func newChoiceHTTPFixture(t *testing.T) choiceHTTPFixture {
 	server.entitySvc = server.newEntityService(nil)
 	return choiceHTTPFixture{
 		server: server, direction: direction, target: target, owner: owner,
-		rootA: rootA, rootB: rootB, pageTwo: choiceHTTPUUID(0x20, 51), hidden: hidden,
+		rootA: rootA, rootB: rootB, pageTwo: choiceHTTPUUID(0x20, 2), hidden: hidden,
 		legacySelected: legacySelected, foreignOther: foreignOther, ownerID: ownerID, user: user,
 	}
 }

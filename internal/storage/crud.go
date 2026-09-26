@@ -907,6 +907,10 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 		query += fmt.Sprintf(" ORDER BY is_folder DESC, %s ASC", firstStrCol)
 	} else {
 		orderCol := "id"
+		orderDir := "ASC"
+		if strings.EqualFold(params.Dir, "desc") {
+			orderDir = "DESC"
+		}
 		if params.Sort != "" {
 			for _, f := range entity.Fields {
 				if f.Name == params.Sort {
@@ -914,12 +918,37 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 					break
 				}
 			}
+		} else {
+			// Без заданной сортировки показываем документы по дате, а плоские
+			// справочники — по первому строковому реквизиту. Если подходящего
+			// поля нет, сохраняем прежний fallback по id.
+			switch entity.Kind {
+			case metadata.KindDocument:
+				for _, f := range entity.Fields {
+					if f.Type == metadata.FieldTypeDate {
+						orderCol = metadata.ColumnName(f)
+						orderDir = "DESC"
+						break
+					}
+				}
+			case metadata.KindCatalog:
+				for _, f := range entity.Fields {
+					if f.Type == metadata.FieldTypeString {
+						orderCol = metadata.ColumnName(f)
+						orderDir = "ASC"
+						break
+					}
+				}
+			}
 		}
-		orderDir := "ASC"
-		if strings.ToLower(params.Dir) == "desc" {
-			orderDir = "DESC"
+		if params.Sort == "" && orderCol != "id" {
+			// PostgreSQL и SQLite по-разному располагают NULL при ASC/DESC.
+			// Пустые значения оставляем в конце на обоих диалектах.
+			query += fmt.Sprintf(" ORDER BY CASE WHEN %s IS NULL THEN 1 ELSE 0 END ASC, %s %s, id ASC",
+				orderCol, orderCol, orderDir)
+		} else {
+			query += fmt.Sprintf(" ORDER BY %s %s", orderCol, orderDir)
 		}
-		query += fmt.Sprintf(" ORDER BY %s %s", orderCol, orderDir)
 	}
 
 	if params.Limit > 0 {
