@@ -455,6 +455,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | № | Файл | Фича | Эстимейт | Статус |
 |---|---|---|---|---|
 | 166 | [166-durable-files-and-clean-restore-rollback.md](166-durable-files-and-clean-restore-rollback.md) | Долговечный каталог файлов PostgreSQL без temp-fallback и чистый rollback/FK при ошибке `DemoReset`; независимая маршрутизация остальных регрессий #1268 | ~2–3 дня для ведущего среза | 📋 Проектирование |
+| 184 | [184-mode-aware-files-root-and-recovery.md](184-mode-aware-files-root-and-recovery.md) | PostgreSQL без обязательного home для db/S3: проверяемый disk root по операции, отдельные временные копии S3 и единое открытие recovery (#1523, #1525) | ~6–9 дней | 📋 Проектирование |
 
 ### Направление У — совместимость встроенного языка 1С
 
