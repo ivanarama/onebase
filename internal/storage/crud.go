@@ -920,8 +920,8 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 			}
 		} else {
 			// Без заданной сортировки показываем документы по дате, а плоские
-			// справочники — по первому строковому реквизиту. Если подходящего
-			// поля нет, сохраняем прежний fallback по id.
+			// справочники — по Наименованию либо первому строковому реквизиту.
+			// Если подходящего поля нет, сохраняем прежний fallback по id.
 			switch entity.Kind {
 			case metadata.KindDocument:
 				for _, f := range entity.Fields {
@@ -932,11 +932,21 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 					}
 				}
 			case metadata.KindCatalog:
+				// Код может быть синтезирован нумератором перед Наименованием.
+				// Список должен идти по видимому имени, а не по коду.
 				for _, f := range entity.Fields {
-					if f.Type == metadata.FieldTypeString {
+					if f.Type == metadata.FieldTypeString && strings.EqualFold(f.Name, "Наименование") {
 						orderCol = metadata.ColumnName(f)
-						orderDir = "ASC"
 						break
+					}
+				}
+				if orderCol == "id" {
+					for _, f := range entity.Fields {
+						if f.Type == metadata.FieldTypeString {
+							orderCol = metadata.ColumnName(f)
+							orderDir = "ASC"
+							break
+						}
 					}
 				}
 			}

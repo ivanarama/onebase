@@ -2,6 +2,9 @@ package storage_test
 
 import (
 	"context"
+	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -24,12 +27,18 @@ func TestListDefaultSortMatrix(t *testing.T) {
 				{Name: "Дата", Type: metadata.FieldTypeDate},
 			},
 		}
-		catalog := &metadata.Entity{
-			Name: "СортСправ" + uuid.NewString()[:8], Kind: metadata.KindCatalog,
-			Fields: []metadata.Field{
-				{Name: "Наименование", Type: metadata.FieldTypeString},
-				{Name: "Код", Type: metadata.FieldTypeString},
-			},
+		catalogName := "СортСправ" + uuid.NewString()[:8]
+		catalogPath := filepath.Join(t.TempDir(), "catalog.yaml")
+		catalogYAML := fmt.Sprintf("name: %s\nnumerator: {prefix: 'S-'}\nfields:\n  - {name: Наименование, type: string}\n", catalogName)
+		if err := os.WriteFile(catalogPath, []byte(catalogYAML), 0o644); err != nil {
+			t.Fatalf("WriteFile catalog: %v", err)
+		}
+		catalog, err := metadata.LoadFile(catalogPath, metadata.KindCatalog)
+		if err != nil {
+			t.Fatalf("LoadFile catalog: %v", err)
+		}
+		if len(catalog.Fields) < 2 || catalog.Fields[0].Name != "Код" || catalog.Fields[1].Name != "Наименование" {
+			t.Fatalf("ожидался синтезированный Код перед Наименованием: %+v", catalog.Fields)
 		}
 		if err := db.Migrate(ctx, []*metadata.Entity{doc, catalog}); err != nil {
 			t.Fatalf("Migrate: %v", err)
@@ -72,9 +81,9 @@ func TestListDefaultSortMatrix(t *testing.T) {
 			name string
 			code string
 		}{
-			{lowID, "B", "B-low-id"},
-			{highID, "A", "A-high-id"},
-			{middleID, "A", "A-middle-id"},
+			{lowID, "B", "001"},
+			{highID, "A", "003"},
+			{middleID, "A", "002"},
 		} {
 			if err := db.Upsert(ctx, catalog.Name, row.id, map[string]any{
 				"Наименование": row.name, "Код": row.code,
@@ -82,11 +91,11 @@ func TestListDefaultSortMatrix(t *testing.T) {
 				t.Fatalf("Upsert catalog %s: %v", row.code, err)
 			}
 		}
-		if err := db.Upsert(ctx, catalog.Name, emptyID, map[string]any{"Код": "Z-no-name"}, catalog); err != nil {
+		if err := db.Upsert(ctx, catalog.Name, emptyID, map[string]any{"Код": "004"}, catalog); err != nil {
 			t.Fatalf("Upsert catalog without name: %v", err)
 		}
 		assertListFieldOrder(t, db, catalog, storage.ListParams{}, "Код",
-			[]string{"A-middle-id", "A-high-id", "B-low-id", "Z-no-name"})
+			[]string{"002", "003", "001", "004"})
 	})
 }
 
