@@ -207,9 +207,9 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    `<!-- pp:base-sync-v1-aborted intent=<id> head=<40hex> reason=commit-before-intent -->`
    закрывает только адресованный недоказуемый v1-intent текущего HEAD. Принимай
    его лишь от `ivanarama`, без редактирования, после trusted снятия `ship`, с
-   точными parents `[intent.from, base]`, единственным `PullRequestCommit` до
-   intent и без других HEAD/base lifecycle events; докажи это двумя стабильными
-   полными GraphQL snapshot и REST. Маркер никогда не является review-proof,
+   точными parents `[intent.from, base]`, соответствующим `PullRequestCommit` до
+   intent и без force-push/delete/restore HEAD или base-change; докажи это
+   двумя стабильными полными GraphQL snapshot и REST. Маркер никогда не является review-proof,
    carry или разрешением на merge. Он, напротив, направляет текущий HEAD в
    **обычное полное содержательное REVIEW**, даже если осталась старая метка
    `reviewed`; сокращённое интеграционное REVIEW здесь запрещено. После
@@ -217,6 +217,14 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    человеческий trusted `LabeledEvent` после anchor этого HEAD. Чужой,
    редактированный, неоднозначный, адресованный другому HEAD маркер и любой
    последующий push этот путь не открывают.
+   Если abort-маркера нет, edge `to` до intent не является признаком v1:
+   при единственном новом `to`, parents `[from, base]` и отсутствии чужих
+   lifecycle events сохраняй доказуемый intent/done handoff и `ship`. Новый
+   abort допустим только при отдельном свидетельстве недоказуемости —
+   дополнительном `PullRequestCommit` вне прежних коммитов `from` и `to`,
+   проверенном двумя одинаковыми полными GraphQL snapshot и REST-графом.
+   Иные нарушения графа без уже опубликованного trusted abort-маркера
+   останавливают маршрут и требуют человека.
 
    Если владелец ещё ждёт интеграционное REVIEW, выбери только его: это
    единственный аудит запуска, остальные слоты не заполняй. Пока MERGE не вольёт
