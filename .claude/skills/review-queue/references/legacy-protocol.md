@@ -470,9 +470,14 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    actor, edit/delete marker, force-push, delete/restore HEAD или смена base
    разрывают carry.
 
-   Каждый переход `from → to` обязан быть ровно одним `PullRequestCommit` после
-   intent, без иных HEAD/lifecycle events; commit `to` имеет ровно двух родителей
-   в порядке `[from, base]`, а `base` является предком текущего `main`. Получи
+   Каждый переход `from → to` доказывай графом, а не позицией `PullRequestCommit`
+   относительно intent: GitHub упорядочивает такие edges по дате локального
+   коммита, а не по моменту push (#1561). Полный набор `PullRequestCommit`
+   ветки — прежние коммиты плюс ровно один новый `to`, без иных HEAD/lifecycle
+   events; commit `to` имеет ровно двух родителей в порядке `[from, base]`,
+   а `base` является предком текущего `main`. Сам по себе edge `to` перед intent
+   не разрывает carry. Порядок доверенных комментариев intent → done, source
+   proof, authorization и все остальные fences остаются обязательными. Получи
    parents через `repos/ivanarama/onebase/commits/<to>` и одновременно адресуй
    intent/done по GraphQL node id в двух полных одинаковых snapshot. Текущий HEAD
    должен равняться `to` последнего done. Нельзя принимать только похожий текст
