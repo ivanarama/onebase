@@ -67,6 +67,12 @@ issue открыта и сохраняет `approved` + `plan-in-review`, пуб
 
 ## Ожидание и парковка
 
+Если в операторском профиле PromptPilot включён `direct_complete`, действия
+`merge` и `cleanup` завершаются самим `pipelinectl` без нового агента. Он
+использует тот же lease и повторяет все fresh proof/ship/CI/CAS/recovery gates;
+это не ручной merge и не обход fallback. Ошибка completion не разрешает
+подставить другой PR. Для REVIEW и сложного fallback такой маршрут запрещён.
+
 Согласованный `integration-review`/`legacy-integration-review` owner означает
 ожидание REVIEW, а не новую работу MERGE. `pipelinectl` возвращает `wait`;
 PromptPilot завершает такой проход без провайдера. Это не подтверждение
