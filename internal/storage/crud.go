@@ -27,17 +27,20 @@ type ListParams struct {
 	// чокпоинтом в List как признак «фильтр не забыли», иначе fail-closed.
 	RowFilterEvaluated bool
 	JournalRowFilters  map[string]*Predicate // per document name row-level predicates for journal UNIONs
-	Sort               string                // field Name (empty = default sort by id)
-	Dir                string                // "asc" or "desc"
-	ParentStr          string                // "" = no filter; "root" = parent IS NULL; "<uuid>" = parent = uuid
-	Search             string                // full-text search: ILIKE across all string fields
-	ActivityScope      string                // "", "active", "inactive", "all"; applied only for opt-in catalogs
-	Limit              int                   // 0 = no limit
-	Offset             int                   // for pagination
-	AfterID            *uuid.UUID            // exclusive keyset cursor; requires id ASC and Offset=0
-	ThroughID          *uuid.UUID            // inclusive keyset high-water mark; requires id ASC and Offset=0
-	ExcludeFolders     bool                  // for hierarchical catalogs: only non-folder elements
-	OnlyFolders        bool                  // for hierarchical catalogs: only folder elements
+	// Sort is a metadata field name. Empty selects the default: keyset by id ASC;
+	// otherwise entity.OrderBy, folders then first string for hierarchical lists,
+	// first document date DESC, flat catalog name/first string ASC, or id (using Dir).
+	Sort           string
+	Dir            string     // "asc" or "desc"
+	ParentStr      string     // "" = no filter; "root" = parent IS NULL; "<uuid>" = parent = uuid
+	Search         string     // full-text search: ILIKE across all string fields
+	ActivityScope  string     // "", "active", "inactive", "all"; applied only for opt-in catalogs
+	Limit          int        // 0 = no limit
+	Offset         int        // for pagination
+	AfterID        *uuid.UUID // exclusive keyset cursor; requires id ASC and Offset=0
+	ThroughID      *uuid.UUID // inclusive keyset high-water mark; requires id ASC and Offset=0
+	ExcludeFolders bool       // for hierarchical catalogs: only non-folder elements
+	OnlyFolders    bool       // for hierarchical catalogs: only folder elements
 	// ExcludeMarked отбрасывает помеченные на удаление строки (план 153).
 	// Нужен источнику дефолта `единственный`: помеченный элемент — кандидат
 	// на исчезновение, подставлять его в новый документ нельзя. Обычные
