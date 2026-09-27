@@ -158,6 +158,8 @@ type formYAMLDoc struct {
 		// Указатель: отсутствие ключа (nil) значит «показывать», и от явного
 		// true его отличать не нужно, а от явного false — нужно.
 		RefCardButton *bool `yaml:"ref_card_button"`
+		// EnterSubmitsForm — форма возвращает себе прежний Enter-submit (#1486).
+		EnterSubmitsForm bool `yaml:"enter_submits_form"`
 	} `yaml:"form"`
 	Attributes            []*metadata.FormAttribute       `yaml:"attributes"`
 	Commands              []*metadata.FormCommand         `yaml:"commands"`
@@ -208,6 +210,7 @@ func (mfl *ManagedFormLoader) parseYAML(data []byte, entityNameFallback string) 
 		AutoSaveDataInSettings: doc.Form.AutoSaveDataInSettings,
 		VerticalScroll:         doc.Form.VerticalScroll,
 		RefCardButton:          doc.Form.RefCardButton,
+		EnterSubmitsForm:       doc.Form.EnterSubmitsForm,
 		Attributes:             doc.Attributes,
 		Commands:               doc.Commands,
 		AutoCommandBar:         doc.CommandBar,

@@ -181,6 +181,13 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 	return template.FuncMap{
 		"refWriteAllowed": refWriteAllowed,
 		"lower":           strings.ToLower,
+		// enterSubmitsForm — форма явно вернула себе прежний Enter-submit.
+		// Данные шаблона — карта, и ключа Form у автогенерённой формы может не
+		// быть вовсе: nil читается как «умолчание платформы», то есть навигация.
+		"enterSubmitsForm": func(v any) bool {
+			form, _ := v.(*metadata.FormModule)
+			return form != nil && form.EnterSubmitsForm
+		},
 		"infoRegKeyValue": infoRegKeyValue,
 		"processorParamPresenceName": func(proc *processorpkg.Processor, name string) string {
 			if proc == nil {
@@ -2279,7 +2286,7 @@ const tplForm = `
 {{end}}{{/* end if not .IsPopup */}}
 
 <div class="card">
-<form id="main-form" method="POST" data-ob-dirty-watch="1">
+<form id="main-form" method="POST" data-ob-dirty-watch="1"{{if enterSubmitsForm (index . "Form")}} data-ob-enter-submits="1"{{end}}>
 {{if and (not .IsNew) (index .Values "_version")}}<input type="hidden" name="_version" value="{{index .Values "_version"}}">{{end}}
 {{if .IsPopup}}<input type="hidden" name="_popup" value="1">{{end}}
 {{if .Entity.Hierarchical}}
