@@ -1050,6 +1050,14 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Тексты просмотра, зависящие от КОНТЕКСТА подбора (choice_preview_proc):
+	// вызывающая форма прислала, например, филиал звонка, и памятка по
+	// направлению собирается уже под него. Ошибка процедуры не валит подбор:
+	// выбирать элемент оператору нужно в любом случае, а текст справа —
+	// вспомогательный (что сломалось, видно в логе сервера).
+	// Динамический preview (choice_preview_proc) обслуживается POST /page:
+	// GET остаётся статическим и обратно совместимым (план 168, инвариант 1).
+	previewField := canonicalChoicePreviewField(ent)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	response := map[string]any{
 		"items":  items,
@@ -1057,6 +1065,7 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 		"limit":  limit,
 		"offset": offset,
 	}
+	response["preview"] = previewField
 	if choice != nil && choice.Selected != nil {
 		allowed := false
 		if !choice.Empty {

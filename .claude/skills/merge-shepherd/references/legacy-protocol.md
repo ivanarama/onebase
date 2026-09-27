@@ -260,8 +260,9 @@ qualified-ссылка на другой repository локальной issue н�
 
    Legacy reauthorization валидна только если текущий HEAD `to` — merge-коммит
    ровно с двумя parents `[from, base]`; `from` имеет каноничный proof `reviewed`
-   и trusted `ship` после него; между этим ship и `to` есть ровно один
-   `PullRequestCommit` и нет иных HEAD/base lifecycle events; `base` — предок
+   и trusted `ship` после него; по графу единственный новый после этого ship
+   `PullRequestCommit` — сам `to`, и нет иных HEAD/base lifecycle events
+   (позиция в таймлайне не проверяется — #1561); `base` — предок
    текущего `main`; а последний ship-transition — новый trusted `LabeledEvent`
    от `ivanarama` после anchor `to`. Старое снятие `ship` между `to` и новым
    label допустимо. Докажи условия двумя стабильными полными GraphQL snapshot и
@@ -270,8 +271,9 @@ qualified-ссылка на другой repository локальной issue н�
 
    Protocol-recovery reauthorization требует trusted не редактированные
    intent/done, exact parents `[from, base]`, каноничный source proof `from`,
-   ровно один `PullRequestCommit` между intent и done, `base` как предка
-   текущего `main` и последний trusted `ship` от `ivanarama` после edge done.
+   ровно один новый `PullRequestCommit` между intent и done — по графу, без
+   опоры на позицию таймлайна (#1561), `base` как предка текущего `main` и
+   последний trusted `ship` от `ivanarama` после edge done.
    После done не допускаются HEAD/base lifecycle events. Исходный stale
    `ship-event` не оживает: новый label разрешает только точный текущий HEAD и
    отменяется следующим push. Условия доказываются двумя стабильными GraphQL
@@ -293,10 +295,13 @@ qualified-ссылка на другой repository локальной issue н�
    доказанным legacy reauthorization после anchor `from`. Для следующего
    `previous` указывает на
    предыдущий done, его `to` равен новому `from`, а новый intent адресует
-   каноничный proof этого `from`. Каждый переход после intent — ровно один
-   `PullRequestCommit` без force-push/delete/restore/base-change; commit `to`
-   имеет ровно двух родителей в порядке `[from, base]`, а `base` — предок
-   текущего `main`. Проверяй parents через
+   каноничный proof этого `from`. Каждый переход после intent доказывается
+   графом, а не позицией в таймлайне: GitHub упорядочивает `PullRequestCommit`
+   по дате локального коммита, поэтому позиция «после intent» ничего не
+   доказывает (#1561). Полный набор `PullRequestCommit` ветки — прежние
+   коммиты плюс ровно один новый `to`, без force-push/delete/restore/
+   base-change; commit `to` имеет ровно двух родителей в порядке
+   `[from, base]`, а `base` — предок текущего `main`. Проверяй parents через
    `repos/ivanarama/onebase/commits/<to>` и адресуй все intent/done по node id в
    обоих полных GraphQL snapshot. Последний переход `ship` во всей цепочке обязан
    оставаться исходным trusted `LabeledEvent`: снятие/повторная постановка,
@@ -371,9 +376,10 @@ qualified-ссылка на другой repository локальной issue н�
 
      Если процесс упал после intent, следующий MERGE восстанавливает **самый
      ранний** intent: при `HEAD == from` повторяет CAS update; при доказанном
-     `[from, base]` публикует отсутствующий done, только если соответствующий
-     `PullRequestCommit` расположен после intent. Если единственный commit edge
-     расположен до intent, примени описанный выше `pp:base-sync-v1-aborted` и
+     по графу `[from, base]` (единственный новый `PullRequestCommit` — `to`;
+     позиция в таймлайне не важна, #1561) публикует отсутствующий done. Если
+     граф не доказывает переход — parents иные, лишние коммиты или чужой
+     lifecycle event, — примени описанный выше `pp:base-sync-v1-aborted` и
      полный REVIEW; такой порядок нельзя «исправлять» повтором или ложным done.
      Поэтому обычный crash не превращается
      во второй ручной `ship`. После подтверждённого done метку `ship` **не

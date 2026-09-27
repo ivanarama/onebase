@@ -326,6 +326,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     o.textContent = label;
     sel.appendChild(o);
   }
+  // BEGIN onebase-ro-apply-values
   function applyValues(values, refOptions){
     if (!values) return;
     const form = document.getElementById('main-form');
@@ -361,6 +362,11 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         } else {
           inp.value = val;
         }
+        // Зеркало значения (план 181C/#1672): у запертого select-поля value
+        // меняет обработчик через сам select, а отправляется зеркало — держим
+        // их синхронными при каждом применении значения.
+        var mir = document.getElementById('ro-mirror-' + k);
+        if (mir) mir.value = val;
       }
     });
     // A form handler may change a choice_filter source without dispatching a
@@ -370,6 +376,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       window.obRefreshChoiceFilters();
     }
   }
+  // END onebase-ro-apply-values
   // applyChoiceList — заполняет <select> элемента ПолеСписка динамическим списком
   // значений из ответа НачалоВыбора (choiceList). Текущее значение сохраняется,
   // если присутствует в новом списке.
@@ -445,6 +452,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   // знает ни статического readonly потомка, ни права на запись, и обход
   // потомков скопом отпирал бы при ложном условии поле, которое сервер
   // отрисовал нередактируемым навсегда.
+  // BEGIN onebase-ro-apply-states
   function applyElementStates(st) {
     if (!st) return;
     var byName = function (name) {
@@ -482,8 +490,17 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       if (el.tagName === 'BUTTON') { el.disabled = on; return; }
       // input/textarea оставляем видимыми и выделяемыми (readonly), select и
       // кнопку подбора гасим (disabled) — как это делает серверный рендер.
+      // Зеркало значения (план 181C/#1672): select под запретом браузер не
+      // отправляет, поэтому успешным делаем зеркало — и только на время
+      // запрета; при разблокировке значение снова возит сам select.
+      var roMirror = null;
       el.querySelectorAll('input, textarea').forEach(function (inp) {
         if (!ownControl(el, inp)) return;
+        if (inp.dataset && inp.dataset.obRoMirror === '1') {
+          inp.disabled = !on;
+          roMirror = inp;
+          return;
+        }
         // Hidden presence-marker distinguishes an unchecked checkbox from a
         // checkbox absent from the submitted form. It must be successful only
         // while the checkbox itself is editable; otherwise marker-without-value
@@ -502,10 +519,12 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       el.querySelectorAll('select, button:not([data-ob-ref-current])').forEach(function (n) {
         if (!ownControl(el, n)) return;
         n.disabled = on;
+        if (n.tagName === 'SELECT' && roMirror) roMirror.value = n.value || '';
       });
     });
   }
   window.applyElementStates = applyElementStates;
+  // END onebase-ro-apply-states
   // Перерисовка табчастей по ответу сервера. tbody у нас имеет
   // id=mtp-body-<TP> и атрибут data-tp-fields="name|type[:Ref],name|type,..."
   // где field-meta использовалось для определения типа input при первичном рендере;
@@ -1005,12 +1024,30 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // optimistic version before any renderer, picker or message callback can
       // throw, so a later queued action updates the row instead of inserting it.
       applySavedIdentity(data);
+      // Навигация (#1557): переход только у инициатора, адрес построен
+      // сервером. Несохранённая форма остаётся на месте — переход отменяется.
+      if (data.navigation && data.navigation.url) {
+        if (window._obFormDirty) {
+          flash('Форма содержит несохранённые изменения — переход не выполнен', 'err');
+          return;
+        }
+        window.location.assign(data.navigation.url);
+        return;
+      }
       // Подбор фазы 1: сервер вернул pickerData — открыть диалог, не трогая
       // ТЧ (её обновит фаза 2 после «Перенести»).
       if (data.pickerData) {
         (data.messages || []).forEach(m => flash(m, 'ok'));
         if (data.error) flash(data.error, 'err');
         openItemPicker(data.pickerData, elementName, extraParams || null);
+        return;
+      }
+      // Вопрос фазы 1 (#1528): открыть модал; ответ вернётся событием Ответ
+      // через _question_answer — сервер положит его в ВопросОтвет.
+      if (data.question) {
+        (data.messages || []).forEach(m => flash(m, 'ok'));
+        if (data.error) flash(data.error, 'err');
+        if (window.obOpenQuestion) window.obOpenQuestion(data.question, elementName);
         return;
       }
       // dirty=true is an authoritative safety signal and must survive a
