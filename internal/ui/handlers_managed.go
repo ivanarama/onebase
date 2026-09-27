@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/metadata"
+	processorpkg "github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/report/compose"
 )
 
@@ -99,6 +102,11 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 		// Фикс B: реквизиты формы (save:false) ссылочного типа получают пикер —
 		// грузим их опции и домешиваем в RefOptions (у полей сущности пикер уже был).
 		s.mergeFormLocalRefOptions(r.Context(), managed, data)
+		// Plan 170/B: только для элементов с choice_filter заменяем
+		// общий список на серверно отфильтрованный и кладём в разметку
+		// только идентичность формы/элемента и имена источников. Field/Op
+		// остаются только в metadata на сервере.
+		s.applyManagedChoiceFilters(r.Context(), entity, managed, data)
 		// Списки значений (СписокВыбора) объявлены на элементах формы, а не на
 		// полях сущности, поэтому собираем их из самой managed-формы. Единая
 		// точка покрывает все пути рендера (new/edit/повторный показ с ошибкой).
@@ -134,6 +142,19 @@ func hierarchyCreateHints(r *http.Request, entity *metadata.Entity, isNew bool) 
 func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any, form *metadata.FormModule) {
 	if form == nil || data == nil {
 		return
+	}
+	opKind := opFormEvent
+	if processor, _ := data["IsProcessor"].(bool); processor {
+		opKind = opProcessorRun
+	}
+	data["FormCloseTimeoutMS"] = formCloseClientTimeoutMS(s.operationTimeout(opKind))
+	data["FormCloseEpoch"] = formCloseProcessEpoch
+	data["FormCloseClientID"] = uuid.NewString()
+	data["FormCloseServerNowMS"] = time.Now().UnixMilli()
+	if processor, _ := data["Processor"].(*processorpkg.Processor); processor != nil {
+		data["FormCloseSchema"] = processorFormCloseSchema(processor, form)
+	} else if entity, _ := data["Entity"].(*metadata.Entity); entity != nil {
+		data["FormCloseSchema"] = entityFormCloseSchema(entity, form)
 	}
 	if css := formConditionalCSS(form); css != "" {
 		data["FormConditionalCSS"] = template.CSS(css) //nolint:gosec // G203: стиль собран cssStyle → csssafe.Color, произвольная строка в CSS не попадает

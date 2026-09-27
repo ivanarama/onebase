@@ -184,7 +184,7 @@ func (h *handler) loadLastRecordContext(ctx context.Context, b *Base, ent *metad
 	}
 	defer db.Close()
 
-	rows, err := db.List(ctx, ent.Name, ent, storage.ListParams{Limit: 1, Dir: "desc"})
+	rows, err := db.List(ctx, ent.Name, ent, storage.ListParams{Limit: 1, Sort: "id", Dir: "desc"})
 	if err != nil || len(rows) == 0 {
 		return nil
 	}

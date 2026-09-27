@@ -572,3 +572,86 @@ elements:
 		t.Errorf("потерян ручной комментарий:\n%s", res.YAML)
 	}
 }
+
+// ChoiceFilter goes through the public configurator endpoint as one ordered
+// edit. The round-trip must retain condition order and the typed false literal:
+// changing false into a string (or omitting it via omitempty) changes meaning.
+func TestConfiguratorChoiceFilter_HTTPRoundTrip(t *testing.T) {
+	s := &Store{path: filepath.Join(t.TempDir(), "ibases.yaml")}
+	b := &Base{Path: t.TempDir(), ConfigSource: "file"}
+	if err := s.Add(b); err != nil {
+		t.Fatalf("Add base: %v", err)
+	}
+	h := &handler{store: s}
+
+	src := `schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Заявка
+elements:
+  - id: fault-picker
+    kind: ПолеВвода
+    name: ПолеНеисправность
+    data_path: Объект.Неисправность
+    choice: true # keep this annotation
+`
+	form := url.Values{
+		"op":            {"setChoiceFilter"},
+		"node":          {"elements.0"},
+		"choice_filter": {`[{"field":"Направление","op":"in_hierarchy","from":"Объект.Направление"},{"field":"is_folder","op":"eq","value":false}]`},
+		"yaml":          {src},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/bases/"+b.ID+"/configurator/forms/edit-op", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", b.ID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	recorder := httptest.NewRecorder()
+	h.configuratorFormsEditOp(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var response editOpResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v; body=%s", err, recorder.Body.String())
+	}
+	if !response.OK {
+		t.Fatalf("ok=false: %v", response.Errors)
+	}
+	conditions := response.Model["elements.0"].ChoiceFilter
+	if len(conditions) != 2 || conditions[0].Field != "Направление" || conditions[0].From != "Объект.Направление" {
+		t.Fatalf("ordered choice_filter was lost in model: %+v", conditions)
+	}
+	if conditions[1].Field != "is_folder" || conditions[1].Value == nil || *conditions[1].Value {
+		t.Fatalf("typed value:false was lost in model: %+v", conditions[1])
+	}
+	first := strings.Index(response.YAML, "field: Направление")
+	second := strings.Index(response.YAML, "field: is_folder")
+	if first < 0 || second <= first {
+		t.Fatalf("condition order was lost in YAML:\n%s", response.YAML)
+	}
+	if !strings.Contains(response.YAML, "value: false") || strings.Contains(response.YAML, `value: "false"`) {
+		t.Fatalf("boolean literal was not preserved in YAML:\n%s", response.YAML)
+	}
+	if !strings.Contains(response.YAML, "# keep this annotation") {
+		t.Fatalf("neighbor comment was lost:\n%s", response.YAML)
+	}
+
+	yamlPath := filepath.Join(t.TempDir(), "form.form.yaml")
+	if err := os.WriteFile(yamlPath, []byte(response.YAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loader.NewManagedFormLoader().LoadFormFile(yamlPath, "Заявка")
+	if err != nil {
+		t.Fatalf("reload edited form: %v", err)
+	}
+	if len(loaded.Elements) != 1 || len(loaded.Elements[0].ChoiceFilter) != 2 {
+		t.Fatalf("choice_filter was lost after save/load: %+v", loaded.Elements)
+	}
+	reloaded := loaded.Elements[0].ChoiceFilter
+	if reloaded[0].Field != "Направление" || reloaded[1].Value == nil || *reloaded[1].Value {
+		t.Fatalf("choice_filter semantics changed after save/load: %+v", reloaded)
+	}
+}

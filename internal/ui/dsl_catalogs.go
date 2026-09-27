@@ -306,10 +306,10 @@ func (w *catWriter) write() error {
 	if result.DSLError != "" {
 		return fmt.Errorf("%s", result.DSLError)
 	}
-	version, err := w.s.store.EntityVersion(ctx, w.entity.Name, w.obj.ID)
-	if err != nil {
-		return err
-	}
+	// SaveResult carries the exact token read inside the write transaction.
+	// A post-commit reread could observe an unrelated concurrent writer and
+	// launder that newer token into this stale object wrapper.
+	version := result.Version
 	wasSaved, previousVersion := w.saved, w.expectedVersion
 	w.saved = true
 	w.expectedVersion = &version

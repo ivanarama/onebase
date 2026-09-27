@@ -1,11 +1,14 @@
 package widget
 
 import (
+	"math"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/access"
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/shopspring/decimal"
 )
 
 func TestCache_GetPut(t *testing.T) {
@@ -52,13 +55,56 @@ func TestCache_NilSafe(t *testing.T) {
 }
 
 func TestCacheKey(t *testing.T) {
-	first := cacheKey("A", "u1", "s")
-	if first == cacheKey("A", "u2", "s") {
+	first := cacheKey("A", "u1", "s", "p1")
+	if first == cacheKey("A", "u2", "s", "p1") {
 		t.Fatal("different users must produce different keys")
 	}
-	second := cacheKey("A", "u1", "s")
+	if first == cacheKey("A", "u1", "s", "p2") {
+		t.Fatal("different effective params must produce different keys")
+	}
+	second := cacheKey("A", "u1", "s", "p1")
 	if first != second {
 		t.Fatal("same inputs must produce same key")
+	}
+}
+
+func TestParamsFingerprintCanonicalAndTypeAware(t *testing.T) {
+	tm := time.Date(2026, 9, 22, 12, 34, 56, 123, time.FixedZone("MSK", 3*60*60))
+	id := uuid.MustParse("2ce0d050-1db3-4dcb-a30c-50eb237c3c2b")
+	one, ok := paramsFingerprint(map[string]any{
+		"nil": nil, "false": false, "zero": int64(0), "empty": "",
+		"uuid": id, "time": tm, "decimal": decimal.RequireFromString("10.500"),
+	})
+	if !ok {
+		t.Fatal("supported typed params unexpectedly disabled cache")
+	}
+	two, ok := paramsFingerprint(map[string]any{
+		"decimal": decimal.RequireFromString("10.5"), "time": tm.UTC(), "uuid": id,
+		"empty": "", "zero": int64(0), "false": false, "nil": nil,
+	})
+	if !ok || one != two {
+		t.Fatalf("map order/canonical scalar representation changed fingerprint: %q != %q", one, two)
+	}
+
+	distinct := []map[string]any{{"v": nil}, {"v": false}, {"v": int64(0)}, {"v": ""}}
+	seen := make(map[string]bool, len(distinct))
+	for _, params := range distinct {
+		fp, cacheable := paramsFingerprint(params)
+		if !cacheable {
+			t.Fatalf("ordinary scalar disabled cache: %#v", params)
+		}
+		if seen[fp] {
+			t.Fatalf("typed values collapsed to one fingerprint: %#v", distinct)
+		}
+		seen[fp] = true
+	}
+}
+
+func TestParamsFingerprintUnsupportedDisablesCache(t *testing.T) {
+	for _, value := range []any{[]string{"x"}, map[string]string{"x": "y"}, make(chan int), math.NaN()} {
+		if _, ok := paramsFingerprint(map[string]any{"v": value}); ok {
+			t.Fatalf("unsupported value must disable cache: %T", value)
+		}
 	}
 }
 

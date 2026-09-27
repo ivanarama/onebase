@@ -833,6 +833,69 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 	// sorting
 	if keyset {
 		query += " ORDER BY id ASC"
+	} else if params.Sort == "" && len(entity.OrderBy) > 0 {
+		// Порядок по умолчанию из метаданных (order_by): у значений бывает свой
+		// порядок, не алфавитный, — «порядок в отчётах» у направлений. Папки
+		// по-прежнему идут первыми: перемешать их с элементами значило бы сломать
+		// дерево.
+		d := db.dialect
+		parts := make([]string, 0, len(entity.OrderBy)+1)
+		if entity.Hierarchical {
+			parts = append(parts, "is_folder DESC")
+		}
+		for _, spec := range entity.OrderBy {
+			name, desc := metadata.SplitOrderSpec(spec)
+			col := ""
+			var field metadata.Field
+			for _, f := range entity.Fields {
+				if strings.EqualFold(f.Name, name) {
+					col = metadata.ColumnName(f)
+					field = f
+					break
+				}
+			}
+			if col == "" {
+				// Имя проверено metadata.Validate; сюда попадает только устаревшая
+				// конфигурация из БД — молча пропускаем, а не роняем список.
+				continue
+			}
+			// Незаполненное — В КОНЕЦ, независимо от направления: «порядок не
+			// задан» это не «идёт первым». В SQLite NULL при ASC оказывается
+			// сверху, в PostgreSQL при DESC — тоже; поэтому признак пустоты
+			// выносим отдельным ключом сортировки.
+			empty := col + " IS NULL"
+			emptyHasBlank := false
+			if field.RefEntity == "" && (field.Type == metadata.FieldTypeString ||
+				field.Type == metadata.FieldTypeRichText || field.Type == metadata.FieldTypeImage ||
+				field.EnumName != "") {
+				empty = "(" + empty + " OR " + col + " = '')"
+				emptyHasBlank = true
+			}
+			parts = append(parts, "CASE WHEN "+empty+" THEN 1 ELSE 0 END ASC")
+			expr := col
+			// Число на SQLite лежит ТЕКСТОМ (десятичная точность — decimal на
+			// стороне Go), и без приведения «100» сортируется раньше «20».
+			if field.Type == metadata.FieldTypeNumber && d.Name() == "sqlite" {
+				expr = "CAST(" + col + " AS NUMERIC)"
+			}
+			// «Незаполнено» — один класс, а не два. Без этого внутри группы
+			// порядок задаёт само значение: на SQLite NULL при ASC идёт раньше
+			// '', и следующий ключ order_by до сравнения не доходит. Для
+			// однобранчевого IS NULL группа и так вся NULL, поэтому нормализуем
+			// только там, где '' считается пустым наравне с NULL.
+			if emptyHasBlank {
+				expr = "CASE WHEN " + empty + " THEN NULL ELSE " + expr + " END"
+			}
+			dir := "ASC"
+			if desc {
+				dir = "DESC"
+			}
+			parts = append(parts, expr+" "+dir)
+		}
+		if len(parts) == 0 {
+			parts = append(parts, "id ASC")
+		}
+		query += " ORDER BY " + strings.Join(parts, ", ")
 	} else if entity.Hierarchical && params.Sort == "" {
 		firstStrCol := "id"
 		for _, f := range entity.Fields {
@@ -920,6 +983,36 @@ func (db *DB) CountList(ctx context.Context, entityName string, entity *metadata
 		return 0, fmt.Errorf("count %s: %w", entityName, err)
 	}
 	return count, nil
+}
+
+// ListContainsID reports whether id belongs to the same filtered set as List
+// and CountList. It deliberately ignores search and pagination at the caller's
+// discretion; the method itself applies every predicate present in params,
+// including choice_filter and row-level access, through the shared WHERE
+// builder. Reference pickers use it to validate a selected value without
+// inferring membership from the current page.
+func (db *DB) ListContainsID(ctx context.Context, entityName string, entity *metadata.Entity, id uuid.UUID, params ListParams) (bool, error) {
+	if db.rlsGuard != nil && !params.RowFilterEvaluated && db.rlsGuard(strings.ToLower(entityName)) {
+		return false, fmt.Errorf("strict RLS: membership of %q requested without row access evaluation (fail-closed, plan 79F)", entityName)
+	}
+	table := metadata.TableName(entityName)
+	whereClause, args, err := db.listWhere(entity, params, false)
+	if err != nil {
+		return false, fmt.Errorf("list contains %s: %w", entityName, err)
+	}
+	idCondition := fmt.Sprintf("id = %s", db.dialect.Placeholder(len(args)+1))
+	if whereClause == "" {
+		whereClause = " WHERE " + idCondition
+	} else {
+		whereClause += " AND " + idCondition
+	}
+	args = append(args, idArg(db.dialect, id))
+	var exists bool
+	query := fmt.Sprintf("SELECT EXISTS(SELECT 1 FROM %s%s)", table, whereClause)
+	if err := db.QueryRow(ctx, query, args...).Scan(&exists); err != nil {
+		return false, fmt.Errorf("list contains %s: %w", entityName, err)
+	}
+	return exists, nil
 }
 
 // GetTablePartRows returns rows of a tablepart for a given parent id, ordered by строка.

@@ -609,3 +609,27 @@ func TestFormsEditor_GroupBackgroundLabelLocalized(t *testing.T) {
 		t.Error("standalone-редактор не должен вызывать отсутствующий JS-хелпер T")
 	}
 }
+
+func TestFormsEditor_ChoiceFilterLabelsLocalized(t *testing.T) {
+	saved := launcherBundle
+	t.Cleanup(func() { launcherBundle = saved })
+	bundle, err := i18n.Load(i18n.EmbeddedLocales, "")
+	if err != nil {
+		t.Fatalf("load i18n bundle: %v", err)
+	}
+	launcherBundle = bundle
+
+	editor := renderFormsEditorHTMLWithLang(t, "en")
+	for _, want := range []string{
+		`"Stable element ID"`,
+		`"Dependent choice filter"`,
+		`"Conditions are evaluated in order and joined with AND. A unique element ID above is required for filtering."`,
+		`"Form field (from)"`,
+		`"Boolean (value)"`,
+		`"+ condition"`,
+	} {
+		if !strings.Contains(editor, want) {
+			t.Errorf("панель choice_filter не получила английский перевод %s", want)
+		}
+	}
+}

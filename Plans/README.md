@@ -426,21 +426,31 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 168 | [168-choice-preview-context.md](168-choice-preview-context.md) | Пояснение в форме выбора: статический реквизит, пакетная DSL-функция и ограниченный контекст вызывающей формы с RBAC (#1391) | ~5.5–8 дней | 📋 Проект 2026-09-08 |
 | 169 | [169-semantic-navigation-settings.md](169-semantic-navigation-settings.md) | Смысловое mixed-kind меню: YAML-база, общая настройка администратора и персональная дельта пользователя с безопасным наследованием (#1362) | ~13–19 дней после bootstrap плана 163 | 📋 Проект 2026-09-08 |
 | 170 | [170-dependent-reference-choice-filters.md](170-dependent-reference-choice-filters.md) | Зависимый отбор ссылочного picker: server-authoritative `eq`, `in_hierarchy`, `is_folder`, одинаковый `List`/`CountList` и защита от stale browser responses (#1303) | ~6–8 дней | 📋 Проектирование |
+| 172 | [172-managed-form-runtime-structure.md](172-managed-form-runtime-structure.md) | Динамическая структура managed-форм: `ЭтаФорма.Элементы`, серверный instance/revision, безопасные DOM-патчи и lifecycle SlickGrid (#1263) | ~12–17 дней | 📋 Проектирование |
+| 178 | [178-attachment-link-mode.md](178-attachment-link-mode.md) | Вложения: режим `link` — платформа хранит путь, а не копию; открытие файла в программе ОС на стороне клиента, выбор режима на уровне базы и сущности, открытие из списка и inline-просмотр хранимых вложений (заявка #1480) | ~11 дней | 📋 Проектирование |
 | 181 | [181-managed-form-close-intent.md](181-managed-form-close-intent.md) | Единый async close-intent: `ПередЗакрытием(Отказ)`, fail-closed shell/standalone/popup, «Записать / ОК / Закрыть» и runtime `РазрешитьЗакрытие` (#1530, #1558, #1559, #1621) | ~8–12 дней + 1–2 дня после runtime-instance 172 | 📋 Проектирование |
+| 182 | [182-interactive-dashboard-widgets.md](182-interactive-dashboard-widgets.md) | Интерактивные виджеты: точечный fresh refresh и live-события для data-widget, безопасная навигация строк и типизированные фильтры list (#1617–#1620) | ~7.5–11.5 дней | 📋 Проектирование |
+| 183 | [183-choice-filter-v2-deep-source-and-table-parts.md](183-choice-filter-v2-deep-source-and-table-parts.md) | choice_filter v2: источник через один переход по ссылке и отбор ссылочных колонок ТЧ (уровень формы и row-local) для каскада #1552 | ~4.5–6.5 дней | 📋 Проектирование |
 
 Повод — вопрос с внедрения «одна организация в базе, почему её не подставляют».
 Граница проведена так: в движок идёт механизм (объявление дефолта, его
 применение, точка входа для кода), персональные настройки пользователя
 («основной склад Пети») остаются прикладными — как задачи (85) и правила (89).
 
-### Направление С — надёжность конвейера сопровождения
+### Направление С — безопасность прав по итогам сопровождения
+
+| № | Файл | Фича | Эстимейт | Статус |
+|---|---|---|---|---|
+| 162 | [162-processor-permissions-fail-closed.md](162-processor-permissions-fail-closed.md) | Явные права на обработки: переходный lint и compatibility mode, затем fail-closed для отсутствующего `permissions.processors` (#1191) | ~3–4 дня в нескольких релизах | 📋 Проектирование |
+
+### Направление Т — надёжность конвейера сопровождения
 
 | № | Файл | Фича | Эстимейт | Статус |
 |---|---|---|---|---|
 | 163 | [163-next-slice-handoff.md](163-next-slice-handoff.md) | Crash-safe handoff между последовательными PR-срезами одной issue: committed merge boundary, уникальный branch-claim, recovery и наблюдаемость (#1379) | ~10–15 дней | 📋 Проектирование |
 | 180 | [180-base-sync-head-transition-proof.md](180-base-sync-head-transition-proof.md) | Доказательство перехода HEAD при base-sync без зависимости от даты commit: точный to, CAS, recovery и миграция carry (#1561) | ~7–11 дней | 📋 Проектирование |
 
-### Направление Т — надёжность развёртывания и восстановления
+### Направление У — надёжность развёртывания и восстановления
 
 | № | Файл | Фича | Эстимейт | Статус |
 |---|---|---|---|---|

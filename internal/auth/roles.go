@@ -24,9 +24,25 @@ type Permission struct {
 	InfoRegs     map[string][]string `yaml:"inforegs"`
 	Reports      map[string][]string `yaml:"reports"`
 	Processors   map[string][]string `yaml:"processors"`
-	RowAccess    RowAccess           `yaml:"row_access"`
-	FieldAccess  FieldAccess         `yaml:"field_access"`
+	// ProcessorsDefault — осознанный compatibility-режим плана 162: ровно
+	// значение "allow", сохраняющее роли доступ ко всем обработкам. Разрешено
+	// только при отсутствующей/null-секции processors; сочетание с любой картой
+	// (включая {}) — ошибка конфигурации, её отвергает разбор роли.
+	ProcessorsDefault string      `yaml:"processors_default"`
+	RowAccess         RowAccess   `yaml:"row_access"`
+	FieldAccess       FieldAccess `yaml:"field_access"`
 }
+
+// Processor permission modes returned by ProcessorPermissionMode (план 162).
+const (
+	// ProcessorModeMap — явная секция processors: разрешено перечисленное.
+	ProcessorModeMap = "map"
+	// ProcessorModeExplicitAllowAll — processors_default: allow.
+	ProcessorModeExplicitAllowAll = "explicit-allow-all"
+	// ProcessorModeImplicitAllowAll — секции нет; переходный срез A плана 162
+	// сохраняет allow-all, срез C сменит его на запрет.
+	ProcessorModeImplicitAllowAll = "implicit-allow-all"
+)
 
 // Role is a named set of permissions.
 type Role struct {
@@ -34,9 +50,23 @@ type Role struct {
 	Name        string     `yaml:"name"`
 	Description string     `yaml:"description"`
 	Permissions Permission `yaml:"permissions"`
+	SourceFile  string     `yaml:"-" json:"-"` // имя исходного roles/*.yaml, если роль загружена из файла
 }
 
 func (p *Permission) UnmarshalYAML(value *yaml.Node) error {
+	// Decode раскрывает YAML merge, а ручной обход синонимов и вложенных секций
+	// раньше видел только прямые ключи. Обе ветки должны читать одну эффективную
+	// карту merge, иначе унаследованный processors_default обходил валидацию.
+	value, err := expandPermissionYAML(value, make(map[*yaml.Node]bool))
+	if err != nil {
+		return err
+	}
+	// Наличие ключа нельзя определить по строковому полю: null и "" при
+	// декодировании выглядят как отсутствие processors_default.
+	hasDefault, err := validateProcessorsDefaultYAML(value)
+	if err != nil {
+		return err
+	}
 	type plain Permission
 	var canonical plain
 	if err := value.Decode(&canonical); err != nil {
@@ -46,8 +76,168 @@ func (p *Permission) UnmarshalYAML(value *yaml.Node) error {
 	if value.Kind == yaml.MappingNode {
 		parsed = mergePermissions(parsed, permissionFromYAMLMap(value))
 	}
+	if hasDefault {
+		parsed.ProcessorsDefault = "allow"
+		// Проверяем после объединения синонимов и вложенных секций прав.
+		if parsed.Processors != nil {
+			return fmt.Errorf("processors_default: allow несовместим с явной секцией processors (включая {}) — уберите одно из двух")
+		}
+	}
 	*p = parsed
 	return nil
+}
+
+// expandPermissionYAML раскрывает YAML merge до разбора Permission. Обычные
+// aliases сохраняются: ручной обход намеренно не активирует права из alias
+// внутри вложенной обёртки.
+// В merge-последовательности первое значение ключа выигрывает, а прямой ключ
+// перекрывает унаследованный. Циклы и некорректные merge-источники отвергаются.
+func expandPermissionYAML(node *yaml.Node, visiting map[*yaml.Node]bool) (*yaml.Node, error) {
+	if node == nil {
+		return nil, nil
+	}
+	if node.Kind == yaml.AliasNode {
+		return node, nil
+	}
+	if visiting[node] {
+		return nil, fmt.Errorf("циклический YAML alias в permissions")
+	}
+	visiting[node] = true
+	defer delete(visiting, node)
+
+	expanded := *node
+	expanded.Anchor = ""
+	expanded.Alias = nil
+	expanded.Content = nil
+	if node.Kind != yaml.MappingNode {
+		for _, child := range node.Content {
+			item, err := expandPermissionYAML(child, visiting)
+			if err != nil {
+				return nil, err
+			}
+			expanded.Content = append(expanded.Content, item)
+		}
+		return &expanded, nil
+	}
+	if len(node.Content)%2 != 0 {
+		return nil, fmt.Errorf("некорректная YAML-карта permissions")
+	}
+
+	explicit := make(map[string]bool)
+	mergeCount := 0
+	for i := 0; i < len(node.Content); i += 2 {
+		key := node.Content[i]
+		if key.Tag == "!!merge" {
+			mergeCount++
+			if mergeCount > 1 {
+				return nil, fmt.Errorf("дублированный YAML merge в permissions")
+			}
+			continue
+		}
+		if explicit[key.Value] {
+			return nil, fmt.Errorf("дублированный YAML-ключ %q в permissions", key.Value)
+		}
+		explicit[key.Value] = true
+	}
+	merged := make(map[string]bool)
+	for i := 0; i < len(node.Content); i += 2 {
+		if node.Content[i].Tag != "!!merge" {
+			continue
+		}
+		maps, err := expandPermissionYAMLMergeSources(node.Content[i+1], visiting)
+		if err != nil {
+			return nil, err
+		}
+		for _, mapping := range maps {
+			for j := 0; j < len(mapping.Content); j += 2 {
+				key := mapping.Content[j]
+				if !explicit[key.Value] && !merged[key.Value] {
+					expanded.Content = append(expanded.Content, key, mapping.Content[j+1])
+					merged[key.Value] = true
+				}
+			}
+		}
+	}
+	for i := 0; i < len(node.Content); i += 2 {
+		if node.Content[i].Tag == "!!merge" {
+			continue
+		}
+		key, err := expandPermissionYAML(node.Content[i], visiting)
+		if err != nil {
+			return nil, err
+		}
+		item, err := expandPermissionYAML(node.Content[i+1], visiting)
+		if err != nil {
+			return nil, err
+		}
+		expanded.Content = append(expanded.Content, key, item)
+	}
+	return &expanded, nil
+}
+
+func expandPermissionYAMLMergeSources(node *yaml.Node, visiting map[*yaml.Node]bool) ([]*yaml.Node, error) {
+	if node == nil {
+		return nil, fmt.Errorf("YAML merge в permissions требует карту")
+	}
+	if node.Kind == yaml.AliasNode {
+		if node.Alias == nil || visiting[node] {
+			return nil, fmt.Errorf("циклический или некорректный YAML merge alias в permissions")
+		}
+		visiting[node] = true
+		defer delete(visiting, node)
+		return expandPermissionYAMLMergeSources(node.Alias, visiting)
+	}
+	if node.Kind == yaml.SequenceNode {
+		var maps []*yaml.Node
+		for _, item := range node.Content {
+			part, err := expandPermissionYAMLMergeSources(item, visiting)
+			if err != nil {
+				return nil, err
+			}
+			maps = append(maps, part...)
+		}
+		return maps, nil
+	}
+	if node.Kind != yaml.MappingNode {
+		return nil, fmt.Errorf("YAML merge в permissions требует карту или список карт")
+	}
+	mapNode, err := expandPermissionYAML(node, visiting)
+	if err != nil {
+		return nil, err
+	}
+	return []*yaml.Node{mapNode}, nil
+}
+
+func validateProcessorsDefaultYAML(node *yaml.Node) (bool, error) {
+	found := false
+	var visit func(*yaml.Node) error
+	visit = func(mapping *yaml.Node) error {
+		if mapping == nil || mapping.Kind != yaml.MappingNode {
+			return nil
+		}
+		for i := 0; i+1 < len(mapping.Content); i += 2 {
+			key, value := mapping.Content[i].Value, mapping.Content[i+1]
+			switch {
+			case processorsDefaultJSONKey(key):
+				if found {
+					return fmt.Errorf("processors_default: ключ задан более одного раза")
+				}
+				found = true
+				if value.Kind != yaml.ScalarNode || value.Tag != "!!str" || value.Value != "allow" {
+					return fmt.Errorf("processors_default: допустимо ровно строковое значение allow; явный запрет записывается как processors: {}")
+				}
+			case permissionWrapperKey(key):
+				if err := visit(value); err != nil {
+					return err
+				}
+			}
+		}
+		return nil
+	}
+	if err := visit(node); err != nil {
+		return false, err
+	}
+	return found, nil
 }
 
 // Has reports whether the user has permission for (kind, entity, op).
@@ -57,20 +247,12 @@ func (u *User) Has(kind, entity, op string) bool {
 	if u.IsAdmin {
 		return true
 	}
-	// Обработки используют opt-in семантику ради обратной совместимости: роль,
-	// которая НЕ объявляет секцию `processors` (map == nil), разрешает все
-	// обработки (прежнее поведение, когда прав на обработки не существовало).
-	// Роль с объявленной секцией ограничивает доступ перечисленными. Пустой
-	// `processors: {}` (non-nil) запрещает все обработки.
 	if kind == "processor" {
+		// Права на обработки решает единый helper (план 162): раньше здесь и в
+		// PermissionHas жили две расходящиеся копии allow-all ветки.
 		for _, r := range u.Roles {
-			if r.Permissions.Processors == nil {
+			if processorAllows(r.Permissions, entity, op) {
 				return true
-			}
-			for _, allowed := range r.Permissions.Processors[entity] {
-				if permissionOpMatches(allowed, op) {
-					return true
-				}
 			}
 		}
 		return false
@@ -81,6 +263,38 @@ func (u *User) Has(kind, entity, op string) bool {
 		}
 	}
 	return false
+}
+
+// ProcessorPermissionMode возвращает эффективный режим прав на обработки
+// одной роли (план 162): явная карта, осознанный compatibility allow-all или
+// неявное allow-all отсутствующей секции. В переходном срезе A последние два
+// дают одинаковый доступ; различает их только диагностика lint.
+func ProcessorPermissionMode(p Permission) string {
+	if p.Processors != nil {
+		return ProcessorModeMap
+	}
+	if strings.TrimSpace(p.ProcessorsDefault) == "allow" {
+		return ProcessorModeExplicitAllowAll
+	}
+	return ProcessorModeImplicitAllowAll
+}
+
+// processorAllows — единая точка решения по обработкам: User.Has и
+// PermissionHas обязаны давать одинаковый ответ для отсутствующей, пустой,
+// явной и compatibility-конфигурации роли.
+func processorAllows(p Permission, entity, op string) bool {
+	if p.Processors != nil {
+		for _, allowed := range p.Processors[entity] {
+			if permissionOpMatches(allowed, op) {
+				return true
+			}
+		}
+		return false
+	}
+	// Переходный срез A плана 162: отсутствие секции пока разрешает все
+	// обработки — и неявно, и через осознанный processors_default: allow.
+	// Срез C в объявленном минорном релизе сменит неявное умолчание на запрет.
+	return true
 }
 
 func PermissionHas(p Permission, kind, entity, op string) bool {
@@ -97,10 +311,7 @@ func PermissionHas(p Permission, kind, entity, op string) bool {
 	case "report":
 		m = p.Reports
 	case "processor":
-		if p.Processors == nil {
-			return true
-		}
-		m = p.Processors
+		return processorAllows(p, entity, op)
 	}
 	for _, allowed := range m[entity] {
 		if permissionOpMatches(allowed, op) {
@@ -153,15 +364,16 @@ func splitPermissionOps(raw string) []string {
 
 func normalizePermission(p Permission) Permission {
 	return Permission{
-		AIDataAccess: p.AIDataAccess,
-		Catalogs:     normalizePermissionMap(p.Catalogs),
-		Documents:    normalizePermissionMap(p.Documents),
-		Registers:    normalizePermissionMap(p.Registers),
-		InfoRegs:     normalizePermissionMap(p.InfoRegs),
-		Reports:      normalizePermissionMap(p.Reports),
-		Processors:   normalizePermissionMap(p.Processors),
-		RowAccess:    normalizeRowAccess(p.RowAccess),
-		FieldAccess:  normalizeFieldAccess(p.FieldAccess),
+		AIDataAccess:      p.AIDataAccess,
+		Catalogs:          normalizePermissionMap(p.Catalogs),
+		Documents:         normalizePermissionMap(p.Documents),
+		Registers:         normalizePermissionMap(p.Registers),
+		InfoRegs:          normalizePermissionMap(p.InfoRegs),
+		Reports:           normalizePermissionMap(p.Reports),
+		Processors:        normalizePermissionMap(p.Processors),
+		ProcessorsDefault: strings.TrimSpace(p.ProcessorsDefault),
+		RowAccess:         normalizeRowAccess(p.RowAccess),
+		FieldAccess:       normalizeFieldAccess(p.FieldAccess),
 	}
 }
 
@@ -188,6 +400,9 @@ func normalizePermissionMap(m map[string][]string) map[string][]string {
 func mergePermissions(dst, src Permission) Permission {
 	if src.AIDataAccess {
 		dst.AIDataAccess = true
+	}
+	if strings.TrimSpace(src.ProcessorsDefault) != "" {
+		dst.ProcessorsDefault = src.ProcessorsDefault
 	}
 	dst.Catalogs = mergePermissionMap(dst.Catalogs, src.Catalogs)
 	dst.Documents = mergePermissionMap(dst.Documents, src.Documents)
@@ -488,6 +703,7 @@ func LoadRoleFile(path string) (*Role, error) {
 	if err != nil {
 		return nil, fmt.Errorf("auth: parse role %s: %w", filepath.Base(path), err)
 	}
+	role.SourceFile = filepath.Base(path)
 	return role, nil
 }
 
@@ -529,15 +745,16 @@ func LoadRolesYAML(dir string) ([]*Role, error) {
 func marshalPermissions(p Permission) (string, error) {
 	p = normalizePermission(p)
 	type permJSON struct {
-		AIDataAccess bool                `json:"ai_data_access,omitempty"`
-		Catalogs     map[string][]string `json:"catalogs,omitempty"`
-		Documents    map[string][]string `json:"documents,omitempty"`
-		Registers    map[string][]string `json:"registers,omitempty"`
-		InfoRegs     map[string][]string `json:"inforegs,omitempty"`
-		Reports      map[string][]string `json:"reports,omitempty"`
-		Processors   map[string][]string `json:"processors"`
-		RowAccess    RowAccess           `json:"row_access,omitempty"`
-		FieldAccess  FieldAccess         `json:"field_access,omitempty"`
+		AIDataAccess      bool                `json:"ai_data_access,omitempty"`
+		Catalogs          map[string][]string `json:"catalogs,omitempty"`
+		Documents         map[string][]string `json:"documents,omitempty"`
+		Registers         map[string][]string `json:"registers,omitempty"`
+		InfoRegs          map[string][]string `json:"inforegs,omitempty"`
+		Reports           map[string][]string `json:"reports,omitempty"`
+		Processors        map[string][]string `json:"processors"`
+		ProcessorsDefault string              `json:"processors_default,omitempty"`
+		RowAccess         RowAccess           `json:"row_access,omitempty"`
+		FieldAccess       FieldAccess         `json:"field_access,omitempty"`
 	}
 	b, err := jsonMarshal(permJSON(p))
 	if err != nil {
@@ -566,6 +783,11 @@ func permissionFromJSONMap(raw map[string]json.RawMessage) Permission {
 			var b bool
 			if err := json.Unmarshal(value, &b); err == nil && b {
 				p.AIDataAccess = true
+			}
+		case processorsDefaultJSONKey(key):
+			var d string
+			if err := json.Unmarshal(value, &d); err == nil {
+				p.ProcessorsDefault = d
 			}
 		case permissionWrapperKey(key):
 			var nested map[string]json.RawMessage
@@ -639,6 +861,12 @@ func setPermissionMap(p *Permission, kind string, m map[string][]string) {
 	case "processor":
 		p.Processors = mergePermissionMap(p.Processors, m)
 	}
+}
+
+// processorsDefaultJSONKey опознаёт ключ compatibility-режима обработок в
+// JSON-представлении прав (таблица _roles) — плоская строка, а не карта.
+func processorsDefaultJSONKey(key string) bool {
+	return strings.EqualFold(strings.TrimSpace(key), "processors_default")
 }
 
 func permissionBoolKey(key string) bool {

@@ -256,6 +256,25 @@ func TestChoiceFilterPredicatesMatrix(t *testing.T) {
 			}
 		})
 
+		t.Run("exact membership reuses choice and row predicates", func(t *testing.T) {
+			params := storage.ListParams{
+				ChoicePredicates: base,
+				RowFilter:        &storage.Predicate{Field: "Owner", Op: "eq", Value: "alice"},
+			}
+			allowed, err := db.ListContainsID(context.Background(), fixture.target.Name, fixture.target, fixture.grandRow, params)
+			if err != nil || !allowed {
+				t.Fatalf("allowed subtree row: allowed=%v err=%v", allowed, err)
+			}
+			blocked, err := db.ListContainsID(context.Background(), fixture.target.Name, fixture.target, choiceTestUUID("000000000105"), params)
+			if err != nil || blocked {
+				t.Fatalf("RLS-hidden row: allowed=%v err=%v", blocked, err)
+			}
+			foreign, err := db.ListContainsID(context.Background(), fixture.target.Name, fixture.target, choiceTestUUID("000000000104"), params)
+			if err != nil || foreign {
+				t.Fatalf("foreign hierarchy row: allowed=%v err=%v", foreign, err)
+			}
+		})
+
 		t.Run("cycle terminates without duplicates", func(t *testing.T) {
 			dialect := db.Dialect()
 			arg := func(id uuid.UUID) any {

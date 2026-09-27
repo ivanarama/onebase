@@ -96,6 +96,8 @@ let configPresent = false;
 let modalID = '';
 let saveClicks = 0;
 let postCloseClicks = 0;
+let popupSaveClicks = 0;
+let popupSaveEnabled = false;
 let domAddButtons = [];
 let dynamicTbody = null;
 let domTableForQuery = null;
@@ -112,6 +114,7 @@ const globalSearch = makeElement('input');
 const listSearch = makeElement('input');
 const save = {disabled: false, click() { saveClicks++; }};
 const postClose = {disabled: false, click() { postCloseClicks++; }};
+const popupSave = {disabled: false, click() { popupSaveClicks++; }};
 const dirtyForm = {addEventListener() {}};
 const closeForm = {click() { closeClicks++; }};
 
@@ -127,6 +130,8 @@ global.window = {
   _obGrids: {},
   location: {href: ''},
   obOpenInShell(url) { activated++; openedURLs.push(url); return true; },
+  obSetManagedFormDirty(dirty) { this._obFormDirty = !!dirty; },
+  obUIMessage(name, fallback) { return fallback; },
   addEventListener(type, fn) { (listeners[type] || (listeners[type] = [])).push(fn); }
 };
 global.document = {
@@ -145,6 +150,7 @@ global.document = {
   },
   querySelector(selector) {
     if (selector.includes('post_and_close')) return postClose;
+	if (selector.includes('save_and_select')) return popupSaveEnabled ? popupSave : null;
     if (selector === 'button[name="_action"][value=""]') return save;
     if (selector === 'input[name="q"]') return globalSearch;
     if (selector === '#main-form[data-ob-dirty-watch="1"]' && dirtyFormEnabled) return dirtyForm;
@@ -211,6 +217,11 @@ modalID = '_ref-create-modal';
 fire({code: 'KeyS', ctrlKey: true});
 assert(saveClicks === 0, 'shortcut escaped the create-reference modal');
 modalID = '';
+
+popupSaveEnabled = true;
+fire({code: 'KeyS', ctrlKey: true});
+assert(popupSaveClicks === 1 && saveClicks === 0, 'popup Ctrl+S did not use save-and-select');
+popupSaveEnabled = false;
 
 const interactiveRow = makeElement('tr', {listRow: true, dataset: {openUrl: '/row'}});
 rows = [interactiveRow];
@@ -805,6 +816,7 @@ global.window = {
   _obActiveGridName: '',
   _obActiveDOMTable: domTable,
   _obFormDirty: false,
+  obSetManagedFormDirty(dirty) { this._obFormDirty = !!dirty; },
   getComputedStyle(el) { return el && (el.computedStyle || el.style) ? (el.computedStyle || el.style) : {}; }
 };
 global.document = {

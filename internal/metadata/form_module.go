@@ -50,6 +50,10 @@ const (
 	// а результат пользователь возвращает событием Выбор с переменной
 	// ПодборРезультат. Generic: годится для любого диалога мультивыбора.
 	FormEventOnChoice FormEventType = "Выбор" // OnChoice
+	// Ответ — вторая фаза диалога вопроса (#1528): обработчик показывает
+	// вопрос билтином ПоказатьВопрос (фаза 1, например Нажатие), ответ
+	// пользователя приезжает событием Ответ с переменной ВопросОтвет.
+	FormEventOnAnswer FormEventType = "Ответ" // OnAnswer
 )
 
 var knownFormEventTypes = map[FormEventType]bool{
@@ -63,6 +67,7 @@ var knownFormEventTypes = map[FormEventType]bool{
 	FormEventBeforeRowAdd: true, FormEventAfterRowAdd: true,
 	FormEventBeforeRowDelete: true, FormEventStartListChoice: true,
 	FormEventAutoComplete: true, FormEventExecuteCommand: true, FormEventOnChoice: true,
+	FormEventOnAnswer: true,
 }
 
 // formTablePartContextVars — имена, которые платформа инжектирует в обработчик
@@ -226,6 +231,11 @@ type FormElement struct {
 	AccessKey string `yaml:"accesskey,omitempty"` // HTML accesskey для браузерной активации (Alt/Option+клавиша)
 	HotKey    string `yaml:"hotkey,omitempty"`    // runtime shortcut для кнопок формы (F2/F4/F7/F8/F9/F10)
 	Multiline bool   `yaml:"multiline,omitempty"` // обычное поле ввода рендерится как textarea
+	// ChoiceContext — что вызывающая форма передаёт в подбор: «имя параметра» →
+	// «путь к значению на форме» (Объект.Филиал, реквизит формы). Аналог
+	// параметров выбора в 1С: форма выбора и область просмотра в ней обязаны
+	// знать, ДЛЯ ЧЕГО выбирают, — памятка по направлению у филиалов разная.
+	ChoiceContext map[string]string `yaml:"choice_context,omitempty"`
 	// Language — язык подсветки для kind: ПолеКода. Пусто → plaintext.
 	// Значения совпадают с идентификаторами языков редактора: bsl, sql, json,
 	// xml, yaml, markdown, javascript, plaintext.
@@ -460,11 +470,10 @@ type FormModule struct {
 	Handlers   map[FormEventType]string  `yaml:"events,omitempty"`
 	Procedures map[string]*FormProcedure `yaml:"-"`
 
-	// Actions — переопределение стандартных действий формы объекта (issue #151).
-	// Пока поддерживается ключ "delete": actions.delete.visible=false скрывает
-	// платформенную кнопку «Удалить», чтобы конфиг мог увести удаление в свой
-	// процессор. Платформенное удаление и так пишется в _audit и закрыто правом
-	// delete — это про управление UI-кнопкой.
+	// Actions — переопределение стандартных действий формы объекта. Ключи
+	// delete/save/ok/close управляют видимостью платформенных кнопок, а
+	// attachments — панелью вложений (plan 181C, #1621); права и серверные
+	// проверки они не ослабляют.
 	Actions map[string]*FormAction `yaml:"actions,omitempty"`
 
 	// Conditional — декларативное условное оформление табличных частей формы.
