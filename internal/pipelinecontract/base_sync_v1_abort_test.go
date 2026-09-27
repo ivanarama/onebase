@@ -25,6 +25,32 @@ func TestBaseSyncV1AbortIsDiagnosticAndReturnsExactHeadToFullReview(t *testing.T
 	)
 }
 
+func TestCommitBeforeIntentUsesGraphProofBeforeAbort(t *testing.T) {
+	merge := skill(t, "merge-shepherd")
+	review := skill(t, "review-queue")
+	guide := repositoryFile(t, "CLAUDE.md")
+
+	requireAllCompact(t, merge,
+		"Позиция `PullRequestCommit` до intent сама по себе не является v1-сигнатурой",
+		"прежнее множество `{A, H}`, новое `{A, H, T}`",
+		"edge `T` до intent дают `done` и сохраняют `ship`",
+		"множество `{A, H, X, T}` с лишним `X` не даёт такого proof",
+		"Для нового abort отдельно требуется дополнительный commit",
+		"При других нарушениях графа остановись без abort-маркера",
+	)
+	requireAllCompact(t, review,
+		"edge `to` до intent не является признаком v1",
+		"сохраняй доказуемый intent/done handoff и `ship`",
+		"дополнительном `PullRequestCommit` вне прежних коммитов `from` и `to`",
+	)
+	requireAllCompact(t, guide,
+		"Положение merge-коммита в timeline до intent само по себе не отменяет carry",
+		"MERGE восстанавливает `done` и сохраняет",
+		"Отдельный проверяемый признак недоказуемого v1 — дополнительный",
+	)
+	rejectAll(t, guide, "доказуемый `done` невозможен")
+}
+
 type v1AbortMarker struct {
 	intentID string
 	head     string
