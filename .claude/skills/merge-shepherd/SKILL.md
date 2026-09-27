@@ -42,8 +42,13 @@ REVIEW к `complete_command` добавляется только `--report <фа
 `pipelinectl` берёт быстрый путь только для `CLEAN` PR с каноничным обычным
 review-proof, новым trusted `ship` и зелёными обязательными проверками. Перед
 compare-and-merge он повторяет стабильный GraphQL snapshot, HEAD/label/proof и
-CI-гейты. Base-sync, carry, legacy re-ship, конфликт и recovery всегда уходят в
-полную процедуру.
+CI-гейты. При операторском `ready_owner_merge` уже проверенный `CLEAN`
+интеграционный владелец также допускает этот путь, но только с новым trusted
+`ship` в текущей server epoch и каноничным outcome `reviewed` точного HEAD.
+Перед completion заново совпадают number/HEAD/stage владельца и исполняемый
+MERGE allowlist; другой PR за барьером брать нельзя. Этот режим не обновляет
+ветку и не выводит carry из меток. Исторический carry, отсутствие нового
+current-epoch `ship`, конфликт и recovery требуют полной процедуры.
 
 До merge CLI публикует точный `pp:merge-cleanup-intent`. Если процесс оборвался
 после успешного merge, следующий запуск находит intent вне списка открытых PR и
