@@ -790,6 +790,88 @@ func (tr *translator) addSource(typeUpper, name string) {
 	tr.sources = append(tr.sources, SourceRef{Kind: kind, Name: name})
 }
 
+// rawSourceAt — токен pos стоит на месте источника запроса: сразу после ИЗ
+// или СОЕДИНЕНИЕ либо после запятой списка источников — на глубине самого
+// SELECT (EXTRACT(YEAR FROM x) источника не начинает). Объект метаданных
+// «Тип.Имя» и вложенный запрос разбирают ветки выше, поэтому здесь бывает
+// только голое имя.
+func (tr *translator) rawSourceAt(pos int) bool {
+	ctx := tr.sourceCtx
+	prevPos := pos - 1
+	if prevPos < 0 || pos >= len(tr.tokens) || prevPos >= len(ctx.tokenDepth) {
+		return false
+	}
+	if ctx.sectionAt(prevPos) != sectionFrom || ctx.tokenDepth[prevPos] != ctx.scopeSelectDepth(tr.tokens, prevPos) {
+		return false
+	}
+	switch prev := tr.tokens[prevPos]; prev.kind {
+	case tComma:
+		return true
+	case tIdent:
+		kw, ok := sqlKW(prev.val)
+		return ok && (kw == "FROM" || kw == "JOIN")
+	}
+	return false
+}
+
+// scopeSelectDepth — глубина скобок ключевого слова SELECT той области
+// запроса, к которой относится токен pos; -1, если области нет.
+func (ctx sourceContext) scopeSelectDepth(tokens []tok, pos int) int {
+	scopeID, ok := ctx.scopeIDAt(pos)
+	if !ok {
+		return -1
+	}
+	for i := pos; i >= 0; i-- {
+		if id, ok := ctx.scopeIDAt(i); !ok || id != scopeID || tokens[i].kind != tIdent {
+			continue
+		}
+		if kw, ok := sqlKW(tokens[i].val); ok && kw == "SELECT" {
+			return ctx.tokenDepth[i]
+		}
+	}
+	return -1
+}
+
+// findEntity — справочник или документ конфигурации по имени без учёта регистра.
+func (tr *translator) findEntity(name string) *metadata.Entity {
+	for _, e := range tr.opts.Entities {
+		if strings.EqualFold(e.Name, name) {
+			return e
+		}
+	}
+	return nil
+}
+
+// addBareEntitySource регистрирует источник, записанный голым именем сущности
+// («ИЗ Клиент» вместо «ИЗ Справочник.Клиент»). Эту краткую форму используют
+// конфигурации; SQL у неё прежний, но без регистрации проверка прав её не
+// видела. Имя, которого нет в метаданных, — таблица СУБД мимо конфигурации:
+// служебные _users и _sessions, таблицы регистров. Её не видит ни объектный
+// RBAC, ни строковый доступ, поэтому запрос отклоняется.
+func (tr *translator) addBareEntitySource(name string) error {
+	e := tr.findEntity(name)
+	if e == nil {
+		// Ключ — одним литералом: i18ncheck собирает ключи из исходника.
+		return i18nerr.Errorf(
+			"«%s» — не объект конфигурации: в ИЗ и СОЕДИНЕНИЕ источником бывает Справочник.Имя, Документ.Имя, регистр (РегистрНакопления.Имя, РегистрСведений.Имя, РегистрБухгалтерии.Имя) или вложенный запрос",
+			name)
+	}
+	typeUpper, typeWord := "СПРАВОЧНИК", "Справочник"
+	if e.Kind == metadata.KindDocument {
+		typeUpper, typeWord = "ДОКУМЕНТ", "Документ"
+	}
+	// Строковый доступ внедряется только в полную форму источника. Голое имя
+	// под политикой всё равно было бы отклонено сверкой assertRowFiltersApplied,
+	// но её текст не подсказывает, что поменять в запросе.
+	if tr.sourceRowFilter(sourcePermKind(typeUpper), e.Name) != nil {
+		return i18nerr.Errorf(
+			"«%s»: на источник действует строковый доступ, а он применяется только к полной форме — %s.%s",
+			name, typeWord, e.Name)
+	}
+	tr.addSource(typeUpper, e.Name)
+	return nil
+}
+
 // addRefSource регистрирует связанную сущность авто-JOIN ссылочного поля как
 // источник запроса (#14): её наименование/номер попадает в результат, поэтому
 // RBAC должен проверить право чтения на неё, а не только на главную таблицу.
@@ -4407,6 +4489,14 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			if tr.pos >= 2 {
 				if pv := upperFast(tr.tokens[tr.pos-2].val); pv == "КАК" || pv == "AS" {
 					prevAlias = !prevDot
+				}
+			}
+			// Голое имя на месте источника: сущность регистрируется для проверки
+			// прав, прочее — таблица СУБД мимо метаданных — отклоняется
+			// (addBareEntitySource). Трансляция самого имени — прежняя, ниже.
+			if !prevDot && tr.rawSourceAt(tr.pos-1) {
+				if err := tr.addBareEntitySource(t.val); err != nil {
+					return Result{}, err
 				}
 			}
 			// Булевы литералы Истина/Ложь. Без этой ветки они уезжали в SQL как

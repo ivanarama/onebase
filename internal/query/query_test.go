@@ -843,7 +843,14 @@ func TestCompile_BareCatalogInFrom(t *testing.T) {
 		Resources: []metadata.Field{{Name: "Выручка"}},
 	}
 
+	// Голое имя источника — краткая форма справочника, поэтому он обязан быть
+	// в метаданных: имя вне конфигурации источником не принимается.
+	номенклатура := &metadata.Entity{Name: "Номенклатура", Kind: metadata.KindCatalog, Fields: []metadata.Field{
+		{Name: "Наименование", Type: metadata.FieldTypeString},
+		{Name: "ЦенаПродажи", Type: metadata.FieldTypeNumber},
+	}}
 	r, err := query.Compile(src, query.CompileOpts{
+		Entities:  []*metadata.Entity{номенклатура},
 		Registers: []*metadata.Register{regProfit},
 	})
 	if err != nil {
@@ -855,6 +862,9 @@ func TestCompile_BareCatalogInFrom(t *testing.T) {
 	}
 	if strings.Contains(sql, "FROM номенклатура_id") {
 		t.Errorf("bare catalog name must NOT be replaced by _id column; got: %s", sql)
+	}
+	if len(r.Sources) != 1 || r.Sources[0] != (query.SourceRef{Kind: "catalog", Name: "Номенклатура"}) {
+		t.Errorf("голое имя справочника должно регистрироваться источником, Sources = %+v", r.Sources)
 	}
 }
 
