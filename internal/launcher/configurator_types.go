@@ -75,8 +75,21 @@ type saveNumerator struct {
 	// уникальность кода и подстановку префикса базы — ровно та потеря, ради
 	// которой заведена структура. Полноту вложенных ключей сторожит
 	// TestSaveNumerator_CoversAllRawKeys.
-	BasePrefix bool `yaml:"base_prefix,omitempty"`
-	Unique     bool `yaml:"unique,omitempty"`
+	BasePrefix bool               `yaml:"base_prefix,omitempty"`
+	Unique     bool               `yaml:"unique,omitempty"`
+	Field      *saveStandardField `yaml:"field,omitempty"`
+}
+
+// saveStandardField mirrors the user properties of metadata.rawNumeratorField.
+// The standard name, string type and stable ID are derived from entity kind.
+type saveStandardField struct {
+	Title         string            `yaml:"title,omitempty"`
+	Label         string            `yaml:"label,omitempty"`
+	Titles        map[string]string `yaml:"titles,omitempty"`
+	TitlesPresent bool              `yaml:"-"` // form marker: nil can also mean an explicit clear
+	Required      bool              `yaml:"required,omitempty"`
+	Default       string            `yaml:"default,omitempty"`
+	PII           bool              `yaml:"pii,omitempty"`
 }
 
 // savePredefined — предопределённые элементы справочника. inline map нужен,
@@ -323,6 +336,7 @@ func applyAccountRegFields(raw []byte, reg saveAccountReg, setTitles bool) ([]by
 
 type cfgField struct {
 	Name           string
+	Standard       bool // standard field is edited in the numerator section
 	Type           string
 	RefEntity      string
 	EnumName       string
@@ -394,20 +408,22 @@ type cfgActivity struct {
 }
 
 type cfgEntity struct {
-	Name               string
-	Kind               string // "Справочник" / "Документ"
-	Posting            bool
-	PostCaption        string // подпись кнопки проведения (пусто → «Провести»), issue #497
-	PostAndCloseHidden bool   // скрыть кнопку «Провести и закрыть»
-	Hierarchical       bool
-	BasedOn            []string // источники для ввода на основании (Plan 38)
-	Receivers          []string // обратный список: куда вводится на основании текущего объекта
-	Fields             []cfgField
-	TableParts         []cfgTablePart
-	Source             string // raw .os content (object module)
-	PostingSource      string // raw .posting.os content (ОбработкаПроведения)
-	ManagerSource      string // raw .manager.os content (модуль менеджера)
-	LinkedPrintForms   []cfgPrintForm
+	Name                string
+	Kind                string // "Справочник" / "Документ"
+	Posting             bool
+	PostCaption         string // подпись кнопки проведения (пусто → «Провести»), issue #497
+	PostAndCloseHidden  bool   // скрыть кнопку «Провести и закрыть»
+	Hierarchical        bool
+	BasedOn             []string // источники для ввода на основании (Plan 38)
+	Receivers           []string // обратный список: куда вводится на основании текущего объекта
+	Fields              []cfgField
+	StandardFieldTitle  string
+	StandardFieldTitles map[string]string
+	TableParts          []cfgTablePart
+	Source              string // raw .os content (object module)
+	PostingSource       string // raw .posting.os content (ОбработкаПроведения)
+	ManagerSource       string // raw .manager.os content (модуль менеджера)
+	LinkedPrintForms    []cfgPrintForm
 	// LinkedDSLForms — DSL-формы (.os) и декларативные макеты (LayoutOnly)
 	// этой сущности: вкладка «Печатные формы» показывает все варианты, а не
 	// только legacy YAML.
@@ -416,6 +432,16 @@ type cfgEntity struct {
 	Titles         map[string]string // переводы синонима объекта
 	Activity       *cfgActivity
 	Numerator      *cfgNumerator
+}
+
+func (e cfgEntity) RegularFieldCount() int {
+	count := 0
+	for _, field := range e.Fields {
+		if !field.Standard {
+			count++
+		}
+	}
+	return count
 }
 
 type cfgRegister struct {

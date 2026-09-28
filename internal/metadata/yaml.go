@@ -39,12 +39,41 @@ type rawTablePart struct {
 }
 
 type rawNumerator struct {
-	Prefix     string `yaml:"prefix"`
-	Length     int    `yaml:"length"`
-	Period     string `yaml:"period"`
-	Scope      string `yaml:"scope"`
-	BasePrefix bool   `yaml:"base_prefix"`
-	Unique     bool   `yaml:"unique"`
+	Prefix     string             `yaml:"prefix"`
+	Length     int                `yaml:"length"`
+	Period     string             `yaml:"period"`
+	Scope      string             `yaml:"scope"`
+	BasePrefix bool               `yaml:"base_prefix"`
+	Unique     bool               `yaml:"unique"`
+	Field      *rawNumeratorField `yaml:"field"`
+}
+
+// rawNumeratorField contains only properties that can vary on the synthesized
+// string field. Its identity and type always come from the entity kind.
+type rawNumeratorField struct {
+	Title    string            `yaml:"title"`
+	Label    string            `yaml:"label"`
+	Titles   map[string]string `yaml:"titles"`
+	Required bool              `yaml:"required"`
+	Default  defaultScalar     `yaml:"default"`
+	PII      bool              `yaml:"pii"`
+}
+
+func (f *rawNumeratorField) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return fmt.Errorf("numerator.field: expected a mapping")
+	}
+	allowed := map[string]bool{"title": true, "label": true, "titles": true, "required": true, "default": true, "pii": true}
+	seen := map[string]bool{}
+	for i := 0; i < len(node.Content); i += 2 {
+		key := node.Content[i].Value
+		if !allowed[key] || seen[key] {
+			return fmt.Errorf("numerator.field: key %q is not allowed or is duplicated", key)
+		}
+		seen[key] = true
+	}
+	type plain rawNumeratorField
+	return node.Decode((*plain)(f))
 }
 
 type rawPredefined struct {
@@ -325,52 +354,48 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 		n.Period = n.PeriodOrDefault(kind)
 		e.Numerator = n
 	}
-	for _, rf := range raw.Fields {
+	standardName, standardID := "", ""
+	if e.Numerator != nil {
+		switch kind {
+		case KindCatalog:
+			standardName, standardID = StandardCodeField, StandardCodeFieldID
+		case KindDocument:
+			standardName, standardID = StandardNumberField, StandardNumberFieldID
+		}
+	}
+	var legacy *rawField
+	for i := range raw.Fields {
+		rf := raw.Fields[i]
+		if standardName != "" && strings.EqualFold(strings.TrimSpace(rf.Name), standardName) {
+			if legacy != nil {
+				return nil, fmt.Errorf("%s: fields contains multiple %s entries alongside numerator", path, standardName)
+			}
+			legacy = &raw.Fields[i]
+			continue
+		}
 		e.Fields = append(e.Fields, parseField(rf))
 	}
-	// A document numerator is the declaration of the standard document number,
-	// not only a formatter for an independently declared field. Keep explicit
-	// Номер metadata untouched, but synthesize the string field when omitted so
-	// describe, DDL, auto-numbering and the query compiler share one contract.
-	if kind == KindDocument && e.Numerator != nil {
-		hasNumber := false
-		for _, f := range e.Fields {
-			if strings.EqualFold(f.Name, StandardNumberField) {
-				hasNumber = true
-				break
+	if standardName != "" {
+		if legacy != nil && raw.Numerator.Field != nil {
+			return nil, fmt.Errorf("%s: %s is defined in both fields and numerator.field", path, standardName)
+		}
+		rf := rawField{Name: standardName, ID: standardID, Type: "string"}
+		if legacy != nil {
+			if legacy.Type != "" && legacy.Type != "string" {
+				return nil, fmt.Errorf("%s: legacy %s with numerator must have type string", path, standardName)
 			}
-		}
-		if !hasNumber {
-			// ID устойчив по той же причине, что у «Кода» справочника: без него
-			// миграция принимает синтезированную колонку за новую и планирует
-			// снос старой вместе с данными (#868).
-			e.Fields = append([]Field{{
-				ID:   StandardNumberFieldID,
-				Name: StandardNumberField,
-				Type: FieldTypeString,
-			}}, e.Fields...)
-		}
-	}
-	// «Код» справочника — ровно та же история (план 117B, issue #658). До этого
-	// блок numerator: у справочника ПАРСИЛСЯ И МОЛЧА НИЧЕГО НЕ ДЕЛАЛ: объявил —
-	// а кода нет и автонумерации нет. Синтезируем поле с устойчивым ID, чтобы
-	// переименование пользовательского «Кода» не выглядело для миграции как
-	// «удалить старое и завести новое пустое».
-	if kind == KindCatalog && e.Numerator != nil {
-		hasCode := false
-		for _, f := range e.Fields {
-			if strings.EqualFold(f.Name, StandardCodeField) {
-				hasCode = true
-				break
+			if legacy.AllowInlineCreate != nil {
+				return nil, fmt.Errorf("%s: legacy %s has unsupported allow_inline_create", path, standardName)
 			}
+			rf = *legacy
+		} else if nf := raw.Numerator.Field; nf != nil {
+			rf.Title, rf.Label, rf.Titles = nf.Title, nf.Label, nf.Titles
+			rf.Required, rf.Default, rf.PII = nf.Required, nf.Default, nf.PII
 		}
-		if !hasCode {
-			e.Fields = append([]Field{{
-				ID:   StandardCodeFieldID,
-				Name: StandardCodeField,
-				Type: FieldTypeString,
-			}}, e.Fields...)
-		}
+		// Legacy IDs can be random. The standard field has one identity in
+		// memory regardless of which compatible YAML representation was read.
+		rf.ID, rf.Name, rf.Type = standardID, standardName, "string"
+		e.Fields = append([]Field{parseField(rf)}, e.Fields...)
 	}
 	for _, ri := range raw.Indexes {
 		idx := IndexSpec{Fields: trimStringList(ri.Fields), Unique: ri.Unique}

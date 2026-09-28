@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/converter/parser1c"
+	"github.com/ivantit66/onebase/internal/metadata"
 )
 
 // Импортированный из 1С документ приезжал вообще без «Номера», «Даты», блока
@@ -38,14 +39,17 @@ func TestWriteDocuments_ДобавляетСтандартныеРеквизит
 		t.Fatalf("WriteDocuments: %v", err)
 	}
 	got := readOut(t, filepath.Join(out, "documents", fileName("РеализацияТоваров")+".yaml"))
-	for _, must := range []string{"name: Номер", "name: Дата", "posting: true", "numerator:", "length: 11", "period: year"} {
+	for _, must := range []string{"name: Дата", "posting: true", "numerator:", "length: 11", "period: year"} {
 		if !strings.Contains(got, must) {
 			t.Errorf("в YAML документа нет %q:\n%s", must, got)
 		}
 	}
-	// Стандартные реквизиты идут первыми, как в 1С.
-	if strings.Index(got, "name: Номер") > strings.Index(got, "name: Контрагент") {
-		t.Errorf("«Номер» должен идти перед пользовательскими реквизитами:\n%s", got)
+	if strings.Contains(got, "name: Номер") {
+		t.Fatalf("автонумеруемый Номер не должен дублироваться в fields:\n%s", got)
+	}
+	e, err := metadata.LoadFile(filepath.Join(out, "documents", fileName("РеализацияТоваров")+".yaml"), metadata.KindDocument)
+	if err != nil || e.Fields[0].ID != metadata.StandardNumberFieldID {
+		t.Fatalf("импортированный документ не получает канонический Номер: %v, %+v", err, e)
 	}
 }
 
@@ -110,6 +114,13 @@ func TestWriteCatalogs_АвтонумерацияКодаПереносится(
 		if !strings.Contains(got, must) {
 			t.Errorf("в YAML нет %q — автонумерация кода потеряна:\n%s", must, got)
 		}
+	}
+	if strings.Contains(got, "name: Код") {
+		t.Fatalf("автонумеруемый Код не должен дублироваться в fields:\n%s", got)
+	}
+	e, err := metadata.LoadFile(filepath.Join(out, "catalogs", fileName("Контрагенты")+".yaml"), metadata.KindCatalog)
+	if err != nil || e.Fields[0].ID != metadata.StandardCodeFieldID {
+		t.Fatalf("импортированный справочник не получает канонический Код: %v, %+v", err, e)
 	}
 	// Периодичности у кода справочника в 1С нет: код живёт с элементом всю
 	// жизнь. Писать period значило бы придумать сброс счётчика, которого не было.

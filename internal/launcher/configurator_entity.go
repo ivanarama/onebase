@@ -158,13 +158,10 @@ func (h *handler) findEntityConfigFile(ctx context.Context, b *Base, entityName 
 	return "", nil, false
 }
 
-func applyFieldEdits(ent *saveEntity, kind metadata.Kind, fields []saveField, tpFields map[string][]saveField, posting *bool, postCaption *string, postAndCloseHidden *bool, hierarchical *bool, basedOn *[]string, activity **saveActivity, numerator **saveNumerator) {
-	// Устойчивые id (план 81) переносим из прежнего состояния файла и выдаём
-	// новым реквизитам — иначе редактор стирал бы их при каждом сохранении.
-	// Стандартное поле («Код» справочника, «Номер» документа) в файле не лежит,
-	// поэтому переносить его id неоткуда — засеваем связь заранее (#1161).
-	stdName, stdID := standardFieldSeed(kind, entityHasNumerator(ent, numerator))
-	ent.Fields = ensureFieldIDs(withStandardFieldSeed(ent.Fields, stdName, stdID), fields)
+func applyFieldEdits(ent *saveEntity, kind metadata.Kind, fields []saveField, tpFields map[string][]saveField, posting *bool, postCaption *string, postAndCloseHidden *bool, hierarchical *bool, basedOn *[]string, activity **saveActivity, numerator **saveNumerator) error {
+	if err := applyStandardFieldEdits(ent, kind, fields, numerator); err != nil {
+		return err
+	}
 	existingTP := make(map[string]bool, len(ent.TableParts))
 	for i, tp := range ent.TableParts {
 		existingTP[tp.Name] = true
@@ -218,22 +215,7 @@ func applyFieldEdits(ent *saveEntity, kind metadata.Kind, fields []saveField, tp
 	if activity != nil {
 		ent.Activity = *activity
 	}
-	if numerator != nil {
-		ent.Numerator = *numerator
-	}
-}
-
-// entityHasNumerator — будет ли у объекта блок numerator после этого
-// сохранения, ИЛИ был ли он до него. Обе стороны важны: нумерацию можно как
-// включить этим же сохранением (тогда стандартное поле появится при следующей
-// загрузке), так и снять (тогда поле останется в fields, но колонка в базе
-// по-прежнему числится за служебным id). numerator == nil означает «форма
-// ключа не присылала» — прежнее состояние не трогаем.
-func entityHasNumerator(ent *saveEntity, numerator **saveNumerator) bool {
-	if ent.Numerator != nil {
-		return true
-	}
-	return numerator != nil && *numerator != nil
+	return nil
 }
 
 func saveEntityFieldsToFile(dir, entityName string, fields []saveField, tpFields map[string][]saveField, posting *bool, postCaption *string, postAndCloseHidden *bool, hierarchical *bool, basedOn *[]string, activity **saveActivity, numerator **saveNumerator, objTitles *map[string]string) error {
@@ -249,7 +231,9 @@ func saveEntityFieldsToFile(dir, entityName string, fields []saveField, tpFields
 	if err := yaml.Unmarshal(raw, &ent); err != nil {
 		return err
 	}
-	applyFieldEdits(&ent, entityKindFromPath(filePath), fields, tpFields, posting, postCaption, postAndCloseHidden, hierarchical, basedOn, activity, numerator)
+	if err := applyFieldEdits(&ent, entityKindFromPath(filePath), fields, tpFields, posting, postCaption, postAndCloseHidden, hierarchical, basedOn, activity, numerator); err != nil {
+		return err
+	}
 	if objTitles != nil {
 		ent.Titles = *objTitles
 	}
@@ -297,7 +281,9 @@ func (h *handler) saveEntityFieldsToDB(ctx context.Context, b *Base, entityName 
 		return fmt.Errorf("entity %q not found in DB config", entityName)
 	}
 
-	applyFieldEdits(&ent, entityKindFromPath(targetPath), fields, tpFields, posting, postCaption, postAndCloseHidden, hierarchical, basedOn, activity, numerator)
+	if err := applyFieldEdits(&ent, entityKindFromPath(targetPath), fields, tpFields, posting, postCaption, postAndCloseHidden, hierarchical, basedOn, activity, numerator); err != nil {
+		return err
+	}
 	if objTitles != nil {
 		ent.Titles = *objTitles
 	}
@@ -750,6 +736,13 @@ func (h *handler) configuratorSaveFields(w http.ResponseWriter, r *http.Request)
 				Scope:      strings.TrimSpace(r.FormValue("numerator_scope")),
 				BasePrefix: r.FormValue("numerator_base_prefix") == "1",
 				Unique:     r.FormValue("numerator_unique") == "1",
+			}
+			if r.FormValue("numerator_field_present") == "1" {
+				target.Field = &saveStandardField{
+					Title:         strings.TrimSpace(r.FormValue("numerator_field_title")),
+					Titles:        parseMapForm(r, "numerator_field_titles"),
+					TitlesPresent: r.FormValue("numerator_field_titles_present") == "1",
+				}
 			}
 			// Уникальность вместе со сбросом счётчика без маски даты — ловушка
 			// с отложенным сроком: значение повторится в следующем периоде, и

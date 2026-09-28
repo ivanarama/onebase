@@ -1341,6 +1341,7 @@
   "%s: уникальность %s включена, но в базе уже есть %d повторяющихся значений; исправьте их до включения": "%s: uniqueness of %s is enabled, but the database already contains %d duplicate values; fix them before enabling it",
   "%s: уникальность %s включена, но у %d записей значение пусто; пустые значения уникальный индекс не ловит — дозаполните их командой onebase renumber": "%s: uniqueness of %s is enabled, but %d records have an empty value; a unique index does not catch empty values — fill them in with onebase renumber",
   "Нумерация": "Numbering",
+  "Синоним стандартного поля": "Standard field title",
   "Выдавать код автоматически": "Assign the code automatically",
   "Выдавать номер автоматически": "Assign the number automatically",
   "Префикс": "Prefix",

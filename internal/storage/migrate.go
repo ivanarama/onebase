@@ -565,7 +565,7 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 		// Реструктуризация (план 81) идёт ДО добавления колонок: иначе
 		// переименованное поле успело бы завести новую пустую колонку, и
 		// переименовывать было бы уже не во что.
-		if err := db.restructureTable(ctx, table, e.Fields); err != nil {
+		if err := db.restructureEntityTable(ctx, e); err != nil {
 			return fmt.Errorf("migrate %s: %w", e.Name, err)
 		}
 		for _, f := range e.Fields {

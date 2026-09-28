@@ -18,11 +18,125 @@ package launcher
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"fmt"
 	"path/filepath"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 )
+
+func splitStandardSaveFields(fields []saveField, name string) ([]saveField, *saveField, error) {
+	ordinary := make([]saveField, 0, len(fields))
+	var standard *saveField
+	for i := range fields {
+		f := fields[i]
+		if strings.EqualFold(strings.TrimSpace(f.Name), name) {
+			if standard != nil {
+				return nil, nil, fmt.Errorf("multiple %s fields alongside numerator", name)
+			}
+			standard = &fields[i]
+		} else {
+			ordinary = append(ordinary, f)
+		}
+	}
+	return ordinary, standard, nil
+}
+
+func standardSaveField(name, id string, properties *saveStandardField) saveField {
+	f := saveField{Name: name, ID: id, Type: "string"}
+	if properties != nil {
+		f.Title, f.Label, f.Titles = properties.Title, properties.Label, properties.Titles
+		f.Required, f.Default, f.PII = properties.Required, properties.Default, properties.PII
+	}
+	return f
+}
+
+func standardProperties(f saveField) *saveStandardField {
+	if f.Title == "" && f.Label == "" && len(f.Titles) == 0 && !f.Required && f.Default == "" && !f.PII {
+		return nil
+	}
+	return &saveStandardField{
+		Title: f.Title, Label: f.Label, Titles: f.Titles,
+		Required: f.Required, Default: f.Default, PII: f.PII,
+	}
+}
+
+// applyStandardFieldEdits keeps the standard column's identity while moving
+// its user properties between numerator.field and fields. The same function
+// runs for file and database configuration storage.
+func applyStandardFieldEdits(ent *saveEntity, kind metadata.Kind, fields []saveField, numerator **saveNumerator) error {
+	hadNumerator := ent.Numerator != nil
+	willNumerator := hadNumerator
+	if numerator != nil {
+		willNumerator = *numerator != nil
+	}
+	name, id := standardFieldIdentity(kind, hadNumerator || willNumerator)
+	if name == "" {
+		ent.Fields = ensureFieldIDs(ent.Fields, fields)
+		if numerator != nil {
+			ent.Numerator = *numerator
+		}
+		return nil
+	}
+	previousOrdinary, previousStandard, err := splitStandardSaveFields(ent.Fields, name)
+	if err != nil {
+		return err
+	}
+	nextOrdinary, nextStandard, err := splitStandardSaveFields(fields, name)
+	if err != nil {
+		return err
+	}
+	if hadNumerator && ent.Numerator.Field != nil && previousStandard != nil {
+		return fmt.Errorf("%s is defined in both fields and numerator.field", name)
+	}
+	standard := standardSaveField(name, id, nil)
+	if previousStandard != nil {
+		standard = *previousStandard
+	} else if hadNumerator {
+		standard = standardSaveField(name, id, ent.Numerator.Field)
+	}
+	if nextStandard != nil {
+		if nextStandard.Type != "" && nextStandard.Type != "string" {
+			return fmt.Errorf("standard field %s must have type string", name)
+		}
+		previousTitles := standard.Titles
+		standard = carryFieldKeys(*nextStandard, standard)
+		if standard.Titles == nil {
+			// With no configured UI languages, the ordinary field row has no
+			// title inputs. Keep its translations during first numbering.
+			standard.Titles = previousTitles
+		}
+	}
+	standard.Name, standard.ID, standard.Type = name, id, "string"
+	if willNumerator {
+		active := ent.Numerator
+		if numerator != nil {
+			active = *numerator
+		}
+		if active.Field != nil && numerator != nil {
+			// Keep the legacy label spelling on an unchanged roundtrip. A
+			// changed form title, including an explicit clear, supersedes it.
+			previousTitle := standard.Title
+			if previousTitle == "" {
+				previousTitle = standard.Label
+			}
+			if active.Field.Title != previousTitle {
+				standard.Title, standard.Label = active.Field.Title, ""
+			}
+			if active.Field.TitlesPresent {
+				standard.Titles = active.Field.Titles
+			}
+		}
+		active.Field = standardProperties(standard)
+		ent.Numerator = active
+		ent.Fields = ensureFieldIDs(previousOrdinary, nextOrdinary)
+		return nil
+	}
+	// Turning numbering off retains the same physical column and stable ID.
+	ent.Numerator = nil
+	ent.Fields = append([]saveField{standard}, ensureFieldIDs(previousOrdinary, nextOrdinary)...)
+	return nil
+}
 
 // ensureFieldIDs возвращает next с проставленными id: перенесёнными из prev по
 // имени реквизита либо сгенерированными. Заодно переносит ключи, которых
@@ -84,39 +198,10 @@ func carryFieldKeys(f, old saveField) saveField {
 	return f
 }
 
-// withStandardFieldSeed дополняет прежнее состояние файла записью о стандартном
-// поле — «Код» справочника, «Номер» документа (#1161).
-//
-// Такого поля в YAML нет: платформа синтезирует его при загрузке объекта с
-// блоком numerator (metadata/yaml.go) и держит за ним устойчивый std_code /
-// std_number. Редактор реквизитов рисует загруженную метаданную, поэтому
-// синтезированная строка приходит обратно наравне с обычными, а совпадения по
-// имени в файле для неё нет — и ensureFieldIDs выдавал ей свежий f_xxxx. При
-// следующем старте колонка числилась за std_code, а занимало её поле с чужим
-// id: сторож коллизии в schemaplan останавливал миграцию.
-//
-// Запись идёт ПЕРЕД реальными: ensureFieldIDs заполняет карту имён по порядку,
-// поэтому одноимённый реквизит из файла перекроет засев, а не наоборот.
-func withStandardFieldSeed(prev []saveField, name, id string) []saveField {
-	if name == "" || id == "" {
-		return prev
-	}
-	return append([]saveField{{ID: id, Name: name}}, prev...)
-}
-
-// standardFieldSeed возвращает имя и устойчивый id стандартного поля объекта.
-// Пустые строки — засев не нужен.
-//
-// Засев привязан и к виду объекта, и к наличию нумерации: у документа
-// стандартное поле зовётся «Номер», поэтому пользовательский реквизит «Код»
-// обязан получить собственный id, иначе фикс сам привязал бы его к чужой
-// колонке.
-//
-// hasNumerator означает «блок numerator есть сейчас ИЛИ появится этим
-// сохранением»: при снятии нумерации поле остаётся в fields обычным реквизитом,
-// но колонка в базе по-прежнему числится за служебным id — свежий f_xxxx дал бы
-// ту же коллизию, от которой чинимся.
-func standardFieldSeed(kind metadata.Kind, hasNumerator bool) (name, id string) {
+// standardFieldIdentity returns the platform-owned field for a numbered
+// entity. Both the previous and submitted numerator state matter: turning
+// numbering off must materialize the field with its existing std_* ID.
+func standardFieldIdentity(kind metadata.Kind, hasNumerator bool) (name, id string) {
 	if !hasNumerator {
 		return "", ""
 	}

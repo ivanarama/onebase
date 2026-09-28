@@ -95,28 +95,10 @@ func TestEnsureFieldIDsKeepsDefault(t *testing.T) {
 	}
 }
 
-// Засев стандартного поля (#1161) — только запасной вариант: если такой
-// реквизит в файле есть со своим id, побеждает файл. Иначе фикс перевязывал бы
-// уже сложившееся соответствие поля колонке.
-func TestStandardFieldSeedYieldsToFile(t *testing.T) {
-	prev := []saveField{{ID: "f_own", Name: "Код", Type: "string"}}
-	next := []saveField{{Name: "Код", Type: "string"}}
-
-	seeded := withStandardFieldSeed(prev, metadata.StandardCodeField, metadata.StandardCodeFieldID)
-	if got := ensureFieldIDs(seeded, next); got[0].ID != "f_own" {
-		t.Fatalf("id из файла заменён засевом: %s", got[0].ID)
-	}
-
-	// А когда в файле такого реквизита нет — засев и срабатывает.
-	if got := ensureFieldIDs(withStandardFieldSeed(nil, metadata.StandardCodeField, metadata.StandardCodeFieldID), next); got[0].ID != metadata.StandardCodeFieldID {
-		t.Fatalf("id = %q, ожидался %q", got[0].ID, metadata.StandardCodeFieldID)
-	}
-}
-
 // Какое поле стандартное — решает вид объекта, а он берётся из пути к YAML, а
 // не из запроса: значение с формы решало бы, за какой колонкой закрепится
 // служебный id.
-func TestStandardFieldSeedByKind(t *testing.T) {
+func TestStandardFieldIdentityByKind(t *testing.T) {
 	cases := []struct {
 		path      string
 		kind      metadata.Kind
@@ -135,7 +117,7 @@ func TestStandardFieldSeedByKind(t *testing.T) {
 		if got := entityKindFromPath(c.path); got != c.kind {
 			t.Errorf("%s: вид = %q, ожидался %q", c.path, got, c.kind)
 		}
-		name, id := standardFieldSeed(entityKindFromPath(c.path), c.numerator)
+		name, id := standardFieldIdentity(entityKindFromPath(c.path), c.numerator)
 		if name != c.wantName || id != c.wantID {
 			t.Errorf("%s (numerator=%v): засев = %q/%q, ожидался %q/%q", c.path, c.numerator, name, id, c.wantName, c.wantID)
 		}

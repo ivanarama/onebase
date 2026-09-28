@@ -1558,6 +1558,7 @@ const cfgTabTree = `{{define "tab-tree"}}
 <details {{if $e.Numerator}}open{{end}} style="margin-bottom:10px">
   <summary class="section-hd" style="cursor:pointer">{{t $.Lang "Нумерация"}}</summary>
   <input type="hidden" name="numerator_present" value="1">
+  <input type="hidden" name="numerator_field_present" value="1">
   <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;margin:6px 0">
     <input type="checkbox" name="numerator_enabled" value="1" {{if $e.Numerator}}checked{{end}}>
     <span>{{if eq $e.Kind "Справочник"}}{{t $.Lang "Выдавать код автоматически"}}{{else}}{{t $.Lang "Выдавать номер автоматически"}}{{end}}</span>
@@ -1567,6 +1568,8 @@ const cfgTabTree = `{{define "tab-tree"}}
     <input type="text" name="numerator_prefix" value="{{if $e.Numerator}}{{$e.Numerator.Prefix}}{{end}}" placeholder="К-" style="padding:5px 6px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">
     <label style="color:#475569">{{t $.Lang "Разрядность"}}</label>
     <input type="number" min="1" max="18" name="numerator_length" value="{{if $e.Numerator}}{{$e.Numerator.Length}}{{end}}" placeholder="6" style="padding:5px 6px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">
+    <label style="color:#475569">{{t $.Lang "Синоним стандартного поля"}}</label>
+    <input type="text" name="numerator_field_title" value="{{$e.StandardFieldTitle}}" style="padding:5px 6px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">
     <label style="color:#475569">{{t $.Lang "Сброс счётчика"}}</label>
     <select name="numerator_period" style="padding:5px 6px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">
       <option value="none"  {{if and $e.Numerator (eq $e.Numerator.Period "none")}}selected{{end}}>{{t $.Lang "не сбрасывать"}}</option>
@@ -1592,16 +1595,21 @@ const cfgTabTree = `{{define "tab-tree"}}
       <span>{{t $.Lang "Подставлять префикс базы"}}</span>
     </label>
   </div>
+  {{if $availLangs}}
+  <input type="hidden" name="numerator_field_titles_present" value="1">
+  <div style="margin:6px 0 0 24px">{{template "titles-block" (dict "Lang" $lang "Langs" $availLangs "Prefix" "numerator_field_titles" "Values" $e.StandardFieldTitles)}}</div>
+  {{end}}
   <div style="color:#94a3b8;font-size:11px;margin-left:24px;margin-top:6px">
     {{t $.Lang "В префиксе работают маски даты: {YYYY}, {YY}, {MM}, {DD}. Уникальность при сбросе счётчика требует маски — иначе значение повторится в следующем периоде. Уже существующие записи остаются без значения: дозаполняет команда onebase renumber."}}
   </div>
 </details>
 
-{{if $e.Fields}}
-<details open><summary class="section-hd" style="cursor:pointer">{{t $.Lang "Реквизиты"}} ({{len $e.Fields}})</summary>
+{{if or $e.RegularFieldCount $e.Numerator}}
+<details open><summary class="section-hd" style="cursor:pointer">{{t $.Lang "Реквизиты"}} ({{$e.RegularFieldCount}})</summary>
 <table class="fields-tbl" id="ft-{{$e.Name}}">
 <tr><th>{{t $.Lang "Поле"}}</th><th>{{t $.Lang "Тип"}}</th><th style="min-width:150px">{{t $.Lang "Объект"}}</th><th title="{{t $.Lang "Кнопка «+ Создать» в picker'е для ссылочного поля. По умолчанию включена для шапки документа."}}">{{t $.Lang "+ в picker'е"}}</th><th style="width:44px"></th></tr>
 {{range $i, $f := $e.Fields}}
+{{if not $f.Standard}}
 <tr>
   <td><input type="hidden" name="field.{{$i}}.name" value="{{$f.Name}}">{{$f.Name}}</td>
   <td>
@@ -1640,6 +1648,7 @@ const cfgTabTree = `{{define "tab-tree"}}
   <td style="text-align:center"><button type="button" onclick="cfgDeleteField(this)" title="{{t $.Lang "Удалить поле"}}" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px;line-height:1;padding:0 4px">&times;</button></td>
 </tr>
 {{if $availLangs}}<tr data-cfg-field-extra="1"><td colspan="5" style="padding:0 0 4px">{{template "titles-block" (dict "Lang" $lang "Langs" $availLangs "Prefix" (printf "field.%d.titles" $i) "Values" $f.Titles)}}</td></tr>{{end}}
+{{end}}
 {{end}}
 </table>
 <button type="button" onclick="cfgAddField('ft-{{$e.Name}}','new_field','{{$e.Name}}','entity')" style="font-size:11px;color:#1a4a80;background:none;border:1px dashed #c0c8d8;padding:2px 8px;border-radius:3px;cursor:pointer;margin:4px 0">+ {{t $.Lang "Добавить поле"}}</button>
