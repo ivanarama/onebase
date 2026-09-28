@@ -49,6 +49,24 @@ func FromField(field *metadata.Field) (Descriptor, bool) {
 	return d, d.Type != "" || d.RefEntity != "" || d.EnumName != ""
 }
 
+// FromConstant copies the type-bearing part of a declared constant. Constants
+// use the same metadata vocabulary as fields but are not metadata.Field values,
+// so keeping the adapter here prevents the DSL boundary from growing a second
+// empty-value table.
+func FromConstant(constant *metadata.Constant) (Descriptor, bool) {
+	if constant == nil {
+		return Descriptor{}, false
+	}
+	d := Descriptor{
+		Type:      constant.Type,
+		RefEntity: constant.RefEntity,
+		EnumName:  constant.EnumName,
+		Length:    constant.Length,
+		Scale:     constant.Scale,
+	}
+	return d, d.Type != "" || d.RefEntity != "" || d.EnumName != ""
+}
+
 // FromFormType parses the compact type spelling used by managed-form
 // attributes (for example decimal(15,2), CatalogRef.Клиенты or string(40)).
 func FromFormType(typeRef string, length, scale int) (Descriptor, bool) {

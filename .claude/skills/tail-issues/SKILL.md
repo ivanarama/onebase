@@ -91,12 +91,43 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
 1. Синхронизация: `git fetch origin main`; если текущая ветка — `main`,
    то `git merge --ff-only origin/main`.
 
-2. Очередь: PR, влитые за последние 14 дней. Окно задаётся **в самом запросе**:
+2. Очередь: PR, влитые за последние 14 дней. Окно задаётся **в самом запросе**.
+   Сначала вычисли календарную UTC-дату ровно средствами текущей ОС; ошибка
+   вычисления или команды списка останавливает запуск, а не заменяется датой
+   вручную.
 
-   ```
-   gh pr list --state merged --base main \
-     --search "merged:>=$(date -d '14 days ago' +%F)" \
+   Windows (PowerShell):
+
+   ```powershell
+   $tailSince = (Get-Date).ToUniversalTime().AddDays(-14).ToString("yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture)
+   gh pr list --state merged --base main `
+     --search ("merged:>=" + $tailSince) `
      --limit 300 --json number,title,baseRefName,mergedAt,labels,url
+   if ($LASTEXITCODE -ne 0) { throw "cannot list the 14-day merged PR window" }
+   ```
+
+   macOS (BSD `date`):
+
+   ```sh
+   tail_since=$(date -u -v-14d +%F) || {
+     echo "cannot compute the 14-day UTC boundary on macOS" >&2
+     exit 1
+   }
+   gh pr list --state merged --base main \
+     --search "merged:>=$tail_since" \
+     --limit 300 --json number,title,baseRefName,mergedAt,labels,url || exit 1
+   ```
+
+   GNU/Linux:
+
+   ```sh
+   tail_since=$(date -u -d '14 days ago' +%F) || {
+     echo "cannot compute the 14-day UTC boundary on GNU/Linux" >&2
+     exit 1
+   }
+   gh pr list --state merged --base main \
+     --search "merged:>=$tail_since" \
+     --limit 300 --json number,title,baseRefName,mergedAt,labels,url || exit 1
    ```
 
    Три вещи здесь неочевидны, и каждая стоила бы потерянных хвостов:
@@ -120,8 +151,6 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    gh api --paginate "repos/ivanarama/onebase/issues/<M>/comments?per_page=100" \
      --jq '.[] | {id,created_at,updated_at,author:.user.login,body}'
    ```
-
-   (`date -d` — GNU; на другой системе подставь дату руками, формат `ГГГГ-ММ-ДД`.)
 
    Сначала один раз получи границу включения нового протокола — `merged_at` PR
    **#1261**, который его вводит:
@@ -202,6 +231,23 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    `pp:review` без валидной ссылки не является аудитом и хвост не подменяет.
    Выпиши из раздела «Хвост» пункты
    `[заявка]` с их заголовками. Пункты `[выброс]` не трогай никогда.
+
+   **Грамматика раздела строгая и одинаковая у REVIEW и TAIL** (#1360). Раздел —
+   строки между `Хвост:` и строкой `Вердикт:`. Внутри допустимы только:
+
+   - пустая строка;
+   - строка пункта: `<номер>. [заявка] …` либо `<номер>. [выброс] …`;
+   - строка-продолжение уже начатого пункта — она обязана начинаться с отступа;
+   - одиночный прочерк `—` вместо списка, и только вместе с `pp:tail=0`.
+
+   Любая другая непустая строка — нарушение контракта: **fail closed**, весь
+   хвост этого PR не разбирается, прогон заканчивается `НУЖЕН ЧЕЛОВЕК` с точной
+   цитатой строки. Заявок при этом не заводится ни одной.
+
+   Молча пропустить такую строку нельзя: если пункт когда-нибудь окажется
+   перенесён без отступа, он исчезнет, а прогон отчитается «Хвост разобран» —
+   ровно та потеря находки, против которой этап и заведён. Замечание, адресованное
+   человеку, живёт в строке `Человеку:` после вердикта, а не в хвосте.
 
    `id` комментария недостаточен: GitHub позволяет редактировать body на месте.
    Для выбранного заключения сохрани `updated_at`. Все текстовые hashes TAIL

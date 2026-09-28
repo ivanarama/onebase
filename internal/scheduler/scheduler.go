@@ -1136,15 +1136,16 @@ func ResolveParamTemplates(params map[string]any) map[string]any {
 }
 
 // ResolveParamTemplateText раскрывает подстановку в ОДИНОЧНОМ значении и отдаёт
-// результат строкой в том виде, в каком его понимают форма и query-строка:
-// дата — YYYY-MM-DD. Нужен там, где значение параметра хранится текстом
-// (умолчание параметра отчёта), а не в карте any: без него каждый вызывающий
-// заводил бы свою карту из одного ключа и своё форматирование даты.
-func ResolveParamTemplateText(raw string) string {
-	return resolveParamTemplateTextAt(raw, time.Now())
+// результат строкой в том виде, в каком его понимают форма и query-строка.
+// Формат результата-момента зависит от ТИПА параметра: `datetime` получает
+// время суток, `date` и все прочие типы — дату, как было всегда. Без типа
+// функция отбрасывала время безусловно, и `{{now | minus_hours:6}}` отличался
+// от `{{now}}` только при переходе через полночь (#1204).
+func ResolveParamTemplateText(raw, typ string) string {
+	return resolveParamTemplateTextAt(raw, typ, time.Now())
 }
 
-func resolveParamTemplateTextAt(raw string, now time.Time) string {
+func resolveParamTemplateTextAt(raw, typ string, now time.Time) string {
 	if strings.TrimSpace(raw) == "" {
 		return ""
 	}
@@ -1152,6 +1153,9 @@ func resolveParamTemplateTextAt(raw string, now time.Time) string {
 	case string:
 		return v
 	case time.Time:
+		if strings.ToLower(strings.TrimSpace(typ)) == "datetime" {
+			return v.Format("2006-01-02T15:04:05")
+		}
 		return v.Format("2006-01-02")
 	default:
 		return fmt.Sprint(v)

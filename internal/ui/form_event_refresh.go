@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -47,9 +49,64 @@ func snapshotFieldValues(fields map[string]any) map[string]string {
 	}
 	out := make(map[string]string, len(fields))
 	for k, v := range fields {
-		out[k] = fmt.Sprintf("%v", v)
+		out[k] = snapshotComparableValue(v)
 	}
 	return out
+}
+
+// snapshotComparableValue preserves reference identity while keeping the
+// deliberately type-tolerant comparison used by form snapshots. A Ref's
+// String method is its presentation, so fmt.Sprint alone would consider two
+// different records with the same label equal and could discard an unsaved
+// BeforeClose assignment during the final database refresh.
+func snapshotComparableValue(value any) string {
+	if value == nil {
+		return "nil:"
+	}
+	if id, ok := snapshotReferenceUUID(value); ok {
+		return "uuid:" + strings.ToLower(strings.TrimSpace(id))
+	}
+	switch v := value.(type) {
+	case uuid.UUID:
+		return "uuid:" + strings.ToLower(v.String())
+	case string:
+		if parsed, err := uuid.Parse(strings.TrimSpace(v)); err == nil {
+			return "uuid:" + strings.ToLower(parsed.String())
+		}
+		return "string:" + v
+	case []byte:
+		return "bytes:" + string(v)
+	case bool:
+		return "bool:" + strconv.FormatBool(v)
+	case time.Time:
+		return "time:" + v.UTC().Format(time.RFC3339Nano)
+	}
+	rv := reflect.ValueOf(value)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return "number:" + strconv.FormatInt(rv.Int(), 10)
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+		return "number:" + strconv.FormatUint(rv.Uint(), 10)
+	case reflect.Float32, reflect.Float64:
+		return "number:" + strconv.FormatFloat(rv.Float(), 'g', -1, 64)
+	}
+	return fmt.Sprintf("%T:%v", value, value)
+}
+
+func snapshotReferenceUUID(value any) (string, bool) {
+	type uuidGetter interface{ GetRefUUID() string }
+	if ref, ok := value.(uuidGetter); ok {
+		return ref.GetRefUUID(), true
+	}
+	rv := reflect.ValueOf(value)
+	if rv.IsValid() && rv.Kind() != reflect.Pointer {
+		copy := reflect.New(rv.Type())
+		copy.Elem().Set(rv)
+		if ref, ok := copy.Interface().(uuidGetter); ok {
+			return ref.GetRefUUID(), true
+		}
+	}
+	return "", false
 }
 
 // readOnlyFormFields собирает имена полей ШАПКИ, отрисованных формой как
@@ -132,7 +189,7 @@ func (s *Server) refreshFieldsWrittenByHandler(
 			// Новый ключ или изменившееся значение — это присваивание внутри
 			// обработчика. Оно может быть ещё не записано и обязано доехать
 			// до формы как есть.
-			if !existed || was != fmt.Sprintf("%v", obj.Fields[k]) {
+			if !existed || was != snapshotComparableValue(obj.Fields[k]) {
 				return false
 			}
 		}
@@ -362,22 +419,12 @@ func boolCanon(b bool) string {
 // открытием и «Записать» пользователь жмёт любую кнопку — ответ отдаёт свежую
 // версию из БД, клиент кладёт её в _version, и последующая проверка версии всегда
 // совпадает, молча затирая правки того, кто сохранил запись параллельно.
-func (s *Server) versionWrittenByHandler(ctx context.Context, entity *metadata.Entity, obj *runtime.Object, this *formObjectThis) int64 {
-	if this == nil || !this.saved {
+func versionWrittenByHandler(this *formObjectThis) int64 {
+	if this == nil || !this.saved || this.expectedVersion == nil {
 		return 0
 	}
-	return s.currentEntityVersion(ctx, entity, obj)
-}
-
-// currentEntityVersion возвращает версию записи после обработчика. Ноль — если
-// записи ещё нет или версию не прочитать: тогда клиент оставляет прежнюю.
-func (s *Server) currentEntityVersion(ctx context.Context, entity *metadata.Entity, obj *runtime.Object) int64 {
-	if s == nil || s.store == nil || entity == nil || obj == nil || obj.ID == uuid.Nil {
-		return 0
-	}
-	version, exists, err := s.store.EntityVersionExists(ctx, entity.Name, obj.ID)
-	if err != nil || !exists {
-		return 0
-	}
-	return version
+	// expectedVersion is advanced from entityservice.SaveResult at the exact
+	// successful write boundary. Re-reading here could observe a later
+	// concurrent writer and hand its token to stale form state.
+	return *this.expectedVersion
 }

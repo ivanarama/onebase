@@ -150,6 +150,10 @@ func refColumns(ctx context.Context, env *Env) ([]refColumn, error) {
 	for _, e := range env.Entities {
 		known[strings.ToLower(e.Name)] = metadata.TableName(e.Name)
 	}
+	// Системная таблица учётных записей — легальная цель ссылки (#1646):
+	// сущности конфигурации нет, а колонки reference:_users проверяем как
+	// остальные, включая автоочистку битых ссылок на удалённые учётки.
+	known[metadata.SystemUsersEntity] = metadata.TableName(metadata.SystemUsersEntity)
 
 	var out []refColumn
 	// column — как называется колонка в таблице. Обычно это имя поля, но у

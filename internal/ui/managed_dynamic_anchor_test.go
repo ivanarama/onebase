@@ -18,7 +18,10 @@ import (
 func managedDynamicAnchorEntity() *metadata.Entity {
 	entity := &metadata.Entity{
 		Name: "ЗаявкаСДинамическимОформлением", Kind: metadata.KindCatalog,
-		Fields: []metadata.Field{{Name: "Стадия", Type: metadata.FieldTypeString}},
+		Fields: []metadata.Field{
+			{Name: "Стадия", Type: metadata.FieldTypeString},
+			{Name: "Срочно", Type: metadata.FieldTypeBool},
+		},
 	}
 	whenAccepted := `Стадия = "Принята"`
 	form := &metadata.FormModule{
@@ -31,6 +34,7 @@ func managedDynamicAnchorEntity() *metadata.Entity {
 			{Kind: metadata.FormElementLabel, Name: "НадписьСтатуса", TitleMap: map[string]string{"ru": "Черновик"}, HiddenWhen: whenAccepted},
 			{Kind: metadata.FormElementPicture, Name: "КартинкаСФайлом", Picture: "logo.png", HiddenWhen: whenAccepted},
 			{Kind: metadata.FormElementPicture, Name: "КартинкаБезФайла", HiddenWhen: whenAccepted},
+			{Kind: metadata.FormElementCheckbox, Name: "ФлажокСрочно", DataPath: "Объект.Срочно", HiddenWhen: whenAccepted},
 			{Kind: metadata.FormElementCommandBar, Name: "ПанельКоманд", ReadOnlyWhen: whenAccepted},
 			{Kind: metadata.FormElementField, Name: "ПолеСтадии", DataPath: "Объект.Стадия"},
 		},
@@ -101,7 +105,7 @@ func managedDescendantButton(root *html.Node) *html.Node {
 
 func TestManagedDynamicAnchorsRenderThroughPublicForm(t *testing.T) {
 	draft := renderManagedDynamicAnchorPage(t, "Черновик")
-	for _, name := range []string{"НадписьСтатуса", "КартинкаСФайлом", "КартинкаБезФайла", "ПанельКоманд"} {
+	for _, name := range []string{"НадписьСтатуса", "КартинкаСФайлом", "КартинкаБезФайла", "ФлажокСрочно", "ПанельКоманд"} {
 		if managedAnchorNode(t, draft, name) == nil {
 			t.Errorf("draft form has no dynamic-state anchor %q", name)
 		}
@@ -115,7 +119,7 @@ func TestManagedDynamicAnchorsRenderThroughPublicForm(t *testing.T) {
 	}
 
 	accepted := renderManagedDynamicAnchorPage(t, "Принята")
-	for _, name := range []string{"НадписьСтатуса", "КартинкаСФайлом", "КартинкаБезФайла"} {
+	for _, name := range []string{"НадписьСтатуса", "КартинкаСФайлом", "КартинкаБезФайла", "ФлажокСрочно"} {
 		if managedAnchorNode(t, accepted, name) != nil {
 			t.Errorf("server render did not hide %q", name)
 		}

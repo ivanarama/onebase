@@ -244,7 +244,7 @@ global.FileReader = FakeFileReader;
 
 global.fetch = async (_url, options) => {
   fetchBodies.push(options.body.toString());
-  return {json: async () => ({messages: []})};
+  return {ok: true, json: async () => ({ok: true, messages: []})};
 };
 
 resetDOM();
@@ -287,6 +287,44 @@ test('immediate click waits for the current file read', async () => {
   assert.equal(new URLSearchParams(fetchBodies[0]).get('Upload'), 'instant contents');
 });
 
+test('saving a new managed form notifies the tab shell after history replacement', async () => {
+  resetDOM();
+  const originalFetch = global.fetch;
+  const originalHistory = global.history;
+  const originalLocation = global.location;
+  const originalParent = global.parent;
+  const messages = [];
+  const replacements = [];
+  global.location = {origin: 'http://127.0.0.1:8080', pathname: '/ui/document/purchase/new'};
+  global.history = {
+    replaceState(_state, _title, url) {
+      replacements.push(url);
+      global.location.pathname = url;
+    }
+  };
+  global.parent = {
+    postMessage(data, targetOrigin) { messages.push({data, targetOrigin}); }
+  };
+  global.fetch = async (_url, options) => {
+    fetchBodies.push(options.body.toString());
+    return {ok: true, json: async () => ({ok: true, savedId: '42', messages: []})};
+  };
+  try {
+    await window.obFire('Save', 'Нажатие');
+    assert.deepEqual(replacements, ['/ui/document/purchase/42']);
+    assert.deepEqual(messages, [{
+      data: {source: 'obFrameURLChanged', url: '/ui/document/purchase/42'},
+      targetOrigin: 'http://127.0.0.1:8080'
+    }]);
+  } finally {
+    global.fetch = originalFetch;
+    global.history = originalHistory;
+    global.location = originalLocation;
+    if (originalParent === undefined) delete global.parent;
+    else global.parent = originalParent;
+  }
+});
+
 test('obFire re-syncs grid state after waiting for FileReader', async () => {
   resetDOM();
   FakeFileReader.instances = [];
@@ -312,6 +350,33 @@ test('obFire re-syncs grid state after waiting for FileReader', async () => {
     assert.equal(new URLSearchParams(fetchBodies[0]).get('tp_json.Товары'), '[{"Цена":2}]');
   } finally {
     window.obGridSync = originalGridSync;
+  }
+});
+
+test('server command dirty state follows unsaved mutations and confirmed writes', async () => {
+  resetDOM();
+  const originalFetch = global.fetch;
+  const originalSetter = window.obSetManagedFormDirty;
+  const originalApplyTableParts = window.applyTableParts;
+  const reports = [];
+  window.obSetManagedFormDirty = value => reports.push(value);
+  try {
+    global.fetch = async () => ({ok: true, json: async () => ({ok: true, dirty: true, values: {Наименование: 'changed'}})});
+    await window.obFire('Command', 'Нажатие');
+    assert.equal(reports.at(-1), true, 'unsaved command mutation did not mark the managed form dirty');
+
+    global.fetch = async () => ({ok: true, json: async () => ({ok: true, dirty: false, version: 2, values: {Наименование: 'saved'}})});
+    await window.obFire('Command', 'Нажатие');
+    assert.equal(reports.at(-1), false, 'confirmed existing-object write did not clear dirty');
+
+    window.applyTableParts = () => { throw new Error('renderer failed'); };
+    global.fetch = async () => ({ok: true, json: async () => ({ok: false, dirty: true, tableparts: {Rows: []}})});
+    await window.obFire('Command', 'Click');
+    assert.equal(reports.at(-1), true, 'renderer exception erased authoritative command dirty state');
+  } finally {
+    global.fetch = originalFetch;
+    window.obSetManagedFormDirty = originalSetter;
+    window.applyTableParts = originalApplyTableParts;
   }
 });
 
@@ -554,6 +619,38 @@ for (const order of ['readonly-first', 'writable-first']) {
     assert.equal(addTarget, writable, 'NoGrid add action targeted the first readonly duplicate');
   });
 }
+
+test('ValueTable add and remove mark the managed form dirty', () => {
+  resetDOM();
+  const reports = [];
+  const previousSetter = window.obSetManagedFormDirty;
+  window.obSetManagedFormDirty = value => reports.push(value);
+  try {
+    const writable = installTableBody('vt-body-Подбор', {
+      'data-vt-fields': 'Значение|string'
+    });
+    obManagedAddVtRow({getAttribute(name) { return name === 'data-ob-add-vt' ? 'Подбор' : null; }});
+    assert.equal(writable.children.length, 1);
+    assert.deepEqual(reports, [true], 'ValueTable add did not report dirty');
+
+    const row = writable.children[0];
+    assert.equal(obManagedRemoveRow({closest(selector) { return selector === 'tr' ? row : null; }}), true);
+    assert.equal(writable.children.length, 0);
+    assert.deepEqual(reports, [true, true], 'ValueTable remove did not report dirty');
+
+    window.applyFormTables({Подбор: [{Значение: 'server row'}]});
+    const repaintedRow = writable.children[0];
+    const repaintedDelete = repaintedRow.children[1].children[0];
+    assert.equal(repaintedDelete.hasAttribute('data-ob-remove-row'), true,
+      'server repaint bypassed delegated ValueTable delete');
+    repaintedDelete.closest = selector => selector === 'tr' ? repaintedRow : null;
+    assert.equal(obManagedRemoveRow(repaintedDelete), true);
+    assert.equal(writable.children.length, 0);
+    assert.deepEqual(reports, [true, true, true], 'repainted ValueTable remove did not report dirty');
+  } finally {
+    window.obSetManagedFormDirty = previousSetter;
+  }
+});
 
 test('NoGrid repaint restores virtual cells for each view', () => {
   resetDOM();

@@ -1047,6 +1047,21 @@ func configuratorObjectDeletePaths(files []configdb.ConfigFile, kind, name strin
 			associated[rel] = struct{}{}
 		}
 	}
+	if kind == "printform" {
+		for _, metadataPath := range metadataPaths {
+			const layoutSuffix = ".layout.yaml"
+			if !strings.HasSuffix(strings.ToLower(metadataPath), layoutSuffix) {
+				continue
+			}
+			templatePath := metadataPath[:len(metadataPath)-len(layoutSuffix)] + ".template.xlsx"
+			for _, file := range files {
+				rel := filepath.ToSlash(file.Path)
+				if strings.EqualFold(rel, templatePath) {
+					associated[rel] = struct{}{}
+				}
+			}
+		}
+	}
 	if len(spec.metadataDirs) == 0 && !foundSource {
 		return nil, "", i18nerr.Errorf("сущность %q не найдена", name)
 	}

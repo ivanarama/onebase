@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/metadata"
+	processorpkg "github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/report/compose"
 )
 
@@ -99,6 +102,11 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 		// Фикс B: реквизиты формы (save:false) ссылочного типа получают пикер —
 		// грузим их опции и домешиваем в RefOptions (у полей сущности пикер уже был).
 		s.mergeFormLocalRefOptions(r.Context(), managed, data)
+		// Plan 170/B: только для элементов с choice_filter заменяем
+		// общий список на серверно отфильтрованный и кладём в разметку
+		// только идентичность формы/элемента и имена источников. Field/Op
+		// остаются только в metadata на сервере.
+		s.applyManagedChoiceFilters(r.Context(), entity, managed, data)
 		// Списки значений (СписокВыбора) объявлены на элементах формы, а не на
 		// полях сущности, поэтому собираем их из самой managed-формы. Единая
 		// точка покрывает все пути рендера (new/edit/повторный показ с ошибкой).
@@ -134,6 +142,19 @@ func hierarchyCreateHints(r *http.Request, entity *metadata.Entity, isNew bool) 
 func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any, form *metadata.FormModule) {
 	if form == nil || data == nil {
 		return
+	}
+	opKind := opFormEvent
+	if processor, _ := data["IsProcessor"].(bool); processor {
+		opKind = opProcessorRun
+	}
+	data["FormCloseTimeoutMS"] = formCloseClientTimeoutMS(s.operationTimeout(opKind))
+	data["FormCloseEpoch"] = formCloseProcessEpoch
+	data["FormCloseClientID"] = uuid.NewString()
+	data["FormCloseServerNowMS"] = time.Now().UnixMilli()
+	if processor, _ := data["Processor"].(*processorpkg.Processor); processor != nil {
+		data["FormCloseSchema"] = processorFormCloseSchema(processor, form)
+	} else if entity, _ := data["Entity"].(*metadata.Entity); entity != nil {
+		data["FormCloseSchema"] = entityFormCloseSchema(entity, form)
 	}
 	if css := formConditionalCSS(form); css != "" {
 		data["FormConditionalCSS"] = template.CSS(css) //nolint:gosec // G203: стиль собран cssStyle → csssafe.Color, произвольная строка в CSS не попадает
@@ -187,6 +208,15 @@ func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any
 // walkBrowserFormElements — тот же обход, которым его берёт серверная отрисовка
 // ($ro в шаблоне managed-element).
 //
+// Условие КАСКАДИТ на потомков ровно так же, как статический readonly (#1184):
+// «после проведения группа реквизитов замерзает» пишется одним условием на
+// группе. Итоговое состояние элемента — «статический readonly (свой или
+// предка) ИЛИ истинное условие (своё или предка)», и считается оно ЗДЕСЬ, в
+// одном месте, а не тремя способами. Раньше правило было размазано по трём
+// исполнителям и в каждом получалось своё: шаблон условие предка не смотрел
+// вовсе, а клиент запирал потомков обходом DOM — и до первого события формы
+// поле было редактируемым, после первого запиралось.
+//
 // Ошибка вычисления НЕ скрывает и НЕ блокирует элемент: неверное условие — это
 // ошибка конфигурации, и молча запертое поле объяснить пользователю нечем.
 // Вместо этого условие игнорируется, а конфигуратор получает предупреждение на
@@ -210,21 +240,34 @@ func managedFormElementStates(form *metadata.FormModule, header map[string]any, 
 		}
 		return ok
 	}
+	// Условие каждого элемента считается ровно один раз — на его собственном
+	// заходе, — и потомки берут результат отсюда. Так предупреждение о сломанном
+	// выражении достаётся тому элементу, который его объявил, и не размножается
+	// по всей ветке. Обход прямой (предок раньше потомков), поэтому к моменту
+	// захода потомка условие предка в карте уже лежит.
+	conds := map[*metadata.FormElement]bool{}
 	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
 		el := visit.element
 		if el == nil {
 			return
 		}
-		// В карту попадает КАЖДЫЙ элемент с условием — в том числе с ложным.
-		// Ответ события формы переносит эти карты на клиент, и без явного
-		// «false» он не смог бы снять запрет, когда условие перестало
-		// выполняться (отличить «условия нет» от «условие ложно» было бы нечем).
-		if strings.TrimSpace(el.ReadOnlyWhen) != "" {
+		own := strings.TrimSpace(el.ReadOnlyWhen) != ""
+		if own {
 			// Условие считается всегда, даже под постоянным запретом: иначе
 			// сломанное выражение под readonly-группой молчало бы вместо
 			// предупреждения конфигуратору.
-			cond := eval(el.ReadOnlyWhen, "условие readonly_when", el.Name)
-			ro[el.Name] = cond || visit.effectiveReadOnly
+			conds[el] = eval(el.ReadOnlyWhen, "условие readonly_when", el.Name)
+		}
+		// В карту попадает КАЖДЫЙ элемент, на который условие влияет, — в том
+		// числе с ложным. Ответ события формы переносит эти карты на клиент, и
+		// без явного «false» он не смог бы снять запрет, когда условие перестало
+		// выполняться (отличить «условия нет» от «условие ложно» было бы нечем).
+		if own || len(visit.readOnlyWhenAncestors) > 0 {
+			state := visit.effectiveReadOnly || conds[el]
+			for _, ancestor := range visit.readOnlyWhenAncestors {
+				state = state || conds[ancestor]
+			}
+			ro[el.Name] = state
 		}
 		if strings.TrimSpace(el.HiddenWhen) != "" {
 			hidden[el.Name] = eval(el.HiddenWhen, "условие hidden_when", el.Name)

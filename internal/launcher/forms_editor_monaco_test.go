@@ -7,8 +7,13 @@ import (
 )
 
 func renderFormsEditorHTML(t *testing.T) string {
+	return renderFormsEditorHTMLWithLang(t, "")
+}
+
+func renderFormsEditorHTMLWithLang(t *testing.T, lang string) string {
 	t.Helper()
 	data := &configuratorData{
+		Lang: lang,
 		Base: &Base{ID: "test-base"},
 		EditingForm: &cfgManagedForm{
 			Entity: "Контрагент", Name: "ФормаОбъекта", Kind: "object",

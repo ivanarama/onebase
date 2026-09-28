@@ -56,12 +56,13 @@ var maskHelperExempt = map[string]maskHelperExemption{
 	// ── Проверки строкового доступа (RLS): наружу идёт bool, 403 или
 	// ErrRowAccessDenied, значения реквизитов никуда не отдаются. Маскировать
 	// строку здесь означало бы решать доступ по маске вместо данных.
-	"Server.matchRowPredicate": {reason: "RLS: строка нужна для вычисления предиката, наружу идёт bool"},
-	"Server.rowAllowedID":      {reason: "RLS: наружу идёт bool"},
-	"Server.rowAllowedUpdate":  {reason: "RLS: наружу идёт bool"},
-	"Server.rowAllowsID":       {reason: "RLS: наружу идёт bool"},
-	"Server.checkDSLRowAccess": {reason: "RLS для DSL: наружу идёт ошибка ErrRowAccessDenied"},
-	"changePublisher.canSee":   {reason: "RLS-адресация живого списка: наружу идёт bool"},
+	"Server.matchRowPredicateResult":       {reason: "RLS: строка нужна для вычисления предиката, наружу идут bool/error"},
+	"Server.rowAllowedID":                  {reason: "RLS: наружу идёт bool"},
+	"Server.rowAllowedUpdate":              {reason: "RLS: наружу идёт bool"},
+	"Server.rowAllowsIDResult":             {reason: "RLS: наружу идут bool/error"},
+	"Server.installFormCloseAccessRecheck": {reason: "финальный RLS-гейт close-intent: строка только решает terminal/redaction и клиенту не отдаётся"},
+	"Server.checkDSLRowAccess":             {reason: "RLS для DSL: наружу идёт ошибка ErrRowAccessDenied"},
+	"changePublisher.canSee":               {reason: "RLS-адресация живого списка: наружу идёт bool"},
 	"Server.publishDocChange": {reason: "живой список (план 87): читает after для адресации по правам, " +
 		"само событие несёт только действие, строки клиенту не отдаются"},
 	"Server.blobReferencedWithPolicy": {reason: "проверка, ссылается ли видимая строка на блоб: наружу идёт bool"},
@@ -94,6 +95,8 @@ var maskHelperExempt = map[string]maskHelperExemption{
 	"dslRefAttrResolver.preloadIDs":        {reason: "наполняет кэш, значения отдаёт только ResolveRefAttr", maskedBy: "dslRefAttrResolver.ResolveRefAttr"},
 	"Server.restoreUnsubmittedFields":      {reason: "дочитывает неприсланные реквизиты ДЛЯ ЗАПИСИ, к клиенту они идут через сериализацию ответа (#609)", maskedBy: "Server.serializeManagedFormEventState"},
 	"Server.refreshFieldsWrittenByHandler": {reason: "перечитывает записанное обработчиком ДЛЯ ЗАПИСИ, к клиенту — через сериализацию ответа (#609)", maskedBy: "Server.serializeManagedFormEventState"},
+	"Server.managedCloseStateDirty":        {reason: "сравнивает серверное состояние с БД и наружу отдаёт только bool; сами поля идут через сериализацию ответа", maskedBy: "Server.serializeManagedFormEventState"},
+	"Server.saveManagedObject":             {reason: "путь записи: GetByID используется только для RLS-предиката, значения клиенту не возвращаются"},
 
 	// ── Особый случай.
 	"Server.loadRuntimeObject": {reason: "строит Объект для DSL-обёрток (catWriter/docWriter маскируют в Get) и для " +

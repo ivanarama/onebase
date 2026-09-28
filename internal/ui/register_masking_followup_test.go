@@ -265,7 +265,7 @@ func TestProtectedMovementKindDeniesBalancesUIAndDSL(t *testing.T) {
 		t.Fatalf("select panic: %v", recovered)
 	}
 	rows := value.(*interpreter.Array)
-	if got := rows.Index(0).(*interpreter.MapThis).Get("вид_движения"); got != "••••••" {
+	if got := rows.Index(0).(interpreter.This).Get("вид_движения"); got != "••••••" {
 		t.Fatalf("movement kind = %v, want mask", got)
 	}
 	if _, recovered = callAccumReg(proxy, "balances", nil); recovered == nil {
@@ -296,7 +296,7 @@ func TestDSLSelectByRecorderRejectsUUIDOnlyAndKeepsTypesSeparate(t *testing.T) {
 		t.Fatalf("typed recorder returned %d rows, want 2 from its type only", len(rows.Iterate()))
 	}
 	for _, item := range rows.Iterate() {
-		if got := item.(*interpreter.MapThis).Get("Метка"); got == "COLLIDING-RECORDER-TYPE" {
+		if got := item.(interpreter.This).Get("Метка"); got == "COLLIDING-RECORDER-TYPE" {
 			t.Fatal("typed recorder mixed a same-UUID movement from another type")
 		}
 	}

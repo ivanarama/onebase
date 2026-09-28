@@ -33,10 +33,15 @@ var adminNavLinks = []string{
 	"/ui/settings/agent",
 }
 
-func renderNav(t *testing.T, isAdmin bool) string {
+func renderNav(t *testing.T, isAdmin bool, extra ...map[string]any) string {
 	t.Helper()
 	var buf bytes.Buffer
 	data := map[string]any{"Cfg": Config{}, "Lang": "ru", "IsAdmin": isAdmin}
+	for _, add := range extra {
+		for k, v := range add {
+			data[k] = v
+		}
+	}
 	if err := tmpl.ExecuteTemplate(&buf, "nav", data); err != nil {
 		t.Fatalf("execute nav: %v", err)
 	}

@@ -105,6 +105,13 @@ func TestServerFormEvents_ЗапускаютсяСервером(t *testing.T) {
 				if !strings.Contains(strings.Join(msgs, "\n"), "СОБЫТИЕ-СРАБОТАЛО") {
 					t.Fatalf("ПослеЗаписи не исполнился: сообщений нет (%v)", msgs)
 				}
+			case metadata.FormEventBeforeClose:
+				rec := executeFormCloseIntent(t, srv, ent, closeIntentBody(uuid.NewString(), "cross", "КОНТРАГЕНТ"))
+				response := decodeCloseIntentResponse(t, rec)
+				if response.OK || response.Close == nil || response.Close.Allowed ||
+					!strings.Contains(response.Error, "СОБЫТИЕ-СРАБОТАЛО") {
+					t.Fatalf("ПередЗакрытием не исполнился через close-intent: %+v", response)
+				}
 			default:
 				t.Fatalf("событие %q объявлено серверным, но у сторожа нет пути его запуска:"+
 					" добавьте путь сюда или уберите событие из metadata.ServerFormEvents", event)
