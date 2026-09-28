@@ -4481,6 +4481,15 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		// Identifiers: aggregate function (only before "("), keyword, or lowercase field name
 		if t.kind == tIdent {
 			tr.advance()
+			// Голое имя на месте источника (после ИЗ, СОЕДИНЕНИЕ или запятой
+			// списка; после точки это место не бывает): сущность регистрируется
+			// для проверки прав, прочее — таблица СУБД мимо метаданных —
+			// отклоняется (addBareEntitySource). Трансляция имени — прежняя, ниже.
+			if tr.rawSourceAt(tr.pos - 1) {
+				if err := tr.addBareEntitySource(t.val); err != nil {
+					return Result{}, err
+				}
+			}
 			prevDot := tr.prevWasDot
 			tr.prevWasDot = false
 			lower := lowerFast(t.val)
@@ -4489,14 +4498,6 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			if tr.pos >= 2 {
 				if pv := upperFast(tr.tokens[tr.pos-2].val); pv == "КАК" || pv == "AS" {
 					prevAlias = !prevDot
-				}
-			}
-			// Голое имя на месте источника: сущность регистрируется для проверки
-			// прав, прочее — таблица СУБД мимо метаданных — отклоняется
-			// (addBareEntitySource). Трансляция самого имени — прежняя, ниже.
-			if !prevDot && tr.rawSourceAt(tr.pos-1) {
-				if err := tr.addBareEntitySource(t.val); err != nil {
-					return Result{}, err
 				}
 			}
 			// Булевы литералы Истина/Ложь. Без этой ветки они уезжали в SQL как
