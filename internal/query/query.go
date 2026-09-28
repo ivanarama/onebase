@@ -1141,7 +1141,7 @@ func (tr *translator) closeLikePattern(t tok) bool {
 // endLikePattern закрывает шаблон без СПЕЦСИМВОЛ. Управляющего символа тогда
 // нет ни на одном диалекте: у LIKE в SQLite его нет по умолчанию, а в
 // PostgreSQL по умолчанию это обратная косая черта — шаблон «%10\%%» совпал бы
-// там со «Скидка 10%», а на SQLite нет. ESCAPE '' на PostgreSQL выравнивает
+// там со «Скидка 10%», а на SQLite нет. Пустой ESCAPE на PostgreSQL выравнивает
 // семантику: обратная косая черта — обычный символ шаблона.
 func (tr *translator) endLikePattern() {
 	if tr.likePattern == nil {
