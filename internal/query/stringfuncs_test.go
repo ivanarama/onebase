@@ -135,4 +135,16 @@ func TestLikeEscapeIsAddedOnlyWhereNeeded(t *testing.T) {
 	if !strings.Contains(ordered, "ESCAPE '' ORDER BY") {
 		t.Errorf("ESCAPE должен закрыть шаблон до ORDER BY: %s", ordered)
 	}
+	// Шаблон — ВЫБОР: ESCAPE после его КОНЕЦ, а не после CASE.
+	conditional := compile(storage.PgDialect{}, `ВЫБРАТЬ Наименование ИЗ Справочник.КлиентТр
+		ГДЕ Наименование ПОДОБНО ВЫБОР КОГДА Наименование = "Ленина" ТОГДА &П ИНАЧЕ &П КОНЕЦ И Наименование <> ""`)
+	if !strings.Contains(conditional, "END ESCAPE '' AND") || strings.Contains(conditional, "CASE ESCAPE") {
+		t.Errorf("ESCAPE должен стоять после всего выражения ВЫБОР: %s", conditional)
+	}
+	// ПОДОБНО внутри условия ВЫБОР — шаблон кончается перед ТОГДА.
+	inCase := compile(storage.PgDialect{}, `ВЫБРАТЬ Наименование ИЗ Справочник.КлиентТр
+		ГДЕ ВЫБОР КОГДА Наименование ПОДОБНО &П ТОГДА 1 ИНАЧЕ 0 КОНЕЦ = 1`)
+	if !strings.Contains(inCase, "ESCAPE '' THEN") {
+		t.Errorf("ESCAPE должен закрыть шаблон перед ТОГДА: %s", inCase)
+	}
 }

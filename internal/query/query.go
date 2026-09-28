@@ -1103,6 +1103,10 @@ func (tr *translator) likeOperatorPosition() bool {
 // только на ней, скобки внутри шаблона (вызовы функций) его не заканчивают.
 type likePatternState struct {
 	depth int
+	// cases — открытые ВЫБОР самого шаблона («ПОДОБНО ВЫБОР КОГДА … КОНЕЦ»):
+	// пока он не закрыт своим КОНЕЦ, его КОГДА/ТОГДА/ИНАЧЕ и И/ИЛИ условий —
+	// часть шаблона, а не граница после него.
+	cases int
 }
 
 // likePatternEnds — ключевые слова, с которых после шаблона начинается уже
@@ -1125,13 +1129,22 @@ func (tr *translator) closeLikePattern(t tok) bool {
 	case tRParen, tComma:
 		tr.endLikePattern()
 	case tIdent:
-		if u := upperFast(t.val); u == "СПЕЦСИМВОЛ" || u == "ESCAPE" {
+		if u := upperFast(t.val); st.cases == 0 && (u == "СПЕЦСИМВОЛ" || u == "ESCAPE") {
 			tr.advance()
 			tr.emit("ESCAPE")
 			tr.likePattern = nil
 			return true
 		}
-		if kw, ok := sqlKW(t.val); ok && likePatternEnds[kw] {
+		kw, ok := sqlKW(t.val)
+		switch {
+		case !ok:
+		case kw == "CASE":
+			st.cases++
+		case st.cases > 0:
+			if kw == "END" {
+				st.cases--
+			}
+		case likePatternEnds[kw]:
 			tr.endLikePattern()
 		}
 	}
