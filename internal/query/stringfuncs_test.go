@@ -55,9 +55,12 @@ func TestStringFuncsCompileByDialect(t *testing.T) {
 		{"прав-pg", storage.PgDialect{}, `ВЫБРАТЬ ПРАВ(Наименование, 3) ИЗ Справочник.КлиентТр`, "right("},
 		{"rightstr-pg", storage.PgDialect{}, `ВЫБРАТЬ RIGHTSTR(Наименование, 3) ИЗ Справочник.КлиентТр`, "right("},
 
-		// ПОДОБНО и СПЕЦСИМВОЛ — ключевые слова, а не функции.
-		{"подобно-pg", storage.PgDialect{}, `ВЫБРАТЬ Наименование ИЗ Справочник.КлиентТр ГДЕ Наименование ПОДОБНО &П`, " LIKE "},
-		{"спецсимвол-pg", storage.PgDialect{}, `ВЫБРАТЬ Наименование ИЗ Справочник.КлиентТр ГДЕ Наименование ПОДОБНО &П СПЕЦСИМВОЛ "\"`, " ESCAPE "},
+		// ПОДОБНО и СПЕЦСИМВОЛ — операторы, а не функции. Без СПЕЦСИМВОЛ
+		// PostgreSQL получает ESCAPE '': управляющего символа нет ни на одном
+		// диалекте, как у LIKE в SQLite.
+		{"подобно-pg", storage.PgDialect{}, `ВЫБРАТЬ Наименование ИЗ Справочник.КлиентТр ГДЕ Наименование ПОДОБНО &П`, " LIKE $1::text ESCAPE ''"},
+		{"подобно-скобки-pg", storage.PgDialect{}, `ВЫБРАТЬ Наименование ИЗ Справочник.КлиентТр ГДЕ (Наименование ПОДОБНО НРЕГ(&П)) И Наименование <> ""`, "ESCAPE '')"},
+		{"спецсимвол-pg", storage.PgDialect{}, `ВЫБРАТЬ Наименование ИЗ Справочник.КлиентТр ГДЕ Наименование ПОДОБНО &П СПЕЦСИМВОЛ "\"`, ` ESCAPE '\'`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			r, err := query.Compile(c.src, query.CompileOpts{
@@ -102,5 +105,34 @@ func TestStringFuncsDoNotBreakJoins(t *testing.T) {
 		if strings.Contains(r.SQL, "ob_left(") {
 			t.Errorf("%s: ЛЕВОЕ СОЕДИНЕНИЕ подменено вызовом ЛЕВ():\n%s", d.Name(), r.SQL)
 		}
+	}
+}
+
+// Явный СПЕЦСИМВОЛ не получает второго ESCAPE, а SQLite — выравнивающего:
+// у его LIKE управляющего символа по умолчанию нет.
+func TestLikeEscapeIsAddedOnlyWhereNeeded(t *testing.T) {
+	compile := func(d storage.Dialect, src string) string {
+		t.Helper()
+		r, err := query.Compile(src, query.CompileOpts{
+			Entities: stringFuncCompileEntities(),
+			Params:   map[string]any{"П": "%x%"},
+			Dialect:  d,
+		})
+		if err != nil {
+			t.Fatalf("%s: компиляция: %v", d.Name(), err)
+		}
+		return r.SQL
+	}
+	explicit := compile(storage.PgDialect{}, `ВЫБРАТЬ Наименование ИЗ Справочник.КлиентТр ГДЕ Наименование ПОДОБНО &П СПЕЦСИМВОЛ "\"`)
+	if strings.Count(explicit, "ESCAPE") != 1 {
+		t.Errorf("явный СПЕЦСИМВОЛ должен дать ровно один ESCAPE: %s", explicit)
+	}
+	if sqlite := compile(storage.SQLiteDialect{}, `ВЫБРАТЬ Наименование ИЗ Справочник.КлиентТр ГДЕ Наименование ПОДОБНО &П`); strings.Contains(sqlite, "ESCAPE") {
+		t.Errorf("на SQLite ESCAPE не нужен: %s", sqlite)
+	}
+	// Шаблон в конце запроса и перед УПОРЯДОЧИТЬ — ESCAPE встаёт до предложения.
+	ordered := compile(storage.PgDialect{}, `ВЫБРАТЬ Наименование ИЗ Справочник.КлиентТр ГДЕ Наименование ПОДОБНО &П УПОРЯДОЧИТЬ ПО Наименование`)
+	if !strings.Contains(ordered, "ESCAPE '' ORDER BY") {
+		t.Errorf("ESCAPE должен закрыть шаблон до ORDER BY: %s", ordered)
 	}
 }
