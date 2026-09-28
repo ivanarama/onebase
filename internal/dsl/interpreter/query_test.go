@@ -33,7 +33,17 @@ type stubReg struct{}
 func (s *stubReg) Registers() []*metadata.Register               { return nil }
 func (s *stubReg) InfoRegisters() []*metadata.InfoRegister       { return nil }
 func (s *stubReg) AccountRegisters() []*metadata.AccountRegister { return nil }
-func (s *stubReg) Entities() []*metadata.Entity                  { return nil }
+
+// Entities — справочники и документы, которые читают тесты: источник запроса
+// «Справочник.Имя»/«Документ.Имя» обязан быть объектом конфигурации (#1772).
+func (s *stubReg) Entities() []*metadata.Entity {
+	cat := func(name string) *metadata.Entity { return &metadata.Entity{Name: name, Kind: metadata.KindCatalog} }
+	doc := func(name string) *metadata.Entity { return &metadata.Entity{Name: name, Kind: metadata.KindDocument} }
+	return []*metadata.Entity{
+		cat("Номенклатура"), cat("Материалы"), cat("ПрофилиИзвлечения"), cat("СобытиеДаты"), cat("ФорматДаты"),
+		doc("РасходТовара"), doc("Работы"), doc("Заказ"), doc("Обращение"),
+	}
+}
 
 func evalQuery(t *testing.T, src string, db interpreter.QueryDB, reg interpreter.QueryRegistry) any {
 	t.Helper()
@@ -131,7 +141,11 @@ func TestQuery_Execute_AccessReferenceReservedAlias(t *testing.T) {
 
 			result := evalQuery(t, src, db, &stubReg{})
 
-			assert.Equal(t, id, result)
+			// Документ есть в метаданных, поэтому «Ссылка» приходит
+			// типизированной ссылкой, а не строкой UUID.
+			ref, ok := result.(*interpreter.Ref)
+			require.True(t, ok, "ожидалась ссылка, получено %T", result)
+			assert.Equal(t, id, ref.UUID)
 		})
 	}
 }

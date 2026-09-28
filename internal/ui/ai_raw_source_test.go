@@ -68,16 +68,20 @@ func TestAIRunQuery_SourceOutsideConfigurationIsRejected(t *testing.T) {
 		return s.aiRunQuery(auth.ContextWithUser(ctx, clerk), llm.ToolCall{ID: "q", Input: map[string]any{"запрос": q}})
 	}
 
-	for _, q := range []string{
-		"ВЫБРАТЬ login, password_hash ИЗ _users",
-		"ВЫБРАТЬ З.Номер, У.password_hash ИЗ Документ.Заказ КАК З ЛЕВОЕ СОЕДИНЕНИЕ _users КАК У ПО У.login <> З.Номер",
+	for _, c := range []struct{ query, reason string }{
+		{"ВЫБРАТЬ login, password_hash ИЗ _users", "не объект конфигурации"},
+		{"ВЫБРАТЬ З.Номер, У.password_hash ИЗ Документ.Заказ КАК З ЛЕВОЕ СОЕДИНЕНИЕ _users КАК У ПО У.login <> З.Номер", "не объект конфигурации"},
+		// Скобки на месте источника и известный вид с чужим именем — те же
+		// служебные таблицы другой записью.
+		{"ВЫБРАТЬ login, password_hash ИЗ (_users)", "не объект конфигурации"},
+		{"ВЫБРАТЬ login, password_hash ИЗ Справочник._users", "такого объекта в конфигурации нет"},
 	} {
-		res := run(q)
+		res := run(c.query)
 		if !res.IsError {
-			t.Fatalf("%s: запрос выполнен, служебная таблица ушла ассистенту: %s", q, res.Content)
+			t.Fatalf("%s: запрос выполнен, служебная таблица ушла ассистенту: %s", c.query, res.Content)
 		}
-		if strings.Contains(res.Content, "boss") || !strings.Contains(res.Content, "не объект конфигурации") {
-			t.Fatalf("%s: отказ без причины или с данными учёток: %s", q, res.Content)
+		if strings.Contains(res.Content, "boss") || !strings.Contains(res.Content, c.reason) {
+			t.Fatalf("%s: отказ без причины или с данными учёток: %s", c.query, res.Content)
 		}
 	}
 

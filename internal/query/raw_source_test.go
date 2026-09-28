@@ -35,27 +35,75 @@ func rawSourceEntities() []*metadata.Entity {
 }
 
 func TestQueryRejectsSourceOutsideConfiguration(t *testing.T) {
-	for _, text := range []string{
-		`ВЫБРАТЬ password_hash ИЗ _users`,
-		`ВЫБРАТЬ У.login ИЗ _users КАК У`,
-		`ВЫБРАТЬ З.Номер ИЗ Документ.Заявка КАК З ЛЕВОЕ СОЕДИНЕНИЕ _sessions КАК С ПО С.user_id = З.Номер`,
-		`ВЫБРАТЬ Номер ИЗ Документ.Заявка ГДЕ Номер В (ВЫБРАТЬ login ИЗ _users)`,
-		`ВЫБРАТЬ З.Номер ИЗ Документ.Заявка КАК З, _users КАК У`,
-		`ВЫБРАТЬ name ИЗ sqlite_master`,
+	const (
+		bare    = "не объект конфигурации"
+		unknown = "такого объекта в конфигурации нет"
+		tail    = "не источник запроса"
+	)
+	// Справочник с именем схемы: «Тип.Имя.X» давал бы public._users.
+	ents := append(rawSourceEntities(), &metadata.Entity{Name: "Public", Kind: metadata.KindCatalog})
+	for _, c := range []struct{ text, reason string }{
+		{`ВЫБРАТЬ password_hash ИЗ _users`, bare},
+		{`ВЫБРАТЬ У.login ИЗ _users КАК У`, bare},
+		{`ВЫБРАТЬ З.Номер ИЗ Документ.Заявка КАК З ЛЕВОЕ СОЕДИНЕНИЕ _sessions КАК С ПО С.user_id = З.Номер`, bare},
+		{`ВЫБРАТЬ Номер ИЗ Документ.Заявка ГДЕ Номер В (ВЫБРАТЬ login ИЗ _users)`, bare},
+		{`ВЫБРАТЬ З.Номер ИЗ Документ.Заявка КАК З, _users КАК У`, bare},
+		{`ВЫБРАТЬ name ИЗ sqlite_master`, bare},
 		// Квалификация схемой не обходит проверку: первым идёт имя схемы.
-		`ВЫБРАТЬ password_hash ИЗ main._users`,
-		`ВЫБРАТЬ password_hash ИЗ public._users`,
+		{`ВЫБРАТЬ password_hash ИЗ main._users`, bare},
+		// public — имя справочника Public: голое имя с хвостом через точку
+		// превращалось бы в схему и таблицу.
+		{`ВЫБРАТЬ password_hash ИЗ public._users`, tail},
 		// Таблица регистра под сырым именем — тоже мимо метаданных.
-		`ВЫБРАТЬ * ИЗ рег_остатки`,
+		{`ВЫБРАТЬ * ИЗ рег_остатки`, bare},
+		// Скобки на месте источника не прячут имя, в том числе скобочное
+		// дерево соединений.
+		{`ВЫБРАТЬ login, password_hash ИЗ (_users)`, bare},
+		{`ВЫБРАТЬ login ИЗ ((_users))`, bare},
+		{`ВЫБРАТЬ З.Номер ИЗ (Документ.Заявка КАК З ЛЕВОЕ СОЕДИНЕНИЕ _users КАК У ПО У.login = З.Номер)`, bare},
+		// Известный вид — ещё не объект: у справочников и документов нет
+		// префикса таблицы, имя уходило в SQL как есть.
+		{`ВЫБРАТЬ login ИЗ Справочник._users`, unknown},
+		{`ВЫБРАТЬ login ИЗ Документ._users`, unknown},
+		{`ВЫБРАТЬ name ИЗ Справочник.sqlite_master`, unknown},
+		{`ВЫБРАТЬ Номер ИЗ Справочник.Заявка`, unknown}, // Заявка — документ
+		{`ВЫБРАТЬ password_hash ИЗ Справочник.Public._users`, tail},
 	} {
 		for _, dialect := range []storage.Dialect{storage.SQLiteDialect{}, storage.PgDialect{}} {
-			res, err := query.Compile(text, query.CompileOpts{Dialect: dialect, Entities: rawSourceEntities()})
+			res, err := query.Compile(c.text, query.CompileOpts{Dialect: dialect, Entities: ents})
 			if err == nil {
-				t.Errorf("%s (%s): запрос скомпилирован, ожидался отказ\nSQL: %s", text, dialect.Name(), res.SQL)
+				t.Errorf("%s (%s): запрос скомпилирован, ожидался отказ\nSQL: %s", c.text, dialect.Name(), res.SQL)
 				continue
 			}
-			if !strings.Contains(err.Error(), "не объект конфигурации") {
-				t.Errorf("%s (%s): ошибка не называет причину: %v", text, dialect.Name(), err)
+			if !strings.Contains(err.Error(), c.reason) {
+				t.Errorf("%s (%s): ошибка не называет причину %q: %v", c.text, dialect.Name(), c.reason, err)
+			}
+		}
+	}
+}
+
+// Скобки на месте источника остаются законными: скобочное дерево соединений
+// объектов конфигурации и вложенный запрос. Скобки вызова функции в условии ПО
+// местом источника не становятся — псевдоним после запятой в них не источник.
+func TestQueryParenthesizedSourcesOfConfigurationCompile(t *testing.T) {
+	заявка := query.SourceRef{Kind: "document", Name: "Заявка"}
+	клиент := query.SourceRef{Kind: "catalog", Name: "КлиентИст"}
+	for _, text := range []string{
+		`ВЫБРАТЬ З.Номер ИЗ (Документ.Заявка КАК З ЛЕВОЕ СОЕДИНЕНИЕ Справочник.КлиентИст КАК К ПО К.Ссылка = З.Клиент)`,
+		`ВЫБРАТЬ З.Номер ИЗ (Заявка КАК З ЛЕВОЕ СОЕДИНЕНИЕ КлиентИст КАК К ПО ЕСТЬNULL(К.Наименование, З.Номер) = З.Номер)`,
+	} {
+		res, err := query.Compile(text, query.CompileOpts{Dialect: storage.SQLiteDialect{}, Entities: rawSourceEntities()})
+		if err != nil {
+			t.Errorf("%s: компиляция: %v", text, err)
+			continue
+		}
+		for _, w := range []query.SourceRef{заявка, клиент} {
+			found := false
+			for _, s := range res.Sources {
+				found = found || s == w
+			}
+			if !found {
+				t.Errorf("%s: источник %+v не зарегистрирован, Sources = %+v", text, w, res.Sources)
 			}
 		}
 	}

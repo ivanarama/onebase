@@ -1,4 +1,7 @@
 {
+  "«%s.%s» — такого объекта в конфигурации нет": "«%s.%s» is not an object of the configuration",
+  "«%s.%s.%s» — не источник запроса: после объекта конфигурации через точку допустима только виртуальная таблица регистра со скобками": "«%s.%s.%s» is not a query source: after a configuration object only a register virtual table with parentheses may follow a dot",
+  "«%s.%s» — не источник запроса: после имени объекта конфигурации через точку ничего не пишется": "«%s.%s» is not a query source: nothing may follow a configuration object name after a dot",
   "«%s» — не объект конфигурации: в ИЗ и СОЕДИНЕНИЕ источником бывает Справочник.Имя, Документ.Имя, регистр (РегистрНакопления.Имя, РегистрСведений.Имя, РегистрБухгалтерии.Имя) или вложенный запрос": "«%s» is not a configuration object: a query source in ИЗ and СОЕДИНЕНИЕ is Справочник.Name, Документ.Name, a register (РегистрНакопления.Name, РегистрСведений.Name, РегистрБухгалтерии.Name) or a subquery",
   "«%s»: на источник действует строковый доступ, а он применяется только к полной форме — %s.%s": "«%s»: row-level access applies to this source, and it is enforced only for the full form — %s.%s",
   "%-ширины не поддерживаются печатью (PDF). Используйте px или mm.": "% widths are not supported when printing (PDF). Use px or mm.",

@@ -665,6 +665,7 @@ type translator struct {
 	section      querySection                  // current clause context
 	aliases      map[string]struct{}           // имена алиасов вывода (КАК ...) — их не квалифицируем и не CAST'им
 	sources      []SourceRef                   // объекты-источники запроса (для RBAC, план 54)
+	sourcePos    []bool                        // токен стоит на месте источника (sourcePositions)
 	rowFilters   []pendingRowFilter            // RLS-фильтры обычных источников, внедряемые в WHERE
 	rowsScoped   bool                          // true после внедрения rowFilters в outer WHERE
 	rowGroupOpen bool                          // открыта скобка вокруг собственного условия ГДЕ после внедрённого фильтра
@@ -790,28 +791,53 @@ func (tr *translator) addSource(typeUpper, name string) {
 	tr.sources = append(tr.sources, SourceRef{Kind: kind, Name: name})
 }
 
-// rawSourceAt — токен pos стоит на месте источника запроса: сразу после ИЗ
-// или СОЕДИНЕНИЕ либо после запятой списка источников — на глубине самого
-// SELECT (EXTRACT(YEAR FROM x) источника не начинает). Объект метаданных
-// «Тип.Имя» и вложенный запрос разбирают ветки выше, поэтому здесь бывает
-// только голое имя.
+// rawSourceAt — идентификатор pos стоит на месте источника запроса
+// (sourcePositions) и не ключевое слово: вложенный запрос «(ВЫБРАТЬ …»
+// начинается с места источника, но источником не является. Объект метаданных
+// «Тип.Имя» разбирают ветки выше, поэтому здесь бывает только голое имя.
 func (tr *translator) rawSourceAt(pos int) bool {
-	ctx := tr.sourceCtx
-	prevPos := pos - 1
-	if prevPos < 0 || pos >= len(tr.tokens) || prevPos >= len(ctx.tokenDepth) {
+	if pos < 0 || pos >= len(tr.sourcePos) || !tr.sourcePos[pos] {
 		return false
 	}
-	if ctx.sectionAt(prevPos) != sectionFrom || ctx.tokenDepth[prevPos] != ctx.scopeSelectDepth(tr.tokens, prevPos) {
-		return false
+	_, keyword := sqlKW(tr.tokens[pos].val)
+	return !keyword
+}
+
+// sourcePositions отмечает токены на месте источника запроса: сразу после ИЗ
+// (на глубине своего SELECT — EXTRACT(YEAR FROM x) источника не начинает),
+// после СОЕДИНЕНИЕ, после запятой списка источников — и внутри скобки,
+// открытой на таком месте. Иначе «ИЗ (_users)» и скобочное дерево соединений
+// «ИЗ (А КАК А ЛЕВОЕ СОЕДИНЕНИЕ _users …)» проходили бы мимо проверки.
+// Скобки выражения — вызов функции в условии ПО — местом источника не
+// становятся, и запятая в них источник не начинает.
+func (ctx sourceContext) sourcePositions(tokens []tok) []bool {
+	positions := make([]bool, len(tokens))
+	var groups []bool // открытые скобки: открыта ли каждая на месте источника
+	for i := range tokens {
+		if i > 0 && ctx.sectionAt(i-1) == sectionFrom {
+			sourceGroup := len(groups) > 0 && groups[len(groups)-1]
+			switch prev := tokens[i-1]; prev.kind {
+			case tLParen:
+				positions[i] = sourceGroup
+			case tComma:
+				positions[i] = sourceGroup || ctx.tokenDepth[i-1] == ctx.scopeSelectDepth(tokens, i-1)
+			case tIdent:
+				if kw, ok := sqlKW(prev.val); ok {
+					positions[i] = kw == "JOIN" ||
+						(kw == "FROM" && ctx.tokenDepth[i-1] == ctx.scopeSelectDepth(tokens, i-1))
+				}
+			}
+		}
+		switch tokens[i].kind {
+		case tLParen:
+			groups = append(groups, positions[i])
+		case tRParen:
+			if len(groups) > 0 {
+				groups = groups[:len(groups)-1]
+			}
+		}
 	}
-	switch prev := tr.tokens[prevPos]; prev.kind {
-	case tComma:
-		return true
-	case tIdent:
-		kw, ok := sqlKW(prev.val)
-		return ok && (kw == "FROM" || kw == "JOIN")
-	}
-	return false
+	return positions
 }
 
 // scopeSelectDepth — глубина скобок ключевого слова SELECT той области
@@ -830,6 +856,30 @@ func (ctx sourceContext) scopeSelectDepth(tokens []tok, pos int) int {
 		}
 	}
 	return -1
+}
+
+// checkSourceObject — источник «Справочник.Имя»/«Документ.Имя» обязан быть
+// объектом конфигурации этого вида. У справочников и документов префикса
+// таблицы нет, поэтому без проверки «Справочник._users» становился FROM _users —
+// таблицей СУБД мимо метаданных, как голое имя (addBareEntitySource). Регистры
+// не проверяются: префикс (рег_, инфо_, акк_) и так держит их в таблицах
+// регистров, а отсутствующий регистр падает при исполнении, ничего не раскрыв.
+// typeWord — вид, как он написан в запросе, для текста ошибки.
+func (tr *translator) checkSourceObject(typeUpper, typeWord, name string) error {
+	var want metadata.Kind
+	switch typeUpper {
+	case "СПРАВОЧНИК", "CATALOG":
+		want = metadata.KindCatalog
+	case "ДОКУМЕНТ", "DOCUMENT":
+		want = metadata.KindDocument
+	default:
+		return nil
+	}
+	if e := tr.findEntity(name); e != nil && e.Kind == want {
+		return nil
+	}
+	// Ключ — одним литералом: i18ncheck собирает ключи из исходника.
+	return i18nerr.Errorf("«%s.%s» — такого объекта в конфигурации нет", typeWord, name)
 }
 
 // findEntity — справочник или документ конфигурации по имени без учёта регистра.
@@ -859,6 +909,14 @@ func (tr *translator) addBareEntitySource(name string) error {
 	typeUpper, typeWord := "СПРАВОЧНИК", "Справочник"
 	if e.Kind == metadata.KindDocument {
 		typeUpper, typeWord = "ДОКУМЕНТ", "Документ"
+	}
+	// Хвост через точку превращал имя сущности в имя схемы: справочник Public
+	// и «ИЗ Public._users» давали FROM public._users.
+	if tr.peek(0).kind == tDot {
+		// Ключ — одним литералом: i18ncheck собирает ключи из исходника.
+		return i18nerr.Errorf(
+			"«%s.%s» — не источник запроса: после имени объекта конфигурации через точку ничего не пишется",
+			name, tr.peek(1).val)
 	}
 	// Строковый доступ внедряется только в полную форму источника. Голое имя
 	// под политикой всё равно было бы отклонено сверкой assertRowFiltersApplied,
@@ -4231,6 +4289,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		unionOrders: map[int]bool{},
 		section:     sectionOther,
 	}
+	tr.sourcePos = tr.sourceCtx.sourcePositions(tokens)
 	for {
 		t := tr.peek(0)
 		if t.kind == tEOF {
@@ -4322,6 +4381,18 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			tr.advance()
 			tr.advance()
 			entity := tr.advance()
+			if err := tr.checkSourceObject(upper, t.val, entity.val); err != nil {
+				return Result{}, err
+			}
+			// «Тип.Имя.X» без скобок — не источник: виртуальные таблицы со
+			// скобками разобраны выше, а хвост через точку уходил в SQL как
+			// схема и таблица — «Справочник.Public._users» давал public._users.
+			if tr.peek(0).kind == tDot {
+				// Ключ — одним литералом: i18ncheck собирает ключи из исходника.
+				return Result{}, i18nerr.Errorf(
+					"«%s.%s.%s» — не источник запроса: после объекта конфигурации через точку допустима только виртуальная таблица регистра со скобками",
+					t.val, entity.val, tr.peek(1).val)
+			}
 			tr.addSource(upper, entity.val)
 			tableName := sourceToTable(upper, entity.val)
 			// Главная таблица — первый источник FROM. Присоединяемые через явный
