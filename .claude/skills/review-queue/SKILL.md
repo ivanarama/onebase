@@ -25,6 +25,11 @@ python -m promptpilot.project_pipeline --config pipelinectl.json next review
 
 Разбери поле `action`:
 
+Если ответ содержит `complete_command` с `--lease-file`, используй её и добавь
+`--report <файл отчёта>`. Для fallback выполняй точную `gate_command` с выданным
+путём. Не копируй и не переписывай непрозрачный токен вручную. Файл не отменяет
+проверки HMAC, срока lease, HEAD, epoch и разрешений и не подлежит редактированию.
+
 - `audit` — проверь только возвращённый `target`: прочитай указанные материалы,
   создай detached worktree точного `head`, выполни подходящие сборку и тесты;
 - `empty` — закончи `ИТОГ: ПУСТО`;
