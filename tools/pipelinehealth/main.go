@@ -30,6 +30,8 @@ var (
 	baseSyncIntent    = regexp.MustCompile(`(?m)^<!-- pp:base-sync-intent from=([0-9a-f]{40}) base=([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) completion=([0-9]+) ship-event=([A-Za-z0-9_=-]+) previous=([0-9]+|none) -->$`)
 	baseSyncDone      = regexp.MustCompile(`(?m)^<!-- pp:base-sync-done intent=([0-9]+) from=([0-9a-f]{40}) to=([0-9a-f]{40}) base=([0-9a-f]{40}) previous=([0-9]+|none) ship-event=([A-Za-z0-9_=-]+) -->$`)
 	baseSyncV1Abort   = regexp.MustCompile(`(?m)^<!-- pp:base-sync-v1-aborted intent=([0-9]+) head=([0-9a-f]{40}) reason=commit-before-intent -->$`)
+	reviewedSHALine   = regexp.MustCompile(`(?m)^Reviewed-SHA: ([0-9a-f]{40})$`)
+	reviewOutcomeLine = regexp.MustCompile(`(?m)^Outcome-Label: (reviewed|changes-requested|needs-decision)$`)
 	triageRouteClaim  = regexp.MustCompile(`(?m)^<!-- pp:triage-route-claim fingerprint-sha256=([0-9a-f]{64}) owner=[0-9a-fA-F-]{36} -->$`)
 	triageRouteRecord = regexp.MustCompile(`(?m)(^pp-triage-route-v1\nissue=([0-9]+)\nissue-updated=[^\n]+\ntitle-sha256=[0-9a-f]{64}\nbody-sha256=[0-9a-f]{64}\nanalysis-sha256=[0-9a-f]{64}\ncomments-sha256=[0-9a-f]{64}\nlabels-sha256=[0-9a-f]{64}\nevents-watermark=(?:[0-9]+|none)\nclass=(?:bug|enhancement|question|documentation)\nroute=(ready-fix|needs-decision)\nmanual=(?:true|false)\nreply=(required|none)\n)`)
 	triageRouteLabels = regexp.MustCompile(`(?m)^<!-- pp:triage-route-labels claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) .+ -->$`)
@@ -101,6 +103,43 @@ type candidate struct {
 	PrioritySource string `json:"priority_source"`
 	UpdatedAt      string `json:"updated_at"`
 	IntegrationAt  string `json:"-"`
+	// Transition описывает механический переход base-sync у двухродительского
+	// HEAD. Заполняется только для такой формы коммита; у обычного раунда
+	// доработки его нет.
+	Transition *transitionProof `json:"transition,omitempty"`
+}
+
+// reviewProof — committed-пара ревью конкретной версии ветки: сам факт и
+// вердикт, который она зафиксировала. Outcome читается из названного
+// заключения и только если это заключение доверенное и относится к той же
+// версии: иначе вердикт остаётся пустым, и потребитель обязан считать переход
+// недоказанным.
+type reviewProof struct {
+	SHA           string `json:"sha"`
+	ReviewComment int64  `json:"review_comment"`
+	Claim         int64  `json:"claim"`
+	Epoch         string `json:"epoch_sha256"`
+	Outcome       string `json:"outcome_label,omitempty"`
+}
+
+// transitionProof — переход base-sync, каким он виден в графе коммитов:
+// родители HEAD дают «откуда» и «какая основная», сам HEAD — «куда».
+//
+// Опубликованные маркеры pp:base-sync-intent/done пересказывают ровно это, но
+// путь opt-in base_sync_merge их намеренно не публикует: ответ update-branch
+// проверяется до любого публикуемого факта, и конфликт 422 не должен оставлять
+// ложное «готово». Поэтому форма коммита — самостоятельное доказательство, а
+// ProvedBy лишь сообщает, был ли рядом ещё и журнал.
+//
+// Снимок очереди не доказывает ни предка base в main, ни побайтовый пересчёт
+// слияния: то и другое требует git и проверяется на стороне потребителя.
+type transitionProof struct {
+	From                string       `json:"from"`
+	Base                string       `json:"base"`
+	To                  string       `json:"to"`
+	ProvedBy            string       `json:"proved_by"`
+	FromReview          *reviewProof `json:"from_review,omitempty"`
+	CurrentHeadReviewed bool         `json:"current_head_reviewed"`
 }
 
 type finding struct {
@@ -370,6 +409,7 @@ func analyze(prs []apiPull, owner string) report {
 		currentCompletions, latestCompletion, latestOverride := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
 		carryDone, carryIntentOpen, v1AbortCurrent, baseAdvanced, protocolHistory, integrationAt := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA, pr.HeadParents)
 		item.IntegrationAt = integrationAt
+		item.Transition = baseSyncTransition(pr, owner, carryDone, currentCompletions)
 		if baseAdvanced {
 			result.add("yellow", "base_sync_base_advanced", pr.Number,
 				"base сдвинулся между intent и done; GraphQL gate должен проверить actual parent и ancestry")
@@ -903,6 +943,82 @@ func needsHeadParents(pr apiPull) bool {
 // while a missed one only falls back to the full GraphQL gate in MERGE.
 func headIsBaseSyncMerge(pr apiPull) bool {
 	return len(pr.HeadParents) == 2
+}
+
+// baseSyncTransition собирает доказательство перехода для двухродительского
+// HEAD. Первый родитель — ветка до освежения, второй — влитая основная: такой
+// порядок оставляет и update-branch, и обычное слияние основной в ветку.
+func baseSyncTransition(pr apiPull, owner string, doneCurrent bool, currentCompletions int) *transitionProof {
+	if !headIsBaseSyncMerge(pr) {
+		return nil
+	}
+	proof := &transitionProof{
+		From:                pr.HeadParents[0],
+		Base:                pr.HeadParents[1],
+		To:                  pr.Head.SHA,
+		ProvedBy:            "graph",
+		CurrentHeadReviewed: currentCompletions > 0,
+	}
+	if doneCurrent {
+		proof.ProvedBy = "markers"
+	}
+	proof.FromReview = committedReviewFor(pr.Comments, owner, proof.From)
+	return proof
+}
+
+// committedReviewFor находит последнюю доверенную committed-пару для указанной
+// версии ветки. Отредактированные и чужие комментарии не считаются — то же
+// правило, по которому живёт весь остальной разбор протокола.
+func committedReviewFor(comments []apiComment, owner, sha string) *reviewProof {
+	var found *reviewProof
+	for _, comment := range comments {
+		if !trustedUnedited(comment, owner) {
+			continue
+		}
+		for _, match := range completionLine.FindAllStringSubmatch(comment.Body, -1) {
+			if !strings.EqualFold(match[1], sha) {
+				continue
+			}
+			reviewID, err := strconv.ParseInt(match[2], 10, 64)
+			if err != nil {
+				continue
+			}
+			claimID, err := strconv.ParseInt(match[3], 10, 64)
+			if err != nil {
+				continue
+			}
+			found = &reviewProof{SHA: sha, ReviewComment: reviewID, Claim: claimID, Epoch: match[4]}
+		}
+	}
+	if found == nil {
+		return nil
+	}
+	found.Outcome = reviewOutcomeFor(comments, owner, found.ReviewComment, sha)
+	return found
+}
+
+// reviewOutcomeFor возвращает вердикт названного заключения и только если оно
+// доверенное и названо ровно для той же версии ветки. Пустая строка означает
+// «вердикт не доказан» — потребитель обязан отправить PR в обычное ревью, а не
+// достраивать вердикт догадкой.
+func reviewOutcomeFor(comments []apiComment, owner string, id int64, sha string) string {
+	for _, comment := range comments {
+		if comment.ID != id {
+			continue
+		}
+		if !trustedUnedited(comment, owner) {
+			return ""
+		}
+		head := reviewedSHALine.FindStringSubmatch(comment.Body)
+		if head == nil || !strings.EqualFold(head[1], sha) {
+			return ""
+		}
+		if outcome := reviewOutcomeLine.FindStringSubmatch(comment.Body); outcome != nil {
+			return outcome[1]
+		}
+		return ""
+	}
+	return ""
 }
 
 func labelSet(labels []apiLabel) map[string]bool {
