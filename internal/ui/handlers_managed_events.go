@@ -1100,6 +1100,9 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// txState — «живой» контекст: обработчик может позвать модуль, который
 	// откроет транзакцию, и ссылки объекта обязаны выполнять ПолучитьОбъект()
 	// внутри неё, а не ждать второго соединения (пул SQLite — одно).
+	if eventName == string(metadata.FormEventOnSearch) {
+		dslCtx = storage.ReadOnlyContext(dslCtx)
+	}
 	vars, txState := s.buildDSLVarsWithMessagesTx(dslCtx, mc, &msgs)
 	defer rollbackDSLExecution(txState)
 	isNewForHandler := strings.TrimSpace(r.FormValue("_id")) == "" && (closeInv == nil || !closeInv.saved)
@@ -1202,6 +1205,17 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	if pr := parsePickResult(r.FormValue("_pick_result")); pr != nil {
 		vars["ПодборРезультат"] = pr
 		vars["PickResult"] = pr
+	}
+
+	// Повторная фаза 1: набранное в строке поиска открытого диалога приходит как
+	// _pick_query → переменная ПодборЗапрос для обработчика события Поиск.
+	// Кладём ВСЕГДА, а не только для непустой строки: очистка строки поиска —
+	// такой же запрос («покажи всё»), и обработчику нужно уметь его отличить от
+	// первого открытия, где переменной нет вовсе.
+	if eventName == string(metadata.FormEventOnSearch) {
+		q := strings.TrimSpace(r.FormValue("_pick_query"))
+		vars["ПодборЗапрос"] = q
+		vars["PickQuery"] = q
 	}
 
 	// Фаза 2 вопроса (#1528): ответ пользователя — переменная ВопросОтвет
@@ -1825,7 +1839,7 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 	// «пересчёт на лету»: выбрал в строке другую ссылку, обработчик строки
 	// отработал — колонка приехала обновлённой.
 	s.applyVirtualTPColumns(ctx, entity, form, tableParts)
-	tpRefOptions, _ := s.loadInitialTPRefOptions(ctx, entity, tableParts)
+	tpRefOptions, _ := s.loadInitialTPRefOptions(ctx, entity, tableParts, values)
 	if s.interp != nil {
 		if warnings := applyManagedFormConditionalRules(form, tableParts, values, rules, newInterpEvaluator(s.interp)); len(warnings) > 0 {
 			msgs = append(msgs, warnings...)
@@ -2458,6 +2472,9 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		// request ends even when operation timeouts are disabled.
 		dslCtx, cancelDSL := context.WithCancel(opCtx)
 		defer cancelDSL()
+		if eventName == string(metadata.FormEventOnSearch) {
+			dslCtx = storage.ReadOnlyContext(dslCtx)
+		}
 		vars, txState := s.buildDSLVarsWithMessagesTx(dslCtx, mc, &msgs)
 		defer rollbackDSLExecution(txState)
 		thisObj := s.newFormObjectThisLive(dslCtx, txState, obj, virtEntity, form, false)
@@ -2503,6 +2520,17 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		if pr := parsePickResult(pickResult); pr != nil {
 			vars["ПодборРезультат"] = pr
 			vars["PickResult"] = pr
+		}
+		// Тот же ПодборЗапрос, что и в формах сущностей: серверный поиск обязан
+		// работать и в формах обработок, иначе платформенное поведение молча
+		// разное. Кладём ВСЕГДА при событии Поиск — очистка строки поиска это
+		// такой же запрос «покажи всё», и обработчику надо отличать его от
+		// первого открытия, где переменной нет вовсе.
+		if eventName == string(metadata.FormEventOnSearch) {
+			pickQuery, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_pick_query"))
+			q := strings.TrimSpace(pickQuery)
+			vars["ПодборЗапрос"] = q
+			vars["PickQuery"] = q
 		}
 		// Фаза 2 вопроса (#1683): ответ пользователя — переменная ВопросОтвет
 		// для обработчика события Ответ.

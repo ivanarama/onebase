@@ -223,12 +223,14 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 							continue
 						}
 						if hasValue {
-							add("%s: литерал value допустим только для is_folder", where)
+							if targetField.Type != metadata.FieldTypeBool {
+								add("%s: литерал value допустим для is_folder и булева реквизита, а %s.%s имеет тип %q", where, target.Name, targetField.Name, targetField.Type)
+							}
 							continue
 						}
-						source, sourceOK := formChoiceRefSource(owner, form, cond.From, entities)
-						if !sourceOK || source == nil {
-							add("%s: from %q не является явной ссылкой Объект.* или Форма.*", where, cond.From)
+						source, problem := formChoiceSourceEntity(owner, form, cond.From, entities)
+						if problem != "" {
+							add("%s: %s", where, problem)
 							continue
 						}
 						if targetField.RefEntity == "" || !strings.EqualFold(targetField.RefEntity, source.Name) {
@@ -241,12 +243,16 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 							continue
 						}
 						hierarchy := entities[strings.ToLower(targetField.RefEntity)]
-						source, sourceOK := formChoiceRefSource(owner, form, cond.From, entities)
+						source, problem := formChoiceSourceEntity(owner, form, cond.From, entities)
 						if targetField.RefEntity == "" || hierarchy == nil || hierarchy.Kind != metadata.KindCatalog || !hierarchy.Hierarchical {
 							add("%s: %s.%s не ссылается на иерархический справочник", where, target.Name, targetField.Name)
 							continue
 						}
-						if !sourceOK || source == nil || !strings.EqualFold(source.Name, hierarchy.Name) {
+						if problem != "" {
+							add("%s: %s", where, problem)
+							continue
+						}
+						if !strings.EqualFold(source.Name, hierarchy.Name) {
 							add("%s: from %q должен ссылаться на тот же иерархический справочник %s", where, cond.From, hierarchy.Name)
 						}
 
@@ -262,8 +268,10 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 }
 
 // formChoiceRefSource resolves an explicit two-segment form path to the entity
-// referenced by that value. Bare names and deeper paths are intentionally
-// rejected so future syntax cannot reinterpret an existing configuration.
+// referenced by that value: data_path of the element itself and the leading
+// segment of a condition source. Bare names and deeper paths are intentionally
+// rejected here so future syntax cannot reinterpret an existing configuration;
+// the one allowed hop lives in formChoiceSourceEntity.
 func formChoiceRefSource(owner *metadata.Entity, form *metadata.FormModule, path string, entities map[string]*metadata.Entity) (*metadata.Entity, bool) {
 	parts := strings.Split(strings.TrimSpace(path), ".")
 	if len(parts) != 2 || strings.TrimSpace(parts[1]) == "" {
@@ -291,6 +299,38 @@ func formChoiceRefSource(owner *metadata.Entity, form *metadata.FormModule, path
 	}
 	entity := entities[strings.ToLower(ref)]
 	return entity, entity != nil
+}
+
+// formChoiceSourceEntity разрешает источник условия: `Объект.<Поле>` и
+// `Форма.<Поле>` (значение самого элемента формы) либо путь с одним переходом
+// по ссылке — `Объект.<Поле>.<Реквизит>` (план 183, срез B1). Возвращает
+// справочник, на который ссылается значение источника, и причину отказа
+// человеческим текстом: сообщение «не является ссылкой» для трёхсегментного
+// пути не подсказало бы, какой из двух сегментов неверен.
+func formChoiceSourceEntity(owner *metadata.Entity, form *metadata.FormModule, path string, entities map[string]*metadata.Entity) (*metadata.Entity, string) {
+	source, ok := metadata.ParseFormChoiceSource(path)
+	if !ok {
+		return nil, fmt.Sprintf("from %q должен быть путём Объект.<Поле>, Форма.<Поле> или Объект.<Поле>.<Реквизит> — не более одного перехода по ссылке", path)
+	}
+	lead, leadOK := formChoiceRefSource(owner, form, source.Root+"."+source.Field, entities)
+	if !leadOK || lead == nil {
+		return nil, fmt.Sprintf("from %q: %s.%s не является явной ссылкой Объект.* или Форма.*", path, source.Root, source.Field)
+	}
+	if !source.Deep() {
+		return lead, ""
+	}
+	attr := entityFieldFold(lead, source.Attr)
+	if attr == nil {
+		return nil, fmt.Sprintf("from %q: у %s нет реквизита %q", path, lead.Name, source.Attr)
+	}
+	if strings.TrimSpace(attr.RefEntity) == "" {
+		return nil, fmt.Sprintf("from %q: реквизит %s.%s не ссылочный, сравнивать нечего", path, lead.Name, attr.Name)
+	}
+	target := entities[strings.ToLower(attr.RefEntity)]
+	if target == nil {
+		return nil, fmt.Sprintf("from %q: реквизит %s.%s ссылается на неизвестный объект %q", path, lead.Name, attr.Name, attr.RefEntity)
+	}
+	return target, ""
 }
 
 func formChoiceTypeRefEntity(typeRef string) string {

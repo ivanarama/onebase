@@ -53,10 +53,16 @@ func (t *pgxTx) releaseConn() {
 }
 
 func (t *pgxTx) Exec(ctx context.Context, sql string, args ...any) (CommandTag, error) {
+	if err := writeAllowed(ctx); err != nil {
+		return CommandTag{}, err
+	}
 	return cmdTag(t.tx.Exec(ctx, sql, args...))
 }
 
 func (t *pgxTx) Query(ctx context.Context, sql string, args ...any) (Rows, error) {
+	if err := queryAllowed(ctx, sql); err != nil {
+		return nil, err
+	}
 	rows, err := t.tx.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, err
@@ -65,6 +71,9 @@ func (t *pgxTx) Query(ctx context.Context, sql string, args ...any) (Rows, error
 }
 
 func (t *pgxTx) QueryRow(ctx context.Context, sql string, args ...any) Row {
+	if err := queryAllowed(ctx, sql); err != nil {
+		return errorRow{err: err}
+	}
 	return pgxRow{r: t.tx.QueryRow(ctx, sql, args...)}
 }
 

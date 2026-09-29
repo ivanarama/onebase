@@ -78,6 +78,21 @@ func choicePredicateSQL(d Dialect, entity *metadata.Entity, predicates []ChoiceP
 		if field == nil {
 			return "", nil, startArg, fmt.Errorf("choice filter %d: field %q does not exist", i, fieldName)
 		}
+		// Булев литерал: «показывать только немуниципальные адреса». Значение
+		// приходит из метаданных формы, а не от браузера, поэтому единственная
+		// проверка здесь — что реквизит действительно булев.
+		if value, isBool := predicate.Value.(bool); isBool {
+			if field.Type != metadata.FieldTypeBool {
+				return "", nil, startArg, fmt.Errorf("choice filter %d: field %q is not boolean", i, fieldName)
+			}
+			if predicate.Op != metadata.FormChoiceOpEqual {
+				return "", nil, startArg, fmt.Errorf("choice filter %d: boolean field %q supports only eq", i, fieldName)
+			}
+			parts = append(parts, metadata.ColumnName(*field)+" = "+d.Placeholder(next))
+			args = append(args, value)
+			next++
+			continue
+		}
 		if strings.TrimSpace(field.RefEntity) == "" {
 			return "", nil, startArg, fmt.Errorf("choice filter %d: field %q is not a reference", i, fieldName)
 		}
