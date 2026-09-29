@@ -2257,33 +2257,13 @@ func (s *Server) deleteMarked(w http.ResponseWriter, r *http.Request) {
 		http.StatusSeeOther)
 }
 
+// saveMovements записывает движения DSL-путей записи документа (Записать /
+// Провести из модуля, проведение из списка) той же реализацией, что Save и
+// Repost: своя копия здесь отставала — не снимала прежние движения из регистров,
+// которых модуль в этот раз не коснулся, и брала локи итогов в случайном
+// порядке обхода map (#626).
 func (s *Server) saveMovements(ctx context.Context, docType string, docID uuid.UUID, mc *runtime.MovementsCollector) error {
-	for regName, rows := range mc.All() {
-		// try accumulation register first
-		reg := s.reg.GetRegister(regName)
-		if reg != nil {
-			if err := s.store.WriteMovements(ctx, regName, docType, docID, rows, reg, mc.Period); err != nil {
-				return err
-			}
-			continue
-		}
-		// try account register
-		ar := s.reg.GetAccountRegister(regName)
-		if ar != nil {
-			if err := s.store.WriteAccountMovements(ctx, regName, docType, docID, rows, ar, mc.Period); err != nil {
-				return err
-			}
-			continue
-		}
-		// try info register (замечание #23)
-		ir := s.reg.GetInfoRegister(regName)
-		if ir != nil {
-			if err := s.store.WriteInfoMovements(ctx, regName, docType, docID, rows, ir, mc.Period); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return s.entityService().ReplaceMovements(ctx, docType, docID, mc)
 }
 
 // setPeriodFromFields sets the movements period from the first date field of the document.

@@ -15,6 +15,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -1361,26 +1362,19 @@ func (s *Service) Repost(ctx context.Context, entityName string, id uuid.UUID) e
 	})
 }
 
-// clearMovements removes every register row recorded by the document. Passing
-// nil rows to the storage writers performs only DELETE-by-recorder, therefore
-// it is safe to visit registers the document did not write to.
+// clearMovements снимает все движения документа (отмена проведения, удаление):
+// та же замена движений регистратора, только хук не сформировал ни одного.
+// Регистры, где у документа движений нет, не трогаются и не запираются.
 func (s *Service) clearMovements(ctx context.Context, entityName string, id uuid.UUID) error {
-	for _, reg := range s.Reg.Registers() {
-		if err := s.Store.WriteMovements(ctx, reg.Name, entityName, id, nil, reg, nil); err != nil {
-			return err
-		}
-	}
-	for _, ir := range s.Reg.InfoRegisters() {
-		if err := s.Store.WriteInfoMovements(ctx, ir.Name, entityName, id, nil, ir, nil); err != nil {
-			return err
-		}
-	}
-	for _, ar := range s.Reg.AccountRegisters() {
-		if err := s.Store.WriteAccountMovements(ctx, ar.Name, entityName, id, nil, ar, nil); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.replaceMovements(ctx, entityName, id, runtime.NewMovementsCollector(entityName, id), true)
+}
+
+// ReplaceMovements записывает движения регистратора, собранные хуком, так же,
+// как это делают Save и Repost. Нужен путям записи документа вне Save (DSL
+// Записать/Провести, проведение из списка): движения документа после записи
+// обязаны получаться одинаково, какой бы дверью ни пришли данные.
+func (s *Service) ReplaceMovements(ctx context.Context, docType string, docID uuid.UUID, mc *runtime.MovementsCollector) error {
+	return s.writeMovements(ctx, docType, docID, mc)
 }
 
 // totalsLockKeys собирает ключи advisory-локов итогов по всем регистрам, в
@@ -1405,21 +1399,79 @@ func (s *Service) totalsLockKeys(mc *runtime.MovementsCollector) []string {
 
 // writeMovements распределяет накопленные в mc движения по нужным типам
 // регистров (накопления, счетов, сведений). Вынесено из ui.Server.saveMovements.
+//
+// Движения документа после записи — ровно то, что сформировал хук: прежние
+// движения из регистров, которых хук в этот раз не коснулся, снимаются. Раньше
+// они оставались: модуль, пишущий регистр по условию, после перепроведения со
+// снятым условием оставлял документу движения, которых его данные уже не
+// порождают, и остатки расходились с документами молча. В 1С то же даёт
+// автоудаление движений при повторном проведении.
+//
+// Регистраторами бывают документы. Справочник с движениями в ПриЗаписи —
+// редкость, и проверять все регистры на каждой записи справочника (массовая
+// загрузка НСИ) было бы лишней ценой: для него поиск прежних движений идёт,
+// только когда хук вообще что-то записал.
 func (s *Service) writeMovements(ctx context.Context, docType string, docID uuid.UUID, mc *runtime.MovementsCollector) error {
+	scanAll := len(mc.All()) > 0
+	if ent := s.Reg.GetEntity(docType); ent != nil && ent.Kind == metadata.KindDocument {
+		scanAll = true
+	}
+	return s.replaceMovements(ctx, docType, docID, mc, scanAll)
+}
+
+// replaceMovements — общая часть записи и снятия движений регистратора.
+// scanAll=true: прежние движения ищутся во всех регистрах конфигурации, и
+// найденные вне mc снимаются.
+func (s *Service) replaceMovements(ctx context.Context, docType string, docID uuid.UUID, mc *runtime.MovementsCollector, scanAll bool) error {
+	var stale storage.RecorderRegisters
+	if scanAll {
+		var err error
+		if stale, err = s.staleMovementRegisters(ctx, docType, docID, mc); err != nil {
+			return err
+		}
+	}
 	// Локи итогов берём ОДНИМ вызовом до записи (issue #626). Каждый
 	// Write*Movements берёт свой лок сам, а обход mc.All() — обычная Go-map со
 	// случайным порядком: одно проведение захватывало «товары», потом
 	// «хозрасчётный», параллельное — наоборот, и PostgreSQL снимал одно из них
 	// с «deadlock detected». AdvisoryXactLock сортирует ключи (normalizeAdvisoryKeys),
-	// но только ВНУТРИ одного вызова — поэтому здесь и нужен общий список.
+	// но только ВНУТРИ одного вызова — поэтому здесь и нужен общий список: в
+	// него входят и регистры, откуда снимаются прежние движения.
 	// Повторный захват того же ключа в той же транзакции безвреден, так что
 	// Write*Movements менять не требуется.
 	//
 	// Тот же инвариант уже записан в runtime/locks.go: «Acquire берёт мьютексы
 	// по всем ключам в детерминированном порядке, чтобы избежать
 	// кросс-deadlock'а между двумя проведениями».
-	if err := s.Store.AdvisoryXactLock(ctx, s.totalsLockKeys(mc)); err != nil {
+	keys := s.totalsLockKeys(mc)
+	for _, reg := range stale.Registers {
+		if reg.TotalsUsable() {
+			keys = append(keys, "register-totals|"+strings.ToLower(reg.Name))
+		}
+	}
+	for _, ar := range stale.AccountRegisters {
+		if ar.TotalsUsable() {
+			keys = append(keys, "account-totals|"+strings.ToLower(ar.Name))
+		}
+	}
+	if err := s.Store.AdvisoryXactLock(ctx, keys); err != nil {
 		return err
+	}
+	// nil rows — только удаление по регистратору, итоги пересчитываются там же.
+	for _, reg := range stale.Registers {
+		if err := s.Store.WriteMovements(ctx, reg.Name, docType, docID, nil, reg, nil); err != nil {
+			return err
+		}
+	}
+	for _, ir := range stale.InfoRegisters {
+		if err := s.Store.WriteInfoMovements(ctx, ir.Name, docType, docID, nil, ir, nil); err != nil {
+			return err
+		}
+	}
+	for _, ar := range stale.AccountRegisters {
+		if err := s.Store.WriteAccountMovements(ctx, ar.Name, docType, docID, nil, ar, nil); err != nil {
+			return err
+		}
 	}
 	for regName, rows := range mc.All() {
 		if reg := s.Reg.GetRegister(regName); reg != nil {
@@ -1441,4 +1493,53 @@ func (s *Service) writeMovements(ctx context.Context, docType string, docID uuid
 		}
 	}
 	return nil
+}
+
+// staleMovementRegisters — регистры вне mc, в которых у регистратора остались
+// прежние движения. Имя регистра в mc разрешается так же, как при записи:
+// накопление, затем бухгалтерия, затем сведения. Кандидаты упорядочены по
+// имени: у одного набора тронутых регистров текст запроса один и тот же, и кэш
+// подготовленных выражений драйвера не размывается.
+func (s *Service) staleMovementRegisters(ctx context.Context, docType string, docID uuid.UUID, mc *runtime.MovementsCollector) (storage.RecorderRegisters, error) {
+	touchedRegs := map[*metadata.Register]bool{}
+	touchedInfos := map[*metadata.InfoRegister]bool{}
+	touchedAccs := map[*metadata.AccountRegister]bool{}
+	for regName := range mc.All() {
+		if reg := s.Reg.GetRegister(regName); reg != nil {
+			touchedRegs[reg] = true
+			continue
+		}
+		if ar := s.Reg.GetAccountRegister(regName); ar != nil {
+			touchedAccs[ar] = true
+			continue
+		}
+		if ir := s.Reg.GetInfoRegister(regName); ir != nil {
+			touchedInfos[ir] = true
+		}
+	}
+	var regs []*metadata.Register
+	for _, reg := range s.Reg.Registers() {
+		if !touchedRegs[reg] {
+			regs = append(regs, reg)
+		}
+	}
+	var infos []*metadata.InfoRegister
+	for _, ir := range s.Reg.InfoRegisters() {
+		if !touchedInfos[ir] {
+			infos = append(infos, ir)
+		}
+	}
+	var accs []*metadata.AccountRegister
+	for _, ar := range s.Reg.AccountRegisters() {
+		if !touchedAccs[ar] {
+			accs = append(accs, ar)
+		}
+	}
+	if len(regs)+len(infos)+len(accs) == 0 {
+		return storage.RecorderRegisters{}, nil
+	}
+	sort.Slice(regs, func(i, j int) bool { return regs[i].Name < regs[j].Name })
+	sort.Slice(infos, func(i, j int) bool { return infos[i].Name < infos[j].Name })
+	sort.Slice(accs, func(i, j int) bool { return accs[i].Name < accs[j].Name })
+	return s.Store.RecorderMovementRegisters(ctx, docType, docID, regs, infos, accs)
 }

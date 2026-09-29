@@ -3,14 +3,14 @@ package entityservice
 // Порты хранилища (шаг 2 ARCH-01, issue #787).
 //
 // Интерфейсы объявлены на стороне потребителя: здесь перечислена ровно та
-// поверхность *storage.DB, которой пользуется сам сервис, — 25 методов из 314.
+// поверхность *storage.DB, которой пользуется сам сервис, — 26 методов из 318.
 // internal/storage о них не знает и не меняется, *storage.DB удовлетворяет им
 // как есть (см. compile-time проверку в конце файла).
 //
 // Зачем: раньше поле Service.Store имело тип *storage.DB, и сигнатура ничего не
 // сообщала о контракте — чтобы узнать, что сервису нужно от базы, приходилось
 // читать сервис целиком. Теперь набор виден объявлением, а изменение любого из
-// остальных 289 методов storage.DB сервиса не задевает.
+// остальных 292 методов storage.DB сервиса не задевает.
 //
 // Роли объявлены раздельно, чтобы будущие потребители могли зависеть от узкой
 // части; поле Store пока держит совокупный Storage — это оставляет все точки
@@ -72,6 +72,10 @@ type MovementStore interface {
 	// WriteAccountMovements перезаписывает проводки документа в бухрегистре
 	// (вместе с итогами в той же транзакции).
 	WriteAccountMovements(ctx context.Context, regName, docType string, docID uuid.UUID, rows []map[string]any, ar *metadata.AccountRegister, period *time.Time) error
+	// RecorderMovementRegisters сообщает одним запросом, в каких из переданных
+	// регистров у регистратора есть движения — чтобы снимать и запирать только их.
+	RecorderMovementRegisters(ctx context.Context, recorderType string, recorderID uuid.UUID,
+		regs []*metadata.Register, infos []*metadata.InfoRegister, accs []*metadata.AccountRegister) (storage.RecorderRegisters, error)
 }
 
 // TxManager — управление транзакцией вокруг записи и проведения.
