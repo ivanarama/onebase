@@ -222,7 +222,7 @@ func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uui
 	args = append(args, *expectedVersion)
 	sql := fmt.Sprintf("UPDATE %s SET %s WHERE id = %s AND _version = %s",
 		table, strings.Join(sets, ", "), idPH, versionPH)
-	tag, err := db.Exec(ctx, sql, args...)
+	tag, err := db.execAllowingFKDiagnosis(ctx, sql, args...)
 	if err != nil {
 		if staged {
 			if conflict := stageConcurrencyErr(err); errors.Is(conflict, ErrStageConcurrentWrite) {
@@ -234,7 +234,11 @@ func (db *DB) upsertVersionedInTx(ctx context.Context, entityName string, id uui
 		if explained := ExplainUniqueViolation(err, entity, fields); errors.Is(explained, ErrCodeDuplicate) {
 			return explained
 		}
-		return fmt.Errorf("upsert versioned %s: %w", entityName, classifyConstraintErr(err))
+		classified := classifyConstraintErr(err)
+		if errors.Is(classified, ErrForeignKeyViolation) {
+			return fmt.Errorf("upsert versioned %s: %w", entityName, db.explainFKViolation(ctx, entity, fields, classified))
+		}
+		return fmt.Errorf("upsert versioned %s: %w", entityName, classified)
 	}
 	if tag.RowsAffected != 1 {
 		return ErrVersionConflict

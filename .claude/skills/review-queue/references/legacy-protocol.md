@@ -490,10 +490,11 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    Legacy re-ship нужен только для веток, которые MERGE обновил до внедрения
    intent/done. Он валиден, когда текущий HEAD `to` — merge-коммит ровно с двумя
    parents `[from, base]`; `from` имеет каноничный proof `reviewed` и trusted
-   `ship` после него; между этим ship и `to` есть ровно один
-   `PullRequestCommit` и нет иных HEAD/base lifecycle events; `base` — предок
-   текущего `main`; а **последний** ship-transition — новый trusted
-   `LabeledEvent` от `ivanarama`, расположенный уже после anchor `to`. Допустимо,
+   `ship` после него; по графу единственный новый после этого ship
+   `PullRequestCommit` — сам `to`, и нет иных HEAD/base lifecycle events
+   (позиция в таймлайне не проверяется — #1561); `base` — предок текущего
+   `main`; а **последний** ship-transition — новый trusted `LabeledEvent` от
+   `ivanarama`, расположенный уже после anchor `to`. Допустимо,
    что старый пастух снял прежний `ship` между `to` и новым re-ship. Новый label
    является явным разрешением проверить и затем влить точный уже существующий
    `to`, но не наследуется следующим push. Все условия докажи двумя стабильными
@@ -507,7 +508,8 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    более поздним unlabel). Он валиден, только если
    текущий HEAD в точности равен `to` этого done; commit имеет parents
    `[from, base]`; адресованный source proof `from` каноничен; между intent и
-   done был ровно один `PullRequestCommit`; `base` — предок текущего `main`; а
+   done был ровно один новый `PullRequestCommit` — по графу, без опоры на
+   позицию таймлайна (#1561); `base` — предок текущего `main`; а
    **последний** ship-transition — новый trusted `LabeledEvent` от `ivanarama`
    уже после edge самого done. После done и до нового label/current snapshot не
    должно быть HEAD/base lifecycle events. Снятие старой метки непосредственно

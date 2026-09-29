@@ -2,6 +2,7 @@ package interpreter_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -25,6 +26,17 @@ func (r *entityReg) Registers() []*metadata.Register               { return nil 
 func (r *entityReg) InfoRegisters() []*metadata.InfoRegister       { return nil }
 func (r *entityReg) AccountRegisters() []*metadata.AccountRegister { return nil }
 func (r *entityReg) Entities() []*metadata.Entity                  { return r.entities }
+
+// GetEntity — вторая половина реестра: её требует EntityLookup у CatalogsRoot,
+// то есть путь «Справочники.X» из продового окружения (#1353).
+func (r *entityReg) GetEntity(name string) *metadata.Entity {
+	for _, e := range r.entities {
+		if e != nil && strings.EqualFold(e.Name, name) {
+			return e
+		}
+	}
+	return nil
+}
 
 func boolFlagCatalog() *metadata.Entity {
 	return &metadata.Entity{

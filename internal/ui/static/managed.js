@@ -326,6 +326,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     o.textContent = label;
     sel.appendChild(o);
   }
+  // BEGIN onebase-ro-apply-values
   function applyValues(values, refOptions){
     if (!values) return;
     const form = document.getElementById('main-form');
@@ -361,6 +362,11 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         } else {
           inp.value = val;
         }
+        // Зеркало значения (план 181C/#1672): у запертого select-поля value
+        // меняет обработчик через сам select, а отправляется зеркало — держим
+        // их синхронными при каждом применении значения.
+        var mir = document.getElementById('ro-mirror-' + k);
+        if (mir) mir.value = val;
       }
     });
     // A form handler may change a choice_filter source without dispatching a
@@ -370,6 +376,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       window.obRefreshChoiceFilters();
     }
   }
+  // END onebase-ro-apply-values
   // applyChoiceList — заполняет <select> элемента ПолеСписка динамическим списком
   // значений из ответа НачалоВыбора (choiceList). Текущее значение сохраняется,
   // если присутствует в новом списке.
@@ -445,6 +452,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   // знает ни статического readonly потомка, ни права на запись, и обход
   // потомков скопом отпирал бы при ложном условии поле, которое сервер
   // отрисовал нередактируемым навсегда.
+  // BEGIN onebase-ro-apply-states
   function applyElementStates(st) {
     if (!st) return;
     var byName = function (name) {
@@ -482,8 +490,17 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       if (el.tagName === 'BUTTON') { el.disabled = on; return; }
       // input/textarea оставляем видимыми и выделяемыми (readonly), select и
       // кнопку подбора гасим (disabled) — как это делает серверный рендер.
+      // Зеркало значения (план 181C/#1672): select под запретом браузер не
+      // отправляет, поэтому успешным делаем зеркало — и только на время
+      // запрета; при разблокировке значение снова возит сам select.
+      var roMirror = null;
       el.querySelectorAll('input, textarea').forEach(function (inp) {
         if (!ownControl(el, inp)) return;
+        if (inp.dataset && inp.dataset.obRoMirror === '1') {
+          inp.disabled = !on;
+          roMirror = inp;
+          return;
+        }
         // Hidden presence-marker distinguishes an unchecked checkbox from a
         // checkbox absent from the submitted form. It must be successful only
         // while the checkbox itself is editable; otherwise marker-without-value
@@ -502,10 +519,12 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       el.querySelectorAll('select, button:not([data-ob-ref-current])').forEach(function (n) {
         if (!ownControl(el, n)) return;
         n.disabled = on;
+        if (n.tagName === 'SELECT' && roMirror) roMirror.value = n.value || '';
       });
     });
   }
   window.applyElementStates = applyElementStates;
+  // END onebase-ro-apply-states
   // Перерисовка табчастей по ответу сервера. tbody у нас имеет
   // id=mtp-body-<TP> и атрибут data-tp-fields="name|type[:Ref],name|type,..."
   // где field-meta использовалось для определения типа input при первичном рендере;
@@ -917,7 +936,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	return legacySelected.join(',');
   }
 
-  async function snapshotFormEvent(elementName, eventName, extraParams, triggerSelection){
+  async function snapshotFormEvent(elementName, eventName, extraParams, triggerSelection, pickerRequest){
     // Зафиксировать активную правку и синхронизировать ТЧ. При невалидной
     // ссылке или исключении editor-lock отправлять старое tp_json нельзя.
     if (window.obGridSync && window.obGridSync() === false) return;
@@ -959,7 +978,8 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     }
     return {
 	  body: body, form: form, elementName: elementName,
-	  extraParams: extraParams, wasNew: !DOC_ID
+	  extraParams: extraParams, wasNew: !DOC_ID,
+	  eventName: eventName, pickerRequest: pickerRequest
 	};
   }
 
@@ -984,6 +1004,9 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	  formEventWriteUnknown = true;
 	  setManagedFormDirty(true);
 	}
+	// Окно могли закрыть, пока событие ждало своей очереди или чтения файлов:
+	// диалог уже не тот — ответ некуда применять.
+	if (snapshot.pickerRequest && snapshot.pickerRequest.search && !window.obPickerRequestCurrent(snapshot.pickerRequest)) return;
     try {
       const res = await fetch(URL, {
         method: 'POST',
@@ -992,6 +1015,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         credentials: 'same-origin'
       });
       const data = await res.json();
+      if (snapshot.pickerRequest && snapshot.pickerRequest.search && !window.obPickerRequestCurrent(snapshot.pickerRequest)) return;
 	  // A JSON proxy/error page is not a trusted application envelope. `ok` is
 	  // mandatory in every formEventResponse, including server-side failures.
       if (!data || typeof data !== 'object' || typeof data.ok !== 'boolean') {
@@ -1005,12 +1029,37 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // optimistic version before any renderer, picker or message callback can
       // throw, so a later queued action updates the row instead of inserting it.
       applySavedIdentity(data);
+      // Навигация (#1557): переход только у инициатора, адрес построен
+      // сервером. Несохранённая форма остаётся на месте — переход отменяется.
+      if (data.navigation && data.navigation.url) {
+        if (window._obFormDirty) {
+          flash('Форма содержит несохранённые изменения — переход не выполнен', 'err');
+          return;
+        }
+        window.location.assign(data.navigation.url);
+        return;
+      }
       // Подбор фазы 1: сервер вернул pickerData — открыть диалог, не трогая
       // ТЧ (её обновит фаза 2 после «Перенести»).
       if (data.pickerData) {
+        if (snapshot.pickerRequest && !window.obPickerRequestCurrent(snapshot.pickerRequest)) return;
         (data.messages || []).forEach(m => flash(m, 'ok'));
         if (data.error) flash(data.error, 'err');
-        openItemPicker(data.pickerData, elementName, extraParams || null);
+        openItemPicker(data.pickerData, elementName, extraParams || null, snapshot.pickerRequest);
+        return;
+      }
+      // Поиск в уже открытом диалоге не дал строк: обработчик ограничился
+      // сообщением и ПоказатьПодбор не позвал. Прежнюю выдачу оставлять нельзя —
+      // её прочитают как ответ на новый запрос.
+      if (snapshot.eventName === 'Поиск' && !data.error && typeof window.obPickerSearchEmpty === 'function') {
+        window.obPickerSearchEmpty(snapshot.pickerRequest);
+      }
+      // Вопрос фазы 1 (#1528): открыть модал; ответ вернётся событием Ответ
+      // через _question_answer — сервер положит его в ВопросОтвет.
+      if (data.question) {
+        (data.messages || []).forEach(m => flash(m, 'ok'));
+        if (data.error) flash(data.error, 'err');
+        if (window.obOpenQuestion) window.obOpenQuestion(data.question, elementName);
         return;
       }
       // dirty=true is an authoritative safety signal and must survive a
@@ -1035,12 +1084,17 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // there is no identity with which to issue another safe write. Fence all
       // write-capable actions for this document; the user can leave the form,
       // but this page must never guess and create a duplicate.
-      if (!responseKnown && snapshot.wasNew && !DOC_ID) fenceUnknownResult();
+      if (snapshot.pickerRequest && snapshot.pickerRequest.search && !window.obPickerRequestCurrent(snapshot.pickerRequest)) return;
+      // Серверный поиск открытого диалога подбора — исключение: его обработчик
+      // не пишет документ (фаза 1 того же диалога), а вечный фенс делал бы
+      // ошибку поиска фатальной для всей формы.
+      if (!responseKnown && snapshot.wasNew && !DOC_ID && !(snapshot.pickerRequest && snapshot.pickerRequest.search)) fenceUnknownResult();
       flash('Сетевая ошибка: ' + (e && e.message ? e.message : e), 'err');
     }
   }
 
-  window.obFire = function(elementName, eventName, extraParams){
+  window.obFire = function(elementName, eventName, extraParams, pickerRequest){
+	pickerRequest = pickerRequest || (window.obPickerRequest ? window.obPickerRequest() : null);
 	if (formEventWriteUnknown || manualReconcileRequired) {
 	  flash(closeMessage('unknownResult', 'Исход операции неизвестен. Проверьте данные в отдельной вкладке и перезагрузите форму; повторная запись заблокирована.'), 'err');
 	  return Promise.resolve();
@@ -1073,21 +1127,19 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	var snapshotPromise = null;
 	var deferSnapshot = formEventPendingCount > 0;
 	if (!deferSnapshot) {
-	  try { snapshotPromise = snapshotFormEvent(capturedElement, capturedEvent, capturedExtra, capturedSelection); }
+	  try { snapshotPromise = snapshotFormEvent(capturedElement, capturedEvent, capturedExtra, capturedSelection, pickerRequest); }
 	  catch (e) {
 		flash('Ошибка формы: ' + (e && e.message ? e.message : e), 'err');
 		return Promise.resolve();
 	  }
 	}
-	formEventPendingCount++;
-	formEventPending = true;
-	var queued = formEventQueue.catch(function(){}).then(async function(){
+	var runEvent = async function(){
 	  var snapshot;
 	  if (reloadRequired || formEventWriteUnknown || manualReconcileRequired) return;
 	  try {
 		snapshot = snapshotPromise
 		  ? await snapshotPromise
-		  : await snapshotFormEvent(capturedElement, capturedEvent, capturedExtra, capturedSelection);
+		  : await snapshotFormEvent(capturedElement, capturedEvent, capturedExtra, capturedSelection, pickerRequest);
 	  }
 	  catch (e) {
 		flash('Ошибка формы: ' + (e && e.message ? e.message : e), 'err');
@@ -1095,9 +1147,24 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	  }
 	  if (!snapshot || reloadRequired || formEventWriteUnknown || manualReconcileRequired) return;
 	  return dispatchFormEvent(snapshot);
-	});
-	formEventQueue = queued.catch(function(){});
+	};
+	// Серверный поиск диалога не пишет документ: гоняем его вне общей очереди
+	// записи, чтобы он не ждал обычные события формы и не блокировал их.
+	var standaloneSearch = !!(pickerRequest && pickerRequest.search);
+	var queued;
+	if (standaloneSearch) {
+	  queued = runEvent();
+	} else {
+	  formEventPendingCount++;
+	  formEventPending = true;
+	  queued = formEventQueue.catch(function(){}).then(runEvent);
+	  formEventQueue = queued.catch(function(){});
+	}
+	if (standaloneSearch && typeof window.obPickerSearchFinished === 'function') {
+	  queued = queued.finally(function(){ window.obPickerSearchFinished(pickerRequest); });
+	}
 	return queued.finally(function(){
+	  if (standaloneSearch) return;
 	  formEventPendingCount = Math.max(0, formEventPendingCount - 1);
 	  formEventPending = formEventPendingCount > 0;
 	});
@@ -1437,11 +1504,16 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         body = new URLSearchParams(pendingRetry.body);
         snapshotKey = pendingRetry.key;
 		envelope = Object.assign({}, pendingRetry.envelope);
+		// Повтор неизвестного исхода не вправе претендовать на «первую
+		// попытку»: после перезапуска сервера он обязан остаться под фенсом
+		// (reconcile), как и раньше (#1685).
+		envelope.first = '';
       } else {
 		envelope = {
 		  intentId: freshCloseIntentID(),
 		  epoch: CLOSE_EPOCH,
 		  issuedAt: String(closeIssuedAtNow()),
+		  first: '1',
 		  reason: reason,
 		  mode: mode,
 		  formKind: closeFormKind(),
@@ -1474,6 +1546,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 			'X-OneBase-Close-Intent': intentID,
 			'X-OneBase-Close-Epoch': String(envelope.epoch || ''),
 			'X-OneBase-Close-Issued-At': String(envelope.issuedAt || ''),
+			'X-OneBase-Close-First-Attempt': String(envelope.first || ''),
 			'X-OneBase-Close-Reason': reason,
 			'X-OneBase-Close-Mode': mode,
 			'X-OneBase-Form-Kind': String(envelope.formKind || ''),
@@ -2375,7 +2448,23 @@ obManagedReady(obManagedInitDelegates);
     var wrapper, input, dropBtn, list;
     var isOpen = false, selectedId = '', defaultValue = '';
     var refEntity = (args.column && args.column.refEntity) || '';
+    var refFilter = (args.column && args.column.refFilter) || '';
+    var initialFilter = '';
+    try {
+      if (refFilter) {
+        var spec = JSON.parse(refFilter), initial = {};
+        Object.keys(spec).forEach(function(key) { initial[key] = (spec[key] && spec[key].value) || ''; });
+        initialFilter = '&flt=' + encodeURIComponent(JSON.stringify(initial));
+      }
+    } catch (e) {}
+    function filterParam() {
+      if (!refFilter || typeof window.obRefFilterParam !== 'function') return '';
+      var carrier = document.createElement('select');
+      carrier.setAttribute('data-ref-filter', refFilter);
+      return window.obRefFilterParam(carrier);
+    }
     var serverRows = [];   // последний ответ серверного поиска
+    var serverFilter = '';
     var shown = [];        // что сейчас отрисовано в списке (для ↑/↓ и Enter)
     var activeIdx = -1;    // подсвеченный пункт списка, -1 — нет подсветки
     var searchTimer = null, searchSeq = 0;
@@ -2395,7 +2484,7 @@ obManagedReady(obManagedInitDelegates);
       for (var k = 0; k < refOptsList.length; k++) {
         if (String(refOptsList[k].id) === String(opt.id)) return;
       }
-      refOptsList.push({id: opt.id, _label: opt._label});
+      refOptsList.push({id: opt.id, _label: opt._label, _ownerFilter: filterParam()});
     }
 
     // candidates — предзагруженные опции + серверные результаты, отфильтрованные
@@ -2412,8 +2501,13 @@ obManagedReady(obManagedInitDelegates);
         seen[key] = true;
         out.push({id: o.id, _label: lbl});
       }
-      for (var i = 0; i < refOptsList.length; i++) push(refOptsList[i]);
-      for (var j = 0; j < serverRows.length; j++) push(serverRows[j]);
+      var currentFilter = filterParam();
+      for (var i = 0; i < refOptsList.length; i++) {
+        if ((refOptsList[i]._ownerFilter || initialFilter) === currentFilter) push(refOptsList[i]);
+      }
+      if (currentFilter === serverFilter) {
+        for (var j = 0; j < serverRows.length; j++) push(serverRows[j]);
+      }
       return out;
     }
 
@@ -2508,16 +2602,18 @@ obManagedReady(obManagedInitDelegates);
     function searchServer(q) {
       if (!refEntity || !window.fetch) return;
       var seq = ++searchSeq;
+      var requestFilter = filterParam();
       var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) +
-                '?limit=50&q=' + encodeURIComponent(q || '');
+                '?limit=50&q=' + encodeURIComponent(q || '') + requestFilter;
       fetch(url, {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
         .then(function(resp) { if (!resp.ok) throw new Error('HTTP ' + resp.status); return resp.json(); })
         .then(function(data) {
-          if (seq !== searchSeq) return; // ответ устарел (или редактор уже закрыт)
+          if (seq !== searchSeq || requestFilter !== filterParam()) return; // ответ устарел
           var keep = (activeIdx >= 0 && shown[activeIdx]) ? shown[activeIdx].id : '';
           serverRows = ((data && data.items) || []).map(function(row) {
             return {id: row && row.id != null ? String(row.id) : '', _label: String((row && row._label) || '')};
           }).filter(function(o) { return o.id !== ''; });
+          serverFilter = requestFilter;
           if (isOpen) buildList(input.value, keep);
         })
         .catch(function() { /* сеть/ошибка — остаются предзагруженные опции */ });
@@ -2557,6 +2653,7 @@ obManagedReady(obManagedInitDelegates);
       if (typeof window.openRefPicker !== 'function') return;
       var selEl = document.createElement('select');
       selEl.setAttribute('data-ref-entity', refEntity);
+      if (refFilter) selEl.setAttribute('data-ref-filter', refFilter);
       // «+ Создать» в форме подбора включается тем же признаком колонки, что и
       // в автоформе (allow_inline_create у поля ТЧ). Без переноса на временный
       // select подбор из ячейки не давал создать элемент НИКОГДА, даже когда
@@ -2947,6 +3044,7 @@ obManagedReady(obManagedInitDelegates);
         // него в ячейке были видны только предзагруженные опции, а модалка
         // подбора уходила в локальный фильтр вместо /ui/_ref-options.
         col.refEntity = c.ref;
+        col.refFilter = c.refFilter || '';
         // allowCreate приходит из allow_inline_create поля ТЧ (сервер кладёт
         // его в data-sg-cols только когда создание разрешено).
         col.allowCreate = !!c.allowCreate;

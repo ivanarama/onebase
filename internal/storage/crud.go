@@ -153,6 +153,9 @@ type upsertWriteOptions struct {
 
 func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any,
 	entity *metadata.Entity, options upsertWriteOptions) error {
+	if err := writeAllowed(ctx); err != nil {
+		return err
+	}
 	if err := db.enumBackstop(ctx, entity, fields); err != nil {
 		return err
 	}
@@ -357,7 +360,7 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 		sql = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (id) DO UPDATE SET %s",
 			table, strings.Join(cols, ", "), strings.Join(placeholders, ", "), strings.Join(updates, ", "))
 	}
-	tag, err := db.Exec(ctx, sql, args...)
+	tag, err := db.execAllowingFKDiagnosis(ctx, sql, args...)
 	if err != nil {
 		if staged {
 			if conflict := stageConcurrencyErr(err); errors.Is(conflict, ErrStageConcurrentWrite) {
@@ -371,7 +374,11 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 		if explained := ExplainUniqueViolation(err, entity, fields); errors.Is(explained, ErrCodeDuplicate) {
 			return explained
 		}
-		return fmt.Errorf("upsert %s: %w", entityName, classifyConstraintErr(err))
+		classified := classifyConstraintErr(err)
+		if errors.Is(classified, ErrForeignKeyViolation) {
+			return fmt.Errorf("upsert %s: %w", entityName, db.explainFKViolation(ctx, entity, fields, classified))
+		}
+		return fmt.Errorf("upsert %s: %w", entityName, classified)
 	}
 	if staged && tag.RowsAffected != 1 {
 		// Ноль изменённых строк на пути с этапами означает ровно одно: между
@@ -833,6 +840,69 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 	// sorting
 	if keyset {
 		query += " ORDER BY id ASC"
+	} else if params.Sort == "" && len(entity.OrderBy) > 0 {
+		// Порядок по умолчанию из метаданных (order_by): у значений бывает свой
+		// порядок, не алфавитный, — «порядок в отчётах» у направлений. Папки
+		// по-прежнему идут первыми: перемешать их с элементами значило бы сломать
+		// дерево.
+		d := db.dialect
+		parts := make([]string, 0, len(entity.OrderBy)+1)
+		if entity.Hierarchical {
+			parts = append(parts, "is_folder DESC")
+		}
+		for _, spec := range entity.OrderBy {
+			name, desc := metadata.SplitOrderSpec(spec)
+			col := ""
+			var field metadata.Field
+			for _, f := range entity.Fields {
+				if strings.EqualFold(f.Name, name) {
+					col = metadata.ColumnName(f)
+					field = f
+					break
+				}
+			}
+			if col == "" {
+				// Имя проверено metadata.Validate; сюда попадает только устаревшая
+				// конфигурация из БД — молча пропускаем, а не роняем список.
+				continue
+			}
+			// Незаполненное — В КОНЕЦ, независимо от направления: «порядок не
+			// задан» это не «идёт первым». В SQLite NULL при ASC оказывается
+			// сверху, в PostgreSQL при DESC — тоже; поэтому признак пустоты
+			// выносим отдельным ключом сортировки.
+			empty := col + " IS NULL"
+			emptyHasBlank := false
+			if field.RefEntity == "" && (field.Type == metadata.FieldTypeString ||
+				field.Type == metadata.FieldTypeRichText || field.Type == metadata.FieldTypeImage ||
+				field.EnumName != "") {
+				empty = "(" + empty + " OR " + col + " = '')"
+				emptyHasBlank = true
+			}
+			parts = append(parts, "CASE WHEN "+empty+" THEN 1 ELSE 0 END ASC")
+			expr := col
+			// Число на SQLite лежит ТЕКСТОМ (десятичная точность — decimal на
+			// стороне Go), и без приведения «100» сортируется раньше «20».
+			if field.Type == metadata.FieldTypeNumber && d.Name() == "sqlite" {
+				expr = "CAST(" + col + " AS NUMERIC)"
+			}
+			// «Незаполнено» — один класс, а не два. Без этого внутри группы
+			// порядок задаёт само значение: на SQLite NULL при ASC идёт раньше
+			// '', и следующий ключ order_by до сравнения не доходит. Для
+			// однобранчевого IS NULL группа и так вся NULL, поэтому нормализуем
+			// только там, где '' считается пустым наравне с NULL.
+			if emptyHasBlank {
+				expr = "CASE WHEN " + empty + " THEN NULL ELSE " + expr + " END"
+			}
+			dir := "ASC"
+			if desc {
+				dir = "DESC"
+			}
+			parts = append(parts, expr+" "+dir)
+		}
+		if len(parts) == 0 {
+			parts = append(parts, "id ASC")
+		}
+		query += " ORDER BY " + strings.Join(parts, ", ")
 	} else if entity.Hierarchical && params.Sort == "" {
 		firstStrCol := "id"
 		for _, f := range entity.Fields {
@@ -1120,6 +1190,9 @@ func (db *DB) upsertTablePartRows(ctx context.Context, entityName, tpName string
 // Delete removes an entity record by id. Tablepart rows cascade automatically.
 // Returns an error if the record is a predefined item (_is_predefined = TRUE).
 func (db *DB) Delete(ctx context.Context, entityName string, id uuid.UUID) error {
+	if err := writeAllowed(ctx); err != nil {
+		return err
+	}
 	d := db.dialect
 	tbl := metadata.TableName(entityName)
 	isPredefined, err := db.isPredefinedRecord(ctx, tbl, id)

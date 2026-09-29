@@ -50,6 +50,17 @@ const (
 	// а результат пользователь возвращает событием Выбор с переменной
 	// ПодборРезультат. Generic: годится для любого диалога мультивыбора.
 	FormEventOnChoice FormEventType = "Выбор" // OnChoice
+	// Поиск — та же фаза 1 диалога подбора, вызванная повторно из уже открытого
+	// окна (план 46). Строка поиска диалога фильтрует то, что уже приехало на
+	// клиент; когда строк больше окна выдачи или часть колонок под маской ПДн
+	// (план 88), фильтровать нечего — искать обязан сервер. Обработчик получает
+	// набранный текст в переменной ПодборЗапрос и снова зовёт ПоказатьПодбор;
+	// клиент заменяет строки в открытом окне, не открывая второго.
+	FormEventOnSearch FormEventType = "Поиск" // OnSearch
+	// Ответ — вторая фаза диалога вопроса (#1528): обработчик показывает
+	// вопрос билтином ПоказатьВопрос (фаза 1, например Нажатие), ответ
+	// пользователя приезжает событием Ответ с переменной ВопросОтвет.
+	FormEventOnAnswer FormEventType = "Ответ" // OnAnswer
 )
 
 var knownFormEventTypes = map[FormEventType]bool{
@@ -63,6 +74,8 @@ var knownFormEventTypes = map[FormEventType]bool{
 	FormEventBeforeRowAdd: true, FormEventAfterRowAdd: true,
 	FormEventBeforeRowDelete: true, FormEventStartListChoice: true,
 	FormEventAutoComplete: true, FormEventExecuteCommand: true, FormEventOnChoice: true,
+	FormEventOnSearch: true,
+	FormEventOnAnswer: true,
 }
 
 // formTablePartContextVars — имена, которые платформа инжектирует в обработчик
@@ -226,6 +239,11 @@ type FormElement struct {
 	AccessKey string `yaml:"accesskey,omitempty"` // HTML accesskey для браузерной активации (Alt/Option+клавиша)
 	HotKey    string `yaml:"hotkey,omitempty"`    // runtime shortcut для кнопок формы (F2/F4/F7/F8/F9/F10)
 	Multiline bool   `yaml:"multiline,omitempty"` // обычное поле ввода рендерится как textarea
+	// ChoiceContext — что вызывающая форма передаёт в подбор: «имя параметра» →
+	// «путь к значению на форме» (Объект.Филиал, реквизит формы). Аналог
+	// параметров выбора в 1С: форма выбора и область просмотра в ней обязаны
+	// знать, ДЛЯ ЧЕГО выбирают, — памятка по направлению у филиалов разная.
+	ChoiceContext map[string]string `yaml:"choice_context,omitempty"`
 	// Language — язык подсветки для kind: ПолеКода. Пусто → plaintext.
 	// Значения совпадают с идентификаторами языков редактора: bsl, sql, json,
 	// xml, yaml, markdown, javascript, plaintext.
@@ -491,6 +509,19 @@ type FormModule struct {
 	// OneCMeta — служебный блок, используемый только конвертером 1С,
 	// рантайм его игнорирует. Может содержать version, unknown_xml и т.п.
 	OneCMeta map[string]any `yaml:"oneC_meta,omitempty"`
+
+	// SourcePath — путь файла, из которого форма прочитана, относительно корня
+	// проекта и всегда со слэшами: `forms/Инвентаризация/объекта.form.yaml`.
+	// Имя файла и `Name` формы совпадать не обязаны (`name: ФормаОбъекта` в
+	// `объекта.form.yaml`), поэтому локатор предупреждения check синтезировать
+	// из `Name` нельзя — по такому пути файла на диске нет (#1356). Регистр
+	// каталога сохраняется таким, как он лежит на диске: после `ExportToDir`
+	// из configdb путь с приведённым регистром открывается на Windows и не
+	// открывается на Linux.
+	//
+	// Пусто у форм, у которых файла нет вовсе: автоформы из `src/*.form.os` и
+	// формы, собранные в тестах или редактором в памяти.
+	SourcePath string `yaml:"-"`
 
 	// ProgramAST — распарсенный AST модуля .form.os (тип *dsl/ast.Program).
 	// Хранится через any, чтобы пакет metadata не зависел от пакета ast

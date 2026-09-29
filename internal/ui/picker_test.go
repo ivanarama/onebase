@@ -64,6 +64,68 @@ func TestPicker_ShowPickerReturnsPickerData(t *testing.T) {
 	}
 }
 
+// План 46, серверный поиск: строка поиска ОТКРЫТОГО диалога шлёт кнопке событие
+// Поиск, набранное приходит обработчику в переменной ПодборЗапрос, и он снова
+// зовёт ПоказатьПодбор — ответ везёт новые строки в то же окно.
+//
+// Пустая строка поиска — такой же запрос («покажи всё»), а не «события не было»:
+// проверяем вторым вызовом, что переменная приходит и пустой. Без этого
+// обработчик, написанный через `Если ПустаяСтрока(ПодборЗапрос)`, вёл бы себя
+// по-разному на очистке строки и на первом открытии.
+func TestPicker_ServerSearchQueryReachesHandler(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ПодборПоиск()
+	Сообщить("[" + ПодборЗапрос + "]");
+	Данные = Новый Массив;
+	Если ПодборЗапрос = "гай" Тогда
+		Данные.Добавить(Новый Структура("Идентификатор,Номенклатура", "u-2", "Гайка"));
+	КонецЕсли;
+	Колонки = Новый Массив;
+	Колонки.Добавить(Новый Структура("Имя,Заголовок,Тип", "Номенклатура", "Товар", "string"));
+	Конфиг = Новый Структура("Заголовок,ПоискНаСервере", "Подбор товаров", Истина);
+	ПоказатьПодбор(Данные, Колонки, Конфиг);
+КонецПроцедуры
+`, nil, []*metadata.FormElement{
+		{
+			Kind: metadata.FormElementButton,
+			Name: "КнопкаПодбор",
+			Handlers: map[metadata.FormEventType]string{
+				metadata.FormEventOnSearch: "ПодборПоиск",
+			},
+		},
+	})
+
+	body := url.Values{}
+	body.Set("_element", "КнопкаПодбор")
+	body.Set("_event", string(metadata.FormEventOnSearch))
+	body.Set("_pick_query", "гай")
+
+	rec := executeFormEvent(t, srv, ent, body)
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	if resp.PickerData == nil {
+		t.Fatalf("ждали pickerData != nil; body=%s", rec.Body.String())
+	}
+	if !resp.PickerData.Config.ServerSearch {
+		t.Errorf("ПоискНаСервере не доехал в конфиг диалога: %+v", resp.PickerData.Config)
+	}
+	if len(resp.PickerData.Rows) != 1 || resp.PickerData.Rows[0].Data["Номенклатура"] != "Гайка" {
+		t.Fatalf("ждали одну строку «Гайка», получили %+v", resp.PickerData.Rows)
+	}
+	if len(resp.Messages) == 0 || resp.Messages[0] != "[гай]" {
+		t.Errorf("обработчик увидел ПодборЗапрос=%v, ждали «[гай]»", resp.Messages)
+	}
+
+	body.Set("_pick_query", "")
+	rec = executeFormEvent(t, srv, ent, body)
+	resp = decodeFormEventResponse(t, rec.Body.Bytes())
+	if resp.PickerData == nil || len(resp.PickerData.Rows) != 0 {
+		t.Fatalf("на пустом запросе ждали диалог без строк, получили %+v", resp.PickerData)
+	}
+	if len(resp.Messages) == 0 || resp.Messages[0] != "[]" {
+		t.Errorf("на пустом запросе ПодборЗапрос=%v, ждали «[]» (переменная есть и пуста)", resp.Messages)
+	}
+}
+
 // План 46, фаза 2: _pick_result (JSON) разбирается в переменную ПодборРезультат,
 // доступную обработчику события Выбор. Проверяем через Сообщить.
 func TestPicker_PickResultParsedToVariable(t *testing.T) {

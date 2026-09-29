@@ -19,6 +19,7 @@
 package installtest
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -119,4 +120,73 @@ func PrivateHome(t *testing.T) string {
 		t.Fatalf("права приватного дома: %v", err)
 	}
 	return dir
+}
+
+// SharedInstallDir — каталог общей установки: сам каталог 0755 и вся цепочка
+// его родителей проходима для посторонних, поэтому selfupdate обязан отвечать
+// «вне личного каталога», а не «нет прав» и не признавать установку своей.
+//
+// Внутри os.TempDir() такую установку смоделировать нельзя: на macOS штатный
+// TMPDIR пользователя приватен (0700), и боевая проверка корректно видит
+// приватную границу на предке. Фикстуры, собранные внутри os.TempDir(),
+// вместо ожидаемого отказа получали «установку можно обновлять», и тесты
+// launcher отвечали 409 вместо 403 (#1577, #1608). Каталог создаётся под
+// первым доступным публичным корнем (os.TempDir(), затем /tmp); отсутствие
+// публичной цепочки — свойство окружения, поэтому тест пропускается
+// с диагностикой, а не падает с чужой ошибкой.
+func SharedInstallDir(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("общая установка моделируется POSIX-правами; на Windows границей служит профиль пользователя")
+	}
+	roots := []string{os.TempDir()}
+	if tmp := "/tmp"; tmp != os.TempDir() {
+		roots = append(roots, tmp)
+	}
+	var lastErr error
+	for _, root := range roots {
+		dir, err := os.MkdirTemp(root, "onebase-shared-install-")
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		// 0755 и есть предмет фикстуры: установка читаема и исполняема всеми,
+		// запись — только владельцу.
+		if err := os.Chmod(dir, 0o755); err != nil { //nolint:gosec // G302: общая установка моделируется намеренно
+			_ = os.RemoveAll(dir)
+			lastErr = err
+			continue
+		}
+		if privateBoundaryAbove(dir) == "" {
+			t.Cleanup(func() { _ = os.RemoveAll(dir) })
+			return dir
+		}
+		_ = os.RemoveAll(dir)
+		lastErr = fmt.Errorf("корень %s лежит за приватной границей", root)
+	}
+	t.Skipf("окружение не даёт смоделировать общую установку (публичного корня нет): %v", lastErr)
+	return ""
+}
+
+// privateBoundaryAbove — первый каталог без права прохода для посторонних на
+// пути от path к корню файловой системы; пустая строка означает, что вся
+// цепочка публична. Правило повторяет обход боевой проверки selfupdate:
+// импортировать selfupdate пакет не может (см. шапку пакета), а фикстуре нужно
+// свойство окружения до того, как боевая проверка сработает в самом тесте.
+func privateBoundaryAbove(path string) string {
+	current := filepath.Clean(path)
+	for {
+		entry, err := os.Stat(current)
+		if err != nil {
+			return current
+		}
+		if !entry.IsDir() || entry.Mode().Perm()&0o011 == 0 {
+			return current
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return ""
+		}
+		current = parent
+	}
 }

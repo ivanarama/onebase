@@ -100,18 +100,20 @@ type saveActivity struct {
 // Список/Дерево, Группа» после добавления поля «Поставщик» в Номенклатуру
 // (2026-05-25). Теперь поля сохраняются полностью.
 type saveEntity struct {
-	Name               string            `yaml:"name"`
-	Title              string            `yaml:"title,omitempty"`
-	Titles             map[string]string `yaml:"titles,omitempty"`
-	Hierarchical       bool              `yaml:"hierarchical,omitempty"`
-	HierarchyKind      string            `yaml:"hierarchy_kind,omitempty"`
-	Posting            bool              `yaml:"posting,omitempty"`
-	PostCaption        string            `yaml:"post_caption,omitempty"`
-	PostAndCloseHidden bool              `yaml:"post_and_close_hidden,omitempty"`
-	BasedOn            []string          `yaml:"based_on,omitempty"`
-	Numerator          *saveNumerator    `yaml:"numerator,omitempty"`
-	Predefined         []savePredefined  `yaml:"predefined,omitempty"`
-	ListForm           []string          `yaml:"list_form,omitempty"`
+	Name         string            `yaml:"name"`
+	Title        string            `yaml:"title,omitempty"`
+	Titles       map[string]string `yaml:"titles,omitempty"`
+	Hierarchical bool              `yaml:"hierarchical,omitempty"`
+	// Owner — справочник-владелец (подчинённый справочник, 1С «Владелец»).
+	Owner              string           `yaml:"owner,omitempty"`
+	HierarchyKind      string           `yaml:"hierarchy_kind,omitempty"`
+	Posting            bool             `yaml:"posting,omitempty"`
+	PostCaption        string           `yaml:"post_caption,omitempty"`
+	PostAndCloseHidden bool             `yaml:"post_and_close_hidden,omitempty"`
+	BasedOn            []string         `yaml:"based_on,omitempty"`
+	Numerator          *saveNumerator   `yaml:"numerator,omitempty"`
+	Predefined         []savePredefined `yaml:"predefined,omitempty"`
+	ListForm           []string         `yaml:"list_form,omitempty"`
 	// ItemForm — []any, а не []string: запись состава формы может быть и
 	// отображением {name, readonly} (#1011). При []string правка реквизитов
 	// в конфигураторе роняла бы разбор такого YAML целиком.
@@ -162,6 +164,12 @@ type saveEntity struct {
 	// `presentation: Артикул` в список из одного элемента, то есть переписал бы
 	// файл, которого автор не трогал.
 	Presentation yaml.Node `yaml:"presentation,omitempty"`
+	// OrderBy — порядок списка по умолчанию. Как и presentation, принимает
+	// строку или список, поэтому сырой узел сохраняет исходную форму YAML при
+	// любом редактировании реквизитов в конфигураторе.
+	OrderBy           yaml.Node `yaml:"order_by,omitempty"`
+	ChoicePreview     string    `yaml:"choice_preview,omitempty"`
+	ChoicePreviewProc string    `yaml:"choice_preview_proc,omitempty"`
 }
 
 type saveRegister struct {
@@ -394,6 +402,7 @@ type cfgEntity struct {
 	PostCaption        string // подпись кнопки проведения (пусто → «Провести»), issue #497
 	PostAndCloseHidden bool   // скрыть кнопку «Провести и закрыть»
 	Hierarchical       bool
+	Owner              string   // справочник-владелец (подчинённый справочник, 1С «Владелец»)
 	BasedOn            []string // источники для ввода на основании (Plan 38)
 	Receivers          []string // обратный список: куда вводится на основании текущего объекта
 	Fields             []cfgField

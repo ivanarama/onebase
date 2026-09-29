@@ -198,6 +198,46 @@ func (r *dslRefAttrResolver) bindRefToContext(ref *interpreter.Ref, entityName s
 	return &bound
 }
 
+// constantsRefPresenter — подписи ссылочных констант для DSL, исполняемого
+// сервером (обработчики, procrun через RunProcessorOffline). Чтение вертикальное
+// (UUID → подпись), как у остальных резолверов ссылок, поэтому подпись строит
+// maskedRecordLabel: сначала маска полевой политики роли, потом представление.
+// Удалённая или нечитаемая строка даёт пустую подпись: UUID, выданный за
+// наименование, молча уезжал в письма и печатные формы (#1536).
+func (s *Server) constantsRefPresenter(ctxSrc docsCtxSource) func(ctx context.Context, entityName, id string) string {
+	return func(ctx context.Context, entityName, id string) string {
+		if s == nil || s.store == nil || s.reg == nil {
+			return ""
+		}
+		if ctxSrc != nil {
+			if live := ctxSrc.Ctx(); live != nil {
+				ctx = live
+			}
+		}
+		entity := s.reg.GetEntity(strings.TrimSpace(entityName))
+		if entity == nil {
+			return ""
+		}
+		uid, err := uuid.Parse(strings.TrimSpace(id))
+		if err != nil {
+			return ""
+		}
+		fields := metadata.LabelFields(entity)
+		if len(fields) == 0 {
+			return ""
+		}
+		rows, err := s.store.GetFieldsByIDs(ctx, entity, []uuid.UUID{uid}, fields)
+		if err != nil {
+			return ""
+		}
+		row := rows[uid.String()]
+		if row == nil {
+			return ""
+		}
+		return s.maskedRecordLabel(ctx, entity, row)
+	}
+}
+
 func (r *dslRefAttrResolver) preloadBatch(batch map[string]map[string]uuid.UUID) {
 	for entityName, idsByString := range batch {
 		entity := r.s.reg.GetEntity(entityName)

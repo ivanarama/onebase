@@ -47,6 +47,31 @@ func (r *infoRegsRoot) Get(name string) any {
 
 func (r *infoRegsRoot) Set(_ string, _ any) {}
 
+// GetDynamicField / SetDynamicField — индексный доступ РегистрыСведений["Имя"] (#1434).
+//
+// Раньше такое выражение компилировалось, но возвращало Неопределено: корни
+// менеджеров не реализовывали DynamicFieldAccessor, и универсальный цикл по
+// списку типов приходилось заменять Соответствием из литералов.
+//
+// Только чтение. Имя сопоставляется без учёта регистра — этим занимается сам
+// поиск в реестре. Неизвестное имя даёт ошибку, а не Неопределено: опечатка
+// обязана падать там, где она написана.
+func (r *infoRegsRoot) GetDynamicField(name string) (any, bool) {
+	v := r.Get(name)
+	if v == nil {
+		return nil, false
+	}
+	return v, true
+}
+
+// Индексная запись корню менеджера не открывается: РегистрыСведений["Имя"] — способ
+// получить менеджер, а не ячейка. Отказ явный, потому что молчаливое false
+// дало бы сообщение «неизвестный реквизит» про существующий менеджер.
+func (r *infoRegsRoot) SetDynamicField(name string, _ any) bool {
+	interpreter.RaiseUserError("РегистрыСведений[\"" + name + "\"]: индексная запись не поддерживается, доступно только чтение")
+	return false
+}
+
 type infoRegProxy struct {
 	s      *Server
 	ctxSrc docsCtxSource

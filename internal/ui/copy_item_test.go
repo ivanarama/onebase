@@ -612,10 +612,14 @@ func TestListAndCardOfferCopy(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("список: code = %d, body: %s", rec.Code, rec.Body.String())
 	}
-	// Имя сущности шаблон отдаёт percent-encoded, поэтому сверяем хвост ссылки.
-	if !strings.Contains(rec.Body.String(), "data-copy-url=") ||
-		!strings.Contains(rec.Body.String(), "/new?copy="+srcID.String()) {
-		t.Error("строка списка не несёт ссылку копирования (пункт меню и F9 без неё не работают)")
+	// Готовой ссылки копирования в строке больше нет: контейнер объявляет опорный
+	// адрес один раз, а идентификатор строки клиент добавляет к нему параметром
+	// copy через obRowParamURL()/URLSearchParams. Поэтому здесь проверяются
+	// опорные данные, из которых ссылка собирается, а не сам адрес.
+	if !strings.Contains(rec.Body.String(), "data-ob-row-copy-url=") ||
+		!strings.Contains(rec.Body.String(), `data-ob-row-can-copy="1"`) ||
+		!strings.Contains(rec.Body.String(), `data-ob-entity-id="`+srcID.String()+`"`) {
+		t.Error("список не несёт опорных данных для ссылки копирования (пункт меню и F9 без них не работают)")
 	}
 
 	card := httptest.NewRequest("GET", "/ui/catalog/клиент/"+srcID.String(), nil)

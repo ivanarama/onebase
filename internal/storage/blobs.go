@@ -109,6 +109,9 @@ func (db *DB) EnsureBlobTable(ctx context.Context) error {
 // (disk|db) берётся из ui.file_storage. Размер ограничен maxSizeBytes
 // (<=0 → 50 МБ по умолчанию).
 func (db *DB) PutBlob(ctx context.Context, mime string, r io.Reader, maxSizeBytes int64, owner BlobOwner) (Blob, error) {
+	if err := writeAllowed(ctx); err != nil {
+		return Blob{}, err
+	}
 	if maxSizeBytes <= 0 {
 		maxSizeBytes = 50 * 1024 * 1024
 	}
@@ -305,6 +308,9 @@ func (db *DB) OpenBlob(ctx context.Context, id uuid.UUID) (Blob, io.ReadCloser, 
 // для сборки мусора). Для s3-блоба сначала удаляем объект; если это не удалось —
 // строку НЕ трогаем (БД остаётся источником правды, удаление можно повторить).
 func (db *DB) DeleteBlob(ctx context.Context, id uuid.UUID) error {
+	if err := writeAllowed(ctx); err != nil {
+		return err
+	}
 	d := db.dialect
 	var loc string
 	_ = db.QueryRow(ctx,

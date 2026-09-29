@@ -19,6 +19,10 @@ type xmlProperties struct {
 	// Accumulation registers
 	Dimensions []xmlAttribute `xml:"Dimensions>Dimension"`
 	Resources  []xmlAttribute `xml:"Resources>Resource"`
+	// Owners — владельцы подчинённого справочника (1С допускает несколько типов;
+	// берём первый: OneBase поддерживает одного владельца, а второй тип означал бы
+	// составной реквизит).
+	Owners []string `xml:"Owners>Owner"`
 	// Свойства кода и номера — см. комментарий у xmlV8ObjProps.
 	Hierarchical      string `xml:"Hierarchical"`
 	CodeLength        string `xml:"CodeLength"`
@@ -29,6 +33,21 @@ type xmlProperties struct {
 	NumberLength      string `xml:"NumberLength"`
 	NumberPeriodicity string `xml:"NumberPeriodicity"`
 	Posting           string `xml:"Posting"`
+}
+
+// ownerCatalogName — имя справочника-владельца из ссылки 1С
+// («CatalogRef.Контрагенты» → «Контрагенты»). Владелец-НЕсправочник (в 1С им
+// бывает план видов характеристик) пропускается: у OneBase владельцем может быть
+// только справочник, и молча превратить его в чужую ссылку нельзя.
+func ownerCatalogName(owners []string) string {
+	for _, raw := range owners {
+		v := strings.TrimSpace(raw)
+		const prefix = "CatalogRef."
+		if strings.HasPrefix(v, prefix) {
+			return strings.TrimPrefix(v, prefix)
+		}
+	}
+	return ""
 }
 
 type xmlLang struct {
@@ -75,6 +94,8 @@ type xmlV8Obj struct {
 
 type xmlV8ObjProps struct {
 	Name string `xml:"Name"`
+	// Owners — владельцы подчинённого справочника (см. ownerCatalogName).
+	Owners []string `xml:"Owners>Owner"`
 	// Свойства кода справочника и номера документа. До этого не читались вовсе,
 	// поэтому автонумерация, длина кода и контроль уникальности терялись молча —
 	// а импортированный документ приходил вообще без «Номера» (план 117, Д6–Д8).
@@ -401,6 +422,7 @@ func parseCatalogs(dir string) ([]*CatalogMeta, error) {
 					Name:         orDefault(obj.Props.Name, name),
 					Attributes:   convertV83Attrs(obj.ChildObjects.Attributes),
 					Hierarchical: xmlBool(obj.Props.Hierarchical),
+					Owner:        ownerCatalogName(obj.Props.Owners),
 					Code: codeNumbering(obj.Props.Autonumbering, obj.Props.CodeLength,
 						obj.Props.CodeType, obj.Props.CheckUnique, ""),
 				}
@@ -430,6 +452,7 @@ func parseCatalogs(dir string) ([]*CatalogMeta, error) {
 			Synonym:      props.Synonym.Content,
 			Attributes:   convertAttrs(props.Attributes),
 			Hierarchical: xmlBool(props.Hierarchical),
+			Owner:        ownerCatalogName(props.Owners),
 			Code: codeNumbering(props.Autonumbering, props.CodeLength,
 				props.CodeType, props.CheckUnique, ""),
 		}

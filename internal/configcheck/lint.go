@@ -402,7 +402,9 @@ func entityYAMLSchema() *yamlLintSchema {
 	})
 	return with(obj(
 		"name", "title", "description", "posting", "hierarchical", "hierarchy_kind",
-		"presentation",
+		// owner — справочник-владелец (подчинённый справочник, 1С «Владелец»).
+		"owner",
+		"presentation", "order_by", "choice_preview", "choice_preview_proc",
 		"list_form", "item_form", "based_on", "list_mode", "notify_changes", "list_refresh_on",
 		"fulltext", "search_fields", "detail_panel",
 	), map[string]*yamlLintSchema{
@@ -501,15 +503,16 @@ func reportYAMLSchema() *yamlLintSchema {
 
 func roleYAMLSchema() *yamlLintSchema {
 	perm := with(obj(), map[string]*yamlLintSchema{
-		"ai_data_access": freeMap(),
-		"catalogs":       freeMap(),
-		"documents":      freeMap(),
-		"registers":      freeMap(),
-		"inforegs":       freeMap(),
-		"reports":        freeMap(),
-		"processors":     freeMap(),
-		"row_access":     freeMap(),
-		"field_access":   freeMap(),
+		"ai_data_access":     freeMap(),
+		"catalogs":           freeMap(),
+		"documents":          freeMap(),
+		"registers":          freeMap(),
+		"inforegs":           freeMap(),
+		"reports":            freeMap(),
+		"processors":         freeMap(),
+		"processors_default": freeMap(),
+		"row_access":         freeMap(),
+		"field_access":       freeMap(),
 	})
 	return with(obj("name", "description"), map[string]*yamlLintSchema{"permissions": perm})
 }
@@ -624,8 +627,18 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	} {
 		element.keys[k] = nil
 	}
+	// choice_filter — «реквизит выбираемого справочника → путь к значению»
+	// (связи параметров выбора), тоже свободная карта.
+	element.keys["choice_filter"] = freeMap()
+	// choice_context — карта «параметр → путь к значению», а не скаляр: состав
+	// ключей свободный, поэтому freeMap, иначе линт ругался бы на каждое имя
+	// параметра.
+	element.keys["choice_context"] = freeMap()
 	element.keys["title"] = freeMap()
 	element.keys["events"] = freeMap()
+	// props остаётся свободной картой: про ключи, которых не читает ни один
+	// потребитель, говорит CheckFormProps — там есть, кем именно ключ не
+	// используется, а здесь было бы только «неизвестный ключ» (#1492).
 	element.keys["props"] = freeMap()
 	element.keys["children"] = seq(element)
 	element.keys["choices"] = seq(with(obj("value"), map[string]*yamlLintSchema{"title": freeMap()}))
@@ -1693,6 +1706,30 @@ func CheckLintRoles(dir string, proj *project.Project, roles []*auth.Role) []Iss
 	coveredProcessors := map[string]bool{}
 	processorsOpen := false
 
+	// Число доступных нетестовых обработок — для сообщений о ролях с
+	// allow-все-обработки (план 162): test-обработки пользователю не видны.
+	availableProcessors := 0
+	for _, proc := range proj.Processors {
+		if !proc.IsTest() {
+			availableProcessors++
+		}
+	}
+	roleProcessorWarning := func(role *auth.Role, code, message, fix string) Issue {
+		file := "roles"
+		if role.SourceFile != "" {
+			file = filepath.ToSlash(filepath.Join("roles", role.SourceFile))
+		}
+		return Issue{
+			File:         file,
+			Object:       role.Name,
+			Kind:         "Роль",
+			Code:         code,
+			Message:      message,
+			SuggestedFix: fix,
+		}
+	}
+	var processorRoleWarnings []Issue
+
 	mark := func(dst map[string]bool, src map[string][]string) {
 		for name, ops := range src {
 			if len(ops) > 0 {
@@ -1706,10 +1743,25 @@ func CheckLintRoles(dir string, proj *project.Project, roles []*auth.Role) []Iss
 		mark(coveredRegisters, role.Permissions.Registers)
 		mark(coveredInfoRegs, role.Permissions.InfoRegs)
 		mark(coveredReports, role.Permissions.Reports)
-		if role.Permissions.Processors == nil {
-			processorsOpen = true
-		} else {
+		switch auth.ProcessorPermissionMode(role.Permissions) {
+		case auth.ProcessorModeMap:
 			mark(coveredProcessors, role.Permissions.Processors)
+		case auth.ProcessorModeImplicitAllowAll:
+			// Переходный срез A плана 162: отсутствие секции пока разрешает все
+			// обработки. Доступ не меняем, но делаем его видимым по каждой роли.
+			processorsOpen = true
+			processorRoleWarnings = append(processorRoleWarnings, roleProcessorWarning(role,
+				"rbac.processors-implicit-allow",
+				fmt.Sprintf("роль %q не объявляет permissions.processors и поэтому сейчас получает все обработки (%d); задайте processors: {}, явную карту или processors_default: allow до следующего минорного релиза",
+					role.Name, availableProcessors),
+				"Задайте permissions.processors: {} (запретить всё), явную карту разрешённых обработок или permissions.processors_default: allow (осознанно сохранить глобальный доступ)."))
+		case auth.ProcessorModeExplicitAllowAll:
+			processorsOpen = true
+			processorRoleWarnings = append(processorRoleWarnings, roleProcessorWarning(role,
+				"rbac.processors-explicit-allow-all",
+				fmt.Sprintf("роль %q осознанно сохраняет доступ ко всем обработкам (%d) через permissions.processors_default: allow; это не блокирует переключение плана 162, но риск остаётся",
+					role.Name, availableProcessors),
+				"Если глобальный доступ больше не нужен, замените processors_default: allow на processors: {} или явную карту."))
 		}
 	}
 
@@ -1762,6 +1814,7 @@ func CheckLintRoles(dir string, proj *project.Project, roles []*auth.Role) []Iss
 			}
 		}
 	}
+	issues = append(issues, processorRoleWarnings...)
 	issues = append(issues, checkLintUnknownRoleRefs(proj, roles)...)
 	issues = append(issues, CheckLintRowAccess(dir, proj, roles)...)
 	issues = append(issues, CheckLintFieldAccess(dir, proj, roles)...)

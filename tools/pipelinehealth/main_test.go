@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -817,6 +818,93 @@ func TestIssueQueuesSeparatePlanFixAndHumanWork(t *testing.T) {
 	}
 }
 
+func TestCLIIssueRouteConflictsAreReportedWithoutChangingRouting(t *testing.T) {
+	closed := issueWithLabels(25, "ready-fix", "needs-decision", "manual", "approved")
+	closed.State = "closed"
+	issues := []apiIssue{
+		issueWithLabels(15, "ready-fix", "needs-decision"),
+		issueWithLabels(16, "manual", "approved"),
+		issueWithLabels(17, "approved", "needs-decision"),
+		issueWithLabels(18, "ready-fix", "needs-decision", "approved"),
+		issueWithLabels(19, "manual", "ready-fix"),
+		issueWithLabels(20, "manual", "plan-needed"),
+		issueWithLabels(21, "manual", "in-work"),
+		issueWithLabels(22, "ready-fix"),
+		issueWithLabels(23, "plan-needed", "approved"),
+		issueWithLabels(24, "manual"),
+		closed,
+	}
+
+	directory := t.TempDir()
+	writeFixture := func(name string, value any) string {
+		t.Helper()
+		path := filepath.Join(directory, name)
+		data, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("marshal %s: %v", name, err)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+		return path
+	}
+	issuePath := writeFixture("issues.json", issues)
+	pullPath := writeFixture("pulls.json", []apiPull{})
+	// Fixtures must exercise the public command without accessing GitHub.
+	t.Setenv("GH_EXE", filepath.Join(directory, "missing-gh"))
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve repository root: %v", err)
+	}
+	// #nosec G204 -- executable and flags are fixed; variable arguments are test-owned paths from t.TempDir.
+	command := exec.Command("go", "run", "./tools/pipelinehealth", "-prs", pullPath, "-issues", issuePath, "-json")
+	command.Dir = repositoryRoot
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pipelinehealth CLI failed: %v\n%s", err, output)
+	}
+	var result report
+	if err := json.Unmarshal(output, &result); err != nil {
+		t.Fatalf("decode pipelinehealth output: %v\n%s", err, output)
+	}
+	if result.State != "yellow" || result.IssuesChecked != len(issues) {
+		t.Fatalf("unexpected CLI status: state=%s issues_checked=%d", result.State, result.IssuesChecked)
+	}
+	wantFindings := map[int]string{
+		15: "issue_route_conflict",
+		16: "manual_route_conflict",
+		19: "manual_route_conflict",
+		20: "manual_route_conflict",
+		21: "manual_route_conflict",
+	}
+	for _, item := range result.Findings {
+		if item.Code != wantFindings[item.Issue] || item.Severity != "yellow" {
+			t.Fatalf("unexpected CLI diagnostic (approved must override needs-decision): %+v", item)
+		}
+		delete(wantFindings, item.Issue)
+	}
+	if len(wantFindings) != 0 {
+		t.Fatalf("CLI omitted route diagnostics: %v", wantFindings)
+	}
+	for _, queue := range []struct {
+		name  string
+		items []candidate
+		want  []int
+	}{
+		{"FIX", result.FixCandidates, []int{17, 18, 22}},
+		{"PLAN", result.PlanCandidates, []int{23}},
+		{"human", result.HumanWaiting, []int{15}},
+	} {
+		var numbers []int
+		for _, item := range queue.items {
+			numbers = append(numbers, item.Number)
+		}
+		if !slices.Equal(numbers, queue.want) {
+			t.Errorf("%s routing changed: got %v, want %v", queue.name, numbers, queue.want)
+		}
+	}
+}
+
 func TestFixQueueExcludesInWorkAndOpenPullReferences(t *testing.T) {
 	result := analyze(nil, "ivanarama")
 	issues := []apiIssue{
@@ -909,6 +997,49 @@ func TestFixQueueRequiresCompletedTriageRoute(t *testing.T) {
 	}
 	if !hasFinding(result, "fix_issue_not_executable") {
 		t.Fatalf("unfinished TRIAGE handoff was not diagnosed: %+v", result.Findings)
+	}
+}
+
+func TestTrustedHumanVoidReleasesUnfinishedTriageRoute(t *testing.T) {
+	root, _ := triageRouteRoot(44, 10, "needs-decision")
+	released := testIssue(44, root, issueComment(11, "Решение принято, claim мёртв.\n<!-- pp:triage-route-void claim=10 -->"))
+	released.Labels = []apiLabel{{Name: "bug"}, {Name: "ready-fix"}}
+	result := analyze(nil, "ivanarama")
+	analyzeIssues(&result, []apiIssue{released}, nil, "ivanarama")
+
+	if len(result.FixCandidates) != 1 || result.FixCandidates[0].Number != 44 {
+		t.Fatalf("trusted void did not release the issue to FIX by its actual labels: %+v", result.FixCandidates)
+	}
+	if hasFinding(result, "fix_issue_not_executable") {
+		t.Fatalf("voided route is still diagnosed as unfinished: %+v", result.Findings)
+	}
+}
+
+func TestVoidMustBeTrustedExactLineForThisClaim(t *testing.T) {
+	root, _ := triageRouteRoot(45, 10, "needs-decision")
+	foreign := issueComment(11, "<!-- pp:triage-route-void claim=10 -->")
+	foreign.User = apiUser{Login: "someone-else"}
+	wrongClaim := issueComment(12, "<!-- pp:triage-route-void claim=99 -->")
+	edited := issueComment(13, "<!-- pp:triage-route-void claim=10 -->")
+	edited.UpdatedAt = "2026-09-02T00:00:00Z"
+	insideParagraph := issueComment(14, "Текст абзаца <!-- pp:triage-route-void claim=10 --> продолжает мысль.")
+	cases := map[string]apiComment{
+		"foreign author":    foreign,
+		"wrong claim":       wrongClaim,
+		"edited comment":    edited,
+		"inline not a line": insideParagraph,
+	}
+	for name, void := range cases {
+		issue := testIssue(45, root, void)
+		issue.Labels = []apiLabel{{Name: "approved"}}
+		result := analyze(nil, "ivanarama")
+		analyzeIssues(&result, []apiIssue{issue}, nil, "ivanarama")
+		if len(result.FixCandidates) != 0 {
+			t.Fatalf("%s: void released the issue to FIX: %+v", name, result.FixCandidates)
+		}
+		if !hasFinding(result, "fix_issue_not_executable") {
+			t.Fatalf("%s: unfinished route lost its diagnosis: %+v", name, result.Findings)
+		}
 	}
 }
 

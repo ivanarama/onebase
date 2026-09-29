@@ -70,17 +70,20 @@ jobs:
             echo "::group::$project"
             out="$("$tmp/onebase" lint --project "$project" --json)"
             issues="$(printf '%s' "$out" | jq '(.issues // []) | length')"
-            warnings="$(printf '%s' "$out" | jq '(.warnings // []) | length')"
+            # Срез A плана 162 намеренно показывает переходные RBAC warnings.
+            # Прочие предупреждения и все ошибки по-прежнему блокируют сборку.
+            warnings="$(printf '%s' "$out" | jq '[.warnings[]? | select(.code != "rbac.processors-implicit-allow" and .code != "rbac.processors-explicit-allow-all")] | length')"
+            transition_warnings="$(printf '%s' "$out" | jq '[.warnings[]? | select(.code == "rbac.processors-implicit-allow" or .code == "rbac.processors-explicit-allow-all")] | length')"
             if [ "$issues" -ne 0 ] || [ "$warnings" -ne 0 ]; then
-              echo "::error::$project has $issues issue(s) and $warnings warning(s)"
+              echo "::error::$project has $issues issue(s) and $warnings blocking warning(s)"
               printf '%s' "$out" | jq -r '
-                (.issues // []), (.warnings // [])
+                (.issues // []), (.warnings // [] | map(select(.code != "rbac.processors-implicit-allow" and .code != "rbac.processors-explicit-allow-all")))
                 | .[]
                 | "\(.file // "(конфигурация)"):\(.line // 0):\(.column // 0): [\(.kind // "")] [\(.code // "")] \(.message)"
               '
               failed=1
             else
-              echo "$project: lint clean"
+              echo "$project: lint clean ($transition_warnings transition warning(s))"
             fi
             echo "::endgroup::"
           done

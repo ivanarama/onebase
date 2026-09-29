@@ -56,14 +56,43 @@ func CheckFormFieldFormat(proj *project.Project) []Issue {
 	return warns
 }
 
-// formFileLabel строит относительный путь формы для локатора предупреждения по
-// соглашению forms/<сущность-в-нижнем-регистре>/<форма>.form.yaml.
+// formFileLabel возвращает локатор формы для предупреждения check.
+//
+// Основной источник — путь файла, из которого форма прочитана. Синтезировать
+// его из `form.Name` нельзя: имя формы и имя файла совпадать не обязаны, и для
+// `name: ФормаОбъекта` в `объекта.form.yaml` получался путь
+// `forms/инвентаризация/ФормаОбъекта.form.yaml` — файла с таким именем на диске
+// нет, и локатор не открывался (#1356). `onebase check` — основной инструмент
+// отладки конфигурации, и ненажимаемый путь обесценивает вывод ровно там, где
+// им пользуются.
 func formFileLabel(ent *metadata.Entity, form *metadata.FormModule) string {
+	return formLabelOrSynthetic(ent.Name, form)
+}
+
+// procFormFileLabel — то же для формы обработки: формы обработок читает тот же
+// загрузчик и кладёт в тот же каталог `forms/<имя>/`.
+func procFormFileLabel(procName string, form *metadata.FormModule) string {
+	return formLabelOrSynthetic(procName, form)
+}
+
+// formLabelOrSynthetic предпочитает фактический путь файла, а когда файла нет
+// вовсе — синтезирует прежнее имя по соглашению.
+//
+// Пустой SourcePath — это не сбой: так выглядят автоформы из `src/*.form.os` и
+// формы, собранные в памяти (редактором, тестами). Открывать там нечего, и
+// прежний синтезированный вид остаётся лучшим, что можно показать.
+func formLabelOrSynthetic(ownerName string, form *metadata.FormModule) string {
+	if form == nil {
+		return "forms/" + strings.ToLower(ownerName)
+	}
+	if form.SourcePath != "" {
+		return form.SourcePath
+	}
 	name := form.Name
 	if name == "" {
 		name = "объекта"
 	}
-	return "forms/" + strings.ToLower(ent.Name) + "/" + name + ".form.yaml"
+	return "forms/" + strings.ToLower(ownerName) + "/" + name + ".form.yaml"
 }
 
 // formElementName возвращает осмысленное имя реквизита для сообщения: имя, иначе

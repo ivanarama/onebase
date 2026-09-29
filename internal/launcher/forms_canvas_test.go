@@ -2,6 +2,8 @@ package launcher
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -538,6 +540,71 @@ elements:
 	}, nil)
 	if !strings.Contains(preview, "group-horizontal") {
 		t.Errorf("предпросмотр не получил класс горизонтальной группы:\n%s", preview)
+	}
+}
+
+// Геометрия горизонтальной группы обязана совпадать во всех трёх
+// представлениях: холст и предпросмотр повторяют flex/min-width/gap рантайма
+// (managed-group-horizontal в internal/ui/templates_managed.go), иначе одна и
+// та же форма переносилась в конструкторе и стояла в один ряд в «Предприятии»
+// (#1575). CSS-движка в харнессах нет, поэтому правила сверяются структурно,
+// а эталон читается из исходника рантайма — рассинхрон словит тест, а не
+// пользователь.
+func TestHorizontalGroupGeometryMatchesRuntime(t *testing.T) {
+	runtimeCSS, err := os.ReadFile(filepath.Join("..", "ui", "templates_managed.go"))
+	if err != nil {
+		t.Fatalf("read runtime managed templates: %v", err)
+	}
+	runtimeSrc := string(runtimeCSS)
+	const (
+		runtimeGap       = "gap:12px;align-items:flex-start"
+		runtimeFieldFlex = "flex:0 1 260px;min-width:180px"
+		runtimeGroupFlex = "min-width:0;flex:1 1 auto"
+	)
+	for name, fragment := range map[string]string{
+		"gap":         runtimeGap,
+		"flex поля":   runtimeFieldFlex,
+		"flex группы": runtimeGroupFlex,
+	} {
+		if !strings.Contains(runtimeSrc, fragment) {
+			t.Fatalf("эталон рантайма изменился: в templates_managed.go нет %s (%q); обновите тест", name, fragment)
+		}
+	}
+
+	canvas := renderFormsEditorHTML(t)
+	for name, fragment := range map[string]string{
+		"gap":            "gap:12px;align-items:flex-start",
+		"flex поля":      ".fc-group-horizontal>.fc-children>.fc-el{flex:0 1 260px;min-width:180px}",
+		"flex группы":    ".fc-group-horizontal>.fc-children>.fc-el.fc-group{flex:1 1 auto;min-width:0}",
+		"зона в покое":   ".fc-group-horizontal>.fc-children>.fc-drop{width:0;",
+		"зона при драге": "body.ob-dragging .fc-group-horizontal>.fc-children>.fc-drop{width:8px}",
+		"переключатель":  "document.body.classList.add('ob-dragging')",
+	} {
+		if !strings.Contains(canvas, fragment) {
+			t.Errorf("холст расходится с рантаймом: нет %s (%q)", name, fragment)
+		}
+	}
+
+	preview := renderManagedFormPreview(&metadata.FormModule{
+		Elements: []*metadata.FormElement{{
+			Kind:        metadata.FormElementGroupBox,
+			Name:        "Реквизиты",
+			Orientation: "horizontal",
+			Children: []*metadata.FormElement{{
+				Kind:     metadata.FormElementField,
+				Name:     "ПолеНомер",
+				DataPath: "Объект.Номер",
+			}},
+		}},
+	}, nil)
+	for name, fragment := range map[string]string{
+		"gap":         "gap:12px;align-items:flex-start",
+		"flex поля":   ".group-horizontal>.group-body>.fg{flex:0 1 260px;min-width:180px;margin-bottom:0}",
+		"flex группы": ".group-horizontal>.group-body>fieldset{flex:1 1 auto;min-width:0;margin-bottom:0}",
+	} {
+		if !strings.Contains(preview, fragment) {
+			t.Errorf("предпросмотр расходится с рантаймом: нет %s (%q)", name, fragment)
+		}
 	}
 }
 
