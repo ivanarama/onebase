@@ -11,7 +11,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/langref"
 )
 
-var languageCountsPattern = regexp.MustCompile(`([0-9]+) функций, ([0-9]+) методов`)
+var languageCountsPattern = regexp.MustCompile(`([0-9]+) функций, ([0-9]+) метод(?:ов|а)`)
 
 func TestPublicDocsLanguageCountsUpToDate(t *testing.T) {
 	functions, methods := 0, 0
@@ -35,7 +35,7 @@ func TestPublicDocsLanguageCountsUpToDate(t *testing.T) {
 			text := readDocForClaimTest(t, tc.path)
 			claims := languageCountsPattern.FindAllStringSubmatch(text, -1)
 			if len(claims) != tc.wantClaims {
-				t.Fatalf("найдено утверждений вида «N функций, M методов»: %d, ожидалось %d; если формулировка изменилась, обновите проверку вместе с текстом", len(claims), tc.wantClaims)
+				t.Fatalf("найдено утверждений вида «N функций, M методов/метода»: %d, ожидалось %d; если формулировка изменилась, обновите проверку вместе с текстом", len(claims), tc.wantClaims)
 			}
 			for _, claim := range claims {
 				gotFunctions, err := strconv.Atoi(claim[1])
