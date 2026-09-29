@@ -16,6 +16,30 @@ type Account struct {
 	Names  map[string]string `yaml:"names"`  // переводы имени счёта по языкам
 	Kind   string            `yaml:"kind"`   // active | passive | active_passive
 	Parent string            `yaml:"parent"` // parent code for hierarchy
+	// Children — вложенная форма той же иерархии (`children:` в YAML, как в
+	// DEVELOPER.md). LoadChartOfAccountsFile разворачивает её в плоский список с
+	// Parent = код родителя, поэтому у загруженного счёта поле всегда пусто.
+	// Раньше ключа в структуре не было, и yaml.v3 молча отбрасывал субсчета.
+	Children []Account `yaml:"children,omitempty"`
+}
+
+// Виды счёта. Остаток активного счёта — дебетовый, пассивного — кредитовый,
+// активно-пассивного — развёрнутый (storage.AccountBalances).
+const (
+	AccountKindActive        = "active"
+	AccountKindPassive       = "passive"
+	AccountKindActivePassive = "active_passive"
+)
+
+// ValidAccountKind сообщает, что вид счёта — один из известных платформе.
+// Непустое неизвестное значение (опечатка, «active-passive» через дефис)
+// платформа читала бы как активно-пассивный вид — молча.
+func ValidAccountKind(kind string) bool {
+	switch kind {
+	case AccountKindActive, AccountKindPassive, AccountKindActivePassive:
+		return true
+	}
+	return false
 }
 
 // DisplayName возвращает имя счёта с учётом языка.
@@ -61,12 +85,45 @@ func LoadChartOfAccountsFile(path string) (*ChartOfAccounts, error) {
 	if chart.Title == "" {
 		chart.Title = chart.Name
 	}
+	accounts, err := flattenAccounts(chart.Accounts, "")
+	if err != nil {
+		return nil, fmt.Errorf("accounts: %s: %w", filepath.Base(path), err)
+	}
+	chart.Accounts = accounts
 	for i := range chart.Accounts {
 		if chart.Accounts[i].Kind == "" {
-			chart.Accounts[i].Kind = "active_passive"
+			chart.Accounts[i].Kind = AccountKindActivePassive
 		}
 	}
 	return &chart, nil
+}
+
+// flattenAccounts разворачивает вложенные `children:` в плоский список: субсчёт
+// идёт сразу за своим родителем и получает Parent = код родителя. Явный parent у
+// вложенного счёта допустим, только если совпадает с тем, куда счёт вложен:
+// противоречие — ошибка, а не молчаливый выбор одного из двух родителей.
+func flattenAccounts(list []Account, parent string) ([]Account, error) {
+	var out []Account
+	for _, a := range list {
+		children := a.Children
+		a.Children = nil
+		if parent != "" {
+			switch a.Parent {
+			case "":
+				a.Parent = parent
+			case parent:
+			default:
+				return nil, fmt.Errorf("счёт %q вложен в %q, но указывает parent: %q", a.Code, parent, a.Parent)
+			}
+		}
+		out = append(out, a)
+		sub, err := flattenAccounts(children, a.Code)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, sub...)
+	}
+	return out, nil
 }
 
 func LoadChartOfAccountsDir(dir string) ([]*ChartOfAccounts, error) {

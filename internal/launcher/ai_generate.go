@@ -815,7 +815,7 @@ const postingModuleGuide = `Проведение документа — моду
 const otherFormatGuides = `Схемы прочих объектов (по одному YAML-файлу):
 - Отчёт (reports/<Имя>.yaml): name, title, params: [{name, type, label}], query: |<ВЫБРАТЬ … ИЗ РегистрНакопления.X.Остатки(&П)>. Параметры — &Имя.
 - Виджет (widgets/<Имя>.yaml): name, type: kpi|list|chart|actions|recent, title, format: number|money|percent, query: |<ВЫБРАТЬ … КАК Значение>.
-- План счетов (accounts/<Имя>.yaml): name, title, accounts: [{code: "51", name: Расчётный счёт, kind: active|passive|active-passive, parent: "51"}].
+- План счетов (accounts/<Имя>.yaml): name, title, accounts: [{code: "90.1", name: Выручка, kind: active|passive|active_passive, parent: "90"}]; parent — код существующего счёта этого плана.
 - Регистр бухгалтерии (accountregs/<Имя>.yaml): name, title, accounts: <ИмяПланаСчетов>, resources: [{name: Сумма, type: number}], subconto: [{name, type: reference:X}].
 - Регистр накопления (registers/<Имя>.yaml): name, dimensions: [{name, type}], resources: [{name, type: number}], attributes: [...]. Ключа type НЕТ.
 - Регистр сведений (inforegs/<Имя>.yaml): name, periodic: false, dimensions: [...], resources: [...].
