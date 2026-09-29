@@ -14,15 +14,24 @@ import (
 func boolPointer(v bool) *bool { return &v }
 
 func choiceFilterProject(conditions []metadata.FormChoiceCondition) *project.Project {
+	faultGroup := &metadata.Entity{
+		Name: "ГруппаНеисправностей", Kind: metadata.KindCatalog, Hierarchical: true,
+		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+	}
 	direction := &metadata.Entity{
 		Name: "Направление", Kind: metadata.KindCatalog, Hierarchical: true,
-		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: "ГруппаНеисправностей", Type: "reference:ГруппаНеисправностей", RefEntity: "ГруппаНеисправностей"},
+		},
 	}
 	fault := &metadata.Entity{
 		Name: "Неисправность", Kind: metadata.KindCatalog, Hierarchical: true,
 		Fields: []metadata.Field{
 			{Name: "Наименование", Type: metadata.FieldTypeString},
 			{Name: "Направление", Type: "reference:Направление", RefEntity: "Направление"},
+			{Name: "Группа", Type: "reference:ГруппаНеисправностей", RefEntity: "ГруппаНеисправностей"},
+			{Name: "Муниципальный", Type: metadata.FieldTypeBool},
 		},
 	}
 	request := &metadata.Entity{
@@ -40,7 +49,7 @@ func choiceFilterProject(conditions []metadata.FormChoiceCondition) *project.Pro
 			DataPath: "Объект.Неисправность", ChoiceFilter: conditions,
 		}},
 	}}
-	return &project.Project{Entities: []*metadata.Entity{direction, fault, request}}
+	return &project.Project{Entities: []*metadata.Entity{direction, fault, request, faultGroup}}
 }
 
 func validChoiceConditions() []metadata.FormChoiceCondition {
@@ -60,6 +69,21 @@ func TestCheckFormChoiceFilterValidPlanExamples(t *testing.T) {
 	}}
 	if issues := CheckFormChoiceFilter(proj); len(issues) != 0 {
 		t.Fatalf("valid eq choice_filter: %+v", issues)
+	}
+	// План 183, B1: «неисправности той группы, что указана у направления» —
+	// один переход по ссылке вместо реквизита-посредника в справочнике.
+	proj.Entities[2].Forms[0].Elements[0].ChoiceFilter = []metadata.FormChoiceCondition{{
+		Field: "Группа", Op: metadata.FormChoiceOpEqual, From: "Объект.Направление.ГруппаНеисправностей",
+	}}
+	if issues := CheckFormChoiceFilter(proj); len(issues) != 0 {
+		t.Fatalf("valid deep source choice_filter: %+v", issues)
+	}
+	// Булев литерал: «только немуниципальные».
+	proj.Entities[2].Forms[0].Elements[0].ChoiceFilter = []metadata.FormChoiceCondition{{
+		Field: "Муниципальный", Op: metadata.FormChoiceOpEqual, Value: boolPointer(false),
+	}}
+	if issues := CheckFormChoiceFilter(proj); len(issues) != 0 {
+		t.Fatalf("valid boolean literal choice_filter: %+v", issues)
 	}
 }
 
@@ -87,10 +111,16 @@ func TestCheckFormChoiceFilterRejectsInvalidContracts(t *testing.T) {
 		}, "допустимо от 1 до 8"},
 		{"bare source", func(p *project.Project) {
 			p.Entities[2].Forms[0].Elements[0].ChoiceFilter[0].From = "Направление"
-		}, "тот же иерархический"},
-		{"deep source", func(p *project.Project) {
+		}, "не более одного перехода"},
+		{"source deeper than one hop", func(p *project.Project) {
+			p.Entities[2].Forms[0].Elements[0].ChoiceFilter[0].From = "Объект.Направление.ГруппаНеисправностей.Наименование"
+		}, "не более одного перехода"},
+		{"deep source unknown attribute", func(p *project.Project) {
 			p.Entities[2].Forms[0].Elements[0].ChoiceFilter[0].From = "Объект.Направление.ID"
-		}, "тот же иерархический"},
+		}, "нет реквизита"},
+		{"deep source is not a reference", func(p *project.Project) {
+			p.Entities[2].Forms[0].Elements[0].ChoiceFilter[0].From = "Объект.Направление.Наименование"
+		}, "не ссылочный"},
 		{"both sources", func(p *project.Project) {
 			p.Entities[2].Forms[0].Elements[0].ChoiceFilter[0].Value = boolPointer(false)
 		}, "ровно одно"},
@@ -107,7 +137,7 @@ func TestCheckFormChoiceFilterRejectsInvalidContracts(t *testing.T) {
 		}, "повторяется"},
 		{"literal on reference", func(p *project.Project) {
 			p.Entities[2].Forms[0].Elements[0].ChoiceFilter[0] = metadata.FormChoiceCondition{Field: "Направление", Op: metadata.FormChoiceOpEqual, Value: boolPointer(false)}
-		}, "только для is_folder"},
+		}, "булева реквизита"},
 		{"folder from", func(p *project.Project) {
 			p.Entities[2].Forms[0].Elements[0].ChoiceFilter[1] = metadata.FormChoiceCondition{Field: "is_folder", Op: metadata.FormChoiceOpEqual, From: "Объект.Направление"}
 		}, "требует boolean value"},
@@ -137,8 +167,14 @@ func writeChoiceFilterCheckProject(t *testing.T, dir string, targetHierarchical 
 hierarchical: true
 fields:
   - {name: Наименование, type: string}
+  - {name: ГруппаНеисправностей, type: "reference:ГруппаНеисправностей"}
 `)
 	mkFile(t, filepath.Join(dir, "catalogs", "плоский.yaml"), `name: Плоский
+fields:
+  - {name: Наименование, type: string}
+`)
+	mkFile(t, filepath.Join(dir, "catalogs", "группанеисправностей.yaml"), `name: ГруппаНеисправностей
+hierarchical: true
 fields:
   - {name: Наименование, type: string}
 `)
@@ -148,6 +184,8 @@ fields:
   - {name: Наименование, type: string}
   - {name: Направление, type: "reference:Направление"}
   - {name: Плоский, type: "reference:Плоский"}
+  - {name: Группа, type: "reference:ГруппаНеисправностей"}
+  - {name: Муниципальный, type: bool}
 `, targetHierarchical))
 	mkFile(t, filepath.Join(dir, "documents", "заявка.yaml"), `name: Заявка
 fields:
@@ -221,6 +259,24 @@ func TestRunFullChoiceFilterAcceptsPlanExamples(t *testing.T) {
 	} else {
 		assertNoChoiceFilterLintWarning(t, result)
 	}
+
+	// Срез B1 плана 183: глубокий источник и булев литерал — тот самый каскад
+	// колл-центра, ради которого грамматика расширяется.
+	writeChoiceFilterCheckProject(t, dir, true, `  - id: fault
+    kind: ПолеВвода
+    data_path: Объект.Неисправность
+    choice_filter:
+      - field: Группа
+        op: eq
+        from: Объект.Направление.ГруппаНеисправностей
+      - field: Муниципальный
+        op: eq
+        value: false`)
+	if result := RunFullWithOptions(dir, Options{Lint: true}); !result.OK || len(choiceFilterIssues(result)) != 0 {
+		t.Fatalf("пример среза B1 не прошёл onebase check: issues=%+v warnings=%+v", result.Issues, result.Warnings)
+	} else {
+		assertNoChoiceFilterLintWarning(t, result)
+	}
 }
 
 func TestRunFullChoiceFilterRejectsPublicContractViolations(t *testing.T) {
@@ -284,11 +340,23 @@ func TestRunFullChoiceFilterRejectsPublicContractViolations(t *testing.T) {
 		{"bare source", true, `  - id: fault
     kind: ПолеВвода
     data_path: Объект.Неисправность
-    choice_filter: [{field: Направление, op: eq, from: Направление}]`, "явной ссылкой"},
-		{"deep source", true, `  - id: fault
+    choice_filter: [{field: Направление, op: eq, from: Направление}]`, "не более одного перехода"},
+		{"source deeper than one hop", true, `  - id: fault
     kind: ПолеВвода
     data_path: Объект.Неисправность
-    choice_filter: [{field: Направление, op: eq, from: Объект.Направление.ID}]`, "явной ссылкой"},
+    choice_filter: [{field: Группа, op: eq, from: Объект.Направление.ГруппаНеисправностей.Наименование}]`, "не более одного перехода"},
+		{"deep source unknown attribute", true, `  - id: fault
+    kind: ПолеВвода
+    data_path: Объект.Неисправность
+    choice_filter: [{field: Направление, op: eq, from: Объект.Направление.ID}]`, "нет реквизита"},
+		{"deep source is not a reference", true, `  - id: fault
+    kind: ПолеВвода
+    data_path: Объект.Неисправность
+    choice_filter: [{field: Направление, op: eq, from: Объект.Направление.Наименование}]`, "не ссылочный"},
+		{"deep source of incompatible kind", true, `  - id: fault
+    kind: ПолеВвода
+    data_path: Объект.Неисправность
+    choice_filter: [{field: Направление, op: eq, from: Объект.Направление.ГруппаНеисправностей}]`, "несовместимые ссылки"},
 		{"unknown operator", true, `  - id: fault
     kind: ПолеВвода
     data_path: Объект.Неисправность
@@ -296,7 +364,7 @@ func TestRunFullChoiceFilterRejectsPublicContractViolations(t *testing.T) {
 		{"literal for reference", true, `  - id: fault
     kind: ПолеВвода
     data_path: Объект.Неисправность
-    choice_filter: [{field: Направление, op: eq, value: false}]`, "только для is_folder"},
+    choice_filter: [{field: Направление, op: eq, value: false}]`, "булева реквизита"},
 		{"non-reference condition field", true, `  - id: fault
     kind: ПолеВвода
     data_path: Объект.Неисправность

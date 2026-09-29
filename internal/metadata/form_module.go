@@ -296,14 +296,60 @@ const (
 )
 
 // FormChoiceCondition описывает одно серверно проверяемое условие подбора.
-// Ровно одно из From и Value обязательно. В версии 1 Value допустим только
-// для служебного поля is_folder и имеет boolean-тип; указатель отличает
-// явное false от отсутствующего литерала.
+// Ровно одно из From и Value обязательно.
+//
+// Value — литерал из конфигурации, boolean: служебное поле is_folder и булев
+// реквизит справочника («только немуниципальные адреса»). Указатель отличает
+// явное false от отсутствующего литерала. Литералов других типов в контракте
+// нет сознательно: строка или число рядом с колонкой — это уже отбор, который
+// пишется в конфигурации запросом, а не грамматикой подбора.
+//
+// From — путь к значению на форме: `Объект.<Поле>` / `Форма.<Поле>` (v1) либо
+// `Объект.<Поле>.<Реквизит>` / `Форма.<Поле>.<Реквизит>` — ровно один переход
+// по ссылке (план 183, срез B1). Разбирается через ParseFormChoiceSource.
 type FormChoiceCondition struct {
 	Field string             `yaml:"field"`
 	Op    FormChoiceOperator `yaml:"op"`
 	From  string             `yaml:"from,omitempty"`
 	Value *bool              `yaml:"value,omitempty"`
+}
+
+// FormChoiceSource — разобранный источник условия подбора.
+//
+// Field — элемент формы, значение которого снимает браузер; Attr — реквизит
+// объекта, на который это значение ссылается. Пустой Attr означает путь v1:
+// значение элемента и есть значение фильтра.
+type FormChoiceSource struct {
+	Root  string
+	Field string
+	Attr  string
+}
+
+// Deep сообщает, что значение фильтра лежит не на форме, а за одним переходом
+// по ссылке: сервер обязан прочитать его сам, под правами пользователя.
+func (s FormChoiceSource) Deep() bool { return s.Attr != "" }
+
+// ParseFormChoiceSource разбирает `from`. Допустимы ровно два и ровно три
+// непустых сегмента: путь длиннее — ещё одно чтение на каждое открытие формы и
+// ещё один посредник, права которого надо проверять, а путь короче неотличим
+// от имени реквизита. Корень (`Объект`/`Форма`) проверяет вызывающая сторона:
+// разбор одинаков для check, сервера форм и конфигуратора.
+func ParseFormChoiceSource(path string) (FormChoiceSource, bool) {
+	parts := strings.Split(strings.TrimSpace(path), ".")
+	if len(parts) != 2 && len(parts) != 3 {
+		return FormChoiceSource{}, false
+	}
+	source := FormChoiceSource{Root: strings.TrimSpace(parts[0]), Field: strings.TrimSpace(parts[1])}
+	if len(parts) == 3 {
+		source.Attr = strings.TrimSpace(parts[2])
+		if source.Attr == "" {
+			return FormChoiceSource{}, false
+		}
+	}
+	if source.Root == "" || source.Field == "" {
+		return FormChoiceSource{}, false
+	}
+	return source, true
 }
 
 // FormVirtualColumn — объявление виртуальной колонки табличной части.
