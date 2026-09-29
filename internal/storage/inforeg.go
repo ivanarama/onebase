@@ -178,6 +178,14 @@ func (db *DB) infoRegSet(ctx context.Context, ir *metadata.InfoRegister,
 	existingFilter *Predicate) (bool, error) {
 	d := db.dialect
 	table := metadata.InfoRegTableName(ir.Name)
+	dimKey, err := regWriteRefMap(ctx, ir.Dimensions, dimKey)
+	if err != nil {
+		return false, fmt.Errorf("info register %s: %w", ir.Name, err)
+	}
+	resources, err = regWriteRefMap(ctx, ir.Resources, resources)
+	if err != nil {
+		return false, fmt.Errorf("info register %s: %w", ir.Name, err)
+	}
 	writeKey, err := db.resolveInfoRegWriteKey(ctx, ir, dimKey, period)
 	if err != nil {
 		return false, err
@@ -712,7 +720,11 @@ func (db *DB) writeInfoMovementsInTx(ctx context.Context, regName, recorderType 
 
 		dimKey := make(map[string]any, len(ir.Dimensions))
 		for _, f := range ir.Dimensions {
-			dimKey[f.Name] = ciGet(row, f.Name)
+			v, err := regWriteRefValue(ctx, f, ciGet(row, f.Name))
+			if err != nil {
+				return fmt.Errorf("write info movement %s row %d dimension %s: %w", regName, i+1, f.Name, err)
+			}
+			dimKey[f.Name] = v
 		}
 		writeKey, err := db.resolveInfoRegWriteKey(ctx, ir, dimKey, rowPeriod)
 		if err != nil {
@@ -729,9 +741,10 @@ func (db *DB) writeInfoMovementsInTx(ctx context.Context, regName, recorderType 
 			col := metadata.ColumnName(f)
 			cols = append(cols, col)
 			phs = append(phs, d.Placeholder(idx))
-			v := ciGet(row, f.Name)
-			var err error
-			v, err = normalizeRegField(d, f, v)
+			v, err := regWriteRefValue(ctx, f, ciGet(row, f.Name))
+			if err == nil {
+				v, err = normalizeRegField(d, f, v)
+			}
 			if err != nil {
 				return fmt.Errorf("write info movement %s row %d resource %s: %w", regName, i+1, f.Name, err)
 			}
