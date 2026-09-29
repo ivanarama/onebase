@@ -52,7 +52,7 @@ PR сначала Draft, после зелёного CI — Ready. Развил�
 С нашей стороны делать нечего: у #1777 HEAD трогать нельзя — сгорят ревью и `ship`, а
 `main` в PR партии 2 подтянет base-sync MERGE, когда до них дойдёт очередь.
 
-## Партия 3 — в работе
+## Партия 3 — отправлено
 
 Найдено при проектировании плана 193, подтверждено прогоном на `main` `e29ed568`
 (мини-конфигурация: два плана счетов, регистр бухгалтерии, документ с проводкой из
@@ -60,20 +60,20 @@ PR сначала Draft, после зелёного CI — Ready. Развил�
 
 | № | Находка | PR | Статус на 29.09 |
 |---|---|---|---|
-| Д11 | Проводка на код, которого нет в плане счетов, записывается без ошибки и выпадает из остатков: «Дт 41х — Кт 60» на 500 при «Дт 41 — Кт 60» на 100 даёт Дт 41 = 100, Кт 60 = 600 — баланс не сходится. Коды `СчётДт`/`СчётКт` не проверяются нигде (`writeAccountMovementsInTx`) | — | в работе |
-| Д12 | Виртуальные таблицы бухрегистра в запросах берут счета всех планов счетов: `genAccountBalances` соединяет `_accounts` без условия на план регистра (у `storage.AccountBalances` оно есть). Со вторым планом, где тоже есть «41», остаток 41 выходит двумя строками | — | в работе |
-| Д13 | `children:` в плане счетов, показанный в `DEVELOPER.md`, загрузчик молча игнорирует: у `metadata.Account` нет такого поля, субсчетов 90.1/90.2 в `_accounts` нет, `onebase check` — «ошибок не найдено» | — | в работе |
+| Д11 | Проводка на код, которого нет в плане счетов, записывается без ошибки и выпадает из остатков: «Дт 41х — Кт 60» на 500 при «Дт 41 — Кт 60» на 100 даёт Дт 41 = 100, Кт 60 = 600 — баланс не сходится. Коды `СчётДт`/`СчётКт` не проверяются нигде (`writeAccountMovementsInTx`); `СчетДт` без «ё» (как в 1С) терялся и писал `<nil>` | [#1801](https://github.com/ivanarama/onebase/pull/1801) | Draft, CI идёт. Проверка в storage — на всех путях записи; тесты, писавшие проводки без плана счетов, заводят его как `migrate` |
+| Д12 | Виртуальные таблицы бухрегистра в запросах берут счета всех планов счетов: `genAccountBalances` соединяет `_accounts` без условия на план регистра (у `storage.AccountBalances` оно есть). Со вторым планом, где тоже есть «41», остаток 41 выходит двумя строками | [#1800](https://github.com/ivanarama/onebase/pull/1800) | Ready, CI зелёный (с `postgres-integration`) — в очереди ревью |
+| Д13 | `children:` в плане счетов, показанный в `DEVELOPER.md`, загрузчик молча игнорирует: у `metadata.Account` нет такого поля, субсчетов 90.1/90.2 в `_accounts` нет, `onebase check` — «ошибок не найдено». Рядом: вид счёта не проверялся (пример ИИ-конфигуратора писал `active-passive`), повтор кода, `parent` в никуда и `accounts:` регистра на несуществующий план проходили `check` | [#1802](https://github.com/ivanarama/onebase/pull/1802) | Draft, CI идёт |
 
 ## Решения владельца 29.09.2026 → планы
 
 | Пункт | Решение | План | PR | Статус |
 |---|---|---|---|---|
-| Д3 | вариант 2 — порядок создания | [189](189-document-creation-order.md) | [#1794](https://github.com/ivanarama/onebase/pull/1794) | Draft, ждёт CI |
-| Д7 | outbox в `_job_queue` | [190](190-webhook-outbox.md) | [#1795](https://github.com/ivanarama/onebase/pull/1795) | Draft, ждёт CI |
-| P1-2 | составные типы — первым | [191](191-composite-types.md) | [#1796](https://github.com/ivanarama/onebase/pull/1796) | Draft, ждёт CI |
-| P1-4 | закрытие периода | [192](192-period-closing.md) | [#1797](https://github.com/ivanarama/onebase/pull/1797) | Draft, ждёт CI |
-| P1-1 | регистр бухгалтерии v2 | [193](193-accounting-register-v2.md) | [#1798](https://github.com/ivanarama/onebase/pull/1798) | Draft, ждёт CI |
-| P1-6 | язык запросов | [194](194-query-language-erp.md) | [#1799](https://github.com/ivanarama/onebase/pull/1799) | Draft, ждёт CI |
+| Д3 | вариант 2 — порядок создания | [189](189-document-creation-order.md) | [#1794](https://github.com/ivanarama/onebase/pull/1794) | Ready, CI зелёный — в очереди ревью |
+| Д7 | outbox в `_job_queue` | [190](190-webhook-outbox.md) | [#1795](https://github.com/ivanarama/onebase/pull/1795) | Ready, CI зелёный — в очереди ревью |
+| P1-2 | составные типы — первым | [191](191-composite-types.md) | [#1796](https://github.com/ivanarama/onebase/pull/1796) | Ready, CI зелёный — в очереди ревью |
+| P1-4 | закрытие периода | [192](192-period-closing.md) | [#1797](https://github.com/ivanarama/onebase/pull/1797) | Ready, CI зелёный — в очереди ревью |
+| P1-1 | регистр бухгалтерии v2 | [193](193-accounting-register-v2.md) | [#1798](https://github.com/ivanarama/onebase/pull/1798) | Ready, CI зелёный — в очереди ревью |
+| P1-6 | язык запросов | [194](194-query-language-erp.md) | [#1799](https://github.com/ivanarama/onebase/pull/1799) | Ready, CI зелёный — в очереди ревью |
 
 Порядок реализации по зависимостям: 191 (срезы 1–2) → 193; 189 → групповое
 перепроведение (P1-5, плана ещё нет); 190, 192 и 194 независимы. Не распланированы: P1-3
