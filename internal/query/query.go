@@ -3188,13 +3188,32 @@ func (tr *translator) qualifyOwn(col, lower string) string {
 	if _, isAlias := tr.aliases[lower]; isAlias {
 		return col // алиас вывода, не колонка таблицы
 	}
-	if len(tr.refDims) > 0 && tr.mainTable != "" {
-		_, own := tr.colTypes[lower]
-		if own {
-			return tr.mainTable + "." + col
-		}
+	if len(tr.refDims) == 0 || tr.inUnionOrder() {
+		return col
+	}
+	// Источник — свой у каждого SELECT-scope. Прежде квалификатором всегда
+	// была главная таблица первого SELECT, и во второй ветви ОБЪЕДИНИТЬ поле
+	// «Дата» становилось «поступлениетоваров.дата» — «no such column».
+	table, colTypes := tr.mainTable, tr.colTypes
+	if scope, ok := tr.sourceCtx.scopeAt(tr.pos - 1); ok && scope.mainTable != "" {
+		table, colTypes = scope.mainTable, scope.mainColTypes
+	}
+	if table == "" {
+		return col
+	}
+	if _, own := colTypes[lower]; own || isEntityServiceColumn(lower) {
+		return table + "." + col
 	}
 	return col
+}
+
+// isEntityServiceColumn — служебная колонка таблицы объекта, которую запрос
+// пишет напрямую (ГДЕ posted = 1 И deletion_mark = 0). Среди реквизитов её нет,
+// поэтому раньше она уходила в SQL без квалификатора и становилась
+// неоднозначной, как только отбор по ссылке присоединял справочник: у него
+// тоже есть deletion_mark — «ambiguous column name».
+func isEntityServiceColumn(lower string) bool {
+	return lower == "posted" || lower == "deletion_mark"
 }
 
 // qualifyReference квалифицирует виртуальное поле Ссылка/Reference/Ref по
