@@ -61,6 +61,10 @@ func TestQueryRejectsSourceOutsideConfiguration(t *testing.T) {
 		{`ВЫБРАТЬ login, password_hash ИЗ (_users)`, bare},
 		{`ВЫБРАТЬ login ИЗ ((_users))`, bare},
 		{`ВЫБРАТЬ З.Номер ИЗ (Документ.Заявка КАК З ЛЕВОЕ СОЕДИНЕНИЕ _users КАК У ПО У.login = З.Номер)`, bare},
+		{`ВЫБРАТЬ login, password_hash ИЗ '_users'`, "строковый литерал не может быть источником запроса"},
+		{`ВЫБРАТЬ login ИЗ "_users"`, "строковый литерал не может быть источником запроса"},
+		{`ВЫБРАТЬ login ИЗ (('_users'))`, "строковый литерал не может быть источником запроса"},
+		{`ВЫБРАТЬ З.Номер ИЗ Документ.Заявка КАК З ЛЕВОЕ СОЕДИНЕНИЕ '_users' КАК У ПО У.login = З.Номер`, "строковый литерал не может быть источником запроса"},
 		// Известный вид — ещё не объект: у справочников и документов нет
 		// префикса таблицы, имя уходило в SQL как есть.
 		{`ВЫБРАТЬ login ИЗ Справочник._users`, unknown},
@@ -123,6 +127,7 @@ func TestQueryBareEntitySourceIsRegistered(t *testing.T) {
 		{`ВЫБРАТЬ Т.Номер ИЗ (ВЫБРАТЬ Номер ИЗ Заявка) КАК Т`, []query.SourceRef{заявка}},
 		// FROM внутри EXTRACT — часть выражения, а не место источника.
 		{`ВЫБРАТЬ EXTRACT(YEAR FROM Дата) КАК Г ИЗ Документ.Заявка`, []query.SourceRef{заявка}},
+		{`ВЫБРАТЬ 'текст' КАК Значение ИЗ Документ.Заявка`, []query.SourceRef{заявка}},
 	} {
 		res, err := query.Compile(c.text, query.CompileOpts{Dialect: storage.SQLiteDialect{}, Entities: rawSourceEntities()})
 		if err != nil {

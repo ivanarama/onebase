@@ -75,6 +75,9 @@ func TestAIRunQuery_SourceOutsideConfigurationIsRejected(t *testing.T) {
 		// служебные таблицы другой записью.
 		{"ВЫБРАТЬ login, password_hash ИЗ (_users)", "не объект конфигурации"},
 		{"ВЫБРАТЬ login, password_hash ИЗ Справочник._users", "такого объекта в конфигурации нет"},
+		{"ВЫБРАТЬ login, password_hash ИЗ '_users'", "строковый литерал не может быть источником запроса"},
+		{"ВЫБРАТЬ login, password_hash ИЗ \"_users\"", "строковый литерал не может быть источником запроса"},
+		{"ВЫБРАТЬ login, password_hash ИЗ (('_users'))", "строковый литерал не может быть источником запроса"},
 	} {
 		res := run(c.query)
 		if !res.IsError {

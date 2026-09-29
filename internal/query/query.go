@@ -4509,6 +4509,11 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 
 		// String literal
 		if t.kind == tStr {
+			// SQLite принимает строку в кавычках как имя таблицы в FROM.
+			// Такой источник не попадает в Sources и обходит проверку прав.
+			if tr.sourcePos[tr.pos] {
+				return Result{}, i18nerr.Errorf("строковый литерал не может быть источником запроса")
+			}
 			tr.prevWasDot = false
 			tr.advance()
 			tr.emit("'" + strings.ReplaceAll(t.val, "'", "''") + "'")
