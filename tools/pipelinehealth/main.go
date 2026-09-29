@@ -103,43 +103,63 @@ type candidate struct {
 	PrioritySource string `json:"priority_source"`
 	UpdatedAt      string `json:"updated_at"`
 	IntegrationAt  string `json:"-"`
-	// Transition описывает механический переход base-sync у двухродительского
-	// HEAD. Заполняется только для такой формы коммита; у обычного раунда
-	// доработки его нет.
-	Transition *transitionProof `json:"transition,omitempty"`
+	// BaseSyncCandidate описывает КАНДИДАТА на механический переход base-sync:
+	// двухродительскую форму HEAD и данные для проверок. Заполняется только для
+	// такой формы коммита; у обычного раунда доработки его нет.
+	BaseSyncCandidate *baseSyncCandidate `json:"base_sync_candidate,omitempty"`
 }
 
-// reviewProof — committed-пара ревью конкретной версии ветки: сам факт и
-// вердикт, который она зафиксировала. Outcome читается из названного
-// заключения и только если это заключение доверенное и относится к той же
-// версии: иначе вердикт остаётся пустым, и потребитель обязан считать переход
-// недоказанным.
-type reviewProof struct {
-	SHA           string `json:"sha"`
-	ReviewComment int64  `json:"review_comment"`
-	Claim         int64  `json:"claim"`
-	Epoch         string `json:"epoch_sha256"`
-	Outcome       string `json:"outcome_label,omitempty"`
+// reviewPairState — насколько согласована committed-пара ревью исходной версии
+// ветки. Снимок проверяет только то, что видно в комментариях: существование
+// каждой части пары, совпадение SHA, идентификаторов и epoch между ними, а
+// также доверенность и неизменённость самих комментариев. Server-ordered epoch
+// по timeline снимок не восстанавливает — это остаётся потребителю.
+type reviewPairState string
+
+const (
+	reviewPairConsistent         reviewPairState = "consistent"
+	reviewPairMissing            reviewPairState = "missing"
+	reviewPairClaimMissing       reviewPairState = "claim_missing"
+	reviewPairClaimEpochMismatch reviewPairState = "claim_epoch_mismatch"
+	reviewPairReviewMissing      reviewPairState = "review_missing"
+	reviewPairReviewUntrusted    reviewPairState = "review_untrusted"
+	reviewPairSHAMismatch        reviewPairState = "review_sha_mismatch"
+	reviewPairOutcomeNotReviewed reviewPairState = "outcome_not_reviewed"
+)
+
+// reviewPairEvidence — то, что снимок нашёл про ревью исходной версии ветки.
+// Вердикт (OutcomeLabel) заполняется ТОЛЬКО при state=consistent: непроверенная
+// пара отдаётся идентификаторами без вердикта, чтобы её нельзя было принять за
+// готовое доказательство.
+type reviewPairEvidence struct {
+	State         reviewPairState `json:"state"`
+	SHA           string          `json:"sha,omitempty"`
+	ReviewComment int64           `json:"review_comment,omitempty"`
+	Claim         int64           `json:"claim,omitempty"`
+	Epoch         string          `json:"epoch_sha256,omitempty"`
+	Outcome       string          `json:"outcome_label,omitempty"`
 }
 
-// transitionProof — переход base-sync, каким он виден в графе коммитов:
-// родители HEAD дают «откуда» и «какая основная», сам HEAD — «куда».
+// baseSyncCandidate — КАНДИДАТ на механический переход base-sync, а не его
+// доказательство. Снимок сообщает форму коммита и найденные данные; полностью
+// доказанным переход становится только после проверок, которые снимку
+// недоступны: предок base в текущем main, побайтовый пересчёт слияния,
+// обязательный CI на точном to и server-ordered epoch по timeline. Их список
+// отдаётся полем ConsumerMustVerify, чтобы граница ответственности читалась
+// машиной, а не подразумевалась.
 //
-// Опубликованные маркеры pp:base-sync-intent/done пересказывают ровно это, но
-// путь opt-in base_sync_merge их намеренно не публикует: ответ update-branch
-// проверяется до любого публикуемого факта, и конфликт 422 не должен оставлять
-// ложное «готово». Поэтому форма коммита — самостоятельное доказательство, а
-// ProvedBy лишь сообщает, был ли рядом ещё и журнал.
-//
-// Снимок очереди не доказывает ни предка base в main, ни побайтовый пересчёт
-// слияния: то и другое требует git и проверяется на стороне потребителя.
-type transitionProof struct {
-	From                string       `json:"from"`
-	Base                string       `json:"base"`
-	To                  string       `json:"to"`
-	ProvedBy            string       `json:"proved_by"`
-	FromReview          *reviewProof `json:"from_review,omitempty"`
-	CurrentHeadReviewed bool         `json:"current_head_reviewed"`
+// Опубликованные маркеры pp:base-sync-intent/done пересказывают ту же форму
+// коммита; opt-in путь base_sync_merge их намеренно не публикует, поэтому
+// кандидат существует и без них, а их отсутствие само по себе ничего не
+// доказывает.
+type baseSyncCandidate struct {
+	From                string              `json:"from"`
+	Base                string              `json:"base"`
+	To                  string              `json:"to"`
+	Source              string              `json:"source"`
+	FromReview          *reviewPairEvidence `json:"from_review,omitempty"`
+	CurrentHeadReviewed bool                `json:"current_head_reviewed"`
+	ConsumerMustVerify  []string            `json:"consumer_must_verify"`
 }
 
 type finding struct {
@@ -409,7 +429,7 @@ func analyze(prs []apiPull, owner string) report {
 		currentCompletions, latestCompletion, latestOverride := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
 		carryDone, carryIntentOpen, v1AbortCurrent, baseAdvanced, protocolHistory, integrationAt := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA, pr.HeadParents)
 		item.IntegrationAt = integrationAt
-		item.Transition = baseSyncTransition(pr, owner, carryDone, currentCompletions)
+		item.BaseSyncCandidate = baseSyncCandidateOf(pr, owner, currentCompletions)
 		if baseAdvanced {
 			result.add("yellow", "base_sync_base_advanced", pr.Number,
 				"base сдвинулся между intent и done; GraphQL gate должен проверить actual parent и ancestry")
@@ -945,32 +965,42 @@ func headIsBaseSyncMerge(pr apiPull) bool {
 	return len(pr.HeadParents) == 2
 }
 
-// baseSyncTransition собирает доказательство перехода для двухродительского
-// HEAD. Первый родитель — ветка до освежения, второй — влитая основная: такой
-// порядок оставляет и update-branch, и обычное слияние основной в ветку.
-func baseSyncTransition(pr apiPull, owner string, doneCurrent bool, currentCompletions int) *transitionProof {
+// baseSyncCandidateOf собирает кандидата для двухродительского HEAD. Первый
+// родитель — ветка до освежения, второй — влитая основная: такой порядок
+// оставляет и update-branch, и обычное слияние основной в ветку.
+//
+// Функция ничего не доказывает и не выдаёт разрешений: она сообщает форму
+// коммита и то, что видно про ревью исходной версии в комментариях.
+func baseSyncCandidateOf(pr apiPull, owner string, currentCompletions int) *baseSyncCandidate {
 	if !headIsBaseSyncMerge(pr) {
 		return nil
 	}
-	proof := &transitionProof{
+	return &baseSyncCandidate{
 		From:                pr.HeadParents[0],
 		Base:                pr.HeadParents[1],
 		To:                  pr.Head.SHA,
-		ProvedBy:            "graph",
+		Source:              "head_parents",
 		CurrentHeadReviewed: currentCompletions > 0,
+		FromReview:          reviewPairFor(pr.Comments, owner, pr.HeadParents[0]),
+		ConsumerMustVerify: []string{
+			"base_ancestry",
+			"merge_tree",
+			"required_checks",
+			"timeline_epoch",
+		},
 	}
-	if doneCurrent {
-		proof.ProvedBy = "markers"
-	}
-	proof.FromReview = committedReviewFor(pr.Comments, owner, proof.From)
-	return proof
 }
 
-// committedReviewFor находит последнюю доверенную committed-пару для указанной
-// версии ветки. Отредактированные и чужие комментарии не считаются — то же
-// правило, по которому живёт весь остальной разбор протокола.
-func committedReviewFor(comments []apiComment, owner, sha string) *reviewProof {
-	var found *reviewProof
+// reviewPairFor проверяет связность committed-пары ревью указанной версии
+// ветки в пределах того, что видно снимку: completion, его claim и названное
+// заключение обязаны ссылаться друг на друга, совпадать по SHA и epoch и быть
+// доверенными неотредактированными комментариями.
+//
+// Несогласованная пара отдаётся идентификаторами БЕЗ вердикта: «нашёл
+// completion» и «ревью доказано» — разные утверждения, и снимок обязан
+// различать их явно.
+func reviewPairFor(comments []apiComment, owner, sha string) *reviewPairEvidence {
+	var completion *reviewPairEvidence
 	for _, comment := range comments {
 		if !trustedUnedited(comment, owner) {
 			continue
@@ -987,38 +1017,84 @@ func committedReviewFor(comments []apiComment, owner, sha string) *reviewProof {
 			if err != nil {
 				continue
 			}
-			found = &reviewProof{SHA: sha, ReviewComment: reviewID, Claim: claimID, Epoch: match[4]}
+			completion = &reviewPairEvidence{
+				SHA: sha, ReviewComment: reviewID, Claim: claimID, Epoch: match[4],
+			}
 		}
 	}
-	if found == nil {
-		return nil
+	if completion == nil {
+		return &reviewPairEvidence{State: reviewPairMissing, SHA: sha}
 	}
-	found.Outcome = reviewOutcomeFor(comments, owner, found.ReviewComment, sha)
-	return found
+
+	claim := claimEvidence(comments, owner, completion.Claim)
+	switch {
+	case claim == nil:
+		completion.State = reviewPairClaimMissing
+		return completion
+	case !strings.EqualFold(claim.head, sha) || claim.reviewComment != completion.ReviewComment:
+		completion.State = reviewPairClaimMissing
+		return completion
+	case !strings.EqualFold(claim.epoch, completion.Epoch):
+		completion.State = reviewPairClaimEpochMismatch
+		return completion
+	}
+
+	conclusion, found := reviewConclusionBody(comments, completion.ReviewComment)
+	switch {
+	case !found:
+		completion.State = reviewPairReviewMissing
+		return completion
+	case !trustedUnedited(conclusion, owner):
+		completion.State = reviewPairReviewUntrusted
+		return completion
+	}
+	head := reviewedSHALine.FindStringSubmatch(conclusion.Body)
+	if head == nil || !strings.EqualFold(head[1], sha) {
+		completion.State = reviewPairSHAMismatch
+		return completion
+	}
+	outcome := reviewOutcomeLine.FindStringSubmatch(conclusion.Body)
+	if outcome == nil || outcome[1] != "reviewed" {
+		completion.State = reviewPairOutcomeNotReviewed
+		return completion
+	}
+	completion.State = reviewPairConsistent
+	completion.Outcome = outcome[1]
+	return completion
 }
 
-// reviewOutcomeFor возвращает вердикт названного заключения и только если оно
-// доверенное и названо ровно для той же версии ветки. Пустая строка означает
-// «вердикт не доказан» — потребитель обязан отправить PR в обычное ревью, а не
-// достраивать вердикт догадкой.
-func reviewOutcomeFor(comments []apiComment, owner string, id int64, sha string) string {
+type claimShape struct {
+	head          string
+	reviewComment int64
+	epoch         string
+}
+
+// claimEvidence находит заявку публикации по её идентификатору комментария.
+func claimEvidence(comments []apiComment, owner string, id int64) *claimShape {
 	for _, comment := range comments {
-		if comment.ID != id {
+		if comment.ID != id || !trustedUnedited(comment, owner) {
 			continue
 		}
-		if !trustedUnedited(comment, owner) {
-			return ""
+		match := claimLine.FindStringSubmatch(comment.Body)
+		if match == nil {
+			return nil
 		}
-		head := reviewedSHALine.FindStringSubmatch(comment.Body)
-		if head == nil || !strings.EqualFold(head[1], sha) {
-			return ""
+		reviewID, err := strconv.ParseInt(match[2], 10, 64)
+		if err != nil {
+			return nil
 		}
-		if outcome := reviewOutcomeLine.FindStringSubmatch(comment.Body); outcome != nil {
-			return outcome[1]
-		}
-		return ""
+		return &claimShape{head: match[1], reviewComment: reviewID, epoch: match[3]}
 	}
-	return ""
+	return nil
+}
+
+func reviewConclusionBody(comments []apiComment, id int64) (apiComment, bool) {
+	for _, comment := range comments {
+		if comment.ID == id {
+			return comment, true
+		}
+	}
+	return apiComment{}, false
 }
 
 func labelSet(labels []apiLabel) map[string]bool {
