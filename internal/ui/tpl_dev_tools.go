@@ -289,9 +289,13 @@ function qcParseQueryToBuilder() {
       cp = cp.trim();
       if (cp.charAt(0) === '(' && cp.charAt(cp.length-1) === ')')
         cp = cp.substring(1, cp.length-1).trim();
-      var opM = cp.match(/(.+?)\s*(<>|>=|<=|!=|=|>|<|ЕСТЬ\s+ПУСТО|НЕ\s+ЕСТЬ\s+ПУСТО|ПОДОБНО|В)\s*(.*)/i);
+      var opM = cp.match(/(.+?)\s*(<>|>=|<=|!=|=|>|<|НЕ\s+ЕСТЬ\s+ПУСТО|ЕСТЬ\s+НЕ\s+ПУСТО|ЕСТЬ\s+ПУСТО|ПОДОБНО|В)\s*(.*)/i);
       if (!opM) return;
       var cField = opM[1].trim(), cOp = opM[2].trim(), cVal = (opM[3] || '').trim();
+      // Синонимы приводим к варианту из списка конструктора, иначе regenerация
+      // после разбора потеряла бы условие: «ЕСТЬ НЕ ПУСТО» в списке нет, и
+      // qbGenerate не узнал бы в нём беззначный оператор.
+      if (cOp.toUpperCase() === 'ЕСТЬ НЕ ПУСТО') cOp = 'НЕ ЕСТЬ ПУСТО';
       if (fromAlias && cField.toLowerCase().indexOf(fromAlias.toLowerCase() + '.') === 0)
         cField = cField.substring(fromAlias.length + 1);
       qbAddCond();

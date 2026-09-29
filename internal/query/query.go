@@ -1037,6 +1037,37 @@ func (tr *translator) peek(offset int) tok {
 	return tr.tokens[i]
 }
 
+// nullCheckTripleAhead проверяет, что за уже пройденным «НЕ» (tr.pos-1) идут
+// «ЕСТЬ ПУСТО» (или английские IS NULL) — составной оператор отрицания
+// пустоты, а не префиксное отрицание выражения.
+func (tr *translator) nullCheckTripleAhead() bool {
+	p1, p2 := tr.peek(0), tr.peek(1)
+	if p1.kind != tIdent || p2.kind != tIdent {
+		return false
+	}
+	u1, u2 := upperFast(p1.val), upperFast(p2.val)
+	return (u1 == "ЕСТЬ" || u1 == "IS") && (u2 == "ПУСТО" || u2 == "NULL")
+}
+
+// prevEndsOperand — предыдущий токен закончил операнд выражения: число,
+// строка, параметр, закрывающая скобка или имя, не являющееся ключевым словом
+// (ключевое слово после себя операнд начинает, а не продолжает).
+func (tr *translator) prevEndsOperand() bool {
+	if tr.pos < 2 {
+		return false
+	}
+	prev := tr.tokens[tr.pos-2]
+	switch prev.kind {
+	case tNum, tStr, tRParen, tParam:
+		return true
+	case tIdent:
+		_, isKW := sqlKW(prev.val)
+		_, isAgg := sqlAgg(prev.val)
+		return !isKW && !isAgg
+	}
+	return false
+}
+
 func (tr *translator) advance() tok {
 	t := tr.tokens[tr.pos]
 	tr.pos++
@@ -2847,6 +2878,206 @@ func sourceColumnTypes(typeUpper, name string, opts CompileOpts) map[string]meta
 	return m
 }
 
+// buildScopedColTypes maps each SELECT scope to the types of the columns its own
+// sources expose without a qualifier. buildColTypes deliberately describes only
+// the first source of the whole token stream, so an unqualified argument inside
+// a nested SELECT or another UNION branch would otherwise be typed by a foreign
+// source. A name that two sources of the same scope type differently is dropped:
+// the compiler must not guess which one the author meant.
+func buildScopedColTypes(tokens []tok, opts CompileOpts, sourceCtx sourceContext) map[int]map[string]metadata.FieldType {
+	scoped := map[int]map[string]metadata.FieldType{}
+	ambiguous := map[int]map[string]bool{}
+
+	for i := 0; i+2 < len(tokens); i++ {
+		if tokens[i].kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+			continue
+		}
+		typeUpper := upperFast(tokens[i].val)
+		if !isSourceType(typeUpper) {
+			continue
+		}
+		scopeID, ok := sourceCtx.scopeIDAt(i)
+		if !ok {
+			continue
+		}
+		fields := sourceColTypes(typeUpper, tokens[i+2].val, opts)
+		if fields == nil {
+			continue
+		}
+		if scoped[scopeID] == nil {
+			scoped[scopeID] = map[string]metadata.FieldType{}
+			ambiguous[scopeID] = map[string]bool{}
+		}
+		for name, typ := range fields {
+			if ambiguous[scopeID][name] {
+				continue
+			}
+			if current, exists := scoped[scopeID][name]; exists {
+				if current != typ {
+					delete(scoped[scopeID], name)
+					ambiguous[scopeID][name] = true
+				}
+				continue
+			}
+			scoped[scopeID][name] = typ
+		}
+	}
+	return scoped
+}
+
+// buildQualifiedColTypes maps each unambiguous source qualifier to the field
+// types of that exact source within its SELECT scope. Scalar functions are
+// rewritten before FROM is emitted, so a qualified argument such as Other.Value
+// cannot use colTypes: that map intentionally describes only the first source
+// of the query. Qualifiers must stay scoped because the same alias may denote
+// different sources in a nested SELECT or another UNION branch.
+func buildQualifiedColTypes(tokens []tok, opts CompileOpts, sourceCtx sourceContext) map[int]map[string]map[string]metadata.FieldType {
+	qualified := map[int]map[string]map[string]metadata.FieldType{}
+	ambiguous := map[int]map[string]bool{}
+
+	sameTypes := func(a, b map[string]metadata.FieldType) bool {
+		if len(a) != len(b) {
+			return false
+		}
+		for name, typ := range a {
+			if b[name] != typ {
+				return false
+			}
+		}
+		return true
+	}
+	addQualifier := func(scopeID int, name string, fields map[string]metadata.FieldType) {
+		name = lowerFast(name)
+		if name == "" {
+			return
+		}
+		if qualified[scopeID] == nil {
+			qualified[scopeID] = map[string]map[string]metadata.FieldType{}
+		}
+		if ambiguous[scopeID] == nil {
+			ambiguous[scopeID] = map[string]bool{}
+		}
+		if ambiguous[scopeID][name] {
+			return
+		}
+		if current, ok := qualified[scopeID][name]; ok {
+			if !sameTypes(current, fields) {
+				delete(qualified[scopeID], name)
+				ambiguous[scopeID][name] = true
+			}
+			return
+		}
+		qualified[scopeID][name] = fields
+	}
+
+	for i := 0; i+2 < len(tokens); i++ {
+		if tokens[i].kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+			continue
+		}
+		typeUpper := upperFast(tokens[i].val)
+		if !isSourceType(typeUpper) {
+			continue
+		}
+		scopeID, ok := sourceCtx.scopeIDAt(i)
+		if !ok {
+			continue
+		}
+		name := tokens[i+2].val
+		fields := sourceColTypes(typeUpper, name, opts)
+		if fields == nil {
+			continue
+		}
+		addQualifier(scopeID, name, fields)
+		addQualifier(scopeID, sourceToTable(typeUpper, name), fields)
+
+		// У виртуальной таблицы пользовательский алиас стоит после списка
+		// аргументов: Регистр.X.Остатки(...) КАК Р (та же логика, что в
+		// разборе областей FROM).
+		if i+5 < len(tokens) && tokens[i+3].kind == tDot && tokens[i+5].kind == tLParen {
+			depth := 0
+			for j := i + 5; j < len(tokens); j++ {
+				switch tokens[j].kind {
+				case tLParen:
+					depth++
+				case tRParen:
+					depth--
+					if depth == 0 {
+						aliasPos := j + 1
+						if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {
+							aliasUpper := upperFast(tokens[aliasPos].val)
+							if (aliasUpper == "КАК" || aliasUpper == "AS") && tokens[aliasPos+1].kind == tIdent {
+								addQualifier(scopeID, tokens[aliasPos+1].val, fields)
+							}
+						}
+						j = len(tokens)
+					}
+				}
+			}
+			continue
+		}
+
+		// A regular source has its optional alias directly after the entity name.
+		aliasPos := i + 3
+		if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {
+			aliasUpper := upperFast(tokens[aliasPos].val)
+			if (aliasUpper == "КАК" || aliasUpper == "AS") && tokens[aliasPos+1].kind == tIdent {
+				addQualifier(scopeID, tokens[aliasPos+1].val, fields)
+			}
+		}
+	}
+	return qualified
+}
+
+func sourceColTypes(typeUpper, name string, opts CompileOpts) map[string]metadata.FieldType {
+	fields := map[string]metadata.FieldType{}
+	add := func(items []metadata.Field) {
+		for _, field := range items {
+			fields[lowerFast(field.Name)] = field.Type
+		}
+	}
+	switch {
+	case isAccumRegType(typeUpper):
+		for _, reg := range opts.Registers {
+			if strings.EqualFold(reg.Name, name) {
+				add(reg.Dimensions)
+				add(reg.Resources)
+				add(reg.Attributes)
+				fields["period"] = metadata.FieldTypeDate
+				fields["период"] = metadata.FieldTypeDate
+				return fields
+			}
+		}
+	case isInfoRegType(typeUpper):
+		for _, reg := range opts.InfoRegs {
+			if strings.EqualFold(reg.Name, name) {
+				add(reg.Dimensions)
+				add(reg.Resources)
+				fields["period"] = metadata.FieldTypeDate
+				fields["период"] = metadata.FieldTypeDate
+				return fields
+			}
+		}
+	case isAccountRegType(typeUpper):
+		for _, reg := range opts.AccountRegs {
+			if strings.EqualFold(reg.Name, name) {
+				add(reg.Resources)
+				add(reg.Subconto)
+				fields["period"] = metadata.FieldTypeDate
+				fields["период"] = metadata.FieldTypeDate
+				return fields
+			}
+		}
+	default:
+		for _, entity := range opts.Entities {
+			if strings.EqualFold(entity.Name, name) {
+				add(entity.Fields)
+				return fields
+			}
+		}
+	}
+	return nil
+}
+
 // needsNumberCast — true, если колонку поля number нужно обернуть в
 // CAST(... AS NUMERIC): только на SQLite (там number хранится как TEXT) и только
 // в позициях сравнения/сортировки (WHERE/HAVING/ORDER BY). В ВЫБРАТЬ не кастим —
@@ -3890,10 +4121,17 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 	}
 	projectionFields := projectionFieldNames(tokens)
 	projectionPlan := analyzeProjection(tokens)
+	// Типы нужно снять до раскрытия функций: после Год(Момент) → EXTRACT/strftime
+	// исходная граница аргумента теряется, а локализовать можно только date-момент,
+	// не произвольную строку и не будущий localdate (#1243).
+	colTypes := buildColTypes(tokens, opts)
+	scalarSourceCtx := preScanSourceContext(tokens)
+	qualifiedColTypes := buildQualifiedColTypes(tokens, opts, scalarSourceCtx)
+	scopedColTypes := buildScopedColTypes(tokens, opts, scalarSourceCtx)
 	tokens = rewriteGroupingReferenceAliases(tokens)
 	// расширяем НачалоДня/Год/Месяц/ОКР/АБС/ЦЕЛ/... в SQL-эквиваленты
 	// до основной трансляции, чтобы остальные шаги ничего не знали о них.
-	tokens = rewriteScalarFuncs(tokens, dialectName(opts.Dialect))
+	tokens = rewriteScalarFuncs(tokens, dialectName(opts.Dialect), scopedColTypes, qualifiedColTypes, scalarSourceCtx, 0, opts.Params)
 	tokens = rewriteStrftime(tokens, dialectName(opts.Dialect))
 	tr := &translator{
 		tokens:      tokens,
@@ -3901,7 +4139,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		paramValues: opts.Params,
 		opts:        opts,
 		colMap:      buildColMap(tokens, opts),
-		colTypes:    buildColTypes(tokens, opts),
+		colTypes:    colTypes,
 		mainTable:   preScanMainTable(tokens),
 		refDims:     preScanRefDims(tokens, opts),
 		mainRef:     preScanMainRefSource(tokens, opts),
@@ -4219,6 +4457,18 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			if agg, ok := sqlAgg(t.val); ok && tr.peek(0).kind == tLParen {
 				tr.emit(agg)
 			} else if kw, ok := sqlKW(t.val); ok {
+				// Составной постфиксный оператор «НЕ ЕСТЬ ПУСТО» — форма, которую
+				// предлагает конструктор отбора консоли. Пословная трансляция
+				// давала «NOT IS NULL»: постфиксная запись, которую не парсит ни
+				// одна СУБД (#1542). Разворачиваем тройку на месте. Префиксное
+				// отрицание не задето: у него после «НЕ» стоит выражение, а не
+				// пара «ЕСТЬ ПУСТО».
+				if kw == "NOT" && tr.nullCheckTripleAhead() {
+					tr.advance()
+					tr.advance()
+					tr.emit("IS NOT NULL")
+					continue
+				}
 				switch kw {
 				case "UNION":
 					// Каждая ветвь ОБЪЕДИНИТЬ — самостоятельный SELECT со своим
@@ -4281,6 +4531,15 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					tr.emit(lower)
 				} else if tr.section == sectionFrom && !prevDot {
 					tr.emit(lower)
+				} else if lower == "подобно" && tr.prevEndsOperand() && (tr.section == sectionWhere || tr.section == sectionHaving) {
+					// «ПОДОБНО» в позиции оператора сравнения — шаблон LIKE,
+					// который предлагает конструктор отбора (#1542). Имя не
+					// резервируется глобально: в позиции операнда (после ГДЕ,
+					// И, НЕ, скобки, запятой) слово уходит в ветки поля ниже,
+					// поэтому существующее поле или алиас «Подобно» работает
+					// как раньше — в том числе рядом с оператором:
+					// «ГДЕ Подобно ПОДОБНО "а%"».
+					tr.emit("LIKE")
 				} else if rd := tr.findRefDim(lower); rd != nil && !prevDot {
 					if nextIsDot {
 						if err := tr.assertSingleHopNavigation(rd); err != nil {
@@ -4717,7 +4976,7 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 // т.п., чтобы основной транслятор обработал внутренний аргумент через обычные
 // правила (resolve ref dims, параметры и т.п.). Рекурсивно для вложенных
 // вызовов: Месяц(НачалоМесяца(x)) и ОКР(СУММА(x), 0) тоже разворачиваются.
-func rewriteScalarFuncs(tokens []tok, dialect string) []tok {
+func rewriteScalarFuncs(tokens []tok, dialect string, scopedColTypes map[int]map[string]metadata.FieldType, qualifiedColTypes map[int]map[string]map[string]metadata.FieldType, sourceCtx sourceContext, tokenOffset int, params map[string]any) []tok {
 	rewrites := scalarFuncRewrites(dialect)
 	var out []tok
 	for i := 0; i < len(tokens); i++ {
@@ -4747,8 +5006,27 @@ func rewriteScalarFuncs(tokens []tok, dialect string) []tok {
 					out = append(out, t)
 					continue
 				}
-				inner := tokens[i+2 : end]
-				inner = rewriteScalarFuncs(inner, dialect) // рекурсия
+				rawInner := tokens[i+2 : end]
+				inner := rewriteScalarFuncs(rawInner, dialect, scopedColTypes, qualifiedColTypes, sourceCtx, tokenOffset+i+2, params) // рекурсия
+				// SQLite хранит date как UTC-текст. Переводим момент в стенные
+				// часы приложения до календарной операции, но только когда тип
+				// аргумента это доказывает. Поэтому будущий localdate останется
+				// «как записан», а строка с похожим содержимым не сменит смысл.
+				// Тип аргумента доказывает область компилируемого SELECT, а не
+				// первый источник всего потока: одноимённое поле соседней
+				// области не должно решать за эту (#1243, круг 4).
+				var scopeColTypes map[string]metadata.FieldType
+				var scopeQualified map[string]map[string]metadata.FieldType
+				if scopeID, ok := sourceCtx.scopeIDAt(tokenOffset + i); ok {
+					scopeColTypes = scopedColTypes[scopeID]
+					scopeQualified = qualifiedColTypes[scopeID]
+				}
+				if dialect == "sqlite" && isCalendarDateFunc(key) && dateArgumentIsMoment(rawInner, scopeColTypes, scopeQualified, params) {
+					wrapped := tokenizeFragment("ob_local_datetime(")
+					wrapped = append(wrapped, inner...)
+					wrapped = append(wrapped, tokenizeFragment(")")...)
+					inner = wrapped
+				}
 				out = append(out, rw.prefix...)
 				out = append(out, inner...)
 				out = append(out, rw.suffix...)
@@ -4759,6 +5037,55 @@ func rewriteScalarFuncs(tokens []tok, dialect string) []tok {
 		out = append(out, t)
 	}
 	return out
+}
+
+func isCalendarDateFunc(name string) bool {
+	switch name {
+	case "началодня", "startofday", "конецдня", "endofday",
+		"началомесяца", "startofmonth", "началогода", "startofyear",
+		"год", "year", "месяц", "month", "день", "day":
+		return true
+	default:
+		return false
+	}
+}
+
+// dateArgumentIsMoment распознаёт только аргумент, чей моментный тип доказан
+// метаданными/параметром. Системный Период регистра тоже является моментом;
+// одноимённое прикладное поле сначала проверяется по метаданным. Сложные
+// выражения оставляем в прежней семантике fail-closed: угадывание их типа
+// локализовало бы будущий localdate или обычную строку.
+func dateArgumentIsMoment(tokens []tok, colTypes map[string]metadata.FieldType, qualifiedColTypes map[string]map[string]metadata.FieldType, params map[string]any) bool {
+	for len(tokens) >= 2 && tokens[0].kind == tLParen && tokens[len(tokens)-1].kind == tRParen {
+		tokens = tokens[1 : len(tokens)-1]
+	}
+	if len(tokens) == 1 {
+		switch tokens[0].kind {
+		case tIdent:
+			name := lowerFast(tokens[0].val)
+			if typ, ok := colTypes[name]; ok {
+				return typ == metadata.FieldTypeDate
+			}
+			return name == "период" || name == "period"
+		case tParam:
+			switch params[tokens[0].val].(type) {
+			case time.Time, *time.Time:
+				return true
+			}
+		}
+		return false
+	}
+	if len(tokens) == 3 && tokens[0].kind == tIdent && tokens[1].kind == tDot && tokens[2].kind == tIdent {
+		fields, ok := qualifiedColTypes[lowerFast(tokens[0].val)]
+		if !ok {
+			return false
+		}
+		if typ, ok := fields[lowerFast(tokens[2].val)]; ok {
+			return typ == metadata.FieldTypeDate
+		}
+		return false
+	}
+	return false
 }
 
 // momentTimeValue — контракт для DSL-значения «момент времени».

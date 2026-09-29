@@ -207,6 +207,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 27 | [27-web-configurator.md](27-web-configurator.md) | Веб-конфигуратор (редактирование схемы в браузере) | 5–6 дней | ✅ Реализовано (в `internal/launcher/`, `/bases/{id}/configurator/` — перекрыт сверх плана) |
 | 28 | [28-auto-backup.md](28-auto-backup.md) | Автобэкап по расписанию с ротацией | 3 дня | 🟡 Ядро реализовано: `backup:` в `app.yaml`, задание `AutoBackup`, ротация `keep_last`, атомарная запись дампов; отдельная `_backups`-таблица не вводилась |
 | 29 | [29-webhooks.md](29-webhooks.md) | Webhook-уведомления на события | 4–5 дней | 🟡 Ядро закрыто; **DSL-путь записи событий не публикует** (дефект Д3), нет события `report.run`, в журнале нет фильтров и кнопки «Повторить» |
+| 176 | [176-write-context-and-load-mode.md](176-write-context-and-load-mode.md) | Контекст записи и явный режим загрузки для DSL/REST без пропуска `ПриЗаписи` (#1435) | 5–6.5 дней | 📋 Проектирование |
 
 ### Направление Д — Интерфейс и доступность
 
@@ -265,6 +266,7 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 70 | [70-report-runtime-settings.md](70-report-runtime-settings.md) | СКД C3 — рантайм-настройки отчёта пользователем: панель группировок/показателей/отборов на форме отчёта, сохранение per-user в `_settings` | 1.5–2 недели | ✅ Реализовано (`compform`, `UserReportSettings`, `_settings`, отборы, UI-панель, Excel) |
 | 60 | [60-config-versioning-marketplace.md](60-config-versioning-marketplace.md) | Версионирование конфигурации в БД (история/diff/откат) + marketplace конфигураций | 2–3 недели | 🟢 Часть A реализована: `_config_versions`, снимки, diff, rollback, UI истории, export ZIP/OBZ; marketplace — нет |
 | 61 | [61-http-services.md](61-http-services.md) | HTTP-сервисы: публикация REST-эндпоинтов на DSL (/hs/*, OpenAPI/RapiDoc); поглотил план 58 | 1 день | ✅ Реализовано |
+| 179 | [179-onec-code-compat.md](179-onec-code-compat.md) | Совместимость с прикладным кодом 1С: замеры на УТ 10.3 и УТ 11.5 с полной БСП (7,45 млн строк) — зависимость от библиотеки сконцентрирована, 20 функций дают 47 % вызовов; инструмент замера, матрица совместимости, слой помощников, уточнение совместимости `НСтр`/`СтрШаблон` и конверсия подтверждённых расхождений (заявка #1479) | предварительно до ~17 дней | 📋 Проектирование |
 
 ### Направление Д — Торговое оборудование
 
@@ -426,8 +428,11 @@ PostgreSQL; для SQLite потребовалось бы суммировани
 | 168 | [168-choice-preview-context.md](168-choice-preview-context.md) | Пояснение в форме выбора: статический реквизит, пакетная DSL-функция и ограниченный контекст вызывающей формы с RBAC (#1391) | ~5.5–8 дней | 📋 Проект 2026-09-08 |
 | 169 | [169-semantic-navigation-settings.md](169-semantic-navigation-settings.md) | Смысловое mixed-kind меню: YAML-база, общая настройка администратора и персональная дельта пользователя с безопасным наследованием (#1362) | ~13–19 дней после bootstrap плана 163 | 📋 Проект 2026-09-08 |
 | 170 | [170-dependent-reference-choice-filters.md](170-dependent-reference-choice-filters.md) | Зависимый отбор ссылочного picker: server-authoritative `eq`, `in_hierarchy`, `is_folder`, одинаковый `List`/`CountList` и защита от stale browser responses (#1303) | ~6–8 дней | 📋 Проектирование |
+| 172 | [172-managed-form-runtime-structure.md](172-managed-form-runtime-structure.md) | Динамическая структура managed-форм: `ЭтаФорма.Элементы`, серверный instance/revision, безопасные DOM-патчи и lifecycle SlickGrid (#1263) | ~12–17 дней | 📋 Проектирование |
+| 178 | [178-attachment-link-mode.md](178-attachment-link-mode.md) | Вложения: режим `link` — платформа хранит путь, а не копию; открытие файла в программе ОС на стороне клиента, выбор режима на уровне базы и сущности, открытие из списка и inline-просмотр хранимых вложений (заявка #1480) | ~11 дней | 📋 Проектирование |
 | 181 | [181-managed-form-close-intent.md](181-managed-form-close-intent.md) | Единый async close-intent: `ПередЗакрытием(Отказ)`, fail-closed shell/standalone/popup, «Записать / ОК / Закрыть» и runtime `РазрешитьЗакрытие` (#1530, #1558, #1559, #1621) | ~8–12 дней + 1–2 дня после runtime-instance 172 | 📋 Проектирование |
 | 182 | [182-interactive-dashboard-widgets.md](182-interactive-dashboard-widgets.md) | Интерактивные виджеты: точечный fresh refresh и live-события для data-widget, безопасная навигация строк и типизированные фильтры list (#1617–#1620) | ~7.5–11.5 дней | 📋 Проектирование |
+| 183 | [183-choice-filter-v2-deep-source-and-table-parts.md](183-choice-filter-v2-deep-source-and-table-parts.md) | choice_filter v2: источник через один переход по ссылке и отбор ссылочных колонок ТЧ (уровень формы и row-local) для каскада #1552 | ~4.5–6.5 дней | 📋 Проектирование |
 
 Повод — вопрос с внедрения «одна организация в базе, почему её не подставляют».
 Граница проведена так: в движок идёт механизм (объявление дефолта, его

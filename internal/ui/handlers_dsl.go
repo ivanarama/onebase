@@ -74,6 +74,9 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 		Notifier:          s.notifier(),
 		Interp:            s.interp, // для hook-правила конфликта в ПланыОбмена.ЗагрузитьПакет
 		EmailFileResolver: s.emailAttachmentPathResolver(txState.Ctx),
+		// Подписи ссылочных констант: живой контекст, RowLabel, полевая
+		// политика роли — в отличие от доверенного StoreRefPresenter (#1536).
+		ConstantRefPresenter: s.constantsRefPresenter(txState),
 	}.Build()
 
 	// TxState несёт «живой» контекст. Транзакционные функции

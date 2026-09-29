@@ -231,6 +231,11 @@ type FormElement struct {
 	AccessKey string `yaml:"accesskey,omitempty"` // HTML accesskey для браузерной активации (Alt/Option+клавиша)
 	HotKey    string `yaml:"hotkey,omitempty"`    // runtime shortcut для кнопок формы (F2/F4/F7/F8/F9/F10)
 	Multiline bool   `yaml:"multiline,omitempty"` // обычное поле ввода рендерится как textarea
+	// ChoiceContext — что вызывающая форма передаёт в подбор: «имя параметра» →
+	// «путь к значению на форме» (Объект.Филиал, реквизит формы). Аналог
+	// параметров выбора в 1С: форма выбора и область просмотра в ней обязаны
+	// знать, ДЛЯ ЧЕГО выбирают, — памятка по направлению у филиалов разная.
+	ChoiceContext map[string]string `yaml:"choice_context,omitempty"`
 	// Language — язык подсветки для kind: ПолеКода. Пусто → plaintext.
 	// Значения совпадают с идентификаторами языков редактора: bsl, sql, json,
 	// xml, yaml, markdown, javascript, plaintext.
@@ -496,6 +501,19 @@ type FormModule struct {
 	// OneCMeta — служебный блок, используемый только конвертером 1С,
 	// рантайм его игнорирует. Может содержать version, unknown_xml и т.п.
 	OneCMeta map[string]any `yaml:"oneC_meta,omitempty"`
+
+	// SourcePath — путь файла, из которого форма прочитана, относительно корня
+	// проекта и всегда со слэшами: `forms/Инвентаризация/объекта.form.yaml`.
+	// Имя файла и `Name` формы совпадать не обязаны (`name: ФормаОбъекта` в
+	// `объекта.form.yaml`), поэтому локатор предупреждения check синтезировать
+	// из `Name` нельзя — по такому пути файла на диске нет (#1356). Регистр
+	// каталога сохраняется таким, как он лежит на диске: после `ExportToDir`
+	// из configdb путь с приведённым регистром открывается на Windows и не
+	// открывается на Linux.
+	//
+	// Пусто у форм, у которых файла нет вовсе: автоформы из `src/*.form.os` и
+	// формы, собранные в тестах или редактором в памяти.
+	SourcePath string `yaml:"-"`
 
 	// ProgramAST — распарсенный AST модуля .form.os (тип *dsl/ast.Program).
 	// Хранится через any, чтобы пакет metadata не зависел от пакета ast

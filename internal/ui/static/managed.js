@@ -1474,11 +1474,16 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         body = new URLSearchParams(pendingRetry.body);
         snapshotKey = pendingRetry.key;
 		envelope = Object.assign({}, pendingRetry.envelope);
+		// Повтор неизвестного исхода не вправе претендовать на «первую
+		// попытку»: после перезапуска сервера он обязан остаться под фенсом
+		// (reconcile), как и раньше (#1685).
+		envelope.first = '';
       } else {
 		envelope = {
 		  intentId: freshCloseIntentID(),
 		  epoch: CLOSE_EPOCH,
 		  issuedAt: String(closeIssuedAtNow()),
+		  first: '1',
 		  reason: reason,
 		  mode: mode,
 		  formKind: closeFormKind(),
@@ -1511,6 +1516,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 			'X-OneBase-Close-Intent': intentID,
 			'X-OneBase-Close-Epoch': String(envelope.epoch || ''),
 			'X-OneBase-Close-Issued-At': String(envelope.issuedAt || ''),
+			'X-OneBase-Close-First-Attempt': String(envelope.first || ''),
 			'X-OneBase-Close-Reason': reason,
 			'X-OneBase-Close-Mode': mode,
 			'X-OneBase-Form-Kind': String(envelope.formKind || ''),

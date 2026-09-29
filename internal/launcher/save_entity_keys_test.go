@@ -8,6 +8,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Конфигуратор сохраняет объект round-trip'ом через saveEntity: Unmarshal →
@@ -93,6 +95,59 @@ func TestSaveEntity_CoversAllRawKeys(t *testing.T) {
 			"Добавьте их в saveEntity (нередактируемые — сырым *yaml.Node) либо\n"+
 			"внесите в saveEntityExempt с объяснением, почему их можно терять.",
 			len(missing), strings.Join(missing, ", "))
+	}
+}
+
+func TestSaveEntity_PreservesOrderByForms(t *testing.T) {
+	tests := []struct {
+		name       string
+		orderByYML string
+		wantKind   yaml.Kind
+		wantValues []string
+	}{
+		{
+			name:       "scalar",
+			orderByYML: "order_by: ПорядокВОтчётах\n",
+			wantKind:   yaml.ScalarNode,
+			wantValues: []string{"ПорядокВОтчётах"},
+		},
+		{
+			name:       "sequence",
+			orderByYML: "order_by: [ПорядокВОтчётах, Наименование desc]\n",
+			wantKind:   yaml.SequenceNode,
+			wantValues: []string{"ПорядокВОтчётах", "Наименование desc"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			source := "name: Направление\n" + tt.orderByYML + "fields: []\n"
+			var entity saveEntity
+			if err := yaml.Unmarshal([]byte(source), &entity); err != nil {
+				t.Fatalf("Unmarshal: %v", err)
+			}
+			encoded, err := yaml.Marshal(&entity)
+			if err != nil {
+				t.Fatalf("Marshal: %v", err)
+			}
+			var roundTrip saveEntity
+			if err := yaml.Unmarshal(encoded, &roundTrip); err != nil {
+				t.Fatalf("повторный Unmarshal: %v", err)
+			}
+			if roundTrip.OrderBy.Kind != tt.wantKind {
+				t.Fatalf("kind order_by = %v, want %v; YAML:\n%s", roundTrip.OrderBy.Kind, tt.wantKind, encoded)
+			}
+			var got []string
+			if roundTrip.OrderBy.Kind == yaml.ScalarNode {
+				got = []string{roundTrip.OrderBy.Value}
+			} else {
+				for _, node := range roundTrip.OrderBy.Content {
+					got = append(got, node.Value)
+				}
+			}
+			if !reflect.DeepEqual(got, tt.wantValues) {
+				t.Fatalf("order_by = %v, want %v; YAML:\n%s", got, tt.wantValues, encoded)
+			}
+		})
 	}
 }
 

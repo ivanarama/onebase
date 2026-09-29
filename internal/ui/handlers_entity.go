@@ -74,6 +74,23 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := r.URL.Query().Get("view")
+	// tree проходит мимо нормализации: иерархический вид открывается по
+	// ?view=tree, но персистентно не сохраняется — его выбирают заново.
+	if view != "list" && view != "tiles" && view != "tree" {
+		view = "" // неизвестное значение трактуем как отсутствие выбора
+	}
+	// Явный выбор вида запоминается по пользователю и сущности (#1485);
+	// открытие без параметра восстанавливает сохранённый вид. Иерархический
+	// вид (tree) персистентно не сохраняется — это отдельный контракт.
+	viewUser := auth.UserFromContext(r.Context())
+	if viewUser != nil && viewUser.Login != "" && (view == "list" || view == "tiles") {
+		_ = s.store.SaveListViewUserSettings(r.Context(), entity.Name, viewUser.Login, view)
+	}
+	if view == "" && viewUser != nil && viewUser.Login != "" {
+		if saved, err := s.store.GetListViewUserSettings(r.Context(), entity.Name, viewUser.Login); err == nil {
+			view = saved
+		}
+	}
 	treeView := entity.Hierarchical && view == "tree"
 	tilesView := view == "tiles"
 	feed := !treeView && s.resolveListMode(w, r, entity)
@@ -692,6 +709,17 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 			obj.Set(k, v)
 		}
 		obj.TablePartRows = tpRows
+		// Реквизиты, которых на управляемой форме не было, до сюда не доходят
+		// вовсе — их значением обязано стать то, что вычислил GET (#1189).
+		newRes, err := s.applyDefaultsToUnsubmittedFields(r, entity, form, obj)
+		if err != nil {
+			s.renderObjectFormError(w, r, entity, true, err.Error(), newRes.DSLMessages, tpRows)
+			return
+		}
+		if newRes.DSLError != "" {
+			s.renderObjectFormError(w, r, entity, true, newRes.DSLError, newRes.DSLMessages, tpRows)
+			return
+		}
 	} else {
 		obj = &runtime.Object{
 			Type:          entity.Name,
@@ -1050,6 +1078,14 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Тексты просмотра, зависящие от КОНТЕКСТА подбора (choice_preview_proc):
+	// вызывающая форма прислала, например, филиал звонка, и памятка по
+	// направлению собирается уже под него. Ошибка процедуры не валит подбор:
+	// выбирать элемент оператору нужно в любом случае, а текст справа —
+	// вспомогательный (что сломалось, видно в логе сервера).
+	// Динамический preview (choice_preview_proc) обслуживается POST /page:
+	// GET остаётся статическим и обратно совместимым (план 168, инвариант 1).
+	previewField := canonicalChoicePreviewField(ent)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	response := map[string]any{
 		"items":  items,
@@ -1057,6 +1093,7 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 		"limit":  limit,
 		"offset": offset,
 	}
+	response["preview"] = previewField
 	if choice != nil && choice.Selected != nil {
 		allowed := false
 		if !choice.Empty {
