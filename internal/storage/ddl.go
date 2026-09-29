@@ -117,6 +117,23 @@ func registerDimPeriodIndexColumns(reg *metadata.Register) []string {
 	return cols
 }
 
+// AddForeignKeySQL объявляет внешний ключ отдельным шагом — для ссылок, не
+// поместившихся в CREATE TABLE (см. createTableSQL).
+func AddForeignKeySQL(table, col, refTable string) string {
+	return "ALTER TABLE " + table + " ADD CONSTRAINT " + ForeignKeyName(table, col, refTable) +
+		" FOREIGN KEY (" + col + ") REFERENCES " + refTable + "(id)"
+}
+
+// ForeignKeyName — имя ключа, который добавляет AddForeignKeySQL. Имя обязано
+// быть устойчивым: по нему проверяется «ключ уже стоит», и оно не должно
+// зависеть от того, какая таблица круга создалась первой. Хеш, а не
+// «таблица_колонка_fkey», потому что у PostgreSQL имя ограничено 63 БАЙТАМИ,
+// а имена объектов конфигурации кириллические, то есть двухбайтовые.
+func ForeignKeyName(table, col, refTable string) string {
+	sum := sha1.Sum([]byte("fk|" + table + "|" + col + "|" + refTable)) //nolint:gosec // G401/G505: SHA1 берётся для СТАБИЛЬНОГО ИМЕНИ КЛЮЧА, а не для защиты — как в stableIndexName
+	return "fk_ob_" + fmt.Sprintf("%x", sum[:6])
+}
+
 func stableIndexName(table string, cols []string, unique bool) string {
 	kind := "n"
 	if unique {
@@ -127,6 +144,16 @@ func stableIndexName(table string, cols []string, unique bool) string {
 }
 
 func CreateTableSQL(d Dialect, e *metadata.Entity) string {
+	return createTableSQL(d, e, nil)
+}
+
+// createTableSQL умеет ПРОПУСТИТЬ часть внешних ключей: перечисленные в
+// deferFK колонки получат ключ отдельным ALTER-ом, когда таблица-цель уже
+// создана. Иначе ссылочный круг («Обращение → Заявка → Обращение») не создать
+// вовсе: какая-то из таблиц круга неизбежно создаётся первой, и её ключ
+// ссылается на ещё не существующую таблицу. Ключи при этом не пропадают —
+// откладывается только момент объявления.
+func createTableSQL(d Dialect, e *metadata.Entity, deferFK map[string]bool) string {
 	var sb strings.Builder
 	table := metadata.TableName(e.Name)
 	sb.WriteString("CREATE TABLE IF NOT EXISTS ")
@@ -149,7 +176,7 @@ func CreateTableSQL(d Dialect, e *metadata.Entity) string {
 	}
 	// foreign key constraints
 	for _, f := range e.Fields {
-		if f.RefEntity != "" {
+		if f.RefEntity != "" && !deferFK[metadata.ColumnName(f)] {
 			sb.WriteString(",\n    FOREIGN KEY (")
 			sb.WriteString(metadata.ColumnName(f))
 			sb.WriteString(") REFERENCES ")
