@@ -72,7 +72,7 @@ type MovementStore interface {
 	// WriteAccountMovements перезаписывает проводки документа в бухрегистре
 	// (вместе с итогами в той же транзакции).
 	WriteAccountMovements(ctx context.Context, regName, docType string, docID uuid.UUID, rows []map[string]any, ar *metadata.AccountRegister, period *time.Time) error
-	// RecorderMovementRegisters сообщает одним запросом, в каких из переданных
+	// RecorderMovementRegisters сообщает, в каких из переданных
 	// регистров у регистратора есть движения — чтобы снимать и запирать только их.
 	RecorderMovementRegisters(ctx context.Context, recorderType string, recorderID uuid.UUID,
 		regs []*metadata.Register, infos []*metadata.InfoRegister, accs []*metadata.AccountRegister) (storage.RecorderRegisters, error)

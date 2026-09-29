@@ -206,3 +206,113 @@ func TestRepost_ClearsMovementsOfUntouchedRegisters_Matrix(t *testing.T) {
 		}
 	})
 }
+
+// Больше 500 регистров: публичные проведение, перепроведение и отмена должны
+// работать и при пустом наборе движений. Проверяем все виды регистров, в том
+// числе движения по обе стороны границы SQL-пакета и в последнем регистре.
+func TestPosting_ManyUntouchedRegisters_Matrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		doc := &metadata.Entity{Name: "БольшойДокумент", Kind: metadata.KindDocument, Posting: true,
+			Fields: []metadata.Field{{Name: "Дата", Type: metadata.FieldTypeDate}, {Name: "Флаг", Type: metadata.FieldTypeBool}, {Name: "Ключ", Type: metadata.FieldTypeString}}}
+		var regs []*metadata.Register
+		var infos []*metadata.InfoRegister
+		for i := 0; i < 250; i++ {
+			regs = append(regs, &metadata.Register{Name: fmt.Sprintf("Р%03d", i), Resources: []metadata.Field{{Name: "К", Type: metadata.FieldTypeNumber}}})
+			infos = append(infos, &metadata.InfoRegister{Name: fmt.Sprintf("И%03d", i), Dimensions: []metadata.Field{{Name: "Ключ", Type: metadata.FieldTypeString}}, Resources: []metadata.Field{{Name: "К", Type: metadata.FieldTypeNumber}}})
+		}
+		acc := &metadata.AccountRegister{Name: "Бух", Accounts: "Основной", Resources: []metadata.Field{{Name: "Сумма", Type: metadata.FieldTypeNumber}}}
+		if err := db.Migrate(ctx, []*metadata.Entity{doc}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.MigrateRegisters(ctx, regs); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.MigrateInfoRegisters(ctx, infos); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{acc}); err != nil {
+			t.Fatal(err)
+		}
+
+		program := mustParseProgramT(t, `Процедура OnPost()
+ Если this.Флаг Тогда
+  Дв = Движения.Р000.Добавить(); Дв.К = 1;
+  Дв = Движения.Р249.Добавить(); Дв.К = 1;
+  Дв = Движения.И000.Добавить(); Дв.Ключ = this.Ключ; Дв.К = 1;
+  Дв = Движения.И149.Добавить(); Дв.Ключ = this.Ключ; Дв.К = 1;
+  Дв = Движения.И150.Добавить(); Дв.Ключ = this.Ключ; Дв.К = 1;
+  Дв = Движения.И249.Добавить(); Дв.Ключ = this.Ключ; Дв.К = 1;
+  Дв = Движения.Бух.Добавить(); Дв.СчётДт = "41"; Дв.СчётКт = "60"; Дв.Сумма = 1;
+ КонецЕсли;
+КонецПроцедуры`)
+		registry := runtime.NewRegistry()
+		registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{doc}, Registers: regs, InfoRegs: infos,
+			Programs: map[string]*ast.Program{doc.Name: program}})
+		registry.LoadAccountRegisters([]*metadata.AccountRegister{acc}, nil)
+		interp := interpreter.New()
+		interp.LookupProc = registry.GetModuleProc
+		svc := &Service{Store: db, Reg: registry, Interp: interp,
+			BuildVars: func(c context.Context, mc *runtime.MovementsCollector, _ *[]string) (map[string]any, *interpreter.TxState) {
+				return dslvars.Common{Ctx: c, Reg: registry, Store: db, Movements: mc}.Build(), nil
+			},
+		}
+		date := time.Date(2026, 9, 29, 10, 0, 0, 0, time.UTC)
+		post := func(id uuid.UUID, isNew, flag bool) {
+			t.Helper()
+			res, err := svc.Save(ctx, SaveRequest{Entity: doc, ID: id, IsNew: isNew, Action: "post",
+				Fields: map[string]any{"Дата": date, "Флаг": flag, "Ключ": id.String()}})
+			if err != nil {
+				t.Fatalf("Save(post): %v", err)
+			}
+			if res.DSLError != "" {
+				t.Fatalf("Save(post): %s", res.DSLError)
+			}
+		}
+		tables := []struct{ table, col string }{
+			{metadata.RegisterTableName(regs[0].Name), "recorder"},
+			{metadata.RegisterTableName(regs[249].Name), "recorder"},
+			{metadata.InfoRegTableName(infos[0].Name), "recorder"},
+			{metadata.InfoRegTableName(infos[149].Name), "recorder"},
+			{metadata.InfoRegTableName(infos[150].Name), "recorder"},
+			{metadata.InfoRegTableName(infos[249].Name), "recorder"},
+			{metadata.AccountRegTableName(acc.Name), "регистратор"},
+		}
+		check := func(id uuid.UUID, want int) {
+			t.Helper()
+			for _, table := range tables {
+				var n int
+				q := fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s = '%s'", table.table, table.col, id)
+				if err := db.QueryRow(ctx, q).Scan(&n); err != nil {
+					t.Fatal(err)
+				}
+				if n != want {
+					t.Errorf("%s: movements = %d, want %d", table.table, n, want)
+				}
+			}
+		}
+		first, other := uuid.New(), uuid.New()
+		post(first, true, false) // пустой mc — все 501 регистра участвуют в поиске
+		check(first, 0)
+		post(first, false, true)
+		post(other, true, true)
+		check(first, 1)
+		if err := svc.Repost(ctx, doc.Name, first); err != nil {
+			t.Fatalf("Repost: %v", err)
+		}
+		check(first, 1)
+		post(first, false, false) // все прежние движения вне mc, снимаются оба пакета
+		check(first, 0)
+		check(other, 1)
+		post(first, false, true)
+		res, err := svc.Unpost(ctx, doc, first)
+		if err != nil {
+			t.Fatalf("Unpost: %v", err)
+		}
+		if res.DSLError != "" {
+			t.Fatalf("Unpost: %s", res.DSLError)
+		}
+		check(first, 0)
+		check(other, 1)
+	})
+}

@@ -20,8 +20,8 @@ type RecorderRegisters struct {
 	AccountRegisters []*metadata.AccountRegister
 }
 
-// RecorderMovementRegisters отвечает одним запросом, в каких из переданных
-// регистров у регистратора есть движения.
+// RecorderMovementRegisters сообщает, в каких из переданных регистров
+// у регистратора есть движения, выполняя поиск ограниченными пакетами.
 //
 // Нужен проведению: движения документа после записи — ровно то, что
 // сформировал его модуль, поэтому прежние движения из регистров, которых модуль
@@ -36,57 +36,61 @@ type RecorderRegisters struct {
 func (db *DB) RecorderMovementRegisters(ctx context.Context, recorderType string, recorderID uuid.UUID,
 	regs []*metadata.Register, infos []*metadata.InfoRegister, accs []*metadata.AccountRegister) (RecorderRegisters, error) {
 	d := db.dialect
-	var (
-		parts []string
-		args  []any
-		n     int
-	)
-	next := func() string {
-		n++
-		return d.Placeholder(n)
-	}
-	// Номер ветки UNION однозначно указывает на регистр: сначала накопление,
-	// затем сведения, затем бухгалтерия — в порядке переданных срезов.
-	addPair := func(table string) {
-		p1 := next()
-		p2 := next()
-		parts = append(parts, fmt.Sprintf(
-			"SELECT %d AS k WHERE EXISTS (SELECT 1 FROM %s WHERE recorder = %s AND recorder_type = %s)",
-			len(parts), table, p1, p2))
-		args = append(args, idArg(d, recorderID), recorderType)
-	}
-	for _, reg := range regs {
-		addPair(metadata.RegisterTableName(reg.Name))
-	}
-	for _, ir := range infos {
-		addPair(metadata.InfoRegTableName(ir.Name))
-	}
-	for _, ar := range accs {
-		p := next()
-		parts = append(parts, fmt.Sprintf(
-			"SELECT %d AS k WHERE EXISTS (SELECT 1 FROM %s WHERE регистратор = %s)",
-			len(parts), metadata.AccountRegTableName(ar.Name), p))
-		args = append(args, idArg(d, recorderID))
-	}
 	var out RecorderRegisters
-	if len(parts) == 0 {
-		return out, nil
-	}
-	rows, err := db.Query(ctx, strings.Join(parts, " UNION ALL "), args...)
-	if err != nil {
-		return out, fmt.Errorf("движения регистратора %s %s: %w", recorderType, recorderID, err)
-	}
-	defer rows.Close()
+	// 400 веток укладываются в лимит SQLite (500), а максимум 800 параметров
+	// — и в старый лимит SQLite (999). Нумерация параметров начинается заново
+	// в каждом запросе; номер регистра остаётся общим для всех пакетов.
+	const batchSize = 400
+	total := len(regs) + len(infos) + len(accs)
 	var found []int
-	for rows.Next() {
-		var k int64
-		if err := rows.Scan(&k); err != nil {
+	for start := 0; start < total; start += batchSize {
+		end := min(start+batchSize, total)
+		var parts []string
+		var args []any
+		next := func(value any) string {
+			args = append(args, value)
+			return d.Placeholder(len(args))
+		}
+		for i := start; i < end; i++ {
+			var table string
+			switch {
+			case i < len(regs):
+				table = metadata.RegisterTableName(regs[i].Name)
+			case i < len(regs)+len(infos):
+				table = metadata.InfoRegTableName(infos[i-len(regs)].Name)
+			default:
+				table = metadata.AccountRegTableName(accs[i-len(regs)-len(infos)].Name)
+			}
+			p := next(idArg(d, recorderID))
+			var condition string
+			if i < len(regs)+len(infos) {
+				condition = fmt.Sprintf("recorder = %s AND recorder_type = %s", p, next(recorderType))
+			} else {
+				condition = "регистратор = " + p
+			}
+			parts = append(parts, fmt.Sprintf(
+				"SELECT %d AS k WHERE EXISTS (SELECT 1 FROM %s WHERE %s)", i, table, condition))
+		}
+		// Курсор закрывается до следующего запроса: в транзакции PostgreSQL
+		// открытый курсор оставляет соединение занятым.
+		err := func() error {
+			rows, err := db.Query(ctx, strings.Join(parts, " UNION ALL "), args...)
+			if err != nil {
+				return err
+			}
+			defer rows.Close()
+			for rows.Next() {
+				var k int64
+				if err := rows.Scan(&k); err != nil {
+					return err
+				}
+				found = append(found, int(k))
+			}
+			return rows.Err()
+		}()
+		if err != nil {
 			return out, fmt.Errorf("движения регистратора %s %s: %w", recorderType, recorderID, err)
 		}
-		found = append(found, int(k))
-	}
-	if err := rows.Err(); err != nil {
-		return out, fmt.Errorf("движения регистратора %s %s: %w", recorderType, recorderID, err)
 	}
 	// Порядок строк UNION ALL СУБД не обещает — восстанавливаем порядок входа.
 	sort.Ints(found)
