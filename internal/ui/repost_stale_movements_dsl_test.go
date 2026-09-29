@@ -20,26 +20,34 @@ import (
 // РегБ оставалось.
 func TestDSLPost_ClearsMovementsOfUntouchedRegisters(t *testing.T) {
 	dir := t.TempDir()
-	write := func(rel, body string) {
-		t.Helper()
-		path := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
+	mk := func(sub string) string {
+		p := filepath.Join(dir, sub)
+		if err := os.MkdirAll(p, 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", sub, err)
 		}
-		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		return p
 	}
-	reg := func(name string) string {
-		return "name: " + name + "\n" +
+	regDir := mk("registers")
+	docDir := mk("documents")
+	procDir := mk("processors")
+	srcDir := mk("src")
+
+	reg := func(name string) []byte {
+		return []byte("name: " + name + "\n" +
 			"dimensions:\n  - {name: Т, type: string}\n" +
-			"resources:\n  - {name: К, type: number}\n"
+			"resources:\n  - {name: К, type: number}\n")
 	}
-	write("registers/рега.yaml", reg("РегА"))
-	write("registers/регб.yaml", reg("РегБ"))
-	write("documents/док.yaml", "name: Док\nposting: true\nfields:\n"+
-		"  - {name: Дата, type: date}\n  - {name: Флаг, type: bool}\n")
-	write("src/Док.posting.os", `Процедура ОбработкаПроведения()
+	if err := os.WriteFile(filepath.Join(regDir, "рега.yaml"), reg("РегА"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(regDir, "регб.yaml"), reg("РегБ"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(docDir, "док.yaml"), []byte("name: Док\nposting: true\nfields:\n"+
+		"  - {name: Дата, type: date}\n  - {name: Флаг, type: bool}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "Док.posting.os"), []byte(`Процедура ОбработкаПроведения()
   Движения.РегА.Очистить();
   Дв = Движения.РегА.Добавить();
   Дв.Т = "x";
@@ -50,9 +58,13 @@ func TestDSLPost_ClearsMovementsOfUntouchedRegisters(t *testing.T) {
     Дв2.К = 100;
   КонецЕсли;
 КонецПроцедуры
-`)
-	write("processors/проба.yaml", "name: Проба\ntitle: Проба\n")
-	write("src/Проба.proc.os", `Процедура Выполнить()
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(procDir, "проба.yaml"), []byte("name: Проба\ntitle: Проба\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "Проба.proc.os"), []byte(`Процедура Выполнить()
   Д = Документы.Док.Создать();
   Д.Дата = ТекущаяДата();
   Д.Флаг = Истина;
@@ -60,7 +72,9 @@ func TestDSLPost_ClearsMovementsOfUntouchedRegisters(t *testing.T) {
   Д.Флаг = Ложь;
   Д.Провести();
 КонецПроцедуры
-`)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	ctx := context.Background()
 	proj, err := project.Load(dir)
