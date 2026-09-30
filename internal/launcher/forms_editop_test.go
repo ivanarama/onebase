@@ -655,3 +655,79 @@ elements:
 		t.Fatalf("choice_filter semantics changed after save/load: %+v", reloaded)
 	}
 }
+
+// Расширенная грамматика (план 183, срез B1) обязана пережить конфигуратор
+// ДОСЛОВНО. Именно здесь ломается такое: редактор, который знает только
+// двухсегментный путь, тихо урежет `Объект.Направление.Группа` до
+// `Объект.Направление` — отбор станет другим, а конфигурация внешне прежней.
+func TestConfiguratorChoiceFilter_DeepSourceAndBooleanLiteralSurviveRoundTrip(t *testing.T) {
+	s := &Store{path: filepath.Join(t.TempDir(), "ibases.yaml")}
+	b := &Base{Path: t.TempDir(), ConfigSource: "file"}
+	if err := s.Add(b); err != nil {
+		t.Fatalf("Add base: %v", err)
+	}
+	h := &handler{store: s}
+
+	src := `schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Заявка
+elements:
+  - id: fault-picker
+    kind: ПолеВвода
+    name: ПолеНеисправность
+    data_path: Объект.Неисправность
+    choice: true
+`
+	form := url.Values{
+		"op":            {"setChoiceFilter"},
+		"node":          {"elements.0"},
+		"choice_filter": {`[{"field":"Группа","op":"eq","from":"Объект.Направление.ГруппаНеисправностей"},{"field":"Муниципальный","op":"eq","value":false}]`},
+		"yaml":          {src},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/bases/"+b.ID+"/configurator/forms/edit-op", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", b.ID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	recorder := httptest.NewRecorder()
+	h.configuratorFormsEditOp(recorder, req)
+
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var response editOpResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v; body=%s", err, recorder.Body.String())
+	}
+	if !response.OK {
+		t.Fatalf("ok=false: %v", response.Errors)
+	}
+	conditions := response.Model["elements.0"].ChoiceFilter
+	if len(conditions) != 2 || conditions[0].From != "Объект.Направление.ГруппаНеисправностей" {
+		t.Fatalf("глубокий источник урезан в модели: %+v", conditions)
+	}
+	if conditions[1].Field != "Муниципальный" || conditions[1].Value == nil || *conditions[1].Value {
+		t.Fatalf("булев литерал обычного реквизита потерян: %+v", conditions[1])
+	}
+	if !strings.Contains(response.YAML, "from: Объект.Направление.ГруппаНеисправностей") {
+		t.Fatalf("глубокий источник не дошёл до YAML: %s", response.YAML)
+	}
+
+	yamlPath := filepath.Join(t.TempDir(), "form.form.yaml")
+	if err := os.WriteFile(yamlPath, []byte(response.YAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loader.NewManagedFormLoader().LoadFormFile(yamlPath, "Заявка")
+	if err != nil {
+		t.Fatalf("reload edited form: %v", err)
+	}
+	reloaded := loaded.Elements[0].ChoiceFilter
+	if len(reloaded) != 2 || reloaded[0].From != "Объект.Направление.ГруппаНеисправностей" {
+		t.Fatalf("глубокий источник потерян после сохранения: %+v", reloaded)
+	}
+	if reloaded[1].Value == nil || *reloaded[1].Value {
+		t.Fatalf("литерал false потерян после сохранения: %+v", reloaded[1])
+	}
+}

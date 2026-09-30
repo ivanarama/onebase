@@ -839,6 +839,23 @@ func readPullFixture(path string) ([]apiPull, error) {
 	if err := json.Unmarshal(data, &pulls); err != nil {
 		return nil, fmt.Errorf("decode pull fixture: %w", err)
 	}
+	// apiPull.Comments is excluded from ordinary JSON because the REST pulls
+	// endpoint exposes "comments" as a count. Offline fixtures may include an
+	// array to exercise the same review routing as a live GraphQL snapshot.
+	var comments []struct {
+		Comments json.RawMessage `json:"comments"`
+	}
+	if err := json.Unmarshal(data, &comments); err != nil {
+		return nil, fmt.Errorf("decode pull fixture comments: %w", err)
+	}
+	for index, item := range comments {
+		if len(item.Comments) == 0 || item.Comments[0] != '[' {
+			continue
+		}
+		if err := json.Unmarshal(item.Comments, &pulls[index].Comments); err != nil {
+			return nil, fmt.Errorf("decode pull fixture comments at %d: %w", index, err)
+		}
+	}
 	return pulls, nil
 }
 

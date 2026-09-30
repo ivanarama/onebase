@@ -524,8 +524,8 @@ func managedFormSchema() map[string]any {
 		"properties": map[string]any{
 			"field": stringSchema("Реквизит выбираемого справочника или служебное поле is_folder"),
 			"op":    enumSchema("eq", "in_hierarchy"),
-			"from":  stringSchema("Источник Объект.<Реквизит> или Форма.<Реквизит>"),
-			"value": boolSchema("Булев литерал; в v1 допустим только для is_folder"),
+			"from":  stringSchema("Источник Объект.<Поле>, Форма.<Поле> или Объект.<Поле>.<Реквизит> — один переход по ссылке"),
+			"value": boolSchema("Булев литерал: is_folder или булев реквизит справочника"),
 		},
 		"oneOf": []any{
 			map[string]any{"required": []string{"from"}, "not": map[string]any{"required": []string{"value"}}},
