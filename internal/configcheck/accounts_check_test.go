@@ -99,8 +99,8 @@ accounts:
 
 func TestRunFull_ChartOfAccountsIssues(t *testing.T) {
 	cases := []struct {
-		name, chart, reg string
-		want             []string
+		name, chart, reg, secondChart string
+		want                          []string
 	}{
 		{
 			name: "вид счёта через дефис",
@@ -169,6 +169,46 @@ resources:
 			want: []string{`"основной"`, `"Основной"`, "регистра букв"},
 		},
 		{
+			name: "пробелы в ссылке на план",
+			chart: `name: Основной
+accounts:
+  - {code: "41", name: Товары, kind: active}
+`,
+			reg: `name: Бух
+accounts: " Основной "
+resources:
+  - {name: Сумма, type: number}
+`,
+			want: []string{`" Основной "`, "не найден"},
+		},
+		{
+			name: "одноимённые планы с повтором кода",
+			chart: `name: Основной
+accounts:
+  - {code: "41", name: Товары, kind: active}
+`,
+			secondChart: `name: Основной
+accounts:
+  - {code: "41", name: Другие товары, kind: passive}
+`,
+			reg:  accountingRegYAML,
+			want: []string{`"Основной"`, "имя плана счетов", "дважды"},
+		},
+		{
+			name: "одноимённые планы с разными кодами",
+			chart: `name: Основной
+accounts:
+  - {code: "41", name: Товары, kind: active}
+`,
+			secondChart: `name: Основной
+accounts:
+  - {code: "60", name: Поставщики, kind: passive}
+`,
+			reg:  accountingRegYAML,
+			want: []string{`"Основной"`, "имя плана счетов", "дважды"},
+		},
+
+		{
 			name: "регистр без плана счетов",
 			chart: `name: Основной
 accounts:
@@ -185,6 +225,9 @@ resources:
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
 			mkFile(t, filepath.Join(dir, "accounts", "основной.yaml"), c.chart)
+			if c.secondChart != "" {
+				mkFile(t, filepath.Join(dir, "accounts", "другой.yaml"), c.secondChart)
+			}
 			mkFile(t, filepath.Join(dir, "accountregs", "бух.yaml"), c.reg)
 			result := RunFull(dir)
 			if result.OK {

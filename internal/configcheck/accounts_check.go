@@ -20,7 +20,7 @@ import (
 //     отказывала только в момент проведения.
 //
 // Имя плана в регистре сравнивается точно: оно становится значением _accounts.plan,
-// а SQL сравнивает строки с учётом регистра.
+// а SQL сравнивает строки с учётом регистра и пробелов.
 func CheckChartsOfAccounts(proj *project.Project) []Issue {
 	var issues []Issue
 	add := func(file, object, kind, msg string) {
@@ -30,6 +30,10 @@ func CheckChartsOfAccounts(proj *project.Project) []Issue {
 	charts := map[string]bool{}
 	chartsFold := map[string]string{}
 	for _, c := range proj.ChartsOfAccounts {
+		if charts[c.Name] {
+			add("accounts", c.Name, "План счетов",
+				fmt.Sprintf("имя плана счетов %q встречается дважды", c.Name))
+		}
 		charts[c.Name] = true
 		chartsFold[strings.ToLower(c.Name)] = c.Name
 
@@ -55,9 +59,9 @@ func CheckChartsOfAccounts(proj *project.Project) []Issue {
 	}
 
 	for _, ar := range proj.AccountRegisters {
-		name := strings.TrimSpace(ar.Accounts)
+		name := ar.Accounts
 		switch {
-		case name == "":
+		case strings.TrimSpace(name) == "":
 			add("accountregs", ar.Name, "Регистр бухгалтерии",
 				"не указан план счетов (accounts:)")
 		case charts[name]:
