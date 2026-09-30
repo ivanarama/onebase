@@ -281,7 +281,10 @@ func TestSchemaFieldMultilineIsLimitedToRenderedContexts(t *testing.T) {
 		"ресурс регистра сведений": {fieldObjectPaths["ресурс регистра свед."], true},
 		"табличная часть":          {fieldObjectPaths["поле табличной части"], false},
 		"регистр накопления":       {fieldObjectPaths["измерение регистра"], false},
-		"бухгалтерский регистр":    {fieldObjectPaths["ресурс бухрегистра"], false},
+		// У бухрегистра свой объект поля (accountRegField, #1567) — его пути
+		// в fieldObjectPaths нет, поэтому они указаны здесь.
+		"ресурс бухрегистра":   {[]string{"$defs", "accountreg", "properties", "resources", "items"}, false},
+		"субконто бухрегистра": {[]string{"$defs", "accountreg", "properties", "subconto", "items"}, false},
 	} {
 		field := schemaAt(t, doc, tc.path...)
 		_, forbidden := field["not"]

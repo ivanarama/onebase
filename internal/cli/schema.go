@@ -186,6 +186,10 @@ func allSchemas() map[string]map[string]any {
 			"type":   stringSchema("string|number|date|bool|text|richtext|image|reference:<Объект>|enum:<Перечисление>|number(10,2)"),
 			"pii":    boolSchema("Персональные данные в бухрегистре не поддерживаются: check отвергает ключ с объяснением"),
 		},
+		// multiline бухрегистр не рисует: запрет объявлен явно, как у табличной
+		// части и регистра накопления (fieldWithoutMultiline), а не только
+		// отсутствием ключа в properties.
+		"not": map[string]any{"required": []string{"multiline"}},
 	}
 	param := map[string]any{
 		"type":                 "object",
