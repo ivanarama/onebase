@@ -130,10 +130,12 @@ func TestListViewSwitchKeepsSearch(t *testing.T) {
 		t.Fatalf("в режиме плитки нет переключателя вида: найдено %d ссылок", len(links))
 	}
 	list := linkQuery(t, links[0][1])
+	// «Список» — явный выбор, как «Плитка». Без параметра вид берётся из
+	// сохранённого выбора пользователя (#1485), то есть из той же плитки.
 	wantParams(t, list, "ссылка «Список»", map[string]string{
 		"q":      "Болт",
 		"f.Цена": "10",
-		"view":   "",
+		"view":   "list",
 	})
 }
 

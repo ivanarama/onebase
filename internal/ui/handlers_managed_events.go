@@ -805,6 +805,23 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 			func() uuid.UUID { return obj.ID },
 			func() bool { return existingFormID != "" || closeInv.saved }, canRead)
 	}
+	// Новый объект, который close-intent сейчас запишет («ОК», «Да» в диалоге
+	// закрытия, «Записать и выбрать»): неразмещённые реквизиты получают default
+	// и ПриСозданииНового ровно как при «Записать» (#1189). До копирования —
+	// тот же порядок, что parseSubmitForm → restoreManagedCopyState в submit:
+	// значения источника копии главнее умолчаний.
+	if closeInv != nil && closeInv.mode != "discard" && existingFormID == "" {
+		newRes, defaultsErr := s.applyDefaultsToUnsubmittedFields(r, entity, form, obj)
+		if defaultsErr != nil || newRes.DSLError != "" {
+			message := newRes.DSLError
+			if defaultsErr != nil {
+				message = s.errText(r, defaultsErr)
+			}
+			w.WriteHeader(http.StatusBadRequest)
+			respondJSON(enc, formEventResponse{Error: message, Messages: newRes.DSLMessages, Dirty: boolPtr(true)})
+			return
+		}
+	}
 	copyStateRestored := false
 	if existingFormID != "" {
 		if restoreErr := s.restoreUnsubmittedFields(dslCtx, r, entity, form, obj.ID, obj.Fields); restoreErr != nil && closeInv != nil {
@@ -1107,6 +1124,24 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	defer rollbackDSLExecution(txState)
 	isNewForHandler := strings.TrimSpace(r.FormValue("_id")) == "" && (closeInv == nil || !closeInv.saved)
 	thisObj := s.newFormObjectThisLive(dslCtx, txState, obj, entity, form, isNewForHandler)
+	if isNewForHandler {
+		// Объект.Записать() из обработчика — ещё один путь записи нового объекта:
+		// без этого он писал неразмещённые реквизиты пустыми, хотя «Записать»
+		// заполняет их умолчанием и ПриСозданииНового (#1189). Значение,
+		// присвоенное самим обработчиком, умолчание не перетирает — даже
+		// Неопределено: набор присвоенного читается в момент записи.
+		thisObj.prepareNew = func(liveCtx context.Context) error {
+			newRes, err := s.overlayNewObjectDefaults(liveCtx, r, entity, form, obj, true, thisObj.assigned)
+			if err != nil {
+				return err
+			}
+			if newRes.DSLError != "" {
+				msgs = append(msgs, newRes.DSLMessages...)
+				return errors.New(newRes.DSLError)
+			}
+			return nil
+		}
+	}
 	if closeInv != nil {
 		thisObj.finalPreflight = func(txCtx context.Context, saveObj *runtime.Object) error {
 			persisted, loadErr := s.store.GetByID(txCtx, entity.Name, saveObj.ID, entity)
