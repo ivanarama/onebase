@@ -389,6 +389,83 @@ func TestLegacyReShipIsVisibleAsPriorityValidationCandidate(t *testing.T) {
 	}
 }
 
+func TestLegacyMergeWithoutSourceReviewDoesNotOwnTheLane(t *testing.T) {
+	for _, currentReviewed := range []bool{false, true} {
+		name := "waiting-integration-review"
+		if currentReviewed {
+			name = "current-head-reviewed"
+		}
+		t.Run(name, func(t *testing.T) {
+			// The historical completion belongs to another SHA, not to the
+			// first parent of the merge. A current-HEAD review cannot replace it.
+			broken := withMergeHead(addComment(testPR(1318, headB, "ship"), 30,
+				completion(headC, 20, 25)))
+			if currentReviewed {
+				broken = addComment(broken, 40, completion(headB, 35, 36))
+			}
+			ordinary := testPR(1779, headD)
+			got := analyze([]apiPull{broken, ordinary}, "ivanarama")
+			if got.IntegrationOwner != nil || len(got.ReviewCandidates) != 1 ||
+				got.ReviewCandidates[0].Number != 1779 || len(got.MergeExecutable) != 0 ||
+				len(got.HumanWaiting) != 1 || got.HumanWaiting[0].Number != 1318 ||
+				got.HumanWaiting[0].Stage != "legacy-source-proof-missing" ||
+				!hasFinding(got, "legacy_source_review_missing") {
+				t.Fatalf("unproved legacy source blocked unrelated work: %+v", got)
+			}
+		})
+	}
+}
+
+func TestPublicCommandDoesNotAssignUnprovedLegacyOwner(t *testing.T) {
+	broken := withMergeHead(addComment(testPR(1318, headB, "ship", "reviewed"), 30,
+		completion(headC, 20, 25)))
+	broken = addComment(broken, 40, completion(headB, 35, 36))
+	ordinary := testPR(1779, headD)
+	directory := t.TempDir()
+	pullPath := filepath.Join(directory, "pulls.json")
+	issuePath := filepath.Join(directory, "issues.json")
+	type pullFixture struct {
+		apiPull
+		Comments []apiComment `json:"comments"`
+	}
+	pulls, err := json.Marshal([]pullFixture{
+		{apiPull: broken, Comments: broken.Comments},
+		{apiPull: ordinary, Comments: ordinary.Comments},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pullPath, pulls, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(issuePath, []byte("[]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GH_EXE", filepath.Join(directory, "missing-gh"))
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// #nosec G204 -- fixed command and test-owned fixture paths.
+	command := exec.Command("go", "run", "./tools/pipelinehealth", "-prs", pullPath,
+		"-issues", issuePath, "-json")
+	command.Dir = repositoryRoot
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pipelinehealth CLI failed: %v\n%s", err, output)
+	}
+	var got report
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode pipelinehealth output: %v\n%s", err, output)
+	}
+	if got.IntegrationOwner != nil || len(got.ReviewCandidates) != 1 ||
+		got.ReviewCandidates[0].Number != 1779 || len(got.MergeExecutable) != 0 ||
+		len(got.HumanWaiting) != 1 || got.HumanWaiting[0].Number != 1318 ||
+		!hasFinding(got, "legacy_source_review_missing") {
+		t.Fatalf("public checker assigned an unproved owner: %+v", got)
+	}
+}
+
 func TestOrdinaryFixRoundIsNotAnIntegrationOwner(t *testing.T) {
 	// changes-requested, push, no review of the new head yet. The comment trail
 	// is identical to a legacy re-ship; only the single-parent head tells them
@@ -997,6 +1074,49 @@ func TestFixQueueRequiresCompletedTriageRoute(t *testing.T) {
 	}
 	if !hasFinding(result, "fix_issue_not_executable") {
 		t.Fatalf("unfinished TRIAGE handoff was not diagnosed: %+v", result.Findings)
+	}
+}
+
+func TestTrustedHumanVoidReleasesUnfinishedTriageRoute(t *testing.T) {
+	root, _ := triageRouteRoot(44, 10, "needs-decision")
+	released := testIssue(44, root, issueComment(11, "Решение принято, claim мёртв.\n<!-- pp:triage-route-void claim=10 -->"))
+	released.Labels = []apiLabel{{Name: "bug"}, {Name: "ready-fix"}}
+	result := analyze(nil, "ivanarama")
+	analyzeIssues(&result, []apiIssue{released}, nil, "ivanarama")
+
+	if len(result.FixCandidates) != 1 || result.FixCandidates[0].Number != 44 {
+		t.Fatalf("trusted void did not release the issue to FIX by its actual labels: %+v", result.FixCandidates)
+	}
+	if hasFinding(result, "fix_issue_not_executable") {
+		t.Fatalf("voided route is still diagnosed as unfinished: %+v", result.Findings)
+	}
+}
+
+func TestVoidMustBeTrustedExactLineForThisClaim(t *testing.T) {
+	root, _ := triageRouteRoot(45, 10, "needs-decision")
+	foreign := issueComment(11, "<!-- pp:triage-route-void claim=10 -->")
+	foreign.User = apiUser{Login: "someone-else"}
+	wrongClaim := issueComment(12, "<!-- pp:triage-route-void claim=99 -->")
+	edited := issueComment(13, "<!-- pp:triage-route-void claim=10 -->")
+	edited.UpdatedAt = "2026-09-02T00:00:00Z"
+	insideParagraph := issueComment(14, "Текст абзаца <!-- pp:triage-route-void claim=10 --> продолжает мысль.")
+	cases := map[string]apiComment{
+		"foreign author":    foreign,
+		"wrong claim":       wrongClaim,
+		"edited comment":    edited,
+		"inline not a line": insideParagraph,
+	}
+	for name, void := range cases {
+		issue := testIssue(45, root, void)
+		issue.Labels = []apiLabel{{Name: "approved"}}
+		result := analyze(nil, "ivanarama")
+		analyzeIssues(&result, []apiIssue{issue}, nil, "ivanarama")
+		if len(result.FixCandidates) != 0 {
+			t.Fatalf("%s: void released the issue to FIX: %+v", name, result.FixCandidates)
+		}
+		if !hasFinding(result, "fix_issue_not_executable") {
+			t.Fatalf("%s: unfinished route lost its diagnosis: %+v", name, result.Findings)
+		}
 	}
 }
 

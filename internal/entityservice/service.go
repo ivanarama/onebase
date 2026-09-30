@@ -430,6 +430,9 @@ type SaveResult struct {
 // как err != nil (включая storage.ErrVersionConflict при !IsNew с конфликтом
 // версий — caller должен проверить errors.Is).
 func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error) {
+	if err := storage.CheckWriteAllowed(ctx); err != nil {
+		return SaveResult{}, err
+	}
 	mc := runtime.NewMovementsCollector(req.Entity.Name, req.ID).WillPersist()
 	lockCollector := runtime.NewLockCollector()
 	defer lockCollector.ReleaseAll()

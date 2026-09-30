@@ -148,6 +148,7 @@ type choicePreviewPageBody struct {
 		Element string `json:"element"`
 	} `json:"source"`
 	Context map[string]string `json:"context"`
+	Filters map[string]string `json:"filters"`
 }
 
 // choicePreviewPage — POST /ui/_ref-options/{entity}/page (план 168, HTTP-контракт).
@@ -247,7 +248,14 @@ func (s *Server) choicePreviewPage(w http.ResponseWriter, r *http.Request, ent *
 
 	// Страница — тем же путём, что и обычный подбор: object read → row filter →
 	// field mask → _label (инварианты 2 и 11). Только затем вызывается функция.
-	items, total, err := s.referenceOptionsPageWithParams(r.Context(), ent, body.Q, limit, body.Offset, storage.ListParams{})
+	filterJSON, _ := json.Marshal(body.Filters)
+	params, filterOK := refOptionsFilters(ent, string(filterJSON), storage.ListParams{})
+	items := []map[string]any{}
+	total := 0
+	var err error
+	if filterOK {
+		items, total, err = s.referenceOptionsPageWithParams(r.Context(), ent, body.Q, limit, body.Offset, params)
+	}
 	if err != nil {
 		s.serverError(w, r, err)
 		return

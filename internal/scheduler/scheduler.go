@@ -866,16 +866,19 @@ func (s *Scheduler) JobStateByName(ctx context.Context, name string) *JobState {
 // RunNow запускает задание немедленно и возвращает идентификатор прогона.
 // Управление возвращается сразу — задание работает в фоне.
 //
-// Контекст вызывающего не используется намеренно (был `_` и остаётся им по
-// смыслу): и само задание, и запись его прогона живут на контексте
-// планировщика. Причин две. Первая известна давно: HTTP-запрос админки
+// Контекст вызывающего проверяется на запрет записи до создания прогона.
+// Само задание и запись его прогона живут на контексте планировщика.
+// Причин две. Первая известна давно: HTTP-запрос админки
 // отменяется сразу после редиректа, и задание умирало бы вместе с ним.
 // Вторая появилась вместе с синхронной вставкой (#742): `storage.DB.Exec`
 // подхватывает транзакцию из контекста, поэтому запуск из кода, идущего
 // внутри транзакции, уложил бы строку прогона в чужую транзакцию — задание её
 // не увидит, финальный UPDATE не найдёт строку, а откат инициатора сотрёт
 // запись уже отработавшего задания.
-func (s *Scheduler) RunNow(_ context.Context, jobName string) (uuid.UUID, error) {
+func (s *Scheduler) RunNow(ctx context.Context, jobName string) (uuid.UUID, error) {
+	if err := storage.CheckWriteAllowed(ctx); err != nil {
+		return uuid.Nil, err
+	}
 	key := jobKey(jobName)
 	s.mu.Lock()
 	job := cloneScheduledJob(s.jobByKeyLocked(key))
@@ -1103,6 +1106,9 @@ func (s *Scheduler) buildDSLVars(ctx context.Context, mc *runtime.MovementsColle
 		Mailer:    schedulerMailer,
 		Movements: mc,
 		Interp:    s.interp, // hook-правило конфликта в ПланыОбмена.ЗагрузитьПакет
+		// Подписи ссылочных констант по общим правилам RowLabel: регламентное
+		// задание — доверенный серверный код без ролевой политики (#1536).
+		ConstantRefPresenter: dslvars.StoreRefPresenter(s.db, s.reg),
 		// Предохранитель сети (план 62): регламентные задания тоже инициируют
 		// HTTP/email из конфигурации — гейтим тем же флагом.
 		NetGuard: func() error {

@@ -29,22 +29,30 @@ import (
 // обогащённые ссылки) в *runtime.Object — пригодный для исполнения обработчиков
 // формы как «Объект». Та же логика, что в docProxy.LoadObject.
 func (s *Server) loadRuntimeObject(ctx context.Context, entity *metadata.Entity, id uuid.UUID) (*runtime.Object, error) {
+	obj, _, err := s.loadRuntimeObjectRow(ctx, entity, id)
+	return obj, err
+}
+
+// loadRuntimeObjectRow — loadRuntimeObject вместе с прочитанной строкой шапки.
+// Служебные колонки (posted, deletion_mark) в объект не попадают, а объекту
+// документа из DSL они нужны как Проведен и ПометкаУдаления.
+func (s *Server) loadRuntimeObjectRow(ctx context.Context, entity *metadata.Entity, id uuid.UUID) (*runtime.Object, map[string]any, error) {
 	row, err := s.store.GetByID(ctx, entity.Name, id, entity)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if row == nil {
-		return nil, fmt.Errorf("объект %s/%s не найден", entity.Name, id)
+		return nil, nil, fmt.Errorf("объект %s/%s не найден", entity.Name, id)
 	}
 	tpRows := make(map[string][]map[string]any, len(entity.TableParts))
 	for _, tp := range entity.TableParts {
 		rows, err := s.store.GetTablePartRows(ctx, entity.Name, tp.Name, id, tp)
 		if err != nil {
-			return nil, fmt.Errorf("табличная часть %s: %w", tp.Name, err)
+			return nil, nil, fmt.Errorf("табличная часть %s: %w", tp.Name, err)
 		}
 		tpRows[tp.Name] = rows
 	}
-	return s.runtimeObjectFromSnapshot(ctx, entity, id, row, tpRows), nil
+	return s.runtimeObjectFromSnapshot(ctx, entity, id, row, tpRows), row, nil
 }
 
 // runtimeObjectFromSnapshot строит объект формы из уже загруженного снимка.

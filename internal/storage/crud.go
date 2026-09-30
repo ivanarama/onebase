@@ -153,6 +153,9 @@ type upsertWriteOptions struct {
 
 func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any,
 	entity *metadata.Entity, options upsertWriteOptions) error {
+	if err := writeAllowed(ctx); err != nil {
+		return err
+	}
 	if err := db.enumBackstop(ctx, entity, fields); err != nil {
 		return err
 	}
@@ -1187,6 +1190,9 @@ func (db *DB) upsertTablePartRows(ctx context.Context, entityName, tpName string
 // Delete removes an entity record by id. Tablepart rows cascade automatically.
 // Returns an error if the record is a predefined item (_is_predefined = TRUE).
 func (db *DB) Delete(ctx context.Context, entityName string, id uuid.UUID) error {
+	if err := writeAllowed(ctx); err != nil {
+		return err
+	}
 	d := db.dialect
 	tbl := metadata.TableName(entityName)
 	isPredefined, err := db.isPredefinedRecord(ctx, tbl, id)

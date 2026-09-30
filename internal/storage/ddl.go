@@ -117,6 +117,39 @@ func registerDimPeriodIndexColumns(reg *metadata.Register) []string {
 	return cols
 }
 
+// registerRecorderIndexColumns — ключ, по которому адресуются движения одного
+// документа: DELETE при проведении, перепроведении, отмене проведения и
+// удалении, чтение «Движений документа» и кортежей измерений для итогов.
+var registerRecorderIndexColumns = []string{"recorder", "recorder_type"}
+
+// CreateRegisterRecorderIndexSQL — индекс по регистратору у таблицы движений
+// регистра накопления.
+//
+// Без него каждое проведение удаляет прежние движения документа полным
+// просмотром таблицы, и цена растёт вместе с регистром: на 500 тыс. движений
+// SQLite тратил ~150 мс на один регистр и одно проведение против долей
+// миллисекунды с индексом. Отмена проведения и удаление документа проходят так
+// все регистры конфигурации подряд. У регистра бухгалтерии такой индекс был
+// с самого начала (idx_<имя>_reg).
+func CreateRegisterRecorderIndexSQL(regName string) string {
+	return CreateEntityIndexSQL(metadata.RegisterTableName(regName), registerRecorderIndexColumns, false)
+}
+
+// CreateInfoRegisterRecorderIndexSQL — тот же индекс у регистра сведений, но
+// частичный. У независимого регистра записей с регистратором нет вовсе
+// (recorder IS NULL у всей таблицы), и полный индекс по ним был бы чистым
+// расходом на каждую запись. Отмена проведения и удаление документа всё равно
+// обходят все регистры сведений — по пустому частичному индексу такой обход
+// ничего не стоит. Условие `recorder = ?` подразумевает IS NOT NULL, поэтому
+// частичный индекс выбирают оба диалекта.
+func CreateInfoRegisterRecorderIndexSQL(regName string) string {
+	const where = "recorder IS NOT NULL"
+	table := metadata.InfoRegTableName(regName)
+	key := append(append([]string{}, registerRecorderIndexColumns...), "WHERE "+where)
+	return "CREATE INDEX IF NOT EXISTS " + stableIndexName(table, key, false) +
+		" ON " + table + " (" + strings.Join(registerRecorderIndexColumns, ", ") + ") WHERE " + where
+}
+
 func stableIndexName(table string, cols []string, unique bool) string {
 	kind := "n"
 	if unique {

@@ -1218,6 +1218,10 @@ func TestFixerSelectsExactPaginatedReviewConclusion(t *testing.T) {
 		"перед добавлением `in-work` и перед `pp:in-work`-комментарием",
 		"issue допускается в FIX **только** при",
 		"pp:triage-route-done claim=<canonical-root-id>",
+		"pp:triage-route-void claim=<canonical-root-id>",
+		"доверенный человеческий void",
+		"FIX допускает issue по фактическим меткам",
+		"Void с чужим автором, чужим `claim=`",
 		"Done обязан существовать **до**\n   создания persistent branch `fix/<N>`",
 		"Canonical triage без route-claim — отдельный legacy fallback",
 		"`approved` OR (`ready-fix` AND NOT `needs-decision`)",
@@ -1288,6 +1292,44 @@ func TestTriageAndFixShareDeterministicCanonicalCommentRule(t *testing.T) {
 		"после удаления winner проигравший\n   sibling не должен воскреснуть",
 		"не считается одним из\n   пяти рабочих slots",
 		"<!-- pp:triage-author-reply claim=<canonical-root-id> fingerprint-sha256=<точный-root-fingerprint> -->",
+	)
+}
+
+func TestTriageRouteVoidIsHumanOwnedAndNamedConsistently(t *testing.T) {
+	triage := skill(t, "triage-issues")
+	fixer := skill(t, "fix-approved")
+	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
+	health := repositoryFile(t, "tools", "pipelinehealth", "main.go")
+
+	for _, text := range map[string]string{
+		"triage": triage, "fix": fixer, "docs": docs, "pipelinehealth": health,
+	} {
+		requireAllCompact(t, text,
+			"pp:triage-route-void claim=",
+			"ivanarama",
+		)
+	}
+	requireAllCompact(t, triage,
+		"доверенный человеческий **void**",
+		"TRIAGE не мутирует её вовсе",
+	)
+	requireAllCompact(t, fixer,
+		"доверенный человеческий void",
+		"FIX допускает issue по фактическим меткам",
+		"план работы берёт из каноничного нередактированного триажа",
+		"Void с чужим автором, чужим `claim=`",
+	)
+	requireAllCompact(t, docs,
+		"незавершённую транзакцию нужно закрыть",
+		"FIX ведёт по фактическим меткам",
+	)
+	requireAll(t, health,
+		"triageRouteVoid   = regexp.MustCompile",
+		"`(?m)^<!-- pp:triage-route-void claim=([0-9]+) -->$`)",
+		"if voided {",
+	)
+	rejectAllCompact(t, triage,
+		"TRIAGE публикует pp:triage-route-void сам",
 	)
 }
 
@@ -2625,6 +2667,47 @@ func TestTailCrashAfterIssueCreateDoesNotCreateDuplicate(t *testing.T) {
 	}
 }
 
+func TestTailBatchRegistryMergesOnlyProvenIdenticalWork(t *testing.T) {
+	tail := skill(t, "tail-issues")
+	requireAllCompact(t, tail,
+		"Локальный реестр batch и семантический дубль внутри одного прогона",
+		"локальный реестр batch** (в памяти)",
+		"после подтверждённого POST `gh issue create`",
+		"перед каждым следующим create сверяй кандидата и с REST-снимком, и с реестром",
+		"корень дефекта, наблюдаемое поведение и весь объём исправления**",
+		"Схожесть заголовка сама по себе объединением не считается",
+		"разные работы с одним заголовком заводятся раздельно",
+		"item-done этого item со ссылкой на каноничную issue",
+		"только после item-done публикуй общий tail-done",
+		"Реестр в памяти не переживает crash",
+		"его восстанавливает прямой пагинированный REST-список",
+	)
+
+	// Разные точные ключи одной работы внутри одного batch: вторая issue не создаётся.
+	if tailBatchCreatesSecondIssue(true, false, true) {
+		t.Fatal("proven identical work in the same batch must reuse the canonical issue via item-done")
+	}
+	// Первый item batch'а: реестр пуст, create законен.
+	if !tailBatchCreatesSecondIssue(true, false, false) {
+		t.Fatal("first item of a batch has nothing to merge into and still needs its own issue")
+	}
+	// Одинаковый заголовок при разной работе: объединение запрещено.
+	if !tailBatchCreatesSecondIssue(false, true, true) {
+		t.Fatal("same title with different work must stay a separate issue")
+	}
+	// Сомнение в объёме при отсутствии совпадения по сути: отдельная issue.
+	if !tailBatchCreatesSecondIssue(false, false, true) {
+		t.Fatal("work that is not proven identical must not be silently merged")
+	}
+}
+
+func tailBatchCreatesSecondIssue(sameCanonicalWork, sameTitleOnly, registryHasFirst bool) bool {
+	if registryHasFirst && sameCanonicalWork {
+		return false
+	}
+	return true
+}
+
 type modeledTailLease struct {
 	id       int
 	previous int
@@ -2897,6 +2980,13 @@ func modeledFixAcceptsTriage(hasRouteClaim, trustedDone, routeConsistent, legacy
 	return legacyTriage
 }
 
+func modeledFixAcceptsTriageWithVoid(hasRouteClaim, trustedDone, routeConsistent, trustedVoid bool) bool {
+	if hasRouteClaim {
+		return trustedVoid || (trustedDone && routeConsistent)
+	}
+	return true
+}
+
 func modeledTriageRepositoryItemCandidate(isPullRequest bool) bool {
 	return !isPullRequest
 }
@@ -2933,6 +3023,15 @@ func TestTriageLabelEventsAndFixHandoffFailClosed(t *testing.T) {
 	}
 	if modeledFixAcceptsTriage(true, false, false, true) {
 		t.Fatal("a malformed new route-claim must never fall back to legacy")
+	}
+	if !modeledFixAcceptsTriageWithVoid(true, false, true, true) {
+		t.Fatal("a trusted human void must release an unfinished route claim to FIX by actual labels")
+	}
+	if modeledFixAcceptsTriageWithVoid(true, false, true, false) {
+		t.Fatal("without trusted done or void an unfinished claim must stay closed to FIX")
+	}
+	if !modeledFixAcceptsTriageWithVoid(false, false, false, false) {
+		t.Fatal("a voided claim must behave like an absent claim, decided by actual labels")
 	}
 	if modeledTriageRepositoryItemCandidate(true) || !modeledTriageRepositoryItemCandidate(false) {
 		t.Fatal("repository Issues REST must exclude pull requests from TRIAGE")
