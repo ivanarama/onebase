@@ -124,3 +124,114 @@ func TestQualifyOwnColumnsByScopeMatrix(t *testing.T) {
 		})
 	})
 }
+
+// Служебная колонка может принадлежать авто-присоединённому источнику:
+// deletion_mark отсутствует у регистров, а posted — у справочников.
+func TestQualifyOwnServiceColumnsBySourceMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		suffix := strings.ReplaceAll(uuid.NewString()[:8], "-", "")
+		org := &metadata.Entity{
+			Name: "ОргСлуж" + suffix, Kind: metadata.KindCatalog,
+			Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+		}
+		doc := &metadata.Entity{
+			Name: "ДокСлуж" + suffix, Kind: metadata.KindDocument,
+			Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+		}
+		catalog := &metadata.Entity{
+			Name: "КатСлуж" + suffix, Kind: metadata.KindCatalog,
+			Fields: []metadata.Field{{Name: "Документ", Type: metadata.FieldType("reference:" + doc.Name), RefEntity: doc.Name}},
+		}
+		reg := &metadata.InfoRegister{
+			Name:       "ПрайсСлуж" + suffix,
+			Dimensions: []metadata.Field{{Name: "Организация", Type: metadata.FieldType("reference:" + org.Name), RefEntity: org.Name}},
+			Resources:  []metadata.Field{{Name: "Цена", Type: metadata.FieldTypeNumber}},
+		}
+		entities := []*metadata.Entity{org, doc, catalog}
+		if err := db.Migrate(ctx, entities); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{reg}); err != nil {
+			t.Fatal(err)
+		}
+		orgID, docID, catalogID := uuid.New(), uuid.New(), uuid.New()
+		for _, row := range []struct {
+			entity *metadata.Entity
+			id     uuid.UUID
+			data   map[string]any
+		}{
+			{org, orgID, map[string]any{"Наименование": "Организация"}},
+			{doc, docID, map[string]any{"Наименование": "Документ"}},
+			{catalog, catalogID, map[string]any{"Документ": docID.String()}},
+		} {
+			if err := db.Upsert(ctx, row.entity.Name, row.id, row.data, row.entity); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := db.InfoRegSet(ctx, reg, map[string]any{"Организация": orgID.String()}, map[string]any{"Цена": 10}, nil); err != nil {
+			t.Fatal(err)
+		}
+		opts := query.CompileOpts{
+			Entities: entities, InfoRegs: []*metadata.InfoRegister{reg}, Dialect: db.Dialect(),
+			Params: map[string]any{"О": orgID.String(), "Д": docID.String()},
+		}
+		count := func(t *testing.T, source string, want int) {
+			t.Helper()
+			compiled, err := query.Compile(source, opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rows, err := db.Query(ctx, compiled.SQL, compiled.Args...)
+			if err != nil {
+				t.Fatalf("исполнение: %v\nSQL: %s", err, compiled.SQL)
+			}
+			defer rows.Close()
+			if !rows.Next() {
+				t.Fatalf("нет строки результата: %v", rows.Err())
+			}
+			var got int
+			if err := rows.Scan(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got != want {
+				t.Fatalf("получено %d, ожидалось %d\nSQL: %s", got, want, compiled.SQL)
+			}
+			if rows.Next() || rows.Err() != nil {
+				t.Fatalf("неожиданный результат: %v", rows.Err())
+			}
+		}
+		t.Run("регистр не владеет deletion_mark", func(t *testing.T) {
+			for _, alias := range []string{"", " КАК Р"} {
+				src := `ВЫБРАТЬ КОЛИЧЕСТВО(*) КАК Всего ИЗ РегистрСведений.` + reg.Name + alias +
+					` ГДЕ Организация = &О И deletion_mark = Ложь`
+				count(t, src, 1)
+				if _, err := db.Exec(ctx, "UPDATE "+metadata.TableName(org.Name)+" SET deletion_mark = "+db.Dialect().Placeholder(1), true); err != nil {
+					t.Fatal(err)
+				}
+				count(t, src, 0)
+				if _, err := db.Exec(ctx, "UPDATE "+metadata.TableName(org.Name)+" SET deletion_mark = "+db.Dialect().Placeholder(1), false); err != nil {
+					t.Fatal(err)
+				}
+			}
+		})
+		t.Run("справочник не владеет posted", func(t *testing.T) {
+			src := `ВЫБРАТЬ КОЛИЧЕСТВО(*) КАК Всего ИЗ Справочник.` + catalog.Name +
+				` КАК К ГДЕ Документ = &Д И posted = Истина`
+			count(t, src, 0)
+			if err := db.SetPosted(ctx, doc.Name, docID, true); err != nil {
+				t.Fatal(err)
+			}
+			count(t, src, 1)
+		})
+		t.Run("справочник владеет deletion_mark", func(t *testing.T) {
+			src := `ВЫБРАТЬ КОЛИЧЕСТВО(*) КАК Всего ИЗ Справочник.` + catalog.Name +
+				` КАК К ГДЕ Документ = &Д И deletion_mark = Ложь`
+			count(t, src, 1)
+			if _, err := db.Exec(ctx, "UPDATE "+metadata.TableName(catalog.Name)+" SET deletion_mark = "+db.Dialect().Placeholder(1), true); err != nil {
+				t.Fatal(err)
+			}
+			count(t, src, 0)
+		})
+	})
+}
