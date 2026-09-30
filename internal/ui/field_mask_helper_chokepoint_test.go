@@ -99,9 +99,10 @@ var maskHelperExempt = map[string]maskHelperExemption{
 	"Server.saveManagedObject":             {reason: "путь записи: GetByID используется только для RLS-предиката, значения клиенту не возвращаются"},
 
 	// ── Особый случай.
-	"Server.loadRuntimeObject": {reason: "строит Объект для DSL-обёрток (catWriter/docWriter маскируют в Get) и для " +
+	"Server.loadRuntimeObjectRow": {reason: "строит Объект для DSL-обёрток (catWriter/docWriter маскируют в Get) и для " +
 		"серверных хуков формы, где действует контракт «this не маскируется»: значение принадлежит текущей операции, " +
-		"а не чужой записи (field_access.go, доккомментарий maskDSLValue)"},
+		"а не чужой записи (field_access.go, доккомментарий maskDSLValue). Строку шапки docWriter читает только ради " +
+		"служебных posted и deletion_mark — полевой политики у них нет"},
 }
 
 // maskHelperFuncName — «Тип.Метод» для метода, «Имя» для функции. Квалификация

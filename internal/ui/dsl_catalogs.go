@@ -186,6 +186,9 @@ func (w *catWriter) Get(name string) any {
 	v := w.obj.Get(name)
 	field := findObjectAttributeField(w.entity, name)
 	if field == nil {
+		if isSelfRefName(name) {
+			return w.selfRef(v)
+		}
 		return v
 	}
 	maskStored := w.loaded && !w.assigned[strings.ToLower(strings.TrimSpace(name))]
@@ -193,6 +196,21 @@ func (w *catWriter) Get(name string) any {
 		return w.s.maskDSLValue(w.ctx(), w.entity, field.Name, v)
 	}
 	return w.s.declaredEntityFieldValue(field, v, w.refResolver())
+}
+
+// selfRef — собственная ссылка объекта копией, привязанной к живому контексту
+// модуля (см. docWriter.selfRef). После Записать() её кладёт в объект
+// entityservice.Save без менеджера, а у объекта из Ссылка.ПолучитьОбъект()
+// её нет вовсе.
+func (w *catWriter) selfRef(stored any) any {
+	ref, ok := stored.(*interpreter.Ref)
+	if !ok {
+		if !w.loaded && !w.saved {
+			return stored
+		}
+		ref = &interpreter.Ref{UUID: w.obj.ID.String(), Name: w.displayName(), Type: w.entity.Name, Kind: w.entity.Kind}
+	}
+	return w.refResolver().bindRefToContext(ref, w.entity.Name)
 }
 
 func (w *catWriter) Set(name string, v any) {
@@ -362,14 +380,17 @@ func (w *catWriter) TypeName() string {
 }
 
 // ref строит ссылку на записанный объект с менеджером-прокси, чтобы
-// Ссылка.ПолучитьОбъект()/Удалить() работали и возвращали catWriter.
+// Ссылка.ПолучитьОбъект()/Удалить() работали и возвращали catWriter. Менеджер
+// спрашивает контекст модуля на каждом вызове, как у docWriter.ref(): со
+// снимком контекста ссылка, возвращённая Записать() внутри НачатьТранзакцию(),
+// после фиксации падала на «transaction has already been committed».
 func (w *catWriter) ref() *interpreter.Ref {
 	return &interpreter.Ref{
 		UUID:    w.obj.ID.String(),
 		Name:    w.displayName(),
 		Type:    w.entity.Name,
 		Kind:    w.entity.Kind,
-		Manager: w.s.refManagerFor(w.entity, w.ctx()),
+		Manager: w.s.refManagerForSrc(w.entity, w.ctxSrc, w.ctx()),
 	}
 }
 

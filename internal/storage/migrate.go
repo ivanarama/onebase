@@ -117,6 +117,9 @@ func (db *DB) ensureRegisterIndexes(ctx context.Context, reg *metadata.Register)
 			return err
 		}
 	}
+	if _, err := db.Exec(ctx, CreateRegisterRecorderIndexSQL(reg.Name)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -193,6 +196,11 @@ func (db *DB) migrateInfoRegister(ctx context.Context, ir *metadata.InfoRegister
 	// CREATE + INSERT SELECT + DROP + RENAME.
 	if err := db.fixInfoRegPK(ctx, ir); err != nil {
 		return fmt.Errorf("migrate info register %s PK: %w", ir.Name, err)
+	}
+	// Индекс по регистратору — после fixInfoRegPK: на SQLite смена ключа
+	// пересоздаёт таблицу, и построенный раньше индекс ушёл бы вместе со старой.
+	if _, err := db.Exec(ctx, CreateInfoRegisterRecorderIndexSQL(ir.Name)); err != nil {
+		return fmt.Errorf("migrate info register %s recorder index: %w", ir.Name, err)
 	}
 	return nil
 }
