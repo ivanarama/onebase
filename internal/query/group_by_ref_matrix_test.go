@@ -34,6 +34,11 @@ func TestGroupByReferenceKeepsSameNamedObjectsApartMatrix(t *testing.T) {
 			Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
 		}
 		refType := metadata.FieldType("reference:" + warehouse.Name)
+		// JOIN приносит вторую склад_id: GROUP BY должен брать ID источника,
+		// даже когда SELECT уже создал выходной алиас склад.
+		warehouse.Fields = append(warehouse.Fields, metadata.Field{
+			Name: "Склад", Type: refType, RefEntity: warehouse.Name,
+		})
 		doc := &metadata.Entity{
 			Name: "ПриходГр" + suffix, Kind: metadata.KindDocument,
 			Fields: []metadata.Field{
@@ -112,6 +117,8 @@ func TestGroupByReferenceKeepsSameNamedObjectsApartMatrix(t *testing.T) {
 				ИЗ РегистрНакопления.` + reg.Name + `.Остатки() СГРУППИРОВАТЬ ПО Склад`},
 			{"документ", `ВЫБРАТЬ Склад, СУММА(Количество) КАК К
 				ИЗ Документ.` + doc.Name + ` СГРУППИРОВАТЬ ПО Склад`},
+			{"документ_с_алиасом", `ВЫБРАТЬ Склад, СУММА(Количество) КАК К
+				ИЗ Документ.` + doc.Name + ` КАК Д СГРУППИРОВАТЬ ПО Склад`},
 			// Следующая секция сразу за полем: ИМЕЮЩИЕ и УПОРЯДОЧИТЬ.
 			{"имеющие", `ВЫБРАТЬ Склад, СУММА(Количество) КАК К
 				ИЗ РегистрНакопления.` + reg.Name + `
@@ -120,6 +127,30 @@ func TestGroupByReferenceKeepsSameNamedObjectsApartMatrix(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				if got := run(t, tc.src); strings.Join([]string{"[", strings.Join(got, " "), "]"}, "") != want {
 					t.Fatalf("строки группировки %v, ожидалось %s: одноимённые склады склеены", got, want)
+				}
+			})
+		}
+
+		for _, tc := range []struct{ name, projection, column string }{
+			{"select_all", "Склад", "склад"},
+			{"select_all_expression", `ЕСТЬNULL(Склад, "") КАК Имя`, "имя"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				compiled, err := query.Compile(`SELECT ALL `+tc.projection+` FROM Document.`+doc.Name, opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				rows, cols, err := query.Run(ctx, db, &compiled)
+				if err != nil {
+					t.Fatalf("исполнение: %v\nSQL: %s", err, compiled.SQL)
+				}
+				if len(cols) != 1 || cols[0] != tc.column || len(rows) != 2 {
+					t.Fatalf("SELECT ALL: cols=%v rows=%v", cols, rows)
+				}
+				for _, row := range rows {
+					if row[tc.column] != "Основной" {
+						t.Fatalf("SELECT ALL потерял поле %s: %v", tc.column, row)
+					}
 				}
 			})
 		}

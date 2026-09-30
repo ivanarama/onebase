@@ -2610,7 +2610,9 @@ func (tr *translator) refIDColumn(rd *refDimInfo, lower string) string {
 	if rd.isVT {
 		return rd.idCol
 	}
-	return tr.qualifyOwn(rd.idCol, lower)
+	// Здесь всегда физическая колонка ссылки, даже при одноимённом
+	// алиасе вывода SELECT. Алиас не отменяет квалификацию источником.
+	return tr.qualifyOwnSource(rd.idCol, lower)
 }
 
 // groupByItemStandalone сообщает, что текущее поле — целый элемент списка
@@ -2638,10 +2640,10 @@ func (tr *translator) groupByItemStandalone() bool {
 }
 
 // selectItemStandalone — то же для списка ВЫБРАТЬ: перед полем начало списка,
-// РАЗЛИЧНЫЕ или запятая, после — запятая, ИЗ, ПОМЕСТИТЬ, ОБЪЕДИНИТЬ или конец
+// РАЗЛИЧНЫЕ, ALL или запятая, после — запятая, ИЗ, ПОМЕСТИТЬ, ОБЪЕДИНИТЬ или конец
 // запроса, и поле не стоит внутри скобок выражения.
 func (tr *translator) selectItemStandalone() bool {
-	if !tr.lastPartIs("SELECT", "DISTINCT", ",") {
+	if !tr.lastPartIs("SELECT", "DISTINCT", "ALL", ",") {
 		return false
 	}
 	next := tr.peek(0)
@@ -3292,6 +3294,12 @@ func (tr *translator) qualifyOwn(col, lower string) string {
 	if _, isAlias := tr.aliases[lower]; isAlias {
 		return col // алиас вывода, не колонка таблицы
 	}
+	return tr.qualifyOwnSource(col, lower)
+}
+
+// qualifyOwnSource квалифицирует колонку таблицы без проверки алиасов вывода.
+// Для физического ID ссылки источник известен независимо от списка SELECT.
+func (tr *translator) qualifyOwnSource(col, lower string) string {
 	if len(tr.refDims) > 0 && tr.mainTable != "" {
 		_, own := tr.colTypes[lower]
 		if own {

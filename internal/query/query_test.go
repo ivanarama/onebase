@@ -749,8 +749,8 @@ func TestCompile_RefDim_AutoJoin(t *testing.T) {
 	}
 	// GROUP BY: сначала ссылка (одноимённые объекты не склеиваются), затем
 	// представление — его выводит SELECT, и PostgreSQL требует его в GROUP BY.
-	if !strings.Contains(sql, "GROUP BY номенклатура_id, ref_номенклатура.наименование") {
-		t.Errorf("expected GROUP BY номенклатура_id, ref_номенклатура.наименование, got: %s", sql)
+	if !strings.Contains(sql, "GROUP BY рег_валоваяприбыль.номенклатура_id, ref_номенклатура.наименование") {
+		t.Errorf("expected GROUP BY рег_валоваяприбыль.номенклатура_id, ref_номенклатура.наименование, got: %s", sql)
 	}
 }
 
