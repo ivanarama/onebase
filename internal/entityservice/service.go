@@ -498,6 +498,13 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 	// при любой последующей ошибке откатываются вместе с родителем.
 	var persistedVersion int64
 	err := s.Store.WithTxScope(ctx, func(txCtx context.Context) error {
+		// Документ раньше итогов/хуков: отмена должна дождаться проведения
+		// прежде, чем решать, какие регистры очищать.
+		if !req.IsNew && req.Entity.Kind == metadata.KindDocument {
+			if err := s.Store.LockMovementRecorder(txCtx, req.Entity, req.ID); err != nil {
+				return err
+			}
+		}
 		// Единая реализация для формы, ИИ, REST v1/v2 и DSL-объектов. Номер
 		// выдаётся внутри транзакции записи и до provisional/hook: хук его
 		// видит, а его исключение или последующий сбой БД откатывает счётчик.
@@ -876,6 +883,11 @@ func (s *Service) deleteInTx(
 	messages *[]string,
 	lockCollector *runtime.LockCollector,
 ) error {
+	if entity.Kind == metadata.KindDocument {
+		if err := s.Store.LockMovementRecorder(txCtx, entity, id); err != nil {
+			return err
+		}
+	}
 	// Объект читается ОДИН раз, до удаления, и отдаётся обоим хукам:
 	// «ПослеУдаления» иначе увидел бы пустоту и не смог бы ни записать в
 	// журнал, ни убрать связанные данные.
@@ -1288,54 +1300,57 @@ func (s *Service) Repost(ctx context.Context, entityName string, id uuid.UUID) e
 	if !ent.Posting {
 		return nil // сущность не проводится — нечего делать
 	}
-	fields, err := s.Store.GetByID(ctx, ent.Name, id, ent)
-	if err != nil {
-		return fmt.Errorf("перепроведение %s: чтение документа: %w", ent.Name, err)
-	}
-	tps := make(map[string][]map[string]any, len(ent.TableParts))
-	for _, tp := range ent.TableParts {
-		rows, err := s.Store.GetTablePartRows(ctx, ent.Name, tp.Name, id, tp)
-		if err != nil {
-			return fmt.Errorf("перепроведение %s: чтение ТЧ %s: %w", ent.Name, tp.Name, err)
-		}
-		tps[tp.Name] = rows
-	}
-
-	mc := runtime.NewMovementsCollector(ent.Name, id).WillPersist()
-	SetPeriodFromFields(mc, ent, fields)
-	// Дата запрета проведения (свёртка базы, план 151): в замороженный период не
-	// перепроводим, иначе движения вернутся и дадут двойной счёт с опорными остатками.
-	if mc.Period != nil {
-		if lock, ok := s.Store.GetPostingLockDate(ctx); ok && storage.PostingFrozen(lock, *mc.Period) {
-			return storage.PostingFrozenError(lock)
-		}
-	}
 	lockCollector := runtime.NewLockCollector()
 	defer lockCollector.ReleaseAll()
-
-	obj := &runtime.Object{Type: ent.Name, Kind: ent.Kind, Presentation: ent.Presentation, ID: id, Fields: fields, TablePartRows: tps}
-	if obj.Fields == nil {
-		obj.Fields = map[string]any{}
-	}
-	selfRef := &interpreter.Ref{UUID: id.String(), Type: ent.Name, Kind: ent.Kind}
-	obj.Fields["ссылка"] = selfRef
-	obj.Fields["reference"] = selfRef
-	if s.PrepareHook != nil {
-		s.PrepareHook(ctx, ent, obj)
-	}
-	if s.EnrichTPRows != nil {
+	return s.Store.WithTx(ctx, func(txCtx context.Context) error {
+		if err := s.Store.LockMovementRecorder(txCtx, ent, id); err != nil {
+			return err
+		}
+		fields, err := s.Store.GetByID(txCtx, ent.Name, id, ent)
+		if err != nil {
+			return fmt.Errorf("перепроведение %s: чтение документа: %w", ent.Name, err)
+		}
+		tps := make(map[string][]map[string]any, len(ent.TableParts))
 		for _, tp := range ent.TableParts {
-			if rows, ok := obj.TablePartRows[tp.Name]; ok {
-				s.EnrichTPRows(ctx, tp, rows)
+			rows, err := s.Store.GetTablePartRows(txCtx, ent.Name, tp.Name, id, tp)
+			if err != nil {
+				return fmt.Errorf("перепроведение %s: чтение ТЧ %s: %w", ent.Name, tp.Name, err)
+			}
+			tps[tp.Name] = rows
+		}
+
+		mc := runtime.NewMovementsCollector(ent.Name, id).WillPersist()
+		SetPeriodFromFields(mc, ent, fields)
+		// Дата запрета проведения (свёртка базы, план 151): в замороженный период не
+		// перепроводим, иначе движения вернутся и дадут двойной счёт с опорными остатками.
+		if mc.Period != nil {
+			if lock, ok := s.Store.GetPostingLockDate(txCtx); ok && storage.PostingFrozen(lock, *mc.Period) {
+				return storage.PostingFrozenError(lock)
 			}
 		}
-	}
 
-	// Хук выполняется ВНУТРИ транзакции записи (issue #458): раньше OnPost
-	// работал вне её — БлокировкаДанных из хука не могла взять advisory lock,
-	// а между чтением остатков и записью движений оставалось окно гонки.
-	proc := s.Reg.GetProcedure(ent.Name, "OnPost")
-	return s.Store.WithTx(ctx, func(txCtx context.Context) error {
+		obj := &runtime.Object{Type: ent.Name, Kind: ent.Kind, Presentation: ent.Presentation, ID: id, Fields: fields, TablePartRows: tps}
+		if obj.Fields == nil {
+			obj.Fields = map[string]any{}
+		}
+		selfRef := &interpreter.Ref{UUID: id.String(), Type: ent.Name, Kind: ent.Kind}
+		obj.Fields["ссылка"] = selfRef
+		obj.Fields["reference"] = selfRef
+		if s.PrepareHook != nil {
+			s.PrepareHook(txCtx, ent, obj)
+		}
+		if s.EnrichTPRows != nil {
+			for _, tp := range ent.TableParts {
+				if rows, ok := obj.TablePartRows[tp.Name]; ok {
+					s.EnrichTPRows(txCtx, tp, rows)
+				}
+			}
+		}
+
+		// Хук выполняется ВНУТРИ транзакции записи (issue #458): раньше OnPost
+		// работал вне её — БлокировкаДанных из хука не могла взять advisory lock,
+		// а между чтением остатков и записью движений оставалось окно гонки.
+		proc := s.Reg.GetProcedure(ent.Name, "OnPost")
 		if proc != nil {
 			hookCtx, cancelHook := s.hookExecutionContext(runtime.ContextWithLockCollector(txCtx, lockCollector))
 			defer cancelHook()
@@ -1428,6 +1443,13 @@ func (s *Service) writeMovements(ctx context.Context, docType string, docID uuid
 func (s *Service) replaceMovements(ctx context.Context, docType string, docID uuid.UUID, mc *runtime.MovementsCollector, scanAll bool) error {
 	var stale storage.RecorderRegisters
 	if scanAll {
+		// Общий backstop для ReplaceMovements (DSL/список), Unpost и Save.
+		// Повторный row-lock в собственной транзакции безопасен.
+		if ent := s.Reg.GetEntity(docType); ent != nil {
+			if err := s.Store.LockMovementRecorder(ctx, ent, docID); err != nil {
+				return err
+			}
+		}
 		var err error
 		if stale, err = s.staleMovementRegisters(ctx, docType, docID, mc); err != nil {
 			return err

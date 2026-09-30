@@ -1776,6 +1776,9 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	defer lockCollector.ReleaseAll()
 	var hookErrMsg string
 	if err := s.store.WithTxScope(r.Context(), func(ctx context.Context) error {
+		if err := s.store.LockMovementRecorder(ctx, entity, id); err != nil {
+			return err
+		}
 		ctx = runtime.ContextWithLockCollector(ctx, lockCollector)
 		if errMsg, _ := s.runOnPostCtx(ctx, obj, mc); errMsg != "" {
 			hookErrMsg = errMsg

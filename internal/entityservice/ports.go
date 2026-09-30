@@ -65,6 +65,9 @@ type EntityStore interface {
 // MovementStore — запись движений документа во все три вида регистров.
 // Пустой rows означает отмену проведения: движения регистратора снимаются.
 type MovementStore interface {
+	// LockMovementRecorder блокирует строку регистратора до поиска/записи
+	// движений, не меняя поля и optimistic-lock версию.
+	LockMovementRecorder(ctx context.Context, entity *metadata.Entity, id uuid.UUID) error
 	// WriteMovements перезаписывает движения документа в регистре накопления.
 	WriteMovements(ctx context.Context, regName, recorderType string, recorderID uuid.UUID, rows []map[string]any, reg *metadata.Register, period *time.Time) error
 	// WriteInfoMovements перезаписывает движения документа в регистре сведений.

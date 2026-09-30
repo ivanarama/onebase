@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -18,6 +19,34 @@ type RecorderRegisters struct {
 	Registers        []*metadata.Register
 	InfoRegisters    []*metadata.InfoRegister
 	AccountRegisters []*metadata.AccountRegister
+}
+
+var ErrRecorderLockRequiresTx = errors.New("postgres recorder lock requires active storage transaction")
+
+// LockMovementRecorder сериализует запись/снятие движений до поиска прежних
+// строк. Row-lock совместим с обычным Upsert документа: отдельный advisory-key
+// после Upsert дал бы обратный порядок «строка → key» / «key → строка».
+// FOR NO KEY UPDATE не мешает FK-ссылкам на документ и не меняет его _version.
+// На SQLite запись уже сериализована самой транзакцией.
+func (db *DB) LockMovementRecorder(ctx context.Context, entity *metadata.Entity, id uuid.UUID) error {
+	if !db.IsPostgres() {
+		return nil
+	}
+	if !HasTx(ctx) {
+		return ErrRecorderLockRequiresTx
+	}
+	// У сущностей с этапами Upsert сначала берёт stage-lock, затем row-lock.
+	// Сохраняем этот порядок, в том числе для отмены и удаления.
+	if stagedEntity(entity) {
+		if err := db.lockStageRecord(ctx, entity.Name, id); err != nil {
+			return err
+		}
+	}
+	_, err := db.Exec(ctx, "SELECT id FROM "+metadata.TableName(entity.Name)+" WHERE id = $1 FOR NO KEY UPDATE", idArg(db.dialect, id))
+	if err != nil {
+		return fmt.Errorf("блокировка регистратора %s %s: %w", entity.Name, id, err)
+	}
+	return nil
 }
 
 // RecorderMovementRegisters сообщает, в каких из переданных регистров
