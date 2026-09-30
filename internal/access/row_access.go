@@ -27,7 +27,12 @@ func DecideWithLookup(u *auth.User, kind, entity, op string, meta *metadata.Enti
 	if u == nil || u.IsAdmin {
 		return Decision{Allowed: true, Unrestricted: true}, nil
 	}
-	var predicates []storage.Predicate
+	// Сначала роли собираются целиком, компиляция — потом. Роль, дающая операцию
+	// без политики, снимает ограничения для всей операции, и ответ не должен
+	// зависеть от того, встретится ли раньше неё роль с политикой, которая не
+	// компилируется. Раньше такая роль обрывала решение ошибкой, только если
+	// шла первой, а роли загружаются по имени — доступ зависел от алфавита.
+	var policies []auth.RowPolicy
 	granted := false
 	for _, role := range u.Roles {
 		if role == nil || !auth.PermissionHas(role.Permissions, kind, entity, op) {
@@ -38,14 +43,18 @@ func DecideWithLookup(u *auth.User, kind, entity, op string, meta *metadata.Enti
 		if !ok {
 			return Decision{Allowed: true, Unrestricted: true}, nil
 		}
+		policies = append(policies, policy)
+	}
+	if !granted {
+		return Decision{}, nil
+	}
+	predicates := make([]storage.Predicate, 0, len(policies))
+	for _, policy := range policies {
 		pred, err := compilePolicy(policy, u, meta, lookup)
 		if err != nil {
 			return Decision{}, err
 		}
 		predicates = append(predicates, pred)
-	}
-	if !granted {
-		return Decision{}, nil
 	}
 	if len(predicates) == 0 {
 		return Decision{Allowed: true, Unrestricted: true}, nil

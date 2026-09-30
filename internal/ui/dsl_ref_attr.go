@@ -198,6 +198,11 @@ func (r *dslRefAttrResolver) bindRefToContext(ref *interpreter.Ref, entityName s
 	return &bound
 }
 
+// isSelfRefName — имя псевдо-реквизита «Ссылка» самого объекта.
+func isSelfRefName(name string) bool {
+	return strings.EqualFold(name, "Ссылка") || strings.EqualFold(name, "Reference")
+}
+
 // constantsRefPresenter — подписи ссылочных констант для DSL, исполняемого
 // сервером (обработчики, procrun через RunProcessorOffline). Чтение вертикальное
 // (UUID → подпись), как у остальных резолверов ссылок, поэтому подпись строит
