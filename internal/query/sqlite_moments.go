@@ -71,12 +71,17 @@ func isMomentCalendarFunc(name string) bool {
 // momentBoundaries знает, в каком формате хранится колонка-момент в каждой
 // области SELECT, и где стоят аргументы виртуальных таблиц. Области и
 // квалификаторы те же, что у buildScopedColTypes/buildQualifiedColTypes.
+//
+// Период виртуальной таблицы моментом не считается: с периодичностью это
+// усечённая метка («2026-10-10», «2026-10»), и перевод границы в UTC сломал бы
+// сравнение, которое с ней совпадало.
 type momentBoundaries struct {
 	// columns — колонка-дата без квалификатора → класс источника, когда все
 	// источники области с такой колонкой одного класса; иначе Unknown.
 	columns map[int]map[string]sourceClass
-	// qualifiers — имя, таблица или алиас источника → его класс.
-	qualifiers map[int]map[string]sourceClass
+	// qualifiers — имя, таблица или алиас источника → его колонки-даты и их
+	// класс.
+	qualifiers map[int]map[string]map[string]sourceClass
 	// vtArgs — токены непосредственно в списке аргументов виртуальной
 	// таблицы регистра: граница периода там сравнивается с period. Позиции —
 	// в том потоке, который переписывает rewriteScalarFuncs.
@@ -89,23 +94,16 @@ type momentBoundaries struct {
 func buildMomentBoundaries(tokens []tok, opts CompileOpts, sourceCtx sourceContext) *momentBoundaries {
 	m := &momentBoundaries{
 		columns:    map[int]map[string]sourceClass{},
-		qualifiers: map[int]map[string]sourceClass{},
+		qualifiers: map[int]map[string]map[string]sourceClass{},
 	}
-	put := func(dst map[int]map[string]sourceClass, scopeID int, name string, kind sourceClass) {
-		name = lowerFast(name)
-		if name == "" {
-			return
-		}
-		if dst[scopeID] == nil {
-			dst[scopeID] = map[string]sourceClass{}
-		}
-		if current, ok := dst[scopeID][name]; ok {
+	put := func(dst map[string]sourceClass, name string, kind sourceClass) {
+		if current, ok := dst[name]; ok {
 			if current != kind {
-				dst[scopeID][name] = sourceClassUnknown // неоднозначно — не угадываем
+				dst[name] = sourceClassUnknown // неоднозначно — не угадываем
 			}
 			return
 		}
-		dst[scopeID][name] = kind
+		dst[name] = kind
 	}
 	for i := 0; i+2 < len(tokens); i++ {
 		if tokens[i].kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
@@ -121,13 +119,32 @@ func buildMomentBoundaries(tokens []tok, opts CompileOpts, sourceCtx sourceConte
 		}
 		name := tokens[i+2].val
 		kind := sourceClassOf(typeUpper)
+		virtual := i+3 < len(tokens) && tokens[i+3].kind == tDot
+		var fields []string
 		for field, typ := range sourceColTypes(typeUpper, name, opts) {
-			if typ == metadata.FieldTypeDate {
-				put(m.columns, scopeID, field, kind)
+			if typ != metadata.FieldTypeDate || virtual && (field == "period" || field == "период") {
+				continue
 			}
+			fields = append(fields, field)
+		}
+		if m.columns[scopeID] == nil {
+			m.columns[scopeID] = map[string]sourceClass{}
+			m.qualifiers[scopeID] = map[string]map[string]sourceClass{}
+		}
+		for _, field := range fields {
+			put(m.columns[scopeID], field, kind)
 		}
 		for _, q := range sourceQualifierNames(tokens, i, typeUpper, name) {
-			put(m.qualifiers, scopeID, q, kind)
+			q = lowerFast(q)
+			if q == "" {
+				continue
+			}
+			if m.qualifiers[scopeID][q] == nil {
+				m.qualifiers[scopeID][q] = map[string]sourceClass{}
+			}
+			for _, field := range fields {
+				put(m.qualifiers[scopeID][q], field, kind)
+			}
 		}
 	}
 	return m
@@ -197,8 +214,7 @@ func vtArgumentPositions(tokens []tok) map[int]bool {
 // календарной функции tokens[i](…)tokens[end], чтобы сравнение шло по одному
 // тексту. Unknown — партнёр не колонка-момент и не параметр-дата (например,
 // другая календарная функция): тогда результат остаётся местным, как раньше.
-func (m *momentBoundaries) boundaryClass(tokens []tok, i, end, tokenOffset int, scopeID int, hasScope bool,
-	qualifiedColTypes map[int]map[string]map[string]metadata.FieldType, params map[string]any) sourceClass {
+func (m *momentBoundaries) boundaryClass(tokens []tok, i, end, tokenOffset int, scopeID int, hasScope bool, params map[string]any) sourceClass {
 	if m == nil {
 		return sourceClassUnknown
 	}
@@ -210,7 +226,7 @@ func (m *momentBoundaries) boundaryClass(tokens []tok, i, end, tokenOffset int, 
 	if !hasScope {
 		return sourceClassUnknown
 	}
-	operand := momentOperand{m: m, tokens: tokens, scopeID: scopeID, qualified: qualifiedColTypes[scopeID], params: params}
+	operand := momentOperand{m: m, tokens: tokens, scopeID: scopeID, params: params}
 	if i >= 2 && isComparisonTok(tokens[i-1]) {
 		return operand.before(i - 2)
 	}
@@ -232,11 +248,10 @@ func (m *momentBoundaries) boundaryClass(tokens []tok, i, end, tokenOffset int, 
 // momentOperand распознаёт партнёра сравнения: колонку-момент (с
 // квалификатором или без), МАКСИМУМ/МИНИМУМ от неё или параметр-дату.
 type momentOperand struct {
-	m         *momentBoundaries
-	tokens    []tok
-	scopeID   int
-	qualified map[string]map[string]metadata.FieldType
-	params    map[string]any
+	m       *momentBoundaries
+	tokens  []tok
+	scopeID int
+	params  map[string]any
 }
 
 // before — операнд, который заканчивается на tokens[k].
@@ -308,11 +323,7 @@ func (o momentOperand) column(name string) sourceClass {
 }
 
 func (o momentOperand) qualifiedColumn(qualifier, name string) sourceClass {
-	fields, ok := o.qualified[lowerFast(qualifier)]
-	if !ok || fields[lowerFast(name)] != metadata.FieldTypeDate {
-		return sourceClassUnknown
-	}
-	return o.m.qualifiers[o.scopeID][lowerFast(qualifier)]
+	return o.m.qualifiers[o.scopeID][lowerFast(qualifier)][lowerFast(name)]
 }
 
 // param — параметр-дата вне прямого сравнения с полем привязывается

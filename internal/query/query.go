@@ -5007,7 +5007,7 @@ func rewriteScalarFuncs(tokens []tok, dialect string, scopedColTypes map[int]map
 				// Местную границу, которую сравнивают с моментом, возвращаем в
 				// UTC и в формат хранения партнёра (см. sqlite_moments.go).
 				if localized && isMomentCalendarFunc(key) {
-					switch moments.boundaryClass(tokens, i, end, tokenOffset, scopeID, hasScope, qualifiedColTypes, params) {
+					switch moments.boundaryClass(tokens, i, end, tokenOffset, scopeID, hasScope, params) {
 					case sourceClassEntity:
 						call = append(append(tokenizeFragment("ob_utc_rfc3339("), call...), tokenizeFragment(")")...)
 					case sourceClassRegister:

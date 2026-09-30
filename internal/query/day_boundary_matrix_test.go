@@ -146,3 +146,27 @@ func dayBoundaryMatrix(t *testing.T, loc *time.Location) {
 		}
 	})
 }
+
+// Период виртуальной таблицы с периодичностью на SQLite — усечённая метка
+// («2026-10-10»), а не момент: сравнение с границей дня с ней совпадало и
+// обязано остаться прежним, без перевода границы в UTC.
+func TestDayBoundaryLeavesVirtualTablePeriodLabel(t *testing.T) {
+	reg := &metadata.Register{Name: "Долги",
+		Dimensions: []metadata.Field{{Name: "Метка", Type: metadata.FieldTypeString}},
+		Resources:  []metadata.Field{{Name: "Сумма", Type: metadata.FieldTypeNumber}},
+	}
+	day := time.Date(2026, 10, 10, 0, 0, 0, 0, time.Local)
+	for _, text := range []string{
+		"ВЫБРАТЬ Период, Метка ИЗ РегистрНакопления.Долги.Обороты(&Нач, &Кон, День) ГДЕ Период = НачалоДня(&Д)",
+		"ВЫБРАТЬ О.Период, О.Метка ИЗ РегистрНакопления.Долги.Обороты(&Нач, &Кон, День) КАК О ГДЕ О.Период = НачалоДня(&Д)",
+	} {
+		compiled, err := query.Compile(text, query.CompileOpts{
+			Registers: []*metadata.Register{reg},
+			Dialect:   storage.SQLiteDialect{},
+			Params:    map[string]any{"Нач": day, "Кон": day.AddDate(0, 0, 1), "Д": day},
+		})
+		require.NoError(t, err, text)
+		require.NotContains(t, compiled.SQL, "ob_utc_", compiled.SQL)
+		require.Contains(t, compiled.SQL, "ob_local_datetime(", compiled.SQL)
+	}
+}
