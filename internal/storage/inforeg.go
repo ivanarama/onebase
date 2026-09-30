@@ -134,10 +134,13 @@ func (db *DB) InfoRegExactMatchesRowFilter(ctx context.Context, ir *metadata.Inf
 // (план 86). Значения измерений/ресурсов проходят через те же канонические
 // storage-boundary функции, что обычная запись; deletion=true удаляет запись
 // по exact-first ключу, сохраняя адресуемость legacy SQLite NUMBER keys.
+// Непредставимые ссылки принимаются как пустые только на этом обменном пути:
+// схема узла-источника может отличаться от схемы получателя.
 func (db *DB) InfoRegApplyExchange(ctx context.Context, ir *metadata.InfoRegister, dims, resources map[string]any, period *time.Time, deletion bool) error {
 	if deletion {
 		return db.InfoRegDelete(ctx, ir, dims, period)
 	}
+	ctx = withStageWriteMode(ctx, stageWriteMode{Source: StageSourceExchange})
 	return db.InfoRegSet(ctx, ir, dims, resources, period)
 }
 
