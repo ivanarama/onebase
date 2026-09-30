@@ -2602,6 +2602,112 @@ func buildRefDimInfosWithEntities(dims []metadata.Field, entities []*metadata.En
 	return result
 }
 
+// refIDColumn — колонка-идентификатор ссылочного поля в текущем запросе.
+//
+// Она квалифицируется так же, как любая своя колонка (п.48). Без этого условие
+// «ГДЕ Сайт = &Сайт» ломалось, как только у присоединённого по другой ссылке
+// справочника заводили одноимённое поле: JOIN приносил второй «сайт_id», и
+// запрос падал ambiguous column name. Правка в конфигурации при этом выглядит
+// совершенно посторонней — падает не тот запрос, который меняли. VT-источник
+// не трогаем: там idCol — логический алиас подзапроса, а не колонка основной
+// таблицы.
+func (tr *translator) refIDColumn(rd *refDimInfo, lower string) string {
+	if rd.isVT {
+		return rd.idCol
+	}
+	// Здесь всегда физическая колонка ссылки, даже при одноимённом
+	// алиасе вывода SELECT. Алиас не отменяет квалификацию источником.
+	return tr.qualifyOwnSource(rd.idCol, lower)
+}
+
+// groupByItemStandalone сообщает, что текущее поле — целый элемент списка
+// СГРУППИРОВАТЬ ПО, а не часть выражения: перед ним начало списка или запятая,
+// после — запятая, закрывающая скобка подзапроса, конец запроса или следующая
+// секция, и поле не стоит внутри скобок выражения.
+func (tr *translator) groupByItemStandalone() bool {
+	if !tr.lastPartIs("GROUP BY", "BY", ",") {
+		return false
+	}
+	next := tr.peek(0)
+	switch next.kind {
+	case tEOF, tComma, tRParen:
+	case tIdent:
+		switch upperFast(next.val) {
+		case "ИМЕЮЩИЕ", "HAVING", "УПОРЯДОЧИТЬ", "ORDER", "ОБЪЕДИНИТЬ", "UNION",
+			"ИТОГИ", "TOTALS", "LIMIT", "ДЛЯ", "FOR":
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+	return !tr.insideParensSince("СГРУППИРОВАТЬ", "GROUP")
+}
+
+// selectItemStandalone — то же для списка ВЫБРАТЬ: перед полем начало списка,
+// РАЗЛИЧНЫЕ, ALL или запятая, после — запятая, ИЗ, ПОМЕСТИТЬ, ОБЪЕДИНИТЬ или конец
+// запроса, и поле не стоит внутри скобок выражения.
+func (tr *translator) selectItemStandalone() bool {
+	if !tr.lastPartIs("SELECT", "DISTINCT", "ALL", ",") {
+		return false
+	}
+	next := tr.peek(0)
+	switch next.kind {
+	case tEOF, tComma:
+	case tIdent:
+		switch upperFast(next.val) {
+		case "ИЗ", "FROM", "ПОМЕСТИТЬ", "INTO", "ОБЪЕДИНИТЬ", "UNION":
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+	return !tr.insideParensSince("ВЫБРАТЬ", "SELECT")
+}
+
+func (tr *translator) lastPartIs(parts ...string) bool {
+	if len(tr.parts) == 0 {
+		return false
+	}
+	last := tr.parts[len(tr.parts)-1]
+	for _, p := range parts {
+		if last == p {
+			return true
+		}
+	}
+	return false
+}
+
+// insideParensSince сообщает, что текущий токен стоит внутри скобки, открытой
+// после ближайшего ключевого слова секции (keywords) того же уровня: такая
+// скобка — вызов функции или группировка выражения, а не граница подзапроса.
+func (tr *translator) insideParensSince(keywords ...string) bool {
+	depth := 0
+	for i := tr.pos - 2; i >= 0; i-- {
+		switch t := tr.tokens[i]; t.kind {
+		case tRParen:
+			depth++
+		case tLParen:
+			if depth == 0 {
+				return true
+			}
+			depth--
+		case tIdent:
+			if depth != 0 {
+				continue
+			}
+			upper := upperFast(t.val)
+			for _, kw := range keywords {
+				if upper == kw {
+					return false
+				}
+			}
+		}
+	}
+	return false
+}
+
 func (tr *translator) findRefDim(name string) *refDimInfo {
 	for i := range tr.refDims {
 		if tr.refDims[i].fieldName == name {
@@ -3193,6 +3299,12 @@ func (tr *translator) qualifyOwn(col, lower string) string {
 	if _, isAlias := tr.aliases[lower]; isAlias {
 		return col // алиас вывода, не колонка таблицы
 	}
+	return tr.qualifyOwnSource(col, lower)
+}
+
+// qualifyOwnSource квалифицирует колонку таблицы без проверки алиасов вывода.
+// Для физического ID ссылки источник известен независимо от списка SELECT.
+func (tr *translator) qualifyOwnSource(col, lower string) string {
 	if len(tr.refDims) > 0 && tr.mainTable != "" {
 		_, own := tr.colTypes[lower]
 		if own {
@@ -4554,30 +4666,36 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					} else {
 						switch tr.section {
 						case sectionSelect:
+							// Имя колонки вывода получает только целый элемент
+							// списка. Внутри выражения «AS склад» ломал SQL:
+							// ЕСТЬNULL(Склад, "") превращался в
+							// coalesce(… AS склад, '') и запрос не исполнялся.
+							standalone := tr.selectItemStandalone()
 							tr.emit(rd.displayCol())
-							if p := upperFast(tr.peek(0).val); p != "КАК" && p != "AS" {
+							if p := upperFast(tr.peek(0).val); p != "КАК" && p != "AS" && standalone {
 								tr.emit("AS")
 								tr.emit(rd.fieldName)
 								tr.aliases[lowerFast(rd.fieldName)] = struct{}{}
 							}
-						case sectionGroupBy, sectionOrderBy:
+						case sectionGroupBy:
+							// Группировка по ссылке — по идентификатору, а
+							// представление идёт в список вторым: его выводит
+							// SELECT, и PostgreSQL требует, чтобы выводимая
+							// колонка была в GROUP BY. Раньше группировали только
+							// по представлению, и два разных склада «Основной»
+							// молча складывались в одну строку с общей суммой.
+							// Внутри выражения колонка остаётся прежней: то же
+							// выражение в SELECT построено по представлению, и
+							// PostgreSQL отверг бы расхождение.
+							if tr.groupByItemStandalone() {
+								tr.emit(tr.refIDColumn(rd, lower))
+								tr.emit(",")
+							}
+							tr.emit(rd.displayCol())
+						case sectionOrderBy:
 							tr.emit(rd.displayCol())
 						default:
-							// Колонка-идентификатор ссылки квалифицируется так же,
-							// как любая своя колонка (п.48). Без этого условие
-							// «ГДЕ Сайт = &Сайт» ломалось, как только у
-							// присоединённого по другой ссылке справочника
-							// заводили одноимённое поле: JOIN приносил второй
-							// «сайт_id», и запрос падал ambiguous column name.
-							// Правка в конфигурации при этом выглядит совершенно
-							// посторонней — падает не тот запрос, который меняли.
-							// VT-источник не трогаем: там idCol — логический
-							// алиас подзапроса, а не колонка основной таблицы.
-							if rd.isVT {
-								tr.emit(rd.idCol)
-							} else {
-								tr.emit(tr.qualifyOwn(rd.idCol, lower))
-							}
+							tr.emit(tr.refIDColumn(rd, lower))
 						}
 					}
 				} else if col, ok := tr.colMap[lower]; ok && !prevDot {

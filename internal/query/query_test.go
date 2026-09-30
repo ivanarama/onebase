@@ -709,7 +709,7 @@ func TestCompile_RefDim_AutoJoin(t *testing.T) {
 	// • SELECT:   Номенклатура → ref_номенклатура.наименование AS номенклатура
 	// • FROM:     inject LEFT JOIN номенклатура ref_номенклатура ON ...
 	// • WHERE:    Номенклатура → номенклатура_id
-	// • GROUP BY: Номенклатура → ref_номенклатура.наименование
+	// • GROUP BY: Номенклатура → номенклатура_id, ref_номенклатура.наименование
 	src := `ВЫБРАТЬ
   Номенклатура,
   СУММА(Выручка) КАК Выручка
@@ -747,9 +747,10 @@ func TestCompile_RefDim_AutoJoin(t *testing.T) {
 	if !strings.Contains(sql, "номенклатура_id") {
 		t.Errorf("expected номенклатура_id in WHERE, got: %s", sql)
 	}
-	// GROUP BY must use the join expression (not _id)
-	if !strings.Contains(sql, "GROUP BY ref_номенклатура.наименование") {
-		t.Errorf("expected GROUP BY ref_номенклатура.наименование, got: %s", sql)
+	// GROUP BY: сначала ссылка (одноимённые объекты не склеиваются), затем
+	// представление — его выводит SELECT, и PostgreSQL требует его в GROUP BY.
+	if !strings.Contains(sql, "GROUP BY рег_валоваяприбыль.номенклатура_id, ref_номенклатура.наименование") {
+		t.Errorf("expected GROUP BY рег_валоваяприбыль.номенклатура_id, ref_номенклатура.наименование, got: %s", sql)
 	}
 }
 
