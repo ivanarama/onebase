@@ -258,6 +258,31 @@ func (r *CatalogsRoot) Get(entityName string) any {
 
 func (r *CatalogsRoot) Set(_ string, _ any) {}
 
+// GetDynamicField / SetDynamicField — индексный доступ Справочники["Имя"] (#1434).
+//
+// Раньше такое выражение компилировалось, но возвращало Неопределено: корни
+// менеджеров не реализовывали DynamicFieldAccessor, и универсальный цикл по
+// списку типов приходилось заменять Соответствием из литералов.
+//
+// Только чтение. Имя сопоставляется без учёта регистра — этим занимается сам
+// поиск в реестре. Неизвестное имя даёт ошибку, а не Неопределено: опечатка
+// обязана падать там, где она написана.
+func (r *CatalogsRoot) GetDynamicField(name string) (any, bool) {
+	v := r.Get(name)
+	if v == nil {
+		return nil, false
+	}
+	return v, true
+}
+
+// Индексная запись корню менеджера не открывается: Справочники["Имя"] — способ
+// получить менеджер, а не ячейка. Отказ явный, потому что молчаливое false
+// дало бы сообщение «неизвестный реквизит» про существующий менеджер.
+func (r *CatalogsRoot) SetDynamicField(name string, _ any) bool {
+	RaiseUserError("Справочники[\"" + name + "\"]: индексная запись не поддерживается, доступно только чтение")
+	return false
+}
+
 // CatalogProxy resolves predefined items, runtime lookups, and record creation.
 //
 //	Справочники.ТипЦен.Закупочная                  → *Ref to predefined item
@@ -530,7 +555,7 @@ func (p *CatalogProxy) findByField(caller, field string, args []any) any {
 	if !p.hasField(field) {
 		RaiseUserError(p.missingFieldMessage(caller, field))
 	}
-	value := MatchValueString(args[0])
+	value := p.matchValueForField(field, args[0])
 	if p.rowAccessRestricted("read") {
 		ids, displays, err := p.visibleMatches(field, value)
 		if err != nil {
@@ -559,6 +584,27 @@ func (p *CatalogProxy) findByField(caller, field string, args []any) any {
 		RaiseUserError(where + ": " + err.Error())
 	}
 	return &Ref{UUID: idStr, Name: display, Type: p.entity.Name, Kind: p.entity.Kind, Manager: p}
+}
+
+// matchValueForField приводит значение поиска к строке сравнения с колонкой.
+// Для ссылочного реквизита Ref-аргумент сравнивается по UUID, а не по
+// представлению: в колонке лежит идентификатор, и `НайтиПоРеквизиту(
+// "УчётнаяЗапись", ТекущийПользователь().Ссылка)` обязан находить элемент по
+// самой ссылке (#1646). MatchValueString взял бы Ref.Name — представление,
+// которое с содержимым ссылочной колонки никогда не совпадёт.
+func (p *CatalogProxy) matchValueForField(field string, raw any) string {
+	if r, ok := raw.(*Ref); ok {
+		for i := range p.entity.Fields {
+			f := &p.entity.Fields[i]
+			if strings.EqualFold(f.Name, field) && f.RefEntity != "" {
+				if id, err := uuid.Parse(r.UUID); err == nil {
+					return id.String()
+				}
+				break
+			}
+		}
+	}
+	return MatchValueString(raw)
 }
 
 // hasField — есть ли у справочника такой реквизит (без учёта регистра).
@@ -590,7 +636,7 @@ func (p *CatalogProxy) missingFieldMessage(caller, field string) string {
 // Ссылкой (только при ровно одном совпадении) и Количеством.
 func (p *CatalogProxy) matchByField(field string, raw any) any {
 	p.denyProtectedFieldSearch("ПроверитьСовпадениеПоРеквизиту", field)
-	value := MatchValueString(raw)
+	value := p.matchValueForField(field, raw)
 	if p.rowAccessRestricted("read") {
 		ids, displays, err := p.visibleMatches(field, value)
 		if err != nil {

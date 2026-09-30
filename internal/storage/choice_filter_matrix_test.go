@@ -43,6 +43,7 @@ func seedChoiceFilterFixture(t *testing.T, db *storage.DB) choiceFilterFixture {
 			{Name: "Наименование", Type: metadata.FieldTypeString},
 			{Name: "Направление", Type: metadata.FieldType("reference:" + direction.Name), RefEntity: direction.Name},
 			{Name: "Owner", Type: metadata.FieldTypeString},
+			{Name: "Муниципальный", Type: metadata.FieldTypeBool},
 		},
 	}
 	if err := db.Migrate(ctx, []*metadata.Entity{direction, target}); err != nil {
@@ -85,19 +86,21 @@ func seedChoiceFilterFixture(t *testing.T, db *storage.DB) choiceFilterFixture {
 		direction uuid.UUID
 		owner     string
 		folder    bool
+		municipal bool
 	}{
-		{fixture.rootRow, "root alpha", fixture.root, "alice", false},
-		{fixture.childRow, "child alpha", fixture.child, "alice", false},
-		{fixture.grandRow, "grand alpha", fixture.grand, "alice", false},
-		{choiceTestUUID("000000000104"), "sibling alpha", fixture.sibling, "alice", false},
-		{choiceTestUUID("000000000105"), "child blocked", fixture.child, "bob", false},
-		{choiceTestUUID("000000000106"), "folder alpha", fixture.child, "alice", true},
+		{fixture.rootRow, "root alpha", fixture.root, "alice", false, false},
+		{fixture.childRow, "child alpha", fixture.child, "alice", false, true},
+		{fixture.grandRow, "grand alpha", fixture.grand, "alice", false, false},
+		{choiceTestUUID("000000000104"), "sibling alpha", fixture.sibling, "alice", false, false},
+		{choiceTestUUID("000000000105"), "child blocked", fixture.child, "bob", false, true},
+		{choiceTestUUID("000000000106"), "folder alpha", fixture.child, "alice", true, false},
 	} {
 		if err := db.Upsert(ctx, target.Name, row.id, map[string]any{
-			"Наименование": row.name,
-			"Направление":  row.direction.String(),
-			"Owner":        row.owner,
-			"ЭтоГруппа":    row.folder,
+			"Наименование":  row.name,
+			"Направление":   row.direction.String(),
+			"Owner":         row.owner,
+			"ЭтоГруппа":     row.folder,
+			"Муниципальный": row.municipal,
 		}, target); err != nil {
 			t.Fatalf("seed target %s: %v", row.name, err)
 		}
@@ -177,6 +180,32 @@ func TestChoiceFilterPredicatesMatrix(t *testing.T) {
 			}
 			if strings.Contains(got, "sibling") || strings.Contains(got, "folder") {
 				t.Fatalf("root/subtree result contains sibling/folder: %q", got)
+			}
+		})
+
+		// Срез B1: литерал у обычного булева реквизита. Значение приходит из
+		// метаданных формы, но в SQL обязано оставаться параметром — иначе
+		// грамматика подбора превращается в приём произвольного текста.
+		t.Run("boolean literal narrows by an ordinary attribute", func(t *testing.T) {
+			rows := assertChoiceListAndCount(t, db, fixture, storage.ListParams{ChoicePredicates: append(append([]storage.ChoicePredicate{}, base...),
+				storage.ChoicePredicate{Field: "Муниципальный", Op: metadata.FormChoiceOpEqual, Value: false},
+			)}, 2)
+			got := strings.Join(choiceRowNames(rows), ",")
+			if !strings.Contains(got, "root alpha") || !strings.Contains(got, "grand alpha") {
+				t.Fatalf("boolean literal rows = %q", got)
+			}
+			if strings.Contains(got, "child alpha") || strings.Contains(got, "child blocked") {
+				t.Fatalf("municipal rows leaked: %q", got)
+			}
+			if _, err := db.CountList(context.Background(), fixture.target.Name, fixture.target, storage.ListParams{
+				ChoicePredicates: []storage.ChoicePredicate{{Field: "Наименование", Op: metadata.FormChoiceOpEqual, Value: true}},
+			}); err == nil {
+				t.Fatal("литерал у строкового реквизита принят")
+			}
+			if _, err := db.CountList(context.Background(), fixture.target.Name, fixture.target, storage.ListParams{
+				ChoicePredicates: []storage.ChoicePredicate{{Field: "Муниципальный", Op: metadata.FormChoiceOpInHierarchy, Value: true}},
+			}); err == nil {
+				t.Fatal("in_hierarchy у булева реквизита принят")
 			}
 		})
 

@@ -524,7 +524,7 @@ test('a form tab is closed by its address, not by whichever tab is active', () =
   assert.equal(app.count(), 1);
 });
 
-test('server-driven close and the cross both protect unsaved changes', () => {
+test('missing bridge keeps legacy dirty protection for non-managed forms', () => {
   const storage = new FakeStorage();
   const app = shell(storage);
   app.open('/ui/document/обращение/1', 'Обращение');
@@ -583,7 +583,7 @@ test('subsystem context does not prevent address-driven close', () => {
   assert.equal(app.count(), 0);
 });
 
-test('server-driven close keeps dirty protection for another duplicate tab', () => {
+test('missing bridge keeps dirty protection for another non-managed duplicate', () => {
   const storage = new FakeStorage();
   const app = shell(storage);
   app.open('/ui/document/обращение/1', 'Обращение');
@@ -594,7 +594,7 @@ test('server-driven close keeps dirty protection for another duplicate tab', () 
   assert.equal(app.confirms(), 1);
 });
 
-test('repeated server-driven close cannot bypass a rejected dirty confirmation', () => {
+test('repeated fallback close cannot bypass a rejected non-managed confirmation', () => {
   const storage = new FakeStorage();
   const app = shell(storage, '', () => false);
   app.open('/ui/document/обращение/1', 'Обращение');
@@ -626,7 +626,7 @@ test('shell removes a form only after the correlated close decision allows it', 
   app.close(0);
   assert.equal(app.count(), 1, 'tab was destroyed before the server decision');
   assert.equal(requests.length, 1, 'double click started a second close intent');
-  assert.equal(app.confirms(), 1, 'double click repeated the dirty confirmation');
+  assert.equal(app.confirms(), 0, 'shell displayed a second, non-authoritative dirty confirmation');
   assert.equal(requests[0].reason, 'cross');
 
   finish({allowed: false, intentId: 'denied'});
@@ -635,7 +635,7 @@ test('shell removes a form only after the correlated close decision allows it', 
 
   app.post({source: 'obCloseTab', reason: 'escape'}, 0);
   assert.equal(requests.length, 2);
-  assert.equal(app.confirms(), 2);
+  assert.equal(app.confirms(), 0);
   assert.equal(requests[1].reason, 'escape');
   finish({allowed: true, intentId: 'allowed'});
   await new Promise((resolve) => setImmediate(resolve));

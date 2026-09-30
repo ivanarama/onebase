@@ -74,6 +74,23 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	view := r.URL.Query().Get("view")
+	// tree проходит мимо нормализации: иерархический вид открывается по
+	// ?view=tree, но персистентно не сохраняется — его выбирают заново.
+	if view != "list" && view != "tiles" && view != "tree" {
+		view = "" // неизвестное значение трактуем как отсутствие выбора
+	}
+	// Явный выбор вида запоминается по пользователю и сущности (#1485);
+	// открытие без параметра восстанавливает сохранённый вид. Иерархический
+	// вид (tree) персистентно не сохраняется — это отдельный контракт.
+	viewUser := auth.UserFromContext(r.Context())
+	if viewUser != nil && viewUser.Login != "" && (view == "list" || view == "tiles") {
+		_ = s.store.SaveListViewUserSettings(r.Context(), entity.Name, viewUser.Login, view)
+	}
+	if view == "" && viewUser != nil && viewUser.Login != "" {
+		if saved, err := s.store.GetListViewUserSettings(r.Context(), entity.Name, viewUser.Login); err == nil {
+			view = saved
+		}
+	}
 	treeView := entity.Hierarchical && view == "tree"
 	tilesView := view == "tiles"
 	feed := !treeView && s.resolveListMode(w, r, entity)
@@ -366,7 +383,7 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 		folderOpts = s.loadFolderOptions(r.Context(), entity, values["parent_id"])
 	}
 	refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
-	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows)
+	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows, values)
 	s.renderEntityForm(w, r, "object", map[string]any{
 		"Entity":        entity,
 		"IsNew":         true,
@@ -680,20 +697,7 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 		return
 	}
 
-	if entity.Hierarchical {
-		// Только если ключи реально пришли в теле. Авто-форма их рендерит
-		// (templates.go), управляемая — нет: безусловное чтение выбрасывало
-		// элемент в корень и снимало признак группы при каждой записи из
-		// managed-формы. Не пришли — восстановятся из БД вместе с прочими
-		// неприсланными полями.
-		submitted := submittedFormKeys(r)
-		if formKeySubmitted(submitted, "parent_id") {
-			fields["parent_id"] = r.FormValue("parent_id") //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
-		}
-		if formKeySubmitted(submitted, "is_folder") {
-			fields["is_folder"] = r.FormValue("is_folder") == "true" //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
-		}
-	}
+	mergeSubmittedEntityServiceFields(r, entity, fields)
 
 	// Объект для new строится через NewObject+Set (ключи нормализуются в lowercase
 	// — историческое поведение submit). Для existing — прямое присваивание Fields,
@@ -705,6 +709,17 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 			obj.Set(k, v)
 		}
 		obj.TablePartRows = tpRows
+		// Реквизиты, которых на управляемой форме не было, до сюда не доходят
+		// вовсе — их значением обязано стать то, что вычислил GET (#1189).
+		newRes, err := s.applyDefaultsToUnsubmittedFields(r, entity, form, obj)
+		if err != nil {
+			s.renderObjectFormError(w, r, entity, true, err.Error(), newRes.DSLMessages, tpRows)
+			return
+		}
+		if newRes.DSLError != "" {
+			s.renderObjectFormError(w, r, entity, true, newRes.DSLError, newRes.DSLMessages, tpRows)
+			return
+		}
 	} else {
 		obj = &runtime.Object{
 			Type:          entity.Name,
@@ -722,6 +737,23 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 	}
 	ok = true
 	return
+}
+
+// mergeSubmittedEntityServiceFields keeps the HTML-submit and close-intent
+// object builders in parity for platform-owned fields which are not declared
+// in entity.Fields. Missing keys remain missing and are restored from storage
+// for an existing partial managed form.
+func mergeSubmittedEntityServiceFields(r *http.Request, entity *metadata.Entity, fields map[string]any) {
+	if r == nil || entity == nil || fields == nil || !entity.Hierarchical {
+		return
+	}
+	submitted := submittedFormKeys(r)
+	if formKeySubmitted(submitted, "parent_id") {
+		fields["parent_id"] = r.FormValue("parent_id") //nolint:gosec // caller applies the entity-specific body limit
+	}
+	if formKeySubmitted(submitted, "is_folder") {
+		fields["is_folder"] = r.FormValue("is_folder") == "true" //nolint:gosec // caller applies the entity-specific body limit
+	}
 }
 
 // renderObjectFormError перерисовывает форму объекта с баннером ошибки — когда
@@ -753,7 +785,7 @@ func (s *Server) renderObjectFormError(w http.ResponseWriter, r *http.Request, e
 	}
 	tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, managedForm)
 	refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
-	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows)
+	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows, values)
 	lang := s.resolveLang(r)
 	data := map[string]any{
 		"Entity":        entity,
@@ -769,6 +801,10 @@ func (s *Server) renderObjectFormError(w http.ResponseWriter, r *http.Request, e
 		"TPRefMeta":     tpRefMeta(entity),
 		"TablePartRows": tablePartRows,
 		"CopySourceID":  copySourceIDForRender(r),
+		// A failed native submit renders a new document, but its values are still
+		// unsaved. Bootstrap the managed dirty guard so Close cannot discard them
+		// silently merely because the browser navigation reset JS state.
+		"InitialDirty": true,
 	}
 	if entity.Hierarchical {
 		data["FolderOptions"] = s.loadFolderOptions(r.Context(), entity, values["parent_id"])
@@ -789,6 +825,24 @@ func (s *Server) renderObjectFormBadRequest(w http.ResponseWriter, r *http.Reque
 	s.renderObjectFormError(w, r, entity, isNew, errMsg, nil, tpRows)
 }
 
+func (s *Server) renderManagedObjectSaveFailure(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, isNew bool, obj *runtime.Object, messages []string, saveErr error) {
+	var failure *managedCloseSaveError
+	if !errors.As(saveErr, &failure) {
+		s.serverError(w, r, saveErr)
+		return
+	}
+	switch failure.kind {
+	case managedSaveForbidden:
+		s.renderForbidden(w, r)
+	case managedSaveConflict:
+		s.renderVersionConflict(w, r, entity, obj.ID)
+	case managedSaveValidation:
+		s.renderObjectFormBadRequest(w, r, entity, isNew, failure.message, obj.TablePartRows)
+	default:
+		s.renderObjectFormError(w, r, entity, isNew, failure.message, messages, obj.TablePartRows)
+	}
+}
+
 func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	entity := s.getEntity(w, r)
 	if entity == nil {
@@ -804,6 +858,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	managedForm := pickManagedForm(entity, "object")
 	if managedForm != nil {
+		s.mergeFormAttrValues(r.Context(), r, managedForm, entity, obj)
 		if strings.TrimSpace(r.FormValue(copySourceFormField)) != "" {
 			if failed := s.restoreManagedCopyState(
 				w, r, entity, managedForm, fields, obj.Fields, obj.TablePartRows,
@@ -816,6 +871,23 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		// Managed HTML submit and close-intent share one result-returning save
+		// layer. Transport differs (redirect/render vs JSON), write semantics do not.
+		hookMsgs, _, saveErr := s.saveManagedObject(r, entity, managedForm, obj, true, action, false, nil)
+		if saveErr != nil {
+			s.renderManagedObjectSaveFailure(w, r, entity, true, obj, hookMsgs, saveErr)
+			return
+		}
+		if r.FormValue("_popup") == "1" {
+			s.renderPopupSaved(w, obj.ID.String(), firstStringField(fields, entity))
+			return
+		}
+		if action == "post_and_close" {
+			http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/ui/"+strings.ToLower(string(entity.Kind))+"/"+entity.Name+"/"+obj.ID.String(), http.StatusSeeOther)
+		return
 	}
 	if err := s.validateManagedFormRequired(r, entity, managedForm, obj.Fields); err != nil {
 		s.renderObjectFormBadRequest(w, r, entity, true, err.Error(), obj.TablePartRows)
@@ -869,7 +941,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		values := formValues(r, entity)
 		tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, pickManagedForm(entity, "object"))
 		refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
-		tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows)
+		tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows, values)
 		langErr := s.resolveLang(r)
 		var fOpts []map[string]any
 		if entity.Hierarchical {
@@ -993,10 +1065,16 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 		}
 		offset = n
 	}
+	// Отбор подбора подчинённого справочника: «реквизит → значение» приезжает
+	// параметром flt от клиента (см. data-ref-filter в разметке). У подчинённого
+	// справочника без владельца выдача ПУСТА — и это ответ, а не ошибка: сначала
+	// контрагент, потом договор. Связи параметров выбора (план 170) едут своим
+	// контрактом choice и в flt не попадают.
+	base, fltOK := refOptionsFilters(ent, r.URL.Query().Get("flt"), storage.ListParams{})
 	items := make([]map[string]any, 0)
 	total := 0
-	if choice == nil || !choice.Empty {
-		extra := storage.ListParams{}
+	if fltOK && (choice == nil || !choice.Empty) {
+		extra := base
 		if choice != nil {
 			extra.ChoicePredicates = choice.Predicates
 		}
@@ -1006,6 +1084,14 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// Тексты просмотра, зависящие от КОНТЕКСТА подбора (choice_preview_proc):
+	// вызывающая форма прислала, например, филиал звонка, и памятка по
+	// направлению собирается уже под него. Ошибка процедуры не валит подбор:
+	// выбирать элемент оператору нужно в любом случае, а текст справа —
+	// вспомогательный (что сломалось, видно в логе сервера).
+	// Динамический preview (choice_preview_proc) обслуживается POST /page:
+	// GET остаётся статическим и обратно совместимым (план 168, инвариант 1).
+	previewField := canonicalChoicePreviewField(ent)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	response := map[string]any{
 		"items":  items,
@@ -1013,10 +1099,13 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 		"limit":  limit,
 		"offset": offset,
 	}
+	response["preview"] = previewField
 	if choice != nil && choice.Selected != nil {
 		allowed := false
-		if !choice.Empty {
-			allowed, err = s.choiceSelectedAllowed(r.Context(), ent, *choice.Selected, choice.Predicates)
+		if !choice.Empty && fltOK {
+			check := base
+			check.ChoicePredicates = choice.Predicates
+			allowed, err = s.choiceSelectedAllowedWithParams(r.Context(), ent, *choice.Selected, check)
 			if err != nil {
 				s.serverError(w, r, err)
 				return
@@ -1397,7 +1486,7 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, vals)
-	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tpRows)
+	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tpRows, vals)
 
 	editUser := auth.UserFromContext(r.Context())
 	editIsAdmin := editUser == nil || editUser.IsAdmin
@@ -1495,7 +1584,18 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 			s.serverError(w, r, err)
 			return
 		}
-		tpRows = obj.TablePartRows
+		s.mergeFormAttrValues(r.Context(), r, managedForm, entity, obj)
+		hookMsgs, _, saveErr := s.saveManagedObject(r, entity, managedForm, obj, false, action, false, nil)
+		if saveErr != nil {
+			s.renderManagedObjectSaveFailure(w, r, entity, false, obj, hookMsgs, saveErr)
+			return
+		}
+		if action == "post_and_close" {
+			http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
+			return
+		}
+		http.Redirect(w, r, "/ui/"+strings.ToLower(string(entity.Kind))+"/"+entity.Name+"/"+id.String(), http.StatusSeeOther)
+		return
 	}
 	// План 88: не дать пользователю, видящему поле лишь замаскированным,
 	// перезаписать реальное значение маской/подделкой — восстанавливаем
@@ -1556,7 +1656,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 		values := formValues(r, entity)
 		tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, pickManagedForm(entity, "object"))
 		refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
-		tpRefOpts2, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows)
+		tpRefOpts2, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows, values)
 		values["_version"] = r.FormValue("_version")
 		langSubmit := s.resolveLang(r)
 		var fOpts []map[string]any
@@ -1766,35 +1866,46 @@ func (s *Server) clearMovements(ctx context.Context, entityName string, id uuid.
 // markForDeletion помечает/снимает пометку на удаление. При пометке проведённого
 // документа сперва отменяет проведение (чистит движения по всем регистрам и
 // снимает posted) — пометка и проведённость взаимоисключающи (как в 1С). Снятие
-// пометки проведение НЕ возвращает. Транзакцию метод не открывает: HTTP-вызовы
-// оборачивают его в store.WithTx, DSL-путь использует живой ctx (как DeleteRef).
+// пометки проведение НЕ возвращает. Весь переход, точный version token и
+// отложенные уведомления объединены WithTxScope: открытая DSL-транзакция
+// переиспользуется, а автономный HTTP/DSL-вызов получает собственную.
 func (s *Server) markForDeletion(ctx context.Context, entity *metadata.Entity, id uuid.UUID, mark bool) error {
-	if mark && entity.Posting {
-		row, err := s.store.GetByID(ctx, entity.Name, id, entity)
+	return s.store.WithTxScope(ctx, func(txCtx context.Context) error {
+		if mark && entity.Posting {
+			row, err := s.store.GetByID(txCtx, entity.Name, id, entity)
+			if err != nil {
+				return err
+			}
+			if asBool(row["posted"]) {
+				if err := s.clearMovements(txCtx, entity.Name, id); err != nil {
+					return err
+				}
+				if err := s.store.SetPosted(txCtx, entity.Name, id, false); err != nil {
+					return err
+				}
+			}
+		}
+		if err := s.store.MarkForDeletion(txCtx, entity.Name, id, mark); err != nil {
+			return err
+		}
+		// Read and publish the token in the same transaction as the mutation.
+		// A post-commit SELECT could observe an unrelated writer and turn its
+		// version into authority for this stale lifecycle.
+		version, err := s.store.EntityVersion(txCtx, entity.Name, id)
 		if err != nil {
 			return err
 		}
-		if asBool(row["posted"]) {
-			if err := s.clearMovements(ctx, entity.Name, id); err != nil {
-				return err
-			}
-			if err := s.store.SetPosted(ctx, entity.Name, id, false); err != nil {
-				return err
-			}
+		entityservice.NotifySaveObserver(txCtx, entity, entityservice.SaveResult{ID: id, Version: version})
+		// Регистрация изменения для планов обмена (план 86): пометка/снятие пометки
+		// на удаление — изменение объекта, распространяем его узлам-получателям.
+		if err := exchange.RegisterOnSave(txCtx, s.store, s.reg.ExchangePlans(), entity, id, mark); err != nil {
+			return err
 		}
-	}
-	if err := s.store.MarkForDeletion(ctx, entity.Name, id, mark); err != nil {
-		return err
-	}
-	// Регистрация изменения для планов обмена (план 86): пометка/снятие пометки
-	// на удаление — изменение объекта, распространяем его узлам-получателям.
-	if err := exchange.RegisterOnSave(ctx, s.store, s.reg.ExchangePlans(), entity, id, mark); err != nil {
-		return err
-	}
-	// Живой список (план 87): пометка меняет вид строки (зачёркивание) → список
-	// перечитывается. Смены владельца нет, before не нужен.
-	s.publishDocChange(ctx, entity, id, "записан", nil)
-	return nil
+		// Живой список (план 87): пометка меняет вид строки (зачёркивание) → список
+		// перечитывается. Смены владельца нет, before не нужен.
+		s.publishDocChange(txCtx, entity, id, "записан", nil)
+		return nil
+	})
 }
 
 // unpostDocument clears movements, sets posted=false and runs

@@ -29,7 +29,7 @@ var serviceInstallCmd = &cobra.Command{
 проекта и SQLite используйте локальный путь или UNC (\\server\share\...).`,
 	Example: `  onebase service install --id <base-id>
   onebase service install --db "postgres://..." --port 8080 --name myapp
-  onebase service install --sqlite ./base.db --project ./project --config-source file --port 8080 --name myapp`,
+  onebase service install --sqlite ./base.db --project ./project --config-source file --host 0.0.0.0 --port 8080 --name myapp`,
 	RunE: runServiceInstall,
 }
 
@@ -41,20 +41,25 @@ var serviceUninstallCmd = &cobra.Command{
 }
 
 func init() {
-	serviceInstallCmd.Flags().String("id", "", "base ID from ibases registry")
-	serviceInstallCmd.Flags().String("name", "", "service name (default: onebase-<base-name>)")
-	serviceInstallCmd.Flags().String("db", "", "PostgreSQL DSN (if not using --id)")
-	serviceInstallCmd.Flags().String("sqlite", "", "SQLite database file path (if not using --id)")
-	serviceInstallCmd.Flags().Int("port", 8080, "HTTP port (if not using --id)")
-	serviceInstallCmd.Flags().String("config-source", "database", "file or database (if not using --id)")
-	serviceInstallCmd.Flags().String("project", "", "project directory (for file config-source)")
-	serviceInstallCmd.Flags().String("user", "", "system user to run the service (Linux only, default: current user)")
-	serviceInstallCmd.Flags().Bool("print", false, "print the unit file instead of installing it")
-	serviceInstallCmd.Flags().Bool("watch", false, "запускать сервер с --watch (hot reload metadata/DSL/scheduled без рестарта)")
+	addServiceInstallFlags(serviceInstallCmd)
 
 	serviceUninstallCmd.Flags().String("name", "onebase", "service name to remove")
 
 	serviceCmd.AddCommand(serviceInstallCmd, serviceUninstallCmd)
+}
+
+func addServiceInstallFlags(cmd *cobra.Command) {
+	cmd.Flags().String("id", "", "base ID from ibases registry")
+	cmd.Flags().String("name", "", "service name (default: onebase-<base-name>)")
+	cmd.Flags().String("db", "", "PostgreSQL DSN (if not using --id)")
+	cmd.Flags().String("sqlite", "", "SQLite database file path (if not using --id)")
+	cmd.Flags().Int("port", 8080, "HTTP port (if not using --id)")
+	cmd.Flags().String("host", "127.0.0.1", "listen interface (0.0.0.0 for all interfaces; inherited from --id unless explicitly set)")
+	cmd.Flags().String("config-source", "database", "file or database (if not using --id)")
+	cmd.Flags().String("project", "", "project directory (for file config-source)")
+	cmd.Flags().String("user", "", "system user to run the service (Linux only, default: current user)")
+	cmd.Flags().Bool("print", false, "print the unit file instead of installing it")
+	cmd.Flags().Bool("watch", false, "запускать сервер с --watch (hot reload metadata/DSL/scheduled без рестарта)")
 }
 
 // ── install ───────────────────────────────────────────────────────────────────
@@ -65,6 +70,7 @@ func runServiceInstall(cmd *cobra.Command, _ []string) error {
 	printOnly, _ := cmd.Flags().GetBool("print")
 
 	var dsn, sqlitePath, dbType, configSource, project, displayName string
+	host, _ := cmd.Flags().GetString("host")
 	var port int
 
 	if baseID != "" {
@@ -82,6 +88,9 @@ func runServiceInstall(cmd *cobra.Command, _ []string) error {
 		port = base.Port
 		configSource = base.ConfigSource
 		project = base.Path
+		if !cmd.Flags().Changed("host") {
+			host = normalizeRegisteredServiceHost(base.Host)
+		}
 		displayName = base.Name
 		if svcName == "" {
 			svcName = "onebase-" + slugify(base.Name)
@@ -117,6 +126,7 @@ func runServiceInstall(cmd *cobra.Command, _ []string) error {
 	if configSource == "" {
 		configSource = "database"
 	}
+	host = normalizeServiceHost(host)
 	if configSource != "file" && configSource != "database" {
 		return fmt.Errorf("--config-source должен быть file или database")
 	}
@@ -160,12 +170,30 @@ func runServiceInstall(cmd *cobra.Command, _ []string) error {
 	watch, _ := cmd.Flags().GetBool("watch")
 	switch runtime.GOOS {
 	case "linux":
-		return installSystemd(exe, svcName, displayName, dsn, sqlitePath, dbType, configSource, project, port, watch, cmd, printOnly)
+		return installSystemd(exe, svcName, displayName, dsn, sqlitePath, dbType, configSource, project, host, port, watch, cmd, printOnly)
 	case "windows":
-		return installWindowsService(exe, svcName, displayName, dsn, sqlitePath, dbType, configSource, project, port, watch, printOnly)
+		return installWindowsService(exe, svcName, displayName, dsn, sqlitePath, dbType, configSource, project, host, port, watch, printOnly)
 	default:
 		return fmt.Errorf("автоустановка сервиса не поддерживается на %s; используйте --print для получения конфигурации", runtime.GOOS)
 	}
+}
+
+func normalizeServiceHost(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return "127.0.0.1"
+	}
+	return host
+}
+
+// normalizeRegisteredServiceHost mirrors the launcher's secure allow-list.
+// A registry written by an older/newer binary or edited by hand must not expose
+// a service to the network unless it contains the explicit supported value.
+func normalizeRegisteredServiceHost(host string) string {
+	if strings.TrimSpace(host) == "0.0.0.0" {
+		return "0.0.0.0"
+	}
+	return "127.0.0.1"
 }
 
 // ── systemd ───────────────────────────────────────────────────────────────────
@@ -178,7 +206,7 @@ Wants=postgresql.service
 [Service]
 Type=simple
 User={{systemdQuote .User}}
-ExecStart={{systemdQuote .Exe}} run --config-source {{systemdQuote .ConfigSource}} {{if eq .DBType "sqlite"}}--sqlite {{systemdQuote .SQLitePath}}{{else}}--db {{systemdQuote .DSN}}{{end}} --port {{.Port}}{{if .Project}} --project {{systemdQuote .Project}}{{end}}{{if .Watch}} --watch{{end}}
+ExecStart={{systemdQuote .Exe}} run --config-source {{systemdQuote .ConfigSource}} {{if eq .DBType "sqlite"}}--sqlite {{systemdQuote .SQLitePath}}{{else}}--db {{systemdQuote .DSN}}{{end}} --host {{systemdQuote .Host}} --port {{.Port}}{{if .Project}} --project {{systemdQuote .Project}}{{end}}{{if .Watch}} --watch{{end}}
 Restart=on-failure
 RestartSec=5s
 StandardOutput=journal
@@ -201,6 +229,7 @@ type systemdData struct {
 	DBType       string
 	ConfigSource string
 	Project      string
+	Host         string
 	Port         int
 	Watch        bool
 }
@@ -228,7 +257,7 @@ func systemdQuote(s string) (string, error) {
 	return `"` + s + `"`, nil
 }
 
-func installSystemd(exe, svcName, displayName, dsn, sqlitePath, dbType, configSource, proj string, port int, watch bool, cmd *cobra.Command, printOnly bool) error {
+func installSystemd(exe, svcName, displayName, dsn, sqlitePath, dbType, configSource, proj, host string, port int, watch bool, cmd *cobra.Command, printOnly bool) error {
 	user, _ := cmd.Flags().GetString("user")
 	if user == "" {
 		user = os.Getenv("USER")
@@ -256,6 +285,7 @@ func installSystemd(exe, svcName, displayName, dsn, sqlitePath, dbType, configSo
 		DBType:       dbType,
 		ConfigSource: configSource,
 		Project:      proj,
+		Host:         host,
 		Port:         port,
 		Watch:        watch,
 	}
@@ -323,7 +353,7 @@ func installSystemd(exe, svcName, displayName, dsn, sqlitePath, dbType, configSo
 
 // ── Windows service ───────────────────────────────────────────────────────────
 
-func installWindowsService(exe, svcName, displayName, dsn, sqlitePath, dbType, configSource, proj string, port int, watch, printOnly bool) error {
+func installWindowsService(exe, svcName, displayName, dsn, sqlitePath, dbType, configSource, proj, host string, port int, watch, printOnly bool) error {
 	servicePaths := []namedPath{{Label: "каталог проекта", Path: proj}}
 	if dbType == "sqlite" {
 		servicePaths = append(servicePaths, namedPath{Label: "файл SQLite", Path: sqlitePath})
@@ -347,6 +377,7 @@ func installWindowsService(exe, svcName, displayName, dsn, sqlitePath, dbType, c
 	serviceArgs := []string{
 		"run", "--config-source", quoteWindowsCommandArg(configSource),
 		dbFlag, quoteWindowsCommandArgAlways(dbValue),
+		"--host", quoteWindowsCommandArg(host),
 		"--port", fmt.Sprint(port),
 	}
 	if proj != "" {

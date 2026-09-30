@@ -236,6 +236,7 @@ func hasColumnChild(en *formdoc.ElementNode) bool {
 // открывал панель без повторного парсинга YAML в браузере.
 type canvasElementInfo struct {
 	NodeID   string `json:"nodeId"`
+	ID       string `json:"id"`
 	Kind     string `json:"kind"`
 	Name     string `json:"name"`
 	TitleRU  string `json:"titleRu"`
@@ -275,12 +276,23 @@ type canvasElementInfo struct {
 	// Набор значений Переключателя/ПолеСписка (batch C1).
 	Options []canvasOption `json:"options"`
 	View    string         `json:"view"` // radio|select
+	// ChoiceFilter сохраняет порядок условий и тип boolean-литерала для
+	// визуального редактора plan 170/C. Указатель отличает value:false от
+	// отсутствующего value (режим from).
+	ChoiceFilter []canvasChoiceCondition `json:"choiceFilter"`
 }
 
 // canvasOption — значение набора Переключателя для редактора опций (C1).
 type canvasOption struct {
 	Value string `json:"value"`
 	Label string `json:"label"`
+}
+
+type canvasChoiceCondition struct {
+	Field string `json:"field"`
+	Op    string `json:"op"`
+	From  string `json:"from,omitempty"`
+	Value *bool  `json:"value,omitempty"`
 }
 
 // canvasModel разворачивает дерево формы в плоскую карту node-id → редактируемые
@@ -297,6 +309,7 @@ func canvasModel(doc *formdoc.Doc) (map[string]canvasElementInfo, error) {
 			el := en.El
 			info := canvasElementInfo{
 				NodeID:      en.NodeID,
+				ID:          el.ID,
 				Kind:        string(el.Kind),
 				Name:        el.Name,
 				DataPath:    el.DataPath,
@@ -330,6 +343,14 @@ func canvasModel(doc *formdoc.Doc) (map[string]canvasElementInfo, error) {
 			}
 			for _, o := range el.Options {
 				info.Options = append(info.Options, canvasOption{Value: o.ValueStr(), Label: o.Label()})
+			}
+			for _, condition := range el.ChoiceFilter {
+				info.ChoiceFilter = append(info.ChoiceFilter, canvasChoiceCondition{
+					Field: condition.Field,
+					Op:    string(condition.Op),
+					From:  condition.From,
+					Value: condition.Value,
+				})
 			}
 			m[en.NodeID] = info
 			walk(en.Children)

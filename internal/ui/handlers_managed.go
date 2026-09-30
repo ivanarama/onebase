@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/metadata"
+	processorpkg "github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/report/compose"
 )
 
@@ -145,6 +148,14 @@ func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any
 		opKind = opProcessorRun
 	}
 	data["FormCloseTimeoutMS"] = formCloseClientTimeoutMS(s.operationTimeout(opKind))
+	data["FormCloseEpoch"] = formCloseProcessEpoch
+	data["FormCloseClientID"] = uuid.NewString()
+	data["FormCloseServerNowMS"] = time.Now().UnixMilli()
+	if processor, _ := data["Processor"].(*processorpkg.Processor); processor != nil {
+		data["FormCloseSchema"] = processorFormCloseSchema(processor, form)
+	} else if entity, _ := data["Entity"].(*metadata.Entity); entity != nil {
+		data["FormCloseSchema"] = entityFormCloseSchema(entity, form)
+	}
 	if css := formConditionalCSS(form); css != "" {
 		data["FormConditionalCSS"] = template.CSS(css) //nolint:gosec // G203: стиль собран cssStyle → csssafe.Color, произвольная строка в CSS не попадает
 	}
@@ -365,7 +376,12 @@ func (s *Server) mergeFormLocalRefOptions(ctx context.Context, form *metadata.Fo
 		if refEntity == nil {
 			continue
 		}
-		rows, err := s.initialReferenceOptions(ctx, refEntity, refOptionsChoice, nil)
+		ownerID, asked := "", false
+		if hf, ok := ownerHolderField(entity, refEntity.Owner); ok {
+			ownerID, asked = formValueForPath(data["Values"], "Объект."+hf.Name), true
+		}
+		selected := formValueForPath(data["Values"], "Форма."+a.Name)
+		rows, err := s.initialReferenceOptionsOwned(ctx, refEntity, refOptionsChoice, []string{selected}, ownerID, asked)
 		if err != nil {
 			continue
 		}

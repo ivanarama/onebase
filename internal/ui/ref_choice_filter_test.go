@@ -40,6 +40,10 @@ func choiceHTTPUUID(prefix byte, number int) uuid.UUID {
 }
 
 func newChoiceHTTPFixture(t *testing.T) choiceHTTPFixture {
+	return newChoiceHTTPFixtureWithOwner(t, false)
+}
+
+func newChoiceHTTPFixtureWithOwner(t *testing.T, subordinate bool) choiceHTTPFixture {
 	t.Helper()
 	ctx := context.Background()
 	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "choice-ui.db"))
@@ -59,6 +63,10 @@ func newChoiceHTTPFixture(t *testing.T) choiceHTTPFixture {
 			{Name: "Направление", Type: metadata.FieldType("reference:" + direction.Name), RefEntity: direction.Name},
 			{Name: "Аудитория", Type: metadata.FieldTypeString},
 		},
+	}
+	if subordinate {
+		target.Owner = direction.Name
+		target.Fields = append(target.Fields, metadata.Field{Name: metadata.StandardOwnerField, ID: metadata.StandardOwnerFieldID, Type: metadata.FieldType("reference:" + direction.Name), RefEntity: direction.Name})
 	}
 	choiceElement := &metadata.FormElement{
 		ID: "fault-picker", Name: "ПолеНеисправность", Kind: metadata.FormElementField,
@@ -81,6 +89,12 @@ func newChoiceHTTPFixture(t *testing.T) choiceHTTPFixture {
 			{Name: "Неисправность", Type: metadata.FieldType("reference:" + target.Name), RefEntity: target.Name},
 		},
 		Forms: []*metadata.FormModule{form},
+	}
+	if subordinate {
+		owner.TableParts = []metadata.TablePart{{Name: "Строки", Fields: []metadata.Field{{Name: target.Name, Type: metadata.FieldType("reference:" + target.Name), RefEntity: target.Name}}}}
+		form.Elements = append(form.Elements, &metadata.FormElement{ID: "fault-rows", Name: "Строки", Kind: metadata.FormElementTablePart, DataPath: "Объект.Строки", NoGrid: true})
+		form.Attributes = append(form.Attributes, &metadata.FormAttribute{Name: "ЛокальнаяНеисправность", TypeRef: "CatalogRef." + target.Name})
+		form.Elements = append(form.Elements, &metadata.FormElement{ID: "local-fault", Name: "ЛокальнаяНеисправность", Kind: metadata.FormElementField, DataPath: "Форма.ЛокальнаяНеисправность"})
 	}
 	entities := []*metadata.Entity{direction, target, owner}
 	if err := db.Migrate(ctx, entities); err != nil {
@@ -117,9 +131,11 @@ func newChoiceHTTPFixture(t *testing.T) choiceHTTPFixture {
 		if i%2 == 0 {
 			branch = childA
 		}
-		if err := db.Upsert(ctx, target.Name, choiceHTTPUUID(0x20, i), map[string]any{
-			"Наименование": name, "Направление": branch.String(), "Аудитория": "anna",
-		}, target); err != nil {
+		fields := map[string]any{"Наименование": name, "Направление": branch.String(), "Аудитория": "anna"}
+		if subordinate {
+			fields[metadata.StandardOwnerField] = branch.String()
+		}
+		if err := db.Upsert(ctx, target.Name, choiceHTTPUUID(0x20, i), fields, target); err != nil {
 			t.Fatalf("seed target %d: %v", i, err)
 		}
 	}
@@ -136,9 +152,11 @@ func newChoiceHTTPFixture(t *testing.T) choiceHTTPFixture {
 		{legacySelected, "needle legacy B", rootB, "anna"},
 		{foreignOther, "needle other B", rootB, "anna"},
 	} {
-		if err := db.Upsert(ctx, target.Name, row.id, map[string]any{
-			"Наименование": row.name, "Направление": row.direction.String(), "Аудитория": row.audience,
-		}, target); err != nil {
+		fields := map[string]any{"Наименование": row.name, "Направление": row.direction.String(), "Аудитория": row.audience}
+		if subordinate {
+			fields[metadata.StandardOwnerField] = row.direction.String()
+		}
+		if err := db.Upsert(ctx, target.Name, row.id, fields, target); err != nil {
 			t.Fatalf("seed target extra: %v", err)
 		}
 	}
@@ -148,18 +166,25 @@ func newChoiceHTTPFixture(t *testing.T) choiceHTTPFixture {
 	}, owner); err != nil {
 		t.Fatalf("seed owner: %v", err)
 	}
+	if subordinate {
+		if err := db.UpsertTablePartRows(ctx, owner.Name, "Строки", ownerID, []map[string]any{{target.Name: choiceHTTPUUID(0x20, 1).String()}}, owner.TableParts[0]); err != nil {
+			t.Fatalf("seed table part: %v", err)
+		}
+	}
 
 	reg := runtime.NewRegistry()
 	reg.Load(runtime.LoadOptions{Entities: entities})
 	user := &auth.User{Login: "anna", Roles: []*auth.Role{{Permissions: auth.Permission{
 		Catalogs:  map[string][]string{direction.Name: {"read"}, target.Name: {"read"}},
-		Documents: map[string][]string{owner.Name: {"read"}},
+		Documents: map[string][]string{owner.Name: {"read", "write"}},
 		RowAccess: auth.RowAccess{Catalogs: map[string]auth.RowPolicies{
 			target.Name: {"read": {Field: "Аудитория", Op: "eq", Value: auth.RowValue{User: "login"}}},
 		}},
 	}}}}
+	server := &Server{reg: reg, store: db}
+	server.entitySvc = server.newEntityService(nil)
 	return choiceHTTPFixture{
-		server: &Server{reg: reg, store: db}, direction: direction, target: target, owner: owner,
+		server: server, direction: direction, target: target, owner: owner,
 		rootA: rootA, rootB: rootB, pageTwo: choiceHTTPUUID(0x20, 51), hidden: hidden,
 		legacySelected: legacySelected, foreignOther: foreignOther, ownerID: ownerID, user: user,
 	}
@@ -219,6 +244,28 @@ func TestRefOptionsChoiceFilterCombinesSearchRLSAndTotal(t *testing.T) {
 		if !strings.Contains(label, "needle") || label == "needle hidden" || strings.Contains(label, " B") {
 			t.Fatalf("search/choice/RLS are not ANDed: %#v", response.Items)
 		}
+	}
+}
+
+func TestRefOptionsOwnerAndChoiceFilterAreCombined(t *testing.T) {
+	f := newChoiceHTTPFixtureWithOwner(t, true)
+	query := f.contextQuery(f.rootA)
+	filter, _ := json.Marshal(map[string]string{metadata.StandardOwnerField: f.rootA.String()})
+	query.Set("flt", string(filter))
+	query.Set("q", "needle")
+	query.Set("selected_id", choiceHTTPUUID(0x20, 2).String()) // choice допускает, owner запрещает
+	got := decodeChoiceHTTP(t, f.serveRefOptions(t, f.target, query))
+	if got.Total != 1 || len(got.Items) != 1 || fmt.Sprint(got.Items[0]["id"]) != choiceHTTPUUID(0x20, 1).String() {
+		t.Fatalf("owner и choice не пересеклись: total=%d items=%#v", got.Total, got.Items)
+	}
+	if got.SelectedAllowed == nil || *got.SelectedAllowed {
+		t.Fatalf("selected_allowed пропустил чужого владельца: %#v", got)
+	}
+	filter, _ = json.Marshal(map[string]string{metadata.StandardOwnerField: ""})
+	query.Set("flt", string(filter))
+	got = decodeChoiceHTTP(t, f.serveRefOptions(t, f.target, query))
+	if got.Total != 0 || len(got.Items) != 0 || got.SelectedAllowed == nil || *got.SelectedAllowed {
+		t.Fatalf("пустой owner открыл строки: %#v", got)
 	}
 }
 
@@ -393,6 +440,117 @@ func TestManagedChoiceFilterInitialRenderKeepsOnlyMarkedLegacyValue(t *testing.T
 	}
 	if legacyCount != 1 || foreignOther {
 		t.Fatalf("legacy/foreign options: selected count=%d foreign other=%v", legacyCount, foreignOther)
+	}
+}
+
+func TestManagedTablePartOwnerFilterOnInitialForm(t *testing.T) {
+	f := newChoiceHTTPFixtureWithOwner(t, true)
+	router := chi.NewRouter()
+	f.server.Mount(router)
+	request := httptest.NewRequest(http.MethodGet, "/ui/document/"+url.PathEscape(f.owner.Name)+"/"+f.ownerID.String(), nil)
+	request = request.WithContext(auth.ContextWithUser(request.Context(), f.user))
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("form status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	document, err := html.Parse(strings.NewReader(recorder.Body.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectNode := findSelectByName(document, "tp.Строки.0."+f.target.Name)
+	if selectNode == nil {
+		t.Fatal("в DOM-таблице нет ссылочного select")
+	}
+	raw, ok := htmlAttribute(selectNode, "data-ref-filter")
+	if !ok || !strings.Contains(raw, f.rootA.String()) {
+		t.Fatalf("табличная часть не получила owner-фильтр: %q", raw)
+	}
+	for option := selectNode.FirstChild; option != nil; option = option.NextSibling {
+		if option.Type != html.ElementNode || option.Data != "option" {
+			continue
+		}
+		value, _ := htmlAttribute(option, "value")
+		if value == choiceHTTPUUID(0x20, 2).String() {
+			t.Fatal("начальная загрузка табличной части показала чужого владельца")
+		}
+	}
+	if !strings.Contains(recorder.Body.String(), `"filter"`) {
+		t.Fatal("новые строки табличной части не получили filter в TPRefMeta")
+	}
+	local := findSelectByName(document, "ЛокальнаяНеисправность")
+	if local == nil {
+		t.Fatal("save:false реквизит формы не получил select")
+	}
+	if raw, ok := htmlAttribute(local, "data-ref-filter"); !ok || !strings.Contains(raw, f.rootA.String()) {
+		t.Fatalf("save:false реквизит не получил owner-фильтр: %q", raw)
+	}
+	for option := local.FirstChild; option != nil; option = option.NextSibling {
+		if option.Type != html.ElementNode || option.Data != "option" {
+			continue
+		}
+		value, _ := htmlAttribute(option, "value")
+		if value == choiceHTTPUUID(0x20, 2).String() {
+			t.Fatal("save:false реквизит показал чужого владельца")
+		}
+	}
+}
+
+func TestManagedGridOwnerFilterOnInitialForm(t *testing.T) {
+	f := newChoiceHTTPFixtureWithOwner(t, true)
+	for _, element := range f.owner.Forms[0].Elements {
+		if element.Kind == metadata.FormElementTablePart {
+			element.NoGrid = false
+		}
+	}
+	router := chi.NewRouter()
+	f.server.Mount(router)
+	request := httptest.NewRequest(http.MethodGet, "/ui/document/"+url.PathEscape(f.owner.Name)+"/"+f.ownerID.String(), nil)
+	request = request.WithContext(auth.ContextWithUser(request.Context(), f.user))
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("form status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	cols := parseManagedTPColumns(t, recorder.Body.String())
+	found := false
+	for _, col := range cols {
+		if col.ID != f.target.Name {
+			continue
+		}
+		found = true
+		if !strings.Contains(col.RefFilter, f.rootA.String()) {
+			t.Fatalf("SlickGrid колонка не получила owner-фильтр: %+v", col)
+		}
+	}
+	if !found {
+		t.Fatal("SlickGrid колонка ссылочного поля отсутствует")
+	}
+}
+
+func TestManagedChoiceFilterLegacyValueSurvivesOrdinarySave(t *testing.T) {
+	f := newChoiceHTTPFixture(t)
+	body := url.Values{
+		"Направление":   {f.rootA.String()},
+		"Неисправность": {f.legacySelected.String()},
+		"_action":       {""},
+	}
+	request := reqWithChi(http.MethodPost,
+		"/ui/document/"+url.PathEscape(f.owner.Name)+"/"+f.ownerID.String(), body,
+		map[string]string{"entity": f.owner.Name, "id": f.ownerID.String()})
+	request = request.WithContext(auth.ContextWithUser(request.Context(), f.user))
+	recorder := httptest.NewRecorder()
+	f.server.submitEdit(recorder, request)
+	if recorder.Code != http.StatusSeeOther {
+		t.Fatalf("ordinary save status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+
+	stored, err := f.server.store.GetByID(context.Background(), f.owner.Name, f.ownerID, f.owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(stored["Неисправность"]); got != f.legacySelected.String() {
+		t.Fatalf("ordinary save erased legacy outside-filter value: got %q, want %s", got, f.legacySelected)
 	}
 }
 

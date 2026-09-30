@@ -163,7 +163,7 @@ func TestGridSyncVetoKeepsDirtyState(t *testing.T) {
 		t.Fatal("dirty-флаг сбрасывается до veto финального submit-handler")
 	}
 	veto := strings.Index(js, "window.obGridSync() === false")
-	reset := strings.Index(js, "!e.defaultPrevented) window._obFormDirty = false")
+	reset := strings.Index(js, "!e.defaultPrevented) window.obSetManagedFormDirty(false)")
 	if veto < 0 || reset < 0 || reset < veto {
 		t.Fatalf("dirty-флаг должен сбрасываться только после obGridSync veto: veto=%d reset=%d", veto, reset)
 	}

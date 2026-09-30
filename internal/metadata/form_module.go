@@ -50,6 +50,17 @@ const (
 	// а результат пользователь возвращает событием Выбор с переменной
 	// ПодборРезультат. Generic: годится для любого диалога мультивыбора.
 	FormEventOnChoice FormEventType = "Выбор" // OnChoice
+	// Поиск — та же фаза 1 диалога подбора, вызванная повторно из уже открытого
+	// окна (план 46). Строка поиска диалога фильтрует то, что уже приехало на
+	// клиент; когда строк больше окна выдачи или часть колонок под маской ПДн
+	// (план 88), фильтровать нечего — искать обязан сервер. Обработчик получает
+	// набранный текст в переменной ПодборЗапрос и снова зовёт ПоказатьПодбор;
+	// клиент заменяет строки в открытом окне, не открывая второго.
+	FormEventOnSearch FormEventType = "Поиск" // OnSearch
+	// Ответ — вторая фаза диалога вопроса (#1528): обработчик показывает
+	// вопрос билтином ПоказатьВопрос (фаза 1, например Нажатие), ответ
+	// пользователя приезжает событием Ответ с переменной ВопросОтвет.
+	FormEventOnAnswer FormEventType = "Ответ" // OnAnswer
 )
 
 var knownFormEventTypes = map[FormEventType]bool{
@@ -63,6 +74,8 @@ var knownFormEventTypes = map[FormEventType]bool{
 	FormEventBeforeRowAdd: true, FormEventAfterRowAdd: true,
 	FormEventBeforeRowDelete: true, FormEventStartListChoice: true,
 	FormEventAutoComplete: true, FormEventExecuteCommand: true, FormEventOnChoice: true,
+	FormEventOnSearch: true,
+	FormEventOnAnswer: true,
 }
 
 // formTablePartContextVars — имена, которые платформа инжектирует в обработчик
@@ -229,6 +242,11 @@ type FormElement struct {
 	// строкового поля. nil наследует Field.Multiline для Объект.* и означает
 	// однострочный ввод для Форма.*; указатель хранит явные true и false.
 	Multiline *bool `yaml:"multiline,omitempty"`
+	// ChoiceContext — что вызывающая форма передаёт в подбор: «имя параметра» →
+	// «путь к значению на форме» (Объект.Филиал, реквизит формы). Аналог
+	// параметров выбора в 1С: форма выбора и область просмотра в ней обязаны
+	// знать, ДЛЯ ЧЕГО выбирают, — памятка по направлению у филиалов разная.
+	ChoiceContext map[string]string `yaml:"choice_context,omitempty"`
 	// Language — язык подсветки для kind: ПолеКода. Пусто → plaintext.
 	// Значения совпадают с идентификаторами языков редактора: bsl, sql, json,
 	// xml, yaml, markdown, javascript, plaintext.
@@ -281,14 +299,60 @@ const (
 )
 
 // FormChoiceCondition описывает одно серверно проверяемое условие подбора.
-// Ровно одно из From и Value обязательно. В версии 1 Value допустим только
-// для служебного поля is_folder и имеет boolean-тип; указатель отличает
-// явное false от отсутствующего литерала.
+// Ровно одно из From и Value обязательно.
+//
+// Value — литерал из конфигурации, boolean: служебное поле is_folder и булев
+// реквизит справочника («только немуниципальные адреса»). Указатель отличает
+// явное false от отсутствующего литерала. Литералов других типов в контракте
+// нет сознательно: строка или число рядом с колонкой — это уже отбор, который
+// пишется в конфигурации запросом, а не грамматикой подбора.
+//
+// From — путь к значению на форме: `Объект.<Поле>` / `Форма.<Поле>` (v1) либо
+// `Объект.<Поле>.<Реквизит>` / `Форма.<Поле>.<Реквизит>` — ровно один переход
+// по ссылке (план 183, срез B1). Разбирается через ParseFormChoiceSource.
 type FormChoiceCondition struct {
 	Field string             `yaml:"field"`
 	Op    FormChoiceOperator `yaml:"op"`
 	From  string             `yaml:"from,omitempty"`
 	Value *bool              `yaml:"value,omitempty"`
+}
+
+// FormChoiceSource — разобранный источник условия подбора.
+//
+// Field — элемент формы, значение которого снимает браузер; Attr — реквизит
+// объекта, на который это значение ссылается. Пустой Attr означает путь v1:
+// значение элемента и есть значение фильтра.
+type FormChoiceSource struct {
+	Root  string
+	Field string
+	Attr  string
+}
+
+// Deep сообщает, что значение фильтра лежит не на форме, а за одним переходом
+// по ссылке: сервер обязан прочитать его сам, под правами пользователя.
+func (s FormChoiceSource) Deep() bool { return s.Attr != "" }
+
+// ParseFormChoiceSource разбирает `from`. Допустимы ровно два и ровно три
+// непустых сегмента: путь длиннее — ещё одно чтение на каждое открытие формы и
+// ещё один посредник, права которого надо проверять, а путь короче неотличим
+// от имени реквизита. Корень (`Объект`/`Форма`) проверяет вызывающая сторона:
+// разбор одинаков для check, сервера форм и конфигуратора.
+func ParseFormChoiceSource(path string) (FormChoiceSource, bool) {
+	parts := strings.Split(strings.TrimSpace(path), ".")
+	if len(parts) != 2 && len(parts) != 3 {
+		return FormChoiceSource{}, false
+	}
+	source := FormChoiceSource{Root: strings.TrimSpace(parts[0]), Field: strings.TrimSpace(parts[1])}
+	if len(parts) == 3 {
+		source.Attr = strings.TrimSpace(parts[2])
+		if source.Attr == "" {
+			return FormChoiceSource{}, false
+		}
+	}
+	if source.Root == "" || source.Field == "" {
+		return FormChoiceSource{}, false
+	}
+	return source, true
 }
 
 // FormVirtualColumn — объявление виртуальной колонки табличной части.
@@ -463,11 +527,10 @@ type FormModule struct {
 	Handlers   map[FormEventType]string  `yaml:"events,omitempty"`
 	Procedures map[string]*FormProcedure `yaml:"-"`
 
-	// Actions — переопределение стандартных действий формы объекта (issue #151).
-	// Пока поддерживается ключ "delete": actions.delete.visible=false скрывает
-	// платформенную кнопку «Удалить», чтобы конфиг мог увести удаление в свой
-	// процессор. Платформенное удаление и так пишется в _audit и закрыто правом
-	// delete — это про управление UI-кнопкой.
+	// Actions — переопределение стандартных действий формы объекта. Ключи
+	// delete/save/ok/close управляют видимостью платформенных кнопок, а
+	// attachments — панелью вложений (plan 181C, #1621); права и серверные
+	// проверки они не ослабляют.
 	Actions map[string]*FormAction `yaml:"actions,omitempty"`
 
 	// Conditional — декларативное условное оформление табличных частей формы.
@@ -495,6 +558,19 @@ type FormModule struct {
 	// OneCMeta — служебный блок, используемый только конвертером 1С,
 	// рантайм его игнорирует. Может содержать version, unknown_xml и т.п.
 	OneCMeta map[string]any `yaml:"oneC_meta,omitempty"`
+
+	// SourcePath — путь файла, из которого форма прочитана, относительно корня
+	// проекта и всегда со слэшами: `forms/Инвентаризация/объекта.form.yaml`.
+	// Имя файла и `Name` формы совпадать не обязаны (`name: ФормаОбъекта` в
+	// `объекта.form.yaml`), поэтому локатор предупреждения check синтезировать
+	// из `Name` нельзя — по такому пути файла на диске нет (#1356). Регистр
+	// каталога сохраняется таким, как он лежит на диске: после `ExportToDir`
+	// из configdb путь с приведённым регистром открывается на Windows и не
+	// открывается на Linux.
+	//
+	// Пусто у форм, у которых файла нет вовсе: автоформы из `src/*.form.os` и
+	// формы, собранные в тестах или редактором в памяти.
+	SourcePath string `yaml:"-"`
 
 	// ProgramAST — распарсенный AST модуля .form.os (тип *dsl/ast.Program).
 	// Хранится через any, чтобы пакет metadata не зависел от пакета ast

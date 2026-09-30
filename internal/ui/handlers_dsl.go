@@ -74,6 +74,9 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 		Notifier:          s.notifier(),
 		Interp:            s.interp, // для hook-правила конфликта в ПланыОбмена.ЗагрузитьПакет
 		EmailFileResolver: s.emailAttachmentPathResolver(txState.Ctx),
+		// Подписи ссылочных констант: живой контекст, RowLabel, полевая
+		// политика роли — в отличие от доверенного StoreRefPresenter (#1536).
+		ConstantRefPresenter: s.constantsRefPresenter(txState),
 	}.Build()
 
 	// TxState несёт «живой» контекст. Транзакционные функции
@@ -117,16 +120,28 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	})
 
 	// API текущего пользователя для персональных настроек.
-	// ТекущийПользователь() → объект {ИД, Имя, ПолноеИмя, Админ}.
+	// ТекущийПользователь() → объект {ИД, Имя, ПолноеИмя, Админ, Ссылка}.
 	// ИмяПользователя()     → строка-логин (или "" для фоновых заданий).
+	// Ссылка — типизированная ссылка на учётную запись (_users, issue #1646):
+	// её можно писать в реквизит типа reference:_users и искать по ней элемент
+	// справочника сотрудников через НайтиПоРеквизиту("УчётнаяЗапись", …).
+	// Для фоновых заданий ссылка пустая — ЗначениеЗаполнено() = Ложь.
 	var curUserID, curUserLogin, curUserFullName string
 	var curUserAdmin bool
+	curUserRef := &interpreter.Ref{Type: metadata.SystemUsersEntity}
 	if u := auth.UserFromContext(ctx); u != nil {
 		curUserID, curUserLogin, curUserFullName, curUserAdmin = u.ID, u.Login, u.FullName, u.IsAdmin
+		label := u.FullName
+		if label == "" {
+			label = u.Login
+		}
+		curUserRef = &interpreter.Ref{UUID: u.ID, Name: label, Type: metadata.SystemUsersEntity}
 	}
 	userObj := &interpreter.MapThis{M: map[string]any{
 		"ИД": curUserID, "Имя": curUserLogin, "ПолноеИмя": curUserFullName, "Админ": curUserAdmin,
-		"ID": curUserID, "Login": curUserLogin, "FullName": curUserFullName, "IsAdmin": curUserAdmin,
+		"Ссылка": curUserRef,
+		"ID":     curUserID, "Login": curUserLogin, "FullName": curUserFullName, "IsAdmin": curUserAdmin,
+		"Ref": curUserRef,
 	}}
 	currentUserFn := interpreter.BuiltinFunc(func(_ []any, _ string, _ int) (any, error) {
 		return userObj, nil

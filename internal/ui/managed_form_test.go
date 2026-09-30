@@ -110,6 +110,7 @@ func TestPageManagedForm_Renders(t *testing.T) {
 		"Entity":             ent,
 		"Form":               form,
 		"IsNew":              true,
+		"CanWrite":           true,
 		"Values":             map[string]string{"Наименование": "", "Активен": "false", "Дата": "2026-07-08T12:00"},
 		"RefOptions":         map[string]any{},
 		"EnumOptions":        map[string]any{},
@@ -156,11 +157,17 @@ func TestPageManagedForm_Renders(t *testing.T) {
 			t.Errorf("в HTML не найдено %q", e)
 		}
 	}
-	if got := strings.Count(html, `data-ob-close-tab`); got < 2 {
-		t.Errorf("both the header and bottom close controls must use the managed close controller, got %d:\n%s", got, html)
+	if got := strings.Count(html, `data-ob-close-tab`); got != 1 {
+		t.Errorf("header cross must use the shell close adapter exactly once, got %d:\n%s", got, html)
 	}
-	if !strings.Contains(html, `data-ob-close-tab data-ob-close-reason="close" class="btn btn-cancel"`) {
-		t.Errorf("bottom Cancel link bypasses the managed close controller:\n%s", html)
+	for _, control := range []string{
+		`type="submit" name="_action" value="" form="main-form"`,
+		`data-ob-form-close="save" data-ob-close-reason="ok"`,
+		`data-ob-form-close="" data-ob-close-reason="close"`,
+	} {
+		if !strings.Contains(html, control) {
+			t.Errorf("bottom Save/OK/Close row is incomplete (%s):\n%s", control, html)
+		}
 	}
 	for _, old := range []string{
 		"window._tpRefOpts =",
@@ -182,6 +189,71 @@ func TestPageManagedForm_Renders(t *testing.T) {
 		if strings.Contains(tplManagedForm, old) {
 			t.Errorf("templates_managed.go не должен содержать inline handler %q", old)
 		}
+	}
+
+	visible := false
+	form.Actions = map[string]*metadata.FormAction{
+		"save":  {Visible: &visible},
+		"ok":    {Visible: &visible},
+		"close": {Visible: &visible},
+	}
+	buf.Reset()
+	if err := tmpl.ExecuteTemplate(&buf, "page-managed-form", data); err != nil {
+		t.Fatalf("ExecuteTemplate with hidden standard actions: %v", err)
+	}
+	hiddenHTML := buf.String()
+	for _, control := range []string{
+		`type="submit" name="_action" value="" form="main-form"`,
+		`data-ob-form-close="save" data-ob-close-reason="ok"`,
+		`data-ob-form-close="" data-ob-close-reason="close"`,
+	} {
+		if strings.Contains(hiddenHTML, control) {
+			t.Errorf("actions.*.visible=false did not hide %s:\n%s", control, hiddenHTML)
+		}
+	}
+
+	controls := map[string]string{
+		"save":  `type="submit" name="_action" value="" form="main-form"`,
+		"ok":    `data-ob-form-close="save" data-ob-close-reason="ok"`,
+		"close": `data-ob-form-close="" data-ob-close-reason="close"`,
+	}
+	for hiddenName := range controls {
+		t.Run("hide only "+hiddenName, func(t *testing.T) {
+			form.Actions = map[string]*metadata.FormAction{hiddenName: {Visible: &visible}}
+			buf.Reset()
+			if err := tmpl.ExecuteTemplate(&buf, "page-managed-form", data); err != nil {
+				t.Fatalf("ExecuteTemplate: %v", err)
+			}
+			got := buf.String()
+			for name, marker := range controls {
+				if strings.Contains(got, marker) == (name == hiddenName) {
+					t.Errorf("visibility of %s crossed with hidden %s:\n%s", name, hiddenName, got)
+				}
+			}
+		})
+	}
+
+	form.Actions = nil
+	data["CanWrite"] = false
+	buf.Reset()
+	if err := tmpl.ExecuteTemplate(&buf, "page-managed-form", data); err != nil {
+		t.Fatalf("ExecuteTemplate read-only: %v", err)
+	}
+	readOnlyHTML := buf.String()
+	if strings.Contains(readOnlyHTML, controls["save"]) || strings.Contains(readOnlyHTML, controls["ok"]) || !strings.Contains(readOnlyHTML, controls["close"]) {
+		t.Errorf("CanWrite=false must hide Save/OK and retain Close:\n%s", readOnlyHTML)
+	}
+
+	data["CanWrite"] = true
+	data["IsPopup"] = true
+	buf.Reset()
+	if err := tmpl.ExecuteTemplate(&buf, "page-managed-form", data); err != nil {
+		t.Fatalf("ExecuteTemplate popup: %v", err)
+	}
+	popupHTML := buf.String()
+	if !strings.Contains(popupHTML, `data-ob-form-close="save_and_select"`) ||
+		strings.Contains(popupHTML, controls["save"]) || strings.Contains(popupHTML, controls["ok"]) || strings.Contains(popupHTML, controls["close"]) {
+		t.Errorf("popup must keep only its specialized action row:\n%s", popupHTML)
 	}
 }
 
@@ -369,6 +441,16 @@ func TestPageManagedForm_ProcessorBottomCancelUsesCloseControllerAndEnglishMessa
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("processor managed form is missing %q:\n%s", want, html)
+		}
+	}
+	for _, forbidden := range []string{
+		`type="submit" name="_action" value="" form="main-form"`,
+		`data-ob-form-close="save" data-ob-close-reason="ok"`,
+		`data-ob-form-close="" data-ob-close-reason="close"`,
+		`data-ob-form-close="save_and_select"`,
+	} {
+		if strings.Contains(html, forbidden) {
+			t.Errorf("processor inherited object/popup action %q:\n%s", forbidden, html)
 		}
 	}
 }

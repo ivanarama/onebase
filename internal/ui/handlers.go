@@ -115,6 +115,63 @@ func (s *Server) usersForSelection(ctx context.Context) []map[string]any {
 	return rows
 }
 
+// usersForSelectionIncluding — варианты выбора учётных записей для поля типа
+// reference:_users, дополненные выбранными значениями (issue #1646).
+//
+// usersForSelection отдаёт только show_in_list: флаг прячет служебные учётки
+// из подбора. Но ссылка на скрытого пользователя может уже стоять в объекте —
+// например, автор документа. Без догрузки такой <option> в <select> нет, и
+// клиентский applyValues ставит selectedIndex=-1: поле выглядит пустым, а
+// следующая запись молча затирает ссылку (тот же механизм, что #615).
+func (s *Server) usersForSelectionIncluding(ctx context.Context, selected []string) []map[string]any {
+	rows := s.usersForSelection(ctx)
+	if s.authRepo == nil {
+		return rows
+	}
+	seen := make(map[string]bool, len(rows)+len(selected))
+	for _, row := range rows {
+		if id := refValueString(row["id"]); id != "" {
+			seen[id] = true
+		}
+	}
+	for _, idStr := range selected {
+		idStr = strings.TrimSpace(idStr)
+		if idStr == "" || seen[idStr] {
+			continue
+		}
+		if row := s.userSelectionRow(ctx, idStr); row != nil {
+			rows = append(rows, row)
+			seen[refValueString(row["id"])] = true
+		}
+	}
+	return rows
+}
+
+// userSelectionRow — один <option> учётной записи по идентификатору: нужен,
+// когда выбранная учётка скрыта флагом show_in_list и в общем списке подбора
+// её нет (см. usersForSelectionIncluding). Неизвестный идентификатор → nil.
+func (s *Server) userSelectionRow(ctx context.Context, idStr string) map[string]any {
+	if s.authRepo == nil {
+		return nil
+	}
+	idStr = strings.TrimSpace(idStr)
+	if idStr == "" {
+		return nil
+	}
+	if _, err := uuid.Parse(idStr); err != nil {
+		return nil
+	}
+	u, err := s.authRepo.GetByID(ctx, idStr)
+	if err != nil || u == nil {
+		return nil
+	}
+	label := u.Login
+	if u.FullName != "" {
+		label = u.FullName
+	}
+	return map[string]any{"id": u.ID, "_label": label}
+}
+
 type refOptionsMode int
 
 const (
@@ -188,6 +245,7 @@ func (s *Server) referenceOptionsPageWithParams(ctx context.Context, refEntity *
 		return nil, 0, err
 	}
 	countParams := s.refListParamsForMode(refEntity, refOptionsChoice)
+	countParams.Filters = extra.Filters
 	countParams.Search = strings.TrimSpace(search)
 	countParams.ChoicePredicates = extra.ChoicePredicates
 	countParams, err = s.rowFilterFor(ctx, refEntity, "read", countParams)
@@ -253,14 +311,22 @@ func (s *Server) loadInitialRefOptions(ctx context.Context, entity *metadata.Ent
 			continue
 		}
 		if f.RefEntity == "_users" {
-			opts[f.Name] = s.usersForSelection(ctx)
+			opts[f.Name] = s.usersForSelectionIncluding(ctx, []string{values[f.Name]})
 			continue
 		}
 		refEntity := s.reg.GetEntity(f.RefEntity)
 		if refEntity == nil {
 			continue
 		}
-		rows, err := s.initialReferenceOptions(ctx, refEntity, refOptionsChoice, []string{values[f.Name]})
+		// Подчинённый справочник (owner:) показывает только элементы своего
+		// владельца — значение владельца берём из этих же значений формы.
+		owner, asked := "", false
+		if strings.TrimSpace(refEntity.Owner) != "" {
+			if hf, ok := ownerHolderField(entity, refEntity.Owner); ok {
+				owner, asked = strings.TrimSpace(values[hf.Name]), true
+			}
+		}
+		rows, err := s.initialReferenceOptionsOwned(ctx, refEntity, refOptionsChoice, []string{values[f.Name]}, owner, asked)
 		if err != nil {
 			return nil, err
 		}
@@ -273,6 +339,10 @@ func (s *Server) loadInitialRefFilterOptions(ctx context.Context, entity *metada
 	opts := make(map[string][]map[string]any)
 	for _, f := range entity.Fields {
 		if f.RefEntity == "" {
+			continue
+		}
+		if f.RefEntity == "_users" {
+			opts[f.Name] = s.usersForSelectionIncluding(ctx, []string{params.Filters[f.Name].Value})
 			continue
 		}
 		refEntity := s.reg.GetEntity(f.RefEntity)
@@ -288,7 +358,11 @@ func (s *Server) loadInitialRefFilterOptions(ctx context.Context, entity *metada
 	return opts, nil
 }
 
-func (s *Server) loadInitialTPRefOptions(ctx context.Context, entity *metadata.Entity, tpRows map[string][]map[string]any) (map[string]map[string][]map[string]any, error) {
+func (s *Server) loadInitialTPRefOptions(ctx context.Context, entity *metadata.Entity, tpRows map[string][]map[string]any, formValues ...any) (map[string]map[string][]map[string]any, error) {
+	var values any
+	if len(formValues) > 0 {
+		values = formValues[0]
+	}
 	result := make(map[string]map[string][]map[string]any)
 	for _, tp := range entity.TableParts {
 		tpOpts := make(map[string][]map[string]any)
@@ -297,11 +371,21 @@ func (s *Server) loadInitialTPRefOptions(ctx context.Context, entity *metadata.E
 				continue
 			}
 			tpOpts[f.Name] = []map[string]any{}
+			if f.RefEntity == "_users" {
+				tpOpts[f.Name] = s.usersForSelectionIncluding(ctx, selectedTPRefIDs(tpRows[tp.Name], f.Name))
+				continue
+			}
 			refEntity := s.reg.GetEntity(f.RefEntity)
 			if refEntity == nil {
 				continue
 			}
-			rows, err := s.initialReferenceOptions(ctx, refEntity, refOptionsChoice, selectedTPRefIDs(tpRows[tp.Name], f.Name))
+			ownerID, asked := "", false
+			if len(formValues) > 0 {
+				if hf, ok := ownerHolderField(entity, refEntity.Owner); ok {
+					ownerID, asked = formValueForPath(values, "Объект."+hf.Name), true
+				}
+			}
+			rows, err := s.initialReferenceOptionsOwned(ctx, refEntity, refOptionsChoice, selectedTPRefIDs(tpRows[tp.Name], f.Name), ownerID, asked)
 			if err != nil {
 				continue
 			}
@@ -603,7 +687,17 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		// TPRefMeta feeds rows added by JavaScript. Rebuild it at the final
 		// render boundary so an earlier metadata-only value cannot re-enable
 		// inline creation for a user without write permission on the target.
-		data["TPRefMeta"] = tpRefMeta(ent, refWriteAccess)
+		// Подчинённые справочники: «реквизит → справочник-владелец». Считаем
+		// здесь, в единственной точке отрисовки форм, а не в каждом обработчике:
+		// подчинение — свойство метаданных, и оно обязано доезжать до шаблона
+		// одинаково на карточке, на копии и на форме с ошибкой валидации.
+		if _, ok := data["RefFilter"]; !ok {
+			values, _ := data["Values"].(map[string]string)
+			form, _ := data["Form"].(*metadata.FormModule)
+			data["RefFilter"] = s.refFilterMap(ent, form, values)
+		}
+		filters, _ := data["RefFilter"].(map[string]string)
+		data["TPRefMeta"] = tpRefMetaWithFilters(ent, refWriteAccess, filters)
 	}
 	// Same for info-register views, which key off "InfoReg" instead of "Entity".
 	if ir, ok := data["InfoReg"].(*metadata.InfoRegister); ok {
@@ -689,6 +783,10 @@ func tpRefMeta(entity *metadata.Entity, refWriteAccess ...map[string]bool) map[s
 	if len(refWriteAccess) > 0 && refWriteAccess[0] != nil {
 		writable = refWriteAccess[0]
 	}
+	return tpRefMetaWithFilters(entity, writable, nil)
+}
+
+func tpRefMetaWithFilters(entity *metadata.Entity, writable map[string]bool, filters map[string]string) map[string]map[string]any {
 	out := make(map[string]map[string]any, len(entity.TableParts))
 	for _, tp := range entity.TableParts {
 		m := map[string]any{}
@@ -697,6 +795,7 @@ func tpRefMeta(entity *metadata.Entity, refWriteAccess ...map[string]bool) map[s
 				m[f.Name] = map[string]any{
 					"entity":      f.RefEntity,
 					"allowCreate": f.InlineCreateEnabled(true) && writable[f.RefEntity],
+					"filter":      filters[tp.Name+"."+f.Name],
 				}
 			}
 		}
