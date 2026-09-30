@@ -187,7 +187,9 @@ func vtArgumentPositions(tokens []tok) map[int]bool {
 		vt := upperFast(tokens[i+4].val)
 		_, accumVT := accumVTKinds[vt]
 		_, infoVT := infoVTKinds[vt]
-		if !(accumVT && (isAccumRegType(typeUpper) || isAccountRegType(typeUpper)) || infoVT && isInfoRegType(typeUpper)) {
+		registerVT := accumVT && (isAccumRegType(typeUpper) || isAccountRegType(typeUpper)) ||
+			infoVT && isInfoRegType(typeUpper)
+		if !registerVT {
 			continue
 		}
 		closing := matchingCloseParen(tokens, i+5)
