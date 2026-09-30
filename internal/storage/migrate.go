@@ -819,21 +819,43 @@ func deferredFKColumns(fks []refCycleFK) map[string]map[string]bool {
 // ensureCycleFKs доводит отложенные ключи до базы. Идемпотентно: миграция идёт
 // при каждом запуске, а ADD CONSTRAINT IF NOT EXISTS в PostgreSQL нет.
 func (db *DB) ensureCycleFKs(ctx context.Context, fks []refCycleFK) error {
-	for _, fk := range fks {
-		table := metadata.TableName(fk.Entity)
-		ref := metadata.TableName(fk.Ref)
-		exists, err := db.foreignKeyExists(ctx, table, ForeignKeyName(table, fk.Column, ref))
-		if err != nil {
-			return fmt.Errorf("migrate %s.%s: %w", fk.Entity, fk.Column, err)
-		}
-		if exists {
-			continue
-		}
-		if _, err := db.Exec(ctx, AddForeignKeySQL(table, fk.Column, ref)); err != nil {
-			return fmt.Errorf("migrate %s.%s: %w", fk.Entity, fk.Column, err)
-		}
+	if len(fks) == 0 {
+		return nil
 	}
-	return nil
+	// Проверка и ALTER принадлежат одной транзакции и одной блокировке.
+	// Блокируем все участвующие таблицы в едином порядке (AdvisoryXactLock
+	// сортирует ключи), в том числе цели: другой обход того же круга может
+	// отложить противоположную ссылку. Блокировки освобождаются после commit.
+	return db.WithTxScope(ctx, func(txCtx context.Context) error {
+		var schema string
+		if err := db.QueryRow(txCtx, "SELECT current_schema()").Scan(&schema); err != nil {
+			return err
+		}
+		keys := make([]string, 0, 2*len(fks))
+		for _, fk := range fks {
+			for _, table := range []string{metadata.TableName(fk.Entity), metadata.TableName(fk.Ref)} {
+				keys = append(keys, fmt.Sprintf("migrate-cycle-fk:%q.%q", schema, table))
+			}
+		}
+		if err := db.AdvisoryXactLock(txCtx, keys); err != nil {
+			return err
+		}
+		for _, fk := range fks {
+			table := metadata.TableName(fk.Entity)
+			ref := metadata.TableName(fk.Ref)
+			exists, err := db.foreignKeyExists(txCtx, table, ForeignKeyName(table, fk.Column, ref))
+			if err != nil {
+				return fmt.Errorf("migrate %s.%s: %w", fk.Entity, fk.Column, err)
+			}
+			if exists {
+				continue
+			}
+			if _, err := db.Exec(txCtx, AddForeignKeySQL(table, fk.Column, ref)); err != nil {
+				return fmt.Errorf("migrate %s.%s: %w", fk.Entity, fk.Column, err)
+			}
+		}
+		return nil
+	})
 }
 
 // foreignKeyExists — запрос PostgreSQL: откладывать ключи приходится только

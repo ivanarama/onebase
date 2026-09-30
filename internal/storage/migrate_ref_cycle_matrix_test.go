@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -139,6 +140,50 @@ func TestMigrateSelfReference_Matrix(t *testing.T) {
 			"Наименование": "Ничьё", "Родитель": uuid.New().String(),
 		}, entity); !errors.Is(err, storage.ErrForeignKeyViolation) {
 			t.Fatalf("висячий родитель принят (ошибка = %v)", err)
+		}
+	})
+}
+
+// Все запуски идут через Migrate, как при одновременном старте двух серверов.
+// Таблицы уже существуют, но отложенного ключа ещё нет (незавершённая миграция).
+func TestMigrateReferenceCycleConcurrent_Matrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+		defer cancel()
+		appeal, request, task := refCycleEntities()
+		entities := []*metadata.Entity{request, appeal, task}
+		if err := db.Migrate(ctx, entities); err != nil {
+			t.Fatal(err)
+		}
+		for round := 0; round < 5; round++ {
+			if !db.IsSQLite() {
+				table := metadata.TableName(appeal.Name)
+				name := storage.ForeignKeyName(table, metadata.ColumnName(appeal.Fields[1]), metadata.TableName(request.Name))
+				if _, err := db.Exec(ctx, "ALTER TABLE "+table+" DROP CONSTRAINT "+name); err != nil {
+					t.Fatal(err)
+				}
+			}
+			start := make(chan struct{})
+			results := make(chan error, 8)
+			for worker := 0; worker < cap(results); worker++ {
+				go func() { <-start; results <- db.Migrate(ctx, entities) }()
+			}
+			close(start)
+			for worker := 0; worker < cap(results); worker++ {
+				if err := <-results; err != nil {
+					t.Errorf("параллельная миграция, круг %d: %v", round, err)
+				}
+			}
+			if t.Failed() {
+				return
+			}
+			// Успех обоих запусков не должен означать, что внешний ключ потерялся.
+			err := db.Upsert(ctx, appeal.Name, uuid.New(), map[string]any{
+				"Номер": "Б-1", "ДополнениеКЗаявке": uuid.New().String(),
+			}, appeal)
+			if !errors.Is(err, storage.ErrForeignKeyViolation) {
+				t.Fatalf("висячая ссылка принята: %v", err)
+			}
 		}
 	})
 }
