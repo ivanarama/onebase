@@ -1313,7 +1313,7 @@ allowlist/owner gate перед мутацией: без общей durable lane
 | `source` | снимок | откуда взяты SHA; `head_parents` — из графа, не из журнала |
 | `from_review.state` | снимок | связность committed-пары в комментариях: completion ↔ claim ↔ заключение, совпадение SHA и epoch, доверенность и неизменённость |
 | `from_review.outcome_label` | снимок | заполняется ТОЛЬКО при `state: consistent`; иначе пара отдаётся идентификаторами без вердикта |
-| `current_head_reviewed` | снимок | у текущего HEAD уже есть committed-пара |
+| `current_head_reviewed` | снимок | у текущего HEAD есть СВЯЗНАЯ committed-пара: completion ↔ claim ↔ заключение, тот же SHA и epoch, доверенные неизменённые маркеры, `Outcome-Label: reviewed`. Проверка та же, что у `from_review.state`; одиночный маркер парой не считается |
 | `consumer_must_verify` | потребитель | что снимок НЕ проверял: предок `base` в `main`, побайтовый пересчёт слияния, обязательный CI на точном `to`, server-ordered epoch по timeline |
 
 Поле описательное: оно не выдаёт разрешений, ни один gate не заменяет и не

@@ -434,7 +434,7 @@ func analyze(prs []apiPull, owner string) report {
 		}
 		carryDone, carryIntentOpen, v1AbortCurrent, baseAdvanced, protocolHistory, integrationAt := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA, pr.HeadParents)
 		item.IntegrationAt = integrationAt
-		item.BaseSyncCandidate = baseSyncCandidateOf(pr, owner, currentCompletions)
+		item.BaseSyncCandidate = baseSyncCandidateOf(pr, owner)
 		if baseAdvanced {
 			result.add("yellow", "base_sync_base_advanced", pr.Number,
 				"base сдвинулся между intent и done; GraphQL gate должен проверить actual parent и ancestry")
@@ -998,16 +998,21 @@ func headIsBaseSyncMerge(pr apiPull) bool {
 //
 // Функция ничего не доказывает и не выдаёт разрешений: она сообщает форму
 // коммита и то, что видно про ревью исходной версии в комментариях.
-func baseSyncCandidateOf(pr apiPull, owner string, currentCompletions int) *baseSyncCandidate {
+func baseSyncCandidateOf(pr apiPull, owner string) *baseSyncCandidate {
 	if !headIsBaseSyncMerge(pr) {
 		return nil
 	}
+	// Ревью ТЕКУЩЕГО HEAD проверяется тем же строгим контрактом, что и ревью
+	// исходной версии: одиночный completion, сиротский claim или несовпавший
+	// epoch committed-пары не образуют. Иначе поле обещало бы потребителю
+	// пару, которой нет, — а он машинный и спорить с именем не станет.
+	current := reviewPairFor(pr.Comments, owner, pr.Head.SHA)
 	return &baseSyncCandidate{
 		From:                pr.HeadParents[0],
 		Base:                pr.HeadParents[1],
 		To:                  pr.Head.SHA,
 		Source:              "head_parents",
-		CurrentHeadReviewed: currentCompletions > 0,
+		CurrentHeadReviewed: current != nil && current.State == reviewPairConsistent,
 		FromReview:          reviewPairFor(pr.Comments, owner, pr.HeadParents[0]),
 		ConsumerMustVerify: []string{
 			"base_ancestry",
