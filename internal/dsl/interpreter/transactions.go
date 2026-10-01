@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/ivantit66/onebase/internal/storage"
@@ -28,6 +29,36 @@ type TxState struct {
 	txs      []storage.Tx      // active transaction per nesting level
 	saves    []string          // savepoint names for nested transactions
 	db       TxDB              // savepoint executor; set on first begin
+
+	cleanupMu sync.Mutex
+	cleanups  []func() // действия на завершение исполнения (AddExecutionCleanup)
+}
+
+// AddExecutionCleanup регистрирует действие, которое выполняется при каждом
+// завершении исполнения DSL, владеющего этим TxState (FinishTxExecution,
+// RollbackTxExecution), — после отката оставленной открытой транзакции.
+// Действие обязано быть идемпотентным: исполнение с несколькими фазами
+// завершается несколько раз. Так отпускаются блокировки, взятые кодом вне
+// записи документа.
+func (s *TxState) AddExecutionCleanup(fn func()) {
+	if s == nil || fn == nil {
+		return
+	}
+	s.cleanupMu.Lock()
+	s.cleanups = append(s.cleanups, fn)
+	s.cleanupMu.Unlock()
+}
+
+func (s *TxState) runExecutionCleanups() {
+	if s == nil {
+		return
+	}
+	s.cleanupMu.Lock()
+	fns := append([]func(){}, s.cleanups...)
+	s.cleanupMu.Unlock()
+	for i := len(fns) - 1; i >= 0; i-- {
+		fns[i]()
+	}
 }
 
 // txExecutionContext takes transaction/storage values from valueCtx while

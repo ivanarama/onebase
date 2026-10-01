@@ -434,7 +434,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 		return SaveResult{}, err
 	}
 	mc := runtime.NewMovementsCollector(req.Entity.Name, req.ID).WillPersist()
-	lockCollector := runtime.NewLockCollector()
+	lockCollector := runtime.NewLockCollectorIn(ctx)
 	defer lockCollector.ReleaseAll()
 
 	obj := &runtime.Object{
@@ -843,7 +843,7 @@ func (e *refsExistError) Error() string {
 // возвращает объект на место.
 func (s *Service) Delete(ctx context.Context, entity *metadata.Entity, id uuid.UUID) (DeleteResult, error) {
 	result := DeleteResult{ID: id}
-	lockCollector := runtime.NewLockCollector()
+	lockCollector := runtime.NewLockCollectorIn(ctx)
 	defer lockCollector.ReleaseAll()
 
 	err := s.Store.WithTxScope(ctx, func(txCtx context.Context) error {
@@ -1029,7 +1029,7 @@ func (s *Service) Unpost(ctx context.Context, entity *metadata.Entity, id uuid.U
 		ID:        id,
 		Movements: runtime.NewMovementsCollector(entity.Name, id),
 	}
-	lockCollector := runtime.NewLockCollector()
+	lockCollector := runtime.NewLockCollectorIn(ctx)
 	defer lockCollector.ReleaseAll()
 
 	err := s.Store.WithTxScope(ctx, func(txCtx context.Context) error {
@@ -1309,7 +1309,7 @@ func (s *Service) Repost(ctx context.Context, entityName string, id uuid.UUID) e
 			return storage.PostingFrozenError(lock)
 		}
 	}
-	lockCollector := runtime.NewLockCollector()
+	lockCollector := runtime.NewLockCollectorIn(ctx)
 	defer lockCollector.ReleaseAll()
 
 	obj := &runtime.Object{Type: ent.Name, Kind: ent.Kind, Presentation: ent.Presentation, ID: id, Fields: fields, TablePartRows: tps}

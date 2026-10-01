@@ -910,7 +910,7 @@ func (w *docWriter) withLockScope(fn func(ctx context.Context) error) error {
 	if runtime.LockCollectorFromContext(base) != nil {
 		return w.s.store.WithTxScope(base, fn)
 	}
-	lc := runtime.NewLockCollector()
+	lc := runtime.NewLockCollectorIn(base)
 	defer lc.ReleaseAll()
 	return w.s.store.WithTxScope(base, func(ctx context.Context) error {
 		return fn(runtime.ContextWithLockCollector(ctx, lc))

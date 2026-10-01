@@ -1772,7 +1772,7 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	// берёт pg_advisory_xact_lock до чтения остатков — раньше хук работал вне
 	// транзакции и блокировки вырождались в no-op. Коллектор освобождает
 	// внутрипроцессные мьютексы после коммита/отката.
-	lockCollector := runtime.NewLockCollector()
+	lockCollector := runtime.NewLockCollectorIn(r.Context())
 	defer lockCollector.ReleaseAll()
 	var hookErrMsg string
 	if err := s.store.WithTxScope(r.Context(), func(ctx context.Context) error {
