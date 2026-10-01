@@ -52,6 +52,13 @@ func TestRepost_ClearsMovementsOfUntouchedRegisters_Matrix(t *testing.T) {
 			Resources: []metadata.Field{{Name: "Цена", Type: metadata.FieldTypeNumber}}}
 		acc := &metadata.AccountRegister{Name: "БухГ", Accounts: "Основной",
 			Resources: []metadata.Field{{Name: "Сумма", Type: metadata.FieldTypeNumber}}}
+		// План счетов «Основной» нужен в базе: проводка бухрегистра проверяется
+		// по счетам своего плана, иначе запись проводки падает на отсутствующей
+		// таблице _accounts. Коды — те, которыми ниже проводит модуль.
+		charts := []*metadata.ChartOfAccounts{{Name: "Основной", Accounts: []metadata.Account{
+			{Code: "41", Name: "Товары", Kind: "active"},
+			{Code: "60", Name: "Поставщики", Kind: "passive"},
+		}}}
 
 		if err := db.Migrate(ctx, []*metadata.Entity{doc}); err != nil {
 			t.Fatal(err)
@@ -60,6 +67,12 @@ func TestRepost_ClearsMovementsOfUntouchedRegisters_Matrix(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{info}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.EnsureAccountsTable(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.SyncAccounts(ctx, charts); err != nil {
 			t.Fatal(err)
 		}
 		if err := db.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{acc}); err != nil {
@@ -91,7 +104,7 @@ func TestRepost_ClearsMovementsOfUntouchedRegisters_Matrix(t *testing.T) {
 			InfoRegs:  []*metadata.InfoRegister{info},
 			Programs:  map[string]*ast.Program{doc.Name: onPost},
 		})
-		registry.LoadAccountRegisters([]*metadata.AccountRegister{acc}, nil)
+		registry.LoadAccountRegisters([]*metadata.AccountRegister{acc}, charts)
 		interp := interpreter.New()
 		interp.LookupProc = registry.GetModuleProc
 		svc := &Service{
@@ -222,6 +235,13 @@ func TestPosting_ManyUntouchedRegisters_Matrix(t *testing.T) {
 			infos = append(infos, &metadata.InfoRegister{Name: fmt.Sprintf("И%03d", i), Dimensions: []metadata.Field{{Name: "Ключ", Type: metadata.FieldTypeString}}, Resources: []metadata.Field{{Name: "К", Type: metadata.FieldTypeNumber}}})
 		}
 		acc := &metadata.AccountRegister{Name: "Бух", Accounts: "Основной", Resources: []metadata.Field{{Name: "Сумма", Type: metadata.FieldTypeNumber}}}
+		// План счетов «Основной» нужен в базе: проводка бухрегистра проверяется
+		// по счетам своего плана, иначе запись проводки падает на отсутствующей
+		// таблице _accounts. Коды — те, которыми ниже проводит модуль.
+		charts := []*metadata.ChartOfAccounts{{Name: "Основной", Accounts: []metadata.Account{
+			{Code: "41", Name: "Товары", Kind: "active"},
+			{Code: "60", Name: "Поставщики", Kind: "passive"},
+		}}}
 		if err := db.Migrate(ctx, []*metadata.Entity{doc}); err != nil {
 			t.Fatal(err)
 		}
@@ -229,6 +249,12 @@ func TestPosting_ManyUntouchedRegisters_Matrix(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := db.MigrateInfoRegisters(ctx, infos); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.EnsureAccountsTable(ctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.SyncAccounts(ctx, charts); err != nil {
 			t.Fatal(err)
 		}
 		if err := db.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{acc}); err != nil {
@@ -249,7 +275,7 @@ func TestPosting_ManyUntouchedRegisters_Matrix(t *testing.T) {
 		registry := runtime.NewRegistry()
 		registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{doc}, Registers: regs, InfoRegs: infos,
 			Programs: map[string]*ast.Program{doc.Name: program}})
-		registry.LoadAccountRegisters([]*metadata.AccountRegister{acc}, nil)
+		registry.LoadAccountRegisters([]*metadata.AccountRegister{acc}, charts)
 		interp := interpreter.New()
 		interp.LookupProc = registry.GetModuleProc
 		svc := &Service{Store: db, Reg: registry, Interp: interp,
