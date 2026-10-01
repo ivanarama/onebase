@@ -27,17 +27,20 @@ type ListParams struct {
 	// чокпоинтом в List как признак «фильтр не забыли», иначе fail-closed.
 	RowFilterEvaluated bool
 	JournalRowFilters  map[string]*Predicate // per document name row-level predicates for journal UNIONs
-	Sort               string                // field Name (empty = default sort by id)
-	Dir                string                // "asc" or "desc"
-	ParentStr          string                // "" = no filter; "root" = parent IS NULL; "<uuid>" = parent = uuid
-	Search             string                // full-text search: ILIKE across all string fields
-	ActivityScope      string                // "", "active", "inactive", "all"; applied only for opt-in catalogs
-	Limit              int                   // 0 = no limit
-	Offset             int                   // for pagination
-	AfterID            *uuid.UUID            // exclusive keyset cursor; requires id ASC and Offset=0
-	ThroughID          *uuid.UUID            // inclusive keyset high-water mark; requires id ASC and Offset=0
-	ExcludeFolders     bool                  // for hierarchical catalogs: only non-folder elements
-	OnlyFolders        bool                  // for hierarchical catalogs: only folder elements
+	// Sort is a metadata field name. Empty selects the default: keyset by id ASC;
+	// otherwise entity.OrderBy, folders then first string for hierarchical lists,
+	// first document date DESC, flat catalog name/first string ASC, or id (using Dir).
+	Sort           string
+	Dir            string     // "asc" or "desc"
+	ParentStr      string     // "" = no filter; "root" = parent IS NULL; "<uuid>" = parent = uuid
+	Search         string     // full-text search: ILIKE across all string fields
+	ActivityScope  string     // "", "active", "inactive", "all"; applied only for opt-in catalogs
+	Limit          int        // 0 = no limit
+	Offset         int        // for pagination
+	AfterID        *uuid.UUID // exclusive keyset cursor; requires id ASC and Offset=0
+	ThroughID      *uuid.UUID // inclusive keyset high-water mark; requires id ASC and Offset=0
+	ExcludeFolders bool       // for hierarchical catalogs: only non-folder elements
+	OnlyFolders    bool       // for hierarchical catalogs: only folder elements
 	// ExcludeMarked отбрасывает помеченные на удаление строки (план 153).
 	// Нужен источнику дефолта `единственный`: помеченный элемент — кандидат
 	// на исчезновение, подставлять его в новый документ нельзя. Обычные
@@ -914,6 +917,10 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 		query += fmt.Sprintf(" ORDER BY is_folder DESC, %s ASC", firstStrCol)
 	} else {
 		orderCol := "id"
+		orderDir := "ASC"
+		if strings.EqualFold(params.Dir, "desc") {
+			orderDir = "DESC"
+		}
 		if params.Sort != "" {
 			for _, f := range entity.Fields {
 				if f.Name == params.Sort {
@@ -921,12 +928,47 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 					break
 				}
 			}
+		} else {
+			// Без заданной сортировки показываем документы по дате, а плоские
+			// справочники — по Наименованию либо первому строковому реквизиту.
+			// Если подходящего поля нет, сохраняем прежний fallback по id.
+			switch entity.Kind {
+			case metadata.KindDocument:
+				for _, f := range entity.Fields {
+					if f.Type == metadata.FieldTypeDate {
+						orderCol = metadata.ColumnName(f)
+						orderDir = "DESC"
+						break
+					}
+				}
+			case metadata.KindCatalog:
+				// Код может быть синтезирован нумератором перед Наименованием.
+				// Список должен идти по видимому имени, а не по коду.
+				for _, f := range entity.Fields {
+					if f.Type == metadata.FieldTypeString && strings.EqualFold(f.Name, "Наименование") {
+						orderCol = metadata.ColumnName(f)
+						break
+					}
+				}
+				if orderCol == "id" {
+					for _, f := range entity.Fields {
+						if f.Type == metadata.FieldTypeString {
+							orderCol = metadata.ColumnName(f)
+							orderDir = "ASC"
+							break
+						}
+					}
+				}
+			}
 		}
-		orderDir := "ASC"
-		if strings.ToLower(params.Dir) == "desc" {
-			orderDir = "DESC"
+		if params.Sort == "" && orderCol != "id" {
+			// PostgreSQL и SQLite по-разному располагают NULL при ASC/DESC.
+			// Пустые значения оставляем в конце на обоих диалектах.
+			query += fmt.Sprintf(" ORDER BY CASE WHEN %s IS NULL THEN 1 ELSE 0 END ASC, %s %s, id ASC",
+				orderCol, orderCol, orderDir)
+		} else {
+			query += fmt.Sprintf(" ORDER BY %s %s", orderCol, orderDir)
 		}
-		query += fmt.Sprintf(" ORDER BY %s %s", orderCol, orderDir)
 	}
 
 	if params.Limit > 0 {
