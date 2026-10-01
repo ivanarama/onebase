@@ -2628,7 +2628,7 @@ func (tr *translator) groupByItemStandalone() bool {
 	case tEOF, tComma, tRParen:
 	case tIdent:
 		switch upperFast(next.val) {
-		case "ИМЕЮЩИЕ", "HAVING", "УПОРЯДОЧИТЬ", "ORDER", "ОБЪЕДИНИТЬ", "UNION",
+		case "ИМЕЮЩИЕ", "ИМЕЯ", "HAVING", "УПОРЯДОЧИТЬ", "ORDER", "ОБЪЕДИНИТЬ", "UNION",
 			"ИТОГИ", "TOTALS", "LIMIT", "ДЛЯ", "FOR":
 		default:
 			return false
