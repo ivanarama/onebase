@@ -328,7 +328,7 @@ func (h *handler) newForm(w http.ResponseWriter, r *http.Request) {
 	if bases, err := h.store.List(); err == nil {
 		port = freeRegistryPort(bases)
 	}
-	render(w, r, "page-form", map[string]any{
+	h.renderBaseForm(w, r, map[string]any{
 		"Title": tr(resolveLang(r), "onebase — Добавить базу"),
 		"IsNew": true,
 		"Base":  &Base{ConfigSource: "file", DBType: "sqlite", Port: port},
@@ -358,7 +358,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if b.Name == "" {
-		render(w, r, "page-form", map[string]any{
+		h.renderBaseForm(w, r, map[string]any{
 			"Title": tr(lang, "onebase — Добавить базу"),
 			"IsNew": true, "Base": b, "Error": tr(lang, "Наименование обязательно"),
 		})
@@ -371,9 +371,9 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		client, err := NewClientBase(b.Name, r.FormValue("server_url"))
 		if err != nil {
 			b.ServerURL = strings.TrimSpace(r.FormValue("server_url"))
-			render(w, r, "page-form", map[string]any{
+			h.renderBaseForm(w, r, map[string]any{
 				"Title": tr(lang, "onebase — Добавить базу"),
-				"IsNew": true, "Base": b, "Error": err.Error(),
+				"IsNew": true, "Base": b, "ClientKind": true, "Error": err.Error(),
 			})
 			return
 		}
@@ -388,14 +388,14 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		b.DBPath = normalizeSQLitePath(b.DBPath, b.Name)
 	}
 	if b.DBType == "sqlite" && b.DBPath == "" {
-		render(w, r, "page-form", map[string]any{
+		h.renderBaseForm(w, r, map[string]any{
 			"Title": tr(lang, "onebase — Добавить базу"),
 			"IsNew": true, "Base": b, "Error": tr(lang, "Укажите путь к файлу SQLite"),
 		})
 		return
 	}
 	if b.DBType != "sqlite" && b.DB == "" {
-		render(w, r, "page-form", map[string]any{
+		h.renderBaseForm(w, r, map[string]any{
 			"Title": tr(lang, "onebase — Добавить базу"),
 			"IsNew": true, "Base": b, "Error": tr(lang, "Укажите строку подключения к PostgreSQL"),
 		})
@@ -403,7 +403,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	}
 	if bases, err := h.store.List(); err == nil {
 		if owner := portOwner(bases, "", b.Port); owner != nil {
-			render(w, r, "page-form", map[string]any{
+			h.renderBaseForm(w, r, map[string]any{
 				"Title": tr(lang, "onebase — Добавить базу"),
 				"IsNew": true, "Base": b, "Error": portConflictError(lang, owner, bases),
 			})
@@ -416,7 +416,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	// concurrent create request.
 	if h.runner != nil {
 		if err := h.runner.holdStarts(); err != nil {
-			render(w, r, "page-form", map[string]any{
+			h.renderBaseForm(w, r, map[string]any{
 				"Title": tr(lang, "onebase — Добавить базу"), "IsNew": true, "Base": b,
 				"Error": tr(lang, "Другая операция с базами ещё выполняется") + ": " + err.Error(),
 			})
@@ -429,7 +429,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 
 	if b.ConfigSource == "database" {
 		if err := h.initDatabaseBase(r.Context(), b, scaffold); err != nil {
-			render(w, r, "page-form", map[string]any{
+			h.renderBaseForm(w, r, map[string]any{
 				"Title": tr(lang, "onebase — Добавить базу"),
 				"IsNew": true, "Base": b, "Error": errText(r, err),
 			})
@@ -438,7 +438,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// file mode
 		if b.Path == "" {
-			render(w, r, "page-form", map[string]any{
+			h.renderBaseForm(w, r, map[string]any{
 				"Title": tr(lang, "onebase — Добавить базу"),
 				"IsNew": true, "Base": b, "Error": tr(lang, "Укажите путь к папке конфигурации"),
 			})
@@ -446,14 +446,14 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		}
 		if scaffold {
 			if err := os.MkdirAll(b.Path, fsmode.Dir); err != nil { //nolint:gosec // G703: путь получен обходом каталога проекта (os.ReadDir/WalkDir), из запроса он не приходит
-				render(w, r, "page-form", map[string]any{
+				h.renderBaseForm(w, r, map[string]any{
 					"Title": tr(lang, "onebase — Добавить базу"),
 					"IsNew": true, "Base": b, "Error": tr(lang, "Не удалось создать папку") + ": " + err.Error(),
 				})
 				return
 			}
 			if err := project.Scaffold(b.Path, b.Name); err != nil {
-				render(w, r, "page-form", map[string]any{
+				h.renderBaseForm(w, r, map[string]any{
 					"Title": tr(lang, "onebase — Добавить базу"),
 					"IsNew": true, "Base": b, "Error": tr(lang, "Ошибка создания конфигурации") + ": " + err.Error(),
 				})
@@ -464,7 +464,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		// ConnectSQLite — здесь делать ничего не надо.
 		if b.DBType != "sqlite" {
 			if err := storage.EnsureDatabase(r.Context(), b.DB); err != nil {
-				render(w, r, "page-form", map[string]any{
+				h.renderBaseForm(w, r, map[string]any{
 					"Title": tr(lang, "onebase — Добавить базу"),
 					"IsNew": true, "Base": b, "Error": tr(lang, "Не удалось создать БД") + ": " + err.Error(),
 				})
@@ -475,7 +475,7 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.store.Add(b); err != nil {
 		if message, ok := storedPortConflictError(lang, err); ok {
-			render(w, r, "page-form", map[string]any{
+			h.renderBaseForm(w, r, map[string]any{
 				"Title": tr(lang, "onebase — Добавить базу"),
 				"IsNew": true, "Base": b, "Error": message,
 			})
@@ -493,7 +493,7 @@ func (h *handler) editForm(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	render(w, r, "page-form", map[string]any{
+	h.renderBaseForm(w, r, map[string]any{
 		"Title": tr(resolveLang(r), "onebase — Изменить базу"),
 		"IsNew": false, "Base": b, "Error": "",
 	})
@@ -522,58 +522,58 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	b.Host = normalizeHost(r.FormValue("host"))
 
 	if b.Name == "" {
-		render(w, r, "page-form", map[string]any{
+		h.renderBaseForm(w, r, map[string]any{
 			"Title": tr(lang, "onebase — Изменить базу"),
 			"IsNew": false, "Base": b, "Error": tr(lang, "Наименование обязательно"),
 		})
 		return
 	}
-	// Вид записи можно переключить в обе стороны. Поля противоположного вида
-	// затираем, а не оставляем «на всякий случай»: запись с одновременными
-	// server_url и DSN неоднозначна, и завтра кто-то прочтёт из неё не то поле.
-	if r.FormValue("base_kind") == baseKindClient {
+	// Вид записи можно переключить в обе стороны, но это ИЗМЕНЕНИЕ ПАРАМЕТРОВ
+	// ЗАПУСКА, а не отдельный быстрый путь: проверки ниже (блокировка конфигурации,
+	// holdStarts, актуальный снимок реестра и отказ при работающем процессе) должны
+	// пройти и для него. Иначе работающая база превращалась бы в клиентскую запись с
+	// Port=0, а её прежний сервер продолжал бы работать — и «Стоп всё» уже проходил
+	// бы мимо него как мимо чужого. Поэтому здесь только заполняем поля.
+	clientKind := r.FormValue("base_kind") == baseKindClient
+	if clientKind {
 		normalized, err := normalizeServerURL(r.FormValue("server_url"))
 		if err != nil {
 			b.ServerURL = strings.TrimSpace(r.FormValue("server_url"))
-			render(w, r, "page-form", map[string]any{
-				"Title": tr(lang, "onebase — Изменить базу"),
-				"IsNew": false, "Base": b, "Error": err.Error(),
+			h.renderBaseForm(w, r, map[string]any{
+				"Title": tr(lang, "onebase — Изменить базу"), "IsNew": false, "Base": b,
+				"ClientKind": true, "Error": err.Error(),
 			})
 			return
 		}
-		client := &Base{
-			ID: b.ID, Name: b.Name, ServerURL: normalized,
-			Created: b.Created, LastOpened: b.LastOpened,
-		}
-		if err := h.store.Update(client); err != nil {
-			http.Error(w, err.Error(), 500)
-			return
-		}
-		h.invalidateStatus(client.ID)
-		http.Redirect(w, r, "/?sel="+client.ID, http.StatusFound)
-		return
+		b.ServerURL = normalized
+		// Поля запуска у клиентской записи не используются. Затираем их, а не
+		// оставляем «на всякий случай»: запись с одновременными server_url и DSN
+		// неоднозначна, и завтра кто-то прочтёт из неё не то поле.
+		b.ConfigSource, b.Path, b.DB, b.DBType, b.DBPath, b.Host = "", "", "", "", "", ""
+		b.Port = 0
+	} else {
+		b.ServerURL = ""
 	}
-	b.ServerURL = ""
-	if b.DBType == "sqlite" {
+	if !clientKind && b.DBType == "sqlite" {
 		b.DBPath = normalizeSQLitePath(b.DBPath, b.Name)
 	}
-	if b.DBType == "sqlite" && b.DBPath == "" {
-		render(w, r, "page-form", map[string]any{
+	if !clientKind && b.DBType == "sqlite" && b.DBPath == "" {
+		h.renderBaseForm(w, r, map[string]any{
 			"Title": tr(lang, "onebase — Изменить базу"),
 			"IsNew": false, "Base": b, "Error": tr(lang, "Укажите путь к файлу SQLite"),
 		})
 		return
 	}
-	if b.DBType != "sqlite" && b.DB == "" {
-		render(w, r, "page-form", map[string]any{
+	if !clientKind && b.DBType != "sqlite" && b.DB == "" {
+		h.renderBaseForm(w, r, map[string]any{
 			"Title": tr(lang, "onebase — Изменить базу"),
 			"IsNew": false, "Base": b, "Error": tr(lang, "Укажите строку подключения к PostgreSQL"),
 		})
 		return
 	}
-	if bases, err := h.store.List(); err == nil {
+	if bases, err := h.store.List(); err == nil && !clientKind {
 		if owner := portOwner(bases, b.ID, b.Port); owner != nil {
-			render(w, r, "page-form", map[string]any{
+			h.renderBaseForm(w, r, map[string]any{
 				"Title": tr(lang, "onebase — Изменить базу"),
 				"IsNew": false, "Base": b, "Error": portConflictError(lang, owner, bases),
 			})
@@ -595,9 +595,10 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if h.runner != nil && runtimeConfigChanged(current, b) && h.runner.RuntimeStatus(current).Occupied {
-		render(w, r, "page-form", map[string]any{
+		h.renderBaseForm(w, r, map[string]any{
 			"Title": tr(lang, "onebase — Изменить базу"), "IsNew": false, "Base": b,
-			"Error": tr(lang, "Сначала остановите базу: параметры запуска нельзя менять у работающего процесса"),
+			"ClientKind": clientKind,
+			"Error":      tr(lang, "Сначала остановите базу: параметры запуска нельзя менять у работающего процесса"),
 		})
 		return
 	}
@@ -610,7 +611,7 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	err = h.store.Update(b)
 	if err != nil {
 		if message, ok := storedPortConflictError(lang, err); ok {
-			render(w, r, "page-form", map[string]any{
+			h.renderBaseForm(w, r, map[string]any{
 				"Title": tr(lang, "onebase — Изменить базу"),
 				"IsNew": false, "Base": b, "Error": message,
 			})
@@ -626,8 +627,26 @@ func runtimeConfigChanged(a, b *Base) bool {
 	if a == nil || b == nil {
 		return true
 	}
+	// ServerURL здесь наравне с остальными: переключение вида записи — это смена
+	// того, что лаунчер делает при открытии, и у работающего процесса её нельзя
+	// разрешать так же, как смену порта или DSN.
 	return a.ConfigSource != b.ConfigSource || a.Path != b.Path || a.DB != b.DB ||
-		a.DBType != b.DBType || a.DBPath != b.DBPath || a.Port != b.Port || a.Host != b.Host
+		a.DBType != b.DBType || a.DBPath != b.DBPath || a.Port != b.Port || a.Host != b.Host ||
+		a.ServerURL != b.ServerURL
+}
+
+// renderBaseForm рисует форму базы, подставляя вид записи из самой записи.
+// Явный ClientKind нужен только на путях валидации: там вид выбрал пользователь,
+// а в Base он ещё не сохранён — иначе ошибка адреса сбрасывала выбор обратно на
+// «базу на этом компьютере» и прятала поле адреса, то есть исправить введённое
+// было нельзя.
+func (h *handler) renderBaseForm(w http.ResponseWriter, r *http.Request, data map[string]any) {
+	if _, ok := data["ClientKind"]; !ok {
+		if b, _ := data["Base"].(*Base); b != nil {
+			data["ClientKind"] = b.Client()
+		}
+	}
+	render(w, r, "page-form", data)
 }
 
 func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
@@ -644,9 +663,15 @@ func (h *handler) delete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	if err := h.runner.stopBaseHeld(b); err != nil {
-		http.Error(w, err.Error(), http.StatusConflict)
-		return
+	// Клиентской записью лаунчер не владеет: останавливать нечего, и запрет
+	// StopBase не должен мешать убрать саму запись из реестра — иначе удалить её
+	// нельзя вовсе, в том числе когда сервер уже недоступен. Запрет остановки при
+	// этом остаётся в силе: он про чужой процесс, а не про строку списка.
+	if !b.Client() {
+		if err := h.runner.stopBaseHeld(b); err != nil {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 	}
 	// Сбой удаления нельзя проглатывать: редирект на список выглядит как
 	// выполненное удаление, а база остаётся в реестре — пользователь решит, что
