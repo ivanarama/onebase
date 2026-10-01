@@ -29,7 +29,7 @@ type concurrentUnpostStore struct {
 }
 
 func (s *concurrentUnpostStore) LockMovementRecorder(ctx context.Context, entity *metadata.Entity, id uuid.UUID) error {
-	if _, err := s.Storage.Exec(ctx, "SELECT set_config('application_name', $1, true)", s.application); err != nil {
+	if _, err := s.Exec(ctx, "SELECT set_config('application_name', $1, true)", s.application); err != nil {
 		return err
 	}
 	s.once.Do(func() { close(s.locking) })
