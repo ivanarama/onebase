@@ -285,7 +285,7 @@ func (h *handler) index(w http.ResponseWriter, r *http.Request) {
 		st := statuses[b.ID]
 		vm := &baseVM{Base: b, Running: st.running, BaseURL: h.runner.BaseURL(b),
 			CompanionStates: h.companionStates(b),
-			AppName: st.appName, AppVersion: st.appVersion}
+			AppName:         st.appName, AppVersion: st.appVersion}
 		if st.hasLogo {
 			vm.LogoBase64 = "/bases/" + b.ID + "/configurator/logo"
 		}
