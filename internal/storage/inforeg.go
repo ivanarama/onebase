@@ -134,8 +134,10 @@ func (db *DB) InfoRegExactMatchesRowFilter(ctx context.Context, ir *metadata.Inf
 // (план 86). Значения измерений/ресурсов проходят через те же канонические
 // storage-boundary функции, что обычная запись; deletion=true удаляет запись
 // по exact-first ключу, сохраняя адресуемость legacy SQLite NUMBER keys.
-// Непредставимые ссылки принимаются как пустые только на этом обменном пути:
-// схема узла-источника может отличаться от схемы получателя.
+// Непредставимые ссылочные ресурсы принимаются как пустые только на этом пути:
+// схема узла-источника может отличаться от схемы получателя. Измерения сохраняют
+// прежнюю обработку ключа: SQLite допускает строковое написание для upsert и
+// tombstone, PostgreSQL по-прежнему отвергает его как некорректный UUID.
 func (db *DB) InfoRegApplyExchange(ctx context.Context, ir *metadata.InfoRegister, dims, resources map[string]any, period *time.Time, deletion bool) error {
 	if deletion {
 		return db.InfoRegDelete(ctx, ir, dims, period)
@@ -181,11 +183,17 @@ func (db *DB) infoRegSet(ctx context.Context, ir *metadata.InfoRegister,
 	existingFilter *Predicate) (bool, error) {
 	d := db.dialect
 	table := metadata.InfoRegTableName(ir.Name)
-	dimKey, err := regWriteRefMap(ctx, ir.Dimensions, dimKey)
-	if err != nil {
-		return false, fmt.Errorf("info register %s: %w", ir.Name, err)
+	// Обменный ключ нельзя обнулить как ресурс: измерения NOT NULL и образуют
+	// PRIMARY KEY. Оставляем их прежнюю нормализацию в resolveInfoRegWriteKey,
+	// совпадающую с lookup/delete; локальная запись остаётся строгой.
+	if stageModeFromCtx(ctx).Source != StageSourceExchange {
+		var err error
+		dimKey, err = regWriteRefMap(ctx, ir.Dimensions, dimKey)
+		if err != nil {
+			return false, fmt.Errorf("info register %s: %w", ir.Name, err)
+		}
 	}
-	resources, err = regWriteRefMap(ctx, ir.Resources, resources)
+	resources, err := regWriteRefMap(ctx, ir.Resources, resources)
 	if err != nil {
 		return false, fmt.Errorf("info register %s: %w", ir.Name, err)
 	}
