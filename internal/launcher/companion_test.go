@@ -1,12 +1,19 @@
 package launcher
 
 import (
+	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
+
+	"github.com/go-chi/chi/v5"
 )
 
 // Сопутствующие приложения: лаунчер запускает только объявленное манифестом
@@ -214,5 +221,105 @@ func TestCompanionFailedExitStaysFailure(t *testing.T) {
 	}
 	if !strings.Contains(st.Err, "exit status 1") {
 		t.Errorf("причина потеряна: %q", st.Err)
+	}
+}
+
+// Два одновременных открытия рабочего места поднимают помощник РОВНО ОДИН раз.
+//
+// Проверяется через настоящие параллельные POST /bases/{id}/start: раньше
+// мьютекс отпускался до запуска, а место в procs занималось после него, поэтому
+// оба запроса успевали увидеть пустое место. Первый startCmd держится до входа
+// второго — без этого гонка не воспроизводится стабильно.
+func TestCompanionSingleStartOnConcurrentOpens(t *testing.T) {
+	lab := withLauncherDir(t, "companions:\n  softphone:\n    exec: sp.exe\n")
+	_ = lab
+
+	dir := t.TempDir()
+	store := &Store{path: filepath.Join(dir, "ibases.yaml")}
+	// Клиентская запись: ensureBaseReady для неё не поднимает локальную базу, и
+	// тест остаётся про companion, а не про запуск платформы.
+	base, err := NewClientBase("Сервер", "https://srv:8443")
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Companions = []string{"softphone"}
+	if err := store.Add(base); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := newCompanionRunner()
+	var mu sync.Mutex
+	starts := 0
+	entered := make(chan struct{}, 2)
+	release := make(chan struct{})
+	runner.startCmd = func(*exec.Cmd) error {
+		mu.Lock()
+		starts++
+		n := starts
+		mu.Unlock()
+		entered <- struct{}{}
+		if n == 1 {
+			// Держим первый запуск, пока второй запрос не дойдёт до проверки.
+			<-release
+		}
+		return nil
+	}
+
+	h := &handler{store: store, runner: NewRunner(), companions: runner}
+
+	var wg sync.WaitGroup
+	for i := 0; i < 2; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := httptest.NewRequest(http.MethodPost, "/bases/"+base.ID+"/start", nil)
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("id", base.ID)
+			req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+			h.start(httptest.NewRecorder(), req)
+		}()
+	}
+
+	// Ждём вход первого запуска, затем даём второму запросу время дойти до
+	// проверки занятости и отпускаем первый.
+	<-entered
+	time.Sleep(150 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	mu.Lock()
+	got := starts
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("запусков помощника %d, ожидался 1 — два открытия подняли второй экземпляр", got)
+	}
+	if st := runner.States([]string{"softphone"}); len(st) != 1 || !st[0].Running {
+		t.Errorf("состояние помощника после параллельных открытий: %+v", st)
+	}
+}
+
+// Неудачный запуск снимает резервацию: иначе место останется занятым навсегда и
+// повторная попытка станет невозможной.
+func TestCompanionReservationReleasedOnStartFailure(t *testing.T) {
+	withLauncherDir(t, "companions:\n  softphone:\n    exec: sp.exe\n")
+	c := newCompanionRunner()
+	attempts := 0
+	c.startCmd = func(*exec.Cmd) error {
+		attempts++
+		if attempts == 1 {
+			return errors.New("файл не найден")
+		}
+		return nil
+	}
+
+	if err := c.Ensure("softphone"); err == nil {
+		t.Fatal("ожидалась ошибка первого запуска")
+	}
+	// Вторая попытка обязана дойти до запуска, а не упереться в резервацию.
+	if err := c.Ensure("softphone"); err != nil {
+		t.Fatalf("повторная попытка после неудачи: %v", err)
+	}
+	if attempts != 2 {
+		t.Errorf("попыток запуска %d, ожидалось 2 — резервация не снята", attempts)
 	}
 }

@@ -211,11 +211,30 @@ func (c *companionRunner) Ensure(name string) error {
 		c.mu.Unlock()
 		return nil
 	}
+	// Место занимается ПОД ТЕМ ЖЕ мьютексом, что и проверка выше. Раньше
+	// мьютекс отпускался до запуска, а запись в procs появлялась только после
+	// него: два одновременных открытия рабочего места успевали увидеть пустое
+	// место и запускали помощник дважды, после чего второй процесс затирал
+	// отслеживаемый первый — тот оставался жить никем не замеченным.
+	//
+	// Резервация — это proc без cmd: для States она «работает», что ближе к
+	// правде, чем «не запущено», потому что запуск уже идёт.
+	proc := &companionProc{started: time.Now()}
+	c.procs[name] = proc
 	c.mu.Unlock()
+
+	// Любой выход ниже обязан снять резервацию, иначе место останется занятым
+	// навсегда и повторная попытка станет невозможной.
+	failReservation := func(err error) error {
+		c.mu.Lock()
+		proc.exited, proc.exitErr, proc.exitedAt = true, err, time.Now()
+		c.mu.Unlock()
+		return err
+	}
 
 	dir, err := launcherDir()
 	if err != nil {
-		return err
+		return failReservation(err)
 	}
 	full := filepath.Join(dir, filepath.FromSlash(spec.Exec))
 	cmd := exec.Command(full, spec.Args...) //nolint:gosec // G204: путь собран из каталога лаунчера и манифеста рядом с его exe; аргументы объявлены там же, извне не приходят
@@ -229,13 +248,12 @@ func (c *companionRunner) Ensure(name string) error {
 	}
 	if err := start(cmd); err != nil {
 		c.mu.Lock()
-		c.procs[name] = &companionProc{cmd: cmd, exited: true, exitErr: err, exitedAt: time.Now()}
+		proc.cmd = cmd
 		c.mu.Unlock()
-		return err
+		return failReservation(err)
 	}
-	proc := &companionProc{cmd: cmd, started: time.Now()}
 	c.mu.Lock()
-	c.procs[name] = proc
+	proc.cmd = cmd
 	c.mu.Unlock()
 
 	// Падение должно быть видно, а не выглядеть как «не запускали». Ждём в
