@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -817,7 +818,7 @@ func loadPipelineInputsGraphQL(client pipelineGraphQLClient, repo, pullFixture, 
 		return nil, nil, fmt.Errorf("GitHub GraphQL client is required outside pull fixture mode")
 	}
 	if issueFixture != "" {
-		pulls, _, err := loadGraphQLSnapshot(client, repo, true, false)
+		pulls, _, err := loadStableGraphQLSnapshot(client, repo, true, false)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -827,7 +828,25 @@ func loadPipelineInputsGraphQL(client pipelineGraphQLClient, repo, pullFixture, 
 		}
 		return pulls, issues, nil
 	}
-	return loadGraphQLSnapshot(client, repo, true, true)
+	return loadStableGraphQLSnapshot(client, repo, true, true)
+}
+
+// A page count changing is transient queue churn, not permission to accept a
+// partial snapshot. Restart the entire read, at most three times, under one
+// shared query budget. Other failures remain fail-closed without retries.
+type pipelineSnapshotChurn struct{ detail string }
+
+func (err *pipelineSnapshotChurn) Error() string { return err.detail }
+
+func loadStableGraphQLSnapshot(client pipelineGraphQLClient, repo string, includePulls, includeIssues bool) ([]apiPull, []apiIssue, error) {
+	bounded := &limitedPipelineGraphQLClient{delegate: client}
+	for attempt := 0; ; attempt++ {
+		pulls, issues, err := loadGraphQLSnapshot(bounded, repo, includePulls, includeIssues)
+		var churn *pipelineSnapshotChurn
+		if err == nil || attempt == 2 || !errors.As(err, &churn) {
+			return pulls, issues, err
+		}
+	}
 }
 
 func readPullFixture(path string) ([]apiPull, error) {
@@ -838,6 +857,23 @@ func readPullFixture(path string) ([]apiPull, error) {
 	var pulls []apiPull
 	if err := json.Unmarshal(data, &pulls); err != nil {
 		return nil, fmt.Errorf("decode pull fixture: %w", err)
+	}
+	// apiPull.Comments is excluded from ordinary JSON because the REST pulls
+	// endpoint exposes "comments" as a count. Offline fixtures may include an
+	// array to exercise the same review routing as a live GraphQL snapshot.
+	var comments []struct {
+		Comments json.RawMessage `json:"comments"`
+	}
+	if err := json.Unmarshal(data, &comments); err != nil {
+		return nil, fmt.Errorf("decode pull fixture comments: %w", err)
+	}
+	for index, item := range comments {
+		if len(item.Comments) == 0 || item.Comments[0] != '[' {
+			continue
+		}
+		if err := json.Unmarshal(item.Comments, &pulls[index].Comments); err != nil {
+			return nil, fmt.Errorf("decode pull fixture comments at %d: %w", index, err)
+		}
 	}
 	return pulls, nil
 }
@@ -900,7 +936,7 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo string, includePulls
 			if pullTotal < 0 {
 				pullTotal = connection.TotalCount
 			} else if connection.TotalCount != pullTotal {
-				return nil, nil, fmt.Errorf("load pull requests: totalCount changed from %d to %d", pullTotal, connection.TotalCount)
+				return nil, nil, &pipelineSnapshotChurn{fmt.Sprintf("load pull requests: totalCount changed from %d to %d", pullTotal, connection.TotalCount)}
 			}
 			if connection.TotalCount < 0 {
 				return nil, nil, fmt.Errorf("load pull requests: negative totalCount %d", connection.TotalCount)
@@ -932,7 +968,7 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo string, includePulls
 			if issueTotal < 0 {
 				issueTotal = connection.TotalCount
 			} else if connection.TotalCount != issueTotal {
-				return nil, nil, fmt.Errorf("load issues: totalCount changed from %d to %d", issueTotal, connection.TotalCount)
+				return nil, nil, &pipelineSnapshotChurn{fmt.Sprintf("load issues: totalCount changed from %d to %d", issueTotal, connection.TotalCount)}
 			}
 			if connection.TotalCount < 0 {
 				return nil, nil, fmt.Errorf("load issues: negative totalCount %d", connection.TotalCount)

@@ -182,7 +182,7 @@ func applicationTimeZoneNameFor(loc *time.Location, envName string, now time.Tim
 			return name
 		}
 		// FixedZone и платформенные имена, которых нет в IANA PostgreSQL,
-		// безопасно сводим к текущему числовому смещению.
+		// сводим к текущему смещению — записанному по правилам POSIX.
 		return applicationTimeZoneOffsetAt(loc, now)
 	}
 	if envName != "" {
@@ -196,14 +196,36 @@ func applicationTimeZoneNameFor(loc *time.Location, envName string, now time.Tim
 	return applicationTimeZoneOffsetAt(loc, now)
 }
 
+// applicationTimeZoneOffsetAt описывает текущее смещение зоны POSIX-строкой
+// для session TimeZone PostgreSQL: «<+03>-3» — это UTC+3.
+//
+// Строка «+03:00» здесь не годится. PostgreSQL не считает её числом часов
+// (мешает двоеточие) и разбирает как POSIX-описание зоны без аббревиатуры, а в
+// POSIX положительное смещение означает запад от Гринвича: «+03:00» — это
+// UTC−3. Так было на Windows и на Linux без TZ в любой зоне без перехода на
+// летнее время (вся Россия): календарные функции запросов, группировка по
+// периодам и текстовые границы дат в отборах сдвигались на шесть часов от
+// московского времени. Знак переворачивает postgresPOSIXOffset — та же функция,
+// что пишет смещения в правилах перехода на летнее время ниже.
 func applicationTimeZoneOffsetAt(loc *time.Location, at time.Time) string {
 	_, offset := at.In(loc).Zone()
+	return "<" + isoOffsetAbbrev(offset) + ">" + postgresPOSIXOffset(offset)
+}
+
+// isoOffsetAbbrev — аббревиатура зоны в виде ISO-смещения («+03», «+0530»,
+// «-05»): так IANA называет зоны без собственной аббревиатуры (<+04>-4 у
+// Asia/Dubai). В угловых скобках POSIX допускает знаки и цифры.
+func isoOffsetAbbrev(utcOffset int) string {
 	sign := '+'
-	if offset < 0 {
+	if utcOffset < 0 {
 		sign = '-'
-		offset = -offset
+		utcOffset = -utcOffset
 	}
-	return fmt.Sprintf("%c%02d:%02d", sign, offset/3600, (offset%3600)/60)
+	hours, minutes := utcOffset/3600, (utcOffset%3600)/60
+	if minutes == 0 {
+		return fmt.Sprintf("%c%02d", sign, hours)
+	}
+	return fmt.Sprintf("%c%02d%02d", sign, hours, minutes)
 }
 
 // applicationTimeZonePOSIX describes the recurring DST rules carried by an

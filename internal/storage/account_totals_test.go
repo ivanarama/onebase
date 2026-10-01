@@ -80,6 +80,7 @@ func TestAccountTotals_RecalcMatchesOnTheFly(t *testing.T) {
 	if err := db.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{ar}); err != nil {
 		t.Fatal(err)
 	}
+	ensureTestChart(t, db, ar.Accounts, "41", "51", "60", "62", "90")
 
 	writeDoc := func(p time.Time, rows []map[string]any) {
 		if err := db.WriteAccountMovements(ctx, ar.Name, "Док", uuid.New(), rows, ar, &p); err != nil {
@@ -173,6 +174,7 @@ func TestAccountTotals_IncrementalMatchesRecalc(t *testing.T) {
 	if err := db.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{ar}); err != nil {
 		t.Fatal(err)
 	}
+	ensureTestChart(t, db, ar.Accounts, "41", "51", "60", "62", "90")
 	const table = "итоги_акк_бухитоги"
 
 	doc1, doc2 := uuid.New(), uuid.New()

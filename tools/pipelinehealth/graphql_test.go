@@ -18,6 +18,23 @@ import (
 
 func TestMain(m *testing.M) {
 	if os.Getenv("PIPELINEHEALTH_TEST_GH_HELPER") == "1" {
+		if path := os.Getenv("PIPELINEHEALTH_TEST_GH_SEQUENCE"); path != "" {
+			data, err := os.ReadFile(path) //nolint:gosec // G703: this subprocess fixture path is supplied by the parent test under t.TempDir.
+			var pages []json.RawMessage
+			if err != nil || json.Unmarshal(data, &pages) != nil {
+				os.Exit(3)
+			}
+			counter, _ := os.ReadFile(path + ".index") //nolint:gosec // G703: adjacent counter belongs to the same isolated test fixture.
+			index, _ := strconv.Atoi(string(counter))
+			if index >= len(pages) {
+				os.Exit(4)
+			}
+			if os.WriteFile(path+".index", []byte(strconv.Itoa(index+1)), 0o600) != nil { //nolint:gosec // G703: only the parent test's fixture counter is written.
+				os.Exit(5)
+			}
+			_, _ = os.Stdout.Write(pages[index])
+			os.Exit(0)
+		}
 		_, _ = io.WriteString(os.Stdout, os.Getenv("PIPELINEHEALTH_TEST_GH_RESPONSE"))
 		os.Exit(0)
 	}
@@ -580,6 +597,107 @@ func TestGraphQLSnapshotRejectsConnectionCountChange(t *testing.T) {
 	_, _, err := loadGraphQLSnapshot(client, "ivanarama/onebase", true, false)
 	if err == nil || !strings.Contains(err.Error(), "totalCount changed") {
 		t.Fatalf("moving queue snapshot did not fail closed: %v", err)
+	}
+}
+
+func TestGraphQLProductionIngressRetriesCountChurnWithoutPartialResults(t *testing.T) {
+	old := gqlTestPullNode("old", 10, headA, nil, nil)
+	one := gqlTestPullNode("new-one", 11, headB, nil, nil)
+	two := gqlTestPullNode("new-two", 12, headA, nil, nil)
+	client := &scriptedGraphQLClient{t: t, results: []any{
+		map[string]any{"repository": map[string]any{"pullRequests": connection(2, []any{old}, true, "page-1"), "issues": connection(0, []any{}, false, nil)}},
+		map[string]any{"repository": map[string]any{"pullRequests": connection(3, []any{two}, false, nil)}},
+		map[string]any{"repository": map[string]any{"pullRequests": connection(2, []any{one, two}, false, nil), "issues": connection(0, []any{}, false, nil)}},
+	}}
+	pulls, issues, err := loadPipelineInputsGraphQL(client, "ivanarama/onebase", "", "")
+	if err != nil || len(pulls) != 2 || len(issues) != 0 || pulls[0].Number != 11 || len(client.calls) != 3 {
+		t.Fatalf("did not retry full read or retained old nodes: pulls=%+v issues=%+v err=%v calls=%v", pulls, issues, err, client.calls)
+	}
+}
+
+func TestGraphQLProductionIngressBoundsCountChurnRetries(t *testing.T) {
+	first := gqlTestPullNode("pr-1", 10, headA, nil, nil)
+	second := gqlTestPullNode("pr-2", 11, headB, nil, nil)
+	client := &scriptedGraphQLClient{t: t}
+	for range 3 {
+		client.results = append(client.results,
+			map[string]any{"repository": map[string]any{"pullRequests": connection(2, []any{first}, true, "page-1"), "issues": connection(0, []any{}, false, nil)}},
+			map[string]any{"repository": map[string]any{"pullRequests": connection(3, []any{second}, false, nil)}})
+	}
+	pulls, issues, err := loadPipelineInputsGraphQL(client, "ivanarama/onebase", "", "")
+	if err == nil || pulls != nil || issues != nil || len(client.calls) != 6 {
+		t.Fatalf("must fail closed after three full attempts: pulls=%+v issues=%+v err=%v calls=%v", pulls, issues, err, client.calls)
+	}
+}
+
+func TestGraphQLProductionIngressRetriesIssueChurnAndReloadsPulls(t *testing.T) {
+	old := gqlTestPullNode("old", 10, headA, nil, nil)
+	fresh := gqlTestPullNode("fresh", 11, headB, nil, nil)
+	one := gqlTestIssueNode("issue-1", 20, []any{gqlTestComment("5702456240")})
+	two := gqlTestIssueNode("issue-2", 21, []any{gqlTestComment("5702456241")})
+	client := &scriptedGraphQLClient{t: t, results: []any{
+		map[string]any{"repository": map[string]any{"pullRequests": connection(1, []any{old}, false, nil), "issues": connection(2, []any{one}, true, "page-1")}},
+		map[string]any{"repository": map[string]any{"issues": connection(3, []any{two}, false, nil)}},
+		map[string]any{"repository": map[string]any{"pullRequests": connection(1, []any{fresh}, false, nil), "issues": connection(2, []any{one, two}, false, nil)}},
+	}}
+	pulls, issues, err := loadPipelineInputsGraphQL(client, "ivanarama/onebase", "", "")
+	if err != nil || len(pulls) != 1 || len(issues) != 2 || pulls[0].Number != 11 || len(client.calls) != 3 {
+		t.Fatalf("issue churn did not restart the complete snapshot: pulls=%+v issues=%+v err=%v", pulls, issues, err)
+	}
+}
+
+func TestGraphQLCLIRetriesIssueCountChurn(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	temporary := t.TempDir()
+	name := "pipelinehealth"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	binary := filepath.Join(temporary, name)
+	//nolint:gosec // executable/output paths are fixed by this test
+	build := exec.Command("go", "build", "-o", binary, "./tools/pipelinehealth")
+	build.Dir = root
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, output)
+	}
+	helper, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pages := []any{
+		map[string]any{"data": snapshotResult(0, []any{}, false, nil, 2, []any{gqlTestIssueNode("one", 20, nil)}, true, "next")},
+		map[string]any{"data": map[string]any{"repository": map[string]any{"issues": connection(3, []any{gqlTestIssueNode("two", 21, nil)}, false, nil)}}},
+		map[string]any{"data": snapshotResult(0, []any{}, false, nil, 0, []any{}, false, nil)},
+	}
+	data, err := json.Marshal(pages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sequence := filepath.Join(temporary, "pages.json")
+	if err := os.WriteFile(sequence, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	//nolint:gosec // binary is built by this test
+	command := exec.Command(binary, "-transport", "graphql", "-json")
+	command.Dir = root
+	command.Env = append(os.Environ(), "GH_EXE="+helper, "PIPELINEHEALTH_TEST_GH_HELPER=1", "PIPELINEHEALTH_TEST_GH_SEQUENCE="+sequence)
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("CLI discarded completed gate after transient churn: %v", err)
+	}
+	var got report
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Checked != 0 || got.IssuesChecked != 0 || got.State != "green" {
+		t.Fatalf("partial old snapshot leaked: %s", output)
+	}
+	counter, err := os.ReadFile(sequence + ".index")
+	if err != nil || string(counter) != "3" {
+		t.Fatalf("retry ingress not reached: counter=%q err=%v", counter, err)
 	}
 }
 

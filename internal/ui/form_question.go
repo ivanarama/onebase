@@ -61,8 +61,15 @@ func expandQuestionVariants(v any) ([]string, error) {
 	if token, ok := knownQuestionVariants[strings.ToLower(s)]; ok {
 		return append([]string(nil), token...), nil
 	}
-	// Массив строк — произвольные подписи кнопок.
-	if arr, ok := v.([]any); ok {
+	// Массив строк — произвольные подписи кнопок. Из модуля приходит Массив
+	// интерпретатора (*interpreter.Array), а не срез Go: без его разбора
+	// обещанный вариант «массив строк» отвечал «неизвестный набор вариантов
+	// "Массив[2]"» на любом настоящем Новый Массив.
+	arr, ok := v.([]any)
+	if dslArray, isDSLArray := v.(*interpreter.Array); isDSLArray && dslArray != nil {
+		arr, ok = dslArray.Iterate(), true
+	}
+	if ok {
 		var out []string
 		for _, item := range arr {
 			label := strings.TrimSpace(fmt.Sprintf("%v", item))

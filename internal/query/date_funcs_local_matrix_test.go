@@ -34,6 +34,9 @@ func TestDateFunctionsUseApplicationLocalTime(t *testing.T) {
 		{name: "Asia/Kolkata", zoneName: "Asia/Kolkata"},
 		{name: "America/New_York", zoneName: "America/New_York"},
 		{name: "system Local without TZ", zoneName: "America/New_York", localName: "Local"},
+		// Зона без летнего времени на Windows/Linux без TZ: PostgreSQL получает
+		// смещение, и его знак обязан читаться по правилам POSIX.
+		{name: "system Local without TZ, no DST", zoneName: "Europe/Moscow", localName: "Local"},
 	}
 	for _, tt := range tests {
 		tt := tt
@@ -329,7 +332,7 @@ func zoneinfoRoot(t *testing.T) string {
 }
 
 func localBoundaryMoment(loc *time.Location, zoneName string, year int, month time.Month) time.Time {
-	if zoneName == "Asia/Kolkata" {
+	if _, offset := time.Date(year, month, 15, 12, 0, 0, 0, loc).Zone(); offset > 0 {
 		// В положительной зоне местная полночь хранится предыдущим UTC-днём.
 		return time.Date(year, month, 15, 0, 30, 0, 0, loc)
 	}
