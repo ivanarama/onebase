@@ -59,8 +59,48 @@ func cfgDBReadLeaseHeld(ctx context.Context, baseID string) bool {
 	return heldID == baseID
 }
 
+// rejectClientBaseConfig отказывает конфигуратору, обмену конфигурацией и
+// резервным копиям для записи КЛИЕНТСКОГО ПОДКЛЮЧЕНИЯ.
+//
+// Скрыть кнопку в списке баз было недостаточно: серверные маршруты оставались
+// доступны по прямому URL и из вкладки конфигуратора, оставшейся открытой после
+// переключения локальной базы в клиентскую. У такой записи пусты ConfigSource,
+// Path и DB, поэтому cfgAuthMiddleware открывал ей временную локальную SQLite и
+// при отсутствии пользователей пропускал запрос, а дальше configuratorSaveModule
+// уходил в файловую ветку, где SafeJoin с пустым Path направлял запись в текущий
+// рабочий каталог — существующий файл конфигурации перезаписывался присланным
+// текстом.
+//
+// Поэтому отказ стоит в НАЧАЛЕ обоих входных middleware: cfgDBReadMiddleware
+// закрывает конфигуратор, вход в него и обмен конфигурацией, cfgAuthMiddleware —
+// группы резервного копирования, у которых внешнего read-middleware нет вовсе
+// (full-export, restore, full-import). Проверка читает только реестр баз: ни БД,
+// ни файлов конфигурации она не касается.
+//
+// Конфигурация такой базы живёт на её сервере, там же и правится.
+func (h *handler) rejectClientBaseConfig(w http.ResponseWriter, r *http.Request) bool {
+	if h.store == nil {
+		return false
+	}
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		return false
+	}
+	base, err := h.store.Get(id)
+	if err != nil || !base.Client() {
+		return false
+	}
+	http.Error(w, "база «"+base.Name+"» — подключение к работающему серверу "+base.ServerURL+
+		": конфигуратор лаунчера к ней не применяется, конфигурация правится на самом сервере",
+		http.StatusConflict)
+	return true
+}
+
 func (h *handler) cfgDBReadMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.rejectClientBaseConfig(w, r) {
+			return
+		}
 		id := chi.URLParam(r, "id")
 		gate := cfgAuthDBGate(id)
 		gate.RLock()
@@ -363,6 +403,9 @@ func (h *handler) cfgLogout(w http.ResponseWriter, r *http.Request) {
 
 func (h *handler) cfgAuthMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if h.rejectClientBaseConfig(w, r) {
+			return
+		}
 		id := chi.URLParam(r, "id")
 		// Restore routes intentionally do not have the outer read middleware:
 		// authenticate under a short read lease, release it, then let the handler
