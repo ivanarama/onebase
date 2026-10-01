@@ -230,7 +230,10 @@ func (db *DB) writeAccountMovementsInTx(ctx context.Context, regName, docType st
 		for _, r := range ar.Resources {
 			col := metadata.ColumnName(r)
 			extraCols = append(extraCols, col)
-			value, err := normalizeRegField(d, r, ciGet(row, r.Name))
+			value, err := regWriteRefValue(ctx, r, ciGet(row, r.Name))
+			if err == nil {
+				value, err = normalizeRegField(d, r, value)
+			}
 			if err != nil {
 				return fmt.Errorf("account movement %s resource %s: %w", regName, r.Name, err)
 			}
@@ -240,7 +243,10 @@ func (db *DB) writeAccountMovementsInTx(ctx context.Context, regName, docType st
 			col := metadata.SubcontoColumn(i + 1)
 			val := subcontoArg(row, i+1, s.Name)
 			extraCols = append(extraCols, col)
-			value, err := normalizeRegField(d, s, val)
+			value, err := regWriteRefValue(ctx, s, val)
+			if err == nil {
+				value, err = normalizeRegField(d, s, value)
+			}
 			if err != nil {
 				return fmt.Errorf("account movement %s subconto %s: %w", regName, s.Name, err)
 			}

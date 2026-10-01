@@ -1395,6 +1395,7 @@
   "Платформа знает, как это исправить": "The platform knows how to fix this",
   "Пустые коды и номера будут проставлены платформой; уже заполненные значения не меняются. Это изменение данных базы.": "The platform will fill in the empty codes and numbers; values that are already set are left untouched. This changes the data in the database.",
   "записей без значения": "records with no value in",
+  "значение «%s» не является ссылкой на «%s» (похоже на представление: поле-ссылку из результата запроса выбирайте как «Поле.Ссылка»)": "value «%s» is not a reference to «%s» (looks like a presentation: select a reference field from a query result as «Field.Ref»)",
   "Дозаполнить и запустить": "Fill in and start",
   "Дозаполняю коды…": "Filling in codes…",
   "Дозаполнено записей": "Records filled in",
