@@ -118,6 +118,10 @@ type handler struct {
 	// clientProbeClient — HTTP-клиент для проверки доступности сервера
 	// клиентского подключения. Подменяется тестом; в production всегда nil.
 	clientProbeClient *http.Client
+	// companions запускает и отслеживает сопутствующие приложения рабочего
+	// места (companion.go). Может быть nil: часть тестов собирает handler
+	// литералом — тогда companion просто не поднимаются.
+	companions *companionRunner
 	// updateMu serializes every selfupdate state mutation, including the quiet
 	// watcher, so a stale network result cannot erase restart recovery state.
 	updateMu sync.Mutex
@@ -158,6 +162,8 @@ type baseVM struct {
 	AppName    string
 	AppVersion string
 	LogoBase64 string
+	// CompanionStates — состояние сопутствующих приложений этой базы.
+	CompanionStates []CompanionState
 }
 
 // baseStatuses возвращает статусы всех баз, обновляя протухшие записи кэша
@@ -278,6 +284,7 @@ func (h *handler) index(w http.ResponseWriter, r *http.Request) {
 	for _, b := range bases {
 		st := statuses[b.ID]
 		vm := &baseVM{Base: b, Running: st.running, BaseURL: h.runner.BaseURL(b),
+			CompanionStates: h.companionStates(b),
 			AppName: st.appName, AppVersion: st.appVersion}
 		if st.hasLogo {
 			vm.LogoBase64 = "/bases/" + b.ID + "/configurator/logo"
@@ -690,6 +697,7 @@ func (h *handler) ensureBaseReady(w http.ResponseWriter, r *http.Request, b *Bas
 			respondLog().Warn("не удалось сохранить отметку последнего открытия базы",
 				"baseID", b.ID, "err", err)
 		}
+		h.ensureCompanions(b)
 		return true
 	}
 	// Mint the persistent identity before the first liveness/adoption probe.
@@ -733,7 +741,35 @@ func (h *handler) ensureBaseReady(w http.ResponseWriter, r *http.Request, b *Bas
 		h.startFailure(w, r, b, err)
 		return false
 	}
+	h.ensureCompanions(b)
 	return true
+}
+
+// ensureCompanions поднимает сопутствующие приложения этой базы.
+//
+// Неудача запуска НЕ отменяет открытие рабочего места: приложение-помощник
+// важно, но работать без него — лучше, чем не работать вовсе. Отсутствие имени
+// в манифесте дистрибутива — вообще не ошибка этого запуска: лаунчер мог
+// обновиться без companion, и contact-центр не должен от этого встать.
+// Состояние видно в списке баз, причина — в журнале.
+// companionStates — состояние сопутствующих приложений для списка баз.
+func (h *handler) companionStates(b *Base) []CompanionState {
+	if h.companions == nil || b == nil || len(b.Companions) == 0 {
+		return nil
+	}
+	return h.companions.States(b.Companions)
+}
+
+func (h *handler) ensureCompanions(b *Base) {
+	if h.companions == nil || b == nil || len(b.Companions) == 0 {
+		return
+	}
+	for _, name := range b.Companions {
+		if err := h.companions.Ensure(name); err != nil {
+			respondLog().Warn("сопутствующее приложение не запущено",
+				"baseID", b.ID, "companion", name, "err", err)
+		}
+	}
 }
 
 func (h *handler) start(w http.ResponseWriter, r *http.Request) {
