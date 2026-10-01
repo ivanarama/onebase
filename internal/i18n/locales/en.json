@@ -698,6 +698,7 @@
   "не запустилось": "failed to start",
   "не запущено": "not started",
   "не поставлено с этим дистрибутивом": "not shipped with this distribution",
+  "завершилось — возможно, уже работало": "exited — it may have already been running",
   "Порядок": "Order",
   "Порядок должен быть целым числом": "Order must be an integer",
   "Последние документы": "Recent documents",

@@ -233,6 +233,7 @@ const tplIndex = `
     <div class="base-sub">
       {{if .Running}}🎧 {{.Name}} — {{t $.Lang "работает"}}
       {{else if .Failed}}🎧 {{.Name}} — {{t $.Lang "не запустилось"}}{{if .Err}}: {{.Err}}{{end}}
+      {{else if .Exited}}🎧 {{.Name}} &mdash; {{t $.Lang "завершилось — возможно, уже работало"}}
       {{else if not .Declared}}🎧 {{.Name}} — {{t $.Lang "не поставлено с этим дистрибутивом"}}
       {{else}}🎧 {{.Name}} — {{t $.Lang "не запущено"}}{{end}}
     </div>

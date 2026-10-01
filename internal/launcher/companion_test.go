@@ -162,3 +162,57 @@ func TestEnsureCompanionsToleratesMissingSetup(t *testing.T) {
 		t.Errorf("без объявленных companion состояний быть не должно: %v", got)
 	}
 }
+
+// Успешный выход — не падение. Так выглядят два обычных случая: пользователь
+// закрыл приложение и single-instance отдал управление уже работающему
+// экземпляру. Второе поймано на настоящем Callista Operator: запуск второго
+// дистрибутива поверх первого завершился с кодом 0 за секунды, и лаунчер
+// показывал «не запустилось» про работающее приложение.
+func TestCompanionSuccessfulExitIsNotFailure(t *testing.T) {
+	withLauncherDir(t, "companions:\n  softphone:\n    exec: sp.exe\n")
+	c := newCompanionRunner()
+	c.startCmd = func(*exec.Cmd) error { return nil }
+	if err := c.Ensure("softphone"); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+
+	// Процесс завершился сам, без ошибки — как при передаче управления.
+	c.mu.Lock()
+	p := c.procs["softphone"]
+	p.exited, p.exitErr = true, nil
+	c.mu.Unlock()
+
+	st := c.States([]string{"softphone"})[0]
+	if st.Failed {
+		t.Error("успешный выход показан как падение")
+	}
+	if !st.Exited {
+		t.Error("успешный выход не отмечен как завершение")
+	}
+	if st.Err != "" {
+		t.Errorf("у успешного выхода появился текст ошибки: %q", st.Err)
+	}
+}
+
+// Завершение С ОШИБКОЙ остаётся падением — иначе настоящая поломка станет
+// невидимой.
+func TestCompanionFailedExitStaysFailure(t *testing.T) {
+	withLauncherDir(t, "companions:\n  softphone:\n    exec: sp.exe\n")
+	c := newCompanionRunner()
+	c.startCmd = func(*exec.Cmd) error { return nil }
+	if err := c.Ensure("softphone"); err != nil {
+		t.Fatalf("Ensure: %v", err)
+	}
+	c.mu.Lock()
+	p := c.procs["softphone"]
+	p.exited, p.exitErr = true, errors.New("exit status 1")
+	c.mu.Unlock()
+
+	st := c.States([]string{"softphone"})[0]
+	if !st.Failed || st.Exited {
+		t.Errorf("завершение с ошибкой классифицировано неверно: %+v", st)
+	}
+	if !strings.Contains(st.Err, "exit status 1") {
+		t.Errorf("причина потеряна: %q", st.Err)
+	}
+}

@@ -107,3 +107,21 @@ func TestIndex_NoCompanionsNoRows(t *testing.T) {
 		t.Error("у базы без companion появилась строка состояния помощника")
 	}
 }
+
+// Успешный выход показывается отдельно от падения: иначе про работающее
+// приложение (single-instance отдал ему управление) лаунчер пишет «не
+// запустилось». Поймано на настоящем Callista Operator.
+func TestIndex_CompanionExitedIsNotShownAsFailure(t *testing.T) {
+	vm := &baseVM{
+		Base: &Base{ID: "c1", Name: "Сервер", ServerURL: "https://srv:8443",
+			Companions: []string{"softphone"}},
+		CompanionStates: []CompanionState{{Name: "softphone", Declared: true, Exited: true}},
+	}
+	html := renderIndex(t, []*baseVM{vm}, vm)
+	if strings.Contains(html, "не запустилось") {
+		t.Error("успешный выход показан как падение")
+	}
+	if !strings.Contains(html, "возможно, уже работало") {
+		t.Error("нет пояснения про уже работающее приложение")
+	}
+}

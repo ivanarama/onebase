@@ -146,9 +146,17 @@ type CompanionState struct {
 	Running bool
 	// Declared — имя объявлено манифестом дистрибутива.
 	Declared bool
-	// Failed — процесс завершился сам. Отличать это от «не запускали» важно:
-	// молчаливое «не работает» выглядит как будто companion и не был нужен.
+	// Failed — запуск не удался либо процесс завершился С ОШИБКОЙ. Отличать это
+	// от «не запускали» важно: молчаливое «не работает» выглядит как будто
+	// companion и не был нужен.
 	Failed bool
+	// Exited — процесс завершился САМ И УСПЕШНО (код 0). Это не ошибка и
+	// называть это падением нельзя: так выглядят сразу два обычных случая —
+	// пользователь закрыл приложение, и single-instance отдал управление уже
+	// работающему экземпляру (приложение при этом работает, просто не наш
+	// процесс). Проверено на Callista Operator: запуск второго дистрибутива
+	// поверх первого завершается с кодом 0 за секунды.
+	Exited bool
 	// Err — текст последней ошибки запуска или завершения, для панели лаунчера.
 	Err string
 }
@@ -258,11 +266,12 @@ func (c *companionRunner) States(names []string) []CompanionState {
 			switch {
 			case !p.exited:
 				st.Running = true
+			case p.exitErr == nil:
+				// Успешный выход. Падением это считать нельзя — см. CompanionState.Exited.
+				st.Exited = true
 			default:
 				st.Failed = true
-				if p.exitErr != nil {
-					st.Err = p.exitErr.Error()
-				}
+				st.Err = p.exitErr.Error()
 			}
 		}
 		out = append(out, st)
