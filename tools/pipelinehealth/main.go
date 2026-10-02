@@ -30,6 +30,8 @@ var (
 	baseSyncIntent    = regexp.MustCompile(`(?m)^<!-- pp:base-sync-intent from=([0-9a-f]{40}) base=([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) completion=([0-9]+) ship-event=([A-Za-z0-9_=-]+) previous=([0-9]+|none) -->$`)
 	baseSyncDone      = regexp.MustCompile(`(?m)^<!-- pp:base-sync-done intent=([0-9]+) from=([0-9a-f]{40}) to=([0-9a-f]{40}) base=([0-9a-f]{40}) previous=([0-9]+|none) ship-event=([A-Za-z0-9_=-]+) -->$`)
 	baseSyncV1Abort   = regexp.MustCompile(`(?m)^<!-- pp:base-sync-v1-aborted intent=([0-9]+) head=([0-9a-f]{40}) reason=commit-before-intent -->$`)
+	reviewedSHALine   = regexp.MustCompile(`(?m)^Reviewed-SHA: ([0-9a-f]{40})$`)
+	reviewOutcomeLine = regexp.MustCompile(`(?m)^Outcome-Label: (reviewed|changes-requested|needs-decision)$`)
 	triageRouteClaim  = regexp.MustCompile(`(?m)^<!-- pp:triage-route-claim fingerprint-sha256=([0-9a-f]{64}) owner=[0-9a-fA-F-]{36} -->$`)
 	triageRouteRecord = regexp.MustCompile(`(?m)(^pp-triage-route-v1\nissue=([0-9]+)\nissue-updated=[^\n]+\ntitle-sha256=[0-9a-f]{64}\nbody-sha256=[0-9a-f]{64}\nanalysis-sha256=[0-9a-f]{64}\ncomments-sha256=[0-9a-f]{64}\nlabels-sha256=[0-9a-f]{64}\nevents-watermark=(?:[0-9]+|none)\nclass=(?:bug|enhancement|question|documentation)\nroute=(ready-fix|needs-decision)\nmanual=(?:true|false)\nreply=(required|none)\n)`)
 	triageRouteLabels = regexp.MustCompile(`(?m)^<!-- pp:triage-route-labels claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) .+ -->$`)
@@ -102,6 +104,63 @@ type candidate struct {
 	PrioritySource string `json:"priority_source"`
 	UpdatedAt      string `json:"updated_at"`
 	IntegrationAt  string `json:"-"`
+	// BaseSyncCandidate описывает КАНДИДАТА на механический переход base-sync:
+	// двухродительскую форму HEAD и данные для проверок. Заполняется только для
+	// такой формы коммита; у обычного раунда доработки его нет.
+	BaseSyncCandidate *baseSyncCandidate `json:"base_sync_candidate,omitempty"`
+}
+
+// reviewPairState — насколько согласована committed-пара ревью исходной версии
+// ветки. Снимок проверяет только то, что видно в комментариях: существование
+// каждой части пары, совпадение SHA, идентификаторов и epoch между ними, а
+// также доверенность и неизменённость самих комментариев. Server-ordered epoch
+// по timeline снимок не восстанавливает — это остаётся потребителю.
+type reviewPairState string
+
+const (
+	reviewPairConsistent         reviewPairState = "consistent"
+	reviewPairMissing            reviewPairState = "missing"
+	reviewPairClaimMissing       reviewPairState = "claim_missing"
+	reviewPairClaimEpochMismatch reviewPairState = "claim_epoch_mismatch"
+	reviewPairReviewMissing      reviewPairState = "review_missing"
+	reviewPairReviewUntrusted    reviewPairState = "review_untrusted"
+	reviewPairSHAMismatch        reviewPairState = "review_sha_mismatch"
+	reviewPairOutcomeNotReviewed reviewPairState = "outcome_not_reviewed"
+)
+
+// reviewPairEvidence — то, что снимок нашёл про ревью исходной версии ветки.
+// Вердикт (OutcomeLabel) заполняется ТОЛЬКО при state=consistent: непроверенная
+// пара отдаётся идентификаторами без вердикта, чтобы её нельзя было принять за
+// готовое доказательство.
+type reviewPairEvidence struct {
+	State         reviewPairState `json:"state"`
+	SHA           string          `json:"sha,omitempty"`
+	ReviewComment int64           `json:"review_comment,omitempty"`
+	Claim         int64           `json:"claim,omitempty"`
+	Epoch         string          `json:"epoch_sha256,omitempty"`
+	Outcome       string          `json:"outcome_label,omitempty"`
+}
+
+// baseSyncCandidate — КАНДИДАТ на механический переход base-sync, а не его
+// доказательство. Снимок сообщает форму коммита и найденные данные; полностью
+// доказанным переход становится только после проверок, которые снимку
+// недоступны: предок base в текущем main, побайтовый пересчёт слияния,
+// обязательный CI на точном to и server-ordered epoch по timeline. Их список
+// отдаётся полем ConsumerMustVerify, чтобы граница ответственности читалась
+// машиной, а не подразумевалась.
+//
+// Опубликованные маркеры pp:base-sync-intent/done пересказывают ту же форму
+// коммита; opt-in путь base_sync_merge их намеренно не публикует, поэтому
+// кандидат существует и без них, а их отсутствие само по себе ничего не
+// доказывает.
+type baseSyncCandidate struct {
+	From                string              `json:"from"`
+	Base                string              `json:"base"`
+	To                  string              `json:"to"`
+	Source              string              `json:"source"`
+	FromReview          *reviewPairEvidence `json:"from_review,omitempty"`
+	CurrentHeadReviewed bool                `json:"current_head_reviewed"`
+	ConsumerMustVerify  []string            `json:"consumer_must_verify"`
 }
 
 type finding struct {
@@ -375,6 +434,7 @@ func analyze(prs []apiPull, owner string) report {
 		}
 		carryDone, carryIntentOpen, v1AbortCurrent, baseAdvanced, protocolHistory, integrationAt := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA, pr.HeadParents)
 		item.IntegrationAt = integrationAt
+		item.BaseSyncCandidate = baseSyncCandidateOf(pr, owner)
 		if baseAdvanced {
 			result.add("yellow", "base_sync_base_advanced", pr.Number,
 				"base сдвинулся между intent и done; GraphQL gate должен проверить actual parent и ancestry")
@@ -938,6 +998,143 @@ func needsHeadParents(pr apiPull) bool {
 // while a missed one only falls back to the full GraphQL gate in MERGE.
 func headIsBaseSyncMerge(pr apiPull) bool {
 	return len(pr.HeadParents) == 2
+}
+
+// baseSyncCandidateOf собирает кандидата для двухродительского HEAD. Первый
+// родитель — ветка до освежения, второй — влитая основная: такой порядок
+// оставляет и update-branch, и обычное слияние основной в ветку.
+//
+// Функция ничего не доказывает и не выдаёт разрешений: она сообщает форму
+// коммита и то, что видно про ревью исходной версии в комментариях.
+func baseSyncCandidateOf(pr apiPull, owner string) *baseSyncCandidate {
+	if !headIsBaseSyncMerge(pr) {
+		return nil
+	}
+	// Ревью ТЕКУЩЕГО HEAD проверяется тем же строгим контрактом, что и ревью
+	// исходной версии: одиночный completion, сиротский claim или несовпавший
+	// epoch committed-пары не образуют. Иначе поле обещало бы потребителю
+	// пару, которой нет, — а он машинный и спорить с именем не станет.
+	current := reviewPairFor(pr.Comments, owner, pr.Head.SHA)
+	return &baseSyncCandidate{
+		From:                pr.HeadParents[0],
+		Base:                pr.HeadParents[1],
+		To:                  pr.Head.SHA,
+		Source:              "head_parents",
+		CurrentHeadReviewed: current != nil && current.State == reviewPairConsistent,
+		FromReview:          reviewPairFor(pr.Comments, owner, pr.HeadParents[0]),
+		ConsumerMustVerify: []string{
+			"base_ancestry",
+			"merge_tree",
+			"required_checks",
+			"timeline_epoch",
+		},
+	}
+}
+
+// reviewPairFor проверяет связность committed-пары ревью указанной версии
+// ветки в пределах того, что видно снимку: completion, его claim и названное
+// заключение обязаны ссылаться друг на друга, совпадать по SHA и epoch и быть
+// доверенными неотредактированными комментариями.
+//
+// Несогласованная пара отдаётся идентификаторами БЕЗ вердикта: «нашёл
+// completion» и «ревью доказано» — разные утверждения, и снимок обязан
+// различать их явно.
+func reviewPairFor(comments []apiComment, owner, sha string) *reviewPairEvidence {
+	var completion *reviewPairEvidence
+	for _, comment := range comments {
+		if !trustedUnedited(comment, owner) {
+			continue
+		}
+		for _, match := range completionLine.FindAllStringSubmatch(comment.Body, -1) {
+			if !strings.EqualFold(match[1], sha) {
+				continue
+			}
+			reviewID, err := strconv.ParseInt(match[2], 10, 64)
+			if err != nil {
+				continue
+			}
+			claimID, err := strconv.ParseInt(match[3], 10, 64)
+			if err != nil {
+				continue
+			}
+			completion = &reviewPairEvidence{
+				SHA: sha, ReviewComment: reviewID, Claim: claimID, Epoch: match[4],
+			}
+		}
+	}
+	if completion == nil {
+		return &reviewPairEvidence{State: reviewPairMissing, SHA: sha}
+	}
+
+	claim := claimEvidence(comments, owner, completion.Claim)
+	switch {
+	case claim == nil:
+		completion.State = reviewPairClaimMissing
+		return completion
+	case !strings.EqualFold(claim.head, sha) || claim.reviewComment != completion.ReviewComment:
+		completion.State = reviewPairClaimMissing
+		return completion
+	case !strings.EqualFold(claim.epoch, completion.Epoch):
+		completion.State = reviewPairClaimEpochMismatch
+		return completion
+	}
+
+	conclusion, found := reviewConclusionBody(comments, completion.ReviewComment)
+	switch {
+	case !found:
+		completion.State = reviewPairReviewMissing
+		return completion
+	case !trustedUnedited(conclusion, owner):
+		completion.State = reviewPairReviewUntrusted
+		return completion
+	}
+	head := reviewedSHALine.FindStringSubmatch(conclusion.Body)
+	if head == nil || !strings.EqualFold(head[1], sha) {
+		completion.State = reviewPairSHAMismatch
+		return completion
+	}
+	outcome := reviewOutcomeLine.FindStringSubmatch(conclusion.Body)
+	if outcome == nil || outcome[1] != "reviewed" {
+		completion.State = reviewPairOutcomeNotReviewed
+		return completion
+	}
+	completion.State = reviewPairConsistent
+	completion.Outcome = outcome[1]
+	return completion
+}
+
+type claimShape struct {
+	head          string
+	reviewComment int64
+	epoch         string
+}
+
+// claimEvidence находит заявку публикации по её идентификатору комментария.
+func claimEvidence(comments []apiComment, owner string, id int64) *claimShape {
+	for _, comment := range comments {
+		if comment.ID != id || !trustedUnedited(comment, owner) {
+			continue
+		}
+		match := claimLine.FindStringSubmatch(comment.Body)
+		if match == nil {
+			return nil
+		}
+		reviewID, err := strconv.ParseInt(match[2], 10, 64)
+		if err != nil {
+			return nil
+		}
+		return &claimShape{head: match[1], reviewComment: reviewID, epoch: match[3]}
+	}
+	return nil
+}
+
+func reviewConclusionBody(comments []apiComment, id int64) (apiComment, bool) {
+	for _, comment := range comments {
+		if comment.ID == id {
+			return comment, true
+		}
+	}
+	return apiComment{}, false
 }
 
 func labelSet(labels []apiLabel) map[string]bool {

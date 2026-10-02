@@ -1291,6 +1291,42 @@ OS-песочницей: локальный процесс с доступом �
 Integration-stage и полный fallback сохраняют повторный глобальный
 allowlist/owner gate перед мутацией: без общей durable lane lease ослаблять их
 нельзя.
+
+У кандидата с двухродительским HEAD снимок дополнительно отдаёт поле
+`base_sync_candidate` — данные для механической проверки перехода, но не сам
+переход:
+
+```json
+"base_sync_candidate": {
+  "from": "<первый родитель: ветка до освежения>",
+  "base": "<второй родитель: влитая основная>",
+  "to": "<текущий HEAD>",
+  "source": "head_parents",
+  "from_review": {"state": "consistent", "sha": "…", "review_comment": 10,
+                  "claim": 20, "epoch_sha256": "…", "outcome_label": "reviewed"},
+  "current_head_reviewed": false,
+  "consumer_must_verify": ["base_ancestry", "merge_tree", "required_checks", "timeline_epoch"]
+}
+```
+
+Кто что проверяет:
+
+| Поле | Кто проверяет | Что означает |
+|---|---|---|
+| `from`, `base`, `to` | снимок | форма коммита: HEAD — слияние двух родителей |
+| `source` | снимок | откуда взяты SHA; `head_parents` — из графа, не из журнала |
+| `from_review.state` | снимок | связность committed-пары в комментариях: completion ↔ claim ↔ заключение, совпадение SHA и epoch, доверенность и неизменённость |
+| `from_review.outcome_label` | снимок | заполняется ТОЛЬКО при `state: consistent`; иначе пара отдаётся идентификаторами без вердикта |
+| `current_head_reviewed` | снимок | у текущего HEAD есть СВЯЗНАЯ committed-пара: completion ↔ claim ↔ заключение, тот же SHA и epoch, доверенные неизменённые маркеры, `Outcome-Label: reviewed`. Проверка та же, что у `from_review.state`; одиночный маркер парой не считается |
+| `consumer_must_verify` | потребитель | что снимок НЕ проверял: предок `base` в `main`, побайтовый пересчёт слияния, обязательный CI на точном `to`, server-ordered epoch по timeline |
+
+Поле описательное: оно не выдаёт разрешений, ни один gate не заменяет и не
+ослабляет. Опубликованные маркеры `pp:base-sync-intent/done` пересказывают ту же
+форму коммита; opt-in путь `base_sync_merge` их намеренно не публикует (ответ
+`update-branch` проверяется до любого публикуемого факта, конфликт 422 не должен
+оставлять ложное «готово»), поэтому кандидат существует и без них, а их
+отсутствие само по себе ничего не доказывает.
+
 На Windows preflight сначала ищет `gh` и `go` в `PATH`, затем проверяет
 стандартные `C:\Program Files\GitHub CLI\gh.exe` и
 `C:\Program Files\Go\bin\go.exe`. На POSIX сначала используется `command -v`,
