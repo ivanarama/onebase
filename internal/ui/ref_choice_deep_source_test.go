@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -68,6 +69,7 @@ func newDeepChoiceFixture(t *testing.T) deepChoiceFixture {
 			{Name: "Наименование", Type: metadata.FieldTypeString},
 			{Name: "Группа", Type: metadata.FieldType("reference:" + group.Name), RefEntity: group.Name},
 			{Name: "Секретный", Type: metadata.FieldTypeBool},
+			{Name: "Аудитория", Type: metadata.FieldTypeString},
 		},
 	}
 	form := &metadata.FormModule{
@@ -131,17 +133,18 @@ func newDeepChoiceFixture(t *testing.T) deepChoiceFixture {
 		}
 	}
 	for _, row := range []struct {
-		id     uuid.UUID
-		name   string
-		group  uuid.UUID
-		secret bool
+		id       uuid.UUID
+		name     string
+		group    uuid.UUID
+		secret   bool
+		audience string
 	}{
-		{deepChoiceUUID(0x30, 1), "Не включается", fixture.groupOne, false},
-		{deepChoiceUUID(0x30, 2), "Течёт", fixture.groupTwo, true},
-		{deepChoiceUUID(0x30, 3), "Шумит", fixture.groupOne, false},
+		{deepChoiceUUID(0x30, 1), "Не включается", fixture.groupOne, false, "anna"},
+		{deepChoiceUUID(0x30, 2), "Течёт", fixture.groupTwo, true, "bob"},
+		{deepChoiceUUID(0x30, 3), "Шумит", fixture.groupOne, false, "anna"},
 	} {
 		if err := db.Upsert(ctx, target.Name, row.id, map[string]any{
-			"Наименование": row.name, "Группа": row.group.String(), "Секретный": row.secret,
+			"Наименование": row.name, "Группа": row.group.String(), "Секретный": row.secret, "Аудитория": row.audience,
 		}, target); err != nil {
 			t.Fatalf("seed fault: %v", err)
 		}
@@ -161,11 +164,21 @@ func newDeepChoiceFixture(t *testing.T) deepChoiceFixture {
 
 func TestManagedDeepChoiceInitialRenderUsesSavedDirection(t *testing.T) {
 	f := newDeepChoiceFixture(t)
+	options := f.initialOptions(t, deepChoiceUser(nil))
+	if len(options) != 2 || !options[deepChoiceUUID(0x30, 1).String()] || !options[deepChoiceUUID(0x30, 3).String()] {
+		t.Fatalf("initial deep choice options = %v, want only group 1", options)
+	}
+}
+
+// initialOptions открывает сохранённую заявку и возвращает варианты, которые
+// сервер отрисовал в поле подбора неисправности.
+func (f deepChoiceFixture) initialOptions(t *testing.T, user *auth.User) map[string]bool {
+	t.Helper()
 	router := chi.NewRouter()
 	f.server.Mount(router)
 	request := httptest.NewRequest(http.MethodGet,
 		"/ui/document/"+url.PathEscape(f.owner.Name)+"/"+f.ownerID.String(), nil)
-	request = request.WithContext(auth.ContextWithUser(request.Context(), deepChoiceUser(nil)))
+	request = request.WithContext(auth.ContextWithUser(request.Context(), user))
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK {
@@ -188,9 +201,7 @@ func TestManagedDeepChoiceInitialRenderUsesSavedDirection(t *testing.T) {
 			options[value] = true
 		}
 	}
-	if len(options) != 2 || !options[deepChoiceUUID(0x30, 1).String()] || !options[deepChoiceUUID(0x30, 3).String()] {
-		t.Fatalf("initial deep choice options = %v, want only group 1", options)
-	}
+	return options
 }
 
 // deepChoiceUser — оператор: читает все три справочника, но видит только свои
@@ -212,6 +223,11 @@ func deepChoiceUser(policies auth.FieldPolicies) *auth.User {
 
 func (f deepChoiceFixture) request(t *testing.T, user *auth.User, sources map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
+	return f.requestWith(t, user, sources, nil)
+}
+
+func (f deepChoiceFixture) requestWith(t *testing.T, user *auth.User, sources map[string]string, extra url.Values) *httptest.ResponseRecorder {
+	t.Helper()
 	encoded, err := json.Marshal(sources)
 	if err != nil {
 		t.Fatal(err)
@@ -222,6 +238,9 @@ func (f deepChoiceFixture) request(t *testing.T, user *auth.User, sources map[st
 		"element":     {"fault-picker"},
 		"sources":     {string(encoded)},
 		"limit":       {"100"},
+	}
+	for key, values := range extra {
+		query[key] = values
 	}
 	router := chi.NewRouter()
 	f.server.Mount(router)
@@ -317,6 +336,140 @@ func TestRefOptionsDeepChoiceSourceReadsIntermediateUnderUserRights(t *testing.T
 	})
 }
 
+// Строковый конец пути: строковый реквизит цели сравнивается со строковым
+// реквизитом посредника — так дом адресного классификатора подбирается по ИД
+// улицы (ВладелецКод). Браузер по-прежнему присылает только ссылку ведущего
+// поля, а права посредника и полевая маска действуют так же, как для ссылки.
+func TestRefOptionsDeepChoiceStringSourceReadsIntermediateUnderUserRights(t *testing.T) {
+	f := newDeepChoiceFixture(t)
+	f.owner.Forms[0].Elements[1].ChoiceFilter = []metadata.FormChoiceCondition{{
+		Field: "Аудитория", Op: metadata.FormChoiceOpEqual, From: "Объект.Направление.Аудитория",
+	}}
+	user := deepChoiceUser(nil)
+	serve := func(user *auth.User, source string) *httptest.ResponseRecorder {
+		return f.request(t, user, map[string]string{"Объект.Направление.Аудитория": source})
+	}
+
+	t.Run("отбор идёт по строковому реквизиту выбранного направления", func(t *testing.T) {
+		labels := f.labels(t, serve(user, f.directionA.String()))
+		sort.Strings(labels)
+		if strings.Join(labels, ",") != "Не включается,Шумит" {
+			t.Fatalf("ожидались неисправности аудитории anna, получено %v", labels)
+		}
+	})
+
+	t.Run("текущее значение проверяется тем же отбором", func(t *testing.T) {
+		sources := map[string]string{"Объект.Направление.Аудитория": f.directionA.String()}
+		for selected, want := range map[uuid.UUID]bool{deepChoiceUUID(0x30, 3): true, deepChoiceUUID(0x30, 2): false} {
+			response := decodeChoiceHTTP(t, f.requestWith(t, user, sources, url.Values{"selected_id": {selected.String()}}))
+			if response.SelectedAllowed == nil || *response.SelectedAllowed != want {
+				t.Fatalf("selected %s: selected_allowed=%v, want %v", selected, response.SelectedAllowed, want)
+			}
+		}
+	})
+
+	t.Run("первая отрисовка формы отбирает по строке сохранённого направления", func(t *testing.T) {
+		// У направления B группа 2 и аудитория anna: отбор по группе дал бы
+		// «Течёт», по аудитории — «Не включается» и «Шумит».
+		if err := f.server.store.Upsert(context.Background(), f.owner.Name, f.ownerID, map[string]any{
+			"Направление": f.directionB.String(),
+		}, f.owner); err != nil {
+			t.Fatal(err)
+		}
+		options := f.initialOptions(t, user)
+		if len(options) != 2 || !options[deepChoiceUUID(0x30, 1).String()] || !options[deepChoiceUUID(0x30, 3).String()] {
+			t.Fatalf("initial string choice options = %v, want audience anna", options)
+		}
+	})
+
+	t.Run("закрытый строковым доступом посредник даёт пустую выдачу", func(t *testing.T) {
+		// Аудитория направления C — bob: прочитай сервер его в обход прав,
+		// в выдаче оказался бы «Течёт».
+		if labels := f.labels(t, serve(user, f.directionC.String())); len(labels) != 0 {
+			t.Fatalf("направление чужого оператора раскрыло свою аудиторию: %v", labels)
+		}
+	})
+
+	t.Run("несуществующий посредник неотличим от закрытого", func(t *testing.T) {
+		if labels := f.labels(t, serve(user, deepChoiceUUID(0x20, 99).String())); len(labels) != 0 {
+			t.Fatalf("выдача по несуществующей записи: %v", labels)
+		}
+	})
+
+	t.Run("реквизит под полевой политикой не участвует в отборе", func(t *testing.T) {
+		for _, strategy := range []string{"hide", "mask_all"} {
+			masked := deepChoiceUser(auth.FieldPolicies{"Аудитория": auth.FieldPolicy{Read: strategy}})
+			if labels := f.labels(t, serve(masked, f.directionA.String())); len(labels) != 0 {
+				t.Fatalf("политика %q обойдена подбором: %v", strategy, labels)
+			}
+		}
+	})
+
+	t.Run("браузер не подставляет строку вместо ссылки", func(t *testing.T) {
+		if recorder := serve(user, "anna"); recorder.Code != http.StatusBadRequest {
+			t.Fatalf("строка принята как значение источника: status=%d body=%s", recorder.Code, recorder.Body.String())
+		}
+	})
+
+	t.Run("пустой или NULL-реквизит посредника не отбирает записи с пустым реквизитом", func(t *testing.T) {
+		ctx := context.Background()
+		for number, audience := range map[int]string{7: "", 8: "   "} {
+			if err := f.server.store.Upsert(ctx, f.target.Name, deepChoiceUUID(0x30, number), map[string]any{
+				"Наименование": fmt.Sprintf("Аудитория %q", audience), "Аудитория": audience,
+			}, f.target); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Строковый доступ снят, чтобы направление без аудитории было видно:
+		// выдача пуста из-за пустого значения, а не из-за прав.
+		open := deepChoiceUser(nil)
+		open.Roles[0].Permissions.RowAccess = auth.RowAccess{}
+		for number, audience := range map[int]any{5: "", 6: "   ", 10: nil} {
+			empty := deepChoiceUUID(0x20, number)
+			if err := f.server.store.Upsert(ctx, "Направление", empty, map[string]any{
+				"Наименование": fmt.Sprintf("Направление %d", number), "Аудитория": audience,
+			}, f.server.reg.GetEntity("Направление")); err != nil {
+				t.Fatal(err)
+			}
+			if labels := f.labels(t, serve(open, empty.String())); len(labels) != 0 {
+				t.Fatalf("аудитория %#v отобрала записи: %v", audience, labels)
+			}
+		}
+	})
+
+	t.Run("значение посредника сравнивается точно", func(t *testing.T) {
+		padded := deepChoiceUUID(0x20, 9)
+		if err := f.server.store.Upsert(context.Background(), "Направление", padded, map[string]any{
+			"Наименование": "Направление F", "Аудитория": "anna ",
+		}, f.server.reg.GetEntity("Направление")); err != nil {
+			t.Fatal(err)
+		}
+		open := deepChoiceUser(nil)
+		open.Roles[0].Permissions.RowAccess = auth.RowAccess{}
+		if labels := f.labels(t, serve(open, padded.String())); len(labels) != 0 {
+			t.Fatalf("«anna » с пробелом отобрала записи «anna»: %v", labels)
+		}
+	})
+
+	// Последним: подтест меняет условие формы.
+	t.Run("несовместимый род конца пути — ошибка до чтения записи", func(t *testing.T) {
+		for _, condition := range []metadata.FormChoiceCondition{
+			{Field: "Группа", Op: metadata.FormChoiceOpEqual, From: "Объект.Направление.Аудитория"},
+			{Field: "Аудитория", Op: metadata.FormChoiceOpEqual, From: "Объект.Направление.ГруппаНеисправностей"},
+		} {
+			f.owner.Forms[0].Elements[1].ChoiceFilter = []metadata.FormChoiceCondition{condition}
+			// Одинаковый ответ для существующей и несуществующей записи: иначе
+			// ошибка выдавала бы, есть ли запись.
+			for _, source := range []uuid.UUID{f.directionA, deepChoiceUUID(0x20, 99)} {
+				recorder := f.request(t, user, map[string]string{condition.From: source.String()})
+				if recorder.Code != http.StatusBadRequest {
+					t.Fatalf("%s ← %s, источник %s: status=%d body=%s", condition.Field, condition.From, source, recorder.Code, recorder.Body.String())
+				}
+			}
+		}
+	})
+}
+
 func TestRefOptionsBooleanLiteralRespectsTargetFieldPolicy(t *testing.T) {
 	f := newDeepChoiceFixture(t)
 	value := false
@@ -345,5 +498,55 @@ func TestRefOptionsBooleanLiteralRespectsTargetFieldPolicy(t *testing.T) {
 			t.Fatalf("hide and mask_all returned distinguishable results: %q vs %q", hiddenResponse, response.Body.String())
 		}
 		hiddenResponse = response.Body.String()
+	}
+}
+
+func TestRefOptionsDeepChoiceStringTargetFieldPolicyNormalizesName(t *testing.T) {
+	for _, field := range []string{"Аудитория", " Аудитория ", "\tаУдИтОрИя\u00a0"} {
+		t.Run(field, func(t *testing.T) {
+			f := newDeepChoiceFixture(t)
+			f.owner.Forms[0].Elements[1].ChoiceFilter = []metadata.FormChoiceCondition{{
+				Field: field, Op: metadata.FormChoiceOpEqual, From: "Объект.Направление.Аудитория",
+			}}
+			sources := map[string]string{"Объект.Направление.Аудитория": f.directionA.String()}
+			extra := url.Values{"selected_id": {deepChoiceUUID(0x30, 1).String()}}
+			open := deepChoiceUser(nil)
+			response := f.requestWith(t, open, sources, extra)
+			if response.Code != http.StatusOK {
+				t.Fatalf("unmasked status=%d body=%s", response.Code, response.Body.String())
+			}
+			got := decodeChoiceHTTP(t, response)
+			if got.Total != 2 || len(got.Items) != 2 || got.SelectedAllowed == nil || !*got.SelectedAllowed {
+				t.Fatalf("unmasked string filter should find two rows and allow the selection: %#v", got)
+			}
+			if options := f.initialOptions(t, open); len(options) != 2 {
+				t.Fatalf("unmasked initial options=%v, want two", options)
+			}
+
+			var hiddenResponse string
+			for _, strategy := range []string{"hide", "mask_all"} {
+				t.Run(strategy, func(t *testing.T) {
+					user := deepChoiceUser(nil)
+					user.Roles[0].Permissions.FieldAccess.Catalogs = map[string]auth.FieldPolicies{
+						f.target.Name: {"Аудитория": {Read: strategy}},
+					}
+					response := f.requestWith(t, user, sources, extra)
+					if response.Code != http.StatusOK {
+						t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+					}
+					got := decodeChoiceHTTP(t, response)
+					if got.Total != 0 || len(got.Items) != 0 || got.SelectedAllowed == nil || *got.SelectedAllowed {
+						t.Fatalf("masked target leaked its string via choice results: %#v", got)
+					}
+					if hiddenResponse != "" && response.Body.String() != hiddenResponse {
+						t.Fatalf("hide and mask_all responses differ: %q vs %q", hiddenResponse, response.Body.String())
+					}
+					hiddenResponse = response.Body.String()
+					if options := f.initialOptions(t, user); len(options) != 0 {
+						t.Fatalf("masked target leaked its string via initial options: %v", options)
+					}
+				})
+			}
+		})
 	}
 }

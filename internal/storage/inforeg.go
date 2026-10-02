@@ -311,6 +311,19 @@ func (db *DB) InfoRegListWithKeyValues(ctx context.Context, ir *metadata.InfoReg
 	return db.infoRegList(ctx, ir, f, true)
 }
 
+// InfoRegPageWithKeyValues returns a bounded UI page with display periods and
+// lossless delete keys. Unlike InfoRegListWithKeyValues it never selects all rows.
+func (db *DB) InfoRegPageWithKeyValues(ctx context.Context, ir *metadata.InfoRegister, f RegFilter, limit, offset int) ([]map[string]any, error) {
+	if limit <= 0 || limit > MaxListPageSize || offset < 0 {
+		return nil, fmt.Errorf("info reg page %s: invalid limit or offset", ir.Name)
+	}
+	raw, err := db.infoRegSelect(ctx, ir, f, true, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return infoRegListRows(ir, raw), nil
+}
+
 // InfoRegPage — страница записей для машинных потребителей (REST, issue #1423).
 // От InfoRegList отличается двумя вещами, и обе существенны.
 //

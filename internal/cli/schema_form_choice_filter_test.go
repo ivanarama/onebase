@@ -30,7 +30,7 @@ func TestSchemaFormPublishesChoiceFilterContract(t *testing.T) {
 	properties := schemaAt(t, condition, "properties")
 	op := schemaAt(t, properties, "op")
 	values, ok := op["enum"].([]any)
-	if !ok || len(values) != 2 || values[0] != "eq" || values[1] != "in_hierarchy" {
+	if !ok || len(values) != 3 || values[0] != "eq" || values[1] != "eq_or_empty" || values[2] != "in_hierarchy" {
 		t.Fatalf("operator enum = %#v", op["enum"])
 	}
 	if schemaAt(t, properties, "value")["type"] != "boolean" {

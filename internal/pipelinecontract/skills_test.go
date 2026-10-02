@@ -1865,6 +1865,24 @@ func TestTailMergedWindowUsesNativeDateArithmeticOnEveryWorkerOS(t *testing.T) {
 	)
 }
 
+func TestTailLegacyTitleSeparatorDoesNotStopOtherPRs(t *testing.T) {
+	tail := skill(t, "tail-issues")
+	review := skill(t, "review-queue")
+	legacy := repositoryFile(t, ".claude", "skills", "review-queue", "references", "legacy-protocol.md")
+	requireAllCompact(t, tail,
+		"канонический `→ заголовок:`",
+		"`— заголовок:`",
+		"совместимость с заключениями #1789 и #1848",
+		"заключения PR #1848",
+		"единственное ` Заголовок: «…»`",
+		"`item-sha256` по-прежнему",
+		"**fail closed для этого PR**",
+		"Продолжи другие PR из той же очереди",
+	)
+	requireAllCompact(t, review, "канонического `→ заголовок:`", "`— заголовок:` в новых заключениях не публикуй")
+	requireAllCompact(t, legacy, "REVIEW его не создаёт")
+}
+
 func TestMaintenanceGuideDocumentsEquivalentWindowsAndMacOSPreparation(t *testing.T) {
 	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
 	requireAllCompact(t, docs,

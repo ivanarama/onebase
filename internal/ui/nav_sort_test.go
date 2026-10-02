@@ -80,7 +80,7 @@ func requireNavURLOrder(t *testing.T, body string, urls ...string) {
 	}
 }
 
-func TestIndex_SortsNavigationByVisibleLocalizedLabel(t *testing.T) {
+func TestIndex_GlobalSortsByLabelAndSubsystemUsesContentsOrder(t *testing.T) {
 	s := newNavSortServer(t)
 
 	tests := []struct {
@@ -115,9 +115,9 @@ func TestIndex_SortsNavigationByVisibleLocalizedLabel(t *testing.T) {
 			subsystem: "Sales",
 			urls: []string{
 				"/ui/catalog/ZCatalog?subsystem=Sales",
-				"/ui/catalog/ATie?subsystem=Sales",
-				"/ui/catalog/BTie?subsystem=Sales",
 				"/ui/catalog/ACatalog?subsystem=Sales",
+				"/ui/catalog/BTie?subsystem=Sales",
+				"/ui/catalog/ATie?subsystem=Sales",
 			},
 		},
 		{
@@ -125,10 +125,10 @@ func TestIndex_SortsNavigationByVisibleLocalizedLabel(t *testing.T) {
 			lang:      "en",
 			subsystem: "Sales",
 			urls: []string{
-				"/ui/catalog/ACatalog?subsystem=Sales",
-				"/ui/catalog/ATie?subsystem=Sales",
-				"/ui/catalog/BTie?subsystem=Sales",
 				"/ui/catalog/ZCatalog?subsystem=Sales",
+				"/ui/catalog/ACatalog?subsystem=Sales",
+				"/ui/catalog/BTie?subsystem=Sales",
+				"/ui/catalog/ATie?subsystem=Sales",
 			},
 		},
 	}
@@ -156,4 +156,44 @@ func TestIndex_SortsNavigationByFinalLabelsWithSuffixes(t *testing.T) {
 		"/ui/report/zreport",
 		"/ui/report/areport",
 	)
+}
+
+func TestIndex_ContentsPreservesRegisterViewsAndReportOrder(t *testing.T) {
+	s := newNavSortServer(t)
+	sub := s.reg.GetSubsystem("Sales")
+	sub.Contents.Registers = []string{"ARegister", "ZRegister"}
+	sub.Contents.Reports = []string{"AReport", "ZReport"}
+	body := renderIndexForNavSort(t, s, "ru", "Sales")
+	requireNavURLOrder(t, body,
+		"/ui/register/aregister?subsystem=Sales",
+		"/ui/register/aregister/balances?subsystem=Sales",
+		"/ui/register/zregister?subsystem=Sales",
+		"/ui/register/zregister/balances?subsystem=Sales",
+	)
+	requireNavURLOrder(t, body, "/ui/report/areport?subsystem=Sales", "/ui/report/zreport?subsystem=Sales")
+}
+
+func TestIndex_GlobalNavNilEmptyAndScopedOrder(t *testing.T) {
+	for _, mode := range []string{"nil", "empty", "scoped"} {
+		t.Run(mode, func(t *testing.T) {
+			s := newNavSortServer(t)
+			home := &metadata.HomePage{}
+			if mode == "empty" {
+				home.Nav = &metadata.SubsystemContents{}
+			}
+			if mode == "scoped" {
+				home.Nav = &metadata.SubsystemContents{Catalogs: []string{"ZCatalog", "ACatalog"}}
+			}
+			s.reg.LoadHomePage(home)
+			body := renderIndexForNavSort(t, s, "en", "")
+			if mode == "scoped" {
+				requireNavURLOrder(t, body, "/ui/catalog/ZCatalog", "/ui/catalog/ACatalog")
+				if strings.Contains(body, `href="/ui/catalog/ATie"`) {
+					t.Fatal("scoped nav exposed an unlisted target")
+				}
+			} else {
+				requireNavURLOrder(t, body, "/ui/catalog/ACatalog", "/ui/catalog/ATie", "/ui/catalog/BTie", "/ui/catalog/ZCatalog")
+			}
+		})
+	}
 }

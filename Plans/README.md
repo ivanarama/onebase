@@ -454,6 +454,7 @@
 |---|---|---|---|---|
 | 163 | [163-next-slice-handoff.md](163-next-slice-handoff.md) | Crash-safe handoff между последовательными PR-срезами одной issue: committed merge boundary, уникальный branch-claim, recovery и наблюдаемость (#1379) | ~10–15 дней | 📋 Проектирование |
 | 180 | [180-base-sync-head-transition-proof.md](180-base-sync-head-transition-proof.md) | Доказательство перехода HEAD при base-sync без зависимости от даты commit: точный to, CAS, recovery и миграция carry (#1561) | ~7–11 дней | 📋 Проектирование |
+| 195 | [195-review-technical-handoff.md](195-review-technical-handoff.md) | Типизированные блокеры REVIEW, конечный технический handoff под флагом и отдельные продуктовые/инженерные статусы в OneBase и PromptPilot (#1836) | ~11–17 дней | 📋 Проектирование |
 
 ### Направление У — надёжность развёртывания и восстановления
 

@@ -208,6 +208,12 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 	params.Limit = extra.Limit
 	params.Offset = extra.Offset
 	params.ChoicePredicates = extra.ChoicePredicates
+	// choice_folders: элемент формы разрешил выбирать группы — снимаем неявный
+	// запрет подбора, но оставляем остальные его правила (активность, права).
+	if extra.IncludeFolders {
+		params.IncludeFolders = true
+		params.ExcludeFolders = false
+	}
 	var err error
 	params, err = s.rowFilterFor(ctx, refEntity, "read", params)
 	if err != nil {
@@ -220,7 +226,7 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 	// The legacy picker never offered catalog groups. An explicit is_folder
 	// choice condition is the opt-in exception from plan 170; storage already
 	// applies its true/false value and replaces the implicit folder scope.
-	if !hasChoiceFolderScope(params.ChoicePredicates) {
+	if !hasChoiceFolderScope(params.ChoicePredicates) && !params.IncludeFolders {
 		rows = filterOutFolders(rows)
 	}
 	// План 88: picker маскирует чувствительные поля до вычисления подписи и до
@@ -248,6 +254,10 @@ func (s *Server) referenceOptionsPageWithParams(ctx context.Context, refEntity *
 	countParams.Filters = extra.Filters
 	countParams.Search = strings.TrimSpace(search)
 	countParams.ChoicePredicates = extra.ChoicePredicates
+	if extra.IncludeFolders {
+		countParams.IncludeFolders = true
+		countParams.ExcludeFolders = false
+	}
 	countParams, err = s.rowFilterFor(ctx, refEntity, "read", countParams)
 	if err != nil {
 		return nil, 0, err

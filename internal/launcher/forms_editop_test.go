@@ -14,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/ivantit66/onebase/internal/dsl/loader"
+	"github.com/ivantit66/onebase/internal/metadata"
 )
 
 // HTTP-уровень: маршрут /forms/edit-op доходит до handler'а, парсит форму,
@@ -599,7 +600,7 @@ elements:
 	form := url.Values{
 		"op":            {"setChoiceFilter"},
 		"node":          {"elements.0"},
-		"choice_filter": {`[{"field":"Направление","op":"in_hierarchy","from":"Объект.Направление"},{"field":"is_folder","op":"eq","value":false}]`},
+		"choice_filter": {`[{"field":"Направление","op":"in_hierarchy","from":"Объект.Направление"},{"field":"is_folder","op":"eq","value":false},{"field":"Филиал","op":"eq_or_empty","from":"Объект.Филиал"}]`},
 		"yaml":          {src},
 	}
 	req := httptest.NewRequest(http.MethodPost, "/bases/"+b.ID+"/configurator/forms/edit-op", strings.NewReader(form.Encode()))
@@ -621,11 +622,14 @@ elements:
 		t.Fatalf("ok=false: %v", response.Errors)
 	}
 	conditions := response.Model["elements.0"].ChoiceFilter
-	if len(conditions) != 2 || conditions[0].Field != "Направление" || conditions[0].From != "Объект.Направление" {
+	if len(conditions) != 3 || conditions[0].Field != "Направление" || conditions[0].From != "Объект.Направление" {
 		t.Fatalf("ordered choice_filter was lost in model: %+v", conditions)
 	}
 	if conditions[1].Field != "is_folder" || conditions[1].Value == nil || *conditions[1].Value {
 		t.Fatalf("typed value:false was lost in model: %+v", conditions[1])
+	}
+	if conditions[2].Op != "eq_or_empty" || conditions[2].From != "Объект.Филиал" {
+		t.Fatalf("eq_or_empty was lost in model: %+v", conditions[2])
 	}
 	first := strings.Index(response.YAML, "field: Направление")
 	second := strings.Index(response.YAML, "field: is_folder")
@@ -647,11 +651,11 @@ elements:
 	if err != nil {
 		t.Fatalf("reload edited form: %v", err)
 	}
-	if len(loaded.Elements) != 1 || len(loaded.Elements[0].ChoiceFilter) != 2 {
+	if len(loaded.Elements) != 1 || len(loaded.Elements[0].ChoiceFilter) != 3 {
 		t.Fatalf("choice_filter was lost after save/load: %+v", loaded.Elements)
 	}
 	reloaded := loaded.Elements[0].ChoiceFilter
-	if reloaded[0].Field != "Направление" || reloaded[1].Value == nil || *reloaded[1].Value {
+	if reloaded[0].Field != "Направление" || reloaded[1].Value == nil || *reloaded[1].Value || reloaded[2].Op != "eq_or_empty" || reloaded[2].From != "Объект.Филиал" {
 		t.Fatalf("choice_filter semantics changed after save/load: %+v", reloaded)
 	}
 }
@@ -729,5 +733,65 @@ elements:
 	}
 	if reloaded[1].Value == nil || *reloaded[1].Value {
 		t.Fatalf("литерал false потерян после сохранения: %+v", reloaded[1])
+	}
+}
+
+// parent_id (#1819) редактор сохраняет так же, как ссылочный реквизит: имя
+// служебного поля, оператор и глубокий источник доезжают до YAML и обратно.
+func TestConfiguratorChoiceFilter_ParentIDRoundTrip(t *testing.T) {
+	s := &Store{path: filepath.Join(t.TempDir(), "ibases.yaml")}
+	b := &Base{Path: t.TempDir(), ConfigSource: "file"}
+	if err := s.Add(b); err != nil {
+		t.Fatalf("Add base: %v", err)
+	}
+	h := &handler{store: s}
+	src := `schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Звонок
+elements:
+  - id: group-picker
+    kind: ПолеВвода
+    name: ПолеТоварнаяГруппа
+    data_path: Объект.ТоварнаяГруппа
+`
+	form := url.Values{
+		"op":            {"setChoiceFilter"},
+		"node":          {"elements.0"},
+		"choice_filter": {`[{"field":"parent_id","op":"in_hierarchy","from":"Объект.Направление.ТоварнаяГруппа"},{"field":"is_folder","op":"eq","value":false}]`},
+		"yaml":          {src},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/bases/"+b.ID+"/configurator/forms/edit-op", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("id", b.ID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+	recorder := httptest.NewRecorder()
+	h.configuratorFormsEditOp(recorder, req)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", recorder.Code, recorder.Body.String())
+	}
+	var response editOpResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v; body=%s", err, recorder.Body.String())
+	}
+	if !response.OK {
+		t.Fatalf("ok=false: %v", response.Errors)
+	}
+	yamlPath := filepath.Join(t.TempDir(), "form.form.yaml")
+	if err := os.WriteFile(yamlPath, []byte(response.YAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := loader.NewManagedFormLoader().LoadFormFile(yamlPath, "Звонок")
+	if err != nil {
+		t.Fatalf("reload edited form: %v", err)
+	}
+	if len(loaded.Elements) != 1 || len(loaded.Elements[0].ChoiceFilter) != 2 {
+		t.Fatalf("choice_filter lost after save/load: %+v", loaded.Elements)
+	}
+	parent := loaded.Elements[0].ChoiceFilter[0]
+	if parent.Field != "parent_id" || parent.Op != metadata.FormChoiceOpInHierarchy || parent.From != "Объект.Направление.ТоварнаяГруппа" {
+		t.Fatalf("parent_id condition changed on round trip: %+v", parent)
 	}
 }

@@ -36,6 +36,12 @@ var ibasesListCmd = &cobra.Command{
 		// который проверяется ниже, — поэтому здесь ошибки нет по построению.
 		tabln(tw, "ID\tNAME\tSOURCE\tPORT\tDB")
 		for _, b := range bases {
+			// У клиентского подключения ни источника конфигурации, ни порта нет:
+			// печатать "database" и 0 значило бы соврать про запись.
+			if b.Client() {
+				tabf(tw, "%s\t%s\t%s\t%s\t%s\n", b.ID[:8]+"…", b.Name, "client", "—", b.ServerURL)
+				continue
+			}
 			dbLabel := b.DB
 			if b.DBType == "sqlite" {
 				dbLabel = b.DBPath
@@ -56,9 +62,33 @@ var ibasesAddCmd = &cobra.Command{
 		path, _ := cmd.Flags().GetString("path")
 		port, _ := cmd.Flags().GetInt("port")
 		src, _ := cmd.Flags().GetString("source")
+		server, _ := cmd.Flags().GetString("server")
 
 		if name == "" {
 			return fmt.Errorf("--name is required")
+		}
+		// Клиентское подключение: ни БД, ни конфигурации, ни порта у записи нет.
+		// Проверки ниже требуют --db или --sqlite, поэтому путь отдельный.
+		if server != "" {
+			if db != "" || sqlitePath != "" || path != "" {
+				return fmt.Errorf("--server взаимоисключает --db, --sqlite и --path: базу и конфигурацию хранит сервер")
+			}
+			if cmd.Flags().Changed("port") {
+				return fmt.Errorf("--port к клиентскому подключению не применяется: порт задаётся в самом адресе --server")
+			}
+			b, err := launcher.NewClientBase(name, server)
+			if err != nil {
+				return err
+			}
+			store, err := launcher.NewStore()
+			if err != nil {
+				return err
+			}
+			if err := store.Add(b); err != nil {
+				return err
+			}
+			outf("added: %s (%s) -> %s\n", b.Name, b.ID, b.ServerURL)
+			return nil
 		}
 		switch {
 		case db == "" && sqlitePath == "":
@@ -119,6 +149,7 @@ func init() {
 	ibasesAddCmd.Flags().String("path", "", "project directory (for file source)")
 	ibasesAddCmd.Flags().Int("port", 8080, "server port")
 	ibasesAddCmd.Flags().String("source", "database", "config source: file or database")
+	ibasesAddCmd.Flags().String("server", "", "адрес работающего сервера onebase — запись клиентского подключения (взаимоисключает --db/--sqlite)")
 
 	ibasesRemoveCmd.Flags().String("id", "", "base ID (from ibases list)")
 

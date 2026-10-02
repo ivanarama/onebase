@@ -431,7 +431,15 @@ func analyze(prs []apiPull, owner string) report {
 				result.MergeCandidates = append(result.MergeCandidates, item)
 			case v1AbortCurrent && currentCompletions == 0:
 				result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
-			case depth > 0 && headIsBaseSyncMerge(pr) && legacySourceCompletions == 0:
+			case currentCompletions > 0 && depth == currentCompletions && !protocolHistory:
+				// A PR may be opened with a merge commit already at its first HEAD.
+				// With no earlier committed review or base-sync transaction, its
+				// first review is a full content review of that exact HEAD, not a
+				// carried integration review of the merge's first parent. The
+				// independent mutation gate still proves review, ship and CI.
+				item.Stage = "merge"
+				result.MergeCandidates = append(result.MergeCandidates, item)
+			case depth > currentCompletions && headIsBaseSyncMerge(pr) && legacySourceCompletions == 0:
 				// A legacy integration review cannot reconstruct the first parent's
 				// content proof. Do not grant this PR single-flight ownership only to
 				// have the independent GraphQL gate reject it on every retry.

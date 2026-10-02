@@ -345,7 +345,7 @@ func TestКаскадУсловногоЗапрета_ТабличнаяЧаст
 	}
 
 	s := &Server{interp: interpreter.New(), reg: runtime.NewRegistry()}
-	states := s.formElementStates(form, ent, map[string]any{"СтадияОформления": "НаОформлении"})
+	states := s.formElementStates(form, ent, map[string]any{"СтадияОформления": "НаОформлении"}, true)
 	сверитьДоступность(t, до, применитьСостоянияВБраузере(t, до, states))
 }
 

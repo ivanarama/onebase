@@ -714,6 +714,14 @@ func (w *docWriter) selfRef(stored any) any {
 			return stored
 		}
 		ref = &interpreter.Ref{UUID: w.obj.ID.String(), Name: w.displayName(), Type: w.entity.Name, Kind: w.entity.Kind}
+	} else if ref != nil && ref.Name == "" && (w.loaded || w.saved) {
+		// После Записать() ссылку кладёт в объект запись (entityservice.Save) —
+		// без представления, и Строка(Об.Ссылка) давала пустую строку, хотя
+		// представление у записанного объекта есть. Имя — копии: хранимая
+		// ссылка остаётся как есть.
+		named := *ref
+		named.Name = w.displayName()
+		ref = &named
 	}
 	return w.refResolver().bindRefToContext(ref, w.entity.Name)
 }

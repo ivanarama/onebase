@@ -416,6 +416,54 @@ func TestLegacyMergeWithoutSourceReviewDoesNotOwnTheLane(t *testing.T) {
 	}
 }
 
+func TestFirstReviewOfMergeHeadUsesOrdinaryMergeLane(t *testing.T) {
+	// The branch was already a merge commit when its first full content review
+	// completed. Its HEAD differs from both parents, and there is no earlier
+	// review to carry from the first parent.
+	pr := withMergeHead(addComment(testPR(1818, headC, "ship", "reviewed"), 40,
+		completion(headC, 35, 36)))
+	directory := t.TempDir()
+	pullPath := filepath.Join(directory, "pulls.json")
+	issuePath := filepath.Join(directory, "issues.json")
+	type pullFixture struct {
+		apiPull
+		Comments []apiComment `json:"comments"`
+	}
+	pulls, err := json.Marshal([]pullFixture{{apiPull: pr, Comments: pr.Comments}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pullPath, pulls, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(issuePath, []byte("[]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GH_EXE", filepath.Join(directory, "missing-gh"))
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// #nosec G204 -- fixed command and test-owned fixture paths.
+	command := exec.Command("go", "run", "./tools/pipelinehealth", "-prs", pullPath,
+		"-issues", issuePath, "-json")
+	command.Dir = repositoryRoot
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pipelinehealth CLI failed: %v\n%s", err, output)
+	}
+	var got report
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode pipelinehealth output: %v\n%s", err, output)
+	}
+	if got.IntegrationOwner != nil || len(got.MergeExecutable) != 1 ||
+		got.MergeExecutable[0].Number != 1818 ||
+		got.MergeExecutable[0].Head != headC || got.MergeExecutable[0].Stage != "merge" ||
+		len(got.HumanWaiting) != 0 || hasFinding(got, "legacy_source_review_missing") {
+		t.Fatalf("public checker mistook first full review of merge HEAD for legacy carry: %+v", got)
+	}
+}
+
 func TestPublicCommandDoesNotAssignUnprovedLegacyOwner(t *testing.T) {
 	broken := withMergeHead(addComment(testPR(1318, headB, "ship", "reviewed"), 30,
 		completion(headC, 20, 25)))

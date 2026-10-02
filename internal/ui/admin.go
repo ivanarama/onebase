@@ -1124,18 +1124,25 @@ func (s *Server) recordHistory(w http.ResponseWriter, r *http.Request) {
 // first-run mode where auth middleware confirmed that the reachable database
 // contains no users. Database errors must never turn into administrator access.
 func (s *Server) isAdmin(r *http.Request) bool {
+	return s.isAdminCtx(r.Context())
+}
+
+// isAdminCtx — тот же вывод по контексту запроса: сериализация ответа события
+// формы до *http.Request не добирается, а признак администратора там нужен —
+// им заперты поля editable_admin_only.
+func (s *Server) isAdminCtx(ctx context.Context) bool {
 	if s.authRepo == nil {
 		return true
 	}
-	if u := auth.UserFromContext(r.Context()); u != nil {
+	if u := auth.UserFromContext(ctx); u != nil {
 		return u.IsAdmin
 	}
-	if auth.OpenAccessFromContext(r.Context()) {
+	if auth.OpenAccessFromContext(ctx) {
 		return true
 	}
 	// Direct handler tests and a few internal call sites do not pass through the
 	// middleware. Preserve bootstrap behavior only after a successful query.
-	hasUsers, err := s.authRepo.HasUsers(r.Context())
+	hasUsers, err := s.authRepo.HasUsers(ctx)
 	return err == nil && !hasUsers
 }
 

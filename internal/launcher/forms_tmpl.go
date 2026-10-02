@@ -1360,7 +1360,7 @@ function addChoiceFilterEditor(panel, info) {
     var hasValue = Object.prototype.hasOwnProperty.call(condition, 'value') && typeof condition.value === 'boolean';
     return {
       field: condition.field || '',
-      op: condition.op === 'in_hierarchy' ? 'in_hierarchy' : 'eq',
+      op: condition.op === 'in_hierarchy' || condition.op === 'eq_or_empty' ? condition.op : 'eq',
       mode: hasValue ? 'value' : 'from',
       from: condition.from || '',
       value: hasValue ? condition.value : false
@@ -1396,14 +1396,16 @@ function addChoiceFilterEditor(panel, info) {
       var opLabel = document.createElement('label'); opLabel.textContent = {{jsString (t $.Lang "Оператор")}};
       var op = document.createElement('select');
       op.appendChild(new Option('eq', 'eq'));
+      op.appendChild(new Option('eq_or_empty', 'eq_or_empty'));
       op.appendChild(new Option('in_hierarchy', 'in_hierarchy'));
       op.value = condition.op;
       op.addEventListener('change', function () {
         condition.op = op.value;
-        if (condition.op === 'in_hierarchy' && condition.mode === 'value') {
+        if (condition.op !== 'eq' && condition.mode === 'value') {
           condition.mode = 'from'; condition.from = condition.from || 'Объект.';
         }
         commit();
+        redraw();
       });
       opRow.appendChild(opLabel); opRow.appendChild(op); card.appendChild(opRow);
 
@@ -1413,7 +1415,7 @@ function addChoiceFilterEditor(panel, info) {
       mode.appendChild(new Option({{jsString (t $.Lang "Поле формы (from)")}}, 'from'));
       mode.appendChild(new Option({{jsString (t $.Lang "Булево (value)")}}, 'value'));
       mode.value = condition.mode;
-      mode.disabled = condition.op === 'in_hierarchy';
+      mode.disabled = condition.op !== 'eq';
       mode.addEventListener('change', function () {
         condition.mode = mode.value;
         if (condition.mode === 'from' && !condition.from) condition.from = 'Объект.';

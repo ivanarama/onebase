@@ -335,3 +335,46 @@ func TestChoiceFilterPredicatesMatrix(t *testing.T) {
 		})
 	})
 }
+
+// Строковый конец глубокого пути (ВладелецКод дома = ИД улицы): значение,
+// которое сервер прочитал из записи посредника, сравнивается со строковым
+// реквизитом цели. Оно остаётся параметром запроса, а сравнение — точным на
+// обеих СУБД: регистр и пробелы значимы, апостроф — обычный символ значения.
+func TestChoiceFilterStringPredicatesMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		fixture := seedChoiceFilterFixture(t, db)
+		ctx := context.Background()
+		if err := db.Upsert(ctx, fixture.target.Name, choiceTestUUID("000000000107"), map[string]any{
+			"Наименование": "apostrophe", "Направление": fixture.sibling.String(), "Owner": "o'brien",
+		}, fixture.target); err != nil {
+			t.Fatalf("seed apostrophe row: %v", err)
+		}
+		owner := func(value any) storage.ListParams {
+			return storage.ListParams{ChoicePredicates: []storage.ChoicePredicate{
+				{Field: "Owner", Op: metadata.FormChoiceOpEqual, Value: value},
+			}}
+		}
+
+		for value, want := range map[string]string{"bob": "child blocked", "o'brien": "apostrophe"} {
+			rows := assertChoiceListAndCount(t, db, fixture, owner(value), 1)
+			if got := strings.Join(choiceRowNames(rows), ","); got != want {
+				t.Fatalf("Owner = %q: rows %q, want %q", value, got, want)
+			}
+		}
+		for _, value := range []string{"Bob", "bob ", "bob' OR '1'='1"} {
+			assertChoiceListAndCount(t, db, fixture, owner(value), 0)
+		}
+
+		for name, predicate := range map[string]storage.ChoicePredicate{
+			"in_hierarchy":       {Field: "Owner", Op: metadata.FormChoiceOpInHierarchy, Value: "bob"},
+			"UUID value":         {Field: "Owner", Op: metadata.FormChoiceOpEqual, Value: fixture.child},
+			"text for reference": {Field: "Направление", Op: metadata.FormChoiceOpEqual, Value: "bob"},
+		} {
+			if _, err := db.CountList(ctx, fixture.target.Name, fixture.target, storage.ListParams{
+				ChoicePredicates: []storage.ChoicePredicate{predicate},
+			}); err == nil {
+				t.Fatalf("%s: условие принято", name)
+			}
+		}
+	})
+}

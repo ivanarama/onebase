@@ -38,6 +38,10 @@ type ListParams struct {
 	ThroughID          *uuid.UUID            // inclusive keyset high-water mark; requires id ASC and Offset=0
 	ExcludeFolders     bool                  // for hierarchical catalogs: only non-folder elements
 	OnlyFolders        bool                  // for hierarchical catalogs: only folder elements
+	// IncludeFolders — явное согласие показать ГРУППЫ там, где подбор их всегда
+	// прятал (choice_folders у элемента формы). Слой UI снимает по нему свой
+	// ExcludeFolders; сам запрос дополнительных условий не получает.
+	IncludeFolders bool
 	// ExcludeMarked отбрасывает помеченные на удаление строки (план 153).
 	// Нужен источнику дефолта `единственный`: помеченный элемент — кандидат
 	// на исчезновение, подставлять его в новый документ нельзя. Обычные
