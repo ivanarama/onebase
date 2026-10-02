@@ -706,6 +706,7 @@ type sourceContext struct {
 }
 
 type sourceScope struct {
+	parent         int // внешний SELECT; -1 у корневого SELECT и его UNION-siblings
 	main           sourceClass
 	mainTable      string
 	mainColTypes   map[string]metadata.FieldType
@@ -3433,8 +3434,13 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 				for len(active) > 0 && active[len(active)-1].depth >= depth {
 					active = active[:len(active)-1]
 				}
+				parent := -1
+				if len(active) > 0 {
+					parent = active[len(active)-1].id
+				}
 				scopeID := len(ctx.scopes)
 				ctx.scopes = append(ctx.scopes, sourceScope{
+					parent:         parent,
 					qualifiers:     map[string]sourceClass{},
 					derivedAliases: map[string]int{},
 					outputAliases:  map[string]struct{}{},

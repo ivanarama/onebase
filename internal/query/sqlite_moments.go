@@ -56,6 +56,7 @@ func isMomentCalendarFunc(name string) bool {
 // усечённая метка («2026-10-10», «2026-10»), и перевод границы в UTC сломал бы
 // сравнение, которое с ней совпадало.
 type momentBoundaries struct {
+	sourceCtx sourceContext
 	// columns — колонка-дата без квалификатора → класс источника, когда все
 	// источники области с такой колонкой одного класса; иначе Unknown.
 	columns map[int]map[string]sourceClass
@@ -73,6 +74,7 @@ type momentBoundaries struct {
 // переписывается.
 func buildMomentBoundaries(tokens []tok, opts CompileOpts, sourceCtx sourceContext) *momentBoundaries {
 	m := &momentBoundaries{
+		sourceCtx:  sourceCtx,
 		columns:    map[int]map[string]sourceClass{},
 		qualifiers: map[int]map[string]map[string]sourceClass{},
 	}
@@ -100,19 +102,22 @@ func buildMomentBoundaries(tokens []tok, opts CompileOpts, sourceCtx sourceConte
 		name := tokens[i+2].val
 		kind := sourceClassOf(typeUpper)
 		virtual := i+3 < len(tokens) && tokens[i+3].kind == tDot
-		var fields []string
+		fields := map[string]sourceClass{}
 		for field, typ := range sourceColTypes(typeUpper, name, opts) {
+			// Даже недатированное поле принадлежит этому источнику: оно не
+			// должно случайно разрешиться как дата внешнего SELECT.
+			fields[field] = sourceClassUnknown
 			if typ != metadata.FieldTypeDate || virtual && (field == "period" || field == "период") {
 				continue
 			}
-			fields = append(fields, field)
+			fields[field] = kind
 		}
 		if m.columns[scopeID] == nil {
 			m.columns[scopeID] = map[string]sourceClass{}
 			m.qualifiers[scopeID] = map[string]map[string]sourceClass{}
 		}
-		for _, field := range fields {
-			put(m.columns[scopeID], field, kind)
+		for field, class := range fields {
+			put(m.columns[scopeID], field, class)
 		}
 		for _, q := range sourceQualifierNames(tokens, i, typeUpper, name) {
 			q = lowerFast(q)
@@ -122,12 +127,91 @@ func buildMomentBoundaries(tokens []tok, opts CompileOpts, sourceCtx sourceConte
 			if m.qualifiers[scopeID][q] == nil {
 				m.qualifiers[scopeID][q] = map[string]sourceClass{}
 			}
-			for _, field := range fields {
-				put(m.qualifiers[scopeID][q], field, kind)
+			for field, class := range fields {
+				put(m.qualifiers[scopeID][q], field, class)
+			}
+		}
+	}
+	// Вложенные SELECT имеют больший scopeID. Сначала переносим их
+	// проекции, затем проекции использующих их производных источников.
+	for scopeID := len(sourceCtx.scopes) - 1; scopeID >= 0; scopeID-- {
+		if m.columns[scopeID] == nil {
+			m.columns[scopeID] = map[string]sourceClass{}
+			m.qualifiers[scopeID] = map[string]map[string]sourceClass{}
+		}
+		for alias, childID := range sourceCtx.scopes[scopeID].derivedAliases {
+			fields := m.projectedColumns(tokens, childID)
+			m.qualifiers[scopeID][alias] = fields
+			for field, class := range fields {
+				put(m.columns[scopeID], field, class)
 			}
 		}
 	}
 	return m
+}
+
+// projectedColumns переносит только доказанный формат простых проекций.
+// Выражение с алиасом остаётся Unknown: календарная функция, например,
+// выдаёт местные часы, а не исходный UTC-текст колонки.
+func (m *momentBoundaries) projectedColumns(tokens []tok, scopeID int) map[string]sourceClass {
+	fields := map[string]sourceClass{}
+	start := -1
+	for i, t := range tokens {
+		if m.sourceCtx.tokenScope[i] == scopeID && isKeywordTok(t, "ВЫБРАТЬ", "SELECT") {
+			start = i
+			break
+		}
+	}
+	if start < 0 {
+		return fields
+	}
+	operand := momentOperand{m: m, scopeID: scopeID}
+	put := func(name string, class sourceClass) {
+		if _, exists := fields[name]; exists {
+			fields[name] = sourceClassUnknown
+		} else {
+			fields[name] = class
+		}
+	}
+	for _, item := range splitProjectionItems(tokens[start+1 : topLevelFrom(tokens, start)]) {
+		col, _ := parseProjectionItem(item)
+		if col.Star {
+			var source map[string]sourceClass
+			switch {
+			case len(item) == 1 && item[0].kind == tStar:
+				source = m.columns[scopeID]
+			case len(item) == 3 && item[0].kind == tIdent && item[1].kind == tDot && item[2].kind == tStar:
+				source = m.qualifiers[scopeID][lowerFast(item[0].val)]
+			}
+			for name, class := range source {
+				put(name, class)
+			}
+			continue
+		}
+		if col.Output == "" {
+			continue
+		}
+		class := sourceClassUnknown
+		switch len(col.Path) {
+		case 1:
+			class = operand.column(col.Path[0])
+		case 2:
+			class = operand.qualifiedColumn(col.Path[0], col.Path[1])
+		}
+		put(col.Output, class)
+	}
+	// UNION может смешивать RFC3339 и sqliteTimeLayout в одной колонке.
+	// Без доказательства формата всех веток не наследуем формат первой.
+	depth := m.sourceCtx.tokenDepth[start]
+	for i := start + 1; i < len(tokens) && m.sourceCtx.tokenDepth[i] >= depth; i++ {
+		if m.sourceCtx.tokenDepth[i] == depth && isKeywordTok(tokens[i], "ОБЪЕДИНИТЬ", "UNION") {
+			for name := range fields {
+				fields[name] = sourceClassUnknown
+			}
+			break
+		}
+	}
+	return fields
 }
 
 // sourceQualifierNames — имена, которыми можно квалифицировать поле источника,
@@ -301,11 +385,23 @@ func (o momentOperand) columnExpr(expr []tok) sourceClass {
 }
 
 func (o momentOperand) column(name string) sourceClass {
-	return o.m.columns[o.scopeID][lowerFast(name)]
+	for scopeID := o.scopeID; scopeID >= 0; scopeID = o.m.sourceCtx.scopes[scopeID].parent {
+		if class, known := o.m.columns[scopeID][lowerFast(name)]; known {
+			return class
+		}
+	}
+	return sourceClassUnknown
 }
 
 func (o momentOperand) qualifiedColumn(qualifier, name string) sourceClass {
-	return o.m.qualifiers[o.scopeID][lowerFast(qualifier)][lowerFast(name)]
+	for scopeID := o.scopeID; scopeID >= 0; scopeID = o.m.sourceCtx.scopes[scopeID].parent {
+		if fields, known := o.m.qualifiers[scopeID][lowerFast(qualifier)]; known {
+			// Сам квалификатор затеняет внешний, даже если искомого поля
+			// в нём нет или его формат неизвестен.
+			return fields[lowerFast(name)]
+		}
+	}
+	return sourceClassUnknown
 }
 
 // param — параметр-дата вне прямого сравнения с полем привязывается
