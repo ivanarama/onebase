@@ -1875,6 +1875,16 @@ func (s *Server) clearMovements(ctx context.Context, entityName string, id uuid.
 func (s *Server) markForDeletion(ctx context.Context, entity *metadata.Entity, id uuid.UUID, mark bool) error {
 	return s.store.WithTxScope(ctx, func(txCtx context.Context) error {
 		if mark && entity.Posting {
+			// Строка регистратора берётся ДО чтения posted и до clearMovements:
+			// порядок «строка регистратора → локи итогов» здесь тот же, что у
+			// Save, Repost, отмены и удаления. Раньше пометка шла наоборот —
+			// сперва clearMovements с локами итогов, и лишь затем SetPosted,
+			// которому нужна строка; с перепроведением того же документа это
+			// давало цикл и PostgreSQL снимал одну из операций с 40P01. Чтение
+			// posted под той же блокировкой заодно убирает скан до блокировки.
+			if err := s.store.LockMovementRecorder(txCtx, entity, id); err != nil {
+				return err
+			}
 			row, err := s.store.GetByID(txCtx, entity.Name, id, entity)
 			if err != nil {
 				return err
