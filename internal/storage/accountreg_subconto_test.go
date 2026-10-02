@@ -36,6 +36,7 @@ func newAccountTestDB(t *testing.T, ar *metadata.AccountRegister) (*DB, context.
 	if err := db.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{ar}); err != nil {
 		t.Fatal(err)
 	}
+	ensureTestChart(t, db, ar.Accounts, "41", "60", "19.3")
 	return db, ctx
 }
 

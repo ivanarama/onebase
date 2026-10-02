@@ -15,8 +15,13 @@ function settle() {
   return new Promise((resolve) => setImmediate(resolve));
 }
 
+// Строка списка в новом контракте несёт идентификатор, а ссылку собирает
+// obRowUrl(). Здесь моделируем строку, пришедшую из JSON-подгрузки: у неё есть
+// собственная ссылка в dataset, и она имеет приоритет над сборкой из контейнера.
 function row(url) {
   return {
+    dataset: { obDetailUrl: url },
+    closest() { return null; },
     getAttribute(name) { return name === 'data-ob-detail-url' ? url : ''; }
   };
 }
@@ -45,6 +50,9 @@ function harness() {
     obDetailEl() { return panel; },
     listSel() { return selected; },
     obDetailRender() { renders++; },
+    // Слайс зовёт общий сборщик ссылок; здесь строка моделирует запись из
+    // JSON-подгрузки, у которой ссылка уже готова.
+    obRowUrl(row) { return row && row.dataset ? (row.dataset.obDetailUrl || '') : ''; },
     fetch(url, options) {
       let resolve;
       let reject;
@@ -131,4 +139,28 @@ test('duplicate pending reads are deduplicated and invalidation aborts them', ()
   assert.equal(h.api.cache().url, '');
   assert.equal(h.api.cache().body, '');
   assert.equal(h.api.pending().url, '');
+});
+
+// Панель деталей — <aside> с белым фоном, и общее оформление меню
+// (тёмный фон, color:#fff) раньше действовало на оба <aside> разом: значения
+// рисовались белым по белому (#1670). Харнесс без CSS-движка, поэтому
+// регрессия держится структурно: в обслуживаемых исходниках стилей не должно
+// остаться голого селектора aside, а правило панели не задаёт белый цвет.
+test('detail panel values do not inherit the nav white-on-dark aside styling', () => {
+  const templates = fs.readFileSync(path.join(__dirname, '..', 'templates.go'), 'utf8');
+  // Навигация сохраняет своё оформление — тёмный фон и белые ссылки, но
+  // адресованные точно: меню #ob-nav, а не все <aside> страницы.
+  assert.match(templates, /#ob-nav\{width:210px;background:#1e293b;color:#fff;/);
+  assert.equal((templates.match(/(^|[^-\w])aside\{/g) || []).length, 0,
+    'голый селектор aside{ возвращает общий стиль панели меню обеим панелям');
+  assert.equal((templates.match(/nav-open aside/g) || []).length, 0,
+    'мобильная шторка обязана адресовать #ob-nav, а не оба <aside>');
+  assert.match(templates, /#ob-nav\{position:fixed;left:0;top:0;bottom:0;/,
+    'на узком окне фиксированной шторкой остаётся только меню');
+
+  const uiSource = fs.readFileSync(path.join(__dirname, 'ui.js'), 'utf8');
+  const panelRule = uiSource.match(/\.ob-detail\{[^}]*\}/);
+  assert.ok(panelRule, 'ui.js должен задавать правило .ob-detail');
+  assert.match(panelRule[0], /background:#fff/);
+  assert.doesNotMatch(panelRule[0], /color:#fff/);
 });

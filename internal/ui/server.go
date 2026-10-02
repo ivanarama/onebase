@@ -4,8 +4,6 @@ import (
 	"context"
 	"html/template"
 	"net/http"
-	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -21,7 +19,6 @@ import (
 	"github.com/ivantit66/onebase/internal/incident"
 	"github.com/ivantit66/onebase/internal/jobqueue"
 	"github.com/ivantit66/onebase/internal/mailer"
-	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/metrics"
 	"github.com/ivantit66/onebase/internal/realtime"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -70,6 +67,11 @@ type Config struct {
 	// New создаёт собственный, чтобы поле никогда не было пустым.
 	LoginLimit *auth.LoginLimiter
 	Limits     RuntimeLimits
+	// POSEnabled — приложение объявило рабочее место кассира (app.yaml:
+	// features.pos). Ложь по умолчанию: платформа умеет РМК, но показывать его
+	// каждому приложению нельзя — в неторговом домене это чужой пункт меню
+	// (issue #1331).
+	POSEnabled bool
 	Metrics    *metrics.Registry
 	// JobQueue — очередь фоновых заданий и её пул исполнителей (план 130).
 	// nil = режим без очереди (procrun, раннер конфигтестов, сервер, собранный
@@ -101,6 +103,8 @@ type Server struct {
 	// поэтому новый запуск снова сообщает оператору о причине обхода кэша.
 	svcCacheCookieWarned sync.Map
 	widgetCache          *widget.Cache
+	closeIntentMu        sync.Mutex
+	closeIntents         *formCloseReplayLedger
 	lockMgr              *runtime.LockManager   // #2 managed locks
 	entitySvc            *entityservice.Service // упсёрт + ТЧ + движения + проведение + удаление, разделяется с api
 	entitySvcOnce        sync.Once              // ленивая сборка для серверов, собранных напрямую (тесты, offline)
@@ -371,6 +375,9 @@ func (s *Server) Mount(r chi.Router) {
 	// SSE-поток уведомлений сервер→браузер (план 74). Регистрируем ДО catch-all
 	// {kind}/{entity}, чтобы «events» не матчился как вид объекта.
 	r.Get("/ui/events", s.eventsStream)
+	// Частичная перерисовка одной карточки дашборда (план 182A). Статический
+	// сегмент обязан идти до catch-all маршрута сущности.
+	r.Get("/ui/_widget/{name}", s.widgetPartial)
 
 	r.Get("/ui/{kind}/{entity}", s.list)
 	r.Get("/ui/{kind}/{entity}/new", s.form)
@@ -385,6 +392,9 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/_ref-open/{entity}/{id}", s.refOpenRedirect)
 	// JSON-поиск ссылочных значений для server-side picker'а.
 	r.Get("/ui/_ref-options/{entity}", s.refOptionsJSON)
+	// Страница подбора с динамическим preview (план 168): POST — значения
+	// незаписанной формы не должны попадать в URL и access log.
+	r.Post("/ui/_ref-options/{entity}/page", s.choicePreviewPageHandler)
 	// Lazy-load детей узла иерархического справочника для tree-view.
 	r.Get("/ui/_tree-children/{entity}", s.treeChildrenJSON)
 	r.Get("/ui/{kind}/{entity}/{id}", s.formEdit)
@@ -393,6 +403,10 @@ func (s *Server) Mount(r chi.Router) {
 	// кнопок (Нажатие) и полей (ПриИзменении). Возвращает JSON с
 	// обновлёнными values и сообщениями от Сообщить().
 	r.Post("/ui/{kind}/{entity}/form-event", s.handleManagedFormEvent)
+	// Lifecycle close-intent is deliberately separate from /form-event:
+	// the browser cannot choose an arbitrary lifecycle event name, and the
+	// response carries a one-shot decision tied to an intent UUID.
+	r.Post("/ui/{kind}/{entity}/form-close-intent", s.handleManagedFormCloseIntent)
 	r.Get("/ui/register/{name}", s.registerMovements)
 	r.Get("/ui/register/{name}/balances", s.registerBalances)
 	r.Get("/ui/inforeg/{name}", s.infoRegList)
@@ -412,6 +426,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/processor/{name}", s.processorForm)
 	r.Post("/ui/processor/{name}", s.processorRun)
 	r.Post("/ui/processor/{name}/form-event", s.handleProcessorFormEvent)
+	r.Post("/ui/processor/{name}/form-close-intent", s.handleProcessorFormCloseIntent)
 
 	// Document posting
 	r.Post("/ui/{kind}/{entity}/{id}/post", s.postDocument)
@@ -628,340 +643,6 @@ func (s *Server) MountDebug(r chi.Router) {
 		r.Post("/stop", s.debugGlobalStop)
 		r.Post("/evaluate", s.debugGlobalEvaluate)
 	})
-}
-
-type navItem struct {
-	Label string
-	URL   string
-}
-
-type navGroup struct {
-	Kind  string
-	Items []navItem
-	// Open — раскрыта ли группа по умолчанию, когда меню рендерится
-	// сворачиваемым. Лёгкие группы (Справочники/Документы) открыты, тяжёлые
-	// (Регистры/Отчёты/Обработки/Журналы) свёрнуты, чтобы меню не растягивалось.
-	Open bool
-}
-
-func (s *Server) buildNav(r *http.Request, sub string) []navGroup {
-	if sub == "" {
-		// Глобальная «Главная». Если в config/home_page.yaml задан блок nav —
-		// меню скоупится по нему (как у подсистемы). Иначе — плоский список
-		// всех читаемых объектов («нейтральный старт»).
-		if hp := s.reg.HomePage(); hp != nil && hp.Nav != nil && !hp.Nav.IsEmpty() {
-			return s.buildNavFromContents(r, hp.Nav, "")
-		}
-		return s.buildFlatNav(r)
-	}
-	if cur := s.reg.GetSubsystem(sub); cur != nil {
-		return s.buildNavForSubsystem(r, cur, sub)
-	}
-	return s.buildFlatNav(r)
-}
-
-func strSet(names []string) map[string]bool {
-	m := make(map[string]bool, len(names))
-	for _, n := range names {
-		m[n] = true
-	}
-	return m
-}
-
-func (s *Server) buildNavForSubsystem(r *http.Request, sub *metadata.Subsystem, subName string) []navGroup {
-	return s.buildNavFromContents(r, &sub.Contents, "?subsystem="+subName)
-}
-
-// buildNavFromContents строит левое меню по набору объектов (contents),
-// фильтруя их по правам пользователя (s.can). q — суффикс URL (например
-// "?subsystem=Продажи") для сохранения контекста подсистемы в ссылках.
-func (s *Server) buildNavFromContents(r *http.Request, contents *metadata.SubsystemContents, q string) []navGroup {
-	lang := s.resolveLang(r)
-	var nav []navGroup
-
-	if len(contents.Catalogs) > 0 || len(contents.Documents) > 0 {
-		catSet := strSet(contents.Catalogs)
-		docSet := strSet(contents.Documents)
-		entities := s.reg.Entities()
-		sort.Slice(entities, func(i, j int) bool { return entities[i].Name < entities[j].Name })
-		var catalogs, documents []navItem
-		for _, e := range entities {
-			if !s.can(r, string(e.Kind), e.Name, "read") {
-				continue
-			}
-			url := "/ui/" + strings.ToLower(string(e.Kind)) + "/" + e.Name + q
-			if e.Kind == metadata.KindCatalog && catSet[e.Name] {
-				catalogs = append(catalogs, navItem{Label: e.DisplayName(lang), URL: url})
-			} else if e.Kind == metadata.KindDocument && docSet[e.Name] {
-				documents = append(documents, navItem{Label: e.DisplayName(lang), URL: url})
-			}
-		}
-		if len(catalogs) > 0 {
-			nav = append(nav, navGroup{Kind: s.tr(lang, "Справочники"), Items: catalogs, Open: true})
-		}
-		if len(documents) > 0 {
-			nav = append(nav, navGroup{Kind: s.tr(lang, "Документы"), Items: documents, Open: true})
-		}
-	}
-
-	if len(contents.Registers) > 0 {
-		regSet := strSet(contents.Registers)
-		registers := s.reg.Registers()
-		sort.Slice(registers, func(i, j int) bool { return registers[i].Name < registers[j].Name })
-		var regItems []navItem
-		for _, reg := range registers {
-			if !regSet[reg.Name] {
-				continue
-			}
-			if !s.can(r, "register", reg.Name, "read") {
-				continue
-			}
-			regItems = append(regItems, navItem{
-				Label: reg.DisplayName(lang) + " (" + s.tr(lang, "движения") + ")",
-				URL:   "/ui/register/" + strings.ToLower(reg.Name) + q,
-			})
-			regItems = append(regItems, navItem{
-				Label: reg.DisplayName(lang) + " (" + s.tr(lang, "остатки") + ")",
-				URL:   "/ui/register/" + strings.ToLower(reg.Name) + "/balances" + q,
-			})
-		}
-		if len(regItems) > 0 {
-			nav = append(nav, navGroup{Kind: s.tr(lang, "Регистры"), Items: regItems})
-		}
-	}
-
-	if len(contents.InfoRegs) > 0 {
-		irSet := strSet(contents.InfoRegs)
-		inforegs := s.reg.InfoRegisters()
-		sort.Slice(inforegs, func(i, j int) bool { return inforegs[i].Name < inforegs[j].Name })
-		var irItems []navItem
-		for _, ir := range inforegs {
-			if !irSet[ir.Name] {
-				continue
-			}
-			if !s.can(r, "inforeg", ir.Name, "read") {
-				continue
-			}
-			label := ir.Name
-			if ir.Periodic {
-				label += " (" + s.tr(lang, "периодический") + ")"
-			}
-			irItems = append(irItems, navItem{Label: label, URL: "/ui/inforeg/" + strings.ToLower(ir.Name) + q})
-		}
-		if len(irItems) > 0 {
-			nav = append(nav, navGroup{Kind: s.tr(lang, "Регистры сведений"), Items: irItems})
-		}
-	}
-
-	if len(contents.Reports) > 0 {
-		repSet := strSet(contents.Reports)
-		reps := s.reg.Reports()
-		sort.Slice(reps, func(i, j int) bool { return reps[i].Name < reps[j].Name })
-		var repItems []navItem
-		for _, rep := range reps {
-			if !repSet[rep.Name] {
-				continue
-			}
-			if !s.can(r, "report", rep.Name, "run") {
-				continue
-			}
-			label := rep.Title
-			if label == "" {
-				label = rep.Name
-			}
-			repItems = append(repItems, navItem{Label: label, URL: "/ui/report/" + strings.ToLower(rep.Name) + q})
-		}
-		if len(repItems) > 0 {
-			nav = append(nav, navGroup{Kind: s.tr(lang, "Отчёты"), Items: repItems})
-		}
-	}
-
-	if len(contents.Processors) > 0 {
-		procSet := strSet(contents.Processors)
-		procs := s.reg.Processors()
-		sort.Slice(procs, func(i, j int) bool { return procs[i].Name < procs[j].Name })
-		var procItems []navItem
-		for _, proc := range procs {
-			if !procSet[proc.Name] {
-				continue
-			}
-			if !s.can(r, "processor", proc.Name, "run") {
-				continue
-			}
-			label := proc.Title
-			if label == "" {
-				label = proc.Name
-			}
-			procItems = append(procItems, navItem{Label: label, URL: "/ui/processor/" + strings.ToLower(proc.Name) + q})
-		}
-		if len(procItems) > 0 {
-			nav = append(nav, navGroup{Kind: s.tr(lang, "Обработки"), Items: procItems})
-		}
-	}
-
-	if len(contents.Journals) > 0 {
-		jSet := strSet(contents.Journals)
-		journals := s.reg.Journals()
-		sort.Slice(journals, func(i, j int) bool { return journals[i].Name < journals[j].Name })
-		var jItems []navItem
-		for _, j2 := range journals {
-			if !jSet[j2.Name] {
-				continue
-			}
-			jItems = append(jItems, navItem{Label: j2.DisplayName(lang), URL: "/ui/journal/" + strings.ToLower(j2.Name) + q})
-		}
-		if len(jItems) > 0 {
-			nav = append(nav, navGroup{Kind: s.tr(lang, "Журналы"), Items: jItems})
-		}
-	}
-
-	if len(contents.Pages) > 0 {
-		pageSet := strSet(contents.Pages)
-		pages := s.reg.Pages()
-		sort.Slice(pages, func(i, j int) bool { return pages[i].Name < pages[j].Name })
-		var pageItems []navItem
-		for _, pg := range pages {
-			if !pageSet[pg.Name] || !s.canSeePage(r, pg) {
-				continue
-			}
-			pageItems = append(pageItems, navItem{Label: pg.DisplayName(lang), URL: "/ui/page/" + pg.Name + q})
-		}
-		if len(pageItems) > 0 {
-			nav = append(nav, navGroup{Kind: s.tr(lang, "Страницы"), Items: pageItems, Open: true})
-		}
-	}
-
-	return nav
-}
-
-func (s *Server) buildFlatNav(r *http.Request) []navGroup {
-	lang := s.resolveLang(r)
-	entities := s.reg.Entities()
-	sort.Slice(entities, func(i, j int) bool { return entities[i].Name < entities[j].Name })
-
-	var catalogs, documents []navItem
-	for _, e := range entities {
-		if !s.can(r, string(e.Kind), e.Name, "read") {
-			continue
-		}
-		url := "/ui/" + strings.ToLower(string(e.Kind)) + "/" + e.Name
-		item := navItem{Label: e.DisplayName(lang), URL: url}
-		if e.Kind == metadata.KindCatalog {
-			catalogs = append(catalogs, item)
-		} else {
-			documents = append(documents, item)
-		}
-	}
-
-	registers := s.reg.Registers()
-	sort.Slice(registers, func(i, j int) bool { return registers[i].Name < registers[j].Name })
-	var regItems []navItem
-	for _, reg := range registers {
-		if !s.can(r, "register", reg.Name, "read") {
-			continue
-		}
-		regItems = append(regItems, navItem{
-			Label: reg.DisplayName(lang) + " (" + s.tr(lang, "движения") + ")",
-			URL:   "/ui/register/" + strings.ToLower(reg.Name),
-		})
-		regItems = append(regItems, navItem{
-			Label: reg.DisplayName(lang) + " (" + s.tr(lang, "остатки") + ")",
-			URL:   "/ui/register/" + strings.ToLower(reg.Name) + "/balances",
-		})
-	}
-
-	var nav []navGroup
-	if len(catalogs) > 0 {
-		nav = append(nav, navGroup{Kind: s.tr(lang, "Справочники"), Items: catalogs, Open: true})
-	}
-	if len(documents) > 0 {
-		nav = append(nav, navGroup{Kind: s.tr(lang, "Документы"), Items: documents, Open: true})
-	}
-	if len(regItems) > 0 {
-		nav = append(nav, navGroup{Kind: s.tr(lang, "Регистры"), Items: regItems})
-	}
-
-	inforegs := s.reg.InfoRegisters()
-	sort.Slice(inforegs, func(i, j int) bool { return inforegs[i].Name < inforegs[j].Name })
-	var inforegItems []navItem
-	for _, ir := range inforegs {
-		if !s.can(r, "inforeg", ir.Name, "read") {
-			continue
-		}
-		label := ir.DisplayName(lang)
-		if ir.Periodic {
-			label += " (" + s.tr(lang, "периодический") + ")"
-		}
-		inforegItems = append(inforegItems, navItem{
-			Label: label,
-			URL:   "/ui/inforeg/" + strings.ToLower(ir.Name),
-		})
-	}
-	if len(inforegItems) > 0 {
-		nav = append(nav, navGroup{Kind: s.tr(lang, "Регистры сведений"), Items: inforegItems})
-	}
-
-	reps := s.reg.Reports()
-	sort.Slice(reps, func(i, j int) bool { return reps[i].Name < reps[j].Name })
-	var repItems []navItem
-	for _, rep := range reps {
-		if !s.can(r, "report", rep.Name, "run") {
-			continue
-		}
-		label := rep.DisplayName(lang)
-		if rep.External {
-			label += " (" + s.tr(lang, "внешний") + ")"
-		}
-		repItems = append(repItems, navItem{
-			Label: label,
-			URL:   "/ui/report/" + strings.ToLower(rep.Name),
-		})
-	}
-	if len(repItems) > 0 {
-		nav = append(nav, navGroup{Kind: s.tr(lang, "Отчёты"), Items: repItems})
-	}
-
-	procs := s.reg.Processors()
-	sort.Slice(procs, func(i, j int) bool { return procs[i].Name < procs[j].Name })
-	isAdmin := s.isAdmin(r)
-	var procItems []navItem
-	for _, proc := range procs {
-		if !s.can(r, "processor", proc.Name, "run") {
-			continue
-		}
-		// Внешняя недоверенная обработка видна только администратору.
-		if proc.External && !proc.Trusted && !isAdmin {
-			continue
-		}
-		label := proc.DisplayName(lang)
-		if proc.External {
-			label += " (" + s.tr(lang, "внешняя") + ")"
-		}
-		procItems = append(procItems, navItem{
-			Label: label,
-			URL:   "/ui/processor/" + strings.ToLower(proc.Name),
-		})
-	}
-	if len(procItems) > 0 {
-		nav = append(nav, navGroup{Kind: s.tr(lang, "Обработки"), Items: procItems})
-	}
-
-	journals := s.reg.Journals()
-	sort.Slice(journals, func(i, j int) bool { return journals[i].Name < journals[j].Name })
-	var journalItems []navItem
-	for _, j := range journals {
-		journalItems = append(journalItems, navItem{Label: j.DisplayName(lang), URL: "/ui/journal/" + strings.ToLower(j.Name)})
-	}
-	if len(journalItems) > 0 {
-		nav = append(nav, navGroup{Kind: s.tr(lang, "Журналы"), Items: journalItems})
-	}
-
-	if len(s.reg.Constants()) > 0 {
-		nav = append(nav, navGroup{Kind: "Настройки", Items: []navItem{
-			{Label: s.tr(lang, "Константы"), URL: "/ui/constants"},
-		}})
-	}
-	return nav
 }
 
 // resolveLang determines the effective UI language for the current request.

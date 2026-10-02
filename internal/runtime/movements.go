@@ -12,7 +12,7 @@ import (
 type MovementsCollector struct {
 	DocType string
 	DocID   uuid.UUID
-	Period  *time.Time // auto-filled from document's first date field
+	Period  *time.Time // auto-filled from the document date (Entity.DocumentDateField)
 	pending map[string][]map[string]any
 	// persists — сбрасывает ли этот коллектор накопленное в базу. По умолчанию
 	// НЕТ, и это сознательно: коллектор подставляется в переменные DSL два

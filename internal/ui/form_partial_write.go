@@ -12,7 +12,9 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/runtime"
 )
 
 type managedFormTablePayloadSource uint8
@@ -608,4 +610,110 @@ func (s *Server) restoreUnsubmittedFields(
 		}
 	}
 	return nil
+}
+
+// applyDefaultsToUnsubmittedFields — то же для НОВОГО объекта управляемой формы.
+// У существующего объекта неприсланный реквизит перечитывается из БД; у нового
+// читать неоткуда — строки ещё нет, и его значением обязано быть ровно то, что
+// вычислил бы GET формы: декларативный дефолт (план 153) плюс ПриСозданииНового.
+//
+// Без этого дефолт и хук доезжали до базы только через автоформу — она рисует
+// все реквизиты, и они возвращаются в POST. Управляемая форма рисует
+// размещённые, остальные до сервера не доходили и записывались пустыми — при
+// том что тот же реквизит через DSL и REST заполнялся, а
+// entityservice/defaults.go обещает единую реализацию на все пути создания
+// (#1189). Отказа не было, в логе тишина: расхождение находилось отчётами.
+//
+// Правило присутствия ключа общее с restoreUnsubmittedFields, включая
+// исключение для редактируемого Флажка: снятый пользователем флажок браузер не
+// шлёт, и дефолт `истина` не имеет права поставить его обратно.
+//
+// Ошибка вычисления или ПриСозданииНового останавливает POST: баннер на GET не
+// доказывает, что пользователь его видел, а продолжение записи сохранило бы
+// частично инициализированный объект. Результат возвращается вызывающему, чтобы
+// тот перерисовал форму с ошибкой и сообщениями хука до Save.
+//
+// Табличные части сюда не переносятся намеренно: строки, созданные хуком, всё
+// равно снял бы restoreUneditableTableParts — он для нового объекта чистит
+// таблицы, которых на форме не было, защищаясь от подделанных строк. Хук
+// заполняет такие таблицы после этой границы, в ПередЗаписью/ПриЗаписи.
+func (s *Server) applyDefaultsToUnsubmittedFields(
+	r *http.Request,
+	entity *metadata.Entity,
+	form *metadata.FormModule,
+	obj *runtime.Object,
+) (entityservice.NewObjectResult, error) {
+	if entity == nil || form == nil || obj == nil || s.entitySvc == nil {
+		return entityservice.NewObjectResult{}, nil
+	}
+	return s.overlayNewObjectDefaults(r.Context(), r, entity, form, obj, false, nil)
+}
+
+// overlayNewObjectDefaults — общая часть записи нового объекта управляемой
+// формы: вычисляет начальное состояние тем же entityservice.NewObject, что GET
+// формы, и переносит значения на реквизиты, которых форма не прислала.
+//
+// Путей записи нового объекта у управляемой формы несколько, и контракт
+// defaults.go обязан держаться на всех: «Записать» (parseSubmitForm), «ОК»,
+// «Да» в диалоге закрытия и «Записать и выбрать» (close-intent), а также
+// Объект.Записать() из обработчика формы. Раньше вызывал только первый — и
+// одна и та же форма писала разные данные в зависимости от нажатой кнопки.
+//
+// keepFilled оставляет значения, уже стоящие в объекте: обработчик формы мог
+// сам присвоить неразмещённый реквизит до Объект.Записать(), и дефолт не имеет
+// права его перетереть. Явное Неопределено по значению не отличить от
+// реквизита, которого форма не прислала, поэтому присвоенные обработчиком
+// реквизиты (assigned, ключи в нижнем регистре) остаются как есть при любом
+// значении. ctx — живой контекст исполнения: хук ПриСозданииНового обязан
+// попасть в открытую модулем транзакцию, а не ждать второго соединения (пул
+// SQLite — одно).
+func (s *Server) overlayNewObjectDefaults(
+	ctx context.Context,
+	r *http.Request,
+	entity *metadata.Entity,
+	form *metadata.FormModule,
+	obj *runtime.Object,
+	keepFilled bool,
+	assigned map[string]struct{},
+) (entityservice.NewObjectResult, error) {
+	if entity == nil || form == nil || obj == nil || s.entitySvc == nil {
+		return entityservice.NewObjectResult{}, nil
+	}
+	submitted := submittedFormKeys(r)
+	checkboxes := checkboxOmittedFields(form, entity, submitted)
+
+	// NewObject вызывается и когда форма прислала все реквизиты: на POST хук
+	// ПриСозданииНового служит самостоятельной серверной проверкой и его ошибка
+	// обязана остановить Save. Фильтр присутствия нужен только при переносе
+	// вычисленных значений ниже — ввод пользователя главнее и дефолта, и хука.
+	// Без Fields GET и POST вычисляют то же начальное состояние объекта.
+	newRes, err := s.entitySvc.NewObject(ctx, entityservice.NewObjectRequest{
+		Entity:    entity,
+		FormEntry: true,
+	})
+	if err != nil || newRes.DSLError != "" {
+		return newRes, err
+	}
+	if newRes.Object == nil {
+		return newRes, fmt.Errorf("создание объекта %s не вернуло объект", entity.Name)
+	}
+	for _, f := range entity.Fields {
+		if formKeySubmitted(submitted, f.Name) || checkboxes[strings.ToLower(f.Name)] {
+			continue
+		}
+		if keepFilled {
+			if _, ok := assigned[strings.ToLower(f.Name)]; ok {
+				continue
+			}
+			if current, ok := maskCIKeyValue(obj.Fields, f.Name); ok && current != nil {
+				continue
+			}
+		}
+		value, ok := maskCIKeyValue(newRes.Object.Fields, f.Name)
+		if !ok || value == nil {
+			continue
+		}
+		obj.Set(f.Name, value)
+	}
+	return newRes, nil
 }

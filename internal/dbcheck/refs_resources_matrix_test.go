@@ -43,6 +43,7 @@ func TestRefsRegisterResourcesMatrix(t *testing.T) {
 		}
 		account := &metadata.AccountRegister{
 			Name:      "БухУчёт" + suffix,
+			Accounts:  "Основной",
 			Resources: []metadata.Field{accountResource},
 		}
 
@@ -55,6 +56,7 @@ func TestRefsRegisterResourcesMatrix(t *testing.T) {
 		if err := db.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{account}); err != nil {
 			t.Fatalf("MigrateAccountRegisters: %v", err)
 		}
+		ensureChart(t, db, account.Accounts, "50", "51")
 
 		live := uuid.New()
 		broken := uuid.New()

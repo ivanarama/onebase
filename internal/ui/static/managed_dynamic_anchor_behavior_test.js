@@ -56,6 +56,10 @@ class Element {
     return this.attributes.has(String(name)) ? this.attributes.get(String(name)) : null;
   }
 
+  hasAttribute(name) {
+    return this.attributes.has(String(name));
+  }
+
   closest(selector) {
     const match = /^\[([a-z0-9-]+)\]$/.exec(String(selector));
     if (!match) throw new Error('unsupported closest selector: ' + selector);
@@ -78,11 +82,13 @@ class Element {
   }
 
   querySelectorAll(selector) {
-    const tags = String(selector).split(',').map((tag) => tag.trim().toUpperCase());
-    if (tags.some((tag) => !/^[A-Z]+$/.test(tag))) {
-      throw new Error('unsupported descendant selector: ' + selector);
-    }
-    return this.descendants().filter((node) => tags.includes(node.tagName));
+    const selectors = String(selector).split(',').map((part) => part.trim());
+    const matches = (node, part) => {
+      const match = /^([a-zA-Z][\w-]*)(?::not\(\[([\w-]+)\]\))?$/.exec(part);
+      if (!match) throw new Error('unsupported descendant selector: ' + selector);
+      return node.tagName === match[1].toUpperCase() && (!match[2] || !node.hasAttribute(match[2]));
+    };
+    return this.descendants().filter((node) => selectors.some((part) => matches(node, part)));
   }
 
   querySelector(selector) {
@@ -113,23 +119,38 @@ function anchor(app, name) {
 test('event state hides decorations and locks the real command bar', () => {
   const app = boot();
   const decorations = ['НадписьСтатуса', 'КартинкаСФайлом', 'КартинкаБезФайла'];
+  const dynamic = decorations.concat('ФлажокСрочно', 'ПанельКоманд');
+  const checkbox = anchor(app, 'ФлажокСрочно');
   const panel = anchor(app, 'ПанельКоманд');
   const buttons = panel.querySelectorAll('button');
   assert.ok(buttons.length > 0, 'fixture has no real command-bar buttons');
+  assert.equal(checkbox.style.display, 'flex');
+  assert.equal(panel.style.display, 'flex');
+
+  // The first event includes false values for every declared hidden_when.
+  // Applying that response must not erase an inline layout declaration.
+  app.applyElementStates({
+    hidden: Object.fromEntries(dynamic.map((name) => [name, false]))
+  });
+  for (const name of decorations) assert.equal(anchor(app, name).style.display, '');
+  assert.equal(checkbox.style.display, 'flex');
+  assert.equal(panel.style.display, 'flex');
 
   app.applyElementStates({
-    hidden: Object.fromEntries(decorations.concat('ПанельКоманд').map((name) => [name, true])),
+    hidden: Object.fromEntries(dynamic.map((name) => [name, true])),
     readonly: {ПанельКоманд: true}
   });
   for (const name of decorations) assert.equal(anchor(app, name).style.display, 'none');
+  assert.equal(checkbox.style.display, 'none');
   assert.equal(panel.style.display, 'none');
   for (const button of buttons) assert.equal(button.disabled, true);
 
   app.applyElementStates({
-    hidden: Object.fromEntries(decorations.concat('ПанельКоманд').map((name) => [name, false])),
+    hidden: Object.fromEntries(dynamic.map((name) => [name, false])),
     readonly: {ПанельКоманд: false}
   });
   for (const name of decorations) assert.equal(anchor(app, name).style.display, '');
-  assert.equal(panel.style.display, '');
+  assert.equal(checkbox.style.display, 'flex');
+  assert.equal(panel.style.display, 'flex');
   for (const button of buttons) assert.equal(button.disabled, false);
 });

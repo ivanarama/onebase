@@ -38,12 +38,7 @@ func CheckFormElementKind(proj *project.Project) []Issue {
 	}
 	for _, p := range proj.Processors {
 		for _, form := range p.Forms {
-			name := form.Name
-			if name == "" {
-				name = "объекта"
-			}
-			label := "forms/" + strings.ToLower(p.Name) + "/" + name + ".form.yaml"
-			report(label, p.Name, form)
+			report(procFormFileLabel(p.Name, form), p.Name, form)
 		}
 	}
 	return issues

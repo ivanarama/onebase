@@ -900,7 +900,7 @@ func exportSafeSettings(ctx context.Context, db safeSettingsDB, zw *zip.Writer) 
 		if err := rows.Scan(&key, &value); err != nil {
 			return 0, fmt.Errorf("scan safe setting: %w", err)
 		}
-		if safeSettingKeys[key] || strings.HasPrefix(strings.ToLower(key), "exchange.this_node.") || isScheduledEnabledKey(key) {
+		if safeSettingKeys[key] || strings.HasPrefix(strings.ToLower(key), "exchange.this_node.") || isScheduledEnabledKey(key) || storage.IsNavigationSettingsKey(key) {
 			selected = append(selected, map[string]string{"key": key, "value": value})
 		}
 	}
@@ -1660,6 +1660,13 @@ func clearPortableSettings(ctx context.Context, db *storage.DB) error {
 	if _, err = db.Exec(ctx, "DELETE FROM _settings WHERE LOWER(key) LIKE "+d.Placeholder(1), "exchange.this_node.%"); err != nil {
 		return err
 	}
+	for _, prefix := range []string{storage.NavigationAdminPrefix, storage.NavigationUserPrefix} {
+		// LIKE is case-insensitive on SQLite. Use the same exact prefix match
+		// as export/import so similarly named non-portable keys remain intact.
+		if _, err := db.Exec(ctx, "DELETE FROM _settings WHERE SUBSTR(key, 1, "+strconv.Itoa(len(prefix))+") = "+d.Placeholder(1), prefix); err != nil {
+			return err
+		}
+	}
 	_, err = db.Exec(ctx, "DELETE FROM _settings WHERE LOWER(key) LIKE "+d.Placeholder(1), scheduledEnabledPrefix+"%")
 	return err
 }
@@ -2094,7 +2101,7 @@ func importSafeSettings(ctx context.Context, db *storage.DB, filePath string, in
 		}
 		isExchangeNode := strings.HasPrefix(strings.ToLower(row.Key), "exchange.this_node.")
 		// Решения о заданиях импортируются в любом режиме восстановления.
-		if !safeSettingKeys[row.Key] && !isScheduledEnabledKey(row.Key) && (!includeExchangeNode || !isExchangeNode) {
+		if !safeSettingKeys[row.Key] && !isScheduledEnabledKey(row.Key) && !storage.IsNavigationSettingsKey(row.Key) && (!includeExchangeNode || !isExchangeNode) {
 			continue
 		}
 		if _, err := db.Exec(ctx, q, row.Key, row.Value); err != nil {

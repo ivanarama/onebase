@@ -274,3 +274,90 @@ func assertCMSCleanupRowCount(t *testing.T, ctx context.Context, db *storage.DB,
 		t.Fatalf("строк %s для %s = %d, ожидалось %d", table, id, got, want)
 	}
 }
+
+// Exercise the public reread/delete sequence. In the former implementation the
+// third context lookup occurred after reading fields but before EntityVersion,
+// so a concurrent checkout lent its new token to the stale cart fields.
+func TestCMSCartReadThenDeleteKeepsConcurrentCheckout(t *testing.T) {
+	proj, err := project.Load("../../examples/cms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proj.Close()
+	carts := cmsCleanupEntity(t, proj, "Корзины")
+
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		if err := db.Migrate(ctx, proj.Entities); err != nil {
+			t.Fatal(err)
+		}
+		id := uuid.New()
+		if err := db.Upsert(ctx, carts.Name, id, map[string]any{
+			"Наименование": "Корзина с конкурентным оформлением",
+			"Дата":         time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+			"Оформлена":    false,
+		}, carts); err != nil {
+			t.Fatal(err)
+		}
+		server, _, err := NewOfflineServer(proj, db)
+		if err != nil {
+			t.Fatal(err)
+		}
+		checkoutDone := false
+		checkout := func() {
+			if checkoutDone {
+				return
+			}
+			checkoutDone = true
+			if err := db.Upsert(ctx, carts.Name, id, map[string]any{"Оформлена": true}, carts); err != nil {
+				t.Fatal(err)
+			}
+		}
+		source := &cmsCleanupReadRaceContext{ctx: ctx}
+		loaded, err := server.catObjectFactory(source).LoadCatalogObject(carts, id.String())
+		if err != nil {
+			t.Fatal(err)
+		}
+		obj := loaded.(interface {
+			CallMethod(string, []any) any
+			Get(string) any
+		})
+		source.calls = 0
+		source.beforeThird = checkout
+		obj.CallMethod("Прочитать", nil)
+		// With one header read there is no second version query to intercept.
+		// Commit immediately after reread instead, before the public CAS delete.
+		checkout()
+		source.beforeThird = nil
+		if cmsCleanupTrue(obj.Get("Оформлена")) {
+			t.Fatal("проверка гонки должна использовать поля до оформления")
+		}
+		if got := obj.CallMethod("УдалитьЕслиНеИзменен", nil); got != false {
+			t.Fatalf("удаление конкурентно оформленной корзины = %v, ожидалось false", got)
+		}
+		row, err := db.GetByID(ctx, carts.Name, id, carts)
+		if err != nil || row == nil || !cmsCleanupTrue(row["Оформлена"]) {
+			t.Fatalf("оформленная корзина потеряна: row=%#v err=%v", row, err)
+		}
+		// A new public read must accept the current token and allow deletion
+		// while that exact snapshot remains unchanged.
+		obj.CallMethod("Прочитать", nil)
+		if got := obj.CallMethod("УдалитьЕслиНеИзменен", nil); got != true {
+			t.Fatalf("удаление неизменённого снимка = %v, ожидалось true", got)
+		}
+	})
+}
+
+type cmsCleanupReadRaceContext struct {
+	ctx         context.Context
+	calls       int
+	beforeThird func()
+}
+
+func (s *cmsCleanupReadRaceContext) Ctx() context.Context {
+	s.calls++
+	if s.calls == 3 && s.beforeThird != nil {
+		s.beforeThird()
+	}
+	return s.ctx
+}

@@ -114,38 +114,16 @@ func (f *catFactory) LoadCatalogObject(entity *metadata.Entity, uuidStr string) 
 	if err := f.s.checkDSLRowAccess(ctx, entity, "read", id, nil); err != nil {
 		return nil, err
 	}
-	row, err := f.s.store.GetByID(ctx, entity.Name, id, entity)
+	obj, row, err := f.s.loadRuntimeObjectRow(ctx, entity, id)
 	if err != nil {
 		return nil, err
 	}
-	if row == nil {
-		return nil, fmt.Errorf("объект %s/%s не найден", entity.Name, id)
+	// Fields and the CAS token must come from the same row. A separate
+	// EntityVersion read can pair stale fields with a newer writer's token.
+	version, ok := row["_version"].(int64)
+	if !ok {
+		return nil, fmt.Errorf("объект %s/%s: не прочитана версия", entity.Name, id)
 	}
-	// Поля и _version берутся из одной строки (#1321): раздельные чтения
-	// оставляли окно, в котором оформление корзины между чтениями давало
-	// CAS на свежей версии при устаревших полях — УдалитьЕслиНеИзменен
-	// удалял уже оформленную корзину.
-	var version int64
-	if raw, ok := row["_version"]; ok && raw != nil {
-		if v, ok := raw.(int64); ok {
-			version = v
-		}
-	} else {
-		v, err := f.s.store.EntityVersion(ctx, entity.Name, id)
-		if err != nil {
-			return nil, err
-		}
-		version = v
-	}
-	tpRows := make(map[string][]map[string]any, len(entity.TableParts))
-	for _, tp := range entity.TableParts {
-		rows, err := f.s.store.GetTablePartRows(ctx, entity.Name, tp.Name, id, tp)
-		if err != nil {
-			return nil, fmt.Errorf("табличная часть %s: %w", tp.Name, err)
-		}
-		tpRows[tp.Name] = rows
-	}
-	obj := f.s.runtimeObjectFromSnapshot(ctx, entity, id, row, tpRows)
 	return &catWriter{
 		s: f.s, ctxSrc: f.ctxSrc, entity: entity, obj: obj, loaded: true,
 		expectedVersion: &version,
@@ -211,6 +189,9 @@ func (w *catWriter) Get(name string) any {
 	v := w.obj.Get(name)
 	field := findObjectAttributeField(w.entity, name)
 	if field == nil {
+		if isSelfRefName(name) {
+			return w.selfRef(v)
+		}
 		return v
 	}
 	maskStored := w.loaded && !w.assigned[strings.ToLower(strings.TrimSpace(name))]
@@ -218,6 +199,29 @@ func (w *catWriter) Get(name string) any {
 		return w.s.maskDSLValue(w.ctx(), w.entity, field.Name, v)
 	}
 	return w.s.declaredEntityFieldValue(field, v, w.refResolver())
+}
+
+// selfRef — собственная ссылка объекта копией, привязанной к живому контексту
+// модуля (см. docWriter.selfRef). После Записать() её кладёт в объект
+// entityservice.Save без менеджера, а у объекта из Ссылка.ПолучитьОбъект()
+// её нет вовсе.
+func (w *catWriter) selfRef(stored any) any {
+	ref, ok := stored.(*interpreter.Ref)
+	if !ok {
+		if !w.loaded && !w.saved {
+			return stored
+		}
+		ref = &interpreter.Ref{UUID: w.obj.ID.String(), Name: w.displayName(), Type: w.entity.Name, Kind: w.entity.Kind}
+	} else if ref != nil && ref.Name == "" && (w.loaded || w.saved) {
+		// После Записать() ссылку кладёт в объект запись (entityservice.Save) —
+		// без представления, и Строка(Об.Ссылка) давала пустую строку, хотя
+		// представление у записанного объекта есть. Имя — копии: хранимая
+		// ссылка остаётся как есть.
+		named := *ref
+		named.Name = w.displayName()
+		ref = &named
+	}
+	return w.refResolver().bindRefToContext(ref, w.entity.Name)
 }
 
 func (w *catWriter) Set(name string, v any) {
@@ -367,10 +371,10 @@ func (w *catWriter) write() error {
 	if result.DSLError != "" {
 		return fmt.Errorf("%s", result.DSLError)
 	}
-	version, err := w.s.store.EntityVersion(ctx, w.entity.Name, w.obj.ID)
-	if err != nil {
-		return err
-	}
+	// SaveResult carries the exact token read inside the write transaction.
+	// A post-commit reread could observe an unrelated concurrent writer and
+	// launder that newer token into this stale object wrapper.
+	version := result.Version
 	wasSaved, previousVersion := w.saved, w.expectedVersion
 	w.saved = true
 	w.expectedVersion = &version
@@ -393,23 +397,17 @@ func (w *catWriter) read() error {
 	if !w.loaded && !w.saved {
 		return fmt.Errorf("объект ещё не записан")
 	}
-	if err := w.s.checkDSLRowAccess(w.ctx(), w.entity, "read", w.obj.ID, nil); err != nil {
-		return err
-	}
-	obj, err := w.s.loadRuntimeObject(w.ctx(), w.entity, w.obj.ID)
+	loaded, err := (&catFactory{s: w.s, ctxSrc: w.ctxSrc}).LoadCatalogObject(w.entity, w.obj.ID.String())
 	if err != nil {
 		return err
 	}
-	w.obj = obj
+	fresh := loaded.(*catWriter)
+	w.obj = fresh.obj
 	// Прочитанный объект целиком приехал из БД: присвоенного модулем в нём
 	// больше нет, а сохранённый признак снимал бы маску с реальных значений
 	// («Об.Телефон = ""; Об.Прочитать(); Сообщить(Об.Телефон)» отдавал реальный).
 	w.assigned = nil
-	version, err := w.s.store.EntityVersion(w.ctx(), w.entity.Name, w.obj.ID)
-	if err != nil {
-		return err
-	}
-	w.expectedVersion = &version
+	w.expectedVersion = fresh.expectedVersion
 	w.loaded = true
 	return nil
 }
@@ -423,14 +421,17 @@ func (w *catWriter) TypeName() string {
 }
 
 // ref строит ссылку на записанный объект с менеджером-прокси, чтобы
-// Ссылка.ПолучитьОбъект()/Удалить() работали и возвращали catWriter.
+// Ссылка.ПолучитьОбъект()/Удалить() работали и возвращали catWriter. Менеджер
+// спрашивает контекст модуля на каждом вызове, как у docWriter.ref(): со
+// снимком контекста ссылка, возвращённая Записать() внутри НачатьТранзакцию(),
+// после фиксации падала на «transaction has already been committed».
 func (w *catWriter) ref() *interpreter.Ref {
 	return &interpreter.Ref{
 		UUID:    w.obj.ID.String(),
 		Name:    w.displayName(),
 		Type:    w.entity.Name,
 		Kind:    w.entity.Kind,
-		Manager: w.s.refManagerFor(w.entity, w.ctx()),
+		Manager: w.s.refManagerForSrc(w.entity, w.ctxSrc, w.ctx()),
 	}
 }
 

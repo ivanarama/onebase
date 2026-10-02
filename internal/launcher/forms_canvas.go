@@ -94,7 +94,7 @@ func renderCanvasElement(buf *bytes.Buffer, en *formdoc.ElementNode, selectedID 
 			groupClass += " fc-group-horizontal"
 		}
 		fmt.Fprintf(buf, `<fieldset class="%s" data-node-id="%s" data-kind="%s"%s><legend class="fc-pick">%s</legend>`,
-			elWrapClass(groupClass, id, selectedID), id, kind, layoutStyleAttr(el), title)
+			elWrapClass(groupClass, id, selectedID), id, kind, groupStyleAttr(el), title)
 		renderCanvasChildren(buf, id, en.Children, selectedID)
 		buf.WriteString(`</fieldset>`)
 
@@ -236,6 +236,7 @@ func hasColumnChild(en *formdoc.ElementNode) bool {
 // открывал панель без повторного парсинга YAML в браузере.
 type canvasElementInfo struct {
 	NodeID   string `json:"nodeId"`
+	ID       string `json:"id"`
 	Kind     string `json:"kind"`
 	Name     string `json:"name"`
 	TitleRU  string `json:"titleRu"`
@@ -266,17 +267,32 @@ type canvasElementInfo struct {
 	AutoSum bool   `json:"autoSum"` // ТабличнаяЧасть: Сумма = Количество × Цена по именам колонок
 	// Orientation — раскладка детей контейнера: ""/"vertical" или "horizontal".
 	Orientation string `json:"orientation"`
+	// Background — безопасный CSS-цвет фона ГруппаФормы. В модель передаётся
+	// исходное значение: панель редактирует YAML, а canvas/preview применяют
+	// его только через FormElementBackgroundCSS.
+	Background string `json:"background"`
 	// События элемента (batch B1): имя события → имя процедуры в .form.os.
 	Events map[string]string `json:"events"`
 	// Набор значений Переключателя/ПолеСписка (batch C1).
 	Options []canvasOption `json:"options"`
 	View    string         `json:"view"` // radio|select
+	// ChoiceFilter сохраняет порядок условий и тип boolean-литерала для
+	// визуального редактора plan 170/C. Указатель отличает value:false от
+	// отсутствующего value (режим from).
+	ChoiceFilter []canvasChoiceCondition `json:"choiceFilter"`
 }
 
 // canvasOption — значение набора Переключателя для редактора опций (C1).
 type canvasOption struct {
 	Value string `json:"value"`
 	Label string `json:"label"`
+}
+
+type canvasChoiceCondition struct {
+	Field string `json:"field"`
+	Op    string `json:"op"`
+	From  string `json:"from,omitempty"`
+	Value *bool  `json:"value,omitempty"`
 }
 
 // canvasModel разворачивает дерево формы в плоскую карту node-id → редактируемые
@@ -293,6 +309,7 @@ func canvasModel(doc *formdoc.Doc) (map[string]canvasElementInfo, error) {
 			el := en.El
 			info := canvasElementInfo{
 				NodeID:      en.NodeID,
+				ID:          el.ID,
 				Kind:        string(el.Kind),
 				Name:        el.Name,
 				DataPath:    el.DataPath,
@@ -312,6 +329,7 @@ func canvasModel(doc *formdoc.Doc) (map[string]canvasElementInfo, error) {
 				NoGrid:      el.NoGrid,
 				AutoSum:     el.AutoSum,
 				Orientation: el.Orientation,
+				Background:  el.Background,
 				View:        el.View,
 			}
 			if el.TitleMap != nil {
@@ -325,6 +343,14 @@ func canvasModel(doc *formdoc.Doc) (map[string]canvasElementInfo, error) {
 			}
 			for _, o := range el.Options {
 				info.Options = append(info.Options, canvasOption{Value: o.ValueStr(), Label: o.Label()})
+			}
+			for _, condition := range el.ChoiceFilter {
+				info.ChoiceFilter = append(info.ChoiceFilter, canvasChoiceCondition{
+					Field: condition.Field,
+					Op:    string(condition.Op),
+					From:  condition.From,
+					Value: condition.Value,
+				})
 			}
 			m[en.NodeID] = info
 			walk(en.Children)

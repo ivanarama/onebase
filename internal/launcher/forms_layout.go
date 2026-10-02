@@ -15,7 +15,24 @@ import (
 // layoutStyleAttr — атрибут style= с размерами и выравниванием, либо пустая
 // строка: элемент без этих ключей рисуется прежней разметкой, без style.
 func layoutStyleAttr(el *metadata.FormElement) string {
-	return styleAttr(metadata.FormElementLayoutCSS(el))
+	return formElementStyleAttr(el, false)
+}
+
+// groupStyleAttr объединяет только два уже нормализованных источника CSS:
+// фон проходит csssafe.Color внутри FormElementBackgroundCSS, а раскладка —
+// словари/диапазоны FormElementLayoutCSS. Холст и preview используют один
+// helper, поэтому не расходятся с runtime и не вставляют сырой background.
+func groupStyleAttr(el *metadata.FormElement) string {
+	return formElementStyleAttr(el, true)
+}
+
+func formElementStyleAttr(el *metadata.FormElement, withBackground bool) string {
+	css := ""
+	if withBackground {
+		css = metadata.FormElementBackgroundCSS(el)
+	}
+	css += metadata.FormElementLayoutCSS(el)
+	return styleAttr(css)
 }
 
 // alignStyleAttr — только выравнивание. Для ПолеКартинки, где width/height

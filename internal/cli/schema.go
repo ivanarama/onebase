@@ -113,12 +113,16 @@ func allSchemas() map[string]map[string]any {
 	// забытый здесь, редактор подчёркивает как ошибку в корректном YAML.
 	//
 	// Объект переиспользуется для полей табличной части (tablePart.fields) и
-	// измерений/ресурсов регистров. Признак pii движок принимает не везде: в
-	// табличной части его отвергает metadata.Validate, у ресурсов и субконто
-	// регистра бухгалтерии — LoadAccountRegisterFile. Разводить отдельный
-	// объект ради одного ключа не стали: расхождение здесь в безопасную
-	// сторону — схема разрешает больше, чем движок, ложной ошибки в редакторе
-	// это не даёт, а отказ приходит из `onebase check`.
+	// измерений/ресурсов регистров накопления и сведений. Признак pii движок
+	// принимает не везде: в табличной части его отвергает metadata.Validate.
+	// Разводить отдельный объект ради одного ключа не стали: расхождение здесь
+	// в безопасную сторону — схема разрешает больше, чем движок, ложной ошибки
+	// в редакторе это не даёт, а отказ приходит из `onebase check`.
+	//
+	// У ресурсов и субконто регистра бухгалтерии переиспользования больше нет
+	// (#1567): их читает отдельная структура metadata.rawAccountRegField без
+	// id/required/default/label/allow_inline_create, и переиспользование
+	// общего field обещало в схеме ключи, которые загрузчик молча игнорирует.
 	field := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -153,6 +157,24 @@ func allSchemas() map[string]map[string]any {
 			"title":  stringSchema("Синоним"),
 			"titles": stringMapSchema(),
 			"fields": arrayOf(field),
+		},
+	}
+	// Ресурс/субконто бухрегистра — собственный объект (metadata.rawAccountRegField,
+	// #1567): состав обязан совпадать с его yaml-тегами в обе стороны. Сторож —
+	// TestSchemaAccountRegField_CoversAllRawAccountRegKeys. pii включён явно,
+	// хотя исполнение его не читает: LoadAccountRegisterFile отвергает ключ с
+	// внятным отказом, и схема должна описывать это, а не делать вид, что
+	// ключа нет.
+	accountRegField := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"name", "type"},
+		"properties": map[string]any{
+			"name":   stringSchema("Имя ресурса или субконто"),
+			"title":  stringSchema("Синоним"),
+			"titles": stringMapSchema(),
+			"type":   stringSchema("string|number|date|bool|text|richtext|image|reference:<Объект>|enum:<Перечисление>|number(10,2)"),
+			"pii":    boolSchema("Персональные данные в бухрегистре не поддерживаются: check отвергает ключ с объяснением"),
 		},
 	}
 	param := map[string]any{
@@ -308,6 +330,8 @@ func allSchemas() map[string]map[string]any {
 				// `presentation: [Артикул, Наименование]` — иначе редактор
 				// подчёркивал бы как ошибку ровно тот вариант, который в
 				// документации назван основным.
+				"choice_preview":      stringSchema("Реквизит, текст которого показывается в области просмотра формы выбора (диалога подбора)"),
+				"choice_preview_proc": stringSchema("«Модуль.Функция», собирающая тексты просмотра формы выбора с учётом контекста подбора: Функция(Ссылки, Контекст) → Соответствие"),
 				"presentation": map[string]any{
 					"description": "Реквизит(ы) представления объекта; по умолчанию — правило по именам, «Код» последним",
 					"oneOf": []any{
@@ -419,18 +443,18 @@ func allSchemas() map[string]map[string]any {
 				"entities": arrayOf(stringSchema("Объект")), "scope": stringSchema("current_user|all"),
 			},
 		},
-		"form":      looseNamedSchema("OneBase managed form"),
+		"form":      managedFormSchema(),
 		"role":      looseNamedSchema("OneBase RBAC role"),
 		"page":      looseNamedSchema("OneBase page"),
 		"service":   looseNamedSchema("OneBase HTTP service"),
-		"subsystem": looseNamedSchema("OneBase subsystem"),
+		"subsystem": navigationContainerSchema(false),
 		"journal":   looseNamedSchema("OneBase document journal"),
 		"scheduled": looseNamedSchema("OneBase scheduled job"),
 		"accounts":  looseNamedSchema("OneBase chart of accounts"),
-		"accountreg": fieldGroupSchema("OneBase accounting register", field, []string{"resources", "subconto"}, map[string]any{
+		"accountreg": fieldGroupSchema("OneBase accounting register", accountRegField, []string{"resources", "subconto"}, map[string]any{
 			"accounts": stringSchema("Имя плана счетов"),
 		}),
-		"home-page": looseNamedSchema("OneBase home page"),
+		"home-page": navigationContainerSchema(true),
 	}
 }
 
@@ -484,5 +508,61 @@ func looseNamedSchema(title string) map[string]any {
 			"titles": stringMapSchema(),
 		},
 		"additionalProperties": true,
+	}
+}
+
+// managedFormSchema publishes the typed part of managed-form YAML that other
+// tools must be able to author safely. The rest of the historically broad form
+// document remains open for compatibility; choice_filter itself is closed and
+// typed because its field/operator pairs become trusted server-side SQL
+// predicates after configcheck validation.
+func managedFormSchema() map[string]any {
+	condition := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"field", "op"},
+		"properties": map[string]any{
+			"field": stringSchema("Реквизит выбираемого справочника или служебное поле is_folder / parent_id"),
+			"op":    enumSchema("eq", "eq_or_empty", "in_hierarchy"),
+			"from":  stringSchema("Источник Объект.<Поле>, Форма.<Поле> или Объект.<Поле>.<Реквизит> — один переход по ссылке; конец пути — ссылка или, для строкового field и eq, строковый реквизит"),
+			"value": boolSchema("Булев литерал: is_folder или булев реквизит справочника"),
+		},
+		"oneOf": []any{
+			map[string]any{"required": []string{"from"}, "not": map[string]any{"required": []string{"value"}}},
+			map[string]any{"required": []string{"value"}, "not": map[string]any{"required": []string{"from"}}},
+		},
+	}
+	element := map[string]any{
+		"$dynamicAnchor":       "formElement",
+		"type":                 "object",
+		"additionalProperties": true,
+		"properties": map[string]any{
+			"id":        stringSchema("Устойчивый уникальный id элемента формы"),
+			"kind":      stringSchema("Вид элемента формы"),
+			"data_path": stringSchema("Путь к значению элемента"),
+			"children": map[string]any{
+				"type":  "array",
+				"items": map[string]any{"$dynamicRef": "#formElement"},
+			},
+			"choice_filter": map[string]any{
+				"type":        "array",
+				"minItems":    1,
+				"maxItems":    8,
+				"uniqueItems": false,
+				"items":       condition,
+				"description": "Условия зависимого подбора; соединяются через AND",
+			},
+		},
+	}
+	return map[string]any{
+		"$schema":              "https://json-schema.org/draft/2020-12/schema",
+		"title":                "OneBase managed form",
+		"type":                 "object",
+		"additionalProperties": true,
+		"properties": map[string]any{
+			"schema":   stringSchema("Версия схемы, сейчас onebase.form/v1"),
+			"form":     map[string]any{"type": "object", "additionalProperties": true},
+			"elements": arrayOf(element),
+		},
 	}
 }

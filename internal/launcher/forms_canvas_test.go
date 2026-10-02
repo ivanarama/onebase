@@ -2,10 +2,13 @@ package launcher
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/formdoc"
+	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 )
 
@@ -537,5 +540,163 @@ elements:
 	}, nil)
 	if !strings.Contains(preview, "group-horizontal") {
 		t.Errorf("предпросмотр не получил класс горизонтальной группы:\n%s", preview)
+	}
+}
+
+// Геометрия горизонтальной группы обязана совпадать во всех трёх
+// представлениях: холст и предпросмотр повторяют flex/min-width/gap рантайма
+// (managed-group-horizontal в internal/ui/templates_managed.go), иначе одна и
+// та же форма переносилась в конструкторе и стояла в один ряд в «Предприятии»
+// (#1575). CSS-движка в харнессах нет, поэтому правила сверяются структурно,
+// а эталон читается из исходника рантайма — рассинхрон словит тест, а не
+// пользователь.
+func TestHorizontalGroupGeometryMatchesRuntime(t *testing.T) {
+	runtimeCSS, err := os.ReadFile(filepath.Join("..", "ui", "templates_managed.go"))
+	if err != nil {
+		t.Fatalf("read runtime managed templates: %v", err)
+	}
+	runtimeSrc := string(runtimeCSS)
+	const (
+		runtimeGap       = "gap:12px;align-items:flex-start"
+		runtimeFieldFlex = "flex:0 1 260px;min-width:180px"
+		runtimeGroupFlex = "min-width:0;flex:1 1 auto"
+	)
+	for name, fragment := range map[string]string{
+		"gap":         runtimeGap,
+		"flex поля":   runtimeFieldFlex,
+		"flex группы": runtimeGroupFlex,
+	} {
+		if !strings.Contains(runtimeSrc, fragment) {
+			t.Fatalf("эталон рантайма изменился: в templates_managed.go нет %s (%q); обновите тест", name, fragment)
+		}
+	}
+
+	canvas := renderFormsEditorHTML(t)
+	for name, fragment := range map[string]string{
+		"gap":            "gap:12px;align-items:flex-start",
+		"flex поля":      ".fc-group-horizontal>.fc-children>.fc-el{flex:0 1 260px;min-width:180px}",
+		"flex группы":    ".fc-group-horizontal>.fc-children>.fc-el.fc-group{flex:1 1 auto;min-width:0}",
+		"зона в покое":   ".fc-group-horizontal>.fc-children>.fc-drop{width:0;",
+		"зона при драге": "body.ob-dragging .fc-group-horizontal>.fc-children>.fc-drop{width:8px}",
+		"переключатель":  "document.body.classList.add('ob-dragging')",
+	} {
+		if !strings.Contains(canvas, fragment) {
+			t.Errorf("холст расходится с рантаймом: нет %s (%q)", name, fragment)
+		}
+	}
+
+	preview := renderManagedFormPreview(&metadata.FormModule{
+		Elements: []*metadata.FormElement{{
+			Kind:        metadata.FormElementGroupBox,
+			Name:        "Реквизиты",
+			Orientation: "horizontal",
+			Children: []*metadata.FormElement{{
+				Kind:     metadata.FormElementField,
+				Name:     "ПолеНомер",
+				DataPath: "Объект.Номер",
+			}},
+		}},
+	}, nil)
+	for name, fragment := range map[string]string{
+		"gap":         "gap:12px;align-items:flex-start",
+		"flex поля":   ".group-horizontal>.group-body>.fg{flex:0 1 260px;min-width:180px;margin-bottom:0}",
+		"flex группы": ".group-horizontal>.group-body>fieldset{flex:1 1 auto;min-width:0;margin-bottom:0}",
+	} {
+		if !strings.Contains(preview, fragment) {
+			t.Errorf("предпросмотр расходится с рантаймом: нет %s (%q)", name, fragment)
+		}
+	}
+}
+
+// background проходит через ту же модель, панель и безопасный style-helper в
+// обоих представлениях конструктора. Сырое невалидное значение остаётся
+// редактируемым в модели, но не должно попадать в CSS canvas/preview.
+func TestRenderFormCanvas_GroupBackground(t *testing.T) {
+	src := `schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Счёт
+elements:
+  - kind: ГруппаФормы
+    name: Реквизиты
+    background: "rgba(12, 34, 56, .5)"
+    children: []
+`
+	doc, err := formdoc.Load([]byte(src))
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	canvas, err := renderFormCanvas(doc, "")
+	if err != nil {
+		t.Fatalf("renderFormCanvas: %v", err)
+	}
+	if !strings.Contains(canvas, `style="background:rgba(12, 34, 56, .5);"`) {
+		t.Errorf("холст не применил фон группы:\n%s", canvas)
+	}
+	model, err := canvasModel(doc)
+	if err != nil {
+		t.Fatalf("canvasModel: %v", err)
+	}
+	if got := model["elements.0"].Background; got != "rgba(12, 34, 56, .5)" {
+		t.Errorf("background модели = %q", got)
+	}
+	preview := renderManagedFormPreview(&metadata.FormModule{Elements: []*metadata.FormElement{{
+		Kind: metadata.FormElementGroupBox, Name: "Реквизиты", Background: "rgba(12, 34, 56, .5)",
+	}}}, nil)
+	if !strings.Contains(preview, `style="background:rgba(12, 34, 56, .5);"`) {
+		t.Errorf("preview не применил фон группы:\n%s", preview)
+	}
+
+	bad := &metadata.FormElement{Kind: metadata.FormElementGroupBox, Name: "Реквизиты", Background: "rgb(,)"}
+	if got := groupStyleAttr(bad); got != "" {
+		t.Errorf("невалидный фон утёк в style canvas/preview: %q", got)
+	}
+
+	editor := renderFormsEditorHTML(t)
+	if !strings.Contains(editor, `"Фон (CSS-цвет)", 'background', info.background`) {
+		t.Error("панель свойств ГруппаФормы не предлагает локализованный background")
+	}
+}
+
+func TestFormsEditor_GroupBackgroundLabelLocalized(t *testing.T) {
+	saved := launcherBundle
+	t.Cleanup(func() { launcherBundle = saved })
+	bundle, err := i18n.Load(i18n.EmbeddedLocales, "")
+	if err != nil {
+		t.Fatalf("load i18n bundle: %v", err)
+	}
+	launcherBundle = bundle
+
+	editor := renderFormsEditorHTMLWithLang(t, "en")
+	if !strings.Contains(editor, `"Background (CSS color)", 'background', info.background`) {
+		t.Error("панель свойств ГруппаФормы не получила английский перевод background")
+	}
+	if strings.Contains(editor, `T("Фон (CSS-цвет)")`) {
+		t.Error("standalone-редактор не должен вызывать отсутствующий JS-хелпер T")
+	}
+}
+
+func TestFormsEditor_ChoiceFilterLabelsLocalized(t *testing.T) {
+	saved := launcherBundle
+	t.Cleanup(func() { launcherBundle = saved })
+	bundle, err := i18n.Load(i18n.EmbeddedLocales, "")
+	if err != nil {
+		t.Fatalf("load i18n bundle: %v", err)
+	}
+	launcherBundle = bundle
+
+	editor := renderFormsEditorHTMLWithLang(t, "en")
+	for _, want := range []string{
+		`"Stable element ID"`,
+		`"Dependent choice filter"`,
+		`"Conditions are evaluated in order and joined with AND. A unique element ID above is required for filtering."`,
+		`"Form field (from)"`,
+		`"Boolean (value)"`,
+		`"+ condition"`,
+	} {
+		if !strings.Contains(editor, want) {
+			t.Errorf("панель choice_filter не получила английский перевод %s", want)
+		}
 	}
 }
