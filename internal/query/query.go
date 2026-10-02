@@ -675,7 +675,7 @@ type translator struct {
 	unionOrders  map[int]bool                  // ORDER BY относится ко всему UNION, алиасы таблиц там недоступны
 	refCols      map[string]string             // колонка вывода (lower) → сущность, на которую она ссылается (#1150)
 	mainRef      mainRefSource                 // главный источник запроса: чья ссылка стоит за голым «Ссылка»
-	colClass     sourceClass                   // класс источника colTypes: на SQLite задаёт текстовый формат его дат
+	dateColumns  *momentBoundaries             // формат колонок-дат по SELECT и квалификатору для параметров SQLite
 }
 
 // mainRefSource — предсканированный главный источник запроса: имя сущности и
@@ -3074,23 +3074,34 @@ func (tr *translator) sqliteDateParamComparedToField(idx int) bool {
 	if dialectOrDefault(tr.opts.Dialect).Name() != "sqlite" || !tr.timeParamAt(idx) {
 		return false
 	}
-	// Период и реквизиты регистров хранятся привязанным time.Time — в том же
-	// формате, что даёт параметру storage.normalizeSQLiteArgs. RFC3339 для них
-	// снова сравнивал бы разные тексты: отбор «с полуночи» терял начало дня.
-	if tr.colClass != sourceClassEntity {
+	scopeID, ok := tr.sourceCtx.scopeIDAt(idx)
+	if !ok {
 		return false
 	}
-	if tr.dateFieldAt(idx-2) && tr.comparisonOpAt(idx-1) {
+	operand := momentOperand{m: tr.dateColumns, tokens: tr.tokens, scopeID: scopeID}
+	// Прямое поле справа от параметра начинается с имени/квалификатора.
+	// Слева оно заканчивается именем; функции и выражения здесь не распознаём.
+	before := func(k int) bool {
+		return k >= 0 && tr.tokens[k].kind == tIdent && operand.before(k) == sourceClassEntity
+	}
+	after := func(k int) bool {
+		return k < len(tr.tokens) && tr.tokens[k].kind == tIdent &&
+			(k+1 >= len(tr.tokens) || tr.tokens[k+1].kind != tLParen) &&
+			operand.after(k) == sourceClassEntity
+	}
+	// Период и реквизиты регистров остаются time.Time: storage сериализует
+	// их в формат регистра. RFC3339 нужен только полю сущности в этой области.
+	if before(idx-2) && tr.comparisonOpAt(idx-1) {
 		return true
 	}
-	if tr.comparisonOpAt(idx+1) && tr.dateFieldAt(idx+2) {
+	if tr.comparisonOpAt(idx+1) && after(idx+2) {
 		return true
 	}
 	// Первый или второй параметр правой части BETWEEN.
-	if tr.dateFieldAt(idx-2) && tr.keywordAt(idx-1, "МЕЖДУ", "BETWEEN") {
+	if before(idx-2) && tr.keywordAt(idx-1, "МЕЖДУ", "BETWEEN") {
 		return true
 	}
-	return tr.dateFieldAt(idx-4) &&
+	return before(idx-4) &&
 		tr.keywordAt(idx-3, "МЕЖДУ", "BETWEEN") &&
 		tr.timeParamAt(idx-2) &&
 		tr.keywordAt(idx-1, "И", "AND")
@@ -3108,13 +3119,6 @@ func (tr *translator) addSQLiteDateParam(name string) string {
 	}
 	tr.args = append(tr.args, value)
 	return dialectOrDefault(tr.opts.Dialect).Placeholder(len(tr.args))
-}
-
-func (tr *translator) dateFieldAt(idx int) bool {
-	if idx < 0 || idx >= len(tr.tokens) || tr.tokens[idx].kind != tIdent {
-		return false
-	}
-	return tr.colTypes[lowerFast(tr.tokens[idx].val)] == metadata.FieldTypeDate
 }
 
 func (tr *translator) timeParamAt(idx int) bool {
@@ -4095,7 +4099,6 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 	// исходная граница аргумента теряется, а локализовать можно только date-момент,
 	// не произвольную строку и не будущий localdate (#1243).
 	colTypes := buildColTypes(tokens, opts)
-	colClass := firstSourceClass(tokens)
 	scalarSourceCtx := preScanSourceContext(tokens)
 	qualifiedColTypes := buildQualifiedColTypes(tokens, opts, scalarSourceCtx)
 	scopedColTypes := buildScopedColTypes(tokens, opts, scalarSourceCtx)
@@ -4106,6 +4109,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 	// до основной трансляции, чтобы остальные шаги ничего не знали о них.
 	tokens = rewriteScalarFuncs(tokens, dialectName(opts.Dialect), scopedColTypes, qualifiedColTypes, scalarSourceCtx, 0, opts.Params, moments)
 	tokens = rewriteStrftime(tokens, dialectName(opts.Dialect))
+	// После раскрытия функций позиции токенов изменились; карта параметров
+	// и SELECT-областей должна описывать уже окончательный поток.
+	sourceCtx := preScanSourceContextWithOpts(tokens, opts)
 	tr := &translator{
 		tokens:      tokens,
 		params:      map[string]int{},
@@ -4114,10 +4120,10 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		colMap:      buildColMap(tokens, opts),
 		colTypes:    colTypes,
 		mainTable:   preScanMainTable(tokens),
-		colClass:    colClass,
+		dateColumns: buildMomentBoundaries(tokens, opts, sourceCtx),
 		refDims:     preScanRefDims(tokens, opts),
 		mainRef:     preScanMainRefSource(tokens, opts),
-		sourceCtx:   preScanSourceContextWithOpts(tokens, opts),
+		sourceCtx:   sourceCtx,
 		aliases:     map[string]struct{}{},
 		unionDepths: map[int]bool{},
 		unionOrders: map[int]bool{},

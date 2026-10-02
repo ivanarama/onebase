@@ -36,26 +36,6 @@ func sourceClassOf(typeUpper string) sourceClass {
 	return sourceClassEntity
 }
 
-// firstSourceClass — класс того источника, чьи поля описывает buildColTypes
-// (первый источник потока). Для виртуальной таблицы buildColTypes пуст, и
-// класс не нужен.
-func firstSourceClass(tokens []tok) sourceClass {
-	for i := 0; i+2 < len(tokens); i++ {
-		if tokens[i].kind != tIdent {
-			continue
-		}
-		upper := upperFast(tokens[i].val)
-		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
-			continue
-		}
-		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
-			return sourceClassUnknown
-		}
-		return sourceClassOf(upper)
-	}
-	return sourceClassUnknown
-}
-
 // isMomentCalendarFunc — календарные функции, чей результат сам момент
 // (граница дня, месяца, года), а не число вроде Год/Месяц/День.
 func isMomentCalendarFunc(name string) bool {
