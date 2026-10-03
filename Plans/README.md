@@ -436,6 +436,7 @@
 | 181 | [181-managed-form-close-intent.md](181-managed-form-close-intent.md) | Единый async close-intent: `ПередЗакрытием(Отказ)`, fail-closed shell/standalone/popup, «Записать / ОК / Закрыть» и runtime `РазрешитьЗакрытие` (#1530, #1558, #1559, #1621) | ~8–12 дней + 1–2 дня после runtime-instance 172 | 📋 Проектирование |
 | 182 | [182-interactive-dashboard-widgets.md](182-interactive-dashboard-widgets.md) | Интерактивные виджеты: точечный fresh refresh и live-события для data-widget, безопасная навигация строк и типизированные фильтры list (#1617–#1620) | ~7.5–11.5 дней | 📋 Проектирование |
 | 183 | [183-choice-filter-v2-deep-source-and-table-parts.md](183-choice-filter-v2-deep-source-and-table-parts.md) | choice_filter v2: источник через один переход по ссылке и отбор ссылочных колонок ТЧ (уровень формы и row-local) для каскада #1552 | ~4.5–6.5 дней | 📋 Проектирование |
+| 187 | [187-reference-combobox-and-autocomplete.md](187-reference-combobox-and-autocomplete.md) | Поиск прямо в верхнеуровневом ссылочном поле с UUID-инвариантом, затем диспетчер `АвтоПодбор` и проверка остатка #1303 (#1529) | ~6–11 дней | 📋 Проектирование |
 
 Повод — вопрос с внедрения «одна организация в базе, почему её не подставляют».
 Граница проведена так: в движок идёт механизм (объявление дефолта, его
