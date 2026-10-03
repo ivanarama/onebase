@@ -490,6 +490,8 @@
   "Не удалось обновить виджет": "Could not refresh widget",
   "Обновить БД": "Update DB",
   "Обработка": "Processor",
+  "ПометкаУдаления": "Deletion mark",
+  "Проведен": "Posted",
   "ОбработкаПроведения": "PostingHandler",
   "Обработки": "Processors",
   "Обработчик": "Handler",
