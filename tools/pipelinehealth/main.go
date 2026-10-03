@@ -117,23 +117,29 @@ type finding struct {
 }
 
 type report struct {
-	State                   string      `json:"state"`
-	Summary                 string      `json:"summary"`
-	Scope                   string      `json:"scope"`
-	Scheduler               string      `json:"scheduler"`
-	Checked                 int         `json:"checked"`
-	IssuesChecked           int         `json:"issues_checked"`
-	ReviewCandidates        []candidate `json:"review_candidates"`
-	ReviewBacklog           []candidate `json:"review_backlog"`
-	ContentReviewCandidates []candidate `json:"content_review_candidates"`
-	ReviewedWaitingShip     []candidate `json:"reviewed_waiting_ship"`
-	IntegrationOwner        *candidate  `json:"integration_owner,omitempty"`
-	MergeCandidates         []candidate `json:"merge_candidates"`
-	MergeExecutable         []candidate `json:"merge_executable"`
-	PlanCandidates          []candidate `json:"plan_candidates"`
-	FixCandidates           []candidate `json:"fix_candidates"`
-	HumanWaiting            []candidate `json:"human_waiting"`
-	Findings                []finding   `json:"findings"`
+	State            string      `json:"state"`
+	Summary          string      `json:"summary"`
+	Scope            string      `json:"scope"`
+	Scheduler        string      `json:"scheduler"`
+	Checked          int         `json:"checked"`
+	IssuesChecked    int         `json:"issues_checked"`
+	ReviewCandidates []candidate `json:"review_candidates"`
+	// ReviewDispatchCandidates is a wake-up hint, never a mutation allowlist.
+	ReviewDispatchCandidates []candidate `json:"review_dispatch_candidates"`
+	ReviewBacklog            []candidate `json:"review_backlog"`
+	ContentReviewCandidates  []candidate `json:"content_review_candidates"`
+	// ParallelReviewCandidates are ordinary native REVIEW targets that may run
+	// beside an integration-review owner. They never authorize another MERGE or
+	// an integration/full-skill fallback target.
+	ParallelReviewCandidates []candidate `json:"parallel_review_candidates"`
+	ReviewedWaitingShip      []candidate `json:"reviewed_waiting_ship"`
+	IntegrationOwner         *candidate  `json:"integration_owner,omitempty"`
+	MergeCandidates          []candidate `json:"merge_candidates"`
+	MergeExecutable          []candidate `json:"merge_executable"`
+	PlanCandidates           []candidate `json:"plan_candidates"`
+	FixCandidates            []candidate `json:"fix_candidates"`
+	HumanWaiting             []candidate `json:"human_waiting"`
+	Findings                 []finding   `json:"findings"`
 }
 
 func main() {
@@ -353,7 +359,7 @@ func analyze(prs []apiPull, owner string) report {
 	result := report{
 		State: "green", Scope: "read-only queue snapshot; mutation gates remain GraphQL",
 		Scheduler: "two-lane-safety-priority-aging-depth-number", Checked: len(prs),
-		ReviewCandidates: []candidate{}, ContentReviewCandidates: []candidate{},
+		ReviewCandidates: []candidate{}, ReviewDispatchCandidates: []candidate{}, ContentReviewCandidates: []candidate{}, ParallelReviewCandidates: []candidate{},
 		ReviewBacklog: []candidate{}, ReviewedWaitingShip: []candidate{}, MergeCandidates: []candidate{}, MergeExecutable: []candidate{}, PlanCandidates: []candidate{}, FixCandidates: []candidate{},
 		HumanWaiting: []candidate{}, Findings: []finding{},
 	}
@@ -512,6 +518,8 @@ func analyze(prs []apiPull, owner string) report {
 	sortCandidates(result.ContentReviewCandidates)
 	sortCandidates(result.ReviewCandidates)
 	applySingleFlight(&result)
+	result.ReviewDispatchCandidates = append(result.ReviewDispatchCandidates, result.ReviewCandidates...)
+	result.ReviewDispatchCandidates = append(result.ReviewDispatchCandidates, result.ParallelReviewCandidates...)
 	setMergeExecutable(&result)
 	result.ReviewBacklog = append(result.ReviewBacklog, result.ContentReviewCandidates...)
 	if result.IntegrationOwner != nil && candidatePriority(result.IntegrationOwner.Stage) == 1 {
@@ -1307,8 +1315,13 @@ func applySingleFlight(result *report) {
 		return
 	}
 	result.ReviewCandidates = []candidate{owner}
+	for _, item := range result.ContentReviewCandidates {
+		if item.Stage == "review" && item.Depth < 2 {
+			result.ParallelReviewCandidates = append(result.ParallelReviewCandidates, item)
+		}
+	}
 	result.add("yellow", "single_flight_barrier", owner.Number,
-		fmt.Sprintf("владелец интеграционной полосы; REVIEW проверяет только интеграционную дельту этого PR, содержательных кандидатов отложено: %d, следующих интеграционных: %d", len(result.ContentReviewCandidates), deferredIntegration))
+		fmt.Sprintf("владелец интеграционной полосы; канонический REVIEW проверяет его дельту, содержательных кандидатов вне этой очереди: %d (доступно для нативного параллельного REVIEW: %d), следующих интеграционных отложено: %d", len(result.ContentReviewCandidates), len(result.ParallelReviewCandidates), deferredIntegration))
 }
 
 func integrationOwnerLess(left, right candidate) bool {

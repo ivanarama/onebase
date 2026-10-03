@@ -1277,7 +1277,17 @@ server-ordered review epoch становятся lease запуска: пере�
 владельца для интеграционной проверки, либо обычные stage `review`, если
 владелец уже ждёт MERGE/recovery. Следующий интеграционный кандидат всегда
 отложен. Если полный GraphQL gate владельца не сошёлся, REVIEW останавливается и
-не переходит к обычным PR в этом же запуске. Настройка
+не переходит к обычным PR в этом же запуске. Поле checker'а
+`parallel_review_candidates` отдельно перечисляет обычные stage `review`
+первого и второго кругов, которые другая локальная REVIEW-реплика может взять
+параллельно с интеграционным владельцем при opt-in PromptPilot
+`parallel_content_review: true`. Это не расширяет закрытый `review_candidates`
+канонического skill, не разрешает полный fallback и не добавляет кандидата в
+`merge_executable`. Каждая параллельная цель получает собственную резервацию
+PR/HEAD и target-v1 lease; без двух реплик, обоих target-v1 гейтов и явного
+поля checker'а opt-in закрыт. `review_dispatch_candidates` объединяет
+канонический список владельца с параллельным списком исключительно для
+`wake_when` — он не служит allowlist для мутаций. Настройка
 `review_completion_gate: "target-v1"` означает один полный health-election:
 обычная цель входит в `content_review_candidates` в момент выдачи lease, а перед
 первой мутацией `complete review` перечитывает только её собственные

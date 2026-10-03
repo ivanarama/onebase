@@ -615,6 +615,14 @@ func TestSingleFlightExposesOnlyFirstIntegrationReview(t *testing.T) {
 	if len(got.ContentReviewCandidates) != 1 || got.ContentReviewCandidates[0].Number != 1 {
 		t.Fatalf("content backlog disappeared behind the integration owner: %+v", got)
 	}
+	if len(got.ParallelReviewCandidates) != 1 || got.ParallelReviewCandidates[0].Number != 1 {
+		t.Fatalf("ordinary content was not exposed to an independent REVIEW replica: %+v", got.ParallelReviewCandidates)
+	}
+	if len(got.ReviewDispatchCandidates) != 2 ||
+		got.ReviewDispatchCandidates[0].Number != 20 ||
+		got.ReviewDispatchCandidates[1].Number != 1 {
+		t.Fatalf("wake-up hint lost owner or parallel content: %+v", got.ReviewDispatchCandidates)
+	}
 	if len(got.ReviewBacklog) != 2 {
 		t.Fatalf("total review backlog hid deferred content: %+v", got)
 	}
@@ -623,10 +631,41 @@ func TestSingleFlightExposesOnlyFirstIntegrationReview(t *testing.T) {
 	}
 }
 
+func TestParallelReviewCandidatesExcludeFallbackAndMergeOwner(t *testing.T) {
+	owner := candidate{Number: 20, Head: headA, Stage: "integration-review"}
+	result := report{
+		ReviewCandidates: []candidate{owner},
+		ContentReviewCandidates: []candidate{
+			{Number: 1, Head: headA, Stage: "review", Depth: 0},
+			{Number: 2, Head: headA, Stage: "review", Depth: 1},
+			{Number: 3, Head: headA, Stage: "review", Depth: 2},
+			{Number: 4, Head: headA, Stage: "pre-review-validation", Depth: 0},
+		},
+	}
+	applySingleFlight(&result)
+	if len(result.ParallelReviewCandidates) != 2 ||
+		result.ParallelReviewCandidates[0].Number != 1 ||
+		result.ParallelReviewCandidates[1].Number != 2 ||
+		len(result.ReviewCandidates) != 1 || result.ReviewCandidates[0] != owner {
+		t.Fatalf("parallel lane widened integration or fallback authority: %+v", result)
+	}
+
+	result = report{
+		ReviewCandidates:        []candidate{{Number: 20, Head: headA, Stage: "integration-merge-ready"}},
+		ContentReviewCandidates: []candidate{{Number: 1, Head: headA, Stage: "review"}},
+	}
+	applySingleFlight(&result)
+	if len(result.ParallelReviewCandidates) != 0 || len(result.ReviewCandidates) != 1 ||
+		result.ReviewCandidates[0].Number != 1 {
+		t.Fatalf("merge-ready owner should use the ordinary REVIEW lane: %+v", result)
+	}
+}
+
 func TestWithoutIntegrationOwnerContentCandidatesAreExecutable(t *testing.T) {
 	got := analyze([]apiPull{testPR(20, headA), testPR(10, headB)}, "ivanarama")
 	if got.IntegrationOwner != nil || len(got.ReviewCandidates) != 2 ||
-		got.ReviewCandidates[0].Number != 10 || len(got.ContentReviewCandidates) != 2 {
+		got.ReviewCandidates[0].Number != 10 || len(got.ContentReviewCandidates) != 2 ||
+		len(got.ReviewDispatchCandidates) != 2 || len(got.ParallelReviewCandidates) != 0 {
 		t.Fatalf("content lane was not exposed as executable: %+v", got)
 	}
 }
