@@ -866,6 +866,7 @@ type sourceScope struct {
 	main           sourceClass
 	mainTable      string
 	mainColTypes   map[string]metadata.FieldType
+	mainEntity     *metadata.Entity
 	sourceCount    int
 	qualifiers     map[string]sourceClass
 	derivedAliases map[string]int
@@ -3387,13 +3388,33 @@ func (tr *translator) qualifyOwn(col, lower string) string {
 	if _, isAlias := tr.aliases[lower]; isAlias {
 		return col // алиас вывода, не колонка таблицы
 	}
-	if len(tr.refDims) > 0 && tr.mainTable != "" {
-		_, own := tr.colTypes[lower]
-		if own {
-			return tr.mainTable + "." + col
-		}
+	if len(tr.refDims) == 0 || tr.inUnionOrder() {
+		return col
+	}
+	// Источник — свой у каждого SELECT-scope. Прежде квалификатором всегда
+	// была главная таблица первого SELECT, и во второй ветви ОБЪЕДИНИТЬ поле
+	// «Дата» становилось «поступлениетоваров.дата» — «no such column».
+	table, colTypes := tr.mainTable, tr.colTypes
+	var entity *metadata.Entity
+	if scope, ok := tr.sourceCtx.scopeAt(tr.pos - 1); ok && scope.mainTable != "" {
+		table, colTypes = scope.mainTable, scope.mainColTypes
+		entity = scope.mainEntity
+	}
+	if table == "" {
+		return col
+	}
+	if _, own := colTypes[lower]; own || isEntityServiceColumn(lower, entity) {
+		return table + "." + col
 	}
 	return col
+}
+
+// isEntityServiceColumn проверяет принадлежность служебной колонки источнику:
+// deletion_mark есть у сущностей, posted — только у документов. Регистры и
+// производные таблицы не получают колонки авто-присоединённой сущности.
+func isEntityServiceColumn(lower string, entity *metadata.Entity) bool {
+	return entity != nil && (lower == "deletion_mark" ||
+		(lower == "posted" && entity.Kind == metadata.KindDocument))
 }
 
 // qualifyReference квалифицирует виртуальное поле Ссылка/Reference/Ref по
@@ -3784,6 +3805,14 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 		}
 		if isMain {
 			scope.mainColTypes = sourceColumnTypes(typeUpper, tokens[i+2].val, opts)
+			if class == sourceClassEntity {
+				for _, entity := range opts.Entities {
+					if strings.EqualFold(entity.Name, tokens[i+2].val) {
+						scope.mainEntity = entity
+						break
+					}
+				}
+			}
 			// Виртуальная таблица эмитится как подзапрос со специальным алиасом,
 			// который здесь не вычисляем. Для обычного источника сохраняем имя,
 			// чтобы bare-Ссылка квалифицировалась в своём SELECT-scope.
