@@ -283,6 +283,40 @@ UUID работает через приведение `*Ref` к идентифи
 таких посетителей до истечения `Max-Age` сохраняется и обход кэша витрины.
 Заказы это не затрагивает.
 
+## 🔎 Состав релиза по PR
+
+Подробности и ограничения описаны выше; здесь — ссылки на вошедшие изменения.
+
+### Формы и конфигуратор
+
+- [PR #1187](https://github.com/ivanarama/onebase/pull/1187) — `required: true` у элемента формы теперь блокирует пустую запись.
+- [PR #1196](https://github.com/ivanarama/onebase/pull/1196) — `onebase check` предупреждает об обработчиках недостижимых событий формы.
+- [PR #1199](https://github.com/ivanarama/onebase/pull/1199) — Конфигуратор не присваивает стандартным «Коду» и «Номеру» ID другого поля.
+- [PR #1228](https://github.com/ivanarama/onebase/pull/1228) — Сохранение объекта в конфигураторе не стирает `title`, `label` и `required`.
+- [PR #1255](https://github.com/ivanarama/onebase/pull/1255) — Панель конструктора не предлагает запрещённое сервером событие `КнопкаКП`.
+- [PR #1287](https://github.com/ivanarama/onebase/pull/1287) — `Надпись` и `ПолеКартинки` применяют `hidden_when`; настоящая `КоманднаяПанель` — также `readonly_when`.
+- [PR #1292](https://github.com/ivanarama/onebase/pull/1292) — Метаданный `required` проверяется после `ПередЗаписью`, а явный флаг элемента формы — до отправки.
+
+### DSL, запросы и фоновые задания
+
+- [PR #1188](https://github.com/ivanarama/onebase/pull/1188) — Ссылочная колонка выборки сохраняет тип ссылки вместо строки.
+- [PR #1197](https://github.com/ivanarama/onebase/pull/1197) — DSL принимает пропущенные аргументы между запятыми.
+- [PR #1215](https://github.com/ivanarama/onebase/pull/1215) — У менеджера документов появился `Провести(Ссылка)` вместо тихого `Неопределено`.
+- [PR #1222](https://github.com/ivanarama/onebase/pull/1222) — Задание без `Registry` записывает понятную ошибку вместо текста паники.
+- [PR #1254](https://github.com/ivanarama/onebase/pull/1254) — `Формат(..., ДФ=…)` использует местное время, как остальные функции дат.
+
+### CMS, макеты и ссылки
+
+- [PR #1229](https://github.com/ivanarama/onebase/pull/1229) — Виджет отбрасывает путь карточки с обратным слэшем, который браузер мог прочесть как внешний адрес.
+- [PR #1259](https://github.com/ivanarama/onebase/pull/1259) — Оформление корзины стало атомарным.
+- [PR #1260](https://github.com/ivanarama/onebase/pull/1260) — Импорт XLSX ограничивает чтение далёкой строки и расход памяти.
+- [PR #1262](https://github.com/ivanarama/onebase/pull/1262) — Создание и импорт макета не перезаписывают файл при конкурентном запросе.
+- [PR #1285](https://github.com/ivanarama/onebase/pull/1285) — Cookie корзины ограничена путём `/hs/shop`.
+
+### Руководство
+
+- [PR #1175](https://github.com/ivanarama/onebase/pull/1175) — README и QUICKSTART дополнены режимами разработки, ссылками на сайт и демо, иллюстрациями.
+
 ## 📦 Установка
 
 ### Windows
@@ -326,3 +360,32 @@ onebase version
 
 Полный список изменений:
 [`v0.11.0…v0.12.0`](https://github.com/ivanarama/onebase/compare/v0.11.0...v0.12.0).
+
+<!-- release-check: omit #1182 reason=триаж и FIX уточнили передачу заявок в отдельный план -->
+<!-- release-check: omit #1194 reason=синхронизированы служебные инструкции об обязательном CI -->
+<!-- release-check: omit #1200 reason=добавлены тест и отчёт i18ncheck для названия локали -->
+<!-- release-check: omit #1213 reason=исправлены сортировка и лимит вывода служебного backlogsweep -->
+<!-- release-check: omit #1214 reason=машинный комментарий конвейера больше не считается ответом автору в backlogsweep -->
+<!-- release-check: omit #1261 reason=служебный протокол ревью предотвращает повтор неизменённого PR -->
+<!-- release-check: omit #1284 reason=очередь ревью перестала отдавать старый PR вне приоритета -->
+<!-- release-check: omit #1290 reason=исправлен перенос ship после base-sync в служебном конвейере -->
+<!-- release-check: omit #1294 reason=разрешено восстановление старого re-ship после base-sync -->
+<!-- release-check: omit #1296 reason=устранён повтор интеграционного ревью в конвейере -->
+<!-- release-check: omit #1298 reason=интеграционный барьер держится до фактического merge -->
+<!-- release-check: omit #1300 reason=ревью проверяет allowlist диагностики pipelinehealth -->
+<!-- release-check: omit #1302 reason=Windows preflight ревью ищет gh в окружении -->
+<!-- release-check: omit #1304 reason=Windows preflight ревью ищет Go в окружении -->
+<!-- release-check: omit #1306 reason=служебный merge восстанавливает явно подтверждённую цепочку base-sync -->
+<!-- release-check: omit #1308 reason=merge читает актуальную базовую вершину -->
+<!-- release-check: omit #1253 reason=добавлены адаптеры Codex для этапов сопровождения -->
+<!-- release-check: omit #1320 reason=введены приоритеты очереди конвейера -->
+<!-- release-check: omit #1325 reason=разделены полосы содержательного и интеграционного ревью -->
+<!-- release-check: omit #1258 reason=добавлен CI-прогон в западной часовой зоне; код продукта не менялся -->
+<!-- release-check: omit #1326 reason=pipelinehealth показывает исполняемую очередь merge -->
+<!-- release-check: omit #1327 reason=ship сохраняется при повторном ревью в служебном конвейере -->
+<!-- release-check: omit #1328 reason=добавлен отдельный этап PLAN для одобренных заявок -->
+<!-- release-check: omit #1330 reason=приоритет plan-PR передаётся в ревью -->
+<!-- release-check: omit #1332 reason=закреплены lease ревью и точный переход FIX -->
+<!-- release-check: omit #1334 reason=синхронизирован корневой REVIEW contract -->
+<!-- release-check: omit #1350 reason=pipelinehealth выбирает владельца интеграционной полосы по родителям HEAD -->
+<!-- release-check: omit #1361 reason=PR подготовил эту заметку релиза и CHANGELOG -->
