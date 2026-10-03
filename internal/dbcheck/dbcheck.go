@@ -113,6 +113,7 @@ func All() []Check {
 		refsCheck{},
 		codesCheck{},
 		orphanMovementsCheck{},
+		unpostedMovementsCheck{},
 		totalsCheck{},
 		accountTotalsCheck{},
 		blobsCheck{},
