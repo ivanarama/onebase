@@ -833,6 +833,7 @@ type translator struct {
 	unionOrders  map[int]bool                  // ORDER BY относится ко всему UNION, алиасы таблиц там недоступны
 	refCols      map[string]string             // колонка вывода (lower) → сущность, на которую она ссылается (#1150)
 	mainRef      mainRefSource                 // главный источник запроса: чья ссылка стоит за голым «Ссылка»
+	dateColumns  *momentBoundaries             // формат колонок-дат по SELECT и квалификатору для параметров SQLite
 }
 
 // mainRefSource — предсканированный главный источник запроса: имя сущности и
@@ -863,6 +864,7 @@ type sourceContext struct {
 }
 
 type sourceScope struct {
+	parent         int // внешний SELECT; -1 у корневого SELECT и его UNION-siblings
 	main           sourceClass
 	mainTable      string
 	mainColTypes   map[string]metadata.FieldType
@@ -3186,42 +3188,8 @@ func buildQualifiedColTypes(tokens []tok, opts CompileOpts, sourceCtx sourceCont
 		if fields == nil {
 			continue
 		}
-		addQualifier(scopeID, name, fields)
-		addQualifier(scopeID, sourceToTable(typeUpper, name), fields)
-
-		// У виртуальной таблицы пользовательский алиас стоит после списка
-		// аргументов: Регистр.X.Остатки(...) КАК Р (та же логика, что в
-		// разборе областей FROM).
-		if i+5 < len(tokens) && tokens[i+3].kind == tDot && tokens[i+5].kind == tLParen {
-			depth := 0
-			for j := i + 5; j < len(tokens); j++ {
-				switch tokens[j].kind {
-				case tLParen:
-					depth++
-				case tRParen:
-					depth--
-					if depth == 0 {
-						aliasPos := j + 1
-						if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {
-							aliasUpper := upperFast(tokens[aliasPos].val)
-							if (aliasUpper == "КАК" || aliasUpper == "AS") && tokens[aliasPos+1].kind == tIdent {
-								addQualifier(scopeID, tokens[aliasPos+1].val, fields)
-							}
-						}
-						j = len(tokens)
-					}
-				}
-			}
-			continue
-		}
-
-		// A regular source has its optional alias directly after the entity name.
-		aliasPos := i + 3
-		if aliasPos+1 < len(tokens) && tokens[aliasPos].kind == tIdent {
-			aliasUpper := upperFast(tokens[aliasPos].val)
-			if (aliasUpper == "КАК" || aliasUpper == "AS") && tokens[aliasPos+1].kind == tIdent {
-				addQualifier(scopeID, tokens[aliasPos+1].val, fields)
-			}
+		for _, qualifier := range sourceQualifierNames(tokens, i, typeUpper, name) {
+			addQualifier(scopeID, qualifier, fields)
 		}
 	}
 	return qualified
@@ -3306,17 +3274,34 @@ func (tr *translator) sqliteDateParamComparedToField(idx int) bool {
 	if dialectOrDefault(tr.opts.Dialect).Name() != "sqlite" || !tr.timeParamAt(idx) {
 		return false
 	}
-	if tr.dateFieldAt(idx-2) && tr.comparisonOpAt(idx-1) {
+	scopeID, ok := tr.sourceCtx.scopeIDAt(idx)
+	if !ok {
+		return false
+	}
+	operand := momentOperand{m: tr.dateColumns, tokens: tr.tokens, scopeID: scopeID}
+	// Прямое поле справа от параметра начинается с имени/квалификатора.
+	// Слева оно заканчивается именем; функции и выражения здесь не распознаём.
+	before := func(k int) bool {
+		return k >= 0 && tr.tokens[k].kind == tIdent && operand.before(k) == sourceClassEntity
+	}
+	after := func(k int) bool {
+		return k < len(tr.tokens) && tr.tokens[k].kind == tIdent &&
+			(k+1 >= len(tr.tokens) || tr.tokens[k+1].kind != tLParen) &&
+			operand.after(k) == sourceClassEntity
+	}
+	// Период и реквизиты регистров остаются time.Time: storage сериализует
+	// их в формат регистра. RFC3339 нужен только полю сущности в этой области.
+	if before(idx-2) && tr.comparisonOpAt(idx-1) {
 		return true
 	}
-	if tr.comparisonOpAt(idx+1) && tr.dateFieldAt(idx+2) {
+	if tr.comparisonOpAt(idx+1) && after(idx+2) {
 		return true
 	}
 	// Первый или второй параметр правой части BETWEEN.
-	if tr.dateFieldAt(idx-2) && tr.keywordAt(idx-1, "МЕЖДУ", "BETWEEN") {
+	if before(idx-2) && tr.keywordAt(idx-1, "МЕЖДУ", "BETWEEN") {
 		return true
 	}
-	return tr.dateFieldAt(idx-4) &&
+	return before(idx-4) &&
 		tr.keywordAt(idx-3, "МЕЖДУ", "BETWEEN") &&
 		tr.timeParamAt(idx-2) &&
 		tr.keywordAt(idx-1, "И", "AND")
@@ -3334,13 +3319,6 @@ func (tr *translator) addSQLiteDateParam(name string) string {
 	}
 	tr.args = append(tr.args, value)
 	return dialectOrDefault(tr.opts.Dialect).Placeholder(len(tr.args))
-}
-
-func (tr *translator) dateFieldAt(idx int) bool {
-	if idx < 0 || idx >= len(tr.tokens) || tr.tokens[idx].kind != tIdent {
-		return false
-	}
-	return tr.colTypes[lowerFast(tr.tokens[idx].val)] == metadata.FieldTypeDate
 }
 
 func (tr *translator) timeParamAt(idx int) bool {
@@ -3655,8 +3633,13 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 				for len(active) > 0 && active[len(active)-1].depth >= depth {
 					active = active[:len(active)-1]
 				}
+				parent := -1
+				if len(active) > 0 {
+					parent = active[len(active)-1].id
+				}
 				scopeID := len(ctx.scopes)
 				ctx.scopes = append(ctx.scopes, sourceScope{
+					parent:         parent,
 					qualifiers:     map[string]sourceClass{},
 					derivedAliases: map[string]int{},
 					outputAliases:  map[string]struct{}{},
@@ -3775,10 +3758,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 		isMain := scope.sourceCount == 0
 		scope.sourceCount++
 
-		class := sourceClassEntity
-		if isAccumRegType(typeUpper) || isInfoRegType(typeUpper) || isAccountRegType(typeUpper) {
-			class = sourceClassRegister
-		}
+		class := sourceClassOf(typeUpper)
 		if scope.main == sourceClassUnknown {
 			scope.main = class
 		}
@@ -4327,11 +4307,16 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 	scalarSourceCtx := preScanSourceContext(tokens)
 	qualifiedColTypes := buildQualifiedColTypes(tokens, opts, scalarSourceCtx)
 	scopedColTypes := buildScopedColTypes(tokens, opts, scalarSourceCtx)
+	moments := buildMomentBoundaries(tokens, opts, scalarSourceCtx)
 	tokens = rewriteGroupingReferenceAliases(tokens)
+	moments.vtArgs = vtArgumentPositions(tokens)
 	// расширяем НачалоДня/Год/Месяц/ОКР/АБС/ЦЕЛ/... в SQL-эквиваленты
 	// до основной трансляции, чтобы остальные шаги ничего не знали о них.
-	tokens = rewriteScalarFuncs(tokens, dialectName(opts.Dialect), scopedColTypes, qualifiedColTypes, scalarSourceCtx, 0, opts.Params)
+	tokens = rewriteScalarFuncs(tokens, dialectName(opts.Dialect), scopedColTypes, qualifiedColTypes, scalarSourceCtx, 0, opts.Params, moments)
 	tokens = rewriteStrftime(tokens, dialectName(opts.Dialect))
+	// После раскрытия функций позиции токенов изменились; карта параметров
+	// и SELECT-областей должна описывать уже окончательный поток.
+	sourceCtx := preScanSourceContextWithOpts(tokens, opts)
 	tr := &translator{
 		tokens:      tokens,
 		params:      map[string]int{},
@@ -4340,9 +4325,10 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		colMap:      buildColMap(tokens, opts),
 		colTypes:    colTypes,
 		mainTable:   preScanMainTable(tokens),
+		dateColumns: buildMomentBoundaries(tokens, opts, sourceCtx),
 		refDims:     preScanRefDims(tokens, opts),
 		mainRef:     preScanMainRefSource(tokens, opts),
-		sourceCtx:   preScanSourceContextWithOpts(tokens, opts),
+		sourceCtx:   sourceCtx,
 		aliases:     map[string]struct{}{},
 		unionDepths: map[int]bool{},
 		unionOrders: map[int]bool{},
@@ -5211,7 +5197,7 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 // т.п., чтобы основной транслятор обработал внутренний аргумент через обычные
 // правила (resolve ref dims, параметры и т.п.). Рекурсивно для вложенных
 // вызовов: Месяц(НачалоМесяца(x)) и ОКР(СУММА(x), 0) тоже разворачиваются.
-func rewriteScalarFuncs(tokens []tok, dialect string, scopedColTypes map[int]map[string]metadata.FieldType, qualifiedColTypes map[int]map[string]map[string]metadata.FieldType, sourceCtx sourceContext, tokenOffset int, params map[string]any) []tok {
+func rewriteScalarFuncs(tokens []tok, dialect string, scopedColTypes map[int]map[string]metadata.FieldType, qualifiedColTypes map[int]map[string]map[string]metadata.FieldType, sourceCtx sourceContext, tokenOffset int, params map[string]any, moments *momentBoundaries) []tok {
 	rewrites := scalarFuncRewrites(dialect)
 	var out []tok
 	for i := 0; i < len(tokens); i++ {
@@ -5242,7 +5228,7 @@ func rewriteScalarFuncs(tokens []tok, dialect string, scopedColTypes map[int]map
 					continue
 				}
 				rawInner := tokens[i+2 : end]
-				inner := rewriteScalarFuncs(rawInner, dialect, scopedColTypes, qualifiedColTypes, sourceCtx, tokenOffset+i+2, params) // рекурсия
+				inner := rewriteScalarFuncs(rawInner, dialect, scopedColTypes, qualifiedColTypes, sourceCtx, tokenOffset+i+2, params, moments) // рекурсия
 				// SQLite хранит date как UTC-текст. Переводим момент в стенные
 				// часы приложения до календарной операции, но только когда тип
 				// аргумента это доказывает. Поэтому будущий localdate останется
@@ -5252,19 +5238,30 @@ func rewriteScalarFuncs(tokens []tok, dialect string, scopedColTypes map[int]map
 				// области не должно решать за эту (#1243, круг 4).
 				var scopeColTypes map[string]metadata.FieldType
 				var scopeQualified map[string]map[string]metadata.FieldType
-				if scopeID, ok := sourceCtx.scopeIDAt(tokenOffset + i); ok {
+				scopeID, hasScope := sourceCtx.scopeIDAt(tokenOffset + i)
+				if hasScope {
 					scopeColTypes = scopedColTypes[scopeID]
 					scopeQualified = qualifiedColTypes[scopeID]
 				}
-				if dialect == "sqlite" && isCalendarDateFunc(key) && dateArgumentIsMoment(rawInner, scopeColTypes, scopeQualified, params) {
+				localized := dialect == "sqlite" && isCalendarDateFunc(key) && dateArgumentIsMoment(rawInner, scopeColTypes, scopeQualified, params)
+				if localized {
 					wrapped := tokenizeFragment("ob_local_datetime(")
 					wrapped = append(wrapped, inner...)
 					wrapped = append(wrapped, tokenizeFragment(")")...)
 					inner = wrapped
 				}
-				out = append(out, rw.prefix...)
-				out = append(out, inner...)
-				out = append(out, rw.suffix...)
+				call := append(append(append([]tok(nil), rw.prefix...), inner...), rw.suffix...)
+				// Местную границу, которую сравнивают с моментом, возвращаем в
+				// UTC и в формат хранения партнёра (см. sqlite_moments.go).
+				if localized && isMomentCalendarFunc(key) {
+					switch moments.boundaryClass(tokens, i, end, tokenOffset, scopeID, hasScope, params) {
+					case sourceClassEntity:
+						call = append(append(tokenizeFragment("ob_utc_rfc3339("), call...), tokenizeFragment(")")...)
+					case sourceClassRegister:
+						call = append(append(tokenizeFragment("ob_utc_moment("), call...), tokenizeFragment(")")...)
+					}
+				}
+				out = append(out, call...)
 				i = end // пропускаем закрывающую )
 				continue
 			}

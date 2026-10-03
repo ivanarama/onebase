@@ -61,6 +61,37 @@ func init() {
 		}
 		return nil, nil
 	})
+	// Обратные к ob_local_datetime: граница из календарной функции (местные
+	// стенные часы без зоны) снова становится моментом в UTC — в том тексте,
+	// в каком хранится колонка, с которой её сравнивают. ob_utc_moment — формат
+	// периода и реквизитов регистров (sqliteTimeLayout), ob_utc_rfc3339 —
+	// реквизитов справочников и документов. Без перевода SQLite сравнивал
+	// местную полночь с UTC-текстом, и граница дня съезжала на смещение зоны.
+	// Неразобранное значение возвращается как есть — прежнее поведение.
+	registerLocalToUTC := func(name, layout string) {
+		sqlite.MustRegisterScalarFunction(name, 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+			if len(args) != 1 || args[0] == nil {
+				return nil, nil
+			}
+			var value string
+			switch v := args[0].(type) {
+			case string:
+				value = v
+			case []byte:
+				value = string(v)
+			default:
+				return args[0], nil
+			}
+			for _, local := range []string{"2006-01-02 15:04:05", "2006-01-02"} {
+				if parsed, err := time.ParseInLocation(local, strings.TrimSpace(value), time.Local); err == nil {
+					return parsed.UTC().Format(layout), nil
+				}
+			}
+			return args[0], nil
+		})
+	}
+	registerLocalToUTC("ob_utc_moment", sqliteTimeLayout)
+	registerLocalToUTC("ob_utc_rfc3339", time.RFC3339)
 }
 
 // ConnectSQLite opens (or creates) a SQLite database file at the given path
