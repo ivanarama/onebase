@@ -417,6 +417,74 @@ func TestGraphQLSnapshotMapsRESTSemanticsAndLargeDatabaseID(t *testing.T) {
 	}
 }
 
+func TestGraphQLCLILoadsUnshippedReviewedMergeParentsBeforeAskingForShip(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	temporary := t.TempDir()
+	name := "pipelinehealth"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	binary := filepath.Join(temporary, name)
+	//nolint:gosec // executable/output paths are fixed by this test
+	build := exec.Command("go", "build", "-o", binary, "./tools/pipelinehealth")
+	build.Dir = root
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build: %v %s", err, output)
+	}
+	helper, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldReview := gqlTestComment("30")
+	oldReview["body"] = completion(headC, 20, 25)
+	currentReview := gqlTestComment("40")
+	currentReview["body"] = completion(headB, 35, 36)
+	pull := gqlTestPullNode("pr-1", 1321, headB,
+		[]any{map[string]any{"name": "reviewed"}}, []any{oldReview, currentReview})
+	pages := []any{
+		map[string]any{"data": snapshotResult(1, []any{pull}, false, nil, 0, nil, false, nil)},
+		map[string]any{"data": map[string]any{"nodes": []any{map[string]any{
+			"__typename": "Commit", "id": "commit-pr-1", "oid": headB,
+			"parents": connection(2, []any{map[string]any{"oid": headA}, map[string]any{"oid": headD}}, false, nil),
+		}}}},
+		map[string]any{"data": map[string]any{"nodes": []any{map[string]any{
+			"__typename": "PullRequest", "id": "pr-1", "headRefOid": headB,
+		}}}},
+	}
+	data, err := json.Marshal(pages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sequence := filepath.Join(temporary, "pages.json")
+	if err := os.WriteFile(sequence, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	//nolint:gosec // binary is built by this test
+	command := exec.Command(binary, "-transport", "graphql", "-json")
+	command.Dir = root
+	command.Env = append(os.Environ(), "GH_EXE="+helper, "PIPELINEHEALTH_TEST_GH_HELPER=1", "PIPELINEHEALTH_TEST_GH_SEQUENCE="+sequence)
+	output, err := command.Output()
+	if err != nil {
+		t.Fatalf("CLI failed: %v", err)
+	}
+	var got report
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.ReviewedWaitingShip) != 0 || len(got.HumanWaiting) != 1 ||
+		got.HumanWaiting[0].Number != 1321 || got.HumanWaiting[0].Stage != "legacy-source-proof-missing" ||
+		!hasFinding(got, "legacy_source_review_missing") {
+		t.Fatalf("CLI asked for ship without source proof: %+v", got)
+	}
+	counter, err := os.ReadFile(sequence + ".index")
+	if err != nil || string(counter) != "3" {
+		t.Fatalf("parent lookup or stable HEAD recheck missing: calls=%q err=%v", counter, err)
+	}
+}
+
 func TestGraphQLSnapshotPaginatesOuterConnections(t *testing.T) {
 	first := gqlTestPullNode("pr-1", 10, headA, nil, nil)
 	second := gqlTestPullNode("pr-2", 11, headB, nil, nil)

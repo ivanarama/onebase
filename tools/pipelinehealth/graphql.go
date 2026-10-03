@@ -1013,7 +1013,7 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo string, includePulls
 			return nil, nil, fmt.Errorf("issue #%d: %w", rawIssues[index].Number, err)
 		}
 	}
-	if err := loadShipHeadParents(client, rawPulls); err != nil {
+	if err := loadRelevantHeadParents(client, rawPulls, owner); err != nil {
 		return nil, nil, err
 	}
 
@@ -1162,15 +1162,15 @@ func completeNodeConnections(client pipelineGraphQLClient, nodeID, typeName stri
 	return nil
 }
 
-func loadShipHeadParents(client pipelineGraphQLClient, pulls []gqlPull) error {
+func loadRelevantHeadParents(client pipelineGraphQLClient, pulls []gqlPull, owner string) error {
 	commitPulls := map[string][]int{}
-	shipPulls := map[string][]int{}
+	relevantPulls := map[string][]int{}
 	for index := range pulls {
 		preview, err := convertGQLPull(pulls[index])
 		if err != nil {
 			return fmt.Errorf("PR #%d: %w", pulls[index].Number, err)
 		}
-		if !needsHeadParents(preview) {
+		if !needsHeadParents(preview, owner) {
 			continue
 		}
 		if len(pulls[index].Commits.Nodes) != 1 {
@@ -1181,7 +1181,7 @@ func loadShipHeadParents(client pipelineGraphQLClient, pulls []gqlPull) error {
 			return fmt.Errorf("PR #%d: head commit does not match captured headRefOid", pulls[index].Number)
 		}
 		commitPulls[commit.ID] = append(commitPulls[commit.ID], index)
-		shipPulls[pulls[index].NodeID] = append(shipPulls[pulls[index].NodeID], index)
+		relevantPulls[pulls[index].NodeID] = append(relevantPulls[pulls[index].NodeID], index)
 	}
 
 	ids := make([]string, 0, len(commitPulls))
@@ -1240,12 +1240,12 @@ func loadShipHeadParents(client pipelineGraphQLClient, pulls []gqlPull) error {
 			return fmt.Errorf("load ship head parents: one or more requested commits are missing")
 		}
 	}
-	return revalidateShipPullHeads(client, pulls, shipPulls)
+	return revalidateRelevantPullHeads(client, pulls, relevantPulls)
 }
 
-func revalidateShipPullHeads(client pipelineGraphQLClient, pulls []gqlPull, shipPulls map[string][]int) error {
-	ids := make([]string, 0, len(shipPulls))
-	for id := range shipPulls {
+func revalidateRelevantPullHeads(client pipelineGraphQLClient, pulls []gqlPull, relevantPulls map[string][]int) error {
+	ids := make([]string, 0, len(relevantPulls))
+	for id := range relevantPulls {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
@@ -1271,7 +1271,7 @@ func revalidateShipPullHeads(client pipelineGraphQLClient, pulls []gqlPull, ship
 				return fmt.Errorf("revalidate ship pull heads: missing, duplicate, or unexpected pull node")
 			}
 			seen[node.ID] = true
-			indices := shipPulls[node.ID]
+			indices := relevantPulls[node.ID]
 			for _, index := range indices {
 				if node.HeadRefOID != pulls[index].HeadRefOID {
 					return fmt.Errorf("PR #%d: headRefOid changed from %s to %s while loading parents", pulls[index].Number, pulls[index].HeadRefOID, node.HeadRefOID)

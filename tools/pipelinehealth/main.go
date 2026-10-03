@@ -247,7 +247,8 @@ func loadPulls(github *githubRESTClient, repo, fixture string) ([]apiPull, error
 					continue
 				}
 				prs[index].Comments = comments
-				if !needsHeadParents(prs[index]) {
+				owner, _, _ := strings.Cut(repo, "/")
+				if !needsHeadParents(prs[index], owner) {
 					continue
 				}
 				var commitResponse struct {
@@ -498,6 +499,15 @@ func analyze(prs []apiPull, owner string) report {
 			result.HumanWaiting = append(result.HumanWaiting, item)
 		case labels["changes-requested"] && !overrideOpen:
 			result.FixCandidates = append(result.FixCandidates, item)
+		case depth > currentCompletions && headIsBaseSyncMerge(pr) && legacySourceCompletions == 0 && !carryDone && !v1AbortCurrent:
+			// A completed review of this HEAD is not enough to turn an earlier
+			// needs-decision review of a different SHA into source proof. Show the
+			// recovery before asking for ship; otherwise the owner is invited into
+			// a merge gate that cannot succeed.
+			item.Stage = "legacy-source-proof-missing"
+			result.HumanWaiting = append(result.HumanWaiting, item)
+			result.add("yellow", "legacy_source_review_missing", pr.Number,
+				"первый родитель merge-коммита не имеет доверенного завершённого REVIEW; ship не поможет: нужен новый обычный content HEAD и полное REVIEW")
 		case labels["reviewed"] && currentCompletions > 0 && !overrideOpen:
 			// Valid-looking current review is waiting for the human ship decision.
 			result.ReviewedWaitingShip = append(result.ReviewedWaitingShip, item)
@@ -958,12 +968,21 @@ func (result *report) addIssue(severity, code string, issue int, message string)
 }
 
 // needsHeadParents limits the extra commit read to pull requests whose stage
-// can depend on it: an open ship candidate targeting main.
-func needsHeadParents(pr apiPull) bool {
+// can depend on it: ship candidates and reviewed heads with older review proof.
+// The latter need their parents before we can safely ask the owner for ship.
+func needsHeadParents(pr apiPull, owner string) bool {
 	if pr.State != "open" || pr.Base.Ref != "main" || pr.Draft || pr.Head.SHA == "" {
 		return false
 	}
-	return labelSet(pr.Labels)["ship"]
+	labels := labelSet(pr.Labels)
+	if labels["ship"] {
+		return true
+	}
+	if !labels["reviewed"] || labels["hold"] || labels["needs-decision"] || labels["changes-requested"] {
+		return false
+	}
+	current, _, _ := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
+	return reviewDepth(pr.Comments, owner) > current
 }
 
 // headIsBaseSyncMerge reports whether the head commit has the shape every

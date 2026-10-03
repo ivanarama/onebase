@@ -66,6 +66,28 @@ func withMergeHead(item apiPull) apiPull {
 	return item
 }
 
+func TestParentLookupOnlyWhenStageNeedsIt(t *testing.T) {
+	first := addComment(testPR(10, headB, "reviewed"), 40, completion(headB, 35, 36))
+	if needsHeadParents(first, "ivanarama") {
+		t.Fatal("first full review on a merge HEAD does not require historical parent proof")
+	}
+	historic := addComment(first, 30, completion(headC, 20, 25))
+	if !needsHeadParents(historic, "ivanarama") {
+		t.Fatal("reviewed head with older proof must load parents before asking for ship")
+	}
+	for _, label := range []string{"hold", "needs-decision", "changes-requested"} {
+		parked := historic
+		parked.Labels = append(append([]apiLabel(nil), historic.Labels...), apiLabel{Name: label})
+		if needsHeadParents(parked, "ivanarama") {
+			t.Fatalf("parked %s head incurred a parent query", label)
+		}
+	}
+	ship := addComment(testPR(11, headB, "ship"), 30, completion(headC, 20, 25))
+	if !needsHeadParents(ship, "ivanarama") {
+		t.Fatal("ship candidate lost its parent gate")
+	}
+}
+
 func hasFinding(result report, code string) bool {
 	for _, item := range result.Findings {
 		if item.Code == code {
@@ -414,6 +436,22 @@ func TestLegacyMergeWithoutSourceReviewDoesNotOwnTheLane(t *testing.T) {
 				t.Fatalf("unproved legacy source blocked unrelated work: %+v", got)
 			}
 		})
+	}
+}
+
+func TestLegacyMergeWithoutSourceReviewDoesNotAskForShip(t *testing.T) {
+	// The current merge HEAD was fully reviewed, but the earlier completed
+	// review is for a different SHA than the merge's first parent. Re-shipping
+	// would send this PR to a gate that cannot prove the legacy source.
+	broken := withMergeHead(addComment(testPR(1321, headB, "reviewed"), 30,
+		completion(headC, 20, 25)))
+	broken = addComment(broken, 40, completion(headB, 35, 36))
+	got := analyze([]apiPull{broken}, "ivanarama")
+	if len(got.ReviewedWaitingShip) != 0 || len(got.MergeCandidates) != 0 ||
+		len(got.HumanWaiting) != 1 || got.HumanWaiting[0].Number != 1321 ||
+		got.HumanWaiting[0].Stage != "legacy-source-proof-missing" ||
+		!hasFinding(got, "legacy_source_review_missing") {
+		t.Fatalf("unprovable merge HEAD incorrectly asked for ship: %+v", got)
 	}
 }
 
