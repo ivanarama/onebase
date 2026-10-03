@@ -1,0 +1,55 @@
+schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: ЗаявкаНаОбработку
+  title:
+    ru: "Заявка на обработку"
+    en: "Processing request"
+# Демонстрация динамических якорей (#1587): по условию «Стадия = Принята»
+# сервер скрывает украшения (hidden_when) и гасит командную панель
+# (readonly_when), а после события формы клиент применяет готовые состояния.
+# Эту же геометрию проверяет браузерный сценарий e2e/tests/dynamic-anchors.spec.js.
+attributes:
+  - name: Объект
+    type: CatalogRef.ЗаявкаНаОбработку
+    save: true
+    main: true
+commands:
+  - name: Пинг
+    action: Пинг
+    title:
+      ru: "Пинг"
+      en: "Ping"
+elements:
+  - kind: Надпись
+    name: НадписьСтатуса
+    title:
+      ru: "Статус: черновик"
+      en: "Status: draft"
+    hidden_when: 'Стадия = "Принята"'
+  - kind: ПолеКартинки
+    name: КартинкаСФайлом
+    picture: logo.png
+    hidden_when: 'Стадия = "Принята"'
+  - kind: ПолеКартинки
+    name: КартинкаБезФайла
+    hidden_when: 'Стадия = "Принята"'
+  - kind: Флажок
+    name: ФлажокСрочно
+    title:
+      ru: "Срочно"
+      en: "Urgent"
+    data_path: Объект.Срочно
+    hidden_when: 'Стадия = "Принята"'
+  - kind: КоманднаяПанель
+    name: ПанельКоманд
+    readonly_when: 'Стадия = "Принята"'
+  - kind: ПолеВвода
+    name: ПолеСтадии
+    title:
+      ru: "Стадия"
+      en: "Stage"
+    data_path: Объект.Стадия
+    events:
+      ПриИзменении: ПолеСтадииПриИзменении

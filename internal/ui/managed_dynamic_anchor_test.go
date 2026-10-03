@@ -1,12 +1,8 @@
 package ui
 
 import (
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -133,34 +129,8 @@ func TestManagedDynamicAnchorsRenderThroughPublicForm(t *testing.T) {
 	}
 }
 
-func TestManagedDynamicAnchorsApplyProductionClientState(t *testing.T) {
-	node, err := exec.LookPath("node")
-	if err != nil {
-		t.Skip("node is required for the managed dynamic-anchor regression test")
-	}
-
-	rendered := renderManagedDynamicAnchorPage(t, "Черновик")
-	doc, err := html.Parse(strings.NewReader(rendered))
-	if err != nil {
-		t.Fatal(err)
-	}
-	body := findHTMLElement(doc, "body")
-	if body == nil {
-		t.Fatalf("rendered managed form has no body:\n%s", rendered)
-	}
-	tree, err := json.Marshal(domElementNode(body))
-	if err != nil {
-		t.Fatal(err)
-	}
-	domPath := filepath.Join(t.TempDir(), "managed-dynamic-anchors.json")
-	if err := os.WriteFile(domPath, tree, 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	cmd := exec.Command(node, "--test", "static/managed_dynamic_anchor_behavior_test.js") //nolint:gosec // test-only executable resolved by exec.LookPath
-	cmd.Env = append(os.Environ(), "ONEBASE_DYNAMIC_ANCHORS_DOM="+domPath)
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("node managed dynamic-anchor behavior test: %v\n%s", err, output)
-	}
-}
+// Поведение клиента (применение готовых состояний hidden/readonly к живой
+// форме) с #1587 проверяет браузерный сценарий e2e/tests/dynamic-anchors.spec.js
+// на настоящем DOM: самописная Element-заглушка с ограниченным разбором
+// селекторов удалена. Здесь остаётся серверная отрисовка через публичный
+// обработчик — она идёт тем же путём, что и браузерная страница.
