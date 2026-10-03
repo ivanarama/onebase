@@ -113,6 +113,7 @@ func NewServer(store *Store, runner *Runner) (*Server, error) {
 		store: store, runner: runner, isoBrowser: systemBrowser{},
 		cfgLoginLimit: auth.NewLoginLimiter(5, time.Minute),
 		incidents:     incident.NewStore(incident.DefaultLimit),
+		companions:    newCompanionRunner(),
 	}
 	if b, err := i18n.Load(i18n.EmbeddedLocales, ""); err == nil {
 		launcherBundle = b
