@@ -447,7 +447,13 @@ Windows-1251 и превратить `Триаж` в `РўСЂРёР°Р¶`. П�
    epoch-sha256=<64hex>` открывает
    post-push фазу, только если `from` — предок HEAD, а
    `review-comment`/`claim`/`epoch-sha256` точно входят в каноничный claim-bound
-   proof `changes-requested` для `from`. Пока trailer
+   proof для `from` с `Outcome-Label: changes-requested`; либо proof имеет
+   `Outcome-Label: needs-decision` / `Outcome-Label: reviewed` и после его
+   completion есть доверенный неотредактированный отдельный
+   `pp:fix-decision <from>`, который остаётся последним валидным переходом
+   владельца в FIX. Один `reviewed` без этого решения trailer не открывает;
+   edit/delete решения, более поздний `pp:review-again` или новая committed-пара
+   закрывают его. Пока trailer
    валиден, метка `changes-requested` ещё присутствует и после push нет
    доверенного `pp:review-again`, review-комментария/claim/completion текущего
    HEAD, PR пропусти: мяч у FIX/recovery. Это атомарно видно вместе с новым HEAD

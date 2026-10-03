@@ -125,6 +125,38 @@ func TestOverrideStartsAnotherReviewEpoch(t *testing.T) {
 	}
 }
 
+func TestShippedNeedsDecisionOverrideReturnsBaseSyncToReview(t *testing.T) {
+	item := withMergeHead(testPR(1778, headC, "ship", "reviewed", "needs-decision"))
+	item = addComment(item, 20, completion(headA, 10, 15))
+	item = addComment(item, 30, syncIntent(headA, 10, 15, 20))
+	item = addComment(item, 31, syncDone(30, headA, headC))
+	item = addComment(item, 40, completion(headC, 35, 36))
+
+	blocked := analyze([]apiPull{item}, "ivanarama")
+	if len(blocked.HumanWaiting) != 1 || len(blocked.ReviewCandidates) != 0 {
+		t.Fatalf("ship + needs-decision moved without human override: %+v", blocked)
+	}
+
+	item = addComment(item, 41, "Owner: repeat integration review after green CI.\n\npp:review-again")
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.HumanWaiting) != 0 || len(got.MergeCandidates) != 0 ||
+		len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 1778 ||
+		got.ReviewCandidates[0].Stage != "integration-review" {
+		t.Fatalf("human override did not return shipped integration HEAD to REVIEW: %+v", got)
+	}
+}
+
+func TestShippedOrdinaryHeadOverrideRequiresContentReview(t *testing.T) {
+	item := addComment(testPR(10, headA, "ship", "reviewed"), 30, completion(headA, 20, 25))
+	item = addComment(item, 31, "pp:review-again")
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.ContentReviewCandidates) != 1 ||
+		got.ContentReviewCandidates[0].Number != 10 || len(got.MergeCandidates) != 0 {
+		t.Fatalf("ship bypassed a later review override: %+v", got)
+	}
+}
+
 func TestUnfinishedClaimIsVisibleImmediately(t *testing.T) {
 	marker := fmt.Sprintf("<!-- pp:review-claim %s review-comment=20 epoch-sha256=%s -->", headA, epoch)
 	item := addComment(testPR(10, headA), 25, marker)

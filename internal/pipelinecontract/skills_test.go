@@ -1464,6 +1464,17 @@ func TestFixerReturnsOrphanReviewAndConsumesExplicitHumanDecision(t *testing.T) 
 		"`Outcome-Label` не `changes-requested`",
 		"текущая `changes-requested` — stale маршрутная подсказка",
 	)
+	review := repositoryFile(t, ".claude", "skills", "review-queue", "references", "legacy-protocol.md")
+	for name, procedure := range map[string]string{"fix": fixer, "review": review} {
+		t.Run(name+"_reviewed_human_rework", func(t *testing.T) {
+			requireAllCompact(t, procedure,
+				"Outcome-Label: reviewed",
+				"pp:fix-decision <from>",
+				"неотредактирован",
+				"последним валидным переходом",
+			)
+		})
+	}
 }
 
 func TestFixerHandoffsAreCrashRecoverable(t *testing.T) {
