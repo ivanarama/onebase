@@ -116,6 +116,7 @@ type yamlElement struct {
 	Choice        bool              `yaml:"choice,omitempty"`
 	Width         int               `yaml:"width,omitempty"`
 	Height        int               `yaml:"height,omitempty"`
+	Multiline     *bool             `yaml:"multiline,omitempty"`
 	Hint          string            `yaml:"hint,omitempty"`
 	Mask          string            `yaml:"mask,omitempty"`
 	Events        map[string]string `yaml:"events,omitempty"`
@@ -263,6 +264,7 @@ func elementToYAML(el *IRElement) yamlElement {
 		Choice:        el.Choice,
 		Width:         el.Width,
 		Height:        el.Height,
+		Multiline:     el.Multiline,
 		Hint:          el.Hint,
 		Mask:          el.Mask,
 	}

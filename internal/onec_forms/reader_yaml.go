@@ -159,6 +159,7 @@ func yamlElementToIR(el yamlElement) *IRElement {
 		Choice:     el.Choice,
 		Width:      el.Width,
 		Height:     el.Height,
+		Multiline:  el.Multiline,
 		Hint:       el.Hint,
 		Mask:       el.Mask,
 		Events:     el.Events,
