@@ -1128,6 +1128,7 @@
   "пусто = по умолчанию": "empty = default",
   "работает": "running",
   "распакованный архив превышает допустимый размер": "the expanded archive exceeds the allowed size",
+  "регистр сведений %s: запись с ключом %s уже записана документом %s %s — второй документ её не перехватывает": "information register %s: the record with key %s is already written by document %s %s — a second document does not take it over",
   "с": "from",
   "сбросить поиск": "reset search",
   "сек.": "sec.",

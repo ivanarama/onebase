@@ -675,9 +675,9 @@ func (db *DB) InfoRegDelete(ctx context.Context, ir *metadata.InfoRegister, dimK
 // регистр periodic — то либо row["Период"], либо общий period из mc.Period.
 // recorder/recorder_type заполняются автоматически из аргументов.
 //
-// При перезаписи строк используется ON CONFLICT по PK — это безопасно
-// для регистров, чья primary key включает (period, dims) и где нет
-// конфликта с другими источниками (например, ручной ввод того же набора).
+// ON CONFLICT по PK обновляет только строки без владельца или строки того же
+// документа (recorder, recorder_type). Условие проверяется самим UPSERT, поэтому
+// параллельное проведение не может перехватить чужой ключ.
 func (db *DB) WriteInfoMovements(ctx context.Context, regName, recorderType string, recorderID uuid.UUID, rows []map[string]any, ir *metadata.InfoRegister, period *time.Time) error {
 	return db.WithTxScope(ctx, func(txCtx context.Context) error {
 		return db.writeInfoMovementsInTx(txCtx, regName, recorderType, recorderID, rows, ir, period)
@@ -773,22 +773,86 @@ func (db *DB) writeInfoMovementsInTx(ctx context.Context, regName, recorderType 
 		var sql string
 		if len(pk) > 0 {
 			sql = fmt.Sprintf(
-				"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
+				"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s WHERE %s",
 				table,
 				strings.Join(cols, ", "),
 				strings.Join(phs, ", "),
 				strings.Join(pk, ", "),
 				strings.Join(updates, ", "),
+				fmt.Sprintf("%s.recorder IS NULL OR CAST(%s.recorder AS TEXT) = '' OR (%s.recorder = EXCLUDED.recorder AND %s.recorder_type = EXCLUDED.recorder_type)",
+					table, table, table, table),
 			)
 		} else {
 			sql = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 				table, strings.Join(cols, ", "), strings.Join(phs, ", "))
 		}
-		if err := db.exec(ctx, sql, args...); err != nil {
+		tag, err := db.Exec(ctx, sql, args...)
+		if err != nil {
 			return fmt.Errorf("write info movement %s row %d: %w", regName, i+1, err)
+		}
+		if len(pk) > 0 && tag.RowsAffected == 0 {
+			// UPSERT has already rejected a foreign owner atomically. Read it
+			// only to explain the conflict, never to authorize the write.
+			if err := db.checkInfoRegMovementKey(ctx, ir, regName, recorderType, recorderID, writeKey, dimKey, rowPeriod); err != nil {
+				return err
+			}
+			return fmt.Errorf("write info movement %s row %d: ownership conflict", regName, i+1)
 		}
 	}
 	return nil
+}
+
+// checkInfoRegMovementKey explains an ownership conflict after UPSERT refused
+// to update the row. A keyless register uses plain INSERT and never calls it.
+// Rows without a recorder remain writable by a document; repeated keys within
+// one posting belong to the same (recorder, recorder_type), so the last wins.
+func (db *DB) checkInfoRegMovementKey(ctx context.Context, ir *metadata.InfoRegister, regName string,
+	recorderType string, recorderID uuid.UUID, writeKey, dimKey map[string]any, period *time.Time,
+) error {
+	d := db.dialect
+	where, args := physicalDimWhere(d, ir, writeKey, 1)
+	if period != nil {
+		where = fmt.Sprintf("%s AND period = %s", where, d.Placeholder(len(args)+1))
+		args = append(args, *period)
+	}
+
+	var owner, ownerType *string
+	err := db.QueryRow(ctx, fmt.Sprintf("SELECT CAST(recorder AS TEXT), recorder_type FROM %s WHERE %s LIMIT 1",
+		metadata.InfoRegTableName(ir.Name), where), args...).Scan(&owner, &ownerType)
+	if IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("info register %s: чтение владельца ключа: %w", regName, err)
+	}
+	if owner == nil || *owner == "" || (strings.EqualFold(*owner, recorderID.String()) && ownerType != nil && *ownerType == recorderType) {
+		return nil
+	}
+	typ := ""
+	if ownerType != nil {
+		typ = *ownerType
+	}
+	// Имя из метаданных, а не regName: коллектор движений отдаёт его в нижнем
+	// регистре, а сообщение читает человек.
+	return i18nerr.Errorf("регистр сведений %s: запись с ключом %s уже записана документом %s %s — второй документ её не перехватывает",
+		ir.Name, infoRegKeyDescription(ir, dimKey, period), typ, *owner)
+}
+
+// infoRegKeyDescription — ключ записи регистра сведений для сообщения:
+// «Период=…, Измерение=…».
+func infoRegKeyDescription(ir *metadata.InfoRegister, dimKey map[string]any, period *time.Time) string {
+	parts := make([]string, 0, len(ir.Dimensions)+1)
+	if period != nil {
+		parts = append(parts, "Период="+period.Format("02.01.2006 15:04:05"))
+	}
+	for _, f := range ir.Dimensions {
+		v := dimKey[f.Name]
+		if t, ok := v.(time.Time); ok {
+			v = t.Format("02.01.2006 15:04:05")
+		}
+		parts = append(parts, fmt.Sprintf("%s=%v", f.Name, v))
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
 }
 
 // pkCols returns the primary key column names for an info register.
