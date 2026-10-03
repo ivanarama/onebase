@@ -91,8 +91,8 @@ title: Основной план счетов
 accounts:
   - {code: "01", name: Основные средства, kind: active}
   - {code: "51", name: Расчётный счёт, kind: active}
-  - {code: "60", name: Расчёты с поставщиками, kind: active-passive}
-  - {code: "90", name: Продажи, kind: active-passive}
+  - {code: "60", name: Расчёты с поставщиками, kind: active_passive}
+  - {code: "90", name: Продажи, kind: active_passive}
   - {code: "90.1", name: Выручка, kind: passive, parent: "90"}
 `
 
