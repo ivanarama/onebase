@@ -550,8 +550,11 @@ var kwMap = map[string]string{
 	"ПУСТО":         "NULL",
 	"В":             "IN",
 	"МЕЖДУ":         "BETWEEN",
-	"ОБЪЕДИНИТЬ":    "UNION",
-	"ВСЕ":           "ALL",
+	// ПОДОБНО и СПЕЦСИМВОЛ здесь нет намеренно: имена не резервируются
+	// глобально, их распознаёт транслятор по позиции (likeOperatorPosition,
+	// closeLikePattern) — поле или алиас «Подобно» работает как раньше (#1542).
+	"ОБЪЕДИНИТЬ": "UNION",
+	"ВСЕ":        "ALL",
 	// JOIN keywords (Russian)
 	"ВНУТРЕННЕЕ": "INNER",
 	"ЛЕВОЕ":      "LEFT",
@@ -833,6 +836,7 @@ type translator struct {
 	unionOrders  map[int]bool                  // ORDER BY относится ко всему UNION, алиасы таблиц там недоступны
 	refCols      map[string]string             // колонка вывода (lower) → сущность, на которую она ссылается (#1150)
 	mainRef      mainRefSource                 // главный источник запроса: чья ссылка стоит за голым «Ссылка»
+	likePattern  *likePatternState             // открытый правый операнд ПОДОБНО (см. closeLikePattern)
 }
 
 // mainRefSource — предсканированный главный источник запроса: имя сущности и
@@ -1229,10 +1233,15 @@ func (tr *translator) nullCheckTripleAhead() bool {
 // строка, параметр, закрывающая скобка или имя, не являющееся ключевым словом
 // (ключевое слово после себя операнд начинает, а не продолжает).
 func (tr *translator) prevEndsOperand() bool {
-	if tr.pos < 2 {
+	return tr.tokenEndsOperand(tr.pos - 2)
+}
+
+// tokenEndsOperand — токен i закончил операнд выражения (см. prevEndsOperand).
+func (tr *translator) tokenEndsOperand(i int) bool {
+	if i < 0 || i >= len(tr.tokens) {
 		return false
 	}
-	prev := tr.tokens[tr.pos-2]
+	prev := tr.tokens[i]
 	switch prev.kind {
 	case tNum, tStr, tRParen, tParam:
 		return true
@@ -1242,6 +1251,95 @@ func (tr *translator) prevEndsOperand() bool {
 		return !isKW && !isAgg
 	}
 	return false
+}
+
+// likeOperatorPosition — слово ПОДОБНО/LIKE (tr.pos-1) стоит в позиции
+// оператора сравнения: перед ним закончился операнд («Поле ПОДОБНО …») либо
+// уже выпущенное НЕ, перед которым закончился операнд («Поле НЕ ПОДОБНО …» —
+// в SQL это «NOT LIKE», допустимое на обоих диалектах).
+func (tr *translator) likeOperatorPosition() bool {
+	if tr.prevEndsOperand() {
+		return true
+	}
+	if tr.pos < 3 {
+		return false
+	}
+	prev := tr.tokens[tr.pos-2]
+	if prev.kind != tIdent {
+		return false
+	}
+	if kw, ok := sqlKW(prev.val); !ok || kw != "NOT" {
+		return false
+	}
+	return tr.tokenEndsOperand(tr.pos - 3)
+}
+
+// likePatternState — открытый правый операнд ПОДОБНО: LIKE уже выпущен, шаблон
+// ещё читается. depth — глубина скобок в момент LIKE: конец шаблона ищется
+// только на ней, скобки внутри шаблона (вызовы функций) его не заканчивают.
+type likePatternState struct {
+	depth int
+	// cases — открытые ВЫБОР самого шаблона («ПОДОБНО ВЫБОР КОГДА … КОНЕЦ»):
+	// пока он не закрыт своим КОНЕЦ, его КОГДА/ТОГДА/ИНАЧЕ и И/ИЛИ условий —
+	// часть шаблона, а не граница после него.
+	cases int
+}
+
+// likePatternEnds — ключевые слова, с которых после шаблона начинается уже
+// другое: соседнее условие, ветка ВЫБОР или следующее предложение запроса.
+var likePatternEnds = map[string]bool{
+	"AND": true, "OR": true, "THEN": true, "ELSE": true, "WHEN": true, "END": true,
+	"GROUP": true, "ORDER": true, "HAVING": true, "UNION": true, "LIMIT": true,
+}
+
+// closeLikePattern смотрит на очередной токен при открытом шаблоне ПОДОБНО.
+// СПЕЦСИМВОЛ/ESCAPE на той же глубине — явный управляющий символ: выпускается
+// ESCAPE, и шаблон закрыт (true — токен поглощён). Конец операнда — шаблон
+// закрывается без поглощения токена.
+func (tr *translator) closeLikePattern(t tok) bool {
+	st := tr.likePattern
+	if st == nil || tr.parenDepth != st.depth {
+		return false
+	}
+	switch t.kind {
+	case tRParen, tComma:
+		tr.endLikePattern()
+	case tIdent:
+		if u := upperFast(t.val); st.cases == 0 && (u == "СПЕЦСИМВОЛ" || u == "ESCAPE") {
+			tr.advance()
+			tr.emit("ESCAPE")
+			tr.likePattern = nil
+			return true
+		}
+		kw, ok := sqlKW(t.val)
+		switch {
+		case !ok:
+		case kw == "CASE":
+			st.cases++
+		case st.cases > 0:
+			if kw == "END" {
+				st.cases--
+			}
+		case likePatternEnds[kw]:
+			tr.endLikePattern()
+		}
+	}
+	return false
+}
+
+// endLikePattern закрывает шаблон без СПЕЦСИМВОЛ. Управляющего символа тогда
+// нет ни на одном диалекте: у LIKE в SQLite его нет по умолчанию, а в
+// PostgreSQL по умолчанию это обратная косая черта — шаблон «%10\%%» совпал бы
+// там со «Скидка 10%», а на SQLite нет. Пустой ESCAPE на PostgreSQL выравнивает
+// семантику: обратная косая черта — обычный символ шаблона.
+func (tr *translator) endLikePattern() {
+	if tr.likePattern == nil {
+		return
+	}
+	tr.likePattern = nil
+	if dialectName(tr.opts.Dialect) != "sqlite" {
+		tr.emit("ESCAPE ''")
+	}
 }
 
 func (tr *translator) advance() tok {
@@ -4353,6 +4451,11 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		if t.kind == tEOF {
 			break
 		}
+		// Открытый шаблон ПОДОБНО: СПЕЦСИМВОЛ его закрывает явно, конец
+		// операнда — с выравниванием управляющего символа (endLikePattern).
+		if tr.likePattern != nil && tr.closeLikePattern(t) {
+			continue
+		}
 		upper := upperFast(t.val)
 
 		// Source type: TypeName.EntityName[.VirtualTable(args)] → table or subquery
@@ -4766,7 +4869,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					tr.emit(lower)
 				} else if tr.section == sectionFrom && !prevDot {
 					tr.emit(lower)
-				} else if lower == "подобно" && tr.prevEndsOperand() && (tr.section == sectionWhere || tr.section == sectionHaving) {
+				} else if (lower == "подобно" || lower == "like") && tr.likeOperatorPosition() && (tr.section == sectionWhere || tr.section == sectionHaving) {
 					// «ПОДОБНО» в позиции оператора сравнения — шаблон LIKE,
 					// который предлагает конструктор отбора (#1542). Имя не
 					// резервируется глобально: в позиции операнда (после ГДЕ,
@@ -4774,7 +4877,12 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					// поэтому существующее поле или алиас «Подобно» работает
 					// как раньше — в том числе рядом с оператором:
 					// «ГДЕ Подобно ПОДОБНО "а%"».
+					//
+					// Регистр ПОДОБНО не приводит ни на одной стороне:
+					// регистронезависимое сравнение пишется явно через
+					// НРЕГ()/ВРЕГ() с обеих сторон (см. scalarFuncRewrites).
 					tr.emit("LIKE")
+					tr.likePattern = &likePatternState{depth: tr.parenDepth}
 				} else if rd := tr.findRefDim(lower); rd != nil && !prevDot {
 					if nextIsDot {
 						if err := tr.assertSingleHopNavigation(rd); err != nil {
@@ -4845,6 +4953,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 
 		tr.advance()
 	}
+	tr.endLikePattern()
 	tr.closeRowFilterGroup()
 	if err := tr.emitPendingRowFiltersAsWhere(); err != nil {
 		return Result{}, err
@@ -5159,6 +5268,24 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 		"естьnull": rw("COALESCE(", ")"),
 		"isnull":   rw("COALESCE(", ")"),
 		"coalesce": rw("COALESCE(", ")"),
+		// Строковые функции языка запросов 1С. Позиция в ПОДСТРОКА считается с
+		// ЕДИНИЦЫ, длина — в символах, а не в байтах. SQLite обрабатывает
+		// неположительный start и отрицательную длину иначе, поэтому ниже для
+		// него используется UDF с семантикой PostgreSQL.
+		"подстрока":    rw("substr(", ")"),
+		"substring":    rw("substr(", ")"),
+		"длинастроки":  rw("length(", ")"),
+		"length":       rw("length(", ")"),
+		"stringlength": rw("length(", ")"),
+		"сокрл":        rw("ltrim(", ")"),
+		"ltrim":        rw("ltrim(", ")"),
+		"trimleft":     rw("ltrim(", ")"),
+		"сокрп":        rw("rtrim(", ")"),
+		"rtrim":        rw("rtrim(", ")"),
+		"trimright":    rw("rtrim(", ")"),
+		"сокрлп":       rw("trim(", ")"),
+		"trim":         rw("trim(", ")"),
+		"trimall":      rw("trim(", ")"),
 	}
 	switch dialect {
 	case "sqlite":
@@ -5166,6 +5293,8 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 		// CAST(x AS INTEGER) усекает к нулю.
 		m["цел"] = rw("CAST(", " AS INTEGER)")
 		m["int"] = rw("CAST(", " AS INTEGER)")
+		m["подстрока"] = rw("ob_substr(", ")")
+		m["substring"] = rw("ob_substr(", ")")
 		m["началодня"] = rw("date(", ")")
 		m["startofday"] = rw("date(", ")")
 		m["конецдня"] = rw("datetime(date(", "), '+1 day', '-1 second')")
@@ -5180,6 +5309,17 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 		m["month"] = rw("CAST(strftime('%m',", ") AS INTEGER)")
 		m["день"] = rw("CAST(strftime('%d',", ") AS INTEGER)")
 		m["day"] = rw("CAST(strftime('%d',", ") AS INTEGER)")
+		// ВРЕГ/НРЕГ и ЛЕВ/ПРАВ — через свои функции (init в storage/sqlite.go):
+		// встроенные UPPER/LOWER в SQLite меняют регистр только ASCII и молча
+		// возвращают кириллицу как есть, а left()/right() в SQLite нет вовсе.
+		m["врег"] = rw("ob_upper(", ")")
+		m["upper"] = rw("ob_upper(", ")")
+		m["нрег"] = rw("ob_lower(", ")")
+		m["lower"] = rw("ob_lower(", ")")
+		m["лев"] = rw("ob_left(", ")")
+		m["leftstr"] = rw("ob_left(", ")")
+		m["прав"] = rw("ob_right(", ")")
+		m["rightstr"] = rw("ob_right(", ")")
 	default: // pg
 		// Цел — усечение к нулю. В PG CAST(x AS INTEGER) округлял бы (half-even),
 		// поэтому берём TRUNC, которое усекает к нулю.
@@ -5201,6 +5341,15 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 		m["month"] = rw("CAST(EXTRACT(MONTH FROM", ") AS INTEGER)")
 		m["день"] = rw("CAST(EXTRACT(DAY FROM", ") AS INTEGER)")
 		m["day"] = rw("CAST(EXTRACT(DAY FROM", ") AS INTEGER)")
+		// В PostgreSQL upper/lower знают локаль, а left/right есть нативно.
+		m["врег"] = rw("upper(", ")")
+		m["upper"] = rw("upper(", ")")
+		m["нрег"] = rw("lower(", ")")
+		m["lower"] = rw("lower(", ")")
+		m["лев"] = rw("left(", ")")
+		m["leftstr"] = rw("left(", ")")
+		m["прав"] = rw("right(", ")")
+		m["rightstr"] = rw("right(", ")")
 	}
 	return m
 }
