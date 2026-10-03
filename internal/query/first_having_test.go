@@ -3,13 +3,21 @@ package query
 import (
 	"strings"
 	"testing"
+
+	"github.com/ivantit66/onebase/internal/metadata"
 )
+
+// товарOpts — справочник Товар в метаданных: источник «Справочник.Товар»
+// обязан быть объектом конфигурации (#1772).
+func товарOpts() CompileOpts {
+	return CompileOpts{Entities: []*metadata.Entity{{Name: "Товар", Kind: metadata.KindCatalog}}}
+}
 
 // «ВЫБРАТЬ ПЕРВЫЕ N» — часть языка запросов 1С; переносимые оттуда модули пишут
 // его постоянно. Без разбора конструкция доезжала до СУБД как есть и падала
 // с «syntax error near "10"».
 func TestCompile_ПервыеПревращаетсяВLimit(t *testing.T) {
-	res, err := Compile(`ВЫБРАТЬ ПЕРВЫЕ 10 Наименование ИЗ Справочник.Товар`, CompileOpts{})
+	res, err := Compile(`ВЫБРАТЬ ПЕРВЫЕ 10 Наименование ИЗ Справочник.Товар`, товарOpts())
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
@@ -22,7 +30,7 @@ func TestCompile_ПервыеПревращаетсяВLimit(t *testing.T) {
 }
 
 func TestCompile_ПервыеВместеСРазличными(t *testing.T) {
-	res, err := Compile(`ВЫБРАТЬ РАЗЛИЧНЫЕ ПЕРВЫЕ 5 Наименование ИЗ Справочник.Товар`, CompileOpts{})
+	res, err := Compile(`ВЫБРАТЬ РАЗЛИЧНЫЕ ПЕРВЫЕ 5 Наименование ИЗ Справочник.Товар`, товарOpts())
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
@@ -36,7 +44,7 @@ func TestCompile_ПервыеВместеСРазличными(t *testing.T) {
 }
 
 func TestCompile_ПервыеПередРазличными(t *testing.T) {
-	res, err := Compile(`ВЫБРАТЬ ПЕРВЫЕ 5 РАЗЛИЧНЫЕ Наименование ИЗ Справочник.Товар`, CompileOpts{})
+	res, err := Compile(`ВЫБРАТЬ ПЕРВЫЕ 5 РАЗЛИЧНЫЕ Наименование ИЗ Справочник.Товар`, товарOpts())
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
@@ -46,7 +54,7 @@ func TestCompile_ПервыеПередРазличными(t *testing.T) {
 }
 
 func TestCompile_TopРаботаетКакПервые(t *testing.T) {
-	res, err := Compile(`SELECT TOP 3 Наименование FROM Справочник.Товар`, CompileOpts{})
+	res, err := Compile(`SELECT TOP 3 Наименование FROM Справочник.Товар`, товарOpts())
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
@@ -58,7 +66,7 @@ func TestCompile_TopРаботаетКакПервые(t *testing.T) {
 // Поле, которое просто называется «Первые», ломать нельзя: вырезаем конструкцию
 // только когда следом идёт число.
 func TestCompile_ПервыеБезЧислаНеТрогаем(t *testing.T) {
-	res, err := Compile(`ВЫБРАТЬ Первые ИЗ Справочник.Товар`, CompileOpts{})
+	res, err := Compile(`ВЫБРАТЬ Первые ИЗ Справочник.Товар`, товарOpts())
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
@@ -74,7 +82,7 @@ func TestCompile_ПервыеПроверяетКоличество(t *testing.T
 		`SELECT TOP 999999999999999999999999 Name FROM Catalog.Товар`,
 	} {
 		t.Run(src, func(t *testing.T) {
-			_, err := Compile(src, CompileOpts{})
+			_, err := Compile(src, товарOpts())
 			if err == nil || !strings.Contains(err.Error(), "неотрицательное целое число") {
 				t.Fatalf("ожидалась понятная ошибка количества, получено %v", err)
 			}
@@ -87,7 +95,7 @@ func TestCompile_ПервыеПроверяетКоличество(t *testing.T
 // конкатенацией с переменным размером порции, и на нулевой порции перенесённый
 // код падал бы ошибкой компиляции — в проде и не сразу (#741).
 func TestCompile_ПервыеНольДопустим(t *testing.T) {
-	res, err := Compile(`ВЫБРАТЬ ПЕРВЫЕ 0 Наименование ИЗ Справочник.Товар`, CompileOpts{})
+	res, err := Compile(`ВЫБРАТЬ ПЕРВЫЕ 0 Наименование ИЗ Справочник.Товар`, товарOpts())
 	if err != nil {
 		t.Fatalf("ПЕРВЫЕ 0 отклонено: %v", err)
 	}
@@ -107,7 +115,7 @@ func TestCompile_ПервыеВОбъединенииОтклоняетсяБе�
 	}
 	for _, src := range queries {
 		t.Run(src, func(t *testing.T) {
-			_, err := Compile(src, CompileOpts{})
+			_, err := Compile(src, товарOpts())
 			if err == nil || (!strings.Contains(err.Error(), "ОБЪЕДИНИТЬ") && !strings.Contains(err.Error(), "вложенных")) {
 				t.Fatalf("ожидался явный отказ для неподдержанной области ПЕРВЫЕ, получено %v", err)
 			}
@@ -119,7 +127,7 @@ func TestCompile_ПервыеВОбъединенииОтклоняетсяБе�
 func TestCompile_ИмеющиеЭтоHaving(t *testing.T) {
 	res, err := Compile(
 		`ВЫБРАТЬ Товар, СУММА(Количество) КАК Кол ИЗ РегистрНакопления.Остатки СГРУППИРОВАТЬ ПО Товар ИМЕЮЩИЕ СУММА(Количество) > 0`,
-		CompileOpts{})
+		товарOpts())
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}
@@ -134,7 +142,7 @@ func TestCompile_ИмеющиеЭтоHaving(t *testing.T) {
 // ЕстьNULL — подстановка значения вместо NULL. В переносимых модулях
 // встречается в каждом втором запросе с левым соединением.
 func TestCompile_ЕстьNullЭтоCoalesce(t *testing.T) {
-	res, err := Compile(`ВЫБРАТЬ ЕстьNULL(Количество, 0) КАК Кол ИЗ РегистрНакопления.Остатки`, CompileOpts{})
+	res, err := Compile(`ВЫБРАТЬ ЕстьNULL(Количество, 0) КАК Кол ИЗ РегистрНакопления.Остатки`, товарOpts())
 	if err != nil {
 		t.Fatalf("Compile: %v", err)
 	}

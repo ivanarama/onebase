@@ -32,7 +32,7 @@ func TestCompile_Sources(t *testing.T) {
 		{
 			"справочник",
 			`ВЫБРАТЬ Наименование ИЗ Справочник.Товар`,
-			query.CompileOpts{},
+			query.CompileOpts{Entities: translationTestEntities()},
 			[]query.SourceRef{{Kind: "catalog", Name: "Товар"}},
 		},
 		{
@@ -40,7 +40,7 @@ func TestCompile_Sources(t *testing.T) {
 			`ВЫБРАТЬ Прод.Номер ИЗ Документ.Реализация КАК Прод
 			   ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.Клиент КАК Клиент
 			   ПО Прод.Покупатель = Клиент.Ссылка`,
-			query.CompileOpts{},
+			query.CompileOpts{Entities: translationTestEntities()},
 			[]query.SourceRef{{Kind: "document", Name: "Реализация"}, {Kind: "catalog", Name: "Клиент"}},
 		},
 		{
