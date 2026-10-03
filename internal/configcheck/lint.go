@@ -727,11 +727,13 @@ type lintProgram struct {
 func CheckLintDSL(dir string, proj *project.Project) []Issue {
 	programs := collectLintPrograms(dir, proj)
 	globals := knownGlobalNames(proj)
+	managers := metadataManagers(proj)
 	var issues []Issue
 	for _, lp := range programs {
 		issues = append(issues, lintUnusedVars(lp)...)
 		issues = append(issues, lintCrossScopeReads(lp)...)
 		issues = append(issues, lintUnknownGlobalMembers(lp, globals)...)
+		issues = append(issues, lintUnknownMetadataObjects(dir, lp, managers)...)
 	}
 	issues = append(issues, lintDeadProcedures(programs)...)
 	return issues
@@ -1234,6 +1236,10 @@ func collectLintPrograms(dir string, proj *project.Project) []lintProgram {
 				"OnUnpost", "ОбработкаУдаленияПроведения",
 				"OnFill", "ОбработкаЗаполнения",
 				"OnCreate", "ПриСозданииНового",
+				// Хуки удаления вызывает entityservice.Delete; без них в списке
+				// корней ПередУдалением объявлялась мёртвой процедурой.
+				"BeforeDelete", "ПередУдалением",
+				"AfterDelete", "ПослеУдаления",
 				"Печать", "Print",
 			), false)
 		default:
@@ -1286,6 +1292,25 @@ func collectLintPrograms(dir string, proj *project.Project) []lintProgram {
 			// Контекст табличной части знает только её обработчик, поэтому
 			// список процедур прикладывается к уже добавленной программе, а не
 			// расширяет общий словарь глобалов.
+			out[len(out)-1].tpContextProcs = collectTablePartHandlerProcs(form)
+		}
+	}
+	// Формы обработок — такие же модули с обработчиками, что и формы объектов,
+	// но раньше в разбор не попадали: опечатка в них не ловилась ни одной
+	// DSL-проверкой.
+	for _, proc := range proj.Processors {
+		for _, form := range proc.Forms {
+			prog, _ := form.ProgramAST.(*ast.Program)
+			if prog == nil {
+				continue
+			}
+			roots := map[string]bool{}
+			collectFormHandlerRoots(form, roots)
+			formName := form.Name
+			if formName == "" {
+				formName = proc.Name
+			}
+			add(proc.Name+"/"+formName, "DSL форма обработки", prog, roots, false)
 			out[len(out)-1].tpContextProcs = collectTablePartHandlerProcs(form)
 		}
 	}
