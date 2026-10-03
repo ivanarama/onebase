@@ -29,7 +29,9 @@ import (
 // Рабочие → консультация, закрытая (RLS: только bob); Архив (папка) → старая;
 // Секретная (папка, RLS: только bob) → тайна; корневая (без папки).
 // У причин есть ссылка Филиал: замена, консультация — Центр; старая — Север;
-// корневая — без филиала.
+// корневая — без филиала. И ссылка Аналог на тот же иерархический справочник
+// (#1821): у консультации — Секретная (закрыта RLS), у старой — замена, у
+// остальных пусто.
 type refChoiceFixture struct {
 	server                                 *Server
 	target, owner, branches                *metadata.Entity
@@ -45,7 +47,9 @@ func refChoiceElement(id, field string, conditions ...metadata.FormChoiceConditi
 	return &metadata.FormElement{ID: id, Name: "Поле" + field, Kind: metadata.FormElementField, DataPath: "Объект." + field, ChoiceFilter: conditions}
 }
 
-func newRefChoiceFixture(t *testing.T, db *storage.DB) refChoiceFixture {
+// extra — дополнительные элементы формы (#1821); реквизит владельца для
+// каждого заводится по имени из data_path, ссылкой на причины.
+func newRefChoiceFixture(t *testing.T, db *storage.DB, extra ...*metadata.FormElement) refChoiceFixture {
 	t.Helper()
 	ctx := context.Background()
 	f := refChoiceFixture{
@@ -68,6 +72,7 @@ func newRefChoiceFixture(t *testing.T, db *storage.DB) refChoiceFixture {
 			{Name: "Наименование", Type: metadata.FieldTypeString},
 			{Name: "Аудитория", Type: metadata.FieldTypeString},
 			{Name: "Филиал", Type: metadata.FieldType("reference:" + branches.Name), RefEntity: branches.Name},
+			{Name: "Аналог", Type: metadata.FieldType("reference:Причина"), RefEntity: "Причина"},
 		},
 	}
 	notFolder := metadata.FormChoiceCondition{Field: "is_folder", Op: metadata.FormChoiceOpEqual, Value: boolPtr(false)}
@@ -88,8 +93,13 @@ func newRefChoiceFixture(t *testing.T, db *storage.DB) refChoiceFixture {
 				metadata.FormChoiceCondition{Field: "parent_id", Op: metadata.FormChoiceOpInHierarchy, Ref: f.secret.String()}, notFolder),
 		},
 	}
+	ownerNames := []string{"ВПапке", "Дети", "ПоФилиалу", "ОбщиеИФилиал", "Пропавшая", "Скрытая"}
+	for _, element := range extra {
+		form.Elements = append(form.Elements, element)
+		ownerNames = append(ownerNames, strings.TrimPrefix(element.DataPath, "Объект."))
+	}
 	ownerFields := []metadata.Field{}
-	for _, name := range []string{"ВПапке", "Дети", "ПоФилиалу", "ОбщиеИФилиал", "Пропавшая", "Скрытая"} {
+	for _, name := range ownerNames {
 		ownerFields = append(ownerFields, metadata.Field{Name: name, Type: metadata.FieldType("reference:" + reasons.Name), RefEntity: reasons.Name})
 	}
 	owner := &metadata.Entity{Name: "Обращение", Kind: metadata.KindDocument, Fields: ownerFields, Forms: []*metadata.FormModule{form}}
@@ -106,6 +116,7 @@ func newRefChoiceFixture(t *testing.T, db *storage.DB) refChoiceFixture {
 			t.Fatalf("seed branch: %v", err)
 		}
 	}
+	var analogs [][2]uuid.UUID
 	for _, row := range []struct {
 		id       uuid.UUID
 		name     string
@@ -113,17 +124,18 @@ func newRefChoiceFixture(t *testing.T, db *storage.DB) refChoiceFixture {
 		folder   bool
 		audience string
 		branch   uuid.UUID
+		analog   uuid.UUID
 	}{
-		{f.working, "Рабочие", uuid.Nil, true, "all", uuid.Nil},
-		{f.repair, "Ремонт", f.working, true, "all", uuid.Nil},
-		{f.archive, "Архив", uuid.Nil, true, "all", uuid.Nil},
-		{f.secret, "Секретная", uuid.Nil, true, "bob", uuid.Nil},
-		{f.replace, "замена", f.repair, false, "all", f.center},
-		{f.consult, "консультация", f.working, false, "all", f.center},
-		{f.closed, "закрытая", f.working, false, "bob", f.center},
-		{f.old, "старая", f.archive, false, "all", f.north},
-		{f.mystery, "тайна", f.secret, false, "all", uuid.Nil},
-		{f.root, "корневая", uuid.Nil, false, "all", uuid.Nil},
+		{f.working, "Рабочие", uuid.Nil, true, "all", uuid.Nil, uuid.Nil},
+		{f.repair, "Ремонт", f.working, true, "all", uuid.Nil, uuid.Nil},
+		{f.archive, "Архив", uuid.Nil, true, "all", uuid.Nil, uuid.Nil},
+		{f.secret, "Секретная", uuid.Nil, true, "bob", uuid.Nil, uuid.Nil},
+		{f.replace, "замена", f.repair, false, "all", f.center, uuid.Nil},
+		{f.consult, "консультация", f.working, false, "all", f.center, f.secret},
+		{f.closed, "закрытая", f.working, false, "bob", f.center, uuid.Nil},
+		{f.old, "старая", f.archive, false, "all", f.north, f.replace},
+		{f.mystery, "тайна", f.secret, false, "all", uuid.Nil, uuid.Nil},
+		{f.root, "корневая", uuid.Nil, false, "all", uuid.Nil, uuid.Nil},
 	} {
 		fields := map[string]any{"Наименование": row.name, "ЭтоГруппа": row.folder, "Аудитория": row.audience}
 		if row.parent != uuid.Nil {
@@ -134,6 +146,21 @@ func newRefChoiceFixture(t *testing.T, db *storage.DB) refChoiceFixture {
 		}
 		if err := db.Upsert(ctx, reasons.Name, row.id, fields, reasons); err != nil {
 			t.Fatalf("seed reason %s: %v", row.name, err)
+		}
+		if row.analog != uuid.Nil {
+			analogs = append(analogs, [2]uuid.UUID{row.id, row.analog})
+		}
+	}
+	// Аналог ссылается на запись того же справочника, которой при вставке
+	// может ещё не быть, — ставим вторым проходом.
+	for _, pair := range analogs {
+		args := []any{pair[1].String(), pair[0].String()}
+		if db.Dialect().Name() == "postgres" {
+			args = []any{pair[1], pair[0]}
+		}
+		if _, err := db.Exec(ctx, "UPDATE "+metadata.TableName(reasons.Name)+" SET "+metadata.ColumnName(reasons.Fields[3])+
+			" = "+db.Dialect().Placeholder(1)+" WHERE id = "+db.Dialect().Placeholder(2), args...); err != nil {
+			t.Fatalf("seed analog: %v", err)
 		}
 	}
 	if err := db.Upsert(ctx, owner.Name, f.ownerID, map[string]any{}, owner); err != nil {

@@ -322,9 +322,11 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 							add("%s: eq_or_empty сравнивает несовместимые ссылки %s.%s и %q", where, target.Name, targetField.Name, cond.From)
 						}
 
-					case metadata.FormChoiceOpInHierarchy:
+					// not_in_hierarchy (#1821) — дополнение in_hierarchy: те же
+					// требования к полю и источнику.
+					case metadata.FormChoiceOpInHierarchy, metadata.FormChoiceOpNotInHierarchy:
 						if isFolder || hasValue {
-							add("%s: in_hierarchy требует ссылочный field и from", where)
+							add("%s: %s требует ссылочный field и from", where, cond.Op)
 							continue
 						}
 						hierarchy := entities[strings.ToLower(targetField.RefEntity)]
@@ -369,7 +371,7 @@ func formChoiceRefProblem(cond metadata.FormChoiceCondition, isFolder bool, targ
 	switch cond.Op {
 	case metadata.FormChoiceOpEqual, metadata.FormChoiceOpEqualOrEmpty:
 		return ""
-	case metadata.FormChoiceOpInHierarchy:
+	case metadata.FormChoiceOpInHierarchy, metadata.FormChoiceOpNotInHierarchy:
 		hierarchy := entities[strings.ToLower(targetField.RefEntity)]
 		if hierarchy == nil || hierarchy.Kind != metadata.KindCatalog || !hierarchy.Hierarchical {
 			return fmt.Sprintf("%s.%s не ссылается на иерархический справочник", target.Name, targetField.Name)

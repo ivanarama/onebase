@@ -1361,7 +1361,7 @@ function addChoiceFilterEditor(panel, info) {
     var hasRef = typeof condition.ref === 'string' && condition.ref !== '';
     return {
       field: condition.field || '',
-      op: condition.op === 'in_hierarchy' || condition.op === 'eq_or_empty' ? condition.op : 'eq',
+      op: ['in_hierarchy', 'not_in_hierarchy', 'eq_or_empty'].indexOf(condition.op) >= 0 ? condition.op : 'eq',
       mode: hasValue ? 'value' : (hasRef ? 'ref' : 'from'),
       from: condition.from || '',
       value: hasValue ? condition.value : false,
@@ -1401,6 +1401,7 @@ function addChoiceFilterEditor(panel, info) {
       op.appendChild(new Option('eq', 'eq'));
       op.appendChild(new Option('eq_or_empty', 'eq_or_empty'));
       op.appendChild(new Option('in_hierarchy', 'in_hierarchy'));
+      op.appendChild(new Option('not_in_hierarchy', 'not_in_hierarchy'));
       op.value = condition.op;
       op.addEventListener('change', function () {
         condition.op = op.value;

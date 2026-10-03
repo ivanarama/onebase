@@ -135,17 +135,16 @@ func choicePredicateSQL(d Dialect, entity *metadata.Entity, predicates []ChoiceP
 			args = append(args, idArg(d, id))
 			next++
 		case metadata.FormChoiceOpInHierarchy:
-			table := metadata.TableName(field.RefEntity)
-			placeholder := d.Placeholder(next)
-			parts = append(parts, fmt.Sprintf(`%s IN (
-				WITH RECURSIVE choice_tree(id) AS (
-					SELECT id FROM %s WHERE id = %s
-					UNION
-					SELECT child.id FROM %s AS child
-					JOIN choice_tree AS parent ON child.parent_id = parent.id
-				)
-				SELECT id FROM choice_tree
-			)`, column, table, placeholder, table))
+			parts = append(parts, column+" IN "+choiceSubtreeSQL(field.RefEntity, d.Placeholder(next)))
+			args = append(args, idArg(d, id))
+			next++
+		case metadata.FormChoiceOpNotInHierarchy:
+			// Точное дополнение in_hierarchy (#1821): пустая ссылка проходит.
+			// Голый NOT IN её молча потерял бы: NULL NOT IN (...) — не истина.
+			// В самом поддереве NULL не бывает (это id), поэтому NOT IN для
+			// заполненной ссылки работает как задумано.
+			parts = append(parts, "("+choiceEmptyRefSQL(d, column)+" OR "+column+" NOT IN "+
+				choiceSubtreeSQL(field.RefEntity, d.Placeholder(next))+")")
 			args = append(args, idArg(d, id))
 			next++
 		default:
@@ -155,7 +154,23 @@ func choicePredicateSQL(d Dialect, entity *metadata.Entity, predicates []ChoiceP
 	return "(" + strings.Join(parts, " AND ") + ")", args, next, nil
 }
 
-// choiceEmptyRefSQL — «ссылка пуста» для eq_or_empty.
+// choiceSubtreeSQL — подзапрос id поддерева записи placeholder (она сама
+// включена) в иерархическом справочнике refEntity. UNION, а не UNION ALL:
+// цикл в иерархии, какой оставляет битая загрузка, не зацикливает обход.
+func choiceSubtreeSQL(refEntity, placeholder string) string {
+	table := metadata.TableName(refEntity)
+	return fmt.Sprintf(`(
+				WITH RECURSIVE choice_tree(id) AS (
+					SELECT id FROM %s WHERE id = %s
+					UNION
+					SELECT child.id FROM %s AS child
+					JOIN choice_tree AS parent ON child.parent_id = parent.id
+				)
+				SELECT id FROM choice_tree
+			)`, table, placeholder, table)
+}
+
+// choiceEmptyRefSQL — «ссылка пуста» для eq_or_empty и not_in_hierarchy.
 func choiceEmptyRefSQL(d Dialect, column string) string {
 	if d.Name() == "sqlite" {
 		return "(" + column + " IS NULL OR " + column + " = '')"

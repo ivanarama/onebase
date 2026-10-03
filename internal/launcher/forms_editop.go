@@ -218,7 +218,7 @@ func applyEditOp(yamlSrc []byte, req editOpRequest) (editOpResult, error) {
 		for i, condition := range raw {
 			op := metadata.FormChoiceOperator(strings.TrimSpace(condition.Op))
 			if op != metadata.FormChoiceOpEqual && op != metadata.FormChoiceOpInHierarchy &&
-				op != metadata.FormChoiceOpEqualOrEmpty {
+				op != metadata.FormChoiceOpEqualOrEmpty && op != metadata.FormChoiceOpNotInHierarchy {
 				return editOpResult{}, fmt.Errorf("setChoiceFilter: условие %d: неизвестный оператор %q", i+1, condition.Op)
 			}
 			from := strings.TrimSpace(condition.From)

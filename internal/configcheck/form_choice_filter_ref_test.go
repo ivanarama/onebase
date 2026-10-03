@@ -55,7 +55,7 @@ func TestCheckFormChoiceFilterRefRejected(t *testing.T) {
 			func(p *project.Project) { p.Entities[0].Hierarchical = false }, "не ссылается на иерархический справочник"},
 		{"parent_id у неиерархического справочника", metadata.FormChoiceCondition{Field: "parent_id", Op: metadata.FormChoiceOpEqual, Ref: choiceRefFolder},
 			func(p *project.Project) { p.Entities[1].Hierarchical = false }, "parent_id допустим только у иерархического справочника"},
-		{"неизвестный оператор", metadata.FormChoiceCondition{Field: "parent_id", Op: "not_in_hierarchy", Ref: choiceRefFolder}, nil, "неизвестный оператор"},
+		{"неизвестный оператор", metadata.FormChoiceCondition{Field: "parent_id", Op: "outside_hierarchy", Ref: choiceRefFolder}, nil, "неизвестный оператор"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			proj := choiceFilterProject([]metadata.FormChoiceCondition{tc.cond})

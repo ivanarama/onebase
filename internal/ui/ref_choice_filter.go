@@ -221,17 +221,34 @@ func (s *Server) choicePredicates(ctx context.Context, owner *metadata.Entity, f
 		if !ok {
 			return nil, false, fmt.Errorf("invalid choice source %q", path)
 		}
-		if !source.Deep() {
-			predicate.Value = id
-			predicates = append(predicates, predicate)
-			continue
+		value := any(id)
+		if source.Deep() {
+			deepValue, found, err := s.deepChoiceSourceValue(ctx, owner, form, source, id, choiceTargetFieldIsString(target, fieldName))
+			if err != nil {
+				return nil, false, err
+			}
+			if !found {
+				return nil, true, nil
+			}
+			value = deepValue
 		}
-		value, found, err := s.deepChoiceSourceValue(ctx, owner, form, source, id, choiceTargetFieldIsString(target, fieldName))
-		if err != nil {
-			return nil, false, err
-		}
-		if !found {
-			return nil, true, nil
+		// not_in_hierarchy (#1821): исключаемую ветку пользователь обязан
+		// видеть, как постоянную ссылку ref. Иначе несуществующий X дал бы
+		// весь справочник, а закрытый строковым доступом — показал бы, что
+		// лежит у него внутри (разность «всё» и «всё, кроме X»). Ссылку из
+		// браузера сервер не берёт на веру и здесь.
+		if condition.Op == metadata.FormChoiceOpNotInHierarchy {
+			excluded, isRef := value.(uuid.UUID)
+			if !isRef {
+				return nil, false, fmt.Errorf("not_in_hierarchy source %q is not a reference", path)
+			}
+			visible, err := s.choiceRefVisible(ctx, target, fieldName, excluded)
+			if err != nil {
+				return nil, false, err
+			}
+			if !visible {
+				return nil, true, nil
+			}
 		}
 		predicate.Value = value
 		predicates = append(predicates, predicate)

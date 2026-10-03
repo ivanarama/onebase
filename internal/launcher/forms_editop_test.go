@@ -853,10 +853,28 @@ elements:
 		t.Fatalf("ref condition changed on round trip: %+v", got)
 	}
 
+	// not_in_hierarchy (#1821) — тот же круг записи и загрузки.
+	response = post(`[{"field":"parent_id","op":"not_in_hierarchy","ref":"` + folder + `"},{"field":"Направление","op":"not_in_hierarchy","from":"Объект.Направление"}]`)
+	if !response.OK {
+		t.Fatalf("not_in_hierarchy: ok=false: %v", response.Errors)
+	}
+	if err := os.WriteFile(yamlPath, []byte(response.YAML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err = loader.NewManagedFormLoader().LoadFormFile(yamlPath, "Звонок")
+	if err != nil {
+		t.Fatalf("reload not_in_hierarchy form: %v", err)
+	}
+	if got := loaded.Elements[0].ChoiceFilter; len(got) != 2 || got[0].Op != metadata.FormChoiceOpNotInHierarchy || got[0].Ref != folder ||
+		got[1].Op != metadata.FormChoiceOpNotInHierarchy || got[1].From != "Объект.Направление" {
+		t.Fatalf("not_in_hierarchy changed on round trip: %+v", got)
+	}
+
 	for name, conditions := range map[string]string{
-		"битый UUID":   `[{"field":"parent_id","op":"in_hierarchy","ref":"папка"}]`,
-		"нулевой UUID": `[{"field":"parent_id","op":"in_hierarchy","ref":"00000000-0000-0000-0000-000000000000"}]`,
-		"ref и from":   `[{"field":"parent_id","op":"in_hierarchy","ref":"` + folder + `","from":"Объект.Направление"}]`,
+		"неизвестный оператор": `[{"field":"parent_id","op":"outside_hierarchy","ref":"` + folder + `"}]`,
+		"битый UUID":           `[{"field":"parent_id","op":"in_hierarchy","ref":"папка"}]`,
+		"нулевой UUID":         `[{"field":"parent_id","op":"in_hierarchy","ref":"00000000-0000-0000-0000-000000000000"}]`,
+		"ref и from":           `[{"field":"parent_id","op":"in_hierarchy","ref":"` + folder + `","from":"Объект.Направление"}]`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			if response := post(conditions); response.OK {

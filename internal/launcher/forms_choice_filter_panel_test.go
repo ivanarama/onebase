@@ -107,6 +107,23 @@ emptyRef.handlers.change();
 equal(edits[edits.length - 1].choice_filter, JSON.stringify([
   { field: 'parent_id', op: 'eq', ref: folder }
 ]), 'entered UUID is trimmed and written as ref');
+// not_in_hierarchy (#1821): offered, opens as is (not rewritten to eq) and is
+// submitted unchanged; no boolean literal, like the other reference operators.
+const fifthPanel = new Element('panel');
+addChoiceFilterEditor(fifthPanel, { choiceFilter: [
+  { field: 'parent_id', op: 'not_in_hierarchy', ref: folder }
+] });
+const fifthOp = all(fifthPanel).find(node => node.tag === 'select' &&
+  node.children.some(option => option.value === 'not_in_hierarchy'));
+if (!fifthOp) throw new Error('the editor must offer not_in_hierarchy');
+equal(fifthOp.value, 'not_in_hierarchy', 'opening the panel must preserve not_in_hierarchy');
+const fifthMode = all(fifthPanel).find(node => node.tag === 'select' &&
+  node.children.some(option => option.value === 'value'));
+equal(fifthMode.children.find(option => option.value === 'value').disabled, true, 'not_in_hierarchy has no boolean literal');
+all(fifthPanel).find(node => node.tag === 'input' && node.value === 'parent_id').handlers.change();
+equal(edits[edits.length - 1].choice_filter, JSON.stringify([
+  { field: 'parent_id', op: 'not_in_hierarchy', ref: folder }
+]), 'not_in_hierarchy is submitted unchanged');
 `
 	// eval the function from the page in the same global scope as its DOM stubs.
 	script := testScript[:strings.Index(testScript, "const panel =")] + "\neval(" + strconv.Quote(page[start:start+end]) + ");\n" + testScript[strings.Index(testScript, "const panel ="):]
