@@ -347,6 +347,28 @@ func (s *Server) maskDSLValue(ctx context.Context, entity *metadata.Entity, fiel
 	return access.MaskValue(dec.Strategy, dec.Keep, v)
 }
 
+// xdtoFieldMask отдаёт сериализатору XML ту же полевую политику, что действует
+// при чтении реквизита из прикладного кода: СериализаторXDTO.ЗаписатьXML — путь
+// чтения, симметричный форме, печати и спискам, и без этого он был бы обходом
+// маски в одну строку (Сообщить(СериализаторXDTO.ЗаписатьXML(Об))).
+//
+// Семантика повторяет Get() обёртки, включая исключения: не маскируется объект,
+// созданный самим модулем (loaded = false), и реквизит, присвоенный в этой же
+// операции (assigned) — там значение принадлежит текущей операции, а не чужой
+// записи. nil означает «маскировать нечего» и избавляет сериализатор от вызова
+// политики на каждый реквизит.
+func (s *Server) xdtoFieldMask(ctx context.Context, entity *metadata.Entity, loaded bool, assigned map[string]bool) func(string, any) any {
+	if !loaded || len(s.fieldDecisions(ctx, entity)) == 0 {
+		return nil
+	}
+	return func(field string, v any) any {
+		if assigned[strings.ToLower(strings.TrimSpace(field))] {
+			return v
+		}
+		return s.maskDSLValue(ctx, entity, field, v)
+	}
+}
+
 // dslFieldSearchDenied reports whether searching by this attribute would turn a
 // masked field into a guessing oracle: НайтиПоРеквизиту("Телефон", …) recovers
 // the exact value the mask hides. Mirrors the query gate, where a protected
