@@ -19,6 +19,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"strings"
 
@@ -101,11 +102,8 @@ func applyStandardFieldEdits(ent *saveEntity, kind metadata.Kind, fields []saveF
 		}
 		previousTitles := standard.Titles
 		standard = carryFieldKeys(*nextStandard, standard)
-		if standard.Titles == nil {
-			// With no configured UI languages, the ordinary field row has no
-			// title inputs. Keep its translations during first numbering.
-			standard.Titles = previousTitles
-		}
+		// During first numbering the ordinary row also omits hidden languages.
+		standard.Titles = mergeStandardTitles(previousTitles, standard.Titles)
 	}
 	standard.Name, standard.ID, standard.Type = name, id, "string"
 	if willNumerator {
@@ -124,7 +122,7 @@ func applyStandardFieldEdits(ent *saveEntity, kind metadata.Kind, fields []saveF
 				standard.Title, standard.Label = active.Field.Title, ""
 			}
 			if active.Field.TitlesPresent {
-				standard.Titles = active.Field.Titles
+				standard.Titles = mergeStandardTitles(standard.Titles, active.Field.Titles)
 			}
 		}
 		active.Field = standardProperties(standard)
@@ -136,6 +134,26 @@ func applyStandardFieldEdits(ent *saveEntity, kind metadata.Kind, fields []saveF
 	ent.Numerator = nil
 	ent.Fields = append([]saveField{standard}, ensureFieldIDs(previousOrdinary, nextOrdinary)...)
 	return nil
+}
+
+// Only submitted languages are edits. Empty submitted values clear a visible
+// translation; absent languages (including ru) keep their stored values.
+func mergeStandardTitles(previous, edits map[string]string) map[string]string {
+	titles := maps.Clone(previous)
+	if titles == nil {
+		titles = make(map[string]string)
+	}
+	for lang, value := range edits {
+		if value == "" {
+			delete(titles, lang)
+		} else {
+			titles[lang] = value
+		}
+	}
+	if len(titles) == 0 {
+		return nil
+	}
+	return titles
 }
 
 // ensureFieldIDs возвращает next с проставленными id: перенесёнными из prev по

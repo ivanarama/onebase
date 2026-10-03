@@ -86,7 +86,7 @@ type saveStandardField struct {
 	Title         string            `yaml:"title,omitempty"`
 	Label         string            `yaml:"label,omitempty"`
 	Titles        map[string]string `yaml:"titles,omitempty"`
-	TitlesPresent bool              `yaml:"-"` // form marker: nil can also mean an explicit clear
+	TitlesPresent bool              `yaml:"-"` // form marker: Titles contains edits, including explicit clears
 	Required      bool              `yaml:"required,omitempty"`
 	Default       string            `yaml:"default,omitempty"`
 	PII           bool              `yaml:"pii,omitempty"`

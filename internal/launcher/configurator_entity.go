@@ -476,6 +476,11 @@ func formHasMapField(r *http.Request, prefix string) bool {
 // "titles." не должен ловить "field.0.titles.en"). nil при пустом результате —
 // тогда omitempty / setYAMLMapField(nil) убирают ключ из YAML.
 func parseMapForm(r *http.Request, prefix string) map[string]string {
+	return parseMapFormValues(r, prefix, false)
+}
+
+// keepEmpty retains explicit clears when merging the standard field's titles.
+func parseMapFormValues(r *http.Request, prefix string, keepEmpty bool) map[string]string {
 	pfx := prefix + "."
 	out := map[string]string{}
 	for key, vals := range r.Form {
@@ -486,7 +491,7 @@ func parseMapForm(r *http.Request, prefix string) map[string]string {
 		if lang == "" || lang == "ru" || strings.Contains(lang, ".") {
 			continue
 		}
-		if v := strings.TrimSpace(vals[0]); v != "" {
+		if v := strings.TrimSpace(vals[0]); v != "" || keepEmpty {
 			out[lang] = v
 		}
 	}
@@ -740,7 +745,7 @@ func (h *handler) configuratorSaveFields(w http.ResponseWriter, r *http.Request)
 			if r.FormValue("numerator_field_present") == "1" {
 				target.Field = &saveStandardField{
 					Title:         strings.TrimSpace(r.FormValue("numerator_field_title")),
-					Titles:        parseMapForm(r, "numerator_field_titles"),
+					Titles:        parseMapFormValues(r, "numerator_field_titles", true),
 					TitlesPresent: r.FormValue("numerator_field_titles_present") == "1",
 				}
 			}
