@@ -2582,6 +2582,7 @@ const tplReport = `
 {{$excel := printf "/ui/report/%s/export/excel%s" (lower .Report.Name) $q}}
 {{$pdf := printf "/ui/report/%s/export/pdf%s" (lower .Report.Name) $q}}
 <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:8px">
+  <a class="btn btn-sm" href="/ui/export-jobs">{{t $.Lang "Мои выгрузки"}}</a>
   {{if eq (lower .Report.OutputFormat) "pdf"}}
   <a class="btn btn-sm" href="{{$pdf}}" style="background:#dc2626;color:#fff" title="{{t $.Lang "Запустить выгрузку PDF"}}">{{t $.Lang "PDF"}}</a>
   <a class="btn btn-sm" href="{{$excel}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Запустить выгрузку Excel"}}">{{t $.Lang "Excel"}}</a>
@@ -2595,11 +2596,12 @@ const tplReport = `
 {{template "head" .}}{{template "nav" .}}
 <main>
 <h2>{{t $.Lang "Выгрузка отчёта"}}</h2>
+<p><a href="/ui/export-jobs">{{t $.Lang "Мои выгрузки"}}</a></p>
 <div class="card" style="max-width:720px">
   <div style="display:grid;grid-template-columns:140px 1fr;gap:8px 16px;margin-bottom:16px">
     <div style="color:#64748b">{{t $.Lang "Отчёт"}}</div><div>{{.Job.Name}}</div>
     <div style="color:#64748b">{{t $.Lang "Формат"}}</div><div>{{.JobFormatLabel}}</div>
-    <div style="color:#64748b">{{t $.Lang "Статус"}}</div><div>{{.JobStatusLabel}}</div>
+    <div style="color:#64748b">{{t $.Lang "Статус"}}</div><div>{{t $.Lang .JobStatusLabel}}</div>
     <div style="color:#64748b">{{t $.Lang "Создано"}}</div><div>{{.CreatedAtText}}</div>
     {{if .JobDone}}<div style="color:#64748b">{{t $.Lang "Доступно до"}}</div><div>{{.ExpiresAtText}}</div>{{end}}
   </div>
@@ -2617,6 +2619,41 @@ const tplReport = `
     <script>setTimeout(function(){ window.location.reload(); }, 2000);</script>
   {{end}}
 </div>
+</main></body></html>
+{{end}}
+{{define "page-export-jobs"}}
+{{template "head" .}}{{template "nav" .}}
+<main>
+<h2>{{t $.Lang "Мои выгрузки"}}</h2>
+<p>{{t $.Lang "Здесь показаны только доступные выгрузки. Они исчезают после истечения срока или перезапуска сервера."}}</p>
+{{if .Jobs}}
+<div class="card" style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse">
+  <thead><tr>
+    <th>{{t $.Lang "Отчёт"}}</th>
+    <th>{{t $.Lang "Формат"}}</th>
+    <th>{{t $.Lang "Статус"}}</th>
+    <th>{{t $.Lang "Создано"}}</th>
+    <th>{{t $.Lang "Доступно до"}}</th>
+    <th>{{t $.Lang "Файл"}}</th>
+  </tr></thead>
+  <tbody>
+  {{range .Jobs}}
+  <tr>
+    <td><a href="{{.StatusURL}}">{{.Name}}</a></td>
+    <td>{{.FormatLabel}}</td>
+    <td>{{t $.Lang .StatusLabel}}</td>
+    <td>{{.CreatedText}}</td>
+    <td>{{.ExpiresText}}</td>
+    <td>{{if .Downloadable}}<a href="{{.DownloadURL}}">{{t $.Lang "Скачать файл"}}</a>{{end}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<p>{{t $.Lang "Доступных выгрузок пока нет."}}</p>
+{{end}}
 </main></body></html>
 {{end}}
 {{define "page-report"}}

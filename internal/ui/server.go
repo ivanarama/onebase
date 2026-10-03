@@ -599,6 +599,7 @@ func (s *Server) Mount(r chi.Router) {
 	// PDF export отчётов (issue #218) — реальный бинарный PDF, как у печатных форм.
 	r.Get("/ui/report/{name}/pdf", s.reportPDF)
 	r.Get("/ui/report/{name}/export/{format}", s.reportExportJobStart)
+	r.Get("/ui/export-jobs", s.exportJobList)
 	r.Get("/ui/export-jobs/{id}", s.exportJobStatus)
 	r.Get("/ui/export-jobs/{id}/download", s.exportJobDownload)
 
