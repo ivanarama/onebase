@@ -566,6 +566,18 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"elLayout": func(el *metadata.FormElement) template.CSS {
 			return template.CSS(metadata.FormElementLayoutCSS(el)) //nolint:gosec // G203: стиль собран из словаря выравнивания и целых размеров 1…4000 px
 		},
+		// elLayoutEx — elLayout + display:none для элементов с hidden_when,
+		// скрытых при первичном рендере. Без этого такие элементы не попадали
+		// в DOM и applyElementStates не мог показать их при смене условия.
+		"elLayoutEx": func(ctx map[string]any, el *metadata.FormElement) template.CSS {
+			css := metadata.FormElementLayoutCSS(el)
+			if el != nil && el.HiddenWhen != "" {
+				if set, _ := ctx["ElHidden"].(map[string]bool); set[el.Name] {
+					css = "display:none;" + css
+				}
+			}
+			return template.CSS(css) //nolint:gosec // G203: стиль собран из словаря выравнивания и целых размеров 1…4000 px
+		},
 		"elAlign": func(el *metadata.FormElement) template.CSS {
 			return template.CSS(metadata.FormElementAlignCSS(el)) //nolint:gosec // G203: стиль собран только из нормализованных значений словаря выравнивания
 		},
@@ -604,7 +616,40 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return false
 			}
 			set, _ := ctx["ElHidden"].(map[string]bool)
-			return set[el.Name]
+			if !set[el.Name] {
+				return false
+			}
+			if el.HiddenWhen == "" {
+				return true // статически скрыт — не рисуем
+			}
+			// Элемент с hidden_when скрыт ДИНАМИЧЕСКИ: пропускать его нельзя,
+			// иначе он не попадёт в DOM и applyElementStates не сможет
+			// показать его при смене условия. Контейнеры (ТабличнаяЧасть,
+			// ГруппаФормы, СтраницыФормы) по-прежнему пропускаются — у них
+			// рендеринг с display:none ломает отправку tp_json и флажков.
+			// Только простые поля ввода и переключатели рендерятся с
+			// display:none. Остальное (контейнеры, ТЧ, флажки, картинки,
+			// надписи, кнопки) пропускается как раньше.
+			switch el.Kind {
+			case metadata.FormElementField,
+				metadata.FormElementSwitch,
+				metadata.FormElementDatePicker:
+				return false // рисуем с display:none
+			}
+			return true // остальные типы — пропускаем как раньше
+		},
+		// elHiddenStyle возвращает "display:none;" для элемента, который
+		// скрыт условием hidden_when при первичном рендере. Элемент
+		// остаётся в DOM, и applyElementStates переключает видимость.
+		"elHiddenStyle": func(ctx map[string]any, el *metadata.FormElement) template.CSS {
+			if el == nil || el.HiddenWhen == "" {
+				return ""
+			}
+			set, _ := ctx["ElHidden"].(map[string]bool)
+			if set[el.Name] {
+				return "display:none;"
+			}
+			return ""
 		},
 		// visibleFormPages — страницы набора СтраницыФормы, которые надо
 		// отрисовать. Отбор вынесен сюда, а не сделан внутри range, потому что

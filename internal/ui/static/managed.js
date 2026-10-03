@@ -198,22 +198,50 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   // клиента, и реквизиты запись переживают). Значения кладём в sessionStorage
   // ровно на время перезагрузки: пишем перед отправкой, применяем и СРАЗУ
   // удаляем при следующей загрузке — дольше одной навигации они не живут.
+  // BEGIN onebase-form-attr-stash
   var FORM_ATTRS = Array.isArray(cfg.formAttrs) ? cfg.formAttrs : [];
   var ATTR_STASH_KEY = 'ob-form-attrs:' + String(cfg.entity || '');
+  // Реквизит бывает нарисован несколькими копиями: копия, скрытая по
+  // hidden_when, остаётся в DOM внутри disabled fieldset и не отправляется.
+  // Первый контрол с этим name — не обязательно тот, который правил оператор:
+  // сохранять надо значение отправляемой копии, иначе после перезагрузки
+  // возвращалось старое значение скрытой копии, а видимое поле пустело (#1759).
+  function formAttrControls(form, name){
+    var key = window.CSS && CSS.escape ? CSS.escape(name) : name;
+    return Array.prototype.slice.call(form.querySelectorAll('[name="' + key + '"]'));
+  }
+  // Значение реквизита, которое уйдёт с формой. Флажки не сохраняются (как и
+  // раньше). Нет отправляемой копии или копии расходятся — не сохраняем ничего:
+  // восстановить наугад хуже, чем не восстановить.
+  function formAttrSubmittedValue(controls){
+    var value = null;
+    for (var i = 0; i < controls.length; i++) {
+      var c = controls[i];
+      if (c.type === 'checkbox' || c.disabled || (c.closest && c.closest('fieldset[disabled]'))) continue;
+      if (c.type === 'radio' && !c.checked) continue;
+      var v = String(c.value == null ? '' : c.value);
+      if (value === null) value = v;
+      else if (value !== v) return '';
+    }
+    return value || '';
+  }
   function stashFormAttrs(){
     if (!FORM_ATTRS.length) return;
     var form = document.getElementById('main-form');
     if (!form) return;
     var data = {};
     for (var i = 0; i < FORM_ATTRS.length; i++) {
-      var el = form.querySelector('[name="' + (window.CSS && CSS.escape ? CSS.escape(FORM_ATTRS[i]) : FORM_ATTRS[i]) + '"]');
-      if (el && el.type !== 'checkbox' && el.value) data[FORM_ATTRS[i]] = el.value;
+      var v = formAttrSubmittedValue(formAttrControls(form, FORM_ATTRS[i]));
+      if (v) data[FORM_ATTRS[i]] = v;
     }
     try {
       if (Object.keys(data).length) sessionStorage.setItem(ATTR_STASH_KEY, JSON.stringify(data));
       else sessionStorage.removeItem(ATTR_STASH_KEY);
     } catch (e) { /* приватный режим — просто не восстановим */ }
   }
+  // Восстановленное значение получают все пустые копии реквизита — какая из
+  // них видима, решает hidden_when уже после загрузки, и копии должны
+  // совпадать. Заполненную сервером копию не трогаем.
   function restoreFormAttrs(){
     if (!FORM_ATTRS.length) return;
     var raw = null;
@@ -224,10 +252,17 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     var form = document.getElementById('main-form');
     if (!form || !data) return;
     Object.keys(data).forEach(function(k){
-      var el = form.querySelector('[name="' + (window.CSS && CSS.escape ? CSS.escape(k) : k) + '"]');
-      if (el && !el.value) el.value = data[k];
+      if (FORM_ATTRS.indexOf(k) < 0) return;
+      var controls = formAttrControls(form, k);
+      var radios = controls.filter(function(c){ return c.type === 'radio'; });
+      if (radios.length && !radios.some(function(r){ return r.checked; })) applyRadioValue(radios, data[k]);
+      controls.forEach(function(c){
+        if (c.type === 'radio' || c.type === 'checkbox') return;
+        if (!c.value) c.value = data[k];
+      });
     });
   }
+  // END onebase-form-attr-stash
 
   window._tpRefOpts = obManagedReadJSON('ob-managed-tp-ref-opts', window._tpRefOpts || {}) || {};
   window._tpEnumLabels = obManagedReadJSON('ob-managed-tp-enum-labels', window._tpEnumLabels || {}) || {};
@@ -327,20 +362,59 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     sel.appendChild(o);
   }
   // BEGIN onebase-ro-apply-values
+  // Радиокнопки с одним name — одна группа на всю форму: браузер держит
+  // отмеченной одну кнопку, даже если реквизит нарисован двумя
+  // переключателями. Отмечаем кнопку той копии, которая сейчас отправляется,
+  // то есть не внутри disabled fieldset скрытой копии. Ответ события
+  // применяет состояния элементов раньше значений, поэтому копию, которую он
+  // показал, эта проверка уже видит отправляемой (#1759).
+  // Отправится ли контрол с формой: не disabled сам (readonly_when отключает
+  // input) и не лежит в disabled fieldset (копия, скрытая по hidden_when).
+  function controlSubmittable(c){
+    return !c.disabled && !(c.closest && c.closest('fieldset[disabled]'));
+  }
+  // Отмечается кнопка, которая уйдёт с формой. Видимая, но readonly копия
+  // переключателя не отправляется: отметь её — и у реквизита не останется
+  // отправляемой отмеченной кнопки, запись потеряет значение (#1759, круг 5).
+  // Отправляемой кнопки с этим value нет — отмечается первая, только для показа.
+  function applyRadioValue(radios, v){
+    var val = (v === null || v === undefined) ? '' : String(v);
+    var target = null;
+    radios.forEach(function(r){
+      if (!target && r.value === val && controlSubmittable(r)) target = r;
+    });
+    radios.forEach(function(r){
+      if (!target && r.value === val) target = r;
+    });
+    radios.forEach(function(r){ r.checked = (r === target); });
+  }
   function applyValues(values, refOptions){
     if (!values) return;
     const form = document.getElementById('main-form');
     if (!form) return;
     Object.keys(values).forEach(function(k){
       const v = values[k];
+      const key = window.CSS && CSS.escape ? CSS.escape(k) : k;
       // Пропускаем файловые поля: не подставляем содержимое в поле пути
-      const fc = form.querySelector('[data-ob-file-content-for="' + (window.CSS && CSS.escape ? CSS.escape(k) : k) + '"]');
+      const fc = form.querySelector('[data-ob-file-content-for="' + key + '"]');
       if (fc) return;
-      const inp = form.querySelector('[name="' + (window.CSS && CSS.escape ? CSS.escape(k) : k) + '"]');
-      if (!inp) return;
-      if (inp.type === 'checkbox') {
-        inp.checked = v === true || v === 'true' || v === 1;
-      } else {
+      // Реквизит бывает на форме не один раз: копия, скрытая по hidden_when,
+      // остаётся в DOM (disabled fieldset) рядом с видимой, а после смены
+      // видимости отправляется уже она. Поэтому, как и у табличных частей
+      // (applyTableParts), значение получают ВСЕ представления реквизита:
+      // иначе ответ доходил только до первого контрола, и видимая копия
+      // отправляла старое значение обратно (#1759).
+      const controls = Array.prototype.slice.call(form.querySelectorAll('[name="' + key + '"]'));
+      const radios = controls.filter(function(c){ return c.type === 'radio'; });
+      if (radios.length) applyRadioValue(radios, v);
+      controls.forEach(function(inp){
+        // value радиокнопки — её вариант, а не значение реквизита: запись в
+        // него ломала бы переключатель. Отметку выставил applyRadioValue.
+        if (inp.type === 'radio') return;
+        if (inp.type === 'checkbox') {
+          inp.checked = v === true || v === 'true' || v === 1;
+          return;
+        }
         var ref = managedRefParts(v);
         var val;
         if (ref) {
@@ -357,17 +431,15 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         // запись затирала её в базе.
         if (inp.type === 'date' && val.indexOf('T') > 0) val = val.slice(0, val.indexOf('T'));
         if (inp.tagName === 'SELECT') ensureRefOption(inp, val, refOptions && refOptions[k], ref && ref.label);
+        // Зеркало значения (план 181C/#1672) — скрытый input с тем же name:
+        // у запертого select-поля отправляется оно, и этот же проход держит
+        // его синхронным с select при каждом применении значения.
         if (inp.classList && inp.classList.contains('code-field') && inp._obSetCodeValue) {
           inp._obSetCodeValue(val);
         } else {
           inp.value = val;
         }
-        // Зеркало значения (план 181C/#1672): у запертого select-поля value
-        // меняет обработчик через сам select, а отправляется зеркало — держим
-        // их синхронными при каждом применении значения.
-        var mir = document.getElementById('ro-mirror-' + k);
-        if (mir) mir.value = val;
-      }
+      });
     });
     // A form handler may change a choice_filter source without dispatching a
     // native change event. Re-scan fingerprints after the whole response has
@@ -440,10 +512,9 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   // показывать их редактируемыми. В картах приходит и false — условие могло
   // перестать выполняться, и запрет нужно снять.
   //
-  // Обратный ход есть не у всего: элемент, скрытый ещё серверной отрисовкой, в
-  // DOM отсутствует, якорь data-ob-el не находится, и hidden=false для него —
-  // пустая операция. Снова показать такой элемент может только перезагрузка
-  // страницы; скрыть уже отрисованный — можно.
+  // Обратный ход есть у простых полей, оставленных сервером в DOM. Контейнер,
+  // скрытый ещё серверной отрисовкой, в DOM отсутствует и появится только после
+  // перезагрузки страницы.
   //
   // Клиент НИЧЕГО не выводит сам. Условие на контейнере каскадит на потомков,
   // но считает каскад сервер: в карте лежит готовое состояние каждого
@@ -465,8 +536,18 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // Some managed elements keep their layout only in an inline display
       // declaration (checkbox and command bar use flex). Remember that value
       // before the first state update instead of erasing it on hidden=false.
-      if (!Object.prototype.hasOwnProperty.call(el, '_obDisplay')) el._obDisplay = el.style.display || '';
+      if (!Object.prototype.hasOwnProperty.call(el, '_obDisplay')) {
+        var d = el.style.display || '';
+        // Элемент с hidden_when рендерится сервером с display:none, но его
+        // натуральное состояние — видимый (''). Не запоминаем 'none' как
+        // значение для восстановления, иначе поле останется скрытым навсегда.
+        el._obDisplay = d === 'none' ? '' : d;
+      }
       el.style.display = hidden[name] ? 'none' : el._obDisplay;
+      // A hidden control must not be submitted or participate in native
+      // required validation. The server renders the same disabled fieldset
+      // for the initial state; update it when hidden_when changes.
+      if (el.getAttribute('data-ob-control-fieldset') === '1') el.disabled = !!hidden[name];
     });
     var ro = st.readonly || {};
     // Свой ли это редактирующий контрол: ближайший якорь элемента формы — сам
