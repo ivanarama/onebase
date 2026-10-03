@@ -809,9 +809,10 @@ SHA с удалённым HEAD до создания worktree и ещё раз �
   означает no-op, потому что при конфликте он остаётся прежним до commit.
   Механические конфликты (`docs/features.md`, `CHANGELOG.md`,
   `internal/i18n/locales/*.json`, `Plans/README.md`) разрешает сам, причём
-  для `CHANGELOG.md` и `docs/features.md` перед commit проверяет целые добавленные
-  блоки с контекстом, порядком строк и числом вхождений через
-  `go run ./tools/mergecheck -kind entries` с исходными base/ours/theirs и
+  для `CHANGELOG.md` и `docs/features.md` сначала строит точное объединение
+  чистых добавлений через `go run ./tools/mergecheck -kind entries -resolve`,
+  затем перед commit проверяет целые добавленные блоки с контекстом, порядком
+  строк и числом вхождений тем же `mergecheck` с исходными base/ours/theirs и
   результатом (полная команда — в канонической процедуре). Множество строк
   не обнаруживает потерю повторяющегося пояснения; `--union` не доказывает
   сохранность записей. Для `Plans/README.md` разрешена перенумерация только
