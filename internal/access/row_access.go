@@ -273,7 +273,11 @@ func resolveValue(v auth.RowValue, u *auth.User) (any, []any, error) {
 	if strings.TrimSpace(v.UserAttr) != "" {
 		value, ok := resolveUserAttr(u, v.UserAttr)
 		if !ok {
-			return nil, nil, fmt.Errorf("unknown row policy user_attr %q", v.UserAttr)
+			// Текст называет встроенные атрибуты: собственных платформа не
+			// хранит (auth.User.Attrs никто не заполняет), и без подсказки
+			// автор политики ищет, где их задать.
+			return nil, nil, fmt.Errorf("unknown row policy user_attr %q: built-in attributes are %s; "+
+				"custom user attributes are not stored by the platform yet", v.UserAttr, builtinUserAttrs)
 		}
 		return value, nil, nil
 	}
@@ -282,6 +286,10 @@ func resolveValue(v auth.RowValue, u *auth.User) (any, []any, error) {
 	}
 	return v.Literal, nil, nil
 }
+
+// builtinUserAttrs — встроенные атрибуты для user_attr, канонические имена
+// из resolveUserAttr.
+const builtinUserAttrs = "id, login, full_name, lang, is_admin, deny_passwd_change, show_in_list, ai_data_access"
 
 func resolveUserAttr(u *auth.User, attr string) (any, bool) {
 	if u == nil {
