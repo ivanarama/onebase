@@ -733,6 +733,37 @@ func (e *Entity) StageField() *Field {
 	return nil
 }
 
+// documentDateNames — имена реквизита «дата документа» в порядке
+// предпочтения; тот же набор ищет МоментВремени() (runtime.Object).
+var documentDateNames = []string{"Дата", "Date", "Период", "Period"}
+
+// DocumentDateField возвращает реквизит «дата документа»: реквизит-дату с
+// именем Дата (Date, Период, Period), а без такого — первый реквизит-дату в
+// порядке объявления; nil, если дат нет вовсе.
+//
+// По этой дате ложатся движения, работает дата запрета проведения и свёртка.
+// Раньше все они брали первый реквизит-дату, и документ, где СрокОплаты
+// объявлен раньше Дата, писал движения на срок оплаты, а проверку запрета
+// проходил по нему же — документ закрытого периода проводился.
+func (e *Entity) DocumentDateField() *Field {
+	if e == nil {
+		return nil
+	}
+	for _, name := range documentDateNames {
+		for i := range e.Fields {
+			if e.Fields[i].Type == FieldTypeDate && strings.EqualFold(e.Fields[i].Name, name) {
+				return &e.Fields[i]
+			}
+		}
+	}
+	for i := range e.Fields {
+		if e.Fields[i].Type == FieldTypeDate {
+			return &e.Fields[i]
+		}
+	}
+	return nil
+}
+
 // Виды регистра накопления (план 151). Балансовый (остатки) — по умолчанию;
 // оборотный нельзя сворачивать в остаток, поэтому свёртка его не предлагает.
 const (

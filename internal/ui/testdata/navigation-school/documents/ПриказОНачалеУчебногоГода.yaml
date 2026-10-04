@@ -1,0 +1,8 @@
+name: ПриказОНачалеУчебногоГода
+title: ПриказОНачалеУчебногоГода
+posting: false
+fields:
+  - name: Number
+    type: string
+  - name: Date
+    type: date

@@ -584,7 +584,7 @@ func (p *docProxy) LoadObject(uuidStr string) (any, error) {
 	}
 	// loadRuntimeObject грузит шапку + ТЧ и обогащает ссылочные поля до
 	// *Ref{…,Manager}, чтобы DSL мог писать Док.СсылочноеПоле.ПолучитьОбъект().
-	obj, err := p.s.loadRuntimeObject(p.ctx(), p.entity, id)
+	obj, row, err := p.s.loadRuntimeObjectRow(p.ctx(), p.entity, id)
 	if err != nil {
 		return nil, err
 	}
@@ -592,7 +592,7 @@ func (p *docProxy) LoadObject(uuidStr string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &docWriter{
+	w := &docWriter{
 		s:               p.s,
 		ctxSrc:          p.ctxSrc,
 		entity:          p.entity,
@@ -600,7 +600,9 @@ func (p *docProxy) LoadObject(uuidStr string) (any, error) {
 		messages:        p.messages,
 		loaded:          true,
 		expectedVersion: &version,
-	}, nil
+	}
+	w.setStandardAttrs(row)
+	return w, nil
 }
 
 // docWriter — записываемый/проводимый документ.
@@ -626,6 +628,31 @@ type docWriter struct {
 	// маскируется, значение принадлежит текущей операции (план 88E).
 	assigned map[string]bool
 	resolver *dslRefAttrResolver
+	// posted и deletionMark — стандартные реквизиты Проведен и ПометкаУдаления.
+	// В obj.Fields их нет: объект несёт только объявленные реквизиты, и без
+	// отдельного состояния Д.Проведен читался как Неопределено.
+	posted       bool
+	deletionMark bool
+}
+
+// setStandardAttrs берёт Проведен и ПометкаУдаления из строки шапки, прочитанной
+// из БД.
+func (w *docWriter) setStandardAttrs(row map[string]any) {
+	w.posted = asBool(row["posted"])
+	w.deletionMark = asBool(row["deletion_mark"])
+}
+
+// standardAttr отдаёт стандартный реквизит документа по имени. Реквизит только
+// для чтения: его меняют Провести(), ОтменитьПроведение() и пометка на удаление,
+// а присваивание, как и раньше, в базу не попадает.
+func (w *docWriter) standardAttr(name string) (any, bool) {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "проведен", "проведён", "posted":
+		return w.posted, true
+	case "пометкаудаления", "deletionmark":
+		return w.deletionMark, true
+	}
+	return nil, false
 }
 
 func (w *docWriter) ctx() context.Context {
@@ -657,6 +684,14 @@ func (w *docWriter) Get(name string) any {
 	v := w.obj.Get(name)
 	field := findObjectAttributeField(w.entity, name)
 	if field == nil {
+		// Объявленный реквизит с тем же именем старше стандартного: такие
+		// конфигурации читают прежнее значение.
+		if std, ok := w.standardAttr(name); ok {
+			return std
+		}
+		if isSelfRefName(name) {
+			return w.selfRef(v)
+		}
 		return v
 	}
 	maskStored := w.loaded && !w.assigned[strings.ToLower(strings.TrimSpace(name))]
@@ -664,6 +699,31 @@ func (w *docWriter) Get(name string) any {
 		return w.s.maskDSLValue(w.ctx(), w.entity, field.Name, v)
 	}
 	return w.s.declaredEntityFieldValue(field, v, w.refResolver())
+}
+
+// selfRef отдаёт собственную ссылку документа копией, привязанной к живому
+// контексту модуля. В объекте она лежит без менеджера (ensureSelfRef), и
+// Д.Ссылка.ПолучитьОбъект() после Записать() отвечал «ссылка не привязана к
+// менеджеру». У объекта из Ссылка.ПолучитьОбъект() и после Прочитать() ссылки
+// в объекте нет вовсе — её строим по идентификатору. У нового, ещё не
+// записанного документа ссылки нет, как и раньше.
+func (w *docWriter) selfRef(stored any) any {
+	ref, ok := stored.(*interpreter.Ref)
+	if !ok {
+		if !w.loaded && !w.saved {
+			return stored
+		}
+		ref = &interpreter.Ref{UUID: w.obj.ID.String(), Name: w.displayName(), Type: w.entity.Name, Kind: w.entity.Kind}
+	} else if ref != nil && ref.Name == "" && (w.loaded || w.saved) {
+		// После Записать() ссылку кладёт в объект запись (entityservice.Save) —
+		// без представления, и Строка(Об.Ссылка) давала пустую строку, хотя
+		// представление у записанного объекта есть. Имя — копии: хранимая
+		// ссылка остаётся как есть.
+		named := *ref
+		named.Name = w.displayName()
+		ref = &named
+	}
+	return w.refResolver().bindRefToContext(ref, w.entity.Name)
 }
 
 func (w *docWriter) Set(name string, v any) {
@@ -675,8 +735,11 @@ func (w *docWriter) Set(name string, v any) {
 }
 
 func (w *docWriter) GetDynamicField(name string) (any, bool) {
-	if w == nil || w.entity == nil || w.obj == nil || findObjectAttributeField(w.entity, name) == nil {
+	if w == nil || w.entity == nil || w.obj == nil {
 		return nil, false
+	}
+	if findObjectAttributeField(w.entity, name) == nil {
+		return w.standardAttr(name)
 	}
 	return w.Get(name), true
 }
@@ -761,6 +824,7 @@ func (w *docWriter) read() error {
 	}
 	w.obj.Fields = fields
 	w.obj.TablePartRows = tpRows
+	w.setStandardAttrs(row)
 	// Прочитанный объект целиком приехал из БД: присвоенного модулем в нём
 	// больше нет, а сохранённый признак снимал бы маску с реальных значений.
 	w.assigned = nil
@@ -1113,6 +1177,11 @@ func (w *docWriter) postInContextAfterAccess(ctx context.Context, hasPrelude, pr
 	if err := w.s.store.SetPosted(ctx, w.entity.Name, w.obj.ID, true); err != nil {
 		return err
 	}
+	// Признак объекта следует за транзакцией, как saved и версия: откат
+	// проведения возвращает прежнее значение.
+	wasPosted := w.posted
+	w.posted = true
+	storage.DeferUntilTxRollback(ctx, func() { w.posted = wasPosted })
 	if err := exchange.RegisterOnSave(ctx, w.s.store, w.s.reg.ExchangePlans(), w.entity, w.obj.ID, false); err != nil {
 		return err
 	}

@@ -63,6 +63,9 @@ func (s *Server) processorForm(w http.ResponseWriter, r *http.Request) {
 			"TablePartRows": tablePartRows,
 		}
 		s.setProcessorManagedContext(r, data, proc)
+		// choice_filter полей формы обработки — тем же серверным путём, что у
+		// форм сущностей: отфильтрованный первый список и контекст подбора (#1840).
+		s.applyProcessorChoiceFilters(r.Context(), proc, data)
 		s.prepareManagedFormData(r.Context(), data, mf)
 		s.render(w, r, "page-managed-form", data)
 		return
@@ -351,6 +354,7 @@ func (s *Server) renderProcessorManagedResult(w http.ResponseWriter, r *http.Req
 		"Ran":           true,
 	}
 	s.setProcessorManagedContext(r, data, proc)
+	s.applyProcessorChoiceFilters(r.Context(), proc, data)
 	s.prepareManagedFormData(r.Context(), data, proc.ManagedForm())
 	s.render(w, r, "page-managed-form", data)
 }
@@ -829,43 +833,9 @@ func processorFormTableRowsFromRequest(
 
 // processorVirtualEntity создаёт виртуальную Entity из параметров обработки,
 // чтобы managed-форма могла рендерить поля через стандартный pipeline.
+// Построение — в processor.VirtualEntity: та же сущность нужна onebase check.
 func processorVirtualEntity(proc *processorpkg.Processor) *metadata.Entity {
-	fields := make([]metadata.Field, 0, len(proc.Params))
-	for _, p := range proc.Params {
-		f := metadata.Field{
-			Name:   p.Name,
-			Title:  p.Label,
-			Titles: p.Labels,
-		}
-		switch {
-		case p.Type == "string", p.Type == "text":
-			f.Type = metadata.FieldTypeString
-		case p.Type == "number":
-			f.Type = metadata.FieldTypeNumber
-		case p.Type == "date":
-			f.Type = metadata.FieldTypeDate
-		case p.Type == "bool":
-			f.Type = metadata.FieldTypeBool
-		case p.Type == "choice":
-			enumName := "_" + p.Name + "_choice"
-			f.Type = metadata.FieldType("enum:" + enumName)
-			f.EnumName = enumName
-		case strings.HasPrefix(p.Type, "reference:"):
-			f.Type = metadata.FieldType("reference:" + strings.TrimPrefix(p.Type, "reference:"))
-			f.RefEntity = strings.TrimPrefix(p.Type, "reference:")
-		default:
-			f.Type = metadata.FieldTypeString
-		}
-		fields = append(fields, f)
-	}
-	return &metadata.Entity{
-		Name:       proc.Name,
-		Title:      proc.Title,
-		Titles:     proc.Titles,
-		Kind:       metadata.KindCatalog,
-		Fields:     fields,
-		TableParts: proc.TableParts,
-	}
+	return proc.VirtualEntity()
 }
 
 // processorEnumOptions возвращает synthetic enum options для choice-параметров

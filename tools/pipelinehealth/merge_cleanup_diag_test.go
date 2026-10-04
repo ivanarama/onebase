@@ -95,3 +95,24 @@ func TestBaseSyncOnlyBroken_KeepsBaseSyncDiagnostic(t *testing.T) {
 		t.Fatalf("base-sync поломка ошибочно названа merge-cleanup: %+v", got.Findings)
 	}
 }
+
+func TestReviewBaseSyncMustUseGraphNotTimelinePosition(t *testing.T) {
+	skillsRoot := fixtureSkillsRoot(t)
+	path := filepath.Join(skillsRoot, "review-queue", "references", "legacy-protocol.md")
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broken := strings.Replace(string(data), "Позиция edge нового коммита относительно", "Порядок edge нового коммита относительно", 1)
+	if broken == string(data) {
+		t.Fatal("fixture не содержит проверяемую гарантию")
+	}
+	if err := os.WriteFile(path, []byte(broken), 0o600); err != nil { //nolint:gosec // G703: test-owned path below t.TempDir
+		t.Fatal(err)
+	}
+	got := report{State: "green"}
+	checkContract(&got, filepath.Join(skillsRoot, "review-queue", "SKILL.md"))
+	if !hasFinding(got, "unsafe_base_sync_contract") {
+		t.Fatalf("пропала графовая гарантия REVIEW, но health не остановил конвейер: %+v", got.Findings)
+	}
+}

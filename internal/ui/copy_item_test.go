@@ -158,7 +158,7 @@ func TestApplyCopyFromQuery_DocumentKeepsFreshNumberAndDate(t *testing.T) {
 	if values["Дата"] != "2026-08-12T10:00" {
 		t.Errorf("Дата = %q, ожидалась дата нового документа", values["Дата"])
 	}
-	if values["СрокОплаты"] != "2026-09-15T18:30" {
+	if values["СрокОплаты"] != "2026-09-15T18:30:00" {
 		t.Errorf("СрокОплаты = %q, бизнес-дата должна переноситься из источника", values["СрокОплаты"])
 	}
 	if values["Покупатель"] != "ООО Ромашка" {

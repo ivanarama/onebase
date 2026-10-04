@@ -43,6 +43,7 @@ func newCleanupFixture(t *testing.T) cleanupFixture {
 	if err := db.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{accountReg}); err != nil {
 		t.Fatalf("MigrateAccountRegisters: %v", err)
 	}
+	ensureTestChart(t, db, accountReg.Accounts, "41", "60")
 
 	period := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	for _, row := range []struct {

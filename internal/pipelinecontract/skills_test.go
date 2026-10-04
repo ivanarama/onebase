@@ -1464,6 +1464,17 @@ func TestFixerReturnsOrphanReviewAndConsumesExplicitHumanDecision(t *testing.T) 
 		"`Outcome-Label` не `changes-requested`",
 		"текущая `changes-requested` — stale маршрутная подсказка",
 	)
+	review := repositoryFile(t, ".claude", "skills", "review-queue", "references", "legacy-protocol.md")
+	for name, procedure := range map[string]string{"fix": fixer, "review": review} {
+		t.Run(name+"_reviewed_human_rework", func(t *testing.T) {
+			requireAllCompact(t, procedure,
+				"Outcome-Label: reviewed",
+				"pp:fix-decision <from>",
+				"неотредактирован",
+				"последним валидным переходом",
+			)
+		})
+	}
 }
 
 func TestFixerHandoffsAreCrashRecoverable(t *testing.T) {
@@ -1863,6 +1874,24 @@ func TestTailMergedWindowUsesNativeDateArithmeticOnEveryWorkerOS(t *testing.T) {
 		"--search \"merged:>=$(date -d '14 days ago' +%F)\"",
 		"на другой системе подставь дату руками",
 	)
+}
+
+func TestTailLegacyTitleSeparatorDoesNotStopOtherPRs(t *testing.T) {
+	tail := skill(t, "tail-issues")
+	review := skill(t, "review-queue")
+	legacy := repositoryFile(t, ".claude", "skills", "review-queue", "references", "legacy-protocol.md")
+	requireAllCompact(t, tail,
+		"канонический `→ заголовок:`",
+		"`— заголовок:`",
+		"совместимость с заключениями #1789 и #1848",
+		"заключения PR #1848",
+		"единственное ` Заголовок: «…»`",
+		"`item-sha256` по-прежнему",
+		"**fail closed для этого PR**",
+		"Продолжи другие PR из той же очереди",
+	)
+	requireAllCompact(t, review, "канонического `→ заголовок:`", "`— заголовок:` в новых заключениях не публикуй")
+	requireAllCompact(t, legacy, "REVIEW его не создаёт")
 }
 
 func TestMaintenanceGuideDocumentsEquivalentWindowsAndMacOSPreparation(t *testing.T) {

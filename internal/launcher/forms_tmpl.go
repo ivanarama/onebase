@@ -1358,12 +1358,14 @@ function addChoiceFilterEditor(panel, info) {
   panel.appendChild(note);
   var conditions = (info.choiceFilter || []).map(function (condition) {
     var hasValue = Object.prototype.hasOwnProperty.call(condition, 'value') && typeof condition.value === 'boolean';
+    var hasRef = typeof condition.ref === 'string' && condition.ref !== '';
     return {
       field: condition.field || '',
-      op: condition.op === 'in_hierarchy' ? 'in_hierarchy' : 'eq',
-      mode: hasValue ? 'value' : 'from',
+      op: condition.op === 'in_hierarchy' || condition.op === 'eq_or_empty' ? condition.op : 'eq',
+      mode: hasValue ? 'value' : (hasRef ? 'ref' : 'from'),
       from: condition.from || '',
-      value: hasValue ? condition.value : false
+      value: hasValue ? condition.value : false,
+      ref: hasRef ? condition.ref : ''
     };
   });
   var nodeAtEdit = _selected;
@@ -1371,6 +1373,7 @@ function addChoiceFilterEditor(panel, info) {
     return conditions.map(function (condition) {
       var out = { field: condition.field, op: condition.op };
       if (condition.mode === 'value') out.value = !!condition.value;
+      else if (condition.mode === 'ref') out.ref = condition.ref;
       else out.from = condition.from;
       return out;
     });
@@ -1396,14 +1399,16 @@ function addChoiceFilterEditor(panel, info) {
       var opLabel = document.createElement('label'); opLabel.textContent = {{jsString (t $.Lang "Оператор")}};
       var op = document.createElement('select');
       op.appendChild(new Option('eq', 'eq'));
+      op.appendChild(new Option('eq_or_empty', 'eq_or_empty'));
       op.appendChild(new Option('in_hierarchy', 'in_hierarchy'));
       op.value = condition.op;
       op.addEventListener('change', function () {
         condition.op = op.value;
-        if (condition.op === 'in_hierarchy' && condition.mode === 'value') {
+        if (condition.op !== 'eq' && condition.mode === 'value') {
           condition.mode = 'from'; condition.from = condition.from || 'Объект.';
         }
         commit();
+        redraw();
       });
       opRow.appendChild(opLabel); opRow.appendChild(op); card.appendChild(opRow);
 
@@ -1411,19 +1416,30 @@ function addChoiceFilterEditor(panel, info) {
       var modeLabel = document.createElement('label'); modeLabel.textContent = {{jsString (t $.Lang "Источник")}};
       var mode = document.createElement('select');
       mode.appendChild(new Option({{jsString (t $.Lang "Поле формы (from)")}}, 'from'));
-      mode.appendChild(new Option({{jsString (t $.Lang "Булево (value)")}}, 'value'));
+      var valueOption = new Option({{jsString (t $.Lang "Булево (value)")}}, 'value');
+      // Булев литерал — только у eq; ссылка (from или ref) — у любого оператора.
+      valueOption.disabled = condition.op !== 'eq';
+      mode.appendChild(valueOption);
+      mode.appendChild(new Option({{jsString (t $.Lang "Постоянная ссылка (ref)")}}, 'ref'));
       mode.value = condition.mode;
-      mode.disabled = condition.op === 'in_hierarchy';
       mode.addEventListener('change', function () {
         condition.mode = mode.value;
         if (condition.mode === 'from' && !condition.from) condition.from = 'Объект.';
+        // Пустой ref не пишется: сервер отклонит условие без источника.
+        // Запись — когда в поле появится UUID.
+        if (condition.mode === 'ref' && !condition.ref) { redraw(); return; }
         commit();
       });
       modeRow.appendChild(modeLabel); modeRow.appendChild(mode); card.appendChild(modeRow);
 
       var valueRow = document.createElement('div'); valueRow.className = 'prop-row';
-      var valueLabel = document.createElement('label'); valueLabel.textContent = condition.mode === 'value' ? 'value' : 'from';
-      if (condition.mode === 'value') {
+      var valueLabel = document.createElement('label'); valueLabel.textContent = condition.mode;
+      if (condition.mode === 'ref') {
+        var ref = document.createElement('input'); ref.type = 'text'; ref.value = condition.ref;
+        ref.placeholder = {{jsString (t $.Lang "UUID записи справочника")}};
+        ref.addEventListener('change', function () { condition.ref = ref.value.trim(); if (condition.ref) commit(); });
+        valueRow.appendChild(valueLabel); valueRow.appendChild(ref);
+      } else if (condition.mode === 'value') {
         var value = document.createElement('select');
         value.appendChild(new Option('false', 'false'));
         value.appendChild(new Option('true', 'true'));

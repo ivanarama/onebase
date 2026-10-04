@@ -86,3 +86,119 @@ func TestMergecheckCLI(t *testing.T) {
 		})
 	}
 }
+
+func TestMergecheckCLIResolveAppendOnlyConflict(t *testing.T) {
+	binary := filepath.Join(t.TempDir(), "mergecheck.exe")
+	//nolint:gosec // G204: fixed command and test-owned path.
+	if output, err := exec.Command("go", "build", "-o", binary, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build mergecheck: %v\n%s", err, output)
+	}
+	dir := t.TempDir()
+	base := "# Changes\n\n- Existing\n"
+	left := "- Left:\n  Repeated explanation.\n\n"
+	right := "- Right:\n  Repeated explanation.\n\n"
+	conflicted := "<<<<<<< HEAD\n- incomplete\n=======\n- incomplete\n>>>>>>> origin/main\n"
+	paths := map[string]string{
+		"base":   base,
+		"ours":   "# Changes\n\n" + left + "- Existing\n",
+		"theirs": "# Changes\n\n" + right + "- Existing\n",
+		"result": conflicted,
+	}
+	for name, content := range paths {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	args := []string{"-kind", "entries", "-base", filepath.Join(dir, "base"),
+		"-ours", filepath.Join(dir, "ours"), "-theirs", filepath.Join(dir, "theirs"),
+		"-result", filepath.Join(dir, "result")}
+	//nolint:gosec // G204: binary and arguments are test-owned fixtures.
+	if output, err := exec.Command(binary, append([]string{"-resolve"}, args...)...).CombinedOutput(); err != nil {
+		t.Fatalf("resolve append-only conflict: %v\n%s", err, output)
+	}
+	actual, err := os.ReadFile(filepath.Join(dir, "result"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "# Changes\n\n" + left + right + "- Existing\n"
+	if string(actual) != want {
+		t.Fatalf("resolved blocks were not preserved exactly:\nwant %q\n got %q", want, actual)
+	}
+	// The normal public verifier must accept the generated file.
+	//nolint:gosec // G204: binary and arguments are test-owned fixtures.
+	if output, err := exec.Command(binary, args...).CombinedOutput(); err != nil {
+		t.Fatalf("verify generated result: %v\n%s", err, output)
+	}
+	// Never replace a file that is already resolved by a person.
+	//nolint:gosec // G204: binary and arguments are test-owned fixtures.
+	if output, err := exec.Command(binary, append([]string{"-resolve"}, args...)...).CombinedOutput(); err == nil ||
+		!strings.Contains(string(output), "unresolved conflict file") {
+		t.Fatalf("resolved file was overwritten: %v\n%s", err, output)
+	}
+	// Literal marker examples inside a valid Markdown line do not make a
+	// previously resolved result writable again, even in the opposite order.
+	markerExample := "Marker examples: `<<<<<<<` and `>>>>>>>`.\n"
+	base = "# Changes\n" + markerExample
+	left, right = "- Left\n", "- Right\n"
+	for name, content := range map[string]string{
+		"base": base, "ours": base + left, "theirs": base + right,
+		"result": base + right + left,
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	before, err := os.ReadFile(filepath.Join(dir, "result"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	//nolint:gosec // G204: binary and arguments are test-owned fixtures.
+	if output, err := exec.Command(binary, args...).CombinedOutput(); err != nil {
+		t.Fatalf("literal marker fixture must be a valid resolution: %v\n%s", err, output)
+	}
+	//nolint:gosec // G204: binary and arguments are test-owned fixtures.
+	if output, err := exec.Command(binary, append([]string{"-resolve"}, args...)...).CombinedOutput(); err == nil ||
+		!strings.Contains(string(output), "unresolved conflict file") {
+		t.Fatalf("literal markers triggered replacement: %v\n%s", err, output)
+	}
+	after, err := os.ReadFile(filepath.Join(dir, "result"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatalf("resolved file changed: before=%q after=%q", before, after)
+	}
+}
+
+func TestMergecheckCLIResolveRejectsContentConflictWithoutWriting(t *testing.T) {
+	dir := t.TempDir()
+	for name, content := range map[string]string{
+		"base":   "# Changes\n\n- Existing\n",
+		"ours":   "# Changes\n\n- Changed by ours\n",
+		"theirs": "# Changes\n\n- Changed by theirs\n",
+		"result": "<<<<<<< HEAD\n- ours\n=======\n- theirs\n>>>>>>> origin/main\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	original, err := os.ReadFile(filepath.Join(dir, "result"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	//nolint:gosec // G204: fixed tool package and test-owned fixture paths.
+	command := exec.Command("go", "run", ".", "-resolve", "-kind", "entries",
+		"-base", filepath.Join(dir, "base"), "-ours", filepath.Join(dir, "ours"),
+		"-theirs", filepath.Join(dir, "theirs"), "-result", filepath.Join(dir, "result"))
+	output, err := command.CombinedOutput()
+	if err == nil || !strings.Contains(string(output), "manual decision required") {
+		t.Fatalf("content conflict was accepted: %v\n%s", err, output)
+	}
+	current, err := os.ReadFile(filepath.Join(dir, "result"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(current) != string(original) {
+		t.Fatalf("rejected conflict changed result: %q", current)
+	}
+}

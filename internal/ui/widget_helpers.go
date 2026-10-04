@@ -56,7 +56,7 @@ func widgetCell(row map[string]any, field, format string) string {
 		return fmt.Sprintf("%.1f%%", f)
 	case "date":
 		if t, ok := v.(time.Time); ok {
-			return t.Format("02.01.2006 15:04")
+			return widgetDate(t)
 		}
 		if s, ok := v.(string); ok && len(s) >= 10 {
 			for _, layout := range []string{
@@ -68,17 +68,28 @@ func widgetCell(row map[string]any, field, format string) string {
 				"2006-01-02T15:04", "2006-01-02",
 			} {
 				if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
-					h, m, sec := t.Clock()
-					if h != 0 || m != 0 || sec != 0 {
-						return t.Format("02.01.2006 15:04")
-					}
-					return t.Format("02.01.2006")
+					return widgetDate(t)
 				}
 			}
 		}
 		return fmt.Sprintf("%v", v)
 	}
 	return fmt.Sprintf("%v", v)
+}
+
+// widgetDate — ячейка list-виджета с format: date. Момент показывается в
+// МЕСТНОМ времени — как в формах (serializeValue) и отчётах (fmtReportCell,
+// #1077): SQLite отдаёт дату строкой в UTC («…Z»), pgx — в зоне процесса, и без
+// перевода виджет показывал время на смещение пояса раньше (17:35 вместо 20:35
+// по Москве), а дату без времени — вчерашним днём в 21:00. Местная полночь —
+// это дата без времени, её показываем одной датой.
+func widgetDate(t time.Time) string {
+	t = t.In(time.Local)
+	h, m, sec := t.Clock()
+	if h == 0 && m == 0 && sec == 0 {
+		return t.Format("02.01.2006")
+	}
+	return t.Format("02.01.2006 15:04")
 }
 
 // echartsJSON serializes ChartData into an ECharts option payload, ready for

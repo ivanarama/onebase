@@ -199,6 +199,25 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   // ровно на время перезагрузки: пишем перед отправкой, применяем и СРАЗУ
   // удаляем при следующей загрузке — дольше одной навигации они не живут.
   var FORM_ATTRS = Array.isArray(cfg.formAttrs) ? cfg.formAttrs : [];
+  // An attribute without a placed control still lives for the open form.
+  // Carry it through the same FormData/applyValues path as visible attributes;
+  // values are client input, never an authorization boundary.
+  function ensureFormAttrControls(){
+    var form = document.getElementById('main-form');
+    if (!form) return;
+    var initial = cfg.formAttrValues || {};
+    for (var i = 0; i < FORM_ATTRS.length; i++) {
+      var name = FORM_ATTRS[i];
+      if (form.querySelector('[name="' + (window.CSS && CSS.escape ? CSS.escape(name) : name) + '"]')) continue;
+      var input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = name;
+      var value = Object.prototype.hasOwnProperty.call(initial, name) ? initial[name] : '';
+      input.value = value == null ? '' : String(value);
+      form.appendChild(input);
+    }
+  }
+  obManagedReady(ensureFormAttrControls);
   var ATTR_STASH_KEY = 'ob-form-attrs:' + String(cfg.entity || '');
   function stashFormAttrs(){
     if (!FORM_ATTRS.length) return;
@@ -351,7 +370,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         } else {
           val = (v === null || v === undefined) ? '' : String(v);
         }
-        // Сервер сериализует дату как «2026-08-04T00:00» (формат datetime-local).
+        // Сервер сериализует дату как «2026-08-04T00:00:00» (формат datetime-local).
         // Для <input type="date"> это невалидное значение: браузер молча очищает
         // поле — дата на форме пропадала после первого же события, а следующая
         // запись затирала её в базе.
@@ -979,6 +998,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     return {
 	  body: body, form: form, elementName: elementName,
 	  extraParams: extraParams, wasNew: !DOC_ID,
+	  editRevision: formEditState.revision,
 	  eventName: eventName, pickerRequest: pickerRequest
 	};
   }
@@ -1029,15 +1049,42 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // optimistic version before any renderer, picker or message callback can
       // throw, so a later queued action updates the row instead of inserting it.
       applySavedIdentity(data);
+      // The user can type after FormData was sent. An old response must not
+      // navigate away or repaint those newer edits, even when the handler
+      // saved the old snapshot and returned dirty=false.
+      if (data.navigation && data.navigation.url && formEditState.revision !== snapshot.editRevision) {
+        setManagedFormDirty(true);
+        var revisionBeforeRead = formEditState.revision;
+        var currentBody = null;
+        try { currentBody = await closeSnapshotBody('', ''); } catch (_) {}
+        if (currentBody && formEditState.revision === revisionBeforeRead) {
+          // Reuse the close controller's field/table merge: only unchanged
+          // controls may receive values from the older server snapshot.
+          applyCloseResponse(data, snapshot.body, currentBody);
+        } else {
+          (data.messages || []).forEach(m => flash(m, 'ok'));
+          if (data.error) flash(data.error, 'err');
+        }
+        setManagedFormDirty(true);
+        flash(closeMessage('navigationFormChanged', 'Форма изменилась во время выполнения команды — переход не выполнен'), 'err');
+        return;
+      }
       // Навигация (#1557): переход только у инициатора, адрес построен
       // сервером. Несохранённая форма остаётся на месте — переход отменяется.
+      // Решает состояние формы ПОСЛЕ этого ответа, а не до него. dirty=true
+      // значит, что обработчик изменил объект перед ОткрытьФорму, а флаг формы
+      // ещё не поднят. dirty=false вместе с savedId/version доказывает запись
+      // в этом же ответе — форма чиста, даже если до обработчика её правили.
+      // При отмене ответ применяется целиком — пользователь видит изменения,
+      // ради которых переход не выполнен, — и сообщение идёт последним.
+      var navigationBlocked = false;
       if (data.navigation && data.navigation.url) {
-        if (window._obFormDirty) {
-          flash('Форма содержит несохранённые изменения — переход не выполнен', 'err');
+        var savedByResponse = data.dirty === false && !!(data.savedId || data.version);
+        if (data.dirty !== true && (!window._obFormDirty || savedByResponse)) {
+          window.location.assign(data.navigation.url);
           return;
         }
-        window.location.assign(data.navigation.url);
-        return;
+        navigationBlocked = true;
       }
       // Подбор фазы 1: сервер вернул pickerData — открыть диалог, не трогая
       // ТЧ (её обновит фаза 2 после «Перенести»).
@@ -1065,7 +1112,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // dirty=true is an authoritative safety signal and must survive a
       // partially failing renderer. Programmatic response application does
       // not emit input/change, so raise it before touching mutable DOM state.
-      if (data.dirty === true) window.obSetManagedFormDirty(true);
+      if (data.dirty === true) setManagedFormDirty(true);
       if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
       applyElementStates(data.elementStates);
       window.obManagedApplyTablePartRefOptions(data.tpRefOptions);
@@ -1076,9 +1123,10 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	  // Server events repaint controls programmatically and therefore do not
 	  // trigger input/change. Raise dirty for unsaved handler mutations; clear
 	  // it only when this response proves a successful Object.Write.
-	  if (data.dirty === false && (data.savedId || data.version)) window.obSetManagedFormDirty(false);
+	  if (data.dirty === false && (data.savedId || data.version)) setManagedFormDirty(false);
       (data.messages || []).forEach(m => flash(m, 'ok'));
       if (data.error) flash(data.error, 'err');
+      if (navigationBlocked) flash(closeMessage('navigationDirty', 'Форма содержит несохранённые изменения — переход не выполнен'), 'err');
     } catch (e) {
       // A lost/unparseable response for /new may hide a committed insert and
       // there is no identity with which to issue another safe write. Fence all
@@ -1185,6 +1233,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   var formEventPending = false;
   var formEventWriteUnknown = false;
 	var manualReconcileRequired = false;
+  var formEditState = {revision: 0};
   var closePending = null;
   // Embedded OK/post first crosses a postMessage boundary before the parent
   // asks this child for its close decision. Keep native submit fail-closed in
@@ -1373,7 +1422,13 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       }
     } catch (_) {}
   }
-  window.obSetManagedFormDirty = setManagedFormDirty;
+  // Grid operations and native inputs share the same edit clock. Count every
+  // user mutation, even when the form was already dirty. Applying a server
+  // response uses the private setter and does not count as new user input.
+  window.obSetManagedFormDirty = function(dirty){
+    if (dirty) formEditState.revision++;
+    setManagedFormDirty(dirty);
+  };
 
   function applySavedIdentity(data){
     if (!data || typeof data !== 'object') return;
@@ -1881,7 +1936,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   var _obBaseTitle = document.title;
   setManagedFormDirty(cfg.initialDirty === true);
   function _obMarkDirty(){
-	setManagedFormDirty(true);
+	window.obSetManagedFormDirty(true);
   }
   document.addEventListener('input',  function(e){ if (e.target && e.target.closest && e.target.closest('#main-form')) _obMarkDirty(); }, true);
   document.addEventListener('change', function(e){ if (e.target && e.target.closest && e.target.closest('#main-form')) _obMarkDirty(); }, true);
@@ -2892,12 +2947,14 @@ obManagedReady(obManagedInitDelegates);
   function obManagedSplitDate(value) {
     if (value == null || value === '') return null;
     var s = String(value);
-    var m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2}))?/.exec(s);
+    var m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(s);
     if (!m) return null;
     return {
       date: m[1] + '-' + m[2] + '-' + m[3],
       day: m[3] + '.' + m[2] + '.' + m[1],
-      time: (m[4] !== undefined) ? (m[4] + ':' + m[5]) : ''
+      time: (m[4] !== undefined) ? (m[4] + ':' + m[5]) : '',
+      // Секунды нужны редактору: без них правка строки отрезала бы их от даты.
+      seconds: (m[6] !== undefined) ? m[6] : ''
     };
   }
 
@@ -2927,6 +2984,9 @@ obManagedReady(obManagedInitDelegates);
     this.init = function() {
       input = document.createElement('input');
       input.type = 'datetime-local';
+      // Шаг в секунду, как у поля даты в шапке: иначе значение с секундами
+      // не проходит проверку поля, а без секунд правка строки отрезала бы их.
+      input.step = '1';
       input.className = 'editor-text';
       input.style.cssText = 'width:100%;height:100%;border:none;outline:none;padding:2px 4px;font-size:13px';
       args.container.appendChild(input);
@@ -2939,8 +2999,12 @@ obManagedReady(obManagedInitDelegates);
     this.setValue = function(val) { input.value = (val == null) ? '' : String(val); };
     this.loadValue = function(item) {
       var parts = obManagedSplitDate(item[args.column.field]);
-      defaultValue = parts ? (parts.date + 'T' + (parts.time || '00:00')) : '';
-      input.value = defaultValue;
+      input.value = parts
+        ? (parts.date + 'T' + (parts.time || '00:00') + (parts.seconds ? ':' + parts.seconds : ''))
+        : '';
+      // Браузер нормализует значение (нулевые секунды опускает), поэтому
+      // «не изменено» сверяется с тем, что поле показало, а не с исходной строкой.
+      defaultValue = input.value;
     };
     // Пустая ячейка отдаётся пустой строкой: сервер понимает её как «значения
     // нет» и пишет NULL. Отдавать сюда «0001-01-01» нельзя — это уже значение.

@@ -121,6 +121,14 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	}
 
 	total, _ := s.store.CountList(r.Context(), entity.Name, entity, params)
+	// Deletions can remove the current page while its URL remains open.
+	// Keep a paginated list usable when its last page disappears.
+	if !feed && params.Limit > 0 && params.Offset >= total {
+		params.Offset = 0
+		if total > 0 {
+			params.Offset = ((total - 1) / params.Limit) * params.Limit
+		}
+	}
 
 	rows, err := s.store.List(r.Context(), entity.Name, entity, params)
 	if err != nil {
@@ -567,6 +575,13 @@ func fieldKeyForForm(entity *metadata.Entity, lowerKey string) string {
 	return lowerKey
 }
 
+// dateInputLayout — значение поля <input type="datetime-local"> вместе с
+// секундами (поле рисуется со step="1"). Без секунд форма держала дату с
+// точностью до минуты: «Записать» молча отрезал секунды от даты документа,
+// переставляя документы внутри минуты (МоментВремени, ФИФО, остатки на момент),
+// а сверка формы с базой считала только что открытую форму изменённой.
+const dateInputLayout = "2006-01-02T15:04:05"
+
 // formatFieldValueForInput приводит значение к браузерному представлению с
 // учётом типа метаданных. SQLite возвращает bool как int64 и date как string,
 // поэтому fmt.Sprint без типа превращал true в "1" и ломал datetime-local.
@@ -588,7 +603,7 @@ func formatUntypedValueForInput(v any) string {
 		return ""
 	}
 	if t, ok := v.(time.Time); ok {
-		return t.In(time.Local).Format("2006-01-02T15:04")
+		return t.In(time.Local).Format(dateInputLayout)
 	}
 	if ref, ok := v.(interface{ GetRefUUID() string }); ok {
 		if s := ref.GetRefUUID(); s != "" {
@@ -603,7 +618,7 @@ func formatDateValueForInput(v any) string {
 		return ""
 	}
 	if t, ok := v.(time.Time); ok {
-		return t.In(time.Local).Format("2006-01-02T15:04")
+		return t.In(time.Local).Format(dateInputLayout)
 	}
 	raw, ok := v.(string)
 	if !ok || strings.TrimSpace(raw) == "" {
@@ -618,12 +633,12 @@ func formatDateValueForInput(v any) string {
 		"2006-01-02T15:04", "2006-01-02",
 	} {
 		if parsed, err := time.Parse(layout, raw); err == nil {
-			return parsed.In(time.Local).Format("2006-01-02T15:04")
+			return parsed.In(time.Local).Format(dateInputLayout)
 		}
 	}
 	if len(raw) >= 10 {
 		if parsed, err := time.ParseInLocation("2006-01-02", raw[:10], time.Local); err == nil {
-			return parsed.Format("2006-01-02T15:04")
+			return parsed.Format(dateInputLayout)
 		}
 	}
 	return raw
@@ -640,6 +655,107 @@ func formatDateValueForInput(v any) string {
 //
 // Возвращает (nil,...,false) если запрос отклонён (нет прав / ошибка парсинга);
 // в этом случае ответ уже записан в w.
+// dropAdminOnlyFields убирает из присланных значений поля, которые форма
+// объявила editable_admin_only, когда запись ведёт не администратор.
+// Возвращает имена отброшенных полей — по ним удобно писать тесты и, при
+// необходимости, журналировать попытку.
+func dropAdminOnlyFields(form *metadata.FormModule, fields map[string]any, admin bool) []string {
+	if form == nil || admin {
+		return nil
+	}
+	var dropped []string
+	form.Walk(func(el *metadata.FormElement) bool {
+		if el == nil || !el.EditableAdminOnly {
+			return true
+		}
+		name := formElementFieldName(el.DataPath)
+		if name == "" {
+			return true
+		}
+		found := false
+		for key := range fields {
+			if strings.EqualFold(key, name) {
+				delete(fields, key)
+				dropped = append(dropped, key)
+				found = true
+			}
+		}
+		// Служебный ключ объекта (parent_id, is_folder) в entity.Fields не
+		// объявлен: formToFields его не приносит, и удалять в карте нечего.
+		// Вернуть его всё равно обязаны — иначе подделанное значение доедет до
+		// объекта следующим mergeSubmittedEntityServiceFields, и запрет, который
+		// форма показала запертым контролом, снимался бы обычным POST
+		// неадминистратора. Запрет серверный: disabled в браузере защитой не
+		// считается.
+		if !found && isEntityServiceFormKey(name) {
+			dropped = append(dropped, name)
+		}
+		return true
+	})
+	return dropped
+}
+
+// entityServiceFormKeys — служебные ключи объекта, которые submit принимает из
+// формы помимо entity.Fields: их переносит mergeSubmittedEntityServiceFields.
+// Список один и тот же для переноса и для серверного запрета — иначе
+// editable_admin_only разъехался бы с тем, что форма реально принимает, и
+// запрет на одном ключе молча не действовал бы.
+var entityServiceFormKeys = []string{"parent_id", "is_folder"}
+
+// isEntityServiceFormKey — имя элемента формы совпало со служебным ключом
+// объекта. Регистронезависимо: data_path пишут и «Объект.parent_id», и
+// «Объект.Parent_ID».
+func isEntityServiceFormKey(name string) bool {
+	for _, key := range entityServiceFormKeys {
+		if strings.EqualFold(key, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// removeSubmittedFormFields removes rejected values from every parsed POST map.
+// Default restoration must treat these fields as absent, including multipart
+// form events, rather than interpreting a forged value as an explicit submit.
+func removeSubmittedFormFields(r *http.Request, names []string) {
+	for _, name := range names {
+		for key := range r.Form {
+			if strings.EqualFold(key, name) {
+				delete(r.Form, key)
+			}
+		}
+		for key := range r.PostForm {
+			if strings.EqualFold(key, name) {
+				delete(r.PostForm, key)
+			}
+		}
+		if r.MultipartForm != nil {
+			for key := range r.MultipartForm.Value {
+				if strings.EqualFold(key, name) {
+					delete(r.MultipartForm.Value, key)
+				}
+			}
+			for key := range r.MultipartForm.File {
+				if strings.EqualFold(key, name) {
+					delete(r.MultipartForm.File, key)
+				}
+			}
+		}
+	}
+}
+
+// formElementFieldName — реквизит записи из двухсегментного data_path
+// «Объект.<Реквизит>». Для пути другой формы возвращает пустую строку:
+// колонку табличной части и реквизит формы этот путь не запирает, и check
+// такое сочетание отклоняет.
+func formElementFieldName(path string) string {
+	parts := strings.Split(strings.TrimSpace(path), ".")
+	if len(parts) != 2 || !strings.EqualFold(strings.TrimSpace(parts[0]), "Объект") {
+		return ""
+	}
+	return strings.TrimSpace(parts[1])
+}
+
 func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, existingID *uuid.UUID) (
 	obj *runtime.Object, fields map[string]any, tpRows map[string][]map[string]any, action string, ok bool,
 ) {
@@ -696,6 +812,12 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 		s.renderObjectFormBadRequest(w, r, entity, existingID == nil, fieldsErr.Error(), tpRows)
 		return
 	}
+	// editable_admin_only: значения запертых полей отбрасываем ЗДЕСЬ, на сервере.
+	// Разметка запрета — подсказка интерфейсу, а не защита: POST её не
+	// спрашивает, и без этого запрет снимался бы подделанной формой или любым
+	// клиентом. Удаляем ключ и из полей объекта, и из признаков отправки:
+	// у существующей записи остаётся прежнее значение, у новой — умолчание.
+	removeSubmittedFormFields(r, dropAdminOnlyFields(form, fields, s.isAdmin(r)))
 
 	mergeSubmittedEntityServiceFields(r, entity, fields)
 
@@ -748,11 +870,16 @@ func mergeSubmittedEntityServiceFields(r *http.Request, entity *metadata.Entity,
 		return
 	}
 	submitted := submittedFormKeys(r)
-	if formKeySubmitted(submitted, "parent_id") {
-		fields["parent_id"] = r.FormValue("parent_id") //nolint:gosec // caller applies the entity-specific body limit
-	}
-	if formKeySubmitted(submitted, "is_folder") {
-		fields["is_folder"] = r.FormValue("is_folder") == "true" //nolint:gosec // caller applies the entity-specific body limit
+	for _, key := range entityServiceFormKeys {
+		if !formKeySubmitted(submitted, key) {
+			continue
+		}
+		switch key {
+		case "parent_id":
+			fields[key] = r.FormValue(key) //nolint:gosec // caller applies the entity-specific body limit
+		case "is_folder":
+			fields[key] = r.FormValue(key) == "true" //nolint:gosec // caller applies the entity-specific body limit
+		}
 	}
 }
 
@@ -1077,6 +1204,7 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 		extra := base
 		if choice != nil {
 			extra.ChoicePredicates = choice.Predicates
+			extra.IncludeFolders = choice.Folders
 		}
 		items, total, err = s.referenceOptionsPageWithParams(r.Context(), ent, r.URL.Query().Get("q"), limit, offset, extra)
 		if err != nil {
@@ -1105,6 +1233,7 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 		if !choice.Empty && fltOK {
 			check := base
 			check.ChoicePredicates = choice.Predicates
+			check.IncludeFolders = choice.Folders
 			allowed, err = s.choiceSelectedAllowedWithParams(r.Context(), ent, *choice.Selected, check)
 			if err != nil {
 				s.serverError(w, r, err)
@@ -1396,7 +1525,7 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 		}
 		if f.Type == metadata.FieldTypeDate {
 			if t, ok := v.(time.Time); ok {
-				vals[f.Name] = t.In(time.Local).Format("2006-01-02T15:04")
+				vals[f.Name] = t.In(time.Local).Format(dateInputLayout)
 				continue
 			}
 			// SQLite returns dates as strings — parse and reformat for <input type="datetime-local">
@@ -1411,7 +1540,7 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 					"2006-01-02T15:04", "2006-01-02",
 				} {
 					if t, err2 := time.Parse(layout, s2); err2 == nil {
-						vals[f.Name] = t.In(time.Local).Format("2006-01-02T15:04")
+						vals[f.Name] = t.In(time.Local).Format(dateInputLayout)
 						parsed = true
 						break
 					}
@@ -1419,7 +1548,7 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 				// Last resort: extract just the date prefix
 				if !parsed && len(s2) >= 10 {
 					if t, err2 := time.ParseInLocation("2006-01-02", s2[:10], time.Local); err2 == nil {
-						vals[f.Name] = t.Format("2006-01-02T15:04")
+						vals[f.Name] = t.Format(dateInputLayout)
 					}
 				}
 				continue
@@ -2294,27 +2423,11 @@ func (s *Server) saveMovements(ctx context.Context, docType string, docID uuid.U
 	return nil
 }
 
-// setPeriodFromFields sets the movements period from the first date field of the document.
+// setPeriodFromFields ставит период движений по дате документа — тем же
+// правилом, что entityservice: у DSL-пути и списка своей копии больше нет,
+// иначе правило «какая дата — дата документа» разъехалось бы между путями.
 func setPeriodFromFields(mc *runtime.MovementsCollector, entity *metadata.Entity, fields map[string]any) {
-	for _, f := range entity.Fields {
-		if f.Type != metadata.FieldTypeDate {
-			continue
-		}
-		// Регистронезависимый поиск: ключи Fields бывают и в PascalCase
-		// (formToFields / GetByID), и в lower-case (после Object.Set).
-		// Прямой fields[f.Name] промахивался на пути submit → period = time.Now().
-		low := strings.ToLower(f.Name)
-		for k, v := range fields {
-			if strings.ToLower(k) != low {
-				continue
-			}
-			if t := runtime.AsTime(v); !t.IsZero() {
-				mc.SetPeriod(t)
-			}
-			break
-		}
-		return
-	}
+	entityservice.SetPeriodFromFields(mc, entity, fields)
 }
 
 // saveTablePartsDirect persists tablepart rows from the provided map (possibly modified by DSL).

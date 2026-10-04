@@ -155,3 +155,59 @@ func TestListViewPersistence1485_TreeViewOpensAndIsNotSaved(t *testing.T) {
 		t.Fatal("дерево не должно сохраняться в настройки вида")
 	}
 }
+
+// Переключатель вида обязан возвращать из плитки. Кнопка «Список» раньше
+// убирала параметр view, а открытие без параметра восстанавливает
+// сохранённый вид — то есть ту же плитку: выбрав её однажды, вернуться к списку
+// через интерфейс было нельзя. Тест идёт по ссылке самой кнопки, как пользователь,
+// а не по сконструированному руками ?view=list.
+func TestListViewPersistence1485_ListButtonLeavesTiles(t *testing.T) {
+	ent := &metadata.Entity{
+		Name:   "Клиент",
+		Kind:   metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+	}
+	s, _ := newSubmitTestServer(t, []*metadata.Entity{ent})
+	if err := s.store.Upsert(context.Background(), ent.Name, uuidMust("44444444-4444-4444-4444-444444444444"),
+		map[string]any{"Наименование": "Иван"}, ent); err != nil {
+		t.Fatalf("запись строки: %v", err)
+	}
+	u := user1485("u1")
+
+	body := listView1485(t, s, u, "?view=tiles")
+	if !strings.Contains(body, "class=\"tile-grid\"") {
+		t.Fatal("явный ?view=tiles не применился к странице")
+	}
+	href := viewButtonHref1485(t, body, "Список")
+	body = listView1485(t, s, u, href)
+	if strings.Contains(body, "class=\"tile-grid\"") {
+		t.Fatalf("кнопка «Список» (%s) оставила плитку", href)
+	}
+	if got := savedView1485(t, s, "u1", "Клиент"); got != "list" {
+		t.Fatalf("после кнопки «Список» сохранён вид %q, ожидался list", got)
+	}
+	// Следующее открытие без параметра — снова список.
+	if body = listView1485(t, s, u, ""); strings.Contains(body, "class=\"tile-grid\"") {
+		t.Fatal("после возврата к списку повторное открытие снова дало плитку")
+	}
+}
+
+// viewButtonHref1485 достаёт адрес кнопки переключателя вида по её подписи.
+func viewButtonHref1485(t *testing.T, body, title string) string {
+	t.Helper()
+	i := strings.Index(body, `title="`+title+`">`)
+	if i < 0 {
+		t.Fatalf("кнопки «%s» нет на странице", title)
+	}
+	start := strings.LastIndex(body[:i], `href="`)
+	if start < 0 {
+		t.Fatalf("у кнопки «%s» нет href", title)
+	}
+	start += len(`href="`)
+	end := strings.Index(body[start:], `"`)
+	href := strings.ReplaceAll(body[start:start+end], "&amp;", "&")
+	if href == "?" {
+		return ""
+	}
+	return href
+}

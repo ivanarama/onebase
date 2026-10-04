@@ -20,7 +20,7 @@ function response(data) {
   return {ok: true, status: 200, json: async () => data};
 }
 
-function runtime(fetchImpl, selected, withOwner, withChoice = true) {
+function runtime(fetchImpl, selected, withOwner, withChoice = true, collapsed = false) {
   const listeners = {};
   const sourceControl = {value: 'warehouse-a'};
   const ownerControl = {name: 'Контрагент', value: 'contractor-a'};
@@ -34,6 +34,7 @@ function runtime(fetchImpl, selected, withOwner, withChoice = true) {
     sources: {'Объект.Склад': 'Склад'},
   });
   if (withOwner) attrs['data-ref-filter'] = JSON.stringify({Владелец: {from: 'Контрагент', value: ownerControl.value}});
+  if (collapsed) attrs['data-ref-choice-dropdown'] = 'false';
   const select = {
     options: [
       {value: '', textContent: '— выбрать —'},
@@ -227,4 +228,78 @@ test('network failure is visible and preserves the previously filtered options a
   assert.deepEqual(env.select.options.map((option) => [option.value, option.textContent]), before);
   assert.equal(env.attrs['data-ob-choice-error'], '1');
   assert.equal(env.attrs['data-ob-choice-loading'], undefined);
+});
+
+test('processor form context forwards form_kind; entity context does not add it (#1840)', async () => {
+  const calls = [];
+  const env = runtime(async (url) => { calls.push(url); return response({items: [], total: 0}); });
+  await env.api.obRefreshChoiceSelect(env.select, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].includes('form_kind='), false);
+
+  env.attrs['data-ref-choice-context'] = JSON.stringify({
+    form_entity: 'ПоискЗаявок',
+    form_kind: 'processor',
+    form: 'ФормаОбъекта',
+    element: 'inventory-storage-choice',
+    sources: {'Объект.Склад': 'Склад'},
+  });
+  await env.api.obRefreshChoiceSelect(env.select, true);
+  assert.equal(calls.length, 2);
+  assert.match(calls[1], /&form_entity=%D0%9F[^&]*&form_kind=processor&form=/);
+});
+
+test('choice_dropdown false keeps only the selected option after a source refresh', async () => {
+  const env = runtime(async () => response({
+    items: [{id: 'legacy-location', _label: 'Saved'}, {id: 'other-location', _label: 'Other'}],
+    total: 2, selected_allowed: true,
+  }), 'legacy-location', false, true, true);
+  env.sourceControl.value = 'warehouse-b';
+  await env.api.obRefreshChoiceSelect(env.select, false);
+  assert.deepEqual(env.select.options.map((option) => option.value), ['', 'legacy-location']);
+  assert.equal(env.select.value, 'legacy-location');
+});
+
+// choice_dropdown: false на owner-only пути — без choice_filter и без
+// choice_folders. Закрытый список обещан закрытым: первые 50 строк ответа — не
+// список, а случайная выборка, и раскрывать его при смене владельца нельзя.
+// Выбирают в таком поле кнопкой подбора, она рядом и никуда не делась.
+test('closed owner-only list stays closed after the owner changes', async () => {
+  const answer = deferred();
+  const env = runtime(() => answer.promise, 'b-1', true, false, true);
+
+  env.api.obRefreshDependentSelects(env.ownerControl);
+  answer.resolve(response({items: [{id: 'b-1', _label: 'B one'}, {id: 'b-2', _label: 'B two'}]}));
+  await new Promise(setImmediate);
+
+  assert.deepEqual(env.select.options.map((option) => option.value), ['', 'b-1']);
+  assert.equal(env.select.value, 'b-1');
+  assert.equal(env.select.options[1].textContent, 'B one');
+});
+
+// Смена владельца может сделать текущее значение чужим. Тогда закрытый список
+// обязан его отпустить, а не хранить ссылку на элемент соседнего владельца.
+test('closed owner-only list drops a value the new owner does not have', async () => {
+  const answer = deferred();
+  const env = runtime(() => answer.promise, 'a-1', true, false, true);
+
+  env.api.obRefreshDependentSelects(env.ownerControl);
+  answer.resolve(response({items: [{id: 'b-1', _label: 'B one'}, {id: 'b-2', _label: 'B two'}]}));
+  await new Promise(setImmediate);
+
+  assert.deepEqual(env.select.options.map((option) => option.value), ['']);
+  assert.equal(env.select.value, '');
+});
+
+// Обычное поле без ключа ведёт себя как прежде: страница ответа видна целиком.
+test('open owner-only list keeps showing the whole page', async () => {
+  const answer = deferred();
+  const env = runtime(() => answer.promise, 'b-1', true, false);
+
+  env.api.obRefreshDependentSelects(env.ownerControl);
+  answer.resolve(response({items: [{id: 'b-1', _label: 'B one'}, {id: 'b-2', _label: 'B two'}]}));
+  await new Promise(setImmediate);
+
+  assert.deepEqual(env.select.options.map((option) => option.value), ['', 'b-1', 'b-2']);
+  assert.equal(env.select.value, 'b-1');
 });

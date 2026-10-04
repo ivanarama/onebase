@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -65,6 +66,28 @@ func withMergeHead(item apiPull) apiPull {
 	return item
 }
 
+func TestParentLookupOnlyWhenStageNeedsIt(t *testing.T) {
+	first := addComment(testPR(10, headB, "reviewed"), 40, completion(headB, 35, 36))
+	if needsHeadParents(first, "ivanarama") {
+		t.Fatal("first full review on a merge HEAD does not require historical parent proof")
+	}
+	historic := addComment(first, 30, completion(headC, 20, 25))
+	if !needsHeadParents(historic, "ivanarama") {
+		t.Fatal("reviewed head with older proof must load parents before asking for ship")
+	}
+	for _, label := range []string{"hold", "needs-decision", "changes-requested"} {
+		parked := historic
+		parked.Labels = append(append([]apiLabel(nil), historic.Labels...), apiLabel{Name: label})
+		if needsHeadParents(parked, "ivanarama") {
+			t.Fatalf("parked %s head incurred a parent query", label)
+		}
+	}
+	ship := addComment(testPR(11, headB, "ship"), 30, completion(headC, 20, 25))
+	if !needsHeadParents(ship, "ivanarama") {
+		t.Fatal("ship candidate lost its parent gate")
+	}
+}
+
 func hasFinding(result report, code string) bool {
 	for _, item := range result.Findings {
 		if item.Code == code {
@@ -121,6 +144,38 @@ func TestOverrideStartsAnotherReviewEpoch(t *testing.T) {
 	got := analyze([]apiPull{item}, "ivanarama")
 	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 10 {
 		t.Fatalf("human override did not return PR to REVIEW: %+v", got)
+	}
+}
+
+func TestShippedNeedsDecisionOverrideReturnsBaseSyncToReview(t *testing.T) {
+	item := withMergeHead(testPR(1778, headC, "ship", "reviewed", "needs-decision"))
+	item = addComment(item, 20, completion(headA, 10, 15))
+	item = addComment(item, 30, syncIntent(headA, 10, 15, 20))
+	item = addComment(item, 31, syncDone(30, headA, headC))
+	item = addComment(item, 40, completion(headC, 35, 36))
+
+	blocked := analyze([]apiPull{item}, "ivanarama")
+	if len(blocked.HumanWaiting) != 1 || len(blocked.ReviewCandidates) != 0 {
+		t.Fatalf("ship + needs-decision moved without human override: %+v", blocked)
+	}
+
+	item = addComment(item, 41, "Owner: repeat integration review after green CI.\n\npp:review-again")
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.HumanWaiting) != 0 || len(got.MergeCandidates) != 0 ||
+		len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 1778 ||
+		got.ReviewCandidates[0].Stage != "integration-review" {
+		t.Fatalf("human override did not return shipped integration HEAD to REVIEW: %+v", got)
+	}
+}
+
+func TestShippedOrdinaryHeadOverrideRequiresContentReview(t *testing.T) {
+	item := addComment(testPR(10, headA, "ship", "reviewed"), 30, completion(headA, 20, 25))
+	item = addComment(item, 31, "pp:review-again")
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if len(got.ContentReviewCandidates) != 1 ||
+		got.ContentReviewCandidates[0].Number != 10 || len(got.MergeCandidates) != 0 {
+		t.Fatalf("ship bypassed a later review override: %+v", got)
 	}
 }
 
@@ -386,6 +441,147 @@ func TestLegacyReShipIsVisibleAsPriorityValidationCandidate(t *testing.T) {
 	}
 	if !hasFinding(got, "legacy_ship_waiting_review_validation") {
 		t.Fatalf("legacy re-ship is invisible: %+v", got)
+	}
+}
+
+func TestLegacyMergeWithoutSourceReviewDoesNotOwnTheLane(t *testing.T) {
+	for _, currentReviewed := range []bool{false, true} {
+		name := "waiting-integration-review"
+		if currentReviewed {
+			name = "current-head-reviewed"
+		}
+		t.Run(name, func(t *testing.T) {
+			// The historical completion belongs to another SHA, not to the
+			// first parent of the merge. A current-HEAD review cannot replace it.
+			broken := withMergeHead(addComment(testPR(1318, headB, "ship"), 30,
+				completion(headC, 20, 25)))
+			if currentReviewed {
+				broken = addComment(broken, 40, completion(headB, 35, 36))
+			}
+			ordinary := testPR(1779, headD)
+			got := analyze([]apiPull{broken, ordinary}, "ivanarama")
+			if got.IntegrationOwner != nil || len(got.ReviewCandidates) != 1 ||
+				got.ReviewCandidates[0].Number != 1779 || len(got.MergeExecutable) != 0 ||
+				len(got.HumanWaiting) != 1 || got.HumanWaiting[0].Number != 1318 ||
+				got.HumanWaiting[0].Stage != "legacy-source-proof-missing" ||
+				!hasFinding(got, "legacy_source_review_missing") {
+				t.Fatalf("unproved legacy source blocked unrelated work: %+v", got)
+			}
+		})
+	}
+}
+
+func TestLegacyMergeWithoutSourceReviewDoesNotAskForShip(t *testing.T) {
+	// The current merge HEAD was fully reviewed, but the earlier completed
+	// review is for a different SHA than the merge's first parent. Re-shipping
+	// would send this PR to a gate that cannot prove the legacy source.
+	broken := withMergeHead(addComment(testPR(1321, headB, "reviewed"), 30,
+		completion(headC, 20, 25)))
+	broken = addComment(broken, 40, completion(headB, 35, 36))
+	got := analyze([]apiPull{broken}, "ivanarama")
+	if len(got.ReviewedWaitingShip) != 0 || len(got.MergeCandidates) != 0 ||
+		len(got.HumanWaiting) != 1 || got.HumanWaiting[0].Number != 1321 ||
+		got.HumanWaiting[0].Stage != "legacy-source-proof-missing" ||
+		!hasFinding(got, "legacy_source_review_missing") {
+		t.Fatalf("unprovable merge HEAD incorrectly asked for ship: %+v", got)
+	}
+}
+
+func TestFirstReviewOfMergeHeadUsesOrdinaryMergeLane(t *testing.T) {
+	// The branch was already a merge commit when its first full content review
+	// completed. Its HEAD differs from both parents, and there is no earlier
+	// review to carry from the first parent.
+	pr := withMergeHead(addComment(testPR(1818, headC, "ship", "reviewed"), 40,
+		completion(headC, 35, 36)))
+	directory := t.TempDir()
+	pullPath := filepath.Join(directory, "pulls.json")
+	issuePath := filepath.Join(directory, "issues.json")
+	type pullFixture struct {
+		apiPull
+		Comments []apiComment `json:"comments"`
+	}
+	pulls, err := json.Marshal([]pullFixture{{apiPull: pr, Comments: pr.Comments}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pullPath, pulls, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(issuePath, []byte("[]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GH_EXE", filepath.Join(directory, "missing-gh"))
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// #nosec G204 -- fixed command and test-owned fixture paths.
+	command := exec.Command("go", "run", "./tools/pipelinehealth", "-prs", pullPath,
+		"-issues", issuePath, "-json")
+	command.Dir = repositoryRoot
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pipelinehealth CLI failed: %v\n%s", err, output)
+	}
+	var got report
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode pipelinehealth output: %v\n%s", err, output)
+	}
+	if got.IntegrationOwner != nil || len(got.MergeExecutable) != 1 ||
+		got.MergeExecutable[0].Number != 1818 ||
+		got.MergeExecutable[0].Head != headC || got.MergeExecutable[0].Stage != "merge" ||
+		len(got.HumanWaiting) != 0 || hasFinding(got, "legacy_source_review_missing") {
+		t.Fatalf("public checker mistook first full review of merge HEAD for legacy carry: %+v", got)
+	}
+}
+
+func TestPublicCommandDoesNotAssignUnprovedLegacyOwner(t *testing.T) {
+	broken := withMergeHead(addComment(testPR(1318, headB, "ship", "reviewed"), 30,
+		completion(headC, 20, 25)))
+	broken = addComment(broken, 40, completion(headB, 35, 36))
+	ordinary := testPR(1779, headD)
+	directory := t.TempDir()
+	pullPath := filepath.Join(directory, "pulls.json")
+	issuePath := filepath.Join(directory, "issues.json")
+	type pullFixture struct {
+		apiPull
+		Comments []apiComment `json:"comments"`
+	}
+	pulls, err := json.Marshal([]pullFixture{
+		{apiPull: broken, Comments: broken.Comments},
+		{apiPull: ordinary, Comments: ordinary.Comments},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pullPath, pulls, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(issuePath, []byte("[]"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GH_EXE", filepath.Join(directory, "missing-gh"))
+	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// #nosec G204 -- fixed command and test-owned fixture paths.
+	command := exec.Command("go", "run", "./tools/pipelinehealth", "-prs", pullPath,
+		"-issues", issuePath, "-json")
+	command.Dir = repositoryRoot
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("pipelinehealth CLI failed: %v\n%s", err, output)
+	}
+	var got report
+	if err := json.Unmarshal(output, &got); err != nil {
+		t.Fatalf("decode pipelinehealth output: %v\n%s", err, output)
+	}
+	if got.IntegrationOwner != nil || len(got.ReviewCandidates) != 1 ||
+		got.ReviewCandidates[0].Number != 1779 || len(got.MergeExecutable) != 0 ||
+		len(got.HumanWaiting) != 1 || got.HumanWaiting[0].Number != 1318 ||
+		!hasFinding(got, "legacy_source_review_missing") {
+		t.Fatalf("public checker assigned an unproved owner: %+v", got)
 	}
 }
 
@@ -741,6 +937,55 @@ func issueWithLabels(number int, labels ...string) apiIssue {
 	return item
 }
 
+func TestFixCandidateCarriesVersionedElectionDigest(t *testing.T) {
+	issue := issueWithLabels(42, "approved")
+	issue.Body = "first body"
+	issue.Thread = append(issue.Thread, issueComment(20, "second comment"))
+	digestFor := func(value apiIssue) string {
+		t.Helper()
+		result := analyze(nil, "ivanarama")
+		analyzeIssues(&result, []apiIssue{value}, nil, "ivanarama")
+		if len(result.FixCandidates) != 1 {
+			t.Fatalf("issue is not executable: %+v", result)
+		}
+		return result.FixCandidates[0].EligibilityDigest
+	}
+	initial := digestFor(issue)
+	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(initial) {
+		t.Fatalf("invalid election revision %q", initial)
+	}
+	reordered := issue
+	reordered.Thread = append([]apiComment(nil), issue.Thread...)
+	reordered.Thread[0], reordered.Thread[1] = reordered.Thread[1], reordered.Thread[0]
+	reordered.Labels = append([]apiLabel{{Name: "queue:p1"}}, issue.Labels...)
+	withPriority := digestFor(reordered)
+	if withPriority == initial {
+		t.Fatal("label change kept the same election revision")
+	}
+	reordered.Labels = append([]apiLabel(nil), issue.Labels...)
+	if digestFor(reordered) != initial {
+		t.Fatal("comment ordering changed the election revision")
+	}
+	edited := issue
+	edited.Body = "edited body"
+	if digestFor(edited) == initial {
+		t.Fatal("body edit kept the same election revision")
+	}
+	edited = issue
+	edited.Thread = append([]apiComment(nil), issue.Thread...)
+	edited.Thread[1].Body = "edited comment"
+	if digestFor(edited) == initial {
+		t.Fatal("comment edit kept the same election revision")
+	}
+	incomplete := issue
+	incomplete.CommentCount = len(issue.Thread) + 1
+	result := analyze(nil, "ivanarama")
+	analyzeIssues(&result, []apiIssue{incomplete}, nil, "ivanarama")
+	if len(result.FixCandidates) != 0 || !hasIssueFinding(result, "fix_issue_incomplete_comments", 42) {
+		t.Fatalf("incomplete snapshot elected: %+v", result)
+	}
+}
+
 func issueComment(id int64, body string) apiComment {
 	timestamp := fmt.Sprintf("2026-09-01T10:%02d:00Z", id%60)
 	return apiComment{ID: id, CreatedAt: timestamp, UpdatedAt: timestamp,
@@ -898,6 +1143,9 @@ func TestCLIIssueRouteConflictsAreReportedWithoutChangingRouting(t *testing.T) {
 		var numbers []int
 		for _, item := range queue.items {
 			numbers = append(numbers, item.Number)
+			if queue.name == "FIX" && !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(item.EligibilityDigest) {
+				t.Errorf("public FIX candidate lacks exact election digest: %+v", item)
+			}
 		}
 		if !slices.Equal(numbers, queue.want) {
 			t.Errorf("%s routing changed: got %v, want %v", queue.name, numbers, queue.want)

@@ -30,7 +30,7 @@ func TestSchemaFormPublishesChoiceFilterContract(t *testing.T) {
 	properties := schemaAt(t, condition, "properties")
 	op := schemaAt(t, properties, "op")
 	values, ok := op["enum"].([]any)
-	if !ok || len(values) != 2 || values[0] != "eq" || values[1] != "in_hierarchy" {
+	if !ok || len(values) != 3 || values[0] != "eq" || values[1] != "eq_or_empty" || values[2] != "in_hierarchy" {
 		t.Fatalf("operator enum = %#v", op["enum"])
 	}
 	if schemaAt(t, properties, "value")["type"] != "boolean" {
@@ -38,6 +38,28 @@ func TestSchemaFormPublishesChoiceFilterContract(t *testing.T) {
 	}
 	if schemaAt(t, properties, "field")["type"] != "string" || schemaAt(t, properties, "from")["type"] != "string" {
 		t.Fatalf("field/from types are not strings: %#v", properties)
+	}
+	// ref (#1820) — третий взаимоисключающий источник: строка-UUID, и ровно
+	// одна из трёх веток oneOf требует именно его.
+	ref := schemaAt(t, properties, "ref")
+	if ref["type"] != "string" || ref["format"] != "uuid" {
+		t.Fatalf("choice_filter.ref is not a UUID string: %#v", ref)
+	}
+	branches, ok := condition["oneOf"].([]any)
+	if !ok || len(branches) != 3 {
+		t.Fatalf("condition must require exactly one of from/value/ref: %#v", condition["oneOf"])
+	}
+	required := map[string]bool{}
+	for _, raw := range branches {
+		branch, _ := raw.(map[string]any)
+		names, _ := branch["required"].([]any)
+		if len(names) != 1 {
+			t.Fatalf("oneOf branch must require one source: %#v", branch)
+		}
+		required[names[0].(string)] = true
+	}
+	if !required["from"] || !required["value"] || !required["ref"] {
+		t.Fatalf("oneOf branches = %#v", required)
 	}
 	element := schemaAt(t, doc, "properties", "elements", "items")
 	children := schemaAt(t, element, "properties", "children", "items")

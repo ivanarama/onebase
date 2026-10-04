@@ -179,6 +179,7 @@ function obFireRowEvent() {}
 window.obFireRowEvent = obFireRowEvent;
 
 eval(source.slice(start, end));
+eval(source.slice(end, source.indexOf("\nobReady(", end)));
 eval(managedSource.slice(managedBodiesStart, managedBodiesEnd));
 eval(managedSource.slice(managedApplyStart, managedApplyExport + 'window.applyTableParts = applyTableParts;'.length));
 // managed.js is loaded at the bottom of a managed form and installs its
@@ -579,6 +580,7 @@ assert(window._obActiveDOMTable === null, 'hidden DOM table remained remembered'
 let liveRows = [];
 let replacementRows = [];
 const live = {
+  querySelector() { return null; },
   contains(node) { return liveRows.includes(node); },
   querySelectorAll(selector) { return selector === '[data-ob-list-row]' ? liveRows : []; }
 };

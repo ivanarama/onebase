@@ -8,8 +8,9 @@ const vm = require('node:vm');
 const htmlPath = process.env.ONEBASE_TABS_HTML;
 assert.ok(htmlPath, 'ONEBASE_TABS_HTML must point to the rendered app shell');
 const html = fs.readFileSync(htmlPath, 'utf8');
-const source = Array.from(html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi), match => match[1])
-  .find(script => script.includes("var STORE='obTabs'"));
+function tabsSource(html) { return Array.from(html.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi), match => match[1])
+  .find(script => script.includes("var STORE='obTabs'")); }
+const source = tabsSource(html);
 assert.ok(source, 'rendered app shell must contain the tabs runtime');
 const uiSource = fs.readFileSync('static/ui.js', 'utf8');
 const bridgeMarker = '// Same-origin request/decision protocol shared by shell tabs and reference';
@@ -141,7 +142,7 @@ class FakeStorage {
 }
 
 function shell(storage, search = '', confirmClose = () => true, requestFrameClose = null, finalizeFrameClose = null,
-  actualBridge = false) {
+  actualBridge = false, runtimeSource = source) {
   const elements = {};
   for (const id of ['ob-tabstrip', 'ob-tabbody', 'ob-tabempty', 'ob-tabhome']) {
     elements[id] = new Element('div', id);
@@ -189,7 +190,7 @@ function shell(storage, search = '', confirmClose = () => true, requestFrameClos
     if (requestFrameClose) context.obRequestFrameClose = requestFrameClose;
     if (finalizeFrameClose) context.obFinalizeFrameClose = finalizeFrameClose;
   }
-  vm.runInNewContext(source, context, {filename: 'rendered-tabs-runtime.js'});
+  vm.runInNewContext(runtimeSource, context, {filename: 'rendered-tabs-runtime.js'});
 
   const strip = elements['ob-tabstrip'];
   const frames = () => elements['ob-tabbody'].children.filter(element => element.tagName === 'IFRAME');
@@ -414,6 +415,7 @@ test('home view preserves the previous active tab across navigation', () => {
 
 test('missing active ID falls back to the first tab', () => {
   const storage = new FakeStorage({
+    obTabsScope: scopeOf(source),
     obTabs: JSON.stringify([
       {id: 'tab:a', url: '/ui/a', title: 'A'},
       {id: 'tab:b', url: '/ui/b', title: 'B'},
@@ -429,27 +431,17 @@ test('missing active ID falls back to the first tab', () => {
   assert.deepEqual(savedActive(storage), {id: 'tab:a', url: '/ui/a'});
 });
 
-test('legacy URL-only state is upgraded and remains restorable', () => {
+test('legacy state without a proven session owner is discarded before reading titles', () => {
   const storage = new FakeStorage({
-    obTabs: JSON.stringify([
-      {url: '/ui/a', title: 'A'},
-      {url: '/ui/b', title: 'B'},
-      {url: '/ui/c', title: 'C'}
-    ]),
-    obTabsActive: '/ui/b'
+    obTabs: JSON.stringify([{url:'/ui/a',title:'Foreign secret'}]),
+    obTabsActive: '/ui/a', unrelated: 'keep'
   });
-
-  let app = shell(storage);
-  assert.equal(app.activeIndex(), 1);
-  const upgraded = savedTabs(storage);
-  assert.equal(upgraded.every(tab => typeof tab.id === 'string' && tab.id.length > 0), true);
-  assert.equal(new Set(upgraded.map(tab => tab.id)).size, 3);
-  assert.equal(savedActive(storage).id, upgraded[1].id);
-  assert.equal(savedActive(storage).url, '/ui/b');
-
-  app = shell(storage);
-  assert.equal(app.activeIndex(), 1);
-  assert.deepEqual(savedTabs(storage).map(tab => tab.id), upgraded.map(tab => tab.id));
+  const app = shell(storage);
+  assert.equal(app.count(), 0);
+  assert.equal(app.activeIndex(), -1);
+  assert.deepEqual(savedTabs(storage), []);
+  assert.equal(storage.getItem('obTabsActive'), null);
+  assert.equal(storage.getItem('unrelated'), 'keep');
 });
 
 test('closing the active tab persists its neighbor and closing the last clears active state', () => {
@@ -472,6 +464,7 @@ test('closing the active tab persists its neighbor and closing the last clears a
 
 test('duplicate or corrupt stored IDs cannot collapse tabs or crash startup', () => {
   const duplicateIDs = new FakeStorage({
+    obTabsScope: scopeOf(source),
     obTabs: JSON.stringify([
       {id: 'tab:same', url: '/ui/a', title: 'A'},
       {id: 'tab:same', url: '/ui/a', title: 'A copy'}
@@ -692,4 +685,69 @@ test('loading tab without a bridge is treated as managed and remains open', () =
   app.close(0);
   assert.equal(app.count(), 1, 'loading tab was classified as legacy and removed');
   assert.equal(app.alerts(), 1);
+});
+
+function scopeOf(script) {
+  const match = script.match(/var STORAGE_SCOPE=([^;]+);/);
+  assert.ok(match, 'public shell must supply a session scope');
+  return JSON.parse(match[1]);
+}
+
+const shellB = tabsSource(fs.readFileSync(process.env.ONEBASE_TABS_B_HTML, 'utf8'));
+const shellANew = tabsSource(fs.readFileSync(process.env.ONEBASE_TABS_A_NEW_HTML, 'utf8'));
+const shellAAgain = tabsSource(fs.readFileSync(process.env.ONEBASE_TABS_A_AGAIN_HTML, 'utf8'));
+const loginHTML = fs.readFileSync(process.env.ONEBASE_LOGIN_HTML, 'utf8');
+
+test('public login sessions isolate A to B, B to A and re-login of the same account', () => {
+  const scopes = [source,shellB,shellANew,shellAAgain].map(scopeOf);
+  assert.equal(new Set(scopes).size, 4);
+  const storage = new FakeStorage({unrelated:'keep'});
+  const stale = shell(storage);
+  stale.open('/ui/private/operator', 'Operator secret');
+  let app = shell(storage, '', undefined, null, null, false, shellB);
+  assert.equal(app.count(), 0);
+  assert.equal(storage.getItem('obTabsActive'), null);
+  app.open('/ui/private/admin', 'Admin secret');
+  const before = storage.getItem('obTabs');
+  stale.open('/ui/stale', 'Stale operator');
+  assert.equal(storage.getItem('obTabs'), before, 'stale shell overwrote the new session');
+  app = shell(storage, '', undefined, null, null, false, shellANew);
+  assert.equal(app.count(), 0);
+  app.open('/ui/private/operator-new', 'New operator');
+  app = shell(storage, '', undefined, null, null, false, shellAAgain);
+  assert.equal(app.count(), 0);
+  assert.equal(storage.getItem('unrelated'),'keep');
+});
+
+test('POST logout redirect to the public login page clears only shell state', () => {
+  const storage = new FakeStorage({unrelated:'keep'});
+  const app = shell(storage);
+  app.open('/ui/private/a', 'Private title');
+  const loginScripts = Array.from(loginHTML.matchAll(/<script(?:\s[^>]*)?>([\s\S]*?)<\/script>/gi), match=>match[1]);
+  assert.ok(loginScripts.length, 'login page must clear shell state');
+  for (const script of loginScripts) vm.runInNewContext(script, {sessionStorage:storage});
+  for (const key of ['obTabs','obTabsActive','obTabsScope']) assert.equal(storage.getItem(key),null);
+  assert.equal(storage.getItem('unrelated'),'keep');
+  assert.equal(shell(storage).count(),0);
+  for (const script of loginScripts) assert.doesNotThrow(()=>vm.runInNewContext(script,{sessionStorage:new FakeStorage({}, {remove:true})}));
+});
+
+test('failure to remove obsolete storage never restores another session snapshot', () => {
+  const storage = new FakeStorage({obTabsScope:scopeOf(shellB), obTabs:JSON.stringify([{url:'/ui/private',title:'Foreign'}]), obTabsActive:'/ui/private'}, {remove:true});
+  const app = shell(storage);
+  assert.equal(app.count(),0);
+  app.open('/ui/current','Current');
+  assert.equal(JSON.parse(storage.getItem('obTabs'))[0].title,'Foreign', 'failed storage initialization must disable persistence');
+});
+
+test('open-access deployment preserves F5 and is discarded on the first authenticated login', () => {
+  const openSource = tabsSource(fs.readFileSync(process.env.ONEBASE_TABS_OPEN_HTML,'utf8'));
+  const storage = new FakeStorage();
+  let app = shell(storage, '', undefined, null, null, false, openSource);
+  app.open('/ui/open','Anonymous');
+  app = shell(storage, '', undefined, null, null, false, openSource);
+  assert.equal(app.count(),1);
+  assert.equal(app.activeIndex(),0);
+  app = shell(storage);
+  assert.equal(app.count(),0);
 });

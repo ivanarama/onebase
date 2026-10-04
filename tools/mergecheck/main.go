@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -27,6 +28,7 @@ func main() {
 
 func run() error {
 	kind := flag.String("kind", "entries", "entries or plans (only the first numeric table cell may change)")
+	resolve := flag.Bool("resolve", false, "write a verified canonical union for append-only entries")
 	base := flag.String("base", "", "merge-base file")
 	ours := flag.String("ours", "", "original PR file")
 	theirs := flag.String("theirs", "", "original main file")
@@ -34,6 +36,9 @@ func run() error {
 	flag.Parse()
 	if (*kind != "entries" && *kind != "plans") || flag.NArg() != 0 {
 		return errors.New("expected -kind entries|plans and four file paths")
+	}
+	if *resolve && *kind != "entries" {
+		return errors.New("-resolve is supported only for append-only entries")
 	}
 	var resolved string
 	for i, path := range []string{*base, *ours, *theirs, *result} {
@@ -72,7 +77,125 @@ func run() error {
 			return fmt.Errorf("git merge-file: %w: %s", err, stderr.String())
 		}
 	}
+	if *resolve {
+		// A marker shown in ordinary Markdown is not an unresolved merge. Never
+		// overwrite a result that the normal verifier already accepts, either.
+		if verify(string(merged), resolved, *kind) == nil || !hasConflictMarkers(resolved) {
+			return errors.New("-resolve requires an unresolved conflict file")
+		}
+		candidate, err := resolveEntries(string(merged))
+		if err != nil {
+			return err
+		}
+		if err := verify(string(merged), candidate, *kind); err != nil {
+			return err
+		}
+		return replaceFile(*result, []byte(candidate))
+	}
 	return verify(string(merged), resolved, *kind)
+}
+
+func hasConflictMarkers(content string) bool {
+	state, width, conflicts := 0, 0, 0
+	for _, line := range lines(content) {
+		switch state {
+		case 0:
+			if next := conflictStartWidth(line); next > 0 {
+				width, state = next, 1
+			}
+		case 1:
+			if line == strings.Repeat("=", width)+"\n" {
+				state = 2
+			}
+		case 2:
+			if strings.HasPrefix(line, strings.Repeat(">", width)+" ") {
+				state, conflicts = 0, conflicts+1
+			}
+		}
+	}
+	return state == 0 && conflicts > 0
+}
+
+func conflictStartWidth(line string) int {
+	width := 0
+	for width < len(line) && line[width] == '<' {
+		width++
+	}
+	if width < 7 || width >= len(line) || line[width] != ' ' {
+		return 0
+	}
+	return width
+}
+
+func resolveEntries(merged string) (string, error) {
+	source := lines(merged)
+	start := strings.Repeat("<", markerSize) + " ours\n"
+	base := strings.Repeat("|", markerSize) + " base\n"
+	separator := strings.Repeat("=", markerSize) + "\n"
+	end := strings.Repeat(">", markerSize) + " theirs\n"
+	var result strings.Builder
+	conflicts := 0
+	for i := 0; i < len(source); {
+		if source[i] != start {
+			result.WriteString(source[i])
+			i++
+			continue
+		}
+		conflicts++
+		i++
+		var ours, original, theirs []string
+		for _, part := range []struct {
+			until string
+			into  *[]string
+		}{{base, &ours}, {separator, &original}, {end, &theirs}} {
+			for i < len(source) && source[i] != part.until {
+				*part.into = append(*part.into, source[i])
+				i++
+			}
+			if i == len(source) {
+				return "", errors.New("incomplete diff3 conflict")
+			}
+			i++
+		}
+		if len(original) != 0 || len(ours) == 0 || len(theirs) == 0 {
+			return "", errors.New("conflict changes existing content; manual decision required")
+		}
+		for _, line := range ours {
+			result.WriteString(line)
+		}
+		for _, line := range theirs {
+			result.WriteString(line)
+		}
+	}
+	if conflicts == 0 {
+		return "", errors.New("-resolve requires an append-only conflict")
+	}
+	return result.String(), nil
+}
+
+func replaceFile(path string, content []byte) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(path), ".mergecheck-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(temp.Name()) }()
+	if err := temp.Chmod(info.Mode().Perm()); err != nil {
+		return errors.Join(err, temp.Close())
+	}
+	if _, err := temp.Write(content); err != nil {
+		return errors.Join(err, temp.Close())
+	}
+	if err := temp.Sync(); err != nil {
+		return errors.Join(err, temp.Close())
+	}
+	if err := temp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(temp.Name(), path)
 }
 
 func lines(text string) []string {

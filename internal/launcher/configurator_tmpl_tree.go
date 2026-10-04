@@ -1128,6 +1128,7 @@ const cfgTabTree = `{{define "tab-tree"}}
   <div class="cfg-panel" id="sub-{{$sub.Name}}">
     <div class="panel-title">🗂 {{$sub.Title}}</div>
     <div class="panel-kind">{{t $.Lang "Подсистема"}}</div>
+    <p><a class="btn" href="/bases/{{$.Base.ID}}/configurator/navigation?subsystem={{$sub.Name}}">{{t $.Lang "Редактор меню"}}</a></p>
     <form method="POST" action="/bases/{{$.Base.ID}}/configurator/subsystem" data-home-key="sub-{{$sub.Name}}">
       <input type="hidden" name="subsystem_name" value="{{$sub.Name}}">
       <div class="fg" style="margin-top:12px">
@@ -1361,6 +1362,7 @@ const cfgTabTree = `{{define "tab-tree"}}
   <div class="cfg-panel" id="home-page">
     <div class="panel-title">🏠 {{t $.Lang "Главная страница"}}</div>
     <div class="panel-kind">{{t $.Lang "Раскладка стартового дашборда"}} (<code>config/home_page.yaml</code>)</div>
+    <p><a class="btn" href="/bases/{{.Base.ID}}/configurator/navigation">{{t $.Lang "Редактор меню"}}</a></p>
     <form method="POST" action="/bases/{{.Base.ID}}/configurator/home-page" data-home-key="home">
       <div class="fg" style="margin-top:12px">
         <label>{{t $.Lang "Заголовок"}}</label>

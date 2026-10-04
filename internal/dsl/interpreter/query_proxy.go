@@ -310,16 +310,25 @@ func (q *queryProxy) wrapRefColumns(res query.Result, rows []map[string]any) {
 		}
 	}
 	for col, entName := range res.RefColumns {
-		ent := entities[strings.ToLower(entName)]
-		if ent == nil {
-			continue // сущности нет в реестре — оставляем значение как есть
+		var refType string
+		var refKind metadata.Kind
+		if metadata.IsSystemRefTarget(entName) {
+			// System references are not configuration entities. Match the
+			// reference exposed by ТекущийПользователь().Ссылка.
+			refType = metadata.SystemUsersEntity
+		} else {
+			ent := entities[strings.ToLower(entName)]
+			if ent == nil {
+				continue // сущности нет в реестре — оставляем значение как есть
+			}
+			refType, refKind = ent.Name, ent.Kind
 		}
 		for _, row := range rows {
 			s, ok := row[col].(string)
 			if !ok || !isRefUUIDValue(s) {
 				continue
 			}
-			row[col] = &Ref{UUID: s, Name: s, Type: ent.Name, Kind: ent.Kind}
+			row[col] = &Ref{UUID: s, Name: s, Type: refType, Kind: refKind}
 		}
 	}
 }

@@ -211,7 +211,12 @@ onebase describe --project <dir>                # вся структура ко
   `pp:base-sync-intent`/`pp:base-sync-done`: новый commit обязан иметь parents
   `[старый HEAD, base]`, REVIEW проверяет его приоритетно, а после зелёного
   completion MERGE продолжает без второго человеческого `ship`. Intent
-  earliest-wins и восстанавливается после crash; edit/delete, разрыв `previous`,
+  выбирается по earliest-wins и восстанавливается после crash. Он
+  предшествует update/push, но edge нового коммита в timeline может идти раньше
+  intent из-за даты локального создания. Для действующей intent/done-цепочки
+  порядок этого edge не проверяется: переход доказывается полным набором
+  коммитов, точными parents и отсутствием посторонних lifecycle events (#1561).
+  Edit/delete, разрыв `previous`,
   снятие метки либо посторонний HEAD event отменяют carry. Последний переход
   метки `ship` среди событий всех actors обязан быть trusted `labeled`: для
   обычного пути он идёт после anchor текущего HEAD и может предшествовать
@@ -223,8 +228,9 @@ onebase describe --project <dir>                # вся структура ко
   воскресает от чужого re-label. ID комментариев
   в snapshot читаются как `fullDatabaseId: BigInt`, а не устаревший 32-битный
   `databaseId`, и строкой сравниваются с REST id.
-  Если исторический v1 merge-коммит уже появился в timeline **до** своего
-  intent, доказуемый `done` невозможен: MERGE не повторяет recovery и не
+  Для исторического незавершённого v1-handoff действует отдельный abort-путь.
+  Если его merge-коммит уже появился в timeline **до** своего intent и нет
+  доказанного done, MERGE не повторяет recovery и не
   синтезирует proof. Он один раз снимает `ship`, после стабильной проверки
   фиксирует точный `pp:base-sync-v1-aborted` и исключает этот intent из
   single-flight. Маркер ничего не авторизует. Текущий HEAD проходит полное

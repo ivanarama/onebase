@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,44 @@ import (
 	"testing"
 	"time"
 )
+
+func TestRESTLoadsUnshippedReviewedMergeParents(t *testing.T) {
+	pr := addComment(testPR(1321, headB, "reviewed"), 30, completion(headC, 20, 25))
+	pr = addComment(pr, 40, completion(headB, 35, 36))
+	var parentReads atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
+		if !requireTestAuthentication(response, request) {
+			return
+		}
+		response.Header().Set("Content-Type", "application/json")
+		switch request.URL.Path {
+		case "/repos/ivanarama/onebase/pulls":
+			_ = json.NewEncoder(response).Encode([]apiPull{pr})
+		case "/repos/ivanarama/onebase/issues/1321/comments":
+			_ = json.NewEncoder(response).Encode(pr.Comments)
+		case "/repos/ivanarama/onebase/commits/" + headB:
+			parentReads.Add(1)
+			_ = json.NewEncoder(response).Encode(map[string]any{"parents": []any{
+				map[string]any{"sha": headA}, map[string]any{"sha": headD},
+			}})
+		default:
+			http.Error(response, "unexpected path", http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+	pulls, err := loadPulls(testRESTClient(t, server), "ivanarama/onebase", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parentReads.Load() != 1 || len(pulls) != 1 || len(pulls[0].HeadParents) != 2 {
+		t.Fatalf("REST omitted reviewed merge parents: reads=%d pulls=%+v", parentReads.Load(), pulls)
+	}
+	got := analyze(pulls, "ivanarama")
+	if len(got.ReviewedWaitingShip) != 0 || len(got.HumanWaiting) != 1 ||
+		got.HumanWaiting[0].Stage != "legacy-source-proof-missing" {
+		t.Fatalf("REST asked for ship without source proof: %+v", got)
+	}
+}
 
 type cacheTestPayload struct {
 	Value string `json:"value"`
