@@ -52,12 +52,12 @@ func TestQuerySQLIsPrintedBeforeExecutionError(t *testing.T) {
 	projectDir, dbPath := queryCommandFixture(t)
 	out, err := executeQueryCommand(t,
 		"query", "--project", projectDir, "--sqlite", dbPath, "--sql",
-		"SELECT * FROM missing_query_table",
+		"SELECT missing_query_column",
 	)
 	if err == nil {
-		t.Fatal("запрос к отсутствующей таблице обязан завершиться ошибкой")
+		t.Fatal("запрос к отсутствующей колонке обязан завершиться ошибкой")
 	}
-	if !strings.Contains(out, "SQL:\n") || !strings.Contains(out, "missing_query_table") {
+	if !strings.Contains(out, "SQL:\n") || !strings.Contains(out, "missing_query_column") {
 		t.Fatalf("--sql не показал скомпилированный SQL до ошибки:\n%s", out)
 	}
 	if !strings.Contains(out, "ARGS: []") {
@@ -69,10 +69,10 @@ func TestQueryExecutionErrorWithoutSQLFlagHasNoDiagnostic(t *testing.T) {
 	projectDir, dbPath := queryCommandFixture(t)
 	out, err := executeQueryCommand(t,
 		"query", "--project", projectDir, "--sqlite", dbPath,
-		"SELECT * FROM missing_query_table",
+		"SELECT missing_query_column",
 	)
 	if err == nil {
-		t.Fatal("запрос к отсутствующей таблице обязан завершиться ошибкой")
+		t.Fatal("запрос к отсутствующей колонке обязан завершиться ошибкой")
 	}
 	if strings.Contains(out, "SQL:") || strings.Contains(out, "ARGS:") {
 		t.Fatalf("диагностика SQL появилась без --sql:\n%s", out)
@@ -118,10 +118,10 @@ func TestQueryJSONExecutionErrorKeepsDiagnosticOutOfStdout(t *testing.T) {
 	projectDir, dbPath := queryCommandFixture(t)
 	out, err := executeQueryCommand(t,
 		"query", "--project", projectDir, "--sqlite", dbPath, "--json", "--sql",
-		"SELECT * FROM missing_query_table",
+		"SELECT missing_query_column",
 	)
 	if err == nil {
-		t.Fatal("запрос к отсутствующей таблице обязан завершиться ошибкой")
+		t.Fatal("запрос к отсутствующей колонке обязан завершиться ошибкой")
 	}
 	if out != "" {
 		t.Fatalf("ошибка не должна загрязнять JSON-канал stdout:\n%s", out)

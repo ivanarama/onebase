@@ -10,6 +10,19 @@ import (
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
+// translationTestEntities — справочники и документы, на которые ссылаются тесты
+// формы SQL: источник «Справочник.Имя»/«Документ.Имя» обязан быть объектом
+// конфигурации (#1772). Реквизиты не нужны — эти тесты смотрят на трансляцию, а
+// не на колонки.
+func translationTestEntities() []*metadata.Entity {
+	cat := func(name string) *metadata.Entity { return &metadata.Entity{Name: name, Kind: metadata.KindCatalog} }
+	doc := func(name string) *metadata.Entity { return &metadata.Entity{Name: name, Kind: metadata.KindDocument} }
+	return []*metadata.Entity{
+		cat("Клиент"), cat("Client"), cat("Номенклатура"), cat("ТипЦен"), cat("Периоды"), cat("Товар"),
+		doc("Реализация"), doc("Sale"), doc("Заказ"), doc("НачислениеВзноса"),
+	}
+}
+
 func TestCompile_BalancesQuery(t *testing.T) {
 	src := `ВЫБРАТЬ
   Номенклатура,
@@ -154,7 +167,7 @@ func TestCompile_InnerJoin(t *testing.T) {
   ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.Клиент КАК Клиент
   ПО Прод.Покупатель = Клиент.Ссылка`
 
-	r, err := query.Compile(src, query.CompileOpts{})
+	r, err := query.Compile(src, query.CompileOpts{Entities: translationTestEntities()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +200,7 @@ func TestCompile_LeftJoin_WithGroupBy(t *testing.T) {
 СГРУППИРОВАТЬ ПО Н.Наименование
 УПОРЯДОЧИТЬ ПО Н.Наименование`
 
-	r, err := query.Compile(src, query.CompileOpts{})
+	r, err := query.Compile(src, query.CompileOpts{Entities: translationTestEntities()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +230,7 @@ FROM Document.Sale AS P
   LEFT JOIN Catalog.Client AS C
   ON P.Client = C.Reference`
 
-	r, err := query.Compile(src, query.CompileOpts{})
+	r, err := query.Compile(src, query.CompileOpts{Entities: translationTestEntities()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +249,7 @@ func TestCompile_RightJoin(t *testing.T) {
   ПРАВОЕ СОЕДИНЕНИЕ Справочник.Клиент КАК К
   ПО З.Клиент = К.Ссылка`
 
-	r, err := query.Compile(src, query.CompileOpts{})
+	r, err := query.Compile(src, query.CompileOpts{Entities: translationTestEntities()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +261,7 @@ func TestCompile_RightJoin(t *testing.T) {
 func TestCompile_Ssylka_InSelect(t *testing.T) {
 	src := `ВЫБРАТЬ Н.Ссылка, Н.Наименование ИЗ Справочник.Номенклатура КАК Н`
 
-	r, err := query.Compile(src, query.CompileOpts{})
+	r, err := query.Compile(src, query.CompileOpts{Entities: translationTestEntities()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +276,7 @@ func TestCompile_Ssylka_InSelect(t *testing.T) {
 func TestCompile_Ssylka_Bare(t *testing.T) {
 	src := `ВЫБРАТЬ Ссылка, Наименование ИЗ Справочник.ТипЦен`
 
-	r, err := query.Compile(src, query.CompileOpts{})
+	r, err := query.Compile(src, query.CompileOpts{Entities: translationTestEntities()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +326,8 @@ func TestCompile_SystemColNamesRemainEntityFields(t *testing.T) {
 ГДЕ Д.Период >= &Дата`
 
 		r, err := query.Compile(src, query.CompileOpts{
-			Params: map[string]any{"Дата": "2026-01-01"},
+			Entities: translationTestEntities(),
+			Params:   map[string]any{"Дата": "2026-01-01"},
 		})
 		if err != nil {
 			t.Fatalf("%s: %v", source, err)
@@ -350,7 +364,7 @@ func TestCompile_SystemColsUseQualifiedSourceType(t *testing.T) {
 ЛЕВОЕ СОЕДИНЕНИЕ РегистрНакопления.Взносы КАК Р
 ПО Р.Регистратор = Д.Ссылка`
 
-	r, err := query.Compile(src, query.CompileOpts{})
+	r, err := query.Compile(src, query.CompileOpts{Entities: translationTestEntities()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -388,7 +402,7 @@ func TestCompile_SystemColsAreScopedToNestedSelect(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r, err := query.Compile(tt.src, query.CompileOpts{})
+			r, err := query.Compile(tt.src, query.CompileOpts{Entities: translationTestEntities()})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -694,7 +708,8 @@ func TestCompile_Ssylka_InWhere(t *testing.T) {
 	src := `ВЫБРАТЬ Наименование ИЗ Справочник.ТипЦен ГДЕ Ссылка = &ИД`
 
 	r, err := query.Compile(src, query.CompileOpts{
-		Params: map[string]any{"ИД": "00000000-0000-0000-0000-000000000000"},
+		Entities: translationTestEntities(),
+		Params:   map[string]any{"ИД": "00000000-0000-0000-0000-000000000000"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -843,7 +858,14 @@ func TestCompile_BareCatalogInFrom(t *testing.T) {
 		Resources: []metadata.Field{{Name: "Выручка"}},
 	}
 
+	// Голое имя источника — краткая форма справочника, поэтому он обязан быть
+	// в метаданных: имя вне конфигурации источником не принимается.
+	номенклатура := &metadata.Entity{Name: "Номенклатура", Kind: metadata.KindCatalog, Fields: []metadata.Field{
+		{Name: "Наименование", Type: metadata.FieldTypeString},
+		{Name: "ЦенаПродажи", Type: metadata.FieldTypeNumber},
+	}}
 	r, err := query.Compile(src, query.CompileOpts{
+		Entities:  []*metadata.Entity{номенклатура},
 		Registers: []*metadata.Register{regProfit},
 	})
 	if err != nil {
@@ -855,6 +877,9 @@ func TestCompile_BareCatalogInFrom(t *testing.T) {
 	}
 	if strings.Contains(sql, "FROM номенклатура_id") {
 		t.Errorf("bare catalog name must NOT be replaced by _id column; got: %s", sql)
+	}
+	if len(r.Sources) != 1 || r.Sources[0] != (query.SourceRef{Kind: "catalog", Name: "Номенклатура"}) {
+		t.Errorf("голое имя справочника должно регистрироваться источником, Sources = %+v", r.Sources)
 	}
 }
 
