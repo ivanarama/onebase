@@ -133,6 +133,7 @@ func allSchemas() map[string]map[string]any {
 			"label":               stringSchema("Алиас синонима"),
 			"titles":              stringMapSchema(),
 			"type":                stringSchema("string|number|date|bool|text|richtext|image|reference:<Объект>|enum:<Перечисление>|number(10,2)"),
+			"multiline":           map[string]any{"type": "boolean", "description": "Редактировать многострочным полем (только для строкового реквизита)"},
 			"allow_inline_create": map[string]any{"type": "boolean"},
 			"id":                  stringSchema("Устойчивый идентификатор реквизита: не меняется при переименовании, по нему миграция переименовывает колонку, а не заводит новую"),
 			"required":            boolSchema("Реквизит обязателен к заполнению; проверяется при записи"),
@@ -148,6 +149,15 @@ func allSchemas() map[string]map[string]any {
 			},
 		},
 	}
+	// rawField читает multiline во всех позициях, но исполняют его только поля
+	// сущности и dimensions/resources регистра сведений. Отдельная схема
+	// сохраняет полный словарь свойств для подсказок, одновременно запрещая
+	// присутствие ключа в контекстах без многострочного редактора.
+	fieldWithoutMultiline := make(map[string]any, len(field)+1)
+	for key, value := range field {
+		fieldWithoutMultiline[key] = value
+	}
+	fieldWithoutMultiline["not"] = map[string]any{"required": []string{"multiline"}}
 	tablePart := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -156,7 +166,7 @@ func allSchemas() map[string]map[string]any {
 			"name":   stringSchema("Имя табличной части"),
 			"title":  stringSchema("Синоним"),
 			"titles": stringMapSchema(),
-			"fields": arrayOf(field),
+			"fields": arrayOf(fieldWithoutMultiline),
 		},
 	}
 	// Ресурс/субконто бухрегистра — собственный объект (metadata.rawAccountRegField,
@@ -176,6 +186,10 @@ func allSchemas() map[string]map[string]any {
 			"type":   stringSchema("string|number|date|bool|text|richtext|image|reference:<Объект>|enum:<Перечисление>|number(10,2)"),
 			"pii":    boolSchema("Персональные данные в бухрегистре не поддерживаются: check отвергает ключ с объяснением"),
 		},
+		// multiline бухрегистр не рисует: запрет объявлен явно, как у табличной
+		// части и регистра накопления (fieldWithoutMultiline), а не только
+		// отсутствием ключа в properties.
+		"not": map[string]any{"required": []string{"multiline"}},
 	}
 	param := map[string]any{
 		"type":                 "object",
@@ -382,7 +396,7 @@ func allSchemas() map[string]map[string]any {
 				},
 			},
 		},
-		"register": fieldGroupSchema("OneBase accumulation register", field, []string{"dimensions", "resources", "attributes"}, map[string]any{"kind": stringSchema("balance|turnover")}),
+		"register": fieldGroupSchema("OneBase accumulation register", fieldWithoutMultiline, []string{"dimensions", "resources", "attributes"}, map[string]any{"kind": stringSchema("balance|turnover")}),
 		"inforeg": fieldGroupSchema("OneBase information register", field, []string{"dimensions", "resources"}, map[string]any{
 			"periodic": map[string]any{"type": "boolean"},
 			"recorder": map[string]any{"type": "boolean", "description": "регистр подчинён регистратору: строки формирует проведение документа, программная запись отклоняется"},

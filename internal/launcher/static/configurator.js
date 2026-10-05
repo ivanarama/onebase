@@ -363,6 +363,15 @@ function cfgToggleNum(sel, numId) {
   if (!n) return;
   n.style.display = (sel.value === 'number') ? '' : 'none';
 }
+function cfgToggleMultiline(sel) {
+  var label = sel.closest('td').querySelector('[data-cfg-multiline]');
+  if (!label) return;
+  var enabled = sel.value === 'string';
+  label.hidden = !enabled;
+  var checkbox = label.querySelector('input[type="checkbox"]');
+  checkbox.disabled = !enabled;
+  if (!enabled) checkbox.checked = false;
+}
 var _cfgNewFieldIdx = 0;
 function cfgDeleteField(btn) {
   var tr = btn && btn.closest ? btn.closest('tr') : null;
@@ -417,15 +426,21 @@ function cfgAddField(tblId, prefix, entityName, set) {
   if (!tbl) return;
   var refId = 'cfr-'+entityName+'-nf'+_cfgNewFieldIdx;
   var numId = 'cfn-'+entityName+'-nf'+_cfgNewFieldIdx;
+  var multiline = '';
+  if (tbl.getAttribute('data-cfg-multiline-fields') === '1') {
+    var fieldPrefix = prefix+'.'+_cfgNewFieldIdx;
+    multiline = '<input type="hidden" name="'+fieldPrefix+'.multiline_present" value="1">'
+      +'<label data-cfg-multiline><input type="checkbox" name="'+fieldPrefix+'.multiline" value="1"> '+T("Многострочный текст")+'</label>';
+  }
   var tr = document.createElement('tr');
   tr.innerHTML = '<td><input name="'+prefix+'.'+_cfgNewFieldIdx+'.name" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px" placeholder="ИмяПоля"></td>'
-    +'<td><select name="'+prefix+'.'+_cfgNewFieldIdx+'.type" onchange="cfgToggleRef(this,\''+refId+'\');cfgToggleNum(this,\''+numId+'\')">'
+    +'<td><select name="'+prefix+'.'+_cfgNewFieldIdx+'.type" onchange="cfgToggleRef(this,\''+refId+'\');cfgToggleNum(this,\''+numId+'\');cfgToggleMultiline(this)">'
     +cfgTypeOptionsHTML(set)
     +'</select>'
     +' <span id="'+numId+'" style="display:none" title="'+T("Длина, Точность")+'">'
     +'<input type="number" min="1" name="'+prefix+'.'+_cfgNewFieldIdx+'.length" placeholder="дл" style="width:46px;padding:2px 3px;border:1px solid #ccd0d8;border-radius:3px;font-size:11px">'
     +' , <input type="number" min="0" name="'+prefix+'.'+_cfgNewFieldIdx+'.scale" placeholder="точн" style="width:46px;padding:2px 3px;border:1px solid #ccd0d8;border-radius:3px;font-size:11px">'
-    +'</span></td>'
+    +'</span>'+multiline+'</td>'
     +'<td><select name="'+prefix+'.'+_cfgNewFieldIdx+'.ref" id="'+refId+'" style="display:none">'
     +'<option value="">'+T("— выбрать —")+'</option>'
     +'</select></td>';

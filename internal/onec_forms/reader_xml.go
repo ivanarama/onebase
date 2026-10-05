@@ -224,6 +224,9 @@ func parseElement(n *xmlNode, warns *Warnings) *IRElement {
 			el.Width = parseInt(c.Text)
 		case "Height":
 			el.Height = parseInt(c.Text)
+		case "MultiLine":
+			value := parseBool(c.Text)
+			el.Multiline = &value
 		case "Mask":
 			el.Mask = strings.TrimSpace(c.Text)
 		case "HorizontalStretch", "VerticalStretch":
