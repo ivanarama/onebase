@@ -44,6 +44,11 @@ type Base struct {
 	// этом адресе окно Предприятия, а поля запуска выше не используются.
 	// Подробности и границы — в client_base.go.
 	ServerURL string `yaml:"server_url,omitempty"`
+	// Companions — логические имена сопутствующих приложений рабочего места,
+	// которые лаунчер поднимает при открытии этой базы. Здесь только ИМЕНА: путь
+	// и аргументы берутся из манифеста рядом с исполняемым файлом лаунчера, а не
+	// отсюда и не из базы (см. companion.go). Неизвестное имя работу не ломает.
+	Companions []string `yaml:"companions,omitempty"`
 }
 
 // LauncherSettings — настройки самого лаунчера (не базы), лежат в том же
@@ -242,6 +247,7 @@ func decodeBaseNode(node *yaml.Node) (*Base, error) {
 var managedBaseYAMLKeys = []string{
 	"id", "control_token", "name", "config_source", "path", "db", "port",
 	"created", "last_opened", "db_type", "db_path", "host", "server_url",
+	"companions",
 }
 
 // patchBaseNode updates only fields owned by the current Base schema. Unknown
