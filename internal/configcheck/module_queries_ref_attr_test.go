@@ -54,7 +54,7 @@ fields:
 		t.Fatalf("migrate: %v", err)
 	}
 
-	issues := CheckModuleQueries(proj, func(sql string) error {
+	issues, _ := CheckModuleQueries(proj, func(sql string) error {
 		return db.ValidateQuery(ctx, sql)
 	})
 	if len(issues) != 0 {

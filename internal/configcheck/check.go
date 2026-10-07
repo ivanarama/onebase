@@ -416,8 +416,7 @@ func yamlScalarLine(path, value string) int {
 
 // CheckQueries compiles every query in widgets and reports. Compilation needs
 // metadata about registers, so this runs after the project has loaded.
-func CheckQueries(proj *project.Project) []Issue {
-	var issues []Issue
+func CheckQueries(proj *project.Project) (issues, warnings []Issue) {
 	opts := query.CompileOpts{
 		Registers:   proj.Registers,
 		InfoRegs:    proj.InfoRegisters,
@@ -434,13 +433,15 @@ func CheckQueries(proj *project.Project) []Issue {
 		}
 		o := opts
 		o.Params = params
-		if _, err := query.Compile(w.Query, o); err != nil {
+		if result, err := query.Compile(w.Query, o); err != nil {
 			issues = append(issues, Issue{
 				File:    "widgets/" + w.Name + ".yaml",
 				Object:  w.Name,
 				Kind:    "Виджет (запрос)",
 				Message: err.Error(),
 			})
+		} else {
+			warnings = append(warnings, queryTypeWarnings(result, "widgets/"+w.Name+".yaml", w.Name, "Виджет (запрос)", 0, 0)...)
 		}
 	}
 	for _, rep := range proj.Reports {
@@ -453,16 +454,18 @@ func CheckQueries(proj *project.Project) []Issue {
 		}
 		o := opts
 		o.Params = params
-		if _, err := query.Compile(rep.Query, o); err != nil {
+		if result, err := query.Compile(rep.Query, o); err != nil {
 			issues = append(issues, Issue{
 				File:    "reports/" + rep.Name + ".yaml",
 				Object:  rep.Name,
 				Kind:    "Отчёт (запрос)",
 				Message: err.Error(),
 			})
+		} else {
+			warnings = append(warnings, queryTypeWarnings(result, "reports/"+rep.Name+".yaml", rep.Name, "Отчёт (запрос)", 0, 0)...)
 		}
 	}
-	return issues
+	return issues, warnings
 }
 
 // CheckQueriesExecutable компилирует каждый запрос виджета/отчёта под SQLite и

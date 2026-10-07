@@ -238,6 +238,61 @@ func TestCheckThroughRootCommand(t *testing.T) {
 	}
 }
 
+// Регрессия #1351 идёт через настоящий argv/Cobra-маршрут пользователя: второй
+// SELECT оставляет runtime-семантику прежней, но больше не проходит check тихо.
+func TestCheckThroughRootWarnsAboutComplexTypedProjection(t *testing.T) {
+	dir := t.TempDir()
+	writeProcrunFixture(t, dir, "config/app.yaml", "name: check-warning-test\n")
+	writeProcrunFixture(t, dir, "documents/Заказ.yaml", `name: Заказ
+fields:
+  - name: Активен
+    type: bool
+  - name: Дата
+    type: date
+`)
+	writeProcrunFixture(t, dir, "reports/Типы.yaml", `name: Типы
+query: |
+  ВЫБРАТЬ Ссылка, Активен, Дата ИЗ Документ.Заказ
+  ОБЪЕДИНИТЬ ВСЕ
+  ВЫБРАТЬ Ссылка, Активен, Дата ИЗ Документ.Заказ
+`)
+	defer resetCheckFlags(t)
+
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	rootCmd.SetArgs([]string{"check", "--project", dir, "--json"})
+	runErr := rootCmd.Execute()
+	_ = w.Close()
+	os.Stdout = old
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	_ = r.Close()
+
+	if runErr != nil {
+		t.Fatalf("`onebase check` вернул ошибку при одном предупреждении: %v", runErr)
+	}
+	var result configcheck.Result
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("вывод не разбирается: %v\n%s", err, buf.String())
+	}
+	if !result.OK {
+		t.Fatalf("предупреждение не должно ломать check: %+v", result.Issues)
+	}
+	for _, warning := range result.Warnings {
+		if warning.Code == "query.complex-projection-types" &&
+			strings.Contains(warning.Message, "Ссылка, Активен, Дата") {
+			return
+		}
+	}
+	t.Fatalf("нет предупреждения о неприведённых типах: %+v", result.Warnings)
+}
+
 // resetCheckFlags возвращает глобальной команде исходное состояние: значения
 // флагов cobra живут в объекте команды, и следующий тест увидел бы чужой
 // --project.
