@@ -7,6 +7,8 @@ import (
 
 	"github.com/shopspring/decimal"
 
+	"github.com/ivantit66/onebase/internal/dsl/lexer"
+	"github.com/ivantit66/onebase/internal/dsl/parser"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 )
@@ -175,4 +177,99 @@ func readXMLError(t *testing.T, serializer *XDTOSerializer, text string) (messag
 	}()
 	serializer.CallMethod("ПрочитатьXML", []any{text})
 	return ""
+}
+
+func runXDTOScript(t *testing.T, ent *metadata.Entity, input, script string) (*runtime.Object, error) {
+	t.Helper()
+	prog, err := parser.New(lexer.New("Процедура Выполнить()\n"+script+"\nКонецПроцедуры", "xdto-test.os")).ParseProgram()
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := runtime.NewObject("Результат", metadata.KindDocument)
+	err = New().Run(prog.Procedures[0], result, map[string]any{
+		"Вход":             input,
+		"СериализаторXDTO": NewXDTOSerializer(xdtoTestRegistry{entity: ent}),
+	})
+	return result, err
+}
+
+func TestXDTOSerializerDSLTablePartEditRoundTrip(t *testing.T) {
+	ent := &metadata.Entity{Name: "Заказ", Kind: metadata.KindDocument,
+		TableParts: []metadata.TablePart{{Name: "Строки", Fields: []metadata.Field{
+			{Name: "Количество", Type: metadata.FieldTypeNumber},
+			{Name: "Комментарий", Type: metadata.FieldTypeString},
+		}}},
+	}
+	input := `<DocumentObject.Заказ><Ref>11111111-1111-1111-1111-111111111111</Ref><Строки><Количество>1</Количество><Комментарий>старое</Комментарий></Строки></DocumentObject.Заказ>`
+	result, err := runXDTOScript(t, ent, input, `
+ Док = СериализаторXDTO.ПрочитатьXML(Вход);
+ Существующая = Док.Строки.Получить(0);
+ Существующая.кОлИчЕсТвО = 2.5;
+ Существующая.комментарий = "изменено";
+ Стр = Док.Строки.Добавить();
+ Стр.КОЛИЧЕСТВО = 3.25;
+ Стр.Комментарий = "добавлено & сохранено";
+ ЭтотОбъект.XML = СериализаторXDTO.ЗаписатьXML(Док);
+ Повтор = СериализаторXDTO.ПрочитатьXML(ЭтотОбъект.XML);
+ Стр2 = Повтор.Строки.Получить(1);
+ ЭтотОбъект.Количество = Стр2.Количество;
+ ЭтотОбъект.Комментарий = Стр2.Комментарий;
+ ЭтотОбъект.Строк = Повтор.Строки.Количество();`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	output := result.Get("XML").(string)
+	for _, want := range []string{"<Количество>2.5</Количество>", "<Комментарий>изменено</Комментарий>", "<Количество>3.25</Количество>", "<Комментарий>добавлено &amp; сохранено</Комментарий>"} {
+		if !strings.Contains(output, want) {
+			t.Errorf("XML lost %s:\n%s", want, output)
+		}
+	}
+	n, ok := result.Get("Количество").(decimal.Decimal)
+	if !ok || !n.Equal(decimal.RequireFromString("3.25")) {
+		t.Errorf("round-trip quantity = %v", result.Get("Количество"))
+	}
+	if result.Get("Комментарий") != "добавлено & сохранено" || result.Get("Строк") != float64(2) {
+		t.Errorf("round-trip result = %+v", result.Fields)
+	}
+}
+
+func TestXDTOSerializerDSLRootBoundary(t *testing.T) {
+	ent := &metadata.Entity{Name: "Заказ", Kind: metadata.KindDocument}
+	id := "11111111-1111-1111-1111-111111111111"
+	root := `<DocumentObject.Заказ><Ref>` + id + `</Ref></DocumentObject.Заказ>`
+	for _, tc := range []struct {
+		name, input string
+		valid       bool
+	}{
+		{"root", root, true},
+		{"BOM and XML declaration", "\uFEFF<?xml version=\"1.0\"?>\n" + root, true},
+		{"trailing whitespace and comments", root + " \n<!-- end --><?note ok?>", true},
+		{"unknown wrapper", strings.Replace(root, "</DocumentObject.Заказ>", "<Unknown><Ref>22222222-2222-2222-2222-222222222222</Ref></Unknown></DocumentObject.Заказ>", 1), true},
+		{"external ref", root + "<Ref>22222222-2222-2222-2222-222222222222</Ref>", false},
+		{"second object", root + root, false},
+		{"trailing text", root + "garbage", false},
+		{"trailing non-XML whitespace", root + "\u00a0", false},
+		{"leading text", "garbage" + root, false},
+		{"trailing directive", root + "<!DOCTYPE Ref>", false},
+		{"unclosed root", strings.TrimSuffix(root, "</DocumentObject.Заказ>"), false},
+		{"nested ref", strings.Replace(root, "<Ref>"+id+"</Ref>", "<Ref><Ref>"+id+"</Ref></Ref>", 1), false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := runXDTOScript(t, ent, tc.input, `
+ Док = СериализаторXDTO.ПрочитатьXML(Вход);
+ ЭтотОбъект.XML = СериализаторXDTO.ЗаписатьXML(Док);`)
+			if !tc.valid {
+				if err == nil {
+					t.Fatal("ПрочитатьXML accepted invalid XML")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := result.Get("XML").(string); !strings.Contains(got, "<Ref>"+id+"</Ref>") {
+				t.Fatalf("XML lost original Ref: %s", got)
+			}
+		})
+	}
 }

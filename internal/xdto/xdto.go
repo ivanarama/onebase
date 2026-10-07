@@ -135,7 +135,7 @@ func Write(ent *metadata.Entity, obj *runtime.Object, opts Options) (string, err
 			fmt.Fprintf(&b, "\t<%s>\n", tp.Name)
 			for j := range tp.Fields {
 				f := &tp.Fields[j]
-				if err := writeElem(&b, 2, f.Name, fieldText(f, row[f.Name]), ""); err != nil {
+				if err := writeElem(&b, 2, f.Name, fieldText(f, rowValue(row, f.Name)), ""); err != nil {
 					return "", fmt.Errorf("xdto: %s.%s: %w", tp.Name, f.Name, err)
 				}
 			}
@@ -152,7 +152,7 @@ func Write(ent *metadata.Entity, obj *runtime.Object, opts Options) (string, err
 // записан, он известен только из описания реквизита.
 func Read(text string, resolve func(name string) *metadata.Entity) (*runtime.Object, Options, error) {
 	var opts Options
-	dec := xml.NewDecoder(strings.NewReader(text))
+	dec := xml.NewDecoder(strings.NewReader(strings.TrimPrefix(text, "\uFEFF")))
 	start, err := firstElement(dec)
 	if err != nil {
 		return nil, opts, err
@@ -178,13 +178,22 @@ func Read(text string, resolve func(name string) *metadata.Entity) (*runtime.Obj
 	for {
 		tok, err := dec.Token()
 		if err == io.EOF {
-			break
+			return nil, opts, fmt.Errorf("xdto: корень %q не закрыт", start.Name.Local)
 		}
 		if err != nil {
 			return nil, opts, fmt.Errorf("xdto: %w", err)
 		}
+		if end, ok := tok.(xml.EndElement); ok && end.Name == start.Name {
+			if err := finishDocument(dec); err != nil {
+				return nil, opts, err
+			}
+			return obj, opts, nil
+		}
 		el, ok := tok.(xml.StartElement)
 		if !ok {
+			if data, ok := tok.(xml.CharData); ok && strings.Trim(string(data), " \t\r\n") != "" {
+				return nil, opts, fmt.Errorf("xdto: текст вне реквизита объекта")
+			}
 			continue
 		}
 		local := el.Name.Local
@@ -195,6 +204,14 @@ func Read(text string, resolve func(name string) *metadata.Entity) (*runtime.Obj
 				return nil, opts, err
 			}
 			obj.TablePartRows[tp.Name] = append(obj.TablePartRows[tp.Name], row)
+			continue
+		}
+
+		if fieldForXMLName(ent, local) == nil && !strings.EqualFold(local, "Ref") &&
+			!strings.EqualFold(local, "DeletionMark") && !strings.EqualFold(local, "Posted") {
+			if err := dec.Skip(); err != nil {
+				return nil, opts, fmt.Errorf("xdto: %w", err)
+			}
 			continue
 		}
 
@@ -233,7 +250,41 @@ func Read(text string, resolve func(name string) *metadata.Entity) (*runtime.Obj
 			obj.Set(f.Name, parsed)
 		}
 	}
-	return obj, opts, nil
+}
+
+// rowValue читает и исходные имена метаданных, и lowercase-ключи новых строк DSL.
+func rowValue(row map[string]any, name string) any {
+	if v, ok := row[name]; ok {
+		return v
+	}
+	for key, value := range row {
+		if strings.EqualFold(key, name) {
+			return value
+		}
+	}
+	return nil
+}
+
+// После корня допустимы только пробелы, комментарии и инструкции обработки.
+func finishDocument(dec *xml.Decoder) error {
+	for {
+		tok, err := dec.Token()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("xdto: %w", err)
+		}
+		switch value := tok.(type) {
+		case xml.Comment, xml.ProcInst:
+			continue
+		case xml.CharData:
+			if strings.Trim(string(value), " \t\r\n") == "" {
+				continue
+			}
+		}
+		return fmt.Errorf("xdto: содержимое после корня объекта")
+	}
 }
 
 // RootName — имя корневого элемента для вида объекта.
@@ -404,6 +455,8 @@ func readText(dec *xml.Decoder, start xml.StartElement) (string, error) {
 			return "", fmt.Errorf("xdto: элемент %q: %w", start.Name.Local, err)
 		}
 		switch el := tok.(type) {
+		case xml.StartElement:
+			return "", fmt.Errorf("xdto: элемент %q содержит вложенный элемент %q", start.Name.Local, el.Name.Local)
 		case xml.CharData:
 			sb.Write(el)
 		case xml.EndElement:
@@ -425,6 +478,9 @@ func firstElement(dec *xml.Decoder) (xml.StartElement, error) {
 		}
 		if el, ok := tok.(xml.StartElement); ok {
 			return el, nil
+		}
+		if data, ok := tok.(xml.CharData); ok && strings.Trim(string(data), " \t\r\n") != "" {
+			return xml.StartElement{}, fmt.Errorf("xdto: текст перед корнем объекта")
 		}
 	}
 }
