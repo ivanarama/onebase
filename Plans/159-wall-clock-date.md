@@ -18,7 +18,7 @@
 `internal/storage/ddl.go:19`), на SQLite — ISO-текст в UTC. Показ приводится к
 зоне процесса: `fmtDateValue` (`internal/ui/templates.go:118`) делает
 `t.In(time.Local)`, ввод разбирается `ParseInLocation(…, time.Local)`
-(`internal/ui/form_attr_values.go:48`, `handlers_entity.go:541`).
+(`internal/ui/form_attr_values.go:48`, `handlers_entity.go:2341`).
 
 Круг замкнут и **сам по себе непротиворечив**: что записано через форму, то и
 прочитано. Приведение к местной зоне сделано намеренно — без него на хосте со
@@ -133,8 +133,12 @@ metadata.FieldTypeDate` или `switch f.Type`. Таких мест на сег�
 `fmtDateValue(v any)` (`ui/templates.go:118`) и `fmtReportCell(v any)`
 (`ui/widget_helpers.go:222`) типа поля не знают вовсе; `normalizeFieldValue(f,
 v any)` (`storage/crud.go:556`) и `exchange/package.go:899` знают, но значение к
-ним всё равно приходит как `any`. Обе группы делают `v.(time.Time)` и приводят
-результат к местной зоне.
+ним всё равно приходит как `any`. Обработка `time.Time` зависит от слоя:
+UI приводит значение к местной зоне для показа; `normalizeDate`
+(`storage/crud.go:573–583`) получает `time.Time` из значения даты, возвращая
+уже переданный `time.Time` без изменения зоны; сериализация exchange
+(`package.go:899–903`) делает `v.(time.Time)` и пишет
+`t.UTC().Format(time.RFC3339)`.
 
 Поэтому `storage` сканирует новые колонки не в `time.Time`, а в отдельный тип
 (рабочее имя `metadata.LocalTime`). Что это даёт:
