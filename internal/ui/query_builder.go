@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
+	"strings"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 )
@@ -23,14 +24,14 @@ type qbSource struct {
 }
 
 func (s *Server) queryBuilder(w http.ResponseWriter, r *http.Request) {
-	sources := s.buildQuerySources()
+	sources := s.buildQuerySources(s.resolveLang(r))
 	schemaJSON, _ := json.Marshal(sources)
 	s.render(w, r, "page-query-builder", map[string]any{
 		"Schema": template.JS(schemaJSON), //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
 	})
 }
 
-func (s *Server) buildQuerySources() []qbSource {
+func (s *Server) buildQuerySources(lang string) []qbSource {
 	var sources []qbSource
 
 	// Catalogs
@@ -43,9 +44,7 @@ func (s *Server) buildQuerySources() []qbSource {
 			Label: "Справочник." + e.Name,
 			Group: "Справочники",
 		}
-		for _, f := range e.Fields {
-			src.Fields = append(src.Fields, qbField{Name: f.Name, Label: f.Name, Type: fieldTypeName(f.Type)})
-		}
+		src.Fields = s.queryBuilderEntityFields(e, lang)
 		sources = append(sources, src)
 	}
 
@@ -59,9 +58,7 @@ func (s *Server) buildQuerySources() []qbSource {
 			Label: "Документ." + e.Name,
 			Group: "Документы",
 		}
-		for _, f := range e.Fields {
-			src.Fields = append(src.Fields, qbField{Name: f.Name, Label: f.Name, Type: fieldTypeName(f.Type)})
-		}
+		src.Fields = s.queryBuilderEntityFields(e, lang)
 		sources = append(sources, src)
 	}
 
@@ -179,6 +176,24 @@ func (s *Server) buildQuerySources() []qbSource {
 	}
 
 	return sources
+}
+
+// Системные имена доступны в конструкторе на тех же условиях, что в Compile:
+// собственный реквизит важнее алиаса, Проведен есть только у документа.
+func (s *Server) queryBuilderEntityFields(e *metadata.Entity, lang string) []qbField {
+	fields := make([]qbField, 0, len(e.Fields)+2)
+	own := make(map[string]bool, len(e.Fields))
+	for _, f := range e.Fields {
+		fields = append(fields, qbField{Name: f.Name, Label: f.Name, Type: fieldTypeName(f.Type)})
+		own[strings.ToLower(f.Name)] = true
+	}
+	if e.Kind == metadata.KindDocument && !own["проведен"] {
+		fields = append(fields, qbField{Name: "Проведен", Label: s.tr(lang, "Проведен"), Type: "bool"})
+	}
+	if !own["пометкаудаления"] {
+		fields = append(fields, qbField{Name: "ПометкаУдаления", Label: s.tr(lang, "ПометкаУдаления"), Type: "bool"})
+	}
+	return fields
 }
 
 func fieldTypeName(t metadata.FieldType) string {

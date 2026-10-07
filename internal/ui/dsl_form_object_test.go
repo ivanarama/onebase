@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -14,6 +16,78 @@ import (
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/shopspring/decimal"
 )
+
+func TestFormObjectThis_WriteInsideOuterTransactionKeepsLiveIdentityAndRollsBackState(t *testing.T) {
+	entity := &metadata.Entity{
+		Name: "ТранзакционныйОбъект", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+	}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{entity})
+	obj := runtime.NewObject(entity.Name, entity.Kind)
+	obj.Fields["Наименование"] = "first"
+
+	err := s.store.WithTx(ctx, func(txCtx context.Context) error {
+		this := s.newFormObjectThisLive(txCtx, nil, obj, entity, nil, true)
+		if err := this.write(); err != nil {
+			return err
+		}
+		if !this.saved || this.expectedVersion == nil || *this.expectedVersion != 1 {
+			t.Fatalf("first savepoint did not expose live identity/version: saved=%v version=%v", this.saved, this.expectedVersion)
+		}
+		ref, ok := this.Get("Ссылка").(*interpreter.Ref)
+		if !ok || ref.UUID != obj.ID.String() {
+			t.Fatalf("self-reference unavailable before outer commit: %#v", this.Get("Ссылка"))
+		}
+		obj.Fields["Наименование"] = "second"
+		if err := this.write(); err != nil {
+			return err
+		}
+		if this.expectedVersion == nil || *this.expectedVersion != 2 {
+			t.Fatalf("second write used new-object semantics: version=%v", this.expectedVersion)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, err := s.store.List(ctx, entity.Name, entity, storage.ListParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, exists, err := s.store.EntityVersionExists(ctx, entity.Name, obj.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0]["Наименование"] != "second" || !exists || version != 2 {
+		t.Fatalf("outer commit result = %#v version=%d exists=%v, want one version-2 row", rows, version, exists)
+	}
+
+	rollbackObject := runtime.NewObject(entity.Name, entity.Kind)
+	rollbackObject.Fields["Наименование"] = "rollback"
+	var rollbackThis *formObjectThis
+	rollbackCause := errors.New("rollback form object state")
+	err = s.store.WithTx(ctx, func(txCtx context.Context) error {
+		rollbackThis = s.newFormObjectThisLive(txCtx, nil, rollbackObject, entity, nil, true)
+		if err := rollbackThis.write(); err != nil {
+			return err
+		}
+		if !rollbackThis.saved || rollbackThis.expectedVersion == nil {
+			t.Fatal("savepoint state was not visible before rollback")
+		}
+		return rollbackCause
+	})
+	if !errors.Is(err, rollbackCause) {
+		t.Fatalf("rollback error=%v, want %v", err, rollbackCause)
+	}
+	if rollbackThis.saved || rollbackThis.expectedVersion != nil {
+		t.Fatalf("rollback retained saved state: saved=%v version=%v", rollbackThis.saved, rollbackThis.expectedVersion)
+	}
+	for _, key := range []string{"ссылка", "reference", "_version"} {
+		if _, exists := rollbackObject.Fields[key]; exists {
+			t.Fatalf("rollback retained service field %q: %#v", key, rollbackObject.Fields)
+		}
+	}
+}
 
 func TestFormObjectThis_DeclaredEmptyValuesAreTypedWithoutMutation(t *testing.T) {
 	target := &metadata.Entity{Name: "Контрагенты", Kind: metadata.KindCatalog}

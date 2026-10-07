@@ -70,17 +70,20 @@ jobs:
             echo "::group::$project"
             out="$("$tmp/onebase" lint --project "$project" --json)"
             issues="$(printf '%s' "$out" | jq '(.issues // []) | length')"
-            warnings="$(printf '%s' "$out" | jq '(.warnings // []) | length')"
+            # Срез A плана 162 намеренно показывает переходные RBAC warnings.
+            # Прочие предупреждения и все ошибки по-прежнему блокируют сборку.
+            warnings="$(printf '%s' "$out" | jq '[.warnings[]? | select(.code != "rbac.processors-implicit-allow" and .code != "rbac.processors-explicit-allow-all")] | length')"
+            transition_warnings="$(printf '%s' "$out" | jq '[.warnings[]? | select(.code == "rbac.processors-implicit-allow" or .code == "rbac.processors-explicit-allow-all")] | length')"
             if [ "$issues" -ne 0 ] || [ "$warnings" -ne 0 ]; then
-              echo "::error::$project has $issues issue(s) and $warnings warning(s)"
+              echo "::error::$project has $issues issue(s) and $warnings blocking warning(s)"
               printf '%s' "$out" | jq -r '
-                (.issues // []), (.warnings // [])
+                (.issues // []), (.warnings // [] | map(select(.code != "rbac.processors-implicit-allow" and .code != "rbac.processors-explicit-allow-all")))
                 | .[]
                 | "\(.file // "(конфигурация)"):\(.line // 0):\(.column // 0): [\(.kind // "")] [\(.code // "")] \(.message)"
               '
               failed=1
             else
-              echo "$project: lint clean"
+              echo "$project: lint clean ($transition_warnings transition warning(s))"
             fi
             echo "::endgroup::"
           done
@@ -127,7 +130,7 @@ jobs:
           trap 'rm -rf "$tmp"' EXIT
           go build -o "$tmp/onebase" ./cmd/onebase
           failed=0
-          for ex in minimal callcenter trade cms; do
+          for ex in minimal callcenter trade cms accounting; do
             echo "::group::onebase test $ex"
             out="$("$tmp/onebase" test --project "examples/$ex" --sqlite "$tmp/$ex.db" --format tap 2>&1)"; code=$?
             echo "$out"
@@ -679,7 +682,7 @@ jobs:
           # (round-trip на выделенной базе, чтобы разрушительный restore не
           # затронул общую onebase_test). Требует pg_dump/psql — см. шаг выше.
           go test -race -count=1 -timeout 10m -tags integration ./internal/backup \
-            -run '^(TestPostgresBackupRestoreRoundTrip|TestUniversalBackupRoundTripInNonPublicSchema)$'
+            -run '^(TestPostgresBackupRestoreRoundTrip|TestUniversalBackupRoundTripInNonPublicSchema|TestUniversalNavigationSettingsMatrix)$'
           # Run the whole UI package while TEST_DATABASE_URL is present. Every
           # dbtest.ForEachDialect call therefore executes its PostgreSQL branch,
           # including a newly added matrix test without maintaining a fragile
@@ -706,9 +709,15 @@ jobs:
           go-version-file: '.go-version'
           cache: true
       - name: govulncheck
+        # Пайп через tools/govulnpolicy: GO-2026-6452 (excelize, CVE-2026-59162)
+        # в vulndb записан без fixed-версии, поэтому голый govulncheck считает
+        # уязвимой ЛЮБУЮ версию — даже запиненный коммит с исправлением. Фильтр
+        # гасит ТОЛЬКО этот advisory и только при точном совпадении версии с
+        # пином из go.mod; любой другой достижимый OSV, откат пина или оборванный
+        # запуск роняют проверку. Условие снятия записи — в комментарии там же.
         run: |
           go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
-          govulncheck ./...
+          govulncheck -json ./... | go run ./tools/govulnpolicy
 
   bench:
     # Контроль регрессий производительности: гоняем микробенчмарки горячих путей

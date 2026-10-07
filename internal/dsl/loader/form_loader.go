@@ -21,38 +21,69 @@ func NewFormLoader() *FormLoader {
 	return &FormLoader{}
 }
 
-// LoadEntityForms loads all form modules for an entity from src/ directory
+// LoadEntityForms loads all form modules for an entity from src/ directory.
+//
+// Имена файлов ИЩУТСЯ в каталоге, а не вычисляются: раньше модуль формы
+// собирался как strings.ToLower(entityName)+".form.os" и сразу открывался, и на
+// регистрозависимой файловой системе файл `Заказы.form.os` молча не
+// подхватывался — форма оставалась без модуля, а обработчики просто не
+// срабатывали (#1452). #1317 тем же способом починил поиск каталога управляемых
+// форм: сопоставление по факту, а не по вычисленному имени.
 func (fl *FormLoader) LoadEntityForms(srcDir, entityName string) ([]*metadata.FormModule, error) {
 	var forms []*metadata.FormModule
 
-	// Try to load object form (entity.form.os)
-	objectFormFile := filepath.Join(srcDir, metadata.ObjectFormFileName(entityName))
-	if form, err := fl.loadFormModule(objectFormFile, entityName, "ФормаОбъекта", "object"); err == nil {
-		forms = append(forms, form)
-	}
-
-	// Try to load list form
-	listFormFile := filepath.Join(srcDir, strings.ToLower(entityName)+"_list.form.os")
-	if _, err := os.Stat(listFormFile); err == nil {
-		if form, err := fl.loadFormModule(listFormFile, entityName, "ФормаСписка", "list"); err == nil {
-			forms = append(forms, form)
-		}
-	}
-
-	// Try to load choice form
-	choiceFormFile := filepath.Join(srcDir, strings.ToLower(entityName)+"_choice.form.os")
-	if _, err := os.Stat(choiceFormFile); err == nil {
-		if form, err := fl.loadFormModule(choiceFormFile, entityName, "ФормаВыбора", "choice"); err == nil {
-			forms = append(forms, form)
-		}
-	}
-
-	// Load custom forms (pattern: entity_formname.form.os)
 	files, err := os.ReadDir(srcDir)
 	if err != nil {
 		return forms, nil
 	}
 
+	// Два файла, различающиеся только регистром, на такой ФС — РАЗНЫЕ файлы.
+	// Точное имя в нижнем регистре старше любого другого: проект, который
+	// грузился до этой правки, обязан продолжать грузить тот же самый файл, а
+	// новое поведение получают только те, у кого канонического имени нет.
+	// Среди остальных берём первый по порядку каталога (os.ReadDir отдаёт
+	// записи отсортированными), чтобы выбор не зависел от файловой системы.
+	actualByLower := make(map[string]string, len(files))
+	for _, file := range files {
+		if file.IsDir() {
+			continue
+		}
+		name := file.Name()
+		lower := strings.ToLower(name)
+		if prev, seen := actualByLower[lower]; !seen || (prev != lower && name == lower) {
+			actualByLower[lower] = name
+		}
+	}
+	resolve := func(want string) (string, bool) {
+		actual, ok := actualByLower[strings.ToLower(want)]
+		if !ok {
+			return "", false
+		}
+		return filepath.Join(srcDir, actual), true
+	}
+
+	// Object form (entity.form.os)
+	if path, ok := resolve(metadata.ObjectFormFileName(entityName)); ok {
+		if form, err := fl.loadFormModule(path, entityName, "ФормаОбъекта", "object"); err == nil {
+			forms = append(forms, form)
+		}
+	}
+
+	// List form
+	if path, ok := resolve(strings.ToLower(entityName) + "_list.form.os"); ok {
+		if form, err := fl.loadFormModule(path, entityName, "ФормаСписка", "list"); err == nil {
+			forms = append(forms, form)
+		}
+	}
+
+	// Choice form
+	if path, ok := resolve(strings.ToLower(entityName) + "_choice.form.os"); ok {
+		if form, err := fl.loadFormModule(path, entityName, "ФормаВыбора", "choice"); err == nil {
+			forms = append(forms, form)
+		}
+	}
+
+	// Custom forms (pattern: entity_formname.form.os)
 	prefix := strings.ToLower(entityName) + "_"
 	suffix := ".form.os"
 
@@ -61,21 +92,40 @@ func (fl *FormLoader) LoadEntityForms(srcDir, entityName string) ([]*metadata.Fo
 			continue
 		}
 		name := file.Name()
-		if strings.HasPrefix(name, prefix) && strings.HasSuffix(name, suffix) {
-			formName := strings.TrimPrefix(name, prefix)
-			formName = strings.TrimSuffix(formName, suffix)
-			formName = upperFirst(formName)
+		if !hasPrefixFold(name, prefix) || !hasSuffixFold(name, suffix) {
+			continue
+		}
+		// Тот же выбор представителя, что и у стандартных форм: иначе пара
+		// файлов, различающихся регистром, дала бы две формы с одним именем.
+		if actualByLower[strings.ToLower(name)] != name {
+			continue
+		}
+		// Имя формы берём из ФАКТИЧЕСКОГО имени файла, а не из приведённого к
+		// нижнему регистру: `заказ_ПечатьСчёта.form.os` обязан остаться формой
+		// «ПечатьСчёта», а не «Печатьсчёта».
+		formName := upperFirst(name[len(prefix) : len(name)-len(suffix)])
 
-			if !metadata.IsStandardForm(formName) {
-				fullPath := filepath.Join(srcDir, name)
-				if form, err := fl.loadFormModule(fullPath, entityName, formName, "custom"); err == nil {
-					forms = append(forms, form)
-				}
+		if !metadata.IsStandardForm(formName) {
+			fullPath := filepath.Join(srcDir, name)
+			if form, err := fl.loadFormModule(fullPath, entityName, formName, "custom"); err == nil {
+				forms = append(forms, form)
 			}
 		}
 	}
 
 	return forms, nil
+}
+
+// hasPrefixFold и hasSuffixFold сравнивают края имени файла без учёта регистра.
+// Срез берётся по длине образца: если граница не попала на границу руны,
+// strings.EqualFold просто вернёт false, и файл не совпадёт — молчаливой ошибки
+// это не даёт.
+func hasPrefixFold(s, prefix string) bool {
+	return len(s) >= len(prefix) && strings.EqualFold(s[:len(prefix)], prefix)
+}
+
+func hasSuffixFold(s, suffix string) bool {
+	return len(s) >= len(suffix) && strings.EqualFold(s[len(s)-len(suffix):], suffix)
 }
 
 func upperFirst(s string) string {

@@ -39,6 +39,11 @@ type Base struct {
 	// Пусто/"127.0.0.1" — только этот компьютер (умолчание, secure-by-default);
 	// "0.0.0.0" — все интерфейсы, база доступна из локальной сети.
 	Host string `yaml:"host,omitempty"`
+	// ServerURL — адрес уже работающего сервера onebase. Непусто = запись
+	// клиентского подключения: лаунчер процессом не владеет, только открывает на
+	// этом адресе окно Предприятия, а поля запуска выше не используются.
+	// Подробности и границы — в client_base.go.
+	ServerURL string `yaml:"server_url,omitempty"`
 }
 
 // LauncherSettings — настройки самого лаунчера (не базы), лежат в том же
@@ -236,7 +241,7 @@ func decodeBaseNode(node *yaml.Node) (*Base, error) {
 
 var managedBaseYAMLKeys = []string{
 	"id", "control_token", "name", "config_source", "path", "db", "port",
-	"created", "last_opened", "db_type", "db_path", "host",
+	"created", "last_opened", "db_type", "db_path", "host", "server_url",
 }
 
 // patchBaseNode updates only fields owned by the current Base schema. Unknown
@@ -703,7 +708,9 @@ func (s *Store) Add(b *Base) error {
 	if b.Created.IsZero() {
 		b.Created = time.Now()
 	}
-	if b.ConfigSource == "" {
+	// Источник конфигурации — свойство базы, которую лаунчер поднимает сам.
+	// Клиентскому подключению он не нужен: конфигурацию читает сервер.
+	if b.ConfigSource == "" && !b.Client() {
 		b.ConfigSource = "database"
 	}
 	return s.mutateDocument(func(doc *yaml.Node) (bool, error) {
@@ -722,15 +729,20 @@ func (s *Store) Add(b *Base) error {
 			}
 			registered = append(registered, existing)
 		}
-		// An omitted port is an allocation request, not an implicit request for a
-		// duplicate 8080. Choose it while holding the same cross-process lock.
-		if b.Port == 0 {
-			b.Port = freeRegistryPort(registered)
-		}
-		if owner := portOwner(registered, b.ID, b.Port); owner != nil {
-			return false, &BasePortConflictError{
-				Port: b.Port, OwnerID: owner.ID, OwnerName: owner.Name,
-				SuggestedPort: freeRegistryPort(registered),
+		// Клиентское подключение порта не занимает: лаунчер на этой машине ничего
+		// не слушает. Выделить ему порт означало бы отнять его у базы, которую
+		// лаунчер действительно поднимает, и выдумать конфликт на пустом месте.
+		if !b.Client() {
+			// An omitted port is an allocation request, not an implicit request for a
+			// duplicate 8080. Choose it while holding the same cross-process lock.
+			if b.Port == 0 {
+				b.Port = freeRegistryPort(registered)
+			}
+			if owner := portOwner(registered, b.ID, b.Port); owner != nil {
+				return false, &BasePortConflictError{
+					Port: b.Port, OwnerID: owner.ID, OwnerName: owner.Name,
+					SuggestedPort: freeRegistryPort(registered),
+				}
 			}
 		}
 		var value yaml.Node
@@ -773,7 +785,9 @@ func (s *Store) Update(b *Base) error {
 		}
 		// Preserve the ability to repair or rename a legacy registry that already
 		// contains duplicates, but reject every newly introduced collision.
-		if b.Port != existing.Port {
+		// Клиентское подключение порта не занимает — ни проверять, ни освобождать
+		// нечего, в том числе когда обычную запись переключают в клиентскую.
+		if !b.Client() && b.Port != existing.Port {
 			if owner := portOwner(registered, b.ID, b.Port); owner != nil {
 				return false, &BasePortConflictError{
 					Port: b.Port, OwnerID: owner.ID, OwnerName: owner.Name,

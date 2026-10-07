@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -43,6 +44,38 @@ type exportJob struct {
 	StartedAt   time.Time
 	FinishedAt  time.Time
 	ExpiresAt   time.Time
+}
+
+// exportJobSummary contains only fields that are safe to render in HTML.
+// In particular, it never carries the exported file's Data []byte.
+type exportJobSummary struct {
+	ID        string
+	Kind      string
+	Name      string
+	Format    string
+	Status    exportJobStatus
+	Error     string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}
+
+func (job exportJob) summary() exportJobSummary {
+	return exportJobSummary{
+		ID: job.ID, Kind: job.Kind, Name: job.Name, Format: job.Format,
+		Status: job.Status, Error: job.Error,
+		CreatedAt: job.CreatedAt, ExpiresAt: job.ExpiresAt,
+	}
+}
+
+type exportJobListItem struct {
+	exportJobSummary
+	StatusLabel  string
+	FormatLabel  string
+	CreatedText  string
+	ExpiresText  string
+	StatusURL    string
+	DownloadURL  string
+	Downloadable bool
 }
 
 type exportJobStore struct {
@@ -133,6 +166,28 @@ func (s *exportJobStore) get(id string) (exportJob, bool) {
 		return exportJob{}, false
 	}
 	return *job, true
+}
+
+// list returns a snapshot for one owner, newest first. Cleanup and owner
+// filtering happen under the same lock, so expired or foreign jobs cannot
+// enter a rendered list. File payloads are deliberately excluded.
+func (s *exportJobStore) list(owner string) []exportJobSummary {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.cleanupLocked(time.Now())
+	items := make([]exportJobSummary, 0)
+	for _, job := range s.jobs {
+		if job.Owner == owner {
+			items = append(items, job.summary())
+		}
+	}
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].CreatedAt.Equal(items[j].CreatedAt) {
+			return items[i].ID > items[j].ID
+		}
+		return items[i].CreatedAt.After(items[j].CreatedAt)
+	})
+	return items
 }
 
 func (s *exportJobStore) markRunning(id string) {
@@ -260,8 +315,9 @@ func (s *Server) exportJobStatus(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	summary := job.summary()
 	s.render(w, r, "page-export-job", map[string]any{
-		"Job":            job,
+		"Job":            summary,
 		"JobDone":        job.Status == exportJobDone,
 		"JobFailed":      job.Status == exportJobError,
 		"JobStatusLabel": exportJobStatusLabel(job.Status),
@@ -271,6 +327,25 @@ func (s *Server) exportJobStatus(w http.ResponseWriter, r *http.Request) {
 		"CreatedAtText":  job.CreatedAt.Format("15:04:05"),
 		"ExpiresAtText":  job.ExpiresAt.Format("15:04:05"),
 	})
+}
+
+func (s *Server) exportJobList(w http.ResponseWriter, r *http.Request) {
+	summaries := s.exportJobStore().list(currentUserLogin(r))
+	items := make([]exportJobListItem, 0, len(summaries))
+	for _, job := range summaries {
+		statusURL := "/ui/export-jobs/" + job.ID
+		items = append(items, exportJobListItem{
+			exportJobSummary: job,
+			StatusLabel:      exportJobStatusLabel(job.Status),
+			FormatLabel:      exportJobFormatLabel(job.Format),
+			CreatedText:      job.CreatedAt.Format("2006-01-02 15:04:05"),
+			ExpiresText:      job.ExpiresAt.Format("2006-01-02 15:04:05"),
+			StatusURL:        statusURL,
+			DownloadURL:      statusURL + "/download",
+			Downloadable:     job.Status == exportJobDone,
+		})
+	}
+	s.render(w, r, "page-export-jobs", map[string]any{"Jobs": items})
 }
 
 func (s *Server) exportJobDownload(w http.ResponseWriter, r *http.Request) {
@@ -294,7 +369,7 @@ func (s *Server) exportJobForRequest(w http.ResponseWriter, r *http.Request) (ex
 		http.NotFound(w, r)
 		return exportJob{}, false
 	}
-	if job.Owner != "" && currentUserLogin(r) != job.Owner {
+	if currentUserLogin(r) != job.Owner {
 		s.renderForbidden(w, r)
 		return exportJob{}, false
 	}

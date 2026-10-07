@@ -31,6 +31,8 @@ func TestAIGuide_РазделыСобытийИПустыхЗначений(t *t
 		"debounce 250 мс",
 		"ТОЛЬКО `ИмяТабличнойЧасти`",
 		"readonly",
+		"Обычная кнопка «Записать»",
+		"ПередЗакрытием(Отказ)",
 	} {
 		if !strings.Contains(g, want) {
 			t.Errorf("в guide нет ожидаемого фрагмента: %q", want)
@@ -179,7 +181,7 @@ func TestAIGuide_ПеременныеКонтекстаТЧИзСловаря(t 
 		known[strings.ToLower(v)] = true
 	}
 	// Переменные вне словаря контекста ТЧ: их кладёт не addValidatedTPEventContext.
-	for _, extra := range []string{"объект", "этотобъект", "подборрезультат"} {
+	for _, extra := range []string{"объект", "этотобъект", "подборрезультат", "подборзапрос"} {
 		known[extra] = true
 	}
 	for _, name := range backquoted(section) {

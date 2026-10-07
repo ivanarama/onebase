@@ -4,6 +4,8 @@ import (
 	"context"
 	"sort"
 	"strings"
+
+	"github.com/ivantit66/onebase/internal/typedempty"
 )
 
 // ConstantsDB — то, что нужно объекту Константы от хранилища.
@@ -26,26 +28,61 @@ type ConstantsDB interface {
 // уходит в базу сразу и обновляет снимок, поэтому в пределах прогона Get после
 // Set видит записанное.
 type ConstantsRoot struct {
-	ctx   context.Context
-	db    ConstantsDB
-	names map[string]string // нижний регистр → объявленное имя
-	cache map[string]any    // объявленное имя → значение
+	ctx              context.Context
+	db               ConstantsDB
+	names            map[string]string // нижний регистр → объявленное имя
+	cache            map[string]any    // объявленное имя → значение
+	descriptors      map[string]typedempty.Descriptor
+	referenceFactory func(typedempty.Descriptor) any
+	// refPresenter достаёт представление ссылочной константы (подпись цели).
+	// nil — ссылка остаётся без подписи: UUID подписью не служит (#1536).
+	refPresenter func(ctx context.Context, entityName, uuid string) string
+	// refCtxSrc — «живой» контекст DSL-транзакции для чтения подписи. Без него
+	// чтение подписи из константы, затребованной внутри НачатьТранзакцию,
+	// уходило бы вторым соединением (пул SQLite — одно соединение, см. #1272).
+	refCtxSrc CtxSource
+}
+
+// DeclaredConstant is the immutable metadata needed by the DSL read boundary.
+// The full metadata.Constant stays owned by runtime.Registry.
+type DeclaredConstant struct {
+	Name       string
+	Descriptor typedempty.Descriptor
 }
 
 // NewConstantsRoot собирает объект Константы. declared — имена из конфигурации,
 // values — снимок значений из базы.
 func NewConstantsRoot(ctx context.Context, db ConstantsDB, declared []string, values map[string]any) *ConstantsRoot {
-	r := &ConstantsRoot{
-		ctx:   ctx,
-		db:    db,
-		names: make(map[string]string, len(declared)),
-		cache: make(map[string]any, len(values)),
+	typed := make([]DeclaredConstant, 0, len(declared))
+	for _, name := range declared {
+		typed = append(typed, DeclaredConstant{Name: name})
 	}
-	for _, n := range declared {
-		if n == "" {
+	return NewTypedConstantsRoot(ctx, db, typed, values, nil)
+}
+
+// NewTypedConstantsRoot builds the production constants object with declared
+// types. SQL NULL remains nil in cache and is materialized only by Get.
+func NewTypedConstantsRoot(
+	ctx context.Context,
+	db ConstantsDB,
+	declared []DeclaredConstant,
+	values map[string]any,
+	referenceFactory func(typedempty.Descriptor) any,
+) *ConstantsRoot {
+	r := &ConstantsRoot{
+		ctx:              ctx,
+		db:               db,
+		names:            make(map[string]string, len(declared)),
+		cache:            make(map[string]any, len(values)),
+		descriptors:      make(map[string]typedempty.Descriptor, len(declared)),
+		referenceFactory: referenceFactory,
+	}
+	for _, constant := range declared {
+		if constant.Name == "" {
 			continue
 		}
-		r.names[strings.ToLower(n)] = n
+		r.names[strings.ToLower(constant.Name)] = constant.Name
+		r.descriptors[constant.Name] = constant.Descriptor
 	}
 	for k, v := range values {
 		// Значение из базы может лежать под именем, которого в конфигурации уже
@@ -59,9 +96,68 @@ func NewConstantsRoot(ctx context.Context, db ConstantsDB, declared []string, va
 	return r
 }
 
+// WithRefPresenter подключает читателя подписей ссылочных констант. Хост
+// решает, по каким правилам читать подпись (права, маскирование, контекст):
+// interpreter знает только контракт «пустая строка — подписи нет».
+func (r *ConstantsRoot) WithRefPresenter(presenter func(ctx context.Context, entityName, uuid string) string) *ConstantsRoot {
+	r.refPresenter = presenter
+	return r
+}
+
+// WithRefCtxSource подключает «живой» источник контекста: чтение подписи из
+// константы, затребованной внутри НачатьТранзакцию, обязано идти в той же
+// транзакции, а не вторым соединением.
+func (r *ConstantsRoot) WithRefCtxSource(src CtxSource) *ConstantsRoot {
+	r.refCtxSrc = src
+	return r
+}
+
+func (r *ConstantsRoot) presentationCtx() context.Context {
+	if r.refCtxSrc != nil {
+		if ctx := r.refCtxSrc.Ctx(); ctx != nil {
+			return ctx
+		}
+	}
+	if r.ctx != nil {
+		return r.ctx
+	}
+	return context.Background()
+}
+
 func (r *ConstantsRoot) Get(name string) any {
 	if canon, ok := r.names[strings.ToLower(name)]; ok {
-		return r.cache[canon]
+		raw := r.cache[canon]
+		desc, declared := r.descriptors[canon]
+		if !declared {
+			return raw
+		}
+		if desc.RefEntity != "" {
+			if r.referenceFactory == nil {
+				return raw
+			}
+			value := r.referenceFactory(desc)
+			ref, ok := value.(*Ref)
+			if !ok || ref == nil {
+				return raw
+			}
+			if raw != nil {
+				if uuid, ok := referenceUUID(raw); ok {
+					ref.UUID = uuid
+				} else {
+					ref.UUID = strings.TrimSpace(MatchValueString(raw))
+				}
+				// Представление даёт хост: подпись цели по тем же правилам, что
+				// видит пользователь в списках. UUID, выданный за наименование,
+				// молча уезжал в письма и печатные формы (#1536); у хоста без
+				// читателя подписи честнее пустое — как у недоступной ссылки.
+				ref.Name = ""
+				if r.refPresenter != nil && ref.UUID != "" {
+					ref.Name = r.refPresenter(r.presentationCtx(), desc.RefEntity, ref.UUID)
+				}
+			}
+			return ref
+		}
+		return typedempty.Normalize(desc, raw, nil)
 	}
 	return nil
 }
@@ -82,11 +178,25 @@ func (r *ConstantsRoot) Set(name string, v any) {
 		RaiseUserError("Константы: запись «" + canon + "» невозможна — нет соединения с базой")
 		return
 	}
-	if err := r.db.SetConstant(r.ctx, canon, v); err != nil {
+	stored := v
+	if desc, declared := r.descriptors[canon]; declared && desc.RefEntity != "" {
+		if uuid, ok := referenceUUID(v); ok {
+			stored = uuid
+		}
+	}
+	if err := r.db.SetConstant(r.ctx, canon, stored); err != nil {
 		RaiseUserError("Константы: запись «" + canon + "»: " + err.Error())
 		return
 	}
-	r.cache[canon] = v
+	r.cache[canon] = stored
+}
+
+func referenceUUID(value any) (string, bool) {
+	ref, ok := value.(interface{ GetRefUUID() string })
+	if !ok || value == nil {
+		return "", false
+	}
+	return strings.TrimSpace(ref.GetRefUUID()), true
 }
 
 // hint перечисляет объявленные константы: имя ошиблись почти всегда в регистре

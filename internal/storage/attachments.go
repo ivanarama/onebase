@@ -157,6 +157,9 @@ func (db *DB) ListAttachments(ctx context.Context, ownerKind, ownerName string, 
 // file_storage=s3) and records metadata. In s3 mode the content is staged to a
 // temp file to bound memory, then uploaded; the row records loc='s3'.
 func (db *DB) UploadAttachment(ctx context.Context, ownerKind, ownerName string, ownerID uuid.UUID, filename, mimeType, uploadedBy string, r io.Reader, maxSizeBytes int64) (Attachment, error) {
+	if err := writeAllowed(ctx); err != nil {
+		return Attachment{}, err
+	}
 	if err := validateAttachmentOwnerName(ownerName); err != nil {
 		return Attachment{}, err
 	}
@@ -457,6 +460,9 @@ func (t *tempDirFile) Close() error {
 // object). Inside a transaction the physical removal is delayed until the outer
 // commit, so a rollback cannot leave a metadata row pointing to missing content.
 func (db *DB) DeleteAttachment(ctx context.Context, id uuid.UUID) error {
+	if err := writeAllowed(ctx); err != nil {
+		return err
+	}
 	d := db.dialect
 	a, err := db.GetAttachment(ctx, id)
 	if err != nil {

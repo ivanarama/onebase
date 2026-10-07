@@ -141,3 +141,45 @@ test('signature handles aliases, compound objects and nested arguments', () => {
 
   assert.equal(signature('НеизвестныйОбъект.Найти('), null);
 });
+
+// Комментарии не участвуют в подсказке сигнатуры (#1562): скобка в комментарии
+// не прячет активный вызов, а «вызов» в комментарии не даёт ложной подсказки.
+test('signature ignores brackets and commas inside comments', () => {
+  // Ложный вызов целиком в комментарии — подсказки нет.
+  assert.equal(signature('// Массив.Добавить('), null);
+  assert.equal(signature('   #Область Группа(Вложенная(\n'), null);
+
+  // Настоящий вызов после комментированных скобок находится, в обеих директивах
+  // и в обоих переводах строки.
+  for (const eol of ['\n', '\r\n']) {
+    const commented = `// Массив.Добавить(${eol}Массив.Добавить(`;
+    const found = signature(commented);
+    assert.equal(found.value.signatures[0].label, 'Массив.Добавить(Значение)');
+    assert.equal(found.value.activeParameter, 0);
+
+    const directive = `   #Область Группа(Лишняя(${eol}Массив.Добавить(`;
+    assert.equal(signature(directive).value.signatures[0].label, 'Массив.Добавить(Значение)');
+  }
+
+  // Запятая и скобка в комментарии не считаются: параметр остаётся первым,
+  // вызов не закрывается.
+  const inComment = 'ТаблицаЗначений.Найти(1, // ), ,(\n';
+  const active = signature(inComment);
+  assert.equal(active.value.signatures[0].label, 'ТаблицаЗначений.Найти(Значение, Колонка)');
+  assert.equal(active.value.activeParameter, 1);
+
+  // «#» в начале строки — директива: скобка внутри неё не закрывает вызов.
+  // «#» в середине строки — не директива (как в лексере): скобка после него
+  // значима и закрывает настоящий вызов.
+  const directiveClose = 'ТаблицаЗначений.Найти(1,\n   # )\n';
+  const directive = signature(directiveClose);
+  assert.equal(directive.value.signatures[0].label, 'ТаблицаЗначений.Найти(Значение, Колонка)');
+  assert.equal(directive.value.activeParameter, 1);
+  assert.equal(signature('ТаблицаЗначений.Найти(1,\n а = 1 # )\n'), null);
+
+  // Внутри строки «//» и «#» остаются текстом: запятых в них нет.
+  const inString = 'ТаблицаЗначений.Найти("// # (", ';
+  const stringArg = signature(inString);
+  assert.equal(stringArg.value.signatures[0].label, 'ТаблицаЗначений.Найти(Значение, Колонка)');
+  assert.equal(stringArg.value.activeParameter, 1);
+});

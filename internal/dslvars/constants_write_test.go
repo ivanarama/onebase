@@ -5,13 +5,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
 	"github.com/ivantit66/onebase/internal/dsl/parser"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/shopspring/decimal"
 )
 
 // Присваивание константы обязано доезжать до базы.
@@ -42,6 +45,68 @@ func constantsFixture(t *testing.T) (*storage.DB, *runtime.Registry, context.Con
 	reg := runtime.NewRegistry()
 	reg.Load(runtime.LoadOptions{Constants: consts})
 	return db, reg, ctx
+}
+
+func TestКонстанты_ПустыеЗначенияТипизированыЧерезCommonBuild(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "typed-consts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	warehouse := &metadata.Entity{Name: "Склады", Kind: metadata.KindCatalog}
+	consts := []*metadata.Constant{
+		{Name: "Лимит", Type: metadata.FieldTypeNumber},
+		{Name: "Включено", Type: metadata.FieldTypeBool},
+		{Name: "Подпись", Type: metadata.FieldTypeString},
+		{Name: "ДатаЗапуска", Type: metadata.FieldTypeDate},
+		{Name: "ОсновнойСклад", Type: metadata.FieldType("reference:Склады"), RefEntity: "Склады"},
+	}
+	if err := db.MigrateConstants(ctx, consts); err != nil {
+		t.Fatal(err)
+	}
+	reg := runtime.NewRegistry()
+	reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{warehouse}, Constants: consts})
+	vars := Common{Ctx: ctx, Reg: reg, Store: db}.Build()
+
+	checks := []struct {
+		name string
+		src  string
+		ok   func(any) bool
+	}{
+		{"number", "Константы.Лимит", func(v any) bool { d, ok := v.(decimal.Decimal); return ok && d.IsZero() }},
+		{"bool", "Константы.Включено", func(v any) bool { b, ok := v.(bool); return ok && !b }},
+		{"string", "Константы.Подпись", func(v any) bool { s, ok := v.(string); return ok && s == "" }},
+		{"date", "Константы.ДатаЗапуска", func(v any) bool { d, ok := v.(time.Time); return ok && d.IsZero() }},
+		{"reference", "Константы.ОсновнойСклад", func(v any) bool {
+			ref, ok := v.(*interpreter.Ref)
+			return ok && ref.UUID == "" && ref.Type == "Склады" && ref.Kind == metadata.KindCatalog
+		}},
+	}
+	for _, tc := range checks {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, err := parser.New(lexer.New("Функция Тест()\nВозврат "+tc.src+";\nКонецФункции", "typed.os")).ParseProgram()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var result any
+			if err := interpreter.New().RunWithResult(prog.Procedures[0], runtime.NewObject("T", metadata.KindCatalog), &result, vars); err != nil {
+				t.Fatal(err)
+			}
+			if !tc.ok(result) {
+				t.Fatalf("%s returned %T(%v)", tc.src, result, result)
+			}
+		})
+	}
+
+	values, err := db.ListConstants(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(values) != 0 {
+		t.Fatalf("typed reads persisted values: %+v", values)
+	}
 }
 
 func runConstantsProc(t *testing.T, db *storage.DB, reg *runtime.Registry, ctx context.Context, src string) error {
@@ -98,6 +163,85 @@ func TestКонстанты_ЧтениеПослеЗаписиВТомЖеПро
 	}
 }
 
+func TestКонстанты_СсылочнаяСохраняетUUIDПослеПрисваиванияИПерезапуска(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "reference-const.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	warehouse := &metadata.Entity{Name: "Склады", Kind: metadata.KindCatalog}
+	consts := []*metadata.Constant{{
+		Name:      "ОсновнойСклад",
+		Type:      metadata.FieldType("reference:Склады"),
+		RefEntity: "Склады",
+	}}
+	if err := db.MigrateConstants(ctx, consts); err != nil {
+		t.Fatal(err)
+	}
+	reg := runtime.NewRegistry()
+	reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{warehouse}, Constants: consts})
+
+	const warehouseID = "2c4be4b8-a41f-44ec-9170-b91afbe0b048"
+	read := func(t *testing.T, assign bool, assigned any) *interpreter.Ref {
+		t.Helper()
+		source := "Функция Тест()\nВозврат Константы.ОсновнойСклад;\nКонецФункции"
+		vars := Common{Ctx: ctx, Reg: reg, Store: db}.Build()
+		if assign {
+			source = "Функция Тест()\nКонстанты.ОсновнойСклад = Склад;\nВозврат Константы.ОсновнойСклад;\nКонецФункции"
+			vars["Склад"] = assigned
+		}
+		prog, err := parser.New(lexer.New(source, "reference-const.os")).ParseProgram()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result any
+		if err := interpreter.New().RunWithResult(prog.Procedures[0], runtime.NewObject("T", metadata.KindCatalog), &result, vars); err != nil {
+			t.Fatal(err)
+		}
+		ref, ok := result.(*interpreter.Ref)
+		if !ok {
+			t.Fatalf("константа вернула %T(%v), ожидалась ссылка", result, result)
+		}
+		return ref
+	}
+
+	warehouseRef := &interpreter.Ref{
+		UUID: warehouseID,
+		Name: "Главный склад",
+		Type: "Склады",
+		Kind: metadata.KindCatalog,
+	}
+	if got := read(t, true, warehouseRef); got.UUID != warehouseID {
+		t.Fatalf("сразу после присваивания UUID = %q, ожидали %q", got.UUID, warehouseID)
+	}
+	stored, err := db.GetConstant(ctx, "ОсновнойСклад")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored != warehouseID {
+		t.Fatalf("в базе сохранено %#v, ожидался UUID %q", stored, warehouseID)
+	}
+	if got := read(t, false, nil); got.UUID != warehouseID {
+		t.Fatalf("после нового Common.Build UUID = %q, ожидали %q", got.UUID, warehouseID)
+	}
+
+	if got := read(t, true, (*interpreter.Ref)(nil)); got.UUID != "" {
+		t.Fatalf("после присваивания typed nil UUID = %q, ожидали пустую ссылку", got.UUID)
+	}
+	stored, err = db.GetConstant(ctx, "ОсновнойСклад")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored != "" {
+		t.Fatalf("для typed nil в базе сохранено %#v, ожидалась пустая UUID-строка", stored)
+	}
+	if got := read(t, false, nil); got.UUID != "" {
+		t.Fatalf("после нового Common.Build typed nil UUID = %q, ожидали пустую ссылку", got.UUID)
+	}
+}
+
 // Опечатка в имени — ошибка, а не тихое заведение ключа в памяти: отличить
 // «выключил не ту константу» от «выключил несуществующую» иначе нечем.
 func TestКонстанты_НеизвестноеИмяЭтоОшибка(t *testing.T) {
@@ -117,5 +261,119 @@ func TestКонстанты_НеизвестноеИмяЭтоОшибка(t *te
 	}
 	if !strings.Contains(err.Error(), "LLMEnabled") {
 		t.Errorf("в ошибке нет подсказки с известными именами: %v", err)
+	}
+}
+
+// Ссылочная константа обязана представляться подписью цели, а не своим UUID:
+// `Строка(Константы.ОсновнойСклад)` уезжал в письма и печатные формы
+// идентификатором, потому что Get выдавал UUID за наименование (#1536).
+// Подпись даёт хост-презентер; без него — честная пустота, а не UUID.
+func TestКонстанты_СсылочнаяПредставляетсяПодписьюЦели(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "reference-label.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+
+	warehouse := &metadata.Entity{
+		Name: "Склады", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+	}
+	consts := []*metadata.Constant{{
+		Name:      "ОсновнойСклад",
+		Type:      metadata.FieldType("reference:Склады"),
+		RefEntity: "Склады",
+	}}
+	if err := db.Migrate(ctx, []*metadata.Entity{warehouse}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.MigrateConstants(ctx, consts); err != nil {
+		t.Fatal(err)
+	}
+	reg := runtime.NewRegistry()
+	reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{warehouse}, Constants: consts})
+
+	mainID := uuid.MustParse("2c4be4b8-a41f-44ec-9170-b91afbe0b048")
+	if err := db.Upsert(ctx, "Склады", mainID, map[string]any{"Наименование": "Главный склад"}, warehouse); err != nil {
+		t.Fatal(err)
+	}
+	spareID := uuid.MustParse("3d52f5c9-b52f-55fd-a281-c02acf1c1591")
+	if err := db.Upsert(ctx, "Склады", spareID, map[string]any{"Наименование": "Запасной склад"}, warehouse); err != nil {
+		t.Fatal(err)
+	}
+
+	build := func(withPresenter bool) map[string]any {
+		t.Helper()
+		common := Common{Ctx: ctx, Reg: reg, Store: db}
+		if withPresenter {
+			common.ConstantRefPresenter = StoreRefPresenter(db, reg)
+		}
+		return common.Build()
+	}
+	read := func(t *testing.T, vars map[string]any, src string) any {
+		t.Helper()
+		prog, err := parser.New(lexer.New("Функция Тест()\nВозврат "+src+";\nКонецФункции", "reference-label.os")).ParseProgram()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var result any
+		if err := interpreter.New().RunWithResult(prog.Procedures[0], runtime.NewObject("T", metadata.KindCatalog), &result, vars); err != nil {
+			t.Fatal(err)
+		}
+		return result
+	}
+	setConstant := func(t *testing.T, id string) {
+		t.Helper()
+		prog, err := parser.New(lexer.New("Процедура Тест()\nКонстанты.ОсновнойСклад = \""+id+"\";\nКонецПроцедуры", "reference-label-set.os")).ParseProgram()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := interpreter.New().Run(prog.Procedures[0], runtime.NewObject("T", metadata.KindCatalog), build(false)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	setConstant(t, mainID.String())
+	ref, ok := read(t, build(true), "Константы.ОсновнойСклад").(*interpreter.Ref)
+	if !ok {
+		t.Fatalf("константа вернула %T, ожидалась ссылка", read(t, build(true), "Константы.ОсновнойСклад"))
+	}
+	if ref.UUID != mainID.String() {
+		t.Fatalf("UUID = %q, ожидали %q", ref.UUID, mainID)
+	}
+	if ref.Name != "Главный склад" {
+		t.Fatalf("подпись = %q, ожидали %q", ref.Name, "Главный склад")
+	}
+	if label, ok := read(t, build(true), "Константы.ОсновнойСклад.Наименование").(string); !ok || label != "Главный склад" {
+		t.Fatalf(".Наименование = %v, ожидали %q", read(t, build(true), "Константы.ОсновнойСклад.Наименование"), "Главный склад")
+	}
+	if s, ok := read(t, build(true), "Строка(Константы.ОсновнойСклад)").(string); !ok || s != "Главный склад" {
+		t.Fatalf("Строка() = %v, ожидали %q", read(t, build(true), "Строка(Константы.ОсновнойСклад)"), "Главный склад")
+	}
+
+	// Без презентера — пустая подпись, а не UUID, выданный за наименование.
+	ref, ok = read(t, build(false), "Константы.ОсновнойСклад").(*interpreter.Ref)
+	if !ok {
+		t.Fatal("без презентера константа перестала быть ссылкой")
+	}
+	if ref.UUID != mainID.String() || ref.Name != "" {
+		t.Fatalf("без презентера UUID = %q, подпись = %q; ожидали UUID без подписи", ref.UUID, ref.Name)
+	}
+
+	// Смена константы — подпись новой цели.
+	setConstant(t, spareID.String())
+	if label, _ := read(t, build(true), "Константы.ОсновнойСклад.Наименование").(string); label != "Запасной склад" {
+		t.Fatalf("после смены подпись = %q, ожидали %q", label, "Запасной склад")
+	}
+
+	// Удалённая цель — честная пустота, UUID сохраняется.
+	setConstant(t, "11111111-2222-3333-4444-555555555555")
+	ref, ok = read(t, build(true), "Константы.ОсновнойСклад").(*interpreter.Ref)
+	if !ok {
+		t.Fatal("ссылка на удалённую цель перестала быть ссылкой")
+	}
+	if ref.Name != "" || ref.UUID != "11111111-2222-3333-4444-555555555555" {
+		t.Fatalf("удалённая цель: подпись = %q, UUID = %q; ожидали пустую подпись и сохранённый UUID", ref.Name, ref.UUID)
 	}
 }

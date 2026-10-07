@@ -58,6 +58,7 @@ func newMatrixFixture(t *testing.T, db *storage.DB) *matrixFixture {
 	}
 	ar := &metadata.AccountRegister{
 		Name:      "БухУчёт" + suffix,
+		Accounts:  "Основной",
 		Resources: []metadata.Field{{Name: "Сумма", Type: metadata.FieldTypeNumber, Length: 15, Scale: 2}},
 		Subconto: []metadata.Field{{
 			Name: "Контрагент", Type: metadata.FieldType("reference:" + partner.Name), RefEntity: partner.Name,
@@ -74,6 +75,7 @@ func newMatrixFixture(t *testing.T, db *storage.DB) *matrixFixture {
 	if err := db.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{ar}); err != nil {
 		t.Fatalf("MigrateAccountRegisters: %v", err)
 	}
+	ensureChart(t, db, ar.Accounts, "50", "51")
 	if err := db.EnsureBlobTable(ctx); err != nil {
 		t.Fatalf("EnsureBlobTable: %v", err)
 	}

@@ -82,6 +82,55 @@ fields:
 	}
 }
 
+// Сохранение через реальную форму конфигуратора не должно превращать
+// синтезированный owner в новый реквизит с f_*: это меняет identity колонки.
+// Тем же путём проверяем смену и снятие владельца.
+func TestSaveFields_OwnerKeepsStandardID(t *testing.T) {
+	h, cfgDir := newFileBaseHandler(t)
+	h.runner = NewRunner()
+	writeCfgFile(t, cfgDir, "catalogs", "Контрагент.yaml", "name: Контрагент\n")
+	writeCfgFile(t, cfgDir, "catalogs", "Организация.yaml", "name: Организация\n")
+	p := writeCfgFile(t, cfgDir, "catalogs", "Договор.yaml", "name: Договор\nowner: Контрагент\n")
+	b, err := h.store.Get("test")
+	if err != nil {
+		t.Fatalf("store.Get: %v", err)
+	}
+	submit := func(changeOwner string) {
+		t.Helper()
+		data := h.loadCfgData(context.Background(), b, "tree")
+		if data.Error != "" {
+			t.Fatalf("конфигурация не загрузилась: %s", data.Error)
+		}
+		form := browserSubmitForEntity(t, renderCfgTree(t, data), "Договор")
+		if !formHasFieldNamed(form, metadata.StandardOwnerField) {
+			t.Fatalf("форма потеряла поле Владелец: %v", form)
+		}
+		form.Set("owner", changeOwner)
+		rec := postCfg(t, "test", "/bases/test/configurator/fields", form, h.configuratorSaveFields)
+		if ok, errText := cfgResponse(t, rec); !ok {
+			t.Fatalf("сохранение не удалось: %s", errText)
+		}
+	}
+	submit("Контрагент")
+	assertStandardFieldSaved(t, p, metadata.KindCatalog, metadata.StandardOwnerField, metadata.StandardOwnerFieldID)
+	submit("Организация")
+	e, err := metadata.LoadFile(p, metadata.KindCatalog)
+	if err != nil {
+		t.Fatalf("LoadFile после смены владельца: %v", err)
+	}
+	if e.Owner != "Организация" || len(e.Fields) != 1 || e.Fields[0].ID != metadata.StandardOwnerFieldID || e.Fields[0].RefEntity != "Организация" {
+		t.Fatalf("после смены owner: owner=%q, fields=%+v", e.Owner, e.Fields)
+	}
+	submit("")
+	e, err = metadata.LoadFile(p, metadata.KindCatalog)
+	if err != nil {
+		t.Fatalf("LoadFile после снятия владельца: %v", err)
+	}
+	if e.Owner != "" || len(e.Fields) != 0 {
+		t.Fatalf("после снятия owner: owner=%q, fields=%+v", e.Owner, e.Fields)
+	}
+}
+
 // То же для «Номера» документа: поле синтезируется тем же кодом и тем же
 // образом получало чужой id.
 func TestSaveFields_DocumentNumberKeepsStandardID(t *testing.T) {

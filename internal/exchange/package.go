@@ -735,6 +735,9 @@ func applyEntity(ctx context.Context, store *storage.DB, resolver EntityResolver
 			return false, obj.Version == localVer, nil
 		}
 	}
+	if err := clearReceiverMovements(ctx, store, resolver, ent, id); err != nil {
+		return false, false, err
+	}
 	if err := applyObject(ctx, store, ent, id, obj, replicationSourceRef(plan.Name, fromNode, messageNo), res); err != nil {
 		return false, false, err
 	}
@@ -749,6 +752,42 @@ func applyEntity(ctx context.Context, store *storage.DB, resolver EntityResolver
 		res.Applied++
 	}
 	return true, true, nil
+}
+
+// movementRegistry — регистры приёмника. Реализуется *runtime.Registry, который
+// передают в обмен все транспорты: HTTP-приёмник, CLI и DSL.
+type movementRegistry interface {
+	Registers() []*metadata.Register
+	InfoRegisters() []*metadata.InfoRegister
+	AccountRegisters() []*metadata.AccountRegister
+}
+
+// clearReceiverMovements снимает движения существующего проводимого документа
+// перед применением его новой версии.
+//
+// Документ из пакета записывается непроведённым (SetExchangeObjectState ставит
+// posted = false), а проведённый источником перепроводится уже после коммита
+// (repost). Движения, записанные прежним перепроведением или локальным
+// проведением, при этом оставались: отмена проведения или пометка удаления на
+// источнике давали у приёмника «непроведённый» документ, чьи движения
+// по-прежнему в остатках, а сорвавшееся перепроведение — непроведённый документ с
+// движениями прежней версии. Снимаем их в транзакции загрузки: документ либо
+// перепроведётся заново, либо останется непроведённым без движений. Признак
+// posted не служит гейтом: старый обмен уже мог оставить posted = false при
+// сохранённых движениях. Следующая новая версия исправляет и такое состояние.
+func clearReceiverMovements(ctx context.Context, store *storage.DB, resolver EntityResolver, ent *metadata.Entity, id uuid.UUID) error {
+	if ent.Kind != metadata.KindDocument || !ent.Posting {
+		return nil
+	}
+	_, exists, err := store.EntityVersionExists(ctx, ent.Name, id)
+	if err != nil || !exists {
+		return err
+	}
+	regs, ok := resolver.(movementRegistry)
+	if !ok {
+		return fmt.Errorf("exchange: документ %s %s существует на приёмнике, но резолвер не перечисляет регистры — снять его движения нечем", ent.Name, id)
+	}
+	return store.ClearRecorderMovements(ctx, ent.Name, id, regs.Registers(), regs.InfoRegisters(), regs.AccountRegisters())
 }
 
 // needsRepost проверяет, что текущая версия пакета относится к проводимому

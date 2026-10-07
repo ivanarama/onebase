@@ -3,18 +3,32 @@ package entityservice
 import (
 	"context"
 	"errors"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
+// Перевод дубля в человеческий текст обязан работать одинаково на обоих
+// диалектах: распознавание идёт РАЗНЫМИ ветками — SQLite читает текст «UNIQUE
+// constraint failed: таблица.колонка», PostgreSQL сверяет имя ограничения из
+// SQLSTATE 23505 с вычисленным stableIndexName (`internal/storage/code_unique.go`).
+// Пока тест гонялся только на SQLite, PG-ветка оставалась непокрытой, хотя
+// разойтись эти пути могут молча: пользователь вместо своего значения увидел бы
+// текст драйвера (#1448).
 func TestSaveExplainsUniqueViolationOnCreateAndVersionedUpdate(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		testSaveExplainsUniqueViolation(t, db)
+	})
+}
+
+func testSaveExplainsUniqueViolation(t *testing.T, db *storage.DB) {
+	t.Helper()
 	t.Run("declared index", func(t *testing.T) {
 		entity := &metadata.Entity{
 			Name: "Контрагенты",
@@ -25,7 +39,7 @@ func TestSaveExplainsUniqueViolationOnCreateAndVersionedUpdate(t *testing.T) {
 			},
 			Indexes: []metadata.IndexSpec{{Fields: []string{"ИНН"}, Unique: true}},
 		}
-		ctx, svc := uniqueViolationFixture(t, entity)
+		ctx, svc := uniqueViolationFixture(t, db, entity)
 
 		saveEntity(t, ctx, svc, entity, uuid.New(), true, nil, map[string]any{
 			"ИНН": "77", "Наименование": "Первый",
@@ -64,7 +78,7 @@ func TestSaveExplainsUniqueViolationOnCreateAndVersionedUpdate(t *testing.T) {
 			},
 			Numerator: &metadata.Numerator{Prefix: "С-", Length: 6, Period: "none", Unique: true},
 		}
-		ctx, svc := uniqueViolationFixture(t, entity)
+		ctx, svc := uniqueViolationFixture(t, db, entity)
 
 		saveEntity(t, ctx, svc, entity, uuid.New(), true, nil, map[string]any{
 			metadata.StandardCodeField: "С-000001", "Наименование": "Первый",
@@ -87,14 +101,11 @@ func TestSaveExplainsUniqueViolationOnCreateAndVersionedUpdate(t *testing.T) {
 	})
 }
 
-func uniqueViolationFixture(t *testing.T, entity *metadata.Entity) (context.Context, *Service) {
+// uniqueViolationFixture готовит сервис на уже открытой базе: соединение и его
+// закрытие ведёт dbtest.ForEachDialect, а на PostgreSQL — ещё и эфемерная схема.
+func uniqueViolationFixture(t *testing.T, db *storage.DB, entity *metadata.Entity) (context.Context, *Service) {
 	t.Helper()
 	ctx := context.Background()
-	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "unique.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
 	if err := db.Migrate(ctx, []*metadata.Entity{entity}); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}

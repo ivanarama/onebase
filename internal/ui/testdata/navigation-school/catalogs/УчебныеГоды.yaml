@@ -1,0 +1,5 @@
+name: УчебныеГоды
+title: УчебныеГоды
+fields:
+  - name: Name
+    type: string

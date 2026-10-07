@@ -127,6 +127,12 @@ func (r *Runner) Start(base *Base) error { return r.start(base, false) }
 func (r *Runner) startHeld(base *Base) error { return r.start(base, true) }
 
 func (r *Runner) start(base *Base, lifecycleHeld bool) error {
+	// Fail-closed: сервер клиентского подключения поднимает не лаунчер. Без этой
+	// проверки запуск ушёл бы в `onebase run` с пустым DSN и портом 0 — то есть
+	// поднял бы на станции лишнюю платформу вместо подключения к серверу.
+	if base.Client() {
+		return ErrBaseNotOwned
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.stopping && !lifecycleHeld {
@@ -254,6 +260,11 @@ type BaseRuntimeStatus struct {
 	// foreign listener. Destructive operations must fail closed in the latter
 	// case even when onebase identity could not be established.
 	Occupied bool
+	// Client — запись клиентского подключения: процессом владеет не лаунчер.
+	// Остальные поля у неё всегда false, и смысла «остановлена» это не несёт:
+	// останавливать нечего. Вызывающий обязан различать эти случаи, иначе покажет
+	// «остановлена» про работающий сервер и предложит кнопку «Остановить».
+	Client bool
 }
 
 // RuntimeStatus возвращает свежий, ограниченный таймаутом статус без чтения
@@ -262,6 +273,13 @@ type BaseRuntimeStatus struct {
 func (r *Runner) RuntimeStatus(base *Base) BaseRuntimeStatus {
 	if base == nil {
 		return BaseRuntimeStatus{}
+	}
+	// Клиентское подключение: процесса, которым владеет лаунчер, нет. Ни
+	// отслеживать, ни усыновлять, ни судить по занятости порта нечего — у записи
+	// порт не задан вовсе, и portFree(0) ответил бы про случайный чужой слушатель.
+	// Доступность сервера — отдельный вопрос, её выясняет probeBase.
+	if base.Client() {
+		return BaseRuntimeStatus{Client: true}
 	}
 	r.mu.Lock()
 	mp, tracked := r.procs[base.ID]
@@ -597,6 +615,12 @@ func (r *Runner) stopBaseHeld(base *Base) error {
 	if base == nil {
 		return nil
 	}
+	// Останавливать чужой сервер лаунчер не вправе. Молчаливый успех здесь был бы
+	// хуже отказа: «Стоп всё» отчитался бы, что базы остановлены, а служба
+	// продолжала бы работать.
+	if base.Client() {
+		return ErrBaseNotOwned
+	}
 	r.mu.Lock()
 	mp, tracked := r.procs[base.ID]
 	r.mu.Unlock()
@@ -833,10 +857,21 @@ func (r *Runner) Healthy(base *Base) bool {
 }
 
 func (r *Runner) BaseURL(base *Base) string {
+	// Клиентское подключение открывается на своём адресе: порта на этой машине у
+	// него нет. Единая точка формирования адреса — поэтому окна Предприятия,
+	// «Новое окно» и изолированный профиль работают с сервером без правок.
+	if base.Client() {
+		return base.ServerURL
+	}
 	return fmt.Sprintf("http://127.0.0.1:%d", base.Port)
 }
 
 func (r *Runner) MigrateBase(ctx context.Context, base *Base) (string, error) {
+	// Схему базы, которой лаунчер не владеет, мигрирует её сервер. Здесь нет ни
+	// DSN, ни конфигурации — `onebase migrate` ушёл бы в пустоту.
+	if base.Client() {
+		return "", ErrBaseNotOwned
+	}
 	exe, err := exePath()
 	if err != nil {
 		return "", err

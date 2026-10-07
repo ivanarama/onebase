@@ -1,0 +1,5 @@
+name: Классы
+title: Классы
+fields:
+  - name: Name
+    type: string

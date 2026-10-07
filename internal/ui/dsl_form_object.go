@@ -47,9 +47,29 @@ type formObjectThis struct {
 	// ctxSrc — «живой» контекст DSL-исполнения: собственная запись объекта тоже
 	// должна попадать в открытую модулем транзакцию, а не ждать второго
 	// соединения (пул SQLite — одно).
-	ctxSrc docsCtxSource
-	isNew  bool
-	saved  bool
+	ctxSrc              docsCtxSource
+	isNew               bool
+	saved               bool
+	expectedVersion     *int64
+	lastSavedFields     map[string]string
+	lastSavedTableParts map[string][]map[string]any
+	// onCommitted propagates a handler-initiated write to the close-intent
+	// ledger at the true durable boundary, before fallible notifications.
+	onCommitted func(entityservice.SaveResult)
+	// finalPreflight is installed by close-intent so an Object.Write performed
+	// by BeforeClose cannot commit a row which the same caller may no longer
+	// read. It runs against the authoritative row inside the save transaction.
+	finalPreflight func(context.Context, *runtime.Object) error
+	// prepareNew достраивает НОВЫЙ объект перед первой записью: неразмещённые
+	// на форме реквизиты получают default и ПриСозданииНового так же, как при
+	// «Записать» (#1189). Ставит form-event для формы новой записи; nil — у
+	// существующей записи восстанавливать нечего, её поля дочитаны из базы.
+	prepareNew func(context.Context) error
+	// assigned — реквизиты (в нижнем регистре), которым обработчик присвоил
+	// значение, в том числе Неопределено. По значению явное очищение не
+	// отличить от реквизита, которого форма не прислала: оба nil, а умолчание
+	// вправе заполнить только второй.
+	assigned map[string]struct{}
 	// writeBlocked prevents a form write lifecycle handler from recursively
 	// saving the same object and then letting the outer Save persist it again.
 	writeBlocked bool
@@ -134,6 +154,51 @@ func (f *formObjectThis) write() error {
 		if err := f.srv.checkDSLRowAccess(ctx, f.entity, "write", f.obj.ID, f.obj.Fields); err != nil {
 			return err
 		}
+	} else if f.prepareNew != nil {
+		if err := f.prepareNew(ctx); err != nil {
+			return err
+		}
+	}
+	wasSaved := f.saved
+	previousExpectedVersion := f.expectedVersion
+	previousSavedFields := f.lastSavedFields
+	previousSavedTableParts := f.lastSavedTableParts
+	previousSelfRef, hadSelfRef := f.obj.Fields["ссылка"]
+	previousReference, hadReference := f.obj.Fields["reference"]
+	previousVersionField, hadVersionField := f.obj.Fields["_version"]
+	markCommitted := func(result entityservice.SaveResult) {
+		f.obj.ID = result.ID
+		f.saved = true
+		f.obj.Fields["ссылка"] = f.selfRef()
+		f.obj.Fields["reference"] = f.obj.Fields["ссылка"]
+		if result.Version > 0 {
+			version := result.Version
+			f.expectedVersion = &version
+			f.obj.Fields["_version"] = version
+		}
+		f.lastSavedFields = snapshotFieldValues(f.obj.Fields)
+		f.lastSavedTableParts = tablePartRowsSnapshot(f.obj.TablePartRows)
+		storage.DeferUntilTxRollback(ctx, func() {
+			f.saved = wasSaved
+			f.expectedVersion = previousExpectedVersion
+			f.lastSavedFields = previousSavedFields
+			f.lastSavedTableParts = previousSavedTableParts
+			if hadSelfRef {
+				f.obj.Fields["ссылка"] = previousSelfRef
+			} else {
+				delete(f.obj.Fields, "ссылка")
+			}
+			if hadReference {
+				f.obj.Fields["reference"] = previousReference
+			} else {
+				delete(f.obj.Fields, "reference")
+			}
+			if hadVersionField {
+				f.obj.Fields["_version"] = previousVersionField
+			} else {
+				delete(f.obj.Fields, "_version")
+			}
+		})
 	}
 	result, err := f.srv.entitySvc.Save(ctx, entityservice.SaveRequest{
 		Entity:        f.entity,
@@ -141,6 +206,12 @@ func (f *formObjectThis) write() error {
 		IsNew:         isNew,
 		Fields:        f.obj.Fields,
 		TablePartRows: f.obj.TablePartRows,
+		ExpectedVersion: func() *int64 {
+			if isNew {
+				return nil
+			}
+			return f.expectedVersion
+		}(),
 		Preflight: func(txCtx context.Context, obj *runtime.Object) error {
 			if !isNew {
 				return nil
@@ -150,6 +221,13 @@ func (f *formObjectThis) write() error {
 			}
 			return f.srv.checkDSLRowAccess(txCtx, f.entity, "write", uuid.Nil, obj.Fields)
 		},
+		FinalPreflight: f.finalPreflight,
+		OnPersisted:    markCommitted,
+		OnCommitted: func(result entityservice.SaveResult) {
+			if f.onCommitted != nil {
+				f.onCommitted(result)
+			}
+		},
 	})
 	if err != nil {
 		return err
@@ -157,14 +235,6 @@ func (f *formObjectThis) write() error {
 	if result.DSLError != "" {
 		return fmt.Errorf("%s", result.DSLError)
 	}
-	wasSaved := f.saved
-	f.saved = true
-	// Ссылка появляется только после записи — до неё её нет ни в объекте, ни
-	// у резолвера. Ставим здесь же, чтобы следующая строка обработчика могла
-	// сразу писать Модуль.Действие(Объект.Ссылка).
-	f.obj.Fields["ссылка"] = f.selfRef()
-	f.obj.Fields["reference"] = f.obj.Fields["ссылка"]
-	storage.DeferUntilTxRollback(ctx, func() { f.saved = wasSaved })
 	return nil
 }
 
@@ -254,6 +324,10 @@ func (f *formObjectThis) Set(name string, v any) {
 	if f == nil || f.obj == nil {
 		return
 	}
+	if f.assigned == nil {
+		f.assigned = map[string]struct{}{}
+	}
+	f.assigned[strings.ToLower(name)] = struct{}{}
 	f.obj.Set(name, v)
 }
 

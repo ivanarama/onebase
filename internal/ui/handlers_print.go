@@ -20,6 +20,7 @@ import (
 	"github.com/ivantit66/onebase/internal/printform"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/sheet"
+	"github.com/ivantit66/onebase/internal/xlsxtemplate"
 )
 
 // printDocument — единый HTML-маршрут печати (/print/{form}) для всех видов
@@ -129,6 +130,7 @@ func (s *Server) loadPrintContext(r *http.Request, entity *metadata.Entity, id u
 	refs := s.buildPrintRefs(r.Context(), row, entity, tpRows)
 	constants, _ := s.store.ListConstants(r.Context())
 	return &printform.RenderContext{
+		EntityName:     entity.Name,
 		Document:       row,
 		TableParts:     tpRows,
 		Constants:      constants,
@@ -171,6 +173,13 @@ func pdfFileName(formName, num string) string {
 		return formName + "_" + num + ".pdf"
 	}
 	return formName + ".pdf"
+}
+
+func xlsxFileName(formName, num string) string {
+	if num != "" {
+		return formName + "_" + num + ".xlsx"
+	}
+	return formName + ".xlsx"
 }
 
 // ensurePDFExt гарантирует расширение .pdf у явного имени файла (DSL).
@@ -356,6 +365,47 @@ func (s *Server) printDocumentPDF(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/pdf")
 	w.Header().Set("Content-Disposition", contentDisposition(fileName))
 	writeDownload(w, fileName, pdfBytes)
+}
+
+// printDocumentXLSX заполняет исходный Excel-шаблон декларативной формы.
+// Маршрут доступен только формам, созданным импортом из Excel: обычные макеты
+// продолжают иметь HTML/PDF, но не получают искусственно пересобранную книгу.
+func (s *Server) printDocumentXLSX(w http.ResponseWriter, r *http.Request) {
+	entity := s.getEntity(w, r)
+	if entity == nil {
+		return
+	}
+	if !s.requirePerm(w, r, string(entity.Kind), entity.Name, "read") {
+		return
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		http.Error(w, "invalid id", http.StatusBadRequest)
+		return
+	}
+	if !s.rowAllowedID(w, r, entity, "read", id) {
+		return
+	}
+	formName := printFormParam(r, "form")
+	ref, ok := s.reg.GetPrintFormRef(entity.Name, formName)
+	if !ok || ref.Kind != runtime.PrintFormDeclarative || ref.Decl == nil || len(ref.Decl.XLSXTemplate) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+	ctx, err := s.loadPrintContext(r, entity, id)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	data, err := xlsxtemplate.RenderBytes(ref.Decl.XLSXTemplate, ctx)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	name := xlsxFileName(ref.Name, docNumber(ctx.Document))
+	w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+	w.Header().Set("Content-Disposition", contentDisposition(name))
+	writeDownload(w, name, data)
 }
 
 // buildDSLPF выполняет общую часть DSL-печати: находит форму/процедуру,

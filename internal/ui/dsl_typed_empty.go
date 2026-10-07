@@ -4,8 +4,10 @@ import (
 	"context"
 	"strings"
 
+	"github.com/ivantit66/onebase/internal/access"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/typedempty"
 )
 
@@ -44,7 +46,99 @@ func declaredDSLValue(raw any, desc typedempty.Descriptor, resolver *dslRefAttrR
 		}
 		return raw
 	}
+	if desc.Type == metadata.FieldTypeDate {
+		if value, ok := raw.(string); ok {
+			if parsed, parsedOK := storage.ParseRegPeriod(value); parsedOK {
+				return parsed
+			}
+		}
+	}
 	return typedempty.Normalize(desc, raw, nil)
+}
+
+// declaredRowThis exposes a metadata-backed storage row without replacing its
+// raw nil values. A read therefore cannot turn SQL NULL into an explicit zero
+// on a later record-set write; only Set mutates the row.
+type declaredRowThis struct {
+	row       map[string]any
+	fields    map[string]declaredRowField
+	resolver  *dslRefAttrResolver
+	decisions map[string]access.FieldDecision
+}
+
+type declaredRowField struct {
+	field *metadata.Field
+	key   string
+}
+
+func newDeclaredRowThis(
+	row map[string]any,
+	fields []metadata.Field,
+	resolver *dslRefAttrResolver,
+	decisions map[string]access.FieldDecision,
+) *declaredRowThis {
+	byName := make(map[string]declaredRowField, len(fields))
+	for i := range fields {
+		byName[strings.ToLower(fields[i].Name)] = declaredRowField{field: &fields[i], key: fields[i].Name}
+	}
+	return &declaredRowThis{row: row, fields: byName, resolver: resolver, decisions: decisions}
+}
+
+// addAlias binds a public DSL spelling to an explicit storage key and type.
+// It is used for register system fields only; arbitrary names never acquire a
+// type by resembling Период/Регистратор/ВидДвижения.
+func (r *declaredRowThis) addAlias(alias, key string, field metadata.Field) {
+	if r == nil {
+		return
+	}
+	r.fields[strings.ToLower(alias)] = declaredRowField{field: &field, key: key}
+}
+
+func (r *declaredRowThis) Get(name string) any {
+	binding, declared := r.fields[strings.ToLower(name)]
+	lookupName := name
+	if declared {
+		lookupName = binding.key
+	}
+	key, raw, exists := lookupMapCI(r.row, lookupName)
+	_ = key
+	if !declared || binding.field == nil {
+		if exists {
+			return raw
+		}
+		return nil
+	}
+	field := binding.field
+	if decision, ok := fieldDecisionByName(r.decisions, field.Name); ok && decision.Masked() {
+		if !exists || decision.Hidden() {
+			return nil
+		}
+		return access.MaskValue(decision.Strategy, decision.Keep, raw)
+	}
+	desc, ok := typedempty.FromField(field)
+	if !ok {
+		return raw
+	}
+	return declaredDSLValue(raw, desc, r.resolver)
+}
+
+func (r *declaredRowThis) Set(name string, value any) {
+	if r == nil || r.row == nil {
+		return
+	}
+	if binding, ok := r.fields[strings.ToLower(name)]; ok && binding.field != nil {
+		r.row[binding.key] = value
+		return
+	}
+	r.row[name] = value
+}
+
+func (r *declaredRowThis) Fields() []string {
+	result := make([]string, 0, len(r.row))
+	for name := range r.row {
+		result = append(result, name)
+	}
+	return result
 }
 
 func (s *Server) declaredEntityFieldValue(

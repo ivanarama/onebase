@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -256,7 +257,7 @@ func (s *Server) adminUserCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data := map[string]any{"User": u}
-	s.addPasswordPolicyData(data)
+	s.addPasswordPolicyData(r.Context(), data)
 	data["BindTicketTTLHours"] = int(auth.BindTicketTTL / time.Hour)
 	if info, infoErr := s.authRepo.TwoFactorInfoFor(r.Context(), userID); infoErr == nil {
 		data["TwoFactor"] = info
@@ -364,7 +365,7 @@ func (s *Server) adminUserFormData(r *http.Request, errMsg, login, fullName stri
 		"Login":        login,
 		"FullName":     fullName,
 	}
-	s.addPasswordPolicyData(data)
+	s.addPasswordPolicyData(r.Context(), data)
 	return data
 }
 
@@ -459,7 +460,7 @@ func (s *Server) adminUserPasswd(w http.ResponseWriter, r *http.Request) {
 		"BackURL":   "/ui/admin/users",
 		"NeedOld":   false,
 	}
-	s.addPasswordPolicyData(data)
+	s.addPasswordPolicyData(r.Context(), data)
 	if r.Method == http.MethodPost {
 		s.limitMultipartRequest(w, r)
 		if err := parseBoundedForm(r, defaultFormMemoryBytes); err != nil {
@@ -540,7 +541,7 @@ func (s *Server) selfPasswd(w http.ResponseWriter, r *http.Request) {
 		"SelfService": true,
 		"OthersOut":   r.URL.Query().Get("others_out") == "1",
 	}
-	s.addPasswordPolicyData(data)
+	s.addPasswordPolicyData(r.Context(), data)
 	if r.Method == http.MethodPost {
 		s.limitMultipartRequest(w, r)
 		if err := parseBoundedForm(r, defaultFormMemoryBytes); err != nil {
@@ -581,10 +582,10 @@ func (s *Server) selfPasswd(w http.ResponseWriter, r *http.Request) {
 	renderAdminTemplate(w, "admin-passwd", data)
 }
 
-func (s *Server) addPasswordPolicyData(data map[string]any) {
+func (s *Server) addPasswordPolicyData(ctx context.Context, data map[string]any) {
 	policy := auth.PasswordPolicy{MinLength: auth.DefaultMinPasswordLength}
 	if s.authRepo != nil {
-		policy = s.authRepo.PasswordPolicy()
+		policy = s.authRepo.EffectivePasswordPolicy(ctx)
 	}
 	data["MinPasswordLength"] = policy.MinLength
 	data["PasswordRequired"] = !policy.AllowEmpty
@@ -1123,18 +1124,25 @@ func (s *Server) recordHistory(w http.ResponseWriter, r *http.Request) {
 // first-run mode where auth middleware confirmed that the reachable database
 // contains no users. Database errors must never turn into administrator access.
 func (s *Server) isAdmin(r *http.Request) bool {
+	return s.isAdminCtx(r.Context())
+}
+
+// isAdminCtx — тот же вывод по контексту запроса: сериализация ответа события
+// формы до *http.Request не добирается, а признак администратора там нужен —
+// им заперты поля editable_admin_only.
+func (s *Server) isAdminCtx(ctx context.Context) bool {
 	if s.authRepo == nil {
 		return true
 	}
-	if u := auth.UserFromContext(r.Context()); u != nil {
+	if u := auth.UserFromContext(ctx); u != nil {
 		return u.IsAdmin
 	}
-	if auth.OpenAccessFromContext(r.Context()) {
+	if auth.OpenAccessFromContext(ctx) {
 		return true
 	}
 	// Direct handler tests and a few internal call sites do not pass through the
 	// middleware. Preserve bootstrap behavior only after a successful query.
-	hasUsers, err := s.authRepo.HasUsers(r.Context())
+	hasUsers, err := s.authRepo.HasUsers(ctx)
 	return err == nil && !hasUsers
 }
 

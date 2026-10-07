@@ -66,9 +66,30 @@ func (mfl *ManagedFormLoader) LoadEntityForms(projectRoot, entityName string) ([
 		if err != nil {
 			return nil, fmt.Errorf("load %s: %w", path, err)
 		}
+		form.SourcePath = projectRelPath(projectRoot, path)
 		out = append(out, form)
 	}
 	return out, nil
+}
+
+// projectRelPath переводит путь файла в локатор относительно корня проекта:
+// со слэшами и с фактическим регистром каталога, как он лежит на диске.
+// Именно этот вид печатает `onebase check`, и по нему файл обязан открываться
+// на case-sensitive файловой системе тоже (#1356).
+//
+// Если путь почему-то оказался вне корня проекта, возвращается пусто:
+// локатор, уводящий за пределы конфигурации, хуже отсутствующего — потребители
+// в этом случае честно откатятся на синтезированное имя.
+func projectRelPath(projectRoot, path string) string {
+	rel, err := filepath.Rel(projectRoot, path)
+	if err != nil {
+		return ""
+	}
+	rel = filepath.ToSlash(rel)
+	if rel == ".." || strings.HasPrefix(rel, "../") {
+		return ""
+	}
+	return rel
 }
 
 // entityFormsDir находит физический каталог форм по переносимому правилу
