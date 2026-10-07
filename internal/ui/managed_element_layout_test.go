@@ -254,12 +254,65 @@ func TestManagedLayout_FormHandlerAppliesValueTableLayout(t *testing.T) {
 		t.Fatalf("форма не открылась: %d", rec.Code)
 	}
 	body := rec.Body.String()
-	want := `class="managed-vt-layout" data-ob-el="ЭлементПодбор" style="width:640px;max-width:100%;flex:0 0 auto;min-width:0;height:520px;"`
+	want := `class="managed-vt-layout managed-vt-scroll" data-ob-el="ЭлементПодбор" style="width:640px;max-width:100%;flex:0 0 auto;min-width:0;height:520px;"`
 	if !strings.Contains(body, want) {
 		t.Errorf("layout ValueTable не применён к внешнему блоку:\n%s", body)
 	}
 	if !strings.Contains(body, `data-vt="Подбор"`) {
 		t.Errorf("сама ValueTable пропала из карточки:\n%s", body)
+	}
+}
+
+// ValueTable с заданной высотой: строки сверх высоты прокручиваются внутри
+// блока (а не вылезают поверх соседних элементов), шапка колонок закреплена.
+// Без высоты блок не прокручивается — таблица растёт по строкам, как раньше.
+func TestManagedLayout_ValueTableHeightScrolls(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		height     int
+		wantScroll bool
+	}{
+		{"с высотой", 90, true},
+		{"без высоты", 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			el := &metadata.FormElement{
+				Kind:     metadata.FormElementTablePart,
+				Name:     "ЭлементИстория",
+				DataPath: "Форма.История",
+				Width:    640,
+				Height:   tc.height,
+			}
+			ent := layoutTestEntity(el)
+			ent.Forms[0].Attributes = []*metadata.FormAttribute{{
+				Name:    "История",
+				TypeRef: "ValueTable",
+				Columns: []*metadata.FormAttributeColumn{{Name: "Номер", TypeRef: "string"}},
+			}}
+			s, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+			req := httptest.NewRequest("GET", "/ui/catalog/клиент/new", nil)
+			rctx := chi.NewRouteContext()
+			rctx.URLParams.Add("entity", "клиент")
+			req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))
+			rec := httptest.NewRecorder()
+			s.form(rec, req)
+			if rec.Code != 200 {
+				t.Fatalf("форма не открылась: %d", rec.Code)
+			}
+			body := rec.Body.String()
+			gotScroll := strings.Contains(body, `class="managed-vt-layout managed-vt-scroll" data-ob-el="ЭлементИстория"`)
+			if gotScroll != tc.wantScroll {
+				t.Errorf("прокрутка блока = %v, ждали %v:\n%s", gotScroll, tc.wantScroll, body)
+			}
+			for _, rule := range []string{
+				".managed-vt-scroll{overflow-y:auto}",
+				".managed-vt-scroll>.tp-table thead th{position:sticky;top:0;z-index:1}",
+			} {
+				if !strings.Contains(body, rule) {
+					t.Errorf("в стиле формы нет правила %q", rule)
+				}
+			}
+		})
 	}
 }
 
