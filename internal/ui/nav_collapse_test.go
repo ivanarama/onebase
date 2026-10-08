@@ -76,7 +76,7 @@ func TestNavCollapsed_ScopedToWideScreen(t *testing.T) {
 	if strings.Contains(narrow, "nav-collapsed") {
 		t.Error("nav-collapsed адресуется на узком экране — конфликтует со шторкой nav-open")
 	}
-	if !strings.Contains(narrow, "body.nav-open aside{transform:translateX(0)}") {
+	if !strings.Contains(narrow, "body.nav-open #ob-nav{transform:translateX(0)}") {
 		t.Error("мобильная шторка задета: пропало правило body.nav-open")
 	}
 }

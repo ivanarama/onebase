@@ -819,7 +819,7 @@ const otherFormatGuides = `Схемы прочих объектов (по одн
 - Регистр бухгалтерии (accountregs/<Имя>.yaml): name, title, accounts: <ИмяПланаСчетов>, resources: [{name: Сумма, type: number}], subconto: [{name, type: reference:X}].
 - Регистр накопления (registers/<Имя>.yaml): name, dimensions: [{name, type}], resources: [{name, type: number}], attributes: [...]. Ключа type НЕТ.
 - Регистр сведений (inforegs/<Имя>.yaml): name, periodic: false, dimensions: [...], resources: [...].
-- Роль (roles/<Имя>.yaml): name, description, permissions: {catalogs: {Имя: [read,write]}, documents: {Имя: [read,write,post,unpost]}, registers: {Имя: [read]}, reports: {Имя: [run]}}.
+- Роль (roles/<Имя>.yaml): name, description, permissions: {catalogs: {Имя: [read,write]}, documents: {Имя: [read,write,post,unpost]}, registers: {Имя: [read]}, reports: {Имя: [run]}, processors: {Имя: [run]}}. Явно выбери один режим прав на обработки: processors: {} запрещает все, карта processors разрешает перечисленные, либо processors_default: allow сохраняет доступ ко всем без секции processors. Совмещать processors и processors_default нельзя; роль без обоих пока получает все обработки с предупреждением линта.
 - HTTP-сервис (services/<Имя>.yaml): name, root_url, auth: none|basic|session, templates: [{template: /путь, methods: {GET: ИмяПроцедуры}}] + обработчики в src/<Сервис>.service.os.
 - Регламентное задание (scheduled/<Имя>.yaml): name, schedule: "*/5 * * * *" (cron), processor: <ИмяОбработки>, params: {...}, enabled: true, on_error: continue|stop, timeout: 60.
 - Страница (pages/<Имя>.yaml): name, title, icon; обработчик в src/<Страница>.page.os (Процедура ПриФормировании(Страница, Параметры) Экспорт).

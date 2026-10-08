@@ -3,6 +3,7 @@ package cli
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -49,6 +50,42 @@ func TestAIGuideCommand_HasIndexesUniqueness(t *testing.T) {
 		if !strings.Contains(g, want) {
 			t.Errorf("в guide нет ожидаемого фрагмента про indexes: %q", want)
 		}
+	}
+}
+
+// TestAIGuideUniquenessClaimMatchesCode — сторож от молчаливого протухания
+// (#1446, класс проблемы из #1201). До #1407 человеческое сообщение о дубле
+// давал только обычный Upsert, и ai-guide честно оговаривал: «при правке
+// существующего пока приходит текст драйвера про constraint». #1407 добавил
+// ExplainUniqueViolation и на версионный путь записи, оговорка стала ложной, но
+// текст никто не тронул — агент, который её прочитает, спорить не станет.
+//
+// Проверяются обе стороны утверждения: в поставляемом тексте оговорки нет, а в
+// коде есть ровно то, что делает её ненужной. Если версионный путь однажды
+// перестанет объяснять дубль, тест упадёт здесь — и станет видно, что вернуть
+// надо не только код, но и оговорку в тексте.
+func TestAIGuideUniquenessClaimMatchesCode(t *testing.T) {
+	g := runAIGuideCommand(t)
+	for _, stale := range []string{
+		"текст драйвера про constraint",
+		"текстом драйвера про constraint",
+	} {
+		if strings.Contains(g, stale) {
+			t.Errorf("ai-guide снова обещает текст драйвера при правке: %q", stale)
+		}
+	}
+	_, file, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("runtime.Caller не сработал")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "..", ".."))
+	versioned, err := os.ReadFile(filepath.Join(root, "internal", "storage", "optimistic_lock.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(versioned), "ExplainUniqueViolation") {
+		t.Error("версионный путь записи больше не объясняет дубль: верните ExplainUniqueViolation " +
+			"или верните оговорку в ai-guide и DEVELOPER.md")
 	}
 }
 

@@ -64,6 +64,68 @@ func TestPicker_ShowPickerReturnsPickerData(t *testing.T) {
 	}
 }
 
+// План 46, серверный поиск: строка поиска ОТКРЫТОГО диалога шлёт кнопке событие
+// Поиск, набранное приходит обработчику в переменной ПодборЗапрос, и он снова
+// зовёт ПоказатьПодбор — ответ везёт новые строки в то же окно.
+//
+// Пустая строка поиска — такой же запрос («покажи всё»), а не «события не было»:
+// проверяем вторым вызовом, что переменная приходит и пустой. Без этого
+// обработчик, написанный через `Если ПустаяСтрока(ПодборЗапрос)`, вёл бы себя
+// по-разному на очистке строки и на первом открытии.
+func TestPicker_ServerSearchQueryReachesHandler(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ПодборПоиск()
+	Сообщить("[" + ПодборЗапрос + "]");
+	Данные = Новый Массив;
+	Если ПодборЗапрос = "гай" Тогда
+		Данные.Добавить(Новый Структура("Идентификатор,Номенклатура", "u-2", "Гайка"));
+	КонецЕсли;
+	Колонки = Новый Массив;
+	Колонки.Добавить(Новый Структура("Имя,Заголовок,Тип", "Номенклатура", "Товар", "string"));
+	Конфиг = Новый Структура("Заголовок,ПоискНаСервере", "Подбор товаров", Истина);
+	ПоказатьПодбор(Данные, Колонки, Конфиг);
+КонецПроцедуры
+`, nil, []*metadata.FormElement{
+		{
+			Kind: metadata.FormElementButton,
+			Name: "КнопкаПодбор",
+			Handlers: map[metadata.FormEventType]string{
+				metadata.FormEventOnSearch: "ПодборПоиск",
+			},
+		},
+	})
+
+	body := url.Values{}
+	body.Set("_element", "КнопкаПодбор")
+	body.Set("_event", string(metadata.FormEventOnSearch))
+	body.Set("_pick_query", "гай")
+
+	rec := executeFormEvent(t, srv, ent, body)
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	if resp.PickerData == nil {
+		t.Fatalf("ждали pickerData != nil; body=%s", rec.Body.String())
+	}
+	if !resp.PickerData.Config.ServerSearch {
+		t.Errorf("ПоискНаСервере не доехал в конфиг диалога: %+v", resp.PickerData.Config)
+	}
+	if len(resp.PickerData.Rows) != 1 || resp.PickerData.Rows[0].Data["Номенклатура"] != "Гайка" {
+		t.Fatalf("ждали одну строку «Гайка», получили %+v", resp.PickerData.Rows)
+	}
+	if len(resp.Messages) == 0 || resp.Messages[0] != "[гай]" {
+		t.Errorf("обработчик увидел ПодборЗапрос=%v, ждали «[гай]»", resp.Messages)
+	}
+
+	body.Set("_pick_query", "")
+	rec = executeFormEvent(t, srv, ent, body)
+	resp = decodeFormEventResponse(t, rec.Body.Bytes())
+	if resp.PickerData == nil || len(resp.PickerData.Rows) != 0 {
+		t.Fatalf("на пустом запросе ждали диалог без строк, получили %+v", resp.PickerData)
+	}
+	if len(resp.Messages) == 0 || resp.Messages[0] != "[]" {
+		t.Errorf("на пустом запросе ПодборЗапрос=%v, ждали «[]» (переменная есть и пуста)", resp.Messages)
+	}
+}
+
 // План 46, фаза 2: _pick_result (JSON) разбирается в переменную ПодборРезультат,
 // доступную обработчику события Выбор. Проверяем через Сообщить.
 func TestPicker_PickResultParsedToVariable(t *testing.T) {
@@ -121,5 +183,78 @@ func TestParsePickResult(t *testing.T) {
 	}
 	if parsePickResult("{не json") != nil {
 		t.Error("битый JSON должен давать nil")
+	}
+}
+
+// План 46 + одиночный выбор: конфиг «ОдинВыбор» доезжает до клиента флагом
+// single. Диалог писался под подбор номенклатуры (много строк с количествами);
+// там, где значение ровно одно, мультивыбор — лишний способ ошибиться.
+func TestPicker_SingleChoiceFlag(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ПодборНажатие()
+	Колонки = Новый Массив;
+	Колонки.Добавить(Новый Структура("Имя,Заголовок,Тип", "Номер", "Заявка №", "string"));
+	Данные = Новый Массив;
+	Данные.Добавить(Новый Структура("Идентификатор,Номер", "u-1", "ЗАЯ-000001"));
+	Конфиг = Новый Структура("Заголовок,ОдинВыбор", "Выберите заявку", Истина);
+	ПоказатьПодбор(Данные, Колонки, Конфиг);
+КонецПроцедуры
+`, nil, []*metadata.FormElement{
+		{
+			Kind: metadata.FormElementButton,
+			Name: "КнопкаПодбор",
+			Handlers: map[metadata.FormEventType]string{
+				metadata.FormEventOnClick: "ПодборНажатие",
+			},
+		},
+	})
+
+	body := url.Values{}
+	body.Set("_element", "КнопкаПодбор")
+	body.Set("_event", string(metadata.FormEventOnClick))
+
+	rec := executeFormEvent(t, srv, ent, body)
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	if resp.PickerData == nil {
+		t.Fatalf("ждали pickerData != nil; body=%s", rec.Body.String())
+	}
+	if !resp.PickerData.Config.Single {
+		t.Errorf("ждали single=true в конфиге диалога, получено %+v", resp.PickerData.Config)
+	}
+	if resp.PickerData.Config.Title != "Выберите заявку" {
+		t.Errorf("заголовок = %q", resp.PickerData.Config.Title)
+	}
+}
+
+// Без «ОдинВыбор» диалог остаётся прежним, мультивыборным.
+func TestPicker_MultiChoiceStaysDefault(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ПодборНажатие()
+	Колонки = Новый Массив;
+	Колонки.Добавить(Новый Структура("Имя,Заголовок,Тип", "Номер", "Заявка №", "string"));
+	Данные = Новый Массив;
+	Данные.Добавить(Новый Структура("Идентификатор,Номер", "u-1", "ЗАЯ-000001"));
+	ПоказатьПодбор(Данные, Колонки, Новый Структура("Заголовок", "Подбор"));
+КонецПроцедуры
+`, nil, []*metadata.FormElement{
+		{
+			Kind: metadata.FormElementButton,
+			Name: "КнопкаПодбор",
+			Handlers: map[metadata.FormEventType]string{
+				metadata.FormEventOnClick: "ПодборНажатие",
+			},
+		},
+	})
+
+	body := url.Values{}
+	body.Set("_element", "КнопкаПодбор")
+	body.Set("_event", string(metadata.FormEventOnClick))
+
+	resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, body).Body.Bytes())
+	if resp.PickerData == nil {
+		t.Fatal("ждали pickerData != nil")
+	}
+	if resp.PickerData.Config.Single {
+		t.Error("без «ОдинВыбор» диалог обязан остаться мультивыборным")
 	}
 }

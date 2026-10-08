@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -118,6 +119,71 @@ func TestLayoutPreview_RealData(t *testing.T) {
 	}
 }
 
+// Предпросмотр берёт последнюю запись по id, даже если сущность объявила другой
+// порядок списков по умолчанию. Иначе order_by перехватывает Dir: desc и макет
+// получает первую запись прикладного порядка вместо последней созданной.
+func TestLayoutPreview_LastRecordIgnoresEntityOrderBy(t *testing.T) {
+	h, b, dir := newLayoutTestBase(t)
+	docPath := filepath.Join(dir, "documents", "реализация.yaml")
+	doc := "name: Реализация\norder_by: Номер\nfields:\n  - name: Номер\n    type: string\n"
+	if err := os.WriteFile(docPath, []byte(doc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := context.Background()
+	proj, err := h.loadProjectFor(ctx, b)
+	if err != nil {
+		t.Fatalf("loadProjectFor: %v", err)
+	}
+	defer proj.Close()
+
+	dbPath := filepath.Join(dir, "last-record.db")
+	db, err := storage.ConnectSQLite(ctx, dbPath)
+	if err != nil {
+		t.Fatalf("ConnectSQLite: %v", err)
+	}
+	if err := db.Migrate(ctx, proj.Entities); err != nil {
+		db.Close()
+		t.Fatalf("Migrate: %v", err)
+	}
+	ent := proj.Entities[0]
+	for _, row := range []struct {
+		id     uuid.UUID
+		number string
+	}{
+		{uuid.MustParse("00000000-0000-0000-0000-000000000001"), "А-ПЕРВАЯ-ПО-ORDER-BY"},
+		{uuid.MustParse("ffffffff-ffff-ffff-ffff-ffffffffffff"), "Я-ПОСЛЕДНЯЯ-ПО-ID"},
+	} {
+		if err := db.Upsert(ctx, ent.Name, row.id, map[string]any{"Номер": row.number}, ent); err != nil {
+			db.Close()
+			t.Fatalf("Upsert %s: %v", row.number, err)
+		}
+	}
+	db.Close()
+
+	b.DBType = "sqlite"
+	b.DBPath = dbPath
+	if err := h.store.Update(b); err != nil {
+		t.Fatalf("Update base: %v", err)
+	}
+
+	layout := `name: ПоследняяЗапись
+document: Реализация
+areas:
+  - name: Заголовок
+    rows:
+      - cells:
+          - parameter: Номер
+`
+	rec := postPreview(t, h, b, `{"yaml":`+jsonStr(layout)+`,"entity":"Реализация"}`, "html")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d, тело: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "Я-ПОСЛЕДНЯЯ-ПО-ID") || strings.Contains(body, "А-ПЕРВАЯ-ПО-ORDER-BY") {
+		t.Fatalf("предпросмотр выбрал не последнюю запись по id:\n%s", body)
+	}
+}
+
 // Без данных (БД пуста/недоступна) → синтетика: имена полей как значения.
 func TestLayoutPreview_Synthetic(t *testing.T) {
 	h, b, _ := newLayoutTestBase(t)
@@ -193,4 +259,73 @@ func jsonStr(s string) string {
 	}
 	b = append(b, '"')
 	return string(b)
+}
+
+// previewQualifiedLayoutYAML — тот же макет, но поле в шапке взято корневым
+// квалификатором: в реальной печати он разрешается через EntityName контекста
+// печати, в предпросмотре контекст имя не получал и поле оставалось пустым
+// (#1602).
+const previewQualifiedLayoutYAML = `name: Квалификатор
+document: Реализация
+areas:
+  - name: Заголовок
+    rows:
+      - cells:
+          - parameter: Реализация.Номер
+`
+
+// Корневой квалификатор в реальных данных: значение из последней записи.
+func TestLayoutPreview_RootQualifier_RealData(t *testing.T) {
+	h, b, dir := newLayoutTestBase(t)
+	seedRealizationDoc(t, h, b, dir)
+
+	rec := postPreview(t, h, b, `{"yaml":`+jsonStr(previewQualifiedLayoutYAML)+`,"entity":"Реализация"}`, "html")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d, тело: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "ПРОБА-777") {
+		t.Errorf("квалифицированный Реализация.Номер потерял значение в реальных данных\n%s", rec.Body.String())
+	}
+}
+
+// Корневой квалификатор на синтетике: значение заглушки Номер; имя корня
+// сравнивается без учёта регистра.
+func TestLayoutPreview_RootQualifier_Synthetic(t *testing.T) {
+	h, b, _ := newLayoutTestBase(t)
+
+	rec := postPreview(t, h, b, `{"yaml":`+jsonStr(previewQualifiedLayoutYAML)+`,"entity":"реализация"}`, "html")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d, тело: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "000000001") {
+		t.Errorf("квалифицированный Реализация.Номер потерял синтетическое значение\n%s", rec.Body.String())
+	}
+}
+
+// Имя сущности берётся из document: макета, когда entity в запросе пуст.
+func TestLayoutPreview_RootQualifier_NameFromLayoutDocument(t *testing.T) {
+	h, b, dir := newLayoutTestBase(t)
+	seedRealizationDoc(t, h, b, dir)
+
+	rec := postPreview(t, h, b, `{"yaml":`+jsonStr(previewQualifiedLayoutYAML)+`}`, "html")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d, тело: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "ПРОБА-777") {
+		t.Errorf("имя из document: макета не дошло до контекста предпросмотра\n%s", rec.Body.String())
+	}
+}
+
+// PDF с корневым квалификатором строится без ошибки.
+func TestLayoutPreview_RootQualifier_PDF(t *testing.T) {
+	h, b, dir := newLayoutTestBase(t)
+	seedRealizationDoc(t, h, b, dir)
+
+	rec := postPreview(t, h, b, `{"yaml":`+jsonStr(previewQualifiedLayoutYAML)+`,"entity":"Реализация"}`, "pdf")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("код %d, тело: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.HasPrefix(rec.Body.String(), "%PDF") {
+		t.Errorf("тело не начинается с %%PDF: %.16q", rec.Body.String())
+	}
 }

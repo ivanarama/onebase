@@ -1,0 +1,58 @@
+name: ОбразовательнаяДеятельность
+title: Образовательная деятельность
+contents:
+  catalogs:
+    - УчебныеГоды
+    - ПериодыОбучения
+    - Классы
+    - ClosedSentinel
+  documents:
+    - ПриказОНачалеУчебногоГода
+  inforegs:
+    - РасписаниеЗвонков
+    - ГрафикКаникул
+  processors:
+    - КлассныйЖурнал
+
+menu:
+  sections:
+    - id: academic-years
+      title: Учебные годы
+      titles:
+        en: Academic years
+      icon: calendar-days
+      items:
+        - id: academic-years-list
+          target: catalog:УчебныеГоды
+      groups:
+        - id: periods
+          title: Периоды обучения
+          items:
+            - id: periods-list
+              target: catalog:ПериодыОбучения
+        - id: schedules
+          title: Расписание и каникулы
+          items:
+            - id: bells
+              target: inforeg:РасписаниеЗвонков
+            - id: vacations
+              target: inforeg:ГрафикКаникул
+        - id: orders
+          title: Приказы по учебному году
+          items:
+            - id: opening-order
+              target: document:ПриказОНачалеУчебногоГода
+    - id: journals
+      title: Журналы
+      items:
+        - id: class-journal
+          target: processor:КлассныйЖурнал
+          title: Классный журнал
+    - id: closed-sentinel-section
+      title: SECRET_SECTION_SENTINEL
+      groups:
+        - id: closed-sentinel-group
+          title: SECRET_GROUP_SENTINEL
+          items:
+            - id: closed-sentinel-item
+              target: catalog:ClosedSentinel

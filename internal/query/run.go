@@ -24,7 +24,9 @@ import (
 	"context"
 	"time"
 
+	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/ivantit66/onebase/internal/typedempty"
 )
 
 // queryRunner — то, что умеет исполнять SQL. Интерфейс, а не *storage.DB,
@@ -67,6 +69,31 @@ func NormalizeColumns(res *Result, rows []map[string]any) {
 	}
 	NormalizeBoolColumns(res.BoolColumns, rows)
 	NormalizeDateColumns(res.DateColumns, rows)
+	NormalizeTypedDateColumns(res.TypedColumns, rows)
+}
+
+// NormalizeTypedDateColumns applies the common database-date conversion to
+// DSL-only descriptors as well. Register system fields are not part of the
+// metadata field list used by DateColumns, but their non-empty values still
+// have to cross the same SQLite TEXT -> time.Time boundary.
+func NormalizeTypedDateColumns(cols map[string]typedempty.Descriptor, rows []map[string]any) {
+	if len(cols) == 0 {
+		return
+	}
+	for _, row := range rows {
+		for col, desc := range cols {
+			if desc.Type != metadata.FieldTypeDate {
+				continue
+			}
+			v, ok := row[col]
+			if !ok || v == nil {
+				continue
+			}
+			if t, converted := ToDateValue(v); converted {
+				row[col] = t
+			}
+		}
+	}
 }
 
 // NormalizeDateColumns приводит значения перечисленных колонок к значению даты.

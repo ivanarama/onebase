@@ -99,8 +99,9 @@ func TestTPDateColumn_ОдинаковаНаДиалектахИСВернымД
 	time.Local = time.FixedZone("MSK", 3*60*60)
 	t.Cleanup(func() { time.Local = saved })
 
-	const wantDay = "1985-03-14T00:00"
-	const wantWithTime = "1985-03-14T13:45"
+	// Секунды едут вместе с датой: без них запись формы отрезала бы их.
+	const wantDay = "1985-03-14T00:00:00"
+	const wantWithTime = "1985-03-14T13:45:00"
 
 	measured := map[string]map[string]string{}
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {

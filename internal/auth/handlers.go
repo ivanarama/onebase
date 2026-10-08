@@ -37,6 +37,13 @@ func credentialsTooLong(login, password string) bool {
 var loginTmpl = template.Must(template.New("login").Parse(`<!DOCTYPE html>
 <html lang="ru">
 <head><meta charset="utf-8"><title>Вход — onebase</title>
+<script>
+// Logout redirects here; JSON/SSO/bootstrap logins are also isolated by the
+// session scope in the app shell. Leave unrelated sessionStorage keys intact.
+['obTabs','obTabsActive','obTabsScope'].forEach(function(key){
+  try{ sessionStorage.removeItem(key); }catch(e){}
+});
+</script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'Segoe UI',Arial,sans-serif;background:#f0f0f0;display:flex;align-items:center;justify-content:center;height:100vh}

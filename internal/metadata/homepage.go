@@ -27,7 +27,8 @@ type HomePage struct {
 	Widgets []HomePageWidget  `yaml:"widgets"` // flat list, used when layout=grid
 	// Nav опционально ограничивает левое меню глобальной «Главной» так же, как
 	// contents подсистемы. nil/пусто = плоский список всех читаемых объектов.
-	Nav *SubsystemContents `yaml:"nav,omitempty"`
+	Nav  *SubsystemContents `yaml:"nav,omitempty"`
+	Menu *Menu              `yaml:"menu,omitempty"`
 	// Hidden прячет глобальную «Главную» целиком: ведущая ссылка в панели
 	// разделов не показывается, а вход (/ui/) уводит на первый раздел —
 	// навигация идёт только по подсистемам (issue #304). Осмыслен только для

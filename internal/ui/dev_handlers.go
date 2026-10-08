@@ -26,12 +26,40 @@ import (
 
 // ─── Query Console ──────────────────────────────────────────────────────────
 
+// coalesceEmptyWrap распознаёт служебную обёртку, которой компилятор запросов
+// окружает текстовое поле в сравнении, чтобы незаполненное значение сравнивалось
+// как пустая строка:
+//
+//	COALESCE(поле, '')
+//
+// Консоль определяет тип параметра текстом, по колонке перед плейсхолдером,
+// поэтому обёртку нужно развернуть обратно.
+//
+// Литерал пустой строки намеренно стоит блоком кода: в обычной строке
+// док-комментария gofmt заменяет две одиночные кавычки одной типографской, и
+// комментарий начинает описывать несуществующую конструкцию.
+var coalesceEmptyWrap = regexp.MustCompile(`(?i)COALESCE\(([^,()]+),\s*''\)`)
+
+// castNumericWrap распознаёт вторую служебную обёртку того же компилятора —
+// CAST, которым на SQLite окружается number-колонка в сравнении (там число
+// хранится как TEXT):
+//
+//	CAST(поле AS NUMERIC)
+//	CAST(алиас.поле AS NUMERIC)
+//
+// Без разворота перед плейсхолдером оставался хвост «numeric)», и параметр
+// уходил в name-based fallback как строка (#1537). Внутреннее выражение
+// ограничено формой, которую генерирует компилятор, — одиночный идентификатор
+// с точками: произвольное выражение вида CAST(а+б AS NUMERIC) разворотом не
+// считается и ведёт себя как раньше.
+var castNumericWrap = regexp.MustCompile(`(?i)CAST\(([\p{L}\p{N}_.]+)\s+AS\s+NUMERIC\)`)
+
 func (s *Server) queryConsolePage(w http.ResponseWriter, r *http.Request) {
 	if !s.isAdmin(r) {
 		s.renderForbidden(w, r)
 		return
 	}
-	sources := s.buildQuerySources()
+	sources := s.buildQuerySources(s.resolveLang(r))
 	schemaJSON, _ := json.Marshal(sources)
 	s.render(w, r, "page-query-console", map[string]any{
 		"Schema": template.JS(schemaJSON), //nolint:gosec // G203: значение получено json.Marshal — он экранирует < > & в \u-последовательности, поэтому «</script>» из данных не разорвёт тег
@@ -249,6 +277,14 @@ func (s *Server) queryConsoleAnalyze(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		before := strings.TrimSpace(parts[occ-1])
+		// Детект колонки текстовый — по последним словам перед плейсхолдером,
+		// поэтому служебные обёртки сравнения разворачиваем: компилятор
+		// окружает текстовое поле как COALESCE(поле, ''), чтобы незаполненное
+		// значение сравнивалось как пустая строка, а number-колонку на SQLite —
+		// как CAST(поле AS NUMERIC), потому что число там хранится как TEXT.
+		// Без разворота вместо имени колонки сюда попадал хвост обёртки.
+		before = coalesceEmptyWrap.ReplaceAllString(before, "$1")
+		before = castNumericWrap.ReplaceAllString(before, "$1")
 		tokens := strings.Fields(before)
 		if len(tokens) < 2 {
 			dbg.Type = "too_few_tokens→fallback"

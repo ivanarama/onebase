@@ -118,6 +118,7 @@ func TestNumberCanonicalBypassWritersMatrix(t *testing.T) {
 		if err := db.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{account}); err != nil {
 			t.Fatalf("MigrateAccountRegisters: %v", err)
 		}
+		ensureChart(t, db, account.Accounts, "41", "60")
 		accountRecorder := uuid.New()
 		if err := db.WriteAccountMovements(ctx, account.Name, "Doc", accountRecorder, []map[string]any{{
 			"счётдт": "41", "счёткт": "60", "Amount": float64(15.5), "Субконто1": "2.5",

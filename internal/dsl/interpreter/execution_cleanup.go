@@ -19,7 +19,11 @@ var ErrTransactionLeftOpen = errors.New("DSL-обработчик оставил
 // and independently bounded, so timeout/error paths cannot strand a pool
 // connection or a borrowed savepoint.
 func FinishTxExecution(state *TxState, runErr error) error {
-	if state == nil || !state.HasOpen() {
+	if state == nil {
+		return runErr
+	}
+	defer state.runExecutionCleanups()
+	if !state.HasOpen() {
 		return runErr
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(state.Ctx()), transactionCleanupTimeout)
@@ -41,7 +45,11 @@ func FinishTxExecution(state *TxState, runErr error) error {
 // RollbackTxExecution is a best-effort panic/early-return backstop. Normal
 // execution paths call FinishTxExecution synchronously before continuing.
 func RollbackTxExecution(state *TxState) {
-	if state == nil || !state.HasOpen() {
+	if state == nil {
+		return
+	}
+	defer state.runExecutionCleanups()
+	if !state.HasOpen() {
 		return
 	}
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(state.Ctx()), transactionCleanupTimeout)

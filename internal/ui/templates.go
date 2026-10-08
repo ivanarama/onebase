@@ -26,6 +26,7 @@ type managedTPColumnJSON struct {
 	Name        string `json:"name"`
 	Type        string `json:"type"`
 	Ref         string `json:"ref,omitempty"`
+	RefFilter   string `json:"refFilter,omitempty"`
 	AllowCreate bool   `json:"allowCreate,omitempty"`
 	Enum        bool   `json:"enum,omitempty"`
 	// Virtual — колонка показывается, но не хранится (#845). Флаг нужен клиенту:
@@ -315,6 +316,19 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return infoRegisterDetailPanelJSONTranslated(ir, row, lang, periodTitle,
 				func(key string) string { return translate(lang, key) })
 		},
+		// choiceContextJSON — карта «имя параметра → путь к контролу» для
+		// data-ref-context. Значения намеренно не подставляются при серверном
+		// рендере: браузер читает текущие контролы перед каждым запросом подбора.
+		"choiceContextJSON": func(el *metadata.FormElement) string {
+			if el == nil || len(el.ChoiceContext) == 0 {
+				return ""
+			}
+			raw, err := json.Marshal(el.ChoiceContext)
+			if err != nil {
+				return ""
+			}
+			return string(raw)
+		},
 		"isRichText": func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
 		"isImage":    func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
 		"fieldNamesCSV": func(fields []metadata.Field) string {
@@ -357,6 +371,20 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// entityHasRichText — есть ли среди реквизитов шапки сущности richtext-поле.
 		// Quill (vendor-ассеты + init) грузятся на форме только при true, чтобы не
 		// тянуть редактор на формы без richtext-полей.
+		// infoRegHasRichText — есть ли у регистра сведений richtext-ресурс. По нему
+		// форма записи решает, тянуть ли вендор-ассеты редактора: у большинства
+		// регистров их грузить незачем.
+		"infoRegHasRichText": func(ir *metadata.InfoRegister) bool {
+			if ir == nil {
+				return false
+			}
+			for _, f := range append(append([]metadata.Field{}, ir.Dimensions...), ir.Resources...) {
+				if metadata.IsRichText(f.Type) {
+					return true
+				}
+			}
+			return false
+		},
 		"entityHasRichText": func(e *metadata.Entity) bool {
 			if e == nil {
 				return false
@@ -396,6 +424,40 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return s[:i]
 			}
 			return s
+		},
+		// managedRefOptions keeps choice_filter options scoped to the stable
+		// element id. The same entity field may be rendered twice with different
+		// filters; falling back by field name is only for elements without the
+		// opt-in contract.
+		"managedRefOptions": func(ctx map[string]any, element *metadata.FormElement, field string) []map[string]any {
+			rows := managedRefOptionRows(ctx, element, field)
+			// choice_dropdown: false — список не разворачивается, выбор идёт формой
+			// подбора. Текущее значение в списке остаётся: без его <option>
+			// заполненное поле выглядело бы пустым.
+			if element != nil && element.ChoiceDropdown != nil && !*element.ChoiceDropdown {
+				return selectedRefOptionsOnly(rows, formContextValue(ctx, field))
+			}
+			return rows
+		},
+		"choiceDropdownCollapsed": func(element *metadata.FormElement) bool {
+			return element != nil && element.ChoiceDropdown != nil && !*element.ChoiceDropdown
+		},
+		// adminOnlyLocked — поле заперто, потому что смотрит не администратор.
+		// Тот же запрет входит в ответы событий формы и в разбор записи: иначе
+		// ложное readonly_when разблокировало бы поле после первого round trip.
+		"adminOnlyLocked": func(ctx map[string]any, element *metadata.FormElement) bool {
+			if element == nil || !element.EditableAdminOnly {
+				return false
+			}
+			admin, _ := ctx["IsAdmin"].(bool)
+			return !admin
+		},
+		"managedChoiceContext": func(ctx map[string]any, element *metadata.FormElement) string {
+			if element == nil {
+				return ""
+			}
+			contexts, _ := ctx["ManagedChoiceContexts"].(map[string]string)
+			return contexts[element.ID]
 		},
 		// itemFormVisible/itemFormHidden делят реквизиты по блоку `item_form:`
 		// (план 117, Д12). До этого ключ парсился, хранился, отдавался в
@@ -446,26 +508,29 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// attrRefEntity — имя сущности из ссылочного типа реквизита формы
 		// ("CatalogRef.X" → "X"), пусто если тип не ссылочный.
 		"attrRefEntity": func(typeRef string) string { return attrRefEntityName(typeRef) },
+		// refHasCard — есть ли у цели ссылки карточка, которую откроет 🔍.
+		// У системной таблицы учётных записей (reference:_users, #1646) её
+		// нет: адрес давал 404, а вкладка с ним не закрывалась (#1684).
+		"refHasCard": func(refEntity string) bool {
+			return strings.TrimSpace(refEntity) != "" && !metadata.IsSystemRefTarget(refEntity)
+		},
 		// formAttrNames — имена скалярных реквизитов формы (save:false), которых
 		// нет среди полей сущности. Клиент по ним восстанавливает введённое после
 		// полной перезагрузки страницы: «Записать» уходит POST'ом с редиректом, и
 		// иначе выбор в реквизите формы просто пропадал (в 1С форма живёт в
 		// памяти клиента и реквизиты переживают запись).
-		"formAttrNames": func(form *metadata.FormModule, entity *metadata.Entity) []string {
-			if form == nil {
-				return nil
-			}
-			var names []string
-			for _, a := range form.Attributes {
-				if a == nil || a.Name == "" || a.MainAttribute || a.TypeRef == "ValueTable" {
-					continue
+		"formAttrNames": formAttrNames,
+		"formAttrValues": func(form *metadata.FormModule, entity *metadata.Entity, values any) map[string]string {
+			initial := make(map[string]string)
+			for _, name := range formAttrNames(form, entity) {
+				// Values uses the same string representation as rendered controls.
+				if vals, ok := values.(map[string]string); ok {
+					initial[name] = vals[name]
+				} else {
+					initial[name] = formValueForPath(values, "Форма."+name)
 				}
-				if _, isEntityField := entityFieldByName(entity, a.Name); isEntityField {
-					continue
-				}
-				names = append(names, a.Name)
 			}
-			return names
+			return initial
 		},
 		// fieldTitleRU достаёт ru-вариант из map[string]string или возвращает fallback.
 		"fieldTitleRU": func(m map[string]string, fallback string) string {
@@ -492,6 +557,36 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			handler, ok := el.Handlers[metadata.FormEventType(eventName)]
 			return ok && strings.TrimSpace(handler) != ""
+		},
+		// elLayout / elAlign / elFill — раскладка элемента (width/height/halign/
+		// valign) по контракту metadata.FormElementLayoutCSS. Шаблон подставляет
+		// результат в style= внешнего блока; правила собираются из словарей и
+		// целых чисел, поэтому отдаются как template.CSS (иначе html/template
+		// вырежет объявления целиком, подставив ZgotmplZ).
+		//
+		// elAlign — вариант без размеров, для ПолеКартинки: там width/height
+		// ограничивают саму картинку и были такими до #1185.
+		"elLayout": func(el *metadata.FormElement) template.CSS {
+			return template.CSS(metadata.FormElementLayoutCSS(el)) //nolint:gosec // G203: стиль собран из словаря выравнивания и целых размеров 1…4000 px
+		},
+		"elAlign": func(el *metadata.FormElement) template.CSS {
+			return template.CSS(metadata.FormElementAlignCSS(el)) //nolint:gosec // G203: стиль собран только из нормализованных значений словаря выравнивания
+		},
+		"elBackground": func(el *metadata.FormElement) template.CSS {
+			return template.CSS(metadata.FormElementBackgroundCSS(el)) //nolint:gosec // G203: значение прошло csssafe.Color, иначе пустая строка
+		},
+		"elFill": func(el *metadata.FormElement) bool {
+			return metadata.FormElementFillsHeight(el)
+		},
+		// elPictureSize сохраняет особую семантику width/height картинки, но
+		// применяет к ним тот же диапазон 1…4000, что общий layout-контракт.
+		"elPictureSize": func(size int) int {
+			return metadata.NormalizeFormLayoutSize(size)
+		},
+		// tpGridCSS — стиль контейнера SlickGrid: высота по числу строк либо по
+		// ключу height, ширина и выравнивание — по общему контракту раскладки.
+		"tpGridCSS": func(el *metadata.FormElement, rows int) template.CSS {
+			return template.CSS(metadata.FormTablePartGridCSS(el, rows)) //nolint:gosec // G203: стиль собран из словаря выравнивания, числа строк и целых размеров 1…4000 px
 		},
 		// elReadOnly / elHidden — итоговое состояние элемента управляемой формы
 		// с учётом условий readonly_when/hidden_when по полям записи. Условия
@@ -561,6 +656,15 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return false
 			}
 			return !*a.Visible
+		},
+		// formActionVisible — видимость стандартного действия managed-формы.
+		// Отсутствующий ключ и visible:nil сохраняют платформенное умолчание.
+		"formActionVisible": func(form *metadata.FormModule, name string) bool {
+			if form == nil || form.Actions == nil {
+				return true
+			}
+			a, ok := form.Actions[name]
+			return !ok || a == nil || a.Visible == nil || *a.Visible
 		},
 		// tablePartByName ищет metadata.TablePart в Entity по имени.
 		// Возвращает указатель на копию (или nil) — нужно managed-шаблону
@@ -971,7 +1075,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
-		"managedTPColumnsJSON": func(plan []managedTPColumn, virtual []metadata.FormVirtualColumn, lang string, refWriteAccess any) template.JS {
+		"managedTPColumnsJSON": func(plan []managedTPColumn, virtual []metadata.FormVirtualColumn, lang string, refWriteAccess any, tpName string, refFilters any) template.JS {
+			filters, _ := refFilters.(map[string]string)
 			fields := make([]metadata.Field, 0, len(plan))
 			for _, column := range plan {
 				fields = append(fields, column.Field)
@@ -985,6 +1090,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 					Name:        field.DisplayName(lang),
 					Type:        string(field.Type),
 					Ref:         field.RefEntity,
+					RefFilter:   filters[tpName+"."+field.Name],
 					AllowCreate: field.RefEntity != "" && field.InlineCreateEnabled(true) && refWriteAllowed(refWriteAccess, field.RefEntity),
 					Enum:        strings.HasPrefix(string(field.Type), "enum:"),
 					Hidden:      column.Hidden,
@@ -1132,6 +1238,53 @@ func isListStateQueryKey(key string) bool {
 // setQueryValue ставит значение параметра; пустое значение убирает параметр, а
 // ключ с «*» на конце — все параметры с таким префиксом (например "f.*" — весь
 // отбор списка).
+// managedRefOptionRows возвращает варианты ссылочного поля: отобранные
+// choice_filter, если сервер посчитал их для этого элемента, иначе общую
+// предзагруженную страницу справочника.
+func managedRefOptionRows(ctx map[string]any, element *metadata.FormElement, field string) []map[string]any {
+	if element != nil {
+		if scoped, ok := ctx["ManagedChoiceOptions"].(map[string][]map[string]any); ok {
+			if rows, exists := scoped[element.ID]; exists {
+				return rows
+			}
+		}
+	}
+	if refs, ok := ctx["RefOptions"].(map[string][]map[string]any); ok {
+		return refs[field]
+	}
+	if refs, ok := ctx["RefOptions"].(map[string]any); ok {
+		if rows, ok := refs[field].([]map[string]any); ok {
+			return rows
+		}
+	}
+	return nil
+}
+
+// selectedRefOptionsOnly оставляет в списке только текущее значение поля.
+func selectedRefOptionsOnly(rows []map[string]any, selected string) []map[string]any {
+	if strings.TrimSpace(selected) == "" {
+		return nil
+	}
+	for _, row := range rows {
+		if refValueString(row["id"]) == selected {
+			return []map[string]any{row}
+		}
+	}
+	return nil
+}
+
+// formContextValue читает значение поля из Values контекста формы: карта
+// приезжает и строковой, и разнотипной — в зависимости от пути отрисовки.
+func formContextValue(ctx map[string]any, field string) string {
+	switch values := ctx["Values"].(type) {
+	case map[string]string:
+		return strings.TrimSpace(values[field])
+	case map[string]any:
+		return strings.TrimSpace(refValueString(values[field]))
+	}
+	return ""
+}
+
 func setQueryValue(vals url.Values, key, value string) {
 	if prefix, ok := strings.CutSuffix(key, "*"); ok {
 		for k := range vals {
@@ -1159,7 +1312,7 @@ func normalizedFormHotkey(value string) string {
 }
 
 func templateSource() string {
-	return tplHead + tplNav + tplIndex + tplList + tplForm + tplManagedForm + tplRegister + tplReport + tplProcessor + tplAgentSettings + tplPOS + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants + tplHistory + tplStages + tplJournal + tplScheduled + tplAccountReg + tplQueryBuilder + tplAllFunctions + tplSearch + tplQueryConsole + tplCodeConsole + tplGengen + tplForbidden + tplReportProblem + tplPageCustom + tplAppShell
+	return tplHead + tplNav + tplIndex + tplList + tplForm + tplManagedForm + tplRegister + tplReport + tplProcessor + tplAgentSettings + tplPOS + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants + tplHistory + tplStages + tplJournal + tplScheduled + tplAccountReg + tplQueryBuilder + tplAllFunctions + tplSearch + tplQueryConsole + tplCodeConsole + tplGengen + tplForbidden + tplReportProblem + tplPageCustom + tplAppShell + tplNavigationSettings
 }
 
 const tplHead = `
@@ -1172,11 +1325,24 @@ const tplHead = `
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="onebase">
 <title>{{if .Cfg.AppName}}{{.Cfg.AppName}}{{else}}onebase{{end}}</title>
+{{with $.Lang}}<script>window.OB_I18N = {"Ничего не найдено": {{t . "Ничего не найдено"}}};</script>{{end}}
+<script type="application/json" id="ob-ui-messages">{{jsJSON (dict
+  "closeNotConfirmed" (t (or $.Lang "ru") "Форма не закрыта: сервер не подтвердил закрытие.")
+  "unsavedClose" (t (or $.Lang "ru") "Данные были изменены и не записаны. Закрыть форму?")
+)}}</script>
 <script src="/static/ui.js"></script>
 <style>
 .ob-embedded .topbar,.ob-embedded .subsys-bar,.ob-embedded #ob-nav{display:none!important}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;min-height:100vh;background:#f5f5f5}
+/* height:100vh + overflow:hidden — окно приложения ровно по экрану. С одним лишь
+   min-height:100vh страницу растягивало САМОЕ ВЫСОКОЕ содержимое (обычно длинное
+   меню слева): при окне 908px тело становилось 1283px, вместе с ним росла
+   вкладка-iframe (.ob-tabbody iframe — height:100% растянутой области), и
+   диалог с position:fixed внутри неё центрировался по ФРЕЙМУ, а не по экрану —
+   то есть уезжал под нижний край. Прокрутка никуда не делась: меню и рабочая
+   область прокручиваются каждая сама (overflow-y:auto). На узком экране правило
+   снимается — там страница прокручивается целиком, см. media-запрос ниже. */
+body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;height:100vh;min-height:100vh;overflow:hidden;background:#f5f5f5}
 .topbar{background:#1e293b;color:#fff;padding:0 16px;display:flex;align-items:center;height:38px;flex-shrink:0;position:sticky;top:0;z-index:100}
 .topbar-title{font-size:14px;font-weight:600;color:#7dd3fc;flex:1}
 .sys-menu{position:relative}
@@ -1218,8 +1384,14 @@ body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;min-hei
 .report-composed.rep-lines-both td:last-child,.report-composed.rep-lines-both th:last-child{border-right:none}
 .report-composed.rep-lines-none td,.report-composed.rep-lines-none th{border-bottom:none}
 .report-composed.rep-zebra tbody tr:nth-child(even){background:#fafbfc}
-.app-body{display:flex;flex:1;overflow:hidden}
-aside{width:210px;background:#1e293b;color:#fff;padding:16px 0;flex-shrink:0;overflow-y:auto}
+/* min-height:0 у строки и её колонок: у flex-элемента min-height по умолчанию
+   auto, поэтому он не может стать ниже своего содержимого — и длинное меню
+   растягивало всю страницу, несмотря на overflow:hidden выше. */
+.app-body{display:flex;flex:1;overflow:hidden;min-height:0}
+/* Оформление меню привязано к #ob-nav, а не к голому aside: детальная панель —
+   тоже <aside> с белым фоном, и унаследованный color:#fff делал её значения
+   белыми на белом (#1670). */
+#ob-nav{width:210px;background:#1e293b;color:#fff;padding:16px 0;flex-shrink:0;overflow-y:auto;min-height:0}
 aside .sec{font-size:11px;text-transform:uppercase;color:#94a3b8;margin:14px 12px 4px;letter-spacing:.05em}
 aside a{display:block;padding:6px 14px;color:#cbd5e1;text-decoration:none;font-size:14px;margin:1px 6px;border-radius:5px;line-height:1.3;overflow-wrap:break-word}
 aside a:hover{background:#334155;color:#fff}
@@ -1229,7 +1401,11 @@ aside details.navsec>summary::-webkit-details-marker{display:none}
 aside details.navsec>summary::before{content:"\25B8";display:inline-block;width:1em;color:#64748b}
 aside details.navsec[open]>summary::before{content:"\25BE"}
 aside details.navsec>summary:hover{color:#cbd5e1}
-main{flex:1;padding:28px;overflow-y:auto}
+aside details.navfolder{margin-left:12px}
+aside details.navfolder>summary{text-transform:none;font-size:12px;margin-top:8px}
+aside .navfolder-title{margin-left:12px;text-transform:none}
+aside .navfolder-items>a{padding-left:26px}
+main{flex:1;padding:28px;overflow-y:auto;min-height:0;min-width:0}
 h2{font-size:22px;font-weight:600;margin-bottom:20px;color:#1e293b}
 h3{font-size:16px;font-weight:600;margin:24px 0 10px;color:#1e293b}
 .card{background:#fff;border-radius:10px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,.1);max-width:1400px}
@@ -1313,9 +1489,12 @@ body{padding-bottom:32px}
   html.nav-collapsed #ob-nav{display:none}
 }
 @media (max-width:820px){
+  /* Мобильная раскладка прокручивает страницу целиком — возвращаем ей высоту по
+     содержимому, иначе низ формы стал бы недоступен. */
+  body{height:auto;overflow:visible}
   .app-body{display:block;overflow:visible}
-  aside{position:fixed;left:0;top:0;bottom:0;width:78vw;max-width:300px;z-index:401;transform:translateX(-100%);transition:transform .2s ease;box-shadow:2px 0 16px rgba(0,0,0,.3)}
-  body.nav-open aside{transform:translateX(0)}
+  #ob-nav{position:fixed;left:0;top:0;bottom:0;width:78vw;max-width:300px;z-index:401;transform:translateX(-100%);transition:transform .2s ease;box-shadow:2px 0 16px rgba(0,0,0,.3)}
+  body.nav-open #ob-nav{transform:translateX(0)}
   body.nav-open::before{content:"";position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:400}
   main{padding:14px;overflow-y:visible}
   h2{font-size:19px;margin-bottom:14px}
@@ -1410,18 +1589,23 @@ const tplNav = `
           </div>
           {{if .HasAuth}}{{if not .DenyPasswdChange}}<a href="/ui/profile/passwd">{{t $.Lang "Сменить пароль"}}</a>{{end}}
           <a href="/ui/profile/2fa">{{t $.Lang "Второй фактор"}}</a>{{end}}
+          {{if .HasPersonalNavigation}}<a href="/ui/settings/navigation?subsystem={{.CurrentSubsystem}}">{{t $.Lang "Настроить меню"}}</a>{{end}}
         </div>
       </details>
-      {{if not .IsAdmin}}
+      {{if and (not .IsAdmin) (or .HasPOS .HasStages)}}
       <details class="sys-group">
         <summary>{{t $.Lang "Платформенные возможности"}}</summary>
         <div class="sys-group-body">
-          <a href="/ui/pos">{{t $.Lang "Рабочее место кассира (РМК)"}}</a>
+          {{if .HasPOS}}<a href="/ui/pos">{{t $.Lang "Рабочее место кассира (РМК)"}}</a>{{end}}
           {{if .HasStages}}<a href="/ui/stages">{{t $.Lang "Этапы — где застряло"}}</a>{{end}}
         </div>
       </details>
       {{end}}
       {{if .IsAdmin}}
+      <details class="sys-group">
+        <summary>{{t $.Lang "Настройка приложения"}}</summary>
+        <div class="sys-group-body"><a href="/ui/admin/navigation?subsystem={{.CurrentSubsystem}}">{{t $.Lang "Навигация"}}</a></div>
+      </details>
       <details class="sys-group">
         <summary>{{t $.Lang "Администрирование"}}</summary>
         <div class="sys-group-body">
@@ -1496,20 +1680,30 @@ const tplNav = `
   {{if not .Subsystems}}<a href="/ui/" style="display:block;padding:12px 14px 8px;color:#7dd3fc;font-weight:700;font-size:15px;text-decoration:none">{{t $.Lang "Главная"}}</a>{{end}}
   {{if .CollapsibleNav}}
   {{range .Nav}}
-  <details class="navsec" data-navsec="{{.Kind}}"{{if .Open}} open{{end}}>
-    <summary>{{.Kind}}</summary>
-    {{range .Items}}<a href="{{.URL}}" title="{{.Label}}">{{navLabel .Label}}</a>
+  <details class="navsec" id="{{.DOMID}}" data-nav-id="{{.ID}}" data-navsec="{{.DOMID}}"{{if .LegacyTitle}} data-navsec-legacy="{{.LegacyTitle}}"{{end}}{{if .Open}} open{{end}}>
+    <summary>{{lucideIcon .Icon}}{{.Kind}}</summary>
+    {{template "nav-items" .Items}}
+    {{range .Groups}}
+    <details class="navsec navfolder" id="{{.DOMID}}" data-nav-id="{{.ID}}" data-navsec="{{.DOMID}}">
+      <summary>{{lucideIcon .Icon}}{{.Kind}}</summary>
+      {{template "nav-items" .Items}}
+    </details>
     {{end}}
   </details>
   {{end}}
   {{else}}
   {{range .Nav}}
-  <div class="sec">{{.Kind}}</div>
-  {{range .Items}}<a href="{{.URL}}" title="{{.Label}}">{{navLabel .Label}}</a>
+  <div class="sec" id="{{.DOMID}}" data-nav-id="{{.ID}}">{{lucideIcon .Icon}}{{.Kind}}</div>
+  {{template "nav-items" .Items}}
+  {{range .Groups}}
+  <div class="sec navfolder-title" id="{{.DOMID}}" data-nav-id="{{.ID}}">{{lucideIcon .Icon}}{{.Kind}}</div>
+  <div class="navfolder-items">{{template "nav-items" .Items}}</div>
   {{end}}{{end}}
   {{end}}
 </aside>
 {{end}}
+{{define "nav-items"}}{{range .}}<a href="{{.URL}}" title="{{.Label}}" id="{{.DOMID}}" data-nav-id="{{.ID}}">{{lucideIcon .Icon}}{{navLabel .Label}}</a>
+{{end}}{{end}}
 `
 
 const tplIndex = `
@@ -1522,7 +1716,13 @@ const tplIndex = `
 .dash-row > .w-card-list,.dash-row > .w-card-chart,.dash-row > .w-card-recent{flex:1 1 360px}
 .dash-grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
 .w-card{background:#fff;border-radius:10px;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.08);display:flex;flex-direction:column;min-height:120px}
-.w-title{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;font-weight:600;margin-bottom:8px}
+.w-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;min-height:24px}
+.w-title{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;font-weight:600;flex:1;min-width:0}
+.w-refresh{border:0;background:transparent;color:#64748b;border-radius:6px;padding:3px 5px;line-height:1;cursor:pointer;font-size:15px}
+.w-refresh:hover{background:#f1f5f9;color:#1d4ed8}.w-refresh:focus-visible{outline:2px solid #60a5fa;outline-offset:2px}
+.w-refresh[disabled]{cursor:wait;opacity:.55}.w-card.ob-widget-loading .w-refresh{animation:ob-widget-spin .8s linear infinite}
+@keyframes ob-widget-spin{to{transform:rotate(360deg)}}
+.w-refresh-status{font-size:12px;color:#b91c1c;margin-top:7px;min-height:0}
 .w-kpi-value{font-size:32px;font-weight:700;color:#0f172a;line-height:1.1;white-space:nowrap}
 .w-kpi-sub{font-size:12px;color:#94a3b8;margin-top:6px}
 /* Кликабельный счётчик: остаётся числом (тот же кегль и цвет), но ведёт себя
@@ -1581,8 +1781,33 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 {{end}}
 
 {{define "widget-card"}}
-<div class="w-card w-card-{{.Type}}">
-  {{if .Title}}<div class="w-title">{{.Title}}</div>{{end}}
+<div class="w-card w-card-{{.Type}}"{{if .PartialURL}} data-ob-widget-card data-widget-name="{{.Name}}" data-widget-url="{{.PartialURL}}" data-refresh-error="{{.RefreshError}}"{{if .RefreshOn}} data-ob-refresh-on="{{.RefreshOn}}" data-ob-live="widget/{{.Name}}"{{end}}{{end}}>
+  {{if or .Title .PartialURL}}
+  <div class="w-head">
+    {{if .Title}}<div class="w-title">{{.Title}}</div>{{end}}
+    {{if .PartialURL}}<button type="button" class="w-refresh" data-ob-widget-refresh title="{{.RefreshLabel}}" aria-label="{{.RefreshLabel}}">↻</button>{{end}}
+  </div>
+  {{end}}
+  {{if .Filters}}
+  <div class="w-filters">
+    {{range .Filters}}{{$f := .}}
+    <label class="w-filter"><span>{{$f.Label}}</span>
+    {{if or (eq $f.Kind "bool") (eq $f.Kind "select") (eq $f.Kind "reference")}}<select data-ob-filter="{{$f.Key}}">
+      {{range $f.Options}}<option value="{{.Value}}"{{if eq .Value $f.Current}} selected{{end}}>{{.Label}}</option>{{end}}
+    </select>{{else}}<input type="{{if eq $f.Kind "date"}}date{{else}}text{{end}}"{{if eq $f.Kind "number"}} inputmode="decimal"{{end}} data-ob-filter="{{$f.Key}}" value="{{$f.Current}}">{{end}}
+    </label>
+    {{end}}
+    <button type="button" class="w-filter-reset" data-ob-filter-reset>{{.ResetLabel}}</button>
+  </div>
+  {{end}}
+  <div data-ob-widget-body>
+  {{template "widget-body" .}}
+  </div>
+  {{if .PartialURL}}<div class="w-refresh-status" data-ob-widget-status role="status" aria-live="polite"></div>{{end}}
+</div>
+{{end}}
+
+{{define "widget-body"}}
   {{if .Error}}<div class="w-error">{{.Error}}</div>
   {{else if eq .Type "kpi"}}{{template "widget-kpi-body" .}}
   {{else if eq .Type "list"}}{{template "widget-list-body" .}}
@@ -1590,7 +1815,6 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
   {{else if eq .Type "actions"}}{{template "widget-actions-body" .}}
   {{else if eq .Type "recent"}}{{template "widget-recent-body" .}}
   {{end}}
-</div>
 {{end}}
 
 {{define "widget-kpi-body"}}
@@ -1611,7 +1835,7 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
     <tbody>
     {{range .Rows}}
       {{$row := .}}
-      <tr>
+      {{with index $row "_row_url"}}<tr class="ob-row-link" tabindex="0" data-ob-row-url="{{.}}">{{else}}<tr>{{end}}
         {{range $.Columns}}
         <td{{if eq .Align "right"}} class="right"{{end}}>{{wcell $row .Field .Format}}</td>
         {{end}}
@@ -1686,7 +1910,10 @@ const tplList = `
     <div class="view-switch">
       {{/* Переключение вида меняет только вид: поиск, отбор и сортировка
            остаются — их сбрасывает лишь явная очистка. */}}
-      <a class="view-btn{{if and (not .TreeView) (not .TilesView)}} active{{end}}" href="{{listURL $.Query "view" ""}}" title="{{t $.Lang "Список"}}">☰</a>
+      {{/* «Список» — явный выбор, как и «Плитка»: без параметра вид берётся из
+           сохранённого выбора пользователя (#1485), и из плитки вернуться было
+           бы нельзя. */}}
+      <a class="view-btn{{if and (not .TreeView) (not .TilesView)}} active{{end}}" href="{{listURL $.Query "view" "list"}}" title="{{t $.Lang "Список"}}">☰</a>
       <a class="view-btn{{if .TilesView}} active{{end}}" href="{{listURL $.Query "view" "tiles"}}" title="{{t $.Lang "Плитка"}}">▦</a>
       {{if .Entity.Hierarchical}}<a class="view-btn{{if .TreeView}} active{{end}}" href="?view=tree{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}" title="{{t $.Lang "Дерево"}}">📂</a>{{end}}
     </div>
@@ -1782,38 +2009,37 @@ const tplList = `
 
 {{$obRefresh := liveListRefreshOn .Entity}}
 <div class="ob-list-wrap">
-<div class="card" data-ob-live="{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}"{{if $obRefresh}} data-ob-refresh-on="{{$obRefresh}}"{{end}}>
+<div class="ob-list-content" data-ob-live="{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}"{{if $obRefresh}} data-ob-refresh-on="{{$obRefresh}}"{{end}}>
+<div class="card">
 {{if .TreeView}}
 {{/* ===== TREE VIEW ===== */}}
 {{if .TreeRows}}
 {{$treeCols := listColumns .Entity}}
 <div style="overflow-x:auto">
-<table><thead><tr>
+<table
+  data-ob-row-base="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}"
+  data-ob-row-subsystem="{{$.CurrentSubsystem}}"
+  data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
+  data-ob-row-copy-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
+  data-ob-row-can-copy="{{if $.CanWrite}}1{{end}}"
+  data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
+><thead><tr>
   {{range $treeCols}}<th>{{.DisplayName $.Lang}}</th>{{end}}
   <th style="width:90px"></th>
 </tr></thead><tbody>
 {{range .TreeRows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}{{$depth := index $row "_depth"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
   data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
+  data-ob-entity-id="{{index $row "id"}}"
   data-tree-id="{{index $row "id"}}"
   data-tree-depth="{{$depth}}"
   data-tree-parent="{{index $row "parent_id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
-  data-folder-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}?parent={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-mark-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete?mark=1"
-  data-del-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete"
   data-posted="{{if index $row "posted"}}1{{end}}"
   data-marked="{{if index $row "deletion_mark"}}1{{end}}"
-  data-unpost-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/unpost"
-  data-unmark-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete?mark=0"
-  data-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
   data-activity-inactive="{{if index $row "_activity_inactive"}}1{{end}}"
-  data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
-  data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
-  data-copy-url="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
-  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-detail-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/detail-panel">
+>
   {{range $i, $col := $treeCols}}
     {{if treeColumn $treeCols $i}}
       <td>
@@ -1848,26 +2074,24 @@ const tplList = `
 {{/* ===== TILES VIEW (плитка) ===== */}}
 {{if .Rows}}
 {{$tile := tileView .Entity}}
-<div class="tile-grid" role="listbox">
+<div class="tile-grid" role="listbox"
+  data-ob-row-base="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}"
+  data-ob-row-subsystem="{{$.CurrentSubsystem}}"
+  data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" ""}}"
+  data-ob-row-copy-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new{{listURL $.Query "copy" ""}}"
+  data-ob-row-can-copy="{{if $.CanWrite}}1{{end}}"
+  data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
+>
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <div class="tile-card{{if index $row "deletion_mark"}} tile-deleted{{end}}"
   data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}" role="option"
+  data-ob-entity-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
-  data-folder-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" (str (index $row "id"))}}"
-  data-mark-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete?mark=1"
-  data-del-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete"
   data-posted="{{if index $row "posted"}}1{{end}}"
   data-marked="{{if index $row "deletion_mark"}}1{{end}}"
-  data-unpost-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/unpost"
-  data-unmark-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete?mark=0"
-  data-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
   data-activity-inactive="{{if index $row "_activity_inactive"}}1{{end}}"
-  data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
-  data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
-  data-copy-url="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
-  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-detail-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/detail-panel">
+>
   {{range $f := $tile.ImageFields}}{{$iv := index $row $f.Name}}
   <div class="tile-img"{{if $iv}} style="background-image:url('/ui/_image/{{$iv}}')"{{end}}>{{if not $iv}}🖼{{end}}</div>
   {{end}}
@@ -1906,26 +2130,24 @@ const tplList = `
   </th>
   {{end}}
   <th style="width:90px"></th>
-</tr></thead><tbody id="list-body">
+</tr></thead><tbody id="list-body"
+  data-ob-row-base="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}"
+  data-ob-row-subsystem="{{$.CurrentSubsystem}}"
+  data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" ""}}"
+  data-ob-row-copy-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new{{listURL $.Query "copy" ""}}"
+  data-ob-row-can-copy="{{if $.CanWrite}}1{{end}}"
+  data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
+>
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
   data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
+  data-ob-entity-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
-  data-folder-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" (str (index $row "id"))}}"
-  data-mark-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete?mark=1"
-  data-del-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete"
   data-posted="{{if index $row "posted"}}1{{end}}"
   data-marked="{{if index $row "deletion_mark"}}1{{end}}"
-  data-unpost-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/unpost"
-  data-unmark-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/delete?mark=0"
-  data-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
   data-activity-inactive="{{if index $row "_activity_inactive"}}1{{end}}"
-  data-activity-hide-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=0"
-  data-activity-show-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/activity?active=1"
-  data-copy-url="{{if $.CanWrite}}/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new?copy={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}{{end}}"
-  data-open-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-detail-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}/detail-panel">
+>
   {{if eq (str $.Entity.Kind) "document"}}
     <td style="text-align:center">
       {{if index $row "posted"}}<span style="color:#16a34a;font-weight:700" title="{{t $.Lang "Проведён"}}">✓</span>{{else}}<span style="color:#94a3b8" title="{{t $.Lang "Не проведён"}}">—</span>{{end}}
@@ -1954,8 +2176,6 @@ const tplList = `
 {{end}}
 {{end}}
 </div>
-{{template "detail-panel" .}}
-</div>
 {{if and .Feed (not .TreeView)}}
 {{/* Лента: догрузка по скроллу. Без JS «Показать ещё» = переход на след. страницу. */}}
 {{if .HasNext}}
@@ -1973,12 +2193,16 @@ const tplList = `
 {{else if gt .Total 0}}
 <div style="color:#94a3b8;font-size:12px;margin-top:8px">{{t $.Lang "Всего:"}} {{.Total}}</div>
 {{end}}
+</div>
+{{template "detail-panel" .}}
+</div>
 </main>
 <script type="application/json" id="ob-list-config">{{jsJSON (dict
   "isAdmin" .IsAdmin
   "canWrite" .CanWrite
   "canDelete" .CanDelete
   "canUnpost" .CanUnpost
+  "basedOn" .BasedOnActions
   "treeEntity" .Entity.Name
   "subsystem" (str $.CurrentSubsystem)
   "labels" (dict
@@ -1986,6 +2210,7 @@ const tplList = `
     "edit" (t $.Lang "Редактировать")
     "open" (t $.Lang "Открыть")
     "copy" (t $.Lang "Скопировать")
+    "basedOn" (t $.Lang "Ввести на основании")
     "enter" (t $.Lang "▶ Войти")
     "activityShow" (t $.Lang "Вернуть в выбор")
     "activityShowConfirm" (t $.Lang "Вернуть в выбор?")
@@ -2070,6 +2295,8 @@ const tplForm = `
              style="flex:1;display:block;padding:9px 16px;color:#334155;text-decoration:none;font-size:13px">{{.Name}}{{if .External}} <span style="color:#94a3b8;font-size:11px">({{t $.Lang "внешняя"}})</span>{{end}}</a>
           <a href="/ui/{{lower (str $.Entity.Kind)}}/{{$.Entity.Name}}/{{$.ID}}/print/{{.Name}}/pdf" target="_blank"
              style="padding:9px 14px;color:#16a34a;text-decoration:none;font-size:12px;font-weight:600">PDF</a>
+		  {{if .HasXLSX}}<a href="/ui/{{lower (str $.Entity.Kind)}}/{{$.Entity.Name}}/{{$.ID}}/print/{{.Name}}/xlsx"
+		     style="padding:9px 14px;color:#15803d;text-decoration:none;font-size:12px;font-weight:600">Excel</a>{{end}}
         </div>
         {{end}}
         {{if .HasPrintProc}}
@@ -2079,13 +2306,13 @@ const tplForm = `
       </div>
     </div>
     {{end}}
-    {{if .Receivers}}
+    {{if .BasedOnActions}}
     <div style="position:relative">
       <button type="button" class="btn btn-sm btn-secondary" data-ob-toggle-next>{{t $.Lang "Ввести на основании"}} ▾</button>
       <div style="display:none;position:absolute;top:100%;left:0;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);min-width:200px;z-index:50;margin-top:4px">
-        {{range .Receivers}}
-        <a href="/ui/{{lower (str .Kind)}}/{{.Name}}/new?based_on={{$.Entity.Name}}&based_on_id={{$.ID}}"
-           style="display:block;padding:9px 16px;color:#334155;text-decoration:none;font-size:13px;border-bottom:1px solid #f1f5f9">{{.DisplayName $.Lang}}</a>
+        {{range .BasedOnActions}}
+        <a href="{{.URL}}&based_on_id={{$.ID}}"
+           style="display:block;padding:9px 16px;color:#334155;text-decoration:none;font-size:13px;border-bottom:1px solid #f1f5f9">{{.Label}}</a>
         {{end}}
       </div>
     </div>
@@ -2161,7 +2388,7 @@ const tplForm = `
   {{if isRef (str .Type)}}
     <div style="display:flex;gap:6px;align-items:center">
       {{if $ro}}<input type="hidden" name="{{$fn}}" value="{{index $.Values $fn}}">{{end}}
-      <select id="ref-{{$fn}}"{{if not $ro}} name="{{$fn}}"{{end}} style="flex:1" data-ref-entity="{{.RefEntity}}"{{if and (not $ro) (.InlineCreateEnabled false) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}>
+      <select id="ref-{{$fn}}"{{if not $ro}} name="{{$fn}}"{{end}} style="flex:1" data-ref-entity="{{.RefEntity}}"{{if $.RefFilter}}{{with index $.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and (not $ro) (.InlineCreateEnabled false) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}>
         <option value="">{{t $.Lang "— выбрать —"}}</option>
         {{range index $.RefOptions $fn}}
         <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
@@ -2181,7 +2408,7 @@ const tplForm = `
       {{end}}
     </select>
   {{else if eq (str .Type) "date"}}
-    <input type="datetime-local" name="{{$fn}}" value="{{index $.Values $fn}}"{{if $ro}} readonly{{end}}>
+    <input type="datetime-local" step="1" name="{{$fn}}" value="{{index $.Values $fn}}"{{if $ro}} readonly{{end}}>
   {{else if eq (str .Type) "bool"}}
     {{if $ro}}<input type="hidden" name="{{$fn}}" value="{{index $.Values $fn}}">{{end}}
     <select{{if not $ro}} name="{{$fn}}"{{end}}{{if $ro}} disabled{{end}}>
@@ -2235,7 +2462,7 @@ const tplForm = `
         <td>
         {{if isRef (str .Type)}}
           <div style="display:flex;gap:4px;align-items:center">
-            <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}" style="flex:1" data-ref-entity="{{.RefEntity}}"{{if and (.InlineCreateEnabled true) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
+            <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}" style="flex:1" data-ref-entity="{{.RefEntity}}"{{if $.RefFilter}}{{with index $.RefFilter (printf "%s.%s" $tpName $fn)}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and (.InlineCreateEnabled true) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
               <option value="">{{t $.Lang "— выбрать —"}}</option>
               {{range index $tpRef $fn}}
               <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID (index $row $fn))}}selected{{end}}>{{index . "_label"}}</option>
@@ -2359,6 +2586,7 @@ const tplReport = `
 {{$excel := printf "/ui/report/%s/export/excel%s" (lower .Report.Name) $q}}
 {{$pdf := printf "/ui/report/%s/export/pdf%s" (lower .Report.Name) $q}}
 <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:8px">
+  <a class="btn btn-sm" href="/ui/export-jobs">{{t $.Lang "Мои выгрузки"}}</a>
   {{if eq (lower .Report.OutputFormat) "pdf"}}
   <a class="btn btn-sm" href="{{$pdf}}" style="background:#dc2626;color:#fff" title="{{t $.Lang "Запустить выгрузку PDF"}}">{{t $.Lang "PDF"}}</a>
   <a class="btn btn-sm" href="{{$excel}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Запустить выгрузку Excel"}}">{{t $.Lang "Excel"}}</a>
@@ -2372,11 +2600,12 @@ const tplReport = `
 {{template "head" .}}{{template "nav" .}}
 <main>
 <h2>{{t $.Lang "Выгрузка отчёта"}}</h2>
+<p><a href="/ui/export-jobs">{{t $.Lang "Мои выгрузки"}}</a></p>
 <div class="card" style="max-width:720px">
   <div style="display:grid;grid-template-columns:140px 1fr;gap:8px 16px;margin-bottom:16px">
     <div style="color:#64748b">{{t $.Lang "Отчёт"}}</div><div>{{.Job.Name}}</div>
     <div style="color:#64748b">{{t $.Lang "Формат"}}</div><div>{{.JobFormatLabel}}</div>
-    <div style="color:#64748b">{{t $.Lang "Статус"}}</div><div>{{.JobStatusLabel}}</div>
+    <div style="color:#64748b">{{t $.Lang "Статус"}}</div><div>{{t $.Lang .JobStatusLabel}}</div>
     <div style="color:#64748b">{{t $.Lang "Создано"}}</div><div>{{.CreatedAtText}}</div>
     {{if .JobDone}}<div style="color:#64748b">{{t $.Lang "Доступно до"}}</div><div>{{.ExpiresAtText}}</div>{{end}}
   </div>
@@ -2394,6 +2623,41 @@ const tplReport = `
     <script>setTimeout(function(){ window.location.reload(); }, 2000);</script>
   {{end}}
 </div>
+</main></body></html>
+{{end}}
+{{define "page-export-jobs"}}
+{{template "head" .}}{{template "nav" .}}
+<main>
+<h2>{{t $.Lang "Мои выгрузки"}}</h2>
+<p>{{t $.Lang "Здесь показаны только доступные выгрузки. Они исчезают после истечения срока или перезапуска сервера."}}</p>
+{{if .Jobs}}
+<div class="card" style="overflow-x:auto">
+<table style="width:100%;border-collapse:collapse">
+  <thead><tr>
+    <th>{{t $.Lang "Отчёт"}}</th>
+    <th>{{t $.Lang "Формат"}}</th>
+    <th>{{t $.Lang "Статус"}}</th>
+    <th>{{t $.Lang "Создано"}}</th>
+    <th>{{t $.Lang "Доступно до"}}</th>
+    <th>{{t $.Lang "Файл"}}</th>
+  </tr></thead>
+  <tbody>
+  {{range .Jobs}}
+  <tr>
+    <td><a href="{{.StatusURL}}">{{.Name}}</a></td>
+    <td>{{.FormatLabel}}</td>
+    <td>{{t $.Lang .StatusLabel}}</td>
+    <td>{{.CreatedText}}</td>
+    <td>{{.ExpiresText}}</td>
+    <td>{{if .Downloadable}}<a href="{{.DownloadURL}}">{{t $.Lang "Скачать файл"}}</a>{{end}}</td>
+  </tr>
+  {{end}}
+  </tbody>
+</table>
+</div>
+{{else}}
+<p>{{t $.Lang "Доступных выгрузок пока нет."}}</p>
+{{end}}
 </main></body></html>
 {{end}}
 {{define "page-report"}}
@@ -2442,6 +2706,10 @@ const tplReport = `
       <label>{{$p.Label}}</label>
       {{if $p.IsDate}}
         <input type="date" name="{{$pname}}" value="{{$pval}}">
+      {{else if $p.IsDateTime}}
+        {{/* step="1" обязателен: шаг поля по умолчанию — 60 секунд, а {{now}}
+             отдаёт секунды, и почти всякое умолчание получило бы stepMismatch. */}}
+        <input type="datetime-local" step="1" name="{{$pname}}" value="{{$pval}}">
       {{else if $p.IsNum}}
         <input type="number" name="{{$pname}}" value="{{$pval}}">
       {{else if $p.IsSel}}
@@ -2610,6 +2878,7 @@ const tplRegister = `
 {{define "reg-filter-form"}}
 {{- $flt := .Filter}}{{$refOpts := .RefOpts}}
 <form method="get" style="display:flex;flex-wrap:wrap;gap:8px;align-items:flex-end;margin-bottom:12px">
+  {{listHidden .Context}}
   {{range .Fields}}
   <div style="display:flex;flex-direction:column;gap:2px">
     <label style="font-size:11px;color:#64748b">{{.DisplayName $.Lang}}</label>
@@ -3122,7 +3391,7 @@ const tplInfoReg = `
     {{if .CanWrite}}<a class="btn" href="/ui/inforeg/{{lower .InfoReg.Name}}/new">+ {{t $.Lang "Добавить запись"}}</a>{{end}}
   </div>
 </div>
-{{template "reg-filter-form" (dict "Fields" .InfoReg.Dimensions "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" .InfoReg.Periodic "ShowToOnly" false "HasFilters" .HasFilters "ResetURL" (printf "/ui/inforeg/%s" (lower .InfoReg.Name)) "Lang" $.Lang)}}
+{{template "reg-filter-form" (dict "Fields" .InfoReg.Dimensions "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" .InfoReg.Periodic "ShowToOnly" false "HasFilters" .HasFilters "ResetURL" .ResetURL "Context" .FilterContext "Lang" $.Lang)}}
 <div style="margin-bottom:8px">{{template "detail-panel-toggle" .}}</div>
 <div class="ob-list-wrap">
 <div class="card">
@@ -3139,7 +3408,7 @@ const tplInfoReg = `
   {{range $.InfoReg.Dimensions}}<td>{{$lbl := index $row (printf "%s_label" .Name)}}{{if $lbl}}{{$lbl}}{{else}}{{index $row .Name}}{{end}}</td>{{end}}
   {{range $.InfoReg.Resources}}<td style="font-weight:600">{{$lbl := index $row (printf "%s_label" .Name)}}{{if $lbl}}{{$lbl}}{{else}}{{index $row .Name}}{{end}}</td>{{end}}
   {{if $.CanDelete}}<td>
-    <form method="POST" action="/ui/inforeg/{{lower $.InfoReg.Name}}/delete" style="display:inline"
+    <form method="POST" action="{{$.DeleteURL}}" style="display:inline"
           data-ob-confirm="{{t $.Lang "Удалить запись?"}}">
       {{if $.InfoReg.Periodic}}<input type="hidden" name="period" value="{{index $row "period_key"}}">{{end}}
       {{range $.InfoReg.Dimensions}}<input type="hidden" name="{{.Name}}" value="{{infoRegKeyValue . $row}}">{{end}}
@@ -3151,11 +3420,24 @@ const tplInfoReg = `
 {{else}}<p class="empty">{{t $.Lang "Записей нет"}}</p>{{end}}
 </div>
 {{template "detail-panel" .}}
-</div></main></div></body></html>
+</div>
+<div data-ob-inforeg-pagination style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
+  <span>{{t $.Lang "Всего:"}} {{.Total}}</span>
+  {{if .HasPrev}}<a class="btn btn-secondary btn-sm" rel="prev" href="{{.PrevURL}}">{{t $.Lang "← Назад"}}</a>{{end}}
+  <span style="color:#64748b;font-size:13px">{{t $.Lang "Стр."}} {{.Page}} {{t $.Lang "из"}} {{.TotalPages}}</span>
+  {{if .HasNext}}<a class="btn btn-secondary btn-sm" rel="next" href="{{.NextURL}}">{{t $.Lang "Вперёд →"}}</a>{{end}}
+</div>
+</main></div></body></html>
 {{end}}
 
 {{define "page-inforeg-form"}}
 {{template "head" .}}{{template "nav" .}}
+{{if infoRegHasRichText .InfoReg}}
+{{/* Вендор-ассеты редактора грузятся ТОЛЬКО когда у регистра есть richtext-
+     ресурс — как и на форме объекта. */}}
+<link rel="stylesheet" href="/vendor/quill/quill.snow.css">
+<script src="/vendor/quill/quill.js"></script>
+{{end}}
 <main>
 <h2>{{.InfoReg.DisplayName $.Lang}} — {{t $.Lang "новая запись"}}</h2>
 {{if .Error}}<div style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">{{.Error}}</div>{{end}}
@@ -3188,7 +3470,17 @@ const tplInfoReg = `
   {{range .InfoReg.Resources}}
   <div class="form-row">
     <label>{{.DisplayName $.Lang}}</label>
+    {{if isRichText (str .Type)}}
+    {{/* Тот же редактор, что и в карточке объекта: скрытая textarea хранит HTML
+         для записи, Quill монтируется на соседний .richtext-editor (см.
+         obInitRichText в /static/ui.js). Без этой ветки richtext-ресурс
+         редактировался однострочным вводом — оформление в регистре можно было
+         задать только правкой разметки руками. */}}
+    <textarea name="{{.Name}}" autocomplete="off" class="richtext-field" rows="8" style="width:100%">{{index $.Values .Name}}</textarea>
+    <div class="richtext-editor"></div>
+    {{else}}
     <input type="text" name="{{.Name}}" value="{{index $.Values .Name}}">
+    {{end}}
   </div>
   {{end}}
   <div style="margin-top:20px;display:flex;gap:8px">
