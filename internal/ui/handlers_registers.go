@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -377,7 +378,42 @@ func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	rows, err := s.store.InfoRegListWithKeyValues(r.Context(), ir, flt)
+	total, err := s.store.InfoRegCount(r.Context(), ir, flt)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	limit := s.store.GetListPageSize(r.Context())
+	query := cloneQuery(r.URL.Query())
+	// Register filters use flt_* and from/to, unlike the f.* entity filters.
+	// Copy only declared controls; arbitrary names can shadow form methods.
+	for _, dim := range ir.Dimensions {
+		key := "flt_" + dim.Name
+		if values, exists := r.URL.Query()[key]; exists {
+			query[key] = append([]string(nil), values...)
+		}
+	}
+	if ir.Periodic {
+		for _, key := range []string{"from", "to"} {
+			if values, exists := r.URL.Query()[key]; exists {
+				query[key] = append([]string(nil), values...)
+			}
+		}
+	}
+	if l, err := strconv.Atoi(query.Get("limit")); err == nil && l > 0 && l <= storage.MaxListPageSize {
+		limit = l
+	}
+	totalPages := 1
+	if total > 0 {
+		totalPages = 1 + (total-1)/limit
+	}
+	page := 1
+	if p, err := strconv.Atoi(query.Get("page")); err == nil && p > 1 {
+		page = min(p, totalPages)
+	}
+	// Clamp before multiplying: offset is bounded by total, even for a request
+	// with page=MaxInt or after deletion of the last row on the last page.
+	rows, err := s.store.InfoRegPageWithKeyValues(r.Context(), ir, flt, limit, (page-1)*limit)
 	if err != nil {
 		s.serverError(w, r, err)
 		return
@@ -396,13 +432,43 @@ func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.resolveInfoRegRows(r.Context(), rows, ir)
+	filterContext := cloneQuery(query)
+	filterContext.Del("page")
+	filterContext.Del("from")
+	filterContext.Del("to")
+	for _, dim := range ir.Dimensions {
+		filterContext.Del("flt_" + dim.Name)
+	}
+	resetURL := "/ui/inforeg/" + strings.ToLower(ir.Name)
+	if encoded := filterContext.Encode(); encoded != "" {
+		resetURL += "?" + encoded
+	}
+	deleteURL := "/ui/inforeg/" + strings.ToLower(ir.Name) + "/delete"
+	if len(query) > 0 {
+		query.Set("page", strconv.Itoa(page))
+		deleteURL += "?" + query.Encode()
+	}
+	query.Set("page", strconv.Itoa(page-1))
+	prevURL := "?" + query.Encode()
+	query.Set("page", strconv.Itoa(page+1))
+	nextURL := "?" + query.Encode()
 	s.render(w, r, "page-inforeg-list", map[string]any{
-		"InfoReg":    ir,
-		"Rows":       rows,
-		"Filter":     filterFormValues(r, ir.Dimensions),
-		"RefOpts":    s.loadRefOpts(r.Context(), ir.Dimensions, filterFormValues(r, ir.Dimensions)),
-		"HasFilters": !flt.IsEmpty(),
-		"RequestURI": r.URL.RequestURI(),
+		"InfoReg":       ir,
+		"Rows":          rows,
+		"Filter":        filterFormValues(r, ir.Dimensions),
+		"RefOpts":       s.loadRefOpts(r.Context(), ir.Dimensions, filterFormValues(r, ir.Dimensions)),
+		"HasFilters":    !flt.IsEmpty(),
+		"RequestURI":    r.URL.RequestURI(),
+		"DeleteURL":     deleteURL,
+		"PrevURL":       prevURL,
+		"NextURL":       nextURL,
+		"FilterContext": filterContext,
+		"ResetURL":      resetURL,
+		"Total":         total,
+		"Page":          page,
+		"TotalPages":    totalPages,
+		"HasPrev":       page > 1,
+		"HasNext":       page < totalPages,
 	})
 }
 
@@ -602,7 +668,11 @@ func (s *Server) infoRegDelete(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	http.Redirect(w, r, "/ui/inforeg/"+strings.ToLower(ir.Name), http.StatusFound)
+	redirectURL := "/ui/inforeg/" + strings.ToLower(ir.Name)
+	if encoded := r.URL.Query().Encode(); encoded != "" {
+		redirectURL += "?" + encoded
+	}
+	http.Redirect(w, r, redirectURL, http.StatusFound)
 }
 
 func requiredSinglePostFormValue(r *http.Request, name string) (string, error) {

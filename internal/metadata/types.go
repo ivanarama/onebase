@@ -238,6 +238,13 @@ const (
 	// ChangeDrop, и --allow-destructive сносит все номера документов.
 	StandardNumberField   = "Номер"
 	StandardNumberFieldID = "std_number"
+	// «Владелец» подчинённого справочника (owner: в YAML) синтезируется той же
+	// логикой и по той же причине нуждается в устойчивом ID: без него миграция
+	// приняла бы синтезированную колонку за новую и запланировала снос старой
+	// вместе со связями. Имя фиксировано — по нему подбор отбирает элементы
+	// владельца, а DSL пишет и читает Эл.Владелец.
+	StandardOwnerField   = "Владелец"
+	StandardOwnerFieldID = "std_owner"
 )
 
 // PredefinedItem describes a catalog record that is always present in the DB
@@ -298,8 +305,16 @@ type Entity struct {
 	Numerator          *Numerator        // nil if auto-numbering is disabled
 	Predefined         []*PredefinedItem // nil for most entities; populated from YAML
 	Hierarchical       bool              // catalog with parent_id / is_folder tree support
-	HierarchyKind      string            // "folders_and_items" (default) | "items_only"
-	ListForm           []string          // visible fields in list form (nil = all)
+	// Owner — имя справочника-ВЛАДЕЛЬЦА (1С: «подчинённый справочник»). Пусто —
+	// справочник самостоятельный. Непусто — у каждого элемента есть реквизит
+	// «Владелец» (синтезируется, если не объявлен явно), а подбор ссылки на этот
+	// справочник ОТБИРАЕТСЯ по владельцу, известному вызывающей форме: товарная
+	// группа выбирается из групп своего направления, а не из всех тринадцати
+	// сотен. Подчинение — свойство справочника, а не формы: отбор появляется сам
+	// везде, где выбирают этот справочник, и его нельзя забыть настроить.
+	Owner         string
+	HierarchyKind string   // "folders_and_items" (default) | "items_only"
+	ListForm      []string // visible fields in list form (nil = all)
 	// ItemForm — состав формы элемента: какие реквизиты видны и в каком
 	// порядке (nil = все). Запись может быть помечена «только просмотр»
 	// (#1011): служебный реквизит, который пересобирает модуль при записи,
@@ -712,6 +727,37 @@ func (e *Entity) StageField() *Field {
 	}
 	for i := range e.Fields {
 		if strings.EqualFold(e.Fields[i].Name, e.Stages.Field) {
+			return &e.Fields[i]
+		}
+	}
+	return nil
+}
+
+// documentDateNames — имена реквизита «дата документа» в порядке
+// предпочтения; тот же набор ищет МоментВремени() (runtime.Object).
+var documentDateNames = []string{"Дата", "Date", "Период", "Period"}
+
+// DocumentDateField возвращает реквизит «дата документа»: реквизит-дату с
+// именем Дата (Date, Период, Period), а без такого — первый реквизит-дату в
+// порядке объявления; nil, если дат нет вовсе.
+//
+// По этой дате ложатся движения, работает дата запрета проведения и свёртка.
+// Раньше все они брали первый реквизит-дату, и документ, где СрокОплаты
+// объявлен раньше Дата, писал движения на срок оплаты, а проверку запрета
+// проходил по нему же — документ закрытого периода проводился.
+func (e *Entity) DocumentDateField() *Field {
+	if e == nil {
+		return nil
+	}
+	for _, name := range documentDateNames {
+		for i := range e.Fields {
+			if e.Fields[i].Type == FieldTypeDate && strings.EqualFold(e.Fields[i].Name, name) {
+				return &e.Fields[i]
+			}
+		}
+	}
+	for i := range e.Fields {
+		if e.Fields[i].Type == FieldTypeDate {
 			return &e.Fields[i]
 		}
 	}

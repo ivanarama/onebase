@@ -24,8 +24,9 @@ import (
 
 // Транспорты приёмки. http — эталонный (HTTP-сервис, план 61). ws — исходящее
 // WebSocket-соединение (план 120): база сама подключается к внешнему серверу и
-// принимает события тем же конвертом. amqp — за швом MessageSource (нативный
-// consumer из G4/путь Б), подключается позже, не трогая ядро.
+// принимает события тем же конвертом. amqp зарезервирован за швом MessageSource
+// (нативный consumer из G4/путь Б), но пока не реализован — Validate его
+// отвергает, чтобы шлюз не выглядел рабочим.
 const (
 	IntakeTransportHTTP = "http"
 	IntakeTransportAMQP = "amqp"
@@ -51,7 +52,7 @@ type Intake struct {
 	Name          string            `yaml:"name"`
 	Title         string            `yaml:"title"`
 	Titles        map[string]string `yaml:"titles"`
-	Transport     string            `yaml:"transport"`      // http (эталон) | amqp (за швом) | ws (план 120)
+	Transport     string            `yaml:"transport"`      // http (эталон) | ws (план 120); amqp зарезервирован, не реализован
 	Endpoint      string            `yaml:"endpoint"`       // для http-транспорта: /hs/<корень>/<путь>
 	SchemaVersion string            `yaml:"schema_version"` // ожидаемая версия конверта
 	Idempotency   IntakeIdempotency `yaml:"idempotency"`
@@ -150,7 +151,14 @@ func (in *Intake) Validate() error {
 			return fmt.Errorf("intake %q: transport http требует endpoint", in.Name)
 		}
 	case IntakeTransportAMQP:
-		// endpoint необязателен: адрес очереди — деплой-настройка за швом MessageSource.
+		// Транспорт заложен в модель (шов MessageSource, план 90, G4/путь Б), но
+		// потребителя очереди в платформе нет. Шлюз с transport amqp проходил
+		// валидацию и молча не принимал ни одного сообщения: интеграция выглядела
+		// настроенной, а данные не приходили. Отказ на загрузке честнее тишины в
+		// рантайме; когда появится нативный consumer, здесь будет проверка его
+		// настроек.
+		return fmt.Errorf("intake %q: transport amqp пока не поддерживается — приёмника очереди в платформе нет, "+
+			"и шлюз не принял бы ни одного сообщения; используйте http (брокер доставляет через HTTP-мост) или ws", in.Name)
 	case IntakeTransportWS:
 		if in.URL == "" {
 			return fmt.Errorf("intake %q: transport ws требует url (ws:// или wss://)", in.Name)
@@ -171,7 +179,7 @@ func (in *Intake) Validate() error {
 			return fmt.Errorf("intake %q: reconnect.max (%d) меньше reconnect.initial (%d)", in.Name, in.Reconnect.Max, in.Reconnect.Initial)
 		}
 	default:
-		return fmt.Errorf("intake %q: неизвестный transport %q (http|amqp|ws)", in.Name, in.Transport)
+		return fmt.Errorf("intake %q: неизвестный transport %q (http|ws)", in.Name, in.Transport)
 	}
 	if in.Handler == "" {
 		return fmt.Errorf("intake %q: не задан handler (процедура Обработать)", in.Name)

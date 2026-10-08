@@ -14,25 +14,30 @@ package launcher
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
+
+	"github.com/ivantit66/onebase/internal/installtest"
+	"github.com/ivantit66/onebase/internal/selfupdate"
 )
 
 // sharedInstallDir — каталог установки, куда писать можно, но самообновление
 // небезопасно: он общий. Ровно случай `C:\Projects\onebase` из заявки.
+//
+// Каталог не зависит от приватности системного TMPDIR (#1577): на macOS
+// штатный TMPDIR приватен, боевая проверка корректно видела приватную границу
+// на предке и разрешала установку — тесты получали 409 вместо 403. Предусловие
+// дополнительно сверяется боевой проверкой: фикстура обязана попадать ровно
+// в класс «вне личного каталога», иначе тест проверял бы не то.
 func sharedInstallDir(t *testing.T) string {
 	t.Helper()
 	isolatedUpdatesHome(t)
-	dir, err := os.MkdirTemp(os.TempDir(), "onebase-shared-install-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(dir) })
-	if err := os.Chmod(dir, 0o755); err != nil { //nolint:gosec // G302: общая установка воспроизводится намеренно
-		t.Fatal(err)
+	dir := installtest.SharedInstallDir(t)
+	if err := selfupdate.ValidateBinaryUpdateTarget(dir); err == nil || !errors.Is(err, selfupdate.ErrTargetNotPrivate) {
+		t.Fatalf("фикстура не смоделировала общую установку (%s): %v", dir, err)
 	}
 	old := updateBinaryDir
 	updateBinaryDir = func() (string, error) { return dir, nil }

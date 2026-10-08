@@ -117,6 +117,9 @@ func (db *DB) ensureRegisterIndexes(ctx context.Context, reg *metadata.Register)
 			return err
 		}
 	}
+	if _, err := db.Exec(ctx, CreateRegisterRecorderIndexSQL(reg.Name)); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -193,6 +196,11 @@ func (db *DB) migrateInfoRegister(ctx context.Context, ir *metadata.InfoRegister
 	// CREATE + INSERT SELECT + DROP + RENAME.
 	if err := db.fixInfoRegPK(ctx, ir); err != nil {
 		return fmt.Errorf("migrate info register %s PK: %w", ir.Name, err)
+	}
+	// Индекс по регистратору — после fixInfoRegPK: на SQLite смена ключа
+	// пересоздаёт таблицу, и построенный раньше индекс ушёл бы вместе со старой.
+	if _, err := db.Exec(ctx, CreateInfoRegisterRecorderIndexSQL(ir.Name)); err != nil {
+		return fmt.Errorf("migrate info register %s recorder index: %w", ir.Name, err)
 	}
 	return nil
 }
@@ -530,7 +538,15 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 	if err := db.EnsureStageHistorySchema(ctx); err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
-	ordered := orderByDependency(entities)
+	ordered, cyclicFK := orderByDependency(entities)
+	// В SQLite ссылка на ещё не созданную таблицу в CREATE TABLE допустима:
+	// внешние ключи там проверяются при изменении данных, а к тому моменту
+	// созданы уже все таблицы. PostgreSQL требует цель немедленно — там ключ,
+	// замыкающий круг, объявляется отдельным ALTER-ом ниже.
+	if d.Name() == "sqlite" {
+		cyclicFK = nil
+	}
+	deferFK := deferredFKColumns(cyclicFK)
 	// Отказы преконтроля уникальности КОПЯТСЯ, а не прерывают цикл (#1080, #1105).
 	//
 	// Раньше первый же объект с пустыми кодами уносил всю миграцию: `Контрагент`
@@ -547,7 +563,7 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 	// стартует, но один прогон renumber теперь видит всё и лечит всё.
 	var notReady []error
 	for _, e := range ordered {
-		if _, err := db.Exec(ctx, CreateTableSQL(d, e)); err != nil {
+		if _, err := db.Exec(ctx, createTableSQL(d, e, deferFK[e.Name])); err != nil {
 			return fmt.Errorf("migrate %s: %w", e.Name, err)
 		}
 		if err := db.EnsurePredefinedColumns(ctx, []*metadata.Entity{e}); err != nil {
@@ -615,6 +631,11 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 				return fmt.Errorf("migrate %s.%s parent index: %w", e.Name, tp.Name, err)
 			}
 		}
+	}
+	// Ключи круга — после того, как созданы ВСЕ таблицы: до этого момента
+	// объявить их было не на что (см. orderByDependency).
+	if err := db.ensureCycleFKs(ctx, cyclicFK); err != nil {
+		return err
 	}
 	// Отказ возвращается здесь: схема уже приведена к конфигурации целиком —
 	// ровно то, что нужно renumber, — но данных мы больше не касаемся. Идти
@@ -718,33 +739,140 @@ func entityIndexColumns(e *metadata.Entity, idx metadata.IndexSpec) ([]string, e
 	return cols, nil
 }
 
+// refCycleFK — ссылка, которую нельзя объявить прямо в CREATE TABLE: она
+// замыкает круг, и таблица-цель к моменту создания таблицы-источника ещё не
+// существует.
+type refCycleFK struct {
+	Entity string
+	Column string
+	Ref    string
+}
+
 // orderByDependency sorts entities so referenced entities come before referencing ones.
-func orderByDependency(entities []*metadata.Entity) []*metadata.Entity {
+//
+// Вторым значением возвращает ссылки, которые порядком закрыть НЕЛЬЗЯ. В круге
+// «Обращение ссылается на Заявку, Заявка на Обращение» какая-то из таблиц
+// создаётся первой, и её внешний ключ указывает на ещё не созданную. Прежний
+// обход помечал сущность посещённой ДО спуска в её ссылки, поэтому круг молча
+// давал неверный порядок: на PostgreSQL миграция падала на первой же таблице
+// круга («relation "заявка" does not exist»), на SQLite проходила — там ссылка
+// на несуществующую таблицу в CREATE TABLE допустима. Теперь круг не
+// скрывается, а называется: порядок верен для всего остального, а ключи круга
+// Migrate доводит отдельным ALTER-ом.
+func orderByDependency(entities []*metadata.Entity) ([]*metadata.Entity, []refCycleFK) {
 	byName := make(map[string]*metadata.Entity, len(entities))
 	for _, e := range entities {
 		byName[e.Name] = e
 	}
-	visited := make(map[string]bool)
+	// inProgress — сущности текущей ветки обхода: ссылка в такую и есть круг.
+	inProgress := make(map[string]bool, len(entities))
+	done := make(map[string]bool, len(entities))
 	var result []*metadata.Entity
-	var visit func(name string)
-	visit = func(name string) {
-		if visited[name] {
-			return
-		}
-		visited[name] = true
-		e := byName[name]
-		if e == nil {
-			return
-		}
+	var cycles []refCycleFK
+	var visit func(e *metadata.Entity)
+	visit = func(e *metadata.Entity) {
+		inProgress[e.Name] = true
 		for _, f := range e.Fields {
-			if f.RefEntity != "" {
-				visit(f.RefEntity)
+			if f.RefEntity == "" || f.RefEntity == e.Name {
+				// Ссылка на себя (иерархия, «родитель») допустима в CREATE TABLE
+				// на обоих диалектах — откладывать нечего.
+				continue
 			}
+			target := byName[f.RefEntity]
+			if target == nil {
+				// Цель мигрирует не здесь (служебные таблицы вроде _users):
+				// порядком сущностей она не управляется.
+				continue
+			}
+			if done[f.RefEntity] {
+				continue
+			}
+			if inProgress[f.RefEntity] {
+				// Ссылка в сущность текущей ветки обхода — круг.
+				cycles = append(cycles, refCycleFK{Entity: e.Name, Column: metadata.ColumnName(f), Ref: f.RefEntity})
+				continue
+			}
+			visit(target)
 		}
+		inProgress[e.Name] = false
+		done[e.Name] = true
 		result = append(result, e)
 	}
 	for _, e := range entities {
-		visit(e.Name)
+		if !done[e.Name] {
+			visit(e)
+		}
 	}
-	return result
+	return result, cycles
+}
+
+// deferredFKColumns группирует отложенные ключи по сущности: createTableSQL
+// спрашивает про колонки одной таблицы.
+func deferredFKColumns(fks []refCycleFK) map[string]map[string]bool {
+	if len(fks) == 0 {
+		return nil
+	}
+	byEntity := make(map[string]map[string]bool, len(fks))
+	for _, fk := range fks {
+		cols := byEntity[fk.Entity]
+		if cols == nil {
+			cols = make(map[string]bool, 1)
+			byEntity[fk.Entity] = cols
+		}
+		cols[fk.Column] = true
+	}
+	return byEntity
+}
+
+// ensureCycleFKs доводит отложенные ключи до базы. Идемпотентно: миграция идёт
+// при каждом запуске, а ADD CONSTRAINT IF NOT EXISTS в PostgreSQL нет.
+func (db *DB) ensureCycleFKs(ctx context.Context, fks []refCycleFK) error {
+	if len(fks) == 0 {
+		return nil
+	}
+	// Проверка и ALTER принадлежат одной транзакции и одной блокировке.
+	// Блокируем все участвующие таблицы в едином порядке (AdvisoryXactLock
+	// сортирует ключи), в том числе цели: другой обход того же круга может
+	// отложить противоположную ссылку. Блокировки освобождаются после commit.
+	return db.WithTxScope(ctx, func(txCtx context.Context) error {
+		var schema string
+		if err := db.QueryRow(txCtx, "SELECT current_schema()").Scan(&schema); err != nil {
+			return err
+		}
+		keys := make([]string, 0, 2*len(fks))
+		for _, fk := range fks {
+			for _, table := range []string{metadata.TableName(fk.Entity), metadata.TableName(fk.Ref)} {
+				keys = append(keys, fmt.Sprintf("migrate-cycle-fk:%q.%q", schema, table))
+			}
+		}
+		if err := db.AdvisoryXactLock(txCtx, keys); err != nil {
+			return err
+		}
+		for _, fk := range fks {
+			table := metadata.TableName(fk.Entity)
+			ref := metadata.TableName(fk.Ref)
+			exists, err := db.foreignKeyExists(txCtx, table, ForeignKeyName(table, fk.Column, ref))
+			if err != nil {
+				return fmt.Errorf("migrate %s.%s: %w", fk.Entity, fk.Column, err)
+			}
+			if exists {
+				continue
+			}
+			if _, err := db.Exec(txCtx, AddForeignKeySQL(table, fk.Column, ref)); err != nil {
+				return fmt.Errorf("migrate %s.%s: %w", fk.Entity, fk.Column, err)
+			}
+		}
+		return nil
+	})
+}
+
+// foreignKeyExists — запрос PostgreSQL: откладывать ключи приходится только
+// там (см. Migrate), на SQLite эта ветка не выполняется.
+func (db *DB) foreignKeyExists(ctx context.Context, table, name string) (bool, error) {
+	var exists bool
+	err := db.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM information_schema.table_constraints
+		   WHERE constraint_schema = current_schema() AND table_name = $1 AND constraint_name = $2)`,
+		table, name).Scan(&exists)
+	return exists, err
 }

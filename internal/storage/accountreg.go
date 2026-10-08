@@ -185,7 +185,22 @@ func (db *DB) writeAccountMovementsInTx(ctx context.Context, regName, docType st
 		return fmt.Errorf("clear account movements %s: %w", regName, err)
 	}
 
-	for _, row := range rows {
+	// Коды счетов плана регистра — один раз на вызов. Без проверки проводка на
+	// код вне плана записывалась молча, а остатки (соединение с _accounts по
+	// коду) теряли её половину: баланс не сходился, и никто не узнавал почему.
+	var codes map[string]bool
+	if len(rows) > 0 {
+		var err error
+		if codes, err = db.chartAccountCodes(ctx, ar.Accounts); err != nil {
+			return fmt.Errorf("account movement %s: %w", regName, err)
+		}
+		if len(codes) == 0 {
+			return i18nerr.Errorf("регистр бухгалтерии %s: план счетов «%s» не загружен в базу — в нём нет ни одного счёта (план счетов синхронизирует onebase migrate)",
+				regName, ar.Accounts)
+		}
+	}
+
+	for i, row := range rows {
 		p := period
 		if pv, ok := row["период"]; ok && pv != nil {
 			if t, ok := pv.(time.Time); ok {
@@ -197,10 +212,14 @@ func (db *DB) writeAccountMovementsInTx(ctx context.Context, regName, docType st
 			p = &now
 		}
 
-		dtRaw := row["счётдт"]
-		ktRaw := row["счёткт"]
-		dtCode := fmt.Sprintf("%v", dtRaw)
-		ktCode := fmt.Sprintf("%v", ktRaw)
+		dtCode, err := movementAccountCode(row, "дт", codes, ar, i+1)
+		if err != nil {
+			return fmt.Errorf("account movement %s: %w", regName, err)
+		}
+		ktCode, err := movementAccountCode(row, "кт", codes, ar, i+1)
+		if err != nil {
+			return fmt.Errorf("account movement %s: %w", regName, err)
+		}
 
 		if err := validateSubconto(row, ar); err != nil {
 			return fmt.Errorf("account movement %s: %w", regName, err)
@@ -357,10 +376,9 @@ ORDER BY a.code`, selectCols, table, d.Placeholder(1), d.Placeholder(2), groupBy
 		// стоял float64, из-за чего PostgreSQL терял точность NUMERIC уже на
 		// стороне Go — сумма приходила округлённой в отчёт и, что хуже, в опорные
 		// проводки свёртки (accountOpeningRows).
-		// Оговорка: на SQLite точность всё равно ограничена движком — SUM() над
-		// TEXT-колонкой возвращает float64 при любом CAST (NUMERIC/DECIMAL), так
-		// что там decimal лишь сохраняет то, что отдал SQL, без второго
-		// округления. Точный агрегат на SQLite потребовал бы суммирования в Go.
+		// На SQLite SUM() тоже точный: встроенный sum() перекрыт десятичным
+		// агрегатом (sqlite_sum.go), и сумма приходит как ближайший к точному
+		// значению double — decimal здесь сохраняет её без второго округления.
 		for range resourceCols {
 			var v any
 			dests = append(dests, &v)
@@ -507,6 +525,59 @@ func validateSubconto(row map[string]any, ar *metadata.AccountRegister) error {
 		}
 	}
 	return nil
+}
+
+// chartAccountCodes — коды счетов плана счетов plan из _accounts.
+func (db *DB) chartAccountCodes(ctx context.Context, plan string) (map[string]bool, error) {
+	rows, err := db.Query(ctx, "SELECT code FROM _accounts WHERE plan = "+db.dialect.Placeholder(1), plan)
+	if err != nil {
+		return nil, fmt.Errorf("чтение плана счетов %s: %w", plan, err)
+	}
+	defer rows.Close()
+	codes := map[string]bool{}
+	for rows.Next() {
+		var code string
+		if err := rows.Scan(&code); err != nil {
+			return nil, fmt.Errorf("чтение плана счетов %s: %w", plan, err)
+		}
+		codes[code] = true
+	}
+	return codes, rows.Err()
+}
+
+// movementAccountCode — код счёта стороны side («дт»/«кт») проводки line.
+//
+// Свойство принимается в обоих написаниях: СчётДт (как в документации
+// платформы) и СчетДт (как его пишут в коде 1С). Коллектор движений кладёт в
+// строку ровно то имя, которое написал модуль, а storage читал только «счётдт»:
+// СчетДт терялся, и в колонку уходила строка «<nil>». Код обязан быть в плане
+// счетов регистра — счёт с тем же кодом в другом плане не подходит.
+func movementAccountCode(row map[string]any, side string, codes map[string]bool, ar *metadata.AccountRegister, line int) (string, error) {
+	sideTitle := "Дт"
+	if side == "кт" {
+		sideTitle = "Кт"
+	}
+	code, given := "", false
+	for _, key := range []string{"счёт" + side, "счет" + side} {
+		raw := ciGet(row, key)
+		if raw == nil {
+			continue
+		}
+		c := strings.TrimSpace(fmt.Sprintf("%v", raw))
+		if given && c != code {
+			return "", i18nerr.Errorf("проводка %d: СчётДт и СчетДт (СчётКт и СчетКт) — одно свойство, а для %s заданы разные счета: «%s» и «%s»",
+				line, sideTitle, code, c)
+		}
+		code, given = c, true
+	}
+	if code == "" {
+		return "", i18nerr.Errorf("проводка %d: не указан счёт %s", line, sideTitle)
+	}
+	if !codes[code] {
+		return "", i18nerr.Errorf("проводка %d: счёта «%s» (%s) нет в плане счетов «%s» регистра %s",
+			line, code, sideTitle, ar.Accounts, ar.Name)
+	}
+	return code, nil
 }
 
 func declaredSubcontoNames(ar *metadata.AccountRegister) string {

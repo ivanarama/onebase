@@ -27,8 +27,13 @@ type User struct {
 	AIDataAccess     bool   // can use AI chat data tools without being admin
 	Lang             string // preferred UI language ("" = use base default)
 	CreatedAt        time.Time
-	Attrs            map[string]any // optional host-provided attributes for row-level access
-	Roles            []*Role        // loaded by middleware after session lookup
+	// Attrs — атрибуты пользователя для row_access `user_attr` сверх встроенных.
+	// Платформа их пока не заполняет: их не хранит база и не задают ни вход, ни
+	// конфигурация, а встраивающему коду пакет internal недоступен. Поле — точка
+	// расширения для назначения пользователю значений доступа; до неё политика с
+	// небазовым `user_attr` не разрешает ни одной строки.
+	Attrs map[string]any
+	Roles []*Role // loaded by middleware after session lookup
 }
 
 type Repo struct {

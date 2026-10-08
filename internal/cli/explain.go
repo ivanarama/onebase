@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -174,7 +175,11 @@ func runReportExplain(cmd *cobra.Command, args []string) error {
 	if rep == nil {
 		return fmt.Errorf("отчёт %q не найден", args[0])
 	}
-	params, err := paramsFromJSONFlag(cmd)
+	rawParams, err := paramsFromJSONFlag(cmd)
+	if err != nil {
+		return err
+	}
+	params, err := typedReportParams(rep, rawParams)
 	if err != nil {
 		return err
 	}
@@ -266,6 +271,56 @@ func printExplain(cmd *cobra.Command, out explainOutput) error {
 		printRowsText(out.Columns, out.Rows)
 	}
 	return nil
+}
+
+// typedReportParams приводит параметры отчёта к их типам тем же путём, что
+// экран и REST v2: report.ParseParamValue, а для параметра, которого нет в
+// --params, — умолчание отчёта по грамматике подстановок ({{today}} и т.п.).
+// Раньше --params уходил в запрос строками: на PostgreSQL дата сравнивалась
+// как text («operator does not exist: timestamp with time zone >= text»), а
+// умолчание не подставлялось — explain показывал не тот запрос, что строит
+// экран. Параметры, которых отчёт не объявляет, передаются как есть.
+func typedReportParams(rep *report.Report, raw map[string]any) (map[string]any, error) {
+	if len(raw) == 0 && len(rep.Params) == 0 {
+		return raw, nil
+	}
+	out := make(map[string]any, len(raw)+len(rep.Params))
+	for k, v := range raw {
+		out[k] = v
+	}
+	for _, p := range rep.Params {
+		v, present := raw[p.Name]
+		var text string
+		switch {
+		case !present:
+			text = scheduler.ResolveParamTemplateText(p.Default, p.Type)
+		case v == nil:
+			text = ""
+		default:
+			text = paramText(v)
+		}
+		typed, err := report.ParseParamValue(text, p, report.ParamParseAPI)
+		if err != nil {
+			return nil, fmt.Errorf("параметр %s: %w", p.Name, err)
+		}
+		out[p.Name] = typed
+	}
+	return out, nil
+}
+
+// paramText — значение из JSON строкой для report.ParseParamValue: числа без
+// экспоненты, булево как true/false.
+func paramText(v any) string {
+	switch t := v.(type) {
+	case string:
+		return t
+	case float64:
+		return strconv.FormatFloat(t, 'f', -1, 64)
+	case bool:
+		return strconv.FormatBool(t)
+	default:
+		return fmt.Sprint(t)
+	}
 }
 
 func findWidget(proj *project.Project, name string) *metadataWidget {

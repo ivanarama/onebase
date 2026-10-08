@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/ivantit66/onebase/internal/metadata"
 )
 
@@ -110,6 +112,37 @@ func (db *DB) deleteMovementFamiliesAndRecalcTotals(
 		return 0, err
 	}
 	return deleted, nil
+}
+
+// ClearRecorderMovements снимает движения регистратора во всех переданных
+// регистрах — то же, что делает отмена проведения (entityservice.clearMovements),
+// для путей записи, у которых нет entityservice: загрузка пакета обмена. Локи
+// итогов берутся одним отсортированным вызовом до записи (#626); итоги
+// затронутых кортежей Write*Movements пересчитывают в той же транзакции.
+func (db *DB) ClearRecorderMovements(ctx context.Context, recorderType string, recorderID uuid.UUID,
+	registers []*metadata.Register, infoRegisters []*metadata.InfoRegister, accountRegisters []*metadata.AccountRegister,
+) error {
+	return db.WithTxIfNeeded(ctx, func(ctx context.Context) error {
+		if err := db.lockMovementTotals(ctx, registers, accountRegisters); err != nil {
+			return err
+		}
+		for _, reg := range registers {
+			if err := db.WriteMovements(ctx, reg.Name, recorderType, recorderID, nil, reg, nil); err != nil {
+				return err
+			}
+		}
+		for _, ir := range infoRegisters {
+			if err := db.WriteInfoMovements(ctx, ir.Name, recorderType, recorderID, nil, ir, nil); err != nil {
+				return err
+			}
+		}
+		for _, ar := range accountRegisters {
+			if err := db.WriteAccountMovements(ctx, ar.Name, recorderType, recorderID, nil, ar, nil); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (db *DB) lockMovementTotals(

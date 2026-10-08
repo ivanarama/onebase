@@ -54,6 +54,13 @@ printf '%s' "${OB_USER_PASSWORD:-Us3r-P@ssw0rd!}" |
 "$OB" user role assign "${OB_USER_LOGIN:-user}" "${OB_USER_ROLE:-Кладовщик}" \
   --project "$PROJ" --sqlite "$DB" >/dev/null
 
+# Независимая личная раскладка второго обычного пользователя (#1362).
+printf '%s' "${OB_SECOND_USER_PASSWORD:-Us3r-P@ssw0rd!}" |
+  "$OB" user add "${OB_SECOND_USER_LOGIN:-second-user}" --name "Второй пользователь" \
+    --project "$PROJ" --sqlite "$DB" --password-stdin
+"$OB" user role assign "${OB_SECOND_USER_LOGIN:-second-user}" "${OB_USER_ROLE:-Кладовщик}" \
+  --project "$PROJ" --sqlite "$DB" >/dev/null
+
 # Демо-данные: без них список справочника пуст и проводить нечего.
 "$OB" procrun --project "$PROJ" --sqlite "$DB" --proc ЗаполнитьТестовуюБазу >/dev/null
 

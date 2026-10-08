@@ -23,13 +23,13 @@ const tplManagedForm = `
      effectiveFormElementReadOnly, условного — карта ElReadOnly, которую строит
      managedFormElementStates. Скрытые по hidden_when не отрисовываются вовсе —
      первой веткой цепочки. */}}
-{{$ro := or (effectiveFormElementReadOnly $ctx.Form $el) (elReadOnly $ctx $el)}}
+{{$ro := or (effectiveFormElementReadOnly $ctx.Form $el) (elReadOnly $ctx $el) (adminOnlyLocked $ctx $el)}}
 		{{/* $roUnlockable — запрет, который клиент может снять без перезагрузки (readonly_when): такой элемент несёт кнопку подбора и data-ob-fire-change даже в запертом состоянии, иначе после разблокировки работать нечем (#1612). */}}
-		{{$roUnlockable := or (not $ro) (ne $el.ReadOnlyWhen "")}}
+		{{$roUnlockable := and (not (adminOnlyLocked $ctx $el)) (or (not $ro) (ne $el.ReadOnlyWhen ""))}}
 {{$effectiveReq := effectiveFormElementRequired $ctx.Entity $el}}{{$req := nativeFormElementRequired $ctx.Entity $el}}
 {{if elHidden $ctx $el}}
 {{else if eq (str $el.Kind) "ГруппаФормы"}}
-  <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}" data-ob-el="{{$el.Name}}" style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elBackground $el}}{{elLayout $el}}">
+  <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}{{if $el.ScrollX}} managed-group-scrollx{{end}}" data-ob-el="{{$el.Name}}" style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elBackground $el}}{{elLayout $el}}">
     {{if $el.TitleMap}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
     <div class="managed-group-body">
       {{range $el.Children}}{{template "managed-element" (dict "El" . "Ctx" $ctx)}}{{end}}
@@ -89,7 +89,7 @@ const tplManagedForm = `
     {{if $f}}
       {{if isRef (str $f.Type)}}
         <div class="managed-control-row" style="display:flex;gap:6px;align-items:center">
-          <select class="managed-fill-control" id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if $choiceCtx}} data-ref-choice-context="{{$choiceCtx}}"{{end}}{{if $el.ChoiceContext}} data-ref-context="{{choiceContextJSON $el}}" data-ref-element="{{$el.Name}}"{{end}}{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if and ($f.InlineCreateEnabled false) (refWriteAllowed $ctx.RefWriteAccess $f.RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+          <select class="managed-fill-control" id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if $ctx.RefFilter}}{{with index $ctx.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if $choiceCtx}} data-ref-choice-context="{{$choiceCtx}}"{{end}}{{if choiceDropdownCollapsed $el}} data-ref-choice-dropdown="false"{{end}}{{if $el.ChoiceContext}} data-ref-context="{{choiceContextJSON $el}}" data-ref-element="{{$el.Name}}"{{end}}{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if and ($f.InlineCreateEnabled false) (refWriteAllowed $ctx.RefWriteAccess $f.RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
             <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
             {{range managedRefOptions $ctx $el $fn}}
             <option value="{{index . "id"}}"{{if index . "_choice_outside_filter"}} data-ob-choice-outside-filter="1"{{end}} {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
@@ -103,7 +103,7 @@ const tplManagedForm = `
           {{if $roUnlockable}}
           <button type="button" data-ob-ref-picker="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
           {{end}}
-          {{if and (or (not $ro) (index $ctx.Values $fn)) (not $ctx.HideRefCard)}}
+          {{if and (or (not $ro) (index $ctx.Values $fn)) (not $ctx.HideRefCard) (refHasCard $f.RefEntity)}}
           <button type="button" data-ob-ref-current="ref-{{$fn}}" data-ob-readonly-navigation="1" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
           {{end}}
           {{if or $ro $el.ReadOnlyWhen}}{{/* план 181C/#1672: disabled select браузер не отправляет — зеркало возит значение записи (см. managed.js) */}}<input type="hidden" name="{{$fn}}" value="{{index $ctx.Values $fn}}" id="ro-mirror-{{$fn}}" data-ob-ro-mirror="1"{{if not $ro}} disabled{{end}}>{{end}}
@@ -117,7 +117,7 @@ const tplManagedForm = `
         </select>
         {{if or $ro $el.ReadOnlyWhen}}<input type="hidden" name="{{$fn}}" value="{{index $ctx.Values $fn}}" id="ro-mirror-{{$fn}}" data-ob-ro-mirror="1"{{if not $ro}} disabled{{end}}>{{end}}
       {{else if eq (str $f.Type) "date"}}
-        <input type="datetime-local" name="{{$fn}}" value="{{index $ctx.Values $fn}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+        <input type="datetime-local" step="1" name="{{$fn}}" value="{{index $ctx.Values $fn}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       {{else if eq (str $f.Type) "bool"}}
         <select name="{{$fn}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
           <option value="false" {{if eq (index $ctx.Values $fn) "false"}}selected{{end}}>Нет</option>
@@ -187,14 +187,14 @@ const tplManagedForm = `
              пустой select, теряющий текущее значение при записи. Нет опций —
              остаётся прежний текстовый ввод со значением. */}}
         <div class="managed-control-row" style="display:flex;gap:6px;align-items:center">
-          <select class="managed-fill-control" id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{attrRefEntity $attr.TypeRef}}"{{if $choiceCtx}} data-ref-choice-context="{{$choiceCtx}}"{{end}}{{if $el.ChoiceContext}} data-ref-context="{{choiceContextJSON $el}}" data-ref-element="{{$el.Name}}"{{end}}{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+          <select class="managed-fill-control" id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{attrRefEntity $attr.TypeRef}}"{{if $ctx.RefFilter}}{{with index $ctx.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if $choiceCtx}} data-ref-choice-context="{{$choiceCtx}}"{{end}}{{if choiceDropdownCollapsed $el}} data-ref-choice-dropdown="false"{{end}}{{if $el.ChoiceContext}} data-ref-context="{{choiceContextJSON $el}}" data-ref-element="{{$el.Name}}"{{end}}{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
             <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
             {{range managedRefOptions $ctx $el $fn}}
             <option value="{{index . "id"}}"{{if index . "_choice_outside_filter"}} data-ob-choice-outside-filter="1"{{end}} {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
           <button type="button" data-ob-ref-picker="ref-{{$fn}}"{{if $ro}} disabled{{end}} style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
-          {{if and (or (not $ro) (index $ctx.Values $fn)) (not $ctx.HideRefCard)}}
+          {{if and (or (not $ro) (index $ctx.Values $fn)) (not $ctx.HideRefCard) (refHasCard (attrRefEntity $attr.TypeRef))}}
           <button type="button" data-ob-ref-current="ref-{{$fn}}" data-ob-readonly-navigation="1" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
           {{end}}
         </div>
@@ -251,7 +251,7 @@ const tplManagedForm = `
   {{$hotKey := ""}}{{if and (not $ro) $clickAction}}{{$hotKey = normalizedFormHotkey $el.HotKey}}{{end}}
   {{$buttonLayout := elLayout $el}}
   {{if $buttonLayout}}<div class="managed-btn-layout" data-ob-el="{{$el.Name}}" style="{{$buttonLayout}}">{{end}}
-  <button type="button" class="btn btn-secondary managed-btn"{{if not $buttonLayout}} data-ob-el="{{$el.Name}}"{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $hotKey}} data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $clickAction}} data-ob-fire-click="{{$el.Name}}"{{end}}>
+  <button type="button" class="btn {{if $el.Primary}}btn-primary{{else}}btn-secondary{{end}} managed-btn"{{if not $buttonLayout}} data-ob-el="{{$el.Name}}"{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $hotKey}} data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $clickAction}} data-ob-fire-click="{{$el.Name}}"{{end}}>
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </button>
   {{if $buttonLayout}}</div>{{end}}
@@ -326,7 +326,7 @@ const tplManagedForm = `
        {{/* id — имя реквизита (по нему идёт привязка данных и разбор tp.*),
             name — только подпись колонки: синоним реквизита, как в автоформе. */}}
        {{if $tpColEvents}}data-sg-colevents="{{$tpColEvents}}"{{end}}
-       data-sg-cols='{{managedTPColumnsJSON $tpPlan $tpVirtualCols (str $ctx.Lang) $ctx.RefWriteAccess}}'
+       data-sg-cols='{{managedTPColumnsJSON $tpPlan $tpVirtualCols (str $ctx.Lang) $ctx.RefWriteAccess $tpName $ctx.RefFilter}}'
        data-sg-ref='{{jsJSON $tpRef}}'
        data-sg-enum='{{jsJSON $tpEnum}}'
        data-sg-rows='{{managedTPRowsJSON $tpMeta.Fields $tpRows}}'
@@ -365,7 +365,7 @@ const tplManagedForm = `
           {{$v := index $row $f.Name}}
           {{if isRef (str $f.Type)}}
             <div style="display:flex;gap:4px;align-items:center">
-              <select name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if and ($f.InlineCreateEnabled true) (refWriteAllowed $ctx.RefWriteAccess $f.RefEntity)}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
+              <select name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if $ctx.RefFilter}}{{with index $ctx.RefFilter (printf "%s.%s" $tpName $f.Name)}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and ($f.InlineCreateEnabled true) (refWriteAllowed $ctx.RefWriteAccess $f.RefEntity)}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
                 <option value="">{{if $tpReadOnly}}—{{else}}— выбрать —{{end}}</option>
                 {{range index $tpRef $f.Name}}
                 <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID $v)}}selected{{end}}>{{index . "_label"}}</option>
@@ -531,6 +531,9 @@ const tplManagedForm = `
 {{if .TabTitle}}<meta name="ob-tab-title" content="{{.TabTitle}}">{{end}}
 <style>
 .managed-group-horizontal>.managed-group-body{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
+/* scroll_x: ряд действий не рвётся на вторую строку, а прокручивается. */
+.managed-group-scrollx>.managed-group-body{flex-wrap:nowrap;overflow-x:auto}
+.managed-group-scrollx>.managed-group-body>*{flex-shrink:0}
 /* Поле в горизонтальной группе не растягивается на всю строку: иначе одинокое
    поле уезжало во всю ширину, а кнопка рядом с ним — к правому краю экрана. */
 .managed-group-horizontal>.managed-group-body>.form-group{flex:0 1 260px;min-width:180px;margin-bottom:0}
@@ -790,6 +793,9 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 
 {{/* ── Рантайм событий managed-формы (план 37, этап 8) ──────────────────
      Статический код живёт в /static/managed.js; ниже только JSON bootstrap. */}}
+{{/* navigationFormChanged и navigationDirty — сообщения отмены перехода
+     ОткрытьФорму (#1557). Текст приходит отсюда, а не лежит строкой в
+     managed.js: иначе он оставался бы русским во всех языках интерфейса. */}}
 {{$closeMessages := (dict
   "controllerUnavailable" (t $.Lang "Проверка закрытия недоступна. Форма оставлена открытой.")
   "invalidResponse" (t $.Lang "Сервер вернул некорректный ответ при проверке закрытия.")
@@ -798,6 +804,8 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
   "timeout" (t $.Lang "Превышено время проверки закрытия")
   "network" (t $.Lang "Сетевая ошибка при закрытии")
   "operationPending" (t $.Lang "Команда формы ещё выполняется. Дождитесь её завершения.")
+  "navigationFormChanged" (t $.Lang "Форма изменилась во время выполнения команды — переход не выполнен")
+  "navigationDirty" (t $.Lang "Форма содержит несохранённые изменения — переход не выполнен")
   "closePending" (t $.Lang "Сначала завершите или восстановите проверку закрытия формы.")
   "reloadRequired" (t $.Lang "Результат уже сохранён. Скопируйте текущие правки и перезагрузите форму перед продолжением.")
   "unknownResult" (t $.Lang "Исход операции неизвестен. Проверьте данные в отдельной вкладке и перезагрузите форму; повторная запись заблокирована.")
@@ -842,6 +850,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
   "docId" .ID
   "autoOpen" (hasFormHandler .Form "ПриОткрытии")
   "formAttrs" (formAttrNames .Form .Entity)
+  "formAttrValues" (formAttrValues .Form .Entity .Values)
 )}}</script>
 {{end}}
 <script type="application/json" id="ob-managed-tp-ref-opts">{{jsJSON .TPRefOptions}}</script>

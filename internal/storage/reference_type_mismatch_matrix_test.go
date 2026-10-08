@@ -108,6 +108,53 @@ func TestReferenceTypeMismatchWriteMatrix(t *testing.T) {
 			assertReferenceValue(t, rows[0]["Товар"], first)
 		})
 
+		exchangeID := uuid.New()
+		sourceRef := `["exchange","test","node","1"]`
+		if err := db.Upsert(ctx, doc.Name, exchangeID, map[string]any{
+			"Номер": "З-до", "Клиент": first.String(),
+		}, doc); err != nil {
+			t.Fatalf("seed replicated document: %v", err)
+		}
+		t.Run("обмен сохраняет несовместимую ссылку шапки как NULL", func(t *testing.T) {
+			if err := db.ApplyReplicatedEntity(ctx, doc.Name, exchangeID, map[string]any{
+				"Номер": "З-обмен", "Клиент": "не UUID",
+			}, doc, sourceRef); err != nil {
+				t.Fatalf("ApplyReplicatedEntity: %v", err)
+			}
+			row, err := db.GetByID(ctx, doc.Name, exchangeID, doc)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if row["Номер"] != "З-обмен" || row["Клиент"] != nil {
+				t.Errorf("replicated document = %#v, want saved number and nil reference", row)
+			}
+		})
+
+		t.Run("обмен целиком заменяет строки с несовместимой ссылкой", func(t *testing.T) {
+			if err := db.UpsertTablePartRows(ctx, doc.Name, tp.Name, exchangeID,
+				[]map[string]any{{"Товар": first.String()}}, tp); err != nil {
+				t.Fatalf("seed replicated table part: %v", err)
+			}
+			if err := db.ApplyReplicatedTablePartRows(ctx, doc.Name, tp.Name, exchangeID,
+				[]map[string]any{
+					{"Товар": second.String()},
+					{"Товар": "не UUID"},
+				}, tp, sourceRef); err != nil {
+				t.Fatalf("ApplyReplicatedTablePartRows: %v", err)
+			}
+			rows, err := db.GetTablePartRows(ctx, doc.Name, tp.Name, exchangeID, tp)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(rows) != 2 {
+				t.Fatalf("replicated rows = %#v, want both replacement rows", rows)
+			}
+			assertReferenceValue(t, rows[0]["Товар"], second)
+			if rows[1]["Товар"] != nil {
+				t.Errorf("incompatible replicated reference = %#v, want nil", rows[1]["Товар"])
+			}
+		})
+
 		t.Run("пустое значение остаётся допустимым", func(t *testing.T) {
 			if err := db.Upsert(ctx, doc.Name, docID, map[string]any{"Клиент": ""}, doc); err != nil {
 				t.Fatalf("empty header reference rejected: %v", err)

@@ -293,6 +293,9 @@ type canvasChoiceCondition struct {
 	Op    string `json:"op"`
 	From  string `json:"from,omitempty"`
 	Value *bool  `json:"value,omitempty"`
+	// Ref — постоянная ссылка (UUID записи справочника), третий вид
+	// источника (#1820).
+	Ref string `json:"ref,omitempty"`
 }
 
 // canvasModel разворачивает дерево формы в плоскую карту node-id → редактируемые
@@ -350,6 +353,7 @@ func canvasModel(doc *formdoc.Doc) (map[string]canvasElementInfo, error) {
 					Op:    string(condition.Op),
 					From:  condition.From,
 					Value: condition.Value,
+					Ref:   condition.Ref,
 				})
 			}
 			m[en.NodeID] = info

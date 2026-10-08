@@ -34,6 +34,13 @@ type ConstantsRoot struct {
 	cache            map[string]any    // объявленное имя → значение
 	descriptors      map[string]typedempty.Descriptor
 	referenceFactory func(typedempty.Descriptor) any
+	// refPresenter достаёт представление ссылочной константы (подпись цели).
+	// nil — ссылка остаётся без подписи: UUID подписью не служит (#1536).
+	refPresenter func(ctx context.Context, entityName, uuid string) string
+	// refCtxSrc — «живой» контекст DSL-транзакции для чтения подписи. Без него
+	// чтение подписи из константы, затребованной внутри НачатьТранзакцию,
+	// уходило бы вторым соединением (пул SQLite — одно соединение, см. #1272).
+	refCtxSrc CtxSource
 }
 
 // DeclaredConstant is the immutable metadata needed by the DSL read boundary.
@@ -89,6 +96,34 @@ func NewTypedConstantsRoot(
 	return r
 }
 
+// WithRefPresenter подключает читателя подписей ссылочных констант. Хост
+// решает, по каким правилам читать подпись (права, маскирование, контекст):
+// interpreter знает только контракт «пустая строка — подписи нет».
+func (r *ConstantsRoot) WithRefPresenter(presenter func(ctx context.Context, entityName, uuid string) string) *ConstantsRoot {
+	r.refPresenter = presenter
+	return r
+}
+
+// WithRefCtxSource подключает «живой» источник контекста: чтение подписи из
+// константы, затребованной внутри НачатьТранзакцию, обязано идти в той же
+// транзакции, а не вторым соединением.
+func (r *ConstantsRoot) WithRefCtxSource(src CtxSource) *ConstantsRoot {
+	r.refCtxSrc = src
+	return r
+}
+
+func (r *ConstantsRoot) presentationCtx() context.Context {
+	if r.refCtxSrc != nil {
+		if ctx := r.refCtxSrc.Ctx(); ctx != nil {
+			return ctx
+		}
+	}
+	if r.ctx != nil {
+		return r.ctx
+	}
+	return context.Background()
+}
+
 func (r *ConstantsRoot) Get(name string) any {
 	if canon, ok := r.names[strings.ToLower(name)]; ok {
 		raw := r.cache[canon]
@@ -111,7 +146,14 @@ func (r *ConstantsRoot) Get(name string) any {
 				} else {
 					ref.UUID = strings.TrimSpace(MatchValueString(raw))
 				}
-				ref.Name = ref.UUID
+				// Представление даёт хост: подпись цели по тем же правилам, что
+				// видит пользователь в списках. UUID, выданный за наименование,
+				// молча уезжал в письма и печатные формы (#1536); у хоста без
+				// читателя подписи честнее пустое — как у недоступной ссылки.
+				ref.Name = ""
+				if r.refPresenter != nil && ref.UUID != "" {
+					ref.Name = r.refPresenter(r.presentationCtx(), desc.RefEntity, ref.UUID)
+				}
 			}
 			return ref
 		}

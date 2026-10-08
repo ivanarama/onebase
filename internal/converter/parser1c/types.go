@@ -18,7 +18,10 @@ type CatalogMeta struct {
 	TabularSections []TabularSection
 	Forms           []FormSource // управляемые формы объекта (Forms/<X>/Ext/Form.xml)
 	Hierarchical    bool
-	Code            Numbering
+	// Owner — справочник-владелец (подчинённый справочник 1С). Пусто —
+	// самостоятельный.
+	Owner string
+	Code  Numbering
 }
 
 // DocumentMeta — документ из Metadata.xml
