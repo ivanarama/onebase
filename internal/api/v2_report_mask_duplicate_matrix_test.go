@@ -112,13 +112,13 @@ func TestAPIV2_ReportMaskDuplicateColumnsMatrix(t *testing.T) {
 				if len(response.Data) != 1 {
 					t.Fatalf("%s/%s: строк %d, ожидалась одна", policy.Read, c.report, len(response.Data))
 				}
-			for key, value := range response.Data[0] {
-				if text, ok := value.(string); ok && strings.Contains(text, raw) {
-					t.Fatalf("%s/%s: колонка %q отдала исходное значение %q",
-						policy.Read, c.report, key, text)
+				for key, value := range response.Data[0] {
+					if text, ok := value.(string); ok && strings.Contains(text, raw) {
+						t.Fatalf("%s/%s: колонка %q отдала исходное значение %q",
+							policy.Read, c.report, key, text)
+					}
 				}
 			}
-		}
 		}
 	})
 }
@@ -215,6 +215,14 @@ func TestAPIV2_ReportMaskDuplicateReferenceColumnsMatrix(t *testing.T) {
 			if len(response.Data) != 1 {
 				t.Fatalf("%s: строк %d, ожидалась одна", c.report, len(response.Data))
 			}
+			maskedKey := "секрет"
+			if c.report == "ЗвёздочкаСсылки" {
+				maskedKey = "секрет_id"
+			}
+			if value, present := response.Data[0][maskedKey]; !present || value != nil {
+				t.Fatalf("%s: hidden reference %q = %#v, present=%v; want null", c.report, maskedKey, value, present)
+			}
+
 			for key, value := range response.Data[0] {
 				if text, ok := value.(string); ok && (text == secretID.String() || text == "Тайна-1") {
 					t.Fatalf("%s: колонка %q отдала скрытое значение %q", c.report, key, text)
