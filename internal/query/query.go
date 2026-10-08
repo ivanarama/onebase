@@ -823,7 +823,7 @@ type translator struct {
 	colTypes     map[string]metadata.FieldType // lowercase field name → type (для квалификации и CAST number)
 	refDims      []refDimInfo                  // reference dimensions with auto-JOIN info
 	mainTable    string                        // main FROM table/alias (set when source is emitted)
-	mainEmitted  bool                          // главная таблица FROM уже эмитирована (refDims авто-JOIN — только для неё)
+	mainEmitted  bool                          // главный FROM текущей SELECT-области уже эмитирован
 	section      querySection                  // current clause context
 	aliases      map[string]struct{}           // имена алиасов вывода (КАК ...) — их не квалифицируем и не CAST'им
 	sources      []SourceRef                   // объекты-источники запроса (для RBAC, план 54)
@@ -833,10 +833,12 @@ type translator struct {
 	rowApplied   []SourceRef                   // источники, к которым RLS-предикат реально внедрён (для финальной сверки)
 	parenDepth   int                           // глубина незакрытых '(' в основном потоке (VT-аргументы считает parseVTArgs)
 	sourceCtx    sourceContext                 // scoped-типы/классы источников для SELECT-кадров
-	unionDepths  map[int]bool                  // глубины SELECT с UNION для compound ORDER BY
-	unionOrders  map[int]bool                  // ORDER BY относится ко всему UNION, алиасы таблиц там недоступны
-	refCols      map[string]string             // колонка вывода (lower) → сущность, на которую она ссылается (#1150)
-	mainRef      mainRefSource                 // главный источник запроса: чья ссылка стоит за голым «Ссылка»
+	selectStates []selectTranslationState
+	activeSelect int
+	unionDepths  map[int]bool      // глубины SELECT с UNION для compound ORDER BY
+	unionOrders  map[int]bool      // ORDER BY относится ко всему UNION, алиасы таблиц там недоступны
+	refCols      map[string]string // колонка вывода (lower) → сущность, на которую она ссылается (#1150)
+	mainRef      mainRefSource     // главный источник запроса: чья ссылка стоит за голым «Ссылка»
 }
 
 // mainRefSource — предсканированный главный источник запроса: имя сущности и
@@ -3498,7 +3500,18 @@ func (tr *translator) qualifyReference(col string) string {
 		return col
 	}
 	if len(tr.refDims) == 0 && scope.sourceCount < 2 {
-		return col
+		// Preserve explicit qualification when another SELECT has an auto-JOIN,
+		// without borrowing its reference metadata for navigation.
+		hasRefJoin := false
+		for _, state := range tr.selectStates {
+			if len(state.refDims) > 0 {
+				hasRefJoin = true
+				break
+			}
+		}
+		if !hasRefJoin {
+			return col
+		}
 	}
 	return scope.mainTable + "." + col
 }
@@ -4569,25 +4582,30 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 	tokens = rewriteScalarFuncs(tokens, dialectName(opts.Dialect), scopedColTypes, qualifiedColTypes, scalarSourceCtx, 0, opts.Params)
 	tokens = rewriteStrftime(tokens, dialectName(opts.Dialect))
 	tr := &translator{
-		tokens:      tokens,
-		params:      map[string]int{},
-		paramValues: opts.Params,
-		opts:        opts,
-		colMap:      buildColMap(tokens, opts),
-		colTypes:    colTypes,
-		mainTable:   preScanMainTable(tokens),
-		refDims:     preScanRefDims(tokens, opts),
-		mainRef:     preScanMainRefSource(tokens, opts),
-		sourceCtx:   preScanSourceContextWithOpts(tokens, opts),
-		aliases:     map[string]struct{}{},
-		unionDepths: map[int]bool{},
-		unionOrders: map[int]bool{},
-		section:     sectionOther,
+		tokens:       tokens,
+		params:       map[string]int{},
+		paramValues:  opts.Params,
+		opts:         opts,
+		colMap:       buildColMap(tokens, opts),
+		colTypes:     colTypes,
+		mainTable:    preScanMainTable(tokens),
+		refDims:      preScanRefDims(tokens, opts),
+		mainRef:      preScanMainRefSource(tokens, opts),
+		sourceCtx:    preScanSourceContextWithOpts(tokens, opts),
+		aliases:      map[string]struct{}{},
+		unionDepths:  map[int]bool{},
+		unionOrders:  map[int]bool{},
+		section:      sectionOther,
+		activeSelect: -1,
 	}
+	tr.initSelectStates()
 	for {
 		t := tr.peek(0)
 		if t.kind == tEOF {
 			break
+		}
+		if scopeID, ok := tr.sourceCtx.scopeIDAt(tr.pos); ok {
+			tr.activateSelect(scopeID)
 		}
 		upper := upperFast(t.val)
 
@@ -5103,6 +5121,11 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 	}
 	if err := tr.assertRowFiltersApplied(); err != nil {
 		return Result{}, err
+	}
+	// Имена и типы результата задаёт первая область, даже если последней
+	// транслировалась другая ветвь UNION или вложенный SELECT.
+	if len(tr.selectStates) > 0 {
+		tr.activateSelect(0)
 	}
 	typedColumns, dslColumnAliases := typedProjectionColumns(projectionPlan, tokens, opts, tr.sourceCtx, tr.refCols)
 	return Result{
