@@ -150,9 +150,21 @@ decimal, дата — существующую семантику `date`, bool �
 | `internal/ui/templates_managed.go`, `handlers_managed_events.go` | Первое HTML-представление и результат после обработчика используют общий loader. Добавить `entityLists` в response, не смешивать с `tableparts`/`formTables`. Ошибки списков возвращать отдельно от исхода записи. |
 | `internal/ui/server.go`, новый `handlers_managed_lists.go` | Read-only POST `/ui/{kind}/{entity}/form-list-refresh`: штатная auth/CSRF, owner-state gate, ограниченный source payload; не исполняет прикладные обработчики, не пишет объект/настройки. |
 | `internal/ui/static/managed.js` | Общий applyEntityLists для event/refresh, зависимости источников, отмена stale ответов, очистка перед загрузкой. Обновление списка не запускает input/change и не сбрасывает dirty. |
-| `internal/launcher/forms_handlers.go`, `forms_tmpl.go` | Редактор сохраняет спецификацию без потерь; отдельные свойства entity/filter/order/columns/limit. Не принимать результат списка за ТЧ и не терять поля при повторном сохранении. |
-| `internal/onec_forms/{ir.go,reader_yaml.go,writer_yaml.go,mapping_in.go,mapping_out.go}` | Сохранение нового YAML через используемый редактором IR — отдельная проверяемая граница. Не обещать автоматический импорт динамического списка 1С. XML export явно диагностирует неподдерживаемую спецификацию, не теряет её молча. |
+| `internal/formdoc/{formdoc.go,elements.go,ops.go}`, `internal/launcher/forms_editop.go`, `forms_canvas.go` | Визуальные операции редактора идут через `formdoc.Load` и `yaml.Node`; `canvasModel` отдаёт свойства панели. Добавить типизированное редактирование entity/filter/order/columns/limit/on_row_click, чтение этих свойств в модель и сохранение их типов при повторных edit-op. Не принимать результат списка за ТЧ. |
+| `internal/launcher/forms_handlers.go`, `forms_tmpl.go` | `saveForm` передаёт текущий YAML; `configuratorFormsSave`/`saveManagedForm` сохраняют его напрямую в файлы или configdb. Обновить панель свойств списка и передачу её операций; проверить HTTP edit-op → save → повторное открытие редактора и загрузку managed loader без потери спецификации. |
+| `internal/onec_forms/{ir.go,reader_yaml.go,writer_yaml.go,mapping_in.go,mapping_out.go}` | IR обслуживает преобразования YAML/1С отдельно от сохранения в конфигураторе. Обеспечить сохранение спецификации при YAML → IR → YAML; XML export явно диагностирует неподдерживаемый список и не теряет его молча. Не обещать автоматический импорт динамического списка 1С. |
 | `docs/forms.md`, `DEVELOPER.md`, `examples/` | Документировать контракт и предоставить минимальную форму истории клиента; обновить справочник метаданных/AI-подсказки, затронутые новым kind. |
+
+Для среза C проверять две независимые границы. В конфигураторе создать
+список и изменить его свойства через реальный HTTP edit-op; проверить
+типизированные массивы filter/order_by/columns, числовой limit, bool/decimal
+литералы и строки source/on_row_click в ответных YAML и модели панели. Затем
+передать этот YAML в HTTP save, повторно открыть редактор, загрузить
+сохранённую форму managed loader и выполнить `onebase check`: значения
+и типы должны сохраниться, в том числе после несвязанной правки заголовка.
+Отдельный сценарий преобразования YAML → IR → YAML проверяет сохранение
+той же спецификации; экспорт в XML 1С проверяет явную диагностику
+неподдерживаемого списка. IR не участвует в HTTP-сохранении редактора.
 
 Действующие HTTP-тесты ValueTable (`managed_element_layout_test.go`,
 `row_events_test.go`) подтверждают прикладной обходной путь, но не доказывают
@@ -186,7 +198,7 @@ loader использует актуальный разрешённый snapshot
 |---|---|---|
 | A: метаданные и защищённое первое чтение | Загрузка YAML, check, typed-eq/order, общий loader, HTML-таблица на форме. Пока источник не изменён; автоматическое refresh поставляется следующим срезом. | CLI `onebase check` на хорошей/ошибочных конфигурациях; GET реальной формы с источником, 2 пользователями, read-denied, RLS и масками. Матрица `dbtest.ForEachDialect` через `DB.List`: decimal 2/10, NULL, равные ключи, UUID tie-breaker, AND+RLS до LIMIT, документы и справочники. Старые order/keyset/choice-тесты остаются зелёными. |
 | B: актуализация без записи | Read-only refresh и entityLists после событий; смена контакта, включая форму new, без handler; изменение источника обработчиком. | HTTP POST реального refresh и form-event, подмена entity/field/op/limit/ID/source/строк; владелец запрещён до hydration; readonly/hidden источники; запрет мутировать через save. Проверка БД до/после refresh. Настоящий managed.js на DOM: A→B→A с обратным порядком ответов, очистка при пустом/denied/error, закрытие окна, dirty и ТЧ сохранены, successful write с list-error не повторяется. |
-| C: навигация, редактор и документация | Enter/click в отдельную вкладку, полный round-trip спецификации через конфигуратор, готовый пример и инструкция. | HTTP реальной карточки с запретом RLS после выдачи списка; браузерный e2e из новой dirty-формы без её записи, безопасные ссылки и XSS-строки; HTTP save/reload формы в конфигураторе и повторный `check`; диагностика XML export; публичный smoke примера. |
+| C: навигация, редактор и документация | Enter/click в отдельную вкладку, полный round-trip спецификации через конфигуратор, готовый пример и инструкция. | HTTP реальной карточки с запретом RLS после выдачи списка; браузерный e2e из новой dirty-формы без её записи, безопасные ссылки и XSS-строки; HTTP edit-op → save → повторное открытие редактора/managed loader и `check`: все свойства списка и типы сохранены в YAML и модели панели; отдельно YAML → IR → YAML и диагностика XML export; публичный smoke примера. |
 
 Срез A не считается выполнением всей issue: документация явно отмечает
 начальную выдачу без refresh до B. Не устанавливать closing keyword на
@@ -196,7 +208,7 @@ loader использует актуальный разрешённый snapshot
 
 Команды реализации: `go build ./...`, `go test ./internal/metadata
 ./internal/dsl/loader ./internal/configcheck ./internal/storage ./internal/ui`,
-для C также `go test ./internal/launcher ./internal/onec_forms`;
+для C также `go test ./internal/formdoc ./internal/launcher ./internal/onec_forms`;
 матрица PostgreSQL с `TEST_DATABASE_URL`, затем штатные обязательные CI-гейты.
 Новые тесты обязаны идти через CLI/HTTP/DB.List/настоящий browser runtime,
 а не доказывать контракт вызовом только приватного loader.
@@ -214,8 +226,10 @@ loader использует актуальный разрешённый snapshot
 не возвращают чужую историю. Изменить контакт из обработчика и без него,
 создать новое обращение; dirty и заполненная ТЧ не теряются. Открыть заявку
 мышью и Enter, убедиться, что обращение не записалось и осталось открытым.
-Отредактировать форму в конфигураторе, сохранить/перезагрузить — источник
-и все ограничения сохраняются.
+Создать и отредактировать список через HTTP edit-op конфигуратора,
+сохранить и повторно открыть форму; сверить модель панели, сохранённый YAML
+и managed loader — источник, ограничения и типы сохраняются. Отдельно
+проверить YAML → IR → YAML и явную диагностику XML export.
 
 Готово, когда эти сценарии автоматизированы, SQL-матрица и штатный CI зелёные,
 новый путь не имеет обхода RBAC/RLS/masking, refresh не пишет данные, редактор
