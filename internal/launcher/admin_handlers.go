@@ -195,7 +195,12 @@ function cfgInfo(text,onClose){
   ov.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:10001;display:flex;align-items:center;justify-content:center';
   var box=document.createElement('div');
   box.style.cssText='background:#fff;padding:18px 22px;border-radius:8px;box-shadow:0 6px 28px rgba(0,0,0,.2);min-width:240px;font-size:13px';
-  box.innerHTML='<div style="margin-bottom:12px">'+text+'</div>';
+  // Текст сюда приходит ответом сервера (e.message) и контракта разметки не
+  // имеет: вставка через innerHTML интерпретировала <, >, & как HTML (#1570).
+  var msg=document.createElement('div');
+  msg.style.cssText='margin-bottom:12px';
+  msg.textContent=text;
+  box.appendChild(msg);
   var ok=document.createElement('button');ok.textContent='OK';ok.style.cssText='background:#1a4a80;color:#fff;border:none;padding:5px 14px;border-radius:4px;cursor:pointer;float:right';
   ok.onclick=function(){document.body.removeChild(ov);if(onClose){onClose()}};
   box.appendChild(ok);ov.appendChild(box);document.body.appendChild(ov);
@@ -452,12 +457,32 @@ func isPasswordPolicyError(err error) bool {
 // Сам текст ошибки говорит только «пароль не может быть пустым» — из
 // конфигуратора не видно, что пустые пароли вообще включаются, и на тестовом
 // стенде это тупик: админ упирается в запрет, о котором знает лишь исходный код.
+//
+// Пользовательское представление трёх отказов локализуется здесь, на границе
+// HTTP (#1571): auth отдаёт типизированные ошибки с фактическими пределами
+// (настройки базы уточняют глобальный минимум), разбор русского err.Error()
+// строковыми заменами не используется. Неизвестная ошибка возвращается как
+// есть — это не отказ политики.
 func passwordPolicyMessage(lang string, err error) string {
 	switch {
 	case errors.Is(err, auth.ErrPasswordRequired):
-		return err.Error() + ". " + tr(lang, "Пустые пароли включаются переменной окружения ONEBASE_ALLOW_EMPTY_PASSWORDS=true перед запуском лаунчера.")
+		return tr(lang, "Пароль не может быть пустым") + ". " +
+			tr(lang, "Пустые пароли включаются переменной окружения ONEBASE_ALLOW_EMPTY_PASSWORDS=true перед запуском лаунчера.")
 	case errors.Is(err, auth.ErrPasswordTooShort):
-		return err.Error() + ". " + tr(lang, "Минимальная длина задаётся переменной окружения ONEBASE_MIN_PASSWORD_LENGTH перед запуском лаунчера.")
+		minLen := auth.DefaultMinPasswordLength
+		var short *auth.PasswordTooShortError
+		if errors.As(err, &short) {
+			minLen = short.Min
+		}
+		return fmt.Sprintf(tr(lang, "пароль слишком короткий: минимум %d символов"), minLen) + ". " +
+			tr(lang, "Минимальная длина задаётся переменной окружения ONEBASE_MIN_PASSWORD_LENGTH перед запуском лаунчера.")
+	case errors.Is(err, auth.ErrPasswordTooLong):
+		maxBytes := auth.MaxPasswordLength
+		var long *auth.PasswordTooLongError
+		if errors.As(err, &long) {
+			maxBytes = long.Max
+		}
+		return fmt.Sprintf(tr(lang, "пароль слишком длинный: максимум %d байта"), maxBytes)
 	}
 	return err.Error()
 }

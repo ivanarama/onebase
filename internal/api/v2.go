@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -70,6 +69,10 @@ func (h *handler) mountV2(r chi.Router) {
 		r.Post("/document/{name}/{id}/unpost", h.unpostDocumentV2())
 
 		r.Get("/report/{name}", h.runReportV2())
+
+		// Чтение регистра сведений (issue #1423). Только GET: запись,
+		// регистры накопления и виртуальные таблицы — отдельные решения.
+		r.Get("/inforeg/{name}", h.listInfoRegV2())
 
 		// Глобальный поиск (план 82) — те же права, что в списках объектов.
 		r.Get("/search", h.searchV2())
@@ -654,44 +657,15 @@ func reportParamsFromQuery(q url.Values, rep *reportpkg.Report) (map[string]any,
 			// необязательной датой приходит пустым, потому что «Срок < NULL» не
 			// выбирает ничего. Явно переданное пустое значение — выбор клиента,
 			// его умолчание не перебивает.
-			raw = scheduler.ResolveParamTemplateText(p.Default)
+			raw = scheduler.ResolveParamTemplateText(p.Default, p.Type)
 		}
-		if raw == "" {
-			if p.Type == "bool" {
-				params[p.Name] = false
-			} else {
-				params[p.Name] = nil
-			}
-			continue
-		}
-		v, err := parseReportParamValue(raw, p.Type)
+		v, err := reportpkg.ParseParamValue(raw, p, reportpkg.ParamParseAPI)
 		if err != nil {
 			return nil, fmt.Errorf("invalid report parameter %s: %w", p.Name, err)
 		}
 		params[p.Name] = v
 	}
 	return params, nil
-}
-
-func parseReportParamValue(raw, typ string) (any, error) {
-	switch strings.ToLower(strings.TrimSpace(typ)) {
-	case "date":
-		t, err := time.ParseInLocation("2006-01-02", raw, time.Local)
-		if err != nil {
-			return nil, errors.New("expected date YYYY-MM-DD")
-		}
-		return t, nil
-	case "bool", "boolean":
-		return parseReportBool(raw), nil
-	case "number":
-		n, err := strconv.ParseFloat(raw, 64)
-		if err != nil {
-			return nil, errors.New("expected number")
-		}
-		return n, nil
-	default:
-		return raw, nil
-	}
 }
 
 func parseReportBool(raw string) bool {
@@ -823,6 +797,17 @@ func buildOpenAPIV2(entities []*metadata.Entity, reports []*reportpkg.Report) ma
 	schemas["DocumentListEnvelope"] = dataEnvelopeSchema(map[string]any{
 		"type":  "array",
 		"items": map[string]any{"$ref": "#/components/schemas/DocumentObject"},
+	}, map[string]any{"$ref": "#/components/schemas/ListMeta"})
+	// Регистр сведений (issue #1423): состав колонок зависит от конкретного
+	// регистра, поэтому строка описана свободным объектом. Точные измерения и
+	// ресурсы клиент берёт из describe, а не из спецификации REST.
+	schemas["InfoRegRecord"] = map[string]any{
+		"type":                 "object",
+		"additionalProperties": true,
+	}
+	schemas["InfoRegListEnvelope"] = dataEnvelopeSchema(map[string]any{
+		"type":  "array",
+		"items": map[string]any{"$ref": "#/components/schemas/InfoRegRecord"},
 	}, map[string]any{"$ref": "#/components/schemas/ListMeta"})
 	schemas["SearchHit"] = map[string]any{
 		"type": "object",
@@ -1039,6 +1024,7 @@ func openAPIV2Paths() map[string]any {
 		"/api/v2/document/{name}/{id}/post":        actionPath("postDocument", "Post document", nameParam, idParam, mutationEnvelope, errorResponses),
 		"/api/v2/document/{name}/{id}/unpost":      actionPath("unpostDocument", "Unpost document", nameParam, idParam, mutationEnvelope, errorResponses),
 		"/api/v2/report/{name}":                    reportPath(nameParam, reportEnvelope, errorResponses),
+		"/api/v2/inforeg/{name}":                   infoRegPath(nameParam, errorResponses),
 		"/api/v2/search":                           searchPath(errorResponses),
 		"/api/v2/openapi.json": map[string]any{
 			"get": map[string]any{
@@ -1047,6 +1033,46 @@ func openAPIV2Paths() map[string]any {
 				"tags":        []string{"openapi"},
 				"responses":   mergeResponses(map[string]any{"200": openAPIResponse}, errorResponses),
 			},
+		},
+	}
+}
+
+// infoRegPath — чтение регистра сведений (issue #1423). Отбор по измерениям
+// записан общим `filter[Измерение]`, как у списков объектов: конкретные имена
+// зависят от регистра, и перечислить их в статической спецификации нельзя.
+func infoRegPath(nameParam any, errors map[string]any) map[string]any {
+	return map[string]any{
+		"get": map[string]any{
+			"operationId": "listInfoRegister",
+			"summary":     "Read information-register records",
+			"tags":        []string{"inforeg"},
+			"parameters": []any{
+				nameParam,
+				map[string]any{"name": "limit", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1, "maximum": restMaxLimit}},
+				map[string]any{"name": "page", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 1}},
+				map[string]any{"name": "offset", "in": "query", "schema": map[string]any{"type": "integer", "minimum": 0}},
+				map[string]any{
+					"name": "filter[Dimension]", "in": "query",
+					"description": "Exact match on a register dimension. The value is compared verbatim: " +
+						"surrounding spaces are significant and an empty value selects records whose " +
+						"dimension is the empty string. An unknown name is rejected with 400 rather " +
+						"than ignored.",
+					"schema": map[string]any{"type": "string"},
+				},
+				map[string]any{
+					"name": "filter[period.from]", "in": "query",
+					"description": "Periodic registers only. ISO date or RFC3339 instant.",
+					"schema":      map[string]any{"type": "string"},
+				},
+				map[string]any{
+					"name": "filter[period.to]", "in": "query",
+					"description": "Periodic registers only; the whole day is included.",
+					"schema":      map[string]any{"type": "string"},
+				},
+			},
+			"responses": mergeResponses(map[string]any{
+				"200": responseWithSchema("OK", "#/components/schemas/InfoRegListEnvelope"),
+			}, errors),
 		},
 	}
 }

@@ -1,6 +1,12 @@
 package ui
 
-import "net/http"
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"net/http"
+
+	"github.com/ivantit66/onebase/internal/auth"
+)
 
 // Оболочка вкладок рантайма (issue #129 переключение форм / #130 несколько
 // экземпляров), фаза 1.
@@ -30,7 +36,21 @@ func (s *Server) appShell(w http.ResponseWriter, r *http.Request) {
 	if !s.requireSubsystemVisible(w, r) {
 		return
 	}
-	s.render(w, r, "page-app-shell", s.homeDashboardData(r))
+	data := s.homeDashboardData(r)
+	// Separate browser state by user and login session without exposing the cookie.
+	// Domain separation keeps this digest distinct from the stored auth token hash.
+	scope := ""
+	if user := auth.UserFromContext(r.Context()); user != nil {
+		if cookie, err := r.Cookie("onebase_session"); err == nil && cookie.Value != "" {
+			digest := sha256.Sum256([]byte("onebase:tab-scope:v1\x00" + user.ID + "\x00" + cookie.Value))
+			scope = hex.EncodeToString(digest[:])
+		}
+	} else if auth.OpenAccessFromContext(r.Context()) {
+		scope = "open-access:v1"
+	}
+	data["TabStorageScope"] = scope
+	w.Header().Set("Cache-Control", "no-store")
+	s.render(w, r, "page-app-shell", data)
 }
 
 const tplAppShell = `{{define "page-app-shell"}}
@@ -72,6 +92,23 @@ const tplAppShell = `{{define "page-app-shell"}}
   var empty=document.getElementById('ob-tabempty');
   var home=document.getElementById('ob-tabhome');
   var tabs=[]; var active=null; var tabSeq=0; var STORE='obTabs'; var STORE_ACTIVE='obTabsActive';
+  var STORAGE_SCOPE={{.TabStorageScope}};
+  var STORE_SCOPE='obTabsScope'; var storageReady=false;
+  // An unowned legacy snapshot is unsafe even when its URLs remain accessible.
+  // Prove ownership before reading either titles/URLs or the active selection.
+  try{
+    if(STORAGE_SCOPE){
+      if(sessionStorage.getItem(STORE_SCOPE)!==STORAGE_SCOPE){
+        sessionStorage.removeItem(STORE);
+        sessionStorage.removeItem(STORE_ACTIVE);
+        sessionStorage.setItem(STORE_SCOPE,STORAGE_SCOPE);
+      }
+      storageReady=true;
+    }
+  }catch(e){}
+  function storageOwned(){
+    try{ return storageReady && sessionStorage.getItem(STORE_SCOPE)===STORAGE_SCOPE; }catch(e){ return false; }
+  }
   var SHOW_HOME=false;
   try{ SHOW_HOME = new URLSearchParams(location.search).get('home')==='1'; }catch(e){}
 
@@ -89,6 +126,7 @@ const tplAppShell = `{{define "page-app-shell"}}
     return id && !tabByID(id) ? id : freshTabID();
   }
   function readSavedActive(){
+    if(!storageOwned())return {id:'',url:''};
     var raw='';
     try{ raw=String(sessionStorage.getItem(STORE_ACTIVE)||''); }catch(e){}
     if(!raw)return {id:'',url:''};
@@ -99,9 +137,9 @@ const tplAppShell = `{{define "page-app-shell"}}
     // До появления стабильных id ключ содержал голый URL.
     return {id:'',url:raw};
   }
-  function persist(){ try{ sessionStorage.setItem(STORE, JSON.stringify(tabs.map(function(t){return {id:t.id,url:t.url,title:t.title};}))); }catch(e){} }
-  function persistActive(t){ try{ sessionStorage.setItem(STORE_ACTIVE, JSON.stringify({id:t.id,url:t.url})); }catch(e){} }
-  function clearPersistedActive(){ try{ sessionStorage.removeItem(STORE_ACTIVE); }catch(e){} }
+  function persist(){ if(!storageOwned())return; try{ sessionStorage.setItem(STORE, JSON.stringify(tabs.map(function(t){return {id:t.id,url:t.url,title:t.title};}))); }catch(e){} }
+  function persistActive(t){ if(!storageOwned())return; try{ sessionStorage.setItem(STORE_ACTIVE, JSON.stringify({id:t.id,url:t.url})); }catch(e){} }
+  function clearPersistedActive(){ if(!storageOwned())return; try{ sessionStorage.removeItem(STORE_ACTIVE); }catch(e){} }
   function syncEmpty(){ if(empty) empty.style.display = (!home && !tabs.length) ? '' : 'none'; }
   function setActive(t){
     active=t||null;
@@ -141,6 +179,18 @@ const tplAppShell = `{{define "page-app-shell"}}
         !!(doc.getElementById&&doc.getElementById('ob-managed-config'));
     }catch(e){ return true; }
   }
+  // Полностью загруженная страница того же источника, которая не managed-форма
+  // и не отвечает на obRequestFormClose (ui.js ставит obAnswersFrameClose):
+  // текстовая ошибка 404 и подобное. Ответа от неё не будет, сохранять в ней
+  // нечего — вкладка закрывается без запроса (#1684). Загрузка, чужой
+  // источник, любая ошибка доступа — не «молчащая» страница (fail-closed).
+  function frameIsSilent(t){
+    try{
+      if(frameIsManaged(t))return false;
+      var child=t&&t.frame&&t.frame.contentWindow;
+      return !!child&&child.obAnswersFrameClose!==true;
+    }catch(e){ return false; }
+  }
   function finalizeTabClose(t,decision){
     var finalized=false;
     if(typeof window.obFinalizeFrameClose==='function') finalized=window.obFinalizeFrameClose(t.frame,decision);
@@ -165,6 +215,10 @@ const tplAppShell = `{{define "page-app-shell"}}
       if(frameIsManaged(t)){ if(window.alert)window.alert(closeFailureMessage()); return false; }
       // ui.js normally supplies the child protocol. If that script is absent,
       // preserve the legacy protection for autogenerated/non-managed forms.
+      if(t.dirty && !window.confirm('В этой вкладке есть несохранённые изменения. Закрыть вкладку?'))return false;
+      return removeTab(t);
+    }
+    if(frameIsSilent(t)){
       if(t.dirty && !window.confirm('В этой вкладке есть несохранённые изменения. Закрыть вкладку?'))return false;
       return removeTab(t);
     }
@@ -220,6 +274,11 @@ const tplAppShell = `{{define "page-app-shell"}}
     var cl=document.createElement('span'); cl.className='ob-tab-close'; cl.textContent='✕'; cl.title='Закрыть'; btn.appendChild(cl);
     var frame=document.createElement('iframe'); frame.src=url;
     var t={id:uniqueTabID(opts.id),url:url,title:title,btn:btn,frame:frame,label:lab};
+    // Стабильное имя фрейма «ob-tab-<id>»: страница внутри iframe читает его
+    // через window.frameElement.name и различает себя от других вкладок
+    // (изоляция отметки фокуса поиска, #1599). id сохраняется оболочкой и
+    // переживает навигацию внутри фрейма и перезапуск оболочки.
+    frame.name='ob-tab-'+t.id;
     frame.addEventListener('load',function(){ syncFrameURL(t); });
     btn.addEventListener('click',function(e){ if(e.target===cl||e.target===dup)return; setActive(t); });
     btn.addEventListener('mousedown',function(e){ if(e.button===1){ e.preventDefault(); closeTab(t,'cross'); } });
@@ -334,7 +393,7 @@ const tplAppShell = `{{define "page-app-shell"}}
   // успеть заменить сохранённый выбор последней добавленной вкладкой.
   var savedActive=readSavedActive();
   try{
-    var saved=JSON.parse(sessionStorage.getItem(STORE)||'[]');
+    var saved=storageOwned()?JSON.parse(sessionStorage.getItem(STORE)||'[]'):[];
     // restoring не активирует/не сохраняет промежуточные вкладки; allowDup
     // сохраняет отдельные экземпляры одного URL (#130).
     saved.forEach(function(s){ if(s&&s.url) openTab(String(s.url), s.title?String(s.title):'Форма', {allowDup:true,id:s.id,restoring:true}); });

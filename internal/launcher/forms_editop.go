@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/ivantit66/onebase/internal/formdoc"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -216,18 +217,34 @@ func applyEditOp(yamlSrc []byte, req editOpRequest) (editOpResult, error) {
 		conditions := make([]metadata.FormChoiceCondition, 0, len(raw))
 		for i, condition := range raw {
 			op := metadata.FormChoiceOperator(strings.TrimSpace(condition.Op))
-			if op != metadata.FormChoiceOpEqual && op != metadata.FormChoiceOpInHierarchy {
+			if op != metadata.FormChoiceOpEqual && op != metadata.FormChoiceOpInHierarchy &&
+				op != metadata.FormChoiceOpEqualOrEmpty && op != metadata.FormChoiceOpNotInHierarchy {
 				return editOpResult{}, fmt.Errorf("setChoiceFilter: условие %d: неизвестный оператор %q", i+1, condition.Op)
 			}
 			from := strings.TrimSpace(condition.From)
-			if (from == "") == (condition.Value == nil) {
-				return editOpResult{}, fmt.Errorf("setChoiceFilter: условие %d: укажите ровно одно из from и value", i+1)
+			ref := strings.TrimSpace(condition.Ref)
+			sources := 0
+			for _, present := range []bool{from != "", condition.Value != nil, ref != ""} {
+				if present {
+					sources++
+				}
+			}
+			if sources != 1 {
+				return editOpResult{}, fmt.Errorf("setChoiceFilter: условие %d: укажите ровно одно из from, value и ref", i+1)
+			}
+			if ref != "" {
+				// Формат проверяется сразу: битый UUID в YAML отклонил бы
+				// onebase check, а редактор не должен его записывать (#1820).
+				if id, err := uuid.Parse(ref); err != nil || id == uuid.Nil {
+					return editOpResult{}, fmt.Errorf("setChoiceFilter: условие %d: ref %q — не UUID записи", i+1, condition.Ref)
+				}
 			}
 			conditions = append(conditions, metadata.FormChoiceCondition{
 				Field: strings.TrimSpace(condition.Field),
 				Op:    op,
 				From:  from,
 				Value: condition.Value,
+				Ref:   ref,
 			})
 		}
 		if err := doc.SetProp(req.Node, "choice_filter", conditions); err != nil {

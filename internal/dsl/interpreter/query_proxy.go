@@ -38,6 +38,11 @@ type queryProxy struct {
 	ctxSrc   CtxSource
 	compiler QueryCompiler
 	guard    QueryGuard
+	// liveTx — живое состояние транзакций исполнения. Используется НЕ для
+	// чтения через транзакцию (это работа живого CtxSource, #1216), а только
+	// для точного обнаружения self-deadlock (#1272): контекст, снятый до
+	// НачатьТранзакцию, на SQLite ждёт собственное соединение фатально.
+	liveTx *TxState
 }
 
 type QueryCompiler func(ctx context.Context, text string, params map[string]any) (query.Result, error)
@@ -109,6 +114,33 @@ func NewQueryFactoryGuardedSource(ctxSrc CtxSource, db QueryDB, reg QueryRegistr
 			guard:    guard,
 		}
 	}
+}
+
+// NewQueryFactoryWithTxState — статическая фабрика с живым состоянием
+// транзакций для точной страховки от self-deadlock (#1272): контекст
+// по-прежнему снимается при сборке (семантику живого чтения вводит #1216), но
+// если транзакция уже активна, а в снятом контексте её нет, Выполнить()
+// возвращает управляемую ошибку вместо фатального ожидания собственного
+// соединения SQLite.
+func NewQueryFactoryWithTxState(ctx context.Context, db QueryDB, reg QueryRegistry, liveTx *TxState) func(args []any) any {
+	return func(args []any) any {
+		return &queryProxy{
+			params: make(map[string]any),
+			db:     db,
+			reg:    reg,
+			ctx:    ctx,
+			liveTx: liveTx,
+		}
+	}
+}
+
+// NewQueryFactorySource is the source-aware counterpart of NewQueryFactory:
+// same direct compilation and no guard, but the execution context is taken
+// from ctxSrc at the moment of Выполнить(). План 161, срез 1 — для callers,
+// которым живой транзакционный контекст нужен без compiler/guard; новый код
+// сходится в ту же реализацию queryProxy, а не копирует execute.
+func NewQueryFactorySource(ctxSrc CtxSource, db QueryDB, reg QueryRegistry) func(args []any) any {
+	return NewQueryFactoryGuardedSource(ctxSrc, db, reg, nil, nil)
 }
 
 func (q *queryProxy) context() context.Context {
@@ -185,6 +217,13 @@ func (q *queryProxy) execute() *Array {
 	}
 	params := unwrapArrayParams(q.params)
 	ctx := q.context()
+	// #1272: транзакция активна, а сохранённый контекст запроса её не
+	// содержит — запрос ушёл бы в пул за соединением, которое держит эта же
+	// транзакция (на SQLite пул из одного соединения даёт fatal deadlock всего
+	// процесса). Управляемая ошибка до обращения к пулу.
+	if q.liveTx != nil && q.liveTx.InTransaction() && !storage.HasTx(ctx) {
+		panic(userError{Msg: "Запрос выполняется с контекстом, полученным до НачатьТранзакцию: внутри активной транзакции он ждал бы собственное соединение (на SQLite — фатальный deadlock всего процесса). Выполняйте чтение до начала транзакции; чтение незакоммиченных данных запросом добавляется отдельно (#1216)."})
+	}
 	var res query.Result
 	var err error
 	if q.compiler != nil {
@@ -301,16 +340,25 @@ func (q *queryProxy) wrapRefColumns(res query.Result, rows []map[string]any) {
 		}
 	}
 	for col, entName := range res.RefColumns {
-		ent := entities[strings.ToLower(entName)]
-		if ent == nil {
-			continue // сущности нет в реестре — оставляем значение как есть
+		var refType string
+		var refKind metadata.Kind
+		if metadata.IsSystemRefTarget(entName) {
+			// System references are not configuration entities. Match the
+			// reference exposed by ТекущийПользователь().Ссылка.
+			refType = metadata.SystemUsersEntity
+		} else {
+			ent := entities[strings.ToLower(entName)]
+			if ent == nil {
+				continue // сущности нет в реестре — оставляем значение как есть
+			}
+			refType, refKind = ent.Name, ent.Kind
 		}
 		for _, row := range rows {
 			s, ok := row[col].(string)
 			if !ok || !isRefUUIDValue(s) {
 				continue
 			}
-			row[col] = &Ref{UUID: s, Name: s, Type: ent.Name, Kind: ent.Kind}
+			row[col] = &Ref{UUID: s, Name: s, Type: refType, Kind: refKind}
 		}
 	}
 }

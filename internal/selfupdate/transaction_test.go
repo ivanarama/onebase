@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -52,28 +54,74 @@ func privateTargetDir(t *testing.T) string {
 	return installtest.PrivateInstallDir(t)
 }
 
+// syncedOutput — вывод дочернего теста, безопасный для чтения, пока exec ещё
+// копирует пайпы: без мьютекса чтение в ожидании маркеров гоняет с cmd.Wait.
+type syncedOutput struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncedOutput) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncedOutput) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// Протокол родитель↔helper — файлы-маркеры в каталоге
+// ONEBASE_TARGET_LOCK_PROTOCOL, каждая стадия означает ровно одно событие:
+//
+//	lease — helper захватил собственную OperationLease;
+//	apply — helper вот-вот войдёт в OperationLease.Apply (попытка захвата
+//	        target lock; лок в этот момент держит родитель);
+//	done  — Apply вернулся: payload "applied_at=<unixnano> targetlock=<0|1>".
+//
+// Раньше helper публиковал "ready" ДО захвата lease, а родитель оценивал
+// блокировку порогами 100/150 мс — задержка планировщика съедала запас и
+// давала ложный отказ исправной блокировки (#1611). Теперь на пути
+// корректности порогов нет: родитель отпускает лок по истечении щедрого
+// грейса — это ограничитель зависания, а не доказательство. Доказательство
+// ожидания прикладное: Apply обязан вернуться только ПОСЛЕ снятия лока,
+// иначе helper не ждал на нём вовсе, и это ложный успех, а не зелёный тест.
 func TestTargetLockSubprocessHelper(t *testing.T) {
 	if os.Getenv("ONEBASE_TARGET_LOCK_HELPER") != "1" {
 		return
 	}
 	targetDir := os.Getenv("ONEBASE_TARGET_LOCK_TARGET")
-	ready := os.Getenv("ONEBASE_TARGET_LOCK_READY")
-	if err := os.WriteFile(ready, []byte("ready"), 0o600); err != nil { //nolint:gosec // G703: parent test passes a path created beneath t.TempDir through the helper environment
-		t.Fatal(err)
+	proto := os.Getenv("ONEBASE_TARGET_LOCK_PROTOCOL")
+	publish := func(name, payload string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(proto, name), []byte(payload), 0o600); err != nil { //nolint:gosec // G703: parent test passes a path created beneath t.TempDir through the helper environment
+			t.Fatal(err)
+		}
 	}
 	lease, err := AcquireOperationLease()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("acquire operation lease: %v", err)
 	}
 	defer func() { _ = lease.Release() }()
+	publish("lease", "lease")
+
+	publish("apply", "apply")
 	started := time.Now()
-	err = lease.Apply(StagedInfo{Verified: true}, targetDir)
-	if err == nil {
+	applyErr := lease.Apply(StagedInfo{Verified: true}, targetDir)
+	waited := time.Since(started)
+	if applyErr == nil {
 		t.Fatal("invalid helper apply unexpectedly succeeded")
 	}
-	if time.Since(started) < 100*time.Millisecond {
-		t.Fatal("helper Apply did not wait for the target-scoped lock")
+	// Структурное доказательство пути блокировки: у Apply с некорректным
+	// пакетом target lock уже должен быть захвачен (см.
+	// TestLegacyLeaseApplyBindsTargetLock). Пустой targetLock означал бы обход
+	// лока или отказ до попытки его захвата.
+	if lease.targetLock == nil {
+		t.Fatalf("helper Apply bypassed the target-scoped lock (waited %s): %v", waited, applyErr)
 	}
+	publish("done", "targetlock=1")
 }
 
 func TestTargetLockSerializesApplyAcrossProfilesAndProcesses(t *testing.T) {
@@ -93,34 +141,78 @@ func TestTargetLockSerializesApplyAcrossProfilesAndProcesses(t *testing.T) {
 		}
 	}()
 	otherHome := t.TempDir()
-	ready := filepath.Join(t.TempDir(), "ready")
+	proto := t.TempDir()
+	output := &syncedOutput{}
+	done := make(chan error, 1)
+	// diagnose прикладывает вывод helper к любому отказу: раньше печаталась
+	// только ошибка cmd.Wait(), и причина падения helper была неизвестна.
+	diagnose := func(format string, args ...any) {
+		t.Helper()
+		t.Fatalf("%s\nвывод helper:\n%s", fmt.Sprintf(format, args...), output.String())
+	}
+	waitMarker := func(name string, timeout time.Duration) {
+		t.Helper()
+		deadline := time.Now().Add(timeout)
+		for {
+			if _, err := os.Stat(filepath.Join(proto, name)); err == nil {
+				return
+			}
+			select {
+			case err := <-done:
+				diagnose("helper exited before the %s marker: %v", name, err)
+			case <-time.After(10 * time.Millisecond):
+			}
+			if time.Now().After(deadline) {
+				diagnose("helper did not publish the %s marker in %s", name, timeout)
+			}
+		}
+	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestTargetLockSubprocessHelper$") //nolint:gosec // G204: execute this exact Go test binary with a fixed helper selector
 	cmd.Env = append(os.Environ(),
 		"ONEBASE_TARGET_LOCK_HELPER=1",
 		"ONEBASE_TARGET_LOCK_TARGET="+targetDir,
-		"ONEBASE_TARGET_LOCK_READY="+ready,
+		"ONEBASE_TARGET_LOCK_PROTOCOL="+proto,
 		"HOME="+otherHome,
 		"USERPROFILE="+otherHome,
 	)
+	cmd.Stdout = output
+	cmd.Stderr = output
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
-	deadline := time.Now().Add(3 * time.Second)
+	// Дочерний процесс не должен пережить родительский тест: при любом выходе
+	// завершаем и вычитываем его, чтобы он не удержал захваченные локи.
+	running := true
+	t.Cleanup(func() {
+		if running {
+			_ = cmd.Process.Kill()
+			_, _ = cmd.Process.Wait()
+		}
+	})
+
+	// Грейсы ниже — ограничители зависания: щедрый запас планировщику, чтобы
+	// ложный отказ не вернулся ни на одной ОС.
+	waitMarker("lease", 30*time.Second)
+	waitMarker("apply", 30*time.Second)
+	// Пока лок удерживается, исправный helper заблокирован в Apply и не может
+	// ни выйти, ни закончить его: ранний маркер done или выход процесса —
+	// обход лока или отказ до блокировки.
+	graceDeadline := time.Now().Add(2 * time.Second)
 	for {
-		if _, err := os.Stat(ready); err == nil {
+		if _, err := os.Stat(filepath.Join(proto, "done")); err == nil {
+			running = false
+			diagnose("helper finished Apply while the target lock was held")
+		}
+		select {
+		case err := <-done:
+			running = false
+			diagnose("helper exited while the target lock was held: %v", err)
+		case <-time.After(10 * time.Millisecond):
+		}
+		if time.Now().After(graceDeadline) {
 			break
 		}
-		if time.Now().After(deadline) {
-			t.Fatal("helper did not reach target lock")
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	select {
-	case err := <-done:
-		t.Fatalf("helper bypassed target lock: %v", err)
-	case <-time.After(150 * time.Millisecond):
 	}
 	if err := lock.Unlock(); err != nil {
 		t.Fatal(err)
@@ -128,11 +220,19 @@ func TestTargetLockSerializesApplyAcrossProfilesAndProcesses(t *testing.T) {
 	locked = false
 	select {
 	case err := <-done:
+		running = false
 		if err != nil {
-			t.Fatal(err)
+			diagnose("helper did not proceed after target lock release: %v", err)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("helper did not proceed after target lock release")
+	case <-time.After(30 * time.Second):
+		diagnose("helper did not proceed after target lock release: helper still running")
+	}
+	payload, err := os.ReadFile(filepath.Join(proto, "done")) //nolint:gosec // G703: protocol dir is test-owned beneath t.TempDir
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(payload) != "targetlock=1" {
+		diagnose("helper Apply did not bind the target-scoped lock: done payload %q", payload)
 	}
 }
 

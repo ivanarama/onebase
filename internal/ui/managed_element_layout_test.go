@@ -254,9 +254,13 @@ func TestManagedLayout_FormHandlerAppliesValueTableLayout(t *testing.T) {
 		t.Fatalf("форма не открылась: %d", rec.Code)
 	}
 	body := rec.Body.String()
-	want := `class="managed-vt-layout" data-ob-el="ЭлементПодбор" style="width:640px;max-width:100%;flex:0 0 auto;min-width:0;height:520px;"`
-	if !strings.Contains(body, want) {
+	// Порядок атрибутов не значим: между data-ob-el и style законно встаёт
+	// data-ob-el-path (#1543), поэтому проверяем их по отдельности.
+	if !strings.Contains(body, `class="managed-vt-layout" data-ob-el="ЭлементПодбор"`) {
 		t.Errorf("layout ValueTable не применён к внешнему блоку:\n%s", body)
+	}
+	if !strings.Contains(body, `style="width:640px;max-width:100%;flex:0 0 auto;min-width:0;height:520px;"`) {
+		t.Errorf("стиль раскладки ValueTable потерян:\n%s", body)
 	}
 	if !strings.Contains(body, `data-vt="Подбор"`) {
 		t.Errorf("сама ValueTable пропала из карточки:\n%s", body)

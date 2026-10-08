@@ -646,6 +646,39 @@ func (s *Server) applyDefaultsToUnsubmittedFields(
 	if entity == nil || form == nil || obj == nil || s.entitySvc == nil {
 		return entityservice.NewObjectResult{}, nil
 	}
+	return s.overlayNewObjectDefaults(r.Context(), r, entity, form, obj, false, nil)
+}
+
+// overlayNewObjectDefaults — общая часть записи нового объекта управляемой
+// формы: вычисляет начальное состояние тем же entityservice.NewObject, что GET
+// формы, и переносит значения на реквизиты, которых форма не прислала.
+//
+// Путей записи нового объекта у управляемой формы несколько, и контракт
+// defaults.go обязан держаться на всех: «Записать» (parseSubmitForm), «ОК»,
+// «Да» в диалоге закрытия и «Записать и выбрать» (close-intent), а также
+// Объект.Записать() из обработчика формы. Раньше вызывал только первый — и
+// одна и та же форма писала разные данные в зависимости от нажатой кнопки.
+//
+// keepFilled оставляет значения, уже стоящие в объекте: обработчик формы мог
+// сам присвоить неразмещённый реквизит до Объект.Записать(), и дефолт не имеет
+// права его перетереть. Явное Неопределено по значению не отличить от
+// реквизита, которого форма не прислала, поэтому присвоенные обработчиком
+// реквизиты (assigned, ключи в нижнем регистре) остаются как есть при любом
+// значении. ctx — живой контекст исполнения: хук ПриСозданииНового обязан
+// попасть в открытую модулем транзакцию, а не ждать второго соединения (пул
+// SQLite — одно).
+func (s *Server) overlayNewObjectDefaults(
+	ctx context.Context,
+	r *http.Request,
+	entity *metadata.Entity,
+	form *metadata.FormModule,
+	obj *runtime.Object,
+	keepFilled bool,
+	assigned map[string]struct{},
+) (entityservice.NewObjectResult, error) {
+	if entity == nil || form == nil || obj == nil || s.entitySvc == nil {
+		return entityservice.NewObjectResult{}, nil
+	}
 	submitted := submittedFormKeys(r)
 	checkboxes := checkboxOmittedFields(form, entity, submitted)
 
@@ -654,7 +687,7 @@ func (s *Server) applyDefaultsToUnsubmittedFields(
 	// обязана остановить Save. Фильтр присутствия нужен только при переносе
 	// вычисленных значений ниже — ввод пользователя главнее и дефолта, и хука.
 	// Без Fields GET и POST вычисляют то же начальное состояние объекта.
-	newRes, err := s.entitySvc.NewObject(r.Context(), entityservice.NewObjectRequest{
+	newRes, err := s.entitySvc.NewObject(ctx, entityservice.NewObjectRequest{
 		Entity:    entity,
 		FormEntry: true,
 	})
@@ -667,6 +700,14 @@ func (s *Server) applyDefaultsToUnsubmittedFields(
 	for _, f := range entity.Fields {
 		if formKeySubmitted(submitted, f.Name) || checkboxes[strings.ToLower(f.Name)] {
 			continue
+		}
+		if keepFilled {
+			if _, ok := assigned[strings.ToLower(f.Name)]; ok {
+				continue
+			}
+			if current, ok := maskCIKeyValue(obj.Fields, f.Name); ok && current != nil {
+				continue
+			}
 		}
 		value, ok := maskCIKeyValue(newRes.Object.Fields, f.Name)
 		if !ok || value == nil {

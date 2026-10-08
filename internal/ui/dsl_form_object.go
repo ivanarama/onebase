@@ -60,6 +60,16 @@ type formObjectThis struct {
 	// by BeforeClose cannot commit a row which the same caller may no longer
 	// read. It runs against the authoritative row inside the save transaction.
 	finalPreflight func(context.Context, *runtime.Object) error
+	// prepareNew достраивает НОВЫЙ объект перед первой записью: неразмещённые
+	// на форме реквизиты получают default и ПриСозданииНового так же, как при
+	// «Записать» (#1189). Ставит form-event для формы новой записи; nil — у
+	// существующей записи восстанавливать нечего, её поля дочитаны из базы.
+	prepareNew func(context.Context) error
+	// assigned — реквизиты (в нижнем регистре), которым обработчик присвоил
+	// значение, в том числе Неопределено. По значению явное очищение не
+	// отличить от реквизита, которого форма не прислала: оба nil, а умолчание
+	// вправе заполнить только второй.
+	assigned map[string]struct{}
 	// writeBlocked prevents a form write lifecycle handler from recursively
 	// saving the same object and then letting the outer Save persist it again.
 	writeBlocked bool
@@ -142,6 +152,10 @@ func (f *formObjectThis) write() error {
 	isNew := f.isNew && !f.saved
 	if !isNew {
 		if err := f.srv.checkDSLRowAccess(ctx, f.entity, "write", f.obj.ID, f.obj.Fields); err != nil {
+			return err
+		}
+	} else if f.prepareNew != nil {
+		if err := f.prepareNew(ctx); err != nil {
 			return err
 		}
 	}
@@ -310,6 +324,10 @@ func (f *formObjectThis) Set(name string, v any) {
 	if f == nil || f.obj == nil {
 		return
 	}
+	if f.assigned == nil {
+		f.assigned = map[string]struct{}{}
+	}
+	f.assigned[strings.ToLower(name)] = struct{}{}
 	f.obj.Set(name, v)
 }
 

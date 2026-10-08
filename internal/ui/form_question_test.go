@@ -122,3 +122,33 @@ func TestExpandQuestionVariants(t *testing.T) {
 		t.Fatal("unknown token must fail")
 	}
 }
+
+// Вариант «массив строк» из модуля — это Новый Массив интерпретатора, а не срез
+// Go. Юнит-тест разбора ниже передаёт []any и поэтому был зелёным, хотя
+// настоящий вызов из обработчика отвечал «неизвестный набор вариантов
+// "Массив[2]"». Проверка идёт через публичный form-event, как из браузера.
+func TestShowQuestion_DSLArrayOfLabels(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура КомандаНажатие()
+	Варианты = Новый Массив;
+	Варианты.Добавить("Оформить");
+	Варианты.Добавить("Отложить");
+	ПоказатьВопрос("Что делаем с заявкой?", Варианты);
+КонецПроцедуры
+`, nil, []*metadata.FormElement{{
+		Kind:     metadata.FormElementButton,
+		Name:     "Команда",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "КомандаНажатие"},
+	}})
+	body := url.Values{}
+	body.Set("_element", "Команда")
+	body.Set("_event", string(metadata.FormEventOnClick))
+
+	resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, body).Body.Bytes())
+	if !resp.OK {
+		t.Fatalf("ok=false, error=%q", resp.Error)
+	}
+	if resp.Question == nil || strings.Join(resp.Question.Variants, "|") != "Оформить|Отложить" {
+		t.Fatalf("варианты из Массива не дошли до вопроса: %+v", resp.Question)
+	}
+}

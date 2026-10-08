@@ -1,0 +1,8 @@
+name: ГрафикКаникул
+title: ГрафикКаникул
+dimensions:
+  - name: Code
+    type: string
+resources:
+  - name: Value
+    type: string

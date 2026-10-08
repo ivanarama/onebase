@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -16,6 +17,14 @@ type browserFormEventTarget struct {
 type browserFormElementVisit struct {
 	element         *metadata.FormElement
 	parentTablePart *metadata.FormElement
+	// path — внутренний устойчивый ключ размещения элемента: индексы от корня
+	// дерева формы («0», «0.2.1»). Имя элемента ключом служить не может:
+	// имя бывает пустым (Надпись, декорации) и повторяющимся (одна ТЧ размещена
+	// дважды), и после #1226 в карту состояний попадает каждый потомок
+	// условного контейнера, а не только элементы с собственным условием (#1543).
+	// Индексы считаются по исходному дереву — ДО фильтрации скрытых страниц,
+	// иначе ключи разъехались бы с клиентом.
+	path string
 	// effectiveReadOnly — нередактируемость по МЕТАДАННЫМ (своя и унаследованная).
 	// conditional — на отрисовку элемента влияет собственное
 	// readonly_when/hidden_when либо readonly_when/hidden_when контейнера-предка.
@@ -134,18 +143,22 @@ func walkBrowserFormElements(form *metadata.FormModule, visit func(browserFormEl
 	if form == nil || visit == nil {
 		return
 	}
-	var walk func([]*metadata.FormElement, *metadata.FormElement, bool, bool, []*metadata.FormElement)
-	walk = func(elements []*metadata.FormElement, parentTable *metadata.FormElement, parentReadOnly, parentConditional bool, roWhenAncestors []*metadata.FormElement) {
+	var walk func([]*metadata.FormElement, string, *metadata.FormElement, bool, bool, []*metadata.FormElement)
+	walk = func(elements []*metadata.FormElement, parentPath string, parentTable *metadata.FormElement, parentReadOnly, parentConditional bool, roWhenAncestors []*metadata.FormElement) {
+		next := 0
 		for _, element := range elements {
 			if element == nil {
 				continue
 			}
+			path := parentPath + strconv.Itoa(next)
+			next++
 			effectiveReadOnly := parentReadOnly || element.ReadOnly
 			conditional := parentConditional ||
 				strings.TrimSpace(element.HiddenWhen) != "" ||
 				strings.TrimSpace(element.ReadOnlyWhen) != ""
 			visit(browserFormElementVisit{
 				element: element, parentTablePart: parentTable,
+				path:              path,
 				effectiveReadOnly: effectiveReadOnly, conditional: conditional,
 				readOnlyWhenAncestors: roWhenAncestors,
 			})
@@ -162,10 +175,10 @@ func walkBrowserFormElements(form *metadata.FormModule, visit func(browserFormEl
 				nextAncestors = append(nextAncestors, roWhenAncestors...)
 				nextAncestors = append(nextAncestors, element)
 			}
-			walk(element.Children, nextTable, effectiveReadOnly, conditional, nextAncestors)
+			walk(element.Children, path+".", nextTable, effectiveReadOnly, conditional, nextAncestors)
 		}
 	}
-	walk(form.Elements, nil, false, false, nil)
+	walk(form.Elements, "", nil, false, false, nil)
 }
 
 func effectiveFormElementReadOnly(form *metadata.FormModule, target *metadata.FormElement) bool {

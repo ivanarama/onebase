@@ -5,11 +5,11 @@ package storage
 // не только по виду отчёта: accountOpeningRows строит из этих остатков опорные
 // проводки свёртки, то есть округление осело бы в базе навсегда.
 //
-// Тесты фиксируют ТИП (decimal.Decimal во всех денежных ключах) и сквозную
-// согласованность остатка до/после свёртки. Точность самого агрегата проверить
-// на SQLite нельзя: SUM() над TEXT-колонкой возвращает float64 при любом CAST,
-// поэтому 0.1×3 там равно 0.30000000000000004 на уровне SQL. На PostgreSQL
-// NUMERIC суммируется точно, и именно там фикс убирает потерю копеек.
+// Тесты фиксируют ТИП (decimal.Decimal во всех денежных ключах), точное значение
+// и сквозную согласованность остатка до/после свёртки. Точность агрегата на
+// SQLite обеспечивает перекрытый sum() (sqlite_sum.go): 0.1×3 даёт ровно 0.3, а
+// не 0.30000000000000004, как встроенный sum() над TEXT-колонкой. На PostgreSQL
+// NUMERIC суммируется точно сам по себе.
 
 import (
 	"testing"
@@ -71,8 +71,8 @@ func TestAccountBalances_KeepsDecimalPrecision(t *testing.T) {
 	if !found {
 		t.Fatal("счёт 41 не найден в остатках")
 	}
-	if diff := got41.Sub(decimal.RequireFromString("2")).Abs(); diff.GreaterThan(decimal.RequireFromString("0.000001")) {
-		t.Errorf("сальдо счёта 41 = %s, ожидалось ≈2", got41)
+	if !got41.Equal(decimal.RequireFromString("2")) {
+		t.Errorf("сальдо счёта 41 = %s, ожидалось ровно 2", got41)
 	}
 
 	// Обороты — тем же типом и той же точностью.
@@ -88,8 +88,8 @@ func TestAccountBalances_KeepsDecimalPrecision(t *testing.T) {
 		if !ok {
 			t.Fatalf("оборот Дт: тип %T, ожидался decimal.Decimal", r["сумма_дт"])
 		}
-		if diff := d.Sub(decimal.RequireFromString("2")).Abs(); diff.GreaterThan(decimal.RequireFromString("0.000001")) {
-			t.Errorf("оборот Дт счёта 41 = %s, ожидалось ≈2", d)
+		if !d.Equal(decimal.RequireFromString("2")) {
+			t.Errorf("оборот Дт счёта 41 = %s, ожидалось ровно 2", d)
 		}
 	}
 }
@@ -135,10 +135,9 @@ func TestRollup_OpeningRowsKeepDecimalPrecision(t *testing.T) {
 		if !ok {
 			t.Fatalf("опорная проводка: тип суммы %T, ожидался decimal.Decimal", r["Сумма"])
 		}
-		// Значение сверяем с допуском: на SQLite агрегат пришёл из float-SUM.
-		// Главное здесь — что сумма доехала как decimal, а не через float64 в Go.
-		if diff := d.Sub(decimal.RequireFromString("0.3")).Abs(); diff.GreaterThan(decimal.RequireFromString("0.000001")) {
-			t.Errorf("опорная сумма = %s, ожидалось ≈0.3", d)
+		// Ровно 0.3: и агрегат SQL, и перенос в Go точные.
+		if !d.Equal(decimal.RequireFromString("0.3")) {
+			t.Errorf("опорная сумма = %s, ожидалось ровно 0.3", d)
 		}
 	}
 	if !seen {
@@ -188,18 +187,15 @@ func TestRollup_AccountRegisterDecimalRoundTrip(t *testing.T) {
 	}
 
 	want := decimal.RequireFromString("0.4")
-	approx := func(got decimal.Decimal) bool {
-		return got.Sub(want).Abs().LessThanOrEqual(decimal.RequireFromString("0.000001"))
-	}
-	if got := bal41(); !approx(got) {
-		t.Fatalf("до свёртки сальдо 41 = %s, ожидалось ≈%s", got, want)
+	if got := bal41(); !got.Equal(want) {
+		t.Fatalf("до свёртки сальдо 41 = %s, ожидалось ровно %s", got, want)
 	}
 	if _, err := db.Rollup(ctx, nil, nil, []*metadata.AccountRegister{ar}, nil,
 		RollupOptions{Date: time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
 			AccountRegisters: []string{ar.Name}}); err != nil {
 		t.Fatalf("Rollup: %v", err)
 	}
-	if got := bal41(); !approx(got) {
-		t.Errorf("после свёртки сальдо 41 = %s, ожидалось ≈%s", got, want)
+	if got := bal41(); !got.Equal(want) {
+		t.Errorf("после свёртки сальдо 41 = %s, ожидалось ровно %s", got, want)
 	}
 }

@@ -3,6 +3,7 @@ package launcher
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -189,6 +190,13 @@ func (h *handler) oneTimeCodeProxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	authorized, authErr := h.cfgAdminAuthorized(r, b)
+	// Клиентское подключение: конфигуратор к нему не применяется. Отличать от
+	// сбоя аутентификации обязательно — иначе отказ выглядел бы как «сервис
+	// недоступен», и причина осталась бы неизвестной.
+	if errors.Is(authErr, ErrBaseNotOwnedConfig) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": clientBaseConfigRefusal(b)})
+		return
+	}
 	if authErr != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Сервис аутентификации недоступен"})
 		return
@@ -255,6 +263,13 @@ func (h *handler) debugProxy(w http.ResponseWriter, r *http.Request) {
 
 	// Требуем сессию админа конфигуратора. 401 JSON (не 302), т.к. это API для JS.
 	authorized, authErr := h.cfgAdminAuthorized(r, b)
+	// Клиентское подключение: конфигуратор к нему не применяется. Отличать от
+	// сбоя аутентификации обязательно — иначе отказ выглядел бы как «сервис
+	// недоступен», и причина осталась бы неизвестной.
+	if errors.Is(authErr, ErrBaseNotOwnedConfig) {
+		writeJSON(w, http.StatusConflict, map[string]string{"error": clientBaseConfigRefusal(b)})
+		return
+	}
 	if authErr != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "Сервис аутентификации недоступен"})
 		return

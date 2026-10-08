@@ -130,7 +130,7 @@ jobs:
           trap 'rm -rf "$tmp"' EXIT
           go build -o "$tmp/onebase" ./cmd/onebase
           failed=0
-          for ex in minimal callcenter trade cms; do
+          for ex in minimal callcenter trade cms accounting; do
             echo "::group::onebase test $ex"
             out="$("$tmp/onebase" test --project "examples/$ex" --sqlite "$tmp/$ex.db" --format tap 2>&1)"; code=$?
             echo "$out"
@@ -682,7 +682,7 @@ jobs:
           # (round-trip на выделенной базе, чтобы разрушительный restore не
           # затронул общую onebase_test). Требует pg_dump/psql — см. шаг выше.
           go test -race -count=1 -timeout 10m -tags integration ./internal/backup \
-            -run '^(TestPostgresBackupRestoreRoundTrip|TestUniversalBackupRoundTripInNonPublicSchema)$'
+            -run '^(TestPostgresBackupRestoreRoundTrip|TestUniversalBackupRoundTripInNonPublicSchema|TestUniversalNavigationSettingsMatrix)$'
           # Run the whole UI package while TEST_DATABASE_URL is present. Every
           # dbtest.ForEachDialect call therefore executes its PostgreSQL branch,
           # including a newly added matrix test without maintaining a fragile

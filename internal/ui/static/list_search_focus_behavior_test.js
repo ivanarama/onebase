@@ -65,6 +65,9 @@ function input(attrs = {}, props = {}) {
 
 // Одна страница приложения: свой DOM, своя история вызовов, общее на вкладку
 // хранилище передаётся снаружи — ровно так живёт sessionStorage в браузере.
+// frameName — имя родительского iframe («ob-tab-<id>» из tabs.go): страница
+// живёт во вкладке оболочки; без него — страница, открытая вне оболочки.
+// hidden — вкладка неактивна и спрятана display:none.
 function page(opts) {
   const listeners = new Map();
   const timers = new Map();
@@ -72,6 +75,7 @@ function page(opts) {
   let nextTimer = 1;
   const doc = {
     readyState: 'complete',
+    hidden: opts.hidden === true,
     addEventListener(type, fn) { listeners.set(type, fn); },
     getElementById(id) { return opts.search && opts.search.id === id ? opts.search : null; },
   };
@@ -83,6 +87,7 @@ function page(opts) {
   };
   sandbox.window = {
     document: doc,
+    frameElement: opts.frameName ? { name: opts.frameName } : null,
     HTMLFormElement: { prototype: { submit() { calls.push('submit'); } } },
   };
   Object.defineProperty(sandbox.window, 'sessionStorage', {
@@ -219,4 +224,79 @@ test('запрещённое хранилище не ломает ни отпр�
   app.type(search);
   assert.deepEqual(app.calls, ['submit'], 'поиск перестал работать без sessionStorage');
   assert.equal(app.restore(), null, 'восстановление не пережило отказ хранилища');
+});
+
+// Вкладки оболочки — same-origin iframe с общим sessionStorage: обе печатают
+// «Ива» перед перезагрузкой, и восстановление обязано сработать в ЛЮБОМ
+// порядке, включая два экземпляра одного URL (#1599).
+test('вкладки оболочки не глотают отметку друг друга даже на одном адресе', () => {
+  const store = storage();
+  const typeIn = (frameName) => {
+    const field = input({ 'data-ob-auto-submit': '320' },
+      { id: 'ob-list-search', value: 'Ива', selectionStart: 3, selectionEnd: 3 });
+    page({ pathname: '/ui/catalog/контрагенты', storage: store, search: field, frameName }).type(field);
+  };
+  const reloaded = (frameName) => {
+    const field = input({ 'data-ob-auto-submit': '320' }, { id: 'ob-list-search', value: 'Ива' });
+    return { field, app: page({ pathname: '/ui/catalog/контрагенты', storage: store, search: field, frameName }) };
+  };
+
+  typeIn('ob-tab-a');
+  typeIn('ob-tab-b');
+
+  const b = reloaded('ob-tab-b');
+  assert.equal(b.app.restore(), b.field, 'вкладка B не нашла свою отметку');
+  assert.equal(b.field.focused, true);
+  assert.deepEqual(b.field.range, [3, 3]);
+
+  const a = reloaded('ob-tab-a');
+  assert.equal(a.app.restore(), a.field, 'вкладка A потеряла отметку после восстановления B');
+  assert.equal(a.field.focused, true);
+  assert.deepEqual(a.field.range, [3, 3]);
+});
+
+// Между сабмитом вкладки A и её перезагрузкой успевают загрузиться чужие
+// страницы — они не должны расходовать отметку A.
+test('чужие загрузки между сохранением и восстановлением отметку не едят', () => {
+  const store = storage();
+  const before = input({ 'data-ob-auto-submit': '320' },
+    { id: 'ob-list-search', value: 'Ива', selectionStart: 3, selectionEnd: 3 });
+  page({ pathname: '/ui/catalog/контрагенты', storage: store, search: before, frameName: 'ob-tab-a' }).type(before);
+
+  const strangerField = input({ 'data-ob-auto-submit': '320' }, { id: 'ob-list-search', value: '' });
+  const stranger = page({ pathname: '/ui/document/расходнаянакладная', storage: store, search: strangerField, frameName: 'ob-tab-z' });
+  assert.equal(stranger.restore(), null, 'чужая страница потратила отметку A');
+
+  const sameUrlOtherField = input({ 'data-ob-auto-submit': '320' }, { id: 'ob-list-search', value: '' });
+  const sameUrlOtherTab = page({ pathname: '/ui/catalog/контрагенты', storage: store, search: sameUrlOtherField, frameName: 'ob-tab-z' });
+  assert.equal(sameUrlOtherTab.restore(), null, 'тот же адрес в другой вкладке потратил отметку A');
+  assert.equal(sameUrlOtherField.focused, false);
+
+  const after = input({ 'data-ob-auto-submit': '320' }, { id: 'ob-list-search', value: 'Ива' });
+  const reloaded = page({ pathname: '/ui/catalog/контрагенты', storage: store, search: after, frameName: 'ob-tab-a' });
+  assert.equal(reloaded.restore(), after, 'вкладка A потеряла свою отметку из-за чужих загрузок');
+  assert.deepEqual(after.range, [3, 3]);
+});
+
+// Скрытая (неактивная) вкладка перезагрузилась сама: фокус активной вкладки
+// оболочки она забирать не должна, а собственная отметка расходуется один раз.
+test('скрытая вкладка не забирает активный фокус оболочки', () => {
+  const store = storage();
+  const typeIn = (frameName, hidden) => {
+    const field = input({ 'data-ob-auto-submit': '320' },
+      { id: 'ob-list-search', value: 'Ива', selectionStart: 3, selectionEnd: 3 });
+    page({ pathname: '/ui/catalog/контрагенты', storage: store, search: field, frameName, hidden }).type(field);
+  };
+
+  typeIn('ob-tab-a');
+  const hiddenField = input({ 'data-ob-auto-submit': '320' }, { id: 'ob-list-search', value: 'Ива' });
+  const hiddenTab = page({ pathname: '/ui/catalog/контрагенты', storage: store, search: hiddenField, frameName: 'ob-tab-a', hidden: true });
+  assert.equal(hiddenTab.restore(), null, 'скрытая вкладка забрала фокус');
+  assert.equal(hiddenField.focused, false, 'скрытая вкладка сфокусировала поиск');
+
+  // Отметка уже потрачена: повторная (теперь активная) загрузка не восстанавливает.
+  const again = input({ 'data-ob-auto-submit': '320' }, { id: 'ob-list-search', value: 'Ива' });
+  const activeTab = page({ pathname: '/ui/catalog/контрагенты', storage: store, search: again, frameName: 'ob-tab-a' });
+  assert.equal(activeTab.restore(), null, 'отметка пережила скрытую загрузку');
+  assert.equal(again.focused, false);
 });

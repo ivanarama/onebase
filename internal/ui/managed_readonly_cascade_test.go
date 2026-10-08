@@ -28,6 +28,22 @@ import (
 // формы (handleManagedFormEvent), а клиентская половина — настоящим
 // applyElementStates из managed.js.
 
+// путьСостояния — ключ элемента в карте состояний ответа события: путь
+// размещения в дереве формы, а не имя (#1543).
+func путьСостояния(t *testing.T, form *metadata.FormModule, имя string) string {
+	t.Helper()
+	var найдено string
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		if visit.element != nil && visit.element.Name == имя && найдено == "" {
+			найдено = visit.path
+		}
+	})
+	if найдено == "" {
+		t.Fatalf("в форме нет элемента %q", имя)
+	}
+	return найдено
+}
+
 func заявкаСУсловнойГруппой(t *testing.T, статическийЗапретПоля bool) *metadata.Entity {
 	t.Helper()
 	ent := &metadata.Entity{
@@ -154,7 +170,7 @@ func TestКаскадУсловногоЗапрета_КартаСостояни
 	ent := заявкаСУсловнойГруппой(t, false)
 
 	_, принята := каскадДоИПосле(t, ent, "Принята")
-	if принята.ElementStates == nil || !принята.ElementStates.ReadOnly["ПолеУлица"] {
+	if принята.ElementStates == nil || !принята.ElementStates.ReadOnly[путьСостояния(t, ent.Forms[0], "ПолеУлица")] {
 		t.Fatalf("карта обязана нести запрет потомка: %#v", принята.ElementStates)
 	}
 
@@ -162,7 +178,7 @@ func TestКаскадУсловногоЗапрета_КартаСостояни
 	if черновик.ElementStates == nil {
 		t.Fatal("карта состояний не рассчитана")
 	}
-	if v, есть := черновик.ElementStates.ReadOnly["ПолеУлица"]; !есть || v {
+	if v, есть := черновик.ElementStates.ReadOnly[путьСостояния(t, ent.Forms[0], "ПолеУлица")]; !есть || v {
 		t.Fatalf("ReadOnly[ПолеУлица] = (%v, есть=%v), ожидалось (false, есть=true): "+
 			"без явного «ложно» клиенту нечем снять запрет", v, есть)
 	}
@@ -180,7 +196,7 @@ func TestКаскадУсловногоЗапрета_КнопкаВГруппе
 	if кнопка := черновик.button(t, "КнопкаВГруппе"); кнопка.Disabled {
 		t.Fatalf("кнопка в доступной группе отрисована неактивной: %#v", кнопка)
 	}
-	if принятаResp.ElementStates == nil || !принятаResp.ElementStates.ReadOnly["КнопкаВГруппе"] {
+	if принятаResp.ElementStates == nil || !принятаResp.ElementStates.ReadOnly[путьСостояния(t, ent.Forms[0], "КнопкаВГруппе")] {
 		t.Fatalf("карта обязана нести запрет кнопки-потомка: %#v", принятаResp.ElementStates)
 	}
 
@@ -263,7 +279,7 @@ func TestКаскадУсловногоЗапрета_СтатическийЗа
 	if улица := до.control(t, "Улица"); !улица.ReadOnly {
 		t.Fatalf("поле со статическим readonly обязано быть отрисовано нередактируемым: %#v", улица)
 	}
-	if resp.ElementStates == nil || !resp.ElementStates.ReadOnly["ПолеУлица"] {
+	if resp.ElementStates == nil || !resp.ElementStates.ReadOnly[путьСостояния(t, ent.Forms[0], "ПолеУлица")] {
 		t.Fatalf("карта обязана нести итоговый запрет, а не ложное условие предка: %#v", resp.ElementStates)
 	}
 
@@ -345,7 +361,7 @@ func TestКаскадУсловногоЗапрета_ТабличнаяЧаст
 	}
 
 	s := &Server{interp: interpreter.New(), reg: runtime.NewRegistry()}
-	states := s.formElementStates(form, ent, map[string]any{"СтадияОформления": "НаОформлении"})
+	states := s.formElementStates(form, ent, map[string]any{"СтадияОформления": "НаОформлении"}, true)
 	сверитьДоступность(t, до, применитьСостоянияВБраузере(t, до, states))
 }
 
@@ -402,6 +418,9 @@ type managedFormDOMModel struct {
 	// Anchors — якорь → тег элемента: кнопка (kind: Кнопка) сама себе контрол, и
 	// applyElementStates гасит её напрямую, а не через потомков.
 	Anchors map[string]string `json:"anchors"`
+	// AnchorPaths — якорь → путь размещения (data-ob-el-path): состояния в
+	// ответе события ключуются путём, а не именем (#1543).
+	AnchorPaths map[string]string `json:"anchorPaths"`
 }
 
 func (m managedFormDOMModel) control(t *testing.T, name string) managedControlNode {
@@ -435,7 +454,7 @@ func managedFormDOM(t *testing.T, rendered string) managedFormDOMModel {
 	if err != nil {
 		t.Fatalf("parse managed form HTML: %v", err)
 	}
-	model := managedFormDOMModel{Anchors: map[string]string{}}
+	model := managedFormDOMModel{Anchors: map[string]string{}, AnchorPaths: map[string]string{}}
 	var walk func(n *html.Node, anchors []string, inTP bool)
 	walk = func(n *html.Node, anchors []string, inTP bool) {
 		if n.Type == html.ElementNode {
@@ -445,6 +464,9 @@ func managedFormDOM(t *testing.T, rendered string) managedFormDOMModel {
 			if name, ok := managedHTMLAttr(n, "data-ob-el"); ok {
 				anchors = append(append([]string{}, anchors...), name)
 				model.Anchors[name] = strings.ToUpper(n.Data)
+				if path, ok := managedHTMLAttr(n, "data-ob-el-path"); ok {
+					model.AnchorPaths[name] = path
+				}
 			}
 			switch n.Data {
 			case "input", "textarea", "select", "button":
@@ -591,7 +613,14 @@ function anchor(name) {
 global.window = {CSS: null};
 global.document = {
   querySelector(selector) {
-    const m = /^\[data-ob-el="(.*)"\]$/.exec(selector);
+    let m = /^\[data-ob-el-path="(.*)"\]$/.exec(selector);
+    if (m) {
+      for (const [name, path] of Object.entries(payload.dom.anchorPaths || {})) {
+        if (path === m[1]) return anchor(name);
+      }
+      return null;
+    }
+    m = /^\[data-ob-el="(.*)"\]$/.exec(selector);
     if (!m) throw new Error('unexpected selector ' + selector);
     return payload.dom.anchors[m[1]] === undefined ? null : anchor(m[1]);
   },
@@ -602,6 +631,7 @@ const applyElementStates = new Function(
 applyElementStates(payload.states);
 process.stdout.write(JSON.stringify({
   anchors: payload.dom.anchors,
+  anchorPaths: payload.dom.anchorPaths || {},
   controls: controls.map((c) => ({
     tagName: c.tagName,
     name: c.name,
@@ -630,4 +660,208 @@ process.stdout.write(JSON.stringify({
 		t.Fatalf("decode managed.js result: %v; output=%s", err, output)
 	}
 	return result
+}
+
+// --- Путь размещения вместо имени (#1543) -----------------------------------
+// Карта состояний ключуется именем элемента: имя бывает пустым (Надписи,
+// декорации) и повторяющимся (ТЧ размещена дважды), а после #1226 в карту
+// попадает каждый потомок условного контейнера. Безымянный потомок клал
+// состояние под общий ключ «», и поле вне группы получало чужой запрет.
+
+// якоряФормы — все пары (data-ob-el, data-ob-el-path) в порядке разметки.
+func якоряФормы(t *testing.T, rendered string) []struct{ имя, путь string } {
+	t.Helper()
+	doc, err := html.Parse(strings.NewReader(rendered))
+	if err != nil {
+		t.Fatalf("parse managed form HTML: %v", err)
+	}
+	var out []struct{ имя, путь string }
+	var walk func(n *html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode {
+			name, естьИмя := managedHTMLAttr(n, "data-ob-el")
+			путь, естьПуть := managedHTMLAttr(n, "data-ob-el-path")
+			if естьИмя && естьПуть {
+				out = append(out, struct{ имя, путь string }{name, путь})
+			}
+		}
+		for child := n.FirstChild; child != nil; child = child.NextSibling {
+			walk(child)
+		}
+	}
+	walk(doc)
+	return out
+}
+
+func TestКаскадУсловногоЗапрета_БезымянныеЭлементыНеПопадаютВОбщийКлюч(t *testing.T) {
+	ent := &metadata.Entity{
+		Name: "ЗаявкаБезымянные", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "СтадияОформления", Type: metadata.FieldTypeString}},
+	}
+	группа := &metadata.FormElement{
+		Kind: metadata.FormElementGroupBox, Name: "ГруппаРеквизитов",
+		ReadOnlyWhen: `СтадияОформления = "Принята"`,
+		Children: []*metadata.FormElement{
+			{Kind: metadata.FormElementLabel, TitleMap: map[string]string{"ru": "Одна"}},
+			{Kind: metadata.FormElementLabel, TitleMap: map[string]string{"ru": "Две"}},
+		},
+	}
+	form := managedObjectForm(группа, fieldEl("ПолеСтадии", "Объект.СтадияОформления"))
+	form.EntityName = ent.Name
+	ent.Forms = []*metadata.FormModule{form}
+
+	// Пройдено через ту же функцию, что и ответ события формы.
+	s := &Server{interp: interpreter.New(), reg: runtime.NewRegistry()}
+	states := s.formElementStates(form, ent, map[string]any{"СтадияОформления": "Принята"}, true)
+	if states == nil {
+		t.Fatal("карта состояний не рассчитана")
+	}
+	if _, есть := states.ReadOnly[""]; есть {
+		t.Fatalf("безымянные потомки попали в общий пустой ключ: %#v", states.ReadOnly)
+	}
+	// Группа и обе надписи — три разные строки карты с непустыми ключами.
+	if len(states.ReadOnly) != 3 {
+		t.Fatalf("ожидались строки группы и обеих надписей, получено: %#v", states.ReadOnly)
+	}
+
+	rendered := отрисоватьСУсловиями(t, ent, form, map[string]string{"СтадияОформления": "Принята"})
+	var безымянные []string
+	for _, якорь := range якоряФормы(t, rendered) {
+		if якорь.имя == "" {
+			безымянные = append(безымянные, якорь.путь)
+		}
+	}
+	if len(безымянные) != 2 || безымянные[0] == безымянные[1] || безымянные[0] == "" {
+		t.Fatalf("безымянные надписи обязаны получить разные непустые пути: %v", безымянные)
+	}
+}
+
+func TestКаскадУсловногоЗапрета_ОдноимённыеЭлементыСРазнымиУсловиями(t *testing.T) {
+	// Одна ТЧ, размещённая дважды (readonly-сводка и редактируемая сетка), —
+	// случай, который applyTableParts обрабатывает специально, значит, он бывает.
+	// Одно имя у двух размещений не должно склеивать их состояния.
+	ent := &metadata.Entity{
+		Name: "ЗаявкаДвойники", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Улица", Type: metadata.FieldTypeString},
+			{Name: "Комментарий", Type: metadata.FieldTypeString},
+			{Name: "СтадияОформления", Type: metadata.FieldTypeString},
+		},
+	}
+	вГруппе := &metadata.FormElement{
+		Kind: metadata.FormElementField, Name: "Двойник",
+		DataPath: "Объект.Улица", ReadOnlyWhen: `СтадияОформления = "Принята"`,
+	}
+	группа := &metadata.FormElement{
+		Kind: metadata.FormElementGroupBox, Name: "ГруппаРеквизитов",
+		ReadOnlyWhen: `СтадияОформления = "Принята"`,
+		Children:     []*metadata.FormElement{вГруппе},
+	}
+	form := managedObjectForm(группа,
+		&metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "Двойник",
+			DataPath: "Объект.Комментарий",
+		},
+		fieldEl("ПолеСтадии", "Объект.СтадияОформления"),
+		&metadata.FormElement{
+			Kind: metadata.FormElementButton, Name: "КнопкаОтметить",
+			Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Отметить"},
+		})
+	form.EntityName = ent.Name
+	form.ProgramAST = mustParse(t, `
+Процедура Отметить()
+	Объект.Комментарий = "к";
+КонецПроцедуры
+`)
+	ent.Forms = []*metadata.FormModule{form}
+
+	rendered, response := каскадДоИПосле(t, ent, "Принята")
+	states := response.ElementStates
+	if states == nil {
+		t.Fatal("карта состояний не рассчитана")
+	}
+	якоря := якоряФормы(t, rendered)
+	var пути []string
+	for _, якорь := range якоря {
+		if якорь.имя == "Двойник" {
+			пути = append(пути, якорь.путь)
+		}
+	}
+	if len(пути) != 2 || пути[0] == "" || пути[1] == "" || пути[0] == пути[1] {
+		t.Fatalf("одноимённые размещения обязаны получить разные пути: %v", пути)
+	}
+	// Ответ публичного события использует те же ключи, что и HTML:
+	// запрет есть только у размещения внутри условной группы.
+	if !states.ReadOnly[пути[0]] {
+		t.Fatalf("двойник в группе не получил запрет по пути %q: %#v", пути[0], states.ReadOnly)
+	}
+	if _, есть := states.ReadOnly[пути[1]]; есть {
+		t.Fatalf("двойник вне группы получил чужое состояние по пути %q: %#v", пути[1], states.ReadOnly)
+	}
+	// Разметка расходит их и по состоянию: в замороженной группе поле
+	// нередактируемо, тёзка вне группы — редактируем.
+	i := strings.Index(rendered, `name="Улица"`)
+	if i < 0 || !strings.Contains(rendered[i:i+200], "readonly") {
+		t.Fatalf("двойник внутри замороженной группы обязан быть нередактируемым:\n%s", rendered)
+	}
+	j := strings.Index(rendered, `name="Комментарий"`)
+	if j < 0 {
+		t.Fatalf("поле «Комментарий» не отрисовано:\n%s", rendered)
+	}
+	if strings.Contains(rendered[j:j+200], "readonly") {
+		t.Fatalf("тёзка вне группы получил чужой запрет:\n%s", rendered)
+	}
+}
+
+func TestКаскадУсловногоЗапрета_СкрытаяСтраницаНеСдвигаетПути(t *testing.T) {
+	// Пути считаются по исходному дереву ДО фильтрации скрытых страниц: иначе
+	// после скрытия первой вкладки ключи разъехались бы с клиентом.
+	ent := заявкаСоСтадией()
+	form := формаСУсловиями(ent, &metadata.FormElement{
+		Kind: metadata.FormElementPages, Name: "Ветки",
+		Children: []*metadata.FormElement{
+			{
+				Kind: metadata.FormElementPage, Name: "СкрытаяСтраница",
+				TitleMap:   map[string]string{"ru": "Скрытая"},
+				HiddenWhen: `СтадияОформления = "Принята"`,
+				Children:   []*metadata.FormElement{fieldEl("ПолеСкрытое", "Объект.Комментарий")},
+			},
+			{
+				Kind: metadata.FormElementPage, Name: "Итоги",
+				TitleMap: map[string]string{"ru": "Итоги"},
+				Children: []*metadata.FormElement{
+					&metadata.FormElement{
+						Kind: metadata.FormElementField, Name: "ПолеУлица",
+						DataPath: "Объект.Улица", ReadOnlyWhen: `СтадияОформления = "Принята"`,
+					},
+				},
+			},
+		},
+	})
+	ключ := путьСостояния(t, form, "ПолеУлица")
+	// Страница-сосед скрыта, но её индекс в пути никуда не девается: скрытие
+	// не перенумеровывает дерево.
+	if !strings.HasSuffix(ключ, ".1.0") {
+		t.Fatalf("путь поля %q не учитывает скрытую страницу-соседа: %q", "ПолеУлица", ключ)
+	}
+
+	s := &Server{interp: interpreter.New(), reg: runtime.NewRegistry()}
+	states := s.formElementStates(form, ent, map[string]any{"СтадияОформления": "Принята"}, true)
+	if states == nil || !states.ReadOnly[ключ] {
+		t.Fatalf("карта обязана нести запрет поля на видимой странице: %#v", states)
+	}
+
+	rendered := отрисоватьСУсловиями(t, ent, form, map[string]string{"СтадияОформления": "Принята"})
+	if strings.Contains(rendered, "Скрытая") {
+		t.Fatalf("скрытая страница не должна отрисовываться:\n%s", rendered)
+	}
+	var нашёлся bool
+	for _, якорь := range якоряФормы(t, rendered) {
+		if якорь.имя == "ПолеУлица" {
+			нашёлся = якорь.путь == ключ
+		}
+	}
+	if !нашёлся {
+		t.Fatalf("якорь поля обязан нести путь %q из карты состояний:\n%s", ключ, rendered)
+	}
 }

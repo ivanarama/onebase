@@ -20,7 +20,8 @@ import (
 //     PostgreSQL advisory transaction locks на storage-слое.
 //   - Гранулярность ровно та, что задал DSL.
 //   - Освобождение происходит явно через Разблокировать или автоматически
-//     через LockCollector в конце Save.
+//     через LockCollector: в конце Save, а вне записи объекта — в конце
+//     исполнения DSL (сборщик исполнения, ContextWithExecutionLockCollector).
 type LockManager struct {
 	mu    sync.Mutex
 	locks map[string]*lockEntry
@@ -43,14 +44,124 @@ type lockCollectorKey struct{}
 // service layer uses the collected keys to take DB-scoped locks inside the
 // later storage transaction, while still releasing any process-local locks that
 // the DSL code forgot to unlock explicitly.
+//
+// Внутри одной области (сборщика) ключ берётся в менеджере один раз: повторный
+// Заблокировать того же ключа — другим объектом той же транзакции или
+// вложенной записью — только увеличивает счётчик. Раньше он ждал мьютекс,
+// который держит сама же операция, и процесс висел.
 type LockCollector struct {
 	mu      sync.Mutex
 	keys    map[string]struct{}
 	objects []*LockObject
+	// parent — внешняя область той же операции: запись внутри обработки,
+	// проведение внутри хука. Её ключи вложенная область не берёт заново.
+	parent *LockCollector
+	// holds — сколько объектов этой области держат ключ; owned — ключ взят в
+	// менеджере именно этой областью (а не унаследован от внешней).
+	holds map[string]int
+	owned map[string]bool
 }
 
 func NewLockCollector() *LockCollector {
-	return &LockCollector{keys: map[string]struct{}{}}
+	return &LockCollector{keys: map[string]struct{}{}, holds: map[string]int{}, owned: map[string]bool{}}
+}
+
+// NewLockCollectorIn — сборщик области записи внутри операции из ctx: ключи,
+// которые уже держит внешняя область (сборщик хука или сборщик исполнения),
+// не берутся заново — иначе операция ждала бы сама себя.
+func NewLockCollectorIn(ctx context.Context) *LockCollector {
+	c := NewLockCollector()
+	c.parent = LockCollectorFromContext(ctx)
+	if c.parent == nil {
+		c.parent = ExecutionLockCollectorFromContext(ctx)
+	}
+	return c
+}
+
+type executionLockCollectorKey struct{}
+
+// ContextWithExecutionLockCollector кладёт в ctx сборщик исполнения DSL
+// (обработка, событие формы, регламентное задание, тест конфигурации).
+// Блокировки, взятые таким кодом вне записи документа, отпускаются в конце
+// исполнения, а не живут до конца процесса. Ключ отдельный от обычного
+// сборщика: запись документа внутри исполнения по-прежнему заводит свою
+// область и отпускает её блокировки в конце записи.
+func ContextWithExecutionLockCollector(ctx context.Context, c *LockCollector) context.Context {
+	if c == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, executionLockCollectorKey{}, c)
+}
+
+func ExecutionLockCollectorFromContext(ctx context.Context) *LockCollector {
+	if c, ok := ctx.Value(executionLockCollectorKey{}).(*LockCollector); ok {
+		return c
+	}
+	return nil
+}
+
+// acquire берёт в менеджере ключи, которых ещё не держат эта область и
+// внешние области той же операции; остальные только учитывает.
+func (c *LockCollector) acquire(mgr *LockManager, keys []string) {
+	need := make([]string, 0, len(keys))
+	c.mu.Lock()
+	for _, k := range keys {
+		if c.holds[k] > 0 || c.heldAboveLocked(k) {
+			c.holds[k]++
+			continue
+		}
+		need = append(need, k)
+	}
+	c.mu.Unlock()
+	if len(need) > 0 {
+		mgr.Acquire(need)
+	}
+	c.mu.Lock()
+	for _, k := range need {
+		c.holds[k]++
+		c.owned[k] = true
+	}
+	c.mu.Unlock()
+}
+
+// release уменьшает счётчики и отпускает в менеджере ключи, которые эта
+// область взяла сама и больше не держит.
+func (c *LockCollector) release(mgr *LockManager, keys []string) {
+	var free []string
+	c.mu.Lock()
+	for _, k := range keys {
+		if c.holds[k] == 0 {
+			continue
+		}
+		c.holds[k]--
+		if c.holds[k] > 0 {
+			continue
+		}
+		delete(c.holds, k)
+		if c.owned[k] {
+			delete(c.owned, k)
+			free = append(free, k)
+		}
+	}
+	c.mu.Unlock()
+	if len(free) > 0 {
+		mgr.Release(free)
+	}
+}
+
+// heldAboveLocked — держит ли ключ внешняя область. Вызывается под c.mu;
+// порядок блокировок всегда «вложенная → внешняя», поэтому взаимных ожиданий
+// между областями нет.
+func (c *LockCollector) heldAboveLocked(k string) bool {
+	for p := c.parent; p != nil; p = p.parent {
+		p.mu.Lock()
+		held := p.holds[k] > 0
+		p.mu.Unlock()
+		if held {
+			return true
+		}
+	}
+	return false
 }
 
 func ContextWithLockCollector(ctx context.Context, c *LockCollector) context.Context {
@@ -227,12 +338,14 @@ func (lo *LockObject) CallMethod(method string, args []any) any {
 			return nil
 		}
 		lo.ReleaseAll()
-		keys := lo.buildKeys()
-		lo.mgr.Acquire(keys)
-		lo.held = normalizeLockKeys(keys)
+		keys := normalizeLockKeys(lo.buildKeys())
 		if lo.collector != nil {
-			lo.collector.Add(lo.held)
+			lo.collector.acquire(lo.mgr, keys)
+			lo.collector.Add(keys)
+		} else {
+			lo.mgr.Acquire(keys)
 		}
+		lo.held = keys
 		if lo.advisory != nil {
 			func() {
 				defer func() {
@@ -257,7 +370,11 @@ func (lo *LockObject) CallMethod(method string, args []any) any {
 // DSL забыл .Разблокировать().
 func (lo *LockObject) ReleaseAll() {
 	if lo.mgr != nil && len(lo.held) > 0 {
-		lo.mgr.Release(lo.held)
+		if lo.collector != nil {
+			lo.collector.release(lo.mgr, lo.held)
+		} else {
+			lo.mgr.Release(lo.held)
+		}
 		lo.held = nil
 	}
 }

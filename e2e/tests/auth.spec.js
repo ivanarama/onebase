@@ -26,7 +26,7 @@ test('вход и выход работают', async ({ page }) => {
   await login(page);
   await expect(page).toHaveURL(/\/ui/);
   // Признак рабочего интерфейса — навигация по разделам конфигурации.
-  await expect(page.locator('[data-navsec="Справочники"]').first()).toBeVisible();
+  await expect(page.locator('[data-nav-id="cfg:legacy-catalog"]').first()).toBeVisible();
 
   // Выход лежит в выпадающем меню «Система»: сначала открыть, потом нажать.
   // Цепляемся за data-ob-toggle-target и action формы — подписи переводятся.

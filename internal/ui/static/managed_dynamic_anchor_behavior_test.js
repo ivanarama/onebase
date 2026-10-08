@@ -8,9 +8,11 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const test = require('node:test');
 
+const placementPath = process.env.ONEBASE_PLACEMENT_FIXTURE;
+const placement = placementPath ? JSON.parse(fs.readFileSync(placementPath, 'utf8')) : null;
 const domPath = process.env.ONEBASE_DYNAMIC_ANCHORS_DOM;
-assert.ok(domPath, 'ONEBASE_DYNAMIC_ANCHORS_DOM must point to the rendered form tree');
-const tree = JSON.parse(fs.readFileSync(domPath, 'utf8'));
+assert.ok(placement || domPath, 'a production HTTP form fixture is required');
+const tree = placement ? placement.tree : JSON.parse(fs.readFileSync(domPath, 'utf8'));
 
 const source = fs.readFileSync('static/managed.js', 'utf8');
 function extract(name) {
@@ -92,9 +94,13 @@ class Element {
   }
 
   querySelector(selector) {
-    const match = /^\[data-ob-el="([^"]+)"\]$/.exec(selector);
+    // Карты состояний ключуются путём размещения (data-ob-el-path), а якорь
+    // человекомочитаемого имени остаётся data-ob-el (#1543). Стаб понимает
+    // оба атрибута.
+    const match = /^\[data-ob-([a-z-]+)="([^"]+)"\]$/.exec(selector);
     if (!match) throw new Error('unsupported document selector: ' + selector);
-    return this.descendants().find((node) => node.getAttribute('data-ob-el') === match[1]) || null;
+    const attr = 'data-ob-' + match[1];
+    return this.descendants().find((node) => node.getAttribute(attr) === match[2]) || null;
   }
 }
 
@@ -116,10 +122,21 @@ function anchor(app, name) {
   return node;
 }
 
-test('event state hides decorations and locks the real command bar', () => {
+// Ключ в картах ответа события — путь размещения, прочитанный с того же узла.
+function pathOf(app, name) {
+  const path = anchor(app, name).getAttribute('data-ob-el-path');
+  assert.ok(path, 'data-ob-el=' + name + ' has no data-ob-el-path');
+  return path;
+}
+
+test('event state hides decorations and locks the real command bar', {skip: !!placement}, () => {
   const app = boot();
   const decorations = ['НадписьСтатуса', 'КартинкаСФайлом', 'КартинкаБезФайла'];
   const dynamic = decorations.concat('ФлажокСрочно', 'ПанельКоманд');
+  const paths = Object.fromEntries(dynamic.map((name) => [name, pathOf(app, name)]));
+  // Пути уникальны и не пусты: безымянные и одноимённые размещения обязаны
+  // получать разные ключи, а не общий ключ имени (#1543).
+  assert.equal(new Set(Object.values(paths)).size, dynamic.length);
   const checkbox = anchor(app, 'ФлажокСрочно');
   const panel = anchor(app, 'ПанельКоманд');
   const buttons = panel.querySelectorAll('button');
@@ -130,15 +147,15 @@ test('event state hides decorations and locks the real command bar', () => {
   // The first event includes false values for every declared hidden_when.
   // Applying that response must not erase an inline layout declaration.
   app.applyElementStates({
-    hidden: Object.fromEntries(dynamic.map((name) => [name, false]))
+    hidden: Object.fromEntries(dynamic.map((name) => [paths[name], false]))
   });
   for (const name of decorations) assert.equal(anchor(app, name).style.display, '');
   assert.equal(checkbox.style.display, 'flex');
   assert.equal(panel.style.display, 'flex');
 
   app.applyElementStates({
-    hidden: Object.fromEntries(dynamic.map((name) => [name, true])),
-    readonly: {ПанельКоманд: true}
+    hidden: Object.fromEntries(dynamic.map((name) => [paths[name], true])),
+    readonly: {[paths['ПанельКоманд']]: true}
   });
   for (const name of decorations) assert.equal(anchor(app, name).style.display, 'none');
   assert.equal(checkbox.style.display, 'none');
@@ -146,11 +163,33 @@ test('event state hides decorations and locks the real command bar', () => {
   for (const button of buttons) assert.equal(button.disabled, true);
 
   app.applyElementStates({
-    hidden: Object.fromEntries(dynamic.map((name) => [name, false])),
-    readonly: {ПанельКоманд: false}
+    hidden: Object.fromEntries(dynamic.map((name) => [paths[name], false])),
+    readonly: {[paths['ПанельКоманд']]: false}
   });
   for (const name of decorations) assert.equal(anchor(app, name).style.display, '');
   assert.equal(checkbox.style.display, 'flex');
   assert.equal(panel.style.display, 'flex');
   for (const button of buttons) assert.equal(button.disabled, false);
+});
+
+
+test('HTTP event preserves admin locks on each repeated or unnamed placement', {skip: !placement}, () => {
+  const app = boot();
+  const copies = app.root.descendants().filter((node) => node.getAttribute('name') === 'ТипЗвонка');
+  const open = app.root.descendants().find((node) => node.getAttribute('name') === 'Комментарий');
+  assert.equal(copies.length, 2, 'both placements must render');
+  assert.ok(open, 'neighbor must render');
+  const controls = copies.concat(open);
+  const paths = controls.map((node) => node.closest('[data-ob-el-path]').getAttribute('data-ob-el-path'));
+  assert.ok(paths.every(Boolean));
+  assert.equal(new Set(paths).size, 3);
+  for (let i = 0; i < controls.length; i++) {
+    const expected = i < 2 && placement.locked;
+    assert.equal(controls[i].readOnly, expected, 'initial rendering');
+    assert.equal(placement.states.readonly[paths[i]], expected, 'HTTP event path');
+  }
+  app.applyElementStates(placement.states);
+  for (let i = 0; i < controls.length; i++) {
+    assert.equal(controls[i].readOnly, i < 2 && placement.locked, 'client after actual event');
+  }
 });

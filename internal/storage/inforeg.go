@@ -311,7 +311,99 @@ func (db *DB) InfoRegListWithKeyValues(ctx context.Context, ir *metadata.InfoReg
 	return db.infoRegList(ctx, ir, f, true)
 }
 
+// InfoRegPageWithKeyValues returns a bounded UI page with display periods and
+// lossless delete keys. Unlike InfoRegListWithKeyValues it never selects all rows.
+func (db *DB) InfoRegPageWithKeyValues(ctx context.Context, ir *metadata.InfoRegister, f RegFilter, limit, offset int) ([]map[string]any, error) {
+	if limit <= 0 || limit > MaxListPageSize || offset < 0 {
+		return nil, fmt.Errorf("info reg page %s: invalid limit or offset", ir.Name)
+	}
+	raw, err := db.infoRegSelect(ctx, ir, f, true, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return infoRegListRows(ir, raw), nil
+}
+
+// InfoRegPage — страница записей для машинных потребителей (REST, issue #1423).
+// От InfoRegList отличается двумя вещами, и обе существенны.
+//
+// Период возвращается как time.Time, а не строкой «02.01.2006»: тот формат
+// собран для HTML-списка и зависит от локальной зоны процесса, а клиент по
+// сети ждёт машинную дату. period_key здесь тоже не нужен — он адресует строку
+// на удаление в форме, а чтение через REST удалять не умеет.
+//
+// limit/offset уходят в SQL, а не режут уже вычитанный срез: регистр сведений
+// может быть большим, и страница в двадцать строк не повод поднимать в память
+// всю матрицу. При limit <= 0 ограничение не накладывается.
+func (db *DB) InfoRegPage(ctx context.Context, ir *metadata.InfoRegister, f RegFilter, limit, offset int) ([]map[string]any, error) {
+	return db.infoRegSelect(ctx, ir, f, false, limit, offset)
+}
+
+// InfoRegCount считает записи ровно тем же WHERE, что InfoRegPage, — включая
+// строковый предикат доступа. Иначе total в ответе обещал бы страницы, которых
+// пользователю не видно.
+func (db *DB) InfoRegCount(ctx context.Context, ir *metadata.InfoRegister, f RegFilter) (int, error) {
+	table := metadata.InfoRegTableName(ir.Name)
+	where, args, err := db.infoRegWhere(ir, f, table)
+	if err != nil {
+		return 0, err
+	}
+	sql := "SELECT COUNT(*) FROM " + table
+	if where != "" {
+		sql += " WHERE " + where
+	}
+	rows, err := db.Query(ctx, sql, args...)
+	if err != nil {
+		return 0, fmt.Errorf("info reg count %s: %w", ir.Name, err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return 0, fmt.Errorf("info reg count %s: empty result", ir.Name)
+	}
+	var total int64
+	if err := rows.Scan(&total); err != nil {
+		return 0, fmt.Errorf("info reg count %s: %w", ir.Name, err)
+	}
+	if err := rows.Err(); err != nil {
+		return 0, fmt.Errorf("info reg count %s: %w", ir.Name, err)
+	}
+	return int(total), nil
+}
+
+// infoRegWhere собирает условия отбора: измерения и период плюс строковый
+// предикат доступа. Вынесено отдельно, чтобы страница и счётчик не могли
+// разойтись условиями.
+func (db *DB) infoRegWhere(ir *metadata.InfoRegister, f RegFilter, table string) (string, []any, error) {
+	where, args, err := dimWhereClause(db.dialect, ir.Dimensions, f, 1, ir.Periodic, ir.Periodic)
+	if err != nil {
+		return "", nil, fmt.Errorf("info reg list %s: %w", ir.Name, err)
+	}
+	whereParts := make([]string, 0, 2)
+	if where != "" {
+		whereParts = append(whereParts, where)
+	}
+	if cond, condArgs, _, err := PredicateSQLQualified(
+		db.dialect, InfoRegisterPredicateEntity(ir), f.RowFilter, len(args)+1, table,
+	); err != nil {
+		return "", nil, fmt.Errorf("info reg list %s row filter: %w", ir.Name, err)
+	} else if cond != "" {
+		whereParts = append(whereParts, cond)
+		args = append(args, condArgs...)
+	}
+	return strings.Join(whereParts, " AND "), args, nil
+}
+
 func (db *DB) infoRegList(ctx context.Context, ir *metadata.InfoRegister, f RegFilter, withKeyValues bool) ([]map[string]any, error) {
+	raw, err := db.infoRegSelect(ctx, ir, f, withKeyValues, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	return infoRegListRows(ir, raw), nil
+}
+
+// infoRegSelect возвращает СЫРЫЕ строки: период остаётся time.Time. Оформление
+// под HTML-список делает infoRegListRows поверх результата.
+func (db *DB) infoRegSelect(ctx context.Context, ir *metadata.InfoRegister, f RegFilter, withKeyValues bool, limit, offset int) ([]map[string]any, error) {
 	table := metadata.InfoRegTableName(ir.Name)
 	var selCols []string
 	if ir.Periodic {
@@ -324,39 +416,29 @@ func (db *DB) infoRegList(ctx context.Context, ir *metadata.InfoRegister, f RegF
 		selCols = append(selCols, metadata.ColumnName(f))
 	}
 
-	where, args, err := dimWhereClause(db.dialect, ir.Dimensions, f, 1, ir.Periodic, ir.Periodic)
+	where, args, err := db.infoRegWhere(ir, f, table)
 	if err != nil {
-		return nil, fmt.Errorf("info reg list %s: %w", ir.Name, err)
-	}
-	whereParts := make([]string, 0, 2)
-	if where != "" {
-		whereParts = append(whereParts, where)
-	}
-	if cond, condArgs, _, err := PredicateSQLQualified(
-		db.dialect, InfoRegisterPredicateEntity(ir), f.RowFilter, len(args)+1, table,
-	); err != nil {
-		return nil, fmt.Errorf("info reg list %s row filter: %w", ir.Name, err)
-	} else if cond != "" {
-		whereParts = append(whereParts, cond)
-		args = append(args, condArgs...)
+		return nil, err
 	}
 	orderBy := strings.Join(pkCols(ir), ", ")
 	sql := fmt.Sprintf("SELECT %s FROM %s", strings.Join(selCols, ", "), table)
-	if len(whereParts) > 0 {
-		sql += " WHERE " + strings.Join(whereParts, " AND ")
+	if where != "" {
+		sql += " WHERE " + where
 	}
 	sql += " ORDER BY " + orderBy
+	// Порядок задан первичным ключом выше, поэтому страницы не перекрываются и
+	// не теряют строк между запросами. Числа подставляются текстом, как в
+	// List: это уже провалидированные целые, а не пользовательская строка.
+	if limit > 0 {
+		sql += fmt.Sprintf(" LIMIT %d OFFSET %d", limit, max(offset, 0))
+	}
 
 	rows, err := db.Query(ctx, sql, args...)
 	if err != nil {
 		return nil, fmt.Errorf("info reg list %s: %w", ir.Name, err)
 	}
 	defer rows.Close()
-	raw, err := scanInfoRegRowsMode(rows, ir, selCols, withKeyValues)
-	if err != nil {
-		return nil, err
-	}
-	return infoRegListRows(ir, raw), nil
+	return scanInfoRegRowsMode(rows, ir, selCols, withKeyValues)
 }
 
 // scanInfoRegRowsMode decodes the common storage projection used by InfoRegList
@@ -593,9 +675,9 @@ func (db *DB) InfoRegDelete(ctx context.Context, ir *metadata.InfoRegister, dimK
 // регистр periodic — то либо row["Период"], либо общий period из mc.Period.
 // recorder/recorder_type заполняются автоматически из аргументов.
 //
-// При перезаписи строк используется ON CONFLICT по PK — это безопасно
-// для регистров, чья primary key включает (period, dims) и где нет
-// конфликта с другими источниками (например, ручной ввод того же набора).
+// ON CONFLICT по PK обновляет только строки без владельца или строки того же
+// документа (recorder, recorder_type). Условие проверяется самим UPSERT, поэтому
+// параллельное проведение не может перехватить чужой ключ.
 func (db *DB) WriteInfoMovements(ctx context.Context, regName, recorderType string, recorderID uuid.UUID, rows []map[string]any, ir *metadata.InfoRegister, period *time.Time) error {
 	return db.WithTxScope(ctx, func(txCtx context.Context) error {
 		return db.writeInfoMovementsInTx(txCtx, regName, recorderType, recorderID, rows, ir, period)
@@ -691,22 +773,86 @@ func (db *DB) writeInfoMovementsInTx(ctx context.Context, regName, recorderType 
 		var sql string
 		if len(pk) > 0 {
 			sql = fmt.Sprintf(
-				"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
+				"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s WHERE %s",
 				table,
 				strings.Join(cols, ", "),
 				strings.Join(phs, ", "),
 				strings.Join(pk, ", "),
 				strings.Join(updates, ", "),
+				fmt.Sprintf("%s.recorder IS NULL OR CAST(%s.recorder AS TEXT) = '' OR (%s.recorder = EXCLUDED.recorder AND %s.recorder_type = EXCLUDED.recorder_type)",
+					table, table, table, table),
 			)
 		} else {
 			sql = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s)",
 				table, strings.Join(cols, ", "), strings.Join(phs, ", "))
 		}
-		if err := db.exec(ctx, sql, args...); err != nil {
+		tag, err := db.Exec(ctx, sql, args...)
+		if err != nil {
 			return fmt.Errorf("write info movement %s row %d: %w", regName, i+1, err)
+		}
+		if len(pk) > 0 && tag.RowsAffected == 0 {
+			// UPSERT has already rejected a foreign owner atomically. Read it
+			// only to explain the conflict, never to authorize the write.
+			if err := db.checkInfoRegMovementKey(ctx, ir, regName, recorderType, recorderID, writeKey, dimKey, rowPeriod); err != nil {
+				return err
+			}
+			return fmt.Errorf("write info movement %s row %d: ownership conflict", regName, i+1)
 		}
 	}
 	return nil
+}
+
+// checkInfoRegMovementKey explains an ownership conflict after UPSERT refused
+// to update the row. A keyless register uses plain INSERT and never calls it.
+// Rows without a recorder remain writable by a document; repeated keys within
+// one posting belong to the same (recorder, recorder_type), so the last wins.
+func (db *DB) checkInfoRegMovementKey(ctx context.Context, ir *metadata.InfoRegister, regName string,
+	recorderType string, recorderID uuid.UUID, writeKey, dimKey map[string]any, period *time.Time,
+) error {
+	d := db.dialect
+	where, args := physicalDimWhere(d, ir, writeKey, 1)
+	if period != nil {
+		where = fmt.Sprintf("%s AND period = %s", where, d.Placeholder(len(args)+1))
+		args = append(args, *period)
+	}
+
+	var owner, ownerType *string
+	err := db.QueryRow(ctx, fmt.Sprintf("SELECT CAST(recorder AS TEXT), recorder_type FROM %s WHERE %s LIMIT 1",
+		metadata.InfoRegTableName(ir.Name), where), args...).Scan(&owner, &ownerType)
+	if IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("info register %s: чтение владельца ключа: %w", regName, err)
+	}
+	if owner == nil || *owner == "" || (strings.EqualFold(*owner, recorderID.String()) && ownerType != nil && *ownerType == recorderType) {
+		return nil
+	}
+	typ := ""
+	if ownerType != nil {
+		typ = *ownerType
+	}
+	// Имя из метаданных, а не regName: коллектор движений отдаёт его в нижнем
+	// регистре, а сообщение читает человек.
+	return i18nerr.Errorf("регистр сведений %s: запись с ключом %s уже записана документом %s %s — второй документ её не перехватывает",
+		ir.Name, infoRegKeyDescription(ir, dimKey, period), typ, *owner)
+}
+
+// infoRegKeyDescription — ключ записи регистра сведений для сообщения:
+// «Период=…, Измерение=…».
+func infoRegKeyDescription(ir *metadata.InfoRegister, dimKey map[string]any, period *time.Time) string {
+	parts := make([]string, 0, len(ir.Dimensions)+1)
+	if period != nil {
+		parts = append(parts, "Период="+period.Format("02.01.2006 15:04:05"))
+	}
+	for _, f := range ir.Dimensions {
+		v := dimKey[f.Name]
+		if t, ok := v.(time.Time); ok {
+			v = t.Format("02.01.2006 15:04:05")
+		}
+		parts = append(parts, fmt.Sprintf("%s=%v", f.Name, v))
+	}
+	return "(" + strings.Join(parts, ", ") + ")"
 }
 
 // pkCols returns the primary key column names for an info register.
