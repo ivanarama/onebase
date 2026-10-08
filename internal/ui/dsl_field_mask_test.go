@@ -264,8 +264,15 @@ func TestDSL_QueryGuardНеТипизируетСкрытыеЧислаПосл�
 		t.Run(tc.name, func(t *testing.T) {
 			user := uiMaskUser([]string{"read"}, auth.FieldPolicies{"Сумма": {Read: tc.strategy}})
 			uctx := auth.ContextWithUser(ctx, user)
-			if got := runDSLRowAccessFunc(t, s, uctx, src); got != tc.want {
-				t.Fatalf("результат = %q, ожидался %q", got, tc.want)
+			for _, alias := range []bool{false, true} {
+				program := src
+				if alias {
+					program = strings.ReplaceAll(program, "Наименование, Сумма ИЗ", "Наименование, Сумма КАК СкрытаяСумма ИЗ")
+					program = strings.ReplaceAll(program, ".Сумма", ".СкрытаяСумма")
+				}
+				if got := runDSLRowAccessFunc(t, s, uctx, program); got != tc.want {
+					t.Fatalf("alias=%v: результат = %q, ожидался %q", alias, got, tc.want)
+				}
 			}
 		})
 	}
