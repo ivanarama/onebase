@@ -1419,3 +1419,107 @@ func hasIssueFinding(result report, code string, issue int) bool {
 	}
 	return false
 }
+
+// #1605: после штатного v1-abort метка ship уже снята, а диагностика
+// base_sync_v1_abort_waiting_review требует родителей HEAD. Гейт загрузки
+// родителей проверяется таблицей, публичный путь загрузки — прогоном команды
+// с офлайн-заглушкой gh.
+func TestAbortMarkerWantsHeadParentsGate(t *testing.T) {
+	comment := func(body string, edited bool) apiComment {
+		stamp := "2026-09-01T00:00:00Z"
+		later := stamp
+		if edited {
+			later = "2026-09-02T00:00:00Z"
+		}
+		return apiComment{ID: 35, CreatedAt: stamp, UpdatedAt: later, User: apiUser{Login: "ivanarama"}, Body: body}
+	}
+	marker := syncV1Abort(30, headC)
+
+	pr := func(comments ...apiComment) apiPull {
+		item := testPR(1464, headC, "reviewed")
+		item.Comments = comments
+		return item
+	}
+	cases := []struct {
+		name string
+		pr   apiPull
+		want bool
+	}{
+		{"trusted marker for current head", pr(comment(marker, false)), true},
+		{"foreign author is not trusted", pr(func() apiComment { c := comment(marker, false); c.User.Login = "someone"; return c }()), false},
+		{"edited marker is not trusted", pr(comment(marker, true)), false},
+		{"marker for another head", pr(comment(syncV1Abort(30, headA), false)), false},
+		{"no marker", pr(comment(completion(headA, 10, 15), false)), false},
+	}
+	for _, c := range cases {
+		if got := abortMarkerWantsHeadParents(c.pr, "ivanarama"); got != c.want {
+			t.Errorf("%s: wants parents = %v, want %v", c.name, got, c.want)
+		}
+	}
+
+	draft := pr(comment(marker, false))
+	draft.Draft = true
+	if abortMarkerWantsHeadParents(draft, "ivanarama") {
+		t.Error("draft pull requested head parents")
+	}
+	offBase := pr(comment(marker, false))
+	offBase.Base.Ref = "release"
+	if abortMarkerWantsHeadParents(offBase, "ivanarama") {
+		t.Error("non-main base requested head parents")
+	}
+}
+
+// buildGhStub собирает офлайн-заглушку gh и возвращает путь к бинарю.
+func buildGhStub(t *testing.T) string {
+	t.Helper()
+	stubPath := filepath.Join(t.TempDir(), "ghstub.exe")
+	//nolint:gosec // G204: fixed package path, test-owned output directory.
+	build := exec.Command("go", "build", "-o", stubPath, "./tools/pipelinehealth/internal/ghstub")
+	build.Dir = repoRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build ghstub: %v\n%s", err, out)
+	}
+	return stubPath
+}
+
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+// writeGhStubFixture пишет построчные JSON-объекты в каталог данных заглушки.
+func writeGhStubFixture(t *testing.T, dir, name string, objects ...any) {
+	t.Helper()
+	var b strings.Builder
+	for _, object := range objects {
+		data, err := json.Marshal(object)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b.Write(data)
+		b.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(b.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestBaseSyncV1AbortWithoutMergeShapeIsNotDiagnosed(t *testing.T) {
+	item := testPR(1464, headC, "reviewed")
+	item.HeadParents = []string{headA} // обычный одно-родительский push, не base-sync
+	item = addComment(item, 20, completion(headA, 10, 15))
+	item = addComment(item, 30, syncIntent(headA, 10, 15, 20))
+	item = addComment(item, 35, syncV1Abort(30, headC))
+
+	got := analyze([]apiPull{item}, "ivanarama")
+	if hasFinding(got, "base_sync_v1_abort_waiting_review") {
+		t.Fatalf("abort recognised without the two-parent merge shape: %+v", got.Findings)
+	}
+	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 1464 {
+		t.Fatalf("ordinary review candidate lost: %+v", got.ReviewCandidates)
+	}
+}
