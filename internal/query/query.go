@@ -3086,11 +3086,22 @@ func (tr *translator) refAttrColumnForPrevQualifier(pos int, attr string) (col, 
 	if tr.tokens[pos-1].kind != tDot || tr.tokens[pos-2].kind != tIdent {
 		return "", "", ""
 	}
+	// У пути Источник.Ссылка.Реквизит метаданные принадлежат именно
+	// присоединённому источнику в его SELECT-scope. Одноимённая ссылка
+	// главной таблицы не задаёт ни суффикс _id, ни CAST, ни тип результата.
+	if pos >= 4 && tr.tokens[pos-3].kind == tDot {
+		if src, rd := tr.findJoinedSource(pos-4, lowerFast(tr.tokens[pos-2].val)); src != nil {
+			return tr.refAttrColumnForDim(rd, attr)
+		}
+	}
 	return tr.refAttrColumn(lowerFast(tr.tokens[pos-2].val), attr)
 }
 
 func (tr *translator) refAttrColumn(qualifier, attr string) (col, refEntity string, fieldType metadata.FieldType) {
-	rd := tr.findRefDim(qualifier)
+	return tr.refAttrColumnForDim(tr.findRefDim(qualifier), attr)
+}
+
+func (tr *translator) refAttrColumnForDim(rd *refDimInfo, attr string) (col, refEntity string, fieldType metadata.FieldType) {
 	if rd == nil || rd.refEntity == "" {
 		return "", "", ""
 	}
@@ -3312,6 +3323,14 @@ func (tr *translator) refEntityForQualifier(pos int) string {
 		return ""
 	}
 	lower := lowerFast(tr.tokens[pos].val)
+	if pos >= 2 && tr.tokens[pos-1].kind == tDot {
+		if src, rd := tr.findJoinedSource(pos-2, lower); src != nil {
+			if rd != nil {
+				return rd.refEntity
+			}
+			return ""
+		}
+	}
 	if rd := tr.findRefDim(lower); rd != nil {
 		return rd.refEntity
 	}
