@@ -825,6 +825,8 @@ func (w *docWriter) read() error {
 	w.obj.Fields = fields
 	w.obj.TablePartRows = tpRows
 	w.setStandardAttrs(row)
+	w.obj.DeletionMark = asBool(row["deletion_mark"])
+	w.obj.Posted = asBool(row["posted"])
 	// Прочитанный объект целиком приехал из БД: присвоенного модулем в нём
 	// больше нет, а сохранённый признак снимал бы маску с реальных значений.
 	w.assigned = nil

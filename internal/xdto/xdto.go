@@ -52,8 +52,8 @@ const EmptyDate = "0001-01-01T00:00:00"
 // EmptyRef — незаполненная ссылка.
 const EmptyRef = "00000000-0000-0000-0000-000000000000"
 
-// Options — сведения об объекте, которых нет в самом runtime.Object: пометка
-// удаления и проведённость живут не в реквизитах, а в состоянии записи.
+// Options — состояние записи и полевая политика для экспорта объекта.
+// Пометка удаления и проведённость не являются прикладными реквизитами.
 type Options struct {
 	DeletionMark bool
 	Posted       bool
@@ -174,6 +174,7 @@ func Read(text string, resolve func(name string) *metadata.Entity) (*runtime.Obj
 
 	obj := runtime.NewObject(ent.Name, ent.Kind)
 	obj.EnsureTableParts(ent)
+	refSeen := false
 
 	for {
 		tok, err := dec.Token()
@@ -184,6 +185,9 @@ func Read(text string, resolve func(name string) *metadata.Entity) (*runtime.Obj
 			return nil, opts, fmt.Errorf("xdto: %w", err)
 		}
 		if end, ok := tok.(xml.EndElement); ok && end.Name == start.Name {
+			if !refSeen {
+				return nil, opts, fmt.Errorf("xdto: отсутствует обязательный элемент Ref")
+			}
 			if err := finishDocument(dec); err != nil {
 				return nil, opts, err
 			}
@@ -197,6 +201,14 @@ func Read(text string, resolve func(name string) *metadata.Entity) (*runtime.Obj
 			continue
 		}
 		local := el.Name.Local
+		// Расширения из другого namespace пропускаются целиком: совпадение
+		// локального имени не даёт им менять ссылку, состояние или реквизиты.
+		if el.Name.Space != start.Name.Space {
+			if err := dec.Skip(); err != nil {
+				return nil, opts, fmt.Errorf("xdto: %w", err)
+			}
+			continue
+		}
 
 		if tp := findTablePart(ent, local); tp != nil {
 			row, err := readRow(dec, tp.Fields, el)
@@ -221,11 +233,15 @@ func Read(text string, resolve func(name string) *metadata.Entity) (*runtime.Obj
 		}
 		switch strings.ToLower(local) {
 		case "ref":
+			if refSeen {
+				return nil, opts, fmt.Errorf("xdto: повторный элемент Ref")
+			}
 			id, err := uuid.Parse(val)
 			if err != nil {
 				return nil, opts, fmt.Errorf("xdto: поле %q: неверный UUID %q: %w", local, val, err)
 			}
 			obj.ID = id
+			refSeen = true
 			continue
 		case "deletionmark":
 			parsed, err := parseXMLBool(val)
@@ -424,6 +440,12 @@ func readRow(dec *xml.Decoder, fields []metadata.Field, start xml.StartElement) 
 		}
 		switch el := tok.(type) {
 		case xml.StartElement:
+			if el.Name.Space != start.Name.Space {
+				if err := dec.Skip(); err != nil {
+					return nil, fmt.Errorf("xdto: %w", err)
+				}
+				continue
+			}
 			val, err := readText(dec, el)
 			if err != nil {
 				return nil, err

@@ -273,3 +273,75 @@ func TestXDTOSerializerDSLRootBoundary(t *testing.T) {
 		})
 	}
 }
+
+func TestXDTOSerializerDSLRefIdentityAndNamespaces(t *testing.T) {
+	const ns = "http://v8.1c.ru/8.1/data/enterprise/current-config"
+	const id = "11111111-1111-1111-1111-111111111111"
+	const other = "22222222-2222-2222-2222-222222222222"
+	ref := "<Ref>" + id + "</Ref>"
+	foreign := `<ext:Ref xmlns:ext="urn:foreign">` + other + `</ext:Ref>`
+	for _, kind := range []metadata.Kind{metadata.KindCatalog, metadata.KindDocument} {
+		ent := &metadata.Entity{Name: "Обмен", Kind: kind, Fields: []metadata.Field{{Name: "Телефон", Type: metadata.FieldTypeString}}, TableParts: []metadata.TablePart{{Name: "Строки", Fields: []metadata.Field{{Name: "Текст", Type: metadata.FieldTypeString}}}}}
+		root := "CatalogObject.Обмен"
+		if kind == metadata.KindDocument {
+			root = "DocumentObject.Обмен"
+		}
+		for _, tc := range []struct {
+			name, body, want, errorText string
+			prefixed                    bool
+		}{
+			{name: "one Ref", body: ref, want: id},
+			{name: "zero Ref", body: "<Ref>00000000-0000-0000-0000-000000000000</Ref>", want: "00000000-0000-0000-0000-000000000000"},
+			{name: "missing Ref", errorText: "Ref"},
+			{name: "invalid Ref", body: "<Ref>bad-uuid</Ref>", errorText: "UUID"},
+			{name: "same duplicate Ref", body: ref + ref, errorText: "Ref"},
+			{name: "different duplicate Ref", body: ref + "<Ref>" + other + "</Ref>", errorText: "Ref"},
+			{name: "foreign before", body: foreign + ref, want: id},
+			{name: "foreign after", body: ref + foreign, want: id},
+			{name: "foreign only", body: foreign, errorText: "Ref"},
+			{name: "nested only", body: "<Unknown>" + ref + "</Unknown>", errorText: "Ref"},
+			{name: "equivalent prefix", body: `<p:Ref xmlns:p="` + ns + `">` + id + `</p:Ref>`, want: id, prefixed: true},
+			{name: "foreign state and fields", body: ref + `<DeletionMark>true</DeletionMark><Posted>true</Posted><Телефон>visible</Телефон><Строки><Текст>row</Текст><ext:Текст xmlns:ext="urn:foreign"><Ref>ignored</Ref></ext:Текст></Строки><ext:DeletionMark xmlns:ext="urn:foreign">false</ext:DeletionMark><ext:Posted xmlns:ext="urn:foreign">false</ext:Posted><ext:Телефон xmlns:ext="urn:foreign">secret</ext:Телефон><ext:Строки xmlns:ext="urn:foreign"><Текст>extra</Текст></ext:Строки>`, want: id},
+		} {
+			for _, namespace := range []string{"", ns} {
+				if tc.prefixed && namespace == "" {
+					continue
+				}
+				t.Run(string(kind)+"/"+tc.name+"/"+namespace, func(t *testing.T) {
+					attr := ""
+					if namespace != "" {
+						attr = ` xmlns="` + namespace + `"`
+					}
+					input := "<" + root + attr + ">" + tc.body + "</" + root + ">"
+					result, err := runXDTOScript(t, ent, input, `Об = СериализаторXDTO.ПрочитатьXML(Вход); ЭтотОбъект.XML = СериализаторXDTO.ЗаписатьXML(Об);`)
+					if tc.errorText != "" {
+						if err == nil || !strings.Contains(err.Error(), tc.errorText) {
+							t.Fatalf("expected %s error, got %v", tc.errorText, err)
+						}
+						return
+					}
+					if err != nil {
+						t.Fatal(err)
+					}
+					xml := result.Get("XML").(string)
+					if !strings.Contains(xml, "<Ref>"+tc.want+"</Ref>") {
+						t.Fatalf("identity changed: %s", xml)
+					}
+					if tc.name == "foreign state and fields" {
+						for _, want := range []string{"<DeletionMark>true</DeletionMark>", "<Телефон>visible</Телефон>", "<Текст>row</Текст>"} {
+							if !strings.Contains(xml, want) {
+								t.Fatalf("lost %s: %s", want, xml)
+							}
+						}
+						if strings.Contains(xml, "secret") || strings.Contains(xml, "extra") || strings.Count(xml, "<Строки>") != 1 {
+							t.Fatalf("foreign namespace changed object: %s", xml)
+						}
+						if kind == metadata.KindDocument && !strings.Contains(xml, "<Posted>true</Posted>") {
+							t.Fatalf("foreign Posted changed state: %s", xml)
+						}
+					}
+				})
+			}
+		}
+	}
+}

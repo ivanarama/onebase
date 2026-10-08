@@ -111,8 +111,8 @@ func (s *XDTOSerializer) read(args []any) any {
 	if err != nil {
 		panic(userError{Msg: err.Error()})
 	}
-	obj.Fields["deletion_mark"] = opts.DeletionMark
-	obj.Fields["posted"] = opts.Posted
+	obj.DeletionMark = opts.DeletionMark
+	obj.Posted = opts.Posted
 	return obj
 }
 
@@ -140,31 +140,11 @@ func asRuntimeObject(v any) *runtime.Object {
 	return nil
 }
 
-// optionsOf восстанавливает пометку удаления и проведённость: в реквизитах
-// объекта их нет, но у записи, прочитанной из БД, они приезжают служебными
-// ключами вместе с id и версией.
+// optionsOf читает состояние снимка, полученного из БД или XML. Прикладные
+// реквизиты с похожими именами не подменяют служебные признаки.
 func optionsOf(obj *runtime.Object) xdto.Options {
 	return xdto.Options{
-		DeletionMark: flagValue(obj.Fields["deletion_mark"]),
-		Posted:       flagValue(obj.Fields["posted"]),
+		DeletionMark: obj.DeletionMark,
+		Posted:       obj.Posted,
 	}
-}
-
-// flagValue читает служебный признак записи. Отдельно от общего truthy пакета:
-// тот считает истиной любую непустую строку, а здесь строка приходит из БД и
-// «false» обязана остаться ложью.
-func flagValue(v any) bool {
-	switch t := v.(type) {
-	case bool:
-		return t
-	case int:
-		return t != 0
-	case int64:
-		return t != 0
-	case float64:
-		return t != 0
-	case string:
-		return t == "true" || t == "1"
-	}
-	return false
 }
