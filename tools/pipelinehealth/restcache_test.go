@@ -40,7 +40,7 @@ func TestRESTLoadsUnshippedReviewedMergeParents(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	pulls, err := loadPulls(testRESTClient(t, server), "ivanarama/onebase", "")
+	pulls, err := loadPulls(testRESTClient(t, server), "ivanarama/onebase", "", "ivanarama")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +420,7 @@ func TestFixtureLoadingDoesNotRequireRESTClient(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`[{"number":7,"state":"open"}]`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	pulls, err := loadPulls(nil, "ignored", path)
+	pulls, err := loadPulls(nil, "ignored", path, "ivanarama")
 	if err != nil {
 		t.Fatal(err)
 	}

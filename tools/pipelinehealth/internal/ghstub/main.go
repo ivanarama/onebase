@@ -1,5 +1,6 @@
 // ghstub — офлайн-заглушка gh для тестов публичной команды pipelinehealth.
-// Отвечает только на чтение: список PR, комментарии PR, родители коммита.
+// Отвечает только на чтение: GraphQL snapshot/parents/HEAD, REST fixtures
+// и фиктивный auth token для локального тестового API.
 // Каждый обработанный путь дописывается в файл GHSTUB_LOG, поэтому тест
 // доказывает, что запрос родителей действительно был (или не был) выполнен.
 // Формат ответа повторяет «gh api --paginate --jq '.[]'» — один JSON-объект
@@ -10,6 +11,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +21,48 @@ func main() {
 	dataDir := os.Getenv("GHSTUB_DATA")
 	logPath := os.Getenv("GHSTUB_LOG")
 	failCommit := os.Getenv("GHSTUB_FAIL_COMMIT") == "1"
+
+	if len(os.Args) > 2 && os.Args[1] == "auth" && os.Args[2] == "token" {
+		fmt.Println("offline-test-token")
+		return
+	}
+	if len(os.Args) > 2 && os.Args[1] == "api" && os.Args[2] == "graphql" {
+		var request struct {
+			Query string `json:"query"`
+		}
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil || json.Unmarshal(data, &request) != nil {
+			fmt.Fprintln(os.Stderr, "ghstub: invalid GraphQL request")
+			os.Exit(2)
+		}
+		name := ""
+		switch {
+		case strings.Contains(request.Query, "query PipelineHealthSnapshot("):
+			name = "snapshot.json"
+		case strings.Contains(request.Query, "query PipelineHealthCommitParents("):
+			name = "parents.json"
+		case strings.Contains(request.Query, "query PipelineHealthPullHeads("):
+			name = "head.json"
+		default:
+			fmt.Fprintln(os.Stderr, "ghstub: unexpected GraphQL query")
+			os.Exit(2)
+		}
+		if logPath != "" {
+			appendLine(logPath, name)
+		}
+		if name == "parents.json" && failCommit {
+			fmt.Fprintln(os.Stderr, "ghstub: injected commit read failure")
+			os.Exit(1)
+		}
+		//nolint:gosec // G703: fixture directory is supplied by the parent test.
+		response, err := os.ReadFile(filepath.Join(dataDir, name))
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(2)
+		}
+		_, _ = os.Stdout.Write(response)
+		return
+	}
 
 	path := ""
 	jq := ""
