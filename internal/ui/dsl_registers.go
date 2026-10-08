@@ -39,6 +39,31 @@ func (r *accumRegsRoot) Get(name string) any {
 
 func (r *accumRegsRoot) Set(_ string, _ any) {}
 
+// GetDynamicField / SetDynamicField — индексный доступ РегистрыНакопления["Имя"] (#1434).
+//
+// Раньше такое выражение компилировалось, но возвращало Неопределено: корни
+// менеджеров не реализовывали DynamicFieldAccessor, и универсальный цикл по
+// списку типов приходилось заменять Соответствием из литералов.
+//
+// Только чтение. Имя сопоставляется без учёта регистра — этим занимается сам
+// поиск в реестре. Неизвестное имя даёт ошибку, а не Неопределено: опечатка
+// обязана падать там, где она написана.
+func (r *accumRegsRoot) GetDynamicField(name string) (any, bool) {
+	v := r.Get(name)
+	if v == nil {
+		return nil, false
+	}
+	return v, true
+}
+
+// Индексная запись корню менеджера не открывается: РегистрыНакопления["Имя"] — способ
+// получить менеджер, а не ячейка. Отказ явный, потому что молчаливое false
+// дало бы сообщение «неизвестный реквизит» про существующий менеджер.
+func (r *accumRegsRoot) SetDynamicField(name string, _ any) bool {
+	interpreter.RaiseUserError("РегистрыНакопления[\"" + name + "\"]: индексная запись не поддерживается, доступно только чтение")
+	return false
+}
+
 type accumRegProxy struct {
 	s      *Server
 	ctxSrc docsCtxSource
@@ -72,7 +97,7 @@ func (p *accumRegProxy) CallMethod(method string, args []any) any {
 		// Та же маска полей, что в списках UI (#859): политика на регистр не
 		// должна зависеть от того, читают его глазами или из модуля.
 		p.s.maskRegisterRecords(p.ctx(), p.reg, rows)
-		return rowsToArray(rows)
+		return rowsToArray(p.s, p.ctx(), p.reg, rows)
 	case "движения", "выбрать", "select":
 		filter, err := p.rowFilter()
 		if err != nil {
@@ -83,7 +108,7 @@ func (p *accumRegProxy) CallMethod(method string, args []any) any {
 			interpreter.RaiseUserError("Движения(" + p.reg.Name + "): " + err.Error())
 		}
 		p.s.maskRegisterRecords(p.ctx(), p.reg, rows)
-		return rowsToArray(rows)
+		return rowsToArray(p.s, p.ctx(), p.reg, rows)
 	case "выбратьпорегистратору", "selectbyrecorder":
 		if len(args) == 0 {
 			interpreter.RaiseUserError("ВыбратьПоРегистратору(" + p.reg.Name + "): не передан регистратор")
@@ -117,7 +142,7 @@ func (p *accumRegProxy) CallMethod(method string, args []any) any {
 			delete(row, "recorder_type")
 		}
 		p.s.maskRegisterRecords(p.ctx(), p.reg, rows)
-		return rowsToArray(rows)
+		return rowsToArray(p.s, p.ctx(), p.reg, rows)
 	}
 	return nil
 }
@@ -141,10 +166,32 @@ func (p *accumRegProxy) rowFilter() (storage.RegFilter, error) {
 
 // rowsToArray оборачивает строки движений/остатков в Массив строк (*MapThis),
 // чтобы в DSL работали Количество()/Получить()/«Для Каждого» и Стр.Колонка.
-func rowsToArray(rows []map[string]any) *interpreter.Array {
+func rowsToArray(s *Server, ctx context.Context, reg *metadata.Register, rows []map[string]any) *interpreter.Array {
 	items := make([]any, 0, len(rows))
+	fields := make([]metadata.Field, 0, len(reg.Dimensions)+len(reg.Resources)+len(reg.Attributes))
+	fields = append(fields, reg.Dimensions...)
+	fields = append(fields, reg.Resources...)
+	fields = append(fields, reg.Attributes...)
+	resolver := s.newDSLRefAttrResolver(ctx)
+	decisions := s.registerFieldDecisions(ctx, reg)
 	for _, r := range rows {
-		items = append(items, &interpreter.MapThis{M: r})
+		view := newDeclaredRowThis(r, fields, resolver, decisions)
+		view.addAlias("Период", "period", metadata.Field{Name: "period", Type: metadata.FieldTypeDate})
+		view.addAlias("Period", "period", metadata.Field{Name: "period", Type: metadata.FieldTypeDate})
+		view.addAlias("ВидДвижения", "вид_движения", metadata.Field{Name: "вид_движения", Type: metadata.FieldTypeString})
+		view.addAlias("MovementType", "вид_движения", metadata.Field{Name: "вид_движения", Type: metadata.FieldTypeString})
+		view.addAlias("НомерСтроки", "line_number", metadata.Field{Name: "line_number", Type: metadata.FieldTypeNumber})
+		view.addAlias("LineNumber", "line_number", metadata.Field{Name: "line_number", Type: metadata.FieldTypeNumber})
+		if recorderType, ok := r["recorder_type"].(string); ok && strings.TrimSpace(recorderType) != "" {
+			field := metadata.Field{
+				Name:      "recorder",
+				Type:      metadata.FieldType("reference:" + recorderType),
+				RefEntity: recorderType,
+			}
+			view.addAlias("Регистратор", "recorder", field)
+			view.addAlias("Recorder", "recorder", field)
+		}
+		items = append(items, view)
 	}
 	return interpreter.NewArray(items)
 }

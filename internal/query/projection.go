@@ -14,6 +14,13 @@ type ProjectionColumn struct {
 	// «КАК ...», иначе последний идентификатор ссылки на поле. Для выражений и
 	// для «*» пусто.
 	Output string
+	// Alias is the explicit output alias, if present. Output alone cannot
+	// distinguish `Ссылка` (whose SQL key is id) from `Ссылка КАК Ссылка`.
+	Alias string
+	// Path preserves every identifier of a simple field reference. Fields is
+	// intentionally lossy for masking compatibility; type inference needs the
+	// qualifier and the `.Ссылка` suffix to prove provenance.
+	Path []string
 	// Fields — логические поля-источники, чьё маскирование должно примениться к
 	// этой колонке. Для ссылочного измерения сюда попадает и само поле, и
 	// отображаемый реквизит связанной сущности (Наименование/Номер).
@@ -218,40 +225,40 @@ func parseProjectionItem(item []tok) (ProjectionColumn, []string) {
 	if n := len(item); n > 0 && item[n-1].kind == tStar {
 		return ProjectionColumn{Star: true}, nil
 	}
-	if field, ok := simpleFieldRef(item); ok {
+	if path, ok := simpleFieldPath(item); ok {
+		field := path[len(path)-1]
 		output := alias
 		if output == "" {
 			output = lowerFast(field)
 		}
-		return ProjectionColumn{Output: output, Fields: []string{field}}, nil
+		return ProjectionColumn{Output: output, Alias: alias, Path: path, Fields: []string{field}}, nil
 	}
 	// Выражение или агрегат: значение колонки — производная от исходных полей,
 	// маска на выходе их не защищает (СУММА(Оклад), ПОДСТРОКА(Телефон, 1, 3)).
 	return ProjectionColumn{Output: alias}, identifiersIn(item)
 }
 
-// simpleFieldRef распознаёт элемент вида `Поле` или `Квалификатор.Поле`
-// (в т.ч. разыменование ссылки `Клиент.Наименование`) и возвращает последний
-// идентификатор — логическое имя выбранного поля.
-func simpleFieldRef(item []tok) (string, bool) {
+func simpleFieldPath(item []tok) ([]string, bool) {
 	if len(item) == 0 || len(item)%2 == 0 {
-		return "", false
+		return nil, false
 	}
+	path := make([]string, 0, (len(item)+1)/2)
 	for i, t := range item {
 		if i%2 == 1 {
 			if t.kind != tDot {
-				return "", false
+				return nil, false
 			}
 			continue
 		}
 		if t.kind != tIdent {
-			return "", false
+			return nil, false
 		}
 		if _, isKW := sqlKW(t.val); isKW {
-			return "", false
+			return nil, false
 		}
+		path = append(path, t.val)
 	}
-	return item[len(item)-1].val, true
+	return path, true
 }
 
 // identifiersIn — все идентификаторы выражения, кроме ключевых слов и имён

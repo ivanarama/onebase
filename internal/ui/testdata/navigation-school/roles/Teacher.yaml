@@ -1,0 +1,13 @@
+name: Teacher
+permissions:
+  catalogs:
+    УчебныеГоды: [read]
+    ПериодыОбучения: [read]
+    Классы: [read]
+  documents:
+    ПриказОНачалеУчебногоГода: [read]
+  inforegs:
+    РасписаниеЗвонков: [read]
+    ГрафикКаникул: [read]
+  processors:
+    КлассныйЖурнал: [run]

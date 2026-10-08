@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
@@ -201,6 +202,55 @@ func TestRun_CompileError_NotAccessDenied(t *testing.T) {
 	}
 	if res.AccessDenied {
 		t.Fatalf("ошибка компиляции не должна помечаться AccessDenied: %+v", res)
+	}
+}
+
+func TestRunWithOptions_ParamsIsolateCacheAndFreshReplacesExactEntry(t *testing.T) {
+	ctx, runner, entity := newRowAccessRunner(t)
+	runner.User = nil
+	runner.Cache = NewCache(time.Minute)
+	firstID := uuid.New()
+	secondID := uuid.New()
+	if err := runner.Store.Upsert(ctx, entity.Name, firstID, map[string]any{"Наименование": "first-old", "Owner": "first"}, entity); err != nil {
+		t.Fatalf("upsert first: %v", err)
+	}
+	if err := runner.Store.Upsert(ctx, entity.Name, secondID, map[string]any{"Наименование": "second-old", "Owner": "second"}, entity); err != nil {
+		t.Fatalf("upsert second: %v", err)
+	}
+	w := &metadata.Widget{
+		Name: "Параметры", Type: metadata.WidgetTypeList,
+		Query: "ВЫБРАТЬ Наименование ИЗ Справочник.Товар ГДЕ Owner = &Owner",
+	}
+	run := func(owner string, fresh bool) string {
+		res := runner.RunWithOptions(ctx, w, RunOptions{Params: map[string]any{"Owner": owner}, Fresh: fresh})
+		if res.Error != "" || len(res.Rows) != 1 {
+			t.Fatalf("run owner=%q fresh=%v: %+v", owner, fresh, res)
+		}
+		return fmt.Sprint(res.Rows[0]["наименование"])
+	}
+	if got := run("first", false); got != "first-old" {
+		t.Fatalf("first initial = %q", got)
+	}
+	if got := run("second", false); got != "second-old" {
+		t.Fatalf("second initial = %q", got)
+	}
+	if err := runner.Store.Upsert(ctx, entity.Name, firstID, map[string]any{"Наименование": "first-new", "Owner": "first"}, entity); err != nil {
+		t.Fatalf("update first: %v", err)
+	}
+	if err := runner.Store.Upsert(ctx, entity.Name, secondID, map[string]any{"Наименование": "second-new", "Owner": "second"}, entity); err != nil {
+		t.Fatalf("update second: %v", err)
+	}
+	if got := run("first", false); got != "first-old" {
+		t.Fatalf("ordinary run must retain cached exact entry, got %q", got)
+	}
+	if got := run("first", true); got != "first-new" {
+		t.Fatalf("fresh run did not see database update, got %q", got)
+	}
+	if got := run("first", false); got != "first-new" {
+		t.Fatalf("fresh run did not replace exact entry, got %q", got)
+	}
+	if got := run("second", false); got != "second-old" {
+		t.Fatalf("fresh run invalidated neighboring params entry, got %q", got)
 	}
 }
 

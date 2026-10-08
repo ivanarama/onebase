@@ -96,6 +96,8 @@ let configPresent = false;
 let modalID = '';
 let saveClicks = 0;
 let postCloseClicks = 0;
+let popupSaveClicks = 0;
+let popupSaveEnabled = false;
 let domAddButtons = [];
 let dynamicTbody = null;
 let domTableForQuery = null;
@@ -112,6 +114,7 @@ const globalSearch = makeElement('input');
 const listSearch = makeElement('input');
 const save = {disabled: false, click() { saveClicks++; }};
 const postClose = {disabled: false, click() { postCloseClicks++; }};
+const popupSave = {disabled: false, click() { popupSaveClicks++; }};
 const dirtyForm = {addEventListener() {}};
 const closeForm = {click() { closeClicks++; }};
 
@@ -127,6 +130,8 @@ global.window = {
   _obGrids: {},
   location: {href: ''},
   obOpenInShell(url) { activated++; openedURLs.push(url); return true; },
+  obSetManagedFormDirty(dirty) { this._obFormDirty = !!dirty; },
+  obUIMessage(name, fallback) { return fallback; },
   addEventListener(type, fn) { (listeners[type] || (listeners[type] = [])).push(fn); }
 };
 global.document = {
@@ -145,6 +150,7 @@ global.document = {
   },
   querySelector(selector) {
     if (selector.includes('post_and_close')) return postClose;
+	if (selector.includes('save_and_select')) return popupSaveEnabled ? popupSave : null;
     if (selector === 'button[name="_action"][value=""]') return save;
     if (selector === 'input[name="q"]') return globalSearch;
     if (selector === '#main-form[data-ob-dirty-watch="1"]' && dirtyFormEnabled) return dirtyForm;
@@ -173,6 +179,7 @@ function obFireRowEvent() {}
 window.obFireRowEvent = obFireRowEvent;
 
 eval(source.slice(start, end));
+eval(source.slice(end, source.indexOf("\nobReady(", end)));
 eval(managedSource.slice(managedBodiesStart, managedBodiesEnd));
 eval(managedSource.slice(managedApplyStart, managedApplyExport + 'window.applyTableParts = applyTableParts;'.length));
 // managed.js is loaded at the bottom of a managed form and installs its
@@ -212,6 +219,11 @@ fire({code: 'KeyS', ctrlKey: true});
 assert(saveClicks === 0, 'shortcut escaped the create-reference modal');
 modalID = '';
 
+popupSaveEnabled = true;
+fire({code: 'KeyS', ctrlKey: true});
+assert(popupSaveClicks === 1 && saveClicks === 0, 'popup Ctrl+S did not use save-and-select');
+popupSaveEnabled = false;
+
 const interactiveRow = makeElement('tr', {listRow: true, dataset: {openUrl: '/row'}});
 rows = [interactiveRow];
 listSetSel(interactiveRow);
@@ -244,9 +256,11 @@ assert(activated === beforeEnter + 2, 'Tab -> Enter/F2 did not open the focused 
 fire({key: 'ArrowDown', target: tabFirst});
 assert(listSel() === tabSecond, 'ArrowDown repeated the focused first row instead of moving to the second');
 
-// F9 в списке — «Создать копированием» (issue #762). Открывается форма
-// создания по data-copy-url; пустой url = нет права записи, клавиша молчит и
-// не гасит событие. Пункт меню строки живёт по тому же признаку.
+// F9 в списке — «Создать копированием» (issue #762). Адрес даёт obRowUrl(row,
+// 'copy'); здесь строки моделируют JSON-подгрузку и несут свой copyUrl, у
+// серверных строк он собирается из data-ob-row-copy-url контейнера при
+// data-ob-row-can-copy="1". Пустой результат = копировать нечем: клавиша молчит
+// и не гасит событие. Пункт меню строки живёт по тому же признаку.
 window._obActiveDOMTable = null;
 window._obActiveGridName = '';
 const copyRow = makeElement('tr', {listRow: true, dataset: {openUrl: '/row', copyUrl: '/ui/catalog/x/new?copy=42'}});
@@ -566,6 +580,7 @@ assert(window._obActiveDOMTable === null, 'hidden DOM table remained remembered'
 let liveRows = [];
 let replacementRows = [];
 const live = {
+  querySelector() { return null; },
   contains(node) { return liveRows.includes(node); },
   querySelectorAll(selector) { return selector === '[data-ob-list-row]' ? liveRows : []; }
 };
@@ -805,6 +820,7 @@ global.window = {
   _obActiveGridName: '',
   _obActiveDOMTable: domTable,
   _obFormDirty: false,
+  obSetManagedFormDirty(dirty) { this._obFormDirty = !!dirty; },
   getComputedStyle(el) { return el && (el.computedStyle || el.style) ? (el.computedStyle || el.style) : {}; }
 };
 global.document = {

@@ -71,11 +71,7 @@ func CheckFormEventDispatch(proj *project.Project) []Issue {
 	}
 	for _, proc := range proj.Processors {
 		for _, form := range proc.Forms {
-			name := form.Name
-			if name == "" {
-				name = "объекта"
-			}
-			report("forms/"+strings.ToLower(proc.Name)+"/"+name+".form.yaml", proc.Name, form)
+			report(procFormFileLabel(proc.Name, form), proc.Name, form)
 		}
 	}
 	return warns

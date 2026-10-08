@@ -94,6 +94,50 @@ func (p *Processor) ManagedForm() *metadata.FormModule {
 	return nil
 }
 
+// VirtualEntity — параметры обработки в виде сущности: управляемая форма
+// обработки рендерится и проверяется тем же конвейером, что форма справочника
+// (поля — параметры, табличные части — табличные части обработки). Общая
+// точка для рендера (ui) и onebase check: источник Объект.<Параметр> в
+// choice_filter разбирается по тем же полям, что видит форма (#1840).
+func (p *Processor) VirtualEntity() *metadata.Entity {
+	fields := make([]metadata.Field, 0, len(p.Params))
+	for _, param := range p.Params {
+		f := metadata.Field{
+			Name:   param.Name,
+			Title:  param.Label,
+			Titles: param.Labels,
+		}
+		switch {
+		case param.Type == "string", param.Type == "text":
+			f.Type = metadata.FieldTypeString
+		case param.Type == "number":
+			f.Type = metadata.FieldTypeNumber
+		case param.Type == "date":
+			f.Type = metadata.FieldTypeDate
+		case param.Type == "bool":
+			f.Type = metadata.FieldTypeBool
+		case param.Type == "choice":
+			enumName := "_" + param.Name + "_choice"
+			f.Type = metadata.FieldType("enum:" + enumName)
+			f.EnumName = enumName
+		case strings.HasPrefix(param.Type, "reference:"):
+			f.Type = metadata.FieldType("reference:" + strings.TrimPrefix(param.Type, "reference:"))
+			f.RefEntity = strings.TrimPrefix(param.Type, "reference:")
+		default:
+			f.Type = metadata.FieldTypeString
+		}
+		fields = append(fields, f)
+	}
+	return &metadata.Entity{
+		Name:       p.Name,
+		Title:      p.Title,
+		Titles:     p.Titles,
+		Kind:       metadata.KindCatalog,
+		Fields:     fields,
+		TableParts: p.TableParts,
+	}
+}
+
 func LoadFile(path string) (*Processor, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

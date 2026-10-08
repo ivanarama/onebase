@@ -43,6 +43,19 @@ func TestFromFormType_PreservesFullDescriptor(t *testing.T) {
 	}
 }
 
+func TestFromConstant_PreservesFullDescriptor(t *testing.T) {
+	d, ok := FromConstant(&metadata.Constant{
+		Name: "Лимит", Type: metadata.FieldTypeNumber, Length: 15, Scale: 2,
+	})
+	if !ok || d.Type != metadata.FieldTypeNumber || d.Length != 15 || d.Scale != 2 {
+		t.Fatalf("constant descriptor = %+v, ok=%v", d, ok)
+	}
+	d, ok = FromConstant(&metadata.Constant{Name: "Склад", RefEntity: "Склады"})
+	if !ok || d.RefEntity != "Склады" {
+		t.Fatalf("reference constant descriptor = %+v, ok=%v", d, ok)
+	}
+}
+
 func TestNormalize_EmptyInputUsesDeclaredType(t *testing.T) {
 	if got, ok := Normalize(Descriptor{Type: metadata.FieldTypeNumber}, "", nil).(decimal.Decimal); !ok || !got.IsZero() {
 		t.Fatalf("empty number = %T(%v)", Normalize(Descriptor{Type: metadata.FieldTypeNumber}, "", nil), Normalize(Descriptor{Type: metadata.FieldTypeNumber}, "", nil))

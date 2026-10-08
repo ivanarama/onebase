@@ -130,6 +130,18 @@ C:\onebase\bin\onebase.exe ibases list      # посмотреть ID базы
 C:\onebase\bin\onebase.exe service install --id <ID-базы>
 ```
 
+По умолчанию служба слушает только `127.0.0.1`. Для доступа из локальной сети
+укажите `--host 0.0.0.0`. При установке через `--id` интерфейс берётся из
+реестра баз; явно переданный `--host` имеет приоритет:
+
+```powershell
+C:\onebase\bin\onebase.exe service install --id <ID-базы> --host 0.0.0.0
+```
+
+Сетевой запуск не ослабляет защиту bootstrap: если пользователи ещё не созданы,
+сервер откажется слушать внешний интерфейс. Сначала настройте администратора на
+loopback, затем переустановите службу с сетевым интерфейсом.
+
 Служба стартует автоматически при загрузке сервера. Управление:
 
 ```powershell
@@ -140,8 +152,18 @@ C:\onebase\bin\onebase.exe service uninstall --name onebase-docflow
 ```
 
 > Если предпочитаете без реестра — можно указать параметры явно:
-> `service install --db "postgres://…" --port 8080 --name onebase-docflow`
-> или `service install --sqlite C:\onebase\data\docflow.db --project C:\onebase\project --config-source file --port 8080 --name onebase-docflow`.
+> `service install --db "postgres://…" --host 0.0.0.0 --port 8080 --name onebase-docflow`
+> или `service install --sqlite C:\onebase\data\docflow.db --project C:\onebase\project --config-source file --host 0.0.0.0 --port 8080 --name onebase-docflow`.
+
+### Каталог файлов PostgreSQL
+
+В дисковом режиме вложения и блобы PostgreSQL по умолчанию лежат в
+`<home>/.onebase/files/<имя-базы>`. У системной учётной записи home должен
+существовать и быть каталогом. Если служба намеренно работает без home, задайте
+ей абсолютный путь к отдельному постоянному каталогу через
+`ONEBASE_FILES_DIR` и заранее выдайте учётной записи права на него. Временный
+каталог ОС для этой цели не используйте: его очистка оставит в БД метаданные без
+файлов.
 
 ### Параметры безопасности окружения
 

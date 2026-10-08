@@ -27,9 +27,6 @@ type QueryMaskPlan struct {
 	// byField — решения по именам полей для проекции «*»: имена колонок
 	// результата там совпадают с колонками таблиц.
 	byField map[string]FieldDecision
-	// deniedReason уточняет причину отказа в тексте ошибки. Пусто — обычный
-	// отказ «поле под маской в отборе/агрегате».
-	deniedReason string
 }
 
 // Empty сообщает, что маскировать нечего и запрос разрешён.
@@ -40,7 +37,7 @@ func (p QueryMaskPlan) Empty() bool {
 // QueryMaskPlanFor строит план маскирования результата скомпилированного
 // запроса для пользователя u. lookup разрешает метаданные объекта-источника.
 func QueryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name string) *metadata.Entity) QueryMaskPlan {
-	masked, columns, fieldColumns := maskedSourceFields(u, res.Sources, lookup)
+	masked, columns := maskedSourceFields(u, res.Sources, lookup)
 	if len(masked) == 0 {
 		return QueryMaskPlan{}
 	}
@@ -91,16 +88,6 @@ func QueryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name str
 			return QueryMaskPlan{Denied: denied}
 		}
 	}
-	// Одно и то же имя выходной колонки у двух элементов выборки делает
-	// сопоставление «колонка → политика» неоднозначным. Движок разводит такие
-	// колонки по-своему: SQLite в обёртке пагинации переименовывает дубль в
-	// `телефон:1`, а карта строки схлопывает точный дубль в один ключ. Маска
-	// адресует одно имя и ложится на одну колонку — вторая уходит клиенту
-	// сырой. Частично замаскированную выдачу отдавать нельзя, поэтому
-	// отказываем до выполнения запроса.
-	if denied, ambiguous := ambiguousMaskedOutput(res.Projection, masked, columns, fieldColumns); ambiguous {
-		return QueryMaskPlan{Denied: denied, deniedReason: "имя колонки встречается в выборке дважды"}
-	}
 	plan := QueryMaskPlan{}
 	for _, col := range res.Projection.Columns {
 		if col.Star {
@@ -133,37 +120,47 @@ func QueryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name str
 // Стратегия hide обнуляет значение, а не удаляет ключ: форма таблицы отчёта
 // (колонки, группировки, выгрузка) не должна меняться от роли читателя.
 func (p QueryMaskPlan) Apply(rows []map[string]any) error {
+	_, err := p.ApplyTracked(rows)
+	return err
+}
+
+// ApplyTracked маскирует строки результата и возвращает точные имена колонок,
+// к которым применено решение для каждой строки. Следующий слой обязан отличать
+// защищённый nil от обычного SQL NULL: повторная типизация после hide превратила
+// бы скрытое число в 0, а пустую ссылку — в правдоподобный объект ссылки.
+func (p QueryMaskPlan) ApplyTracked(rows []map[string]any) ([]map[string]struct{}, error) {
 	if p.Denied != "" {
-		if p.deniedReason != "" {
-			return fmt.Errorf("запрос отклонён: защищённое поле %q — %s", p.Denied, p.deniedReason)
-		}
-		return fmt.Errorf("запрос отклонён: защищённое поле %q", p.Denied)
+		return nil, fmt.Errorf("запрос отклонён: защищённое поле %q", p.Denied)
 	}
 	if len(rows) == 0 || p.Empty() {
-		return nil
+		return nil, nil
+	}
+	tracked := make([]map[string]struct{}, len(rows))
+	mark := func(row int, key string) {
+		if tracked[row] == nil {
+			tracked[row] = map[string]struct{}{}
+		}
+		tracked[row][key] = struct{}{}
 	}
 	for column, dec := range p.byColumn {
-		key, count := matchRowKeyStrict(rows[0], column)
-		if count == 0 {
-			return fmt.Errorf("защищённая колонка %q не найдена в результате запроса", column)
+		key, ok := matchRowKey(rows[0], column)
+		if !ok {
+			return nil, fmt.Errorf("защищённая колонка %q не найдена в результате запроса", column)
 		}
-		if count > 1 {
-			// Два фактических ключа с одним именем: какой из них соответствует
-			// разобранной колонке, доказать нечем.
-			return fmt.Errorf("защищённая колонка %q встречается в результате запроса дважды", column)
-		}
-		for _, row := range rows {
+		for i, row := range rows {
 			applyDecision(row, key, dec)
+			mark(i, key)
 		}
 	}
 	for field, dec := range p.byField {
-		for _, row := range rows {
+		for i, row := range rows {
 			if key, ok := matchRowKey(row, field); ok {
 				applyDecision(row, key, dec)
+				mark(i, key)
 			}
 		}
 	}
-	return nil
+	return tracked, nil
 }
 
 func applyDecision(row map[string]any, key string, dec FieldDecision) {
@@ -175,16 +172,13 @@ func applyDecision(row map[string]any, key string, dec FieldDecision) {
 }
 
 // maskedSourceFields собирает решения по всем источникам запроса: по логическому
-// имени поля и, отдельно, по имени колонки таблицы (для проекции «*»). Третья
-// карта — обратная: логическое имя поля → его физические колонки, чтобы явную
-// проекцию ссылки сопоставлять с той же колонкой, которую покрывает «*».
-func maskedSourceFields(u *auth.User, sources []query.SourceRef, lookup func(kind, name string) *metadata.Entity) (byField, byColumn map[string]FieldDecision, fieldColumns map[string][]string) {
+// имени поля и, отдельно, по имени колонки таблицы (для проекции «*»).
+func maskedSourceFields(u *auth.User, sources []query.SourceRef, lookup func(kind, name string) *metadata.Entity) (byField, byColumn map[string]FieldDecision) {
 	if u == nil || (u.IsAdmin && !MaskAdmin()) {
-		return nil, nil, nil
+		return nil, nil
 	}
 	byField = map[string]FieldDecision{}
 	byColumn = map[string]FieldDecision{}
-	fieldColumns = map[string][]string{}
 	put := func(m map[string]FieldDecision, key string, dec FieldDecision) {
 		key = fieldKey(key)
 		if prev, ok := m[key]; ok && !lessRestrictive(prev, dec) {
@@ -200,86 +194,16 @@ func maskedSourceFields(u *auth.User, sources []query.SourceRef, lookup func(kin
 		for field, dec := range FieldDecisions(u, src.Kind, src.Name, meta) {
 			put(byField, field, dec)
 			if f, ok := concreteMetaField(meta, field); ok {
-				col := metadata.ColumnName(f)
-				put(byColumn, col, dec)
-				fk := fieldKey(field)
-				if !containsString(fieldColumns[fk], fieldKey(col)) {
-					fieldColumns[fk] = append(fieldColumns[fk], fieldKey(col))
-				}
+				put(byColumn, metadata.ColumnName(f), dec)
 			} else {
 				put(byColumn, field, dec)
 			}
 		}
 	}
 	if len(byField) == 0 {
-		return nil, nil, nil
+		return nil, nil
 	}
-	return byField, byColumn, fieldColumns
-}
-
-func containsString(list []string, v string) bool {
-	for _, s := range list {
-		if s == v {
-			return true
-		}
-	}
-	return false
-}
-
-// ambiguousMaskedOutput ищет защищённое имя выходной колонки, встречающееся в
-// списке выборки больше одного раза. «*» считается за все защищённые колонки
-// своих источников, поэтому «ВЫБРАТЬ *, Телефон» тоже попадает сюда. Элемент
-// выборки учитывается и под выходным именем, и под физическими колонками своих
-// полей: защищённая ссылка выводится под логическим именем (`секрет`), а «*» и
-// auto-JOIN адресуют ту же колонку по физическому имени (`секрет_id`) — без
-// сопоставления их дубль не обнаруживался бы вовсе (круг 4 #1428). Дубль
-// НЕзащищённого имени к отказу не ведёт: маску он не трогает.
-func ambiguousMaskedOutput(p query.ProjectionPlan, masked, columns map[string]FieldDecision, fieldColumns map[string][]string) (string, bool) {
-	counts := map[string]int{}
-	protected := map[string]bool{}
-	for _, col := range p.Columns {
-		if col.Star {
-			for name := range columns {
-				key := fieldKey(name)
-				counts[key]++
-				protected[key] = true
-			}
-			continue
-		}
-		if col.Output == "" {
-			continue
-		}
-		_, isProtected := mostRestrictive(masked, col.Fields)
-		seen := map[string]bool{}
-		add := func(key string) {
-			if seen[key] {
-				return
-			}
-			seen[key] = true
-			counts[key]++
-			if isProtected {
-				protected[key] = true
-			}
-		}
-		add(fieldKey(col.Output))
-		for _, field := range col.Fields {
-			for _, colKey := range fieldColumns[fieldKey(field)] {
-				add(colKey)
-			}
-		}
-	}
-	denied := ""
-	for key := range protected {
-		if counts[key] < 2 {
-			continue
-		}
-		// Имя выбирается детерминированно, чтобы текст отказа не плясал от
-		// обхода карты.
-		if denied == "" || key < denied {
-			denied = key
-		}
-	}
-	return denied, denied != ""
+	return byField, byColumn
 }
 
 // firstMaskedField возвращает первое из полей, на которое стоит маска.

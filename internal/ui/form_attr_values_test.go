@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/onec_forms"
 	"github.com/ivantit66/onebase/internal/runtime"
 )
 
@@ -114,6 +115,41 @@ func TestFormEvent_StringAttrRoundTrip(t *testing.T) {
 	}
 	if got != "привет!" {
 		t.Fatalf("мутация обработчика не вернулась: %v", got)
+	}
+}
+
+// Канонический decimal(15) из импорта 1С и дата с runtime-префиксом проходят
+// через настоящий form-event и видны DSL типизированными, а не строками.
+func TestFormEvent_ImportedDecimalAndDatePrefixKeepRuntimeTypes(t *testing.T) {
+	s, ent, _ := attrEventServer(t, `
+Процедура ПолеТипыПриИзменении()
+	Сообщить(ТипЗнч(Объект.Сумма) + "/" + ТипЗнч(Объект.Период));
+КонецПроцедуры
+`)
+	importedType := onec_forms.Type1CToOneBase("xs:decimal", 15, 0, "")
+	if importedType != "decimal(15)" {
+		t.Fatalf("канонический импорт xs:decimal = %q, ожидался decimal(15)", importedType)
+	}
+	form := ent.Forms[0]
+	form.Attributes = append(form.Attributes,
+		&metadata.FormAttribute{Name: "Сумма", TypeRef: importedType, Save: false},
+		&metadata.FormAttribute{Name: "Период", TypeRef: "dateSuffix", Save: false},
+	)
+	form.Elements = append(form.Elements, &metadata.FormElement{
+		Kind: metadata.FormElementField, Name: "ПолеТипы", DataPath: "Сумма",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnChange: "ПолеТипыПриИзменении"},
+	})
+
+	rec := executeFormEvent(t, s, ent, url.Values{
+		"_element":     {"ПолеТипы"},
+		"_event":       {"ПриИзменении"},
+		"Наименование": {"Тест"},
+		"Сумма":        {"12,50"},
+		"Период":       {"2026-09-09"},
+	})
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	if len(resp.Messages) != 1 || resp.Messages[0] != "Число/Дата" {
+		t.Fatalf("runtime-типы реквизитов формы = %v, ожидались [Число/Дата]", resp.Messages)
 	}
 }
 
