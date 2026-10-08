@@ -4892,6 +4892,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			// (... КАК Истина ... УПОРЯДОЧИТЬ ПО Истина) и при одноимённом поле
 			// источника.
 			_, isAlias := tr.aliases[lower]
+			isAlias = isAlias || tr.unionOutputAlias(lower)
 			if !prevDot && !prevAlias && !nextIsDot && !ownField && !isAlias {
 				if lit, ok := boolLiteralSQL(lower, dialectName(tr.opts.Dialect)); ok {
 					tr.emit(lit)
@@ -5040,6 +5041,8 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					// как раньше — в том числе рядом с оператором:
 					// «ГДЕ Подобно ПОДОБНО "а%"».
 					tr.emit("LIKE")
+				} else if !prevDot && !nextIsDot && tr.unionOutputAlias(lower) {
+					tr.emit(lower)
 				} else if rd := tr.findRefDim(lower); rd != nil && !prevDot {
 					if nextIsDot {
 						if err := tr.assertSingleHopNavigation(rd); err != nil {
@@ -5078,7 +5081,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 				} else if col, ok := tr.colMap[lower]; ok && !prevDot {
 					tr.emitOwnColumn(col, lower)
 				} else if prevDot {
-					if col, refEntity, fieldType := tr.refAttrColumnForPrevQualifier(tr.pos-1, lower); col != "" {
+					if col, fieldType, ok := tr.qualifiedSourceColumn(tr.pos-1, lower); ok && !nextIsDot {
+						tr.emitRefAttrColumn(col, fieldType)
+					} else if col, refEntity, fieldType := tr.refAttrColumnForPrevQualifier(tr.pos-1, lower); col != "" {
 						// После точки реквизит принадлежит сущности квалификатора,
 						// даже если у основного источника есть одноимённое поле.
 						tr.emitRefAttrColumn(col, fieldType)
