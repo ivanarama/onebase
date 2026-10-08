@@ -299,12 +299,12 @@ func TestPageManagedForm_ReadOnlyRefDisablesPickerActions(t *testing.T) {
 	}
 	// Кнопка подбора не рисуется вовсе: серая «…» рядом с готовым значением
 	// заставляет читать его как незаполненный ввод.
-	if strings.Contains(html, `data-ob-ref-picker="ref-Клиент"`) {
+	if strings.Contains(html, `data-ob-ref-picker="closest"`) {
 		t.Errorf("read-only ref не должен нести кнопку подбора:\n%s", html)
 	}
 	// А «Открыть карточку» остаётся рабочей: просмотр связанного объекта —
 	// не редактирование, и именно на нередактируемом поле он нужен чаще всего.
-	cur := strings.Index(html, `data-ob-ref-current="ref-Клиент"`)
+	cur := strings.Index(html, `data-ob-ref-current="closest"`)
 	if cur < 0 {
 		t.Fatalf("кнопка «Открыть карточку» потеряна:\n%s", html)
 	}
@@ -315,7 +315,7 @@ func TestPageManagedForm_ReadOnlyRefDisablesPickerActions(t *testing.T) {
 	// Пустое значение: открывать нечего — кнопки нет, и заглушка выбора не
 	// подписана «— выбрать —», иначе готовое к чтению поле выглядит как забытый ввод.
 	empty := render("")
-	if strings.Contains(empty, `data-ob-ref-current="ref-Клиент"`) {
+	if strings.Contains(empty, `data-ob-ref-current="closest"`) {
 		t.Errorf("на пустом readonly-поле кнопка «Открыть карточку» не нужна:\n%s", empty)
 	}
 	if strings.Contains(empty, "— выбрать —") {
@@ -657,7 +657,7 @@ func TestPageManagedForm_EditableRefRendersMagnifier(t *testing.T) {
 		t.Fatalf("execute managed-element: %v", err)
 	}
 	html := buf.String()
-	want := `data-ob-ref-current="ref-Клиент"`
+	want := `data-ob-ref-current="closest"`
 	if !strings.Contains(html, want) {
 		t.Errorf("на редактируемой форме пустое поле-ссылка обязано содержать кнопку перехода в карточку %q:\n%s", want, html)
 	}

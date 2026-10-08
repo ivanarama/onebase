@@ -24,6 +24,12 @@ chmod -R u+w "$WORK" 2>/dev/null || true
 rm -rf "$WORK"
 mkdir -p "$WORK"
 
+# Exercise hidden_when through the real loader/renderer without adding
+# test-only documents to examples/trade.
+cp -R "$PROJ" "$WORK/project"
+cp -R "$REPO/e2e/fixtures/." "$WORK/project/"
+PROJ="$WORK/project"
+
 # Собираем с обычным HOME, чтобы переиспользовать общий кеш модулей.
 OB="${OB_BIN:-$WORK/onebase}"
 if [ ! -x "$OB" ]; then

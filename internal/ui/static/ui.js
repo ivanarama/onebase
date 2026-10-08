@@ -4064,8 +4064,8 @@ function obRefFilterValues(sel) {
     var item = spec[key] || {};
     var value = item.value || '';
     if (item.from) {
-      var src = scope.querySelector('[name="' + (window.CSS && CSS.escape ? CSS.escape(item.from) : item.from) + '"]');
-      if (src) value = src.value || '';
+      var sourceValue = obRefSourceValue(scope, item.from);
+      if (sourceValue !== null) value = sourceValue;
     }
     // Ключ кладём даже с пустым значением: сервер по нему отличает «владельца
     // ещё не выбрали» (список пуст) от «на этой форме владельца не спрашивают»
@@ -4074,6 +4074,39 @@ function obRefFilterValues(sel) {
     any = true;
   }
   return any ? out : null;
+}
+
+// Read the first value that would be submitted for this name, rather than
+// RadioNodeList.value (which only works for radios) or the first DOM copy.
+// A hidden_when copy is disabled by its fieldset; a readonly select instead
+// submits its enabled hidden mirror. null means the source is absent, so the
+// legacy owner filter can still use the value supplied by the server.
+function obRefSourceValue(scope, name) {
+  if (!scope || !name) return null;
+  var controls;
+  if (scope.elements && scope.elements.namedItem) {
+    var named = scope.elements.namedItem(name);
+    // Select elements have a length too; only a RadioNodeList is a group.
+    controls = !named ? [] : ((named.tagName || named.nodeType === 1 ||
+      typeof named.length !== 'number') ? [named] : named);
+  } else if (scope.getElementsByName) {
+    controls = scope.getElementsByName(name);
+  } else {
+    var escaped = window.CSS && CSS.escape ? CSS.escape(name) : name;
+    controls = scope.querySelectorAll('[name="' + escaped + '"]');
+  }
+  if (!controls || !controls.length) return null;
+  for (var i = 0; i < controls.length; i++) {
+    var control = controls[i];
+    if (control.disabled) continue;
+    if (control.matches ? control.matches(':disabled') :
+        control.closest && control.closest('fieldset[disabled]')) continue;
+    var type = String(control.type || '').toLowerCase();
+    if ((type === 'radio' || type === 'checkbox') && !control.checked) continue;
+    if (type === 'button' || type === 'submit' || type === 'reset' || type === 'file') continue;
+    if (control.value != null) return String(control.value);
+  }
+  return '';
 }
 
 // obRefFilterParam — тот же отбор строкой для запроса /ui/_ref-options.
@@ -4160,8 +4193,7 @@ function refContextForRequest(sel) {
   Object.keys(paths).forEach(function (name) {
     var parts = String(paths[name] == null ? '' : paths[name]).split('.');
     var fieldName = parts[parts.length - 1];
-    var control = fieldName ? sel.form.elements.namedItem(fieldName) : null;
-    context[name] = control && control.value != null ? String(control.value) : '';
+    context[name] = obRefSourceValue(sel.form, fieldName) || '';
   });
   return JSON.stringify(context);
 }
@@ -4230,13 +4262,7 @@ function obRefChoiceSnapshot(sel) {
   var paths = Object.keys(declared).sort();
   paths.forEach(function (path) {
     var name = declared[path];
-    var control = null;
-    if (sel.form && sel.form.elements && name) control = sel.form.elements.namedItem(name);
-    if (!control && name) {
-      var controls = document.getElementsByName(name);
-      if (controls && controls.length) control = controls[0];
-    }
-    values[path] = control && control.value != null ? String(control.value) : '';
+    values[path] = obRefSourceValue(sel.form || document, name) || '';
   });
   var query = '&form_entity=' + encodeURIComponent(ctx.form_entity) +
     // Форма обработки (#1840): вид владельца — из серверного контекста.
@@ -4677,8 +4703,7 @@ function openRefPicker(selOrId) {
         var bindings = JSON.parse(refContextRaw);
         Object.keys(bindings).forEach(function (name) {
           var parts = String(bindings[name]).split('.');
-          var control = sel.form && sel.form.elements ? sel.form.elements.namedItem(parts[parts.length - 1]) : null;
-          contextValues[name] = control && control.value != null ? String(control.value) : '';
+          contextValues[name] = obRefSourceValue(sel.form, parts[parts.length - 1]) || '';
         });
       } catch (e) {}
       fetchOptions.body = JSON.stringify({

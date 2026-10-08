@@ -26,7 +26,11 @@ function runtime(cfg, controls = []) {
       const match = /^\[name="([^"]+)"\]$/.exec(selector);
       return match ? this.controls.find((el) => el.name === match[1]) || null : null;
     },
-    querySelectorAll() { return []; },
+    // applyValues обходит все копии реквизита с этим name (#1759).
+    querySelectorAll(selector) {
+      const match = /^\[name="([^"]+)"\]$/.exec(selector);
+      return match ? this.controls.filter((el) => el.name === match[1]) : [];
+    },
   };
   const document = {
     getElementById(id) { return id === 'main-form' ? form : null; },

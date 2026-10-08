@@ -32,6 +32,11 @@ function applyValues(controls) {
       const match = selector.match(/^\[name="([^"]+)"\]$/);
       return match ? (controls[match[1]] || null) : null;
     },
+    // applyValues раздаёт значение всем копиям реквизита (#1759).
+    querySelectorAll(selector) {
+      const match = selector.match(/^\[name="([^"]+)"\]$/);
+      return match && controls[match[1]] ? [controls[match[1]]] : [];
+    },
   };
   const document = {getElementById(id) { return id === 'main-form' ? form : null; }};
   return new Function('document', 'window',

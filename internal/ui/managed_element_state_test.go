@@ -115,6 +115,73 @@ func TestУсловноеСкрытие_ЭлементНеОтрисован(t *
 	}
 }
 
+func TestУсловноеСкрытие_ПолеВводаОстаётсяВDOM(t *testing.T) {
+	// ПолеВвода с hidden_when должно рендериться с display:none, а не
+	// пропускаться: иначе applyElementStates не может показать его при смене
+	// условия (например, при переключении радиокнопки).
+	ent := заявкаСоСтадией()
+	form := формаСУсловиями(ent,
+		&metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеУлица",
+			DataPath: "Объект.Улица", TitleMap: map[string]string{"ru": "Улица"},
+			Required:   true,
+			HiddenWhen: `СтадияОформления = "Принята"`,
+		},
+		&metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеУлицаВидимо",
+			DataPath: "Объект.Улица", TitleMap: map[string]string{"ru": "Улица (видимая)"},
+		})
+
+	// Извлекаем обёртку элемента по data-ob-el.
+	извлечьЭлемент := func(html, name string) string {
+		marker := `data-ob-el="` + name + `"`
+		i := strings.Index(html, marker)
+		if i < 0 {
+			return ""
+		}
+		j := max(strings.LastIndex(html[:i], "<fieldset"), strings.LastIndex(html[:i], "<div"))
+		end := strings.IndexByte(html[i:], '>')
+		if j < 0 || end < 0 {
+			return ""
+		}
+		return html[j : i+end+1]
+	}
+
+	// Когда условие ложно — поле видно, без display:none на элементе.
+	черновик := отрисоватьСУсловиями(t, ent, form, map[string]string{
+		"Улица": "Ленина", "СтадияОформления": "НаОформлении"})
+	блокЧерновик := извлечьЭлемент(черновик, "ПолеУлица")
+	if блокЧерновик == "" {
+		t.Fatalf("поле не отрисовано при ложном условии")
+	}
+	if strings.Contains(блокЧерновик, "display:none") {
+		t.Errorf("поле не должно быть скрыто при ложном условии: %s", блокЧерновик)
+	}
+	if strings.Contains(блокЧерновик, " disabled") {
+		t.Errorf("видимое поле должно отправляться: %s", блокЧерновик)
+	}
+
+	// Когда условие истинно — поле В DOM, но с display:none.
+	принята := отрисоватьСУсловиями(t, ent, form, map[string]string{
+		"Улица": "Ленина", "СтадияОформления": "Принята"})
+	блокПринята := извлечьЭлемент(принята, "ПолеУлица")
+	if блокПринята == "" {
+		t.Fatalf("поле должно быть в DOM даже при истинном hidden_when")
+	}
+	if !strings.Contains(блокПринята, "display:none") {
+		t.Errorf("поле должно быть скрыто (display:none) при истинном hidden_when: %s", блокПринята)
+	}
+	if !strings.Contains(блокПринята, " disabled") {
+		t.Errorf("скрытое поле не должно отправляться и проходить native required: %s", блокПринята)
+	}
+	if !strings.Contains(принята, `name="Улица"`) || strings.Count(принята, `name="Улица"`) != 2 {
+		t.Fatalf("ожидались два контрола одного реквизита")
+	}
+	if блокВидимый := извлечьЭлемент(принята, "ПолеУлицаВидимо"); блокВидимый == "" || strings.Contains(блокВидимый, " disabled") {
+		t.Errorf("второе представление должно оставаться успешным: %s", блокВидимый)
+	}
+}
+
 func TestСостоянияЭлементов_СодержатЛожныеУсловия(t *testing.T) {
 	// В карте состояний должен присутствовать КАЖДЫЙ элемент с объявленным
 	// условием, в том числе с ложным: ответ события формы переносит карты на

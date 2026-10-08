@@ -84,10 +84,23 @@ elements:
 			t.Fatalf("в форме нет ссылочного поля %s:\n%.1200s", field, html)
 		}
 	}
-	if !strings.Contains(html, `data-ob-ref-current="ref-Клиент"`) {
+	// Кнопка ищет поле в своей строке (data-ob-ref-current="closest", #1759):
+	// у копий реквизита id совпадает. Поэтому смотрим строку самого поля.
+	fieldRow := func(field string) string {
+		start := strings.Index(html, `id="ref-`+field+`"`)
+		if start < 0 {
+			return ""
+		}
+		end := strings.Index(html[start:], "managed-control-row")
+		if end < 0 {
+			end = len(html) - start
+		}
+		return html[start : start+end]
+	}
+	if !strings.Contains(fieldRow("Клиент"), `data-ob-ref-current=`) {
 		t.Error("у обычной ссылки пропала кнопка «Открыть карточку»")
 	}
-	if strings.Contains(html, `data-ob-ref-current="ref-Ответственный"`) {
+	if strings.Contains(fieldRow("Ответственный"), `data-ob-ref-current=`) {
 		t.Error("у reference:_users нарисована кнопка карточки, которой нет")
 	}
 
