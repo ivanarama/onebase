@@ -1190,6 +1190,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// Решается по составу маски, а не отдельным ключом: «00.00.00» — это
 		// заведомо цифры, и заставлять автора объявлять это второй раз незачем.
 		"inputMaskDigitsOnly": metadata.InputMaskDigitsOnly,
+		"inputAutocomplete":   inputAutocomplete,
 		"wcell":               widgetCell,
 		"echartsJSON":         echartsJSON,
 		"stageChartJSON":      stageChartJSON,
@@ -4235,3 +4236,19 @@ const tplPageCustom = `
 </body></html>
 {{end}}
 `
+
+// inputAutocomplete — значение autocomplete текстового поля управляемой формы.
+// Обычно "off" (#595). Поле с маской ввода — почти всегда телефон, а
+// автозаполнение Яндекс Браузера на "off" не смотрит и предлагает сохранённые
+// номера из своего профиля. "one-time-code" по стандарту HTML — поле кода
+// подтверждения: браузер может подставить в него пришедший одноразовый код
+// (так делает Safari), но не сохранённые телефоны. Проверено вручную: в Яндекс
+// Браузере подсказки телефонов на таком поле пропадают. Это обход для
+// телефонов, а не гарантия, что подсказок нет ни в одном браузере;
+// "new-password" тоже гасит подсказки, но зовёт менеджер паролей.
+func inputAutocomplete(el *metadata.FormElement) string {
+	if el != nil && el.InputMask != "" {
+		return "one-time-code"
+	}
+	return "off"
+}
