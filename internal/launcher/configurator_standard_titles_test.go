@@ -105,10 +105,11 @@ func TestSaveFields_StandardTitlesPreserveUnsubmittedLanguages(t *testing.T) {
 								t.Fatal("visible English control missing")
 							}
 							form.Set("numerator_enabled", "1")
-							if action == "edit" {
+							switch action {
+							case "edit":
 								form.Set("numerator_field_titles.en", "Edited name")
 								wantTitles["en"] = "Edited name"
-							} else if action == "clear" {
+							case "clear":
 								form.Set("numerator_field_titles.en", "  ")
 								delete(wantTitles, "en")
 							}
