@@ -1,14 +1,22 @@
 // Реальные DOM-события и vendored SlickGrid: подмена navigate/commit не ловит
 // гонку capture-обработчика с редактором ссылки и implicit submit браузера.
-const { test, expect } = require('@playwright/test');
+const { test: base, expect } = require('@playwright/test');
 const path = require('node:path');
 
 const root = path.resolve(__dirname, '../..');
 
+// Ошибки runtime после действий клавиатуры тоже должны провалить сценарий.
+const test = base.extend({
+  runtimeErrors: [async ({ page }, use) => {
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await use();
+    expect(errors).toEqual([]);
+  }, { auto: true }],
+});
+
 async function formFixture(page, { legacy = false, hiddenGrid = false, readonlyPlacement = false,
   domTable = false, fieldAfterDOMTable = false } = {}) {
-  const errors = [];
-  page.on('pageerror', error => errors.push(error.message));
   await page.route('**/__enter_navigation_fixture', route => route.fulfill({
     contentType: 'text/html',
     body: '<!doctype html><html><head><meta charset="utf-8"></head><body></body></html>',
@@ -40,7 +48,11 @@ async function formFixture(page, { legacy = false, hiddenGrid = false, readonlyP
     <div ${hiddenGrid ? 'style="display:none"' : ''}>${host('grid')}</div>
     <input type="hidden" name="tp_json.Rows" id="tp-json-Rows">
     <input id="after"><textarea id="area"></textarea><button id="save" type="submit">Save</button>
-  </form>`);
+  </form>
+  <script type="application/json" id="ob-managed-config">${JSON.stringify({
+    kind: 'catalog', entity: 'Items', url: '/ui/catalog/Items/form-event',
+    docId: '', autoOpen: false, formAttrs: [], initialDirty: false,
+  })}</script>`);
   await page.evaluate(() => {
     window.testSubmits = 0;
     document.getElementById('main-form').addEventListener('submit', event => {
@@ -49,6 +61,7 @@ async function formFixture(page, { legacy = false, hiddenGrid = false, readonlyP
     });
   });
   await page.route('**/ui/_ref-options/Items?*', route => route.fulfill({ json: [] }));
+  await page.route('**/ui/catalog/Items/form-event', route => route.fulfill({ json: { values: {} } }));
   await page.addStyleTag({ path: path.join(root, 'internal/webassets/slickgrid/slick.grid.css') });
   await page.addScriptTag({ path: path.join(root, 'internal/ui/static/ui.js') });
   for (const script of ['core', 'interactions', 'grid', 'dataview', 'editors', 'formatters']) {
@@ -56,7 +69,6 @@ async function formFixture(page, { legacy = false, hiddenGrid = false, readonlyP
   }
   await page.addScriptTag({ path: path.join(root, 'internal/ui/static/managed.js') });
   await expect.poll(() => page.evaluate(() => !!window._obGrids.Rows)).toBe(true);
-  expect(errors).toEqual([]);
 }
 
 async function gridState(page) {
