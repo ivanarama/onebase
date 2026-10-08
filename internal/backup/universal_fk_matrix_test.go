@@ -227,9 +227,12 @@ func archiveWithMissingFKTarget(t *testing.T, data []byte, target string) []byte
 			t.Fatal(err)
 		}
 		body, err := io.ReadAll(r)
-		r.Close()
+		closeErr := r.Close()
 		if err != nil {
 			t.Fatal(err)
+		}
+		if closeErr != nil {
+			t.Fatal(closeErr)
 		}
 		if entry.Name == "data/a.jsonl" {
 			if !bytes.Contains(body, []byte(target)) {
