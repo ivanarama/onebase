@@ -554,6 +554,7 @@ func managedFormSchema() map[string]any {
 				"type":  "array",
 				"items": map[string]any{"$dynamicRef": "#formElement"},
 			},
+			"ref_card_button": boolSchema("Кнопка «Открыть карточку» у этого ссылочного поля: явное значение сильнее ключей формы ref_card_button и ref_card_button_admin_only"),
 			"choice_filter": map[string]any{
 				"type":        "array",
 				"minItems":    1,
@@ -570,8 +571,15 @@ func managedFormSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": true,
 		"properties": map[string]any{
-			"schema":   stringSchema("Версия схемы, сейчас onebase.form/v1"),
-			"form":     map[string]any{"type": "object", "additionalProperties": true},
+			"schema": stringSchema("Версия схемы, сейчас onebase.form/v1"),
+			"form": map[string]any{
+				"type":                 "object",
+				"additionalProperties": true,
+				"properties": map[string]any{
+					"ref_card_button":            boolSchema("false — убрать кнопку «Открыть карточку» у всех ссылочных полей формы"),
+					"ref_card_button_admin_only": boolSchema("true — кнопку «Открыть карточку» видит только администратор; настройка интерфейса, не защита"),
+				},
+			},
 			"elements": arrayOf(element),
 		},
 	}

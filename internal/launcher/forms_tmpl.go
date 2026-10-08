@@ -1232,6 +1232,23 @@ function renderFormProps(panel) {
   // События формы и штатные действия.
   addEventsRows(panel, formEvents(), f.events || {}, 'Форма');
   addFormActionsSection(panel, f);
+  addFormRefCardSection(panel, f);
+}
+// Кнопка «Открыть карточку» (🔍) у ссылочных полей (#1876). Ключ, совпадающий
+// с умолчанием, удаляется, а не пишется: «показывать» = нет ref_card_button,
+// «всем» = нет ref_card_button_admin_only. Явный ref_card_button у отдельного
+// поля сильнее обоих и правится в YAML.
+function addFormRefCardSection(panel, f) {
+  var hd = document.createElement('div'); hd.className = 'prop-row prop-section'; hd.textContent = 'Кнопка «Открыть карточку»';
+  panel.appendChild(hd);
+  addCheckRaw(panel, 'Показывать у ссылочных полей', f.refCardButton !== false, function (ch) {
+    if (ch) editOp({ op: 'delProp', node: 'form', key: 'ref_card_button' }, true);
+    else setProp('ref_card_button', 'false');
+  });
+  addCheckRaw(panel, 'Только администратору', !!f.refCardAdminOnly, function (ch) {
+    if (ch) setProp('ref_card_button_admin_only', 'true');
+    else editOp({ op: 'delProp', node: 'form', key: 'ref_card_button_admin_only' }, true);
+  });
 }
 // Штатные действия формы (B3). Рантайм читает только actions.delete.visible —
 // показываем галочку для кнопки «Удалить»; снятие пишет visible:false.

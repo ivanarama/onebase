@@ -439,6 +439,17 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return rows
 		},
+		// hideRefCard — убрать ли у поля кнопку «Открыть карточку» (🔍): явный
+		// ref_card_button поля решает сам, иначе — решение формы (HideRefCard из
+		// prepareManagedFormData: ref_card_button: false или «только
+		// администратору» для неадминистратора), #1876.
+		"hideRefCard": func(ctx map[string]any, element *metadata.FormElement) bool {
+			if element != nil && element.RefCardButton != nil {
+				return !*element.RefCardButton
+			}
+			hidden, _ := ctx["HideRefCard"].(bool)
+			return hidden
+		},
 		"choiceDropdownCollapsed": func(element *metadata.FormElement) bool {
 			return element != nil && element.ChoiceDropdown != nil && !*element.ChoiceDropdown
 		},

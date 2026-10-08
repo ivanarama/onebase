@@ -63,6 +63,9 @@ type formInfo struct {
 	Kind    string            `json:"kind"`
 	Events  map[string]string `json:"events"`
 	Actions map[string]bool   `json:"actions"`
+	// Кнопка «Открыть карточку» у ссылочных полей (#1876).
+	RefCardButton    bool `json:"refCardButton"`
+	RefCardAdminOnly bool `json:"refCardAdminOnly"`
 }
 
 // boolProps — свойства элемента, значение которых интерпретируется как bool
@@ -70,6 +73,8 @@ type formInfo struct {
 var boolProps = map[string]bool{
 	"required": true, "readonly": true, "choice": true,
 	"visible": true, "enabled": true, "no_grid": true, "auto_sum": true,
+	// Кнопка «Открыть карточку»: у поля и у формы (#1876).
+	"ref_card_button": true, "ref_card_button_admin_only": true,
 }
 
 // numProps — целочисленные свойства: пишем в YAML числом, а не строкой (иначе
@@ -363,7 +368,8 @@ func applyEditOp(yamlSrc []byte, req editOpRequest) (editOpResult, error) {
 		CanvasHTML: canvas,
 		SelectedID: selected,
 		Model:      model,
-		Form:       formInfo{TitleRU: meta.TitleRU, Kind: meta.Kind, Events: meta.Events, Actions: meta.Actions},
+		Form: formInfo{TitleRU: meta.TitleRU, Kind: meta.Kind, Events: meta.Events, Actions: meta.Actions,
+			RefCardButton: meta.RefCardButton, RefCardAdminOnly: meta.RefCardAdminOnly},
 	}, nil
 }
 
