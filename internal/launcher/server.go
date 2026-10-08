@@ -321,6 +321,9 @@ func (s *Server) ListenAndServe() error {
 		r.Get("/bases/{id}/configurator/file", s.h.configuratorFileRaw) // raw-просмотр файла, issue #132
 		r.Post("/bases/{id}/configurator/app", s.h.configuratorSaveApp)
 		r.Post("/bases/{id}/configurator/subsystem", s.h.configuratorSaveSubsystem)
+		r.Get("/bases/{id}/configurator/navigation", s.h.configuratorNavigation)
+		r.Post("/bases/{id}/configurator/navigation/save", s.h.configuratorNavigationSave)
+		r.Post("/bases/{id}/configurator/navigation/preview", s.h.configuratorNavigationPreview)
 		r.Post("/bases/{id}/configurator/widget", s.h.configuratorSaveWidget)
 		r.Post("/bases/{id}/configurator/widget-delete", s.h.configuratorDeleteWidget)
 		r.Post("/bases/{id}/configurator/widget-preview", s.h.configuratorWidgetPreview)

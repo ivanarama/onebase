@@ -41,6 +41,25 @@ func entityServiceFieldName(name string) bool {
 	}
 }
 
+// formAttrNames lists client-carried scalar form attributes. Entity and service
+// fields already have their own controls and must never get a second carrier.
+func formAttrNames(form *metadata.FormModule, entity *metadata.Entity) []string {
+	if form == nil {
+		return nil
+	}
+	var names []string
+	for _, a := range form.Attributes {
+		if !formAttrIsScalar(a) || a.MainAttribute || entityServiceFieldName(a.Name) {
+			continue
+		}
+		if _, isEntityField := entityFieldByName(entity, a.Name); isEntityField {
+			continue
+		}
+		names = append(names, a.Name)
+	}
+	return names
+}
+
 // typeFormAttrValue приводит строку из формы к типу реквизита. Разбор совпадает
 // с formToFields для полей сущности: пустая строка — nil, дата в трёх раскладках,
 // число через parseFormNumber, «true» для булева.

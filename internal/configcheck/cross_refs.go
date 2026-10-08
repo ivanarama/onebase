@@ -252,6 +252,7 @@ func CheckCrossRefs(proj *project.Project, roles []*auth.Role) []Issue {
 		checkRefs("roles", r.Name, "Роль", keys(r.Permissions.Processors), processors, "обработка")
 	}
 
+	issues = append(issues, checkNavigation(proj, false)...)
 	return issues
 }
 

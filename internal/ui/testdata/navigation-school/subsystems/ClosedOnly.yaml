@@ -1,0 +1,4 @@
+name: ClosedOnly
+title: SECRET_SUBSYSTEM_SENTINEL
+contents:
+  catalogs: [ClosedSentinel]

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -77,6 +78,7 @@ query PipelineHealthSnapshot(
         id
         number
         title
+        body
         url
         createdAt
         updatedAt
@@ -590,6 +592,7 @@ type gqlIssue struct {
 	NodeID    string               `json:"id"`
 	Number    int                  `json:"number"`
 	Title     string               `json:"title"`
+	Body      string               `json:"body"`
 	URL       string               `json:"url"`
 	CreatedAt string               `json:"createdAt"`
 	UpdatedAt string               `json:"updatedAt"`
@@ -610,6 +613,7 @@ func (issue *gqlIssue) UnmarshalJSON(data []byte) error {
 		{"id", &issue.NodeID},
 		{"number", &issue.Number},
 		{"title", &issue.Title},
+		{"body", &issue.Body},
 		{"url", &issue.URL},
 		{"createdAt", &issue.CreatedAt},
 		{"updatedAt", &issue.UpdatedAt},
@@ -817,7 +821,7 @@ func loadPipelineInputsGraphQL(client pipelineGraphQLClient, repo, pullFixture, 
 		return nil, nil, fmt.Errorf("GitHub GraphQL client is required outside pull fixture mode")
 	}
 	if issueFixture != "" {
-		pulls, _, err := loadGraphQLSnapshot(client, repo, true, false)
+		pulls, _, err := loadStableGraphQLSnapshot(client, repo, true, false)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -827,7 +831,25 @@ func loadPipelineInputsGraphQL(client pipelineGraphQLClient, repo, pullFixture, 
 		}
 		return pulls, issues, nil
 	}
-	return loadGraphQLSnapshot(client, repo, true, true)
+	return loadStableGraphQLSnapshot(client, repo, true, true)
+}
+
+// A page count changing is transient queue churn, not permission to accept a
+// partial snapshot. Restart the entire read, at most three times, under one
+// shared query budget. Other failures remain fail-closed without retries.
+type pipelineSnapshotChurn struct{ detail string }
+
+func (err *pipelineSnapshotChurn) Error() string { return err.detail }
+
+func loadStableGraphQLSnapshot(client pipelineGraphQLClient, repo string, includePulls, includeIssues bool) ([]apiPull, []apiIssue, error) {
+	bounded := &limitedPipelineGraphQLClient{delegate: client}
+	for attempt := 0; ; attempt++ {
+		pulls, issues, err := loadGraphQLSnapshot(bounded, repo, includePulls, includeIssues)
+		var churn *pipelineSnapshotChurn
+		if err == nil || attempt == 2 || !errors.As(err, &churn) {
+			return pulls, issues, err
+		}
+	}
 }
 
 func readPullFixture(path string) ([]apiPull, error) {
@@ -838,6 +860,23 @@ func readPullFixture(path string) ([]apiPull, error) {
 	var pulls []apiPull
 	if err := json.Unmarshal(data, &pulls); err != nil {
 		return nil, fmt.Errorf("decode pull fixture: %w", err)
+	}
+	// apiPull.Comments is excluded from ordinary JSON because the REST pulls
+	// endpoint exposes "comments" as a count. Offline fixtures may include an
+	// array to exercise the same review routing as a live GraphQL snapshot.
+	var comments []struct {
+		Comments json.RawMessage `json:"comments"`
+	}
+	if err := json.Unmarshal(data, &comments); err != nil {
+		return nil, fmt.Errorf("decode pull fixture comments: %w", err)
+	}
+	for index, item := range comments {
+		if len(item.Comments) == 0 || item.Comments[0] != '[' {
+			continue
+		}
+		if err := json.Unmarshal(item.Comments, &pulls[index].Comments); err != nil {
+			return nil, fmt.Errorf("decode pull fixture comments at %d: %w", index, err)
+		}
 	}
 	return pulls, nil
 }
@@ -900,7 +939,7 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo string, includePulls
 			if pullTotal < 0 {
 				pullTotal = connection.TotalCount
 			} else if connection.TotalCount != pullTotal {
-				return nil, nil, fmt.Errorf("load pull requests: totalCount changed from %d to %d", pullTotal, connection.TotalCount)
+				return nil, nil, &pipelineSnapshotChurn{fmt.Sprintf("load pull requests: totalCount changed from %d to %d", pullTotal, connection.TotalCount)}
 			}
 			if connection.TotalCount < 0 {
 				return nil, nil, fmt.Errorf("load pull requests: negative totalCount %d", connection.TotalCount)
@@ -932,7 +971,7 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo string, includePulls
 			if issueTotal < 0 {
 				issueTotal = connection.TotalCount
 			} else if connection.TotalCount != issueTotal {
-				return nil, nil, fmt.Errorf("load issues: totalCount changed from %d to %d", issueTotal, connection.TotalCount)
+				return nil, nil, &pipelineSnapshotChurn{fmt.Sprintf("load issues: totalCount changed from %d to %d", issueTotal, connection.TotalCount)}
 			}
 			if connection.TotalCount < 0 {
 				return nil, nil, fmt.Errorf("load issues: negative totalCount %d", connection.TotalCount)
@@ -974,7 +1013,7 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo string, includePulls
 			return nil, nil, fmt.Errorf("issue #%d: %w", rawIssues[index].Number, err)
 		}
 	}
-	if err := loadShipHeadParents(client, rawPulls); err != nil {
+	if err := loadRelevantHeadParents(client, rawPulls, owner); err != nil {
 		return nil, nil, err
 	}
 
@@ -1123,15 +1162,15 @@ func completeNodeConnections(client pipelineGraphQLClient, nodeID, typeName stri
 	return nil
 }
 
-func loadShipHeadParents(client pipelineGraphQLClient, pulls []gqlPull) error {
+func loadRelevantHeadParents(client pipelineGraphQLClient, pulls []gqlPull, owner string) error {
 	commitPulls := map[string][]int{}
-	shipPulls := map[string][]int{}
+	relevantPulls := map[string][]int{}
 	for index := range pulls {
 		preview, err := convertGQLPull(pulls[index])
 		if err != nil {
 			return fmt.Errorf("PR #%d: %w", pulls[index].Number, err)
 		}
-		if !needsHeadParents(preview) {
+		if !needsHeadParents(preview, owner) {
 			continue
 		}
 		if len(pulls[index].Commits.Nodes) != 1 {
@@ -1142,7 +1181,7 @@ func loadShipHeadParents(client pipelineGraphQLClient, pulls []gqlPull) error {
 			return fmt.Errorf("PR #%d: head commit does not match captured headRefOid", pulls[index].Number)
 		}
 		commitPulls[commit.ID] = append(commitPulls[commit.ID], index)
-		shipPulls[pulls[index].NodeID] = append(shipPulls[pulls[index].NodeID], index)
+		relevantPulls[pulls[index].NodeID] = append(relevantPulls[pulls[index].NodeID], index)
 	}
 
 	ids := make([]string, 0, len(commitPulls))
@@ -1201,12 +1240,12 @@ func loadShipHeadParents(client pipelineGraphQLClient, pulls []gqlPull) error {
 			return fmt.Errorf("load ship head parents: one or more requested commits are missing")
 		}
 	}
-	return revalidateShipPullHeads(client, pulls, shipPulls)
+	return revalidateRelevantPullHeads(client, pulls, relevantPulls)
 }
 
-func revalidateShipPullHeads(client pipelineGraphQLClient, pulls []gqlPull, shipPulls map[string][]int) error {
-	ids := make([]string, 0, len(shipPulls))
-	for id := range shipPulls {
+func revalidateRelevantPullHeads(client pipelineGraphQLClient, pulls []gqlPull, relevantPulls map[string][]int) error {
+	ids := make([]string, 0, len(relevantPulls))
+	for id := range relevantPulls {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
@@ -1232,7 +1271,7 @@ func revalidateShipPullHeads(client pipelineGraphQLClient, pulls []gqlPull, ship
 				return fmt.Errorf("revalidate ship pull heads: missing, duplicate, or unexpected pull node")
 			}
 			seen[node.ID] = true
-			indices := shipPulls[node.ID]
+			indices := relevantPulls[node.ID]
 			for _, index := range indices {
 				if node.HeadRefOID != pulls[index].HeadRefOID {
 					return fmt.Errorf("PR #%d: headRefOid changed from %s to %s while loading parents", pulls[index].Number, pulls[index].HeadRefOID, node.HeadRefOID)
@@ -1327,6 +1366,7 @@ func convertGQLIssue(raw gqlIssue) (apiIssue, error) {
 	issue := apiIssue{
 		Number:       raw.Number,
 		Title:        raw.Title,
+		Body:         raw.Body,
 		HTMLURL:      raw.URL,
 		CreatedAt:    raw.CreatedAt,
 		UpdatedAt:    raw.UpdatedAt,

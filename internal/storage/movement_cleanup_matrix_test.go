@@ -40,6 +40,7 @@ func TestDeleteUnknownRecorderTypeMovementsAndRecalcTotals_Matrix(t *testing.T) 
 		if err := db.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{accountReg}); err != nil {
 			t.Fatalf("MigrateAccountRegisters: %v", err)
 		}
+		ensureChart(t, db, accountReg.Accounts, "41", "60")
 
 		period := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 		write := func(recorderType string, quantity, amount float64) {

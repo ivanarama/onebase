@@ -208,6 +208,12 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 	params.Limit = extra.Limit
 	params.Offset = extra.Offset
 	params.ChoicePredicates = extra.ChoicePredicates
+	// choice_folders: элемент формы разрешил выбирать группы — снимаем неявный
+	// запрет подбора, но оставляем остальные его правила (активность, права).
+	if extra.IncludeFolders {
+		params.IncludeFolders = true
+		params.ExcludeFolders = false
+	}
 	var err error
 	params, err = s.rowFilterFor(ctx, refEntity, "read", params)
 	if err != nil {
@@ -220,7 +226,7 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 	// The legacy picker never offered catalog groups. An explicit is_folder
 	// choice condition is the opt-in exception from plan 170; storage already
 	// applies its true/false value and replaces the implicit folder scope.
-	if !hasChoiceFolderScope(params.ChoicePredicates) {
+	if !hasChoiceFolderScope(params.ChoicePredicates) && !params.IncludeFolders {
 		rows = filterOutFolders(rows)
 	}
 	// План 88: picker маскирует чувствительные поля до вычисления подписи и до
@@ -245,8 +251,13 @@ func (s *Server) referenceOptionsPageWithParams(ctx context.Context, refEntity *
 		return nil, 0, err
 	}
 	countParams := s.refListParamsForMode(refEntity, refOptionsChoice)
+	countParams.Filters = extra.Filters
 	countParams.Search = strings.TrimSpace(search)
 	countParams.ChoicePredicates = extra.ChoicePredicates
+	if extra.IncludeFolders {
+		countParams.IncludeFolders = true
+		countParams.ExcludeFolders = false
+	}
 	countParams, err = s.rowFilterFor(ctx, refEntity, "read", countParams)
 	if err != nil {
 		return nil, 0, err
@@ -317,7 +328,15 @@ func (s *Server) loadInitialRefOptions(ctx context.Context, entity *metadata.Ent
 		if refEntity == nil {
 			continue
 		}
-		rows, err := s.initialReferenceOptions(ctx, refEntity, refOptionsChoice, []string{values[f.Name]})
+		// Подчинённый справочник (owner:) показывает только элементы своего
+		// владельца — значение владельца берём из этих же значений формы.
+		owner, asked := "", false
+		if strings.TrimSpace(refEntity.Owner) != "" {
+			if hf, ok := ownerHolderField(entity, refEntity.Owner); ok {
+				owner, asked = strings.TrimSpace(values[hf.Name]), true
+			}
+		}
+		rows, err := s.initialReferenceOptionsOwned(ctx, refEntity, refOptionsChoice, []string{values[f.Name]}, owner, asked)
 		if err != nil {
 			return nil, err
 		}
@@ -349,7 +368,11 @@ func (s *Server) loadInitialRefFilterOptions(ctx context.Context, entity *metada
 	return opts, nil
 }
 
-func (s *Server) loadInitialTPRefOptions(ctx context.Context, entity *metadata.Entity, tpRows map[string][]map[string]any) (map[string]map[string][]map[string]any, error) {
+func (s *Server) loadInitialTPRefOptions(ctx context.Context, entity *metadata.Entity, tpRows map[string][]map[string]any, formValues ...any) (map[string]map[string][]map[string]any, error) {
+	var values any
+	if len(formValues) > 0 {
+		values = formValues[0]
+	}
 	result := make(map[string]map[string][]map[string]any)
 	for _, tp := range entity.TableParts {
 		tpOpts := make(map[string][]map[string]any)
@@ -366,7 +389,13 @@ func (s *Server) loadInitialTPRefOptions(ctx context.Context, entity *metadata.E
 			if refEntity == nil {
 				continue
 			}
-			rows, err := s.initialReferenceOptions(ctx, refEntity, refOptionsChoice, selectedTPRefIDs(tpRows[tp.Name], f.Name))
+			ownerID, asked := "", false
+			if len(formValues) > 0 {
+				if hf, ok := ownerHolderField(entity, refEntity.Owner); ok {
+					ownerID, asked = formValueForPath(values, "Объект."+hf.Name), true
+				}
+			}
+			rows, err := s.initialReferenceOptionsOwned(ctx, refEntity, refOptionsChoice, selectedTPRefIDs(tpRows[tp.Name], f.Name), ownerID, asked)
 			if err != nil {
 				continue
 			}
@@ -668,7 +697,17 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		// TPRefMeta feeds rows added by JavaScript. Rebuild it at the final
 		// render boundary so an earlier metadata-only value cannot re-enable
 		// inline creation for a user without write permission on the target.
-		data["TPRefMeta"] = tpRefMeta(ent, refWriteAccess)
+		// Подчинённые справочники: «реквизит → справочник-владелец». Считаем
+		// здесь, в единственной точке отрисовки форм, а не в каждом обработчике:
+		// подчинение — свойство метаданных, и оно обязано доезжать до шаблона
+		// одинаково на карточке, на копии и на форме с ошибкой валидации.
+		if _, ok := data["RefFilter"]; !ok {
+			values, _ := data["Values"].(map[string]string)
+			form, _ := data["Form"].(*metadata.FormModule)
+			data["RefFilter"] = s.refFilterMap(ent, form, values)
+		}
+		filters, _ := data["RefFilter"].(map[string]string)
+		data["TPRefMeta"] = tpRefMetaWithFilters(ent, refWriteAccess, filters)
 	}
 	// Same for info-register views, which key off "InfoReg" instead of "Entity".
 	if ir, ok := data["InfoReg"].(*metadata.InfoRegister); ok {
@@ -679,6 +718,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 			data["CanDelete"] = s.can(r, "inforeg", ir.Name, "delete")
 		}
 	}
+	data["HasPersonalNavigation"] = s.store != nil && currentUserLogin(r) != ""
 	if _, ok := data["HasAuth"]; !ok {
 		u := auth.UserFromContext(r.Context())
 		data["HasAuth"] = s.authRepo != nil && u != nil
@@ -754,6 +794,10 @@ func tpRefMeta(entity *metadata.Entity, refWriteAccess ...map[string]bool) map[s
 	if len(refWriteAccess) > 0 && refWriteAccess[0] != nil {
 		writable = refWriteAccess[0]
 	}
+	return tpRefMetaWithFilters(entity, writable, nil)
+}
+
+func tpRefMetaWithFilters(entity *metadata.Entity, writable map[string]bool, filters map[string]string) map[string]map[string]any {
 	out := make(map[string]map[string]any, len(entity.TableParts))
 	for _, tp := range entity.TableParts {
 		m := map[string]any{}
@@ -762,6 +806,7 @@ func tpRefMeta(entity *metadata.Entity, refWriteAccess ...map[string]bool) map[s
 				m[f.Name] = map[string]any{
 					"entity":      f.RefEntity,
 					"allowCreate": f.InlineCreateEnabled(true) && writable[f.RefEntity],
+					"filter":      filters[tp.Name+"."+f.Name],
 				}
 			}
 		}

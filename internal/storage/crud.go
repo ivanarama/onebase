@@ -27,20 +27,21 @@ type ListParams struct {
 	// чокпоинтом в List как признак «фильтр не забыли», иначе fail-closed.
 	RowFilterEvaluated bool
 	JournalRowFilters  map[string]*Predicate // per document name row-level predicates for journal UNIONs
-	// Sort is a metadata field name. Empty selects the default: keyset by id ASC;
-	// otherwise entity.OrderBy, folders then first string for hierarchical lists,
-	// first document date DESC, flat catalog name/first string ASC, or id (using Dir).
-	Sort           string
-	Dir            string     // "asc" or "desc"
-	ParentStr      string     // "" = no filter; "root" = parent IS NULL; "<uuid>" = parent = uuid
-	Search         string     // full-text search: ILIKE across all string fields
-	ActivityScope  string     // "", "active", "inactive", "all"; applied only for opt-in catalogs
-	Limit          int        // 0 = no limit
-	Offset         int        // for pagination
-	AfterID        *uuid.UUID // exclusive keyset cursor; requires id ASC and Offset=0
-	ThroughID      *uuid.UUID // inclusive keyset high-water mark; requires id ASC and Offset=0
-	ExcludeFolders bool       // for hierarchical catalogs: only non-folder elements
-	OnlyFolders    bool       // for hierarchical catalogs: only folder elements
+	Sort               string                // field Name (empty = default sort by id)
+	Dir                string                // "asc" or "desc"
+	ParentStr          string                // "" = no filter; "root" = parent IS NULL; "<uuid>" = parent = uuid
+	Search             string                // full-text search: ILIKE across all string fields
+	ActivityScope      string                // "", "active", "inactive", "all"; applied only for opt-in catalogs
+	Limit              int                   // 0 = no limit
+	Offset             int                   // for pagination
+	AfterID            *uuid.UUID            // exclusive keyset cursor; requires id ASC and Offset=0
+	ThroughID          *uuid.UUID            // inclusive keyset high-water mark; requires id ASC and Offset=0
+	ExcludeFolders     bool                  // for hierarchical catalogs: only non-folder elements
+	OnlyFolders        bool                  // for hierarchical catalogs: only folder elements
+	// IncludeFolders — явное согласие показать ГРУППЫ там, где подбор их всегда
+	// прятал (choice_folders у элемента формы). Слой UI снимает по нему свой
+	// ExcludeFolders; сам запрос дополнительных условий не получает.
+	IncludeFolders bool
 	// ExcludeMarked отбрасывает помеченные на удаление строки (план 153).
 	// Нужен источнику дефолта `единственный`: помеченный элемент — кандидат
 	// на исчезновение, подставлять его в новый документ нельзя. Обычные
@@ -156,6 +157,9 @@ type upsertWriteOptions struct {
 
 func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any,
 	entity *metadata.Entity, options upsertWriteOptions) error {
+	if err := writeAllowed(ctx); err != nil {
+		return err
+	}
 	if err := db.enumBackstop(ctx, entity, fields); err != nil {
 		return err
 	}
@@ -360,7 +364,7 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 		sql = fmt.Sprintf("INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (id) DO UPDATE SET %s",
 			table, strings.Join(cols, ", "), strings.Join(placeholders, ", "), strings.Join(updates, ", "))
 	}
-	tag, err := db.Exec(ctx, sql, args...)
+	tag, err := db.execAllowingFKDiagnosis(ctx, sql, args...)
 	if err != nil {
 		if staged {
 			if conflict := stageConcurrencyErr(err); errors.Is(conflict, ErrStageConcurrentWrite) {
@@ -374,7 +378,11 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 		if explained := ExplainUniqueViolation(err, entity, fields); errors.Is(explained, ErrCodeDuplicate) {
 			return explained
 		}
-		return fmt.Errorf("upsert %s: %w", entityName, classifyConstraintErr(err))
+		classified := classifyConstraintErr(err)
+		if errors.Is(classified, ErrForeignKeyViolation) {
+			return fmt.Errorf("upsert %s: %w", entityName, db.explainFKViolation(ctx, entity, fields, classified))
+		}
+		return fmt.Errorf("upsert %s: %w", entityName, classified)
 	}
 	if staged && tag.RowsAffected != 1 {
 		// Ноль изменённых строк на пути с этапами означает ровно одно: между
@@ -1225,6 +1233,21 @@ func (db *DB) upsertTablePartRows(ctx context.Context, entityName, tpName string
 // Delete removes an entity record by id. Tablepart rows cascade automatically.
 // Returns an error if the record is a predefined item (_is_predefined = TRUE).
 func (db *DB) Delete(ctx context.Context, entityName string, id uuid.UUID) error {
+	return db.deleteEntity(ctx, entityName, id, nil)
+}
+
+// DeleteVersioned removes an entity record only while its revision still
+// matches expectedVersion. This is the delete-side counterpart of
+// UpsertVersioned: callers that made a decision from a loaded object can avoid
+// deleting a newer state that appeared between that read and the DELETE.
+func (db *DB) DeleteVersioned(ctx context.Context, entityName string, id uuid.UUID, expectedVersion int64) error {
+	return db.deleteEntity(ctx, entityName, id, &expectedVersion)
+}
+
+func (db *DB) deleteEntity(ctx context.Context, entityName string, id uuid.UUID, expectedVersion *int64) error {
+	if err := writeAllowed(ctx); err != nil {
+		return err
+	}
 	d := db.dialect
 	tbl := metadata.TableName(entityName)
 	isPredefined, err := db.isPredefinedRecord(ctx, tbl, id)
@@ -1254,8 +1277,16 @@ func (db *DB) Delete(ctx context.Context, entityName string, id uuid.UUID) error
 		}
 	}
 
-	err = db.exec(ctx,
-		fmt.Sprintf("DELETE FROM %s WHERE id = %s", tbl, d.Placeholder(1)), idArg(d, id))
+	deleteSQL := fmt.Sprintf("DELETE FROM %s WHERE id = %s", tbl, d.Placeholder(1))
+	args := []any{idArg(d, id)}
+	if expectedVersion != nil {
+		deleteSQL += " AND _version = " + d.Placeholder(2)
+		args = append(args, *expectedVersion)
+	}
+	tag, err := db.Exec(ctx, deleteSQL, args...)
+	if err == nil && expectedVersion != nil && tag.RowsAffected != 1 {
+		return ErrVersionConflict
+	}
 	if err == nil {
 		// План 82: удалённый объект уходит и из полнотекстового индекса, иначе
 		// глобальный поиск отдавал бы битые ссылки на несуществующие карточки.

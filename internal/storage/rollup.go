@@ -553,7 +553,7 @@ func (db *DB) deferFKChecks(ctx context.Context) error {
 
 // applyRollupDocPolicy удаляет (или снимает проведение) документы с датой < cutoff.
 // Возвращает число удалённых документов (0 при keep-режиме). Дата документа —
-// первое поле типа date; сущности без даты пропускаются.
+// Entity.DocumentDateField; сущности без даты пропускаются.
 func (db *DB) applyRollupDocPolicy(ctx context.Context, ents []*metadata.Entity, cutoff time.Time, del bool, beforeDelete func(context.Context, *metadata.Entity, uuid.UUID) error) (int, error) {
 	d := db.dialect
 	deleted := 0
@@ -632,13 +632,11 @@ func (db *DB) countDocumentsBefore(ctx context.Context, ents []*metadata.Entity,
 	return total, nil
 }
 
-// documentDateColumn возвращает имя колонки первого date-поля документа (его
-// «даты»), либо "" если такого поля нет.
+// documentDateColumn возвращает колонку даты документа (Entity.DocumentDateField),
+// либо "" если дат у документа нет.
 func documentDateColumn(e *metadata.Entity) string {
-	for _, f := range e.Fields {
-		if f.Type == metadata.FieldTypeDate {
-			return metadata.ColumnName(f)
-		}
+	if f := e.DocumentDateField(); f != nil {
+		return metadata.ColumnName(*f)
 	}
 	return ""
 }
@@ -1188,6 +1186,11 @@ func parseUUIDValue(v any) (uuid.UUID, bool) {
 	switch x := v.(type) {
 	case uuid.UUID:
 		return x, true
+	case [16]byte:
+		// Так pgx сканирует колонку uuid в any. Без этой ветки свёртка на
+		// PostgreSQL не находила ни одного документа к удалению: список id
+		// оставался пустым, и отчёт честно говорил «удалено 0».
+		return uuid.UUID(x), true
 	case string:
 		if id, err := uuid.Parse(strings.TrimSpace(x)); err == nil {
 			return id, true

@@ -62,11 +62,7 @@ func CheckFormLayout(proj *project.Project) []Issue {
 			if form == nil {
 				continue
 			}
-			name := form.Name
-			if name == "" {
-				name = "объекта"
-			}
-			report("forms/"+strings.ToLower(proc.Name)+"/"+name+".form.yaml", proc.Name, form)
+			report(procFormFileLabel(proc.Name, form), proc.Name, form)
 		}
 	}
 	return warns

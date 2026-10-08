@@ -52,6 +52,17 @@ func resolveServerLaunchConfig(cmd *cobra.Command) (serverLaunchConfig, error) {
 	if err != nil {
 		return serverLaunchConfig{}, fmt.Errorf("база не найдена: %w\nИспользуйте 'onebase ibases list' для просмотра зарегистрированных баз", err)
 	}
+	// Клиентское подключение описывает ЧУЖОЙ работающий сервер, и поднимать для
+	// него локальную платформу нечем. Отказ обязан стоять здесь — до сборки cfg и
+	// до legacy-ветки ниже: у такой записи DBType и DB пусты, ветка приняла бы их
+	// за старую SQLite-запись, создала бы базу в os.TempDir() и подняла listener.
+	// Пользователь при этом работал бы в отдельной пустой базе вместо сервера и
+	// заметил бы это не сразу.
+	if base.Client() {
+		return serverLaunchConfig{}, fmt.Errorf(
+			"база %q — подключение к работающему серверу %s: запускать её нечем, сервер поднимается на своей стороне\nЧтобы открыть её, выполните 'onebase start' и нажмите «Предприятие»",
+			base.Name, base.ServerURL)
+	}
 	cfg := serverLaunchConfig{
 		dir: base.Path, dsn: base.DB, port: base.Port, configSource: base.ConfigSource,
 		dbType: base.DBType, sqlitePath: base.DBPath,

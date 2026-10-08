@@ -5,13 +5,18 @@ const test = require('node:test');
 const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, 'ui.js'), 'utf8');
+// listMenuItems() собирает адреса действий строки через obRowUrl(): опорные
+// адреса объявлены на контейнере списка, а не в каждой строке. Срез меню без
+// этого блока падает на ReferenceError, поэтому он выполняется здесь же.
+const rowUrlStart = source.indexOf('// BEGIN onebase-row-url');
+const rowUrlEnd = source.indexOf('// END onebase-row-url');
 const itemsStart = source.indexOf('function listBasedOnItems');
 const itemsEnd = source.indexOf('\nfunction showListMenu', itemsStart);
 const treeStart = source.indexOf('function makeTreeRow');
 const treeEnd = source.indexOf('\nfunction listBasedOnItems', treeStart);
 const menuStart = source.indexOf('function showListMenu');
 const menuEnd = source.indexOf('\nfunction listCtxMenu', menuStart);
-if (itemsStart < 0 || itemsEnd < 0 || treeStart < 0 || treeEnd < 0 || menuStart < 0 || menuEnd < 0) {
+if (rowUrlStart < 0 || rowUrlEnd <= rowUrlStart || itemsStart < 0 || itemsEnd < 0 || treeStart < 0 || treeEnd < 0 || menuStart < 0 || menuEnd < 0) {
   throw new Error('based-on production slices not found');
 }
 
@@ -21,11 +26,23 @@ global.window = {location: {href: ''}};
 global.obListConfig = () => config;
 global.listOpen = (url, title) => { opened = {url, title}; };
 global.listSubmit = () => {};
+vm.runInThisContext(source.slice(rowUrlStart, rowUrlEnd), {filename: 'ui-list-based-on-row-url.js'});
 vm.runInThisContext(source.slice(itemsStart, itemsEnd), {filename: 'ui-list-based-on-items.js'});
 vm.runInThisContext(source.slice(treeStart, treeEnd), {filename: 'ui-list-based-on-tree.js'});
 
+// Контейнер списка несёт опорные адреса; строка — только идентификатор.
+const LIST_BOX = {dataset: {obRowBase: '/ui/document/order', obRowCanCopy: '1'}};
+
 function row(id = '11111111-1111-1111-1111-111111111111') {
-  return {dataset: {obEntityId: id, openUrl: '/ui/document/order/' + id}};
+  return {
+    dataset: {obEntityId: id},
+    closest(selector) {
+      return selector === '[data-ob-row-base]' ? LIST_BOX : null;
+    },
+    getAttribute() {
+      return '';
+    }
+  };
 }
 
 test('selected row builds one safe based-on submenu from server config', () => {

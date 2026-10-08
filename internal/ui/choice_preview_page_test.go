@@ -120,6 +120,41 @@ func previewPageBody(element string, ctxVals map[string]string) map[string]any {
 	}
 }
 
+func TestChoicePreviewPageHonorsChoiceFolders(t *testing.T) {
+	f := newChoiceFoldersFixture(t)
+	f.owner.Forms[0].Elements[0].ChoiceContext = map[string]string{"Город": "Объект.НаселённыйПункт"}
+	f.owner.Forms[0].Elements[1].ChoiceContext = map[string]string{"Улица": "Объект.Улица"}
+	for _, test := range []struct {
+		element string
+		want    int
+	}{
+		{"ПолеНаселённыйПункт", 2},
+		{"ПолеУлица", 1},
+	} {
+		t.Run(test.element, func(t *testing.T) {
+			body := map[string]any{
+				"q": "", "limit": 10, "offset": 0,
+				"source":  map[string]string{"entity": f.owner.Name, "element": test.element},
+				"context": map[string]string{},
+			}
+			rec := postPreviewPage(t, f.server, f.target.Name, body, f.user)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			var result struct {
+				Items []map[string]any `json:"items"`
+				Total int              `json:"total"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+				t.Fatal(err)
+			}
+			if len(result.Items) != test.want || result.Total != test.want {
+				t.Fatalf("picker: items=%v total=%d, want=%d", choiceLabels(result.Items), result.Total, test.want)
+			}
+		})
+	}
+}
+
 // Функция получает страницу одной пачкой и контекст, восстановленный сервером
 // из метаданных формы: «памятка филиала МСК» собирается под филиал звонка.
 func TestChoicePreviewPageRunsProcWithResolvedContext(t *testing.T) {

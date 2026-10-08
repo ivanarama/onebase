@@ -268,10 +268,20 @@ const tplFormsEditor = `
 .fc-pick:hover{background:#f5f8ff}
 .fc-group{border:1px solid #e2e8f0;padding:5px 9px;margin:1px 0}
 .fc-group>legend{font-weight:600;color:#475569;padding:0 5px;font-size:12px}
-.fc-group-horizontal>.fc-children{flex-direction:row;flex-wrap:wrap;gap:8px;align-items:flex-start}
-.fc-group-horizontal>.fc-children>.fc-drop{width:8px;height:auto;align-self:stretch;min-height:32px}
+/* Раскладка горизонтальной группы на холсте повторяет рантайм
+   (managed-group-horizontal в internal/ui/templates_managed.go): те же flex,
+   min-width и gap — иначе форма с шириной 400 у полей переносилась в
+   конструкторе, но стояла в один ряд в «Предприятии» (#1575). */
+.fc-group-horizontal>.fc-children{flex-direction:row;flex-wrap:wrap;gap:12px;align-items:flex-start}
+/* Зоны вставки не должны менять измеряемую раскладку: в покое они нулевой
+   ширины, видимой зона становится только на время перетаскивания
+   (класс ob-dragging вешает document-level dragstart ниже). */
+.fc-group-horizontal>.fc-children>.fc-drop{width:0;height:auto;align-self:stretch;min-height:32px}
+body.ob-dragging .fc-group-horizontal>.fc-children>.fc-drop{width:8px}
 .fc-group-horizontal>.fc-children>.fc-drop.fc-drop-over{width:16px;height:auto}
-.fc-group-horizontal>.fc-children>.fc-el{flex:1 1 220px;min-width:180px}
+.fc-group-horizontal>.fc-children>.fc-el{flex:0 1 260px;min-width:180px}
+/* Колонка-группа делит ширину строки, как form-group-box в рантайме. */
+.fc-group-horizontal>.fc-children>.fc-el.fc-group{flex:1 1 auto;min-width:0}
 .fc-pages{border:1px dashed #c7d8f5;border-radius:6px;padding:4px}
 .fc-page{border:1px solid #eef0f5;border-radius:6px;margin:3px 0;padding:4px 6px}
 .fc-tab{font-size:11px;color:#1a4a80;font-weight:600;margin-bottom:3px}
@@ -972,6 +982,12 @@ function renderCanvasHTML(html) {
     e.stopPropagation();
     selectNode(el.getAttribute('data-node-id'));
   });
+  // На время любого перетаскивания на странице зоны вставки раскрываются
+  // (body.ob-dragging): в покое они нулевой ширины и не сдвигают раскладку
+  // холста относительно рантайма (#1575). dragend срабатывает всегда, даже
+  // если бросили мимо цели.
+  document.addEventListener('dragstart', function () { document.body.classList.add('ob-dragging'); });
+  document.addEventListener('dragend', function () { document.body.classList.remove('ob-dragging'); });
   // Перетаскивание элемента холста — для переноса в другой контейнер. Свой mime
   // text/onebase-node, чтобы не путать с палитрами (attr/struct/tablepart).
   host.addEventListener('dragstart', function (e) {
@@ -1132,6 +1148,7 @@ function renderProps() {
       addTextProp(panel, {{jsString (t $.Lang "Устойчивый id элемента")}}, 'id', info.id || '');
       addChoiceFilterEditor(panel, info);
     }
+    addChoiceFilterEditor(panel, info);
   }
   if (info.kind === 'ГруппаФормы') {
     addTextProp(panel, {{jsString (t $.Lang "Фон (CSS-цвет)")}}, 'background', info.background || '');
@@ -1341,12 +1358,14 @@ function addChoiceFilterEditor(panel, info) {
   panel.appendChild(note);
   var conditions = (info.choiceFilter || []).map(function (condition) {
     var hasValue = Object.prototype.hasOwnProperty.call(condition, 'value') && typeof condition.value === 'boolean';
+    var hasRef = typeof condition.ref === 'string' && condition.ref !== '';
     return {
       field: condition.field || '',
-      op: condition.op === 'in_hierarchy' ? 'in_hierarchy' : 'eq',
-      mode: hasValue ? 'value' : 'from',
+      op: ['in_hierarchy', 'not_in_hierarchy', 'eq_or_empty'].indexOf(condition.op) >= 0 ? condition.op : 'eq',
+      mode: hasValue ? 'value' : (hasRef ? 'ref' : 'from'),
       from: condition.from || '',
-      value: hasValue ? condition.value : false
+      value: hasValue ? condition.value : false,
+      ref: hasRef ? condition.ref : ''
     };
   });
   var nodeAtEdit = _selected;
@@ -1354,6 +1373,7 @@ function addChoiceFilterEditor(panel, info) {
     return conditions.map(function (condition) {
       var out = { field: condition.field, op: condition.op };
       if (condition.mode === 'value') out.value = !!condition.value;
+      else if (condition.mode === 'ref') out.ref = condition.ref;
       else out.from = condition.from;
       return out;
     });
@@ -1379,14 +1399,17 @@ function addChoiceFilterEditor(panel, info) {
       var opLabel = document.createElement('label'); opLabel.textContent = {{jsString (t $.Lang "Оператор")}};
       var op = document.createElement('select');
       op.appendChild(new Option('eq', 'eq'));
+      op.appendChild(new Option('eq_or_empty', 'eq_or_empty'));
       op.appendChild(new Option('in_hierarchy', 'in_hierarchy'));
+      op.appendChild(new Option('not_in_hierarchy', 'not_in_hierarchy'));
       op.value = condition.op;
       op.addEventListener('change', function () {
         condition.op = op.value;
-        if (condition.op === 'in_hierarchy' && condition.mode === 'value') {
+        if (condition.op !== 'eq' && condition.mode === 'value') {
           condition.mode = 'from'; condition.from = condition.from || 'Объект.';
         }
         commit();
+        redraw();
       });
       opRow.appendChild(opLabel); opRow.appendChild(op); card.appendChild(opRow);
 
@@ -1394,19 +1417,30 @@ function addChoiceFilterEditor(panel, info) {
       var modeLabel = document.createElement('label'); modeLabel.textContent = {{jsString (t $.Lang "Источник")}};
       var mode = document.createElement('select');
       mode.appendChild(new Option({{jsString (t $.Lang "Поле формы (from)")}}, 'from'));
-      mode.appendChild(new Option({{jsString (t $.Lang "Булево (value)")}}, 'value'));
+      var valueOption = new Option({{jsString (t $.Lang "Булево (value)")}}, 'value');
+      // Булев литерал — только у eq; ссылка (from или ref) — у любого оператора.
+      valueOption.disabled = condition.op !== 'eq';
+      mode.appendChild(valueOption);
+      mode.appendChild(new Option({{jsString (t $.Lang "Постоянная ссылка (ref)")}}, 'ref'));
       mode.value = condition.mode;
-      mode.disabled = condition.op === 'in_hierarchy';
       mode.addEventListener('change', function () {
         condition.mode = mode.value;
         if (condition.mode === 'from' && !condition.from) condition.from = 'Объект.';
+        // Пустой ref не пишется: сервер отклонит условие без источника.
+        // Запись — когда в поле появится UUID.
+        if (condition.mode === 'ref' && !condition.ref) { redraw(); return; }
         commit();
       });
       modeRow.appendChild(modeLabel); modeRow.appendChild(mode); card.appendChild(modeRow);
 
       var valueRow = document.createElement('div'); valueRow.className = 'prop-row';
-      var valueLabel = document.createElement('label'); valueLabel.textContent = condition.mode === 'value' ? 'value' : 'from';
-      if (condition.mode === 'value') {
+      var valueLabel = document.createElement('label'); valueLabel.textContent = condition.mode;
+      if (condition.mode === 'ref') {
+        var ref = document.createElement('input'); ref.type = 'text'; ref.value = condition.ref;
+        ref.placeholder = {{jsString (t $.Lang "UUID записи справочника")}};
+        ref.addEventListener('change', function () { condition.ref = ref.value.trim(); if (condition.ref) commit(); });
+        valueRow.appendChild(valueLabel); valueRow.appendChild(ref);
+      } else if (condition.mode === 'value') {
         var value = document.createElement('select');
         value.appendChild(new Option('false', 'false'));
         value.appendChild(new Option('true', 'true'));
@@ -1713,7 +1747,11 @@ h2{margin:0 0 14px;color:#1a4a80;font-size:16px;display:flex;align-items:center;
 fieldset{border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:12px}
 legend{font-weight:600;color:#475569;padding:0 6px;font-size:12px}
 .group-horizontal>.group-body{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
-.group-horizontal>.group-body>.fg{flex:1 1 220px;min-width:180px;margin-bottom:0}
+/* Flex, min-width и вложенные группы — как в рантайме
+   (managed-group-horizontal в internal/ui/templates_managed.go), иначе
+   предпросмотр переносил поля там, где «Предприятие» стоит в один ряд (#1575). */
+.group-horizontal>.group-body>.fg{flex:0 1 260px;min-width:180px;margin-bottom:0}
+.group-horizontal>.group-body>fieldset{flex:1 1 auto;min-width:0;margin-bottom:0}
 .tabs{margin-bottom:10px}
 .tabs-hd{display:flex;border-bottom:2px solid #e2e8f0;margin-bottom:10px;gap:2px;flex-wrap:wrap}
 .tab{padding:6px 12px;font-size:12px;color:#64748b;border-bottom:2px solid transparent;margin-bottom:-2px;cursor:pointer;user-select:none;background:none;border-left:none;border-right:none;border-top:none;font-family:inherit}

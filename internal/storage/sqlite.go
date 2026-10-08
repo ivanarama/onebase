@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
@@ -33,6 +34,32 @@ func init() {
 		default:
 			return v, nil
 		}
+	})
+	// date хранится в SQLite как UTC с явным offset. Календарные функции
+	// прикладного запроса должны сначала увидеть те же локальные стенные часы,
+	// что DSL/UI. Функция намеренно не deterministic: time.Local — настройка
+	// процесса, и тесты проверяют несколько зон в одном запуске (#1243).
+	sqlite.MustRegisterScalarFunction("ob_local_datetime", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		if len(args) != 1 || args[0] == nil {
+			return nil, nil
+		}
+		var value string
+		switch v := args[0].(type) {
+		case string:
+			value = v
+		case []byte:
+			value = string(v)
+		case time.Time:
+			return v.In(time.Local).Format("2006-01-02 15:04:05.999999999"), nil
+		default:
+			return nil, nil
+		}
+		for _, layout := range []string{sqliteTimeLayout, time.RFC3339Nano, time.RFC3339} {
+			if parsed, err := time.Parse(layout, strings.TrimSpace(value)); err == nil {
+				return parsed.In(time.Local).Format("2006-01-02 15:04:05.999999999"), nil
+			}
+		}
+		return nil, nil
 	})
 }
 
