@@ -212,6 +212,18 @@ func (r *Runner) RunWithOptions(ctx context.Context, w *metadata.Widget, opts Ru
 	for k, v := range w.Params {
 		params[k] = v
 	}
+	// Only configuration params contain templates. Caller params are already
+	// typed literals and must keep their whitespace and template-like text.
+	switch w.Type {
+	case metadata.WidgetTypeKPI, metadata.WidgetTypeList, metadata.WidgetTypeChart:
+		resolved, err := scheduler.ResolveParamTemplates(params, scheduler.NewConstantResolver(ctx, r.Store, r.Reg))
+		if err != nil {
+			res := Result{Name: w.Name, Type: string(w.Type), Title: w.Title, Link: safeWidgetLink(w.Link)}
+			setResultError(&res, err)
+			return res
+		}
+		params = resolved
+	}
 	for k, v := range opts.Params {
 		params[k] = v
 	}
@@ -593,10 +605,6 @@ func (r *Runner) navigationIDs(w *metadata.Widget, cols []string, rows []map[str
 
 // runQuery is the shared back-end for kpi/list/chart widgets.
 func (r *Runner) runQuery(ctx context.Context, w *metadata.Widget, params map[string]any) ([]map[string]any, []string, *query.Result, error) {
-	params, err := scheduler.ResolveParamTemplates(params, scheduler.NewConstantResolver(ctx, r.Store, r.Reg))
-	if err != nil {
-		return nil, nil, nil, err
-	}
 	rowFilters, err := access.QueryRowFiltersWithLookup(r.User, r.Reg.Entities(), r.Reg.Registers(), r.Reg.InfoRegisters(), r.Reg.AccountRegisters(), r.Reg)
 	if err != nil {
 		return nil, nil, nil, err
