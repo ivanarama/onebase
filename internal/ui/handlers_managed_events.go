@@ -2537,12 +2537,15 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		respondJSON(enc, formEventResponse{Error: err.Error()})
 		return
 	}
-	paramValues, err := processorParamValuesFromRequest(
+	paramValues, uploadTemps, err := processorParamValuesFromRequest(
 		r,
 		proc.Params,
 		maxSize,
 		requestControls,
 	)
+	// Временные файлы двоичных параметров живут ровно прогон: обработка
+	// получила путь, а после ответа файл платформе не нужен.
+	defer uploadTemps.Cleanup()
 	if err != nil {
 		opStatus = "error"
 		w.WriteHeader(uploadErrorStatus(err))
