@@ -292,6 +292,11 @@ window.obUIMessage = function (name, fallback) {
     }
     answerCloseRequest(requester, requesterOrigin, data);
   });
+  // Эта страница отвечает на obRequestFormClose. Оболочка вкладок (tabs.go)
+  // по этому признаку отличает страницу приложения от той, что в протоколе
+  // закрытия не участвует (текстовая ошибка 404 и т. п.): такую ждать
+  // бесполезно, и вкладка с ней иначе не закрывалась (#1684).
+  window.obAnswersFrameClose = true;
 })();
 
 if (window.__obEmbedded) {
@@ -504,6 +509,11 @@ function obReadJSONScript(id, fallback) {
       document.querySelectorAll('aside details.navsec').forEach(function (d) {
         var key = 'navsec:' + d.getAttribute('data-navsec');
         var saved = localStorage.getItem(key);
+        var legacy = d.getAttribute('data-navsec-legacy');
+        if (saved === null && legacy) {
+          saved = localStorage.getItem('navsec:' + legacy);
+          if (saved === '1' || saved === '0') localStorage.setItem(key, saved);
+        }
         if (saved === '1') d.open = true;
         else if (saved === '0') d.open = false;
         d.addEventListener('toggle', function () { localStorage.setItem(key, d.open ? '1' : '0'); });
@@ -1296,6 +1306,76 @@ function obListConfig() {
   return obReadJSONScript('ob-list-config', { labels: {} }) || { labels: {} };
 }
 
+// BEGIN onebase-row-url (executed directly by the Node regression test)
+// Ссылки строк списка собираются из опорных адресов, объявленных один раз на
+// контейнере (data-ob-row-base, -subsystem, -list-url, -copy-url, -can-copy,
+// -activity-enabled), а не повторяются в каждой строке: на списке из 100 строк
+// это экономит около 1,5 КБ на строку. Строки, приходящие из JSON при подгрузке,
+// по-прежнему могут нести готовые ссылки — они имеют приоритет.
+var OB_ROW_OWN = {
+  open: 'openUrl', folder: 'folderUrl', mark: 'markUrl', unmark: 'unmarkUrl',
+  del: 'delUrl', unpost: 'unpostUrl', activityShow: 'activityShowUrl',
+  activityHide: 'activityHideUrl', detail: 'obDetailUrl', copy: 'copyUrl'
+};
+// Ссылка действия строки собирается из опорных адресов контейнера и
+// идентификатора строки: раньше каждая строка несла десять готовых URL, и на
+// списке из 100 строк это давало больше половины веса страницы. Параметр
+// добавляется штатным URLSearchParams, а не подстановкой в строку, — иначе
+// пользовательский ввод, сохранённый в query списка, мог бы подменить слот.
+function obRowParamURL(base, name, value) {
+  // Через new URL() нельзя: он percent-кодирует кириллицу в пути, и адрес
+  // перестаёт совпадать с тем, что отдаёт сервер. Трогаем только строку запроса.
+  var hash = '';
+  var h = base.indexOf('#');
+  if (h >= 0) { hash = base.slice(h); base = base.slice(0, h); }
+  var q = base.indexOf('?');
+  var path = q >= 0 ? base.slice(0, q) : base;
+  var params = new URLSearchParams(q >= 0 ? base.slice(q + 1) : '');
+  params.set(name, value);
+  var query = params.toString();
+  return path + (query ? '?' + query : '') + hash;
+}
+function obRowUrl(row, kind) {
+  if (!row) return '';
+  var own = row.dataset[OB_ROW_OWN[kind]];
+  if (own) return own;                     // строка из JSON-подгрузки несёт свои ссылки
+  var box = row.closest('[data-ob-row-base]');
+  if (!box) return '';
+  var id = row.dataset.obEntityId || '';
+  if (!id) return '';
+  var base = box.dataset.obRowBase || '';
+  var sub = box.dataset.obRowSubsystem || '';
+  var item = base + '/' + encodeURIComponent(id);
+  switch (kind) {
+    case 'open': return item + (sub ? '?subsystem=' + encodeURIComponent(sub) : '');
+    case 'mark': return item + '/delete?mark=1';
+    case 'unmark': return item + '/delete?mark=0';
+    case 'del': return item + '/delete';
+    case 'unpost': return item + '/unpost';
+    case 'activityShow': return item + '/activity?active=1';
+    case 'activityHide': return item + '/activity?active=0';
+    case 'detail': return item + '/detail-panel';
+    case 'folder': return obRowParamURL(box.dataset.obRowListUrl || base, 'parent', id);
+    case 'copy':
+      if (box.dataset.obRowCanCopy !== '1') return '';
+      return obRowParamURL(box.dataset.obRowCopyUrl || (base + '/new'), 'copy', id);
+  }
+  return '';
+}
+function obRowActivityEnabled(row) {
+  if (!row) return false;
+  var own = row.dataset.activityEnabled;
+  if (own) return own === '1';
+  var box = row.closest('[data-ob-row-base]');
+  return !!box && box.dataset.obRowActivityEnabled === '1';
+}
+// Ключ выделенной строки: идентификатор устойчив к перерисовке списка, тогда как
+// прежний data-open-url на строках больше не выводится.
+function obRowKey(row) {
+  if (!row) return '';
+  return row.dataset.obEntityId || row.getAttribute('data-open-url') || '';
+}
+// END onebase-row-url
 function obListLabel(key, fallback) {
   var labels = obListConfig().labels || {};
   return labels[key] || fallback;
@@ -1391,14 +1471,16 @@ function listSyncActionsBtn() {
 }
 
 // Возврат выделения после перерисовки списка: та же запись опознаётся по
-// data-open-url (в нём id, у всех трёх видов строк — таблица, плитка, дерево).
+// obRowKey() — то есть по data-ob-entity-id, который несут все три вида строк
+// (таблица, плитка, дерево); строки из JSON-подгрузки откатываются на свой
+// data-open-url.
 // Записи не стало в выдаче — выделение снимается, а не остаётся на призраке.
 function listRestoreSel(key, root, options) {
   var next = null;
   if (key) {
     var rows = (root || document).querySelectorAll('[data-ob-list-row]');
     for (var i = 0; i < rows.length; i++) {
-      if (rows[i].getAttribute('data-open-url') === key) { next = rows[i]; break; }
+      if (obRowKey(rows[i]) === key) { next = rows[i]; break; }
     }
   }
   listSetSel(next, { focus: !!(options && options.focus), root: root || document });
@@ -1414,14 +1496,17 @@ function obReplaceLiveListContents(cur, fresh) {
   // Даже если выбранной строки сейчас нет, кэш мог остаться от прежнего выбора.
   // После live refresh такой ответ уже не описывает новую версию списка.
   if (typeof obDetailInvalidate === 'function') obDetailInvalidate();
+  var oldFeed = cur.querySelector('#feed-more');
+  if (oldFeed && oldFeed.__obFeedDispose) oldFeed.__obFeedDispose();
   cur.innerHTML = fresh.innerHTML;
+  obInitFeed(cur);
   if (selMine) listRestoreSel(selKey, cur, { focus: restoreFocus });
   else obEnsureListRovingTabindex(cur);
 }
 
 function listSelKey() {
   var sel = listSel();
-  return sel ? (sel.getAttribute('data-open-url') || '') : '';
+  return obRowKey(sel);
 }
 
 function listRowClick(e, tr) {
@@ -1436,8 +1521,8 @@ function listRowDblClick(e, tr) {
 
 function listActivateRow(tr) {
   if (!tr) return;
-  if (tr.dataset.isFolder === '1') window.location.href = tr.dataset.folderUrl;
-  else listOpen(tr.dataset.openUrl);
+  if (tr.dataset.isFolder === '1') window.location.href = obRowUrl(tr, 'folder');
+  else listOpen(obRowUrl(tr, 'open'));
 }
 
 // Встроенные горячие клавиши — привычные по 1С. Живут в ui.js, потому что нужны
@@ -1570,7 +1655,7 @@ function obListCurrentRow() {
 function obListCanMarkDelete(row) {
   var cfg = obListConfig();
   return !!(row && row.dataset && cfg.canDelete === true &&
-    row.dataset.predefined !== '1' && String(row.dataset.markUrl || '').trim());
+    row.dataset.predefined !== '1' && String(obRowUrl(row, 'mark') || '').trim());
 }
 
 function obHandleListDeleteShortcut(e) {
@@ -1582,7 +1667,7 @@ function obHandleListDeleteShortcut(e) {
   if (!obListCanMarkDelete(sel)) return;
   e.preventDefault();
   if (listSel() !== sel) listSetSel(sel);
-  listSubmit(sel.dataset.markUrl, obListLabel('markDeleteConfirm', 'Пометить на удаление?'));
+  listSubmit(obRowUrl(sel, 'mark'), obListLabel('markDeleteConfirm', 'Пометить на удаление?'));
 }
 
 function obInitListFocusSelection() {
@@ -1948,17 +2033,17 @@ function obInitKeyboardShortcuts() {
     if ((e.key === 'Enter' || e.key === 'F2') && sel) {
       e.preventDefault();
       if (listSel() !== sel) listSetSel(sel);
-      if (e.key === 'F2') listOpen(sel.dataset.openUrl);
+      if (e.key === 'F2') listOpen(obRowUrl(sel, 'open'));
       else listActivateRow(sel);
       return;
     }
     // F9 в списке — «Создать копированием», как в 1С. В форме та же клавиша
     // копирует строку ТЧ, но туда обработчик не доходит: obHandleDOMTableShortcut
     // выше забирает F9 себе, когда активна таблица ТЧ.
-    if (e.key === 'F9' && sel && sel.dataset.copyUrl) {
+    if (e.key === 'F9' && sel && obRowUrl(sel, 'copy')) {
       e.preventDefault();
       if (listSel() !== sel) listSetSel(sel);
-      listOpen(sel.dataset.copyUrl);
+      listOpen(obRowUrl(sel, 'copy'));
     }
   });
   document.addEventListener('keydown', obHandleListDeleteShortcut);
@@ -2141,42 +2226,43 @@ function listMenuItems(tr) {
   var isFolder = tr.dataset.isFolder === '1';
   var items = [];
   if (isFolder) {
-    items.push({ label: labels.enterGroup || '▶ Войти в группу', fn: function () { window.location.href = tr.dataset.folderUrl; } });
-    items.push({ label: labels.edit || 'Редактировать', fn: function () { listOpen(tr.dataset.openUrl); } });
+    items.push({ label: labels.enterGroup || '▶ Войти в группу', fn: function () { window.location.href = obRowUrl(tr, 'folder'); } });
+    items.push({ label: labels.edit || 'Редактировать', fn: function () { listOpen(obRowUrl(tr, 'open')); } });
   } else {
-    items.push({ label: labels.open || 'Открыть', fn: function () { listOpen(tr.dataset.openUrl); } });
+    items.push({ label: labels.open || 'Открыть', fn: function () { listOpen(obRowUrl(tr, 'open')); } });
   }
   // «Скопировать» (F9): открывает форму создания, заполненную значениями строки.
-  // Пустой data-copy-url = нет права записи, пункт не показываем.
-  if (tr.dataset.copyUrl) {
-    items.push({ label: labels.copy || 'Скопировать', fn: function () { listOpen(tr.dataset.copyUrl); } });
+  // Право записи объявлено один раз на контейнере (data-ob-row-can-copy);
+  // без него obRowUrl вернёт пустую строку и пункт не показываем.
+  if (obRowUrl(tr, 'copy')) {
+    items.push({ label: labels.copy || 'Скопировать', fn: function () { listOpen(obRowUrl(tr, 'copy')); } });
   }
   var basedOnItems = listBasedOnItems(tr, cfg);
   if (basedOnItems.length) {
     items.push({ label: labels.basedOn || 'Ввести на основании', items: basedOnItems });
   }
-  if (cfg.canWrite && tr.dataset.activityEnabled === '1') {
+  if (cfg.canWrite && obRowActivityEnabled(tr)) {
     if (tr.dataset.activityInactive === '1') {
-      items.push({ label: labels.activityShow || 'Вернуть в выбор', fn: function () { listSubmit(tr.dataset.activityShowUrl, labels.activityShowConfirm || 'Вернуть в выбор?'); } });
+      items.push({ label: labels.activityShow || 'Вернуть в выбор', fn: function () { listSubmit(obRowUrl(tr, 'activityShow'), labels.activityShowConfirm || 'Вернуть в выбор?'); } });
     } else {
-      items.push({ label: labels.activityHide || 'Скрыть из выбора', fn: function () { listSubmit(tr.dataset.activityHideUrl, labels.activityHideConfirm || 'Скрыть из выбора?'); } });
+      items.push({ label: labels.activityHide || 'Скрыть из выбора', fn: function () { listSubmit(obRowUrl(tr, 'activityHide'), labels.activityHideConfirm || 'Скрыть из выбора?'); } });
     }
   }
   if (cfg.canDelete) {
     if (!isPredefined) {
-      items.push({ label: labels.markDelete || 'Пометить на удаление', danger: true, fn: function () { listSubmit(tr.dataset.markUrl, labels.markDeleteConfirm || 'Пометить на удаление?'); } });
+      items.push({ label: labels.markDelete || 'Пометить на удаление', danger: true, fn: function () { listSubmit(obRowUrl(tr, 'mark'), labels.markDeleteConfirm || 'Пометить на удаление?'); } });
     } else {
       items.push({ label: labels.predefinedNoDelete || 'Предопределённый — нельзя удалить', disabled: true });
     }
   }
   if (cfg.canUnpost && tr.dataset.posted === '1') {
-    items.push({ label: labels.unpost || 'Отменить проведение', fn: function () { listSubmit(tr.dataset.unpostUrl, labels.unpostConfirm || 'Отменить проведение?'); } });
+    items.push({ label: labels.unpost || 'Отменить проведение', fn: function () { listSubmit(obRowUrl(tr, 'unpost'), labels.unpostConfirm || 'Отменить проведение?'); } });
   }
   if (cfg.canDelete && tr.dataset.marked === '1' && !isPredefined) {
-    items.push({ label: labels.unmarkDelete || 'Снять пометку на удаление', fn: function () { listSubmit(tr.dataset.unmarkUrl, labels.unmarkDeleteConfirm || 'Снять пометку на удаление?'); } });
+    items.push({ label: labels.unmarkDelete || 'Снять пометку на удаление', fn: function () { listSubmit(obRowUrl(tr, 'unmark'), labels.unmarkDeleteConfirm || 'Снять пометку на удаление?'); } });
   }
   if (cfg.isAdmin && !isPredefined) {
-    items.push({ label: labels.deleteForever || 'Удалить навсегда', danger: true, fn: function () { listSubmit(tr.dataset.delUrl, labels.deleteForeverConfirm || 'Удалить запись навсегда?'); } });
+    items.push({ label: labels.deleteForever || 'Удалить навсегда', danger: true, fn: function () { listSubmit(obRowUrl(tr, 'del'), labels.deleteForeverConfirm || 'Удалить запись навсегда?'); } });
   }
   return items;
 }
@@ -2274,6 +2360,27 @@ function listActionsBtnClick(e, btn) {
 // переход по ссылке и возврат назад не должны сами забирать фокус в поиск.
 var OB_LIST_SEARCH_FOCUS = 'ob-list-search-focus';
 
+// Ключ отметки привязан к вкладке оболочки. Вкладки — same-origin iframe с
+// общим sessionStorage, и один общий ключ позволял вкладкам глотать отметку
+// друг друга: A читал отметку B, расходовал её и отклонял по pathname, B
+// оставался без ничего (#1599). Имя фрейма «ob-tab-<id>» ставит оболочка
+// (tabs.go): оно переживает навигацию внутри iframe, восстанавливается вместе
+// с вкладками после перезапуска оболочки и различает два экземпляра одного
+// URL. Страница без оболочки (открыта напрямую) продолжает пользоваться общим
+// ключом — в окне без вкладок глотать отметку некому.
+function obListSearchKey() {
+  var frame = null;
+  try {
+    frame = window.frameElement;
+  } catch (e) {
+    frame = null;
+  }
+  if (frame && typeof frame.name === 'string' && frame.name.indexOf('ob-tab-') === 0) {
+    return OB_LIST_SEARCH_FOCUS + ':' + frame.name;
+  }
+  return OB_LIST_SEARCH_FOCUS;
+}
+
 function obListSearchStorage() {
   // В приватном режиме и при запрещённых сайту данных бросает сам доступ к
   // свойству — потерянный фокус не повод ронять поиск целиком.
@@ -2298,7 +2405,7 @@ function obSaveListSearchFocus(input) {
   var start = obListSearchCaret(input.selectionStart, value.length);
   var end = obListSearchCaret(input.selectionEnd, value.length);
   try {
-    store.setItem(OB_LIST_SEARCH_FOCUS, JSON.stringify({
+    store.setItem(obListSearchKey(), JSON.stringify({
       path: location.pathname,
       start: start,
       end: end < start ? start : end,
@@ -2313,9 +2420,9 @@ function obRestoreListSearchFocus() {
   if (!store) return null;
   var raw = null;
   try {
-    raw = store.getItem(OB_LIST_SEARCH_FOCUS);
+    raw = store.getItem(obListSearchKey());
     // Снимаем отметку сразу: она действует ровно на одну загрузку страницы.
-    if (raw !== null) store.removeItem(OB_LIST_SEARCH_FOCUS);
+    if (raw !== null) store.removeItem(obListSearchKey());
   } catch (e) {
     return null;
   }
@@ -2329,6 +2436,15 @@ function obRestoreListSearchFocus() {
   if (!state || state.path !== location.pathname) return null;
   var input = document.getElementById('ob-list-search');
   if (!input) return null;
+  // Скрытая вкладка (display:none в оболочке) не должна забирать активный
+  // фокус оболочки: отметку расходуем, фокус не трогаем (#1599).
+  var hidden = false;
+  try {
+    hidden = document.hidden === true;
+  } catch (e) {
+    hidden = false;
+  }
+  if (hidden) return null;
   var value = typeof input.value === 'string' ? input.value : '';
   var start = obListSearchCaret(state.start, value.length);
   var end = obListSearchCaret(state.end, value.length);
@@ -2407,13 +2523,19 @@ function listSubmit(url, msg) {
   }
 }
 
-function obInitFeed() {
-  var more = document.getElementById('feed-more');
-  if (!more) return;
+function obInitFeed(root) {
+  root = root || document;
+  var more = root.querySelector('#feed-more');
+  if (!more || more.__obFeedDispose) return;
   var loading = false;
   var done = false;
-  function stop() {
+  var observer;
+  more.__obFeedDispose = function () {
     done = true;
+    if (observer) observer.disconnect();
+  };
+  function stop() {
+    more.__obFeedDispose();
     if (more && more.parentNode) more.parentNode.removeChild(more);
   }
   function loadNext() {
@@ -2425,7 +2547,7 @@ function obInitFeed() {
       return;
     }
     var sel = more.getAttribute('data-container');
-    var c = document.querySelector(sel);
+    var c = root.querySelector(sel);
     if (!c) {
       stop();
       return;
@@ -2437,6 +2559,8 @@ function obInitFeed() {
     fetch(window.location.pathname + '?' + sp.toString(), { credentials: 'same-origin' })
       .then(function (r) { return r.text(); })
       .then(function (html) {
+        // A live refresh may have replaced this feed while the GET was in flight.
+        if (done || !more.isConnected || !c.isConnected) return;
         var doc = new DOMParser().parseFromString(html, 'text/html');
         var items = doc.querySelectorAll(sel + ' > ' + more.getAttribute('data-item'));
         if (!items.length) {
@@ -2444,7 +2568,7 @@ function obInitFeed() {
           return;
         }
         items.forEach(function (el) { c.appendChild(document.importNode(el, true)); });
-        var loaded = document.getElementById('feed-loaded');
+        var loaded = root.querySelector('#feed-loaded');
         if (loaded) loaded.textContent = c.children.length;
         n++;
         more.setAttribute('data-next', n);
@@ -2466,9 +2590,10 @@ function obInitFeed() {
     }
   });
   if ('IntersectionObserver' in window) {
-    new IntersectionObserver(function (ents) {
+    observer = new IntersectionObserver(function (ents) {
       ents.forEach(function (en) { if (en.isIntersecting) loadNext(); });
-    }, { rootMargin: '300px' }).observe(more);
+    }, { rootMargin: '300px' });
+    observer.observe(more);
   }
 }
 
@@ -3216,6 +3341,9 @@ function obInitFormDelegates() {
       var form = document.getElementById(submitInput.getAttribute('data-ob-submit-form') || '');
       if (form) form.submit();
     }
+    // Сменили владельца (контрагента, направление) — перестраиваем списки,
+    // которые по нему отбираются.
+    if (e.target.name) obRefreshDependentSelects(e.target);
   });
   document.addEventListener('submit', function (e) {
     var form = e.target;
@@ -3283,6 +3411,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
       if (meta && meta.entity) {
         sel.setAttribute('data-ref-entity', meta.entity);
         if (meta.allowCreate) sel.setAttribute('data-ref-allow-create', '1');
+        if (meta.filter) sel.setAttribute('data-ref-filter', meta.filter);
       }
       var defOpt = document.createElement('option');
       defOpt.value = '';
@@ -3425,8 +3554,120 @@ obReady(function () {
   });
 });
 
-function openItemPicker(payload, elementName, eventContext) {
+// obPickerSearch — состояние диалога подбора при СЕРВЕРНОМ поиске. Диалог
+// пересобирается на каждый ответ сервера (ответ приходит тем же pickerData, что
+// и первое открытие), поэтому всё, что обязано пережить пересборку, живёт здесь,
+// а не в замыкании openItemPicker: набранное, каретка, отмеченные строки и
+// признак «запрос в пути».
+var obPickerSearch = {
+  generation: 0,  // отдельное открытие диалога, включая повтор той же кнопки
+  element: '',     // элемент, чей диалог открыт; пусто — диалога нет
+  context: null,   // контекст события, с которым диалог открыли
+  query: '',       // что набрано в строке поиска
+  timer: null,     // таймер debounce
+  inFlight: null,  // конкретный запрос отправлен, ответ ещё не применён
+  pending: null,   // запрос, набранный пока предыдущий в пути (строка) либо null
+  picked: {},      // выбранные строки по id — переживают смену выдачи
+  order: []        // порядок выбора: «Перенести» отдаёт строки в нём
+};
+
+// obPickerForget — диалог закрыт. Гасим таймер, забываем набранное и выбор.
+// Меняем поколение: ответы и завершение старых запросов больше не относятся
+// к этому открытию, даже если новый подбор вызван той же кнопкой.
+function obPickerForget() {
+  if (obPickerSearch.timer) clearTimeout(obPickerSearch.timer);
+  obPickerSearch.timer = null;
+  obPickerSearch.pending = null;
+  obPickerSearch.element = '';
+  obPickerSearch.context = null;
+  obPickerSearch.query = '';
+  obPickerSearch.picked = {};
+  obPickerSearch.order = [];
+  obPickerSearch.generation++;
+  obPickerSearch.inFlight = null;
+}
+window.obPickerForget = obPickerForget;
+
+// Контекст живёт только в браузере и не подмешивается в поля формы.
+window.obPickerRequest = function () {
+  return {generation: obPickerSearch.generation, search: false};
+};
+
+function obPickerRequestCurrent(request) {
+  return !!request && request.generation === obPickerSearch.generation &&
+    (!request.search || obPickerSearch.inFlight === request);
+}
+window.obPickerRequestCurrent = obPickerRequestCurrent;
+
+// obPickerSendSearch — отправить запрос серверного поиска. В одном открытии
+// диалога в полёте не больше одного: иначе старый ответ может затереть новый.
+// Набранное позже ждёт своей очереди в pending.
+function obPickerSendSearch(q) {
+  if (!obPickerSearch.element) return;
+  if (obPickerSearch.inFlight) { obPickerSearch.pending = q; return; }
+  if (!document.getElementById('_item-picker-modal')) { obPickerForget(); return; }
+  if (typeof obFire !== 'function') return;
+  var request = {generation: obPickerSearch.generation, search: true};
+  obPickerSearch.inFlight = request;
+  var params = {};
+  var ctx = obPickerSearch.context;
+  if (ctx) Object.keys(ctx).forEach(function (key) { params[key] = ctx[key]; });
+  params._pick_query = q;
+  obFire(obPickerSearch.element, 'Поиск', params, request);
+}
+
+// obPickerSearchApplied — ответ серверного поиска дошёл. Возвращает false, если
+// применять его уже некуда: диалог закрыли, пока запрос был в пути.
+function obPickerSearchApplied(request) {
+  if (!obPickerRequestCurrent(request)) return false;
+  if (request.search) obPickerSearch.inFlight = null;
+  return true;
+}
+
+// finally в obFire закрывает также ошибку fetch/JSON и ранний выход до fetch.
+// Завершение старого запроса не может освободить очередь нового открытия.
+window.obPickerSearchFinished = function (request) {
+  if (request && request.search && obPickerSearchApplied(request)) obPickerFirePending();
+};
+
+// obPickerFirePending — набранное, пока предыдущий запрос был в пути.
+function obPickerFirePending() {
+  if (obPickerSearch.pending === null) return;
+  var q = obPickerSearch.pending;
+  obPickerSearch.pending = null;
+  obPickerSendSearch(q);
+}
+
+// obPickerSearchEmpty — серверный поиск не вернул диалога: обработчик ничего не
+// показал (обычно Сообщить и возврат). Окно и набранное оставляем — человек
+// правит запрос и ищет снова, — но строки чистим: прежняя выдача читается как
+// ответ на новый запрос.
+window.obPickerSearchEmpty = function (request) {
+  if (!request || !request.search || !obPickerSearchApplied(request)) return;
+  var modal = document.getElementById('_item-picker-modal');
+  var tb = modal ? modal.querySelector('tbody') : null;
+  if (!tb) { obPickerFirePending(); return; }
+  tb.innerHTML = '';
+  var tr = document.createElement('tr');
+  var td = document.createElement('td');
+  td.colSpan = 99;
+  td.style.cssText = 'padding:14px;text-align:center;color:#94a3b8;font-size:13px';
+  // Словарь страницы (tplHead рендерит его на языке пользователя); без него —
+  // ключ, то есть русский текст.
+  var dict = (typeof window.OB_I18N === 'object' && window.OB_I18N) || {};
+  td.textContent = dict['Ничего не найдено'] || 'Ничего не найдено';
+  tr.appendChild(td);
+  tb.appendChild(tr);
+  obPickerFirePending();
+};
+
+function openItemPicker(payload, elementName, eventContext, request) {
   if (!payload) return;
+  // Ответ серверного поиска может прийти уже после «Отмена»/«Перенести»/Esc.
+  // Открывать окно заново нельзя: человек его закрыл.
+  var searchResponse = !!(request && request.search);
+  if (request && !obPickerSearchApplied(request)) return;
+  if (!searchResponse) obPickerForget();
   var cols = payload.columns || [];
   var rows = payload.rows || [];
   var cfg = payload.config || {};
@@ -3452,6 +3693,22 @@ function openItemPicker(payload, elementName, eventContext) {
   search.placeholder = 'Поиск...';
   search.autocomplete = 'off';
   search.style.cssText = 'padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;font-size:14px;margin-bottom:10px;outline:none';
+  // Серверный поиск (Конфиг.ПоискНаСервере): строка спрашивает обработчик
+  // события Поиск, а не фильтрует уже приехавшие строки. Нужен там, где
+  // фильтровать нечего: выдача обрезана пределом, а искомое за ним, либо
+  // колонка показана маской ПДн и её текст искать бессмысленно.
+  var serverSearch = !!cfg.serverSearch && typeof obFire === 'function';
+  if (serverSearch) {
+    if (!searchResponse || obPickerSearch.element !== elementName) {
+      // Новое открытие, а не ответ на поиск: прежний выбор не наследуется.
+      obPickerSearch.query = '';
+      obPickerSearch.picked = {};
+      obPickerSearch.order = [];
+    }
+    obPickerSearch.element = elementName;
+    obPickerSearch.context = eventContext || null;
+    search.value = obPickerSearch.query;
+  }
   box.appendChild(search);
   var scroll = document.createElement('div');
   scroll.style.cssText = 'overflow:auto;flex:1;min-height:120px;border:1px solid #e2e8f0;border-radius:7px';
@@ -3493,7 +3750,10 @@ function openItemPicker(payload, elementName, eventContext) {
     if (single) cb.name = '_ip-choice';
     cb.className = '_ip-cb';
     if (cfg.checkAll && !single) cb.checked = true;
-    cb.onchange = updateCounter;
+    cb.onchange = function () {
+      if (serverSearch) rememberRow(tr);
+      updateCounter();
+    };
     tdCb.appendChild(cb);
     // В одиночном выборе строка целиком работает как переключатель: попадать
     // мышью в кружок диаметром 13 px посреди разговора с клиентом незачем.
@@ -3502,6 +3762,7 @@ function openItemPicker(payload, elementName, eventContext) {
       tr.addEventListener('click', function (e) {
         if (e.target === cb) return;
         cb.checked = true;
+        if (serverSearch) rememberRow(tr);
         updateCounter();
       });
     }
@@ -3526,16 +3787,44 @@ function openItemPicker(payload, elementName, eventContext) {
     });
     tbody.appendChild(tr);
   });
+  if (serverSearch) {
+    // Выдача сменилась ответом сервера: вернуть отметки и правленые значения
+    // строкам, выбранным по прежнему запросу. Без этого мультивыбор по
+    // нескольким запросам невозможен, а «Перенести» отдаёт только последнюю
+    // выдачу.
+    Array.prototype.forEach.call(tbody.rows, function (tr) {
+      var id = tr.getAttribute('data-id') || '';
+      var cb = tr.querySelector('._ip-cb');
+      if (!id || !cb) return;
+      var saved = Object.prototype.hasOwnProperty.call(obPickerSearch.picked, id)
+        ? obPickerSearch.picked[id] : null;
+      if (saved) {
+        cb.checked = true;
+        cols.forEach(function (c) {
+          if (!c.editable) return;
+          var inp = tr.querySelector('._ip-val[data-col="' + c.name + '"]');
+          if (inp && Object.prototype.hasOwnProperty.call(saved, c.name)) inp.value = saved[c.name];
+        });
+        return;
+      }
+      // Строки, отмеченные конфигом checkAll, тоже часть выбора.
+      if (cb.checked) rememberRow(tr);
+    });
+  }
   tbody.addEventListener('input', function (e) {
     var inp = e.target;
     if (!inp.classList.contains('_ip-val')) return;
-    if (cfg.qtyField && inp.getAttribute('data-col') !== cfg.qtyField) return;
     var tr = inp.closest('tr');
     if (!tr) return;
+    if (cfg.qtyField && inp.getAttribute('data-col') !== cfg.qtyField) {
+      if (serverSearch) rememberRow(tr);
+      return;
+    }
     var cb = tr.querySelector('._ip-cb');
     if (!cb) return;
     var val = parseFloat(inp.value);
     cb.checked = (!isNaN(val) && val > 0);
+    if (serverSearch) rememberRow(tr);
     updateCounter();
     updateBasket();
   });
@@ -3610,8 +3899,45 @@ function openItemPicker(payload, elementName, eventContext) {
       return cb.checked && cb.closest('tr').style.display !== 'none';
     });
   }
+  // rowObject — строка в том виде, в каком она уходит обработчику события Выбор.
+  function rowObject(tr) {
+    var obj = { id: tr.getAttribute('data-id') };
+    cols.forEach(function (c) {
+      if (c.editable) {
+        var inp = tr.querySelector('._ip-val[data-col="' + c.name + '"]');
+        obj[c.name] = inp ? inp.value : '';
+      } else {
+        var td = tr.querySelector('td[data-col="' + c.name + '"]');
+        obj[c.name] = td ? td.textContent : '';
+      }
+    });
+    return obj;
+  }
+  // rememberRow — запомнить или забыть строку в выборе, переживающем смену
+  // выдачи. Строка без id между выдачами неузнаваема, её не запоминаем.
+  function rememberRow(tr) {
+    var id = tr.getAttribute('data-id') || '';
+    if (!id) return;
+    var cb = tr.querySelector('._ip-cb');
+    var known = Object.prototype.hasOwnProperty.call(obPickerSearch.picked, id);
+    if (cb && cb.checked) {
+      if (single) {
+        obPickerSearch.picked = {};
+        obPickerSearch.order = [];
+        known = false;
+      }
+      if (!known) obPickerSearch.order.push(id);
+      obPickerSearch.picked[id] = rowObject(tr);
+      return;
+    }
+    if (!known) return;
+    delete obPickerSearch.picked[id];
+    var at = obPickerSearch.order.indexOf(id);
+    if (at >= 0) obPickerSearch.order.splice(at, 1);
+  }
   function updateCounter() {
-    counter.textContent = single ? '' : ('Выбрано: ' + checkedRows().length);
+    var n = serverSearch ? obPickerSearch.order.length : checkedRows().length;
+    counter.textContent = single ? '' : ('Выбрано: ' + n);
   }
   function updateBasket() {
     bTbody.innerHTML = '';
@@ -3644,7 +3970,23 @@ function openItemPicker(payload, elementName, eventContext) {
   updateCounter();
   updateBasket();
   search.focus();
+  if (serverSearch && search.value) {
+    // Каретка в конец: окно пересобрано ответом сервера, а человек продолжает
+    // набирать — без этого следующая буква уехала бы в начало строки.
+    try { search.setSelectionRange(search.value.length, search.value.length); } catch (e) { /* старый браузер */ }
+  }
+  function scheduleServerSearch(q) {
+    obPickerSearch.query = q;
+    if (obPickerSearch.timer) clearTimeout(obPickerSearch.timer);
+    // 250 мс: меньше — запрос на каждую букву, больше — задержка заметна.
+    obPickerSearch.timer = setTimeout(function () {
+      obPickerSearch.timer = null;
+      obPickerSendSearch(q);
+    }, 250);
+  }
+  if (serverSearch) obPickerFirePending();
   search.addEventListener('input', function () {
+    if (serverSearch) { scheduleServerSearch(this.value); return; }
     var q = this.value.toLowerCase();
     Array.prototype.forEach.call(tbody.rows, function (tr) {
       tr.style.display = (tr.getAttribute('data-search') || '').indexOf(q) >= 0 ? '' : 'none';
@@ -3658,26 +4000,35 @@ function openItemPicker(payload, elementName, eventContext) {
       if (tr.style.display === 'none') return;
       var cb = tr.querySelector('._ip-cb');
       if (cb) cb.checked = cbAll.checked;
+      if (serverSearch) rememberRow(tr);
     });
     updateCounter();
     updateBasket();
   });
-  btnCancel.addEventListener('click', function () { modal.remove(); });
+  // Esc закрывает диалог тем же путём, что «Отмена»: общий обработчик Escape
+  // зовёт modal._obClose, если он есть.
+  modal._obClose = function () {
+    obPickerForget();
+    modal.remove();
+  };
+  btnCancel.addEventListener('click', function () {
+    obPickerForget();
+    modal.remove();
+  });
   btnOk.addEventListener('click', function () {
-    var result = checkedRows().map(function (cb) {
-      var tr = cb.closest('tr');
-      var obj = { id: tr.getAttribute('data-id') };
-      cols.forEach(function (c) {
-        if (c.editable) {
-          var inp = tr.querySelector('._ip-val[data-col="' + c.name + '"]');
-          obj[c.name] = inp ? inp.value : '';
-        } else {
-          var td = tr.querySelector('td[data-col="' + c.name + '"]');
-          obj[c.name] = td ? td.textContent : '';
-        }
+    var result;
+    if (serverSearch) {
+      // Выбор собран по всем запросам, а не только по последней выдаче.
+      result = obPickerSearch.order.map(function (id) { return obPickerSearch.picked[id]; });
+      // Строка без id не может пережить смену выдачи, но текущий одиночный
+      // выбор всё равно должен попасть в ответ.
+      if (single && !result.length) result = checkedRows().map(function (cb) { return rowObject(cb.closest('tr')); });
+    } else {
+      result = checkedRows().map(function (cb) {
+        return rowObject(cb.closest('tr'));
       });
-      return obj;
-    });
+    }
+    obPickerForget();
     modal.remove();
     if (typeof obFire === 'function') {
       var params = {};
@@ -3689,6 +4040,180 @@ function openItemPicker(payload, elementName, eventContext) {
     }
   });
 }
+
+// ── Отбор подбора: подчинённые справочники и связи параметров выбора ──────────
+//
+// Разметка несёт на поле data-ref-filter вида
+//     {"Владелец":{"from":"Контрагент","value":"<uuid>"}}
+// «from» — имя поля-источника НА ЭТОЙ ЖЕ форме, «value» — его значение на момент
+// отрисовки. Живое поле важнее: пользователь мог сменить контрагента секунду
+// назад, до того как форма съездила на сервер. Значение из разметки — запасной
+// вариант для источника, которого на форме нет (реквизит объекта, не вынесенный
+// на форму).
+function obRefFilterValues(sel) {
+  if (!sel || !sel.getAttribute) return null;
+  var raw = sel.getAttribute('data-ref-filter');
+  if (!raw) return null;
+  var spec;
+  try { spec = JSON.parse(raw); } catch (e) { return null; }
+  var scope = (sel.closest && sel.closest('form')) || document;
+  var out = {};
+  var any = false;
+  for (var key in spec) {
+    if (!Object.prototype.hasOwnProperty.call(spec, key)) continue;
+    var item = spec[key] || {};
+    var value = item.value || '';
+    if (item.from) {
+      var src = scope.querySelector('[name="' + (window.CSS && CSS.escape ? CSS.escape(item.from) : item.from) + '"]');
+      if (src) value = src.value || '';
+    }
+    // Ключ кладём даже с пустым значением: сервер по нему отличает «владельца
+    // ещё не выбрали» (список пуст) от «на этой форме владельца не спрашивают»
+    // (список целиком).
+    out[key] = value;
+    any = true;
+  }
+  return any ? out : null;
+}
+
+// obRefFilterParam — тот же отбор строкой для запроса /ui/_ref-options.
+function obRefFilterParam(sel) {
+  var values = obRefFilterValues(sel);
+  if (!values) return '';
+  return '&flt=' + encodeURIComponent(JSON.stringify(values));
+}
+window.obRefFilterParam = obRefFilterParam;
+
+// obRefreshDependentSelects — сменили контрагента: списки, отобранные по нему,
+// перестраиваем сразу, не дожидаясь перерисовки формы. Значение, выпавшее из
+// нового отбора, очищаем: договор чужого контрагента в поле — это молча
+// сохранённая ошибка, а пустое поле человек видит.
+function obRefreshDependentSelects(sourceEl) {
+  if (!sourceEl || !sourceEl.name || !window.fetch) return;
+  var scope = (sourceEl.closest && sourceEl.closest('form')) || document;
+  var targets = scope.querySelectorAll('select[data-ref-filter]');
+  for (var i = 0; i < targets.length; i++) {
+    (function (sel) {
+      var raw = sel.getAttribute('data-ref-filter');
+      if (!raw || raw.indexOf('"' + sourceEl.name + '"') < 0) return;
+      var entity = sel.getAttribute('data-ref-entity') || '';
+      if (!entity) return;
+      // У managed-поля с choice_filter есть один владелец запроса и один
+      // sequence gate. Два независимых ответа перезаписывали друг другу select.
+      if (sel.getAttribute('data-ref-choice-context')) {
+        obRefreshChoiceSelect(sel, true);
+        return;
+      }
+      var filter = obRefFilterParam(sel);
+      var seq = (sel._obOwnerRefreshSeq || 0) + 1;
+      sel._obOwnerRefreshSeq = seq;
+      var url = '/ui/_ref-options/' + encodeURIComponent(entity) + '?limit=50' + filter;
+      fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
+        .then(function (resp) { return resp.ok ? resp.json() : null; })
+        .then(function (data) {
+          // An older response must not replace options for a newer owner,
+          // including when the user has switched A → B → A in the meantime.
+          if (!data || sel._obOwnerRefreshSeq !== seq || obRefFilterParam(sel) !== filter) return;
+          var rows = data.items || [];
+          var current = sel.value;
+          // choice_dropdown: false — список закрыт, и смена владельца его не
+          // раскрывает. Проверка допустимости значения та же, что у открытого
+          // списка (присутствие в странице ответа нового владельца); отличается
+          // только разметка: в закрытом списке остаётся одно подтверждённое
+          // значение, а выбирают в таком поле кнопкой подбора.
+          var collapsed = sel.getAttribute('data-ref-choice-dropdown') === 'false';
+          var keep = false;
+          while (sel.options.length) sel.remove(0);
+          var empty = document.createElement('option');
+          empty.value = '';
+          empty.textContent = '— выбрать —';
+          sel.appendChild(empty);
+          for (var j = 0; j < rows.length; j++) {
+            var id = String(rows[j].id);
+            // keep считается ДО отсева: закрытый список не показывает строку,
+            // но знать, что владелец её подтвердил, обязан.
+            if (id === String(current)) keep = true;
+            if (collapsed && id !== String(current)) continue;
+            var opt = document.createElement('option');
+            opt.value = rows[j].id;
+            opt.textContent = rows[j]._label != null ? rows[j]._label : rows[j].id;
+            sel.appendChild(opt);
+          }
+          sel.value = keep ? current : '';
+        })
+        .catch(function () {});
+    })(targets[i]);
+  }
+}
+// refContextForRequest собирает choice_context из ТЕКУЩИХ контролов формы.
+// В data-ref-context лежит карта «параметр → путь», а не значения серверного
+// рендера: пользователь мог поменять Филиал уже после открытия карточки.
+// Функция вызывается для каждого запроса подбора, поэтому поиск в уже открытом
+// диалоге тоже не отправляет устаревший снимок.
+function refContextForRequest(sel) {
+  var raw = sel.getAttribute('data-ref-context') || '';
+  if (!raw || !sel.form || !sel.form.elements) return '';
+  var paths;
+  try { paths = JSON.parse(raw); } catch (e) { return ''; }
+  if (!paths || typeof paths !== 'object' || Array.isArray(paths)) return '';
+  var context = Object.create(null);
+  Object.keys(paths).forEach(function (name) {
+    var parts = String(paths[name] == null ? '' : paths[name]).split('.');
+    var fieldName = parts[parts.length - 1];
+    var control = fieldName ? sel.form.elements.namedItem(fieldName) : null;
+    context[name] = control && control.value != null ? String(control.value) : '';
+  });
+  return JSON.stringify(context);
+}
+
+
+// BEGIN onebase-question-modal
+/* ПоказатьВопрос (#1528, план 158 срез A): модал вопроса фазы 1. Ответ
+   пользователя уходит событием Ответ с _question_answer — сервер кладёт его
+   в переменную ВопросОтвет и вызывает обработчик Ответ того же элемента.
+   Диалог неблокирующий: клик мимо закрывает модал без ответа (обработчик фазы 1
+   сам решает, что делать без второй фазы). */
+function obOpenQuestion(payload, elementName) {
+  if (!payload || !payload.variants || !payload.variants.length) return;
+  var old = document.getElementById('_question-modal');
+  if (old) old.remove();
+  var modal = document.createElement('div');
+  modal.id = '_question-modal';
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
+  var box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border-radius:10px;padding:20px;width:460px;max-width:94vw;box-shadow:0 8px 32px rgba(0,0,0,.18)';
+  if (payload.title) {
+    var title = document.createElement('div');
+    title.style.cssText = 'font-weight:600;font-size:15px;color:#1e293b;margin-bottom:8px';
+    title.textContent = payload.title;
+    box.appendChild(title);
+  }
+  var text = document.createElement('div');
+  text.style.cssText = 'font-size:14px;color:#1e293b;white-space:pre-line;margin-bottom:16px';
+  text.textContent = payload.text;
+  box.appendChild(text);
+  var row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+  payload.variants.forEach(function (variant) {
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = variant;
+    btn.style.cssText = 'padding:8px 16px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:14px';
+    btn.addEventListener('click', function () {
+      modal.remove();
+      if (typeof obFire === 'function') obFire(elementName, 'Ответ', { _question_answer: variant });
+    });
+    row.appendChild(btn);
+  });
+  box.appendChild(row);
+  modal.appendChild(box);
+  modal.addEventListener('click', function (ev) {
+    if (ev.target === modal) modal.remove();
+  });
+  document.body.appendChild(modal);
+}
+window.obOpenQuestion = obOpenQuestion;
+// END onebase-question-modal
 
 /* Live refresh for managed-form choice_filter controls (plan 170/C).
    The server remains authoritative: the browser only snapshots declared
@@ -3714,14 +4239,18 @@ function obRefChoiceSnapshot(sel) {
     values[path] = control && control.value != null ? String(control.value) : '';
   });
   var query = '&form_entity=' + encodeURIComponent(ctx.form_entity) +
+    // Форма обработки (#1840): вид владельца — из серверного контекста.
+    (ctx.form_kind ? '&form_kind=' + encodeURIComponent(ctx.form_kind) : '') +
     '&form=' + encodeURIComponent(ctx.form) +
     '&element=' + encodeURIComponent(ctx.element) +
     '&sources=' + encodeURIComponent(JSON.stringify(values));
   if (sel.value) query += '&selected_id=' + encodeURIComponent(sel.value);
+  var ownerQuery = obRefFilterParam(sel);
+  query += ownerQuery;
   var fingerprintParts = paths.map(function (path) { return [path, values[path]]; });
   return {
     query: query,
-    fingerprint: JSON.stringify([ctx.form_entity, ctx.form, ctx.element, fingerprintParts]),
+    fingerprint: JSON.stringify([ctx.form_entity, ctx.form_kind || '', ctx.form, ctx.element, fingerprintParts, ownerQuery]),
     selected: sel.value == null ? '' : String(sel.value)
   };
 }
@@ -3776,9 +4305,11 @@ function obChoiceApplyResponse(sel, data, selectedAtRequest) {
   sel.appendChild(blank);
 
   var selectedPresent = false;
+  var collapsed = sel.getAttribute('data-ref-choice-dropdown') === 'false';
   rows.forEach(function (row) {
     var id = row && row.id != null ? String(row.id) : '';
     if (!id) return;
+    if (collapsed && (id !== selectedAtRequest || selectedAllowed === false)) return;
     var opt = document.createElement('option');
     opt.value = id;
     opt.textContent = String((row && row._label) || id);
@@ -3922,6 +4453,10 @@ function openRefPicker(selOrId) {
   if (!sel) return;
   if (sel.disabled || sel.readOnly || sel.hasAttribute('readonly')) return;
   var refEntity = sel.getAttribute('data-ref-entity') || '';
+  // Контекст подбора (choice_context вызывающей формы): «для чего выбираем».
+  // Уезжает на сервер вместе с запросом строк — по нему конфигурация собирает
+  // текст просмотра, который зависит не только от строки (памятка по
+  // направлению у филиалов разная).
   var allowCreate = sel.getAttribute('data-ref-allow-create') === '1';
   var localOpts = [];
   for (var i = 0; i < sel.options.length; i++) {
@@ -3939,21 +4474,41 @@ function openRefPicker(selOrId) {
   }
   var modal = document.createElement('div');
   modal.id = '_ref-picker-modal';
-  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
-  var inner = '<div style="background:#fff;border-radius:10px;padding:20px;width:480px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.18)">';
+  // Ширина зависит от preview в первом ответе. До него скрываем именно этот
+  // диалог, а не независимый openItemPicker; rpReveal покажет его после layout.
+  modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center;visibility:hidden';
+  var inner = '<div id="_rp-card" style="background:#fff;border-radius:10px;padding:20px;width:480px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.18)">';
   inner += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-weight:600;font-size:15px;color:#1e293b">Выбор из списка</div>';
   if (allowCreate && refEntity) {
     inner += '<button type="button" id="_rp-create" style="padding:5px 12px;border:1px solid #16a34a;border-radius:6px;background:#f0fdf4;cursor:pointer;font-size:12px;font-weight:600;color:#16a34a" title="Создать новый">+ Создать</button>';
   }
   inner += '</div>';
   inner += '<input id="_rp-search" type="text" placeholder="Поиск..." autocomplete="off" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;font-size:14px;margin-bottom:10px;outline:none">';
-  inner += '<div id="_rp-list" style="overflow-y:auto;flex:1;border:1px solid #e2e8f0;border-radius:7px"></div>';
+  // Список и область просмотра — РЯДОМ, и высота у обоих не зависит от того,
+  // есть ли у строки текст. Просмотр под списком не годился дважды: длинный
+  // список уводил его за нижний край, а появление и исчезновение текста при
+  // переводе курсора меняло высоту диалога — он прыгал под мышью.
+  inner += '<div id="_rp-body" style="display:flex;gap:12px;align-items:stretch;flex:1;min-height:0">';
+  inner += '<div id="_rp-list" style="overflow-y:auto;flex:1 1 auto;min-width:0;border:1px solid #e2e8f0;border-radius:7px"></div>';
+  // Колонки просмотра нет вовсе, пока сущность не объявила choice_preview:
+  // подбор по остальным справочникам остаётся ровно таким, каким был.
+  inner += '<div id="_rp-preview" style="display:none;flex:0 0 340px;padding:12px 14px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;font-size:13px;line-height:1.5;color:#334155;white-space:pre-wrap;overflow-y:auto"></div>';
+  inner += '</div>';
   inner += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px"><div id="_rp-status" style="font-size:12px;color:#94a3b8"></div><button type="button" id="_rp-cancel" style="padding:6px 18px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">Отмена</button></div>';
   inner += '</div>';
   modal.innerHTML = inner;
   document.body.appendChild(modal);
   var list = document.getElementById('_rp-list');
   var status = document.getElementById('_rp-status');
+  // rpReveal — показать диалог. Зовётся с первым отрисованным списком, а если
+  // сервер молчит — по таймауту: невидимый диалог хуже прыгающего.
+  var rpRevealed = false;
+  function rpReveal() {
+    if (rpRevealed) return;
+    rpRevealed = true;
+    modal.style.visibility = 'visible';
+  }
+  setTimeout(rpReveal, 400);
   // rpActive — подсвеченная строка списка. Форма выбора обязана работать с
   // клавиатуры целиком: ищем в поле, ↑/↓ ведут по найденному, Enter выбирает.
   // Раньше выбрать пункт можно было только мышью.
@@ -3963,12 +4518,58 @@ function openRefPicker(selOrId) {
     var items = rpItems();
     return (rpActive >= 0 && items[rpActive]) ? items[rpActive].getAttribute('data-id') : '';
   }
+  // rpPreviewField — имя реквизита области просмотра; приезжает вместе со
+  // строками (choice_preview сущности). Пусто — области просмотра нет.
+  var rpPreviewField = '';
+  // сервер тем же санитайзером, что и остальной richtext платформы; клиент сам
+  // ничего не разрешает и в обычном режиме ставит текст, а не HTML.
+  function rpApplyPreviewLayout() {
+    var box = document.getElementById('_rp-preview');
+    var card = document.getElementById('_rp-card');
+    var body = document.getElementById('_rp-body');
+    if (!box || !card) return;
+    var on = !!rpPreviewField;
+    box.style.display = on ? 'block' : 'none';
+    // Диалог со списком — 480px и высота по содержимому, как был всегда. Диалог
+    // со списком И просмотром — шире и с фиксированной высотой: иначе текст под
+    // курсором тянул бы окно то вверх, то вниз. Справочник без choice_preview
+    // этой геометрии не видит вовсе.
+    card.style.width = on ? '900px' : '480px';
+    if (body && on) {
+      // Высота фиксированная, но карточка обязана уместиться в экран:
+      // flex-shrink оставлен, поэтому на низком окне тело сжимается вместе с
+      // карточкой. Дрожания от этого нет — высота зависит от размера окна, а не
+      // от того, на какой строке стоит курсор.
+      body.style.flex = '1 1 auto';
+      body.style.height = '52vh';
+      body.style.minHeight = '180px';
+    }
+  }
+  function rpPaintPreview() {
+    var box = document.getElementById('_rp-preview');
+    if (!box || !rpPreviewField) return;
+    var items = rpItems();
+    var text = (rpActive >= 0 && items[rpActive]) ? (items[rpActive].getAttribute('data-preview') || '') : '';
+    // Пустой текст — прочерк, а не исчезающая колонка: строка без пояснения не
+    // должна ни двигать вёрстку, ни оставлять на экране чужой текст.
+    if (false) {
+      box.innerHTML = text;
+    } else {
+      box.textContent = text || '—';
+    }
+    // Размеченный текст приносит свои абзацы и списки — переносы по пробелам
+    // ему только мешают; у обычного текста они, наоборот, единственный способ
+    // сохранить строки.
+    box.style.whiteSpace = 'pre-wrap';
+    box.style.color = text ? '#334155' : '#cbd5e1';
+  }
   function rpPaint() {
     var items = rpItems();
     for (var i = 0; i < items.length; i++) items[i].style.background = (i === rpActive) ? '#eef2ff' : '';
     if (rpActive >= 0 && items[rpActive] && items[rpActive].scrollIntoView) {
       items[rpActive].scrollIntoView({ block: 'nearest' });
     }
+    rpPaintPreview();
   }
   // keepId — не сбрасывать подсветку на первую строку, когда список
   // перестраивается ответом серверного поиска, а не действием пользователя.
@@ -3988,6 +4589,7 @@ function openRefPicker(selOrId) {
       item.className = '_rp-item';
       item.setAttribute('data-id', opts[i].id);
       item.setAttribute('data-label', opts[i].label);
+      if (opts[i].preview) item.setAttribute('data-preview', opts[i].preview);
       item.style.cssText = 'padding:9px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:14px;color:#1e293b';
       item.textContent = opts[i].label;
       (function (idx) {
@@ -4013,6 +4615,7 @@ function openRefPicker(selOrId) {
     }
     renderItems(filtered);
     if (status) status.textContent = '';
+    rpReveal();
   }
   function selectItem(item) {
     if (!window._rpTarget) return;
@@ -4052,11 +4655,49 @@ function openRefPicker(selOrId) {
     var choiceQuery = choiceSnapshot ? choiceSnapshot.query : obRefChoiceQuery(sel);
     var choiceFingerprint = choiceSnapshot ? choiceSnapshot.fingerprint : '';
     var choiceSelected = sel.value == null ? '' : String(sel.value);
+    // План 168: у элемента с choice_context страница запрашивается POST-ом
+    // /_ref-options/{entity}/page — значения незаписанной формы не попадают в
+    // URL и access log, а allowlist контекста сервер восстанавливает сам.
+    // Ответ 422 — «Пояснение недоступно»: выбор блокируется (fail-closed),
+    // тихий откат к списку без просмотра запрещён.
+    var refContextRaw = sel.getAttribute('data-ref-context') || '';
+    var usePreviewPage = !!refContextRaw;
     var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + encodeURIComponent(q || '') + choiceQuery;
+    // Отбор подбора: владелец подчинённого справочника.
+    if (!choiceSnapshot) url += obRefFilterParam(sel);
     var fetchOptions = { credentials: 'same-origin', headers: { 'Accept': 'application/json' } };
     if (requestController) fetchOptions.signal = requestController.signal;
+    if (usePreviewPage) {
+      url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '/page';
+      fetchOptions.method = 'POST';
+      fetchOptions.headers['Content-Type'] = 'application/json';
+      var sourceElement = sel.getAttribute('data-ref-element') || '';
+      var contextValues = {};
+      try {
+        var bindings = JSON.parse(refContextRaw);
+        Object.keys(bindings).forEach(function (name) {
+          var parts = String(bindings[name]).split('.');
+          var control = sel.form && sel.form.elements ? sel.form.elements.namedItem(parts[parts.length - 1]) : null;
+          contextValues[name] = control && control.value != null ? String(control.value) : '';
+        });
+      } catch (e) {}
+      fetchOptions.body = JSON.stringify({
+        q: q || '', limit: 50, offset: 0,
+        source: { entity: refEntity, element: sourceElement },
+        context: contextValues,
+        filters: obRefFilterValues(sel) || {}
+      });
+    }
     fetch(url, fetchOptions)
       .then(function (resp) {
+        if (resp.status === 422) {
+          // Пояснение недоступно: блокируем выбор (fail-closed, инвариант 10).
+          rpPreviewField = '';
+          rpReveal();
+          renderItems([], '');
+          if (status) status.textContent = 'Пояснение недоступно: повторите запрос';
+          throw new Error('preview-unavailable');
+        }
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         return resp.json();
       })
@@ -4067,11 +4708,16 @@ function openRefPicker(selOrId) {
             (sel.value == null ? '' : String(sel.value)) !== choiceSelected)) return;
         var keep = rpActiveId();
         var rows = (data && data.items) || [];
+        rpPreviewField = (data && data.preview) || '';
+        rpApplyPreviewLayout();
         var opts = rows.map(function (row) {
           var id = row && row.id != null ? String(row.id) : '';
-          return { id: id, label: String((row && row._label) || id) };
+          var preview = '';
+          if (rpPreviewField && row && row[rpPreviewField] != null) preview = String(row[rpPreviewField]);
+          return { id: id, label: String((row && row._label) || id), preview: preview };
         }).filter(function (opt) { return opt.id !== ''; });
         renderItems(opts, keep);
+        rpReveal();
         if (status) {
           var total = data && typeof data.total === 'number' ? data.total : opts.length;
           status.textContent = total > opts.length ? 'Показано ' + opts.length + ' из ' + total : '';
@@ -4658,6 +5304,7 @@ window.onebaseDevice = {
   var devState = { generation: null };
   function connect() {
     if (typeof EventSource === 'undefined') return;
+    if (window.__obEvents) return;
     var es = new EventSource('/ui/events');
     window.__obEvents = es;
     es.onopen = function () {
@@ -4698,6 +5345,17 @@ window.onebaseDevice = {
   // (Hub.Publish доставляет каждому подписчику). Произвольные onebase:<имя>
   // события оболочка ретранслирует во фреймы через проверенный postMessage.
   if (!window.__obEmbedded) {
+    // Back/forward cache can retain the previous document and its EventSource.
+    // Release the HTTP connection before navigation: six retained streams can
+    // otherwise block the next page on HTTP/1.1. A restored document reconnects
+    // and uses the existing reconnect refresh path to catch up on live data.
+    window.addEventListener('pagehide', function () {
+      if (window.__obEvents) window.__obEvents.close();
+      window.__obEvents = null;
+    });
+    window.addEventListener('pageshow', function (ev) {
+      if (ev.persisted) connect();
+    });
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', connect);
     else connect();
   }
@@ -4917,7 +5575,7 @@ function obDetailFetch(row, url) {
       // Строка могла смениться, пока ответ шёл. Старый ответ не должен даже
       // попадать в общий кэш, иначе следующий render покажет чужую версию.
       var current = (typeof listSel === 'function') ? listSel() : null;
-      if (!current || current.getAttribute('data-ob-detail-url') !== url) return;
+      if (!current || obRowUrl(current, 'detail') !== url) return;
       obDetailCache = { url: url, body: body };
       obDetailRender();
     })
@@ -4926,7 +5584,7 @@ function obDetailFetch(row, url) {
       obDetailPending = { url: '', controller: null };
       if (err && err.name === 'AbortError') return;
       var current = (typeof listSel === 'function') ? listSel() : null;
-      if (!current || current.getAttribute('data-ob-detail-url') !== url) return;
+      if (!current || obRowUrl(current, 'detail') !== url) return;
       obDetailCache = { url: '', body: '' };
       if (fieldsEl) fieldsEl.textContent = 'Не удалось загрузить детали: ' + err.message;
     });
@@ -4950,7 +5608,7 @@ function obDetailRender() {
   // #860). Ответ кэшируется на строку: переключение закладок не должно
   // дёргать сервер.
   var raw = row ? row.getAttribute('data-ob-detail') : '';
-  var lazyURL = row ? row.getAttribute('data-ob-detail-url') : '';
+  var lazyURL = row ? obRowUrl(row, 'detail') : '';
   if (!raw && lazyURL) {
     if (obDetailCache.url === lazyURL) {
       raw = obDetailCache.body;
@@ -5091,7 +5749,7 @@ function initDetailPanel() {
 (function () {
   var css = '' +
     '.ob-list-wrap{display:flex;gap:12px;align-items:flex-start}' +
-    '.ob-list-wrap>.card{flex:1 1 auto;min-width:0}' +
+    '.ob-list-wrap>.card,.ob-list-content{flex:1 1 auto;min-width:0}' +
     '.ob-detail{position:relative;flex:0 0 auto;width:320px;background:#fff;border:1px solid #e2e8f0;' +
     'border-radius:8px;padding:0;align-self:stretch;max-height:calc(100vh - 160px);overflow:auto}' +
     '.ob-detail-grip{position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:col-resize}' +

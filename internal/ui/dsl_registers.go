@@ -39,6 +39,31 @@ func (r *accumRegsRoot) Get(name string) any {
 
 func (r *accumRegsRoot) Set(_ string, _ any) {}
 
+// GetDynamicField / SetDynamicField — индексный доступ РегистрыНакопления["Имя"] (#1434).
+//
+// Раньше такое выражение компилировалось, но возвращало Неопределено: корни
+// менеджеров не реализовывали DynamicFieldAccessor, и универсальный цикл по
+// списку типов приходилось заменять Соответствием из литералов.
+//
+// Только чтение. Имя сопоставляется без учёта регистра — этим занимается сам
+// поиск в реестре. Неизвестное имя даёт ошибку, а не Неопределено: опечатка
+// обязана падать там, где она написана.
+func (r *accumRegsRoot) GetDynamicField(name string) (any, bool) {
+	v := r.Get(name)
+	if v == nil {
+		return nil, false
+	}
+	return v, true
+}
+
+// Индексная запись корню менеджера не открывается: РегистрыНакопления["Имя"] — способ
+// получить менеджер, а не ячейка. Отказ явный, потому что молчаливое false
+// дало бы сообщение «неизвестный реквизит» про существующий менеджер.
+func (r *accumRegsRoot) SetDynamicField(name string, _ any) bool {
+	interpreter.RaiseUserError("РегистрыНакопления[\"" + name + "\"]: индексная запись не поддерживается, доступно только чтение")
+	return false
+}
+
 type accumRegProxy struct {
 	s      *Server
 	ctxSrc docsCtxSource

@@ -33,8 +33,10 @@ func ValidateConstants(constants []*Constant, entities []*Entity, enums []*Enum)
 
 func Validate(entities []*Entity, enums []*Enum) error {
 	entityNames := make(map[string]bool, len(entities))
+	entityKinds := make(map[string]Kind, len(entities))
 	for _, e := range entities {
 		entityNames[e.Name] = true
+		entityKinds[e.Name] = e.Kind
 	}
 	enumNames := make(map[string]bool, len(enums))
 	for _, en := range enums {
@@ -70,6 +72,67 @@ func Validate(entities []*Entity, enums []*Enum) error {
 			if f.Type != FieldTypeString {
 				return fmt.Errorf("entity %s: presentation реквизит %s должен быть строковым (сейчас %s)", e.Name, name, f.Type)
 			}
+		}
+		// Подчинённый справочник: владелец обязан существовать, быть справочником
+		// и не быть самим собой. Опечатка иначе выглядела бы как «отбор в подборе
+		// не работает» — а это не отличить от «данные не заполнены».
+		if owner := strings.TrimSpace(e.Owner); owner != "" {
+			if e.Kind != KindCatalog {
+				return fmt.Errorf("entity %s: owner допустим только у справочника (сейчас %s)", e.Name, e.Kind)
+			}
+			if owner == e.Name {
+				return fmt.Errorf("entity %s: owner ссылается на сам справочник", e.Name)
+			}
+			if !entityNames[owner] {
+				return fmt.Errorf("entity %s: owner ссылается на несуществующую сущность %s", e.Name, owner)
+			}
+			// Владельцем бывает только справочник — как в 1С. Документ-владелец
+			// означал бы, что состав НСИ зависит от оперативных данных.
+			if entityKinds[owner] != KindCatalog {
+				return fmt.Errorf("entity %s: владельцем может быть только справочник, а %s — %s", e.Name, owner, entityKinds[owner])
+			}
+			f := findEntityFieldFold(e, StandardOwnerField)
+			if f == nil {
+				return fmt.Errorf("entity %s: owner объявлен, но реквизита %s нет", e.Name, StandardOwnerField)
+			}
+			if f.RefEntity != owner {
+				return fmt.Errorf("entity %s: реквизит %s ссылается на %s, а owner — на %s", e.Name, StandardOwnerField, f.RefEntity, owner)
+			}
+		}
+		// order_by меняет порядок СРАЗУ ВЕЗДЕ — список, подбор, REST. Опечатка иначе
+		// выглядит как «сортировка не применилась», а это не отличить от «значения
+		// не заполнены».
+		for _, spec := range e.OrderBy {
+			name, _ := splitOrderSpec(spec)
+			if name == "" {
+				return fmt.Errorf("entity %s: order_by содержит пустое имя реквизита", e.Name)
+			}
+			if findEntityFieldFold(e, name) == nil {
+				return fmt.Errorf("entity %s: order_by ссылается на несуществующий реквизит %s", e.Name, name)
+			}
+		}
+		// choice_preview: имя реквизита проверяем здесь же. Опечатка иначе выглядит
+		// как «область просмотра в подборе пустая» — а это не отличить от «текст
+		// не заполнили».
+		if name := strings.TrimSpace(e.ChoicePreview); name != "" {
+			f := findEntityFieldFold(e, name)
+			if f == nil {
+				return fmt.Errorf("entity %s: choice_preview ссылается на несуществующий реквизит %s", e.Name, name)
+			}
+			if f.Type != FieldTypeString && f.Type != FieldTypeRichText {
+				return fmt.Errorf("entity %s: choice_preview реквизит %s должен быть текстовым (сейчас %s)", e.Name, name, f.Type)
+			}
+		}
+		// choice_preview_proc: строго квалифицированное имя экспортной функции
+		// общего модуля вида `Модуль.Функция` (план 168). Короткое имя позволил бы
+		// вызов обработчика формы, а опечатка в модуле выглядела бы как
+		// «область просмотра пустая».
+		if proc := strings.TrimSpace(e.ChoicePreviewProc); proc != "" {
+			mod, fn, ok := strings.Cut(proc, ".")
+			if !ok || strings.TrimSpace(mod) == "" || strings.TrimSpace(fn) == "" || strings.Contains(fn, ".") || strings.ContainsAny(mod, " 	") || strings.ContainsAny(fn, " 	") {
+				return fmt.Errorf("entity %s: choice_preview_proc должен быть вида Модуль.Функция (сейчас %q)", e.Name, proc)
+			}
+			_ = fn
 		}
 		if err := validateFieldIDs(e); err != nil {
 			return err

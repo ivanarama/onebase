@@ -1,0 +1,5 @@
+name: ClosedSentinel
+title: SECRET_METADATA_SENTINEL
+fields:
+  - name: Name
+    type: string

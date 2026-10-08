@@ -12,6 +12,7 @@ import (
 	"errors"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/metadata"
 )
 
@@ -19,13 +20,31 @@ import (
 type dslCatalogDeleter struct{ s *Server }
 
 func (d dslCatalogDeleter) DeleteCatalogRef(ctx context.Context, entity *metadata.Entity, id uuid.UUID) error {
+	return d.deleteCatalogRef(ctx, entity, id, nil)
+}
+
+// DeleteCatalogRefVersioned preserves the same entityservice chokepoint while
+// binding the delete to the revision read by ПолучитьОбъект().
+func (d dslCatalogDeleter) DeleteCatalogRefVersioned(ctx context.Context, entity *metadata.Entity, id uuid.UUID, expectedVersion int64) error {
+	return d.deleteCatalogRef(ctx, entity, id, &expectedVersion)
+}
+
+func (d dslCatalogDeleter) deleteCatalogRef(ctx context.Context, entity *metadata.Entity, id uuid.UUID, expectedVersion *int64) error {
 	// Pre-образ живого списка (план 87) — как в UI-удалении: строка читается
 	// ДО удаления, чтобы увидевшие её пользователи убрали её из списка.
 	var delBefore map[string]any
 	if entity.NotifyChanges {
 		delBefore, _ = d.s.store.GetByID(ctx, entity.Name, id, entity)
 	}
-	res, err := d.s.entityService().Delete(ctx, entity, id)
+	var (
+		res entityservice.DeleteResult
+		err error
+	)
+	if expectedVersion == nil {
+		res, err = d.s.entityService().Delete(ctx, entity, id)
+	} else {
+		res, err = d.s.entityService().DeleteVersioned(ctx, entity, id, *expectedVersion)
+	}
 	if err != nil {
 		return err
 	}

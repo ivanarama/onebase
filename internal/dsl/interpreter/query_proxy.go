@@ -111,6 +111,15 @@ func NewQueryFactoryGuardedSource(ctxSrc CtxSource, db QueryDB, reg QueryRegistr
 	}
 }
 
+// NewQueryFactorySource is the source-aware counterpart of NewQueryFactory:
+// same direct compilation and no guard, but the execution context is taken
+// from ctxSrc at the moment of Выполнить(). План 161, срез 1 — для callers,
+// которым живой транзакционный контекст нужен без compiler/guard; новый код
+// сходится в ту же реализацию queryProxy, а не копирует execute.
+func NewQueryFactorySource(ctxSrc CtxSource, db QueryDB, reg QueryRegistry) func(args []any) any {
+	return NewQueryFactoryGuardedSource(ctxSrc, db, reg, nil, nil)
+}
+
 func (q *queryProxy) context() context.Context {
 	if q.ctxSrc != nil {
 		return q.ctxSrc.Ctx()
@@ -301,16 +310,25 @@ func (q *queryProxy) wrapRefColumns(res query.Result, rows []map[string]any) {
 		}
 	}
 	for col, entName := range res.RefColumns {
-		ent := entities[strings.ToLower(entName)]
-		if ent == nil {
-			continue // сущности нет в реестре — оставляем значение как есть
+		var refType string
+		var refKind metadata.Kind
+		if metadata.IsSystemRefTarget(entName) {
+			// System references are not configuration entities. Match the
+			// reference exposed by ТекущийПользователь().Ссылка.
+			refType = metadata.SystemUsersEntity
+		} else {
+			ent := entities[strings.ToLower(entName)]
+			if ent == nil {
+				continue // сущности нет в реестре — оставляем значение как есть
+			}
+			refType, refKind = ent.Name, ent.Kind
 		}
 		for _, row := range rows {
 			s, ok := row[col].(string)
 			if !ok || !isRefUUIDValue(s) {
 				continue
 			}
-			row[col] = &Ref{UUID: s, Name: s, Type: ent.Name, Kind: ent.Kind}
+			row[col] = &Ref{UUID: s, Name: s, Type: refType, Kind: refKind}
 		}
 	}
 }

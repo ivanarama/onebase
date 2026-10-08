@@ -119,7 +119,6 @@ var fieldObjectPaths = map[string][]string{
 	"поле табличной части":  {"$defs", "entity", "properties", "tableparts", "items", "properties", "fields", "items"},
 	"измерение регистра":    {"$defs", "register", "properties", "dimensions", "items"},
 	"ресурс регистра свед.": {"$defs", "inforeg", "properties", "resources", "items"},
-	"ресурс бухрегистра":    {"$defs", "accountreg", "properties", "resources", "items"},
 }
 
 func TestSchemaField_CoversAllRawKeys(t *testing.T) {
@@ -154,6 +153,43 @@ func TestSchemaField_CoversAllRawKeys(t *testing.T) {
 				"корректном YAML. Добавьте ключ в объект field (internal/cli/schema.go)\n"+
 				"либо впишите в schemaFieldExempt с обоснованием.",
 				name, len(missing), strings.Join(missing, ", "))
+		}
+	}
+}
+
+// Ресурс/субконто бухрегистра описан отдельной структурой
+// metadata.rawAccountRegField, а не общим rawField (#1567): схема обязана
+// совпадать с ней В ОБЕ стороны. Прямая — читаемые ключи присутствуют
+// (иначе additionalProperties:false подчеркнёт корректный YAML). Обратная —
+// схема не обещает ключей, которые загрузчик молча игнорирует: до выделения
+// отдельного объекта здесь висели id/required/default/label/allow_inline_create.
+func TestSchemaAccountRegField_CoversAllRawAccountRegKeys(t *testing.T) {
+	raw := yamlTagsOfStruct(t, "../metadata/accountreg.go", "rawAccountRegField")
+	doc := publishedSchema(t)
+
+	for name, path := range map[string][]string{
+		"ресурс бухрегистра":   {"$defs", "accountreg", "properties", "resources", "items"},
+		"субконто бухрегистра": {"$defs", "accountreg", "properties", "subconto", "items"},
+	} {
+		field := schemaAt(t, doc, path...)
+		if field["additionalProperties"] != false {
+			t.Fatalf("%s: additionalProperties = %#v, ожидалось false", name, field["additionalProperties"])
+		}
+		props, ok := field["properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("%s: properties = %#v", name, field["properties"])
+		}
+		rawKeys := make(map[string]bool, len(raw))
+		for _, k := range raw {
+			rawKeys[k] = true
+			if _, ok := props[k]; !ok {
+				t.Errorf("%s: схема не описывает ключ rawAccountRegField %q", name, k)
+			}
+		}
+		for k := range props {
+			if !rawKeys[k] {
+				t.Errorf("%s: схема обещает ключ %q, который rawAccountRegField не читает — загрузчик примет его молча", name, k)
+			}
 		}
 	}
 }
@@ -212,6 +248,34 @@ func TestSchemaFieldDefaultAcceptsEveryScalar(t *testing.T) {
 		if !have[want] {
 			t.Errorf("default не принимает %s: %#v", want, types)
 		}
+	}
+}
+
+// Описание `default` обязано перечислять ВСЕ источники, которые принимает
+// metadata.ParseDefault, в обеих языковых формах: контракт читают редакторы и
+// ИИ-клиенты, и половина принимаемого синтаксиса не должна быть невидимой
+// (#1568).
+func TestSchemaFieldDefaultDescriptionListsEverySource(t *testing.T) {
+	props := schemaAt(t, publishedSchema(t),
+		"$defs", "entity", "properties", "fields", "items", "properties")
+	def, ok := props["default"].(map[string]any)
+	if !ok {
+		t.Fatalf("default = %#v", props["default"])
+	}
+	description, _ := def["description"].(string)
+	for _, source := range []string{
+		"сегодня", "today",
+		"сейчас", "now",
+		"текущийпользователь", "currentuser",
+		"единственный", "single",
+		"константа.<Имя>", "constant.<Имя>",
+	} {
+		if !strings.Contains(description, source) {
+			t.Errorf("описание default не называет источник %q: %s", source, description)
+		}
+	}
+	if !strings.Contains(description, "регистр") {
+		t.Errorf("описание default не оговаривает независимость от регистра: %s", description)
 	}
 }
 

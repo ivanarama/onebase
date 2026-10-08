@@ -443,11 +443,11 @@ func TestCompile_DateFuncs_SQLite(t *testing.T) {
 		src  string
 		want string
 	}{
-		{`ВЫБРАТЬ Год(Период) ИЗ РегистрНакопления.Х`, "cast(strftime('%Y', period) AS integer)"},
-		{`ВЫБРАТЬ Месяц(Период) ИЗ РегистрНакопления.Х`, "cast(strftime('%m', period) AS integer)"},
-		{`ВЫБРАТЬ День(Период) ИЗ РегистрНакопления.Х`, "cast(strftime('%d', period) AS integer)"},
-		{`ВЫБРАТЬ НачалоДня(Период) ИЗ РегистрНакопления.Х`, "date(period)"},
-		{`ВЫБРАТЬ НачалоМесяца(Период) ИЗ РегистрНакопления.Х`, "date(period, 'start of month')"},
+		{`ВЫБРАТЬ Год(Период) ИЗ РегистрНакопления.Х`, "cast(strftime('%Y', ob_local_datetime(period)) AS integer)"},
+		{`ВЫБРАТЬ Месяц(Период) ИЗ РегистрНакопления.Х`, "cast(strftime('%m', ob_local_datetime(period)) AS integer)"},
+		{`ВЫБРАТЬ День(Период) ИЗ РегистрНакопления.Х`, "cast(strftime('%d', ob_local_datetime(period)) AS integer)"},
+		{`ВЫБРАТЬ НачалоДня(Период) ИЗ РегистрНакопления.Х`, "date(ob_local_datetime(period))"},
+		{`ВЫБРАТЬ НачалоМесяца(Период) ИЗ РегистрНакопления.Х`, "date(ob_local_datetime(period), 'start of month')"},
 	}
 	for _, c := range cases {
 		r, err := query.Compile(c.src, query.CompileOpts{Dialect: storage.SQLiteDialect{}})
@@ -491,8 +491,34 @@ func TestCompile_DateFuncs_Nested(t *testing.T) {
 		t.Fatal(err)
 	}
 	// внутри Месяц(...) должно быть date(period, ...)
-	if !strings.Contains(r.SQL, "strftime('%m', date(period, 'start of month'))") {
+	if !strings.Contains(r.SQL, "strftime('%m', date(ob_local_datetime(period), 'start of month'))") {
 		t.Errorf("вложенность не развернулась: %s", r.SQL)
+	}
+}
+
+// Локализация привязана к типу date, а не к синтаксису функции. Это граница с
+// будущим localdate: значение без зоны должно остаться ровно как записано.
+func TestCompile_DateFuncs_LocalizeOnlyMomentType(t *testing.T) {
+	ent := &metadata.Entity{
+		Name: "Событие",
+		Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Момент", Type: metadata.FieldTypeDate},
+			{Name: "СтенныеЧасы", Type: metadata.FieldTypeString},
+		},
+	}
+	r, err := query.Compile(
+		`ВЫБРАТЬ День(Момент), День(СтенныеЧасы) ИЗ Справочник.Событие`,
+		query.CompileOpts{Entities: []*metadata.Entity{ent}, Dialect: storage.SQLiteDialect{}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.SQL, "strftime('%d', ob_local_datetime(момент))") {
+		t.Errorf("date-момент не локализован: %s", r.SQL)
+	}
+	if strings.Contains(r.SQL, "ob_local_datetime(стенныечасы)") {
+		t.Errorf("обычное строковое/будущее localdate поле ошибочно локализовано: %s", r.SQL)
 	}
 }
 

@@ -1,0 +1,8 @@
+name: РасписаниеЗвонков
+title: РасписаниеЗвонков
+dimensions:
+  - name: Code
+    type: string
+resources:
+  - name: Value
+    type: string

@@ -62,9 +62,21 @@ func langFromCtx(ctx context.Context) string {
 // со статическим контекстом такой вызов уходит за вторым соединением, а пул
 // SQLite — одно соединение, и запрос виснет до таймаута.
 func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollector) (map[string]any, *interpreter.TxState) {
+	// Сборщик исполнения: блокировки, взятые кодом вне записи документа
+	// (обработка, событие формы, задание, тест), отпускаются в конце
+	// исполнения. Без него ключ без явного Разблокировать() жил до конца
+	// процесса, и следующий запрос с тем же ключом висел навсегда.
+	var execLocks *runtime.LockCollector
+	if runtime.LockCollectorFromContext(ctx) == nil && runtime.ExecutionLockCollectorFromContext(ctx) == nil {
+		execLocks = runtime.NewLockCollector()
+		ctx = runtime.ContextWithExecutionLockCollector(ctx, execLocks)
+	}
 	// TxState is created before the common variable set so path resolvers and
 	// all write-capable DSL objects observe the same live transaction context.
 	txState := interpreter.NewTxState(ctx)
+	if execLocks != nil {
+		txState.AddExecutionCleanup(execLocks.ReleaseAll)
+	}
 	// Базовый набор (Перечисления, Константы, Запрос, Предопределённые,
 	// Движения, HTTP, Email) — общий с scheduler, см. internal/dslvars.
 	vars := dslvars.Common{
@@ -74,6 +86,9 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 		Notifier:          s.notifier(),
 		Interp:            s.interp, // для hook-правила конфликта в ПланыОбмена.ЗагрузитьПакет
 		EmailFileResolver: s.emailAttachmentPathResolver(txState.Ctx),
+		// Подписи ссылочных констант: живой контекст, RowLabel, полевая
+		// политика роли — в отличие от доверенного StoreRefPresenter (#1536).
+		ConstantRefPresenter: s.constantsRefPresenter(txState),
 	}.Build()
 
 	// TxState несёт «живой» контекст. Транзакционные функции
@@ -103,7 +118,11 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	// транзакции (обработка без НачатьТранзакцию) поведение прежнее:
 	// только внутрипроцессный мьютекс.
 	lockFactory := interpreter.BuiltinFunc(func(_ []any, _ string, _ int) (any, error) {
-		lo := runtime.NewLockObjectWithCollector(s.lockMgr, runtime.LockCollectorFromContext(ctx))
+		collector := runtime.LockCollectorFromContext(ctx)
+		if collector == nil {
+			collector = runtime.ExecutionLockCollectorFromContext(ctx)
+		}
+		lo := runtime.NewLockObjectWithCollector(s.lockMgr, collector)
 		lo.WithAdvisory(func(keys []string) {
 			c := txState.Ctx()
 			if !storage.HasTx(c) {

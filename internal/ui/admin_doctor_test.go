@@ -150,6 +150,17 @@ func TestAdminDoctorFindsAndFixesOrphanAccountEntry(t *testing.T) {
 	if err := s.store.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{reg}); err != nil {
 		t.Fatal(err)
 	}
+	// Запись проводок сверяет коды с планом счетов регистра — заводим его, как migrate.
+	chart := &metadata.ChartOfAccounts{Name: reg.Accounts, Accounts: []metadata.Account{
+		{Code: "41", Name: "Товары", Kind: "active"},
+		{Code: "60", Name: "Поставщики", Kind: "passive"},
+	}}
+	if err := s.store.EnsureAccountsTable(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.store.SyncAccounts(ctx, []*metadata.ChartOfAccounts{chart}); err != nil {
+		t.Fatal(err)
+	}
 	s.reg.LoadAccountRegisters([]*metadata.AccountRegister{reg}, nil)
 
 	period := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)

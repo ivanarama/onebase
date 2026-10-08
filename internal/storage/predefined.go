@@ -79,7 +79,8 @@ func (db *DB) isPredefinedRecord(ctx context.Context, table string, id uuid.UUID
 // ссылаются cross-ref поля, синхронизируется раньше ссылающегося — иначе
 // GetPredefinedID не нашёл бы целевую запись.
 func (db *DB) SyncAllPredefined(ctx context.Context, entities []*metadata.Entity) error {
-	for _, e := range orderByDependency(entities) {
+	ordered, _ := orderByDependency(entities)
+	for _, e := range ordered {
 		if err := db.SyncPredefined(ctx, e); err != nil {
 			return fmt.Errorf("sync predefined %s: %w", e.Name, err)
 		}

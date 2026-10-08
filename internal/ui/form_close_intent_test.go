@@ -80,6 +80,7 @@ func setEntityCloseIntentHeaders(req *http.Request, body interface{ Get(string) 
 	req.Header.Set("X-OneBase-Close-Intent", body.Get("_close_intent_id"))
 	req.Header.Set("X-OneBase-Close-Epoch", body.Get("_close_epoch"))
 	req.Header.Set("X-OneBase-Close-Issued-At", body.Get("_close_issued_at"))
+	req.Header.Set("X-OneBase-Close-First-Attempt", body.Get("_close_first_attempt"))
 	req.Header.Set("X-OneBase-Close-Reason", body.Get("_close_reason"))
 	req.Header.Set("X-OneBase-Close-Mode", body.Get("_close_mode"))
 	req.Header.Set("X-OneBase-Close-Client", body.Get("_close_client"))
@@ -1018,5 +1019,69 @@ func TestManagedFormCloseIntentRejectsStaleProcessProofWithoutExecuting(t *testi
 	rows, err := srv.store.List(context.Background(), ent.Name, ent, storage.ListParams{})
 	if err != nil || len(rows) != 0 {
 		t.Fatalf("stale process proof executed handler: rows=%v err=%v", rows, err)
+	}
+}
+
+// #1685: после перезапуска сервера свежая страница знает, что её intent
+// предыдущему процессу не отправлялся. Помеченная первая попытка открывает
+// новую запись журнала даже при чужой эпохе — закрытие исполняется вместо
+// reconcile.
+func TestManagedFormCloseIntentFirstAttemptAfterRestartExecutes(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ПроверитьЗакрытие()
+	Объект.Записать();
+КонецПроцедуры
+`, map[metadata.FormEventType]string{metadata.FormEventBeforeClose: "ПроверитьЗакрытие"}, nil)
+	body := closeIntentBody(uuid.NewString(), "close", "fresh page after restart")
+	body.Set("_close_epoch", uuid.NewString())
+	body.Set("_close_first_attempt", "1")
+	recorder := executeFormCloseIntent(t, srv, ent, body)
+	response := decodeCloseIntentResponse(t, recorder)
+	if recorder.Code != http.StatusOK || response.Close == nil || !response.Close.Allowed {
+		t.Fatalf("marked first attempt was not allowed after restart: status=%d response=%+v", recorder.Code, response)
+	}
+	rows, err := srv.store.List(context.Background(), ent.Name, ent, storage.ListParams{})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("marked first attempt did not execute: rows=%v err=%v", rows, err)
+	}
+}
+
+// Повтор после неизвестного исхода остаётся под фенсом: клиент снимает отметку
+// первой попытки, и чужая эпоха при пустом журнале перезапуска возвращает
+// reconcile, как и раньше.
+func TestManagedFormCloseIntentRetryWithoutMarkStaysFencedAfterRestart(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ПроверитьЗакрытие()
+	Объект.Записать();
+КонецПроцедуры
+`, map[metadata.FormEventType]string{metadata.FormEventBeforeClose: "ПроверитьЗакрытие"}, nil)
+	body := closeIntentBody(uuid.NewString(), "close", "lost response retry")
+	body.Set("_close_epoch", uuid.NewString())
+	body.Set("_close_first_attempt", "1")
+	first := executeFormCloseIntent(t, srv, ent, body)
+	firstResponse := decodeCloseIntentResponse(t, first)
+	if first.Code != http.StatusOK || firstResponse.Close == nil || !firstResponse.Close.Allowed {
+		t.Fatalf("marked attempt was not allowed: status=%d response=%+v", first.Code, firstResponse)
+	}
+
+	// Перезапуск: журнал идемпотентности в памяти пуст, эпоха сменилась.
+	ledger := srv.formCloseLedger()
+	ledger.mu.Lock()
+	ledger.entries = map[string]*formCloseReplayEntry{}
+	ledger.mu.Unlock()
+
+	retry := closeIntentBody(firstResponse.Close.IntentID, "close", "lost response retry")
+	retry.Set("_close_epoch", uuid.NewString())
+	retry.Del("_close_first_attempt")
+	recorder := executeFormCloseIntent(t, srv, ent, retry)
+	response := decodeCloseIntentResponse(t, recorder)
+	if recorder.Code != http.StatusConflict || response.Close == nil || !response.Close.Reconcile || response.Close.Allowed {
+		t.Fatalf("retry without mark was not fenced after restart: status=%d response=%+v", recorder.Code, response)
+	}
+	// Первая (помеченная) попытка легитимно записала строку; фенс означает,
+	// что повтор не исполнил закрытие второй раз.
+	rows, err := srv.store.List(context.Background(), ent.Name, ent, storage.ListParams{})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("fenced retry changed stored rows: rows=%v err=%v", rows, err)
 	}
 }

@@ -356,26 +356,22 @@ test('obFire re-syncs grid state after waiting for FileReader', async () => {
 test('server command dirty state follows unsaved mutations and confirmed writes', async () => {
   resetDOM();
   const originalFetch = global.fetch;
-  const originalSetter = window.obSetManagedFormDirty;
   const originalApplyTableParts = window.applyTableParts;
-  const reports = [];
-  window.obSetManagedFormDirty = value => reports.push(value);
   try {
     global.fetch = async () => ({ok: true, json: async () => ({ok: true, dirty: true, values: {Наименование: 'changed'}})});
     await window.obFire('Command', 'Нажатие');
-    assert.equal(reports.at(-1), true, 'unsaved command mutation did not mark the managed form dirty');
+    assert.equal(window._obFormDirty, true, 'unsaved command mutation did not mark the managed form dirty');
 
     global.fetch = async () => ({ok: true, json: async () => ({ok: true, dirty: false, version: 2, values: {Наименование: 'saved'}})});
     await window.obFire('Command', 'Нажатие');
-    assert.equal(reports.at(-1), false, 'confirmed existing-object write did not clear dirty');
+    assert.equal(window._obFormDirty, false, 'confirmed existing-object write did not clear dirty');
 
     window.applyTableParts = () => { throw new Error('renderer failed'); };
     global.fetch = async () => ({ok: true, json: async () => ({ok: false, dirty: true, tableparts: {Rows: []}})});
     await window.obFire('Command', 'Click');
-    assert.equal(reports.at(-1), true, 'renderer exception erased authoritative command dirty state');
+    assert.equal(window._obFormDirty, true, 'renderer exception erased authoritative command dirty state');
   } finally {
     global.fetch = originalFetch;
-    window.obSetManagedFormDirty = originalSetter;
     window.applyTableParts = originalApplyTableParts;
   }
 });

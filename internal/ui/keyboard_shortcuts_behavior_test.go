@@ -179,6 +179,7 @@ function obFireRowEvent() {}
 window.obFireRowEvent = obFireRowEvent;
 
 eval(source.slice(start, end));
+eval(source.slice(end, source.indexOf("\nobReady(", end)));
 eval(managedSource.slice(managedBodiesStart, managedBodiesEnd));
 eval(managedSource.slice(managedApplyStart, managedApplyExport + 'window.applyTableParts = applyTableParts;'.length));
 // managed.js is loaded at the bottom of a managed form and installs its
@@ -255,9 +256,11 @@ assert(activated === beforeEnter + 2, 'Tab -> Enter/F2 did not open the focused 
 fire({key: 'ArrowDown', target: tabFirst});
 assert(listSel() === tabSecond, 'ArrowDown repeated the focused first row instead of moving to the second');
 
-// F9 в списке — «Создать копированием» (issue #762). Открывается форма
-// создания по data-copy-url; пустой url = нет права записи, клавиша молчит и
-// не гасит событие. Пункт меню строки живёт по тому же признаку.
+// F9 в списке — «Создать копированием» (issue #762). Адрес даёт obRowUrl(row,
+// 'copy'); здесь строки моделируют JSON-подгрузку и несут свой copyUrl, у
+// серверных строк он собирается из data-ob-row-copy-url контейнера при
+// data-ob-row-can-copy="1". Пустой результат = копировать нечем: клавиша молчит
+// и не гасит событие. Пункт меню строки живёт по тому же признаку.
 window._obActiveDOMTable = null;
 window._obActiveGridName = '';
 const copyRow = makeElement('tr', {listRow: true, dataset: {openUrl: '/row', copyUrl: '/ui/catalog/x/new?copy=42'}});
@@ -577,6 +580,7 @@ assert(window._obActiveDOMTable === null, 'hidden DOM table remained remembered'
 let liveRows = [];
 let replacementRows = [];
 const live = {
+  querySelector() { return null; },
   contains(node) { return liveRows.includes(node); },
   querySelectorAll(selector) { return selector === '[data-ob-list-row]' ? liveRows : []; }
 };

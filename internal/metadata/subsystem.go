@@ -21,6 +21,7 @@ type Subsystem struct {
 	Roles    []string
 	Contents SubsystemContents
 	HomePage *HomePage
+	Menu     *Menu
 }
 
 // DisplayName возвращает заголовок подсистемы с учётом языка.
@@ -77,6 +78,7 @@ type rawSubsystem struct {
 		Pages      []string `yaml:"pages"`
 	} `yaml:"contents"`
 	HomePage *HomePage `yaml:"home_page"`
+	Menu     *Menu     `yaml:"menu"`
 }
 
 func LoadSubsystemFile(path string) (*Subsystem, error) {
@@ -101,6 +103,7 @@ func LoadSubsystemFile(path string) (*Subsystem, error) {
 		Icon:   raw.Icon,
 		Order:  raw.Order,
 		Roles:  raw.Roles,
+		Menu:   raw.Menu,
 		Contents: SubsystemContents{
 			Documents:  raw.Contents.Documents,
 			Catalogs:   raw.Contents.Catalogs,

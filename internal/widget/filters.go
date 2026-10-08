@@ -74,7 +74,11 @@ func ParseFilterValue(f metadata.WidgetFilter, raw string) (any, error) {
 		}
 		return d, nil
 	case "date":
-		t, err := time.Parse("2006-01-02", raw)
+		// Местная полночь, как у параметров отчёта, REST и полей формы: дата
+		// из формы хранится моментом местного времени. time.Parse давал полночь
+		// UTC, и в восточной зоне «Дата >= &С» терял записи первых часов дня, а
+		// «Дата = &Д» не находил дату, введённую в форме.
+		t, err := time.ParseInLocation("2006-01-02", raw, time.Local)
 		if err != nil {
 			return nil, fmt.Errorf("значение фильтра %q не является датой (ГГГГ-ММ-ДД)", f.Name)
 		}
