@@ -24,12 +24,14 @@ func (tr *translator) initSelectStates() {
 		}
 	}
 	tr.selectStates = make([]selectTranslationState, len(scopedTokens))
+	allDims := make([][]refDimInfo, len(scopedTokens))
 	for id, tokens := range scopedTokens {
 		scope := tr.sourceCtx.scopes[id]
+		allDims[id] = preScanAllRefDims(tokens, tr.opts)
 		state := selectTranslationState{
 			colMap:    buildColMap(tokens, tr.opts),
 			colTypes:  buildColTypes(tokens, tr.opts),
-			refDims:   preScanRefDims(tokens, tr.opts),
+			refDims:   filterUsedRefDims(allDims[id], tokens),
 			mainTable: preScanMainTable(tokens),
 			mainRef:   preScanMainRefSource(tokens, tr.opts),
 			section:   sectionOther,
@@ -37,7 +39,7 @@ func (tr *translator) initSelectStates() {
 		}
 		// Direct qualified references also occur only inside correlated children.
 		// Their physical columns do not require an auto-JOIN in the owner SELECT.
-		for _, rd := range preScanAllRefDims(tokens, tr.opts) {
+		for _, rd := range allDims[id] {
 			state.colMap[rd.fieldName] = rd.idCol
 		}
 		if _, derived := scope.derivedAliases[scope.mainTable]; derived {
@@ -52,6 +54,66 @@ func (tr *translator) initSelectStates() {
 		}
 		tr.selectStates[id] = state
 	}
+	// References used only by correlated children still need a JOIN in their
+	// owning SELECT. Resolve the name through parents, never UNION siblings;
+	// a child's own field or source qualifier hides an outer reference.
+	for pos, token := range tr.tokens {
+		if token.kind != tIdent || pos+1 >= len(tr.tokens) || tr.tokens[pos+1].kind != tDot {
+			continue
+		}
+		if pos > 0 && tr.tokens[pos-1].kind == tDot {
+			continue // qualified fields keep their local prescan path
+		}
+		id, ok := tr.sourceCtx.scopeIDAt(pos)
+		if !ok {
+			continue
+		}
+		name := lowerFast(token.val)
+		owner := tr.referenceOwner(id, name)
+		if owner < 0 || owner == id {
+			continue
+		}
+		state := &tr.selectStates[owner]
+		for _, rd := range allDims[owner] {
+			if rd.fieldName != name {
+				continue
+			}
+			found := false
+			for _, used := range state.refDims {
+				if used.fieldName == name {
+					found = true
+					break
+				}
+			}
+			if !found {
+				state.refDims = append(state.refDims, rd)
+			}
+			break
+		}
+	}
+}
+
+// referenceOwner returns the closest visible owner of an unqualified field.
+// Source/derived aliases and non-reference fields also stop lookup: they must
+// not be reinterpreted using an identically named reference in an outer SELECT.
+func (tr *translator) referenceOwner(id int, name string) int {
+	for id >= 0 {
+		scope := tr.sourceCtx.scopes[id]
+		if _, known := scope.qualifiers[name]; known {
+			return -1
+		}
+		if _, known := scope.derivedAliases[name]; known {
+			return -1
+		}
+		if _, own := tr.selectStates[id].colTypes[name]; own {
+			return id
+		}
+		if _, derived := scope.derivedAliases[scope.mainTable]; derived {
+			return -1
+		}
+		id = scope.parent
+	}
+	return -1
 }
 
 func (tr *translator) activateSelect(id int) {

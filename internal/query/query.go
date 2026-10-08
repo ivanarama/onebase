@@ -2881,6 +2881,17 @@ func (tr *translator) findRefDim(name string) *refDimInfo {
 			return &tr.refDims[i]
 		}
 	}
+	if id, ok := tr.sourceCtx.scopeIDAt(tr.pos - 1); ok {
+		owner := tr.referenceOwner(id, name)
+		if owner >= 0 && owner != id {
+			for i := range tr.selectStates[owner].refDims {
+				rd := &tr.selectStates[owner].refDims[i]
+				if rd.fieldName == name {
+					return rd
+				}
+			}
+		}
+	}
 	return nil
 }
 
