@@ -66,6 +66,73 @@ func (a WidgetAction) DisplayLabel(lang string) string {
 	return a.Label
 }
 
+// WidgetSource описывает навигацию строк list-виджета (план 182C): сущность,
+// чью карточку открывает клик по строке, и колонку результата, несущую
+// идентификатор записи. Компилятор подтверждает по RefColumns, что колонка —
+// ссылка именно на эту сущность; без подтверждения строки остаются
+// некликабельными (fail-closed).
+type WidgetSource struct {
+	Entity  string `yaml:"entity"`
+	IDField string `yaml:"id_field"`
+}
+
+// WidgetFilterValue — один вариант select-фильтра list-виджета.
+type WidgetFilterValue struct {
+	Value  string            `yaml:"value"`
+	Label  string            `yaml:"label"`
+	Labels map[string]string `yaml:"labels"`
+}
+
+// DisplayLabel возвращает подпись варианта с учётом языка.
+func (v WidgetFilterValue) DisplayLabel(lang string) string {
+	if lang != "" {
+		if s, ok := v.Labels[lang]; ok && s != "" {
+			return s
+		}
+	}
+	if v.Label != "" {
+		return v.Label
+	}
+	return v.Value
+}
+
+// WidgetFilter — интерактивный фильтр list-виджета (план 182D). Значение
+// приходит только из браузера по имени фильтра; тип, param и query сервер
+// перечитывает из метаданных. Пустое значение передаётся в запрос типизированным
+// nil — семантику «пустого отбора» задаёт сам запрос (&Параметр ЕСТЬ ПУСТО).
+type WidgetFilter struct {
+	Name    string              `yaml:"name"`
+	Label   string              `yaml:"label"`
+	Labels  map[string]string   `yaml:"labels"`
+	Type    string              `yaml:"type"` // string | number | date | bool | select | reference:<Сущность>
+	Param   string              `yaml:"param"`
+	Values  []WidgetFilterValue `yaml:"values,omitempty"` // select
+	Default any                 `yaml:"default,omitempty"`
+}
+
+// DisplayLabel возвращает подпись фильтра с учётом языка.
+func (f WidgetFilter) DisplayLabel(lang string) string {
+	if lang != "" {
+		if s, ok := f.Labels[lang]; ok && s != "" {
+			return s
+		}
+	}
+	if f.Label != "" {
+		return f.Label
+	}
+	return f.Name
+}
+
+// ReferenceEntity возвращает имя сущности для типа reference:<Сущность>
+// (пустую строку для остальных типов).
+func (f WidgetFilter) ReferenceEntity() string {
+	const prefix = "reference:"
+	if !strings.HasPrefix(f.Type, prefix) {
+		return ""
+	}
+	return strings.TrimSpace(strings.TrimPrefix(f.Type, prefix))
+}
+
 // Widget describes a single dashboard widget loaded from widgets/<Name>.yaml.
 type Widget struct {
 	Name      string            `yaml:"name"`
@@ -85,11 +152,26 @@ type Widget struct {
 	Items     []WidgetAction    `yaml:"items"`      // actions
 	Entities  []string          `yaml:"entities"`   // recent — filter to these entity names
 	Scope     string            `yaml:"scope"`      // recent: current_user | all
+	// Source — навигация строк list-виджета: клик по строке открывает карточку
+	// записи Source.Entity по идентификатору из колонки Source.IDField. У
+	// kpi/chart/recent/actions навигации строк нет, и check такое объявление
+	// отвергает.
+	Source *WidgetSource `yaml:"source"`
+	// Filters — интерактивные фильтры list-виджета (план 182D). Только
+	// объявленные фильтры принимаются от браузера; значения идут bind-параметрами
+	// существующего компилятора запросов, текст запроса значениями не правится.
+	Filters []WidgetFilter `yaml:"filters,omitempty"`
 	// Link — куда ведёт клик по карточке (kpi). Счётчик «в карантине: 3» без
 	// ссылки заставляет искать эту очередь руками; со ссылкой карточка сама
 	// открывает список с нужным отбором. Значение — внутренний путь приложения
 	// (начинается с «/»), внешние адреса не принимаются.
 	Link string `yaml:"link"`
+	// RefreshOn — имена уже существующих onebase-событий, по которым карточка
+	// перечитывается без F5 (план 182B). Штатный источник — «данные.<имя>» от
+	// сущности с notify_changes; прочие имена шлёт конфигурация через
+	// ОтправитьУведомление. Допустимо для kpi/list/chart/recent; у actions
+	// перечитывать нечего, и check такое объявление отвергает.
+	RefreshOn []string `yaml:"refresh_on"`
 }
 
 // DisplayTitle возвращает заголовок виджета с учётом языка.

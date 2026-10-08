@@ -96,6 +96,18 @@ test('редактор — datetime-local, а не свободный текст
   assert.equal(editor.isValueChanged(), false);
 });
 
+test('редактор держит секунды и шаг в секунду', () => {
+  // Без секунд правка строки отрезала бы их от даты: документ от 13:45:30
+  // становился документом от 13:45:00. Шаг в секунду нужен, чтобы поле
+  // вообще приняло значение с секундами.
+  const container = element('div');
+  const editor = new ObDateEditor({container, column: {field: 'Дат'}, item: {'Дат': '1985-03-14T13:45:30'}});
+  const input = container.children[0];
+  assert.equal(input.step, '1');
+  assert.equal(input.value, '1985-03-14T13:45:30');
+  assert.equal(editor.isValueChanged(), false);
+});
+
 test('редактор поднимает дату без времени как полночь', () => {
   const container = element('div');
   new ObDateEditor({container, column: {field: 'Дат'}, item: {'Дат': '1985-03-14'}});

@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"github.com/ivantit66/onebase/internal/formdoc"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -24,7 +25,7 @@ import (
 
 // editOpRequest — разобранная команда правки формы.
 type editOpRequest struct {
-	Op       string // render | setProp | delProp | insert | insertColumns | move | delete | setOptions
+	Op       string // render | setProp | delProp | insert | insertColumns | move | delete | setOptions | setChoiceFilter
 	Node     string // node-id цели (setProp, move); "form" = корневые свойства формы
 	Key      string // setProp/delProp: имя свойства (может быть вложенным, "title.ru")
 	Value    string // setProp: значение (сырое; bool-свойства приводятся)
@@ -36,6 +37,8 @@ type editOpRequest struct {
 	TitleRU  string // insert: ru-заголовок нового элемента
 	Options  string // setOptions: JSON-массив [{value,label}] набора значений
 	Columns  string // insertColumns: JSON-массив [{name,title,data_path}] колонок ТЧ
+	// ChoiceFilter — JSON-массив ordered-условий [{field,op,from|value}].
+	ChoiceFilter string
 }
 
 // columnSpec — одна колонка табличной части в команде insertColumns.
@@ -196,6 +199,59 @@ func applyEditOp(yamlSrc []byte, req editOpRequest) (editOpResult, error) {
 		}
 		selected = req.Node
 
+	case "setChoiceFilter":
+		var raw []canvasChoiceCondition
+		if err := json.Unmarshal([]byte(req.ChoiceFilter), &raw); err != nil {
+			return editOpResult{}, fmt.Errorf("setChoiceFilter: разбор JSON: %w", err)
+		}
+		if len(raw) > 8 {
+			return editOpResult{}, fmt.Errorf("setChoiceFilter: допустимо не более 8 условий")
+		}
+		if len(raw) == 0 {
+			if err := doc.DeleteProp(req.Node, "choice_filter"); err != nil {
+				return editOpResult{}, err
+			}
+			selected = req.Node
+			break
+		}
+		conditions := make([]metadata.FormChoiceCondition, 0, len(raw))
+		for i, condition := range raw {
+			op := metadata.FormChoiceOperator(strings.TrimSpace(condition.Op))
+			if op != metadata.FormChoiceOpEqual && op != metadata.FormChoiceOpInHierarchy &&
+				op != metadata.FormChoiceOpEqualOrEmpty && op != metadata.FormChoiceOpNotInHierarchy {
+				return editOpResult{}, fmt.Errorf("setChoiceFilter: условие %d: неизвестный оператор %q", i+1, condition.Op)
+			}
+			from := strings.TrimSpace(condition.From)
+			ref := strings.TrimSpace(condition.Ref)
+			sources := 0
+			for _, present := range []bool{from != "", condition.Value != nil, ref != ""} {
+				if present {
+					sources++
+				}
+			}
+			if sources != 1 {
+				return editOpResult{}, fmt.Errorf("setChoiceFilter: условие %d: укажите ровно одно из from, value и ref", i+1)
+			}
+			if ref != "" {
+				// Формат проверяется сразу: битый UUID в YAML отклонил бы
+				// onebase check, а редактор не должен его записывать (#1820).
+				if id, err := uuid.Parse(ref); err != nil || id == uuid.Nil {
+					return editOpResult{}, fmt.Errorf("setChoiceFilter: условие %d: ref %q — не UUID записи", i+1, condition.Ref)
+				}
+			}
+			conditions = append(conditions, metadata.FormChoiceCondition{
+				Field: strings.TrimSpace(condition.Field),
+				Op:    op,
+				From:  from,
+				Value: condition.Value,
+				Ref:   ref,
+			})
+		}
+		if err := doc.SetProp(req.Node, "choice_filter", conditions); err != nil {
+			return editOpResult{}, err
+		}
+		selected = req.Node
+
 	case "insert":
 		if strings.TrimSpace(req.Kind) == "" {
 			return editOpResult{}, fmt.Errorf("insert: не указан kind")
@@ -331,18 +387,19 @@ func (h *handler) configuratorFormsEditOp(w http.ResponseWriter, r *http.Request
 	}
 	index, _ := strconv.Atoi(r.FormValue("index"))
 	req := editOpRequest{
-		Op:       strings.TrimSpace(r.FormValue("op")),
-		Node:     r.FormValue("node"),
-		Key:      r.FormValue("key"),
-		Value:    r.FormValue("value"),
-		Parent:   r.FormValue("parent"),
-		Index:    index,
-		Kind:     r.FormValue("kind"),
-		Name:     r.FormValue("name"),
-		DataPath: r.FormValue("data_path"),
-		TitleRU:  r.FormValue("title_ru"),
-		Options:  r.FormValue("options"),
-		Columns:  r.FormValue("columns"),
+		Op:           strings.TrimSpace(r.FormValue("op")),
+		Node:         r.FormValue("node"),
+		Key:          r.FormValue("key"),
+		Value:        r.FormValue("value"),
+		Parent:       r.FormValue("parent"),
+		Index:        index,
+		Kind:         r.FormValue("kind"),
+		Name:         r.FormValue("name"),
+		DataPath:     r.FormValue("data_path"),
+		TitleRU:      r.FormValue("title_ru"),
+		Options:      r.FormValue("options"),
+		Columns:      r.FormValue("columns"),
+		ChoiceFilter: r.FormValue("choice_filter"),
 	}
 	res, err := applyEditOp([]byte(r.FormValue("yaml")), req)
 	if err != nil {

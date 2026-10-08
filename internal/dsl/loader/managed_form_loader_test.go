@@ -647,3 +647,63 @@ form:
 		t.Errorf("ref_card_button: false должен доехать как явное false, получили %v", got.RefCardButton)
 	}
 }
+
+// Загрузчик обязан запоминать, из какого файла прочитана форма: имя формы и имя
+// файла совпадать не обязаны, и без этого `onebase check` печатал локатор, по
+// которому файла нет (#1356).
+func TestManagedFormLoader_SourcePath(t *testing.T) {
+	root := t.TempDir()
+	// Каталог намеренно в исходном регистре, а искать будем по другому:
+	// сопоставление имени без учёта регистра не должно портить путь.
+	dir := filepath.Join(root, "forms", "Инвентаризация")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "объекта.form.yaml"), []byte(`schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Инвентаризация
+elements:
+  - kind: ПолеВвода
+    name: Наименование
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	forms, err := NewManagedFormLoader().LoadEntityForms(root, "инвентаризация")
+	if err != nil {
+		t.Fatalf("LoadEntityForms: %v", err)
+	}
+	if len(forms) != 1 {
+		t.Fatalf("ожидалась одна форма, получили %d", len(forms))
+	}
+	want := "forms/Инвентаризация/объекта.form.yaml"
+	if forms[0].SourcePath != want {
+		t.Errorf("SourcePath = %q, ожидался %q", forms[0].SourcePath, want)
+	}
+	if forms[0].Name != "ФормаОбъекта" {
+		t.Errorf("имя формы не должно подменяться именем файла: %q", forms[0].Name)
+	}
+	if _, statErr := os.Stat(filepath.Join(root, filepath.FromSlash(forms[0].SourcePath))); statErr != nil {
+		t.Errorf("по SourcePath файл не открывается: %v", statErr)
+	}
+}
+
+// Форма, прочитанная одиночным LoadFormFile (редактор, валидация загруженного
+// файла), корня проекта не знает — путь остаётся пустым, и потребители честно
+// откатываются на синтезированное имя.
+func TestManagedFormLoader_LoadFormFileLeavesSourcePathEmpty(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "объекта.form.yaml")
+	if err := os.WriteFile(path, []byte("schema: onebase.form/v1\nform:\n  name: ФормаОбъекта\n  kind: object\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	form, err := NewManagedFormLoader().LoadFormFile(path, "Инвентаризация")
+	if err != nil {
+		t.Fatalf("LoadFormFile: %v", err)
+	}
+	if form.SourcePath != "" {
+		t.Errorf("SourcePath = %q, ожидалось пусто", form.SourcePath)
+	}
+}

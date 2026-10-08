@@ -122,43 +122,50 @@ func (h *handler) configuratorSaveHomePage(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	type yamlHomePage struct {
-		Title   string                      `yaml:"title,omitempty"`
-		Titles  map[string]string           `yaml:"titles,omitempty"`
-		Layout  string                      `yaml:"layout,omitempty"`
-		Hidden  bool                        `yaml:"hidden,omitempty"`
-		Rows    []metadata.HomePageRow      `yaml:"rows,omitempty"`
-		Widgets []metadata.HomePageWidget   `yaml:"widgets,omitempty"`
-		Nav     *metadata.SubsystemContents `yaml:"nav,omitempty"`
-	}
-	hp := yamlHomePage{
-		Title:  strings.TrimSpace(r.FormValue("home_title")),
-		Hidden: r.FormValue("home_hidden") == "1", // #304: скрыть глобальную «Главную»
-	}
-	// Titles: если форма содержит блок titles.* — берём из формы; иначе переносим
-	// из существующего файла (визуальный редактор раскладки их не должен терять).
-	if formHasMapField(r, "titles") {
-		hp.Titles = parseMapForm(r, "titles")
-	}
-
-	// Сохраняем Nav и fallback-Title из существующего файла.
-	if proj, lerr := h.loadProjectFor(r.Context(), b); lerr == nil && proj != nil {
-		if proj.HomePage != nil {
-			if !formHasMapField(r, "titles") {
-				hp.Titles = proj.HomePage.Titles
-			}
-			hp.Nav = proj.HomePage.Nav
-			if hp.Title == "" {
-				hp.Title = proj.HomePage.Title
-			}
+	// As with subsystem forms, edit only fields owned by this form. In
+	// particular, menu/nav and future metadata must survive an ordinary save.
+	files, saveErr := h.listConfiguratorFiles(r.Context(), b)
+	var raw []byte
+	for _, file := range files {
+		if file.Path == "config/home_page.yaml" {
+			raw = file.Content
+			break
 		}
-		proj.Close()
 	}
-
-	hp.Rows, hp.Layout = rowsFromForm(r)
-
-	out, _ := yaml.Marshal(&hp)
-	saveErr := saveConfigFile(r, h, b, "config/home_page.yaml", out)
+	if saveErr == nil {
+		var out []byte
+		out, saveErr = updateYAMLMapping(raw, "config/home_page.yaml", func(doc *yaml.Node) error {
+			if title := strings.TrimSpace(r.FormValue("home_title")); title != "" {
+				if err := setYAMLMapField(doc, "title", title); err != nil {
+					return err
+				}
+			}
+			if formHasMapField(r, "titles") {
+				var value any
+				if titles := parseMapForm(r, "titles"); len(titles) > 0 {
+					value = titles
+				}
+				if err := setYAMLMapField(doc, "titles", value); err != nil {
+					return err
+				}
+			}
+			rows, layout := rowsFromForm(r)
+			var rowValue, hiddenValue any
+			if len(rows) > 0 {
+				rowValue = rows
+			}
+			if r.FormValue("home_hidden") == "1" {
+				hiddenValue = true
+			}
+			return setAppYAMLFields(doc, []appYAMLField{
+				{key: "rows", val: rowValue}, {key: "layout", val: strOrNil(layout)},
+				{key: "widgets", val: nil}, {key: "hidden", val: hiddenValue},
+			})
+		})
+		if saveErr == nil {
+			saveErr = saveConfigFile(r, h, b, "config/home_page.yaml", out)
+		}
+	}
 	data := h.loadCfgData(r.Context(), b, "tree")
 	if saveErr != nil {
 		data.Error = tr(lang, "Ошибка сохранения") + ": " + saveErr.Error()

@@ -140,10 +140,12 @@ const tplIndex = `
       <a href="#" onclick="return startIsolated(this,'{{.Selected.ID}}','browser')" style="display:block;padding:7px 12px;font-size:12px;color:#333;text-decoration:none">{{t $.Lang "Окно браузера (Edge/Chrome)"}}</a>
     </div>
   </div>
+  {{if not .Selected.Client}}
   <a class="tbtn" href="/bases/{{.Selected.ID}}/configurator">
     <svg viewBox="0 0 24 24"><path d="M22 9V7h-2V5c0-1.1-.9-2-2-2H4c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2v-2h2v-2h-2v-2h2v-2h-2V9h2zm-4 10H4V5h14v14z"/><path d="M6 13h5v4H6zm6-6h4v3h-4zm0 4h4v6h-4zM6 7h5v5H6z"/></svg> {{t $.Lang "Конфигуратор"}}
   </a>
-  {{if .Selected.Running}}
+  {{end}}
+  {{if and .Selected.Running (not .Selected.Client)}}
   <a class="tbtn danger" href="/bases/{{.Selected.ID}}/stop" onclick="return doPost(this)">
     <svg viewBox="0 0 24 24"><path d="M6 6h12v12H6z"/></svg> {{t $.Lang "Остановить"}}
   </a>
@@ -212,12 +214,21 @@ const tplIndex = `
   <div style="flex:1;min-width:0">
     <div class="base-name">
       <span class="status-dot"></span>{{.Name}}
-      {{if .Running}}<span class="badge badge-run">{{t $.Lang "работает"}}</span>{{else}}<span class="badge badge-stop">{{t $.Lang "остановлена"}}</span>{{end}}
+      {{if .Client}}
+        {{if .Running}}<span class="badge badge-run">{{t $.Lang "сервер отвечает"}}</span>{{else}}<span class="badge badge-stop">{{t $.Lang "сервер не отвечает"}}</span>{{end}}
+      {{else}}
+        {{if .Running}}<span class="badge badge-run">{{t $.Lang "работает"}}</span>{{else}}<span class="badge badge-stop">{{t $.Lang "остановлена"}}</span>{{end}}
+      {{end}}
     </div>
+    {{if .Client}}
+    <div class="base-sub">🖧 {{t $.Lang "Подключение к серверу"}}</div>
+    <div class="base-sub">{{.ServerURL}}</div>
+    {{else}}
     <div class="base-sub">
       {{if eq .ConfigSource "file"}}📁 {{.Path}}{{else}}🗄 {{t $.Lang "В базе данных"}}{{end}}
     </div>
     <div class="base-sub">{{if eq .DBType "sqlite"}}💾 {{.DBPath}}{{else}}{{maskDSN .DB}}{{end}} · :{{.Port}}</div>
+    {{end}}
   </div>
 </div>
 {{end}}
@@ -1198,6 +1209,19 @@ const tplForm = `
       <input name="name" value="{{.Base.Name}}" required autofocus>
     </div>
     <div class="fg">
+      <label>{{t $.Lang "Вид записи"}}</label>
+      <select name="base_kind" onchange="toggleBaseKind(this.value)">
+        <option value="local" {{if not .ClientKind}}selected{{end}}>{{t $.Lang "База на этом компьютере — лаунчер её запускает"}}</option>
+        <option value="client" {{if .ClientKind}}selected{{end}}>{{t $.Lang "Подключение к работающему серверу"}}</option>
+      </select>
+      <div class="hint">{{t $.Lang "«Подключение к серверу» — для работы нескольких пользователей против одной службы: лаунчер ничего не запускает, а открывает Предприятие на указанном адресе."}}</div>
+    </div>
+    <div class="fg" id="server-row" style="{{if not .ClientKind}}display:none{{end}}">
+      <label>{{t $.Lang "Адрес сервера"}}</label>
+      <input name="server_url" value="{{.Base.ServerURL}}" placeholder="https://onebase.example.local:8443">
+      <div class="hint">{{t $.Lang "Схема обязательна: http:// или https://. Без пути и параметров — только адрес и порт."}}</div>
+    </div>
+    <div class="fg local-only" style="{{if .ClientKind}}display:none{{end}}">
       <label>{{t $.Lang "Тип хранения конфигурации"}}</label>
       <select name="config_source" onchange="togglePath(this.value)">
         <option value="database" {{if eq .Base.ConfigSource "database"}}selected{{end}}>{{t $.Lang "В базе данных (1С-режим)"}}</option>
@@ -1205,7 +1229,7 @@ const tplForm = `
       </select>
       <div class="hint">{{t $.Lang "«В базе данных» — конфигурация хранится в БД, редактирование через Выгрузку/Загрузку. «Файловый» — папка на диске под git."}}</div>
     </div>
-    <div class="fg" id="path-row" style="{{if ne .Base.ConfigSource "file"}}display:none{{end}}">
+    <div class="fg local-only" id="path-row" style="{{if ne .Base.ConfigSource "file"}}display:none{{end}}">
       <label>{{t $.Lang "Путь к папке конфигурации"}}</label>
       <div class="input-browse">
         <input id="inp-path" name="path" value="{{.Base.Path}}" placeholder="/home/user/my-app" onblur="autoFillSQLitePath(this.value)">
@@ -1213,7 +1237,7 @@ const tplForm = `
       </div>
       <div class="hint">{{t $.Lang "Папка должна содержать catalogs/, documents/ и т.д."}}</div>
     </div>
-    <div class="fg">
+    <div class="fg local-only">
       <label>{{t $.Lang "Тип базы данных"}}</label>
       <select name="db_type" onchange="toggleDB(this.value)">
         <option value="postgres" {{if or (eq .Base.DBType "") (eq .Base.DBType "postgres")}}selected{{end}}>{{t $.Lang "Серверная (PostgreSQL)"}}</option>
@@ -1221,12 +1245,12 @@ const tplForm = `
       </select>
       <div class="hint">{{t $.Lang "«Файловая» — один файл .db, без установки сервера, идеальна для pet-проектов. «Серверная» — PostgreSQL."}}</div>
     </div>
-    <div class="fg" id="dsn-row" style="{{if eq .Base.DBType "sqlite"}}display:none{{end}}">
+    <div class="fg local-only" id="dsn-row" style="{{if eq .Base.DBType "sqlite"}}display:none{{end}}">
       <label>{{t $.Lang "Строка подключения к PostgreSQL"}}</label>
       <input name="db" value="{{.Base.DB}}" placeholder="postgres://localhost/mydb?sslmode=disable">
       <div class="hint">{{t $.Lang "База данных будет создана автоматически, если не существует."}}</div>
     </div>
-    <div class="fg" id="dbpath-row" style="{{if ne .Base.DBType "sqlite"}}display:none{{end}}">
+    <div class="fg local-only" id="dbpath-row" style="{{if ne .Base.DBType "sqlite"}}display:none{{end}}">
       <label>{{t $.Lang "Путь к файлу SQLite"}}</label>
       <div class="input-browse">
         <input id="inp-dbpath" name="db_path" value="{{.Base.DBPath}}" placeholder="C:\onebase\mydb.db" onblur="normalizeDBPath('inp-dbpath')">
@@ -1234,14 +1258,14 @@ const tplForm = `
       </div>
       <div class="hint">{{t $.Lang "Файл будет создан, если не существует. Расширение .db рекомендуется."}}</div>
     </div>
-    <div class="form-row">
+    <div class="form-row local-only">
       <div class="fg">
         <label>{{t $.Lang "Порт сервера"}}</label>
         <input name="port" type="number" value="{{if .Base.Port}}{{.Base.Port}}{{else}}8080{{end}}" min="1024" max="65535">
         <div class="hint">{{t $.Lang "У каждой базы должен быть уникальный порт. Первая база: 8080, вторая: 8081 и т.д."}}</div>
       </div>
     </div>
-    <div class="form-row">
+    <div class="form-row local-only">
       <div class="fg">
         <label>{{t $.Lang "Доступ по сети"}}</label>
         <select name="host">
@@ -1264,6 +1288,26 @@ const tplForm = `
   </form>
 </div>
 <script>
+// toggleBaseKind переключает форму между базой, которую лаунчер поднимает сам,
+// и подключением к работающему серверу. У второго вида поля запуска не просто
+// не нужны — они обманывают: порт и DSN у такой записи не используются вовсе.
+function toggleBaseKind(v) {
+  var client = (v === "client");
+  var server = document.getElementById("server-row");
+  if (server) server.style.display = client ? "" : "none";
+  var rows = document.querySelectorAll(".local-only");
+  for (var i = 0; i < rows.length; i++) {
+    rows[i].style.display = client ? "none" : "";
+  }
+  if (!client) {
+    // Вернуть видимость внутри локального вида по текущим значениям: у пути и
+    // у DSN/SQLite своя логика, общий показ её бы нарушил.
+    var cs = document.querySelector('[name="config_source"]');
+    if (cs) togglePath(cs.value);
+    var dt = document.querySelector('[name="db_type"]');
+    if (dt) toggleDB(dt.value);
+  }
+}
 function togglePath(v) {
   var r = document.getElementById('path-row');
   var sl = document.getElementById('scaffold-label');

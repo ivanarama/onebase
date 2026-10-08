@@ -38,6 +38,7 @@ func TestOrphanAccountEntries_Matrix(t *testing.T) {
 		if err := db.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{ar}); err != nil {
 			t.Fatal(err)
 		}
+		ensureChart(t, db, ar.Accounts, "41", "60")
 
 		period := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)
 		rows := []map[string]any{{"счётдт": "41", "счёткт": "60", "сумма": float64(100)}}
@@ -130,6 +131,7 @@ func TestDeleteAccountEntriesOfUnknownRecorderType_Matrix(t *testing.T) {
 		if err := db.MigrateAccountRegisters(ctx, []*metadata.AccountRegister{ar}); err != nil {
 			t.Fatal(err)
 		}
+		ensureChart(t, db, ar.Accounts, "41", "60")
 
 		period := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)
 		rows := []map[string]any{{"счётдт": "41", "счёткт": "60", "сумма": float64(100)}}

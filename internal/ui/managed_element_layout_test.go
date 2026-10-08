@@ -16,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"golang.org/x/net/html"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 )
@@ -109,6 +110,117 @@ func TestManagedLayout_FormHandlerAppliesNestedPageLayout(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, `data-tab-content="0" style="display:block;width:310px;max-width:100%;flex:0 0 auto;min-width:0;"`) {
 		t.Errorf("layout вложенной страницы не применён к контейнеру вкладки:\n%s", body)
+	}
+}
+
+// Внешний контейнер СтраницыФормы отделяет вкладки от полей, идущих ниже.
+// Проверяем production-HTML штатного обработчика карточки: это одновременно
+// фиксирует визуальные border/padding/margin и не даёт потерять elLayout при
+// последующих правках оформления контейнера.
+func TestManagedTabs_FormHandlerFramesContentBeforeFollowingFields(t *testing.T) {
+	ent := layoutTestEntity(&metadata.FormElement{
+		Kind:  metadata.FormElementPages,
+		Name:  "Страницы",
+		Width: 500,
+		Children: []*metadata.FormElement{
+			{
+				Kind:     metadata.FormElementPage,
+				Name:     "Основное",
+				TitleMap: map[string]string{"ru": "Основное"},
+				Children: []*metadata.FormElement{{
+					Kind:     metadata.FormElementField,
+					Name:     "ПолеНаименование",
+					DataPath: "Объект.Наименование",
+				}},
+			},
+			{
+				Kind:     metadata.FormElementPage,
+				Name:     "Дополнительно",
+				TitleMap: map[string]string{"ru": "Дополнительно"},
+			},
+		},
+	})
+	ent.Forms[0].Elements = append(ent.Forms[0].Elements, &metadata.FormElement{
+		Kind:     metadata.FormElementField,
+		Name:     "ПолеКомментарий",
+		DataPath: "Объект.Комментарий",
+	})
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+
+	req := httptest.NewRequest("GET", "/ui/catalog/клиент/new", nil)
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("entity", "клиент")
+	req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, rctx))
+	rec := httptest.NewRecorder()
+	s.form(rec, req)
+
+	if rec.Code != 200 {
+		t.Fatalf("форма не открылась: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	const tabsAnchor = `class="managed-tabs" data-tabs="Страницы"`
+	tabsAt := strings.Index(body, tabsAnchor)
+	if tabsAt < 0 {
+		t.Fatalf("внешний контейнер вкладок не найден:\n%s", body)
+	}
+	tagEnd := strings.Index(body[tabsAt:], ">")
+	if tagEnd < 0 {
+		t.Fatalf("открывающий тег контейнера вкладок не закрыт:\n%s", body[tabsAt:])
+	}
+	tabsTag := body[tabsAt : tabsAt+tagEnd]
+	for _, want := range []string{
+		"border:1px solid #e2e8f0",
+		"border-radius:8px",
+		"padding:12px 14px",
+		"margin-bottom:14px",
+		"width:500px",
+		"max-width:100%",
+		"flex:0 0 auto",
+		"min-width:0",
+	} {
+		if !strings.Contains(tabsTag, want) {
+			t.Errorf("контейнер вкладок не содержит %q: <%s>", want, tabsTag)
+		}
+	}
+	if strings.Contains(tabsTag, "ZgotmplZ") {
+		t.Errorf("стиль контейнера вкладок вырезан контекстным экранированием: <%s>", tabsTag)
+	}
+
+	belowAt := strings.Index(body, `data-ob-el="ПолеКомментарий"`)
+	if belowAt < 0 {
+		t.Fatalf("поле под вкладками не отрисовано:\n%s", body)
+	}
+	if belowAt <= tabsAt {
+		t.Errorf("поле под вкладками оказалось раньше контейнера: tabs=%d field=%d", tabsAt, belowAt)
+	}
+
+	doc, err := html.Parse(strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("разобрать HTML формы: %v", err)
+	}
+	var findByAttr func(*html.Node, string, string) *html.Node
+	findByAttr = func(node *html.Node, key, value string) *html.Node {
+		for _, attr := range node.Attr {
+			if attr.Key == key && attr.Val == value {
+				return node
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			if found := findByAttr(child, key, value); found != nil {
+				return found
+			}
+		}
+		return nil
+	}
+	tabsNode := findByAttr(doc, "data-tabs", "Страницы")
+	belowNode := findByAttr(doc, "data-ob-el", "ПолеКомментарий")
+	if tabsNode == nil || belowNode == nil {
+		t.Fatalf("структура вкладок и поля под ними не разобрана: tabs=%v field=%v", tabsNode != nil, belowNode != nil)
+	}
+	for parent := belowNode.Parent; parent != nil; parent = parent.Parent {
+		if parent == tabsNode {
+			t.Fatal("поле под вкладками ошибочно вложено во внешний контейнер вкладок")
+		}
 	}
 }
 

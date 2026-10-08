@@ -1,6 +1,10 @@
 package interpreter
 
-import "context"
+import (
+	"context"
+
+	"github.com/ivantit66/onebase/internal/storage"
+)
 
 // PredefinedDB is the minimal storage interface for predefined item lookup.
 // Returns the UUID of a predefined item as a string.
@@ -37,7 +41,16 @@ type PredefinedCatalogProxy struct {
 func (p *PredefinedCatalogProxy) Get(itemName string) any {
 	id, err := p.db.GetPredefinedIDStr(p.ctx, p.entityName, itemName)
 	if err != nil {
-		panic(userError{Msg: "Предопределённый элемент " + p.entityName + "." + itemName + " не найден"})
+		if storage.IsNotFound(err) {
+			panic(userError{
+				Msg: "Предопределённый элемент " + p.entityName + "." + itemName + " не найден",
+				Err: err,
+			})
+		}
+		panic(userError{
+			Msg: "Не удалось получить предопределённый элемент " + p.entityName + "." + itemName + ": " + err.Error(),
+			Err: err,
+		})
 	}
 	return id
 }

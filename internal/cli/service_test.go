@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/ivantit66/onebase/internal/launcher"
 	"github.com/spf13/cobra"
 )
 
@@ -51,6 +53,7 @@ func TestInstallWindowsServicePrintUsesSQLite(t *testing.T) {
 			"sqlite",
 			"file",
 			`C:\onebase\project`,
+			"0.0.0.0",
 			8080,
 			true,
 			true,
@@ -67,6 +70,9 @@ func TestInstallWindowsServicePrintUsesSQLite(t *testing.T) {
 	}
 	if !strings.Contains(out, `--project \"C:\onebase\project\"`) || !strings.Contains(out, "--watch") {
 		t.Fatalf("windows service command lost project/watch args:\n%s", out)
+	}
+	if !strings.Contains(out, "--host 0.0.0.0") {
+		t.Fatalf("windows service command lost host arg:\n%s", out)
 	}
 	if !strings.Contains(out, `binPath= "\"C:\Program Files\OneBase\onebase.exe\" run`) {
 		t.Fatalf("binPath must preserve quotes around executable with spaces, got:\n%s", out)
@@ -102,7 +108,7 @@ func TestInstallWindowsServiceRejectsMappedDrive(t *testing.T) {
 
 	err := installWindowsService(
 		`C:\Program Files\OneBase\onebase.exe`, "onebase-docflow", "docflow", "",
-		`Z:\DocFlow\app.db`, "sqlite", "file", `Z:\DocFlow`, 8080, false, false,
+		`Z:\DocFlow\app.db`, "sqlite", "file", `Z:\DocFlow`, "127.0.0.1", 8080, false, false,
 	)
 	if err == nil || !strings.Contains(err.Error(), "LocalSystem") || !strings.Contains(err.Error(), "UNC") {
 		t.Fatalf("mapped drive должен остановить установку с подсказкой, got %v", err)
@@ -134,6 +140,7 @@ func TestInstallSystemdPrintUsesSQLite(t *testing.T) {
 			"sqlite",
 			"file",
 			"/srv/onebase/project",
+			"0.0.0.0",
 			8080,
 			true,
 			cmd,
@@ -152,6 +159,131 @@ func TestInstallSystemdPrintUsesSQLite(t *testing.T) {
 	if !strings.Contains(out, `--project "/srv/onebase/project"`) || !strings.Contains(out, "--watch") {
 		t.Fatalf("systemd unit lost project/watch args:\n%s", out)
 	}
+	if !strings.Contains(out, `--host "0.0.0.0"`) {
+		t.Fatalf("systemd unit lost host arg:\n%s", out)
+	}
+}
+
+func TestRunServiceInstallPrintCarriesExplicitHost(t *testing.T) {
+	cmd := &cobra.Command{}
+	addServiceInstallFlags(cmd)
+	for name, value := range map[string]string{
+		"sqlite": filepath.Join(t.TempDir(), "base.db"),
+		"name":   "onebase-host-test",
+		"host":   "0.0.0.0",
+		"print":  "true",
+	} {
+		if err := cmd.Flags().Set(name, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out, err := captureStdout(t, func() error { return runServiceInstall(cmd, nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !serviceOutputHasHost(out, "0.0.0.0") {
+		t.Fatalf("service install --host was not carried into generated command:\n%s", out)
+	}
+}
+
+func TestRunServiceInstallPrintDefaultsToLoopback(t *testing.T) {
+	cmd := &cobra.Command{}
+	addServiceInstallFlags(cmd)
+	for name, value := range map[string]string{
+		"sqlite": filepath.Join(t.TempDir(), "base.db"),
+		"name":   "onebase-loopback-test",
+		"print":  "true",
+	} {
+		if err := cmd.Flags().Set(name, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	out, err := captureStdout(t, func() error { return runServiceInstall(cmd, nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !serviceOutputHasHost(out, "127.0.0.1") {
+		t.Fatalf("service install default host must stay loopback:\n%s", out)
+	}
+}
+
+func TestRunServiceInstallPrintInheritsRegistryHost(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	store, err := launcher.NewStore()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := &launcher.Base{
+		ID: "service-host-test", Name: "host-test", DBType: "sqlite",
+		DBPath: filepath.Join(home, "base.db"), Port: 18080,
+		ConfigSource: "database", Host: "0.0.0.0",
+	}
+	if err := store.Add(base); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := &cobra.Command{}
+	addServiceInstallFlags(cmd)
+	if err := cmd.Flags().Set("id", base.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Flags().Set("print", "true"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := captureStdout(t, func() error { return runServiceInstall(cmd, nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !serviceOutputHasHost(out, "0.0.0.0") {
+		t.Fatalf("service install --id did not inherit registered host:\n%s", out)
+	}
+
+	override := &cobra.Command{}
+	addServiceInstallFlags(override)
+	for name, value := range map[string]string{
+		"id":    base.ID,
+		"host":  "127.0.0.1",
+		"print": "true",
+	} {
+		if err := override.Flags().Set(name, value); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out, err = captureStdout(t, func() error { return runServiceInstall(override, nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !serviceOutputHasHost(out, "127.0.0.1") || serviceOutputHasHost(out, "0.0.0.0") {
+		t.Fatalf("explicit --host must override registered host:\n%s", out)
+	}
+
+	base.Host = "unexpected.example"
+	if err := store.Update(base); err != nil {
+		t.Fatal(err)
+	}
+	corrupt := &cobra.Command{}
+	addServiceInstallFlags(corrupt)
+	if err := corrupt.Flags().Set("id", base.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := corrupt.Flags().Set("print", "true"); err != nil {
+		t.Fatal(err)
+	}
+	out, err = captureStdout(t, func() error { return runServiceInstall(corrupt, nil) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !serviceOutputHasHost(out, "127.0.0.1") || strings.Contains(out, "unexpected.example") {
+		t.Fatalf("unknown registered host must fail safely to loopback:\n%s", out)
+	}
+}
+
+func serviceOutputHasHost(out, host string) bool {
+	return strings.Contains(out, "--host "+host) || strings.Contains(out, `--host "`+host+`"`)
 }
 
 func TestSystemdQuoteEscapesSpecialCharacters(t *testing.T) {

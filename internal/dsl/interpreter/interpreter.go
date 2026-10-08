@@ -155,6 +155,16 @@ func (i *Interpreter) Call(proc *ast.ProcedureDecl, this This, args []any, extra
 	return
 }
 
+// EntryCallResult is the result of invoking a DSL entry procedure together
+// with the final values of its declared parameters. Ordinary user-procedure
+// calls deliberately keep parameters inside the callee frame; lifecycle
+// entrypoints with output parameters (for example ПередЗакрытием(Отказ)) need
+// an explicit, narrow way to observe those values after the call.
+type EntryCallResult struct {
+	Value    any
+	Bindings map[string]any
+}
+
 // RunWithResult executes a function procedure and captures its return value.
 func (i *Interpreter) RunWithResult(proc *ast.ProcedureDecl, this This, result *any, extraVars ...map[string]any) (err error) {
 	e := i.startEnv(this)
@@ -589,7 +599,13 @@ func (i *Interpreter) evalExprUnchecked(expr ast.Expr, e *env) any {
 		case This:
 			return protectReadOnly(e.ec, o.Get(field))
 		case *Ref:
-			return protectReadOnly(e.ec, o.Get(field))
+			value, ok := o.Lookup(field)
+			if !ok {
+				RaiseUserError("Реквизит ссылки «" + v.Field.Literal +
+					"» недоступен через точку — используйте ЗначениеРеквизитаОбъекта(Ссылка, \"" +
+					v.Field.Literal + "\")")
+			}
+			return protectReadOnly(e.ec, value)
 		case *Map:
 			// Соответствие не поддерживает чтение по точке (как в 1С) — частая
 			// ошибка с результатом ПрочитатьJSON. Раньше тихо возвращали
@@ -650,7 +666,16 @@ func (i *Interpreter) evalExprUnchecked(expr ast.Expr, e *env) any {
 
 func (i *Interpreter) evalNew(n *ast.NewExpr, e *env) any {
 	args := i.evalArgs(n.Args, e)
-	typeName := strings.ToLower(n.TypeName.Literal)
+	// План 173, срез A: dispatch вынесен в construct, чтобы динамическая форма
+	// Новый(<Тип>, <Параметры>) в срезе B пошла через ту же точку создания.
+	return i.construct(strings.ToLower(n.TypeName.Literal), args, e, n.TypeName.Literal)
+}
+
+// construct создаёт объект по нормализованному имени типа и готовым аргументам.
+// typeName ожидается в нижнем регистре (единственная нормализация —
+// normalizeTypeName для публичных имён типов значений); displayName — имя так,
+// как его написал автор модуля, для текстов ошибок.
+func (i *Interpreter) construct(typeName string, args []any, e *env, displayName string) any {
 	switch typeName {
 	case "массив", "array":
 		return &Array{}
@@ -672,11 +697,11 @@ func (i *Interpreter) evalNew(n *ast.NewExpr, e *env) any {
 	// Расширяемые типы через env: "__factory_<ИмяТипа>"
 	if factory, ok := e.get("__factory_" + typeName); ok {
 		if fn, ok := factory.(func([]any) any); ok {
-			refuseReadOnly(e.ec, "создание объекта «"+n.TypeName.Literal+"» через внешнюю фабрику")
+			refuseReadOnly(e.ec, "создание объекта «"+displayName+"» через внешнюю фабрику")
 			return fn(args)
 		}
 	}
-	panic(userError{Msg: "Новый: неизвестный тип " + n.TypeName.Literal})
+	panic(userError{Msg: "Новый: неизвестный тип " + displayName})
 }
 
 func (i *Interpreter) evalUnary(u *ast.UnaryExpr, e *env) any {
@@ -1144,11 +1169,17 @@ func (i *Interpreter) evalEvalBuiltin(args []any, e *env) any {
 }
 
 func (i *Interpreter) callUserProc(proc *ast.ProcedureDecl, callEnv *env, args []any) (retVal any) {
-	return i.callUserProcAtDepth(proc, callEnv, args, callEnv.depth+1)
+	retVal, _ = i.callUserProcAtDepthWithBindings(proc, callEnv, args, callEnv.depth+1)
+	return retVal
 }
 
 func (i *Interpreter) callEntryProc(proc *ast.ProcedureDecl, root *env, args []any) (retVal any) {
-	return i.callUserProcAtDepth(proc, root, args, root.depth)
+	retVal, _ = i.callUserProcAtDepthWithBindings(proc, root, args, root.depth)
+	return retVal
+}
+
+func (i *Interpreter) callEntryProcWithBindings(proc *ast.ProcedureDecl, root *env, args []any) (retVal any, bindings map[string]any) {
+	return i.callUserProcAtDepthWithBindings(proc, root, args, root.depth)
 }
 
 func (i *Interpreter) moduleEnvFor(proc *ast.ProcedureDecl, root *env) *env {
@@ -1190,7 +1221,7 @@ func (i *Interpreter) moduleEnvFor(proc *ast.ProcedureDecl, root *env) *env {
 	return me
 }
 
-func (i *Interpreter) callUserProcAtDepth(proc *ast.ProcedureDecl, callEnv *env, args []any, frameDepth int) (retVal any) {
+func (i *Interpreter) callUserProcAtDepthWithBindings(proc *ast.ProcedureDecl, callEnv *env, args []any, frameDepth int) (retVal any, bindings map[string]any) {
 	// Страж рекурсии: env нового кадра будет на уровень глубже вызывающего.
 	// Обрываем ДО создания кадра и проброса в отладчик, иначе бесконечная
 	// рекурсия переполнит стек горутины и аварийно уронит процесс (мимо Попытки).
@@ -1205,7 +1236,14 @@ func (i *Interpreter) callUserProcAtDepth(proc *ast.ProcedureDecl, callEnv *env,
 		hook.HookPushFrame(proc.Name.Literal, 0)
 		defer hook.HookPopFrame()
 	}
+	var child *env
 	defer func() {
+		if child != nil {
+			bindings = make(map[string]any, len(proc.Params))
+			for _, param := range proc.Params {
+				bindings[param.Literal] = child.vars[strings.ToLower(param.Literal)]
+			}
+		}
 		if r := recover(); r != nil {
 			switch s := r.(type) {
 			case dslReturn:
@@ -1227,7 +1265,7 @@ func (i *Interpreter) callUserProcAtDepth(proc *ast.ProcedureDecl, callEnv *env,
 	} else if moduleEnv != nil {
 		defaultEnv = callEnv.frameWithModule(callEnv, moduleEnv, callEnv.depth)
 	}
-	child := callEnv.frameWithModule(parentEnv, moduleEnv, frameDepth)
+	child = callEnv.frameWithModule(parentEnv, moduleEnv, frameDepth)
 	child.sourceFile = proc.Name.File
 	for idx, param := range proc.Params {
 		if idx < len(args) {
@@ -1253,7 +1291,7 @@ func (i *Interpreter) callUserProcAtDepth(proc *ast.ProcedureDecl, callEnv *env,
 		}
 	}
 	i.execBlock(proc.Body, child)
-	return nil
+	return nil, bindings
 }
 
 // evalArgs — аргументы для всех, кроме пользовательской процедуры: пропуск

@@ -50,6 +50,17 @@ const (
 	// а результат пользователь возвращает событием Выбор с переменной
 	// ПодборРезультат. Generic: годится для любого диалога мультивыбора.
 	FormEventOnChoice FormEventType = "Выбор" // OnChoice
+	// Поиск — та же фаза 1 диалога подбора, вызванная повторно из уже открытого
+	// окна (план 46). Строка поиска диалога фильтрует то, что уже приехало на
+	// клиент; когда строк больше окна выдачи или часть колонок под маской ПДн
+	// (план 88), фильтровать нечего — искать обязан сервер. Обработчик получает
+	// набранный текст в переменной ПодборЗапрос и снова зовёт ПоказатьПодбор;
+	// клиент заменяет строки в открытом окне, не открывая второго.
+	FormEventOnSearch FormEventType = "Поиск" // OnSearch
+	// Ответ — вторая фаза диалога вопроса (#1528): обработчик показывает
+	// вопрос билтином ПоказатьВопрос (фаза 1, например Нажатие), ответ
+	// пользователя приезжает событием Ответ с переменной ВопросОтвет.
+	FormEventOnAnswer FormEventType = "Ответ" // OnAnswer
 )
 
 var knownFormEventTypes = map[FormEventType]bool{
@@ -63,6 +74,8 @@ var knownFormEventTypes = map[FormEventType]bool{
 	FormEventBeforeRowAdd: true, FormEventAfterRowAdd: true,
 	FormEventBeforeRowDelete: true, FormEventStartListChoice: true,
 	FormEventAutoComplete: true, FormEventExecuteCommand: true, FormEventOnChoice: true,
+	FormEventOnSearch: true,
+	FormEventOnAnswer: true,
 }
 
 // formTablePartContextVars — имена, которые платформа инжектирует в обработчик
@@ -199,7 +212,24 @@ type FormElement struct {
 	HorizontalAlign string            `yaml:"halign,omitempty"`         // left|center|right|stretch
 	VerticalAlign   string            `yaml:"valign,omitempty"`         // top|center|bottom
 	Orientation     string            `yaml:"orientation,omitempty"`    // vertical|horizontal для контейнеров
-	ReadOnly        bool              `yaml:"readonly,omitempty"`       // только чтение
+	// ScrollX — горизонтальная группа не переносит содержимое на вторую строку,
+	// а прокручивается. Нужна ряду кнопок: перенос рвёт панель действий пополам,
+	// и половина кнопок читается как отдельный блок. По умолчанию перенос, как
+	// было.
+	ScrollX    bool   `yaml:"scroll_x,omitempty"`
+	Background string `yaml:"background,omitempty"` // фон контейнера; читается только у ГруппаФормы (#1547), цвет проверяет csssafe.Color
+	ReadOnly   bool   `yaml:"readonly,omitempty"`   // только чтение
+	// EditableAdminOnly — поле редактирует только администратор, остальным оно
+	// нередактируемо всегда. В отличие от ReadOnlyWhen условие тут не от данных
+	// записи, а от того, кто смотрит, поэтому вычисляется на сервере при
+	// отрисовке и при каждом ответе события — и там же, на сервере, отбрасывается
+	// присланное значение: иначе запрет держался бы на разметке.
+	EditableAdminOnly bool `yaml:"editable_admin_only,omitempty"`
+	// Primary — кнопка основного действия формы: рисуется акцентным стилем.
+	// Нужна формам, где штатный ряд «Записать / ОК / Закрыть» скрыт и
+	// единственное действие объявлено своей кнопкой — без акцента она теряется
+	// среди вспомогательных.
+	Primary bool `yaml:"primary,omitempty"`
 	// ReadOnlyWhen / HiddenWhen — условия по полям ЗАПИСИ (выражение того же
 	// языка, что `when` условного оформления): элемент становится нередактируемым
 	// либо вовсе не показывается, пока условие истинно. Нужны там, где запрет
@@ -225,6 +255,11 @@ type FormElement struct {
 	AccessKey string `yaml:"accesskey,omitempty"` // HTML accesskey для браузерной активации (Alt/Option+клавиша)
 	HotKey    string `yaml:"hotkey,omitempty"`    // runtime shortcut для кнопок формы (F2/F4/F7/F8/F9/F10)
 	Multiline bool   `yaml:"multiline,omitempty"` // обычное поле ввода рендерится как textarea
+	// ChoiceContext — что вызывающая форма передаёт в подбор: «имя параметра» →
+	// «путь к значению на форме» (Объект.Филиал, реквизит формы). Аналог
+	// параметров выбора в 1С: форма выбора и область просмотра в ней обязаны
+	// знать, ДЛЯ ЧЕГО выбирают, — памятка по направлению у филиалов разная.
+	ChoiceContext map[string]string `yaml:"choice_context,omitempty"`
 	// Language — язык подсветки для kind: ПолеКода. Пусто → plaintext.
 	// Значения совпадают с идентификаторами языков редактора: bsl, sql, json,
 	// xml, yaml, markdown, javascript, plaintext.
@@ -237,6 +272,29 @@ type FormElement struct {
 	DisplayFormat string `yaml:"display_format,omitempty"`
 	Type          string `yaml:"type,omitempty"`   // "file" для файлового поля, и т.п.
 	Choice        bool   `yaml:"choice,omitempty"` // включена кнопка выбора у InputField
+	// ChoiceFolders — разрешить выбирать ГРУППЫ иерархического справочника
+	// (1С: ВыборГруппИЭлементов). Подбор ссылочного поля всегда исключает папки,
+	// и для справочника, где значение по смыслу является группой, поле
+	// оказывается невыбираемым: список пуст, а уже записанное значение платформа
+	// считает недопустимым. Так ведёт себя населённый пункт адресного
+	// классификатора — у города есть улицы, поэтому он группа.
+	ChoiceFolders bool `yaml:"choice_folders,omitempty"`
+	// ChoiceDropdown — разворачивать ли варианты прямо в выпадающем списке
+	// ссылочного поля. По умолчанию да: <select> получает предзагруженную
+	// страницу, и мелкий справочник выбирается одним кликом.
+	//
+	// `choice_dropdown: false` оставляет в списке плейсхолдер и текущее значение,
+	// а выбор уходит в форму подбора. Это нужно там, где предзагруженная страница
+	// вводит в заблуждение: у большого справочника она показывает произвольные
+	// первые N записей, и оператор выбирает из них, не подозревая, что видит не
+	// весь список. Указатель отличает явное false от отсутствующего ключа.
+	ChoiceDropdown *bool `yaml:"choice_dropdown,omitempty"`
+	// ChoiceFilter ограничивает варианты ссылочного поля декларативными
+	// условиями. Браузер передаёт только значения объявленных источников, а
+	// сервер восстанавливает Field/Op из этих метаданных; SQL-фрагменты в
+	// контракт не входят. Порядок условий сохраняется для стабильного YAML
+	// round-trip, семантика списка — AND.
+	ChoiceFilter []FormChoiceCondition `yaml:"choice_filter,omitempty"`
 	// Choices — декларативный список значений для выбора (аналог 1С СписокВыбора).
 	// Задаётся в .form.yaml на элементе kind: ПолеСписка; рендерер показывает
 	// <select> с этими значениями, а выбор дёргает событие ПриИзменении.
@@ -260,6 +318,112 @@ type FormElement struct {
 	// (FormAttributeColumn). Дочерний элемент kind: ПолеВвода тоже не подошёл —
 	// такая колонка выглядела бы редактируемой, а редактировать нечего.
 	VirtualColumns []FormVirtualColumn `yaml:"virtual_columns,omitempty"`
+}
+
+// FormChoiceOperator — закрытый набор операторов choice_filter v1.
+type FormChoiceOperator string
+
+const (
+	FormChoiceOpEqual       FormChoiceOperator = "eq"
+	FormChoiceOpInHierarchy FormChoiceOperator = "in_hierarchy"
+	// FormChoiceOpEqualOrEmpty — «равно значению источника ИЛИ реквизит пуст».
+	// Так 1С отбирает общие записи вместе со своими: запись без филиала
+	// доступна любому филиалу, а отбор «Филиал = филиал документа» её прятал.
+	// Пустой источник оставляет только записи с пустым реквизитом — как
+	// список отбора 1С из одной пустой ссылки.
+	FormChoiceOpEqualOrEmpty FormChoiceOperator = "eq_or_empty"
+	// FormChoiceOpNotInHierarchy — точное дополнение in_hierarchy для того же
+	// поля и источника (#1821): запись проходит, если значение поля НЕ лежит в
+	// поддереве X (X включительно). Пустое значение поля проходит — оно ни в
+	// каком поддереве не лежит. Пустой, несуществующий или закрытый источник
+	// даёт пустую выдачу: «всё, кроме невидимой ветки» раскрыло бы её состав.
+	FormChoiceOpNotInHierarchy FormChoiceOperator = "not_in_hierarchy"
+)
+
+// FormChoiceParentField — служебное поле choice_filter иерархического
+// справочника: ссылка записи на родителя в том же справочнике (#1819). К нему
+// применимы операторы ссылочного реквизита: `eq X` — непосредственные дети X,
+// `in_hierarchy X` — записи, чей родитель лежит в поддереве X (сама X
+// включена), то есть записи строго внутри X. У корневых записей родителя нет —
+// они не проходят ни eq, ни in_hierarchy. `not_in_hierarchy X` — дополнение
+// in_hierarchy: всё, что не строго внутри X, включая корневые записи и саму X.
+const FormChoiceParentField = "parent_id"
+
+// FormChoiceParentFieldOf — parent_id как ссылочный реквизит справочника на
+// самого себя; nil, если справочник не иерархический.
+func FormChoiceParentFieldOf(entity *Entity) *Field {
+	if entity == nil || entity.Kind != KindCatalog || !entity.Hierarchical {
+		return nil
+	}
+	return &Field{Name: FormChoiceParentField, Type: FieldType("reference:" + entity.Name), RefEntity: entity.Name}
+}
+
+// FormChoiceCondition описывает одно серверно проверяемое условие подбора.
+// Ровно одно из From, Value и Ref обязательно.
+//
+// Value — литерал из конфигурации, boolean: служебное поле is_folder и булев
+// реквизит справочника («только немуниципальные адреса»). Указатель отличает
+// явное false от отсутствующего литерала. Литералов других типов в контракте
+// нет сознательно: строка или число рядом с колонкой — это уже отбор, который
+// пишется в конфигурации запросом, а не грамматикой подбора.
+//
+// From — путь к значению на форме: `Объект.<Поле>` / `Форма.<Поле>` (v1) либо
+// `Объект.<Поле>.<Реквизит>` / `Форма.<Поле>.<Реквизит>` — ровно один переход
+// по ссылке (план 183, срез B1). Разбирается через ParseFormChoiceSource.
+// Конец такого пути — ссылочный реквизит либо, для строкового Field и eq,
+// строковый: дом адресного классификатора хранит ИД улицы в ВладелецКод.
+//
+// Ref — постоянная ссылка: UUID записи справочника, на который ссылается Field
+// (для parent_id — самого справочника), литералом в метаданных формы (#1820).
+// Условие от выбора пользователя не зависит: «только из папки Рабочие». Браузер
+// значение не присылает. Пустой, нулевой и неразбираемый UUID отклоняет
+// onebase check. Если записи с таким UUID нет или пользователь её не видит,
+// подбор пуст при любом операторе (fail-closed): иначе пропавшая папка
+// раскрыла бы весь справочник.
+type FormChoiceCondition struct {
+	Field string             `yaml:"field"`
+	Op    FormChoiceOperator `yaml:"op"`
+	From  string             `yaml:"from,omitempty"`
+	Value *bool              `yaml:"value,omitempty"`
+	Ref   string             `yaml:"ref,omitempty"`
+}
+
+// FormChoiceSource — разобранный источник условия подбора.
+//
+// Field — элемент формы, значение которого снимает браузер; Attr — реквизит
+// объекта, на который это значение ссылается. Пустой Attr означает путь v1:
+// значение элемента и есть значение фильтра.
+type FormChoiceSource struct {
+	Root  string
+	Field string
+	Attr  string
+}
+
+// Deep сообщает, что значение фильтра лежит не на форме, а за одним переходом
+// по ссылке: сервер обязан прочитать его сам, под правами пользователя.
+func (s FormChoiceSource) Deep() bool { return s.Attr != "" }
+
+// ParseFormChoiceSource разбирает `from`. Допустимы ровно два и ровно три
+// непустых сегмента: путь длиннее — ещё одно чтение на каждое открытие формы и
+// ещё один посредник, права которого надо проверять, а путь короче неотличим
+// от имени реквизита. Корень (`Объект`/`Форма`) проверяет вызывающая сторона:
+// разбор одинаков для check, сервера форм и конфигуратора.
+func ParseFormChoiceSource(path string) (FormChoiceSource, bool) {
+	parts := strings.Split(strings.TrimSpace(path), ".")
+	if len(parts) != 2 && len(parts) != 3 {
+		return FormChoiceSource{}, false
+	}
+	source := FormChoiceSource{Root: strings.TrimSpace(parts[0]), Field: strings.TrimSpace(parts[1])}
+	if len(parts) == 3 {
+		source.Attr = strings.TrimSpace(parts[2])
+		if source.Attr == "" {
+			return FormChoiceSource{}, false
+		}
+	}
+	if source.Root == "" || source.Field == "" {
+		return FormChoiceSource{}, false
+	}
+	return source, true
 }
 
 // FormVirtualColumn — объявление виртуальной колонки табличной части.
@@ -434,11 +598,10 @@ type FormModule struct {
 	Handlers   map[FormEventType]string  `yaml:"events,omitempty"`
 	Procedures map[string]*FormProcedure `yaml:"-"`
 
-	// Actions — переопределение стандартных действий формы объекта (issue #151).
-	// Пока поддерживается ключ "delete": actions.delete.visible=false скрывает
-	// платформенную кнопку «Удалить», чтобы конфиг мог увести удаление в свой
-	// процессор. Платформенное удаление и так пишется в _audit и закрыто правом
-	// delete — это про управление UI-кнопкой.
+	// Actions — переопределение стандартных действий формы объекта. Ключи
+	// delete/save/ok/close управляют видимостью платформенных кнопок, а
+	// attachments — панелью вложений (plan 181C, #1621); права и серверные
+	// проверки они не ослабляют.
 	Actions map[string]*FormAction `yaml:"actions,omitempty"`
 
 	// Conditional — декларативное условное оформление табличных частей формы.
@@ -466,6 +629,19 @@ type FormModule struct {
 	// OneCMeta — служебный блок, используемый только конвертером 1С,
 	// рантайм его игнорирует. Может содержать version, unknown_xml и т.п.
 	OneCMeta map[string]any `yaml:"oneC_meta,omitempty"`
+
+	// SourcePath — путь файла, из которого форма прочитана, относительно корня
+	// проекта и всегда со слэшами: `forms/Инвентаризация/объекта.form.yaml`.
+	// Имя файла и `Name` формы совпадать не обязаны (`name: ФормаОбъекта` в
+	// `объекта.form.yaml`), поэтому локатор предупреждения check синтезировать
+	// из `Name` нельзя — по такому пути файла на диске нет (#1356). Регистр
+	// каталога сохраняется таким, как он лежит на диске: после `ExportToDir`
+	// из configdb путь с приведённым регистром открывается на Windows и не
+	// открывается на Linux.
+	//
+	// Пусто у форм, у которых файла нет вовсе: автоформы из `src/*.form.os` и
+	// формы, собранные в тестах или редактором в памяти.
+	SourcePath string `yaml:"-"`
 
 	// ProgramAST — распарсенный AST модуля .form.os (тип *dsl/ast.Program).
 	// Хранится через any, чтобы пакет metadata не зависел от пакета ast
