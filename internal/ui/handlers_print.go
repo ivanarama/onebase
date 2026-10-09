@@ -64,7 +64,7 @@ func (s *Server) printDocument(w http.ResponseWriter, r *http.Request) {
 
 	switch ref.Kind {
 	case runtime.PrintFormDeclarative:
-		doc, _, err := s.buildDeclarativeSheet(r, entity, id, ref.Decl)
+		doc, _, err := s.BuildDeclarativeSheet(r, entity, id, ref.Decl)
 		if err != nil {
 			s.serverError(w, r, err)
 			return
@@ -91,7 +91,7 @@ func (s *Server) printDocument(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "legacy print form conversion failed: "+ref.Name, 500)
 			return
 		}
-		doc, _, err := s.buildDeclarativeSheet(r, entity, id, ref.Decl)
+		doc, _, err := s.BuildDeclarativeSheet(r, entity, id, ref.Decl)
 		if err != nil {
 			s.serverError(w, r, err)
 			return
@@ -139,11 +139,13 @@ func (s *Server) loadPrintContext(r *http.Request, entity *metadata.Entity, id u
 	}, nil
 }
 
-// buildDeclarativeSheet строит sheet.Document по декларативной форме (макет +
+// BuildDeclarativeSheet — общий сервис рендера для UI и REST. Вызывающий
+// обязан проверить read/RLS; контекст запроса сохраняет маски полей.
+// Строит sheet.Document по декларативной форме (макет +
 // binding) и данным записи. Возвращает также загруженный RenderContext, чтобы
 // вызывающий мог взять номер документа из уже прочитанной записи (имя PDF-файла)
 // без повторного GetByID.
-func (s *Server) buildDeclarativeSheet(r *http.Request, entity *metadata.Entity, id uuid.UUID, lf *printform.LayoutForm) (*sheet.Document, *printform.RenderContext, error) {
+func (s *Server) BuildDeclarativeSheet(r *http.Request, entity *metadata.Entity, id uuid.UUID, lf *printform.LayoutForm) (*sheet.Document, *printform.RenderContext, error) {
 	ctx, err := s.loadPrintContext(r, entity, id)
 	if err != nil {
 		return nil, nil, err
@@ -316,7 +318,7 @@ func (s *Server) printDocumentPDF(w http.ResponseWriter, r *http.Request) {
 	fileName := ref.Name + ".pdf"
 	switch ref.Kind {
 	case runtime.PrintFormDeclarative:
-		doc, ctx, err := s.buildDeclarativeSheet(r, entity, id, ref.Decl)
+		doc, ctx, err := s.BuildDeclarativeSheet(r, entity, id, ref.Decl)
 		if err != nil {
 			s.serverError(w, r, err)
 			return
@@ -349,7 +351,7 @@ func (s *Server) printDocumentPDF(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "legacy print form conversion failed: "+ref.Name, 500)
 			return
 		}
-		doc, ctx, err := s.buildDeclarativeSheet(r, entity, id, ref.Decl)
+		doc, ctx, err := s.BuildDeclarativeSheet(r, entity, id, ref.Decl)
 		if err != nil {
 			s.serverError(w, r, err)
 			return
