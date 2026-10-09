@@ -8,10 +8,12 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os/exec"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
@@ -403,5 +405,133 @@ func TestTPChoiceGlobalSourceCasePublicHTTP(t *testing.T) {
 				})
 			})
 		}
+	}
+}
+
+// The actual GET contexts of both TP renderers feed production browser
+// snapshots and the public HTTP picker on both database dialects. Empty eq
+// closes the picker; eq_or_empty preserves only common records under RLS.
+func TestTPChoiceEmptySourcePublicHTTPMatrix(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required for browser choice snapshots")
+	}
+	for _, grid := range []bool{false, true} {
+		t.Run(map[bool]string{false: "table", true: "grid"}[grid], func(t *testing.T) {
+			dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+				f := newChoiceHTTPFixtureWithStore(t, db, false)
+				addTPChoiceFixture(t, f, grid)
+				common, hiddenCommon := choiceHTTPUUID(0x20, 55), choiceHTTPUUID(0x20, 56)
+				for id, audience := range map[uuid.UUID]string{common: "anna", hiddenCommon: "bob"} {
+					if err := db.Upsert(context.Background(), f.target.Name, id, map[string]any{
+						"Наименование": "needle common", "Аудитория": audience,
+					}, f.target); err != nil {
+						t.Fatal(err)
+					}
+				}
+				// An empty new row must use the same condition during initial rendering.
+				if err := db.UpsertTablePartRows(context.Background(), f.owner.Name, "Строки", f.ownerID,
+					[]map[string]any{{"Направление": "", "Локальная": ""}}, f.owner.TableParts[0]); err != nil {
+					t.Fatal(err)
+				}
+				table := f.owner.Forms[0].Elements[2]
+				for _, op := range []metadata.FormChoiceOperator{metadata.FormChoiceOpEqual, metadata.FormChoiceOpEqualOrEmpty} {
+					t.Run(string(op), func(t *testing.T) {
+						table.Columns[2].ChoiceFilter[0].Op = op
+						router := chi.NewRouter()
+						f.server.Mount(router)
+						req := httptest.NewRequest(http.MethodGet, "/ui/document/"+url.PathEscape(f.owner.Name)+"/"+f.ownerID.String(), nil)
+						req = req.WithContext(auth.ContextWithUser(req.Context(), f.user))
+						r := httptest.NewRecorder()
+						router.ServeHTTP(r, req)
+						if r.Code != http.StatusOK {
+							t.Fatalf("GET form: %d %s", r.Code, r.Body.String())
+						}
+						doc, err := html.Parse(strings.NewReader(r.Body.String()))
+						if err != nil {
+							t.Fatal(err)
+						}
+						var raw string
+						var walk func(*html.Node)
+						walk = func(n *html.Node) {
+							if grid {
+								if contexts, ok := htmlAttribute(n, "data-sg-choice"); ok {
+									var choices map[string]string
+									if err := json.Unmarshal([]byte(contexts), &choices); err != nil {
+										t.Fatal(err)
+									}
+									raw = choices["Локальная"]
+								}
+							} else if name, _ := htmlAttribute(n, "name"); name == "tp.Строки.0.Локальная" {
+								raw, _ = htmlAttribute(n, "data-ref-choice-context")
+								var options []string
+								for o := n.FirstChild; o != nil; o = o.NextSibling {
+									if id, _ := htmlAttribute(o, "value"); id != "" {
+										options = append(options, id)
+									}
+								}
+								want := []string{}
+								if op == metadata.FormChoiceOpEqualOrEmpty {
+									want = []string{common.String()}
+								}
+								if !slices.Equal(options, want) {
+									t.Fatalf("initial empty row: options=%v want=%v", options, want)
+								}
+							}
+							for c := n.FirstChild; c != nil; c = c.NextSibling {
+								walk(c)
+							}
+						}
+						walk(doc)
+						if raw == "" {
+							t.Fatal("rendered row-local choice context missing")
+						}
+						for _, source := range []string{"", f.rootA.String(), f.rootB.String()} {
+							want := []uuid.UUID{}
+							if source == f.rootA.String() {
+								want = append(want, choiceHTTPUUID(0x20, 1))
+							} else if source == f.rootB.String() {
+								want = append(want, f.legacySelected, f.foreignOther)
+							}
+							if op == metadata.FormChoiceOpEqualOrEmpty {
+								want = append(want, common)
+							}
+							for _, selected := range []uuid.UUID{common, hiddenCommon, choiceHTTPUUID(0x20, 1), f.legacySelected, f.hidden} {
+								payload, err := json.Marshal(map[string]any{
+									"context": raw, "grid": grid, "column": "Локальная", "selected": selected.String(),
+									"row":      map[string]string{"Направление": source, "Локальная": selected.String()},
+									"controls": []map[string]string{{"name": "tp.Строки.0.Направление", "value": source}},
+								})
+								if err != nil {
+									t.Fatal(err)
+								}
+								cmd := exec.Command(node, "static/tp_choice_global_source_probe.js") //nolint:gosec // test executable resolved by LookPath
+								cmd.Stdin = bytes.NewReader(payload)
+								out, err := cmd.CombinedOutput()
+								if err != nil {
+									t.Fatalf("browser snapshot: %v\n%s", err, out)
+								}
+								q, err := url.ParseQuery(strings.TrimPrefix(string(out), "&"))
+								if err != nil {
+									t.Fatal(err)
+								}
+								q.Set("q", "needle")
+								q.Set("limit", "100")
+								r := f.serveRefOptions(t, f.target, q)
+								if r.Code != http.StatusOK {
+									t.Fatalf("picker: %d %s", r.Code, r.Body.String())
+								}
+								got := decodeChoiceHTTP(t, r)
+								allowed := slices.Contains(want, selected)
+								if !slices.Equal(choiceItemIDs(got), sortedIDs(want...)) || got.Total != len(want) ||
+									got.SelectedAllowed == nil || *got.SelectedAllowed != allowed {
+									t.Fatalf("%s source=%q selected=%s: %#v, want ids=%v allowed=%v", op, source, selected, got, want, allowed)
+								}
+							}
+						}
+					})
+				}
+			})
+		})
 	}
 }

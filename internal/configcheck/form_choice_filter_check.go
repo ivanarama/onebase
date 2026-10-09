@@ -276,6 +276,16 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 						continue
 					}
 
+					// TP sources are always two-segment paths, including string eq.
+					// Check before its special deep-source branch can finish early.
+					if _, tpName := metadata.FormChoiceTablePart(form, el); tpName != "" && hasFrom {
+						source, ok := metadata.ParseFormChoiceSource(cond.From)
+						if !ok || source.Deep() {
+							add("%s: from колонки ТЧ должен содержать ровно два сегмента", where)
+							continue
+						}
+					}
+
 					switch cond.Op {
 					case metadata.FormChoiceOpEqual:
 						if isFolder || isRoot {
