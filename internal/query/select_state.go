@@ -108,12 +108,103 @@ func (tr *translator) referenceOwner(id int, name string) int {
 		if _, own := tr.selectStates[id].colTypes[name]; own {
 			return id
 		}
-		if _, derived := scope.derivedAliases[scope.mainTable]; derived {
-			return -1
+		for _, entity := range scope.entities {
+			if _, own := entity.fields[name]; own {
+				return -1
+			}
+		}
+		for _, child := range scope.derivedAliases {
+			if tr.derivedProjectionShadows(child, name, map[int]bool{}) {
+				return -1
+			}
 		}
 		id = scope.parent
 	}
 	return -1
+}
+
+// derivedProjectionShadows permits correlation only when the derived output
+// proves the name absent. UNION output names belong to its first SELECT; stars
+// recurse into their actual sources rather than borrowing sibling metadata.
+func (tr *translator) derivedProjectionShadows(id int, name string, seen map[int]bool) bool {
+	id = tr.sourceCtx.scopes[id].unionFirst
+	if seen[id] {
+		return true // an unprovable output must not expose an outer reference
+	}
+	seen[id] = true
+	defer delete(seen, id)
+	start := -1
+	depth := 0
+	for i, token := range tr.tokens {
+		if scope, ok := tr.sourceCtx.scopeIDAt(i); ok && scope == id && token.kind == tIdent {
+			if kw, ok := sqlKW(token.val); ok && kw == "SELECT" {
+				start, depth = i+1, tr.sourceCtx.tokenDepth[i]
+				break
+			}
+		}
+	}
+	if start < 0 {
+		return true
+	}
+	end := start
+	for ; end < len(tr.tokens); end++ {
+		if tr.sourceCtx.tokenDepth[end] < depth {
+			break
+		}
+		if tr.sourceCtx.tokenDepth[end] == depth {
+			scope, ok := tr.sourceCtx.scopeIDAt(end)
+			if !ok || scope != id || tr.sourceCtx.sectionAt(end) != sectionSelect {
+				break
+			}
+		}
+	}
+	for _, item := range splitProjectionItems(tr.tokens[start:end]) {
+		column, _ := parseProjectionItem(item)
+		if column.Output == name {
+			return true
+		}
+		if !column.Star {
+			if column.Output == "" {
+				return true // an unnamed expression has a database-defined name
+			}
+			continue
+		}
+		scope := tr.sourceCtx.scopes[id]
+		if len(item) == 3 && item[0].kind == tIdent && item[1].kind == tDot && item[2].kind == tStar {
+			if tr.starSourceShadows(scope, lowerFast(item[0].val), name, seen) {
+				return true
+			}
+			continue
+		}
+		if len(item) != 1 || item[0].kind != tStar || scope.sourceCount == 0 {
+			return true
+		}
+		for qualifier := range scope.qualifiers {
+			if tr.starSourceShadows(scope, qualifier, name, seen) {
+				return true
+			}
+		}
+		for qualifier := range scope.derivedAliases {
+			if tr.starSourceShadows(scope, qualifier, name, seen) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (tr *translator) starSourceShadows(scope sourceScope, qualifier, name string, seen map[int]bool) bool {
+	if child, derived := scope.derivedAliases[qualifier]; derived {
+		return tr.derivedProjectionShadows(child, name, seen)
+	}
+	if entity, known := scope.entities[qualifier]; known {
+		_, own := entity.fields[name]
+		_, system := entity.systemColumn(name)
+		return own || system
+	}
+	// Registers, virtual tables and unknown metadata can have generated output
+	// names. Without an exact expansion, absence is not proven.
+	return true
 }
 
 func (tr *translator) activateSelect(id int) {
