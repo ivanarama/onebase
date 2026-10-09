@@ -914,7 +914,7 @@ func TestInsertRow_BlobSourceIntoJSONBTarget(t *testing.T) {
 	boolCols := map[string]bool{}
 	byteaCols := map[string]bool{}
 
-	if err := insertRow(ctx, db, "_constants", raw, btypes, existingCols, jsonCols, boolCols, byteaCols); err != nil {
+	if err := insertRow(ctx, db, "_constants", raw, btypes, existingCols, jsonCols, boolCols, byteaCols, nil); err != nil {
 		t.Fatalf("insertRow: %v", err)
 	}
 	var got string
@@ -965,7 +965,7 @@ func TestInsertRow_BlobSourceCP1251IntoJSONBTarget(t *testing.T) {
 	boolCols := map[string]bool{}
 	byteaCols := map[string]bool{}
 
-	if err := insertRow(ctx, db, "_audit", raw, btypes, existingCols, jsonCols, boolCols, byteaCols); err != nil {
+	if err := insertRow(ctx, db, "_audit", raw, btypes, existingCols, jsonCols, boolCols, byteaCols, nil); err != nil {
 		t.Fatalf("insertRow: %v", err)
 	}
 
@@ -1017,7 +1017,7 @@ func TestInsertRow_BlobSourceValidJSONPassesThrough(t *testing.T) {
 	boolCols := map[string]bool{}
 	byteaCols := map[string]bool{}
 
-	if err := insertRow(ctx, db, "_audit", raw, btypes, existingCols, jsonCols, boolCols, byteaCols); err != nil {
+	if err := insertRow(ctx, db, "_audit", raw, btypes, existingCols, jsonCols, boolCols, byteaCols, nil); err != nil {
 		t.Fatalf("insertRow: %v", err)
 	}
 	var got string

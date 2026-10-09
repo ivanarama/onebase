@@ -13,6 +13,7 @@ import (
 	"path"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -1283,6 +1284,17 @@ func (h *handler) backupFullImport(w http.ResponseWriter, r *http.Request) {
 				// их, чтобы владельцам перепривязать приложение-аутентификатор (#611).
 				msg += ". " + fmt.Sprintf(tr(lang, "Сброшен второй фактор (перепривяжите): %s"),
 					strings.Join(report.TOTPReset, ", "))
+			}
+			if len(report.SkippedTables) > 0 {
+				// Таблицы метаданных, которых в конфигурации архива уже нет:
+				// их строки не восстановлены — называем, чтобы потеря не была тихой.
+				names := make([]string, 0, len(report.SkippedTables))
+				for name, rows := range report.SkippedTables {
+					names = append(names, fmt.Sprintf("%s (%d)", name, rows))
+				}
+				sort.Strings(names)
+				msg += ". " + fmt.Sprintf(tr(lang, "Не восстановлены таблицы, которых нет в конфигурации: %s"),
+					strings.Join(names, ", "))
 			}
 			if wasRunning {
 				msg += ". " + tr(lang, "База остановлена — запустите её заново.")

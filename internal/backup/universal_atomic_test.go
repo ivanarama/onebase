@@ -130,14 +130,20 @@ func TestImportUniversalReplacesCompleteSnapshot(t *testing.T) {
 func TestImportUniversalLateFailureRollsBackDatabaseAndFiles(t *testing.T) {
 	ctx := context.Background()
 	archive := buildUniversalAtomicFixture(t, map[string]string{
-		"META.txt":            "onebase_full_export\nversion=2\nformat=universal\nhas_exchange_state=false\n",
-		"manifest.json":       `{"data/ghost.jsonl":1}`,
+		"META.txt": "onebase_full_export\nversion=2\nformat=universal\nhas_exchange_state=false\n",
+		// Таблица есть, но строк в архиве меньше, чем требует манифест: поздняя
+		// ошибка сверки. (Таблица, которой нет в схеме, теперь пропускается и
+		// попадает в ImportReport.SkippedTables — сбоем она больше не служит.)
+		"manifest.json":       `{"data/ghost.jsonl":2}`,
 		"config/onebase.yaml": "name: replacement\n",
 		"data/ghost.jsonl":    "{\"_schema\":1}\n{\"id\":\"not-importable\"}\n",
 	})
 
 	dst := newSQLite(t, "atomic-failure-dst")
 	if _, err := dst.Exec(ctx, `CREATE TABLE keep_rows (id TEXT PRIMARY KEY, value TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dst.Exec(ctx, `CREATE TABLE ghost (id TEXT PRIMARY KEY)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dst.Exec(ctx, `INSERT INTO keep_rows(id,value) VALUES ('old','must survive')`); err != nil {

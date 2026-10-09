@@ -675,6 +675,7 @@
   "Правка отклонена и откачена: с ней конфигурация перестала бы загружаться": "Edit rejected and rolled back: the configuration would stop loading",
   "Префикс базы снят": "Database prefix cleared",
   "Сброшен второй фактор (перепривяжите): %s": "Two-factor authentication was reset (re-enroll): %s",
+  "Не восстановлены таблицы, которых нет в конфигурации: %s": "Tables absent from the configuration were not restored: %s",
   "Полное восстановление выполнено: база данных + конфигурация": "Full restore completed: database + configuration",
   "Полный код": "Full code",
   "Пользователи": "Users",
