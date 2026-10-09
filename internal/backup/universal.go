@@ -1255,14 +1255,6 @@ func ImportUniversalWithOptions(
 			_ = tx.Rollback(txCtx)
 		}
 	}()
-	if fkTransactional {
-		fkCleanup, err = db.DisableFKForImport(txCtx)
-		if err != nil {
-			txOpen = false
-			return report, errors.Join(fmt.Errorf("import: disable FK: %w", err), tx.Rollback(txCtx), rollbackFiles())
-		}
-		fkDisabled = true
-	}
 	rollbackDB := func(cause error) error {
 		txOpen = false
 		rollbackErr := tx.Rollback(txCtx)
@@ -1291,6 +1283,16 @@ func ImportUniversalWithOptions(
 		}
 		if err := migrateSchema(txCtx, db, configDest, schemaConfigDir); err != nil {
 			return fmt.Errorf("import: schema migration: %w", err)
+		}
+		if fkTransactional {
+			// Migration can create ordinary and cyclic-reference constraints,
+			// even on an existing schema. Suspend the final FK set before
+			// clearing/loading rows, then restore and validate it before commit.
+			fkCleanup, err = db.DisableFKForImport(txCtx)
+			if err != nil {
+				return fmt.Errorf("import: disable FK: %w", err)
+			}
+			fkDisabled = true
 		}
 		if err := clearRestoreTables(txCtx, db, opts.ExchangeMode, archiveHasExchangeState); err != nil {
 			return err
