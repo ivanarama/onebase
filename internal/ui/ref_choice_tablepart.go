@@ -58,21 +58,32 @@ func (s *Server) applyTPChoiceFilters(ctx context.Context, owner *metadata.Entit
 			all[tp] = render
 		}
 		controls := choiceSourceControls(el)
-		// Preserve each declared source path as the server predicate key, but
-		// publish the canonical row control name used by the DOM renderer.
+		// Preserve the declared path as the predicate key while publishing the
+		// canonical DOM control name for row, object and form sources alike.
 		for path, name := range controls {
 			source, ok := metadata.ParseFormChoiceSource(path)
-			if !ok || !strings.EqualFold(source.Root, tp) {
+			if !ok {
 				continue
 			}
-			for _, tablePart := range owner.TableParts {
-				if tablePart.Name != tp {
-					continue
+			switch {
+			case strings.EqualFold(source.Root, "Объект"):
+				if field, exists := entityFieldByName(owner, name); exists {
+					controls[path] = field.Name
 				}
-				for _, field := range tablePart.Fields {
-					if strings.EqualFold(field.Name, name) {
-						controls[path] = field.Name
-						break
+			case strings.EqualFold(source.Root, "Форма"):
+				if attr := formAttributeByName(form, name); attr != nil {
+					controls[path] = attr.Name
+				}
+			case strings.EqualFold(source.Root, tp):
+				for _, tablePart := range owner.TableParts {
+					if tablePart.Name != tp {
+						continue
+					}
+					for _, field := range tablePart.Fields {
+						if strings.EqualFold(field.Name, name) {
+							controls[path] = field.Name
+							break
+						}
 					}
 				}
 			}

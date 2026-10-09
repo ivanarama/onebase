@@ -4233,6 +4233,16 @@ function obRefChoiceSnapshot(sel) {
   var declared = ctx.sources || {};
   var form = sel.form || sel._obChoiceForm;
   var rowID = sel.getAttribute("data-ref-row-id");
+  // Structural no_grid operations reindex names without dispatching change.
+  // Read the live row index so pickers and pending-response fingerprints use
+  // the current row immediately. Detached SlickGrid carriers keep their id.
+  if (ctx.table_part && !sel._obChoiceRow) {
+    var rowName = (sel.name || '').split('.');
+    if (rowName.length === 4 && rowName[0] === 'tp' &&
+        rowName[1] === ctx.table_part && /^[0-9]+$/.test(rowName[2])) {
+      rowID = rowName[2];
+    }
+  }
   var paths = Object.keys(declared).sort();
   paths.forEach(function (path) {
     var name = declared[path];

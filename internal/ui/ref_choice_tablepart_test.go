@@ -200,6 +200,7 @@ func TestTPChoiceNoGridPublicRoundTrip(t *testing.T) {
 		form := f.owner.Forms[0]
 		table := form.Elements[2]
 		table.DataPath = "Объект.строки"
+		table.Columns[1].ChoiceFilter[0].From = "Объект.направление"
 		table.Columns[2].ChoiceFilter[0].From = "строки.направление"
 		table.Handlers = map[metadata.FormEventType]string{metadata.FormEventOnChange: "ИзменитьСтроки"}
 		form.ProgramAST = mustParse(t, `Процедура ИзменитьСтроки()
@@ -315,4 +316,92 @@ func TestTPChoiceNoGridPublicRoundTrip(t *testing.T) {
 			}
 		}
 	})
+}
+
+// Metadata paths are case-insensitive; browser control names are canonical.
+// Exercise contexts rendered by both table implementations and send the
+// browser snapshot to the public endpoint, preserving the declared path key.
+func TestTPChoiceGlobalSourceCasePublicHTTP(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required for browser choice snapshots")
+	}
+	for _, grid := range []bool{false, true} {
+		for _, root := range []string{"Объект", "Форма"} {
+			t.Run(map[bool]string{false: "table", true: "grid"}[grid]+"/"+root, func(t *testing.T) {
+				dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+					f := newChoiceHTTPFixtureWithStore(t, db, false)
+					addTPChoiceFixture(t, f, grid)
+					form := f.owner.Forms[0]
+					table := form.Elements[2]
+					name := "Направление"
+					if root == "Форма" {
+						name = "НаправлениеФормы"
+						form.Attributes = append(form.Attributes, &metadata.FormAttribute{Name: name, TypeRef: "CatalogRef." + f.direction.Name})
+						form.Elements = append(form.Elements, &metadata.FormElement{ID: "form-direction", Name: name, Kind: metadata.FormElementField, DataPath: "Форма." + name})
+					}
+					path := root + "." + strings.ToLower(name)
+					table.Columns[1].ChoiceFilter[0].From = path
+					router := chi.NewRouter()
+					f.server.Mount(router)
+					req := httptest.NewRequest(http.MethodGet, "/ui/document/"+url.PathEscape(f.owner.Name)+"/"+f.ownerID.String(), nil)
+					req = req.WithContext(auth.ContextWithUser(req.Context(), f.user))
+					r := httptest.NewRecorder()
+					router.ServeHTTP(r, req)
+					if r.Code != http.StatusOK {
+						t.Fatalf("GET form: %d %s", r.Code, r.Body.String())
+					}
+					doc, err := html.Parse(strings.NewReader(r.Body.String()))
+					if err != nil {
+						t.Fatal(err)
+					}
+					var raw string
+					var controls []map[string]string
+					var walk func(*html.Node)
+					walk = func(n *html.Node) {
+						if control, ok := htmlAttribute(n, "name"); ok && control == name {
+							controls = append(controls, map[string]string{"name": control, "value": f.rootA.String()})
+						}
+						if grid {
+							if contexts, ok := htmlAttribute(n, "data-sg-choice"); ok {
+								var choices map[string]string
+								if err := json.Unmarshal([]byte(contexts), &choices); err != nil {
+									t.Fatal(err)
+								}
+								raw = choices["Глобальная"]
+							}
+						} else if control, _ := htmlAttribute(n, "name"); control == "tp.Строки.0.Глобальная" {
+							raw, _ = htmlAttribute(n, "data-ref-choice-context")
+						}
+						for c := n.FirstChild; c != nil; c = c.NextSibling {
+							walk(c)
+						}
+					}
+					walk(doc)
+					if raw == "" || len(controls) == 0 {
+						t.Fatal("rendered choice context or source control missing")
+					}
+					payload, err := json.Marshal(map[string]any{"context": raw, "controls": controls, "grid": grid, "selected": f.pageTwo.String()})
+					if err != nil {
+						t.Fatal(err)
+					}
+					cmd := exec.Command(node, "static/tp_choice_global_source_probe.js") //nolint:gosec // test executable resolved by LookPath
+					cmd.Stdin = bytes.NewReader(payload)
+					out, err := cmd.CombinedOutput()
+					if err != nil {
+						t.Fatalf("browser choice snapshot: %v\n%s", err, out)
+					}
+					q, err := url.ParseQuery(strings.TrimPrefix(string(out), "&"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					q.Set("q", "needle")
+					got := decodeChoiceHTTP(t, f.serveRefOptions(t, f.target, q))
+					if got.Total != 2 || len(got.Items) != 2 || got.SelectedAllowed == nil || !*got.SelectedAllowed {
+						t.Fatalf("%s browser source: %#v; query=%v", path, got, q)
+					}
+				})
+			})
+		}
+	}
 }
