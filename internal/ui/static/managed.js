@@ -582,6 +582,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       const hiddenNames = obManagedHiddenColumnNames(tbody);
       const rows = tps[tpName] || [];
       const refOpts = (window._tpRefOpts && window._tpRefOpts[tpName]) || {};
+      const refMeta = (obTPRefMeta()[tpName]) || {};
       var choices={};try{choices=JSON.parse(tbody.getAttribute('data-tp-choice')||'{}')||{};}catch(e){}
       const tpEnumLabels = (window._tpEnumLabels && window._tpEnumLabels[tpName]) || {};
       const tpEnumOrder = (window._tpEnumOrder && window._tpEnumOrder[tpName]) || {};
@@ -626,6 +627,8 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
             const sel = document.createElement('select');
             sel.name = 'tp.' + tpName + '.' + idx + '.' + f.name;
             var choice=choices[f.name];
+            const meta = refMeta[f.name];
+            if (meta && meta.filter) sel.setAttribute('data-ref-filter', meta.filter);
             if(choice) {sel.setAttribute('data-ref-choice-context',choice);sel.setAttribute('data-ref-row-id',String(idx));sel.setAttribute('data-ref-entity',f.ref.split(':').pop());}
             const empty = document.createElement('option');
             empty.value = ''; empty.textContent = '— выбрать —';

@@ -1,18 +1,22 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os/exec"
 	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dbtest"
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 	"golang.org/x/net/html"
 )
@@ -179,4 +183,136 @@ func TestTPChoiceInitialPublicForm(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Public GET -> form-event -> no-grid redraw -> public choice endpoint. Use
+// lower-case YAML paths to cover both scoped TP identity and row source names.
+func TestTPChoiceNoGridPublicRoundTrip(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required for the no-grid public round-trip")
+	}
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		f := newChoiceHTTPFixtureWithStore(t, db, true)
+		// Replace the fixture's legacy table with explicitly filtered columns.
+		f.owner.Forms[0].Elements = f.owner.Forms[0].Elements[:2]
+		addTPChoiceFixture(t, f, false)
+		form := f.owner.Forms[0]
+		table := form.Elements[2]
+		table.DataPath = "Объект.строки"
+		table.Columns[2].ChoiceFilter[0].From = "строки.направление"
+		table.Handlers = map[metadata.FormEventType]string{metadata.FormEventOnChange: "ИзменитьСтроки"}
+		form.ProgramAST = mustParse(t, `Процедура ИзменитьСтроки()
+			Для Каждого Стр Из Объект.Строки Цикл
+				Стр.Локальная = Объект.Неисправность;
+			КонецЦикла;
+		КонецПроцедуры`)
+		f.server.interp = interpreter.New()
+		f.server.interp.LookupProc = f.server.reg.GetModuleProc
+		f.server.lockMgr = runtime.NewLockManager()
+		f.server.messages = NewMessageStore()
+		rows := []map[string]any{{"Направление": f.rootA.String(), "Локальная": f.pageTwo.String(), "Глобальная": choiceHTTPUUID(0x20, 1).String()}}
+		if err := db.UpsertTablePartRows(context.Background(), f.owner.Name, "Строки", f.ownerID, rows, f.owner.TableParts[0]); err != nil {
+			t.Fatal(err)
+		}
+
+		router := chi.NewRouter()
+		f.server.Mount(router)
+		request := httptest.NewRequest(http.MethodGet, "/ui/document/"+url.PathEscape(f.owner.Name)+"/"+f.ownerID.String(), nil)
+		request = request.WithContext(auth.ContextWithUser(request.Context(), f.user))
+		r := httptest.NewRecorder()
+		router.ServeHTTP(r, request)
+		if r.Code != http.StatusOK {
+			t.Fatalf("GET form: %d %s", r.Code, r.Body.String())
+		}
+		doc, err := html.Parse(strings.NewReader(r.Body.String()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		attrs := map[string]string{}
+		var refMeta json.RawMessage
+		var controls []map[string]string
+		var walk func(*html.Node)
+		walk = func(n *html.Node) {
+			id, _ := htmlAttribute(n, "id")
+			if id == "tp-body-Строки" {
+				for _, a := range n.Attr {
+					attrs[a.Key] = a.Val
+				}
+			}
+			if id == "ob-tp-ref-meta" && n.FirstChild != nil {
+				refMeta = json.RawMessage(n.FirstChild.Data)
+			}
+			if name, ok := htmlAttribute(n, "name"); ok && name == "Направление" {
+				controls = append(controls, map[string]string{"name": name, "value": f.rootA.String()})
+			}
+			for c := n.FirstChild; c != nil; c = c.NextSibling {
+				walk(c)
+			}
+		}
+		walk(doc)
+		if len(attrs) == 0 || len(refMeta) == 0 || len(controls) == 0 {
+			t.Fatal("public form is missing table metadata or owner control")
+		}
+		encodedRows, err := json.Marshal(rows)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body := url.Values{
+			"_element": {table.Name}, "_event": {string(metadata.FormEventOnChange)}, "_kind": {"object"},
+			"_tp": {"Строки"}, "_tp_row": {"0"}, "_tp_row_number": {"1"}, "_tp_col": {"Направление"}, "_tp_col_index": {"0"},
+			"_form": {form.Name}, "_id": {f.ownerID.String()}, "Направление": {f.rootA.String()},
+			"Неисправность": {choiceHTTPUUID(0x20, 1).String()}, "tp_json.Строки": {string(encodedRows)},
+			"tp.Строки.0.Направление": {f.rootA.String()}, "tp.Строки.0.Локальная": {f.pageTwo.String()}, "tp.Строки.0.Глобальная": {choiceHTTPUUID(0x20, 1).String()},
+		}
+		request = httptest.NewRequest(http.MethodPost, "/ui/document/"+url.PathEscape(f.owner.Name)+"/form-event", strings.NewReader(body.Encode()))
+		request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		request = request.WithContext(auth.ContextWithUser(request.Context(), f.user))
+		r = httptest.NewRecorder()
+		router.ServeHTTP(r, request)
+		resp := decodeFormEventResponse(t, r.Body.Bytes())
+		if r.Code != http.StatusOK || !resp.OK || len(resp.TableParts["Строки"]) != 1 {
+			t.Fatalf("form event: %d %s", r.Code, r.Body.String())
+		}
+		if got := resp.TableParts["Строки"][0]["Локальная"]; got != choiceHTTPUUID(0x20, 1).String() {
+			t.Fatalf("event did not change the selected reference: %v", got)
+		}
+		payload, err := json.Marshal(map[string]any{"attrs": attrs, "refMeta": refMeta, "controls": controls, "tableparts": resp.TableParts, "refOptions": resp.TPRefOptions})
+		if err != nil {
+			t.Fatal(err)
+		}
+		cmd := exec.Command(node, "static/tp_choice_roundtrip_probe.js") //nolint:gosec // test executable resolved by LookPath
+		cmd.Stdin = bytes.NewReader(payload)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("browser redraw: %v\n%s", err, out)
+		}
+		var queries []struct{ Name, Query, Filter string }
+		if err := json.Unmarshal(out, &queries); err != nil {
+			t.Fatal(err)
+		}
+		if len(queries) != 2 {
+			t.Fatalf("expected two dependent selectors: %s", out)
+		}
+		for _, snapshot := range queries {
+			q, err := url.ParseQuery(strings.TrimPrefix(snapshot.Query, "&"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if snapshot.Filter == "" || q.Get("flt") == "" {
+				t.Fatalf("redraw lost owner filter: %s", out)
+			}
+			q.Set("q", "needle")
+			got := decodeChoiceHTTP(t, f.serveRefOptions(t, f.target, q))
+			if got.Total != 1 || len(got.Items) != 1 || got.SelectedAllowed == nil || !*got.SelectedAllowed {
+				t.Fatalf("redrawn %s choice: %#v", snapshot.Name, got)
+			}
+			// Column ids remain exact; metadata name normalization must not
+			// make another scoped identity valid.
+			q.Set("element", strings.Replace(q.Get("element"), ".local", ".LOCAL", 1))
+			if strings.HasSuffix(snapshot.Name, ".Локальная") && f.serveRefOptions(t, f.target, q).Code != http.StatusBadRequest {
+				t.Fatal("case-folded column id was accepted")
+			}
+		}
+	})
 }

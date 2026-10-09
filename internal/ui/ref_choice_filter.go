@@ -480,7 +480,7 @@ func (s *Server) resolveChoiceRequest(r *http.Request, target *metadata.Entity) 
 	if err != nil {
 		return nil, err
 	}
-	element := findTPChoiceElement(form, elementID)
+	element := findTPChoiceElement(owner, form, elementID)
 	if element == nil {
 		element = findChoiceElementByID(form, elementID)
 		if element != nil {

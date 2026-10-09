@@ -187,7 +187,7 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 				}
 
 				_, tpName := metadata.FormChoiceTablePart(form, el)
-				if el.Kind != metadata.FormElementField && !(tpName != "" && el.Kind == metadata.FormElementColumn) {
+				if el.Kind != metadata.FormElementField && (tpName == "" || el.Kind != metadata.FormElementColumn) {
 					add("choice_filter допустим только у kind: %s", metadata.FormElementField)
 				}
 				id := strings.TrimSpace(el.ID)

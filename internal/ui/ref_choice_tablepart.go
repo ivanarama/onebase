@@ -17,11 +17,11 @@ func formChoiceElementTarget(owner *metadata.Entity, form *metadata.FormModule, 
 	}
 	return formChoiceRefEntity(owner, form, el.DataPath)
 }
-func findTPChoiceElement(form *metadata.FormModule, identity string) *metadata.FormElement {
+func findTPChoiceElement(owner *metadata.Entity, form *metadata.FormModule, identity string) *metadata.FormElement {
 	var found *metadata.FormElement
 	count := 0
 	form.Walk(func(el *metadata.FormElement) bool {
-		_, tp := metadata.FormChoiceTablePart(form, el)
+		_, tp := metadata.FormChoiceTPField(owner, form, el)
 		if tp != "" && identity == tp+"."+el.ID {
 			found = el
 			count++
@@ -58,6 +58,25 @@ func (s *Server) applyTPChoiceFilters(ctx context.Context, owner *metadata.Entit
 			all[tp] = render
 		}
 		controls := choiceSourceControls(el)
+		// Preserve each declared source path as the server predicate key, but
+		// publish the canonical row control name used by the DOM renderer.
+		for path, name := range controls {
+			source, ok := metadata.ParseFormChoiceSource(path)
+			if !ok || !strings.EqualFold(source.Root, tp) {
+				continue
+			}
+			for _, tablePart := range owner.TableParts {
+				if tablePart.Name != tp {
+					continue
+				}
+				for _, field := range tablePart.Fields {
+					if strings.EqualFold(field.Name, name) {
+						controls[path] = field.Name
+						break
+					}
+				}
+			}
+		}
 		encoded, err := json.Marshal(managedChoiceContext{FormEntity: owner.Name, FormKind: kind, Form: form.Name, Element: tp + "." + el.ID, TablePart: tp, Sources: controls})
 		if err == nil {
 			render.Contexts[field.Name] = string(encoded)
