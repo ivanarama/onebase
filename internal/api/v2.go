@@ -67,6 +67,8 @@ func (h *handler) mountV2(r chi.Router) {
 		r.Delete("/document/{name}/{id}", h.deleteObjectV2(metadata.KindDocument))
 		r.Post("/document/{name}/{id}/post", h.postDocumentV2())
 		r.Post("/document/{name}/{id}/unpost", h.unpostDocumentV2())
+		r.Get("/document/{name}/{id}/print/{form}", h.printDocumentV2(false))
+		r.Get("/document/{name}/{id}/print/{form}/pdf", h.printDocumentV2(true))
 
 		r.Get("/report/{name}", h.runReportV2())
 
@@ -1014,18 +1016,20 @@ func openAPIV2Paths() map[string]any {
 		},
 	}
 	return map[string]any{
-		"/api/v2/catalog/{name}":                   crud("catalog"),
-		"/api/v2/catalog/{name}/{id}":              item("catalog"),
-		"/api/v2/catalog/{name}/{id}/attachments":  attachmentsCollection("catalog"),
-		"/api/v2/document/{name}":                  crud("document"),
-		"/api/v2/document/{name}/{id}":             item("document"),
-		"/api/v2/document/{name}/{id}/attachments": attachmentsCollection("document"),
-		"/api/v2/attachments/{aid}":                attachmentItem,
-		"/api/v2/document/{name}/{id}/post":        actionPath("postDocument", "Post document", nameParam, idParam, mutationEnvelope, errorResponses),
-		"/api/v2/document/{name}/{id}/unpost":      actionPath("unpostDocument", "Unpost document", nameParam, idParam, mutationEnvelope, errorResponses),
-		"/api/v2/report/{name}":                    reportPath(nameParam, reportEnvelope, errorResponses),
-		"/api/v2/inforeg/{name}":                   infoRegPath(nameParam, errorResponses),
-		"/api/v2/search":                           searchPath(errorResponses),
+		"/api/v2/catalog/{name}":                        crud("catalog"),
+		"/api/v2/catalog/{name}/{id}":                   item("catalog"),
+		"/api/v2/catalog/{name}/{id}/attachments":       attachmentsCollection("catalog"),
+		"/api/v2/document/{name}":                       crud("document"),
+		"/api/v2/document/{name}/{id}":                  item("document"),
+		"/api/v2/document/{name}/{id}/attachments":      attachmentsCollection("document"),
+		"/api/v2/document/{name}/{id}/print/{form}":     printFormPath(false, nameParam, idParam, errorResponses),
+		"/api/v2/document/{name}/{id}/print/{form}/pdf": printFormPath(true, nameParam, idParam, errorResponses),
+		"/api/v2/attachments/{aid}":                     attachmentItem,
+		"/api/v2/document/{name}/{id}/post":             actionPath("postDocument", "Post document", nameParam, idParam, mutationEnvelope, errorResponses),
+		"/api/v2/document/{name}/{id}/unpost":           actionPath("unpostDocument", "Unpost document", nameParam, idParam, mutationEnvelope, errorResponses),
+		"/api/v2/report/{name}":                         reportPath(nameParam, reportEnvelope, errorResponses),
+		"/api/v2/inforeg/{name}":                        infoRegPath(nameParam, errorResponses),
+		"/api/v2/search":                                searchPath(errorResponses),
 		"/api/v2/openapi.json": map[string]any{
 			"get": map[string]any{
 				"operationId": "getOpenAPI",
