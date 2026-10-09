@@ -235,7 +235,7 @@ func TestUI_InfoRegList_MasksAtHandlerBoundaryAndBuildsSafeDetailPayload(t *test
 	}
 	panel := firstDetailPanelData(t, page)
 	for label, want := range map[string]string{
-		"Период":       "12.08.2026",
+		"Период":       "12.08.2026 12:00:00",
 		"Product":      "Chair reference label",
 		"Secret value": "••••••",
 	} {

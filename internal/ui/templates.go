@@ -3455,7 +3455,8 @@ const tplInfoReg = `
   {{if .InfoReg.Periodic}}
   <div class="form-row">
     <label>{{t $.Lang "Период"}}</label>
-    <input type="date" name="period" value="{{index .Values "period"}}" required>
+    {{/* Период — момент с точностью до секунды, как у даты документа и в 1С. */}}
+    <input type="datetime-local" step="1" name="period" value="{{index .Values "period"}}" required>
   </div>
   {{end}}
   {{range .InfoReg.Dimensions}}

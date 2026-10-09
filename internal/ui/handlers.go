@@ -569,11 +569,11 @@ func asString(v any) string {
 
 func regFmtDate(v any) string {
 	if t, ok := v.(time.Time); ok {
-		return t.Format("02.01.2006")
+		return storage.FormatDisplayDate(t)
 	}
 	if s, ok := v.(string); ok {
 		if t, err := time.Parse(time.RFC3339, s); err == nil {
-			return t.Format("02.01.2006")
+			return storage.FormatDisplayDate(t)
 		}
 	}
 	return fmt.Sprintf("%v", v)

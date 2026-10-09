@@ -484,7 +484,7 @@ func (s *Server) infoRegForm(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePerm(w, r, "inforeg", ir.Name, "write") {
 		return
 	}
-	now := time.Now().Format("2006-01-02")
+	now := time.Now().Format(dateInputLayout)
 	s.render(w, r, "page-inforeg-form", map[string]any{
 		"InfoReg": ir,
 		"Values":  map[string]string{"period": now},

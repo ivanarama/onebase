@@ -512,7 +512,7 @@ func (db *DB) GetMovements(ctx context.Context, regName string, reg *metadata.Re
 		row["line_number"] = dest[2]
 		if dest[3] != nil {
 			if t, ok := dest[3].(time.Time); ok {
-				row["period"] = t.Format("02.01.2006")
+				row["period"] = FormatDisplayDate(t)
 			} else {
 				row["period"] = dest[3]
 			}
@@ -557,7 +557,7 @@ func (db *DB) GetDocumentMovements(ctx context.Context, recorderID uuid.UUID, re
 			row := make(map[string]any, len(cols))
 			row["line_number"] = dest[0]
 			if t, ok := dest[1].(time.Time); ok {
-				row["period"] = t.Format("02.01.2006")
+				row["period"] = FormatDisplayDate(t)
 			} else {
 				row["period"] = dest[1]
 			}
