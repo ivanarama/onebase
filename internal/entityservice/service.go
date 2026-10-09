@@ -210,13 +210,13 @@ func (s *Service) dispatchSaved(ctx context.Context, req SaveRequest, isPosting 
 }
 
 // webhookRecord копирует поля записи для шаблона тела хука, отбрасывая
-// служебные псевдо-реквизиты (ссылка/reference — это *interpreter.Ref,
-// в шаблоне он бесполезен).
+// служебные псевдо-реквизиты: ссылка/reference — это *interpreter.Ref,
+// а _version нужна форме для контроля одновременного редактирования.
 func webhookRecord(fields map[string]any) map[string]any {
 	rec := make(map[string]any, len(fields))
 	for k, v := range fields {
 		low := strings.ToLower(k)
-		if low == "ссылка" || low == "reference" {
+		if low == "ссылка" || low == "reference" || low == "_version" {
 			continue
 		}
 		rec[k] = v

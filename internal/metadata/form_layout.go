@@ -205,3 +205,22 @@ func NormalizeFormLayoutSize(n int) int {
 	}
 	return n
 }
+
+// UsesEqualColumns включает режим только у горизонтальной группы без scroll_x.
+// В остальных случаях check сообщает, почему настройка не применяется.
+func (el *FormElement) UsesEqualColumns() bool {
+	return el != nil && el.Kind == FormElementGroupBox && el.Orientation == "horizontal" && el.EqualColumns && !el.ScrollX
+}
+
+// FormEqualColumnsCSS — единый режим для runtime, preview и холста. Группа
+// управляет шириной всех непосредственных детей, включая кнопки и группы;
+// !important намеренно перекрывает их явную width/flex/halign. Высота и
+// вертикальное выравнивание остаются свойствами самого элемента.
+const FormEqualColumnsCSS = `
+.ob-equal-columns>:is(.managed-group-body,.group-body,.fc-children){display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
+.ob-equal-columns>:is(.managed-group-body,.group-body,.fc-children)>*{box-sizing:border-box;flex:1 1 180px!important;min-width:min(180px,100%)!important;width:auto!important;max-width:100%;margin-left:0!important;margin-right:0!important}
+.ob-equal-columns :is(input,select,textarea){box-sizing:border-box;max-width:100%}
+/* Пустые drop-зоны холста не занимают колонку или gap в обычном режиме. */
+.ob-equal-columns>.fc-children>.fc-drop{display:none}
+body.ob-dragging .ob-equal-columns>.fc-children>.fc-drop{display:block;flex:0 0 8px!important;min-width:0!important;width:8px!important}
+`

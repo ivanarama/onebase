@@ -214,11 +214,12 @@ func TestSemanticNavigation_GlobalNilEmptyAndScoped(t *testing.T) {
 			t.Fatalf("%s nav bypassed semantic layout", mode)
 		}
 		links := strings.Join(semanticLinks(nav), "|")
+		// Константы — только администратору, учителю их нет ни в одном режиме.
 		if mode == "scoped" {
 			if strings.Contains(links, "/ui/constants") || strings.Contains(links, "/ui/catalog/Years") || !strings.Contains(links, "/ui/page/TeacherPage") {
 				t.Fatalf("scoped global membership: %s", links)
 			}
-		} else if !strings.Contains(links, "/ui/constants") || !strings.Contains(links, "/ui/register/attendance/balances") || strings.Contains(links, "/ui/page/TeacherPage") {
+		} else if strings.Contains(links, "/ui/constants") || !strings.Contains(links, "/ui/register/attendance/balances") || strings.Contains(links, "/ui/page/TeacherPage") {
 			t.Fatalf("flat global membership: %s", links)
 		}
 	}

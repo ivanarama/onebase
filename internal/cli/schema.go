@@ -547,9 +547,10 @@ func managedFormSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": true,
 		"properties": map[string]any{
-			"id":        stringSchema("Устойчивый уникальный id элемента формы"),
-			"kind":      stringSchema("Вид элемента формы"),
-			"data_path": stringSchema("Путь к значению элемента"),
+			"id":            stringSchema("Устойчивый уникальный id элемента формы"),
+			"kind":          stringSchema("Вид элемента формы"),
+			"data_path":     stringSchema("Путь к значению элемента"),
+			"equal_columns": boolSchema("Равная ширина детей горизонтальной ГруппаФормы без scroll_x; по умолчанию false"),
 			"children": map[string]any{
 				"type":  "array",
 				"items": map[string]any{"$dynamicRef": "#formElement"},

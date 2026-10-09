@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -131,7 +132,11 @@ func (f *formObjectThis) CallMethod(method string, args []any) any {
 			interpreter.RaiseUserError("Записать недоступно внутри обработчика записи формы")
 		}
 		if err := f.write(); err != nil {
-			interpreter.RaiseUserError("Записать(" + f.entity.Name + "): " + err.Error())
+			message := err.Error()
+			if errors.Is(err, errCloseResultUnreadable) {
+				message = f.srv.tr(f.srv.resolveLangCtx(f.liveCtx()), "доступ запрещён")
+			}
+			interpreter.RaiseUserError("Записать(" + f.entity.Name + "): " + message)
 		}
 		return f.selfRef()
 	case "этоновый", "isnew":

@@ -1,0 +1,17 @@
+name: НарядНаВыезд
+document: Наряд
+columns:
+  - width: 650px
+areas:
+  - name: Наряд
+    rows:
+      - cells:
+          - text: "Наряд № {{Номер}}"
+            bold: true
+      - cells:
+          - text: "Адрес: {{АдресПредставление}}"
+      - cells:
+          - text: "Исходная строка: {{ИсходныйАдрес}}"
+binding:
+  sequence:
+    - Наряд

@@ -843,7 +843,15 @@ func parseInfoRegFieldValue(f metadata.Field, val string) any {
 	}
 }
 
+// constantsList и constantsSave — только администратору. Прав на константы в
+// ролях нет, а константа — типовое место для ключей внешних сервисов и
+// адресов интеграций: без проверки любой вошедший читал их значения и мог
+// переписать (адрес отправки, токен) из браузера.
 func (s *Server) constantsList(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		s.renderForbidden(w, r)
+		return
+	}
 	values, _ := s.store.ListConstants(r.Context())
 	valStrs := make(map[string]string, len(values))
 	for k, v := range values {
@@ -899,6 +907,10 @@ func (s *Server) renderConstantsPage(w http.ResponseWriter, r *http.Request, val
 }
 
 func (s *Server) constantsSave(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		s.renderForbidden(w, r)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, s.errText(r, err), 400)

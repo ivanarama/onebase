@@ -990,6 +990,9 @@ func (s *Server) captureFormCloseResponse(w http.ResponseWriter, r *http.Request
 	}
 	if inv.suppressState {
 		redactUnreadableSavedFormResponse(&response)
+		if response.Error != "" {
+			response.Error = s.tr(s.resolveLang(r), "доступ запрещён")
+		}
 	}
 	if inv.accessCheckFailed && !inv.terminal {
 		status = http.StatusInternalServerError

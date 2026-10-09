@@ -206,6 +206,8 @@ type QueueConfig struct {
 type AppConfig struct {
 	Name    string `yaml:"name"`
 	Version string `yaml:"version"`
+	// MinEngineVersion is advisory: it never prevents checking or starting a base.
+	MinEngineVersion string `yaml:"min_engine_version,omitempty"`
 	// Авторство и лицензия конфигурации (план 69). Необязательны. Едут вместе
 	// с конфигурацией (app.yaml попадает в файл / в _onebase_config / в .obz) —
 	// чтобы форк или поставка клиенту имели определённого правообладателя.

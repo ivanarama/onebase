@@ -212,6 +212,7 @@ type FormElement struct {
 	HorizontalAlign string            `yaml:"halign,omitempty"`         // left|center|right|stretch
 	VerticalAlign   string            `yaml:"valign,omitempty"`         // top|center|bottom
 	Orientation     string            `yaml:"orientation,omitempty"`    // vertical|horizontal для контейнеров
+	EqualColumns    bool              `yaml:"equal_columns,omitempty"`  // равная ширина детей горизонтальной ГруппаФормы
 	// ScrollX — горизонтальная группа не переносит содержимое на вторую строку,
 	// а прокручивается. Нужна ряду кнопок: перенос рвёт панель действий пополам,
 	// и половина кнопок читается как отдельный блок. По умолчанию перенос, как

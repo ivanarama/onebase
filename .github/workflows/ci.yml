@@ -25,10 +25,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Keep the workflow and required jobs present for every PR. A missing/failed
+  # classification runs the full suite; only a successful exact docs diff opts out.
+  classify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      mode: ${{ steps.diff.outputs.mode }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Classify exact PR diff
+        id: diff
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bash .github/scripts/classify-ci.sh
+
   build:
+    needs: [classify]
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Docs-only success
+        if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
+        run: echo "Documentation diff; full CI steps are unnecessary."
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
@@ -48,6 +73,7 @@ jobs:
       # срабатывает только локально и обходится --no-verify (план 64: 19 ключей
       # редактора макетов просочились в main). Быстрый шаг — до тяжёлых тестов.
       - name: i18n translations check
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: go run ./tools/i18ncheck
 
       # Уникальность номеров планов: номер — это ссылка («план 74» в коде,
@@ -58,6 +84,7 @@ jobs:
         run: go run ./tools/plannum
 
       - name: Lint shipped example/template configurations
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: |
           set -euo pipefail
           tmp="$(mktemp -d)"
@@ -96,6 +123,7 @@ jobs:
       # обработчике проведения не было методов) прожила до тех пор, пока
       # тихий отказ не сделали слышным.
       - name: Seed shipped example databases (SQLite)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: |
           set -uo pipefail
           tmp="$(mktemp -d)"
@@ -124,6 +152,7 @@ jobs:
       # гейт отдельно проверяет ненулевой план TAP (1..N, N>0), иначе «нет
       # тестов» молча считалось бы успехом.
       - name: Run shipped example config tests (SQLite)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: |
           set -uo pipefail
           tmp="$(mktemp -d)"
@@ -152,6 +181,7 @@ jobs:
       # ровно потому, что его никто не ловит. third_party исключён: он
       # вендорный, приводить его к нашему формату незачем.
       - name: gofmt
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: |
           unformatted="$(git ls-files '*.go' | grep -v '^third_party/' | xargs gofmt -l)"
           if [ -n "$unformatted" ]; then
@@ -162,6 +192,7 @@ jobs:
           echo "gofmt: чисто"
 
       - name: go vet
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: go vet ./...
 
       # JavaScript не проверялся в CI ничем. Для компилятора Go это вложенные
@@ -174,6 +205,7 @@ jobs:
       # node предустановлен на ubuntu-latest, ставить нечего. Вендоренные бандлы
       # (webassets, rapidoc, third_party) исключены — они не наши.
       - name: JS syntax check
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: |
           set -eu
           command -v node >/dev/null || { echo "::error::node не найден на раннере"; exit 1; }
@@ -199,6 +231,7 @@ jobs:
       # Go это текст, поэтому ошибка в шаблонном JS проходит все гейты зелёной
       # и всплывает у пользователя пустой страницей (#879, класс #684).
       - name: Inline JS syntax check (Go templates)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: |
           set -euo pipefail
           tmp="${RUNNER_TEMP:-/tmp}/inline-js"
@@ -238,6 +271,7 @@ jobs:
       # гонки разделяемого интерпретатора и других синглтонов (план 52/56).
       # Coverage собирается тем же прогоном, чтобы не гонять тесты дважды.
       - name: Unit tests (-race, coverage)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
 
       # Раннеры работают в UTC, поэтому целый класс дефектов «время
@@ -248,6 +282,7 @@ jobs:
       # округлении часа видны сразу. Москвы для этого мало: тест, красный в
       # Дубае и Индии, в ней остаётся зелёным (#962).
       - name: Unit tests (восточная зона)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         env:
           TZ: Asia/Kolkata
         run: go test -count=1 ./internal/storage/ ./internal/query/ ./internal/entityservice/ ./internal/ui/
@@ -255,19 +290,23 @@ jobs:
       # Западная зона сдвигает полночь UTC на предыдущий день — этот класс
       # ошибок не виден ни в UTC, ни при прогоне в восточной зоне (#1212).
       - name: Unit tests (западная зона)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         env:
           TZ: America/New_York
         run: go test -count=1 ./internal/storage/ ./internal/query/ ./internal/entityservice/ ./internal/ui/
 
       - name: Coverage summary
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: go tool cover -func=coverage.out | tail -5
 
       - uses: actions/upload-artifact@v4
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         with:
           name: coverage
           path: coverage.out
 
       - name: Build (check compile)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         env:
           CGO_ENABLED: 0
         run: go build ./...
@@ -281,6 +320,7 @@ jobs:
       # CGO_ENABLED=0 все его файлы исключаются («build constraints exclude
       # all Go files»). Его отдельно компилирует launcher-webview-build ниже.
       - name: Build (windows, check compile)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         env:
           CGO_ENABLED: 0
           GOOS: windows
@@ -289,23 +329,32 @@ jobs:
 
   # Native close handling lives behind both Windows and CGo build constraints.
   # A release-only check discovers launcher-window regressions too late; compile
-  # the actual GUI target and run its tagged unit tests on every PR.
+  # the actual GUI target and run its tagged unit tests on code-changing PRs.
   launcher-webview-build:
-    runs-on: windows-latest
+    needs: [classify]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' && 'ubuntu-latest' || 'windows-latest' }}
     timeout-minutes: 15
     steps:
+      - name: Docs-only success
+        if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
+        run: echo "Documentation diff; full CI steps are unnecessary."
       - uses: actions/checkout@v4
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
       - uses: actions/setup-go@v5
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         with:
           go-version-file: '.go-version'
           cache: true
       - name: Build launcher GUI (Windows WebView2)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         shell: pwsh
         env:
           CGO_ENABLED: 1
         run: go build -tags webview -o "$env:RUNNER_TEMP\onebase-gui.exe" ./cmd/onebase
 
       - name: Test launcher GUI state (Windows WebView2)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         shell: pwsh
         env:
           CGO_ENABLED: 1
@@ -320,8 +369,10 @@ jobs:
   # приватного каталога воспроизводит ровно тот случай, который и так работал;
   # дефект виден лишь из ОБЩЕГО каталога вне дерева пользователя.
   smoke_matrix:
+    needs: [classify]
+    if: ${{ always() && !cancelled() }}
     name: Smoke ${{ matrix.os }} / ${{ matrix.location }}
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' && 'ubuntu-latest' || matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -329,13 +380,19 @@ jobs:
         os: [ubuntu-latest, windows-latest]
         location: [private, shared]
     steps:
+      - name: Docs-only success
+        if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
+        run: echo "Documentation diff; full CI steps are unnecessary."
       - uses: actions/checkout@v4
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
       - uses: actions/setup-go@v5
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         with:
           go-version-file: '.go-version'
           cache: true
 
       - name: Build binary
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         shell: bash
         run: go build -o "$RUNNER_TEMP/onebase${{ runner.os == 'Windows' && '.exe' || '' }}" ./cmd/onebase
 
@@ -343,6 +400,7 @@ jobs:
       # проверка. Каталоги создаются заранее и вне репозитория: запуск из
       # рабочей копии не воспроизводит ни одного из двух случаев.
       - name: Place binary
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         shell: bash
         run: |
           set -eu
@@ -361,6 +419,7 @@ jobs:
           echo "SMOKE_BIN=$dir/onebase$ext" >> "$GITHUB_ENV"
 
       - name: Version of the placed binary
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         shell: bash
         run: |
           "$SMOKE_BIN" --version
@@ -370,6 +429,7 @@ jobs:
       # доставляются ненадёжно). Проверяется и код возврата: «поднялся и
       # свалился при выходе» — тоже отказ.
       - name: Start, serve, quit
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         shell: bash
         run: |
           set -euo pipefail
@@ -477,24 +537,33 @@ jobs:
   # frontend-gate — только на синтаксис JS. Путь «вошёл → создал → провёл →
   # увидел движения» не проверял никто.
   e2e:
+    needs: [classify]
+    if: ${{ always() && !cancelled() }}
     name: e2e
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
+      - name: Docs-only success
+        if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
+        run: echo "Documentation diff; full CI steps are unnecessary."
       - uses: actions/checkout@v4
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
 
       - uses: actions/setup-go@v5
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         with:
           go-version-file: '.go-version'
           cache: true
 
       - uses: actions/setup-node@v4
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         with:
           node-version: '20'
           cache: npm
           cache-dependency-path: e2e/package-lock.json
 
       - name: Install test deps
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         working-directory: e2e
         run: npm ci
 
@@ -502,6 +571,7 @@ jobs:
       # минута впустую. Ключ включает версию playwright из lock-файла, иначе
       # после обновления пакета подтянулся бы несовместимый браузер из кеша.
       - name: Cache browser
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         id: pw-cache
         uses: actions/cache@v4
         with:
@@ -509,10 +579,12 @@ jobs:
           key: pw-${{ runner.os }}-${{ hashFiles('e2e/package-lock.json') }}
 
       - name: Install browser
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         working-directory: e2e
         run: npx playwright install --with-deps chromium
 
       - name: Run browser smoke suite
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         working-directory: e2e
         env:
           CI: '1'
@@ -521,7 +593,7 @@ jobs:
       # Без артефактов упавший браузерный тест разбирать нечем: трассировка
       # показывает шаги, снимок — что было на экране в момент падения.
       - name: Upload failure artifacts
-        if: failure()
+        if: ${{ failure() && (needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs') }}
         uses: actions/upload-artifact@v4
         with:
           name: e2e-artifacts
@@ -539,11 +611,18 @@ jobs:
   # установки в общем /tmp, который selfupdate законно отказывается обновлять.
   # Джоб включён обратно после их починки (#924).
   test-windows:
-    runs-on: windows-latest
+    needs: [classify]
+    if: ${{ always() && !cancelled() }}
+    runs-on: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' && 'ubuntu-latest' || 'windows-latest' }}
     timeout-minutes: 30
     steps:
+      - name: Docs-only success
+        if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
+        run: echo "Documentation diff; full CI steps are unnecessary."
       - uses: actions/checkout@v4
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
       - uses: actions/setup-go@v5
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         with:
           go-version-file: '.go-version'
           cache: true
@@ -551,6 +630,7 @@ jobs:
       # -race на Windows намеренно не включаем: дорого, а базовый прогон
       # исполняет обычные (без тега webview) windows-only тесты.
       - name: Unit tests (Windows)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: go test ./...
 
       # install.ps1 не исполнял ни один джоб: скрипт установки для Windows
@@ -561,6 +641,7 @@ jobs:
       # ставит бинарь, исполнять его в CI незачем. Синтаксис — это всё, что
       # можно проверить дёшево и без побочных эффектов.
       - name: PowerShell syntax check (install.ps1)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         # Установщик поддерживает штатный Windows PowerShell 5.1, а pwsh на
         # runner'е — PowerShell 7. Проверяем минимальную поддержанную версию,
         # чтобы CI не пропустил, например, PS7-only операторы.
@@ -583,26 +664,36 @@ jobs:
           Write-Host "install.ps1: синтаксис корректен"
 
   lint:
+    needs: [classify]
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Docs-only success
+        if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
+        run: echo "Documentation diff; full CI steps are unnecessary."
       - uses: actions/checkout@v4
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
       - uses: actions/setup-go@v5
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         with:
           go-version-file: '.go-version'
           cache: true
       # Набор линтеров — в .golangci.yml (план 56): стартуем с того, что
       # проходит сейчас, ужесточаем по мере чистки.
       - uses: golangci/golangci-lint-action@v8
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         with:
           version: v2.11.4
 
   postgres-integration:
+    needs: [classify]
+    if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
     services:
       postgres:
-        image: postgres:16
+        image: ${{ (needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs') && 'postgres:16' || '' }}
         env:
           POSTGRES_USER: onebase
           POSTGRES_PASSWORD: onebase
@@ -617,12 +708,18 @@ jobs:
     env:
       TEST_DATABASE_URL: postgres://onebase:onebase@127.0.0.1:5432/onebase_test?sslmode=disable
     steps:
+      - name: Docs-only success
+        if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
+        run: echo "Documentation diff; full CI steps are unnecessary."
       - uses: actions/checkout@v4
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
       - uses: actions/setup-go@v5
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         with:
           go-version-file: '.go-version'
           cache: true
       - name: Install PostgreSQL client (pg_dump/psql для DR-01 round-trip)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         # Сервис — postgres:16, поэтому и клиент 16: pg_dump старее сервера
         # отказывается снимать дамп. Пакет есть в базовых репозиториях
         # ubuntu-latest; версию печатаем для диагностики.
@@ -632,6 +729,7 @@ jobs:
           pg_dump --version
           psql --version
       - name: PostgreSQL integration tests
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: |
           set -euo pipefail
           # Run packages sequentially: tagged suites share the service database
@@ -666,6 +764,10 @@ jobs:
           # Гоним весь пакет, чтобы новый матричный тест нельзя было добавить
           # рядом с checks_matrix_test.go и случайно оставить вне PG-гейта.
           go test -race -count=1 -timeout 15m ./internal/dbcheck
+          # Fresh migrate/test databases must initialize auth before creating
+          # reference:_users foreign keys; run both dialects and dry-run here.
+          go test -race -count=1 -timeout 5m ./internal/cli \
+            -run '^(TestMigrateUserReferencesMatrix|TestTestUserReferencesMatrix|TestMigrateUserReferencesDryRunMatrix)$'
           # Очередь фоновых заданий (план 130). Юнит-джоб гоняет её на SQLite,
           # где исполнитель ровно один по построению — то есть ГЛАВНОЕ свойство
           # подсистемы, параллельная работа N исполнителей и расхождение
@@ -691,6 +793,8 @@ jobs:
           go test -race -count=1 -timeout 20m ./internal/ui
 
   vuln:
+    needs: [classify]
+    if: ${{ always() && !cancelled() }}
     # Сканирование известных уязвимостей в зависимостях и stdlib. govulncheck
     # анализирует только достижимый код (call graph), поэтому шумит меньше, чем
     # аудит всего go.sum: падает лишь когда уязвимая функция реально вызывается.
@@ -703,12 +807,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
+      - name: Docs-only success
+        if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
+        run: echo "Documentation diff; full CI steps are unnecessary."
       - uses: actions/checkout@v4
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
       - uses: actions/setup-go@v5
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         with:
           go-version-file: '.go-version'
           cache: true
       - name: govulncheck
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         # Пайп через tools/govulnpolicy: GO-2026-6452 (excelize, CVE-2026-59162)
         # в vulndb записан без fixed-версии, поэтому голый govulncheck считает
         # уязвимой ЛЮБУЮ версию — даже запиненный коммит с исправлением. Фильтр
@@ -720,32 +830,41 @@ jobs:
           govulncheck -json ./... | go run ./tools/govulnpolicy
 
   bench:
+    needs: [classify]
+    if: ${{ always() && !cancelled() && github.event_name == 'pull_request' }}
     # Контроль регрессий производительности: гоняем микробенчмарки горячих путей
     # (DSL-интерпретатор, storage CRUD, проведение документа) на PR и сравниваем
     # с базой через benchstat. Все бенчи работают на SQLite в tempdir — внешних
     # сервисов не нужно. Только для pull_request (нужна база для сравнения).
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      - name: Docs-only success
+        if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
+        run: echo "Documentation diff; full CI steps are unnecessary."
       - uses: actions/checkout@v4
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         with:
           fetch-depth: 0
       - uses: actions/setup-go@v5
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         with:
           go-version-file: '.go-version'
           cache: true
 
       - name: Install benchstat
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: go install golang.org/x/perf/cmd/benchstat@v0.0.0-20260709024250-82a0b07e230d
 
       - name: Benchmark (PR)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: |
           go test -run NONE -bench . -benchmem -count 6 \
             ./internal/dsl/interpreter/ ./internal/storage/ ./internal/entityservice/ ./internal/query/ \
             | tee bench-pr.txt
 
       - name: Benchmark (base)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: |
           git checkout ${{ github.event.pull_request.base.sha }}
           # На базе бенч-функций может не быть — тогда файл пустой, benchstat
@@ -756,10 +875,11 @@ jobs:
           git checkout -
 
       - name: Compare (benchstat)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: benchstat bench-base.txt bench-pr.txt | tee benchstat.txt
 
       - name: Upload benchstat report
-        if: always()
+        if: ${{ always() && (needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs') }}
         uses: actions/upload-artifact@v4
         with:
           name: benchstat
@@ -783,6 +903,7 @@ jobs:
       # Поэтому строки, где разброс не меньше самой просадки, отбрасываются —
       # с печатью в лог, чтобы это не превратилось в тихое замалчивание.
       - name: Fail on performance regression
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: |
           benchstat -format csv bench-base.txt bench-pr.txt 2>/dev/null \
             | go run ./tools/benchgate -threshold 25

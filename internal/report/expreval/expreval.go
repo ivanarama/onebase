@@ -62,6 +62,7 @@ func DefaultProfile() interpreter.SandboxProfile {
 		DenyNet:      true,
 		DenyFile:     true,
 		DenyExec:     true,
+		DenySecrets:  true,
 		MaxWallClock: 10 * time.Second,
 		MaxLoopIters: 1_000_000,
 		// A wall-clock deadline is checked between DSL operations; it cannot

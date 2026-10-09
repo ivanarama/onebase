@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -139,6 +140,11 @@ func printMigrationPlan(ctx context.Context, db *storage.DB, proj *project.Proje
 // migrate и раннером тестов (onebase test), которому нужна готовая схема на
 // свежей (в т.ч. :memory:) базе.
 func applyAllMigrations(ctx context.Context, db *storage.DB, proj *project.Project) error {
+	// Реквизиты reference:_users создают FK на auth-таблицу. Подготовить её
+	// нужно до сущностей, в том числе на свежей базе migrate/test.
+	if err := auth.NewRepo(db).EnsureSchema(ctx); err != nil {
+		return fmt.Errorf("auth schema: %w", err)
+	}
 	if err := db.Migrate(ctx, proj.Entities); err != nil {
 		return err
 	}

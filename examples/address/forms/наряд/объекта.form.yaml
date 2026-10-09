@@ -1,0 +1,70 @@
+schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Наряд
+  title:
+    ru: Наряд на выезд
+    en: Work order
+elements:
+  - kind: ПолеВвода
+    name: ПолеГород
+    title:
+      ru: Город
+      en: City
+    data_path: Объект.Город
+  - kind: ПолеВвода
+    name: ПолеУлица
+    title:
+      ru: Улица
+      en: Street
+    data_path: Объект.Улица
+  - kind: ПолеВвода
+    name: ПолеДом
+    title:
+      ru: Дом
+      en: House
+    data_path: Объект.Дом
+  - kind: ПолеВвода
+    name: ПолеКорпус
+    title:
+      ru: Корпус
+      en: Building
+    data_path: Объект.Корпус
+  - kind: ПолеВвода
+    name: ПолеКвартира
+    title:
+      ru: Квартира
+      en: Apartment
+    data_path: Объект.Квартира
+  - kind: ПолеВвода
+    name: ПолеПодъезд
+    title:
+      ru: Подъезд
+      en: Entrance
+    data_path: Объект.Подъезд
+  - kind: ПолеВвода
+    name: ПолеЭтаж
+    title:
+      ru: Этаж
+      en: Floor
+    data_path: Объект.Этаж
+  - kind: ПолеВвода
+    name: ПолеДомофон
+    title:
+      ru: Домофон
+      en: Intercom
+    data_path: Объект.Домофон
+  - kind: ПолеВвода
+    name: ПолеИсходныйАдрес
+    title:
+      ru: ИсходныйАдрес
+      en: Original address
+    data_path: Объект.ИсходныйАдрес
+  - kind: ПолеВвода
+    name: ПолеАдресПредставление
+    title:
+      ru: АдресПредставление
+      en: Address
+    data_path: Объект.АдресПредставление
+    readonly: true

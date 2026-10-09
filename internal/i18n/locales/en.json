@@ -1,4 +1,7 @@
 {
+  "min_engine_version %q: ожидается версия major.minor.patch; работа продолжается": "min_engine_version %q: expected major.minor.patch; operation continues",
+  "Нельзя сравнить версию платформы %q с min_engine_version %q; работа продолжается": "Cannot compare platform version %q with min_engine_version %q; operation continues",
+  "Конфигурации требуется платформа не ниже %s, установлена %s; работа продолжается": "Configuration requires platform version %s or later; installed version is %s; operation continues",
   "%-ширины не поддерживаются печатью (PDF). Используйте px или mm.": "% widths are not supported when printing (PDF). Use px or mm.",
   "+ Добавить": "+ Add",
   "+ Печатная форма (макет)": "+ Print form (layout)",
@@ -246,6 +249,7 @@
   "Документы:": "Documents:",
   "Доступных выгрузок пока нет.": "No exports are available yet.",
   "Доступ запрещён": "Access denied",
+  "доступ запрещён": "access denied",
   "Доступ запрещён. Только для администраторов.": "Access denied. Administrators only.",
   "Доступно до": "Available until",
   "Доступные виджеты": "Available widgets",
@@ -1553,5 +1557,6 @@
   "Сбросить личную настройку к общей?": "Reset personal settings to the common layout?",
   "Сбросить к общей настройке": "Reset to common settings",
   "Повреждённая личная настройка пропущена. Показано общее меню; сохранение или сброс исправит этот слой.": "Invalid personal settings were skipped. The common menu is shown; save or reset to repair this layer.",
-  "Повреждённая общая настройка пропущена. Обратитесь к администратору базы.": "Invalid common settings were skipped. Contact your database administrator."
+  "Повреждённая общая настройка пропущена. Обратитесь к администратору базы.": "Invalid common settings were skipped. Contact your database administrator.",
+  "Равные колонки": "Equal columns"
 }

@@ -1,5 +1,7 @@
 package ui
 
+import "github.com/ivantit66/onebase/internal/metadata"
+
 // tplManagedForm — шаблон рендеринга «управляемой формы» из FormModule
 // (план 37, этап 3). В отличие от tplForm, который автоматически выводит
 // все поля Entity подряд, этот шаблон обходит дерево FormModule.Elements
@@ -29,7 +31,7 @@ const tplManagedForm = `
 {{$effectiveReq := effectiveFormElementRequired $ctx.Entity $el}}{{$req := nativeFormElementRequired $ctx.Entity $el}}
 {{if elHidden $ctx $el}}
 {{else if eq (str $el.Kind) "ГруппаФормы"}}
-  <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}{{if $el.ScrollX}} managed-group-scrollx{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elBackground $el}}{{elLayout $el}}">
+  <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}{{if $el.ScrollX}} managed-group-scrollx{{end}}{{if $el.UsesEqualColumns}} ob-equal-columns{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elBackground $el}}{{elLayout $el}}">
     {{if $el.TitleMap}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
     <div class="managed-group-body">
       {{range $el.Children}}{{template "managed-element" (dict "El" . "Ctx" $ctx)}}{{end}}
@@ -596,6 +598,7 @@ main>.card{max-width:none}
    локальный полный список: ui.js оставляет прежние варианты и значение. */
 select[data-ref-choice-context][data-ob-choice-loading="1"]{cursor:progress}
 select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;background:#fef2f2;box-shadow:0 0 0 1px #fecaca}
+` + metadata.FormEqualColumnsCSS + `
 </style>
 {{if hasGridTP .Form}}
 <link rel="stylesheet" href="/vendor/slickgrid/slick.grid.css">

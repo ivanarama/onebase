@@ -564,3 +564,166 @@ for (const element of ['КнопкаНайти', 'ДругаяКнопка']) {
     }
   }
 }
+
+// ── Одиночный выбор мышью и с клавиатуры, отборы по колонкам ─────────────────
+// Окно выбора 1С выбирает строку двойным щелчком и Enter; здесь одиночный
+// подбор раньше выбирал только кнопкой «Выбрать». Отборы (Конфиг.Отборы)
+// сравнивают значение колонки целиком: строка поиска ищет подстроку во всех
+// колонках и не отличает направление «СМ» от мастера «Смирнов».
+const masterColumns = [
+  {name: 'Мастер', title: 'Мастер', type: 'string'},
+  {name: 'Направление', title: 'Направление', type: 'string'},
+  {name: 'Филиал', title: 'Филиал', type: 'string'},
+];
+const masterRows = [
+  {id: 'm-1', data: {Мастер: 'Смирнов', Направление: 'ХД', Филиал: 'МСК'}},
+  {id: 'm-2', data: {Мастер: 'Иванов', Направление: 'СМ', Филиал: 'МСК'}},
+  {id: 'm-3', data: {Мастер: 'Петров', Направление: 'СМ', Филиал: 'СПБ'}},
+  {id: 'm-4', data: {Мастер: 'Сидоров', Направление: 'ТВ', Филиал: 'СПБ'}},
+];
+
+function tbodyOf(ctx) { return ctx.modal().querySelector('tbody'); }
+function visibleIds(ctx) {
+  return tbodyOf(ctx).rows.filter((tr) => tr.style.display !== 'none').map((tr) => tr.getAttribute('data-id'));
+}
+function filterSelect(ctx, col) { return ctx.modal().querySelector('select[data-col="' + col + '"]'); }
+function optionValues(sel) { return sel.children.map((o) => o.value); }
+function choose(sel, value) { sel.value = value; sel.dispatch('change'); }
+function key(input, name) { input.dispatch('keydown', {key: name, preventDefault() {}}); }
+function picked(ctx) {
+  const last = ctx.fired[ctx.fired.length - 1];
+  assert.ok(last && last.event === 'Выбор', 'событие Выбор не ушло');
+  return JSON.parse(last.params._pick_result).map((r) => r.id);
+}
+
+test('ОдинВыбор: двойной щелчок выбирает строку и закрывает окно', () => {
+  const ctx = pickerContext();
+  ctx.open({columns: masterColumns, rows: masterRows, config: {single: true}}, 'КнВыбратьМастера', null);
+  tbodyOf(ctx).rows[2].dispatch('dblclick');
+  assert.deepEqual(picked(ctx), ['m-3']);
+  assert.equal(ctx.modal(), null, 'окно осталось открытым');
+});
+
+test('мультивыбор двойным щелчком ничего не отправляет', () => {
+  const ctx = pickerContext();
+  ctx.open({columns: masterColumns, rows: masterRows, config: {}}, 'КнПодбор', null);
+  tbodyOf(ctx).rows[0].dispatch('dblclick');
+  assert.deepEqual(ctx.fired, []);
+  assert.ok(ctx.modal(), 'мультивыбор закрылся двойным щелчком');
+});
+
+test('ОдинВыбор: Enter без отметки выбирает первую видимую строку', () => {
+  const ctx = pickerContext();
+  const picker = ctx.open({columns: masterColumns, rows: masterRows, config: {single: true}}, 'КнВыбратьМастера', null);
+  picker.search.value = 'петр';
+  picker.search.dispatch('input');
+  key(picker.search, 'Enter');
+  assert.deepEqual(picked(ctx), ['m-3']);
+});
+
+test('ОдинВыбор: стрелки ведут отметку по видимым строкам, Enter её выбирает', () => {
+  const ctx = pickerContext();
+  const picker = ctx.open({columns: masterColumns, rows: masterRows, config: {single: true}}, 'КнВыбратьМастера', null);
+  key(picker.search, 'ArrowDown');
+  key(picker.search, 'ArrowDown');
+  key(picker.search, 'ArrowUp');
+  key(picker.search, 'ArrowUp');
+  assert.deepEqual(ctx.fired, [], 'стрелка отправила выбор');
+  key(picker.search, 'Enter');
+  assert.deepEqual(picked(ctx), ['m-4'], 'вверх с первой строки уходит на последнюю');
+});
+
+test('без Отборы панели отборов нет', () => {
+  const ctx = pickerContext();
+  ctx.open({columns: masterColumns, rows: masterRows, config: {single: true}}, 'КнВыбратьМастера', null);
+  assert.equal(ctx.modal().querySelector('select._ip-flt'), null);
+});
+
+test('отборы: значения колонки, «Все» первым, выбор оставляет только совпадения', () => {
+  const ctx = pickerContext();
+  const picker = ctx.open({columns: masterColumns, rows: masterRows,
+    config: {single: true, filters: ['Направление', 'Филиал']}}, 'КнВыбратьМастера', null);
+  assert.deepEqual(optionValues(filterSelect(ctx, 'Направление')), ['', 'СМ', 'ТВ', 'ХД']);
+  assert.deepEqual(optionValues(filterSelect(ctx, 'Филиал')), ['', 'МСК', 'СПБ']);
+
+  choose(filterSelect(ctx, 'Направление'), 'СМ');
+  assert.deepEqual(visibleIds(ctx), ['m-2', 'm-3'], 'отбор «СМ» показал Смирнова из ХД');
+  assert.deepEqual(optionValues(filterSelect(ctx, 'Филиал')), ['', 'МСК', 'СПБ']);
+
+  choose(filterSelect(ctx, 'Филиал'), 'СПБ');
+  assert.deepEqual(visibleIds(ctx), ['m-3']);
+  assert.deepEqual(optionValues(filterSelect(ctx, 'Направление')), ['', 'СМ', 'ТВ'], 'филиал не сузил направления');
+
+  // Поиск работает поверх отборов.
+  choose(filterSelect(ctx, 'Направление'), '');
+  picker.search.value = 'сид';
+  picker.search.dispatch('input');
+  assert.deepEqual(visibleIds(ctx), ['m-4']);
+  key(picker.search, 'Enter');
+  assert.deepEqual(picked(ctx), ['m-4']);
+});
+
+test('отбор, которого не стало в списке, сбрасывается на «Все»', () => {
+  const ctx = pickerContext();
+  ctx.open({columns: masterColumns, rows: masterRows,
+    config: {single: true, filters: ['Направление', 'Филиал']}}, 'КнВыбратьМастера', null);
+  choose(filterSelect(ctx, 'Направление'), 'ХД');
+  choose(filterSelect(ctx, 'Филиал'), '');
+  assert.deepEqual(optionValues(filterSelect(ctx, 'Филиал')), ['', 'МСК']);
+  choose(filterSelect(ctx, 'Направление'), 'ТВ');
+  assert.deepEqual(visibleIds(ctx), ['m-4']);
+  assert.equal(filterSelect(ctx, 'Филиал').value, '');
+});
+
+test('при серверном поиске отборы переживают новую выдачу, новое открытие их сбрасывает', () => {
+  const ctx = pickerContext();
+  const config = {single: true, serverSearch: true, filters: ['Филиал']};
+  const picker = ctx.open({columns: masterColumns, rows: masterRows, config}, 'КнВыбратьМастера', null);
+  choose(filterSelect(ctx, 'Филиал'), 'СПБ');
+  picker.search.value = 'о';
+  picker.search.dispatch('input');
+  ctx.flush();
+  ctx.respond({columns: masterColumns, rows: masterRows, config}, 'КнВыбратьМастера', null);
+  assert.equal(filterSelect(ctx, 'Филиал').value, 'СПБ', 'отбор потерялся после ответа сервера');
+  assert.deepEqual(visibleIds(ctx), ['m-3', 'm-4']);
+
+  ctx.cancel();
+  ctx.open({columns: masterColumns, rows: masterRows, config}, 'КнВыбратьМастера', null);
+  assert.equal(filterSelect(ctx, 'Филиал').value, '', 'закрытое окно передало отбор следующему');
+});
+
+for (const phase of ['debounce', 'in-flight', 'pending', 'newer-debounce', 'failed']) {
+  test('ОдинВыбор: Enter ждёт актуальную серверную выдачу — ' + phase, () => {
+    const ctx = pickerContext();
+    const config = {single: true, serverSearch: true};
+    const payload = (row) => ({columns: masterColumns, rows: [row], config});
+    const picker = ctx.open(payload(masterRows[0]), 'КнВыбратьМастера', null);
+    key(picker.search, 'ArrowDown'); // Ранее отмеченный Смирнов тоже не должен уйти.
+    picker.search.value = 'Петров';
+    picker.search.dispatch('input');
+    if (phase !== 'debounce') ctx.flush();
+    if (phase === 'pending' || phase === 'newer-debounce') {
+      picker.search.value = 'Сидоров';
+      picker.search.dispatch('input');
+      if (phase === 'pending') ctx.flush();
+      // Приходит Петров, но поле поиска уже содержит Сидоров.
+      ctx.respond(payload(masterRows[2]), 'КнВыбратьМастера', null);
+    }
+    if (phase === 'failed') {
+      ctx.window.obPickerSearchFinished(ctx.fired[0].request);
+      assert.equal(ctx.state().inFlight, null);
+    }
+    key(ctx.search(), 'Enter');
+    assert.ok(ctx.modal(), 'Enter закрыл диалог до актуального ответа');
+    assert.equal(ctx.fired.filter((f) => f.event === 'Выбор').length, 0, 'ушла устаревшая строка');
+
+    // Точный актуальный ответ разрешает обычный Enter; после ошибки — повтор поиска.
+    if (phase === 'failed') ctx.search().dispatch('input');
+    ctx.flush();
+    const row = phase === 'pending' || phase === 'newer-debounce' ? masterRows[3] : masterRows[2];
+    ctx.respond(payload(row), 'КнВыбратьМастера', null);
+    key(ctx.search(), 'Enter');
+    assert.deepEqual(picked(ctx), [row.id]);
+    assert.equal(ctx.modal(), null);
+  });
+}

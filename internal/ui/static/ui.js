@@ -3564,11 +3564,13 @@ var obPickerSearch = {
   element: '',     // элемент, чей диалог открыт; пусто — диалога нет
   context: null,   // контекст события, с которым диалог открыли
   query: '',       // что набрано в строке поиска
+  appliedQuery: '', // запрос, которому соответствует показанная выдача
   timer: null,     // таймер debounce
   inFlight: null,  // конкретный запрос отправлен, ответ ещё не применён
   pending: null,   // запрос, набранный пока предыдущий в пути (строка) либо null
   picked: {},      // выбранные строки по id — переживают смену выдачи
-  order: []        // порядок выбора: «Перенести» отдаёт строки в нём
+  order: [],       // порядок выбора: «Перенести» отдаёт строки в нём
+  filters: {}      // значения отборов (Конфиг.Отборы) — переживают смену выдачи
 };
 
 // obPickerForget — диалог закрыт. Гасим таймер, забываем набранное и выбор.
@@ -3581,8 +3583,10 @@ function obPickerForget() {
   obPickerSearch.element = '';
   obPickerSearch.context = null;
   obPickerSearch.query = '';
+  obPickerSearch.appliedQuery = '';
   obPickerSearch.picked = {};
   obPickerSearch.order = [];
+  obPickerSearch.filters = {};
   obPickerSearch.generation++;
   obPickerSearch.inFlight = null;
 }
@@ -3607,7 +3611,7 @@ function obPickerSendSearch(q) {
   if (obPickerSearch.inFlight) { obPickerSearch.pending = q; return; }
   if (!document.getElementById('_item-picker-modal')) { obPickerForget(); return; }
   if (typeof obFire !== 'function') return;
-  var request = {generation: obPickerSearch.generation, search: true};
+  var request = {generation: obPickerSearch.generation, search: true, query: q};
   obPickerSearch.inFlight = request;
   var params = {};
   var ctx = obPickerSearch.context;
@@ -3644,6 +3648,7 @@ function obPickerFirePending() {
 // ответ на новый запрос.
 window.obPickerSearchEmpty = function (request) {
   if (!request || !request.search || !obPickerSearchApplied(request)) return;
+  obPickerSearch.appliedQuery = null;
   var modal = document.getElementById('_item-picker-modal');
   var tb = modal ? modal.querySelector('tbody') : null;
   if (!tb) { obPickerFirePending(); return; }
@@ -3704,10 +3709,47 @@ function openItemPicker(payload, elementName, eventContext, request) {
       obPickerSearch.query = '';
       obPickerSearch.picked = {};
       obPickerSearch.order = [];
+      obPickerSearch.filters = {};
     }
+    obPickerSearch.appliedQuery = searchResponse ? request.query : '';
     obPickerSearch.element = elementName;
     obPickerSearch.context = eventContext || null;
     search.value = obPickerSearch.query;
+  }
+  // Отборы (Конфиг.Отборы): выпадающий список значений колонки над таблицей.
+  // Строка поиска ищет подстроку во всех колонках и не отличает направление
+  // «СМ» от мастера «Смирнов»; отбор сравнивает значение колонки целиком.
+  // При серверном поиске значения отборов переживают смену выдачи.
+  var filterCols = (cfg.filters || []).filter(function (name) {
+    return cols.some(function (c) { return c.name === name && !c.editable; });
+  });
+  var fltState = serverSearch ? obPickerSearch.filters : {};
+  var fltSelects = {};
+  if (filterCols.length) {
+    var filterBar = document.createElement('div');
+    filterBar.className = '_ip-filters';
+    filterBar.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center;margin-bottom:10px';
+    filterCols.forEach(function (name) {
+      var col = cols.filter(function (c) { return c.name === name; })[0];
+      var label = document.createElement('label');
+      label.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:13px;color:#475569';
+      var caption = document.createElement('span');
+      caption.textContent = col.title || col.name;
+      var sel = document.createElement('select');
+      sel.className = '_ip-flt';
+      sel.setAttribute('data-col', name);
+      sel.style.cssText = 'padding:5px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;max-width:220px';
+      sel.addEventListener('change', function () {
+        fltState[name] = sel.value;
+        rebuildFilters();
+        applyVisibility();
+      });
+      label.appendChild(caption);
+      label.appendChild(sel);
+      filterBar.appendChild(label);
+      fltSelects[name] = sel;
+    });
+    box.appendChild(filterBar);
   }
   box.appendChild(search);
   var scroll = document.createElement('div');
@@ -3743,6 +3785,7 @@ function openItemPicker(payload, elementName, eventContext, request) {
     var tr = document.createElement('tr');
     tr.setAttribute('data-id', r.id || '');
     tr.setAttribute('data-search', rowText(r));
+    tr._obRow = r;
     var tdCb = document.createElement('td');
     tdCb.style.textAlign = 'center';
     var cb = document.createElement('input');
@@ -3764,6 +3807,12 @@ function openItemPicker(payload, elementName, eventContext, request) {
         cb.checked = true;
         if (serverSearch) rememberRow(tr);
         updateCounter();
+      });
+      // Двойной щелчок выбирает строку и закрывает окно — как форма выбора 1С.
+      tr.addEventListener('dblclick', function () {
+        cb.checked = true;
+        if (serverSearch) rememberRow(tr);
+        submitPick();
       });
     }
     tr.appendChild(tdCb);
@@ -3987,13 +4036,112 @@ function openItemPicker(payload, elementName, eventContext, request) {
   if (serverSearch) obPickerFirePending();
   search.addEventListener('input', function () {
     if (serverSearch) { scheduleServerSearch(this.value); return; }
-    var q = this.value.toLowerCase();
+    applyVisibility();
+  });
+  // Одиночный выбор — с клавиатуры, как форма «…» ссылочного поля: стрелки
+  // ведут отметку по видимым строкам, Enter выбирает (без отметки — первую
+  // видимую).
+  search.addEventListener('keydown', function (e) {
+    if (!single) return;
+    var key = e.key;
+    if (key !== 'ArrowDown' && key !== 'ArrowUp' && key !== 'Enter') return;
+    if (e.preventDefault) e.preventDefault();
+    // Поле уже изменилось, а строки могут быть от предыдущего запроса —
+    // включая ошибку поиска, после которой inFlight уже освобождён.
+    if (serverSearch && (obPickerSearch.timer || obPickerSearch.inFlight ||
+        obPickerSearch.pending !== null || search.value !== obPickerSearch.appliedQuery)) return;
+    var visible = Array.prototype.filter.call(tbody.rows, function (tr) { return tr.style.display !== 'none'; });
+    if (!visible.length) return;
+    var at = -1;
+    for (var i = 0; i < visible.length; i++) {
+      var vcb = visible[i].querySelector('._ip-cb');
+      if (vcb && vcb.checked) { at = i; break; }
+    }
+    if (key === 'Enter') {
+      if (at < 0) markRow(visible[0]);
+      submitPick();
+      return;
+    }
+    var next = at < 0 ? 0 : at + (key === 'ArrowDown' ? 1 : -1);
+    if (next < 0) next = visible.length - 1;
+    if (next >= visible.length) next = 0;
+    markRow(visible[next]);
+  });
+  function markRow(tr) {
+    var mcb = tr.querySelector('._ip-cb');
+    if (!mcb) return;
+    // Отметка одна: снимаем остальные явно, не полагаясь на группу радиокнопок.
+    Array.prototype.forEach.call(tbody.querySelectorAll('._ip-cb'), function (other) { other.checked = false; });
+    mcb.checked = true;
+    if (serverSearch) rememberRow(tr);
+    if (tr.scrollIntoView) tr.scrollIntoView({ block: 'nearest' });
+    updateCounter();
+  }
+  function rowValue(tr, name) {
+    var data = (tr._obRow && tr._obRow.data) || {};
+    var v = data[name];
+    return v == null ? '' : String(v);
+  }
+  // rowPasses — строка подходит под все отборы, кроме skip: значения отбора
+  // строятся из строк, подходящих под ОСТАЛЬНЫЕ отборы, — выбор филиала сужает
+  // список направлений, и наоборот.
+  function rowPasses(tr, skip) {
+    for (var i = 0; i < filterCols.length; i++) {
+      var name = filterCols[i];
+      if (name === skip || !fltState[name]) continue;
+      if (rowValue(tr, name) !== fltState[name]) return false;
+    }
+    return true;
+  }
+  function rebuildFilters() {
+    // Выбранное значение, которого больше нет среди подходящих строк,
+    // сбрасывается на «Все»; сброс меняет списки соседей — ещё проход.
+    for (var pass = 0; pass <= filterCols.length; pass++) {
+      var reset = false;
+      filterCols.forEach(function (name) {
+        var seen = {};
+        var values = [];
+        Array.prototype.forEach.call(tbody.rows, function (tr) {
+          if (!rowPasses(tr, name)) return;
+          var v = rowValue(tr, name);
+          if (v === '' || seen[v]) return;
+          seen[v] = true;
+          values.push(v);
+        });
+        values.sort(function (a, b) { return a.localeCompare(b, 'ru'); });
+        if (fltState[name] && !seen[fltState[name]]) { fltState[name] = ''; reset = true; }
+        var sel = fltSelects[name];
+        sel.innerHTML = '';
+        var all = document.createElement('option');
+        all.value = '';
+        all.textContent = 'Все';
+        sel.appendChild(all);
+        values.forEach(function (v) {
+          var opt = document.createElement('option');
+          opt.value = v;
+          opt.textContent = v;
+          sel.appendChild(opt);
+        });
+        sel.value = fltState[name] || '';
+      });
+      if (!reset) break;
+    }
+  }
+  // applyVisibility — строка видна, если подходит под клиентский поиск и все
+  // отборы. При серверном поиске выдачу уже отобрал сервер — здесь только отборы.
+  function applyVisibility() {
+    var q = serverSearch ? '' : search.value.toLowerCase();
     Array.prototype.forEach.call(tbody.rows, function (tr) {
-      tr.style.display = (tr.getAttribute('data-search') || '').indexOf(q) >= 0 ? '' : 'none';
+      var hit = !q || (tr.getAttribute('data-search') || '').indexOf(q) >= 0;
+      tr.style.display = (hit && rowPasses(tr, null)) ? '' : 'none';
     });
     updateCounter();
     updateBasket();
-  });
+  }
+  if (filterCols.length) {
+    rebuildFilters();
+    applyVisibility();
+  }
   cbAll.addEventListener('change', function () {
     if (single) return;
     Array.prototype.forEach.call(tbody.rows, function (tr) {
@@ -4015,7 +4163,8 @@ function openItemPicker(payload, elementName, eventContext, request) {
     obPickerForget();
     modal.remove();
   });
-  btnOk.addEventListener('click', function () {
+  btnOk.addEventListener('click', function () { submitPick(); });
+  function submitPick() {
     var result;
     if (serverSearch) {
       // Выбор собран по всем запросам, а не только по последней выдаче.
@@ -4038,7 +4187,7 @@ function openItemPicker(payload, elementName, eventContext, request) {
       params._pick_result = JSON.stringify(result);
       obFire(elementName, 'Выбор', params);
     }
-  });
+  }
 }
 
 // ── Отбор подбора: подчинённые справочники и связи параметров выбора ──────────

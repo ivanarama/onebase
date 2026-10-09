@@ -38,7 +38,7 @@ const conditionLoopIters = 100_000
 // данные закрывается не списком имён, а центральной read-only границей
 // интерпретатора (см. readonly.go и evalCall).
 func conditionOverlay() map[string]any {
-	p := SandboxProfile{DenyNet: true, DenyFile: true, DenyExec: true}
+	p := SandboxProfile{DenyNet: true, DenyFile: true, DenyExec: true, DenySecrets: true}
 	overlay := make(map[string]any, 32)
 	for k, v := range p.Vars() {
 		overlay[strings.ToLower(k)] = v
