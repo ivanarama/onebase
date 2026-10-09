@@ -1169,17 +1169,17 @@ func (i *Interpreter) evalEvalBuiltin(args []any, e *env) any {
 }
 
 func (i *Interpreter) callUserProc(proc *ast.ProcedureDecl, callEnv *env, args []any) (retVal any) {
-	retVal, _ = i.callUserProcAtDepthWithBindings(proc, callEnv, args, callEnv.depth+1)
+	retVal, _ = i.callUserProcAtDepthWithBindings(proc, callEnv, args, callEnv.depth+1, false)
 	return retVal
 }
 
 func (i *Interpreter) callEntryProc(proc *ast.ProcedureDecl, root *env, args []any) (retVal any) {
-	retVal, _ = i.callUserProcAtDepthWithBindings(proc, root, args, root.depth)
+	retVal, _ = i.callUserProcAtDepthWithBindings(proc, root, args, root.depth, false)
 	return retVal
 }
 
 func (i *Interpreter) callEntryProcWithBindings(proc *ast.ProcedureDecl, root *env, args []any) (retVal any, bindings map[string]any) {
-	return i.callUserProcAtDepthWithBindings(proc, root, args, root.depth)
+	return i.callUserProcAtDepthWithBindings(proc, root, args, root.depth, true)
 }
 
 func (i *Interpreter) moduleEnvFor(proc *ast.ProcedureDecl, root *env) *env {
@@ -1221,7 +1221,7 @@ func (i *Interpreter) moduleEnvFor(proc *ast.ProcedureDecl, root *env) *env {
 	return me
 }
 
-func (i *Interpreter) callUserProcAtDepthWithBindings(proc *ast.ProcedureDecl, callEnv *env, args []any, frameDepth int) (retVal any, bindings map[string]any) {
+func (i *Interpreter) callUserProcAtDepthWithBindings(proc *ast.ProcedureDecl, callEnv *env, args []any, frameDepth int, captureBindings bool) (retVal any, bindings map[string]any) {
 	// Страж рекурсии: env нового кадра будет на уровень глубже вызывающего.
 	// Обрываем ДО создания кадра и проброса в отладчик, иначе бесконечная
 	// рекурсия переполнит стек горутины и аварийно уронит процесс (мимо Попытки).
@@ -1238,7 +1238,9 @@ func (i *Interpreter) callUserProcAtDepthWithBindings(proc *ast.ProcedureDecl, c
 	}
 	var child *env
 	defer func() {
-		if child != nil {
+		// Only lifecycle entrypoints request final parameter values. Ordinary
+		// calls discard them and must not allocate a second parameter map.
+		if captureBindings && child != nil {
 			bindings = make(map[string]any, len(proc.Params))
 			for _, param := range proc.Params {
 				bindings[param.Literal] = child.vars[strings.ToLower(param.Literal)]
