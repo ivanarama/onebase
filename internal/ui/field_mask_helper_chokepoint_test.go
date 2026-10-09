@@ -41,7 +41,7 @@ var maskHelperGateFuncs = map[string]bool{
 // ЗначенияРеквизитовОбъектов, и без него утечка в этой функции была бы
 // сканеру не видна.
 var maskHelperStoreReads = map[string]bool{
-	"List": true, "GetByID": true, "GetFieldsByIDs": true, "ListMarked": true,
+	"List": true, "GetByID": true, "GetFieldsByIDs": true, "GetByIDsFiltered": true, "ListMarked": true,
 }
 
 // maskHelperExemption — почему функция читает store без маски. maskedBy != ""

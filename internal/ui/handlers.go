@@ -431,35 +431,51 @@ func refValueString(v any) string {
 }
 
 func (s *Server) appendSelectedRefOptions(ctx context.Context, rows []map[string]any, refEntity *metadata.Entity, selected []string) []map[string]any {
-	seen := make(map[string]bool, len(rows)+len(selected))
+	seen := make(map[uuid.UUID]bool, len(rows)+len(selected))
 	for _, row := range rows {
-		if id := refValueString(row["id"]); id != "" {
+		if id, err := uuid.Parse(refValueString(row["id"])); err == nil {
 			seen[id] = true
 		}
 	}
+	ids := make([]uuid.UUID, 0, len(selected))
 	for _, idStr := range selected {
-		idStr = strings.TrimSpace(idStr)
-		if idStr == "" || seen[idStr] {
+		id, err := uuid.Parse(strings.TrimSpace(idStr))
+		if err != nil || seen[id] {
 			continue
 		}
-		id, err := uuid.Parse(idStr)
+		// Deduplicate before reading, including missing and inaccessible IDs.
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return rows
+	}
+	decision, err := s.rowDecision(ctx, refEntity, "read")
+	if err != nil || !decision.Allowed {
+		return rows
+	}
+	var predicate *storage.Predicate
+	if !decision.Unrestricted {
+		predicate = decision.Predicate
+	}
+	for start := 0; start < len(ids); start += refLabelBatchSize {
+		end := min(start+refLabelBatchSize, len(ids))
+		batch := ids[start:end]
+		selectedRows, err := s.store.GetByIDsFiltered(ctx, refEntity, batch, predicate)
 		if err != nil {
 			continue
 		}
-		row, err := s.store.GetByID(ctx, refEntity.Name, id, refEntity)
-		if err != nil || row == nil {
-			continue
+		// SQL result order is unspecified; keep the first selected occurrence.
+		for _, id := range batch {
+			row := selectedRows[id.String()]
+			if row == nil {
+				continue
+			}
+			// Mask before computing the label and serialising the complete option.
+			s.maskRecord(ctx, refEntity, row)
+			row["_label"] = firstStringField(row, refEntity)
+			rows = append(rows, row)
 		}
-		if !s.rowAllowsSelected(ctx, refEntity, row) {
-			continue
-		}
-		// План 88: замаскировать догруженную (вне первой страницы) выбранную
-		// запись до вычисления подписи и сериализации — иначе ПДн из ссылки
-		// утекли бы в JSON опций (HTML/DevTools) в обход маски списка.
-		s.maskRecord(ctx, refEntity, row)
-		row["_label"] = firstStringField(row, refEntity)
-		rows = append(rows, row)
-		seen[idStr] = true
 	}
 	return rows
 }
