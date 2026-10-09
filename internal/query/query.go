@@ -903,6 +903,11 @@ type sourceScope struct {
 	wildcardColumns   map[string]map[string]string // квалификатор → логическое имя → имя в SELECT *
 	outputAliases     map[string]struct{}
 	refAliases        map[string]struct{}
+	// physicalCols — колонки обычных (не виртуальных) источников по
+	// квалификатору: имя поля в нижнем регистре → колонка БД, только там, где
+	// они различаются (ссылка → «_id»). Нужна присоединённым источникам: общая
+	// colMap строится по главному источнику и о них не знает.
+	physicalCols map[string]map[string]string
 }
 
 func (ctx sourceContext) scopeAt(tokenPos int) (sourceScope, bool) {
@@ -3038,6 +3043,35 @@ func (tr *translator) refAttrColumn(qualifier, attr string) (col, refEntity stri
 	return "", "", ""
 }
 
+// joinedSourceColumn — колонка БД поля «квалификатор.поле», если квалификатор —
+// обычный (не виртуальный) источник SELECT: «ПО М.Склад = О.Склад» у
+// присоединённого регистра сведений даёт «м.склад_id». Раньше поле переводилось
+// по первому источнику всего запроса: ссылочное измерение без «_id», а
+// одноимённое измерение главной виртуальной таблицы перехватывало перевод —
+// запрос падал «no such column: м.склад». То же у главного источника
+// вложенного SELECT (подзапрос в соединении). Виртуальные таблицы колонок
+// здесь не имеют и идут прежним путём; навигацию «А.Ссылка.Реквизит»
+// вызывающий не передаёт.
+func (tr *translator) joinedSourceColumn(pos int, attr string) (string, bool) {
+	if pos < 2 || pos >= len(tr.tokens) {
+		return "", false
+	}
+	if tr.tokens[pos-1].kind != tDot || tr.tokens[pos-2].kind != tIdent {
+		return "", false
+	}
+	qualifier := lowerFast(tr.tokens[pos-2].val)
+	scope, ok := tr.sourceCtx.qualifierScopeAt(pos, qualifier)
+	if !ok {
+		return "", false
+	}
+	cols := scope.physicalCols[qualifier]
+	if cols == nil {
+		return "", false
+	}
+	col, ok := cols[attr]
+	return col, ok
+}
+
 func (tr *translator) findRefDim(name string) *refDimInfo {
 	for i := range tr.refDims {
 		if tr.refDims[i].fieldName == name {
@@ -3280,6 +3314,48 @@ func buildColTypes(tokens []tok, opts CompileOpts) map[string]metadata.FieldType
 // отличие от buildColTypes, этот помощник применим и к виртуальной таблице:
 // имена её измерений и атрибутов сохраняются в сгенерированном подзапросе.
 // Производные имена ресурсов (например, СуммаОстаток) здесь не синтезируются.
+// sourcePhysicalColumns — колонки БД полей обычного источника, отличающиеся от
+// имени поля (ссылочные — с суффиксом «_id»). Пустая карта — переводить нечего.
+func sourcePhysicalColumns(typeUpper, name string, opts CompileOpts) map[string]string {
+	m := map[string]string{}
+	add := func(fields []metadata.Field) {
+		for _, f := range fields {
+			if col := metadata.ColumnName(f); col != lowerFast(f.Name) {
+				m[lowerFast(f.Name)] = col
+			}
+		}
+	}
+	switch {
+	case isAccumRegType(typeUpper):
+		for _, reg := range opts.Registers {
+			if strings.EqualFold(reg.Name, name) {
+				add(reg.Dimensions)
+				add(reg.Resources)
+				add(reg.Attributes)
+				return m
+			}
+		}
+	case isInfoRegType(typeUpper):
+		for _, ir := range opts.InfoRegs {
+			if strings.EqualFold(ir.Name, name) {
+				add(ir.Dimensions)
+				add(ir.Resources)
+				return m
+			}
+		}
+	case isAccountRegType(typeUpper):
+		return m
+	default: // справочник / документ
+		for _, e := range opts.Entities {
+			if strings.EqualFold(e.Name, name) {
+				add(e.Fields)
+				return m
+			}
+		}
+	}
+	return m
+}
+
 func sourceColumnTypes(typeUpper, name string, opts CompileOpts) map[string]metadata.FieldType {
 	m := map[string]metadata.FieldType{}
 	add := func(fields []metadata.Field) {
@@ -3977,6 +4053,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 					wildcardColumns: map[string]map[string]string{},
 					outputAliases:   map[string]struct{}{},
 					refAliases:      map[string]struct{}{},
+					physicalCols:    map[string]map[string]string{},
 				})
 				sections = append(sections, sectionSelect)
 				active = append(active, scopeFrame{id: scopeID, depth: depth})
@@ -4118,6 +4195,16 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 		scope.wildcardColumns[sourceToTable(typeUpper, tokens[i+2].val)] = wildcardColumns
 		scope.qualifiers[entityName] = class
 		scope.qualifiers[sourceToTable(typeUpper, tokens[i+2].val)] = class
+		// Колонки обычного источника; у виртуальной таблицы (Тип.Имя.ВТ(...))
+		// подзапрос сам называет колонки логическими именами.
+		var physCols map[string]string
+		if i+3 >= len(tokens) || tokens[i+3].kind != tDot {
+			physCols = sourcePhysicalColumns(typeUpper, tokens[i+2].val, opts)
+			if len(physCols) > 0 {
+				scope.physicalCols[entityName] = physCols
+				scope.physicalCols[sourceToTable(typeUpper, tokens[i+2].val)] = physCols
+			}
+		}
 		// Для источника-объекта запоминаем вид и собственные реквизиты: по ним
 		// решается системный алиас (#1436). Регистрам это не нужно — у них свой
 		// механизм по классу источника.
@@ -4143,6 +4230,9 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 				scope.wildcardColumns[alias] = wildcardColumns
 				if entityInfo != nil {
 					scope.entities[alias] = *entityInfo
+				}
+				if len(physCols) > 0 {
+					scope.physicalCols[alias] = physCols
 				}
 				if isMain {
 					scope.mainTable = alias
@@ -5295,6 +5385,8 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 						tr.emitRefAttrColumn(col, fieldType)
 						tr.noteRefOutputAs(refEntity, col)
 						tr.emitDerivedReferenceAlias(col, lower)
+					} else if col, ok := tr.joinedSourceColumn(tr.pos-1, lower); ok && !nextIsDot {
+						tr.emitQualifiedColumn(col, lower)
 					} else if rd := tr.findRefDim(lower); rd != nil {
 						// Двухуровневая навигация: Источник.Ссылка.Реквизит.
 						// LEFT JOIN на связанную таблицу к этому моменту уже
