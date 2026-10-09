@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -25,10 +26,11 @@ type managedChoiceContext struct {
 	// FormKind различает владельца формы: пусто — документ или справочник,
 	// "processor" — обработка (#1840). Имена обработок и сущностей живут в
 	// разных пространствах, поэтому вид едет явно, а не угадывается по имени.
-	FormKind string            `json:"form_kind,omitempty"`
-	Form     string            `json:"form"`
-	Element  string            `json:"element"`
-	Sources  map[string]string `json:"sources,omitempty"` // full metadata path -> browser control name
+	FormKind  string            `json:"form_kind,omitempty"`
+	Form      string            `json:"form"`
+	Element   string            `json:"element"`
+	TablePart string            `json:"table_part,omitempty"`
+	Sources   map[string]string `json:"sources,omitempty"` // full metadata path -> browser control name
 }
 
 // choiceFormKindProcessor — значение form_kind для формы обработки.
@@ -161,6 +163,22 @@ func (s *Server) choicePredicates(ctx context.Context, owner *metadata.Entity, f
 		return nil, false, fmt.Errorf("choice target is unknown")
 	}
 	allowed := choiceSourceControls(element)
+	_, tpName := metadata.FormChoiceTablePart(form, element)
+	for path := range allowed {
+		source, ok := metadata.ParseFormChoiceSource(path)
+		if !ok || (tpName != "" && source.Deep()) {
+			return nil, false, fmt.Errorf("invalid TP source")
+		}
+		global := strings.EqualFold(source.Root, "Объект") || strings.EqualFold(source.Root, "Форма")
+		if !global && (tpName == "" || !strings.EqualFold(source.Root, tpName)) {
+			return nil, false, fmt.Errorf("foreign row source")
+		}
+		if !global {
+			if choiceAttrMasked(s.fieldDecisions(ctx, owner), tpName+"."+source.Field) {
+				return nil, true, nil
+			}
+		}
+	}
 	for path := range sources {
 		if _, ok := allowed[path]; !ok {
 			return nil, false, fmt.Errorf("unknown choice source %q", path)
@@ -421,7 +439,7 @@ func (s *Server) resolveChoiceRequest(r *http.Request, target *metadata.Entity) 
 	// ignored unknown query parameters, so adding it must not turn an otherwise
 	// context-free request into a 400. Identity/source parameters do opt in and
 	// therefore require the complete trusted metadata context below.
-	contextKeys := []string{"form_entity", "form_kind", "form", "element", "sources"}
+	contextKeys := []string{"form_entity", "form_kind", "form", "element", "sources", "row_id"}
 	contextPresent := false
 	for _, key := range contextKeys {
 		if _, ok := query[key]; ok {
@@ -462,11 +480,32 @@ func (s *Server) resolveChoiceRequest(r *http.Request, target *metadata.Entity) 
 	if err != nil {
 		return nil, err
 	}
-	element := findChoiceElementByID(form, elementID)
+	element := findTPChoiceElement(owner, form, elementID)
+	if element == nil {
+		element = findChoiceElementByID(form, elementID)
+		if element != nil {
+			if _, tp := metadata.FormChoiceTablePart(form, element); tp != "" {
+				return nil, fmt.Errorf("column needs scoped identity")
+			}
+		}
+	}
 	if element == nil || (len(element.ChoiceFilter) == 0 && !element.ChoiceFolders) {
 		return nil, fmt.Errorf("unknown choice element")
 	}
-	targetName := formChoiceRefEntity(owner, form, element.DataPath)
+	targetName := formChoiceElementTarget(owner, form, element)
+	_, tpName := metadata.FormChoiceTablePart(form, element)
+	rowID, err := oneQueryValue(query, "row_id", tpName != "")
+	if err != nil {
+		return nil, err
+	}
+	if tpName == "" && rowID != "" {
+		return nil, fmt.Errorf("unexpected row_id")
+	}
+	if tpName != "" {
+		if _, err := strconv.ParseUint(rowID, 10, 32); err != nil {
+			return nil, fmt.Errorf("invalid row_id")
+		}
+	}
 	if target == nil || targetName == "" || !strings.EqualFold(target.Name, targetName) {
 		return nil, fmt.Errorf("choice target does not match route")
 	}
@@ -638,6 +677,7 @@ func (s *Server) applyChoiceFilters(ctx context.Context, owner *metadata.Entity,
 	if owner == nil || form == nil || data == nil {
 		return
 	}
+	s.applyTPChoiceFilters(ctx, owner, form, formKind, data)
 	options := make(map[string][]map[string]any)
 	contexts := make(map[string]string)
 	form.Walk(func(element *metadata.FormElement) bool {
@@ -645,6 +685,9 @@ func (s *Server) applyChoiceFilters(ctx context.Context, owner *metadata.Entity,
 			return true
 		}
 		if len(element.ChoiceFilter) == 0 && !element.ChoiceFolders {
+			return true
+		}
+		if _, tpName := metadata.FormChoiceTablePart(form, element); tpName != "" {
 			return true
 		}
 		targetName := formChoiceRefEntity(owner, form, element.DataPath)

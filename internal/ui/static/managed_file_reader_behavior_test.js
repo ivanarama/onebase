@@ -42,6 +42,7 @@ function domNode(tagName) {
 }
 
 function resetDOM() {
+  window._tpRefMeta = {};
   banner = domNode('div');
   fetchBodies = [];
   submittedBodies = [];

@@ -3390,6 +3390,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
   var enumLabels = (obTPEnumLabels()[tpName]) || {};
   var enumOrder = (obTPEnumOrder()[tpName]) || {};
   var bools = Array.isArray(boolFields) ? boolFields : [];
+  var choiceContexts={};try{choiceContexts=JSON.parse(tbody.getAttribute("data-tp-choice")||"{}")||{};}catch(e){}
   if (tbody && tbody.getAttribute('data-tp-cmd') === '1') {
     var tdSel = document.createElement('td');
     tdSel.style.textAlign = 'center';
@@ -3406,6 +3407,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
       wrapper.style.cssText = 'display:flex;gap:4px;align-items:center';
       var sel = document.createElement('select');
       sel.name = 'tp.' + tpName + '.' + idx + '.' + fn;
+      if(choiceContexts[fn]) {sel.setAttribute('data-ref-choice-context',choiceContexts[fn]);sel.setAttribute('data-ref-row-id',String(idx));}
       sel.style.flex = '1';
       var meta = refMeta[fn];
       if (meta && meta.entity) {
@@ -3417,7 +3419,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
       defOpt.value = '';
       defOpt.textContent = '— выбрать —';
       sel.appendChild(defOpt);
-      (refOpts[fn] || []).forEach(function (opt) {
+      (choiceContexts[fn] ? [] : (refOpts[fn] || [])).forEach(function (opt) {
         var o = document.createElement('option');
         o.value = opt.id;
         o.textContent = opt._label || opt.id;
@@ -3500,6 +3502,8 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
   tr.appendChild(tdDel);
   tbody.appendChild(tr);
   if (table) obDOMFinishMutation(table, tr, true);
+  if(window.obAttachTPChoiceContexts)window.obAttachTPChoiceContexts(document);
+  if(window.obRefreshChoiceFilters)window.obRefreshChoiceFilters();
 }
 
 function recalcTpRow(inp) {
@@ -4227,11 +4231,28 @@ function obRefChoiceSnapshot(sel) {
   if (!ctx || !ctx.form_entity || !ctx.form || !ctx.element) return null;
   var values = {};
   var declared = ctx.sources || {};
+  var form = sel.form || sel._obChoiceForm;
+  var rowID = sel.getAttribute("data-ref-row-id");
+  // Structural no_grid operations reindex names without dispatching change.
+  // Read the live row index so pickers and pending-response fingerprints use
+  // the current row immediately. Detached SlickGrid carriers keep their id.
+  if (ctx.table_part && !sel._obChoiceRow) {
+    var rowName = (sel.name || '').split('.');
+    if (rowName.length === 4 && rowName[0] === 'tp' &&
+        rowName[1] === ctx.table_part && /^[0-9]+$/.test(rowName[2])) {
+      rowID = rowName[2];
+    }
+  }
   var paths = Object.keys(declared).sort();
   paths.forEach(function (path) {
     var name = declared[path];
     var control = null;
-    if (sel.form && sel.form.elements && name) control = sel.form.elements.namedItem(name);
+    if (ctx.table_part && path.split(".")[0].toLowerCase() === ctx.table_part.toLowerCase()) {
+      if (sel._obChoiceRow) { var key=Object.keys(sel._obChoiceRow).find(function(key){return key.toLowerCase()===String(name).toLowerCase();});
+        values[path] = obChoiceRowValue(sel._obChoiceRow[key]); return; }
+      name = "tp." + ctx.table_part + "." + rowID + "." + name;
+    }
+    if (form && form.elements && name) control = form.elements.namedItem(name);
     if (!control && name) {
       var controls = document.getElementsByName(name);
       if (controls && controls.length) control = controls[0];
@@ -4243,6 +4264,7 @@ function obRefChoiceSnapshot(sel) {
     (ctx.form_kind ? '&form_kind=' + encodeURIComponent(ctx.form_kind) : '') +
     '&form=' + encodeURIComponent(ctx.form) +
     '&element=' + encodeURIComponent(ctx.element) +
+    (ctx.table_part ? '&row_id=' + encodeURIComponent(rowID == null ? '' : rowID) : '') +
     '&sources=' + encodeURIComponent(JSON.stringify(values));
   if (sel.value) query += '&selected_id=' + encodeURIComponent(sel.value);
   var ownerQuery = obRefFilterParam(sel);
@@ -4250,11 +4272,29 @@ function obRefChoiceSnapshot(sel) {
   var fingerprintParts = paths.map(function (path) { return [path, values[path]]; });
   return {
     query: query,
-    fingerprint: JSON.stringify([ctx.form_entity, ctx.form_kind || '', ctx.form, ctx.element, fingerprintParts, ownerQuery]),
+    fingerprint: JSON.stringify([ctx.form_entity, ctx.form_kind || '', ctx.form, ctx.element, rowID, fingerprintParts, ownerQuery]),
     selected: sel.value == null ? '' : String(sel.value)
   };
 }
 
+function obChoiceRowValue(value) {
+  if (value && typeof value === 'object') return String(value.id || value.ID || '');
+  return value == null ? '' : String(value);
+}
+window.obTPChoiceCarrier = function(context, row, rowID, form, field, entity, filter) {
+  var carrier = document.createElement('select');
+  carrier.setAttribute('data-ref-choice-context', context);
+  carrier.setAttribute('data-ref-row-id', String(rowID));
+  carrier.setAttribute('data-ref-entity', entity);
+  if (filter) carrier.setAttribute('data-ref-filter', filter);
+  carrier._obChoiceRow = row;
+  carrier._obChoiceForm = form;
+  // Detached selects have no option matching the UUID. The snapshot must read
+  // the row's value rather than the DOM select's empty fallback.
+  Object.defineProperty(carrier, 'value', {get: function(){return obChoiceRowValue(row[field]);}, configurable:true});
+  return carrier;
+};
+window.obRefChoiceSnapshot = obRefChoiceSnapshot;
 function obRefChoiceQuery(sel) {
   if (!sel || !sel.getAttribute || !sel.getAttribute('data-ref-choice-context')) return '';
   var snapshot = obRefChoiceSnapshot(sel);
@@ -4434,9 +4474,25 @@ window.obRefreshChoiceFilters = function () {
   var selects = document.querySelectorAll('select[data-ref-choice-context]');
   var pending = [];
   for (var i = 0; i < selects.length; i++) pending.push(obRefreshChoiceSelect(selects[i], false));
+  if(window.obRefreshTPChoiceFilters)pending.push(window.obRefreshTPChoiceFilters());
   return Promise.all(pending);
 };
 
+function obAttachTPChoiceContexts(scope) {
+  if (!scope || !scope.querySelectorAll) return;
+  var bodies = scope.querySelectorAll('tbody[data-tp-choice]');
+  for (var i=0; i<bodies.length; i++) {
+    var contexts; try { contexts=JSON.parse(bodies[i].getAttribute('data-tp-choice') || '{}') || {}; } catch(e) {continue;}
+    var controls=bodies[i].querySelectorAll('select[name]');
+    for(var j=0;j<controls.length;j++) {
+      var parts=controls[j].name.split('.'), context=contexts[parts[3]];
+      if(!context)continue;
+      controls[j].setAttribute('data-ref-choice-context',context);
+      controls[j].setAttribute('data-ref-row-id',parts[2]);
+    }
+  }
+}
+window.obAttachTPChoiceContexts=obAttachTPChoiceContexts;
 function obInitChoiceFilterRefresh() {
   if (!document.querySelectorAll) return;
   var selects = document.querySelectorAll('select[data-ref-choice-context]');
@@ -4444,7 +4500,7 @@ function obInitChoiceFilterRefresh() {
     var snapshot = obRefChoiceSnapshot(selects[i]);
     if (snapshot) obChoiceRefreshState(selects[i]).appliedFingerprint = snapshot.fingerprint;
   }
-  document.addEventListener('change', function () { window.obRefreshChoiceFilters(); });
+  document.addEventListener('change', function () { obAttachTPChoiceContexts(document); window.obRefreshChoiceFilters(); });
 }
 obReady(obInitChoiceFilterRefresh);
 

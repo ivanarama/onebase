@@ -95,8 +95,8 @@ func managedTPColumnPlan(el *metadata.FormElement, fields []metadata.Field) []ma
 
 	chosen := make(map[int]*metadata.FormElement, len(fields))
 	order := make([]int, 0, len(fields))
-	for _, child := range el.Children {
-		if child == nil || child.Kind != metadata.FormElementColumn {
+	for _, child := range append(append([]*metadata.FormElement{}, el.Children...), el.Columns...) {
+		if child == nil || (child.Kind != metadata.FormElementColumn && child.Kind != metadata.FormElementField) {
 			continue
 		}
 		index, ok := managedTPFieldIndexForColumn(fields, child)

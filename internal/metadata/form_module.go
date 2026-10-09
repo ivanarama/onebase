@@ -198,6 +198,7 @@ type FormElement struct {
 	Handlers  map[FormEventType]string `yaml:"events,omitempty"`
 	Props     map[string]any           `yaml:"props,omitempty"`
 	Children  []*FormElement           `yaml:"children,omitempty"`
+	Columns   []*FormElement           `yaml:"columns,omitempty"` // план 183: колонки ТЧ с отбором
 
 	// Поля, добавленные планом 37. Все опциональны; YAML-загрузчик
 	// заполняет их при чтении managed-формы, конвертер 1С использует
@@ -910,6 +911,9 @@ func walkElement(el *FormElement, fn func(*FormElement) bool) {
 		return
 	}
 	for _, child := range el.Children {
+		walkElement(child, fn)
+	}
+	for _, child := range el.Columns {
 		walkElement(child, fn)
 	}
 }
