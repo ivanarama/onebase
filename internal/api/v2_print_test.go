@@ -52,7 +52,10 @@ func TestAPIV2_PrintDocumentThroughHTTP(t *testing.T) {
 			Area: "Строка", Source: "Товары", Parameters: map[string]string{"Товар": "Товар"},
 		}}},
 	}}
-	h.reg.LoadLayoutForms([]*printform.LayoutForm{form})
+	percentForm, escapedTextForm := *form, *form
+	percentForm.Name = "Накладная 20%"
+	escapedTextForm.Name = "Накладная %41"
+	h.reg.LoadLayoutForms([]*printform.LayoutForm{form, &percentForm, &escapedTextForm})
 	h.reg.LoadDSLPrintForms([]*printform.DSLPrintForm{{Name: "DSLOutsideScope", Document: doc.Name}})
 	buyerID, id, hiddenID := uuid.New(), uuid.New(), uuid.New()
 	if err := h.store.Upsert(ctx, buyer.Name, buyerID, map[string]any{
@@ -176,6 +179,49 @@ func TestAPIV2_PrintDocumentThroughHTTP(t *testing.T) {
 			}
 			if got, want := printPDFPages(t, api.Body.Bytes()), printPDFPages(t, browser.Body.Bytes()); !bytes.Equal(got, want) {
 				t.Fatal("REST PDF pages differ from UI PDF pages")
+			}
+		}
+	})
+	t.Run("form names are decoded exactly once", func(t *testing.T) {
+		for _, name := range []string{percentForm.Name, escapedTextForm.Name} {
+			for _, rawPath := range []bool{false, true} {
+				encodedName := url.PathEscape(name)
+				routeSource := "Path"
+				if rawPath {
+					routeSource = "RawPath"
+					// Lowercase escapes make Go preserve RawPath, which chi uses
+					// for routing (including its mounted RoutePath).
+					encodedName = strings.ReplaceAll(encodedName, "%D0", "%d0")
+				}
+				for _, suffix := range []string{"", "/pdf"} {
+					t.Run(name+"/"+routeSource+suffix, func(t *testing.T) {
+						formPath := strings.Replace(path, url.PathEscape(form.Name), encodedName, 1) + suffix
+						if got := httptest.NewRequest(http.MethodGet, formPath, nil).URL.RawPath != ""; got != rawPath {
+							t.Fatalf("RawPath set = %v, want %v", got, rawPath)
+						}
+						api := request(formPath, "reader", false)
+						// The original UI form has the same layout and data, and
+						// provides an independent reference for the rendered sheet.
+						browser := request(uiPath+suffix, "reader", true)
+						if api.Code != http.StatusOK || browser.Code != http.StatusOK {
+							t.Fatalf("API=%d UI=%d", api.Code, browser.Code)
+						}
+						if suffix == "" {
+							sheet := regexp.MustCompile(`(?s)<table>.*</table>`)
+							if got, want := sheet.Find(api.Body.Bytes()), sheet.Find(browser.Body.Bytes()); len(got) == 0 || !bytes.Equal(got, want) {
+								t.Fatalf("REST sheet differs from UI: %s\n%s", got, want)
+							}
+						} else {
+							_, params, err := mime.ParseMediaType(api.Header().Get("Content-Disposition"))
+							if err != nil || params["filename"] != name+"_З-007.pdf" {
+								t.Fatalf("download filename: %v %v", params, err)
+							}
+							if got, want := printPDFPages(t, api.Body.Bytes()), printPDFPages(t, browser.Body.Bytes()); !bytes.Equal(got, want) {
+								t.Fatal("REST PDF pages differ from UI PDF pages")
+							}
+						}
+					})
+				}
 			}
 		}
 	})

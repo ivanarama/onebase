@@ -29,10 +29,15 @@ func (h *handler) printDocumentV2(pdf bool) http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, "invalid id", "", 0)
 			return
 		}
-		form, err := url.PathUnescape(chi.URLParam(r, "form"))
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "invalid form name", "", 0)
-			return
+		form := chi.URLParam(r, "form")
+		// chi routes on RawPath when present; mounted RoutePath inherits
+		// that encoding. Otherwise it uses the already decoded URL.Path.
+		if r.URL.RawPath != "" {
+			form, err = url.PathUnescape(form)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid form name", "", 0)
+				return
+			}
 		}
 		ref, ok := h.reg.GetPrintFormRef(entity.Name, form)
 		if !ok || ref.Kind != runtime.PrintFormDeclarative || ref.Decl == nil {
