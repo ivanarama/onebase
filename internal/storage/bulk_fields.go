@@ -20,6 +20,19 @@ func (db *DB) GetFieldsByIDs(ctx context.Context, entity *metadata.Entity, ids [
 // label resolvers. The predicate is compiled into the same SELECT that reads
 // labels, so an inaccessible target row is never loaded and filtered in Go.
 func (db *DB) GetFieldsByIDsFiltered(ctx context.Context, entity *metadata.Entity, ids []uuid.UUID, fields []metadata.Field, rowFilter *Predicate) (map[string]map[string]any, error) {
+	return db.getFieldsByIDsFiltered(ctx, entity, ids, fields, rowFilter, false)
+}
+
+// GetByIDsFiltered reads complete objects with the same fields and types as
+// GetByID. The caller bounds the batch size; rowFilter is enforced in SQL.
+func (db *DB) GetByIDsFiltered(ctx context.Context, entity *metadata.Entity, ids []uuid.UUID, rowFilter *Predicate) (map[string]map[string]any, error) {
+	if entity == nil {
+		return map[string]map[string]any{}, nil
+	}
+	return db.getFieldsByIDsFiltered(ctx, entity, ids, entity.Fields, rowFilter, true)
+}
+
+func (db *DB) getFieldsByIDsFiltered(ctx context.Context, entity *metadata.Entity, ids []uuid.UUID, fields []metadata.Field, rowFilter *Predicate, fullObject bool) (map[string]map[string]any, error) {
 	result := make(map[string]map[string]any, len(ids))
 	if entity == nil || len(ids) == 0 {
 		return result, nil
@@ -29,6 +42,9 @@ func (db *DB) GetFieldsByIDsFiltered(ctx context.Context, entity *metadata.Entit
 	cols := []string{"id"}
 	for _, f := range fields {
 		cols = append(cols, metadata.ColumnName(f))
+	}
+	if fullObject {
+		cols = objectReadColumns(entity)
 	}
 	placeholders := make([]string, 0, len(ids))
 	args := make([]any, 0, len(ids))
@@ -67,10 +83,15 @@ func (db *DB) GetFieldsByIDsFiltered(ctx context.Context, entity *metadata.Entit
 			return nil, err
 		}
 		idStr := fmt.Sprintf("%v", normalizeValue(dest[0]))
-		row := make(map[string]any, len(fields)+1)
-		row["id"] = idStr
-		for i, f := range fields {
-			row[f.Name] = normalizeFieldValue(f, dest[i+1])
+		var row map[string]any
+		if fullObject {
+			row = objectReadValues(entity, dest)
+		} else {
+			row = make(map[string]any, len(fields)+1)
+			row["id"] = idStr
+			for i, f := range fields {
+				row[f.Name] = normalizeFieldValue(f, dest[i+1])
+			}
 		}
 		result[idStr] = row
 	}
