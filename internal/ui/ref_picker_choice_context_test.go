@@ -25,6 +25,11 @@ func TestRefPickerChoiceContextReadsCurrentControl(t *testing.T) {
 			},
 		},
 	}
+	form.Attributes = []*metadata.FormAttribute{{Name: "ЛокальноеНаправление", TypeRef: "CatalogRef.Направление"}}
+	form.Elements = append(form.Elements, &metadata.FormElement{
+		Kind: metadata.FormElementField, Name: "ЛокальноеПоле", DataPath: "Форма.ЛокальноеНаправление",
+		ChoiceContext: map[string]string{"Филиал": "Объект.Филиал"},
+	})
 	ent := &metadata.Entity{
 		Name: "Заявка", Kind: metadata.KindCatalog, Forms: []*metadata.FormModule{form},
 		Fields: []metadata.Field{
@@ -35,7 +40,7 @@ func TestRefPickerChoiceContextReadsCurrentControl(t *testing.T) {
 	data := map[string]any{
 		"Entity": ent, "Form": form, "IsNew": true,
 		"Values":      map[string]string{"Филиал": "old-branch", "Направление": ""},
-		"RefOptions":  map[string][]map[string]any{"Направление": {}},
+		"RefOptions":  map[string][]map[string]any{"Направление": {}, "ЛокальноеНаправление": {{"id": "direction-id", "_label": "Ремонт"}}},
 		"EnumOptions": map[string]any{}, "ChoiceOptions": map[string]any{},
 		"TPRefOptions": map[string]any{}, "TPEnumLabels": map[string]any{},
 		"TPEnumOrder": map[string]any{}, "TPRefMeta": map[string]any{},
@@ -48,6 +53,18 @@ func TestRefPickerChoiceContextReadsCurrentControl(t *testing.T) {
 	doc, err := html.Parse(strings.NewReader(rendered.String()))
 	if err != nil {
 		t.Fatal(err)
+	}
+	for _, name := range []string{"Направление", "ЛокальноеНаправление"} {
+		selectNode := findSelectByName(doc, name)
+		if selectNode == nil {
+			t.Fatalf("reference select %q not rendered", name)
+		}
+		if owner, _ := htmlAttribute(selectNode, "data-ref-source-entity"); owner != ent.Name {
+			t.Fatalf("%s: preview source entity = %q, want form owner %q", name, owner, ent.Name)
+		}
+		if target, _ := htmlAttribute(selectNode, "data-ref-entity"); target != "Направление" {
+			t.Fatalf("%s: reference target = %q", name, target)
+		}
 	}
 	var rawContext string
 	var walk func(*html.Node)

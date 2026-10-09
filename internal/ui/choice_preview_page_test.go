@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"golang.org/x/net/html"
 
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
@@ -321,5 +322,70 @@ func TestChoicePreviewOffPageKeyIgnored(t *testing.T) {
 	}
 	if len(resp.Items) != 1 {
 		t.Fatalf("состав строк изменился: %d", len(resp.Items))
+	}
+}
+
+// The source comes from the rendered owner form, not from a manually corrected request body.
+func TestChoicePreviewPageUsesRenderedOwner(t *testing.T) {
+	s, target, _, _ := previewFixture(t, `
+Функция ДляПодбора(Ссылки, Контекст) Экспорт
+    Рез = Новый Соответствие;
+    Для Каждого Стр Из Ссылки Цикл
+        Рез.Вставить(Строка(Стр.Ссылка), "памятка " + Контекст.Получить("Филиал"));
+    КонецЦикла;
+    Возврат Рез;
+КонецФункции`)
+	s.entitySvc = s.EntitySvc()
+	router := chi.NewRouter()
+	s.Mount(router)
+	formResponse := httptest.NewRecorder()
+	router.ServeHTTP(formResponse, httptest.NewRequest(http.MethodGet, "/ui/catalog/Заявка/new", nil))
+	if formResponse.Code != http.StatusOK {
+		t.Fatalf("form: %d %s", formResponse.Code, formResponse.Body.String())
+	}
+	doc, err := html.Parse(strings.NewReader(formResponse.Body.String()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	selectNode := findSelectByName(doc, "Направление")
+	if selectNode == nil {
+		t.Fatal("reference select absent")
+	}
+	owner, _ := htmlAttribute(selectNode, "data-ref-source-entity")
+	element, _ := htmlAttribute(selectNode, "data-ref-element")
+	refEntity, _ := htmlAttribute(selectNode, "data-ref-entity")
+	if owner != "Заявка" || refEntity != target.Name {
+		t.Fatalf("source=%q target=%q", owner, refEntity)
+	}
+	body := previewPageBody(element, map[string]string{"Филиал": "новый филиал"})
+	body["source"] = map[string]string{"entity": owner, "element": element}
+	raw, err := json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/ui/_ref-options/"+refEntity+"/page", strings.NewReader(string(raw))))
+	if response.Code != http.StatusOK {
+		t.Fatalf("page: %d %s", response.Code, response.Body.String())
+	}
+	var got struct {
+		Items []map[string]any `json:"items"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Items) != 1 || got.Items[0]["_preview"] != "памятка новый филиал" {
+		t.Fatalf("preview: %#v", got.Items)
+	}
+	// The target name still cannot impersonate the form owner at the public endpoint.
+	body["source"] = map[string]string{"entity": refEntity, "element": element}
+	raw, err = json.Marshal(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejected := httptest.NewRecorder()
+	router.ServeHTTP(rejected, httptest.NewRequest(http.MethodPost, "/ui/_ref-options/"+refEntity+"/page", strings.NewReader(string(raw))))
+	if rejected.Code != http.StatusBadRequest {
+		t.Fatalf("wrong owner accepted: %d %s", rejected.Code, rejected.Body.String())
 	}
 }
