@@ -45,10 +45,21 @@ func TestUnionReferenceReviewMatrix(t *testing.T) {
 		insert(ents[2], "С-А", branch)
 		insert(ents[2], "С-Б", other)
 		insert(ents[3], "О-А", division)
+		if err := db.Upsert(ctx, ents[4].Name, uuid.New(), map[string]any{"Филиал": "Локально"}, ents[4]); err != nil {
+			t.Fatal(err)
+		}
 		cases := []struct {
 			name, text, column string
 			want               []string
 		}{
+			{"bare local field shadows outer", `ВЫБРАТЬ (ВЫБРАТЬ Филиал ИЗ Справочник.Локальные КАК Л) КАК Имя ИЗ Справочник.Склады КАК С`, "имя", []string{"Локально", "Локально"}},
+			{"bare local reference shadows outer", `ВЫБРАТЬ (ВЫБРАТЬ Филиал ИЗ Справочник.Организации КАК О) КАК Имя ИЗ Справочник.Склады КАК С`, "имя", []string{"Р-А", "Р-А"}},
+			{"bare derived output shadows outer", `ВЫБРАТЬ (ВЫБРАТЬ Филиал ИЗ (ВЫБРАТЬ "Локально" КАК Филиал) КАК П) КАК Имя ИЗ Справочник.Склады КАК С`, "имя", []string{"Локально", "Локально"}},
+			{"bare derived star shadows outer", `ВЫБРАТЬ (ВЫБРАТЬ Филиал ИЗ (ВЫБРАТЬ ВСЕ Л.* ИЗ Справочник.Локальные КАК Л) КАК П) КАК Имя ИЗ Справочник.Склады КАК С`, "имя", []string{"Локально", "Локально"}},
+			{"bare derived nested star shadows outer", `ВЫБРАТЬ (ВЫБРАТЬ Филиал ИЗ (ВЫБРАТЬ ALL * ИЗ (ВЫБРАТЬ "Локально" КАК Филиал) КАК Е) КАК П) КАК Имя ИЗ Справочник.Склады КАК С`, "имя", []string{"Локально", "Локально"}},
+			{"bare projection remains display", `ВЫБРАТЬ Филиал КАК Имя ИЗ Справочник.Склады КАК С УПОРЯДОЧИТЬ ПО Имя`, "имя", []string{"Ф-А", "Ф-Б"}},
+			{"bare union all owners", `ВЫБРАТЬ (ВЫБРАТЬ Филиал) КАК Имя ИЗ Справочник.Склады КАК С ОБЪЕДИНИТЬ ВСЕ ВЫБРАТЬ (ВЫБРАТЬ Филиал) КАК ДругоеИмя ИЗ Справочник.Организации КАК С УПОРЯДОЧИТЬ ПО Имя`, "имя", []string{"Р-А", "Ф-А", "Ф-Б"}},
+			{"bare union distinct owners", `ВЫБРАТЬ (ВЫБРАТЬ Филиал) КАК Имя ИЗ Справочник.Склады КАК С ОБЪЕДИНИТЬ ВЫБРАТЬ (ВЫБРАТЬ Филиал) КАК ДругоеИмя ИЗ Справочник.Организации КАК С УПОРЯДОЧИТЬ ПО Имя`, "имя", []string{"Р-А", "Ф-А", "Ф-Б"}},
 			{"derived qualifier shadows outer reference", `ВЫБРАТЬ (ВЫБРАТЬ Филиал.Наименование ИЗ (ВЫБРАТЬ "Локально" КАК Наименование) КАК Филиал) КАК Имя ИЗ Справочник.Склады КАК С УПОРЯДОЧИТЬ ПО Имя`, "имя", []string{"Локально", "Локально"}},
 			{"derived bridge qualifier shadows outer reference", `ВЫБРАТЬ (ВЫБРАТЬ (ВЫБРАТЬ Филиал.Наименование) ИЗ (ВЫБРАТЬ "Локально" КАК Наименование) КАК Филиал) КАК Имя ИЗ Справочник.Склады КАК С УПОРЯДОЧИТЬ ПО Имя`, "имя", []string{"Локально", "Локально"}},
 			{"derived child", `ВЫБРАТЬ (ВЫБРАТЬ Филиал.Наименование ИЗ (ВЫБРАТЬ 1 КАК Один) КАК П) КАК Имя ИЗ Справочник.Склады КАК С УПОРЯДОЧИТЬ ПО Имя`, "имя", []string{"Ф-А", "Ф-Б"}},
@@ -118,6 +129,66 @@ func TestUnionReferenceReviewMatrix(t *testing.T) {
 				t.Fatalf("rows = %v; want %v\nSQL: %s", got, want, res.SQL)
 			}
 		})
+		for _, child := range []string{
+			`ВЫБРАТЬ Филиал`,
+			`ВЫБРАТЬ ВСЕ Филиал`,
+			`SELECT ALL Филиал`,
+			`ВЫБРАТЬ РАЗЛИЧНЫЕ Филиал`,
+			`SELECT DISTINCT Филиал`,
+			`ВЫБРАТЬ Филиал ИЗ (ВЫБРАТЬ 1 КАК Один) КАК П`,
+			`ВЫБРАТЬ (ВЫБРАТЬ Филиал) ИЗ (ВЫБРАТЬ 1 КАК Один) КАК П`,
+			`ВЫБРАТЬ Филиал ИЗ (ВЫБРАТЬ ВСЕ Ф.Наименование ИЗ Справочник.Филиалы КАК Ф ГДЕ Ф.Наименование = "Ф-А") КАК П`,
+			`ВЫБРАТЬ Филиал ИЗ (ВЫБРАТЬ ALL Ф.* ИЗ Справочник.Филиалы КАК Ф ГДЕ Ф.Наименование = "Ф-А") КАК П`,
+		} {
+			t.Run("bare outer reference/"+child, func(t *testing.T) {
+				text := `ВЫБРАТЬ С.Наименование КАК Имя, (` + child + `) КАК ФилиалИмя ИЗ Справочник.Склады КАК С УПОРЯДОЧИТЬ ПО Имя`
+				res, err := query.Compile(text, query.CompileOpts{Entities: ents, Dialect: db.Dialect()})
+				if err != nil {
+					t.Fatal(err)
+				}
+				rows, cols, err := query.Run(ctx, db, &res)
+				if err != nil {
+					t.Fatalf("run: %v\nSQL: %s", err, res.SQL)
+				}
+				if !reflect.DeepEqual(cols, []string{"имя", "филиалимя"}) {
+					t.Fatalf("columns = %v", cols)
+				}
+				var got [][2]string
+				for _, row := range rows {
+					got = append(got, [2]string{fmt.Sprint(row["имя"]), fmt.Sprint(row["филиалимя"])})
+				}
+				want := [][2]string{{"С-А", "Ф-А"}, {"С-Б", "Ф-Б"}}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("rows = %v; want %v\nSQL: %s", got, want, res.SQL)
+				}
+			})
+		}
+		for _, child := range []string{
+			`ВЫБРАТЬ Филиал ИЗ (ВЫБРАТЬ СУММА(1)) КАК П`,
+			`ВЫБРАТЬ Филиал ИЗ (ВЫБРАТЬ 1 КАК Один) КАК Филиал`,
+			`ВЫБРАТЬ Филиал ИЗ Справочник.Разделы КАК Филиал`,
+			`ВЫБРАТЬ 1 КАК Филиал`,
+		} {
+			t.Run("bare lookup fence/"+child, func(t *testing.T) {
+				res, err := query.Compile(`ВЫБРАТЬ (`+child+`) КАК Имя ИЗ Справочник.Склады КАК С`, query.CompileOpts{Entities: ents, Dialect: db.Dialect()})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(res.SQL, "ref_филиал") {
+					t.Fatalf("declaration or unknown local output exposed outer reference: %s", res.SQL)
+				}
+				// A source alias can be a composite value on PostgreSQL. Either
+				// a local result or a database refusal is valid; outer data is not.
+				rows, _, err := query.Run(ctx, db, &res)
+				if err == nil {
+					for _, row := range rows {
+						if got := fmt.Sprint(row["имя"]); got == "Ф-А" || got == "Ф-Б" {
+							t.Fatalf("outer reference leaked through local declaration: %v", rows)
+						}
+					}
+				}
+			})
+		}
 		// Known local names and unprovable outputs must not read an outer target.
 		// Invalid local navigation must remain invalid.
 		for _, tc := range []struct{ name, projection string }{

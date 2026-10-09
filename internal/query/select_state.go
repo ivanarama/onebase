@@ -58,8 +58,22 @@ func (tr *translator) initSelectStates() {
 	// owning SELECT. Resolve the name through parents, never UNION siblings;
 	// a child's own field or source qualifier hides an outer reference.
 	for pos, token := range tr.tokens {
-		if token.kind != tIdent || pos+1 >= len(tr.tokens) || tr.tokens[pos+1].kind != tDot {
+		if token.kind != tIdent {
 			continue
+		}
+		// A bare reference in a child projection uses its owner's display
+		// column too. Prepare that JOIN before the owner's FROM is emitted.
+		// Output aliases and function names are declarations, not field reads.
+		if pos+1 >= len(tr.tokens) || tr.tokens[pos+1].kind != tDot {
+			if tr.sourceCtx.sectionAt(pos) != sectionSelect ||
+				(pos+1 < len(tr.tokens) && tr.tokens[pos+1].kind == tLParen) {
+				continue
+			}
+			if pos > 0 {
+				if kw, ok := sqlKW(tr.tokens[pos-1].val); ok && kw == "AS" {
+					continue
+				}
+			}
 		}
 		if pos > 0 && tr.tokens[pos-1].kind == tDot {
 			continue // qualified fields keep their local prescan path
@@ -67,6 +81,14 @@ func (tr *translator) initSelectStates() {
 		id, ok := tr.sourceCtx.scopeIDAt(pos)
 		if !ok {
 			continue
+		}
+		if pos+1 >= len(tr.tokens) || tr.tokens[pos+1].kind != tDot {
+			scope := tr.sourceCtx.scopes[id]
+			if _, derived := scope.derivedAliases[scope.mainTable]; scope.sourceCount > 0 && !derived {
+				// Keep the existing bare-field path for a physical child FROM.
+				// This compatibility fix concerns source-less/derived children.
+				continue
+			}
 		}
 		name := lowerFast(token.val)
 		owner := tr.referenceOwner(id, name)
