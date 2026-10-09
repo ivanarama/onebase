@@ -1,8 +1,10 @@
 package interpreter_test
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
 	"github.com/ivantit66/onebase/internal/dsl/parser"
@@ -56,5 +58,41 @@ func BenchmarkInterpreter_Parse(b *testing.B) {
 		if _, err := parser.New(lexer.New(benchSrc, "bench.os")).ParseProgram(); err != nil {
 			b.Fatalf("parse: %v", err)
 		}
+	}
+}
+
+// BenchmarkInterpreter_UserProcedureCalls isolates repeated DSL calls from
+// parsing and arithmetic. Each operation invokes 100 helpers with a parameter.
+func BenchmarkInterpreter_UserProcedureCalls(b *testing.B) {
+	src := "Процедура Старт()\n" + strings.Repeat("Касание(\"value\");\n", 100) + `КонецПроцедуры
+Процедура Касание(value)
+	Возврат;
+КонецПроцедуры`
+	prog, err := parser.New(lexer.New(src, "calls.os")).ParseProgram()
+	if err != nil {
+		b.Fatal(err)
+	}
+	for _, strict := range []bool{false, true} {
+		name := "legacy"
+		if strict {
+			name = "strict"
+		}
+		b.Run(name, func(b *testing.B) {
+			in := interpreter.New()
+			in.StrictLexicalScope = strict
+			in.LookupProc = func(name string) *ast.ProcedureDecl {
+				if strings.EqualFold(name, "Касание") {
+					return prog.Procedures[1]
+				}
+				return nil
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for n := 0; n < b.N; n++ {
+				if _, err := in.Call(prog.Procedures[0], nil, nil); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
 	}
 }
