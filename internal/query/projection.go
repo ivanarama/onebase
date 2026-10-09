@@ -140,7 +140,7 @@ func topLevelFrom(tokens []tok, start int) int {
 }
 
 // splitProjectionItems делит список выборки по запятым нулевой глубины,
-// отбрасывая ведущее РАЗЛИЧНЫЕ.
+// отбрасывая ведущие РАЗЛИЧНЫЕ/DISTINCT и ВСЕ/ALL.
 func splitProjectionItems(tokens []tok) [][]tok {
 	var items [][]tok
 	depth, from := 0, 0
@@ -169,11 +169,11 @@ func splitProjectionItems(tokens []tok) [][]tok {
 	return items
 }
 
-// trimProjectionItem снимает модификаторы выборки (РАЗЛИЧНЫЕ), не относящиеся к
-// самому выражению колонки.
+// trimProjectionItem снимает модификаторы выборки (РАЗЛИЧНЫЕ/DISTINCT, ВСЕ/ALL),
+// не относящиеся к самому выражению колонки.
 func trimProjectionItem(item []tok) []tok {
 	for len(item) > 0 && item[0].kind == tIdent {
-		if kw, isKW := sqlKW(item[0].val); isKW && kw == "DISTINCT" {
+		if kw, isKW := sqlKW(item[0].val); isKW && (kw == "DISTINCT" || kw == "ALL") {
 			item = item[1:]
 			continue
 		}
