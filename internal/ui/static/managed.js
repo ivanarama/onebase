@@ -582,6 +582,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       const hiddenNames = obManagedHiddenColumnNames(tbody);
       const rows = tps[tpName] || [];
       const refOpts = (window._tpRefOpts && window._tpRefOpts[tpName]) || {};
+      var choices={};try{choices=JSON.parse(tbody.getAttribute('data-tp-choice')||'{}')||{};}catch(e){}
       const tpEnumLabels = (window._tpEnumLabels && window._tpEnumLabels[tpName]) || {};
       const tpEnumOrder = (window._tpEnumOrder && window._tpEnumOrder[tpName]) || {};
       const hasCmd = tbody.getAttribute('data-tp-cmd') === '1';
@@ -621,16 +622,19 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
           const v = row[f.name];
           const isRef = f.type === 'reference' || f.type.indexOf('reference') === 0;
           const isEnum = f.type === 'enum' || f.type.indexOf('enum') === 0;
-          if (isRef && refOpts[f.name]) {
+          if (isRef && (refOpts[f.name] || choices[f.name])) {
             const sel = document.createElement('select');
             sel.name = 'tp.' + tpName + '.' + idx + '.' + f.name;
+            var choice=choices[f.name];
+            if(choice) {sel.setAttribute('data-ref-choice-context',choice);sel.setAttribute('data-ref-row-id',String(idx));sel.setAttribute('data-ref-entity',f.ref.split(':').pop());}
             const empty = document.createElement('option');
             empty.value = ''; empty.textContent = '— выбрать —';
             sel.appendChild(empty);
             // v приходит сериализованным как UUID-string (serializeTablePartRows),
             // но на всякий случай учитываем и legacy-формат с GetRefUUID-методом.
             const cur = (v && typeof v === 'object' && v.GetRefUUID) ? v.GetRefUUID() : (v == null ? '' : String(v));
-            refOpts[f.name].forEach(function(opt){
+            (refOpts[f.name] || []).forEach(function(opt){
+              if(choice && String(opt.id)!==cur)return;
               const o = document.createElement('option');
               o.value = opt.id;
               o.textContent = opt._label;
@@ -2518,6 +2522,9 @@ obManagedReady(obManagedInitDelegates);
     var isOpen = false, selectedId = '', defaultValue = '';
     var refEntity = (args.column && args.column.refEntity) || '';
     var refFilter = (args.column && args.column.refFilter) || '';
+    var choiceContext = (args.column && args.column.choiceContext) || '';
+    function choiceCarrier() { return window.obTPChoiceCarrier(choiceContext, args.item, args.row, args.container.closest('form'), args.column.field, refEntity, refFilter); }
+    function requestParam() { return choiceContext ? window.obRefChoiceSnapshot(choiceCarrier()).query : filterParam(); }
     var initialFilter = '';
     try {
       if (refFilter) {
@@ -2536,7 +2543,9 @@ obManagedReady(obManagedInitDelegates);
     var serverFilter = '';
     var shown = [];        // что сейчас отрисовано в списке (для ↑/↓ и Enter)
     var activeIdx = -1;    // подсвеченный пункт списка, -1 — нет подсветки
-    var searchTimer = null, searchSeq = 0;
+    var searchTimer = null, searchSeq = 0, lastChoiceRequest = "";
+    function choiceSourceChanged(){if(!choiceContext || !input || lastChoiceRequest===requestParam())return;serverRows=[];buildList(input.value);searchServer(input.value);}
+    if(choiceContext){document.addEventListener("change",choiceSourceChanged);window._obTPChoiceEditorRefresh=choiceSourceChanged;}
 
     function label(id) {
       for (var k = 0; k < refOptsList.length; k++) {
@@ -2570,8 +2579,13 @@ obManagedReady(obManagedInitDelegates);
         seen[key] = true;
         out.push({id: o.id, _label: lbl});
       }
-      var currentFilter = filterParam();
-      for (var i = 0; i < refOptsList.length; i++) {
+      var currentFilter = requestParam();
+      if(choiceContext && args.column.choiceSeeds) {
+        var seed=args.column.choiceSeeds.get(args.item);
+        var snapshot=window.obRefChoiceSnapshot(choiceCarrier());
+        if(seed && seed.fingerprint===snapshot.fingerprint)seed.items.forEach(function(o){if(!o._choice_outside_filter)push(o);});
+      }
+      for (var i = 0; !choiceContext && i < refOptsList.length; i++) {
         if ((refOptsList[i]._ownerFilter || initialFilter) === currentFilter) push(refOptsList[i]);
       }
       if (currentFilter === serverFilter) {
@@ -2671,13 +2685,14 @@ obManagedReady(obManagedInitDelegates);
     function searchServer(q) {
       if (!refEntity || !window.fetch) return;
       var seq = ++searchSeq;
-      var requestFilter = filterParam();
+      var requestFilter = requestParam();
+      lastChoiceRequest=requestFilter;
       var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) +
                 '?limit=50&q=' + encodeURIComponent(q || '') + requestFilter;
       fetch(url, {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
         .then(function(resp) { if (!resp.ok) throw new Error('HTTP ' + resp.status); return resp.json(); })
         .then(function(data) {
-          if (seq !== searchSeq || requestFilter !== filterParam()) return; // ответ устарел
+          if (seq !== searchSeq || requestFilter !== requestParam()) return; // ответ устарел
           var keep = (activeIdx >= 0 && shown[activeIdx]) ? shown[activeIdx].id : '';
           serverRows = ((data && data.items) || []).map(function(row) {
             return {id: row && row.id != null ? String(row.id) : '', _label: String((row && row._label) || '')};
@@ -2722,6 +2737,7 @@ obManagedReady(obManagedInitDelegates);
       if (typeof window.openRefPicker !== 'function') return;
       var selEl = document.createElement('select');
       selEl.setAttribute('data-ref-entity', refEntity);
+      if(choiceContext) { selEl.setAttribute('data-ref-choice-context',choiceContext); selEl.setAttribute('data-ref-row-id',String(args.row)); selEl._obChoiceRow=args.item; selEl._obChoiceForm=args.container.closest('form'); }
       if (refFilter) selEl.setAttribute('data-ref-filter', refFilter);
       // «+ Создать» в форме подбора включается тем же признаком колонки, что и
       // в автоформе (allow_inline_create у поля ТЧ). Без переноса на временный
@@ -2734,6 +2750,9 @@ obManagedReady(obManagedInitDelegates);
         o.value = opts[k].id;
         o.textContent = opts[k]._label;
         selEl.appendChild(o);
+      }
+      if(choiceContext && selectedId && !opts.some(function(o){return String(o.id)===String(selectedId);})) {
+        var current=document.createElement('option');current.value=selectedId;current.textContent=label(selectedId)||selectedId;current.setAttribute('data-ob-choice-outside-filter','1');selEl.appendChild(current);
       }
       selEl.value = selectedId;
       selEl.addEventListener('change', function() {
@@ -2833,6 +2852,7 @@ obManagedReady(obManagedInitDelegates);
       // список уже уничтоженного редактора.
       if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
       searchSeq++;
+      if(choiceContext){document.removeEventListener("change",choiceSourceChanged);if(window._obTPChoiceEditorRefresh===choiceSourceChanged)window._obTPChoiceEditorRefresh=null;}
       closeList();
       isOpen = false;
       if (list && list.parentElement) list.remove();
@@ -2846,6 +2866,7 @@ obManagedReady(obManagedInitDelegates);
       defaultValue = v;
       selectedId = refId(v);
       input.value = label(selectedId);
+      if(choiceContext) searchServer('');
     };
     this.serializeValue = function() { resolveTyped(); return selectedId; };
     this.applyValue = function(item, state) { item[args.column.field] = state; };
@@ -3665,7 +3686,53 @@ obManagedReady(obManagedInitDelegates);
       });
     });
     if (origApplyTP) origApplyTP(tps);
+    if(window.obAttachTPChoiceContexts)window.obAttachTPChoiceContexts(document);
+    if(window.obRefreshChoiceFilters)window.obRefreshChoiceFilters();
+    if(window.obRefreshTPChoiceFilters)window.obRefreshTPChoiceFilters();
   };
+
+  // BEGIN onebase-tp-choice-refresh
+  var tpChoiceStates = new WeakMap();
+  window.obRefreshTPChoiceFilters = function() {
+    if(window._obTPChoiceEditorRefresh)window._obTPChoiceEditorRefresh();
+    var jobs=[];
+    (window._obGridViews || []).forEach(function(g){
+      if(g.readOnly || !window.fetch || !window.obTPChoiceCarrier)return;
+      var items=g.dataView.getItems();
+      items.forEach(function(row,index){
+        var states=tpChoiceStates.get(row);
+        if(!states){states={};tpChoiceStates.set(row,states);}
+        g.columns.forEach(function(col){
+          if(!col.choiceContext)return;
+          var carrier=window.obTPChoiceCarrier(col.choiceContext,row,index,g.div.closest('form'),col.field,col.refEntity,col.refFilter);
+          var snapshot=window.obRefChoiceSnapshot(carrier);
+          var state=states[col.field] || (states[col.field]={seq:0});
+          var key=snapshot.fingerprint+'|'+snapshot.selected;
+          if(state.pending===key || state.applied===key)return;
+          var seq=++state.seq;state.pending=key;
+          var picker=document.getElementById('_ref-picker-modal');
+          if(picker && window._rpTarget && window._rpTarget._obChoiceRow===row && typeof picker._obChoiceReload==='function')picker._obChoiceReload();
+          var job=window.fetch('/ui/_ref-options/'+encodeURIComponent(col.refEntity)+'?limit=50'+snapshot.query,{credentials:'same-origin',headers:{Accept:'application/json'}})
+            .then(function(resp){if(!resp.ok)throw new Error('HTTP '+resp.status);return resp.json();})
+            .then(function(data){
+              if(state.seq!==seq || g.dataView.getItems().indexOf(row)<0)return;
+              var current=window.obRefChoiceSnapshot(carrier);
+              if(current.fingerprint!==snapshot.fingerprint || current.selected!==snapshot.selected){state.pending='';return window.obRefreshTPChoiceFilters();}
+              if(snapshot.selected && typeof data.selected_allowed!=='boolean')throw new Error('missing selected_allowed');
+              state.pending='';state.applied=key;g.div.removeAttribute('data-ob-choice-error');
+              if(snapshot.selected && data.selected_allowed===false){
+                row[col.field]='';g.grid.invalidate();g.grid.render();
+                if(window.obSetManagedFormDirty)window.obSetManagedFormDirty(true);
+                return window.obRefreshTPChoiceFilters();
+              }
+            }).catch(function(){if(state.seq===seq){state.pending='';g.div.setAttribute('data-ob-choice-error','1');}});
+          jobs.push(job);
+        });
+      });
+    });
+    return Promise.all(jobs);
+  };
+  // END onebase-tp-choice-refresh
 
   // setupGrid инициализирует один грид. Вынесено из цикла в отдельную функцию,
   // чтобы каждый грид замыкал свои grid/dataView/tpName (иначе при нескольких
@@ -3699,6 +3766,9 @@ obManagedReady(obManagedInitDelegates);
     // алфавитный, а список должен идти в порядке объявления values:.
     var enumOrder = (window._tpEnumOrder && window._tpEnumOrder[tpName]) || {};
     var columns = buildColumns(colsRaw, refOpts, enumLabels, enumOrder);
+    var choiceContexts={};
+    try { choiceContexts=JSON.parse(div.getAttribute('data-sg-choice') || '{}') || {}; } catch(e) {}
+    columns.forEach(function(col){col.choiceContext=choiceContexts[col.field] || '';});
     // _ord — исходный порядок строки. Клиентская сортировка меняет ПОРЯДОК
     // ОТОБРАЖЕНИЯ (dataView.sort), но при сохранении (obGridSync) строки
     // сериализуются по _ord — чтобы сортировка «для просмотра» не переставляла
@@ -3751,8 +3821,18 @@ obManagedReady(obManagedInitDelegates);
       columnsMeta: colsRaw, refOpts: refOpts, div: div, readOnly: readOnly,
       tpName: tpName
     };
+    var choiceRows={};try{choiceRows=JSON.parse(div.getAttribute('data-sg-choice-rows')||'{}')||{};}catch(e){}
+    columns.forEach(function(col){
+      if(!col.choiceContext || !window.obTPChoiceCarrier)return;
+      col.choiceSeeds=new WeakMap();
+      dataView.getItems().forEach(function(row,index){
+        var carrier=window.obTPChoiceCarrier(col.choiceContext,row,index,div.closest('form'),col.field,col.refEntity,col.refFilter);
+        col.choiceSeeds.set(row,{fingerprint:window.obRefChoiceSnapshot(carrier).fingerprint,items:(choiceRows[col.field]||[])[index]||[]});
+      });
+    });
     div._obGridState = gridState;
     window._obGridViews.push(gridState);
+    if(Object.keys(choiceContexts).length)Promise.resolve().then(function(){window.obRefreshTPChoiceFilters();});
     var registered = window._obGrids[tpName];
     if (!registered || (!readOnly && registered.readOnly)) {
       window._obGrids[tpName] = gridState;
@@ -3765,7 +3845,7 @@ obManagedReady(obManagedInitDelegates);
     }
 
    try {
-    dataView.onRowCountChanged.subscribe(function() { grid.updateRowCount(); grid.render(); updateTotals(gridState); });
+    dataView.onRowCountChanged.subscribe(function() { grid.updateRowCount(); grid.render(); updateTotals(gridState); if(window.obRefreshTPChoiceFilters)window.obRefreshTPChoiceFilters(); });
     dataView.onRowsChanged.subscribe(function(e, args) { grid.invalidateRows(args.rows); grid.render(); });
 
     // Сортировка по клику на заголовок (колонки sortable). Порядок ОТОБРАЖЕНИЯ;
@@ -3823,6 +3903,7 @@ obManagedReady(obManagedInitDelegates);
         }
       }
       updateTotals(gridState);
+      if(window.obRefreshTPChoiceFilters)window.obRefreshTPChoiceFilters();
     });
 
     // Ячейка не прошла проверку (например, в колонке-ссылке набрано то, чего нет

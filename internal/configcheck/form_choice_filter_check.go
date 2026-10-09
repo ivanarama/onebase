@@ -62,8 +62,8 @@ func walkChoiceFilterYAML(elements *yaml.Node, path, file string, issues *[]Issu
 			switch key.Value {
 			case "choice_filter":
 				validateChoiceFilterYAML(value, elementPath+".choice_filter", file, issues)
-			case "children":
-				walkChoiceFilterYAML(value, elementPath+".children", file, issues)
+			case "children", "columns":
+				walkChoiceFilterYAML(value, elementPath+"."+key.Value, file, issues)
 			}
 		}
 	}
@@ -186,7 +186,8 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 					})
 				}
 
-				if el.Kind != metadata.FormElementField {
+				_, tpName := metadata.FormChoiceTablePart(form, el)
+				if el.Kind != metadata.FormElementField && !(tpName != "" && el.Kind == metadata.FormElementColumn) {
 					add("choice_filter допустим только у kind: %s", metadata.FormElementField)
 				}
 				id := strings.TrimSpace(el.ID)
@@ -205,6 +206,13 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 				}
 
 				target, ok := formChoiceRefSource(owner, form, el.DataPath, entities)
+				if tpName != "" {
+					field, _ := metadata.FormChoiceTPField(owner, form, el)
+					if field != nil {
+						target = entities[strings.ToLower(field.RefEntity)]
+						ok = target != nil
+					}
+				}
 				if !ok || target == nil || target.Kind != metadata.KindCatalog {
 					add("data_path %q не выбирает ссылку на справочник", el.DataPath)
 					return true
@@ -295,7 +303,7 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 							}
 							continue
 						}
-						source, problem := formChoiceSourceEntity(owner, form, cond.From, entities)
+						source, problem := formChoiceColumnSourceEntity(owner, form, el, cond.From, entities)
 						if problem != "" {
 							add("%s: %s", where, problem)
 							continue
@@ -313,7 +321,7 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 						}
 						// Источник — тот же общий разбор, что у eq: прямая ссылка
 						// формы или один переход по ссылке (план 183, срез B1).
-						source, problem := formChoiceSourceEntity(owner, form, cond.From, entities)
+						source, problem := formChoiceColumnSourceEntity(owner, form, el, cond.From, entities)
 						if problem != "" {
 							add("%s: %s", where, problem)
 							continue
@@ -330,7 +338,7 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 							continue
 						}
 						hierarchy := entities[strings.ToLower(targetField.RefEntity)]
-						source, problem := formChoiceSourceEntity(owner, form, cond.From, entities)
+						source, problem := formChoiceColumnSourceEntity(owner, form, el, cond.From, entities)
 						if targetField.RefEntity == "" || hierarchy == nil || hierarchy.Kind != metadata.KindCatalog || !hierarchy.Hierarchical {
 							add("%s: %s.%s не ссылается на иерархический справочник", where, target.Name, targetField.Name)
 							continue
@@ -496,4 +504,34 @@ func entityFieldFold(entity *metadata.Entity, name string) *metadata.Field {
 		}
 	}
 	return nil
+}
+
+func formChoiceColumnSourceEntity(owner *metadata.Entity, form *metadata.FormModule, el *metadata.FormElement, path string, entities map[string]*metadata.Entity) (*metadata.Entity, string) {
+	_, tpName := metadata.FormChoiceTablePart(form, el)
+	if tpName == "" {
+		return formChoiceSourceEntity(owner, form, path, entities)
+	}
+	source, ok := metadata.ParseFormChoiceSource(path)
+	if !ok || source.Deep() {
+		return nil, "from колонки ТЧ должен содержать ровно два сегмента"
+	}
+	if strings.EqualFold(source.Root, "Объект") || strings.EqualFold(source.Root, "Форма") {
+		return formChoiceSourceEntity(owner, form, path, entities)
+	}
+	if !strings.EqualFold(source.Root, tpName) {
+		return nil, "префикс ТЧ from должен совпадать с ТЧ колонки"
+	}
+	for _, tp := range owner.TableParts {
+		if !strings.EqualFold(tp.Name, tpName) {
+			continue
+		}
+		for _, field := range tp.Fields {
+			if strings.EqualFold(field.Name, source.Field) && field.RefEntity != "" {
+				if entity := entities[strings.ToLower(field.RefEntity)]; entity != nil {
+					return entity, ""
+				}
+			}
+		}
+	}
+	return nil, "row-local from не является ссылочной колонкой этой ТЧ"
 }

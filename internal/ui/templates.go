@@ -1129,6 +1129,31 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
 		"managedTPColumnPlan": managedTPColumnPlan,
+		"tpChoiceContexts": func(ctx map[string]any, tp string) map[string]string {
+			all, _ := ctx["TPChoices"].(map[string]*tpChoiceRender)
+			if all[tp] != nil {
+				return all[tp].Contexts
+			}
+			return nil
+		},
+		"tpChoiceRows": func(ctx map[string]any, tp string) map[string][][]map[string]any {
+			all, _ := ctx["TPChoices"].(map[string]*tpChoiceRender)
+			if all[tp] != nil {
+				return all[tp].Options
+			}
+			return nil
+		},
+		"tpChoiceOptions": func(ctx map[string]any, tp, field string, row int, fallback map[string][]map[string]any) []map[string]any {
+			all, _ := ctx["TPChoices"].(map[string]*tpChoiceRender)
+			if all[tp] != nil && all[tp].Contexts[field] != "" {
+				rows := all[tp].Options[field]
+				if row < len(rows) {
+					return rows[row]
+				}
+				return nil
+			}
+			return fallback[field]
+		},
 		// managedTPFieldsAttr — значение data-tp-fields в порядке отрисовки
 		// ячеек: applyTableParts перестраивает строку по этому списку, и любое
 		// расхождение порядка развалило бы соответствие ячеек колонкам.
