@@ -4670,8 +4670,7 @@ function openRefPicker(selOrId) {
   // rpPreviewField — имя реквизита области просмотра; приезжает вместе со
   // строками (choice_preview сущности). Пусто — области просмотра нет.
   var rpPreviewField = '';
-  // сервер тем же санитайзером, что и остальной richtext платформы; клиент сам
-  // ничего не разрешает и в обычном режиме ставит текст, а не HTML.
+  // Preview всегда обычный текст, даже для реквизита richtext.
   function rpApplyPreviewLayout() {
     var box = document.getElementById('_rp-preview');
     var card = document.getElementById('_rp-card');
@@ -4701,14 +4700,8 @@ function openRefPicker(selOrId) {
     var text = (rpActive >= 0 && items[rpActive]) ? (items[rpActive].getAttribute('data-preview') || '') : '';
     // Пустой текст — прочерк, а не исчезающая колонка: строка без пояснения не
     // должна ни двигать вёрстку, ни оставлять на экране чужой текст.
-    if (false) {
-      box.innerHTML = text;
-    } else {
-      box.textContent = text || '—';
-    }
-    // Размеченный текст приносит свои абзацы и списки — переносы по пробелам
-    // ему только мешают; у обычного текста они, наоборот, единственный способ
-    // сохранить строки.
+    box.textContent = text || '—';
+    // Сохраняем переносы строк и пробелы обычного текста.
     box.style.whiteSpace = 'pre-wrap';
     box.style.color = text ? '#334155' : '#cbd5e1';
   }
