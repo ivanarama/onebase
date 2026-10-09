@@ -59,7 +59,16 @@ func navDOMID(context, id string) string {
 func (s *Server) buildNav(r *http.Request, sub string) []navGroup {
 	if sub == "" {
 		if hp := s.reg.HomePage(); hp != nil {
-			return s.buildNavigation(r, hp.Menu, hp.Nav, true, "")
+			contents := hp.Nav
+			// nav_by_role: у пользователя роль из блока — меню его ролей вместо
+			// общего nav; пустой состав — пустое меню, а не «все объекты».
+			if byRole, ok := hp.NavForRoles(homeNavRoles(r)); ok {
+				if byRole.IsEmpty() {
+					return nil
+				}
+				contents = byRole
+			}
+			return s.buildNavigation(r, hp.Menu, contents, true, "")
 		}
 		return s.buildFlatNav(r)
 	}
@@ -67,6 +76,22 @@ func (s *Server) buildNav(r *http.Request, sub string) []navGroup {
 		return s.buildNavForSubsystem(r, current, sub)
 	}
 	return s.buildFlatNav(r)
+}
+
+// homeNavRoles — роли, по которым выбирается меню «Главной». Администратор
+// (и открытый деплой без пользователя) видит общий nav.
+func homeNavRoles(r *http.Request) []string {
+	u := auth.UserFromContext(r.Context())
+	if u == nil || u.IsAdmin {
+		return nil
+	}
+	names := make([]string, 0, len(u.Roles))
+	for _, role := range u.Roles {
+		if role != nil {
+			names = append(names, role.Name)
+		}
+	}
+	return names
 }
 
 func (s *Server) buildNavForSubsystem(r *http.Request, sub *metadata.Subsystem, name string) []navGroup {

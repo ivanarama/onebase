@@ -2,6 +2,7 @@ package metadata
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -158,5 +159,34 @@ func TestApplyDefaults(t *testing.T) {
 	}
 	if h3.Layout != "rows" {
 		t.Errorf("explicit layout overwritten: %q", h3.Layout)
+	}
+}
+
+func TestLoadHomePage_NavByRole(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "home_page.yaml")
+	writeFile(t, path, `nav:
+  documents: [Звонок, Заявка]
+nav_by_role:
+  Кладовщик:
+    documents: [Ордер]
+    reports: [Остатки]
+  МенеджерСклада:
+    documents: [Ордер, Перемещение]
+  Гость: {}
+`)
+	hp, err := LoadHomePage(path)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	got, ok := hp.NavForRoles([]string{"Кладовщик", "менеджерсклада"})
+	if !ok || strings.Join(got.Documents, ",") != "Ордер,Перемещение" || strings.Join(got.Reports, ",") != "Остатки" {
+		t.Errorf("объединение ролей = %+v, ok=%v", got, ok)
+	}
+	if got, ok := hp.NavForRoles([]string{"Гость"}); !ok || !got.IsEmpty() {
+		t.Errorf("пустой состав роли: %+v, ok=%v — ждали пустой и ok", got, ok)
+	}
+	if _, ok := hp.NavForRoles([]string{"Оператор"}); ok {
+		t.Error("роль не из nav_by_role — должен действовать общий nav")
 	}
 }

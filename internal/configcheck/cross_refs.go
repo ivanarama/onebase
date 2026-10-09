@@ -165,6 +165,39 @@ func CheckCrossRefs(proj *project.Project, roles []*auth.Role) []Issue {
 		checkRefs("config/home_page.yaml", "home_page.nav", "Главная страница", c.Journals, journals, "журнал")
 	}
 
+	// Главная страница → nav_by_role: роли и объекты их составов. Опечатка в
+	// имени роли молча оставила бы пользователю общий nav.
+	if proj.HomePage != nil && len(proj.HomePage.NavByRole) > 0 {
+		knownRoles := nameSet{}
+		for _, r := range roles {
+			if r != nil {
+				knownRoles.add(r.Name)
+			}
+		}
+		names := make([]string, 0, len(proj.HomePage.NavByRole))
+		for name := range proj.HomePage.NavByRole {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		for _, name := range names {
+			object := "home_page.nav_by_role." + name
+			if len(roles) > 0 && !knownRoles.has(name) {
+				add("config/home_page.yaml", object, "Главная страница", fmt.Sprintf("роль %q не найдена", name))
+			}
+			c := proj.HomePage.NavByRole[name]
+			if c == nil {
+				continue
+			}
+			checkRefs("config/home_page.yaml", object, "Главная страница", c.Documents, docs, "документ")
+			checkRefs("config/home_page.yaml", object, "Главная страница", c.Catalogs, cats, "справочник")
+			checkRefs("config/home_page.yaml", object, "Главная страница", c.Reports, reports, "отчёт")
+			checkRefs("config/home_page.yaml", object, "Главная страница", c.InfoRegs, inforegs, "регистр сведений")
+			checkRefs("config/home_page.yaml", object, "Главная страница", c.Registers, registers, "регистр")
+			checkRefs("config/home_page.yaml", object, "Главная страница", c.Processors, processors, "обработка")
+			checkRefs("config/home_page.yaml", object, "Главная страница", c.Journals, journals, "журнал")
+		}
+	}
+
 	// Печатные формы → документ/справочник-источник и табличная часть.
 	for _, pf := range proj.PrintForms {
 		// «general» — зарезервированный источник для форм без привязки к
