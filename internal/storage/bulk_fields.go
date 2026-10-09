@@ -46,6 +46,10 @@ func (db *DB) getFieldsByIDsFiltered(ctx context.Context, entity *metadata.Entit
 	if fullObject {
 		cols = objectReadColumns(entity)
 	}
+	const alias = "batch_object"
+	for i, col := range cols {
+		cols[i] = alias + "." + col
+	}
 	placeholders := make([]string, 0, len(ids))
 	args := make([]any, 0, len(ids))
 	for i, id := range ids {
@@ -53,8 +57,10 @@ func (db *DB) getFieldsByIDsFiltered(ctx context.Context, entity *metadata.Entit
 		args = append(args, idArg(d, id))
 	}
 
-	where := fmt.Sprintf("id IN (%s)", strings.Join(placeholders, ", "))
-	if cond, condArgs, _, err := PredicateSQL(d, entity, rowFilter, len(args)+1); err != nil {
+	where := fmt.Sprintf("%s.id IN (%s)", alias, strings.Join(placeholders, ", "))
+	// Reference policies use correlated EXISTS queries. Qualify the outer
+	// columns so a matching column on the reference target cannot capture them.
+	if cond, condArgs, _, err := PredicateSQLQualified(d, entity, rowFilter, len(args)+1, alias); err != nil {
 		return nil, fmt.Errorf("get fields by ids %s row filter: %w", entity.Name, err)
 	} else if cond != "" {
 		where += " AND (" + cond + ")"
@@ -62,9 +68,10 @@ func (db *DB) getFieldsByIDsFiltered(ctx context.Context, entity *metadata.Entit
 	}
 
 	sql := fmt.Sprintf(
-		"SELECT %s FROM %s WHERE %s",
+		"SELECT %s FROM %s %s WHERE %s",
 		strings.Join(cols, ", "),
 		metadata.TableName(entity.Name),
+		alias,
 		where,
 	)
 	rows, err := db.Query(ctx, sql, args...)

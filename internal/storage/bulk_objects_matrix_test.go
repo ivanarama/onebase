@@ -76,3 +76,46 @@ func TestGetByIDsFilteredMatrix(t *testing.T) {
 		}
 	})
 }
+
+func TestGetByIDsFilteredReferencePolicyMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		entity := &metadata.Entity{Name: "BulkPolicy" + uuid.NewString()[:8], Kind: metadata.KindCatalog}
+		label := metadata.Field{Name: "Label", Type: metadata.FieldTypeString}
+		entity.Fields = []metadata.Field{label,
+			{Name: "Audience", Type: metadata.FieldTypeString},
+			{Name: "Owner", Type: metadata.FieldType("reference:" + entity.Name), RefEntity: entity.Name},
+		}
+		if err := db.Migrate(t.Context(), []*metadata.Entity{entity}); err != nil {
+			t.Fatal(err)
+		}
+		allowedOwner, deniedOwner, allowed, denied := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+		for _, row := range []struct {
+			id, owner uuid.UUID
+			audience  string
+		}{
+			{allowedOwner, allowedOwner, "anna"}, {deniedOwner, deniedOwner, "other"},
+			{allowed, allowedOwner, "other"}, {denied, deniedOwner, "anna"},
+		} {
+			if err := db.Upsert(t.Context(), entity.Name, row.id, map[string]any{
+				"Label": row.id.String(), "Audience": row.audience, "Owner": row.owner.String(),
+			}, entity); err != nil {
+				t.Fatal(err)
+			}
+		}
+		predicate := &storage.Predicate{Field: "Owner", RefEntity: entity,
+			RefPredicate: &storage.Predicate{Field: "Audience", Op: "eq", Value: "anna"}}
+		ids := []uuid.UUID{denied, allowed}
+		for _, full := range []bool{false, true} {
+			var rows map[string]map[string]any
+			var err error
+			if full {
+				rows, err = db.GetByIDsFiltered(t.Context(), entity, ids, predicate)
+			} else {
+				rows, err = db.GetFieldsByIDsFiltered(t.Context(), entity, ids, []metadata.Field{label}, predicate)
+			}
+			if err != nil || len(rows) != 1 || rows[allowed.String()] == nil {
+				t.Fatalf("full=%t: reference policy must use the outer object's owner: rows=%v err=%v", full, rows, err)
+			}
+		}
+	})
+}

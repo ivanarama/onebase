@@ -217,3 +217,67 @@ func TestProcessorSelectedRefBatchQueryGrowthMatrix(t *testing.T) {
 		}
 	})
 }
+
+func TestProcessorSelectedRefBatchPolicyCorrelationMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		target := &metadata.Entity{Name: "CorrelatedChoice" + uuid.NewString()[:8], Kind: metadata.KindCatalog}
+		target.Fields = []metadata.Field{
+			{Name: "Name", Type: metadata.FieldTypeString},
+			{Name: "Audience", Type: metadata.FieldTypeString},
+			{Name: "Owner", Type: metadata.FieldType("reference:" + target.Name), RefEntity: target.Name},
+			{Name: "Secret", Type: metadata.FieldTypeString},
+		}
+		if err := db.Migrate(t.Context(), []*metadata.Entity{target}); err != nil {
+			t.Fatal(err)
+		}
+		srv, proc := selectedRefBatchServer(t, db, target)
+		user := &auth.User{Login: "anna", Roles: []*auth.Role{{Permissions: auth.Permission{
+			Processors: map[string][]string{proc.Name: {"run"}},
+			Catalogs:   map[string][]string{target.Name: {"read"}},
+			RowAccess: auth.RowAccess{Catalogs: map[string]auth.RowPolicies{target.Name: {
+				"read": {Field: "Owner.Audience", Op: "eq", Value: auth.RowValue{User: "login"}},
+			}}},
+		}}}}
+		idAt := func(i int) uuid.UUID {
+			return uuid.MustParse(fmt.Sprintf("abcdef00-0000-4000-8000-%012x", i))
+		}
+		allowedOwner, deniedOwner, allowed, denied := idAt(100), idAt(101), idAt(102), idAt(103)
+		insert := func(id uuid.UUID, name, audience string, owner uuid.UUID) {
+			t.Helper()
+			if err := db.Upsert(t.Context(), target.Name, id, map[string]any{
+				"Name": name, "Audience": audience, "Owner": owner.String(), "Secret": "private-" + name,
+			}, target); err != nil {
+				t.Fatal(err)
+			}
+		}
+		// Both the outer object and its referenced owner have owner_id. An
+		// unqualified EXISTS can bind to the inner owner's self-reference.
+		insert(allowedOwner, "Z-owner-allowed", "anna", allowedOwner)
+		insert(deniedOwner, "Z-owner-denied", "other", deniedOwner)
+		for i := 0; i < refPickerDefaultLimit; i++ {
+			insert(idAt(i+1), fmt.Sprintf("A-item-%03d", i), "other", allowedOwner)
+		}
+		insert(allowed, "Z-selected-allowed", "other", allowedOwner)
+		insert(denied, "Z-selected-denied", "other", deniedOwner)
+		initial := selectedRefBatchHTTP(t, srv, proc, nil, user)
+		if len(initial) != refPickerDefaultLimit {
+			t.Fatalf("initial options=%d", len(initial))
+		}
+		for _, row := range initial {
+			if row["id"] == allowed.String() || row["id"] == denied.String() {
+				t.Fatal("selected objects must lie outside the initial page")
+			}
+		}
+		got := selectedRefBatchHTTP(t, srv, proc, []string{denied.String(), allowed.String(), denied.String()}, user)
+		want, err := db.GetByID(t.Context(), target.Name, allowed, target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want["_label"] = firstStringField(want, target)
+		wantJSON, _ := json.Marshal(append(initial, want))
+		gotJSON, _ := json.Marshal(got)
+		if string(gotJSON) != string(wantJSON) {
+			t.Fatalf("reference policy must admit only the selected object with anna's owner: got %d options, want %d", len(got), len(initial)+1)
+		}
+	})
+}
