@@ -101,6 +101,11 @@ func TestRunServerBootsFullApplication(t *testing.T) {
 // путь к файлу БД и функцию остановки.
 func bootSmokeServer(t *testing.T) (base, dbPath string, stop func(*testing.T)) {
 	t.Helper()
+	return bootSmokeServerProject(t, filepath.Join("..", "..", "examples", "minimal"))
+}
+
+func bootSmokeServerProject(t *testing.T, dir string) (base, dbPath string, stop func(*testing.T)) {
+	t.Helper()
 
 	dbPath = filepath.Join(t.TempDir(), "smoke.db")
 
@@ -120,7 +125,7 @@ func bootSmokeServer(t *testing.T) (base, dbPath string, stop func(*testing.T)) 
 	// настоящее определение команды и не разъедется с ним, когда флаг добавят.
 	// Прежние значения возвращаем, чтобы не влиять на соседние тесты пакета.
 	for _, kv := range [][2]string{
-		{"project", filepath.Join("..", "..", "examples", "minimal")},
+		{"project", dir},
 		{"sqlite", dbPath},
 		{"port", fmt.Sprint(port)},
 		{"host", "127.0.0.1"},

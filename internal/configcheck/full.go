@@ -9,6 +9,7 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/ivantit66/onebase/internal/version"
 )
 
 // Options tunes the complete configuration validation.
@@ -40,6 +41,13 @@ func RunFullWithOptions(dir string, opts Options) Result {
 	}
 	if appCfgErr == nil {
 		warnings = append(warnings, deprecatedAppConfigWarnings(appCfg)...)
+		if warning := version.MinimumWarning(appCfg.MinEngineVersion); warning != nil {
+			warnings = append(warnings, Issue{
+				File: "config/app.yaml", Code: "config.min-engine-version",
+				Message:      warning.Error(),
+				SuggestedFix: "Проверьте min_engine_version и версию движка (onebase version).",
+			})
+		}
 	}
 
 	if proj, err := project.Load(dir); err == nil {

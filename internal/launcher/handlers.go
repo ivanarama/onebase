@@ -22,6 +22,7 @@ import (
 	"github.com/ivantit66/onebase/internal/incident"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/ivantit66/onebase/internal/version"
 )
 
 // normalizeSQLitePath приводит ввод пути к файлу SQLite к одному виду:
@@ -761,6 +762,37 @@ func (h *handler) ensureBaseReady(w http.ResponseWriter, r *http.Request, b *Bas
 	return true
 }
 
+// startResult carries an advisory warning across the launcher's return to the
+// base list. The base is already ready; a warning never changes launch success.
+func (h *handler) startResult(r *http.Request, b *Base, result map[string]any) map[string]any {
+	if b.Client() {
+		return result
+	}
+	var cfg project.AppConfig
+	if err := readAppYAML(r.Context(), b, &cfg); err != nil {
+		return result // The running server owns configuration load errors.
+	}
+	// The ready server may have been adopted from an older launcher. Compare
+	// its version header, not the version of this launcher process.
+	current := ""
+	if cfg.MinEngineVersion != "" {
+		client := localControlClient(controlProbeTimeout)
+		resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d/healthz", b.Port))
+		if err == nil {
+			current = resp.Header.Get("X-OneBase-Version")
+			if err := resp.Body.Close(); err != nil {
+				respondLog().Debug("не удалось закрыть ответ версии базы", "err", err)
+			}
+		}
+	}
+	if warning := version.MinimumWarningFor(current, cfg.MinEngineVersion); warning != nil {
+		if key := h.putFlash(flashWarning, errText(r, warning)); key != "" {
+			result["launcher_url"] = "/?sel=" + b.ID + "&flash=" + key
+		}
+	}
+	return result
+}
+
 func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 	b, err := h.store.Get(chi.URLParam(r, "id"))
 	if err != nil {
@@ -770,7 +802,7 @@ func (h *handler) start(w http.ResponseWriter, r *http.Request) {
 	if !h.ensureBaseReady(w, r, b, resolveLang(r)) {
 		return
 	}
-	writeJSON(w, 200, map[string]any{"url": h.runner.BaseURL(b)})
+	writeJSON(w, 200, h.startResult(r, b, map[string]any{"url": h.runner.BaseURL(b)}))
 }
 
 // startNative (кнопка «Предприятие» в GUI-сборке под Windows): запускает базу и
@@ -793,7 +825,7 @@ func (h *handler) startNative(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"error": errText(r, err)})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ok": true})
+	writeJSON(w, 200, h.startResult(r, b, map[string]any{"ok": true}))
 }
 
 // startIsolated (план 78, фаза 3): запускает базу (если нужно) и открывает
@@ -829,7 +861,7 @@ func (h *handler) startIsolated(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 500, map[string]any{"error": errText(r, err)})
 		return
 	}
-	writeJSON(w, 200, map[string]any{"ok": true})
+	writeJSON(w, 200, h.startResult(r, b, map[string]any{"ok": true}))
 }
 
 // cleanProfiles удаляет свободные (не запущенные) изолированные профили базы.

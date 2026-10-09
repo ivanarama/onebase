@@ -903,7 +903,7 @@ function startIsolated(el, id, mode) {
       // Путь тот же самый (ensureBaseReady), значит и отказ тот же: упавшая
       // миграция здесь не менее вероятна, чем при обычном запуске.
       if (d && d.error) { showStartErrorModal(d.error, d.fix, id); }
-      else { setTimeout(function(){ window.location.href = '/?sel=' + id; }, 500); }
+      else { setTimeout(function(){ window.location.href = d.launcher_url || ('/?sel=' + id); }, 500); }
     })
     .catch(function(e){ showStartErrorModal(String(e), null, id); });
   return false;
@@ -1145,7 +1145,7 @@ function startBase(el, id) {
     .then(function(d){
       if (d.url) {
         if (win) win.location.href = d.url;
-        setTimeout(function(){ window.location.href = '/?sel=' + id; }, 800);
+        setTimeout(function(){ window.location.href = d.launcher_url || ('/?sel=' + id); }, 800);
       } else {
         showStartError(win, d.error || '{{t $.Lang "Неизвестная ошибка"}}', d.fix, id);
         setStartButtonHTML(btn, origHTML);
@@ -1172,7 +1172,7 @@ function startBaseNative(el, id) {
         showStartErrorModal(d.error, d.fix, id);
         setStartButtonHTML(btn, origHTML);
       } else {
-        setTimeout(function(){ window.location.href = '/?sel=' + id; }, 500);
+        setTimeout(function(){ window.location.href = d.launcher_url || ('/?sel=' + id); }, 500);
       }
     })
     .catch(function(e){

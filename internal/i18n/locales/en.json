@@ -1,4 +1,7 @@
 {
+  "min_engine_version %q: ожидается версия major.minor.patch; работа продолжается": "min_engine_version %q: expected major.minor.patch; operation continues",
+  "Нельзя сравнить версию платформы %q с min_engine_version %q; работа продолжается": "Cannot compare platform version %q with min_engine_version %q; operation continues",
+  "Конфигурации требуется платформа не ниже %s, установлена %s; работа продолжается": "Configuration requires platform version %s or later; installed version is %s; operation continues",
   "%-ширины не поддерживаются печатью (PDF). Используйте px или mm.": "% widths are not supported when printing (PDF). Use px or mm.",
   "+ Добавить": "+ Add",
   "+ Печатная форма (макет)": "+ Print form (layout)",
