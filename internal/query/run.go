@@ -42,6 +42,7 @@ func Run(ctx context.Context, db queryRunner, res *Result) ([]map[string]any, []
 	if err != nil {
 		return rows, cols, err
 	}
+	RestoreLongLabels(res, rows, cols)
 	NormalizeColumns(res, rows)
 	return rows, cols, nil
 }
@@ -53,6 +54,7 @@ func RunLimit(ctx context.Context, db queryRunner, res *Result, maxRows int) ([]
 	if err != nil {
 		return rows, cols, truncated, err
 	}
+	RestoreLongLabels(res, rows, cols)
 	NormalizeColumns(res, rows)
 	return rows, cols, truncated, nil
 }

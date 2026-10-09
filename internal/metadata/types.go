@@ -856,12 +856,22 @@ func (ir *InfoRegister) DisplayName(lang string) string {
 	return ir.Name
 }
 
-func RegisterTableName(regName string) string {
-	return "рег_" + strings.ToLower(regName)
-}
+// Функции имён таблиц и колонок. Каждая — SQLIdent от «логического» имени
+// (*Logical): логическое — то, что уходило в базу до #1946; оно нужно миграции,
+// чтобы найти и переименовать таблицу, созданную под длинным именем.
+
+func RegisterTableName(regName string) string { return SQLIdent(RegisterTableLogical(regName)) }
+
+// RegisterTableLogical — логическое имя таблицы регистра накопления.
+func RegisterTableLogical(regName string) string { return "рег_" + strings.ToLower(regName) }
 
 // RegisterTotalsTableName — таблица предрасчитанных итогов регистра (план 80).
 func RegisterTotalsTableName(regName string) string {
+	return SQLIdent(RegisterTotalsTableLogical(regName))
+}
+
+// RegisterTotalsTableLogical — логическое имя таблицы итогов регистра.
+func RegisterTotalsTableLogical(regName string) string {
 	return "итоги_" + strings.ToLower(regName)
 }
 
@@ -870,11 +880,17 @@ func RegisterTotalsTableName(regName string) string {
 // time.Format("2006-01"), чтобы границу момента можно было вычислить в Go.
 const RegisterTotalsMonthCol = "месяц"
 
-func InfoRegTableName(regName string) string {
-	return "инфо_" + strings.ToLower(regName)
-}
+func InfoRegTableName(regName string) string { return SQLIdent(InfoRegTableLogical(regName)) }
+
+// InfoRegTableLogical — логическое имя таблицы регистра сведений.
+func InfoRegTableLogical(regName string) string { return "инфо_" + strings.ToLower(regName) }
 
 func TablePartTableName(entityName, tpName string) string {
+	return SQLIdent(TablePartTableLogical(entityName, tpName))
+}
+
+// TablePartTableLogical — логическое имя таблицы табличной части.
+func TablePartTableLogical(entityName, tpName string) string {
 	return strings.ToLower(entityName) + "_" + strings.ToLower(tpName)
 }
 
@@ -936,9 +952,10 @@ func EnumTypeName(ft FieldType) string {
 	return strings.TrimPrefix(string(ft), "enum:")
 }
 
-func TableName(entityName string) string {
-	return strings.ToLower(entityName)
-}
+func TableName(entityName string) string { return SQLIdent(TableLogical(entityName)) }
+
+// TableLogical — логическое имя таблицы справочника или документа.
+func TableLogical(entityName string) string { return strings.ToLower(entityName) }
 
 // FieldSignature — диалект-независимая подпись типа поля (план 81).
 //
@@ -959,7 +976,10 @@ func FieldSignature(f Field) string {
 	}
 }
 
-func ColumnName(f Field) string {
+func ColumnName(f Field) string { return SQLIdent(LogicalColumnName(f)) }
+
+// LogicalColumnName — логическое имя колонки поля: lower(имя), у ссылки — с _id.
+func LogicalColumnName(f Field) string {
 	col := strings.ToLower(f.Name)
 	if f.RefEntity != "" {
 		return col + "_id"

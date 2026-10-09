@@ -79,6 +79,9 @@ func (db *DB) renameSnakeCols(ctx context.Context, table string, fields []metada
 func (db *DB) MigrateRegisters(ctx context.Context, registers []*metadata.Register) error {
 	d := db.dialect
 	for _, reg := range registers {
+		if err := db.renameLegacyTable(ctx, metadata.RegisterTableLogical(reg.Name)); err != nil {
+			return fmt.Errorf("migrate register %s: %w", reg.Name, err)
+		}
 		if _, err := db.Exec(ctx, CreateRegisterSQL(d, reg)); err != nil {
 			return fmt.Errorf("migrate register %s: %w", reg.Name, err)
 		}
@@ -87,6 +90,9 @@ func (db *DB) MigrateRegisters(ctx context.Context, registers []*metadata.Regist
 			return fmt.Errorf("migrate register %s.period: %w", reg.Name, err)
 		}
 		allFields := append(append([]metadata.Field{}, reg.Dimensions...), append(reg.Resources, reg.Attributes...)...)
+		if err := db.renameLegacyColumns(ctx, table, logicalColumnNames(allFields)); err != nil {
+			return fmt.Errorf("migrate register %s: %w", reg.Name, err)
+		}
 		if err := db.renameSnakeCols(ctx, table, allFields); err != nil {
 			return fmt.Errorf("migrate register %s: %w", reg.Name, err)
 		}
@@ -144,10 +150,16 @@ func (db *DB) MigrateInfoRegisters(ctx context.Context, regs []*metadata.InfoReg
 
 func (db *DB) migrateInfoRegister(ctx context.Context, ir *metadata.InfoRegister) error {
 	d := db.dialect
+	if err := db.renameLegacyTable(ctx, metadata.InfoRegTableLogical(ir.Name)); err != nil {
+		return fmt.Errorf("migrate info register %s: %w", ir.Name, err)
+	}
 	if _, err := db.Exec(ctx, CreateInfoRegisterSQL(d, ir)); err != nil {
 		return fmt.Errorf("migrate info register %s: %w", ir.Name, err)
 	}
 	table := metadata.InfoRegTableName(ir.Name)
+	if err := db.renameLegacyColumns(ctx, table, logicalColumnNames(append(append([]metadata.Field{}, ir.Dimensions...), ir.Resources...))); err != nil {
+		return fmt.Errorf("migrate info register %s: %w", ir.Name, err)
+	}
 	// period колонка для periodic-регистров — может отсутствовать,
 	// если в YAML только что добавили `periodic: true`. ALLOW NULL,
 	// потому что existing rows иначе не вставить.
@@ -423,7 +435,7 @@ func (db *DB) fixInfoRegPKPostgres(ctx context.Context, ir *metadata.InfoRegiste
 			}
 		}
 		_, err = db.Exec(txCtx, "ALTER TABLE "+pgQuoteIdent(table)+" ADD CONSTRAINT "+
-			pgQuoteIdent(table+"_pkey")+" PRIMARY KEY ("+pgIdentList(expected)+")")
+			pgQuoteIdent(metadata.SQLIdent(table+"_pkey"))+" PRIMARY KEY ("+pgIdentList(expected)+")")
 		return err
 	})
 }
@@ -562,8 +574,24 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 	// быть не перестаёт — база с невыполненным предусловием по-прежнему не
 	// стартует, но один прогон renumber теперь видит всё и лечит всё.
 	var notReady []error
+	// Таблицы с длинными именами (#1946) переименовываются до создания любой
+	// из таблиц: внешние ключи новых таблиц ссылаются на короткие имена, и
+	// цель ссылки к этому моменту уже должна называться по-новому.
+	for _, e := range ordered {
+		if err := db.renameLegacyTable(ctx, metadata.TableLogical(e.Name)); err != nil {
+			return fmt.Errorf("migrate %s: %w", e.Name, err)
+		}
+		for _, tp := range e.TableParts {
+			if err := db.renameLegacyTable(ctx, metadata.TablePartTableLogical(e.Name, tp.Name)); err != nil {
+				return fmt.Errorf("migrate %s.%s: %w", e.Name, tp.Name, err)
+			}
+		}
+	}
 	for _, e := range ordered {
 		if _, err := db.Exec(ctx, createTableSQL(d, e, deferFK[e.Name])); err != nil {
+			return fmt.Errorf("migrate %s: %w", e.Name, err)
+		}
+		if err := db.renameLegacyColumns(ctx, metadata.TableName(e.Name), logicalColumnNames(e.Fields)); err != nil {
 			return fmt.Errorf("migrate %s: %w", e.Name, err)
 		}
 		if err := db.EnsurePredefinedColumns(ctx, []*metadata.Entity{e}); err != nil {
@@ -601,7 +629,7 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 			return fmt.Errorf("migrate %s._version: %w", e.Name, err)
 		}
 		if e.Hierarchical {
-			if err := db.AddHierarchyColumns(ctx, table); err != nil {
+			if err := db.AddHierarchyColumns(ctx, table, metadata.TableLogical(e.Name)); err != nil {
 				return fmt.Errorf("migrate %s hierarchy: %w", e.Name, err)
 			}
 		}
@@ -619,6 +647,9 @@ func (db *DB) Migrate(ctx context.Context, entities []*metadata.Entity) error {
 				return fmt.Errorf("migrate %s.%s: %w", e.Name, tp.Name, err)
 			}
 			tpTable := metadata.TablePartTableName(e.Name, tp.Name)
+			if err := db.renameLegacyColumns(ctx, tpTable, logicalColumnNames(tp.Fields)); err != nil {
+				return fmt.Errorf("migrate %s.%s: %w", e.Name, tp.Name, err)
+			}
 			if err := db.restructureTable(ctx, tpTable, tp.Fields); err != nil {
 				return fmt.Errorf("migrate %s.%s: %w", e.Name, tp.Name, err)
 			}

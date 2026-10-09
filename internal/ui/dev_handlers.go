@@ -110,6 +110,7 @@ func (s *Server) queryConsoleExec(w http.ResponseWriter, r *http.Request) {
 		jsonResp(w, 200, map[string]any{"error": "Ошибка выполнения: " + err.Error()})
 		return
 	}
+	query.RestoreLongLabels(&res, rows, nil)
 	if err := maskPlan.Apply(rows); err != nil {
 		jsonResp(w, http.StatusForbidden, map[string]any{"error": "Нет доступа к защищённому полю: " + err.Error()})
 		return
@@ -364,11 +365,11 @@ func (s *Server) devEntitySearch(w http.ResponseWriter, r *http.Request) {
 	for _, f := range found.Fields {
 		if f.Type == metadata.FieldTypeString {
 			if nameCol == "" {
-				nameCol = strings.ToLower(f.Name)
+				nameCol = metadata.ColumnName(f)
 			}
 		}
 		if strings.EqualFold(f.Name, "код") || strings.EqualFold(f.Name, "code") {
-			codeCol = strings.ToLower(f.Name)
+			codeCol = metadata.ColumnName(f)
 		}
 	}
 	if nameCol == "" {

@@ -85,6 +85,9 @@ func (db *DB) MigrateAccountRegisters(ctx context.Context, regs []*metadata.Acco
 func (db *DB) migrateAccountReg(ctx context.Context, ar *metadata.AccountRegister) error {
 	d := db.dialect
 	table := metadata.AccountRegTableName(ar.Name)
+	if err := db.renameLegacyTable(ctx, metadata.AccountRegTableLogical(ar.Name)); err != nil {
+		return fmt.Errorf("migrate account register %s: %w", ar.Name, err)
+	}
 	var sb strings.Builder
 	sb.WriteString("CREATE TABLE IF NOT EXISTS ")
 	sb.WriteString(table)
@@ -111,11 +114,20 @@ func (db *DB) migrateAccountReg(ctx context.Context, ar *metadata.AccountRegiste
 	if _, err := db.Exec(ctx, sb.String()); err != nil {
 		return fmt.Errorf("migrate account register %s: %w", ar.Name, err)
 	}
-	idx1 := fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_dt ON %s (счётдт, period)", strings.ToLower(ar.Name), table)
-	idx2 := fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_kt ON %s (счёткт, period)", strings.ToLower(ar.Name), table)
-	idx3 := fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_reg ON %s (регистратор)", strings.ToLower(ar.Name), table)
-	for _, s := range []string{idx1, idx2, idx3} {
-		if _, err := db.Exec(ctx, s); err != nil {
+	if err := db.renameLegacyColumns(ctx, table, logicalColumnNames(ar.Resources)); err != nil {
+		return fmt.Errorf("migrate account register %s: %w", ar.Name, err)
+	}
+	low := strings.ToLower(ar.Name)
+	for _, ix := range []struct{ suffix, cols string }{
+		{"_dt", "счётдт, period"},
+		{"_kt", "счёткт, period"},
+		{"_reg", "регистратор"},
+	} {
+		name, err := db.indexName(ctx, table, "idx_"+low+ix.suffix)
+		if err != nil {
+			return fmt.Errorf("migrate account register %s index: %w", ar.Name, err)
+		}
+		if _, err := db.Exec(ctx, fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s)", name, table, ix.cols)); err != nil {
 			return fmt.Errorf("migrate account register %s index: %w", ar.Name, err)
 		}
 	}
@@ -133,9 +145,12 @@ func (db *DB) migrateAccountReg(ctx context.Context, ar *metadata.AccountRegiste
 	// Индекс по первому субконто ускоряет разворот остатков/оборотов по аналитике.
 	if len(ar.Subconto) > 0 {
 		sb1 := metadata.SubcontoColumn(1)
-		idxDt := fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_dt_сб1 ON %s (счётдт, %s, period)", strings.ToLower(ar.Name), table, sb1)
-		idxKt := fmt.Sprintf("CREATE INDEX IF NOT EXISTS idx_%s_kt_сб1 ON %s (счёткт, %s, period)", strings.ToLower(ar.Name), table, sb1)
-		for _, s := range []string{idxDt, idxKt} {
+		for _, ix := range []struct{ suffix, acc string }{{"_dt_сб1", "счётдт"}, {"_kt_сб1", "счёткт"}} {
+			name, err := db.indexName(ctx, table, "idx_"+low+ix.suffix)
+			if err != nil {
+				return i18nerr.Wrapf(err, "migrate account register %s субконто index", ar.Name)
+			}
+			s := fmt.Sprintf("CREATE INDEX IF NOT EXISTS %s ON %s (%s, %s, period)", name, table, ix.acc, sb1)
 			if _, err := db.Exec(ctx, s); err != nil {
 				return i18nerr.Wrapf(err, "migrate account register %s субконто index", ar.Name)
 			}

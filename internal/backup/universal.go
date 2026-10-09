@@ -27,6 +27,7 @@ import (
 	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/extform"
 	"github.com/ivantit66/onebase/internal/fsmode"
+	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/secrets"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -2539,6 +2540,9 @@ func importTableJSONL(ctx context.Context, db *storage.DB, tableName, filePath s
 	btypes := make(map[string]bool)
 	for _, c := range schema.Btypes {
 		btypes[c] = true
+		if len(c) > metadata.MaxSQLIdentBytes {
+			btypes[metadata.SQLIdent(strings.ToLower(c))] = true // см. перевод колонок ниже (#1946)
+		}
 	}
 
 	// Check table exists; skip if not (e.g. a table from a different config
@@ -2547,6 +2551,17 @@ func importTableJSONL(ctx context.Context, db *storage.DB, tableName, filePath s
 	exists, err := tableExistsChecked(ctx, db, tableName)
 	if err != nil {
 		return 0, fmt.Errorf("inspect table %s: %w", tableName, err)
+	}
+	if !exists && len(tableName) > metadata.MaxSQLIdentBytes {
+		// Архив снят с базы до #1946: таблица с длинным именем лежит в нём под
+		// полным именем, а у текущей платформы она короткая. Без перевода она
+		// пропускалась как «таблица другой конфигурации», и импорт отказывал
+		// на сверке с манифестом — базу с длинными именами было не перенести.
+		short := metadata.SQLIdent(strings.ToLower(tableName))
+		if exists, err = tableExistsChecked(ctx, db, short); err != nil {
+			return 0, fmt.Errorf("inspect table %s: %w", short, err)
+		}
+		tableName = short
 	}
 	if !exists {
 		return 0, nil
@@ -2606,6 +2621,19 @@ func importTableJSONL(ctx context.Context, db *storage.DB, tableName, filePath s
 		var raw map[string]json.RawMessage
 		if err := json.Unmarshal(line, &raw); err != nil {
 			return n, fmt.Errorf("parse row %d: %w", n+1, err)
+		}
+		// Колонки с длинными именами из архива до #1946 — под текущее
+		// физическое имя. Иначе ниже они завелись бы заново текстовыми (на
+		// PostgreSQL — ещё и обрезанными), а данные ушли бы мимо реквизита.
+		for col, v := range raw {
+			if len(col) <= metadata.MaxSQLIdentBytes {
+				continue
+			}
+			short := metadata.SQLIdent(strings.ToLower(col))
+			if _, taken := raw[short]; !taken {
+				delete(raw, col)
+				raw[short] = v
+			}
 		}
 
 		// Discover columns on every row. Older exporters did not guarantee that

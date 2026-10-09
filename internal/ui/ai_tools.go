@@ -198,6 +198,7 @@ func (s *Server) aiRunQuery(ctx context.Context, call llm.ToolCall) llm.ToolResu
 	if err != nil {
 		return llm.ToolResult{ID: call.ID, Content: "ошибка выполнения: " + err.Error(), IsError: true}
 	}
+	query.RestoreLongLabels(&res, rows, nil)
 	if err := maskPlan.Apply(rows); err != nil {
 		return llm.ToolResult{ID: call.ID, Content: "нет доступа к защищённому полю: " + err.Error(), IsError: true}
 	}

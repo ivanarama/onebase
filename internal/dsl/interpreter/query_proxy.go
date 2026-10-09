@@ -245,6 +245,7 @@ func (q *queryProxy) execute() *Array {
 	if err != nil {
 		panic(userError{Msg: "Ошибка выполнения SQL: " + err.Error() + "\nSQL: " + res.SQL})
 	}
+	query.RestoreLongLabels(&res, rows, nil)
 	var guarded GuardedColumns
 	if q.guard != nil {
 		guarded, err = q.guard(ctx, res, rows)
