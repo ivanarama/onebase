@@ -61,11 +61,13 @@ func (tr *translator) initSelectStates() {
 		if token.kind != tIdent {
 			continue
 		}
-		// A bare reference in a child projection uses its owner's display
-		// column too. Prepare that JOIN before the owner's FROM is emitted.
+		// Bare references in child projections and predicates need the owner's
+		// reference metadata before its FROM is emitted. Projections use the
+		// display column; predicates keep the physical FK column.
 		// Output aliases and function names are declarations, not field reads.
 		if pos+1 >= len(tr.tokens) || tr.tokens[pos+1].kind != tDot {
-			if tr.sourceCtx.sectionAt(pos) != sectionSelect ||
+			section := tr.sourceCtx.sectionAt(pos)
+			if (section != sectionSelect && section != sectionWhere) ||
 				(pos+1 < len(tr.tokens) && tr.tokens[pos+1].kind == tLParen) {
 				continue
 			}
@@ -113,6 +115,18 @@ func (tr *translator) initSelectStates() {
 			break
 		}
 	}
+}
+
+// referenceIDColumn keeps a correlated predicate tied to the nearest owner,
+// even when the child has a derived FROM with its own alias.
+func (tr *translator) referenceIDColumn(rd *refDimInfo, name string) string {
+	if id, ok := tr.sourceCtx.scopeIDAt(tr.pos - 1); ok {
+		owner := tr.referenceOwner(id, name)
+		if owner >= 0 && owner != id && tr.selectStates[owner].mainTable != "" {
+			return tr.selectStates[owner].mainTable + "." + rd.idCol
+		}
+	}
+	return tr.qualifyOwn(rd.idCol, name)
 }
 
 // referenceOwner returns the closest visible owner of an unqualified field.

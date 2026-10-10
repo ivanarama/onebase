@@ -189,6 +189,107 @@ func TestUnionReferenceReviewMatrix(t *testing.T) {
 				}
 			})
 		}
+		// A reference read only in a child WHERE still denotes its owner's FK.
+		for _, child := range []struct{ name, text string }{
+			{"without from", `ВЫБРАТЬ 1 ГДЕ %s = &Филиал`},
+			{"derived from", `ВЫБРАТЬ 1 ИЗ (ВЫБРАТЬ 1 КАК Один) КАК П ГДЕ %s = &Филиал`},
+			{"derived bridge", `ВЫБРАТЬ (ВЫБРАТЬ 1 ГДЕ %s = &Филиал) ИЗ (ВЫБРАТЬ 1 КАК Один) КАК П`},
+			{"derived physical column collision", `ВЫБРАТЬ 1 ИЗ (ВЫБРАТЬ "local column" КАК филиал_id) КАК П ГДЕ %s = &Филиал`},
+			{"first union output absent", `ВЫБРАТЬ 1 ИЗ (ВЫБРАТЬ 1 КАК Один ОБЪЕДИНИТЬ ВЫБРАТЬ 1 КАК Филиал) КАК П ГДЕ %s = &Филиал`},
+			{"proven physical star absent", `ВЫБРАТЬ 1 ИЗ (ВЫБРАТЬ Ф.* ИЗ Справочник.Филиалы КАК Ф ГДЕ Ф.Наименование = "Ф-А") КАК П ГДЕ %s = &Филиал`},
+		} {
+			for _, field := range []string{"Филиал", "С.Филиал"} {
+				for _, param := range []struct {
+					name string
+					id   uuid.UUID
+					want []string
+				}{
+					{"first", branch, []string{"С-А"}},
+					{"second", other, []string{"С-Б"}},
+					{"missing", uuid.New(), nil},
+				} {
+					t.Run("outer reference predicate/"+child.name+"/"+field+"/"+param.name, func(t *testing.T) {
+						text := `ВЫБРАТЬ С.Наименование КАК Имя ИЗ Справочник.Склады КАК С ГДЕ 1 = (` + fmt.Sprintf(child.text, field) + `) УПОРЯДОЧИТЬ ПО Имя`
+						res, err := query.Compile(text, query.CompileOpts{Entities: ents, Dialect: db.Dialect(), Params: map[string]any{"Филиал": param.id}})
+						if err != nil {
+							t.Fatal(err)
+						}
+						rows, cols, err := query.Run(ctx, db, &res)
+						if err != nil {
+							t.Fatalf("run: %v\nSQL: %s", err, res.SQL)
+						}
+						if !reflect.DeepEqual(cols, []string{"имя"}) {
+							t.Fatalf("columns = %v", cols)
+						}
+						var got []string
+						for _, row := range rows {
+							got = append(got, fmt.Sprint(row["имя"]))
+						}
+						if !reflect.DeepEqual(got, param.want) {
+							t.Fatalf("rows = %v; want %v\nSQL: %s", got, param.want, res.SQL)
+						}
+					})
+				}
+			}
+		}
+		// Local data must match independently of each warehouse's outer FK.
+		for _, tc := range []struct {
+			name, child string
+			param       any
+		}{
+			{"physical string", `ВЫБРАТЬ 1 ИЗ Справочник.Локальные КАК Л ГДЕ Филиал = &Значение`, "Локально"},
+			{"physical reference", `ВЫБРАТЬ 1 ИЗ Справочник.Организации КАК О ГДЕ Филиал = &Значение`, division},
+			{"nearest parent reference", `ВЫБРАТЬ (ВЫБРАТЬ 1 ГДЕ Филиал = &Значение) ИЗ Справочник.Организации КАК О`, division},
+			{"derived field", `ВЫБРАТЬ 1 ИЗ (ВЫБРАТЬ "Локально" КАК Филиал) КАК П ГДЕ Филиал = &Значение`, "Локально"},
+			{"first union output", `ВЫБРАТЬ 1 ИЗ (ВЫБРАТЬ 1 КАК Филиал ОБЪЕДИНИТЬ ВЫБРАТЬ 1 КАК Один) КАК П ГДЕ Филиал = &Значение`, 1},
+			{"physical star", `ВЫБРАТЬ 1 ИЗ (ВЫБРАТЬ ВСЕ Л.* ИЗ Справочник.Локальные КАК Л) КАК П ГДЕ Филиал = &Значение`, "Локально"},
+			{"nested star", `ВЫБРАТЬ (ВЫБРАТЬ 1 ГДЕ Филиал = &Значение) ИЗ (SELECT ALL * ИЗ (ВЫБРАТЬ "Локально" КАК Филиал) КАК Е) КАК П`, "Локально"},
+		} {
+			t.Run("predicate shadow/"+tc.name, func(t *testing.T) {
+				res, err := query.Compile(`ВЫБРАТЬ С.Наименование КАК Имя ИЗ Справочник.Склады КАК С ГДЕ 1 = (`+tc.child+`) УПОРЯДОЧИТЬ ПО Имя`, query.CompileOpts{Entities: ents, Dialect: db.Dialect(), Params: map[string]any{"Значение": tc.param}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				rows, cols, err := query.Run(ctx, db, &res)
+				if err != nil {
+					t.Fatalf("run: %v\nSQL: %s", err, res.SQL)
+				}
+				if !reflect.DeepEqual(cols, []string{"имя"}) {
+					t.Fatalf("columns = %v", cols)
+				}
+				var got []string
+				for _, row := range rows {
+					got = append(got, fmt.Sprint(row["имя"]))
+				}
+				if !reflect.DeepEqual(got, []string{"С-А", "С-Б"}) {
+					t.Fatalf("local predicate read outer FK: %v\nSQL: %s", got, res.SQL)
+				}
+				for _, source := range res.Sources {
+					if source.Name == "Филиалы" {
+						t.Fatalf("shadowed field exposed outer target: %v", res.Sources)
+					}
+				}
+			})
+		}
+		for _, child := range []string{
+			`ВЫБРАТЬ 1 ИЗ (ВЫБРАТЬ СУММА(1)) КАК П ГДЕ Филиал = &Филиал`,
+			`ВЫБРАТЬ 1 ИЗ (ВЫБРАТЬ 1 КАК Один) КАК Филиал ГДЕ Филиал = &Филиал`,
+			`ВЫБРАТЬ 1 ИЗ Справочник.Разделы КАК Филиал ГДЕ Филиал = &Филиал`,
+			`ВЫБРАТЬ 1 ИЗ Справочник.Разделы КАК Р ГДЕ Филиал = &Филиал`,
+		} {
+			t.Run("predicate lookup fence/"+child, func(t *testing.T) {
+				res, err := query.Compile(`ВЫБРАТЬ С.Наименование КАК Имя ИЗ Справочник.Склады КАК С ГДЕ 1 = (`+child+`)`, query.CompileOpts{Entities: ents, Dialect: db.Dialect(), Params: map[string]any{"Филиал": branch}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if strings.Contains(res.SQL, "ref_филиал") || strings.Contains(res.SQL, "с.филиал_id") {
+					t.Fatalf("lookup fence exposed outer FK: %s", res.SQL)
+				}
+				if rows, _, err := query.Run(ctx, db, &res); err == nil && len(rows) != 0 {
+					t.Fatalf("unproven/local source read outer FK: %v\nSQL: %s", rows, res.SQL)
+				}
+			})
+		}
 		// Known local names and unprovable outputs must not read an outer target.
 		// Invalid local navigation must remain invalid.
 		for _, tc := range []struct{ name, projection string }{

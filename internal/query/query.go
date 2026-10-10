@@ -5312,7 +5312,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 							if rd.isVT {
 								tr.emit(rd.idCol)
 							} else {
-								tr.emit(tr.qualifyOwn(rd.idCol, lower))
+								tr.emit(tr.referenceIDColumn(rd, lower))
 							}
 						}
 					}
