@@ -10,10 +10,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
 	"github.com/ivantit66/onebase/internal/dsl/parser"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/ui"
 )
 
@@ -466,5 +468,81 @@ func TestManagedFormRuntimeDSLCaughtExpiredProxyRollsBack(t *testing.T) {
 				t.Fatalf("caught expired access committed partial structure: ops=%+v err=%v", ops, err)
 			}
 		})
+	}
+}
+
+// Form helpers resolve only from their source module. A call made by a common
+// module must keep its own sibling/global lookup even while a form is running.
+func TestManagedFormRuntimeDSLProcedureScope(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		for _, tc := range []struct {
+			name, call, sibling, want string
+			export, wantError         bool
+		}{
+			{name: "form helper before global export", call: "ОбщаяЛогика()", export: true, want: "form-private"},
+			{name: "external module uses global export", call: "ОбщийШаг()", export: true, want: "global-export"},
+			{name: "external module uses own private helper", call: "ОбщийШаг()", sibling: `Функция ОбщаяЛогика() Возврат "caller-private"; КонецФункции`, export: true, want: "caller-private"},
+			{name: "form private helper is unavailable to external module", call: "ОбщийШаг()", wantError: true},
+		} {
+			t.Run(fmt.Sprintf("strict=%t/%s", strict, tc.name), func(t *testing.T) {
+				parse := func(file, source string) *ast.Program {
+					t.Helper()
+					program, err := parser.New(lexer.New(source, file)).ParseProgram()
+					if err != nil {
+						t.Fatal(err)
+					}
+					return program
+				}
+				form, entity := structureForm(t, "")
+				form.ProgramAST = parse("sample.form.os", `
+Функция ОбщаяЛогика()
+ Возврат "form-private";
+КонецФункции
+Процедура Обработчик()
+ ЭтаФорма.Элементы.Статика.Заголовок = "partial";
+ ЭтаФорма.Элементы.Статика.Заголовок = `+tc.call+`;
+КонецПроцедуры`)
+				caller := parse("caller.module.os", tc.sibling+`
+Функция ОбщийШаг() Экспорт
+ Возврат ОбщаяЛогика();
+КонецФункции`)
+				modules := map[string]*ast.Program{"caller": caller}
+				if tc.export {
+					modules["shared"] = parse("shared.module.os", `
+Функция ОбщаяЛогика() Экспорт
+ Возврат "global-export";
+КонецФункции`)
+				}
+				registry := runtime.NewRegistry()
+				registry.LoadModules(modules)
+				interp := interpreter.New()
+				interp.StrictLexicalScope = strict
+				interp.LookupProc = registry.GetModuleProc
+				interp.LookupSiblingProc = registry.GetSiblingProc
+				originalExport := interp.LookupProc("ОбщаяЛогика")
+				model := structureModel(t, form, entity)
+				before := structureSnapshot(t, model)
+				// The runtime owns its form procedure table; caller vars are copied
+				// and a preexisting table must not replace this form's helpers.
+				callerTable := map[string]*ast.ProcedureDecl{}
+				vars := map[string]any{"__FORM_PROCS__": callerTable}
+				ops, err := model.Run("Обработчик", interp, nil, interpreter.SandboxProfile{}, vars)
+				if tc.wantError {
+					if err == nil || !strings.Contains(err.Error(), "ОбщаяЛогика") || len(ops) != 0 || !reflect.DeepEqual(before, structureSnapshot(t, model)) {
+						t.Fatalf("external call reached private form helper or committed a partial change: ops=%+v err=%v", ops, err)
+					}
+				} else {
+					if err != nil {
+						t.Fatal(err)
+					}
+					if got := structureSnapshot(t, model)[0].Title; got != tc.want || len(ops) != 2 {
+						t.Fatalf("procedure scope: title=%q want=%q ops=%+v", got, tc.want, ops)
+					}
+				}
+				if interp.LookupProc("ОбщаяЛогика") != originalExport || len(vars) != 1 || !reflect.DeepEqual(vars["__FORM_PROCS__"], callerTable) || len(callerTable) != 0 {
+					t.Fatal("Run changed the caller interpreter or variables")
+				}
+			})
+		}
 	}
 }

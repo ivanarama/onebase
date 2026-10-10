@@ -180,14 +180,17 @@ func (m *ManagedFormRuntime) Run(name string, interp *interpreter.Interpreter, t
 	defer func() { tx.active = false }()
 	tx.reindex()
 	proxy := &managedFormProxy{tx: tx}
-	extra := make(map[string]any, len(vars)+2)
+	extra := make(map[string]any, len(vars)+3)
 	for key, value := range vars {
-		if !strings.EqualFold(key, "ЭтаФорма") && !strings.EqualFold(key, "ThisForm") {
+		if !strings.EqualFold(key, "ЭтаФорма") && !strings.EqualFold(key, "ThisForm") && !strings.EqualFold(key, "__form_procs__") {
 			extra[key] = value
 		}
 	}
 	extra["ЭтаФорма"] = proxy
 	extra["ThisForm"] = proxy
+	// The interpreter restricts this table to calls from the form source file.
+	// Keep the caller's sibling/global resolvers intact for other modules.
+	extra["__form_procs__"] = m.procedures
 	local := *interp
 	previousGuard := local.ValidateObjectAccess
 	local.ValidateObjectAccess = func(object any) {
@@ -213,16 +216,6 @@ func (m *ManagedFormRuntime) Run(name string, interp *interpreter.Interpreter, t
 		if previousGuard != nil {
 			previousGuard(object)
 		}
-	}
-	fallback := local.LookupProc
-	local.LookupProc = func(name string) *ast.ProcedureDecl {
-		if p := m.procedures[strings.ToLower(name)]; p != nil {
-			return p
-		}
-		if fallback != nil {
-			return fallback(name)
-		}
-		return nil
 	}
 	if err := local.RunSandboxed(proc, this, profile, nil, extra); err != nil {
 		return nil, err
