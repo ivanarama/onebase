@@ -136,7 +136,7 @@ func run(ctx context.Context, store *storage.DB, deps Deps, text string, limit i
 		if filter != nil && filter.Entities != nil && !allowedNames[strings.ToLower(e.Name)] {
 			continue
 		}
-		if len(metadata.FullTextFields(e)) == 0 {
+		if len(metadata.HeaderFullTextFields(e)) == 0 {
 			continue
 		}
 		if filter != nil {
@@ -287,7 +287,7 @@ func visibleMatch(text string, e *metadata.Entity, row map[string]any, masked []
 		hidden[strings.ToLower(name)] = true
 	}
 	var visible strings.Builder
-	for _, f := range metadata.FullTextFields(e) {
+	for _, f := range metadata.HeaderFullTextFields(e) {
 		if hidden[strings.ToLower(f.Name)] {
 			continue
 		}
