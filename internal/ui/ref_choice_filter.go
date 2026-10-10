@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/access"
+	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -174,7 +175,7 @@ func (s *Server) choicePredicates(ctx context.Context, owner *metadata.Entity, f
 		fieldName := strings.TrimSpace(condition.Field)
 		// The filtered result and its total reveal a target field even when the
 		// field itself is hidden from the response. Keep mask and hide identical.
-		if choiceAttrMasked(targetDecisions, fieldName) {
+		if choiceAttrMasked(targetDecisions, fieldName) || s.choiceTablePartMasked(ctx, target, fieldName) {
 			return nil, true, nil
 		}
 		predicate := storage.ChoicePredicate{Field: fieldName, Op: condition.Op}
@@ -237,10 +238,17 @@ func (s *Server) choicePredicates(ctx context.Context, owner *metadata.Entity, f
 		// весь справочник, а закрытый строковым доступом — показал бы, что
 		// лежит у него внутри (разность «всё» и «всё, кроме X»). Ссылку из
 		// браузера сервер не берёт на веру и здесь.
-		if condition.Op == metadata.FormChoiceOpNotInHierarchy {
+		//
+		// Колонка табличной части (#1822): тот же гейт и для eq. Иначе UUID
+		// записи, которую пользователь не видит (нет права чтения справочника,
+		// RLS), отвечал бы, у каких записей цели она стоит в ТЧ, — а через ref
+		// та же запись даёт пустой подбор. Контракт #1822: закрытый источник —
+		// пустая выдача.
+		_, _, isTablePart := strings.Cut(fieldName, ".")
+		if condition.Op == metadata.FormChoiceOpNotInHierarchy || isTablePart {
 			excluded, isRef := value.(uuid.UUID)
 			if !isRef {
-				return nil, false, fmt.Errorf("not_in_hierarchy source %q is not a reference", path)
+				return nil, false, fmt.Errorf("%s source %q is not a reference", condition.Op, path)
 			}
 			visible, err := s.choiceRefVisible(ctx, target, fieldName, excluded)
 			if err != nil {
@@ -335,6 +343,12 @@ func (s *Server) choiceRefVisible(ctx context.Context, target *metadata.Entity, 
 		if parent := metadata.FormChoiceParentFieldOf(target); parent != nil {
 			refName = parent.RefEntity
 		}
+	} else if tpName, columnName, isTablePart := strings.Cut(fieldName, "."); isTablePart {
+		// Колонка табличной части цели (#1822): запись ref — из справочника,
+		// на который ссылается колонка.
+		if _, column := storage.ChoiceTablePartColumn(target, tpName, columnName); column != nil {
+			refName = strings.TrimSpace(column.RefEntity)
+		}
 	}
 	refEntity := s.reg.GetEntity(refName)
 	if refEntity == nil {
@@ -350,6 +364,31 @@ func (s *Server) choiceRefVisible(ctx context.Context, target *metadata.Entity, 
 		return false, nil
 	}
 	return s.choiceSelectedAllowed(ctx, refEntity, id, nil, true)
+}
+
+// choiceTablePartMasked — закрыта ли колонка табличной части цели («<ТЧ>.<Колонка>»,
+// #1822) полевой политикой или признаком ПДн. Подбор по ней раскрывал бы
+// значение колонки так же, как отбор по замаскированному реквизиту шапки
+// (выдача и total отвечают на вопрос «есть ли строка с этой ссылкой»), поэтому
+// правило то же: закрыта — пустая выдача. Решение считает общий
+// access.FieldDecisions: политика на «<ТЧ>.<Колонка>» или на «<ТЧ>» целиком и
+// pii: true колонки — по тем же правилам голосования ролей, что у шапки
+// (молчащая роль маскирует ПДн, явный read: full открывает).
+func (s *Server) choiceTablePartMasked(ctx context.Context, target *metadata.Entity, fieldName string) bool {
+	tpName, columnName, isTablePart := strings.Cut(fieldName, ".")
+	if !isTablePart || target == nil {
+		return false
+	}
+	tp, column := storage.ChoiceTablePartColumn(target, tpName, columnName)
+	if tp == nil || column == nil {
+		return false // такое условие отвергнет SQL-компилятор
+	}
+	path := tp.Name + "." + column.Name
+	meta := &metadata.Entity{Name: target.Name, Kind: target.Kind, Fields: []metadata.Field{{
+		Name: path, Type: column.Type, RefEntity: column.RefEntity, PII: column.PII,
+	}}}
+	decisions := access.FieldDecisions(auth.UserFromContext(ctx), string(target.Kind), target.Name, meta)
+	return choiceAttrMasked(decisions, path) || choiceAttrMasked(decisions, tp.Name)
 }
 
 // choiceTargetFieldIsString — строковый нессылочный ли реквизит

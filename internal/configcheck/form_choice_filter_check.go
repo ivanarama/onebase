@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/project"
+	"github.com/ivantit66/onebase/internal/storage"
 	"gopkg.in/yaml.v3"
 )
 
@@ -239,6 +240,16 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 						continue
 					}
 
+					// «<ТЧ>.<Колонка>» — отбор по табличной части цели (#1822):
+					// только eq, только ссылочная колонка, источник — from или ref
+					// той же сущности, на которую ссылается колонка.
+					if tpName, columnName, isTablePart := strings.Cut(fieldName, "."); isTablePart {
+						if problem := formChoiceTablePartProblem(owner, form, cond, target, tpName, columnName, hasValue, hasRef, entities); problem != "" {
+							add("%s: %s", where, problem)
+						}
+						continue
+					}
+
 					isFolder := strings.EqualFold(fieldName, "is_folder")
 					targetField := entityFieldFold(target, fieldName)
 					isRoot := targetField == nil && strings.EqualFold(fieldName, metadata.FormChoiceRootField)
@@ -352,6 +363,44 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 		}
 	}
 	return issues
+}
+
+// formChoiceTablePartProblem проверяет условие по колонке табличной части
+// выбираемого справочника (#1822). Пусто — условие корректно; рантайм
+// компилирует его в EXISTS (storage.choicePredicateSQL) и закрывает выдачу,
+// если колонка под полевой политикой или ПДн.
+func formChoiceTablePartProblem(owner *metadata.Entity, form *metadata.FormModule, cond metadata.FormChoiceCondition, target *metadata.Entity, tpName, columnName string, hasValue, hasRef bool, entities map[string]*metadata.Entity) string {
+	tp, column := storage.ChoiceTablePartColumn(target, tpName, columnName)
+	switch {
+	case tp == nil:
+		return fmt.Sprintf("у справочника %s нет табличной части %q", target.Name, strings.TrimSpace(tpName))
+	case column == nil:
+		return fmt.Sprintf("в табличной части %s.%s нет колонки %q", target.Name, tp.Name, strings.TrimSpace(columnName))
+	case strings.TrimSpace(column.RefEntity) == "":
+		return fmt.Sprintf("%s.%s.%s не ссылка: по табличной части отбирают только по ссылочной колонке", target.Name, tp.Name, column.Name)
+	case cond.Op != metadata.FormChoiceOpEqual:
+		return fmt.Sprintf("по колонке табличной части допустим только eq, а не %q", cond.Op)
+	case hasValue:
+		return "литерал value у колонки табличной части недопустим: нужен from или ref"
+	}
+	if hasRef {
+		id, err := uuid.Parse(strings.TrimSpace(cond.Ref))
+		if err != nil {
+			return fmt.Sprintf("ref %q не является UUID", cond.Ref)
+		}
+		if id == uuid.Nil {
+			return "ref — нулевой UUID: нужен UUID записи справочника"
+		}
+		return ""
+	}
+	source, problem := formChoiceSourceEntity(owner, form, cond.From, entities)
+	if problem != "" {
+		return problem
+	}
+	if !strings.EqualFold(column.RefEntity, source.Name) {
+		return fmt.Sprintf("eq сравнивает несовместимые ссылки %s.%s.%s и %q", target.Name, tp.Name, column.Name, cond.From)
+	}
+	return ""
 }
 
 // formChoiceRefProblem проверяет условие с постоянной ссылкой (ref, #1820):
