@@ -1184,8 +1184,12 @@ func (db *DB) upsertTablePartRows(ctx context.Context, entityName, tpName string
 	}
 
 	for i, row := range prepared {
-		if err := db.exec(ctx, row.sql, row.args...); err != nil {
-			return fmt.Errorf("insert tablepart %s.%s row %d: %w", entityName, tpName, i+1, err)
+		if _, err := db.execAllowingFKDiagnosis(ctx, row.sql, row.args...); err != nil {
+			classified := classifyConstraintErr(err)
+			if errors.Is(classified, ErrForeignKeyViolation) {
+				classified = db.explainFKViolation(ctx, &metadata.Entity{Fields: tp.Fields}, rows[i], classified)
+			}
+			return fmt.Errorf("insert tablepart %s.%s row %d: %w", entityName, tpName, i+1, classified)
 		}
 	}
 	return nil
