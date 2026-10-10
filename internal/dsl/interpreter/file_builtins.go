@@ -282,6 +282,8 @@ func NewFileFunctions(guard FileGuard) map[string]any {
 	m["deletefiles"] = guardedFile(guard, deleteFileFn)
 	m["создатькаталог"] = guardedFile(guard, makeDirFn)
 	m["createdirectory"] = guardedFile(guard, makeDirFn)
+	m["прочитатьфайл"] = guardedFile(guard, readFileFn)
+	m["readfile"] = guardedFile(guard, readFileFn)
 	m["найтифайлы"] = guardedFile(guard, findFilesFn)
 	m["findfiles"] = guardedFile(guard, findFilesFn)
 
