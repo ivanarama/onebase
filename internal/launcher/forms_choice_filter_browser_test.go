@@ -78,13 +78,20 @@ elements:
 	if runtime.GOOS == "linux" {
 		args = append([]string{"--no-sandbox"}, args...)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	// В общем CI-прогоне с -race запуск Chromium конкурирует с другими
+	// пакетами за CPU. Лимит включает запуск процесса, а не только 5 секунд
+	// виртуального времени страницы; оставляем запас, сохраняя конечный срок.
+	const browserTimeout = 2 * time.Minute
+	ctx, cancel := context.WithTimeout(t.Context(), browserTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, browser, args...) //nolint:gosec // test-only browser из закрытого allow-list
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	dumped, err := cmd.Output()
 	if err != nil {
+		if ctx.Err() != nil {
+			t.Fatalf("browser: %v (%v; timeout %s)\n%s", err, ctx.Err(), browserTimeout, stderr.String())
+		}
 		t.Fatalf("browser: %v\n%s", err, stderr.String())
 	}
 	const marker = `<pre id="choice-filter-panel-result">`
