@@ -45,17 +45,32 @@ form:
 elements:
   - kind: ПолеВвода
     name: Файл
-    mask: "00.00.00"
+    width: -10
+  - kind: НеизвестныйВид
+    name: НеизвестныйЭлемент
+  - kind: Колонка
+    name: КолонкаВнеТаблицы
+events:
+  ПриЗакрытии: ПриЗакрытииФормы
+`)
+	mkFile(t, filepath.Join(dir, "forms", "ЗагрузкаПрайса", "главная.form.os"), `Процедура ПриЗакрытииФормы()
+КонецПроцедуры
 `)
 
+	wantEntity := "forms/Инвентаризация/объекта.form.yaml"
+	wantProc := "forms/ЗагрузкаПрайса/главная.form.yaml"
 	res := RunFullWithOptions(dir, Options{})
 
+	procCodes := make(map[string]bool)
 	var seen []string
 	for _, issue := range append(append([]Issue{}, res.Issues...), res.Warnings...) {
 		if !strings.HasSuffix(issue.File, ".form.yaml") {
 			continue
 		}
 		seen = append(seen, issue.File)
+		if issue.File == wantProc {
+			procCodes[issue.Code] = true
+		}
 		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(issue.File))); err != nil {
 			t.Errorf("локатор %q не открывается как файл: %v\n  (code=%s: %s)",
 				issue.File, err, issue.Code, issue.Message)
@@ -67,8 +82,6 @@ elements:
 
 	// Проверяем и сам вид пути: он обязан сохранять регистр каталога, иначе на
 	// case-sensitive файловой системе после ExportToDir файл не найдётся.
-	wantEntity := "forms/Инвентаризация/объекта.form.yaml"
-	wantProc := "forms/ЗагрузкаПрайса/главная.form.yaml"
 	for _, want := range []string{wantEntity, wantProc} {
 		found := false
 		for _, got := range seen {
@@ -78,6 +91,19 @@ elements:
 		}
 		if !found {
 			t.Errorf("среди локаторов нет %q: %v", want, seen)
+		}
+	}
+
+	// Одного локатора недостаточно: form.not-loaded раньше скрывал отсутствие
+	// диагностик этих четырёх проверок для формы обработки.
+	for _, code := range []string{
+		"form.unknown-kind",
+		"form.column",
+		"form.event-not-dispatched",
+		"form.layout-size",
+	} {
+		if !procCodes[code] {
+			t.Errorf("нет диагностики %s с локатором %q: %v", code, wantProc, procCodes)
 		}
 	}
 }
