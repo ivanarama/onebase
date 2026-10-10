@@ -619,7 +619,7 @@ func TestEditableAdminOnlyPlacementPathsThroughHTTPAndClient(t *testing.T) {
 				if err := os.WriteFile(fixturePath, fixture, 0o600); err != nil {
 					t.Fatal(err)
 				}
-				cmd := exec.CommandContext(t.Context(), node, "--test", "static/managed_dynamic_anchor_behavior_test.js") //nolint:gosec // test-only node resolved from PATH
+				cmd := exec.CommandContext(t.Context(), node, "--test", "static/managed_placement_behavior_test.js") //nolint:gosec // test-only node resolved from PATH
 				cmd.Env = append(os.Environ(), "ONEBASE_PLACEMENT_FIXTURE="+fixturePath)
 				if out, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("production client: %v\n%s", err, out)
