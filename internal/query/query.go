@@ -833,6 +833,8 @@ type translator struct {
 	colMap       map[string]string             // lowercase field name → actual column name (for reference dims)
 	colTypes     map[string]metadata.FieldType // lowercase field name → type (для квалификации и CAST number)
 	refDims      []refDimInfo                  // reference dimensions with auto-JOIN info
+	refScope     int                           // SELECT, которому принадлежат авто-JOIN
+	refSources   map[string]bool               // имена и алиас источника этих JOIN
 	mainTable    string                        // main FROM table/alias (set when source is emitted)
 	mainEmitted  bool                          // главная таблица FROM уже эмитирована (refDims авто-JOIN — только для неё)
 	section      querySection                  // current clause context
@@ -928,20 +930,28 @@ func (ctx sourceContext) scopeIDAt(tokenPos int) (int, bool) {
 // Само наличие локального квалификатора останавливает поиск, даже если у
 // источника нет нужной системной колонки: внешняя таблица его не подменяет.
 func (ctx sourceContext) qualifierScopeAt(tokenPos int, qualifier string) (sourceScope, bool) {
-	scopeID, ok := ctx.scopeIDAt(tokenPos)
+	scopeID, ok := ctx.qualifierScopeIDAt(tokenPos, qualifier)
 	if !ok {
 		return sourceScope{}, false
+	}
+	return ctx.scopes[scopeID], true
+}
+
+func (ctx sourceContext) qualifierScopeIDAt(tokenPos int, qualifier string) (int, bool) {
+	scopeID, ok := ctx.scopeIDAt(tokenPos)
+	if !ok {
+		return 0, false
 	}
 	for scopeID >= 0 {
 		scope := ctx.scopes[scopeID]
 		_, source := scope.qualifiers[qualifier]
 		_, derived := scope.derivedAliases[qualifier]
 		if source || derived {
-			return scope, true
+			return scopeID, true
 		}
 		scopeID = scope.parent
 	}
-	return sourceScope{}, false
+	return 0, false
 }
 
 // isDerivedQualifierAt учитывает область SELECT и локальное затенение алиаса.
@@ -1459,22 +1469,32 @@ func (tr *translator) emit(s string) {
 // false, если картина иная, — тогда вызывающий не меняет поведение.
 //
 // Снимаем ТОЛЬКО настоящий квалификатор источника: имя или алиас из scope'а
-// текущего SELECT, и притом ушедший в SQL дословно. Без этой проверки под нож
-// шёл любой идентификатор перед ссылочным полем — `Чужой.Профиль.Наименование`
+// текущего или внешнего SELECT, и притом ушедший в SQL дословно. Без этой
+// проверки под нож шёл любой идентификатор перед ссылочным полем — `Чужой.Профиль.Наименование`
 // молча превращался бы в поле присоединённого справочника, то есть неверный
 // запрос отвечал бы данными вместо отказа. Тихо подменённый результат хуже
 // ошибки: ошибку видно сразу, подмену — на сверке отчётов через месяц.
-func (tr *translator) dropSourceQualifier() bool {
+func (tr *translator) dropSourceQualifier(rd *refDimInfo) bool {
 	if tr.pos < 3 || tr.tokens[tr.pos-3].kind != tIdent {
 		return false
 	}
 	qualifier := lowerFast(tr.tokens[tr.pos-3].val)
-	scope, ok := tr.sourceCtx.scopeAt(tr.pos - 1)
-	if !ok {
+	scopeID, ok := tr.sourceCtx.qualifierScopeIDAt(tr.pos-1, qualifier)
+	// Поиск останавливается на ближайшем alias, даже если у него нет нужной
+	// ссылки. Авто-JOIN принадлежит одному источнику одного SELECT: одинаковые
+	// имена полей во вложенной или присоединённой таблице его не заимствуют.
+	if !ok || scopeID != tr.refScope || !tr.refSources[qualifier] {
 		return false
 	}
-	if _, known := scope.qualifiers[qualifier]; !known {
-		return false
+	// Даже верно найденный внешний источник нельзя читать через alias JOIN,
+	// затенённый явным источником вложенного SELECT.
+	for id, _ := tr.sourceCtx.scopeIDAt(tr.pos - 1); id != scopeID; id = tr.sourceCtx.scopes[id].parent {
+		scope := tr.sourceCtx.scopes[id]
+		_, source := scope.qualifiers[rd.joinAlias]
+		_, derived := scope.derivedAliases[rd.joinAlias]
+		if source || derived {
+			return false
+		}
 	}
 	// Сверяемся с уже эмитнутым: квалификатор мог уйти в SQL не дословно
 	// (CAST у числовой колонки, префикс основной таблицы) — тогда две
@@ -4800,6 +4820,24 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		unionOrders: map[int]bool{},
 		section:     sectionOther,
 	}
+	tr.refScope = -1
+	// Тот же первый источник, что preScanRefDims: сохраняем его область и
+	// квалификаторы до эмиссии SELECT, когда FROM ещё не обработан.
+	for i := 0; i+2 < len(tokens); i++ {
+		if tokens[i].kind != tIdent || !isSourceType(upperFast(tokens[i].val)) ||
+			tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+			continue
+		}
+		if scopeID, ok := tr.sourceCtx.scopeIDAt(i); ok {
+			tr.refScope = scopeID
+			tr.refSources = map[string]bool{
+				lowerFast(tokens[i+2].val):                               true,
+				sourceToTable(upperFast(tokens[i].val), tokens[i+2].val): true,
+				tr.sourceCtx.scopes[scopeID].mainTable:                   true,
+			}
+		}
+		break
+	}
 	tr.textEqIndex = positiveTextEqualities(tokens, tr.sourceCtx)
 	for {
 		t := tr.peek(0)
@@ -5305,7 +5343,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 						// Квалификатор источника («сигналыrag» и точку) снимаем:
 						// реквизит берётся из псевдонима присоединённой таблицы,
 						// а не из колонки-идентификатора.
-						if nextIsDot && tr.dropSourceQualifier() {
+						if nextIsDot && tr.dropSourceQualifier(rd) {
 							if err := tr.assertSingleHopNavigation(rd); err != nil {
 								return Result{}, err
 							}
