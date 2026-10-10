@@ -61,13 +61,14 @@ func (tr *translator) initSelectStates() {
 		if token.kind != tIdent {
 			continue
 		}
-		// Bare references in child projections and predicates need the owner's
-		// reference metadata before its FROM is emitted. Projections use the
-		// display column; predicates keep the physical FK column.
+		// Bare references in every child expression clause need the owner's
+		// reference metadata before its FROM is emitted. Projection, grouping
+		// and ordering use the display; WHERE/HAVING keep the physical FK.
 		// Output aliases and function names are declarations, not field reads.
 		if pos+1 >= len(tr.tokens) || tr.tokens[pos+1].kind != tDot {
 			section := tr.sourceCtx.sectionAt(pos)
-			if (section != sectionSelect && section != sectionWhere) ||
+			if (section != sectionSelect && section != sectionWhere &&
+				section != sectionGroupBy && section != sectionHaving && section != sectionOrderBy) ||
 				(pos+1 < len(tr.tokens) && tr.tokens[pos+1].kind == tLParen) {
 				continue
 			}
@@ -84,15 +85,23 @@ func (tr *translator) initSelectStates() {
 		if !ok {
 			continue
 		}
+		name := lowerFast(token.val)
 		if pos+1 >= len(tr.tokens) || tr.tokens[pos+1].kind != tDot {
 			scope := tr.sourceCtx.scopes[id]
+			if tr.sourceCtx.isOutputAliasAt(pos, name) {
+				continue // an output alias does not read an outer reference
+			}
+			if tr.sourceCtx.sectionAt(pos) == sectionOrderBy && scope.unionFirst != id {
+				if _, output := tr.sourceCtx.scopes[scope.unionFirst].outputAliases[name]; output {
+					continue // compound ORDER BY belongs to the first projection
+				}
+			}
 			if _, derived := scope.derivedAliases[scope.mainTable]; scope.sourceCount > 0 && !derived {
 				// Keep the existing bare-field path for a physical child FROM.
 				// This compatibility fix concerns source-less/derived children.
 				continue
 			}
 		}
-		name := lowerFast(token.val)
 		owner := tr.referenceOwner(id, name)
 		if owner < 0 || owner == id {
 			continue
