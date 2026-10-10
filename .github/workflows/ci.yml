@@ -774,11 +774,11 @@ jobs:
           # конкурентов через FOR UPDATE SKIP LOCKED, там не проверяется вообще.
           # Без этой строки пул на 16–32 исполнителя не доказан ни одним гейтом.
           go test -race -count=1 -timeout 15m ./internal/jobqueue
-          # Table-part shape compatibility is dialect-matrix tested in
-          # internal/exchange. The regular unit job has no TEST_DATABASE_URL,
-          # so explicitly gate the PostgreSQL half here.
-          go test -race -count=1 -timeout 5m ./internal/exchange \
-            -run '^TestApplyPackage_НедостающееПолеТЧПринимается$/^postgres$'
+          # Run the whole exchange package while TEST_DATABASE_URL is present:
+          # table-part compatibility and receiver movement cleanup are matrix
+          # tested, and new matrix tests must enter the PostgreSQL gate too.
+          # The regular unit job only executes their SQLite branches.
+          go test -race -count=1 -timeout 15m ./internal/exchange
           # DR-01 (issue #784): сквозной backup→restore PostgreSQL. Проверяет,
           # что pg_dump снимает дамп, а psql-restore возвращает те же данные
           # (round-trip на выделенной базе, чтобы разрушительный restore не

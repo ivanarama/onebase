@@ -124,11 +124,11 @@ func TestDSLDocuments_DispatchWebhooks(t *testing.T) {
 		t.Fatalf("после Записать ожидался document.save, получено %v", got)
 	}
 
-	// Провести() делает неявную запись, поэтому добавляет save + post.
+	// Провести() объединяет неявную запись и проведение в одно финальное post.
 	w.CallMethod("провести", nil)
 	d.Wait()
-	if got := sink.sorted(); len(got) != 3 {
-		t.Fatalf("после Провести ожидалось 3 события (save, save, post), получено %v", got)
+	if got := sink.sorted(); len(got) != 2 || got[0] != "document.post" || got[1] != "document.save" {
+		t.Fatalf("после Провести ожидались два события (save, post), получено %v", got)
 	}
 
 	ref := dp.CallMethod("найтипономеру", []any{"ПОС-001"}).(*interpreter.Ref)
@@ -138,7 +138,7 @@ func TestDSLDocuments_DispatchWebhooks(t *testing.T) {
 	d.Wait()
 
 	got := sink.sorted()
-	want := []string{"document.delete", "document.post", "document.save", "document.save", "document.unpost"}
+	want := []string{"document.delete", "document.post", "document.save", "document.unpost"}
 	if len(got) != len(want) {
 		t.Fatalf("событий %d, ждали %d: %v", len(got), len(want), got)
 	}
