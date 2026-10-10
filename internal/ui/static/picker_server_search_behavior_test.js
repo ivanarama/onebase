@@ -727,3 +727,103 @@ for (const phase of ['debounce', 'in-flight', 'pending', 'newer-debounce', 'fail
     assert.equal(ctx.modal(), null);
   });
 }
+
+// Имена и значения Object.prototype — обычные данные подбора, в том числе
+// __proto__: computed key создаёт собственное поле, а не меняет прототип fixture.
+const prototypeNames = ['constructor', 'toString', '__proto__'];
+const prototypeValues = [...prototypeNames, 'Обычное'];
+const sortedPrototypeValues = [...prototypeValues].sort((a, b) => a.localeCompare(b, 'ru'));
+
+for (const serverSearch of [false, true]) {
+  for (const name of prototypeNames) {
+    test(`отбор ${name}: все значения доступны, серверный поиск=${serverSearch}`, () => {
+      const ctx = pickerContext();
+      const columns = [{name, type: 'string'}];
+      const rows = [...prototypeValues, 'constructor'].map((value, i) => ({
+        id: 'p-' + i, data: {[name]: value},
+      }));
+      ctx.open({columns, rows, config: {filters: [name], serverSearch}}, 'Подбор');
+      assert.deepEqual(visibleIds(ctx), rows.map((r) => r.id), 'отбор включился сам при открытии');
+      assert.deepEqual(optionValues(filterSelect(ctx, name)), ['', ...sortedPrototypeValues],
+        'значение потерялось или повторилось в отборе');
+      for (const value of prototypeValues) {
+        choose(filterSelect(ctx, name), value);
+        assert.equal(filterSelect(ctx, name).value, value);
+        assert.deepEqual(visibleIds(ctx), rows.filter((r) => r.data[name] === value).map((r) => r.id));
+      }
+      choose(filterSelect(ctx, name), '');
+      assert.deepEqual(visibleIds(ctx), rows.map((r) => r.id), '«Все» не сбросил отбор');
+    });
+  }
+}
+
+const prototypeColumns = prototypeNames.map((name) => ({name, type: 'string'}));
+const prototypeRows = [
+  ['constructor', 'toString', '__proto__'],
+  ['constructor', 'Обычное', 'toString'],
+  ['toString', 'toString', 'Обычное'],
+  ['__proto__', 'constructor', '__proto__'],
+].map((values, i) => ({
+  id: 'linked-' + i,
+  data: Object.fromEntries(prototypeNames.map((name, j) => [name, values[j]])),
+}));
+
+for (const serverSearch of [false, true]) {
+  test(`связанные отборы по именам Object.prototype, серверный поиск=${serverSearch}`, () => {
+    const ctx = pickerContext();
+    const config = {filters: prototypeNames, serverSearch};
+    ctx.open({columns: prototypeColumns, rows: prototypeRows, config}, 'Подбор');
+    assert.deepEqual(visibleIds(ctx), prototypeRows.map((r) => r.id));
+    choose(filterSelect(ctx, 'constructor'), 'constructor');
+    assert.deepEqual(visibleIds(ctx), ['linked-0', 'linked-1']);
+    assert.deepEqual(optionValues(filterSelect(ctx, 'toString')), ['', 'Обычное', 'toString']);
+    choose(filterSelect(ctx, 'toString'), 'toString');
+    choose(filterSelect(ctx, '__proto__'), '__proto__');
+    assert.deepEqual(visibleIds(ctx), ['linked-0']);
+    assert.deepEqual(optionValues(filterSelect(ctx, 'constructor')), ['', 'constructor']);
+
+    if (serverSearch) {
+      function respond(rows, query) {
+        ctx.search().value = query;
+        ctx.search().dispatch('input');
+        ctx.flush();
+        ctx.respond({columns: prototypeColumns, rows, config}, 'Подбор');
+      }
+      const newRow = {...prototypeRows[0], id: 'new-result'};
+      respond([newRow, prototypeRows[1]], 'новая выдача');
+      prototypeNames.forEach((name) => assert.equal(filterSelect(ctx, name).value, name,
+        'выбранный отбор потерян после пересборки'));
+      assert.deepEqual(visibleIds(ctx), ['new-result']);
+
+      // Ни одна строка новой выдачи не проходит прежние связанные отборы:
+      // все три сбрасываются, и варианты собираются заново после сброса соседей.
+      respond([prototypeRows[2]], 'исчезнувшие значения');
+      prototypeNames.forEach((name) => {
+        assert.equal(filterSelect(ctx, name).value, '');
+        assert.deepEqual(optionValues(filterSelect(ctx, name)), ['', prototypeRows[2].data[name]]);
+      });
+      assert.deepEqual(visibleIds(ctx), ['linked-2']);
+      respond(prototypeRows, 'восстановленная выдача');
+      assert.deepEqual(visibleIds(ctx), prototypeRows.map((r) => r.id));
+      choose(filterSelect(ctx, '__proto__'), '__proto__');
+      assert.deepEqual(visibleIds(ctx), ['linked-0', 'linked-3']);
+    }
+  });
+}
+
+for (const close of ['cancel', 'escape', 'transfer', 'other-button']) {
+  test(`отбор __proto__ не наследуется после ${close}`, () => {
+    const ctx = pickerContext();
+    const config = {serverSearch: true, filters: prototypeNames};
+    const payload = {columns: prototypeColumns, rows: prototypeRows, config};
+    ctx.open(payload, 'Подбор');
+    choose(filterSelect(ctx, '__proto__'), '__proto__');
+    assert.deepEqual(visibleIds(ctx), ['linked-0', 'linked-3']);
+    if (close !== 'other-button') ctx[close]();
+    ctx.open(payload, close === 'other-button' ? 'ДругойПодбор' : 'Подбор');
+    prototypeNames.forEach((name) => assert.equal(filterSelect(ctx, name).value, ''));
+    assert.deepEqual(visibleIds(ctx), prototypeRows.map((r) => r.id));
+    choose(filterSelect(ctx, '__proto__'), 'toString');
+    assert.deepEqual(visibleIds(ctx), ['linked-1'], 'повторное открытие вернуло коллизии ключей');
+  });
+}
