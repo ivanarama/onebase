@@ -98,8 +98,7 @@ func (p *changePublisher) canSee(ctx context.Context, u *auth.User, entity *meta
 }
 
 // publishDocChange публикует изменение из DSL-пути документов (dsl_documents.go),
-// который идёт мимо entityservice.Save. before захвачен до записи; after читается
-// после commit свежим контекстом. Вызывать ВНУТРИ транзакции DSL-записи — публикация
+// который идёт мимо entityservice.Save. Снимки фиксируются до commit, публикация
 // отложится до её commit (DeferUntilTxCommit); при откате — не сработает.
 func (s *Server) publishDocChange(ctx context.Context, entity *metadata.Entity, id uuid.UUID, action string, before map[string]any) {
 	cp := s.newChangePublisher()
@@ -107,13 +106,12 @@ func (s *Server) publishDocChange(ctx context.Context, entity *metadata.Entity, 
 		return
 	}
 	name := entity.Name
+	var after map[string]any
+	if action != "удалён" {
+		after, _ = s.store.GetByID(ctx, name, id, entity)
+	}
 	publish := func() {
-		bg := context.Background()
-		var after map[string]any
-		if action != "удалён" {
-			after, _ = s.store.GetByID(bg, name, id, entity)
-		}
-		cp.PublishChange(bg, name, action, before, after)
+		cp.PublishChange(context.Background(), name, action, before, after)
 	}
 	if storage.DeferUntilTxCommit(ctx, publish) {
 		return
