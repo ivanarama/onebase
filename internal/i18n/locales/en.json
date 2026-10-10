@@ -402,7 +402,7 @@
   "Метод": "Method",
   "Миграция": "Migration",
   "Пароль не может быть пустым": "The password cannot be empty",
-  "Минимальная длина задаётся переменной окружения ONEBASE_MIN_PASSWORD_LENGTH перед запуском лаунчера.": "The minimum length is set by the ONEBASE_MIN_PASSWORD_LENGTH environment variable before the launcher starts.",
+  "ONEBASE_MIN_PASSWORD_LENGTH задаёт минимальную длину по умолчанию перед запуском лаунчера. Сохранённая политика паролей базы перекрывает это значение. Чтобы изменить минимум, откройте «Параметры базы» → «Пароли».": "ONEBASE_MIN_PASSWORD_LENGTH sets the default minimum length before the launcher starts. A saved database password policy overrides this value. To change the minimum, open Database parameters → Passwords.",
   "Минимальная длина пароля": "Minimum password length",
   "Минимальная длина пароля должна быть целым числом от 1 до %d или пустой для наследования": "The minimum password length must be an integer from 1 to %d, or empty to inherit",
   "Минимум — от 1 до %d символов. Сам пароль — не более %d байт UTF-8 из-за ограничения bcrypt, поэтому для не-ASCII фактический максимум символов меньше.": "The minimum is from 1 to %d characters. The password itself is limited to %d UTF-8 bytes by bcrypt, so the actual maximum number of non-ASCII characters is lower.",

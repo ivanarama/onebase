@@ -2,6 +2,9 @@ package launcher
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -172,5 +175,115 @@ func TestPasswordPolicyMessagesLocalizedOnCreate(t *testing.T) {
 	}
 	if user != nil {
 		t.Fatal("пользователь с отвергнутым паролем создан")
+	}
+}
+
+// Проверка проходит через штатные маршруты и middleware лаунчера: сообщение
+// должно называть действующий минимум и объяснять приоритет настройки базы.
+func TestPasswordMinimumHintHTTP(t *testing.T) {
+	for _, policy := range []struct {
+		name   string
+		stored int
+		min    int
+	}{
+		{"environment", 0, 12},
+		{"database_lower", 4, 4},
+		{"database_higher", 14, 14},
+	} {
+		t.Run(policy.name, func(t *testing.T) {
+			t.Setenv("ONEBASE_MIN_PASSWORD_LENGTH", "12")
+			t.Setenv("ONEBASE_ALLOW_EMPTY_PASSWORDS", "false")
+			ctx := context.Background()
+			baseID := "password-hint"
+			dbPath := filepath.Join(t.TempDir(), "base.db")
+			db, err := storage.ConnectSQLite(ctx, dbPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { db.Close() })
+			repo := auth.NewRepo(db)
+			if err := repo.EnsureSchema(ctx); err != nil {
+				t.Fatal(err)
+			}
+			admin, err := repo.Create(ctx, "admin", "Str0ng-Passw0rd!", "Admin", true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			other, err := repo.Create(ctx, "other", "Str0ng-Passw0rd!", "Other", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			token, err := repo.CreateSession(ctx, admin.ID, auth.SessionMeta{Kind: auth.SessionKindConfigurator})
+			if err != nil {
+				t.Fatal(err)
+			}
+			savedBundle := launcherBundle
+			t.Cleanup(func() { launcherBundle = savedBundle })
+			srv, err := NewServer(baseOnSQLite(t, baseID, dbPath), NewRunner())
+			if err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- srv.ListenAndServe() }()
+			t.Cleanup(func() { srv.Close(); <-done })
+			client := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+			post := func(path, lang, body string) (int, string) {
+				t.Helper()
+				req, err := http.NewRequest(http.MethodPost, srv.URL()+"/bases/"+baseID+"/configurator/admin/"+path, strings.NewReader(body))
+				if err != nil {
+					t.Fatal(err)
+				}
+				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Accept-Language", lang)
+				req.AddCookie(&http.Cookie{Name: configuratorSessionCookieName, Value: token})
+				res, err := client.Do(req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer res.Body.Close()
+				raw, err := io.ReadAll(res.Body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				return res.StatusCode, string(raw)
+			}
+			if policy.stored != 0 {
+				status, body := post("settings/save", "en", fmt.Sprintf(`{"list_page_size":50,"password_min_length":%d}`, policy.stored))
+				if status != http.StatusOK {
+					t.Fatalf("save policy: status=%d body=%s", status, body)
+				}
+			}
+			for _, lang := range []string{"en", "ru"} {
+				for _, action := range []string{"create", "passwd"} {
+					t.Run(lang+"/"+action, func(t *testing.T) {
+						body := func(length int) string {
+							return fmt.Sprintf(`{"id":%q,"login":%q,"password":%q}`, other.ID, "candidate-"+lang, strings.Repeat("x", length))
+						}
+						status, raw := post("users/"+action, lang, body(policy.min-1))
+						if status != http.StatusBadRequest {
+							t.Fatalf("short password: status=%d body=%s", status, raw)
+						}
+						var reply struct {
+							Error string `json:"error"`
+						}
+						if err := json.Unmarshal([]byte(raw), &reply); err != nil {
+							t.Fatal(err)
+						}
+						wantMin := fmt.Sprintf("minimum %d characters", policy.min)
+						wantHint := "ONEBASE_MIN_PASSWORD_LENGTH sets the default minimum length before the launcher starts. A saved database password policy overrides this value. To change the minimum, open Database parameters → Passwords."
+						if lang == "ru" {
+							wantMin = fmt.Sprintf("минимум %d символов", policy.min)
+							wantHint = "ONEBASE_MIN_PASSWORD_LENGTH задаёт минимальную длину по умолчанию перед запуском лаунчера. Сохранённая политика паролей базы перекрывает это значение. Чтобы изменить минимум, откройте «Параметры базы» → «Пароли»."
+						}
+						if !strings.Contains(reply.Error, wantMin) || !strings.Contains(reply.Error, wantHint) {
+							t.Errorf("password policy message = %q; want %q and %q", reply.Error, wantMin, wantHint)
+						}
+						if status, raw := post("users/"+action, lang, body(policy.min)); status != http.StatusOK {
+							t.Fatalf("password at effective minimum: status=%d body=%s", status, raw)
+						}
+					})
+				}
+			}
+		})
 	}
 }

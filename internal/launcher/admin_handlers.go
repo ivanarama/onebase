@@ -475,7 +475,7 @@ func passwordPolicyMessage(lang string, err error) string {
 			minLen = short.Min
 		}
 		return fmt.Sprintf(tr(lang, "пароль слишком короткий: минимум %d символов"), minLen) + ". " +
-			tr(lang, "Минимальная длина задаётся переменной окружения ONEBASE_MIN_PASSWORD_LENGTH перед запуском лаунчера.")
+			tr(lang, "ONEBASE_MIN_PASSWORD_LENGTH задаёт минимальную длину по умолчанию перед запуском лаунчера. Сохранённая политика паролей базы перекрывает это значение. Чтобы изменить минимум, откройте «Параметры базы» → «Пароли».")
 	case errors.Is(err, auth.ErrPasswordTooLong):
 		maxBytes := auth.MaxPasswordLength
 		var long *auth.PasswordTooLongError
