@@ -53,8 +53,7 @@ func SetPeriodFromFields(mc *runtime.MovementsCollector, entity *metadata.Entity
 
 // Service выполняет сохранение объектов вместе с побочными эффектами.
 type Service struct {
-	// Store — порт хранилища (ports.go), а не *storage.DB: сервису нужны 25
-	// метода из 314, и объявлены здесь только они.
+	// Store — порт хранилища (ports.go), включая lifecycle записи/проведения.
 	Store  Storage
 	Reg    *runtime.Registry
 	Interp *interpreter.Interpreter
@@ -158,9 +157,8 @@ type ChangePublisher interface {
 }
 
 // publishChange публикует «данные.<сущность>» живым спискам после успешного
-// сохранения (план 87). before захвачен до записи; after читается уже после
-// commit свежим контекстом (tx-контекст после commit использовать нельзя).
-func (s *Service) publishChange(ctx context.Context, req SaveRequest, isPosting bool, before map[string]any) {
+// сохранения (план 87). Оба снимка захвачены в save scope; доставка ждёт commit.
+func (s *Service) publishChange(ctx context.Context, req SaveRequest, isPosting bool, before, after map[string]any) {
 	if s.ChangePublisher == nil || !req.Entity.NotifyChanges {
 		return
 	}
@@ -168,10 +166,9 @@ func (s *Service) publishChange(ctx context.Context, req SaveRequest, isPosting 
 	if isPosting {
 		action = "проведён"
 	}
-	entity, id, meta := req.Entity.Name, req.ID, req.Entity
+	entity := req.Entity.Name
 	publish := func() {
 		bg := context.Background()
-		after, _ := s.Store.GetByID(bg, entity, id, meta)
 		s.ChangePublisher.PublishChange(bg, entity, action, before, after)
 	}
 	if storage.DeferUntilTxCommit(ctx, publish) {
@@ -387,13 +384,13 @@ type SaveRequest struct {
 	FinalPreflight func(ctx context.Context, obj *runtime.Object) error
 
 	// Action: "" (просто Записать) | "post" | "post_and_close".
-	// Для документов с Posting=true и Action=post* запускается OnPost вместо
-	// OnWrite и в конце сохранения выставляется posted=true.
+	// Для документов с Posting=true и Action=post* выполняется OnWrite,
+	// tx-local запись, затем OnPost и финализация с posted=true.
 	Action string
 
-	// ExpectedVersion — только для !IsNew. nil ⇒ без проверки optimistic
-	// lock (поведение совместимо с прежним Upsert). Не-nil ⇒ UpsertVersioned
-	// вернёт storage.ErrVersionConflict при несовпадении версии.
+	// ExpectedVersion — только для !IsNew. nil сохраняет обычную unversioned
+	// запись; при проведении сервис читает внутренний CAS token в tx scope.
+	// Не-nil защищает исходную клиентскую версию до запуска хуков и при CAS.
 	ExpectedVersion *int64
 
 	// OnPersisted runs immediately after the save scope succeeds. In an ambient
@@ -463,40 +460,42 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 		return SaveResult{ID: req.ID, DSLError: msg}, nil
 	}
 
-	// Выбор хука: OnPost при проведении документа, иначе OnWrite.
 	isPosting := req.Entity.Posting && (req.Action == "post" || req.Action == "post_and_close")
-	// Инвариант: помеченный на удаление документ нельзя провести (как в 1С).
-	// Проверяем ДО запуска хука и записи, чтобы не терять правки полей.
-	if isPosting && !req.IsNew {
-		marked, err := s.Store.IsMarkedForDeletion(ctx, req.Entity.Name, req.ID)
-		if err != nil {
-			return SaveResult{}, err
-		}
-		if marked {
-			return SaveResult{ID: req.ID, DSLError: storage.ErrPostingDeletionMarked.Error()}, nil
-		}
-	}
-	hookName := "OnWrite"
-	if isPosting {
-		hookName = "OnPost"
-	}
-	proc := s.Reg.GetProcedure(req.Entity.Name, hookName)
+	writeProc := s.Reg.GetProcedure(req.Entity.Name, "OnWrite")
+	provisional := req.IsNew && (writeProc != nil || isPosting)
 
 	var msgs []string
 	wasPosted := false
-	// Pre-образ для живого списка (план 87): читаем строку ДО записи, чтобы
-	// прежний владелец убрал её из своего списка при смене прав. Только когда
-	// автопубликация реально включена — иначе лишнего чтения нет.
-	var changeBefore map[string]any
-	if s.ChangePublisher != nil && req.Entity.NotifyChanges && !req.IsNew {
-		changeBefore, _ = s.Store.GetByID(ctx, req.Entity.Name, req.ID, req.Entity)
-	}
+	var changeBefore, changeAfter map[string]any
 	// Хук и все его DB-побочные записи выполняются в той же транзакции, что
 	// шапка, ТЧ, движения и проведение. Для нового объекта сначала вставляется
 	// полноценная шапка: FK-ссылки из создаваемых хуком объектов уже валидны, но
 	// при любой последующей ошибке откатываются вместе с родителем.
 	var persistedVersion int64
 	err := s.Store.WithTxScope(ctx, func(txCtx context.Context) error {
+		if s.ChangePublisher != nil && req.Entity.NotifyChanges && !req.IsNew {
+			changeBefore, _ = s.Store.GetByID(txCtx, req.Entity.Name, req.ID, req.Entity)
+		}
+		// Capture the original state in this scope. A known stale client token
+		// must fail before hooks; the prelude still performs the atomic CAS.
+		var postingVersion *int64
+		if !req.IsNew && isPosting {
+			version, err := s.Store.EntityVersion(txCtx, req.Entity.Name, req.ID)
+			if err != nil {
+				return err
+			}
+			if req.ExpectedVersion != nil && version != *req.ExpectedVersion {
+				return storage.ErrVersionConflict
+			}
+			postingVersion = &version
+			marked, err := s.Store.IsMarkedForDeletion(txCtx, req.Entity.Name, req.ID)
+			if err != nil {
+				return err
+			}
+			if marked {
+				return &hookRunError{err: storage.ErrPostingDeletionMarked}
+			}
+		}
 		// Единая реализация для формы, ИИ, REST v1/v2 и DSL-объектов. Номер
 		// выдаётся внутри транзакции записи и до provisional/hook: хук его
 		// видит, а его исключение или последующий сбой БД откатывает счётчик.
@@ -533,13 +532,6 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			}
 		}
 		SetPeriodFromFields(mc, req.Entity, obj.Fields)
-		// Form preflight may change the document date. Check the posting lock
-		// against that final value, inside the same rollback scope.
-		if isPosting && mc.Period != nil {
-			if lock, ok := s.Store.GetPostingLockDate(txCtx); ok && storage.PostingFrozen(lock, *mc.Period) {
-				return &hookRunError{err: storage.PostingFrozenError(lock)}
-			}
-		}
 		if req.Entity.Posting && !req.IsNew && !isPosting {
 			stored, err := s.Store.GetByID(txCtx, req.Entity.Name, req.ID, req.Entity)
 			if err != nil {
@@ -547,40 +539,43 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			}
 			wasPosted, _ = stored["posted"].(bool)
 		}
-		if proc != nil {
+		if provisional {
+			if err := s.Store.UpsertProvisional(txCtx, req.Entity.Name, req.ID, obj.Fields, req.Entity); err != nil {
+				return err
+			}
+		}
+		writeMovements := mc
+		if isPosting {
+			// Only OnPost contributes the posting collector. Direct DB writes
+			// from OnWrite remain in the same transaction and are not discarded.
+			writeMovements = runtime.NewMovementsCollector(req.Entity.Name, req.ID).WillPersist()
+			SetPeriodFromFields(writeMovements, req.Entity, obj.Fields)
+		}
+		if err := s.runSaveHook(txCtx, req.Entity, obj, writeProc, writeMovements, &msgs, lockCollector); err != nil {
+			return err
+		}
+		if isPosting {
 			if req.IsNew {
-				if err := s.Store.UpsertProvisional(txCtx, req.Entity.Name, req.ID, obj.Fields, req.Entity); err != nil {
+				if err := s.Store.UpdateProvisional(txCtx, req.Entity.Name, req.ID, obj.Fields, req.Entity); err != nil {
 					return err
 				}
+			} else if err := s.Store.UpsertPostingPreludeVersioned(txCtx, req.Entity.Name, req.ID, obj.Fields, req.Entity, postingVersion); err != nil {
+				return err
 			}
-			txHookCtx, cancelHook := s.hookExecutionContext(runtime.ContextWithLockCollector(txCtx, lockCollector))
-			defer cancelHook()
-			var vars map[string]any
-			var txState *interpreter.TxState
-			if s.BuildVars != nil {
-				vars, txState = s.BuildVars(txHookCtx, mc, &msgs)
+			for _, tp := range req.Entity.TableParts {
+				if rows, provided := obj.TablePartRows[tp.Name]; provided {
+					if err := s.Store.UpsertPostingPreludeTablePartRows(txCtx, req.Entity.Name, tp.Name, req.ID, rows, tp); err != nil {
+						return err
+					}
+				}
 			}
-			defer interpreter.RollbackTxExecution(txState)
-			var thisVal interpreter.This = obj
-			if s.MakeThis != nil {
-				thisVal = s.MakeThis(txHookCtx, txState, obj, req.Entity)
+			intermediate, err := s.Store.GetByID(txCtx, req.Entity.Name, req.ID, req.Entity)
+			if err != nil {
+				return err
 			}
-			runErr := s.runHook(txHookCtx, proc, thisVal, vars)
-			if runErr = interpreter.FinishTxExecution(txState, runErr); runErr != nil {
-				return &hookRunError{err: runErr}
-			}
-			// Повторно — уже после хука (#977). Входная проверка защищает от
-			// значения, пришедшего от пользователя, но хук может присвоить
-			// реквизиту-перечислению что угодно, и до сих пор это доезжало до
-			// базы: форма показывала пустой выбор, а сравнение «Если Статус =
-			// …» молча не срабатывало.
-			//
-			// Прежний довод «откатывать последствия хука хуже, чем не
-			// начинать» не выдержал проверки: хук исполняется ВНУТРИ этой
-			// транзакции, и его последствия откатываются вместе с ней даром.
-			// Платить нечем, а тихая порча данных остаётся навсегда.
-			if msg := ValidateEnumFields(s.Reg, req.Entity, obj.Fields, obj.TablePartRows); msg != "" {
-				return &hookRunError{err: errors.New(msg)}
+			SetPeriodFromFields(mc, req.Entity, intermediate)
+			if err := s.runSaveHook(txCtx, req.Entity, obj, s.Reg.GetProcedure(req.Entity.Name, "OnPost"), mc, &msgs, lockCollector); err != nil {
+				return err
 			}
 		}
 
@@ -589,15 +584,36 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 		// Ранняя проверка отвергала такие законные создания; проверка только в
 		// storage, наоборот, не видела ТЧ. Здесь отказ ещё откатывает provisional
 		// row, номер и все побочные записи хука, а caller получает DSLError.
-		if msg := storage.ValidateRequiredObjectValues(req.Entity, obj.Fields, obj.TablePartRows, req.IsNew); msg != "" {
+		finalFields := obj.Fields
+		if !req.IsNew {
+			stored, err := s.Store.GetByID(txCtx, req.Entity.Name, req.ID, req.Entity)
+			if err != nil {
+				return err
+			}
+			// Validate effective partial state without adding omitted fields to
+			// the write map or exposing them to the caller's hook.
+			finalFields = effectiveSaveFields(stored, obj.Fields)
+		}
+		if msg := storage.ValidateRequiredObjectValues(req.Entity, finalFields, obj.TablePartRows, true); msg != "" {
 			return &hookRunError{err: errors.New(msg)}
+		}
+		if isPosting {
+			// Use the effective final date, including an omitted REST field or
+			// a date cleared/replaced by a hook; do not retain a stale period.
+			mc.Period = nil
+			SetPeriodFromFields(mc, req.Entity, finalFields)
+			if mc.Period != nil {
+				if lock, ok := s.Store.GetPostingLockDate(txCtx); ok && storage.PostingFrozen(lock, *mc.Period) {
+					return &hookRunError{err: storage.PostingFrozenError(lock)}
+				}
+			}
 		}
 		if err := s.Store.AdvisoryXactLock(txCtx, lockCollector.Keys()); err != nil {
 			return err
 		}
 		if req.IsNew {
 			var err error
-			if proc != nil {
+			if provisional {
 				// Строка уже вставлена перед hook. Обновляем изменённые hook-поля,
 				// сохраняя стартовую _version=1.
 				err = s.Store.UpsertPreserveVersion(txCtx, req.Entity.Name, req.ID, obj.Fields, req.Entity)
@@ -605,6 +621,10 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 				err = s.Store.Upsert(txCtx, req.Entity.Name, req.ID, obj.Fields, req.Entity)
 			}
 			if err != nil {
+				return err
+			}
+		} else if isPosting {
+			if err := s.Store.UpsertAfterVersionBump(txCtx, req.Entity.Name, req.ID, obj.Fields, req.Entity); err != nil {
 				return err
 			}
 		} else if req.ExpectedVersion == nil {
@@ -628,6 +648,12 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			// Preflight/PrepareHook/OnWrite may replace TablePartRows wholesale;
 			// req.TablePartRows can then still point at the pre-hook map.
 			rows, ok := obj.TablePartRows[tp.Name]
+			if isPosting {
+				if err := s.Store.FinalizePostingPreludeTablePartRows(txCtx, req.Entity.Name, tp.Name, req.ID, rows, ok, tp); err != nil {
+					return err
+				}
+				continue
+			}
 			if !ok {
 				continue
 			}
@@ -672,6 +698,9 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			return err
 		}
 		persistedVersion = version
+		if s.ChangePublisher != nil && req.Entity.NotifyChanges {
+			changeAfter, _ = s.Store.GetByID(txCtx, req.Entity.Name, req.ID, req.Entity)
+		}
 		if req.FinalPreflight != nil {
 			if err := req.FinalPreflight(txCtx, obj); err != nil {
 				return err
@@ -709,10 +738,56 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 		}
 	}
 
+	// Hooks may replace either map; committed delivery uses their final state.
+	req.Fields, req.TablePartRows = obj.Fields, obj.TablePartRows
 	s.dispatchSaved(ctx, req, isPosting)
-	s.publishChange(ctx, req, isPosting, changeBefore)
+	s.publishChange(ctx, req, isPosting, changeBefore, changeAfter)
 
 	return result, nil
+}
+
+// runSaveHook owns one timeout/DSL transaction execution while keeping the
+// storage transaction and lock scope shared by both phases of a posting save.
+func (s *Service) runSaveHook(ctx context.Context, entity *metadata.Entity, obj *runtime.Object,
+	proc *ast.ProcedureDecl, mc *runtime.MovementsCollector, msgs *[]string, locks *runtime.LockCollector) error {
+	if proc != nil {
+		hookCtx, cancel := s.hookExecutionContext(runtime.ContextWithLockCollector(ctx, locks))
+		defer cancel()
+		var vars map[string]any
+		var txState *interpreter.TxState
+		if s.BuildVars != nil {
+			vars, txState = s.BuildVars(hookCtx, mc, msgs)
+		}
+		defer interpreter.RollbackTxExecution(txState)
+		var this interpreter.This = obj
+		if s.MakeThis != nil {
+			this = s.MakeThis(hookCtx, txState, obj, entity)
+		}
+		err := s.runHook(hookCtx, proc, this, vars)
+		if err = interpreter.FinishTxExecution(txState, err); err != nil {
+			return &hookRunError{err: err}
+		}
+	}
+	if msg := ValidateEnumFields(s.Reg, entity, obj.Fields, obj.TablePartRows); msg != "" {
+		return &hookRunError{err: errors.New(msg)}
+	}
+	return nil
+}
+
+func effectiveSaveFields(stored, patch map[string]any) map[string]any {
+	fields := make(map[string]any, len(stored)+len(patch))
+	for key, value := range stored {
+		fields[key] = value
+	}
+	for key, value := range patch {
+		for old := range fields {
+			if strings.EqualFold(old, key) {
+				delete(fields, old)
+			}
+		}
+		fields[key] = value
+	}
+	return fields
 }
 
 // hookRunError distinguishes a user-facing save rejection (DSL hook or a

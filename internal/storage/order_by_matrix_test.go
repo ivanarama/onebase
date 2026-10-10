@@ -92,8 +92,9 @@ func TestOrderByEmptyTextLastMatrix(t *testing.T) {
 
 // Незаполненное — это один класс, а не два. NULL и ” обязаны давать
 // одинаковый вторичный ключ, иначе следующий ключ порядка до сравнения не
-// доходит: на SQLite NULL при ASC оказывается раньше ”, и «Бета» без ранга
-// обгоняет «Альфу» с пустым рангом вопреки order_by: [Ранг, Наименование].
+// доходит: на SQLite NULL при ASC оказывается раньше ”, и Beta без ранга
+// обгоняет Alpha с пустым рангом вопреки order_by: [Ранг, Наименование].
+// ASCII-имена проверяют вторичный ключ без зависимости от языковой collation базы.
 func TestOrderByEmptyGroupFallsThroughToSecondaryKeyMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		ctx := context.Background()
@@ -114,9 +115,9 @@ func TestOrderByEmptyGroupFallsThroughToSecondaryKeyMatrix(t *testing.T) {
 			fields map[string]any
 		}{
 			// Ранг не передан вовсе — в колонке остаётся NULL.
-			{name: "Бета", fields: map[string]any{"Наименование": "Бета"}},
-			{name: "Альфа", fields: map[string]any{"Наименование": "Альфа", "Ранг": ""}},
-			{name: "Гамма", fields: map[string]any{"Наименование": "Гамма", "Ранг": "A"}},
+			{name: "Beta", fields: map[string]any{"Наименование": "Beta"}},
+			{name: "Alpha", fields: map[string]any{"Наименование": "Alpha", "Ранг": ""}},
+			{name: "Gamma", fields: map[string]any{"Наименование": "Gamma", "Ранг": "A"}},
 		} {
 			if err := db.Upsert(ctx, entity.Name, uuid.New(), row.fields, entity); err != nil {
 				t.Fatalf("Upsert %s: %v", row.name, err)
@@ -131,7 +132,7 @@ func TestOrderByEmptyGroupFallsThroughToSecondaryKeyMatrix(t *testing.T) {
 		for _, row := range rows {
 			got = append(got, row["Наименование"].(string))
 		}
-		want := []string{"Гамма", "Альфа", "Бета"}
+		want := []string{"Gamma", "Alpha", "Beta"}
 		if len(got) != len(want) {
 			t.Fatalf("получено %v, want %v", got, want)
 		}
