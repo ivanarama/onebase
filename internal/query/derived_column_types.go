@@ -79,11 +79,15 @@ func scalarProjectionTypes(tokens []tok, ctx sourceContext, scopeID int,
 			}
 		}
 	}
-	for _, item := range splitProjectionItems(tokens[start+1 : end]) {
+	add := func(from, to int) {
+		item := trimProjectionItem(tokens[from:to])
+		from = to - len(item)
 		column, _ := parseProjectionItem(item)
 		if column.Output == "" || column.Star {
-			continue
+			return
 		}
+		fieldEnd := from + 2*len(column.Path) - 1
+		key := projectionSQLKey(tokens, ctx, column, fieldEnd)
 		typ := metadata.FieldType("")
 		if !union {
 			expr := item
@@ -92,14 +96,64 @@ func scalarProjectionTypes(tokens []tok, ctx sourceContext, scopeID int,
 					expr = item[:n-2]
 				}
 			}
-			typ = scalarProjectionExpressionType(expr, fields, qualified)
+			typ = scalarProjectionFieldTypeAt(tokens, ctx, from, from+len(expr), fields, qualified)
 		}
-		if _, duplicate := output[column.Output]; duplicate {
+		if _, duplicate := output[key]; duplicate {
 			typ = ""
 		}
-		output[column.Output] = typ
+		output[key] = typ
 	}
+	depth, from := 0, start+1
+	for i := from; i < end; i++ {
+		switch tokens[i].kind {
+		case tLParen:
+			depth++
+		case tRParen:
+			depth--
+		case tComma:
+			if depth == 0 {
+				add(from, i)
+				from = i + 1
+			}
+		}
+	}
+	add(from, end)
 	return output
+}
+
+// projectionSQLKey preserves explicit aliases and otherwise maps the system
+// flags to the names emitted by the SQL translator. Derived projections must
+// count collisions under these keys, not under their distinct DSL spellings.
+func projectionSQLKey(tokens []tok, ctx sourceContext, column ProjectionColumn, fieldEnd int) string {
+	if column.Alias == "" && len(column.Path) > 0 && ctx.systemColumnIdentifierAt(tokens, fieldEnd-1, map[int]bool{}) {
+		if physical, _, system := entitySystemColAlias(column.Output); system {
+			return physical
+		}
+	}
+	return column.Output
+}
+
+// scalarProjectionFieldTypeAt resolves direct system fields by their actual
+// input SQL key too: a derived table exports posted, even when its child SELECT
+// used Проведен. An explicit logical alias and a same-named own field retain
+// their literal keys because the source context does not rewrite them.
+func scalarProjectionFieldTypeAt(tokens []tok, ctx sourceContext, from, to int,
+	fields map[string]metadata.FieldType, qualified map[string]map[string]metadata.FieldType,
+) metadata.FieldType {
+	start, end := trimProjectionParentheses(tokens, from, to)
+	expr := tokens[start:end]
+	if (len(expr) == 1 || len(expr) == 3 && expr[1].kind == tDot) &&
+		ctx.systemColumnIdentifierAt(tokens, end-1, map[int]bool{}) {
+		if physical, _, system := entitySystemColAlias(expr[len(expr)-1].val); system {
+			if len(expr) == 3 {
+				return qualified[lowerFast(expr[0].val)][physical]
+			}
+			if scopeID, ok := ctx.scopeIDAt(start); ok {
+				return qualified[ctx.scopes[scopeID].mainTable][physical]
+			}
+		}
+	}
+	return scalarProjectionExpressionType(expr, fields, qualified)
 }
 
 // Only a direct field and MIN/MAX of a proven field preserve its type here.

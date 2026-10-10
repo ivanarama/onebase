@@ -48,24 +48,13 @@ func scopedBoolOutputColumns(tokens []tok, ctx sourceContext,
 		if col.Output == "" {
 			return
 		}
-		output := col.Output
 		fieldEnd := from + 2*len(col.Path) - 1
-		if col.Alias == "" && len(col.Path) > 0 && ctx.systemColumnIdentifierAt(tokens, fieldEnd-1, map[int]bool{}) {
-			if physical, _, system := entitySystemColAlias(output); system {
-				output = physical
-			}
-		}
+		output := projectionSQLKey(tokens, ctx, col, fieldEnd)
 		counts[output]++
 		// Prove the expression independently: two logical names can emit
 		// distinct SQL keys and must not erase each other's source types.
 		if len(col.Path) > 0 {
-			fields := scoped[scopeID]
-			if len(col.Path) == 1 && ctx.systemColumnIdentifierAt(tokens, fieldEnd-1, map[int]bool{}) {
-				// The translator binds an unqualified system column to the
-				// main source, even when a JOIN has a same-named own field.
-				fields = qualified[scopeID][ctx.scopes[scopeID].mainTable]
-			}
-			if scalarProjectionExpressionType(tokens[from:fieldEnd], fields, qualified[scopeID]) == metadata.FieldTypeBool {
+			if scalarProjectionFieldTypeAt(tokens, ctx, from, fieldEnd, scoped[scopeID], qualified[scopeID]) == metadata.FieldTypeBool {
 				candidates = append(candidates, output)
 			}
 		}
