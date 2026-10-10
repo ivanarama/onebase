@@ -232,11 +232,14 @@ func (s *Server) choicePreviewPage(w http.ResponseWriter, r *http.Request, ent *
 				http.Error(w, "invalid context reference entity: "+alias, http.StatusBadRequest)
 				return
 			}
-			// Ссылка требует object read и допуска строки (инвариант 7) —
-			// тот же гейт, что и selected_allowed у choice.
-			// folders=false: здесь проверяется не состав подбора, а допуск к самой
-			// ссылке контекста — состав выдачи ни при чём.
-			okAllowed, aerr := s.choiceSelectedAllowed(r.Context(), refEnt, id, nil, false)
+			if !s.can(r, string(refEnt.Kind), refEnt.Name, "read") {
+				http.Error(w, "context reference not allowed: "+alias, http.StatusForbidden)
+				return
+			}
+			// Контекст допускает и элементы, и группы, уже выбранные через
+			// choice_folders. Проверки read, RLS и активности ссылки сохраняются;
+			// состав целевого подбора определяет его собственный choice_folders.
+			okAllowed, aerr := s.choiceSelectedAllowed(r.Context(), refEnt, id, nil, true)
 			if aerr != nil {
 				s.serverError(w, r, aerr)
 				return
