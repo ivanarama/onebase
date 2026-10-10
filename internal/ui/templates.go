@@ -1422,6 +1422,8 @@ h2{font-size:22px;font-weight:600;margin-bottom:20px;color:#1e293b}
 h3{font-size:16px;font-weight:600;margin:24px 0 10px;color:#1e293b}
 .card{background:#fff;border-radius:10px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,.1);max-width:1400px}
 .main-list .card,.main-list .row-top,.main-list details,.main-list .breadcrumb{max-width:1600px}
+.main-list .ob-list-content{width:100%}
+.main-list .ob-list-content>.card{max-width:none}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th{text-align:left;padding:10px 12px;border-bottom:2px solid #e2e8f0;color:#64748b;font-weight:600}
 th a{color:#64748b;text-decoration:none}
@@ -2598,7 +2600,6 @@ const tplReport = `
 {{$excel := printf "/ui/report/%s/export/excel%s" (lower .Report.Name) $q}}
 {{$pdf := printf "/ui/report/%s/export/pdf%s" (lower .Report.Name) $q}}
 <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:8px">
-  <a class="btn btn-sm" href="/ui/export-jobs">{{t $.Lang "Мои выгрузки"}}</a>
   {{if eq (lower .Report.OutputFormat) "pdf"}}
   <a class="btn btn-sm" href="{{$pdf}}" style="background:#dc2626;color:#fff" title="{{t $.Lang "Запустить выгрузку PDF"}}">{{t $.Lang "PDF"}}</a>
   <a class="btn btn-sm" href="{{$excel}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Запустить выгрузку Excel"}}">{{t $.Lang "Excel"}}</a>
@@ -2676,6 +2677,9 @@ const tplReport = `
 {{template "head" .}}{{template "nav" .}}
 <main>
 <h2>{{.Report.DisplayName $.Lang}}</h2>
+<div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+  <a class="btn btn-sm" href="/ui/export-jobs">{{t $.Lang "Мои выгрузки"}}</a>
+</div>
 {{if or .ReportParams .Report.Variants .ReportPresets}}
 <details class="card report-block" data-block="params" open style="margin-bottom:16px">
 <summary>{{t $.Lang "Параметры"}}</summary>
