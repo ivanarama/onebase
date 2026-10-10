@@ -75,7 +75,13 @@ type DebugHook interface {
 }
 
 type Interpreter struct {
-	LookupProc func(name string) *ast.ProcedureDecl
+	// ValidateObjectAccess is an optional receiver guard for one execution
+	// policy. It checks evaluated receivers before property reads/writes and
+	// method dispatch, including references returned by other objects. Configure
+	// it before running; do not mutate a shared interpreter while executing.
+	// The guard may raise a catchable user error.
+	ValidateObjectAccess func(object any)
+	LookupProc           func(name string) *ast.ProcedureDecl
 	// LookupSiblingProc resolves a helper procedure defined in the same
 	// source file as the currently-executing statement. Used so that
 	// `.proc.os` / `.posting.os` / `.rep.os` могут содержать вспомогательные
@@ -571,6 +577,9 @@ func (i *Interpreter) assign(target ast.Expr, val any, e *env) {
 
 func (i *Interpreter) evalExpr(expr ast.Expr, e *env) any {
 	result := i.evalExprUnchecked(expr, e)
+	if i.ValidateObjectAccess != nil {
+		i.ValidateObjectAccess(unwrapReadOnly(result))
+	}
 	e.ec.checkReadOnlyViolation()
 	return result
 }
