@@ -35,6 +35,8 @@ func TestFieldPathsPublicYAMLContract(t *testing.T) {
 		{"search_fields", "[Контакты.parent_id]", "Контакты.parent_id"},
 		{"search_fields", "[Контакты.строка]", "Контакты.строка"},
 		{"search_fields", "[id]", "id"},
+		{"search_fields", "[Строка]", "неизвестный реквизит шапки"},
+		{"fulltext", "[Контакты.строка]", "служебные колонки"},
 		{"search_fields", "[Контакты.Ссылка]", "Контакты.Ссылка"},
 		{"search_fields", "[Контакты.Значение, контакты.значение]", "дважды"},
 		{"search_fields", "[Наименование, наименование]", "дважды"},
@@ -100,5 +102,59 @@ func TestTypedFieldPathsDefaultsAndCanonicalNames(t *testing.T) {
 	e.FullText = []string{"Наименование", "Нет"}
 	if got := HeaderFullTextFields(e); len(got) != 0 {
 		t.Fatalf("invalid header adapter returned partial index: %v", got)
+	}
+}
+
+// Строка is reserved only as a table-part column, not as a header field or
+// the name of a table part. Exercise the public YAML and validation path.
+func TestFieldPathsServiceNamesBySegmentRole(t *testing.T) {
+	const yaml = `name: Записи
+fields:
+  - {name: Строка, type: string}
+tableparts:
+  - name: Строка
+    fields:
+      - {name: Значение, type: string}
+  - name: id
+    fields:
+      - {name: Значение, type: string}
+`
+	for _, tc := range []struct {
+		key, path, canonical string
+		tablePart            bool
+	}{
+		{"search_fields", "Строка", "Строка", false},
+		{"search_fields", "сТрОкА", "Строка", false},
+		{"fulltext", "Строка", "Строка", false},
+		{"fulltext", "сТрОкА", "Строка", false},
+		{"search_fields", "строка.значение", "Строка.Значение", true},
+		{"search_fields", "ID.Значение", "id.Значение", true},
+	} {
+		t.Run(tc.key+tc.path, func(t *testing.T) {
+			e, err := LoadFile(writeEntityYAML(t, yaml+tc.key+": ["+tc.path+"]\n"), KindCatalog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := Validate([]*Entity{e}, nil); err != nil {
+				t.Fatal(err)
+			}
+			if err := ValidateIdentifiers([]*Entity{e}, nil, nil, nil, nil, nil); err != nil {
+				t.Fatal(err)
+			}
+			resolve := SearchFieldPaths
+			if tc.key == "fulltext" {
+				resolve = FullTextFieldPaths
+			}
+			paths, err := resolve(e)
+			if err != nil || len(paths) != 1 || paths[0].Path != tc.canonical || (paths[0].TablePart != nil) != tc.tablePart {
+				t.Fatalf("declared path lost: %+v, %v", paths, err)
+			}
+			if tc.key == "fulltext" {
+				fields := HeaderFullTextFields(e)
+				if len(fields) != 1 || fields[0].Name != "Строка" {
+					t.Fatalf("header FTS field lost: %+v", fields)
+				}
+			}
+		})
 	}
 }

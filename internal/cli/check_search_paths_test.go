@@ -10,6 +10,16 @@ func TestCheckSearchPathsThroughRootCommand(t *testing.T) {
 		key, path string
 		valid     bool
 	}{
+		{"search_fields", "Строка", true},
+		{"search_fields", "сТрОкА", true},
+		{"fulltext", "Строка", true},
+		{"fulltext", "сТрОкА", true},
+		{"search_fields", "строка.значение", true},
+		{"search_fields", "ID.Значение", true},
+		{"search_fields", "Контакты.строка", false},
+		{"fulltext", "Контакты.строка", false},
+		{"search_fields", "Контакты.parent_id", false},
+		{"search_fields", "id", false},
 		{"search_fields", "Контакты.Телефон", true},
 		{"search_fields", "контакты.телефон", true},
 		{"search_fields", "Контакты.Нет", false},
@@ -24,10 +34,17 @@ func TestCheckSearchPathsThroughRootCommand(t *testing.T) {
 			writeProcrunFixture(t, dir, "catalogs/Клиенты.yaml", `name: Клиенты
 fields:
   - {name: Наименование, type: string}
+  - {name: Строка, type: string}
 tableparts:
   - name: Контакты
     fields:
       - {name: Телефон, type: string}
+  - name: Строка
+    fields:
+      - {name: Значение, type: string}
+  - name: id
+    fields:
+      - {name: Значение, type: string}
 `+tc.key+": ["+tc.path+"]\n")
 			out, err := captureStdout(t, func() error { rootCmd.SetArgs([]string{"check", "--project", dir}); return rootCmd.Execute() })
 			if tc.valid {

@@ -31,10 +31,12 @@ func ResolveEntityFieldPath(e *Entity, path string) (EntityFieldPath, error) {
 		if part == "" || strings.TrimSpace(part) != part {
 			return fail("пустой сегмент или пробелы в имени")
 		}
-		switch strings.ToLower(part) {
-		case "id", "parent_id", "строка", "is_folder", "deletion_mark", "_version", "posted":
-			return fail("служебные колонки не участвуют в поиске")
-		}
+	}
+	// Reserved names apply to the field segment, never the table-part name.
+	// Строка is generated only in table parts and remains a valid header field.
+	fieldName := strings.ToLower(parts[len(parts)-1])
+	if systemColumns[fieldName] || (len(parts) == 2 && tablePartReservedColumns[fieldName]) {
+		return fail("служебные колонки не участвуют в поиске")
 	}
 	if len(parts) == 1 {
 		if f := findEntityFieldFold(e, parts[0]); f != nil {
