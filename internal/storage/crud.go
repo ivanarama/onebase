@@ -951,6 +951,7 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 				for _, f := range entity.Fields {
 					if f.Type == metadata.FieldTypeString && strings.EqualFold(f.Name, "Наименование") {
 						orderCol = metadata.ColumnName(f)
+						orderDir = "ASC"
 						break
 					}
 				}

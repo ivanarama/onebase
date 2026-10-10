@@ -68,8 +68,10 @@ func TestListDefaultSortMatrix(t *testing.T) {
 		if err := db.Upsert(ctx, doc.Name, emptyID, map[string]any{"Номер": "D-no-date"}, doc); err != nil {
 			t.Fatalf("Upsert document without date: %v", err)
 		}
-		assertListFieldOrder(t, db, doc, storage.ListParams{}, "Номер",
-			[]string{"C-new-low-id", "B-new-high-id", "A-old", "D-no-date"})
+		for _, dir := range []string{"", "asc", "desc", "DESC"} {
+			assertListFieldOrder(t, db, doc, storage.ListParams{Dir: dir}, "Номер",
+				[]string{"C-new-low-id", "B-new-high-id", "A-old", "D-no-date"})
+		}
 		// Явный выбор колонки и keyset по id имеют приоритет над новым дефолтом.
 		assertListFieldOrder(t, db, doc, storage.ListParams{Sort: "Номер"}, "Номер",
 			[]string{"A-old", "B-new-high-id", "C-new-low-id", "D-no-date"})
@@ -96,6 +98,74 @@ func TestListDefaultSortMatrix(t *testing.T) {
 		}
 		assertListFieldOrder(t, db, catalog, storage.ListParams{}, "Код",
 			[]string{"002", "003", "001", "004"})
+	})
+}
+
+func TestListDefaultSortDirectionMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		lowID := uuid.MustParse("00000000-0000-0000-0000-000000000001")
+		middleID := uuid.MustParse("80000000-0000-0000-0000-000000000002")
+		highID := uuid.MustParse("f0000000-0000-0000-0000-000000000003")
+		emptyID := uuid.MustParse("e0000000-0000-0000-0000-000000000004")
+		for _, field := range []string{"Наименование", "Название"} {
+			t.Run(field, func(t *testing.T) {
+				catalog := &metadata.Entity{
+					Name: "Направление" + uuid.NewString()[:8], Kind: metadata.KindCatalog,
+					Fields: []metadata.Field{{Name: field, Type: metadata.FieldTypeString}},
+				}
+				if err := db.Migrate(ctx, []*metadata.Entity{catalog}); err != nil {
+					t.Fatalf("Migrate: %v", err)
+				}
+				for _, row := range []struct {
+					id   uuid.UUID
+					name string
+				}{{lowID, "B"}, {highID, "A"}} {
+					if err := db.Upsert(ctx, catalog.Name, row.id, map[string]any{field: row.name}, catalog); err != nil {
+						t.Fatalf("Upsert: %v", err)
+					}
+				}
+				for _, dir := range []string{"", "asc", "desc", "DESC"} {
+					assertListFieldOrder(t, db, catalog, storage.ListParams{Dir: dir}, field, []string{"A", "B"})
+				}
+				assertListFieldOrder(t, db, catalog, storage.ListParams{Sort: field, Dir: "desc"}, field, []string{"B", "A"})
+				if err := db.Upsert(ctx, catalog.Name, middleID, map[string]any{field: "A"}, catalog); err != nil {
+					t.Fatalf("Upsert equal name: %v", err)
+				}
+				if err := db.Upsert(ctx, catalog.Name, emptyID, map[string]any{}, catalog); err != nil {
+					t.Fatalf("Upsert NULL name: %v", err)
+				}
+				want := []string{middleID.String(), highID.String(), lowID.String(), emptyID.String()}
+				for _, dir := range []string{"", "asc", "desc", "DESC"} {
+					assertListFieldOrder(t, db, catalog, storage.ListParams{Dir: dir}, "id", want)
+					for repeat := 0; repeat < 2; repeat++ {
+						for offset := 0; offset < len(want); offset += 2 {
+							assertListFieldOrder(t, db, catalog, storage.ListParams{Dir: dir, Limit: 2, Offset: offset}, "id", want[offset:offset+2])
+						}
+					}
+				}
+			})
+		}
+		// Без строкового поля fallback по id продолжает учитывать Dir.
+		catalog := &metadata.Entity{
+			Name: "БезСтроки" + uuid.NewString()[:8], Kind: metadata.KindCatalog,
+			Fields: []metadata.Field{{Name: "Число", Type: metadata.FieldTypeNumber}},
+		}
+		if err := db.Migrate(ctx, []*metadata.Entity{catalog}); err != nil {
+			t.Fatalf("Migrate fallback: %v", err)
+		}
+		for _, id := range []uuid.UUID{lowID, highID} {
+			if err := db.Upsert(ctx, catalog.Name, id, map[string]any{"Число": 1}, catalog); err != nil {
+				t.Fatalf("Upsert fallback: %v", err)
+			}
+		}
+		for _, dir := range []string{"", "asc", "desc", "DESC"} {
+			want := []string{lowID.String(), highID.String()}
+			if dir == "desc" || dir == "DESC" {
+				want = []string{highID.String(), lowID.String()}
+			}
+			assertListFieldOrder(t, db, catalog, storage.ListParams{Dir: dir}, "id", want)
+		}
 	})
 }
 
