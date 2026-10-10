@@ -5746,13 +5746,13 @@ func rewriteScalarFuncs(tokens []tok, dialect string, scopedColTypes map[int]map
 				argument := rawInner
 				modifier := 0
 				if len(argument) > 0 && argument[0].kind == tIdent {
-					if kw, ok := sqlKW(argument[0].val); ok && kw == "DISTINCT" {
+					if kw, ok := sqlKW(argument[0].val); ok && (kw == "DISTINCT" || kw == "ALL") {
 						argument = argument[1:]
 						modifier = 1
 					}
 				}
 				if numberAggregate && scalarProjectionExpressionType(argument, scopeColTypes, scopeQualified) == metadata.FieldTypeNumber {
-					// Preserve DISTINCT outside CAST; wrapping an unproven string
+					// Preserve DISTINCT/ALL outside CAST; wrapping an unproven string
 					// or expression would silently change its SQL semantics.
 					wrapped := append([]tok(nil), inner[:modifier]...)
 					wrapped = append(wrapped, tokenizeFragment("CAST(")...)

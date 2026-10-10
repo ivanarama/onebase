@@ -29,25 +29,62 @@ func scopedBoolOutputColumns(tokens []tok, ctx sourceContext,
 	if !ok {
 		return nil
 	}
-	types := scalarProjectionTypes(tokens, ctx, scopeID, scoped[scopeID], qualified[scopeID])
+	end := topLevelFrom(tokens, start)
+	// UNION types must agree by position across all branches; a direct field
+	// in the first SELECT alone cannot prove the result type.
+	for i := end; i < len(tokens) && ctx.tokenDepth[i] >= ctx.tokenDepth[start]; i++ {
+		if tokens[i].kind == tIdent && ctx.tokenDepth[i] == ctx.tokenDepth[start] {
+			if kw, ok := sqlKW(tokens[i].val); ok && kw == "UNION" {
+				return nil
+			}
+		}
+	}
 	var candidates []string
 	counts := map[string]int{}
-	for _, item := range splitProjectionItems(tokens[start+1 : topLevelFrom(tokens, start)]) {
+	add := func(from, to int) {
+		item := trimProjectionItem(tokens[from:to])
+		from = to - len(item)
 		col, _ := parseProjectionItem(item)
 		if col.Output == "" {
-			continue
+			return
 		}
 		output := col.Output
-		if col.Alias == "" && ctx.scopeProjectsSystemColumn(tokens, scopeID, output, map[int]bool{}) {
+		fieldEnd := from + 2*len(col.Path) - 1
+		if col.Alias == "" && len(col.Path) > 0 && ctx.systemColumnIdentifierAt(tokens, fieldEnd-1, map[int]bool{}) {
 			if physical, _, system := entitySystemColAlias(output); system {
 				output = physical
 			}
 		}
 		counts[output]++
-		if len(col.Path) > 0 && types[col.Output] == metadata.FieldTypeBool {
-			candidates = append(candidates, output)
+		// Prove the expression independently: two logical names can emit
+		// distinct SQL keys and must not erase each other's source types.
+		if len(col.Path) > 0 {
+			fields := scoped[scopeID]
+			if len(col.Path) == 1 && ctx.systemColumnIdentifierAt(tokens, fieldEnd-1, map[int]bool{}) {
+				// The translator binds an unqualified system column to the
+				// main source, even when a JOIN has a same-named own field.
+				fields = qualified[scopeID][ctx.scopes[scopeID].mainTable]
+			}
+			if scalarProjectionExpressionType(tokens[from:fieldEnd], fields, qualified[scopeID]) == metadata.FieldTypeBool {
+				candidates = append(candidates, output)
+			}
 		}
 	}
+	depth, from := 0, start+1
+	for i := from; i < end; i++ {
+		switch tokens[i].kind {
+		case tLParen:
+			depth++
+		case tRParen:
+			depth--
+		case tComma:
+			if depth == 0 {
+				add(from, i)
+				from = i + 1
+			}
+		}
+	}
+	add(from, end)
 	var out []string
 	for _, output := range candidates {
 		// Different DSL names can emit the same SQL key (Проведен ->

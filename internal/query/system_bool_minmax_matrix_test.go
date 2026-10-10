@@ -66,6 +66,38 @@ func TestRunSystemBoolAndMinMaxMatrix(t *testing.T) {
 				}
 			})
 		}
+		for _, tc := range []struct {
+			projection string
+			ownFields  bool
+			join       bool
+		}{
+			{"Д.Проведен, С.Проведен, Д.ПометкаУдаления, С.ПометкаУдаления", true, true},
+			{"С.Проведен, Д.Проведен, С.ПометкаУдаления, Д.ПометкаУдаления", true, true},
+			{"Д.Проведен, 42 КАК Проведен, Д.ПометкаУдаления, 43 КАК ПометкаУдаления", false, false},
+			{"42 КАК Проведен, Д.Проведен, 43 КАК ПометкаУдаления, Д.ПометкаУдаления", false, false},
+			{"Проведен, 42 КАК Проведен, ПометкаУдаления, 43 КАК ПометкаУдаления", false, false},
+			{"Проведен, 42 КАК Проведен, ПометкаУдаления, 43 КАК ПометкаУдаления", false, true},
+		} {
+			t.Run(fmt.Sprintf("distinct SQL keys/join=%v/%s", tc.join, tc.projection), func(t *testing.T) {
+				source := "Документ.ТипыЗапроса КАК Д"
+				if tc.join {
+					source += " ЛЕВОЕ СОЕДИНЕНИЕ Справочник.СвоиФлаги КАК С ПО 1=1"
+				}
+				rows := run(t, "ВЫБРАТЬ "+tc.projection+" ИЗ "+source+" УПОРЯДОЧИТЬ ПО Д.Номер")
+				require.Len(t, rows, 3)
+				for i, row := range rows {
+					require.Equal(t, i == 0, row["posted"])
+					require.Equal(t, i == 1, row["deletion_mark"])
+					if tc.ownFields {
+						require.Equal(t, "1", row["проведен"])
+						require.Equal(t, "0", row["пометкаудаления"])
+					} else {
+						require.EqualValues(t, 42, row["проведен"])
+						require.EqualValues(t, 43, row["пометкаудаления"])
+					}
+				}
+			})
+		}
 		t.Run("own names are strings", func(t *testing.T) {
 			rows := run(t, `ВЫБРАТЬ С.Проведен, С.ПометкаУдаления ИЗ Справочник.СвоиФлаги КАК С`)
 			require.Equal(t, "1", rows[0]["проведен"])
@@ -74,6 +106,13 @@ func TestRunSystemBoolAndMinMaxMatrix(t *testing.T) {
 		t.Run("SQL output collision keeps string", func(t *testing.T) {
 			rows := run(t, `ВЫБРАТЬ Проведен, "1" КАК posted ИЗ Документ.ТипыЗапроса`)
 			require.Equal(t, "1", rows[0]["posted"])
+			rows = run(t, `ВЫБРАТЬ Д.Проведен КАК Проведен, С.Проведен ИЗ Документ.ТипыЗапроса КАК Д ЛЕВОЕ СОЕДИНЕНИЕ Справочник.СвоиФлаги КАК С ПО 1=1`)
+			require.Equal(t, "1", rows[0]["проведен"])
+			for _, projection := range []string{`Проведен, "1" КАК posted`, `"1" КАК posted, Проведен`, `С.Проведен, Д.Проведен КАК Проведен`} {
+				res, err := query.Compile("ВЫБРАТЬ "+projection+" ИЗ Документ.ТипыЗапроса КАК Д ЛЕВОЕ СОЕДИНЕНИЕ Справочник.СвоиФлаги КАК С ПО 1=1", query.CompileOpts{Entities: entities, Dialect: db.Dialect()})
+				require.NoError(t, err)
+				require.Empty(t, res.BoolColumns, res.SQL)
+			}
 		})
 		t.Run("null joined flags", func(t *testing.T) {
 			rows := run(t, `ВЫБРАТЬ Д.Проведен КАК П, Д.ПометкаУдаления КАК У ИЗ Справочник.СвоиФлаги КАК С ЛЕВОЕ СОЕДИНЕНИЕ Документ.ТипыЗапроса КАК Д ПО 1=0`)
@@ -85,6 +124,10 @@ func TestRunSystemBoolAndMinMaxMatrix(t *testing.T) {
 			for _, tc := range []struct{ name, arg, source string }{
 				{"direct", "Число", "Документ.ТипыЗапроса"},
 				{"distinct", "РАЗЛИЧНЫЕ Число", "Документ.ТипыЗапроса"},
+				{"all Russian", "ВСЕ Число", "Документ.ТипыЗапроса"},
+				{"all English", "ALL Число", "Документ.ТипыЗапроса"},
+				{"all qualified", "ALL Д.Число", "Документ.ТипыЗапроса КАК Д"},
+				{"all derived", "ВСЕ Выборка.Значение", "(ВЫБРАТЬ Число КАК Значение ИЗ Документ.ТипыЗапроса) КАК Выборка"},
 				{"parenthesized", "(Число)", "Документ.ТипыЗапроса"},
 				{"qualified", "Д.Число", "Документ.ТипыЗапроса КАК Д"},
 				{"joined different type", "Д.Число", "Справочник.СвоиФлаги КАК С ЛЕВОЕ СОЕДИНЕНИЕ Документ.ТипыЗапроса КАК Д ПО 1=1"},
@@ -97,14 +140,16 @@ func TestRunSystemBoolAndMinMaxMatrix(t *testing.T) {
 					require.Equal(t, "100", fmt.Sprint(rows[0]["макс"]))
 				})
 			}
-			t.Run(names[0]+" text and null", func(t *testing.T) {
-				rows := run(t, fmt.Sprintf("ВЫБРАТЬ %s(Текст) КАК Мин, %s(Текст) КАК Макс ИЗ Документ.ТипыЗапроса", names[0], names[1]))
-				require.Equal(t, "100", rows[0]["мин"])
-				require.Equal(t, "20", rows[0]["макс"])
-				rows = run(t, fmt.Sprintf("ВЫБРАТЬ %s(Число) КАК Мин, %s(Число) КАК Макс ИЗ Документ.ТипыЗапроса ГДЕ Номер=\"2\"", names[0], names[1]))
-				require.Nil(t, rows[0]["мин"])
-				require.Nil(t, rows[0]["макс"])
-			})
+			for _, modifier := range []string{"", "ВСЕ ", "ALL ", "РАЗЛИЧНЫЕ "} {
+				t.Run(names[0]+" text and null/"+modifier, func(t *testing.T) {
+					rows := run(t, fmt.Sprintf("ВЫБРАТЬ %s(%sТекст) КАК Мин, %s(%sТекст) КАК Макс ИЗ Документ.ТипыЗапроса", names[0], modifier, names[1], modifier))
+					require.Equal(t, "100", rows[0]["мин"])
+					require.Equal(t, "20", rows[0]["макс"])
+					rows = run(t, fmt.Sprintf("ВЫБРАТЬ %s(%sЧисло) КАК Мин, %s(%sЧисло) КАК Макс ИЗ Документ.ТипыЗапроса ГДЕ Номер=\"2\"", names[0], modifier, names[1], modifier))
+					require.Nil(t, rows[0]["мин"])
+					require.Nil(t, rows[0]["макс"])
+				})
+			}
 		}
 		t.Run("nested select has own type", func(t *testing.T) {
 			rows := run(t, `ВЫБРАТЬ (ВЫБРАТЬ МАКС(Число) ИЗ Документ.ТипыЗапроса) КАК Макс ИЗ Справочник.СвоиФлаги`)
