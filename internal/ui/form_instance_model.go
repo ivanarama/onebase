@@ -189,6 +189,31 @@ func (m *ManagedFormRuntime) Run(name string, interp *interpreter.Interpreter, t
 	extra["ЭтаФорма"] = proxy
 	extra["ThisForm"] = proxy
 	local := *interp
+	previousGuard := local.ValidateObjectAccess
+	local.ValidateObjectAccess = func(object any) {
+		// Check immutable transaction identity before touching the other proxy's
+		// mutable state. A live foreign handler may run concurrently with this one.
+		var owner *managedFormTransaction
+		switch p := object.(type) {
+		case *managedFormProxy:
+			owner = p.tx
+		case *managedFormElementsProxy:
+			owner = p.tx
+		case *managedFormElementProxy:
+			owner = p.tx
+		}
+		if owner != nil {
+			if owner != tx {
+				// Poison this transaction, not the foreign/expired transaction: catching
+				// the DSL exception must still discard our entire structural diff.
+				tx.fail("элемент принадлежит другому экземпляру или обработчику")
+			}
+			tx.requireActive()
+		}
+		if previousGuard != nil {
+			previousGuard(object)
+		}
+	}
 	fallback := local.LookupProc
 	local.LookupProc = func(name string) *ast.ProcedureDecl {
 		if p := m.procedures[strings.ToLower(name)]; p != nil {

@@ -163,7 +163,7 @@ func TestManagedFormRuntimeDSLLimits(t *testing.T) {
 		vars       map[string]any
 	}{
 		{"operations", `Для i = 1 По 65 Цикл ЭтаФорма.Элементы.Статика.Заголовок = "X"; КонецЦикла;`, interpreter.SandboxProfile{}, nil},
-		{"caught limit", `Попытка Для i = 1 По 65 Цикл ЭтаФорма.Элементы.Статика.Заголовок = "X"; КонецЦикла; Исключение КонецПопытки;`, interpreter.SandboxProfile{}, nil},
+		{"caught limit", `Попытка Для i = 1 По 65 Цикл ЭтаФорма.Элементы.Статика.Заголовок = "X"; КонецЦикла; Исключение Поймано = Истина; КонецПопытки;`, interpreter.SandboxProfile{}, nil},
 		{"patch", `ЭтаФорма.Элементы.Статика.Заголовок = БольшойТекст;`, interpreter.SandboxProfile{}, map[string]any{"БольшойТекст": strings.Repeat("я", ui.ManagedFormMaxPatchBytes)}},
 		{"timeout", `ЭтаФорма.Элементы.Статика.Заголовок = "partial"; Пока Истина Цикл КонецЦикла;`, interpreter.SandboxProfile{MaxWallClock: time.Millisecond, MaxLoopIters: 100000000}, nil},
 		{"cancelled", `ЭтаФорма.Элементы.Статика.Заголовок = "partial";`, interpreter.SandboxProfile{Context: cancelledStructureContext()}, nil},
@@ -364,5 +364,107 @@ func TestManagedFormRuntimeDSLBoundaryAndSameParentMove(t *testing.T) {
 	}
 	if result := structureSnapshot(t, m); len(result) != 17 || result[0].Name != "Статика" || len(form.Elements) != 1 {
 		t.Fatal("serialized handlers lost changes or changed source metadata")
+	}
+}
+
+// Keep the source handler alive while another instance attempts direct proxy
+// dispatch; checking only collection arguments misses these accesses.
+type structureLiveReferenceSink struct {
+	reference chan any
+	release   chan struct{}
+}
+
+func (s *structureLiveReferenceSink) Get(string) any { return nil }
+func (s *structureLiveReferenceSink) Set(_ string, value any) {
+	s.reference <- value
+	<-s.release
+}
+
+func TestManagedFormRuntimeDSLLiveForeignProxyAccess(t *testing.T) {
+	for _, tc := range []struct{ name, capture, access string }{
+		{"form get", "ЭтаФорма", `Значение = Чужой.Элементы;`},
+		{"form set", "ЭтаФорма", `Чужой.Элементы = Неопределено;`},
+		{"collection get", "ЭтаФорма.Элементы", `Значение = Чужой.Статика;`},
+		{"collection set", "ЭтаФорма.Элементы", `Чужой.Статика = Неопределено;`},
+		{"collection method", "ЭтаФорма.Элементы", `Значение = Чужой.Найти("Статика");`},
+		{"element get", "ЭтаФорма.Элементы.Статика", `Значение = Чужой.Заголовок;`},
+		{"element set", "ЭтаФорма.Элементы.Статика", `Чужой.Заголовок = "foreign";`},
+		{"element method", "ЭтаФорма.Элементы.Статика", `Чужой.УстановитьДействие("ПриИзменении", "Изменён");`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sourceForm, entity := structureForm(t, `Приёмник.Ссылка = `+tc.capture+`; ЭтаФорма.Элементы.Статика.Заголовок = "owner";`)
+			source := structureModel(t, sourceForm, entity)
+			sink := &structureLiveReferenceSink{reference: make(chan any), release: make(chan struct{})}
+			done := make(chan error, 1)
+			go func() {
+				_, err := source.Run("Проверить", interpreter.New(), nil, interpreter.SandboxProfile{}, map[string]any{"Приёмник": sink})
+				done <- err
+			}()
+			reference := <-sink.reference
+			defer func() {
+				close(sink.release)
+				if err := <-done; err != nil {
+					t.Errorf("foreign access poisoned source handler: %v", err)
+				}
+				if got := structureSnapshot(t, source)[0].Title; got != "owner" {
+					t.Errorf("source handler did not commit its own change: %q", got)
+				}
+			}()
+			form, entity := structureForm(t, `ЭтаФорма.Элементы.Статика.Заголовок = "partial";
+Попытка
+`+tc.access+`
+Исключение
+ Приёмник.Ссылка = Истина;
+КонецПопытки;`)
+			other := structureModel(t, form, entity)
+			before := structureSnapshot(t, other)
+			caught := &structureReferenceSink{}
+			ops, err := other.Run("Проверить", interpreter.New(), nil, interpreter.SandboxProfile{}, map[string]any{"Чужой": reference, "Приёмник": caught})
+			if caught.value != true {
+				t.Error("foreign access did not raise a catchable error")
+			}
+			if err == nil || !strings.Contains(err.Error(), "другому экземпляру или обработчику") || len(ops) != 0 || !reflect.DeepEqual(before, structureSnapshot(t, other)) {
+				t.Fatalf("foreign access did not roll back current handler: ops=%+v err=%v", ops, err)
+			}
+		})
+	}
+}
+
+func TestManagedFormRuntimeDSLCaughtExpiredProxyRollsBack(t *testing.T) {
+	for _, tc := range []struct{ name, capture, access string }{
+		{"form", "ЭтаФорма", `Значение = Приёмник.Ссылка.Элементы;`},
+		{"collection get", "ЭтаФорма.Элементы", `Значение = Приёмник.Ссылка.Статика;`},
+		{"collection method", "ЭтаФорма.Элементы", `Значение = Приёмник.Ссылка.Найти("Статика");`},
+		{"element get", "ЭтаФорма.Элементы.Статика", `Значение = Приёмник.Ссылка.Заголовок;`},
+		{"element set", "ЭтаФорма.Элементы.Статика", `Приёмник.Ссылка.Заголовок = "expired";`},
+		{"element method", "ЭтаФорма.Элементы.Статика", `Приёмник.Ссылка.УстановитьДействие("ПриИзменении", "Изменён");`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			form, entity := structureForm(t, `Если Сохранить Тогда
+ Приёмник.Ссылка = `+tc.capture+`;
+Иначе
+ ЭтаФорма.Элементы.Статика.Заголовок = "partial";
+ Попытка
+ `+tc.access+`
+ Исключение
+  Поймано.Ссылка = Истина;
+ КонецПопытки;
+КонецЕсли;`)
+			m := structureModel(t, form, entity)
+			sink, caught := &structureReferenceSink{}, &structureReferenceSink{}
+			vars := map[string]any{"Сохранить": true, "Приёмник": sink, "Поймано": caught}
+			if _, err := m.Run("Проверить", interpreter.New(), nil, interpreter.SandboxProfile{}, vars); err != nil {
+				t.Fatal(err)
+			}
+			before := structureSnapshot(t, m)
+			vars["Сохранить"] = false
+			ops, err := m.Run("Проверить", interpreter.New(), nil, interpreter.SandboxProfile{}, vars)
+			if caught.value != true {
+				t.Error("expired access did not raise a catchable error")
+			}
+			if err == nil || len(ops) != 0 || !reflect.DeepEqual(before, structureSnapshot(t, m)) {
+				t.Fatalf("caught expired access committed partial structure: ops=%+v err=%v", ops, err)
+			}
+		})
 	}
 }
