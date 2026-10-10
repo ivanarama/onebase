@@ -2,6 +2,7 @@ package entityservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -113,6 +114,9 @@ func testPostInfoRegisterKeyOwnership(t *testing.T, db *storage.DB) {
 	res, err := svc.Save(ctx, SaveRequest{Entity: doc, ID: second, Fields: fields, Action: "post"})
 	if err == nil && res.DSLError != "" {
 		err = fmt.Errorf("%s", res.DSLError)
+	}
+	if !errors.Is(fmt.Errorf("wrapped: %w", err), storage.ErrInfoRegOwnershipConflict) {
+		t.Errorf("ownership error is not recognized through wrappers: %v", err)
 	}
 	if err == nil {
 		t.Fatalf("второй документ с тем же ключом (дата, товар) проведён: запись первого перехвачена")
