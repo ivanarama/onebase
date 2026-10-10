@@ -3,14 +3,16 @@ package entityservice
 // Порты хранилища (шаг 2 ARCH-01, issue #787).
 //
 // Интерфейсы объявлены на стороне потребителя: здесь перечислена ровно та
-// поверхность *storage.DB, которой пользуется сам сервис, — 25 методов из 314.
+// поверхность *storage.DB, которой пользуется сам сервис.
 // internal/storage о них не знает и не меняется, *storage.DB удовлетворяет им
 // как есть (см. compile-time проверку в конце файла).
 //
 // Зачем: раньше поле Service.Store имело тип *storage.DB, и сигнатура ничего не
 // сообщала о контракте — чтобы узнать, что сервису нужно от базы, приходилось
-// читать сервис целиком. Теперь набор виден объявлением, а изменение любого из
-// остальных 289 методов storage.DB сервиса не задевает.
+// читать сервис целиком. Теперь набор виден объявлением, а изменение методов
+// storage.DB за его пределами сервиса не задевает. Счётчиков методов здесь
+// сознательно нет: число устаревало при каждой правке портов и storage, и
+// описание начинало врать — назначение портов важнее их количества.
 //
 // Роли объявлены раздельно, чтобы будущие потребители могли зависеть от узкой
 // части; поле Store пока держит совокупный Storage — это оставляет все точки
@@ -68,6 +70,9 @@ type EntityStore interface {
 // MovementStore — запись движений документа во все три вида регистров.
 // Пустой rows означает отмену проведения: движения регистратора снимаются.
 type MovementStore interface {
+	// LockMovementRecorder блокирует строку регистратора до поиска/записи
+	// движений, не меняя поля и optimistic-lock версию.
+	LockMovementRecorder(ctx context.Context, entity *metadata.Entity, id uuid.UUID) error
 	// WriteMovements перезаписывает движения документа в регистре накопления.
 	WriteMovements(ctx context.Context, regName, recorderType string, recorderID uuid.UUID, rows []map[string]any, reg *metadata.Register, period *time.Time) error
 	// WriteInfoMovements перезаписывает движения документа в регистре сведений.
@@ -75,6 +80,10 @@ type MovementStore interface {
 	// WriteAccountMovements перезаписывает проводки документа в бухрегистре
 	// (вместе с итогами в той же транзакции).
 	WriteAccountMovements(ctx context.Context, regName, docType string, docID uuid.UUID, rows []map[string]any, ar *metadata.AccountRegister, period *time.Time) error
+	// RecorderMovementRegisters сообщает, в каких из переданных
+	// регистров у регистратора есть движения — чтобы снимать и запирать только их.
+	RecorderMovementRegisters(ctx context.Context, recorderType string, recorderID uuid.UUID,
+		regs []*metadata.Register, infos []*metadata.InfoRegister, accs []*metadata.AccountRegister) (storage.RecorderRegisters, error)
 }
 
 // TxManager — управление транзакцией вокруг записи и проведения.

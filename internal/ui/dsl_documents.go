@@ -971,6 +971,11 @@ func (w *docWriter) writeInContextForAction(ctx context.Context, posting bool) e
 			return err
 		}
 	}
+	if w.loaded || w.saved {
+		if err := w.s.store.LockMovementRecorder(ctx, w.entity, w.obj.ID); err != nil {
+			return err
+		}
+	}
 	// План 88E: реквизит, видный модулю только под маской, не перезаписывается —
 	// тот же контракт, что у формы и REST («нельзя изменить то, что не видно»).
 	if w.loaded || w.saved {
@@ -1104,6 +1109,9 @@ func (w *docWriter) postInContext(ctx context.Context) error {
 }
 
 func (w *docWriter) postInContextAfterAccess(ctx context.Context, hasPrelude, provisionalCreate bool) error {
+	if err := w.s.store.LockMovementRecorder(ctx, w.entity, w.obj.ID); err != nil {
+		return err
+	}
 	// Инвариант: помеченный на удаление документ нельзя провести (как в 1С).
 	if marked, err := w.s.store.IsMarkedForDeletion(ctx, w.entity.Name, w.obj.ID); err != nil {
 		return err
