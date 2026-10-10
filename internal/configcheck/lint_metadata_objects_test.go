@@ -5,7 +5,90 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
+
+func TestLintUnknownMetadataObjectDefaults(t *testing.T) {
+	for _, strict := range []bool{false, true} {
+		mode := "legacy"
+		if strict {
+			mode = "strict"
+		}
+		for _, tc := range []struct {
+			name, source string
+			wantWarning  bool
+		}{
+			{"same parameter", `Функция Прочитать(Документы = Документы.НетТакого)
+  Возврат Документы.Произвольный;
+КонецФункции
+`, true},
+			{"body assignment", `Функция Прочитать(Параметр = Документы.НетТакого)
+  Документы = Новый Структура("Произвольный", 42);
+  Возврат Документы.Произвольный;
+КонецФункции
+`, true},
+			{"body declaration", `Функция Прочитать(Параметр = Документы.НетТакого)
+  Перем Документы;
+  Возврат Документы.Произвольный;
+КонецФункции
+`, true},
+			{"other parameter", `Функция Прочитать(Параметр = Документы.НетТакого)
+  Возврат Параметр;
+КонецФункции
+`, true},
+			{"preceding parameter", `Функция Прочитать(Документы, Параметр = Документы.НетТакого)
+  Возврат Параметр;
+КонецФункции
+`, true},
+			{"module declaration", `Перем Документы;
+Функция Прочитать(Параметр = Документы.НетТакого)
+  Возврат Параметр;
+КонецФункции
+`, false},
+			{"known object", `Функция Прочитать(Документы = Документы.Приход)
+  Возврат Документы.Произвольный;
+КонецФункции
+`, false},
+		} {
+			t.Run(mode+"/"+tc.name, func(t *testing.T) {
+				dir := t.TempDir()
+				mkFile(t, filepath.Join(dir, "documents", "приход.yaml"), "name: Приход\nfields: []\n")
+				mkFile(t, filepath.Join(dir, "processors", "проверка.yaml"), "name: Проверка\nparams: []\n")
+				mkFile(t, filepath.Join(dir, "src", "проверка.proc.os"), tc.source)
+				if strict {
+					mkFile(t, filepath.Join(dir, "config", "app.yaml"), "name: Тест\ndsl:\n  strict_lexical_scope: true\n")
+				}
+				for _, lint := range []bool{false, true} {
+					res := RunFullWithOptions(dir, Options{Lint: lint})
+					if !res.OK {
+						t.Fatalf("проверка конфигурации: %+v", res.Issues)
+					}
+					var got []Issue
+					for _, w := range res.Warnings {
+						if w.Code == "dsl.unknown-metadata-object" {
+							got = append(got, w)
+						}
+					}
+					if !lint || !tc.wantWarning {
+						if len(got) != 0 {
+							t.Fatalf("lint=%v: ложное предупреждение: %+v", lint, got)
+						}
+						continue
+					}
+					if len(got) != 1 {
+						t.Fatalf("ожидалось предупреждение в дефолте, получено: %+v", got)
+					}
+					firstLine := strings.Split(tc.source, "\n")[0]
+					col := utf8.RuneCountInString(firstLine[:strings.Index(firstLine, "НетТакого")]) + 1
+					w := got[0]
+					if w.File != "src/проверка.proc.os" || w.Object != "Проверка" || w.Kind != "DSL обработка" || w.Line != 1 || w.Column != col || !strings.HasPrefix(w.Message, "Документы.НетТакого:") {
+						t.Errorf("неверная диагностика дефолта: %+v, ожидалась колонка %d", w, col)
+					}
+				}
+			})
+		}
+	}
+}
 
 // Обращение к несуществующему объекту через глобальный менеджер
 // (Документы.СписаниеСРасчётныйСчёт при документе «СписаниеСРасчётногоСчёта»)
@@ -100,6 +183,33 @@ func TestLintUnknownMetadataObjectMergedModuleScope(t *testing.T) {
 `,
 			postingModule: `Процедура ОбработкаПроведения()
   Значение = Документы.НетТакого;
+КонецПроцедуры
+`,
+			wantWarnings: 1,
+		},
+		{
+			name: "posting module shadows default manager",
+			objectModule: `Процедура ПриЗаписи()
+КонецПроцедуры
+`,
+			postingModule: `Перем Документы;
+Функция Прочитать(Параметр = Документы.Произвольный)
+  Возврат Параметр;
+КонецФункции
+Процедура ОбработкаПроведения()
+КонецПроцедуры
+`,
+		},
+		{
+			name: "object module does not shadow posting default",
+			objectModule: `Перем Документы;
+Процедура ПриЗаписи()
+КонецПроцедуры
+`,
+			postingModule: `Функция Прочитать(Документы = Документы.НетТакого)
+  Возврат Документы.Произвольный;
+КонецФункции
+Процедура ОбработкаПроведения()
 КонецПроцедуры
 `,
 			wantWarnings: 1,
