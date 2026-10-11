@@ -435,7 +435,7 @@ func TestCMSCartLateDeleteConflict(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					defer outer.Rollback(ctx)
+					defer func() { _ = outer.Rollback(ctx) }()
 					// Written after BeginTx: a whole-transaction rollback would
 					// erase this row, unlike the required savepoint rollback.
 					if err := db.Upsert(runCtx, carts.Name, unrelatedID,
