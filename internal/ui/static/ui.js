@@ -3949,7 +3949,9 @@ function openItemPicker(payload, elementName, eventContext, request) {
   }
   // rowObject — строка в том виде, в каком она уходит обработчику события Выбор.
   function rowObject(tr) {
-    var obj = { id: tr.getAttribute('data-id') };
+    // Имена колонок, включая __proto__, должны стать собственными полями JSON.
+    var obj = Object.create(null);
+    obj.id = tr.getAttribute('data-id');
     cols.forEach(function (c) {
       if (c.editable) {
         var inp = tr.querySelector('._ip-val[data-col="' + c.name + '"]');
