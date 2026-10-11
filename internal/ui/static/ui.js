@@ -3570,7 +3570,7 @@ var obPickerSearch = {
   pending: null,   // запрос, набранный пока предыдущий в пути (строка) либо null
   picked: {},      // выбранные строки по id — переживают смену выдачи
   order: [],       // порядок выбора: «Перенести» отдаёт строки в нём
-  filters: {}      // значения отборов (Конфиг.Отборы) — переживают смену выдачи
+  filters: Object.create(null) // значения отборов (Конфиг.Отборы) — переживают смену выдачи
 };
 
 // obPickerForget — диалог закрыт. Гасим таймер, забываем набранное и выбор.
@@ -3586,7 +3586,7 @@ function obPickerForget() {
   obPickerSearch.appliedQuery = '';
   obPickerSearch.picked = {};
   obPickerSearch.order = [];
-  obPickerSearch.filters = {};
+  obPickerSearch.filters = Object.create(null);
   obPickerSearch.generation++;
   obPickerSearch.inFlight = null;
 }
@@ -3709,7 +3709,7 @@ function openItemPicker(payload, elementName, eventContext, request) {
       obPickerSearch.query = '';
       obPickerSearch.picked = {};
       obPickerSearch.order = [];
-      obPickerSearch.filters = {};
+      obPickerSearch.filters = Object.create(null);
     }
     obPickerSearch.appliedQuery = searchResponse ? request.query : '';
     obPickerSearch.element = elementName;
@@ -3723,8 +3723,8 @@ function openItemPicker(payload, elementName, eventContext, request) {
   var filterCols = (cfg.filters || []).filter(function (name) {
     return cols.some(function (c) { return c.name === name && !c.editable; });
   });
-  var fltState = serverSearch ? obPickerSearch.filters : {};
-  var fltSelects = {};
+  var fltState = serverSearch ? obPickerSearch.filters : Object.create(null);
+  var fltSelects = Object.create(null);
   if (filterCols.length) {
     var filterBar = document.createElement('div');
     filterBar.className = '_ip-filters';
@@ -4108,7 +4108,7 @@ function openItemPicker(payload, elementName, eventContext, request) {
     for (var pass = 0; pass <= filterCols.length; pass++) {
       var reset = false;
       filterCols.forEach(function (name) {
-        var seen = {};
+        var seen = Object.create(null);
         var values = [];
         Array.prototype.forEach.call(tbody.rows, function (tr) {
           if (!rowPasses(tr, name)) return;
