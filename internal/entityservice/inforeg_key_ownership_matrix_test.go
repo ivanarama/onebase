@@ -2,6 +2,7 @@ package entityservice
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -74,6 +75,9 @@ func TestInfoMovementOwnerIncludesDocumentTypeMatrix(t *testing.T) {
 			t.Fatal(err)
 		}
 		err := postInfoOwner(ctx, newService(), docs[1], id, "Гвоздь", 20)
+		if !errors.Is(err, storage.ErrInfoRegOwnershipConflict) {
+			t.Errorf("ownership error is not recognized: %v", err)
+		}
 		if err == nil {
 			t.Fatal("a different document type took over a key with the same UUID")
 		}
