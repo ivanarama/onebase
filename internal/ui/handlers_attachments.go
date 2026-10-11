@@ -104,7 +104,8 @@ func (s *Server) attachmentUpload(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, r.Referer(), http.StatusSeeOther)
 }
 
-// attachmentDownload serves a file attachment for download.
+// attachmentDownload serves a stored attachment, allowing inline viewing of
+// the MIME types agreed in slice E of plan 178.
 func (s *Server) attachmentDownload(w http.ResponseWriter, r *http.Request) {
 	aid, err := uuid.Parse(chi.URLParam(r, "aid"))
 	if err != nil {
@@ -130,8 +131,8 @@ func (s *Server) attachmentDownload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", att.MimeType)
-	w.Header().Set("Content-Disposition", contentDisposition(att.Filename))
+	setFileSecurityHeaders(w.Header())
+	setFileContentHeaders(w.Header(), att.MimeType, att.Filename, attachmentInlineType(att.MimeType))
 	http.ServeContent(w, r, att.Filename, att.UploadedAt, f)
 }
 
