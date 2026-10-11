@@ -68,9 +68,6 @@ func TestExportJobListHTTPFiltersOwnerAndShowsLiveJobs(t *testing.T) {
 	if !strings.Contains(page, "/ui/export-jobs/"+old.ID+"/download") || strings.Contains(page, "/ui/export-jobs/"+newer.ID+"/download") {
 		t.Fatal("ссылка скачивания должна быть только у готового задания")
 	}
-	if buttons := renderExportButtons(t, &reportpkg.Report{Name: "Тест"}); !strings.Contains(buttons, `href="/ui/export-jobs"`) {
-		t.Fatal("форма отчёта не ведёт в список выгрузок")
-	}
 	statusPage := request("/ui/export-jobs/"+old.ID, "alice").Body.String()
 	if !strings.Contains(statusPage, `href="/ui/export-jobs"`) {
 		t.Fatal("страница задания не ведёт в список выгрузок")

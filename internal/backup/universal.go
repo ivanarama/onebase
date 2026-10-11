@@ -1660,10 +1660,30 @@ func clearPortableSettings(ctx context.Context, db *storage.DB) error {
 	if _, err = db.Exec(ctx, "DELETE FROM _settings WHERE LOWER(key) LIKE "+d.Placeholder(1), "exchange.this_node.%"); err != nil {
 		return err
 	}
-	for _, prefix := range []string{storage.NavigationAdminPrefix, storage.NavigationUserPrefix} {
-		// LIKE is case-insensitive on SQLite. Use the same exact prefix match
-		// as export/import so similarly named non-portable keys remain intact.
-		if _, err := db.Exec(ctx, "DELETE FROM _settings WHERE SUBSTR(key, 1, "+strconv.Itoa(len(prefix))+") = "+d.Placeholder(1), prefix); err != nil {
+	// Use the same complete key validator as export/import. A reserved prefix
+	// alone does not make a malformed key portable; keep such local values.
+	rows, err := db.Query(ctx, "SELECT key FROM _settings")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var navigationKeys []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return err
+		}
+		if storage.IsNavigationSettingsKey(key) {
+			navigationKeys = append(navigationKeys, key)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	// Finish reading before issuing writes on the same restore transaction.
+	rows.Close()
+	for _, key := range navigationKeys {
+		if _, err := db.Exec(ctx, "DELETE FROM _settings WHERE key = "+d.Placeholder(1), key); err != nil {
 			return err
 		}
 	}

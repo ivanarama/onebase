@@ -111,10 +111,11 @@ func (e *managedCloseSaveError) Error() string { return e.message }
 func (e *managedCloseSaveError) Unwrap() error { return e.cause }
 
 const (
-	managedSaveForbidden  = "forbidden"
-	managedSaveConflict   = "conflict"
-	managedSaveValidation = "validation"
-	managedSaveHook       = "hook"
+	managedSaveForbidden         = "forbidden"
+	managedSaveConflict          = "conflict"
+	managedSaveOwnershipConflict = "ownership_conflict"
+	managedSaveValidation        = "validation"
+	managedSaveHook              = "hook"
 )
 
 // saveManagedObject is the canonical result-returning save layer shared by
@@ -236,6 +237,8 @@ func (s *Server) saveManagedObject(r *http.Request, entity *metadata.Entity, for
 	})
 	if err != nil {
 		switch {
+		case errors.Is(err, storage.ErrInfoRegOwnershipConflict):
+			return hookMessages, 0, &managedCloseSaveError{status: http.StatusConflict, kind: managedSaveOwnershipConflict, message: s.errText(r, err), messages: hookMessages, cause: err}
 		case errors.Is(err, storage.ErrVersionConflict):
 			return hookMessages, 0, &managedCloseSaveError{status: http.StatusConflict, kind: managedSaveConflict, message: "объект был изменён другим пользователем; форма оставлена открытой", messages: hookMessages}
 		case errors.Is(err, errCloseResultUnreadable):
@@ -2061,6 +2064,17 @@ func serializeTablePartRowsForEntity(tps map[string][]map[string]any, entity *me
 				break
 			}
 		}
+		boolColumns := make(map[string]bool)
+		for _, tp := range declared {
+			if strings.EqualFold(tp.Name, canonicalName) {
+				for _, field := range tp.Fields {
+					if field.Type == metadata.FieldTypeBool {
+						boolColumns[strings.ToLower(field.Name)] = true
+					}
+				}
+				break
+			}
+		}
 		outRows := make([]map[string]any, len(rows))
 		for i, row := range rows {
 			outRow := make(map[string]any, len(row))
@@ -2080,6 +2094,10 @@ func serializeTablePartRowsForEntity(tps map[string][]map[string]any, entity *me
 					}
 				}
 				if ok {
+					if boolColumns[strings.ToLower(column)] {
+						// A no-op event can refresh rows from SQLite as int64.
+						v = tpCellNorm(metadata.Field{Type: metadata.FieldTypeBool}, v) == "true"
+					}
 					outRow[column] = serializeValue(v)
 				}
 			}

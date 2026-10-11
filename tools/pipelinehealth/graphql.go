@@ -801,7 +801,7 @@ func (client *limitedPipelineGraphQLClient) Query(query string, variables map[st
 // loadPipelineInputsGraphQL preserves the historical fixture matrix. In
 // particular, -prs by itself is a completely offline input and intentionally
 // yields no issues.
-func loadPipelineInputsGraphQL(client pipelineGraphQLClient, repo, pullFixture, issueFixture string) ([]apiPull, []apiIssue, error) {
+func loadPipelineInputsGraphQL(client pipelineGraphQLClient, repo, trustedOwner, pullFixture, issueFixture string) ([]apiPull, []apiIssue, error) {
 	if pullFixture != "" {
 		pulls, err := readPullFixture(pullFixture)
 		if err != nil {
@@ -821,7 +821,7 @@ func loadPipelineInputsGraphQL(client pipelineGraphQLClient, repo, pullFixture, 
 		return nil, nil, fmt.Errorf("GitHub GraphQL client is required outside pull fixture mode")
 	}
 	if issueFixture != "" {
-		pulls, _, err := loadStableGraphQLSnapshot(client, repo, true, false)
+		pulls, _, err := loadStableGraphQLSnapshot(client, repo, trustedOwner, true, false)
 		if err != nil {
 			return nil, nil, err
 		}
@@ -831,7 +831,7 @@ func loadPipelineInputsGraphQL(client pipelineGraphQLClient, repo, pullFixture, 
 		}
 		return pulls, issues, nil
 	}
-	return loadStableGraphQLSnapshot(client, repo, true, true)
+	return loadStableGraphQLSnapshot(client, repo, trustedOwner, true, true)
 }
 
 // A page count changing is transient queue churn, not permission to accept a
@@ -841,10 +841,10 @@ type pipelineSnapshotChurn struct{ detail string }
 
 func (err *pipelineSnapshotChurn) Error() string { return err.detail }
 
-func loadStableGraphQLSnapshot(client pipelineGraphQLClient, repo string, includePulls, includeIssues bool) ([]apiPull, []apiIssue, error) {
+func loadStableGraphQLSnapshot(client pipelineGraphQLClient, repo, trustedOwner string, includePulls, includeIssues bool) ([]apiPull, []apiIssue, error) {
 	bounded := &limitedPipelineGraphQLClient{delegate: client}
 	for attempt := 0; ; attempt++ {
-		pulls, issues, err := loadGraphQLSnapshot(bounded, repo, includePulls, includeIssues)
+		pulls, issues, err := loadGraphQLSnapshot(bounded, repo, trustedOwner, includePulls, includeIssues)
 		var churn *pipelineSnapshotChurn
 		if err == nil || attempt == 2 || !errors.As(err, &churn) {
 			return pulls, issues, err
@@ -893,12 +893,12 @@ func readIssueFixture(path string) ([]apiIssue, error) {
 	return issues, nil
 }
 
-func loadGraphQLSnapshot(client pipelineGraphQLClient, repo string, includePulls, includeIssues bool) ([]apiPull, []apiIssue, error) {
+func loadGraphQLSnapshot(client pipelineGraphQLClient, repo, trustedOwner string, includePulls, includeIssues bool) ([]apiPull, []apiIssue, error) {
 	if client == nil {
 		return nil, nil, fmt.Errorf("GitHub GraphQL client is required")
 	}
 	client = &limitedPipelineGraphQLClient{delegate: client}
-	owner, name, err := splitGitHubRepository(repo)
+	repositoryOwner, name, err := splitGitHubRepository(repo)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -916,7 +916,7 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo string, includePulls
 
 	for !pullsDone || !issuesDone {
 		variables := map[string]any{
-			"owner":         owner,
+			"owner":         repositoryOwner,
 			"name":          name,
 			"pullCursor":    pullCursor,
 			"issueCursor":   issueCursor,
@@ -1013,7 +1013,7 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo string, includePulls
 			return nil, nil, fmt.Errorf("issue #%d: %w", rawIssues[index].Number, err)
 		}
 	}
-	if err := loadRelevantHeadParents(client, rawPulls, owner); err != nil {
+	if err := loadRelevantHeadParents(client, rawPulls, trustedOwner); err != nil {
 		return nil, nil, err
 	}
 
@@ -1031,9 +1031,7 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo string, includePulls
 		if err != nil {
 			return nil, nil, fmt.Errorf("issue #%d: %w", raw.Number, err)
 		}
-		if issue.CommentCount > 0 {
-			issues = append(issues, issue)
-		}
+		issues = append(issues, issue)
 	}
 	return pulls, issues, nil
 }

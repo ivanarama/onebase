@@ -1249,6 +1249,14 @@ func reportParamOpenAPISchema(p reportpkg.Param) map[string]any {
 	switch strings.ToLower(p.Type) {
 	case "date":
 		return map[string]any{"type": "string", "format": "date"}
+	case "datetime":
+		return map[string]any{
+			"type": "string",
+			"description": "Local date and time in the server's local time zone, without a time zone suffix: " +
+				"YYYY-MM-DDTHH:MM[:SS] (for example, 2026-09-28T12:30 or 2026-09-28T12:30:41). " +
+				"A date alone, YYYY-MM-DD (for example, 2026-09-28), is also accepted and interpreted as midnight.",
+			"example": "2026-09-28T12:30:41",
+		}
 	case "number":
 		return map[string]any{"type": "number"}
 	case "bool", "boolean":

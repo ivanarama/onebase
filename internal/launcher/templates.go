@@ -1229,7 +1229,7 @@ const tplForm = `
       </select>
       <div class="hint">{{t $.Lang "«В базе данных» — конфигурация хранится в БД, редактирование через Выгрузку/Загрузку. «Файловый» — папка на диске под git."}}</div>
     </div>
-    <div class="fg local-only" id="path-row" style="{{if ne .Base.ConfigSource "file"}}display:none{{end}}">
+    <div class="fg local-only" id="path-row" style="{{if or .ClientKind (ne .Base.ConfigSource "file")}}display:none{{end}}">
       <label>{{t $.Lang "Путь к папке конфигурации"}}</label>
       <div class="input-browse">
         <input id="inp-path" name="path" value="{{.Base.Path}}" placeholder="/home/user/my-app" onblur="autoFillSQLitePath(this.value)">
@@ -1237,7 +1237,7 @@ const tplForm = `
       </div>
       <div class="hint">{{t $.Lang "Папка должна содержать catalogs/, documents/ и т.д."}}</div>
     </div>
-    <div class="fg local-only">
+    <div class="fg local-only" style="{{if .ClientKind}}display:none{{end}}">
       <label>{{t $.Lang "Тип базы данных"}}</label>
       <select name="db_type" onchange="toggleDB(this.value)">
         <option value="postgres" {{if or (eq .Base.DBType "") (eq .Base.DBType "postgres")}}selected{{end}}>{{t $.Lang "Серверная (PostgreSQL)"}}</option>
@@ -1245,12 +1245,12 @@ const tplForm = `
       </select>
       <div class="hint">{{t $.Lang "«Файловая» — один файл .db, без установки сервера, идеальна для pet-проектов. «Серверная» — PostgreSQL."}}</div>
     </div>
-    <div class="fg local-only" id="dsn-row" style="{{if eq .Base.DBType "sqlite"}}display:none{{end}}">
+    <div class="fg local-only" id="dsn-row" style="{{if or .ClientKind (eq .Base.DBType "sqlite")}}display:none{{end}}">
       <label>{{t $.Lang "Строка подключения к PostgreSQL"}}</label>
       <input name="db" value="{{.Base.DB}}" placeholder="postgres://localhost/mydb?sslmode=disable">
       <div class="hint">{{t $.Lang "База данных будет создана автоматически, если не существует."}}</div>
     </div>
-    <div class="fg local-only" id="dbpath-row" style="{{if ne .Base.DBType "sqlite"}}display:none{{end}}">
+    <div class="fg local-only" id="dbpath-row" style="{{if or .ClientKind (ne .Base.DBType "sqlite")}}display:none{{end}}">
       <label>{{t $.Lang "Путь к файлу SQLite"}}</label>
       <div class="input-browse">
         <input id="inp-dbpath" name="db_path" value="{{.Base.DBPath}}" placeholder="C:\onebase\mydb.db" onblur="normalizeDBPath('inp-dbpath')">
@@ -1258,14 +1258,14 @@ const tplForm = `
       </div>
       <div class="hint">{{t $.Lang "Файл будет создан, если не существует. Расширение .db рекомендуется."}}</div>
     </div>
-    <div class="form-row local-only">
+    <div class="form-row local-only" style="{{if .ClientKind}}display:none{{end}}">
       <div class="fg">
         <label>{{t $.Lang "Порт сервера"}}</label>
         <input name="port" type="number" value="{{if .Base.Port}}{{.Base.Port}}{{else}}8080{{end}}" min="1024" max="65535">
         <div class="hint">{{t $.Lang "У каждой базы должен быть уникальный порт. Первая база: 8080, вторая: 8081 и т.д."}}</div>
       </div>
     </div>
-    <div class="form-row local-only">
+    <div class="form-row local-only" style="{{if .ClientKind}}display:none{{end}}">
       <div class="fg">
         <label>{{t $.Lang "Доступ по сети"}}</label>
         <select name="host">
@@ -1276,7 +1276,7 @@ const tplForm = `
       </div>
     </div>
     {{if .IsNew}}
-    <div class="cbrow" id="scaffold-row">
+    <div class="cbrow local-only" id="scaffold-row" style="{{if .ClientKind}}display:none{{end}}">
       <input type="checkbox" name="scaffold" id="scaffold" value="1">
       <label for="scaffold" id="scaffold-label">{{t $.Lang "Создать пустую конфигурацию (новая база)"}}</label>
     </div>

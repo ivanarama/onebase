@@ -21,6 +21,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/exchange"
+	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -952,6 +953,14 @@ func (s *Server) renderObjectFormBadRequest(w http.ResponseWriter, r *http.Reque
 	s.renderObjectFormError(w, r, entity, isNew, errMsg, nil, tpRows)
 }
 
+// An ownership refusal concerns the submitted data, so keep the current attempt
+// for retry instead of reloading the persisted object like a version conflict.
+func (s *Server) renderObjectFormConflict(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, isNew bool, message string, messages []string, tpRows map[string][]map[string]any) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusConflict)
+	s.renderObjectFormError(w, r, entity, isNew, message, messages, tpRows)
+}
+
 func (s *Server) renderManagedObjectSaveFailure(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, isNew bool, obj *runtime.Object, messages []string, saveErr error) {
 	var failure *managedCloseSaveError
 	if !errors.As(saveErr, &failure) {
@@ -963,6 +972,8 @@ func (s *Server) renderManagedObjectSaveFailure(w http.ResponseWriter, r *http.R
 		s.renderForbidden(w, r)
 	case managedSaveConflict:
 		s.renderVersionConflict(w, r, entity, obj.ID)
+	case managedSaveOwnershipConflict:
+		s.renderObjectFormConflict(w, r, entity, isNew, failure.message, messages, obj.TablePartRows)
 	case managedSaveValidation:
 		s.renderObjectFormBadRequest(w, r, entity, isNew, failure.message, obj.TablePartRows)
 	default:
@@ -1059,6 +1070,10 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, errSubmitFormHook) {
 			s.renderObjectFormError(w, r, entity, true, formHookErr.Error(), hookMsgs, obj.TablePartRows)
+			return
+		}
+		if errors.Is(err, storage.ErrInfoRegOwnershipConflict) {
+			s.renderObjectFormConflict(w, r, entity, true, s.errText(r, err), hookMsgs, obj.TablePartRows)
 			return
 		}
 		if errors.Is(err, storage.ErrCodeDuplicate) {
@@ -1782,6 +1797,10 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 			s.renderVersionConflict(w, r, entity, id)
 			return
 		}
+		if errors.Is(err, storage.ErrInfoRegOwnershipConflict) {
+			s.renderObjectFormConflict(w, r, entity, false, s.errText(r, err), hookMsgs, obj.TablePartRows)
+			return
+		}
 		if errors.Is(err, storage.ErrCodeDuplicate) {
 			s.renderObjectFormBadRequest(w, r, entity, false, s.errText(r, err), obj.TablePartRows)
 			return
@@ -1954,6 +1973,10 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 		// Регистрация изменения в планах обмена (план 86) — в той же транзакции.
 		return exchange.RegisterOnSave(ctx, s.store, s.reg.ExchangePlans(), entity, id, false)
 	}); err != nil {
+		if errors.Is(err, storage.ErrInfoRegOwnershipConflict) {
+			http.Redirect(w, r, docURL+"?posting_error="+url.QueryEscape(s.errText(r, err)), http.StatusSeeOther)
+			return
+		}
 		if hookErrMsg != "" {
 			http.Redirect(w, r, docURL+"?posting_error="+url.QueryEscape(hookErrMsg), http.StatusSeeOther)
 			return
@@ -2632,7 +2655,15 @@ func typedFormFieldValue(f metadata.Field, raw string) (any, error) {
 		}
 		return number, nil
 	case metadata.FieldTypeBool:
-		return raw == "true", nil
+		switch raw {
+		case "true", "1":
+			return true, nil
+		case "false", "0", "":
+			// Missing unchecked checkboxes are still false.
+			return false, nil
+		default:
+			return nil, i18nerr.Errorf("%q не булево значение", raw)
+		}
 	case metadata.FieldTypeDate:
 		if raw == "" {
 			return nil, nil

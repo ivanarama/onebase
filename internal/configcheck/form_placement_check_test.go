@@ -75,15 +75,12 @@ func TestCheckFormPlacement_UnknownDirWarns(t *testing.T) {
 	}
 }
 
-// Регистр каталога важен: загрузчик ищет строго нижний регистр.
-func TestCheckFormPlacement_WrongCaseWarnsWithHint(t *testing.T) {
+// Загрузчик сопоставляет имя каталога без учёта регистра.
+func TestCheckFormPlacement_MixedCaseDirSilent(t *testing.T) {
 	dir, proj := placementProject(t, "РеализацияТоваров/объекта.form.yaml")
 	warns := configcheck.CheckFormPlacement(dir, proj)
-	if len(warns) != 1 {
-		t.Fatalf("ожидалось 1 предупреждение, получено %d", len(warns))
-	}
-	if !strings.Contains(warns[0].SuggestedFix, "реализациятоваров") {
-		t.Errorf("подсказка не называет верный каталог: %q", warns[0].SuggestedFix)
+	if len(warns) != 0 {
+		t.Fatalf("ложное срабатывание: %v", codesOf(warns))
 	}
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -389,6 +390,12 @@ func tpCellNorm(f metadata.Field, v any) string {
 		switch t := v.(type) {
 		case bool:
 			return boolCanon(t)
+		case decimal.Decimal:
+			// DSL numeric literals must use the same truth value as DB integers.
+			return boolCanon(!t.IsZero())
+		case float64:
+			// Number fields parsed from the form reach handlers as float64.
+			return boolCanon(t != 0)
 		case int64:
 			// SQLite хранит булево как INTEGER (TypeBool → INTEGER), и драйвер
 			// отдаёт int64. Без этой ветки значение уходило в общий Sprintf → "1"/"0"

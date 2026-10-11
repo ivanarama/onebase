@@ -3570,7 +3570,7 @@ var obPickerSearch = {
   pending: null,   // запрос, набранный пока предыдущий в пути (строка) либо null
   picked: {},      // выбранные строки по id — переживают смену выдачи
   order: [],       // порядок выбора: «Перенести» отдаёт строки в нём
-  filters: {}      // значения отборов (Конфиг.Отборы) — переживают смену выдачи
+  filters: Object.create(null) // значения отборов (Конфиг.Отборы) — переживают смену выдачи
 };
 
 // obPickerForget — диалог закрыт. Гасим таймер, забываем набранное и выбор.
@@ -3586,7 +3586,7 @@ function obPickerForget() {
   obPickerSearch.appliedQuery = '';
   obPickerSearch.picked = {};
   obPickerSearch.order = [];
-  obPickerSearch.filters = {};
+  obPickerSearch.filters = Object.create(null);
   obPickerSearch.generation++;
   obPickerSearch.inFlight = null;
 }
@@ -3709,7 +3709,7 @@ function openItemPicker(payload, elementName, eventContext, request) {
       obPickerSearch.query = '';
       obPickerSearch.picked = {};
       obPickerSearch.order = [];
-      obPickerSearch.filters = {};
+      obPickerSearch.filters = Object.create(null);
     }
     obPickerSearch.appliedQuery = searchResponse ? request.query : '';
     obPickerSearch.element = elementName;
@@ -3723,8 +3723,8 @@ function openItemPicker(payload, elementName, eventContext, request) {
   var filterCols = (cfg.filters || []).filter(function (name) {
     return cols.some(function (c) { return c.name === name && !c.editable; });
   });
-  var fltState = serverSearch ? obPickerSearch.filters : {};
-  var fltSelects = {};
+  var fltState = serverSearch ? obPickerSearch.filters : Object.create(null);
+  var fltSelects = Object.create(null);
   if (filterCols.length) {
     var filterBar = document.createElement('div');
     filterBar.className = '_ip-filters';
@@ -3875,7 +3875,6 @@ function openItemPicker(payload, elementName, eventContext, request) {
     cb.checked = (!isNaN(val) && val > 0);
     if (serverSearch) rememberRow(tr);
     updateCounter();
-    updateBasket();
   });
   table.appendChild(tbody);
   scroll.appendChild(table);
@@ -3987,37 +3986,47 @@ function openItemPicker(payload, elementName, eventContext, request) {
   function updateCounter() {
     var n = serverSearch ? obPickerSearch.order.length : checkedRows().length;
     counter.textContent = single ? '' : ('Выбрано: ' + n);
+    updateBasket();
   }
   function updateBasket() {
     bTbody.innerHTML = '';
     var cnt = 0;
     if (!cfg.qtyField) return;
-    Array.prototype.forEach.call(tbody.rows, function (tr) {
-      if (tr.style.display === 'none') return;
-      var inp = tr.querySelector('._ip-val[data-col="' + cfg.qtyField + '"]');
-      if (!inp) return;
-      var val = parseFloat(inp.value);
-      if (isNaN(val) || val <= 0) return;
+    function appendBasketRow(name, qty) {
       cnt++;
       var bTr = document.createElement('tr');
       var tdName = document.createElement('td');
-      if (displayCol) {
-        var srcTd = tr.querySelector('td[data-col="' + displayCol.name + '"]');
-        tdName.textContent = srcTd ? srcTd.textContent : '';
-      }
+      tdName.textContent = name;
       var tdQty = document.createElement('td');
       tdQty.style.cssText = 'text-align:right;font-weight:600';
-      tdQty.textContent = inp.value;
+      tdQty.textContent = qty;
       bTr.appendChild(tdName);
       bTr.appendChild(tdQty);
       bTbody.appendChild(bTr);
-    });
+    }
+    if (serverSearch) {
+      // Корзина показывает тот же полный выбор и порядок, что «Перенести»,
+      // включая позиции, отсутствующие в текущей серверной выдаче.
+      obPickerSearch.order.forEach(function (id) {
+        var saved = obPickerSearch.picked[id];
+        appendBasketRow(displayCol ? saved[displayCol.name] : '', saved[cfg.qtyField]);
+      });
+    } else {
+      Array.prototype.forEach.call(tbody.rows, function (tr) {
+        if (tr.style.display === 'none') return;
+        var inp = tr.querySelector('._ip-val[data-col="' + cfg.qtyField + '"]');
+        if (!inp) return;
+        var val = parseFloat(inp.value);
+        if (isNaN(val) || val <= 0) return;
+        var srcTd = displayCol ? tr.querySelector('td[data-col="' + displayCol.name + '"]') : null;
+        appendBasketRow(srcTd ? srcTd.textContent : '', inp.value);
+      });
+    }
     basketBadge.textContent = cnt > 0 ? (cnt + ' поз.') : 'пусто';
     if (cnt > 0 && basketScroll.style.display === 'none') basketScroll.style.display = '';
     if (cnt === 0) basketScroll.style.display = 'none';
   }
   updateCounter();
-  updateBasket();
   search.focus();
   if (serverSearch && search.value) {
     // Каретка в конец: окно пересобрано ответом сервера, а человек продолжает
@@ -4099,7 +4108,7 @@ function openItemPicker(payload, elementName, eventContext, request) {
     for (var pass = 0; pass <= filterCols.length; pass++) {
       var reset = false;
       filterCols.forEach(function (name) {
-        var seen = {};
+        var seen = Object.create(null);
         var values = [];
         Array.prototype.forEach.call(tbody.rows, function (tr) {
           if (!rowPasses(tr, name)) return;
@@ -4136,7 +4145,6 @@ function openItemPicker(payload, elementName, eventContext, request) {
       tr.style.display = (hit && rowPasses(tr, null)) ? '' : 'none';
     });
     updateCounter();
-    updateBasket();
   }
   if (filterCols.length) {
     rebuildFilters();
@@ -4151,7 +4159,6 @@ function openItemPicker(payload, elementName, eventContext, request) {
       if (serverSearch) rememberRow(tr);
     });
     updateCounter();
-    updateBasket();
   });
   // Esc закрывает диалог тем же путём, что «Отмена»: общий обработчик Escape
   // зовёт modal._obClose, если он есть.

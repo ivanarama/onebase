@@ -84,10 +84,27 @@ func (db *DB) UpsertProvisional(ctx context.Context, entityName string, id uuid.
 		bumpVersion:      true,
 		validateRequired: false,
 		auditMode:        upsertAuditSkip,
+		transient:        true,
 	}); err != nil {
 		return err
 	}
 	return armWriteLifecycle(ctx, state)
+}
+
+// UpdateProvisional makes a new parent's post-OnWrite snapshot visible to
+// OnPost without closing its create lifecycle, advancing the version or
+// publishing durable effects. Only the final UpsertPreserveVersion may commit it.
+func (db *DB) UpdateProvisional(ctx context.Context, entityName string, id uuid.UUID, fields map[string]any, entity *metadata.Entity) error {
+	if !HasTx(ctx) {
+		return errors.New("storage: UpdateProvisional requires an active transaction")
+	}
+	if _, err := pendingWriteLifecycle(ctx, entityWriteLifecycleKey(db, "provisional-create", entityName, id)); err != nil {
+		return err
+	}
+	return db.upsert(ctx, entityName, id, fields, entity, upsertWriteOptions{
+		auditMode: upsertAuditSkip,
+		transient: true,
+	})
 }
 
 // UpsertPreserveVersion updates fields without advancing _version on conflict.
@@ -148,6 +165,9 @@ const (
 
 type upsertWriteOptions struct {
 	bumpVersion bool
+	// transient writes are visible only to hooks in the active lifecycle.
+	// Stage validation/history, FTS and audit belong to its final snapshot.
+	transient bool
 	// validateRequired is false only for an active provisional-create
 	// lifecycle. Audit policy is deliberately independent of this invariant.
 	validateRequired  bool
@@ -217,6 +237,11 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 		oldRow = existing
 	}
 	effectOldRow := oldRow
+	if options.auditMode == upsertAuditCreate {
+		// A provisional create has no original logical row. Validate and record
+		// the initial stage only once, using the final object.
+		effectOldRow = nil
+	}
 	if options.effectOldOverride != nil {
 		// A posting prelude already made the OnWrite snapshot visible inside the
 		// transaction and bumped the version. Durable effects belong to the one
@@ -248,9 +273,13 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 	// Compare against the persisted final snapshot, not just raw incoming keys.
 	// A posting final may omit the stage and thereby retain the transient prelude
 	// value; that retained value still has to pass the original-to-final route.
-	stageTr, err := db.checkStageTransition(ctx, entityName, entity, effectOldRow, effectiveFields)
-	if err != nil {
-		return err
+	var stageTr *stageTransition
+	if !options.transient {
+		var err error
+		stageTr, err = db.checkStageTransition(ctx, entityName, entity, effectOldRow, effectiveFields)
+		if err != nil {
+			return err
+		}
 	}
 
 	table := metadata.TableName(entityName)
@@ -391,27 +420,14 @@ func (db *DB) upsertInTx(ctx context.Context, entityName string, id uuid.UUID, f
 		return ErrStageConcurrentWrite
 	}
 
-	// Полнотекстовый индекс (план 82) — в той же транзакции, что и запись:
-	// откат записи откатывает и индекс, поэтому разъехаться они не могут.
-	// Здесь, а не в entityservice, потому что путей записи несколько
-	// (entityservice.Save, ui/dsl_documents, обмен, приёмка) — общий у них
-	// только этот upsert.
-	if err := db.IndexObject(ctx, entity, id, effectiveFields); err != nil {
-		return err
-	}
-
-	// История переходов (план 121) — в той же транзакции, что и запись, и
-	// безусловно: журнал регистрации ниже выключается настройкой, а отчёт «где
-	// застряло» обязан работать всегда.
-	//
-	// Режим аудита здесь СОЗНАТЕЛЬНО не учитывается. Провизорная вставка нового
-	// объекта (upsertAuditSkip) — это и есть момент, когда «» → начальный этап;
-	// её запись в истории откатится вместе с транзакцией, если хук упадёт.
-	// Audit mode intentionally does not affect stage history: a provisional
-	// insert is still the real transition from no stage to the initial stage,
-	// and its history row is committed or rolled back with the transaction.
-	if err := db.logStageTransition(ctx, entityName, id, stageTr); err != nil {
-		return err
+	// Only the final logical snapshot contributes FTS and stage history.
+	if !options.transient {
+		if err := db.IndexObject(ctx, entity, id, effectiveFields); err != nil {
+			return err
+		}
+		if err := db.logStageTransition(ctx, entityName, id, stageTr); err != nil {
+			return err
+		}
 	}
 
 	// Audit (best-effort, non-blocking)
@@ -1184,8 +1200,12 @@ func (db *DB) upsertTablePartRows(ctx context.Context, entityName, tpName string
 	}
 
 	for i, row := range prepared {
-		if err := db.exec(ctx, row.sql, row.args...); err != nil {
-			return fmt.Errorf("insert tablepart %s.%s row %d: %w", entityName, tpName, i+1, err)
+		if _, err := db.execAllowingFKDiagnosis(ctx, row.sql, row.args...); err != nil {
+			classified := classifyConstraintErr(err)
+			if errors.Is(classified, ErrForeignKeyViolation) {
+				classified = db.explainFKViolation(ctx, &metadata.Entity{Fields: tp.Fields}, rows[i], classified)
+			}
+			return fmt.Errorf("insert tablepart %s.%s row %d: %w", entityName, tpName, i+1, classified)
 		}
 	}
 	return nil

@@ -217,8 +217,8 @@ func assertServiceInstallPrintHost(t *testing.T, args []string, host, forbiddenH
 			t.Fatalf("service install must not use host %s, got:\n%s", forbiddenHost, out)
 		}
 	default:
-		want := "автоустановка сервиса не поддерживается на " + runtime.GOOS
-		if err == nil || !strings.HasPrefix(err.Error(), want+";") {
+		want := "автоустановка сервиса не поддерживается на " + runtime.GOOS + "; поддерживаются только Linux и Windows"
+		if err == nil || err.Error() != want {
 			t.Fatalf("service install --print must reject %s, got: %v", runtime.GOOS, err)
 		}
 		if out != "" {

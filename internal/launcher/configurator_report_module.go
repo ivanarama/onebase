@@ -38,10 +38,11 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 	chartSource := r.FormValue("chart_source")
 
 	type saveParam struct {
-		Name   string            `yaml:"name"`
-		Type   string            `yaml:"type"`
-		Label  string            `yaml:"label,omitempty"`
-		Labels map[string]string `yaml:"labels,omitempty"`
+		Name    string            `yaml:"name"`
+		Type    string            `yaml:"type"`
+		Label   string            `yaml:"label,omitempty"`
+		Labels  map[string]string `yaml:"labels,omitempty"`
+		Default *string           `yaml:"default,omitempty"`
 	}
 	type saveReport struct {
 		Name        string              `yaml:"name"`
@@ -95,6 +96,21 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 			return nil, fmt.Errorf("updateReportFile: ожидалось YAML-отображение в корне отчёта")
 		}
 		doc := root.Content[0]
+		// Умолчания не редактируются формой. Сохраняем их по имени, чтобы
+		// перестановка строк не переносила значение на другой параметр,
+		// а новые и переименованные параметры не наследовали чужой default.
+		var existing saveReport
+		if err := doc.Decode(&existing); err != nil {
+			return nil, err
+		}
+		defaults := make(map[string]*string, len(existing.Params))
+		for _, p := range existing.Params {
+			defaults[p.Name] = p.Default
+		}
+		params := append([]saveParam(nil), newParams...)
+		for i := range params {
+			params[i].Default = defaults[params[i].Name]
+		}
 		if err := setYAMLMapField(doc, "query", query); err != nil {
 			return nil, err
 		}
@@ -116,8 +132,8 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 			return nil, err
 		}
 		var pv any
-		if len(newParams) > 0 {
-			pv = newParams
+		if len(params) > 0 {
+			pv = params
 		}
 		if err := setYAMLMapField(doc, "params", pv); err != nil {
 			return nil, err

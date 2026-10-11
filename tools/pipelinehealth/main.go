@@ -158,7 +158,7 @@ func main() {
 	var err error
 	switch selectedTransport {
 	case "graphql":
-		prs, issues, err = loadPipelineInputsGraphQL(newGHPipelineGraphQLClient(), *repo, *fixture, *issueFixture)
+		prs, issues, err = loadPipelineInputsGraphQL(newGHPipelineGraphQLClient(), *repo, *owner, *fixture, *issueFixture)
 	case "rest":
 		var github *githubRESTClient
 		if *fixture == "" {
@@ -169,7 +169,7 @@ func main() {
 			}
 		}
 		if err == nil {
-			prs, err = loadPulls(github, *repo, *fixture)
+			prs, err = loadPulls(github, *repo, *owner, *fixture)
 		}
 		if err == nil {
 			issues, err = loadIssues(github, *repo, *issueFixture, *fixture != "")
@@ -209,7 +209,7 @@ func fail(err error) {
 	os.Exit(2)
 }
 
-func loadPulls(github *githubRESTClient, repo, fixture string) ([]apiPull, error) {
+func loadPulls(github *githubRESTClient, repo, trustedOwner, fixture string) ([]apiPull, error) {
 	if fixture != "" {
 		data, err := os.ReadFile(fixture)
 		if err != nil {
@@ -252,8 +252,7 @@ func loadPulls(github *githubRESTClient, repo, fixture string) ([]apiPull, error
 					continue
 				}
 				prs[index].Comments = comments
-				owner, _, _ := strings.Cut(repo, "/")
-				if !needsHeadParents(prs[index], owner) {
+				if !needsHeadParents(prs[index], trustedOwner) {
 					continue
 				}
 				var commitResponse struct {
@@ -314,7 +313,7 @@ func loadIssues(github *githubRESTClient, repo, fixture string, skipLive bool) (
 	}
 	issues := make([]apiIssue, 0, len(all))
 	for _, issue := range all {
-		if issue.PullRequest == nil && issue.CommentCount > 0 {
+		if issue.PullRequest == nil {
 			issues = append(issues, issue)
 		}
 	}
@@ -331,6 +330,9 @@ func loadIssues(github *githubRESTClient, repo, fixture string, skipLive bool) (
 		go func() {
 			defer wg.Done()
 			for index := range jobs {
+				if issues[index].CommentCount == 0 {
+					continue
+				}
 				path := fmt.Sprintf("repos/%s/issues/%d/comments?per_page=100", repo, issues[index].Number)
 				comments, err := getAllPages[apiComment](github, path)
 				if err != nil {
