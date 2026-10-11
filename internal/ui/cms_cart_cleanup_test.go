@@ -2,7 +2,9 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"reflect"
 	"testing"
 	"time"
 
@@ -360,4 +362,188 @@ func (s *cmsCleanupReadRaceContext) Ctx() context.Context {
 		s.beforeThird()
 	}
 	return s.ctx
+}
+
+// The storage port injects a write immediately before the real versioned SQL
+// DELETE. The public DSL method, service transaction and table-part deletion
+// remain intact; no private delete helper is invoked by the test.
+func TestCMSCartLateDeleteConflict(t *testing.T) {
+	proj, err := project.Load("../../examples/cms")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer proj.Close()
+	carts := cmsCleanupEntity(t, proj, "Корзины")
+	if len(carts.TableParts) == 0 {
+		t.Fatal("корзина должна иметь табличные части для проверки отката")
+	}
+
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		if err := db.Migrate(ctx, proj.Entities); err != nil {
+			t.Fatal(err)
+		}
+		for _, borrowed := range []bool{false, true} {
+			name := "owned-transaction"
+			if borrowed {
+				name = "borrowed-savepoint"
+			}
+			t.Run(name, func(t *testing.T) {
+				id := uuid.New()
+				if err := db.Upsert(ctx, carts.Name, id, map[string]any{
+					"Наименование": "Корзина с поздним конфликтом",
+					"Дата":         time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+					"Оформлена":    false,
+				}, carts); err != nil {
+					t.Fatal(err)
+				}
+				original, err := db.GetByID(ctx, carts.Name, id, carts)
+				if err != nil || original == nil {
+					t.Fatalf("исходная корзина: row=%#v err=%v", original, err)
+				}
+				originalParts := make(map[string][]map[string]any)
+				for _, tp := range carts.TableParts {
+					if err := db.UpsertTablePartRows(ctx, carts.Name, tp.Name, id,
+						[]map[string]any{{"Количество": 2}, {"Количество": 7}}, tp); err != nil {
+						t.Fatal(err)
+					}
+					rows, err := db.GetTablePartRows(ctx, carts.Name, tp.Name, id, tp)
+					if err != nil || len(rows) != 2 {
+						t.Fatalf("исходная ТЧ %s: rows=%#v err=%v", tp.Name, rows, err)
+					}
+					originalParts[tp.Name] = rows
+				}
+				assertRestored := func(readCtx context.Context) {
+					t.Helper()
+					row, err := db.GetByID(readCtx, carts.Name, id, carts)
+					if err != nil || !reflect.DeepEqual(row, original) {
+						t.Fatalf("корзина не восстановлена: row=%#v want=%#v err=%v", row, original, err)
+					}
+					for _, tp := range carts.TableParts {
+						rows, err := db.GetTablePartRows(readCtx, carts.Name, tp.Name, id, tp)
+						if err != nil || !reflect.DeepEqual(rows, originalParts[tp.Name]) {
+							t.Fatalf("ТЧ %s не восстановлена: rows=%#v want=%#v err=%v", tp.Name, rows, originalParts[tp.Name], err)
+						}
+					}
+				}
+
+				runCtx := ctx
+				unrelatedID, afterConflictID := uuid.New(), uuid.New()
+				var outer storage.Tx
+				if borrowed {
+					outer, runCtx, err = db.BeginTx(ctx)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer outer.Rollback(ctx)
+					// Written after BeginTx: a whole-transaction rollback would
+					// erase this row, unlike the required savepoint rollback.
+					if err := db.Upsert(runCtx, carts.Name, unrelatedID,
+						map[string]any{"Наименование": "До конфликта"}, carts); err != nil {
+						t.Fatal(err)
+					}
+				}
+				server, _, err := NewOfflineServer(proj, db)
+				if err != nil {
+					t.Fatal(err)
+				}
+				injected := false
+				port := &cmsCleanupLateDeleteStore{DB: db}
+				port.beforeDelete = func(deleteCtx context.Context, entity string, target uuid.UUID, expected int64) {
+					if entity != carts.Name || target != id {
+						t.Fatalf("неожиданный объект DELETE: %s %s", entity, target)
+					}
+					if injected {
+						return
+					}
+					if !storage.HasTx(deleteCtx) {
+						t.Fatal("инъекция должна выполняться в транзакции удаления")
+					}
+					// Prove the early version check has passed and all table
+					// parts have already been removed, while the header still
+					// has the loaded token. This rejects an early injection.
+					row, err := db.GetByID(deleteCtx, carts.Name, id, carts)
+					if err != nil || row == nil || row["_version"] != expected || !reflect.DeepEqual(row, original) {
+						t.Fatalf("инъекция не перед финальным DELETE: row=%#v expected=%d err=%v", row, expected, err)
+					}
+					for _, tp := range carts.TableParts {
+						assertCMSCleanupRowCount(t, deleteCtx, db,
+							metadata.TablePartTableName(carts.Name, tp.Name), "parent_id", id, 0)
+					}
+					if err := db.Upsert(deleteCtx, carts.Name, id,
+						map[string]any{"Оформлена": true}, carts); err != nil {
+						t.Fatal(err)
+					}
+					row, err = db.GetByID(deleteCtx, carts.Name, id, carts)
+					if err != nil || row["_version"] != expected+1 || !cmsCleanupTrue(row["Оформлена"]) {
+						t.Fatalf("позднее обновление не выполнено: row=%#v err=%v", row, err)
+					}
+					injected = true
+				}
+				server.EntitySvc().Store = port
+				loaded, err := server.catObjectFactory(interpreter.NewStaticCtx(runCtx)).LoadCatalogObject(carts, id.String())
+				if err != nil {
+					t.Fatal(err)
+				}
+				obj := loaded.(interface{ CallMethod(string, []any) any })
+				if got := obj.CallMethod("УдалитьЕслиНеИзменен", nil); got != false {
+					t.Fatalf("поздний конфликт: got=%v, ожидалось false", got)
+				}
+				if !injected || port.calls != 1 || !errors.Is(port.lastErr, storage.ErrVersionConflict) {
+					t.Fatalf("финальный SQL-конфликт не подтверждён: injected=%v calls=%d err=%v", injected, port.calls, port.lastErr)
+				}
+				assertRestored(runCtx)
+				if borrowed {
+					assertCMSCleanupRowCount(t, runCtx, db, metadata.TableName(carts.Name), "id", unrelatedID, 1)
+					// A new write proves the borrowed transaction is still usable.
+					if err := db.Upsert(runCtx, carts.Name, afterConflictID,
+						map[string]any{"Наименование": "После конфликта"}, carts); err != nil {
+						t.Fatal(err)
+					}
+					if err := outer.Commit(ctx); err != nil {
+						t.Fatalf("commit внешней транзакции: %v", err)
+					}
+					assertRestored(ctx)
+					assertCMSCleanupRowCount(t, ctx, db, metadata.TableName(carts.Name), "id", unrelatedID, 1)
+					assertCMSCleanupRowCount(t, ctx, db, metadata.TableName(carts.Name), "id", afterConflictID, 1)
+				}
+				// Retry through a fresh public read after the rollback (and,
+				// for the borrowed case, after committing the outer transaction).
+				loaded, err = server.catObjectFactory(interpreter.NewStaticCtx(ctx)).LoadCatalogObject(carts, id.String())
+				if err != nil {
+					t.Fatal(err)
+				}
+				obj = loaded.(interface{ CallMethod(string, []any) any })
+				obj.CallMethod("Прочитать", nil)
+				if got := obj.CallMethod("УдалитьЕслиНеИзменен", nil); got != true {
+					t.Fatalf("повтор после нового чтения: got=%v, ожидалось true", got)
+				}
+				if port.calls != 2 || port.lastErr != nil {
+					t.Fatalf("повтор не прошёл финальный SQL: calls=%d err=%v", port.calls, port.lastErr)
+				}
+				assertCMSCleanupRowCount(t, ctx, db, metadata.TableName(carts.Name), "id", id, 0)
+				for _, tp := range carts.TableParts {
+					assertCMSCleanupRowCount(t, ctx, db, metadata.TablePartTableName(carts.Name, tp.Name), "parent_id", id, 0)
+				}
+				if borrowed {
+					assertCMSCleanupRowCount(t, ctx, db, metadata.TableName(carts.Name), "id", unrelatedID, 1)
+					assertCMSCleanupRowCount(t, ctx, db, metadata.TableName(carts.Name), "id", afterConflictID, 1)
+				}
+			})
+		}
+	})
+}
+
+type cmsCleanupLateDeleteStore struct {
+	*storage.DB
+	beforeDelete func(context.Context, string, uuid.UUID, int64)
+	calls        int
+	lastErr      error
+}
+
+func (s *cmsCleanupLateDeleteStore) DeleteVersioned(ctx context.Context, entity string, id uuid.UUID, expected int64) error {
+	s.calls++
+	s.beforeDelete(ctx, entity, id, expected)
+	s.lastErr = s.DB.DeleteVersioned(ctx, entity, id, expected)
+	return s.lastErr
 }
