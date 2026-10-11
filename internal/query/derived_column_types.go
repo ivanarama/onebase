@@ -79,11 +79,19 @@ func scalarProjectionTypes(tokens []tok, ctx sourceContext, scopeID int,
 			}
 		}
 	}
-	for _, item := range splitProjectionItems(tokens[start+1 : end]) {
+	hasStar := false
+	add := func(from, to int) {
+		item := trimProjectionItem(tokens[from:to])
+		from = to - len(item)
 		column, _ := parseProjectionItem(item)
-		if column.Output == "" || column.Star {
-			continue
+		if column.Star {
+			hasStar = true
 		}
+		if column.Output == "" || column.Star {
+			return
+		}
+		fieldEnd := from + 2*len(column.Path) - 1
+		key := projectionSQLKey(tokens, ctx, column, fieldEnd)
 		typ := metadata.FieldType("")
 		if !union {
 			expr := item
@@ -92,14 +100,75 @@ func scalarProjectionTypes(tokens []tok, ctx sourceContext, scopeID int,
 					expr = item[:n-2]
 				}
 			}
-			typ = scalarProjectionExpressionType(expr, fields, qualified)
+			typ = scalarProjectionFieldTypeAt(tokens, ctx, from, from+len(expr), fields, qualified)
 		}
-		if _, duplicate := output[column.Output]; duplicate {
+		if _, duplicate := output[key]; duplicate {
 			typ = ""
 		}
-		output[column.Output] = typ
+		output[key] = typ
+	}
+	depth, from := 0, start+1
+	for i := from; i < end; i++ {
+		switch tokens[i].kind {
+		case tLParen:
+			depth++
+		case tRParen:
+			depth--
+		case tComma:
+			if depth == 0 {
+				add(from, i)
+				from = i + 1
+			}
+		}
+	}
+	add(from, end)
+	if hasStar {
+		// Until every SQL column of the wildcard is known, any explicit output
+		// may collide with it, in either order. Keep the names reserved but do
+		// not let an unproven type trigger normalization or a numeric CAST.
+		for key := range output {
+			output[key] = ""
+		}
 	}
 	return output
+}
+
+// projectionSQLKey uses the names emitted by the SQL translator. Reference
+// names, including explicit aliases, emit id; other explicit aliases remain
+// literal. Derived projections must count collisions under these SQL keys.
+func projectionSQLKey(tokens []tok, ctx sourceContext, column ProjectionColumn, fieldEnd int) string {
+	if isReferenceName(column.Output) {
+		return "id"
+	}
+	if column.Alias == "" && len(column.Path) > 0 && ctx.systemColumnIdentifierAt(tokens, fieldEnd-1, map[int]bool{}) {
+		if physical, _, system := entitySystemColAlias(column.Output); system {
+			return physical
+		}
+	}
+	return column.Output
+}
+
+// scalarProjectionFieldTypeAt resolves direct system fields by their actual
+// input SQL key too: a derived table exports posted, even when its child SELECT
+// used Проведен. A non-reserved logical alias and a same-named own field retain
+// their literal keys because the source context does not rewrite them.
+func scalarProjectionFieldTypeAt(tokens []tok, ctx sourceContext, from, to int,
+	fields map[string]metadata.FieldType, qualified map[string]map[string]metadata.FieldType,
+) metadata.FieldType {
+	start, end := trimProjectionParentheses(tokens, from, to)
+	expr := tokens[start:end]
+	if (len(expr) == 1 || len(expr) == 3 && expr[1].kind == tDot) &&
+		ctx.systemColumnIdentifierAt(tokens, end-1, map[int]bool{}) {
+		if physical, _, system := entitySystemColAlias(expr[len(expr)-1].val); system {
+			if len(expr) == 3 {
+				return qualified[lowerFast(expr[0].val)][physical]
+			}
+			if scopeID, ok := ctx.scopeIDAt(start); ok {
+				return qualified[ctx.scopes[scopeID].mainTable][physical]
+			}
+		}
+	}
+	return scalarProjectionExpressionType(expr, fields, qualified)
 }
 
 // Only a direct field and MIN/MAX of a proven field preserve its type here.
@@ -115,10 +184,20 @@ func scalarProjectionExpressionType(expr []tok, fields map[string]metadata.Field
 		}
 	}
 	if len(expr) == 1 && expr[0].kind == tIdent {
-		return fields[lowerFast(expr[0].val)]
+		return fields[projectionInputSQLKey(expr[0].val)]
 	}
 	if len(expr) == 3 && expr[0].kind == tIdent && expr[1].kind == tDot && expr[2].kind == tIdent {
-		return qualified[lowerFast(expr[0].val)][lowerFast(expr[2].val)]
+		return qualified[lowerFast(expr[0].val)][projectionInputSQLKey(expr[2].val)]
 	}
 	return ""
+}
+
+// References to a reserved alias read id too. Looking up its logical spelling
+// would lose a proven derived type or miss the collision recorded under id.
+func projectionInputSQLKey(name string) string {
+	key := lowerFast(name)
+	if isReferenceName(key) {
+		return "id"
+	}
+	return key
 }
