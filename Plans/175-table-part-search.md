@@ -1,7 +1,7 @@
 # План 175 — поиск владельца по полям табличных частей
 
 Дата проектирования: 2026-09-11.
-Статус: 📋 **проектирование**, продуктовый код в этом PR не меняется.
+Статус: 🚧 **реализация** — подготовлен срез A (#1896); срезы B/C ещё не реализованы.
 Заявка: [#1372](https://github.com/ivanarama/onebase/issues/1372).
 Выбранный вариант: **1** — закрепить единый контракт путей в `search_fields` и
 `fulltext`, затем реализовать поиск списка и полнотекстовый поиск отдельными
@@ -15,19 +15,20 @@
 ## Контекст
 
 Телефоны, Email и другие повторяющиеся контакты естественно хранить строками
-табличной части справочника. Сейчас оба штатных поиска видят только шапку:
+табличной части справочника. До среза A оба штатных поиска видели только шапку:
 
-- `metadata.SearchFields` и `metadata.FullTextFields` возвращают плоский
+- `metadata.SearchFields` и `metadata.FullTextFields` возвращали плоский
   `metadata.Field` из `Entity.Fields`;
-- `storage.List` и `storage.Count` независимо строят `LIKE` только по колонкам
-  таблицы владельца;
+- общий `listWhere` для `storage.List` и `CountList` строил `LIKE` только по
+  колонкам таблицы владельца;
 - `storage.IndexObject` получает карту полей шапки из `Upsert`, а
   `rebuildEntityFTS` читает только таблицу владельца;
 - `UpsertTablePartRows` заменяет дочерние строки после шапочного FTS-upsert и
   не обновляет `_fts`.
 
-Поэтому контакт в ТЧ нельзя найти ни в строке списка/подборе ссылки, ни в
-глобальном UI, REST v2 и DSL. Денормализовать контакты в поле шапки можно, но
+Срез A добавляет поиск контакта в строке списка и подборе ссылки. Глобальный
+UI, REST v2 и DSL полнотекстового поиска до среза C продолжают видеть шапку.
+Денормализовать контакты в поле шапки можно, но
 это создаёт вторую копию данных и отдельный протокол синхронизации.
 
 ## Объём и синтаксис
@@ -190,11 +191,11 @@ Posting prelude/finalize и replicated writer получают ту же пар�
 
 | Граница | Текущее состояние | Планируемое изменение |
 |---|---|---|
-| `internal/metadata/types.go` | `SearchFields`/`FullTextFields` возвращают поля шапки | typed path resolver с прежними default/empty правилами |
-| `internal/metadata/validate.go`, `yaml.go` | плоское имя, pointer отличает key absent от `[]` | строгая проверка двухсегментного пути; wire-формат остаётся `[]string` |
-| `internal/configcheck`, `internal/cli/aiguide.go` | схема знает ключи, но не dotted-семантику | публичная диагностика и актуальный AI-guide/describe контракт |
+| `internal/metadata/field_path.go`, `types.go` | A: typed paths для списка и общий resolver; FTS использует `HeaderFullTextFields` | B/C: перевести FTS-потребителей на все typed paths |
+| `internal/metadata/validate.go`, `yaml.go` | A: строгие пути search_fields, dotted fulltext отклонён; pointer отличает key absent от `[]` | C: включить dotted fulltext после атомарного writer |
+| `internal/configcheck`, `internal/cli/schema.go` | A: публичная диагностика и schema описывают работающий search_fields-срез | C: описать полную dotted fulltext-семантику |
 | `internal/launcher/configurator_types.go` | `[]string` уже проходит YAML round-trip | сохранить dotted строки побайтно по смыслу; добавить round-trip тест |
-| `internal/storage/crud.go` | `List` и `Count` дублируют header-only `LIKE` | общий builder: header predicates + grouped correlated `EXISTS` |
+| `internal/storage/crud.go` | A: общий `listWhere` для List/CountList/membership содержит grouped correlated `EXISTS` | поиск списка реализован в A |
 | `internal/storage/fts.go` | `BuildFTSDoc` и rebuild получают только шапку | разделить header title и body fragments; batch-загрузка ТЧ |
 | `internal/storage/crud.go:UpsertTablePartRows` | общий дочерний writer не знает полного `Entity`, не трогает FTS, а `WithTxIfNeeded` не изолирует ошибку внутри внешней транзакции | передать метаданные владельца через typed writer/сигнатуру и выполнить replace + reindex в `WithTxScope` |
 | `internal/entityservice/ports.go` и writer-вызовы UI/DSL/exchange | порт принимает имя сущности и отдельную ТЧ | провести typed parent metadata через все вызовы, не оставлять обходного старого writer |
@@ -230,7 +231,8 @@ fixtures. Старый публичный метод удаляется в то�
 
 1. Ввести typed path resolver и строгую валидацию для обоих ключей, но включить
    runtime dotted path сначала только в `search_fields`.
-2. Вынести общий SQL-builder из `List`/`Count`, добавить `EXISTS` по ТЧ.
+2. Расширить существующий общий SQL-builder `listWhere` для `List`/`CountList`,
+   добавить `EXISTS` по ТЧ.
 3. Сохранить dotted values через configurator round-trip и описать первый
    пользовательский срез в `DEVELOPER.md`/features.
 
@@ -238,6 +240,15 @@ fixtures. Старый публичный метод удаляется в то�
 списка и picker находят владельца по телефону, показывают его один раз и дают
 одинаковые list/count на SQLite и PostgreSQL. Невалидный путь отклоняется
 `onebase check` с именем сущности и исходным путём.
+
+Граница поставки A (#1896): расширен уже существовавший общий `listWhere`
+для `List`/`CountList`, а не создан второй builder. Typed paths используются
+поиском списка; действующие FTS-потребители используют явный
+`HeaderFullTextFields`, который не возвращает частичный индекс при dotted
+пути. Dotted `fulltext` остаётся ошибкой публичной валидации до C.
+Конфигуратор сохраняет пути при обычном редактировании полей; пример первого
+среза — `examples/search-tableparts`. Родитель #1372 закрывается после всех
+срезов; B/C сохраняют отдельный маршрут.
 
 ### Срез B — единая сборка FTS и пакетный reindex (~1.5–2 дня)
 

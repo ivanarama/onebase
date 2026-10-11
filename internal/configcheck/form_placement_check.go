@@ -14,8 +14,8 @@ import (
 // CheckFormPlacement возвращает НЕблокирующие предупреждения о файлах управляемых
 // форм, которые платформа не загрузит из-за размещения.
 //
-// Загрузчик (internal/dsl/loader/managed_form_loader.go) ищет формы строго в
-// forms/<имя-сущности-в-нижнем-регистре>/*.form.yaml и молча возвращает пусто,
+// Загрузчик (internal/dsl/loader/managed_form_loader.go) ищет формы в
+// forms/<имя-сущности>/*.form.yaml без учёта регистра каталога и возвращает пусто,
 // если каталога нет. Поэтому файл, положенный плоско в forms/ или в каталог с
 // именем, не совпадающим ни с одной сущностью, становится мёртвой конфигурацией:
 // он существует, читается человеком как рабочий, проходит `onebase check` — а в
@@ -33,18 +33,20 @@ func CheckFormPlacement(dir string, proj *project.Project) []Issue {
 	// Каталоги, которые загрузчик реально просматривает: по одному на сущность
 	// И на обработку — у обработок тоже бывают управляемые формы
 	// (ui.handleProcessorFormEvent, шаблон с forms/<имя обработки>/).
-	known := make(map[string]string) // нижний регистр → оригинальное имя
+	// Исходные имена нельзя объединять через ToLower: I и İ дают один
+	// ключ, хотя EqualFold считает их разными владельцами.
+	known := make(map[string]struct{})
 	for _, ent := range proj.Entities {
 		if ent == nil || ent.Name == "" {
 			continue
 		}
-		known[strings.ToLower(ent.Name)] = ent.Name
+		known[ent.Name] = struct{}{}
 	}
 	for _, pr := range proj.Processors {
 		if pr == nil || pr.Name == "" {
 			continue
 		}
-		known[strings.ToLower(pr.Name)] = pr.Name
+		known[pr.Name] = struct{}{}
 	}
 
 	var warns []Issue
@@ -64,8 +66,8 @@ func CheckFormPlacement(dir string, proj *project.Project) []Issue {
 			warns = append(warns, Issue{
 				File: label, Kind: "Управляемая форма", Code: "form.not-loaded",
 				Message: fmt.Sprintf("файл %q лежит прямо в forms/ и НЕ загружается: "+
-					"формы читаются только из forms/<имя-сущности-в-нижнем-регистре>/", label),
-				SuggestedFix: "Перенесите файл в forms/<имя-сущности-в-нижнем-регистре>/ " +
+					"формы читаются только из forms/<имя-сущности>/", label),
+				SuggestedFix: "Перенесите файл в forms/<имя-сущности>/ " +
 					"(например forms/реализациятоваров/объекта.form.yaml). Сейчас сущность " +
 					"открывается авто-генерируемой формой, а этот файл не влияет ни на что.",
 			})
@@ -74,20 +76,28 @@ func CheckFormPlacement(dir string, proj *project.Project) []Issue {
 				File: label, Kind: "Управляемая форма", Code: "form.not-loaded",
 				Message: fmt.Sprintf("файл %q лежит во вложенном каталоге и НЕ загружается: "+
 					"просматривается только forms/<сущность>/ на один уровень", label),
-				SuggestedFix: "Положите файл непосредственно в forms/<имя-сущности-в-нижнем-регистре>/.",
+				SuggestedFix: "Положите файл непосредственно в forms/<имя-сущности>/.",
 			})
 		default:
-			// Сравнение регистрозависимое: загрузчик собирает путь как
-			// strings.ToLower(entityName), поэтому на регистрозависимой ФС
-			// каталог «РеализацияТоваров» не найдётся, хотя выглядит правильным.
-			if _, ok := known[parts[0]]; !ok {
+			// То же Unicode-сравнение, что у managed-загрузчика. ToLower
+			// недостаточно: например, EqualFold("ſ", "S") == true.
+			matched := false
+			for name := range known {
+				if strings.EqualFold(parts[0], name) {
+					matched = true
+					break
+				}
+			}
+			// Неоднозначные каталоги отклоняет загрузчик в project.Load,
+			// до запуска проверок размещения в RunFullWithOptions.
+			if !matched {
 				warns = append(warns, Issue{
 					File: label, Kind: "Управляемая форма", Code: "form.not-loaded",
 					Message: fmt.Sprintf("каталог forms/%s/ не соответствует ни одной сущности "+
 						"конфигурации — файл %q НЕ загружается", parts[0], label),
-					SuggestedFix: "Имя каталога должно точно совпадать с именем сущности в нижнем " +
-						"регистре — это ИМЯ из YAML (поле name), а не имя файла. " +
-						suggestClosestEntity(parts[0], known),
+					SuggestedFix: "Имя каталога должно совпадать с именем сущности или обработки без " +
+						"учёта регистра — это ИМЯ из YAML (поле name), а не имя файла. " +
+						suggestFormDirectories(known),
 				})
 			}
 		}
@@ -98,16 +108,16 @@ func CheckFormPlacement(dir string, proj *project.Project) []Issue {
 	return warns
 }
 
-// suggestClosestEntity подсказывает подходящее имя каталога, если оно отличается
-// от имени сущности только регистром — самая частая причина промаха.
-func suggestClosestEntity(dirName string, known map[string]string) string {
-	lower := strings.ToLower(dirName)
-	if orig, ok := known[lower]; ok {
-		return fmt.Sprintf("Похоже, имелась в виду сущность %q → каталог forms/%s/.", orig, lower)
+// suggestFormDirectories перечисляет примеры имён каталогов в стабильном порядке.
+func suggestFormDirectories(known map[string]struct{}) string {
+	// Нижний регистр нужен только для примеров, не для сопоставления владельцев.
+	examples := make(map[string]struct{})
+	for name := range known {
+		examples[strings.ToLower(name)] = struct{}{}
 	}
 	var names []string
-	for low := range known {
-		names = append(names, low)
+	for name := range examples {
+		names = append(names, name)
 	}
 	sort.Strings(names)
 	if len(names) > 8 {

@@ -32,7 +32,7 @@ fulltext: [Наименование, Комментарий]
 	if !e.FullTextSet || len(e.FullText) != 2 {
 		t.Fatalf("ожидался явный список полей, получено %+v (set=%v)", e.FullText, e.FullTextSet)
 	}
-	if got := FullTextFields(e); len(got) != 2 || got[0].Name != "Наименование" {
+	if got := HeaderFullTextFields(e); len(got) != 2 || got[0].Name != "Наименование" {
 		t.Fatalf("неожиданный состав индекса: %+v", got)
 	}
 }
@@ -53,7 +53,7 @@ fields:
 	if e.FullTextSet {
 		t.Fatalf("без ключа fulltext флаг не должен взводиться")
 	}
-	if got := FullTextFields(e); len(got) != 1 || got[0].Name != "Наименование" {
+	if got := HeaderFullTextFields(e); len(got) != 1 || got[0].Name != "Наименование" {
 		t.Fatalf("по умолчанию индексируются строковые реквизиты, получено %+v", got)
 	}
 
@@ -70,7 +70,7 @@ fulltext: []
 	if !e2.FullTextSet {
 		t.Fatalf("явный fulltext: [] должен взводить флаг")
 	}
-	if got := FullTextFields(e2); len(got) != 0 {
+	if got := HeaderFullTextFields(e2); len(got) != 0 {
 		t.Fatalf("явный пустой список означает «вне поиска», получено %+v", got)
 	}
 }
@@ -88,7 +88,7 @@ fields:
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := FullTextFields(e)
+	got := HeaderFullTextFields(e)
 	if len(got) != 1 || got[0].Name != "Номер" {
 		t.Fatalf("ожидался Номер в индексе по умолчанию, получено %+v", got)
 	}
@@ -158,7 +158,7 @@ func TestValidate_FullTextAcceptsStringAndRichText(t *testing.T) {
 	if err := Validate([]*Entity{e}, nil); err != nil {
 		t.Fatalf("string и richtext должны приниматься: %v", err)
 	}
-	if got := FullTextFields(e); len(got) != 2 {
+	if got := HeaderFullTextFields(e); len(got) != 2 {
 		t.Fatalf("имя реквизита должно сопоставляться без учёта регистра: %+v", got)
 	}
 }

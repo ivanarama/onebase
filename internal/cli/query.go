@@ -106,18 +106,17 @@ func runQuery(cmd *cobra.Command, args []string) error {
 	}
 
 	limit, _ := cmd.Flags().GetInt("limit")
-	sqlText := compiled.SQL
 	if limit > 0 {
-		sqlText = "SELECT * FROM (" + sqlText + ") _onebase_q LIMIT " + fmt.Sprint(limit)
+		compiled.SQL = "SELECT * FROM (" + compiled.SQL + ") _onebase_q LIMIT " + fmt.Sprint(limit)
 	}
 	if showSQL && !jsonOut {
-		outf("SQL:\n%s\nARGS: %v\n\n", sqlText, compiled.Args)
+		outf("SQL:\n%s\nARGS: %v\n\n", compiled.SQL, compiled.Args)
 	}
 	start := time.Now()
 	rows, cols, err := querylang.Run(ctx, db, &compiled)
 	if err != nil {
 		if showSQL && jsonOut {
-			return fmt.Errorf("SQL:\n%s\nARGS: %v\n\n%w", sqlText, compiled.Args, err)
+			return fmt.Errorf("SQL:\n%s\nARGS: %v\n\n%w", compiled.SQL, compiled.Args, err)
 		}
 		return err
 	}
@@ -137,7 +136,7 @@ func runQuery(cmd *cobra.Command, args []string) error {
 		Sources: toQuerySourceOutput(compiled.Sources),
 	}
 	if showSQL || jsonOut {
-		out.SQL = sqlText
+		out.SQL = compiled.SQL
 		out.Args = compiled.Args
 	}
 	if jsonOut {

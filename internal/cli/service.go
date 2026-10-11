@@ -174,7 +174,7 @@ func runServiceInstall(cmd *cobra.Command, _ []string) error {
 	case "windows":
 		return installWindowsService(exe, svcName, displayName, dsn, sqlitePath, dbType, configSource, project, host, port, watch, printOnly)
 	default:
-		return fmt.Errorf("автоустановка сервиса не поддерживается на %s; используйте --print для получения конфигурации", runtime.GOOS)
+		return fmt.Errorf("автоустановка сервиса не поддерживается на %s; поддерживаются только Linux и Windows", runtime.GOOS)
 	}
 }
 

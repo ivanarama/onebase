@@ -145,14 +145,18 @@ func lintUnknownMetadataObjects(dir string, lp lintProgram, managers map[string]
 				local[strings.ToLower(tok.Literal)] = true
 			}
 		}
+		// Дефолты вычисляются до привязки параметров и выполнения тела:
+		// в caller-env (legacy) либо module-env/root (strict lexical).
+		// В статической области процедуры их затеняют только переменные
+		// исходного модуля, а не её параметры и локальные присваивания.
+		for _, def := range pr.Defaults {
+			walkManagerMembersExpr(def, check(local))
+		}
 		for _, p := range pr.Params {
 			local[strings.ToLower(p.Literal)] = true
 		}
 		collectDeclaredAndAssigned(pr.Body, local)
 		visit := check(local)
-		for _, def := range pr.Defaults {
-			walkManagerMembersExpr(def, visit)
-		}
 		walkManagerMembersStmts(pr.Body, visit)
 	}
 	walkManagerMembersStmts(lp.prog.Body, check(shadowed))

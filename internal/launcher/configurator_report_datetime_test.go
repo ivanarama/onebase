@@ -65,6 +65,16 @@ query: ВЫБРАТЬ 1 КАК Один
 }
 
 func TestConfiguratorAddReportParam_OffersDatetime(t *testing.T) {
+	out := reportAddedParamRow(t)
+	for _, typ := range []string{"bool", "datetime", "date", "string", "number", "select", "reference:Покупатель"} {
+		if !strings.Contains(out, `<option value="`+typ+`">`) {
+			t.Errorf("новая строка параметра не предлагает тип %q: %s", typ, out)
+		}
+	}
+}
+
+func reportAddedParamRow(t *testing.T) string {
+	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
 		t.Skip("node is required for the report parameter UI test")
@@ -102,9 +112,5 @@ process.stdout.write(added.innerHTML);
 	if err != nil {
 		t.Fatalf("repAddParam: %v\n%s", err, out)
 	}
-	for _, typ := range []string{"datetime", "date", "string", "number", "select", "reference:Покупатель"} {
-		if !strings.Contains(string(out), `<option value="`+typ+`">`) {
-			t.Errorf("новая строка параметра не предлагает тип %q: %s", typ, out)
-		}
-	}
+	return string(out)
 }

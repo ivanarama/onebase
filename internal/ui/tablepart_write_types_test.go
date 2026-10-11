@@ -40,6 +40,11 @@ import (
 
 func tpw1074Server(t *testing.T, db *storage.DB, entities []*metadata.Entity) *httptest.Server {
 	t.Helper()
+	return tpw1074ServerWithConfig(t, db, entities, Config{})
+}
+
+func tpw1074ServerWithConfig(t *testing.T, db *storage.DB, entities []*metadata.Entity, cfg Config) *httptest.Server {
+	t.Helper()
 	if err := db.Migrate(context.Background(), entities); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
@@ -48,6 +53,7 @@ func tpw1074Server(t *testing.T, db *storage.DB, entities []*metadata.Entity) *h
 	interp := interpreter.New()
 	interp.LookupProc = reg.GetModuleProc
 	s := &Server{
+		cfg:         cfg,
 		store:       db,
 		reg:         reg,
 		interp:      interp,

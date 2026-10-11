@@ -5,11 +5,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/launcher"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 func captureStdout(t *testing.T, fn func() error) (string, error) {
@@ -164,122 +166,108 @@ func TestInstallSystemdPrintUsesSQLite(t *testing.T) {
 	}
 }
 
-func TestRunServiceInstallPrintCarriesExplicitHost(t *testing.T) {
-	cmd := &cobra.Command{}
-	addServiceInstallFlags(cmd)
-	for name, value := range map[string]string{
-		"sqlite": filepath.Join(t.TempDir(), "base.db"),
-		"name":   "onebase-host-test",
-		"host":   "0.0.0.0",
-		"print":  "true",
-	} {
-		if err := cmd.Flags().Set(name, value); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	out, err := captureStdout(t, func() error { return runServiceInstall(cmd, nil) })
+// assertServiceInstallPrintHost exercises the registered CLI command, including
+// argument parsing and dispatch. Unsupported platforms must fail explicitly,
+// rather than silently passing by skipping the service-install checks.
+func assertServiceInstallPrintHost(t *testing.T, args []string, host, forbiddenHost string) {
+	t.Helper()
+	cmd, _, err := rootCmd.Find([]string{"service", "install"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !serviceOutputHasHost(out, "0.0.0.0") {
-		t.Fatalf("service install --host was not carried into generated command:\n%s", out)
+	type flagState struct {
+		flag    *pflag.Flag
+		value   string
+		changed bool
 	}
+	var saved []flagState
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		saved = append(saved, flagState{f, f.Value.String(), f.Changed})
+	})
+	oldSilenceUsage := cmd.SilenceUsage
+	defer func() {
+		rootCmd.SetArgs(nil)
+		cmd.SilenceUsage = oldSilenceUsage
+		for _, state := range saved {
+			if err := state.flag.Value.Set(state.value); err != nil {
+				t.Error(err)
+			}
+			state.flag.Changed = state.changed
+		}
+	}()
+	// Each invocation starts from defaults: --id inherits the registry host
+	// only when a preceding invocation's explicit --host is no longer changed.
+	for _, state := range saved {
+		if err := state.flag.Value.Set(state.flag.DefValue); err != nil {
+			t.Fatal(err)
+		}
+		state.flag.Changed = false
+	}
+	rootCmd.SetArgs(append([]string{"service", "install", "--print"}, args...))
+	out, err := captureStdout(t, rootCmd.Execute)
+	switch runtime.GOOS {
+	case "linux", "windows":
+		if err != nil {
+			t.Fatalf("service install --print: %v", err)
+		}
+		if !serviceOutputHasHost(out, host) {
+			t.Fatalf("service install must use host %s, got:\n%s", host, out)
+		}
+		if forbiddenHost != "" && strings.Contains(out, forbiddenHost) {
+			t.Fatalf("service install must not use host %s, got:\n%s", forbiddenHost, out)
+		}
+	default:
+		want := "автоустановка сервиса не поддерживается на " + runtime.GOOS + "; поддерживаются только Linux и Windows"
+		if err == nil || err.Error() != want {
+			t.Fatalf("service install --print must reject %s, got: %v", runtime.GOOS, err)
+		}
+		if out != "" {
+			t.Fatalf("unsupported service install must not print a configuration, got:\n%s", out)
+		}
+	}
+}
+
+func TestRunServiceInstallPrintCarriesExplicitHost(t *testing.T) {
+	assertServiceInstallPrintHost(t, []string{
+		"--sqlite", filepath.Join(t.TempDir(), "base.db"),
+		"--name", "onebase-host-test", "--host", "0.0.0.0",
+	}, "0.0.0.0", "")
 }
 
 func TestRunServiceInstallPrintDefaultsToLoopback(t *testing.T) {
-	cmd := &cobra.Command{}
-	addServiceInstallFlags(cmd)
-	for name, value := range map[string]string{
-		"sqlite": filepath.Join(t.TempDir(), "base.db"),
-		"name":   "onebase-loopback-test",
-		"print":  "true",
-	} {
-		if err := cmd.Flags().Set(name, value); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	out, err := captureStdout(t, func() error { return runServiceInstall(cmd, nil) })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !serviceOutputHasHost(out, "127.0.0.1") {
-		t.Fatalf("service install default host must stay loopback:\n%s", out)
-	}
+	assertServiceInstallPrintHost(t, []string{
+		"--sqlite", filepath.Join(t.TempDir(), "base.db"),
+		"--name", "onebase-loopback-test",
+	}, "127.0.0.1", "0.0.0.0")
 }
 
 func TestRunServiceInstallPrintInheritsRegistryHost(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
+	serviceHome := t.TempDir()
+	t.Setenv("HOME", serviceHome)
+	t.Setenv("USERPROFILE", serviceHome)
 	store, err := launcher.NewStore()
 	if err != nil {
 		t.Fatal(err)
 	}
 	base := &launcher.Base{
 		ID: "service-host-test", Name: "host-test", DBType: "sqlite",
-		DBPath: filepath.Join(home, "base.db"), Port: 18080,
+		DBPath: filepath.Join(serviceHome, "base.db"), Port: 18080,
 		ConfigSource: "database", Host: "0.0.0.0",
 	}
 	if err := store.Add(base); err != nil {
 		t.Fatal(err)
 	}
 
-	cmd := &cobra.Command{}
-	addServiceInstallFlags(cmd)
-	if err := cmd.Flags().Set("id", base.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := cmd.Flags().Set("print", "true"); err != nil {
-		t.Fatal(err)
-	}
-	out, err := captureStdout(t, func() error { return runServiceInstall(cmd, nil) })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !serviceOutputHasHost(out, "0.0.0.0") {
-		t.Fatalf("service install --id did not inherit registered host:\n%s", out)
-	}
-
-	override := &cobra.Command{}
-	addServiceInstallFlags(override)
-	for name, value := range map[string]string{
-		"id":    base.ID,
-		"host":  "127.0.0.1",
-		"print": "true",
-	} {
-		if err := override.Flags().Set(name, value); err != nil {
-			t.Fatal(err)
-		}
-	}
-	out, err = captureStdout(t, func() error { return runServiceInstall(override, nil) })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !serviceOutputHasHost(out, "127.0.0.1") || serviceOutputHasHost(out, "0.0.0.0") {
-		t.Fatalf("explicit --host must override registered host:\n%s", out)
-	}
+	assertServiceInstallPrintHost(t, []string{"--id", base.ID}, "0.0.0.0", "")
+	assertServiceInstallPrintHost(t, []string{
+		"--id", base.ID, "--host", "127.0.0.1",
+	}, "127.0.0.1", "0.0.0.0")
 
 	base.Host = "unexpected.example"
 	if err := store.Update(base); err != nil {
 		t.Fatal(err)
 	}
-	corrupt := &cobra.Command{}
-	addServiceInstallFlags(corrupt)
-	if err := corrupt.Flags().Set("id", base.ID); err != nil {
-		t.Fatal(err)
-	}
-	if err := corrupt.Flags().Set("print", "true"); err != nil {
-		t.Fatal(err)
-	}
-	out, err = captureStdout(t, func() error { return runServiceInstall(corrupt, nil) })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !serviceOutputHasHost(out, "127.0.0.1") || strings.Contains(out, "unexpected.example") {
-		t.Fatalf("unknown registered host must fail safely to loopback:\n%s", out)
-	}
+	assertServiceInstallPrintHost(t, []string{"--id", base.ID}, "127.0.0.1", "unexpected.example")
 }
 
 func serviceOutputHasHost(out, host string) bool {

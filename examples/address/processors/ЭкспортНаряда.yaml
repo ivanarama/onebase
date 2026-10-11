@@ -1,0 +1,7 @@
+name: ЭкспортНаряда
+title: Экспорт адреса наряда в JSON
+titles:
+  en: Export the work order address as JSON
+params:
+  - name: Номер
+    type: string

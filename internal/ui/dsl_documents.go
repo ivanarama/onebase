@@ -992,6 +992,13 @@ func (w *docWriter) writeInContextForAction(ctx context.Context, posting bool) e
 	w.ensureSelfRef()
 	mc := runtime.NewMovementsCollector(w.entity.Name, w.obj.ID).WillPersist()
 	setPeriodFromFields(mc, w.entity, w.obj.Fields)
+	if posting && isNew {
+		// Keep a tx-local FK parent available to both hooks. Its lifecycle is
+		// finalized only after OnPost; the intermediate snapshot is not a create.
+		if err := w.s.store.UpsertProvisional(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
+			return err
+		}
+	}
 	errMsg, hookMessages := w.s.runOnWriteCtx(ctx, w.obj, mc)
 	w.appendHookMessages(hookMessages)
 	if errMsg != "" {
@@ -1014,7 +1021,7 @@ func (w *docWriter) writeInContextForAction(ctx context.Context, posting bool) e
 	}
 	switch {
 	case posting && isNew:
-		if err := w.s.store.UpsertProvisional(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
+		if err := w.s.store.UpdateProvisional(ctx, w.entity.Name, w.obj.ID, w.obj.Fields, w.entity); err != nil {
 			return err
 		}
 	case posting:
@@ -1039,10 +1046,10 @@ func (w *docWriter) writeInContextForAction(ctx context.Context, posting bool) e
 			return err
 		}
 	}
-	// Регистрация изменения для планов обмена (план 86): запись документа из DSL
-	// идёт мимо entityservice.Save. Провести() зовёт write() → регистрируется и оно.
-	if err := exchange.RegisterOnSave(ctx, w.s.store, w.s.reg.ExchangePlans(), w.entity, w.obj.ID, false); err != nil {
-		return err
+	if !posting {
+		if err := exchange.RegisterOnSave(ctx, w.s.store, w.s.reg.ExchangePlans(), w.entity, w.obj.ID, false); err != nil {
+			return err
+		}
 	}
 	// Для непроводимых документов движения, записанные в ПриЗаписи, фиксируем.
 	// У проводимых документов движения формирует проведение (post).
@@ -1062,12 +1069,12 @@ func (w *docWriter) writeInContextForAction(ctx context.Context, posting bool) e
 		w.saved = wasSaved
 		w.expectedVersion = previousVersion
 	})
-	entityservice.NotifySaveObserver(ctx, w.entity, entityservice.SaveResult{ID: w.obj.ID, Version: version})
-	// Живой список (план 87): отложенная до commit публикация «данные.<сущность>».
-	w.s.publishDocChange(ctx, w.entity, w.obj.ID, "записан", changeBefore)
-	// Веб-хук document.save (план 29) — Провести() зовёт write(), поэтому событие
-	// записи приходит и перед document.post, как на пути entityservice.Save.
-	w.s.dispatchDocWebhook(ctx, "document.save", w.entity, w.obj.ID, w.obj.Fields)
+	if !posting {
+		entityservice.NotifySaveObserver(ctx, w.entity, entityservice.SaveResult{ID: w.obj.ID, Version: version})
+		w.s.publishDocChange(ctx, w.entity, w.obj.ID, "записан", changeBefore)
+		w.s.dispatchDocWebhook(ctx, "document.save", w.entity, w.obj.ID, w.obj.Fields)
+	}
+
 	return nil
 }
 
@@ -1083,10 +1090,14 @@ func (w *docWriter) accessID() uuid.UUID {
 func (w *docWriter) conduct() error {
 	return w.withLockScope(func(ctx context.Context) error {
 		provisionalCreate := !w.loaded && !w.saved
+		var before map[string]any
+		if w.entity.NotifyChanges && !provisionalCreate {
+			before, _ = w.s.store.GetByID(ctx, w.entity.Name, w.obj.ID, w.entity)
+		}
 		if err := w.writeInContextForAction(ctx, true); err != nil {
 			return err
 		}
-		return w.postInContextAfterAccess(ctx, true, provisionalCreate)
+		return w.postInContextAfterAccess(ctx, true, provisionalCreate, before)
 	})
 }
 
@@ -1100,10 +1111,10 @@ func (w *docWriter) postInContext(ctx context.Context) error {
 	if err := w.s.checkDSLRowAccess(ctx, w.entity, "post", w.obj.ID, w.obj.Fields); err != nil {
 		return err
 	}
-	return w.postInContextAfterAccess(ctx, false, false)
+	return w.postInContextAfterAccess(ctx, false, false, nil)
 }
 
-func (w *docWriter) postInContextAfterAccess(ctx context.Context, hasPrelude, provisionalCreate bool) error {
+func (w *docWriter) postInContextAfterAccess(ctx context.Context, hasPrelude, provisionalCreate bool, before map[string]any) error {
 	// Инвариант: помеченный на удаление документ нельзя провести (как в 1С).
 	if marked, err := w.s.store.IsMarkedForDeletion(ctx, w.entity.Name, w.obj.ID); err != nil {
 		return err
@@ -1114,7 +1125,7 @@ func (w *docWriter) postInContextAfterAccess(ctx context.Context, hasPrelude, pr
 	mc := runtime.NewMovementsCollector(w.entity.Name, w.obj.ID).WillPersist()
 	setPeriodFromFields(mc, w.entity, w.obj.Fields)
 	// Дата запрета проведения (свёртка базы, план 151).
-	if mc.Period != nil {
+	if !hasPrelude && mc.Period != nil {
 		if lock, ok := w.s.store.GetPostingLockDate(ctx); ok && storage.PostingFrozen(lock, *mc.Period) {
 			return storage.PostingFrozenError(lock)
 		}
@@ -1123,6 +1134,13 @@ func (w *docWriter) postInContextAfterAccess(ctx context.Context, hasPrelude, pr
 	w.appendHookMessages(hookMessages)
 	if errMsg != "" {
 		return fmt.Errorf("%s", errMsg)
+	}
+	mc.Period = nil
+	setPeriodFromFields(mc, w.entity, w.obj.Fields)
+	if mc.Period != nil {
+		if lock, ok := w.s.store.GetPostingLockDate(ctx); ok && storage.PostingFrozen(lock, *mc.Period) {
+			return storage.PostingFrozenError(lock)
+		}
 	}
 	// Хук мог присвоить реквизиту-перечислению недопустимое значение (#977):
 	// входная проверка была до него. Транзакция ещё открыта — откат бесплатен.
@@ -1169,7 +1187,6 @@ func (w *docWriter) postInContextAfterAccess(ctx context.Context, hasPrelude, pr
 			w.saved = wasSaved
 			w.expectedVersion = previousVersion
 		})
-		entityservice.NotifySaveObserver(ctx, w.entity, entityservice.SaveResult{ID: w.obj.ID, Version: version})
 	}
 	if err := w.s.saveMovements(ctx, w.entity.Name, w.obj.ID, mc); err != nil {
 		return err
@@ -1185,8 +1202,13 @@ func (w *docWriter) postInContextAfterAccess(ctx context.Context, hasPrelude, pr
 	if err := exchange.RegisterOnSave(ctx, w.s.store, w.s.reg.ExchangePlans(), w.entity, w.obj.ID, false); err != nil {
 		return err
 	}
+	version, err := w.s.store.EntityVersion(ctx, w.entity.Name, w.obj.ID)
+	if err != nil {
+		return err
+	}
+	entityservice.NotifySaveObserver(ctx, w.entity, entityservice.SaveResult{ID: w.obj.ID, Version: version})
 	// Живой список (план 87): «проведён» после успешного проведения из DSL.
-	w.s.publishDocChange(ctx, w.entity, w.obj.ID, "проведён", nil)
+	w.s.publishDocChange(ctx, w.entity, w.obj.ID, "проведён", before)
 	// Веб-хук document.post (план 29).
 	w.s.dispatchDocWebhook(ctx, "document.post", w.entity, w.obj.ID, w.obj.Fields)
 	return nil

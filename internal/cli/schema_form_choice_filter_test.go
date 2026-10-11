@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -38,6 +39,9 @@ func TestSchemaFormPublishesChoiceFilterContract(t *testing.T) {
 	}
 	if schemaAt(t, properties, "field")["type"] != "string" || schemaAt(t, properties, "from")["type"] != "string" {
 		t.Fatalf("field/from types are not strings: %#v", properties)
+	}
+	if description, _ := schemaAt(t, properties, "field")["description"].(string); !strings.Contains(description, "is_root") {
+		t.Fatalf("schema form does not advertise is_root: %#v", properties["field"])
 	}
 	// ref (#1820) — третий взаимоисключающий источник: строка-UUID, и ровно
 	// одна из трёх веток oneOf требует именно его.

@@ -346,7 +346,11 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     sel.appendChild(o);
   }
   // BEGIN onebase-ro-apply-values
-  function applyValues(values, refOptions){
+  // sent — значения, отправленные с этим событием (URLSearchParams). Поле,
+  // которое пользователь изменил, пока шёл запрос, ответ не трогает, если
+  // сервер вернул ровно отправленное: иначе набранные за это время символы
+  // молча стирались (оператор не досчитывался последней цифры телефона).
+  function applyValues(values, refOptions, sent){
     if (!values) return;
     const form = document.getElementById('main-form');
     if (!form) return;
@@ -375,6 +379,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         // поле — дата на форме пропадала после первого же события, а следующая
         // запись затирала её в базе.
         if (inp.type === 'date' && val.indexOf('T') > 0) val = val.slice(0, val.indexOf('T'));
+        if (sent && typeof sent.has === 'function' && sent.has(k) && sent.get(k) === val && inp.value !== val) return;
         if (inp.tagName === 'SELECT') ensureRefOption(inp, val, refOptions && refOptions[k], ref && ref.label);
         if (inp.classList && inp.classList.contains('code-field') && inp._obSetCodeValue) {
           inp._obSetCodeValue(val);
@@ -459,10 +464,16 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   // показывать их редактируемыми. В картах приходит и false — условие могло
   // перестать выполняться, и запрет нужно снять.
   //
+  // Ключ карты — путь размещения элемента в дереве формы, он же атрибут
+  // data-ob-el-path рядом с человекомочитаемым data-ob-el. Имя ключом быть
+  // не может: оно бывает пустым (Надписи) и повторяющимся (ТЧ размещена
+  // дважды), и безымянный потомок условного контейнера попадал в общий ключ,
+  // по которому находился первый попавшийся безымянный элемент (#1543).
+  //
   // Обратный ход есть не у всего: элемент, скрытый ещё серверной отрисовкой, в
-  // DOM отсутствует, якорь data-ob-el не находится, и hidden=false для него —
-  // пустая операция. Снова показать такой элемент может только перезагрузка
-  // страницы; скрыть уже отрисованный — можно.
+  // DOM отсутствует, якорь data-ob-el-path не находится, и hidden=false для
+  // него — пустая операция. Снова показать такой элемент может только
+  // перезагрузка страницы; скрыть уже отрисованный — можно.
   //
   // Клиент НИЧЕГО не выводит сам. Условие на контейнере каскадит на потомков,
   // но считает каскад сервер: в карте лежит готовое состояние каждого
@@ -474,18 +485,18 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   // BEGIN onebase-ro-apply-states
   function applyElementStates(st) {
     if (!st) return;
-    var byName = function (name) {
-      return document.querySelector('[data-ob-el="' + (window.CSS && CSS.escape ? CSS.escape(name) : name) + '"]');
+    var byPath = function (path) {
+      return document.querySelector('[data-ob-el-path="' + (window.CSS && CSS.escape ? CSS.escape(path) : path) + '"]');
     };
     var hidden = st.hidden || {};
-    Object.keys(hidden).forEach(function (name) {
-      var el = byName(name);
+    Object.keys(hidden).forEach(function (path) {
+      var el = byPath(path);
       if (!el) return;
       // Some managed elements keep their layout only in an inline display
       // declaration (checkbox and command bar use flex). Remember that value
       // before the first state update instead of erasing it on hidden=false.
       if (!Object.prototype.hasOwnProperty.call(el, '_obDisplay')) el._obDisplay = el.style.display || '';
-      el.style.display = hidden[name] ? 'none' : el._obDisplay;
+      el.style.display = hidden[path] ? 'none' : el._obDisplay;
     });
     var ro = st.readonly || {};
     // Свой ли это редактирующий контрол: ближайший якорь элемента формы — сам
@@ -501,10 +512,10 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       if (node.dataset && node.dataset.obReadonlyNavigation === '1') return false;
       return node.closest('[data-ob-el]') === el;
     };
-    Object.keys(ro).forEach(function (name) {
-      var el = byName(name);
+    Object.keys(ro).forEach(function (path) {
+      var el = byPath(path);
       if (!el) return;
-      var on = !!ro[name];
+      var on = !!ro[path];
       // Сам элемент может быть кнопкой (kind: Кнопка) — тогда управляем им же.
       if (el.tagName === 'BUTTON') { el.disabled = on; return; }
       // input/textarea оставляем видимыми и выделяемыми (readonly), select и
@@ -1117,13 +1128,16 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       applyElementStates(data.elementStates);
       window.obManagedApplyTablePartRefOptions(data.tpRefOptions);
       window.applyTableParts(data.tableparts);
-      applyValues(data.values, data.refOptions);
+      applyValues(data.values, data.refOptions, snapshot.body);
       applyChoiceList(elementName, data.choiceList);
       applyFormTables(data.formTables);
 	  // Server events repaint controls programmatically and therefore do not
 	  // trigger input/change. Raise dirty for unsaved handler mutations; clear
-	  // it only when this response proves a successful Object.Write.
-	  if (data.dirty === false && (data.savedId || data.version)) setManagedFormDirty(false);
+	  // it only when this response proves a successful Object.Write and no
+	  // user edits followed the snapshot that was saved.
+	  if (data.dirty === false && (data.savedId || data.version)) {
+		setManagedFormDirty(formEditState.revision !== snapshot.editRevision);
+	  }
       (data.messages || []).forEach(m => flash(m, 'ok'));
       if (data.error) flash(data.error, 'err');
       if (navigationBlocked) flash(closeMessage('navigationDirty', 'Форма содержит несохранённые изменения — переход не выполнен'), 'err');

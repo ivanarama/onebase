@@ -6,7 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/exec"
 	"path"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,6 +17,7 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
+	"golang.org/x/net/html"
 )
 
 // editable_admin_only — запрет по тому, КТО смотрит, а не по данным записи.
@@ -211,10 +215,10 @@ func TestEditableAdminOnlyStaysLockedAfterFormEvent(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatalf("разбор ответа: %v; тело=%s", err, recorder.Body.String())
 	}
-	if response.ElementStates == nil || !response.ElementStates.ReadOnly["ПолеТипЗвонка"] {
+	if response.ElementStates == nil || !response.ElementStates.ReadOnly[путьСостояния(t, ent.Forms[0], "ПолеТипЗвонка")] {
 		t.Fatalf("после события запрет исчез: %s", recorder.Body.String())
 	}
-	if response.ElementStates.ReadOnly["ПолеКомментарий"] {
+	if response.ElementStates.ReadOnly[путьСостояния(t, ent.Forms[0], "ПолеКомментарий")] {
 		t.Fatalf("запрет расползся на соседнее поле: %s", recorder.Body.String())
 	}
 
@@ -230,7 +234,7 @@ func TestEditableAdminOnlyStaysLockedAfterFormEvent(t *testing.T) {
 	if err := json.Unmarshal(adminRecorder.Body.Bytes(), &adminResponse); err != nil {
 		t.Fatalf("разбор админского ответа: %v", err)
 	}
-	if adminResponse.ElementStates != nil && adminResponse.ElementStates.ReadOnly["ПолеТипЗвонка"] {
+	if adminResponse.ElementStates != nil && adminResponse.ElementStates.ReadOnly[путьСостояния(t, ent.Forms[0], "ПолеТипЗвонка")] {
 		t.Fatalf("администратору поле заперлось: %s", adminRecorder.Body.String())
 	}
 }
@@ -546,6 +550,81 @@ func TestEntityServiceFormKeysMatchServerGuard(t *testing.T) {
 		dropped := dropAdminOnlyFields(form, map[string]any{}, false)
 		if len(dropped) != 1 || !strings.EqualFold(dropped[0], key) {
 			t.Errorf("%s: серверный запрет его не отбирает (dropped = %v)", key, dropped)
+		}
+	}
+}
+
+// Публичная карточка и HTTP-событие передают настоящие пути в managed.js.
+// Две копии закрытого поля и соседний открытый элемент могут иметь одно имя
+// или вовсе не иметь имени: клиент обязан сохранить три разных состояния.
+func TestEditableAdminOnlyPlacementPathsThroughHTTPAndClient(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required for placement path regression")
+	}
+	for _, name := range []string{"Двойник", ""} {
+		for _, admin := range []bool{false, true} {
+			t.Run(fmt.Sprintf("name=%q/admin=%v", name, admin), func(t *testing.T) {
+				srv, ent, id := adminOnlyFixture(t)
+				form := ent.Forms[0]
+				locked := form.Elements[1]
+				locked.Name = name
+				copy := *locked
+				open := form.Elements[2]
+				open.Name = name
+				open.ReadOnlyWhen = `Наименование = "заперт"`
+				group := &metadata.FormElement{
+					Kind: metadata.FormElementGroupBox, Name: "Группа", Orientation: "horizontal", ScrollX: true,
+					ReadOnlyWhen: `Наименование = "заперт"`,
+					Children:     []*metadata.FormElement{locked, &copy},
+				}
+				button := form.Elements[3]
+				button.Primary = true
+				form.Elements = []*metadata.FormElement{group, open, button}
+				user := adminOnlyOperator(ent.Name)
+				if admin {
+					user = &auth.User{Login: "root", IsAdmin: true}
+				}
+				req := reqWithChi(http.MethodGet, "/ui/catalog/"+ent.Name+"/"+id.String(), nil,
+					map[string]string{"kind": "catalog", "entity": ent.Name, "id": id.String()})
+				req = req.WithContext(auth.ContextWithUser(req.Context(), user))
+				rendered := httptest.NewRecorder()
+				srv.formEdit(rendered, req)
+				if rendered.Code != http.StatusOK {
+					t.Fatalf("render: %d %s", rendered.Code, rendered.Body.String())
+				}
+				if !strings.Contains(rendered.Body.String(), "managed-group-scrollx") || !strings.Contains(rendered.Body.String(), "btn-primary managed-btn") {
+					t.Fatal("lost group scrolling or primary button while reconciling templates")
+				}
+				event := runFormEventAs(t, srv, ent, url.Values{
+					"_element": {"Кн"}, "_event": {string(metadata.FormEventOnClick)},
+					"_kind": {"object"}, "_id": {id.String()}, "Наименование": {"звонок"},
+				}, user)
+				response := decodeFormEventResponse(t, event.Body.Bytes())
+				if event.Code != http.StatusOK || !response.OK || response.ElementStates == nil {
+					t.Fatalf("event: %d %s", event.Code, event.Body.String())
+				}
+				doc, err := html.Parse(strings.NewReader(rendered.Body.String()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				fixture, err := json.Marshal(map[string]any{
+					"tree":   domElementNode(findHTMLElement(doc, "body")),
+					"states": response.ElementStates, "locked": !admin,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				fixturePath := filepath.Join(t.TempDir(), "placements.json")
+				if err := os.WriteFile(fixturePath, fixture, 0o600); err != nil {
+					t.Fatal(err)
+				}
+				cmd := exec.CommandContext(t.Context(), node, "--test", "static/managed_placement_behavior_test.js") //nolint:gosec // test-only node resolved from PATH
+				cmd.Env = append(os.Environ(), "ONEBASE_PLACEMENT_FIXTURE="+fixturePath)
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("production client: %v\n%s", err, out)
+				}
+			})
 		}
 	}
 }

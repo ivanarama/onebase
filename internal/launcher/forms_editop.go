@@ -69,7 +69,7 @@ type formInfo struct {
 // (чекбоксы панели свойств шлют "true"/"" — пишем в YAML булев скаляр, не строку).
 var boolProps = map[string]bool{
 	"required": true, "readonly": true, "choice": true,
-	"visible": true, "enabled": true, "no_grid": true, "auto_sum": true,
+	"visible": true, "enabled": true, "no_grid": true, "auto_sum": true, "equal_columns": true,
 }
 
 // numProps — целочисленные свойства: пишем в YAML числом, а не строкой (иначе
@@ -231,6 +231,12 @@ func applyEditOp(yamlSrc []byte, req editOpRequest) (editOpResult, error) {
 			}
 			if sources != 1 {
 				return editOpResult{}, fmt.Errorf("setChoiceFilter: условие %d: укажите ровно одно из from, value и ref", i+1)
+			}
+			// Without catalog metadata, the YAML editor cannot distinguish an
+			// is_root attribute from the pseudo-field. Validate boolean syntax
+			// here; onebase check resolves fields and sources against the project.
+			if condition.Value != nil && op != metadata.FormChoiceOpEqual {
+				return editOpResult{}, fmt.Errorf("setChoiceFilter: условие %d: boolean value требует eq", i+1)
 			}
 			if ref != "" {
 				// Формат проверяется сразу: битый UUID в YAML отклонил бы

@@ -17,6 +17,7 @@ import (
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/ivantit66/onebase/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -217,6 +218,9 @@ func prepareServerProject(ctx context.Context, db *storage.DB, cfg serverLaunchC
 	appCfg, err := project.LoadConfig(proj.Dir)
 	if err != nil {
 		return fail(fmt.Errorf("load app config: %w", err))
+	}
+	if warning := version.MinimumWarning(appCfg.MinEngineVersion); warning != nil {
+		log.Warn(warning.Error())
 	}
 	if err := migrateServerSchema(ctx, db, proj); err != nil {
 		return fail(err)

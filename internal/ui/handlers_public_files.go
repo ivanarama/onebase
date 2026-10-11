@@ -14,27 +14,6 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// inlineSafeType сообщает, можно ли показывать такой тип прямо в браузере.
-//
-// text/html и svg на своём домене = XSS с доступом к cookie админки: страница
-// откроется в origin платформы. Такие файлы отдаются вложением с нейтральным
-// типом, а не inline.
-func inlineSafeType(mime string) bool {
-	m := strings.ToLower(strings.TrimSpace(mime))
-	if i := strings.IndexByte(m, ';'); i >= 0 {
-		m = strings.TrimSpace(m[:i])
-	}
-	switch {
-	case m == "image/svg+xml": // векторная картинка со скриптом внутри
-		return false
-	case strings.HasPrefix(m, "image/"), strings.HasPrefix(m, "video/"), strings.HasPrefix(m, "audio/"):
-		return true
-	case m == "application/pdf", m == "text/plain":
-		return true
-	}
-	return false
-}
-
 // opPublicFileServe ограничивает одновременные отдачи /pub: поверхность
 // анонимная, а блоб из стора без Seek читается в память целиком — без предела
 // N параллельных медленных клиентов держали бы N буферов.
@@ -91,8 +70,7 @@ func (s *Server) publicFileServe(w http.ResponseWriter, r *http.Request) {
 	// весь объект, а уже затем возвращала короткий 304.
 	etag := `W/"` + pf.Token + `"`
 	h.Set("ETag", etag)
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	setFileSecurityHeaders(h)
 	// Тело можно хранить и повторно использовать после 304, но перед КАЖДЫМ
 	// использованием кэш обязан свериться с origin. Иначе fresh max-age позволил
 	// бы браузеру или shared proxy отдавать файл после удаления capability-токена
@@ -150,15 +128,7 @@ func (s *Server) publicFileServe(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if inlineSafeType(mimeType) {
-		h.Set("Content-Type", mimeType)
-		// Через dispositionHeader, а не strconv.Quote: сырой UTF-8 в
-		// quoted-string браузеры читают как latin-1 (issue #46).
-		h.Set("Content-Disposition", dispositionHeader("inline", name))
-	} else {
-		h.Set("Content-Type", "application/octet-stream")
-		h.Set("Content-Disposition", contentDisposition(name))
-	}
+	setFileContentHeaders(h, mimeType, name, true)
 	// ServeContent сам обрабатывает Range, If-Modified-Since и If-None-Match.
 	http.ServeContent(w, r, name, modified, content)
 }

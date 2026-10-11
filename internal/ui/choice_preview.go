@@ -72,6 +72,12 @@ func (s *Server) runChoicePreviewProc(ctx context.Context, ent *metadata.Entity,
 	if len(items) == 0 {
 		return nil
 	}
+	// Статический fallback берём только из уже отфильтрованных и
+	// замаскированных строк, в том числе когда процедура не задана.
+	staticField := canonicalChoicePreviewField(ent)
+	for _, row := range items {
+		row[choicePreviewKey] = refValueString(row[staticField])
+	}
 	name := strings.TrimSpace(ent.ChoicePreviewProc)
 	if name == "" {
 		return nil
@@ -106,14 +112,11 @@ func (s *Server) runChoicePreviewProc(ctx context.Context, ent *metadata.Entity,
 	}
 	// Merge-семантика: запись функции перекрывает статический fallback,
 	// отсутствующая запись оставляет его (инвариант плана 168).
-	staticField := canonicalChoicePreviewField(ent)
 	for _, row := range items {
 		id := refValueString(row["id"])
 		if text, ok := texts[id]; ok {
 			row[choicePreviewKey] = text
-			continue
 		}
-		row[choicePreviewKey] = refValueString(row[staticField])
 	}
 	return nil
 }

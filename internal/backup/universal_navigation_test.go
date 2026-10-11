@@ -45,7 +45,32 @@ func TestUniversalNavigationSettingsMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, source *storage.DB) {
 		ctx := context.Background()
 		source.SetFilesDir(t.TempDir())
-		keys := []string{"ui.navigation.admin.9:Education", "ui.navigation.user.8:Иван.9:Education", "ui.navigation.admin.7:corrupt"}
+		keys := []string{
+			"ui.navigation.admin.9:Education",
+			"ui.navigation.user.8:Иван.9:Education",
+			"ui.navigation.admin.7:corrupt",
+			"ui.navigation.admin.10:Школа",
+			"ui.navigation.user.8:Иван.10:Школа",
+			"ui.navigation.admin.8:part.1:x",
+			"ui.navigation.user.5:a.b:c.8:part.1:x",
+		}
+		// These keys are local, non-portable settings even when they use a
+		// reserved prefix. Restore must preserve the target value, while export
+		// must never copy the source value into the archive.
+		localKeys := []string{
+			"ui.navigation.admin.not-a-length-key",
+			"ui.navigation.user.not-a-length-key",
+			"ui.navigation.admin.4:Школа",
+			"ui.navigation.user.4:Иван.10:Школа",
+			"ui.navigation.admin.0:",
+			"ui.navigation.admin.05:other",
+			"ui.navigation.user.3:bob.0:",
+			"ui.navigation.admin.5:other.trailing",
+			"ui.navigation.user.3:bob.5:other.trailing",
+			"UI.NAVIGATION.ADMIN.5:other",
+			"UI.NAVIGATION.USER.3:bob.5:other",
+			"llm.config",
+		}
 		// Preserve literal formatting and Unicode, rather than decode/re-encode
 		// portable values. A corrupt JSON layer is portable too and will fall back
 		// independently when the navigation resolver reads it after restoration.
@@ -54,6 +79,10 @@ func TestUniversalNavigationSettingsMatrix(t *testing.T) {
 			" {\n \"version\":1, \"base_hash\":\"" + hash + "\", \"ops\":[{\"op\":\"rename\",\"node\":\"cfg:main\",\"title\":\"Школа\"}] } \n",
 			`{"version":1,"base_hash":"` + hash + `","ops":[{"op":"rename","node":"cfg:main","title":"Личная настройка"}]}`,
 			"{ broken stored JSON: повреждённый слой }",
+			" {\n \"Unicode\": \"Школа\" } \n",
+			" {\n \"Unicode\": \"Иван / Школа\" } \n",
+			`{"context":"part.1:x"}`,
+			`{"login":"a.b:c","context":"part.1:x"}`,
 		}
 		for _, include := range []bool{true, false} {
 			t.Run(map[bool]string{true: "with-layers", false: "without-layers"}[include], func(t *testing.T) {
@@ -66,7 +95,7 @@ func TestUniversalNavigationSettingsMatrix(t *testing.T) {
 						t.Fatal(err)
 					}
 				}
-				for _, key := range []string{"llm.config", "ui.navigation.admin.not-a-length-key"} {
+				for _, key := range localKeys {
 					if err := source.SaveSetting(ctx, key, "source-private-secret"); err != nil {
 						t.Fatal(err)
 					}
@@ -108,11 +137,10 @@ func TestUniversalNavigationSettingsMatrix(t *testing.T) {
 								t.Fatal(err)
 							}
 						}
-						if err := target.SaveSetting(ctx, "llm.config", "target-private-secret"); err != nil {
-							t.Fatal(err)
-						}
-						if err := target.SaveSetting(ctx, "UI.NAVIGATION.ADMIN.5:other", "unrelated-case-sensitive-key"); err != nil {
-							t.Fatal(err)
+						for _, key := range localKeys {
+							if err := target.SaveSetting(ctx, key, "target-private-secret"); err != nil {
+								t.Fatal(err)
+							}
 						}
 						if _, err := ImportUniversalWithOptions(ctx, target, "file", t.TempDir(), "", bytes.NewReader(archive.Bytes()), int64(archive.Len()), ImportOptions{ExchangeMode: mode}); err != nil {
 							t.Fatal("restore", err)
@@ -128,11 +156,10 @@ func TestUniversalNavigationSettingsMatrix(t *testing.T) {
 								t.Fatalf("old target override retained: %q %v", key, err)
 							}
 						}
-						if got, exists, err := target.GetSetting(ctx, "llm.config"); err != nil || !exists || got != "target-private-secret" {
-							t.Fatal("non-portable setting overwritten", err)
-						}
-						if got, exists, err := target.GetSetting(ctx, "UI.NAVIGATION.ADMIN.5:other"); err != nil || !exists || got != "unrelated-case-sensitive-key" {
-							t.Fatal("non-portable case variant was removed", err)
+						for _, key := range localKeys {
+							if got, exists, err := target.GetSetting(ctx, key); err != nil || !exists || got != "target-private-secret" {
+								t.Errorf("non-portable target setting %q changed: exists=%v got=%q err=%v", key, exists, got, err)
+							}
 						}
 					})
 				}

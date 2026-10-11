@@ -240,9 +240,9 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 					}
 
 					isFolder := strings.EqualFold(fieldName, "is_folder")
-					var targetField *metadata.Field
-					if !isFolder {
-						targetField = entityFieldFold(target, fieldName)
+					targetField := entityFieldFold(target, fieldName)
+					isRoot := targetField == nil && strings.EqualFold(fieldName, metadata.FormChoiceRootField)
+					if !isFolder && !isRoot {
 						// parent_id — служебная ссылка иерархического справочника на
 						// себя (#1819): дальше проверяется как обычный ссылочный реквизит.
 						if targetField == nil && strings.EqualFold(fieldName, metadata.FormChoiceParentField) {
@@ -262,7 +262,7 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 					// ссылается field. Существование записи статически не проверить —
 					// рантайм при её отсутствии даёт пустой подбор (fail-closed).
 					if hasRef {
-						if problem := formChoiceRefProblem(cond, isFolder, target, targetField, entities); problem != "" {
+						if problem := formChoiceRefProblem(cond, isFolder || isRoot, target, targetField, entities); problem != "" {
 							add("%s: %s", where, problem)
 						}
 						continue
@@ -270,18 +270,18 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 
 					switch cond.Op {
 					case metadata.FormChoiceOpEqual:
-						if isFolder {
+						if isFolder || isRoot {
 							if !target.Hierarchical {
-								add("%s: is_folder допустим только у иерархического справочника", where)
+								add("%s: %s допустим только у иерархического справочника", where, fieldName)
 							}
 							if !hasValue {
-								add("%s: is_folder требует boolean value, а не from", where)
+								add("%s: %s требует boolean value, а не from", where, fieldName)
 							}
 							continue
 						}
 						if hasValue {
 							if targetField.Type != metadata.FieldTypeBool {
-								add("%s: литерал value допустим для is_folder и булева реквизита, а %s.%s имеет тип %q", where, target.Name, targetField.Name, targetField.Type)
+								add("%s: литерал value допустим для is_folder, is_root и булева реквизита, а %s.%s имеет тип %q", where, target.Name, targetField.Name, targetField.Type)
 							}
 							continue
 						}
@@ -307,7 +307,7 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 					case metadata.FormChoiceOpEqualOrEmpty:
 						// Только ссылка со ссылочным источником того же типа:
 						// «пусто» у служебного is_folder не нужно.
-						if isFolder || hasValue {
+						if isFolder || isRoot || hasValue {
 							add("%s: eq_or_empty требует ссылочный field и from", where)
 							continue
 						}
@@ -325,7 +325,7 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 					// not_in_hierarchy (#1821) — дополнение in_hierarchy: те же
 					// требования к полю и источнику.
 					case metadata.FormChoiceOpInHierarchy, metadata.FormChoiceOpNotInHierarchy:
-						if isFolder || hasValue {
+						if isFolder || isRoot || hasValue {
 							add("%s: %s требует ссылочный field и from", where, cond.Op)
 							continue
 						}

@@ -128,6 +128,7 @@ func (s *Server) renderNavigationEditor(w http.ResponseWriter, r *http.Request, 
 	bootstrap := map[string]any{
 		"base": state.Base, "desired": state.Desired, "subsystem": sub,
 		"revision": state.Setting.Revision, "labels": labels, "icons": LucideNames(),
+		"iconAliases": lucideAliases, "iconSprite": LucideSpriteURL(), "iconFallback": lucideFallback,
 		"preview":  s.editorNavigationPreview(r, state, sub),
 		"personal": state.Personal, "ownedPrefix": ownedPrefix, "path": path,
 	}

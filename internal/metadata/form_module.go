@@ -212,6 +212,7 @@ type FormElement struct {
 	HorizontalAlign string            `yaml:"halign,omitempty"`         // left|center|right|stretch
 	VerticalAlign   string            `yaml:"valign,omitempty"`         // top|center|bottom
 	Orientation     string            `yaml:"orientation,omitempty"`    // vertical|horizontal для контейнеров
+	EqualColumns    bool              `yaml:"equal_columns,omitempty"`  // равная ширина детей горизонтальной ГруппаФормы
 	// ScrollX — горизонтальная группа не переносит содержимое на вторую строку,
 	// а прокручивается. Нужна ряду кнопок: перенос рвёт панель действий пополам,
 	// и половина кнопок читается как отдельный блок. По умолчанию перенос, как
@@ -349,6 +350,11 @@ const (
 // in_hierarchy: всё, что не строго внутри X, включая корневые записи и саму X.
 const FormChoiceParentField = "parent_id"
 
+// FormChoiceRootField — служебный булев признак корня иерархического
+// справочника (#1823). При отсутствии одноимённого реквизита это условие
+// по parent_id; объявленный реквизит сохраняет свой прежний смысл.
+const FormChoiceRootField = "is_root"
+
 // FormChoiceParentFieldOf — parent_id как ссылочный реквизит справочника на
 // самого себя; nil, если справочник не иерархический.
 func FormChoiceParentFieldOf(entity *Entity) *Field {
@@ -361,7 +367,7 @@ func FormChoiceParentFieldOf(entity *Entity) *Field {
 // FormChoiceCondition описывает одно серверно проверяемое условие подбора.
 // Ровно одно из From, Value и Ref обязательно.
 //
-// Value — литерал из конфигурации, boolean: служебное поле is_folder и булев
+// Value — литерал из конфигурации, boolean: служебные поля is_folder/is_root и булев
 // реквизит справочника («только немуниципальные адреса»). Указатель отличает
 // явное false от отсутствующего литерала. Литералов других типов в контракте
 // нет сознательно: строка или число рядом с колонкой — это уже отбор, который

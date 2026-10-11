@@ -9,6 +9,7 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/ivantit66/onebase/internal/version"
 )
 
 // Options tunes the complete configuration validation.
@@ -40,6 +41,13 @@ func RunFullWithOptions(dir string, opts Options) Result {
 	}
 	if appCfgErr == nil {
 		warnings = append(warnings, deprecatedAppConfigWarnings(appCfg)...)
+		if warning := version.MinimumWarning(appCfg.MinEngineVersion); warning != nil {
+			warnings = append(warnings, Issue{
+				File: "config/app.yaml", Code: "config.min-engine-version",
+				Message:      warning.Error(),
+				SuggestedFix: "Проверьте min_engine_version и версию движка (onebase version).",
+			})
+		}
 	}
 
 	if proj, err := project.Load(dir); err == nil {
@@ -60,7 +68,6 @@ func RunFullWithOptions(dir string, opts Options) Result {
 		issues = append(issues, CheckFormChoiceFolders(proj)...)
 		issues = append(issues, CheckFormVirtualColumns(proj)...)
 		issues = append(issues, CheckFormTablePartColumns(proj)...)
-		issues = append(issues, CheckFormChoiceFilter(proj)...)
 		issues = append(issues, CheckReportOutputFormat(proj)...)
 		roles, rolesErr := auth.LoadRolesYAML(filepath.Join(dir, "roles"))
 		if rolesErr != nil && !AlreadyReported(issues, rolesErr.Error()) {
@@ -74,6 +81,7 @@ func RunFullWithOptions(dir string, opts Options) Result {
 		warnings = append(warnings, CheckFormLayout(proj)...)
 		warnings = append(warnings, CheckFormKeyPlacement(proj)...)
 		warnings = append(warnings, CheckFormProps(proj)...)
+		warnings = append(warnings, CheckFormReadonlyConflict(proj)...)
 		warnings = append(warnings, CheckFormBackground(proj)...)
 		warnings = append(warnings, CheckFormPlacement(dir, proj)...)
 		warnings = append(warnings, CheckSecretHygiene(appCfg, proj)...)
@@ -187,6 +195,9 @@ func BuildSchemaDB(proj *project.Project) (*storage.DB, func(), error) {
 	}
 	closer := func() { db.Close(); oblog.RemoveQuiet("configcheck", path) }
 	steps := []func() error{
+		// System user references need the same auth schema as a running base.
+		// Create it before application tables, without seeding any user accounts.
+		func() error { return auth.NewRepo(db).EnsureSchema(ctx) },
 		func() error { return db.Migrate(ctx, proj.Entities) },
 		func() error { return db.MigrateRegisters(ctx, proj.Registers) },
 		func() error { return db.MigrateInfoRegisters(ctx, proj.InfoRegisters) },

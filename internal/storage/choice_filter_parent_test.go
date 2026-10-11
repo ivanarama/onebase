@@ -196,6 +196,61 @@ func TestChoiceFilterParentIDMatrix(t *testing.T) {
 	})
 }
 
+// is_root (#1823) is an explicit condition on the target catalog's own
+// parent_id. Both List and CountList must agree on SQLite and PostgreSQL.
+func TestChoiceFilterIsRootMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		f := seedChoiceParentFixture(t, db)
+		join := func(rows []string) string { return strings.Join(rows, ",") }
+		root := choiceParentNames(t, db, f, storage.ChoicePredicate{Field: "is_root", Op: metadata.FormChoiceOpEqual, Value: true})
+		if got, want := join(root), "Прочее,Техника,корневой элемент"; got != want {
+			t.Fatalf("is_root=true: %q, want %q", got, want)
+		}
+		nested := choiceParentNames(t, db, f, storage.ChoicePredicate{Field: "is_root", Op: metadata.FormChoiceOpEqual, Value: false})
+		if len(nested) != 8 || strings.Contains(join(nested), "корневой элемент") {
+			t.Fatalf("is_root=false: %v", nested)
+		}
+		folders := choiceParentNames(t, db, f,
+			storage.ChoicePredicate{Field: "is_root", Op: metadata.FormChoiceOpEqual, Value: true},
+			storage.ChoicePredicate{Field: "is_folder", Op: metadata.FormChoiceOpEqual, Value: true})
+		if got, want := join(folders), "Прочее,Техника"; got != want {
+			t.Fatalf("root folders: %q, want %q", got, want)
+		}
+		for _, tc := range []struct {
+			root bool
+			op   metadata.FormChoiceOperator
+			want string
+		}{
+			{true, metadata.FormChoiceOpNotInHierarchy, "Прочее,Техника"},
+			{false, metadata.FormChoiceOpNotInHierarchy, "цикл А,цикл Б"},
+			{true, metadata.FormChoiceOpInHierarchy, ""},
+			{false, metadata.FormChoiceOpInHierarchy, "Кухня,Плиты"},
+		} {
+			got := choiceParentNames(t, db, f,
+				storage.ChoicePredicate{Field: "is_root", Op: metadata.FormChoiceOpEqual, Value: tc.root},
+				storage.ChoicePredicate{Field: "is_folder", Op: metadata.FormChoiceOpEqual, Value: true},
+				storage.ChoicePredicate{Field: "parent_id", Op: tc.op, Value: f.tech})
+			if join(got) != tc.want {
+				t.Fatalf("is_root=%v with %s: %v, want %q", tc.root, tc.op, got, tc.want)
+			}
+		}
+
+		for _, bad := range []storage.ChoicePredicate{
+			{Field: "is_root", Op: metadata.FormChoiceOpEqual, Value: f.tech},
+			{Field: "is_root", Op: metadata.FormChoiceOpInHierarchy, Value: true},
+			{Field: "is_root", Op: metadata.FormChoiceOpNotInHierarchy, Value: true},
+		} {
+			if _, err := db.CountList(context.Background(), f.groups.Name, f.groups, storage.ListParams{ChoicePredicates: []storage.ChoicePredicate{bad}}); err == nil {
+				t.Fatalf("invalid is_root accepted: %+v", bad)
+			}
+		}
+		flat := &metadata.Entity{Name: "FlatChoice", Kind: metadata.KindCatalog, Fields: f.groups.Fields}
+		if _, err := db.CountList(context.Background(), flat.Name, flat, storage.ListParams{ChoicePredicates: []storage.ChoicePredicate{{Field: "is_root", Op: metadata.FormChoiceOpEqual, Value: true}}}); err == nil {
+			t.Fatal("is_root accepted for flat catalog")
+		}
+	})
+}
+
 // parent_id — поле только иерархического справочника: у обычного его нет.
 func TestChoiceFilterParentIDRequiresHierarchy(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {

@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
+	"github.com/ivantit66/onebase/internal/access"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
@@ -110,10 +111,11 @@ func (e *managedCloseSaveError) Error() string { return e.message }
 func (e *managedCloseSaveError) Unwrap() error { return e.cause }
 
 const (
-	managedSaveForbidden  = "forbidden"
-	managedSaveConflict   = "conflict"
-	managedSaveValidation = "validation"
-	managedSaveHook       = "hook"
+	managedSaveForbidden         = "forbidden"
+	managedSaveConflict          = "conflict"
+	managedSaveOwnershipConflict = "ownership_conflict"
+	managedSaveValidation        = "validation"
+	managedSaveHook              = "hook"
 )
 
 // saveManagedObject is the canonical result-returning save layer shared by
@@ -235,6 +237,8 @@ func (s *Server) saveManagedObject(r *http.Request, entity *metadata.Entity, for
 	})
 	if err != nil {
 		switch {
+		case errors.Is(err, storage.ErrInfoRegOwnershipConflict):
+			return hookMessages, 0, &managedCloseSaveError{status: http.StatusConflict, kind: managedSaveOwnershipConflict, message: s.errText(r, err), messages: hookMessages, cause: err}
 		case errors.Is(err, storage.ErrVersionConflict):
 			return hookMessages, 0, &managedCloseSaveError{status: http.StatusConflict, kind: managedSaveConflict, message: "объект был изменён другим пользователем; форма оставлена открытой", messages: hookMessages}
 		case errors.Is(err, errCloseResultUnreadable):
@@ -767,9 +771,13 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// Построить объект из текущих form-values.
 	obj, err := buildObjectFromForm(r, entity, form, canWrite)
 	if err != nil {
-		respondJSON(enc, formEventResponse{Error: err.Error()})
+		respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
 		return
 	}
+	// Что прислал клиент — до восстановлений и обработчика: ответ события не
+	// маскирует значение, которое клиент сам только что набрал (см.
+	// serializeManagedFormEventState).
+	r = r.WithContext(withSubmittedFormFields(r.Context(), obj.Fields))
 	// Событие может вызвать Объект.Записать() до обычного submit. Удаляем
 	// присланные значения запертых полей из объекта и POST: последующее
 	// restoreUnsubmittedFields восстановит каноничное значение из БД.
@@ -1902,18 +1910,18 @@ func (s *Server) formElementStates(form *metadata.FormModule, entity *metadata.E
 	}
 	var ro, hidden map[string]bool
 	if s.interp != nil {
-		ro, hidden, _ = managedFormElementStates(form, managedFormHeaderValues(entity, values), newInterpEvaluator(s.interp))
+		ro, hidden, _, _ = managedFormElementStates(form, managedFormHeaderValues(entity, values), newInterpEvaluator(s.interp))
 	}
 	// editable_admin_only не зависит от данных записи, поэтому его нет в
 	// readonly_when-состояниях. Добавляем здесь: ответ события применяется
 	// клиентом целиком, и без этой записи ложное readonly_when сняло бы запрет
 	// с поля, которое неадминистратору редактировать нельзя.
 	if !admin {
-		for _, name := range adminOnlyElementNames(form) {
+		for _, path := range adminOnlyElementPaths(form) {
 			if ro == nil {
 				ro = make(map[string]bool)
 			}
-			ro[name] = true
+			ro[path] = true
 		}
 	}
 	if len(ro) == 0 && len(hidden) == 0 {
@@ -1922,19 +1930,17 @@ func (s *Server) formElementStates(form *metadata.FormModule, entity *metadata.E
 	return &elementStates{ReadOnly: ro, Hidden: hidden}
 }
 
-// adminOnlyElementNames — элементы формы, запертые для неадминистратора.
-func adminOnlyElementNames(form *metadata.FormModule) []string {
-	if form == nil {
-		return nil
-	}
-	var names []string
-	form.Walk(func(element *metadata.FormElement) bool {
-		if element != nil && element.EditableAdminOnly && strings.TrimSpace(element.Name) != "" {
-			names = append(names, element.Name)
+// adminOnlyElementPaths — размещения формы, запертые для неадминистратора.
+// Тот же путь используют условные состояния и якоря серверной разметки:
+// пустое или повторяющееся имя не должно снимать запрет после события.
+func adminOnlyElementPaths(form *metadata.FormModule) []string {
+	var paths []string
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		if visit.element.EditableAdminOnly {
+			paths = append(paths, visit.path)
 		}
-		return true
 	})
-	return names
+	return paths
 }
 
 func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metadata.FormModule, entity *metadata.Entity, obj *runtime.Object, rules []metadata.FormCondRule, msgs []string) formEventState {
@@ -1953,7 +1959,11 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 	//
 	// serializeFieldsForEntity строит НОВУЮ карту, поэтому obj.Fields остаётся
 	// нетронутым и обработчик продолжает видеть настоящие значения.
+	echo := submittedFieldsToEcho(ctx, s.fieldDecisions(ctx, entity), obj.Fields, fields)
 	s.maskRecord(ctx, entity, fields)
+	for key, value := range echo {
+		fields[key] = value
+	}
 	values := normalizeFormAttrKeys(fields, form, entity)
 	// Псевдо-реквизит «Ссылка» — контекст обработчика, а не значение формы:
 	// в ответ он не едет, чтобы applyValues не искал под него элемент.
@@ -2054,6 +2064,17 @@ func serializeTablePartRowsForEntity(tps map[string][]map[string]any, entity *me
 				break
 			}
 		}
+		boolColumns := make(map[string]bool)
+		for _, tp := range declared {
+			if strings.EqualFold(tp.Name, canonicalName) {
+				for _, field := range tp.Fields {
+					if field.Type == metadata.FieldTypeBool {
+						boolColumns[strings.ToLower(field.Name)] = true
+					}
+				}
+				break
+			}
+		}
 		outRows := make([]map[string]any, len(rows))
 		for i, row := range rows {
 			outRow := make(map[string]any, len(row))
@@ -2073,6 +2094,10 @@ func serializeTablePartRowsForEntity(tps map[string][]map[string]any, entity *me
 					}
 				}
 				if ok {
+					if boolColumns[strings.ToLower(column)] {
+						// A no-op event can refresh rows from SQLite as int64.
+						v = tpCellNorm(metadata.Field{Type: metadata.FieldTypeBool}, v) == "true"
+					}
 					outRow[column] = serializeValue(v)
 				}
 			}
@@ -2876,4 +2901,57 @@ func formTablesFromRows(rows map[string][]map[string]any, form *metadata.FormMod
 		return nil
 	}
 	return result
+}
+
+type submittedFormFieldsKey struct{}
+
+// withSubmittedFormFields запоминает в контексте события значения, присланные
+// клиентом (копию: обработчик и восстановления меняют obj.Fields дальше).
+func withSubmittedFormFields(ctx context.Context, fields map[string]any) context.Context {
+	snapshot := make(map[string]any, len(fields))
+	for k, v := range fields {
+		snapshot[k] = v
+	}
+	return context.WithValue(ctx, submittedFormFieldsKey{}, snapshot)
+}
+
+// submittedFieldsToEcho — защищённые поля, которые ответ события отдаёт без
+// маски: в них ровно то, что клиент прислал в этом запросе, и это не маска.
+// Клиент это значение и так знает — он его набрал, — а маска на обратном пути
+// подменяла бы набранный номер звёздочками: следующее событие или запись
+// прислали бы на сервер уже их, и номер терялся. Значение, пришедшее из базы
+// (клиент прислал маску или обработчик поставил другое), маскируется как
+// раньше. Скрытые поля не возвращаются даже при совпадении присланного значения.
+// Возвращает ключи карты serialized с немаскированными значениями.
+func submittedFieldsToEcho(ctx context.Context, decisions map[string]access.FieldDecision, current, serialized map[string]any) map[string]any {
+	submitted, _ := ctx.Value(submittedFormFieldsKey{}).(map[string]any)
+	if len(submitted) == 0 || len(decisions) == 0 {
+		return nil
+	}
+	var echo map[string]any
+	for field, decision := range decisions {
+		if !decision.Masked() || decision.Hidden() {
+			continue
+		}
+		sent, ok := maskCIKeyValue(submitted, field)
+		if !ok || sent == nil || access.LooksMasked(sent) {
+			continue
+		}
+		if s, isString := sent.(string); isString && strings.TrimSpace(s) == "" {
+			continue
+		}
+		now, ok := maskCIKeyValue(current, field)
+		if !ok || fmt.Sprint(now) != fmt.Sprint(sent) {
+			continue
+		}
+		key, ok := maskCIKey(serialized, field)
+		if !ok {
+			continue
+		}
+		if echo == nil {
+			echo = map[string]any{}
+		}
+		echo[key] = serialized[key]
+	}
+	return echo
 }

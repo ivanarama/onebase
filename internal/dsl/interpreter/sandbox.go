@@ -28,6 +28,7 @@ type SandboxProfile struct {
 	DenyNet      bool            // запретить сеть: HTTP-клиент, email, ИИ-запросы
 	DenyFile     bool            // запретить файловые builtins (и чтение в РаспознатьДокумент)
 	DenyExec     bool            // запретить команды ОС (ВыполнитьКоманду, план 67) недоверенному коду; secure-by-default обычного режима даёт флаг базы exec.enabled
+	DenySecrets  bool            // запретить РасшифроватьСекрет: недоверенный код не получает открытые секреты базы
 	MaxWallClock time.Duration   // 0 = без лимита времени
 	MaxLoopIters int             // 0 = дефолт (maxWhileIter)
 	// MaxDecimalExpansion bounds decimal exponents, coefficients and explicit
@@ -49,6 +50,7 @@ func RestrictedProfile() SandboxProfile {
 		DenyNet:             true,
 		DenyFile:            true,
 		DenyExec:            true,
+		DenySecrets:         true,
 		MaxWallClock:        10 * time.Second,
 		MaxLoopIters:        1_000_000,
 		MaxDecimalExpansion: defaultSandboxDecimalExpansion,
@@ -99,6 +101,11 @@ func (p SandboxProfile) Vars() map[string]any {
 		for k, v := range NewExecFunctions(deny, nil) {
 			m[k] = v
 		}
+	}
+	if p.DenySecrets {
+		deny := llmDenyFn("расшифровка секретов запрещена в этом режиме (песочница)")
+		m["РасшифроватьСекрет"] = deny
+		m["DecryptSecret"] = deny
 	}
 	// ИИ-builtin'ы (llm_builtins.go) ходят в сеть (ai.Ask), а РаспознатьДокумент
 	// ещё и читает файл с диска ДО сетевого вызова. Они внедряются через

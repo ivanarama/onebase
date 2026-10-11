@@ -1,0 +1,9 @@
+name: ЗаявкаНаОбработку
+title: Заявка на обработку
+fields:
+  - name: Наименование
+    type: string
+  - name: Стадия
+    type: string
+  - name: Срочно
+    type: bool

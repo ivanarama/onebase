@@ -370,6 +370,35 @@ func toDisplayString(v any) string {
 	}
 }
 
+// MaskedEmptyFillable reports whether a write may fill a protected field whose
+// stored value the user sees as empty. Under a mask_* strategy an empty value
+// is shown empty, so it hides nothing: accepting the user's value discloses
+// nothing and lets a masked role fill a field of an already saved object (a
+// document created by code and opened for completion). A filled value is never
+// writable. hide is excluded: a hidden field shows nothing either way, so
+// accepting the write would tell the role whether it was empty.
+//
+// A submitted value that carries the mask bullet is the mask the form showed,
+// not data: it never fills anything (otherwise the literal "••••••" would be
+// stored once a form round-trip had masked a value the user typed).
+func MaskedEmptyFillable(decision FieldDecision, stored, submitted any) bool {
+	if LooksMasked(submitted) {
+		return false
+	}
+	if !strings.HasPrefix(strings.ToLower(strings.TrimSpace(decision.Strategy)), "mask_") {
+		return false
+	}
+	shown := MaskValue(decision.Strategy, decision.Keep, stored)
+	return shown == nil || shown == ""
+}
+
+// LooksMasked reports whether a value carries the mask bullet, i.e. it is (or
+// contains) a mask produced by MaskValue rather than user data.
+func LooksMasked(v any) bool {
+	s, ok := v.(string)
+	return ok && strings.Contains(s, maskBullet)
+}
+
 func maskTail(s string, keep int) string {
 	if s == "" {
 		return ""

@@ -78,7 +78,7 @@ function setup(initialSearchUnused) {
   const select = element('select', { name: 'Направление' });
   const mirror = element('input', { id: 'ro-mirror-Направление', name: 'Направление' });
   mirror.dataset.obRoMirror = '1';
-  const anchor = element('div', { 'data-ob-el': 'ПолеНаправление' });
+  const anchor = element('div', { 'data-ob-el': 'ПолеНаправление', 'data-ob-el-path': '0.1' });
   anchor.children = [select, mirror];
   [select, mirror].forEach((n) => { n.parent = anchor; });
 
@@ -97,8 +97,8 @@ function setup(initialSearchUnused) {
         };
       },
       querySelector(sel) {
-        const m = /^\[data-ob-el="([^"]+)"\]$/.exec(sel);
-        if (m && m[1] === 'ПолеНаправление') return anchor;
+        const m = /^\[data-ob-el-path="([^"]+)"\]$/.exec(sel);
+        if (m && m[1] === '0.1') return anchor;
         return null;
       },
     },
@@ -131,12 +131,12 @@ test('applyValues синхронизирует зеркало со значен�
 test('applyElementStates: под запретом активно зеркало, при снятии — select', () => {
   const app = setup();
   app.__select.value = 'a8b64d2d-d422-490a-9e4e-092eefc47a40';
-  app.window.applyElementStates({ readonly: { ПолеНаправление: true } });
+  app.window.applyElementStates({ readonly: { '0.1': true } });
   assert.equal(app.__select.disabled, true);
   assert.equal(app.__mirror.disabled, false);
   assert.equal(app.__mirror.value, 'a8b64d2d-d422-490a-9e4e-092eefc47a40');
 
-  app.window.applyElementStates({ readonly: { ПолеНаправление: false } });
+  app.window.applyElementStates({ readonly: { '0.1': false } });
   assert.equal(app.__select.disabled, false);
   assert.equal(app.__mirror.disabled, true);
 });

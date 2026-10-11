@@ -91,25 +91,9 @@ func TestScanCompatibilityWarnings(t *testing.T) {
 	procs := splitProcedures(lines)
 	warns := ScanCompatibilityWarnings(procs)
 
-	// Должны быть как минимум: Сообщить( + Новый Запрос
-	var seenSoobshit, seenZapros bool
-	for _, w := range warns {
-		if w.Code != W040_BSLNotInDSL {
-			t.Errorf("неверный код: %+v", w)
-			continue
-		}
-		if w.Field == "Сообщить(" {
-			seenSoobshit = true
-		}
-		if w.Field == "Новый Запрос" {
-			seenZapros = true
-		}
-	}
-	if !seenSoobshit {
-		t.Error("warning о Сообщить( не сгенерирован")
-	}
-	if !seenZapros {
-		t.Error("warning о Новый Запрос не сгенерирован")
+	// Сообщить(Текст) и Новый Запрос без аргументов уже поддерживаются.
+	if len(warns) != 0 {
+		t.Fatalf("поддерживаемый BSL получил предупреждения: %+v", warns)
 	}
 }
 

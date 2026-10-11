@@ -605,6 +605,7 @@ const cfgTabTree = `{{define "tab-tree"}}
                   <option value="date"   {{if eq $p.Type "date"}}selected{{end}}>{{t $.Lang "дата"}}</option>
                   <option value="datetime" {{if eq $p.Type "datetime"}}selected{{end}}>{{t $.Lang "Дата и время"}}</option>
                   <option value="number" {{if eq $p.Type "number"}}selected{{end}}>{{t $.Lang "число"}}</option>
+                  <option value="bool" {{if eq $p.Type "bool"}}selected{{end}}>{{t $.Lang "булево"}}</option>
                   <option value="select" {{if eq $p.Type "select"}}selected{{end}}>{{t $.Lang "список"}}</option>
                   {{range $.AllEntityNames}}<option value="reference:{{.}}" {{if eq $p.Type (print "reference:" .)}}selected{{end}}>ссылка: {{.}}</option>
                   {{end}}

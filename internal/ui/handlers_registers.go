@@ -372,7 +372,23 @@ func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePerm(w, r, "inforeg", ir.Name, "read") {
 		return
 	}
-	flt := parseRegFilter(r, ir.Dimensions, ir.Periodic)
+	decisions := s.fieldDecisionsFor(r.Context(), "inforeg", ir.Name, storage.InfoRegisterPredicateEntity(ir))
+	// Reject probes before storage: masking rows cannot hide whether a protected
+	// dimension matched. Inspect every value, including repeated parameters.
+	rawQuery := r.URL.Query()
+	for _, field := range ir.Dimensions {
+		if !registerFieldProtected(decisions, field.Name) {
+			continue
+		}
+		for _, value := range rawQuery["flt_"+field.Name] {
+			if strings.TrimSpace(value) != "" {
+				s.renderForbidden(w, r)
+				return
+			}
+		}
+	}
+	filterFields := unprotectedRegisterDimensions(decisions, ir.Dimensions)
+	flt := parseRegFilter(r, filterFields, ir.Periodic)
 	var ok bool
 	flt, ok = s.applyRegRowFilter(w, r, "inforeg", ir.Name, "read", storage.InfoRegisterPredicateEntity(ir), flt)
 	if !ok {
@@ -387,7 +403,7 @@ func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
 	query := cloneQuery(r.URL.Query())
 	// Register filters use flt_* and from/to, unlike the f.* entity filters.
 	// Copy only declared controls; arbitrary names can shadow form methods.
-	for _, dim := range ir.Dimensions {
+	for _, dim := range filterFields {
 		key := "flt_" + dim.Name
 		if values, exists := r.URL.Query()[key]; exists {
 			query[key] = append([]string(nil), values...)
@@ -455,8 +471,9 @@ func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "page-inforeg-list", map[string]any{
 		"InfoReg":       ir,
 		"Rows":          rows,
-		"Filter":        filterFormValues(r, ir.Dimensions),
-		"RefOpts":       s.loadRefOpts(r.Context(), ir.Dimensions, filterFormValues(r, ir.Dimensions)),
+		"FilterFields":  filterFields,
+		"Filter":        filterFormValues(r, filterFields),
+		"RefOpts":       s.loadRefOpts(r.Context(), filterFields, filterFormValues(r, filterFields)),
 		"HasFilters":    !flt.IsEmpty(),
 		"RequestURI":    r.URL.RequestURI(),
 		"DeleteURL":     deleteURL,
@@ -843,7 +860,15 @@ func parseInfoRegFieldValue(f metadata.Field, val string) any {
 	}
 }
 
+// constantsList и constantsSave — только администратору. Прав на константы в
+// ролях нет, а константа — типовое место для ключей внешних сервисов и
+// адресов интеграций: без проверки любой вошедший читал их значения и мог
+// переписать (адрес отправки, токен) из браузера.
 func (s *Server) constantsList(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		s.renderForbidden(w, r)
+		return
+	}
 	values, _ := s.store.ListConstants(r.Context())
 	valStrs := make(map[string]string, len(values))
 	for k, v := range values {
@@ -899,6 +924,10 @@ func (s *Server) renderConstantsPage(w http.ResponseWriter, r *http.Request, val
 }
 
 func (s *Server) constantsSave(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		s.renderForbidden(w, r)
+		return
+	}
 	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	if err := r.ParseForm(); err != nil {
 		http.Error(w, s.errText(r, err), 400)

@@ -111,6 +111,10 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 		// полях сущности, поэтому собираем их из самой managed-формы. Единая
 		// точка покрывает все пути рендера (new/edit/повторный показ с ошибкой).
 		data["ChoiceOptions"] = loadChoiceOptions(managed, s.resolveLang(r))
+		// Поля под маской показываются точками, как пароль: и маска из базы, и
+		// номер, который пользователь набирает сам (ответ события отдаёт его
+		// без маски — см. submittedFieldsToEcho).
+		data["ProtectedFields"] = s.protectedFieldSet(r.Context(), entity)
 		s.prepareManagedFormData(r.Context(), data, managed)
 		s.render(w, r, "page-managed-form", data)
 		return
@@ -162,11 +166,19 @@ func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any
 	entity, _ := data["Entity"].(*metadata.Entity)
 	header := managedFormHeaderValues(entity, data["Values"])
 
+	// Якори размещений нужны и без интерпретатора: editable_admin_only
+	// вычисляется независимо от DSL и возвращается после события формы.
+	paths := make(map[*metadata.FormElement]string)
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		paths[visit.element] = visit.path
+	})
+	data["ElPaths"] = paths
+
 	// Условная доступность элементов (readonly_when/hidden_when) — по полям
 	// ЗАПИСИ, поэтому считается здесь же, где известны Values, и заново после
 	// каждого события формы.
 	if s.interp != nil {
-		ro, hidden, warns := managedFormElementStates(form, header, newInterpEvaluator(s.interp))
+		ro, hidden, _, warns := managedFormElementStates(form, header, newInterpEvaluator(s.interp))
 		if len(ro) > 0 {
 			data["ElReadOnly"] = ro
 		}
@@ -194,8 +206,16 @@ func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any
 }
 
 // managedFormElementStates вычисляет состояние readonly/hidden каждого элемента
-// формы по полям записи. Возвращает множества имён элементов, которые должны
-// быть нередактируемы и скрыты, и предупреждения по нерабочим условиям.
+// формы по полям записи. Возвращает карты состояний, ключ которых — путь
+// размещения элемента (индексы от корня, см. browserFormElementVisit.path),
+// карту указатель элемента → путь для шаблона и предупреждения по нерабочим
+// условиям.
+//
+// Ключ — не имя: имя бывает пустым (Надпись, декорации) и повторяющимся (одна
+// ТЧ размещена дважды). После #1226 в карту попадает каждый потомок условного
+// контейнера, поэтому безымянный потомок клал состояние под общий ключ «», и
+// клиент находил по нему первый попавшийся безымянный элемент страницы, а
+// одноимённые размещения делили одну строку карты (#1543).
 //
 // В карту readonly кладётся ИТОГОВОЕ состояние элемента — «условие ИЛИ
 // эффективный статический readonly», — а не одно условие. Карту применяет
@@ -221,12 +241,13 @@ func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any
 // ошибка конфигурации, и молча запертое поле объяснить пользователю нечем.
 // Вместо этого условие игнорируется, а конфигуратор получает предупреждение на
 // форме — тем же способом, что и у условного оформления.
-func managedFormElementStates(form *metadata.FormModule, header map[string]any, ev compose.Evaluator) (map[string]bool, map[string]bool, []string) {
+func managedFormElementStates(form *metadata.FormModule, header map[string]any, ev compose.Evaluator) (map[string]bool, map[string]bool, map[*metadata.FormElement]string, []string) {
 	if form == nil || ev == nil {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	ro := map[string]bool{}
 	hidden := map[string]bool{}
+	paths := map[*metadata.FormElement]string{}
 	wc := &formWarnCollector{}
 	row := compose.Row(header)
 	eval := func(expr, kind, elName string) bool {
@@ -251,6 +272,7 @@ func managedFormElementStates(form *metadata.FormModule, header map[string]any, 
 		if el == nil {
 			return
 		}
+		paths[el] = visit.path
 		own := strings.TrimSpace(el.ReadOnlyWhen) != ""
 		if own {
 			// Условие считается всегда, даже под постоянным запретом: иначе
@@ -267,13 +289,24 @@ func managedFormElementStates(form *metadata.FormModule, header map[string]any, 
 			for _, ancestor := range visit.readOnlyWhenAncestors {
 				state = state || conds[ancestor]
 			}
-			ro[el.Name] = state
+			ro[visit.path] = state
 		}
 		if strings.TrimSpace(el.HiddenWhen) != "" {
-			hidden[el.Name] = eval(el.HiddenWhen, "условие hidden_when", el.Name)
+			hidden[visit.path] = eval(el.HiddenWhen, "условие hidden_when", el.Name)
 		}
 	})
-	return ro, hidden, wc.msgs
+	return ro, hidden, paths, wc.msgs
+}
+
+// elementStatePath — ключ элемента в картах состояний: путь его размещения в
+// дереве формы. Для элементов вне дерева (например, синтетических в редакторе)
+// путь пуст, и состояние по нему не найдётся — карты путей ключа «» не пишут.
+func elementStatePath(ctx map[string]any, el *metadata.FormElement) string {
+	if el == nil {
+		return ""
+	}
+	paths, _ := ctx["ElPaths"].(map[*metadata.FormElement]string)
+	return paths[el]
 }
 
 // unplacedCommands возвращает команды формы, НЕ размещённые вручную элементом

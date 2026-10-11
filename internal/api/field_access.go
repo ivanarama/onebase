@@ -69,12 +69,16 @@ func (h *handler) protectMaskedFieldsOnWrite(ctx context.Context, entity *metada
 	if err != nil {
 		return err
 	}
-	for field := range dec {
+	for field, decision := range dec {
 		key, ok := restCIKey(fields, field)
 		if !ok {
 			continue
 		}
 		if v, present := restCIKey2(row, field); present {
+			// Пустое под маской заполнить можно — как в форме (access.MaskedEmptyFillable).
+			if access.MaskedEmptyFillable(decision, v, fields[key]) {
+				continue
+			}
 			fields[key] = v
 		} else {
 			delete(fields, key)

@@ -1,0 +1,59 @@
+name: Наряд
+title: Наряд на выезд
+titles:
+  en: Work order
+posting: false
+numerator:
+  prefix: "АД-"
+  length: 5
+fields:
+  - name: Город
+    type: string
+    title: Город
+    titles:
+      en: City
+  - name: Улица
+    type: string
+    title: Улица
+    titles:
+      en: Street
+  - name: Дом
+    type: string
+    title: Дом
+    titles:
+      en: House
+  - name: Корпус
+    type: string
+    title: Корпус
+    titles:
+      en: Building
+  - name: Квартира
+    type: string
+    title: Квартира
+    titles:
+      en: Apartment
+  - name: Подъезд
+    type: string
+    title: Подъезд
+    titles:
+      en: Entrance
+  - name: Этаж
+    type: string
+    title: Этаж
+    titles:
+      en: Floor
+  - name: Домофон
+    type: string
+    title: Домофон
+    titles:
+      en: Intercom
+  - name: ИсходныйАдрес
+    type: string
+    title: ИсходныйАдрес
+    titles:
+      en: Original address
+  - name: АдресПредставление
+    type: string
+    title: АдресПредставление
+    titles:
+      en: Address

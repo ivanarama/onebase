@@ -292,3 +292,31 @@ func TestAPI_FieldMask_WriteGuard(t *testing.T) {
 		t.Fatalf("visible field must update, got %v", row["Наименование"])
 	}
 }
+
+// Пустой телефон под маской роль видит пустым — заполнить его через REST можно,
+// как и в форме; заполненный по-прежнему не меняется (TestAPI_FieldMask_WriteGuard).
+func TestAPI_FieldMask_EmptyMaskedFieldCanBeFilled(t *testing.T) {
+	cat := clientEntityAPI()
+	h, ctx := newAPITestHandler(t, []*metadata.Entity{cat}, nil)
+	id := uuid.New()
+	if err := h.store.Upsert(ctx, "Клиент", id, map[string]any{"Наименование": "Иванов"}, cat); err != nil {
+		t.Fatal(err)
+	}
+	user := maskUser([]string{"read", "write"}, auth.FieldPolicies{"Телефон": {Read: "mask_tail", Keep: 4}})
+
+	body := []byte(`{"Наименование":"Петров","Телефон":"7770001122"}`)
+	req := withUser(reqWithEntity("PUT", "/catalogs/Клиент/"+id.String(), body,
+		map[string]string{"entity": "Клиент", "id": id.String()}, nil), user)
+	rec := httptest.NewRecorder()
+	h.updateObject(metadata.KindCatalog).ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
+	}
+	row, err := h.store.GetByID(ctx, "Клиент", id, cat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row["Телефон"] != "7770001122" {
+		t.Fatalf("пустой телефон под маской должен заполниться, получено %v", row["Телефон"])
+	}
+}

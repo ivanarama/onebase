@@ -323,3 +323,56 @@ func TestChoicePreviewOffPageKeyIgnored(t *testing.T) {
 		t.Fatalf("состав строк изменился: %d", len(resp.Items))
 	}
 }
+
+// Без процедуры POST-подбор использует статический реквизит из уже
+// отфильтрованной и замаскированной строки, включая канонизацию имени поля.
+func TestChoicePreviewPageWithoutProcUsesStaticFallback(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		field    string
+		strategy string
+		want     string
+	}{
+		{name: "static", field: "Информация", want: "общая памятка"},
+		{name: "canonical field", field: "информация", want: "общая памятка"},
+		{name: "masked field", field: "Информация", strategy: "mask_all", want: "••••••"},
+		{name: "hidden field", field: "Информация", strategy: "hide", want: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, ent, _, id := previewFixture(t, "")
+			ent.ChoicePreviewProc = " "
+			ent.ChoicePreview = tc.field
+			user := &auth.User{Login: "operator", Roles: []*auth.Role{{Permissions: auth.Permission{
+				Catalogs: map[string][]string{ent.Name: {"read"}},
+				FieldAccess: auth.FieldAccess{Catalogs: map[string]auth.FieldPolicies{
+					ent.Name: {"Информация": {Read: tc.strategy}},
+				}},
+			}}}}
+			rec := postPreviewPage(t, s, ent.Name, previewPageBody("ПолеНаправление", nil), user)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("code = %d, body = %s", rec.Code, rec.Body.String())
+			}
+			var resp struct {
+				Preview string           `json:"preview"`
+				Items   []map[string]any `json:"items"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatal(err)
+			}
+			if resp.Preview != "_preview" {
+				t.Fatalf("preview = %q, want _preview", resp.Preview)
+			}
+			if len(resp.Items) != 1 || resp.Items[0]["id"] != id.String() {
+				t.Fatalf("unexpected items: %v", resp.Items)
+			}
+			if got, ok := resp.Items[0][resp.Preview].(string); !ok || got != tc.want {
+				t.Fatalf("preview = %v, want %q", resp.Items[0][resp.Preview], tc.want)
+			}
+			if tc.strategy == "hide" {
+				if _, ok := resp.Items[0]["Информация"]; ok {
+					t.Fatal("hidden field leaked into response")
+				}
+			}
+		})
+	}
+}

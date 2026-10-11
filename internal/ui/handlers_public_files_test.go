@@ -190,6 +190,44 @@ func TestPublicFile_HTMLAndSVGNotInline(t *testing.T) {
 	}
 }
 
+// Sharing the file response helpers must preserve /pub's existing broader
+// media policy and the security headers on its early ETag response.
+func TestPublicFile_MIMEPolicyAndConditionalHeaders(t *testing.T) {
+	_, r, db := newPublicFilesServer(t)
+	db.SetFilesDir(t.TempDir())
+	for _, tc := range []struct {
+		mimeType string
+		inline   bool
+	}{
+		{" IMAGE/BMP ; charset=utf-8", true},
+		{"VIDEO/MP4; codecs=avc1", true},
+		{"audio/mpeg", true},
+		{"IMAGE/SVG+XML; charset=utf-8", false},
+		{"TEXT/HTML; charset=utf-8", false},
+		{"application/xhtml+xml", false},
+	} {
+		t.Run(tc.mimeType, func(t *testing.T) {
+			token := publishTestFile(t, db, "файл.png", tc.mimeType, "body", storage.PublishOptions{})
+			w := httptest.NewRecorder()
+			r.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/pub/"+token, nil))
+			wantDisposition, wantType := "attachment;", "application/octet-stream"
+			if tc.inline {
+				wantDisposition, wantType = "inline;", tc.mimeType
+			}
+			if w.Code != http.StatusOK || w.Header().Get("Content-Type") != wantType || !strings.HasPrefix(w.Header().Get("Content-Disposition"), wantDisposition) {
+				t.Fatalf("status=%d headers=%v", w.Code, w.Header())
+			}
+			req := httptest.NewRequest(http.MethodGet, "/pub/"+token, nil)
+			req.Header.Set("If-None-Match", w.Header().Get("ETag"))
+			conditional := httptest.NewRecorder()
+			r.ServeHTTP(conditional, req)
+			if conditional.Code != http.StatusNotModified || conditional.Header().Get("Content-Security-Policy") != "default-src 'none'; sandbox" || conditional.Header().Get("X-Content-Type-Options") != "nosniff" {
+				t.Fatalf("conditional status=%d headers=%v", conditional.Code, conditional.Header())
+			}
+		})
+	}
+}
+
 // Публичная отдача — та же поверхность наружу, что и /hs/*: при выключенной
 // сети недоступна.
 func TestPublicFile_NetworkDisabled(t *testing.T) {

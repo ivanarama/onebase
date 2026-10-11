@@ -225,3 +225,36 @@ func TestValidateFieldPolicy(t *testing.T) {
 		t.Fatal("mask_city on a number field must be rejected")
 	}
 }
+
+func TestMaskedEmptyFillable(t *testing.T) {
+	cases := []struct {
+		strategy string
+		stored   any
+		want     bool
+	}{
+		{access.FieldMaskAll, nil, true},
+		{access.FieldMaskAll, "", true},
+		{access.FieldMaskTail, "", true},
+		{access.FieldMaskCity, nil, true},
+		{access.FieldMaskAll, "(916)111-22-33", false},
+		{access.FieldMaskTail, "+79161234455", false},
+		{access.FieldMaskAll, " ", false}, // пробел показывается маской — не «пусто» для роли
+		{access.FieldMaskAll, 0, false},   // число показывается маской
+		{access.FieldHide, nil, false},    // пустоту скрытого поля роль не видит
+		{access.FieldFull, nil, false},
+	}
+	for _, tc := range cases {
+		if got := access.MaskedEmptyFillable(access.FieldDecision{Strategy: tc.strategy, Keep: 4}, tc.stored, "(903)222-33-44"); got != tc.want {
+			t.Errorf("MaskedEmptyFillable(%s, %#v) = %v, ожидалось %v", tc.strategy, tc.stored, got, tc.want)
+		}
+	}
+}
+
+// Маска, вернувшаяся из формы, — не данные: пустое ею не заполняется.
+func TestMaskedEmptyFillable_RejectsMaskValue(t *testing.T) {
+	for _, sent := range []any{"••••••", "•••••••••22-33"} {
+		if access.MaskedEmptyFillable(access.FieldDecision{Strategy: access.FieldMaskAll}, nil, sent) {
+			t.Errorf("маска %q не должна заполнять пустое поле", sent)
+		}
+	}
+}

@@ -73,8 +73,28 @@ func choicePredicateSQL(d Dialect, entity *metadata.Entity, predicates []ChoiceP
 			next++
 			continue
 		}
-
+		// Existing configuration attributes take precedence over the new
+		// pseudo-field, including in flat catalogs and case-insensitive lookup.
 		field, column := choiceField(entity, fieldName)
+		if field == nil && strings.EqualFold(fieldName, metadata.FormChoiceRootField) {
+			if !entity.Hierarchical {
+				return "", nil, startArg, fmt.Errorf("choice filter %d: is_root requires a hierarchical catalog", i)
+			}
+			if predicate.Op != metadata.FormChoiceOpEqual {
+				return "", nil, startArg, fmt.Errorf("choice filter %d: is_root supports only eq", i)
+			}
+			value, ok := predicate.Value.(bool)
+			if !ok {
+				return "", nil, startArg, fmt.Errorf("choice filter %d: is_root value must be boolean", i)
+			}
+			rootSQL := choiceEmptyRefSQL(d, "parent_id")
+			if !value {
+				rootSQL = "NOT (" + rootSQL + ")"
+			}
+			parts = append(parts, rootSQL)
+			continue
+		}
+
 		if field == nil {
 			return "", nil, startArg, fmt.Errorf("choice filter %d: field %q does not exist", i, fieldName)
 		}
@@ -170,7 +190,7 @@ func choiceSubtreeSQL(refEntity, placeholder string) string {
 			)`, table, placeholder, table)
 }
 
-// choiceEmptyRefSQL — «ссылка пуста» для eq_or_empty и not_in_hierarchy.
+// choiceEmptyRefSQL — «ссылка пуста» для eq_or_empty, is_root и not_in_hierarchy.
 func choiceEmptyRefSQL(d Dialect, column string) string {
 	if d.Name() == "sqlite" {
 		return "(" + column + " IS NULL OR " + column + " = '')"

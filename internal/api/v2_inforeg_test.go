@@ -342,6 +342,82 @@ func TestInfoRegV2PaginatesWithoutOverlap(t *testing.T) {
 	})
 }
 
+// Строковая политика применяется до LIMIT/OFFSET и к обоим счётчикам.
+// Скрытые строки чередуются с видимыми в порядке ключа: фильтрация уже
+// выбранной страницы дала бы неполные страницы и потеряла видимые записи.
+func TestInfoRegV2RowAccessPaginatesVisibleRows(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ir := matrixTariffs()
+		srv := matrixInfoRegAPI(t, db, ir)
+		seedTariffs(t, db, ir, [][3]any{
+			{"a", "other", 10.0},
+			{"b", "reader", 20.0},
+			{"c", "other", 30.0},
+			{"d", "reader", 40.0},
+			{"e", "other", 50.0},
+			{"f", "reader", 60.0},
+			{"g", "other", 70.0},
+		})
+		permission := auth.Permission{
+			InfoRegs: map[string][]string{ir.Name: {"read"}},
+			RowAccess: auth.RowAccess{InfoRegs: map[string]auth.RowPolicies{
+				ir.Name: {"read": {Field: "Статья", Op: "eq", Value: auth.RowValue{User: "login"}}},
+			}},
+		}
+		for _, tc := range []struct {
+			name string
+			user *auth.User
+			keys []string
+		}{
+			{
+				name: "without_policy",
+				user: apiUser("reader", auth.Permission{InfoRegs: map[string][]string{ir.Name: {"read"}}}),
+				keys: []string{"a", "b", "c", "d", "e", "f", "g"},
+			},
+			{name: "own_rows", user: apiUser("reader", permission), keys: []string{"b", "d", "f"}},
+			{name: "no_visible_rows", user: apiUser("nobody", permission)},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				const limit = 2
+				wantTotal := len(tc.keys)
+				wantPages := (wantTotal + limit - 1) / limit
+				// Включаем страницу за концом выдачи, в том числе при total=0.
+				for page := 1; page <= wantPages+1; page++ {
+					w, resp := getInfoReg(t, srv,
+						"/api/v2/inforeg/ТарифыСтатей?limit=2&page="+strconv.Itoa(page), tc.user)
+					if w.Code != http.StatusOK {
+						t.Fatalf("страница %d: код %d, тело %s", page, w.Code, w.Body.String())
+					}
+					if resp.Meta.Total != wantTotal || resp.Meta.TotalPages != wantPages ||
+						resp.Meta.Page != page || resp.Meta.Limit != limit {
+						t.Fatalf("страница %d: meta=%+v, ожидались total=%d total_pages=%d page=%d limit=%d",
+							page, resp.Meta, wantTotal, wantPages, page, limit)
+					}
+					if got := w.Header().Get("X-Total-Count"); got != strconv.Itoa(wantTotal) {
+						t.Errorf("страница %d: X-Total-Count=%q, ожидалось %d", page, got, wantTotal)
+					}
+					start := min((page-1)*limit, wantTotal)
+					end := min(start+limit, wantTotal)
+					wantKeys := tc.keys[start:end]
+					if len(resp.Data) != len(wantKeys) {
+						t.Fatalf("страница %d: %d строк вместо %d: %v", page, len(resp.Data), len(wantKeys), resp.Data)
+					}
+					for index, key := range wantKeys {
+						row := resp.Data[index]
+						wantArticle := "other"
+						if key == "b" || key == "d" || key == "f" {
+							wantArticle = "reader"
+						}
+						if row["Профиль"] != key || row["Статья"] != wantArticle {
+							t.Errorf("страница %d, строка %d: %v, ожидалась %s/%s", page, index, row, key, wantArticle)
+						}
+					}
+				}
+			})
+		}
+	})
+}
+
 func TestInfoRegV2RequiresReadPermission(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		ir := matrixTariffs()

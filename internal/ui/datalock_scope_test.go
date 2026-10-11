@@ -19,9 +19,11 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -51,8 +53,8 @@ var dlProcessors = map[string]string{
   Сообщить("оба");
 КонецПроцедуры
 `,
-	// Держит ключ дольше, чтобы параллельный запуск его ждал.
-	"долгийзамок": "Процедура Выполнить()\n" + dlLockK1 + "  Приостановить(1);\n  Сообщить(\"отпустил\");\nКонецПроцедуры\n",
+	// Сигналы теста отмечают попытку захвата и вход под реальной блокировкой.
+	"синхронныйзамок": "Процедура Выполнить()\n  ПередЗахватом();\n" + dlLockK1 + "  ПослеЗахвата();\nКонецПроцедуры\n",
 	// Держит ключ и проводит документ, проведение которого берёт тот же ключ.
 	"вложенныйзамок": "Процедура Выполнить()\n" + dlLockK1 + `  Д = Документы.ЗамокДок.Создать();
   Д.Дата = ТекущаяДата();
@@ -169,16 +171,81 @@ func TestDataLockReentrantInNestedPosting(t *testing.T) {
 
 func TestDataLockStillExcludesConcurrentExecutions(t *testing.T) {
 	s, reg := dlServer(t)
-	start := time.Now()
-	long := dlRun(s, reg, "долгийзамок")
-	time.Sleep(300 * time.Millisecond)
-	short := dlRun(s, reg, "замок")
-	l := dlWait(t, long, "долгая блокировка")
-	sh := dlWait(t, short, "параллельная блокировка")
-	if sh.at.Before(l.at) {
-		t.Fatalf("параллельный запуск взял ключ через %v, пока его держала другая обработка (та закончила через %v)",
-			sh.at.Sub(start), l.at.Sub(start))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	firstEntered := make(chan struct{})
+	secondAttempt := make(chan struct{})
+	secondEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseFirst) }) }
+	var runs sync.WaitGroup
+	t.Cleanup(func() {
+		// При любой ошибке отпускаем callback и ждём исполнителей до закрытия БД.
+		release()
+		cancel()
+		done := make(chan struct{})
+		go func() { runs.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(10 * time.Second):
+			t.Error("исполнители не завершились после освобождения блокировки")
+		}
+	})
+	run := func(before, after interpreter.BuiltinFunc) <-chan dlResult {
+		out := make(chan dlResult, 1)
+		runs.Add(1)
+		go func() {
+			defer runs.Done()
+			msgs, runErr, err := s.RunProcessor(ctx, reg, "синхронныйзамок", nil, nil, map[string]any{
+				"ПередЗахватом": before,
+				"ПослеЗахвата":  after,
+			})
+			if err == nil {
+				err = runErr
+			}
+			out <- dlResult{msgs: msgs, err: err}
+		}()
+		return out
 	}
+	signal := func(ch chan struct{}) interpreter.BuiltinFunc {
+		return func([]any, string, int) (any, error) { close(ch); return nil, nil }
+	}
+	waitSignal := func(ch <-chan struct{}, what string) {
+		t.Helper()
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			t.Fatalf("%s: %v", what, ctx.Err())
+		}
+	}
+	first := run(func([]any, string, int) (any, error) { return nil, nil },
+		func([]any, string, int) (any, error) {
+			close(firstEntered)
+			select {
+			case <-releaseFirst:
+				return nil, nil
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		})
+	waitSignal(firstEntered, "первая обработка не захватила ключ")
+	second := run(signal(secondAttempt), signal(secondEntered))
+	waitSignal(secondAttempt, "параллельная обработка не начала захват ключа")
+	// Ограниченное окно проверяет отсутствие входа, а не порядок возвратов:
+	// первая обработка гарантированно находится внутри критической секции.
+	select {
+	case <-secondEntered:
+		t.Fatal("параллельная обработка вошла, пока ключ удерживается первой")
+	case <-second:
+		t.Fatal("параллельная обработка завершилась, пока ключ удерживается первой")
+	case <-ctx.Done():
+		t.Fatalf("проверка взаимного исключения: %v", ctx.Err())
+	case <-time.After(100 * time.Millisecond):
+	}
+	release()
+	waitSignal(secondEntered, "параллельная обработка не вошла после освобождения ключа")
+	dlWait(t, first, "первая обработка")
+	dlWait(t, second, "параллельная обработка")
 }
 
 func TestDataLockOfPostingReleasedAtWriteEnd(t *testing.T) {

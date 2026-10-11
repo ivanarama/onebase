@@ -423,7 +423,7 @@ func (db *DB) rebuildEntityFTS(ctx context.Context, e *metadata.Entity, batchSiz
 
 func (db *DB) rebuildEntityFTSTx(ctx context.Context, e *metadata.Entity, batchSize int) (int, error) {
 	d := db.dialect
-	fields := metadata.FullTextFields(e)
+	fields := metadata.HeaderFullTextFields(e)
 	// Сначала снимаем прежние строки объекта: без этого записи, выпавшие из
 	// индекса (удалены мимо платформы, сузился список `fulltext`), остались бы
 	// в выдаче навсегда.
@@ -553,7 +553,7 @@ func BuildFTSDoc(e *metadata.Entity, id uuid.UUID, fields map[string]any) FTSDoc
 // вперёд. Состав индексируемого текста при этом не меняется: переставляется
 // только порядок, а Title — это первое непустое значение.
 func ftsFieldsTitleFirst(e *metadata.Entity) []metadata.Field {
-	all := metadata.FullTextFields(e)
+	all := metadata.HeaderFullTextFields(e)
 	label := metadata.LabelFields(e)
 	if len(label) == 0 || len(all) == 0 {
 		return all

@@ -37,7 +37,7 @@ func (d restSearchDeps) MaskedIndexedFields(ctx context.Context, e *metadata.Ent
 		return nil
 	}
 	var out []string
-	for _, f := range metadata.FullTextFields(e) {
+	for _, f := range metadata.HeaderFullTextFields(e) {
 		for name, dec := range decisions {
 			if strings.EqualFold(name, f.Name) && dec.Masked() {
 				out = append(out, f.Name)

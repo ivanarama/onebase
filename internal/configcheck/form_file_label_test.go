@@ -38,6 +38,8 @@ elements:
 	mkFile(t, filepath.Join(dir, "processors", "загрузка.yaml"), `name: ЗагрузкаПрайса
 title: Загрузка прайса
 `)
+	// Маски проверяются только у сущностей. Для обработки нужен настоящий
+	// layout-warning: ложный form.not-loaded больше не служит локатором.
 	mkFile(t, filepath.Join(dir, "forms", "ЗагрузкаПрайса", "главная.form.yaml"), `schema: onebase.form/v1
 form:
   name: ФормаОбработки
@@ -45,7 +47,7 @@ form:
 elements:
   - kind: ПолеВвода
     name: Файл
-    mask: "00.00.00"
+    width: -10
 `)
 
 	res := RunFullWithOptions(dir, Options{})

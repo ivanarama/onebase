@@ -23,6 +23,30 @@ func init() {
 	builtins["createdirectory"] = makeDirFn
 	builtins["найтифайлы"] = findFilesFn
 	builtins["findfiles"] = findFilesFn
+	builtins["прочитатьфайл"] = readFileFn
+	builtins["readfile"] = readFileFn
+}
+
+// ПрочитатьФайл(Путь) — содержимое текстового файла одной строкой.
+//
+// Короткий путь для типового «прочитать небольшой файл целиком». Через
+// ЧтениеТекста это три вызова с ловушкой: конструктор путь запоминает, но не
+// читает, и без Открыть() метод Прочитать() падает «файл не открыт» (#1441).
+//
+// Кодировка определяется тем же decodeText, что и у ЧтениеТекста.Открыть:
+// UTF-8, иначе Windows-1251. Файл читается в память целиком — как и
+// ЧтениеТекста.Открыть. ЧтениеТекста предоставляет построчный доступ
+// к уже загруженному содержимому.
+func readFileFn(args []any, _ string, _ int) (any, error) {
+	raw := strArg(args, 0)
+	if raw == "" {
+		RaiseUserError("ПрочитатьФайл: не указан путь к файлу")
+	}
+	data, err := os.ReadFile(safePathOrRaise("ПрочитатьФайл", raw)) //nolint:gosec // G703: trusted DSL file capability; sandbox profiles replace this builtin before evaluation
+	if err != nil {
+		RaiseUserError("ПрочитатьФайл: " + err.Error())
+	}
+	return decodeText(data), nil
 }
 
 // КопироватьФайл(Откуда, Куда) — копирование содержимого файла.

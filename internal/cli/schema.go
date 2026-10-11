@@ -327,8 +327,8 @@ func allSchemas() map[string]map[string]any {
 					},
 				}),
 				"list_mode":     stringSchema("pages|feed"),
-				"fulltext":      arrayOf(stringSchema("Реквизит, попадающий в полнотекстовый поиск (по умолчанию — все строковые)")),
-				"search_fields": arrayOf(stringSchema("Реквизит для поиска по строке в списке и подборе (по умолчанию — все строковые)")),
+				"fulltext":      arrayOf(stringSchema("Реквизит шапки для полнотекстового поиска (по умолчанию — все строковые шапки; пути ТЧ пока отклоняются)")),
+				"search_fields": arrayOf(stringSchema("Реквизит шапки или ТабличнаяЧасть.Поле для поиска подстроки в списке и подборе; без ключа — только строковые шапки, [] выключает поиск; ссылки, служебные колонки и дубликаты запрещены")),
 				// Схема принимает обе формы записи: `presentation: Артикул` и
 				// `presentation: [Артикул, Наименование]` — иначе редактор
 				// подчёркивал бы как ошибку ровно тот вариант, который в
@@ -525,10 +525,10 @@ func managedFormSchema() map[string]any {
 		"additionalProperties": false,
 		"required":             []string{"field", "op"},
 		"properties": map[string]any{
-			"field": stringSchema("Реквизит выбираемого справочника или служебное поле is_folder / parent_id"),
+			"field": stringSchema("Реквизит выбираемого справочника или служебное поле is_folder / is_root / parent_id"),
 			"op":    enumSchema("eq", "eq_or_empty", "in_hierarchy", "not_in_hierarchy"),
 			"from":  stringSchema("Источник Объект.<Поле>, Форма.<Поле> или Объект.<Поле>.<Реквизит> — один переход по ссылке; конец пути — ссылка или, для строкового field и eq, строковый реквизит"),
-			"value": boolSchema("Булев литерал: is_folder или булев реквизит справочника"),
+			"value": boolSchema("Булев литерал: is_folder, is_root или булев реквизит справочника"),
 			"ref": map[string]any{
 				"type":        "string",
 				"format":      "uuid",
@@ -547,9 +547,15 @@ func managedFormSchema() map[string]any {
 		"type":                 "object",
 		"additionalProperties": true,
 		"properties": map[string]any{
-			"id":        stringSchema("Устойчивый уникальный id элемента формы"),
-			"kind":      stringSchema("Вид элемента формы"),
-			"data_path": stringSchema("Путь к значению элемента"),
+			"id":                  stringSchema("Устойчивый уникальный id элемента формы"),
+			"kind":                stringSchema("Вид элемента формы"),
+			"data_path":           stringSchema("Путь к значению элемента"),
+			"equal_columns":       boolSchema("Равная ширина детей горизонтальной ГруппаФормы без scroll_x; по умолчанию false"),
+			"choice_folders":      boolSchema("Разрешить выбор элементов и групп иерархического справочника в ссылочном поле; по умолчанию false"),
+			"choice_dropdown":     boolSchema("Предзагружать варианты в выпадающий список ссылочного поля; отсутствие ключа или true включает варианты, false оставляет плейсхолдер и текущее значение для выбора через форму подбора"),
+			"editable_admin_only": boolSchema("Разрешить редактирование поля только администратору; сервер отклоняет изменения от остальных пользователей; по умолчанию false"),
+			"primary":             boolSchema("Выделить кнопку основного действия акцентным стилем; по умолчанию false"),
+			"scroll_x":            boolSchema("Прокручивать горизонтальную ГруппаФормы вместо переноса содержимого на следующую строку; по умолчанию false"),
 			"children": map[string]any{
 				"type":  "array",
 				"items": map[string]any{"$dynamicRef": "#formElement"},

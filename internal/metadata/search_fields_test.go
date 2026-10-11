@@ -29,21 +29,21 @@ func fieldNames(fs []Field) []string {
 }
 
 func TestSearchFields_УмолчаниеВсеСтроковые(t *testing.T) {
-	got := fieldNames(SearchFields(searchTestEntity(nil, false)))
+	got := fieldNames(searchFieldsForTest(t, searchTestEntity(nil, false)))
 	if len(got) != 1 || got[0] != "Наименование" {
 		t.Errorf("умолчание должно давать строковые реквизиты, получено %v", got)
 	}
 }
 
 func TestSearchFields_ЯвныйСписокРазрешаетЧисловой(t *testing.T) {
-	got := fieldNames(SearchFields(searchTestEntity([]string{"Артикул"}, true)))
+	got := fieldNames(searchFieldsForTest(t, searchTestEntity([]string{"Артикул"}, true)))
 	if len(got) != 1 || got[0] != "Артикул" {
 		t.Errorf("явный список должен пускать числовой реквизит, получено %v", got)
 	}
 }
 
 func TestSearchFields_ПустойСписокОтличимОтОтсутствия(t *testing.T) {
-	if got := SearchFields(searchTestEntity([]string{}, true)); len(got) != 0 {
+	if got := searchFieldsForTest(t, searchTestEntity([]string{}, true)); len(got) != 0 {
 		t.Errorf("`search_fields: []` — поиск выключен, получено %v", fieldNames(got))
 	}
 }
@@ -51,7 +51,7 @@ func TestSearchFields_ПустойСписокОтличимОтОтсутств
 // Регистронезависимость: метаданные и DSL регистр не различают, поэтому
 // `search_fields: [наименование]` обязан находить реквизит «Наименование».
 func TestSearchFields_ИмяБезУчётаРегистра(t *testing.T) {
-	got := fieldNames(SearchFields(searchTestEntity([]string{"наименование"}, true)))
+	got := fieldNames(searchFieldsForTest(t, searchTestEntity([]string{"наименование"}, true)))
 	if len(got) != 1 || got[0] != "Наименование" {
 		t.Errorf("имя реквизита должно искаться без учёта регистра, получено %v", got)
 	}
@@ -84,4 +84,17 @@ func TestValidateSearchFields_БезБлокаНеПроверяется(t *test
 	if err := validateSearchFields(searchTestEntity(nil, false)); err != nil {
 		t.Fatalf("без блока search_fields проверять нечего: %v", err)
 	}
+}
+
+func searchFieldsForTest(t *testing.T, e *Entity) []Field {
+	t.Helper()
+	paths, err := SearchFieldPaths(e)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fields []Field
+	for _, p := range paths {
+		fields = append(fields, p.Field)
+	}
+	return fields
 }

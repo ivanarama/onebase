@@ -107,104 +107,16 @@ type RefSources interface {
 // уровне БД там нет, поэтому удалённый товар оставлял бы регистр с движениями
 // по несуществующей ссылке — остатки и обороты «висели» бы на пустом месте.
 func (db *DB) CheckRefs(ctx context.Context, entityName string, id uuid.UUID, src RefSources) ([]RefInfo, error) {
-	d := db.dialect
-	idA := idArg(d, id)
 	var refs []RefInfo
-	if src == nil {
-		return nil, nil
-	}
-	for _, e := range src.Entities() {
-		for _, f := range e.Fields {
-			if f.RefEntity != entityName {
-				continue
-			}
-			col := metadata.ColumnName(f)
-			var count int
-			if err := db.QueryRow(ctx,
-				fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s = %s",
-					metadata.TableName(e.Name), col, d.Placeholder(1)),
-				idA).Scan(&count); err != nil {
-				return nil, fmt.Errorf("проверка ссылок %s.%s: %w", e.Name, f.Name, err)
-			}
-			if count > 0 {
-				refs = append(refs, RefInfo{EntityName: e.Name, FieldName: f.Name, Count: count})
-			}
+	for _, s := range referenceSources(entityName, src) {
+		var count int
+		if err := db.QueryRow(ctx,
+			fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s = %s", s.table, s.column, db.dialect.Placeholder(1)),
+			idArg(db.dialect, id)).Scan(&count); err != nil {
+			return nil, fmt.Errorf("проверка ссылок %s.%s: %w", s.label, s.field.Name, err)
 		}
-		for _, tp := range e.TableParts {
-			for _, f := range tp.Fields {
-				if f.RefEntity != entityName {
-					continue
-				}
-				col := metadata.ColumnName(f)
-				table := metadata.TablePartTableName(e.Name, tp.Name)
-				var count int
-				if err := db.QueryRow(ctx,
-					fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s = %s", table, col, d.Placeholder(1)),
-					idA).Scan(&count); err != nil {
-					return nil, fmt.Errorf("проверка ссылок %s.%s.%s: %w", e.Name, tp.Name, f.Name, err)
-				}
-				if count > 0 {
-					refs = append(refs, RefInfo{
-						EntityName: e.Name + "." + tp.Name,
-						FieldName:  f.Name,
-						Count:      count,
-					})
-				}
-			}
-		}
-	}
-
-	// Регистры. Ссылка из измерения ничем не отличается от ссылки из реквизита:
-	// объект, на который она указывает, удалять нельзя.
-	type regRef struct {
-		label  string // как показать источник пользователю
-		table  string // где искать
-		fields []metadata.Field
-		column func(i int, f metadata.Field) string
-	}
-	byName := func(_ int, f metadata.Field) string { return metadata.ColumnName(f) }
-
-	var sources []regRef
-	for _, r := range src.Registers() {
-		table := metadata.RegisterTableName(r.Name)
-		sources = append(sources,
-			regRef{"РегистрНакопления." + r.Name, table, r.Dimensions, byName},
-			regRef{"РегистрНакопления." + r.Name, table, r.Resources, byName},
-			regRef{"РегистрНакопления." + r.Name, table, r.Attributes, byName},
-		)
-	}
-	for _, ir := range src.InfoRegisters() {
-		table := metadata.InfoRegTableName(ir.Name)
-		sources = append(sources,
-			regRef{"РегистрСведений." + ir.Name, table, ir.Dimensions, byName},
-			regRef{"РегистрСведений." + ir.Name, table, ir.Resources, byName},
-		)
-	}
-	for _, ar := range src.AccountRegisters() {
-		table := metadata.AccountRegTableName(ar.Name)
-		sources = append(sources,
-			regRef{"РегистрБухгалтерии." + ar.Name, table, ar.Resources, byName},
-			// Субконто хранятся в колонках с номером, а не с именем поля:
-			// имя колонки стабильно при переименовании субконто.
-			regRef{"РегистрБухгалтерии." + ar.Name, table, ar.Subconto,
-				func(i int, _ metadata.Field) string { return metadata.SubcontoColumn(i + 1) }},
-		)
-	}
-
-	for _, s := range sources {
-		for i, f := range s.fields {
-			if f.RefEntity != entityName {
-				continue
-			}
-			var count int
-			if err := db.QueryRow(ctx,
-				fmt.Sprintf("SELECT COUNT(*) FROM %s WHERE %s = %s", s.table, s.column(i, f), d.Placeholder(1)),
-				idA).Scan(&count); err != nil {
-				return nil, fmt.Errorf("проверка ссылок %s.%s: %w", s.label, f.Name, err)
-			}
-			if count > 0 {
-				refs = append(refs, RefInfo{EntityName: s.label, FieldName: f.Name, Count: count})
-			}
+		if count > 0 {
+			refs = append(refs, RefInfo{EntityName: s.label, FieldName: s.field.Name, Count: count})
 		}
 	}
 	return refs, nil

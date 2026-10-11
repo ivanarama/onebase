@@ -18,6 +18,14 @@ const escapeStart = managed.indexOf('  function consumeManagedEscape', escapeCom
 const escapeEnd = managed.indexOf('  }, true);', escapeStart);
 assert.ok(escapeComment >= 0 && escapeStart >= 0 && escapeEnd > escapeStart, 'managed Escape slice not found');
 const escapeHandler = managed.slice(escapeStart, escapeEnd + '  }, true);'.length);
+const valuesStart = managed.indexOf('  function managedRefParts(');
+const valuesEnd = managed.indexOf('  // END onebase-ro-apply-values', valuesStart);
+assert.ok(valuesStart >= 0 && valuesEnd > valuesStart, 'managed value renderer not found');
+const valueRenderer = managed.slice(valuesStart, valuesEnd);
+const dirtyStart = managed.indexOf('  function _obMarkDirty(');
+const dirtyEnd = managed.indexOf('  // «Грязный» флаг', dirtyStart);
+assert.ok(dirtyStart >= 0 && dirtyEnd > dirtyStart, 'managed input listeners not found');
+const dirtyListeners = managed.slice(dirtyStart, dirtyEnd);
 
 class FakeFormData {
   constructor(form) {
@@ -33,7 +41,7 @@ class FakeFormData {
   forEach(fn) { for (const [key, value] of this.values) fn(value, key); }
 }
 
-function runtime(fetchImpl, cfgOverride = {}) {
+function runtime(fetchImpl, cfgOverride = {}, productionValues = false) {
   const applied = [];
   const assigned = [];
 	const dirtyReports = [];
@@ -50,6 +58,16 @@ function runtime(fetchImpl, cfgOverride = {}) {
     querySelector(selector) {
       if (selector === '[name="_id"]') return idInput;
       if (selector === '[name="_version"]') return versionInput;
+      const match = selector.match(/^\[name="([^"]+)"\]$/);
+      if (productionValues && match && this.values.has(match[1])) {
+        const name = match[1];
+        return {
+          tagName: 'INPUT', type: 'text', classList: {contains() { return false; }},
+          get value() { return form.values.get(name); },
+          set value(value) { form.values.set(name, value); },
+          closest(selector) { return selector === '#main-form' ? form : null; },
+        };
+      }
       return null;
     },
     appendChild() {},
@@ -190,7 +208,7 @@ function runtime(fetchImpl, cfgOverride = {}) {
 	  function openItemPicker(value, name, extra){ globalThis.__applied.push(['picker', value, name, extra]); }
       function flash(value, kind){ globalThis.__applied.push(['flash', value, kind]); }
   `;
-  vm.runInNewContext(prefix + eventController + controller + '\n})();', context, {filename: 'managed-close-controller.js'});
+  vm.runInNewContext(prefix + (productionValues ? valueRenderer + dirtyListeners : '') + eventController + controller + '\n})();', context, {filename: 'managed-close-controller.js'});
   vm.runInNewContext(escapeHandler, context, {filename: 'managed-close-escape.js'});
 	return {
 	  context, form, idInput, versionInput, applied, listeners, document, closeButton, assigned, dirtyReports,
@@ -1243,6 +1261,69 @@ test('ordinary form event adopts saved identity before a throwing renderer', asy
   assert.equal(bodies.length, 2, 'renderer failure incorrectly activated the unknown-result fence');
   assert.equal(bodies[1].get('_id'), 'event-saved');
   assert.equal(bodies[1].get('_version'), '7');
+});
+
+test('ordinary saved form event keeps late typing dirty until close is confirmed', async (t) => {
+  const savedResponse = process.env.ONEBASE_SAVED_EVENT_RESPONSE
+    ? JSON.parse(fs.readFileSync(process.env.ONEBASE_SAVED_EVENT_RESPONSE, 'utf8'))
+    : {ok: true, values: {Телефон: '(937)637-32-7'}, version: 2, dirty: false};
+  assert.equal(savedResponse.dirty, false);
+  assert.ok(savedResponse.savedId || savedResponse.version);
+  for (const initiallyDirty of [false, true]) {
+    await t.test(`late input, initially dirty=${initiallyDirty}`, async () => {
+      let complete;
+      const closeBodies = [];
+      const app = runtime((url, options) => {
+        if (url.endsWith('/form-event')) {
+          assert.equal(options.body.get('Телефон'), '(937)637-32-7');
+          return new Promise((resolve) => { complete = resolve; });
+        }
+        closeBodies.push(capturedCloseBody(options));
+        return Promise.resolve(response({ok: true, close: {
+          intentId: closeIntent(options), allowed: true, saved: closeMode(options) === 'save',
+        }}));
+      }, {docId: 'existing-card'}, true);
+      app.form.values.set('Телефон', '(937)637-32-7');
+      const phone = app.form.querySelector('[name="Телефон"]');
+      if (initiallyDirty) app.document.dispatch('input', {target: phone});
+      const event = app.context.obFire('SaveInsideHandler', 'Click');
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(typeof complete, 'function');
+      phone.value += '1';
+      app.document.dispatch('input', {target: phone});
+      complete(response(savedResponse));
+      await event;
+
+      assert.equal(phone.value, '(937)637-32-71', 'the real renderer lost late input');
+      assert.equal(app.versionInput.value, String(savedResponse.version));
+      assert.equal(app.context._obFormDirty, true, 'saved old snapshot cleared late edits');
+      const close = app.context.obRequestFormClose({reason: 'close'});
+      await new Promise((resolve) => setImmediate(resolve));
+      const modal = app.document.getElementById('ob-managed-close-confirm');
+      assert.ok(modal, 'closing silently discarded the late digit');
+      assert.equal(closeBodies.length, 0, 'close was sent before confirmation');
+      const row = modal.children[0].children[2];
+      row.dispatch('click', {target: row.children[0]});
+      assert.equal((await close).allowed, true);
+      assert.equal(closeBodies[0].closeMode, 'save');
+      assert.equal(closeBodies[0].get('Телефон'), '(937)637-32-71');
+    });
+  }
+  await t.test('without late input a saved event clears earlier dirty state', async () => {
+    const modes = [];
+    const app = runtime(async (url, options) => {
+      if (url.endsWith('/form-event')) return response(savedResponse);
+      modes.push(closeMode(options));
+      return response({ok: true, close: {intentId: closeIntent(options), allowed: true, saved: false}});
+    }, {docId: 'existing-card'}, true);
+    app.form.values.set('Телефон', '(937)637-32-7');
+    app.document.dispatch('input', {target: app.form.querySelector('[name="Телефон"]')});
+    await app.context.obFire('SaveInsideHandler', 'Click');
+    assert.equal(app.context._obFormDirty, false);
+    assert.equal((await app.context.obRequestFormClose({reason: 'close'})).allowed, true);
+    assert.equal(app.document.getElementById('ob-managed-close-confirm'), null);
+    assert.deepEqual(modes, ['discard']);
+  });
 });
 
 test('server reconcile response keeps the unknown close body and permanently fences writes', async () => {

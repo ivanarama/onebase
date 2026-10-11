@@ -300,7 +300,8 @@ func navigationPreview(groups []navGroup) []NavigationPreviewSection {
 func (s *Server) navigationItemVisible(r *http.Request, object navigation.Object, resolved navigation.ResolvedItem, semantic, flat bool) bool {
 	switch resolved.Kind {
 	case "system":
-		return true // membership already restricts this to the existing constants route
+		// The only system target is the constants page, which is admin-only.
+		return s.isAdmin(r)
 	case "page":
 		page := s.reg.GetPage(resolved.Name)
 		return page != nil && s.canSeePage(r, page)

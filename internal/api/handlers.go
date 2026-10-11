@@ -721,13 +721,15 @@ func writeError(w http.ResponseWriter, code int, msg, file string, line int) {
 
 // writeSaveError отдаёт структурированную HTTP-ошибку для неуспешного
 // entitySvc.Save, маппя известные ошибки storage в точные коды статуса:
-// конфликт версий → 409, нарушение внешнего ключа (ссылка на несуществующий
-// объект) → 422. Прочее — 500 с текстом ошибки, как прежде. Общий для v1 и v2
+// конфликт версий или владельца ключа регистра → 409; нарушение внешнего
+// ключа (ссылка на несуществующий объект) → 422. Прочее — 500 с текстом ошибки, как прежде. Общий для v1 и v2
 // REST, чтобы сырой текст драйвера БД не утекал в ответ по create/update/post.
 func writeSaveError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, storage.ErrVersionConflict):
 		writeError(w, http.StatusConflict, "version conflict: object was modified by another client", "", 0)
+	case errors.Is(err, storage.ErrInfoRegOwnershipConflict):
+		writeError(w, http.StatusConflict, err.Error(), "", 0)
 	case errors.Is(err, storage.ErrForeignKeyViolation):
 		writeError(w, http.StatusUnprocessableEntity, "ссылка на несуществующий объект", "", 0)
 	case errors.Is(err, storage.ErrCodeDuplicate):

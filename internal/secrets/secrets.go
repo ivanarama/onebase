@@ -163,6 +163,31 @@ func (r *Resolver) Resolve(s string) (string, error) {
 	return out, nil
 }
 
+// ErrRefNotAllowed — в значении есть ссылка env:/file:, а вызывающий принимает
+// только enc: (ResolveEnc).
+var ErrRefNotAllowed = errors.New("secrets: разрешены только enc:-ссылки")
+
+// ResolveEnc — Resolve для значений, пришедших из ДАННЫХ базы (реквизит
+// справочника, константа), а не из конфигурации: разворачивает только enc:.
+//
+// Ссылки env:/file: здесь отклоняются целиком, до разыменования чего-либо.
+// Значение в справочник вписывает пользователь с правом записи, а не
+// администратор сервера; разреши ему env:/file: — он прочитал бы переменную
+// окружения или файл сервера, вписав ссылку и указав свой адрес назначения.
+// enc: такого не даёт: расшифровать можно лишь то, что администратор уже
+// зашифровал мастер-ключом. Значение без ссылок возвращается как есть.
+func (r *Resolver) ResolveEnc(s string) (string, error) {
+	if scheme, _, ok := splitBare(s); ok && scheme != SchemeEnc {
+		return "", fmt.Errorf("%w (в значении ссылка %s:)", ErrRefNotAllowed, scheme)
+	}
+	for _, m := range refPattern.FindAllStringSubmatch(s, -1) {
+		if m[1] != SchemeEnc {
+			return "", fmt.Errorf("%w (в значении ссылка ${%s:…})", ErrRefNotAllowed, m[1])
+		}
+	}
+	return r.Resolve(s)
+}
+
 func (r *Resolver) resolveOne(scheme, arg string) (string, error) {
 	arg = strings.TrimSpace(arg)
 	switch scheme {

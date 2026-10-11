@@ -308,6 +308,16 @@ MVP не добавляет `_refs`. Если on-the-fly обход упрётс
 
 ### Срез A — storage-контракт и единая карта ссылок
 
+Реализация A (#1899): общий физический описатель в
+`internal/storage/ref_sources.go`, публичные `ReferenceSources`,
+`ReadReferencePage` и `NewReferenceIterator` в `reference_graph.go`.
+Контракт доступа, cursor и обхода описан в `internal/storage/reference_graph.md`.
+SQL-потоки регистров разделены по типам документов: внутри потока порядок UUID,
+межтиповый k-way merge в Go сохраняет единый порядок независимо от collation.
+Публичная матрица `TestReferenceGraph*` проверяет SQL на SQLite/PostgreSQL;
+driver fault проверяет отказ при Scan/rows.Err без частичной страницы.
+Это storage-срез: пользовательский граф и проверки HTTP-доступа остаются B–D.
+
 - Выделить общий описатель источников из `CheckRefs`.
 - Добавить bounded API входящих кандидатов для шапок, ТЧ и трёх семейств
   регистров, включая проекцию на регистратора.

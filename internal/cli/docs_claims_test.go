@@ -12,16 +12,12 @@ import (
 )
 
 var languageCountsPattern = regexp.MustCompile(`([0-9]+) функций, ([0-9]+) метод(?:ов|а)`)
+var fullLanguageCountsPattern = regexp.MustCompile(`([0-9]+) функций,\s+([0-9]+) метод(?:ов|а)\s+объектов,\s+([0-9]+) конструкций(?:\s+и|,)\s+([0-9]+) элементов языка запросов`)
 
 func TestPublicDocsLanguageCountsUpToDate(t *testing.T) {
-	functions, methods := 0, 0
+	counts := make(map[langref.Kind]int)
 	for _, descriptor := range langref.All() {
-		switch descriptor.Kind {
-		case langref.KindFunc:
-			functions++
-		case langref.KindMethod:
-			methods++
-		}
+		counts[descriptor.Kind]++
 	}
 
 	for _, tc := range []struct {
@@ -33,22 +29,32 @@ func TestPublicDocsLanguageCountsUpToDate(t *testing.T) {
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			text := readDocForClaimTest(t, tc.path)
-			claims := languageCountsPattern.FindAllStringSubmatch(text, -1)
-			if len(claims) != tc.wantClaims {
-				t.Fatalf("найдено утверждений вида «N функций, M методов/метода»: %d, ожидалось %d; если формулировка изменилась, обновите проверку вместе с текстом", len(claims), tc.wantClaims)
-			}
-			for _, claim := range claims {
-				gotFunctions, err := strconv.Atoi(claim[1])
-				if err != nil {
-					t.Fatalf("разобрать число функций %q: %v", claim[1], err)
-				}
-				gotMethods, err := strconv.Atoi(claim[2])
-				if err != nil {
-					t.Fatalf("разобрать число методов %q: %v", claim[2], err)
-				}
-				if gotFunctions != functions || gotMethods != methods {
-					t.Errorf("указано %d функций и %d методов, в реестре %d и %d", gotFunctions, gotMethods, functions, methods)
-				}
+			for _, check := range []struct {
+				name       string
+				pattern    *regexp.Regexp
+				kinds      []langref.Kind
+				wantClaims int
+			}{
+				{"functions-methods", languageCountsPattern, []langref.Kind{langref.KindFunc, langref.KindMethod}, tc.wantClaims},
+				{"all-kinds", fullLanguageCountsPattern, []langref.Kind{langref.KindFunc, langref.KindMethod, langref.KindKeyword, langref.KindQuery}, 1},
+			} {
+				t.Run(check.name, func(t *testing.T) {
+					claims := check.pattern.FindAllStringSubmatch(text, -1)
+					if len(claims) != check.wantClaims {
+						t.Fatalf("найдено утверждений %s: %d, ожидалось %d; если формулировка изменилась, обновите проверку вместе с текстом", check.name, len(claims), check.wantClaims)
+					}
+					for _, claim := range claims {
+						for i, kind := range check.kinds {
+							got, err := strconv.Atoi(claim[i+1])
+							if err != nil {
+								t.Fatalf("разобрать число %s %q: %v", kind, claim[i+1], err)
+							}
+							if got != counts[kind] {
+								t.Errorf("%s: указано %d, в реестре %d", kind, got, counts[kind])
+							}
+						}
+					}
+				})
 			}
 		})
 	}

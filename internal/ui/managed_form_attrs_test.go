@@ -135,14 +135,14 @@ func TestFormEvent_UnplacedAttributesSurviveOtherEvent(t *testing.T) {
 	if !second.OK || strings.Join(second.Messages, "|") != "ФЛАГ:ДА|ПУСТО:ДА|СКЛАД:Основной" {
 		t.Fatalf("next event lost attributes: %+v", second)
 	}
-	if second.ElementStates == nil || !second.ElementStates.Hidden["Скрываемое"] || !second.ElementStates.ReadOnly["Запираемое"] {
+	if second.ElementStates == nil || !second.ElementStates.Hidden[путьСостояния(t, form, "Скрываемое")] || !second.ElementStates.ReadOnly[путьСостояния(t, form, "Запираемое")] {
 		t.Fatalf("next event reset conditions: %+v", second.ElementStates)
 	}
 
 	// Negative control: omitting the carrier reproduces the original rollback.
 	body.Del("СкрытьПоле")
 	missing := decodeFormEventResponse(t, executeFormEvent(t, s, ent, body).Body.Bytes())
-	if !missing.OK || missing.ElementStates == nil || missing.ElementStates.Hidden["Скрываемое"] || missing.ElementStates.ReadOnly["Запираемое"] {
+	if !missing.OK || missing.ElementStates == nil || missing.ElementStates.Hidden[путьСостояния(t, form, "Скрываемое")] || missing.ElementStates.ReadOnly[путьСостояния(t, form, "Запираемое")] {
 		t.Fatalf("test did not reproduce rollback without carrier: %+v", missing)
 	}
 }

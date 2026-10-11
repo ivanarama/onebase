@@ -25,7 +25,6 @@ import (
 var (
 	completionLine    = regexp.MustCompile(`(?m)^<!-- pp:head-reviewed ([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
 	claimLine         = regexp.MustCompile(`(?m)^<!-- pp:review-claim ([0-9a-f]{40}) review-comment=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
-	reviewAgain       = regexp.MustCompile(`(?m)^pp:review-again$`)
 	displayRepair     = regexp.MustCompile(`(?m)^<!-- pp:display-repair comment=([0-9]+) -->$`)
 	baseSyncIntent    = regexp.MustCompile(`(?m)^<!-- pp:base-sync-intent from=([0-9a-f]{40}) base=([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) completion=([0-9]+) ship-event=([A-Za-z0-9_=-]+) previous=([0-9]+|none) -->$`)
 	baseSyncDone      = regexp.MustCompile(`(?m)^<!-- pp:base-sync-done intent=([0-9]+) from=([0-9a-f]{40}) to=([0-9a-f]{40}) base=([0-9a-f]{40}) previous=([0-9]+|none) ship-event=([A-Za-z0-9_=-]+) -->$`)
@@ -159,7 +158,7 @@ func main() {
 	var err error
 	switch selectedTransport {
 	case "graphql":
-		prs, issues, err = loadPipelineInputsGraphQL(newGHPipelineGraphQLClient(), *repo, *fixture, *issueFixture)
+		prs, issues, err = loadPipelineInputsGraphQL(newGHPipelineGraphQLClient(), *repo, *owner, *fixture, *issueFixture)
 	case "rest":
 		var github *githubRESTClient
 		if *fixture == "" {
@@ -170,7 +169,7 @@ func main() {
 			}
 		}
 		if err == nil {
-			prs, err = loadPulls(github, *repo, *fixture)
+			prs, err = loadPulls(github, *repo, *owner, *fixture)
 		}
 		if err == nil {
 			issues, err = loadIssues(github, *repo, *issueFixture, *fixture != "")
@@ -210,7 +209,7 @@ func fail(err error) {
 	os.Exit(2)
 }
 
-func loadPulls(github *githubRESTClient, repo, fixture string) ([]apiPull, error) {
+func loadPulls(github *githubRESTClient, repo, trustedOwner, fixture string) ([]apiPull, error) {
 	if fixture != "" {
 		data, err := os.ReadFile(fixture)
 		if err != nil {
@@ -253,8 +252,7 @@ func loadPulls(github *githubRESTClient, repo, fixture string) ([]apiPull, error
 					continue
 				}
 				prs[index].Comments = comments
-				owner, _, _ := strings.Cut(repo, "/")
-				if !needsHeadParents(prs[index], owner) {
+				if !needsHeadParents(prs[index], trustedOwner) {
 					continue
 				}
 				var commitResponse struct {
@@ -315,7 +313,7 @@ func loadIssues(github *githubRESTClient, repo, fixture string, skipLive bool) (
 	}
 	issues := make([]apiIssue, 0, len(all))
 	for _, issue := range all {
-		if issue.PullRequest == nil && issue.CommentCount > 0 {
+		if issue.PullRequest == nil {
 			issues = append(issues, issue)
 		}
 	}
@@ -332,6 +330,9 @@ func loadIssues(github *githubRESTClient, repo, fixture string, skipLive bool) (
 		go func() {
 			defer wg.Done()
 			for index := range jobs {
+				if issues[index].CommentCount == 0 {
+					continue
+				}
 				path := fmt.Sprintf("repos/%s/issues/%d/comments?per_page=100", repo, issues[index].Number)
 				comments, err := getAllPages[apiComment](github, path)
 				if err != nil {
@@ -1026,6 +1027,40 @@ func trustedUnedited(comment apiComment, owner string) bool {
 	return comment.User.Login == owner && comment.CreatedAt != "" && comment.UpdatedAt == comment.CreatedAt
 }
 
+// hasReviewAgain accepts the exact protocol line outside Markdown fenced code.
+// An unclosed fence quotes the rest of the comment, including any instructions
+// that happen to spell the marker. Fences use at least three backticks or tildes
+// and at most three leading spaces; a close must use the same character, be at
+// least as long as the opener, and contain only trailing spaces or tabs.
+func hasReviewAgain(body string) bool {
+	var fence byte
+	var fenceLength int
+	for _, line := range strings.Split(body, "\n") {
+		if fence == 0 && line == "pp:review-again" {
+			return true
+		}
+		text := strings.TrimLeft(line, " ")
+		if len(line)-len(text) > 3 || len(text) < 3 || (text[0] != '`' && text[0] != '~') {
+			continue
+		}
+		length := 1
+		for length < len(text) && text[length] == text[0] {
+			length++
+		}
+		if fence != 0 {
+			if text[0] == fence && length >= fenceLength && strings.Trim(text[length:], " \t\r") == "" {
+				fence, fenceLength = 0, 0
+			}
+			continue
+		}
+		// A backtick in the info string makes a backtick opener invalid.
+		if length >= 3 && (text[0] != '`' || !strings.Contains(text[length:], "`")) {
+			fence, fenceLength = text[0], length
+		}
+	}
+	return false
+}
+
 func reviewDepth(comments []apiComment, owner string) int {
 	ids := map[string]bool{}
 	for _, comment := range comments {
@@ -1045,7 +1080,7 @@ func currentProtocolState(comments []apiComment, owner, head string) (count int,
 		if !trustedUnedited(comment, owner) {
 			continue
 		}
-		if reviewAgain.MatchString(comment.Body) {
+		if hasReviewAgain(comment.Body) {
 			latestOverride = comment.ID
 		}
 		for _, match := range completionLine.FindAllStringSubmatch(comment.Body, -1) {
@@ -1214,7 +1249,7 @@ func duplicateCompletionEpoch(comments []apiComment, owner, head string) bool {
 		if !trustedUnedited(comment, owner) {
 			continue
 		}
-		if reviewAgain.MatchString(comment.Body) {
+		if hasReviewAgain(comment.Body) {
 			ids = map[int64]bool{}
 		}
 		for _, match := range completionLine.FindAllStringSubmatch(comment.Body, -1) {

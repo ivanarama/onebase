@@ -270,11 +270,11 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 		e.DetailPanel = dp
 	}
 	if raw.FullText != nil {
-		e.FullText = trimStringList(*raw.FullText)
+		e.FullText = trimFieldPathList(*raw.FullText)
 		e.FullTextSet = true
 	}
 	if raw.Search != nil {
-		e.Search = trimStringList(*raw.Search)
+		e.Search = trimFieldPathList(*raw.Search)
 		e.SearchSet = true
 	}
 	if raw.Stages != nil {
@@ -420,6 +420,16 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 		e.Predefined = append(e.Predefined, &PredefinedItem{Name: rp.Name, Fields: fields})
 	}
 	return e, nil
+}
+
+// Preserve empty entries so path validation can report them instead of
+// silently converting an invalid list into a disabled search.
+func trimFieldPathList(in []string) []string {
+	out := make([]string, len(in))
+	for i, path := range in {
+		out[i] = strings.TrimSpace(path)
+	}
+	return out
 }
 
 func trimStringList(in []string) []string {
