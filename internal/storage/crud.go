@@ -706,7 +706,7 @@ func ListEntityColumns(entity *metadata.Entity) []string {
 // listWhere builds the complete predicate shared by List and CountList. Count
 // deliberately omits keyset cursors because its public contract reports the
 // total before pagination; every other filter must be byte-for-byte identical.
-func (db *DB) listWhere(entity *metadata.Entity, params ListParams, includeKeyset bool) (string, []any, error) {
+func (db *DB) listWhere(entityName string, entity *metadata.Entity, params ListParams, includeKeyset bool) (string, []any, error) {
 	d := db.dialect
 	var whereParts []string
 	var args []any
@@ -779,13 +779,48 @@ func (db *DB) listWhere(entity *metadata.Entity, params ListParams, includeKeyse
 	if params.Search != "" {
 		var searchParts []string
 		pattern := "%" + params.Search + "%"
-		// SQLite placeholders are positional, so bind the pattern once per
-		// searchable field rather than reusing a numbered placeholder.
-		for _, field := range metadata.SearchFields(entity) {
-			column := metadata.ColumnName(field)
-			searchParts = append(searchParts, d.LowerLike(column)+" LIKE "+d.LowerLike(d.Placeholder(argIdx)))
-			args = append(args, pattern)
-			argIdx++
+		paths, err := metadata.SearchFieldPaths(entity)
+		if err != nil {
+			return "", nil, err
+		}
+		// Group each table part into one correlated EXISTS. Bind every LIKE
+		// separately because SQLite placeholders are positional.
+		type tableSearch struct {
+			name    string
+			columns []string
+		}
+		var tables []tableSearch
+		tableIndex := make(map[string]int)
+		for _, path := range paths {
+			if path.TablePart == nil {
+				column := metadata.ColumnName(path.Field)
+				searchParts = append(searchParts, d.LowerLike(column)+" LIKE "+d.LowerLike(d.Placeholder(argIdx)))
+				args = append(args, pattern)
+				argIdx++
+				continue
+			}
+			name := path.TablePart.Name
+			index, ok := tableIndex[name]
+			if !ok {
+				index = len(tables)
+				tableIndex[name] = index
+				tables = append(tables, tableSearch{name: name})
+			}
+			tables[index].columns = append(tables[index].columns, metadata.ColumnName(path.Field))
+		}
+		for i, tp := range tables {
+			alias := fmt.Sprintf("ob_search_tp_%d", i)
+			for strings.EqualFold(alias, metadata.TableName(entityName)) {
+				alias += "_"
+			}
+			var matches []string
+			for _, column := range tp.columns {
+				matches = append(matches, d.LowerLike(alias+"."+column)+" LIKE "+d.LowerLike(d.Placeholder(argIdx)))
+				args = append(args, pattern)
+				argIdx++
+			}
+			searchParts = append(searchParts, fmt.Sprintf("EXISTS (SELECT 1 FROM %s AS %s WHERE %s.parent_id = %s.id AND (%s))",
+				metadata.TablePartTableName(entityName, tp.name), alias, alias, metadata.TableName(entityName), strings.Join(matches, " OR ")))
 		}
 		if len(searchParts) > 0 {
 			whereParts = append(whereParts, "("+strings.Join(searchParts, " OR ")+")")
@@ -851,7 +886,7 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 	table := metadata.TableName(entityName)
 	cols := ListEntityColumns(entity)
 	hasPredefined := entity.Kind == metadata.KindCatalog && len(entity.Predefined) > 0
-	whereClause, args, err := db.listWhere(entity, params, true)
+	whereClause, args, err := db.listWhere(entityName, entity, params, true)
 	if err != nil {
 		return nil, fmt.Errorf("list %s: %w", entityName, err)
 	}
@@ -1000,7 +1035,7 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 // (ignoring pagination: Limit, Offset, AfterID and ThroughID).
 func (db *DB) CountList(ctx context.Context, entityName string, entity *metadata.Entity, params ListParams) (int, error) {
 	table := metadata.TableName(entityName)
-	whereClause, args, err := db.listWhere(entity, params, false)
+	whereClause, args, err := db.listWhere(entityName, entity, params, false)
 	if err != nil {
 		return 0, fmt.Errorf("count %s: %w", entityName, err)
 	}
@@ -1023,7 +1058,7 @@ func (db *DB) ListContainsID(ctx context.Context, entityName string, entity *met
 		return false, fmt.Errorf("strict RLS: membership of %q requested without row access evaluation (fail-closed, plan 79F)", entityName)
 	}
 	table := metadata.TableName(entityName)
-	whereClause, args, err := db.listWhere(entity, params, false)
+	whereClause, args, err := db.listWhere(entityName, entity, params, false)
 	if err != nil {
 		return false, fmt.Errorf("list contains %s: %w", entityName, err)
 	}

@@ -1,0 +1,10 @@
+name: Клиенты
+title: Клиенты
+search_fields: [Наименование, Контакты.Значение]
+fields:
+  - {name: Наименование, type: string}
+tableparts:
+  - name: Контакты
+    fields:
+      - {name: Вид, type: string}
+      - {name: Значение, type: string}
