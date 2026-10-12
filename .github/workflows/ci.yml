@@ -583,6 +583,12 @@ jobs:
         working-directory: e2e
         run: npx playwright install --with-deps chromium
 
+      - name: Managed reference combobox acceptance
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        env:
+          ONEBASE_REQUIRE_REF_BROWSER: '1'
+        run: go test -count=1 -timeout 3m -v ./internal/ui -run '^TestManagedRefComboboxBrowser$'
+
       - name: Run browser smoke suite
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         working-directory: e2e

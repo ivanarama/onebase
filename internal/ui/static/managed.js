@@ -380,6 +380,13 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         // запись затирала её в базе.
         if (inp.type === 'date' && val.indexOf('T') > 0) val = val.slice(0, val.indexOf('T'));
         if (sent && typeof sent.has === 'function' && sent.has(k) && sent.get(k) === val && inp.value !== val) return;
+        if (inp._obRefCombo && sent && sent.has(k) && sent.get(k) === val && inp._obRefCombo.isEditing()) return;
+        if (inp._obRefCombo) {
+          var rows = refOptions && refOptions[k];
+          var label = ref && ref.label;
+          (rows || []).forEach(function (row) { if (String(row.id) === val) label = row._label; });
+          inp._obRefCombo.setValue(val, label || val, false);
+        }
         if (inp.tagName === 'SELECT') ensureRefOption(inp, val, refOptions && refOptions[k], ref && ref.label);
         if (inp.classList && inp.classList.contains('code-field') && inp._obSetCodeValue) {
           inp._obSetCodeValue(val);
@@ -497,6 +504,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // before the first state update instead of erasing it on hidden=false.
       if (!Object.prototype.hasOwnProperty.call(el, '_obDisplay')) el._obDisplay = el.style.display || '';
       el.style.display = hidden[path] ? 'none' : el._obDisplay;
+      el.querySelectorAll('input, textarea').forEach(function (n) { if (n._obRefCombo) n._obRefCombo.updateState(); });
     });
     var ro = st.readonly || {};
     // Свой ли это редактирующий контрол: ближайший якорь элемента формы — сам
@@ -526,6 +534,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       var roMirror = null;
       el.querySelectorAll('input, textarea').forEach(function (inp) {
         if (!ownControl(el, inp)) return;
+        if (inp.dataset && inp.dataset.obRefSearch === '1') return;
         if (inp.dataset && inp.dataset.obRoMirror === '1') {
           inp.disabled = !on;
           roMirror = inp;
@@ -538,6 +547,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         var checkboxPresence = inp.dataset && inp.dataset.obCheckboxPresence === '1';
         if (inp.type === 'checkbox' || inp.type === 'radio' || checkboxPresence) inp.disabled = on;
         else inp.readOnly = on;
+        if (inp._obRefCombo) inp._obRefCombo.updateState();
       });
       // Кнопка «Открыть карточку» из гашения исключена: сервер под $ro рисует её
       // БЕЗ disabled намеренно (templates_managed.go:94) — посмотреть связанный

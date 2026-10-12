@@ -4247,13 +4247,14 @@ window.obRefFilterParam = obRefFilterParam;
 function obRefreshDependentSelects(sourceEl) {
   if (!sourceEl || !sourceEl.name || !window.fetch) return;
   var scope = (sourceEl.closest && sourceEl.closest('form')) || document;
-  var targets = scope.querySelectorAll('select[data-ref-filter]');
+  var targets = scope.querySelectorAll('[data-ref-filter]');
   for (var i = 0; i < targets.length; i++) {
     (function (sel) {
       var raw = sel.getAttribute('data-ref-filter');
       if (!raw || raw.indexOf('"' + sourceEl.name + '"') < 0) return;
       var entity = sel.getAttribute('data-ref-entity') || '';
       if (!entity) return;
+      if (sel._obRefCombo) { sel._obRefCombo.refresh(true); return; }
       // У managed-поля с choice_filter есть один владелец запроса и один
       // sequence gate. Два независимых ответа перезаписывали друг другу select.
       if (sel.getAttribute('data-ref-choice-context')) {
@@ -4504,6 +4505,7 @@ function obChoiceRefreshState(sel) {
 }
 
 function obRefreshChoiceSelect(sel, force) {
+  if (sel && sel._obRefCombo) return sel._obRefCombo.refresh(force);
   if (!sel || !sel.getAttribute || !sel.getAttribute('data-ref-choice-context') || !window.fetch) {
     return Promise.resolve();
   }
@@ -4587,7 +4589,7 @@ function obRefreshChoiceSelect(sel, force) {
 
 window.obRefreshChoiceFilters = function () {
   if (!document.querySelectorAll) return Promise.resolve([]);
-  var selects = document.querySelectorAll('select[data-ref-choice-context]');
+  var selects = document.querySelectorAll('[data-ref-choice-context],input[data-ob-ref-combobox]');
   var pending = [];
   for (var i = 0; i < selects.length; i++) pending.push(obRefreshChoiceSelect(selects[i], false));
   return Promise.all(pending);
@@ -4595,7 +4597,7 @@ window.obRefreshChoiceFilters = function () {
 
 function obInitChoiceFilterRefresh() {
   if (!document.querySelectorAll) return;
-  var selects = document.querySelectorAll('select[data-ref-choice-context]');
+  var selects = document.querySelectorAll('[data-ref-choice-context]');
   for (var i = 0; i < selects.length; i++) {
     var snapshot = obRefChoiceSnapshot(selects[i]);
     if (snapshot) obChoiceRefreshState(selects[i]).appliedFingerprint = snapshot.fingerprint;
@@ -4615,7 +4617,8 @@ function openRefPicker(selOrId) {
   // направлению у филиалов разная).
   var allowCreate = sel.getAttribute('data-ref-allow-create') === '1';
   var localOpts = [];
-  for (var i = 0; i < sel.options.length; i++) {
+  if (sel._obRefCombo) sel._obRefCombo.close();
+  for (var i = 0; i < (sel.options || []).length; i++) {
     var o = sel.options[i];
     // A saved legacy value outside choice_filter stays visible in the field,
     // but must not become a candidate merely because it is an <option>.
@@ -4770,6 +4773,10 @@ function openRefPicker(selOrId) {
     if (!window._rpTarget) return;
     var id = item.getAttribute('data-id') || '';
     var label = item.getAttribute('data-label') || item.textContent || id;
+    if (window._rpTarget._obRefCombo) {
+      window._rpTarget._obRefCombo.setValue(id, label, true);
+      return;
+    }
     var exists = false;
     for (var i = 0; i < window._rpTarget.options.length; i++) {
       if (window._rpTarget.options[i].value === id) {
@@ -5030,6 +5037,11 @@ function openRefCreate(targetSelect, refEntity) {
           closeFailure();
           return;
         }
+      }
+      if (targetSelect._obRefCombo) {
+        targetSelect._obRefCombo.setValue(String(d.id), String(d.label || d.id), true);
+        cleanup();
+        return;
       }
       var exists = false;
       for (var i = 0; i < targetSelect.options.length; i++) {
