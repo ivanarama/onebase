@@ -130,6 +130,16 @@ func Connect(ctx context.Context, dsn string) (*DB, error) {
 // ConnectWithPool opens a PostgreSQL pool, sizing it from pc with precedence
 // app.yaml (pc) > explicit pool_* in the DSN > OneBase defaults.
 func ConnectWithPool(ctx context.Context, dsn string, pc PoolConfig) (*DB, error) {
+	return connectWithPool(ctx, dsn, pc, true)
+}
+
+// ConnectReadOnly opens a PostgreSQL reader without compatibility DDL. Every
+// physical connection rejects writes; schema inspection cannot publish changes.
+func ConnectReadOnly(ctx context.Context, dsn string) (*DB, error) {
+	return connectWithPool(ctx, dsn, PoolConfig{}, false)
+}
+
+func connectWithPool(ctx context.Context, dsn string, pc PoolConfig, compatibilityDDL bool) (*DB, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("storage: parse dsn: %w", err)
@@ -140,6 +150,11 @@ func ConnectWithPool(ctx context.Context, dsn string, pc PoolConfig) (*DB, error
 	}
 	applyPoolDefaults(cfg, dsn, pc)
 	applyPostgresApplicationTimeZone(cfg)
+	if !compatibilityDDL {
+		cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+		// Audit must fail rather than silently inspect only rows visible through RLS.
+		cfg.ConnConfig.RuntimeParams["row_security"] = "off"
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("storage: connect: %w", err)
@@ -152,8 +167,10 @@ func ConnectWithPool(ctx context.Context, dsn string, pc PoolConfig) (*DB, error
 	// (where uuid is stored as text) work on PostgreSQL without explicit
 	// casts.  WITH INOUT uses type I/O functions (uuidout→textin) directly,
 	// avoiding recursion that a custom function with ::text would cause.
-	_, _ = pool.Exec(ctx, `DROP CAST IF EXISTS (uuid AS text)`)
-	_, _ = pool.Exec(ctx, `CREATE CAST (uuid AS text) WITH INOUT AS IMPLICIT`)
+	if compatibilityDDL {
+		_, _ = pool.Exec(ctx, `DROP CAST IF EXISTS (uuid AS text)`)
+		_, _ = pool.Exec(ctx, `CREATE CAST (uuid AS text) WITH INOUT AS IMPLICIT`)
+	}
 
 	return &DB{pool: pool, filesDir: filesDir, dialect: PgDialect{}}, nil
 }
