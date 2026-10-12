@@ -1403,3 +1403,382 @@ test('standalone bottom link and Escape use the close controller before navigati
   assert.deepEqual(reasons, ['close', 'escape']);
   assert.deepEqual(app.assigned, ['/ui/catalog/Тест']);
 });
+
+// ПередПроведением: стандартные «Провести и закрыть» и «Провести» сначала
+// спрашивают обработчик формы; close-intent и отправка формы — только после
+// ответа без отказа.
+function beforePostRuntime(answers) {
+  const calls = [];
+  const app = runtime(async (url, options) => {
+    calls.push({url, options});
+    const next = answers.shift();
+    if (typeof next === 'function') return response(next(url, options));
+    return response(next);
+  }, {kind: 'document', docId: 'doc-1', beforePost: true});
+  return {app, calls};
+}
+
+function formEventName(call) { return call.options.body.get('_event'); }
+
+async function waitFor(check) {
+  for (let i = 0; i < 30 && !check(); i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.ok(check(), 'expected asynchronous browser action');
+}
+
+test('before-post: embedded standard button asks and posts without parallel writes', async () => {
+  const {app, calls} = beforePostRuntime([
+    {ok: true, question: {text: 'Провести?', variants: ['Да']}},
+    {ok: true},
+    (url, options) => ({ok: true, close: {intentId: closeIntent(options), allowed: true, saved: true}}),
+  ]);
+  let question;
+  let pending;
+  app.context.obOpenQuestion = (payload, elementName, handlers) => { question = handlers; };
+  app.context.parent = {postMessage(message, origin) {
+    assert.equal(origin, 'http://onebase.test');
+    assert.equal(message.source, 'obCloseTab');
+    pending = app.context.obRequestFormClose({mode: message.mode, reason: message.reason});
+  }};
+  const delegateStart = managed.indexOf('function obManagedInitDelegates() {');
+  const delegateEnd = managed.indexOf('obManagedReady(obManagedInitDelegates);', delegateStart);
+  assert.ok(delegateStart >= 0 && delegateEnd > delegateStart);
+  vm.runInNewContext(managed.slice(delegateStart, delegateEnd) + '\nobManagedInitDelegates();', app.context);
+  app.closeButton.getAttribute = (name) => name === 'data-ob-form-close' ? 'post' : null;
+  app.document.dispatch('click', {target: app.closeButton, preventDefault() {}});
+  assert.ok(pending);
+  await waitFor(() => question);
+  assert.equal(calls.length, 1);
+  assert.equal(dispatchSubmit(app).defaultPrevented, true);
+  await app.context.obFire('other', 'Нажатие');
+  assert.equal(calls.length, 1, 'another handler raced the question');
+  assert.equal((await app.context.obRequestFormClose({mode: 'save'})).allowed, false);
+  assert.equal(calls.length, 1, 'another close-save raced the question');
+  question.onAnswer('Да');
+  assert.equal((await pending).allowed, true);
+  assert.equal(calls.length, 3);
+  assert.equal(calls[1].options.body.get('_question_answer'), 'Да');
+  assert.equal(closeMode(calls[2].options), 'post');
+  assert.equal(dispatchSubmit(app).defaultPrevented, false, 'handoff remained locked');
+});
+
+for (const dismiss of [false, true]) {
+  test('before-post: edits before the question survive ' + (dismiss ? 'dismissal' : 'answer and posting'), async () => {
+    const rows = [{Количество: 2}];
+    const table = [{Значение: 'новое'}];
+    const {app, calls} = beforePostRuntime([
+      {ok: true, dirty: true, values: {Наименование: 'Правка перед вопросом'},
+        tableparts: {Товары: rows}, formTables: {Результат: table},
+        question: {text: 'Провести?', variants: ['Да']}},
+      {ok: true},
+      (url, options) => ({ok: true, close: {intentId: closeIntent(options), allowed: true, saved: true}}),
+    ]);
+    app.form.values.set('tp_json.Товары', '[]');
+    app.context.applyTableParts = (parts) => {
+      app.applied.push(['parts', parts]);
+      for (const [name, data] of Object.entries(parts || {})) app.form.values.set('tp_json.' + name, JSON.stringify(data));
+    };
+    let question;
+    app.context.obOpenQuestion = (payload, elementName, handlers) => { question = handlers; };
+    const pending = app.context.obRequestFormClose({mode: 'post'});
+    await waitFor(() => question);
+    assert.equal(app.form.values.get('Наименование'), 'Правка перед вопросом');
+    assert.equal(app.context._obFormDirty, true);
+    assert.ok(app.applied.some(([kind, data]) => kind === 'tables' && data && data.Результат === table));
+    if (dismiss) question.onDismiss();
+    else question.onAnswer('Да');
+    assert.equal((await pending).allowed, !dismiss);
+    assert.equal(calls.length, dismiss ? 1 : 3);
+    for (const call of calls.slice(1)) {
+      assert.equal(call.options.body.get('Наименование'), 'Правка перед вопросом');
+      assert.equal(call.options.body.get('tp_json.Товары'), JSON.stringify(rows));
+    }
+    if (dismiss) assert.equal(app.context._obFormDirty, true);
+    assert.equal(dispatchSubmit(app).defaultPrevented, false);
+  });
+}
+
+test('before-post: a question response preserves newer input and merges untouched fields', async () => {
+  let complete;
+  let question;
+  const app = runtime(() => new Promise((resolve) => { complete = resolve; }),
+    {kind: 'document', docId: 'doc-1', beforePost: true}, true);
+  app.form.values.set('Статус', 'Исходный');
+  app.form.values.set('tp_json.Товары', '[{"Количество":1}]');
+  app.context.obOpenQuestion = (payload, elementName, handlers) => { question = handlers; };
+  const pending = app.context.obRequestFormClose({mode: 'post'});
+  await waitFor(() => complete);
+  app.form.values.set('Наименование', 'Свежий ввод');
+  app.form.values.set('tp_json.Товары', '[{"Количество":3}]');
+  app.context.obSetManagedFormDirty(true);
+  complete(response({ok: true, dirty: false, version: 2,
+    values: {Наименование: 'Старый ответ', Статус: 'Правка обработчика'},
+    tableparts: {Товары: [{Количество: 2}]},
+    question: {text: 'Провести?', variants: ['Да']}}));
+  await waitFor(() => question);
+  assert.equal(app.form.values.get('Наименование'), 'Свежий ввод');
+  assert.equal(app.form.values.get('Статус'), 'Правка обработчика');
+  assert.ok(app.applied.some(([kind, data]) => kind === 'parts' && JSON.stringify(data) === '{}'));
+  assert.equal(app.context._obFormDirty, true);
+  question.onDismiss();
+  assert.equal((await pending).allowed, false);
+});
+
+test('before-post: standard submit carries edits from before the question into posting', async () => {
+  const {app, calls} = beforePostRuntime([
+    {ok: true, dirty: true, values: {Наименование: 'До вопроса'},
+      tableparts: {Товары: [{Количество: 2}]}, question: {text: 'Провести?', variants: ['Да']}},
+    {ok: true},
+  ]);
+  let question;
+  let posted;
+  app.context.applyTableParts = (parts) => {
+    for (const [name, rows] of Object.entries(parts || {})) app.form.values.set('tp_json.' + name, JSON.stringify(rows));
+  };
+  app.context.obOpenQuestion = (payload, elementName, handlers) => { question = handlers; };
+  const submitter = {name: '_action', value: 'post'};
+  function submit() {
+    const event = {target: app.form, submitter, defaultPrevented: false,
+      preventDefault() { this.defaultPrevented = true; },
+      stopImmediatePropagation() { this.immediatePropagationStopped = true; }};
+    app.document.dispatch('submit', event);
+    if (!event.defaultPrevented) posted = new Map(app.form.values);
+    return event;
+  }
+  app.form.requestSubmit = (button) => { assert.equal(button, submitter); submit(); };
+  assert.equal(submit().defaultPrevented, true);
+  await waitFor(() => question);
+  assert.equal(posted, undefined);
+  assert.equal(dispatchSubmit(app).defaultPrevented, true, 'save raced the question');
+  question.onAnswer('Да');
+  await waitFor(() => posted);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].options.body.get('Наименование'), 'До вопроса');
+  assert.equal(posted.get('Наименование'), 'До вопроса');
+  assert.equal(posted.get('tp_json.Товары'), '[{"Количество":2}]');
+});
+
+test('before-post: Отказ cancels post-and-close without a close intent', async () => {
+  const {app, calls} = beforePostRuntime([{ok: true, cancel: true, messages: ['нельзя']}]);
+  const decision = await app.context.obRequestFormClose({reason: 'post_and_close', mode: 'post'});
+  assert.equal(decision.allowed, false);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/ui/catalog/Тест/form-event');
+  assert.equal(formEventName(calls[0]), 'ПередПроведением');
+  assert.equal(calls[0].options.body.get('_element'), '');
+  assert.ok(app.applied.some((entry) => entry[0] === 'flash' && entry[1] === 'нельзя'));
+});
+
+test('before-post: no objection continues with the post close intent', async () => {
+  const {app, calls} = beforePostRuntime([
+    {ok: true, values: {Наименование: 'Проверено'}},
+    (url, options) => ({ok: true, close: {intentId: closeIntent(options), allowed: true, saved: true}}),
+  ]);
+  const decision = await app.context.obRequestFormClose({reason: 'post_and_close', mode: 'post'});
+  assert.equal(decision.allowed, true);
+  assert.equal(calls.length, 2);
+  assert.equal(formEventName(calls[0]), 'ПередПроведением');
+  assert.equal(calls[1].url, '/ui/catalog/Тест/form-close-intent');
+  assert.equal(closeMode(calls[1].options), 'post');
+  // Правка обработчика уходит в проведение.
+  assert.equal(calls[1].options.body.get('Наименование'), 'Проверено');
+});
+
+test('before-post: question answer re-fires the same event, dismiss cancels', async () => {
+  const opened = [];
+  const {app, calls} = beforePostRuntime([
+    {ok: true, question: {text: 'Выдать?', variants: ['Да', 'Отмена']}},
+    {ok: true, values: {Наименование: 'Ответ Да'}},
+    (url, options) => ({ok: true, close: {intentId: closeIntent(options), allowed: true, saved: true}}),
+    {ok: true, question: {text: 'Выдать?', variants: ['Да', 'Отмена']}},
+  ]);
+  app.context.obOpenQuestion = (payload, elementName, handlers) => opened.push({payload, elementName, handlers});
+
+  const pending = app.context.obRequestFormClose({reason: 'post_and_close', mode: 'post'});
+  for (let i = 0; i < 20 && !opened.length; i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].elementName, '');
+  assert.equal(calls.length, 1);
+  opened[0].handlers.onAnswer('Да');
+  const decision = await pending;
+  assert.equal(decision.allowed, true);
+  assert.equal(calls.length, 3);
+  assert.equal(formEventName(calls[1]), 'ПередПроведением');
+  assert.equal(calls[1].options.body.get('_question_answer'), 'Да');
+  assert.equal(calls[2].options.body.get('Наименование'), 'Ответ Да');
+
+  const second = app.context.obRequestFormClose({reason: 'post_and_close', mode: 'post'});
+  for (let i = 0; i < 20 && opened.length < 2; i++) await new Promise((resolve) => setImmediate(resolve));
+  opened[1].handlers.onDismiss();
+  assert.equal((await second).allowed, false);
+  assert.equal(calls.length, 4);
+});
+
+test('before-post: «Провести» submit waits for the handler and resubmits the same button', async () => {
+  const {app, calls} = beforePostRuntime([{ok: true}]);
+  const clicks = [];
+  const submitter = {name: '_action', value: 'post', click() { clicks.push('post'); }};
+  const event = {
+    target: app.form, submitter, defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+    stopPropagation() { this.propagationStopped = true; },
+    stopImmediatePropagation() { this.immediatePropagationStopped = true; },
+  };
+  app.document.dispatch('submit', event);
+  assert.equal(event.defaultPrevented, true);
+  for (let i = 0; i < 20 && !clicks.length; i++) await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(clicks, ['post']);
+  assert.equal(calls.length, 1);
+  assert.equal(formEventName(calls[0]), 'ПередПроведением');
+
+  // Обычная «Записать» обработчик не спрашивает.
+  const save = {
+    target: app.form, submitter: {name: '_action', value: ''}, defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+    stopPropagation() {}, stopImmediatePropagation() { this.immediatePropagationStopped = true; },
+  };
+  app.document.dispatch('submit', save);
+  assert.equal(save.defaultPrevented, false);
+  assert.equal(calls.length, 1);
+});
+
+test('before-post: without a handler post-and-close goes straight to the close intent', async () => {
+  const calls = [];
+  const app = runtime(async (url, options) => {
+    calls.push({url, options});
+    return response({ok: true, close: {intentId: closeIntent(options), allowed: true, saved: true}});
+  }, {kind: 'document', docId: 'doc-1'});
+  assert.equal((await app.context.obRequestFormClose({reason: 'post_and_close', mode: 'post'})).allowed, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, '/ui/catalog/Тест/form-close-intent');
+});
+
+for (const viaClose of [false, true]) {
+  test('before-post: concurrent edits cancel ' + (viaClose ? 'post-and-close' : 'standard post') + ' until a fresh check', async () => {
+    const calls = [];
+    let complete;
+    let posted;
+    const app = runtime((url, options) => {
+      calls.push({url, options});
+      if (url.endsWith('/form-event')) return new Promise((resolve) => { complete = resolve; });
+      return Promise.resolve(response({ok: true, close: {intentId: closeIntent(options), allowed: true, saved: true}}));
+    }, {kind: 'document', docId: 'doc-1', beforePost: true});
+    const submitter = {name: '_action', value: 'post'};
+    function submit() {
+      const event = {target: app.form, submitter, defaultPrevented: false,
+        preventDefault() { this.defaultPrevented = true; },
+        stopImmediatePropagation() { this.immediatePropagationStopped = true; }};
+      app.document.dispatch('submit', event);
+      if (!event.defaultPrevented) posted = new Map(app.form.values);
+    }
+    app.form.requestSubmit = () => submit();
+    const first = viaClose ? app.context.obRequestFormClose({mode: 'post'}) : (submit(), null);
+    await waitFor(() => complete);
+    assert.equal(calls[0].options.body.get('Наименование'), 'Черновик');
+    app.form.values.set('Наименование', 'Новое значение требует проверки');
+    app.context.obSetManagedFormDirty(true);
+    complete(response({ok: true, values: {Наименование: 'Старый ответ'}}));
+    if (viaClose) assert.equal((await first).allowed, false);
+    else await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(posted, undefined, 'new fields were posted with old permission');
+    assert.equal(calls.length, 1, 'old permission opened a close intent');
+    assert.equal(app.form.values.get('Наименование'), 'Новое значение требует проверки');
+    assert.equal(app.context._obFormDirty, true);
+    complete = null;
+    const second = viaClose ? app.context.obRequestFormClose({mode: 'post'}) : (submit(), null);
+    await waitFor(() => complete);
+    assert.equal(calls[1].options.body.get('Наименование'), 'Новое значение требует проверки');
+    complete(response({ok: true}));
+    if (viaClose) assert.equal((await second).allowed, true);
+    else { await waitFor(() => posted); assert.equal(posted.get('Наименование'), 'Новое значение требует проверки'); }
+    assert.equal(calls.length, viaClose ? 3 : 2);
+  });
+}
+
+for (const failure of ['network', 'timeout']) {
+  for (const edit of [false, true]) {
+    test('before-post: ' + failure + ' replays post-close before a new check, edited=' + edit, async () => {
+      const calls = [];
+      const app = runtime(async (url, options) => {
+        calls.push({url, options});
+        if (url.endsWith('/form-event')) return response({ok: true});
+        if (calls.length === 2) {
+          const err = new Error('lost close result');
+          if (failure === 'timeout') err.name = 'AbortError';
+          throw err;
+        }
+        return response({ok: true, close: {intentId: closeIntent(options), allowed: true, saved: true}});
+      }, {kind: 'document', docId: 'doc-1', beforePost: true});
+      const first = await app.context.obRequestFormClose({reason: 'post_and_close', mode: 'post'});
+      assert.equal(first.error, failure);
+      if (edit) {
+        app.form.values.set('Наименование', 'Ввод после потерянного ответа');
+        app.context.obSetManagedFormDirty(true);
+      }
+      const recovered = await app.context.obRequestFormClose({reason: 'post_and_close', mode: 'post'});
+      assert.equal(calls.length, 3, 'replay must bypass a new form event');
+      assert.equal(calls[2].url, calls[1].url);
+      assert.equal(closeIntent(calls[2].options), first.intentId);
+      assert.equal(calls[2].options.body.toString(), calls[1].options.body.toString());
+      assert.equal(calls[2].options.headers['X-OneBase-Close-First-Attempt'], '');
+      assert.equal(recovered.allowed, !edit);
+      if (edit) {
+        assert.equal(recovered.error, 'form-changed');
+        assert.equal(app.form.values.get('Наименование'), 'Ввод после потерянного ответа');
+      }
+      assert.equal((await app.context.obRequestFormClose({reason: 'post_and_close', mode: 'post'})).allowed, true);
+      assert.equal(calls.length, 5);
+      assert.equal(formEventName(calls[3]), 'ПередПроведением');
+      assert.notEqual(closeIntent(calls[4].options), first.intentId);
+      assert.equal(calls[3].options.body.get('Наименование'), edit ? 'Ввод после потерянного ответа' : 'Черновик');
+    });
+  }
+}
+
+test('before-post: edits committed while serializing post-close invalidate approval', async () => {
+  const {app, calls} = beforePostRuntime([{ok: true}]);
+  let syncs = 0;
+  app.context.obGridSync = () => {
+    // Form-event snapshots synchronize twice. The close snapshot runs next.
+    if (++syncs === 3) {
+      app.form.values.set('Наименование', 'Новая правка ячейки');
+      app.context.obSetManagedFormDirty(true);
+    }
+    return true;
+  };
+  const result = await app.context.obRequestFormClose({mode: 'post'});
+  assert.equal(result.allowed, false);
+  assert.equal(result.error, 'form-changed');
+  assert.equal(calls.length, 1);
+  assert.equal(app.form.values.get('Наименование'), 'Новая правка ячейки');
+});
+
+test('before-post: native post recovers an unknown close before starting a fresh operation', async () => {
+  const calls = [];
+  const app = runtime(async (url, options) => {
+    calls.push({url, options});
+    if (url.endsWith('/form-event')) return response({ok: true});
+    if (calls.length === 2) throw new Error('lost result');
+    return response({ok: true, close: {intentId: closeIntent(options), allowed: true, saved: true}});
+  }, {kind: 'document', docId: 'doc-1', beforePost: true});
+  const first = await app.context.obRequestFormClose({reason: 'post_and_close', mode: 'post'});
+  assert.equal(first.error, 'network');
+  let posted = false;
+  const submitter = {name: '_action', value: 'post'};
+  app.form.requestSubmit = () => { posted = true; };
+  const event = {target: app.form, submitter, defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+    stopImmediatePropagation() { this.immediatePropagationStopped = true; }};
+  app.document.dispatch('submit', event);
+  assert.equal(event.defaultPrevented, true);
+  await waitFor(() => calls.length === 3);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(posted, false, 'recovery must not start another post');
+  assert.equal(closeIntent(calls[2].options), first.intentId);
+  assert.equal(calls[2].options.body.toString(), calls[1].options.body.toString());
+  assert.equal(calls.filter((call) => call.url.endsWith('/form-event')).length, 1);
+  const second = {...event, defaultPrevented: false, immediatePropagationStopped: false};
+  app.document.dispatch('submit', second);
+  await waitFor(() => posted);
+  assert.equal(calls.length, 4);
+  assert.equal(formEventName(calls[3]), 'ПередПроведением');
+});

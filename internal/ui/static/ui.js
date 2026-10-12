@@ -4328,8 +4328,10 @@ function refContextForRequest(sel) {
    пользователя уходит событием Ответ с _question_answer — сервер кладёт его
    в переменную ВопросОтвет и вызывает обработчик Ответ того же элемента.
    Диалог неблокирующий: клик мимо закрывает модал без ответа (обработчик фазы 1
-   сам решает, что делать без второй фазы). */
-function obOpenQuestion(payload, elementName) {
+   сам решает, что делать без второй фазы).
+   handlers (необязательно) — {onAnswer(variant), onDismiss()}: ответ уходит не
+   событием Ответ элемента, а вызывающему (вопрос ПередПроведением). */
+function obOpenQuestion(payload, elementName, handlers) {
   if (!payload || !payload.variants || !payload.variants.length) return;
   var old = document.getElementById('_question-modal');
   if (old) old.remove();
@@ -4357,6 +4359,7 @@ function obOpenQuestion(payload, elementName) {
     btn.style.cssText = 'padding:8px 16px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:14px';
     btn.addEventListener('click', function () {
       modal.remove();
+      if (handlers && typeof handlers.onAnswer === 'function') { handlers.onAnswer(variant); return; }
       if (typeof obFire === 'function') obFire(elementName, 'Ответ', { _question_answer: variant });
     });
     row.appendChild(btn);
@@ -4364,7 +4367,9 @@ function obOpenQuestion(payload, elementName) {
   box.appendChild(row);
   modal.appendChild(box);
   modal.addEventListener('click', function (ev) {
-    if (ev.target === modal) modal.remove();
+    if (ev.target !== modal) return;
+    modal.remove();
+    if (handlers && typeof handlers.onDismiss === 'function') handlers.onDismiss();
   });
   document.body.appendChild(modal);
 }

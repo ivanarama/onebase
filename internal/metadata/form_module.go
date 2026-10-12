@@ -61,6 +61,13 @@ const (
 	// вопрос билтином ПоказатьВопрос (фаза 1, например Нажатие), ответ
 	// пользователя приезжает событием Ответ с переменной ВопросОтвет.
 	FormEventOnAnswer FormEventType = "Ответ" // OnAnswer
+	// ПередПроведением — проверка перед проведением документа стандартными
+	// «Провести» и «Провести и закрыть» управляемой формы, как ПередЗаписью
+	// обычной формы 1С в режиме проведения. Обработчик вправе задать вопрос
+	// (ПоказатьВопрос): ответ возвращается тем же событием в ВопросОтвет. Отказ
+	// отменяет проведение; без отказа и без вопроса браузер проводит документ
+	// как обычно.
+	FormEventBeforePost FormEventType = "ПередПроведением" // BeforePost
 )
 
 var knownFormEventTypes = map[FormEventType]bool{
@@ -75,7 +82,7 @@ var knownFormEventTypes = map[FormEventType]bool{
 	FormEventBeforeRowDelete: true, FormEventStartListChoice: true,
 	FormEventAutoComplete: true, FormEventExecuteCommand: true, FormEventOnChoice: true,
 	FormEventOnSearch: true,
-	FormEventOnAnswer: true,
+	FormEventOnAnswer: true, FormEventBeforePost: true,
 }
 
 // formTablePartContextVars — имена, которые платформа инжектирует в обработчик
