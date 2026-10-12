@@ -221,6 +221,7 @@ func sandboxBuiltinFormatsValues(operation string) bool {
 		"strtemplate", "стршаблон", "trimleft", "сокрл", "trimright", "сокрп",
 		"stroccurrencecount", "стрчисловхождений", "strlinecount", "стрчислострок",
 		"strgetline", "стрполучитьстроку", "strcompare", "стрсравнить",
+		"levenshteindistance", "расстояниелевенштейна",
 		"isblankstring", "пустаястрока", "titlecase", "трег", "nstr", "нстр",
 		"readjson", "прочитатьjson", "writejson", "записатьjson":
 		return true
