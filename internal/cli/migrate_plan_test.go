@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"context"
+	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/storage"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -116,5 +119,52 @@ func TestMigratePlanShowsRenameAndKeepsDataIntact(t *testing.T) {
 	}
 	if again != out {
 		t.Errorf("пробный прогон изменил базу — второй план отличается:\n--- первый ---\n%s\n--- второй ---\n%s", out, again)
+	}
+}
+
+// Проверяем именно команду dry-run: передача бухрегистров в PlanLongIdents
+// обязательна, даже если тест самого storage-плана проходит.
+func TestMigrateDryRunListsLongAccountTable(t *testing.T) {
+	const name = "БухгалтерскийРегистрСОченьДлиннымИменемИзКонфигурацииОдинЭс"
+	dir := t.TempDir()
+	dbPath := filepath.Join(t.TempDir(), "long-account.db")
+	writeProcrunFixture(t, dir, "config/app.yaml", "name: long-account\n")
+	writeProcrunFixture(t, dir, "accountregs/Регистр.yaml", "name: "+name+"\nresources:\n  - name: Сумма\n    type: number\n")
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.EnsureServiceSchema(ctx); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	old := metadata.AccountRegTableLogical(name)
+	target := metadata.AccountRegTableName(name)
+	// Таблица движений до #1949; для планирования достаточно её существования.
+	if _, err := db.Exec(ctx, "CREATE TABLE "+old+" (id TEXT PRIMARY KEY)"); err != nil {
+		db.Close()
+		t.Fatal(err)
+	}
+	db.Close()
+	out, err := captureStdout(t, func() error {
+		return runMigrate(migrateCmdFor(t, dir, dbPath, map[string]string{"dry-run": "true"}), nil)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "Длинные имена") || !strings.Contains(out, old+" → "+target) {
+		t.Fatalf("команда скрыла переименование бухрегистра:\n%s", out)
+	}
+	db, err = storage.ConnectSQLite(ctx, dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if exists, err := db.TableExists(ctx, old); err != nil || !exists {
+		t.Fatalf("dry-run изменил таблицу: %v", err)
+	}
+	if exists, err := db.TableExists(ctx, target); err != nil || exists {
+		t.Fatalf("dry-run создал новое имя: %v", err)
 	}
 }

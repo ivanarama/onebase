@@ -25,7 +25,8 @@ type QueryMaskPlan struct {
 	// byColumn — решения по имени результирующей колонки (нижний регистр).
 	byColumn map[string]FieldDecision
 	// byField — решения по именам полей для проекции «*»: имена колонок
-	// результата там совпадают с колонками таблиц.
+	// результата после query.RestoreLongLabels совпадают с логическими
+	// именами колонок таблиц.
 	byField map[string]FieldDecision
 }
 
@@ -172,7 +173,8 @@ func applyDecision(row map[string]any, key string, dec FieldDecision) {
 }
 
 // maskedSourceFields собирает решения по всем источникам запроса: по логическому
-// имени поля и, отдельно, по имени колонки таблицы (для проекции «*»).
+// имени поля и, отдельно, по логическому имени колонки (для проекции «*»):
+// query.Run и DSL восстанавливают полные имена до применения масок.
 func maskedSourceFields(u *auth.User, sources []query.SourceRef, lookup func(kind, name string) *metadata.Entity) (byField, byColumn map[string]FieldDecision) {
 	if u == nil || (u.IsAdmin && !MaskAdmin()) {
 		return nil, nil
@@ -194,7 +196,7 @@ func maskedSourceFields(u *auth.User, sources []query.SourceRef, lookup func(kin
 		for field, dec := range FieldDecisions(u, src.Kind, src.Name, meta) {
 			put(byField, field, dec)
 			if f, ok := concreteMetaField(meta, field); ok {
-				put(byColumn, metadata.ColumnName(f), dec)
+				put(byColumn, metadata.LogicalColumnName(f), dec)
 			} else {
 				put(byColumn, field, dec)
 			}

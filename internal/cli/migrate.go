@@ -106,6 +106,9 @@ func runMigrate(cmd *cobra.Command, _ []string) error {
 
 // printMigrationPlan показывает, что сделает реструктуризация, ничего не меняя.
 func printMigrationPlan(ctx context.Context, db *storage.DB, proj *project.Project) error {
+	if err := printLongIdentPlan(ctx, db, proj); err != nil {
+		return err
+	}
 	plan, err := db.PlanMigration(ctx, proj.Entities, proj.Registers, proj.InfoRegisters)
 	if err != nil {
 		return err
@@ -140,6 +143,10 @@ func printMigrationPlan(ctx context.Context, db *storage.DB, proj *project.Proje
 // migrate и раннером тестов (onebase test), которому нужна готовая схема на
 // свежей (в т.ч. :memory:) базе.
 func applyAllMigrations(ctx context.Context, db *storage.DB, proj *project.Project) error {
+	if err := db.CheckLongIdents(ctx, proj.Entities, proj.Registers, proj.InfoRegisters, proj.AccountRegisters); err != nil {
+		return err
+	}
+
 	// Реквизиты reference:_users создают FK на auth-таблицу. Подготовить её
 	// нужно до сущностей, в том числе на свежей базе migrate/test.
 	if err := auth.NewRepo(db).EnsureSchema(ctx); err != nil {
@@ -189,4 +196,32 @@ func dsnFromFlags(cmd *cobra.Command) string {
 		return dsn
 	}
 	return "postgres://localhost/onebase"
+}
+
+// printLongIdentPlan — инвентаризация длинных имён (#1946): какие таблицы и
+// колонки миграция переименует и где откажет. Печатается, только если есть
+// что показать; без длинных имён вывод dry-run прежний.
+func printLongIdentPlan(ctx context.Context, db *storage.DB, proj *project.Project) error {
+	plan, err := db.PlanLongIdents(ctx, proj.Entities, proj.Registers, proj.InfoRegisters, proj.AccountRegisters)
+	if err != nil {
+		return err
+	}
+	if len(plan) == 0 {
+		return nil
+	}
+	conflicts := 0
+	outf("Длинные имена (#1946, docs/long-identifiers.md), %d:\n", len(plan))
+	for _, a := range plan {
+		outln("  " + a.String())
+		if a.Conflict != "" {
+			conflicts++
+		}
+	}
+	if conflicts > 0 {
+		outf("Конфликтов: %d — миграция на них откажет, ничего не переименовав в этих таблицах.\n", conflicts)
+	} else {
+		outln("Переименование — ALTER … RENAME, данные не копируются. Снимите резервную копию: старая платформа переименованную базу не прочитает.")
+	}
+	outln("")
+	return nil
 }

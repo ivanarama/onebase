@@ -303,7 +303,10 @@ func (db *DB) AddColumnIfMissing(ctx context.Context, table, col, typ string) er
 
 // HierarchyColumnsSQL adds parent_id/is_folder columns and an index.
 // Now executes against db directly (was returning raw SQL); use db.AddColumnIfMissing.
-func (db *DB) AddHierarchyColumns(ctx context.Context, tableName string) error {
+// logicalTable — логическое имя таблицы (metadata.TableLogical): от него, а не
+// от сокращённого tableName, строится имя индекса, чтобы найти индекс, заведённый
+// до #1946 под длинным именем.
+func (db *DB) AddHierarchyColumns(ctx context.Context, tableName, logicalTable string) error {
 	d := db.dialect
 	if err := db.AddColumnIfMissing(ctx, tableName, "parent_id", d.TypeUUID()); err != nil {
 		return err
@@ -311,6 +314,10 @@ func (db *DB) AddHierarchyColumns(ctx context.Context, tableName string) error {
 	if err := db.AddColumnIfMissing(ctx, tableName, "is_folder", d.TypeBool()+" NOT NULL DEFAULT "+boolFalseLit(d)); err != nil {
 		return err
 	}
-	_, err := db.Exec(ctx, "CREATE INDEX IF NOT EXISTS idx_"+tableName+"_parent ON "+tableName+" (parent_id)")
+	idx, err := db.indexName(ctx, tableName, "idx_"+logicalTable+"_parent")
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(ctx, "CREATE INDEX IF NOT EXISTS "+idx+" ON "+tableName+" (parent_id)")
 	return err
 }
