@@ -1341,6 +1341,10 @@ const tplHead = `
 <script type="application/json" id="ob-ui-messages">{{jsJSON (dict
   "closeNotConfirmed" (t (or $.Lang "ru") "Форма не закрыта: сервер не подтвердил закрытие.")
   "unsavedClose" (t (or $.Lang "ru") "Данные были изменены и не записаны. Закрыть форму?")
+  "refChoose" (t (or $.Lang "ru") "Выберите ссылку из результатов поиска или очистите поле.")
+  "refSearchError" (t (or $.Lang "ru") "Не удалось проверить ссылку. Повторите поиск.")
+  "refSearchEmpty" (t (or $.Lang "ru") "Ничего не найдено")
+  "refSearchLoading" (t (or $.Lang "ru") "Поиск...")
 )}}</script>
 <script src="/static/ui.js"></script>
 <style>

@@ -1561,5 +1561,7 @@
   "Сбросить к общей настройке": "Reset to common settings",
   "Повреждённая личная настройка пропущена. Показано общее меню; сохранение или сброс исправит этот слой.": "Invalid personal settings were skipped. The common menu is shown; save or reset to repair this layer.",
   "Повреждённая общая настройка пропущена. Обратитесь к администратору базы.": "Invalid common settings were skipped. Contact your database administrator.",
-  "Равные колонки": "Equal columns"
+  "Равные колонки": "Equal columns",
+  "Выберите ссылку из результатов поиска или очистите поле.": "Choose a reference from the search results or clear the field.",
+  "Не удалось проверить ссылку. Повторите поиск.": "The reference could not be verified. Search again."
 }
