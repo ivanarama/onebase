@@ -1588,6 +1588,19 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 		// (reconcile), как и раньше (#1685).
 		envelope.first = '';
       } else {
+        // These buttons bypass native submit validation. Check the same
+        // reference input validity before allocating a fresh writing intent.
+        // An unknown prior intent must replay its original UUID/body even if
+        // the user has since entered invalid text in the live form.
+        if (mode === 'save' || mode === 'post' || mode === 'save_and_select') {
+          var form = document.getElementById('main-form');
+          var references = form ? form.querySelectorAll('[data-ob-ref-search]') : [];
+          for (var i = 0; i < references.length; i++) {
+            if (!references[i].reportValidity()) {
+              return {allowed: false, intentId: '', error: 'invalid-reference'};
+            }
+          }
+        }
 		envelope = {
 		  intentId: freshCloseIntentID(),
 		  epoch: CLOSE_EPOCH,

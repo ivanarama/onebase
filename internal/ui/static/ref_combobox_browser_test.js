@@ -27,6 +27,66 @@ const cfg = JSON.parse(process.env.ONEBASE_REF_BROWSER);
     assert.equal(await text.inputValue(), 'needle legacy B');
     assert.equal(await text.getAttribute('aria-controls'), await page.locator('[data-ob-el="ПолеНеисправность"] [role=listbox]').getAttribute('id'));
     assert.equal(await page.locator('label[for="' + await text.getAttribute('id') + '"]').count(), 1);
+    if (cfg.optional) {
+      // A real native save establishes a durable optional reference first.
+      await search('needle');
+      await options.first().click();
+      const selected = await hidden('Неисправность').inputValue();
+      const nativeSave = page.waitForResponse(r => r.request().method() === 'POST' && r.url().includes('/ui/document/'));
+      await page.getByRole('button', { name: 'Записать', exact: true }).click();
+      assert.equal((await nativeSave).status(), 303);
+      await page.goto(formURL);
+      await text.waitFor();
+      assert.equal(await hidden('Неисправность').inputValue(), selected);
+      assert.equal(await text.evaluate(e => e.required), false);
+      let closeRequests = 0;
+      page.on('request', r => { if (r.url().includes('/form-close-intent')) closeRequests++; });
+      await text.fill('unselected reference');
+      assert.equal(await text.evaluate(e => e.checkValidity()), false);
+      assert.equal(await hidden('Неисправность').inputValue(), '');
+      await page.getByRole('button', { name: 'ОК', exact: true }).click();
+      // Await controller completion, not a fixed delay, then inspect transport.
+      const refused = await page.evaluate(() => window.obRequestFormClose({reason: 'ok', mode: 'save'}));
+      assert.equal(refused.allowed, false);
+      assert.equal(refused.error, 'invalid-reference');
+      for (const mode of ['post', 'save_and_select']) {
+        const decision = await page.evaluate(mode => window.obRequestFormClose({reason: 'ok', mode}), mode);
+        assert.equal(decision.allowed, false);
+        assert.equal(decision.error, 'invalid-reference');
+      }
+      assert.equal(closeRequests, 0, 'invalid optional text reached the write endpoint');
+      assert.equal(await text.inputValue(), 'unselected reference');
+      assert.equal(page.url(), new URL(formURL).href);
+      // A separate GET proves that the old durable UUID survived the refusal.
+      const stored = await browser.newPage();
+      await stored.goto(formURL);
+      await stored.locator('[data-ob-el="ПолеНеисправность"] [role=combobox]').waitFor();
+      assert.equal(await stored.locator('input[type=hidden][name="Неисправность"]').inputValue(), selected);
+      await stored.close();
+      await search('needle');
+      await options.nth(1).click();
+      const replacement = await hidden('Неисправность').inputValue();
+      const closeSave = page.waitForResponse(r => r.url().includes('/form-close-intent'));
+      await page.getByRole('button', { name: 'ОК', exact: true }).click();
+      const saved = await (await closeSave).json();
+      assert.equal(saved.close.saved, true);
+      assert.equal(saved.close.allowed, true);
+      await page.goto(formURL);
+      await text.waitFor();
+      assert.equal(await hidden('Неисправность').inputValue(), replacement);
+      // Empty optional input remains a valid explicit clear.
+      await text.fill('');
+      assert.equal(await text.evaluate(e => e.checkValidity()), true);
+      const clearSave = page.waitForResponse(r => r.url().includes('/form-close-intent'));
+      await page.getByRole('button', { name: 'ОК', exact: true }).click();
+      assert.equal((await (await clearSave).json()).close.saved, true);
+      await page.goto(formURL);
+      await text.waitFor();
+      assert.equal(await hidden('Неисправность').inputValue(), '');
+      assert.deepEqual(errors, []);
+      console.log('PASS: optional reference OK/save/post/save_and_select refusal, durable UUID, valid replacement and clear');
+      return;
+    }
     await text.fill('n');
     assert.equal(await hidden('Неисправность').inputValue(), '');
     assert.equal(await text.evaluate(e => e.checkValidity()), false);

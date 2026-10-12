@@ -21,6 +21,11 @@ import (
 // This test drives the actual HTTP form, scripts, browser validation and save.
 // npm ci in e2e/ and Playwright Chromium are required; no DOM stub is used.
 func TestManagedRefComboboxBrowser(t *testing.T) {
+	t.Run("required", func(t *testing.T) { testManagedRefComboboxBrowser(t, true) })
+	t.Run("optional-close", func(t *testing.T) { testManagedRefComboboxBrowser(t, false) })
+}
+
+func testManagedRefComboboxBrowser(t *testing.T, required bool) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		if os.Getenv("ONEBASE_REQUIRE_REF_BROWSER") == "1" {
@@ -43,9 +48,9 @@ func TestManagedRefComboboxBrowser(t *testing.T) {
 	}
 	form := f.owner.Forms[0]
 	f.owner.Fields = append(f.owner.Fields, metadata.Field{Name: "Запрет", Type: metadata.FieldTypeBool})
-	f.owner.Fields[1].Required = true
+	f.owner.Fields[1].Required = required
 	form.Elements[1].ReadOnlyWhen = "Запрет"
-	form.Elements[1].Required = true
+	form.Elements[1].Required = required
 	form.Attributes = append(form.Attributes, &metadata.FormAttribute{Name: "Просмотр", TypeRef: "CatalogRef." + f.target.Name})
 	form.Elements = append(form.Elements,
 		&metadata.FormElement{ID: "lock", Name: "ПолеЗапрет", Kind: metadata.FormElementCheckbox, DataPath: "Объект.Запрет", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnChange: "Обновить"}},
@@ -100,7 +105,7 @@ func TestManagedRefComboboxBrowser(t *testing.T) {
 		inlineRouter.ServeHTTP(w, r.WithContext(auth.ContextWithUser(r.Context(), &auth.User{Login: "root", IsAdmin: true})))
 	}))
 	defer inlineServer.Close()
-	payload, _ := json.Marshal(map[string]string{"base": server.URL, "inlineBase": inlineServer.URL, "id": f.ownerID.String(), "rootA": f.rootA.String(), "rootB": f.rootB.String(), "pageTwo": f.pageTwo.String(), "legacy": f.legacySelected.String()})
+	payload, _ := json.Marshal(map[string]any{"optional": !required, "base": server.URL, "inlineBase": inlineServer.URL, "id": f.ownerID.String(), "rootA": f.rootA.String(), "rootB": f.rootB.String(), "pageTwo": f.pageTwo.String(), "legacy": f.legacySelected.String()})
 	cmd := exec.CommandContext(t.Context(), node, "static/ref_combobox_browser_test.js") //nolint:gosec // local test executable
 	cmd.Env = append(os.Environ(), "ONEBASE_REF_BROWSER="+string(payload))
 	out, err := cmd.CombinedOutput()
