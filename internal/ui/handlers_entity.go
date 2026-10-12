@@ -2000,29 +2000,6 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 // при ошибке ОбработкаПроведения; наружу уходит текст хука, не она сама.
 var errPostingHookFailed = errors.New("posting hook failed")
 
-// clearMovements removes all register movements (accumulation, info, account)
-// recorded by the given document, across every register. Passing nil rows to the
-// register writers performs only the DELETE-by-recorder step, so iterating all
-// registers is safe even for those the document never wrote to.
-func (s *Server) clearMovements(ctx context.Context, entityName string, id uuid.UUID) error {
-	for _, reg := range s.reg.Registers() {
-		if err := s.store.WriteMovements(ctx, reg.Name, entityName, id, nil, reg, nil); err != nil {
-			return err
-		}
-	}
-	for _, ir := range s.reg.InfoRegisters() {
-		if err := s.store.WriteInfoMovements(ctx, ir.Name, entityName, id, nil, ir, nil); err != nil {
-			return err
-		}
-	}
-	for _, ar := range s.reg.AccountRegisters() {
-		if err := s.store.WriteAccountMovements(ctx, ar.Name, entityName, id, nil, ar, nil); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // markForDeletion помечает/снимает пометку на удаление. При пометке проведённого
 // документа сперва отменяет проведение (чистит движения по всем регистрам и
 // снимает posted) — пометка и проведённость взаимоисключающи (как в 1С). Снятие
@@ -2037,11 +2014,15 @@ func (s *Server) markForDeletion(ctx context.Context, entity *metadata.Entity, i
 				return err
 			}
 			if asBool(row["posted"]) {
-				if err := s.clearMovements(txCtx, entity.Name, id); err != nil {
+				// Пометка проведённого документа снимает проведение так же, как
+				// «Отменить проведение», — с ОбработкаУдаленияПроведения, как в 1С.
+				// Отказ обработчика отменяет и пометку.
+				res, err := s.entityService().Unpost(txCtx, entity, id)
+				if err != nil {
 					return err
 				}
-				if err := s.store.SetPosted(txCtx, entity.Name, id, false); err != nil {
-					return err
+				if res.DSLError != "" {
+					return &markRefusedError{message: res.DSLError}
 				}
 			}
 		}
@@ -2067,6 +2048,12 @@ func (s *Server) markForDeletion(ctx context.Context, entity *metadata.Entity, i
 		return nil
 	})
 }
+
+// markRefusedError — ОбработкаУдаленияПроведения отказала в снятии проведения
+// при пометке на удаление: документ остаётся проведённым и непомеченным.
+type markRefusedError struct{ message string }
+
+func (e *markRefusedError) Error() string { return e.message }
 
 // unpostDocument clears movements, sets posted=false and runs
 // ОбработкаУдаленияПроведения in the same transaction.
@@ -2265,6 +2252,12 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 		if err := s.store.WithTx(r.Context(), func(ctx context.Context) error {
 			return s.markForDeletion(ctx, entity, id, true)
 		}); err != nil {
+			var refused *markRefusedError
+			if errors.As(err, &refused) {
+				// Обработчик отменил снятие проведения — документ на месте.
+				http.Error(w, s.errText(r, errors.New(refused.message)), http.StatusConflict)
+				return
+			}
 			s.serverError(w, r, err)
 			return
 		}

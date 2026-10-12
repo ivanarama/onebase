@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -21,6 +22,13 @@ import (
 // newPostingDoc поднимает SQLite-Server с проводимым документом ПоступлениеТоваров
 // (ТЧ Товары), который в ОбработкаПроведения пишет приход в регистр ОстаткиТоваров.
 func newPostingDoc(t *testing.T) (context.Context, *storage.DB, *Server, *docProxy, *metadata.Entity) {
+	t.Helper()
+	return newPostingDocWithModule(t, "")
+}
+
+// newPostingDocWithModule — тот же документ, в модуль которого дописаны
+// процедуры extraSrc (например, ОбработкаУдаленияПроведения).
+func newPostingDocWithModule(t *testing.T, extraSrc string) (context.Context, *storage.DB, *Server, *docProxy, *metadata.Entity) {
 	t.Helper()
 	ctx := context.Background()
 	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "test.db"))
@@ -62,7 +70,7 @@ func newPostingDoc(t *testing.T) (context.Context, *storage.DB, *Server, *docPro
 	registry := runtime.NewRegistry()
 	registry.Load(runtime.LoadOptions{
 		Entities:  []*metadata.Entity{doc},
-		Programs:  map[string]*ast.Program{"ПоступлениеТоваров": mustParse(t, onPostSrc)},
+		Programs:  map[string]*ast.Program{"ПоступлениеТоваров": mustParse(t, onPostSrc+"\n"+extraSrc)},
 		Registers: []*metadata.Register{reg},
 	})
 	interp := interpreter.New()
@@ -436,5 +444,95 @@ func TestDocWriterPost_DSL_PersistsOnPostFieldEdits(t *testing.T) {
 	}
 	if !posted {
 		t.Error("документ должен быть проведён после Провести()")
+	}
+}
+
+// Пометка проведённого документа на удаление снимает проведение, как
+// «Отменить проведение»: с ОбработкаУдаленияПроведения (как в 1С). Отказ
+// обработчика — 409, документ остаётся проведённым, непомеченным, движения на
+// месте. Путь — HTTP-обработчик кнопки «Пометить на удаление».
+func TestMarkForDeletion_RunsUnpostHook(t *testing.T) {
+	ctx, db, s, dp, doc := newPostingDocWithModule(t, `Процедура ОбработкаУдаленияПроведения()
+  ВызватьИсключение("снимать проведение нельзя");
+КонецПроцедуры`)
+	w := postOne(t, dp)
+	id := w.obj.ID.String()
+
+	rec := httptest.NewRecorder()
+	s.deleteRecord(rec, reqWithChi("POST", "/ui/document/ПоступлениеТоваров/"+id+"/delete?mark=1", url.Values{},
+		map[string]string{"kind": "document", "entity": doc.Name, "id": id}))
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "снимать проведение нельзя") {
+		t.Fatalf("отказ обработчика — 409 с его текстом, получено %d: %s", rec.Code, rec.Body.String())
+	}
+	row, err := db.GetByID(ctx, doc.Name, w.obj.ID, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !asBool(row["posted"]) || asBool(row["deletion_mark"]) {
+		t.Fatalf("документ должен остаться проведённым и непомеченным: posted=%v deletion_mark=%v", row["posted"], row["deletion_mark"])
+	}
+	var mov int
+	if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM рег_остаткитоваров").Scan(&mov); err != nil {
+		t.Fatal(err)
+	}
+	if mov != 1 {
+		t.Fatalf("движения должны остаться: %d", mov)
+	}
+}
+
+// Без отказа пометка снимает проведение через обработчик: он видит
+// непроведённый документ (как после «Отменить проведение»).
+func TestMarkForDeletion_UnpostHookSeesUnpostedDocument(t *testing.T) {
+	ctx, db, s, dp, doc := newPostingDocWithModule(t, `Процедура ОбработкаУдаленияПроведения()
+  Если ЭтотОбъект.Posted Тогда
+    ВызватьИсключение("обработчик увидел проведённый документ");
+  КонецЕсли;
+КонецПроцедуры`)
+	w := postOne(t, dp)
+	id := w.obj.ID.String()
+
+	rec := httptest.NewRecorder()
+	s.deleteRecord(rec, reqWithChi("POST", "/ui/document/ПоступлениеТоваров/"+id+"/delete?mark=1", url.Values{},
+		map[string]string{"kind": "document", "entity": doc.Name, "id": id}))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("пометка должна пройти, получено %d: %s", rec.Code, rec.Body.String())
+	}
+	row, err := db.GetByID(ctx, doc.Name, w.obj.ID, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asBool(row["posted"]) || !asBool(row["deletion_mark"]) {
+		t.Fatalf("документ должен стать непроведённым и помеченным: posted=%v deletion_mark=%v", row["posted"], row["deletion_mark"])
+	}
+	var mov int
+	if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM рег_остаткитоваров").Scan(&mov); err != nil {
+		t.Fatal(err)
+	}
+	if mov != 0 {
+		t.Fatalf("движения должны быть сняты: %d", mov)
+	}
+}
+
+// Пометка из кода конфигурации (Документы.X.УстановитьПометкуУдаления) идёт
+// тем же путём: отказ обработчика — ошибка, документ проведён.
+func TestDSLMarkForDeletion_RunsUnpostHook(t *testing.T) {
+	ctx, db, _, dp, doc := newPostingDocWithModule(t, `Процедура ОбработкаУдаленияПроведения()
+  ВызватьИсключение("снимать проведение нельзя");
+КонецПроцедуры`)
+	w := postOne(t, dp)
+	var raised any
+	func() {
+		defer func() { raised = recover() }()
+		dp.CallMethod("пометитьнаудаление", []any{&interpreter.Ref{UUID: w.obj.ID.String(), Type: doc.Name, Kind: doc.Kind}})
+	}()
+	if raised == nil || !strings.Contains(fmt.Sprint(raised), "снимать проведение нельзя") {
+		t.Fatalf("ожидался отказ обработчика, получено: %v", raised)
+	}
+	row, err := db.GetByID(ctx, doc.Name, w.obj.ID, doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !asBool(row["posted"]) || asBool(row["deletion_mark"]) {
+		t.Fatalf("документ должен остаться проведённым и непомеченным: posted=%v deletion_mark=%v", row["posted"], row["deletion_mark"])
 	}
 }
