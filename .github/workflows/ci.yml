@@ -272,7 +272,12 @@ jobs:
       # Coverage собирается тем же прогоном, чтобы не гонять тесты дважды.
       - name: Unit tests (-race, coverage)
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
-        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+        # Масштабный HTTP-тест с 2.1M строк запускается отдельным обязательным
+        # шагом e2e ниже: race-инструментация pure-Go SQLite тратит минуты на
+        # seed/LIKE и исчерпала общий бюджет UI в #2103. Остальные unit-тесты
+        # сохраняют -race и atomic coverage; конечный бюджет совпадает с UI
+        # в postgres-integration.
+        run: go test -race -timeout 20m -skip '^TestRefComboboxLargeCatalogPublicHTTP$' -coverprofile=coverage.out -covermode=atomic ./...
 
       # Раннеры работают в UTC, поэтому целый класс дефектов «время
       # канонизируется не в той зоне» для CI невидим: #945 поймали случайно, на
@@ -588,6 +593,13 @@ jobs:
         env:
           ONEBASE_REQUIRE_REF_BROWSER: '1'
         run: go test -count=1 -timeout 3m -v ./internal/ui -run '^TestManagedRefComboboxBrowser$'
+
+      # Полный каталог проверяется через публичные form/search HTTP routes
+      # без race-инструментации SQL-движка. Тест не уменьшает число строк и
+      # проверяет прежние total, limit и границы HTML/JSON; падение блокирует e2e.
+      - name: Large catalog managed reference acceptance
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        run: go test -count=1 -timeout 3m -v ./internal/ui -run '^TestRefComboboxLargeCatalogPublicHTTP$'
 
       - name: Run browser smoke suite
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
