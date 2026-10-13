@@ -116,7 +116,7 @@ func (s *Server) personalNavigationState(r *http.Request, sub string) (navigatio
 		}
 		return delta
 	}
-	mark(adminSetting, navigation.AdminLayer, state.configuration, "common")
+	mark(adminSetting, navigation.AdminLayer, state.adminBase, "common")
 	state.previous = mark(state.Setting, navigation.UserLayer, state.layerBase, "personal")
 	for id := range desiredNodes {
 		if strings.HasPrefix(id, "usr:") {

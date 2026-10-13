@@ -40,6 +40,7 @@ type navigationEditorState struct {
 	Renamed       []string
 	Origins       map[string]string
 	configuration navigation.Tree
+	adminBase     navigation.Tree
 	layerBase     navigation.Tree
 	effective     navigation.Tree
 	previous      navigation.Delta
@@ -53,12 +54,8 @@ func (s *Server) navigationEditorState(r *http.Request, sub string) (navigationE
 			return state, fmt.Errorf("unknown subsystem")
 		}
 		state.Base, state.Configured = s.configurationNavigation(current.Menu, &current.Contents, false, sub)
-	} else if hp := s.reg.HomePage(); hp != nil {
-		state.Base, state.Configured = s.configurationNavigation(hp.Menu, hp.Nav, true, "")
-		state.Flat = hp.Nav.IsEmpty()
 	} else {
-		state.Base, state.Configured = s.configurationNavigation(nil, nil, true, "")
-		state.Flat = true
+		state.Base, state.Configured, state.Flat = s.homeConfigurationNavigation(r)
 	}
 	var err error
 	state.Setting, err = s.store.GetNavigationSettings(r.Context(), storage.NavigationSettingsScope{Layer: navigation.AdminLayer, Context: state.Base.Context})
@@ -69,7 +66,13 @@ func (s *Server) navigationEditorState(r *http.Request, sub string) (navigationE
 	if state.Setting.Exists {
 		raw = []byte(state.Setting.Raw)
 	}
+	state.adminBase = state.Base
 	state.Desired, state.Diagnostics = navigation.Compose(state.Base, raw, nil)
+	// nav_by_role «Главной» или подсистемы: личный редактор не видит и не
+	// сохраняет объекты вне меню ролей пользователя (администратор — общее).
+	hp := s.navigationHomePage(sub)
+	state.Base = s.projectRoleNavigation(r, hp, state.Base)
+	state.Desired = s.projectRoleNavigation(r, hp, state.Desired)
 	return state, nil
 }
 

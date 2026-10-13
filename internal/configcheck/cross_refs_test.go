@@ -424,3 +424,97 @@ fields:
 		t.Errorf("сообщение должно называть оба вида объектов: %q", issues[0].Message)
 	}
 }
+
+// nav_by_role: опечатка в имени роли молча оставила бы ей общее меню, в имени
+// объекта — пункт пропал бы без следа. Обе ловит onebase check.
+func TestCheckCrossRefs_HomeNavByRole(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "documents", "ордер.yaml"), `name: Ордер
+fields:
+  - name: Номер
+    type: string`)
+	mkFile(t, filepath.Join(dir, "roles", "кладовщик.yaml"), `name: Кладовщик
+permissions:
+  documents:
+    Ордер: [read]`)
+	mkFile(t, filepath.Join(dir, "config", "home_page.yaml"), `nav_by_role:
+  Кладовщик:
+    documents: [Ордер, НетОрдера]
+  Кладовшик:
+    documents: [Ордер]
+`)
+	proj, err := project.Load(dir)
+	if err != nil {
+		t.Fatalf("project.Load: %v", err)
+	}
+	defer proj.Close()
+	roles, _ := auth.LoadRolesYAML(filepath.Join(dir, "roles"))
+	var badDoc, badRole bool
+	for _, i := range CheckCrossRefs(proj, roles) {
+		if i.Object == "home_page.nav_by_role.Кладовщик" && strings.Contains(i.Message, "НетОрдера") {
+			badDoc = true
+		}
+		if i.Object == "home_page.nav_by_role.Кладовшик" && strings.Contains(i.Message, "роль") {
+			badRole = true
+		}
+		if i.Object == "home_page.nav_by_role.Кладовщик" && strings.Contains(i.Message, "роль") {
+			t.Errorf("существующая роль названа ненайденной: %+v", i)
+		}
+	}
+	if !badDoc {
+		t.Error("ожидалась ошибка о несуществующем документе в составе роли")
+	}
+	if !badRole {
+		t.Error("ожидалась ошибка о несуществующей роли")
+	}
+}
+
+// nav_by_role подсистемы: опечатка в роли или объекте и объект вне contents
+// подсистемы (состав роли только сужает её меню — такой пункт не появится).
+func TestCheckCrossRefs_SubsystemNavByRole(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "documents", "ордер.yaml"), `name: Ордер
+fields:
+  - name: Номер
+    type: string`)
+	mkFile(t, filepath.Join(dir, "documents", "заказ.yaml"), `name: Заказ
+fields:
+  - name: Номер
+    type: string`)
+	mkFile(t, filepath.Join(dir, "roles", "кладовщик.yaml"), `name: Кладовщик
+permissions:
+  documents:
+    Ордер: [read]`)
+	mkFile(t, filepath.Join(dir, "subsystems", "склад.yaml"), `name: Склад
+contents:
+  documents: [Ордер]
+home_page:
+  nav_by_role:
+    Кладовщик:
+      documents: [Ордер, Заказ, НетОрдера]
+    Кладовшик:
+      documents: [Ордер]
+`)
+	proj, err := project.Load(dir)
+	if err != nil {
+		t.Fatalf("project.Load: %v", err)
+	}
+	defer proj.Close()
+	roles, _ := auth.LoadRolesYAML(filepath.Join(dir, "roles"))
+	var badDoc, outOfScope, badRole bool
+	for _, i := range CheckCrossRefs(proj, roles) {
+		switch {
+		case i.Object == "Склад.home_page.nav_by_role.Кладовщик" && strings.Contains(i.Message, "НетОрдера"):
+			badDoc = true
+		case i.Object == "Склад.home_page.nav_by_role.Кладовщик" && strings.Contains(i.Message, "\"Заказ\" не входит в contents"):
+			outOfScope = true
+		case i.Object == "Склад.home_page.nav_by_role.Кладовшик" && strings.Contains(i.Message, "роль"):
+			badRole = true
+		case strings.Contains(i.Message, "\"Ордер\" не входит"):
+			t.Errorf("объект из contents назван посторонним: %+v", i)
+		}
+	}
+	if !badDoc || !outOfScope || !badRole {
+		t.Errorf("ожидались ошибки: документ %v, вне contents %v, роль %v", badDoc, outOfScope, badRole)
+	}
+}
