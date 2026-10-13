@@ -18,6 +18,7 @@ function block(beginMark, endMark) {
 
 const refreshSource = block('// BEGIN onebase-widget-refresh', '// END onebase-widget-refresh');
 const liveSource = block('// BEGIN onebase-live-list', '// END onebase-live-list');
+const dashboardSource = block('window.obInitDashboard = function () {', '\n};');
 
 const DEBOUNCE_WAIT = 900;
 
@@ -102,6 +103,7 @@ function setup(cards) {
     clearTimeout,
     Promise,
     console,
+    obInitMappedCharts() {},
     fetch(url) {
       fetchCalls.push(url);
       return Promise.resolve(response({ html: 'new body' }));
@@ -109,11 +111,14 @@ function setup(cards) {
   };
   sandbox.window = sandbox;
   sandbox.document = documentShim;
-  sandbox.addEventListener = (name, fn) => winListeners.set(name, fn);
+  sandbox.addEventListener = (name, fn) => {
+    if (!winListeners.has(name)) winListeners.set(name, []);
+    winListeners.get(name).push(fn);
+  };
+  sandbox.__listenerCount = name => (winListeners.get(name) || []).length;
   sandbox.fetchCalls = fetchCalls;
   sandbox.__fire = function (name) {
-    const fn = winListeners.get(name);
-    if (fn) fn({ detail: {} });
+    for (const fn of winListeners.get(name) || []) fn({ detail: {} });
   };
   sandbox.__fireDocument = function (name) {
     const fn = docListeners.get(name);
@@ -122,6 +127,7 @@ function setup(cards) {
   vm.createContext(sandbox);
   vm.runInContext(refreshSource, sandbox, { filename: 'widget-refresh.js' });
   vm.runInContext(liveSource, sandbox, { filename: 'live-list.js' });
+  vm.runInContext(dashboardSource, sandbox, { filename: 'dashboard.js' });
   return sandbox;
 }
 
@@ -175,4 +181,31 @@ test('неподписанная карточка не реагирует на �
   await wait(DEBOUNCE_WAIT);
   assert.equal(app.fetchCalls.length, 0);
   assert.equal(card._body.innerHTML, 'old body');
+});
+
+test('новый рабочий стол подписывается на новые события без повторных обработчиков', async () => {
+  const oldCard = widgetCard('Продажи', 'данные.заказ');
+  const cards = [oldCard];
+  const app = setup(cards);
+  const next = widgetCard('Остатки', 'данные.товар');
+  cards.splice(0, cards.length, next);
+  app.obInitDashboard();
+  app.obInitDashboard();
+  assert.ok(next._obWidgetController, 'контроллер нового рабочего стола');
+  app.__fire('onebase:данные.товар');
+  await wait(DEBOUNCE_WAIT);
+  assert.deepEqual(app.fetchCalls, ['/ui/_widget/' + encodeURIComponent('Остатки')]);
+  assert.equal(next._body.innerHTML, 'new body');
+  assert.equal(oldCard._body.innerHTML, 'old body');
+  assert.equal(app.__listenerCount('onebase:данные.товар'), 1);
+  assert.equal(app.__listenerCount('onebase:данные.заказ'), 1);
+  cards.splice(0, cards.length, widgetCard('Продажи', 'данные.заказ'));
+  app.obInitDashboard();
+  app.__fire('onebase:данные.товар');
+  await wait(DEBOUNCE_WAIT);
+  assert.equal(app.fetchCalls.length, 1, 'удалённая карточка не перечитывается');
+  app.__fire('onebase:данные.заказ');
+  await wait(DEBOUNCE_WAIT);
+  assert.equal(app.fetchCalls.length, 2);
+  assert.equal(app.__listenerCount('onebase:данные.заказ'), 1);
 });

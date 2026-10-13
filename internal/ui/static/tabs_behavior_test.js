@@ -803,3 +803,273 @@ test('open-access deployment preserves F5 and is discarded on the first authenti
   app = shell(storage);
   assert.equal(app.count(),0);
 });
+
+// Смена раздела без перезагрузки оболочки: открытые вкладки — живые фреймы, и
+// перезагрузка теряла введённое в незаписанных формах (браузер спрашивал
+// «Уверены, что хотите закрыть страницу?»). Оболочка берёт страницу раздела
+// фоном и подменяет строку разделов, боковое меню и рабочий стол.
+function sectionShell({fetchImpl} = {}) {
+  const storage = new FakeStorage();
+  const elements = {};
+  for (const id of ['ob-tabstrip', 'ob-tabbody', 'ob-tabempty', 'ob-tabhome', 'ob-widget-charts']) {
+    elements[id] = new Element('div', id);
+  }
+  elements['ob-nav'] = new Element('aside', 'ob-nav');
+  let bar = new Element('nav');
+  bar.className = 'subsys-bar';
+  const home = elements['ob-tabhome'];
+  Object.defineProperty(home, 'firstChild', {get() { return this.children[0] || null; }});
+  home.removeChild = child => child.remove();
+  home.appendChild(new Element('h2'));
+  const replaceable = element => {
+    element.replaceWith = next => {
+      if (element === bar) bar = next;
+      else elements[element.id] = next;
+      replaceable(next);
+    };
+    return element;
+  };
+  replaceable(bar);
+  replaceable(elements['ob-nav']);
+
+  const next = {
+    bar: Object.assign(new Element('nav'), {className: 'subsys-bar sklad'}),
+    nav: new Element('aside', 'ob-nav'),
+    homeNodes: [new Element('h2'), new Element('div')],
+  };
+  const navigationPaths = ['/ui/settings/navigation', '/ui/admin/navigation'];
+  const navigation = navigationPaths.map(path => {
+    const link = new Element('a');
+    link.setAttribute('href', path + '?subsystem=');
+    return link;
+  });
+  const nextNavigation = navigationPaths.map(path => {
+    const link = new Element('a');
+    link.setAttribute('href', path + '?subsystem=' + encodeURIComponent('Склад'));
+    return link;
+  });
+  function navigationLink(selector, links) {
+    const index = navigationPaths.findIndex(path => selector === '.topbar a[href^="' + path + '?"]');
+    return index < 0 ? null : links[index];
+  }
+  class FakeDOMParser {
+    parseFromString(title) {
+      return {
+        title: title === 'Главная' ? title : 'Склад',
+        querySelector(sel) { return sel === '.subsys-bar' ? next.bar : navigationLink(sel, nextNavigation); },
+        getElementById(id) {
+          if (id === 'ob-nav') return next.nav;
+          if (id === 'ob-tabhome') return {childNodes: next.homeNodes};
+          if (id === 'ob-widget-charts') return {textContent: '{"склад":1}'};
+          return null;
+        },
+      };
+    }
+  }
+  const fetched = [];
+  const documentListeners = new Map();
+  const windowListeners = new Map();
+  const pushed = [];
+  const location = {origin: 'http://127.0.0.1:8080', pathname: '/ui/app', search: '?home=1', href: '/ui/app?home=1'};
+  const setLocation = url => {
+    const u = new URL(url, location.origin);
+    location.pathname = u.pathname;
+    location.search = u.search;
+    location.href = u.pathname + u.search;
+  };
+  const calls = {nav: [], dashboard: 0};
+  const document = {
+    body: new Element('body'),
+    readyState: 'complete',
+    title: 'Главная',
+    getElementById(id) { return elements[id] || null; },
+    querySelector(sel) { return sel === '.subsys-bar' ? bar : navigationLink(sel, navigation); },
+    createElement(tagName) { return new Element(tagName); },
+    importNode(node) { return node; },
+    addEventListener(type, listener) {
+      if (!documentListeners.has(type)) documentListeners.set(type, []);
+      documentListeners.get(type).push(listener);
+    },
+  };
+  const context = {
+    document,
+    sessionStorage: storage,
+    location,
+    URL,
+    URLSearchParams,
+    DOMParser: FakeDOMParser,
+    history: {pushState(state, title, url) { pushed.push(url); setLocation(url); }},
+    fetch(url, options) {
+      fetched.push({url, options});
+      if (fetchImpl) return fetchImpl(url);
+      const target = new URL(url, location.origin);
+      return Promise.resolve({ok: true, url: target.href, text: () => Promise.resolve('<html></html>')});
+    },
+    crypto: {randomUUID() { return '00000000-0000-4000-8000-000000000001'; }},
+    setTimeout() { return 1; },
+    clearTimeout() {},
+    confirm() { return true; },
+    alert() {},
+    obUIMessage(name, fallback) { return fallback; },
+    obInitNavSections(scope) { calls.nav.push(scope); },
+    obInitDashboard() { calls.dashboard++; },
+    addEventListener(type, listener) {
+      if (!windowListeners.has(type)) windowListeners.set(type, []);
+      windowListeners.get(type).push(listener);
+    },
+  };
+  context.window = context;
+  vm.runInNewContext(source, context, {filename: 'rendered-tabs-runtime.js'});
+  const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(resolve => setImmediate(resolve)); };
+  return {
+    context, elements, next, fetched, pushed, calls, location, settle, navigation, nextNavigation,
+    bar: () => bar,
+    clickSection(href) {
+      const anchor = {closest() { return anchor; }, getAttribute(name) { return name === 'href' ? href : null; }, textContent: ''};
+      const event = {target: anchor, button: 0, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }};
+      for (const listener of documentListeners.get('click') || []) listener(event);
+      return event;
+    },
+    popstate(url) {
+      setLocation(url);
+      for (const listener of windowListeners.get('popstate') || []) listener({});
+    },
+    tabCount() { return elements['ob-tabstrip'].children.length; },
+    markDirty(index) {
+      const frame = elements['ob-tabbody'].children.filter(element => element.tagName === 'IFRAME')[index];
+      for (const listener of windowListeners.get('message') || []) {
+        listener({origin: location.origin, source: frame.contentWindow, data: {source: 'obDirty', dirty: true}});
+      }
+    },
+  };
+}
+
+test('раздел меняется без перезагрузки: незаписанная вкладка остаётся', async () => {
+  const app = sectionShell();
+  app.context.obOpenTab('/ui/document/Ордер/new', 'Insert');
+  app.markDirty(0);
+  const event = app.clickSection('/ui/?subsystem=Склад');
+  assert.equal(event.defaultPrevented, true);
+  await app.settle();
+
+  assert.equal(app.fetched.length, 1);
+  assert.equal(decodeURIComponent(app.fetched[0].url), '/ui/app?home=1&subsystem=Склад');
+  assert.equal(app.fetched[0].options.credentials, 'same-origin');
+  assert.deepEqual(app.pushed.map(decodeURIComponent), ['/ui/app?home=1&subsystem=Склад'], 'адрес раздела — в историю');
+  assert.equal(app.bar(), app.next.bar, 'строка разделов подменена');
+  assert.equal(app.elements['ob-nav'], app.next.nav, 'меню подменено');
+  assert.deepEqual(app.elements['ob-tabhome'].children, app.next.homeNodes, 'рабочий стол раздела');
+  assert.equal(app.elements['ob-widget-charts'].textContent, '{"склад":1}');
+  assert.equal(app.context.document.title, 'Склад');
+  assert.deepEqual(app.calls.nav, [app.next.nav]);
+  assert.equal(app.calls.dashboard, 1);
+  assert.equal(app.tabCount(), 1, 'вкладка с незаписанной формой не закрыта');
+
+  // «Назад» — тем же путём, без записи в историю.
+  app.popstate('/ui/app?home=1');
+  await app.settle();
+  assert.equal(app.fetched.length, 2);
+  assert.equal(app.fetched[1].url, '/ui/app?home=1');
+  assert.equal(app.pushed.length, 1);
+  assert.equal(app.tabCount(), 1);
+
+  // Смена только отборов виджетов того же раздела — не смена раздела.
+  app.popstate('/ui/app?home=1&w.Ордера.Филиал=1');
+  await app.settle();
+  assert.equal(app.fetched.length, 2);
+});
+
+test('раздел не загрузился — прежний переход', async () => {
+  const app = sectionShell({fetchImpl: () => Promise.resolve({ok: false, status: 403, url: '', text: () => Promise.resolve('')})});
+  app.clickSection('/ui/?subsystem=Склад');
+  await app.settle();
+  assert.equal(decodeURIComponent(app.location.href), '/ui/app?home=1&subsystem=Склад');
+  assert.equal(app.pushed.length, 0);
+  assert.equal(app.calls.dashboard, 0);
+});
+
+for (const failed of [false, true]) {
+  test('Back → Forward отменяет задержанный ' + (failed ? 'отказ' : 'ответ') + ' прошлого раздела', async () => {
+    let finishBack;
+    const app = sectionShell({fetchImpl(url) {
+      if (url === '/ui/app?home=1') return new Promise(resolve => { finishBack = resolve; });
+      return Promise.resolve({ok: true, url, text: () => Promise.resolve('Склад')});
+    }});
+    app.context.obOpenTab('/ui/document/Ордер/new', 'Insert');
+    app.markDirty(0);
+    app.clickSection('/ui/?subsystem=Склад');
+    await app.settle();
+    const bar = app.bar(), nav = app.elements['ob-nav'];
+    const nodes = app.elements['ob-tabhome'].children.slice();
+    const frame = app.elements['ob-tabbody'].children.find(el => el.tagName === 'IFRAME');
+    app.popstate('/ui/app?home=1');
+    app.popstate('/ui/app?home=1&subsystem=Склад');
+    finishBack({ok: !failed, status: 503, url: '/ui/app?home=1', text: () => Promise.resolve('Главная')});
+    await app.settle();
+    assert.equal(app.context.document.title, 'Склад');
+    assert.equal(decodeURIComponent(app.location.href), '/ui/app?home=1&subsystem=Склад');
+    assert.equal(app.bar(), bar);
+    assert.equal(app.elements['ob-nav'], nav);
+    assert.deepEqual(app.elements['ob-tabhome'].children, nodes);
+    assert.equal(app.calls.dashboard, 1);
+    assert.equal(app.pushed.length, 1);
+    assert.equal(app.elements['ob-tabbody'].children.find(el => el.tagName === 'IFRAME'), frame);
+    // currentSection тоже не должен остаться от устаревшего ответа.
+    app.popstate('/ui/app?home=1&subsystem=Склад&w.Ордера.Филиал=1');
+    assert.equal(app.fetched.length, 2);
+  });
+}
+
+test('команды настройки меню используют подсистему из ответа, включая Back', async () => {
+  const app = sectionShell({fetchImpl(url) {
+    // Сервер может перенаправить на другую фактическую подсистему.
+    const target = url.includes('subsystem=') ? '/ui/app?home=1&subsystem=Фактическая' : url;
+    return Promise.resolve({ok: true, url: target, text: () => Promise.resolve('Склад')});
+  }});
+  for (const link of app.nextNavigation) {
+    const url = new URL(link.getAttribute('href'), app.location.origin);
+    url.searchParams.set('subsystem', 'Фактическая');
+    link.setAttribute('href', url.pathname + url.search);
+  }
+  app.clickSection('/ui/?subsystem=Склад');
+  await app.settle();
+  for (let i = 0; i < app.navigation.length; i++) {
+    assert.equal(app.navigation[i].getAttribute('href'), app.nextNavigation[i].getAttribute('href'));
+    assert.equal(new URL(app.navigation[i].getAttribute('href'), app.location.origin).searchParams.get('subsystem'), 'Фактическая');
+  }
+  for (const link of app.nextNavigation) {
+    const url = new URL(link.getAttribute('href'), app.location.origin);
+    url.searchParams.set('subsystem', '');
+    link.setAttribute('href', url.pathname + url.search);
+  }
+  app.popstate('/ui/app?home=1');
+  await app.settle();
+  for (const link of app.navigation) assert.equal(new URL(link.getAttribute('href'), app.location.origin).searchParams.get('subsystem'), '');
+});
+
+test('отсутствующие по правам команды меню не мешают смене раздела', async () => {
+  const app = sectionShell();
+  app.navigation.fill(null);
+  app.nextNavigation.fill(null);
+  app.clickSection('/ui/?subsystem=Склад');
+  await app.settle();
+  assert.equal(app.context.document.title, 'Склад');
+  assert.equal(app.calls.dashboard, 1);
+  assert.equal(app.pushed.length, 1);
+});
+
+test('изменение доступных команд меню вызывает переход до подмены DOM', async () => {
+  const app = sectionShell();
+  const bar = app.bar(), nav = app.elements['ob-nav'];
+  const nodes = app.elements['ob-tabhome'].children.slice();
+  app.nextNavigation[1] = null;
+  app.clickSection('/ui/?subsystem=Склад');
+  await app.settle();
+  assert.equal(decodeURIComponent(app.location.href), '/ui/app?home=1&subsystem=Склад');
+  assert.equal(app.context.document.title, 'Главная');
+  assert.equal(app.bar(), bar);
+  assert.equal(app.elements['ob-nav'], nav);
+  assert.deepEqual(app.elements['ob-tabhome'].children, nodes);
+  assert.equal(app.calls.dashboard, 0);
+  assert.equal(app.pushed.length, 0);
+});

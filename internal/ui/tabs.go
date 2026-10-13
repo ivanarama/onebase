@@ -377,13 +377,71 @@ const tplAppShell = `{{define "page-app-shell"}}
       return t.pathname+t.search;
     }catch(e){return '';}
   }
+  // Смена раздела без перезагрузки: открытые вкладки — живые фреймы, и
+  // перезагрузка оболочки теряла бы введённое в незаписанных формах (браузер
+  // спрашивал «Уверены, что хотите закрыть страницу?»). Страницу раздела берём
+  // тем же адресом, что и при переходе, и подменяем в оболочке только строку
+  // разделов, боковое меню и рабочий стол; вкладки не трогаем. Любая неудача —
+  // прежний переход, как раньше.
+  function sectionOf(href){
+    try{ var u=new URL(href, location.origin); return u.pathname+'?'+(u.searchParams.get('subsystem')||''); }catch(e){ return ''; }
+  }
+  var currentSection=sectionOf(location.href);
+  var sectionSeq=0;
+  function switchSection(url,push){
+    var seq=++sectionSeq;
+    if(typeof window.fetch!=='function'||typeof window.DOMParser!=='function'){ location.href=url; return; }
+    window.fetch(url,{credentials:'same-origin',headers:{'Accept':'text/html'}}).then(function(r){
+      if(!r.ok)throw new Error('status '+r.status);
+      return r.text().then(function(html){ return {html:html,url:r.url||url}; });
+    }).then(function(res){
+      if(seq!==sectionSeq)return;
+      var target=new URL(res.url,location.origin);
+      if(target.origin!==location.origin||!/^\/ui\/app\/?$/.test(target.pathname))throw new Error('unexpected target');
+      var doc=new window.DOMParser().parseFromString(res.html,'text/html');
+      var nextBar=doc.querySelector('.subsys-bar'), nextNav=doc.getElementById('ob-nav'), nextHome=doc.getElementById('ob-tabhome');
+      var bar=document.querySelector('.subsys-bar'), nav=document.getElementById('ob-nav');
+      if(!nextHome||!home||!!nextBar!==!!bar||!!nextNav!==!!nav)throw new Error('shell layout differs');
+      // Настройки меню остаются в topbar, но относятся к разделу из ответа.
+      // Сначала проверяем наличие обеих ссылок, до изменения рабочего стола.
+      var navigationLinks=['/ui/settings/navigation','/ui/admin/navigation'].map(function(path){
+        var selector='.topbar a[href^="'+path+'?"]';
+        var current=document.querySelector(selector), next=doc.querySelector(selector);
+        if(!!current!==!!next)throw new Error('shell navigation differs');
+        return {current:current,next:next};
+      });
+      if(bar)bar.replaceWith(document.importNode(nextBar,true));
+      if(nav)nav.replaceWith(document.importNode(nextNav,true));
+      while(home.firstChild)home.removeChild(home.firstChild);
+      Array.prototype.forEach.call(nextHome.childNodes,function(n){ home.appendChild(document.importNode(n,true)); });
+      var nextCharts=doc.getElementById('ob-widget-charts'), charts=document.getElementById('ob-widget-charts');
+      if(nextCharts&&charts)charts.textContent=nextCharts.textContent;
+      navigationLinks.forEach(function(link){ if(link.current)link.current.setAttribute('href',link.next.getAttribute('href')); });
+      if(doc.title)document.title=doc.title;
+      if(push)history.pushState({obSection:true},'',target.pathname+target.search);
+      currentSection=sectionOf(location.href);
+      setActive(null); syncEmpty();
+      if(typeof window.obInitNavSections==='function')window.obInitNavSections(document.getElementById('ob-nav'));
+      if(typeof window.obInitDashboard==='function')window.obInitDashboard();
+    }).catch(function(){ if(seq===sectionSeq)location.href=url; });
+  }
+  window.obSwitchSection=switchSection;
+  // «Назад»/«Вперёд» между разделами — тем же путём. Смена только отборов
+  // виджетов (тот же раздел) остаётся их собственному обработчику popstate.
+  window.addEventListener('popstate',function(){
+    // Даже возврат к уже показанному разделу отменяет предыдущий pending fetch.
+    ++sectionSeq;
+    if(sectionOf(location.href)===currentSection)return;
+    switchSection(location.pathname+location.search,false);
+  });
+
   document.addEventListener('click',function(e){
     if(e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;
     var a=e.target.closest?e.target.closest('#ob-nav a[href], .subsys-bar a[href], #ob-tabhome a[href]'):null;
     if(!a)return;
     var href=a.getAttribute('href')||'';
     var shellHome=shellHomeURL(href);
-    if(shellHome){ e.preventDefault(); location.href=shellHome; return; }
+    if(shellHome){ e.preventDefault(); switchSection(shellHome,true); return; }
     if(!openable(href))return;
     e.preventDefault();
     openTab(href,(a.getAttribute('title')||a.textContent||'').replace(/\s+/g,' ').trim()||'Форма');

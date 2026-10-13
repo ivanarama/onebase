@@ -414,6 +414,7 @@ function obReady(fn) {
   else fn();
 }
 
+
 function obReadJSONScript(id, fallback) {
   var el = document.getElementById(id);
   if (!el) return fallback;
@@ -428,6 +429,25 @@ function obReadJSONScript(id, fallback) {
 
 (function () {
   if (window.__obNavInit) return;
+  // Раскрытие разделов бокового меню — из localStorage, со слежением за
+  // переключением. Общая функция: вкладочная оболочка подменяет меню при смене
+  // раздела без перезагрузки и зовёт её для нового #ob-nav.
+  window.obInitNavSections = function (scope) {
+    try {
+      (scope || document).querySelectorAll('aside details.navsec').forEach(function (d) {
+        var key = 'navsec:' + d.getAttribute('data-navsec');
+        var saved = localStorage.getItem(key);
+        var legacy = d.getAttribute('data-navsec-legacy');
+        if (saved === null && legacy) {
+          saved = localStorage.getItem('navsec:' + legacy);
+          if (saved === '1' || saved === '0') localStorage.setItem(key, saved);
+        }
+        if (saved === '1') d.open = true;
+        else if (saved === '0') d.open = false;
+        d.addEventListener('toggle', function () { localStorage.setItem(key, d.open ? '1' : '0'); });
+      });
+    } catch (e) {}
+  };
   window.__obNavInit = true;
   // Гамбургер значит разное по сторонам брейкпоинта: на узком экране он
   // выдвигает шторку (класс `nav-open` на body, живёт только до перехода), на
@@ -505,20 +525,7 @@ function obReadJSONScript(id, fallback) {
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && document.body.classList.contains('nav-open')) setNav(false);
     });
-    try {
-      document.querySelectorAll('aside details.navsec').forEach(function (d) {
-        var key = 'navsec:' + d.getAttribute('data-navsec');
-        var saved = localStorage.getItem(key);
-        var legacy = d.getAttribute('data-navsec-legacy');
-        if (saved === null && legacy) {
-          saved = localStorage.getItem('navsec:' + legacy);
-          if (saved === '1' || saved === '0') localStorage.setItem(key, saved);
-        }
-        if (saved === '1') d.open = true;
-        else if (saved === '0') d.open = false;
-        d.addEventListener('toggle', function () { localStorage.setItem(key, d.open ? '1' : '0'); });
-      });
-    } catch (e) {}
+    window.obInitNavSections(document);
   });
 })();
 
@@ -832,11 +839,19 @@ function obInitReportChart() {
   }
 }
 
-obReady(function () {
+// Виджеты рабочего стола: диаграммы и контроллеры обновления. Оболочка зовёт
+// повторно после смены раздела без перезагрузки — уже инициализированные
+// узлы пропускаются (data-ob-init, card._obWidgetController).
+window.obInitDashboard = function () {
   obInitMappedCharts('ob-widget-charts', '.w-chart-canvas[data-widget]', 'data-widget', 'chart init failed', true);
+  obInitWidgetControllers();
+  if (window.obInitLiveList) window.obInitLiveList();
+};
+
+obReady(function () {
+  window.obInitDashboard();
   obInitMappedCharts('ob-page-charts', '.w-chart-canvas[data-pagechart]', 'data-pagechart', 'page chart init failed', false);
   obInitReportChart();
-  obInitWidgetControllers();
 });
 
 function obInitFormDirty() {
@@ -5757,6 +5772,8 @@ window.onebaseDevice = {
       }
     }
   }
+  // После подмены рабочего стола добавляем только ещё не привязанные события.
+  window.obInitLiveList = bindEvents;
 
   // Скрытая вкладка копит dirty; при возврате — один перечитывающий GET.
   document.addEventListener('visibilitychange', function () {
