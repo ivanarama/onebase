@@ -276,7 +276,7 @@ func sqliteRetypeExpr(col string, f metadata.Field, newSQL string) string {
 // объявленные в конфигурации пересоздаются тем же прогоном миграции
 // (ensureEntityIndexes идёт следом).
 func (db *DB) dropColumn(ctx context.Context, table, column string) error {
-	if db.IsSQLite() {
+	if db.IsSQLite() && ctx.Value(entityDDLKey{}) != table {
 		if err := db.dropIndexesOnColumn(ctx, table, column); err != nil {
 			return err
 		}

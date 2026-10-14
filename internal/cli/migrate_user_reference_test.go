@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/dblock"
 	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -172,8 +173,32 @@ func TestMigrateUserReferencesDryRunMatrix(t *testing.T) {
 		if count := userReferenceTableCount(t, db); count != 0 {
 			t.Fatalf("fresh fixture has %d auth/entity tables", count)
 		}
+		// Prepare a valid revision and the normal lifetime lock outside preview.
+		// A direct dbtest DB has neither a published marker nor a CLI lease.
+		if _, err := db.RaiseSchemaRevision(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		path := db.SQLitePath()
+		if db.IsSQLite() {
+			lease, _, err := dblock.AcquireSQLiteTarget(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			db.Close()
+			if err := lease.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}
 		if _, err := captureStdout(t, func() error { return migrateCmd.RunE(cmd, nil) }); err != nil {
 			t.Fatalf("onebase migrate --dry-run: %v", err)
+		}
+		if path != "" {
+			var err error
+			db, err = storage.ConnectSQLite(t.Context(), path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(db.Close)
 		}
 		if count := userReferenceTableCount(t, db); count != 0 {
 			t.Fatalf("dry-run created %d auth/entity tables", count)

@@ -2,8 +2,10 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/configdb"
@@ -32,19 +34,31 @@ func init() {
 	migrateCmd.Flags().String("db", "", "database URL (overrides DATABASE_URL env)")
 	migrateCmd.Flags().String("sqlite", "", "path to SQLite database file (alternative to --db)")
 	migrateCmd.Flags().String("config-source", "file", "configuration source: file or database")
+	migrateCmd.Flags().String("adopt-indexes", "", "JSON-манифест явного принятия legacy-индексов после резервной копии")
 	migrateCmd.Flags().Bool("dry-run", false, "показать план реструктуризации и выйти, ничего не меняя")
 	migrateCmd.Flags().Bool("allow-destructive", false, "разрешить удаление колонок вместе с данными")
 }
 
 func runMigrate(cmd *cobra.Command, _ []string) error {
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	adoptPath, _ := cmd.Flags().GetString("adopt-indexes")
+	if dryRun {
+		if adoptPath != "" {
+			return fmt.Errorf("--adopt-indexes cannot be combined with --dry-run")
+		}
+		return runMigrationPreview(cmd)
+	}
+	adoptions, err := readIndexManifest(adoptPath)
+	if err != nil {
+		return err
+	}
 	dir, _ := cmd.Flags().GetString("project")
 	sqlitePath, _ := cmd.Flags().GetString("sqlite")
 	configSource, _ := cmd.Flags().GetString("config-source")
 
 	ctx := context.Background()
 	var (
-		db  *storage.DB
-		err error
+		db *storage.DB
 	)
 	if sqlitePath != "" {
 		db, err = openCLIStorage(ctx, "sqlite", sqlitePath, "")
@@ -71,17 +85,13 @@ func runMigrate(cmd *cobra.Command, _ []string) error {
 	}
 	defer proj.Close()
 
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
-	if dryRun {
-		return printMigrationPlan(ctx, db, proj)
-	}
-
 	// Отчёт о реструктуризации печатается по ходу: администратор должен видеть,
 	// что миграция сделала с его данными, а не только «migration complete».
 	allowDestructive, _ := cmd.Flags().GetBool("allow-destructive")
 	var skipped int
 	db.SetSchemaOptions(storage.SchemaOptions{
 		AllowDestructive: allowDestructive,
+		AdoptIndexes:     adoptions,
 		Report: func(c storage.SchemaChange, applied bool) {
 			if applied {
 				outln("  " + c.String())
@@ -104,34 +114,58 @@ func runMigrate(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
-// printMigrationPlan показывает, что сделает реструктуризация, ничего не меняя.
-func printMigrationPlan(ctx context.Context, db *storage.DB, proj *project.Project) error {
+// migrationPlanText buffers output until preview verifies its stable read.
+func migrationPlanText(ctx context.Context, db *storage.DB, proj *project.Project) (string, error) {
+	var text strings.Builder
+	for _, e := range proj.Entities {
+		if err := db.CheckEntityColumnMigration(ctx, e); err != nil {
+			fmt.Fprintln(&text, "  БЛОКИРОВКА:", err)
+		}
+	}
 	plan, err := db.PlanMigration(ctx, proj.Entities, proj.Registers, proj.InfoRegisters)
 	if err != nil {
-		return err
+		return "", err
+	}
+	actions, manifest, err := db.PlanEntityIndexes(ctx, proj.Entities)
+	if err != nil {
+		return "", err
+	}
+	for _, a := range actions {
+		fmt.Fprintf(&text, "  Индекс %s.%s: %s (%s), unique=%t, columns=%v\n", a.Index.Table, a.Index.Name, a.Action, a.Ownership, a.Index.Unique, a.Index.Columns)
+		if a.Index.Definition != "" {
+			fmt.Fprintln(&text, "    "+a.Index.Definition)
+		}
+	}
+	if len(manifest.Indexes) > 0 {
+		raw, err := json.MarshalIndent(manifest, "", "  ")
+		if err != nil {
+			return "", err
+		}
+		fmt.Fprintln(&text, "Манифест кандидатов: проверьте определения, сделайте backup; примите только нужные индексы через --adopt-indexes.")
+		fmt.Fprintln(&text, string(raw))
 	}
 	if len(plan) == 0 {
-		outln("Реструктуризация не требуется: схема существующих таблиц соответствует метаданным.")
-		outln("(Новые таблицы и колонки создаст обычный `onebase migrate` — в плане их нет.)")
-		return nil
+		fmt.Fprintln(&text, "Реструктуризация не требуется: схема существующих таблиц соответствует метаданным.")
+		fmt.Fprintln(&text, "(Новые таблицы и колонки создаст обычный `onebase migrate` — в плане их нет.)")
+		return text.String(), nil
 	}
-	outf("План реструктуризации (%d изменен.):\n", len(plan))
+	fmt.Fprintf(&text, "План реструктуризации (%d изменен.):\n", len(plan))
 	destructive := 0
 	for _, c := range plan {
-		outln("  " + c.String())
+		fmt.Fprintln(&text, "  "+c.String())
 		if c.Note != "" {
-			outln("      " + c.Note)
+			fmt.Fprintln(&text, "      "+c.Note)
 		}
 		if c.Destructive() {
 			destructive++
 		}
 	}
-	outln("")
-	outln("Это пробный прогон — база не изменена.")
+	fmt.Fprintln(&text, "")
+	fmt.Fprintln(&text, "Это пробный прогон — база не изменена.")
 	if destructive > 0 {
-		outf("Изменений с потерей данных: %d — они выполнятся только с --allow-destructive.\n", destructive)
+		fmt.Fprintf(&text, "Изменений с потерей данных: %d — они выполнятся только с --allow-destructive.\n", destructive)
 	}
-	return nil
+	return text.String(), nil
 }
 
 // applyAllMigrations приводит схему БД в соответствие метаданным проекта:

@@ -168,12 +168,7 @@ func ForeignKeyName(table, col, refTable string) string {
 }
 
 func stableIndexName(table string, cols []string, unique bool) string {
-	kind := "n"
-	if unique {
-		kind = "u"
-	}
-	sum := sha1.Sum([]byte(kind + "|" + table + "|" + strings.Join(cols, "|"))) //nolint:gosec // G401/G505: SHA1 берётся для СТАБИЛЬНОГО ИМЕНИ ИНДЕКСА, а не для защиты; смена алгоритма переименовала бы все индексы и потребовала миграции
-	return "idx_ob_" + fmt.Sprintf("%x", sum[:6])
+	return metadata.StableEntityIndexName(table, cols, unique)
 }
 
 func CreateTableSQL(d Dialect, e *metadata.Entity) string {
