@@ -142,8 +142,10 @@ type rawEntity struct {
 	ListMode      string             `yaml:"list_mode"`
 	ListRefreshOn []string           `yaml:"list_refresh_on"`
 	NotifyChanges bool               `yaml:"notify_changes"`
-	TileView      *rawTileView       `yaml:"tile_view"`
-	DetailPanel   *rawDetailPanel    `yaml:"detail_panel"`
+	// InteractiveCreate — указатель: отсутствие ключа значит «можно».
+	InteractiveCreate *bool           `yaml:"interactive_create"`
+	TileView          *rawTileView    `yaml:"tile_view"`
+	DetailPanel       *rawDetailPanel `yaml:"detail_panel"`
 	// FullText — указатель, чтобы отличить отсутствие ключа (умолчание: все
 	// строковые реквизиты) от явного `fulltext: []` (объект вне поиска).
 	FullText *[]string `yaml:"fulltext"`
@@ -257,6 +259,7 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 		}
 	}
 	e.NotifyChanges = raw.NotifyChanges
+	e.NoInteractiveCreate = raw.InteractiveCreate != nil && !*raw.InteractiveCreate
 	if raw.TileView != nil {
 		e.TileView = &TileView{
 			Image:    strings.TrimSpace(raw.TileView.Image),

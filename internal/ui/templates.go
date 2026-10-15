@@ -1945,12 +1945,12 @@ const tplList = `
     {{end}}
     {{if .Entity.Hierarchical}}
       {{if .UpURL}}<a class="btn btn-secondary btn-sm" href="{{.UpURL}}">{{t $.Lang "↑ Наверх"}}</a>{{end}}
-      {{if .CanWrite}}
+      {{if .CanCreate}}
       <a class="btn btn-primary" data-ob-list-create title="Insert" aria-keyshortcuts="Insert" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?{{if .ParentStr}}parent={{.ParentStr}}&{{end}}subsystem={{$.CurrentSubsystem}}">{{t $.Lang "+ Элемент"}}</a>
       <a class="btn btn-secondary" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?is_folder=true{{if .ParentStr}}&parent={{.ParentStr}}{{end}}">{{t $.Lang "📁 Группа"}}</a>
       {{end}}
     {{else}}
-      {{if .CanWrite}}<a class="btn btn-primary" data-ob-list-create title="Insert" aria-keyshortcuts="Insert" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "+ Создать"}}</a>{{end}}
+      {{if .CanCreate}}<a class="btn btn-primary" data-ob-list-create title="Insert" aria-keyshortcuts="Insert" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "+ Создать"}}</a>{{end}}
     {{end}}
     {{/* На свежем списке строка не выбрана — кнопка приходит с сервера уже
          приглушённой, дальше её состояние ведёт ui.js по выделению. */}}
@@ -2035,7 +2035,7 @@ const tplList = `
   data-ob-row-subsystem="{{$.CurrentSubsystem}}"
   data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
   data-ob-row-copy-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-row-can-copy="{{if $.CanWrite}}1{{end}}"
+  data-ob-row-can-copy="{{if $.CanCreate}}1{{end}}"
   data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
 ><thead><tr>
   {{range $treeCols}}<th>{{.DisplayName $.Lang}}</th>{{end}}
@@ -2082,7 +2082,7 @@ const tplList = `
 </tbody></table>
 </div>
 {{else}}
-<p class="empty">{{t $.Lang "Записей нет"}} — <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new">{{t $.Lang "создать первую"}}</a></p>
+<p class="empty">{{t $.Lang "Записей нет"}}{{if $.CanCreate}} — <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new">{{t $.Lang "создать первую"}}</a>{{end}}</p>
 {{end}}
 {{else if .TilesView}}
 {{/* ===== TILES VIEW (плитка) ===== */}}
@@ -2093,7 +2093,7 @@ const tplList = `
   data-ob-row-subsystem="{{$.CurrentSubsystem}}"
   data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" ""}}"
   data-ob-row-copy-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new{{listURL $.Query "copy" ""}}"
-  data-ob-row-can-copy="{{if $.CanWrite}}1{{end}}"
+  data-ob-row-can-copy="{{if $.CanCreate}}1{{end}}"
   data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
 >
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
@@ -2128,7 +2128,7 @@ const tplList = `
 </div>{{end}}
 </div>
 {{else}}
-<p class="empty">{{if .Params.Search}}{{t $.Lang "Ничего не найдено по запросу"}} «{{.Params.Search}}» — <a href="{{listURL $.Query "q" ""}}">{{t $.Lang "сбросить поиск"}}</a>{{else}}{{t $.Lang "Записей нет"}} — <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new">{{t $.Lang "создать первую"}}</a>{{end}}</p>
+<p class="empty">{{if .Params.Search}}{{t $.Lang "Ничего не найдено по запросу"}} «{{.Params.Search}}» — <a href="{{listURL $.Query "q" ""}}">{{t $.Lang "сбросить поиск"}}</a>{{else}}{{t $.Lang "Записей нет"}}{{if $.CanCreate}} — <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new">{{t $.Lang "создать первую"}}</a>{{end}}{{end}}</p>
 {{end}}
 {{else}}
 {{/* ===== LIST VIEW (default) ===== */}}
@@ -2149,7 +2149,7 @@ const tplList = `
   data-ob-row-subsystem="{{$.CurrentSubsystem}}"
   data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" ""}}"
   data-ob-row-copy-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new{{listURL $.Query "copy" ""}}"
-  data-ob-row-can-copy="{{if $.CanWrite}}1{{end}}"
+  data-ob-row-can-copy="{{if $.CanCreate}}1{{end}}"
   data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
 >
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
@@ -2186,7 +2186,7 @@ const tplList = `
 </tbody></table>
 </div>
 {{else}}
-<p class="empty">{{if .Params.Search}}{{t $.Lang "Ничего не найдено по запросу"}} «{{.Params.Search}}» — <a href="{{listURL $.Query "q" ""}}">{{t $.Lang "сбросить поиск"}}</a>{{else}}{{t $.Lang "Записей нет"}} — <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new">{{t $.Lang "создать первую"}}</a>{{end}}</p>
+<p class="empty">{{if .Params.Search}}{{t $.Lang "Ничего не найдено по запросу"}} «{{.Params.Search}}» — <a href="{{listURL $.Query "q" ""}}">{{t $.Lang "сбросить поиск"}}</a>{{else}}{{t $.Lang "Записей нет"}}{{if $.CanCreate}} — <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new">{{t $.Lang "создать первую"}}</a>{{end}}{{end}}</p>
 {{end}}
 {{end}}
 </div>
@@ -2297,7 +2297,7 @@ const tplForm = `
     {{/* Копия открывается формой создания: пока её не записали, в базе ничего
          нет. Горячей клавиши здесь нет намеренно — F9 на карточке принадлежит
          копированию строки табличной части. */}}
-    {{if .CanWrite}}<a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?copy={{.ID}}" class="btn btn-sm btn-secondary">{{t $.Lang "Скопировать"}}</a>{{end}}
+    {{if .CanCreate}}<a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?copy={{.ID}}" class="btn btn-sm btn-secondary">{{t $.Lang "Скопировать"}}</a>{{end}}
     <a href="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/history" class="btn btn-sm btn-secondary">{{t $.Lang "История"}}</a>
     {{if or .AllPrintForms .HasPrintProc}}
     <div style="position:relative">

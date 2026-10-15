@@ -682,7 +682,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
   {{if not .IsNew}}
     {{/* См. комментарий в автогенерируемой карточке: копия — это форма
          создания, а F9 здесь занята копированием строки ТЧ. */}}
-    {{if .CanWrite}}<a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?copy={{.ID}}" class="btn btn-sm btn-secondary">{{t $.Lang "Скопировать"}}</a>{{end}}
+    {{if .CanCreate}}<a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?copy={{.ID}}" class="btn btn-sm btn-secondary">{{t $.Lang "Скопировать"}}</a>{{end}}
     <a href="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/history" class="btn btn-sm btn-secondary">{{t $.Lang "История"}}</a>
     {{if or .AllPrintForms .HasPrintProc}}
     <div style="position:relative">
