@@ -28,6 +28,27 @@ const cfg = JSON.parse(process.env.ONEBASE_REF_BROWSER);
     assert.equal(await text.getAttribute('aria-controls'), await page.locator('[data-ob-el="ПолеНеисправность"] [role=listbox]').getAttribute('id'));
     assert.equal(await page.locator('label[for="' + await text.getAttribute('id') + '"]').count(), 1);
     if (cfg.optional) {
+      async function saveAndClose() {
+        const ok = page.getByRole('button', { name: 'ОК', exact: true });
+        const destination = new URL(await ok.getAttribute('data-ob-close-href'), cfg.base).href;
+        let result;
+        // Read the real server response before forwarding it to the controller:
+        // an allowed close navigates away and can discard the page response body.
+        const forward = async route => {
+          const response = await route.fetch();
+          result = await response.json();
+          await route.fulfill({ response });
+        };
+        await page.route('**/form-close-intent', forward);
+        try {
+          const navigation = page.waitForURL(destination, { waitUntil: 'domcontentloaded' });
+          await Promise.all([navigation, ok.click()]);
+          assert.equal(result.close.saved, true);
+          assert.equal(result.close.allowed, true);
+        } finally {
+          await page.unroute('**/form-close-intent', forward);
+        }
+      }
       // A real native save establishes a durable optional reference first.
       await search('needle');
       await options.first().click();
@@ -66,20 +87,16 @@ const cfg = JSON.parse(process.env.ONEBASE_REF_BROWSER);
       await search('needle');
       await options.nth(1).click();
       const replacement = await hidden('Неисправность').inputValue();
-      const closeSave = page.waitForResponse(r => r.url().includes('/form-close-intent'));
-      await page.getByRole('button', { name: 'ОК', exact: true }).click();
-      const saved = await (await closeSave).json();
-      assert.equal(saved.close.saved, true);
-      assert.equal(saved.close.allowed, true);
+      assert.notEqual(replacement, selected);
+      await saveAndClose();
+      // Reopen only after close navigation finishes; this GET checks durable data.
       await page.goto(formURL);
       await text.waitFor();
       assert.equal(await hidden('Неисправность').inputValue(), replacement);
       // Empty optional input remains a valid explicit clear.
       await text.fill('');
       assert.equal(await text.evaluate(e => e.checkValidity()), true);
-      const clearSave = page.waitForResponse(r => r.url().includes('/form-close-intent'));
-      await page.getByRole('button', { name: 'ОК', exact: true }).click();
-      assert.equal((await (await clearSave).json()).close.saved, true);
+      await saveAndClose();
       await page.goto(formURL);
       await text.waitFor();
       assert.equal(await hidden('Неисправность').inputValue(), '');
