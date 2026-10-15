@@ -66,6 +66,23 @@ func (s *Server) validateManagedFormRequired(
 	}
 
 	lang := s.resolveLang(r)
+	// Only conditionally hidden pages suspend the form-local rule. An ordinary
+	// inactive page remains available for input. Recompute from submitted values,
+	// never from a client-provided visibility flag; Field.required is still
+	// checked by entityservice against the final state on every write path.
+	var hiddenPages []string
+	tabSets := make(map[string]bool)
+	states := s.formElementStates(form, entity, values, s.isAdmin(r))
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		if visit.element.Kind == metadata.FormElementPages {
+			tabSets[visit.path] = true
+		}
+		parent := strings.LastIndex(visit.path, ".")
+		if visit.element.Kind == metadata.FormElementPage && parent >= 0 && tabSets[visit.path[:parent]] &&
+			states != nil && states.Hidden[visit.path] {
+			hiddenPages = append(hiddenPages, visit.path+".")
+		}
+	})
 	seen := make(map[string]bool)
 	var missing []string
 	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
@@ -73,6 +90,11 @@ func (s *Server) validateManagedFormRequired(
 		if element == nil || visit.parentTablePart != nil || visit.effectiveReadOnly ||
 			!managedElementPostsScalar(element) {
 			return
+		}
+		for _, prefix := range hiddenPages {
+			if strings.HasPrefix(visit.path, prefix) {
+				return
+			}
 		}
 		path := strings.TrimSpace(element.DataPath)
 		if path == "" || strings.Count(path, ".") > 1 {

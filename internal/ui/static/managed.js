@@ -491,7 +491,12 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     var hidden = st.hidden || {};
     Object.keys(hidden).forEach(function (path) {
       var el = byPath(path);
-      if (!el) return;
+      if (!el) {
+        // Страница набора СтраницыФормы своего якоря не имеет — её якорь
+        // стоит на кнопке закладки.
+        obManagedSetPageHidden(path, !!hidden[path]);
+        return;
+      }
       // Some managed elements keep their layout only in an inline display
       // declaration (checkbox and command bar use flex). Remember that value
       // before the first state update instead of erasing it on hidden=false.
@@ -4117,7 +4122,7 @@ function obManagedTabKey(tabs) {
 
 function obManagedSwitchTab(btn) {
   var tabs = btn && btn.closest ? btn.closest('.managed-tabs') : null;
-  if (!tabs) return;
+  if (!tabs || btn.style.display === 'none') return;
   var idx = btn.getAttribute('data-tab-idx') || '0';
   tabs.querySelectorAll('.managed-tab-btn').forEach(function (b) { b.classList.remove('active'); });
   btn.classList.add('active');
@@ -4126,6 +4131,79 @@ function obManagedSwitchTab(btn) {
   if (content) content.style.display = 'block';
   try { sessionStorage.setItem(obManagedTabKey(tabs), idx); } catch (_) {}
   if (window._obResizeGrids) setTimeout(window._obResizeGrids, 0);
+}
+
+// obManagedSetPageHidden применяет пересчитанное событием формы условие
+// hidden_when к странице набора СтраницыФормы. Страница представлена двумя
+// узлами — кнопкой закладки и содержимым, — поэтому общий путь
+// applyElementStates (display у якоря) ей не подходит: спрятанное содержимое
+// оставило бы кнопку, а спрятанная кнопка — открытое содержимое. Прячется
+// кнопка; если она была открытой, открывается первая видимая закладка того же
+// набора, а когда видимых не осталось, гаснет и содержимое. hidden=false
+// возвращает кнопку, не переключая открытую закладку; если открытых больше
+// нет, открывает возвращённую. Это не зависит от порядка ключей hidden.
+// Страницу, скрытую уже при отрисовке, сервер не выводит, и показать её до
+// перезагрузки нечем.
+function obManagedSetPageHidden(path, hide) {
+  var btn = document.querySelector('.managed-tab-btn[data-ob-tab-path="' + (window.CSS && CSS.escape ? CSS.escape(path) : path) + '"]');
+  if (!btn) return;
+  btn.style.display = hide ? 'none' : '';
+  obManagedSyncPageRequired();
+  var siblings = btn.parentElement ? btn.parentElement.children : [];
+  if (!hide) {
+    for (var i = 0; i < siblings.length; i++) {
+      if (siblings[i].style.display !== 'none' && siblings[i].classList.contains('active')) return;
+    }
+    obManagedSwitchTab(btn);
+    return;
+  }
+  if (!btn.classList.contains('active')) return;
+  for (var i = 0; i < siblings.length; i++) {
+    if (siblings[i] !== btn && siblings[i].style.display !== 'none') {
+      obManagedSwitchTab(siblings[i]);
+      return;
+    }
+  }
+  btn.classList.remove('active');
+  var tabs = btn.closest ? btn.closest('.managed-tabs') : null;
+  var content = tabs ? tabs.querySelector('.managed-tab-content[data-tab-content="' + (btn.getAttribute('data-tab-idx') || '0') + '"]') : null;
+  if (content) content.style.display = 'none';
+}
+
+// A conditionally hidden page cannot be filled. Suspend only its form-local
+// native required and string mask (pattern) rules. Keep controls enabled so
+// their unchanged values still post. Ordinary inactive pages keep both rules.
+// Restore the exact attributes only after every ancestor page is available;
+// Field.required and type validation remain enforced by the server.
+function obManagedSyncPageRequired() {
+  document.querySelectorAll('input[required], select[required], textarea[required], input[data-ob-form-mask][pattern], [data-ob-page-required], [data-ob-page-pattern]').forEach(function (control) {
+    var hidden = false;
+    var content = control.closest('.managed-tab-content');
+    while (content) {
+      var tabs = content.closest('.managed-tabs');
+      var idx = content.getAttribute('data-tab-content');
+      var btn = tabs && tabs.querySelector('.managed-tab-btn[data-tab-idx="' + idx + '"]');
+      if (btn && btn.style.display === 'none') {
+        hidden = true;
+        break;
+      }
+      var parent = content.parentElement;
+      content = parent && parent.closest ? parent.closest('.managed-tab-content') : null;
+    }
+    ['required', 'pattern'].forEach(function (rule) {
+      if (rule === 'pattern' && !control.hasAttribute('data-ob-form-mask')) return;
+      var saved = 'data-ob-page-' + rule;
+      if (hidden && control.hasAttribute(rule)) {
+        // Remember once: another hide (or a still-hidden ancestor) must not
+        // overwrite the original value with the suspended state.
+        if (!control.hasAttribute(saved)) control.setAttribute(saved, control.getAttribute(rule));
+        control.removeAttribute(rule);
+      } else if (!hidden && control.hasAttribute(saved)) {
+        control.setAttribute(rule, control.getAttribute(saved));
+        control.removeAttribute(saved);
+      }
+    });
+  });
 }
 
 obManagedReady(function () {
@@ -4138,8 +4216,6 @@ obManagedReady(function () {
   var validationPassStarted = false;
   document.addEventListener('invalid', function (e) {
     if (validationPassStarted) return;
-    validationPassStarted = true;
-    setTimeout(function () { validationPassStarted = false; }, 0);
     var control = e.target;
     if (!control || !control.closest) return;
     var pages = [];
@@ -4149,16 +4225,30 @@ obManagedReady(function () {
       var parent = content.parentElement;
       content = parent && parent.closest ? parent.closest('.managed-tab-content') : null;
     }
-    // For nested tab groups, select every ancestor page from outer to inner.
-    // Switching an outer group currently hides descendant pages too, so the
-    // inner selection must be restored even when it was active beforehand.
-    for (var i = pages.length - 1; i >= 0; i--) {
+    // Check the entire ancestor chain before switching anything: an inactive
+    // page may be opened, but a button hidden by hidden_when may not. Ignore
+    // that control for navigation without consuming the first-invalid slot,
+    // so the next invalid control on an available page can still be revealed.
+    var buttons = [];
+    for (var i = 0; i < pages.length; i++) {
       var page = pages[i];
       var tabs = page.closest('.managed-tabs');
       if (!tabs) continue;
       var idx = page.getAttribute('data-tab-content');
       var btn = tabs.querySelector('.managed-tab-btn[data-tab-idx="' + idx + '"]');
-      if (btn) obManagedSwitchTab(btn);
+      if (btn && btn.style.display === 'none') {
+        e.preventDefault();
+        return;
+      }
+      if (btn) buttons.push(btn);
+    }
+    validationPassStarted = true;
+    setTimeout(function () { validationPassStarted = false; }, 0);
+    // For nested tab groups, select every ancestor page from outer to inner.
+    // Switching an outer group currently hides descendant pages too, so the
+    // inner selection must be restored even when it was active beforehand.
+    for (var i = buttons.length - 1; i >= 0; i--) {
+      obManagedSwitchTab(buttons[i]);
     }
   }, true);
 
