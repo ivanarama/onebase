@@ -892,29 +892,20 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"isActivityField": func(e *metadata.Entity, f metadata.Field) bool {
 			return e != nil && e.Activity != nil && f.Name == e.Activity.Field
 		},
-		"listQuerySuffix": func(params storage.ListParams) template.URL {
-			var parts []string
-			if params.ActivityScope != "" {
-				parts = append(parts, "activity="+url.QueryEscape(params.ActivityScope))
+		"listQuerySuffix": funcsListQuerySuffix,
+		// listExcelSuffix — состояние списка для выгрузки в Excel: то же, что
+		// listQuerySuffix, плюс снятые отборы формы списка (lf_off).
+		"listExcelSuffix": func(params storage.ListParams, offValue any) template.URL {
+			suffix := string(funcsListQuerySuffix(params))
+			off, _ := offValue.(string)
+			if strings.TrimSpace(off) == "" {
+				return template.URL(suffix) //nolint:gosec // G203: строка собрана listQuerySuffix из экранированных частей
 			}
-			if params.Search != "" {
-				parts = append(parts, "q="+url.QueryEscape(params.Search))
+			sep := "?"
+			if suffix != "" {
+				sep = "&"
 			}
-			for k, v := range params.Filters {
-				if v.From != "" {
-					parts = append(parts, "f."+url.QueryEscape(k)+".from="+url.QueryEscape(v.From))
-				}
-				if v.To != "" {
-					parts = append(parts, "f."+url.QueryEscape(k)+".to="+url.QueryEscape(v.To))
-				}
-				if v.Value != "" {
-					parts = append(parts, "f."+url.QueryEscape(k)+"="+url.QueryEscape(v.Value))
-				}
-			}
-			if len(parts) == 0 {
-				return ""
-			}
-			return template.URL("?" + strings.Join(parts, "&")) //nolint:gosec // G203: части строки запроса пропущены через url.QueryEscape
+			return template.URL(suffix + sep + "lf_off=" + url.QueryEscape(off)) //nolint:gosec // G203: значение пропущено через url.QueryEscape
 		},
 		"filterQuery": func(params storage.ListParams) template.URL {
 			var parts []string
@@ -1288,6 +1279,12 @@ func cloneQuery(current any) url.Values {
 func isListStateQueryKey(key string) bool {
 	switch key {
 	case "q", "sort", "dir", "activity", "view", "lm", "parent", "subsystem", "limit", "page":
+		return true
+	// Снятый отбор по умолчанию формы списка переносится, как поиск и отбор:
+	// иначе «Применить» отбора, поиск, сортировка и страницы молча включали
+	// его обратно, и, например, «Выполнена = Да» при снятом «Невыполненные»
+	// давало пустой список.
+	case listFormFilterOffParam:
 		return true
 	default:
 		return strings.HasPrefix(key, "f.")
@@ -1986,6 +1983,13 @@ const tplList = `
       <a class="view-btn{{if eq .Params.ActivityScope "all"}} active{{end}}" href="{{listURL $.Query "activity" "all"}}">{{t $.Lang "Все"}}</a>
     </div>
     {{end}}
+    {{/* Снимаемые отборы формы списка (filter: removable): включённый — с
+         галочкой; щелчок переключает, состояние живёт в адресе (lf_off). */}}
+    {{if .ListFormToggles}}
+    <div class="view-switch" data-ob-list-form-toggles>
+      {{range .ListFormToggles}}<a class="view-btn{{if .On}} active{{end}}" href="{{listURL $.Query "lf_off" .Off}}" aria-pressed="{{if .On}}true{{else}}false{{end}}">{{if .On}}☑{{else}}☐{{end}} {{.Label}}</a>{{end}}
+    </div>
+    {{end}}
     {{if not .TreeView}}
       {{if .Feed}}<a class="btn btn-secondary btn-sm" href="{{listURL $.Query "lm" "pages"}}" title="{{t $.Lang "Показывать постранично"}}">▤ {{t $.Lang "Страницы"}}</a>
       {{else}}<a class="btn btn-secondary btn-sm" href="{{listURL $.Query "lm" "feed"}}" title="{{t $.Lang "Лента с догрузкой по скроллу"}}">≣ {{t $.Lang "Лента"}}</a>{{end}}
@@ -2002,7 +2006,7 @@ const tplList = `
     {{/* На свежем списке строка не выбрана — кнопка приходит с сервера уже
          приглушённой, дальше её состояние ведёт ui.js по выделению. */}}
     <button type="button" id="list-actions-btn" class="btn btn-secondary" data-ob-list-actions aria-disabled="true" title="{{t $.Lang "Сначала выберите строку списка"}}">⚙ {{t $.Lang "Действия"}} ▾</button>
-    <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{listQuerySuffix .Params}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
+    <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{listExcelSuffix .Params .ListFormOff}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
   </div>
 </div>
 <form method="GET" style="display:flex;gap:8px;margin-bottom:12px;max-width:460px">
@@ -4298,3 +4302,30 @@ const tplPageCustom = `
 </body></html>
 {{end}}
 `
+
+// funcsListQuerySuffix — состояние списка (активность, поиск, отбор) строкой
+// запроса для ссылок выгрузки.
+func funcsListQuerySuffix(params storage.ListParams) template.URL {
+	var parts []string
+	if params.ActivityScope != "" {
+		parts = append(parts, "activity="+url.QueryEscape(params.ActivityScope))
+	}
+	if params.Search != "" {
+		parts = append(parts, "q="+url.QueryEscape(params.Search))
+	}
+	for k, v := range params.Filters {
+		if v.From != "" {
+			parts = append(parts, "f."+url.QueryEscape(k)+".from="+url.QueryEscape(v.From))
+		}
+		if v.To != "" {
+			parts = append(parts, "f."+url.QueryEscape(k)+".to="+url.QueryEscape(v.To))
+		}
+		if v.Value != "" {
+			parts = append(parts, "f."+url.QueryEscape(k)+"="+url.QueryEscape(v.Value))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return template.URL("?" + strings.Join(parts, "&")) //nolint:gosec // G203: части строки запроса пропущены через url.QueryEscape
+}

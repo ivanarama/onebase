@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -44,6 +45,286 @@ func (s *Server) applyRowFilter(w http.ResponseWriter, r *http.Request, entity *
 	}
 	params.RowFilterEvaluated = true // план 79F: строковый доступ вычислен
 	return params, true
+}
+
+// applyListFormFilter добавляет к отбору списка постоянные условия формы
+// (ключ `filter` блока form:). Это правило ИНТЕРФЕЙСА, а не прав: записи,
+// не прошедшие условие, в этом списке не показываются, но остаются доступны
+// по ссылке, в отчётах и через API — иначе это был бы row_access.
+//
+// Условие с @ТекущийПользователь при неизвестном пользователе (фоновые
+// задания, анонимные пути) не применяется вовсе: подставить туда нечего,
+// а отбор «по никому» показал бы пустой список и выглядел бы поломкой.
+func (s *Server) applyListFormFilter(r *http.Request, entity *metadata.Entity, params storage.ListParams) storage.ListParams {
+	form := pickManagedForm(entity, "list")
+	if form == nil || len(form.ListFilter) == 0 {
+		return params
+	}
+	user := auth.UserFromContext(r.Context())
+	off := listFormFilterOff(r)
+	var extra []storage.Predicate
+	for i, cond := range form.ListFilter {
+		// Снятый пользователем отбор по умолчанию не применяется; снять можно
+		// только removable-условие — адресом остальные не отключить.
+		if cond.Removable && off[i] {
+			continue
+		}
+		var (
+			pred storage.Predicate
+			ok   bool
+		)
+		if strings.TrimSpace(cond.Query) != "" {
+			pred, ok = s.listFilterQueryPredicate(r.Context(), entity, cond, user)
+		} else {
+			pred, ok = s.listFilterPredicate(entity, cond, user)
+		}
+		if !ok {
+			continue
+		}
+		extra = append(extra, pred)
+	}
+	if len(extra) == 0 {
+		return params
+	}
+	if params.RowFilter != nil {
+		extra = append(extra, *params.RowFilter)
+	}
+	combined := storage.Predicate{All: extra}
+	params.RowFilter = &combined
+	return params
+}
+
+// listFormFilterOffParam — параметр адреса списка со снятыми отборами по
+// умолчанию: номера условий filter через запятую.
+const listFormFilterOffParam = "lf_off"
+
+// listFormFilterMaxRows — сколько ссылок условие-запрос может вернуть. Больше —
+// отбор закрывается целиком: длинный список параметров упирается в предел СУБД,
+// а молча обрезанный выглядел бы как «потерянные» записи.
+const listFormFilterMaxRows = 10000
+
+func listFormFilterOff(r *http.Request) map[int]bool {
+	off := map[int]bool{}
+	if r == nil {
+		return off
+	}
+	for _, part := range strings.Split(r.URL.Query().Get(listFormFilterOffParam), ",") {
+		var n int
+		if _, err := fmt.Sscanf(strings.TrimSpace(part), "%d", &n); err == nil && n >= 0 {
+			off[n] = true
+		}
+	}
+	return off
+}
+
+// listFormFilterToggle — переключатель снимаемого отбора над списком.
+type listFormFilterToggle struct {
+	Label string
+	On    bool
+	// Off — значение lf_off для адреса переключателя: с этим условием, если
+	// оно включено, и без него, если снято.
+	Off string
+}
+
+// listFormFilterToggles — переключатели снимаемых отборов формы списка для
+// текущего пользователя: условие, которое к нему не относится (роль,
+// администратор), переключателя не получает.
+func (s *Server) listFormFilterToggles(r *http.Request, entity *metadata.Entity) []listFormFilterToggle {
+	form := pickManagedForm(entity, "list")
+	if form == nil {
+		return nil
+	}
+	user := auth.UserFromContext(r.Context())
+	off := listFormFilterOff(r)
+	var out []listFormFilterToggle
+	for i, cond := range form.ListFilter {
+		if !cond.Removable || !listFormFilterApplies(cond, user) {
+			continue
+		}
+		next := map[int]bool{}
+		for k, v := range off {
+			next[k] = v
+		}
+		next[i] = !off[i]
+		var nums []string
+		for j := range form.ListFilter {
+			if next[j] {
+				nums = append(nums, fmt.Sprint(j))
+			}
+		}
+		out = append(out, listFormFilterToggle{
+			Label: cond.DisplayLabel(s.resolveLang(r)),
+			On:    !off[i],
+			Off:   strings.Join(nums, ","),
+		})
+	}
+	return out
+}
+
+// listFormFilterApplies — относится ли условие к пользователю: роль из roles,
+// для @ТекущийПользователь и запроса — известный пользователь не-администратор.
+func listFormFilterApplies(cond metadata.FormListCondition, user *auth.User) bool {
+	if len(cond.Roles) > 0 && !userHasAnyRole(user, cond.Roles) {
+		return false
+	}
+	if cond.Value == metadata.ListFilterCurrentUser || strings.TrimSpace(cond.Query) != "" {
+		return user != nil && user.ID != "" && !user.IsAdmin
+	}
+	return true
+}
+
+// listFilterQueryPredicate — условие запросом: «Ссылка В (первая колонка
+// результата)». Ошибка запроса или слишком длинный результат закрывают отбор
+// (пустой список), а не открывают его: правило интерфейса сломалось, и
+// показать всё вместо «своего» было бы хуже, чем ничего.
+func (s *Server) listFilterQueryPredicate(ctx context.Context, entity *metadata.Entity, cond metadata.FormListCondition, user *auth.User) (storage.Predicate, bool) {
+	if !listFormFilterApplies(cond, user) {
+		return storage.Predicate{}, false
+	}
+	closed := storage.Predicate{Field: "id", Op: "in", Value: []any{}}
+	ids, err := s.listFilterQueryIDs(ctx, cond.Query, user)
+	if err != nil {
+		slog.Warn("list form filter query failed", "error", err)
+		return closed, true
+	}
+	if len(ids) > listFormFilterMaxRows {
+		slog.Warn("list form filter query returned too many rows", "rows", len(ids))
+		return closed, true
+	}
+	values := make([]any, 0, len(ids))
+	for _, id := range ids {
+		values = append(values, id)
+	}
+	return storage.Predicate{Field: "id", Op: "in", Value: values}, true
+}
+
+// listFilterQueryIDs исполняет запрос условия с правами смотрящего (RLS его
+// источников действует, как у виджета) и возвращает идентификаторы из первой
+// колонки. Пустые и не-UUID значения пропускаются.
+func (s *Server) listFilterQueryIDs(ctx context.Context, text string, user *auth.User) ([]string, error) {
+	rowFilters, err := access.QueryRowFiltersWithContext(ctx, user, s.reg.Entities(), s.reg.Registers(), s.reg.InfoRegisters(), s.reg.AccountRegisters(), access.RuntimeContext(s.reg, s.store))
+	if err != nil {
+		return nil, err
+	}
+	compiled, err := query.Compile(text, query.CompileOpts{
+		Params: map[string]any{
+			"ТекущийПользователь": user.ID,
+			"ТекущийЛогин":        user.Login,
+		},
+		Entities:    s.reg.Entities(),
+		Registers:   s.reg.Registers(),
+		InfoRegs:    s.reg.InfoRegisters(),
+		AccountRegs: s.reg.AccountRegisters(),
+		RowFilters:  rowFilters,
+		Dialect:     s.store.Dialect(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("compile: %w", err)
+	}
+	rows, cols, err := query.Run(ctx, s.store, &compiled)
+	if err != nil {
+		return nil, err
+	}
+	if len(cols) == 0 {
+		return nil, errors.New("запрос отбора не вернул колонок")
+	}
+	seen := make(map[string]bool, len(rows))
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		id, ok := listFilterRowID(row[cols[0]])
+		if !ok || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+func listFilterRowID(v any) (string, bool) {
+	var raw string
+	switch t := v.(type) {
+	case nil:
+		return "", false
+	case uuid.UUID:
+		raw = t.String()
+	case []byte:
+		raw = string(t)
+	default:
+		raw = fmt.Sprint(t)
+	}
+	id, err := uuid.Parse(strings.TrimSpace(raw))
+	if err != nil || id == uuid.Nil {
+		return "", false
+	}
+	return id.String(), true
+}
+
+// listFilterPredicate переводит одно условие формы списка в предикат хранилища.
+// Поле допускает одно разыменование: «Инициатор.УчётнаяЗапись» проверяет
+// реквизит связанной записи.
+// userHasAnyRole — есть ли у пользователя хотя бы одна из ролей (имя роли
+// без учёта регистра, как в остальных проверках ролей).
+func userHasAnyRole(user *auth.User, roles []string) bool {
+	if user == nil {
+		return false
+	}
+	for _, have := range user.Roles {
+		if have == nil {
+			continue
+		}
+		for _, want := range roles {
+			if strings.EqualFold(strings.TrimSpace(have.Name), strings.TrimSpace(want)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *Server) listFilterPredicate(entity *metadata.Entity, cond metadata.FormListCondition, user *auth.User) (storage.Predicate, bool) {
+	field := strings.TrimSpace(cond.Field)
+	if field == "" {
+		return storage.Predicate{}, false
+	}
+	if len(cond.Roles) > 0 && !userHasAnyRole(user, cond.Roles) {
+		return storage.Predicate{}, false
+	}
+	op := strings.TrimSpace(cond.Op)
+	if op == "" {
+		op = "eq"
+	}
+	value := any(cond.Value)
+	if cond.Value == metadata.ListFilterCurrentUser {
+		if user == nil || user.ID == "" {
+			return storage.Predicate{}, false
+		}
+		// Администратора правило «мои записи» не касается: он разбирает чужие
+		// документы, и список, показывающий ему только своё, мешал бы работе.
+		// Та же логика, что у маскирования ПДн.
+		if user.IsAdmin {
+			return storage.Predicate{}, false
+		}
+		value = user.ID
+	}
+
+	head, attr, nested := strings.Cut(field, ".")
+	if !nested {
+		return storage.Predicate{Field: head, Op: op, Value: value}, true
+	}
+	refField, ok := entityFieldByName(entity, head)
+	if !ok || refField.RefEntity == "" {
+		return storage.Predicate{}, false
+	}
+	target := s.reg.GetEntity(refField.RefEntity)
+	if target == nil {
+		return storage.Predicate{}, false
+	}
+	return storage.Predicate{
+		Field:        head,
+		RefEntity:    target,
+		RefPredicate: &storage.Predicate{Field: attr, Op: op, Value: value},
+	}, true
 }
 
 func (s *Server) rowAllowed(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, op string, row map[string]any) bool {

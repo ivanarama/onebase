@@ -652,6 +652,20 @@ type FormModule struct {
 	// становится втрое шире и перестаёт быть узнаваемой — там её выключают одним
 	// ключом на форму.
 	RefCardButton *bool `yaml:"ref_card_button,omitempty"`
+	// ListFilter — постоянный отбор ФОРМЫ СПИСКА. Отличается от фильтров в
+	// адресе страницы тем, что его не снять: список сущности просто не
+	// показывает записи, не прошедшие условие.
+	//
+	// Нужен там, где «мои записи» — это правило интерфейса, а не прав:
+	// оператор должен видеть в списке задач свои, но остальные ему не
+	// запрещены (их видно в отчётах и по ссылке), поэтому RLS здесь не
+	// подходит — он скрыл бы записи везде разом.
+	//
+	// Поле допускает ОДНО разыменование: «Инициатор.УчётнаяЗапись» отбирает
+	// по реквизиту связанной записи. Значение — литерал или @ТекущийПользователь
+	// (идентификатор учётной записи смотрящего).
+	ListFilter []FormListCondition `yaml:"filter,omitempty"`
+
 	// OneCMeta — служебный блок, используемый только конвертером 1С,
 	// рантайм его игнорирует. Может содержать version, unknown_xml и т.п.
 	OneCMeta map[string]any `yaml:"oneC_meta,omitempty"`
@@ -683,6 +697,49 @@ type FormModule struct {
 	idCounter int        `yaml:"-"`
 	idMu      sync.Mutex `yaml:"-"`
 }
+
+// FormListCondition — одно условие постоянного отбора формы списка.
+type FormListCondition struct {
+	Field string `yaml:"field"`
+	Op    string `yaml:"op,omitempty"`    // пока только eq (умолчание)
+	Value string `yaml:"value,omitempty"` // литерал или @ТекущийПользователь
+	// Roles — условие действует только для пользователя с одной из этих
+	// ролей; пусто — для всех. «Мои записи» нужны оператору, а сотрудник
+	// контроля качества разбирает весь список: одна форма, разный отбор.
+	Roles []string `yaml:"roles,omitempty"`
+	// Query — условие запросом вместо Field/Value: первая колонка результата —
+	// ссылки на записи этой сущности, список показывает только их. Правило
+	// «чьи записи» бывает сложнее одного поля — например, менеджеру задачи по
+	// направлениям из его карточки, остальным — по подразделению. Параметры
+	// &ТекущийПользователь (идентификатор учётки) и &ТекущийЛогин подставляются
+	// сами; как и у @ТекущийПользователь, администратора условие не касается.
+	Query string `yaml:"query,omitempty"`
+	// Removable — отбор по умолчанию: над списком переключатель с подписью
+	// Label, снятый переключатель отключает условие (как «Только активные» в
+	// рабочем списке задач 1С). Без Removable условие снять нельзя.
+	Removable bool              `yaml:"removable,omitempty"`
+	Label     map[string]string `yaml:"label,omitempty"`
+}
+
+// DisplayLabel — подпись переключателя снимаемого отбора на языке lang
+// (ru — запасной), без подписи — «Отбор».
+func (c FormListCondition) DisplayLabel(lang string) string {
+	if v := strings.TrimSpace(c.Label[lang]); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(c.Label["ru"]); v != "" {
+		return v
+	}
+	for _, v := range c.Label {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return "Отбор"
+}
+
+// ListFilterCurrentUser — подстановка «тот, кто смотрит» в значении условия.
+const ListFilterCurrentUser = "@ТекущийПользователь"
 
 // FormProcedure represents a procedure in form module
 type FormProcedure struct {

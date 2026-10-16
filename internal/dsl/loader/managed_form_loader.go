@@ -179,6 +179,8 @@ type formYAMLDoc struct {
 		// Указатель: отсутствие ключа (nil) значит «показывать», и от явного
 		// true его отличать не нужно, а от явного false — нужно.
 		RefCardButton *bool `yaml:"ref_card_button"`
+		// Постоянный отбор формы списка (metadata.FormListCondition).
+		ListFilter []metadata.FormListCondition `yaml:"filter"`
 	} `yaml:"form"`
 	Attributes            []*metadata.FormAttribute       `yaml:"attributes"`
 	Commands              []*metadata.FormCommand         `yaml:"commands"`
@@ -229,6 +231,7 @@ func (mfl *ManagedFormLoader) parseYAML(data []byte, entityNameFallback string) 
 		AutoSaveDataInSettings: doc.Form.AutoSaveDataInSettings,
 		VerticalScroll:         doc.Form.VerticalScroll,
 		RefCardButton:          doc.Form.RefCardButton,
+		ListFilter:             doc.Form.ListFilter,
 		Attributes:             doc.Attributes,
 		Commands:               doc.Commands,
 		AutoCommandBar:         doc.CommandBar,
