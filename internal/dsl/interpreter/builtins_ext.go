@@ -108,7 +108,10 @@ func fmtBuiltinBounded(args []any, maxDecimalPlaces int32) (string, error) {
 
 	// Number formatting
 	if f, ok := toFloat(val); ok {
-		decimals := 2
+		// Без ЧДЦ — столько знаков, сколько есть в значении, как в 1С:
+		// Формат(21, "ЧГ=0") = «21». Раньше подставлялось два знака, и номер
+		// дня или года печатался «21.00» / «2 026.00».
+		decimals := -1
 		if d := extractFormatParam(fmtStr, "чдц="); d != "" {
 			if n, err := strconv.Atoi(d); err == nil {
 				if maxDecimalPlaces > 0 && (n < -int(maxDecimalPlaces) || n > int(maxDecimalPlaces)) {
@@ -123,6 +126,19 @@ func fmtBuiltinBounded(args []any, maxDecimalPlaces int32) (string, error) {
 				return "", fmt.Errorf("формат: разделитель разрядов слишком длинный")
 			}
 			sep = s
+		}
+		// ЧГ=0 — без группировки разрядов, как в 1С. Раньше ключ не читался
+		// вовсе, и год печатался «2 026».
+		if strings.TrimSpace(extractFormatParam(fmtStr, "чг=")) == "0" {
+			sep = ""
+		}
+		if decimals < 0 {
+			return formatNumberAsIs(val, f, sep), nil
+		}
+		// Округление — по правилам 1С, половина от нуля: Формат(1234.5,
+		// "ЧДЦ=0") = «1235». Через float половина уходила к чётному («1234»).
+		if d, ok := toDecimal(val); ok && decimals <= 64 {
+			return groupNumberDigits(d.StringFixed(int32(decimals)), sep), nil //nolint:gosec // G115: 0 ≤ decimals ≤ 64 проверено выше
 		}
 		return formatNumber(f, decimals, sep), nil
 	}
@@ -245,9 +261,24 @@ func isMinutesSecondsPattern(pattern string) bool {
 	return !strings.Contains(pattern, "dd") && !strings.Contains(pattern, "дд")
 }
 
+// formatNumberAsIs — число без заданной точности: десятичная запись значения
+// без незначащих нулей (21 → «21», 21.50 → «21.5»). Десятичное значение берётся
+// как есть, а не через float: 0.1 + 0.2 не превращается в «0.30000000000000004».
+func formatNumberAsIs(val any, f float64, sep string) string {
+	s := strconv.FormatFloat(f, 'f', -1, 64)
+	if d, ok := toDecimal(val); ok {
+		s = d.String()
+	}
+	return groupNumberDigits(s, sep)
+}
+
 // formatNumber formats a float with given decimal places and thousands separator.
 func formatNumber(f float64, decimals int, sep string) string {
-	s := strconv.FormatFloat(f, 'f', decimals, 64)
+	return groupNumberDigits(strconv.FormatFloat(f, 'f', decimals, 64), sep)
+}
+
+// groupNumberDigits расставляет разделитель разрядов в целой части записи числа.
+func groupNumberDigits(s, sep string) string {
 	parts := strings.Split(s, ".")
 	intPart := parts[0]
 	if sep != "" && len(intPart) > 3 {
