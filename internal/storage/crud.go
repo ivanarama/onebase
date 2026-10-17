@@ -761,6 +761,26 @@ func (db *DB) listWhere(entityName string, entity *metadata.Entity, params ListP
 				args = append(args, bound)
 				argIdx++
 			}
+		case field.Type == metadata.FieldTypeBool:
+			// Булево — точное сравнение, а не подстрока: на SQLite значение
+			// хранится как 0/1, и «%Да%» не совпадал ни с одной записью. «Нет»
+			// включает незаполненное (NULL) — в карточке оно и показывается как
+			// «Нет». Непонятное значение не открывает весь список.
+			if filter.Value != "" {
+				b, ok := parseAnyBool(filter.Value)
+				switch {
+				case !ok:
+					whereParts = append(whereParts, "1 = 0")
+				case b:
+					whereParts = append(whereParts, fmt.Sprintf("%s = %s", column, d.Placeholder(argIdx)))
+					args = append(args, true)
+					argIdx++
+				default:
+					whereParts = append(whereParts, fmt.Sprintf("(%s = %s OR %s IS NULL)", column, d.Placeholder(argIdx), column))
+					args = append(args, false)
+					argIdx++
+				}
+			}
 		case field.RefEntity != "":
 			if filter.Value != "" {
 				whereParts = append(whereParts, fmt.Sprintf("%s = %s", column, d.Placeholder(argIdx)))
