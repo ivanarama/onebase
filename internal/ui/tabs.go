@@ -316,6 +316,28 @@ const tplAppShell = `{{define "page-app-shell"}}
     }
     return norm(a)===norm(b);
   }
+  // Команда закрытия, не нашедшая вкладку, ждёт её недолго. Обработчик формы
+  // НОВОГО объекта пишет его и тут же шлёт ui.закрытьФорму по адресу с id, а
+  // команда приходит по SSE ещё до ответа на событие формы: вкладка в этот
+  // момент числится по адресу /new, и id она узнаёт только из ответа
+  // (savedId → replaceState → obFrameURLChanged). Без ожидания такая вкладка
+  // не закрывалась никогда. Ждём только смену адреса после записи — так
+  // закроется лишь сама записанная форма, а не вкладка, открытая позже.
+  var pendingCloses=[];
+  var PENDING_CLOSE_MS=15000;
+  function rememberPendingClose(u,reason){
+    var now=Date.now();
+    pendingCloses=pendingCloses.filter(function(p){ return p.until>now && !sameURL(p.url,u); });
+    pendingCloses.push({url:u,reason:reason||'programmatic',until:now+PENDING_CLOSE_MS});
+  }
+  function takePendingClose(t){
+    var now=Date.now();
+    pendingCloses=pendingCloses.filter(function(p){ return p.until>now; });
+    for(var i=0;i<pendingCloses.length;i++){
+      if(sameURL(t.url,pendingCloses[i].url)){ return pendingCloses.splice(i,1)[0]; }
+    }
+    return null;
+  }
   function closeTabByURL(url,reason){
     var u=String(url||''); if(!u)return 0;
     var n=0;
@@ -331,6 +353,7 @@ const tplAppShell = `{{define "page-app-shell"}}
         matched.push(t);
       }
     });
+    if(!matched.length){ rememberPendingClose(u,reason); return typeof window.obRequestFrameClose==='function'?Promise.resolve(0):0; }
     if(typeof window.obRequestFrameClose!=='function'){
       matched.forEach(function(t){ closeTab(t,reason||'programmatic'); if(!tabs.includes(t))n++; });
       return n;
@@ -345,6 +368,17 @@ const tplAppShell = `{{define "page-app-shell"}}
   }
   window.obCloseTabByURL=closeTabByURL;
 
+  // frameShows — фрейм вкладки сейчас показывает адрес u. obFrameURLChanged
+  // документ шлёт после replaceState, но до доставки сообщения фрейм может
+  // перейти на другую форму: WindowProxy тот же, Document новый. Запоздавшее
+  // сообщение старого документа не должно ни переписать адрес вкладки, ни
+  // отдать ей отложенное закрытие — иначе закрылась бы уже другая форма.
+  // Адрес недоступен (чужой origin) — сверить нечем, сообщение принимается.
+  function frameShows(t,u){
+    var href='';
+    try{ href=String(t.frame.contentWindow.location.href||''); }catch(e){ return true; }
+    return !href || sameURL(href,u);
+  }
   function tabByWindow(win){ for(var i=0;i<tabs.length;i++){ if(tabs[i].frame.contentWindow===win)return tabs[i]; } return null; }
   window.addEventListener('message',function(ev){
     // Принимаем сообщения только от своего origin: иначе любой сторонний фрейм
@@ -355,7 +389,7 @@ const tplAppShell = `{{define "page-app-shell"}}
     var d=ev.data; if(!d||typeof d!=='object')return;
     if(d.source==='obOpenTab' && d.url){ var ou=String(d.url); if(!openable(ou))return; openTab(ou, d.title?String(d.title):'Форма', {allowDup:!!d.allowDup}); }
     else if(d.source==='obCloseTab'){ if(d.url){ closeTabByURL(String(d.url),d.reason||'programmatic'); } else { var ct=tabByWindow(ev.source); if(ct)closeTab(ct,d.reason||'cross',d.mode||''); } }
-    else if(d.source==='obFrameURLChanged' && d.url){ var ut=tabByWindow(ev.source); if(ut)syncFrameURL(ut,String(d.url)); }
+    else if(d.source==='obFrameURLChanged' && d.url){ var ut=tabByWindow(ev.source); if(ut && frameShows(ut,String(d.url))){ syncFrameURL(ut,String(d.url)); var pc=takePendingClose(ut); if(pc)closeTab(ut,pc.reason); } }
     else if(d.source==='obSetTitle' && active && d.title){ active.title=String(d.title); active.label.textContent=active.title; active.btn.title=active.title; persist(); }
     else if(d.source==='obDirty'){ var dt=tabByWindow(ev.source); if(dt){ dt.dirty=!!d.dirty; dt.btn.classList.toggle('dirty',dt.dirty); } } // фаза 3
   });
