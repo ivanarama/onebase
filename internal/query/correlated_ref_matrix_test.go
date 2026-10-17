@@ -100,13 +100,36 @@ func TestCorrelatedRefNavigationMatrix(t *testing.T) {
 				}
 			})
 		}
+		// Every SELECT now has its own auto-JOIN. A local source with the same
+		// alias uses its own reference target; it must not borrow the outer one.
+		t.Run("local qualifier uses local target", func(t *testing.T) {
+			r := compile(t, `ВЫБРАТЬ (ВЫБРАТЬ Д.Клиент.Наименование ИЗ Справочник.ВнутренняяПроба КАК Д) КАК Имя ИЗ Документ.ЗаказПроба КАК Д`)
+			rows, cols, err := query.Run(ctx, db, &r)
+			if err != nil {
+				t.Fatalf("run: %v\nSQL: %s", err, r.SQL)
+			}
+			if len(cols) != 1 || cols[0] != "имя" || len(rows) != 2 {
+				t.Fatalf("rows: %#v; columns: %v\nSQL: %s", rows, cols, r.SQL)
+			}
+			for _, row := range rows {
+				if row["имя"] != "Другой" {
+					t.Fatalf("local reference read outer target: %#v\nSQL: %s", rows, r.SQL)
+				}
+			}
+		})
+		t.Run("local deletion mark does not read outer target", func(t *testing.T) {
+			r := compile(t, `ВЫБРАТЬ Д.Номер ИЗ Документ.ЗаказПроба КАК Д ГДЕ Д.Ссылка В
+    (ВЫБРАТЬ Д.Ссылка ИЗ Справочник.ВнутренняяПроба КАК Д ГДЕ Д.Клиент.deletion_mark = Ложь)`)
+			rows, _, err := query.Run(ctx, db, &r)
+			if err != nil || len(rows) != 0 {
+				t.Fatalf("deleted local target returned rows: %#v; err: %v\nSQL: %s", rows, err, r.SQL)
+			}
+		})
 		// Эти пути не имеют собственного авто-JOIN. Нельзя молча подменить их
 		// внешним ref_клиент: запрос должен завершиться отказом, а не чужими данными.
 		for _, tc := range []struct{ name, src string }{
 			{"unknown qualifier", `ВЫБРАТЬ Д.Номер ИЗ Документ.ЗаказПроба КАК Д ГДЕ Д.Ссылка В
     (ВЫБРАТЬ П.Ссылка ИЗ Документ.ЗаказПроба КАК П ГДЕ Чужой.Клиент.deletion_mark = Ложь)`},
-			{"shadow with different target", `ВЫБРАТЬ Д.Номер ИЗ Документ.ЗаказПроба КАК Д ГДЕ Д.Ссылка В
-    (ВЫБРАТЬ Д.Ссылка ИЗ Справочник.ВнутренняяПроба КАК Д ГДЕ Д.Клиент.deletion_mark = Ложь)`},
 			{"shadow without reference", `ВЫБРАТЬ Д.Номер ИЗ Документ.ЗаказПроба КАК Д ГДЕ Д.Ссылка В
     (ВЫБРАТЬ Д.Ссылка ИЗ Справочник.КонтрагентПроба КАК Д ГДЕ Д.Клиент.deletion_mark = Ложь)`},
 			{"join alias shadow", `ВЫБРАТЬ Д.Номер ИЗ Документ.ЗаказПроба КАК Д ГДЕ Д.Ссылка В
