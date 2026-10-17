@@ -1205,6 +1205,7 @@ func redactUnreadableSavedFormResponse(response *formEventResponse) {
 	response.TPRefOptions = nil
 	response.ConditionalCSS = ""
 	response.ElementStates = nil
+	response.ColumnTitles = nil
 	response.Messages = nil
 	response.PickerData = nil
 	response.ChoiceList = nil

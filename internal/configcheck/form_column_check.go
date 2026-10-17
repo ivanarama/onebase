@@ -52,6 +52,30 @@ func CheckFormTablePartColumns(proj *project.Project) []Issue {
 				SuggestedFix: "вложите колонку в элемент kind: ТабличнаяЧасть — состав колонок задаётся только там",
 			})
 		})
+		// title_from — заголовок колонки из реквизита. Опечатка в имени не
+		// ломает форму, а молча оставляет статичный заголовок — поэтому ошибка.
+		walkFormElementsWithParent(form.Elements, nil, func(el, parent *metadata.FormElement) {
+			source := strings.TrimSpace(el.TitleFrom)
+			if source == "" {
+				return
+			}
+			add := func(msg, fix string) {
+				issues = append(issues, Issue{
+					File: label, Object: object, Kind: "Управляемая форма", Code: "form.column",
+					Message:      fmt.Sprintf("элемент %q: %s", formElementName(el), msg),
+					SuggestedFix: fix,
+				})
+			}
+			if el.Kind != metadata.FormElementColumn || parent == nil || parent.Kind != metadata.FormElementTablePart {
+				add("title_from действует только у колонки табличной части",
+					"перенесите title_from на элемент kind: Колонка внутри kind: ТабличнаяЧасть")
+				return
+			}
+			if !formTitleSourceExists(ent, form, source) {
+				add(fmt.Sprintf("title_from: %q — нет такого реквизита формы или шапки объекта", source),
+					"объявите реквизит формы (attributes, обычно save: false, тип string) и заполняйте его в обработчике")
+			}
+		})
 	}
 
 	for _, ent := range proj.Entities {
@@ -165,4 +189,24 @@ func walkFormElementsWithParent(
 		visit(el, parent)
 		walkFormElementsWithParent(el.Children, el, visit)
 	}
+}
+
+// formTitleSourceExists — имя из title_from (допускается префикс «Форма.» или
+// «Объект.») есть среди реквизитов формы или полей шапки сущности. Сравнение
+// без учёта регистра, как в рантайме.
+func formTitleSourceExists(ent *metadata.Entity, form *metadata.FormModule, source string) bool {
+	name := metadata.FormTitleSourceName(source)
+	for _, a := range form.Attributes {
+		if a != nil && strings.EqualFold(a.Name, name) {
+			return true
+		}
+	}
+	if ent != nil {
+		for _, f := range ent.Fields {
+			if strings.EqualFold(f.Name, name) {
+				return true
+			}
+		}
+	}
+	return false
 }
