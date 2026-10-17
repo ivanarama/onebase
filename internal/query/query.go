@@ -28,6 +28,17 @@ type CompileOpts struct {
 	RowFilters map[SourceRef]*storage.Predicate
 	// Dialect selects the SQL flavour. nil = PgDialect (default).
 	Dialect storage.Dialect
+
+	// tablePartSources — табличные части, встреченные в запросе как
+	// источники, по синтетическому имени источника (rewriteTablePartSources).
+	tablePartSources map[string]tablePartSource
+}
+
+// tablePartSource — табличная часть объекта как источник запроса
+// («ИЗ Справочник.Мастера.СписокНаправлений КАК С», как в 1С).
+type tablePartSource struct {
+	owner *metadata.Entity
+	tp    *metadata.TablePart
 }
 
 func dialectOrDefault(d storage.Dialect) storage.Dialect {
@@ -115,6 +126,10 @@ type SourceOccurrence struct {
 type SourceRef struct {
 	Kind string
 	Name string
+	// TablePart — табличная часть объекта Name, если источник —
+	// «Справочник.Name.ТЧ». Право чтения и строковая политика — владельца,
+	// полевые политики — полей табличной части.
+	TablePart string
 }
 
 // sourcePermKind переводит ключевое слово типа источника в секцию прав User.Has.
@@ -144,6 +159,7 @@ func Compile(src string, opts CompileOpts) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	tokens, opts = rewriteTablePartSources(tokens, opts)
 	res, err := translate(tokens, opts)
 	if err != nil || !hasLimit {
 		return res, err
@@ -154,6 +170,98 @@ func Compile(src string, opts CompileOpts) (Result, error) {
 	// LIMIT молча изменил бы результат.
 	res.SQL += " LIMIT " + strconv.FormatInt(limit, 10)
 	return res, nil
+}
+
+// rewriteTablePartSources превращает «Справочник.Владелец.ТЧ» (и документ) в
+// источник с синтетическим именем — физическим именем таблицы табличной части.
+// Её метаданные (номер строки и реквизиты ТЧ) добавляются к сущностям
+// компиляции, поэтому разбор полей, типов и авто-JOIN ссылок работает как у
+// обычного источника; SQL источника — подзапрос tablePartSourceSQL.
+//
+// Тип.Имя.Имя(…) — виртуальная таблица регистра, не трогаем; ЗНАЧЕНИЕ(…) —
+// предопределённое значение, тоже не источник.
+func rewriteTablePartSources(tokens []tok, opts CompileOpts) ([]tok, CompileOpts) {
+	var out []tok
+	var found map[string]tablePartSource
+	for i := 0; i < len(tokens); i++ {
+		if tablePartPathAt(tokens, i) {
+			if typeUpper := upperFast(tokens[i].val); isEntitySourceType(typeUpper) {
+				if owner, tp := findTablePart(opts.Entities, tokens[i+2].val, tokens[i+4].val); tp != nil {
+					name := metadata.TablePartTableName(owner.Name, tp.Name)
+					if found == nil {
+						found = map[string]tablePartSource{}
+					}
+					found[lowerFast(name)] = tablePartSource{owner: owner, tp: tp}
+					if out == nil {
+						out = append(out, tokens[:i]...)
+					}
+					out = append(out, tokens[i], tokens[i+1], tok{kind: tIdent, val: name})
+					i += 4
+					continue
+				}
+			}
+		}
+		if out != nil {
+			out = append(out, tokens[i])
+		}
+	}
+	if found == nil {
+		return tokens, opts
+	}
+	entities := make([]*metadata.Entity, 0, len(opts.Entities)+len(found))
+	entities = append(entities, opts.Entities...)
+	for name, tps := range found {
+		entities = append(entities, metadata.TablePartQueryEntity(tps.owner, tps.tp, name))
+	}
+	opts.Entities = entities
+	opts.tablePartSources = found
+	return out, opts
+}
+
+// tablePartPathAt — «Тип.Имя.Имя» с позиции i без продолжения «(» (виртуальная
+// таблица), не после точки (поле через точку) и не аргумент ЗНАЧЕНИЕ(…).
+func tablePartPathAt(tokens []tok, i int) bool {
+	if i+4 >= len(tokens) {
+		return false
+	}
+	for k, kind := range []tokKind{tIdent, tDot, tIdent, tDot, tIdent} {
+		if tokens[i+k].kind != kind {
+			return false
+		}
+	}
+	switch {
+	case i+5 < len(tokens) && tokens[i+5].kind == tLParen:
+		return false
+	case i > 0 && tokens[i-1].kind == tDot:
+		return false
+	case i > 1 && tokens[i-1].kind == tLParen && tokens[i-2].kind == tIdent && isValueKeyword(tokens[i-2].val):
+		return false
+	}
+	return true
+}
+
+func isEntitySourceType(upper string) bool {
+	return upper == "СПРАВОЧНИК" || upper == "CATALOG" || upper == "ДОКУМЕНТ" || upper == "DOCUMENT"
+}
+
+func isValueKeyword(val string) bool {
+	u := upperFast(val)
+	return u == "ЗНАЧЕНИЕ" || u == "VALUE"
+}
+
+func findTablePart(entities []*metadata.Entity, ownerName, tpName string) (*metadata.Entity, *metadata.TablePart) {
+	for _, e := range entities {
+		if e == nil || !strings.EqualFold(e.Name, ownerName) {
+			continue
+		}
+		for i := range e.TableParts {
+			if strings.EqualFold(e.TableParts[i].Name, tpName) {
+				return e, &e.TableParts[i]
+			}
+		}
+		return nil, nil
+	}
+	return nil, nil
 }
 
 // extractFirstN вырезает «ВЫБРАТЬ ПЕРВЫЕ N» (1С) / «SELECT TOP N» и возвращает N.
@@ -1193,11 +1301,63 @@ func (tr *translator) addSource(typeUpper, name string) {
 	kind := sourcePermKind(typeUpper)
 	tr.sourceRefs = append(tr.sourceRefs, SourceOccurrence{SourceRef: SourceRef{Kind: kind, Name: name}, Qualifier: sourceToTable(typeUpper, name)})
 	for _, s := range tr.sources {
-		if s.Kind == kind && s.Name == name {
+		if s.Kind == kind && s.Name == name && s.TablePart == "" {
 			return // уже зафиксирован (напр. та же сущность и в FROM, и через ссылку)
 		}
 	}
 	tr.sources = append(tr.sources, SourceRef{Kind: kind, Name: name})
+}
+
+// addTablePartSource фиксирует табличную часть как источник: RBAC проверяет
+// чтение владельца, полевые маски — поля табличной части.
+func (tr *translator) addTablePartSource(typeUpper, name string, tps tablePartSource) {
+	kind := sourcePermKind(typeUpper)
+	ref := SourceRef{Kind: kind, Name: tps.owner.Name, TablePart: tps.tp.Name}
+	tr.sourceRefs = append(tr.sourceRefs, SourceOccurrence{
+		SourceRef: ref, Qualifier: sourceToTable(typeUpper, name),
+		Virtual: true, OutputColumns: tablePartSourceColumns(tps),
+	})
+	for _, s := range tr.sources {
+		if s == ref {
+			return
+		}
+	}
+	tr.sources = append(tr.sources, ref)
+}
+
+// tablePartSourceColumns — колонки подзапроса табличной части.
+func tablePartSourceColumns(tps tablePartSource) []string {
+	cols := []string{"id", metadata.ColumnName(metadata.Field{Name: metadata.TablePartRowNumberField})}
+	for _, f := range tps.tp.Fields {
+		cols = append(cols, metadata.ColumnName(f))
+	}
+	return cols
+}
+
+// tablePartSourceSQL — подзапрос табличной части: id строки — ссылка на
+// владельца (parent_id), как «ТЧ.Ссылка» в 1С; «строка» — НомерСтроки. Строковая
+// политика владельца отбирает строки ТЧ через родителя — в том числе у
+// присоединяемой и вложенной табличной части.
+func (tr *translator) tablePartSourceSQL(typeUpper string, tps tablePartSource, alias string) (string, error) {
+	cols := []string{"parent_id AS id", "строка AS " + metadata.ColumnName(metadata.Field{Name: metadata.TablePartRowNumberField})}
+	for _, f := range tps.tp.Fields {
+		cols = append(cols, metadata.ColumnName(f))
+	}
+	where := ""
+	kind := sourcePermKind(typeUpper)
+	if pred := tr.sourceRowFilter(kind, tps.owner.Name); pred != nil {
+		cond, args, _, err := storage.PredicateSQLQualified(dialectOrDefault(tr.opts.Dialect), tps.owner, pred, len(tr.args)+1, "")
+		if err != nil {
+			return "", fmt.Errorf("row filter %s.%s: %w", kind, tps.owner.Name, err)
+		}
+		tr.args = append(tr.args, args...)
+		tr.markRowApplied(kind, tps.owner.Name)
+		if cond != "" {
+			where = " WHERE parent_id IN (SELECT id FROM " + metadata.TableName(tps.owner.Name) + " WHERE " + cond + ")"
+		}
+	}
+	return fmt.Sprintf("(SELECT %s FROM %s%s) AS %s", strings.Join(cols, ", "),
+		metadata.TablePartTableName(tps.owner.Name, tps.tp.Name), where, alias), nil
 }
 
 // addRefSource регистрирует связанную сущность авто-JOIN ссылочного поля как
@@ -3233,8 +3393,12 @@ func preScanMainRefSource(tokens []tok, opts CompileOpts) mainRefSource {
 			if !strings.EqualFold(ent.Name, name) {
 				continue
 			}
+			refEntity := ent.Name
+			if tps, ok := opts.tablePartSources[lowerFast(name)]; ok {
+				refEntity = tps.owner.Name
+			}
 			src := mainRefSource{
-				Entity:     ent.Name,
+				Entity:     refEntity,
 				Qualifiers: map[string]bool{lowerFast(name): true, lowerFast(sourceToTable(upper, name)): true},
 			}
 			if i+4 < len(tokens) && tokens[i+3].kind == tIdent && tokens[i+4].kind == tIdent {
@@ -4950,7 +5114,12 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			tr.advance()
 			tr.advance()
 			entity := tr.advance()
-			tr.addSource(upper, entity.val)
+			tps, isTablePart := tr.opts.tablePartSources[lowerFast(entity.val)]
+			if isTablePart {
+				tr.addTablePartSource(upper, entity.val, tps)
+			} else {
+				tr.addSource(upper, entity.val)
+			}
 			tableName := sourceToTable(upper, entity.val)
 			// Главная таблица — первый источник FROM. Присоединяемые через явный
 			// JOIN (ЛЕВОЕ СОЕДИНЕНИЕ ... ПО ...) не должны перезаписывать mainTable
@@ -4983,7 +5152,13 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 				}
 			}
 			tr.sourceRefs[len(tr.sourceRefs)-1].Qualifier = sourceAlias
-			if !isMain || tr.parenDepth > 0 {
+			if isTablePart {
+				sql, err := tr.tablePartSourceSQL(upper, tps, sourceAlias)
+				if err != nil {
+					return Result{}, err
+				}
+				tr.emit(sql)
+			} else if !isMain || tr.parenDepth > 0 {
 				filtered, ok, err := tr.rowFilteredSourceSQL(upper, entity.val, tableName, sourceAlias)
 				if err != nil {
 					return Result{}, err
