@@ -79,9 +79,10 @@ type yamlLintSpec struct {
 }
 
 type yamlLintSchema struct {
-	keys map[string]*yamlLintSchema
-	elem *yamlLintSchema
-	free bool
+	keys   map[string]*yamlLintSchema
+	elem   *yamlLintSchema
+	values *yamlLintSchema
+	free   bool
 }
 
 func yamlLintSpecs() []yamlLintSpec {
@@ -137,6 +138,16 @@ func lintYAMLNode(label, kind, path string, node *yaml.Node, schema *yamlLintSch
 		nextPath := path + "[]"
 		for _, item := range node.Content {
 			lintYAMLNode(label, kind, nextPath, item, schema.elem, issues)
+		}
+		return
+	}
+	if node.Kind == yaml.MappingNode && schema.values != nil {
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			nextPath := node.Content[i].Value
+			if path != "" {
+				nextPath = path + "." + nextPath
+			}
+			lintYAMLNode(label, kind, nextPath, node.Content[i+1], schema.values, issues)
 		}
 		return
 	}
@@ -608,11 +619,12 @@ func accountRegisterYAMLSchema() *yamlLintSchema {
 func homePageYAMLSchema() *yamlLintSchema {
 	nav := obj("documents", "catalogs", "reports", "inforegs", "registers", "processors", "journals", "pages")
 	return with(obj("title", "layout", "hidden"), map[string]*yamlLintSchema{
-		"titles":  freeMap(),
-		"rows":    seq(obj("widgets")),
-		"widgets": seq(obj("name", "span")),
-		"nav":     nav,
-		"menu":    menuYAMLSchema(),
+		"titles":      freeMap(),
+		"rows":        seq(obj("widgets")),
+		"widgets":     seq(obj("name", "span")),
+		"nav":         nav,
+		"nav_by_role": {values: nav},
+		"menu":        menuYAMLSchema(),
 	})
 }
 

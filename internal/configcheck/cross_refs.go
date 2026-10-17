@@ -66,6 +66,11 @@ func CheckCrossRefs(proj *project.Project, roles []*auth.Role) []Issue {
 		journals.add(j.Name)
 	}
 
+	pages := nameSet{}
+	for _, p := range proj.Pages {
+		pages.add(p.Name)
+	}
+
 	var issues []Issue
 	add := func(file, object, kind, msg string) {
 		issues = append(issues, Issue{File: file, Object: object, Kind: kind, Message: msg})
@@ -163,6 +168,53 @@ func CheckCrossRefs(proj *project.Project, roles []*auth.Role) []Issue {
 		checkRefs("config/home_page.yaml", "home_page.nav", "Главная страница", c.Registers, registers, "регистр")
 		checkRefs("config/home_page.yaml", "home_page.nav", "Главная страница", c.Processors, processors, "обработка")
 		checkRefs("config/home_page.yaml", "home_page.nav", "Главная страница", c.Journals, journals, "журнал")
+	}
+
+	// Главная страница → nav_by_role: роли и объекты их составов. Опечатка в
+	// имени роли молча оставила бы пользователю общий nav.
+	if proj.HomePage != nil && len(proj.HomePage.NavByRole) > 0 {
+		knownRoles := nameSet{}
+		for _, r := range roles {
+			if r != nil {
+				knownRoles.add(r.Name)
+			}
+		}
+		names := make([]string, 0, len(proj.HomePage.NavByRole))
+		for name := range proj.HomePage.NavByRole {
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		// Роли платформы — только roles/*.yaml (в _roles они лишь
+		// синхронизируются), поэтому имя проверяется и при пустом каталоге
+		// ролей: без него nav_by_role не применится ни к одному пользователю.
+		// Имена ролей сравниваются без учёта регистра — два ключа, совпадающие
+		// так, давали бы составу двух хозяев.
+		seen := map[string]string{}
+		for _, name := range names {
+			object := "home_page.nav_by_role." + name
+			if !knownRoles.has(name) {
+				add("config/home_page.yaml", object, "Главная страница", fmt.Sprintf("роль %q не найдена", name))
+			}
+			key := strings.ToLower(strings.TrimSpace(name))
+			if prev, dup := seen[key]; dup {
+				add("config/home_page.yaml", object, "Главная страница",
+					fmt.Sprintf("роль %q уже указана как %q (имена ролей — без учёта регистра)", name, prev))
+			} else {
+				seen[key] = name
+			}
+			c := proj.HomePage.NavByRole[name]
+			if c == nil {
+				continue
+			}
+			checkRefs("config/home_page.yaml", object, "Главная страница", c.Documents, docs, "документ")
+			checkRefs("config/home_page.yaml", object, "Главная страница", c.Catalogs, cats, "справочник")
+			checkRefs("config/home_page.yaml", object, "Главная страница", c.Reports, reports, "отчёт")
+			checkRefs("config/home_page.yaml", object, "Главная страница", c.InfoRegs, inforegs, "регистр сведений")
+			checkRefs("config/home_page.yaml", object, "Главная страница", c.Registers, registers, "регистр")
+			checkRefs("config/home_page.yaml", object, "Главная страница", c.Processors, processors, "обработка")
+			checkRefs("config/home_page.yaml", object, "Главная страница", c.Journals, journals, "журнал")
+			checkRefs("config/home_page.yaml", object, "Главная страница", c.Pages, pages, "страница")
+		}
 	}
 
 	// Печатные формы → документ/справочник-источник и табличная часть.

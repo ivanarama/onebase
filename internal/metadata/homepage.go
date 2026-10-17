@@ -3,6 +3,8 @@ package metadata
 import (
 	"fmt"
 	"os"
+	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -29,12 +31,50 @@ type HomePage struct {
 	// contents подсистемы. nil/пусто = плоский список всех читаемых объектов.
 	Nav  *SubsystemContents `yaml:"nav,omitempty"`
 	Menu *Menu              `yaml:"menu,omitempty"`
+	// NavByRole — левое меню «Главной» по ролям: имя роли → состав (как nav).
+	// Пользователь с ролями из этого блока видит объединение составов своих
+	// ролей вместо nav; пустой состав роли — пустое меню. Остальные и
+	// администратор видят nav. Нужен, когда объект читается ради ссылок и
+	// подбора (кладовщику — заявки из ордера), но в меню роли ему не место.
+	NavByRole map[string]*SubsystemContents `yaml:"nav_by_role,omitempty"`
 	// Hidden прячет глобальную «Главную» целиком: ведущая ссылка в панели
 	// разделов не показывается, а вход (/ui/) уводит на первый раздел —
 	// навигация идёт только по подсистемам (issue #304). Осмыслен только для
 	// глобальной config/home_page.yaml; у подсистем игнорируется. Фейл-сейф:
 	// без подсистем прятать нечем, поэтому флаг не срабатывает.
 	Hidden bool `yaml:"hidden,omitempty"`
+}
+
+// NavForRoles — состав левого меню «Главной» для ролей пользователя:
+// объединение составов nav_by_role его ролей (имя роли — без учёта регистра).
+// ok=false — ни одна роль в nav_by_role не указана, действует nav.
+func (h *HomePage) NavForRoles(roles []string) (contents *SubsystemContents, ok bool) {
+	if h == nil || len(h.NavByRole) == 0 {
+		return nil, false
+	}
+	// Ключи — в порядке имён: обход map случаен, а порядок объединения
+	// задаёт порядок объектов меню (и ревизию личной настройки), если два
+	// ключа совпадают без учёта регистра (check такое отвергает).
+	names := make([]string, 0, len(h.NavByRole))
+	for name := range h.NavByRole {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	union := &SubsystemContents{}
+	for _, role := range roles {
+		for _, name := range names {
+			c := h.NavByRole[name]
+			if !strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(role)) {
+				continue
+			}
+			ok = true
+			union.merge(c)
+		}
+	}
+	if !ok {
+		return nil, false
+	}
+	return union, true
 }
 
 // DisplayTitle возвращает заголовок главной страницы с учётом языка.

@@ -58,15 +58,127 @@ func navDOMID(context, id string) string {
 
 func (s *Server) buildNav(r *http.Request, sub string) []navGroup {
 	if sub == "" {
-		if hp := s.reg.HomePage(); hp != nil {
-			return s.buildNavigation(r, hp.Menu, hp.Nav, true, "")
-		}
-		return s.buildFlatNav(r)
+		base, configured, flat := s.homeConfigurationNavigation(r)
+		return s.buildNavigationFromBase(r, base, configured, flat, "")
 	}
 	if current := s.reg.GetSubsystem(sub); current != nil {
 		return s.buildNavForSubsystem(r, current, sub)
 	}
 	return s.buildFlatNav(r)
+}
+
+// Keep the common layout intact until its stored layer has been composed.
+// A move may use a destination or predecessor excluded by the user's role.
+func (s *Server) homeConfigurationNavigation(r *http.Request) (navigation.Tree, bool, bool) {
+	hp := s.reg.HomePage()
+	if hp == nil {
+		base, configured := s.configurationNavigation(nil, nil, true, "")
+		return base, configured, true
+	}
+	base, configured := s.configurationNavigation(hp.Menu, hp.Nav, true, "")
+	contents, byRole := hp.NavForRoles(homeNavRoles(r))
+	if !byRole {
+		return base, configured, hp.Nav.IsEmpty()
+	}
+	scoped, _ := s.configurationNavigation(nil, contents, false, "")
+	placed := map[string]bool{}
+	for _, section := range base.Sections {
+		for _, item := range section.Items {
+			placed[item.Target] = true
+		}
+		for _, group := range section.Groups {
+			for _, item := range group.Items {
+				placed[item.Target] = true
+			}
+		}
+	}
+	// Supply targets present only in nav_by_role before composing layers. Do
+	// not append after composition: that would resurrect common hidden items.
+	for _, section := range scoped.Sections {
+		var extra []navigation.Item
+		for _, item := range section.Items {
+			if !placed[item.Target] {
+				extra = append(extra, item)
+			}
+		}
+		if len(extra) == 0 {
+			continue
+		}
+		if configured {
+			section = navigation.Section{ID: "cfg:other", Title: "Другое", Titles: map[string]string{"en": "Other"}}
+		}
+		found := false
+		for i := range base.Sections {
+			if base.Sections[i].ID == section.ID {
+				base.Sections[i].Items = append(base.Sections[i].Items, extra...)
+				found = true
+				break
+			}
+		}
+		if !found {
+			section.Items = extra
+			base.Sections = append(base.Sections, section)
+		}
+	}
+	return base, configured, false
+}
+
+// Project both the configuration palette and the composed common layer onto
+// role membership; personal settings never receive targets outside that scope.
+func (s *Server) projectHomeNavigation(r *http.Request, tree navigation.Tree) navigation.Tree {
+	hp := s.reg.HomePage()
+	contents, byRole := hp.NavForRoles(homeNavRoles(r))
+	if !byRole {
+		return tree
+	}
+	scoped, _ := s.configurationNavigation(nil, contents, false, "")
+	allowed := map[string]bool{}
+	for _, section := range scoped.Sections {
+		for _, item := range section.Items {
+			allowed[item.Target] = true
+		}
+	}
+	items := func(input []navigation.Item) []navigation.Item {
+		var output []navigation.Item
+		for _, item := range input {
+			if allowed[item.Target] {
+				output = append(output, item)
+			}
+		}
+		return output
+	}
+	result := navigation.Tree{Version: tree.Version, Context: tree.Context}
+	for _, section := range tree.Sections {
+		section.Items = items(section.Items)
+		var groups []navigation.Group
+		for _, group := range section.Groups {
+			group.Items = items(group.Items)
+			if len(group.Items) > 0 {
+				groups = append(groups, group)
+			}
+		}
+		section.Groups = groups
+		if len(section.Items) > 0 || len(groups) > 0 {
+			result.Sections = append(result.Sections, section)
+		}
+	}
+	return result
+}
+
+// homeNavRoles — роли, по которым выбирается меню «Главной». Администратор
+// (и открытый деплой без пользователя) видит общий nav.
+func homeNavRoles(r *http.Request) []string {
+	u := auth.UserFromContext(r.Context())
+	if u == nil || u.IsAdmin {
+		return nil
+	}
+	names := make([]string, 0, len(u.Roles))
+	for _, role := range u.Roles {
+		if role != nil {
+			names = append(names, role.Name)
+		}
+	}
+	return names
 }
 
 func (s *Server) buildNavForSubsystem(r *http.Request, sub *metadata.Subsystem, name string) []navGroup {
@@ -159,9 +271,17 @@ func (s *Server) adminNavigationLayer(r *http.Request, base navigation.Tree) (na
 
 func (s *Server) buildNavigation(r *http.Request, menu *metadata.Menu, contents *metadata.SubsystemContents, global bool, sub string) []navGroup {
 	base, configured := s.configurationNavigation(menu, contents, global, sub)
+	return s.buildNavigationFromBase(r, base, configured, global && contents.IsEmpty(), sub)
+}
+
+func (s *Server) buildNavigationFromBase(r *http.Request, base navigation.Tree, configured, flat bool, sub string) []navGroup {
 	tree, _ := s.adminNavigationLayer(r, base)
+	if sub == "" {
+		base = s.projectHomeNavigation(r, base)
+		tree = s.projectHomeNavigation(r, tree)
+	}
 	tree = s.personalNavigationLayer(r, tree)
-	return s.navigationGroups(r, tree, base, configured, global && contents.IsEmpty(), sub)
+	return s.navigationGroups(r, tree, base, configured, flat, sub)
 }
 
 func (s *Server) personalNavigationLayer(r *http.Request, base navigation.Tree) navigation.Tree {
