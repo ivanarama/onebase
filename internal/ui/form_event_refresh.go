@@ -330,17 +330,54 @@ func (s *Server) tablePartRowsFromDB(ctx context.Context, entity *metadata.Entit
 // tpRowsEqual сравнивает строки ТЧ по значениям объявленных колонок. Порядок
 // строк значим (обе стороны упорядочены по номеру строки).
 func tpRowsEqual(a, b []map[string]any, tp metadata.TablePart) bool {
+	return tpRowsEqualAt(a, b, tp, "")
+}
+
+// tpRowsEqualStored — tpRowsEqual для сравнения строк в памяти со строками
+// базы: даты приводятся к точности хранения диалекта (tpCellNormStored).
+func tpRowsEqualStored(a, b []map[string]any, tp metadata.TablePart, dialect string) bool {
+	return tpRowsEqualAt(a, b, tp, dialect)
+}
+
+func tpRowsEqualAt(a, b []map[string]any, tp metadata.TablePart, dialect string) bool {
 	if len(a) != len(b) {
 		return false
 	}
 	for i := range a {
 		for _, f := range tp.Fields {
-			if tpCellNorm(f, tpCellValue(a[i], f.Name)) != tpCellNorm(f, tpCellValue(b[i], f.Name)) {
+			if tpCellNormStored(f, tpCellValue(a[i], f.Name), dialect) != tpCellNormStored(f, tpCellValue(b[i], f.Name), dialect) {
 				return false
 			}
 		}
 	}
 	return true
+}
+
+// tpCellNormStored — tpCellNorm для сравнения значения в памяти с записью в
+// базе: дата приводится к точности, с которой её хранит диалект. SQLite пишет
+// RFC3339 без долей секунды (storage: fieldValueDialect), PostgreSQL —
+// timestamptz с точностью до микросекунды. Иначе ТекущаяДатаВремя(),
+// записанная обработчиком, на SQLite отличалась бы от только что сохранённой
+// (форма «изменена» сразу после Записать()), а обрезка до секунды на PG
+// спрятала бы настоящую несохранённую правку «+ 0.5». dialect "" — без
+// приведения (сравнение снимков в памяти).
+func tpCellNormStored(f metadata.Field, v any, dialect string) string {
+	if f.Type == metadata.FieldTypeDate {
+		if t, ok := dateCellInstant(v); ok {
+			return dateAtStoragePrecision(dialect, t).UTC().Format(time.RFC3339Nano)
+		}
+	}
+	return tpCellNorm(f, v)
+}
+
+func dateAtStoragePrecision(dialect string, t time.Time) time.Time {
+	switch dialect {
+	case "sqlite":
+		return t.Truncate(time.Second)
+	case "postgres":
+		return t.Round(time.Microsecond)
+	}
+	return t
 }
 
 func tpCellValue(row map[string]any, name string) any {
@@ -371,7 +408,8 @@ func tpCellNorm(f metadata.Field, v any) string {
 		// Одна и та же дата приходит из формы стенными часами, из SQLite —
 		// строкой RFC3339 в UTC, из PostgreSQL — time.Time в зоне сессии.
 		// Сравниваются моменты времени, а не их запись: иначе открытая без
-		// правок форма считалась изменённой.
+		// правок форма считалась изменённой. Точность полная: снимки в памяти
+		// сравниваются как есть; с записью в базе — tpCellNormStored.
 		if t, ok := dateCellInstant(v); ok {
 			return t.UTC().Format(time.RFC3339Nano)
 		}

@@ -1702,9 +1702,10 @@ func (s *Server) managedCloseStateDirty(
 	if err != nil || persisted == nil {
 		return true
 	}
+	dialect := s.store.Dialect().Name()
 	for _, field := range entity.Fields {
 		stored, _ := maskCIKeyValue(persisted, field.Name)
-		if tpCellNorm(field, obj.Get(field.Name)) != tpCellNorm(field, stored) {
+		if tpCellNormStored(field, obj.Get(field.Name), dialect) != tpCellNormStored(field, stored, dialect) {
 			return true
 		}
 	}
@@ -1735,7 +1736,7 @@ func (s *Server) managedCloseStateDirty(
 	}
 	for _, tablePart := range entity.TableParts {
 		stored, rowsErr := s.store.GetTablePartRows(ctx, entity.Name, tablePart.Name, obj.ID, tablePart)
-		if rowsErr != nil || !tpRowsEqual(obj.TablePartRows[tablePart.Name], stored, tablePart) {
+		if rowsErr != nil || !tpRowsEqualStored(obj.TablePartRows[tablePart.Name], stored, tablePart, dialect) {
 			return true
 		}
 	}
