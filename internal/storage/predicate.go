@@ -143,6 +143,17 @@ func referencePredicateSQL(d Dialect, entity *metadata.Entity, p Predicate, next
 	if inner == "" {
 		return "", args, next, nil
 	}
+	if qualifier == "" {
+		// Без квалификатора (List, журналы, регистры) внешняя колонка обязана
+		// стоять ВНЕ подзапроса: в EXISTS (... WHERE rls_ref.id = owner_id)
+		// неквалифицированная owner_id связывалась с одноимённой колонкой
+		// связанной таблицы, и условие теряло связь с внешней строкой (#2172).
+		// «IS NOT NULL AND … IN» даёт для NULL тот же результат, что EXISTS,
+		// в том числе под NOT.
+		sql := fmt.Sprintf("(%s IS NOT NULL AND %s IN (SELECT %s.id FROM %s %s WHERE (%s)))",
+			col, col, alias, metadata.TableName(p.RefEntity.Name), alias, inner)
+		return sql, args, next, nil
+	}
 	sql := fmt.Sprintf("EXISTS (SELECT 1 FROM %s %s WHERE %s.id = %s AND (%s))",
 		metadata.TableName(p.RefEntity.Name), alias, alias, col, inner)
 	return sql, args, next, nil
@@ -200,6 +211,14 @@ func predicateCompareSQL(d Dialect, entity *metadata.Entity, field *metadata.Fie
 	}
 	return fmt.Sprintf("%s %s %s", col, op, d.Placeholder(nextArg)),
 		[]any{arg}, nextArg + 1, nil
+}
+
+// PredicateFieldKnown — поле допустимо в предикате строк сущности: реквизит
+// или служебная колонка, которую понимает predicateSQL. Нужен проверке
+// конфигурации (onebase check), чтобы она не расходилась с исполнением.
+func PredicateFieldKnown(entity *metadata.Entity, field string) bool {
+	_, _, ok := predicateColumn(entity, field)
+	return ok
 }
 
 func predicateColumn(entity *metadata.Entity, field string) (string, *metadata.Field, bool) {

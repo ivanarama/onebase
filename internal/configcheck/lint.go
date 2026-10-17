@@ -670,8 +670,11 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	commandBar := obj("id", "original_id", "name", "visible")
 	commandBar.keys["buttons"] = seq(button)
 
+	// filter — постоянный отбор формы списка (поле ListFilter), читается
+	// загрузчиком внутри блока form:.
 	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button"), map[string]*yamlLintSchema{
-		"title": freeMap(),
+		"title":  freeMap(),
+		"filter": seq(obj("field", "op", "value", "roles")),
 	})
 	style := obj("color", "background", "bold", "italic")
 	conditional := with(obj("when", "target", "element", "table_part", "field"), map[string]*yamlLintSchema{
