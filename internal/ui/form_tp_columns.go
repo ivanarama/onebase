@@ -25,6 +25,15 @@ type managedTPColumn struct {
 	Element *metadata.FormElement // элемент kind: Колонка, если объявлен
 }
 
+// Width — ширина колонки в пикселях из `width` элемента Колонка; 0 — ширину
+// выбирает таблица. Мусор отсекается общим диапазоном раскладки формы.
+func (c managedTPColumn) Width() int {
+	if c.Element == nil {
+		return 0
+	}
+	return metadata.NormalizeFormLayoutSize(c.Element.Width)
+}
+
 // managedColumnField переносит явный заголовок элемента формы в копию
 // реквизита. Идентификатор и остальные свойства реквизита не меняются, поэтому
 // один и тот же результат безопасно используют и таблица формы объекта, и

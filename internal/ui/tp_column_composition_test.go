@@ -377,3 +377,46 @@ func tpTableFragment(rendered string) string {
 	}
 	return rendered[start:end]
 }
+
+// width колонки — ширина колонки таблицы. В простой таблице она уходит в
+// заголовок колонки: узкие колонки отдают место широким. Без width заголовок
+// остаётся без стиля — ширину по-прежнему выбирает таблица.
+func TestTPКолонки_ШиринаКолонкиПростойТаблицы(t *testing.T) {
+	price := tpColumn("КолЦена", "Цена")
+	price.Width = 90
+	s, order, id := tpColumnsFixture(t, &metadata.FormElement{
+		Kind: metadata.FormElementTablePart, Name: "ТабСтроки", DataPath: "Объект.Строки",
+		NoGrid:   true,
+		Children: []*metadata.FormElement{tpColumn("КолКоличество", "Количество"), price},
+	})
+	rendered := tpColumnsFormHTML(t, s, order, id)
+
+	if !strings.Contains(rendered, `<th style="width:90px">Цена</th>`) {
+		t.Errorf("ширина колонки не дошла до заголовка простой таблицы:\n%s", tpTableFragment(rendered))
+	}
+	if !strings.Contains(rendered, `<th>Количество</th>`) {
+		t.Errorf("колонка без width получила стиль:\n%s", tpTableFragment(rendered))
+	}
+}
+
+// В сетке ширина едет в описании колонок: из него SlickGrid строит колонки.
+// Мусорная ширина отбрасывается так же, как у раскладки остальных элементов.
+func TestTPКолонки_ШиринаКолонкиСетки(t *testing.T) {
+	price := tpColumn("КолЦена", "Цена")
+	price.Width = 90
+	qty := tpColumn("КолКоличество", "Количество")
+	qty.Width = -10
+	s, order, id := tpColumnsFixture(t, &metadata.FormElement{
+		Kind: metadata.FormElementTablePart, Name: "ТабСтроки", DataPath: "Объект.Строки",
+		Children: []*metadata.FormElement{qty, price},
+	})
+	cols := parseManagedTPColumns(t, tpColumnsFormHTML(t, s, order, id))
+
+	got := map[string]int{}
+	for _, c := range cols {
+		got[c.ID] = c.Width
+	}
+	if got["Цена"] != 90 || got["Количество"] != 0 || got["Сумма"] != 0 {
+		t.Errorf("ширины колонок сетки = %v, ожидались Цена=90, остальные 0", got)
+	}
+}

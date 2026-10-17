@@ -365,7 +365,7 @@ const tplManagedForm = `
     <thead>
       <tr>
         {{if $tpCmds}}<th style="width:30px"></th>{{end}}
-        {{range $c := $tpPlan}}<th{{if $c.Hidden}} style="display:none"{{end}}>{{$c.Field.DisplayName (str $ctx.Lang)}}</th>{{end}}
+        {{range $c := $tpPlan}}<th{{if $c.Hidden}} style="display:none"{{else if $c.Width}} style="width:{{$c.Width}}px"{{end}}>{{$c.Field.DisplayName (str $ctx.Lang)}}</th>{{end}}
         {{range $tpVirtualCols}}<th>{{.ColumnTitle (str $ctx.Lang)}}</th>{{end}}
         <th style="width:40px"></th>
       </tr>
