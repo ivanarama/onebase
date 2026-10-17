@@ -987,14 +987,15 @@ func (result *report) addIssue(severity, code string, issue int, message string)
 }
 
 // needsHeadParents limits the extra commit read to pull requests whose stage
-// can depend on it: ship candidates and reviewed heads with older review proof.
+// can depend on it: ship candidates, v1-abort diagnostics, and reviewed heads
+// with older review proof.
 // The latter need their parents before we can safely ask the owner for ship.
 func needsHeadParents(pr apiPull, owner string) bool {
 	if pr.State != "open" || pr.Base.Ref != "main" || pr.Draft || pr.Head.SHA == "" {
 		return false
 	}
 	labels := labelSet(pr.Labels)
-	if labels["ship"] {
+	if labels["ship"] || abortMarkerWantsHeadParents(pr, owner) {
 		return true
 	}
 	if !labels["reviewed"] || labels["hold"] || labels["needs-decision"] || labels["changes-requested"] {
@@ -1002,6 +1003,30 @@ func needsHeadParents(pr apiPull, owner string) bool {
 	}
 	current, _, _ := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
 	return reviewDepth(pr.Comments, owner) > current
+}
+
+// abortMarkerWantsHeadParents расширяет чтение родителей на PR, у которого
+// есть доверенный неотредактированный abort-маркер ровно для текущего HEAD.
+// В штатном состоянии после v1-abort метка ship уже снята, поэтому лимит
+// needsHeadParents оставлял диагностику base_sync_v1_abort_waiting_review
+// без данных — parents не загружались и abort не распознавался (#1605).
+// Сам маркер ничего не разрешает: форма двух родителей, связь с intent и
+// доверенный автор по-прежнему проверяются там, где abort распознаётся.
+func abortMarkerWantsHeadParents(pr apiPull, owner string) bool {
+	if pr.State != "open" || pr.Base.Ref != "main" || pr.Draft || pr.Head.SHA == "" {
+		return false
+	}
+	for _, comment := range pr.Comments {
+		if !trustedUnedited(comment, owner) {
+			continue
+		}
+		for _, match := range baseSyncV1Abort.FindAllStringSubmatch(comment.Body, -1) {
+			if match[2] == pr.Head.SHA {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // headIsBaseSyncMerge reports whether the head commit has the shape every
