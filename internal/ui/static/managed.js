@@ -1244,6 +1244,14 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // ТЧ (её обновит фаза 2 после «Перенести»).
       if (data.pickerData) {
         if (snapshot.pickerRequest && !window.obPickerRequestCurrent(snapshot.pickerRequest)) return;
+        // Реквизиты шапки, поставленные обработчиком, который открыл подбор
+        // (режим многошагового действия, выбранное на прошлом шаге), нужны
+        // событию Выбор: без них оно уходило с прежними значениями, и
+        // обработчик выбора не узнавал свой подбор — выбор молча терялся.
+        if (data.dirty === true) window.obSetManagedFormDirty(true);
+        // controlState — как в обычной ветке: ввод, сделанный пока шёл запрос,
+        // эхо отправленного значения не затирает.
+        if (data.values) applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
         (data.messages || []).forEach(m => flash(m, 'ok'));
         if (data.error) flash(data.error, 'err');
         openItemPicker(data.pickerData, elementName, extraParams || null, snapshot.pickerRequest);
