@@ -111,10 +111,6 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 		// полях сущности, поэтому собираем их из самой managed-формы. Единая
 		// точка покрывает все пути рендера (new/edit/повторный показ с ошибкой).
 		data["ChoiceOptions"] = loadChoiceOptions(managed, s.resolveLang(r))
-		// Поля под маской показываются точками, как пароль: и маска из базы, и
-		// номер, который пользователь набирает сам (ответ события отдаёт его
-		// без маски — см. submittedFieldsToEcho).
-		data["ProtectedFields"] = s.protectedFieldSet(r.Context(), entity)
 		s.prepareManagedFormData(r.Context(), data, managed)
 		s.render(w, r, "page-managed-form", data)
 		return
