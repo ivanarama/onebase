@@ -3605,24 +3605,25 @@ func (tr *translator) needsNumberCastForType(fieldType metadata.FieldType) bool 
 }
 
 // sqliteDateParamComparedToField распознаёт time.Time-параметр в прямом
-// сравнении с полем date. Такие параметры сериализуются тем же UTC RFC3339,
-// что и значения полей сущностей: иначе SQLite сравнивает разные TEXT-форматы
-// лексикографически по разделителю ('T' против пробела) и ошибается (#462).
+// сравнении с полем date объекта. Такие параметры сериализуются тем же UTC
+// RFC3339, что и значения полей сущностей: иначе SQLite сравнивает разные
+// TEXT-форматы лексикографически по разделителю ('T' против пробела) и
+// ошибается (#462). Поле регистра сюда не относится — см. entityDateFieldAt.
 func (tr *translator) sqliteDateParamComparedToField(idx int) bool {
 	if dialectOrDefault(tr.opts.Dialect).Name() != "sqlite" || !tr.timeParamAt(idx) {
 		return false
 	}
-	if tr.dateFieldAt(idx-2) && tr.comparisonOpAt(idx-1) {
+	if tr.entityDateFieldAt(idx-2) && tr.comparisonOpAt(idx-1) {
 		return true
 	}
-	if tr.comparisonOpAt(idx+1) && tr.dateFieldAt(idx+2) {
+	if tr.comparisonOpAt(idx+1) && tr.entityDateFieldAt(idx+2) {
 		return true
 	}
 	// Первый или второй параметр правой части BETWEEN.
-	if tr.dateFieldAt(idx-2) && tr.keywordAt(idx-1, "МЕЖДУ", "BETWEEN") {
+	if tr.entityDateFieldAt(idx-2) && tr.keywordAt(idx-1, "МЕЖДУ", "BETWEEN") {
 		return true
 	}
-	return tr.dateFieldAt(idx-4) &&
+	return tr.entityDateFieldAt(idx-4) &&
 		tr.keywordAt(idx-3, "МЕЖДУ", "BETWEEN") &&
 		tr.timeParamAt(idx-2) &&
 		tr.keywordAt(idx-1, "И", "AND")
@@ -3647,6 +3648,34 @@ func (tr *translator) dateFieldAt(idx int) bool {
 		return false
 	}
 	return tr.colTypes[lowerFast(tr.tokens[idx].val)] == metadata.FieldTypeDate
+}
+
+// entityDateFieldAt — поле date, хранимое в формате реквизитов объекта. Регистры
+// пишут даты привязкой time.Time, и SQLite-адаптер кладёт их как
+// «2006-01-02 15:04:05+00:00» (storage.sqliteTimeLayout), а не RFC3339 — так же
+// различает форматы storage.predicateSQLValue. Для поля регистра параметр
+// уходит обычной привязкой в том же формате; RFC3339 с 'T' ломал сравнение
+// внутри одного UTC-дня: «Дата = &Д» не находил строку, «Дата >= &Д» терял
+// запись ровно на границе.
+func (tr *translator) entityDateFieldAt(idx int) bool {
+	return tr.dateFieldAt(idx) && !tr.registerFieldAt(idx)
+}
+
+// registerFieldAt — поле в позиции idx принадлежит источнику-регистру: по
+// квалификатору «Р.Поле» или, без квалификатора, по главному источнику SELECT.
+// Путь через ссылку («Р.Мастер.Поле») ведёт к объекту и регистром не считается.
+func (tr *translator) registerFieldAt(idx int) bool {
+	if idx >= 2 && tr.tokens[idx-1].kind == tDot && tr.tokens[idx-2].kind == tIdent {
+		qualifier := lowerFast(tr.tokens[idx-2].val)
+		scope, ok := tr.sourceCtx.qualifierScopeAt(idx, qualifier)
+		if !ok {
+			return false
+		}
+		class, known := scope.qualifiers[qualifier]
+		return known && class == sourceClassRegister
+	}
+	scope, ok := tr.sourceCtx.scopeAt(idx)
+	return ok && scope.main == sourceClassRegister
 }
 
 func (tr *translator) timeParamAt(idx int) bool {
