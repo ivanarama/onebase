@@ -2645,7 +2645,10 @@ const tplForm = `
 <link rel="stylesheet" href="/vendor/quill/quill.snow.css">
 <script src="/vendor/quill/quill.js"></script>
 {{end}}
-<script type="application/json" id="ob-tp-ref-opts">{{jsJSON .TPRefOptions}}</script>
+{{/* Управляемая форма выводит те же варианты своим блоком
+     (ob-managed-tp-ref-opts) — второй экземпляр удваивал страницу: у заявки
+     колл-центра это 1,3 МБ дважды. */}}
+{{if not .Form}}<script type="application/json" id="ob-tp-ref-opts">{{jsJSON .TPRefOptions}}</script>{{end}}
 <script type="application/json" id="ob-tp-ref-meta">{{jsJSON .TPRefMeta}}</script>
 {{/* Перечисления колонок ТЧ — для строк, которые добавляет JS (#1010): сервер
      их не рендерит, а без вариантов и порядка addTpRow снова поставил бы
