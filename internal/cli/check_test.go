@@ -276,7 +276,7 @@ func TestCheckRelatedEntityListCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	b = []byte(strings.Replace(string(b), "limit: 5", "limit: 0", 1))
-	if err := os.WriteFile(path, b, 0600); err != nil {
+	if err := os.WriteFile(path, b, 0600); err != nil { //nolint:gosec // G703: path is a constant relative fixture name under t.TempDir(), not CLI input.
 		t.Fatal(err)
 	}
 	out, err = runCheckCmd(t, runCheck, dir, nil)

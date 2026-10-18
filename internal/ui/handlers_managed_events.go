@@ -777,6 +777,12 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// formToFields разбирает только поля сущности. Источники Форма.* должны
+	// получить типизированные реквизиты до проверки/восстановления списков,
+	// иначе пустой источник затрёт введённое значение. После восстановления
+	// не подмешиваем POST повторно: он может содержать поддельный readonly.
+	s.mergeFormAttrValues(dslCtx, r, form, entity, obj)
+
 	// Что прислал клиент — до восстановлений и обработчика: ответ события не
 	// маскирует значение, которое клиент сам только что набрал (см.
 	// serializeManagedFormEventState).
@@ -795,8 +801,23 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 			respondJSON(enc, formEventResponse{Error: "list source unavailable"})
 			return
 		}
-		for _, name := range listSources(form) {
-			setListValue(obj.Fields, strings.ToLower(name), listValue(restored, name))
+		for path, name := range listSources(form) {
+			field := metadata.EntityListSourceField(entity, form, path)
+			if field == nil {
+				respondJSON(enc, formEventResponse{Error: "list source unavailable"})
+				return
+			}
+			value, _, err := listTypedValue(field, listValue(restored, name))
+			if err != nil {
+				respondJSON(enc, formEventResponse{Error: "list source unavailable"})
+				return
+			}
+			if value != nil && field.RefEntity != "" {
+				if ref := s.formAttrRef(dslCtx, field.RefEntity, fmt.Sprint(value)); ref != nil {
+					value = ref
+				}
+			}
+			setListValue(obj.Fields, name, value)
 		}
 	}
 	// Событие может вызвать Объект.Записать() до обычного submit. Удаляем
@@ -953,10 +974,6 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// Неопределено». Ставится ДО newFormObjectThis: attachObject предзагружает
 	// реквизиты именно по этой ссылке.
 	setFormSelfRef(r, entity, obj)
-
-	// Реквизиты формы (attributes с save:false) — formToFields их не разбирает,
-	// поэтому без этого шага Объект.<Реквизит> в обработчике всегда nil.
-	s.mergeFormAttrValues(dslCtx, r, form, entity, obj)
 
 	// Подмешать ValueTable-данные из vt.<name>.<idx>.<field>.
 	vtRows, err := parseValueTableRowsForManagedForm(r, form, entity, canWrite)

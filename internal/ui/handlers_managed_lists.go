@@ -58,7 +58,7 @@ func entityListUser(ctx context.Context) string {
 	return u.Login
 }
 func entityListSchema(form *metadata.FormModule) (string, error) {
-	b, err := json.Marshal(form.Elements)
+	b, err := json.Marshal(form.Elements) //nolint:gosec // G117: AccessKey is a keyboard shortcut; only the schema hash is retained, not this JSON.
 	if err != nil {
 		return "", err
 	}
@@ -470,31 +470,31 @@ func (s *Server) handleManagedListRefresh(w http.ResponseWriter, r *http.Request
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-	if err := r.ParseForm(); err != nil {
+	if err := r.ParseForm(); err != nil { //nolint:gosec // G120: the body is capped at 64 KiB by MaxBytesReader immediately above.
 		fail(http.StatusBadRequest)
 		return
 	}
 	r = postFormOnlyRequest(r)
-	form := findManagedFormByName(owner, r.FormValue("form"))
+	form := findManagedFormByName(owner, r.PostForm.Get("form"))
 	if form == nil || metadata.ValidateFormEntityLists(owner, form, s.reg.Entities()) != nil {
 		fail(http.StatusBadRequest)
 		return
 	}
-	element := findChoiceElementByID(form, r.FormValue("element"))
+	element := findChoiceElementByID(form, r.PostForm.Get("element"))
 	if element == nil || element.Kind != metadata.FormElementEntityList {
 		fail(http.StatusBadRequest)
 		return
 	}
 	var sources map[string]string
-	if json.Unmarshal([]byte(r.FormValue("sources")), &sources) != nil {
+	if json.Unmarshal([]byte(r.PostForm.Get("sources")), &sources) != nil {
 		fail(http.StatusBadRequest)
 		return
 	}
-	values, err := s.entityListRefreshValues(r, owner, form, r.FormValue("id"), sources)
+	values, err := s.entityListRefreshValues(r, owner, form, r.PostForm.Get("id"), sources)
 	if err != nil {
 		fail(http.StatusForbidden)
 		return
 	}
-	lists := s.loadManagedEntityLists(r.Context(), owner, form, values, r.FormValue("id"), element.ID)
+	lists := s.loadManagedEntityLists(r.Context(), owner, form, values, r.PostForm.Get("id"), element.ID)
 	respondJSON(enc, map[string]any{"ok": true, "entityLists": map[string]entityListData{element.ID: lists[element.ID]}})
 }
