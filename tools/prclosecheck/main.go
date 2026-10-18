@@ -25,11 +25,12 @@ const (
 )
 
 var (
-	closingRE     = regexp.MustCompile(`(?i)` + keyword + `(` + reference + `)`)
-	declarationRE = regexp.MustCompile(`(?i)^` + keyword + `(` + reference + `)[.]?$`)
-	shaRE         = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	repoRE        = regexp.MustCompile(`(?i)^[a-z0-9_.-]+/[a-z0-9_.-]+$`)
-	rawHTMLRE     = regexp.MustCompile(`(?i)^<(pre|script|style|textarea)(?:\s|>|$)`)
+	closingRE      = regexp.MustCompile(`(?i)` + keyword + `(` + reference + `)`)
+	declarationRE  = regexp.MustCompile(`(?i)^` + keyword + `(` + reference + `)[.]?$`)
+	shaRE          = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	repoRE         = regexp.MustCompile(`(?i)^[a-z0-9_.-]+/[a-z0-9_.-]+$`)
+	rawHTMLRE      = regexp.MustCompile(`(?i)^<(pre|script|style|textarea|code)(?:\s|/?>|$)`)
+	rawHTMLCloseRE = regexp.MustCompile(`(?i)^</(pre|script|style|textarea|code)[ \t]*>`)
 )
 
 type event struct {
@@ -153,21 +154,11 @@ func declarations(body, repo string) map[string]bool {
 	var fence byte
 	fenceLen, spanLen := 0, 0
 	inComment, inHTML := false, false
-	rawTag := ""
+	var rawTags []string
+	inTag := false
+	var tagQuote byte
 	for _, line := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
 		trimmed := strings.TrimSpace(line)
-		if rawTag != "" {
-			if strings.Contains(strings.ToLower(line), "</"+rawTag+">") {
-				rawTag = ""
-			}
-			continue
-		}
-		if inHTML {
-			if trimmed == "" {
-				inHTML = false
-			}
-			continue
-		}
 		if fence != 0 {
 			closing := strings.TrimLeft(line, " ")
 			if n := runLength(closing, fence); len(line)-len(closing) <= 3 && n >= fenceLen && strings.TrimSpace(closing[n:]) == "" {
@@ -178,24 +169,21 @@ func declarations(body, repo string) map[string]bool {
 		// Also recognize fence openers in lists/quotes; their contents cannot
 		// become top-level declarations after indentation is removed.
 		candidate := strings.TrimLeft(trimmed, "> +-0123456789.)\t")
-		if !inComment && spanLen == 0 && len(candidate) > 0 && (candidate[0] == '`' || candidate[0] == '~') {
+		if !inComment && !inHTML && len(rawTags) == 0 && spanLen == 0 && len(candidate) > 0 && (candidate[0] == '`' || candidate[0] == '~') {
 			n := runLength(candidate, candidate[0])
 			if n >= 3 && (candidate[0] != '`' || !strings.Contains(candidate[n:], "`")) {
 				fence, fenceLen = candidate[0], n
 				continue
 			}
 		}
-		if !inComment && spanLen == 0 && strings.HasPrefix(trimmed, "<") && !strings.HasPrefix(trimmed, "<!--") {
-			if m := rawHTMLRE.FindStringSubmatch(trimmed); m != nil {
-				if !strings.Contains(strings.ToLower(line), "</"+strings.ToLower(m[1])+">") {
-					rawTag = strings.ToLower(m[1])
-				}
-			} else {
-				inHTML = true
-			}
-			continue
+		// A blank line ends an ordinary HTML block, but comments and code
+		// elements keep their own state until their actual closing delimiter.
+		hadMarkup := inHTML || inComment || len(rawTags) != 0 || spanLen != 0
+		if trimmed == "" {
+			inHTML = false
+		} else if !inComment && len(rawTags) == 0 && spanLen == 0 && strings.HasPrefix(trimmed, "<") && !strings.HasPrefix(trimmed, "<!--") {
+			inHTML, hadMarkup = true, true
 		}
-		hadMarkup := inComment || spanLen != 0
 		for i := 0; i < len(line); i++ {
 			if inComment {
 				n := strings.Index(line[i:], "-->")
@@ -206,31 +194,79 @@ func declarations(body, repo string) map[string]bool {
 				inComment = false
 				continue
 			}
+			// Do not mistake a delimiter inside an opening tag's quoted
+			// attribute for the end of a code element, even across lines.
+			if inTag {
+				switch {
+				case tagQuote != 0:
+					if line[i] == tagQuote {
+						tagQuote = 0
+					}
+				case line[i] == '\'' || line[i] == '"':
+					tagQuote = line[i]
+				case line[i] == '>':
+					inTag = false
+				}
+				continue
+			}
+			if len(rawTags) != 0 {
+				tag := rawTags[len(rawTags)-1]
+				if (tag == "pre" || tag == "code") && strings.HasPrefix(line[i:], "<!--") {
+					inComment = true
+					i += 3
+					continue
+				}
+				if line[i] == '<' {
+					if m := rawHTMLCloseRE.FindStringSubmatch(line[i:]); m != nil && strings.EqualFold(m[1], tag) {
+						rawTags = rawTags[:len(rawTags)-1]
+						i += len(m[0]) - 1
+					} else if tag == "pre" || tag == "code" {
+						if m := rawHTMLRE.FindStringSubmatch(line[i:]); m != nil {
+							rawTags = append(rawTags, strings.ToLower(m[1]))
+							inTag = !strings.HasSuffix(m[0], ">")
+							i += len(m[0]) - 1
+						}
+					}
+				}
+				continue
+			}
 			if spanLen == 0 && strings.HasPrefix(line[i:], "<!--") {
 				inComment, hadMarkup = true, true
 				i += 3
 				continue
 			}
-			if line[i] != '`' {
+			if spanLen == 0 && line[i] == '<' {
+				if m := rawHTMLRE.FindStringSubmatch(line[i:]); m != nil {
+					rawTags = append(rawTags, strings.ToLower(m[1]))
+					inTag = !strings.HasSuffix(m[0], ">")
+					hadMarkup = true
+					i += len(m[0]) - 1
+					continue
+				}
+			}
+			if line[i] != '`' || inHTML {
 				continue
 			}
 			n := runLength(line[i:], '`')
 			hadMarkup = true
-			if spanLen == 0 {
+			switch spanLen {
+			case 0:
 				spanLen = n
-			} else if spanLen == n {
+			case n:
 				spanLen = 0
 			}
 			i += n - 1
 		}
 		indent := 0
+	indentation:
 		for _, ch := range line {
-			if ch == ' ' {
+			switch ch {
+			case ' ':
 				indent++
-			} else if ch == '\t' {
+			case '\t':
 				indent += 4 - indent%4
-			} else {
-				break
+			default:
+				break indentation
 			}
 		}
 		if hadMarkup || indent >= 4 {
