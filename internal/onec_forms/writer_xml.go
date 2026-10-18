@@ -25,6 +25,21 @@ func WriteFormXML(form *IRForm, dstPath string) error {
 		return fmt.Errorf("WriteFormXML: form nil")
 	}
 
+	var check func([]*IRElement) error
+	check = func(elements []*IRElement) error {
+		for _, el := range elements {
+			if el.EntityList != nil || el.Kind == "Список" {
+				return fmt.Errorf("entity list %q cannot be exported to 1C XML", el.Name)
+			}
+			if err := check(el.Children); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if err := check(form.Elements); err != nil {
+		return err
+	}
 	gen := &idGenerator{next: 1000}
 
 	var buf strings.Builder

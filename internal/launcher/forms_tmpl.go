@@ -403,6 +403,7 @@ try{var _ct=localStorage.getItem('cfgCodeTheme');if(_ct?_ct==='light':window.cfg
 <div class="struct-palette" id="struct-palette">
   <span class="attr-palette-label">Структура (перетащите на холст):</span>
   <span class="attr-chip struct-chip" draggable="true" data-kind="ГруппаФормы" data-name="Группа" data-title="Группа" title="Группа полей">＋ Группа</span>
+  <span class="attr-chip struct-chip" draggable="true" data-kind="Список" data-name="СвязанныеЗаписи">＋ {{t $.Lang "Список связанных записей"}}</span>
   <span class="attr-chip struct-chip" draggable="true" data-kind="СтраницыФормы" data-name="Страницы" title="Набор вкладок: бросьте на холст — появится набор с одной готовой вкладкой; ещё вкладки добавляйте кнопкой «+ страница» внутри">＋ Страницы (набор)</span>
   <span class="attr-chip struct-chip" draggable="true" data-kind="Страница" data-name="Страница" data-title="Страница" title="Вкладка: бросьте на «+ страница» внутри набора — добавится вкладка; на обычное место холста — обернётся в новый набор вкладок">＋ Страница (вкладка)</span>
   <span class="attr-chip struct-chip" draggable="true" data-kind="Надпись" data-name="Надпись" data-title="Надпись" title="Текстовая надпись">＋ Надпись</span>
@@ -1127,7 +1128,9 @@ function renderProps() {
   h.appendChild(sk); panel.appendChild(h);
   addTextProp(panel, 'Заголовок (ru)', 'title.ru', info.titleRu || '');
   addTextProp(panel, 'Имя', 'name', info.name || '');
-  if (info.kind === 'ПолеКартинки') {
+  if (info.kind === 'Список') {
+    addEntityListEditor(panel, info);
+  } else if (info.kind === 'ПолеКартинки') {
     addTextProp(panel, 'Картинка (путь)', 'picture', info.picture || '');
     // У картинки width/height ограничивают её саму, а не блок вокруг (так было
     // до общего контракта раскладки, #1185) — подписаны отдельно, чтобы это не
@@ -1180,6 +1183,29 @@ function renderProps() {
 // правились только руками в YAML, а действовали и вовсе нигде; теперь контракт
 // один на рантайм, предпросмотр и холст, поэтому и в панели они общие для всех
 // видов. Пустое значение выравнивания = ключа нет (delProp), а не halign: "".
+function addEntityListEditor(panel, info) {
+  addTextProp(panel, {{jsString (t $.Lang "Устойчивый id элемента")}}, 'id', info.id || '');
+  var spec = info.entityList || {entity: '', filter: [], columns: [], order_by: [], limit: 5, on_row_click: 'нет'};
+  var nodeAtEdit = _selected;
+  function commit() { return editOp({op: 'setEntityList', node: nodeAtEdit, entity_list: JSON.stringify(spec)}, true); }
+  function text(label, key) {
+    var row = document.createElement('label'); row.className='prop-row'; row.textContent=label;
+    var input=document.createElement('input');input.value=spec[key] || '';
+    input.addEventListener('change',function(){spec[key]=input.value;commit();});row.appendChild(input);panel.appendChild(row);
+  }
+  text({{jsString (t $.Lang "Сущность списка")}}, 'entity');
+  text({{jsString (t $.Lang "Действие строки (открыть/нет)")}}, 'on_row_click');
+  ['filter','order_by','columns'].forEach(function(key){
+    var row=document.createElement('label');row.className='prop-row';row.textContent=key;
+    var input=document.createElement('textarea');input.value=JSON.stringify(spec[key] || [],null,2);
+    input.addEventListener('change',function(){try {var value=JSON.parse(input.value);if(!Array.isArray(value))throw new Error('array required');spec[key]=value;input.setCustomValidity('');commit();}catch(_){input.setCustomValidity('JSON array required');input.reportValidity();}});
+    row.appendChild(input);panel.appendChild(row);
+  });
+  var row=document.createElement('label');row.className='prop-row';row.textContent='limit';
+  var limit=document.createElement('input');limit.type='number';limit.min='1';limit.max='100';limit.value=spec.limit || 5;
+  limit.addEventListener('change',function(){if(limit.checkValidity()){spec.limit=Number(limit.value);commit();}});row.appendChild(limit);panel.appendChild(row);
+}
+
 function addLayoutSection(panel, info) {
   // Виды без собственного блока в форме: колонка описывает колонку таблицы,
   // командная панель разворачивается в тулбар. Предлагать им размер значило бы

@@ -1,0 +1,25 @@
+schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Обращение
+elements:
+  - kind: ПолеВвода
+    id: client
+    name: Клиент
+    data_path: Объект.Клиент
+  - kind: ПолеВвода
+    id: comment
+    name: Комментарий
+    data_path: Объект.Комментарий
+  - kind: Список
+    id: client-orders
+    name: ЗаявкиКлиента
+    title: {ru: Заявки клиента, en: Customer orders}
+    entity: Заявка
+    filter:
+      - {field: Клиент, op: eq, source: Объект.Клиент}
+    order_by: [ДатаВызова desc, Номер asc]
+    limit: 5
+    columns: [Номер, ДатаВызова, Состояние, Клиент]
+    on_row_click: открыть

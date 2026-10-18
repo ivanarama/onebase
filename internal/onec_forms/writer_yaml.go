@@ -3,6 +3,7 @@ package onec_forms
 import (
 	"encoding/base64"
 	"fmt"
+	"github.com/ivantit66/onebase/internal/metadata"
 	"os"
 
 	"github.com/ivantit66/onebase/internal/fsmode"
@@ -105,24 +106,26 @@ type yamlCommandBarButton struct {
 }
 
 type yamlElement struct {
-	Kind          string            `yaml:"kind"`
-	Name          string            `yaml:"name,omitempty"`
-	Title         map[string]string `yaml:"title,omitempty"`
-	DataPath      string            `yaml:"data_path,omitempty"`
-	OriginalID    string            `yaml:"original_id,omitempty"`
-	Picture       string            `yaml:"picture,omitempty"`
-	ValuesPicture string            `yaml:"values_picture,omitempty"`
-	ReadOnly      bool              `yaml:"readonly,omitempty"`
-	Required      bool              `yaml:"required,omitempty"`
-	Choice        bool              `yaml:"choice,omitempty"`
-	Width         int               `yaml:"width,omitempty"`
-	Height        int               `yaml:"height,omitempty"`
-	Hint          string            `yaml:"hint,omitempty"`
-	Mask          string            `yaml:"mask,omitempty"`
-	Events        map[string]string `yaml:"events,omitempty"`
-	Props         map[string]any    `yaml:"props,omitempty"`
-	Children      []yamlElement     `yaml:"children,omitempty"`
-	UnknownXMLB64 string            `yaml:"unknown_xml_b64,omitempty"`
+	ID            string                       `yaml:"id,omitempty"`
+	EntityList    *metadata.FormEntityListSpec `yaml:",inline"`
+	Kind          string                       `yaml:"kind"`
+	Name          string                       `yaml:"name,omitempty"`
+	Title         map[string]string            `yaml:"title,omitempty"`
+	DataPath      string                       `yaml:"data_path,omitempty"`
+	OriginalID    string                       `yaml:"original_id,omitempty"`
+	Picture       string                       `yaml:"picture,omitempty"`
+	ValuesPicture string                       `yaml:"values_picture,omitempty"`
+	ReadOnly      bool                         `yaml:"readonly,omitempty"`
+	Required      bool                         `yaml:"required,omitempty"`
+	Choice        bool                         `yaml:"choice,omitempty"`
+	Width         int                          `yaml:"width,omitempty"`
+	Height        int                          `yaml:"height,omitempty"`
+	Hint          string                       `yaml:"hint,omitempty"`
+	Mask          string                       `yaml:"mask,omitempty"`
+	Events        map[string]string            `yaml:"events,omitempty"`
+	Props         map[string]any               `yaml:"props,omitempty"`
+	Children      []yamlElement                `yaml:"children,omitempty"`
+	UnknownXMLB64 string                       `yaml:"unknown_xml_b64,omitempty"`
 }
 
 type yamlResource struct {
@@ -253,6 +256,7 @@ func commandBarToYAML(b *IRCommandBar) yamlCommandBar {
 
 func elementToYAML(el *IRElement) yamlElement {
 	out := yamlElement{
+
 		Kind:          el.Kind,
 		Name:          el.Name,
 		Title:         nonEmptyTitle(el.Title),
@@ -267,6 +271,10 @@ func elementToYAML(el *IRElement) yamlElement {
 		Height:        el.Height,
 		Hint:          el.Hint,
 		Mask:          el.Mask,
+	}
+	if el.Kind == "Список" {
+		out.ID = el.ID
+		out.EntityList = el.EntityList
 	}
 	if len(el.Events) > 0 {
 		out.Events = el.Events

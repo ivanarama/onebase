@@ -69,6 +69,13 @@ const tplManagedForm = `
     {{if $el.TitleMap}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
     {{range $el.Children}}{{template "managed-element" (dict "El" . "Ctx" $ctx)}}{{end}}
   </fieldset>
+{{else if eq (str $el.Kind) "Список"}}
+ {{$list := index $ctx.EntityLists $el.ID}}
+ <section class="form-group ob-entity-list" data-ob-list-id="{{$el.ID}}" data-ob-list-sources="{{jsJSON $el.EntityList.SourceControls}}" data-ob-list-state="{{$list.Status}}" style="overflow:auto;max-width:100%">
+ <label>{{fieldTitleRU $el.TitleMap $el.Name}}</label>
+ <p class="ob-list-status" role="status">{{if eq $list.Status "denied"}}{{t $ctx.Lang "Доступ запрещён"}}{{else if eq $list.Status "error"}}{{t $ctx.Lang "Ошибка"}}{{else if eq $list.Status "empty"}}{{t $ctx.Lang "Нет данных"}}{{end}}</p>
+ <table><thead><tr>{{range $list.Columns}}<th>{{.}}</th>{{end}}</tr></thead><tbody>{{range $list.Rows}}{{$url := .URL}}{{$marked := .Marked}}<tr{{if $marked}} style="text-decoration:line-through"{{end}}>{{range .Cells}}<td>{{if $url}}<a href="{{$url}}" target="_blank" rel="noopener noreferrer">{{.}}</a>{{else}}{{.}}{{end}}</td>{{end}}</tr>{{end}}</tbody></table>
+ </section>
 {{else if eq (str $el.Kind) "ПолеКода"}}
   {{$fn := dpField $el.DataPath}}
   {{$hChg := hasHandler $el "ПриИзменении"}}
@@ -891,6 +898,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
   "formAttrValues" (formAttrValues .Form .Entity .Values)
 )}}</script>
 {{end}}
+{{if .EntityLists}}<script type="application/json" id="ob-entity-list-config">{{jsJSON (dict "form" .Form.Name "state" .EntityListState "messages" (dict "loading" (t .Lang "Загрузка...") "empty" (t .Lang "Нет данных") "denied" (t .Lang "Доступ запрещён") "error" (t .Lang "Ошибка")))}}</script>{{end}}
 <script type="application/json" id="ob-managed-tp-ref-opts">{{jsJSON .TPRefOptions}}</script>
 <script type="application/json" id="ob-managed-tp-enum-labels">{{jsJSON .TPEnumLabels}}</script>
 <script type="application/json" id="ob-managed-tp-enum-order">{{jsJSON .TPEnumOrder}}</script>
@@ -903,8 +911,10 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 <script src="/vendor/slickgrid/slick.dataview.js"></script>
 <script src="/vendor/slickgrid/slick.editors.js"></script>
 <script src="/vendor/slickgrid/slick.formatters.js"></script>
+{{if .EntityLists}}<script src="/static/entity_lists.js"></script>{{end}}
 <script src="/static/managed.js"></script>
 {{else}}
+{{if .EntityLists}}<script src="/static/entity_lists.js"></script>{{end}}
 <script src="/static/managed.js"></script>
 {{end}}
 

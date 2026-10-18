@@ -17,7 +17,9 @@ import (
 
 // ListParams controls filtering, search, sorting and pagination for List queries.
 type ListParams struct {
-	Filters map[string]FilterValue
+	Equalities []ListEquality
+	OrderKeys  []ListOrderKey
+	Filters    map[string]FilterValue
 	// ChoicePredicates are trusted, metadata-derived choice_filter conditions.
 	ChoicePredicates []ChoicePredicate
 	RowFilter        *Predicate // additional SQL-side row-level access predicate
@@ -842,6 +844,13 @@ func (db *DB) listWhere(entityName string, entity *metadata.Entity, params ListP
 		args = append(args, condArgs...)
 		argIdx = next
 	}
+	if cond, condArgs, next, err := listEqualitySQL(d, entity, params.Equalities, argIdx); err != nil {
+		return "", nil, err
+	} else if cond != "" {
+		whereParts = append(whereParts, "("+cond+")")
+		args = append(args, condArgs...)
+		argIdx = next
+	}
 	if cond, condArgs, next, err := PredicateSQL(d, entity, params.RowFilter, argIdx); err != nil {
 		return "", nil, fmt.Errorf("row filter: %w", err)
 	} else if cond != "" {
@@ -877,6 +886,9 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 	}
 	keyset := params.AfterID != nil || params.ThroughID != nil
 	if keyset {
+		if params.OrderKeys != nil {
+			return nil, fmt.Errorf("keyset cannot use projection ordering")
+		}
 		if params.Offset != 0 {
 			return nil, fmt.Errorf("list %s: keyset pagination cannot be combined with offset", entityName)
 		}
@@ -899,6 +911,12 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 	// sorting
 	if keyset {
 		query += " ORDER BY id ASC"
+	} else if params.OrderKeys != nil {
+		order, err := listProjectionOrder(db.dialect, entity, params.OrderKeys)
+		if err != nil {
+			return nil, err
+		}
+		query += " ORDER BY " + order
 	} else if params.Sort == "" && len(entity.OrderBy) > 0 {
 		// Порядок по умолчанию из метаданных (order_by): у значений бывает свой
 		// порядок, не алфавитный, — «порядок в отчётах» у направлений. Папки

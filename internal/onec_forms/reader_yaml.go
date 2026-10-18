@@ -148,6 +148,7 @@ func yamlCommandBarToIR(b *yamlCommandBar) *IRCommandBar {
 
 func yamlElementToIR(el yamlElement) *IRElement {
 	out := &IRElement{
+
 		Kind:       el.Kind,
 		Name:       el.Name,
 		Title:      IRTitle(el.Title),
@@ -166,6 +167,10 @@ func yamlElementToIR(el yamlElement) *IRElement {
 		Props:      el.Props,
 		Visible:    true,
 		Enabled:    true,
+	}
+	if el.Kind == "Список" {
+		out.ID = el.ID
+		out.EntityList = el.EntityList
 	}
 	for _, c := range el.Children {
 		out.Children = append(out.Children, yamlElementToIR(c))

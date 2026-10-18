@@ -1135,6 +1135,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     if (window.obGridSync && window.obGridSync() === false) return;
     const body = new URLSearchParams();
     const eventFD = fileEventFormData(form, fileHelpers);
+    const listRevision = window.obEntityLists ? window.obEntityLists.snapshot(eventFD) : null;
     eventFD.set(serviceField('_element'), elementName || '');
     eventFD.set(serviceField('_event'), eventName || '');
     eventFD.set(serviceField('_kind'), 'object');
@@ -1152,7 +1153,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     return {
 	  body: body, form: form, controlState: captureFormControlState(form), elementName: elementName,
 	  extraParams: extraParams, wasNew: !DOC_ID,
-	  editRevision: formEditState.revision,
+	  editRevision: formEditState.revision, listRevision: listRevision,
 	  eventName: eventName, pickerRequest: pickerRequest
 	};
   }
@@ -1170,6 +1171,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     if (!snapshot || reloadRequired || formEventWriteUnknown || manualReconcileRequired) return;
     refreshQueuedFormEventIdentity(snapshot);
     var body = snapshot.body;
+    if (window.obEntityLists) { window.obEntityLists.snapshot(body); window.obEntityLists.invalidate(); }
     var form = snapshot.form;
     var elementName = snapshot.elementName;
 	var extraParams = snapshot.extraParams;
@@ -1243,6 +1245,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // Подбор фазы 1: сервер вернул pickerData — открыть диалог, не трогая
       // ТЧ (её обновит фаза 2 после «Перенести»).
       if (data.pickerData) {
+        if (window.obEntityLists) window.obEntityLists.refresh(data);
         if (snapshot.pickerRequest && !window.obPickerRequestCurrent(snapshot.pickerRequest)) return;
         (data.messages || []).forEach(m => flash(m, 'ok'));
         if (data.error) flash(data.error, 'err');
@@ -1258,6 +1261,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // Вопрос фазы 1 (#1528): открыть модал; ответ вернётся событием Ответ
       // через _question_answer — сервер положит его в ВопросОтвет.
       if (data.question) {
+        if (window.obEntityLists) window.obEntityLists.refresh(data);
         (data.messages || []).forEach(m => flash(m, 'ok'));
         if (data.error) flash(data.error, 'err');
         if (window.obOpenQuestion) window.obOpenQuestion(data.question, elementName);
@@ -1274,6 +1278,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
       applyChoiceList(elementName, data.choiceList);
       applyFormTables(data.formTables);
+      if (window.obEntityLists) window.obEntityLists.refresh(data, snapshot.listRevision);
 	  // Server events repaint controls programmatically and therefore do not
 	  // trigger input/change. Raise dirty for unsaved handler mutations; clear
 	  // it only when this response proves a successful Object.Write and no
@@ -1440,6 +1445,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     if (window.obGridSync && window.obGridSync() === false) return null;
     var fd = fileEventFormData(form, fileHelpers);
     fd.set(serviceField('_kind'), closeFormKind());
+    if (window.obEntityLists) window.obEntityLists.snapshot(fd);
     if (DOC_ID) fd.set(serviceField('_id'), DOC_ID);
     var body = new URLSearchParams();
     fd.forEach(function(v, k){
@@ -1648,6 +1654,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	window.applyTableParts(tableparts);
 	applyValues(values, refOptions);
 	applyFormTables(formTables);
+    if (window.obEntityLists) window.obEntityLists.refresh(data);
     (data.messages || []).forEach(function(message){ flash(message, 'ok'); });
     if (data.error) flash(data.error, 'err');
   }

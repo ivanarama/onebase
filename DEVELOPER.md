@@ -4290,3 +4290,15 @@ onebase check --project <dir>             # validation gate после прав�
 `catalog`, `document`, `register`, `inforeg`, `enum`, `processor`, `report`, `widget`,
 `form`, `page`, `service`, `role`, `query`, `posting`. Русские алиасы вроде
 `справочник`, `документ`, `запрос`, `роль` тоже поддерживаются.
+
+### Список связанных записей на managed-форме
+
+`kind: Список` — read-only проекция документов/справочников, отдельная от
+`TablePartRows` и `FormTables`. Контракт YAML и ограничения описаны в
+[docs/forms.md](docs/forms.md#список-связанных-записей), пример —
+`examples/related-lists`. Серверный refresh не вызывает DSL и не пишет объект.
+Нельзя передавать поле/оператор/порядок/колонки от браузера: они восстанавливаются
+из `FormEntityListSpec`. Новые `ListParams.Equalities` и `OrderKeys` опциональны;
+прежние list/picker/keyset используют прежний путь. Состояние нового
+readonly-источника связано подписью с пользователем, формой, схемой и владельцем;
+маскированный источник не используется даже при валидной подписи.
