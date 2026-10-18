@@ -300,15 +300,26 @@ func ValidateFormEntityLists(owner *Entity, form *FormModule, entities []*Entity
 	return problem
 }
 
-// SourceControls exposes paths, never field/operator/order authority, to the browser.
-func (s *FormEntityListSpec) SourceControls() map[string]string {
+// SourceControls preserves source paths for transport, but resolves control names
+// from the form: source paths are case-insensitive, while HTML names are not.
+// It never exposes field/operator/order authority to the browser.
+func (s *FormEntityListSpec) SourceControls(owner *Entity, form *FormModule) map[string]string {
 	out := map[string]string{}
 	if s != nil {
 		for _, c := range s.Filter {
 			if c.Source != "" {
-				parts := strings.Split(c.Source, ".")
-				if len(parts) == 2 {
-					out[c.Source] = parts[1]
+				if field := EntityListSourceField(owner, form, c.Source); field != nil {
+					name := field.Name
+					if form != nil {
+						form.Walk(func(el *FormElement) bool {
+							if (el.Kind == FormElementField || el.Kind == FormElementCodeField || el.Kind == FormElementCheckbox) && strings.EqualFold(el.DataPath, c.Source) {
+								name = strings.Split(el.DataPath, ".")[1]
+								return false
+							}
+							return true
+						})
+					}
+					out[c.Source] = name
 				}
 			}
 		}

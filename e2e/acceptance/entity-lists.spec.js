@@ -10,6 +10,17 @@ async function open(page, id=ids.owner) {
  await expect(list(page)).toHaveAttribute('data-ob-list-state','ready');
  await expect(list(page).locator('tbody tr')).toHaveCount(2);
 }
+test('case-insensitive source path binds the rendered control and refreshes B',async({page})=>{
+ await open(page);
+ expect(JSON.parse(await list(page).getAttribute('data-ob-list-sources'))).toEqual({'объект.направление':'Направление'});
+ const responsePromise=page.waitForResponse(r=>r.url().endsWith('/form-list-refresh')&&r.request().method()==='POST');
+ await source(page).selectOption(ids.b);
+ const response=await responsePromise;
+ expect(JSON.parse(new URLSearchParams(response.request().postData()).get('sources'))).toEqual({'объект.направление':ids.b});
+ await expect(list(page)).toHaveAttribute('data-ob-list-state','ready');
+ await expect(list(page).locator('tbody tr')).toHaveCount(2);
+ await expect(list(page).locator('tbody')).toContainText(' B');
+});
 for (const abort of [true,false]) test(`list A→B→A, reverse replies, no AbortController=${!abort}`,async ({page})=>{
  await page.addInitScript(value=>{if(!value)window.AbortController=undefined;},abort);
  await open(page);

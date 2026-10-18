@@ -23,6 +23,9 @@ import (
 func TestEntityListsBrowserAcceptance(t *testing.T) {
 	browseracceptance.Require(t)
 	f := entityListFixture(t)
+	// Validation accepts case-insensitive source paths; the rendered control
+	// remains select[name="Направление"]. Exercise that binding in every scenario.
+	f.owner.Forms[0].Elements[2].EntityList.Filter[0].Source = "объект.направление"
 	f.owner.Forms[0].Elements[1].ChoiceFilter = nil
 	for _, entry := range []struct{ id, name string }{{f.rootA.String(), "A"}, {f.rootB.String(), "B"}} {
 		uid, err := uuid.Parse(entry.id)

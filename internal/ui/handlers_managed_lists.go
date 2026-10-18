@@ -19,7 +19,6 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
-	"github.com/shopspring/decimal"
 )
 
 type entityListRow struct {
@@ -229,7 +228,7 @@ func listTypedValue(f *metadata.Field, v any) (any, bool, error) {
 		b, err := strconv.ParseBool(raw)
 		return b, false, err
 	case metadata.FieldTypeNumber:
-		n, err := decimal.NewFromString(raw)
+		n, err := parseFormNumber(raw)
 		return n, false, err
 	case metadata.FieldTypeDate:
 		if t, ok := v.(time.Time); ok {

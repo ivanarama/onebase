@@ -71,7 +71,7 @@ const tplManagedForm = `
   </fieldset>
 {{else if eq (str $el.Kind) "Список"}}
  {{$list := index $ctx.EntityLists $el.ID}}
- <section class="form-group ob-entity-list" data-ob-list-id="{{$el.ID}}" data-ob-list-sources="{{jsJSON $el.EntityList.SourceControls}}" data-ob-list-state="{{$list.Status}}" style="overflow:auto;max-width:100%">
+ <section class="form-group ob-entity-list" data-ob-list-id="{{$el.ID}}" data-ob-list-sources="{{jsJSON ($el.EntityList.SourceControls $ctx.Entity $ctx.Form)}}" data-ob-list-state="{{$list.Status}}" style="overflow:auto;max-width:100%">
  <label>{{fieldTitleRU $el.TitleMap $el.Name}}</label>
  <p class="ob-list-status" role="status">{{if eq $list.Status "denied"}}{{t $ctx.Lang "Доступ запрещён"}}{{else if eq $list.Status "error"}}{{t $ctx.Lang "Ошибка"}}{{else if eq $list.Status "empty"}}{{t $ctx.Lang "Нет данных"}}{{end}}</p>
  <table><thead><tr>{{range $list.Columns}}<th>{{.}}</th>{{end}}</tr></thead><tbody>{{range $list.Rows}}{{$url := .URL}}{{$marked := .Marked}}<tr{{if $marked}} style="text-decoration:line-through"{{end}}>{{range .Cells}}<td>{{if $url}}<a href="{{$url}}" target="_blank" rel="noopener noreferrer">{{.}}</a>{{else}}{{.}}{{end}}</td>{{end}}</tr>{{end}}</tbody></table>
