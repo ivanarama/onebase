@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, edited, ready_for_review]
   # Ручной запуск (план 115). Без него прогон нельзя перезапустить иначе как
   # новым пушем: во время аварии GitHub Actions 2026-08-06 вебхуки были
   # задушены до ~15%, PR-события прогонов не создавали, а обязательные
@@ -55,10 +56,18 @@ jobs:
         if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
         run: echo "Documentation diff; full CI steps are unnecessary."
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
           go-version-file: '.go-version'
           cache: true
+
+      # Raw commit messages can close issues even when the phrase is only an
+      # example. This gate also runs for docs-only PRs and PR body edits.
+      - name: Check commit closing references
+        if: ${{ github.event_name == 'pull_request' }}
+        run: go run ./tools/prclosecheck -event "$GITHUB_EVENT_PATH"
 
       - name: Check for UTF-8 BOM in .go files
         run: |

@@ -16,6 +16,7 @@ type docsCIWorkflow struct {
 	On map[string]struct {
 		Paths       []string `yaml:"paths"`
 		PathsIgnore []string `yaml:"paths-ignore"`
+		Types       []string `yaml:"types"`
 	} `yaml:"on"`
 	Jobs map[string]docsCIJob `yaml:"jobs"`
 }
@@ -92,6 +93,12 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 				lightFound = step.If == "${{ "+docs+" }}" && step.Run != ""
 				continue
 			}
+			if id == "build" && step.Name == "Check commit closing references" {
+				if step.If != "${{ github.event_name == 'pull_request' }}" {
+					t.Fatal("closing-reference gate must run for every PR, including docs-only")
+				}
+				continue
+			}
 			if id == "build" && (lightBuild[step.Name] || lightBuild[step.Uses]) {
 				if step.If != "" {
 					t.Fatalf("docs validation %s should still execute", step.Name+step.Uses)
@@ -129,6 +136,28 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 	if step.ID != "diff" || step.Env["BASE_SHA"] != "${{ github.event.pull_request.base.sha }}" ||
 		step.Env["HEAD_SHA"] != "${{ github.event.pull_request.head.sha }}" || step.Env["EVENT_NAME"] != "${{ github.event_name }}" {
 		t.Fatal("classification must use immutable event SHAs, not movable refs")
+	}
+}
+
+func TestCICommitClosingGate(t *testing.T) {
+	w := docsWorkflow(t)
+	for _, event := range []string{"opened", "synchronize", "reopened", "edited", "ready_for_review"} {
+		if !slices.Contains(w.On["pull_request"].Types, event) {
+			t.Errorf("closing-reference gate must recheck pull_request %s", event)
+		}
+	}
+	var found, completeHistory bool
+	for _, step := range w.Jobs["build"].Steps {
+		if step.Uses == "actions/checkout@v4" {
+			completeHistory = step.With["fetch-depth"] == "0"
+		}
+		if step.Name == "Check commit closing references" {
+			found = step.If == "${{ github.event_name == 'pull_request' }}" &&
+				step.Run == `go run ./tools/prclosecheck -event "$GITHUB_EVENT_PATH"` && completeHistory
+		}
+	}
+	if !found {
+		t.Fatal("required build must check event data through prclosecheck with complete history")
 	}
 }
 
