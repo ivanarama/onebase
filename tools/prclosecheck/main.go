@@ -154,6 +154,7 @@ func declarations(body, repo string) map[string]bool {
 	var fence byte
 	fenceLen, spanLen := 0, 0
 	inComment, inHTML := false, false
+	var htmlEnd string
 	var rawTags []string
 	inTag := false
 	var tagQuote byte
@@ -169,22 +170,38 @@ func declarations(body, repo string) map[string]bool {
 		// Also recognize fence openers in lists/quotes; their contents cannot
 		// become top-level declarations after indentation is removed.
 		candidate := strings.TrimLeft(trimmed, "> +-0123456789.)\t")
-		if !inComment && !inHTML && len(rawTags) == 0 && spanLen == 0 && len(candidate) > 0 && (candidate[0] == '`' || candidate[0] == '~') {
+		if !inComment && !inHTML && htmlEnd == "" && len(rawTags) == 0 && spanLen == 0 && len(candidate) > 0 && (candidate[0] == '`' || candidate[0] == '~') {
 			n := runLength(candidate, candidate[0])
 			if n >= 3 && (candidate[0] != '`' || !strings.Contains(candidate[n:], "`")) {
+				// Indented fences may continue a list; container fences can
+				// end with their container. Without a container parser, a later
+				// top-level opener is not a safe closer. Keep only earlier
+				// declarations rather than authorize text in a later code block.
+				if candidate != strings.TrimRight(line, " \t") {
+					return result
+				}
 				fence, fenceLen = candidate[0], n
 				continue
 			}
 		}
-		// A blank line ends an ordinary HTML block, but comments and code
-		// elements keep their own state until their actual closing delimiter.
-		hadMarkup := inHTML || inComment || len(rawTags) != 0 || spanLen != 0
+		// A blank line ends an ordinary HTML block. Comments, special HTML
+		// blocks and code elements retain their own closing delimiter.
+		hadMarkup := inHTML || inComment || htmlEnd != "" || len(rawTags) != 0 || spanLen != 0
 		if trimmed == "" {
 			inHTML = false
 		} else if !inComment && len(rawTags) == 0 && spanLen == 0 && strings.HasPrefix(trimmed, "<") && !strings.HasPrefix(trimmed, "<!--") {
 			inHTML, hadMarkup = true, true
 		}
 		for i := 0; i < len(line); i++ {
+			if htmlEnd != "" {
+				n := strings.Index(line[i:], htmlEnd)
+				if n < 0 {
+					break
+				}
+				i += n + len(htmlEnd) - 1
+				htmlEnd = ""
+				continue
+			}
 			if inComment {
 				n := strings.Index(line[i:], "-->")
 				if n < 0 {
@@ -236,6 +253,23 @@ func declarations(body, repo string) map[string]bool {
 				continue
 			}
 			if spanLen == 0 && line[i] == '<' {
+				// GFM special HTML blocks end at their terminator, including
+				// across blank lines. Their contents are not Markdown or tags.
+				switch {
+				case strings.HasPrefix(line[i:], "<![CDATA["):
+					htmlEnd = "]]>"
+					i += len("<![CDATA[") - 1
+				case strings.HasPrefix(line[i:], "<?"):
+					htmlEnd = "?>"
+					i++
+				case len(line)-i >= 3 && line[i+1] == '!' && line[i+2] >= 'A' && line[i+2] <= 'Z':
+					htmlEnd = ">"
+					i += 2
+				}
+				if htmlEnd != "" {
+					hadMarkup = true
+					continue
+				}
 				if m := rawHTMLRE.FindStringSubmatch(line[i:]); m != nil {
 					rawTags = append(rawTags, strings.ToLower(m[1]))
 					inTag = !strings.HasSuffix(m[0], ">")
