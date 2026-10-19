@@ -18,17 +18,47 @@ fs.mkdirSync(shots, {recursive:true});
     (process.platform === 'win32' && fs.existsSync(edge) ? edge : undefined);
   const browser = await chromium.launch({headless:true, executablePath});
   try {
-    const visitor = await browser.newContext({viewport:{width:1440,height:1000}});
+    const captures = [];
+    async function capture(page, locator, name, subject, inset=0) {
+      await expect(locator).toBeVisible();
+      const messageBar = page.locator('#ob-msg-bar');
+      if (await messageBar.count() && /\bopen\b/.test(await messageBar.getAttribute('class') || '')) {
+        await page.locator('#ob-msg-head').click();
+        await expect(messageBar).not.toHaveClass(/\bopen\b/);
+      }
+      await locator.evaluate(el=>el.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'}));
+      await page.evaluate(()=>document.fonts.ready.then(()=>true));
+      const broken = await locator.locator('img').evaluateAll(es=>es.filter(e=>!e.complete || !e.naturalWidth).map(e=>e.getAttribute('src')));
+      assert.deepEqual(broken,[],'Images must finish loading before capture');
+      await page.mouse.move(1,1);
+      const box = await locator.boundingBox();
+      const clear = await locator.evaluate(el=>{
+        const r=el.getBoundingClientRect();
+        return r.top>=0 && r.bottom<=innerHeight && [r.top+20,r.bottom-20].every(y=>el.contains(document.elementFromPoint(r.left+r.width/2,y)));
+      });
+      assert.ok(clear,'A panel or viewport edge obscures '+name);
+      const settings = {path:path.join(shots,name),animations:'disabled',caret:'hide',scale:'device'};
+      // Dialogs have 20px padding. An inset within that empty padding avoids
+      // including the dimmed page at their rounded corners, without editing pixels.
+      const bytes = inset
+        ? await page.screenshot({...settings,clip:{x:box.x+inset,y:box.y+inset,width:box.width-2*inset,height:box.height-2*inset}})
+        : await locator.screenshot(settings);
+      const pixelWidth = bytes.readUInt32BE(16), pixelHeight = bytes.readUInt32BE(20);
+      assert.ok(box.width<=1100 && box.height<=900,'Publication capture must remain readable: '+name);
+      captures.push({file:name,subject,cssWidth:Math.round(box.width-2*inset),cssHeight:Math.round(box.height-2*inset),pixelWidth,pixelHeight,deviceScaleFactor:2});
+    }
+    const visitor = await browser.newContext({viewport:{width:1024,height:950},deviceScaleFactor:2});
     const page = await visitor.newPage();
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     assert.equal((await page.goto(base+'/hs/site/catalog')).status(), 200);
     await expect(page.getByText('Керамическая кружка', {exact:true})).toBeVisible();
-    await page.screenshot({path:path.join(shots,'cms-catalog.png'),fullPage:true});
+    await expect(page.locator('main img')).toHaveCount(3);
+    await capture(page,page.locator('main'),'cms-catalog.png','Публичный каталог: товары, иллюстрации и цены');
     await page.goto(base+'/hs/site/product/demo-mug');
     await page.getByRole('button',{name:'В корзину',exact:true}).click();
     await expect(page.getByText('Итого: 790 ₽',{exact:true})).toBeVisible();
-    await page.screenshot({path:path.join(shots,'cms-cart.png'),fullPage:true});
+    await capture(page,page.locator('main'),'cms-cart.png','Корзина перед оформлением заказа');
     await page.getByRole('link',{name:'Оформить заказ',exact:true}).click();
     await page.locator('[name=name]').fill('Анна Примерова');
     await page.locator('[name=contact]').fill('anna@example.test');
@@ -39,7 +69,7 @@ fs.mkdirSync(shots, {recursive:true});
     const orderID = orderURL.split('/').pop();
     await expect(page.getByText('Принят, ждёт подтверждения',{exact:true})).toBeVisible();
 
-    const office = await browser.newContext({viewport:{width:1440,height:1100}});
+    const office = await browser.newContext({viewport:{width:1100,height:1000},deviceScaleFactor:2});
     const manager = await office.newPage();
     manager.on('pageerror', error => errors.push(error.message));
     await manager.goto(base+'/login');
@@ -47,6 +77,9 @@ fs.mkdirSync(shots, {recursive:true});
     await manager.locator('[name=password]').fill(password);
     await manager.locator('button[type=submit]').click();
     await manager.waitForURL(/\/ui/);
+    // Use the actual navigation control, rather than restyling the captured UI.
+    const navigation = manager.locator('[data-ob-nav-toggle]');
+    if (await navigation.getAttribute('aria-expanded') === 'true') await navigation.click();
     const formURL = base+'/ui/document/'+encodeURIComponent('ЗаказПокупателя')+'/'+orderID;
     const opened = manager.waitForResponse(r=>r.url().includes('/form-event') && r.request().method()==='POST');
     await manager.goto(formURL);
@@ -63,12 +96,13 @@ fs.mkdirSync(shots, {recursive:true});
     await change('Покупатель',{label:'Анна Примерова'});
     await expect(manager.locator('input[name=Телефон]')).toHaveValue('+7 (000) 000-00-01');
     await expect.poll(()=>manager.locator('input:disabled').evaluateAll(es=>es.map(e=>e.value))).toContain('ЗС-000001');
+    await capture(manager,manager.locator('[data-ob-el="ИсторияПокупателя"] table'),'cms-order-history.png','История покупок выбранного покупателя');
     await change('СпособПолучения','Доставка');
     const address = manager.locator('select[name=АдресДоставки]');
     await expect(address).toContainText('Дом — Анна');
     await expect(address).not.toContainText('Дом — Павел');
     await address.selectOption({label:'Дом — Анна'});
-    await manager.screenshot({path:path.join(shots,'cms-order-delivery.png'),fullPage:true});
+    await capture(manager,manager.locator('[data-ob-el="ДвеКолонки"]'),'cms-order-delivery.png','Доставка: адрес подчинён выбранному покупателю');
     await change('Покупатель',{label:'Павел Демонстрационный'});
     await expect(address).toHaveValue('');
     await expect(address).toContainText('Дом — Павел');
@@ -82,7 +116,7 @@ fs.mkdirSync(shots, {recursive:true});
     const choices = manager.locator('#_ref-picker-modal');
     await expect(choices).toContainText('Центральный — Учебный город');
     await expect(choices).not.toContainText('Парковый — Демонстрационный город');
-    await manager.screenshot({path:path.join(shots,'cms-pickup-choice.png'),fullPage:true});
+    await capture(manager,choices.locator('#_rp-card'),'cms-pickup-choice.png','Выбор пунктов только выбранного города',10);
     await choices.getByText('Центральный — Учебный город',{exact:true}).click();
     await expect(choices).not.toBeVisible();
     await expect(pickup).not.toHaveValue('');
@@ -92,21 +126,23 @@ fs.mkdirSync(shots, {recursive:true});
     await expect(choices).toContainText('Парковый — Демонстрационный город');
     await expect(choices).not.toContainText('Центральный — Учебный город');
     await choices.getByText('Парковый — Демонстрационный город',{exact:true}).click();
+    await change('Город',{label:'Учебный город'});
+    await pickup.locator('..').locator('[data-ob-ref-picker]').click();
+    await choices.getByText('Центральный — Учебный город',{exact:true}).click();
 
     await manager.getByRole('button',{name:'Добавить товары',exact:true}).click();
     const picker = manager.locator('#_item-picker-modal');
     await expect(picker).toBeVisible();
     await picker.locator('table').first().locator('tbody tr').filter({hasText:'Ежедневник без дат'}).locator('._ip-val').fill('2');
-    await manager.screenshot({path:path.join(shots,'cms-product-picker.png'),fullPage:true});
+    await capture(manager,picker.locator(':scope > div'),'cms-product-picker.png','Подбор: количество и корзина выбранных товаров',10);
     const selected = manager.waitForResponse(r=>r.url().includes('/form-event') && r.request().method()==='POST');
     await picker.getByRole('button',{name:'Перенести в документ',exact:true}).click();
     const selectedResult = await (await selected).json();
     assert.equal(selectedResult.ok,true,selectedResult.error);
     await expect(manager.locator('input[name=Сумма]')).toHaveValue('3170');
     await manager.locator('select[name=Ответственный]').selectOption({label:'Менеджер демонстрации'});
-    await manager.setViewportSize({width:1440,height:2100});
-    await manager.screenshot({path:path.join(shots,'cms-order-workspace.png'),fullPage:true});
-    await manager.setViewportSize({width:1440,height:1100});
+    await capture(manager,manager.locator('[data-ob-el="ДвеКолонки"]'),'cms-order-workspace.png','Цветные области: покупатель и получение заказа');
+    await capture(manager,manager.locator('[data-ob-el="Состав"]'),'cms-order-details.png','Состав заказа после подбора: 3170 рублей');
     const accepted = manager.waitForResponse(r=>r.url().includes('/form-event') && r.request().method()==='POST');
     await manager.getByRole('button',{name:'Подтвердить заказ',exact:true}).click();
     const acceptedResult = await (await accepted).json();
@@ -128,7 +164,7 @@ fs.mkdirSync(shots, {recursive:true});
     await expect(printPage.locator('body')).toContainText('Керамическая кружка');
     await expect(printPage.locator('body')).toContainText('Ежедневник без дат');
     await expect(printPage.locator('body')).toContainText('3170');
-    await printPage.locator('table').screenshot({path:path.join(shots,'cms-order-print.png')});
+    await capture(printPage,printPage.locator('table'),'cms-order-print.png','Печатная форма с сохранёнными ценами заказа');
     const pdf = await manager.request.get(links.find(link=>link.text==='PDF').url);
     assert.equal(pdf.status(),200,'PDF export');
     assert.equal((await pdf.body()).subarray(0,5).toString(),'%PDF-');
@@ -138,7 +174,7 @@ fs.mkdirSync(shots, {recursive:true});
     assert.equal(finishedResult.ok,true,finishedResult.error);
     await page.goto(orderURL);
     await expect(page.getByText('Выполнен',{exact:true})).toBeVisible();
-    await page.screenshot({path:path.join(shots,'cms-order-status.png'),fullPage:true});
+    await capture(page,page.locator('main'),'cms-order-status.png','Публичная страница выполненного заказа');
 
     // A second real checkout verifies both answers to the cancellation question.
     await page.goto(base+'/hs/site/product/demo-mug');
@@ -164,6 +200,7 @@ fs.mkdirSync(shots, {recursive:true});
     await page.goto(cancelledURL);
     await expect(page.getByText('Отменён',{exact:true})).toBeVisible();
     assert.deepEqual(errors,[],'Browser JavaScript errors');
+    fs.writeFileSync(path.join(shots,'captures.json'),JSON.stringify(captures,null,2)+'\n');
     console.log(JSON.stringify({ok:true,orderID,orderURL,formURL,total:3170,screenshots:shots,printLinks:links},null,2));
   } finally {
     await browser.close();

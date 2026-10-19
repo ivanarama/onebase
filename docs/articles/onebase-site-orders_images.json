@@ -1,0 +1,92 @@
+[
+  {
+    "source": "../images/cms-orders/cms-order-workspace.png",
+    "alt": "Цветные области формы: покупатель, ответственный и получение заказа",
+    "caption": "Рисунок 1. Цветные области формы: покупатель, ответственный и получение заказа",
+    "sha256": "3fa1331d97cf1b00c9ea0c172de8abafbcb93bbc69e323ec5ca300746f26279e",
+    "pixelWidth": 1992,
+    "pixelHeight": 912,
+    "cssWidth": 996,
+    "cssHeight": 456
+  },
+  {
+    "source": "../images/cms-orders/cms-catalog.png",
+    "alt": "Публичный каталог с вымышленными товарами",
+    "caption": "Рисунок 2. Публичный каталог с вымышленными товарами",
+    "sha256": "d7d87e13012ca6e7aa275ca2c65a0a58cc67cad5f317cb2cc577ad5748f2960f",
+    "pixelWidth": 2048,
+    "pixelHeight": 862,
+    "cssWidth": 1024,
+    "cssHeight": 431
+  },
+  {
+    "source": "../images/cms-orders/cms-cart.png",
+    "alt": "Корзина перед оформлением заказа",
+    "caption": "Рисунок 3. Корзина перед оформлением заказа",
+    "sha256": "fefe4443945edf6fb5e174d1bc22df2ae09d5564f9f78906313437e5f267b964",
+    "pixelWidth": 2048,
+    "pixelHeight": 706,
+    "cssWidth": 1024,
+    "cssHeight": 353
+  },
+  {
+    "source": "../images/cms-orders/cms-order-history.png",
+    "alt": "Предыдущие покупки выбранного покупателя: номер, сумма и статус",
+    "caption": "Рисунок 4. Предыдущие покупки выбранного покупателя: номер, сумма и статус",
+    "sha256": "14dd6438fde8d81c7e1dd91e1626e540751b05f3e5869f3e9b013e1583cf25db",
+    "pixelWidth": 1932,
+    "pixelHeight": 374,
+    "cssWidth": 966,
+    "cssHeight": 187
+  },
+  {
+    "source": "../images/cms-orders/cms-pickup-choice.png",
+    "alt": "В подборе видны только пункты выбранного города",
+    "caption": "Рисунок 5. В подборе видны только пункты выбранного города",
+    "sha256": "cc45eb57b37966ef5f84b7cba165820f81a3d9d43cd9fbc78189f201ef47eb4e",
+    "pixelWidth": 920,
+    "pixelHeight": 430,
+    "cssWidth": 460,
+    "cssHeight": 215
+  },
+  {
+    "source": "../images/cms-orders/cms-product-picker.png",
+    "alt": "Подбор с количеством и корзиной выбранных позиций",
+    "caption": "Рисунок 6. Подбор с количеством и корзиной выбранных позиций",
+    "sha256": "3eb6e491ece77e48674ca16c02c2cef292ad6a3e4a0eb3c07b59a9088697eaf6",
+    "pixelWidth": 1400,
+    "pixelHeight": 776,
+    "cssWidth": 700,
+    "cssHeight": 388
+  },
+  {
+    "source": "../images/cms-orders/cms-order-details.png",
+    "alt": "Состав после подбора: кружка и два ежедневника, итог 3170 рублей",
+    "caption": "Рисунок 7. Состав после подбора: кружка и два ежедневника, итог 3170 рублей",
+    "sha256": "efcffad46b637ea79c1b5b1b7d6a51d6dd592b4ecb34663cb7a44520325cc92e",
+    "pixelWidth": 1992,
+    "pixelHeight": 1008,
+    "cssWidth": 996,
+    "cssHeight": 504
+  },
+  {
+    "source": "../images/cms-orders/cms-order-print.png",
+    "alt": "Печатная форма заказа",
+    "caption": "Рисунок 8. Печатная форма заказа",
+    "sha256": "9ee61b0410cd616802824d42652694c223c3406547a291aa4793b9159c9298a0",
+    "pixelWidth": 1242,
+    "pixelHeight": 572,
+    "cssWidth": 621,
+    "cssHeight": 286
+  },
+  {
+    "source": "../images/cms-orders/cms-order-status.png",
+    "alt": "Покупатель видит выполненный заказ с тем же составом",
+    "caption": "Рисунок 9. Покупатель видит выполненный заказ с тем же составом",
+    "sha256": "a6ed806032e136697d6a08995c70cb1ba19c656835208a02cf493f98a3cd4787",
+    "pixelWidth": 2048,
+    "pixelHeight": 1112,
+    "cssWidth": 1024,
+    "cssHeight": 556
+  }
+]
