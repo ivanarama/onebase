@@ -4,10 +4,20 @@ title: Заказ с сайта
 # часть добавляет конфигурация внедрения — ей хватит ОбработкаПроведения, а
 # примеру склад не нужен, чтобы показать путь «корзина → документ».
 posting: false
+notify_changes: true
+list_refresh_on: [данные.заказпокупателя]
+list_filters: [Номер, Дата, Статус, Покупатель, Ответственный]
 numerator:
   prefix: "ЗС-"
   length: 6
   period: year
+stages:
+  field: Статус
+  order: [Новый, ВРаботе, Выполнен, Отменён]
+  transitions:
+    - {from: Новый, to: [ВРаботе, Отменён]}
+    - {from: ВРаботе, to: [Выполнен, Отменён]}
+  enforce: strict
 fields:
   - name: Номер
     type: string
@@ -37,6 +47,20 @@ fields:
   - name: ОшибкаОтправкиПисьма
     title: Письмо не ушло (причина)
     type: string
+  - name: Покупатель
+    type: reference:Покупатели
+  - name: Телефон
+    type: string
+  - name: СпособПолучения
+    type: enum:СпособПолучения
+  - name: АдресДоставки
+    type: reference:АдресаДоставки
+  - name: Город
+    type: reference:Города
+  - name: ПунктВыдачи
+    type: reference:ПунктыВыдачи
+  - name: Ответственный
+    type: reference:_users
 tableparts:
   - name: Товары
     fields:

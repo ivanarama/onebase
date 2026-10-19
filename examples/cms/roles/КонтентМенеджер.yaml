@@ -6,6 +6,10 @@ description: Наполнение сайта контентом без дост�
 # относится материал.
 permissions:
   catalogs:
+    Покупатели: [read]
+    АдресаДоставки: [read]
+    Города: [read]
+    ПунктыВыдачи: [read]
     Сайты: [read]
     Страницы: [read, write]
     Новости: [read, write]

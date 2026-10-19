@@ -2,6 +2,10 @@ name: РедакторСайта
 description: Контент плюс оформление, маршруты и редиректы
 permissions:
   catalogs:
+    Покупатели: [read]
+    АдресаДоставки: [read]
+    Города: [read]
+    ПунктыВыдачи: [read]
     Сайты: [read, write]
     СтилиСайта: [read, write]
     ШаблоныСайта: [read, write]

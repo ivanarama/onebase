@@ -1,0 +1,9 @@
+name: Покупатели
+title: Покупатели
+fields:
+  - name: Наименование
+    type: string
+  - name: Телефон
+    type: string
+  - name: Почта
+    type: string

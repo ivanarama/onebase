@@ -1,0 +1,92 @@
+name: ЗаказСайта
+document: ЗаказПокупателя
+columns:
+- width: 40px
+- width: 300px
+- width: 90px
+- width: 90px
+- width: 100px
+areas:
+- name: Заголовок
+  rows:
+  - cells:
+    - text: Заказ № {{Номер}} от {{Дата | date}}
+      colspan: 5
+      bold: true
+      fontSize: 16
+- name: Покупатель
+  rows:
+  - cells:
+    - text: 'Покупатель: {{Наименование}}'
+      colspan: 5
+  - cells:
+    - text: 'Контакт: {{Контакт}}'
+      colspan: 5
+  - cells:
+    - text: 'Способ получения: {{СпособПолучения}}'
+      colspan: 5
+  - cells:
+    - text: 'Адрес доставки: {{АдресДоставки.Адрес}}'
+      colspan: 5
+  - cells:
+    - text: 'Пункт выдачи: {{ПунктВыдачи.Наименование}}'
+      colspan: 5
+  - cells:
+    - text: 'Комментарий: {{Комментарий}}'
+      colspan: 5
+- name: ШапкаТаблицы
+  rows:
+  - cells:
+    - text: №
+      bold: true
+      border: all
+    - text: Товар
+      bold: true
+      border: all
+    - text: Количество
+      bold: true
+      border: all
+    - text: Цена
+      bold: true
+      border: all
+    - text: Сумма
+      bold: true
+      border: all
+- name: Строка
+  rows:
+  - cells:
+    - parameter: Кол0
+      border: all
+    - parameter: Кол1
+      border: all
+    - parameter: Кол2
+      border: all
+    - parameter: Кол3
+      border: all
+    - parameter: Кол4
+      border: all
+- name: Итого
+  rows:
+  - cells:
+    - text: 'Итого: {{Сумма | number:2}} {{Валюта}}'
+      colspan: 5
+      bold: true
+  - cells:
+    - text: Это подтверждение состава заказа. Оплата и фискализация в примере не реализованы.
+      colspan: 5
+binding:
+  sequence:
+  - Заголовок
+  - Покупатель
+  - ШапкаТаблицы
+  - Строка
+  - Итого
+  repeat:
+  - area: Строка
+    source: Товары
+    parameters:
+      Кол0: '@row'
+      Кол1: Наименование
+      Кол2: Количество
+      Кол3: Цена | number:2
+      Кол4: Сумма | number:2

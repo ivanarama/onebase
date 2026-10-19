@@ -1,0 +1,277 @@
+schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: ЗаказПокупателя
+  title:
+    ru: Заказ с сайта
+  auto_save_settings: true
+attributes:
+- name: Объект
+  type: DocumentRef.ЗаказПокупателя
+  save: true
+  main: true
+- name: История
+  type: ValueTable
+  save: false
+  columns:
+  - name: Номер
+    type: string
+  - name: Дата
+    type: date
+  - name: Сумма
+    type: number
+  - name: Валюта
+    type: string
+  - name: Статус
+    type: string
+elements:
+- kind: ГруппаФормы
+  name: Заголовок
+  title:
+    ru: Заказ с сайта
+  background: '#f8fafc'
+  children:
+  - kind: ПолеВвода
+    name: ПолеНомер
+    title:
+      ru: Номер
+    data_path: Объект.Номер
+    readonly: true
+  - kind: ПолеВвода
+    name: ПолеДата
+    title:
+      ru: Дата
+    data_path: Объект.Дата
+    readonly: true
+  - kind: ПолеВвода
+    name: ПолеСайт
+    title:
+      ru: Сайт
+    data_path: Объект.Сайт
+    choice: true
+  - kind: ПолеВвода
+    name: ПолеСтатус
+    title:
+      ru: Статус
+    data_path: Объект.Статус
+    readonly: true
+  orientation: horizontal
+- kind: ГруппаФормы
+  name: ДвеКолонки
+  orientation: horizontal
+  children:
+  - kind: ГруппаФормы
+    name: Покупатель
+    title:
+      ru: Покупатель и контакт
+    background: '#eff6ff'
+    children:
+    - kind: ПолеВвода
+      name: ПолеНаименование
+      title:
+        ru: Имя с сайта
+      data_path: Объект.Наименование
+      readonly: true
+    - kind: ПолеВвода
+      name: ПолеКонтакт
+      title:
+        ru: Контакт с сайта
+      data_path: Объект.Контакт
+      readonly: true
+    - kind: ПолеВвода
+      name: ПолеПокупатель
+      title:
+        ru: Покупатель
+      data_path: Объект.Покупатель
+      choice: true
+      events:
+        ПриИзменении: ПокупательИзменён
+    - kind: ПолеВвода
+      name: ПолеТелефон
+      title:
+        ru: Телефон
+      data_path: Объект.Телефон
+      input_mask: +7 (000) 000-00-00
+    - kind: ПолеВвода
+      name: ПолеОтветственный
+      title:
+        ru: Ответственный
+      data_path: Объект.Ответственный
+      choice: true
+  - kind: ГруппаФормы
+    name: Получение
+    title:
+      ru: Как передать заказ
+    background: '#f0fdf4'
+    children:
+    - kind: ПолеВвода
+      name: ПолеСпособПолучения
+      title:
+        ru: Способ получения
+      data_path: Объект.СпособПолучения
+      events:
+        ПриИзменении: СпособИзменён
+    - kind: ПолеВвода
+      name: ПолеАдресДоставки
+      title:
+        ru: Адрес покупателя
+      data_path: Объект.АдресДоставки
+      id: cms-order-address
+      choice: true
+      hidden_when: СпособПолучения <> "Доставка"
+      choice_filter:
+      - field: Владелец
+        op: eq
+        from: Объект.Покупатель
+    - kind: ПолеВвода
+      name: ПолеГород
+      title:
+        ru: Город
+      data_path: Объект.Город
+      choice: true
+      hidden_when: СпособПолучения <> "Самовывоз"
+      events:
+        ПриИзменении: ГородИзменён
+    - kind: ПолеВвода
+      name: ПолеПунктВыдачи
+      title:
+        ru: Пункт выдачи
+      data_path: Объект.ПунктВыдачи
+      id: cms-order-pickup
+      choice: true
+      choice_dropdown: false
+      hidden_when: СпособПолучения <> "Самовывоз"
+      choice_filter:
+      - field: Владелец
+        op: eq
+        from: Объект.Город
+    - kind: ПолеВвода
+      name: ПолеКомментарий
+      title:
+        ru: Комментарий
+      data_path: Объект.Комментарий
+  readonly_when: Статус = "Выполнен" ИЛИ Статус = "Отменён"
+  equal_columns: true
+- kind: ГруппаФормы
+  name: Состав
+  title:
+    ru: Состав заказа — цены зафиксированы при покупке
+  background: '#fffbeb'
+  children:
+  - kind: Кнопка
+    name: Подобрать
+    title:
+      ru: Добавить товары
+    events:
+      Нажатие: ПодобратьТовары
+      Выбор: ТоварыВыбраны
+    hidden_when: Статус <> "Новый"
+  - kind: ТабличнаяЧасть
+    name: ТабТовары
+    data_path: Объект.Товары
+    readonly_when: Статус <> "Новый"
+    children:
+    - kind: Колонка
+      name: КолТовар
+      title:
+        ru: Товар
+      data_path: Объект.Товары.Товар
+      readonly: true
+    - kind: Колонка
+      name: КолНаименование
+      title:
+        ru: Название при покупке
+      data_path: Объект.Товары.Наименование
+      readonly: true
+    - kind: Колонка
+      name: КолАртикул
+      title:
+        ru: Артикул
+      data_path: Объект.Товары.Артикул
+      readonly: true
+    - kind: Колонка
+      name: КолКоличество
+      title:
+        ru: Количество
+      data_path: Объект.Товары.Количество
+      readonly: false
+      events:
+        ПриИзменении: Пересчитать
+    - kind: Колонка
+      name: КолЦена
+      title:
+        ru: Цена
+      data_path: Объект.Товары.Цена
+      readonly: false
+      events:
+        ПриИзменении: Пересчитать
+    - kind: Колонка
+      name: КолСумма
+      title:
+        ru: Сумма
+      data_path: Объект.Товары.Сумма
+      readonly: true
+  - kind: ПолеВвода
+    name: ПолеСумма
+    title:
+      ru: Итого
+    data_path: Объект.Сумма
+    readonly: true
+  - kind: ПолеВвода
+    name: ПолеВалюта
+    title:
+      ru: Валюта
+    data_path: Объект.Валюта
+    readonly: true
+- kind: ГруппаФормы
+  name: Действия
+  title:
+    ru: Обработка заказа
+  background: '#eef2ff'
+  children:
+  - kind: Кнопка
+    name: Принять
+    title:
+      ru: Подтвердить заказ
+    events:
+      Нажатие: ПринятьЗаказ
+    hidden_when: Статус <> "Новый"
+    primary: true
+    background: '#dbeafe'
+  - kind: Кнопка
+    name: Завершить
+    title:
+      ru: Завершить
+    events:
+      Нажатие: ЗавершитьЗаказ
+    hidden_when: Статус <> "ВРаботе"
+  - kind: Кнопка
+    name: Отменить
+    title:
+      ru: Отменить заказ
+    hidden_when: Статус = "Выполнен" ИЛИ Статус = "Отменён"
+    events:
+      Нажатие: СпроситьОтмену
+      Ответ: ОтветНаОтмену
+  orientation: horizontal
+- kind: ГруппаФормы
+  name: ИсторияПокупателя
+  title:
+    ru: Другие заказы выбранного покупателя
+  background: '#f1f5f9'
+  children:
+  - kind: ТабличнаяЧасть
+    name: ТабИстория
+    data_path: Форма.История
+    readonly: true
+- kind: ПолеВвода
+  name: ПолеОшибкаОтправкиПисьма
+  title:
+    ru: Диагностика уведомления
+  data_path: Объект.ОшибкаОтправкиПисьма
+  readonly: true
+  hidden_when: ОшибкаОтправкиПисьма = ""
+events:
+  ПриОткрытии: ПриОткрытии
+  ПередЗаписью: ПередЗаписью

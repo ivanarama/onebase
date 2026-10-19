@@ -1,0 +1,8 @@
+name: АдресаДоставки
+title: Адреса доставки
+owner: Покупатели
+fields:
+  - name: Наименование
+    type: string
+  - name: Адрес
+    type: string

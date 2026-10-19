@@ -1,0 +1,5 @@
+name: Города
+title: Города
+fields:
+  - name: Наименование
+    type: string

@@ -1,0 +1,8 @@
+name: ПунктыВыдачи
+title: Пункты выдачи
+owner: Города
+fields:
+  - name: Наименование
+    type: string
+  - name: Адрес
+    type: string

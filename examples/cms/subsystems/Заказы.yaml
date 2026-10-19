@@ -1,0 +1,13 @@
+name: Заказы
+title: Заказы и покупатели
+icon: shopping-cart
+order: 5
+contents:
+  documents:
+  - ЗаказПокупателя
+  catalogs:
+  - Покупатели
+  - АдресаДоставки
+  - Города
+  - ПунктыВыдачи
+  - Товары

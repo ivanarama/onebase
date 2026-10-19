@@ -1,0 +1,13 @@
+name: МенеджерЗаказов
+description: Обработка заказов и ведение покупателей без изменения сайта и каталога товаров
+permissions:
+  catalogs:
+    Сайты: [read]
+    Товары: [read]
+    Покупатели: [read, write]
+    АдресаДоставки: [read, write]
+    Города: [read]
+    ПунктыВыдачи: [read]
+  documents:
+    ЗаказПокупателя: [read, write]
+  processors: {}
