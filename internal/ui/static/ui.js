@@ -6109,7 +6109,7 @@ function initDetailPanel() {
     'object-fit:contain;object-position:center;border-radius:6px}' +
     '.ob-detail-empty{color:#94a3b8;font-size:13px;margin:4px 0 0}' +
     /* Узкий экран: третья колонка недопустима — панель уходит под список. */
-    '@media(max-width:820px){.ob-list-wrap{flex-direction:column}.ob-detail{width:auto!important;max-height:none}}';
+    '@media(max-width:820px){.ob-list-wrap{flex-direction:column;align-items:stretch}.ob-detail{width:auto!important;max-height:none}}';
   var st = document.createElement('style');
   st.textContent = css;
   (document.head || document.documentElement).appendChild(st);
