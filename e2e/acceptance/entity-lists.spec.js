@@ -11,15 +11,57 @@ async function open(page, id=ids.owner) {
  await expect(list(page).locator('tbody tr')).toHaveCount(2);
 }
 test('case-insensitive source path binds the rendered control and refreshes B',async({page})=>{
- await open(page);
- expect(JSON.parse(await list(page).getAttribute('data-ob-list-sources'))).toEqual({'объект.направление':'Направление'});
- const responsePromise=page.waitForResponse(r=>r.url().endsWith('/form-list-refresh')&&r.request().method()==='POST');
- await source(page).selectOption(ids.b);
- const response=await responsePromise;
- expect(JSON.parse(new URLSearchParams(response.request().postData()).get('sources'))).toEqual({'объект.направление':ids.b});
- await expect(list(page)).toHaveAttribute('data-ob-list-state','ready');
- await expect(list(page).locator('tbody tr')).toHaveCount(2);
- await expect(list(page).locator('tbody')).toContainText(' B');
+ for(const order of [['second-history','history'],['history','second-history']]){
+  await open(page);
+  expect(JSON.parse(await list(page).getAttribute('data-ob-list-sources'))).toEqual({'объект.направление':'Направление'});
+  const held=new Map();
+  const delivered=[];
+  const responses={};
+  const intercept=async route=>{
+   const element=new URLSearchParams(route.request().postData()).get('element');
+   if(!order.includes(element))return route.continue();
+   const response=await route.fetch();
+   const body=await response.body();
+   let release;const barrier=new Promise(resolve=>release=resolve);
+   const delivery=barrier.then(()=>route.fulfill({response,body}));
+   held.set(element,{release,delivery});
+   await delivery;
+  };
+  await page.route('**/form-list-refresh',intercept);
+  // Each waiter belongs to its own widget and precedes the source change. Hold real
+  // server responses so either alias can arrive first without timing sleeps.
+  for(const element of order){
+   responses[element]=page.waitForResponse(r=>r.url().endsWith('/form-list-refresh')&&r.request().method()==='POST'&&new URLSearchParams(r.request().postData()).get('element')===element)
+    .then(response=>{delivered.push(element);return response;});
+  }
+  try{
+   await source(page).selectOption(ids.b);
+   await expect.poll(()=>held.size).toBe(2);
+   await expect(list(page).locator('tbody tr')).toHaveCount(0);
+   for(const element of order){
+    held.get(element).release();
+    const response=await responses[element];
+    expect(new URLSearchParams(response.request().postData()).get('element')).toBe(element);
+    await expect(page.locator(`[data-ob-list-id="${element}"]`)).toHaveAttribute('data-ob-list-state','ready');
+    if(element===order[0])expect(delivered).toEqual([element]);
+   }
+   const response=await responses.history;
+   expect(JSON.parse(new URLSearchParams(response.request().postData()).get('sources'))).toEqual({'объект.направление':ids.b});
+   const secondResponse=await responses['second-history'];
+   expect(JSON.parse(new URLSearchParams(secondResponse.request().postData()).get('sources'))).toEqual({'Объект.Направление':ids.b});
+   expect(delivered).toEqual(order);
+   await expect(list(page)).toHaveAttribute('data-ob-list-state','ready');
+   await expect(list(page).locator('tbody tr')).toHaveCount(2);
+   await expect(list(page).locator('tbody')).toContainText(' B');
+   const second=page.locator('[data-ob-list-id="second-history"]');
+   await expect(second.locator('tbody tr')).toHaveCount(2);
+   await expect(second.locator('tbody')).toContainText(' B');
+  }finally{
+   held.forEach(entry=>entry.release());
+   await Promise.all([...held.values()].map(entry=>entry.delivery));
+   await page.unroute('**/form-list-refresh',intercept);
+  }
+ }
 });
 for (const abort of [true,false]) test(`list A→B→A, reverse replies, no AbortController=${!abort}`,async ({page})=>{
  await page.addInitScript(value=>{if(!value)window.AbortController=undefined;},abort);
