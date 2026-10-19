@@ -6044,13 +6044,14 @@ func complexProjectionTypeFields(tokens []tok, opts CompileOpts) []string {
 		return nil
 	}
 	types, hasReferenceSource := queriedColumnTypes(tokens, opts)
+	registerPeriods := complexProjectionRegisterPeriods(tokens, opts)
 	seen := map[string]bool{}
 	var out []string
 	for _, field := range fields {
 		key := lowerFast(field)
-		isTyped := false
+		isTyped := registerPeriods[key]
 		if byType := types[key]; byType != nil {
-			isTyped = byType[metadata.FieldTypeBool] || byType[metadata.FieldTypeDate]
+			isTyped = isTyped || byType[metadata.FieldTypeBool] || byType[metadata.FieldTypeDate]
 		}
 		if hasReferenceSource && isReferenceName(key) {
 			isTyped = true

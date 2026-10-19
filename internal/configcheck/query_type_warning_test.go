@@ -118,3 +118,43 @@ filters:
 		t.Errorf("missing query type warning: %+v", result.Warnings)
 	}
 }
+
+func TestRunFullWarnsAboutComplexRegisterPeriod(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "config", "app.yaml"), "name: PeriodWarning\n")
+	mkFile(t, filepath.Join(dir, "registers", "движения.yaml"), `name: Движения
+resources:
+  - name: Количество
+    type: number
+`)
+	mkFile(t, filepath.Join(dir, "reports", "периоды.yaml"), `name: Периоды
+query: |
+  ВЫБРАТЬ Д.Период КАК Момент ИЗ РегистрНакопления.Движения КАК Д
+  ОБЪЕДИНИТЬ ВСЕ
+  ВЫБРАТЬ period ИЗ РегистрНакопления.Движения
+`)
+	mkFile(t, filepath.Join(dir, "reports", "простой.yaml"), `name: Простой
+query: ВЫБРАТЬ Период ИЗ РегистрНакопления.Движения
+`)
+	mkFile(t, filepath.Join(dir, "src", "периоды.os"), `Процедура Проверить()
+  Запрос = Новый Запрос;
+  Запрос.Текст = "ВЫБРАТЬ Т.Момент ИЗ (ВЫБРАТЬ Период КАК Момент ИЗ РегистрНакопления.Движения) КАК Т";
+КонецПроцедуры
+`)
+	result := RunFull(dir)
+	if !result.OK || len(result.Issues) != 0 {
+		t.Fatalf("date diagnostic must remain advisory: %+v", result)
+	}
+	got := map[string]bool{}
+	for _, warning := range result.Warnings {
+		if warning.Code == "query.complex-projection-types" {
+			if !strings.Contains(warning.Message, "Период") {
+				t.Errorf("missing date in warning: %+v", warning)
+			}
+			got[warning.File] = true
+		}
+	}
+	if len(got) != 2 || !got["reports/Периоды.yaml"] || !got["src/периоды.os"] {
+		t.Fatalf("warnings=%+v", result.Warnings)
+	}
+}

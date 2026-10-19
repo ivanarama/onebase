@@ -314,3 +314,62 @@ func resetCheckFlags(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckThroughRootWarnsAboutComplexRegisterPeriod(t *testing.T) {
+	dir := t.TempDir()
+	writeProcrunFixture(t, dir, "config/app.yaml", "name: period-warning\n")
+	writeProcrunFixture(t, dir, "registers/Движения.yaml", `name: Движения
+resources:
+  - name: Количество
+    type: number
+`)
+	writeProcrunFixture(t, dir, "reports/Периоды.yaml", `name: Периоды
+query: |
+  ВЫБРАТЬ Период ИЗ РегистрНакопления.Движения
+  ОБЪЕДИНИТЬ ВСЕ
+  ВЫБРАТЬ period ИЗ РегистрНакопления.Движения
+`)
+	writeProcrunFixture(t, dir, "src/периоды.os", `Процедура Проверить()
+  Запрос = Новый Запрос;
+  Запрос.Текст = "ВЫБРАТЬ Т.Момент ИЗ (ВЫБРАТЬ Д.ПеРиОд КАК Момент ИЗ РегистрНакопления.Движения КАК Д) КАК Т";
+КонецПроцедуры
+`)
+	defer resetCheckFlags(t)
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	os.Stdout = w
+	rootCmd.SetArgs([]string{"check", "--project", dir, "--json"})
+	runErr := rootCmd.Execute()
+	_ = w.Close()
+	os.Stdout = old
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatal(err)
+	}
+	_ = r.Close()
+	if runErr != nil {
+		t.Fatalf("check rejected advisory: %v", runErr)
+	}
+	var result configcheck.Result
+	if err := json.Unmarshal(buf.Bytes(), &result); err != nil {
+		t.Fatalf("JSON: %v\n%s", err, buf.String())
+	}
+	if !result.OK || len(result.Issues) != 0 {
+		t.Fatalf("advisory blocks check: %+v", result)
+	}
+	got := map[string]bool{}
+	for _, warning := range result.Warnings {
+		if warning.Code == "query.complex-projection-types" {
+			if !strings.Contains(strings.ToLower(warning.Message), "период") {
+				t.Errorf("missing period: %+v", warning)
+			}
+			got[warning.File] = true
+		}
+	}
+	if len(got) != 2 || !got["reports/Периоды.yaml"] || !got["src/периоды.os"] {
+		t.Fatalf("warnings: %+v", result.Warnings)
+	}
+}
