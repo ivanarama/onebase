@@ -164,6 +164,9 @@ func TestTestUserReferencesMatrix(t *testing.T) {
 
 func TestMigrateUserReferencesDryRunMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		if _, err := db.RaiseSchemaRevision(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 		dir := userReferenceProject(t)
 		cmd := userReferenceCLICommand(t, db, dir, false)
 		if err := cmd.Flags().Set("dry-run", "true"); err != nil {
@@ -172,8 +175,8 @@ func TestMigrateUserReferencesDryRunMatrix(t *testing.T) {
 		if count := userReferenceTableCount(t, db); count != 0 {
 			t.Fatalf("fresh fixture has %d auth/entity tables", count)
 		}
-		if _, err := captureStdout(t, func() error { return migrateCmd.RunE(cmd, nil) }); err != nil {
-			t.Fatalf("onebase migrate --dry-run: %v", err)
+		if _, err := captureStdout(t, func() error { return migrateCmd.RunE(cmd, nil) }); err == nil || !strings.Contains(err.Error(), "таблица _users отсутствует") {
+			t.Fatalf("onebase migrate --dry-run must explain missing auth schema: %v", err)
 		}
 		if count := userReferenceTableCount(t, db); count != 0 {
 			t.Fatalf("dry-run created %d auth/entity tables", count)

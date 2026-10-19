@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -115,6 +116,9 @@ func TestAPIV2_PrintDocumentThroughHTTP(t *testing.T) {
 	}
 	srv := newTestServer(h.reg, h.store, h.interp, repo, "127.0.0.1", 0, ui.Config{}, nil)
 	t.Cleanup(srv.frontend.(*ui.Server).Close)
+	router := chi.NewRouter()
+	router.Mount("/mounted", srv.Handler())
+	router.Mount("/", srv.Handler())
 	request := func(path, login string, session bool) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(http.MethodGet, path, nil)
@@ -128,7 +132,7 @@ func TestAPIV2_PrintDocumentThroughHTTP(t *testing.T) {
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
 		w := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(w, req)
+		router.ServeHTTP(w, req)
 		return w
 	}
 	path := "/api/v2/document/" + url.PathEscape(doc.Name) + "/" + id.String() + "/print/" + url.PathEscape(form.Name)
@@ -183,7 +187,7 @@ func TestAPIV2_PrintDocumentThroughHTTP(t *testing.T) {
 		}
 	})
 	t.Run("form names are decoded exactly once", func(t *testing.T) {
-		for _, name := range []string{percentForm.Name, escapedTextForm.Name} {
+		for _, name := range []string{form.Name, percentForm.Name, escapedTextForm.Name} {
 			for _, rawPath := range []bool{false, true} {
 				encodedName := url.PathEscape(name)
 				routeSource := "Path"
@@ -200,9 +204,24 @@ func TestAPIV2_PrintDocumentThroughHTTP(t *testing.T) {
 							t.Fatalf("RawPath set = %v, want %v", got, rawPath)
 						}
 						api := request(formPath, "reader", false)
-						// The original UI form has the same layout and data, and
-						// provides an independent reference for the rendered sheet.
+						// Exercise the same name in UI routes, including chi's
+						// mounted RoutePath, and compare with the original form.
 						browser := request(uiPath+suffix, "reader", true)
+						for _, prefix := range []string{"", "/mounted"} {
+							actualPath := prefix + strings.Replace(uiPath, url.PathEscape(form.Name), encodedName, 1) + suffix
+							actual := request(actualPath, "reader", true)
+							if actual.Code != http.StatusOK {
+								t.Fatalf("UI %s: status=%d %s", actualPath, actual.Code, actual.Body.String())
+							}
+							if suffix == "" {
+								sheet := regexp.MustCompile(`(?s)<table>.*</table>`)
+								if got, want := sheet.Find(actual.Body.Bytes()), sheet.Find(browser.Body.Bytes()); len(got) == 0 || !bytes.Equal(got, want) {
+									t.Fatalf("UI sheet differs: %s\n%s", got, want)
+								}
+							} else if got, want := printPDFPages(t, actual.Body.Bytes()), printPDFPages(t, browser.Body.Bytes()); !bytes.Equal(got, want) {
+								t.Fatal("UI PDF pages differ")
+							}
+						}
 						if api.Code != http.StatusOK || browser.Code != http.StatusOK {
 							t.Fatalf("API=%d UI=%d", api.Code, browser.Code)
 						}

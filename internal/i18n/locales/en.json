@@ -932,6 +932,7 @@
   "Тот же узел (восстановить очередь обмена)": "Same node (restore the exchange queue)",
   "Точки ост.": "Breakpoints",
   "У вас нет прав для просмотра этого раздела.": "You do not have permission to view this section.",
+  "«%s» создаётся только из других объектов — отдельно создать нельзя.": "%s can only be created from other objects and cannot be created on its own.",
   "Показать отмеченные": "Show selected",
   "Стандартный порядок колонок": "Default column order",
   "Колонки можно переставлять, перетаскивая заголовок": "Drag a column header to reorder columns",

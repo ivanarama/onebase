@@ -63,6 +63,26 @@ func init() {
 	})
 }
 
+// ConnectSQLiteReadOnly opens an existing database without creation, write probes,
+// journal changes or filesystem setup. Foreign-key mode is local to the reader.
+func ConnectSQLiteReadOnly(ctx context.Context, path string) (*DB, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return nil, err
+	}
+	conn, err := sql.Open("sqlite", schemaRevisionSQLiteURI(abs, "mode=ro")+"&_pragma=foreign_keys(ON)&_pragma=busy_timeout(5000)")
+	if err != nil {
+		return nil, err
+	}
+	conn.SetMaxOpenConns(1)
+	conn.SetMaxIdleConns(1)
+	if err := conn.PingContext(ctx); err != nil {
+		_ = conn.Close()
+		return nil, fmt.Errorf("storage: SQLite read-only: %w", err)
+	}
+	return &DB{sqlDB: conn, dialect: SQLiteDialect{}, databaseFile: abs}, nil
+}
+
 // ConnectSQLite opens (or creates) a SQLite database file at the given path
 // and applies pragmas that match the project's operational profile:
 //   - WAL journal: concurrent readers don't block on a writer.

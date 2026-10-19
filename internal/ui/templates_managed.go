@@ -402,6 +402,13 @@ const tplManagedForm = `
               <option value="{{.Value}}"{{if .Selected}} selected{{end}}{{if .Unknown}} style="color:#dc2626"{{end}}>{{if .Unknown}}⚠ {{end}}{{.Label}}</option>
               {{end}}
             </select>
+          {{else if eq (str $f.Type) "date"}}
+            {{/* Дата: в текстовом поле простая таблица показывала сырое
+                 «2026-10-19T09:15:30». Только для чтения — текст, как у даты
+                 в сетке и в списке («19.10.2026 09:15:30»: поле даты браузер
+                 показал бы с запятой и календарём); иначе — поле даты, как в
+                 шапке, шаг в секунду — правка строки не отрежет секунды. */}}
+            {{if $tpReadOnly}}<input type="text" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="{{fmtDate $v}}" disabled data-ob-date-text>{{else}}<input type="datetime-local" step="1" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="{{tpDateInput $v}}" data-ob-recalc-tp-row>{{end}}
           {{else if eq (str $f.Type) "bool"}}
             <input type="checkbox" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="true"{{if checked $v}} checked{{end}}{{if $tpReadOnly}} disabled{{end}}>
           {{else}}
@@ -707,7 +714,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
   {{if not .IsNew}}
     {{/* См. комментарий в автогенерируемой карточке: копия — это форма
          создания, а F9 здесь занята копированием строки ТЧ. */}}
-    {{if .CanWrite}}<a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?copy={{.ID}}" class="btn btn-sm btn-secondary">{{t $.Lang "Скопировать"}}</a>{{end}}
+    {{if .CanCreate}}<a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?copy={{.ID}}" class="btn btn-sm btn-secondary">{{t $.Lang "Скопировать"}}</a>{{end}}
     <a href="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/history" class="btn btn-sm btn-secondary">{{t $.Lang "История"}}</a>
     {{if or .AllPrintForms .HasPrintProc}}
     <div style="position:relative">
