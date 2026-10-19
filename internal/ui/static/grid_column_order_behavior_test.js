@@ -52,7 +52,7 @@ test('перетаскивание переносит колонку на мес
 
 // Штатный инициализатор подключает события DOM-host; тест не вызывает
 // enableColumnReorder напрямую и проверяет оба пользовательских пути.
-function mountedGrid(ids, savedOrder) {
+function mountedGrid(ids, savedOrder, fetchOrder) {
   const listeners = {}, resetListeners = {}, saves = [];
   const reset = {style: {}, addEventListener(type, fn) { resetListeners[type] = fn; }};
   const headers = ids.map(() => ({setAttribute() {}, closest(s) { return s === '.slick-header-column' ? this : null; }}));
@@ -91,7 +91,10 @@ function mountedGrid(ids, savedOrder) {
   };
   // SlickGrid.setColumns закрывает редактор, теряя незавершённый ввод.
   Grid.prototype.setColumns = function(columns) { this.setCalls++; this.pending = null; this.columns = columns; };
-  const window = {addEventListener() {}, fetch(url, options) { saves.push(options.body); return Promise.resolve(); }};
+  const window = {addEventListener() {}, fetch(url, options) {
+    saves.push(options.body);
+    return fetchOrder ? fetchOrder(url, options) : Promise.resolve();
+  }};
   const document = {
     readyState: 'complete', querySelectorAll(s) { return s === '.ob-grid[data-sg-tp]' ? [div] : []; },
     addEventListener() {}, getElementById() { return null; }
@@ -151,3 +154,57 @@ test('инициализация и сброс сохраняют колонки
   assert.deepEqual(state.grid.columns.map(c => c.id), ids);
   assert.equal(state.saves.length, 1);
 });
+
+// The first HTTP operation stays in flight while the user changes the layout.
+// Completing it simulates the server write, rather than only recording fetches.
+function delayedSaves() {
+  const requests = [];
+  let saved = [];
+  return {
+    requests,
+    saved: () => saved,
+    fetch(url, options) {
+      assert.equal(url, '/ui/_grid-order');
+      return new Promise((resolve, reject) => {
+        requests.push({
+          complete(fail = false) {
+            if (fail) { reject(new Error('offline')); return; }
+            const order = new URLSearchParams(options.body).get('order');
+            saved = order ? JSON.parse(order) : [];
+            resolve({ok: true});
+          }
+        });
+      });
+    }
+  };
+}
+const flushSaves = () => new Promise(resolve => setImmediate(resolve));
+
+for (const resetLast of [false, true]) {
+  for (const failFirst of [false, true]) {
+    test(`overlapping saves: last ${resetLast ? 'reset' : 'move'}, first ${failFirst ? 'fails' : 'succeeds'}`, async () => {
+      const server = delayedSaves();
+      const ids = ['Qty', 'Price', 'Total'];
+      const state = mountedGrid(ids, [], server.fetch);
+      state.drop(0, 2); // Price, Total, Qty — held at the server.
+      state.drop(1, 0); // Total, Price, Qty — superseded before sending.
+      if (resetLast) state.resetOrder();
+      else state.drop(2, 0); // Qty, Total, Price — latest desired order.
+      const expected = state.grid.columns.map(c => c.id);
+      assert.equal(server.requests.length, 1, 'one in-flight save per table');
+      server.requests[0].complete(failFirst);
+      await flushSaves();
+      assert.equal(server.requests.length, 2, 'only the latest pending action is sent');
+      server.requests[1].complete();
+      await flushSaves();
+      const reopened = mountedGrid(ids, server.saved());
+      assert.deepEqual(reopened.grid.columns.map(c => c.id), expected);
+      assert.equal(server.requests.length, 2);
+      // A drained queue must also accept later actions.
+      state.drop(0, 1);
+      assert.equal(server.requests.length, 3);
+      server.requests[2].complete();
+      await flushSaves();
+    });
+  }
+}

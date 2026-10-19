@@ -398,6 +398,9 @@ func builtinToNumber(args []any, file string, line int) (any, error) {
 	s := fmt.Sprintf("%v", args[0])
 	d, err := decimal.NewFromString(strings.ReplaceAll(s, ",", "."))
 	if err != nil {
+		if _, isString := args[0].(string); isString {
+			return raiseUserException([]any{"Преобразование значения к типу Число не может быть выполнено"}, file, line)
+		}
 		return decimal.Zero, nil
 	}
 	return d, nil

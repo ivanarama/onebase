@@ -5,6 +5,8 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -89,12 +91,19 @@ func TestPrintDocumentXLSXThroughHTTPHandler(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = f.Close()
-	s.reg.LoadLayoutForms([]*printform.LayoutForm{{
-		Name:         "Карточка",
-		Document:     entity.Name,
-		Layout:       &printform.LayoutTemplate{},
-		XLSXTemplate: template.Bytes(),
-	}})
+	formNames := []string{"Карточка", "Карточка 20%", "Карточка %41"}
+	var forms []*printform.LayoutForm
+	for _, name := range formNames {
+		forms = append(forms, &printform.LayoutForm{
+			Name: name, Document: entity.Name,
+			Layout: &printform.LayoutTemplate{}, XLSXTemplate: template.Bytes(),
+		})
+	}
+	s.reg.LoadLayoutForms(forms)
+	router := chi.NewRouter()
+	s.Mount(router)
+	mounted := chi.NewRouter()
+	mounted.Mount("/mounted", router)
 
 	id := uuid.New()
 	if err := s.store.Upsert(ctx, entity.Name, id, map[string]any{
@@ -103,31 +112,50 @@ func TestPrintDocumentXLSXThroughHTTPHandler(t *testing.T) {
 	}, entity); err != nil {
 		t.Fatal(err)
 	}
-	target := "/ui/catalog/Контрагент/" + id.String() + "/print/Карточка/xlsx"
-	req := reqWithChi(http.MethodGet, target, nil, map[string]string{
-		"kind": "catalog", "entity": entity.Name, "id": id.String(), "form": "Карточка",
-	})
-	rec := httptest.NewRecorder()
-	s.printDocumentXLSX(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status=%d: %s", rec.Code, rec.Body.String())
-	}
-	if got := rec.Header().Get("Content-Type"); got != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
-		t.Errorf("Content-Type = %q", got)
-	}
-	if got := rec.Header().Get("Content-Disposition"); !bytes.Contains([]byte(got), []byte(".xlsx")) {
-		t.Errorf("Content-Disposition = %q", got)
-	}
-	out, err := excelize.OpenReader(bytes.NewReader(rec.Body.Bytes()))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if err := out.Close(); err != nil {
-			t.Errorf("Close XLSX: %v", err)
+	for _, name := range formNames {
+		for _, rawPath := range []bool{false, true} {
+			for _, prefix := range []string{"", "/mounted"} {
+				source := "Path"
+				encodedName := url.PathEscape(name)
+				if rawPath {
+					source = "RawPath"
+					encodedName = strings.ReplaceAll(encodedName, "%D0", "%d0")
+				}
+				t.Run(name+"/"+source+prefix, func(t *testing.T) {
+					target := prefix + "/ui/catalog/" + url.PathEscape(entity.Name) + "/" + id.String() + "/print/" + encodedName + "/xlsx"
+					req := httptest.NewRequest(http.MethodGet, target, nil)
+					if got := req.URL.RawPath != ""; got != rawPath {
+						t.Fatalf("RawPath set = %v, want %v", got, rawPath)
+					}
+					rec := httptest.NewRecorder()
+					if prefix == "" {
+						router.ServeHTTP(rec, req)
+					} else {
+						mounted.ServeHTTP(rec, req)
+					}
+					if rec.Code != http.StatusOK {
+						t.Fatalf("status=%d: %s", rec.Code, rec.Body.String())
+					}
+					if got := rec.Header().Get("Content-Type"); got != "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" {
+						t.Errorf("Content-Type = %q", got)
+					}
+					if got := rec.Header().Get("Content-Disposition"); !bytes.Contains([]byte(got), []byte(".xlsx")) {
+						t.Errorf("Content-Disposition = %q", got)
+					}
+					out, err := excelize.OpenReader(bytes.NewReader(rec.Body.Bytes()))
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer func() {
+						if err := out.Close(); err != nil {
+							t.Errorf("Close XLSX: %v", err)
+						}
+					}()
+					if got, err := out.GetCellValue("Sheet1", "A1"); err != nil || got != "ООО Ромашка" {
+						t.Errorf("A1 = %q, %v", got, err)
+					}
+				})
+			}
 		}
-	}()
-	if got, err := out.GetCellValue("Sheet1", "A1"); err != nil || got != "ООО Ромашка" {
-		t.Errorf("A1 = %q, %v", got, err)
 	}
 }

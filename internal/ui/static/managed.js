@@ -2630,6 +2630,8 @@ function obGridColumnIds(columns) {
   // drop: vendored SlickGrid без Sortable.js свой reorder не включает) и
   // сохранение порядка за пользователем; «Стандартный порядок колонок»
   // возвращает порядок формы.
+  // Очередь общая для одного ключа, включая повторные представления таблицы.
+  var gridOrderSaves = Object.create(null);
   function enableColumnReorder(state, defaultIds) {
     var div = state.div, grid = state.grid;
     var key = div.getAttribute("data-sg-layout");
@@ -2649,11 +2651,28 @@ function obGridColumnIds(columns) {
     }
     function save(order) {
       if (!window.fetch) return;
-      var body = "grid=" + encodeURIComponent(key) + "&order=" + encodeURIComponent(order);
-      window.fetch("/ui/_grid-order", {
-        method: "POST", credentials: "same-origin",
-        headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: body
-      }).catch(function() {});
+      var queue = gridOrderSaves[key] || (gridOrderSaves[key] = {running: false, pending: null});
+      queue.pending = order; // Пустая строка — сброс, null — нет ожидающей записи.
+      if (queue.running) return;
+      function sendNext() {
+        if (queue.pending === null) {
+          queue.running = false;
+          delete gridOrderSaves[key];
+          return;
+        }
+        var body = "grid=" + encodeURIComponent(key) + "&order=" + encodeURIComponent(queue.pending);
+        queue.pending = null;
+        queue.running = true;
+        // Пока сервер не закончил старую запись, новую не отправляем.
+        // Ошибка не должна блокировать более позднее действие пользователя.
+        try {
+          window.fetch("/ui/_grid-order", {
+            method: "POST", credentials: "same-origin",
+            headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: body
+          }).then(sendNext, sendNext);
+        } catch (e) { sendNext(); }
+      }
+      sendNext();
     }
     function applyColumns() {
       grid.setColumns(state.columns);

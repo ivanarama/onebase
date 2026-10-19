@@ -443,6 +443,7 @@ func infoRegisterYAMLSchema() *yamlLintSchema {
 		"titles":     freeMap(),
 		"dimensions": seq(fieldYAMLSchema(false)),
 		"resources":  seq(fieldYAMLSchema(false)),
+		"indexes":    seq(indexYAMLSchema()),
 	})
 }
 
