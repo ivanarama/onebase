@@ -3330,7 +3330,7 @@ function obInitFormDelegates() {
       var tpName = addTp.getAttribute('data-tp-name') || '';
       var tbody = document.getElementById('tp-body-' + tpName);
       addTpRow(tpName, obSplitDataList(addTp.getAttribute('data-tp-fields')), obSplitDataList(addTp.getAttribute('data-tp-num-fields')), tbody ? tbody.rows.length : 0,
-        null, null, obSplitDataList(addTp.getAttribute('data-tp-bool-fields')));
+        null, null, obSplitDataList(addTp.getAttribute('data-tp-bool-fields')), obSplitDataList(addTp.getAttribute('data-tp-date-fields')));
       var table = tbody && tbody.closest ? tbody.closest('table[data-ob-dom-table]') : null;
       if (table) obDOMNotifyMutation(table, 'add');
       return;
@@ -3398,7 +3398,7 @@ function obTPEnumOrder() {
 
 // boolFields — список булевых колонок: тип колонки в разметке автоформы больше
 // нигде не виден, а флажок вместо текстового поля нужен и в добавленной строке.
-function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, boolFields) {
+function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, boolFields, dateFields) {
   var tbody = tbodyOverride || document.getElementById('tp-body-' + tpName);
   var table = tbody && tbody.closest ? tbody.closest('table[data-ob-dom-table]') : null;
   var domWritable = !!(table && !obDOMTableReadOnly(table));
@@ -3408,6 +3408,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
   var enumLabels = (obTPEnumLabels()[tpName]) || {};
   var enumOrder = (obTPEnumOrder()[tpName]) || {};
   var bools = Array.isArray(boolFields) ? boolFields : [];
+  var dates = Array.isArray(dateFields) ? dateFields : [];
   if (tbody && tbody.getAttribute('data-tp-cmd') === '1') {
     var tdSel = document.createElement('td');
     tdSel.style.textAlign = 'center';
@@ -3491,6 +3492,10 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
         inp.type = 'number';
         inp.setAttribute('data-tp-num', fn);
         inp.setAttribute('data-ob-tp-recalc', '');
+      } else if (dates.indexOf(fn) !== -1) {
+        // Новая строка простой таблицы — то же поле даты, что у записанных.
+        inp.type = 'datetime-local';
+        inp.step = '1';
       } else {
         inp.type = 'text';
       }

@@ -17,7 +17,7 @@ func KindFromWord(word string) string {
 }
 
 // NormalizeOp приводит операцию к канону PermissionHas. Принимает и канон
-// (read/write/post/unpost/delete/run/disclose), и русские синонимы; незнакомое
+// (read/write/post/unpost/delete/run/disclose/create), и русские синонимы; незнакомое
 // слово возвращается как есть (в нижнем регистре) — операции сопоставляются
 // литерально, конфигурация вправе объявлять свои.
 func NormalizeOp(word string) string {
@@ -37,6 +37,8 @@ func NormalizeOp(word string) string {
 		return "run"
 	case "disclose", "раскрыть", "раскрытие":
 		return "disclose"
+	case "create", "создать", "создание", "добавить", "добавление":
+		return "create"
 	default:
 		return w
 	}

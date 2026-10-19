@@ -123,7 +123,7 @@ const (
 // permission, row-filter, required, optimistic-version, form-hook and
 // entityservice semantics live here exactly once.
 func (s *Server) saveManagedObject(r *http.Request, entity *metadata.Entity, form *metadata.FormModule, obj *runtime.Object, isNew bool, action string, requireReadableResult bool, onCommitted func(uuid.UUID, int64)) ([]string, int64, error) {
-	if !s.can(r, string(entity.Kind), entity.Name, "write") {
+	if !s.can(r, string(entity.Kind), entity.Name, "write") || isNew && !s.canInteractiveCreate(r, entity) {
 		return nil, 0, &managedCloseSaveError{status: http.StatusForbidden, kind: managedSaveForbidden, message: "доступ запрещён"}
 	}
 	posting := action == "post" || action == "post_and_close"
@@ -513,8 +513,8 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 						func() uuid.UUID { return savedID }, func() bool { return true }, canRead)
 				}
 			}
-			if !hasSavedIdentity && !canWrite {
-				// The cached result belongs to a still-unsaved form. If write access
+			if !hasSavedIdentity && !s.canInteractiveCreate(r, entity) {
+				// The cached result belongs to a still-unsaved form. If write/create access
 				// disappeared, replay must have the same terminal semantics as a fresh
 				// discard and must not disclose old handler deltas/messages.
 				closeInv.suppressState = true
@@ -581,9 +581,9 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	}
 	isNewObject := rawID == "" && (strings.EqualFold(form.Kind, "object") || form.Kind == "" && formKind == "object")
 	if isNewObject {
-		if !canWrite {
+		if !s.canInteractiveCreate(r, entity) {
 			if closeInv != nil && closeInv.mode == "discard" {
-				// There is no durable identity to protect and no authorized write to
+				// There is no durable identity to protect and no authorized creation to
 				// perform. Let the owner destroy its unsaved client-only form without
 				// invoking trusted lifecycle code under revoked permissions.
 				finishTerminalClose()
