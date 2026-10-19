@@ -27,6 +27,12 @@ func TestEntityListsBrowserAcceptance(t *testing.T) {
 	// remains select[name="Направление"]. Exercise that binding in every scenario.
 	f.owner.Forms[0].Elements[2].EntityList.Filter[0].Source = "объект.направление"
 	f.owner.Forms[0].Elements[1].ChoiceFilter = nil
+	// Each widget has its own transport spelling for the same canonical field.
+	f.owner.Forms[0].Elements = append(f.owner.Forms[0].Elements, &metadata.FormElement{
+		ID: "second-history", Name: "SecondHistory", Kind: metadata.FormElementEntityList,
+		EntityList: &metadata.FormEntityListSpec{Entity: f.target.Name, Columns: []string{"Наименование"}, OrderBy: []string{"Наименование asc"}, Limit: 2,
+			Filter: []metadata.FormEntityListCondition{{Field: "Направление", Op: "eq", Source: "Объект.Направление"}}},
+	})
 	for _, entry := range []struct{ id, name string }{{f.rootA.String(), "A"}, {f.rootB.String(), "B"}} {
 		uid, err := uuid.Parse(entry.id)
 		if err != nil {

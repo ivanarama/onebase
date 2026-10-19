@@ -113,13 +113,13 @@ func hasManagedEntityLists(form *metadata.FormModule) bool {
 	})
 	return found
 }
-func listSources(form *metadata.FormModule) map[string]string {
+func listSources(form *metadata.FormModule, elementID string) map[string]string {
 	out := map[string]string{}
 	if form == nil {
 		return out
 	}
 	form.Walk(func(el *metadata.FormElement) bool {
-		if el.Kind == metadata.FormElementEntityList && el.EntityList != nil {
+		if el.Kind == metadata.FormElementEntityList && el.EntityList != nil && (elementID == "" || el.ID == elementID) {
 			for _, c := range el.EntityList.Filter {
 				if c.Source != "" {
 					out[c.Source] = dpFieldName(c.Source)
@@ -157,11 +157,11 @@ func (s *Server) listSourceWritable(owner *metadata.Entity, form *metadata.FormM
 }
 
 func (s *Server) signEntityListState(ctx context.Context, owner *metadata.Entity, form *metadata.FormModule, id string, values map[string]any) string {
-	if len(listSources(form)) == 0 {
+	if len(listSources(form, "")) == 0 {
 		return ""
 	}
 	v := map[string]string{}
-	for path, name := range listSources(form) {
+	for path, name := range listSources(form, "") {
 		if !choiceAttrMasked(s.fieldDecisions(ctx, owner), name) {
 			v[path] = listSourceString(owner, form, path, listValue(values, name))
 		}
@@ -405,7 +405,7 @@ func (s *Server) loadManagedEntityLists(ctx context.Context, owner *metadata.Ent
 
 // Sources are search parameters, never authorization. Readonly existing-object
 // values come from storage; new-object values require the server's signed state.
-func (s *Server) entityListRefreshValues(r *http.Request, owner *metadata.Entity, form *metadata.FormModule, id string, sources map[string]string) (map[string]any, error) {
+func (s *Server) entityListRefreshValues(r *http.Request, owner *metadata.Entity, form *metadata.FormModule, id, elementID string, sources map[string]string) (map[string]any, error) {
 	values := map[string]any{}
 	baseline := map[string]any{}
 	if id != "" {
@@ -427,7 +427,9 @@ func (s *Server) entityListRefreshValues(r *http.Request, owner *metadata.Entity
 		}
 	}
 	signed, _ := s.parseEntityListState(r.Context(), r.FormValue("state"), owner, form, id)
-	allowed := listSources(form)
+	// A refresh carries only the selected list's exact transport paths.
+	// Sources of other lists must neither authorize input nor erase this list's values.
+	allowed := listSources(form, elementID)
 	for path := range sources {
 		if _, ok := allowed[path]; !ok {
 			return nil, fmt.Errorf("unexpected source")
@@ -489,7 +491,7 @@ func (s *Server) handleManagedListRefresh(w http.ResponseWriter, r *http.Request
 		fail(http.StatusBadRequest)
 		return
 	}
-	values, err := s.entityListRefreshValues(r, owner, form, r.PostForm.Get("id"), sources)
+	values, err := s.entityListRefreshValues(r, owner, form, r.PostForm.Get("id"), element.ID, sources)
 	if err != nil {
 		fail(http.StatusForbidden)
 		return

@@ -790,18 +790,18 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	if hasManagedEntityLists(form) {
 		r = r.WithContext(context.WithValue(r.Context(), entityListOwnerIDKey{}, strings.TrimSpace(r.FormValue("_id"))))
 		sources := map[string]string{}
-		for path, name := range listSources(form) {
+		for path, name := range listSources(form, "") {
 			sources[path] = listSourceString(entity, form, path, listValue(obj.Fields, name))
 		}
 		clone := r.Clone(r.Context())
 		clone.Form = cloneQuery(r.Form)
 		clone.Form.Set("state", r.FormValue("_entity_list_state"))
-		restored, err := s.entityListRefreshValues(clone, entity, form, strings.TrimSpace(r.FormValue("_id")), sources)
+		restored, err := s.entityListRefreshValues(clone, entity, form, strings.TrimSpace(r.FormValue("_id")), "", sources)
 		if err != nil {
 			respondJSON(enc, formEventResponse{Error: "list source unavailable"})
 			return
 		}
-		for path, name := range listSources(form) {
+		for path, name := range listSources(form, "") {
 			field := metadata.EntityListSourceField(entity, form, path)
 			if field == nil {
 				respondJSON(enc, formEventResponse{Error: "list source unavailable"})

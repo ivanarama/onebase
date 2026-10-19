@@ -27,6 +27,7 @@ for (const abort of [true,false]) test(`list A→B→A, reverse replies, no Abor
  const cell=page.locator('[name="tp.Items.0.Text"]'); await cell.fill("dirty row");
  const held=[];
  await page.route('**/form-list-refresh',async route=>{
+  if(new URLSearchParams(route.request().postData()).get('element')!=='history')return route.continue();
   const response=await route.fetch();const body=await response.body();
   let release;const barrier=new Promise(resolve=>release=resolve);const entry={release,source:new URLSearchParams(route.request().postData()).get('sources')};held.push(entry);
   await barrier;try{await route.fulfill({response,body});}catch(e){if(!route.request().failure())throw e;}entry.delivered=true;
@@ -39,6 +40,9 @@ for (const abort of [true,false]) test(`list A→B→A, reverse replies, no Abor
   const newest=await list(page).locator('tbody tr').allTextContents();expect(newest.join(' ')).not.toContain(' B');
   held[0].release();await expect.poll(()=>held[0].delivered).toBeTruthy();
   await expect(list(page).locator('tbody tr')).toHaveText(newest);
+  const second=page.locator('[data-ob-list-id="second-history"]');
+  await expect(second).toHaveAttribute('data-ob-list-state','ready');
+  await expect(second.locator('tbody')).not.toContainText(' B');
   await expect(cell).toHaveValue("dirty row");
   expect(await page.evaluate(()=>window._obFormDirty)).toBe(true);
  }finally{held.forEach(x=>x.release());}
@@ -64,7 +68,7 @@ test('empty/network failure clear previous rows and recover without saving',asyn
 test('closed DOM instance rejects late response',async({page})=>{
  await open(page);
  let release;let arrived;const ready=new Promise(r=>arrived=r);const barrier=new Promise(r=>release=r);
- await page.route('**/form-list-refresh',async route=>{const response=await route.fetch();const body=await response.body();arrived();await barrier;try{await route.fulfill({response,body});}catch(e){if(!route.request().failure())throw e;}});
+ await page.route('**/form-list-refresh',async route=>{if(new URLSearchParams(route.request().postData()).get('element')!=='history')return route.continue();const response=await route.fetch();const body=await response.body();arrived();await barrier;try{await route.fulfill({response,body});}catch(e){if(!route.request().failure())throw e;}});
  try{await source(page).selectOption(ids.b);await ready;await page.locator('#main-form').evaluate(f=>f.remove());release();await expect(page.locator('.ob-entity-list')).toHaveCount(0);}finally{release&&release();}
 });
 
@@ -91,4 +95,34 @@ test('late writing event and failed list refresh do not repeat the write',async(
   expect(writes).toBe(1);expect(await page.evaluate(()=>window._obFormDirty)).toBe(true);
   const persisted=await page.request.get(`/ui/document/Заявка/${ids.owner}`);expect(await persisted.text()).toContain(`value="${ids.b}" selected`);
  }finally{release&&release();}
+});
+
+test('two lists refresh their own exact aliases, clear together and preserve dirty table data',async({page})=>{
+ await open(page);
+ const persistedSourceBefore=await source(page).inputValue();
+ const second=page.locator('[data-ob-list-id="second-history"]');
+ await expect(second).toHaveAttribute('data-ob-list-state','ready');
+ expect(JSON.parse(await second.getAttribute('data-ob-list-sources'))).toEqual({'Объект.Направление':'Направление'});
+ const cell=page.locator('[name="tp.Items.0.Text"]');await cell.fill('two-list dirty');
+ const dirtyBefore=await page.evaluate(()=>window._obFormDirty);
+ const payloads=[];
+ page.on('request',r=>{if(r.url().endsWith('/form-list-refresh'))payloads.push(new URLSearchParams(r.postData()));});
+ for(const value of [ids.b,ids.a,'',ids.b]){
+  await source(page).selectOption(value);
+  for(const widget of [list(page),second]){
+   await expect(widget).toHaveAttribute('data-ob-list-state',value?'ready':'empty');
+   await expect(widget.locator('tbody tr')).toHaveCount(value?2:0);
+   if(value===ids.b)await expect(widget.locator('tbody')).toContainText(' B');
+   if(value===ids.a)await expect(widget.locator('tbody')).not.toContainText(' B');
+  }
+ }
+ expect(payloads.length).toBe(8);
+ for(const p of payloads){
+  const path=p.get('element')==='history'?'объект.направление':'Объект.Направление';
+  expect(Object.keys(JSON.parse(p.get('sources')))).toEqual([path]);
+ }
+ await expect(cell).toHaveValue('two-list dirty');
+ expect(await page.evaluate(()=>window._obFormDirty)).toBe(dirtyBefore);
+ const persisted=await page.request.get(`/ui/document/Заявка/${ids.owner}`);
+ expect(await persisted.text()).toContain(`value="${persistedSourceBefore}" selected`);
 });

@@ -166,3 +166,37 @@ func TestManagedEntityListRefreshRejectsOversizedBody(t *testing.T) {
 		t.Fatalf("oversized refresh accepted: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestManagedEntityListEventRestoresAllListSources(t *testing.T) {
+	srv, owner, _ := attrEventServer(t, `Процедура Проверить()
+ Сообщить(Объект.Поиск + ":" + Объект.ДругойПоиск);
+ Объект.Поиск = "after one";
+ Объект.ДругойПоиск = "after two";
+КонецПроцедуры`)
+	form := owner.Forms[0]
+	form.Attributes = []*metadata.FormAttribute{{Name: "Поиск", TypeRef: "String"}, {Name: "ДругойПоиск", TypeRef: "String"}}
+	form.Elements = []*metadata.FormElement{
+		{Name: "Search", Kind: metadata.FormElementField, DataPath: "Форма.Поиск"},
+		{Name: "Other", Kind: metadata.FormElementField, DataPath: "Форма.ДругойПоиск"},
+		{Name: "Check", Kind: metadata.FormElementButton, Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Проверить"}},
+	}
+	for _, entry := range []struct{ id, path string }{{"one", "Форма.Поиск"}, {"alias", "форма.поиск"}, {"two", "Форма.ДругойПоиск"}} {
+		form.Elements = append(form.Elements, &metadata.FormElement{ID: entry.id, Name: entry.id, Kind: metadata.FormElementEntityList, EntityList: &metadata.FormEntityListSpec{Entity: owner.Name, Columns: []string{"Наименование"}, Filter: []metadata.FormEntityListCondition{{Field: "Наименование", Op: "eq", Source: entry.path}}}})
+	}
+	for _, value := range []string{"after one", "after two"} {
+		if err := srv.store.Upsert(context.Background(), owner.Name, uuid.New(), map[string]any{"Наименование": value}, owner); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec := executeFormEvent(t, srv, owner, url.Values{"_element": {"Check"}, "_event": {"Нажатие"}, "_kind": {"object"}, "Поиск": {"before one"}, "ДругойПоиск": {"before two"}})
+	response := decodeFormEventResponse(t, rec.Body.Bytes())
+	if !response.OK || strings.Join(response.Messages, "|") != "before one:before two" {
+		t.Fatalf("event: %s", rec.Body.String())
+	}
+	for _, entry := range []struct{ id, value string }{{"one", "after one"}, {"alias", "after one"}, {"two", "after two"}} {
+		got := response.EntityLists[entry.id]
+		if got.Status != "ready" || len(got.Rows) != 1 || got.Rows[0].Cells[0] != entry.value {
+			t.Fatalf("%s: %+v", entry.id, got)
+		}
+	}
+}
