@@ -9,8 +9,8 @@ import (
 	"github.com/ivantit66/onebase/internal/project"
 )
 
-// CheckFormBackground предупреждает о фоне контейнера, который рантайм не
-// применит. Ключ background читает только ГруппаФорма (#1547), значение
+// CheckFormBackground предупреждает о фоне элемента, который рантайм не
+// применит. Ключ background читают ГруппаФормы (#1547) и Кнопка, значение
 // обязано проходить csssafe.Color. Класс тот же, что у раскладки (#1185):
 // ключ принимался без диагностики — значит, расхождение обязан называть
 // check, а не наблюдение «почему-то не позеленело».
@@ -29,13 +29,13 @@ func CheckFormBackground(proj *project.Project) []Issue {
 			if strings.TrimSpace(el.Background) == "" {
 				return
 			}
-			if el.Kind != metadata.FormElementGroupBox {
+			if !metadata.FormElementSupportsBackground(el.Kind) {
 				warns = append(warns, Issue{
 					File:         label,
 					Object:       object,
 					Kind:         "Управляемая форма",
 					Code:         "form.background-kind",
-					Message:      fmt.Sprintf("элемент %q (%s): ключ background игнорируется — фон поддерживает только ГруппаФормы", formElementName(el), el.Kind),
+					Message:      fmt.Sprintf("элемент %q (%s): ключ background игнорируется — фон поддерживают только ГруппаФормы и Кнопка", formElementName(el), el.Kind),
 					SuggestedFix: "Перенесите background на объемлющую ГруппаФормы или удалите ключ.",
 				})
 				return
@@ -46,7 +46,7 @@ func CheckFormBackground(proj *project.Project) []Issue {
 					Object:       object,
 					Kind:         "Управляемая форма",
 					Code:         "form.background-color",
-					Message:      fmt.Sprintf("группа %q: background %q — не распознанный цвет, фон применён не будет", formElementName(el), el.Background),
+					Message:      fmt.Sprintf("%s %q: background %q — не распознанный цвет, фон применён не будет", el.Kind, formElementName(el), el.Background),
 					SuggestedFix: "Допустимы hex (#rrggbb, #rgb), rgb(...) и именованные CSS-цвета.",
 				})
 			}

@@ -167,6 +167,23 @@ func (s *Server) rlsAutoFillFields(role *auth.Role, target rlsDiagnosticTarget, 
 	if role == nil || target.meta == nil {
 		return ""
 	}
+	policy, ok := role.Permissions.RowAccess.Policy(target.kind, target.name, op)
+	if ok && policy.Value.UserCard != nil {
+		// Diagnostics describe potential auto-fill, without resolving private
+		// card values. Only a validated direct equality implies a field here.
+		if !auth.PermissionHas(role.Permissions, target.kind, target.name, op) ||
+			len(policy.All) > 0 || len(policy.Any) > 0 || policy.Not != nil ||
+			(policy.Op != "" && policy.Op != "eq") ||
+			access.ValidatePolicyWithLookup(policy, target.meta, s.reg) != nil {
+			return ""
+		}
+		for _, field := range target.meta.Fields {
+			if strings.EqualFold(field.Name, policy.Field) {
+				return field.Name
+			}
+		}
+		return ""
+	}
 	u := &auth.User{
 		ID:       "_diag_user_id",
 		Login:    "_diag_user_login",

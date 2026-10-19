@@ -4,6 +4,9 @@
 It is a thin stdio wrapper over the CLI commands used in CI and local
 development.
 
+For project setup, client-specific verification status, and a checked Codex CLI
+recipe, see [AI-assisted configuration development](vibe-coding.md).
+
 Default mode is read-only. Mutating tools are hidden unless the server is
 started with a specific write flag. `--allow-write` is still available as a
 coarse switch for trusted local workflows, but the narrower flags are preferred.

@@ -19,13 +19,17 @@ type IRForm struct {
 	Version                string  // <Form version="2.20">
 	AutoSaveDataInSettings bool    // <AutoSaveDataInSettings>
 	VerticalScroll         string  // "auto"|"never"|"always"
-	AutoCommandBar         *IRCommandBar
-	Attributes             []*IRAttribute
-	Commands               []*IRCommand
-	Parameters             []*IRParameter
-	Elements               []*IRElement      // дерево ChildItems
-	Events                 map[string]string // form-level events (1С имя → процедура)
-	Resources              []IRResource      // бинарные файлы из Items/
+	// EnterSubmitsForm — форма возвращает себе прежний Enter-submit (#1486).
+	// В 1С такого свойства нет, поэтому из XML оно не читается и в XML не
+	// пишется: это настройка платформы OneBase, живущая в YAML.
+	EnterSubmitsForm bool
+	AutoCommandBar   *IRCommandBar
+	Attributes       []*IRAttribute
+	Commands         []*IRCommand
+	Parameters       []*IRParameter
+	Elements         []*IRElement      // дерево ChildItems
+	Events           map[string]string // form-level events (1С имя → процедура)
+	Resources        []IRResource      // бинарные файлы из Items/
 	// UnknownTopLevel — XML-узлы верхнего уровня, не имеющие IR-семантики
 	// (ДКС, Conditional Appearance, расширения). Хранятся «как есть» для
 	// round-trip; сериализуются в oneC_meta.unknown_xml в YAML.

@@ -23,7 +23,9 @@ function element(tag, attrs, parent) {
     attrs: new Map(),
     listeners: new Map(),
     textContent: '',
+    children: [],
   };
+  if (parent) parent.children.push(el);
   for (const [k, v] of Object.entries(attrs || {})) el.attrs.set(k, String(v));
   el.getAttribute = (name) => (el.attrs.has(name) ? el.attrs.get(name) : null);
   el.hasAttribute = (name) => el.attrs.has(name);
@@ -32,6 +34,15 @@ function element(tag, attrs, parent) {
     if (selector === NAV_SELECTOR) return el.attrs.has('data-ob-row-url');
     if (selector === CELL_TAGS) return CELL_TAGS.split(', ').includes(el.tag);
     return false;
+  };
+  el.querySelector = (selector) => {
+    const stack = [...el.children];
+    while (stack.length) {
+      const cur = stack.shift();
+      if (cur.tag === selector) return cur;
+      stack.push(...cur.children);
+    }
+    return null;
   };
   el.closest = (selector) => {
     let cur = el;
@@ -44,9 +55,10 @@ function element(tag, attrs, parent) {
   return el;
 }
 
-function setup() {
+function setup(shell) {
   const docHandlers = new Map();
   const navigated = [];
+  const opened = [];
   const sandbox = {
     document: { addEventListener: (name, fn) => docHandlers.set(name, fn) },
     location: {
@@ -54,6 +66,18 @@ function setup() {
     },
   };
   sandbox.window = sandbox;
+  // Оболочка вкладок: 'top' — виджет в самой /ui/app (obOpenTab), 'frame' —
+  // во вкладке (obOpenInShell), 'frame-refuses' — адрес не для вкладки.
+  if (shell === 'top') {
+    sandbox.obOpenTab = (url, title) => { opened.push(['tab', url, title]); };
+  } else if (shell === 'frame' || shell === 'frame-refuses') {
+    sandbox.obOpenInShell = (url, title) => {
+      if (shell === 'frame-refuses') return false;
+      opened.push(['shell', url, title]);
+      return true;
+    };
+  }
+  sandbox.__opened = opened;
   let selection = '';
   sandbox.getSelection = () => selection;
   sandbox.__setSelection = (value) => { selection = value; };
@@ -121,4 +145,40 @@ test('клик вне строки виджета не навигирует', ()
   const elsewhere = element('div', {});
   app.__fire('click', { target: elsewhere });
   assert.deepEqual(app.__navigated, []);
+});
+
+// Главная с виджетами в режиме вкладок — верхний документ /ui/app: переход
+// в том же окне уводил из оболочки вместе со всеми вкладками.
+test('в оболочке клик по строке открывает вкладку, а не уходит из /ui/app', () => {
+  const app = setup('top');
+  const row = element('tr', { 'data-ob-row-url': cardURL });
+  const cell = element('td', {}, row);
+  cell.textContent = '  ЗД-00001190 ';
+  app.__fire('click', { target: cell });
+  assert.deepEqual(app.__navigated, []);
+  assert.deepEqual(app.__opened, [['tab', cardURL, 'ЗД-00001190']]);
+});
+
+test('Enter в оболочке тоже открывает вкладку', () => {
+  const app = setup('top');
+  const { row } = buildRow(false);
+  app.__fire('keydown', { target: row, key: 'Enter', preventDefault: () => {} });
+  assert.deepEqual(app.__navigated, []);
+  assert.deepEqual(app.__opened, [['tab', cardURL, 'Форма']]);
+});
+
+test('виджет внутри вкладки просит оболочку открыть соседнюю вкладку', () => {
+  const app = setup('frame');
+  const { row } = buildRow(false);
+  app.__fire('click', { target: row });
+  assert.deepEqual(app.__navigated, []);
+  assert.deepEqual(app.__opened, [['shell', cardURL, 'Форма']]);
+});
+
+test('адрес, который оболочка не открывает вкладкой, — переход в том же окне', () => {
+  const app = setup('frame-refuses');
+  const { row } = buildRow(false);
+  app.__fire('click', { target: row });
+  assert.deepEqual(app.__navigated, [cardURL]);
+  assert.deepEqual(app.__opened, []);
 });

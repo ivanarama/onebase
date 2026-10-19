@@ -25,6 +25,7 @@ type DB struct {
 	sqlDB        *sql.DB       // non-nil for SQLite
 	databaseFile string        // absolute SQLite database path; empty for PostgreSQL/in-memory
 	filesDir     string
+	filesDirMu   sync.RWMutex
 	dialect      Dialect
 	blobStore    BlobObjectStore // non-nil when file_storage=s3 configured
 	blobPrefix   string          // key prefix for blob objects in the bucket
@@ -422,14 +423,22 @@ func defaultFilesDirForConfig(cfg *pgxpool.Config) (string, error) {
 	return filepath.Join(home, ".onebase", "files", dbName), nil
 }
 
-func (db *DB) FilesDir() string { return db.filesDir }
+func (db *DB) FilesDir() string {
+	db.filesDirMu.RLock()
+	defer db.filesDirMu.RUnlock()
+	return db.filesDir
+}
 
 // SQLitePath returns the exact on-disk SQLite database opened by this DB.
 // An empty value means PostgreSQL or an in-memory SQLite database.
 func (db *DB) SQLitePath() string { return db.databaseFile }
 
 // SetFilesDir переопределяет каталог файлового хранилища (вложения, блобы).
-func (db *DB) SetFilesDir(dir string) { db.filesDir = dir }
+func (db *DB) SetFilesDir(dir string) {
+	db.filesDirMu.Lock()
+	defer db.filesDirMu.Unlock()
+	db.filesDir = dir
+}
 
 func (db *DB) Close() {
 	if db == nil {

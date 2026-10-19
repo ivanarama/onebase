@@ -192,6 +192,10 @@ func (e *configRejectedError) Unwrap() error { return e.cause }
 // «сохранили, проверили и вернули как было» — разные события, и путать их
 // нельзя. Во втором случае пользователю нужно понять, что его файл цел.
 func cfgSaveErrorText(lang string, err error) string {
+	var conflict *standardTitleConflictError
+	if errors.As(err, &conflict) {
+		return fmt.Sprintf(tr(lang, "Переводы поля «%s» для языка %s изменены по-разному в двух редакторах. Укажите одинаковое значение и сохраните снова"), conflict.field, conflict.language)
+	}
 	var rejected *configRejectedError
 	if errors.As(err, &rejected) {
 		if rejected.restoreErr != nil {

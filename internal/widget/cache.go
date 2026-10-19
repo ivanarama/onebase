@@ -213,6 +213,9 @@ func writeFloat(dst *bytes.Buffer, value float64, bits int) bool {
 // cache miss immediately. Unsupported host attributes disable caching rather
 // than risking reuse under an incomplete fingerprint.
 func securityFingerprint(user *auth.User) (string, bool) {
+	if auth.HasUserCardSource(user) {
+		return "", false
+	}
 	payload := struct {
 		IsAdmin   bool
 		Attrs     map[string]any

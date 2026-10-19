@@ -172,8 +172,8 @@ func renderCanvasElement(buf *bytes.Buffer, en *formdoc.ElementNode, selectedID 
 			elWrapClass("fc-label", id, selectedID), id, kind, layoutStyleAttr(el), title)
 
 	case metadata.FormElementButton:
-		fmt.Fprintf(buf, `<div class="%s fc-pick" data-node-id="%s" data-kind="%s"%s><button type="button" disabled>%s</button></div>`,
-			elWrapClass("fc-btn", id, selectedID), id, kind, layoutStyleAttr(el), title)
+		fmt.Fprintf(buf, `<div class="%s fc-pick" data-node-id="%s" data-kind="%s"%s><button type="button" disabled%s>%s</button></div>`,
+			elWrapClass("fc-btn", id, selectedID), id, kind, layoutStyleAttr(el), styleAttr(metadata.FormElementBackgroundCSS(el)), title)
 
 	case metadata.FormElementPicture:
 		fmt.Fprintf(buf, `<div class="%s fc-pick" data-node-id="%s" data-kind="%s"%s>`,
@@ -271,7 +271,7 @@ type canvasElementInfo struct {
 	// Orientation — раскладка детей контейнера: ""/"vertical" или "horizontal".
 	Orientation  string `json:"orientation"`
 	EqualColumns bool   `json:"equalColumns"`
-	// Background — безопасный CSS-цвет фона ГруппаФормы. В модель передаётся
+	// Background — безопасный CSS-цвет фона ГруппаФормы и Кнопка. В модель передаётся
 	// исходное значение: панель редактирует YAML, а canvas/preview применяют
 	// его только через FormElementBackgroundCSS.
 	Background string `json:"background"`

@@ -20,7 +20,6 @@ func TestBuiltinToNumber_Bool(t *testing.T) {
 		{"1", "1"},
 		{"0", "0"},
 		{float64(1), "1"},
-		{"не число", "0"},
 	} {
 		got, err := builtinToNumber([]any{tc.in}, "", 0)
 		if err != nil {

@@ -414,11 +414,13 @@ func entityYAMLSchema() *yamlLintSchema {
 		// {name, readonly} — «показывать, но не давать править» (#1011).
 		// Скалярные элементы схема пропускает, а опечатку в ключе записи
 		// (read_only) ловит.
-		"item_form":    seq(obj("name", "readonly")),
-		"fields":       seq(fieldYAMLSchema(true)),
-		"tableparts":   seq(tablePartYAMLSchema(true)),
-		"indexes":      seq(indexYAMLSchema()),
-		"numerator":    obj("prefix", "length", "period", "scope", "base_prefix", "unique"),
+		"item_form":  seq(obj("name", "readonly")),
+		"fields":     seq(fieldYAMLSchema(true)),
+		"tableparts": seq(tablePartYAMLSchema(true)),
+		"indexes":    seq(indexYAMLSchema()),
+		"numerator": with(obj("prefix", "length", "period", "scope", "base_prefix", "unique"), map[string]*yamlLintSchema{
+			"field": with(obj("title", "label", "required", "default", "pii"), map[string]*yamlLintSchema{"titles": freeMap()}),
+		}),
 		"predefined":   seq(with(obj("name"), map[string]*yamlLintSchema{"fields": freeMap()})),
 		"tile_view":    obj("image", "title", "subtitle", "fields"),
 		"activity":     obj("field", "default_scope", "hide_from_choice"),
@@ -441,6 +443,7 @@ func infoRegisterYAMLSchema() *yamlLintSchema {
 		"titles":     freeMap(),
 		"dimensions": seq(fieldYAMLSchema(false)),
 		"resources":  seq(fieldYAMLSchema(false)),
+		"indexes":    seq(indexYAMLSchema()),
 	})
 }
 
@@ -496,7 +499,7 @@ func reportYAMLSchema() *yamlLintSchema {
 		// параметра пока только у обработок (processor.Param). А вот «default»
 		// модель знает — параметр без значения получает умолчание, — поэтому
 		// ключ разрешён: иначе линт ругался бы на работающую возможность.
-		"params":      seq(with(obj("name", "type", "label", "options", "default"), map[string]*yamlLintSchema{"labels": freeMap()})),
+		"params":      seq(with(obj("name", "type", "label", "options", "default", "period_end"), map[string]*yamlLintSchema{"labels": freeMap()})),
 		"composition": composition,
 		"variants":    seq(with(obj("name"), map[string]*yamlLintSchema{"composition": composition})),
 	})
@@ -686,8 +689,9 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	actions := with(obj(), map[string]*yamlLintSchema{
 		"delete": action,
 		"save":   action,
-		"ok":     action,
-		"close":  action,
+		// ok.post — «ОК» проводит документ, как в 1С.
+		"ok":    obj("visible", "post"),
+		"close": action,
 		// attachments.visible:false скрывает панель вложений выбранной
 		// managed-формы (план 181C, #1621); attachment endpoint не меняется.
 		"attachments": action,

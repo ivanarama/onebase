@@ -30,7 +30,7 @@ func (s *Server) rowDecision(ctx context.Context, entity *metadata.Entity, op st
 }
 
 func (s *Server) rowDecisionFor(ctx context.Context, kind, name, op string, meta *metadata.Entity) (access.Decision, error) {
-	return access.DecideWithLookup(auth.UserFromContext(ctx), kind, name, op, meta, s.reg)
+	return access.DecideWithContext(ctx, auth.UserFromContext(ctx), kind, name, op, meta, access.RuntimeContext(s.reg, s.store))
 }
 
 func (s *Server) applyRowFilter(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, op string, params storage.ListParams) (storage.ListParams, bool) {
@@ -225,13 +225,13 @@ func (s *Server) rowFilterFor(ctx context.Context, entity *metadata.Entity, op s
 }
 
 func (s *Server) queryRowFilters(ctx context.Context) (map[query.SourceRef]*storage.Predicate, error) {
-	return access.QueryRowFiltersWithLookup(
+	return access.QueryRowFiltersWithContext(ctx,
 		auth.UserFromContext(ctx),
 		s.reg.Entities(),
 		s.reg.Registers(),
 		s.reg.InfoRegisters(),
 		s.reg.AccountRegisters(),
-		s.reg,
+		access.RuntimeContext(s.reg, s.store),
 	)
 }
 

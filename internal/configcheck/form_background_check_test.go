@@ -115,3 +115,22 @@ elements:
 		}
 	}
 }
+
+func TestCheckFormBackground_ButtonSupported(t *testing.T) {
+	warns := CheckFormBackground(projWithElement(&metadata.FormElement{
+		Kind:       metadata.FormElementButton,
+		Name:       "КнСоздатьЗаявку",
+		Background: "#e4f6d4",
+	}))
+	if len(warns) != 0 {
+		t.Fatalf("фон кнопки поддерживается — предупреждений быть не должно: %+v", warns)
+	}
+	warns = CheckFormBackground(projWithElement(&metadata.FormElement{
+		Kind:       metadata.FormElementButton,
+		Name:       "КнСоздатьЗаявку",
+		Background: "зеленый-в-клеточку",
+	}))
+	if len(warns) != 1 || warns[0].Code != "form.background-color" {
+		t.Fatalf("невалидный цвет кнопки — form.background-color: %+v", warns)
+	}
+}

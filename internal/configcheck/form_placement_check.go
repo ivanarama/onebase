@@ -110,10 +110,15 @@ func CheckFormPlacement(dir string, proj *project.Project) []Issue {
 
 // suggestFormDirectories перечисляет примеры имён каталогов в стабильном порядке.
 func suggestFormDirectories(known map[string]struct{}) string {
-	// Нижний регистр нужен только для примеров, не для сопоставления владельцев.
+	// Нижний регистр допустим лишь при совпадении с владельцем по правилам
+	// загрузчика: ToLower("İ") == "i", но EqualFold("İ", "i") == false.
 	examples := make(map[string]struct{})
 	for name := range known {
-		examples[strings.ToLower(name)] = struct{}{}
+		lower := strings.ToLower(name)
+		if strings.EqualFold(name, lower) {
+			name = lower
+		}
+		examples[name] = struct{}{}
 	}
 	var names []string
 	for name := range examples {

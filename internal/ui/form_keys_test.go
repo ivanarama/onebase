@@ -119,7 +119,7 @@ func TestChoiceDropdownFalseLeavesOnlyCurrentValue(t *testing.T) {
 		t.Error("список не передал JS признак choice_dropdown: false")
 	}
 	// Выбор уходит в форму подбора, значит кнопка подбора обязана остаться.
-	if !strings.Contains(html, `data-ob-ref-picker="ref-Филиал"`) {
+	if !strings.Contains(html, `data-ob-ref-picker="closest"`) {
 		t.Error("кнопка подбора пропала — выбирать значение стало нечем")
 	}
 

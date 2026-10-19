@@ -261,3 +261,71 @@ func mustUUID(t *testing.T, s string) uuid.UUID {
 func urlEscape(s string) string { return url.PathEscape(s) }
 
 func urlQueryEscape(s string) string { return url.QueryEscape(s) }
+
+// User filter values are literals, even when they look like configuration templates.
+// Check both HTTP entry points and warmed cache entries against distinguishable rows.
+func TestWidgetFiltersHTTP_PreservesLiteralValues(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		entity := &metadata.Entity{Name: "LiteralFilterRow", Kind: metadata.KindCatalog,
+			Fields: []metadata.Field{
+				{Name: "Literal", Type: metadata.FieldTypeString},
+				{Name: "Marker", Type: metadata.FieldTypeString},
+			}}
+		if err := db.Migrate(ctx, []*metadata.Entity{entity}); err != nil {
+			t.Fatal(err)
+		}
+		constant := &metadata.Constant{Name: "FilterEnabled", Type: metadata.FieldTypeBool, Default: "true"}
+		if err := db.MigrateConstants(ctx, []*metadata.Constant{constant}); err != nil {
+			t.Fatal(err)
+		}
+		cases := []struct{ value, marker string }{
+			{"ordinary", "row_plain"},
+			{" ordinary ", "row_spaces"},
+			{"{{today}}", "row_today_literal"},
+			{"{{constant:NotDeclared}}", "row_constant_literal"},
+			{"O'Brien", "row_apostrophe"},
+		}
+		for _, tc := range cases {
+			if err := db.Upsert(ctx, entity.Name, uuid.New(), map[string]any{"Literal": tc.value, "Marker": tc.marker}, entity); err != nil {
+				t.Fatal(err)
+			}
+		}
+		reg := runtime.NewRegistry()
+		reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{entity}, Constants: []*metadata.Constant{constant}})
+		w := &metadata.Widget{
+			Name: "LiteralFilter", Type: metadata.WidgetTypeList,
+			Query:   "ВЫБРАТЬ Marker ИЗ Справочник.LiteralFilterRow ГДЕ Literal = &Literal И &Enabled",
+			Params:  map[string]string{"Enabled": "{{constant:FilterEnabled}}"},
+			Filters: []metadata.WidgetFilter{{Name: "Literal", Type: "string", Param: "Literal"}},
+		}
+		reg.LoadWidgets([]*metadata.Widget{w})
+		reg.LoadHomePage(&metadata.HomePage{Layout: "rows", Rows: []metadata.HomePageRow{{Widgets: []string{w.Name}}}})
+		s := &Server{reg: reg, store: db, widgetCache: widget.NewCache(time.Minute), messages: NewMessageStore()}
+		router := chi.NewRouter()
+		s.Mount(router)
+		for _, path := range []string{"/ui/_widget/" + w.Name, "/ui/"} {
+			for _, tc := range cases {
+				t.Run(path+tc.marker, func(t *testing.T) {
+					for attempt := 0; attempt < 2; attempt++ {
+						values := url.Values{widgetFilterKey(w.Name, "Literal"): {tc.value}}
+						rec := httptest.NewRecorder()
+						router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path+"?"+values.Encode(), nil))
+						if rec.Code != http.StatusOK {
+							t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+						}
+						body := rec.Body.String()
+						if !strings.Contains(body, tc.marker) {
+							t.Fatalf("literal %q did not select %s: %s", tc.value, tc.marker, body)
+						}
+						for _, other := range cases {
+							if other.marker != tc.marker && strings.Contains(body, other.marker) {
+								t.Fatalf("literal %q also selected %s", tc.value, other.marker)
+							}
+						}
+					}
+				})
+			}
+		}
+	})
+}

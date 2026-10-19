@@ -29,10 +29,12 @@ type RowPolicy struct {
 }
 
 type RowValue struct {
-	User     string `yaml:"user,omitempty" json:"user,omitempty"`
-	UserAttr string `yaml:"user_attr,omitempty" json:"user_attr,omitempty"`
-	Literal  any    `yaml:"literal,omitempty" json:"literal,omitempty"`
-	List     []any  `yaml:"list,omitempty" json:"list,omitempty"`
+	UserCard   *UserCardSource `yaml:"user_card,omitempty" json:"user_card,omitempty"`
+	LiteralSet bool            `yaml:"-" json:"-"`
+	User       string          `yaml:"user,omitempty" json:"user,omitempty"`
+	UserAttr   string          `yaml:"user_attr,omitempty" json:"user_attr,omitempty"`
+	Literal    any             `yaml:"literal,omitempty" json:"literal,omitempty"`
+	List       []any           `yaml:"list,omitempty" json:"list,omitempty"`
 }
 
 func (policies RowPolicies) Resolve(op string) (RowPolicy, bool) {

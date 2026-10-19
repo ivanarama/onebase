@@ -67,6 +67,9 @@ func (p *Permission) UnmarshalYAML(value *yaml.Node) error {
 	if err != nil {
 		return err
 	}
+	if err := validateRowValuesYAML(value); err != nil {
+		return err
+	}
 	type plain Permission
 	var canonical plain
 	if err := value.Decode(&canonical); err != nil {
@@ -771,6 +774,15 @@ func unmarshalPermissions(data []byte) Permission {
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return Permission{}
+	}
+	var node yaml.Node
+	if err := yaml.Unmarshal(data, &node); err != nil {
+		return Permission{}
+	}
+	if len(node.Content) > 0 {
+		if err := validateRowValuesYAML(node.Content[0]); err != nil {
+			return Permission{}
+		}
 	}
 	return normalizePermission(permissionFromJSONMap(raw))
 }

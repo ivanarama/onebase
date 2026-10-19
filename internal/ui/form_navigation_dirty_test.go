@@ -109,7 +109,7 @@ if ([start, end, fireEnd, helpersStart, helpersEnd, mergeStart, mergeEnd].some(i
   throw new Error('managed.js behavior slices not found');
 }
 const dirtyEnd = source.indexOf('  function applySavedIdentity(data){', helpersEnd);
-const markStart = source.indexOf('  function _obMarkDirty(){');
+const markStart = source.indexOf('  function _obMarkDirty(');
 const markEnd = source.indexOf('  document.addEventListener', markStart);
 const gridHelpersStart = source.indexOf('  function reindexOrd(items) {');
 const gridHelpersEnd = source.indexOf('  // obGridCopyRow', gridHelpersStart);

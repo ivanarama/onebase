@@ -37,7 +37,12 @@ func (s *Server) reportForm(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, s.errText(r, err), 400)
 			return
 		}
-		s.runReport(w, r, rep, reportParamValuesFromRequest(r, rep))
+		values, verr := reportParamValuesFromRequest(r, rep, s.constantResolver(r.Context()))
+		if verr != nil {
+			s.serverError(w, r, verr)
+			return
+		}
+		s.runReport(w, r, rep, values)
 		return
 	}
 	user := currentUserLogin(r)
@@ -61,7 +66,11 @@ func (s *Server) reportForm(w http.ResponseWriter, r *http.Request) {
 	}
 	// Умолчания видны сразу при открытии отчёта: поле «На дату» заполнено, и его
 	// можно изменить до первого построения.
-	defaults := reportParamDefaults(rep.Params)
+	defaults, derr := reportParamDefaults(rep.Params, s.constantResolver(r.Context()))
+	if derr != nil {
+		s.serverError(w, r, derr)
+		return
+	}
 	s.render(w, r, "page-report", map[string]any{
 		"Report":         rep,
 		"ParamValues":    defaults,
@@ -86,24 +95,39 @@ func (s *Server) reportRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, s.errText(r, err), 400)
 		return
 	}
-	s.runReport(w, r, rep, reportParamValuesFromRequest(r, rep))
+	values, verr := reportParamValuesFromRequest(r, rep, s.constantResolver(r.Context()))
+	if verr != nil {
+		s.serverError(w, r, verr)
+		return
+	}
+	s.runReport(w, r, rep, values)
+}
+
+// constantResolver — источник значений констант для подстановки
+// {{constant:Имя}} в умолчаниях параметров. Один на все пути отчёта, чтобы
+// экран, экспорт и REST не разошлись в том, что считают значением настройки.
+func (s *Server) constantResolver(ctx context.Context) scheduler.ConstantResolver {
+	return scheduler.NewConstantResolver(ctx, s.store, s.reg)
 }
 
 // reportParamDefault возвращает значение параметра по умолчанию с раскрытыми
 // подстановками ({{today}} и прочие) — той же грамматикой, что у виджетов и
 // регламентных заданий. Пусто, если умолчание не задано.
-func reportParamDefault(p reportpkg.Param) string {
-	return scheduler.ResolveParamTemplateText(p.Default, p.Type)
+func reportParamDefault(p reportpkg.Param, res scheduler.ConstantResolver) (string, error) {
+	return scheduler.ResolveParamTemplateText(p.Default, p.Type, res)
 }
 
 // reportParamDefaults — значения параметров для ПЕРВОГО показа формы, пока
 // пользователь ничего не выбирал. Без них поле с умолчанием стоит пустым до
 // первого построения, и умолчание видно только в форме на странице результата —
 // то есть ровно там, где оно уже не нужно.
-func reportParamDefaults(params []reportpkg.Param) map[string]any {
+func reportParamDefaults(params []reportpkg.Param, res scheduler.ConstantResolver) (map[string]any, error) {
 	values := make(map[string]any, len(params))
 	for _, p := range params {
-		val := reportParamDefault(p)
+		val, err := reportParamDefault(p, res)
+		if err != nil {
+			return nil, err
+		}
 		if val == "" {
 			continue
 		}
@@ -115,7 +139,7 @@ func reportParamDefaults(params []reportpkg.Param) map[string]any {
 		}
 		values[p.Name] = val
 	}
-	return values
+	return values, nil
 }
 
 // reportParamPresenceKey — имя скрытого поля-спутника флажка на форме
@@ -141,12 +165,16 @@ func reportParamRequestValue(r *http.Request, p reportpkg.Param) (string, bool) 
 	return "", false
 }
 
-func reportParamValuesFromRequest(r *http.Request, rep *reportpkg.Report) map[string]any {
+func reportParamValuesFromRequest(r *http.Request, rep *reportpkg.Report, res scheduler.ConstantResolver) (map[string]any, error) {
 	paramValues := make(map[string]any, len(rep.Params))
 	for _, p := range rep.Params {
 		val, ok := reportParamRequestValue(r, p)
 		if !ok {
-			val = reportParamDefault(p)
+			d, err := reportParamDefault(p, res)
+			if err != nil {
+				return nil, err
+			}
+			val = d
 		}
 		if val == "" {
 			paramValues[p.Name] = nil
@@ -154,7 +182,7 @@ func reportParamValuesFromRequest(r *http.Request, rep *reportpkg.Report) map[st
 			paramValues[p.Name] = val
 		}
 	}
-	return paramValues
+	return paramValues, nil
 }
 
 func (s *Server) getReport(w http.ResponseWriter, r *http.Request) *reportpkg.Report {
@@ -197,13 +225,22 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 	}
 	comp := effectiveComposition(rep, settings)
 	settingsJSON := reportSettingsPanelJSON(rep, settings)
-	// Build query params: convert date strings to time.Time for proper PG type inference.
+	// Restore query parameter types after the form's text representation:
+	// SQLite compares text and numbers differently; PostgreSQL needs type hints.
 	// Keep paramValues unchanged so the form repopulates with the original strings.
 	queryValues := make(map[string]any, len(paramValues))
 	for k, v := range paramValues {
 		queryValues[k] = v
 	}
 	for _, p := range rep.Params {
+		// Числовые параметры констант сохраняют принятый тип и на экране:
+		// строка меняет сравнение на SQLite и не сравнима с числом на PG.
+		if p.Type == "number" {
+			if str, ok := queryValues[p.Name].(string); ok {
+				queryValues[p.Name] = parseParamValue(str, "number")
+			}
+			continue
+		}
 		str, _ := queryValues[p.Name].(string)
 		v, perr := reportpkg.ParseParamValue(str, p, reportpkg.ParamParseForm)
 		if perr != nil {
@@ -629,7 +666,15 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 	for _, p := range rep.Params {
 		val := qs.Get(p.Name)
 		if _, ok := qs[p.Name]; !ok {
-			val = reportParamDefault(p)
+			d, derr := reportParamDefault(p, s.constantResolver(ctx))
+			if derr != nil {
+				return nil, nil, derr
+			}
+			val = d
+		}
+		if p.Type == "number" {
+			paramValues[p.Name] = parseParamValue(val, "number")
+			continue
 		}
 		v, perr := reportpkg.ParseParamValue(val, p, reportpkg.ParamParseForm)
 		if perr != nil {

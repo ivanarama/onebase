@@ -1,6 +1,7 @@
 package access
 
 import (
+	"context"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/auth"
@@ -30,12 +31,16 @@ func QueryRowFiltersWithLookup(
 	accountRegs []*metadata.AccountRegister,
 	lookup EntityLookup,
 ) (map[query.SourceRef]*storage.Predicate, error) {
+	return QueryRowFiltersWithContext(context.Background(), u, entities, registers, infoRegs, accountRegs, DecisionContext{Lookup: lookup})
+}
+
+func QueryRowFiltersWithContext(ctx context.Context, u *auth.User, entities []*metadata.Entity, registers []*metadata.Register, infoRegs []*metadata.InfoRegister, accountRegs []*metadata.AccountRegister, dc DecisionContext) (map[query.SourceRef]*storage.Predicate, error) {
 	if u == nil || u.IsAdmin {
 		return nil, nil
 	}
 	out := map[query.SourceRef]*storage.Predicate{}
 	add := func(kind, name string, meta *metadata.Entity) error {
-		dec, err := DecideWithLookup(u, kind, name, "read", meta, lookup)
+		dec, err := DecideWithContext(ctx, u, kind, name, "read", meta, dc)
 		if err != nil {
 			return err
 		}

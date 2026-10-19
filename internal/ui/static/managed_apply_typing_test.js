@@ -32,33 +32,45 @@ function applyValues(controls) {
       const match = selector.match(/^\[name="([^"]+)"\]$/);
       return match ? (controls[match[1]] || null) : null;
     },
+    // applyValues раздаёт значение всем копиям реквизита (#1759).
+    querySelectorAll(selector) {
+      const match = selector.match(/^\[name="([^"]+)"\]$/);
+      if (selector === '[name]') return Object.values(controls);
+      return match && controls[match[1]] ? [controls[match[1]]] : [];
+    },
   };
   const document = {getElementById(id) { return id === 'main-form' ? form : null; }};
   return new Function('document', 'window',
+    'var controlEditRevisions = new WeakMap(); var formEditState = {revision: 0};' +
+    'window.obSetManagedFormDirty = function(){ formEditState.revision++; };' +
+    extract('controlSubmittable') + '\n' + extract('captureFormControlState') + '\n' + extract('_obMarkDirty') + '\n' +
     extract('managedRefParts') + '\n' + extract('ensureRefOption') + '\n' + extract('applyValues') +
-      '\nreturn applyValues;')(document, {});
+      '\nreturn {apply: applyValues, snapshot: function(){return captureFormControlState(document.getElementById("main-form"));}, edit: function(inp, value){ inp.value = value; _obMarkDirty({target: inp}); }};')(document, {});
 }
 
 test('набранное за время запроса не стирается эхом отправленного', () => {
-  const phone = input('(937)637-32-71');
+  const phone = input('(937)637-32-7');
   const sent = new URLSearchParams({Телефон: '(937)637-32-7'});
-  applyValues({Телефон: phone})({Телефон: '(937)637-32-7'}, null, sent);
+  const runtime = applyValues({Телефон: phone});
+  const before = runtime.snapshot();
+  runtime.edit(phone, '(937)637-32-71');
+  runtime.apply({Телефон: '(937)637-32-7'}, null, sent, before);
   assert.equal(phone.value, '(937)637-32-71');
 });
 
 test('значение, изменённое сервером, применяется', () => {
   const field = input('пользователь');
   const sent = new URLSearchParams({Поле: 'было'});
-  applyValues({Поле: field})({Поле: 'сервер'}, null, sent);
+  applyValues({Поле: field}).apply({Поле: 'сервер'}, null, sent);
   assert.equal(field.value, 'сервер');
 });
 
 test('без изменений пользователя ответ применяется, в том числе маска', () => {
   const phone = input('••••••');
   const sent = new URLSearchParams({Телефон: '••••••'});
-  applyValues({Телефон: phone})({Телефон: '••••••'}, null, sent);
+  applyValues({Телефон: phone}).apply({Телефон: '••••••'}, null, sent);
   assert.equal(phone.value, '••••••');
   const other = input('');
-  applyValues({Другое: other})({Другое: 'x'}, null, null);
+  applyValues({Другое: other}).apply({Другое: 'x'}, null, null);
   assert.equal(other.value, 'x');
 });

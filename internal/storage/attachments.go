@@ -170,19 +170,28 @@ func (db *DB) UploadAttachment(ctx context.Context, ownerKind, ownerName string,
 	var n int64
 	var compensate func() // отмена внешней записи при сбое INSERT / откате транзакции
 
-	if db.GetFileStorageMode(ctx) == FileStorageS3 {
+	mode, err := db.ReadFileStorageMode(ctx)
+	if err != nil {
+		return Attachment{}, err
+	}
+	if mode == FileStorageS3 {
 		if db.blobStore == nil {
 			return Attachment{}, fmt.Errorf("attachments: file_storage=s3, но клиент S3 не сконфигурирован (file_storage.s3)")
 		}
+		store := db.blobStore
 		key := db.attachmentObjectKey(ownerName, id)
-		cnt, err := db.stagePutAttachmentS3(ctx, key, mimeType, r, maxSizeBytes)
+		cnt, err := stagePutAttachmentS3(ctx, store, key, mimeType, r, maxSizeBytes)
 		if err != nil {
 			return Attachment{}, err
 		}
 		n, loc = cnt, FileStorageS3
-		compensate = func() { _ = db.blobStore.DeleteObject(context.Background(), key) }
+		compensate = func() { _ = store.DeleteObject(context.Background(), key) }
 	} else {
-		dir := filepath.Join(db.filesDir, ownerName)
+		root, err := db.RequireFilesDir()
+		if err != nil {
+			return Attachment{}, err
+		}
+		dir := filepath.Join(root, ownerName)
 		if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 			return Attachment{}, err
 		}
@@ -253,7 +262,7 @@ func (db *DB) attachmentObjectKey(ownerName string, id uuid.UUID) string {
 
 // stagePutAttachmentS3 buffers r to a temp file (bounded memory), enforces the
 // size limit, then uploads to S3 under key. Returns the byte count.
-func (db *DB) stagePutAttachmentS3(ctx context.Context, key, mime string, r io.Reader, maxSizeBytes int64) (int64, error) {
+func stagePutAttachmentS3(ctx context.Context, store BlobObjectStore, key, mime string, r io.Reader, maxSizeBytes int64) (int64, error) {
 	tmp, err := os.CreateTemp("", "onebase-att-*")
 	if err != nil {
 		return 0, err
@@ -271,7 +280,7 @@ func (db *DB) stagePutAttachmentS3(ctx context.Context, key, mime string, r io.R
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 		return 0, err
 	}
-	if err := db.blobStore.PutObject(ctx, key, tmp, n, mime); err != nil {
+	if err := store.PutObject(ctx, key, tmp, n, mime); err != nil {
 		return 0, fmt.Errorf("attachments: s3 put: %w", err)
 	}
 	return n, nil
@@ -324,7 +333,11 @@ func (db *DB) OpenAttachment(ctx context.Context, id uuid.UUID) (io.ReadSeekClos
 	if a.Loc != "" && a.Loc != FileStorageDisk {
 		return nil, nil, fmt.Errorf("attachments: attachment %s has unsupported location %q", a.ID, a.Loc)
 	}
-	f, err := openAttachmentDiskFile(db.filesDir, a)
+	root, err := db.RequireFilesDir()
+	if err != nil {
+		return nil, nil, err
+	}
+	f, err := openAttachmentDiskFile(root, a)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -352,7 +365,11 @@ func (db *DB) MaterializeAttachment(ctx context.Context, id uuid.UUID) (string, 
 	if a.Loc != "" && a.Loc != FileStorageDisk {
 		return "", nil, nil, fmt.Errorf("attachments: attachment %s has unsupported location %q", a.ID, a.Loc)
 	}
-	f, err := openAttachmentDiskFile(db.filesDir, a)
+	root, err := db.RequireFilesDir()
+	if err != nil {
+		return "", nil, nil, err
+	}
+	f, err := openAttachmentDiskFile(root, a)
 	if err != nil {
 		return "", nil, nil, err
 	}
@@ -397,7 +414,11 @@ func (db *DB) downloadAttachmentTemp(ctx context.Context, a *Attachment) (string
 	if objectSize >= 0 && objectSize != a.SizeBytes {
 		return "", fmt.Errorf("attachments: S3 attachment %s size mismatch: metadata=%d object=%d", a.ID, a.SizeBytes, objectSize)
 	}
-	base := filepath.Join(db.filesDir, "_attach_tmp")
+	root, err := db.RequireFilesDir()
+	if err != nil {
+		return "", err
+	}
+	base := filepath.Join(root, "_attach_tmp")
 	if err := os.MkdirAll(base, fsmode.Dir); err != nil {
 		return "", err
 	}
@@ -438,7 +459,11 @@ func (db *DB) downloadAttachmentTemp(ctx context.Context, a *Attachment) (string
 // context.AfterFunc cleanup cannot fire (e.g. headless procrun with a
 // non-cancellable context). Best-effort; errors are ignored.
 func (db *DB) SweepAttachmentTemp() {
-	_ = os.RemoveAll(filepath.Join(db.filesDir, "_attach_tmp"))
+	root, err := db.RequireFilesDir()
+	if err != nil {
+		return
+	}
+	_ = os.RemoveAll(filepath.Join(root, "_attach_tmp"))
 }
 
 // tempDirFile is an io.ReadSeekCloser over a temp file; Close closes the handle
@@ -469,15 +494,23 @@ func (db *DB) DeleteAttachment(ctx context.Context, id uuid.UUID) error {
 		return err
 	}
 	var remove func()
-	if a.Loc == FileStorageS3 {
+	switch a.Loc {
+	case FileStorageS3:
 		if db.blobStore == nil {
 			return fmt.Errorf("attachments: вложение %s в S3, но клиент S3 не сконфигурирован — удаление невозможно", id)
 		}
+		store := db.blobStore
 		key := db.attachmentObjectKey(a.OwnerName, id)
-		remove = func() { _ = db.blobStore.DeleteObject(context.Background(), key) }
-	} else {
-		filePath := filepath.Join(db.filesDir, a.OwnerName, id.String())
+		remove = func() { _ = store.DeleteObject(context.Background(), key) }
+	case "", FileStorageDisk:
+		root, err := db.RequireFilesDir()
+		if err != nil {
+			return err
+		}
+		filePath := filepath.Join(root, a.OwnerName, id.String())
 		remove = func() { _ = os.Remove(filePath) }
+	default:
+		return fmt.Errorf("attachments: attachment %s has unsupported location %q", id, a.Loc)
 	}
 	q := fmt.Sprintf(`DELETE FROM _attachments WHERE id=%s`, d.Placeholder(1))
 	if _, err = db.Exec(ctx, q, idArg(d, id)); err != nil {

@@ -370,45 +370,90 @@ const (
 	FileStorageS3 = "s3"
 )
 
-// GetFileStorageMode читает режим хранения бинарников из _settings
-// (ui.file_storage). Отсутствие ключа/таблицы или нераспознанное значение →
-// FileStorageDisk.
-func (db *DB) GetFileStorageMode(ctx context.Context) string {
-	d := db.dialect
-	var v string
-	err := db.QueryRow(ctx,
-		`SELECT value FROM _settings WHERE key = `+d.Placeholder(1),
-		"ui.file_storage").Scan(&v)
-	if err != nil {
-		return FileStorageDisk
+// fileStorageSettingsTable confines the setting to the current schema. Catalog
+// introspection distinguishes an absent table from denied SELECT without a
+// failing query that would abort a PostgreSQL transaction. Do not use
+// information_schema: it hides tables the current role cannot read.
+func (db *DB) fileStorageSettingsTable(ctx context.Context) (string, bool, error) {
+	var exists bool
+	if db.dialect.Name() == "postgres" {
+		var schema string
+		err := db.QueryRow(ctx, `SELECT current_schema(), EXISTS (
+			SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
+			WHERE n.nspname=current_schema() AND c.relname='_settings')`).Scan(&schema, &exists)
+		if err != nil {
+			return "", false, fmt.Errorf("settings: inspect ui.file_storage schema: %w", err)
+		}
+		return pgQuoteIdent(schema) + `._settings`, exists, nil
 	}
-	switch strings.TrimSpace(v) {
-	case FileStorageDB:
-		return FileStorageDB
-	case FileStorageS3:
-		return FileStorageS3
+	err := db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM main.sqlite_schema WHERE name='_settings')`).Scan(&exists)
+	if err != nil {
+		return "", false, fmt.Errorf("settings: inspect ui.file_storage table: %w", err)
+	}
+	return `main._settings`, exists, nil
+}
+
+// ReadFileStorageMode reads the current setting once. Only an absent table/key
+// defaults to disk; database errors and corrupt values never authorize disk I/O.
+func (db *DB) ReadFileStorageMode(ctx context.Context) (string, error) {
+	table, exists, err := db.fileStorageSettingsTable(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !exists {
+		return FileStorageDisk, nil
+	}
+	var mode string
+	err = db.QueryRow(ctx, `SELECT value FROM `+table+` WHERE key = `+db.dialect.Placeholder(1), "ui.file_storage").Scan(&mode)
+	if IsNotFound(err) {
+		return FileStorageDisk, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("settings: read ui.file_storage: %w", err)
+	}
+	switch mode {
+	case FileStorageDisk, FileStorageDB, FileStorageS3:
+		return mode, nil
 	default:
-		return FileStorageDisk
+		return "", fmt.Errorf("settings: invalid ui.file_storage value %q", mode)
 	}
 }
 
-// SaveFileStorageMode сохраняет режим хранения бинарников в _settings.
-// Допустимы FileStorageDB и FileStorageS3; любое иное значение → FileStorageDisk.
+// GetFileStorageMode is a legacy display-only wrapper. Its fallback cannot be
+// used to authorize file I/O or a setting change; use ReadFileStorageMode there.
+func (db *DB) GetFileStorageMode(ctx context.Context) string {
+	mode, err := db.ReadFileStorageMode(ctx)
+	if err != nil {
+		return FileStorageDisk
+	}
+	return mode
+}
+
+// SaveFileStorageMode validates the requested mode and disk root before any
+// change to the setting or schema. db still stores attachments on disk.
 func (db *DB) SaveFileStorageMode(ctx context.Context, mode string) error {
-	if err := db.EnsureSettingsSchema(ctx); err != nil {
+	if err := writeAllowed(ctx); err != nil {
 		return err
 	}
 	switch mode {
+	case FileStorageDisk:
+		if _, err := db.RequireFilesDir(); err != nil {
+			return err
+		}
 	case FileStorageDB, FileStorageS3:
-		// допустимые режимы — сохраняем как есть
 	default:
-		mode = FileStorageDisk
+		return fmt.Errorf("settings: invalid ui.file_storage value %q", mode)
+	}
+	table, _, err := db.fileStorageSettingsTable(ctx)
+	if err != nil {
+		return err
+	}
+	if _, err := db.Exec(ctx, `CREATE TABLE IF NOT EXISTS `+table+` (key TEXT PRIMARY KEY, value TEXT NOT NULL DEFAULT '')`); err != nil {
+		return fmt.Errorf("settings: create ui.file_storage table: %w", err)
 	}
 	d := db.dialect
-	q := fmt.Sprintf(
-		`INSERT INTO _settings (key, value) VALUES (%s, %s)
-		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
-		d.Placeholder(1), d.Placeholder(2))
+	q := fmt.Sprintf(`INSERT INTO %s (key, value) VALUES (%s, %s)
+		ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`, table, d.Placeholder(1), d.Placeholder(2))
 	if _, err := db.Exec(ctx, q, "ui.file_storage", mode); err != nil {
 		return fmt.Errorf("settings: save ui.file_storage: %w", err)
 	}

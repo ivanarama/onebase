@@ -353,3 +353,24 @@ func liveRole(t *testing.T, h *handler, name string) *auth.Role {
 	t.Fatalf("роль %q не найдена в _roles", name)
 	return nil
 }
+
+func TestUserCardPublicRoleEditorPreservesSource(t *testing.T) {
+	source := strings.Replace(editorRoleYAML, "{ user: login }", "{ user_card: {catalog: Сотрудники, account_field: Учётка, field: Филиал} }", 1)
+	h, dir := roleEditorBase(t, source)
+	rec := saveRoleFromMatrix(t, h, "Оператор", "Оператор", "document|Задача|read")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("role save: %d %s", rec.Code, rec.Body.String())
+	}
+	saved, err := os.ReadFile(filepath.Join(dir, "roles", "оператор.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, err := auth.ParseRole(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _ := role.Permissions.RowAccess.Policy("document", "Задача", "read")
+	if len(p.Any) != 1 || p.Any[0].Value.UserCard == nil || p.Any[0].Value.UserCard.AccountField != "Учётка" {
+		t.Fatalf("role source lost: %s", saved)
+	}
+}

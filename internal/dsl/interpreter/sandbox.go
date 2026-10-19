@@ -203,7 +203,7 @@ func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p Sandbox
 			case dslStop:
 				err = s.err
 			case userError:
-				err = &DSLError{File: e.ec.curFile, Line: e.ec.curLine, Msg: s.Msg, Err: s.Err}
+				err = s.asDSLError(e.ec.curFile, e.ec.curLine)
 			case dslReturn:
 				if result != nil {
 					*result = s.val
@@ -251,7 +251,7 @@ func (i *Interpreter) CallSandboxed(proc *ast.ProcedureDecl, this This, args []a
 			case dslStop:
 				err = s.err
 			case userError:
-				err = &DSLError{File: e.ec.curFile, Line: e.ec.curLine, Msg: s.Msg, Err: s.Err}
+				err = s.asDSLError(e.ec.curFile, e.ec.curLine)
 			default:
 				panic(r)
 			}
@@ -287,7 +287,7 @@ func (i *Interpreter) CallEntrySandboxedWithBindings(proc *ast.ProcedureDecl, th
 			case dslStop:
 				err = s.err
 			case userError:
-				err = &DSLError{File: e.ec.curFile, Line: e.ec.curLine, Msg: s.Msg, Err: s.Err}
+				err = s.asDSLError(e.ec.curFile, e.ec.curLine)
 			default:
 				panic(r)
 			}

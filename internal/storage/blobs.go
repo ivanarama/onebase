@@ -139,7 +139,11 @@ func (db *DB) PutBlob(ctx context.Context, mime string, r io.Reader, maxSizeByte
 		return Blob{ID: id, Mime: mime, Size: size, OwnerKind: owner.Kind, OwnerEntity: owner.Entity}
 	}
 
-	switch db.GetFileStorageMode(ctx) {
+	mode, err := db.ReadFileStorageMode(ctx)
+	if err != nil {
+		return Blob{}, err
+	}
+	switch mode {
 	case FileStorageDB:
 		data, err := io.ReadAll(limited)
 		if err != nil {
@@ -196,7 +200,11 @@ func (db *DB) PutBlob(ctx context.Context, mime string, r io.Reader, maxSizeByte
 		return result(int64(len(data))), nil
 
 	default: // FileStorageDisk — файл на диске, в _blobs только метаданные.
-		dir := filepath.Join(db.filesDir, blobsDirName)
+		root, err := db.RequireFilesDir()
+		if err != nil {
+			return Blob{}, err
+		}
+		dir := filepath.Join(root, blobsDirName)
 		if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 			return Blob{}, err
 		}
@@ -287,7 +295,11 @@ func (db *DB) OpenBlob(ctx context.Context, id uuid.UUID) (Blob, io.ReadCloser, 
 		return Blob{}, nil, fmt.Errorf("blobs: blob %s has unsupported location %q", id, loc)
 	}
 	// disk mode, or a legacy row with NULL data, is backed by a file.
-	f, err := os.Open(filepath.Join(db.filesDir, blobsDirName, id.String()))
+	root, err := db.RequireFilesDir()
+	if err != nil {
+		return Blob{}, nil, err
+	}
+	f, err := os.Open(filepath.Join(root, blobsDirName, id.String()))
 	if err != nil {
 		return Blob{}, nil, err
 	}
@@ -313,8 +325,15 @@ func (db *DB) DeleteBlob(ctx context.Context, id uuid.UUID) error {
 	}
 	d := db.dialect
 	var loc string
-	_ = db.QueryRow(ctx,
-		fmt.Sprintf(`SELECT loc FROM _blobs WHERE id=%s`, d.Placeholder(1)), id.String()).Scan(&loc)
+	var dataNull bool
+	err := db.QueryRow(ctx,
+		fmt.Sprintf(`SELECT loc, data IS NULL FROM _blobs WHERE id=%s`, d.Placeholder(1)), id.String()).Scan(&loc, &dataNull)
+	if IsNotFound(err) {
+		return db.deletePublicFileByBlob(ctx, id)
+	}
+	if err != nil {
+		return err
+	}
 	if loc == FileStorageS3 {
 		if db.blobStore == nil {
 			return fmt.Errorf("blobs: блоб %s в S3, но клиент S3 не сконфигурирован — удаление невозможно", id)
@@ -322,9 +341,16 @@ func (db *DB) DeleteBlob(ctx context.Context, id uuid.UUID) error {
 		if err := db.blobStore.DeleteObject(ctx, db.blobObjectKey(id)); err != nil {
 			return fmt.Errorf("blobs: s3 delete: %w", err)
 		}
-	} else {
-		// disk / db / легаси: файла на диске может не быть (db-режим) — это не ошибка.
-		removeFile(filepath.Join(db.filesDir, blobsDirName, id.String()))
+	} else if loc == FileStorageDisk || (loc == "" && dataNull) {
+		root, err := db.RequireFilesDir()
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(filepath.Join(root, blobsDirName, id.String())); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	} else if loc != FileStorageDB && loc != "" {
+		return fmt.Errorf("blobs: blob %s has unsupported location %q", id, loc)
 	}
 	if _, err := db.Exec(ctx,
 		fmt.Sprintf(`DELETE FROM _blobs WHERE id=%s`, d.Placeholder(1)), id.String()); err != nil {

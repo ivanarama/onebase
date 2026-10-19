@@ -62,13 +62,39 @@ func (db *DB) RunQueryLimit(ctx context.Context, sql string, args []any, maxRows
 	return result, cols, truncated, nil
 }
 
+// CountQuery returns the number of rows produced by a complete query. Wrapping
+// the query preserves its parameters and any top-level LIMIT supplied by the
+// report author.
+func (db *DB) CountQuery(ctx context.Context, sql string, args []any) (int, error) {
+	var total int
+	if err := db.QueryRow(ctx, fmt.Sprintf("SELECT COUNT(*) FROM (%s) AS total_rows", subquerySQL(sql)), args...).Scan(&total); err != nil {
+		return 0, fmt.Errorf("count query: %w", err)
+	}
+	return total, nil
+}
+
+// RunQueryPage executes one database-side page of a complete query. limit and
+// offset are trusted integers rather than SQL parameters so the original
+// dialect-specific placeholders and argument ordering remain untouched.
+func (db *DB) RunQueryPage(ctx context.Context, sql string, args []any, limit, offset int) ([]map[string]any, []string, error) {
+	if limit <= 0 || offset < 0 {
+		return nil, nil, fmt.Errorf("invalid query page: limit=%d offset=%d", limit, offset)
+	}
+	paged := fmt.Sprintf("SELECT * FROM (%s) AS page_rows LIMIT %d OFFSET %d", subquerySQL(sql), limit, offset)
+	return db.RunQuery(ctx, paged, args)
+}
+
+func subquerySQL(query string) string {
+	return strings.TrimRightFunc(strings.TrimSpace(query), func(r rune) bool {
+		return unicode.IsSpace(r) || r == ';'
+	})
+}
+
 func limitedQuerySQL(query string, limit int) string {
 	if limit <= 0 || hasTopLevelLimit(query) {
 		return query
 	}
-	trimmed := strings.TrimRightFunc(strings.TrimSpace(query), func(r rune) bool {
-		return unicode.IsSpace(r) || r == ';'
-	})
+	trimmed := subquerySQL(query)
 	if trimmed == "" {
 		return query
 	}

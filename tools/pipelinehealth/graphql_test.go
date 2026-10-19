@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"io"
@@ -19,6 +21,18 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	caPath := os.Getenv("PIPELINEHEALTH_TEST_REST_CA")
+	if caPath != "" {
+		// Install the fixture CA before wrapping this transport for CLI routing.
+		data, err := os.ReadFile(caPath) //nolint:gosec // G703: parent test supplies a t.TempDir certificate.
+		roots := x509.NewCertPool()
+		if err != nil || !roots.AppendCertsFromPEM(data) {
+			os.Exit(3)
+		}
+		transport := http.DefaultTransport.(*http.Transport).Clone()
+		transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+		http.DefaultTransport = transport
+	}
 	if base := os.Getenv("PIPELINEHEALTH_TEST_REST_CLI"); base != "" {
 		endpoint, err := url.Parse(base)
 		if err != nil {
@@ -29,6 +43,11 @@ func TestMain(m *testing.M) {
 		if owner := os.Getenv("PIPELINEHEALTH_TEST_REST_OWNER"); owner != "" {
 			os.Args = append(os.Args, "-owner", owner)
 		}
+		main()
+		os.Exit(0)
+	}
+	if caPath != "" {
+		// The abort regression supplies the public CLI arguments directly.
 		main()
 		os.Exit(0)
 	}

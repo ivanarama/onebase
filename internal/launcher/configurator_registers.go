@@ -204,12 +204,14 @@ func saveInfoRegToFile(dir string, reg saveInfoReg, objTitles *map[string]string
 		var existing saveInfoReg
 		if yaml.Unmarshal(raw, &existing) == nil {
 			reg.Title = existing.Title
+			reg.Recorder = existing.Recorder
 			if objTitles == nil {
 				reg.Titles = existing.Titles
 			}
 			// Устойчивые id (план 81) — тоже поле, которого форма не знает.
 			reg.Dimensions = ensureFieldIDs(existing.Dimensions, reg.Dimensions)
 			reg.Resources = ensureFieldIDs(existing.Resources, reg.Resources)
+			reg.Indexes = existing.Indexes
 		}
 	}
 	if objTitles != nil {
@@ -246,12 +248,14 @@ func (h *handler) saveInfoRegToDB(ctx context.Context, b *Base, reg saveInfoReg,
 			// Round-trip: сохраняем поля, которые форма не редактирует.
 			// Titles перезаписываем только если форма прислала блок переводов.
 			reg.Title = existing.Title
+			reg.Recorder = existing.Recorder
 			if objTitles == nil {
 				reg.Titles = existing.Titles
 			}
 			// Устойчивые id (план 81) — тоже поле, которого форма не знает.
 			reg.Dimensions = ensureFieldIDs(existing.Dimensions, reg.Dimensions)
 			reg.Resources = ensureFieldIDs(existing.Resources, reg.Resources)
+			reg.Indexes = existing.Indexes
 			break
 		}
 	}

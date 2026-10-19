@@ -159,7 +159,15 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		treeRows = buildCatalogTree(allRows)
 	}
 
-	refFilterOptions, _ := s.loadInitialRefFilterOptions(r.Context(), entity, params)
+	// Варианты выбора — только полям, которые панель «Отбор» показывает: при
+	// list_filters это основной набор, добавленные пользователем и уже
+	// включённые отборы. Раньше варианты грузились всем ссылочным реквизитам
+	// сущности, и у документа с тремя полями в панели список открывался
+	// секунды: справочник адресов в 600 тыс. строк сортировался ради поля,
+	// которого на экране нет.
+	listFilterExtra := s.listFilterExtra(r, entity)
+	panelFields := listFilterPanelFields(map[string]any{"Entity": entity, "ListFilterExtra": listFilterExtra, "Params": params})
+	refFilterOptions, _ := s.loadInitialRefFilterOptions(r.Context(), entity, params, panelFields)
 
 	user := auth.UserFromContext(r.Context())
 	isAdmin := user == nil || user.IsAdmin
@@ -198,6 +206,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		"EnumLabels":       s.buildEnumLabels(entity, lang),
 		"BasedOnActions":   s.basedOnActions(r, entity, lang),
 		"RequestURI":       r.URL.RequestURI(),
+		"ListFilterExtra":  listFilterExtra,
 	})
 }
 
@@ -1231,11 +1240,6 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	// Тексты просмотра, зависящие от КОНТЕКСТА подбора (choice_preview_proc):
-	// вызывающая форма прислала, например, филиал звонка, и памятка по
-	// направлению собирается уже под него. Ошибка процедуры не валит подбор:
-	// выбирать элемент оператору нужно в любом случае, а текст справа —
-	// вспомогательный (что сломалось, видно в логе сервера).
 	// Динамический preview (choice_preview_proc) обслуживается POST /page:
 	// GET остаётся статическим и обратно совместимым (план 168, инвариант 1).
 	previewField := canonicalChoicePreviewField(ent)
@@ -1932,6 +1936,9 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	defer lockCollector.ReleaseAll()
 	var hookErrMsg string
 	if err := s.store.WithTxScope(r.Context(), func(ctx context.Context) error {
+		if err := s.store.LockMovementRecorder(ctx, entity, id); err != nil {
+			return err
+		}
 		ctx = runtime.ContextWithLockCollector(ctx, lockCollector)
 		if errMsg, _ := s.runOnPostCtx(ctx, obj, mc); errMsg != "" {
 			hookErrMsg = errMsg
@@ -2032,6 +2039,16 @@ func (s *Server) clearMovements(ctx context.Context, entityName string, id uuid.
 func (s *Server) markForDeletion(ctx context.Context, entity *metadata.Entity, id uuid.UUID, mark bool) error {
 	return s.store.WithTxScope(ctx, func(txCtx context.Context) error {
 		if mark && entity.Posting {
+			// Строка регистратора берётся ДО чтения posted и до clearMovements:
+			// порядок «строка регистратора → локи итогов» здесь тот же, что у
+			// Save, Repost, отмены и удаления. Раньше пометка шла наоборот —
+			// сперва clearMovements с локами итогов, и лишь затем SetPosted,
+			// которому нужна строка; с перепроведением того же документа это
+			// давало цикл и PostgreSQL снимал одну из операций с 40P01. Чтение
+			// posted под той же блокировкой заодно убирает скан до блокировки.
+			if err := s.store.LockMovementRecorder(txCtx, entity, id); err != nil {
+				return err
+			}
 			row, err := s.store.GetByID(txCtx, entity.Name, id, entity)
 			if err != nil {
 				return err
@@ -2425,33 +2442,13 @@ func (s *Server) deleteMarked(w http.ResponseWriter, r *http.Request) {
 		http.StatusSeeOther)
 }
 
+// saveMovements записывает движения DSL-путей записи документа (Записать /
+// Провести из модуля, проведение из списка) той же реализацией, что Save и
+// Repost: своя копия здесь отставала — не снимала прежние движения из регистров,
+// которых модуль в этот раз не коснулся, и брала локи итогов в случайном
+// порядке обхода map (#626).
 func (s *Server) saveMovements(ctx context.Context, docType string, docID uuid.UUID, mc *runtime.MovementsCollector) error {
-	for regName, rows := range mc.All() {
-		// try accumulation register first
-		reg := s.reg.GetRegister(regName)
-		if reg != nil {
-			if err := s.store.WriteMovements(ctx, regName, docType, docID, rows, reg, mc.Period); err != nil {
-				return err
-			}
-			continue
-		}
-		// try account register
-		ar := s.reg.GetAccountRegister(regName)
-		if ar != nil {
-			if err := s.store.WriteAccountMovements(ctx, regName, docType, docID, rows, ar, mc.Period); err != nil {
-				return err
-			}
-			continue
-		}
-		// try info register (замечание #23)
-		ir := s.reg.GetInfoRegister(regName)
-		if ir != nil {
-			if err := s.store.WriteInfoMovements(ctx, regName, docType, docID, rows, ir, mc.Period); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
+	return s.entityService().ReplaceMovements(ctx, docType, docID, mc)
 }
 
 // setPeriodFromFields ставит период движений по дате документа — тем же

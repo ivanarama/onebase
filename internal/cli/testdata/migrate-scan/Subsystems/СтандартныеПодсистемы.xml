@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MetaDataObject xmlns="http://v8.1c.ru/8.3/MDClasses" xmlns:xr="http://v8.1c.ru/8.3/xcf/readable">
+  <Subsystem>
+    <Properties>
+      <Name>СтандартныеПодсистемы</Name>
+      <Content>
+        <xr:Item>CommonModule.Утилиты</xr:Item>
+        <xr:Item>Catalog.Служебный</xr:Item>
+      </Content>
+    </Properties>
+    <ChildObjects><Subsystem>Общие</Subsystem></ChildObjects>
+  </Subsystem>
+</MetaDataObject>

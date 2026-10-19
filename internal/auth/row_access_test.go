@@ -80,3 +80,25 @@ func TestRowAccessInvalidSameAsStillCountsAsPolicy(t *testing.T) {
 		t.Fatal("same_as на отсутствующую операцию должен считаться policy для fail-closed")
 	}
 }
+
+func TestUserCardRoleStoragePreservesShorthand(t *testing.T) {
+	role, err := ParseRole([]byte(`name: Employee
+permissions:
+  documents: {Order: [read]}
+  row_access:
+    documents:
+      Order:
+        read: {field: Branch, op: eq, value: {user_card: Employees.Branch}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := marshalPermissions(role.Permissions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, ok := unmarshalPermissions([]byte(raw)).RowAccess.Policy("document", "Order", "read")
+	if !ok || p.Value.UserCard == nil || !p.Value.UserCard.Shorthand {
+		t.Fatalf("shorthand lost in role storage: %s", raw)
+	}
+}

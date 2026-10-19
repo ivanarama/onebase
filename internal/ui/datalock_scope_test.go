@@ -170,11 +170,32 @@ func TestDataLockReentrantInNestedPosting(t *testing.T) {
 }
 
 func TestDataLockStillExcludesConcurrentExecutions(t *testing.T) {
+	for _, delayedResult := range []bool{false, true} {
+		name := "normal_results"
+		if delayedResult {
+			name = "first_result_after_second"
+		}
+		t.Run(name, func(t *testing.T) {
+			testDataLockStillExcludesConcurrentExecutions(t, delayedResult)
+		})
+	}
+}
+
+func testDataLockStillExcludesConcurrentExecutions(t *testing.T, delayedResult bool) {
+	t.Helper()
 	s, reg := dlServer(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	firstEntered := make(chan struct{})
 	secondAttempt := make(chan struct{})
 	secondEntered := make(chan struct{})
+	secondResult := make(chan struct{})
+	var firstResultFence <-chan struct{}
+	if delayedResult {
+		// После освобождения ключа первый RunProcessor может вернуть управление
+		// раньше второго, но его горутина опубликует результат позже. Именно этот
+		// допустимый порядок приводил к ложному падению сравнения time.Now().
+		firstResultFence = secondResult
+	}
 	releaseFirst := make(chan struct{})
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(releaseFirst) }) }
@@ -191,7 +212,7 @@ func TestDataLockStillExcludesConcurrentExecutions(t *testing.T) {
 			t.Error("исполнители не завершились после освобождения блокировки")
 		}
 	})
-	run := func(before, after interpreter.BuiltinFunc) <-chan dlResult {
+	run := func(before, after interpreter.BuiltinFunc, resultFence <-chan struct{}, resultPublished chan<- struct{}) <-chan dlResult {
 		out := make(chan dlResult, 1)
 		runs.Add(1)
 		go func() {
@@ -203,7 +224,17 @@ func TestDataLockStillExcludesConcurrentExecutions(t *testing.T) {
 			if err == nil {
 				err = runErr
 			}
+			if resultFence != nil {
+				select {
+				case <-resultFence:
+				case <-ctx.Done():
+					err = ctx.Err()
+				}
+			}
 			out <- dlResult{msgs: msgs, err: err}
+			if resultPublished != nil {
+				close(resultPublished)
+			}
 		}()
 		return out
 	}
@@ -227,9 +258,9 @@ func TestDataLockStillExcludesConcurrentExecutions(t *testing.T) {
 			case <-ctx.Done():
 				return nil, ctx.Err()
 			}
-		})
+		}, firstResultFence, nil)
 	waitSignal(firstEntered, "первая обработка не захватила ключ")
-	second := run(signal(secondAttempt), signal(secondEntered))
+	second := run(signal(secondAttempt), signal(secondEntered), nil, secondResult)
 	waitSignal(secondAttempt, "параллельная обработка не начала захват ключа")
 	// Ограниченное окно проверяет отсутствие входа, а не порядок возвратов:
 	// первая обработка гарантированно находится внутри критической секции.

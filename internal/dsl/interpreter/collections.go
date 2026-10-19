@@ -409,6 +409,10 @@ func (s *Struct) CallMethod(name string, args []any) any {
 	case "количество", "count":
 		return float64(len(s.keys))
 	case "свойство", "property":
+		if len(args) > 1 {
+			RaiseUserError("Структура.Свойство(Ключ): лишние аргументы — выходной параметр не поддерживается. " +
+				"Метод возвращает значение свойства или Неопределено, а не Булево; читайте значение отдельно.")
+		}
 		key := strings.ToLower(strArg(args, 0))
 		v, ok := s.vals[key]
 		if !ok {

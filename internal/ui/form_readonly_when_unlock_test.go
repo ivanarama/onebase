@@ -72,7 +72,7 @@ func TestManagedForm_ReadonlyWhenKeepsPickerAndHandler(t *testing.T) {
 	// разблокированного состояния уже на месте.
 	html := roUnlockRender(t, map[string]string{"Филиал": "x", "Заперто": "", "Условно": "", "Обычное": ""})
 	lockedZone := elementZone(t, html, "ПолеУсловно", "ПолеОбычное")
-	if !strings.Contains(lockedZone, `data-ob-ref-picker="ref-Условно"`) {
+	if !strings.Contains(lockedZone, `data-ob-ref-picker="closest"`) {
 		t.Fatalf("locked conditional ref misses picker button")
 	}
 	if !strings.Contains(lockedZone, `data-ob-fire-change="ПолеУсловно"`) {
@@ -89,7 +89,7 @@ func TestManagedForm_ReadonlyWhenUnlockedStillCarriesMarkup(t *testing.T) {
 	// Условие не выполняется: поле открыто, разметка на месте и активна.
 	html := roUnlockRender(t, map[string]string{"Филиал": "", "Заперто": "", "Условно": "", "Обычное": ""})
 	condZone := elementZone(t, html, "ПолеУсловно", "ПолеОбычное")
-	if !strings.Contains(condZone, `data-ob-ref-picker="ref-Условно"`) {
+	if !strings.Contains(condZone, `data-ob-ref-picker="closest"`) {
 		t.Fatalf("unlocked conditional ref misses picker button")
 	}
 	if !strings.Contains(condZone, `data-ob-fire-change="ПолеУсловно"`) {

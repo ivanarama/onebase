@@ -47,11 +47,9 @@ func writeCatalogProject(t *testing.T, catalogYAML string) *metadata.Entity {
 	return nil
 }
 
-// Базам, куда конфигуратор уже записал «Код» с чужим id, фикс сохранения не
-// поможет: в YAML идентификатор так и останется чужим, и миграция продолжит
-// отказывать. Отказ обязан называть правку, а не оставлять человека с общим
-// «разберите вручную» — правка тут ровно одна (#1161).
-func TestПланИзменений_ПодсказкаПроСтандартныйКод(t *testing.T) {
+// Legacy YAML с чужим ID теперь нормализуется загрузчиком до std_code.
+// Если карта уже была канонической, план остаётся пустым.
+func TestПланИзменений_LegacyКодНормализован(t *testing.T) {
 	ctx := context.Background()
 	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "code.db"))
 	if err != nil {
@@ -82,14 +80,9 @@ fields:
   - {id: f_4b7b017c, name: Фамилия, type: string}
 `)
 
-	_, err = db.PlanTableChanges(ctx, metadata.TableName(after.Name), after.Fields)
-	if err == nil {
-		t.Fatal("план построен молча: колонка кода досталась полю с чужим id")
-	}
-	for _, want := range []string{metadata.StandardCodeFieldID, "id: " + metadata.StandardCodeFieldID, "numerator"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("в отказе нет %q, человеку не с чем идти в YAML:\n%v", want, err)
-		}
+	changes, err := db.PlanTableChanges(ctx, metadata.TableName(after.Name), after.Fields)
+	if err != nil || len(changes) != 0 {
+		t.Fatalf("план после нормализации = %v, %v", changes, err)
 	}
 
 	// Данные отказ не тронул.

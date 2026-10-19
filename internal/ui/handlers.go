@@ -345,9 +345,12 @@ func (s *Server) loadInitialRefOptions(ctx context.Context, entity *metadata.Ent
 	return opts, nil
 }
 
-func (s *Server) loadInitialRefFilterOptions(ctx context.Context, entity *metadata.Entity, params storage.ListParams) (map[string][]map[string]any, error) {
+// loadInitialRefFilterOptions — варианты ссылочных полей панели «Отбор». fields —
+// поля, которые панель покажет (listFilterPanelFields); остальным варианты не
+// нужны.
+func (s *Server) loadInitialRefFilterOptions(ctx context.Context, entity *metadata.Entity, params storage.ListParams, fields []metadata.Field) (map[string][]map[string]any, error) {
 	opts := make(map[string][]map[string]any)
-	for _, f := range entity.Fields {
+	for _, f := range fields {
 		if f.RefEntity == "" {
 			continue
 		}
@@ -569,11 +572,11 @@ func asString(v any) string {
 
 func regFmtDate(v any) string {
 	if t, ok := v.(time.Time); ok {
-		return t.Format("02.01.2006")
+		return storage.FormatDisplayDate(t)
 	}
 	if s, ok := v.(string); ok {
 		if t, err := time.Parse(time.RFC3339, s); err == nil {
-			return t.Format("02.01.2006")
+			return storage.FormatDisplayDate(t)
 		}
 	}
 	return fmt.Sprintf("%v", v)

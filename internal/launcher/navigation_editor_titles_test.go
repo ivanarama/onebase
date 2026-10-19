@@ -3,6 +3,7 @@ package launcher
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,88 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 	"gopkg.in/yaml.v3"
 )
+
+func navigationTitlesSubprocessContext(t *testing.T, budget time.Duration) (context.Context, context.CancelFunc) {
+	t.Helper()
+	deadline := time.Now().Add(budget)
+	if outer, ok := t.Deadline(); ok && outer.Add(-5*time.Second).Before(deadline) {
+		// Leave time for reporting and cleanup before the package timeout.
+		deadline = outer.Add(-5 * time.Second)
+	}
+	return context.WithDeadline(context.Background(), deadline)
+}
+
+func runNavigationTitlesSubprocess(ctx context.Context, pattern, scenario string, env []string) error {
+	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run="+pattern, "-test.v") //nolint:gosec // Test subprocess uses the current test executable and fixed test patterns.
+	cmd.Env = append(os.Environ(), env...)
+	started := time.Now()
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if len(output) > 4096 {
+		// A stack trace or assertion at the end is as useful as startup output.
+		output = []byte(fmt.Sprintf("%s\n... %d bytes omitted ...\n%s", output[:2048], len(output)-4096, output[len(output)-2048:]))
+	}
+	deadline, _ := ctx.Deadline()
+	return fmt.Errorf("HTTP round trip subprocess %q: process error: %w; context error: %v; deadline exceeded: %t; deadline: %s; elapsed: %s\n%s",
+		scenario, err, ctx.Err(), errors.Is(ctx.Err(), context.DeadlineExceeded), deadline.Format(time.RFC3339Nano), time.Since(started), output)
+}
+
+// Exercise the actual subprocess runner: a hung child must be killed, while a
+// child assertion must remain distinguishable from a wrapper deadline.
+func TestNavigationEditorTitlesSubprocessFailure(t *testing.T) {
+	if control := os.Getenv("ONEBASE_NAVIGATION_TITLES_FAILURE_CONTROL"); control != "" {
+		fmt.Println("subprocess diagnostic beginning")
+		if control != "cycle" {
+			fmt.Println(strings.Repeat("x", 8192))
+		}
+		fmt.Println("subprocess diagnostic ending")
+		if control == "cycle" {
+			debug.SetMaxStack(2 << 20)
+			node := &yaml.Node{Kind: yaml.MappingNode}
+			node.Content = []*yaml.Node{{Kind: yaml.ScalarNode, Value: "cycle"}, node}
+			if _, err := yaml.Marshal(node); err != nil {
+				t.Fatal(err)
+			}
+			t.Fatal("cyclic encoder unexpectedly returned")
+		}
+		if control == "exit" {
+			t.Fatal("synthetic HTTP/YAML failure")
+		}
+		for {
+			time.Sleep(time.Hour)
+		}
+	}
+	// Run the timeout last: it can consume the remaining outer test budget.
+	for _, control := range []string{"exit", "cycle", "deadline"} {
+		t.Run(control, func(t *testing.T) {
+			ctx, cancel := navigationTitlesSubprocessContext(t, 5*time.Second)
+			defer cancel()
+			err := runNavigationTitlesSubprocess(ctx, "^TestNavigationEditorTitlesSubprocessFailure$", control,
+				[]string{"ONEBASE_NAVIGATION_TITLES_FAILURE_CONTROL=" + control})
+			if err == nil {
+				t.Fatal("failing subprocess reported success")
+			}
+			for _, want := range []string{"subprocess \"" + control + "\"", "process error:", "context error:",
+				"deadline exceeded: " + fmt.Sprint(control == "deadline"), "bytes omitted",
+				"subprocess diagnostic beginning", "subprocess diagnostic ending"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("missing diagnostic %q: %v", want, err)
+				}
+			}
+			if control == "deadline" && !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				t.Fatalf("hung child was not stopped by deadline: %v", err)
+			}
+			if control == "exit" && (!strings.Contains(err.Error(), "synthetic HTTP/YAML failure") || ctx.Err() != nil) {
+				t.Fatalf("child assertion confused with wrapper timeout: %v", err)
+			}
+			if control == "cycle" && (!strings.Contains(err.Error(), "fatal error: stack overflow") || ctx.Err() != nil) {
+				t.Fatalf("encoder cycle did not report a child stack overflow: %v", err)
+			}
+		})
+	}
+}
 
 // Run saves in a subprocess so an encoder cycle reports a regression instead
 // of exhausting the stack of the whole package's test process.
@@ -35,15 +118,11 @@ func TestNavigationEditorTitlesIDProductionRoundTrip(t *testing.T) {
 				}
 				t.Run(name, func(t *testing.T) {
 					if selected == "" {
-						ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+						ctx, cancel := navigationTitlesSubprocessContext(t, 30*time.Second)
 						defer cancel()
-						cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestNavigationEditorTitlesIDProductionRoundTrip$", "-test.v") //nolint:gosec // Test subprocess uses the current test executable.
-						cmd.Env = append(os.Environ(), "ONEBASE_NAVIGATION_TITLES_CASE="+name)
-						if output, err := cmd.CombinedOutput(); err != nil {
-							if len(output) > 4096 {
-								output = output[:4096]
-							}
-							t.Fatalf("HTTP round trip subprocess: %v\n%s", err, output)
+						if err := runNavigationTitlesSubprocess(ctx, "^TestNavigationEditorTitlesIDProductionRoundTrip$", name,
+							[]string{"ONEBASE_NAVIGATION_TITLES_CASE=" + name}); err != nil {
+							t.Fatal(err)
 						}
 						return
 					}

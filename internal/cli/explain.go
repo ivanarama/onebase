@@ -101,16 +101,10 @@ func runWidgetExplain(cmd *cobra.Command, args []string) error {
 		Type:  string(w.Type),
 		Query: w.Query,
 	}
-	params := map[string]any{}
-	for k, v := range scheduler.ResolveParamTemplates(copyStringMap(w.Params)) {
-		params[k] = v
-	}
-	if len(params) > 0 {
-		out.Params = params
-	}
 	// Открываем БД заранее, если запрошен --sample: её диалект нужен и для
 	// исполнения виджета, и чтобы показанный SQL совпадал с фактическим (иначе
-	// на SQLite генерятся Postgres-плейсхолдеры $N::text). См. issue #473.
+	// на SQLite генерятся Postgres-плейсхолдеры $N::text). Она нужна и для
+	// раскрытия констант до компиляции запроса. См. issues #473, #1433.
 	sample, _ := cmd.Flags().GetInt("sample")
 	var db *storage.DB
 	if sample > 0 {
@@ -119,6 +113,14 @@ func runWidgetExplain(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		defer db.Close()
+	}
+	reg := buildRuntimeRegistry(proj)
+	params, err := scheduler.ResolveParamTemplates(copyStringMap(w.Params), scheduler.NewConstantResolver(context.Background(), db, reg))
+	if err != nil {
+		return err
+	}
+	if len(params) > 0 {
+		out.Params = params
 	}
 	if strings.TrimSpace(w.Query) != "" {
 		opts := querylang.CompileOpts{
@@ -139,7 +141,6 @@ func runWidgetExplain(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if sample > 0 {
-		reg := buildRuntimeRegistry(proj)
 		res := widget.New(reg, db).Run(context.Background(), w)
 		if res.Error != "" {
 			out.Error = res.Error
@@ -179,7 +180,17 @@ func runReportExplain(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	params, err := typedReportParams(rep, rawParams)
+	sample, _ := cmd.Flags().GetInt("sample")
+	var db *storage.DB
+	if sample > 0 {
+		db, err = bc.OpenDB(context.Background())
+		if err != nil {
+			return err
+		}
+		defer db.Close()
+	}
+	reg := buildRuntimeRegistry(proj)
+	params, err := typedReportParams(rep, rawParams, scheduler.NewConstantResolver(context.Background(), db, reg))
 	if err != nil {
 		return err
 	}
@@ -195,18 +206,7 @@ func runReportExplain(cmd *cobra.Command, args []string) error {
 		out.Variants = append(out.Variants, v.Name)
 	}
 	if strings.TrimSpace(rep.Query) != "" {
-		// При --sample открываем БД до компиляции: без её диалекта компилятор
-		// генерит Postgres-плейсхолдеры $N::text, и исполнение на SQLite падает
-		// с «missing named argument». См. issue #473.
-		sample, _ := cmd.Flags().GetInt("sample")
-		var db *storage.DB
-		if sample > 0 {
-			db, err = bc.OpenDB(context.Background())
-			if err != nil {
-				return err
-			}
-			defer db.Close()
-		}
+		// БД уже открыта для подстановок; её диалект нужен и при компиляции (#473).
 		opts := querylang.CompileOpts{
 			Params:      params,
 			Entities:    proj.Entities,
@@ -280,7 +280,7 @@ func printExplain(cmd *cobra.Command, out explainOutput) error {
 // как text («operator does not exist: timestamp with time zone >= text»), а
 // умолчание не подставлялось — explain показывал не тот запрос, что строит
 // экран. Параметры, которых отчёт не объявляет, передаются как есть.
-func typedReportParams(rep *report.Report, raw map[string]any) (map[string]any, error) {
+func typedReportParams(rep *report.Report, raw map[string]any, res scheduler.ConstantResolver) (map[string]any, error) {
 	if len(raw) == 0 && len(rep.Params) == 0 {
 		return raw, nil
 	}
@@ -293,7 +293,11 @@ func typedReportParams(rep *report.Report, raw map[string]any) (map[string]any, 
 		var text string
 		switch {
 		case !present:
-			text = scheduler.ResolveParamTemplateText(p.Default, p.Type)
+			resolved, err := scheduler.ResolveParamTemplateText(p.Default, p.Type, res)
+			if err != nil {
+				return nil, fmt.Errorf("параметр %s: %w", p.Name, err)
+			}
+			text = resolved
 		case v == nil:
 			text = ""
 		default:

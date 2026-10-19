@@ -34,8 +34,8 @@ func (s *Server) loadRuntimeObject(ctx context.Context, entity *metadata.Entity,
 }
 
 // loadRuntimeObjectRow — loadRuntimeObject вместе с прочитанной строкой шапки.
-// Служебные колонки (posted, deletion_mark) в объект не попадают, а объекту
-// документа из DSL они нужны как Проведен и ПометкаУдаления.
+// Служебные колонки не входят в Fields. Строка нужна обёртке документа для
+// стандартных реквизитов Проведен и ПометкаУдаления и токена версии.
 func (s *Server) loadRuntimeObjectRow(ctx context.Context, entity *metadata.Entity, id uuid.UUID) (*runtime.Object, map[string]any, error) {
 	row, err := s.store.GetByID(ctx, entity.Name, id, entity)
 	if err != nil {
@@ -79,6 +79,8 @@ func (s *Server) runtimeObjectFromSnapshot(
 		Kind:          entity.Kind,
 		Fields:        fields,
 		TablePartRows: tpRows,
+		DeletionMark:  asBool(row["deletion_mark"]),
+		Posted:        asBool(row["posted"]),
 	}
 	s.enrichHeaderRefs(ctx, entity, obj)
 	for _, tp := range entity.TableParts {

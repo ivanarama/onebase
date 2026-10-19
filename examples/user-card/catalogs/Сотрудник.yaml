@@ -1,0 +1,10 @@
+name: Сотрудник
+fields:
+  - name: Наименование
+    type: string
+  - name: Учётка
+    type: reference:_users
+  - name: Филиал
+    type: string
+indexes:
+  - fields: [Учётка]

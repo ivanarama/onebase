@@ -62,6 +62,9 @@ func ParseParamValue(raw string, p Param, mode ParamParseMode) (any, error) {
 		if err != nil {
 			return nil, errors.New("expected date YYYY-MM-DD")
 		}
+		if p.PeriodEnd {
+			return time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 0, time.Local), nil
+		}
 		return t, nil
 	case "bool":
 		if mode == ParamParseAPI {

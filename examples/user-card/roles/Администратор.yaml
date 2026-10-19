@@ -1,0 +1,6 @@
+name: Администратор
+description: Создание и изменение карточек сотрудников
+permissions:
+  processors: {}
+  catalogs:
+    Сотрудник: [read, write, delete]

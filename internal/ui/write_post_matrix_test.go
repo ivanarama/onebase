@@ -516,26 +516,118 @@ func TestWritePost_NilVersionConcurrentCASPostgres(t *testing.T) {
 		t.Fatal(err)
 	}
 	s, doc := writePostServer(t, a, "")
-	id := seedWritePost(t, a, doc)
-	_, err = s.entityService().Save(ctx, entityservice.SaveRequest{Entity: doc, ID: id, Action: "post", Fields: map[string]any{"Ввод": "input"},
-		Preflight: func(context.Context, *runtime.Object) error {
-			return b.Upsert(ctx, doc.Name, id, map[string]any{"Расчет": "concurrent"}, doc)
-		},
+	t.Run("nil version serializes concurrent write", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		id := seedWritePost(t, a, doc)
+		writerPID := make(chan int, 1)
+		writerDone := make(chan error, 1)
+		result, err := s.entityService().Save(ctx, entityservice.SaveRequest{
+			Entity: doc, ID: id, Action: "post", Fields: map[string]any{"Ввод": "input"},
+			TablePartRows: map[string][]map[string]any{"Товары": {{"Item": "line"}}},
+			Preflight: func(txCtx context.Context, _ *runtime.Object) error {
+				var postingPID int
+				if err := a.QueryRow(txCtx, "SELECT pg_backend_pid()").Scan(&postingPID); err != nil {
+					return err
+				}
+				// Save already owns the recorder row. Run the second connection
+				// independently: waiting for its write here would deadlock Save.
+				go func() {
+					writerDone <- b.WithTxScope(ctx, func(writerCtx context.Context) error {
+						var pid int
+						if err := b.QueryRow(writerCtx, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
+							return err
+						}
+						writerPID <- pid
+						return b.Upsert(writerCtx, doc.Name, id, map[string]any{"Расчет": "concurrent"}, doc)
+					})
+				}()
+				var pid int
+				select {
+				case pid = <-writerPID:
+				case err := <-writerDone:
+					return fmt.Errorf("writer failed before locking: %v", err)
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				// Prove a real database wait on this Save's transaction instead
+				// of relying on a sleep or a signal sent before the SQL executes.
+				ticker := time.NewTicker(10 * time.Millisecond)
+				defer ticker.Stop()
+				for {
+					var blocked bool
+					if err := a.QueryRow(txCtx, "SELECT $1 = ANY(pg_blocking_pids($2))", postingPID, pid).Scan(&blocked); err != nil {
+						return err
+					}
+					if blocked {
+						return nil // Allow Save to commit and release the writer.
+					}
+					select {
+					case err := <-writerDone:
+						return fmt.Errorf("writer completed before posting released its row: %v", err)
+					case <-ticker.C:
+					case <-ctx.Done():
+						return ctx.Err()
+					}
+				}
+			},
+		})
+		if err != nil || result.DSLError != "" {
+			t.Fatalf("nil token posting: result=%+v err=%v", result, err)
+		}
+		select {
+		case err := <-writerDone:
+			if err != nil {
+				t.Fatal(err)
+			}
+		case <-ctx.Done():
+			t.Fatal("writer did not finish after posting committed")
+		}
+		row, err := b.GetByID(ctx, doc.Name, id, doc)
+		if err != nil || row["Расчет"] != "concurrent" || row["posted"] != true || row["След"] != "WP" {
+			t.Fatalf("serialized writes lost an update: %v %v", row, err)
+		}
+		version, err := b.EntityVersion(ctx, doc.Name, id)
+		if err != nil || result.Version != 2 || version != 3 {
+			t.Fatalf("posting version=%d final version=%d err=%v", result.Version, version, err)
+		}
 	})
-	if !errors.Is(err, storage.ErrVersionConflict) {
-		t.Fatalf("nil token CAS race=%v", err)
-	}
-	row, err := b.GetByID(ctx, doc.Name, id, doc)
-	if err != nil || row["Расчет"] != "concurrent" || row["posted"] != false {
-		t.Fatalf("lost update: %v %v", row, err)
-	}
-	var children int
-	if err := b.QueryRow(ctx, "SELECT COUNT(*) FROM "+metadata.TableName("СледХука")).Scan(&children); err != nil {
-		t.Fatal(err)
-	}
-	if children != 0 {
-		t.Fatalf("OnWrite side effects survived failed CAS: %d", children)
-	}
+
+	t.Run("concurrent commit before recorder lock rejects stale CAS", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		id := seedWritePost(t, a, doc)
+		version, err := a.EntityVersion(ctx, doc.Name, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The optimistic token belongs to the caller's earlier snapshot.
+		// Commit the competing write before Save acquires the recorder lock.
+		if err := b.Upsert(ctx, doc.Name, id, map[string]any{"Расчет": "concurrent"}, doc); err != nil {
+			t.Fatal(err)
+		}
+		_, err = s.entityService().Save(ctx, entityservice.SaveRequest{Entity: doc, ID: id, Action: "post",
+			ExpectedVersion: &version, Fields: map[string]any{"Ввод": "input"},
+			Preflight: func(context.Context, *runtime.Object) error {
+				t.Error("stale token reached preflight")
+				return nil
+			},
+		})
+		if !errors.Is(err, storage.ErrVersionConflict) {
+			t.Fatalf("stale token CAS race=%v", err)
+		}
+		row, err := b.GetByID(ctx, doc.Name, id, doc)
+		if err != nil || row["Расчет"] != "concurrent" || row["posted"] != false {
+			t.Fatalf("lost update: %v %v", row, err)
+		}
+		var children int
+		if err := b.QueryRow(ctx, "SELECT COUNT(*) FROM "+metadata.TableName("СледХука")+" WHERE "+metadata.ColumnName(metadata.Field{Name: "Владелец", RefEntity: doc.Name})+" = $1", id).Scan(&children); err != nil {
+			t.Fatal(err)
+		}
+		if children != 0 {
+			t.Fatalf("OnWrite side effects survived failed CAS: %d", children)
+		}
+	})
 }
 
 func TestWritePost_CaughtFailureRetryMatrix(t *testing.T) {

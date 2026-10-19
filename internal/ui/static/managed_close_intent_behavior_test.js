@@ -22,6 +22,7 @@ const valuesStart = managed.indexOf('  function managedRefParts(');
 const valuesEnd = managed.indexOf('  // END onebase-ro-apply-values', valuesStart);
 assert.ok(valuesStart >= 0 && valuesEnd > valuesStart, 'managed value renderer not found');
 const valueRenderer = managed.slice(valuesStart, valuesEnd);
+const controlStateRenderer = managed.slice(managed.indexOf('  function controlSubmittable('), managed.indexOf('  function applyValues('));
 const dirtyStart = managed.indexOf('  function _obMarkDirty(');
 const dirtyEnd = managed.indexOf('  // «Грязный» флаг', dirtyStart);
 assert.ok(dirtyStart >= 0 && dirtyEnd > dirtyStart, 'managed input listeners not found');
@@ -208,7 +209,7 @@ function runtime(fetchImpl, cfgOverride = {}, productionValues = false) {
 	  function openItemPicker(value, name, extra){ globalThis.__applied.push(['picker', value, name, extra]); }
       function flash(value, kind){ globalThis.__applied.push(['flash', value, kind]); }
   `;
-  vm.runInNewContext(prefix + (productionValues ? valueRenderer + dirtyListeners : '') + eventController + controller + '\n})();', context, {filename: 'managed-close-controller.js'});
+  vm.runInNewContext(prefix + (productionValues ? valueRenderer + dirtyListeners : controlStateRenderer) + eventController + controller + '\n})();', context, {filename: 'managed-close-controller.js'});
   vm.runInNewContext(escapeHandler, context, {filename: 'managed-close-escape.js'});
 	return {
 	  context, form, idInput, versionInput, applied, listeners, document, closeButton, assigned, dirtyReports,

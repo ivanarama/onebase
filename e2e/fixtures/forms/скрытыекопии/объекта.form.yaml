@@ -1,0 +1,67 @@
+schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: СкрытыеКопии
+attributes:
+  - name: Объект
+    type: DocumentRef.СкрытыеКопии
+    save: true
+    main: true
+  - name: МестоПервое
+    type: CatalogRef.МестоХранения
+    save: false
+  - name: МестоВторое
+    type: CatalogRef.МестоХранения
+    save: false
+elements:
+  - kind: ПолеВвода
+    name: СкрытыйСкладПервый
+    data_path: Объект.СкладПервый
+    hidden_when: "1 = 1"
+  - kind: ПолеВвода
+    name: ВидимыйСкладПервый
+    data_path: Объект.СкладПервый
+  - kind: ПолеВвода
+    name: СкрытыйФайлПервый
+    data_path: Объект.ФайлПервый
+    type: file
+    hidden_when: "1 = 1"
+  - kind: ПолеВвода
+    name: ВидимыйФайлПервый
+    data_path: Объект.ФайлПервый
+    type: file
+  - id: dependent-Первый
+    kind: ПолеВвода
+    name: ПодборМестоПервое
+    data_path: Форма.МестоПервое
+    choice: true
+    choice_filter:
+      - field: Склад
+        op: eq
+        from: Объект.СкладПервый
+  - kind: ПолеВвода
+    name: ВидимыйСкладВторой
+    data_path: Объект.СкладВторой
+  - kind: ПолеВвода
+    name: СкрытыйСкладВторой
+    data_path: Объект.СкладВторой
+    hidden_when: "1 = 1"
+  - kind: ПолеВвода
+    name: ВидимыйФайлВторой
+    data_path: Объект.ФайлВторой
+    type: file
+  - kind: ПолеВвода
+    name: СкрытыйФайлВторой
+    data_path: Объект.ФайлВторой
+    type: file
+    hidden_when: "1 = 1"
+  - id: dependent-Второй
+    kind: ПолеВвода
+    name: ПодборМестоВторое
+    data_path: Форма.МестоВторое
+    choice: true
+    choice_filter:
+      - field: Склад
+        op: eq
+        from: Объект.СкладВторой

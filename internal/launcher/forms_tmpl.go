@@ -1149,10 +1149,11 @@ function renderProps() {
       addTextProp(panel, {{jsString (t $.Lang "Устойчивый id элемента")}}, 'id', info.id || '');
       addChoiceFilterEditor(panel, info);
     }
-    addChoiceFilterEditor(panel, info);
+  }
+  if (info.kind === 'ГруппаФормы' || info.kind === 'Кнопка') {
+    addTextProp(panel, {{jsString (t $.Lang "Фон (CSS-цвет)")}}, 'background', info.background || '');
   }
   if (info.kind === 'ГруппаФормы') {
-    addTextProp(panel, {{jsString (t $.Lang "Фон (CSS-цвет)")}}, 'background', info.background || '');
     addCheckProp(panel, {{jsString (t $.Lang "Равные колонки")}}, 'equal_columns', info.equalColumns);
     addSelectRaw(panel, 'Расположение реквизитов', info.orientation === 'horizontal' ? 'horizontal' : 'vertical', [
       { value: 'vertical', label: 'Вертикально' },
@@ -1263,6 +1264,7 @@ function applicableEvents(kind) {
     // Колонка ТЧ: обработчик срабатывает на правку ячейки именно этой колонки
     // (план 154, Р4). Обработчик самой ТЧ при этом не отключается.
     case 'Колонка': return ['ПриИзменении'];
+    case 'СтраницыФормы': return ['ПриСменеСтраницы'];
     default: return [];
   }
 }
@@ -1934,11 +1936,12 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 	case metadata.FormElementButton:
 		layout := metadata.FormElementLayoutCSS(el)
 		if layout == "" {
-			fmt.Fprintf(buf, `<button type="button" class="btn">%s</button>`, html.EscapeString(title))
+			fmt.Fprintf(buf, `<button type="button" class="btn"%s>%s</button>`,
+				styleAttr(metadata.FormElementBackgroundCSS(el)), html.EscapeString(title))
 			break
 		}
-		fmt.Fprintf(buf, `<div class="btn-layout"%s><button type="button" class="btn">%s</button></div>`,
-			styleAttr(layout), html.EscapeString(title))
+		fmt.Fprintf(buf, `<div class="btn-layout"%s><button type="button" class="btn"%s>%s</button></div>`,
+			styleAttr(layout), styleAttr(metadata.FormElementBackgroundCSS(el)), html.EscapeString(title))
 	case metadata.FormElementPicture:
 		// width/height у картинки — размер самой картинки (см. рантайм), поэтому
 		// shrink-to-fit обёртка получает выравнивание, а настоящий img — те же

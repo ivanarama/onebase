@@ -94,6 +94,11 @@ function setup(initialSearchUnused) {
             if (m) return m[1] === 'Направление' ? select : null;
             return null;
           },
+          // Как в разметке: у select и его зеркала один name, в порядке DOM.
+          querySelectorAll(sel) {
+            const m = /^\[name="([^"]+)"\]$/.exec(sel);
+            return m && m[1] === 'Направление' ? [select, mirror] : [];
+          },
         };
       },
       querySelector(sel) {

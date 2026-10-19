@@ -26,7 +26,12 @@ function runtime(cfg, controls = []) {
       const match = /^\[name="([^"]+)"\]$/.exec(selector);
       return match ? this.controls.find((el) => el.name === match[1]) || null : null;
     },
-    querySelectorAll() { return []; },
+    // applyValues обходит все копии реквизита с этим name (#1759).
+    querySelectorAll(selector) {
+      if (selector === '[name]') return this.controls;
+      const match = /^\[name="([^"]+)"\]$/.exec(selector);
+      return match ? this.controls.filter((el) => el.name === match[1]) : [];
+    },
   };
   const document = {
     getElementById(id) { return id === 'main-form' ? form : null; },
@@ -45,11 +50,15 @@ function runtime(cfg, controls = []) {
     function obManagedReady(fn) { fn(); }
     var DOC_ID = '';
     var formEditState = {revision: 0};
+    var controlEditRevisions = new WeakMap();
     function serviceField(name) { return name; }
     ${attrsInit}
     ${extract('managedRefParts')}
     ${extract('ensureRefOption')}
     ${extract('applyValues')}
+    ${extract('controlSubmittable')}
+    ${extract('captureFormControlState')}
+    ${extract('fileEventFormData')}
     ${extract('snapshotFormEvent')}
     return {ensureFormAttrControls, applyValues, snapshotFormEvent};
   `)(document, {}, cfg, FormData);

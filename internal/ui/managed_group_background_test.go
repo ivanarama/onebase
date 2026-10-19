@@ -64,3 +64,37 @@ func TestManagedField_BackgroundIgnored(t *testing.T) {
 		t.Errorf("фон негруппового элемента не должен применяться:\n%s", body)
 	}
 }
+
+// Кнопка с фоном: цвет в разметке самой кнопки — пользователь различает
+// действия формы цветом, как в 1С.
+func TestManagedButton_BackgroundRendered(t *testing.T) {
+	body := renderManagedFormBody(t, &metadata.FormElement{
+		Kind:       metadata.FormElementButton,
+		Name:       "КнСоздатьЗаявку",
+		Background: "#e4f6d4",
+	})
+	_, rest, ok := strings.Cut(body, `class="btn btn-secondary managed-btn"`)
+	if !ok {
+		t.Fatalf("кнопка не отрисована:\n%s", body)
+	}
+	tag, _, _ := strings.Cut(rest, ">")
+	if !strings.Contains(tag, "background:#e4f6d4") || !strings.Contains(tag, `data-ob-el="КнСоздатьЗаявку"`) {
+		t.Errorf("фон не попал в тег кнопки: %s", tag)
+	}
+}
+
+func TestManagedButton_BackgroundInvalidIgnored(t *testing.T) {
+	body := renderManagedFormBody(t, &metadata.FormElement{
+		Kind:       metadata.FormElementButton,
+		Name:       "КнСоздатьЗаявку",
+		Background: "red;position:fixed",
+	})
+	_, rest, ok := strings.Cut(body, `class="btn btn-secondary managed-btn"`)
+	if !ok {
+		t.Fatalf("кнопка не отрисована:\n%s", body)
+	}
+	tag, _, _ := strings.Cut(rest, ">")
+	if strings.Contains(tag, "style=") || strings.Contains(tag, "position") {
+		t.Errorf("невалидное значение фона кнопки попало в тег: %s", tag)
+	}
+}
