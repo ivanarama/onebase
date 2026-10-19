@@ -74,6 +74,8 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	params = s.applyListFormFilter(r, entity, params)
+
 	view := r.URL.Query().Get("view")
 	// tree проходит мимо нормализации: иерархический вид открывается по
 	// ?view=tree, но персистентно не сохраняется — его выбирают заново.
@@ -1344,6 +1346,9 @@ func (s *Server) treeChildrenJSON(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Ветка дерева — тот же список: постоянный отбор формы списка действует и
+	// здесь, иначе раскрытие папки показало бы записи, скрытые в её списке.
+	params = s.applyListFormFilter(r, ent, params)
 	rows, err := s.store.List(r.Context(), ent.Name, ent, params)
 	if err != nil {
 		s.serverError(w, r, err)

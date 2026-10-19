@@ -46,6 +46,140 @@ func (s *Server) applyRowFilter(w http.ResponseWriter, r *http.Request, entity *
 	return params, true
 }
 
+// applyListFormFilter добавляет к отбору списка постоянные условия формы
+// (ключ `filter` блока form:). Это правило ИНТЕРФЕЙСА, а не прав: записи,
+// не прошедшие условие, в этом списке не показываются, но остаются доступны
+// по ссылке, в отчётах и через API — иначе это был бы row_access.
+//
+// Условие с @ТекущийПользователь при неизвестном пользователе (фоновые
+// задания, анонимные пути) не применяется вовсе: подставить туда нечего,
+// а отбор «по никому» показал бы пустой список и выглядел бы поломкой.
+func (s *Server) applyListFormFilter(r *http.Request, entity *metadata.Entity, params storage.ListParams) storage.ListParams {
+	form := pickManagedForm(entity, "list")
+	if form == nil || len(form.ListFilter) == 0 {
+		return params
+	}
+	user := auth.UserFromContext(r.Context())
+	var extra []storage.Predicate
+	for _, cond := range form.ListFilter {
+		pred, ok := s.listFilterPredicate(entity, cond, user)
+		if !ok {
+			continue
+		}
+		extra = append(extra, pred)
+	}
+	if len(extra) == 0 {
+		return params
+	}
+	cond := storage.Predicate{All: extra}
+	// Папки иерархического справочника отбор не скрывает: по ним идёт
+	// навигация, и без папки без автора до своей записи внутри неё из списка
+	// и дерева было бы не дойти. Строковый доступ (row_access) на папки
+	// по-прежнему действует — он добавляется ниже через «И».
+	if entity.Hierarchical {
+		cond = storage.Predicate{Any: []storage.Predicate{
+			{Field: "is_folder", Op: "eq", Value: true},
+			cond,
+		}}
+	}
+	parts := []storage.Predicate{cond}
+	if params.RowFilter != nil {
+		parts = append(parts, *params.RowFilter)
+	}
+	combined := storage.Predicate{All: parts}
+	params.RowFilter = &combined
+	return params
+}
+
+// listFilterPredicate переводит одно условие формы списка в предикат хранилища.
+// Поле допускает одно разыменование: «Инициатор.УчётнаяЗапись» проверяет
+// реквизит связанной записи.
+// userHasAnyRole — есть ли у пользователя хотя бы одна из ролей (имя роли
+// без учёта регистра, как в остальных проверках ролей).
+func userHasAnyRole(user *auth.User, roles []string) bool {
+	if user == nil {
+		return false
+	}
+	for _, have := range user.Roles {
+		if have == nil {
+			continue
+		}
+		for _, want := range roles {
+			if strings.EqualFold(strings.TrimSpace(have.Name), strings.TrimSpace(want)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (s *Server) listFilterPredicate(entity *metadata.Entity, cond metadata.FormListCondition, user *auth.User) (storage.Predicate, bool) {
+	field := strings.TrimSpace(cond.Field)
+	if field == "" {
+		return storage.Predicate{}, false
+	}
+	if len(cond.Roles) > 0 && !userHasAnyRole(user, cond.Roles) {
+		return storage.Predicate{}, false
+	}
+	op := strings.TrimSpace(cond.Op)
+	if op == "" {
+		op = "eq"
+	}
+	value := any(cond.Value)
+	if cond.Value == metadata.ListFilterCurrentUser {
+		if user == nil || user.ID == "" {
+			return storage.Predicate{}, false
+		}
+		// Администратора правило «мои записи» не касается: он разбирает чужие
+		// документы, и список, показывающий ему только своё, мешал бы работе.
+		// Та же логика, что у маскирования ПДн.
+		if user.IsAdmin {
+			return storage.Predicate{}, false
+		}
+		value = user.ID
+	}
+
+	head, attr, nested := strings.Cut(field, ".")
+	refField, ok := entityFieldByName(entity, head)
+	// _users.id is the reference itself, including its NULL semantics. Do not
+	// resolve it through the configuration registry or expose private user fields.
+	if ok && strings.EqualFold(refField.RefEntity, metadata.SystemUsersEntity) && (!nested || strings.EqualFold(attr, "id")) {
+		return listFormFilterLeaf(entity, head, op, value), true
+	}
+	if !nested {
+		return listFormFilterLeaf(entity, head, op, value), true
+	}
+	if !ok || refField.RefEntity == "" {
+		return storage.Predicate{}, false
+	}
+	target := s.reg.GetEntity(refField.RefEntity)
+	if target == nil {
+		return storage.Predicate{}, false
+	}
+	leaf := listFormFilterLeaf(target, attr, op, value)
+	return storage.Predicate{
+		Field:        head,
+		RefEntity:    target,
+		RefPredicate: &leaf,
+	}, true
+}
+
+// Form filters accept empty/not_empty for any reference leaf. UUID columns
+// store NULL rather than empty strings on both dialects; the generic predicate
+// also compares with an empty string, which PostgreSQL rejects for UUID.
+// Normalize only form-filter leaves, preserving string and row-access semantics.
+func listFormFilterLeaf(entity *metadata.Entity, field, op string, value any) storage.Predicate {
+	if storage.PredicateFieldIsReference(entity, field) {
+		switch strings.ToLower(op) {
+		case "empty":
+			op, value = "eq", nil
+		case "not_empty":
+			op, value = "ne", nil
+		}
+	}
+	return storage.Predicate{Field: field, Op: op, Value: value}
+}
+
 func (s *Server) rowAllowed(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, op string, row map[string]any) bool {
 	dec, err := s.rowDecision(r.Context(), entity, op)
 	return s.renderRowDecision(w, r, dec, err, row)
