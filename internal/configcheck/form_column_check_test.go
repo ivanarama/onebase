@@ -143,3 +143,35 @@ func TestCheckFormTablePartColumns_КолонкаВнеТабличнойЧас�
 		t.Fatalf("колонка вне ТЧ принята: %+v", issues)
 	}
 }
+
+// title_from с опечаткой не ломает форму — колонка молча держит статичный
+// заголовок; поэтому check называет и неизвестный реквизит, и элемент не того
+// вида.
+func TestCheckFormTablePartColumns_TitleFrom(t *testing.T) {
+	withTitle := func(el *metadata.FormElement, source string) *metadata.FormElement {
+		el.TitleFrom = source
+		return el
+	}
+	run := func(table *metadata.FormElement, extra ...*metadata.FormElement) []Issue {
+		proj := tablePartColumnProject(table)
+		form := proj.Entities[0].Forms[0]
+		form.Attributes = []*metadata.FormAttribute{{Name: "ЗаголовокЦены", TypeRef: "string"}}
+		proj.Entities[0].Fields = []metadata.Field{{Name: "Подпись", Type: metadata.FieldTypeString}}
+		form.Elements = append(form.Elements, extra...)
+		return CheckFormTablePartColumns(proj)
+	}
+	for _, source := range []string{"ЗаголовокЦены", "Форма.ЗаголовокЦены", "заголовокцены", "Объект.Подпись"} {
+		if issues := run(tableWith(withTitle(columnElement("КолЦена", "Объект.Строки.Цена"), source))); len(issues) != 0 {
+			t.Fatalf("title_from: %q отклонён: %+v", source, issues)
+		}
+	}
+	issues := run(tableWith(withTitle(columnElement("КолЦена", "Объект.Строки.Цена"), "ЗаголовокСкидки")))
+	if len(issues) != 1 || !strings.Contains(issues[0].Message, "нет такого реквизита") {
+		t.Fatalf("неизвестный реквизит в title_from принят: %+v", issues)
+	}
+	field := &metadata.FormElement{Kind: metadata.FormElementField, Name: "ПолеПодпись", DataPath: "Объект.Подпись", TitleFrom: "ЗаголовокЦены"}
+	issues = run(tableWith(), field)
+	if len(issues) != 1 || !strings.Contains(issues[0].Message, "только у колонки") {
+		t.Fatalf("title_from вне колонки принят: %+v", issues)
+	}
+}

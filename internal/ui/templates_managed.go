@@ -303,7 +303,7 @@ const tplManagedForm = `
   {{/* Состав и порядок колонок задают дети kind: Колонка (план 154). Реквизит,
        не попавший в выбор, остаётся в плане скрытым: убрать его из полезной
        нагрузки значит затереть его в базе при следующей же записи. */}}
-  {{$tpPlan := managedTPColumnPlan $el $tpMeta.Fields}}
+  {{$tpPlan := managedTPColumnsTitled (managedTPColumnPlan $el $tpMeta.Fields) $ctx.Values}}
   {{$tpColEvents := managedTPColumnEventsJSON $tpPlan $tpReadOnly}}
   {{if $tpCmds}}
   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">

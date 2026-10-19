@@ -248,11 +248,16 @@ type FormElement struct {
 	// собственным ReadOnly.
 	ReadOnlyWhen string `yaml:"readonly_when,omitempty"`
 	HiddenWhen   string `yaml:"hidden_when,omitempty"`
-	UseGrid      bool   `yaml:"use_grid,omitempty"` // (устар.) SlickGrid теперь включён по умолчанию
-	NoGrid       bool   `yaml:"no_grid,omitempty"`  // отключить SlickGrid у ТЧ (вернуть простую таблицу)
-	AutoSum      bool   `yaml:"auto_sum,omitempty"` // ТЧ: авто Сумма = Количество × Цена по именам колонок — opt-in (#215.1)
-	Hint         string `yaml:"hint,omitempty"`     // всплывающая подсказка
-	Mask         string `yaml:"mask,omitempty"`     // регулярное выражение проверки (HTML pattern), НЕ шаблон ввода
+	// TitleFrom — у колонки табличной части (kind: Колонка): имя реквизита
+	// формы или шапки объекта, строковое значение которого заменяет заголовок
+	// колонки, пока оно не пусто. Обновляется и после событий формы — аналог
+	// Колонка.ТекстШапки 1С: шапка «1 пн … 31 ср» под выбранный месяц.
+	TitleFrom string `yaml:"title_from,omitempty"`
+	UseGrid   bool   `yaml:"use_grid,omitempty"` // (устар.) SlickGrid теперь включён по умолчанию
+	NoGrid    bool   `yaml:"no_grid,omitempty"`  // отключить SlickGrid у ТЧ (вернуть простую таблицу)
+	AutoSum   bool   `yaml:"auto_sum,omitempty"` // ТЧ: авто Сумма = Количество × Цена по именам колонок — opt-in (#215.1)
+	Hint      string `yaml:"hint,omitempty"`     // всплывающая подсказка
+	Mask      string `yaml:"mask,omitempty"`     // регулярное выражение проверки (HTML pattern), НЕ шаблон ввода
 	// InputMask — настоящая маска ввода: заполнители подставляются по мере
 	// набора, разделители ставятся сами (#763, п. 3). Отдельный ключ, потому что
 	// `mask` — это regexp, и переиспользовать его под шаблон значило бы сломать
@@ -957,4 +962,16 @@ func (el *FormElement) IsContainer() bool {
 		return true
 	}
 	return false
+}
+
+// FormTitleSourceName — имя реквизита из title_from колонки: префикс «Форма.»
+// или «Объект.» (как в data_path) отбрасывается.
+func FormTitleSourceName(source string) string {
+	name := strings.TrimSpace(source)
+	for _, prefix := range []string{"Форма.", "Объект.", "Form.", "Object."} {
+		if len(name) > len(prefix) && strings.EqualFold(name[:len(prefix)], prefix) {
+			return strings.TrimSpace(name[len(prefix):])
+		}
+	}
+	return name
 }

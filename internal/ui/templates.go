@@ -37,6 +37,10 @@ type managedTPColumnJSON struct {
 	// по-прежнему сериализуется в tp_json (план 154). Ровно наоборот к Virtual:
 	// та видима и не отправляется, эта отправляется и не видима.
 	Hidden bool `json:"hidden,omitempty"`
+	// TitleFrom — заголовок взят из реквизита формы (title_from) и потому
+	// приходит как текст: клиент экранирует его перед выводом в шапку
+	// SlickGrid, которая рисует подпись как HTML.
+	TitleFrom bool `json:"titleFrom,omitempty"`
 	// Index — позиция реквизита в метаданных табличной части. Клиент кладёт её
 	// в _tp_col_index: сервер сверяет индекс с порядком метаданных, а порядок
 	// показа с ним больше не совпадает. Для виртуальной колонки — -1.
@@ -1220,6 +1224,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 					Enum:        strings.HasPrefix(string(field.Type), "enum:"),
 					Hidden:      column.Hidden,
 					Index:       column.Index,
+					TitleFrom:   column.Element != nil && strings.TrimSpace(column.Element.TitleFrom) != "",
 				})
 			}
 			// Виртуальные колонки идут ПОСЛЕ реквизитов: порядок хранимых колонок
@@ -1245,6 +1250,11 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
 		"managedTPColumnPlan": managedTPColumnPlan,
+		// managedTPColumnsTitled — заголовки колонок из title_from по значениям
+		// формы при отрисовке; после событий их присылает columnTitles.
+		"managedTPColumnsTitled": func(plan []managedTPColumn, values any) []managedTPColumn {
+			return managedTPColumnsTitled(plan, values)
+		},
 		// managedTPFieldsAttr — значение data-tp-fields в порядке отрисовки
 		// ячеек: applyTableParts перестраивает строку по этому списку, и любое
 		// расхождение порядка развалило бы соответствие ячеек колонкам.
