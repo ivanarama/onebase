@@ -10,7 +10,7 @@ areas:
 - name: Заголовок
   rows:
   - cells:
-    - text: Заказ № {{Номер}} от {{Дата | date}}
+    - text: Заказ № {{Номер}}
       colspan: 5
       bold: true
       fontSize: 16
@@ -72,7 +72,7 @@ areas:
       colspan: 5
       bold: true
   - cells:
-    - text: Это подтверждение состава заказа. Оплата и фискализация в примере не реализованы.
+    - text: Подтверждение состава заказа.
       colspan: 5
 binding:
   sequence:

@@ -99,7 +99,7 @@ func newCMSSeedFixture(t *testing.T) (context.Context, *project.Project, *storag
 		t.Fatalf("ConnectSQLite: %v", err)
 	}
 	t.Cleanup(func() { db.Close() })
-	if err := db.Migrate(ctx, proj.Entities); err != nil {
+	if err := migrateCMSFixture(ctx, db, proj.Entities); err != nil {
 		t.Fatalf("миграция: %v", err)
 	}
 	if err := db.EnsureAuditSchema(ctx); err != nil {

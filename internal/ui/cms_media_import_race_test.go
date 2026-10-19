@@ -277,7 +277,7 @@ func TestCMSMediaImport_PostClaimFailureRollsBackWithoutPolling(t *testing.T) {
 		t.Fatalf("connect SQLite: %v", err)
 	}
 	t.Cleanup(db.Close)
-	if err := db.Migrate(ctx, proj.Entities); err != nil {
+	if err := migrateCMSFixture(ctx, db, proj.Entities); err != nil {
 		t.Fatalf("migrate CMS: %v", err)
 	}
 	ensureCMSMediaIntegrationSchema(t, ctx, db)

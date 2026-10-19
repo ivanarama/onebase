@@ -34,7 +34,7 @@ func TestCMSCartCookieIsScopedToShopService(t *testing.T) {
 	if err := db.EnsureServiceSchema(ctx); err != nil {
 		t.Fatalf("служебная схема: %v", err)
 	}
-	if err := db.Migrate(ctx, proj.Entities); err != nil {
+	if err := migrateCMSFixture(ctx, db, proj.Entities); err != nil {
 		t.Fatalf("схема CMS: %v", err)
 	}
 	if err := db.SaveNetworkEnabled(ctx, true); err != nil {

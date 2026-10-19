@@ -238,7 +238,6 @@ elements:
       Нажатие: ПринятьЗаказ
     hidden_when: Статус <> "Новый"
     primary: true
-    background: '#dbeafe'
   - kind: Кнопка
     name: Завершить
     title:
@@ -254,6 +253,7 @@ elements:
     events:
       Нажатие: СпроситьОтмену
       Ответ: ОтветНаОтмену
+    background: '#fee2e2'
   orientation: horizontal
 - kind: ГруппаФормы
   name: ИсторияПокупателя

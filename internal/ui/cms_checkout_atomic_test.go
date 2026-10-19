@@ -33,7 +33,7 @@ type cmsCheckoutFixture struct {
 func newCMSCheckoutFixture(t *testing.T, proj *project.Project, db *storage.DB) *cmsCheckoutFixture {
 	t.Helper()
 	ctx := context.Background()
-	if err := db.Migrate(ctx, proj.Entities); err != nil {
+	if err := migrateCMSFixture(ctx, db, proj.Entities); err != nil {
 		t.Fatalf("migrate CMS: %v", err)
 	}
 	if err := db.SaveNetworkEnabled(ctx, true); err != nil {

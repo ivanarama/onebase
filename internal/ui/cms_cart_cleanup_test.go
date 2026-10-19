@@ -54,7 +54,7 @@ func TestCMSCartCleanupProcessor(t *testing.T) {
 
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		ctx := context.Background()
-		if err := db.Migrate(ctx, proj.Entities); err != nil {
+		if err := migrateCMSFixture(ctx, db, proj.Entities); err != nil {
 			t.Fatalf("миграция CMS: %v", err)
 		}
 
@@ -290,7 +290,7 @@ func TestCMSCartReadThenDeleteKeepsConcurrentCheckout(t *testing.T) {
 
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		ctx := context.Background()
-		if err := db.Migrate(ctx, proj.Entities); err != nil {
+		if err := migrateCMSFixture(ctx, db, proj.Entities); err != nil {
 			t.Fatal(err)
 		}
 		id := uuid.New()
@@ -380,7 +380,7 @@ func TestCMSCartLateDeleteConflict(t *testing.T) {
 
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		ctx := context.Background()
-		if err := db.Migrate(ctx, proj.Entities); err != nil {
+		if err := migrateCMSFixture(ctx, db, proj.Entities); err != nil {
 			t.Fatal(err)
 		}
 		for _, borrowed := range []bool{false, true} {

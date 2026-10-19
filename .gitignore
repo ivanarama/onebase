@@ -92,6 +92,7 @@ docs/*
 # Скриншоты для README. Каталог, а не маска — по той же причине, что выше:
 # правило `!docs/images/*.png` не сработает, git в исключённый каталог не зайдёт.
 !docs/images/
+!docs/articles/
 
 # Генерируется `onebase langref`; сверяется тестом TestDSLReferenceUpToDate.
 !docs/dsl-reference.md
