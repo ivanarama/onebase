@@ -494,6 +494,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         }
       });
     });
+    if (typeof refreshPictureBindings === 'function') refreshPictureBindings(form, values);
     // A form handler may change a choice_filter source without dispatching a
     // native change event. Re-scan fingerprints after the whole response has
     // been applied, so dependants see the final source and selected values.
@@ -502,6 +503,49 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     }
   }
   // END onebase-ro-apply-values
+  // BEGIN onebase-picture-bind
+  // refreshPictureBindings — ПолеКартинки с data_path: идентификатор вложения в
+  // скрытом поле → картинка и ссылка «открыть в полном размере». Подставляется
+  // только UUID: чужой адрес или javascript: в src/href не попадает.
+  function refreshPictureBindings(form, values){
+    if (!form) return;
+    var esc = function(s){ return (window.CSS && CSS.escape) ? CSS.escape(s) : s; };
+    form.querySelectorAll('input[data-ob-picture-for]').forEach(function(inp){
+      var name = inp.getAttribute('data-ob-picture-for');
+      // Rendered editors keep their applied value (including concurrent typing).
+      // If a hidden container omitted the editor from the DOM, this preview
+      // becomes the submitting control. A second preview finds that control
+      // by name, so only one carrier is created for the field.
+      var field = inp.getAttribute('data-ob-picture-field');
+      if (field && !inp.getAttribute('name')) {
+        var editor = form.querySelector('[name="' + esc(field) + '"]');
+        if (editor) {
+          inp.value = editor.value;
+        } else {
+          inp.setAttribute('name', field);
+          if (values && Object.prototype.hasOwnProperty.call(values, field)) {
+            inp.value = values[field] == null ? '' : String(values[field]);
+          }
+        }
+      }
+      var id = String(inp.value || '').trim().toLowerCase();
+      var ok = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(id) &&
+        id !== '00000000-0000-0000-0000-000000000000';
+      var url = ok ? '/ui/attachments/' + id + '/download' : '';
+      var link = form.querySelector('[data-ob-picture-link="' + esc(name) + '"]');
+      var empty = form.querySelector('[data-ob-picture-empty="' + esc(name) + '"]');
+      if (link) {
+        if (ok) {
+          link.setAttribute('href', url);
+          var img = link.querySelector('img');
+          if (img && img.getAttribute('src') !== url) img.setAttribute('src', url);
+        }
+        link.hidden = !ok;
+      }
+      if (empty) empty.hidden = ok;
+    });
+  }
+  // END onebase-picture-bind
   // applyChoiceList — заполняет <select> элемента ПолеСписка динамическим списком
   // значений из ответа НачалоВыбора (choiceList). Текущее значение сохраняется,
   // если присутствует в новом списке.

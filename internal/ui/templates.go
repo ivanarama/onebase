@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
@@ -662,6 +663,62 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// применяет к ним тот же диапазон 1…4000, что общий layout-контракт.
 		"elPictureSize": func(size int) int {
 			return metadata.NormalizeFormLayoutSize(size)
+		},
+		// pictureAttachmentID — значение реквизита ПолеКартинки с data_path:
+		// идентификатор вложения (UUID) или "". Любое другое значение (адрес,
+		// путь, javascript:) в src/href не попадает — картинка берётся только
+		// из вложений, с их проверкой права чтения владельца.
+		"pictureAttachmentID": func(v any) string {
+			if v == nil {
+				return ""
+			}
+			id, err := uuid.Parse(strings.TrimSpace(fmt.Sprint(v)))
+			if err != nil || id == uuid.Nil {
+				return ""
+			}
+			return id.String()
+		},
+		// pictureRawValue — значение реквизита ПолеКартинки как есть (для
+		// скрытого поля состояния): форма отправляет его неизменным, даже если
+		// это не идентификатор вложения, — иначе сохранение без правки
+		// стирало бы legacy-значение (#2177).
+		"pictureRawValue": func(v any) string {
+			if v == nil {
+				return ""
+			}
+			return fmt.Sprint(v)
+		},
+		// formFieldHasEditor — на форме есть элемент, отправляющий реквизит
+		// field (поле ввода, флажок, список…). Тогда скрытое поле ПолеКартинки
+		// своё значение не отправляет: два контрола одного name дали бы
+		// сохранению старое значение из скрытого поля первым (#2177).
+		"formFieldHasEditor": func(form *metadata.FormModule, field string) bool {
+			if form == nil {
+				return false
+			}
+			editor := map[metadata.FormElementType]bool{
+				metadata.FormElementField: true, metadata.FormElementCheckbox: true,
+				metadata.FormElementSwitch: true, metadata.FormElementInputList: true,
+				metadata.FormElementDatePicker: true, metadata.FormElementFormField: true,
+				metadata.FormElementCodeField: true,
+			}
+			var walk func([]*metadata.FormElement) bool
+			walk = func(elements []*metadata.FormElement) bool {
+				for _, el := range elements {
+					if el == nil {
+						continue
+					}
+					if editor[el.Kind] && (strings.EqualFold(dpFieldName(el.DataPath), field) ||
+						(el.DataPath == "" && strings.EqualFold(el.FieldName, field))) {
+						return true
+					}
+					if walk(el.Children) {
+						return true
+					}
+				}
+				return false
+			}
+			return walk(form.Elements)
 		},
 		// tpGridCSS — стиль контейнера SlickGrid: высота по числу строк либо по
 		// ключу height, ширина и выравнивание — по общему контракту раскладки.
