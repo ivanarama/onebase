@@ -276,6 +276,7 @@ func CreateInfoRegisterSQL(d Dialect, ir *metadata.InfoRegister) string {
 	// могут быть и не от документа (миграция, seed, ручной ввод).
 	cols = append(cols, "recorder "+d.TypeUUID(), "recorder_type "+d.TypeText())
 	cols = append(cols, "updated_at "+d.TypeTimestamp())
+	cols = append(cols, InfoRegEditRevisionColumn+" "+d.TypeText())
 	if len(pkParts) > 0 {
 		cols = append(cols, "PRIMARY KEY ("+strings.Join(pkParts, ", ")+")")
 	}

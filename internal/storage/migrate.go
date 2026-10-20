@@ -143,6 +143,9 @@ func (db *DB) MigrateInfoRegisters(ctx context.Context, regs []*metadata.InfoReg
 }
 
 func (db *DB) migrateInfoRegister(ctx context.Context, ir *metadata.InfoRegister) error {
+	if err := db.validateInfoRegEditRevisionSchema(ctx, ir); err != nil {
+		return err
+	}
 	d := db.dialect
 	if _, err := db.Exec(ctx, CreateInfoRegisterSQL(d, ir)); err != nil {
 		return fmt.Errorf("migrate info register %s: %w", ir.Name, err)
@@ -188,6 +191,14 @@ func (db *DB) migrateInfoRegister(ctx context.Context, ir *metadata.InfoRegister
 		if err := db.AddColumnIfMissing(ctx, table, metadata.ColumnName(f), fieldType(d, f)); err != nil {
 			return fmt.Errorf("migrate info register %s.%s: %w", ir.Name, f.Name, err)
 		}
+	}
+	if err := db.AddColumnIfMissing(ctx, table, InfoRegEditRevisionColumn, d.TypeText()); err != nil {
+		return fmt.Errorf("migrate info register %s edit revision: %w", ir.Name, err)
+	}
+	// Backfill before a SQLite PK rebuild so its intersection copy preserves
+	// every revision. The enclosing scope rolls back DDL and backfill together.
+	if err := db.fillInfoRegEditRevisions(ctx, ir, false); err != nil {
+		return err
 	}
 	// фактический PK таблицы может не
 	// совпадать с pkCols(ir) — наследие старого CREATE до того как
