@@ -31,6 +31,7 @@ var (
 	repoRE         = regexp.MustCompile(`(?i)^[a-z0-9_.-]+/[a-z0-9_.-]+$`)
 	rawHTMLRE      = regexp.MustCompile(`(?i)^<(pre|script|style|textarea|code)(?:\s|/?>|$)`)
 	rawHTMLCloseRE = regexp.MustCompile(`(?i)^</(pre|script|style|textarea|code)[ \t]*>`)
+	htmlTagRE      = regexp.MustCompile(`(?i)^</?[a-z][a-z0-9-]*(?:[ \t]|/?>|$)`)
 )
 
 type event struct {
@@ -277,6 +278,12 @@ func declarations(body, repo string) map[string]bool {
 					i += len(m[0]) - 1
 					continue
 				}
+				if m := htmlTagRE.FindString(line[i:]); m != "" {
+					inTag = !strings.HasSuffix(m, ">")
+					hadMarkup = true
+					i += len(m) - 1
+					continue
+				}
 			}
 			if line[i] != '`' || inHTML {
 				continue
@@ -290,6 +297,12 @@ func declarations(body, repo string) map[string]bool {
 				spanLen = 0
 			}
 			i += n - 1
+		}
+		// An ordinary tag split across lines can hide later text in a quoted
+		// attribute even after a blank line ends the Markdown HTML block.
+		// Without parsing arbitrary HTML, keep only earlier declarations.
+		if inTag && len(rawTags) == 0 {
+			return result
 		}
 		indent := 0
 	indentation:
