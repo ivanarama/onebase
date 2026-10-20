@@ -112,6 +112,7 @@ func TestSaveFields_OwnerKeepsStandardID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("store.Get: %v", err)
 	}
+	currentOwner := "Контрагент"
 	submit := func(changeOwner string) {
 		t.Helper()
 		data := h.loadCfgData(context.Background(), b, "tree")
@@ -122,6 +123,9 @@ func TestSaveFields_OwnerKeepsStandardID(t *testing.T) {
 		if !formHasFieldNamed(form, metadata.StandardOwnerField) {
 			t.Fatalf("форма потеряла поле Владелец: %v", form)
 		}
+		if got := form.Get("owner"); got != currentOwner {
+			t.Fatalf("владелец потерян в форме до изменений: got=%q want=%q", got, currentOwner)
+		}
 		form.Set("owner", changeOwner)
 		rec := postCfg(t, "test", "/bases/test/configurator/fields", form, h.configuratorSaveFields)
 		if ok, errText := cfgResponse(t, rec); !ok {
@@ -131,6 +135,7 @@ func TestSaveFields_OwnerKeepsStandardID(t *testing.T) {
 	submit("Контрагент")
 	assertStandardFieldSaved(t, p, metadata.KindCatalog, metadata.StandardOwnerField, metadata.StandardOwnerFieldID)
 	submit("Организация")
+	currentOwner = "Организация"
 	e, err := metadata.LoadFile(p, metadata.KindCatalog)
 	if err != nil {
 		t.Fatalf("LoadFile после смены владельца: %v", err)

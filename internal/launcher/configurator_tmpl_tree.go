@@ -296,7 +296,7 @@ const cfgTabTree = `{{define "tab-tree"}}
   <div class="cfg-panel" id="e-{{.Name}}">
     <div class="panel-title">📄 {{.Name}}</div>
     <div class="panel-kind">{{t $.Lang "Справочник"}}</div>
-    {{template "entity-detail" (dict "Entity" . "BaseID" $.Base.ID "ConfigSource" $.Base.ConfigSource "ModuleSaved" $.ModuleSaved "ModuleSavedEntity" $.ModuleSavedEntity "AllEntityNames" $.AllEntityNames "AllEnumNames" $.AllEnumNames "FieldsSaved" $.FieldsSaved "FieldsSavedEntity" $.FieldsSavedEntity "ManagedForms" $.ManagedForms "Lang" $.Lang "AvailableLangs" $.AvailableLangs)}}
+    {{template "entity-detail" (dict "Entity" . "Catalogs" $.Catalogs "BaseID" $.Base.ID "ConfigSource" $.Base.ConfigSource "ModuleSaved" $.ModuleSaved "ModuleSavedEntity" $.ModuleSavedEntity "AllEntityNames" $.AllEntityNames "AllEnumNames" $.AllEnumNames "FieldsSaved" $.FieldsSaved "FieldsSavedEntity" $.FieldsSavedEntity "ManagedForms" $.ManagedForms "Lang" $.Lang "AvailableLangs" $.AvailableLangs)}}
   </div>
   {{end}}
 
@@ -308,7 +308,7 @@ const cfgTabTree = `{{define "tab-tree"}}
       {{if .Posting}}<span style="background:#dbeafe;color:#1d4ed8;font-size:11px;font-weight:600;padding:2px 8px;border-radius:10px">{{t $.Lang "проводится"}}</span>{{end}}
     </div>
     <div class="panel-kind">{{t $.Lang "Документ"}}</div>
-    {{template "entity-detail" (dict "Entity" . "BaseID" $.Base.ID "ConfigSource" $.Base.ConfigSource "ModuleSaved" $.ModuleSaved "ModuleSavedEntity" $.ModuleSavedEntity "AllEntityNames" $.AllEntityNames "AllEnumNames" $.AllEnumNames "FieldsSaved" $.FieldsSaved "FieldsSavedEntity" $.FieldsSavedEntity "ManagedForms" $.ManagedForms "Lang" $.Lang "AvailableLangs" $.AvailableLangs)}}
+    {{template "entity-detail" (dict "Entity" . "Catalogs" $.Catalogs "BaseID" $.Base.ID "ConfigSource" $.Base.ConfigSource "ModuleSaved" $.ModuleSaved "ModuleSavedEntity" $.ModuleSavedEntity "AllEntityNames" $.AllEntityNames "AllEnumNames" $.AllEnumNames "FieldsSaved" $.FieldsSaved "FieldsSavedEntity" $.FieldsSavedEntity "ManagedForms" $.ManagedForms "Lang" $.Lang "AvailableLangs" $.AvailableLangs)}}
   </div>
   {{end}}
 
