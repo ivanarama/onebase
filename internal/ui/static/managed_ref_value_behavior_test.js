@@ -39,6 +39,12 @@ function runtime(controls) {
       const match = selector.match(/^\[name="([^"]+)"\]$/);
       return match ? (controls[match[1]] || null) : null;
     },
+    // applyValues обновляет все контролы реквизита (#1759); здесь у каждого
+    // реквизита ровно один.
+    querySelectorAll(selector) {
+      const match = selector.match(/^\[name="([^"]+)"\]$/);
+      return match && controls[match[1]] ? [controls[match[1]]] : [];
+    },
   };
   const document = {
     getElementById(id) { return id === 'main-form' ? form : null; },

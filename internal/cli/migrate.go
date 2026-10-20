@@ -40,6 +40,11 @@ func runMigrate(cmd *cobra.Command, _ []string) error {
 	dir, _ := cmd.Flags().GetString("project")
 	sqlitePath, _ := cmd.Flags().GetString("sqlite")
 	configSource, _ := cmd.Flags().GetString("config-source")
+	dryRun, _ := cmd.Flags().GetBool("dry-run")
+	open := openCLIStorage
+	if dryRun {
+		open = openCLIStorageMigrationPlan
+	}
 
 	ctx := context.Background()
 	var (
@@ -47,9 +52,9 @@ func runMigrate(cmd *cobra.Command, _ []string) error {
 		err error
 	)
 	if sqlitePath != "" {
-		db, err = openCLIStorage(ctx, "sqlite", sqlitePath, "")
+		db, err = open(ctx, "sqlite", sqlitePath, "")
 	} else {
-		db, err = openCLIStorage(ctx, "postgres", "", dsnFromFlags(cmd))
+		db, err = open(ctx, "postgres", "", dsnFromFlags(cmd))
 	}
 	if err != nil {
 		return err
@@ -59,8 +64,10 @@ func runMigrate(cmd *cobra.Command, _ []string) error {
 	var proj *project.Project
 	if configSource == "database" {
 		cfgRepo := configdb.New(db)
-		if err := cfgRepo.EnsureSchema(ctx); err != nil {
-			return fmt.Errorf("configdb schema: %w", err)
+		if !dryRun {
+			if err := cfgRepo.EnsureSchema(ctx); err != nil {
+				return fmt.Errorf("configdb schema: %w", err)
+			}
 		}
 		proj, err = project.LoadFromDB(ctx, cfgRepo)
 	} else {
@@ -71,7 +78,6 @@ func runMigrate(cmd *cobra.Command, _ []string) error {
 	}
 	defer proj.Close()
 
-	dryRun, _ := cmd.Flags().GetBool("dry-run")
 	if dryRun {
 		return printMigrationPlan(ctx, db, proj)
 	}
@@ -110,26 +116,49 @@ func printMigrationPlan(ctx context.Context, db *storage.DB, proj *project.Proje
 	if err != nil {
 		return err
 	}
-	if len(plan) == 0 {
-		outln("Реструктуризация не требуется: схема существующих таблиц соответствует метаданным.")
-		outln("(Новые таблицы и колонки создаст обычный `onebase migrate` — в плане их нет.)")
-		return nil
+	refs := storage.UsersReferences(proj.Entities, proj.Registers, proj.InfoRegisters, proj.AccountRegisters)
+	usersPlan, err := db.PlanUsersReferenceConstraints(ctx, refs)
+	if err != nil {
+		return err
 	}
-	outf("План реструктуризации (%d изменен.):\n", len(plan))
 	destructive := 0
-	for _, c := range plan {
-		outln("  " + c.String())
-		if c.Note != "" {
-			outln("      " + c.Note)
+	if len(plan) == 0 {
+		outln("Реструктуризация не требуется для полей с устойчивым id: план изменений полей пуст.")
+		outln("(Новые таблицы и колонки создаст обычный `onebase migrate` — в плане их нет.)")
+	} else {
+		outf("План реструктуризации (%d изменен.):\n", len(plan))
+		for _, c := range plan {
+			outln("  " + c.String())
+			if c.Note != "" {
+				outln("      " + c.Note)
+			}
+			if c.Destructive() {
+				destructive++
+			}
 		}
-		if c.Destructive() {
-			destructive++
-		}
+		outln("")
 	}
-	outln("")
+	var broken int64
+	if len(usersPlan) > 0 {
+		outln("Ссылки на учётные записи (_users), read-only preflight:")
+		for _, p := range usersPlan {
+			outln("  " + p.String())
+			if db.IsSQLite() && (p.State == "missing-fk" || p.State == "incompatible-fk") {
+				outln("      Установка FK на существующую колонку потребует перестройки SQLite.")
+			}
+			if p.BrokenCount > 0 {
+				outf("      Битых ссылок: %d; идентификаторы исходных записей (до 5): %q\n", p.BrokenCount, p.RecordIDs)
+				broken += p.BrokenCount
+			}
+		}
+		outln("Этот срез только проверяет ссылки; отсутствующие FK обычный migrate пока не довносит.")
+	}
 	outln("Это пробный прогон — база не изменена.")
 	if destructive > 0 {
 		outf("Изменений с потерей данных: %d — они выполнятся только с --allow-destructive.\n", destructive)
+	}
+	if broken > 0 {
+		return fmt.Errorf("preflight _users: битых ссылок: %d; исправьте данные вручную и повторите dry-run; автоматическая очистка запрещена", broken)
 	}
 	return nil
 }

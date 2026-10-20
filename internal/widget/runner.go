@@ -227,6 +227,23 @@ func (r *Runner) RunWithOptions(ctx context.Context, w *metadata.Widget, opts Ru
 	for k, v := range opts.Params {
 		params[k] = v
 	}
+	// Служебные параметры «кто смотрит»: без них список-виджет не может
+	// показать «мои» записи — статический запрос не знает о пользователе, а
+	// отбор в адресе страницы у каждого свой. Конфигурация связывает учётку
+	// со своим справочником сотрудников сама, например
+	//   ГДЕ Исполнитель.УчётнаяЗапись = &ТекущийПользователь
+	// Заданный в виджете параметр с тем же именем не перекрываем: явное
+	// значение автора конфигурации важнее умолчания.
+	if r.User != nil {
+		if _, ok := params["ТекущийПользователь"]; !ok {
+			params["ТекущийПользователь"] = r.User.ID
+		}
+	}
+	if r.CurrentUser != "" {
+		if _, ok := params["ТекущийЛогин"]; !ok {
+			params["ТекущийЛогин"] = r.CurrentUser
+		}
+	}
 
 	if r.Cache != nil && w.Type != metadata.WidgetTypeActions {
 		security, cacheable := securityFingerprint(r.User)
@@ -605,7 +622,7 @@ func (r *Runner) navigationIDs(w *metadata.Widget, cols []string, rows []map[str
 
 // runQuery is the shared back-end for kpi/list/chart widgets.
 func (r *Runner) runQuery(ctx context.Context, w *metadata.Widget, params map[string]any) ([]map[string]any, []string, *query.Result, error) {
-	rowFilters, err := access.QueryRowFiltersWithLookup(r.User, r.Reg.Entities(), r.Reg.Registers(), r.Reg.InfoRegisters(), r.Reg.AccountRegisters(), r.Reg)
+	rowFilters, err := access.QueryRowFiltersWithContext(ctx, r.User, r.Reg.Entities(), r.Reg.Registers(), r.Reg.InfoRegisters(), r.Reg.AccountRegisters(), access.RuntimeContext(r.Reg, r.Store))
 	if err != nil {
 		return nil, nil, nil, err
 	}
@@ -680,7 +697,7 @@ func (r *Runner) canWrite(kind, name string) bool {
 }
 
 func (r *Runner) rowAllowedID(ctx context.Context, entity *metadata.Entity, op string, id uuid.UUID) bool {
-	dec, err := access.DecideWithLookup(r.User, string(entity.Kind), entity.Name, op, entity, r.Reg)
+	dec, err := access.DecideWithContext(ctx, r.User, string(entity.Kind), entity.Name, op, entity, access.RuntimeContext(r.Reg, r.Store))
 	if err != nil || !dec.Allowed {
 		return false
 	}

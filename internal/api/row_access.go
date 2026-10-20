@@ -21,7 +21,7 @@ func (h *handler) rowDecision(ctx context.Context, entity *metadata.Entity, op s
 	if entity == nil {
 		return access.Decision{}, nil
 	}
-	return access.DecideWithLookup(auth.UserFromContext(ctx), string(entity.Kind), entity.Name, op, entity, h.reg)
+	return access.DecideWithContext(ctx, auth.UserFromContext(ctx), string(entity.Kind), entity.Name, op, entity, access.RuntimeContext(h.reg, h.store))
 }
 
 func (h *handler) applyRowFilter(ctx context.Context, entity *metadata.Entity, op string, params storage.ListParams) (storage.ListParams, error) {
@@ -87,13 +87,13 @@ func (h *handler) rowAllowedUpdate(ctx context.Context, entity *metadata.Entity,
 }
 
 func (h *handler) compileQueryWithRowAccess(ctx context.Context, text string, params map[string]any) (query.Result, error) {
-	rowFilters, err := access.QueryRowFiltersWithLookup(
+	rowFilters, err := access.QueryRowFiltersWithContext(ctx,
 		auth.UserFromContext(ctx),
 		h.reg.Entities(),
 		h.reg.Registers(),
 		h.reg.InfoRegisters(),
 		h.reg.AccountRegisters(),
-		h.reg,
+		access.RuntimeContext(h.reg, h.store),
 	)
 	if err != nil {
 		return query.Result{}, err

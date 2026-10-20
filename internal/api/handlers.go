@@ -29,11 +29,12 @@ const (
 )
 
 type handler struct {
-	reg       *runtime.Registry
-	store     *storage.DB
-	interp    *interpreter.Interpreter
-	entitySvc *entityservice.Service // разделяем с ui — см. ui.Server.EntitySvc()
-	hooks     *webhook.Dispatcher    // исходящие веб-хуки (план 29); nil-safe
+	printForms PrintFormRenderer
+	reg        *runtime.Registry
+	store      *storage.DB
+	interp     *interpreter.Interpreter
+	entitySvc  *entityservice.Service // разделяем с ui — см. ui.Server.EntitySvc()
+	hooks      *webhook.Dispatcher    // исходящие веб-хуки (план 29); nil-safe
 	// Настройки вложений (план 55) — те же, что у UI-пути (ui.Config): нужны для
 	// REST v2 attachments (issue #315). maxFileSizeBytes == 0 → дефолт 50 МБ;
 	// allowedAttachmentTypes пусто → без ограничений по расширению.

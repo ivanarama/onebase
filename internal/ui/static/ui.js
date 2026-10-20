@@ -659,16 +659,34 @@ window.obRefreshWidgetCard = function (card) {
    записи. Клик и Enter. Клик не срабатывает при выделении текста и на
    ссылках/кнопках внутри ячеек; Enter работает, только когда фокус на самой
    строке. Делегирование на document: partial-refresh подменяет тело карточки,
-   обработчик его переживает. */
+   обработчик его переживает.
+   В режиме вкладок карточка открывается новой вкладкой оболочки: Главная с
+   виджетами — верхний документ /ui/app, и переход в том же окне уводил из
+   оболочки вместе со всеми открытыми вкладками. */
 (function () {
   if (window.__obWidgetRowNavInit) return;
   window.__obWidgetRowNavInit = true;
   function rowOf(target) {
     return target && target.closest ? target.closest('[data-ob-row-url]') : null;
   }
+  // Подпись вкладки до загрузки карточки — первая ячейка строки; карточка
+  // затем сама сообщает оболочке своё представление (obSetTitle).
+  function rowTitle(el) {
+    var cell = el.querySelector ? el.querySelector('td') : null;
+    var text = cell ? String(cell.textContent || '').trim() : '';
+    return text || 'Форма';
+  }
   function go(el) {
     var url = el.getAttribute('data-ob-row-url');
-    if (url) window.location.assign(url);
+    if (!url) return;
+    try {
+      // Виджет в самой оболочке (Главная /ui/app).
+      if (typeof window.obOpenTab === 'function') { window.obOpenTab(url, rowTitle(el)); return; }
+      // Виджет на странице внутри вкладки оболочки.
+      if (typeof window.obOpenInShell === 'function' && window.obOpenInShell(url, rowTitle(el))) return;
+    } catch (e) {}
+    // Без оболочки (режим страниц) — переход в том же окне, как раньше.
+    window.location.assign(url);
   }
   document.addEventListener('click', function (ev) {
     var el = rowOf(ev.target);
@@ -3212,7 +3230,7 @@ function obSplitDataList(value) {
 
 function obClosestSelect(btn) {
   var parent = btn && btn.parentElement;
-  return parent ? parent.querySelector('select') : null;
+  return parent ? parent.querySelector('select, input[data-ob-ref-combobox]') : null;
 }
 
 function obSendPopupCancel() {
@@ -3312,7 +3330,7 @@ function obInitFormDelegates() {
       var tpName = addTp.getAttribute('data-tp-name') || '';
       var tbody = document.getElementById('tp-body-' + tpName);
       addTpRow(tpName, obSplitDataList(addTp.getAttribute('data-tp-fields')), obSplitDataList(addTp.getAttribute('data-tp-num-fields')), tbody ? tbody.rows.length : 0,
-        null, null, obSplitDataList(addTp.getAttribute('data-tp-bool-fields')));
+        null, null, obSplitDataList(addTp.getAttribute('data-tp-bool-fields')), obSplitDataList(addTp.getAttribute('data-tp-date-fields')));
       var table = tbody && tbody.closest ? tbody.closest('table[data-ob-dom-table]') : null;
       if (table) obDOMNotifyMutation(table, 'add');
       return;
@@ -3380,7 +3398,7 @@ function obTPEnumOrder() {
 
 // boolFields — список булевых колонок: тип колонки в разметке автоформы больше
 // нигде не виден, а флажок вместо текстового поля нужен и в добавленной строке.
-function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, boolFields) {
+function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, boolFields, dateFields) {
   var tbody = tbodyOverride || document.getElementById('tp-body-' + tpName);
   var table = tbody && tbody.closest ? tbody.closest('table[data-ob-dom-table]') : null;
   var domWritable = !!(table && !obDOMTableReadOnly(table));
@@ -3390,6 +3408,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
   var enumLabels = (obTPEnumLabels()[tpName]) || {};
   var enumOrder = (obTPEnumOrder()[tpName]) || {};
   var bools = Array.isArray(boolFields) ? boolFields : [];
+  var dates = Array.isArray(dateFields) ? dateFields : [];
   if (tbody && tbody.getAttribute('data-tp-cmd') === '1') {
     var tdSel = document.createElement('td');
     tdSel.style.textAlign = 'center';
@@ -3473,6 +3492,10 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
         inp.type = 'number';
         inp.setAttribute('data-tp-num', fn);
         inp.setAttribute('data-ob-tp-recalc', '');
+      } else if (dates.indexOf(fn) !== -1) {
+        // Новая строка простой таблицы — то же поле даты, что у записанных.
+        inp.type = 'datetime-local';
+        inp.step = '1';
       } else {
         inp.type = 'text';
       }
@@ -3570,8 +3593,20 @@ var obPickerSearch = {
   pending: null,   // запрос, набранный пока предыдущий в пути (строка) либо null
   picked: {},      // выбранные строки по id — переживают смену выдачи
   order: [],       // порядок выбора: «Перенести» отдаёт строки в нём
-  filters: Object.create(null) // значения отборов (Конфиг.Отборы) — переживают смену выдачи
+  filters: Object.create(null), // значения отборов (Конфиг.Отборы) — переживают смену выдачи
+  fields: Object.create(null),  // значения полей шапки (Конфиг.ПоляШапки) — уходят на сервер
+  appliedFields: null // поля шапки, которым соответствует показанная выдача
 };
+
+// obPickerFieldsParam — значения полей шапки строкой для _pick_fields; пусто —
+// полей шапки у окна нет.
+function obPickerFieldsParam() {
+  var keys = Object.keys(obPickerSearch.fields);
+  if (!keys.length) return '';
+  var out = {};
+  keys.forEach(function (k) { out[k] = obPickerSearch.fields[k]; });
+  return JSON.stringify(out);
+}
 
 // obPickerForget — диалог закрыт. Гасим таймер, забываем набранное и выбор.
 // Меняем поколение: ответы и завершение старых запросов больше не относятся
@@ -3587,6 +3622,8 @@ function obPickerForget() {
   obPickerSearch.picked = {};
   obPickerSearch.order = [];
   obPickerSearch.filters = Object.create(null);
+  obPickerSearch.fields = Object.create(null);
+  obPickerSearch.appliedFields = null;
   obPickerSearch.generation++;
   obPickerSearch.inFlight = null;
 }
@@ -3611,12 +3648,18 @@ function obPickerSendSearch(q) {
   if (obPickerSearch.inFlight) { obPickerSearch.pending = q; return; }
   if (!document.getElementById('_item-picker-modal')) { obPickerForget(); return; }
   if (typeof obFire !== 'function') return;
-  var request = {generation: obPickerSearch.generation, search: true, query: q};
+  var fields = Object.create(null);
+  Object.keys(obPickerSearch.fields).forEach(function (k) { fields[k] = obPickerSearch.fields[k]; });
+  var request = {generation: obPickerSearch.generation, search: true, query: q, fields: fields};
   obPickerSearch.inFlight = request;
   var params = {};
   var ctx = obPickerSearch.context;
   if (ctx) Object.keys(ctx).forEach(function (key) { params[key] = ctx[key]; });
   params._pick_query = q;
+  var fieldsParam = obPickerFieldsParam();
+  // Контекст ответа содержит параметры прошлого Поиска, включая удалённые поля.
+  delete params._pick_fields;
+  if (fieldsParam) params._pick_fields = fieldsParam;
   obFire(obPickerSearch.element, 'Поиск', params, request);
 }
 
@@ -3649,6 +3692,7 @@ function obPickerFirePending() {
 window.obPickerSearchEmpty = function (request) {
   if (!request || !request.search || !obPickerSearchApplied(request)) return;
   obPickerSearch.appliedQuery = null;
+  obPickerSearch.appliedFields = null;
   var modal = document.getElementById('_item-picker-modal');
   var tb = modal ? modal.querySelector('tbody') : null;
   if (!tb) { obPickerFirePending(); return; }
@@ -3682,7 +3726,9 @@ function openItemPicker(payload, elementName, eventContext, request) {
   modal.id = '_item-picker-modal';
   modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
   var box = document.createElement('div');
-  box.style.cssText = 'background:#fff;border-radius:10px;padding:20px;width:720px;max-width:96vw;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.18)';
+  // Конфиг.Ширина — ширина окна в пикселях; на узком экране — не шире 96vw.
+  var boxWidth = cfg.width > 0 ? Math.round(cfg.width) : 720;
+  box.style.cssText = 'background:#fff;border-radius:10px;padding:20px;width:' + boxWidth + 'px;max-width:96vw;max-height:86vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.18)';
   var head = document.createElement('div');
   head.style.cssText = 'display:flex;align-items:center;justify-content:space-between;margin-bottom:12px';
   var title = document.createElement('div');
@@ -3703,18 +3749,120 @@ function openItemPicker(payload, elementName, eventContext, request) {
   // фильтровать нечего: выдача обрезана пределом, а искомое за ним, либо
   // колонка показана маской ПДн и её текст искать бессмысленно.
   var serverSearch = !!cfg.serverSearch && typeof obFire === 'function';
-  if (serverSearch) {
+  // Поля шапки (Конфиг.ПоляШапки) — как отборы «Списка номенклатуры» 1С: что
+  // искать, решает сервер. Окно с ними живёт по правилам серверного поиска
+  // (пересборка ответом, выбор переживает смену выдачи), даже если строка
+  // поиска фильтрует приехавшие строки на клиенте.
+  var headerFields = (typeof obFire === 'function' && cfg.headerFields) || [];
+  // Ответ остаётся частью серверного диалога и после удаления последнего поля:
+  // очередь запросов и накопленный выбор должны пережить пустую шапку.
+  var serverMode = serverSearch || headerFields.length > 0 || searchResponse;
+  // Конфиг.БезВыбора — окно только для просмотра: ни отметок, ни «Выбрать».
+  var noSelect = !!cfg.noSelect;
+  if (serverMode) {
     if (!searchResponse || obPickerSearch.element !== elementName) {
       // Новое открытие, а не ответ на поиск: прежний выбор не наследуется.
       obPickerSearch.query = '';
       obPickerSearch.picked = {};
       obPickerSearch.order = [];
       obPickerSearch.filters = Object.create(null);
+      obPickerSearch.fields = Object.create(null);
     }
+    // Сохраняем ввод только существующих полей. Удалённые имена не должны
+    // уходить в следующий Поиск/Выбор или блокировать сверку с appliedFields.
+    var currentFields = Object.create(null);
+    headerFields.forEach(function (f) { currentFields[f.name] = true; });
+    Object.keys(obPickerSearch.fields).forEach(function (name) {
+      if (!Object.prototype.hasOwnProperty.call(currentFields, name)) delete obPickerSearch.fields[name];
+    });
     obPickerSearch.appliedQuery = searchResponse ? request.query : '';
+    obPickerSearch.appliedFields = Object.create(null);
     obPickerSearch.element = elementName;
     obPickerSearch.context = eventContext || null;
     search.value = obPickerSearch.query;
+  }
+  if (headerFields.length) {
+    // Значение поля — набранное человеком (переживает пересборку окна ответом),
+    // иначе присланное сервером. Значение списка, которого нет среди новых
+    // вариантов (сменили филиал — у него свои направления), берётся с сервера.
+    var hdrState = obPickerSearch.fields;
+    var hdrBar = document.createElement('div');
+    hdrBar.className = '_ip-head-fields';
+    hdrBar.style.cssText = 'display:flex;flex-wrap:wrap;gap:8px 14px;align-items:flex-end;margin-bottom:10px;padding:8px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:7px';
+    var hdrRefresh = function () { obPickerSendSearch(obPickerSearch.query); };
+    headerFields.forEach(function (f) {
+      // Ответ подтверждает отправленные значения, а не ввод, сделанный пока
+      // запрос был в пути. Сервер может заменить недоступный вариант списка.
+      var appliedKnown = searchResponse && request.fields &&
+        Object.prototype.hasOwnProperty.call(request.fields, f.name);
+      var applied = appliedKnown ? request.fields[f.name] :
+        (f.type === 'bool' ? !!f.value : (f.value == null ? '' : String(f.value)));
+      if (f.type === 'list' && applied !== '' &&
+          !(f.options || []).some(function (o) { return o.value === applied; })) {
+        applied = f.value == null ? '' : String(f.value);
+      }
+      obPickerSearch.appliedFields[f.name] = applied;
+      var known = Object.prototype.hasOwnProperty.call(hdrState, f.name);
+      if (f.type === 'list' && known && hdrState[f.name] !== '' &&
+          !(f.options || []).some(function (o) { return o.value === hdrState[f.name]; })) known = false;
+      if (!known) hdrState[f.name] = f.type === 'bool' ? !!f.value : (f.value == null ? '' : String(f.value));
+      var label = document.createElement('label');
+      label.style.cssText = 'display:flex;align-items:center;gap:6px;font-size:13px;color:#475569';
+      var caption = document.createElement('span');
+      caption.textContent = f.title || f.name;
+      var ctl;
+      if (f.type === 'bool') {
+        ctl = document.createElement('input');
+        ctl.type = 'checkbox';
+        ctl.checked = !!hdrState[f.name];
+        ctl.addEventListener('change', function () { hdrState[f.name] = !!ctl.checked; hdrRefresh(); });
+        label.appendChild(ctl);
+        label.appendChild(caption);
+      } else {
+        if (f.type === 'list') {
+          ctl = document.createElement('select');
+          var empty = document.createElement('option');
+          empty.value = '';
+          empty.textContent = '';
+          ctl.appendChild(empty);
+          (f.options || []).forEach(function (o) {
+            var opt = document.createElement('option');
+            opt.value = o.value;
+            opt.textContent = o.title;
+            ctl.appendChild(opt);
+          });
+          ctl.value = hdrState[f.name];
+          ctl.addEventListener('change', function () { hdrState[f.name] = ctl.value; hdrRefresh(); });
+        } else {
+          ctl = document.createElement('input');
+          ctl.type = 'text';
+          ctl.autocomplete = 'off';
+          ctl.value = hdrState[f.name];
+          ctl.addEventListener('input', function () { hdrState[f.name] = ctl.value; });
+          ctl.addEventListener('change', function () { hdrState[f.name] = ctl.value; hdrRefresh(); });
+          ctl.addEventListener('keydown', function (e) {
+            if (e.key !== 'Enter') return;
+            if (e.preventDefault) e.preventDefault();
+            hdrState[f.name] = ctl.value;
+            hdrRefresh();
+          });
+        }
+        ctl.className = '_ip-hf';
+        ctl.setAttribute('data-col', f.name);
+        ctl.style.cssText = 'padding:5px 8px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;width:' + (f.width > 0 ? Math.round(f.width) : 160) + 'px;max-width:100%';
+        label.appendChild(caption);
+        label.appendChild(ctl);
+      }
+      hdrBar.appendChild(label);
+    });
+    var btnRefresh = document.createElement('button');
+    btnRefresh.type = 'button';
+    btnRefresh.className = '_ip-refresh';
+    btnRefresh.textContent = 'Обновить';
+    btnRefresh.style.cssText = 'padding:5px 14px;border:1px solid #e2e8f0;border-radius:6px;background:#fff;cursor:pointer;font-size:13px';
+    btnRefresh.addEventListener('click', hdrRefresh);
+    hdrBar.appendChild(btnRefresh);
+    box.appendChild(hdrBar);
   }
   // Отборы (Конфиг.Отборы): выпадающий список значений колонки над таблицей.
   // Строка поиска ищет подстроку во всех колонках и не отличает направление
@@ -3723,7 +3871,7 @@ function openItemPicker(payload, elementName, eventContext, request) {
   var filterCols = (cfg.filters || []).filter(function (name) {
     return cols.some(function (c) { return c.name === name && !c.editable; });
   });
-  var fltState = serverSearch ? obPickerSearch.filters : Object.create(null);
+  var fltState = serverMode ? obPickerSearch.filters : Object.create(null);
   var fltSelects = Object.create(null);
   if (filterCols.length) {
     var filterBar = document.createElement('div');
@@ -3766,7 +3914,7 @@ function openItemPicker(payload, elementName, eventContext, request) {
   cbAll.type = 'checkbox';
   // «Выбрать всё» в режиме одного выбора отмечать нечего.
   if (!single) thCb.appendChild(cbAll);
-  htr.appendChild(thCb);
+  if (!noSelect) htr.appendChild(thCb);
   cols.forEach(function (c) {
     var th = document.createElement('th');
     th.textContent = c.title || c.name;
@@ -3794,28 +3942,28 @@ function openItemPicker(payload, elementName, eventContext, request) {
     cb.className = '_ip-cb';
     if (cfg.checkAll && !single) cb.checked = true;
     cb.onchange = function () {
-      if (serverSearch) rememberRow(tr);
+      if (serverMode) rememberRow(tr);
       updateCounter();
     };
     tdCb.appendChild(cb);
     // В одиночном выборе строка целиком работает как переключатель: попадать
     // мышью в кружок диаметром 13 px посреди разговора с клиентом незачем.
-    if (single) {
+    if (single && !noSelect) {
       tr.style.cursor = 'pointer';
       tr.addEventListener('click', function (e) {
         if (e.target === cb) return;
         cb.checked = true;
-        if (serverSearch) rememberRow(tr);
+        if (serverMode) rememberRow(tr);
         updateCounter();
       });
       // Двойной щелчок выбирает строку и закрывает окно — как форма выбора 1С.
       tr.addEventListener('dblclick', function () {
         cb.checked = true;
-        if (serverSearch) rememberRow(tr);
+        if (serverMode) rememberRow(tr);
         submitPick();
       });
     }
-    tr.appendChild(tdCb);
+    if (!noSelect) tr.appendChild(tdCb);
     cols.forEach(function (c) {
       var td = document.createElement('td');
       var v = (r.data || {})[c.name];
@@ -3836,7 +3984,7 @@ function openItemPicker(payload, elementName, eventContext, request) {
     });
     tbody.appendChild(tr);
   });
-  if (serverSearch) {
+  if (serverMode) {
     // Выдача сменилась ответом сервера: вернуть отметки и правленые значения
     // строкам, выбранным по прежнему запросу. Без этого мультивыбор по
     // нескольким запросам невозможен, а «Перенести» отдаёт только последнюю
@@ -3866,14 +4014,14 @@ function openItemPicker(payload, elementName, eventContext, request) {
     var tr = inp.closest('tr');
     if (!tr) return;
     if (cfg.qtyField && inp.getAttribute('data-col') !== cfg.qtyField) {
-      if (serverSearch) rememberRow(tr);
+      if (serverMode) rememberRow(tr);
       return;
     }
     var cb = tr.querySelector('._ip-cb');
     if (!cb) return;
     var val = parseFloat(inp.value);
     cb.checked = (!isNaN(val) && val > 0);
-    if (serverSearch) rememberRow(tr);
+    if (serverMode) rememberRow(tr);
     updateCounter();
   });
   table.appendChild(tbody);
@@ -3903,7 +4051,7 @@ function openItemPicker(payload, elementName, eventContext, request) {
   basketHead.appendChild(basketBadge);
   // Корзина — про «набрать позиций с количествами». Без колонки количества она
   // всё равно всегда пуста, а в одиночном выборе не нужна по смыслу.
-  if (!single && cfg.qtyField) box.appendChild(basketHead);
+  if (!single && !noSelect && cfg.qtyField) box.appendChild(basketHead);
   var basketScroll = document.createElement('div');
   basketScroll.style.cssText = 'overflow:auto;max-height:180px;margin-top:4px;border:1px solid #e2e8f0;border-radius:7px;display:none';
   var basketTable = document.createElement('table');
@@ -3923,7 +4071,7 @@ function openItemPicker(payload, elementName, eventContext, request) {
   var bTbody = document.createElement('tbody');
   basketTable.appendChild(bTbody);
   basketScroll.appendChild(basketTable);
-  if (!single && cfg.qtyField) box.appendChild(basketScroll);
+  if (!single && !noSelect && cfg.qtyField) box.appendChild(basketScroll);
   basketHead.addEventListener('click', function () {
     basketScroll.style.display = basketScroll.style.display === 'none' ? '' : 'none';
   });
@@ -3938,7 +4086,8 @@ function openItemPicker(payload, elementName, eventContext, request) {
   btnOk.textContent = single ? 'Выбрать' : 'Перенести в документ';
   btnOk.style.cssText = 'padding:7px 18px;border:1px solid #2563eb;border-radius:7px;background:#2563eb;color:#fff;cursor:pointer;font-size:13px;font-weight:600';
   foot.appendChild(btnCancel);
-  foot.appendChild(btnOk);
+  if (noSelect) btnCancel.textContent = 'Закрыть';
+  else foot.appendChild(btnOk);
   box.appendChild(foot);
   modal.appendChild(box);
   document.body.appendChild(modal);
@@ -3984,8 +4133,8 @@ function openItemPicker(payload, elementName, eventContext, request) {
     if (at >= 0) obPickerSearch.order.splice(at, 1);
   }
   function updateCounter() {
-    var n = serverSearch ? obPickerSearch.order.length : checkedRows().length;
-    counter.textContent = single ? '' : ('Выбрано: ' + n);
+    var n = serverMode ? obPickerSearch.order.length : checkedRows().length;
+    counter.textContent = (single || noSelect) ? '' : ('Выбрано: ' + n);
     updateBasket();
   }
   function updateBasket() {
@@ -4004,7 +4153,7 @@ function openItemPicker(payload, elementName, eventContext, request) {
       bTr.appendChild(tdQty);
       bTbody.appendChild(bTr);
     }
-    if (serverSearch) {
+    if (serverMode) {
       // Корзина показывает тот же полный выбор и порядок, что «Перенести»,
       // включая позиции, отсутствующие в текущей серверной выдаче.
       obPickerSearch.order.forEach(function (id) {
@@ -4042,16 +4191,19 @@ function openItemPicker(payload, elementName, eventContext, request) {
       obPickerSendSearch(q);
     }, 250);
   }
-  if (serverSearch) obPickerFirePending();
+  if (serverMode) obPickerFirePending();
   search.addEventListener('input', function () {
     if (serverSearch) { scheduleServerSearch(this.value); return; }
+    // Поля шапки пересобирают окно ответом сервера: клиентский фильтр
+    // строки поиска должен это пережить.
+    if (serverMode) obPickerSearch.query = this.value;
     applyVisibility();
   });
   // Одиночный выбор — с клавиатуры, как форма «…» ссылочного поля: стрелки
   // ведут отметку по видимым строкам, Enter выбирает (без отметки — первую
   // видимую).
   search.addEventListener('keydown', function (e) {
-    if (!single) return;
+    if (!single || noSelect) return;
     var key = e.key;
     if (key !== 'ArrowDown' && key !== 'ArrowUp' && key !== 'Enter') return;
     if (e.preventDefault) e.preventDefault();
@@ -4059,6 +4211,7 @@ function openItemPicker(payload, elementName, eventContext, request) {
     // включая ошибку поиска, после которой inFlight уже освобождён.
     if (serverSearch && (obPickerSearch.timer || obPickerSearch.inFlight ||
         obPickerSearch.pending !== null || search.value !== obPickerSearch.appliedQuery)) return;
+    if (serverMode && obPickerSearch.inFlight) return;
     var visible = Array.prototype.filter.call(tbody.rows, function (tr) { return tr.style.display !== 'none'; });
     if (!visible.length) return;
     var at = -1;
@@ -4082,7 +4235,7 @@ function openItemPicker(payload, elementName, eventContext, request) {
     // Отметка одна: снимаем остальные явно, не полагаясь на группу радиокнопок.
     Array.prototype.forEach.call(tbody.querySelectorAll('._ip-cb'), function (other) { other.checked = false; });
     mcb.checked = true;
-    if (serverSearch) rememberRow(tr);
+    if (serverMode) rememberRow(tr);
     if (tr.scrollIntoView) tr.scrollIntoView({ block: 'nearest' });
     updateCounter();
   }
@@ -4149,6 +4302,8 @@ function openItemPicker(payload, elementName, eventContext, request) {
   if (filterCols.length) {
     rebuildFilters();
     applyVisibility();
+  } else if (serverMode && !serverSearch && search.value) {
+    applyVisibility();
   }
   cbAll.addEventListener('change', function () {
     if (single) return;
@@ -4156,7 +4311,7 @@ function openItemPicker(payload, elementName, eventContext, request) {
       if (tr.style.display === 'none') return;
       var cb = tr.querySelector('._ip-cb');
       if (cb) cb.checked = cbAll.checked;
-      if (serverSearch) rememberRow(tr);
+      if (serverMode) rememberRow(tr);
     });
     updateCounter();
   });
@@ -4172,8 +4327,22 @@ function openItemPicker(payload, elementName, eventContext, request) {
   });
   btnOk.addEventListener('click', function () { submitPick(); });
   function submitPick() {
+    if (noSelect) return;
+    // Общий гейт для Enter, двойного щелчка и кнопки: прежние строки нельзя
+    // отправить с новым контекстом шапки, в том числе после ошибки обновления.
+    // Проверяем также ответ с пустой шапкой: у него ещё может быть запрос в очереди.
+    if ((headerFields.length || searchResponse) && (obPickerSearch.inFlight || obPickerSearch.pending !== null ||
+        !obPickerSearch.appliedFields ||
+        Object.keys(obPickerSearch.fields).length !== Object.keys(obPickerSearch.appliedFields).length ||
+        Object.keys(obPickerSearch.fields).some(function (k) {
+          return !Object.prototype.hasOwnProperty.call(obPickerSearch.appliedFields, k) ||
+            obPickerSearch.fields[k] !== obPickerSearch.appliedFields[k];
+        }))) return;
     var result;
-    if (serverSearch) {
+    // Поля шапки уходят и с выбором: где выбрано (склад, филиал) обработчику
+    // бывает нужно не меньше, чем что.
+    var fieldsParam = obPickerFieldsParam();
+    if (serverMode) {
       // Выбор собран по всем запросам, а не только по последней выдаче.
       result = obPickerSearch.order.map(function (id) { return obPickerSearch.picked[id]; });
       // Строка без id не может пережить смену выдачи, но текущий одиночный
@@ -4192,6 +4361,8 @@ function openItemPicker(payload, elementName, eventContext, request) {
         Object.keys(eventContext).forEach(function (key) { params[key] = eventContext[key]; });
       }
       params._pick_result = JSON.stringify(result);
+      delete params._pick_fields;
+      if (fieldsParam) params._pick_fields = fieldsParam;
       obFire(elementName, 'Выбор', params);
     }
   }
@@ -4220,8 +4391,8 @@ function obRefFilterValues(sel) {
     var item = spec[key] || {};
     var value = item.value || '';
     if (item.from) {
-      var src = scope.querySelector('[name="' + (window.CSS && CSS.escape ? CSS.escape(item.from) : item.from) + '"]');
-      if (src) value = src.value || '';
+      var sourceValue = obRefSourceValue(scope, item.from);
+      if (sourceValue !== null) value = sourceValue;
     }
     // Ключ кладём даже с пустым значением: сервер по нему отличает «владельца
     // ещё не выбрали» (список пуст) от «на этой форме владельца не спрашивают»
@@ -4230,6 +4401,39 @@ function obRefFilterValues(sel) {
     any = true;
   }
   return any ? out : null;
+}
+
+// Read the first value that would be submitted for this name, rather than
+// RadioNodeList.value (which only works for radios) or the first DOM copy.
+// A hidden_when copy is disabled by its fieldset; a readonly select instead
+// submits its enabled hidden mirror. null means the source is absent, so the
+// legacy owner filter can still use the value supplied by the server.
+function obRefSourceValue(scope, name) {
+  if (!scope || !name) return null;
+  var controls;
+  if (scope.elements && scope.elements.namedItem) {
+    var named = scope.elements.namedItem(name);
+    // Select elements have a length too; only a RadioNodeList is a group.
+    controls = !named ? [] : ((named.tagName || named.nodeType === 1 ||
+      typeof named.length !== 'number') ? [named] : named);
+  } else if (scope.getElementsByName) {
+    controls = scope.getElementsByName(name);
+  } else {
+    var escaped = window.CSS && CSS.escape ? CSS.escape(name) : name;
+    controls = scope.querySelectorAll('[name="' + escaped + '"]');
+  }
+  if (!controls || !controls.length) return null;
+  for (var i = 0; i < controls.length; i++) {
+    var control = controls[i];
+    if (control.disabled) continue;
+    if (control.matches ? control.matches(':disabled') :
+        control.closest && control.closest('fieldset[disabled]')) continue;
+    var type = String(control.type || '').toLowerCase();
+    if ((type === 'radio' || type === 'checkbox') && !control.checked) continue;
+    if (type === 'button' || type === 'submit' || type === 'reset' || type === 'file') continue;
+    if (control.value != null) return String(control.value);
+  }
+  return '';
 }
 
 // obRefFilterParam — тот же отбор строкой для запроса /ui/_ref-options.
@@ -4317,8 +4521,7 @@ function refContextForRequest(sel) {
   Object.keys(paths).forEach(function (name) {
     var parts = String(paths[name] == null ? '' : paths[name]).split('.');
     var fieldName = parts[parts.length - 1];
-    var control = fieldName ? sel.form.elements.namedItem(fieldName) : null;
-    context[name] = control && control.value != null ? String(control.value) : '';
+    context[name] = obRefSourceValue(sel.form, fieldName) || '';
   });
   return JSON.stringify(context);
 }
@@ -4387,13 +4590,7 @@ function obRefChoiceSnapshot(sel) {
   var paths = Object.keys(declared).sort();
   paths.forEach(function (path) {
     var name = declared[path];
-    var control = null;
-    if (sel.form && sel.form.elements && name) control = sel.form.elements.namedItem(name);
-    if (!control && name) {
-      var controls = document.getElementsByName(name);
-      if (controls && controls.length) control = controls[0];
-    }
-    values[path] = control && control.value != null ? String(control.value) : '';
+    values[path] = obRefSourceValue(sel.form || document, name) || '';
   });
   var query = '&form_entity=' + encodeURIComponent(ctx.form_entity) +
     // Форма обработки (#1840): вид владельца — из серверного контекста.
@@ -4833,8 +5030,7 @@ function openRefPicker(selOrId) {
         var bindings = JSON.parse(refContextRaw);
         Object.keys(bindings).forEach(function (name) {
           var parts = String(bindings[name]).split('.');
-          var control = sel.form && sel.form.elements ? sel.form.elements.namedItem(parts[parts.length - 1]) : null;
-          contextValues[name] = control && control.value != null ? String(control.value) : '';
+          contextValues[name] = obRefSourceValue(sel.form, parts[parts.length - 1]) || '';
         });
       } catch (e) {}
       fetchOptions.body = JSON.stringify({
@@ -5930,7 +6126,7 @@ function initDetailPanel() {
     'object-fit:contain;object-position:center;border-radius:6px}' +
     '.ob-detail-empty{color:#94a3b8;font-size:13px;margin:4px 0 0}' +
     /* Узкий экран: третья колонка недопустима — панель уходит под список. */
-    '@media(max-width:820px){.ob-list-wrap{flex-direction:column}.ob-detail{width:auto!important;max-height:none}}';
+    '@media(max-width:820px){.ob-list-wrap{flex-direction:column;align-items:stretch}.ob-detail{width:auto!important;max-height:none}}';
   var st = document.createElement('style');
   st.textContent = css;
   (document.head || document.documentElement).appendChild(st);
@@ -5984,4 +6180,118 @@ function initDetailPanel() {
       btn.appendChild(document.createTextNode(text));
     }, 0);
   }, true);
+})();
+
+// ─── Enter — навигация по полям формы (#1486) ──────────────────────────────
+//
+// Прежнее «Enter записывает объект» не было спроектированным контрактом: это
+// неявная отправка HTML-формы. В табличной части и в ссылочных редакторах Enter
+// уже вёл себя иначе, то есть поведение и так было непоследовательным, а
+// оператор, вводящий данные потоком, ожидает перевода фокуса — как в 1С.
+//
+// Умолчание платформы: Enter переводит фокус к следующему полю. Форма может
+// вернуть себе прежнее поведение ключом enter_submits_form — тогда на ней стоит
+// data-ob-enter-submits="1". Явные команды записи (Ctrl+S, Ctrl+Enter, кнопки
+// «Записать»/«Провести») этой правкой не затронуты вовсе.
+
+// obEnterOwnedByElement — элементы, у которых Enter имеет собственный смысл.
+function obEnterOwnedByElement(el) {
+  if (!el || el.nodeType !== 1) return false;
+  var tag = String(el.tagName || '').toLowerCase();
+  // textarea — перенос строки; кнопка/ссылка/summary — активация.
+  if (tag === 'textarea' || tag === 'button' || tag === 'a' || tag === 'summary') return true;
+  if (tag === 'input') {
+    var type = String(el.type || 'text').toLowerCase();
+    if (type === 'submit' || type === 'button' || type === 'reset' || type === 'file') return true;
+  }
+  if (el.isContentEditable) return true;
+  return false;
+}
+
+// obEnterFieldUsable — поле, на которое имеет смысл ставить фокус. Скрытые,
+// readonly и disabled пропускаются: по решению они не участвуют в переходе.
+function obEnterFieldUsable(el) {
+  if (!el || el.disabled || el.readOnly) return false;
+  if (String(el.type || '').toLowerCase() === 'hidden') return false;
+  if (typeof el.tabIndex === 'number' && el.tabIndex < 0) return false;
+  if (typeof obElementVisible === 'function' && !obElementVisible(el)) return false;
+  return true;
+}
+
+// obEnterStops — остановки маршрута Enter в порядке разметки: обычные поля и
+// табличные части целиком. Грид — одна остановка, а не набор полей: его ячейки
+// рисует SlickGrid, отдельных input'ов в разметке у них нет, и внутри грида
+// Enter обслуживает он сам.
+function obEnterStops(form, source) {
+  var out = [];
+  var nodes = form.querySelectorAll('input,select,textarea,.ob-grid[data-sg-tp]');
+  for (var i = 0; i < nodes.length; i++) {
+    var el = nodes[i];
+    if (el.classList && el.classList.contains('ob-grid')) {
+      if (obElementVisible(el)) out.push(el);
+      continue;
+    }
+    if (el.closest && el.closest('.ob-grid[data-sg-tp]')) continue; // редактор ячейки грида
+    // readonly/tabindex=-1 не являются остановками, но могут получить фокус
+    // мышью. Сохраняем позицию источника, чтобы Enter и оттуда не записывал форму.
+    if (el !== source && !obEnterFieldUsable(el)) continue;
+    out.push(el);
+  }
+  return out;
+}
+
+// obEnterNavigateFrom переводит фокус с поля target к следующей остановке.
+// Возвращает true, если нажатие обработано (и форму отправлять не нужно).
+function obEnterNavigateFrom(target) {
+  if (!target || obEnterOwnedByElement(target)) return false;
+  var form = target.form || (target.closest ? target.closest('form') : null);
+  if (!form) return false;
+  // Только форма объекта/обработки. Поиск в шапке, фильтр списка и прочие
+  // маленькие формы обязаны отправляться по Enter: там нажатие и есть команда,
+  // а не переход к следующему полю.
+  if (form.id !== 'main-form') return false;
+  // Прежнее поведение оставлено форме явным ключом конфигурации.
+  if (form.getAttribute && form.getAttribute('data-ob-enter-submits') === '1') return false;
+  // Внутри грида Enter обслуживает сам грид: коммит ячейки и переход вправо.
+  if (target.closest && target.closest('.ob-grid[data-sg-tp]')) return false;
+
+  // В no_grid ячейки — обычные поля DOM, но маршрут из ячейки ограничен
+  // её табличной частью: конец последней строки не ведёт в следующее поле формы.
+  var table = target.closest ? target.closest('table[data-ob-dom-table]') : null;
+  var stops = obEnterStops(table || form, target);
+  var idx = -1;
+  for (var i = 0; i < stops.length; i++) {
+    if (stops[i] === target) { idx = i; break; }
+  }
+  if (idx < 0) return false;
+  for (var j = idx + 1; j < stops.length; j++) {
+    var next = stops[j];
+    if (next.classList && next.classList.contains('ob-grid')) {
+      // Из последнего поля шапки — в первую доступную ячейку табличной части.
+      if (typeof window.obGridFocusFirstCell === 'function' && window.obGridFocusFirstCell(next)) return true;
+      continue; // грид не принял фокус (пустой или только для чтения) — идём дальше
+    }
+    next.focus();
+    if (typeof next.select === 'function') {
+      try { next.select(); } catch (err) { /* select() есть не у всех типов */ }
+    }
+    return true;
+  }
+  // Конец формы или табличной части: фокус остаётся на месте. Неявной записи
+  // не происходит — для неё есть Ctrl+S, Ctrl+Enter и кнопки формы.
+  return true;
+}
+
+(function () {
+  if (window.__obEnterNav) return;
+  window.__obEnterNav = true;
+  document.addEventListener('keydown', function (e) {
+    if (e.defaultPrevented) return;
+    if (e.key !== 'Enter' && e.keyCode !== 13) return;
+    if (e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+    // Активная IME-композиция: Enter подтверждает набранное, а не переходит.
+    if (e.isComposing === true || e.keyCode === 229) return;
+    if (typeof obHasBlockingModal === 'function' && obHasBlockingModal()) return;
+    if (obEnterNavigateFrom(e.target)) e.preventDefault();
+  });
 })();

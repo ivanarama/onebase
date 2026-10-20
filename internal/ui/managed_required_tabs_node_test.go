@@ -65,8 +65,12 @@ func managedRequiredTabsDOM(t *testing.T) []byte {
 			{Kind: metadata.FormElementPage, Name: "ВложеннаяВторая", Children: []*metadata.FormElement{required("ПолеВложенное")}},
 		},
 	}
+	// Внешний набор объявляет ПриСменеСтраницы, вложенный — нет: node
+	// проверяет, что событие шлёт только набор с обработчиком и только на
+	// пользовательский щелчок.
 	pages := &metadata.FormElement{
 		Kind: metadata.FormElementPages, Name: "Страницы",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnPageChange: "СтраницыПриСменеСтраницы"},
 		Children: []*metadata.FormElement{
 			{Kind: metadata.FormElementPage, Name: "Основная", Children: []*metadata.FormElement{required("ПолеВкладки")}},
 			{Kind: metadata.FormElementPage, Name: "Дополнительно", Children: []*metadata.FormElement{inner}},

@@ -128,7 +128,7 @@ const cfg = JSON.parse(process.env.ONEBASE_REF_BROWSER);
     await search('needle');
     await options.nth(1).click();
     assert.equal(await hidden('Неисправность').inputValue(), cfg.pageTwo);
-    await page.locator('[data-ob-ref-picker="ref-Неисправность"]').click();
+    await page.locator('[data-ob-el="ПолеНеисправность"] [data-ob-ref-picker]').click();
     await page.locator('#_rp-list ._rp-item').first().waitFor();
     await page.locator('#_rp-list ._rp-item').first().click();
     assert.notEqual(await hidden('Неисправность').inputValue(), '');
@@ -150,6 +150,45 @@ const cfg = JSON.parse(process.env.ONEBASE_REF_BROWSER);
     assert.equal(await text.inputValue(), 'element 051');
     assert.equal(await text.getAttribute('aria-expanded'), 'false');
     await page.unroute('**/ui/_ref-options/**');
+    // An unchanged echo must preserve a query typed after the event snapshot.
+    // Fetch the real response before holding it; no payload is fabricated.
+    let releaseEcho, echoReady;
+    const heldEcho = new Promise(resolve => { releaseEcho = resolve; });
+    const readyEcho = new Promise(resolve => { echoReady = resolve; });
+    await page.route('**/form-event', async route => {
+      const response = await route.fetch();
+      echoReady();
+      await heldEcho;
+      await route.fulfill({ response });
+    });
+    try {
+      await page.getByRole('button', { name: 'Повторить', exact: true }).click();
+      await readyEcho;
+      await text.fill('needle');
+      const delivered = page.waitForResponse(r => r.url().endsWith('/form-event'));
+      releaseEcho();
+      await (await delivered).finished();
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.equal(await text.inputValue(), 'needle');
+      assert.equal(await hidden('Неисправность').inputValue(), '');
+      assert.equal(await text.evaluate(e => e.checkValidity()), false);
+    } finally {
+      releaseEcho();
+      await page.unroute('**/form-event');
+    }
+    await search('element 051');
+    await options.first().click();
+    // hidden_when must disable the fieldset as well as closing the combobox.
+    await search('needle');
+    await page.locator('[name="Скрыть"][type=checkbox]').check();
+    await text.waitFor({ state: 'hidden' });
+    assert.equal(await text.evaluate(e => e.closest('fieldset').disabled), true);
+    assert.equal(await text.getAttribute('aria-expanded'), 'false');
+    assert.equal(await hidden('Неисправность').evaluate(e => new FormData(e.form).getAll(e.name).length), 0);
+    await page.locator('[name="Скрыть"][type=checkbox]').uncheck();
+    await text.waitFor({ state: 'visible' });
+    assert.equal(await text.evaluate(e => e.closest('fieldset').disabled), false);
+    assert.equal(await hidden('Неисправность').evaluate(e => new FormData(e.form).getAll(e.name).length), 1);
     // Conditional readonly travels through the public form-event response.
     await page.locator('[name="Запрет"][type=checkbox]').check();
     await page.waitForFunction(() => document.querySelector('[data-ob-el="ПолеНеисправность"] [role=combobox]').readOnly);
@@ -223,7 +262,7 @@ const cfg = JSON.parse(process.env.ONEBASE_REF_BROWSER);
     // Native inline-create iframe returns its saved UUID to the enhanced control.
     await page.goto(cfg.inlineBase + '/ui/catalog/Заказ/new');
     await input('ПолеСклад').waitFor();
-    await page.locator('[data-ob-ref-picker="ref-Склад"]').click();
+    await page.locator('[data-ob-el="ПолеСклад"] [data-ob-ref-picker]').click();
     await page.locator('#_rp-create').click();
     const popup = page.frameLocator('#_ref-create-modal iframe');
     await popup.locator('[name="Наименование"]').fill('Новый склад combobox');

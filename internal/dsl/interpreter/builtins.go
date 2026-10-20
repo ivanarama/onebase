@@ -325,7 +325,7 @@ func decimalArg(args []any, i int) decimal.Decimal {
 // builtinToString — Строка()/Стр(). Для decimal используем String() напрямую:
 // маршрут через toFloat терял бы точность на больших числах.
 func builtinToString(args []any, file string, line int) (any, error) {
-	if len(args) == 0 {
+	if len(args) == 0 || args[0] == nil {
 		return "", nil
 	}
 	if wrapped, ok := args[0].(readOnlyStringValue); ok {
@@ -398,6 +398,9 @@ func builtinToNumber(args []any, file string, line int) (any, error) {
 	s := fmt.Sprintf("%v", args[0])
 	d, err := decimal.NewFromString(strings.ReplaceAll(s, ",", "."))
 	if err != nil {
+		if _, isString := args[0].(string); isString {
+			return raiseUserException([]any{"Преобразование значения к типу Число не может быть выполнено"}, file, line)
+		}
 		return decimal.Zero, nil
 	}
 	return d, nil
@@ -583,6 +586,8 @@ func KnownBuiltinNames() map[string]struct{} {
 		"фоновыезадания", "backgroundjobs",
 		"предопределённыезначения", "predefinedvalues",
 		"нумераторы", "numerators",
+		// сериализация объектов в XML формата 1С (internal/xdto)
+		"сериализаторxdto", "xdtoserializer",
 		"значениереквизитаобъекта", "objectattributevalue",
 		"значенияреквизитовобъектов", "objectattributevalues",
 		"выполнитькоманду", "executecommand",

@@ -1,0 +1,6 @@
+name: Ордер
+fields:
+  - name: Номер
+    type: string
+  - name: Филиал
+    type: string

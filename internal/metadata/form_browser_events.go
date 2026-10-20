@@ -47,6 +47,12 @@ var browserFormEventRules = []browserFormEventRule{
 		},
 	},
 	{
+		// Набор страниц шлёт смену открытой страницы; обработчик вправе
+		// показать вопрос или подбор — их вторые фазы приходят тому же набору.
+		kinds:  []FormElementType{FormElementPages},
+		events: []FormEventType{FormEventOnPageChange, FormEventOnChoice, FormEventOnAnswer},
+	},
+	{
 		// Колонка табличной части шлёт только правку своей ячейки (план 154).
 		// Остальные события строки принадлежат таблице целиком: строка
 		// добавляется и удаляется не «в колонке».

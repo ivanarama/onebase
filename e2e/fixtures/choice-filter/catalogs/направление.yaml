@@ -1,0 +1,5 @@
+name: Направление
+hierarchical: true
+fields:
+  - name: Наименование
+    type: string

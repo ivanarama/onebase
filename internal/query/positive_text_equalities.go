@@ -7,6 +7,16 @@ package query
 // for the whole filter. Each SELECT is inspected independently; predicates in
 // projection, HAVING, JOIN and virtual-table arguments are never marked.
 func positiveTextEqualities(tokens []tok, ctx sourceContext) map[int]bool {
+	return textComparisonPositions(tokens, ctx, true)
+}
+
+// scalarTextComparisons includes simple literal/parameter comparisons under
+// NOT as well. It never marks column-to-column joins or scalar expressions.
+func scalarTextComparisons(tokens []tok, ctx sourceContext) map[int]bool {
+	return textComparisonPositions(tokens, ctx, false)
+}
+
+func textComparisonPositions(tokens []tok, ctx sourceContext, positiveOnly bool) map[int]bool {
 	out := make(map[int]bool)
 	for i, token := range tokens {
 		if token.kind != tIdent {
@@ -38,7 +48,7 @@ func positiveTextEqualities(tokens []tok, ctx sourceContext) map[int]bool {
 			}
 			end++
 		}
-		positions, valid := positiveComparisonTree(tokens, i+1, end)
+		positions, valid := textComparisonTree(tokens, i+1, end, positiveOnly)
 		if valid {
 			for _, pos := range positions {
 				out[pos] = true
@@ -48,7 +58,7 @@ func positiveTextEqualities(tokens []tok, ctx sourceContext) map[int]bool {
 	return out
 }
 
-func positiveComparisonTree(tokens []tok, start, end int) ([]int, bool) {
+func textComparisonTree(tokens []tok, start, end int, positiveOnly bool) ([]int, bool) {
 	start, end = trimProjectionParentheses(tokens, start, end)
 	if start >= end {
 		return nil, false
@@ -71,7 +81,7 @@ func positiveComparisonTree(tokens []tok, start, end int) ([]int, bool) {
 			case tIdent:
 				kw, ok := sqlKW(tokens[i].val)
 				if depth == 0 && ok && kw == operator {
-					p, valid := positiveComparisonTree(tokens, part, i)
+					p, valid := textComparisonTree(tokens, part, i, positiveOnly)
 					if !valid {
 						return nil, false
 					}
@@ -84,14 +94,17 @@ func positiveComparisonTree(tokens []tok, start, end int) ([]int, bool) {
 			return nil, false
 		}
 		if part != start {
-			p, valid := positiveComparisonTree(tokens, part, end)
+			p, valid := textComparisonTree(tokens, part, end, positiveOnly)
 			return append(positions, p...), valid
 		}
 	}
 	if tokens[start].kind == tIdent {
 		if kw, ok := sqlKW(tokens[start].val); ok && kw == "NOT" {
-			_, valid := positiveComparisonTree(tokens, start+1, end)
-			return nil, valid // even double negation keeps the conservative path
+			positions, valid := textComparisonTree(tokens, start+1, end, positiveOnly)
+			if positiveOnly {
+				return nil, valid // even double negation keeps the conservative path
+			}
+			return positions, valid
 		}
 	}
 	for i := start + 1; i < end-1; i++ {
@@ -107,6 +120,18 @@ func positiveComparisonTree(tokens []tok, start, end int) ([]int, bool) {
 		right, rightOK := simpleComparisonOperand(tokens, i+1, end)
 		if !leftOK || !rightOK {
 			return nil, false
+		}
+		if !positiveOnly {
+			if tokens[i].val != "=" && tokens[i].val != "<>" && tokens[i].val != "!=" {
+				return nil, true
+			}
+			if left >= 0 && end == i+2 && (tokens[i+1].kind == tStr || tokens[i+1].kind == tParam) {
+				return []int{left}, true
+			}
+			if right >= 0 && i == start+1 && (tokens[start].kind == tStr || tokens[start].kind == tParam) {
+				return []int{right}, true
+			}
+			return nil, true
 		}
 		if tokens[i].val == "=" {
 			if left >= 0 && end == i+2 && tokens[i+1].kind == tStr && tokens[i+1].val != "" {

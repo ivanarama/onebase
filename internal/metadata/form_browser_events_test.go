@@ -62,7 +62,7 @@ func TestBrowserFormEvents_ПроверкаПарыСходитсяСПереч�
 // Fail-closed: вид, который ничего не отправляет, не отправляет и незнакомое.
 func TestBrowserFormEvents_ПассивныеВидыМолчат(t *testing.T) {
 	for _, kind := range []FormElementType{
-		FormElementLabel, FormElementGroupBox, FormElementPage, FormElementPages,
+		FormElementLabel, FormElementGroupBox, FormElementPage,
 		FormElementPicture, FormElementType("ВыдуманныйВид"), "",
 	} {
 		if events := BrowserFormEventsFor(kind); len(events) != 0 {
@@ -71,6 +71,30 @@ func TestBrowserFormEvents_ПассивныеВидыМолчат(t *testing.T) 
 		if BrowserFormEventAllowed(kind, FormEventOnChange) {
 			t.Errorf("вид %q разрешил ПриИзменении", kind)
 		}
+	}
+}
+
+// Набор страниц шлёт смену открытой страницы и вторые фазы диалогов её
+// обработчика — и ничего из событий полей: правки значения у набора нет.
+// Сама страница по-прежнему молчит: событие принадлежит набору, как
+// ПриСменеСтраницы панели 1С.
+func TestBrowserFormEvents_НаборСтраницТолькоСменаСтраницы(t *testing.T) {
+	want := []FormEventType{FormEventOnPageChange, FormEventOnChoice, FormEventOnAnswer}
+	got := BrowserFormEventsFor(FormElementPages)
+	if len(got) != len(want) {
+		t.Fatalf("набор страниц отправляет %v, ожидалось %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("набор страниц отправляет %v, ожидалось %v", got, want)
+			break
+		}
+	}
+	if BrowserFormEventAllowed(FormElementPages, FormEventOnChange) {
+		t.Error("набор страниц разрешил ПриИзменении")
+	}
+	if BrowserFormEventAllowed(FormElementPage, FormEventOnPageChange) {
+		t.Error("страница разрешила ПриСменеСтраницы — событие принадлежит набору")
 	}
 }
 

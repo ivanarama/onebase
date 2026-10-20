@@ -7,11 +7,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ivantit66/onebase/internal/access"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/langref"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/project"
+	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -252,6 +254,7 @@ type descHTTPService struct {
 }
 
 type descPermission struct {
+	RowAccess  auth.RowAccess      `json:"row_access,omitempty"`
 	Catalogs   map[string][]string `json:"catalogs,omitempty"`
 	Documents  map[string][]string `json:"documents,omitempty"`
 	Registers  map[string][]string `json:"registers,omitempty"`
@@ -504,7 +507,14 @@ func runDescribe(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
+	roleRegistry := runtime.NewRegistry()
+	roleRegistry.Load(runtime.LoadOptions{Entities: proj.Entities})
 	for _, r := range roles {
+		canonical, err := access.CanonicalRowAccess(r.Permissions.RowAccess, roleRegistry)
+		if err != nil {
+			return err
+		}
+		r.Permissions.RowAccess = canonical
 		out.Roles = append(out.Roles, descRole{
 			Name:        r.Name,
 			Description: r.Description,
@@ -602,6 +612,7 @@ func toDescForms(forms []*metadata.FormModule) []descForm {
 
 func toDescPermission(p auth.Permission) descPermission {
 	return descPermission{
+		RowAccess:  p.RowAccess,
 		Catalogs:   p.Catalogs,
 		Documents:  p.Documents,
 		Registers:  p.Registers,

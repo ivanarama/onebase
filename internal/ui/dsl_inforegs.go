@@ -411,10 +411,34 @@ func (rs *infoRegRecordSet) IterateThis() []interpreter.This {
 	return items
 }
 
-func (rs *infoRegRecordSet) rowThis(row map[string]any) *declaredRowThis {
+func (rs *infoRegRecordSet) rowThis(row map[string]any) *infoRegRecordSetRow {
 	meta := storage.InfoRegisterPredicateEntity(rs.ir)
 	decisions := rs.s.fieldDecisionsFor(rs.ctx(), "inforeg", rs.ir.Name, meta)
-	return newDeclaredRowThis(row, appendInfoRegFields(rs.ir), rs.s.newDSLRefAttrResolver(rs.ctx()), decisions)
+	return &infoRegRecordSetRow{newDeclaredRowThis(row, appendInfoRegFields(rs.ir), rs.s.newDSLRefAttrResolver(rs.ctx()), decisions)}
+}
+
+// Only record-set rows opt into indexed field access. Other declaredRowThis
+// consumers retain their existing surfaces. Resolve membership from metadata,
+// not the raw map: declared NULLs are known, incidental keys are not fields.
+type infoRegRecordSetRow struct {
+	*declaredRowThis
+}
+
+var _ interpreter.DynamicFieldAccessor = (*infoRegRecordSetRow)(nil)
+
+func (r *infoRegRecordSetRow) GetDynamicField(name string) (any, bool) {
+	if _, ok := r.fields[strings.ToLower(name)]; !ok {
+		return nil, false
+	}
+	return r.Get(name), true
+}
+
+func (r *infoRegRecordSetRow) SetDynamicField(name string, value any) bool {
+	if _, ok := r.fields[strings.ToLower(name)]; !ok {
+		return false
+	}
+	r.Set(name, value)
+	return true
 }
 
 func appendInfoRegFields(ir *metadata.InfoRegister) []metadata.Field {

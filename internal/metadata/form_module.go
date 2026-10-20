@@ -61,6 +61,11 @@ const (
 	// вопрос билтином ПоказатьВопрос (фаза 1, например Нажатие), ответ
 	// пользователя приезжает событием Ответ с переменной ВопросОтвет.
 	FormEventOnAnswer FormEventType = "Ответ" // OnAnswer
+	// ПриСменеСтраницы — пользователь открыл другую страницу набора
+	// СтраницыФормы (ПриСменеСтраницы панели 1С). Имя открытой страницы —
+	// переменная ТекущаяСтраница; сервер принимает только страницу этого же
+	// набора.
+	FormEventOnPageChange FormEventType = "ПриСменеСтраницы" // OnCurrentPageChange
 )
 
 var knownFormEventTypes = map[FormEventType]bool{
@@ -74,8 +79,9 @@ var knownFormEventTypes = map[FormEventType]bool{
 	FormEventBeforeRowAdd: true, FormEventAfterRowAdd: true,
 	FormEventBeforeRowDelete: true, FormEventStartListChoice: true,
 	FormEventAutoComplete: true, FormEventExecuteCommand: true, FormEventOnChoice: true,
-	FormEventOnSearch: true,
-	FormEventOnAnswer: true,
+	FormEventOnSearch:     true,
+	FormEventOnAnswer:     true,
+	FormEventOnPageChange: true,
 }
 
 // formTablePartContextVars — имена, которые платформа инжектирует в обработчик
@@ -575,6 +581,20 @@ type FormAction struct {
 	// Visible — показывать ли кнопку действия. nil = поведение по умолчанию
 	// (для delete — по праву CanDelete). false = скрыть кнопку.
 	Visible *bool `yaml:"visible,omitempty"`
+	// Post — только для ok: у проводимого документа «ОК» записывает, проводит
+	// и закрывает форму, как в 1С (обычное «ОК» — записать и закрыть). Без
+	// права «Провести» и у помеченного на удаление документа «ОК» остаётся
+	// записью. У непроводимой сущности ключ игнорируется (check предупреждает).
+	Post *bool `yaml:"post,omitempty"`
+}
+
+// OKPosts — «ОК» формы проводит документ (actions.ok.post: true).
+func (f *FormModule) OKPosts() bool {
+	if f == nil || f.Actions == nil {
+		return false
+	}
+	a := f.Actions["ok"]
+	return a != nil && a.Post != nil && *a.Post
 }
 
 // FormCondRule описывает декларативное условное оформление строк и ячеек
@@ -632,6 +652,12 @@ type FormModule struct {
 	// становится втрое шире и перестаёт быть узнаваемой — там её выключают одним
 	// ключом на форму.
 	RefCardButton *bool `yaml:"ref_card_button,omitempty"`
+	// EnterSubmitsForm возвращает ПРЕЖНЕЕ поведение клавиши Enter: обычное
+	// нажатие может отправить форму (неявный HTML-submit). По умолчанию платформа
+	// переводит Enter в навигацию по полям — как в 1С и как ожидает оператор,
+	// вводящий данные потоком (#1486). Ctrl+S, Ctrl+Enter и кнопки записи
+	// работают всегда, независимо от этого ключа.
+	EnterSubmitsForm bool `yaml:"enter_submits_form,omitempty"`
 	// OneCMeta — служебный блок, используемый только конвертером 1С,
 	// рантайм его игнорирует. Может содержать version, unknown_xml и т.п.
 	OneCMeta map[string]any `yaml:"oneC_meta,omitempty"`

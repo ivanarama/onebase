@@ -34,29 +34,6 @@ func (s *Server) fieldDecisionsFor(ctx context.Context, kind, name string, meta 
 	return access.FieldDecisions(auth.UserFromContext(ctx), kind, name, meta)
 }
 
-// protectedFieldSet — реквизиты сущности под полной маской (mask_all) для
-// пользователя запроса, по именам полей формы; их форма показывает точками,
-// как пароль. mask_tail/mask_city намеренно показывают часть значения —
-// точки скрыли бы и её. nil — таких полей нет.
-func (s *Server) protectedFieldSet(ctx context.Context, entity *metadata.Entity) map[string]bool {
-	if entity == nil {
-		return nil
-	}
-	dec := s.fieldDecisions(ctx, entity)
-	var set map[string]bool
-	for _, f := range entity.Fields {
-		d, ok := fieldDecisionByName(dec, f.Name)
-		if !ok || !strings.EqualFold(strings.TrimSpace(d.Strategy), access.FieldMaskAll) {
-			continue
-		}
-		if set == nil {
-			set = map[string]bool{}
-		}
-		set[f.Name] = true
-	}
-	return set
-}
-
 // maskRecord masks/hides sensitive fields of one record in place before it is
 // rendered or serialised. Shared chokepoint for every UI read path.
 func (s *Server) maskRecord(ctx context.Context, entity *metadata.Entity, row map[string]any) {
@@ -368,6 +345,28 @@ func (s *Server) maskDSLValue(ctx context.Context, entity *metadata.Entity, fiel
 		return nil
 	}
 	return access.MaskValue(dec.Strategy, dec.Keep, v)
+}
+
+// xdtoFieldMask отдаёт сериализатору XML ту же полевую политику, что действует
+// при чтении реквизита из прикладного кода: СериализаторXDTO.ЗаписатьXML — путь
+// чтения, симметричный форме, печати и спискам, и без этого он был бы обходом
+// маски в одну строку (Сообщить(СериализаторXDTO.ЗаписатьXML(Об))).
+//
+// Семантика повторяет Get() обёртки, включая исключения: не маскируется объект,
+// созданный самим модулем (loaded = false), и реквизит, присвоенный в этой же
+// операции (assigned) — там значение принадлежит текущей операции, а не чужой
+// записи. nil означает «маскировать нечего» и избавляет сериализатор от вызова
+// политики на каждый реквизит.
+func (s *Server) xdtoFieldMask(ctx context.Context, entity *metadata.Entity, loaded bool, assigned map[string]bool) func(string, any) any {
+	if !loaded || len(s.fieldDecisions(ctx, entity)) == 0 {
+		return nil
+	}
+	return func(field string, v any) any {
+		if assigned[strings.ToLower(strings.TrimSpace(field))] {
+			return v
+		}
+		return s.maskDSLValue(ctx, entity, field, v)
+	}
 }
 
 // dslFieldSearchDenied reports whether searching by this attribute would turn a

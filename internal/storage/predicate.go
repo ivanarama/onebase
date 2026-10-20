@@ -15,6 +15,7 @@ import (
 // It is intentionally not SQL text: callers provide field/op/value and storage
 // renders placeholders for the active dialect.
 type Predicate struct {
+	Deny         bool
 	Any          []Predicate
 	All          []Predicate
 	Not          *Predicate
@@ -46,6 +47,9 @@ func PredicateSQLQualified(d Dialect, entity *metadata.Entity, p *Predicate, nex
 }
 
 func predicateSQL(d Dialect, entity *metadata.Entity, p Predicate, nextArg int, qualifier string) (string, []any, int, error) {
+	if p.Deny {
+		return "1=0", nil, nextArg, nil
+	}
 	if len(p.All) > 0 {
 		return predicateGroupSQL(d, entity, p.All, " AND ", nextArg, qualifier)
 	}
@@ -491,6 +495,9 @@ func matchPredicate(row map[string]any, p Predicate, resolver PredicateRefResolv
 // Go negation would turn `NOT (NULL = x)` into true and make direct RLS checks
 // less restrictive than the SQL filter used by list/query paths.
 func matchPredicateTruth(row map[string]any, p Predicate, resolver PredicateRefResolver) predicateTruth {
+	if p.Deny {
+		return predicateFalse
+	}
 	if len(p.All) > 0 {
 		result := predicateTrue
 		for _, item := range p.All {

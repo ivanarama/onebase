@@ -1,0 +1,21 @@
+name: Сотрудник
+description: Только ордера филиала своей карточки; карточки редактирует администратор
+permissions:
+  processors: {}
+  documents:
+    Ордер: [read, write, delete, post, unpost]
+  row_access:
+    documents:
+      Ордер:
+        read:
+          field: Филиал
+          op: eq
+          value:
+            user_card:
+              catalog: Сотрудник
+              account_field: Учётка
+              field: Филиал
+        write: {same_as: read}
+        delete: {same_as: read}
+        post: {same_as: read}
+        unpost: {same_as: read}

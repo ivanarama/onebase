@@ -151,6 +151,16 @@ func allSchemas() map[string]map[string]any {
 			},
 		},
 	}
+	fieldProperties := field["properties"].(map[string]any)
+	standardField := map[string]any{
+		"type": "object", "additionalProperties": false,
+		"description": "Свойства стандартного строкового Кода/Номера; имя, тип и ID задаёт платформа",
+		"properties": map[string]any{
+			"title": fieldProperties["title"], "label": fieldProperties["label"],
+			"titles": fieldProperties["titles"], "required": fieldProperties["required"],
+			"default": fieldProperties["default"], "pii": fieldProperties["pii"],
+		},
+	}
 	tablePart := map[string]any{
 		"type":                 "object",
 		"additionalProperties": false,
@@ -185,10 +195,13 @@ func allSchemas() map[string]map[string]any {
 		"additionalProperties": false,
 		"required":             []string{"name", "type"},
 		"properties": map[string]any{
-			"name":    stringSchema("Имя параметра"),
-			"type":    stringSchema("Тип параметра"),
-			"label":   stringSchema("Подпись"),
-			"options": arrayOf(stringSchema("Значение")),
+			"name":       stringSchema("Имя параметра"),
+			"type":       stringSchema("Тип параметра"),
+			"label":      stringSchema("Подпись"),
+			"labels":     stringMapSchema(),
+			"default":    stringSchema("Значение параметра по умолчанию"),
+			"options":    arrayOf(stringSchema("Значение")),
+			"period_end": boolSchema("Для type: date — использовать конец выбранного дня (23:59:59)"),
 		},
 	}
 	// Параметр ОБРАБОТКИ знает обязательность, параметр отчёта — нет
@@ -202,6 +215,8 @@ func allSchemas() map[string]map[string]any {
 			"name":     stringSchema("Имя параметра"),
 			"type":     stringSchema("Тип параметра"),
 			"label":    stringSchema("Подпись"),
+			"labels":   stringMapSchema(),
+			"default":  map[string]any{"description": "Значение параметра по умолчанию"},
 			"options":  arrayOf(stringSchema("Значение")),
 			"required": boolSchema("Обязательный параметр"),
 		},
@@ -363,6 +378,7 @@ func allSchemas() map[string]map[string]any {
 						"scope":       stringSchema("Поле области нумерации"),
 						"base_prefix": map[string]any{"type": "boolean", "description": "Подставлять префикс этой базы (для обмена между базами)"},
 						"unique":      map[string]any{"type": "boolean", "description": "Требовать уникальность кода/номера"},
+						"field":       standardField,
 					},
 				},
 				"predefined": arrayOf(map[string]any{
@@ -447,7 +463,7 @@ func allSchemas() map[string]map[string]any {
 			},
 		},
 		"form":      managedFormSchema(),
-		"role":      looseNamedSchema("OneBase RBAC role"),
+		"role":      roleRowAccessSchema(),
 		"page":      looseNamedSchema("OneBase page"),
 		"service":   looseNamedSchema("OneBase HTTP service"),
 		"subsystem": navigationContainerSchema(false),

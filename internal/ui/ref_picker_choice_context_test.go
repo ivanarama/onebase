@@ -82,7 +82,7 @@ func TestRefPickerChoiceContextReadsCurrentControl(t *testing.T) {
 	}
 	picker := js[start:end]
 	for _, want := range []string{
-		"sel.form.elements.namedItem(fieldName)",
+		"obRefSourceValue(sel.form, fieldName)",
 		"var refContextRaw = sel.getAttribute('data-ref-context') || '';",
 		"fetchOptions.method = 'POST';",
 		"'/ui/_ref-options/' + encodeURIComponent(refEntity) + '/page'",

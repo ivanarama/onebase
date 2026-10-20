@@ -38,12 +38,13 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 	chartSource := r.FormValue("chart_source")
 
 	type saveParam struct {
-		Name    string            `yaml:"name"`
-		Type    string            `yaml:"type"`
-		Label   string            `yaml:"label,omitempty"`
-		Labels  map[string]string `yaml:"labels,omitempty"`
-		Default *string           `yaml:"default,omitempty"`
-		Options *[]string         `yaml:"options,omitempty"`
+		Name      string            `yaml:"name"`
+		Type      string            `yaml:"type"`
+		Label     string            `yaml:"label,omitempty"`
+		Labels    map[string]string `yaml:"labels,omitempty"`
+		Default   *string           `yaml:"default,omitempty"`
+		Options   *[]string         `yaml:"options,omitempty"`
+		PeriodEnd *bool             `yaml:"period_end,omitempty"`
 	}
 	type saveReport struct {
 		Name        string              `yaml:"name"`
@@ -97,10 +98,10 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 			return nil, fmt.Errorf("updateReportFile: ожидалось YAML-отображение в корне отчёта")
 		}
 		doc := root.Content[0]
-		// Умолчания и варианты выбора не редактируются формой. Сохраняем
+		// Умолчания, варианты выбора и period_end не редактируются формой. Сохраняем
 		// их по имени: перестановка не переносит их на другой параметр,
 		// а новые и переименованные параметры не наследуют чужие значения.
-		// Указатель Options отличает отсутствующий список от явного options: [].
+		// Указатели отличают отсутствие ключа от options: [] и period_end: false.
 		var existing saveReport
 		if err := doc.Decode(&existing); err != nil {
 			return nil, err
@@ -114,6 +115,7 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 			previous := byName[params[i].Name]
 			params[i].Default = previous.Default
 			params[i].Options = previous.Options
+			params[i].PeriodEnd = previous.PeriodEnd
 		}
 		if err := setYAMLMapField(doc, "query", query); err != nil {
 			return nil, err

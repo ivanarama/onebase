@@ -1,0 +1,9 @@
+name: Неисправность
+hierarchical: true
+fields:
+  - name: Наименование
+    type: string
+  - name: Направление
+    type: reference:Направление
+  - name: Аудитория
+    type: string

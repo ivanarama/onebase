@@ -101,8 +101,8 @@ class Element {
     return null;
   }
 
-  // Как в браузере: выборка идёт по всем потомкам, а не по прямым детям.
-  // Именно поэтому переключение внешней группы гасит и вложенные страницы.
+  // Как в браузере: выборка идёт по всем потомкам, а не по прямым детям —
+  // переключение обязано отсекать вложенные наборы само (obManagedOwnTabParts).
   querySelectorAll(selector) {
     const parsed = parseSelector(selector);
     const found = [];
@@ -127,6 +127,7 @@ function boot() {
   const documentListeners = new Map();
   const timers = [];
   const stored = new Map();
+  const fired = [];
 
   const context = {
     document: {
@@ -145,15 +146,30 @@ function boot() {
       setItem(key, value) { stored.set(String(key), String(value)); }
     },
     setTimeout(fn) { timers.push(fn); return timers.length; },
-    obManagedReady(fn) { fn(); }
+    obManagedReady(fn) { fn(); },
+    // Объект extra создан в песочнице vm — у него свой Object.prototype, и
+    // deepStrictEqual отличал бы его от литерала теста. Сравниваем данные.
+    obFire(element, event, extra) { fired.push(JSON.parse(JSON.stringify([element, event, extra]))); }
   };
   context.window = context;
   vm.runInNewContext(runtime, context, {filename: 'managed-tabs-runtime.js'});
 
   const invalidListeners = documentListeners.get('invalid') || [];
+  const clickListeners = documentListeners.get('click') || [];
   return {
     root,
     invalidListeners,
+    fired,
+    // Щелчок по закладке набора name с индексом idx — как браузер: событие
+    // приходит документу, цель — кнопка.
+    click(name, idx) {
+      const tabs = root.querySelector('[data-tabs="' + name + '"]');
+      assert.ok(tabs, 'в отрендеренной форме нет набора ' + name);
+      const btn = tabs.querySelectorAll('.managed-tab-btn')
+        .filter((b) => b.closest('.managed-tabs') === tabs && b.getAttribute('data-tab-idx') === String(idx))[0];
+      assert.ok(btn, 'в наборе ' + name + ' нет закладки ' + idx);
+      for (const entry of clickListeners) entry.listener({target: btn});
+    },
     control(name) {
       const control = root.querySelector('[name="' + name + '"]');
       assert.ok(control, 'в отрендеренной форме нет контрола ' + name);
@@ -235,4 +251,52 @@ test('обработчик слушает фазу перехвата — invali
   assert.equal(app.invalidListeners.length, 1);
   // Без capture=true документ не увидит событие вовсе: invalid не всплывает.
   assert.equal(app.invalidListeners[0].capture, true);
+});
+
+test('внешняя закладка не гасит вложенный набор: его первая страница видна', () => {
+  const app = boot();
+  app.click('Страницы', 1);
+  // Раньше переключение внешнего набора снимало active и прятало страницы
+  // вложенного: открытая «Дополнительно» показывала одни заголовки.
+  assert.deepEqual(app.activeTabIndexes(), ['1', '0']);
+  assert.equal(app.visible(app.control('Заметка')), true, 'первая страница вложенного набора скрыта');
+});
+
+test('выбор во вложенном наборе переживает уход с внешней закладки и возврат', () => {
+  const app = boot();
+  app.click('Страницы', 1);
+  app.click('ВложенныеСтраницы', 1);
+  app.click('Страницы', 0);
+  app.click('Страницы', 1);
+  assert.deepEqual(app.activeTabIndexes(), ['1', '1']);
+  assert.equal(app.visible(app.control('ПолеВложенное')), true, 'выбранная вложенная страница скрыта');
+  assert.equal(app.visible(app.control('Заметка')), false, 'вложенный набор показывает две страницы сразу');
+});
+
+test('ПриСменеСтраницы: щелчок по другой закладке шлёт событие набору с именем страницы', () => {
+  const app = boot();
+  app.click('Страницы', 1);
+  assert.deepEqual(app.fired, [['Страницы', 'ПриСменеСтраницы', {_page: 'Дополнительно'}]]);
+
+  // Щелчок по уже открытой закладке страницу не меняет — события нет.
+  app.click('Страницы', 1);
+  assert.equal(app.fired.length, 1, 'повторный щелчок по открытой закладке отправил событие');
+
+  app.click('Страницы', 0);
+  assert.deepEqual(app.fired[1], ['Страницы', 'ПриСменеСтраницы', {_page: 'Основная'}]);
+});
+
+test('ПриСменеСтраницы: набор без обработчика молчит и не будит внешний', () => {
+  const app = boot();
+  app.click('Страницы', 1);
+  app.fired.length = 0;
+  app.click('ВложенныеСтраницы', 1);
+  assert.deepEqual(app.fired, [], 'вложенный набор без обработчика отправил событие');
+});
+
+test('ПриСменеСтраницы: переход к невалидному полю — не пользовательская смена', () => {
+  const app = boot();
+  app.fire(app.control('ПолеВложенное'));
+  assert.deepEqual(app.activeTabIndexes(), ['1', '1'], 'фикстура: вкладки не переключились');
+  assert.deepEqual(app.fired, [], 'открытие вкладки невалидного поля отправило ПриСменеСтраницы');
 });

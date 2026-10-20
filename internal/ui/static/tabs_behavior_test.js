@@ -67,6 +67,7 @@ class Element {
       // вне протокола — текстовую ошибку 404.
       this.contentWindow = {
         document: this.contentDocument,
+        obFrameCloseDocumentToken: 'initial-document',
         obAnswersFrameClose: true,
         postMessage: (data, origin) => { this._posted.push({data, origin}); },
       };
@@ -269,6 +270,14 @@ function shell(storage, search = '', confirmClose = () => true, requestFrameClos
       frame.contentWindow.location = {href};
       frame.dispatch('load');
     },
+    // Сообщение фрейма без смены его адреса: так доходит запоздавший
+    // obFrameURLChanged документа, который фрейм уже покинул.
+    postFromFrame(index, data) {
+      const frame = frames()[index];
+      for (const listener of windowListeners.get('message') || []) {
+        listener({origin: context.location.origin, source: frame.contentWindow, data});
+      }
+    },
     replaceWithoutLoad(index, href) {
       const frame = frames()[index];
       frame.contentWindow.location = {href};
@@ -276,7 +285,7 @@ function shell(storage, search = '', confirmClose = () => true, requestFrameClos
         listener({
           origin: context.location.origin,
           source: frame.contentWindow,
-          data: {source: 'obFrameURLChanged', url: href}
+          data: {source: 'obFrameURLChanged', url: href, documentToken: frame.contentWindow.obFrameCloseDocumentToken}
         });
       }
     },
@@ -802,4 +811,80 @@ test('open-access deployment preserves F5 and is discarded on the first authenti
   assert.equal(app.activeIndex(),0);
   app = shell(storage);
   assert.equal(app.count(),0);
+});
+
+test('a close command that outran the save of a new form closes it once the id arrives', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/звонок/new', 'Звонок');
+  app.open('/ui/document/заявка/7', 'Заявка');
+  // Обработчик формы записал новый звонок и сразу прислал ui.закрытьФорму
+  // по адресу с id — по SSE раньше, чем форма получила ответ с savedId.
+  assert.equal(app.closeByURL('/ui/document/звонок/42'), 0);
+  assert.equal(app.count(), 2);
+  // Ответ пришёл: форма сменила адрес через replaceState и сообщила оболочке.
+  app.replaceWithoutLoad(0, 'http://127.0.0.1:8080/ui/document/звонок/42');
+  assert.deepEqual(app.titles(), ['Заявка']);
+});
+
+test('a waiting close command does not touch another document', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/звонок/new', 'Звонок');
+  assert.equal(app.closeByURL('/ui/document/звонок/42'), 0);
+  app.replaceWithoutLoad(0, 'http://127.0.0.1:8080/ui/document/звонок/43');
+  assert.equal(app.count(), 1);
+  // Вкладка, открытая позже обычным переходом, команду тоже не подхватывает.
+  app.open('/ui/document/звонок/42', 'Звонок 42');
+  assert.equal(app.count(), 2);
+});
+
+test('a waiting close command is used once', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/звонок/new', 'Звонок');
+  app.duplicate(0);
+  assert.equal(app.closeByURL('/ui/document/звонок/42'), 0);
+  app.replaceWithoutLoad(0, 'http://127.0.0.1:8080/ui/document/звонок/42');
+  assert.equal(app.count(), 1);
+  app.replaceWithoutLoad(0, 'http://127.0.0.1:8080/ui/document/звонок/42');
+  assert.equal(app.count(), 1);
+});
+
+// Ревью #2151: форма /new записалась, получила ui.закрытьФорму по /42 и
+// отправила obFrameURLChanged, но фрейм успел перейти на другую форму.
+// WindowProxy тот же — сообщение старого документа не должно ни переписать
+// адрес вкладки, ни закрыть новую форму.
+test('a stale url message of a left document neither renames nor closes the tab', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/call/new', 'Звонок');
+  assert.equal(app.closeByURL('/ui/document/call/42'), 0);
+  app.navigate(0, 'http://127.0.0.1:8080/ui/document/other/7');
+  app.postFromFrame(0, {source: 'obFrameURLChanged', url: '/ui/document/call/42', documentToken: 'initial-document'});
+  assert.equal(app.count(), 1);
+  assert.equal(savedTabs(storage)[0].url, '/ui/document/other/7');
+  // Тот же документ, оставшийся во фрейме, своё закрытие получает как раньше.
+  app.navigate(0, 'http://127.0.0.1:8080/ui/document/call/new');
+  assert.equal(app.closeByURL('/ui/document/call/43'), 0);
+  app.replaceWithoutLoad(0, 'http://127.0.0.1:8080/ui/document/call/43');
+  assert.equal(app.count(), 0);
+});
+
+test('a waiting close belongs to the original Document even when its replacement has the same URL', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/call/new', 'Call');
+  app.installManagedDocument(0, 'original');
+  assert.equal(app.closeByURL('/ui/document/call/42'), 0);
+  // Document changes before load; WindowProxy and the saved URL stay the same.
+  app.silentNavigate(0, 'http://127.0.0.1:8080/ui/document/call/42');
+  app.installManagedDocument(0, 'replacement');
+  app.postFromFrame(0, {source: 'obFrameURLChanged', url: '/ui/document/call/42', documentToken: 'original'});
+  assert.equal(savedTabs(storage)[0].url, '/ui/document/call/new');
+  // Even a genuine URL notification of the new Document cannot inherit the
+  // original Document's pending command.
+  app.replaceWithoutLoad(0, 'http://127.0.0.1:8080/ui/document/call/42');
+  assert.equal(app.count(), 1);
+  assert.equal(app.posted(0).length, 0);
 });

@@ -1,0 +1,44 @@
+schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Заявка
+attributes:
+  - name: Объект
+    type: DocumentRef.Заявка
+    main: true
+    save: true
+  - name: ТочныйВыбор
+    type: CatalogRef.Неисправность
+    save: false
+elements:
+  - id: direction
+    kind: ПолеВвода
+    name: ПолеНаправление
+    data_path: Объект.Направление
+    choice: true
+    choice_folders: true
+  - id: fault-picker
+    kind: ПолеВвода
+    name: ПолеНеисправность
+    data_path: Объект.Неисправность
+    choice: true
+    choice_filter:
+      - field: Направление
+        op: in_hierarchy
+        from: Объект.Направление
+      - field: is_folder
+        op: eq
+        value: false
+  - id: exact-picker
+    kind: ПолеВвода
+    name: ТочныйВыбор
+    data_path: Форма.ТочныйВыбор
+    choice: true
+    choice_filter:
+      - field: Направление
+        op: eq
+        from: Объект.Направление
+      - field: is_folder
+        op: eq
+        value: false

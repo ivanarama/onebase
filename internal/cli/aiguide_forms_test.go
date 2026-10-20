@@ -180,8 +180,9 @@ func TestAIGuide_ПеременныеКонтекстаТЧИзСловаря(t 
 	for _, v := range metadata.FormTablePartContextVars() {
 		known[strings.ToLower(v)] = true
 	}
-	// Переменные вне словаря контекста ТЧ: их кладёт не addValidatedTPEventContext.
-	for _, extra := range []string{"объект", "этотобъект", "подборрезультат", "подборзапрос"} {
+	// Переменные вне словаря контекста ТЧ: их кладёт не addValidatedTPEventContext
+	// (ТекущаяСтраница — addPageChangeContext события ПриСменеСтраницы).
+	for _, extra := range []string{"объект", "этотобъект", "подборрезультат", "подборзапрос", "текущаястраница"} {
 		known[extra] = true
 	}
 	for _, name := range backquoted(section) {

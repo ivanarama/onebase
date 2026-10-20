@@ -236,7 +236,7 @@ func (s *Service) listParamsWithRowAccess(ctx context.Context, ref *metadata.Ent
 		params.RowFilterEvaluated = true
 		return params, nil
 	}
-	dec, err := access.DecideWithLookup(u, string(ref.Kind), ref.Name, "read", ref, s.Reg)
+	dec, err := access.DecideWithContext(ctx, u, string(ref.Kind), ref.Name, "read", ref, access.RuntimeContext(s.Reg, s.Store))
 	if err != nil {
 		return params, fmt.Errorf("default единственный (%s): %w", ref.Name, err)
 	}
@@ -433,7 +433,7 @@ func (s *Service) NewObject(ctx context.Context, req NewObjectRequest) (NewObjec
 	if proc == nil {
 		return NewObjectResult{Object: obj, Filled: filled}, nil
 	}
-	hookCtx, cancelHook := s.hookExecutionContext(ctx)
+	hookCtx, cancelHook := s.hookExecutionContext(withHookObjectState(ctx, obj, true))
 	defer cancelHook()
 
 	var msgs []string

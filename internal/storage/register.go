@@ -464,6 +464,8 @@ func (db *DB) writeMovementsInTx(ctx context.Context, regName, recorderType stri
 
 // GetMovements returns movement rows for a register, ordered by period and
 // recorder. Если f задан — выборка сужается по измерениям и периоду (issue #45).
+// period remains a machine value (PostgreSQL time.Time or SQLite TEXT), so DSL
+// reads retain its type and saved precision. Format dates only for display.
 func (db *DB) GetMovements(ctx context.Context, regName string, reg *metadata.Register, f RegFilter) ([]map[string]any, error) {
 	table := metadata.RegisterTableName(regName)
 	cols := []string{"recorder", "recorder_type", "line_number", "period", "вид_движения"}
@@ -511,11 +513,7 @@ func (db *DB) GetMovements(ctx context.Context, regName string, reg *metadata.Re
 		row["recorder_type"] = dest[1]
 		row["line_number"] = dest[2]
 		if dest[3] != nil {
-			if t, ok := dest[3].(time.Time); ok {
-				row["period"] = t.Format("02.01.2006")
-			} else {
-				row["period"] = dest[3]
-			}
+			row["period"] = dest[3]
 		}
 		row["вид_движения"] = dest[4]
 		for i, f := range allFields {
@@ -557,7 +555,7 @@ func (db *DB) GetDocumentMovements(ctx context.Context, recorderID uuid.UUID, re
 			row := make(map[string]any, len(cols))
 			row["line_number"] = dest[0]
 			if t, ok := dest[1].(time.Time); ok {
-				row["period"] = t.Format("02.01.2006")
+				row["period"] = FormatDisplayDate(t)
 			} else {
 				row["period"] = dest[1]
 			}

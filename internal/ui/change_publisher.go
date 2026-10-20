@@ -81,7 +81,7 @@ func (p *changePublisher) canSee(ctx context.Context, u *auth.User, entity *meta
 	if row == nil {
 		return false
 	}
-	dec, err := access.DecideWithLookup(u, string(entity.Kind), entity.Name, "read", entity, p.s.reg)
+	dec, err := access.DecideWithContext(ctx, u, string(entity.Kind), entity.Name, "read", entity, access.RuntimeContext(p.s.reg, p.s.store))
 	if err != nil || !dec.Allowed {
 		return false
 	}

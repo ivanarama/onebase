@@ -149,6 +149,9 @@ func Validate(entities []*Entity, enums []*Enum) error {
 		if err := validateFullText(e); err != nil {
 			return err
 		}
+		if err := validateListFilters(e); err != nil {
+			return err
+		}
 		if err := validateSearchFields(e); err != nil {
 			return err
 		}
@@ -638,6 +641,22 @@ func findEntityField(e *Entity, name string) *Field {
 		if e.Fields[i].Name == name {
 			return &e.Fields[i]
 		}
+	}
+	return nil
+}
+
+// validateListFilters: поля list_filters — реквизиты сущности. Опечатка иначе
+// молча убрала бы поле из панели «Отбор».
+func validateListFilters(e *Entity) error {
+	seen := map[string]bool{}
+	for _, name := range e.ListFilters {
+		if findEntityField(e, name) == nil {
+			return fmt.Errorf("entity %s: list_filters references unknown field %s", e.Name, name)
+		}
+		if seen[name] {
+			return fmt.Errorf("entity %s: list_filters: поле %s указано дважды", e.Name, name)
+		}
+		seen[name] = true
 	}
 	return nil
 }

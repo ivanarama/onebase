@@ -47,13 +47,16 @@ func testManagedRefComboboxBrowser(t *testing.T, required bool) {
 		t.Fatal(err)
 	}
 	form := f.owner.Forms[0]
-	f.owner.Fields = append(f.owner.Fields, metadata.Field{Name: "Запрет", Type: metadata.FieldTypeBool})
+	f.owner.Fields = append(f.owner.Fields, metadata.Field{Name: "Запрет", Type: metadata.FieldTypeBool}, metadata.Field{Name: "Скрыть", Type: metadata.FieldTypeBool})
 	f.owner.Fields[1].Required = required
 	form.Elements[1].ReadOnlyWhen = "Запрет"
+	form.Elements[1].HiddenWhen = "Скрыть"
 	form.Elements[1].Required = required
 	form.Attributes = append(form.Attributes, &metadata.FormAttribute{Name: "Просмотр", TypeRef: "CatalogRef." + f.target.Name})
 	form.Elements = append(form.Elements,
 		&metadata.FormElement{ID: "lock", Name: "ПолеЗапрет", Kind: metadata.FormElementCheckbox, DataPath: "Объект.Запрет", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnChange: "Обновить"}},
+		&metadata.FormElement{ID: "hide", Name: "ПолеСкрыть", Kind: metadata.FormElementCheckbox, DataPath: "Объект.Скрыть", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnChange: "Обновить"}},
+		&metadata.FormElement{ID: "echo", Name: "Повторить", Kind: metadata.FormElementButton, TitleMap: map[string]string{"ru": "Повторить"}, Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Обновить"}},
 		&metadata.FormElement{ID: "readonly", Name: "Просмотр", Kind: metadata.FormElementField, DataPath: "Форма.Просмотр", ReadOnly: true},
 		&metadata.FormElement{ID: "fill", Name: "Заполнить", Kind: metadata.FormElementButton, TitleMap: map[string]string{"ru": "Заполнить"}, Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Заполнить"}},
 	)

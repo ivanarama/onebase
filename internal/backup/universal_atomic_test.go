@@ -130,14 +130,20 @@ func TestImportUniversalReplacesCompleteSnapshot(t *testing.T) {
 func TestImportUniversalLateFailureRollsBackDatabaseAndFiles(t *testing.T) {
 	ctx := context.Background()
 	archive := buildUniversalAtomicFixture(t, map[string]string{
-		"META.txt":            "onebase_full_export\nversion=2\nformat=universal\nhas_exchange_state=false\n",
-		"manifest.json":       `{"data/ghost.jsonl":1}`,
+		"META.txt": "onebase_full_export\nversion=2\nformat=universal\nhas_exchange_state=false\n",
+		// Число строк соответствует манифесту, поэтому архив проходит preflight.
+		// Повторный первичный ключ вызывает ошибку второй вставки уже внутри
+		// транзакции, после подготовки конфигурации и вложений.
+		"manifest.json":       `{"data/ghost.jsonl":2}`,
 		"config/onebase.yaml": "name: replacement\n",
-		"data/ghost.jsonl":    "{\"_schema\":1}\n{\"id\":\"not-importable\"}\n",
+		"data/ghost.jsonl":    "{\"_schema\":1}\n{\"id\":\"duplicate\"}\n{\"id\":\"duplicate\"}\n",
 	})
 
 	dst := newSQLite(t, "atomic-failure-dst")
 	if _, err := dst.Exec(ctx, `CREATE TABLE keep_rows (id TEXT PRIMARY KEY, value TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dst.Exec(ctx, `CREATE TABLE ghost (id TEXT PRIMARY KEY)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dst.Exec(ctx, `INSERT INTO keep_rows(id,value) VALUES ('old','must survive')`); err != nil {
@@ -155,9 +161,14 @@ func TestImportUniversalLateFailureRollsBackDatabaseAndFiles(t *testing.T) {
 	writeTestFile(t, filepath.Join(dstConfig, "onebase.yaml"), "name: original\n")
 	writeTestFile(t, filepath.Join(dstAttachments, "old.bin"), "original attachment")
 
-	if _, err := ImportUniversal(ctx, dst, "file", dstConfig, dstAttachments,
-		bytes.NewReader(archive), int64(len(archive))); err == nil {
-		t.Fatal("ImportUniversal error = nil, want late table-count failure")
+	_, err := ImportUniversal(ctx, dst, "file", dstConfig, dstAttachments,
+		bytes.NewReader(archive), int64(len(archive)))
+	if err == nil {
+		t.Fatal("ImportUniversal error = nil, want duplicate primary key on second insert")
+	}
+	if !strings.Contains(err.Error(), "insert row 2 into ghost") ||
+		!strings.Contains(err.Error(), "UNIQUE constraint failed: ghost.id") {
+		t.Fatalf("ImportUniversal error = %v, want late duplicate primary key failure", err)
 	}
 	var value string
 	if err := dst.QueryRow(ctx, `SELECT value FROM keep_rows WHERE id='old'`).Scan(&value); err != nil {
@@ -166,6 +177,7 @@ func TestImportUniversalLateFailureRollsBackDatabaseAndFiles(t *testing.T) {
 	if value != "must survive" {
 		t.Fatalf("database rollback value = %q", value)
 	}
+	assertTableCount(t, ctx, dst, "ghost", 0)
 	if got := readTestFile(t, filepath.Join(dstConfig, "onebase.yaml")); got != "name: original\n" {
 		t.Fatalf("configuration changed on failed restore: %q", got)
 	}

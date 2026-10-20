@@ -113,6 +113,98 @@ func TestRunFullFormPlacementPreservesDistinctUnicodeOwners(t *testing.T) {
 	}
 }
 
+func placementWarnings(t *testing.T, dir string) []configcheck.Issue {
+	t.Helper()
+	res := configcheck.RunFullWithOptions(dir, configcheck.Options{})
+	if !res.OK {
+		t.Fatalf("check отклонил проект: %+v", res.Issues)
+	}
+	var warnings []configcheck.Issue
+	for _, warning := range res.Warnings {
+		if warning.Code == "form.not-loaded" {
+			warnings = append(warnings, warning)
+		}
+	}
+	return warnings
+}
+
+// Подсказанный каталог должен действительно загружаться тем же публичным путём.
+func TestRunFullFormPlacementUnicodeSuggestionLoads(t *testing.T) {
+	for _, kind := range []string{"catalogs", "processors"} {
+		t.Run(kind, func(t *testing.T) {
+			dir := fullPlacementProject(t, kind, "İ", "other/главная.form.yaml")
+			warnings := placementWarnings(t, dir)
+			if len(warnings) != 1 {
+				t.Fatalf("ожидалось одно предупреждение: %+v", warnings)
+			}
+			const prefix = "Доступные каталоги: "
+			_, suggestion, ok := strings.Cut(warnings[0].SuggestedFix, prefix)
+			if !ok || suggestion != "İ." {
+				t.Fatalf("подсказка потеряла имя владельца İ: %q", warnings[0].SuggestedFix)
+			}
+			// Прежняя подсказка i не совпадает с İ даже без учёта регистра.
+			forms := filepath.Join(dir, "forms")
+			if err := os.Rename(filepath.Join(forms, "other"), filepath.Join(forms, "i")); err != nil {
+				t.Fatal(err)
+			}
+			if warnings := placementWarnings(t, dir); len(warnings) != 1 {
+				t.Fatalf("каталог i не должен загружаться для İ: %+v", warnings)
+			}
+			folder := strings.TrimSuffix(suggestion, ".")
+			if err := os.Rename(filepath.Join(forms, "i"), filepath.Join(forms, folder)); err != nil {
+				t.Fatal(err)
+			}
+			if warnings := placementWarnings(t, dir); len(warnings) != 0 {
+				t.Fatalf("подсказанный каталог не загружается: %+v", warnings)
+			}
+			proj, err := project.Load(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer proj.Close()
+			if kind == "catalogs" {
+				if len(proj.Entities[0].Forms) != 1 {
+					t.Fatal("подсказанная форма сущности не загружена")
+				}
+			} else if len(proj.Processors[0].Forms) != 1 {
+				t.Fatal("подсказанная форма обработки не загружена")
+			}
+		})
+	}
+}
+
+func TestRunFullFormPlacementSuggestionsPreserveDistinctUnicodeOwners(t *testing.T) {
+	dir := fullPlacementProject(t, "catalogs", "I", "other/главная.form.yaml")
+	processorsDir := filepath.Join(dir, "processors")
+	if err := os.MkdirAll(processorsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(processorsDir, "other.yaml"), []byte("name: İ\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	warnings := placementWarnings(t, dir)
+	if len(warnings) != 1 || !strings.HasSuffix(warnings[0].SuggestedFix, "Доступные каталоги: i, İ.") {
+		t.Fatalf("подсказка объединила различных владельцев I и İ: %+v", warnings)
+	}
+}
+
+func TestRunFullFormPlacementSuggestionsSortedAndLimited(t *testing.T) {
+	dir := fullPlacementProject(t, "catalogs", "İ", "other/главная.form.yaml")
+	for i, name := range []string{"Zulu", "Gamma", "Beta", "Alpha", "Theta", "Eta", "Delta", "Iota", "Kappa"} {
+		path := filepath.Join(dir, "catalogs", fmt.Sprintf("owner%d.yaml", i))
+		if err := os.WriteFile(path, []byte("name: "+name+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const want = "Доступные каталоги: alpha, beta, delta, eta, gamma, iota, kappa, theta."
+	for range 3 {
+		warnings := placementWarnings(t, dir)
+		if len(warnings) != 1 || !strings.HasSuffix(warnings[0].SuggestedFix, want) {
+			t.Fatalf("ожидались восемь отсортированных примеров: %+v", warnings)
+		}
+	}
+}
+
 func TestRunFullFormPlacementUnloadedDirectories(t *testing.T) {
 	for _, rel := range []string{
 		"главная.form.yaml",

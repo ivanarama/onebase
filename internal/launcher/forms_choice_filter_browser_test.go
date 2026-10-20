@@ -104,12 +104,14 @@ elements:
 		t.Fatal("результат браузера не закрыт")
 	}
 	var rows []struct {
-		Node     int      `json:"node"`
-		Editors  int      `json:"editors"`
-		Fields   []string `json:"fields"`
-		ID       string   `json:"id"`
-		Mask     string   `json:"mask"`
-		Readonly int      `json:"readonly"`
+		Node        int      `json:"node"`
+		Editors     int      `json:"editors"`
+		Fields      []string `json:"fields"`
+		ID          string   `json:"id"`
+		Mask        string   `json:"mask"`
+		Readonly    int      `json:"readonly"`
+		Background  int      `json:"background"`
+		Orientation int      `json:"orientation"`
 	}
 	if err := json.Unmarshal([]byte(html.UnescapeString(result)), &rows); err != nil {
 		t.Fatalf("результат браузера: %v: %s", err, result)
@@ -134,6 +136,16 @@ elements:
 		}
 		if row.Editors != wantEditors {
 			t.Errorf("узел %d: редакторов choice_filter %d вместо %d", row.Node, row.Editors, wantEditors)
+		}
+		wantBackground, wantOrientation := 0, 0
+		if row.Node == 1 || row.Node == 3 {
+			wantBackground = 1
+		}
+		if row.Node == 3 {
+			wantOrientation = 1
+		}
+		if row.Background != wantBackground || row.Orientation != wantOrientation {
+			t.Errorf("узел %d: свойства фона/группы: %+v", row.Node, row)
 		}
 		if row.Node <= 2 && row.Readonly != 1 {
 			t.Errorf("узел %d: соседнее свойство readonly потеряно/дублировано: %d", row.Node, row.Readonly)
@@ -162,7 +174,9 @@ window.addEventListener('load', function () {
         fields: Array.from(panel.querySelectorAll('.prop-choice-card')).map(function (el) { return el.querySelector('input').value; }),
         id: inputValue('Устойчивый id элемента'),
         mask: inputValue('Шаблон ввода (00.00.00)'),
-        readonly: labels.filter(function (el) { return el.textContent === 'Только чтение'; }).length
+        readonly: labels.filter(function (el) { return el.textContent === 'Только чтение'; }).length,
+        background: labels.filter(function (el) { return el.textContent === 'Фон (CSS-цвет)'; }).length,
+        orientation: labels.filter(function (el) { return el.textContent === 'Расположение реквизитов'; }).length
       };
     });
     var out = document.createElement('pre');

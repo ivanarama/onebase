@@ -270,6 +270,8 @@ func NewFileFunctions(guard FileGuard) map[string]any {
 
 	m["декодироватьфайл"] = guardedFile(guard, decodeFileBuiltin)
 	m["decodefile"] = guardedFile(guard, decodeFileBuiltin)
+	m["прочитатьexcel"] = guardedFile(guard, builtinImportExcel)
+	m["importexcel"] = guardedFile(guard, builtinImportExcel)
 
 	// Процедурные файловые builtins (глобально зарегистрированы в
 	// builtins_files.go) перекрываются здесь обёрткой с guard'ом: extraVars

@@ -44,6 +44,7 @@ type formYAMLOut struct {
 		OriginalID             string            `yaml:"original_id,omitempty"`
 		AutoSaveDataInSettings bool              `yaml:"auto_save_settings,omitempty"`
 		VerticalScroll         string            `yaml:"vertical_scroll,omitempty"`
+		EnterSubmitsForm       bool              `yaml:"enter_submits_form,omitempty"`
 	} `yaml:"form"`
 
 	Attributes []yamlAttribute   `yaml:"attributes,omitempty"`
@@ -141,6 +142,7 @@ func buildYAMLDoc(form *IRForm) formYAMLOut {
 	doc.Form.Title = nonEmptyTitle(form.Title)
 	doc.Form.OriginalID = form.OriginalID
 	doc.Form.AutoSaveDataInSettings = form.AutoSaveDataInSettings
+	doc.Form.EnterSubmitsForm = form.EnterSubmitsForm
 	doc.Form.VerticalScroll = form.VerticalScroll
 
 	for _, a := range form.Attributes {

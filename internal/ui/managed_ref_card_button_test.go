@@ -86,7 +86,7 @@ form:
 			}
 
 			html := response.Body.String()
-			hasButton := strings.Contains(html, `data-ob-ref-current="ref-Клиент"`)
+			hasButton := strings.Contains(html, `data-ob-ref-current="closest"`)
 			if hasButton != tc.wantButton {
 				t.Fatalf("наличие кнопки «Открыть карточку» = %v, ожидалось %v:\n%.1200s", hasButton, tc.wantButton, html)
 			}

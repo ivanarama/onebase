@@ -62,6 +62,13 @@ func ResolveSafePath(p string) (string, error) {
 	return resolveSafePath(p)
 }
 
+// FileSandboxRoot — корень песочницы или пустая строка, если она выключена.
+// Нужен вышестоящему слою, чтобы класть временные файлы двоичных параметров
+// ВНУТРЬ песочницы: иначе обработка не смогла бы прочитать собственный файл.
+func FileSandboxRoot() string {
+	return fileSandboxRoot
+}
+
 func safePathOrRaise(op, p string) string {
 	safe, err := resolveSafePath(p)
 	if err != nil {

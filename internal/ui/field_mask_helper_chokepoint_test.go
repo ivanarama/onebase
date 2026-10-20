@@ -100,6 +100,9 @@ var maskHelperExempt = map[string]maskHelperExemption{
 	"Server.saveManagedObject":             {reason: "путь записи: GetByID используется только для RLS-предиката, значения клиенту не возвращаются"},
 
 	// ── Особый случай.
+	"formObjectThis.XDTOObject": {reason: "HTTP-снимок XDTO: прочитанная строка используется для read/RLS и только служебных bool posted/deletion_mark; " +
+		"её реквизиты не копируются в снимок. Исходные поля формы маскируются сериализатором через XDTOMaskField, " +
+		"контракт проверяют TestXDTOObjectSourceAlwaysMasks и публичная TestXDTOHTTPFormStateMatrix"},
 	"Server.loadRuntimeObjectRow": {reason: "строит Объект для DSL-обёрток (catWriter/docWriter маскируют в Get) и для " +
 		"серверных хуков формы, где действует контракт «this не маскируется»: значение принадлежит текущей операции, " +
 		"а не чужой записи (field_access.go, доккомментарий maskDSLValue). Строку шапки docWriter читает только ради " +

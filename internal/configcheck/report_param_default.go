@@ -21,6 +21,16 @@ func CheckLintReports(proj *project.Project) []Issue {
 			continue
 		}
 		for _, param := range rep.Params {
+			if param.PeriodEnd && param.Type != "date" {
+				issues = append(issues, Issue{
+					File:         "reports/" + rep.Name + ".yaml",
+					Object:       rep.Name,
+					Kind:         "Отчёт",
+					Code:         "report.period-end-type",
+					Message:      fmt.Sprintf("параметр %q: period_end действует только у type: date, здесь %q — ключ игнорируется", param.Name, param.Type),
+					SuggestedFix: "Уберите period_end или сделайте параметр датой (type: date).",
+				})
+			}
 			defaultValue := strings.TrimSpace(param.Default)
 			if param.Type != "select" || defaultValue == "" || isReportParamDefaultTemplate(defaultValue) {
 				continue

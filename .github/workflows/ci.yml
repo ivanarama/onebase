@@ -20,8 +20,10 @@ permissions:
 # снимает предыдущий незавершённый прогон, чтобы зависшие/лишние runs не
 # потребляли раннеры бесконечно. По ref, а не глобально, — параллельные ветки
 # не мешают друг другу.
+# Ручной запуск имеет отдельную группу: он не отменяет push@main, которым release.yml
+# доказывает готовность точного релизного SHA.
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -547,6 +549,21 @@ jobs:
     name: e2e
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    # Browser fixtures exercise the same public routes on SQLite and PostgreSQL.
+    services:
+      postgres:
+        image: ${{ (needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs') && 'postgres:16' || '' }}
+        env:
+          POSTGRES_USER: onebase
+          POSTGRES_PASSWORD: onebase
+          POSTGRES_DB: onebase_browser_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U onebase -d onebase_browser_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Docs-only success
         if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
@@ -607,6 +624,14 @@ jobs:
         env:
           CI: '1'
         run: npx playwright test
+
+      - name: Run public browser acceptance
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        env:
+          CI: '1'
+          ONEBASE_BROWSER_ACCEPTANCE: '1'
+          TEST_DATABASE_URL: postgres://onebase:onebase@127.0.0.1:5432/onebase_browser_test?sslmode=disable
+        run: go test -count=1 -v ./internal/ui ./internal/launcher -run 'Test(ChoiceFilter(Configurator)?|HiddenCopies|TabsClose)BrowserAcceptance$'
 
       # Без артефактов упавший браузерный тест разбирать нечем: трассировка
       # показывает шаги, снимок — что было на экране в момент падения.
@@ -784,8 +809,10 @@ jobs:
           go test -race -count=1 -timeout 15m ./internal/dbcheck
           # Fresh migrate/test databases must initialize auth before creating
           # reference:_users foreign keys; run both dialects and dry-run here.
-          go test -race -count=1 -timeout 5m ./internal/cli \
-            -run '^(TestMigrateUserReferencesMatrix|TestTestUserReferencesMatrix|TestMigrateUserReferencesDryRunMatrix)$'
+          # Include procrun row indexing; verbose output confirms the PostgreSQL
+          # subtests execute instead of being skipped.
+          go test -race -count=1 -v -timeout 5m ./internal/cli \
+            -run '^(TestMigrateUserReferencesMatrix|TestTestUserReferencesMatrix|TestMigrateUserReferencesDryRunMatrix|TestProcrunInfoRegRowIndexMatrix)$'
           # Очередь фоновых заданий (план 130). Юнит-джоб гоняет её на SQLite,
           # где исполнитель ровно один по построению — то есть ГЛАВНОЕ свойство
           # подсистемы, параллельная работа N исполнителей и расхождение

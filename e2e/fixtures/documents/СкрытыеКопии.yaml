@@ -1,0 +1,11 @@
+name: СкрытыеКопии
+title: "Проверка скрытых копий"
+fields:
+  - name: СкладПервый
+    type: reference:Склад
+  - name: СкладВторой
+    type: reference:Склад
+  - name: ФайлПервый
+    type: string
+  - name: ФайлВторой
+    type: string

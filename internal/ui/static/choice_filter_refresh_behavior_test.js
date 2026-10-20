@@ -23,6 +23,7 @@ function response(data) {
 function runtime(fetchImpl, selected, withOwner, withChoice = true, collapsed = false) {
   const listeners = {};
   const sourceControl = {value: 'warehouse-a'};
+  const sourceControls = [sourceControl];
   const ownerControl = {name: 'Контрагент', value: 'contractor-a'};
   const attrs = {
     'data-ref-entity': 'МестоХранения',
@@ -43,7 +44,7 @@ function runtime(fetchImpl, selected, withOwner, withChoice = true, collapsed = 
     _value: selected || '',
     changeCount: 0,
     isConnected: true,
-    form: {elements: {namedItem(name) { return name === 'Склад' ? sourceControl : null; }}},
+    form: {elements: {namedItem(name) { return name === 'Склад' ? (sourceControls.length === 1 ? sourceControls[0] : sourceControls) : null; }}},
     get value() { return this._value; },
     set value(value) {
       const text = String(value == null ? '' : value);
@@ -94,7 +95,7 @@ function runtime(fetchImpl, selected, withOwner, withChoice = true, collapsed = 
   vm.createContext(sandbox);
   vm.runInContext(refreshSource, sandbox, {filename: 'ui.js#choice-filter-refresh'});
   ready();
-  return {api: sandbox, attrs, select, sourceControl, ownerControl};
+  return {api: sandbox, attrs, select, sourceControl, sourceControls, ownerControl};
 }
 
 test('owner-only refresh ignores a late A response after B has been selected', async () => {
@@ -303,3 +304,27 @@ test('open owner-only list keeps showing the whole page', async () => {
   assert.deepEqual(env.select.options.map((option) => option.value), ['', 'b-1', 'b-2']);
   assert.equal(env.select.value, 'b-1');
 });
+
+// Verify the request consumer too: duplicated names must follow the same
+// disabled/radio/mirror semantics as the form submitted by the browser.
+for (const [description, controls, expected] of [
+  ['disabled first copy', [{value: 'old', disabled: true}, {value: 'current'}], 'current'],
+  ['disabled last copy', [{value: 'current'}, {value: 'old', disabled: true}], 'current'],
+  ['disabled fieldset', [{value: 'old', matches: () => true}, {value: 'current', matches: () => false}], 'current'],
+  ['readonly mirror', [{value: 'old', disabled: true}, {type: 'hidden', value: 'current'}], 'current'],
+  ['checked radio', [{type: 'radio', value: 'old', checked: false}, {type: 'radio', value: 'current', checked: true}], 'current'],
+  ['disabled checked radio', [{type: 'radio', value: 'old', checked: true, disabled: true}, {type: 'radio', value: 'current', checked: true}], 'current'],
+  ['unchecked checkbox and hidden false value', [{type: 'checkbox', value: 'true', checked: false}, {type: 'hidden', value: 'false'}], 'false'],
+  ['only disabled controls', [{value: 'old', disabled: true}], ''],
+]) {
+  test(`choice source request uses ${description}`, async () => {
+    let requested;
+    const env = runtime(async (url) => {
+      requested = new URL(url, 'http://localhost');
+      return response({items: [], total: 0});
+    });
+    env.sourceControls.splice(0, env.sourceControls.length, ...controls);
+    await env.api.obRefreshChoiceSelect(env.select, true);
+    assert.equal(JSON.parse(requested.searchParams.get('sources'))['Объект.Склад'], expected);
+  });
+}

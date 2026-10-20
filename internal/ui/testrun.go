@@ -169,19 +169,18 @@ func (rc *accessChecker) RowRestriction(name, kind, entity, op string) (string, 
 	if meta == nil {
 		return "", fmt.Errorf("объект «%s» не найден", entity)
 	}
-	user := &auth.User{ID: "_test_user_id", Login: "_test_user", Roles: []*auth.Role{r}}
-	dec, err := access.DecideWithLookup(user, k, entity, auth.NormalizeOp(op), meta, rc.reg)
-	if err != nil {
+	normalized := auth.NormalizeOp(op)
+	if !auth.PermissionHas(r.Permissions, k, entity, normalized) {
+		return "denied", nil
+	}
+	policy, ok := r.Permissions.RowAccess.Policy(k, entity, normalized)
+	if !ok {
+		return "unrestricted", nil
+	}
+	if err := access.ValidatePolicyWithLookup(policy, meta, rc.reg); err != nil {
 		return "", err
 	}
-	switch {
-	case !dec.Allowed:
-		return "denied", nil
-	case dec.Unrestricted:
-		return "unrestricted", nil
-	default:
-		return "restricted", nil
-	}
+	return "restricted", nil
 }
 
 // TestRunOptions управляет прогоном тестов.

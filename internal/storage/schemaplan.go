@@ -37,10 +37,11 @@ type ChangeKind string
 
 // Виды изменений.
 const (
-	ChangeAdd    ChangeKind = "add"    // новое поле → новая колонка
-	ChangeRename ChangeKind = "rename" // поле переименовано → колонка переименована, данные на месте
-	ChangeRetype ChangeKind = "retype" // изменился тип → преобразование колонки
-	ChangeDrop   ChangeKind = "drop"   // поле удалено из метаданных → колонка лишняя
+	ChangeAdd           ChangeKind = "add"             // новое поле → новая колонка
+	ChangeRename        ChangeKind = "rename"          // поле переименовано → колонка переименована, данные на месте
+	ChangeRetype        ChangeKind = "retype"          // изменился тип → преобразование колонки
+	ChangeDrop          ChangeKind = "drop"            // поле удалено из метаданных → колонка лишняя
+	ChangeRebindFieldID ChangeKind = "rebind-field-id" // та же колонка получает канонический ID
 )
 
 // SchemaChange — одно запланированное изменение схемы.
@@ -107,6 +108,8 @@ func (c SchemaChange) String() string {
 		return fmt.Sprintf("%s: изменить тип колонки %s: %s → %s (поле %s)", c.Table, c.To, c.From, metadata.FieldSignature(c.Field), c.Field.Name)
 	case ChangeDrop:
 		return fmt.Sprintf("%s: удалить колонку %s вместе с данными (поле с id %s убрано из конфигурации)", c.Table, c.From, c.FieldID)
+	case ChangeRebindFieldID:
+		return fmt.Sprintf("%s: перепривязать колонку %s: id %s → %s (данные и колонка не меняются)", c.Table, c.To, c.From, c.FieldID)
 	}
 	return c.Table + ": " + string(c.Kind)
 }
@@ -285,6 +288,44 @@ func (db *DB) tableColumns(ctx context.Context, table string) (map[string]string
 	return out, nil
 }
 
+// standardFieldProvenance can only be produced from an entire entity. Its
+// standard code or number keeps the same ID after numbering is disabled;
+// table parts and registers cannot provide this provenance.
+type standardFieldProvenance struct {
+	id, name string
+}
+
+func standardProvenance(e *metadata.Entity) standardFieldProvenance {
+	if e == nil {
+		return standardFieldProvenance{}
+	}
+	var p standardFieldProvenance
+	switch e.Kind {
+	case metadata.KindCatalog:
+		p = standardFieldProvenance{metadata.StandardCodeFieldID, metadata.StandardCodeField}
+	case metadata.KindDocument:
+		p = standardFieldProvenance{metadata.StandardNumberFieldID, metadata.StandardNumberField}
+	default:
+		return standardFieldProvenance{}
+	}
+	count := 0
+	for _, f := range e.Fields {
+		if f.ID == p.id && f.Name != p.name {
+			return standardFieldProvenance{}
+		}
+		if strings.EqualFold(f.Name, p.name) {
+			if f.Name != p.name || f.ID != p.id || f.Type != metadata.FieldTypeString {
+				return standardFieldProvenance{}
+			}
+			count++
+		}
+	}
+	if count != 1 {
+		return standardFieldProvenance{}
+	}
+	return p
+}
+
 // PlanMigration строит план реструктуризации по всей конфигурации, не меняя
 // базу, — это и есть пробный прогон `onebase migrate --dry-run`.
 //
@@ -299,7 +340,7 @@ func (db *DB) PlanMigration(
 	infoRegs []*metadata.InfoRegister,
 ) ([]SchemaChange, error) {
 	var out []SchemaChange
-	plan := func(table string, fields []metadata.Field) error {
+	plan := func(table string, fields []metadata.Field, provenance standardFieldProvenance) error {
 		if !anyFieldHasID(fields) {
 			return nil
 		}
@@ -310,7 +351,7 @@ func (db *DB) PlanMigration(
 		if len(cols) == 0 {
 			return nil // таблицы ещё нет
 		}
-		changes, err := db.PlanTableChanges(ctx, table, fields)
+		changes, err := db.planTableChanges(ctx, table, fields, provenance)
 		if err != nil {
 			return err
 		}
@@ -319,24 +360,24 @@ func (db *DB) PlanMigration(
 	}
 
 	for _, e := range entities {
-		if err := plan(metadata.TableName(e.Name), e.Fields); err != nil {
+		if err := plan(metadata.TableName(e.Name), e.Fields, standardProvenance(e)); err != nil {
 			return nil, err
 		}
 		for _, tp := range e.TableParts {
-			if err := plan(metadata.TablePartTableName(e.Name, tp.Name), tp.Fields); err != nil {
+			if err := plan(metadata.TablePartTableName(e.Name, tp.Name), tp.Fields, standardFieldProvenance{}); err != nil {
 				return nil, err
 			}
 		}
 	}
 	for _, reg := range registers {
 		fields := append(append([]metadata.Field{}, reg.Dimensions...), append(reg.Resources, reg.Attributes...)...)
-		if err := plan(metadata.RegisterTableName(reg.Name), fields); err != nil {
+		if err := plan(metadata.RegisterTableName(reg.Name), fields, standardFieldProvenance{}); err != nil {
 			return nil, err
 		}
 	}
 	for _, ir := range infoRegs {
 		fields := append(append([]metadata.Field{}, ir.Dimensions...), ir.Resources...)
-		if err := plan(metadata.InfoRegTableName(ir.Name), fields); err != nil {
+		if err := plan(metadata.InfoRegTableName(ir.Name), fields, standardFieldProvenance{}); err != nil {
 			return nil, err
 		}
 	}
@@ -348,6 +389,10 @@ func (db *DB) PlanMigration(
 // План строится только по полям с `id` и только по колонкам, записанным в
 // карте: всё остальное — не наше, и планировщик о нём не рассуждает.
 func (db *DB) PlanTableChanges(ctx context.Context, table string, fields []metadata.Field) ([]SchemaChange, error) {
+	return db.planTableChanges(ctx, table, fields, standardFieldProvenance{})
+}
+
+func (db *DB) planTableChanges(ctx context.Context, table string, fields []metadata.Field, provenance standardFieldProvenance) ([]SchemaChange, error) {
 	stored, err := db.loadSchemaMap(ctx, table)
 	if err != nil {
 		return nil, err
@@ -359,6 +404,15 @@ func (db *DB) PlanTableChanges(ctx context.Context, table string, fields []metad
 
 	var changes []SchemaChange
 	alive := map[string]bool{}
+	desiredIDs := map[string]bool{}
+	desiredColumns := map[string]int{}
+	for _, f := range fields {
+		desiredColumns[metadata.ColumnName(f)]++
+		if f.ID != "" {
+			desiredIDs[f.ID] = true
+		}
+	}
+	reboundIDs := map[string]bool{}
 	for _, f := range fields {
 		if f.ID == "" {
 			continue
@@ -369,6 +423,32 @@ func (db *DB) PlanTableChanges(ctx context.Context, table string, fields []metad
 		st, known := stored[f.ID]
 
 		if !known {
+			if provenance.id == f.ID && provenance.name == f.Name {
+				var oldID string
+				for id, entry := range stored {
+					if strings.EqualFold(entry.Column, want) {
+						if oldID != "" {
+							return nil, fmt.Errorf("%s.%s: multiple schema-map owners %s and %s; standard ID %s cannot be rebound", table, want, oldID, id, f.ID)
+						}
+						oldID = id
+					}
+				}
+				if oldID != "" {
+					if _, exists := actual[want]; !exists {
+						return nil, fmt.Errorf("%s.%s: schema-map owner %s exists but the physical column is missing; standard ID %s cannot be rebound", table, want, oldID, f.ID)
+					}
+					old := stored[oldID]
+					if desiredIDs[oldID] || desiredColumns[want] != 1 || old.Type != sig {
+						return nil, fmt.Errorf("%s.%s: unsafe schema-map rebind %s → %s (type %s → %s or ID/column in use)", table, want, oldID, f.ID, old.Type, sig)
+					}
+					changes = append(changes, SchemaChange{
+						Table: table, Kind: ChangeRebindFieldID, FieldID: f.ID,
+						From: oldID, To: want, Field: f,
+					})
+					reboundIDs[oldID] = true
+					continue
+				}
+			}
 			// Поле впервые видят с идентификатором. Колонка уже есть — значит,
 			// это существующая база, которой просто дописали id: изменение не
 			// нужно, достаточно запомнить соответствие (это делает saveSchemaMap).
@@ -431,7 +511,7 @@ func (db *DB) PlanTableChanges(ctx context.Context, table string, fields []metad
 		}
 	}
 	for id, st := range stored {
-		if alive[id] {
+		if alive[id] || reboundIDs[id] {
 			continue
 		}
 		if _, exists := actual[st.Column]; !exists {
@@ -488,14 +568,16 @@ func standardFieldIDHint(storedID, fieldName string) string {
 // что), затем смена типа, затем добавления, и в самом конце — удаления.
 func changeOrder(c SchemaChange) int {
 	switch c.Kind {
-	case ChangeRename:
+	case ChangeRebindFieldID:
 		return 0
-	case ChangeRetype:
+	case ChangeRename:
 		return 1
-	case ChangeAdd:
+	case ChangeRetype:
 		return 2
-	default:
+	case ChangeAdd:
 		return 3
+	default:
+		return 4
 	}
 }
 
