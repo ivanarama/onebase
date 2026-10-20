@@ -2612,6 +2612,49 @@ function obGridMoveColumn(columns, from, to) {
   columns.splice(to, 0, col);
   return true;
 }
+// obGridKeepDeclaredWidths — у таблицы с объявленными ширинами (`width`
+// колонки), которая в видимую область не помещается, ширины сохраняются, а
+// таблица прокручивается по горизонтали. autosizeColumns подгоняет сумму
+// ширин под контейнер: при сотне колонок табеля каждая ужималась до минимума
+// и подписи превращались в «1…». Таблица без объявленных ширин или
+// помещающаяся — false: её по-прежнему растягивает autosizeColumns.
+function obGridKeepDeclaredWidths(grid, available) {
+  var cols = grid.getColumns();
+  var declared = false, total = 0;
+  for (var i = 0; i < cols.length; i++) {
+    if (cols[i].obWidth) declared = true;
+    total += cols[i].obWidth || 120;
+  }
+  if (!declared || !(available > 0) || total <= available) return false;
+  var changed = false;
+  for (var j = 0; j < cols.length; j++) {
+    var want = cols[j].obWidth || 120;
+    if (cols[j].width !== want) { cols[j].width = want; changed = true; }
+  }
+  if (changed) grid.setColumns(cols);
+  return true;
+}
+
+// obGridAutosize — подгонка помещающейся таблицы под контейнер. Свободное
+// место получают колонки без объявленной ширины: legacy-autosize SlickGrid
+// растягивает пропорционально все resizable-колонки, и `width: 130` у «Даты»
+// превращался бы в 200 с лишним. На время подгонки объявленные колонки
+// исключаются из неё (resizable=false), затем перетаскивание им возвращается.
+function obGridAutosize(grid) {
+  var cols = grid.getColumns(), locked = [];
+  for (var i = 0; i < cols.length; i++) {
+    if (!cols[i].obWidth || cols[i].resizable === false) continue;
+    cols[i].width = cols[i].obWidth;
+    cols[i].resizable = false;
+    locked.push(cols[i]);
+  }
+  try {
+    grid.autosizeColumns();
+  } finally {
+    for (var j = 0; j < locked.length; j++) locked[j].resizable = true;
+  }
+}
+
 function obGridColumnIds(columns) {
   return (columns || []).map(function(c) { return c.id; });
 }
@@ -2629,7 +2672,7 @@ function obGridColumnIds(columns) {
   function resizeGrid(g) {
     if (!g || !g.div || g.div.offsetParent === null) return;
     g.grid.resizeCanvas();
-    g.grid.autosizeColumns();
+    if (!obGridKeepDeclaredWidths(g.grid, g.div.clientWidth)) obGridAutosize(g.grid);
     updateTotals(g); // footer-ячейки пересоздаются при re-render — обновляем суммы
   }
 
@@ -3410,6 +3453,10 @@ function obGridColumnIds(columns) {
       if (c && c.hidden) continue;
       var col = {id: c.id, name: c.name, field: c.id, width: 120, resizable: true, sortable: true,
                  metaIndex: (c && typeof c.index === "number") ? c.index : -1};
+      // Ширина из `width` элемента Колонка (или виртуальной колонки).
+      // obWidth — объявленная ширина: autosizeColumns перезаписывает width, а
+      // широкой таблице её надо вернуть (obGridKeepDeclaredWidths).
+      if (c.width) { col.width = c.width; col.obWidth = c.width; }
       if (c.virtual) {
         // Виртуальная колонка (#845): значение приехало с сервера по ссылке из
         // строки и в базе не хранится. Без редактора и в сером — иначе правка
@@ -3417,7 +3464,6 @@ function obGridColumnIds(columns) {
         col.virtual = true;
         col.focusable = false;
         col.cssClass = "ob-virtual";
-        if (c.width) col.width = c.width;
         col.formatter = function(row, cell, value) {
           if (value == null || value === "") return "";
           return "<span style='color:#64748b'>" + obManagedEscapeHTML(value) + "</span>";
@@ -4151,6 +4197,14 @@ function obGridColumnIds(columns) {
     };
 
     var grid = new Slick.Grid(div, dataView, columns, options);
+    // Ширину, которую пользователь задал мышью, следующий resizeGrid не
+    // сбрасывает к объявленной: она и становится объявленной.
+    if (grid.onColumnsResized) grid.onColumnsResized.subscribe(function() {
+      var cols = grid.getColumns(), declared = false;
+      for (var i = 0; i < cols.length; i++) if (cols[i].obWidth) declared = true;
+      if (!declared) return;
+      for (var j = 0; j < cols.length; j++) cols[j].obWidth = cols[j].width;
+    });
 
     // Каждый DOM-host инициализируется отдельно: readonly summary должна
     // оставаться видимой рядом с writable placement той же табличной части.

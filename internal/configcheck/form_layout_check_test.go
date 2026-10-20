@@ -177,15 +177,14 @@ elements:
 // Вид без собственного блока (колонка, командная панель) раскладку применить не
 // может — и обязан об этом сказать, а не молчать так же, как молчал рантайм.
 func TestCheckFormLayout_KindWithoutBlockWarns(t *testing.T) {
-	for _, kind := range []metadata.FormElementType{
-		metadata.FormElementColumn,
-		metadata.FormElementCommandBar,
-		metadata.FormElementCommandBarButton,
+	for _, el := range []*metadata.FormElement{
+		{Kind: metadata.FormElementColumn, Name: "Элемент", Height: 40},
+		{Kind: metadata.FormElementColumn, Name: "Элемент", HorizontalAlign: "right"},
+		{Kind: metadata.FormElementCommandBar, Name: "Элемент", Width: 100},
+		{Kind: metadata.FormElementCommandBarButton, Name: "Элемент", Width: 100},
 	} {
-		t.Run(string(kind), func(t *testing.T) {
-			warns := CheckFormLayout(projWithElement(&metadata.FormElement{
-				Kind: kind, Name: "Элемент", Width: 100,
-			}))
+		t.Run(string(el.Kind), func(t *testing.T) {
+			warns := CheckFormLayout(projWithElement(el))
 			if len(warns) != 1 {
 				t.Fatalf("ожидалось 1 предупреждение, получили %d: %+v", len(warns), warns)
 			}
@@ -199,5 +198,29 @@ func TestCheckFormLayout_KindWithoutBlockWarns(t *testing.T) {
 		Kind: metadata.FormElementColumn, Name: "Колонка",
 	})); len(warns) != 0 {
 		t.Errorf("колонка без раскладки помечена зря: %+v", warns)
+	}
+}
+
+// width колонки — ширина колонки таблицы, рантайм её применяет: молчать о ней
+// обязаны, а мусор (отрицательный, запредельный) — называть, как у всех.
+func TestCheckFormLayout_ColumnWidthApplies(t *testing.T) {
+	if warns := CheckFormLayout(projWithElement(&metadata.FormElement{
+		Kind: metadata.FormElementColumn, Name: "Колонка", Width: 120,
+	})); len(warns) != 0 {
+		t.Errorf("width колонки помечен как неработающий: %+v", warns)
+	}
+	warns := CheckFormLayout(projWithElement(&metadata.FormElement{
+		Kind: metadata.FormElementColumn, Name: "Колонка", Width: -5,
+	}))
+	if len(warns) != 1 || warns[0].Code != "form.layout-size" {
+		t.Errorf("отрицательная ширина колонки: %+v", warns)
+	}
+	// halign у колонки не действует — об этом одно предупреждение; «ширина не
+	// действует» было бы неправдой: width колонки рантайм применяет.
+	warns = CheckFormLayout(projWithElement(&metadata.FormElement{
+		Kind: metadata.FormElementColumn, Name: "Колонка", Width: 90, HorizontalAlign: "stretch",
+	}))
+	if len(warns) != 1 || warns[0].Code != "form.layout-unsupported-kind" {
+		t.Errorf("width + halign: stretch у колонки: %+v", warns)
 	}
 }
