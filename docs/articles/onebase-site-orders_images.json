@@ -1,8 +1,48 @@
 [
   {
-    "source": "../images/cms-orders/cms-order-workspace.png",
-    "alt": "Цветные области формы: покупатель, ответственный и получение заказа",
-    "caption": "Рисунок 1. Цветные области формы: покупатель, ответственный и получение заказа",
+    "source": "../images/cms-orders/cms-dashboard.png",
+    "alt": "Рабочий стол менеджера: переход на витрину, счётчик новых заказов и список документов",
+    "caption": "Рисунок 1. Рабочий стол менеджера: переход на витрину, счётчик новых заказов и список документов",
+    "sha256": "bff637ae1b1ba7d6edda89422cf690b259f64cd02e6ce30a4b3354959a886d32",
+    "pixelWidth": 2088,
+    "pixelHeight": 600,
+    "cssWidth": 1044,
+    "cssHeight": 300
+  },
+  {
+    "source": "../images/cms-orders/cms-catalog.png",
+    "alt": "Публичный каталог с вымышленными товарами",
+    "caption": "Рисунок 2. Публичный каталог с вымышленными товарами",
+    "sha256": "ecbc878f0a5d012f41abc4802d1a1b80553252ca929642521c34e11438996e8a",
+    "pixelWidth": 1840,
+    "pixelHeight": 2676,
+    "cssWidth": 920,
+    "cssHeight": 1338
+  },
+  {
+    "source": "../images/cms-orders/cms-cart.png",
+    "alt": "Корзина перед оформлением заказа",
+    "caption": "Рисунок 3. Корзина перед оформлением заказа",
+    "sha256": "07216433c8741dc458fb28beae92ea8d956b624b39b8de2e8e4d2946682c5f9f",
+    "pixelWidth": 1840,
+    "pixelHeight": 706,
+    "cssWidth": 920,
+    "cssHeight": 353
+  },
+  {
+    "source": "../images/cms-orders/cms-order-history.png",
+    "alt": "Предыдущие покупки выбранного покупателя: номер, сумма и статус",
+    "caption": "Рисунок 4. Предыдущие покупки выбранного покупателя: номер, сумма и статус",
+    "sha256": "8d5aa23869447c65ffbf54689645b7b6ef5b8ef0397ff5fda7beeeae329a4936",
+    "pixelWidth": 1932,
+    "pixelHeight": 146,
+    "cssWidth": 966,
+    "cssHeight": 73
+  },
+  {
+    "source": "../images/cms-orders/cms-form-colors.png",
+    "alt": "Цветные области в работе: контакты слева и получение справа",
+    "caption": "Рисунок 5. Цветные области в работе: контакты слева и получение справа",
     "sha256": "3fa1331d97cf1b00c9ea0c172de8abafbcb93bbc69e323ec5ca300746f26279e",
     "pixelWidth": 1992,
     "pixelHeight": 912,
@@ -10,39 +50,39 @@
     "cssHeight": 456
   },
   {
-    "source": "../images/cms-orders/cms-catalog.png",
-    "alt": "Публичный каталог с вымышленными товарами",
-    "caption": "Рисунок 2. Публичный каталог с вымышленными товарами",
-    "sha256": "d7d87e13012ca6e7aa275ca2c65a0a58cc67cad5f317cb2cc577ad5748f2960f",
-    "pixelWidth": 2048,
-    "pixelHeight": 862,
-    "cssWidth": 1024,
-    "cssHeight": 431
+    "source": "../images/cms-orders/cms-config-colors.png",
+    "alt": "Конфигуратор: выбрана группа получения, справа задан фон #f0fdf4",
+    "caption": "Рисунок 6. Конфигуратор: выбрана группа получения, справа задан фон #f0fdf4",
+    "sha256": "646cf9814ea1603aa8b589dfe6cc8af51816528ef89eb848eb3ef7d9aa04505c",
+    "pixelWidth": 2128,
+    "pixelHeight": 1340,
+    "cssWidth": 1064,
+    "cssHeight": 670
   },
   {
-    "source": "../images/cms-orders/cms-cart.png",
-    "alt": "Корзина перед оформлением заказа",
-    "caption": "Рисунок 3. Корзина перед оформлением заказа",
-    "sha256": "fefe4443945edf6fb5e174d1bc22df2ae09d5564f9f78906313437e5f267b964",
-    "pixelWidth": 2048,
-    "pixelHeight": 706,
-    "cssWidth": 1024,
-    "cssHeight": 353
+    "source": "../images/cms-orders/cms-config-owner.png",
+    "alt": "Конфигуратор: адреса подчинены покупателям, поле Владелец ссылается на Покупатели",
+    "caption": "Рисунок 7. Конфигуратор: адреса подчинены покупателям, поле Владелец ссылается на Покупатели",
+    "sha256": "b2bd3780aaf42b5c15b3461bc5cbf41b71c26bd0fc8c62b8ea5abe612ff16b66",
+    "pixelWidth": 2200,
+    "pixelHeight": 1626,
+    "cssWidth": 1100,
+    "cssHeight": 813
   },
   {
-    "source": "../images/cms-orders/cms-order-history.png",
-    "alt": "Предыдущие покупки выбранного покупателя: номер, сумма и статус",
-    "caption": "Рисунок 4. Предыдущие покупки выбранного покупателя: номер, сумма и статус",
-    "sha256": "14dd6438fde8d81c7e1dd91e1626e540751b05f3e5869f3e9b013e1583cf25db",
-    "pixelWidth": 1932,
-    "pixelHeight": 374,
-    "cssWidth": 966,
-    "cssHeight": 187
+    "source": "../images/cms-orders/cms-config-choice.png",
+    "alt": "Конфигуратор: отбор адресов по владельцу из поля покупателя",
+    "caption": "Рисунок 8. Конфигуратор: отбор адресов по владельцу из поля покупателя",
+    "sha256": "45153bb0208713272f86fd80f0451ebb0a3421eae6b29ca5ac08e28655214748",
+    "pixelWidth": 2128,
+    "pixelHeight": 1340,
+    "cssWidth": 1064,
+    "cssHeight": 670
   },
   {
     "source": "../images/cms-orders/cms-pickup-choice.png",
     "alt": "В подборе видны только пункты выбранного города",
-    "caption": "Рисунок 5. В подборе видны только пункты выбранного города",
+    "caption": "Рисунок 9. В подборе видны только пункты выбранного города",
     "sha256": "cc45eb57b37966ef5f84b7cba165820f81a3d9d43cd9fbc78189f201ef47eb4e",
     "pixelWidth": 920,
     "pixelHeight": 430,
@@ -52,17 +92,17 @@
   {
     "source": "../images/cms-orders/cms-product-picker.png",
     "alt": "Подбор с количеством и корзиной выбранных позиций",
-    "caption": "Рисунок 6. Подбор с количеством и корзиной выбранных позиций",
-    "sha256": "3eb6e491ece77e48674ca16c02c2cef292ad6a3e4a0eb3c07b59a9088697eaf6",
+    "caption": "Рисунок 10. Подбор с количеством и корзиной выбранных позиций",
+    "sha256": "fbbeac5cb2c4147dd40ad7241d579b249645f18e3cc7e5e2ce35feb5cbe12721",
     "pixelWidth": 1400,
-    "pixelHeight": 776,
+    "pixelHeight": 738,
     "cssWidth": 700,
-    "cssHeight": 388
+    "cssHeight": 369
   },
   {
     "source": "../images/cms-orders/cms-order-details.png",
     "alt": "Состав после подбора: кружка и два ежедневника, итог 3170 рублей",
-    "caption": "Рисунок 7. Состав после подбора: кружка и два ежедневника, итог 3170 рублей",
+    "caption": "Рисунок 11. Состав после подбора: кружка и два ежедневника, итог 3170 рублей",
     "sha256": "efcffad46b637ea79c1b5b1b7d6a51d6dd592b4ecb34663cb7a44520325cc92e",
     "pixelWidth": 1992,
     "pixelHeight": 1008,
@@ -72,8 +112,8 @@
   {
     "source": "../images/cms-orders/cms-order-print.png",
     "alt": "Печатная форма заказа",
-    "caption": "Рисунок 8. Печатная форма заказа",
-    "sha256": "9ee61b0410cd616802824d42652694c223c3406547a291aa4793b9159c9298a0",
+    "caption": "Рисунок 12. Печатная форма заказа",
+    "sha256": "43191d60f5359a5933d3d74f58d74a59aa71a526d0dfbde5399822025f6d5e3f",
     "pixelWidth": 1242,
     "pixelHeight": 572,
     "cssWidth": 621,
@@ -82,11 +122,81 @@
   {
     "source": "../images/cms-orders/cms-order-status.png",
     "alt": "Покупатель видит выполненный заказ с тем же составом",
-    "caption": "Рисунок 9. Покупатель видит выполненный заказ с тем же составом",
-    "sha256": "a6ed806032e136697d6a08995c70cb1ba19c656835208a02cf493f98a3cd4787",
-    "pixelWidth": 2048,
+    "caption": "Рисунок 13. Покупатель видит выполненный заказ с тем же составом",
+    "sha256": "a0615ec26989193367c4c75edd12196c735b3603e8c2564670d8b9738108587d",
+    "pixelWidth": 1840,
     "pixelHeight": 1112,
-    "cssWidth": 1024,
+    "cssWidth": 920,
     "cssHeight": 556
+  },
+  {
+    "source": "../images/cms-orders/cms-order-question.png",
+    "alt": "Вопрос перед отменой заказа: ответ Нет оставляет документ без изменения",
+    "caption": "Рисунок 14. Вопрос перед отменой заказа: ответ Нет оставляет документ без изменения",
+    "sha256": "c17d190710c47bcf34fd69854454229680e94873c56625581120e5f4ab8462c5",
+    "pixelWidth": 880,
+    "pixelHeight": 234,
+    "cssWidth": 440,
+    "cssHeight": 117
+  },
+  {
+    "source": "../images/cms-orders/cms-config-navigation.png",
+    "alt": "Визуальный редактор меню: раздел Продажи, папки и предпросмотр",
+    "caption": "Рисунок 15. Визуальный редактор меню: раздел Продажи, папки и предпросмотр",
+    "sha256": "3c8da59a6ae86b43a53aa14993182260e412a125bf2f7cbbcaa5d727ac8cc3fb",
+    "pixelWidth": 2200,
+    "pixelHeight": 2050,
+    "cssWidth": 1100,
+    "cssHeight": 1025
+  },
+  {
+    "source": "../images/cms-orders/cms-config-print.png",
+    "alt": "Конфигуратор: области печатного макета, привязка данных и импорт из Excel",
+    "caption": "Рисунок 16. Конфигуратор: области печатного макета, привязка данных и импорт из Excel",
+    "sha256": "ecadf34acc6d4359648f1fe0b2aa6a9649be47b6ce0b258e6b2c0d67740cbd17",
+    "pixelWidth": 2200,
+    "pixelHeight": 1626,
+    "cssWidth": 1100,
+    "cssHeight": 813
+  },
+  {
+    "source": "../images/cms-orders/cms-config-module.png",
+    "alt": "Конфигуратор: прикладная проверка получения заказа в общем модуле",
+    "caption": "Рисунок 17. Конфигуратор: прикладная проверка получения заказа в общем модуле",
+    "sha256": "95edd09066583960178ed2a38d82bb1204032888df7e439d8a2d77232ca33329",
+    "pixelWidth": 2200,
+    "pixelHeight": 1626,
+    "cssWidth": 1100,
+    "cssHeight": 813
+  },
+  {
+    "source": "../images/cms-orders/cms-config-templates.png",
+    "alt": "Конфигуратор: общий модуль Рендер с HTML-шаблоном публичного сайта",
+    "caption": "Рисунок 18. Конфигуратор: общий модуль Рендер с HTML-шаблоном публичного сайта",
+    "sha256": "91402910203e54c3449368747238eff1765858b572cc8c615a541b3e0da35a96",
+    "pixelWidth": 2200,
+    "pixelHeight": 1626,
+    "cssWidth": 1100,
+    "cssHeight": 813
+  },
+  {
+    "source": "../images/cms-orders/cms-config-settings.png",
+    "alt": "Параметры базы: сетевые операции, запуск команд ОС и политика паролей",
+    "caption": "Рисунок 19. Параметры базы: сетевые операции, запуск команд ОС и политика паролей",
+    "sha256": "0b2cf8a059de037aa562eddf2498c355da5898d75da126568073d563f1bb718a",
+    "pixelWidth": 1552,
+    "pixelHeight": 870,
+    "cssWidth": 776,
+    "cssHeight": 435
+  },
+  {
+    "source": "../images/cms-orders/cms-config-language.png",
+    "alt": "Синтакс-помощник прямо в конфигураторе: параметры и описание функции КонецДня",
+    "caption": "Рисунок 20. Синтакс-помощник прямо в конфигураторе: параметры и описание функции КонецДня",
+    "sha256": "83200456fa0880a2e6a165dd3c6340c7fc1381657a4d15c71f15681fc913cf72",
+    "pixelWidth": 1040,
+    "pixelHeight": 484,
+    "cssWidth": 520,
+    "cssHeight": 242
   }
 ]

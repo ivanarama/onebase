@@ -11,3 +11,31 @@ contents:
   - Города
   - ПунктыВыдачи
   - Товары
+menu:
+  sections:
+  - id: sales
+    title: Продажи
+    icon: shopping-cart
+    items:
+    - id: orders
+      target: document:ЗаказПокупателя
+    groups:
+    - id: customers
+      title: Покупатели и адреса
+      items:
+      - id: buyers
+        target: catalog:Покупатели
+      - id: addresses
+        target: catalog:АдресаДоставки
+    - id: fulfillment
+      title: Получение заказа
+      items:
+      - id: cities
+        target: catalog:Города
+      - id: pickups
+        target: catalog:ПунктыВыдачи
+    - id: assortment
+      title: Каталог
+      items:
+      - id: products
+        target: catalog:Товары

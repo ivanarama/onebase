@@ -149,6 +149,18 @@ jobs:
           $ldflags += " -X github.com/ivantit66/onebase/internal/selfupdate.RequireSignature=1"
           go build -tags webview "-ldflags=$ldflags" -o onebase-gui.exe ./cmd/onebase
 
+      # Build a host-native helper even when the release target is arm64.
+      # The prepared SQLite file contains configuration, demo data and images.
+      - name: Prepare ready-to-open CMS demo
+        shell: bash
+        env:
+          BUILD_VER: ${{ steps.ver.outputs.ver }}
+        run: |
+          set -euo pipefail
+          go build -ldflags="-X github.com/ivantit66/onebase/internal/version.Build=$BUILD_VER" -o cms-demo-builder.exe ./cmd/onebase
+          go run ./tools/cmsdemo -binary ./cms-demo-builder.exe -out dist-demo/cms-orders.db
+          cp examples/cms/DEMO-START.md dist-demo/README.md
+
       - name: Package (Windows)
         if: matrix.goos == 'windows'
         shell: pwsh
@@ -169,6 +181,7 @@ jobs:
           }
           Copy-Item README.md "$name\" -ErrorAction SilentlyContinue
           Copy-Item examples "$name\" -Recurse -ErrorAction SilentlyContinue
+          Copy-Item dist-demo "$name\demo" -Recurse
           Compress-Archive -Path "$name\*" -DestinationPath "${name}.zip"
           echo "ASSET=${name}.zip" >> $env:GITHUB_ENV
 
@@ -180,6 +193,7 @@ jobs:
           cp onebase "$name/"
           cp README.md "$name/" 2>/dev/null || true
           cp -r examples "$name/" 2>/dev/null || true
+          cp -r dist-demo "$name/demo"
           tar czf "${name}.tar.gz" "$name"
           echo "ASSET=${name}.tar.gz" >> $GITHUB_ENV
 

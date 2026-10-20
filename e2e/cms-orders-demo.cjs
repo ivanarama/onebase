@@ -22,14 +22,13 @@ fs.mkdirSync(shots, {recursive:true});
     async function capture(page, locator, name, subject, inset=0) {
       await expect(locator).toBeVisible();
       const messageBar = page.locator('#ob-msg-bar');
-      if (await messageBar.count() && /\bopen\b/.test(await messageBar.getAttribute('class') || '')) {
+      if (!await page.locator('#_question-modal').isVisible() && await messageBar.count() && /\bopen\b/.test(await messageBar.getAttribute('class') || '')) {
         await page.locator('#ob-msg-head').click();
         await expect(messageBar).not.toHaveClass(/\bopen\b/);
       }
       await locator.evaluate(el=>el.scrollIntoView({block:'center',inline:'nearest',behavior:'instant'}));
       await page.evaluate(()=>document.fonts.ready.then(()=>true));
-      const broken = await locator.locator('img').evaluateAll(es=>es.filter(e=>!e.complete || !e.naturalWidth).map(e=>e.getAttribute('src')));
-      assert.deepEqual(broken,[],'Images must finish loading before capture');
+      await expect.poll(()=>locator.locator('img').evaluateAll(es=>es.filter(e=>!e.complete || !e.naturalWidth).map(e=>e.getAttribute('src'))),{message:'Images must finish loading before capture'}).toEqual([]);
       await page.mouse.move(1,1);
       const box = await locator.boundingBox();
       const clear = await locator.evaluate(el=>{
@@ -44,7 +43,7 @@ fs.mkdirSync(shots, {recursive:true});
         ? await page.screenshot({...settings,clip:{x:box.x+inset,y:box.y+inset,width:box.width-2*inset,height:box.height-2*inset}})
         : await locator.screenshot(settings);
       const pixelWidth = bytes.readUInt32BE(16), pixelHeight = bytes.readUInt32BE(20);
-      assert.ok(box.width<=1100 && box.height<=900,'Publication capture must remain readable: '+name);
+      assert.ok(box.width<=1100 && box.height<=(name==='cms-catalog.png' ? 1450 : 900),'Publication capture must remain readable: '+name);
       captures.push({file:name,subject,cssWidth:Math.round(box.width-2*inset),cssHeight:Math.round(box.height-2*inset),pixelWidth,pixelHeight,deviceScaleFactor:2});
     }
     const visitor = await browser.newContext({viewport:{width:1024,height:950},deviceScaleFactor:2});
@@ -53,8 +52,9 @@ fs.mkdirSync(shots, {recursive:true});
     page.on('pageerror', error => errors.push(error.message));
     assert.equal((await page.goto(base+'/hs/site/catalog')).status(), 200);
     await expect(page.getByText('Керамическая кружка', {exact:true})).toBeVisible();
-    await expect(page.locator('main img')).toHaveCount(3);
-    await capture(page,page.locator('main'),'cms-catalog.png','Публичный каталог: товары, иллюстрации и цены');
+    await expect(page.locator('main img')).toHaveCount(9);
+    await page.setViewportSize({width:920,height:1450});
+    await capture(page,page.locator('body'),'cms-catalog.png','Публичный каталог: товары, иллюстрации и цены');
     await page.goto(base+'/hs/site/product/demo-mug');
     await page.getByRole('button',{name:'В корзину',exact:true}).click();
     await expect(page.getByText('Итого: 790 ₽',{exact:true})).toBeVisible();
@@ -80,6 +80,8 @@ fs.mkdirSync(shots, {recursive:true});
     // Use the actual navigation control, rather than restyling the captured UI.
     const navigation = manager.locator('[data-ob-nav-toggle]');
     if (await navigation.getAttribute('aria-expanded') === 'true') await navigation.click();
+    await expect(manager.getByText('anna@example.test',{exact:true}).first()).toBeVisible();
+    await capture(manager,manager.locator('.dash'),'cms-dashboard.png','Рабочий стол менеджера: витрина, счётчик и список заказов');
     const formURL = base+'/ui/document/'+encodeURIComponent('ЗаказПокупателя')+'/'+orderID;
     const opened = manager.waitForResponse(r=>r.url().includes('/form-event') && r.request().method()==='POST');
     await manager.goto(formURL);
@@ -133,6 +135,7 @@ fs.mkdirSync(shots, {recursive:true});
     await manager.getByRole('button',{name:'Добавить товары',exact:true}).click();
     const picker = manager.locator('#_item-picker-modal');
     await expect(picker).toBeVisible();
+    await picker.locator('input[type=search], input[placeholder*=Поиск]').first().fill('Ежедневник');
     await picker.locator('table').first().locator('tbody tr').filter({hasText:'Ежедневник без дат'}).locator('._ip-val').fill('2');
     await capture(manager,picker.locator(':scope > div'),'cms-product-picker.png','Подбор: количество и корзина выбранных товаров',10);
     const selected = manager.waitForResponse(r=>r.url().includes('/form-event') && r.request().method()==='POST');
@@ -142,6 +145,7 @@ fs.mkdirSync(shots, {recursive:true});
     await expect(manager.locator('input[name=Сумма]')).toHaveValue('3170');
     await manager.locator('select[name=Ответственный]').selectOption({label:'Менеджер демонстрации'});
     await capture(manager,manager.locator('[data-ob-el="ДвеКолонки"]'),'cms-order-workspace.png','Цветные области: покупатель и получение заказа');
+    await capture(manager,manager.locator('[data-ob-el="ДвеКолонки"]'),'cms-form-colors.png','Голубая область контактов и зелёная область получения');
     await capture(manager,manager.locator('[data-ob-el="Состав"]'),'cms-order-details.png','Состав заказа после подбора: 3170 рублей');
     const accepted = manager.waitForResponse(r=>r.url().includes('/form-event') && r.request().method()==='POST');
     await manager.getByRole('button',{name:'Подтвердить заказ',exact:true}).click();
@@ -189,6 +193,7 @@ fs.mkdirSync(shots, {recursive:true});
     assert.equal((await (await openedCancel).json()).ok,true);
     await manager.getByRole('button',{name:'Отменить заказ',exact:true}).click();
     await expect(manager.getByText('Отменить этот заказ?',{exact:true})).toBeVisible();
+    await capture(manager,manager.locator('#_question-modal > div'),'cms-order-question.png','Вопрос перед отменой заказа',10);
     await manager.getByRole('button',{name:'Нет',exact:true}).click();
     await expect(manager.locator('select[name=Статус]')).toHaveValue('Новый');
     await manager.getByRole('button',{name:'Отменить заказ',exact:true}).click();

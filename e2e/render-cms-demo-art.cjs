@@ -15,7 +15,7 @@ const root=path.resolve(__dirname,'..');
     const lines=['// Generated from demo/art/*.svg by node e2e/render-cms-demo-art.cjs.',
       '// Original vector illustrations are part of this public demo.',
       'Функция Данные(Слаг)'];
-    for(const [index,slug] of ['demo-mug','demo-notebook','demo-organizer'].entries()){
+    for(const [index,slug] of ['demo-mug','demo-notebook','demo-organizer','demo-lamp','demo-pencils','demo-clock','demo-bottle','demo-tote','demo-plant'].entries()){
       await page.setContent('<style>html,body{margin:0;padding:0}</style>'+fs.readFileSync(path.join(root,'examples/cms/demo/art',slug+'.svg'),'utf8'));
       const bytes=await page.locator('svg').screenshot({animations:'disabled'});
       const chunks=bytes.toString('base64').match(/.{1,1200}/g);
