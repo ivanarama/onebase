@@ -195,7 +195,7 @@
         + ".site-main.product>*:not(h1):not(.price):not(.cover){grid-column:2}"
         // ── витрина карточками ──
         + ".cards{list-style:none;margin:24px 0 0;padding:0;display:grid;gap:18px;"
-        + "grid-template-columns:repeat(auto-fill,minmax(220px,1fr))}"
+        + "grid-template-columns:repeat(3,minmax(0,1fr))}"
         + ".card{display:flex;flex-direction:column;border:1px solid var(--граница);"
         + "border-radius:14px;overflow:hidden;background:var(--фон);transition:box-shadow .15s,transform .15s}"
         + ".card:hover{box-shadow:0 8px 24px rgba(15,23,42,.10);transform:translateY(-2px)}"
