@@ -675,6 +675,12 @@ type FormModule struct {
 	// вводящий данные потоком (#1486). Ctrl+S, Ctrl+Enter и кнопки записи
 	// работают всегда, независимо от этого ключа.
 	EnterSubmitsForm bool `yaml:"enter_submits_form,omitempty"`
+	// TabSkipReadonly — нередактируемые поля и ячейки таблиц не входят в порядок
+	// Tab: оператор переходит только по тому, что можно ввести.
+	TabSkipReadonly bool `yaml:"tab_skip_readonly,omitempty"`
+	// Autofocus — курсор при открытии формы: "first_empty" — в первое пустое
+	// доступное поле формы, имя группы — в первое пустое поле этой группы.
+	Autofocus string `yaml:"autofocus,omitempty"`
 	// OneCMeta — служебный блок, используемый только конвертером 1С,
 	// рантайм его игнорирует. Может содержать version, unknown_xml и т.п.
 	OneCMeta map[string]any `yaml:"oneC_meta,omitempty"`

@@ -237,6 +237,22 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// enterSubmitsForm — форма явно вернула себе прежний Enter-submit.
 		// Данные шаблона — карта, и ключа Form у автогенерённой формы может не
 		// быть вовсе: nil читается как «умолчание платформы», то есть навигация.
+		// formKeyboardAttrs — data-атрибуты <form> для tab_skip_readonly и
+		// autofocus формы (obFormKeyboard в managed.js).
+		"formKeyboardAttrs": func(v any) template.HTMLAttr {
+			form, _ := v.(*metadata.FormModule)
+			if form == nil {
+				return ""
+			}
+			out := ""
+			if form.TabSkipReadonly {
+				out += ` data-ob-tab-skip-readonly="1"`
+			}
+			if f := strings.TrimSpace(form.Autofocus); f != "" {
+				out += ` data-ob-autofocus="` + template.HTMLEscapeString(f) + `"`
+			}
+			return template.HTMLAttr(out) //nolint:gosec // G203: значения экранированы HTMLEscapeString, имена атрибутов фиксированы
+		},
 		"enterSubmitsForm": func(v any) bool {
 			form, _ := v.(*metadata.FormModule)
 			return form != nil && form.EnterSubmitsForm

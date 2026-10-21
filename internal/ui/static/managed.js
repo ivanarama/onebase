@@ -1294,6 +1294,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
       applyChoiceList(elementName, data.choiceList);
       applyFormTables(data.formTables);
+      if (window.obFormKeyboard) window.obFormKeyboard(true);
 	  // Server events repaint controls programmatically and therefore do not
 	  // trigger input/change. Raise dirty for unsaved handler mutations; clear
 	  // it only when this response proves a successful Object.Write and no
@@ -4649,5 +4650,70 @@ obManagedReady(function () {
         });
       })(holders[i]);
     }
+  });
+});
+
+// ─── tab_skip_readonly / autofocus формы ────────────────────────────────────
+//
+// tab_skip_readonly: нередактируемые поля и ячейки нередактируемых таблиц
+// получают tabindex=-1 — Tab ведёт только по тому, что можно ввести; поле, снова
+// ставшее редактируемым после события, возвращает свой tabindex. Порядок
+// остальных — порядок разметки, то есть раскладки: колонки — вложенные группы.
+// autofocus: при открытии курсор встаёт в первое пустое доступное поле формы
+// ("first_empty") или указанной группы; после ответа события (ПриОткрытии
+// заполнило поля) — ещё раз, если пользователь никуда не перешёл сам.
+var obAutofocusDone = null;
+function obKeyboardControls(scope) {
+  return Array.prototype.slice.call(scope.querySelectorAll('input, select, textarea')).filter(function (el) {
+    var t = String(el.type || '').toLowerCase();
+    return t !== 'hidden' && t !== 'button' && t !== 'submit';
+  });
+}
+function obKeyboardReadonly(el) {
+  return !!(el.readOnly || el.disabled || (el.closest && el.closest('fieldset[disabled], [data-ob-table-readonly]')));
+}
+function obFormKeyboard(afterEvent) {
+  var form = document.getElementById('main-form');
+  if (!form || !form.getAttribute) return;
+  if (form.getAttribute('data-ob-tab-skip-readonly') === '1') {
+    obKeyboardControls(form).forEach(function (el) {
+      if (obKeyboardReadonly(el)) {
+        if (!el.hasAttribute('data-ob-tab-orig')) el.setAttribute('data-ob-tab-orig', el.getAttribute('tabindex') || '');
+        el.setAttribute('tabindex', '-1');
+      } else if (el.hasAttribute('data-ob-tab-orig')) {
+        var orig = el.getAttribute('data-ob-tab-orig');
+        if (orig) el.setAttribute('tabindex', orig); else el.removeAttribute('tabindex');
+        el.removeAttribute('data-ob-tab-orig');
+      }
+    });
+  }
+  var target = form.getAttribute('data-ob-autofocus');
+  if (!target) return;
+  var active = document.activeElement;
+  if (afterEvent) {
+    // Пользователь уже сам перешёл в другое поле — курсор не уводим.
+    if (obAutofocusDone === 'manual') return;
+    if (active && active !== document.body && active !== obAutofocusDone) return;
+  } else if (active && active !== document.body) {
+    return;
+  }
+  var scope = target === 'first_empty' ? form : form.querySelector('[data-ob-el="' + target + '"]');
+  if (!scope) return;
+  var editable = obKeyboardControls(scope).filter(function (el) {
+    return !obKeyboardReadonly(el) && el.offsetParent !== null && !(el.closest && el.closest('.tp-table, .ob-grid'));
+  });
+  var pick = null;
+  for (var i = 0; i < editable.length; i++) {
+    if (editable[i].type !== 'checkbox' && String(editable[i].value || '') === '') { pick = editable[i]; break; }
+  }
+  if (!pick || pick === active) return;
+  pick.focus();
+  obAutofocusDone = pick;
+}
+window.obFormKeyboard = obFormKeyboard;
+obManagedReady(function () {
+  obFormKeyboard(false);
+  document.addEventListener('focusin', function (e) {
+    if (obAutofocusDone && obAutofocusDone !== 'manual' && e.target !== obAutofocusDone) obAutofocusDone = 'manual';
   });
 });

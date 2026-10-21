@@ -182,7 +182,9 @@ type formYAMLDoc struct {
 		// «🔍 только администратору» (#1876).
 		RefCardButtonAdminOnly bool `yaml:"ref_card_button_admin_only"`
 		// EnterSubmitsForm — форма возвращает себе прежний Enter-submit (#1486).
-		EnterSubmitsForm bool `yaml:"enter_submits_form"`
+		EnterSubmitsForm bool   `yaml:"enter_submits_form"`
+		TabSkipReadonly  bool   `yaml:"tab_skip_readonly"`
+		Autofocus        string `yaml:"autofocus"`
 	} `yaml:"form"`
 	Attributes            []*metadata.FormAttribute       `yaml:"attributes"`
 	Commands              []*metadata.FormCommand         `yaml:"commands"`
@@ -235,6 +237,8 @@ func (mfl *ManagedFormLoader) parseYAML(data []byte, entityNameFallback string) 
 		RefCardButton:          doc.Form.RefCardButton,
 		RefCardButtonAdminOnly: doc.Form.RefCardButtonAdminOnly,
 		EnterSubmitsForm:       doc.Form.EnterSubmitsForm,
+		TabSkipReadonly:        doc.Form.TabSkipReadonly,
+		Autofocus:              doc.Form.Autofocus,
 		Attributes:             doc.Attributes,
 		Commands:               doc.Commands,
 		AutoCommandBar:         doc.CommandBar,
