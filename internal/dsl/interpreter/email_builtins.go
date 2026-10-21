@@ -280,9 +280,12 @@ func NewEmailFunctions(sender EmailSender, guard NetGuard, resolvers ...EmailFil
 		return &dslEmail{sender: sender, guard: guard, resolver: resolver}
 	}
 
+	receive := newReceiveMailBuiltin(guard)
 	return map[string]any{
 		"ОтправитьПисьмо":        shorthand,
 		"SendEmail":              shorthand,
+		"ПолучитьПисьма":         receive,
+		"ReceiveEmails":          receive,
 		"__factory_ПисьмоEmail":  emailFactory,
 		"__factory_EmailMessage": emailFactory,
 	}
