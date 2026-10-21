@@ -2106,6 +2106,7 @@ const tplList = `
   {{range .Breadcrumbs}}<span>›</span><a href="{{listURL $.Query "parent" .ID}}">{{.Label}}</a>{{end}}
 </nav>
 {{end}}
+{{if .SearchAll}}<p class="list-search-scope" style="margin:6px 0 10px;color:#64748b;font-size:13px">{{t $.Lang "Результаты поиска по всему справочнику"}}</p>{{end}}
 
 {{$entity := .Entity}}{{$params := .Params}}{{$refOpts := .RefFilterOptions}}
 <details{{if hasFilter $params}} open{{end}}>
@@ -2306,6 +2307,7 @@ const tplList = `
     </a>
   </th>
   {{end}}
+  {{if $.SearchAll}}<th>{{t $.Lang "Группа"}}</th>{{end}}
   <th style="width:90px"></th>
 </tr></thead><tbody id="list-body"
   data-ob-row-base="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}"
@@ -2338,6 +2340,7 @@ const tplList = `
     {{else if isEnum (str .Type)}}<td style="white-space:nowrap">{{enumLabel $.EnumLabels .Name (str (index $row .Name))}}</td>
     {{else}}<td style="white-space:nowrap">{{if and (eq .Name "Наименование") $.Entity.Hierarchical}}{{if $isFolder}}📁 {{else}}📄 {{end}}{{end}}{{fmtCell (index $row .Name)}}{{if and (eq .Name "Наименование") (index $row "_is_predefined")}} <span title="{{t $.Lang "Предопределённый элемент"}}" style="color:#f59e0b;font-size:11px">★</span>{{end}}</td>{{end}}
   {{end}}
+  {{if $.SearchAll}}<td style="white-space:nowrap" data-ob-list-group>{{with index $row "_group_id"}}<a href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}?parent={{.}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}">📁 {{index $row "_group_label"}}</a>{{else}}<span style="color:#94a3b8">{{t $.Lang "Корень"}}</span>{{end}}</td>{{end}}
   <td>
     {{if and $isFolder $.Entity.Hierarchical}}
       <a class="btn btn-sm btn-secondary" href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" (str (index $row "id"))}}">{{t $.Lang "▶ Войти"}}</a>

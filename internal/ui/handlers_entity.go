@@ -99,12 +99,22 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	var breadcrumbs []map[string]string
 	var parentStr string
 	var upURL string
+	// Поиск и отбор в иерархическом списке ищут по всему справочнику, а не
+	// среди прямых детей открытой папки: «Севрюкова» из корня не находилась,
+	// если мастер лежит в группе. Папка в адресе остаётся — по ней строятся
+	// хлебные крошки и «✕» возвращает туда, где пользователь был.
+	searchAll := entity.Hierarchical && !treeView && listSearchesWholeHierarchy(params)
 	if entity.Hierarchical && !treeView {
 		parentStr = r.URL.Query().Get("parent")
-		if parentStr == "" {
+		switch {
+		case searchAll:
+			params.ParentStr = ""
+		case parentStr == "":
 			params.ParentStr = "root"
-		} else {
+		default:
 			params.ParentStr = parentStr
+		}
+		if parentStr != "" {
 			breadcrumbs = s.buildHierarchyBreadcrumbs(r.Context(), entity, parentStr)
 			baseListURL := "/ui/" + strings.ToLower(string(entity.Kind)) + "/" + strings.ToLower(entity.Name)
 			upParent := ""
@@ -141,6 +151,9 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	s.maskRecords(r.Context(), entity, rows)
 	s.resolveRefs(r.Context(), entity, rows)
 	markActivityRows(entity, rows)
+	if searchAll {
+		s.markHierarchyGroups(r.Context(), entity, rows)
+	}
 
 	// Tree view is lazy: render only root rows first, children are loaded by
 	// /ui/_tree-children/{entity} when the user expands a folder.
@@ -191,6 +204,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		"IsAdmin":          isAdmin,
 		"Breadcrumbs":      breadcrumbs,
 		"ParentStr":        parentStr,
+		"SearchAll":        searchAll,
 		"UpURL":            upURL,
 		"TreeView":         treeView,
 		"TilesView":        tilesView,
@@ -208,6 +222,37 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		"RequestURI":       r.URL.RequestURI(),
 		"ListFilterExtra":  listFilterExtra,
 	})
+}
+
+// listSearchesWholeHierarchy — поиск или отбор в списке иерархического
+// справочника идут по всему справочнику, а не только по открытой папке.
+func listSearchesWholeHierarchy(params storage.ListParams) bool {
+	return strings.TrimSpace(params.Search) != "" || len(params.Filters) > 0
+}
+
+// markHierarchyGroups подписывает строки результата поиска по всему
+// иерархическому справочнику их группой: «_group_id» и «_group_label». Без
+// этого найденный элемент из глубины дерева не отличить от одноимённого в
+// другой папке. Подпись — та же, что у хлебных крошек (maskedRecordLabel).
+func (s *Server) markHierarchyGroups(ctx context.Context, entity *metadata.Entity, rows []map[string]any) {
+	labels := map[string]string{}
+	for _, row := range rows {
+		pid := refValueString(row["parent_id"])
+		if pid == "" {
+			continue
+		}
+		label, ok := labels[pid]
+		if !ok {
+			if id, err := uuid.Parse(pid); err == nil {
+				if parent, err := s.store.GetByID(ctx, entity.Name, id, entity); err == nil {
+					label = s.maskedRecordLabel(ctx, entity, parent)
+				}
+			}
+			labels[pid] = label
+		}
+		row["_group_id"] = pid
+		row["_group_label"] = label
+	}
 }
 
 // buildCatalogTree converts a flat list of catalog rows into a depth-first ordered

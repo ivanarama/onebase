@@ -1,0 +1,94 @@
+package ui
+
+// Поиск и отбор в списке иерархического справочника (режим папок) ищут по
+// всему справочнику, а не среди прямых детей открытой папки. Раньше поиск из
+// корня находил только верхние папки, а из папки — только её детей: мастер в
+// группе «СМ» не находился ни из корня, ни из «БРН». Матрица — потому что
+// условие parent_id и поиск собирает SQL; путь — публичный GET списка.
+
+import (
+	"context"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/google/uuid"
+
+	"github.com/ivantit66/onebase/internal/dbtest"
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
+	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/runtime"
+	"github.com/ivantit66/onebase/internal/storage"
+)
+
+func TestHierarchyListSearchFindsWholeCatalog(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ent := &metadata.Entity{
+			Name: "МастерИерархия", Kind: metadata.KindCatalog, Hierarchical: true,
+			Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}},
+		}
+		if err := db.Migrate(ctx, []*metadata.Entity{ent}); err != nil {
+			t.Fatal(err)
+		}
+		sm, brn, item := uuid.New(), uuid.New(), uuid.New()
+		for _, row := range []struct {
+			id     uuid.UUID
+			values map[string]any
+		}{
+			{sm, map[string]any{"Наименование": "СМ", "is_folder": true}},
+			{brn, map[string]any{"Наименование": "БРН", "is_folder": true}},
+			{item, map[string]any{"Наименование": "Севрюкова_Тест", "parent_id": sm.String()}},
+			{uuid.New(), map[string]any{"Наименование": "Петров", "parent_id": brn.String()}},
+		} {
+			if err := db.Upsert(ctx, ent.Name, row.id, row.values, ent); err != nil {
+				t.Fatal(err)
+			}
+		}
+		registry := runtime.NewRegistry()
+		registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{ent}})
+		s := &Server{store: db, reg: registry, interp: interpreter.New(), lockMgr: runtime.NewLockManager(),
+			messages: NewMessageStore(), ops: newOperationLimiter()}
+		get := func(query string) string {
+			w := httptest.NewRecorder()
+			s.list(w, reqWithChi("GET", "/ui/catalog/мастериерархия"+query, nil, map[string]string{"entity": "мастериерархия"}))
+			if w.Code != 200 {
+				t.Fatalf("%s: код %d", query, w.Code)
+			}
+			return w.Body.String()
+		}
+
+		for _, q := range []string{"?q=Севрюкова", "?q=Севрюкова&parent=" + brn.String()} {
+			body := get(q)
+			if !strings.Contains(body, "Севрюкова_Тест") {
+				t.Fatalf("%s: элемент из группы «СМ» не найден", q)
+			}
+			if strings.Contains(body, "Петров") {
+				t.Fatalf("%s: поиск вернул лишнее", q)
+			}
+			if !strings.Contains(body, "Результаты поиска по всему справочнику") {
+				t.Fatalf("%s: нет пометки «поиск по всему справочнику»", q)
+			}
+			if !strings.Contains(body, "data-ob-list-group") || !strings.Contains(body, "?parent="+sm.String()) || !strings.Contains(body, "📁 СМ") {
+				t.Fatalf("%s: у найденного не показана группа «СМ» со ссылкой на неё", q)
+			}
+		}
+		// Отбор панели «Отбор» — так же по всему справочнику.
+		if body := get("?f.Наименование=Севрюкова_Тест"); !strings.Contains(body, "Севрюкова_Тест") {
+			t.Fatalf("отбор из корня не нашёл элемент в группе")
+		}
+		// «✕» и навигация: без поиска — прежняя работа по папкам.
+		root := get("")
+		if strings.Contains(root, "Севрюкова_Тест") || !strings.Contains(root, "СМ") || strings.Contains(root, "Результаты поиска по всему справочнику") {
+			t.Fatalf("без поиска корень обязан показывать только верхний уровень")
+		}
+		if folder := get("?parent=" + sm.String()); !strings.Contains(folder, "Севрюкова_Тест") || strings.Contains(folder, "Петров") {
+			t.Fatalf("без поиска папка показывает только своих детей")
+		}
+		// Количество совпадает со строками: CountList и List — одно условие.
+		total, err := db.CountList(ctx, ent.Name, ent, storage.ListParams{Search: "Севрюкова"})
+		if err != nil || total != 1 {
+			t.Fatalf("CountList по всему справочнику = %d, %v", total, err)
+		}
+	})
+}
