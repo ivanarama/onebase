@@ -1,4 +1,7 @@
 {
+  "Не удалось сохранить язык интерфейса": "Could not save the interface language",
+  "По умолчанию для базы": "Database default",
+  "Язык интерфейса недоступен": "Interface language is not available",
   "у локального источника %s нет ссылочного реквизита %s; внешняя ссылка затенена": "Local source %s has no reference field %s; the outer reference is shadowed",
   "временный каталог загрузок": "temporary upload directory",
   "временный файл параметра %s": "temporary file for parameter %s",
