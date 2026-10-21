@@ -65,3 +65,36 @@ func TestShowQuestion_ProcessorForm(t *testing.T) {
 		t.Fatalf("Ответ handler did not receive ВопросОтвет: %v", resp2.Messages)
 	}
 }
+
+// Поля диалога в форме обработки: введённое возвращается в ДиалогПоля тем же
+// путём, что и ВопросОтвет.
+func TestShowQuestion_ProcessorFormDialogFields(t *testing.T) {
+	formProgram := mustParse(t, `
+Процедура ОформитьОтвет()
+	Сообщить("Примечание=" + ДиалогПоля.Примечание);
+КонецПроцедуры
+`)
+	form := processorExecutionForm(
+		&metadata.FormElement{
+			Kind: metadata.FormElementButton, Name: "Оформить",
+			Handlers: map[metadata.FormEventType]string{metadata.FormEventOnAnswer: "ОформитьОтвет"},
+		},
+	)
+	form.ProgramAST = formProgram
+	proc := &processor.Processor{Name: "ВопросСПолями", Forms: []*metadata.FormModule{form}}
+	srv, _ := newProcessorFormEventExecutionServer(t, proc, nil)
+
+	body := processorClickBody("Оформить")
+	body.Set("_event", string(metadata.FormEventOnAnswer))
+	body.Set("_question_answer", "Сохранить")
+	body.Set("_question_fields", `{"Примечание":"перезвонить после 18"}`)
+	rec := postProcessorFormEventExecution(t, srv, proc.Name,
+		"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
+	resp := decodeFormEventResponse(t, rec.Body.Bytes())
+	if !resp.OK {
+		t.Fatalf("ok=false, error=%q", resp.Error)
+	}
+	if !strings.Contains(strings.Join(resp.Messages, "\n"), "Примечание=перезвонить после 18") {
+		t.Fatalf("ДиалогПоля не дошёл до обработчика обработки: %v", resp.Messages)
+	}
+}

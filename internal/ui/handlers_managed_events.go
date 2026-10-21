@@ -1294,6 +1294,11 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		vars["ВопросОтвет"] = qa
 		vars["QuestionAnswer"] = qa
 	}
+	// Значения редактируемых полей диалога — структура ДиалогПоля.
+	if qf := parseQuestionFields(r.FormValue("_question_fields")); qf != nil {
+		vars["ДиалогПоля"] = qf
+		vars["DialogFields"] = qf
+	}
 
 	if err := addPageChangeContext(eventName, r.FormValue("_page"), eventTarget, vars); err != nil {
 		respondJSON(enc, formEventResponse{Error: err.Error()})
@@ -2735,6 +2740,13 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		if qa, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_question_answer")); strings.TrimSpace(qa) != "" {
 			vars["ВопросОтвет"] = qa
 			vars["QuestionAnswer"] = qa
+		}
+		// Значения редактируемых полей диалога — структура ДиалогПоля.
+		if raw, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_question_fields")); strings.TrimSpace(raw) != "" {
+			if fields := parseQuestionFields(raw); fields != nil {
+				vars["ДиалогПоля"] = fields
+				vars["DialogFields"] = fields
+			}
 		}
 		page, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_page"))
 		if err := addPageChangeContext(eventName, page, eventTarget, vars); err != nil {
