@@ -210,3 +210,47 @@ elements:
 		}
 	}
 }
+
+// rows/show_count/empty_text у таблицы над ValueTable — без предупреждений;
+// у табличной части документа — ключи не действуют, check об этом говорит.
+func TestRunFullValueTableOutputKeys(t *testing.T) {
+	dir := t.TempDir()
+	mkFile(t, filepath.Join(dir, "documents", "звонок.yaml"), `name: Звонок
+fields:
+  - {name: Номер, type: string}
+tableparts:
+  - name: Товары
+    fields:
+      - {name: Наименование, type: string}
+`)
+	mkFile(t, filepath.Join(dir, "forms", "звонок", "объекта.form.yaml"), `schema: onebase.form/v1
+form:
+  name: Объекта
+  kind: object
+  entity: Звонок
+attributes:
+  - name: ИсторияЗаявок
+    type: ValueTable
+    columns:
+      - { name: Дата, type: string }
+elements:
+  - kind: ТабличнаяЧасть
+    name: ТЧИсторияЗаявок
+    table_part: ИсторияЗаявок
+    rows: 5
+    show_count: true
+    empty_text: Заявок нет
+  - kind: ТабличнаяЧасть
+    name: ТЧТовары
+    data_path: Объект.Товары
+    rows: 3
+`)
+	result := RunFullWithOptions(dir, Options{Lint: true})
+	got := messages(append(append([]Issue{}, result.Issues...), result.Warnings...))
+	if strings.Contains(got, "rows") && strings.Contains(got, "неизвест") {
+		t.Fatalf("линт не знает ключи таблицы-выдачи: %s", got)
+	}
+	if strings.Count(got, "form.vt-output") != 1 || !strings.Contains(got, "ТЧТовары") {
+		t.Fatalf("ожидалось одно предупреждение form.vt-output у ТЧТовары, получено: %s", got)
+	}
+}
