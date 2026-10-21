@@ -380,3 +380,77 @@ func TestSubmit_NewDocumentPostChecksRowPolicy(t *testing.T) {
 		t.Fatalf("запись не должна была создаться: %#v", rows)
 	}
 }
+
+// ПередЗаписью формы различает новый и записанный объект: у записанного —
+// Объект.Ссылка на него и ЭтоНовый() = Ложь, у нового — ЭтоНовый() = Истина
+// (ссылку новому сохранение назначает заранее, как и раньше). До фикса хук
+// всегда получал ЭтоНовый() = Ложь, а у записанного объекта — пустую ссылку:
+// браузер её не присылает, а признак новизны до формового хука не доходил, —
+// и сравнить запись с её прежней версией в базе было нечем.
+func TestSubmit_FormBeforeWriteSeesSelfRefAndIsNew(t *testing.T) {
+	form := managedObjectForm(
+		fieldEl("Name", "Объект.Наименование"),
+		fieldEl("Ref", "Объект.ВиделСсылку"),
+		fieldEl("New", "Объект.ВиделНовый"),
+	)
+	form.Handlers = map[metadata.FormEventType]string{
+		metadata.FormEventBeforeWrite: "ПередЗаписьюФормы",
+	}
+	form.ProgramAST = mustParse(t, `
+Процедура ПередЗаписьюФормы()
+	Если ЗначениеЗаполнено(Объект.Ссылка) Тогда
+		Объект.ВиделСсылку = Строка(Объект.Ссылка.УникальныйИдентификатор());
+	Иначе
+		Объект.ВиделСсылку = "пусто";
+	КонецЕсли;
+	Объект.ВиделНовый = ?(Объект.ЭтоНовый(), "новый", "записан");
+КонецПроцедуры`)
+	cat := &metadata.Entity{
+		Name: "КарточкаСХуком", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString},
+			{Name: "ВиделСсылку", Type: metadata.FieldTypeString},
+			{Name: "ВиделНовый", Type: metadata.FieldTypeString},
+		},
+		Forms: []*metadata.FormModule{form},
+	}
+	s, ctx := newSubmitTestServer(t, []*metadata.Entity{cat})
+
+	r := reqWithChi(http.MethodPost, "/ui/catalog/"+cat.Name+"/new",
+		url.Values{"Наименование": {"Первая"}, "ВиделСсылку": {""}, "ВиделНовый": {""}},
+		map[string]string{"entity": cat.Name})
+	w := httptest.NewRecorder()
+	s.submit(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("создание: ожидался 303, получен %d: %s", w.Code, w.Body.String())
+	}
+	rows, err := s.store.List(ctx, cat.Name, cat, storage.ListParams{})
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("ожидалась 1 запись: %v, %v", rows, err)
+	}
+	if got := fmt.Sprint(rows[0]["ВиделНовый"]); got != "новый" {
+		t.Fatalf("новый объект: ЭтоНовый() в ПередЗаписью = %q, ждали «новый»", got)
+	}
+	id := fmt.Sprint(rows[0]["id"])
+	if got := strings.ToLower(fmt.Sprint(rows[0]["ВиделСсылку"])); got != strings.ToLower(id) {
+		t.Fatalf("новый объект: Объект.Ссылка в ПередЗаписью = %q, ждали заранее назначенную %s", got, id)
+	}
+	r = reqWithChi(http.MethodPost, "/ui/catalog/"+cat.Name+"/"+id,
+		url.Values{"Наименование": {"Вторая"}, "ВиделСсылку": {""}, "ВиделНовый": {""}},
+		map[string]string{"entity": cat.Name, "id": id})
+	w = httptest.NewRecorder()
+	s.submitEdit(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("правка: ожидался 303, получен %d: %s", w.Code, w.Body.String())
+	}
+	rec, err := s.store.GetByID(ctx, cat.Name, uuid.MustParse(id), cat)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(rec["ВиделНовый"]); got != "записан" {
+		t.Fatalf("записанный объект: ЭтоНовый() в ПередЗаписью = %q, ждали «записан»", got)
+	}
+	if got := strings.ToLower(fmt.Sprint(rec["ВиделСсылку"])); got != strings.ToLower(id) {
+		t.Fatalf("записанный объект: Объект.Ссылка в ПередЗаписью = %q, ждали %s", got, id)
+	}
+}

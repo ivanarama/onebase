@@ -1072,7 +1072,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 			}
 			// Form events see the assigned number, while their rejection remains
 			// in the same rollback scope as the counter and eventual write.
-			if formHookErr = s.runPreSaveFormHooks(txCtx, entity, saveObj, &hookMsgs); formHookErr != nil {
+			if formHookErr = s.runPreSaveFormHooks(txCtx, entity, saveObj, true, &hookMsgs); formHookErr != nil {
 				return errSubmitFormHook
 			}
 			return nil
@@ -1808,7 +1808,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 	// Серверные события записи формы (ПередЗаписью/ПриЗаписи) — до Save. Бросок
 	// ВызватьИсключение в обработчике отменяет запись и перерисовывает форму.
 	var hookMsgs []string
-	if hookErr := s.runPreSaveFormHooks(r.Context(), entity, obj, &hookMsgs); hookErr != nil {
+	if hookErr := s.runPreSaveFormHooks(r.Context(), entity, obj, false, &hookMsgs); hookErr != nil {
 		s.renderObjectFormError(w, r, entity, false, hookErr.Error(), hookMsgs, obj.TablePartRows)
 		return
 	}

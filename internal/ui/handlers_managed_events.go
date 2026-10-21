@@ -177,7 +177,7 @@ func (s *Server) saveManagedObject(r *http.Request, entity *metadata.Entity, for
 				expectedVersion = &parsed
 			}
 		}
-		if hookErr = s.runPreSaveFormHooks(r.Context(), entity, obj, &hookMessages); hookErr != nil {
+		if hookErr = s.runPreSaveFormHooks(r.Context(), entity, obj, false, &hookMessages); hookErr != nil {
 			return hookMessages, 0, &managedCloseSaveError{status: http.StatusBadRequest, kind: managedSaveHook, message: hookErr.Error(), messages: hookMessages}
 		}
 	}
@@ -200,7 +200,7 @@ func (s *Server) saveManagedObject(r *http.Request, entity *metadata.Entity, for
 				(posting && !s.rowAllowedContext(txCtx, entity, "post", saveObj.Fields)) {
 				return errSubmitRowAccessDenied
 			}
-			if hookErr = s.runPreSaveFormHooks(txCtx, entity, saveObj, &hookMessages); hookErr != nil {
+			if hookErr = s.runPreSaveFormHooks(txCtx, entity, saveObj, true, &hookMessages); hookErr != nil {
 				return errSubmitFormHook
 			}
 			return nil

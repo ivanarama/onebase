@@ -195,7 +195,12 @@ func (s *Server) executeFormReadHook(
 //
 // Аналог runFormReadHook, но «Объект» передаётся снаружи (а не загружается из
 // БД), а тип события — параметр. Используется в save-пути (submit/submitEdit).
-func (s *Server) runFormWriteHook(ctx context.Context, entity *metadata.Entity, form *metadata.FormModule, obj *runtime.Object, event metadata.FormEventType, msgs *[]string) error {
+//
+// isNew — объект ещё не записан: тогда Объект.ЭтоНовый() истинно, но
+// Объект.Ссылка уже назначена до формовых хуков. У записанного объекта браузер
+// ссылку не присылает — она ставится здесь, иначе ПередЗаписью/ПриЗаписи не
+// могли бы сравнить объект с его записанной версией.
+func (s *Server) runFormWriteHook(ctx context.Context, entity *metadata.Entity, form *metadata.FormModule, obj *runtime.Object, isNew bool, event metadata.FormEventType, msgs *[]string) error {
 	if form == nil || s.interp == nil || obj == nil {
 		return nil
 	}
@@ -233,7 +238,25 @@ func (s *Server) runFormWriteHook(ctx context.Context, entity *metadata.Entity, 
 	mc := runtime.NewMovementsCollector(entity.Name, obj.ID)
 	vars, txState := s.buildDSLVarsWithMessagesTx(executionCtx, mc, msgs)
 	defer rollbackDSLExecution(txState)
-	thisObj := s.newFormObjectThisLive(executionCtx, txState, obj, entity, form, false)
+	if !isNew && obj.ID != uuid.Nil {
+		// Ссылка нужна только обработчику: в поля, которые дальше уходят в
+		// сохранение, она не попадает — Save получает то же, что без хуков.
+		if obj.Fields == nil {
+			obj.Fields = map[string]any{}
+		}
+		_, hadSelf := obj.Fields["ссылка"]
+		_, hadReference := obj.Fields["reference"]
+		setPersistedFormSelfRef(entity, obj)
+		defer func() {
+			if !hadSelf {
+				delete(obj.Fields, "ссылка")
+			}
+			if !hadReference {
+				delete(obj.Fields, "reference")
+			}
+		}()
+	}
+	thisObj := s.newFormObjectThisLive(executionCtx, txState, obj, entity, form, isNew)
 	thisObj.writeBlocked = true
 	vars["Объект"] = thisObj
 	vars["ЭтотОбъект"] = thisObj
@@ -263,7 +286,7 @@ func (s *Server) runFormWriteHook(ctx context.Context, entity *metadata.Entity, 
 //
 // Возвращает ошибку обработчика — вызывающий код обязан отказать в записи
 // (перерисовать форму с ошибкой), как при DSLError из entityService.Save.
-func (s *Server) runPreSaveFormHooks(ctx context.Context, entity *metadata.Entity, obj *runtime.Object, msgs *[]string) error {
+func (s *Server) runPreSaveFormHooks(ctx context.Context, entity *metadata.Entity, obj *runtime.Object, isNew bool, msgs *[]string) error {
 	before := pickObjectFormWithHook(entity, string(metadata.FormEventBeforeWrite))
 	onWrite := pickObjectFormWithHook(entity, string(metadata.FormEventOnWrite))
 	if before == nil && onWrite == nil {
@@ -273,12 +296,12 @@ func (s *Server) runPreSaveFormHooks(ctx context.Context, entity *metadata.Entit
 	s.enrichHeaderRefs(ctx, entity, obj)
 
 	if before != nil {
-		if err := s.runFormWriteHook(ctx, entity, before, obj, metadata.FormEventBeforeWrite, msgs); err != nil {
+		if err := s.runFormWriteHook(ctx, entity, before, obj, isNew, metadata.FormEventBeforeWrite, msgs); err != nil {
 			return err
 		}
 	}
 	if onWrite != nil {
-		if err := s.runFormWriteHook(ctx, entity, onWrite, obj, metadata.FormEventOnWrite, msgs); err != nil {
+		if err := s.runFormWriteHook(ctx, entity, onWrite, obj, isNew, metadata.FormEventOnWrite, msgs); err != nil {
 			return err
 		}
 	}
@@ -302,7 +325,7 @@ func (s *Server) runAfterWriteFormHook(ctx context.Context, entity *metadata.Ent
 		return
 	}
 	setPersistedFormSelfRef(entity, obj)
-	if err := s.runFormWriteHook(ctx, entity, form, obj, metadata.FormEventAfterWrite, msgs); err != nil && msgs != nil {
+	if err := s.runFormWriteHook(ctx, entity, form, obj, false, metadata.FormEventAfterWrite, msgs); err != nil && msgs != nil {
 		*msgs = append(*msgs, "ПослеЗаписи: "+err.Error())
 	}
 }
