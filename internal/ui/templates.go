@@ -241,6 +241,17 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			form, _ := v.(*metadata.FormModule)
 			return form != nil && form.EnterSubmitsForm
 		},
+		// formDensityClass — класс плотности раскладки на <html> страницы формы
+		// (form.density). Данные страницы — карта с ключом Form только у
+		// управляемой формы; у остальных страниц класса нет.
+		"formDensityClass": func(page any) string {
+			data, _ := page.(map[string]any)
+			form, _ := data["Form"].(*metadata.FormModule)
+			if form != nil && form.Density == metadata.FormDensityCompact {
+				return "ob-density-compact"
+			}
+			return ""
+		},
 		"processorParamPresenceName": func(proc *processorpkg.Processor, name string) string {
 			if proc == nil {
 				return processorParamPresencePrefix + name
@@ -1493,7 +1504,7 @@ func templateSource() string {
 
 const tplHead = `
 {{define "head"}}<!DOCTYPE html>
-<html lang="ru"><head><meta charset="UTF-8">
+<html lang="ru"{{with formDensityClass .}} class="{{.}}"{{end}}><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#1e293b">
 <link rel="manifest" href="/manifest.webmanifest">
