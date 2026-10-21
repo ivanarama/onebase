@@ -1748,6 +1748,18 @@ const tplNav = `
       <details class="sys-group">
         <summary>{{t $.Lang "Профиль и интерфейс"}}</summary>
         <div class="sys-group-body">
+          {{if and .HasAuth .AvailableLangs}}
+          <div class="sys-mode-block">
+            <form method="post" action="/ui/profile/lang" style="margin:0;padding:0">
+              <label class="sys-mode-title" for="ob-profile-lang">{{t $.Lang "Язык интерфейса"}}</label>
+              <select id="ob-profile-lang" name="lang" style="width:100%;max-width:100%;font-size:13px">
+                <option value="" {{if eq .UserLang ""}}selected{{end}}>{{t $.Lang "По умолчанию для базы"}}</option>
+                {{range .AvailableLangs}}<option value="{{.Code}}" {{if eq $.UserLang .Code}}selected{{end}}>{{.Native}}</option>{{end}}
+              </select>
+              <button type="submit" class="sys-btn">{{t $.Lang "Применить"}}</button>
+            </form>
+          </div>
+          {{end}}
           <div class="sys-mode-block">
             <div class="sys-mode-title">{{t $.Lang "Режим открытия форм"}}</div>
             <form method="post" action="/ui/form-mode" style="margin:0;padding:0">

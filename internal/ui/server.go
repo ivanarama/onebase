@@ -681,21 +681,6 @@ func (s *Server) errText(r *http.Request, err error) string {
 	return i18nerr.Localize(s.cfg.Bundle, s.resolveLang(r), err)
 }
 
-// setLang saves the user's preferred language.
-func (s *Server) setLang(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, s.errText(r, err), 400)
-		return
-	}
-	lang := r.FormValue("lang")
-	u := auth.UserFromContext(r.Context())
-	if u != nil && s.authRepo != nil {
-		_ = s.authRepo.SetUserLang(r.Context(), u.ID, lang)
-	}
-	http.Redirect(w, r, r.Header.Get("Referer"), http.StatusSeeOther)
-}
-
 // resolveLangCtx — язык интерфейса там, где есть только контекст.
 //
 // Отличается от resolveLang ровно одним: не видит заголовок Accept-Language,

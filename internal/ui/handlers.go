@@ -742,6 +742,10 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		}
 	}
 	data["HasPersonalNavigation"] = s.store != nil && currentUserLogin(r) != ""
+	data["UserLang"] = ""
+	if u := auth.UserFromContext(r.Context()); u != nil {
+		data["UserLang"] = u.Lang
+	}
 	if _, ok := data["HasAuth"]; !ok {
 		u := auth.UserFromContext(r.Context())
 		data["HasAuth"] = s.authRepo != nil && u != nil
