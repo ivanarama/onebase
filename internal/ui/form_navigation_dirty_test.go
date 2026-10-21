@@ -160,6 +160,9 @@ async function run(response, formDirty, concurrentEdit) {
     formEditState,
     formEventQueue: Promise.resolve(), formEventPendingCount: 0, formEventPending: false,
     closePending: null, closeHandoffPending: false, retryableClose: null,
+    // Вопрос перед проведением (ПередПроведением) живёт в контроллере закрытия,
+    // вне вырезки; навигации он не касается.
+    beforePostState: null, beforePostSnapshot: () => false, settleBeforePost() {},
     DOC_ID: 'doc', URL: '/ui/form-event',
     fetch: () => { fetchEntered(); return waiting; },
     flash: (m, kind) => calls.flash.push([m, kind]),

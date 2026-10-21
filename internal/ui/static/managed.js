@@ -1270,7 +1270,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       }
       // Вопрос фазы 1 (#1528): открыть модал; ответ вернётся событием Ответ
       // через _question_answer — сервер положит его в ВопросОтвет.
-      if (data.question) {
+      if (data.question && !beforePostSnapshot(snapshot)) {
         (data.messages || []).forEach(m => flash(m, 'ok'));
         if (data.error) flash(data.error, 'err');
         if (window.obOpenQuestion) window.obOpenQuestion(data.question, elementName);
@@ -1280,23 +1280,59 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // partially failing renderer. Programmatic response application does
       // not emit input/change, so raise it before touching mutable DOM state.
       if (data.dirty === true) setManagedFormDirty(true);
-      if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
-      applyElementStates(data.elementStates);
-      window.obManagedApplyTablePartRefOptions(data.tpRefOptions);
-      window.applyTableParts(data.tableparts);
-      applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
-      applyChoiceList(elementName, data.choiceList);
-      applyFormTables(data.formTables);
+      var beforePostMerged = beforePostSnapshot(snapshot) && formEditState.revision !== snapshot.editRevision;
+      if (beforePostMerged) {
+        // Перед ответом на вопрос сохранить свежий ввод, но принять правки
+        // обработчика в полях и таблицах, которых пользователь не касался.
+        var mergeRevision = formEditState.revision;
+        var mergeBody = await closeSnapshotBody('', '');
+        if (!mergeBody || formEditState.revision !== mergeRevision) {
+          setManagedFormDirty(true);
+          return;
+        }
+        applyCloseResponse(data, snapshot.body, mergeBody);
+        setManagedFormDirty(true);
+      } else {
+        if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
+        applyElementStates(data.elementStates);
+        window.obManagedApplyTablePartRefOptions(data.tpRefOptions);
+        window.applyTableParts(data.tableparts);
+        applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
+        applyChoiceList(elementName, data.choiceList);
+        applyFormTables(data.formTables);
+      }
 	  // Server events repaint controls programmatically and therefore do not
 	  // trigger input/change. Raise dirty for unsaved handler mutations; clear
 	  // it only when this response proves a successful Object.Write and no
 	  // user edits followed the snapshot that was saved.
-	  if (data.dirty === false && (data.savedId || data.version)) {
+	  if (!beforePostMerged && data.dirty === false && (data.savedId || data.version)) {
 		setManagedFormDirty(formEditState.revision !== snapshot.editRevision);
 	  }
-      (data.messages || []).forEach(m => flash(m, 'ok'));
-      if (data.error) flash(data.error, 'err');
+      if (!beforePostMerged) {
+        (data.messages || []).forEach(m => flash(m, 'ok'));
+        if (data.error) flash(data.error, 'err');
+      }
       if (navigationBlocked) flash(closeMessage('navigationDirty', 'Форма содержит несохранённые изменения — переход не выполнен'), 'err');
+      if (data.question && beforePostSnapshot(snapshot) && beforePostState) {
+        // Правки и dirty уже применены. Ответ пойдёт тем же событием с новым
+        // снимком формы; закрытие вопроса мимо кнопок отменяет проведение.
+        beforePostState.questionOpen = true;
+        if (window.obOpenQuestion) window.obOpenQuestion(data.question, '', {
+          onAnswer: function(variant){ runBeforePostEvent({_question_answer: variant}); },
+          onDismiss: function(){ settleBeforePost(false); }
+        });
+        else settleBeforePost(false);
+        return;
+      }
+      // Решение — после того, как событие целиком вышло из очереди (см.
+      // runBeforePostEvent): иначе проведение застало бы форму «занятой».
+      if (beforePostSnapshot(snapshot) && beforePostState) {
+        // Merging protects newer input but cannot authorize posting it: the
+        // handler checked another snapshot. A fresh user attempt must check it.
+        beforePostState.outcome = !beforePostMerged && !data.cancel && !data.error && !navigationBlocked;
+        beforePostState.approval.revision = snapshot.editRevision;
+        if (beforePostMerged) flash(closeMessage('formChanged', 'Форма изменилась во время проверки закрытия. Повторите закрытие.'), 'err');
+      }
     } catch (e) {
       // A lost/unparseable response for /new may hide a committed insert and
       // there is no identity with which to issue another safe write. Fence all
@@ -1311,7 +1347,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     }
   }
 
-  window.obFire = function(elementName, eventName, extraParams, pickerRequest){
+  function fireFormEvent(elementName, eventName, extraParams, pickerRequest, beforePostOwner){
 	pickerRequest = pickerRequest || (window.obPickerRequest ? window.obPickerRequest() : null);
 	if (formEventWriteUnknown || manualReconcileRequired) {
 	  flash(closeMessage('unknownResult', 'Исход операции неизвестен. Проверьте данные в отдельной вкладке и перезагрузите форму; повторная запись заблокирована.'), 'err');
@@ -1321,7 +1357,9 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	  flash(closeMessage('reloadRequired', 'Результат уже сохранён. Скопируйте текущие правки и перезагрузите форму перед продолжением.'), 'err');
 	  return Promise.resolve();
 	}
-	if (closePending || closeHandoffPending || retryableClose) {
+	if (closePending || retryableClose ||
+        (closeHandoffPending && (!beforePostOwner || beforePostOwner !== beforePostState)) ||
+        (beforePostState && beforePostOwner !== beforePostState)) {
 	  flash(closeMessage('closePending', 'Сначала завершите или восстановите проверку закрытия формы.'), 'err');
 	  return Promise.resolve();
 	}
@@ -1386,6 +1424,9 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	  formEventPendingCount = Math.max(0, formEventPendingCount - 1);
 	  formEventPending = formEventPendingCount > 0;
 	});
+  }
+  window.obFire = function(elementName, eventName, extraParams, pickerRequest){
+    return fireFormEvent(elementName, eventName, extraParams, pickerRequest);
   };
 
   // One close controller for every managed-form adapter. It snapshots the
@@ -1393,6 +1434,42 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   // applies returned state/messages first and only then returns a decision.
   // Shell/popup/standalone code decides how to destroy its own UI.
   var CLOSE_URL = String(cfg.closeUrl || '');
+  // ПередПроведением (событие уровня формы): стандартные «Провести» и «Провести
+  // и закрыть» сначала спрашивают обработчик. Он вправе отказать (Отказ) или
+  // задать вопрос — ответ возвращается тем же событием; проведение идёт, только
+  // когда обработчик ответил без отказа, без ошибки и без нового вопроса.
+  var BEFORE_POST = !!cfg.beforePost;
+  var beforePostState = null;
+  function beforePostSnapshot(snapshot){
+    return !!(snapshot && !snapshot.elementName && snapshot.eventName === 'ПередПроведением');
+  }
+  function settleBeforePost(ok){
+    var state = beforePostState;
+    beforePostState = null;
+    if (state) state.resolve(!!ok && state.approval.revision === formEditState.revision);
+  }
+  function runBeforePostEvent(extra){
+    if (!beforePostState) return;
+    beforePostState.questionOpen = false;
+    beforePostState.outcome = false;
+    // Только событие владельца может пройти через embedded handoff. Общие
+    // команды и native submit остаются заперты, в том числе пока открыт вопрос.
+    Promise.resolve(fireFormEvent('', 'ПередПроведением', extra || null, null, beforePostState)).then(function(){
+      // Ответ разобран и событие вышло из очереди. Открыт вопрос — ждём ответа;
+      // не дошло до разбора (отказ очереди, сеть) — outcome остался false.
+      if (beforePostState && !beforePostState.questionOpen) settleBeforePost(beforePostState.outcome === true);
+    });
+  }
+  function managedBeforePost(allowHandoff, approval){
+    if (!BEFORE_POST) return Promise.resolve(true);
+    if (beforePostState || formEventPending || closePending || retryableClose ||
+        (closeHandoffPending && !allowHandoff)) return Promise.resolve(false);
+    return new Promise(function(resolve){
+      beforePostState = {resolve: resolve, questionOpen: false, approval: approval || {}};
+      runBeforePostEvent(null);
+    });
+  }
+  window.obManagedBeforePost = function(){ return managedBeforePost(false); };
   var CLOSE_TIMEOUT_MS = Number(cfg.closeTimeoutMs || 30000);
   var CLOSE_MESSAGES = cfg.closeMessages || {};
   // Declared with the close controller because browser behavior tests extract
@@ -1667,6 +1744,23 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 
   window.obRequestFormClose = function(options){
     options = options || {};
+    if (beforePostState) return Promise.resolve({allowed: false, intentId: '', error: 'form-event-pending'});
+    // An unknown result belongs to an already checked operation. Recover its
+    // exact payload/UUID before starting any new BeforePost handler.
+    if (BEFORE_POST && options.mode === 'post' && !options.__beforePostDone && !retryableClose && !closePending) {
+      var nextOptions = {};
+      Object.keys(options).forEach(function(key){ nextOptions[key] = options[key]; });
+      nextOptions.__beforePostDone = true;
+      var approval = {};
+      return managedBeforePost(true, approval).then(function(ok){
+        if (!ok || approval.revision !== formEditState.revision) {
+          closeHandoffPending = false;
+          return {allowed: false, intentId: '', error: 'before-post-cancelled'};
+        }
+        nextOptions.__beforePostRevision = approval.revision;
+        return window.obRequestFormClose(nextOptions);
+      });
+    }
 	if (formEventPending) {
 	  // An embedded adapter may already have raised the handoff flag before its
 	  // parent asks for this decision. This early refusal completes that handoff;
@@ -1704,6 +1798,14 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       if (mode === 'cancel') return {allowed: false, intentId: '', error: 'user-cancelled'};
       var body = await closeSnapshotBody(reason, mode);
       if (!body) return {allowed: false, intentId: '', error: 'form-state'};
+      // File reads and grid synchronization may yield or commit fresh edits
+      // after BeforePost completed. Never open a new intent under old approval.
+      if (BEFORE_POST && mode === 'post' && !retryableClose &&
+          options.__beforePostRevision !== formEditState.revision) {
+        setManagedFormDirty(true);
+        flash(closeMessage('formChanged', 'Форма изменилась во время проверки закрытия. Повторите закрытие.'), 'err');
+        return {allowed: false, intentId: '', error: 'form-changed'};
+      }
       var snapshotKey = closeSnapshotKey(body);
 	  var requestedReason = reason;
 	  var requestedMode = mode;
@@ -1930,6 +2032,47 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     return true;
   };
 
+  // «Провести»: до отправки формы — ПередПроведением. Перехват в фазе захвата,
+  // раньше остальных обработчиков отправки; после согласия форма отправляется
+  // заново той же кнопкой и проходит их как обычно.
+  // Файловое поле откладывает отправку: его обработчик отменяет наш повторный
+  // submit, ждёт FileReader и отправляет форму сам (флаг reentry). Разрешение
+  // проверенного снимка поэтому живёт дольше синхронного requestSubmit — до
+  // этого повторного submit — и годится только для той же ревизии формы:
+  // правка во время чтения требует новой проверки, а не отправки по старой.
+  function obFileSubmitReentry(form){
+    return typeof obManagedFileSubmitReentry !== 'undefined' && obManagedFileSubmitReentry.has(form);
+  }
+  document.addEventListener('submit', function(e){
+    var form = e.target;
+    if (!BEFORE_POST || !form || form.id !== 'main-form' || form.__obBeforePostApproved) return;
+    var submitter = e.submitter || null;
+    if (!submitter || submitter.name !== '_action' || submitter.value !== 'post') return;
+    var granted = form.__obBeforePostApproval || null;
+    form.__obBeforePostApproval = null;
+    // Повтор файлового обработчика для того же снимка — без второй проверки
+    // (разрешение одноразовое).
+    if (granted && obFileSubmitReentry(form) && granted.revision === formEditState.revision) return;
+    // Let the native-submit controller recover an existing close intent.
+    // BeforePost is only for a new operation, never for replay of an old one.
+    if (closePending || retryableClose) return;
+    e.preventDefault();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+    else if (e.stopPropagation) e.stopPropagation();
+    var approval = {};
+    managedBeforePost(false, approval).then(function(ok){
+      if (!ok || approval.revision !== formEditState.revision) return;
+      form.__obBeforePostApproval = {revision: approval.revision};
+      form.__obBeforePostApproved = true;
+      try {
+        if (typeof form.requestSubmit === 'function') form.requestSubmit(submitter);
+        else submitter.click();
+      } finally {
+        form.__obBeforePostApproved = false;
+      }
+    });
+  }, true);
+
   // A native submit must not race an unfinished close request. A lost close
   // response is also an unknown commit outcome: BeforeClose may call
   // Object.Write even for discard. Until the exact UUID/body is replayed, a
@@ -1941,7 +2084,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     var pending = retryableClose;
     var recoveryMode = pending && String(pending.mode || '');
     if (!form || form.id !== 'main-form') return;
-	if (formEventPending || formEventWriteUnknown || manualReconcileRequired) {
+	if (beforePostState || formEventPending || formEventWriteUnknown || manualReconcileRequired) {
 	  e.preventDefault();
 	  if (e.stopImmediatePropagation) e.stopImmediatePropagation();
 	  else if (e.stopPropagation) e.stopPropagation();

@@ -72,8 +72,10 @@ var browserFormCommandEvents = []FormEventType{FormEventOnClick, FormEventOnSear
 
 // browserFormLevelEvents — события, приходящие без имени элемента, на форму
 // целиком. Остальные события уровня формы серверные: их запускает сервер на
-// чтении и записи, из браузера они не вызываются.
-var browserFormLevelEvents = []FormEventType{FormEventOnOpen}
+// чтении и записи, из браузера они не вызываются. ПередПроведением браузер
+// шлёт сам перед стандартным проведением: обработчику нужен диалог с
+// пользователем, а серверный хук записи спросить его не может.
+var browserFormLevelEvents = []FormEventType{FormEventOnOpen, FormEventBeforePost}
 
 // BrowserFormEventsFor возвращает копию перечня событий, которые браузер вправе
 // отправить элементу формы данного вида. Вид, ничего не отправляющий (надпись,
