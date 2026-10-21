@@ -17,6 +17,8 @@ const InfoRegEditRevisionColumn = "_edit_revision"
 
 // InfoRegEditKey contains the complete physical key. Dimensions and
 // PeriodText returned by InfoRegReadForEdit retain the SQLite database spelling.
+// Typed DATE dimensions accept native UTC and universal-backup formats;
+// ambiguous SQLite spellings require the returned physical dimension value.
 type InfoRegEditKey struct {
 	Dimensions map[string]any
 	Period     *time.Time
@@ -272,7 +274,7 @@ func (db *DB) InfoRegReadForEdit(ctx context.Context, ir *metadata.InfoRegister,
 	if err != nil {
 		return nil, err
 	}
-	where, args := physicalDimWhere(db.dialect, ir, lookup, 1)
+	where, args := db.infoRegEditDimWhere(ir, lookup, 1)
 	// A periodic register without dimensions still has an exact period key.
 	if len(ir.Dimensions) == 0 {
 		where = "1=1"
@@ -358,7 +360,7 @@ func (db *DB) InfoRegReadForEdit(ctx context.Context, ir *metadata.InfoRegister,
 		i++
 	}
 	if rows.Next() {
-		return nil, fmt.Errorf("info register %s: ambiguous physical period; use PeriodText", ir.Name)
+		return nil, fmt.Errorf("info register %s: ambiguous physical key; use exact dimension values and PeriodText", ir.Name)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -391,6 +393,35 @@ func (db *DB) infoRegEditPeriodWhere(ir *metadata.InfoRegister, key InfoRegEditK
 	return " AND period IN (" + db.dialect.Placeholder(start) + ", " + db.dialect.Placeholder(start+1) + ")", []any{p.Format(time.RFC3339Nano), p.Format("2006-01-02 15:04:05.999999999-07:00")}, nil
 }
 
+// DATE dimensions need the same lossless SQLite bind path as the period.
+// Lexical machine keys stay exact; typed timestamps match supported UTC
+// spellings without rounding. The final LIMIT 2 read rejects physical aliases.
+func (db *DB) infoRegEditDimWhere(ir *metadata.InfoRegister, key map[string]any, start int) (string, []any) {
+	var conditions []string
+	var args []any
+	for _, field := range ir.Dimensions {
+		value := physicalRegFieldArg(db.dialect, field, key[field.Name])
+		if db.IsSQLite() && field.Type == metadata.FieldTypeDate {
+			if p, ok := value.(*time.Time); ok && p != nil {
+				value = *p
+			}
+			if p, ok := value.(time.Time); ok {
+				p = p.UTC()
+				idx := start + len(args)
+				conditions = append(conditions, metadata.ColumnName(field)+" IN ("+db.dialect.Placeholder(idx)+", "+db.dialect.Placeholder(idx+1)+")")
+				args = append(args, p.Format(time.RFC3339Nano), p.Format("2006-01-02 15:04:05.999999999-07:00"))
+				continue
+			}
+		}
+		conditions = append(conditions, metadata.ColumnName(field)+" = "+db.dialect.Placeholder(start+len(args)))
+		args = append(args, value)
+	}
+	if len(conditions) == 0 {
+		return "1=1", nil
+	}
+	return strings.Join(conditions, " AND "), args
+}
+
 func (db *DB) resolveInfoRegEditLookupKey(ctx context.Context, ir *metadata.InfoRegister, key InfoRegEditKey) (map[string]any, error) {
 	if _, _, err := db.infoRegEditPeriodWhere(ir, key, 1); err != nil {
 		return nil, err
@@ -402,7 +433,7 @@ func (db *DB) resolveInfoRegEditLookupKey(ctx context.Context, ir *metadata.Info
 	if err != nil || !exact {
 		return raw, err
 	}
-	where, args := physicalDimWhere(db.dialect, ir, raw, 1)
+	where, args := db.infoRegEditDimWhere(ir, raw, 1)
 	periodWhere, periodArgs, err := db.infoRegEditPeriodWhere(ir, key, len(args)+1)
 	if err != nil {
 		return nil, err
