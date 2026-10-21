@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -134,6 +136,103 @@ resources:
 					}
 					seen[row.Revision] = true
 					originals[k] = row.Revision
+				}
+			}
+		})
+	})
+}
+
+func TestUniversalInfoRegEditPhysicalPeriodMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, source *storage.DB) {
+		ctx := context.Background()
+		source.SetFilesDir(t.TempDir())
+		cfg := testConfigDir(t)
+		if err := os.Mkdir(filepath.Join(cfg, "inforegs"), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(cfg, "inforegs", "periodbackup.yaml"), []byte(`name: PeriodBackup
+periodic: true
+dimensions:
+  - {name: Key, type: number, length: 15, scale: 2}
+resources:
+  - {name: Value, type: string}
+`), 0600); err != nil {
+			t.Fatal(err)
+		}
+		proj, err := project.Load(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer proj.Close()
+		ir := proj.InfoRegisters[0]
+		if err := source.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+			t.Fatal(err)
+		}
+		p := time.Date(2026, 10, 19, 13, 22, 33, 123456000, time.UTC)
+		periods := []time.Time{p.Truncate(time.Second)}
+		if !source.IsSQLite() {
+			periods = append(periods, p, p.Add(time.Microsecond))
+		}
+		for i, period := range periods {
+			if err := source.InfoRegSet(ctx, ir, map[string]any{"Key": "1.00"}, map[string]any{"Value": fmt.Sprint(i)}, &period); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var archive bytes.Buffer
+		if err := ExportUniversal(ctx, source, "file", cfg, "", "period-test", &archive); err != nil {
+			t.Fatal(err)
+		}
+		dbtest.ForEachDialect(t, func(t *testing.T, target *storage.DB) {
+			target.SetFilesDir(t.TempDir())
+			if _, err := ImportUniversal(ctx, target, "file", filepath.Join(t.TempDir(), "config"), "", bytes.NewReader(archive.Bytes()), int64(archive.Len())); err != nil {
+				t.Fatal(err)
+			}
+			listed, err := target.InfoRegListWithKeyValues(ctx, ir, storage.RegFilter{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(listed) != len(periods) {
+				t.Fatalf("restored rows: %v", listed)
+			}
+			revisions := map[string]string{}
+			for _, row := range listed {
+				period, ok := storage.ParseRegPeriod(row["period_key"].(string))
+				if !ok {
+					t.Fatal(row)
+				}
+				dims := row[storage.InfoRegKeyValuesField].(map[string]string)
+				key := storage.InfoRegEditKey{Dimensions: map[string]any{"Key": dims["Key"]}, Period: &period}
+				read, err := target.InfoRegReadForEdit(ctx, ir, key, nil)
+				if err != nil || read == nil || read.Row["Value"] != row["Value"] || !read.Key.Period.Equal(period) {
+					t.Fatalf("exact restored read %v %v, want %v", read, err, row)
+				}
+				again, err := target.InfoRegReadForEdit(ctx, ir, read.Key, nil)
+				if err != nil || again == nil || again.Revision != read.Revision {
+					t.Fatalf("physical round trip %v %v", again, err)
+				}
+				revisions[row["period_key"].(string)] = read.Revision
+				hidden, err := target.InfoRegReadForEdit(ctx, ir, key, &storage.Predicate{Field: "Value", Op: "eq", Value: "denied"})
+				if err != nil || hidden != nil {
+					t.Fatalf("RLS leak: %v %v", hidden, err)
+				}
+			}
+			if target.IsSQLite() {
+				// Native writes use another physical format and must not steal restored keys.
+				native := p.Truncate(time.Second).Add(time.Second)
+				if err := target.InfoRegSet(ctx, ir, map[string]any{"Key": "1.00"}, map[string]any{"Value": "native"}, &native); err != nil {
+					t.Fatal(err)
+				}
+				for _, row := range listed {
+					period, _ := storage.ParseRegPeriod(row["period_key"].(string))
+					read, err := target.InfoRegReadForEdit(ctx, ir, storage.InfoRegEditKey{Dimensions: map[string]any{"Key": "1.00"}, Period: &period}, nil)
+					if err != nil || read == nil || read.Row["Value"] != row["Value"] || read.Revision != revisions[row["period_key"].(string)] {
+						t.Fatalf("sibling selected: %v %v", read, err)
+					}
+				}
+				missing := p.Add(time.Second)
+				read, err := target.InfoRegReadForEdit(ctx, ir, storage.InfoRegEditKey{Dimensions: map[string]any{"Key": "1.00"}, Period: &missing}, nil)
+				if err != nil || read != nil {
+					t.Fatalf("fractional key selected second sibling: %v %v", read, err)
 				}
 			}
 		})

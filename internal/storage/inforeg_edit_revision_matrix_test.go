@@ -199,6 +199,11 @@ func TestInfoRegEditExactReadGateMatrix(t *testing.T) {
 		ir.Periodic = true
 		ir.Dimensions = append(ir.Dimensions, metadata.Field{Name: "Flag", Type: metadata.FieldTypeBool}, metadata.Field{Name: "Amount", Type: "number", Length: 15, Scale: 2}, metadata.Field{Name: "Ref", Type: "reference", RefEntity: "Catalog"}, metadata.Field{Name: "Date", Type: "date"})
 		p := time.Date(2026, 10, 19, 13, 22, 33, 123000000, time.UTC)
+		// Native SQLite writers store seconds; use the physical stored key.
+		// Fractional restored periods are covered by the universal-backup matrix.
+		if db.IsSQLite() {
+			p = p.Truncate(time.Second)
+		}
 		ref := uuid.New()
 		key := storage.InfoRegEditKey{Period: &p, Dimensions: map[string]any{"Key": "", "Flag": true, "Amount": "1.00", "Ref": ref, "Date": p}}
 		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
@@ -405,6 +410,102 @@ func TestInfoRegEditReadRejectsDeferredKeyMigrationMatrix(t *testing.T) {
 		// identity, and another sibling could be inserted at any later time.
 		if _, err := db.InfoRegReadForEdit(ctx, &narrowed, storage.InfoRegEditKey{Dimensions: map[string]any{"Key": "X"}}, nil); err == nil {
 			t.Fatal("incomplete physical key accepted")
+		}
+	})
+}
+
+func TestInfoRegEditRevisionShadowedLocatorsMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		for _, legacy := range []bool{false, true} {
+			t.Run(fmt.Sprintf("legacy=%t", legacy), func(t *testing.T) {
+				ir := revisionRegister(fmt.Sprintf("ShadowedLocators%t", legacy))
+				ir.Resources = []metadata.Field{{Name: "rowid", Type: "string"}, {Name: "_rowid_", Type: "string"}, {Name: "oid", Type: "string"}}
+				table := metadata.InfoRegTableName(ir.Name)
+				if legacy {
+					if _, err := db.Exec(ctx, "CREATE TABLE "+table+" (key TEXT PRIMARY KEY, rowid TEXT, _rowid_ TEXT, oid TEXT)"); err != nil {
+						t.Fatal(err)
+					}
+					// More than one backfill batch; repeated resource values cannot locate rows.
+					for i := 0; i < 515; i++ {
+						if _, err := db.Exec(ctx, "INSERT INTO "+table+" (key,rowid,_rowid_,oid) VALUES ("+db.Dialect().Placeholder(1)+",'R','S','T')", fmt.Sprint(i)); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
+				if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+					t.Fatal(err)
+				}
+				key := storage.InfoRegEditKey{Dimensions: map[string]any{"Key": "0"}}
+				if !legacy {
+					if err := db.InfoRegSet(ctx, ir, key.Dimensions, map[string]any{"rowid": "R", "_rowid_": "S", "oid": "T"}, nil); err != nil {
+						t.Fatal(err)
+					}
+				}
+				first := readRevision(t, db, ir, key)
+				if first.Row["rowid"] != "R" || first.Row["_rowid_"] != "S" || first.Row["oid"] != "T" {
+					t.Fatalf("business fields changed: %v", first)
+				}
+				if legacy {
+					seen := map[string]bool{}
+					for i := 0; i < 515; i++ {
+						row := readRevision(t, db, ir, storage.InfoRegEditKey{Dimensions: map[string]any{"Key": fmt.Sprint(i)}})
+						if seen[row.Revision] {
+							t.Fatal("backfill reused revision")
+						}
+						seen[row.Revision] = true
+					}
+				}
+				if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+					t.Fatal(err)
+				}
+				if got := readRevision(t, db, ir, key); got.Revision != first.Revision {
+					t.Fatal("repeat migration changed revision")
+				}
+				if err := db.WithTxScope(ctx, func(txCtx context.Context) error { return db.InvalidateInfoRegEditRevisions(txCtx, ir) }); err != nil {
+					t.Fatal(err)
+				}
+				if got := readRevision(t, db, ir, key); got.Revision == first.Revision || got.Row["oid"] != "T" {
+					t.Fatal("invalidation lost identity or business data")
+				}
+			})
+		}
+	})
+}
+
+func TestInfoRegEditPhysicalPeriodSpellingMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ir := revisionRegister("PhysicalPeriodSpelling")
+		ir.Periodic = true
+		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+			t.Fatal(err)
+		}
+		p := time.Date(2026, 10, 19, 13, 22, 33, 0, time.UTC)
+		key := storage.InfoRegEditKey{Dimensions: map[string]any{"Key": "A"}, Period: &p}
+		if err := db.InfoRegSet(ctx, ir, key.Dimensions, map[string]any{"Value": "native"}, &p); err != nil {
+			t.Fatal(err)
+		}
+		native := readRevision(t, db, ir, key)
+		if !db.IsSQLite() {
+			return
+		} // PostgreSQL has one physical instant, no TEXT aliases.
+		revision := uuid.NewString()
+		if _, err := db.Exec(ctx, "INSERT INTO "+metadata.InfoRegTableName(ir.Name)+" (period,key,value,_edit_revision) VALUES (?,'A','restored',?)", p.Format(time.RFC3339Nano), revision); err != nil {
+			t.Fatal(err)
+		}
+		if row, err := db.InfoRegReadForEdit(ctx, ir, key, nil); err == nil || row != nil {
+			t.Fatalf("ambiguous typed period selected a row: %v %v", row, err)
+		}
+		exact := readRevision(t, db, ir, native.Key)
+		if exact.Revision != native.Revision || exact.Row["Value"] != "native" {
+			t.Fatalf("physical period selected sibling: %v", exact)
+		}
+		inconsistent := native.Key
+		changed := p.Add(time.Second)
+		inconsistent.Period = &changed
+		if row, err := db.InfoRegReadForEdit(ctx, ir, inconsistent, nil); err == nil || row != nil {
+			t.Fatalf("inconsistent physical period accepted: %v %v", row, err)
 		}
 	})
 }

@@ -15,11 +15,14 @@ import (
 // or a version supplied by an exchange partner or universal backup.
 const InfoRegEditRevisionColumn = "_edit_revision"
 
-// InfoRegEditKey contains the complete physical key. Dimensions returned by
-// InfoRegReadForEdit retain the database spelling (including SQLite NUMBER).
+// InfoRegEditKey contains the complete physical key. Dimensions and
+// PeriodText returned by InfoRegReadForEdit retain the SQLite database spelling.
 type InfoRegEditKey struct {
 	Dimensions map[string]any
 	Period     *time.Time
+	// PeriodText preserves the physical SQLite spelling returned by this read.
+	// When absent, Period accepts the native UTC and universal-backup formats.
+	PeriodText string
 }
 
 // InfoRegEditRecord is internal edit-service input. Row contains only business
@@ -59,15 +62,14 @@ func (db *DB) fillInfoRegEditRevisions(ctx context.Context, ir *metadata.InfoReg
 		return errors.New("info register edit revisions require active transaction")
 	}
 	table := metadata.InfoRegTableName(ir.Name)
-	locator := "ctid"
-	cast := "::tid"
+	locators := []string{"CAST(ctid AS TEXT)"}
+	locatorWhere := "ctid = " + db.dialect.Placeholder(2) + "::tid"
 	if db.IsSQLite() {
-		cast = ""
 		cols, err := db.tableColumns(ctx, table)
 		if err != nil {
 			return err
 		}
-		locator = ""
+		locators = nil
 		for _, candidate := range []string{"rowid", "_rowid_", "oid"} {
 			shadowed := false
 			for col := range cols {
@@ -76,12 +78,34 @@ func (db *DB) fillInfoRegEditRevisions(ctx context.Context, ir *metadata.InfoReg
 				}
 			}
 			if !shadowed {
-				locator = candidate
+				locators = []string{quoteIdent(candidate)}
+				locatorWhere = quoteIdent(candidate) + " = " + db.dialect.Placeholder(2)
 				break
 			}
 		}
-		if locator == "" {
-			return fmt.Errorf("info register %s: no unshadowed physical row locator", ir.Name)
+		if len(locators) == 0 {
+			// Business columns may shadow every rowid alias. Use the actual
+			// physical PK (not metadata, which may be mid-migration).
+			rows, err := db.Query(ctx, "SELECT name FROM pragma_table_info(?) WHERE pk > 0 ORDER BY pk", table)
+			if err != nil {
+				return err
+			}
+			var conditions []string
+			for rows.Next() {
+				var name string
+				if err := rows.Scan(&name); err != nil {
+					rows.Close()
+					return err
+				}
+				locators = append(locators, quoteIdent(name))
+				conditions = append(conditions, quoteIdent(name)+" IS "+db.dialect.Placeholder(len(locators)+1))
+			}
+			err = rows.Err()
+			rows.Close()
+			if err != nil {
+				return err
+			}
+			locatorWhere = strings.Join(conditions, " AND ")
 		}
 	}
 	// Validate all existing nonempty versions before changing any of them. Invalid
@@ -111,7 +135,17 @@ func (db *DB) fillInfoRegEditRevisions(ctx context.Context, ir *metadata.InfoReg
 	if invalidate {
 		condition = "1=1"
 	}
-	query := "SELECT CAST(" + locator + " AS TEXT) FROM " + table + " WHERE " + condition
+	if len(locators) == 0 {
+		var count int
+		if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM "+table+" WHERE "+condition).Scan(&count); err != nil {
+			return err
+		}
+		if count == 0 {
+			return nil
+		}
+		return fmt.Errorf("info register %s: no physical row locator", ir.Name)
+	}
+	query := "SELECT " + strings.Join(locators, ", ") + " FROM " + table + " WHERE " + condition
 	if !invalidate {
 		query += " LIMIT 512"
 	}
@@ -120,10 +154,14 @@ func (db *DB) fillInfoRegEditRevisions(ctx context.Context, ir *metadata.InfoReg
 		if err != nil {
 			return err
 		}
-		var ids []string
+		var ids [][]any
 		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
+			id := make([]any, len(locators))
+			ptrs := make([]any, len(id))
+			for i := range id {
+				ptrs[i] = &id[i]
+			}
+			if err := rows.Scan(ptrs...); err != nil {
 				rows.Close()
 				return err
 			}
@@ -139,9 +177,13 @@ func (db *DB) fillInfoRegEditRevisions(ctx context.Context, ir *metadata.InfoReg
 			if err != nil {
 				return fmt.Errorf("info register %s edit revision: %w", ir.Name, err)
 			}
-			_, err = db.Exec(ctx, "UPDATE "+table+" SET "+InfoRegEditRevisionColumn+" = "+db.dialect.Placeholder(1)+" WHERE "+locator+" = "+db.dialect.Placeholder(2)+cast, revision.String(), id)
+			args := append([]any{revision.String()}, id...)
+			result, err := db.Exec(ctx, "UPDATE "+table+" SET "+InfoRegEditRevisionColumn+" = "+db.dialect.Placeholder(1)+" WHERE "+locatorWhere, args...)
 			if err != nil {
 				return err
+			}
+			if affected := result.RowsAffected; affected != 1 {
+				return fmt.Errorf("info register %s: row locator matched %d rows", ir.Name, affected)
 			}
 		}
 		if invalidate || len(ids) == 0 {
@@ -226,7 +268,7 @@ func (db *DB) InfoRegReadForEdit(ctx context.Context, ir *metadata.InfoRegister,
 	if err := db.infoRegCheckEditPrimaryKey(ctx, ir); err != nil {
 		return nil, err
 	}
-	lookup, err := db.resolveInfoRegLookupKey(ctx, ir, key.Dimensions, key.Period)
+	lookup, err := db.resolveInfoRegEditLookupKey(ctx, ir, key)
 	if err != nil {
 		return nil, err
 	}
@@ -235,10 +277,12 @@ func (db *DB) InfoRegReadForEdit(ctx context.Context, ir *metadata.InfoRegister,
 	if len(ir.Dimensions) == 0 {
 		where = "1=1"
 	}
-	if key.Period != nil {
-		where += " AND period = " + db.dialect.Placeholder(len(args)+1)
-		args = append(args, *key.Period)
+	periodWhere, periodArgs, err := db.infoRegEditPeriodWhere(ir, key, len(args)+1)
+	if err != nil {
+		return nil, err
 	}
+	where += periodWhere
+	args = append(args, periodArgs...)
 	table := metadata.InfoRegTableName(ir.Name)
 	condition, filterArgs, _, err := PredicateSQLQualified(db.dialect, InfoRegisterPredicateEntity(ir), readFilter, len(args)+1, table)
 	if err != nil {
@@ -257,7 +301,7 @@ func (db *DB) InfoRegReadForEdit(ctx context.Context, ir *metadata.InfoRegister,
 	}
 	// Keep revision out of the business row, using the same field and key
 	// normalizers as ordinary information-register reads.
-	rows, err := db.Query(ctx, "SELECT "+strings.Join(cols, ", ")+", recorder, "+InfoRegEditRevisionColumn+" FROM "+table+" WHERE "+where+" LIMIT 1", args...)
+	rows, err := db.Query(ctx, "SELECT "+strings.Join(cols, ", ")+", recorder, "+InfoRegEditRevisionColumn+" FROM "+table+" WHERE "+where+" LIMIT 2", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -291,6 +335,9 @@ func (db *DB) InfoRegReadForEdit(ctx context.Context, ir *metadata.InfoRegister,
 			return nil, fmt.Errorf("info register %s: invalid period", ir.Name)
 		}
 		record.Key.Period = &p
+		if db.IsSQLite() {
+			record.Key.PeriodText = fmt.Sprint(normalizeValue(values[0]))
+		}
 		record.Row["period"] = p
 		i++
 	}
@@ -310,8 +357,63 @@ func (db *DB) InfoRegReadForEdit(ctx context.Context, ir *metadata.InfoRegister,
 		record.Row[f.Name] = normalizeFieldValue(f, values[i])
 		i++
 	}
+	if rows.Next() {
+		return nil, fmt.Errorf("info register %s: ambiguous physical period; use PeriodText", ir.Name)
+	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return record, nil
+}
+
+// Keep timestamp parameters out of SQLite's second-resolution bind adapter.
+// No truncation is allowed here: a fractional key must never select its sibling.
+func (db *DB) infoRegEditPeriodWhere(ir *metadata.InfoRegister, key InfoRegEditKey, start int) (string, []any, error) {
+	if err := validateInfoRegExactPeriod(ir, key.Period); err != nil {
+		return "", nil, err
+	}
+	if key.PeriodText != "" {
+		p, ok := ParseRegPeriod(key.PeriodText)
+		if !ir.Periodic || !ok || !p.Equal(*key.Period) {
+			return "", nil, fmt.Errorf("info register %s: inconsistent physical period", ir.Name)
+		}
+		if db.IsSQLite() {
+			return " AND period = " + db.dialect.Placeholder(start), []any{key.PeriodText}, nil
+		}
+	}
+	if !ir.Periodic {
+		return "", nil, nil
+	}
+	if !db.IsSQLite() {
+		return " AND period = " + db.dialect.Placeholder(start), []any{*key.Period}, nil
+	}
+	p := key.Period.UTC()
+	return " AND period IN (" + db.dialect.Placeholder(start) + ", " + db.dialect.Placeholder(start+1) + ")", []any{p.Format(time.RFC3339Nano), p.Format("2006-01-02 15:04:05.999999999-07:00")}, nil
+}
+
+func (db *DB) resolveInfoRegEditLookupKey(ctx context.Context, ir *metadata.InfoRegister, key InfoRegEditKey) (map[string]any, error) {
+	if _, _, err := db.infoRegEditPeriodWhere(ir, key, 1); err != nil {
+		return nil, err
+	}
+	if !db.IsSQLite() || !infoRegHasNumberDimension(ir) {
+		return canonicalInfoRegKey(db.dialect, ir, key.Dimensions)
+	}
+	raw, exact, err := physicalInfoRegKey(db.dialect, ir, key.Dimensions)
+	if err != nil || !exact {
+		return raw, err
+	}
+	where, args := physicalDimWhere(db.dialect, ir, raw, 1)
+	periodWhere, periodArgs, err := db.infoRegEditPeriodWhere(ir, key, len(args)+1)
+	if err != nil {
+		return nil, err
+	}
+	args = append(args, periodArgs...)
+	var exists bool
+	if err := db.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM "+metadata.InfoRegTableName(ir.Name)+" WHERE "+where+periodWhere+")", args...).Scan(&exists); err != nil {
+		return nil, err
+	}
+	if exists {
+		return raw, nil
+	}
+	return canonicalInfoRegKey(db.dialect, ir, key.Dimensions)
 }
