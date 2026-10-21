@@ -834,6 +834,22 @@ func InfoRegTableName(regName string) string {
 	return "инфо_" + strings.ToLower(regName)
 }
 
+// TablePartRowNumberField — номер строки табличной части в запросе
+// («ТЧ.НомерСтроки», как в 1С); в таблице это колонка «строка».
+const TablePartRowNumberField = "НомерСтроки"
+
+// TablePartQueryEntity — табличная часть как источник запроса: номер строки и
+// реквизиты ТЧ под именем name. Ссылка такого источника — владелец строки.
+func TablePartQueryEntity(owner *Entity, tp *TablePart, name string) *Entity {
+	if owner == nil || tp == nil {
+		return nil
+	}
+	fields := make([]Field, 0, len(tp.Fields)+1)
+	fields = append(fields, Field{Name: TablePartRowNumberField, Type: FieldTypeNumber})
+	fields = append(fields, tp.Fields...)
+	return &Entity{Name: name, Kind: owner.Kind, Fields: fields}
+}
+
 func TablePartTableName(entityName, tpName string) string {
 	return strings.ToLower(entityName) + "_" + strings.ToLower(tpName)
 }
