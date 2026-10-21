@@ -814,6 +814,44 @@ func reportPresetBoolLit(d Dialect, v bool) string {
 	return "FALSE"
 }
 
+// listSortSettingsKey — ключ выбранной пользователем сортировки списка
+// («поле|asc» / «поле|desc») отдельно для пользователя и сущности.
+func listSortSettingsKey(entity, user string) string {
+	return fmt.Sprintf("listsort.%d:%s.%d:%s", len(entity), entity, len(user), user)
+}
+
+// GetListSortUserSettings возвращает сохранённую сортировку списка
+// пользователя для сущности: поле и направление. Отсутствие ключа/таблицы — не
+// ошибка, возвращаются пустые строки.
+func (db *DB) GetListSortUserSettings(ctx context.Context, entity, user string) (field, dir string, err error) {
+	d := db.dialect
+	var v string
+	if err := db.QueryRow(ctx,
+		`SELECT value FROM _settings WHERE key = `+d.Placeholder(1),
+		listSortSettingsKey(entity, user)).Scan(&v); err != nil {
+		return "", "", nil
+	}
+	field, dir, _ = strings.Cut(v, "|")
+	return field, dir, nil
+}
+
+// SaveListSortUserSettings сохраняет сортировку списка пользователя для
+// сущности одним upsert. Конфигурацию (YAML) не трогает.
+func (db *DB) SaveListSortUserSettings(ctx context.Context, entity, user, field, dir string) error {
+	if err := db.EnsureSettingsSchema(ctx); err != nil {
+		return err
+	}
+	d := db.dialect
+	q := fmt.Sprintf(
+		`INSERT INTO _settings (key, value) VALUES (%s, %s)
+		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+		d.Placeholder(1), d.Placeholder(2))
+	if _, err := db.Exec(ctx, q, listSortSettingsKey(entity, user), field+"|"+dir); err != nil {
+		return fmt.Errorf("settings: save list sort: %w", err)
+	}
+	return nil
+}
+
 // listViewSettingsKey — ключ настройки вида списка (Список/Плитка) отдельно
 // для пользователя и сущности (#1485).
 func listViewSettingsKey(entity, user string) string {

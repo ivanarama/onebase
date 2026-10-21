@@ -73,6 +73,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.resolveListSort(r, entity, &params)
 
 	view := r.URL.Query().Get("view")
 	// tree проходит мимо нормализации: иерархический вид открывается по
@@ -2879,6 +2880,46 @@ func parseLegacyTablePartRows(r *http.Request, entity *metadata.Entity) (map[str
 }
 
 // parseListParams reads filter, search, sort and pagination URL params.
+// resolveListSort запоминает сортировку, которую пользователь выбрал щелчком по
+// заголовку колонки, и возвращает её при следующем открытии того же списка.
+//
+// Без этого порядок жил только в адресе страницы: ушёл в другой список,
+// вернулся — и строки снова в порядке по умолчанию, хотя человек его менял.
+// Хранится как вид списка (#1485) — по пользователю и сущности. Явный ?sort
+// перекрывает и обновляет сохранённое; сохраняется и восстанавливается только
+// поле, которое есть у сущности: исчезнувшее из метаданных молча забывается.
+func (s *Server) resolveListSort(r *http.Request, entity *metadata.Entity, params *storage.ListParams) {
+	user := auth.UserFromContext(r.Context())
+	if user == nil || user.Login == "" || s.store == nil {
+		return
+	}
+	known := func(name string) bool {
+		for _, f := range entity.Fields {
+			if f.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+	if params.Sort != "" {
+		if !known(params.Sort) {
+			return
+		}
+		dir := "asc"
+		if strings.EqualFold(params.Dir, "desc") {
+			dir = "desc"
+		}
+		_ = s.store.SaveListSortUserSettings(r.Context(), entity.Name, user.Login, params.Sort, dir)
+		return
+	}
+	field, dir, err := s.store.GetListSortUserSettings(r.Context(), entity.Name, user.Login)
+	if err != nil || field == "" || !known(field) {
+		return
+	}
+	params.Sort = field
+	params.Dir = dir
+}
+
 // listModeCookie — кука с per-сущностными предпочтениями режима списка
 // (pages|feed). Значение — URL-escaped JSON map: "kind/name" → режим.
 const listModeCookie = "ob_listmodes"
