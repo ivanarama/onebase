@@ -43,6 +43,10 @@ type Common struct {
 	// email). Возвращает ошибку, если сеть заблокирована предохранителем
 	// (план 62). nil → сеть не ограничивается (для тестов/совместимости).
 	NetGuard func() error
+	// HTTPFileMaxBytes — предел тела ответа, которое HTTPСоединение пишет в
+	// ИмяВыходногоФайла. 0 → interpreter.DefaultDSLHTTPFileBytes. UI передаёт
+	// предел загрузки вложений: скачанный файл обычно тут же прикрепляется.
+	HTTPFileMaxBytes int64
 	// ExecGuard вызывается перед запуском команды ОС (ВыполнитьКоманду, план 67).
 	// nil → команды ЗАПРЕЩЕНЫ (secure by default, в отличие от NetGuard): exec —
 	// исполнение кода на сервере, разрешается только явной настройкой базы.
@@ -132,7 +136,7 @@ func (c Common) Build() map[string]any {
 		"ПредопределённыеЗначения": predefined,
 		"PredefinedValues":         predefined,
 	}
-	for k, v := range interpreter.NewHTTPFunctions(c.NetGuard, ctxSource) {
+	for k, v := range interpreter.NewHTTPFunctionsWith(c.NetGuard, interpreter.HTTPOptions{Ctx: ctxSource, MaxFileBytes: c.HTTPFileMaxBytes}) {
 		vars[k] = v
 	}
 	for k, v := range interpreter.NewEmailFunctions(c.Mailer, c.NetGuard, c.EmailFileResolver) {
