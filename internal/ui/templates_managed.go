@@ -32,7 +32,7 @@ const tplManagedForm = `
 {{/* Кнопка, скрытая hidden_when при отрисовке, рисуется с display:none, а не пропускается: иначе после события формы, снявшего условие, показать её нечем — «Утвердить» после «ОК» появлялась только при повторном открытии. Остальные виды пока пропускаются (поля — #1914). Защитой hidden_when не служит: событие кнопки сервер принимает и без неё в разметке. */}}
 {{if and (elHidden $ctx $el) (ne (str $el.Kind) "Кнопка")}}
 {{else if eq (str $el.Kind) "ГруппаФормы"}}
-  <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}{{if $el.ScrollX}} managed-group-scrollx{{end}}{{if $el.UsesEqualColumns}} ob-equal-columns{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elBackground $el}}{{elLayout $el}}">
+  <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}{{if $el.ScrollX}} managed-group-scrollx{{end}}{{if $el.UsesEqualColumns}} ob-equal-columns{{end}}"{{if $el.FitWindow}} data-ob-fit-group="1"{{end}} data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elBackground $el}}{{elLayout $el}}">
     {{if $el.TitleMap}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
     <div class="managed-group-body">
       {{range $el.Children}}{{template "managed-element" (dict "El" . "Ctx" $ctx)}}{{end}}
@@ -48,7 +48,10 @@ const tplManagedForm = `
   {{/* ПриСменеСтраницы: клиент шлёт событие набору со щелчком по закладке
        и именем открытой страницы (data-tab-page) — только если обработчик
        объявлен, иначе переключение остаётся чисто клиентским. */}}
-  <div class="managed-tabs" data-tabs="{{$el.Name}}"{{if hasHandler $el "ПриСменеСтраницы"}} data-ob-fire-pagechange="{{$el.Name}}"{{end}} style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elLayout $el}}">
+  {{/* equal_height — область страниц высотой с самую высокую (obEqualizeTabs);
+       fit_window — страницы занимают остаток окна, рамка формы без прокрутки (obFitTabsToWindow);
+       height — постоянная высота набора, длинная страница прокручивается внутри. */}}
+  <div class="managed-tabs{{if elFill $el}} managed-tabs-fill{{end}}" data-tabs="{{$el.Name}}"{{if $el.EqualHeight}} data-ob-equal-height="1"{{end}}{{if $el.FitWindow}} data-ob-fit-window="1"{{end}}{{if hasHandler $el "ПриСменеСтраницы"}} data-ob-fire-pagechange="{{$el.Name}}"{{end}} style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elLayout $el}}">
     <div class="managed-tab-headers" style="display:flex;gap:2px;border-bottom:2px solid #e2e8f0;margin-bottom:12px">
       {{range $i, $page := $pages}}
         <button type="button" class="managed-tab-btn{{if eq $i 0}} active{{end}}" data-tab-idx="{{$i}}" data-tab-page="{{$page.Name}}" data-ob-readonly-navigation="1">
@@ -945,6 +948,9 @@ window.MonacoEnvironment = window.MonacoEnvironment || { getWorkerUrl: function 
      видом, а .active переопределяет цвет/border (выше по специфичности
      не получается без !important — поэтому используем именно класс). */}}
 <style>
+.managed-tabs-fill{display:flex;flex-direction:column}
+.managed-tabs-fill>.managed-tab-headers{flex:0 0 auto}
+.managed-tabs-fill>.managed-tab-content{flex:1 1 auto;min-height:0;overflow-y:auto}
 .managed-tab-btn{padding:8px 14px;border:none;background:none;cursor:pointer;font-size:13px;color:#64748b;border-bottom:2px solid transparent;margin-bottom:-2px;font-family:inherit}
 .managed-tab-btn:hover{color:#1a4a80;background:#f5f8ff}
 .managed-tab-btn.active{color:#1a4a80;border-bottom-color:#1a4a80;font-weight:600}

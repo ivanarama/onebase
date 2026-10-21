@@ -1650,8 +1650,10 @@ details[open] summary::before{content:"▼ "}
 .breadcrumb{display:flex;align-items:center;gap:6px;font-size:13px;color:#64748b;margin-bottom:12px;max-width:1400px;flex-wrap:wrap}
 .breadcrumb a{color:#3b82f6;text-decoration:none}.breadcrumb a:hover{text-decoration:underline}
 .breadcrumb span{color:#94a3b8;padding:0 2px}
-/* Чтобы контент не накрывало панелью сообщений */
-body{padding-bottom:32px}
+/* Чтобы контент не накрывало панелью сообщений — только пока она видна: скрытая
+   панель (class hidden) места не занимает, и резерв впустую отнимал 32px у каждой
+   формы (а в оболочке вкладок — ещё 32px снаружи). */
+body:has(>#ob-msg-bar:not(.hidden)){padding-bottom:32px}
 /* Стили плавающих виджетов (ИИ-помощник, панель сообщений) инжектирует сам
    /static/ui.js вместе с их разметкой — они работают и на страницах с
    собственным <head> (админские). Здесь их не дублировать. */

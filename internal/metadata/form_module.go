@@ -332,6 +332,16 @@ type FormElement struct {
 	// (FormAttributeColumn). Дочерний элемент kind: ПолеВвода тоже не подошёл —
 	// такая колонка выглядела бы редактируемой, а редактировать нечего.
 	VirtualColumns []FormVirtualColumn `yaml:"virtual_columns,omitempty"`
+
+	// EqualHeight — у СтраницыФормы: область страниц высотой с самую высокую
+	// страницу, переключение закладок не сдвигает то, что ниже набора.
+	EqualHeight bool `yaml:"equal_height,omitempty"`
+	// FitWindow — у СтраницыФормы: набор страниц занимает остаток высоты окна,
+	// у ГруппаФормы — высоту fit_window-набора страниц той же строки (или остаток
+	// окна), с прокруткой содержимого внутри. У СтраницыФормы:
+	// рамка формы помещается без прокрутки, длинная страница прокручивается
+	// внутри.
+	FitWindow bool `yaml:"fit_window,omitempty"`
 }
 
 // FormChoiceOperator — закрытый набор операторов choice_filter v1.
