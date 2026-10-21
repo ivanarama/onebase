@@ -23,6 +23,9 @@ type IRForm struct {
 	// В 1С такого свойства нет, поэтому из XML оно не читается и в XML не
 	// пишется: это настройка платформы OneBase, живущая в YAML.
 	EnterSubmitsForm bool
+	// Density — плотность раскладки формы ("" | "compact"); как и
+	// EnterSubmitsForm, настройка OneBase: в XML 1С не читается и не пишется.
+	Density string
 	AutoCommandBar   *IRCommandBar
 	Attributes       []*IRAttribute
 	Commands         []*IRCommand

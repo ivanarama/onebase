@@ -91,6 +91,17 @@ func CheckFormKeyPlacement(proj *project.Project) []Issue {
 
 	var warns []Issue
 	forEachProjectForm(proj, func(owner *metadata.Entity, form *metadata.FormModule) {
+		if d := form.Density; d != "" && d != metadata.FormDensityCompact {
+			object := ""
+			if owner != nil {
+				object = owner.Name
+			}
+			warns = append(warns, Issue{
+				File: formFileLabel(owner, form), Object: object, Kind: "Управляемая форма", Code: "form.density",
+				Message:      fmt.Sprintf("density: %q не поддерживается — раскладка формы останется обычной", d),
+				SuggestedFix: "Задайте density: compact или уберите ключ.",
+			})
+		}
 		walkFormElements(form.Elements, func(el *metadata.FormElement) {
 			if el == nil {
 				return
