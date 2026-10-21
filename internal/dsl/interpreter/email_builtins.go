@@ -115,6 +115,11 @@ type dslEmail struct {
 	text     string
 	html     string
 	files    []EmailAttachment
+	// profile/from/fromName — Профиль SMTP и отправитель письма из DSL; nil
+	// профиль — штатная секция email из app.yaml.
+	profile  *EmailProfile
+	from     string
+	fromName string
 }
 
 func (e *dslEmail) Get(field string) any {
@@ -129,6 +134,10 @@ func (e *dslEmail) Get(field string) any {
 		return e.text
 	case "htmlтело", "htmlbody":
 		return e.html
+	case "отправитель", "from":
+		return e.from
+	case "имяотправителя", "fromname":
+		return e.fromName
 	}
 	return nil
 }
@@ -151,6 +160,18 @@ func (e *dslEmail) Set(field string, val any) {
 	case "htmlтело", "htmlbody":
 		emailLengthOrRaise("ПисьмоEmail.HTMLТело", s, MaxEmailBodyBytes)
 		e.html = s
+	case "отправитель", "from":
+		emailLengthOrRaise("ПисьмоEmail.Отправитель", s, MaxEmailRecipientBytes)
+		e.from = s
+	case "имяотправителя", "fromname":
+		emailLengthOrRaise("ПисьмоEmail.ИмяОтправителя", s, MaxEmailRecipientBytes)
+		e.fromName = s
+	case "профиль", "profile":
+		p, err := parseEmailProfile(val)
+		if err != nil {
+			panic(userError{Msg: "ПисьмоEmail.Профиль: " + err.Error()})
+		}
+		e.profile = p
 	}
 }
 
@@ -216,25 +237,42 @@ func (e *dslEmail) CallMethod(name string, args []any) any {
 		}
 		e.files = append(e.files, EmailAttachment{Name: fname, MimeType: mt, Data: data})
 		return nil
+	case "добавитьвложение", "addattachment":
+		// ПисьмоEmail.ДобавитьВложение(ИмяФайла, Данные[, ТипСодержимого[, Base64]]) —
+		// вложение из данных, а не с диска: двоичного типа в DSL нет, поэтому
+		// Данные — строка, Base64 = Истина для base64 (ВыгрузитьВExcel, PDF).
+		if len(args) < 2 {
+			panic(userError{Msg: "ПисьмоEmail.ДобавитьВложение(ИмяФайла, Данные[, ТипСодержимого[, Base64]])"})
+		}
+		mt := ""
+		if len(args) > 2 && args[2] != nil {
+			mt = strings.TrimSpace(fmt.Sprint(args[2]))
+		}
+		isB64 := len(args) > 3 && truthy(args[3])
+		att, err := newEmailAttachment(strings.TrimSpace(fmt.Sprint(args[0])), fmt.Sprint(args[1]), mt, isB64)
+		if err != nil {
+			panic(userError{Msg: "ПисьмоEmail.ДобавитьВложение: " + err.Error()})
+		}
+		if len(e.files) >= MaxEmailAttachmentCount {
+			panic(userError{Msg: fmt.Sprintf("ПисьмоEmail.ДобавитьВложение: не более %d вложений", MaxEmailAttachmentCount)})
+		}
+		e.files = append(e.files, att)
+		return nil
 	case "отправить", "send":
 		checkNet(e.guard)
 		if e.subject == "" {
 			panic(userError{Msg: "ПисьмоEmail.Отправить: поле Тема не задана"})
 		}
-		if err := ValidateEmailMessage(e.to, e.subject, e.text, e.html, e.files); err != nil {
-			panic(userError{Msg: "ПисьмоEmail.Отправить: " + err.Error()})
+		to, err := splitEmailRecipients(e.to)
+		if err != nil {
+			panic(userError{Msg: "ПисьмоEmail.Отправить: Кому: " + err.Error()})
 		}
-		if len(e.files) > 0 {
-			as, ok := e.sender.(EmailAttachmentSender)
-			if !ok {
-				panic(userError{Msg: "ПисьмоEmail.Отправить: отправитель не поддерживает вложения"})
-			}
-			if err := as.SendWithAttachments(e.to, e.subject, e.text, e.html, e.files); err != nil {
-				panic(userError{Msg: "ОтправитьПисьмо: " + err.Error()})
-			}
-			return nil
+		cc, err := splitEmailRecipients(e.cc)
+		if err != nil {
+			panic(userError{Msg: "ПисьмоEmail.Отправить: Копия: " + err.Error()})
 		}
-		if err := e.sender.Send(e.to, e.subject, e.text, e.html); err != nil {
+		msg := EmailMessage{To: to, Cc: cc, Subject: e.subject, Text: e.text, HTML: e.html, Files: e.files, From: e.from, FromName: e.fromName}
+		if err := sendEmailMessage(e.sender, e.profile, msg); err != nil {
 			panic(userError{Msg: "ОтправитьПисьмо: " + err.Error()})
 		}
 		return nil
@@ -251,38 +289,39 @@ func NewEmailFunctions(sender EmailSender, guard NetGuard, resolvers ...EmailFil
 	if len(resolvers) > 0 {
 		resolver = resolvers[0]
 	}
-	send := func(to, subject, textBody string) {
-		checkNet(guard)
-		if sender == nil || !sender.Configured() {
-			panic(userError{Msg: "email не настроен — добавьте секцию email: в config/app.yaml"})
-		}
-		if err := ValidateEmailMessage(to, subject, textBody, "", nil); err != nil {
-			panic(userError{Msg: "ОтправитьПисьмо: " + err.Error()})
-		}
-		if err := sender.Send(to, subject, textBody, ""); err != nil {
-			panic(userError{Msg: "ОтправитьПисьмо: " + err.Error()})
-		}
-	}
-
+	// ОтправитьПисьмо(Кому, Тема, Текст[, Параметры]) — Параметры: Структура
+	// {HTML, Копия, Вложения, Профиль, Отправитель, ИмяОтправителя}. Кому и Копия —
+	// адреса через запятую/точку с запятой или Массив.
 	shorthand := BuiltinFunc(func(args []any, file string, line int) (any, error) {
-		to := strArg(args, 0)
-		subject := strArg(args, 1)
-		text := strArg(args, 2)
-		send(to, subject, text)
+		checkNet(guard)
+		to, err := splitEmailRecipients(argAt(args, 0))
+		if err != nil {
+			panic(userError{Msg: "ОтправитьПисьмо: Кому: " + err.Error(), File: file, Line: line})
+		}
+		msg := EmailMessage{To: to, Subject: strArg(args, 1), Text: strArg(args, 2)}
+		params, err := parseEmailParams(argAt(args, 3), msg)
+		if err != nil {
+			panic(userError{Msg: "ОтправитьПисьмо: " + err.Error(), File: file, Line: line})
+		}
+		if err := sendEmailMessage(sender, params.profile, params.msg); err != nil {
+			panic(userError{Msg: "ОтправитьПисьмо: " + err.Error(), File: file, Line: line})
+		}
 		return nil, nil
 	})
 
+	// Объект письма создаётся и без секции email: Профиль задаётся свойством,
+	// а отсутствие и того и другого — ошибка Отправить.
 	emailFactory := func(args []any) any {
 		checkNet(guard)
-		if sender == nil || !sender.Configured() {
-			panic(userError{Msg: "email не настроен — добавьте секцию email: в config/app.yaml"})
-		}
 		return &dslEmail{sender: sender, guard: guard, resolver: resolver}
 	}
 
+	receive := newReceiveMailBuiltin(guard)
 	return map[string]any{
 		"ОтправитьПисьмо":        shorthand,
 		"SendEmail":              shorthand,
+		"ПолучитьПисьма":         receive,
+		"ReceiveEmails":          receive,
 		"__factory_ПисьмоEmail":  emailFactory,
 		"__factory_EmailMessage": emailFactory,
 	}
