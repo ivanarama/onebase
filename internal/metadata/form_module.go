@@ -332,6 +332,11 @@ type FormElement struct {
 	// (FormAttributeColumn). Дочерний элемент kind: ПолеВвода тоже не подошёл —
 	// такая колонка выглядела бы редактируемой, а редактировать нечего.
 	VirtualColumns []FormVirtualColumn `yaml:"virtual_columns,omitempty"`
+
+	// DeadlineWarn — поле-срок: значение («ЧЧ:ММ» сегодня или дата со временем)
+	// подсвечивается по часам браузера — меньше DeadlineWarn минут до срока
+	// жёлтым, срок прошёл — красным.
+	DeadlineWarn int `yaml:"deadline_warn,omitempty"`
 }
 
 // FormChoiceOperator — закрытый набор операторов choice_filter v1.

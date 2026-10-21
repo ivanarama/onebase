@@ -4651,3 +4651,50 @@ obManagedReady(function () {
     }
   });
 });
+
+// ─── deadline_warn: поле-срок ───────────────────────────────────────────────
+//
+// Значение поля — срок: «ЧЧ:ММ» (сегодня) или дата со временем. До срока меньше
+// N минут (data-ob-deadline) — класс ob-deadline-soon, срок прошёл —
+// ob-deadline-over. Считается по часам браузера и пересчитывается каждые 15
+// секунд: форма открыта долго, а «время вышло» должно стать видно без
+// перезагрузки. Значение, которое не читается как срок, подсветки не даёт.
+function obDeadlineParse(raw, now) {
+  var v = String(raw || "").trim();
+  if (!v) return null;
+  var m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(v);
+  if (m) {
+    var d = new Date(now.getTime());
+    d.setHours(+m[1], +m[2], m[3] ? +m[3] : 0, 0);
+    return d;
+  }
+  m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(v);
+  if (m) return new Date(+m[1], +m[2] - 1, +m[3], +m[4], +m[5], m[6] ? +m[6] : 0);
+  m = /^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(v);
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1], +m[4], +m[5], m[6] ? +m[6] : 0);
+  return null;
+}
+function obDeadlineState(raw, warnMinutes, now) {
+  var due = obDeadlineParse(raw, now);
+  if (!due) return "";
+  var left = due.getTime() - now.getTime();
+  if (left <= 0) return "over";
+  if (left <= warnMinutes * 60000) return "soon";
+  return "";
+}
+function obDeadlineTick() {
+  var now = new Date();
+  document.querySelectorAll("input[data-ob-deadline]").forEach(function (inp) {
+    var state = obDeadlineState(inp.value, parseFloat(inp.getAttribute("data-ob-deadline")) || 0, now);
+    inp.classList.toggle("ob-deadline-soon", state === "soon");
+    inp.classList.toggle("ob-deadline-over", state === "over");
+  });
+}
+window.obDeadlineTick = obDeadlineTick;
+obManagedReady(function () {
+  obDeadlineTick();
+  setInterval(obDeadlineTick, 15000);
+  document.addEventListener("input", function (e) {
+    if (e.target && e.target.hasAttribute && e.target.hasAttribute("data-ob-deadline")) obDeadlineTick();
+  });
+});
