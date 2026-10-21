@@ -255,6 +255,8 @@ const tplManagedForm = `
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </div>
 {{else if eq (str $el.Kind) "Кнопка"}}
+  {{/* placement: header — кнопка рисуется в строке команд формы (form-header-commands), а не в теле. */}}
+  {{if and (eq $el.Placement "header") (not $.HeaderPass)}}{{else}}
   {{$clickAction := or (hasHandler $el "Нажатие") (and $ctx.IsProcessor (processorExecuteFallbackButton $ctx.Form $el))}}
   {{$hotKey := ""}}{{if and (not $ro) $clickAction}}{{$hotKey = normalizedFormHotkey $el.HotKey}}{{end}}
   {{$buttonLayout := elLayout $el}}
@@ -264,6 +266,7 @@ const tplManagedForm = `
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </button>
   {{if $buttonLayout}}</div>{{end}}
+  {{end}}
 {{else if eq (str $el.Kind) "ПолеКартинки"}}
   {{/* width/height здесь ограничивают САМУ картинку — так было до общего
        контракта раскладки (#1185), и менять смысл ключей значило бы перестроить
@@ -557,11 +560,18 @@ const tplManagedForm = `
 {{end}}
 {{end}}
 
+{{/* form-header-commands — кнопки формы с placement: header и «? Справка» в строке
+     команд документа: сразу после «История» (у новой записи и обработки — в конце
+     строки). Освобождает строку тела формы, где такие кнопки стояли отдельно. */}}
+{{define "form-header-commands"}}{{$page := .}}<span class="ob-header-commands">{{range formHeaderButtons .Form}}{{template "managed-element" (dict "El" . "Ctx" $page "HeaderPass" true)}}{{end}}</span>{{template "context-help" .}}{{end}}
 {{define "page-managed-form"}}
 {{template "head" .}}{{if not .IsPopup}}{{template "nav" .}}{{end}}
 {{if .TabTitle}}<meta name="ob-tab-title" content="{{.TabTitle}}">{{end}}
 <style>
 .ob-grid[data-ob-choice-error="1"] { outline: 2px solid #dc2626; }
+.ob-header-commands{display:contents}
+.ob-header-commands .managed-btn,.ob-header-commands .managed-btn-layout{margin:0}
+.ob-header-commands .managed-btn{padding:5px 12px;font-size:13px}
 .ob-managed-control{border:0;padding:0;min-width:0}
 .managed-group-horizontal>.managed-group-body{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
 /* scroll_x: ряд действий не рвётся на вторую строку, а прокручивается. */
@@ -671,7 +681,9 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
     {{if .IsProcessor}}{{.Processor.DisplayName $.Lang}}{{else}}{{if .IsNew}}{{t $.Lang "Создать"}} — {{.Entity.DisplayName $.Lang}}{{else}}{{if .RecordTitle}}{{.RecordTitle}}{{else}}{{t $.Lang "Редактировать"}} — {{.Entity.DisplayName $.Lang}}{{end}}{{end}}{{end}}
     <span style="font-size:11px;color:#10b981;background:#d1fae5;padding:2px 8px;border-radius:10px;vertical-align:middle;font-weight:500" title="Управляемая форма из forms/{{if .IsProcessor}}{{lower .Processor.Name}}{{else}}{{lower .Entity.Name}}{{end}}/">◇ managed</span>
   </h2>
-  {{template "context-help" .}}
+  {{/* «? Справка» у формы в строке команд рядом с «История»; у всплывающей
+       формы этой строки нет — справка остаётся в заголовке. */}}
+  {{if .IsPopup}}{{template "context-help" .}}{{end}}
   {{if .IsPopup}}
   <a href="#" data-ob-ref-cancel title="Закрыть" style="font-size:22px;line-height:1;color:#94a3b8;text-decoration:none;padding:2px 8px;border-radius:5px;background:#f1f5f9;font-weight:300">×</a>
   {{else}}
@@ -720,6 +732,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
          создания, а F9 здесь занята копированием строки ТЧ. */}}
     {{if .CanCreate}}<a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?copy={{.ID}}" class="btn btn-sm btn-secondary">{{t $.Lang "Скопировать"}}</a>{{end}}
     <a href="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/history" class="btn btn-sm btn-secondary">{{t $.Lang "История"}}</a>
+    {{template "form-header-commands" .}}
     {{if or .AllPrintForms .HasPrintProc}}
     <div style="position:relative">
       <button type="button" class="btn btn-sm btn-secondary" data-ob-toggle-next>{{t $.Lang "Печать"}} ▾</button>
@@ -760,6 +773,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
     {{end}}
   {{end}}
   {{end}}{{/* end if not .IsProcessor */}}
+  {{if or .IsNew .IsProcessor}}{{template "form-header-commands" .}}{{end}}
 </div>
 {{end}}{{/* end if not .IsPopup */}}
 {{if and (not .IsNew) .Entity.Posting}}

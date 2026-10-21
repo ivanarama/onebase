@@ -187,6 +187,9 @@ const (
 )
 
 // FormElement represents a single form element (field, button, etc.)
+// FormPlacementHeader — кнопка в строке команд документа (FormElement.Placement).
+const FormPlacementHeader = "header"
+
 type FormElement struct {
 	ID   string          `yaml:"id,omitempty"`
 	Name string          `yaml:"name,omitempty"`
@@ -332,6 +335,10 @@ type FormElement struct {
 	// (FormAttributeColumn). Дочерний элемент kind: ПолеВвода тоже не подошёл —
 	// такая колонка выглядела бы редактируемой, а редактировать нечего.
 	VirtualColumns []FormVirtualColumn `yaml:"virtual_columns,omitempty"`
+
+	// Placement — где рисуется кнопка: "" — в теле формы, "header" — в строке
+	// команд документа сразу после «История» (FormPlacementHeader).
+	Placement string `yaml:"placement,omitempty"`
 }
 
 // FormChoiceOperator — закрытый набор операторов choice_filter v1.
