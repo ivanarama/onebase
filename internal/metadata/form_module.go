@@ -332,6 +332,10 @@ type FormElement struct {
 	// (FormAttributeColumn). Дочерний элемент kind: ПолеВвода тоже не подошёл —
 	// такая колонка выглядела бы редактируемой, а редактировать нечего.
 	VirtualColumns []FormVirtualColumn `yaml:"virtual_columns,omitempty"`
+
+	// HintInline — hint печатается текстом под полем, как раньше; по умолчанию
+	// подсказка всплывающая: значок ⓘ у подписи и title.
+	HintInline bool `yaml:"hint_inline,omitempty"`
 }
 
 // FormChoiceOperator — закрытый набор операторов choice_filter v1.
