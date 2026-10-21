@@ -467,7 +467,8 @@ func (d *SpreadsheetDocument) HTMLString() string {
 // Формат содержимого зависит от типа:
 //   - "pdf"        → base64-строка PDF-байтов (как ВыгрузитьВExcel);
 //   - "html"/""    → сырой HTML-текст;
-//   - "txt"        → сырой табличный текст (колонки \t, строки \n).
+//   - "txt"        → сырой табличный текст (колонки \t, строки \n);
+//   - "xlsx"/"xls"/"xls97" → base64-строка книги Excel с оформлением макета.
 func (d *SpreadsheetDocument) write(fileName string, args []any) any {
 	d.Doc.FileName = fileName
 	fileType := "html"
@@ -482,6 +483,8 @@ func (d *SpreadsheetDocument) write(fileName string, args []any) any {
 		return d.writePDF(fileName)
 	case "txt":
 		return d.writeTXT(fileName)
+	case "xlsx", "xls", "xls97":
+		return d.writeXLSX(fileName)
 	}
 	return nil
 }
@@ -502,6 +505,20 @@ func (d *SpreadsheetDocument) writePDF(fileName string) any {
 	b, err := d.Doc.PDF(sheet.PDFOptions{Title: fileName})
 	if err != nil {
 		msg := fmt.Sprintf("Ошибка формирования PDF %q: %v", fileName, err)
+		fmt.Printf("// %s\n", msg)
+		return msg
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+// writeXLSX выгружает документ в xlsx с оформлением макета (шрифт, рамки,
+// заливка, выравнивание, объединения, ширины) и возвращает base64-строку, как
+// writePDF: её берёт вложение письма с Base64 = Истина. «xls»/«xls97» —
+// синонимы (ТипФайлаТабличногоДокумента.XLS97 в 1С): пишется современный xlsx.
+func (d *SpreadsheetDocument) writeXLSX(fileName string) any {
+	b, err := d.Doc.XLSX()
+	if err != nil {
+		msg := fmt.Sprintf("Ошибка формирования XLSX %q: %v", fileName, err)
 		fmt.Printf("// %s\n", msg)
 		return msg
 	}
