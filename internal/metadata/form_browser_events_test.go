@@ -62,7 +62,7 @@ func TestBrowserFormEvents_ПроверкаПарыСходитсяСПереч�
 // Fail-closed: вид, который ничего не отправляет, не отправляет и незнакомое.
 func TestBrowserFormEvents_ПассивныеВидыМолчат(t *testing.T) {
 	for _, kind := range []FormElementType{
-		FormElementLabel, FormElementGroupBox, FormElementPage,
+		FormElementLabel, FormElementPage,
 		FormElementPicture, FormElementType("ВыдуманныйВид"), "",
 	} {
 		if events := BrowserFormEventsFor(kind); len(events) != 0 {
@@ -163,5 +163,17 @@ func TestBrowserFormEvents_ОтдаютсяКопии(t *testing.T) {
 	commands[0] = "ИспорченноеИмя"
 	if BrowserFormCommandEvents()[0] == "ИспорченноеИмя" {
 		t.Error("BrowserFormCommandEvents отдал ссылку на таблицу, а не копию")
+	}
+}
+
+// Группа сама ничего не вводит: она шлёт только отложенную загрузку своих
+// данных (ПослеОткрытия) и ничего больше.
+func TestBrowserFormEvents_ГруппаШлётТолькоПослеОткрытия(t *testing.T) {
+	events := BrowserFormEventsFor(FormElementGroupBox)
+	if len(events) != 1 || events[0] != FormEventAfterOpen {
+		t.Fatalf("группа отправляет %v, ожидалось только ПослеОткрытия", events)
+	}
+	if BrowserFormEventAllowed(FormElementGroupBox, FormEventOnChange) {
+		t.Fatal("группа разрешила ПриИзменении")
 	}
 }

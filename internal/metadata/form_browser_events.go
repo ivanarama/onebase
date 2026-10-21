@@ -43,8 +43,14 @@ var browserFormEventRules = []browserFormEventRule{
 		events: []FormEventType{
 			FormEventOnChange, FormEventOnRowAdded, FormEventOnRowDeleted,
 			FormEventOnChoice, FormEventOnRowActivated, FormEventOnRowChanged,
-			FormEventAfterRowAdd, FormEventOnAnswer,
+			FormEventAfterRowAdd, FormEventOnAnswer, FormEventAfterOpen,
 		},
+	},
+	{
+		// Группа сама ничего не вводит; она шлёт только отложенную загрузку
+		// своих данных после открытия формы (история клиента и т.п.).
+		kinds:  []FormElementType{FormElementGroupBox},
+		events: []FormEventType{FormEventAfterOpen},
 	},
 	{
 		// Набор страниц шлёт смену открытой страницы; обработчик вправе

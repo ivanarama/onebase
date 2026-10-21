@@ -10,6 +10,11 @@ import (
 // FormEventType represents types of form events (1C-style)
 type FormEventType string
 
+// FormEventAfterOpen — отложенная загрузка данных группы или таблицы: клиент
+// шлёт её после ответа ПриОткрытии мимо очереди событий, с индикатором на
+// элементе; ответ несёт только изменённое обработчиком.
+const FormEventAfterOpen FormEventType = "ПослеОткрытия"
+
 const (
 	FormEventOnOpen         FormEventType = "ПриОткрытии"        // OnOpen (client-side, after render)
 	FormEventOnReadAtServer FormEventType = "ПриЧтенииНаСервере" // OnReadAtServer (server-side, before render → может запретить чтение)
@@ -69,7 +74,7 @@ const (
 )
 
 var knownFormEventTypes = map[FormEventType]bool{
-	FormEventOnOpen: true, FormEventOnReadAtServer: true,
+	FormEventOnOpen: true, FormEventAfterOpen: true, FormEventOnReadAtServer: true,
 	FormEventBeforeWrite: true, FormEventOnWrite: true, FormEventAfterWrite: true,
 	FormEventBeforeClose: true, FormEventOnClose: true, FormEventOnActivate: true,
 	FormEventItemChoice: true, FormEventStartChoice: true, FormEventOnChange: true,

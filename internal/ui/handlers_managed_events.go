@@ -47,6 +47,7 @@ import (
 type formEventResponse struct {
 	OK             bool                        `json:"ok"`
 	Values         map[string]any              `json:"values,omitempty"`
+	Deferred       bool                        `json:"deferred,omitempty"`
 	TableParts     map[string][]map[string]any `json:"tableparts,omitempty"`
 	FormTables     map[string][]map[string]any `json:"formTables,omitempty"`
 	ConditionalCSS string                      `json:"conditionalCss"`
@@ -1477,6 +1478,10 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	resp.SavedID = savedFormID(thisObj)
 	resp.Version = versionWrittenByHandler(thisObj)
 	resp.Dirty = eventDirty
+	if deferredFormEvent(r) {
+		filterDeferredResponse(r, &resp)
+		resp.Dirty = nil
+	}
 	compactFormCloseDelta(&resp, closeInv)
 	respondJSON(enc, resp)
 }

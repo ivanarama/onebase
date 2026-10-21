@@ -93,7 +93,9 @@ func resolveBrowserFormEvent(form *metadata.FormModule, elementName, eventName s
 		el := visit.element
 		target.element = el
 		target.parentTablePart = visit.parentTablePart
-		if visit.effectiveReadOnly {
+		// Загрузка данных после открытия не правит форму: нередактируемой группе
+		// (история клиента) она разрешена.
+		if visit.effectiveReadOnly && event != metadata.FormEventAfterOpen {
 			return "", target, false, fmt.Errorf("элемент формы %q доступен только для чтения", el.Name)
 		}
 		if !browserEventAllowedForElement(el.Kind, event) {
