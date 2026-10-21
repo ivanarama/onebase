@@ -1,0 +1,7 @@
+name: Заявка
+fields:
+  - {name: Номер, type: string}
+  - {name: ДатаВызова, type: date}
+  - {name: Клиент, type: 'reference:Клиент'}
+  - {name: Состояние, type: string}
+  - {name: Оператор, type: string}

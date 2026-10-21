@@ -1,5 +1,7 @@
 package onec_forms
 
+import "github.com/ivantit66/onebase/internal/metadata"
+
 // IR — нейтральное промежуточное представление управляемой формы.
 // К нему сводятся оба формата: 1С Form.xml (через reader_xml.go) и
 // OneBase .form.yaml (через reader_yaml.go). Обратно — writer_xml.go и
@@ -40,6 +42,7 @@ type IRForm struct {
 // Kind хранит каноническое имя из 1С (InputField, Table, UsualGroup, Page, …)
 // либо OneBase-имя (ПолеВвода, Таблица, …) — нормализация в mapping_in/out.
 type IRElement struct {
+	EntityList *metadata.FormEntityListSpec
 	ID         string  // внутренний id (мб совпадать с OriginalID)
 	OriginalID string  // id из Form.xml
 	Name       string  // имя элемента (как в XML attribute name=)

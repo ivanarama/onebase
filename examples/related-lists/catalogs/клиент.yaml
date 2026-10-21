@@ -1,0 +1,4 @@
+name: Клиент
+fields:
+  - {name: Наименование, type: string}
+  - {name: Телефон, type: string, pii: true}

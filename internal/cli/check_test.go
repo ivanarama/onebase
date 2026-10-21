@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -257,5 +258,29 @@ func resetCheckFlags(t *testing.T) {
 				t.Fatal(err)
 			}
 		}
+	}
+}
+
+func TestCheckRelatedEntityListCLI(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.CopyFS(dir, os.DirFS("../../examples/related-lists")); err != nil {
+		t.Fatal(err)
+	}
+	out, err := runCheckCmd(t, runCheck, dir, nil)
+	if err != nil || !strings.Contains(out, "OK:") {
+		t.Fatalf("valid related list: %v %s", err, out)
+	}
+	path := filepath.Join(dir, "forms", "обращение", "object.form.yaml")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b = []byte(strings.Replace(string(b), "limit: 5", "limit: 0", 1))
+	if err := os.WriteFile(path, b, 0600); err != nil { //nolint:gosec // G703: path is a constant relative fixture name under t.TempDir(), not CLI input.
+		t.Fatal(err)
+	}
+	out, err = runCheckCmd(t, runCheck, dir, nil)
+	if !errors.Is(err, errSilentExit) || !strings.Contains(out, "limit") {
+		t.Fatalf("invalid list accepted: %v %s", err, out)
 	}
 }
