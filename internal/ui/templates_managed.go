@@ -591,7 +591,7 @@ const tplManagedForm = `
 .ob-density-compact .tp-table th{padding:4px 6px;font-size:11px}
 .ob-density-compact .tp-table td{padding:2px 4px}
 .ob-density-compact .tp-table input{height:24px;padding:2px 6px;font-size:13px}
-.ob-density-compact h3{margin:8px 0 4px !important;font-size:13px !important}
+.ob-density-compact h3{margin:6px 0 4px !important;font-size:13px !important}
 .ob-density-compact .ob-form-head{margin-bottom:6px !important}
 .ob-density-compact .ob-form-head h2{font-size:17px}
 .ob-density-compact .ob-form-actions{margin-bottom:6px !important}
