@@ -1611,6 +1611,8 @@ input:focus,select:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,2
    для ввода. Без этого readonly-поле неотличимо от обычного, и пользователь
    решает, что форма сломалась, когда в него не печатается. */
 input[readonly],textarea[readonly],select:disabled,input:disabled{background:#f1f5f9;color:#475569;cursor:default}
+select[data-ref-choice-dropdown="false"]{appearance:none;-webkit-appearance:none;-moz-appearance:none;background-image:none;cursor:pointer}
+select[data-ref-choice-dropdown="false"]:disabled{cursor:default}
 .error{background:#fef2f2;border:1px solid #fecaca;color:#dc2626;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px}
 .empty{color:#94a3b8;text-align:center;padding:48px;font-size:15px}
 .row-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;max-width:1400px}

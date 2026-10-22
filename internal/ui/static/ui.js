@@ -4513,7 +4513,10 @@ function obRefreshDependentSelects(sourceEl) {
           while (sel.options.length) sel.remove(0);
           var empty = document.createElement('option');
           empty.value = '';
-          empty.textContent = '— выбрать —';
+          // Поле без списка пустое значение показывает пустым, как в 1С:
+          // подсказка «— выбрать —» в узком поле обрезалась и ничего не
+          // объясняла — выбирают кнопкой «…».
+          empty.textContent = collapsed ? '' : '— выбрать —';
           sel.appendChild(empty);
           for (var j = 0; j < rows.length; j++) {
             var id = String(rows[j].id);
@@ -4879,6 +4882,66 @@ function obInitChoiceFilterRefresh() {
   document.addEventListener('change', function () { obAttachTPChoiceContexts(document); window.obRefreshChoiceFilters(); });
 }
 obReady(obInitChoiceFilterRefresh);
+
+// choice_dropdown: false — ссылочное поле без выпадающего списка. Значение
+// по-прежнему несёт <select> (обязательность, Tab, readonly_when, зеркало
+// значения и события поля работают как у любого ссылочного поля), но список
+// не раскрывается: в нём только текущее значение, и открывать его — значит
+// показать пустышку «— выбрать —». Щелчок, Enter, F4 и Alt+↓ открывают форму
+// подбора, Shift+F4 / Delete / Backspace очищают поле. Стрелки и набор букв
+// гасятся: у закрытого <select> они молча меняли бы значение на соседний
+// пункт, то есть на пустое.
+function obRefNoListSelect(el) {
+  if (!el || el.tagName !== 'SELECT' || el.disabled) return null;
+  return el.getAttribute('data-ref-choice-dropdown') === 'false' ? el : null;
+}
+
+function obRefNoListClear(sel) {
+  if (!sel || sel.disabled || !sel.value) return;
+  sel.value = '';
+  try { sel.dispatchEvent(new Event('change', { bubbles: true })); } catch (e) {}
+}
+window.obRefNoListClear = obRefNoListClear;
+
+function obRefNoListKey(e) {
+  var sel = obRefNoListSelect(e.target);
+  if (!sel) return;
+  var key = e.key || '';
+  var stop = function () {
+    e.preventDefault();
+    if (e.stopPropagation) e.stopPropagation();
+  };
+  if ((key === 'F4' && e.shiftKey) || key === 'Delete' || key === 'Backspace') {
+    stop();
+    obRefNoListClear(sel);
+    return;
+  }
+  if (key === 'Enter' || key === 'F4' || key === ' ' || key === 'Spacebar' ||
+      (e.altKey && (key === 'ArrowDown' || key === 'ArrowUp'))) {
+    stop();
+    openRefPicker(sel);
+    return;
+  }
+  if (key === 'ArrowDown' || key === 'ArrowUp' || key === 'PageDown' || key === 'PageUp' ||
+      key === 'Home' || key === 'End' || (key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey)) {
+    e.preventDefault();
+  }
+}
+
+function obRefNoListPointer(e) {
+  if (e.button !== undefined && e.button !== 0) return;
+  var target = e.target && e.target.closest ? e.target.closest('select') : null;
+  var sel = obRefNoListSelect(target);
+  if (!sel) return;
+  e.preventDefault();
+  try { sel.focus(); } catch (_) {}
+  openRefPicker(sel);
+}
+
+if (typeof document !== 'undefined' && document.addEventListener) {
+  document.addEventListener('keydown', obRefNoListKey, true);
+  document.addEventListener('mousedown', obRefNoListPointer, true);
+}
 
 function openRefPicker(selOrId) {
   var sel = (typeof selOrId === 'string') ? document.getElementById(selOrId) : selOrId;
