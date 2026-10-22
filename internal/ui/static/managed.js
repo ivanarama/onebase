@@ -903,51 +903,75 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       var tableBodies = obManagedTableBodies('vt-body-' + vtName, 'data-vt-fields');
       if (!tableBodies.length) return;
       tableBodies.forEach(function(tbody){
-      var fieldsMeta = (tbody.getAttribute('data-vt-fields') || '').split(',').map(function(s){
-        var idx = s.indexOf('|');
-        if (idx < 0) return { name: s, type: 'string' };
-        return { name: s.slice(0, idx), type: (s.slice(idx + 1) || 'string').toLowerCase() };
-      });
-      var rows = vts[vtName] || [];
-      var readOnly = obManagedTableReadOnly(tbody);
+      var before = obManagedVtRowsKey(tbody);
       tbody.innerHTML = '';
-      rows.forEach(function(row, idx){
-        var tr = document.createElement('tr');
-        tr.className = obFormRowClass(row);
-        fieldsMeta.forEach(function(f){
-          var td = document.createElement('td');
-          td.className = obFormCellClass(row, f.name);
-          var v = row[f.name];
-          var inp = document.createElement('input');
-          inp.name = 'vt.' + vtName + '.' + idx + '.' + f.name;
-          if (f.type === 'number') {
-            inp.type = 'number'; inp.step = 'any';
-            inp.setAttribute('data-vt-num', f.name);
-            inp.value = (v == null ? '' : v);
-          } else if (f.type === 'bool') {
-            inp.type = 'checkbox'; inp.value = 'true';
-            if (String(v) === 'true') inp.checked = true;
-            inp.disabled = readOnly;
-          } else {
-            inp.type = 'text';
-            inp.value = (v == null ? '' : v);
-          }
-          inp.disabled = readOnly;
-          td.appendChild(inp);
-          tr.appendChild(td);
-        });
-        var tdDel = document.createElement('td');
-        var btn = document.createElement('button');
-        btn.type = 'button'; btn.className = 'del-btn'; btn.textContent = '×';
-        btn.disabled = readOnly;
-        if (!readOnly) btn.setAttribute('data-ob-remove-row', '');
-        tdDel.appendChild(btn);
-        tr.appendChild(tdDel);
-        tbody.appendChild(tr);
+      (vts[vtName] || []).forEach(function(row, idx){
+        tbody.appendChild(buildVtRow(tbody, vtName, idx, row));
       });
+      // An unchanged event echo replaces DOM nodes, but preserves the selection.
+      // A different result set (including order or hidden values) clears it.
+      if (before !== obManagedVtRowsKey(tbody)) obManagedVtActiveRow.delete(tbody);
       });
     });
   }
+  function buildVtRow(tbody, vtName, idx, row) {
+    var fields = obManagedParseFieldMeta(tbody.getAttribute('data-vt-fields') || '');
+    var flags = {};
+    (tbody.getAttribute('data-vt-flags') || '').split(',').forEach(function(part){
+      var i = part.lastIndexOf(':');
+      if (i >= 0) flags[part.slice(0, i)] = part.slice(i + 1);
+    });
+    var readOnly = obManagedTableReadOnly(tbody);
+    var tr = document.createElement('tr');
+    tr.className = obFormRowClass(row);
+    if (tbody.getAttribute('data-ob-vt-activate')) {
+      tr.setAttribute('data-ob-vt-row', String(idx));
+      tr.style.cursor = 'pointer';
+    }
+    fields.forEach(function(f){
+      var flag = flags[f.name] || '';
+      var columnReadOnly = flag.indexOf('r') >= 0;
+      var td = document.createElement('td');
+      if (flag.indexOf('h') >= 0) td.style.display = 'none';
+      td.className = obFormCellClass(row, f.name);
+      var value = row[f.name];
+      var inp = document.createElement('input');
+      inp.name = 'vt.' + vtName + '.' + idx + '.' + f.name;
+      var type = f.type.toLowerCase();
+      if (type === 'number') {
+        inp.type = 'number'; inp.step = 'any';
+        inp.setAttribute('data-vt-num', f.name);
+        inp.value = value == null ? '' : value;
+      } else if (type === 'bool') {
+        inp.type = 'checkbox'; inp.value = 'true';
+        inp.checked = String(value) === 'true';
+      } else {
+        inp.type = 'text'; inp.value = value == null ? '' : value;
+      }
+      inp.disabled = readOnly || (type === 'bool' && columnReadOnly);
+      if (type !== 'bool') inp.readOnly = columnReadOnly;
+      td.appendChild(inp);
+      // Disabled checkboxes do not participate in FormData. Only the writable
+      // placement carries a single successful value for a protected column.
+      if (type === 'bool' && columnReadOnly && !readOnly) {
+        var hidden = document.createElement('input');
+        hidden.type = 'hidden'; hidden.name = inp.name;
+        hidden.value = inp.checked ? 'true' : 'false';
+        td.appendChild(hidden);
+      }
+      tr.appendChild(td);
+    });
+    if (tbody.getAttribute('data-vt-editable') !== '0') {
+      var tdDel = document.createElement('td');
+      var btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'del-btn'; btn.textContent = '×';
+      btn.disabled = readOnly;
+      if (!readOnly) btn.setAttribute('data-ob-remove-row', '');
+      tdDel.appendChild(btn); tr.appendChild(tdDel);
+    }
+    return tr;
+  }
+  window.obBuildVtRow = buildVtRow;
   window.applyFormTables = applyFormTables;
 
   function beginFileRead(contentEl) {
@@ -2173,32 +2197,10 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 function addVtRow(vtName, fields, tbodyOverride) {
   var tbody = tbodyOverride || document.getElementById("vt-body-" + vtName);
   if (!tbody || tbody.getAttribute('data-ob-table-readonly') === '1') return;
-  var idx = tbody.rows.length;
-  var tr = document.createElement("tr");
-  var fieldTypes = (tbody.getAttribute("data-vt-fields") || "").split(",");
-  fields.forEach(function(fn, i) {
-    var td = document.createElement("td");
-    var inp = document.createElement("input");
-    inp.name = "vt." + vtName + "." + idx + "." + fn;
-    var ft = (fieldTypes[i] || "").split("|")[1] || "";
-    if (ft === "number") {
-      inp.type = "number"; inp.step = "any";
-      inp.setAttribute("data-vt-num", fn);
-    } else if (ft === "bool") {
-      inp.type = "checkbox"; inp.value = "true";
-    } else {
-      inp.type = "text";
-    }
-    td.appendChild(inp);
-    tr.appendChild(td);
-  });
-  var tdDel = document.createElement("td");
-  var btn = document.createElement("button");
-  btn.type = "button"; btn.className = "del-btn"; btn.textContent = "×";
-  btn.setAttribute("data-ob-remove-row", "");
-  tdDel.appendChild(btn);
-  tr.appendChild(tdDel);
+  if (tbody.getAttribute('data-vt-editable') === '0') return;
+  var tr = window.obBuildVtRow(tbody, vtName, tbody.rows.length, {});
   tbody.appendChild(tr);
+  obManagedVtActiveRow.delete(tbody);
 }
 
 function obManagedClosestSelect(btn) {
@@ -2259,6 +2261,46 @@ function obManagedAddTpRow(btn) {
   if (table && window.obDOMNotifyMutation) window.obDOMNotifyMutation(table, 'add');
 }
 
+// obManagedVtRowActivated — щелчок по строке ValueTable зовёт
+// ПриАктивизацииСтроки.
+//
+// У «большой» табличной части это делает SlickGrid (data-sg-rowactivate), а
+// ValueTable рисуется простой разметкой, и подписки у неё не было вовсе: форма
+// могла объявить обработчик, а сработать он не мог. Именно такой таблицей
+// удобно показывать результат поиска, где строку выбирают щелчком.
+//
+// Подписываемся только когда обработчик объявлен (атрибут на tbody) — иначе
+// гоняли бы сеть на каждый щелчок по любой таблице формы. Повторный щелчок по
+// той же строке события не шлёт: активизация строки — это смена строки.
+// Помним индекс у конкретного tbody. Перерисовка сбрасывает выбор только
+// при изменении данных, а не при обычном эхо-ответе обработчика.
+var obManagedVtActiveRow = new WeakMap();
+
+// Compare rendered values rather than response JSON: initial HTML has no stored
+// response, and numeric/string representations must compare the same way.
+function obManagedVtRowsKey(tbody) {
+  return JSON.stringify(Array.prototype.map.call(tbody.rows, function(tr){
+    return Array.prototype.map.call(tr.children, function(td){
+      var input = td.children[0];
+      if (!input || input.tagName !== 'INPUT') return null;
+      return [input.name, input.type === 'checkbox' ? !!input.checked : String(input.value || '')];
+    });
+  }));
+}
+
+function obManagedVtRowActivated(tr) {
+  if (!tr || !tr.parentNode) return;
+  var tbody = tr.parentNode;
+  var elName = tbody.getAttribute && tbody.getAttribute('data-ob-vt-activate');
+  var vtName = tbody.getAttribute && tbody.getAttribute('data-ob-vt-name');
+  if (!elName || !vtName) return;
+  var row = tr.getAttribute('data-ob-vt-row');
+  if (row === null || row === '') return;
+  if (obManagedVtActiveRow.get(tbody) === row) return;
+  obManagedVtActiveRow.set(tbody, row);
+  if (window.obFire) window.obFire(elName, 'ПриАктивизацииСтроки', {_tp: vtName, _tp_row: row});
+}
+
 function obManagedAddVtRow(btn) {
   var vtName = btn.getAttribute('data-ob-add-vt') || '';
   var tbody = obManagedWritableTableBody('vt-body-' + vtName, 'data-vt-fields');
@@ -2274,6 +2316,7 @@ function obManagedRemoveRow(btn) {
   var table = tr.closest && tr.closest('table[data-ob-dom-table]');
   var body = tr.parentElement;
   var index = tr.sectionRowIndex;
+  if (body) obManagedVtActiveRow.delete(body);
   tr.remove();
   if (window.obSetManagedFormDirty) window.obSetManagedFormDirty(true);
   if (table && body && window.obDOMFinishMutation) {
@@ -2344,6 +2387,11 @@ function obManagedInitDelegates() {
     // ui.js (из шаблона "head"), где этот же делегат уже висит на document.
     // Дублирование переключало бы display дважды (none→block→none) за один клик
     // и dropdown «Печать ▾»/«Ввести на основании» не открывался бы — issue #309.
+    // Щелчок по строке ValueTable — не кнопка, поэтому проверяем до выхода:
+    // иначе выбор строки в таблице результатов не доходил бы до обработчика.
+    var vtRow = e.target && e.target.closest ? e.target.closest('tr[data-ob-vt-row]') : null;
+    if (vtRow) obManagedVtRowActivated(vtRow);
+
     var btn = e.target && e.target.closest ? e.target.closest('[data-ob-ref-picker],[data-ob-ref-current],[data-ob-file-trigger],[data-ob-fire-click],[data-ob-grid-add],[data-ob-grid-del],[data-ob-add-tp],[data-ob-add-vt],[data-ob-remove-row],[data-ob-ref-cancel],[data-ob-form-close]') : null;
     if (!btn) return;
     if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') return;

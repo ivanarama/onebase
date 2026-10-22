@@ -1271,6 +1271,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
 		"managedTPColumnPlan": managedTPColumnPlan,
+		"managedVTColumnPlan": managedVTColumnPlan,
+		"managedVTEditable":   managedVTEditable,
 		"tpChoiceContexts": func(ctx map[string]any, table *metadata.FormElement) map[string]string {
 			all, _ := ctx["TPChoices"].(map[*metadata.FormElement]*tpChoiceRender)
 			if all[table] != nil {

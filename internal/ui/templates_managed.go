@@ -444,7 +444,11 @@ const tplManagedForm = `
   {{$vtLayout := elLayout $el}}
   {{/* Заданная высота ограничивает весь блок ValueTable, включая строки и команды. */}}
   {{if $vtLayout}}<div class="managed-vt-layout{{if elFill $el}} managed-vt-scroll{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="{{$vtLayout}}">{{end}}
-  <h3 style="margin:18px 0 8px;font-size:14px">{{fieldTitleRU $el.TitleMap (or (tablePartTitle $tpMeta) $tpName)}}</h3>
+  {{/* Заголовок уже напечатан выше, для ЛЮБОЙ табличной части: здесь он давал
+       вторую такую же надпись над ValueTable. */}}
+  {{$vtPlan := managedVTColumnPlan $el $vtCols}}
+  {{$vtEditable := managedVTEditable $vtPlan}}
+  {{$vtActivate := hasHandler $el "ПриАктивизацииСтроки"}}
   {{if $vtCmds}}
   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
     {{range $vtCmds}}
@@ -461,34 +465,38 @@ const tplManagedForm = `
   <table class="tp-table" data-vt="{{$tpName}}">
     <thead>
       <tr>
-        {{range $vtCols}}<th>{{if .Title}}{{index .Title "ru"}}{{else}}{{.Name}}{{end}}</th>{{end}}
-        <th style="width:40px"></th>
+        {{range $vtPlan}}{{if not .Hidden}}<th{{with .Width}} style="width:{{.}}px"{{end}}>{{.Title}}</th>{{end}}{{end}}
+        {{if $vtEditable}}<th style="width:40px"></th>{{end}}
       </tr>
     </thead>
-    <tbody id="vt-body-{{$tpName}}" {{if $tpReadOnly}}data-ob-table-readonly="1" {{end}}data-vt-fields="{{range $i, $c := $vtCols}}{{if $i}},{{end}}{{$c.Name}}|{{$c.TypeRef}}{{end}}">
+    <tbody id="vt-body-{{$tpName}}" {{if $tpReadOnly}}data-ob-table-readonly="1" {{end}}{{if $vtActivate}}data-ob-vt-activate="{{$el.Name}}" data-ob-vt-name="{{$tpName}}" {{end}}data-vt-editable="{{if $vtEditable}}1{{else}}0{{end}}" data-vt-flags="{{range $i, $col := $vtPlan}}{{if $i}},{{end}}{{$col.Column.Name}}:{{if $col.ReadOnly}}r{{end}}{{if $col.Hidden}}h{{end}}{{end}}" data-vt-fields="{{range $i, $col := $vtPlan}}{{if $i}},{{end}}{{$col.Column.Name}}|{{$col.Column.TypeRef}}{{end}}">
     {{range $i, $row := $vtRows}}
-      <tr{{with formRowClass $row}} class="{{.}}"{{end}}>
-        {{range $c := $vtCols}}
-        <td{{with formCellClass $row $c.Name}} class="{{.}}"{{end}}>
+      <tr{{with formRowClass $row}} class="{{.}}"{{end}}{{if $vtActivate}} data-ob-vt-row="{{$i}}" style="cursor:pointer"{{end}}>
+        {{range $col := $vtPlan}}{{$c := $col.Column}}
+        {{$cellRO := or $tpReadOnly $col.ReadOnly}}
+        <td{{with formCellClass $row $c.Name}} class="{{.}}"{{end}}{{if $col.Hidden}} style="display:none"{{end}}>
           {{$v := index $row $c.Name}}
           {{if eq (lower $c.TypeRef) "number"}}
-            <input type="number" step="any" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="{{$v}}" data-vt-num="{{$c.Name}}"{{if $tpReadOnly}} disabled{{end}}>
+            <input type="number" step="any" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="{{$v}}" data-vt-num="{{$c.Name}}"{{if $tpReadOnly}} disabled{{else if $col.ReadOnly}} readonly{{end}}>
           {{else if eq (lower $c.TypeRef) "bool"}}
-            <input type="checkbox" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="true" {{if eq (str $v) "true"}}checked{{end}}{{if $tpReadOnly}} disabled{{end}}>
+            <input type="checkbox" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="true" {{if eq (str $v) "true"}}checked{{end}}{{if $cellRO}} disabled{{end}}>
+            {{if and $col.ReadOnly (not $tpReadOnly)}}<input type="hidden" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="{{if eq (str $v) "true"}}true{{else}}false{{end}}">{{end}}
           {{else}}
-            <input type="text" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="{{$v}}"{{if $tpReadOnly}} disabled{{end}}>
+            <input type="text" name="vt.{{$tpName}}.{{$i}}.{{$c.Name}}" value="{{$v}}"{{if $tpReadOnly}} disabled{{else if $col.ReadOnly}} readonly{{end}}>
           {{end}}
         </td>
         {{end}}
-        <td><button type="button" class="del-btn"{{if $tpReadOnly}} disabled{{else}} data-ob-remove-row{{end}}>×</button></td>
+        {{if $vtEditable}}<td><button type="button" class="del-btn"{{if $tpReadOnly}} disabled{{else}} data-ob-remove-row{{end}}>×</button></td>{{end}}
       </tr>
     {{end}}
     </tbody>
   </table>
+  {{if $vtEditable}}
   <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin:0 0 12px"{{if $tpReadOnly}} disabled{{else}}
     data-ob-add-vt="{{$tpName}}"{{end}}>
     + Добавить строку
   </button>
+  {{end}}
   {{if $vtLayout}}</div>{{end}}
   {{else}}
   <div style="background:#fef9c3;padding:8px;border-radius:6px;font-size:12px;color:#92400e">
