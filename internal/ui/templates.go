@@ -790,6 +790,23 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return !*a.Visible
 		},
+		// groupTitleStyle — CSS заголовка группы/таблицы managed-формы:
+		// form.group_titles: bold — жирный тёмный (#1f2937), иначе прежний
+		// полужирный серый.
+		"groupTitleStyle": func(form *metadata.FormModule) template.CSS {
+			if form != nil && form.GroupTitles == metadata.FormGroupTitlesBold {
+				return template.CSS("font-weight:700;color:#1f2937;")
+			}
+			return template.CSS("font-weight:600;color:#475569;")
+		},
+		// tableTitleStyle — то же для заголовка таблицы (h3): по умолчанию
+		// пусто, h3 остаётся как был.
+		"tableTitleStyle": func(form *metadata.FormModule) template.CSS {
+			if form != nil && form.GroupTitles == metadata.FormGroupTitlesBold {
+				return template.CSS("font-weight:700;color:#1f2937;")
+			}
+			return ""
+		},
 		// formActionVisible — видимость стандартного действия managed-формы.
 		// Отсутствующий ключ и visible:nil сохраняют платформенное умолчание.
 		"formActionVisible": func(form *metadata.FormModule, name string) bool {

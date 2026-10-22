@@ -698,6 +698,10 @@ type FormModule struct {
 	// вводящий данные потоком (#1486). Ctrl+S, Ctrl+Enter и кнопки записи
 	// работают всегда, независимо от этого ключа.
 	EnterSubmitsForm bool `yaml:"enter_submits_form,omitempty"`
+	// GroupTitles — оформление заголовков групп и таблиц этой формы:
+	// "" — обычное (полужирный серый), "bold" — жирный тёмный, как заголовки
+	// разделов в ТЗ форм колл-центра. Другие формы не меняются.
+	GroupTitles string `yaml:"group_titles,omitempty"`
 	// OneCMeta — служебный блок, используемый только конвертером 1С,
 	// рантайм его игнорирует. Может содержать version, unknown_xml и т.п.
 	OneCMeta map[string]any `yaml:"oneC_meta,omitempty"`
@@ -1001,3 +1005,7 @@ func (el *FormElement) IsContainer() bool {
 	}
 	return false
 }
+
+// FormGroupTitlesBold — жирные тёмные заголовки групп и таблиц формы
+// (FormModule.GroupTitles).
+const FormGroupTitlesBold = "bold"
