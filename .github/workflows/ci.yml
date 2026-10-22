@@ -85,6 +85,14 @@ jobs:
       - name: Plan numbers are unique
         run: go run ./tools/plannum
 
+      - name: Release license bundle (actual CLI binary)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        run: |
+          set -euo pipefail
+          go test ./tools/licensebundle
+          go build -o "$RUNNER_TEMP/onebase-licensecheck" ./cmd/onebase
+          go run ./tools/licensebundle -release -out "$RUNNER_TEMP/licenses-cli" "$RUNNER_TEMP/onebase-licensecheck"
+
       - name: Lint shipped example/template configurations
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: |
@@ -354,6 +362,11 @@ jobs:
         env:
           CGO_ENABLED: 1
         run: go build -tags webview -o "$env:RUNNER_TEMP\onebase-gui.exe" ./cmd/onebase
+
+      - name: Release license bundle (actual native GUI binary)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        shell: pwsh
+        run: go run ./tools/licensebundle -release -out "$env:RUNNER_TEMP\licenses-gui" "$env:RUNNER_TEMP\onebase-gui.exe"
 
       - name: Test launcher GUI state (Windows WebView2)
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}

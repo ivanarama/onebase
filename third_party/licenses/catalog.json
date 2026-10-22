@@ -1,0 +1,1624 @@
+{
+  "schema": 1,
+  "go": {
+    "license": "BSD-3-Clause",
+    "files": [
+      {
+        "path": "LICENSE",
+        "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+      },
+      {
+        "path": "PATENTS",
+        "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+      }
+    ]
+  },
+  "modules": {
+    "github.com/aymerick/douceur": {
+      "license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "a91ec19456c4efb3d9fc22dc9c1ec60ec3701a9e8f4be511ebcf908c04288ffb"
+        }
+      ]
+    },
+    "github.com/coder/websocket": {
+      "license": "ISC",
+      "files": [
+        {
+          "path": "LICENSE.txt",
+          "sha256": "cc0975a5f6305145bdd7b41ce9479632fdac3870e6ac4281f28017f18c767c4e"
+        }
+      ]
+    },
+    "github.com/dustin/go-humanize": {
+      "license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "a973b4498c13eb74baa2a8e5c351426a6826f2fcdd909916dbe53ee2e755fd71"
+        }
+      ]
+    },
+    "github.com/fsnotify/fsnotify": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "2dfbe6d2b5eb18b55148f3805d88648a09e0d17e38428123259afb08c8996e37"
+        }
+      ]
+    },
+    "github.com/go-chi/chi/v5": {
+      "license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "a2d51b7515acfaff2f7a88688650f2fc4fd99561383e72bba2305e3db59a1647"
+        }
+      ]
+    },
+    "github.com/go-pdf/fpdf": {
+      "license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "886dff73f14c6beea6936796184c1517c3c4a6986b97d26904e5dac028c494dc"
+        }
+      ]
+    },
+    "github.com/google/uuid": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "0a8d61ed3cbfd5312326e8126c31ce9c627a283adc99131b56896d29ada04b2d"
+        }
+      ]
+    },
+    "github.com/gorilla/css": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "af11d643d903cb178a641d7512879285287844f7a6c0611e2d0c6b131e50188b"
+        }
+      ]
+    },
+    "github.com/inconshreveable/mousetrap": {
+      "license": "Apache-2.0",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "4819582701f150b28a563a6cd8ed0bf5a754e3c67b90ad38d78ba4131bf77795"
+        }
+      ]
+    },
+    "github.com/jackc/pgpassfile": {
+      "license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "adb1663fda031df8f4344aa68f299fd87d80353e31339406742ded21dae65702"
+        }
+      ]
+    },
+    "github.com/jackc/pgservicefile": {
+      "license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "fc505773403fe869ed64cc2235cdd13988a427bb7e3a7e7004a3f4b27420f8fc"
+        }
+      ]
+    },
+    "github.com/jackc/pgx/v5": {
+      "license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "467f95e074fe23079a5623ed652619682692041b8551da27e3c2ddb9659a1507"
+        }
+      ]
+    },
+    "github.com/jackc/puddle/v2": {
+      "license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "2d50e98a4900b4d6457a38d39c1432fdc156fc2f7b365f2e33ec9344acbb0057"
+        }
+      ]
+    },
+    "github.com/mattn/go-isatty": {
+      "license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "08eab1118c80885fa1fa6a6dd7303f65a379fcb3733e063d20d1bbc2c76e6fa1"
+        }
+      ]
+    },
+    "github.com/microcosm-cc/bluemonday": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE.md",
+          "sha256": "a8e8489f1168b5f3e0ebb43d7fe1c78a2fd7db9939c1a6cb555940a4b631f8d2"
+        }
+      ]
+    },
+    "github.com/ncruces/go-strftime": {
+      "license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "38ae43959daf953a393a585b2988672cb65a5a541aca0d0be5e72595a0a16883"
+        }
+      ]
+    },
+    "github.com/remyoudompheng/bigfft": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "dd26a7abddd02e2d0aba97805b31f248ef7835d9e10da289b22e3b8ab78b324d"
+        }
+      ]
+    },
+    "github.com/richardlehane/mscfb": {
+      "license": "Apache-2.0",
+      "files": [
+        {
+          "path": "LICENSE.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    "github.com/richardlehane/msoleps": {
+      "license": "Apache-2.0",
+      "files": [
+        {
+          "path": "LICENSE.txt",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    "github.com/robfig/cron/v3": {
+      "license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "8f650581478707182f3306d9a86676d4e03e2d4edc868344378cf4d6fe6c927a"
+        }
+      ]
+    },
+    "github.com/shopspring/decimal": {
+      "license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "b92ba0f6ee02f2309628bfdadb123668a17c016e475ba477b857d33470d9d625"
+        }
+      ]
+    },
+    "github.com/spf13/cobra": {
+      "license": "Apache-2.0",
+      "files": [
+        {
+          "path": "LICENSE.txt",
+          "sha256": "5e3400b93bbb099e83e52bab885e7441750673c21f97988ca3f1240639b63283"
+        }
+      ]
+    },
+    "github.com/spf13/pflag": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "b8514c577c1c4b46cee454d5a882b15fa411e72c5bd7f801f241591789fce61a"
+        }
+      ]
+    },
+    "github.com/tiendc/go-deepcopy": {
+      "license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "790522a8c994c2adf4c35397a0bc2fe68e59feb7b59fba812586403d15692c71"
+        }
+      ]
+    },
+    "github.com/xuri/efp": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "d53cb863b9c33f0ae5deab2b69d00e4cb2dcd862ba3abeaf03b784dacf0df0d8"
+        }
+      ]
+    },
+    "github.com/xuri/excelize/v2": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "0b8e4f8789b88fa44dee713d934e4d36f52854b33670ab4a0ce3de69e8e224cd"
+        }
+      ]
+    },
+    "github.com/xuri/nfp": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "0de3fcd687652dc103446ce5c0d2aec948fbbb1f9099b3c1958c3fd62ba941a0"
+        }
+      ]
+    },
+    "github.com/yuin/goldmark": {
+      "license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "c1d6f653c38c80294dc7994647ba0dcc508ce64a86996303c804efa2f7982bff"
+        }
+      ]
+    },
+    "go.bug.st/serial": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "f787622ac8d567bad50247aaa924fad85ed3355e34fa43793c4b3dbb85b5f687"
+        }
+      ]
+    },
+    "golang.org/x/crypto": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        },
+        {
+          "path": "PATENTS",
+          "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+        }
+      ]
+    },
+    "golang.org/x/net": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        },
+        {
+          "path": "PATENTS",
+          "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+        }
+      ]
+    },
+    "golang.org/x/sync": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        },
+        {
+          "path": "PATENTS",
+          "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+        }
+      ]
+    },
+    "golang.org/x/sys": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        },
+        {
+          "path": "PATENTS",
+          "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+        }
+      ]
+    },
+    "golang.org/x/text": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        },
+        {
+          "path": "PATENTS",
+          "sha256": "96f408bfae65bf137fc2525d3ecb030271c50c1e90799f87abf8846d8dd505cc"
+        }
+      ]
+    },
+    "gopkg.in/yaml.v3": {
+      "license": "MIT and Apache-2.0 (different source portions)",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "d18f6323b71b0b768bb5e9616e36da390fbd39369a81807cca352de4e4e6aa0b"
+        },
+        {
+          "path": "NOTICE",
+          "sha256": "f6c2dd3a67b576eafb89b80200b8b1627230bf3821a0c14cb99a22ac19107d00"
+        }
+      ]
+    },
+    "modernc.org/libc": {
+      "license": "BSD-3-Clause; additional third-party terms in LICENSE-3RD-PARTY.md",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "95ff867eb55a56935fa7492406cfa953fb7c13ca73f4c0a86ae05756b4605600"
+        },
+        {
+          "path": "LICENSE-3RD-PARTY.md",
+          "sha256": "f597097efe3d97021f89170746bd3a0fb9a8b6fb26b82043ed68a4e0283bee6c"
+        }
+      ]
+    },
+    "modernc.org/mathutil": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "bfa9bf72a72ca009fd62a8f84fca3dca67e51d93af96352723646599898b6cf5"
+        }
+      ]
+    },
+    "modernc.org/memory": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "59895e669f48f168b6b858358f6005779cdf40a265f7828813061b56af67b496"
+        },
+        {
+          "path": "LICENSE-GO",
+          "sha256": "2d36597f7117c38b006835ae7f537487207d8ec407aa9d9980794b2030cbc067"
+        },
+        {
+          "path": "LICENSE-LOGO",
+          "sha256": "5ae5bee3072a841376451b48d8cfcec7188e10543926d5870828d36c8a750dc5"
+        },
+        {
+          "path": "LICENSE-MMAP-GO",
+          "sha256": "c2eba69f20d05414538c3a5df7694dde392e065ff70882e1625e90f5d6659fff"
+        }
+      ]
+    },
+    "modernc.org/sqlite": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "c6fe05491a60ae13bcd223088d2705e36dede24e5587226231d2459ada5c4822"
+        }
+      ]
+    },
+    "rsc.io/qr": {
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "2d36597f7117c38b006835ae7f537487207d8ec407aa9d9980794b2030cbc067"
+        }
+      ]
+    },
+    "github.com/webview/webview_go": {
+      "license": "MIT",
+      "files": [
+        {
+          "path": "LICENSE",
+          "sha256": "fd0db78a64aeeec3aaf623a8f7b0b99c3ee41b19af6dd6486c0ccce0a23ae720"
+        }
+      ]
+    }
+  },
+  "resources": [
+    {
+      "id": "assets/monaco-editor",
+      "version": "0.52.2",
+      "source": "https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.52.2.tgz",
+      "assets": [
+        {
+          "path": "internal/webassets/monaco/vs/base/browser/ui/codicons/codicon/codicon.ttf",
+          "sha256": "0f1d5219934e96e83b8db162d60b4d8c09b5de1e7d38031cbafe4a3c0f2889c9"
+        },
+        {
+          "path": "internal/webassets/monaco/vs/base/worker/workerMain.js",
+          "sha256": "dbe4aa4f2874f5768e8d98e94281667c0bc493e02dd9760adca930699ff3279b"
+        },
+        {
+          "path": "internal/webassets/monaco/vs/basic-languages/yaml/yaml.js",
+          "sha256": "f4407dcc5601eec349552548557f3656a907b094575e7395402390aa08f8d7f2"
+        },
+        {
+          "path": "internal/webassets/monaco/vs/editor/editor.main.css",
+          "sha256": "857bc0beafefbcc83ab5cf3510e929391c0314add43ee1a4cb8ecaf4726abbac"
+        },
+        {
+          "path": "internal/webassets/monaco/vs/editor/editor.main.js",
+          "sha256": "90b588bc0b624e24052a576e1bcab2eaffec7bc666895188862eebd9c9745782"
+        },
+        {
+          "path": "internal/webassets/monaco/vs/loader.js",
+          "sha256": "28f3584fd04b182dfce15a9a1ce35b25bea22b31464aee500372bed18b7fee1a"
+        }
+      ],
+      "terms": {
+        "license": "MIT; additional terms in upstream notices",
+        "files": [
+          {
+            "path": "third_party/licenses/monaco-editor/LICENSE",
+            "sha256": "33e4ff1a06ef62ba21788ea162564ee8165269a24a9ce6ef301837447eab0ac6"
+          },
+          {
+            "path": "third_party/licenses/monaco-editor/ThirdPartyNotices.txt",
+            "sha256": "790537262fc78a764e121e6b92b959bcd3f5c310b47d9d9b9e92e17fe0af5336"
+          },
+          {
+            "path": "third_party/licenses/monaco-editor/PROVENANCE.json",
+            "sha256": "7ca9699dc02d96b2e820d2bfc5223b614fbd52ce538ac4241522132f70dcb1c0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "assets/echarts",
+      "version": "5.4.3",
+      "source": "https://registry.npmjs.org/echarts/-/echarts-5.4.3.tgz",
+      "assets": [
+        {
+          "path": "internal/webassets/echarts/echarts.min.js",
+          "sha256": "987554a0014ad7be585eccc91c4329d050b40c2c0ebd2e8ec84adca82c0eb843"
+        }
+      ],
+      "terms": {
+        "license": "Apache-2.0; additional terms in upstream notices",
+        "files": [
+          {
+            "path": "third_party/licenses/echarts/LICENSE",
+            "sha256": "634293835b43a6dd2094fa39182a3d9a6b9ca43b7fdb9ac354e8037af2a3093a"
+          },
+          {
+            "path": "third_party/licenses/echarts/NOTICE",
+            "sha256": "3b15c5af186cf75638546f7f6e6c5df547c76b75c65cd0a5c1dbacf2e55dde6f"
+          },
+          {
+            "path": "third_party/licenses/echarts/licenses/LICENSE-d3",
+            "sha256": "e1211892da0b0e0585b7aebe8f98c1274fba15bafe47fa1f4ee8a7a502c06304"
+          },
+          {
+            "path": "third_party/licenses/echarts/PROVENANCE.json",
+            "sha256": "0cfd247d60215afb0abd8e112ce63c7aa7fbb602e0a090c1dadbb7ab90e9c216"
+          }
+        ]
+      }
+    },
+    {
+      "id": "assets/slickgrid",
+      "version": "5.18.6",
+      "source": "https://registry.npmjs.org/slickgrid/-/slickgrid-5.18.6.tgz",
+      "assets": [
+        {
+          "path": "internal/webassets/slickgrid/slick-default-theme.css",
+          "sha256": "7af1a15c5475d955e22c116408b35373dec6d74350087ed2cb0768c4a520e5ba"
+        },
+        {
+          "path": "internal/webassets/slickgrid/slick.core.js",
+          "sha256": "df421fbcb5570d36854dc3a341f52c80c133682c0f1e4aa071e1ca15a291a2dd"
+        },
+        {
+          "path": "internal/webassets/slickgrid/slick.dataview.js",
+          "sha256": "d14a9f1a72118a16826c76f2e3ae7958d417c431975ce48fcf453d4528feab53"
+        },
+        {
+          "path": "internal/webassets/slickgrid/slick.editors.js",
+          "sha256": "c2fbab7e85cf80c0139bbc5987115da843ba18e02f8b8b83c6f829b55313d953"
+        },
+        {
+          "path": "internal/webassets/slickgrid/slick.formatters.js",
+          "sha256": "60acb8f302b36f02de3462d02ab310132005ab0d84ef7610f0638521fc54b565"
+        },
+        {
+          "path": "internal/webassets/slickgrid/slick.grid.css",
+          "sha256": "9e68831fa891120c75c1d9a1545c93f5cd0872263a312ffca3af69c8ab253590"
+        },
+        {
+          "path": "internal/webassets/slickgrid/slick.grid.js",
+          "sha256": "bffd51c95e004467a61413f1a1d2192d526d10b28b483ea1b55b4c5842ebcc68"
+        },
+        {
+          "path": "internal/webassets/slickgrid/slick.interactions.js",
+          "sha256": "224d134c80cfceb3a3d0354a0261c05afd8de9660505556616a0f8e48490295b"
+        }
+      ],
+      "terms": {
+        "license": "MIT",
+        "files": [
+          {
+            "path": "third_party/licenses/slickgrid/LICENSE",
+            "sha256": "bfce12a8ee2abffdc3784453b1866112c31705ddc55ebf586faf24f75069737c"
+          },
+          {
+            "path": "third_party/licenses/slickgrid/PROVENANCE.json",
+            "sha256": "8777c51d7620cd860eb28476619a87c7ef21453a64a94e3b364a03a6cafd48e6"
+          }
+        ]
+      }
+    },
+    {
+      "id": "assets/quill",
+      "version": "2.0.3",
+      "source": "https://registry.npmjs.org/quill/-/quill-2.0.3.tgz",
+      "assets": [
+        {
+          "path": "internal/webassets/quill/quill.js",
+          "sha256": "f6157c72ac9b3f51cdead426335688a027b12405d9d6a4daadd38a676b2d7ff2"
+        },
+        {
+          "path": "internal/webassets/quill/quill.snow.css",
+          "sha256": "1c7948cd13aa92fac6390319bc1e5e461823da171519d3a768db56164f871636"
+        }
+      ],
+      "terms": {
+        "license": "BSD-3-Clause; MIT; Apache-2.0 (bundled dependencies)",
+        "files": [
+          {
+            "path": "internal/webassets/quill/LICENSE",
+            "sha256": "395c12b616d6f58238b4be39284d4d9221b58dd6e1f1e34d9ab537e34abbb022"
+          },
+          {
+            "path": "third_party/licenses/quill/LICENSE",
+            "sha256": "395c12b616d6f58238b4be39284d4d9221b58dd6e1f1e34d9ab537e34abbb022"
+          },
+          {
+            "path": "third_party/licenses/quill/PROVENANCE.json",
+            "sha256": "e2407425098a2f795a8e43e2facda44cbf99bea9579ff2b539c163a7b594262e"
+          },
+          {
+            "path": "third_party/licenses/quill/UPSTREAM_DEPENDENCIES.json",
+            "sha256": "8a329ad62488adc060022c9a1cfd922deb48b08cd442e2a65b63eb33e9bcb9e1"
+          },
+          {
+            "path": "third_party/licenses/quill/dependencies/eventemitter3/5.0.1/LICENSE",
+            "sha256": "3aecc12b1cb28832b5f65ab64291de96568c3f236a74d646281b4491f7bcadbf"
+          },
+          {
+            "path": "third_party/licenses/quill/dependencies/fast-diff/1.3.0/LICENSE",
+            "sha256": "20430d7ea026abdb78e873e59a0817dd7d2921d94acefeafdc3e4e0150a4595d"
+          },
+          {
+            "path": "third_party/licenses/quill/dependencies/fast-diff/1.3.0/diff.js.HEADER.txt",
+            "sha256": "b4c9d93dafdbf70464d8fb5ee85d6bdcf0b8f4280b84b3af00610e292aecb271"
+          },
+          {
+            "path": "third_party/licenses/quill/dependencies/lodash-es/4.17.21/LICENSE",
+            "sha256": "f71e8ed126b46346494aad5486874cd8f0aafe95092ed67d2e3cb6110f939abc"
+          },
+          {
+            "path": "third_party/licenses/quill/dependencies/lodash.clonedeep/4.5.0/LICENSE",
+            "sha256": "ffd8b33b354585f4ce119f19c53728281e48a97b074491eb6bf6d5c5ff305272"
+          },
+          {
+            "path": "third_party/licenses/quill/dependencies/lodash.isequal/4.5.0/LICENSE",
+            "sha256": "e159c6d48c989185448658f276375bfb2300362ec6d4ae5525a2d49c4bcb947d"
+          },
+          {
+            "path": "third_party/licenses/quill/dependencies/parchment/3.0.0/LICENSE",
+            "sha256": "34cdf2002459c0373913285283c9147dd8537c66f1e56e1e8746c713280ca55d"
+          },
+          {
+            "path": "third_party/licenses/quill/dependencies/quill-delta/5.1.0/LICENSE",
+            "sha256": "2a61fd00f6f3b446a049b71531eba0b3575096249c1a841e2e6b8fe7fa979455"
+          },
+          {
+            "path": "third_party/licenses/quill/dist/quill.core.js.LICENSE.txt",
+            "sha256": "7b1938804d68d96764233d0a148a7501f39e547e6ae2dead4b16836e9b8d123c"
+          },
+          {
+            "path": "third_party/licenses/quill/dist/quill.js.LICENSE.txt",
+            "sha256": "7b1938804d68d96764233d0a148a7501f39e547e6ae2dead4b16836e9b8d123c"
+          }
+        ]
+      }
+    },
+    {
+      "id": "assets/rapidoc",
+      "version": "9.3.8",
+      "source": "https://registry.npmjs.org/rapidoc/-/rapidoc-9.3.8.tgz",
+      "assets": [
+        {
+          "path": "internal/ui/rapidoc/rapidoc-min.js",
+          "sha256": "affbd173a65e870e18f392cca963113bcdafb6e50e88cd2f6a834a65b22db94d"
+        }
+      ],
+      "terms": {
+        "license": "MIT; additional terms in upstream notices",
+        "files": [
+          {
+            "path": "internal/ui/rapidoc/LICENSE.txt",
+            "sha256": "b6366d212427ca41732dd93ce56a47ceaf7a0902edc2e90b22ca6a9d6feff20e"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/LICENSE.txt",
+            "sha256": "92682ac573adb5e1357f1f41dd0eaa2f0e9dd6116b569218978c2469c1cd085c"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/PROVENANCE.json",
+            "sha256": "245e18184191eb0ca6248cd916f31b4f517fd2f47d423f7aa3e6b34447874e91"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/UPSTREAM_DEPENDENCIES.json",
+            "sha256": "6bb508e33269dec1c21d84d9abf4ab68cc7ea1d81d86c76f3fc2045c975b410f"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@apitools/openapi-parser/0.0.33/MIT-TEXT.txt",
+            "sha256": "87aa873758958c54e28de58cac40b1a6b501e8abf6bc09256b6adae17764993f"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@apitools/openapi-parser/0.0.33/ORIGINAL_PACKAGE.json",
+            "sha256": "2f6d1f9b346c2b2dbf9bc59edcbe568b15802b2fd7770cf174643f77a84e8706"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@babel/runtime-corejs3/7.25.6/LICENSE",
+            "sha256": "117da2af0d4ce0fe1c8e19b5cff9dcd806adf973d328d27b11d4448c4ff24f76"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@lit-labs/ssr-dom-shim/1.2.1/LICENSE",
+            "sha256": "45d31799d0db956cc3eb5469346abbd9b7025babc5ff29fab10d7095da992ef1"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@lit/reactive-element/2.0.4/LICENSE",
+            "sha256": "45d31799d0db956cc3eb5469346abbd9b7025babc5ff29fab10d7095da992ef1"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ast/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ast/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ast/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-core/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-core/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-core/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-error/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-error/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-error/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-json-pointer/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-json-pointer/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-json-pointer/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-api-design-systems/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-api-design-systems/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-api-design-systems/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-asyncapi-2/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-asyncapi-2/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-asyncapi-2/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-asyncapi-2/1.0.0-alpha.9/cjs/elements/License.cjs",
+            "sha256": "c39b087f4a7cff0579468820cfd1a894d34c0a4bde96a60acdfbf4fbed9c5d69"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-asyncapi-2/1.0.0-alpha.9/es/elements/License.mjs",
+            "sha256": "36b752f98ff9458ca74645b5cbb4e0b065aa4a9a47ce7ec8966681476f2030cc"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-json-schema-draft-4/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-json-schema-draft-4/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-json-schema-draft-4/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-json-schema-draft-6/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-json-schema-draft-6/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-json-schema-draft-6/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-json-schema-draft-7/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-json-schema-draft-7/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-json-schema-draft-7/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-openapi-2/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-openapi-2/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-openapi-2/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-openapi-2/1.0.0-alpha.9/cjs/elements/License.cjs",
+            "sha256": "c39b087f4a7cff0579468820cfd1a894d34c0a4bde96a60acdfbf4fbed9c5d69"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-openapi-2/1.0.0-alpha.9/es/elements/License.mjs",
+            "sha256": "36b752f98ff9458ca74645b5cbb4e0b065aa4a9a47ce7ec8966681476f2030cc"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-openapi-3-0/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-openapi-3-0/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-openapi-3-0/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-openapi-3-0/1.0.0-alpha.9/cjs/elements/License.cjs",
+            "sha256": "c39b087f4a7cff0579468820cfd1a894d34c0a4bde96a60acdfbf4fbed9c5d69"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-openapi-3-0/1.0.0-alpha.9/es/elements/License.mjs",
+            "sha256": "36b752f98ff9458ca74645b5cbb4e0b065aa4a9a47ce7ec8966681476f2030cc"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-openapi-3-1/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-openapi-3-1/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-openapi-3-1/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-openapi-3-1/1.0.0-alpha.9/cjs/elements/License.cjs",
+            "sha256": "6371fbe166a1c840e532e092b602e66dccdb24deef5255be163acfdd35d68f18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-openapi-3-1/1.0.0-alpha.9/es/elements/License.mjs",
+            "sha256": "bbc956fabae8b721806e2000855e44219a8fe2d7bfcb790c598d8f36d92983ce"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-workflows-1/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-workflows-1/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-ns-workflows-1/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-api-design-systems-json/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-api-design-systems-json/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-api-design-systems-json/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-api-design-systems-yaml/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-api-design-systems-yaml/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-api-design-systems-yaml/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-asyncapi-json-2/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-asyncapi-json-2/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-asyncapi-json-2/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-asyncapi-yaml-2/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-asyncapi-yaml-2/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-asyncapi-yaml-2/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-json/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-json/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-json/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-json-2/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-json-2/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-json-2/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-json-3-0/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-json-3-0/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-json-3-0/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-json-3-1/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-json-3-1/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-json-3-1/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-yaml-2/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-yaml-2/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-yaml-2/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-yaml-3-0/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-yaml-3-0/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-yaml-3-0/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-yaml-3-1/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-yaml-3-1/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-openapi-yaml-3-1/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-workflows-json-1/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-workflows-json-1/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-workflows-json-1/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-workflows-yaml-1/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-workflows-yaml-1/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-workflows-yaml-1/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-yaml-1-2/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-yaml-1-2/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-parser-adapter-yaml-1-2/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-reference/1.0.0-alpha.9/LICENSES/Apache-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-reference/1.0.0-alpha.9/LICENSES/MIT.txt",
+            "sha256": "b85dcd3e453d05982552c52b5fc9e0bdd6d23c6f8e844b984a88af32570b0cc0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@swagger-api/apidom-reference/1.0.0-alpha.9/NOTICE",
+            "sha256": "b003655a035ca3e217c723c143597e6fb2d8020448aa40255750847429bdca18"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@types/ramda/0.30.2/LICENSE",
+            "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/@types/trusted-types/2.0.7/LICENSE",
+            "sha256": "c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/apg-lite/1.0.4/LICENSE.md",
+            "sha256": "e41fa7a83264f33115b9630ab731695c01583bdd32bfd267bd1db6c5d5bbf764"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/argparse/2.0.1/LICENSE",
+            "sha256": "de4d1f2d2ad5ad0cfd1657a106476b31cb5db5ef9d1ff842b237c0c81f0c8a23"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/asynckit/0.4.0/LICENSE",
+            "sha256": "1953150d5d4b10c7542cee6f6e0c613b2682545233f069d75cfff1936386ce10"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/axios/1.7.7/LICENSE",
+            "sha256": "82761059eaedacb3356803aea8a170d8298609f91b14fc32ee1bfb40d690183c"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/balanced-match/1.0.2/LICENSE.md",
+            "sha256": "a1bd5deadb6a06dd74efa852c1b8b23f63b67f2214fbe9c8bd591da51da69268"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/base64-arraybuffer/1.0.2/LICENSE",
+            "sha256": "f3eca6ff762533fa5a77caf954a143e48afa204668cf97dce758c45a9e006be3"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/base64-js/1.5.1/LICENSE",
+            "sha256": "5b37224c080cdcc97c871ada971c224e9926370fe74f11b539aa1cf9f3b1aca1"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/bl/4.1.0/LICENSE.md",
+            "sha256": "9377db95383c8befacf05c6e465d969d756edf178487ca1344fdf3ba147c596f"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/brace-expansion/2.0.1/LICENSE",
+            "sha256": "68f12f6e2c33688699249c01d8f9623c534da20aa71989c57b061b7bc1676d14"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/buffer/5.7.1/LICENSE",
+            "sha256": "06bafa45fdad2579ba0e43b0c9b2c6290287c99c4203c300254a462b38a307f6"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/buffer/6.0.3/LICENSE",
+            "sha256": "06bafa45fdad2579ba0e43b0c9b2c6290287c99c4203c300254a462b38a307f6"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/chownr/1.1.4/LICENSE",
+            "sha256": "4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/combined-stream/1.0.8/License",
+            "sha256": "47eb8ca82c798246774946d1be0f9aa08f025fa8325ced0947aeeb4c05fe5547"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/cookie/0.6.0/LICENSE",
+            "sha256": "c02110eedc16c7114f1a9bdc026c65626ce1d9c7e27fd51a8e0feee8a48a6858"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/core-js-pure/3.38.1/LICENSE",
+            "sha256": "51aff0fa92ac49e01ce6ba0fed992b0a34f8afe15203dd5f38c43f9e88b0167b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/decompress-response/6.0.0/license",
+            "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/deep-extend/0.6.0/LICENSE",
+            "sha256": "e17120ad3deff741c2ca5cbe511971ca33971a1ba6e49694c6498309bb2680b9"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/deepmerge/4.3.1/license.txt",
+            "sha256": "6cfc4687cb2f2d86f4a77e6b526290d3878e5e512f3fec2f4cb36a9cb36f798b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/delayed-stream/1.0.0/License",
+            "sha256": "47eb8ca82c798246774946d1be0f9aa08f025fa8325ced0947aeeb4c05fe5547"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/detect-libc/2.0.3/LICENSE",
+            "sha256": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/drange/1.1.1/LICENSE",
+            "sha256": "05ff177fbd1f816df52d583de62e1a5ca8887766bee91156eae7879253a45c7b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/end-of-stream/1.4.4/LICENSE",
+            "sha256": "3fe8d55a98dbf260eace67c00cf9bc53edb46234e840098a0b93df3096b97fb6"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/expand-template/2.0.3/LICENSE",
+            "sha256": "0967624813244bf47da346449804af853437433cbdeb8c977f1e0d4bd14e0a3b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/fast-json-patch/3.1.1/LICENSE.txt",
+            "sha256": "26593d78926902a82eb9bc7e40d1811fc381055f23516b92fe48ca8399bf02df"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/follow-redirects/1.15.9/LICENSE",
+            "sha256": "bfa8a54bb952ccda79f0f1889721d108f5b605babbb2b8a3705ffb52f4132eb7"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/form-data/4.0.0/License",
+            "sha256": "e5b780d4f38d1d3328e3e53186c4e62d3fa149ea6f2bacd5de5ad0c30ac85343"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/fs-constants/1.0.0/LICENSE",
+            "sha256": "2281f2db407bdbb54f069eec38128b2dee2c0c952f52b786ef1faecb81767b3c"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/github-from-package/0.0.0/LICENSE",
+            "sha256": "435a6722c786b0a56fbe7387028f1d9d3f3a2d0fb615bb8fee118727c3f59b7b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/ieee754/1.2.1/LICENSE",
+            "sha256": "18d45466ba3253deae04667e267a91ea8de8548f18c1125264d1c9db28194cc1"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/inherits/2.0.4/LICENSE",
+            "sha256": "5ffe28e7ade7d8f10d85d5337a73fd793dac5c462fb9a28fbf8c5046c7fbca3b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/ini/1.3.8/LICENSE",
+            "sha256": "4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/js-yaml/4.1.0/LICENSE",
+            "sha256": "a07bc24468b9654ce76a547d47a2db282d07733b715db4c73a98bd63961f9550"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/lit-element/4.1.0/LICENSE",
+            "sha256": "45d31799d0db956cc3eb5469346abbd9b7025babc5ff29fab10d7095da992ef1"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/lit-html/3.2.0/LICENSE",
+            "sha256": "2b66f9390afde29edfe4314daff93f01fb182e1178053e228120178987e5db75"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/lit/3.2.1/LICENSE",
+            "sha256": "45d31799d0db956cc3eb5469346abbd9b7025babc5ff29fab10d7095da992ef1"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/lodash/4.17.21/LICENSE",
+            "sha256": "f71e8ed126b46346494aad5486874cd8f0aafe95092ed67d2e3cb6110f939abc"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/marked/4.3.0/LICENSE.md",
+            "sha256": "8e3a3f82f59a60958f56ca08f445647c32a4733dc7ca6c2c46f6eb898471ab9c"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/mime-db/1.52.0/LICENSE",
+            "sha256": "cc1dfd4dafa27271e8212cd3b274eeb3f262e40a6fdab36ddc3f9696f706f58b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/mime-types/2.1.35/LICENSE",
+            "sha256": "71f83c4c0621102a56d9853812777b85751bce7e9726f686f5b056c1f8a4b0e6"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/mimic-response/3.1.0/license",
+            "sha256": "5c932d88256b4ab958f64a856fa48e8bd1f55bc1d96b8149c65689e0c61789d3"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/minim/0.23.8/LICENSE",
+            "sha256": "7646e55e4b487bed8093757faad0db79c42dbd76df8cadceab1fff0381ae1a24"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/minimatch/7.4.6/LICENSE",
+            "sha256": "d11323827fa4edeaafc437cc5b91b6971b335f0127efeeb42bf5122fe8657e8f"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/minimist/1.2.8/LICENSE",
+            "sha256": "435a6722c786b0a56fbe7387028f1d9d3f3a2d0fb615bb8fee118727c3f59b7b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/mkdirp-classic/0.5.3/LICENSE",
+            "sha256": "a255b85c1a510ecfe660c4d442ecdbc1e9d07f4b4d3d7f90443f7e5570591e0a"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/nan/2.20.0/LICENSE.md",
+            "sha256": "95d152af7a776fba93bd795d3235d478cca4a207f8e1475fc9a3d71d28964c39"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/napi-build-utils/1.0.2/LICENSE",
+            "sha256": "9c6a91d2847bd9bfd493c1ca87b9c3f96302cfd069667e6dd4a6278e69a33a31"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/neotraverse/0.6.18/LICENSE",
+            "sha256": "50810ca34b3c662b51f54cdf2ba6bfa346f5528cc2af4001716092a55c397c28"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/node-abi/3.67.0/LICENSE",
+            "sha256": "9a508cd4122f2dc1cc39f8ab0b6950efbc49fb087a581c7177a4b8c9d5d0d6a1"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/node-abort-controller/3.1.1/LICENSE",
+            "sha256": "3ed030086e7f0b82f7c8d86b7c66342b6c820d76062458192cd4990a99f95dfa"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/node-domexception/1.0.0/LICENSE",
+            "sha256": "8ec1386f7f078b0c7cd25341cd80f332df902371cda9f40c10ec2b4007b420b7"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/node-fetch-commonjs/3.3.2/LICENSE.md",
+            "sha256": "3e2c11dcf3f17ab585baab8faba54772d7872f1c6e026022acd4b4006665efb0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/once/1.4.0/LICENSE",
+            "sha256": "4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/openapi-path-templating/1.6.0/LICENSE",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/openapi-path-templating/1.6.0/NOTICE",
+            "sha256": "aa7bc806dc0c1ead55d814520deea08eac05cb8a982126f3e89957cf5d871786"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/openapi-server-url-templating/1.1.0/LICENSE",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/openapi-server-url-templating/1.1.0/NOTICE",
+            "sha256": "0681f1f9848bf396593aa0ffd30450479ca94f94e6831fc63702e8f46323e48b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/prebuild-install/7.1.2/LICENSE",
+            "sha256": "0aa9add6a9158efad3e6649e3affd607c7e2629f6677af19f9988c8fbb0757b0"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/prismjs/1.29.0/LICENSE",
+            "sha256": "2b947f0901a7ffcf08a89957da9783c0e9c6e72cb6ce8e959f501ab5409e4d2b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/process/0.11.10/LICENSE",
+            "sha256": "59a400d04c5078579acc27ddd6452c1bdf763f9506e01364700935fbb1a7c91b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/proxy-from-env/1.1.0/LICENSE",
+            "sha256": "f55828df4b8752c48e765a806465b76a103e3cb363379c569b15a1df2ba2d79e"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/pump/3.0.2/LICENSE",
+            "sha256": "3fe8d55a98dbf260eace67c00cf9bc53edb46234e840098a0b93df3096b97fb6"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/ramda-adjunct/5.1.0/LICENSE.md",
+            "sha256": "42e071758a8ea21dbb8ca30b5e6cbc095a379f5391740a543461211e52a6f29e"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/ramda/0.30.1/LICENSE.txt",
+            "sha256": "62fba31dc0582fb6ee413403e47f2de319a4f14140ebd71be094c1f8c7a839ff"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/randexp/0.5.3/LICENSE",
+            "sha256": "bfc2c678db20d806b3787956f607a1509da5fca45b4d40a97c671cbee737159d"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/rc/1.2.8/LICENSE.APACHE2",
+            "sha256": "e8734448285a2dd773d40136ed5d5e8163a70701dd540cdc796cfca232f67d55"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/rc/1.2.8/LICENSE.BSD",
+            "sha256": "65e7e4d223688c601f42959defde380f8c4aa677fa4706da3b4a53f129bd78a3"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/rc/1.2.8/LICENSE.MIT",
+            "sha256": "d72dea1a8cdf3f4dfa2f594253d0c5b37baefc76e806f5ecb0e426393edcd505"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/readable-stream/3.6.2/LICENSE",
+            "sha256": "ec62dc96da0099b87f4511736c87309335527fb7031639493e06c95728dc8c54"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/regenerator-runtime/0.14.1/LICENSE",
+            "sha256": "51887a3d47051ac2fce1210562e5b9fe0830a8a8fabeb272c2d586eeb18a05fd"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/repeat-string/1.6.1/LICENSE",
+            "sha256": "3672fb6ef1c214578dfee689643516c2685f61ab08d130517ca8ea24f383a840"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/ret/0.2.2/LICENSE",
+            "sha256": "bfc2c678db20d806b3787956f607a1509da5fca45b4d40a97c671cbee737159d"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/safe-buffer/5.2.1/LICENSE",
+            "sha256": "c7cc929b57080f4b9d0c6cf57669f0463fc5b39906344dfc8d3bc43426b30eac"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/semver/7.6.3/LICENSE",
+            "sha256": "4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/short-unique-id/5.2.0/APACHE-2.0.txt",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/short-unique-id/5.2.0/README.md",
+            "sha256": "12e930cffec0fdea06712f9dfb10f39fd2a32fda4c081140f86f29578073f78e"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/short-unique-id/5.2.0/package.json",
+            "sha256": "f0fcc8c4621e8f381526e31a42ad58755adb1f2f4f526fadbc4d16259e4d9ff4"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/simple-concat/1.0.1/LICENSE",
+            "sha256": "d4c2065e2b936e62a4eb400efb4576edec9ca1388a9f78aa288e147275e7bc8b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/simple-get/4.0.1/LICENSE",
+            "sha256": "d4c2065e2b936e62a4eb400efb4576edec9ca1388a9f78aa288e147275e7bc8b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/string_decoder/1.3.0/LICENSE",
+            "sha256": "11f2aafb37d06b3ee5bdaf06e9811141d0da05263c316f3d627f45c20d43261b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/strip-json-comments/2.0.1/license",
+            "sha256": "6fb9754611c20f6649f68805e8c990e83261f29316e29de9e6cedae607b8634c"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/swagger-client/3.29.3/LICENSE",
+            "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/swagger-client/3.29.3/NOTICE",
+            "sha256": "9c6f5e2178717c84d9f8eb0ae6d33cbfdb77f73613fb25ec7f788f3b9518f52f"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/tar-fs/2.1.1/LICENSE",
+            "sha256": "3fe8d55a98dbf260eace67c00cf9bc53edb46234e840098a0b93df3096b97fb6"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/tar-stream/2.2.0/LICENSE",
+            "sha256": "3fe8d55a98dbf260eace67c00cf9bc53edb46234e840098a0b93df3096b97fb6"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/tree-sitter-json/0.20.2/LICENSE",
+            "sha256": "2e0110e07abef7c2548b26ec9d6969775617ca539a0dc8dbeeb14d6452c711d1"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/tree-sitter-yaml/0.5.0/LICENSE",
+            "sha256": "b727eee929bee836e8102cecf749a795b199f291b58c885bcd81cae727ac5a46"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/tree-sitter/0.20.4/LICENSE",
+            "sha256": "d39420a108609f487bece31800015cccabdb531fee4d543d66595459b3812d9a"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/tree-sitter/0.20.4/vendor/tree-sitter/LICENSE",
+            "sha256": "5eb1860bedd3a6eca8652ac3c8f0c8dbfb6878b6363628832d2fc05675b76a4f"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/tree-sitter/0.20.4/vendor/tree-sitter/lib/src/unicode/LICENSE",
+            "sha256": "6a18c5fac70d7860b57f5b72b4e2c9a1ba6b3d2741eef7ff9767c5379364f10d"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/ts-mixer/6.0.4/LICENSE",
+            "sha256": "76259fd03cdfcdfff2eee620d78c57c6a6e2fceb80ca91887e061cbad8f97951"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/ts-toolbelt/9.6.0/LICENSE",
+            "sha256": "737c928a0a66a1050e64490f3e12967ba8ba237a00410fc247625628d23b1499"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/tunnel-agent/0.6.0/LICENSE",
+            "sha256": "d446a8c73d7bbe4872d6524b15ae206f9a2d7eb53f8c9cb6e6c893a43acc5276"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/types-ramda/0.30.1/LICENSE.md",
+            "sha256": "2319953c82789662e6e76f6f7b9db3ad2107b049ecd80275402b0f3086cf6494"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/unraw/3.0.0/license.md",
+            "sha256": "cefb5a30e36c5a6dc926cfb5c8cc636964f6c8fe0be563c2c004e1e7a2507083"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/util-deprecate/1.0.2/LICENSE",
+            "sha256": "0154425673db15cdfa80ecba2c9b1f1a867f7197a006764712849bfc3a93cbb7"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/web-streams-polyfill/3.3.3/LICENSE",
+            "sha256": "81008a3fb78f69f3c4a72a9e005c8582342ab62864371b3ab8e1b6af9041e080"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/web-tree-sitter/0.20.3/LICENSE",
+            "sha256": "5eb1860bedd3a6eca8652ac3c8f0c8dbfb6878b6363628832d2fc05675b76a4f"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/wrappy/1.0.2/LICENSE",
+            "sha256": "4ec3d4c66cd87f5c8d8ad911b10f99bf27cb00cdfcff82621956e379186b016b"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dependencies/xml-but-prettier/1.0.1/LICENSE",
+            "sha256": "8a1a2aa0e90d61f0bfcbd9bac4787d971fa9ba699df1d1dedefb249367a3b5f4"
+          },
+          {
+            "path": "third_party/licenses/rapidoc/dist/rapidoc-min.js.LICENSE.txt",
+            "sha256": "b6366d212427ca41732dd93ce56a47ceaf7a0902edc2e90b22ca6a9d6feff20e"
+          }
+        ]
+      }
+    },
+    {
+      "id": "assets/js-yaml",
+      "version": "4.1.1",
+      "source": "https://registry.npmjs.org/js-yaml/-/js-yaml-4.1.1.tgz",
+      "assets": [
+        {
+          "path": "internal/launcher/static/js-yaml.min.js",
+          "sha256": "0de3dec92d20eab9e0b46a5d928cd45ec025d73e348ddf458dbfb01da00cb473"
+        }
+      ],
+      "terms": {
+        "license": "MIT",
+        "files": [
+          {
+            "path": "third_party/licenses/js-yaml/LICENSE",
+            "sha256": "a07bc24468b9654ce76a547d47a2db282d07733b715db4c73a98bd63961f9550"
+          },
+          {
+            "path": "third_party/licenses/js-yaml/PROVENANCE.json",
+            "sha256": "0c90d3594fd8cd049cb62f597f6635b11954738955fa35fc6c975a377470431e"
+          }
+        ]
+      }
+    },
+    {
+      "id": "assets/lucide",
+      "version": "vendored snapshot sha256:0e4775b15c6fe9d7b673414f776ea081706025208d8ef976cfefa3cf971a7781",
+      "source": "https://github.com/lucide-icons/lucide (original package version not recorded; exact sprite hash retained)",
+      "assets": [
+        {
+          "path": "internal/webassets/lucide/sprite.svg",
+          "sha256": "0e4775b15c6fe9d7b673414f776ea081706025208d8ef976cfefa3cf971a7781"
+        }
+      ],
+      "terms": {
+        "license": "ISC and MIT (Feather-derived icons)",
+        "files": [
+          {
+            "path": "internal/webassets/lucide/LICENSE",
+            "sha256": "b495047bd93a9b06913511076f504daba17d5bbeb3e0650f3bb53a4220329c57"
+          }
+        ]
+      }
+    },
+    {
+      "id": "fonts/pt-sans-serif",
+      "version": "vendored PT Sans / PT Serif; exact font snapshots identified by SHA-256",
+      "source": "https://www.paratype.com/public/",
+      "assets": [
+        {
+          "path": "internal/sheet/fonts/PTSans-Bold.ttf",
+          "sha256": "3128bd5ecf01816e59a23d54c57a7a6b14615b07db53ff277c77376010265b05"
+        },
+        {
+          "path": "internal/sheet/fonts/PTSans-Regular.ttf",
+          "sha256": "9cc831490532009bae2b3ce0d39c62adfc889060beb421593bfd9d2396d0f10a"
+        },
+        {
+          "path": "internal/sheet/fonts/PTSerif-Bold.ttf",
+          "sha256": "038ba7336bd7ea14f12ad155bed51a4345cac5153275d521dec3ba04021c526e"
+        },
+        {
+          "path": "internal/sheet/fonts/PTSerif-BoldItalic.ttf",
+          "sha256": "f003788ba08981eb0988b3557a6f224a53dab49c20e283e8b74d5af3c466f8be"
+        },
+        {
+          "path": "internal/sheet/fonts/PTSerif-Italic.ttf",
+          "sha256": "f57e95ff9dc85691a3b2e193f2028db36f6663939a46c0fc4f286d618b80b7ce"
+        },
+        {
+          "path": "internal/sheet/fonts/PTSerif-Regular.ttf",
+          "sha256": "a4951fade06ff8f09b7673aa81ffb65a8cd409e24d3289a6dc670bc4dda2557a"
+        }
+      ],
+      "terms": {
+        "license": "OFL-1.1",
+        "files": [
+          {
+            "path": "internal/sheet/fonts/OFL.txt",
+            "sha256": "ddf311c28ddf5a5ad9747649837346b67bed9d356789c3072bb27dbce49e514d"
+          }
+        ]
+      }
+    },
+    {
+      "id": "vendored/pdfparse",
+      "version": "github.com/dslipak/pdf v0.0.2 with local patches",
+      "source": "https://github.com/dslipak/pdf/tree/v0.0.2",
+      "assets": [],
+      "terms": {
+        "license": "BSD-3-Clause",
+        "files": [
+          {
+            "path": "internal/pdfimport/pdfparse/LICENSE",
+            "sha256": "2d36597f7117c38b006835ae7f537487207d8ec407aa9d9980794b2030cbc067"
+          },
+          {
+            "path": "internal/pdfimport/pdfparse/NOTICE.md",
+            "sha256": "214fa0e98b2759116e786432148e0fb624d871c464bf611c1b508f983f17b268"
+          }
+        ]
+      }
+    },
+    {
+      "id": "native/webview",
+      "module": "github.com/webview/webview_go",
+      "version": "fb6b17d826041411e6346cd9a785a5ceba7987c4",
+      "source": "https://github.com/webview/webview_go",
+      "assets": [
+        {
+          "path": "third_party/webview_go/libs/webview/include/webview.h",
+          "sha256": "f088e2aca7173b03030d321cc9998aff51ba4c0d1d5e1ecd4166d941c3e15873"
+        },
+        {
+          "path": "third_party/webview_go/libs/webview/version.txt",
+          "sha256": "2336871e50bb2f09fa03a3b20dbd0568fb1a136f7470b1cae814358c1f88d938"
+        }
+      ],
+      "terms": {
+        "license": "MIT",
+        "files": [
+          {
+            "path": "third_party/webview_go/libs/webview/LICENSE",
+            "sha256": "22c4c38a605ae5362bdbd795b4358f3599c7a7e58d4824c4ed55e3be192386e0"
+          }
+        ]
+      }
+    },
+    {
+      "id": "native/mswebview2",
+      "module": "github.com/webview/webview_go",
+      "version": "1.0.1150.38",
+      "source": "https://github.com/webview/webview_go",
+      "assets": [
+        {
+          "path": "third_party/webview_go/libs/mswebview2/include/WebView2.h",
+          "sha256": "56f028e9035647b651032b743593fec7c3646afcc583a0c127f724e912d9138b"
+        },
+        {
+          "path": "third_party/webview_go/libs/mswebview2/version.txt",
+          "sha256": "8c1210aec2a4e609aacb4a0762e06068bf2ec7e0c5b75df520c7d10418e06c9a"
+        }
+      ],
+      "terms": {
+        "license": "BSD-3-Clause",
+        "files": [
+          {
+            "path": "third_party/webview_go/libs/mswebview2/LICENSE",
+            "sha256": "0af8f1b807512aae39c2ac1aa4d0cae65cabecb6fd554b8439a5162a0d6eca55"
+          }
+        ]
+      }
+    }
+  ],
+  "managed_roots": [
+    "internal/webassets",
+    "internal/ui/rapidoc",
+    "internal/sheet/fonts",
+    "third_party/webview_go/libs"
+  ]
+}

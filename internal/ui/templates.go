@@ -3545,6 +3545,10 @@ const tplAbout = `
         {{with .UpdateAvailable}}<div style="margin-top:6px;font-weight:400;font-size:13px;color:#166534">{{t $.Lang "Доступна новая версия платформы"}}: {{.}} <span style="color:#94a3b8">— {{t $.Lang "обновление выполняется из лаунчера"}}</span></div>{{end}}
       </td>
     </tr>
+    {{with .Distribution}}{{if .Present}}
+    <tr><td style="padding:14px 0;color:#64748b;font-size:14px">{{t $.Lang "Изменённая сборка"}}</td><td style="padding:14px 0;font-size:14px">{{.Name}} {{.Version}}</td></tr>
+    {{if .Supplier}}<tr><td style="padding:14px 0;color:#64748b;font-size:14px">{{t $.Lang "Поставщик сборки"}}</td><td style="padding:14px 0;font-size:14px">{{.Supplier}}</td></tr>{{end}}
+    {{end}}{{end}}
     {{if .Cfg.PlatAuthor}}
     <tr>
       <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">{{t $.Lang "Правообладатель платформы"}}</td>

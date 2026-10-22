@@ -36,6 +36,7 @@ func (s *Server) about(w http.ResponseWriter, r *http.Request) {
 	user := auth.UserFromContext(r.Context())
 	s.render(w, r, "page-about", map[string]any{
 		"Cfg":             cfg,
+		"Distribution":    version.DistributionInfo(),
 		"Catalogs":        catalogs,
 		"Documents":       docs,
 		"Registers":       len(s.reg.Registers()),
