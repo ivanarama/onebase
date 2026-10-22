@@ -2462,9 +2462,9 @@ func (tr *translator) genBalances(reg *metadata.Register, args [][]tok) (string,
 			"SUM(CASE WHEN вид_движения = 'Приход' THEN "+col+" ELSE -"+col+" END) AS "+col+"остаток")
 	}
 	// атрибуты — не часть ключа измерения, но должны быть
-	// доступны в outer SELECT/WHERE. Берём MIN(col) — детерминированно
-	// и работает в обоих диалектах (TEXT/UUID сравнимы лексикографически).
-	cols = append(cols, attributeAggCols(reg.Attributes)...)
+	// доступны в outer SELECT/WHERE. Агрегат — attributeAggCols: MIN, а для
+	// ссылок и булевых на PostgreSQL — их собственные формы (см. там).
+	cols = append(cols, attributeAggCols(reg.Attributes, tr.opts.Dialect)...)
 
 	var sb strings.Builder
 	sb.WriteString("SELECT ")
@@ -2720,7 +2720,7 @@ func (tr *translator) genTurnovers(reg *metadata.Register, args [][]tok) (string
 			"SUM(CASE WHEN вид_движения = 'Приход' THEN "+col+" ELSE -"+col+" END) AS "+col+"оборот",
 		)
 	}
-	cols = append(cols, attributeAggCols(reg.Attributes)...)
+	cols = append(cols, attributeAggCols(reg.Attributes, tr.opts.Dialect)...)
 
 	var sb strings.Builder
 	sb.WriteString("SELECT ")
@@ -2878,7 +2878,7 @@ func (tr *translator) genBalancesAndTurnovers(reg *metadata.Register, args [][]t
 					" THEN -"+col+" ELSE 0 END) AS "+col+"конечный")
 		}
 	}
-	cols = append(cols, attributeAggCols(reg.Attributes)...)
+	cols = append(cols, attributeAggCols(reg.Attributes, tr.opts.Dialect)...)
 
 	var sb strings.Builder
 	sb.WriteString("SELECT ")
@@ -2916,11 +2916,28 @@ func (tr *translator) genBalancesAndTurnovers(reg *metadata.Register, args [][]t
 // варьируется в пределах одного значения измерения, MIN отдаст
 // лексикографически минимальное; в стабильных учётных моделях такое
 // нехарактерно.
-func attributeAggCols(attrs []metadata.Field) []string {
+//
+// На PostgreSQL у uuid и boolean агрегата min нет (function min(uuid) does not
+// exist): ссылочный реквизит берётся минимумом текста с обратным приведением к
+// uuid — тот же порядок, что у SQLite, где ссылка хранится текстом, — а
+// булев — bool_and, то есть тот же минимум (ЛОЖЬ < ИСТИНА). На SQLite оба
+// хранятся TEXT/INTEGER, и MIN работает как есть.
+func attributeAggCols(attrs []metadata.Field, dialect storage.Dialect) []string {
+	pg := dialectOrDefault(dialect).Name() == "postgres"
 	out := make([]string, 0, len(attrs))
 	for _, a := range attrs {
 		col := metadata.ColumnName(a)
-		out = append(out, "MIN("+col+") AS "+col)
+		// Наружу — логическое имя, как у измерений (dimSelCols): внешний
+		// запрос и авто-JOIN ссылки обращаются к «мастер», а не к «мастер_id».
+		name := lowerFast(a.Name)
+		switch {
+		case pg && a.RefEntity != "":
+			out = append(out, "MIN("+col+"::text)::uuid AS "+name)
+		case pg && a.Type == metadata.FieldTypeBool:
+			out = append(out, "bool_and("+col+") AS "+name)
+		default:
+			out = append(out, "MIN("+col+") AS "+name)
+		}
 	}
 	return out
 }
