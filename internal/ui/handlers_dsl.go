@@ -83,7 +83,7 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 		Ctx: ctx, CtxSource: txState, Reg: s.reg, Store: s.store, Mailer: s.mailer, Movements: mc,
 		NetGuard:          s.netGuard(ctx),
 		ExecGuard:         s.execGuard(ctx),
-		Notifier:          s.notifier(),
+		Notifier:          s.notifier(ctx),
 		Interp:            s.interp, // для hook-правила конфликта в ПланыОбмена.ЗагрузитьПакет
 		EmailFileResolver: s.emailAttachmentPathResolver(txState.Ctx),
 		// Подписи ссылочных констант: живой контекст, RowLabel, полевая

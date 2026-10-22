@@ -1205,7 +1205,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       const res = await fetch(URL, {
         method: 'POST',
         body: body,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', 'X-OneBase-Shell': (typeof window.obShellId === 'function' ? window.obShellId() : '') },
         credentials: 'same-origin'
       });
       const data = await res.json();
@@ -1766,6 +1766,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 		  // and the exact envelope is retained with an unknown intent for replay.
           headers: {
 			'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
+			'X-OneBase-Shell': (typeof window.obShellId === 'function' ? window.obShellId() : ''),
 			'X-OneBase-Close-Intent': intentID,
 			'X-OneBase-Close-Epoch': String(envelope.epoch || ''),
 			'X-OneBase-Close-Issued-At': String(envelope.issuedAt || ''),

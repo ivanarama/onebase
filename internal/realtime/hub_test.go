@@ -266,3 +266,49 @@ func TestHubCloseDisconnectsAndRejectsSubscribers(t *testing.T) {
 	}
 	h.Publish("*", Event{Name: "ignored"})
 }
+
+// Событие с адресом оболочки получает подписчик этой оболочки и подписчик
+// без адреса (страница со старым ui.js), но не другая оболочка того же
+// пользователя; при переподключении replay соблюдает то же правило.
+func TestPublishShellScopedEvent(t *testing.T) {
+	h := NewHub()
+	_, a, cancelA := h.SubscribeShellSince("u", "anna", nil, "shell-a", 0)
+	defer cancelA()
+	_, b, cancelB := h.SubscribeShellSince("u", "anna", nil, "shell-b", 0)
+	defer cancelB()
+	_, legacy, cancelLegacy := h.SubscribeShellSince("u", "anna", nil, "", 0)
+	defer cancelLegacy()
+
+	h.Publish("anna", Event{Name: "ui.открытьФорму", Shell: "shell-a"})
+	h.Publish("anna", Event{Name: "ui.оповещение"})
+
+	next := func(ch <-chan Event) string {
+		t.Helper()
+		select {
+		case ev := <-ch:
+			return ev.Name
+		case <-time.After(time.Second):
+			return "<нет>"
+		}
+	}
+	if got := next(a); got != "ui.открытьФорму" {
+		t.Fatalf("оболочка-источник: %q", got)
+	}
+	if got := next(b); got != "ui.оповещение" {
+		t.Fatalf("другая оболочка получила %q вместо тоста", got)
+	}
+	if got := next(legacy); got != "ui.открытьФорму" {
+		t.Fatalf("подписчик без адреса: %q", got)
+	}
+
+	// Переподключение другой оболочки с Last-Event-ID до обоих событий:
+	// replay отдаёт ей тост, но не чужую команду.
+	_, replay, cancelReplay := h.SubscribeShellSince("u", "anna", nil, "shell-c", 3)
+	defer cancelReplay()
+	if got := next(replay); got != "ui.оповещение" {
+		t.Fatalf("replay другой оболочке: %q", got)
+	}
+	if got := next(replay); got != "<нет>" {
+		t.Fatalf("replay другой оболочке отдал лишнее: %q", got)
+	}
+}

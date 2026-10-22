@@ -15,6 +15,28 @@ try {
 // оболочки /ui/app, прячем хром (топбар/подсистемы) — навигация идёт из оболочки.
 window.__obEmbedded = window.self !== window.top;
 
+// Адрес оболочки — случайный id верхнего окна. С ним окно подписывается на
+// /ui/events, а формы его фреймов шлют его в запросах событий (заголовок
+// X-OneBase-Shell): команды формы самому себе (ui.открытьФорму /
+// ui.закрытьФорму) сервер отдаёт только этой оболочке, а не всем вкладкам
+// браузера пользователя.
+if (!window.__obEmbedded && !window.__obShellId) {
+  window.__obShellId = (function () {
+    try {
+      if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+    } catch (_) {}
+    return 'w' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
+  })();
+}
+
+function obShellId() {
+  try {
+    if (window.top && window.top !== window && window.top.__obShellId) return String(window.top.__obShellId);
+  } catch (_) {}
+  return window.__obShellId ? String(window.__obShellId) : '';
+}
+window.obShellId = obShellId;
+
 window.obUIMessage = function (name, fallback) {
   try {
     var node = document.getElementById('ob-ui-messages');
@@ -5728,7 +5750,8 @@ window.onebaseDevice = {
   function connect() {
     if (typeof EventSource === 'undefined') return;
     if (window.__obEvents) return;
-    var es = new EventSource('/ui/events');
+    var shell = obShellId();
+    var es = new EventSource('/ui/events' + (shell ? '?shell=' + encodeURIComponent(shell) : ''));
     window.__obEvents = es;
     es.onopen = function () {
       // План 87: служебные события данные.* не переигрываются из replay-окна.

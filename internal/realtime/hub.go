@@ -23,6 +23,11 @@ type Event struct {
 	Name   string
 	Data   any
 	System string
+	// Shell — адрес оболочки (верхнего окна браузера), которой адресовано
+	// событие. Непустой — событие получает только подписчик этой оболочки;
+	// подписчик без адреса (страница со старым ui.js) получает его, как
+	// раньше. В кадр SSE не попадает.
+	Shell string
 }
 
 // subscriberBuffer holds the full replay window. A slower live subscriber is
@@ -38,6 +43,7 @@ type subscriber struct {
 	userID string
 	login  string
 	roles  []string
+	shell  string
 	ch     chan Event
 }
 
@@ -72,6 +78,12 @@ func (h *Hub) Subscribe(userID, login string, roles []string) (id string, ch <-c
 // которые он мог пропустить при автоматическом reconnect. lastID берётся из
 // Last-Event-ID SSE-клиента; 0 означает новую страницу без replay.
 func (h *Hub) SubscribeSince(userID, login string, roles []string, lastID int64) (id string, ch <-chan Event, cancel func()) {
+	return h.SubscribeShellSince(userID, login, roles, "", lastID)
+}
+
+// SubscribeShellSince — SubscribeSince с адресом оболочки подписчика: события
+// с Event.Shell другой оболочки ему не доставляются.
+func (h *Hub) SubscribeShellSince(userID, login string, roles []string, shell string, lastID int64) (id string, ch <-chan Event, cancel func()) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closed {
@@ -81,7 +93,7 @@ func (h *Hub) SubscribeSince(userID, login string, roles []string, lastID int64)
 	}
 	h.seq++
 	id = "s" + strconv.FormatInt(h.seq, 10)
-	s := &subscriber{id: id, userID: userID, login: login, roles: roles, ch: make(chan Event, subscriberBuffer)}
+	s := &subscriber{id: id, userID: userID, login: login, roles: roles, shell: shell, ch: make(chan Event, subscriberBuffer)}
 	h.subs[id] = s
 	h.replayLocked(s, lastID, time.Now())
 	return id, s.ch, func() { h.unsubscribe(id) }
@@ -117,7 +129,7 @@ func (h *Hub) Publish(target string, ev Event) {
 	now := time.Now()
 	h.appendRecentLocked(target, ev, now)
 	for id, s := range h.subs {
-		if matches(s, target) {
+		if matchesEvent(s, target, ev) {
 			select {
 			case s.ch <- ev:
 			default:
@@ -229,7 +241,7 @@ func (h *Hub) replayLocked(s *subscriber, lastID int64, now time.Time) {
 	}
 	cutoff := now.Add(-recentTTL)
 	for _, item := range h.recent {
-		if item.ev.ID <= lastID || item.at.Before(cutoff) || !matches(s, item.target) {
+		if item.ev.ID <= lastID || item.at.Before(cutoff) || !matchesEvent(s, item.target, item.ev) {
 			continue
 		}
 		select {
@@ -238,6 +250,14 @@ func (h *Hub) replayLocked(s *subscriber, lastID int64, now time.Time) {
 			return
 		}
 	}
+}
+
+// matchesEvent — адрес совпал и событие не адресовано другой оболочке.
+func matchesEvent(s *subscriber, target string, ev Event) bool {
+	if ev.Shell != "" && s.shell != "" && s.shell != ev.Shell {
+		return false
+	}
+	return matches(s, target)
 }
 
 // matches решает, адресовано ли событие подписчику.
