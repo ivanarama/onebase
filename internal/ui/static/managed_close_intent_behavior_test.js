@@ -1090,10 +1090,15 @@ test('failed current re-snapshot adopts saved identity without applying stale mu
   assert.equal(app.context._obFormDirty, true);
 });
 
-test('form events retain trigger context, execute in order and fence close/native submit while queued', async () => {
+test('form events retain trigger context, execute in order, close waits for the queue and native submit is fenced', async () => {
   const eventCalls = [];
+  const closeCalls = [];
   let completeFirst;
   const app = runtime((url, options) => {
+    if (url === '/ui/catalog/Тест/form-close-intent') {
+      closeCalls.push(options);
+      return Promise.resolve(response({ok: true, close: {intentId: options.headers['X-OneBase-Close-Intent'], allowed: true, saved: options.headers['X-OneBase-Close-Mode'] === 'save'}}));
+    }
     assert.equal(url, '/ui/catalog/Тест/form-event');
     const body = new URLSearchParams(options.body.toString());
     eventCalls.push(body);
@@ -1111,14 +1116,22 @@ test('form events retain trigger context, execute in order and fence close/nativ
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(eventCalls.length, 1, 'second form event raced the first HTTP request');
 
-  app.context.obBeginManagedCloseHandoff();
-  const refusedClose = await app.context.obRequestFormClose({reason: 'ok', mode: 'save'});
-  assert.equal(refusedClose.error, 'form-event-pending');
+  // Закрытие, запрошенное во время события, ждёт очередь, а не отказывает
+  // сразу; нативный submit по-прежнему не проходит.
+  let closeSettled = false;
+  const awaitedClose = app.context.obRequestFormClose({reason: 'ok', mode: 'save'});
+  awaitedClose.then(() => { closeSettled = true; });
   assert.equal(dispatchSubmit(app).defaultPrevented, true, 'native submit raced a form event');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closeSettled, false, 'close decided before the queued events finished');
+  assert.equal(closeCalls.length, 0, 'close request raced queued form events');
 
   completeFirst(response({ok: true, savedId: 'queued-saved', version: 2}));
   await first;
   await second;
+  const decision = await awaitedClose;
+  assert.equal(decision.allowed, true, 'close after the queue drained must go to the controller');
+  assert.equal(closeCalls.length, 1);
   assert.equal(eventCalls.length, 2);
   assert.equal(eventCalls[0].get('Value'), 'first snapshot');
   assert.equal(eventCalls[1].get('Value'), 'second snapshot');
@@ -1126,9 +1139,47 @@ test('form events retain trigger context, execute in order and fence close/nativ
 	assert.equal(eventCalls[1].get('_version'), '2', 'queued event kept the pre-save optimistic version');
   assert.deepEqual(eventCalls.map((body) => body.get('_event')), ['Click', 'Change']);
 
-  app.form.values.set('Value', 'after handoff refusal');
-  await app.context.obFire('Third', 'Click');
-  assert.equal(eventCalls.length, 3, 'refused embedded close left closeHandoffPending stuck');
+});
+
+test('close refuses when a new form event arrives while it waits', async () => {
+  const eventCalls = [];
+  const completions = [];
+  const app = runtime((url) => {
+    assert.equal(url, '/ui/catalog/Тест/form-event', 'refused close must not reach the controller');
+    eventCalls.push(url);
+    return new Promise((resolve) => { completions.push(resolve); });
+  });
+
+  const first = app.context.obFire('First', 'Change');
+  await new Promise((resolve) => setImmediate(resolve));
+  const close = app.context.obRequestFormClose({reason: 'close', mode: 'discard'});
+  // Новое событие пришло, пока закрытие ждёт: один круг очереди, затем отказ.
+  const second = app.context.obFire('Second', 'Change');
+  completions[0](response({ok: true}));
+  await first;
+  const refused = await close;
+  assert.equal(refused.error, 'form-event-pending');
+  completions[1](response({ok: true}));
+  await second;
+  assert.equal(eventCalls.length, 2);
+});
+
+test('close waiting for a stuck form event gives up after the close timeout and clears the embedded handoff', async () => {
+  const completions = [];
+  const app = runtime(() => new Promise((resolve) => { completions.push(resolve); }), {closeTimeoutMs: 30});
+  const first = app.context.obFire('First', 'Change');
+  await new Promise((resolve) => setImmediate(resolve));
+  app.context.obBeginManagedCloseHandoff();
+  const refused = await app.context.obRequestFormClose({reason: 'close', mode: 'discard'});
+  assert.equal(refused.error, 'form-event-pending');
+  completions[0](response({ok: true}));
+  await first;
+
+  const third = app.context.obFire('Third', 'Click');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(completions.length, 2, 'refused embedded close left closeHandoffPending stuck');
+  completions[1](response({ok: true}));
+  await third;
 });
 
 test('queued event snapshots form after the previous handler response is applied', async () => {
