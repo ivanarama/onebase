@@ -23,6 +23,7 @@ dbquery.exe
 
 # Test/coverage artifacts
 coverage.out
+coverage.out.report/
 *.log
 
 # Артефакты аудита конфигураций (onebase describe --json)

@@ -1,11 +1,14 @@
 package devserver
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"net/netip"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,15 +17,121 @@ import (
 	"time"
 )
 
-// TestSupervisorHelperProcess — «сервер» для тестов супервизора: живёт, пока его
-// не остановят. Запускается не тестовым раннером, а через os.Args[0] (приём из
-// os/exec): нужен настоящий процесс, чтобы проверять его остановку.
+// The helper owns one persistent TCP connection. It replies with its PID, and
+// never closes that connection itself: EOF or a peer reset means the OS terminated
+// the child (or Supervisor's sole Wait reaped it), not a read of Cmd.ProcessState.
 func TestSupervisorHelperProcess(t *testing.T) {
 	if os.Getenv("ONEBASE_DEVSERVER_HELPER") != "1" {
 		t.Skip("вспомогательный процесс запускается супервизором, а не раннером")
 	}
-	// Sleep, а не select{} — пустой select роняет рантайм как deadlock.
-	time.Sleep(2 * time.Minute)
+	observer, err := netip.ParseAddrPort(os.Getenv("ONEBASE_DEVSERVER_OBSERVER"))
+	if err != nil || observer.Addr() != netip.AddrFrom4([4]byte{127, 0, 0, 1}) || observer.Port() == 0 {
+		t.Fatal("helper observer must be a numeric IPv4 loopback address with a port")
+	}
+	conn, err := net.DialTimeout("tcp4", observer.String(), 10*time.Second) //nolint:gosec // G704: numeric 127.0.0.1 and a nonzero port are checked above; no DNS or external hosts.
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Do not defer conn.Close: only process termination must close this socket.
+	if _, err := fmt.Fprintf(conn, "ready %d\n", os.Getpid()); err != nil {
+		os.Exit(2)
+	}
+	scanner := bufio.NewScanner(conn)
+	for scanner.Scan() {
+		switch scanner.Text() {
+		case "ping":
+			if _, err := fmt.Fprintf(conn, "pong %d\n", os.Getpid()); err != nil {
+				os.Exit(2)
+			}
+		case "exit":
+			os.Exit(0)
+		case "reset":
+			// Exercise the reset path on Unix too; Windows may do this on Kill.
+			if err := conn.(*net.TCPConn).SetLinger(0); err != nil {
+				os.Exit(2)
+			}
+			os.Exit(0)
+		default:
+			os.Exit(2)
+		}
+	}
+	os.Exit(2)
+}
+
+// observedChild only reads the process's immutable PID and exchanges messages
+// on its own connection. Supervisor remains the only caller of cmd.Wait.
+type observedChild struct {
+	cmd     *exec.Cmd
+	conn    net.Conn
+	reader  *bufio.Reader
+	mu      sync.Mutex
+	stopped bool
+}
+
+func (p *observedChild) ping() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.conn == nil || p.stopped {
+		return errors.New("helper is not connected")
+	}
+	if err := p.conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintln(p.conn, "ping"); err != nil {
+		return err
+	}
+	line, err := p.reader.ReadString('\n')
+	if err != nil {
+		return err
+	}
+	if line != fmt.Sprintf("pong %d\n", p.cmd.Process.Pid) {
+		return fmt.Errorf("unexpected helper response: %q", line)
+	}
+	return nil
+}
+
+func (p *observedChild) waitStopped() error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.stopped {
+		return nil
+	}
+	if p.conn == nil {
+		return errors.New("missing helper connection")
+	}
+	if err := p.conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return err
+	}
+	b, err := p.reader.ReadByte()
+	if err == nil {
+		return fmt.Errorf("expected helper termination, got byte %q", b)
+	}
+	// A timeout or arbitrary read error cannot prove process termination.
+	if !errors.Is(err, io.EOF) && !helperPeerReset(err) {
+		return fmt.Errorf("expected helper EOF or peer reset: %w", err)
+	}
+	p.stopped = true
+	return nil
+}
+
+func requireHelperAlive(t *testing.T, p *observedChild) {
+	t.Helper()
+	if p == nil {
+		t.Fatal("helper was not started")
+	}
+	if err := p.ping(); err != nil {
+		t.Fatalf("helper does not answer: %v", err)
+	}
+}
+
+func requireHelperStopped(t *testing.T, p *observedChild) {
+	t.Helper()
+	if p == nil {
+		t.Fatal("helper was not started")
+	}
+	if err := p.waitStopped(); err != nil {
+		t.Fatalf("helper did not terminate: %v", err)
+	}
 }
 
 // helperSupervisor собирает супервизор с подменёнными сборкой и запуском: обе
@@ -30,6 +139,30 @@ func TestSupervisorHelperProcess(t *testing.T) {
 func helperSupervisor(t *testing.T, srcDir string) (*Supervisor, *recorder) {
 	t.Helper()
 	rec := &recorder{}
+	// Registered before runSupervisor cleanup: Run must finish and reap children
+	// before their observer sockets are checked and closed. No reader goroutine
+	// or second Wait needs a separate lifetime here.
+	t.Cleanup(func() {
+		rec.mu.Lock()
+		procs := append([]*observedChild(nil), rec.procs...)
+		startErrors := append([]error(nil), rec.startErrors...)
+		rec.mu.Unlock()
+		for _, err := range startErrors {
+			t.Error(err)
+		}
+		for _, p := range procs {
+			if err := p.waitStopped(); err != nil {
+				t.Errorf("helper cleanup: %v", err)
+				_ = p.cmd.Process.Kill()
+				if err := p.waitStopped(); err != nil {
+					t.Errorf("helper after kill: %v", err)
+				}
+			}
+			if p.conn != nil {
+				_ = p.conn.Close()
+			}
+		}
+	})
 	sup := &Supervisor{
 		SourceDir: srcDir,
 		Out:       &rec.out,
@@ -47,17 +180,59 @@ func helperSupervisor(t *testing.T, srcDir string) (*Supervisor, *recorder) {
 			return nil, nil
 		},
 		start: func(_ string, _, _ []string, _ io.Writer) (*exec.Cmd, error) {
-			cmd := exec.Command(os.Args[0], "-test.run=TestSupervisorHelperProcess") //nolint:gosec // G204: тест запускает собственный бинарь
-			cmd.Env = append(os.Environ(), "ONEBASE_DEVSERVER_HELPER=1")
+			rec.mu.Lock()
+			var previous *observedChild
+			if len(rec.procs) > 0 {
+				previous = rec.procs[len(rec.procs)-1]
+			}
+			rec.mu.Unlock()
+			// Check at the replacement boundary, before starting a new child.
+			if previous != nil {
+				if err := previous.waitStopped(); err != nil {
+					rec.mu.Lock()
+					rec.startErrors = append(rec.startErrors, err)
+					rec.mu.Unlock()
+					return nil, err
+				}
+			}
+			listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+			if err != nil {
+				return nil, err
+			}
+			defer func() { _ = listener.Close() }()
+			if err := listener.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+				return nil, err
+			}
+			cmd := exec.Command(os.Args[0], "-test.run=^TestSupervisorHelperProcess$") //nolint:gosec // G204: тест запускает собственный бинарь
+			cmd.Env = append(os.Environ(), "ONEBASE_DEVSERVER_HELPER=1", "ONEBASE_DEVSERVER_OBSERVER="+listener.Addr().String())
 			cmd.Stdout = io.Discard
 			cmd.Stderr = io.Discard
 			if err := cmd.Start(); err != nil {
 				return nil, err
 			}
+			p := &observedChild{cmd: cmd}
+			conn, handshakeErr := listener.Accept()
+			if handshakeErr == nil {
+				p.conn, p.reader = conn, bufio.NewReader(conn)
+				handshakeErr = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+				if handshakeErr == nil {
+					var line string
+					line, handshakeErr = p.reader.ReadString('\n')
+					if handshakeErr == nil && line != fmt.Sprintf("ready %d\n", cmd.Process.Pid) {
+						handshakeErr = fmt.Errorf("unexpected handshake: %q", line)
+					}
+				}
+			}
 			rec.mu.Lock()
 			defer rec.mu.Unlock()
 			rec.starts++
-			rec.procs = append(rec.procs, cmd)
+			rec.procs = append(rec.procs, p)
+			if handshakeErr != nil {
+				rec.startErrors = append(rec.startErrors, handshakeErr)
+				_ = cmd.Process.Kill()
+			}
+			// Even a failed handshake returns the started command, so Supervisor
+			// owns and completes its Wait. The test records the handshake failure.
 			return cmd, nil
 		},
 	}
@@ -65,12 +240,13 @@ func helperSupervisor(t *testing.T, srcDir string) (*Supervisor, *recorder) {
 }
 
 type recorder struct {
-	mu       sync.Mutex
-	builds   int
-	starts   int
-	procs    []*exec.Cmd
-	buildErr error
-	out      syncBuffer
+	mu          sync.Mutex
+	builds      int
+	starts      int
+	procs       []*observedChild
+	startErrors []error
+	buildErr    error
+	out         syncBuffer
 }
 
 func (r *recorder) counts() (builds, starts int) {
@@ -85,7 +261,7 @@ func (r *recorder) failBuilds(err error) {
 	r.buildErr = err
 }
 
-func (r *recorder) proc(i int) *exec.Cmd {
+func (r *recorder) proc(i int) *observedChild {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if i >= len(r.procs) {
@@ -163,6 +339,7 @@ func TestSupervisor_RebuildsAndRestartsOnGoChange(t *testing.T) {
 
 	waitFor(t, "первый запуск сервера", func() bool { _, starts := rec.counts(); return starts == 1 })
 	first := rec.proc(0)
+	requireHelperAlive(t, first)
 
 	writeGo(t, dir, "main.go", "package main // правка\n")
 	waitFor(t, "перезапуск после пересборки", func() bool { _, starts := rec.counts(); return starts == 2 })
@@ -170,11 +347,8 @@ func TestSupervisor_RebuildsAndRestartsOnGoChange(t *testing.T) {
 	if builds, _ := rec.counts(); builds != 2 {
 		t.Errorf("ожидалось 2 сборки, получено %d", builds)
 	}
-	// Прежний процесс должен быть остановлен, а не брошен: иначе порт остался бы
-	// за ним и пересобранный сервер не поднялся бы.
-	waitFor(t, "остановку прежнего процесса", func() bool {
-		return first != nil && first.ProcessState != nil
-	})
+	requireHelperStopped(t, first)
+	requireHelperAlive(t, rec.proc(1))
 }
 
 // Не скомпилировалось — прежний сервер продолжает работать. Это главное свойство
@@ -187,6 +361,7 @@ func TestSupervisor_KeepsRunningServerWhenBuildFails(t *testing.T) {
 
 	waitFor(t, "первый запуск сервера", func() bool { _, starts := rec.counts(); return starts == 1 })
 	first := rec.proc(0)
+	requireHelperAlive(t, first)
 
 	rec.failBuilds(errors.New("exit status 1"))
 	writeGo(t, dir, "main.go", "package main // сломано\n")
@@ -197,9 +372,7 @@ func TestSupervisor_KeepsRunningServerWhenBuildFails(t *testing.T) {
 	if _, starts := rec.counts(); starts != 1 {
 		t.Fatalf("сервер перезапускался при неудачной сборке: starts=%d", starts)
 	}
-	if first == nil || first.ProcessState != nil {
-		t.Fatal("прежний процесс остановлен, хотя новая сборка не удалась")
-	}
+	requireHelperAlive(t, first)
 	if out := rec.out.String(); !bytes.Contains([]byte(out), []byte("undefined: Ошибка")) {
 		t.Errorf("вывод компилятора не показан разработчику:\n%s", out)
 	}
@@ -235,6 +408,7 @@ func TestSupervisor_StopsChildOnCancel(t *testing.T) {
 
 	waitFor(t, "первый запуск сервера", func() bool { _, starts := rec.counts(); return starts == 1 })
 	proc := rec.proc(0)
+	requireHelperAlive(t, proc)
 	cancel()
 
 	select {
@@ -245,9 +419,41 @@ func TestSupervisor_StopsChildOnCancel(t *testing.T) {
 	case <-time.After(15 * time.Second):
 		t.Fatal("Run не завершился после отмены контекста")
 	}
-	if proc == nil || proc.ProcessState == nil {
-		t.Fatal("дочерний процесс сервера не остановлен")
+	requireHelperStopped(t, proc)
+}
+
+// An unresponsive observer is not proof of exit: a live helper must still
+// answer after the read deadline, and Supervisor must remain its sole waiter.
+func TestSupervisor_ObserverTimeoutDoesNotCountAsExit(t *testing.T) {
+	dir := t.TempDir()
+	writeGo(t, dir, "main.go", "package main\n")
+	sup, rec := helperSupervisor(t, dir)
+	runSupervisor(t, sup)
+	waitFor(t, "первый запуск сервера", func() bool { _, starts := rec.counts(); return starts == 1 })
+	proc := rec.proc(0)
+	requireHelperAlive(t, proc)
+	var timeout net.Error
+	if err := proc.waitStopped(); !errors.As(err, &timeout) || !timeout.Timeout() {
+		t.Fatalf("live helper must produce a timeout, got %v", err)
 	}
+	requireHelperAlive(t, proc)
+}
+
+func TestSupervisor_PeerResetCountsAsExit(t *testing.T) {
+	dir := t.TempDir()
+	writeGo(t, dir, "main.go", "package main\n")
+	sup, rec := helperSupervisor(t, dir)
+	runSupervisor(t, sup)
+	waitFor(t, "первый запуск сервера", func() bool { _, starts := rec.counts(); return starts == 1 })
+	proc := rec.proc(0)
+	requireHelperAlive(t, proc)
+	if _, err := fmt.Fprintln(proc.conn, "reset"); err != nil {
+		t.Fatal(err)
+	}
+	requireHelperStopped(t, proc)
+	waitFor(t, "супервизор дождался завершения процесса", func() bool {
+		return bytes.Contains([]byte(rec.out.String()), []byte("процесс сервера завершился"))
+	})
 }
 
 // Сервер упал сам (занят порт, битая конфигурация) — супервизор не крутит
@@ -260,9 +466,11 @@ func TestSupervisor_WaitsForEditAfterChildExits(t *testing.T) {
 
 	waitFor(t, "первый запуск сервера", func() bool { _, starts := rec.counts(); return starts == 1 })
 	proc := rec.proc(0)
-	if err := proc.Process.Kill(); err != nil {
+	requireHelperAlive(t, proc)
+	if err := proc.cmd.Process.Kill(); err != nil {
 		t.Fatal(err)
 	}
+	requireHelperStopped(t, proc)
 	waitFor(t, "сообщение о завершении сервера", func() bool {
 		return bytes.Contains([]byte(rec.out.String()), []byte("процесс сервера завершился"))
 	})
@@ -273,4 +481,5 @@ func TestSupervisor_WaitsForEditAfterChildExits(t *testing.T) {
 
 	writeGo(t, dir, "main.go", fmt.Sprintf("package main // %d\n", time.Now().UnixNano()))
 	waitFor(t, "запуск после правки", func() bool { _, starts := rec.counts(); return starts == 2 })
+	requireHelperAlive(t, rec.proc(1))
 }

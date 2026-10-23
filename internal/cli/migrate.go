@@ -88,6 +88,7 @@ func runMigrate(cmd *cobra.Command, _ []string) error {
 	var skipped int
 	db.SetSchemaOptions(storage.SchemaOptions{
 		AllowDestructive: allowDestructive,
+		Warn:             func(w storage.SchemaTypeWarning) { outln("  ПРЕДУПРЕЖДЕНИЕ: " + w.String()) },
 		Report: func(c storage.SchemaChange, applied bool) {
 			if applied {
 				outln("  " + c.String())
@@ -112,6 +113,13 @@ func runMigrate(cmd *cobra.Command, _ []string) error {
 
 // printMigrationPlan показывает, что сделает реструктуризация, ничего не меняя.
 func printMigrationPlan(ctx context.Context, db *storage.DB, proj *project.Project) error {
+	warnings, err := db.UntrackedFieldTypeWarnings(ctx, proj.Entities, proj.Registers, proj.InfoRegisters)
+	if err != nil {
+		return err
+	}
+	for _, warning := range warnings {
+		outln("  ПРЕДУПРЕЖДЕНИЕ: " + warning.String())
+	}
 	if err := printLongIdentPlan(ctx, db, proj); err != nil {
 		return err
 	}

@@ -130,6 +130,9 @@ type SchemaOptions struct {
 	// Report вызывается на каждое изменение — применённое или отложенное.
 	// Второй аргумент: применено ли оно на самом деле.
 	Report func(change SchemaChange, applied bool)
+	// Warn receives diagnostics for untracked physical types, independently of
+	// applied/skipped changes. Without a callback they go to the storage log.
+	Warn func(warning SchemaTypeWarning)
 }
 
 // SetSchemaOptions задаёт режим реструктуризации для последующих миграций.
