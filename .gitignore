@@ -73,6 +73,7 @@ docs/*
 !docs/migrate-scan.md
 !docs/ai-assistant.md
 !docs/features.md
+!docs/portable.md
 !docs/mcp.md
 !docs/vibe-coding.md
 !docs/rest-api-v2.md

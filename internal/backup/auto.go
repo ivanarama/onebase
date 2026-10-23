@@ -14,6 +14,7 @@ import (
 	"github.com/ivantit66/onebase/internal/objstore"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/scheduler"
+	"github.com/ivantit66/onebase/internal/userdata"
 )
 
 const (
@@ -309,8 +310,8 @@ func AutoBackupDir(cfg *project.BackupConfig, projectDir string) string {
 	if projectDir != "" {
 		return filepath.Join(projectDir, "backups")
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".onebase", "backups", "default")
+	dir, _ := userdata.Path("backups", "default")
+	return dir
 }
 
 func dumpAutoTarget(ctx context.Context, target AutoTarget, dir string) (string, error) {
