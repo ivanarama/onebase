@@ -332,6 +332,12 @@ type FormElement struct {
 	// (FormAttributeColumn). Дочерний элемент kind: ПолеВвода тоже не подошёл —
 	// такая колонка выглядела бы редактируемой, а редактировать нечего.
 	VirtualColumns []FormVirtualColumn `yaml:"virtual_columns,omitempty"`
+
+	// Conceal hides a string object field until a successful trusted event
+	// explicitly assigns its boolean form controller (optionally НЕ/NOT).
+	// Disclosure is session/form/object-bound server state, never browser input.
+	Conceal    bool   `yaml:"conceal,omitempty"`
+	RevealWhen string `yaml:"reveal_when,omitempty"`
 }
 
 // FormChoiceOperator — закрытый набор операторов choice_filter v1.

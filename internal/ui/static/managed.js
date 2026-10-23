@@ -1205,7 +1205,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       const res = await fetch(URL, {
         method: 'POST',
         body: body,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', 'X-OneBase-Conceal-Context': form && form.getAttribute ? form.getAttribute('data-ob-conceal-context') || '' : '' },
         credentials: 'same-origin'
       });
       const data = await res.json();
@@ -1216,6 +1216,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 		throw new Error('invalid form-event response');
 	  }
       responseKnown = true;
+      if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form);
 	  // Even parseable JSON on non-2xx may come from an intermediary after the
 	  // application committed. No subsequent write is safe on this document.
 	  if (!res.ok) fenceUnknownResult();
@@ -1302,6 +1303,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
       applyChoiceList(elementName, data.choiceList);
       applyFormTables(data.formTables);
+      if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form);
 	  // Server events repaint controls programmatically and therefore do not
 	  // trigger input/change. Raise dirty for unsaved handler mutations; clear
 	  // it only when this response proves a successful Object.Write and no
@@ -1651,6 +1653,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   function applyCloseResponse(data, before, current){
     if (!data || typeof data !== 'object') return;
 	var merging = !!(before && current);
+    if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, document.getElementById('main-form'));
 	var values = merging ? filterCloseMap(data.values, function(name){
 	  return closeFieldUnchanged(before, current, name);
 	}) : data.values;
@@ -1774,6 +1777,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 		  // and the exact envelope is retained with an unknown intent for replay.
           headers: {
 			'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
+			'X-OneBase-Conceal-Context': (document.getElementById('main-form') || {}).getAttribute ? document.getElementById('main-form').getAttribute('data-ob-conceal-context') || '' : '',
 			'X-OneBase-Close-Intent': intentID,
 			'X-OneBase-Close-Epoch': String(envelope.epoch || ''),
 			'X-OneBase-Close-Issued-At': String(envelope.issuedAt || ''),
@@ -4658,4 +4662,35 @@ obManagedReady(function () {
       })(holders[i]);
     }
   });
+});
+
+// obApplyConcealed — conceal/reveal_when: раскрытое ответом события скрытое
+// поле становится доступным (если не readonly) и отправляется с формой;
+// нераскрытое — снова отключено и пусто, значение в браузере не остаётся.
+// Решение принимает сервер: список revealed приходит в каждом ответе события.
+function obApplyConcealed(revealed, form) {
+  if (!form) return;
+  var open = {};
+  (revealed || []).forEach(function (n) { open[String(n).toLowerCase()] = true; });
+  form.querySelectorAll("[data-ob-concealed]").forEach(function (el) {
+    var name = String(el.getAttribute("name") || "").toLowerCase();
+    if (open[name]) {
+      el.disabled = false;
+    } else {
+      el.disabled = true;
+      el.value = "";
+    }
+  });
+}
+window.obApplyConcealed = obApplyConcealed;
+
+// A reload carries the old server instance so the next GET revokes it.
+document.addEventListener('DOMContentLoaded', function () {
+  var form = document.getElementById('main-form');
+  var token = form && form.getAttribute('data-ob-conceal-context');
+  if (token && window.history && window.history.replaceState) {
+    var url = new URL(window.location.href);
+    url.searchParams.set('_ob_conceal', token);
+    window.history.replaceState(window.history.state, '', url.toString());
+  }
 });

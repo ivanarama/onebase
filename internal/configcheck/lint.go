@@ -646,6 +646,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		// документированный «language» у kind: ПолеКода не давал примеру
 		// пройти собственную проверку (#1014).
 		"orientation", "background", "input_mask", "language", "virtual_columns",
+		"conceal", "reveal_when",
 	} {
 		element.keys[k] = nil
 	}

@@ -103,6 +103,9 @@ type Server struct {
 	// поэтому новый запуск снова сообщает оператору о причине обхода кэша.
 	svcCacheCookieWarned sync.Map
 	widgetCache          *widget.Cache
+	concealMu            sync.Mutex
+	concealInstances     map[string]*concealInstance
+	concealClock         func() time.Time
 	closeIntentMu        sync.Mutex
 	closeIntents         *formCloseReplayLedger
 	lockMgr              *runtime.LockManager   // #2 managed locks
