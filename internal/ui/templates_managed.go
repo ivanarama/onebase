@@ -297,7 +297,7 @@ const tplManagedForm = `
        его запретил. Каскад от группы табличную часть достаёт, но на отрисовке:
        $ro уже содержит условие предка (#1184). */}}
   <div class="managed-tp" data-ob-tp="{{$el.Name}}">
-  <h3 style="margin:18px 0 8px;font-size:14px">{{fieldTitleRU $el.TitleMap (or (tablePartTitle $tpMeta) $tpName)}}</h3>
+  {{if not $el.TitleHidden}}<h3 style="margin:18px 0 8px;font-size:14px">{{fieldTitleRU $el.TitleMap (or (tablePartTitle $tpMeta) $tpName)}}</h3>{{end}}
   {{if $tpMeta}}
   {{$tpVirtualCols := managedTPVirtualColumns $tpMeta.Fields $el.VirtualColumns}}
   {{/* Состав и порядок колонок задают дети kind: Колонка (план 154). Реквизит,
@@ -444,7 +444,7 @@ const tplManagedForm = `
   {{$vtLayout := elLayout $el}}
   {{/* Заданная высота ограничивает весь блок ValueTable, включая строки и команды. */}}
   {{if $vtLayout}}<div class="managed-vt-layout{{if elFill $el}} managed-vt-scroll{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="{{$vtLayout}}">{{end}}
-  <h3 style="margin:18px 0 8px;font-size:14px">{{fieldTitleRU $el.TitleMap (or (tablePartTitle $tpMeta) $tpName)}}</h3>
+  {{if not $el.TitleHidden}}<h3 style="margin:18px 0 8px;font-size:14px">{{fieldTitleRU $el.TitleMap (or (tablePartTitle $tpMeta) $tpName)}}</h3>{{end}}
   {{if $vtCmds}}
   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">
     {{range $vtCmds}}

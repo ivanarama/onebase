@@ -224,9 +224,13 @@ type FormElement struct {
 	// а прокручивается. Нужна ряду кнопок: перенос рвёт панель действий пополам,
 	// и половина кнопок читается как отдельный блок. По умолчанию перенос, как
 	// было.
-	ScrollX    bool   `yaml:"scroll_x,omitempty"`
-	Background string `yaml:"background,omitempty"` // фон контейнера; читается только у ГруппаФормы (#1547), цвет проверяет csssafe.Color
-	ReadOnly   bool   `yaml:"readonly,omitempty"`   // только чтение
+	ScrollX bool `yaml:"scroll_x,omitempty"`
+	// TitleHidden — у ТабличнаяЧасть не рисовать заголовок над таблицей: без
+	// title платформа подставляет имя таблицы, а таблице-выдаче (результат
+	// поиска) подпись не нужна и стоит строки высоты формы.
+	TitleHidden bool   `yaml:"title_hidden,omitempty"`
+	Background  string `yaml:"background,omitempty"` // фон контейнера; читается только у ГруппаФормы (#1547), цвет проверяет csssafe.Color
+	ReadOnly    bool   `yaml:"readonly,omitempty"`   // только чтение
 	// EditableAdminOnly — поле редактирует только администратор, остальным оно
 	// нередактируемо всегда. В отличие от ReadOnlyWhen условие тут не от данных
 	// записи, а от того, кто смотрит, поэтому вычисляется на сервере при
