@@ -68,6 +68,7 @@ Thumbs.db
 # Рабочие материалы / документация (не в публичном репо)
 docs/*
 !docs/forms.md
+!docs/configuration-help.md
 !docs/forms-1c-converter.md
 !docs/migrate-scan.md
 !docs/ai-assistant.md
@@ -84,6 +85,7 @@ docs/*
 !docs/release-signing.md
 !docs/self-update.md
 !docs/maintenance-pipeline.md
+!docs/long-identifiers.md
 # Каталоги, а не файлы по одному: `docs/*` исключает и сам каталог, а в
 # исключённый каталог git не заходит — правило вида `!docs/releases/*.md`
 # не сработало бы, и новые заметки молча не попадали бы в коммит (#988, А3).

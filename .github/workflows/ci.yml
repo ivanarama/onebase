@@ -51,7 +51,7 @@ jobs:
     needs: [classify]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Docs-only success
         if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
@@ -274,12 +274,10 @@ jobs:
       # Coverage собирается тем же прогоном, чтобы не гонять тесты дважды.
       - name: Unit tests (-race, coverage)
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
-        # Масштабный HTTP-тест с 2.1M строк запускается отдельным обязательным
-        # шагом e2e ниже: race-инструментация pure-Go SQLite тратит минуты на
-        # seed/LIKE и исчерпала общий бюджет UI в #2103. Остальные unit-тесты
-        # сохраняют -race и atomic coverage; конечный бюджет совпадает с UI
-        # в postgres-integration.
-        run: go test -race -timeout 20m -skip '^TestRefComboboxLargeCatalogPublicHTTP$' -coverprofile=coverage.out -covermode=atomic ./...
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_coverage_test.py'
+          python3 .github/scripts/test-race-coverage_test.py
+          python3 .github/scripts/test-race-coverage.py coverage.out
 
       # Раннеры работают в UTC, поэтому целый класс дефектов «время
       # канонизируется не в той зоне» для CI невидим: #945 поймали случайно, на

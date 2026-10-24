@@ -414,6 +414,7 @@ function obReady(fn) {
   else fn();
 }
 
+
 function obReadJSONScript(id, fallback) {
   var el = document.getElementById(id);
   if (!el) return fallback;
@@ -428,6 +429,25 @@ function obReadJSONScript(id, fallback) {
 
 (function () {
   if (window.__obNavInit) return;
+  // Раскрытие разделов бокового меню — из localStorage, со слежением за
+  // переключением. Общая функция: вкладочная оболочка подменяет меню при смене
+  // раздела без перезагрузки и зовёт её для нового #ob-nav.
+  window.obInitNavSections = function (scope) {
+    try {
+      (scope || document).querySelectorAll('aside details.navsec').forEach(function (d) {
+        var key = 'navsec:' + d.getAttribute('data-navsec');
+        var saved = localStorage.getItem(key);
+        var legacy = d.getAttribute('data-navsec-legacy');
+        if (saved === null && legacy) {
+          saved = localStorage.getItem('navsec:' + legacy);
+          if (saved === '1' || saved === '0') localStorage.setItem(key, saved);
+        }
+        if (saved === '1') d.open = true;
+        else if (saved === '0') d.open = false;
+        d.addEventListener('toggle', function () { localStorage.setItem(key, d.open ? '1' : '0'); });
+      });
+    } catch (e) {}
+  };
   window.__obNavInit = true;
   // Гамбургер значит разное по сторонам брейкпоинта: на узком экране он
   // выдвигает шторку (класс `nav-open` на body, живёт только до перехода), на
@@ -505,20 +525,7 @@ function obReadJSONScript(id, fallback) {
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && document.body.classList.contains('nav-open')) setNav(false);
     });
-    try {
-      document.querySelectorAll('aside details.navsec').forEach(function (d) {
-        var key = 'navsec:' + d.getAttribute('data-navsec');
-        var saved = localStorage.getItem(key);
-        var legacy = d.getAttribute('data-navsec-legacy');
-        if (saved === null && legacy) {
-          saved = localStorage.getItem('navsec:' + legacy);
-          if (saved === '1' || saved === '0') localStorage.setItem(key, saved);
-        }
-        if (saved === '1') d.open = true;
-        else if (saved === '0') d.open = false;
-        d.addEventListener('toggle', function () { localStorage.setItem(key, d.open ? '1' : '0'); });
-      });
-    } catch (e) {}
+    window.obInitNavSections(document);
   });
 })();
 
@@ -850,11 +857,19 @@ function obInitReportChart() {
   }
 }
 
-obReady(function () {
+// Виджеты рабочего стола: диаграммы и контроллеры обновления. Оболочка зовёт
+// повторно после смены раздела без перезагрузки — уже инициализированные
+// узлы пропускаются (data-ob-init, card._obWidgetController).
+window.obInitDashboard = function () {
   obInitMappedCharts('ob-widget-charts', '.w-chart-canvas[data-widget]', 'data-widget', 'chart init failed', true);
+  obInitWidgetControllers();
+  if (window.obInitLiveList) window.obInitLiveList();
+};
+
+obReady(function () {
+  window.obInitDashboard();
   obInitMappedCharts('ob-page-charts', '.w-chart-canvas[data-pagechart]', 'data-pagechart', 'page chart init failed', false);
   obInitReportChart();
-  obInitWidgetControllers();
 });
 
 function obInitFormDirty() {
@@ -2098,6 +2113,7 @@ function toggleTreeNode(btn) {
   var depth = (tr && tr.dataset.treeDepth) || '0';
   var url = '/ui/_tree-children/' + encodeURIComponent(cfg.treeEntity || '') + '?parent=' + encodeURIComponent(fid) + '&depth=' + encodeURIComponent(depth);
   if (cfg.subsystem) url += '&subsystem=' + encodeURIComponent(cfg.subsystem);
+  if (cfg.listFormOff) url += '&lf_off=' + encodeURIComponent(cfg.listFormOff);
   fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
     .then(function (resp) {
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -3408,6 +3424,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
   var enumLabels = (obTPEnumLabels()[tpName]) || {};
   var enumOrder = (obTPEnumOrder()[tpName]) || {};
   var bools = Array.isArray(boolFields) ? boolFields : [];
+  var choiceContexts={};try{choiceContexts=JSON.parse(tbody.getAttribute("data-tp-choice")||"{}")||{};}catch(e){}
   var dates = Array.isArray(dateFields) ? dateFields : [];
   if (tbody && tbody.getAttribute('data-tp-cmd') === '1') {
     var tdSel = document.createElement('td');
@@ -3425,6 +3442,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
       wrapper.style.cssText = 'display:flex;gap:4px;align-items:center';
       var sel = document.createElement('select');
       sel.name = 'tp.' + tpName + '.' + idx + '.' + fn;
+      if(choiceContexts[fn]) {sel.setAttribute('data-ref-choice-context',choiceContexts[fn]);sel.setAttribute('data-ref-row-id',String(idx));}
       sel.style.flex = '1';
       var meta = refMeta[fn];
       if (meta && meta.entity) {
@@ -3436,7 +3454,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
       defOpt.value = '';
       defOpt.textContent = '— выбрать —';
       sel.appendChild(defOpt);
-      (refOpts[fn] || []).forEach(function (opt) {
+      (choiceContexts[fn] ? [] : (refOpts[fn] || [])).forEach(function (opt) {
         var o = document.createElement('option');
         o.value = opt.id;
         o.textContent = opt._label || opt.id;
@@ -3523,6 +3541,8 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
   tr.appendChild(tdDel);
   tbody.appendChild(tr);
   if (table) obDOMFinishMutation(table, tr, true);
+  if(window.obAttachTPChoiceContexts)window.obAttachTPChoiceContexts(document);
+  if(window.obRefreshChoiceFilters)window.obRefreshChoiceFilters();
 }
 
 function recalcTpRow(inp) {
@@ -3933,6 +3953,11 @@ function openItemPicker(payload, elementName, eventContext, request) {
     var tr = document.createElement('tr');
     tr.setAttribute('data-id', r.id || '');
     tr.setAttribute('data-search', rowText(r));
+    // Конфиг.ПолеВыделения: строка видна и выбирается, но выделена
+    // светло-серым — как архивная номенклатура в подборе 1С.
+    if (r.highlight) {
+      tr.className = '_ip-row-highlight';
+    }
     tr._obRow = r;
     var tdCb = document.createElement('td');
     tdCb.style.textAlign = 'center';
@@ -4098,7 +4123,9 @@ function openItemPicker(payload, elementName, eventContext, request) {
   }
   // rowObject — строка в том виде, в каком она уходит обработчику события Выбор.
   function rowObject(tr) {
-    var obj = { id: tr.getAttribute('data-id') };
+    // Имена колонок, включая __proto__, должны стать собственными полями JSON.
+    var obj = Object.create(null);
+    obj.id = tr.getAttribute('data-id');
     cols.forEach(function (c) {
       if (c.editable) {
         var inp = tr.querySelector('._ip-val[data-col="' + c.name + '"]');
@@ -4587,16 +4614,34 @@ function obRefChoiceSnapshot(sel) {
   if (!ctx || !ctx.form_entity || !ctx.form || !ctx.element) return null;
   var values = {};
   var declared = ctx.sources || {};
+  var form = sel.form || sel._obChoiceForm;
+  var rowID = sel.getAttribute("data-ref-row-id");
+  // Structural no_grid operations reindex names without dispatching change.
+  // Read the live row index so pickers and pending-response fingerprints use
+  // the current row immediately. Detached SlickGrid carriers keep their id.
+  if (ctx.table_part && !sel._obChoiceRow) {
+    var rowName = (sel.name || '').split('.');
+    if (rowName.length === 4 && rowName[0] === 'tp' &&
+        rowName[1] === ctx.table_part && /^[0-9]+$/.test(rowName[2])) {
+      rowID = rowName[2];
+    }
+  }
   var paths = Object.keys(declared).sort();
   paths.forEach(function (path) {
     var name = declared[path];
-    values[path] = obRefSourceValue(sel.form || document, name) || '';
+    if (ctx.table_part && path.split(".")[0].toLowerCase() === ctx.table_part.toLowerCase()) {
+      if (sel._obChoiceRow) { var key=Object.keys(sel._obChoiceRow).find(function(key){return key.toLowerCase()===String(name).toLowerCase();});
+        values[path] = obChoiceRowValue(sel._obChoiceRow[key]); return; }
+      name = "tp." + ctx.table_part + "." + rowID + "." + name;
+    }
+    values[path] = obRefSourceValue(form || document, name) || '';
   });
   var query = '&form_entity=' + encodeURIComponent(ctx.form_entity) +
     // Форма обработки (#1840): вид владельца — из серверного контекста.
     (ctx.form_kind ? '&form_kind=' + encodeURIComponent(ctx.form_kind) : '') +
     '&form=' + encodeURIComponent(ctx.form) +
     '&element=' + encodeURIComponent(ctx.element) +
+    (ctx.table_part ? '&row_id=' + encodeURIComponent(rowID == null ? '' : rowID) : '') +
     '&sources=' + encodeURIComponent(JSON.stringify(values));
   if (sel.value) query += '&selected_id=' + encodeURIComponent(sel.value);
   var ownerQuery = obRefFilterParam(sel);
@@ -4604,11 +4649,29 @@ function obRefChoiceSnapshot(sel) {
   var fingerprintParts = paths.map(function (path) { return [path, values[path]]; });
   return {
     query: query,
-    fingerprint: JSON.stringify([ctx.form_entity, ctx.form_kind || '', ctx.form, ctx.element, fingerprintParts, ownerQuery]),
+    fingerprint: JSON.stringify([ctx.form_entity, ctx.form_kind || '', ctx.form, ctx.element, rowID, fingerprintParts, ownerQuery]),
     selected: sel.value == null ? '' : String(sel.value)
   };
 }
 
+function obChoiceRowValue(value) {
+  if (value && typeof value === 'object') return String(value.id || value.ID || '');
+  return value == null ? '' : String(value);
+}
+window.obTPChoiceCarrier = function(context, row, rowID, form, field, entity, filter) {
+  var carrier = document.createElement('select');
+  carrier.setAttribute('data-ref-choice-context', context);
+  carrier.setAttribute('data-ref-row-id', String(rowID));
+  carrier.setAttribute('data-ref-entity', entity);
+  if (filter) carrier.setAttribute('data-ref-filter', filter);
+  carrier._obChoiceRow = row;
+  carrier._obChoiceForm = form;
+  // Detached selects have no option matching the UUID. The snapshot must read
+  // the row's value rather than the DOM select's empty fallback.
+  Object.defineProperty(carrier, 'value', {get: function(){return obChoiceRowValue(row[field]);}, configurable:true});
+  return carrier;
+};
+window.obRefChoiceSnapshot = obRefChoiceSnapshot;
 function obRefChoiceQuery(sel) {
   if (!sel || !sel.getAttribute || !sel.getAttribute('data-ref-choice-context')) return '';
   var snapshot = obRefChoiceSnapshot(sel);
@@ -4789,9 +4852,25 @@ window.obRefreshChoiceFilters = function () {
   var selects = document.querySelectorAll('[data-ref-choice-context],input[data-ob-ref-combobox]');
   var pending = [];
   for (var i = 0; i < selects.length; i++) pending.push(obRefreshChoiceSelect(selects[i], false));
+  if(window.obRefreshTPChoiceFilters)pending.push(window.obRefreshTPChoiceFilters());
   return Promise.all(pending);
 };
 
+function obAttachTPChoiceContexts(scope) {
+  if (!scope || !scope.querySelectorAll) return;
+  var bodies = scope.querySelectorAll('tbody[data-tp-choice]');
+  for (var i=0; i<bodies.length; i++) {
+    var contexts; try { contexts=JSON.parse(bodies[i].getAttribute('data-tp-choice') || '{}') || {}; } catch(e) {continue;}
+    var controls=bodies[i].querySelectorAll('select[name]');
+    for(var j=0;j<controls.length;j++) {
+      var parts=controls[j].name.split('.'), context=contexts[parts[3]];
+      if(!context)continue;
+      controls[j].setAttribute('data-ref-choice-context',context);
+      controls[j].setAttribute('data-ref-row-id',parts[2]);
+    }
+  }
+}
+window.obAttachTPChoiceContexts=obAttachTPChoiceContexts;
 function obInitChoiceFilterRefresh() {
   if (!document.querySelectorAll) return;
   var selects = document.querySelectorAll('[data-ref-choice-context]');
@@ -4799,7 +4878,7 @@ function obInitChoiceFilterRefresh() {
     var snapshot = obRefChoiceSnapshot(selects[i]);
     if (snapshot) obChoiceRefreshState(selects[i]).appliedFingerprint = snapshot.fingerprint;
   }
-  document.addEventListener('change', function () { window.obRefreshChoiceFilters(); });
+  document.addEventListener('change', function () { obAttachTPChoiceContexts(document); window.obRefreshChoiceFilters(); });
 }
 obReady(obInitChoiceFilterRefresh);
 
@@ -5025,6 +5104,7 @@ function openRefPicker(selOrId) {
       fetchOptions.method = 'POST';
       fetchOptions.headers['Content-Type'] = 'application/json';
       var sourceElement = sel.getAttribute('data-ref-element') || '';
+      var sourceEntity = sel.getAttribute('data-ref-source-entity') || '';
       var contextValues = {};
       try {
         var bindings = JSON.parse(refContextRaw);
@@ -5035,7 +5115,7 @@ function openRefPicker(selOrId) {
       } catch (e) {}
       fetchOptions.body = JSON.stringify({
         q: q || '', limit: 50, offset: 0,
-        source: { entity: refEntity, element: sourceElement },
+        source: { entity: sourceEntity, element: sourceElement },
         context: contextValues,
         filters: obRefFilterValues(sel) || {}
       });
@@ -5547,17 +5627,39 @@ window.onebaseDevice = {
   /* Ступень B (план 87): клиентские команды ui.*. Рисует/исполняет только
      оболочка (как callToast) — событие ретранслируется во фреймы, но всплывашку и
      открытие вкладки делает верхнее окно, иначе дубли. */
+  // Адрес формы по ссылке команды ui.открытьФорму. Списку без id можно
+  // передать «отбор» — Структура «Поле → значение» становится отбором списка
+  // (f.<Поле>=…, как панель «Отбор»); отчёту — «параметры» (имена параметров
+  // отчёта) и «сформировать» = Истина, чтобы отчёт сразу построился, как
+  // СкомпоноватьРезультат в 1С. Ссылки приходят идентификатором.
   function formURL(link) {
     link = link || {};
     var kind = String(link['вид'] || link.kind || 'document').toLowerCase();
     var ent = link['сущность'] || link.entity || '';
     var id = link['id'] || link.id || '';
     if (!ent) return '';
+    function pairs(obj, prefix) {
+      var out = [];
+      if (!obj || typeof obj !== 'object') return out;
+      Object.keys(obj).forEach(function (k) {
+        var v = obj[k];
+        if (v === null || v === undefined) return;
+        out.push(encodeURIComponent(prefix + k) + '=' + encodeURIComponent(String(v)));
+      });
+      return out;
+    }
     if (kind === 'processor' || kind === 'report' || kind === 'page') {
-      return '/ui/' + kind + '/' + encodeURIComponent(String(ent));
+      var path = '/ui/' + kind + '/' + encodeURIComponent(String(ent));
+      if (kind !== 'report') return path;
+      var q = pairs(link['параметры'] || link.params, '');
+      var run = link['сформировать'] || link.run;
+      if (run === true || run === 'true') q.push('__run=1');
+      return q.length ? path + '?' + q.join('&') : path;
     }
     var base = '/ui/' + kind + '/' + encodeURIComponent(String(ent).toLowerCase());
-    return id ? base + '/' + encodeURIComponent(String(id)) : base;
+    if (id) return base + '/' + encodeURIComponent(String(id));
+    var f = pairs(link['отбор'] || link.filter, 'f.');
+    return f.length ? base + '?' + f.join('&') : base;
   }
   function openFormTab(link) {
     var url = formURL(link);
@@ -5817,6 +5919,8 @@ window.onebaseDevice = {
       }
     }
   }
+  // После подмены рабочего стола добавляем только ещё не привязанные события.
+  window.obInitLiveList = bindEvents;
 
   // Скрытая вкладка копит dirty; при возврате — один перечитывающий GET.
   document.addEventListener('visibilitychange', function () {

@@ -267,6 +267,7 @@ func TestWrapTextWithFonts(t *testing.T) {
 // страницей — пригоден для измерения переноса (wrapText/SplitText) в тестах.
 func newMeasuredPDF() *fpdf.Fpdf {
 	pdf := fpdf.New("P", "mm", "A4", "")
+	pdf.SetCellMargin(0) // как в Document.PDF
 	registerFonts(pdf)
 	pdf.AddPage()
 	return pdf

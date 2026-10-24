@@ -86,14 +86,6 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 	managed := pickManagedForm(entity, kind)
 	if managed != nil {
 		data["Form"] = managed
-		// Кнопка «Открыть карточку» (🔍) у заполненного ссылочного поля рисуется по
-		// умолчанию; форма может её выключить (ref_card_button: false). Признак
-		// кладём ОТРИЦАТЕЛЬНЫЙ: managed-шаблон рендерит и формы обработок
-		// (handlers_processors.go), где этого ключа в данных нет вовсе, — при
-		// положительном признаке кнопка бы там молча исчезла.
-		if managed.RefCardButton != nil && !*managed.RefCardButton {
-			data["HideRefCard"] = true
-		}
 		// Фикс A: команды формы, не размещённые вручную элементом kind: Кнопка,
 		// рисуются автоматической командной панелью (иначе объявленная в commands:
 		// команда в UI не видна — её кнопку рисует только kind: Кнопка). Fire-click
@@ -151,6 +143,20 @@ func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any
 	data["FormCloseEpoch"] = formCloseProcessEpoch
 	data["FormCloseClientID"] = uuid.NewString()
 	data["FormCloseServerNowMS"] = time.Now().UnixMilli()
+	// Кнопка «Открыть карточку» (🔍) у ссылочного поля рисуется по умолчанию.
+	// Здесь — решение уровня формы, общее для форм сущностей и обработок (обе
+	// проходят через эту функцию; раньше признак ставил только renderEntityForm,
+	// и ref_card_button: false на форме обработки молча не работал, #1876):
+	// ref_card_button: false скрывает кнопку у всех, ref_card_button_admin_only —
+	// у всех, кроме администратора. Администратор — серверный признак запроса
+	// (без настроенной авторизации платформа считает администратором любого).
+	// Явный ref_card_button поля сильнее и того, и другого — его применяет
+	// шаблонная функция hideRefCard. Признак отрицательный: его отсутствие
+	// сохраняет кнопку.
+	if (form.RefCardButton != nil && !*form.RefCardButton) ||
+		(form.RefCardButtonAdminOnly && !s.isAdminCtx(ctx)) {
+		data["HideRefCard"] = true
+	}
 	if processor, _ := data["Processor"].(*processorpkg.Processor); processor != nil {
 		data["FormCloseSchema"] = processorFormCloseSchema(processor, form)
 	} else if entity, _ := data["Entity"].(*metadata.Entity); entity != nil {

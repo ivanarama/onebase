@@ -8,9 +8,11 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/printform"
+	"github.com/shopspring/decimal"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -142,8 +144,14 @@ func renderValues(f *excelize.File, sheet string, rowNum int, values []string, c
 			inner := value[matches[0][2]:matches[0][3]]
 			expr, format := splitFormat(inner)
 			expr = stripTablePart(expr, tablePart)
+			value := printform.ResolveExpr(expr, ctx, row, itemNum)
+			if written, err := setNumberCell(f, sheet, axis, value, format); err != nil {
+				return err
+			} else if written {
+				continue
+			}
 			if format == "" {
-				if err := f.SetCellValue(sheet, axis, printform.ResolveExpr(expr, ctx, row, itemNum)); err != nil {
+				if err := f.SetCellValue(sheet, axis, value); err != nil {
 					return err
 				}
 				continue
@@ -163,6 +171,105 @@ func renderValues(f *excelize.File, sheet string, rowNum int, values []string, c
 		}
 	}
 	return nil
+}
+
+// setNumberCell пишет числовое значение тега числом, а не текстом: иначе Excel
+// помечает ячейку «число сохранено как текст» и не считает по ней формулы.
+// Числовые поля приходят из хранилища как decimal.Decimal, который excelize не
+// знает и записывает строкой, а форматы number:N и currency раньше всегда давали
+// текст. Строковые значения не трогаем — ИНН или артикул с ведущими нулями
+// должны остаться как есть. false означает «не число, пишите обычным путём».
+func setNumberCell(f *excelize.File, sheet, axis string, value any, format string) (bool, error) {
+	number, ok := numericValue(value)
+	if !ok {
+		return false, nil
+	}
+	decimals, ok := numberFormatDecimals(format)
+	if !ok {
+		return false, nil
+	}
+	if decimals < 0 {
+		return true, f.SetCellFloat(sheet, axis, number, -1, 64)
+	}
+	// Как и DecimalPlaces в excelize, ограничиваем точность до 30 знаков.
+	// Проверяем до форматирования и strings.Repeat: тег может прийти из чужого шаблона.
+	if decimals > 30 {
+		decimals = 30
+	}
+	// Используем то же округление, что и теги внутри текста. Иначе одна
+	// сумма может отличаться на копейку в зависимости от окружения тега.
+	rounded := printform.ApplyFormat(value, "number:"+strconv.Itoa(decimals))
+	number, err := strconv.ParseFloat(rounded, 64)
+	if err != nil {
+		return true, fmt.Errorf("parse formatted number for %s: %w", axis, err)
+	}
+	if err := f.SetCellFloat(sheet, axis, number, -1, 64); err != nil {
+		return true, err
+	}
+	return true, applyNumberFormat(f, sheet, axis, decimals)
+}
+
+// numberFormatDecimals: -1 — формат не задан, знаки не ограничиваем;
+// ok=false — формат не числовой (date, upper, default:…), значение уходит текстом.
+func numberFormatDecimals(format string) (int, bool) {
+	name, arg, _ := strings.Cut(format, ":")
+	switch strings.TrimSpace(name) {
+	case "":
+		return -1, true
+	case "number":
+		n, err := strconv.Atoi(strings.TrimSpace(arg))
+		if err != nil || n < 0 {
+			n = 0
+		}
+		return n, true
+	case "currency":
+		return 2, true
+	}
+	return 0, false
+}
+
+func numericValue(value any) (float64, bool) {
+	switch v := value.(type) {
+	case decimal.Decimal:
+		return v.InexactFloat64(), true
+	case float64:
+		return v, true
+	case float32:
+		return float64(v), true
+	case int:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	}
+	return 0, false
+}
+
+// applyNumberFormat задаёт ячейке формат с нужным числом знаков, но только если
+// автор бланка не задал свой: формат из шаблона (разделители, «руб.») главнее.
+func applyNumberFormat(f *excelize.File, sheet, axis string, decimals int) error {
+	styleID, err := f.GetCellStyle(sheet, axis)
+	if err != nil {
+		return err
+	}
+	style, err := f.GetStyle(styleID)
+	if err != nil {
+		return err
+	}
+	if style.NumFmt != 0 || (style.CustomNumFmt != nil && *style.CustomNumFmt != "") {
+		return nil
+	}
+	code := "0"
+	if decimals > 0 {
+		code += "." + strings.Repeat("0", decimals)
+	}
+	style.CustomNumFmt = &code
+	newID, err := f.NewStyle(style)
+	if err != nil {
+		return err
+	}
+	return f.SetCellStyle(sheet, axis, axis, newID)
 }
 
 func splitFormat(value string) (expr, format string) {

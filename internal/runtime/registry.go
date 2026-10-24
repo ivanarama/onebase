@@ -15,6 +15,7 @@ import (
 	"github.com/ivantit66/onebase/internal/printform"
 	"github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/report"
+	"github.com/ivantit66/onebase/internal/userhelp"
 )
 
 func registryLog() *slog.Logger {
@@ -57,6 +58,7 @@ type Registry struct {
 	widgets         map[string]*metadata.Widget // lowercase name → widget
 	widgetOrder     []string                    // preserves load order
 	homePage        *metadata.HomePage
+	help            *userhelp.Book
 	// basedOnIndex — обратный индекс «источник → приёмники» для ввода на
 	// основании. Ключ — lowercase имя источника (документа/справочника),
 	// значение — список *Entity-приёмников, у которых в YAML указан этот
@@ -140,7 +142,20 @@ func (r *Registry) ReplaceProjectFrom(src *Registry) {
 	r.widgets = src.widgets
 	r.widgetOrder = src.widgetOrder
 	r.homePage = src.homePage
+	r.help = src.help
 	r.basedOnIndex = src.basedOnIndex
+}
+
+func (r *Registry) LoadHelp(book *userhelp.Book) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.help = book
+}
+
+func (r *Registry) Help() *userhelp.Book {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.help
 }
 
 // LoadWidgets registers dashboard widgets by name (case-insensitive).

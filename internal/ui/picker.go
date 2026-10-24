@@ -52,6 +52,10 @@ type pickerColumn struct {
 type pickerRow struct {
 	ID   string         `json:"id"`
 	Data map[string]any `json:"data"`
+	// Highlight — строка выделена светло-серым фоном (Конфиг.ПолеВыделения):
+	// как ВыделитьСтрокуСАрхивнойНоменклатурой 1С — строку видно и можно
+	// выбрать, но она отличается от остальных.
+	Highlight bool `json:"highlight,omitempty"`
 }
 
 // pickerConfig — параметры диалога.
@@ -123,9 +127,11 @@ type pickerHeaderOption struct {
 // Колонки — Массив структур {Имя, Заголовок, Тип, Редактируемое}.
 // Конфиг  — Структура {Заголовок, ПолеПоиска, ПолеКоличества, ВыбратьВсе,
 //
-//	ОдинВыбор, Отборы, Ширина, ПоляШапки, БезВыбора}
+//	ОдинВыбор, Отборы, ПолеВыделения, Ширина, ПоляШапки, БезВыбора}
 //
 //	(опционально). Отборы — имена колонок строкой через запятую или Массивом.
+//	ПолеВыделения — имя поля строки Данных (не обязательно колонки): строки,
+//	где оно Истина, выделяются светло-серым фоном.
 func newPickerBuiltin(sink **pickerPayload) interpreter.BuiltinFunc {
 	return interpreter.BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
 		p := &pickerPayload{}
@@ -147,6 +153,11 @@ func newPickerBuiltin(sink **pickerPayload) interpreter.BuiltinFunc {
 				p.Columns = append(p.Columns, col)
 			}
 		}
+		// Поле выделения строк — из Конфига, читается до строк Данных.
+		highlightField := ""
+		if len(args) > 2 && args[2] != nil {
+			highlightField = strings.TrimSpace(pickStr(dslField(args[2], "ПолеВыделения", "HighlightField")))
+		}
 		// Данные (args[0]).
 		if len(args) > 0 {
 			for _, r := range iterateAny(args[0]) {
@@ -156,6 +167,9 @@ func newPickerBuiltin(sink **pickerPayload) interpreter.BuiltinFunc {
 				}
 				for _, col := range p.Columns {
 					row.Data[col.Name] = serializeValue(dslField(r, col.Name))
+				}
+				if highlightField != "" {
+					row.Highlight = pickBool(dslField(r, highlightField))
 				}
 				p.Rows = append(p.Rows, row)
 			}

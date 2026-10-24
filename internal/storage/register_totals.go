@@ -76,8 +76,9 @@ func CreateRegisterTotalsSQL(d Dialect, reg *metadata.Register) string {
 
 func CreateRegisterTotalsIndexSQL(reg *metadata.Register) string {
 	cols := append(dimColNames(reg.Dimensions), totalsMonthCol)
-	return "CREATE INDEX IF NOT EXISTS idx_" + metadata.RegisterTotalsTableName(reg.Name) +
-		"_dims_month ON " + metadata.RegisterTotalsTableName(reg.Name) + " (" + strings.Join(cols, ", ") + ")"
+	idx := metadata.SQLIdent("idx_" + metadata.RegisterTotalsTableLogical(reg.Name) + "_dims_month")
+	return "CREATE INDEX IF NOT EXISTS " + idx + " ON " + metadata.RegisterTotalsTableName(reg.Name) +
+		" (" + strings.Join(cols, ", ") + ")"
 }
 
 func dimColNames(dims []metadata.Field) []string {
@@ -192,6 +193,12 @@ func (db *DB) syncRegisterTotals(ctx context.Context, reg *metadata.Register) er
 
 func (db *DB) ensureRegisterTotals(ctx context.Context, reg *metadata.Register, fingerprint string) error {
 	table := metadata.RegisterTotalsTableName(reg.Name)
+	if err := db.renameLegacyTable(ctx, metadata.RegisterTotalsTableLogical(reg.Name)); err != nil {
+		return err
+	}
+	if err := db.renameLegacyColumns(ctx, table, logicalColumnNames(append(append([]metadata.Field{}, reg.Dimensions...), reg.Resources...))); err != nil {
+		return err
+	}
 	state, err := db.totalsState(ctx, reg.Name)
 	if err != nil {
 		return err

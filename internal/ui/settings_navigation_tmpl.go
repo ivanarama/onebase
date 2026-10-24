@@ -3,7 +3,7 @@ package ui
 const tplNavigationSettings = `
 {{define "page-navigation-settings"}}
 {{template "head" .}}{{template "nav" .}}
-<main id="navigation-settings" style="padding:20px;max-width:1500px;margin:auto">
+<main id="navigation-settings" style="padding:20px;max-width:1500px;margin:0 auto">
 <h1>{{t .Lang .NavigationTitle}} → {{t .Lang "Навигация"}}</h1>
 <p>{{t .Lang .NavigationDescription}}</p>
 <form method="GET" action="{{.NavigationPath}}">

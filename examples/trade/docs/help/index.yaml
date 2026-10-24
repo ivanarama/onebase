@@ -1,0 +1,8 @@
+title: Руководство торговой конфигурации
+enabled: true
+auto_update: true
+chapters:
+  - id: sales
+    title: Реализация товаров
+    file: sales.md
+    objects: [document/РеализацияТоваров]

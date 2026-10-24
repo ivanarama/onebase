@@ -28,6 +28,7 @@ func navigationContainerSchema(home bool) map[string]any {
 	if home {
 		title = "OneBase home page"
 		props["nav"] = contents
+		props["nav_by_role"] = map[string]any{"type": "object", "additionalProperties": contents}
 		props["hidden"] = boolSchema("Скрыть глобальную Главную")
 		props["layout"] = enumSchema("auto", "grid", "rows")
 		props["rows"] = arrayOf(map[string]any{"type": "object", "properties": map[string]any{"widgets": names}})

@@ -55,20 +55,31 @@ function runtime(fetchImpl, cfgOverride = {}, productionValues = false) {
   const form = {
     id: 'main-form',
     values: new Map([['Наименование', 'Черновик']]),
-    querySelectorAll() { return []; },
+    // Настоящему applyValues поля нужны постоянными объектами: он ищет их
+    // через querySelectorAll и сверяет снимок controlState по ссылке.
+    controls: new Map(),
+    control(name) {
+      if (!this.controls.has(name)) {
+        this.controls.set(name, {
+          name, tagName: 'INPUT', type: 'text', classList: {contains() { return false; }},
+          get value() { return form.values.get(name); },
+          set value(value) { form.values.set(name, value); },
+          closest(selector) { return selector === '#main-form' ? form : null; },
+        });
+      }
+      return this.controls.get(name);
+    },
+    querySelectorAll(selector) {
+      if (!productionValues) return [];
+      if (selector === '[name]') return Array.from(this.values.keys()).map((name) => this.control(name));
+      const match = String(selector).match(/^\[name="([^"]+)"\]$/);
+      return match && this.values.has(match[1]) ? [this.control(match[1])] : [];
+    },
     querySelector(selector) {
       if (selector === '[name="_id"]') return idInput;
       if (selector === '[name="_version"]') return versionInput;
       const match = selector.match(/^\[name="([^"]+)"\]$/);
-      if (productionValues && match && this.values.has(match[1])) {
-        const name = match[1];
-        return {
-          tagName: 'INPUT', type: 'text', classList: {contains() { return false; }},
-          get value() { return form.values.get(name); },
-          set value(value) { form.values.set(name, value); },
-          closest(selector) { return selector === '#main-form' ? form : null; },
-        };
-      }
+      if (productionValues && match && this.values.has(match[1])) return this.control(match[1]);
       return null;
     },
     appendChild() {},
@@ -1183,6 +1194,54 @@ test('queued picker event preserves its cloned table-part context', async () => 
   assert.equal(picker[3]._tp, 'Lines');
   assert.equal(picker[3].marker, 'original');
   assert.equal(bodies[1].get('_tp'), 'Lines');
+});
+
+test('picker-opening response applies header values before the choice event', async () => {
+  const bodies = [];
+  const app = runtime((url, options) => {
+    const body = new URLSearchParams(options.body.toString());
+    bodies.push(body);
+    if (bodies.length === 1) {
+      return Promise.resolve(response({ok: true, values: {Mode: 'Master'}, pickerData: {items: []}}));
+    }
+    return Promise.resolve(response({ok: true}));
+  }, {docId: 'existing-row'});
+  app.form.values.set('Mode', 'WhichMasters');
+
+  await app.context.obFire('Distribute', 'Answer');
+  const valuesAt = app.applied.findIndex((entry) => entry[0] === 'values');
+  const pickerAt = app.applied.findIndex((entry) => entry[0] === 'picker');
+  assert.ok(pickerAt >= 0, 'pickerData did not reach openItemPicker');
+  assert.ok(valuesAt >= 0 && valuesAt < pickerAt, 'handler values were not applied before the picker opened');
+  assert.ok(!app.applied.some((entry) => entry[0] === 'parts'), 'picker phase 1 must not touch table parts');
+
+  await app.context.obFire('Distribute', 'Choice', {_pick_result: '[]'});
+  assert.equal(bodies[1].get('Mode'), 'Master', 'choice event resent the pre-handler mode');
+});
+
+// Ревью #2173: ответ, открывающий подбор, применяет значения тем же
+// настоящим applyValues, что и обычная ветка, — с controlState. Набранное за
+// время запроса не стирается эхом отправленного, а значение, изменённое
+// обработчиком, применяется.
+test('picker-opening response keeps late typing and applies handler values', async () => {
+  let complete;
+  const app = runtime((url) => {
+    if (url.endsWith('/form-event')) return new Promise((resolve) => { complete = resolve; });
+    return Promise.resolve(response({ok: true}));
+  }, {docId: 'existing-row'}, true);
+  app.form.values.set('Телефон', '123');
+  app.form.values.set('Режим', 'WhichMasters');
+  const phone = app.form.querySelector('[name="Телефон"]');
+  const event = app.context.obFire('Distribute', 'Answer');
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(typeof complete, 'function');
+  phone.value += '4';
+  app.document.dispatch('input', {target: phone});
+  complete(response({ok: true, values: {Телефон: '123', Режим: 'Master'}, pickerData: {items: []}}));
+  await event;
+
+  assert.equal(phone.value, '1234', 'picker branch lost late input');
+  assert.equal(app.form.querySelector('[name="Режим"]').value, 'Master', 'handler value was not applied');
 });
 
 test('queued table-part event keeps trigger-time canonical selection', async () => {

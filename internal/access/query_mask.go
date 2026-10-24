@@ -25,7 +25,8 @@ type QueryMaskPlan struct {
 	// byColumn — решения по имени результирующей колонки (нижний регистр).
 	byColumn map[string]FieldDecision
 	// byField — решения по именам полей для проекции «*»: имена колонок
-	// результата там совпадают с колонками таблиц.
+	// результата после query.RestoreLongLabels совпадают с логическими
+	// именами колонок таблиц.
 	byField map[string]FieldDecision
 	// deniedReason уточняет причину отказа в тексте ошибки. Пусто — обычный
 	// отказ «поле под маской в отборе/агрегате».
@@ -122,6 +123,18 @@ func QueryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name str
 		if prev, exists := plan.byColumn[col.Output]; !exists || lessRestrictive(prev, dec) {
 			plan.byColumn[col.Output] = dec
 		}
+	}
+	// Wildcard ambiguity is checked against physical SQL columns above. Rows
+	// reach Apply after Run/RunLimit restores the selected logical labels.
+	if len(plan.byField) > 0 && len(res.LongIdents) > 0 {
+		restored := make(map[string]FieldDecision, len(plan.byField))
+		for column, dec := range plan.byField {
+			if logical, ok := res.LongIdents[column]; ok {
+				column = logical
+			}
+			restored[column] = dec
+		}
+		plan.byField = restored
 	}
 	return plan
 }

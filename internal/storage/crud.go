@@ -761,6 +761,26 @@ func (db *DB) listWhere(entityName string, entity *metadata.Entity, params ListP
 				args = append(args, bound)
 				argIdx++
 			}
+		case field.Type == metadata.FieldTypeBool:
+			// Булево — точное сравнение, а не подстрока: на SQLite значение
+			// хранится как 0/1, и «%Да%» не совпадал ни с одной записью. «Нет»
+			// включает незаполненное (NULL) — в карточке оно и показывается как
+			// «Нет». Непонятное значение не открывает весь список.
+			if filter.Value != "" {
+				b, ok := parseAnyBool(filter.Value)
+				switch {
+				case !ok:
+					whereParts = append(whereParts, "1 = 0")
+				case b:
+					whereParts = append(whereParts, fmt.Sprintf("%s = %s", column, d.Placeholder(argIdx)))
+					args = append(args, true)
+					argIdx++
+				default:
+					whereParts = append(whereParts, fmt.Sprintf("(%s = %s OR %s IS NULL)", column, d.Placeholder(argIdx), column))
+					args = append(args, false)
+					argIdx++
+				}
+			}
 		case field.RefEntity != "":
 			if filter.Value != "" {
 				whereParts = append(whereParts, fmt.Sprintf("%s = %s", column, d.Placeholder(argIdx)))
@@ -897,6 +917,12 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 	query := fmt.Sprintf("SELECT %s FROM %s%s", strings.Join(cols, ", "), table, whereClause)
 
 	// sorting
+	// Папки впереди — только когда они перемешаны с элементами. Если отбор
+	// оставил одни элементы (выбор значения ссылки) или одни папки, is_folder
+	// у всех строк одинаков, а ключ сортировки по нему лишь мешает индексу:
+	// «первые 50 по коду» превращались в сортировку всего справочника (иерархия
+	// адресов 615 тыс. строк — 0,2–0,4 с на каждое ссылочное поле формы).
+	foldersFirst := entity.Hierarchical && !params.OnlyFolders && !params.ExcludeFolders
 	if keyset {
 		query += " ORDER BY id ASC"
 	} else if params.Sort == "" && len(entity.OrderBy) > 0 {
@@ -906,7 +932,7 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 		// дерево.
 		d := db.dialect
 		parts := make([]string, 0, len(entity.OrderBy)+1)
-		if entity.Hierarchical {
+		if foldersFirst {
 			parts = append(parts, "is_folder DESC")
 		}
 		for _, spec := range entity.OrderBy {
@@ -970,7 +996,11 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 				break
 			}
 		}
-		query += fmt.Sprintf(" ORDER BY is_folder DESC, %s ASC", firstStrCol)
+		if foldersFirst {
+			query += fmt.Sprintf(" ORDER BY is_folder DESC, %s ASC", firstStrCol)
+		} else {
+			query += fmt.Sprintf(" ORDER BY %s ASC", firstStrCol)
+		}
 	} else {
 		orderCol := "id"
 		orderDir := "ASC"

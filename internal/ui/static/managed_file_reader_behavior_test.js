@@ -42,6 +42,7 @@ function domNode(tagName) {
 }
 
 function resetDOM() {
+  window._tpRefMeta = {};
   banner = domNode('div');
   fetchBodies = [];
   submittedBodies = [];
@@ -696,6 +697,37 @@ test('NoGrid add inserts empty virtual cells before delete', () => {
   assert.equal(row.children[2].getAttribute('data-ob-virtual-col'), 'Дата');
   assert.equal(row.children[1].children.length, 0);
   assert.equal(row.children[3].children[0].className, 'del-btn');
+});
+
+test('NoGrid add keeps dependent reference context and an empty date in the same row', () => {
+  resetDOM();
+  const context = JSON.stringify({form_entity: 'Заявка', form: 'Объекта',
+    element: 'Строки.Выбор', table_part: 'Строки', sources: {'Строки.Направление': 'Направление'}});
+  window._tpRefOpts = {Строки: {Выбор: [{id: 'unfiltered', _label: 'Чужой'}]}};
+  window._tpRefMeta = {};
+  window._tpEnumLabels = {};
+  window._tpEnumOrder = {};
+  const body = installTableBody('tp-body-Строки', {
+    'data-tp-fields': 'Выбор|reference:Цель,Дата|date,Направление|string',
+    'data-tp-choice': JSON.stringify({Выбор: context})
+  });
+
+  obManagedAddTpRow({getAttribute(name) {
+    return name === 'data-ob-add-tp' ? 'Строки' : null;
+  }});
+
+  const row = body.children[0];
+  const picker = row.children[0].children[0].children[0];
+  assert.equal(picker.name, 'tp.Строки.0.Выбор');
+  assert.equal(picker.getAttribute('data-ref-choice-context'), context);
+  assert.equal(picker.getAttribute('data-ref-row-id'), '0');
+  assert.equal(picker.children.length, 1, 'dependent picker must not offer unfiltered options');
+  const date = row.children[1].children[0];
+  assert.equal(date.name, 'tp.Строки.0.Дата');
+  assert.equal(date.type, 'datetime-local');
+  assert.equal(date.step, '1');
+  assert.equal(date.value || '', '', 'new date must stay empty');
+  assert.equal(row.children[2].children[0].type, 'text');
 });
 
 test('NoGrid add uses the clicked duplicate view schema', () => {

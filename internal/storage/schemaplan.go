@@ -127,6 +127,8 @@ type SchemaOptions struct {
 	// был бы обещанием, которого эта функция не выполняет. План строится
 	// отдельным входом — PlanMigration, он не меняет ничего.
 	AllowDestructive bool
+	// AdoptIndexes confirms exact legacy definitions, never names or wildcards.
+	AdoptIndexes []IndexAdoption
 	// Report вызывается на каждое изменение — применённое или отложенное.
 	// Второй аргумент: применено ли оно на самом деле.
 	Report func(change SchemaChange, applied bool)

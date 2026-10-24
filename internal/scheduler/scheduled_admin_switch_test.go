@@ -104,6 +104,15 @@ func TestТикГейтитНативноеЗадание(t *testing.T) {
 func TestRunNowРаботаетДляВыключенного(t *testing.T) {
 	db, ctx := openSchedulerTestDB(t)
 	sched := New(db, nil, nil)
+	// RunNow возвращает до завершения задания. Cleanup выполняется раньше
+	// зарегистрированных в openSchedulerTestDB закрытия БД и удаления TempDir.
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := sched.Shutdown(shutdownCtx); err != nil {
+			t.Errorf("scheduler shutdown before database cleanup: %v", err)
+		}
+	})
 	if err := sched.LoadJobs([]*metadata.ScheduledJob{{
 		Name:    "РучнойПрогон",
 		Enabled: false,
@@ -188,6 +197,14 @@ func TestJobStatesБезБазыСледуютКонфигурации(t *testin
 func TestПустоеРасписаниеЗаданиеПоТребованию(t *testing.T) {
 	db, ctx := openSchedulerTestDB(t)
 	sched := New(db, nil, nil)
+	// Даже без cron ручной запуск должен завершиться до cleanup базы.
+	t.Cleanup(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := sched.Shutdown(shutdownCtx); err != nil {
+			t.Errorf("scheduler shutdown before database cleanup: %v", err)
+		}
+	})
 
 	// Регрессия: раньше включённое задание с пустым расписанием валило
 	// LoadJobs ошибкой парсера cron, хотя metadata.ValidateSchedule обещает

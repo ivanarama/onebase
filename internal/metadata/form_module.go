@@ -204,6 +204,7 @@ type FormElement struct {
 	Handlers  map[FormEventType]string `yaml:"events,omitempty"`
 	Props     map[string]any           `yaml:"props,omitempty"`
 	Children  []*FormElement           `yaml:"children,omitempty"`
+	Columns   []*FormElement           `yaml:"columns,omitempty"` // план 183: колонки ТЧ с отбором
 
 	// Поля, добавленные планом 37. Все опциональны; YAML-загрузчик
 	// заполняет их при чтении managed-формы, конвертер 1С использует
@@ -296,6 +297,12 @@ type FormElement struct {
 	// первые N записей, и оператор выбирает из них, не подозревая, что видит не
 	// весь список. Указатель отличает явное false от отсутствующего ключа.
 	ChoiceDropdown *bool `yaml:"choice_dropdown,omitempty"`
+	// RefCardButton — показывать ли у ЭТОГО ссылочного поля кнопку «Открыть
+	// карточку» (🔍). Явное значение у поля сильнее обоих ключей формы
+	// (ref_card_button и ref_card_button_admin_only) в обе стороны: может и
+	// выключить кнопку при включённой форме, и показать её всем при выключенной
+	// или «только администратору» (#1876). nil — решает форма.
+	RefCardButton *bool `yaml:"ref_card_button,omitempty"`
 	// ChoiceFilter ограничивает варианты ссылочного поля декларативными
 	// условиями. Браузер передаёт только значения объявленных источников, а
 	// сервер восстанавливает Field/Op из этих метаданных; SQL-фрагменты в
@@ -522,6 +529,29 @@ func InputMaskDigitsOnly(mask string) bool {
 	return seen
 }
 
+// InputMaskHint — подсказка пустого поля по маске ввода: заполнители
+// (InputMaskPlaceholders) заменяются подчёркиванием, литералы остаются на
+// местах. «(000)000-00-00» превращается в «(___)___-__-__», «Пл0000000» — в
+// «Пл_______».
+//
+// Нужна потому, что маска до первого символа ничем себя не выдаёт: поле
+// выглядит обычным, и человек не знает ни формата, ни того, что «Пл»
+// подставится само.
+func InputMaskHint(mask string) string {
+	if mask == "" {
+		return ""
+	}
+	var b strings.Builder
+	for _, r := range mask {
+		if strings.ContainsRune(InputMaskPlaceholders, r) {
+			b.WriteRune('_')
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
 // FormChoice — один пункт списка значений элемента ПолеСписка. Value хранится
 // в реквизите (строкой), Title — локализованная подпись (ru, en, ...) по образцу
 // Enum.ValueTitles; если перевода нет, в качестве подписи используется Value.
@@ -652,6 +682,31 @@ type FormModule struct {
 	// становится втрое шире и перестаёт быть узнаваемой — там её выключают одним
 	// ключом на форму.
 	RefCardButton *bool `yaml:"ref_card_button,omitempty"`
+	// ListFilter — постоянный отбор ФОРМЫ СПИСКА. Отличается от фильтров в
+	// адресе страницы тем, что неснимаемое условие (без removable) нельзя
+	// отключить параметром адреса. removable включает снимаемый отбор по
+	// умолчанию; query задаёт ссылки на записи вместо сравнения field/value.
+	//
+	// Нужен там, где «мои записи» — это правило интерфейса, а не прав:
+	// оператор должен видеть в списке задач свои, но остальные ему не
+	// запрещены (их видно в отчётах и по ссылке), поэтому RLS здесь не
+	// подходит — он скрыл бы записи везде разом.
+	//
+	// Поле допускает ОДНО разыменование: «Инициатор.УчётнаяЗапись» отбирает
+	// по реквизиту связанной записи. Значение — литерал или @ТекущийПользователь
+	// (идентификатор учётной записи смотрящего).
+	ListFilter []FormListCondition `yaml:"filter,omitempty"`
+
+	// RefCardButtonAdminOnly — кнопку «Открыть карточку» видит только
+	// администратор (#1876). Оператору справочники вести не положено, и лупа у
+	// каждого значения мешает читать плотную форму; администратору она нужна
+	// именно на форме — разбирать ошибки и править записи.
+	//
+	// Отдельный ключ, а не значение ref_card_button: тот отвечает «рисовать ли
+	// вообще», этот — «кому». Порядок: явный ref_card_button поля →
+	// ref_card_button: false формы (скрыть у всех) → этот ключ. Это настройка
+	// интерфейса, не защита: карточку по прямому адресу и запись решают права.
+	RefCardButtonAdminOnly bool `yaml:"ref_card_button_admin_only,omitempty"`
 	// EnterSubmitsForm возвращает ПРЕЖНЕЕ поведение клавиши Enter: обычное
 	// нажатие может отправить форму (неявный HTML-submit). По умолчанию платформа
 	// переводит Enter в навигацию по полям — как в 1С и как ожидает оператор,
@@ -689,6 +744,49 @@ type FormModule struct {
 	idCounter int        `yaml:"-"`
 	idMu      sync.Mutex `yaml:"-"`
 }
+
+// FormListCondition — одно условие постоянного отбора формы списка.
+type FormListCondition struct {
+	Field string `yaml:"field"`
+	Op    string `yaml:"op,omitempty"`    // пока только eq (умолчание)
+	Value string `yaml:"value,omitempty"` // литерал или @ТекущийПользователь
+	// Roles — условие действует только для пользователя с одной из этих
+	// ролей; пусто — для всех. «Мои записи» нужны оператору, а сотрудник
+	// контроля качества разбирает весь список: одна форма, разный отбор.
+	Roles []string `yaml:"roles,omitempty"`
+	// Query — условие запросом вместо Field/Value: первая колонка результата —
+	// ссылки на записи этой сущности, список показывает только их. Правило
+	// «чьи записи» бывает сложнее одного поля — например, менеджеру задачи по
+	// направлениям из его карточки, остальным — по подразделению. Параметры
+	// &ТекущийПользователь (идентификатор учётки) и &ТекущийЛогин подставляются
+	// сами; как и у @ТекущийПользователь, администратора условие не касается.
+	Query string `yaml:"query,omitempty"`
+	// Removable — отбор по умолчанию: над списком переключатель с подписью
+	// Label, снятый переключатель отключает условие (как «Только активные» в
+	// рабочем списке задач 1С). Без Removable условие снять нельзя.
+	Removable bool              `yaml:"removable,omitempty"`
+	Label     map[string]string `yaml:"label,omitempty"`
+}
+
+// DisplayLabel — подпись переключателя снимаемого отбора на языке lang
+// (ru — запасной), без подписи — «Отбор».
+func (c FormListCondition) DisplayLabel(lang string) string {
+	if v := strings.TrimSpace(c.Label[lang]); v != "" {
+		return v
+	}
+	if v := strings.TrimSpace(c.Label["ru"]); v != "" {
+		return v
+	}
+	for _, v := range c.Label {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return "Отбор"
+}
+
+// ListFilterCurrentUser — подстановка «тот, кто смотрит» в значении условия.
+const ListFilterCurrentUser = "@ТекущийПользователь"
 
 // FormProcedure represents a procedure in form module
 type FormProcedure struct {
@@ -937,6 +1035,9 @@ func walkElement(el *FormElement, fn func(*FormElement) bool) {
 		return
 	}
 	for _, child := range el.Children {
+		walkElement(child, fn)
+	}
+	for _, child := range el.Columns {
 		walkElement(child, fn)
 	}
 }

@@ -1,5 +1,5 @@
 const { test, expect } = require('@playwright/test');
-const { ids = {}, refs = {} } = JSON.parse(process.env.OB_HIDDEN_REF_ATTR_FIXTURE || '{}');
+const { ids = {}, refs = {}, locals = {} } = JSON.parse(process.env.OB_HIDDEN_REF_ATTR_FIXTURE || '{}');
 const oldID = refs['Исходный склад'];
 const newID = refs['Выбранный склад'];
 const visible = page => page.locator('.ob-ref-combobox:visible').getByRole('combobox');
@@ -70,7 +70,12 @@ for (const [name, id] of Object.entries(ids)) {
       const data = await fire(page, 'Переключить');
       expect(data.values.Получено).toBe('Выбранный склад');
       await submitted(page, newID);
+      // Keep the hidden copy deliberately different after the real event too.
+      await page.locator('select[name="Склад"]:not(:visible)').evaluate((s, id) => { s.value = id; }, oldID);
       await card(page, newID);
+      await picker(page);
+      await page.locator('#_rp-list ._rp-item').filter({ hasText: 'Выбранный склад' }).click();
+      await submitted(page, newID);
     }
     const [save] = await Promise.all([
       page.waitForResponse(r => r.request().method() === 'POST' && !r.url().endsWith('/form-event') && decodeURI(r.url()).includes(`/ui/catalog/${name}/`)),
@@ -80,7 +85,7 @@ for (const [name, id] of Object.entries(ids)) {
     await page.waitForLoadState();
     await submitted(page, newID);
     // POST and redirect restore the local attr through the existing stash; a
-    // fresh server GET has no persisted value (remove any consumed stash too).
+    // fresh server GET restores persistent fields but leaves save:false empty.
     expect((await fire(page, 'Проверить')).values.Получено).toBe('Выбранный склад');
     await picker(page);
     await page.locator('#_rp-cancel').click();
@@ -90,7 +95,7 @@ for (const [name, id] of Object.entries(ids)) {
     expect((await fire(page, 'Проверить')).values.Получено).toBe('Пусто');
     await submitted(page, '');
     await page.reload();
-    await submitted(page, '');
+    await submitted(page, locals[name] ? '' : newID);
   });
 
   test(`${name}: readonly blocks selection and card reads its own copy`, async ({ page }) => {

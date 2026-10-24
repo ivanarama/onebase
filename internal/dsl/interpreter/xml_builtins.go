@@ -1060,6 +1060,14 @@ func validateXMLNCName(name string) error {
 	if name == "" {
 		return fmt.Errorf("имя пусто")
 	}
+	// Long ASCII names need no rune-by-rune Unicode checks. TrimLeft uses
+	// an ASCII set in the standard library; every other input keeps the full
+	// UTF-8 check and the original diagnostic precedence below.
+	const asciiStart = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz_"
+	const asciiName = asciiStart + "0123456789-."
+	if strings.ContainsRune(asciiStart, rune(name[0])) && strings.TrimLeft(name[1:], asciiName) == "" {
+		return nil
+	}
 	if !utf8.ValidString(name) {
 		return fmt.Errorf("имя содержит некорректную UTF-8 последовательность")
 	}
@@ -1515,7 +1523,13 @@ func builtinFindDisallowedXMLChars(args []any, file string, line int) (any, erro
 // проверка RuneError с размером 1 отличает повреждённую UTF-8 от допустимого
 // литерального символа U+FFFD.
 func firstDisallowedXMLCharacter(text string) int {
-	position := 0
+	// Consume the ASCII prefix in bulk once; the remainder retains the
+	// original Unicode/invalid UTF-8 loop and character-based positions.
+	const asciiXML = "\t\n\r !\"#$%&'()*+,-./0123456789:;<=>?@" +
+		"ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f"
+	rest := strings.TrimLeft(text, asciiXML)
+	position := len(text) - len(rest)
+	text = rest
 	for len(text) > 0 {
 		position++
 		r, size := utf8.DecodeRuneInString(text)

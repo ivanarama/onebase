@@ -2557,6 +2557,12 @@ static constexpr IID IID_ICoreWebView2WebMessageReceivedEventHandler{
     0x00E6,
     0x49FA,
     {0x8E, 0x07, 0x89, 0x8E, 0xA0, 0x1E, 0xCB, 0xD2}};
+// onebase patch: ICoreWebView2Settings4 — автозаполнение форм (см. embed).
+static constexpr IID IID_ICoreWebView2Settings4{
+    0xCB56846C,
+    0x4168,
+    0x4D53,
+    {0xB0, 0x4F, 0x03, 0xB6, 0xD6, 0x79, 0x6F, 0xF2}};
 
 #if WEBVIEW_MSWEBVIEW2_BUILTIN_IMPL == 1
 enum class webview2_runtime_type { installed = 0, embedded = 1 };
@@ -3385,6 +3391,22 @@ private:
     res = settings->put_IsStatusBarEnabled(FALSE);
     if (res != S_OK) {
       return false;
+    }
+    // onebase patch: окно Предприятия — рабочее место оператора, а не
+    // личный браузер. Встроенное автозаполнение WebView2 (включено по
+    // умолчанию) запоминало введённое и подсказывало прошлые телефоны и
+    // адреса — чужие данные из прошлых звонков. Выключаем его; сохранение
+    // паролей (по умолчанию выключено) ставим в FALSE явно. Нет
+    // ICoreWebView2Settings4 (старый runtime) — оставляем как есть: окно
+    // должно открыться и без этой настройки.
+    ICoreWebView2Settings4 *settings4 = nullptr;
+    if (settings->QueryInterface(mswebview2::IID_ICoreWebView2Settings4,
+                                 reinterpret_cast<void **>(&settings4)) ==
+            S_OK &&
+        settings4) {
+      settings4->put_IsGeneralAutofillEnabled(FALSE);
+      settings4->put_IsPasswordAutosaveEnabled(FALSE);
+      settings4->Release();
     }
     init("window.external={invoke:s=>window.chrome.webview.postMessage(s)}");
     resize_webview();

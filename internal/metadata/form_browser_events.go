@@ -73,7 +73,12 @@ var browserFormCommandEvents = []FormEventType{FormEventOnClick, FormEventOnSear
 // browserFormLevelEvents — события, приходящие без имени элемента, на форму
 // целиком. Остальные события уровня формы серверные: их запускает сервер на
 // чтении и записи, из браузера они не вызываются.
-var browserFormLevelEvents = []FormEventType{FormEventOnOpen}
+//
+// Ответ — вторая фаза вопроса, заданного из ПриОткрытии («Принять задачу?»
+// при открытии, как в 1С): у вопроса формы нет элемента-источника, и клиент
+// отправляет ответ без имени элемента. Вызывается только объявленный в events
+// формы обработчик — иначе fail-closed отказ, как у любого события.
+var browserFormLevelEvents = []FormEventType{FormEventOnOpen, FormEventOnAnswer}
 
 // BrowserFormEventsFor возвращает копию перечня событий, которые браузер вправе
 // отправить элементу формы данного вида. Вид, ничего не отправляющий (надпись,

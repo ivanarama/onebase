@@ -354,6 +354,9 @@ func (s *Server) MountStatic(r chi.Router) {
 }
 
 func (s *Server) Mount(r chi.Router) {
+	r.Get("/ui/help", s.helpIndex)
+	r.Get("/ui/help/chapter/{chapter}", s.helpChapter)
+	r.Get("/ui/help/assets/*", s.helpAsset)
 	r.Get("/ui", s.index)
 	r.Get("/ui/", s.index)
 	r.Get("/ui/app", s.appShell)           // оболочка вкладок (issue #129/#130, фаза 1)
