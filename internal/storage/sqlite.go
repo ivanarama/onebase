@@ -22,6 +22,30 @@ import (
 // strings.ToLower (полная таблица Unicode) и применяется в LowerLike SQLite-
 // диалекта. Регистрация глобальна и действует на все коннекты, открытые позже.
 func init() {
+	// Регистры допускают старые RFC3339-строки и штатную привязку time.Time.
+	// Общий UTC-ключ нужен только для их сравнений с параметром-моментом.
+	// Фиксированная дробная часть сохраняет порядок и точность; datetime() и
+	// julianday() SQLite округляют дробные секунды.
+	sqlite.MustRegisterDeterministicScalarFunction("ob_utc_datetime", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		if len(args) != 1 || args[0] == nil {
+			return nil, nil
+		}
+		var value string
+		switch v := args[0].(type) {
+		case string:
+			value = v
+		case []byte:
+			value = string(v)
+		default:
+			return nil, nil
+		}
+		for _, layout := range []string{sqliteTimeLayout, time.RFC3339Nano} {
+			if parsed, err := time.Parse(layout, value); err == nil {
+				return parsed.UTC().Format("2006-01-02 15:04:05.000000000"), nil
+			}
+		}
+		return nil, nil
+	})
 	sqlite.MustRegisterDeterministicScalarFunction("ob_lower", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 		if len(args) != 1 || args[0] == nil {
 			return nil, nil

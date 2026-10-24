@@ -4118,48 +4118,176 @@ func (tr *translator) needsNumberCastForType(fieldType metadata.FieldType) bool 
 }
 
 // sqliteDateParamComparedToField распознаёт time.Time-параметр в прямом
-// сравнении с полем date. Такие параметры сериализуются тем же UTC RFC3339,
-// что и значения полей сущностей: иначе SQLite сравнивает разные TEXT-форматы
-// лексикографически по разделителю ('T' против пробела) и ошибается (#462).
+// сравнении с полем date объекта. Такие параметры сериализуются тем же UTC
+// RFC3339, что и значения полей сущностей: иначе SQLite сравнивает разные
+// TEXT-форматы лексикографически по разделителю ('T' против пробела) и
+// ошибается (#462). Для регистра нормализуются оба операнда, поскольку
+// публичная запись допускает несколько физических форматов даты.
 func (tr *translator) sqliteDateParamComparedToField(idx int) bool {
-	if dialectOrDefault(tr.opts.Dialect).Name() != "sqlite" || !tr.timeParamAt(idx) {
-		return false
-	}
-	if tr.dateFieldAt(idx-2) && tr.comparisonOpAt(idx-1) {
-		return true
-	}
-	if tr.comparisonOpAt(idx+1) && tr.dateFieldAt(idx+2) {
-		return true
-	}
-	// Первый или второй параметр правой части BETWEEN.
-	if tr.dateFieldAt(idx-2) && tr.keywordAt(idx-1, "МЕЖДУ", "BETWEEN") {
-		return true
-	}
-	return tr.dateFieldAt(idx-4) &&
-		tr.keywordAt(idx-3, "МЕЖДУ", "BETWEEN") &&
-		tr.timeParamAt(idx-2) &&
-		tr.keywordAt(idx-1, "И", "AND")
+	return tr.sqliteDateParamField(idx) >= 0
 }
 
-func (tr *translator) addSQLiteDateParam(name string) string {
+// sqliteDateParamField возвращает последний токен поля в прямом сравнении.
+// Выражения над датами сохраняют прежнюю трансляцию. Строковая граница
+// регистра нормализуется только в паре с time.Time в прямом BETWEEN.
+func (tr *translator) sqliteDateParamField(idx int) int {
+	if dialectOrDefault(tr.opts.Dialect).Name() != "sqlite" {
+		return -1
+	}
+	if field := tr.sqliteRegisterDateBetweenField(idx); field >= 0 {
+		return field
+	}
+	if !tr.timeParamAt(idx) {
+		return -1
+	}
+	if tr.dateFieldAt(idx-2) && tr.comparisonOpAt(idx-1) {
+		return idx - 2
+	}
+	if tr.comparisonOpAt(idx + 1) {
+		field := idx + 2
+		for field+2 < len(tr.tokens) && tr.tokens[field].kind == tIdent &&
+			tr.tokens[field+1].kind == tDot && tr.tokens[field+2].kind == tIdent {
+			field += 2
+		}
+		if tr.dateFieldAt(field) {
+			return field
+		}
+	}
+	// Первый или второй параметр правой части BETWEEN.
+	if tr.dateFieldAt(idx-2) && tr.keywordAt(idx-1, "МЕЖДУ", "BETWEEN") &&
+		(!tr.registerFieldAt(idx-2) || tr.keywordAt(idx+1, "И", "AND") && tr.timeParamAt(idx+2)) {
+		return idx - 2
+	}
+	if tr.dateFieldAt(idx-4) &&
+		tr.keywordAt(idx-3, "МЕЖДУ", "BETWEEN") &&
+		tr.timeParamAt(idx-2) &&
+		tr.keywordAt(idx-1, "И", "AND") {
+		return idx - 4
+	}
+	return -1
+}
+
+// Обе границы должны быть отдельными параметрами, хотя бы один — time.Time.
+// Только валидная RFC3339-строка второй границы может разделить UTC-ключ с ним.
+// Решение общее для колонки и обеих границ, чтобы не смешать три формата.
+func (tr *translator) sqliteRegisterDateBetweenField(idx int) int {
+	for _, first := range []int{idx, idx - 2} {
+		field, last := first-2, first+2
+		if !tr.dateFieldAt(field) || !tr.registerFieldAt(field) ||
+			!tr.keywordAt(first-1, "МЕЖДУ", "BETWEEN") || !tr.keywordAt(first+1, "И", "AND") ||
+			!tr.dateBoundaryParamAt(first) || !tr.dateBoundaryParamAt(last) ||
+			(!tr.timeParamAt(first) && !tr.timeParamAt(last)) {
+			continue
+		}
+		// Арифметика, вызов функции и иные выражения после верхней границы
+		// не являются прямым BETWEEN двух параметров.
+		if last+1 >= len(tr.tokens) {
+			continue
+		}
+		next := tr.tokens[last+1]
+		switch next.kind {
+		case tEOF, tRParen, tComma:
+			return field
+		case tIdent:
+			if kw, ok := sqlKW(next.val); ok {
+				switch kw {
+				case "AND", "OR", "GROUP", "HAVING", "ORDER", "UNION", "LIMIT", "THEN", "ELSE", "END", "AS", "FROM":
+					return field
+				}
+			}
+		}
+	}
+	return -1
+}
+
+func (tr *translator) dateBoundaryParamAt(idx int) bool {
+	if tr.timeParamAt(idx) {
+		return true
+	}
+	if idx < 0 || idx >= len(tr.tokens) || tr.tokens[idx].kind != tParam {
+		return false
+	}
+	value, ok := tr.paramValues[tr.tokens[idx].val].(string)
+	if !ok {
+		return false
+	}
+	_, err := time.Parse(time.RFC3339Nano, value)
+	return err == nil
+}
+
+func (tr *translator) addSQLiteDateParam(name string, register bool) string {
+	layout := time.RFC3339
+	if register {
+		layout = time.RFC3339Nano
+	}
 	var value any
 	switch v := tr.paramValues[name].(type) {
+	case string:
+		value = v // RFC3339 проверен общим решением для BETWEEN.
 	case time.Time:
-		value = v.UTC().Format(time.RFC3339)
+		value = v.UTC().Format(layout)
 	case *time.Time:
 		if v != nil {
-			value = v.UTC().Format(time.RFC3339)
+			value = v.UTC().Format(layout)
 		}
 	}
 	tr.args = append(tr.args, value)
-	return dialectOrDefault(tr.opts.Dialect).Placeholder(len(tr.args))
+	placeholder := dialectOrDefault(tr.opts.Dialect).Placeholder(len(tr.args))
+	if register {
+		return "ob_utc_datetime(" + placeholder + ")"
+	}
+	return placeholder
 }
 
 func (tr *translator) dateFieldAt(idx int) bool {
 	if idx < 0 || idx >= len(tr.tokens) || tr.tokens[idx].kind != tIdent {
 		return false
 	}
+	if tr.registerFieldAt(idx) {
+		typ, _, known := tr.columnTypeAt(idx, lowerFast(tr.tokens[idx].val), tr.columnQualifierAt(idx))
+		return known && typ == metadata.FieldTypeDate
+	}
 	return tr.colTypes[lowerFast(tr.tokens[idx].val)] == metadata.FieldTypeDate
+}
+
+// Оборачиваем только поле того же прямого сравнения, чей параметр получил
+// ob_utc_datetime. SELECT/ORDER BY и сравнения строк не меняют представление.
+func (tr *translator) sqliteRegisterDateComparisonAt(idx int) bool {
+	if !tr.dateFieldAt(idx) || !tr.registerFieldAt(idx) {
+		return false
+	}
+	start := idx
+	for start >= 2 && tr.tokens[start-1].kind == tDot && tr.tokens[start-2].kind == tIdent {
+		start -= 2
+	}
+	for _, param := range []int{idx + 2, idx + 4, start - 2} {
+		if tr.sqliteDateParamField(param) == idx {
+			return true
+		}
+	}
+	return false
+}
+
+// registerFieldAt — поле в позиции idx принадлежит источнику-регистру: по
+// квалификатору «Р.Поле» или, без квалификатора, по главному источнику SELECT.
+// Путь через ссылку («Р.Мастер.Поле») ведёт к объекту и регистром не считается.
+func (tr *translator) registerFieldAt(idx int) bool {
+	if idx >= 2 && tr.tokens[idx-1].kind == tDot && tr.tokens[idx-2].kind == tIdent {
+		if idx >= 3 && tr.tokens[idx-3].kind == tDot {
+			// В Р.Мастер.Поле имя Мастер — ссылочный реквизит, даже если
+			// другой источник SELECT использует его как свой алиас.
+			return false
+		}
+		qualifier := lowerFast(tr.tokens[idx-2].val)
+		scope, ok := tr.sourceCtx.qualifierScopeAt(idx, qualifier)
+		if !ok {
+			return false
+		}
+		class, known := scope.qualifiers[qualifier]
+		return known && class == sourceClassRegister
+	}
+	scope, ok := tr.sourceCtx.scopeAt(idx)
+	return ok && scope.main == sourceClassRegister
 }
 
 func (tr *translator) timeParamAt(idx int) bool {
@@ -4259,6 +4387,10 @@ func isReferenceName(lower string) bool {
 // emitOwnColumn эмитит неквалифицированную собственную колонку с учётом п.48/п.49.
 func (tr *translator) emitOwnColumn(col, lower string) {
 	col = tr.qualifyOwn(col, lower)
+	if tr.sqliteRegisterDateComparisonAt(tr.pos - 1) {
+		tr.emit("ob_utc_datetime(" + col + ")")
+		return
+	}
 	if tr.needsNumberCast(lower) {
 		tr.emit("CAST(" + col + " AS NUMERIC)")
 		return
@@ -4374,6 +4506,10 @@ func (tr *translator) equalityOpAt(idx int) bool {
 // обязателен.
 func (tr *translator) emitQualifiedColumn(col, lower string) {
 	if len(tr.parts) >= 2 && tr.parts[len(tr.parts)-1] == "." {
+		if tr.sqliteRegisterDateComparisonAt(tr.pos - 1) {
+			tr.emit("ob_utc_datetime(" + tr.takeQualifier() + col + ")")
+			return
+		}
 		if tr.needsNumberCast(lower) {
 			tr.emit("CAST(" + tr.takeQualifier() + col + " AS NUMERIC)")
 			return
@@ -4426,6 +4562,10 @@ func (tr *translator) emitDerivedReferenceAlias(col, lower string) {
 }
 
 func (tr *translator) emitRefAttrColumn(col string, fieldType metadata.FieldType) {
+	if len(tr.parts) >= 2 && tr.parts[len(tr.parts)-1] == "." && tr.sqliteRegisterDateComparisonAt(tr.pos-1) {
+		tr.emit("ob_utc_datetime(" + tr.takeQualifier() + col + ")")
+		return
+	}
 	if len(tr.parts) >= 2 && tr.parts[len(tr.parts)-1] == "." && tr.needsNumberCastForType(fieldType) {
 		tr.emit("CAST(" + tr.takeQualifier() + col + " AS NUMERIC)")
 		return
@@ -5620,9 +5760,10 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		if t.kind == tParam {
 			tr.prevWasDot = false
 			normalizeDate := tr.sqliteDateParamComparedToField(tr.pos)
+			registerDate := normalizeDate && tr.registerFieldAt(tr.sqliteDateParamField(tr.pos))
 			tr.advance()
 			if normalizeDate {
-				tr.emit(tr.addSQLiteDateParam(t.val))
+				tr.emit(tr.addSQLiteDateParam(t.val, registerDate))
 			} else {
 				tr.emit(tr.addParam(t.val))
 			}
