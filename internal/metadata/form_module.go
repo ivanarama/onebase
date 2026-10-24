@@ -399,13 +399,29 @@ func FormChoiceParentFieldOf(entity *Entity) *Field {
 // onebase check. Если записи с таким UUID нет или пользователь её не видит,
 // подбор пуст при любом операторе (fail-closed): иначе пропавшая папка
 // раскрыла бы весь справочник.
+//
+// Query — условие запросом вместо field/op (как filter[].query у формы списка,
+// #2181): допустимы только записи из первой колонки результата — ссылки или
+// строки с UUID. Правило «какие товарные группы есть в соответствии объектов
+// 1С для базы филиала» одним реквизитом не выражается. Params — параметры
+// запроса из формы: имя параметра → путь Объект.<Реквизит> (ссылка) или
+// Объект.<Ссылка>.<Реквизит> (ссылка или строка за одним переходом), те же
+// источники, что from. Пустой источник закрывает подбор, как у eq; ошибка
+// запроса и больше 10000 строк — тоже (fail-closed). Запрос исполняется с
+// правами пользователя: строковый доступ его источников действует, закрытые
+// источники и поля дают пустой подбор.
 type FormChoiceCondition struct {
-	Field string             `yaml:"field"`
-	Op    FormChoiceOperator `yaml:"op"`
-	From  string             `yaml:"from,omitempty"`
-	Value *bool              `yaml:"value,omitempty"`
-	Ref   string             `yaml:"ref,omitempty"`
+	Field  string             `yaml:"field,omitempty"`
+	Op     FormChoiceOperator `yaml:"op,omitempty"`
+	From   string             `yaml:"from,omitempty"`
+	Value  *bool              `yaml:"value,omitempty"`
+	Ref    string             `yaml:"ref,omitempty"`
+	Query  string             `yaml:"query,omitempty"`
+	Params map[string]string  `yaml:"params,omitempty"`
 }
+
+// IsQuery — условие задано запросом (query), а не реквизитом цели.
+func (c FormChoiceCondition) IsQuery() bool { return strings.TrimSpace(c.Query) != "" }
 
 // FormChoiceSource — разобранный источник условия подбора.
 //

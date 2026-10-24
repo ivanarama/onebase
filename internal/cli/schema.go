@@ -558,6 +558,21 @@ func managedFormSchema() map[string]any {
 			map[string]any{"required": []string{"ref"}, "not": map[string]any{"anyOf": []any{map[string]any{"required": []string{"from"}}, map[string]any{"required": []string{"value"}}}}},
 		},
 	}
+	// Условие запросом (как filter[].query формы списка): допустимы записи из
+	// первой колонки результата; params — значения из формы.
+	queryCondition := map[string]any{
+		"type":                 "object",
+		"additionalProperties": false,
+		"required":             []string{"query"},
+		"properties": map[string]any{
+			"query": map[string]any{"type": "string", "minLength": 1, "description": "Запрос: первая колонка — ссылки (или строки с UUID) допустимых записей; исполняется с правами пользователя, ошибка или больше 10000 строк — пустой подбор"},
+			"params": map[string]any{
+				"type":                 "object",
+				"additionalProperties": map[string]any{"type": "string"},
+				"description":          "Параметры запроса: Имя → Объект.<Ссылка>, Форма.<Ссылка> или Объект.<Ссылка>.<Реквизит> (ссылка или строка); пустое значение — пустой подбор",
+			},
+		},
+	}
 	element := map[string]any{
 		"$dynamicAnchor":       "formElement",
 		"type":                 "object",
@@ -582,7 +597,7 @@ func managedFormSchema() map[string]any {
 				"minItems":    1,
 				"maxItems":    8,
 				"uniqueItems": false,
-				"items":       condition,
+				"items":       map[string]any{"oneOf": []any{condition, queryCondition}},
 				"description": "Условия зависимого подбора; соединяются через AND",
 			},
 		},

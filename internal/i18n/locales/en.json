@@ -1517,6 +1517,7 @@
   "Оператор": "Operator",
   "Поле формы (from)": "Form field (from)",
   "Постоянная ссылка (ref)": "Fixed reference (ref)",
+  "Условие запросом — правится в YAML формы:": "Query condition — edit it in the form YAML:",
   "UUID записи справочника": "Catalog record UUID",
   "Условия идут по порядку и соединяются через И. Для подбора обязателен уникальный id выше.": "Conditions are evaluated in order and joined with AND. A unique element ID above is required for filtering.",
   "Устойчивый id элемента": "Stable element ID",

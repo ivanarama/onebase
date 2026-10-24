@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -122,16 +123,24 @@ func choiceSourceControls(element *metadata.FormElement) map[string]string {
 		return nil
 	}
 	controls := make(map[string]string)
-	for _, condition := range element.ChoiceFilter {
-		path := strings.TrimSpace(condition.From)
+	add := func(path string) {
+		path = strings.TrimSpace(path)
 		if path == "" {
-			continue
+			return
 		}
 		// Браузер снимает значение ВЕДУЩЕГО элемента формы — и для глубокого
 		// источника тоже: реквизит за ссылкой на форме не лежит, его читает
 		// сервер под правами пользователя.
 		if source, ok := metadata.ParseFormChoiceSource(path); ok {
 			controls[path] = source.Field
+		}
+	}
+	for _, condition := range element.ChoiceFilter {
+		add(condition.From)
+		// Параметры условия-запроса — такие же источники: значение ведущего
+		// поля присылает браузер, переход по ссылке делает сервер.
+		for _, path := range condition.Params {
+			add(path)
 		}
 	}
 	if len(controls) == 0 {
@@ -189,6 +198,14 @@ func (s *Server) choicePredicates(ctx context.Context, owner *metadata.Entity, f
 	predicates := make([]storage.ChoicePredicate, 0, len(element.ChoiceFilter))
 	targetDecisions := s.fieldDecisions(ctx, target)
 	for _, condition := range element.ChoiceFilter {
+		if condition.IsQuery() {
+			predicate, closed, err := s.choiceQueryPredicate(ctx, owner, form, condition, sources)
+			if err != nil || closed {
+				return nil, closed, err
+			}
+			predicates = append(predicates, predicate)
+			continue
+		}
 		// Match the checker and SQL field lookup before applying target masks.
 		fieldName := strings.TrimSpace(condition.Field)
 		// The filtered result and its total reveal a target field even when the
@@ -280,6 +297,78 @@ func (s *Server) choicePredicates(ctx context.Context, owner *metadata.Entity, f
 		predicates = append(predicates, predicate)
 	}
 	return predicates, false, nil
+}
+
+// choiceQueryPredicate — условие choice_filter запросом (query): допустимы
+// записи из первой колонки результата, как у filter[].query формы списка
+// (#2181). Запрос исполняет listFilterQueryIDs — с правами пользователя, с той
+// же защитой источников и полей. Параметры — значения источников формы:
+// ссылка ведущего поля приходит из браузера, реквизит за ней читает сервер.
+//
+// closed=true — пустой подбор: пустой или недоступный источник параметра
+// (как у eq), ошибка запроса или больше listFormFilterMaxRows строк. Сломанное
+// правило не раскрывает весь справочник. Ошибка запроса не уходит клиенту
+// текстом — только в журнал: её текст рассказал бы о схеме и данных.
+func (s *Server) choiceQueryPredicate(ctx context.Context, owner *metadata.Entity, form *metadata.FormModule, condition metadata.FormChoiceCondition, sources map[string]string) (storage.ChoicePredicate, bool, error) {
+	params := make(map[string]any, len(condition.Params))
+	for name, rawPath := range condition.Params {
+		path := strings.TrimSpace(rawPath)
+		raw := strings.TrimSpace(sources[path])
+		if raw == "" {
+			return storage.ChoicePredicate{}, true, nil
+		}
+		id, err := uuid.Parse(raw)
+		if err != nil || id == uuid.Nil {
+			return storage.ChoicePredicate{}, false, fmt.Errorf("invalid value for choice source %q", path)
+		}
+		source, ok := metadata.ParseFormChoiceSource(path)
+		if !ok {
+			return storage.ChoicePredicate{}, false, fmt.Errorf("invalid choice source %q", path)
+		}
+		if !source.Deep() {
+			params[strings.TrimSpace(name)] = id.String()
+			continue
+		}
+		value, found, err := s.deepChoiceSourceValue(ctx, owner, form, source, id, deepChoiceSourceIsText(s, owner, form, source))
+		if err != nil {
+			return storage.ChoicePredicate{}, false, err
+		}
+		if !found {
+			return storage.ChoicePredicate{}, true, nil
+		}
+		if ref, isRef := value.(uuid.UUID); isRef {
+			value = ref.String()
+		}
+		params[strings.TrimSpace(name)] = value
+	}
+	ids, err := s.listFilterQueryIDs(ctx, condition.Query, auth.UserFromContext(ctx), params)
+	if err != nil {
+		slog.Warn("choice_filter query failed", "error", err)
+		return storage.ChoicePredicate{}, true, nil
+	}
+	if len(ids) > listFormFilterMaxRows {
+		slog.Warn("choice_filter query returned too many rows", "rows", len(ids))
+		return storage.ChoicePredicate{}, true, nil
+	}
+	predicate := storage.ChoicePredicate{ByIDs: true, IDs: make([]uuid.UUID, 0, len(ids))}
+	for _, raw := range ids {
+		if id, err := uuid.Parse(raw); err == nil {
+			predicate.IDs = append(predicate.IDs, id)
+		}
+	}
+	return predicate, false, nil
+}
+
+// deepChoiceSourceIsText — конец глубокого пути строковый реквизит: параметр
+// запроса тогда строка, иначе ссылка. Для from это решает реквизит цели, у
+// параметра запроса цели нет — решает сам путь.
+func deepChoiceSourceIsText(s *Server, owner *metadata.Entity, form *metadata.FormModule, source metadata.FormChoiceSource) bool {
+	lead := s.reg.GetEntity(formChoiceRefEntity(owner, form, source.Root+"."+source.Field))
+	if lead == nil {
+		return false
+	}
+	attr, ok := entityFieldByName(lead, source.Attr)
+	return ok && strings.TrimSpace(attr.RefEntity) == "" && attr.Type == metadata.FieldTypeString
 }
 
 // deepChoiceSourceValue читает единственный разрешённый переход по ссылке:
