@@ -53,6 +53,10 @@ type maskHelperExemption struct {
 }
 
 var maskHelperExempt = map[string]maskHelperExemption{
+	// Кэш записи запроса формы: отдаёт вызывающему сырую строку, как
+	// store.GetByID; вызов recordForRequest страж считает чтением store, так что
+	// каждый вызывающий сам стоит под этим правилом.
+	"Server.recordForRequest": {reason: "обёртка GetByID с кэшем на время запроса; маску накладывают вызывающие, их чтения страж видит"},
 	// ── Проверки строкового доступа (RLS): наружу идёт bool, 403 или
 	// ErrRowAccessDenied, значения реквизитов никуда не отдаются. Маскировать
 	// строку здесь означало бы решать доступ по маске вместо данных.
@@ -92,12 +96,12 @@ var maskHelperExempt = map[string]maskHelperExemption{
 
 	// ── Гейт стоит не здесь, а в названной функции. Тест
 	// DelegatedGatesStillMask следит, что он там действительно есть.
-	"docWriter.read":                       {reason: "значения кладутся в obj и маскируются на выдаче", maskedBy: "docWriter.Get"},
-	"dslRefAttrResolver.preloadIDs":        {reason: "наполняет кэш, значения отдаёт только ResolveRefAttr", maskedBy: "dslRefAttrResolver.ResolveRefAttr"},
-	"Server.restoreUnsubmittedFields":      {reason: "дочитывает неприсланные реквизиты ДЛЯ ЗАПИСИ, к клиенту они идут через сериализацию ответа (#609)", maskedBy: "Server.serializeManagedFormEventState"},
-	"Server.refreshFieldsWrittenByHandler": {reason: "перечитывает записанное обработчиком ДЛЯ ЗАПИСИ, к клиенту — через сериализацию ответа (#609)", maskedBy: "Server.serializeManagedFormEventState"},
-	"Server.managedCloseStateDirty":        {reason: "сравнивает серверное состояние с БД и наружу отдаёт только bool; сами поля идут через сериализацию ответа", maskedBy: "Server.serializeManagedFormEventState"},
-	"Server.saveManagedObject":             {reason: "путь записи: GetByID используется только для RLS-предиката, значения клиенту не возвращаются"},
+	"docWriter.read":                        {reason: "значения кладутся в obj и маскируются на выдаче", maskedBy: "docWriter.Get"},
+	"dslRefAttrResolver.preloadIDs":         {reason: "наполняет кэш, значения отдаёт только ResolveRefAttr", maskedBy: "dslRefAttrResolver.ResolveRefAttr"},
+	"Server.restoreUnsubmittedFields":       {reason: "дочитывает неприсланные реквизиты ДЛЯ ЗАПИСИ, к клиенту они идут через сериализацию ответа (#609)", maskedBy: "Server.serializeManagedFormEventValues"},
+	"Server.refreshFieldsWrittenByHandler":  {reason: "перечитывает записанное обработчиком ДЛЯ ЗАПИСИ, к клиенту — через сериализацию ответа (#609)", maskedBy: "Server.serializeManagedFormEventValues"},
+	"Server.managedCloseStateDirtyWithRows": {reason: "сравнивает серверное состояние с БД и наружу отдаёт только bool; сами поля идут через сериализацию ответа", maskedBy: "Server.serializeManagedFormEventValues"},
+	"Server.saveManagedObject":              {reason: "путь записи: GetByID используется только для RLS-предиката, значения клиенту не возвращаются"},
 
 	// ── Особый случай.
 	"formObjectThis.XDTOObject": {reason: "HTTP-снимок XDTO: прочитанная строка используется для read/RLS и только служебных bool posted/deletion_mark; " +
@@ -171,6 +175,12 @@ func maskHelperScan(t *testing.T) map[string]maskHelperFact {
 					if inner, ok := sel.X.(*ast.SelectorExpr); ok && inner.Sel.Name == "store" {
 						readsStore = true
 					}
+				}
+				// recordForRequest — GetByID с кэшем запроса: вызывающий читает
+				// ту же сырую запись, что и прямым store.GetByID, и отвечает за
+				// маску сам. Без этого обёртка спрятала бы чтение от стража.
+				if sel.Sel.Name == "recordForRequest" {
+					readsStore = true
 				}
 				return true
 			})

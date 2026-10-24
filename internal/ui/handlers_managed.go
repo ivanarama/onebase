@@ -46,6 +46,8 @@ func pickManagedForm(entity *metadata.Entity, kind string) *metadata.FormModule 
 // автоматически активирует managed-рендер для выбранной сущности; без
 // .form.yaml продолжает работать существующая авто-форма без изменений.
 func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind string, data map[string]any) {
+	// formData — сборка данных управляемой формы до отрисовки шаблона.
+	endFormData := serverTimingSpan(r.Context(), "formData")
 	entity, _ := data["Entity"].(*metadata.Entity)
 	// #481: заголовок вкладки/карточки = представление записи (Наименование…),
 	// а не имя сущности. Для существующей записи кладём TabTitle (его читает
@@ -104,9 +106,11 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 		// точка покрывает все пути рендера (new/edit/повторный показ с ошибкой).
 		data["ChoiceOptions"] = loadChoiceOptions(managed, s.resolveLang(r))
 		s.prepareManagedFormData(r.Context(), data, managed)
+		endFormData()
 		s.render(w, r, "page-managed-form", data)
 		return
 	}
+	endFormData()
 	s.render(w, r, "page-form", data)
 }
 

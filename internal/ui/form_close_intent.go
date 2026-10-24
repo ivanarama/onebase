@@ -1440,3 +1440,20 @@ func formCloseClientTimeoutMS(timeout time.Duration) int64 {
 	}
 	return timeout.Milliseconds() + 1500
 }
+
+type formCloseBaselineKey struct{}
+
+// withFormCloseBaseline отмечает запрос закрытия, снимок которого уже снят:
+// дальше сериализация ответа считает варианты выбора только для того, что
+// изменилось относительно снимка.
+func withFormCloseBaseline(ctx context.Context, inv *formCloseInvocation) context.Context {
+	if inv == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, formCloseBaselineKey{}, inv)
+}
+
+func formCloseBaselineFrom(ctx context.Context) *formCloseInvocation {
+	inv, _ := ctx.Value(formCloseBaselineKey{}).(*formCloseInvocation)
+	return inv
+}
