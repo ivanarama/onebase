@@ -582,6 +582,7 @@ func KnownBuiltinNames() map[string]struct{} {
 		"записатьсобытиеаудита", "writeauditdecision",
 		"справочники", "catalogs",
 		"символы", "chars",
+		"статуссообщения", "messagestatus",
 		"документы", "documents",
 		"регистрынакопления", "accumulationregisters",
 		"регистрысведений", "inforegisters",

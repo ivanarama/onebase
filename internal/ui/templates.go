@@ -12,6 +12,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/msgstatus"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/richtext"
@@ -666,8 +667,30 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"elAlign": func(el *metadata.FormElement) template.CSS {
 			return template.CSS(metadata.FormElementAlignCSS(el)) //nolint:gosec // G203: стиль собран только из нормализованных значений словаря выравнивания
 		},
+		// msgText / msgError — сообщение модуля без метки статуса и признак
+		// «показать как ошибку» (Сообщить со СтатусСообщения.Важное или
+		// .ОченьВажное, internal/msgstatus).
+		"msgText": msgstatus.Strip,
+		"msgError": func(s string) bool {
+			_, status := msgstatus.Split(s)
+			return msgstatus.IsError(status)
+		},
 		"elBackground": func(el *metadata.FormElement) template.CSS {
 			return template.CSS(metadata.FormElementBackgroundCSS(el)) //nolint:gosec // G203: значение прошло csssafe.Color, иначе пустая строка
+		},
+		// elTextColor — цвет текста поля ввода или надписи (text_color или
+		// importance: error); значение прошло csssafe.Color либо взято из
+		// константы платформы.
+		"elTextColor": func(el *metadata.FormElement) template.CSS {
+			return template.CSS(metadata.FormElementTextColorCSS(el)) //nolint:gosec // G203: цвет прошёл csssafe.Color или это константа платформы
+		},
+		// cssJoin склеивает уже безопасные фрагменты стиля в один атрибут.
+		"cssJoin": func(parts ...template.CSS) template.CSS {
+			var b strings.Builder
+			for _, p := range parts {
+				b.WriteString(string(p))
+			}
+			return template.CSS(b.String()) //nolint:gosec // G203: склеиваются только значения template.CSS из функций выше
 		},
 		"elFill": func(el *metadata.FormElement) bool {
 			return metadata.FormElementFillsHeight(el)
@@ -3331,7 +3354,7 @@ const tplProcessor = `
   <div class="error">{{.RunError}}</div>
 {{else if .Messages}}
   <table class="tbl-plain"><tbody>
-  {{range .Messages}}<tr><td style="font-family:monospace;font-size:13px;padding:6px 12px;border-bottom:1px solid #f1f5f9">{{.}}</td></tr>{{end}}
+  {{range .Messages}}<tr><td style="font-family:monospace;font-size:13px;padding:6px 12px;border-bottom:1px solid #f1f5f9{{if msgError .}};color:#b91c1c;background:#fef2f2{{end}}">{{msgText .}}</td></tr>{{end}}
   </tbody></table>
 {{else}}
   <p class="empty">{{t $.Lang "Выполнено без сообщений"}}</p>

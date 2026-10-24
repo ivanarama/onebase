@@ -226,7 +226,14 @@ type FormElement struct {
 	// было.
 	ScrollX    bool   `yaml:"scroll_x,omitempty"`
 	Background string `yaml:"background,omitempty"` // фон контейнера; читается только у ГруппаФормы (#1547), цвет проверяет csssafe.Color
-	ReadOnly   bool   `yaml:"readonly,omitempty"`   // только чтение
+	// TextColor — цвет текста поля ввода или надписи (подпись и значение,
+	// у нередактируемого поля тоже); цвет проверяет csssafe.Color, как у
+	// background. Importance — смысловое выделение вместо конкретного цвета:
+	// error — красный текст ошибки (например, «Не отправлена в 1С»). Если
+	// заданы оба, text_color сильнее. См. FormElementTextColorCSS.
+	TextColor  string `yaml:"text_color,omitempty"`
+	Importance string `yaml:"importance,omitempty"`
+	ReadOnly   bool   `yaml:"readonly,omitempty"` // только чтение
 	// EditableAdminOnly — поле редактирует только администратор, остальным оно
 	// нередактируемо всегда. В отличие от ReadOnlyWhen условие тут не от данных
 	// записи, а от того, кто смотрит, поэтому вычисляется на сервере при

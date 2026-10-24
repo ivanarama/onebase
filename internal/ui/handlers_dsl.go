@@ -18,6 +18,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dslvars"
 	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/msgstatus"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 )
@@ -389,8 +390,9 @@ func (s *Server) buildDSLVarsWithMessagesTx(ctx context.Context, mc *runtime.Mov
 	vars, txState := s.buildDSLVarsTx(ctx, mc)
 	userKey := userKeyFromCtx(ctx)
 	msgFunc := interpreter.BuiltinFunc(func(args []any, file string, line int) (any, error) {
-		if len(args) > 0 {
-			text := fmt.Sprintf("%v", args[0])
+		// Второй аргумент — СтатусСообщения: метка едет в строке сообщения
+		// (msgstatus) и снимается там, где сообщение показывают.
+		if text, ok := msgstatus.FromArgs(args); ok {
 			if msgs != nil {
 				*msgs = append(*msgs, text)
 			}

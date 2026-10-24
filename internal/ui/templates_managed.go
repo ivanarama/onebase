@@ -90,7 +90,7 @@ const tplManagedForm = `
   {{$f := fieldByName $ctx.Entity $fn}}
   {{$hChg := hasHandler $el "ПриИзменении"}}
   {{$choiceCtx := managedChoiceContext $ctx $el}}
-  {{if $el.HiddenWhen}}<fieldset class="form-group ob-managed-control{{if elFill $el}} ob-el-fill{{end}}" data-ob-el="{{$el.Name}}" data-ob-control-fieldset="1"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{if elHiddenStyle $ctx $el}} disabled{{end}}{{with elLayoutEx $ctx $el}} style="{{.}}"{{end}}>{{else}}<div class="form-group{{if elFill $el}} ob-el-fill{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{with elLayout $el}} style="{{.}}"{{end}}>{{end}}
+  {{if $el.HiddenWhen}}<fieldset class="form-group ob-managed-control{{if elFill $el}} ob-el-fill{{end}}{{if elTextColor $el}} ob-text-colored{{end}}" data-ob-el="{{$el.Name}}" data-ob-control-fieldset="1"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{if elHiddenStyle $ctx $el}} disabled{{end}}{{with cssJoin (elLayoutEx $ctx $el) (elTextColor $el)}} style="{{.}}"{{end}}>{{else}}<div class="form-group{{if elFill $el}} ob-el-fill{{end}}{{if elTextColor $el}} ob-text-colored{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{with cssJoin (elLayout $el) (elTextColor $el)}} style="{{.}}"{{end}}>{{end}}
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}</label>
     {{if $f}}
       {{if isRef (str $f.Type)}}
@@ -251,7 +251,7 @@ const tplManagedForm = `
     <label for="cb-{{$fn}}" style="margin-bottom:0;cursor:pointer">{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}</label>
   </div>
 {{else if eq (str $el.Kind) "Надпись"}}
-  <div class="form-decoration" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="padding:6px 0;color:#475569;font-size:13px;{{elLayout $el}}">
+  <div class="form-decoration{{if elTextColor $el}} ob-text-colored{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="padding:6px 0;color:#475569;font-size:13px;{{elLayout $el}}{{elTextColor $el}}">
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </div>
 {{else if eq (str $el.Kind) "Кнопка"}}
@@ -504,7 +504,7 @@ const tplManagedForm = `
   {{$fn := dpField $el.DataPath}}
   {{$hChg := hasHandler $el "ПриИзменении"}}
   {{$dv := index $ctx.Values $fn}}
-  {{if $el.HiddenWhen}}<fieldset class="form-group ob-managed-control{{if elFill $el}} ob-el-fill{{end}}" data-ob-el="{{$el.Name}}" data-ob-control-fieldset="1"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{if elHiddenStyle $ctx $el}} disabled{{end}}{{with elLayoutEx $ctx $el}} style="{{.}}"{{end}}>{{else}}<div class="form-group{{if elFill $el}} ob-el-fill{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{with elLayout $el}} style="{{.}}"{{end}}>{{end}}
+  {{if $el.HiddenWhen}}<fieldset class="form-group ob-managed-control{{if elFill $el}} ob-el-fill{{end}}{{if elTextColor $el}} ob-text-colored{{end}}" data-ob-el="{{$el.Name}}" data-ob-control-fieldset="1"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{if elHiddenStyle $ctx $el}} disabled{{end}}{{with cssJoin (elLayoutEx $ctx $el) (elTextColor $el)}} style="{{.}}"{{end}}>{{else}}<div class="form-group{{if elFill $el}} ob-el-fill{{end}}{{if elTextColor $el}} ob-text-colored{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{with cssJoin (elLayout $el) (elTextColor $el)}} style="{{.}}"{{end}}>{{end}}
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}</label>
     <input type="date" name="{{$fn}}" value="{{if ge (len $dv) 10}}{{slice $dv 0 10}}{{else}}{{$dv}}{{end}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
   {{if $el.HiddenWhen}}</fieldset>{{else}}</div>{{end}}
@@ -524,7 +524,7 @@ const tplManagedForm = `
        видимой копии того же реквизита. Значение ей приходит из ответа
        события, который её показывает (applyValues, #1759). */}}
   {{$radioMark := not (elHiddenStyle $ctx $el)}}
-  {{if $el.HiddenWhen}}<fieldset class="form-group ob-managed-control{{if elFill $el}} ob-el-fill{{end}}" data-ob-el="{{$el.Name}}" data-ob-control-fieldset="1"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{if elHiddenStyle $ctx $el}} disabled{{end}}{{with elLayoutEx $ctx $el}} style="{{.}}"{{end}}>{{else}}<div class="form-group{{if elFill $el}} ob-el-fill{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{with elLayout $el}} style="{{.}}"{{end}}>{{end}}
+  {{if $el.HiddenWhen}}<fieldset class="form-group ob-managed-control{{if elFill $el}} ob-el-fill{{end}}{{if elTextColor $el}} ob-text-colored{{end}}" data-ob-el="{{$el.Name}}" data-ob-control-fieldset="1"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{if elHiddenStyle $ctx $el}} disabled{{end}}{{with cssJoin (elLayoutEx $ctx $el) (elTextColor $el)}} style="{{.}}"{{end}}>{{else}}<div class="form-group{{if elFill $el}} ob-el-fill{{end}}{{if elTextColor $el}} ob-text-colored{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{with cssJoin (elLayout $el) (elTextColor $el)}} style="{{.}}"{{end}}>{{end}}
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}</label>
     {{if eq $el.View "select"}}
       <select name="{{$fn}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
@@ -627,6 +627,10 @@ main>.card{max-width:none}
    и нередактируемая галка превращалась в подпись без индикатора. */
 .form-group input[readonly],.form-group input:disabled:not([type=checkbox]):not([type=radio]),.form-group select:disabled,.form-group textarea[readonly]{
   background:#f8fafc;border-color:#eef2f7;color:#334155;cursor:default;opacity:1;-webkit-appearance:none;appearance:none}
+/* text_color / importance: error у поля ввода (.ob-text-colored): input, select
+   и textarea цвет родителя не наследуют, поэтому цвет передаётся им явно —
+   и нередактируемому полю тоже, иначе правило выше вернуло бы серый. */
+.form-group.ob-text-colored>label,.form-group.ob-text-colored input,.form-group.ob-text-colored select,.form-group.ob-text-colored textarea{color:var(--ob-text-color);-webkit-text-fill-color:var(--ob-text-color)}
 /* Раскладка элемента (#1185): height задаёт высоту ВНЕШНЕГО блока, а тянуться
    на остаток должен сам ввод — иначе «высота 200» растянула бы пустое место под
    полем, оставив поле прежним. Подпись сверху сохраняет свою высоту. */
@@ -680,7 +684,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 </div>
 {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
 {{if .RunError}}<div class="error">{{.RunError}}</div>{{end}}
-{{if .Messages}}{{range .Messages}}<div class="msg-info">{{.}}</div>{{end}}{{end}}
+{{if .Messages}}{{range .Messages}}{{if msgError .}}<div class="error msg-important">{{msgText .}}</div>{{else}}<div class="msg-info">{{msgText .}}</div>{{end}}{{end}}{{end}}
 {{if .FormWarnings}}{{range .FormWarnings}}<div class="msg-info">{{.}}</div>{{end}}{{end}}
 
 {{if not .IsProcessor}}{{template "stage-route" .}}{{end}}

@@ -83,6 +83,7 @@ func RunFullWithOptions(dir string, opts Options) Result {
 		warnings = append(warnings, CheckFormProps(proj)...)
 		warnings = append(warnings, CheckFormReadonlyConflict(proj)...)
 		warnings = append(warnings, CheckFormBackground(proj)...)
+		warnings = append(warnings, CheckFormTextColor(proj)...)
 		warnings = append(warnings, CheckFormOKPost(proj)...)
 		warnings = append(warnings, CheckFormPlacement(dir, proj)...)
 		warnings = append(warnings, CheckSecretHygiene(appCfg, proj)...)

@@ -53,12 +53,19 @@ func CheckFormBackground(proj *project.Project) []Issue {
 		})
 	}
 
+	forEachLabeledForm(proj, report)
+	return warns
+}
+
+// forEachLabeledForm обходит формы сущностей и обработок проекта с меткой
+// файла для сообщения check.
+func forEachLabeledForm(proj *project.Project, fn func(label, object string, form *metadata.FormModule)) {
 	for _, ent := range proj.Entities {
 		if ent == nil {
 			continue
 		}
 		for _, form := range ent.Forms {
-			report(formFileLabel(ent, form), ent.Name, form)
+			fn(formFileLabel(ent, form), ent.Name, form)
 		}
 	}
 	for _, proc := range proj.Processors {
@@ -73,8 +80,7 @@ func CheckFormBackground(proj *project.Project) []Issue {
 			if name == "" {
 				name = "объекта"
 			}
-			report("forms/"+strings.ToLower(proc.Name)+"/"+name+".form.yaml", proc.Name, form)
+			fn("forms/"+strings.ToLower(proc.Name)+"/"+name+".form.yaml", proc.Name, form)
 		}
 	}
-	return warns
 }

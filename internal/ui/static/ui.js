@@ -2713,6 +2713,8 @@ obReady(function () {
     '#ob-msg-list .it{padding:5px 14px;border-bottom:1px solid #f1f5f9;display:flex;gap:10px;align-items:flex-start;font-family:Consolas,monospace;font-size:12px;white-space:pre-wrap;word-break:break-word}' +
     '#ob-msg-list .it:last-child{border-bottom:none}' +
     '#ob-msg-list .it .t{color:#94a3b8;flex-shrink:0;font-size:11px;padding-top:1px}' +
+    /* Сообщить(..., СтатусСообщения.Важное | ОченьВажное) — ошибка: красный текст и полоса слева. */
+    '#ob-msg-list .it.ob-msg-error{color:#b91c1c;background:#fef2f2;border-left:3px solid #dc2626;padding-left:11px}' +
     '#ob-msg-list .empty{padding:10px 14px;color:#94a3b8;font-style:italic}';
   (document.head || document.documentElement).appendChild(st);
 })();
@@ -3077,7 +3079,8 @@ obReady(function () {
       var html = '';
       for (var i = 0; i < msgs.length; i++) {
         var m = msgs[i];
-        html += '<div class="it"><span class="t">' + fmtTime(m.time) + '</span><span>' + escapeHtml(m.text) + '</span></div>';
+        var err = m.status === 'important' || m.status === 'very_important';
+        html += '<div class="it' + (err ? ' ob-msg-error' : '') + '"><span class="t">' + fmtTime(m.time) + '</span><span>' + escapeHtml(m.text) + '</span></div>';
       }
       if (html !== lastHtml) {
         // Не перерисовывать пока пользователь выделяет текст внутри панели —
