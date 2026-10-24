@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -40,6 +41,10 @@ func testManagedRefComboboxBrowser(t *testing.T, required bool) {
 		t.Skip("run npm ci in e2e/ for browser acceptance")
 	}
 	f := newChoiceHTTPFixtureWithOwner(t, true)
+	empty := uuid.New()
+	if err := f.server.store.Upsert(context.Background(), f.direction.Name, empty, map[string]any{"Наименование": "Empty", "is_folder": true}, f.direction); err != nil {
+		t.Fatal(err)
+	}
 	if err := f.server.store.Upsert(context.Background(), f.target.Name, f.pageTwo, map[string]any{metadata.StandardOwnerField: f.rootA.String()}, f.target); err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +65,7 @@ func testManagedRefComboboxBrowser(t *testing.T, required bool) {
 		&metadata.FormElement{ID: "readonly", Name: "Просмотр", Kind: metadata.FormElementField, DataPath: "Форма.Просмотр", ReadOnly: true},
 		&metadata.FormElement{ID: "fill", Name: "Заполнить", Kind: metadata.FormElementButton, TitleMap: map[string]string{"ru": "Заполнить"}, Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Заполнить"}},
 	)
-	for _, branch := range []string{"A", "B"} {
+	for _, branch := range []string{"A", "B", "Пусто"} {
 		form.Elements = append(form.Elements, &metadata.FormElement{ID: "source" + branch, Name: "Источник" + branch, Kind: metadata.FormElementButton, TitleMap: map[string]string{"ru": "Источник" + branch}, Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Источник" + branch}})
 	}
 	form.ProgramAST = mustParse(t, `
@@ -72,6 +77,9 @@ func testManagedRefComboboxBrowser(t *testing.T, required bool) {
 КонецПроцедуры
 Процедура ИсточникB()
  Объект.Направление = Справочники.Направление.НайтиПоНаименованию("B");
+КонецПроцедуры
+Процедура ИсточникПусто()
+ Объект.Направление = Справочники.Направление.НайтиПоНаименованию("Empty");
 КонецПроцедуры
 Процедура Обновить()
 КонецПроцедуры

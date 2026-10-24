@@ -674,7 +674,24 @@ jobs:
       # исполняет обычные (без тега webview) windows-only тесты.
       - name: Unit tests (Windows)
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
-        run: go test ./...
+        shell: bash
+        run: |
+          set -euo pipefail
+          # UI has over a thousand top-level tests; keep the 10m deadline per
+          # bounded batch instead of spending it cumulatively on the entire suite.
+          package_file="$(mktemp)"
+          trap 'rm -f "$package_file"' EXIT
+          go list ./... > "$package_file"
+          packages=()
+          while IFS= read -r package; do
+            package="${package%$'\r'}"
+            if [ "$package" != "github.com/ivantit66/onebase/internal/ui" ]; then
+              packages+=("$package")
+            fi
+          done < "$package_file"
+          [ "${#packages[@]}" -gt 0 ]
+          go test "${packages[@]}"
+          bash .github/scripts/test-ui-batches.sh
 
       # install.ps1 не исполнял ни один джоб: скрипт установки для Windows
       # проверялся только тем, что кто-то его запускал у себя. Опечатка в нём

@@ -27,6 +27,136 @@ const cfg = JSON.parse(process.env.ONEBASE_REF_BROWSER);
     assert.equal(await text.inputValue(), 'needle legacy B');
     assert.equal(await text.getAttribute('aria-controls'), await page.locator('[data-ob-el="ПолеНеисправность"] [role=listbox]').getAttribute('id'));
     assert.equal(await page.locator('label[for="' + await text.getAttribute('id') + '"]').count(), 1);
+    const status = page.locator('[data-ob-el="ПолеНеисправность"] [role=status]');
+    async function reopen() {
+      await page.goto(formURL);
+      await text.waitFor();
+    }
+    async function countChanges() {
+      await hidden('Неисправность').evaluate(e => {
+        window.refChanges = 0;
+        e.addEventListener('change', () => window.refChanges++);
+      });
+    }
+    async function settled() {
+      // Observe completion of the real fetch's DOM update, without a time delay.
+      await page.waitForFunction(() => !document.querySelector('[data-ob-el="ПолеНеисправность"] [role=combobox]').hasAttribute('aria-busy'));
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    }
+    // A real empty page with an independently permitted selected UUID preserves
+    // that UUID. Only the requested offset is changed; the server builds JSON.
+    await countChanges();
+    await page.route('**/ui/_ref-options/**', async route => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.get('check_selected_id') === cfg.legacy) url.searchParams.set('offset', '1000000');
+      const response = await route.fetch({ url: url.href });
+      if (url.searchParams.get('check_selected_id') === cfg.legacy) {
+        const body = await response.json();
+        assert.deepEqual(body.items, []);
+        assert.equal(body.selected_allowed, true);
+      }
+      await route.fulfill({ response });
+    });
+    const allowedPage = page.waitForResponse(r => new URL(r.url()).searchParams.get('check_selected_id') === cfg.legacy);
+    await page.getByRole('button', { name: 'ИсточникB', exact: true }).click();
+    await (await allowedPage).finished();
+    await settled();
+    assert.equal(await hidden('Неисправность').inputValue(), cfg.legacy);
+    assert.equal(await text.inputValue(), 'needle legacy B');
+    assert.equal(await text.evaluate(e => e.checkValidity()), true);
+    assert.equal(await page.evaluate(() => window.refChanges), 0);
+    assert.deepEqual(await hidden('Неисправность').evaluate(e => new FormData(e.form).getAll(e.name)), [cfg.legacy]);
+    await page.unroute('**/ui/_ref-options/**');
+    await reopen();
+    // Hold a genuine allowed response from B, switch to the genuinely empty
+    // source, and deliver B last. The old source cannot revive the cleared UUID.
+    await page.evaluate(() => { window.AbortController = undefined; });
+    await countChanges();
+    let releaseOld, oldReady;
+    const heldOld = new Promise(resolve => { releaseOld = resolve; });
+    const readyOld = new Promise(resolve => { oldReady = resolve; });
+    let holdNextSource = true;
+    const oldSource = async route => {
+      if (!holdNextSource || new URL(route.request().url()).searchParams.get('check_selected_id') !== cfg.legacy) {
+        await route.continue();
+        return;
+      }
+      holdNextSource = false;
+      const response = await route.fetch();
+      assert.equal((await response.json()).selected_allowed, true);
+      oldReady();
+      await heldOld;
+      await route.fulfill({ response });
+    };
+    await page.route('**/ui/_ref-options/**', oldSource);
+    try {
+      await page.getByRole('button', { name: 'ИсточникB', exact: true }).click();
+      await readyOld;
+      const emptyPage = page.waitForResponse(r => new URL(r.url()).searchParams.get('check_selected_id') === cfg.legacy);
+      await page.getByRole('button', { name: 'ИсточникПусто', exact: true }).click();
+      const emptyBody = await (await emptyPage).json();
+      assert.deepEqual(emptyBody.items, []);
+      assert.equal(emptyBody.total, 0);
+      assert.equal(emptyBody.selected_allowed, false);
+      await page.waitForFunction(() => !document.querySelector('[name="Неисправность"]').value);
+      assert.equal(await text.inputValue(), '');
+      assert.equal(await page.evaluate(() => window.refChanges), 1);
+      const delivered = page.waitForResponse(r => new URL(r.url()).searchParams.get('check_selected_id') === cfg.legacy);
+      releaseOld();
+      await (await delivered).finished();
+      await settled();
+      assert.equal(await hidden('Неисправность').inputValue(), '');
+      assert.equal(await text.inputValue(), '');
+      assert.equal(await page.evaluate(() => window.refChanges), 1);
+      assert.deepEqual(await hidden('Неисправность').evaluate(e => new FormData(e.form).getAll(e.name)), ['']);
+    } finally {
+      releaseOld();
+      await page.unroute('**/ui/_ref-options/**', oldSource);
+    }
+    await reopen();
+    // Ordinary zero-match search is a successful empty result, not a malformed
+    // response. Unselected text must nevertheless continue to block writing.
+    const noMatches = page.waitForResponse(r => new URL(r.url()).searchParams.get('q') === 'no such reference');
+    await text.fill('no such reference');
+    assert.deepEqual((await (await noMatches).json()).items, []);
+    await settled();
+    assert.equal(await status.textContent(), await page.evaluate(() => window.obUIMessage('refSearchEmpty', 'refSearchEmpty')));
+    assert.equal(await text.getAttribute('aria-expanded'), 'false');
+    assert.equal(await hidden('Неисправность').inputValue(), '');
+    assert.equal(await text.evaluate(e => e.validationMessage), await page.evaluate(() => window.obUIMessage('refChoose', 'refChoose')));
+    // Explicitly corrupted transport remains fail-closed; it must never be
+    // normalized by the browser into a successful empty page or a clear.
+    for (const corruption of ['null items', 'missing selected_allowed']) {
+      await reopen();
+      const corrupt = async route => {
+        if (new URL(route.request().url()).searchParams.get('check_selected_id') !== cfg.legacy) {
+          await route.continue();
+          return;
+        }
+        const response = await route.fetch();
+        const body = await response.json();
+        if (corruption === 'null items') body.items = null;
+        else delete body.selected_allowed;
+        await route.fulfill({ response, json: body });
+      };
+      await page.route('**/ui/_ref-options/**', corrupt);
+      try {
+        const response = page.waitForResponse(r => new URL(r.url()).searchParams.get('check_selected_id') === cfg.legacy);
+        await page.getByRole('button', { name: 'ИсточникB', exact: true }).click();
+        await (await response).finished();
+        await settled();
+        assert.equal(await hidden('Неисправность').inputValue(), cfg.legacy);
+        assert.equal(await text.evaluate(e => e.checkValidity()), false);
+        assert.equal(await status.textContent(), await page.evaluate(() => window.obUIMessage('refSearchError', 'refSearchError')));
+        const decision = await page.evaluate(() => window.obRequestFormClose({reason: 'ok', mode: 'save'}));
+        assert.equal(decision.allowed, false);
+        assert.equal(decision.error, 'invalid-reference');
+      } finally {
+        await page.unroute('**/ui/_ref-options/**', corrupt);
+      }
+    }
+    await reopen();
+    console.log('PASS: real empty search/context/page, exact one-change clear, stale source, FormData and malformed-page write refusal');
     if (cfg.optional) {
       async function saveAndClose() {
         const ok = page.getByRole('button', { name: 'ОК', exact: true });

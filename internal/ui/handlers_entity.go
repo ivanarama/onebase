@@ -1278,6 +1278,11 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A successful empty page is an array, including a nil storage result.
+	// Clients must still reject malformed pages before checking membership.
+	if items == nil {
+		items = make([]map[string]any, 0)
+	}
 	// Динамический preview (choice_preview_proc) обслуживается POST /page:
 	// GET остаётся статическим и обратно совместимым (план 168, инвариант 1).
 	previewField := canonicalChoicePreviewField(ent)

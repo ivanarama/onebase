@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -69,6 +70,73 @@ func TestRefComboboxSelectedCheckPublicMatrix(t *testing.T) {
 			if len(response.Items) > 1 || strings.Contains(rec.Body.String(), "needle secret") {
 				t.Fatalf("unbounded or unmasked response: %s", rec.Body.String())
 			}
+		}
+	})
+}
+
+// Exercise the public route and inspect raw JSON: decoding null into a Go
+// slice would otherwise hide the distinction the browser relies on.
+func TestRefComboboxEmptyPagePublicMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		target := &metadata.Entity{Name: "ПустойВыбор", Kind: metadata.KindCatalog, Fields: []metadata.Field{
+			{Name: "Наименование", Type: metadata.FieldTypeString}, {Name: "Область", Type: metadata.FieldTypeString},
+		}}
+		if err := db.Migrate(ctx, []*metadata.Entity{target}); err != nil {
+			t.Fatal(err)
+		}
+		selected := uuid.New()
+		if err := db.Upsert(ctx, target.Name, selected, map[string]any{"Наименование": "needle", "Область": "A"}, target); err != nil {
+			t.Fatal(err)
+		}
+		reg := runtime.NewRegistry()
+		reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{target}})
+		server := &Server{store: db, reg: reg}
+		router := chi.NewRouter()
+		server.Mount(router)
+		user := &auth.User{Login: "anna", Roles: []*auth.Role{{Permissions: auth.Permission{Catalogs: map[string][]string{target.Name: {"read"}}}}}}
+		for _, tc := range []struct {
+			name, search, area string
+			offset, total      int
+			check, allowed     bool
+		}{
+			{name: "no matches", search: "absent", area: "A"},
+			{name: "search does not revoke selection", search: "absent", area: "A", check: true, allowed: true},
+			{name: "empty context revokes selection", area: "empty", check: true},
+			{name: "offset beyond end preserves selection", area: "A", offset: 50, total: 1, check: true, allowed: true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				q := url.Values{"q": {tc.search}, "limit": {"50"}, "offset": {fmt.Sprint(tc.offset)}, "flt": {`{"Область":"` + tc.area + `"}`}}
+				if tc.check {
+					q.Set("check_selected_id", selected.String())
+				}
+				req := httptest.NewRequest(http.MethodGet, "/ui/_ref-options/"+url.PathEscape(target.Name)+"?"+q.Encode(), nil)
+				rec := httptest.NewRecorder()
+				router.ServeHTTP(rec, req.WithContext(auth.ContextWithUser(ctx, user)))
+				if rec.Code != http.StatusOK {
+					t.Fatalf("status=%d: %s", rec.Code, rec.Body.String())
+				}
+				var got struct {
+					Items           json.RawMessage `json:"items"`
+					Total           int             `json:"total"`
+					Limit           int             `json:"limit"`
+					Offset          int             `json:"offset"`
+					SelectedAllowed *bool           `json:"selected_allowed"`
+				}
+				if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+					t.Fatal(err)
+				}
+				if string(got.Items) != "[]" || got.Total != tc.total || got.Limit != 50 || got.Offset != tc.offset {
+					t.Fatalf("wrong empty page: %s", rec.Body.String())
+				}
+				if tc.check {
+					if got.SelectedAllowed == nil || *got.SelectedAllowed != tc.allowed {
+						t.Fatalf("wrong membership: %s", rec.Body.String())
+					}
+				} else if got.SelectedAllowed != nil {
+					t.Fatalf("unexpected membership check: %s", rec.Body.String())
+				}
+			})
 		}
 	})
 }
