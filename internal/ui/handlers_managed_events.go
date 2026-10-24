@@ -2590,6 +2590,10 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
 		return
 	}
+	// Параметры, которые браузер не присылает (нет элемента, нередактируемый,
+	// скрыт), приходят запечатанным состоянием формы (processor_form_carry.go).
+	carry := s.openProcessorCarry(r, proc)
+	applyProcessorCarryParams(proc, carry, paramValues)
 	progAny := form.ProgramAST
 	var program *ast.Program
 	if p, ok := progAny.(*ast.Program); ok && p != nil {
@@ -2630,6 +2634,10 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			respondJSON(enc, formEventResponse{Error: err.Error()})
 			return
 		}
+		// Реквизиты формы обработки — как у формы документа: присланное
+		// значение элемента, иначе перенесённое состояние.
+		s.mergeFormAttrValues(r.Context(), r, form, virtEntity, obj)
+		s.applyProcessorCarryAttrs(r, proc, form, carry, obj.Fields)
 		if closeInv != nil {
 			baseline := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, nil, nil).response(false)
 			closeInv.baselineValues = baseline.Values
@@ -2775,6 +2783,7 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			}
 			resp.Dirty = boolPtr(!formOpenEvent(elementName, eventName) && transientManagedStateDirty(obj, fieldsBefore, tablesBefore))
 			compactFormCloseDelta(&resp, closeInv)
+			s.finishProcessorCarry(r, proc, form, obj.Fields, &resp)
 			respondJSON(enc, resp)
 			return
 		}
@@ -2791,6 +2800,7 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		resp.ChoiceList = choiceItems
 		resp.Dirty = boolPtr(!formOpenEvent(elementName, eventName) && transientManagedStateDirty(obj, fieldsBefore, tablesBefore))
 		compactFormCloseDelta(&resp, closeInv)
+		s.finishProcessorCarry(r, proc, form, obj.Fields, &resp)
 		respondJSON(enc, resp)
 		return
 	}

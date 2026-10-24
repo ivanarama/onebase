@@ -882,6 +882,8 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
   "docId" ""
   "autoOpen" (hasFormHandler .Form "ПриОткрытии")
   "serviceFields" (processorServiceFieldNames .Processor)
+  "formAttrs" .ProcessorCarryAttrs
+  "formAttrValues" .ProcessorCarryValues
 )}}</script>
 {{else}}
 <script type="application/json" id="ob-managed-config">{{jsJSON (dict

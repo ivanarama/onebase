@@ -242,6 +242,9 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, s.errText(r, err), uploadErrorStatus(err))
 		return
 	}
+	// Значения без элемента на форме (служебные флаги) — из запечатанного
+	// состояния формы, как в событиях (processor_form_carry.go).
+	applyProcessorCarryParams(proc, s.openProcessorCarry(r, proc), paramValues)
 
 	// Обязательные параметры проверяются ДО запуска. Атрибут required в форме
 	// останавливает обычного пользователя, но он же — подсказка, а не гарантия:
@@ -380,6 +383,7 @@ func (s *Server) setProcessorManagedContext(r *http.Request, data map[string]any
 	data["IsProcessor"] = true
 	data["Processor"] = proc
 	data["CanWrite"] = proc != nil && s.can(r, "processor", proc.Name, "run")
+	s.setProcessorCarryContext(r, data, proc)
 }
 
 func (s *Server) getProcessor(w http.ResponseWriter, r *http.Request) *processorpkg.Processor {
