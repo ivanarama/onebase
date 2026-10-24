@@ -329,6 +329,8 @@ func (s *Server) installFormCloseAccessRecheck(
 func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Request, closeInv *formCloseInvocation) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
+	// prepare — разбор запроса, сборка объекта и чтение базы до обработчика.
+	endPrepare := serverTimingSpan(r.Context(), "prepare")
 
 	// Сущность резолвим ДО разбора тела: от неё зависит предел (#629). Пределы не
 	// композируются — прежняя пара «1 МиБ, затем limitMultipartRequest на 52 МиБ»
@@ -1324,6 +1326,8 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// клиент покажет красный баннер и не закроет форму.
 	var runErr error
 	timeout := interpreter.ClampWallClock(opCtx, s.operationTimeout(opFormEvent))
+	endPrepare()
+	endDSL := serverTimingSpan(r.Context(), "dsl")
 	if closeInv != nil {
 		var entryResult interpreter.EntryCallResult
 		entryResult, runErr = s.interp.CallEntrySandboxedWithBindings(decl, thisObj, closeArgs,
@@ -1342,6 +1346,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// единственное соединение. Успешный выход с открытой транзакцией считается
 	// ошибкой процедуры, чтобы конфигурационная ошибка не оставалась незаметной.
 	runErr = finishDSLExecution(txState, runErr)
+	endDSL()
 	liveCtx := txState.Ctx()
 	if closeInv != nil && thisObj.saved {
 		// BeforeClose itself may save in discard mode. Promote that durable
@@ -1361,12 +1366,14 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// случайный uuid, поэтому obj.ID != uuid.Nil истинно ВСЕГДА и каждое событие
 	// на «Создать» уходило бы в базу за несуществующей строкой. Ровно эта ловушка
 	// описана выше у restoreUnsubmittedFields.
+	endRefresh := serverTimingSpan(r.Context(), "refresh")
 	if (existingRecord || savedFormID(thisObj) != "") && (closeInv == nil || !closeInv.saved) {
 		s.refreshFieldsWrittenByHandler(liveCtx, r, entity, form, obj, fieldsBefore)
 	}
 	if existingRecord && tpDBBefore != nil && !thisObj.saved {
 		s.refreshTablePartsWrittenByHandler(liveCtx, entity, obj, tpBefore, tpDBBefore)
 	}
+	endRefresh()
 	var closePersisted map[string]any
 	var closePersistedErr error
 	if closeInv != nil && obj.ID != uuid.Nil && (existingFormID != "" || closeInv.saved) {
@@ -1436,10 +1443,12 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// lifecycle calls. Programmatic values/TableParts/FormTables do not emit DOM
 	// input events; without this signal an unsaved command mutation on a clean
 	// form could be silently discarded by the next Close.
+	endDirty := serverTimingSpan(r.Context(), "dirty")
 	dirty := transientManagedStateDirty(obj, fieldsBefore, tpBefore)
 	if existingRecord || thisObj.saved || (closeInv != nil && closeInv.saved) {
 		dirty = s.managedCloseStateDirty(liveCtx, entity, form, obj, fieldsBefore, tpBefore)
 	}
+	endDirty()
 	if formOpenEvent(elementName, eventName) && !thisObj.saved {
 		dirty = false
 	}
@@ -1464,7 +1473,9 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	}
 
 	opStatus = "ok"
+	endSerialize := serverTimingSpan(r.Context(), "serialize")
 	resp := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs).response(true)
+	endSerialize()
 	resp.PickerData = picker
 	if question.Variants != nil {
 		q := question
@@ -1478,6 +1489,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	resp.Version = versionWrittenByHandler(thisObj)
 	resp.Dirty = eventDirty
 	compactFormCloseDelta(&resp, closeInv)
+	defer serverTimingSpan(r.Context(), "encode")()
 	respondJSON(enc, resp)
 }
 
@@ -2009,8 +2021,13 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 		// Условия readonly_when/hidden_when считаются здесь же, где известны
 		// значения ПОСЛЕ обработчика: команда, изменившая состояние объекта,
 		// сразу меняет доступность полей.
-		ElementStates: s.formElementStates(form, entity, values, s.isAdminCtx(ctx)),
+		ElementStates: s.timedFormElementStates(ctx, form, entity, values),
 	}
+}
+
+func (s *Server) timedFormElementStates(ctx context.Context, form *metadata.FormModule, entity *metadata.Entity, values map[string]any) *elementStates {
+	defer serverTimingSpan(ctx, "elementStates")()
+	return s.formElementStates(form, entity, values, s.isAdminCtx(ctx))
 }
 
 // serializeFieldsForEntity нормализует имена полей к оригинальному регистру
