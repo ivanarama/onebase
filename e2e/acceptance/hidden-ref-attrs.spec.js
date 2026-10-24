@@ -9,6 +9,15 @@ async function choose(page, id) {
   await visible(page).locator('..').getByRole('option', {name: label, exact: true}).click();
   await submitted(page, id);
 }
+const hiddenRow = page => page.locator('[data-ob-control-fieldset]:not(:visible)').filter({
+  has: page.locator('input[type=hidden][name="Склад"]'),
+});
+async function hiddenUUID(page) {
+  await expect(hiddenRow(page)).toHaveCount(1);
+  const input = hiddenRow(page).locator('input[type=hidden][name="Склад"]');
+  await expect(input).toHaveCount(1);
+  return input;
+}
 const row = page => page.locator('[data-ob-control-fieldset]').filter({ has: visible(page) });
 let pageErrors;
 test.beforeEach(async ({ page }) => {
@@ -64,14 +73,18 @@ for (const [name, id] of Object.entries(ids)) {
     await expect(page.locator('#_ref-picker-modal')).toHaveCount(0);
     await submitted(page, newID);
     // Before any event the hidden copy is still empty, so global-ID card lookup fails too.
-    await expect(page.locator('[data-ob-control-fieldset]:not(:visible) input[type=hidden][name="Склад"]')).toHaveValue('');
+    await expect(await hiddenUUID(page)).toHaveValue('');
     await card(page, newID);
     for (let i = 0; i < 2; i++) {
       const data = await fire(page, 'Переключить');
       expect(data.values.Получено).toBe('Выбранный склад');
       await submitted(page, newID);
       // Keep the hidden copy deliberately different after the real event too.
-      await page.locator('select[name="Склад"]:not(:visible)').evaluate((s, id) => { s.value = id; }, oldID);
+      const hidden = await hiddenUUID(page);
+      await hidden.evaluate((input, id) => { input.value = id; }, oldID);
+      await expect(hidden).toHaveValue(oldID);
+      expect(oldID).not.toBe(newID);
+      await expect(visible(page).locator('..').locator('input[type=hidden][name="Склад"]')).toHaveValue(newID);
       await card(page, newID);
       await picker(page);
       await page.locator('#_rp-list ._rp-item').filter({ hasText: 'Выбранный склад' }).click();
