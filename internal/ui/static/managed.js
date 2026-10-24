@@ -1283,14 +1283,6 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       if (snapshot.eventName === 'Поиск' && !data.error && typeof window.obPickerSearchEmpty === 'function') {
         window.obPickerSearchEmpty(snapshot.pickerRequest);
       }
-      // Вопрос фазы 1 (#1528): открыть модал; ответ вернётся событием Ответ
-      // через _question_answer — сервер положит его в ВопросОтвет.
-      if (data.question) {
-        (data.messages || []).forEach(m => flash(m, 'ok'));
-        if (data.error) flash(data.error, 'err');
-        if (window.obOpenQuestion) window.obOpenQuestion(data.question, elementName);
-        return;
-      }
       // dirty=true is an authoritative safety signal and must survive a
       // partially failing renderer. Programmatic response application does
       // not emit input/change, so raise it before touching mutable DOM state.
@@ -1312,6 +1304,13 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       (data.messages || []).forEach(m => flash(m, 'ok'));
       if (data.error) flash(data.error, 'err');
       if (navigationBlocked) flash(closeMessage('navigationDirty', 'Форма содержит несохранённые изменения — переход не выполнен'), 'err');
+      // Вопрос фазы 1 (#1528): ответ вернётся событием Ответ через
+      // _question_answer — сервер положит его в ВопросОтвет. Модал открывается
+      // ПОСЛЕ применения ответа: обработчик до ПоказатьВопрос уже изменил
+      // форму (скрыл кнопки, заполнил реквизиты), как в 1С. Раньше ответ с
+      // вопросом не применялся вовсе — форма показывала скрытое, а ответ на
+      // вопрос уходил со снимком без этих реквизитов и терял их.
+      if (data.question && window.obOpenQuestion) window.obOpenQuestion(data.question, elementName);
     } catch (e) {
       // A lost/unparseable response for /new may hide a committed insert and
       // there is no identity with which to issue another safe write. Fence all
