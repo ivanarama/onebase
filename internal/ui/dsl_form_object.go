@@ -198,25 +198,64 @@ func (f *formObjectThis) CallMethod(method string, args []any) any {
 			interpreter.RaiseUserError("Записать(" + f.entity.Name + "): " + message)
 		}
 		return f.selfRef()
+	case "провести", "post":
+		// Как кнопка «Провести» формы: запись с проведением одним сохранением —
+		// ОбработкаПроведения, движения, признак проведения. Раньше вызов уходил
+		// в runtime.Object и молча ничего не делал.
+		if f.entity == nil || !f.entity.Posting {
+			name := ""
+			if f.entity != nil {
+				name = f.entity.Name
+			}
+			interpreter.RaiseUserError("Провести(" + name + "): объект не проводится")
+		}
+		if f.writeBlocked {
+			interpreter.RaiseUserError("Провести недоступно внутри обработчика записи формы")
+		}
+		if err := f.save(saveActionPost); err != nil {
+			message := err.Error()
+			if errors.Is(err, errCloseResultUnreadable) {
+				message = f.srv.tr(f.srv.resolveLangCtx(f.liveCtx()), "доступ запрещён")
+			}
+			interpreter.RaiseUserError("Провести(" + f.entity.Name + "): " + message)
+		}
+		return f.selfRef()
 	case "этоновый", "isnew":
 		return f.isNew && !f.saved
 	}
 	return f.obj.CallMethod(method, args)
 }
 
+// saveActionPost — действие сохранения «записать и провести» (как кнопка
+// «Провести» формы).
+const saveActionPost = "post"
+
 // write сохраняет объект формы через entityservice.Save — тем же путём, что и
 // кнопка «Записать»: с хуками ПриЗаписи/ОбработкаПроведения, табличными частями
 // и проверкой построчного доступа. Нужна обработчикам команд: на новой форме
 // они иначе упирались в незаполненную Ссылка.
 func (f *formObjectThis) write() error {
+	return f.save("")
+}
+
+// save — общая часть Записать() и Провести(): action "" — запись,
+// saveActionPost — запись с проведением (права и построчный доступ на «post»
+// проверяются так же, как у кнопки «Провести»).
+func (f *formObjectThis) save(action string) error {
 	if f.srv == nil || f.entity == nil {
 		return fmt.Errorf("запись из обработчика формы недоступна")
 	}
 	ctx := f.liveCtx()
 	isNew := f.isNew && !f.saved
+	posting := action == saveActionPost
 	if !isNew {
 		if err := f.srv.checkDSLRowAccess(ctx, f.entity, "write", f.obj.ID, f.obj.Fields); err != nil {
 			return err
+		}
+		if posting {
+			if err := f.srv.checkDSLRowAccess(ctx, f.entity, "post", f.obj.ID, f.obj.Fields); err != nil {
+				return err
+			}
 		}
 	} else if f.prepareNew != nil {
 		if err := f.prepareNew(ctx); err != nil {
@@ -312,6 +351,7 @@ func (f *formObjectThis) write() error {
 		IsNew:         isNew,
 		Fields:        f.obj.Fields,
 		TablePartRows: f.obj.TablePartRows,
+		Action:        action,
 		ExpectedVersion: func() *int64 {
 			if isNew {
 				return nil
@@ -325,7 +365,20 @@ func (f *formObjectThis) write() error {
 			if err := f.srv.autoFillRowAccessFields(txCtx, f.entity, "write", obj.Fields); err != nil {
 				return err
 			}
-			return f.srv.checkDSLRowAccess(txCtx, f.entity, "write", uuid.Nil, obj.Fields)
+			if posting {
+				if err := f.srv.autoFillRowAccessFields(txCtx, f.entity, "post", obj.Fields); err != nil {
+					return err
+				}
+			}
+			// Both policies must see the final fields: post autofill can change
+			// whether the row is writable, just as in saveManagedObject.
+			if err := f.srv.checkDSLRowAccess(txCtx, f.entity, "write", uuid.Nil, obj.Fields); err != nil {
+				return err
+			}
+			if posting {
+				return f.srv.checkDSLRowAccess(txCtx, f.entity, "post", uuid.Nil, obj.Fields)
+			}
+			return nil
 		},
 		FinalPreflight: f.finalPreflight,
 		OnPersisted:    markCommitted,
