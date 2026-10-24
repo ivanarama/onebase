@@ -33,7 +33,9 @@ func TestReferencePreloadOnFormOpenHTTP(t *testing.T) {
 		{name: "dropdown", managed: true, present: true, dropdown: true, wantOptions: 8, maxReads: 16},
 		{name: "collapsed", managed: true, present: true, wantOptions: 1, maxReads: 1},
 		{name: "collapsed_empty", managed: true, present: true, empty: true, maxReads: 0},
-		{name: "outside_form", managed: true, dropdown: true, maxReads: 1},
+		// Поля нет на форме — браузер его не рисует, ни списка, ни подписи не
+		// читаем (раньше читалась подпись текущего значения).
+		{name: "outside_form", managed: true, dropdown: true, maxReads: 0},
 		{name: "scoped", managed: true, present: true, dropdown: true, scoped: true, wantOptions: 2, maxReads: 5},
 		{name: "automatic", present: true, dropdown: true, wantOptions: 8, maxReads: 16},
 		{name: "automatic_empty", present: true, dropdown: true, empty: true, wantOptions: 8, maxReads: 16},

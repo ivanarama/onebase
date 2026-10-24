@@ -572,26 +572,32 @@ func (s *Server) restoreUnsubmittedFields(
 		return nil
 	}
 
-	row, err := s.store.GetByID(ctx, entity.Name, id, entity)
+	row, err := s.recordForRequest(ctx, entity, id)
 	if err != nil {
 		return err
 	}
 	if row == nil {
 		return nil
 	}
+	// Индексы вместо перебора на каждое поле (ci_index.go). Новый ключ цикл
+	// добавляет только для поля, которого в fields не было, — в индекс он
+	// тоже дописывается.
+	rowKeys := newCIIndex(row, equalFoldKey)
+	fieldKeys := newCIIndex(fields, equalFoldKey)
 	for _, f := range entity.Fields {
 		if formKeySubmitted(submitted, f.Name) || checkboxes[strings.ToLower(f.Name)] {
 			continue
 		}
-		stored, ok := maskCIKeyValue(row, f.Name)
+		_, stored, ok := ciGet(row, rowKeys, f.Name)
 		if !ok {
 			continue
 		}
-		if key, exists := maskCIKey(fields, f.Name); exists {
+		if key, _, exists := ciGet(fields, fieldKeys, f.Name); exists {
 			fields[key] = normalizeRestoredValue(f, stored)
 			continue
 		}
 		fields[f.Name] = normalizeRestoredValue(f, stored)
+		fieldKeys.add(f.Name)
 	}
 
 	if entity.Hierarchical {

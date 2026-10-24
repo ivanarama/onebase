@@ -563,6 +563,7 @@ func beginPGTransactionForExecution(conn pgExecutionBeginner, acquireCtx context
 // data in args. The G701 annotations cover only the generic SQLite execution
 // sites below; query-building checks remain enabled elsewhere.
 func (db *DB) Exec(ctx context.Context, sqlText string, args ...any) (CommandTag, error) {
+	noteExec(ctx, sqlText)
 	if err := writeAllowed(ctx); err != nil {
 		return CommandTag{}, err
 	}
@@ -608,6 +609,7 @@ func (db *DB) Exec(ctx context.Context, sqlText string, args ...any) (CommandTag
 
 // Query runs a SQL query and returns multiple rows, respecting any transaction in ctx.
 func (db *DB) Query(ctx context.Context, sqlText string, args ...any) (Rows, error) {
+	noteQuery(ctx, sqlText)
 	if err := queryAllowed(ctx, sqlText); err != nil {
 		return nil, err
 	}
@@ -663,6 +665,7 @@ func (db *DB) Query(ctx context.Context, sqlText string, args ...any) (Rows, err
 // QueryRow runs a SQL query expected to return at most one row, respecting any
 // transaction in ctx.
 func (db *DB) QueryRow(ctx context.Context, sqlText string, args ...any) Row {
+	noteQuery(ctx, sqlText)
 	if err := queryAllowed(ctx, sqlText); err != nil {
 		return errorRow{err: err}
 	}

@@ -389,7 +389,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/_widget/{name}", s.widgetPartial)
 
 	r.Get("/ui/{kind}/{entity}", s.list)
-	r.Get("/ui/{kind}/{entity}/new", s.form)
+	r.Get("/ui/{kind}/{entity}/new", withServerTiming(s.form))
 	r.Post("/ui/{kind}/{entity}/new", s.submit)
 	// Inline-создание элемента справочника из ссылочного поля документа
 	// (как в 1С: «+» рядом с полем выбора). JS-клиент не знает kind целевой
@@ -406,16 +406,16 @@ func (s *Server) Mount(r chi.Router) {
 	r.Post("/ui/_ref-options/{entity}/page", s.choicePreviewPageHandler)
 	// Lazy-load детей узла иерархического справочника для tree-view.
 	r.Get("/ui/_tree-children/{entity}", s.treeChildrenJSON)
-	r.Get("/ui/{kind}/{entity}/{id}", s.formEdit)
+	r.Get("/ui/{kind}/{entity}/{id}", withServerTiming(s.formEdit))
 	r.Post("/ui/{kind}/{entity}/{id}", s.submitEdit)
 	// Рантайм событий управляемых форм (план 37, этап 8): обработчики
 	// кнопок (Нажатие) и полей (ПриИзменении). Возвращает JSON с
 	// обновлёнными values и сообщениями от Сообщить().
-	r.Post("/ui/{kind}/{entity}/form-event", s.handleManagedFormEvent)
+	r.Post("/ui/{kind}/{entity}/form-event", withServerTiming(s.handleManagedFormEvent))
 	// Lifecycle close-intent is deliberately separate from /form-event:
 	// the browser cannot choose an arbitrary lifecycle event name, and the
 	// response carries a one-shot decision tied to an intent UUID.
-	r.Post("/ui/{kind}/{entity}/form-close-intent", s.handleManagedFormCloseIntent)
+	r.Post("/ui/{kind}/{entity}/form-close-intent", withServerTiming(s.handleManagedFormCloseIntent))
 	r.Get("/ui/register/{name}", s.registerMovements)
 	r.Get("/ui/register/{name}/balances", s.registerBalances)
 	r.Get("/ui/inforeg/{name}", s.infoRegList)
