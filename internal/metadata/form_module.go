@@ -224,7 +224,10 @@ type FormElement struct {
 	// а прокручивается. Нужна ряду кнопок: перенос рвёт панель действий пополам,
 	// и половина кнопок читается как отдельный блок. По умолчанию перенос, как
 	// было.
-	ScrollX    bool   `yaml:"scroll_x,omitempty"`
+	ScrollX bool `yaml:"scroll_x,omitempty"`
+	// Grow — элемент горизонтальной группы занимает остаток её строки
+	// (flex:1 1 0): рядом с соседями, а не отдельной строкой, как stretch.
+	Grow       bool   `yaml:"grow,omitempty"`
 	Background string `yaml:"background,omitempty"` // фон контейнера; читается только у ГруппаФормы (#1547), цвет проверяет csssafe.Color
 	ReadOnly   bool   `yaml:"readonly,omitempty"`   // только чтение
 	// EditableAdminOnly — поле редактирует только администратор, остальным оно

@@ -118,6 +118,12 @@ func formLayoutCSS(el *FormElement, withSize bool) string {
 		// min-width. Полная flex-запись делает stretch отдельной строкой группы
 		// и одинаково работает в рантайме, preview и на холсте.
 		b.WriteString("width:100%;flex:1 1 100%;min-width:0;")
+	} else if el.Grow {
+		// grow — остаток строки горизонтальной группы рядом с соседями: в
+		// отличие от stretch элемент не уходит на отдельную строку, а
+		// ужимается, когда сосед появляется, и растягивается, когда сосед
+		// скрыт (hidden_when). Явная width при grow не действует.
+		b.WriteString("flex:1 1 0;min-width:0;")
 	} else if withSize {
 		switch {
 		case formLayoutSize(el.Width) > 0:
