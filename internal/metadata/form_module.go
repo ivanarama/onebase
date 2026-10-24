@@ -224,7 +224,12 @@ type FormElement struct {
 	// а прокручивается. Нужна ряду кнопок: перенос рвёт панель действий пополам,
 	// и половина кнопок читается как отдельный блок. По умолчанию перенос, как
 	// было.
-	ScrollX    bool   `yaml:"scroll_x,omitempty"`
+	ScrollX bool `yaml:"scroll_x,omitempty"`
+	// Frame — рамка ГруппаФормы: frame: false убирает рамку, внутренние
+	// отступы и заголовок, оставляя только раскладку детей. Так собирают
+	// строку полей внутри раздела (как в карточке 1С: рамка у раздела, а не у
+	// каждой строки). nil и true — рамка, как было.
+	Frame      *bool  `yaml:"frame,omitempty"`
 	Background string `yaml:"background,omitempty"` // фон контейнера; читается только у ГруппаФормы (#1547), цвет проверяет csssafe.Color
 	ReadOnly   bool   `yaml:"readonly,omitempty"`   // только чтение
 	// EditableAdminOnly — поле редактирует только администратор, остальным оно
@@ -1058,4 +1063,9 @@ func (el *FormElement) IsContainer() bool {
 		return true
 	}
 	return false
+}
+
+// Frameless — ГруппаФормы с frame: false: без рамки, отступов и заголовка.
+func (el *FormElement) Frameless() bool {
+	return el != nil && el.Kind == FormElementGroupBox && el.Frame != nil && !*el.Frame
 }
