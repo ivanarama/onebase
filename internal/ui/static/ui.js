@@ -4706,6 +4706,18 @@ function obChoiceApplyResponse(sel, data, selectedAtRequest) {
     }
     selectedAllowed = data.selected_allowed;
   }
+  // Заблокированное поле (disabled/readonly, в том числе внутри disabled
+  // fieldset) пользователь не меняет, а отбор лишь ограничивает выбор: его
+  // значение не очищается, и change не шлётся. Иначе запертая форма после
+  // ответа ПриОткрытии сама отправляла ПриИзменении по каждому полю с
+  // choice_filter — по событию на поле, цепочкой.
+  var locked = !!(sel.disabled || (sel.hasAttribute && sel.hasAttribute('readonly')) ||
+    (sel.closest && sel.closest('fieldset[disabled]')));
+  var keptOutside = false;
+  if (selectedAtRequest && selectedAllowed === false && locked) {
+    selectedAllowed = true;
+    keptOutside = true;
+  }
 
   var blankLabel = '— выбрать —';
   var selectedLabel = selectedAtRequest;
@@ -4738,6 +4750,9 @@ function obChoiceApplyResponse(sel, data, selectedAtRequest) {
     var selected = document.createElement('option');
     selected.value = selectedAtRequest;
     selected.textContent = selectedLabel || selectedAtRequest;
+    // Сохранённое вне отбора значение запертого поля видно, но кандидатом
+    // подбора не становится — как у прежних значений вне choice_filter.
+    if (keptOutside && selected.setAttribute) selected.setAttribute('data-ob-choice-outside-filter', '1');
     sel.appendChild(selected);
   }
 
