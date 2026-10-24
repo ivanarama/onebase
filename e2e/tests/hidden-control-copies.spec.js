@@ -10,37 +10,52 @@ for (const [order, warehouse, file, location] of [
   test(`зависимый подбор: скрытая копия ${order}`, async ({ page }) => {
     await login(page);
     await open(page, '/ui/document/СкрытыеКопии/new');
-    const source = page.locator(`[data-ob-el="Видимый${warehouse}"] select`);
+    const source = page.locator(`[data-ob-el="Видимый${warehouse}"]`);
     const hidden = page.locator(`[data-ob-el="Скрытый${warehouse}"]`);
-    const target = page.locator(`select[name="${location}"]`);
+    const target = page.locator(`input[type="hidden"][name="${location}"]`);
     await expect(hidden).toHaveAttribute('disabled', '');
     await expect(hidden).toBeHidden();
-    const mainID = await source.locator('option').filter({ hasText: 'Главный склад «Чёрная дыра»' }).getAttribute('value');
-    const discountID = await source.locator('option').filter({ hasText: 'Склад уценёнки «Хламоприёмник»' }).getAttribute('value');
-    expect(mainID).toBeTruthy();
-    expect(discountID).toBeTruthy();
+    async function chooseWarehouse(label) {
+      await source.getByRole('combobox').fill(label);
+      await source.getByRole('option', { name: label, exact: true }).click();
+      await expect(source.getByRole('combobox')).toHaveValue(label);
+      const value = source.locator(`input[type="hidden"][name="${warehouse}"]`);
+      await expect(value).not.toHaveValue('');
+      const id = await value.inputValue();
+      expect(await page.locator('#main-form').evaluate((form, name) => new FormData(form).getAll(name), warehouse)).toEqual([id]);
+      return id;
+    }
+    async function openLocations(warehouseID) {
+      const response = page.waitForResponse((resp) => {
+        const url = new URL(resp.url());
+        return url.pathname.includes('/_ref-options/') && url.searchParams.get('q') === '' &&
+          JSON.parse(url.searchParams.get('sources') || '{}')[`Объект.${warehouse}`] === warehouseID;
+      });
+      // The UUID is inside the enhanced combobox; its picker is a sibling.
+      await target.locator('../..').locator('[data-ob-ref-picker]').click();
+      const result = await response;
+      expect(result.ok()).toBe(true);
+      return result.json();
+    }
 
-    await source.selectOption(mainID);
-    await expect.poll(async () => (await target.locator('option').allTextContents()).join('\n'))
-      .toContain('Стеллаж 1 «Покосившийся»');
-    expect(await page.locator('#main-form').evaluate((form, name) => new FormData(form).getAll(name), warehouse)).toEqual([mainID]);
-
-    const response = page.waitForResponse((resp) => {
-      const url = new URL(resp.url());
-      return url.pathname.includes('/_ref-options/') && url.searchParams.get('q') === '' &&
-        JSON.parse(url.searchParams.get('sources') || '{}')[`Объект.${warehouse}`] === mainID;
-    });
-    await target.locator('..').locator('[data-ob-ref-picker]').click();
-    const data = await (await response).json();
-    expect(data.total).toBe(3);
+    const mainID = await chooseWarehouse('Главный склад «Чёрная дыра»');
+    const mainLocations = await openLocations(mainID);
+    expect(mainLocations.total).toBe(3);
+    expect(mainLocations.items.map(item => item._label)).toContain('Стеллаж 1 «Покосившийся»');
     await expect(page.locator('#_rp-list')).toContainText('Стеллаж 1 «Покосившийся»');
     await page.keyboard.press('Escape');
-    await source.selectOption(discountID);
-    await expect.poll(async () => (await target.locator('option').allTextContents()).join('\n'))
-      .not.toContain('Стеллаж 1 «Покосившийся»');
-    await source.selectOption(mainID);
-    await expect.poll(async () => (await target.locator('option').allTextContents()).join('\n'))
-      .toContain('Стеллаж 1 «Покосившийся»');
+    const discountID = await chooseWarehouse('Склад уценёнки «Хламоприёмник»');
+    expect(discountID).not.toBe(mainID);
+    const discountLocations = await openLocations(discountID);
+    expect((discountLocations.items || []).map(item => item._label)).not.toContain('Стеллаж 1 «Покосившийся»');
+    await expect(page.locator('#_rp-list')).not.toContainText('Стеллаж 1 «Покосившийся»');
+    await page.keyboard.press('Escape');
+    expect(await chooseWarehouse('Главный склад «Чёрная дыра»')).toBe(mainID);
+    const restoredLocations = await openLocations(mainID);
+    expect(restoredLocations.total).toBe(3);
+    expect(restoredLocations.items.map(item => item._label)).toContain('Стеллаж 1 «Покосившийся»');
+    await expect(page.locator('#_rp-list')).toContainText('Стеллаж 1 «Покосившийся»');
+    await page.keyboard.press('Escape');
   });
 
   test(`выбор файла: скрытая копия ${order}`, async ({ page }) => {

@@ -1463,3 +1463,58 @@ test('standalone bottom link and Escape use the close controller before navigati
   assert.deepEqual(reasons, ['close', 'escape']);
   assert.deepEqual(app.assigned, ['/ui/catalog/Тест']);
 });
+
+test('invalid reference blocks fresh writes but never blocks discard', async (t) => {
+  for (const mode of ['save', 'post', 'save_and_select', 'discard']) {
+    await t.test(mode, async () => {
+      let calls = 0, reports = 0;
+      const app = runtime(async (url, options) => {
+        calls++;
+        return response({ok: true, dirty: false, close: {
+          intentId: closeIntent(options), allowed: true, saved: mode !== 'discard',
+        }});
+      });
+      app.form.querySelectorAll = selector => selector === '[data-ob-ref-search]'
+        ? [{reportValidity() { reports++; return false; }}] : [];
+      const result = await app.context.obRequestFormClose({reason: 'ok', mode});
+      assert.equal(result.allowed, mode === 'discard');
+      assert.equal(calls, mode === 'discard' ? 1 : 0);
+      assert.equal(reports, mode === 'discard' ? 0 : 1);
+      if (mode !== 'discard') {
+        assert.equal(result.error, 'invalid-reference');
+        assert.equal(result.intentId, '');
+        app.form.querySelectorAll = () => [];
+        assert.equal((await app.context.obRequestFormClose({reason: 'ok', mode})).allowed, true);
+        assert.equal(calls, 1, 'validation refusal poisoned the next attempt');
+      }
+    });
+  }
+});
+
+test('invalid live reference cannot prevent exact recovery of an unknown save', async () => {
+  const calls = [];
+  const app = runtime(async (url, options) => {
+    calls.push({body: options.body.toString(), headers: {...options.headers}});
+    if (calls.length === 1) throw new Error('response lost after commit');
+    return response({ok: true, dirty: false, savedId: 'saved-reference', version: 1,
+      close: {intentId: closeIntent(options), allowed: true, saved: true}});
+  });
+  app.form.values.set('Ссылка', 'old-reference');
+  assert.equal((await app.context.obRequestFormClose({reason: 'ok', mode: 'save'})).error, 'network');
+  app.form.values.set('Ссылка', '');
+  let reports = 0;
+  app.form.querySelectorAll = selector => selector === '[data-ob-ref-search]'
+    ? [{reportValidity() { reports++; return false; }}] : [];
+  const recovered = await app.context.obRequestFormClose({reason: 'ok', mode: 'save'});
+  assert.equal(recovered.allowed, false);
+  assert.equal(recovered.error, 'form-changed');
+  assert.equal(reports, 0, 'live validation prevented old intent recovery');
+  assert.equal(calls[1].body, calls[0].body);
+  assert.equal(calls[1].headers['X-OneBase-Close-Intent'], calls[0].headers['X-OneBase-Close-Intent']);
+  assert.equal(calls[1].headers['X-OneBase-Close-First-Attempt'], '');
+  assert.equal(app.form.values.get('Ссылка'), '', 'recovery overwrote live input');
+  assert.equal(app.context.__form.querySelector('[name="_id"]').value, 'saved-reference');
+  const next = await app.context.obRequestFormClose({reason: 'ok', mode: 'save'});
+  assert.equal(next.error, 'invalid-reference');
+  assert.equal(calls.length, 2, 'fresh write followed recovery despite invalid reference');
+});

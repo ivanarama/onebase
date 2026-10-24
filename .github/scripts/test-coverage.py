@@ -138,6 +138,31 @@ def merge(profiles, output):
     temporary.replace(output)
 
 
+LARGE_CATALOG = "TestRefComboboxLargeCatalogPublicHTTP"
+
+
+def verify_acceptance_workflow(workflow):
+    job = re.search(r"^  e2e:\n(.*?)(?=^  [^ #\n]|\Z)", workflow, re.M | re.S)
+    if not job or re.search(r"^    continue-on-error:", job[1], re.M):
+        raise ValueError("mandatory e2e job missing or optional")
+    steps = re.split(r"^      - name: ", job[1], flags=re.M)[1:]
+    condition = "if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}"
+    expected = [
+        ["Managed reference combobox acceptance", condition, "env:",
+         "ONEBASE_REQUIRE_REF_BROWSER: '1'",
+         "run: go test -count=1 -timeout 3m -v ./internal/ui -run '^TestManagedRefComboboxBrowser$'"],
+        ["Large catalog managed reference acceptance", condition,
+         "run: go test -count=1 -timeout 3m -v ./internal/ui -run '^" + LARGE_CATALOG + "$'"],
+    ]
+    for required in expected:
+        matches = [[line.strip() for line in step.splitlines()
+                    if line.strip() and not line.lstrip().startswith("#")]
+                   for step in steps if step.splitlines()[0] == required[0]]
+        if matches != [required]:
+            raise ValueError("missing, duplicate or modified mandatory acceptance: " + required[0])
+
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--artifacts", type=Path, default=Path("test-results"))
@@ -157,14 +182,19 @@ def main(argv=None):
     others = [p for p in packages if p not in {UI, LAUNCHER}]
     require(others, "missing ungrouped packages")
     flags = ["-race", "-count=1", "-timeout=10m", "-json"]
+    verify_acceptance_workflow(Path(".github/workflows/ci.yml").read_text(encoding="utf-8"))
     inventories = {}
     grouped_runs = []
     for label, package, count in SERIES:
         listing = args.artifacts / (label + "-list.jsonl")
         command(["go", "test", *flags, "-list", "^(Test|Example|Fuzz)", package], listing)
         names = inventory(listing, package)
-        groups = partition(names, count)
-        inventories[label] = {"package": package, "names": names, "groups": groups}
+        delegated = [LARGE_CATALOG] if package == UI else []
+        require(not delegated or names.count(LARGE_CATALOG) == 1, "missing exact mandatory e2e inventory")
+        race_names = [name for name in names if name not in delegated]
+        require(Counter(race_names + delegated) == Counter(names), "delegation loses or repeats suites")
+        groups = partition(race_names, count)
+        inventories[label] = {"package": package, "names": names, "groups": groups, "mandatory_e2e": delegated}
         grouped_runs.extend((f"{label}-{i+1}", [package], group, label)
                             for i, group in enumerate(groups))
     (args.artifacts / "inventory.json").write_text(
@@ -185,7 +215,7 @@ def main(argv=None):
         profiles.append((series, coverage))
     merge(profiles, args.output)
     print(f"PASS: {len(packages)} packages; " + "; ".join(
-        f"{len(item['names'])} {label} suites exactly once in {len(item['groups'])} groups"
+        f"{len(item['names'])} {label} suites accounted for in {len(item['groups'])} race groups + mandatory e2e {item['mandatory_e2e']}"
         for label, item in inventories.items()))
 
 

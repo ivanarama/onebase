@@ -417,7 +417,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       state.set(inp, {
         value: inp.value,
         revision: controlEditRevisions.get(inp) || 0,
-        editable: controlSubmittable(inp) && !inp.readOnly && inp.type !== 'hidden'
+        editable: controlSubmittable(inp) && !inp.readOnly && (inp.type !== 'hidden' || !!inp._obRefCombo)
       });
     });
     return state;
@@ -482,6 +482,18 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         if (newerInput && sent.has(k) && sent.get(k) === val) {
           val = newerInput.value;
           if (inp.value === val) return; // Keep the active editor/caret intact.
+        }
+        if (inp._obRefCombo) {
+          // The UUID is hidden; its visible editor may still contain an
+          // unfinished query while the server echoes the submitted UUID.
+          var before = controlState && controlState.get(inp);
+          var wasEditable = before ? before.editable : controlSubmittable(inp) && !inp.readOnly;
+          if (wasEditable && sent && sent.has(k) && sent.get(k) === val &&
+              (inp.value !== (before ? before.value : val) || inp._obRefCombo.isEditing())) return;
+          var rows = refOptions && refOptions[k];
+          var label = ref && ref.label;
+          (rows || []).forEach(function (row) { if (String(row.id) === val) label = row._label; });
+          inp._obRefCombo.setValue(val, label || val, false);
         }
         if (inp.tagName === 'SELECT') ensureRefOption(inp, val, refOptions && refOptions[k], ref && ref.label);
         // Зеркало значения (план 181C/#1672) — скрытый input с тем же name:
@@ -608,6 +620,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // required validation. The server renders the same disabled fieldset
       // for the initial state; update it when hidden_when changes.
       if (el.getAttribute('data-ob-control-fieldset') === '1') el.disabled = !!hidden[path];
+      el.querySelectorAll('input, textarea').forEach(function (n) { if (n._obRefCombo) n._obRefCombo.updateState(); });
     });
     var ro = st.readonly || {};
     // Свой ли это редактирующий контрол: ближайший якорь элемента формы — сам
@@ -637,6 +650,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       var roMirror = null;
       el.querySelectorAll('input, textarea').forEach(function (inp) {
         if (!ownControl(el, inp)) return;
+        if (inp.dataset && inp.dataset.obRefSearch === '1') return;
         if (inp.dataset && inp.dataset.obRoMirror === '1') {
           inp.disabled = !on;
           roMirror = inp;
@@ -649,6 +663,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         var checkboxPresence = inp.dataset && inp.dataset.obCheckboxPresence === '1';
         if (inp.type === 'checkbox' || inp.type === 'radio' || checkboxPresence) inp.disabled = on;
         else inp.readOnly = on;
+        if (inp._obRefCombo) inp._obRefCombo.updateState();
       });
       // Кнопка «Открыть карточку» из гашения исключена: сервер под $ro рисует её
       // БЕЗ disabled намеренно (templates_managed.go:94) — посмотреть связанный
@@ -1740,6 +1755,19 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 		// (reconcile), как и раньше (#1685).
 		envelope.first = '';
       } else {
+        // These buttons bypass native submit validation. Check the same
+        // reference input validity before allocating a fresh writing intent.
+        // An unknown prior intent must replay its original UUID/body even if
+        // the user has since entered invalid text in the live form.
+        if (mode === 'save' || mode === 'post' || mode === 'save_and_select') {
+          var form = document.getElementById('main-form');
+          var references = form ? form.querySelectorAll('[data-ob-ref-search]') : [];
+          for (var i = 0; i < references.length; i++) {
+            if (!references[i].reportValidity()) {
+              return {allowed: false, intentId: '', error: 'invalid-reference'};
+            }
+          }
+        }
 		envelope = {
 		  intentId: freshCloseIntentID(),
 		  epoch: CLOSE_EPOCH,

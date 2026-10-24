@@ -1282,6 +1282,11 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// A successful empty page is an array, including a nil storage result.
+	// Clients must still reject malformed pages before checking membership.
+	if items == nil {
+		items = make([]map[string]any, 0)
+	}
 	// Динамический preview (choice_preview_proc) обслуживается POST /page:
 	// GET остаётся статическим и обратно совместимым (план 168, инвариант 1).
 	previewField := canonicalChoicePreviewField(ent)
@@ -1293,13 +1298,33 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 		"offset": offset,
 	}
 	response["preview"] = previewField
-	if choice != nil && choice.Selected != nil {
+	// Combobox owner-only refresh needs an exact membership check beyond the
+	// first page. Keep legacy selected_id semantics; this separate opt-in uses
+	// the same RLS/owner/choice predicates as the public candidate endpoint.
+	var selected *uuid.UUID
+	if choice != nil {
+		selected = choice.Selected
+	}
+	if raw, parseErr := oneQueryValue(r.URL.Query(), "check_selected_id", false); parseErr != nil {
+		http.Error(w, "invalid selected check", http.StatusBadRequest)
+		return
+	} else if raw != "" {
+		id, parseErr := uuid.Parse(raw)
+		if parseErr != nil || id == uuid.Nil {
+			http.Error(w, "invalid selected check", http.StatusBadRequest)
+			return
+		}
+		selected = &id
+	}
+	if selected != nil {
 		allowed := false
-		if !choice.Empty && fltOK {
+		if fltOK && (choice == nil || !choice.Empty) {
 			check := base
-			check.ChoicePredicates = choice.Predicates
-			check.IncludeFolders = choice.Folders
-			allowed, err = s.choiceSelectedAllowedWithParams(r.Context(), ent, *choice.Selected, check)
+			if choice != nil {
+				check.ChoicePredicates = choice.Predicates
+				check.IncludeFolders = choice.Folders
+			}
+			allowed, err = s.choiceSelectedAllowedWithParams(r.Context(), ent, *selected, check)
 			if err != nil {
 				s.serverError(w, r, err)
 				return
@@ -1490,9 +1515,18 @@ func (s *Server) renderPopupSaved(w http.ResponseWriter, id, label string) {
 	idJSON, _ := json.Marshal(id)
 	labelJSON, _ := json.Marshal(label)
 	writeBody(w, fmt.Appendf(nil, `<!doctype html><html><body><script>
-try {
-  window.parent.postMessage({source:"obRefCreate", id:%s, label:%s}, "*");
-} catch (e) {}
+function notifyCreated() {
+  try {
+    window.parent.postMessage({source:"obRefCreate", id:%s, label:%s}, "*");
+  } catch (e) {}
+}
+// The parent accepts legacy results only from a ready native document.
+// During parsing it must conservatively require a managed close proof.
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", notifyCreated, {once:true});
+} else {
+  notifyCreated();
+}
 </script>Готово.</body></html>`, idJSON, labelJSON))
 }
 

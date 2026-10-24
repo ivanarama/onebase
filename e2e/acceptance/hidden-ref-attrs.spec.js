@@ -2,8 +2,23 @@ const { test, expect } = require('@playwright/test');
 const { ids = {}, refs = {}, locals = {} } = JSON.parse(process.env.OB_HIDDEN_REF_ATTR_FIXTURE || '{}');
 const oldID = refs['Исходный склад'];
 const newID = refs['Выбранный склад'];
-const visible = page => page.locator('select[name="Склад"]:visible');
-const row = page => page.locator('[data-ob-el]').filter({ has: visible(page) });
+const visible = page => page.locator('.ob-ref-combobox:visible').getByRole('combobox');
+async function choose(page, id) {
+  const label = id === oldID ? 'Исходный склад' : 'Выбранный склад';
+  await visible(page).fill(label);
+  await visible(page).locator('..').getByRole('option', {name: label, exact: true}).click();
+  await submitted(page, id);
+}
+const hiddenRow = page => page.locator('[data-ob-control-fieldset]:not(:visible)').filter({
+  has: page.locator('input[type=hidden][name="Склад"]'),
+});
+async function hiddenUUID(page) {
+  await expect(hiddenRow(page)).toHaveCount(1);
+  const input = hiddenRow(page).locator('input[type=hidden][name="Склад"]');
+  await expect(input).toHaveCount(1);
+  return input;
+}
+const row = page => page.locator('[data-ob-control-fieldset]').filter({ has: visible(page) });
 let pageErrors;
 test.beforeEach(async ({ page }) => {
   pageErrors = [];
@@ -12,7 +27,7 @@ test.beforeEach(async ({ page }) => {
 test.afterEach(() => expect(pageErrors).toEqual([]));
 
 async function submitted(page, value) {
-  await expect(visible(page)).toHaveValue(value);
+  await expect(visible(page).locator('..').locator('input[type=hidden][name="Склад"]')).toHaveValue(value);
   expect(await page.locator('#main-form').evaluate(f => new FormData(f).getAll('Склад'))).toEqual([value]);
 }
 async function fire(page, button) {
@@ -46,26 +61,30 @@ for (const [name, id] of Object.entries(ids)) {
   const url = `/ui/catalog/${name}/${id}?lang=ru`;
   async function open(page) {
     await page.goto(url);
-    await expect(page.locator('select[name="Склад"]')).toHaveCount(2);
+    await expect(page.locator('input[type=hidden][name="Склад"]')).toHaveCount(2);
     await expect(visible(page)).toHaveCount(1);
   }
   test(`${name}: own picker, event, both visibility directions and save:false reload`, async ({ page }) => {
     await open(page);
     // Initial selection is deliberately different from the picker result.
-    await visible(page).selectOption(oldID);
+    await choose(page, oldID);
     await picker(page);
     await page.locator('#_rp-list ._rp-item').filter({ hasText: 'Выбранный склад' }).click();
     await expect(page.locator('#_ref-picker-modal')).toHaveCount(0);
     await submitted(page, newID);
     // Before any event the hidden copy is still empty, so global-ID card lookup fails too.
-    await expect(page.locator('select[name="Склад"]:not(:visible)')).toHaveValue('');
+    await expect(await hiddenUUID(page)).toHaveValue('');
     await card(page, newID);
     for (let i = 0; i < 2; i++) {
       const data = await fire(page, 'Переключить');
       expect(data.values.Получено).toBe('Выбранный склад');
       await submitted(page, newID);
       // Keep the hidden copy deliberately different after the real event too.
-      await page.locator('select[name="Склад"]:not(:visible)').evaluate((s, id) => { s.value = id; }, oldID);
+      const hidden = await hiddenUUID(page);
+      await hidden.evaluate((input, id) => { input.value = id; }, oldID);
+      await expect(hidden).toHaveValue(oldID);
+      expect(oldID).not.toBe(newID);
+      await expect(visible(page).locator('..').locator('input[type=hidden][name="Склад"]')).toHaveValue(newID);
       await card(page, newID);
       await picker(page);
       await page.locator('#_rp-list ._rp-item').filter({ hasText: 'Выбранный склад' }).click();
@@ -84,7 +103,7 @@ for (const [name, id] of Object.entries(ids)) {
     await picker(page);
     await page.locator('#_rp-cancel').click();
     await submitted(page, newID);
-    await visible(page).selectOption('');
+    await visible(page).fill('');
     await submitted(page, '');
     expect((await fire(page, 'Проверить')).values.Получено).toBe('Пусто');
     await submitted(page, '');
@@ -94,10 +113,10 @@ for (const [name, id] of Object.entries(ids)) {
 
   test(`${name}: readonly blocks selection and card reads its own copy`, async ({ page }) => {
     await open(page);
-    await visible(page).selectOption(newID);
+    await choose(page, newID);
     // readonly is computed by a real event, preserving the copy's selected value.
     await fire(page, 'Заблокировать');
-    await expect(visible(page)).toBeDisabled();
+    await expect(visible(page)).not.toBeEditable();
     await expect(row(page).locator('[data-ob-ref-picker]')).toBeDisabled();
     await expect(row(page).locator('[data-ob-ref-current]')).toBeEnabled();
     await card(page, newID);

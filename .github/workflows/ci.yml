@@ -603,6 +603,19 @@ jobs:
         working-directory: e2e
         run: npx playwright install --with-deps chromium
 
+      - name: Managed reference combobox acceptance
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        env:
+          ONEBASE_REQUIRE_REF_BROWSER: '1'
+        run: go test -count=1 -timeout 3m -v ./internal/ui -run '^TestManagedRefComboboxBrowser$'
+
+      # Полный каталог проверяется через публичные form/search HTTP routes
+      # без race-инструментации SQL-движка. Тест не уменьшает число строк и
+      # проверяет прежние total, limit и границы HTML/JSON; падение блокирует e2e.
+      - name: Large catalog managed reference acceptance
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        run: go test -count=1 -timeout 3m -v ./internal/ui -run '^TestRefComboboxLargeCatalogPublicHTTP$'
+
       - name: Run browser smoke suite
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         working-directory: e2e

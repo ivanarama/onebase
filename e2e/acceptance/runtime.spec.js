@@ -1,7 +1,33 @@
 const { test, expect } = require('@playwright/test');
 const ids = JSON.parse(process.env.OB_CHOICE_IDS || '{}');
-const direction = (page) => page.locator('select[name="Направление"]');
-const target = (page) => page.locator('select[name="Неисправность"]');
+const direction = (page) => page.locator('input[type=hidden][name="Направление"]');
+const target = (page) => page.locator('input[type=hidden][name="Неисправность"]');
+const targetText = page => target(page).locator('..').getByRole('combobox');
+const targetOptions = page => target(page).locator('..').getByRole('option');
+const targetPicker = page => page.locator('[data-ob-el="ПолеНеисправность"] [data-ob-ref-picker]');
+async function chooseDirection(page, id) {
+  // The source fixture has one-letter labels, below the search threshold.
+  // Use the public picker; if the dependent picker is open, restore it after
+  // choosing so its in-flight responses still exercise the same race.
+  const pickerWasOpen = await page.locator('#_ref-picker-modal').count() > 0;
+  if (pickerWasOpen) await page.locator('#_rp-cancel').click();
+  await page.locator('[data-ob-el="ПолеНаправление"] [data-ob-ref-picker]').click();
+  const label = id === ids.a ? 'A' : 'B';
+  await page.locator('#_rp-list ._rp-item').filter({hasText: new RegExp('^' + label + '$')}).click();
+  await expect(direction(page)).toHaveValue(id);
+  if (pickerWasOpen) await targetPicker(page).click();
+}
+async function searchTarget(page, query) {
+  await targetText(page).fill(query);
+  await expect(targetOptions(page).first()).toBeVisible();
+}
+async function chooseTarget(page) {
+  await searchTarget(page, 'needle');
+  await targetText(page).press('ArrowDown');
+  await targetText(page).press('Enter');
+  await expect(target(page)).not.toHaveValue('');
+  return target(page).inputValue();
+}
 const formURL = (id) => `/ui/document/Заявка/${id || 'new'}`;
 const requests = '**/ui/_ref-options/**';
 
@@ -17,8 +43,8 @@ async function open(page, id) {
   await expect(target(page)).toHaveAttribute('data-ref-choice-context', /fault-picker/);
 }
 async function settled(page) {
-  await expect(target(page)).not.toHaveAttribute('data-ob-choice-loading', '1');
-  await expect(target(page)).not.toHaveAttribute('data-ob-choice-error', '1');
+  await expect(targetText(page)).not.toHaveAttribute('aria-busy', 'true');
+  await expect(target(page).locator('..').getByRole('status')).not.toContainText('Не удалось');
 }
 function query(source, selected, extra = {}) {
   return new URLSearchParams({
@@ -39,7 +65,7 @@ async function holdResponses(page) {
   const held = [];
   await page.route(requests, async (route) => {
     const url = new URL(route.request().url());
-    if (url.searchParams.get('element') !== 'fault-picker' || !JSON.parse(url.searchParams.get('sources') || '{}')['Объект.Направление']) return route.continue();
+    if (url.searchParams.get('q') || url.searchParams.get('element') !== 'fault-picker' || !JSON.parse(url.searchParams.get('sources') || '{}')['Объект.Направление']) return route.continue();
     const response = await route.fetch();
     expect(response.status()).toBe(200);
     const data = await response.json();
@@ -67,7 +93,8 @@ for (const abortAvailable of [true, false]) {
       const fetch = window.fetch;
       window.fetch = async (...args) => {
         const response = await fetch(...args);
-        if (String(args[0]).includes('element=fault-picker')) {
+        const url = new URL(String(args[0]), location.origin);
+        if (url.searchParams.get('element') === 'fault-picker' && !url.searchParams.get('q') && JSON.parse(url.searchParams.get('sources') || '{}')['Объект.Направление']) {
           const json = response.json.bind(response);
           response.json = async () => { const data = await json(); window.__choiceBodies++; return data; };
         }
@@ -77,11 +104,11 @@ for (const abortAvailable of [true, false]) {
     await open(page);
     const held = await holdResponses(page);
     try {
-      await direction(page).selectOption(ids.a);
+      await chooseDirection(page, ids.a);
       await expect.poll(() => held.length).toBe(1);
-      await direction(page).selectOption(ids.b);
+      await chooseDirection(page, ids.b);
       await expect.poll(() => held.length).toBe(2);
-      await direction(page).selectOption(ids.a);
+      await chooseDirection(page, ids.a);
       await expect.poll(() => held.length).toBe(3);
       expect(held.map((entry) => entry.source)).toEqual([ids.a, ids.b, ids.a]);
       expect(held[1].data.items.map((item) => item.id)).toContain(ids.legacy);
@@ -89,11 +116,11 @@ for (const abortAvailable of [true, false]) {
       expect(held[2].data.items.map((item) => item.id)).not.toContain(ids.hidden);
       expect(held[2].data.items.map((item) => item.id)).not.toContain(ids.folder);
       held[2].release();
-      await expect(target(page).locator('option')).toContainText(['needle 001']);
+      await searchTarget(page, 'needle');
+      await expect(targetOptions(page)).toContainText(['needle 001']);
       await settled(page);
-      const selected = await target(page).locator('option').filter({ hasText: 'needle 001' }).getAttribute('value');
-      await target(page).selectOption(selected);
-      const before = await target(page).locator('option').allTextContents();
+      const selected = await chooseTarget(page);
+      const before = await targetOptions(page).allTextContents();
       // Reverse order: obsolete B would clear the new A choice; oldest A was
       // requested without that choice and shares its source fingerprint.
       held[1].release();
@@ -101,8 +128,8 @@ for (const abortAvailable of [true, false]) {
       await expect.poll(() => held.every((entry) => entry.delivered)).toBe(true);
       if (!abortAvailable) await page.waitForFunction(() => window.__choiceBodies === 3);
       await expect(target(page)).toHaveValue(selected);
-      expect(await target(page).locator('option').allTextContents()).toEqual(before);
-      await expect(target(page).locator(`option[value="${ids.legacy}"]`)).toHaveCount(0);
+      expect(await targetOptions(page).allTextContents()).toEqual(before);
+      await expect(targetOptions(page).filter({hasText: 'needle legacy B'})).toHaveCount(0);
       await expect(direction(page)).toHaveValue(ids.a);
     } finally {
       held.forEach((entry) => entry.release());
@@ -118,7 +145,7 @@ test('runtime open picker keeps current A options through A→B→A delivery wit
     window.fetch = async (...args) => {
       const response = await fetch(...args);
       const url = new URL(String(args[0]), location.origin);
-      if (url.searchParams.get('element') === 'fault-picker' && JSON.parse(url.searchParams.get('sources') || '{}')['Объект.Направление']) {
+      if (url.searchParams.get('element') === 'fault-picker' && !url.searchParams.get('q') && JSON.parse(url.searchParams.get('sources') || '{}')['Объект.Направление']) {
         const json = response.json.bind(response);
         response.json = async () => { const data = await json(); window.__choiceBodies++; return data; };
       }
@@ -127,23 +154,22 @@ test('runtime open picker keeps current A options through A→B→A delivery wit
   });
   await open(page);
   const initial = page.waitForResponse((response) => response.url().includes('element=fault-picker'));
-  await target(page).locator('..').locator('[data-ob-ref-picker="closest"]').click();
+  await targetPicker(page).click();
   await (await initial).finished();
   await expect(page.locator('#_rp-status')).not.toHaveText('Загрузка...');
   const held = await holdResponses(page);
   try {
-    await direction(page).selectOption(ids.a);
+    await chooseDirection(page, ids.a);
     await expect.poll(() => held.length).toBe(2); // select + open picker
-    await direction(page).selectOption(ids.b);
+    await chooseDirection(page, ids.b);
     await expect.poll(() => held.length).toBe(4);
-    await direction(page).selectOption(ids.a);
+    await chooseDirection(page, ids.a);
     await expect.poll(() => held.length).toBe(6);
     expect(held.map((entry) => entry.source)).toEqual([ids.a, ids.a, ids.b, ids.b, ids.a, ids.a]);
     held.slice(4).forEach((entry) => entry.release());
     await settled(page);
     await expect(page.locator('#_rp-list ._rp-item')).toHaveCount(50);
-    const selected = await target(page).locator('option').filter({ hasText: 'needle 001' }).getAttribute('value');
-    await target(page).selectOption(selected);
+    const selected = await chooseTarget(page);
     const before = await page.locator('#_rp-list ._rp-item').allTextContents();
     held.slice(2, 4).forEach((entry) => entry.release());
     await page.waitForFunction(() => window.__choiceBodies === 4);
@@ -160,7 +186,7 @@ test('runtime open picker keeps current A options through A→B→A delivery wit
 test('runtime legacy choice survives open/save and clears only after an authoritative source change', async ({ page }) => {
   await open(page, ids.owner);
   await expect(target(page)).toHaveValue(ids.legacy);
-  await expect(target(page).locator(`option[value="${ids.legacy}"]`)).toHaveAttribute('data-ob-choice-outside-filter', '1');
+  await expect(targetText(page)).toHaveValue('needle legacy B');
   // Use the actual form submit and persisted reload, not a direct DB assertion.
   const save = page.locator('button[name="_action"][value=""]').first();
   const [saved] = await Promise.all([page.waitForResponse((r) => r.request().method() === 'POST' && decodeURI(new URL(r.url()).pathname).includes('/Заявка/')), save.click()]);
@@ -169,7 +195,7 @@ test('runtime legacy choice survives open/save and clears only after an authorit
   await expect(target(page)).toHaveValue(ids.legacy);
   const held = await holdResponses(page);
   try {
-    await direction(page).selectOption(ids.b);
+    await chooseDirection(page, ids.b);
     await expect.poll(() => held.length).toBe(1);
     await expect(target(page)).toHaveValue(ids.legacy);
     expect(held[0].data.selected_allowed).toBe(true);
@@ -180,7 +206,7 @@ test('runtime legacy choice survives open/save and clears only after an authorit
       window.__choiceChanges = 0;
       select.addEventListener('change', () => window.__choiceChanges++);
     });
-    await direction(page).selectOption(ids.a);
+    await chooseDirection(page, ids.a);
     await expect.poll(() => held.length).toBe(2);
     expect(held[1].data.selected_allowed).toBe(false);
     await expect(target(page)).toHaveValue(ids.legacy);
@@ -198,9 +224,9 @@ test('runtime selected_allowed preserves a real selection beyond page 50 and sea
   expect(data.items.map((item) => item.id)).not.toContain(ids.selected);
   const held = await holdResponses(page);
   try {
-    await direction(page).selectOption(ids.b);
+    await chooseDirection(page, ids.b);
     await expect.poll(() => held.length).toBe(1);
-    await direction(page).selectOption(ids.a);
+    await chooseDirection(page, ids.a);
     await expect.poll(() => held.length).toBe(2);
     expect(held[1].data.selected_allowed).toBe(true);
     expect(held[1].data.items.map((item) => item.id)).not.toContain(ids.selected);
@@ -216,8 +242,9 @@ test('runtime selected_allowed preserves a real selection beyond page 50 and sea
 test('runtime hierarchy, eq, folder scope and RLS remain ANDed in select and picker', async ({ page }) => {
   await open(page);
   expect((await options(page, query(''))).total).toBe(0);
-  await direction(page).selectOption(ids.a);
-  await expect.poll(async () => target(page).locator('option').count()).toBe(51); // empty + first 50
+  await chooseDirection(page, ids.a);
+  await searchTarget(page, 'le');
+  await expect(targetOptions(page)).toHaveCount(50); // bounded search, no empty option
   await settled(page);
   const filtered = await options(page, query(ids.a, ids.hidden, { limit: '100' }));
   expect(filtered.total).toBe(51);
@@ -227,7 +254,7 @@ test('runtime hierarchy, eq, folder scope and RLS remain ANDed in select and pic
   const exact = await options(page, query(ids.a, undefined, { element: 'exact-picker', limit: '100' }));
   expect(exact.total).toBe(26); // root items only; child A.1 is excluded by eq
   // Click the actual picker button beside the target select.
-  await target(page).locator('..').locator('[data-ob-ref-picker="closest"]').click();
+  await targetPicker(page).click();
   await expect(page.locator('#_rp-list ._rp-item')).toHaveCount(50);
   await page.locator('#_rp-search').fill('needle');
   await expect(page.locator('#_rp-list ._rp-item')).toHaveCount(2);
@@ -240,10 +267,11 @@ test('runtime hierarchy, eq, folder scope and RLS remain ANDed in select and pic
 
 test('runtime network failure retains the filtered options and current value', async ({ page }) => {
   await open(page, ids.pageTwoOwner);
-  const before = await target(page).locator('option').allTextContents();
-  await page.route(requests, (route) => route.abort('failed'));
-  await direction(page).selectOption(ids.b);
-  await expect(target(page)).toHaveAttribute('data-ob-choice-error', '1');
+  const before = await targetOptions(page).allTextContents();
+  await page.route(requests, route => new URL(route.request().url()).searchParams.get('element') === 'fault-picker' ? route.abort('failed') : route.continue());
+  await chooseDirection(page, ids.b);
+  await expect(target(page).locator('..').getByRole('status')).toContainText('Не удалось');
+  expect(await targetText(page).evaluate(input => input.checkValidity())).toBe(false);
   await expect(target(page)).toHaveValue(ids.selected);
-  expect(await target(page).locator('option').allTextContents()).toEqual(before);
+  expect(await targetOptions(page).allTextContents()).toEqual(before);
 });
