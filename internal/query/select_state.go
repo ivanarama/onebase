@@ -50,8 +50,8 @@ func (tr *translator) initSelectStates() {
 		}
 		state.refSources = map[string]bool{}
 		for i := 0; i+2 < len(tokens); i++ {
-			if tokens[i].kind == tIdent && isSourceType(upperFast(tokens[i].val)) &&
-				tokens[i+1].kind == tDot && tokens[i+2].kind == tIdent {
+			if tokens[i].kind == tIdent && tokens[i+1].kind == tDot &&
+				tokens[i+2].kind == tIdent && isSourceType(upperFast(tokens[i].val)) {
 				state.refSources[lowerFast(tokens[i+2].val)] = true
 				state.refSources[sourceToTable(upperFast(tokens[i].val), tokens[i+2].val)] = true
 				state.refSources[scope.mainTable] = true
