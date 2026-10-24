@@ -33,8 +33,9 @@ const (
 // подменяется фейком, чтобы не открывать реальные окна.
 type isolatedBrowser interface {
 	// Open открывает окно с профилем profileDir на url в заданном режиме
-	// (isolatedMode*; пустая строка = auto).
-	Open(profileDir, url, mode string) error
+	// (isolatedMode*; пустая строка = auto). baseID — запись базы, чьи
+	// сопутствующие программы окно запускает после входа (companions.go).
+	Open(profileDir, url, mode, baseID string) error
 }
 
 // NativeIsolatedSupported сообщает, умеет ли эта сборка нативные
@@ -48,7 +49,7 @@ func NativeIsolatedSupported() bool { return nativeIsolatedSupported() }
 // Браузерный путь: установленный Chromium-браузер с --user-data-dir.
 type systemBrowser struct{}
 
-func (systemBrowser) Open(profileDir, url, mode string) error {
+func (systemBrowser) Open(profileDir, url, mode, baseID string) error {
 	if mode == "" {
 		mode = isolatedModeAuto
 	}
@@ -56,7 +57,7 @@ func (systemBrowser) Open(profileDir, url, mode string) error {
 		return i18nerr.Errorf("нативные окна доступны только в GUI-сборке под Windows — выберите «Окно браузера»")
 	}
 	if mode != isolatedModeBrowser && nativeIsolatedSupported() {
-		if cmd, ok := nativeIsolatedCommand(profileDir, url); ok {
+		if cmd, ok := nativeIsolatedCommand(profileDir, url, baseID); ok {
 			err := cmd.Start()
 			if err == nil {
 				return nil

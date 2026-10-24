@@ -8,4 +8,4 @@ import "os/exec"
 // п. 4.2) — остальные сборки открывают изолированные окна внешним Chromium.
 func nativeIsolatedSupported() bool { return false }
 
-func nativeIsolatedCommand(_, _ string) (*exec.Cmd, bool) { return nil, false }
+func nativeIsolatedCommand(_, _, _ string) (*exec.Cmd, bool) { return nil, false }

@@ -983,6 +983,46 @@ function obInitAttachments() {
 }
 obReady(obInitAttachments);
 
+// Сопутствующие программы рабочего места (лаунчер, companions.go): окно
+// Предприятия GUI-сборки лаунчера отдаёт странице window.obLauncherCompanions.
+// После входа верхнее окно спрашивает сервер, какие программы нужны
+// пользователю, — сервер называет только ключи («callista»), путь к программе
+// знает лишь запись базы на этом компьютере. Ошибку запуска показываем, база
+// работает в любом случае.
+function obShowLauncherMessage(text) {
+  if (typeof window.obFlash === 'function') { window.obFlash(text, 'err'); return; }
+  if (!document.body) return;
+  var box = document.createElement('div');
+  box.setAttribute('role', 'alert');
+  box.setAttribute('data-ob-launcher-message', '1');
+  box.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483000;max-width:420px;background:#7f1d1d;color:#fff;padding:10px 32px 10px 12px;border-radius:8px;font-size:13px;box-shadow:0 6px 16px rgba(0,0,0,.3)';
+  box.textContent = text;
+  var x = document.createElement('button');
+  x.type = 'button';
+  x.textContent = '×';
+  x.setAttribute('aria-label', 'Закрыть');
+  x.style.cssText = 'position:absolute;top:4px;right:8px;background:none;border:none;color:#fff;font-size:18px;cursor:pointer';
+  x.addEventListener('click', function () { box.remove(); });
+  box.appendChild(x);
+  document.body.appendChild(box);
+}
+
+function obInitLauncherCompanions() {
+  if (window.__obEmbedded || typeof window.obLauncherCompanions !== 'function' || !window.fetch) return;
+  if (/^\/login/.test(location.pathname)) return;
+  fetch('/ui/launcher/companions', { credentials: 'same-origin', headers: { Accept: 'application/json' } })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (data) {
+      var keys = data && Array.isArray(data.keys) ? data.keys : [];
+      return keys.length ? window.obLauncherCompanions(keys) : null;
+    })
+    .then(function (msgs) {
+      (Array.isArray(msgs) ? msgs : []).forEach(function (m) { obShowLauncherMessage(String(m)); });
+    })
+    .catch(function () {});
+}
+obReady(obInitLauncherCompanions);
+
 function rsNorm(v) { return String(v || '').toLowerCase(); }
 
 function rsFieldMap(values) {

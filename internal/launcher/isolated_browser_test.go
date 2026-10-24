@@ -131,7 +131,7 @@ type fakeBrowser struct {
 	err   error
 }
 
-func (f *fakeBrowser) Open(dir, url, mode string) error {
+func (f *fakeBrowser) Open(dir, url, mode, _ string) error {
 	f.calls++
 	f.dir, f.url, f.mode = dir, url, mode
 	return f.err

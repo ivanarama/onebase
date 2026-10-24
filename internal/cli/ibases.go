@@ -3,6 +3,7 @@ package cli
 import (
 	"fmt"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/ivantit66/onebase/internal/launcher"
@@ -63,6 +64,11 @@ var ibasesAddCmd = &cobra.Command{
 		port, _ := cmd.Flags().GetInt("port")
 		src, _ := cmd.Flags().GetString("source")
 		server, _ := cmd.Flags().GetString("server")
+		companionLines, _ := cmd.Flags().GetStringArray("companion")
+		companions, err := launcher.ParseCompanions(strings.Join(companionLines, "\n"))
+		if err != nil {
+			return fmt.Errorf("--companion: %w", err)
+		}
 
 		if name == "" {
 			return fmt.Errorf("--name is required")
@@ -80,6 +86,7 @@ var ibasesAddCmd = &cobra.Command{
 			if err != nil {
 				return err
 			}
+			b.Companions = companions
 			store, err := launcher.NewStore()
 			if err != nil {
 				return err
@@ -106,6 +113,7 @@ var ibasesAddCmd = &cobra.Command{
 			Path:         path,
 			Port:         port,
 			ConfigSource: src,
+			Companions:   companions,
 		}
 		if sqlitePath != "" {
 			b.DBType = "sqlite"
@@ -150,6 +158,7 @@ func init() {
 	ibasesAddCmd.Flags().Int("port", 8080, "server port")
 	ibasesAddCmd.Flags().String("source", "database", "config source: file or database")
 	ibasesAddCmd.Flags().String("server", "", "адрес работающего сервера onebase — запись клиентского подключения (взаимоисключает --db/--sqlite)")
+	ibasesAddCmd.Flags().StringArray("companion", nil, "программа, запускаемая вместе с базой по ключу от сервера: \"ключ|путь|аргументы|каталог\" (можно несколько раз)")
 
 	ibasesRemoveCmd.Flags().String("id", "", "base ID (from ibases list)")
 

@@ -350,6 +350,17 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 		Port:         parsePort(r.FormValue("port")),
 		Host:         normalizeHost(r.FormValue("host")),
 	}
+	companions, compErr := ParseCompanions(r.FormValue("companions"))
+	if compErr != nil {
+		b.ServerURL = strings.TrimSpace(r.FormValue("server_url"))
+		h.renderBaseForm(w, r, map[string]any{
+			"Title": tr(lang, "onebase — Добавить базу"), "IsNew": true, "Base": b,
+			"ClientKind":     r.FormValue("base_kind") == baseKindClient,
+			"CompanionsText": r.FormValue("companions"), "Error": compErr.Error(),
+		})
+		return
+	}
+	b.Companions = companions
 
 	if b.Name == "" {
 		h.renderBaseForm(w, r, map[string]any{
@@ -363,6 +374,9 @@ func (h *handler) create(w http.ResponseWriter, r *http.Request) {
 	// ниже создала бы базу данных и конфигурацию на стороне клиента.
 	if r.FormValue("base_kind") == baseKindClient {
 		client, err := NewClientBase(b.Name, r.FormValue("server_url"))
+		if client != nil {
+			client.Companions = b.Companions
+		}
 		if err != nil {
 			b.ServerURL = strings.TrimSpace(r.FormValue("server_url"))
 			h.renderBaseForm(w, r, map[string]any{
@@ -514,6 +528,16 @@ func (h *handler) update(w http.ResponseWriter, r *http.Request) {
 	b.DBPath = r.FormValue("db_path")
 	b.Port = parsePort(r.FormValue("port"))
 	b.Host = normalizeHost(r.FormValue("host"))
+	companions, compErr := ParseCompanions(r.FormValue("companions"))
+	if compErr != nil {
+		h.renderBaseForm(w, r, map[string]any{
+			"Title": tr(lang, "onebase — Изменить базу"), "IsNew": false, "Base": b,
+			"ClientKind":     r.FormValue("base_kind") == baseKindClient,
+			"CompanionsText": r.FormValue("companions"), "Error": compErr.Error(),
+		})
+		return
+	}
+	b.Companions = companions
 
 	if b.Name == "" {
 		h.renderBaseForm(w, r, map[string]any{
@@ -635,6 +659,11 @@ func runtimeConfigChanged(a, b *Base) bool {
 // «базу на этом компьютере» и прятала поле адреса, то есть исправить введённое
 // было нельзя.
 func (h *handler) renderBaseForm(w http.ResponseWriter, r *http.Request, data map[string]any) {
+	if _, ok := data["CompanionsText"]; !ok {
+		if b, _ := data["Base"].(*Base); b != nil {
+			data["CompanionsText"] = FormatCompanions(b.Companions)
+		}
+	}
 	if _, ok := data["ClientKind"]; !ok {
 		if b, _ := data["Base"].(*Base); b != nil {
 			data["ClientKind"] = b.Client()
@@ -821,7 +850,7 @@ func (h *handler) startNative(w http.ResponseWriter, r *http.Request) {
 	if !h.ensureBaseReady(w, r, b, resolveLang(r)) {
 		return
 	}
-	if err := h.isoBrowser.Open("", h.runner.BaseURL(b), isolatedModeNative); err != nil {
+	if err := h.isoBrowser.Open("", h.runner.BaseURL(b), isolatedModeNative, b.ID); err != nil {
 		writeJSON(w, 500, map[string]any{"error": errText(r, err)})
 		return
 	}
@@ -854,7 +883,7 @@ func (h *handler) startIsolated(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		var dir string
 		if dir, err = pickProfileDir(root); err == nil {
-			err = h.isoBrowser.Open(dir, h.runner.BaseURL(b)+"/ui", mode)
+			err = h.isoBrowser.Open(dir, h.runner.BaseURL(b)+"/ui", mode, b.ID)
 		}
 	}
 	if err != nil {

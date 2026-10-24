@@ -1221,6 +1221,11 @@ const tplForm = `
       <input name="server_url" value="{{.Base.ServerURL}}" placeholder="https://onebase.example.local:8443">
       <div class="hint">{{t $.Lang "Схема обязательна: http:// или https://. Без пути и параметров — только адрес и порт."}}</div>
     </div>
+    <div class="fg">
+      <label>{{t $.Lang "Запускать вместе с базой"}}</label>
+      <textarea name="companions" rows="3" style="width:100%;font-family:monospace" placeholder="callista | C:\Callista\callista-operator.exe">{{.CompanionsText}}</textarea>
+      <div class="hint">{{t $.Lang "Необязательно. Обычно программы задаёт комплект — файл companions.yaml рядом с лаунчером; строка здесь с тем же ключом задаёт свой путь на этом компьютере. Формат: «ключ | путь к программе | аргументы | рабочий каталог» (аргументы и каталог — по желанию). Окно Предприятия запускает программу после входа, если база назвала её ключ пользователю; уже запущенная второй раз не запускается."}}</div>
+    </div>
     <div class="fg local-only" style="{{if .ClientKind}}display:none{{end}}">
       <label>{{t $.Lang "Тип хранения конфигурации"}}</label>
       <select name="config_source" onchange="togglePath(this.value)">

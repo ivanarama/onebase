@@ -1,4 +1,6 @@
 {
+  "Запускать вместе с базой": "Start with the base",
+  "Необязательно. Обычно программы задаёт комплект — файл companions.yaml рядом с лаунчером; строка здесь с тем же ключом задаёт свой путь на этом компьютере. Формат: «ключ | путь к программе | аргументы | рабочий каталог» (аргументы и каталог — по желанию). Окно Предприятия запускает программу после входа, если база назвала её ключ пользователю; уже запущенная второй раз не запускается.": "Optional. Programs normally come with the kit — the companions.yaml file next to the launcher; a line here with the same key sets this computer's own path. Format: “key | program path | arguments | working directory” (arguments and directory are optional). The Enterprise window starts the program after login when the base names its key for the user; a program that is already running is not started again.",
   "у локального источника %s нет ссылочного реквизита %s; внешняя ссылка затенена": "Local source %s has no reference field %s; the outer reference is shadowed",
   "временный каталог загрузок": "temporary upload directory",
   "временный файл параметра %s": "temporary file for parameter %s",

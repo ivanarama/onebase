@@ -384,6 +384,9 @@ func (s *Server) Mount(r chi.Router) {
 	// SSE-поток уведомлений сервер→браузер (план 74). Регистрируем ДО catch-all
 	// {kind}/{entity}, чтобы «events» не матчился как вид объекта.
 	r.Get("/ui/events", s.eventsStream)
+	// Ключи сопутствующих программ пользователя для окна Предприятия лаунчера
+	// (launcher_companions.go). До catch-all {kind}/{entity}.
+	r.Get("/ui/launcher/companions", s.launcherCompanions)
 	// Частичная перерисовка одной карточки дашборда (план 182A). Статический
 	// сегмент обязан идти до catch-all маршрута сущности.
 	r.Get("/ui/_widget/{name}", s.widgetPartial)

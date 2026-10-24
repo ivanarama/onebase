@@ -18,12 +18,17 @@ func nativeIsolatedSupported() bool { return true }
 // cookie-jar. Пустой profileDir = ОБЩИЙ профиль (%APPDATA%\<exe>, как у самого
 // лаунчера): переменную не задаём, окно делит сеанс с Предприятием — это путь
 // кнопки «Предприятие».
-func nativeIsolatedCommand(profileDir, url string) (*exec.Cmd, bool) {
+func nativeIsolatedCommand(profileDir, url, baseID string) (*exec.Cmd, bool) {
 	exe, err := os.Executable()
 	if err != nil {
 		return nil, false
 	}
-	cmd := exec.Command(exe, "window", "--url", url, "--title", "onebase — Предприятие")
+	args := []string{"window", "--url", url, "--title", "onebase — Предприятие"}
+	if baseID != "" {
+		// По записи базы окно найдёт свои сопутствующие программы.
+		args = append(args, "--base", baseID)
+	}
+	cmd := exec.Command(exe, args...) //nolint:gosec // G204: свой же exe, аргументы — адрес и id записи из ibases.yaml
 	cmd.Env = environmentWithout(os.Environ(), "ONEBASE_WEBVIEW_PROFILE")
 	if profileDir != "" {
 		cmd.Env = append(cmd.Env, "ONEBASE_WEBVIEW_PROFILE="+profileDir)

@@ -13,3 +13,9 @@ func OpenWindow(url, title string, done <-chan struct{}, cc CloseCoordinator) er
 	WaitForClose(done)
 	return nil
 }
+
+// OpenEnterpriseWindow — окно Предприятия базы baseID. В сборке без WebView2
+// сопутствующие программы не запускаются: связи страницы с лаунчером нет.
+func OpenEnterpriseWindow(url, title, baseID string) error {
+	return OpenWindow(url, title, nil, nil)
+}
