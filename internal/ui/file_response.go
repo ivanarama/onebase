@@ -40,6 +40,50 @@ func attachmentInlineType(mimeType string) bool {
 	return false
 }
 
+// attachmentAudioTypes — аудио, которое вложение отдаёт встроенному
+// проигрывателю (<audio> в панели вложений). Список закрытый, как и у
+// attachmentInlineType: остальное по-прежнему скачивается.
+var attachmentAudioTypes = map[string]string{
+	"audio/ogg":   "audio/ogg",
+	"audio/opus":  "audio/ogg",
+	"audio/mpeg":  "audio/mpeg",
+	"audio/mp3":   "audio/mpeg",
+	"audio/wav":   "audio/wav",
+	"audio/wave":  "audio/wav",
+	"audio/x-wav": "audio/wav",
+}
+
+var attachmentAudioExtensions = map[string]string{
+	".ogg":  "audio/ogg",
+	".oga":  "audio/ogg",
+	".opus": "audio/ogg",
+	".mp3":  "audio/mpeg",
+	".wav":  "audio/wav",
+}
+
+// attachmentAudioType — тип, под которым аудио-вложение отдаётся проигрывателю,
+// или "" для не-аудио. Тип при записи вложения берётся из расширения
+// (mime.TypeByExtension), а у .ogg/.mp3 его знает только системная таблица
+// типов: на сервере без неё запись разговора лежит как
+// application/octet-stream. Поэтому общий («не знаю») тип уточняется по
+// расширению; явный не-аудио тип (например, text/plain у «.mp3») — нет.
+func attachmentAudioType(mimeType, filename string) string {
+	m := normalizedFileMIME(mimeType)
+	if t, ok := attachmentAudioTypes[m]; ok {
+		return t
+	}
+	if m != "" && m != "application/octet-stream" && m != "application/ogg" {
+		return ""
+	}
+	ext := strings.ToLower(filename)
+	if i := strings.LastIndexByte(ext, '.'); i >= 0 {
+		ext = ext[i:]
+	} else {
+		return ""
+	}
+	return attachmentAudioExtensions[ext]
+}
+
 func setFileSecurityHeaders(h http.Header) {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Content-Security-Policy", "default-src 'none'; sandbox")

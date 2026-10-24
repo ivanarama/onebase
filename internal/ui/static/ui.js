@@ -976,6 +976,19 @@ function obInitAttachments() {
           row.appendChild(dl);
           row.appendChild(delForm);
           list.appendChild(row);
+          // Аудио (запись разговора) — встроенный проигрыватель под строкой.
+          // Источник — тот же адрес скачивания, с той же проверкой прав;
+          // preload="none" — запись не качается, пока её не запустили, и сама
+          // не играет.
+          if (a.audio) {
+            var player = document.createElement('audio');
+            player.controls = true;
+            player.preload = 'none';
+            player.src = dl.href;
+            player.setAttribute('data-ob-attachment-audio', String(a.id));
+            player.style.cssText = 'display:block;width:100%;margin:4px 0 8px';
+            list.appendChild(player);
+          }
         });
       }).catch(function () {});
   }
