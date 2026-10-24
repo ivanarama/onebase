@@ -292,6 +292,7 @@ func (s *Server) loadRefOptions(ctx context.Context, entity *metadata.Entity) (m
 }
 
 func (s *Server) loadRefOptionsWithMode(ctx context.Context, entity *metadata.Entity, mode refOptionsMode) (map[string][]map[string]any, error) {
+	defer serverTimingSpan(ctx, "refOptions")()
 	opts := make(map[string][]map[string]any)
 	for _, f := range entity.Fields {
 		if f.RefEntity == "" {
@@ -316,6 +317,7 @@ func (s *Server) loadRefOptionsWithMode(ctx context.Context, entity *metadata.En
 }
 
 func (s *Server) loadInitialRefOptions(ctx context.Context, entity *metadata.Entity, values map[string]string) (map[string][]map[string]any, error) {
+	defer serverTimingSpan(ctx, "refOptions")()
 	opts := make(map[string][]map[string]any)
 	dropdown := refDropdownFields(entity)
 	for _, f := range entity.Fields {
@@ -426,12 +428,21 @@ func (s *Server) loadInitialRefFilterOptions(ctx context.Context, entity *metada
 }
 
 func (s *Server) loadInitialTPRefOptions(ctx context.Context, entity *metadata.Entity, tpRows map[string][]map[string]any, formValues ...any) (map[string]map[string][]map[string]any, error) {
+	defer serverTimingSpan(ctx, "tpRefOptions")()
 	var values any
 	if len(formValues) > 0 {
 		values = formValues[0]
 	}
 	result := make(map[string]map[string][]map[string]any)
+	delta, _ := ctx.Value(tpRefDeltaKey{}).(*tpRefDelta)
+	var placed map[string]bool
+	if delta != nil {
+		placed = delta.placedTableParts(entity)
+	}
 	for _, tp := range entity.TableParts {
+		if delta != nil && delta.skipTablePart(entity, tp, placed, tpRefOwnerScoped(entity, tp, s.reg)) {
+			continue
+		}
 		tpOpts := make(map[string][]map[string]any)
 		for _, f := range tp.Fields {
 			if f.RefEntity == "" {
@@ -703,6 +714,7 @@ func (s *Server) requirePerm(w http.ResponseWriter, r *http.Request, kind, entit
 }
 
 func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
+	defer serverTimingSpan(r.Context(), "render")()
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if data == nil {
 		data = make(map[string]any)

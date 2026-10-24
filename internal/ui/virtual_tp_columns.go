@@ -29,6 +29,7 @@ func (s *Server) applyVirtualTPColumns(
 	form *metadata.FormModule,
 	tpRows map[string][]map[string]any,
 ) {
+	defer serverTimingSpan(ctx, "virtualColumns")()
 	if entity == nil || form == nil || len(tpRows) == 0 {
 		return
 	}
