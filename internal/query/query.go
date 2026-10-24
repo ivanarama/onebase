@@ -948,6 +948,9 @@ type translator struct {
 	derivedAs    map[int]string    // позиция закрывающей скобки → отложенный AS простой ссылки
 	mainRef      mainRefSource     // главный источник запроса: чья ссылка стоит за голым «Ссылка»
 
+	// grouped belongs to the active SELECT, independently of expression parentheses.
+	grouped bool
+
 	joinedRefs      []joinedRefSource // ссылочные поля присоединённых источников (#1385)
 	pendingRefJoins []pendingRefJoin  // авто-JOIN присоединённых источников ждут конца ПО
 	onSourceAliases map[int]string    // текущий источник ПО каждого SELECT
@@ -1597,6 +1600,33 @@ func (tr *translator) advance() tok {
 	t := tr.tokens[tr.pos]
 	tr.pos++
 	return t
+}
+
+// inAggregateArgument checks the enclosing calls of the identifier just read.
+// Closed expressions are skipped; an aggregate outside this SELECT does not
+// aggregate its subquery's ORDER BY. Scalar calls and grouping parentheses
+// inside an aggregate keep that aggregate's context.
+func (tr *translator) inAggregateArgument() bool {
+	depth := 0
+	for i := tr.pos - 2; i >= 0; i-- {
+		switch tr.tokens[i].kind {
+		case tRParen:
+			depth++
+		case tLParen:
+			if depth > 0 {
+				depth--
+			} else if i > 0 && tr.tokens[i-1].kind == tIdent {
+				if _, ok := sqlAgg(tr.tokens[i-1].val); ok {
+					return true
+				}
+			}
+		case tIdent:
+			if kw, ok := sqlKW(tr.tokens[i].val); depth == 0 && ok && kw == "SELECT" {
+				return false
+			}
+		}
+	}
+	return false
 }
 
 func (tr *translator) emit(s string) {
@@ -5608,6 +5638,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 				tr.emit("ORDER BY")
 			} else {
 				tr.section = sectionGroupBy
+				tr.grouped = true
 				tr.emit("GROUP BY")
 			}
 			if tr.peek(0).kind == tIdent && upperFast(tr.peek(0).val) == "ПО" {
@@ -5861,10 +5892,12 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 				switch kw {
 				case "SELECT":
 					tr.section = sectionSelect
+					tr.grouped = false
 				case "FROM":
 					tr.section = sectionFrom
 				case "GROUP":
 					tr.section = sectionGroupBy
+					tr.grouped = true
 				case "HAVING":
 					tr.section = sectionHaving
 				case "ORDER":
@@ -5909,8 +5942,19 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 								tr.emit(rd.fieldName)
 								tr.aliases[lowerFast(rd.fieldName)] = struct{}{}
 							}
-						case sectionGroupBy, sectionOrderBy:
+						case sectionGroupBy:
 							tr.emit(rd.displayCol())
+						case sectionOrderBy:
+							if tr.grouped && !tr.inAggregateArgument() {
+								// В сгруппированной выборке представление ссылки — не
+								// колонка группировки: сортируем по нему агрегатом. Внутри
+								// группы ссылка одна, значит и представление одно — порядок
+								// тот же, что без группировки, и запрос допустим на обоих
+								// диалектах.
+								tr.emit("MIN(" + rd.displayCol() + ")")
+							} else {
+								tr.emit(rd.displayCol())
+							}
 						default:
 							// Колонка-идентификатор ссылки квалифицируется так же,
 							// как любая своя колонка (п.48). Без этого условие

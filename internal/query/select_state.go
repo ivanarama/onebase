@@ -19,6 +19,7 @@ type selectTranslationState struct {
 	mainEmitted bool
 	section     querySection
 	aliases     map[string]struct{}
+	grouped     bool
 }
 
 func (tr *translator) initSelectStates() {
@@ -288,14 +289,14 @@ func (tr *translator) activateSelect(id int) {
 		tr.selectStates[tr.activeSelect] = selectTranslationState{
 			colMap: tr.colMap, colTypes: tr.colTypes, refDims: tr.refDims,
 			mainTable: tr.mainTable, mainRef: tr.mainRef, mainEmitted: tr.mainEmitted,
-			section: tr.section, aliases: tr.aliases,
+			section: tr.section, aliases: tr.aliases, grouped: tr.grouped,
 			refSources: tr.selectStates[tr.activeSelect].refSources,
 		}
 	}
 	state := tr.selectStates[id]
 	tr.colMap, tr.colTypes, tr.refDims = state.colMap, state.colTypes, state.refDims
 	tr.mainTable, tr.mainRef, tr.mainEmitted = state.mainTable, state.mainRef, state.mainEmitted
-	tr.section, tr.aliases = state.section, state.aliases
+	tr.section, tr.aliases, tr.grouped = state.section, state.aliases, state.grouped
 	tr.activeSelect = id
 }
 
