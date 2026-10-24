@@ -225,8 +225,11 @@ type FormElement struct {
 	// и половина кнопок читается как отдельный блок. По умолчанию перенос, как
 	// было.
 	ScrollX    bool   `yaml:"scroll_x,omitempty"`
-	Background string `yaml:"background,omitempty"` // фон контейнера; читается только у ГруппаФормы (#1547), цвет проверяет csssafe.Color
-	ReadOnly   bool   `yaml:"readonly,omitempty"`   // только чтение
+	Background string `yaml:"background,omitempty"` // фон: ГруппаФормы (#1547), Кнопка, у ПолеВвода — фон самого ввода; цвет проверяет csssafe.Color
+	// BorderColor — цвет рамки ввода ПолеВвода (вместе с background выделяет
+	// поле, как в ТЗ форм колл-центра); цвет проверяет csssafe.Color.
+	BorderColor string `yaml:"border_color,omitempty"`
+	ReadOnly    bool   `yaml:"readonly,omitempty"` // только чтение
 	// EditableAdminOnly — поле редактирует только администратор, остальным оно
 	// нередактируемо всегда. В отличие от ReadOnlyWhen условие тут не от данных
 	// записи, а от того, кто смотрит, поэтому вычисляется на сервере при

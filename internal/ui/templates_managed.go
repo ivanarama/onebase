@@ -90,7 +90,7 @@ const tplManagedForm = `
   {{$f := fieldByName $ctx.Entity $fn}}
   {{$hChg := hasHandler $el "ПриИзменении"}}
   {{$choiceCtx := managedChoiceContext $ctx $el}}
-  {{if $el.HiddenWhen}}<fieldset class="form-group ob-managed-control{{if elFill $el}} ob-el-fill{{end}}" data-ob-el="{{$el.Name}}" data-ob-control-fieldset="1"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{if elHiddenStyle $ctx $el}} disabled{{end}}{{with elLayoutEx $ctx $el}} style="{{.}}"{{end}}>{{else}}<div class="form-group{{if elFill $el}} ob-el-fill{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{with elLayout $el}} style="{{.}}"{{end}}>{{end}}
+  {{$fcVars := elFieldColorVars $el}}{{if $el.HiddenWhen}}<fieldset class="form-group ob-managed-control{{if elFill $el}} ob-el-fill{{end}}{{elFieldColorClass $el}}" data-ob-el="{{$el.Name}}" data-ob-control-fieldset="1"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{if elHiddenStyle $ctx $el}} disabled{{end}}{{$lay := elLayoutEx $ctx $el}}{{if or $lay $fcVars}} style="{{$lay}}{{$fcVars}}"{{end}}>{{else}}<div class="form-group{{if elFill $el}} ob-el-fill{{end}}{{elFieldColorClass $el}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{$lay := elLayout $el}}{{if or $lay $fcVars}} style="{{$lay}}{{$fcVars}}"{{end}}>{{end}}
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}</label>
     {{if $f}}
       {{if isRef (str $f.Type)}}
@@ -627,6 +627,10 @@ main>.card{max-width:none}
    и нередактируемая галка превращалась в подпись без индикатора. */
 .form-group input[readonly],.form-group input:disabled:not([type=checkbox]):not([type=radio]),.form-group select:disabled,.form-group textarea[readonly]{
   background:#f8fafc;border-color:#eef2f7;color:#334155;cursor:default;opacity:1;-webkit-appearance:none;appearance:none}
+/* Фон и рамка ввода ПолеВвода (background / border_color): поле окрашено
+   всегда, в том числе нередактируемое, поэтому правило сильнее readonly выше. */
+.form-group.ob-field-bg input:not([type=checkbox]):not([type=radio]),.form-group.ob-field-bg select,.form-group.ob-field-bg textarea{background:var(--ob-field-bg)}
+.form-group.ob-field-border input:not([type=checkbox]):not([type=radio]),.form-group.ob-field-border select,.form-group.ob-field-border textarea{border-color:var(--ob-field-border)}
 /* Раскладка элемента (#1185): height задаёт высоту ВНЕШНЕГО блока, а тянуться
    на остаток должен сам ввод — иначе «высота 200» растянула бы пустое место под
    полем, оставив поле прежним. Подпись сверху сохраняет свою высоту. */

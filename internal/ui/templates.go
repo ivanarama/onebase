@@ -669,6 +669,16 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"elBackground": func(el *metadata.FormElement) template.CSS {
 			return template.CSS(metadata.FormElementBackgroundCSS(el)) //nolint:gosec // G203: значение прошло csssafe.Color, иначе пустая строка
 		},
+		// elFieldColorClass / elFieldColorVars — фон и рамка ввода ПолеВвода
+		// (background, border_color): классы и CSS-переменные обёртки поля.
+		"elFieldColorClass": func(el *metadata.FormElement) string {
+			classes, _ := metadata.FormElementFieldColors(el)
+			return classes
+		},
+		"elFieldColorVars": func(el *metadata.FormElement) template.CSS {
+			_, vars := metadata.FormElementFieldColors(el)
+			return template.CSS(vars) //nolint:gosec // G203: цвета прошли csssafe.Color, иначе пустая строка
+		},
 		"elFill": func(el *metadata.FormElement) bool {
 			return metadata.FormElementFillsHeight(el)
 		},
