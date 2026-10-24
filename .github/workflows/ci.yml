@@ -610,6 +610,13 @@ jobs:
           CI: '1'
         run: npx playwright test
 
+      - name: Run image viewer acceptance
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        working-directory: e2e
+        env:
+          CI: '1'
+        run: npx playwright test --config=image-viewer.config.js
+
       - name: Run public browser acceptance
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         env:

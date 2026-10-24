@@ -492,6 +492,9 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         } else {
           inp.value = val;
         }
+        if (inp.type === 'hidden' && typeof window.obSetImageField === 'function' && inp.closest('.img-field')) {
+          window.obSetImageField(inp.closest('.img-field'), val);
+        }
       });
     });
     // A form handler may change a choice_filter source without dispatching a
@@ -2144,6 +2147,9 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   }
   document.addEventListener('keydown', function(e){
     if (e.key !== 'Escape' && e.keyCode !== 27) return;
+    if (window.obImageViewerIsOpen && window.obImageViewerIsOpen()) {
+      window.obImageViewerClose(); consumeManagedEscape(e); return;
+    }
     var modal = document.getElementById('ob-managed-close-confirm') || document.getElementById('_ref-create-modal') || document.getElementById('_item-picker-modal') || document.getElementById('_ref-picker-modal');
     if (modal) {
       if (typeof modal._obClose === 'function') modal._obClose();

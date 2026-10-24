@@ -1586,5 +1586,17 @@
   "Повреждённая личная настройка пропущена. Показано общее меню; сохранение или сброс исправит этот слой.": "Invalid personal settings were skipped. The common menu is shown; save or reset to repair this layer.",
   "Повреждённая общая настройка пропущена. Обратитесь к администратору базы.": "Invalid common settings were skipped. Contact your database administrator.",
   "Равные колонки": "Equal columns",
+  "Закрыть просмотр изображения": "Close image viewer",
+  "Предыдущее изображение": "Previous image",
+  "Следующее изображение": "Next image",
+  "Увеличить изображение": "Zoom in",
+  "Уменьшить изображение": "Zoom out",
+  "Вписать изображение": "Fit image",
+  "Исходный размер изображения": "Original image size",
+  "Открыть изображение в новой вкладке": "Open image in a new tab",
+  "Скачать изображение": "Download image",
+  "Загрузка изображения…": "Loading image\u2026",
+  "Не удалось загрузить изображение": "Could not load image",
+  "Область просмотра изображения": "Image viewport",
   "Переводы поля «%s» для языка %s изменены по-разному в двух редакторах. Укажите одинаковое значение и сохраните снова": "The translation of field \"%s\" for language %s was changed differently in the two editors. Enter the same value and save again"
 }

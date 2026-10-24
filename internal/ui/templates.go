@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
@@ -392,6 +393,11 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"isRichText": func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
 		"isImage":    func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
+		"isImageRef": func(raw any) bool {
+			value := fmt.Sprint(raw)
+			_, err := uuid.Parse(value)
+			return len(value) == 36 && err == nil
+		},
 		"fieldNamesCSV": func(fields []metadata.Field) string {
 			names := make([]string, 0, len(fields))
 			for _, f := range fields {
@@ -1507,6 +1513,18 @@ const tplHead = `
 <script type="application/json" id="ob-ui-messages">{{jsJSON (dict
   "closeNotConfirmed" (t (or $.Lang "ru") "Форма не закрыта: сервер не подтвердил закрытие.")
   "unsavedClose" (t (or $.Lang "ru") "Данные были изменены и не записаны. Закрыть форму?")
+  "imageClose" (t (or $.Lang "ru") "Закрыть просмотр изображения")
+  "imagePrevious" (t (or $.Lang "ru") "Предыдущее изображение")
+  "imageNext" (t (or $.Lang "ru") "Следующее изображение")
+  "imageZoomIn" (t (or $.Lang "ru") "Увеличить изображение")
+  "imageZoomOut" (t (or $.Lang "ru") "Уменьшить изображение")
+  "imageFit" (t (or $.Lang "ru") "Вписать изображение")
+  "imageOriginal" (t (or $.Lang "ru") "Исходный размер изображения")
+  "imageNewTab" (t (or $.Lang "ru") "Открыть изображение в новой вкладке")
+  "imageDownload" (t (or $.Lang "ru") "Скачать изображение")
+  "imageLoading" (t (or $.Lang "ru") "Загрузка изображения…")
+  "imageError" (t (or $.Lang "ru") "Не удалось загрузить изображение")
+  "imageArea" (t (or $.Lang "ru") "Область просмотра изображения")
 )}}</script>
 <script src="/static/ui.js"></script>
 <style>
@@ -1727,6 +1745,24 @@ body{padding-bottom:32px}
 .search-hit-posted{color:#16a34a;font-weight:600}
 /* Поле-картинка на форме */
 .img-field{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.img-preview [data-ob-image-view]{display:block;border:0;padding:0;background:transparent;cursor:zoom-in;border-radius:8px}
+.img-preview [data-ob-image-view]:focus-visible{outline:3px solid #2563eb;outline-offset:3px}
+.ob-image-viewer{margin:auto;width:96vw;height:92vh;max-width:96vw;max-height:92vh;padding:12px;border:1px solid #475569;border-radius:12px;background:#0f172a;color:#f8fafc;overflow:hidden}
+.ob-image-viewer[open]{display:flex;flex-direction:column;gap:10px}
+.ob-image-viewer::backdrop{background:rgba(0,0,0,.72)}
+.ob-image-viewer header,.ob-image-viewer nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.ob-image-viewer h2{color:#f8fafc;flex:1;font-size:16px;overflow-wrap:anywhere}
+.ob-image-viewer button,.ob-image-viewer a{border:1px solid #64748b;border-radius:6px;padding:6px 10px;background:#1e293b;color:#f8fafc;font:inherit;text-decoration:none;cursor:pointer}
+.ob-image-viewer button:disabled{opacity:.4;cursor:default}
+.ob-image-viewer :focus-visible{outline:3px solid #60a5fa;outline-offset:2px}
+.ob-image-viewport{flex:1;min-height:0;overflow:auto;touch-action:none;overscroll-behavior:contain;background:#020617}
+.ob-image-canvas{display:grid;place-items:center;min-width:100%;min-height:100%}
+.ob-image-canvas img[hidden]{display:none}
+.ob-image-canvas img{display:block;max-width:none;max-height:none;user-select:none;touch-action:none}
+.ob-image-viewport[data-loaded="1"]{cursor:grab}
+.ob-image-viewport[data-dragging="1"]{cursor:grabbing}
+.ob-image-status{min-height:1.4em;font-size:13px}
+@media(prefers-reduced-motion:reduce){.ob-image-viewer *{scroll-behavior:auto}}
 .img-preview img{max-width:240px;max-height:240px;border-radius:8px;border:1px solid #e2e8f0;display:block;background:#f8fafc}
 .img-actions{display:flex;gap:8px;align-items:center}
 .img-field label.btn{cursor:pointer;margin:0}
@@ -2654,10 +2690,10 @@ const tplForm = `
     {{/* Поле-картинка: скрытый input хранит ссылку (UUID), превью + загрузка/очистка.
          Без JS остаётся скрытый input — значение не теряется при записи. */}}
     {{$iv := index $.Values $fn}}
-    <div class="img-field">
+    <div class="img-field" data-ob-image-field="{{$fn}}" data-ob-image-label="{{$flabel}}">
       <input type="hidden" name="{{$fn}}" value="{{$iv}}">
-      <div class="img-preview"{{if not $iv}} style="display:none"{{end}}><img src="{{if $iv}}/ui/_image/{{$iv}}{{end}}" alt=""></div>
-      {{if not $ro}}
+      <div class="img-preview"{{if not $iv}} style="display:none"{{end}}><button type="button"{{if not (isImageRef $iv)}} disabled{{end}} data-ob-image-view data-ob-readonly-navigation="1" data-ob-image-ref="{{$iv}}" aria-label="{{$flabel}}"><img src="{{if $iv}}/ui/_image/{{$iv}}{{end}}" alt="{{$flabel}}"></button></div>
+      {{if and (not $ro) $.CanWrite}}
       <div class="img-actions">
         <label class="btn btn-sm btn-secondary">{{t $.Lang "Загрузить…"}}<input type="file" accept="image/*" style="display:none" data-ob-image-upload="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/_image"></label>
         <button type="button" class="btn btn-sm img-clear-btn" data-ob-image-clear{{if not $iv}} style="display:none"{{end}}>{{t $.Lang "Очистить"}}</button>

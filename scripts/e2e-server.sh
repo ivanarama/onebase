@@ -24,10 +24,13 @@ chmod -R u+w "$WORK" 2>/dev/null || true
 rm -rf "$WORK"
 mkdir -p "$WORK"
 
-# Exercise hidden_when through the real loader/renderer without adding
-# test-only documents to examples/trade.
+# Exercise hidden_when in the shared trade suite without adding test-only
+# documents to examples/trade. An explicit OB_PROJECT owns its fixtures:
+# trade-only documents may reference entities absent from that project.
 cp -R "$PROJ" "$WORK/project"
-cp -R "$REPO/e2e/fixtures/." "$WORK/project/"
+if [ -z "${OB_PROJECT:-}" ]; then
+  cp -R "$REPO/e2e/fixtures/." "$WORK/project/"
+fi
 PROJ="$WORK/project"
 
 # Собираем с обычным HOME, чтобы переиспользовать общий кеш модулей.

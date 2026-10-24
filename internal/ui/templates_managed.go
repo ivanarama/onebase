@@ -149,10 +149,11 @@ const tplManagedForm = `
              JS (data-ob-image-upload / data-ob-image-clear) уже поддерживает эту
              разметку. Без JS остаётся скрытый input — значение не теряется. */}}
         {{$iv := index $ctx.Values $fn}}
-        <div class="img-field">
+        {{$imageLabel := $f.DisplayName $ctx.Lang}}{{if $el.TitleMap}}{{$imageLabel = fieldTitleRU $el.TitleMap $imageLabel}}{{end}}
+        <div class="img-field" data-ob-image-field="{{$fn}}" data-ob-image-label="{{$imageLabel}}">
           <input type="hidden" name="{{$fn}}" value="{{$iv}}">
-          <div class="img-preview"{{if not $iv}} style="display:none"{{end}}><img src="{{if $iv}}/ui/_image/{{$iv}}{{end}}" alt=""></div>
-          {{if not $ro}}
+          <div class="img-preview"{{if not $iv}} style="display:none"{{end}}><button type="button"{{if not (isImageRef $iv)}} disabled{{end}} data-ob-image-view data-ob-readonly-navigation="1" data-ob-image-ref="{{$iv}}" aria-label="{{$imageLabel}}"><img src="{{if $iv}}/ui/_image/{{$iv}}{{end}}" alt="{{$imageLabel}}"></button></div>
+          {{if and (not $ro) $ctx.CanWrite}}
           <div class="img-actions">
             <label class="btn btn-sm btn-secondary">{{t $ctx.Lang "Загрузить…"}}<input type="file" accept="image/*" style="display:none" data-ob-image-upload="/ui/{{lower (str $ctx.Entity.Kind)}}/{{lower $ctx.Entity.Name}}/_image"></label>
             <button type="button" class="btn btn-sm img-clear-btn" data-ob-image-clear{{if not $iv}} style="display:none"{{end}}>{{t $ctx.Lang "Очистить"}}</button>
