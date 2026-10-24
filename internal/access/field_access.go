@@ -8,6 +8,7 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // Field masking strategies (план 88). A field not listed in any policy is
@@ -22,9 +23,11 @@ const (
 
 // fixedMask is the constant replacement used by mask_all and by any unknown
 // (fail-closed) strategy — it deliberately leaks neither value nor length.
-const fixedMask = "••••••"
+// Константы общие со страховкой записи storage.IsMaskPlaceholder: заглушка,
+// которую подставляет маска, обязана распознаваться при попытке её записать.
+const fixedMask = storage.MaskFixed
 
-const maskBullet = "•"
+const maskBullet = storage.MaskBullet
 
 // FieldDecision is the effective read decision for one field, after merging all
 // roles that grant object-level read (least-restrictive wins).
