@@ -23,3 +23,23 @@ func FormElementBackgroundCSS(el *FormElement) string {
 func FormElementSupportsBackground(kind FormElementType) bool {
 	return kind == FormElementGroupBox || kind == FormElementButton
 }
+
+// FormTableHeaderColors — классы и CSS-переменные контейнера таблицы
+// ТабличнаяЧасть для фона и границы шапки (header_background /
+// header_border_color): SlickGrid, простая таблица и таблица значений.
+// Каждый цвет проходит csssafe.Color; нераспознанный не выдаётся, его
+// называет check.
+func FormTableHeaderColors(el *FormElement) (classes, vars string) {
+	if el == nil || el.Kind != FormElementTablePart {
+		return "", ""
+	}
+	if c := csssafe.Color(el.HeaderBackground); el.HeaderBackground != "" && c != "" {
+		classes += " ob-th-bg"
+		vars += "--ob-th-bg:" + c + ";"
+	}
+	if c := csssafe.Color(el.HeaderBorderColor); el.HeaderBorderColor != "" && c != "" {
+		classes += " ob-th-border"
+		vars += "--ob-th-border:" + c + ";"
+	}
+	return classes, vars
+}

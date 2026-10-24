@@ -321,7 +321,7 @@ const tplManagedForm = `
   {{if not $el.NoGrid}}
   {{/* Высота сетки по умолчанию считается по числу строк; ключ height (#1185)
        её перебивает — «покажи 15 строк» иначе задать нечем. */}}
-  <div id="sg-{{$tpName}}" class="ob-grid" style="{{tpGridCSS $el (len $tpRows)}}"
+  <div id="sg-{{$tpName}}" class="ob-grid{{tableHeaderClass $el}}" style="{{tpGridCSS $el (len $tpRows)}}{{tableHeaderVars $el}}"
        data-sg-tp="{{$tpName}}"
        data-sg-el="{{$el.Name}}"
        {{with gridLayoutAttr $ctx $el.Name}}data-sg-layout="{{.}}"{{end}}
@@ -361,7 +361,7 @@ const tplManagedForm = `
      и удалив их все, браузер шлёт то же самое, что и форма, где таблицы вовсе
      не было (скрыта hidden_when). Различает эти случаи только маркер. */}}
 {{if not $tpReadOnly}}<input type="hidden" name="tp_present.{{$tpName}}" value="1">{{end}}
-<table class="tp-table" data-tp="{{$tpName}}" data-ob-dom-table="{{$tpName}}" data-ob-readonly="{{if $tpReadOnly}}1{{else}}0{{end}}"{{with elLayout $el}} style="{{.}}"{{end}}
+<table class="tp-table{{tableHeaderClass $el}}" data-tp="{{$tpName}}" data-ob-dom-table="{{$tpName}}" data-ob-readonly="{{if $tpReadOnly}}1{{else}}0{{end}}"{{$thLay := elLayout $el}}{{$thVars := tableHeaderVars $el}}{{if or $thLay $thVars}} style="{{$thLay}}{{$thVars}}"{{end}}
   data-ob-element="{{$el.Name}}"{{if and (not $tpReadOnly) (hasHandler $el "ПриДобавленииСтроки")}} data-ob-rowadd="1"{{end}}{{if and (not $tpReadOnly) (hasHandler $el "ПриУдаленииСтроки")}} data-ob-rowdel="1"{{end}}
   {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}>
     <thead>
@@ -458,7 +458,7 @@ const tplManagedForm = `
     {{end}}
   </div>
   {{end}}
-  <table class="tp-table" data-vt="{{$tpName}}">
+  <table class="tp-table{{tableHeaderClass $el}}" data-vt="{{$tpName}}"{{with tableHeaderVars $el}} style="{{.}}"{{end}}>
     <thead>
       <tr>
         {{range $vtCols}}<th>{{if .Title}}{{index .Title "ru"}}{{else}}{{.Name}}{{end}}</th>{{end}}
@@ -651,6 +651,12 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 .ob-grid .slick-header-columns{background:#f1f5f9;border-bottom:2px solid #cbd5e1}
 .ob-grid .slick-header-column{font-weight:600;color:#475569;font-size:12px;padding:6px 8px;border-right:1px solid #cbd5e1}
 .ob-grid .slick-header-column:hover{background:#e2e8f0}
+/* header_background / header_border_color у ТабличнаяЧасть: шапка этой
+   таблицы своим цветом — на цветном фоне формы серая шапка сливается со
+   строками. SlickGrid, простая таблица и таблица значений. */
+.ob-grid.ob-th-bg .slick-header-columns,.ob-grid.ob-th-bg .slick-header-column,.tp-table.ob-th-bg th{background:var(--ob-th-bg)}
+.ob-grid.ob-th-border .slick-header-columns,.tp-table.ob-th-border th{border-bottom-color:var(--ob-th-border)}
+.ob-grid.ob-th-border .slick-header-column{border-right-color:var(--ob-th-border)}
 /* Зебра — на строке; ячейки прозрачны, чтобы фон строки просвечивал. */
 .ob-grid .slick-cell{padding:4px 8px;border-right:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;background:transparent}
 .ob-grid .slick-row.odd{background:#f6f8fb}
