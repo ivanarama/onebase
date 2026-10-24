@@ -48,7 +48,7 @@ const tplManagedForm = `
   {{/* ПриСменеСтраницы: клиент шлёт событие набору со щелчком по закладке
        и именем открытой страницы (data-tab-page) — только если обработчик
        объявлен, иначе переключение остаётся чисто клиентским. */}}
-  <div class="managed-tabs" data-tabs="{{$el.Name}}"{{if hasHandler $el "ПриСменеСтраницы"}} data-ob-fire-pagechange="{{$el.Name}}"{{end}} style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elLayout $el}}">
+  <div class="managed-tabs" data-tabs="{{$el.Name}}"{{if hasHandler $el "ПриСменеСтраницы"}} data-ob-fire-pagechange="{{$el.Name}}"{{end}} style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elBackground $el}}{{elLayout $el}}">
     <div class="managed-tab-headers" style="display:flex;gap:2px;border-bottom:2px solid #e2e8f0;margin-bottom:12px">
       {{range $i, $page := $pages}}
         <button type="button" class="managed-tab-btn{{if eq $i 0}} active{{end}}" data-tab-idx="{{$i}}" data-tab-page="{{$page.Name}}" data-ob-readonly-navigation="1">

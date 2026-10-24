@@ -225,7 +225,7 @@ type FormElement struct {
 	// и половина кнопок читается как отдельный блок. По умолчанию перенос, как
 	// было.
 	ScrollX    bool   `yaml:"scroll_x,omitempty"`
-	Background string `yaml:"background,omitempty"` // фон контейнера; читается только у ГруппаФормы (#1547), цвет проверяет csssafe.Color
+	Background string `yaml:"background,omitempty"` // фон: ГруппаФормы (#1547), СтраницыФормы (весь набор с полосой закладок), Кнопка; цвет проверяет csssafe.Color
 	ReadOnly   bool   `yaml:"readonly,omitempty"`   // только чтение
 	// EditableAdminOnly — поле редактирует только администратор, остальным оно
 	// нередактируемо всегда. В отличие от ReadOnlyWhen условие тут не от данных
