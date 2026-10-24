@@ -660,6 +660,9 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       el.querySelectorAll('select, button:not([data-ob-ref-current])').forEach(function (n) {
         if (!ownControl(el, n)) return;
         n.disabled = on;
+        // Пустой пункт подписан по доступности на момент отрисовки — после
+        // смены запрета подпись обязана смениться вместе с ним.
+        if (n.tagName === 'SELECT' && typeof window.obSyncEmptyOption === 'function') window.obSyncEmptyOption(n);
         if (n.tagName === 'SELECT' && roMirror) roMirror.value = n.value || '';
       });
     });
