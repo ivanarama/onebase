@@ -211,7 +211,7 @@ func (tr *translator) derivedProjectionShadows(id int, name string, seen map[int
 	for i, token := range tr.tokens {
 		if scope, ok := tr.sourceCtx.scopeIDAt(i); ok && scope == id && token.kind == tIdent {
 			if kw, ok := sqlKW(token.val); ok && kw == "SELECT" {
-				start, depth = i+1, tr.sourceCtx.tokenDepth[i]
+				start, depth = selectProjectionStart(tr.tokens, i), tr.sourceCtx.tokenDepth[i]
 				break
 			}
 		}

@@ -4079,6 +4079,14 @@ func sourceColTypes(typeUpper, name string, opts CompileOpts) map[string]metadat
 	default:
 		for _, entity := range opts.Entities {
 			if strings.EqualFold(entity.Name, name) {
+				// Physical system flags and their DSL aliases share one type.
+				// An explicitly declared field still owns its logical name.
+				fields["deletion_mark"] = metadata.FieldTypeBool
+				fields["пометкаудаления"] = metadata.FieldTypeBool
+				if entity.Kind == metadata.KindDocument {
+					fields["posted"] = metadata.FieldTypeBool
+					fields["проведен"] = metadata.FieldTypeBool
+				}
 				add(entity.Fields)
 				return fields
 			}
@@ -5363,9 +5371,12 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 	// исходная граница аргумента теряется, а локализовать можно только date-момент,
 	// не произвольную строку и не будущий localdate (#1243).
 	colTypes := buildColTypes(tokens, opts)
-	scalarSourceCtx := preScanSourceContext(tokens)
-	scopedColTypes, qualifiedColTypes := buildScalarColumnTypes(tokens, opts, scalarSourceCtx)
-	dateOutputs := simpleProjectionDateOutputs(tokens, projectionPlan, scalarSourceCtx, scopedColTypes, qualifiedColTypes)
+	scalarSourceCtx := preScanSourceContextWithOpts(tokens, opts)
+	projectionKeys := newProjectionKeyResolver(tokens, opts, scalarSourceCtx)
+	scopedColTypes, qualifiedColTypes := buildScalarColumnTypes(tokens, opts, scalarSourceCtx, projectionKeys)
+	boolColumns := scopedBoolOutputColumns(tokens, opts, scalarSourceCtx, scopedColTypes, qualifiedColTypes, projectionKeys)
+	dateOutputs := simpleProjectionDateOutputs(tokens, projectionPlan, scalarSourceCtx, scopedColTypes, qualifiedColTypes, projectionKeys)
+	dateColumns := mergeDateOutputColumns(tokens, projectionPlan, projectionKeys, dateOutputs)
 	tokens = rewriteGroupingReferenceAliases(tokens)
 	// расширяем НачалоДня/Год/Месяц/ОКР/АБС/ЦЕЛ/... в SQL-эквиваленты
 	// до основной трансляции, чтобы остальные шаги ничего не знали о них.
@@ -6022,8 +6033,17 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 	longLabels, ambiguousLabels := longOutputLabels(tokens, sql, tr.sourceCtx)
 	if ambiguousLabels {
 		projectionPlan.Simple = false
+		dateOutputs = nil
+		dateColumns = nil
 	}
 	typedColumns, dslColumnAliases := typedProjectionColumns(projectionPlan, tokens, opts, tr.sourceCtx, tr.refCols)
+	// The descriptor path also normalizes dates. Do not let it restore a type
+	// rejected by the projection proof (duplicate or unknown SQL output names).
+	for key, desc := range typedColumns {
+		if desc.Type == metadata.FieldTypeDate && !dateOutputs[key] {
+			delete(typedColumns, key)
+		}
+	}
 	return Result{
 		SQL:               sql,
 		LongIdents:        longLabels,
@@ -6032,8 +6052,8 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		SourceOccurrences: tr.sourceRefs,
 		ProjectionFields:  expandReferenceProjection(projectionFields, tr.refDims),
 		Projection:        expandProjectionRefDims(projectionPlan, tr.refDims),
-		BoolColumns:       boolOutputColumns(projectionPlan, tr.colTypes),
-		DateColumns:       mergeDateOutputColumns(projectionPlan, typedOutputColumns(projectionPlan, tr.colTypes, metadata.FieldTypeDate), dateOutputs),
+		BoolColumns:       boolColumns,
+		DateColumns:       dateColumns,
 		RefColumns:        refOutputColumns(projectionPlan, tr.refCols),
 		TypedColumns:      typedColumns,
 		DSLColumnAliases:  dslColumnAliases,
@@ -6226,22 +6246,6 @@ func addRegisterSystemFields(source *typedProjectionSource, period, movement boo
 	}
 }
 
-// boolOutputColumns перечисляет колонки результата, читающие булево поле. Нужны
-// потребителю: булево доезжает из БД в разных Go-типах (PostgreSQL — bool,
-// SQLite — int64 из INTEGER), и без приведения одно и то же поле ведёт себя в
-// прикладном коде по-разному (issue #704).
-//
-// Разбираются только простые ссылки на поле в одном SELECT: у выражений,
-// агрегатов и ОБЪЕДИНИТЬ соответствие «колонка ↔ поле» неоднозначно, и молча
-// приводить их значения нельзя.
-func boolOutputColumns(p ProjectionPlan, colTypes map[string]metadata.FieldType) []string {
-	return typedOutputColumns(p, colTypes, metadata.FieldTypeBool)
-}
-
-// typedOutputColumns — общий перебор колонок проекции, читающих поле заданного
-// типа. Кроме булевых так же приводятся даты: на SQLite они хранятся TEXT, и
-// без приведения путь запроса отдавал строку там, где объектный путь отдаёт
-// значение даты (#1013).
 // simpleProjectionDateOutputs — колонки простой проекции, доказанно несущие
 // дату: поле-дата любого источника по его псевдониму (`Зв.Дата` при
 // присоединённом `Документ.Звонок КАК Зв`) и МИНИМУМ/МАКСИМУМ такого поля.
@@ -6251,6 +6255,7 @@ func boolOutputColumns(p ProjectionPlan, colTypes map[string]metadata.FieldType)
 // дат молча давала Неопределено.
 func simpleProjectionDateOutputs(tokens []tok, p ProjectionPlan, ctx sourceContext,
 	scoped map[int]map[string]metadata.FieldType, qualified map[int]map[string]map[string]metadata.FieldType,
+	keys *projectionKeyResolver,
 ) map[string]bool {
 	if !p.Simple {
 		return nil
@@ -6264,7 +6269,7 @@ func simpleProjectionDateOutputs(tokens []tok, p ProjectionPlan, ctx sourceConte
 		return nil
 	}
 	out := map[string]bool{}
-	for name, typ := range scalarProjectionTypes(tokens, ctx, scopeID, scoped[scopeID], qualified[scopeID]) {
+	for name, typ := range scalarProjectionTypes(tokens, ctx, scopeID, scoped[scopeID], qualified[scopeID], keys) {
 		if typ == metadata.FieldTypeDate {
 			out[name] = true
 		}
@@ -6272,26 +6277,26 @@ func simpleProjectionDateOutputs(tokens []tok, p ProjectionPlan, ctx sourceConte
 	return out
 }
 
-// mergeDateOutputColumns дополняет прежний список колонок-дат доказанными
-// simpleProjectionDateOutputs, сохраняя порядок колонок выборки.
-func mergeDateOutputColumns(p ProjectionPlan, legacy []string, proven map[string]bool) []string {
-	if len(proven) == 0 {
-		return legacy
+// mergeDateOutputColumns сохраняет порядок доказанных колонок-дат по реальным
+// SQL-ключам. Прежний глобальный список не добавляется: он не знает источник
+// поля и может вернуть отвергнутый resolver тип после коллизии с соседним выходом.
+func mergeDateOutputColumns(tokens []tok, p ProjectionPlan, keys *projectionKeyResolver, proven map[string]bool) []string {
+	if !p.Simple || len(proven) == 0 {
+		return nil
 	}
-	have := map[string]bool{}
-	for _, c := range legacy {
-		have[c] = true
+	start, ok := singleSelectStart(tokens)
+	if !ok {
+		return nil
 	}
 	var out []string
-	for _, c := range p.Columns {
-		if c.Output == "" || c.Star {
-			continue
+	from := selectProjectionStart(tokens, start)
+	for _, item := range splitProjectionItems(tokens[from:topLevelFrom(tokens, start)]) {
+		column, _ := parseProjectionItem(item)
+		key, known := keys.outputSQLKey(column, from, from+len(item))
+		if !column.Star && known && proven[key] && !containsString(out, key) {
+			out = append(out, key)
 		}
-		if have[c.Output] || proven[c.Output] {
-			if !containsString(out, c.Output) {
-				out = append(out, c.Output)
-			}
-		}
+		from += len(item) + 1 // separator comma
 	}
 	return out
 }
@@ -6303,22 +6308,6 @@ func containsString(list []string, s string) bool {
 		}
 	}
 	return false
-}
-
-func typedOutputColumns(p ProjectionPlan, colTypes map[string]metadata.FieldType, want metadata.FieldType) []string {
-	if !p.Simple {
-		return nil
-	}
-	var cols []string
-	for _, c := range p.Columns {
-		if c.Star || c.Output == "" || len(c.Fields) != 1 {
-			continue
-		}
-		if colTypes[lowerFast(c.Fields[0])] == want {
-			cols = append(cols, c.Output)
-		}
-	}
-	return cols
 }
 
 // boolLiteralSQL переводит булев литерал текста запроса в литерал диалекта.
@@ -6454,7 +6443,14 @@ func rewriteScalarFuncs(tokens []tok, dialect string, scopedColTypes map[int]map
 		t := tokens[i]
 		if t.kind == tIdent && i+1 < len(tokens) && tokens[i+1].kind == tLParen {
 			key := lowerFast(t.val)
-			if rw, ok := rewrites[key]; ok {
+			rw, ok := rewrites[key]
+			agg, isAgg := sqlAgg(t.val)
+			numberAggregate := dialect == "sqlite" && isAgg && (agg == "MIN" || agg == "MAX")
+			if numberAggregate {
+				rw = funcRewrite{prefix: tokenizeFragment(agg + "("), suffix: tokenizeFragment(")")}
+				ok = true
+			}
+			if ok {
 				// поиск парной закрывающей )
 				depth := 0
 				end := -1
@@ -6491,6 +6487,22 @@ func rewriteScalarFuncs(tokens []tok, dialect string, scopedColTypes map[int]map
 				if scopeID, ok := sourceCtx.scopeIDAt(tokenOffset + i); ok {
 					scopeColTypes = scopedColTypes[scopeID]
 					scopeQualified = qualifiedColTypes[scopeID]
+				}
+				argument := rawInner
+				modifier := 0
+				if len(argument) > 0 && argument[0].kind == tIdent {
+					if kw, ok := sqlKW(argument[0].val); ok && (kw == "DISTINCT" || kw == "ALL") {
+						argument = argument[1:]
+						modifier = 1
+					}
+				}
+				if numberAggregate && scalarProjectionExpressionType(argument, scopeColTypes, scopeQualified) == metadata.FieldTypeNumber {
+					// Preserve DISTINCT/ALL outside CAST; wrapping an unproven string
+					// or expression would silently change its SQL semantics.
+					wrapped := append([]tok(nil), inner[:modifier]...)
+					wrapped = append(wrapped, tokenizeFragment("CAST(")...)
+					wrapped = append(wrapped, inner[modifier:]...)
+					inner = append(wrapped, tokenizeFragment(" AS NUMERIC)")...)
 				}
 				if dialect == "sqlite" && isCalendarDateFunc(key) && dateArgumentIsMoment(rawInner, scopeColTypes, scopeQualified, params) {
 					wrapped := tokenizeFragment("ob_local_datetime(")
@@ -6533,7 +6545,7 @@ func dateArgumentIsMoment(tokens []tok, colTypes map[string]metadata.FieldType, 
 	if len(tokens) == 1 {
 		switch tokens[0].kind {
 		case tIdent:
-			name := lowerFast(tokens[0].val)
+			name := projectionInputSQLKey(tokens[0].val)
 			if typ, ok := colTypes[name]; ok {
 				return typ == metadata.FieldTypeDate
 			}
@@ -6551,7 +6563,7 @@ func dateArgumentIsMoment(tokens []tok, colTypes map[string]metadata.FieldType, 
 		if !ok {
 			return false
 		}
-		if typ, ok := fields[lowerFast(tokens[2].val)]; ok {
+		if typ, ok := fields[projectionInputSQLKey(tokens[2].val)]; ok {
 			return typ == metadata.FieldTypeDate
 		}
 		return false
