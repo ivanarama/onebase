@@ -1695,6 +1695,15 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     if (data.error) flash(data.error, 'err');
   }
 
+  function reportReferenceValidity(form) {
+    var references = form ? form.querySelectorAll('[data-ob-ref-search]') : [];
+    for (var i = 0; i < references.length; i++) {
+      var reference = references[i]._obRefCombo || references[i];
+      if (!reference.reportValidity()) return false;
+    }
+    return true;
+  }
+
   window.obRequestFormClose = function(options){
     options = options || {};
 	if (formEventPending) {
@@ -1761,11 +1770,8 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         // the user has since entered invalid text in the live form.
         if (mode === 'save' || mode === 'post' || mode === 'save_and_select') {
           var form = document.getElementById('main-form');
-          var references = form ? form.querySelectorAll('[data-ob-ref-search]') : [];
-          for (var i = 0; i < references.length; i++) {
-            if (!references[i].reportValidity()) {
-              return {allowed: false, intentId: '', error: 'invalid-reference'};
-            }
+          if (!reportReferenceValidity(form)) {
+            return {allowed: false, intentId: '', error: 'invalid-reference'};
           }
         }
 		envelope = {
@@ -2005,7 +2011,14 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       popupSubmit = !!(form.querySelector && form.querySelector('[name="_popup"]')) ||
         !!(location.search && new URLSearchParams(location.search).get('_popup') === '1');
     } catch (_) {}
-    if (!requestInFlight && !closeHandoffPending && !pending && !popupSubmit) return;
+    if (!requestInFlight && !closeHandoffPending && !pending && !popupSubmit) {
+      if (!reportReferenceValidity(form)) {
+        e.preventDefault();
+        if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+        else if (e.stopPropagation) e.stopPropagation();
+      }
+      return;
+    }
     e.preventDefault();
     if (e.stopImmediatePropagation) e.stopImmediatePropagation();
     else if (e.stopPropagation) e.stopPropagation();

@@ -13,10 +13,12 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/realtime"
 	"github.com/ivantit66/onebase/internal/runtime"
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // This test drives the actual HTTP form, scripts, browser validation and save.
@@ -24,9 +26,28 @@ import (
 func TestManagedRefComboboxBrowser(t *testing.T) {
 	t.Run("required", func(t *testing.T) { testManagedRefComboboxBrowser(t, true) })
 	t.Run("optional-close", func(t *testing.T) { testManagedRefComboboxBrowser(t, false) })
+	t.Run("picker-only", testManagedRefPickerOnlyBrowser)
+}
+
+func testManagedRefPickerOnlyBrowser(t *testing.T) {
+	for _, required := range []bool{true, false} {
+		name := "optional"
+		if required {
+			name = "required"
+		}
+		t.Run(name, func(t *testing.T) {
+			dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+				runManagedRefComboboxBrowser(t, required, true, db)
+			})
+		})
+	}
 }
 
 func testManagedRefComboboxBrowser(t *testing.T, required bool) {
+	runManagedRefComboboxBrowser(t, required, false, nil)
+}
+
+func runManagedRefComboboxBrowser(t *testing.T, required, pickerOnly bool, db *storage.DB) {
 	node, err := exec.LookPath("node")
 	if err != nil {
 		if os.Getenv("ONEBASE_REQUIRE_REF_BROWSER") == "1" {
@@ -40,7 +61,12 @@ func testManagedRefComboboxBrowser(t *testing.T, required bool) {
 		}
 		t.Skip("run npm ci in e2e/ for browser acceptance")
 	}
-	f := newChoiceHTTPFixtureWithOwner(t, true)
+	var f choiceHTTPFixture
+	if db == nil {
+		f = newChoiceHTTPFixtureWithOwner(t, true)
+	} else {
+		f = newChoiceHTTPFixtureWithStore(t, db, true)
+	}
 	empty := uuid.New()
 	if err := f.server.store.Upsert(context.Background(), f.direction.Name, empty, map[string]any{"Наименование": "Empty", "is_folder": true}, f.direction); err != nil {
 		t.Fatal(err)
@@ -57,6 +83,16 @@ func testManagedRefComboboxBrowser(t *testing.T, required bool) {
 	form.Elements[1].ReadOnlyWhen = "Запрет"
 	form.Elements[1].HiddenWhen = "Скрыть"
 	form.Elements[1].Required = required
+	if pickerOnly {
+		dropdown := false
+		form.Elements[1].ChoiceDropdown = &dropdown
+		for _, el := range form.Elements {
+			if el.Name == "ЛокальнаяНеисправность" {
+				el.ChoiceDropdown = &dropdown
+				el.ChoiceFilter = append([]metadata.FormChoiceCondition(nil), form.Elements[1].ChoiceFilter...)
+			}
+		}
+	}
 	form.Attributes = append(form.Attributes, &metadata.FormAttribute{Name: "Просмотр", TypeRef: "CatalogRef." + f.target.Name})
 	form.Elements = append(form.Elements,
 		&metadata.FormElement{ID: "lock", Name: "ПолеЗапрет", Kind: metadata.FormElementCheckbox, DataPath: "Объект.Запрет", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnChange: "Обновить"}},
@@ -117,7 +153,11 @@ func testManagedRefComboboxBrowser(t *testing.T, required bool) {
 	}))
 	defer inlineServer.Close()
 	payload, _ := json.Marshal(map[string]any{"optional": !required, "base": server.URL, "inlineBase": inlineServer.URL, "id": f.ownerID.String(), "rootA": f.rootA.String(), "rootB": f.rootB.String(), "pageTwo": f.pageTwo.String(), "legacy": f.legacySelected.String()})
-	cmd := exec.CommandContext(t.Context(), node, "static/ref_combobox_browser_test.js") //nolint:gosec // local test executable
+	script := "static/ref_combobox_browser_test.js"
+	if pickerOnly {
+		script = "static/ref_picker_only_browser_test.js"
+	}
+	cmd := exec.CommandContext(t.Context(), node, script) //nolint:gosec // local test executable
 	cmd.Env = append(os.Environ(), "ONEBASE_REF_BROWSER="+string(payload))
 	out, err := cmd.CombinedOutput()
 	if err != nil {

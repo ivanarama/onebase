@@ -10,9 +10,11 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dsl/loader"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/testutil/browseracceptance"
 )
 
@@ -21,7 +23,11 @@ import (
 // no endpoint response, selected_allowed result or client function is mocked.
 func TestChoiceFilterBrowserAcceptance(t *testing.T) {
 	browseracceptance.Require(t)
-	f := newChoiceHTTPFixture(t)
+	dbtest.ForEachDialect(t, testChoiceFilterBrowserAcceptance)
+}
+
+func testChoiceFilterBrowserAcceptance(t *testing.T, db *storage.DB) {
+	f := newChoiceHTTPFixtureWithStore(t, db, false)
 	f.target.Hierarchical = true
 	if err := f.server.store.Migrate(context.Background(), []*metadata.Entity{f.target}); err != nil {
 		t.Fatal(err)

@@ -1518,3 +1518,40 @@ test('invalid live reference cannot prevent exact recovery of an unknown save', 
   assert.equal(next.error, 'invalid-reference');
   assert.equal(calls.length, 2, 'fresh write followed recovery despite invalid reference');
 });
+
+test('picker-only validity vetoes native save and fresh close writes, preserving exact unknown recovery', async () => {
+  const calls = [];
+  const app = runtime(async (url, options) => {
+    calls.push({body: options.body.toString(), headers: {...options.headers}});
+    if (calls.length === 1) throw new Error('lost committed save');
+    return response({ok: true, dirty: false, savedId: 'saved-picker-only', version: 1,
+      close: {intentId: closeIntent(options), allowed: true, saved: true}});
+  });
+  let valid = false, reports = 0;
+  app.form.querySelectorAll = selector => selector === '[data-ob-ref-search]' ? [{
+    // Browsers exempt readonly text from constraint validation.
+    reportValidity() { return true; },
+    _obRefCombo: {reportValidity() { reports++; return valid; }},
+  }] : [];
+  app.form.values.set('Ссылка', 'original-picker-uuid');
+  assert.equal(dispatchSubmit(app).defaultPrevented, true);
+  for (const mode of ['save', 'post', 'save_and_select']) {
+    assert.equal((await app.context.obRequestFormClose({reason: 'ok', mode})).error, 'invalid-reference');
+  }
+  assert.equal(calls.length, 0);
+  valid = true;
+  assert.equal(dispatchSubmit(app).defaultPrevented, false);
+  assert.equal((await app.context.obRequestFormClose({reason: 'ok', mode: 'save'})).error, 'network');
+  valid = false;
+  app.form.values.set('Ссылка', 'new-invalid-picker-uuid');
+  const before = reports;
+  assert.equal(dispatchSubmit(app).defaultPrevented, true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls.length, 2, 'live picker validity blocked exact old-intent recovery');
+  assert.equal(reports, before, 'recovery consulted new live validity');
+  assert.equal(calls[1].body, calls[0].body);
+  assert.equal(calls[1].headers['X-OneBase-Close-Intent'], calls[0].headers['X-OneBase-Close-Intent']);
+  assert.equal(app.form.values.get('Ссылка'), 'new-invalid-picker-uuid');
+  assert.equal((await app.context.obRequestFormClose({reason: 'ok', mode: 'save'})).error, 'invalid-reference');
+  assert.equal(calls.length, 2);
+});

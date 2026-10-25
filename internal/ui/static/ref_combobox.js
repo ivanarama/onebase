@@ -70,9 +70,30 @@
       return value.isConnected && !text.readOnly && !value.disabled &&
         text.getClientRects().length > 0;
     }
+    function editable() {
+      // Picker-only prevents typing, not choosing or writing. Actual readonly,
+      // disabled fieldsets and inactive hidden copies are separate contexts.
+      return value.isConnected && !value.readOnly && !value.disabled &&
+        !value.hasAttribute('readonly') && !value.matches(':disabled') &&
+        text.getClientRects().length > 0;
+    }
     function validate() {
-      text.setCustomValidity(text.readOnly ? '' : searchError ? message('refSearchError') :
-        text.value && !value.value ? message('refChoose') : '');
+      var error = !editable() ? '' : searchError ? message('refSearchError') :
+        fingerprint() !== applied ? message('refSearchLoading') :
+        (!value.value && (text.value || text.required)) ? message('refChoose') : '';
+      text.setCustomValidity(error);
+      text.setAttribute('aria-invalid', error ? 'true' : 'false');
+      return error;
+    }
+    function reportValidity() {
+      var error = validate();
+      if (!error) return true;
+      // Native constraint validation exempts readonly text and hidden UUIDs.
+      // The form's write guards must consult this state explicitly.
+      status.textContent = error;
+      text.focus();
+      if (!text.readOnly) text.reportValidity();
+      return false;
     }
     function close() {
       list.hidden = true;
@@ -97,6 +118,9 @@
       value.value = id;
       text.value = id ? String(caption || id) : '';
       selectedID = id;
+      // A user selection from the protected picker/search belongs to this
+      // context. A server echo alone must still recheck changed sources.
+      if (change) applied = fingerprint();
       searchError = false;
       status.textContent = '';
       validate();
@@ -195,7 +219,8 @@
       if (!force && fp === pendingFingerprint) return pending || Promise.resolve();
       return request('', true);
     }
-    value._obRefCombo = { setValue: setValue, updateState: updateState, close: cancel, refresh: refresh, isEditing: function () { return !!text.value && !value.value; }, text: text };
+    value._obRefCombo = { setValue: setValue, updateState: updateState, close: cancel, refresh: refresh, reportValidity: reportValidity, isEditing: function () { return !!text.value && !value.value; }, text: text };
+    text._obRefCombo = value._obRefCombo;
     text.addEventListener('input', function () {
       if (text.readOnly) return;
       cancel();
