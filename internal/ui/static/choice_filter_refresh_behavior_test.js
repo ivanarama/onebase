@@ -64,8 +64,8 @@ function runtime(fetchImpl, selected, withOwner, withChoice = true, collapsed = 
   const document = {
     documentElement: {contains() { return true; }},
     querySelectorAll(selector) {
-      if (selector === 'select[data-ref-choice-context]') return withChoice ? [select] : [];
-      if (selector === 'select[data-ref-filter]') return withOwner ? [select] : [];
+      if (selector.includes('[data-ref-choice-context]')) return withChoice ? [select] : [];
+      if (selector.includes('[data-ref-filter]')) return withOwner ? [select] : [];
       return [];
     },
     getElementsByName(name) { return name === 'Склад' ? [sourceControl] : name === 'Контрагент' ? [ownerControl] : []; },

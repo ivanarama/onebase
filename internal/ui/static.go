@@ -13,6 +13,9 @@ import (
 //go:embed static/ui.js
 var uiJS []byte
 
+//go:embed static/ref_combobox.js
+var refComboboxJS []byte
+
 //go:embed static/managed.js
 var managedJS []byte
 
@@ -25,6 +28,7 @@ var settingsNavigationJS []byte
 // ETag'и приложенческого JS считаются один раз при старте по содержимому.
 var (
 	uiJSETag                 = assetETag(uiJS)
+	refComboboxJSETag        = assetETag(refComboboxJS)
 	managedJSETag            = assetETag(managedJS)
 	queryBuilderJSETag       = assetETag(queryBuilderJS)
 	settingsNavigationJSETag = assetETag(settingsNavigationJS)
@@ -58,6 +62,9 @@ func serveAppJS(w http.ResponseWriter, r *http.Request, body []byte, etag string
 // тем же путём, что и в конфигураторе лаунчера, чтобы рабочий стол и
 // предпросмотр виджетов рисовались идентично.
 func mountStatic(r chi.Router) {
+	r.Get("/static/ref_combobox.js", func(w http.ResponseWriter, req *http.Request) {
+		serveAppJS(w, req, refComboboxJS, refComboboxJSETag)
+	})
 	r.Get("/static/settings-navigation.js", func(w http.ResponseWriter, req *http.Request) {
 		serveAppJS(w, req, settingsNavigationJS, settingsNavigationJSETag)
 	})

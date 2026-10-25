@@ -14,6 +14,7 @@ import unittest
 RUNNER = Path(__file__).with_name("test-coverage.py")
 UI = "github.com/ivantit66/onebase/internal/ui"
 LAUNCHER = "github.com/ivantit66/onebase/internal/launcher"
+LARGE_CATALOG = "TestRefComboboxLargeCatalogPublicHTTP"
 
 # This is a child process replacing only Go at the external command boundary.
 # The real Go fixture below checks the actual -run/subtest/seed semantics.
@@ -39,6 +40,8 @@ def emit(action, package, **kw):
     print(json.dumps(dict(Action=action, Package=package, **kw)))
 names = ['TestAlpha', 'TestBravo', 'TestCharlie', 'TestDelta', 'ExampleValue', 'FuzzSeed']
 if os.environ.get('NEW_TEST'): names += ['TestNewAutomaticallyDiscovered']
+if args[-1] == ui: names += ['TestRefComboboxLargeCatalogPublicHTTP']
+if mode == 'missing-scale-inventory': names = [n for n in names if n != 'TestRefComboboxLargeCatalogPublicHTTP']
 if '-list' in args:
     package = args[-1]
     assert package in [ui, launcher] and args[args.index('-list')+1] == '^(Test|Example|Fuzz)'
@@ -104,6 +107,9 @@ class CoverageCLI(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
+        workflow = self.root / ".github/workflows/ci.yml"
+        workflow.parent.mkdir(parents=True)
+        workflow.write_text(Path(__file__).with_name("..").resolve().joinpath("workflows/ci.yml").read_text(encoding="utf-8"), encoding="utf-8")
         self.bin = self.root / "bin"
         self.bin.mkdir()
         go = self.bin / "go"
@@ -130,8 +136,11 @@ class CoverageCLI(unittest.TestCase):
             self.assertIn("ExampleValue", names)
             self.assertIn("FuzzSeed", names)
             self.assertIn("TestNewAutomaticallyDiscovered", names)
-            self.assertEqual(item["groups"], [sorted(names)[i::count] for i in range(count)])
-            self.assertEqual(Counter(n for g in item["groups"] for n in g), Counter(names))
+            delegated = [LARGE_CATALOG] if label == "ui" else []
+            self.assertEqual(item["mandatory_e2e"], delegated)
+            race_names = [n for n in names if n not in delegated]
+            self.assertEqual(item["groups"], [sorted(race_names)[i::count] for i in range(count)])
+            self.assertEqual(Counter([n for g in item["groups"] for n in g] + delegated), Counter(names))
             self.assertEqual(len(list((self.root / "test-results").glob(label+"-?.jsonl"))), count)
         lines = (self.root / "coverage.out").read_text().splitlines()
         self.assertEqual(lines, ["mode: atomic",
@@ -150,7 +159,7 @@ class CoverageCLI(unittest.TestCase):
 
     def test_failures_never_publish_partial_or_stale_coverage(self):
         for mode in ["list-failure", "missing-ui-package", "missing-launcher-package",
-                     "duplicate-package", "compile-failure", "empty-launcher-inventory",
+                     "duplicate-package", "missing-scale-inventory", "compile-failure", "empty-launcher-inventory",
                      "empty-inventory", "duplicate-inventory", "invalid-inventory",
                      "missing-execution", "duplicate-execution", "missing-test-result", "missing-subtest-result", "failed-test", "race", "timeout",
                      "missing-package-result", "event-failure", "missing-profile", "corrupt-profile",
@@ -163,6 +172,22 @@ class CoverageCLI(unittest.TestCase):
                 result = self.run_cli(mode)
                 self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertFalse((self.root / "coverage.out").exists())
+
+    def test_mandatory_e2e_cannot_be_removed_or_weakened(self):
+        workflow = self.root / ".github/workflows/ci.yml"
+        original = workflow.read_text(encoding="utf-8")
+        for broken in [
+            original.replace("'^" + LARGE_CATALOG + "$'", "'^TestOther$'"),
+            original.replace("ONEBASE_REQUIRE_REF_BROWSER: '1'", "ONEBASE_REQUIRE_REF_BROWSER: '0'"),
+            original.replace("-timeout 3m -v ./internal/ui", "-timeout 30m -v ./internal/ui"),
+            original.replace("  e2e:\n", "  e2e:\n    continue-on-error: true\n"),
+            original.replace("      - name: Large catalog managed reference acceptance", "      - name: Large catalog managed reference acceptance\n        continue-on-error: true"),
+        ]:
+            shutil.rmtree(self.root / "test-results", ignore_errors=True)
+            workflow.write_text(broken, encoding="utf-8")
+            result = self.run_cli()
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertFalse((self.root / "coverage.out").exists())
 
     def test_partition_omission_and_duplicate_fail_before_tests(self):
         for count in [4, 2]:
@@ -192,6 +217,7 @@ func TestAlpha(t *testing.T) { for _, n := range []string{"a", "b"} {
  t.Run(n, func(t *testing.T) { if Value()!=42 { t.Fatal("value") } }) } }
 func TestBravo(t *testing.T) { if Value()!=42 { t.Fatal("value") } }
 func TestCharlie(t *testing.T) { if Value()!=42 { t.Fatal("value") } }
+func TestRefComboboxLargeCatalogPublicHTTP(t *testing.T) { t.Fatal("must run only in mandatory e2e") }
 func ExampleValue() { fmt.Println(Value()); // Output: 42
 }
 func FuzzValue(f *testing.F) { f.Add(1); f.Add(2); f.Fuzz(func(t *testing.T, x int) {
@@ -214,6 +240,7 @@ func TestOther(t *testing.T) { if Value()!=7 { t.Fatal("other") } }
         (launcher / "launch.go").write_text("package launcher\nfunc Value() int { return 42 }\n")
         for name in ["value_test.go", "new_test.go"]:
             text = (ui / name).read_text().replace("package ui", "package launcher", 1)
+            text = text.replace('func TestRefComboboxLargeCatalogPublicHTTP(t *testing.T) { t.Fatal("must run only in mandatory e2e") }\n', '')
             (launcher / name).write_text(text)
         result = subprocess.run(self.cli_command(self.runner), cwd=self.root,
                                 capture_output=True, text=True, encoding="utf-8", timeout=180)

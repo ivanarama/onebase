@@ -603,6 +603,19 @@ jobs:
         working-directory: e2e
         run: npx playwright install --with-deps chromium
 
+      - name: Managed reference combobox acceptance
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        env:
+          ONEBASE_REQUIRE_REF_BROWSER: '1'
+        run: go test -count=1 -timeout 3m -v ./internal/ui -run '^TestManagedRefComboboxBrowser$'
+
+      # Полный каталог проверяется через публичные form/search HTTP routes
+      # без race-инструментации SQL-движка. Тест не уменьшает число строк и
+      # проверяет прежние total, limit и границы HTML/JSON; падение блокирует e2e.
+      - name: Large catalog managed reference acceptance
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        run: go test -count=1 -timeout 3m -v ./internal/ui -run '^TestRefComboboxLargeCatalogPublicHTTP$'
+
       - name: Run browser smoke suite
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         working-directory: e2e
@@ -836,12 +849,12 @@ jobs:
           # PostgreSQL-подтесты в обязательном job. Запускаем весь пакет
           # последовательно; -v показывает выполненные диалекты в журнале CI.
           go test -race -count=1 -timeout 15m -v ./internal/api
-          # Run the whole UI package while TEST_DATABASE_URL is present. Every
-          # dbtest.ForEachDialect call therefore executes its PostgreSQL branch,
-          # including a newly added matrix test without maintaining a fragile
-          # test-name allowlist here. The package has no parallel top-level tests,
-          # so its matrix cases can safely share this service database.
-          go test -race -count=1 -timeout 20m ./internal/ui
+          # Discover every UI Test/Example/Fuzz seed and run sequential groups
+          # of at most 128 roots against this same PostgreSQL service. Each
+          # group retains -race/-count=1 and the finite 20m Go timeout. Validate
+          # exact run/terminal outcomes, including the large catalog test.
+          python3 .github/scripts/test_postgres_ui_test.py
+          python3 .github/scripts/test-postgres-ui.py
 
   vuln:
     needs: [classify]
