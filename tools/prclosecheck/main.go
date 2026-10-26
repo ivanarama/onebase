@@ -20,8 +20,10 @@ import (
 )
 
 const (
-	keyword   = `\b(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\b[\s:]+`
-	reference = `(?:https://github\.com/[a-z0-9_.-]+/[a-z0-9_.-]+/(?:issues|pull)/[0-9]+|(?:[a-z0-9_.-]+/[a-z0-9_.-]+)?#[0-9]+)`
+	keyword         = `\b(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)\b[\s:]+`
+	reference       = `(?:https://github\.com/[a-z0-9_.-]+/[a-z0-9_.-]+/(?:issues|pull)/[0-9]+|(?:[a-z0-9_.-]+/[a-z0-9_.-]+)?#[0-9]+)`
+	linkDestination = `(?:<[^<>\s\\]*>|[^\s()"'\\<>]*)`
+	linkTitle       = `(?:"[^"\\]*"|'[^'\\]*'|\([^()\\]*\))`
 )
 
 var (
@@ -31,7 +33,12 @@ var (
 	repoRE         = regexp.MustCompile(`(?i)^[a-z0-9_.-]+/[a-z0-9_.-]+$`)
 	rawHTMLRE      = regexp.MustCompile(`(?i)^<(pre|script|style|textarea|code)(?:\s|/?>|$)`)
 	rawHTMLCloseRE = regexp.MustCompile(`(?i)^</(pre|script|style|textarea|code)[ \t]*>`)
-	htmlTagRE      = regexp.MustCompile(`(?i)^</?[a-z][a-z0-9-]*(?:[ \t]|/?>|$)`)
+	// Certify only simple links completed on one line. Anything more complex
+	// keeps earlier declarations but cannot authorize a later closure.
+	linkLabelRE      = regexp.MustCompile(`^\[[^\[\]\\\x60<>]*\]`)
+	inlineLinkRE     = regexp.MustCompile(`^\[[^\[\]\\\x60<>]*\]\(` + linkDestination + `(?:[ \t]+` + linkTitle + `)?[ \t]*\)`)
+	linkDefinitionRE = regexp.MustCompile(`^\[[^\[\]\\\x60<>]+\]:[ \t]*(?:<[^<>\s\\]*>|[^\s()"'\\<>]+)[ \t]+` + linkTitle + `[ \t]*$`)
+	htmlTagRE        = regexp.MustCompile(`(?i)^</?[a-z][a-z0-9-]*(?:[ \t]|/?>|$)`)
 )
 
 type event struct {
@@ -282,6 +289,38 @@ func declarations(body, repo string) map[string]bool {
 					inTag = !strings.HasSuffix(m, ">")
 					hadMarkup = true
 					i += len(m) - 1
+					continue
+				}
+			}
+			if spanLen == 0 && !inHTML {
+				// Escaped brackets cannot start a Markdown link. Consume the
+				// escaped byte so an escaped backslash still leaves '[' active.
+				if line[i] == '\\' && i+1 < len(line) {
+					i++
+					continue
+				}
+				if line[i] == '[' {
+					label := linkLabelRE.FindString(line[i:])
+					if label == "" {
+						return result
+					}
+					rest := line[i+len(label):]
+					switch {
+					case strings.HasPrefix(rest, "("):
+						link := inlineLinkRE.FindString(line[i:])
+						if link == "" {
+							return result
+						}
+						i += len(link) - 1
+					case strings.HasPrefix(rest, ":"):
+						// Even a destination completed here can have a title
+						// on the next line. Only a complete same-line title
+						// certifies the end of this definition.
+						if !linkDefinitionRE.MatchString(line[i:]) {
+							return result
+						}
+						i = len(line) - 1
+					}
 					continue
 				}
 			}
