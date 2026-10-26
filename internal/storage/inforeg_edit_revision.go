@@ -138,14 +138,13 @@ func (db *DB) fillInfoRegEditRevisions(ctx context.Context, ir *metadata.InfoReg
 		condition = "1=1"
 	}
 	if len(locators) == 0 {
-		var count int
-		if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM "+table+" WHERE "+condition).Scan(&count); err != nil {
-			return err
-		}
-		if count == 0 {
-			return nil
-		}
-		return fmt.Errorf("info register %s: no physical row locator", ir.Name)
+		// All SQLite rowid aliases can be business fields in a legacy keyless
+		// table. A non-deterministic scalar generates one crypto/rand UUID per
+		// matching physical row, including identical duplicates. Keep validation
+		// above this UPDATE and use the caller's existing transaction/lock so
+		// entropy, SQL or cancellation failures roll back the entire scope.
+		_, err := db.Exec(ctx, "UPDATE "+table+" SET "+InfoRegEditRevisionColumn+" = ob_inforeg_edit_revision() WHERE "+condition)
+		return err
 	}
 	query := "SELECT " + strings.Join(locators, ", ") + " FROM " + table + " WHERE " + condition
 	if !invalidate {
