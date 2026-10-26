@@ -61,6 +61,26 @@
     var applied = fingerprint(), pending = null, pendingFingerprint = '', searchError = false;
     var selectedID = value.value;
     var collapsed = value.getAttribute('data-ref-choice-dropdown') === 'false';
+    var clear = null;
+    if (collapsed && !text.required) {
+      var entry = document.createElement('div');
+      entry.style.cssText = 'display:flex;gap:4px';
+      box.replaceChild(entry, text);
+      entry.appendChild(text);
+      text.style.minWidth = '0';
+      clear = document.createElement('button');
+      clear.type = 'button';
+      clear.className = 'btn btn-sm';
+      clear.setAttribute('data-ob-ref-clear', '1');
+      clear.textContent = message('refClear');
+      entry.appendChild(clear);
+      clear.addEventListener('click', function () {
+        if (!editable() || !value.value) return;
+        // Use the same generation fence and change event as picker selection.
+        setValue('', '', true);
+        text.focus();
+      });
+    }
     function fingerprint() {
       var choice = obRefChoiceSnapshot(value);
       if (value.hasAttribute('data-ref-choice-context') && !choice) return null;
@@ -78,6 +98,10 @@
         text.getClientRects().length > 0;
     }
     function validate() {
+      if (clear) {
+        clear.hidden = !editable();
+        clear.disabled = !editable() || !value.value;
+      }
       var error = !editable() ? '' : searchError ? message('refSearchError') :
         fingerprint() !== applied ? message('refSearchLoading') :
         (!value.value && (text.value || text.required)) ? message('refChoose') : '';

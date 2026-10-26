@@ -44,7 +44,9 @@ func testManagedRefPickerOnlyBrowser(t *testing.T) {
 }
 
 func testManagedRefComboboxBrowser(t *testing.T, required bool) {
-	runManagedRefComboboxBrowser(t, required, false, nil)
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		runManagedRefComboboxBrowser(t, required, false, db)
+	})
 }
 
 func runManagedRefComboboxBrowser(t *testing.T, required, pickerOnly bool, db *storage.DB) {
@@ -89,9 +91,15 @@ func runManagedRefComboboxBrowser(t *testing.T, required, pickerOnly bool, db *s
 		for _, el := range form.Elements {
 			if el.Name == "ЛокальнаяНеисправность" {
 				el.ChoiceDropdown = &dropdown
+				el.Handlers = map[metadata.FormEventType]string{metadata.FormEventOnChange: "Наблюдать"}
 				el.ChoiceFilter = append([]metadata.FormChoiceCondition(nil), form.Elements[1].ChoiceFilter...)
 			}
 		}
+		form.Attributes = append(form.Attributes, &metadata.FormAttribute{Name: "Наблюдение", TypeRef: "string"})
+		form.Elements = append(form.Elements,
+			&metadata.FormElement{ID: "observed", Name: "Наблюдение", Kind: metadata.FormElementField, DataPath: "Форма.Наблюдение", ReadOnly: true},
+			&metadata.FormElement{ID: "hidden-fault", Name: "СкрытаяНеисправность", Kind: metadata.FormElementField, DataPath: "Объект.Неисправность", HiddenWhen: "1 = 1", ChoiceDropdown: &dropdown},
+		)
 	}
 	form.Attributes = append(form.Attributes, &metadata.FormAttribute{Name: "Просмотр", TypeRef: "CatalogRef." + f.target.Name})
 	form.Elements = append(form.Elements,
@@ -104,7 +112,7 @@ func runManagedRefComboboxBrowser(t *testing.T, required, pickerOnly bool, db *s
 	for _, branch := range []string{"A", "B", "Пусто"} {
 		form.Elements = append(form.Elements, &metadata.FormElement{ID: "source" + branch, Name: "Источник" + branch, Kind: metadata.FormElementButton, TitleMap: map[string]string{"ru": "Источник" + branch}, Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Источник" + branch}})
 	}
-	form.ProgramAST = mustParse(t, `
+	program := `
 Процедура Заполнить()
  Объект.Неисправность = Справочники.Неисправность.НайтиПоНаименованию("element 051");
 КонецПроцедуры
@@ -119,7 +127,15 @@ func runManagedRefComboboxBrowser(t *testing.T, required, pickerOnly bool, db *s
 КонецПроцедуры
 Процедура Обновить()
 КонецПроцедуры
-`)
+`
+	if pickerOnly {
+		program += `
+Процедура Наблюдать()
+ Объект.Наблюдение = Строка(Объект.ЛокальнаяНеисправность);
+КонецПроцедуры
+`
+	}
+	form.ProgramAST = mustParse(t, program)
 	if err := f.server.store.Migrate(context.Background(), []*metadata.Entity{f.direction, f.target, f.owner}); err != nil {
 		t.Fatal(err)
 	}
