@@ -17,6 +17,7 @@ import (
 	"github.com/ivantit66/onebase/internal/bugreport"
 	"github.com/ivantit66/onebase/internal/launcher"
 	"github.com/ivantit66/onebase/internal/project"
+	"github.com/ivantit66/onebase/internal/userdata"
 	"github.com/spf13/cobra"
 )
 
@@ -189,11 +190,11 @@ func supportOutPath(out string, now time.Time) (string, error) {
 	if strings.TrimSpace(out) != "" {
 		return out, nil
 	}
-	home, err := os.UserHomeDir()
+	dir, err := userdata.Path("reports")
 	if err != nil {
 		return "", fmt.Errorf("определить домашний каталог: %w", err)
 	}
-	return filepath.Join(home, ".onebase", "reports", bugreport.FileName(now, "zip")), nil
+	return filepath.Join(dir, bugreport.FileName(now, "zip")), nil
 }
 
 func printSupportContacts(c bugreport.Contacts) {

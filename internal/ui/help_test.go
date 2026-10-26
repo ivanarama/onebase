@@ -1,10 +1,13 @@
 package ui
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -15,6 +18,93 @@ import (
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/userhelp"
 )
+
+func TestHelpAssetURLsDecodeOncePublicRoute(t *testing.T) {
+	s := newServerForFormMode(t)
+	s = New(s.reg, s.store, interpreter.New(), nil, Config{}, nil)
+	defer s.BeginShutdown()
+	dir := t.TempDir()
+	helpDir := filepath.Join(dir, "docs", "help")
+	if err := os.MkdirAll(filepath.Join(helpDir, "images"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.OpenRoot(helpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = root.Close() }()
+	write := func(name, data string) {
+		t.Helper()
+		if err := root.WriteFile(name, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("index.yaml", "title: Help\nchapters:\n  - id: images\n    title: Images\n    file: images.md\n")
+	names := []string{"scan%41.png", "scan%25.png", "space name.png", "снимок.png", "plain.png", "scanA.png", "scan%.png"}
+	var markdown strings.Builder
+	for i, name := range names {
+		write("images/"+name, "image:"+name)
+		fmt.Fprintf(&markdown, "![asset%d](%s)\n\n", i, (&url.URL{Path: "images/" + name}).EscapedPath())
+	}
+	write("images.md", markdown.String())
+	write("images/private.png", "not referenced by the book")
+	b := userhelp.Load(dir)
+	if len(b.Warnings) != 0 {
+		t.Fatalf("help warnings: %v", b.Warnings)
+	}
+	s.reg.LoadHelp(b)
+	router := chi.NewRouter()
+	s.Mount(router)
+	chapter := httptest.NewRecorder()
+	router.ServeHTTP(chapter, httptest.NewRequest(http.MethodGet, "/ui/help/chapter/images", nil))
+	if chapter.Code != http.StatusOK {
+		t.Fatalf("chapter: %d %s", chapter.Code, chapter.Body.String())
+	}
+	links := regexp.MustCompile(`src="(/ui/help/assets/[^"]+)"`).FindAllStringSubmatch(chapter.Body.String(), -1)
+	if len(links) != len(names) {
+		t.Fatalf("got %d image links, want %d: %s", len(links), len(names), chapter.Body.String())
+	}
+	for i, name := range names {
+		for _, rawPath := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/RawPath=%t", name, rawPath), func(t *testing.T) {
+				target := links[i][1]
+				if rawPath {
+					// A noncanonical escape makes Go retain RawPath, which chi uses.
+					target = strings.Replace(target, "/images/", "/%69mages/", 1)
+				}
+				req := httptest.NewRequest(http.MethodGet, target, nil)
+				if got := req.URL.RawPath != ""; got != rawPath {
+					t.Fatalf("RawPath set=%t, want %t", got, rawPath)
+				}
+				rec := httptest.NewRecorder()
+				router.ServeHTTP(rec, req)
+				if rec.Code != http.StatusOK || rec.Body.String() != "image:"+name {
+					t.Fatalf("GET %s: %d %q, want %q", target, rec.Code, rec.Body.String(), "image:"+name)
+				}
+				if got := rec.Header().Get("Content-Type"); got != "image/png" {
+					t.Errorf("Content-Type=%q, want image/png", got)
+				}
+				if got := rec.Header().Get("X-Content-Type-Options"); got != "nosniff" {
+					t.Errorf("X-Content-Type-Options=%q, want nosniff", got)
+				}
+			})
+		}
+	}
+	for _, target := range []string{
+		"/ui/help/assets/images/missing.png",
+		"/ui/help/assets/images/private.png",
+		"/ui/help/assets/index.yaml",
+		"/ui/help/assets/images.md",
+	} {
+		t.Run(target, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, target, nil))
+			if rec.Code != http.StatusNotFound {
+				t.Fatalf("GET %s: %d, want 404", target, rec.Code)
+			}
+		})
+	}
+}
 
 func TestHelpManagedProcessorContextPublicRoute(t *testing.T) {
 	for _, tc := range []struct {

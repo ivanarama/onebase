@@ -51,7 +51,7 @@ jobs:
     needs: [classify]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Docs-only success
         if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
@@ -84,6 +84,14 @@ jobs:
       # переездов). Гейт держит развод: он дешевле, чем разводить снова.
       - name: Plan numbers are unique
         run: go run ./tools/plannum
+
+      - name: Release license bundle (actual CLI binary)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        run: |
+          set -euo pipefail
+          go test ./tools/licensebundle
+          go build -o "$RUNNER_TEMP/onebase-licensecheck" ./cmd/onebase
+          go run ./tools/licensebundle -release -out "$RUNNER_TEMP/licenses-cli" "$RUNNER_TEMP/onebase-licensecheck"
 
       - name: Lint shipped example/template configurations
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
@@ -274,7 +282,10 @@ jobs:
       # Coverage собирается тем же прогоном, чтобы не гонять тесты дважды.
       - name: Unit tests (-race, coverage)
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
-        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_coverage_test.py'
+          python3 .github/scripts/test-race-coverage_test.py
+          python3 .github/scripts/test-race-coverage.py coverage.out
 
       # Раннеры работают в UTC, поэтому целый класс дефектов «время
       # канонизируется не в той зоне» для CI невидим: #945 поймали случайно, на
@@ -354,6 +365,11 @@ jobs:
         env:
           CGO_ENABLED: 1
         run: go build -tags webview -o "$env:RUNNER_TEMP\onebase-gui.exe" ./cmd/onebase
+
+      - name: Release license bundle (actual native GUI binary)
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        shell: pwsh
+        run: go run ./tools/licensebundle -release -out "$env:RUNNER_TEMP\licenses-gui" "$env:RUNNER_TEMP\onebase-gui.exe"
 
       - name: Test launcher GUI state (Windows WebView2)
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
@@ -607,6 +623,13 @@ jobs:
           CI: '1'
         run: npx playwright test
 
+      - name: Run image viewer acceptance
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        working-directory: e2e
+        env:
+          CI: '1'
+        run: npx playwright test --config=image-viewer.config.js
+
       - name: Run public browser acceptance
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         env:
@@ -656,7 +679,24 @@ jobs:
       # исполняет обычные (без тега webview) windows-only тесты.
       - name: Unit tests (Windows)
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
-        run: go test ./...
+        shell: bash
+        run: |
+          set -euo pipefail
+          # UI has over a thousand top-level tests; keep the 10m deadline per
+          # bounded batch instead of spending it cumulatively on the entire suite.
+          package_file="$(mktemp)"
+          trap 'rm -f "$package_file"' EXIT
+          go list ./... > "$package_file"
+          packages=()
+          while IFS= read -r package; do
+            package="${package%$'\r'}"
+            if [ "$package" != "github.com/ivantit66/onebase/internal/ui" ]; then
+              packages+=("$package")
+            fi
+          done < "$package_file"
+          [ "${#packages[@]}" -gt 0 ]
+          go test "${packages[@]}"
+          bash .github/scripts/test-ui-batches.sh
 
       # install.ps1 не исполнял ни один джоб: скрипт установки для Windows
       # проверялся только тем, что кто-то его запускал у себя. Опечатка в нём

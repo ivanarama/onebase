@@ -10,9 +10,9 @@ func generatedSourceColumns(sql string) []string {
 	if len(tokens) == 0 || upperFast(tokens[0].val) != "SELECT" {
 		return nil
 	}
-	items := tokens[1:topLevelFrom(tokens, 0)]
-	if len(items) > 0 && upperFast(items[0].val) == "DISTINCT" {
-		items = items[1:]
+	start := selectProjectionStart(tokens, 0)
+	items := tokens[start:topLevelFrom(tokens, 0)]
+	if start > 1 && upperFast(tokens[1].val) == "DISTINCT" {
 		// PostgreSQL's information slices emit DISTINCT ON (dimensions).
 		if len(items) > 0 && upperFast(items[0].val) == "ON" {
 			if len(items) < 2 || items[1].kind != tLParen {

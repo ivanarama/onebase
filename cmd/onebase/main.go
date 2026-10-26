@@ -12,9 +12,13 @@ import (
 	"github.com/ivantit66/onebase/internal/fsmode"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/selfupdate"
+	"github.com/ivantit66/onebase/internal/userdata"
 )
 
 func main() {
+	if !cli.PrepareUserData() {
+		os.Exit(1)
+	}
 	oblog.ConfigureDefault()
 	writeStartupLog()
 
@@ -84,11 +88,10 @@ func commandName(args []string) string {
 }
 
 func writeStartupLog() {
-	home, err := os.UserHomeDir()
+	dir, err := userdata.Path()
 	if err != nil {
 		return
 	}
-	dir := filepath.Join(home, ".onebase")
 	// Каталог может уже быть или быть недоступен — тогда ниже упадёт
 	// сама запись, с понятной причиной и путём.
 	_ = os.MkdirAll(dir, fsmode.Dir)

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
+	"github.com/ivantit66/onebase/internal/userdata"
 	sqlite "modernc.org/sqlite"
 )
 
@@ -261,6 +262,6 @@ func defaultFilesDirForSQLite(dbPath string) string {
 			break
 		}
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".onebase", "files", base)
+	dir, _ := userdata.Path("files", base)
+	return dir
 }

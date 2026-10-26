@@ -97,6 +97,10 @@ type formEventResponse struct {
 	// Close присутствует только в ответе отдельного close-intent endpoint.
 	// Обычный /form-event не выдаёт разрешение уничтожить форму.
 	Close *formCloseDecision `json:"close,omitempty"`
+	// Cancel — обработчик ПередПроведением выставил Отказ: браузер документ не
+	// проводит. Только для этого события; вопрос (Question) тоже откладывает
+	// проведение до ответа, но отказом не является.
+	Cancel bool `json:"cancel,omitempty"`
 }
 
 type managedCloseSaveError struct {
@@ -653,8 +657,20 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		elementName = ""
 		eventName = string(metadata.FormEventBeforeClose)
 	}
+	beforePost := closeInv == nil && beforePostEvent(elementName, eventName)
 	progAny := form.ProgramAST
 	if progAny == nil {
+		// Posting requires the declared check to run. The historical no-op for
+		// ordinary events must not authorize posting when the module is absent.
+		if beforePost {
+			procName, _, _, eligibilityErr := resolveBrowserFormEvent(form, elementName, eventName, false)
+			if eligibilityErr != nil {
+				respondJSON(enc, formEventResponse{Error: eligibilityErr.Error()})
+			} else {
+				respondJSON(enc, formEventResponse{Error: "процедура «" + procName + "» не найдена в .form.os"})
+			}
+			return
+		}
 		if closeInv != nil {
 			if procName := resolveFormCloseHandler(form); procName != "" {
 				respondJSON(enc, formEventResponse{Error: "процедура «" + procName + "» не найдена в .form.os"})
@@ -741,7 +757,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	if procName != "" && decl == nil {
-		if closeInv != nil {
+		if closeInv != nil || beforePost {
 			respondJSON(enc, formEventResponse{Error: "процедура «" + procName + "» не найдена в .form.os"})
 			return
 		}
@@ -759,6 +775,23 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
+	// ПередПроведением: тот же контракт Отказ, что у ПередЗакрытием, — но
+	// событие обычное браузерное, без протокола закрытия.
+	var beforePostArgs []any
+	if beforePost {
+		if !entity.Posting {
+			respondJSON(enc, formEventResponse{Error: "ПередПроведением: документ «" + entity.Name + "» не проводится"})
+			return
+		}
+		if decl != nil {
+			beforePostArgs, err = validateFormCancelProcedure(decl, string(metadata.FormEventBeforePost))
+			if err != nil {
+				respondJSON(enc, formEventResponse{Error: err.Error()})
+				return
+			}
+		}
+	}
+	postCancelled := false
 
 	// Лимит richtext проверяем по СЫРОМУ значению формы до санитайза, как в
 	// parseSubmitForm/handlers_entity — иначе мега-blob обходит лимит через
@@ -1293,6 +1326,11 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	if qa := strings.TrimSpace(r.FormValue("_question_answer")); qa != "" {
 		vars["ВопросОтвет"] = qa
 		vars["QuestionAnswer"] = qa
+	} else if beforePost {
+		// ПередПроведением приходит и без ответа, и с ответом на свой же
+		// вопрос: пустая строка отличает первый вызов от ответа.
+		vars["ВопросОтвет"] = ""
+		vars["QuestionAnswer"] = ""
 	}
 
 	if err := addPageChangeContext(eventName, r.FormValue("_page"), eventTarget, vars); err != nil {
@@ -1330,6 +1368,13 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 			interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, vars)
 		if runErr == nil {
 			closeInv.cancelled = formCloseBindingCancelled(decl, entryResult.Bindings)
+		}
+	} else if beforePost && decl != nil {
+		var entryResult interpreter.EntryCallResult
+		entryResult, runErr = s.interp.CallEntrySandboxedWithBindings(decl, thisObj, beforePostArgs,
+			interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, vars)
+		if runErr == nil {
+			postCancelled = formCloseBindingCancelled(decl, entryResult.Bindings)
 		}
 	} else if timeout > 0 {
 		runErr = s.interp.RunSandboxed(decl, thisObj,
@@ -1470,6 +1515,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		q := question
 		resp.Question = &q
 	}
+	resp.Cancel = postCancelled
 	if navigation != nil {
 		resp.Navigation = navigation
 	}
@@ -1702,9 +1748,10 @@ func (s *Server) managedCloseStateDirty(
 	if err != nil || persisted == nil {
 		return true
 	}
+	dialect := s.store.Dialect().Name()
 	for _, field := range entity.Fields {
 		stored, _ := maskCIKeyValue(persisted, field.Name)
-		if tpCellNorm(field, obj.Get(field.Name)) != tpCellNorm(field, stored) {
+		if tpCellNormStored(field, obj.Get(field.Name), dialect) != tpCellNormStored(field, stored, dialect) {
 			return true
 		}
 	}
@@ -1735,7 +1782,7 @@ func (s *Server) managedCloseStateDirty(
 	}
 	for _, tablePart := range entity.TableParts {
 		stored, rowsErr := s.store.GetTablePartRows(ctx, entity.Name, tablePart.Name, obj.ID, tablePart)
-		if rowsErr != nil || !tpRowsEqual(obj.TablePartRows[tablePart.Name], stored, tablePart) {
+		if rowsErr != nil || !tpRowsEqualStored(obj.TablePartRows[tablePart.Name], stored, tablePart, dialect) {
 			return true
 		}
 	}
@@ -1780,6 +1827,12 @@ func snapshotValueCI(snapshot map[string]string, name string) (string, bool) {
 // (Объект.Записать()) по-прежнему сверяется с базой.
 func formOpenEvent(elementName, eventName string) bool {
 	return elementName == "" && strings.EqualFold(eventName, string(metadata.FormEventOnOpen))
+}
+
+// beforePostEvent — проверка перед стандартным проведением (ПередПроведением
+// уровня формы).
+func beforePostEvent(elementName, eventName string) bool {
+	return elementName == "" && strings.EqualFold(eventName, string(metadata.FormEventBeforePost))
 }
 
 // transientManagedStateDirty is used by processor forms, which have no
@@ -2546,6 +2599,13 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 	if eventName == "" {
 		opStatus = "error"
 		respondJSON(enc, formEventResponse{Error: "_event required"})
+		return
+	}
+	// Проведения у обработки нет: событие уровня формы ПередПроведением ей не
+	// адресуется, даже если модуль объявил обработчик.
+	if closeInv == nil && beforePostEvent(elementName, eventName) {
+		opStatus = "error"
+		respondJSON(enc, formEventResponse{Error: "ПередПроведением: у обработки нет проведения"})
 		return
 	}
 

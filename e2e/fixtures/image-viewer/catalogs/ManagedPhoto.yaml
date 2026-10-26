@@ -1,0 +1,9 @@
+name: ManagedPhoto
+fields:
+  - {name: Name, type: string}
+  - {name: Owner, type: string}
+  - {name: First, title: "First camera", type: image}
+  - {name: Second, title: "Second camera", type: image}
+  - {name: Secret, type: image}
+  - {name: Empty, type: image}
+  - {name: HideSecond, type: bool}

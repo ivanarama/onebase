@@ -447,6 +447,13 @@ func CheckQueries(proj *project.Project) []Issue {
 			})
 		}
 	}
+	for _, lq := range listFormFilterQueries(proj) {
+		o := opts
+		o.Params = listFormFilterQueryParams()
+		if _, err := query.Compile(lq.query, o); err != nil {
+			issues = append(issues, Issue{File: lq.file, Object: lq.object, Kind: "Форма списка (запрос отбора)", Message: err.Error()})
+		}
+	}
 	for _, rep := range proj.Reports {
 		if rep.Query == "" {
 			continue
@@ -513,7 +520,47 @@ func CheckQueriesExecutable(proj *project.Project, validate func(sqlText string)
 		}
 		check(rep.Query, "reports/"+rep.Name+".yaml", rep.Name, "Отчёт (исполнение запроса)", params)
 	}
+	for _, lq := range listFormFilterQueries(proj) {
+		check(lq.query, lq.file, lq.object, "Форма списка (исполнение запроса отбора)", listFormFilterQueryParams())
+	}
 	return issues
+}
+
+// listFormFilterQuery — запрос условия постоянного отбора формы списка
+// (filter: query). Сломанный запрос рантайм закрывает пустым списком, поэтому
+// ловить его надо здесь, а не по жалобе «список пуст».
+type listFormFilterQuery struct {
+	query, file, object string
+}
+
+func listFormFilterQueries(proj *project.Project) []listFormFilterQuery {
+	var out []listFormFilterQuery
+	for _, e := range proj.Entities {
+		if e == nil {
+			continue
+		}
+		for _, f := range e.Forms {
+			if f == nil || !strings.EqualFold(f.Kind, "list") {
+				continue
+			}
+			file := f.SourcePath
+			if file == "" {
+				file = "forms/" + strings.ToLower(e.Name) + "/списка.form.yaml"
+			}
+			for _, c := range f.ListFilter {
+				if strings.TrimSpace(c.Query) != "" {
+					out = append(out, listFormFilterQuery{query: c.Query, file: file, object: e.Name})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// listFormFilterQueryParams — служебные параметры запроса отбора: их
+// подставляет рантайм списка.
+func listFormFilterQueryParams() map[string]any {
+	return map[string]any{"ТекущийПользователь": nil, "ТекущийЛогин": nil}
 }
 
 // ParseDSL runs the lexer and parser on a snippet, then validates function

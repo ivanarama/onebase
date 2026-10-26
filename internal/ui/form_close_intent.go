@@ -168,8 +168,15 @@ func resolveFormCloseHandler(form *metadata.FormModule) string {
 }
 
 func validateFormCloseProcedure(decl *ast.ProcedureDecl) ([]any, error) {
+	return validateFormCancelProcedure(decl, string(metadata.FormEventBeforeClose))
+}
+
+// validateFormCancelProcedure — контракт обработчика события с отказом
+// (ПередЗакрытием, ПередПроведением): 0 параметров или один Отказ/Cancel,
+// который приходит Ложь и читается после выполнения.
+func validateFormCancelProcedure(decl *ast.ProcedureDecl, event string) ([]any, error) {
 	if decl == nil {
-		return nil, errors.New("процедура ПередЗакрытием не найдена в .form.os")
+		return nil, fmt.Errorf("процедура %s не найдена в .form.os", event)
 	}
 	switch len(decl.Params) {
 	case 0:
@@ -179,9 +186,9 @@ func validateFormCloseProcedure(decl *ast.ProcedureDecl) ([]any, error) {
 		if strings.EqualFold(name, "Отказ") || strings.EqualFold(name, "Cancel") {
 			return []any{false}, nil
 		}
-		return nil, fmt.Errorf("ПередЗакрытием: единственный параметр должен называться Отказ или Cancel, получено %q", name)
+		return nil, fmt.Errorf("%s: единственный параметр должен называться Отказ или Cancel, получено %q", event, name)
 	default:
-		return nil, fmt.Errorf("ПередЗакрытием поддерживает 0 или 1 параметр, получено %d", len(decl.Params))
+		return nil, fmt.Errorf("%s поддерживает 0 или 1 параметр, получено %d", event, len(decl.Params))
 	}
 }
 

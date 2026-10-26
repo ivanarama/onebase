@@ -116,6 +116,11 @@ func runDeploy(cmd *cobra.Command, _ []string) error {
 	defer proj.Close()
 
 	outln("→ Применение DDL-миграций...")
+	// Check all object kinds before the first application-table ALTER.
+	if err := db.CheckLongIdents(ctx, proj.Entities, proj.Registers, proj.InfoRegisters, proj.AccountRegisters); err != nil {
+		return fmt.Errorf("long identifiers: %w", err)
+	}
+
 	if err := db.Migrate(ctx, proj.Entities); err != nil {
 		return fmt.Errorf("migrate entities: %w", err)
 	}

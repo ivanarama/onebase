@@ -558,7 +558,10 @@ func beginPGTransactionForExecution(conn pgExecutionBeginner, acquireCtx context
 	return conn.Begin(acquireCtx)
 }
 
-// Exec runs a non-query SQL statement, respecting any transaction in ctx.
+// Exec runs a caller-built SQL statement, respecting any transaction in ctx.
+// This is the raw SQL boundary: callers must compile/quote identifiers and bind
+// data in args. The G701 annotations cover only the generic SQLite execution
+// sites below; query-building checks remain enabled elsewhere.
 func (db *DB) Exec(ctx context.Context, sqlText string, args ...any) (CommandTag, error) {
 	if err := writeAllowed(ctx); err != nil {
 		return CommandTag{}, err
@@ -566,7 +569,7 @@ func (db *DB) Exec(ctx context.Context, sqlText string, args ...any) (CommandTag
 	if db.sqlDB != nil {
 		args = normalizeSQLiteArgs(args)
 		if tx, ok := ctx.Value(txKey{}).(*sql.Tx); ok {
-			res, err := tx.ExecContext(ctx, sqlText, args...)
+			res, err := tx.ExecContext(ctx, sqlText, args...) // #nosec G701 -- Raw SQL boundary; callers own the statement, data is bound in args.
 			if err != nil {
 				return CommandTag{}, err
 			}
@@ -584,7 +587,7 @@ func (db *DB) Exec(ctx context.Context, sqlText string, args ...any) (CommandTag
 			n, _ := res.RowsAffected()
 			return CommandTag{RowsAffected: n}, nil
 		}
-		res, err := db.sqlDB.ExecContext(ctx, sqlText, args...)
+		res, err := db.sqlDB.ExecContext(ctx, sqlText, args...) // #nosec G701 -- Raw SQL boundary; callers own the statement, data is bound in args.
 		if err != nil {
 			return CommandTag{}, err
 		}
@@ -611,7 +614,7 @@ func (db *DB) Query(ctx context.Context, sqlText string, args ...any) (Rows, err
 	if db.sqlDB != nil {
 		args = normalizeSQLiteArgs(args)
 		if tx, ok := ctx.Value(txKey{}).(*sql.Tx); ok {
-			rows, err := tx.QueryContext(ctx, sqlText, args...)
+			rows, err := tx.QueryContext(ctx, sqlText, args...) // #nosec G701 -- Raw SQL boundary (see Exec); values remain bound in args.
 			if err != nil {
 				return nil, err
 			}
@@ -627,7 +630,7 @@ func (db *DB) Query(ctx context.Context, sqlText string, args ...any) (Rows, err
 			}
 			return &sqlRows{r: rows}, nil
 		}
-		rows, err := db.sqlDB.QueryContext(ctx, sqlText, args...)
+		rows, err := db.sqlDB.QueryContext(ctx, sqlText, args...) // #nosec G701 -- Raw SQL boundary (see Exec); values remain bound in args.
 		if err != nil {
 			return nil, err
 		}
@@ -666,7 +669,7 @@ func (db *DB) QueryRow(ctx context.Context, sqlText string, args ...any) Row {
 	if db.sqlDB != nil {
 		args = normalizeSQLiteArgs(args)
 		if tx, ok := ctx.Value(txKey{}).(*sql.Tx); ok {
-			return sqlRow{r: tx.QueryRowContext(ctx, sqlText, args...)}
+			return sqlRow{r: tx.QueryRowContext(ctx, sqlText, args...)} // #nosec G701 -- Raw SQL boundary (see Exec); values remain bound in args.
 		}
 		if session := durableSessionFromContext(ctx, db); session != nil && session.sqliteConn != nil {
 			if err := session.ensureDurable(ctx); err != nil {
@@ -674,7 +677,7 @@ func (db *DB) QueryRow(ctx context.Context, sqlText string, args ...any) Row {
 			}
 			return sqlRow{r: session.sqliteConn.QueryRowContext(ctx, sqlText, args...)}
 		}
-		return sqlRow{r: db.sqlDB.QueryRowContext(ctx, sqlText, args...)}
+		return sqlRow{r: db.sqlDB.QueryRowContext(ctx, sqlText, args...)} // #nosec G701 -- Raw SQL boundary (see Exec); values remain bound in args.
 	}
 	if tx, ok := ctx.Value(txKey{}).(pgx.Tx); ok {
 		return pgxRow{r: tx.QueryRow(ctx, sqlText, args...)}

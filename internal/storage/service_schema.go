@@ -34,6 +34,7 @@ func (db *DB) EnsureServiceSchema(ctx context.Context) error {
 		{"audit", db.EnsureAuditSchema},
 		{"settings", db.EnsureSettingsSchema},
 		{"numerator", db.EnsureNumeratorSchema},
+		{"managed entity indexes", db.EnsureManagedIndexSchema},
 		{"stage history", db.EnsureStageHistorySchema},
 		{"exchange", db.EnsureExchangeSchema},
 		{"intake", db.EnsureIntakeSchema},

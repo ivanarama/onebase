@@ -88,10 +88,17 @@ func (h *handler) configuratorWidgetPreview(w http.ResponseWriter, r *http.Reque
 	// сошлются на отсутствующую колонку — запрос упадёт «no such column …»,
 	// даже если сам виджет этот реквизит не использует. Поэтому best-effort
 	// дотягиваем схему регистров — ровно как делает запуск базы (onebase run)
-	// на старте. Это чистый идемпотентный ADD COLUMN / CREATE IF NOT EXISTS
-	// (без сидинга предопределённых данных, т.е. без db.Migrate по сущностям).
+	// на старте. Миграция также может переименовать прежние длинные имена,
+	// поэтому общий preflight ниже обязателен даже без миграции сущностей.
+	// Предопределённые данные не сидируем (db.Migrate по сущностям не вызываем).
 	// Ошибки миграции не должны прятать сам предпросмотр — игнорируем их и
 	// просто пробуем выполнить запрос.
+	// A conflicting legacy name may belong to a different object kind.
+	// Refuse before any best-effort migration can rename that table.
+	if err := db.CheckLongIdents(r.Context(), proj.Entities, proj.Registers, proj.InfoRegisters, proj.AccountRegisters); err != nil {
+		writeFormsJSON(w, widgetPreviewResponse{Error: "long identifiers: " + err.Error()})
+		return
+	}
 	_ = db.MigrateRegisters(r.Context(), proj.Registers)
 	_ = db.MigrateInfoRegisters(r.Context(), proj.InfoRegisters)
 	_ = db.MigrateAccountRegisters(r.Context(), proj.AccountRegisters)

@@ -218,7 +218,7 @@ replies in English.
 
 ## Building from source
 
-Go 1.26.6 (pinned in `.go-version`). No CGo needed for the standard binary:
+Go 1.26.10 (pinned in `.go-version`). No CGo needed for the standard binary:
 
 ```bash
 go build -o onebase ./cmd/onebase

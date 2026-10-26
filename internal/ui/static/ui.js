@@ -25,6 +25,361 @@ window.obUIMessage = function (name, fallback) {
   return String(fallback || '');
 };
 
+// A viewer belongs to one Document and one authorized form projection. It never
+// reads hidden backing inputs or fetches extra fields to build its gallery.
+(function () {
+  var current = null;
+  var sequence = 0;
+  var uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  function validRef(ref) { return typeof ref === 'string' && uuidPattern.test(ref); }
+  function message(name) { return window.obUIMessage(name, ''); }
+  function consume(ev) {
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+  }
+  function sourceURL(ref) { return '/ui/_image/' + encodeURIComponent(ref); }
+  // Inactive tabs are part of the same presentation; hidden_when containers
+  // are not. Inspect ancestors without treating a tab's display:none as a
+  // hidden field. No values are recovered from hidden inputs.
+  function pageAvailable(content) {
+    var tabs = content.closest('.managed-tabs');
+    if (!tabs) return false;
+    var buttons = tabs.querySelectorAll('.managed-tab-btn');
+    for (var i = 0; i < buttons.length; i++) {
+      var button = buttons[i];
+      if (button.closest('.managed-tabs') !== tabs ||
+          button.getAttribute('data-tab-idx') !== content.getAttribute('data-tab-content')) continue;
+      // hidden_when hides the button, leaving the inactive content in the
+      // DOM. Match within its own set: nested/sibling sets reuse indices.
+      for (var node = button; node && node !== tabs; node = node.parentElement) {
+        if (node.hidden || node.getAttribute('aria-hidden') === 'true') return false;
+        var style = window.getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+      }
+      return true;
+    }
+    return false;
+  }
+  function projected(field, owner) {
+    for (var node = field; node && node !== owner; node = node.parentElement) {
+      if (node.hidden || node.getAttribute('aria-hidden') === 'true') return false;
+      var style = window.getComputedStyle(node);
+      if (style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+      if (node.classList.contains('managed-tab-content')) {
+        if (!pageAvailable(node)) return false;
+      } else if (style.display === 'none') return false;
+    }
+    return !!owner && owner.isConnected;
+  }
+  function formGallery(owner, trigger) {
+    var items = [], seen = Object.create(null), index = -1;
+    var clicked = trigger.closest('.img-field');
+    owner.querySelectorAll('.img-field[data-ob-image-field]').forEach(function (field) {
+      if (!projected(field, owner)) return;
+      var button = field.querySelector('[data-ob-image-view]');
+      var ref = button && button.getAttribute('data-ob-image-ref');
+      var key = field.getAttribute('data-ob-image-field');
+      if (!key || !validRef(ref)) return;
+      if (Object.prototype.hasOwnProperty.call(seen, key)) {
+        if (field === clicked) {
+          index = seen[key];
+          items[index].label = field.getAttribute('data-ob-image-label') || key;
+          items[index].ref = ref;
+        }
+        return;
+      }
+      seen[key] = items.length;
+      if (field === clicked) index = items.length;
+      items.push({field: key, ref: ref, label: field.getAttribute('data-ob-image-label') || key});
+    });
+    return {items: items, index: index};
+  }
+  function releasePointer(state) {
+    if (state.drag) {
+      try { state.viewport.releasePointerCapture(state.drag.id); } catch (_) {}
+      state.drag = null;
+    }
+    state.viewport.removeAttribute('data-dragging');
+  }
+  function close() {
+    var state = current;
+    if (!state) return;
+    current = null;
+    sequence++;
+    releasePointer(state);
+    state.observer.disconnect();
+    if (state.removalObserver) state.removalObserver.disconnect();
+    window.removeEventListener('resize', state.resize);
+    if (state.image) {
+      state.image.onload = state.image.onerror = null;
+      state.image.removeAttribute('src');
+    }
+    state.dialog.close();
+    state.dialog.remove();
+    document.documentElement.style.overflow = state.overflow;
+    if (state.trigger && state.trigger.isConnected && obElementVisible(state.trigger)) state.trigger.focus();
+    else if (state.owner && state.owner.isConnected) {
+      var oldTabindex = state.owner.getAttribute('tabindex');
+      state.owner.setAttribute('tabindex', '-1');
+      state.owner.focus({preventScroll: true});
+      if (oldTabindex === null) state.owner.removeAttribute('tabindex');
+      else state.owner.setAttribute('tabindex', oldTabindex);
+    }
+  }
+  window.obImageViewerClose = close;
+  window.obImageViewerIsOpen = function () { return !!current; };
+
+  function dimensions(state) {
+    state.image.style.width = state.width * state.scale + 'px';
+    state.image.style.height = state.height * state.scale + 'px';
+    state.canvas.style.width = Math.max(state.viewport.clientWidth, state.width * state.scale) + 'px';
+    state.canvas.style.height = Math.max(state.viewport.clientHeight, state.height * state.scale) + 'px';
+    state.zoomOut.disabled = state.scale <= state.fit + 0.0001;
+    state.zoomIn.disabled = state.scale >= 8;
+    state.percent.textContent = Math.round(state.scale * 100) + ' %';
+  }
+  function setScale(state, scale, x, y) {
+    if (!state.width || current !== state) return;
+    releasePointer(state);
+    x = x == null ? state.viewport.clientWidth / 2 : x;
+    y = y == null ? state.viewport.clientHeight / 2 : y;
+    var oldX = Math.max(0, (state.canvas.clientWidth - state.width * state.scale) / 2);
+    var oldY = Math.max(0, (state.canvas.clientHeight - state.height * state.scale) / 2);
+    var imageX = (state.viewport.scrollLeft + x - oldX) / state.scale;
+    var imageY = (state.viewport.scrollTop + y - oldY) / state.scale;
+    state.scale = Math.max(state.fit, Math.min(8, scale));
+    dimensions(state);
+    var newX = Math.max(0, (state.canvas.clientWidth - state.width * state.scale) / 2);
+    var newY = Math.max(0, (state.canvas.clientHeight - state.height * state.scale) / 2);
+    state.viewport.scrollLeft = newX + imageX * state.scale - x;
+    state.viewport.scrollTop = newY + imageY * state.scale - y;
+  }
+  function fit(state) {
+    if (!state.width) return;
+    // Remove the old oversized canvas first: scrollbar size must not reduce
+    // the fit every time the dialog is resized or reopened.
+    state.image.style.width = '0px';
+    state.image.style.height = '0px';
+    state.canvas.style.width = state.canvas.style.height = '100%';
+    state.fit = Math.min(1, state.viewport.clientWidth / state.width, state.viewport.clientHeight / state.height);
+    state.fitted = true;
+    setScale(state, state.fit);
+    state.viewport.scrollLeft = state.viewport.scrollTop = 0;
+  }
+  function navigate(state, index) {
+    if (current !== state || index < 0 || index >= state.items.length) return;
+    sequence++;
+    var generation = sequence;
+    releasePointer(state);
+    state.index = index;
+    state.width = state.height = 0;
+    state.fitted = true;
+    state.prev.disabled = index === 0;
+    state.next.disabled = index === state.items.length - 1;
+    state.zoomIn.disabled = state.zoomOut.disabled = state.original.disabled = state.fitButton.disabled = true;
+    state.percent.textContent = '';
+    state.viewport.removeAttribute('data-loaded');
+    var item = state.items[index];
+    state.title.textContent = item.label;
+    state.status.textContent = message('imageLoading');
+    state.newTab.href = sourceURL(item.ref);
+    state.download.href = sourceURL(item.ref) + '?download=1';
+    if (state.image) {
+      state.image.onload = state.image.onerror = null;
+      state.image.removeAttribute('src');
+    }
+    state.canvas.replaceChildren();
+    state.canvas.style.width = state.canvas.style.height = '100%';
+    var image = document.createElement('img');
+    state.image = image;
+    image.alt = item.label;
+    image.draggable = false;
+    image.hidden = true;
+    image.onload = function () {
+      if (current !== state || sequence !== generation || !state.owner.isConnected) return;
+      if (!image.naturalWidth || !image.naturalHeight) { image.onerror(); return; }
+      state.width = image.naturalWidth;
+      state.height = image.naturalHeight;
+      state.scale = 1;
+      image.hidden = false;
+      fit(state);
+      state.fitButton.disabled = state.original.disabled = false;
+      state.viewport.setAttribute('data-loaded', '1');
+      state.status.textContent = '';
+    };
+    image.onerror = function () {
+      if (current !== state || sequence !== generation) return;
+      image.hidden = true;
+      state.status.textContent = message('imageError');
+    };
+    state.canvas.appendChild(image);
+    image.src = sourceURL(item.ref);
+  }
+  window.obImageViewerOpen = function (options) {
+    if (!options || !options.owner || options.owner.ownerDocument !== document || !options.owner.isConnected ||
+        !Array.isArray(options.items) || !Number.isInteger(options.index) || document.getElementById('ob-managed-close-confirm')) return false;
+    var items = options.items.filter(function (item) { return item && validRef(item.ref) && typeof item.field === 'string' && item.field; })
+      .map(function (item) { return {field: item.field, ref: item.ref, label: String(item.label || item.field)}; });
+    if (!items.length || items.length !== (options.items || []).length || options.index < 0 || options.index >= items.length) return false;
+    close();
+    var state = {owner: options.owner, trigger: options.trigger, items: items, index: options.index, scale: 1, fit: 1};
+    var dialog = document.createElement('dialog');
+    state.dialog = dialog;
+    dialog.className = 'ob-image-viewer';
+    dialog.id = 'ob-image-viewer';
+    dialog.setAttribute('aria-labelledby', 'ob-image-viewer-title');
+    var header = document.createElement('header');
+    state.title = document.createElement('h2');
+    state.title.id = 'ob-image-viewer-title';
+    header.appendChild(state.title);
+    var nav = document.createElement('nav');
+    function button(key, text, parent, action) {
+      var node = document.createElement('button');
+      node.type = 'button';
+      node.setAttribute('data-ob-viewer-action', key);
+      node.setAttribute('aria-label', message(key));
+      node.title = message(key);
+      node.textContent = text || message(key);
+      node.addEventListener('click', action);
+      (parent || nav).appendChild(node);
+      return node;
+    }
+    state.closeButton = button('imageClose', '×', header, close);
+    state.prev = button('imagePrevious', '←', null, function () { navigate(state, state.index - 1); });
+    state.next = button('imageNext', '→', null, function () { navigate(state, state.index + 1); });
+    function zoom(factor, x, y) { state.fitted = false; setScale(state, state.scale * factor, x, y); }
+    state.zoomOut = button('imageZoomOut', '−', null, function () { zoom(1 / 1.25); });
+    state.zoomIn = button('imageZoomIn', '+', null, function () { zoom(1.25); });
+    state.original = button('imageOriginal', '100 %', null, function () { state.fitted = false; setScale(state, 1); });
+    state.fitButton = button('imageFit', '', null, function () { fit(state); });
+    state.percent = document.createElement('output');
+    nav.appendChild(state.percent);
+    function link(key) {
+      var node = document.createElement('a');
+      node.textContent = message(key);
+      node.setAttribute('data-ob-viewer-action', key);
+      nav.appendChild(node);
+      return node;
+    }
+    state.newTab = link('imageNewTab');
+    state.newTab.target = '_blank';
+    state.newTab.rel = 'noopener noreferrer';
+    state.download = link('imageDownload');
+    state.download.setAttribute('download', '');
+    var viewport = document.createElement('div');
+    state.viewport = viewport;
+    viewport.className = 'ob-image-viewport';
+    viewport.tabIndex = 0;
+    viewport.setAttribute('role', 'region');
+    viewport.setAttribute('aria-label', message('imageArea'));
+    state.canvas = document.createElement('div');
+    state.canvas.className = 'ob-image-canvas';
+    viewport.appendChild(state.canvas);
+    state.status = document.createElement('p');
+    state.status.className = 'ob-image-status';
+    state.status.setAttribute('role', 'status');
+    state.status.setAttribute('aria-live', 'polite');
+    dialog.append(header, nav, viewport, state.status);
+    dialog.addEventListener('cancel', function (ev) { ev.preventDefault(); close(); });
+    viewport.addEventListener('wheel', function (ev) {
+      if (ev.ctrlKey || ev.metaKey || !state.width || !ev.deltaY) return;
+      ev.preventDefault();
+      var rect = viewport.getBoundingClientRect();
+      zoom(ev.deltaY < 0 ? 1.25 : 1 / 1.25, ev.clientX - rect.left, ev.clientY - rect.top);
+    }, {passive: false});
+    viewport.addEventListener('pointerdown', function (ev) {
+      if (!state.width || !ev.isPrimary || ev.button !== 0) return;
+      state.drag = {id: ev.pointerId, x: ev.clientX, y: ev.clientY, left: viewport.scrollLeft, top: viewport.scrollTop};
+      viewport.setPointerCapture(ev.pointerId);
+      viewport.setAttribute('data-dragging', '1');
+      ev.preventDefault();
+    });
+    viewport.addEventListener('pointermove', function (ev) {
+      if (!state.drag || state.drag.id !== ev.pointerId) return;
+      viewport.scrollLeft = state.drag.left + state.drag.x - ev.clientX;
+      viewport.scrollTop = state.drag.top + state.drag.y - ev.clientY;
+    });
+    viewport.addEventListener('pointerup', function () { releasePointer(state); });
+    viewport.addEventListener('pointercancel', function () { state.background = null; releasePointer(state); });
+    // Pointer capture retargets pointerup to the viewport. Coordinates and the
+    // original down target distinguish an intentional background click from a
+    // drag that ends outside the image.
+    dialog.addEventListener('pointerdown', function (ev) {
+      state.background = (ev.target === dialog || ev.target === viewport || ev.target === state.canvas)
+        ? {x: ev.clientX, y: ev.clientY} : null;
+    });
+    dialog.addEventListener('pointerup', function (ev) {
+      var start = state.background;
+      state.background = null;
+      if (!start || Math.hypot(start.x - ev.clientX, start.y - ev.clientY) > 3) return;
+      var rect = state.image && state.image.getBoundingClientRect();
+      if (rect && !state.image.hidden && ev.clientX >= rect.left && ev.clientX <= rect.right && ev.clientY >= rect.top && ev.clientY <= rect.bottom) return;
+      if (ev.target === dialog || ev.target === viewport || ev.target === state.canvas) close();
+    });
+    state.resize = function () {
+      if (current !== state || !state.width) return;
+      if (state.fitted) fit(state);
+      else {
+        state.fit = Math.min(1, viewport.clientWidth / state.width, viewport.clientHeight / state.height);
+        setScale(state, state.scale);
+      }
+    };
+    state.observer = new MutationObserver(function () {
+      if (current === state) close();
+    });
+    document.body.appendChild(dialog);
+    state.overflow = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = 'hidden';
+    current = state;
+    dialog.showModal();
+    navigate(state, state.index);
+    state.closeButton.focus();
+    window.addEventListener('resize', state.resize);
+    // A changed form projection invalidates the gallery, including live
+    // upload/clear, hidden_when and managed event responses. DOM removal of
+    // the owner is watched separately without reacting to the viewer itself.
+    state.observer.observe(state.owner, {childList: true, subtree: true, attributes: true});
+    state.removalObserver = new MutationObserver(function () {
+      if (current === state && !state.owner.isConnected) close();
+    });
+    state.removalObserver.observe(document.body, {childList: true, subtree: true});
+    return true;
+  };
+  document.addEventListener('click', function (ev) {
+    var trigger = ev.target.closest && ev.target.closest('[data-ob-image-view]');
+    if (!trigger) return;
+    var owner = trigger.closest('form');
+    if (!owner) return;
+    consume(ev);
+    var gallery = formGallery(owner, trigger);
+    window.obImageViewerOpen({owner: owner, items: gallery.items, index: gallery.index, trigger: trigger});
+  }, true);
+  document.addEventListener('dblclick', function (ev) {
+    if (ev.target.closest && ev.target.closest('[data-ob-image-view]')) consume(ev);
+  }, true);
+  document.addEventListener('keydown', function (ev) {
+    if (!current) return;
+    if (ev.key === 'Escape' || ev.keyCode === 27) { consume(ev); close(); return; }
+    if (ev.key === 'Tab') {
+      var controls = Array.prototype.slice.call(current.dialog.querySelectorAll('button:not(:disabled),a[href],[tabindex="0"]'));
+      var index = controls.indexOf(document.activeElement);
+      var next = (index + (ev.shiftKey ? -1 : 1) + controls.length) % controls.length;
+      consume(ev);
+      if (controls[next]) controls[next].focus();
+      return;
+    }
+    if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') {
+      consume(ev);
+      navigate(current, current.index + (ev.key === 'ArrowLeft' ? -1 : 1));
+      return;
+    }
+    // Native dialog keeps focus in its top layer. Stop document/grid/form
+    // shortcuts while preserving native Tab, scrolling and browser controls.
+    ev.stopImmediatePropagation();
+    if ((ev.ctrlKey || ev.metaKey) && /^(s|enter)$/i.test(ev.key)) ev.preventDefault();
+  }, true);
+})();
+
 // Same-origin request/decision protocol shared by shell tabs and reference
 // popups. The parent owns the final DOM removal; the child owns the server
 // close-intent. Correlation plus exact source/origin/document generation prevent
@@ -414,6 +769,7 @@ function obReady(fn) {
   else fn();
 }
 
+
 function obReadJSONScript(id, fallback) {
   var el = document.getElementById(id);
   if (!el) return fallback;
@@ -428,6 +784,25 @@ function obReadJSONScript(id, fallback) {
 
 (function () {
   if (window.__obNavInit) return;
+  // Раскрытие разделов бокового меню — из localStorage, со слежением за
+  // переключением. Общая функция: вкладочная оболочка подменяет меню при смене
+  // раздела без перезагрузки и зовёт её для нового #ob-nav.
+  window.obInitNavSections = function (scope) {
+    try {
+      (scope || document).querySelectorAll('aside details.navsec').forEach(function (d) {
+        var key = 'navsec:' + d.getAttribute('data-navsec');
+        var saved = localStorage.getItem(key);
+        var legacy = d.getAttribute('data-navsec-legacy');
+        if (saved === null && legacy) {
+          saved = localStorage.getItem('navsec:' + legacy);
+          if (saved === '1' || saved === '0') localStorage.setItem(key, saved);
+        }
+        if (saved === '1') d.open = true;
+        else if (saved === '0') d.open = false;
+        d.addEventListener('toggle', function () { localStorage.setItem(key, d.open ? '1' : '0'); });
+      });
+    } catch (e) {}
+  };
   window.__obNavInit = true;
   // Гамбургер значит разное по сторонам брейкпоинта: на узком экране он
   // выдвигает шторку (класс `nav-open` на body, живёт только до перехода), на
@@ -505,20 +880,7 @@ function obReadJSONScript(id, fallback) {
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && document.body.classList.contains('nav-open')) setNav(false);
     });
-    try {
-      document.querySelectorAll('aside details.navsec').forEach(function (d) {
-        var key = 'navsec:' + d.getAttribute('data-navsec');
-        var saved = localStorage.getItem(key);
-        var legacy = d.getAttribute('data-navsec-legacy');
-        if (saved === null && legacy) {
-          saved = localStorage.getItem('navsec:' + legacy);
-          if (saved === '1' || saved === '0') localStorage.setItem(key, saved);
-        }
-        if (saved === '1') d.open = true;
-        else if (saved === '0') d.open = false;
-        d.addEventListener('toggle', function () { localStorage.setItem(key, d.open ? '1' : '0'); });
-      });
-    } catch (e) {}
+    window.obInitNavSections(document);
   });
 })();
 
@@ -850,11 +1212,19 @@ function obInitReportChart() {
   }
 }
 
-obReady(function () {
+// Виджеты рабочего стола: диаграммы и контроллеры обновления. Оболочка зовёт
+// повторно после смены раздела без перезагрузки — уже инициализированные
+// узлы пропускаются (data-ob-init, card._obWidgetController).
+window.obInitDashboard = function () {
   obInitMappedCharts('ob-widget-charts', '.w-chart-canvas[data-widget]', 'data-widget', 'chart init failed', true);
+  obInitWidgetControllers();
+  if (window.obInitLiveList) window.obInitLiveList();
+};
+
+obReady(function () {
+  window.obInitDashboard();
   obInitMappedCharts('ob-page-charts', '.w-chart-canvas[data-pagechart]', 'data-pagechart', 'page chart init failed', false);
   obInitReportChart();
-  obInitWidgetControllers();
 });
 
 function obInitFormDirty() {
@@ -1583,7 +1953,8 @@ function obIsInteractiveTarget(el) {
 }
 
 function obHasBlockingModal() {
-  return !!(document.getElementById('ob-managed-close-confirm') ||
+  return !!((window.obImageViewerIsOpen && window.obImageViewerIsOpen()) ||
+    document.getElementById('ob-managed-close-confirm') ||
     document.getElementById('_ref-picker-modal') ||
     document.getElementById('_item-picker-modal') ||
     document.getElementById('_ref-create-modal'));
@@ -2098,6 +2469,7 @@ function toggleTreeNode(btn) {
   var depth = (tr && tr.dataset.treeDepth) || '0';
   var url = '/ui/_tree-children/' + encodeURIComponent(cfg.treeEntity || '') + '?parent=' + encodeURIComponent(fid) + '&depth=' + encodeURIComponent(depth);
   if (cfg.subsystem) url += '&subsystem=' + encodeURIComponent(cfg.subsystem);
+  if (cfg.listFormOff) url += '&lf_off=' + encodeURIComponent(cfg.listFormOff);
   fetch(url, { credentials: 'same-origin', headers: { Accept: 'application/json' } })
     .then(function (resp) {
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
@@ -3176,6 +3548,38 @@ function obInitRichText() {
 }
 obReady(obInitRichText);
 
+// Keep repeated managed elements of one field in sync after upload/clear.
+// The caller supplies the new authorized value; gallery collection still reads
+// only the visible projection, never hidden backing fields.
+function obSetImageField(wrap, ref) {
+  if (!wrap) return;
+  var owner = wrap.closest('form');
+  var field = wrap.getAttribute('data-ob-image-field');
+  var wraps = owner && field ? owner.querySelectorAll('.img-field[data-ob-image-field]') : [wrap];
+  Array.prototype.forEach.call(wraps, function (candidate) {
+    if (candidate !== wrap && candidate.getAttribute('data-ob-image-field') !== field) return;
+    var hidden = candidate.querySelector('input[type=hidden]');
+    if (hidden) hidden.value = ref;
+    var prev = candidate.querySelector('.img-preview');
+    if (prev) {
+      prev.style.display = ref ? '' : 'none';
+      var img = prev.querySelector('img');
+      if (img) {
+        if (ref) img.src = '/ui/_image/' + encodeURIComponent(ref);
+        else img.removeAttribute('src');
+      }
+      var trigger = prev.querySelector('[data-ob-image-view]');
+      if (trigger) {
+        trigger.setAttribute('data-ob-image-ref', ref);
+        trigger.disabled = !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(ref);
+      }
+    }
+    var clear = candidate.querySelector('.img-clear-btn');
+    if (clear) clear.style.display = ref ? '' : 'none';
+  });
+}
+window.obSetImageField = obSetImageField;
+
 function obImageUpload(input, url) {
   var file = input.files && input.files[0];
   if (!file) return;
@@ -3191,15 +3595,9 @@ function obImageUpload(input, url) {
     })
     .then(function (data) {
       if (!wrap || !data || !data.ref) return;
-      wrap.querySelector('input[type=hidden]').value = data.ref;
-      var prev = wrap.querySelector('.img-preview');
-      if (prev) {
-        var img = prev.querySelector('img');
-        if (img) img.src = '/ui/_image/' + data.ref;
-        prev.style.display = '';
-      }
-      var clr = wrap.querySelector('.img-clear-btn');
-      if (clr) clr.style.display = '';
+      obSetImageField(wrap, data.ref);
+      if (typeof window.obSetManagedFormDirty === 'function') window.obSetManagedFormDirty(true);
+      else if (typeof window.obSetAutoFormDirty === 'function') window.obSetAutoFormDirty(true);
     })
     .catch(function (e) { alert('Ошибка загрузки картинки: ' + e.message); })
     .finally(function () { input.value = ''; });
@@ -3210,18 +3608,11 @@ function obImageClear(btn) {
   if (!wrap) return;
   var hidden = wrap.querySelector('input[type=hidden]');
   var changed = !!(hidden && hidden.value !== '');
-  if (hidden) hidden.value = '';
-	if (changed) {
-	  if (typeof window.obSetManagedFormDirty === 'function') window.obSetManagedFormDirty(true);
-	  else if (typeof window.obSetAutoFormDirty === 'function') window.obSetAutoFormDirty(true);
-	}
-  var prev = wrap.querySelector('.img-preview');
-  if (prev) {
-    prev.style.display = 'none';
-    var img = prev.querySelector('img');
-    if (img) img.removeAttribute('src');
+  obSetImageField(wrap, '');
+  if (changed) {
+    if (typeof window.obSetManagedFormDirty === 'function') window.obSetManagedFormDirty(true);
+    else if (typeof window.obSetAutoFormDirty === 'function') window.obSetAutoFormDirty(true);
   }
-  btn.style.display = 'none';
 }
 
 function obSplitDataList(value) {
@@ -3408,6 +3799,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
   var enumLabels = (obTPEnumLabels()[tpName]) || {};
   var enumOrder = (obTPEnumOrder()[tpName]) || {};
   var bools = Array.isArray(boolFields) ? boolFields : [];
+  var choiceContexts={};try{choiceContexts=JSON.parse(tbody.getAttribute("data-tp-choice")||"{}")||{};}catch(e){}
   var dates = Array.isArray(dateFields) ? dateFields : [];
   if (tbody && tbody.getAttribute('data-tp-cmd') === '1') {
     var tdSel = document.createElement('td');
@@ -3425,6 +3817,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
       wrapper.style.cssText = 'display:flex;gap:4px;align-items:center';
       var sel = document.createElement('select');
       sel.name = 'tp.' + tpName + '.' + idx + '.' + fn;
+      if(choiceContexts[fn]) {sel.setAttribute('data-ref-choice-context',choiceContexts[fn]);sel.setAttribute('data-ref-row-id',String(idx));}
       sel.style.flex = '1';
       var meta = refMeta[fn];
       if (meta && meta.entity) {
@@ -3436,7 +3829,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
       defOpt.value = '';
       defOpt.textContent = '— выбрать —';
       sel.appendChild(defOpt);
-      (refOpts[fn] || []).forEach(function (opt) {
+      (choiceContexts[fn] ? [] : (refOpts[fn] || [])).forEach(function (opt) {
         var o = document.createElement('option');
         o.value = opt.id;
         o.textContent = opt._label || opt.id;
@@ -3523,6 +3916,8 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
   tr.appendChild(tdDel);
   tbody.appendChild(tr);
   if (table) obDOMFinishMutation(table, tr, true);
+  if(window.obAttachTPChoiceContexts)window.obAttachTPChoiceContexts(document);
+  if(window.obRefreshChoiceFilters)window.obRefreshChoiceFilters();
 }
 
 function recalcTpRow(inp) {
@@ -4103,7 +4498,9 @@ function openItemPicker(payload, elementName, eventContext, request) {
   }
   // rowObject — строка в том виде, в каком она уходит обработчику события Выбор.
   function rowObject(tr) {
-    var obj = { id: tr.getAttribute('data-id') };
+    // Имена колонок, включая __proto__, должны стать собственными полями JSON.
+    var obj = Object.create(null);
+    obj.id = tr.getAttribute('data-id');
     cols.forEach(function (c) {
       if (c.editable) {
         var inp = tr.querySelector('._ip-val[data-col="' + c.name + '"]');
@@ -4536,8 +4933,10 @@ function refContextForRequest(sel) {
    пользователя уходит событием Ответ с _question_answer — сервер кладёт его
    в переменную ВопросОтвет и вызывает обработчик Ответ того же элемента.
    Диалог неблокирующий: клик мимо закрывает модал без ответа (обработчик фазы 1
-   сам решает, что делать без второй фазы). */
-function obOpenQuestion(payload, elementName) {
+   сам решает, что делать без второй фазы).
+   handlers (необязательно) — {onAnswer(variant), onDismiss()}: ответ уходит не
+   событием Ответ элемента, а вызывающему (вопрос ПередПроведением). */
+function obOpenQuestion(payload, elementName, handlers) {
   if (!payload || !payload.variants || !payload.variants.length) return;
   var old = document.getElementById('_question-modal');
   if (old) old.remove();
@@ -4565,6 +4964,7 @@ function obOpenQuestion(payload, elementName) {
     btn.style.cssText = 'padding:8px 16px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:14px';
     btn.addEventListener('click', function () {
       modal.remove();
+      if (handlers && typeof handlers.onAnswer === 'function') { handlers.onAnswer(variant); return; }
       if (typeof obFire === 'function') obFire(elementName, 'Ответ', { _question_answer: variant });
     });
     row.appendChild(btn);
@@ -4572,7 +4972,9 @@ function obOpenQuestion(payload, elementName) {
   box.appendChild(row);
   modal.appendChild(box);
   modal.addEventListener('click', function (ev) {
-    if (ev.target === modal) modal.remove();
+    if (ev.target !== modal) return;
+    modal.remove();
+    if (handlers && typeof handlers.onDismiss === 'function') handlers.onDismiss();
   });
   document.body.appendChild(modal);
 }
@@ -4591,16 +4993,34 @@ function obRefChoiceSnapshot(sel) {
   if (!ctx || !ctx.form_entity || !ctx.form || !ctx.element) return null;
   var values = {};
   var declared = ctx.sources || {};
+  var form = sel.form || sel._obChoiceForm;
+  var rowID = sel.getAttribute("data-ref-row-id");
+  // Structural no_grid operations reindex names without dispatching change.
+  // Read the live row index so pickers and pending-response fingerprints use
+  // the current row immediately. Detached SlickGrid carriers keep their id.
+  if (ctx.table_part && !sel._obChoiceRow) {
+    var rowName = (sel.name || '').split('.');
+    if (rowName.length === 4 && rowName[0] === 'tp' &&
+        rowName[1] === ctx.table_part && /^[0-9]+$/.test(rowName[2])) {
+      rowID = rowName[2];
+    }
+  }
   var paths = Object.keys(declared).sort();
   paths.forEach(function (path) {
     var name = declared[path];
-    values[path] = obRefSourceValue(sel.form || document, name) || '';
+    if (ctx.table_part && path.split(".")[0].toLowerCase() === ctx.table_part.toLowerCase()) {
+      if (sel._obChoiceRow) { var key=Object.keys(sel._obChoiceRow).find(function(key){return key.toLowerCase()===String(name).toLowerCase();});
+        values[path] = obChoiceRowValue(sel._obChoiceRow[key]); return; }
+      name = "tp." + ctx.table_part + "." + rowID + "." + name;
+    }
+    values[path] = obRefSourceValue(form || document, name) || '';
   });
   var query = '&form_entity=' + encodeURIComponent(ctx.form_entity) +
     // Форма обработки (#1840): вид владельца — из серверного контекста.
     (ctx.form_kind ? '&form_kind=' + encodeURIComponent(ctx.form_kind) : '') +
     '&form=' + encodeURIComponent(ctx.form) +
     '&element=' + encodeURIComponent(ctx.element) +
+    (ctx.table_part ? '&row_id=' + encodeURIComponent(rowID == null ? '' : rowID) : '') +
     '&sources=' + encodeURIComponent(JSON.stringify(values));
   if (sel.value) query += '&selected_id=' + encodeURIComponent(sel.value);
   var ownerQuery = obRefFilterParam(sel);
@@ -4608,11 +5028,29 @@ function obRefChoiceSnapshot(sel) {
   var fingerprintParts = paths.map(function (path) { return [path, values[path]]; });
   return {
     query: query,
-    fingerprint: JSON.stringify([ctx.form_entity, ctx.form_kind || '', ctx.form, ctx.element, fingerprintParts, ownerQuery]),
+    fingerprint: JSON.stringify([ctx.form_entity, ctx.form_kind || '', ctx.form, ctx.element, rowID, fingerprintParts, ownerQuery]),
     selected: sel.value == null ? '' : String(sel.value)
   };
 }
 
+function obChoiceRowValue(value) {
+  if (value && typeof value === 'object') return String(value.id || value.ID || '');
+  return value == null ? '' : String(value);
+}
+window.obTPChoiceCarrier = function(context, row, rowID, form, field, entity, filter) {
+  var carrier = document.createElement('select');
+  carrier.setAttribute('data-ref-choice-context', context);
+  carrier.setAttribute('data-ref-row-id', String(rowID));
+  carrier.setAttribute('data-ref-entity', entity);
+  if (filter) carrier.setAttribute('data-ref-filter', filter);
+  carrier._obChoiceRow = row;
+  carrier._obChoiceForm = form;
+  // Detached selects have no option matching the UUID. The snapshot must read
+  // the row's value rather than the DOM select's empty fallback.
+  Object.defineProperty(carrier, 'value', {get: function(){return obChoiceRowValue(row[field]);}, configurable:true});
+  return carrier;
+};
+window.obRefChoiceSnapshot = obRefChoiceSnapshot;
 function obRefChoiceQuery(sel) {
   if (!sel || !sel.getAttribute || !sel.getAttribute('data-ref-choice-context')) return '';
   var snapshot = obRefChoiceSnapshot(sel);
@@ -4792,9 +5230,25 @@ window.obRefreshChoiceFilters = function () {
   var selects = document.querySelectorAll('select[data-ref-choice-context]');
   var pending = [];
   for (var i = 0; i < selects.length; i++) pending.push(obRefreshChoiceSelect(selects[i], false));
+  if(window.obRefreshTPChoiceFilters)pending.push(window.obRefreshTPChoiceFilters());
   return Promise.all(pending);
 };
 
+function obAttachTPChoiceContexts(scope) {
+  if (!scope || !scope.querySelectorAll) return;
+  var bodies = scope.querySelectorAll('tbody[data-tp-choice]');
+  for (var i=0; i<bodies.length; i++) {
+    var contexts; try { contexts=JSON.parse(bodies[i].getAttribute('data-tp-choice') || '{}') || {}; } catch(e) {continue;}
+    var controls=bodies[i].querySelectorAll('select[name]');
+    for(var j=0;j<controls.length;j++) {
+      var parts=controls[j].name.split('.'), context=contexts[parts[3]];
+      if(!context)continue;
+      controls[j].setAttribute('data-ref-choice-context',context);
+      controls[j].setAttribute('data-ref-row-id',parts[2]);
+    }
+  }
+}
+window.obAttachTPChoiceContexts=obAttachTPChoiceContexts;
 function obInitChoiceFilterRefresh() {
   if (!document.querySelectorAll) return;
   var selects = document.querySelectorAll('select[data-ref-choice-context]');
@@ -4802,7 +5256,7 @@ function obInitChoiceFilterRefresh() {
     var snapshot = obRefChoiceSnapshot(selects[i]);
     if (snapshot) obChoiceRefreshState(selects[i]).appliedFingerprint = snapshot.fingerprint;
   }
-  document.addEventListener('change', function () { window.obRefreshChoiceFilters(); });
+  document.addEventListener('change', function () { obAttachTPChoiceContexts(document); window.obRefreshChoiceFilters(); });
 }
 obReady(obInitChoiceFilterRefresh);
 
@@ -5023,6 +5477,7 @@ function openRefPicker(selOrId) {
       fetchOptions.method = 'POST';
       fetchOptions.headers['Content-Type'] = 'application/json';
       var sourceElement = sel.getAttribute('data-ref-element') || '';
+      var sourceEntity = sel.getAttribute('data-ref-source-entity') || '';
       var contextValues = {};
       try {
         var bindings = JSON.parse(refContextRaw);
@@ -5033,7 +5488,7 @@ function openRefPicker(selOrId) {
       } catch (e) {}
       fetchOptions.body = JSON.stringify({
         q: q || '', limit: 50, offset: 0,
-        source: { entity: refEntity, element: sourceElement },
+        source: { entity: sourceEntity, element: sourceElement },
         context: contextValues,
         filters: obRefFilterValues(sel) || {}
       });
@@ -5310,6 +5765,13 @@ function openRefCreate(targetSelect, refEntity) {
   }
   function closeOnEscape(ev) {
     if (ev.defaultPrevented || (ev.key !== 'Escape' && ev.keyCode !== 27)) return;
+    var child = frameDocument && frameDocument.defaultView;
+    if (child && child.obImageViewerIsOpen && child.obImageViewerIsOpen()) {
+      child.obImageViewerClose();
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      return;
+    }
     requestPopupClose();
     ev.preventDefault();
     ev.stopPropagation();
@@ -5540,17 +6002,39 @@ window.onebaseDevice = {
   /* Ступень B (план 87): клиентские команды ui.*. Рисует/исполняет только
      оболочка (как callToast) — событие ретранслируется во фреймы, но всплывашку и
      открытие вкладки делает верхнее окно, иначе дубли. */
+  // Адрес формы по ссылке команды ui.открытьФорму. Списку без id можно
+  // передать «отбор» — Структура «Поле → значение» становится отбором списка
+  // (f.<Поле>=…, как панель «Отбор»); отчёту — «параметры» (имена параметров
+  // отчёта) и «сформировать» = Истина, чтобы отчёт сразу построился, как
+  // СкомпоноватьРезультат в 1С. Ссылки приходят идентификатором.
   function formURL(link) {
     link = link || {};
     var kind = String(link['вид'] || link.kind || 'document').toLowerCase();
     var ent = link['сущность'] || link.entity || '';
     var id = link['id'] || link.id || '';
     if (!ent) return '';
+    function pairs(obj, prefix) {
+      var out = [];
+      if (!obj || typeof obj !== 'object') return out;
+      Object.keys(obj).forEach(function (k) {
+        var v = obj[k];
+        if (v === null || v === undefined) return;
+        out.push(encodeURIComponent(prefix + k) + '=' + encodeURIComponent(String(v)));
+      });
+      return out;
+    }
     if (kind === 'processor' || kind === 'report' || kind === 'page') {
-      return '/ui/' + kind + '/' + encodeURIComponent(String(ent));
+      var path = '/ui/' + kind + '/' + encodeURIComponent(String(ent));
+      if (kind !== 'report') return path;
+      var q = pairs(link['параметры'] || link.params, '');
+      var run = link['сформировать'] || link.run;
+      if (run === true || run === 'true') q.push('__run=1');
+      return q.length ? path + '?' + q.join('&') : path;
     }
     var base = '/ui/' + kind + '/' + encodeURIComponent(String(ent).toLowerCase());
-    return id ? base + '/' + encodeURIComponent(String(id)) : base;
+    if (id) return base + '/' + encodeURIComponent(String(id));
+    var f = pairs(link['отбор'] || link.filter, 'f.');
+    return f.length ? base + '?' + f.join('&') : base;
   }
   function openFormTab(link) {
     var url = formURL(link);
@@ -5810,6 +6294,8 @@ window.onebaseDevice = {
       }
     }
   }
+  // После подмены рабочего стола добавляем только ещё не привязанные события.
+  window.obInitLiveList = bindEvents;
 
   // Скрытая вкладка копит dirty; при возврате — один перечитывающий GET.
   document.addEventListener('visibilitychange', function () {

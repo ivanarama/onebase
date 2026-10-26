@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -109,14 +110,42 @@ func wsClose(t *testing.T, s *Server) {
 func wsIntakeTestServer(t *testing.T, session func(ctx context.Context, n int64, c *websocket.Conn)) *httptest.Server {
 	t.Helper()
 	var sessions atomic.Int64
+	ctx, cancel := context.WithCancel(context.Background())
+	var mu sync.Mutex
+	var handlers sync.WaitGroup
+	closing := false
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		if closing {
+			mu.Unlock()
+			return
+		}
+		handlers.Add(1)
+		mu.Unlock()
+		defer handlers.Done()
 		c, err := websocket.Accept(w, r, nil)
 		if err != nil {
 			return
 		}
-		session(r.Context(), sessions.Add(1), c)
+		defer func() { _ = c.CloseNow() }()
+		session(ctx, sessions.Add(1), c)
 	}))
-	t.Cleanup(srv.Close)
+	t.Cleanup(func() {
+		mu.Lock()
+		closing = true
+		mu.Unlock()
+		// Server.Close excludes hijacked connections. Cancel their sessions
+		// explicitly, including handlers waiting for context rather than Read.
+		cancel()
+		srv.Close()
+		done := make(chan struct{})
+		go func() { handlers.Wait(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("WS test server cleanup did not finish all sessions")
+		}
+	})
 	return srv
 }
 

@@ -1280,6 +1280,14 @@ func (h *handler) cfgAdminAbout(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 
+	distributionRows := ""
+	if d := version.DistributionInfo(); d.Present() {
+		distributionRows = fmt.Sprintf(`<tr><td style="padding:6px 0;color:#888">%s</td><td style="padding:6px 0">%s %s</td></tr>`, escHTML(tr(resolveLang(r), "Изменённая сборка")), escHTML(d.Name), escHTML(d.Version))
+		if d.Supplier != "" {
+			distributionRows += fmt.Sprintf(`<tr><td style="padding:6px 0;color:#888">%s</td><td style="padding:6px 0">%s</td></tr>`, escHTML(tr(resolveLang(r), "Поставщик сборки")), escHTML(d.Supplier))
+		}
+	}
+
 	dbLocation := baseDatabaseLocation(b)
 	configMode := "Файлы"
 	configLocation := b.Path
@@ -1303,6 +1311,7 @@ func (h *handler) cfgAdminAbout(w http.ResponseWriter, r *http.Request) {
 	%s
 	<tr><td style="padding:6px 0;color:#888;width:140px">Версия платформы</td><td style="padding:6px 0">%s</td></tr>
 	%s
+	%s
 	<tr><td style="padding:6px 0;color:#888">Режим конфигурации</td><td style="padding:6px 0">%s</td></tr>
 	<tr><td style="padding:6px 0;color:#888">Расположение конфигурации</td><td style="padding:6px 0;word-break:break-all">%s</td></tr>
 	<tr><td style="padding:6px 0;color:#888">База данных</td><td style="padding:6px 0;word-break:break-all">%s</td></tr>
@@ -1315,6 +1324,7 @@ func (h *handler) cfgAdminAbout(w http.ResponseWriter, r *http.Request) {
 		logoHTML,
 		userRow,
 		platVer,
+		distributionRows,
 		cfgRows,
 		escHTML(configMode),
 		escHTML(configLocation),

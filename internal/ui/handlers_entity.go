@@ -74,6 +74,8 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	params = s.applyListFormFilter(r, entity, params)
+
 	view := r.URL.Query().Get("view")
 	// tree проходит мимо нормализации: иерархический вид открывается по
 	// ?view=tree, но персистентно не сохраняется — его выбирают заново.
@@ -206,6 +208,8 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		"EnumLabels":       s.buildEnumLabels(entity, lang),
 		"BasedOnActions":   s.basedOnActions(r, entity, lang),
 		"RequestURI":       r.URL.RequestURI(),
+		"ListFormToggles":  s.listFormFilterToggles(r, entity),
+		"ListFormOff":      r.URL.Query().Get(listFormFilterOffParam),
 		"ListFilterExtra":  listFilterExtra,
 	})
 }
@@ -1382,6 +1386,7 @@ func (s *Server) treeChildrenJSON(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	params = s.applyListFormFilter(r, ent, params)
 	rows, err := s.store.List(r.Context(), ent.Name, ent, params)
 	if err != nil {
 		s.serverError(w, r, err)
@@ -1426,6 +1431,9 @@ func (s *Server) treeChildRows(r *http.Request, entity *metadata.Entity, rows []
 		if subQS != "" {
 			folderURL += "&" + subQS
 			openURL += "?" + subQS
+		}
+		if off := r.URL.Query().Get(listFormFilterOffParam); off != "" {
+			folderURL += "&" + listFormFilterOffParam + "=" + url.QueryEscape(off)
 		}
 		copyURL := ""
 		if canCopy {
@@ -1567,7 +1575,7 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 	// поэтому RLS на чтение, объявленный в autogen-форме, тоже срабатывает.
 	if objForm := pickObjectFormWithReadHook(entity); objForm != nil {
 		if denied := s.runFormReadHook(r.Context(), entity, objForm, id); denied != nil {
-			s.renderForbidden(w, r)
+			s.renderReadHookDenied(w, r, denied)
 			return
 		}
 	}

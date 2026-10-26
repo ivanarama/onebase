@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
@@ -123,6 +124,9 @@ func newTemplate(bundle *i18n.Bundle) (*template.Template, error) {
 // показ даты нужен не только шаблонам, и каждая новая копия этой логики — новый
 // шанс забыть про `In(time.Local)`.
 func fmtDateValue(v any) string {
+	if v == nil {
+		return ""
+	}
 	fmtT := func(t time.Time) string {
 		lt := t.In(time.Local)
 		h, m, sec := lt.Clock()
@@ -389,6 +393,11 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"isRichText": func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
 		"isImage":    func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
+		"isImageRef": func(raw any) bool {
+			value := fmt.Sprint(raw)
+			_, err := uuid.Parse(value)
+			return len(value) == 36 && err == nil
+		},
 		"fieldNamesCSV": func(fields []metadata.Field) string {
 			names := make([]string, 0, len(fields))
 			for _, f := range fields {
@@ -506,6 +515,17 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return selectedRefOptionsOnly(rows, formContextValue(ctx, field))
 			}
 			return rows
+		},
+		// hideRefCard — убрать ли у поля кнопку «Открыть карточку» (🔍): явный
+		// ref_card_button поля решает сам, иначе — решение формы (HideRefCard из
+		// prepareManagedFormData: ref_card_button: false или «только
+		// администратору» для неадминистратора), #1876.
+		"hideRefCard": func(ctx map[string]any, element *metadata.FormElement) bool {
+			if element != nil && element.RefCardButton != nil {
+				return !*element.RefCardButton
+			}
+			hidden, _ := ctx["HideRefCard"].(bool)
+			return hidden
 		},
 		"choiceDropdownCollapsed": func(element *metadata.FormElement) bool {
 			return element != nil && element.ChoiceDropdown != nil && !*element.ChoiceDropdown
@@ -925,6 +945,21 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return b.String()
 		},
 		"fmtDate": fmtDateValue,
+		// boolFilterValue — значение булева отбора из адреса: "true"/"false",
+		// "" — пусто или не распознано (storage.ParseBoolValue).
+		"boolFilterValue": func(raw string) string {
+			if strings.TrimSpace(raw) == "" {
+				return ""
+			}
+			b, ok := storage.ParseBoolValue(raw)
+			if !ok {
+				return ""
+			}
+			if b {
+				return "true"
+			}
+			return "false"
+		},
 		"filterVal": func(params storage.ListParams, fieldName string) storage.FilterValue {
 			return filterValue(params, fieldName)
 		},
@@ -958,29 +993,20 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"isActivityField": func(e *metadata.Entity, f metadata.Field) bool {
 			return e != nil && e.Activity != nil && f.Name == e.Activity.Field
 		},
-		"listQuerySuffix": func(params storage.ListParams) template.URL {
-			var parts []string
-			if params.ActivityScope != "" {
-				parts = append(parts, "activity="+url.QueryEscape(params.ActivityScope))
+		"listQuerySuffix": funcsListQuerySuffix,
+		// listExcelSuffix — состояние списка для выгрузки в Excel: то же, что
+		// listQuerySuffix, плюс снятые отборы формы списка (lf_off).
+		"listExcelSuffix": func(params storage.ListParams, offValue any) template.URL {
+			suffix := string(funcsListQuerySuffix(params))
+			off, _ := offValue.(string)
+			if strings.TrimSpace(off) == "" {
+				return template.URL(suffix) //nolint:gosec // G203: строка собрана listQuerySuffix из экранированных частей
 			}
-			if params.Search != "" {
-				parts = append(parts, "q="+url.QueryEscape(params.Search))
+			sep := "?"
+			if suffix != "" {
+				sep = "&"
 			}
-			for k, v := range params.Filters {
-				if v.From != "" {
-					parts = append(parts, "f."+url.QueryEscape(k)+".from="+url.QueryEscape(v.From))
-				}
-				if v.To != "" {
-					parts = append(parts, "f."+url.QueryEscape(k)+".to="+url.QueryEscape(v.To))
-				}
-				if v.Value != "" {
-					parts = append(parts, "f."+url.QueryEscape(k)+"="+url.QueryEscape(v.Value))
-				}
-			}
-			if len(parts) == 0 {
-				return ""
-			}
-			return template.URL("?" + strings.Join(parts, "&")) //nolint:gosec // G203: части строки запроса пропущены через url.QueryEscape
+			return template.URL(suffix + sep + "lf_off=" + url.QueryEscape(off)) //nolint:gosec // G203: значение пропущено через url.QueryEscape
 		},
 		"filterQuery": func(params storage.ListParams) template.URL {
 			var parts []string
@@ -1245,6 +1271,31 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
 		"managedTPColumnPlan": managedTPColumnPlan,
+		"tpChoiceContexts": func(ctx map[string]any, table *metadata.FormElement) map[string]string {
+			all, _ := ctx["TPChoices"].(map[*metadata.FormElement]*tpChoiceRender)
+			if all[table] != nil {
+				return all[table].Contexts
+			}
+			return nil
+		},
+		"tpChoiceRows": func(ctx map[string]any, table *metadata.FormElement) map[string][][]map[string]any {
+			all, _ := ctx["TPChoices"].(map[*metadata.FormElement]*tpChoiceRender)
+			if all[table] != nil {
+				return all[table].Options
+			}
+			return nil
+		},
+		"tpChoiceOptions": func(ctx map[string]any, table *metadata.FormElement, field string, row int, fallback map[string][]map[string]any) []map[string]any {
+			all, _ := ctx["TPChoices"].(map[*metadata.FormElement]*tpChoiceRender)
+			if all[table] != nil && all[table].Contexts[field] != "" {
+				rows := all[table].Options[field]
+				if row < len(rows) {
+					return rows[row]
+				}
+				return nil
+			}
+			return fallback[field]
+		},
 		// managedTPFieldsAttr — значение data-tp-fields в порядке отрисовки
 		// ячеек: applyTableParts перестраивает строку по этому списку, и любое
 		// расхождение порядка развалило бы соответствие ячеек колонкам.
@@ -1306,6 +1357,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// Решается по составу маски, а не отдельным ключом: «00.00.00» — это
 		// заведомо цифры, и заставлять автора объявлять это второй раз незачем.
 		"inputMaskDigitsOnly": metadata.InputMaskDigitsOnly,
+		"inputAutocomplete":   inputAutocomplete,
+		"inputMaskHint":       metadata.InputMaskHint,
 		"wcell":               widgetCell,
 		"echartsJSON":         echartsJSON,
 		"stageChartJSON":      stageChartJSON,
@@ -1354,6 +1407,12 @@ func cloneQuery(current any) url.Values {
 func isListStateQueryKey(key string) bool {
 	switch key {
 	case "q", "sort", "dir", "activity", "view", "lm", "parent", "subsystem", "limit", "page":
+		return true
+	// Снятый отбор по умолчанию формы списка переносится, как поиск и отбор:
+	// иначе «Применить» отбора, поиск, сортировка и страницы молча включали
+	// его обратно, и, например, «Выполнена = Да» при снятом «Невыполненные»
+	// давало пустой список.
+	case listFormFilterOffParam:
 		return true
 	default:
 		return strings.HasPrefix(key, "f.")
@@ -1454,6 +1513,18 @@ const tplHead = `
 <script type="application/json" id="ob-ui-messages">{{jsJSON (dict
   "closeNotConfirmed" (t (or $.Lang "ru") "Форма не закрыта: сервер не подтвердил закрытие.")
   "unsavedClose" (t (or $.Lang "ru") "Данные были изменены и не записаны. Закрыть форму?")
+  "imageClose" (t (or $.Lang "ru") "Закрыть просмотр изображения")
+  "imagePrevious" (t (or $.Lang "ru") "Предыдущее изображение")
+  "imageNext" (t (or $.Lang "ru") "Следующее изображение")
+  "imageZoomIn" (t (or $.Lang "ru") "Увеличить изображение")
+  "imageZoomOut" (t (or $.Lang "ru") "Уменьшить изображение")
+  "imageFit" (t (or $.Lang "ru") "Вписать изображение")
+  "imageOriginal" (t (or $.Lang "ru") "Исходный размер изображения")
+  "imageNewTab" (t (or $.Lang "ru") "Открыть изображение в новой вкладке")
+  "imageDownload" (t (or $.Lang "ru") "Скачать изображение")
+  "imageLoading" (t (or $.Lang "ru") "Загрузка изображения…")
+  "imageError" (t (or $.Lang "ru") "Не удалось загрузить изображение")
+  "imageArea" (t (or $.Lang "ru") "Область просмотра изображения")
 )}}</script>
 <script src="/static/ui.js"></script>
 <style>
@@ -1674,6 +1745,24 @@ body{padding-bottom:32px}
 .search-hit-posted{color:#16a34a;font-weight:600}
 /* Поле-картинка на форме */
 .img-field{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.img-preview [data-ob-image-view]{display:block;border:0;padding:0;background:transparent;cursor:zoom-in;border-radius:8px}
+.img-preview [data-ob-image-view]:focus-visible{outline:3px solid #2563eb;outline-offset:3px}
+.ob-image-viewer{margin:auto;width:96vw;height:92vh;max-width:96vw;max-height:92vh;padding:12px;border:1px solid #475569;border-radius:12px;background:#0f172a;color:#f8fafc;overflow:hidden}
+.ob-image-viewer[open]{display:flex;flex-direction:column;gap:10px}
+.ob-image-viewer::backdrop{background:rgba(0,0,0,.72)}
+.ob-image-viewer header,.ob-image-viewer nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.ob-image-viewer h2{color:#f8fafc;flex:1;font-size:16px;overflow-wrap:anywhere}
+.ob-image-viewer button,.ob-image-viewer a{border:1px solid #64748b;border-radius:6px;padding:6px 10px;background:#1e293b;color:#f8fafc;font:inherit;text-decoration:none;cursor:pointer}
+.ob-image-viewer button:disabled{opacity:.4;cursor:default}
+.ob-image-viewer :focus-visible{outline:3px solid #60a5fa;outline-offset:2px}
+.ob-image-viewport{flex:1;min-height:0;overflow:auto;touch-action:none;overscroll-behavior:contain;background:#020617}
+.ob-image-canvas{display:grid;place-items:center;min-width:100%;min-height:100%}
+.ob-image-canvas img[hidden]{display:none}
+.ob-image-canvas img{display:block;max-width:none;max-height:none;user-select:none;touch-action:none}
+.ob-image-viewport[data-loaded="1"]{cursor:grab}
+.ob-image-viewport[data-dragging="1"]{cursor:grabbing}
+.ob-image-status{min-height:1.4em;font-size:13px}
+@media(prefers-reduced-motion:reduce){.ob-image-viewer *{scroll-behavior:auto}}
 .img-preview img{max-width:240px;max-height:240px;border-radius:8px;border:1px solid #e2e8f0;display:block;background:#f8fafc}
 .img-actions{display:flex;gap:8px;align-items:center}
 .img-field label.btn{cursor:pointer;margin:0}
@@ -2058,6 +2147,13 @@ const tplList = `
       <a class="view-btn{{if eq .Params.ActivityScope "all"}} active{{end}}" href="{{listURL $.Query "activity" "all"}}">{{t $.Lang "Все"}}</a>
     </div>
     {{end}}
+    {{/* Снимаемые отборы формы списка (filter: removable): включённый — с
+         галочкой; щелчок переключает, состояние живёт в адресе (lf_off). */}}
+    {{if .ListFormToggles}}
+    <div class="view-switch" data-ob-list-form-toggles>
+      {{range .ListFormToggles}}<a class="view-btn{{if .On}} active{{end}}" href="{{listURL $.Query "lf_off" .Off}}" aria-pressed="{{if .On}}true{{else}}false{{end}}">{{if .On}}☑{{else}}☐{{end}} {{.Label}}</a>{{end}}
+    </div>
+    {{end}}
     {{if not .TreeView}}
       {{if .Feed}}<a class="btn btn-secondary btn-sm" href="{{listURL $.Query "lm" "pages"}}" title="{{t $.Lang "Показывать постранично"}}">▤ {{t $.Lang "Страницы"}}</a>
       {{else}}<a class="btn btn-secondary btn-sm" href="{{listURL $.Query "lm" "feed"}}" title="{{t $.Lang "Лента с догрузкой по скроллу"}}">≣ {{t $.Lang "Лента"}}</a>{{end}}
@@ -2074,7 +2170,7 @@ const tplList = `
     {{/* На свежем списке строка не выбрана — кнопка приходит с сервера уже
          приглушённой, дальше её состояние ведёт ui.js по выделению. */}}
     <button type="button" id="list-actions-btn" class="btn btn-secondary" data-ob-list-actions aria-disabled="true" title="{{t $.Lang "Сначала выберите строку списка"}}">⚙ {{t $.Lang "Действия"}} ▾</button>
-    <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{listQuerySuffix .Params}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
+    <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{listExcelSuffix .Params .ListFormOff}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
   </div>
 </div>
 <form method="GET" style="display:flex;gap:8px;margin-bottom:12px;max-width:460px">
@@ -2122,6 +2218,20 @@ const tplList = `
           <button type="button" data-ob-ref-picker="flt-{{$f.Name}}" style="padding:7px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
         </div>
       </div>
+    {{else if eq (str .Type) "bool"}}{{$raw := (filterVal $params .Name).Value}}{{$bv := boolFilterValue $raw}}
+      <div>
+        <label>{{.DisplayName $.Lang}}</label>
+        {{/* Значение из адреса распознаётся тем же правилом, что у хранилища
+             («нет», «1», «истина»…), и отправляется нормализованным. Нераспознанное
+             остаётся выбранным как есть: повторное «Применить» не превращает
+             пустой список во весь (#2184). */}}
+        <select name="f.{{.Name}}">
+          <option value="">{{t $.Lang "— все —"}}</option>
+          <option value="true" {{if eq $bv "true"}}selected{{end}}>{{t $.Lang "Да"}}</option>
+          <option value="false" {{if eq $bv "false"}}selected{{end}}>{{t $.Lang "Нет"}}</option>
+          {{if and $raw (eq $bv "")}}<option value="{{$raw}}" selected>{{$raw}}</option>{{end}}
+        </select>
+      </div>
     {{else}}
       <div>
         <label>{{.DisplayName $.Lang}}</label>
@@ -2167,7 +2277,7 @@ const tplList = `
 <table
   data-ob-row-base="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}"
   data-ob-row-subsystem="{{$.CurrentSubsystem}}"
-  data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
+  data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "view" "" "parent" ""}}"
   data-ob-row-copy-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
   data-ob-row-can-copy="{{if $.CanCreate}}1{{end}}"
   data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
@@ -2207,7 +2317,7 @@ const tplList = `
   {{end}}
   <td>
     {{if $isFolder}}
-      <a class="btn btn-sm btn-secondary" href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}?parent={{index $row "id"}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "▶ Войти"}}</a>
+      <a class="btn btn-sm btn-secondary" href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "view" "" "parent" (str (index $row "id"))}}">{{t $.Lang "▶ Войти"}}</a>
     {{else}}
       <a class="btn btn-sm btn-primary" href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "Открыть"}}</a>
     {{end}}
@@ -2352,6 +2462,7 @@ const tplList = `
   "canUnpost" .CanUnpost
   "basedOn" .BasedOnActions
   "treeEntity" .Entity.Name
+  "listFormOff" .ListFormOff
   "subsystem" (str $.CurrentSubsystem)
   "labels" (dict
     "enterGroup" (t $.Lang "▶ Войти в группу")
@@ -2579,10 +2690,10 @@ const tplForm = `
     {{/* Поле-картинка: скрытый input хранит ссылку (UUID), превью + загрузка/очистка.
          Без JS остаётся скрытый input — значение не теряется при записи. */}}
     {{$iv := index $.Values $fn}}
-    <div class="img-field">
+    <div class="img-field" data-ob-image-field="{{$fn}}" data-ob-image-label="{{$flabel}}">
       <input type="hidden" name="{{$fn}}" value="{{$iv}}">
-      <div class="img-preview"{{if not $iv}} style="display:none"{{end}}><img src="{{if $iv}}/ui/_image/{{$iv}}{{end}}" alt=""></div>
-      {{if not $ro}}
+      <div class="img-preview"{{if not $iv}} style="display:none"{{end}}><button type="button"{{if not (isImageRef $iv)}} disabled{{end}} data-ob-image-view data-ob-readonly-navigation="1" data-ob-image-ref="{{$iv}}" aria-label="{{$flabel}}"><img src="{{if $iv}}/ui/_image/{{$iv}}{{end}}" alt="{{$flabel}}"></button></div>
+      {{if and (not $ro) $.CanWrite}}
       <div class="img-actions">
         <label class="btn btn-sm btn-secondary">{{t $.Lang "Загрузить…"}}<input type="file" accept="image/*" style="display:none" data-ob-image-upload="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/_image"></label>
         <button type="button" class="btn btn-sm img-clear-btn" data-ob-image-clear{{if not $iv}} style="display:none"{{end}}>{{t $.Lang "Очистить"}}</button>
@@ -2721,7 +2832,10 @@ const tplForm = `
 <link rel="stylesheet" href="/vendor/quill/quill.snow.css">
 <script src="/vendor/quill/quill.js"></script>
 {{end}}
-<script type="application/json" id="ob-tp-ref-opts">{{jsJSON .TPRefOptions}}</script>
+{{/* Управляемая форма выводит те же варианты своим блоком
+     (ob-managed-tp-ref-opts) — второй экземпляр удваивал страницу: у заявки
+     колл-центра это 1,3 МБ дважды. */}}
+{{if not .Form}}<script type="application/json" id="ob-tp-ref-opts">{{jsJSON .TPRefOptions}}</script>{{end}}
 <script type="application/json" id="ob-tp-ref-meta">{{jsJSON .TPRefMeta}}</script>
 {{/* Перечисления колонок ТЧ — для строк, которые добавляет JS (#1010): сервер
      их не рендерит, а без вариантов и порядка addTpRow снова поставил бы
@@ -3476,6 +3590,10 @@ const tplAbout = `
         {{with .UpdateAvailable}}<div style="margin-top:6px;font-weight:400;font-size:13px;color:#166534">{{t $.Lang "Доступна новая версия платформы"}}: {{.}} <span style="color:#94a3b8">— {{t $.Lang "обновление выполняется из лаунчера"}}</span></div>{{end}}
       </td>
     </tr>
+    {{with .Distribution}}{{if .Present}}
+    <tr><td style="padding:14px 0;color:#64748b;font-size:14px">{{t $.Lang "Изменённая сборка"}}</td><td style="padding:14px 0;font-size:14px">{{.Name}} {{.Version}}</td></tr>
+    {{if .Supplier}}<tr><td style="padding:14px 0;color:#64748b;font-size:14px">{{t $.Lang "Поставщик сборки"}}</td><td style="padding:14px 0;font-size:14px">{{.Supplier}}</td></tr>{{end}}
+    {{end}}{{end}}
     {{if .Cfg.PlatAuthor}}
     <tr>
       <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">{{t $.Lang "Правообладатель платформы"}}</td>
@@ -4399,3 +4517,46 @@ const tplPageCustom = `
 </body></html>
 {{end}}
 `
+
+// inputAutocomplete — значение autocomplete текстового поля управляемой формы.
+// Обычно "off" (#595). Поле с маской ввода — почти всегда телефон, а
+// автозаполнение Яндекс Браузера на "off" не смотрит и предлагает сохранённые
+// номера из своего профиля. "one-time-code" по стандарту HTML — поле кода
+// подтверждения: браузер может подставить в него пришедший одноразовый код
+// (так делает Safari), но не сохранённые телефоны. Проверено вручную: в Яндекс
+// Браузере подсказки телефонов на таком поле пропадают. Это обход для
+// телефонов, а не гарантия, что подсказок нет ни в одном браузере;
+// "new-password" тоже гасит подсказки, но зовёт менеджер паролей.
+func inputAutocomplete(el *metadata.FormElement) string {
+	if el != nil && el.InputMask != "" {
+		return "one-time-code"
+	}
+	return "off"
+}
+
+// funcsListQuerySuffix — состояние списка (активность, поиск, отбор) строкой
+// запроса для ссылок выгрузки.
+func funcsListQuerySuffix(params storage.ListParams) template.URL {
+	var parts []string
+	if params.ActivityScope != "" {
+		parts = append(parts, "activity="+url.QueryEscape(params.ActivityScope))
+	}
+	if params.Search != "" {
+		parts = append(parts, "q="+url.QueryEscape(params.Search))
+	}
+	for k, v := range params.Filters {
+		if v.From != "" {
+			parts = append(parts, "f."+url.QueryEscape(k)+".from="+url.QueryEscape(v.From))
+		}
+		if v.To != "" {
+			parts = append(parts, "f."+url.QueryEscape(k)+".to="+url.QueryEscape(v.To))
+		}
+		if v.Value != "" {
+			parts = append(parts, "f."+url.QueryEscape(k)+"="+url.QueryEscape(v.Value))
+		}
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return template.URL("?" + strings.Join(parts, "&")) //nolint:gosec // G203: части строки запроса пропущены через url.QueryEscape
+}
