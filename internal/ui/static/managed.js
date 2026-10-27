@@ -3181,8 +3181,10 @@ function obGridColumnIds(columns) {
       var seq = ++searchSeq;
       var requestFilter = requestParam();
       lastChoiceRequest=requestFilter;
+      var refMarked = (args.column && args.column.refMarked) || '';
       var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) +
-                '?limit=50&q=' + encodeURIComponent(q || '') + requestFilter;
+                '?limit=50&q=' + encodeURIComponent(q || '') + requestFilter +
+                (refMarked ? '&marked=' + refMarked : '');
       fetch(url, {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
         .then(function(resp) { if (!resp.ok) throw new Error('HTTP ' + resp.status); return resp.json(); })
         .then(function(data) {
@@ -3679,6 +3681,8 @@ function obGridColumnIds(columns) {
         // подбора уходила в локальный фильтр вместо /ui/_ref-options.
         col.refEntity = c.ref;
         col.refFilter = c.refFilter || '';
+        // Ключ choice_show_deleted реквизита для выдачи /ui/_ref-options.
+        col.refMarked = c.refMarked || '';
         // allowCreate приходит из allow_inline_create поля ТЧ (сервер кладёт
         // его в data-sg-cols только когда создание разрешено).
         col.allowCreate = !!c.allowCreate;
@@ -4344,7 +4348,7 @@ function obGridColumnIds(columns) {
           var seq=++state.seq;state.pending=key;
           var picker=document.getElementById('_ref-picker-modal');
           if(picker && window._rpTarget && window._rpTarget._obChoiceRow===row && typeof picker._obChoiceReload==='function')picker._obChoiceReload();
-          var job=window.fetch('/ui/_ref-options/'+encodeURIComponent(col.refEntity)+'?limit=50'+snapshot.query,{credentials:'same-origin',headers:{Accept:'application/json'}})
+          var job=window.fetch('/ui/_ref-options/'+encodeURIComponent(col.refEntity)+'?limit=50'+snapshot.query+(col.refMarked?'&marked='+col.refMarked:''),{credentials:'same-origin',headers:{Accept:'application/json'}})
             .then(function(resp){if(!resp.ok)throw new Error('HTTP '+resp.status);return resp.json();})
             .then(function(data){
               if(state.seq!==seq || g.dataView.getItems().indexOf(row)<0)return;

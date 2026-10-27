@@ -42,6 +42,7 @@ function runtime() {
   vm.runInContext(ui.slice(ui.indexOf('function obRefSourceValue(scope, name)'), ui.indexOf('// obRefFilterParam')), sandbox);
   vm.runInContext(ui.slice(ui.indexOf('function obRefChoiceSnapshot(sel)'), ui.indexOf('function obAttachTPChoiceContexts')), sandbox);
   sandbox.obRefFilterParam = () => '';
+  sandbox.obRefMarkedParam = () => '';
   sandbox.obChoiceApplyResponse = (sel, data) => applied.push(data.marker);
   function shortcut(row, key, ctrlKey = false) {
     document.activeElement = row;

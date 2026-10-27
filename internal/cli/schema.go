@@ -134,6 +134,7 @@ func allSchemas() map[string]map[string]any {
 			"titles":              stringMapSchema(),
 			"type":                stringSchema("string|number|date|bool|text|richtext|image|reference:<Объект>|enum:<Перечисление>|number(10,2)"),
 			"allow_inline_create": map[string]any{"type": "boolean"},
+			"choice_show_deleted": boolSchema("Показывать в выборе элементы, помеченные на удаление: true — показывать, false — скрывать. По умолчанию при вводе данных скрыты, в параметрах отчётов и отборах списков показаны с отметкой"),
 			"id":                  stringSchema("Устойчивый идентификатор реквизита: не меняется при переименовании, по нему миграция переименовывает колонку, а не заводит новую"),
 			"required":            boolSchema("Реквизит обязателен к заполнению; проверяется при записи"),
 			"pii":                 boolSchema("Реквизит содержит персональные данные: закрыт маской для роли, которая про него не сказала read: full"),
@@ -195,13 +196,14 @@ func allSchemas() map[string]map[string]any {
 		"additionalProperties": false,
 		"required":             []string{"name", "type"},
 		"properties": map[string]any{
-			"name":       stringSchema("Имя параметра"),
-			"type":       stringSchema("Тип параметра"),
-			"label":      stringSchema("Подпись"),
-			"labels":     stringMapSchema(),
-			"default":    stringSchema("Значение параметра по умолчанию"),
-			"options":    arrayOf(stringSchema("Значение")),
-			"period_end": boolSchema("Для type: date — использовать конец выбранного дня (23:59:59)"),
+			"name":                stringSchema("Имя параметра"),
+			"type":                stringSchema("Тип параметра"),
+			"label":               stringSchema("Подпись"),
+			"labels":              stringMapSchema(),
+			"default":             stringSchema("Значение параметра по умолчанию"),
+			"options":             arrayOf(stringSchema("Значение")),
+			"period_end":          boolSchema("Для type: date — использовать конец выбранного дня (23:59:59)"),
+			"choice_show_deleted": boolSchema("Показывать в выборе элементы, помеченные на удаление: true — показывать, false — скрывать. По умолчанию при вводе данных скрыты, в параметрах отчётов и отборах списков показаны с отметкой"),
 		},
 	}
 	// Параметр ОБРАБОТКИ знает обязательность, параметр отчёта — нет
@@ -212,13 +214,14 @@ func allSchemas() map[string]map[string]any {
 		"additionalProperties": false,
 		"required":             []string{"name", "type"},
 		"properties": map[string]any{
-			"name":     stringSchema("Имя параметра"),
-			"type":     stringSchema("Тип параметра"),
-			"label":    stringSchema("Подпись"),
-			"labels":   stringMapSchema(),
-			"default":  map[string]any{"description": "Значение параметра по умолчанию"},
-			"options":  arrayOf(stringSchema("Значение")),
-			"required": boolSchema("Обязательный параметр"),
+			"name":                stringSchema("Имя параметра"),
+			"type":                stringSchema("Тип параметра"),
+			"label":               stringSchema("Подпись"),
+			"labels":              stringMapSchema(),
+			"default":             map[string]any{"description": "Значение параметра по умолчанию"},
+			"options":             arrayOf(stringSchema("Значение")),
+			"required":            boolSchema("Обязательный параметр"),
+			"choice_show_deleted": boolSchema("Показывать в выборе элементы, помеченные на удаление: true — показывать, false — скрывать. По умолчанию при вводе данных скрыты, в параметрах отчётов и отборах списков показаны с отметкой"),
 		},
 	}
 	detailPanelTab := map[string]any{
@@ -349,6 +352,7 @@ func allSchemas() map[string]map[string]any {
 				// подчёркивал бы как ошибку ровно тот вариант, который в
 				// документации назван основным.
 				"choice_preview":      stringSchema("Реквизит, текст которого показывается в области просмотра формы выбора (диалога подбора)"),
+				"choice_show_deleted": boolSchema("Показывать в выборе элементы, помеченные на удаление: true — показывать, false — скрывать. По умолчанию при вводе данных скрыты, в параметрах отчётов и отборах списков показаны с отметкой"),
 				"choice_preview_proc": stringSchema("«Модуль.Функция», собирающая тексты просмотра формы выбора с учётом контекста подбора: Функция(Ссылки, Контекст) → Соответствие"),
 				"presentation": map[string]any{
 					"description": "Реквизит(ы) представления объекта; по умолчанию — правило по именам, «Код» последним",
@@ -567,6 +571,7 @@ func managedFormSchema() map[string]any {
 			"kind":                stringSchema("Вид элемента формы"),
 			"data_path":           stringSchema("Путь к значению элемента"),
 			"equal_columns":       boolSchema("Равная ширина детей горизонтальной ГруппаФормы без scroll_x; по умолчанию false"),
+			"choice_show_deleted": boolSchema("Показывать в выборе элементы, помеченные на удаление: true — показывать, false — скрывать. По умолчанию при вводе данных скрыты, в параметрах отчётов и отборах списков показаны с отметкой"),
 			"choice_folders":      boolSchema("Разрешить выбор элементов и групп иерархического справочника в ссылочном поле; по умолчанию false"),
 			"choice_dropdown":     boolSchema("Предзагружать варианты в выпадающий список ссылочного поля; отсутствие ключа или true включает варианты, false оставляет плейсхолдер и текущее значение для выбора через форму подбора"),
 			"editable_admin_only": boolSchema("Разрешить редактирование поля только администратору; сервер отклоняет изменения от остальных пользователей; по умолчанию false"),

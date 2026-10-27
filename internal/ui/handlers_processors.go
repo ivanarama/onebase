@@ -106,7 +106,7 @@ func (s *Server) loadProcessorRefOpts(ctx context.Context, params []processorpkg
 		if entity == nil {
 			continue
 		}
-		rows, err := s.initialReferenceOptions(ctx, entity, refOptionsChoice, []string{refValueString(values[p.Name])})
+		rows, err := s.initialReferenceOptions(ctx, entity, refOptionsChoice.withMarked(p.ChoiceShowDeleted), []string{refValueString(values[p.Name])})
 		if err != nil {
 			continue
 		}

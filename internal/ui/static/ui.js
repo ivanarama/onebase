@@ -4846,6 +4846,21 @@ function obRefFilterParam(sel) {
 }
 window.obRefFilterParam = obRefFilterParam;
 
+// obRefMarkedParam — помеченные на удаление в выдаче /ui/_ref-options: поле
+// поиска по истории (data-ref-search — отбор списка, параметр отчёта) их
+// показывает, ключ choice_show_deleted поля (data-ref-marked="1"/"0")
+// перекрывает. Без признаков сервер считает поле вводом данных и помеченные
+// скрывает.
+function obRefMarkedParam(el) {
+  if (!el || !el.getAttribute) return '';
+  var out = '';
+  if (el.getAttribute('data-ref-search') === '1') out += '&search=1';
+  var marked = el.getAttribute('data-ref-marked');
+  if (marked === '1' || marked === '0') out += '&marked=' + marked;
+  return out;
+}
+window.obRefMarkedParam = obRefMarkedParam;
+
 // obRefreshDependentSelects — сменили контрагента: списки, отобранные по нему,
 // перестраиваем сразу, не дожидаясь перерисовки формы. Значение, выпавшее из
 // нового отбора, очищаем: договор чужого контрагента в поле — это молча
@@ -4869,7 +4884,7 @@ function obRefreshDependentSelects(sourceEl) {
       var filter = obRefFilterParam(sel);
       var seq = (sel._obOwnerRefreshSeq || 0) + 1;
       sel._obOwnerRefreshSeq = seq;
-      var url = '/ui/_ref-options/' + encodeURIComponent(entity) + '?limit=50' + filter;
+      var url = '/ui/_ref-options/' + encodeURIComponent(entity) + '?limit=50' + filter + obRefMarkedParam(sel);
       fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
         .then(function (resp) { return resp.ok ? resp.json() : null; })
         .then(function (data) {
@@ -5175,7 +5190,7 @@ function obRefreshChoiceSelect(sel, force) {
   sel.removeAttribute('data-ob-choice-error');
 
   var refEntity = sel.getAttribute('data-ref-entity') || '';
-  var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + snapshot.query;
+  var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + snapshot.query + obRefMarkedParam(sel);
   var options = { credentials: 'same-origin', headers: { 'Accept': 'application/json' } };
   if (controller) options.signal = controller.signal;
   state.promise = window.fetch(url, options)
@@ -5467,13 +5482,15 @@ function openRefPicker(selOrId) {
     // тихий откат к списку без просмотра запрещён.
     var refContextRaw = sel.getAttribute('data-ref-context') || '';
     var usePreviewPage = !!refContextRaw;
-    var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + encodeURIComponent(q || '') + choiceQuery;
+    var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + encodeURIComponent(q || '') + choiceQuery + obRefMarkedParam(sel);
     // Отбор подбора: владелец подчинённого справочника.
     if (!choiceSnapshot) url += obRefFilterParam(sel);
     var fetchOptions = { credentials: 'same-origin', headers: { 'Accept': 'application/json' } };
     if (requestController) fetchOptions.signal = requestController.signal;
     if (usePreviewPage) {
       url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '/page';
+      var markedQuery = obRefMarkedParam(sel);
+      if (markedQuery) url += '?' + markedQuery.slice(1);
       fetchOptions.method = 'POST';
       fetchOptions.headers['Content-Type'] = 'application/json';
       var sourceElement = sel.getAttribute('data-ref-element') || '';

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html/template"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -176,9 +177,133 @@ func (s *Server) userSelectionRow(ctx context.Context, idStr string) map[string]
 type refOptionsMode int
 
 const (
+	// refOptionsChoice — ввод данных: поля объектов, форм и обработок.
 	refOptionsChoice refOptionsMode = iota
+	// refOptionsFilter — поиск по истории: отборы списков, параметры отчётов.
 	refOptionsFilter
 )
+
+// Помеченные на удаление в выборе ссылок — как подбор 1С без «показывать
+// помеченные». Ввод данных их скрывает: выбрать в новый документ элемент,
+// который вот-вот исчезнет, — ошибка. Поиск по истории показывает их с
+// отметкой: у удалённого мастера остаются долги, у помеченной позиции —
+// остаток. Ключ choice_show_deleted перекрывает правило в обе стороны: у
+// реквизита, элемента формы или параметра (refOptionsShowMarked /
+// refOptionsHideMarked), иначе у справочника. Уже выбранное значение
+// показывается как есть (appendSelectedRefOptions), а проверка выбранного и
+// запись документа пометку не учитывают — документ с помеченным автором
+// по-прежнему записывается.
+const (
+	refOptionsShowMarked refOptionsMode = 1 << 4
+	refOptionsHideMarked refOptionsMode = 1 << 5
+)
+
+func (m refOptionsMode) base() refOptionsMode {
+	return m &^ (refOptionsShowMarked | refOptionsHideMarked)
+}
+
+// withMarked добавляет к режиму явное решение ключа choice_show_deleted.
+func (m refOptionsMode) withMarked(show *bool) refOptionsMode {
+	if show == nil {
+		return m
+	}
+	m = m.base()
+	if *show {
+		return m | refOptionsShowMarked
+	}
+	return m | refOptionsHideMarked
+}
+
+// markedVisible — показывать ли помеченные на удаление элементы refEntity.
+func (m refOptionsMode) markedVisible(refEntity *metadata.Entity) bool {
+	switch {
+	case m&refOptionsShowMarked != 0:
+		return true
+	case m&refOptionsHideMarked != 0:
+		return false
+	case refEntity != nil && refEntity.ChoiceShowDeleted != nil:
+		return *refEntity.ChoiceShowDeleted
+	}
+	return m.base() == refOptionsFilter
+}
+
+// firstBool — первый заданный ключ: элемент формы главнее реквизита.
+func firstBool(values ...*bool) *bool {
+	for _, v := range values {
+		if v != nil {
+			return v
+		}
+	}
+	return nil
+}
+
+// markRefOptionLabels дописывает к подписи помеченного элемента отметку.
+func (s *Server) markRefOptionLabels(ctx context.Context, rows []map[string]any) {
+	note := ""
+	for _, row := range rows {
+		if !asBool(row["deletion_mark"]) {
+			continue
+		}
+		if note == "" {
+			// Язык запроса кладут в контекст не все пути (выдача подбора,
+			// отрисовка формы): без него словарь откатывался на en, и русский
+			// интерфейс получал «(marked for deletion)». Тогда — язык
+			// пользователя и базы, как у остального интерфейса.
+			lang := langFromCtx(ctx)
+			if lang == "" {
+				lang = s.resolveLangCtx(ctx)
+			}
+			note = " (" + s.tr(lang, "помечен на удаление") + ")"
+		}
+		label, _ := row["_label"].(string)
+		row["_label"] = label + note
+	}
+}
+
+// refPickAttrs — атрибуты поля выбора ссылки в разметке (см. refOptionsModeFromRequest).
+func refPickAttrs(search bool, show *bool) template.HTMLAttr {
+	out := ""
+	if search {
+		out += ` data-ref-search="1"`
+	}
+	if show != nil {
+		if *show {
+			out += ` data-ref-marked="1"`
+		} else {
+			out += ` data-ref-marked="0"`
+		}
+	}
+	return template.HTMLAttr(out) //nolint:gosec // G203: только фиксированные атрибуты
+}
+
+// markedFlag — ключ choice_show_deleted строкой для клиента: "1", "0" или "".
+func markedFlag(show *bool) string {
+	if show == nil {
+		return ""
+	}
+	if *show {
+		return "1"
+	}
+	return "0"
+}
+
+// refOptionsModeFromRequest — режим выдачи /ui/_ref-options по признакам
+// поля в разметке (data-ref-search, data-ref-marked): search=1 — поиск по
+// истории, marked=1/0 — ключ choice_show_deleted поля.
+func refOptionsModeFromRequest(r *http.Request) refOptionsMode {
+	q := r.URL.Query()
+	mode := refOptionsChoice
+	if q.Get("search") == "1" {
+		mode = refOptionsFilter
+	}
+	switch q.Get("marked") {
+	case "1":
+		mode |= refOptionsShowMarked
+	case "0":
+		mode |= refOptionsHideMarked
+	}
+	return mode
+}
 
 const (
 	refPickerDefaultLimit = 50
@@ -187,7 +312,7 @@ const (
 
 func (s *Server) refListParamsForMode(refEntity *metadata.Entity, mode refOptionsMode) storage.ListParams {
 	params := storage.ListParams{ExcludeFolders: true}
-	if mode == refOptionsChoice && refEntity != nil && refEntity.Activity != nil && refEntity.Activity.HideFromChoice {
+	if mode.base() == refOptionsChoice && refEntity != nil && refEntity.Activity != nil && refEntity.Activity.HideFromChoice {
 		params.ActivityScope = metadata.ActivityScopeActive
 	}
 	return params
@@ -202,6 +327,7 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 		return nil, nil
 	}
 	params := s.refListParamsForMode(refEntity, mode)
+	params.ExcludeMarked = !mode.markedVisible(refEntity)
 	params.Filters = extra.Filters
 	params.Search = extra.Search
 	params.Sort = extra.Sort
@@ -236,10 +362,13 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 	for _, row := range rows {
 		row["_label"] = firstStringField(row, refEntity)
 	}
+	if !params.ExcludeMarked {
+		s.markRefOptionLabels(ctx, rows)
+	}
 	return rows, nil
 }
 
-func (s *Server) referenceOptionsPageWithParams(ctx context.Context, refEntity *metadata.Entity, search string, limit, offset int, extra storage.ListParams) ([]map[string]any, int, error) {
+func (s *Server) referenceOptionsPageWithParams(ctx context.Context, refEntity *metadata.Entity, mode refOptionsMode, search string, limit, offset int, extra storage.ListParams) ([]map[string]any, int, error) {
 	if refEntity == nil {
 		return nil, 0, nil
 	}
@@ -247,11 +376,12 @@ func (s *Server) referenceOptionsPageWithParams(ctx context.Context, refEntity *
 	params.Search = strings.TrimSpace(search)
 	params.Limit = limit
 	params.Offset = offset
-	rows, err := s.referenceOptionsWithParams(ctx, refEntity, refOptionsChoice, params)
+	rows, err := s.referenceOptionsWithParams(ctx, refEntity, mode, params)
 	if err != nil {
 		return nil, 0, err
 	}
-	countParams := s.refListParamsForMode(refEntity, refOptionsChoice)
+	countParams := s.refListParamsForMode(refEntity, mode)
+	countParams.ExcludeMarked = !mode.markedVisible(refEntity)
 	countParams.Filters = extra.Filters
 	countParams.Search = strings.TrimSpace(search)
 	countParams.ChoicePredicates = extra.ChoicePredicates
@@ -343,7 +473,7 @@ func (s *Server) loadInitialRefOptions(ctx context.Context, entity *metadata.Ent
 				owner, asked = strings.TrimSpace(values[hf.Name]), true
 			}
 		}
-		rows, err := s.initialReferenceOptionsOwned(ctx, refEntity, refOptionsChoice, []string{values[f.Name]}, owner, asked)
+		rows, err := s.initialReferenceOptionsOwned(ctx, refEntity, refOptionsChoice.withMarked(f.ChoiceShowDeleted), []string{values[f.Name]}, owner, asked)
 		if err != nil {
 			return nil, err
 		}
@@ -416,7 +546,7 @@ func (s *Server) loadInitialRefFilterOptions(ctx context.Context, entity *metada
 		if refEntity == nil {
 			continue
 		}
-		rows, err := s.initialReferenceOptions(ctx, refEntity, refOptionsFilter, []string{params.Filters[f.Name].Value})
+		rows, err := s.initialReferenceOptions(ctx, refEntity, refOptionsFilter.withMarked(f.ChoiceShowDeleted), []string{params.Filters[f.Name].Value})
 		if err != nil {
 			return nil, err
 		}
@@ -452,7 +582,7 @@ func (s *Server) loadInitialTPRefOptions(ctx context.Context, entity *metadata.E
 					ownerID, asked = formValueForPath(values, "Объект."+hf.Name), true
 				}
 			}
-			rows, err := s.initialReferenceOptionsOwned(ctx, refEntity, refOptionsChoice, selectedTPRefIDs(tpRows[tp.Name], f.Name), ownerID, asked)
+			rows, err := s.initialReferenceOptionsOwned(ctx, refEntity, refOptionsChoice.withMarked(f.ChoiceShowDeleted), selectedTPRefIDs(tpRows[tp.Name], f.Name), ownerID, asked)
 			if err != nil {
 				continue
 			}

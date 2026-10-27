@@ -44,6 +44,8 @@ type resolvedChoiceRequest struct {
 	// Folders — элемент объявил choice_folders: группы справочника остаются в
 	// выдаче. Признак берётся из метаданных формы, а не из запроса браузера.
 	Folders bool
+	// ShowDeleted — ключ choice_show_deleted элемента (метаданные формы).
+	ShowDeleted *bool
 }
 
 func findManagedFormByName(owner *metadata.Entity, name string) *metadata.FormModule {
@@ -557,7 +559,7 @@ func (s *Server) resolveChoiceRequest(r *http.Request, target *metadata.Entity) 
 		return nil, err
 	}
 
-	resolved := &resolvedChoiceRequest{Predicates: predicates, Empty: empty, Folders: element.ChoiceFolders}
+	resolved := &resolvedChoiceRequest{Predicates: predicates, Empty: empty, Folders: element.ChoiceFolders, ShowDeleted: element.ChoiceShowDeleted}
 	if selectedRaw != "" {
 		id, parseErr := uuid.Parse(selectedRaw)
 		if parseErr != nil || id == uuid.Nil {
@@ -672,7 +674,7 @@ func (s *Server) initialChoiceOptions(ctx context.Context, owner *metadata.Entit
 	var rows []map[string]any
 	params, ownerOK := ownerFilterParams(target, ownerID, ownerAsked, storage.ListParams{Limit: refPickerDefaultLimit, ChoicePredicates: predicates, IncludeFolders: element.ChoiceFolders})
 	if !empty && ownerOK {
-		rows, err = s.referenceOptionsWithParams(ctx, target, refOptionsChoice, params)
+		rows, err = s.referenceOptionsWithParams(ctx, target, refOptionsChoice.withMarked(element.ChoiceShowDeleted), params)
 		if err != nil {
 			return nil, err
 		}

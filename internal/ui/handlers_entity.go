@@ -1276,7 +1276,13 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 			extra.ChoicePredicates = choice.Predicates
 			extra.IncludeFolders = choice.Folders
 		}
-		items, total, err = s.referenceOptionsPageWithParams(r.Context(), ent, r.URL.Query().Get("q"), limit, offset, extra)
+		// Помеченные на удаление: признаки поля из разметки (search/marked),
+		// поверх — ключ элемента формы из доверенного контекста выбора.
+		mode := refOptionsModeFromRequest(r)
+		if choice != nil {
+			mode = mode.withMarked(choice.ShowDeleted)
+		}
+		items, total, err = s.referenceOptionsPageWithParams(withLang(r.Context(), s.resolveLang(r)), ent, mode, r.URL.Query().Get("q"), limit, offset, extra)
 		if err != nil {
 			s.serverError(w, r, err)
 			return

@@ -56,6 +56,9 @@ type saveField struct {
 	// открывается всем ролям, которые про него не высказались. Полноту
 	// вложенных ключей сторожит TestSaveField_CoversAllRawKeys.
 	PII bool `yaml:"pii,omitempty"`
+	// ChoiceShowDeleted — choice_show_deleted ссылочного реквизита. Редактор
+	// его не показывает, ключ переносится из прежнего состояния файла.
+	ChoiceShowDeleted *bool `yaml:"choice_show_deleted,omitempty"`
 }
 
 type saveTP struct {
@@ -177,7 +180,10 @@ type saveEntity struct {
 	ListFilters   []string  `yaml:"list_filters,omitempty"`
 	NotifyChanges bool      `yaml:"notify_changes,omitempty"`
 	// InteractiveCreate — указатель: явное `false` обязано пережить round-trip.
-	InteractiveCreate *bool     `yaml:"interactive_create,omitempty"`
+	InteractiveCreate *bool `yaml:"interactive_create,omitempty"`
+	// ChoiceShowDeleted — choice_show_deleted справочника; редактор его не
+	// показывает, ключ переносится как есть.
+	ChoiceShowDeleted *bool     `yaml:"choice_show_deleted,omitempty"`
 	TileView          yaml.Node `yaml:"tile_view,omitempty"`
 	// DetailPanel — состав боковой панели деталей (план 118C). Конфигуратор его
 	// не редактирует (прецедент tile_view), но обязан сохранить: иначе правка
