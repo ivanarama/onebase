@@ -187,6 +187,9 @@ func (db *DB) upsert(ctx context.Context, entityName string, id uuid.UUID, field
 	if err := db.enumBackstop(ctx, entity, fields); err != nil {
 		return err
 	}
+	if err := db.maskBackstop(ctx, entity, id, fields); err != nil {
+		return err
+	}
 	// Сущность с объявленными этапами (план 121) пишется сериализованным циклом
 	// «прочитать → проверить переход → записать → записать историю». Решение о
 	// допустимости принимается по прочитанному значению, поэтому между чтением и
@@ -1372,6 +1375,9 @@ func (db *DB) upsertTablePartRows(ctx context.Context, entityName, tpName string
 	// Страховка значений перечислений в строках (#962, Н3): шапочная проверка
 	// сюда не достаёт — строки пишутся отдельным вызовом.
 	if err := db.enumBackstopRows(ctx, entityName, tp, rows); err != nil {
+		return err
+	}
+	if err := db.maskBackstopRows(ctx, entityName, tp, parentID, rows); err != nil {
 		return err
 	}
 	if validateRequired {

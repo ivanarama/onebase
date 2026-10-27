@@ -40,6 +40,9 @@ func (db *DB) UpsertVersioned(ctx context.Context, entityName string, id uuid.UU
 	if err := db.enumBackstop(ctx, entity, fields); err != nil {
 		return err
 	}
+	if err := db.maskBackstop(ctx, entity, id, fields); err != nil {
+		return err
+	}
 	if expectedVersion == nil {
 		return db.Upsert(ctx, entityName, id, fields, entity)
 	}
@@ -71,6 +74,9 @@ func (db *DB) UpsertPostingPreludeVersioned(ctx context.Context, entityName stri
 		return errors.New("storage: UpsertPostingPreludeVersioned requires an expected version")
 	}
 	if err := db.enumBackstop(ctx, entity, fields); err != nil {
+		return err
+	}
+	if err := db.maskBackstop(ctx, entity, id, fields); err != nil {
 		return err
 	}
 	state, err := beginWriteLifecycle(ctx,
