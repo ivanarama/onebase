@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/userdata"
@@ -23,6 +24,16 @@ import (
 // strings.ToLower (полная таблица Unicode) и применяется в LowerLike SQLite-
 // диалекта. Регистрация глобальна и действует на все коннекты, открытые позже.
 func init() {
+	// Internal migration/maintenance fallback for keyless tables whose business
+	// fields shadow every rowid alias. Never mark this deterministic: SQLite
+	// must invoke crypto/rand separately for every physical row.
+	sqlite.MustRegisterScalarFunction("ob_inforeg_edit_revision", 0, func(_ *sqlite.FunctionContext, _ []driver.Value) (driver.Value, error) {
+		revision, err := uuid.NewRandom()
+		if err != nil {
+			return nil, fmt.Errorf("info register edit revision: %w", err)
+		}
+		return revision.String(), nil
+	})
 	sqlite.MustRegisterDeterministicScalarFunction("ob_lower", 1, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
 		if len(args) != 1 || args[0] == nil {
 			return nil, nil

@@ -1462,6 +1462,42 @@ func (tr *translator) rowFilterCondition(kind, name string, meta *metadata.Entit
 	return "(" + sql + ")", nil
 }
 
+// infoRegPublicColumns preserves the pre-revision physical projection even
+// for SELECT * and joined/derived sources. Local edit state cannot enter DSL,
+// reports or an outer wildcard through a raw table source.
+func (tr *translator) infoRegPublicColumns(typeUpper, name string) string {
+	if !isInfoRegType(typeUpper) {
+		return "*"
+	}
+	ir := tr.findInfoRegister(name)
+	if ir == nil {
+		return "*"
+	} // runtime callers supply register metadata
+	var cols []string
+	if ir.Periodic {
+		cols = append(cols, "period")
+	}
+	for _, f := range ir.Dimensions {
+		cols = append(cols, metadata.ColumnName(f))
+	}
+	for _, f := range ir.Resources {
+		cols = append(cols, metadata.ColumnName(f))
+	}
+	cols = append(cols, "recorder", "recorder_type", "updated_at")
+	return strings.Join(cols, ", ")
+}
+
+func (tr *translator) emitPublicSource(typeUpper, name, table, alias string, hasAlias bool) {
+	if cols := tr.infoRegPublicColumns(typeUpper, name); cols != "*" {
+		tr.emit("(SELECT " + cols + " FROM " + table + ") AS " + alias)
+		return
+	}
+	tr.emit(table)
+	if hasAlias {
+		tr.emit("AS " + alias)
+	}
+}
+
 func (tr *translator) rowFilteredSourceSQL(typeUpper, name, tableName, alias string) (string, bool, error) {
 	kind := sourcePermKind(typeUpper)
 	pred := tr.sourceRowFilter(kind, name)
@@ -1478,7 +1514,7 @@ func (tr *translator) rowFilteredSourceSQL(typeUpper, name, tableName, alias str
 	}
 	tr.args = append(tr.args, args...)
 	tr.markRowApplied(kind, name)
-	return fmt.Sprintf("(SELECT * FROM %s WHERE %s) AS %s", tableName, sql, alias), true, nil
+	return fmt.Sprintf("(SELECT %s FROM %s WHERE %s) AS %s", tr.infoRegPublicColumns(typeUpper, name), tableName, sql, alias), true, nil
 }
 
 func (tr *translator) pendingRowFilterConditions() ([]string, error) {
@@ -5552,16 +5588,10 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 				if ok {
 					tr.emit(filtered)
 				} else {
-					tr.emit(tableName)
-					if hasAlias {
-						tr.emit("AS " + sourceAlias)
-					}
+					tr.emitPublicSource(upper, entity.val, tableName, sourceAlias, hasAlias)
 				}
 			} else {
-				tr.emit(tableName)
-				if hasAlias {
-					tr.emit("AS " + sourceAlias)
-				}
+				tr.emitPublicSource(upper, entity.val, tableName, sourceAlias, hasAlias)
 				if err := tr.addPendingRowFilter(upper, entity.val, sourceAlias); err != nil {
 					return Result{}, err
 				}
