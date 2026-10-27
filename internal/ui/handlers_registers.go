@@ -29,19 +29,26 @@ var (
 )
 
 func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
+	if data, ok := s.registerMovementsData(w, r); ok {
+		s.render(w, r, "page-register-movements", data)
+	}
+}
+
+// registerMovementsData is the shared HTML/XLSX read boundary.
+func (s *Server) registerMovementsData(w http.ResponseWriter, r *http.Request) (map[string]any, bool) {
 	name := capitalize(chi.URLParam(r, "name"))
 	reg := s.reg.GetRegister(name)
 	if reg == nil {
 		http.Error(w, "unknown register: "+name, 404)
-		return
+		return nil, false
 	}
 	if !s.requirePerm(w, r, "register", reg.Name, "read") {
-		return
+		return nil, false
 	}
 	decisions := s.registerFieldDecisions(r.Context(), reg)
 	if protectedRegisterFilterRequested(r, reg, decisions) {
 		s.renderForbidden(w, r)
-		return
+		return nil, false
 	}
 	filterFields := unprotectedRegisterDimensions(decisions, reg.Dimensions)
 	showPeriodFilter := !registerFieldProtected(decisions, "period")
@@ -49,12 +56,12 @@ func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
 	var ok bool
 	flt, ok = s.applyRegRowFilter(w, r, "register", reg.Name, "read", storage.RegisterPredicateEntity(reg), flt)
 	if !ok {
-		return
+		return nil, false
 	}
 	rows, err := s.store.GetMovements(r.Context(), name, reg, flt)
 	if err != nil {
 		s.serverError(w, r, err)
-		return
+		return nil, false
 	}
 	// Маска полей — ДО разрешения ссылок в представления: иначе защищённое
 	// значение уже превратилось бы в человекочитаемую подпись (#859).
@@ -62,7 +69,8 @@ func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
 	s.resolveRegisterRows(r.Context(), rows, reg)
 	filterValues := filterFormValues(r, filterFields)
 	columns := registerMovementColumnsFor(decisions)
-	s.render(w, r, "page-register-movements", map[string]any{
+	return map[string]any{
+		"ExcelURL":          registerExcelURL(r, "/ui/register/"+strings.ToLower(reg.Name)+"/excel"),
 		"Register":          reg,
 		"Rows":              rows,
 		"CanViewBalances":   !registerBalancesProtected(decisions, reg),
@@ -76,29 +84,36 @@ func (s *Server) registerMovements(w http.ResponseWriter, r *http.Request) {
 		"Filter":            filterValues,
 		"RefOpts":           s.loadRefOpts(r.Context(), filterFields, filterValues),
 		"HasFilters":        !flt.IsEmpty(),
-	})
+	}, true
 }
 
 func (s *Server) registerBalances(w http.ResponseWriter, r *http.Request) {
+	if data, ok := s.registerBalancesData(w, r); ok {
+		s.render(w, r, "page-register-balances", data)
+	}
+}
+
+// registerBalancesData is the shared HTML/XLSX read boundary.
+func (s *Server) registerBalancesData(w http.ResponseWriter, r *http.Request) (map[string]any, bool) {
 	name := capitalize(chi.URLParam(r, "name"))
 	reg := s.reg.GetRegister(name)
 	if reg == nil {
 		http.Error(w, "unknown register: "+name, 404)
-		return
+		return nil, false
 	}
 	if !s.requirePerm(w, r, "register", reg.Name, "read") {
-		return
+		return nil, false
 	}
 	decisions := s.registerFieldDecisions(r.Context(), reg)
 	// Balances GROUP BY every dimension and use movement kind as the resource
 	// sign. Masking the output cannot hide either protected input.
 	if registerBalancesProtected(decisions, reg) {
 		s.renderForbidden(w, r)
-		return
+		return nil, false
 	}
 	if protectedRegisterFilterRequested(r, reg, decisions) {
 		s.renderForbidden(w, r)
-		return
+		return nil, false
 	}
 	filterFields := unprotectedRegisterDimensions(decisions, reg.Dimensions)
 	showPeriodFilter := !registerFieldProtected(decisions, "period")
@@ -107,17 +122,18 @@ func (s *Server) registerBalances(w http.ResponseWriter, r *http.Request) {
 	var ok bool
 	flt, ok = s.applyRegRowFilter(w, r, "register", reg.Name, "read", storage.RegisterPredicateEntity(reg), flt)
 	if !ok {
-		return
+		return nil, false
 	}
 	rows, err := s.store.GetBalances(r.Context(), name, reg, flt)
 	if err != nil {
 		s.serverError(w, r, err)
-		return
+		return nil, false
 	}
 	s.maskRegisterRecords(r.Context(), reg, rows)
 	s.resolveRegisterRows(r.Context(), rows, reg)
 	filterValues := filterFormValues(r, filterFields)
-	s.render(w, r, "page-register-balances", map[string]any{
+	return map[string]any{
+		"ExcelURL":          registerExcelURL(r, "/ui/register/"+strings.ToLower(reg.Name)+"/balances/excel"),
 		"Register":          reg,
 		"Rows":              rows,
 		"VisibleDimensions": visibleRegisterFields(decisions, reg.Dimensions),
@@ -127,7 +143,7 @@ func (s *Server) registerBalances(w http.ResponseWriter, r *http.Request) {
 		"Filter":            filterValues,
 		"RefOpts":           s.loadRefOpts(r.Context(), filterFields, filterValues),
 		"HasFilters":        !flt.IsEmpty(),
-	})
+	}, true
 }
 
 type documentMovementRead struct {
@@ -365,12 +381,19 @@ func (s *Server) getInfoReg(w http.ResponseWriter, r *http.Request) *metadata.In
 }
 
 func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
+	if data, ok := s.infoRegListData(w, r); ok {
+		s.render(w, r, "page-inforeg-list", data)
+	}
+}
+
+// infoRegListData is the shared HTML/XLSX read boundary.
+func (s *Server) infoRegListData(w http.ResponseWriter, r *http.Request) (map[string]any, bool) {
 	ir := s.getInfoReg(w, r)
 	if ir == nil {
-		return
+		return nil, false
 	}
 	if !s.requirePerm(w, r, "inforeg", ir.Name, "read") {
-		return
+		return nil, false
 	}
 	decisions := s.fieldDecisionsFor(r.Context(), "inforeg", ir.Name, storage.InfoRegisterPredicateEntity(ir))
 	// Reject probes before storage: masking rows cannot hide whether a protected
@@ -383,7 +406,7 @@ func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
 		for _, value := range rawQuery["flt_"+field.Name] {
 			if strings.TrimSpace(value) != "" {
 				s.renderForbidden(w, r)
-				return
+				return nil, false
 			}
 		}
 	}
@@ -392,12 +415,12 @@ func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
 	var ok bool
 	flt, ok = s.applyRegRowFilter(w, r, "inforeg", ir.Name, "read", storage.InfoRegisterPredicateEntity(ir), flt)
 	if !ok {
-		return
+		return nil, false
 	}
 	total, err := s.store.InfoRegCount(r.Context(), ir, flt)
 	if err != nil {
 		s.serverError(w, r, err)
-		return
+		return nil, false
 	}
 	limit := s.store.GetListPageSize(r.Context())
 	query := cloneQuery(r.URL.Query())
@@ -432,7 +455,7 @@ func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.store.InfoRegPageWithKeyValues(r.Context(), ir, flt, limit, (page-1)*limit)
 	if err != nil {
 		s.serverError(w, r, err)
-		return
+		return nil, false
 	}
 	maskedKey := len(s.maskedInfoRegKeyFields(r.Context(), ir)) != 0
 	// Mask before resolving references: a protected UUID must not turn into a
@@ -468,7 +491,8 @@ func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
 	prevURL := "?" + query.Encode()
 	query.Set("page", strconv.Itoa(page+1))
 	nextURL := "?" + query.Encode()
-	s.render(w, r, "page-inforeg-list", map[string]any{
+	return map[string]any{
+		"ExcelURL":      registerExcelURL(r, "/ui/inforeg/"+strings.ToLower(ir.Name)+"/excel"),
 		"InfoReg":       ir,
 		"Rows":          rows,
 		"FilterFields":  filterFields,
@@ -486,7 +510,7 @@ func (s *Server) infoRegList(w http.ResponseWriter, r *http.Request) {
 		"TotalPages":    totalPages,
 		"HasPrev":       page > 1,
 		"HasNext":       page < totalPages,
-	})
+	}, true
 }
 
 func (s *Server) loadInfoRegRefOpts(ctx context.Context, ir *metadata.InfoRegister, values map[string]string) map[string][]map[string]any {
