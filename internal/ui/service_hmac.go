@@ -90,7 +90,10 @@ func (c *replayCache) purgeLocked(now time.Time, force bool) {
 
 // verifyServiceHMAC проверяет подпись запроса к generic HTTP-сервису.
 // Возвращает (true, "") при успехе или (false, причина) при отказе.
-func verifyServiceHMAC(secret, svcName string, r *http.Request, body []byte, cache *replayCache) (ok bool, reason string) {
+// allowRepeatedGET — для GET/HEAD повтор той же подписи в окне свежести не
+// отвергается (сервис объявил hmac_allow_repeated_get: справка без побочных
+// эффектов).
+func verifyServiceHMAC(secret, svcName string, r *http.Request, body []byte, cache *replayCache, allowRepeatedGET bool) (ok bool, reason string) {
 	sig := strings.TrimSpace(r.Header.Get("X-Webhook-Signature"))
 	tsRaw := strings.TrimSpace(r.Header.Get("X-Webhook-Timestamp"))
 	lowSig := strings.ToLower(sig)
@@ -115,6 +118,9 @@ func verifyServiceHMAC(secret, svcName string, r *http.Request, body []byte, cac
 		canonical := "v1:" + tsRaw + ":" + strings.ToUpper(r.Method) + ":" + requestTarget + ":" + hex.EncodeToString(bodyHash[:])
 		if !hmacEqualHex(secret, []byte(canonical), got) {
 			return false, "неверная подпись"
+		}
+		if allowRepeatedGET && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
+			return true, ""
 		}
 		if replay, saturated := cache.seenBefore(svcName+"|"+got, now); saturated {
 			return false, "кэш защиты от повторов переполнен"

@@ -416,7 +416,7 @@ func (s *Server) resolveServiceAuth(svc *httpservice.Service, w http.ResponseWri
 		if !ok {
 			return nil, false
 		}
-		if ok, reason := verifyServiceHMAC(secret, svc.Name, r, body, serviceReplay); !ok {
+		if ok, reason := verifyServiceHMAC(secret, svc.Name, r, body, serviceReplay, svc.HMACAllowRepeatedGET); !ok {
 			writeServiceError(w, http.StatusUnauthorized, reason)
 			return nil, false
 		}

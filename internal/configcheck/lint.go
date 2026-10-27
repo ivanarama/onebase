@@ -551,7 +551,7 @@ func serviceYAMLSchema() *yamlLintSchema {
 	cache := obj("ttl", "vary", "public", "max_body")
 	securityHeaders := with(obj("csp", "frame_options", "referrer_policy", "hsts"),
 		map[string]*yamlLintSchema{"extra": freeMap()})
-	return with(obj("name", "title", "root_url", "auth", "secret", "rate_limit", "roles", "compress"),
+	return with(obj("name", "title", "root_url", "auth", "secret", "hmac_allow_repeated_get", "rate_limit", "roles", "compress"),
 		map[string]*yamlLintSchema{
 			"titles":           freeMap(),
 			"cors":             cors,
