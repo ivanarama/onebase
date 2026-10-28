@@ -44,13 +44,37 @@ func (db *DB) validateInfoRegEditRevisionSchema(ctx context.Context, ir *metadat
 			return fmt.Errorf("info register %s: reserved field %s", ir.Name, InfoRegEditRevisionColumn)
 		}
 	}
-	stored, err := db.loadSchemaMap(ctx, metadata.InfoRegTableName(ir.Name))
-	if err != nil {
-		return err
+	logical := metadata.InfoRegTableLogical(ir.Name)
+	tables := []string{metadata.InfoRegTableName(ir.Name), logical}
+	// The map uses TEXT keys, so PostgreSQL may retain the full logical name
+	// even though the old physical table was truncated. Check both aliases
+	// before rename/restructure can adopt a removed business column as service
+	// state. CheckLongIdents remains the ownership gate for the whole migration.
+	if !db.IsSQLite() {
+		tables = append(tables, metadata.LegacySQLIdents(logical)...)
+	} else {
+		// On SQLite the truncated alias is not automatically ours. Include it
+		// only when the existing rename planner identifies it as the source.
+		action, err := db.planLegacyTable(ctx, logical, nil)
+		if err != nil {
+			return err
+		}
+		if action != nil {
+			if action.Conflict != "" {
+				return action.err()
+			}
+			tables = append(tables, action.Old)
+		}
 	}
-	for _, f := range stored {
-		if strings.EqualFold(f.Column, InfoRegEditRevisionColumn) {
-			return fmt.Errorf("info register %s: reserved column %s belongs to a business field", ir.Name, InfoRegEditRevisionColumn)
+	for _, table := range uniqueStrings(tables) {
+		stored, err := db.loadSchemaMap(ctx, table)
+		if err != nil {
+			return err
+		}
+		for _, f := range stored {
+			if strings.EqualFold(f.Column, InfoRegEditRevisionColumn) {
+				return fmt.Errorf("info register %s: reserved column %s belongs to a business field", ir.Name, InfoRegEditRevisionColumn)
+			}
 		}
 	}
 	return nil
