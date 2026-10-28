@@ -1,4 +1,6 @@
 {
+  "Провести(%s): объект не проводится": "Post(%s): object does not support posting",
+  "Провести недоступно внутри обработчика записи формы": "Post is unavailable inside a form write handler",
   "у локального источника %s нет ссылочного реквизита %s; внешняя ссылка затенена": "Local source %s has no reference field %s; the outer reference is shadowed",
   "временный каталог загрузок": "temporary upload directory",
   "временный файл параметра %s": "temporary file for parameter %s",
