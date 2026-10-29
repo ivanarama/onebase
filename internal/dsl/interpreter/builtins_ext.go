@@ -2,6 +2,7 @@ package interpreter
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -75,6 +76,14 @@ func fmtBuiltin(args []any) (string, error) {
 	return fmtBuiltinBounded(args, 0)
 }
 
+// Recognize the lexical forms accepted by Decimal or ParseFloat without
+// constructing a coefficient or parsing an exponent. RE2 is linear in input
+// size; the sandbox's independent string budget is checked before this sink.
+const formatDecimalDigits = `[0-9](?:_?[0-9])*`
+const formatHexDigits = `[0-9a-f](?:_?[0-9a-f])*`
+
+var formatNumericText = regexp.MustCompile(`(?i)^[+-]?(?:(?:` + formatDecimalDigits + `(?:\.(?:` + formatDecimalDigits + `)?)?|\.` + formatDecimalDigits + `)(?:e[+-]?` + formatDecimalDigits + `)?|0x_?(?:` + formatHexDigits + `(?:\.(?:` + formatHexDigits + `)?)?|\.` + formatHexDigits + `)p[+-]?` + formatDecimalDigits + `)$|^\.[+-][0-9]+(?:e[+-]?[0-9]+)?$`)
+
 func fmtBuiltinBounded(args []any, maxDecimalPlaces int32) (string, error) {
 	if len(args) == 0 {
 		return "", nil
@@ -88,7 +97,13 @@ func fmtBuiltinBounded(args []any, maxDecimalPlaces int32) (string, error) {
 		// lexical size before parsing, then the coefficient and exponent before
 		// either formatting path can expand them (including float underflow).
 		if text, ok := val.(string); ok && len(text) > maxSandboxDecimalTextBytes {
-			return "", fmt.Errorf("формат: numeric text exceeds the sandbox decimal limit")
+			if formatNumericText.MatchString(text) {
+				return "", fmt.Errorf("формат: numeric text exceeds the sandbox decimal limit")
+			}
+			// Long nonnumeric text cannot become a date or a number. Returning
+			// it here also avoids allocating failed Decimal parse diagnostics.
+			// The wrapper checks MaxStringExpansion on both input and output.
+			return text, nil
 		}
 		if d, ok := toDecimal(val); ok && !decimalWithinExpansionBounds(d, maxDecimalPlaces) {
 			return "", fmt.Errorf("формат: число вне безопасного диапазона")
