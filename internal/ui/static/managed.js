@@ -3083,7 +3083,7 @@ function obGridColumnIds(columns) {
         var key = String(o.id);
         if (seen[key]) return;
         var lbl = String(o._label == null ? '' : o._label);
-        if (f && lbl.toLowerCase().indexOf(f) < 0) return;
+        if (f && o._matchedQuery !== f && lbl.toLowerCase().indexOf(f) < 0) return;
         seen[key] = true;
         out.push({id: o.id, _label: lbl});
       }
@@ -3202,8 +3202,11 @@ function obGridColumnIds(columns) {
         .then(function(data) {
           if (seq !== searchSeq || requestFilter !== requestParam()) return; // ответ устарел
           var keep = (activeIdx >= 0 && shown[activeIdx]) ? shown[activeIdx].id : '';
+          // matched: выдачу подобрала функция поиска (choice_search_proc) —
+          // подстрокой её не дофильтровываем, «15к1» не входит в «д.15, корп.1».
+          var matchedQuery = (data && data.matched) ? String(q == null ? '' : q).trim().toLowerCase() : null;
           serverRows = ((data && data.items) || []).map(function(row) {
-            return {id: row && row.id != null ? String(row.id) : '', _label: String((row && row._label) || '')};
+            return {id: row && row.id != null ? String(row.id) : '', _label: String((row && row._label) || ''), _matchedQuery: matchedQuery};
           }).filter(function(o) { return o.id !== ''; });
           serverFilter = requestFilter;
           if (isOpen) buildList(input.value, keep);

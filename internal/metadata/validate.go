@@ -134,6 +134,13 @@ func Validate(entities []*Entity, enums []*Enum) error {
 			}
 			_ = fn
 		}
+		// choice_search_proc — то же правило имени, что у choice_preview_proc.
+		if proc := strings.TrimSpace(e.ChoiceSearchProc); proc != "" {
+			mod, fn, ok := strings.Cut(proc, ".")
+			if !ok || strings.TrimSpace(mod) == "" || strings.TrimSpace(fn) == "" || strings.Contains(fn, ".") || strings.ContainsAny(mod, " 	") || strings.ContainsAny(fn, " 	") {
+				return fmt.Errorf("entity %s: choice_search_proc должен быть вида Модуль.Функция (сейчас %q)", e.Name, proc)
+			}
+		}
 		if err := validateFieldIDs(e); err != nil {
 			return err
 		}

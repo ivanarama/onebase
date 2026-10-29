@@ -24,6 +24,7 @@ list_refresh_on:
 notify_changes: true
 choice_preview: Информация
 choice_preview_proc: Памятки.ДляПодбора
+choice_search_proc: Памятки.Поиск
 indexes:
   - fields: [Артикул]
     unique: true
@@ -77,6 +78,7 @@ fields:
 		"notify_changes: true",
 		"choice_preview: Информация",
 		"choice_preview_proc: Памятки.ДляПодбора",
+		"choice_search_proc: Памятки.Поиск",
 		"unique: true", // indexes
 		"image: Фото",  // tile_view
 		"detail_panel:",

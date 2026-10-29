@@ -5496,12 +5496,20 @@ function openRefPicker(selOrId) {
     fetch(url, fetchOptions)
       .then(function (resp) {
         if (resp.status === 422) {
-          // Пояснение недоступно: блокируем выбор (fail-closed, инвариант 10).
-          rpPreviewField = '';
-          rpReveal();
-          renderItems([], '');
-          if (status) status.textContent = 'Пояснение недоступно: повторите запрос';
-          throw new Error('preview-unavailable');
+          return resp.json().catch(function () { return {}; }).then(function (d) {
+            rpPreviewField = '';
+            rpReveal();
+            renderItems([], '');
+            // Сломана функция поиска (choice_search_proc): показываем её отказ,
+            // а не результат подстроки — тихий откат скрыл бы ошибку.
+            if (d && d.preview !== false && d.error) {
+              if (status) status.textContent = String(d.error);
+              throw new Error('choice-search-unavailable');
+            }
+            // Пояснение недоступно: блокируем выбор (fail-closed, инвариант 10).
+            if (status) status.textContent = 'Пояснение недоступно: повторите запрос';
+            throw new Error('preview-unavailable');
+          });
         }
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         return resp.json();
@@ -5531,6 +5539,7 @@ function openRefPicker(selOrId) {
       .catch(function (err) {
         if (seq !== requestSeq) return;
         if (err && err.name === 'AbortError') return;
+        if (err && err.message === 'choice-search-unavailable') return;
         // A form-scoped picker is server-authoritative. Falling back to an
         // untrusted or stale full list would bypass choice_filter; retain the
         // already rendered filtered options and surface the failure instead.

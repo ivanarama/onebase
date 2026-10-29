@@ -1528,6 +1528,7 @@
   "Результат уже сохранён. Скопируйте текущие правки и перезагрузите форму перед продолжением.": "The result has already been saved. Copy your current edits and reload the form before continuing.",
   "Исход операции неизвестен. Проверьте данные в отдельной вкладке и перезагрузите форму; повторная запись заблокирована.": "The operation outcome is unknown. Check the data in another tab and reload the form; further writes are blocked.",
   "Пояснение недоступно: повторите запрос": "Preview unavailable: retry the request",
+  "Поиск недоступен: ошибка функции поиска": "Search unavailable: the search function failed",
   "Внутрь папки": "Into folder",
   "Выбрать": "Select",
   "Выше": "Move up",

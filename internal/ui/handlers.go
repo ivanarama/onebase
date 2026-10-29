@@ -243,6 +243,10 @@ func (s *Server) referenceOptionsPageWithParams(ctx context.Context, refEntity *
 	if refEntity == nil {
 		return nil, 0, nil
 	}
+	// choice_search_proc: непустой ввод ищет функция конфигурации, а не ILIKE.
+	if choiceSearchActive(refEntity, search) {
+		return s.choiceSearchPage(ctx, refEntity, search, limit, offset, extra)
+	}
 	params := extra
 	params.Search = strings.TrimSpace(search)
 	params.Limit = limit
