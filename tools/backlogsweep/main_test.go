@@ -190,9 +190,8 @@ func TestEveryBrokenPlanReferenceIsReported(t *testing.T) {
 }
 
 // Живой случай #1134: имя плана названо неверно, а следующим комментарием
-// поправлено. Находка остаётся (скрытая неотличима от «инструмент не заметил»),
-// но помечается — иначе отчёт печатает знакомую строку каждую неделю, и глаз
-// перестаёт читать не только её.
+// поправлено. История остаётся в информационной корзине, а действующая
+// отсутствующая ссылка больше не заявляется.
 func TestPlanReferenceCorrectedLaterInThreadIsMarked(t *testing.T) {
 	cfg := testConfig()
 	cfg.plans = testPlans("158-open-form.md")
@@ -200,7 +199,11 @@ func TestPlanReferenceCorrectedLaterInThreadIsMarked(t *testing.T) {
 		[2]string{"ivanarama", "поправка: план получил номер 158 — `Plans/158-open-form.md`"}),
 		"работа оформлена планом `Plans/157-open-form.md`")
 
-	got := bucketByTitle(analyze([]issue{is}, cfg), "ссылка на план, которого нет")
+	buckets := analyze([]issue{is}, cfg)
+	if got := bucketByTitle(buckets, "ссылка на план, которого нет"); len(got) != 0 {
+		t.Fatalf("поправленная ссылка осталась действующей находкой: %v", details(got))
+	}
+	got := bucketByTitle(buckets, "исправленные ссылки на планы (справочно)")
 
 	if len(got) != 1 {
 		t.Fatalf("ожидалась одна находка, получено %v", details(got))
@@ -288,7 +291,7 @@ func TestCommentsAreOrderedByCreationNotByDelivery(t *testing.T) {
 	is = commentAt(is, 0, ago(1))
 	is = commentAt(is, 1, ago(5))
 
-	got := bucketByTitle(analyze([]issue{is}, cfg), "ссылка на план, которого нет")
+	got := bucketByTitle(analyze([]issue{is}, cfg), "исправленные ссылки на планы (справочно)")
 
 	if len(got) != 1 {
 		t.Fatalf("ожидалась одна находка, получено %v", details(got))

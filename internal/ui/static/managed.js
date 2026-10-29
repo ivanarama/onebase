@@ -1213,7 +1213,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       const res = await fetch(URL, {
         method: 'POST',
         body: body,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', 'X-OneBase-Conceal-Context': form && form.getAttribute ? form.getAttribute('data-ob-conceal-context') || '' : '' },
         credentials: 'same-origin'
       });
       const data = await res.json();
@@ -1224,6 +1224,8 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 		throw new Error('invalid form-event response');
 	  }
       responseKnown = true;
+      if (!res.ok || !data.ok || data.error || data.cancel) data.revealed = [];
+      if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form);
 	  // Even parseable JSON on non-2xx may come from an intermediary after the
 	  // application committed. No subsequent write is safe on this document.
 	  if (!res.ok) fenceUnknownResult();
@@ -1280,6 +1282,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         // controlState — как в обычной ветке: ввод, сделанный пока шёл запрос,
         // эхо отправленного значения не затирает.
         if (data.values) applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
+        if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
         (data.messages || []).forEach(m => flash(m, 'ok'));
         if (data.error) flash(data.error, 'err');
         openItemPicker(data.pickerData, elementName, extraParams || null, snapshot.pickerRequest);
@@ -1290,14 +1293,6 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // её прочитают как ответ на новый запрос.
       if (snapshot.eventName === 'Поиск' && !data.error && typeof window.obPickerSearchEmpty === 'function') {
         window.obPickerSearchEmpty(snapshot.pickerRequest);
-      }
-      // Вопрос фазы 1 (#1528): открыть модал; ответ вернётся событием Ответ
-      // через _question_answer — сервер положит его в ВопросОтвет.
-      if (data.question && !beforePostSnapshot(snapshot)) {
-        (data.messages || []).forEach(m => flash(m, 'ok'));
-        if (data.error) flash(data.error, 'err');
-        if (window.obOpenQuestion) window.obOpenQuestion(data.question, elementName);
-        return;
       }
       // dirty=true is an authoritative safety signal and must survive a
       // partially failing renderer. Programmatic response application does
@@ -1324,6 +1319,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         applyChoiceList(elementName, data.choiceList);
         applyFormTables(data.formTables);
       }
+      if (!beforePostMerged && window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
 	  // Server events repaint controls programmatically and therefore do not
 	  // trigger input/change. Raise dirty for unsaved handler mutations; clear
 	  // it only when this response proves a successful Object.Write and no
@@ -1336,6 +1332,12 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         if (data.error) flash(data.error, 'err');
       }
       if (navigationBlocked) flash(closeMessage('navigationDirty', 'Форма содержит несохранённые изменения — переход не выполнен'), 'err');
+      // Apply the response, including disclosed values, before opening a
+      // question. Dismissing it must leave the same valid form as no question.
+      if (data.question && !beforePostSnapshot(snapshot)) {
+        if (window.obOpenQuestion) window.obOpenQuestion(data.question, elementName);
+        return;
+      }
       if (data.question && beforePostSnapshot(snapshot) && beforePostState) {
         // Правки и dirty уже применены. Ответ пойдёт тем же событием с новым
         // снимком формы; закрытие вопроса мимо кнопок отменяет проведение.
@@ -1366,6 +1368,8 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // не пишет документ (фаза 1 того же диалога), а вечный фенс делал бы
       // ошибку поиска фатальной для всей формы.
       if (!responseKnown && snapshot.wasNew && !DOC_ID && !(snapshot.pickerRequest && snapshot.pickerRequest.search)) fenceUnknownResult();
+      // A partial renderer must never leave a disclosed control submittable.
+      if (window.obApplyConcealed) window.obApplyConcealed([], form, {});
       flash('Сетевая ошибка: ' + (e && e.message ? e.message : e), 'err');
     }
   }
@@ -1735,7 +1739,11 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 
   function applyCloseResponse(data, before, current){
     if (!data || typeof data !== 'object') return;
+    var form = window.obApplyConcealed ? document.getElementById('main-form') : null;
+    if (data.ok === false || data.error || data.cancel) data.revealed = [];
+    try {
 	var merging = !!(before && current);
+    if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, document.getElementById('main-form'));
 	var values = merging ? filterCloseMap(data.values, function(name){
 	  return closeFieldUnchanged(before, current, name);
 	}) : data.values;
@@ -1761,8 +1769,13 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	window.applyTableParts(tableparts);
 	applyValues(values, refOptions);
 	applyFormTables(formTables);
+    if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, document.getElementById('main-form'), values || {}, data.values || {});
     (data.messages || []).forEach(function(message){ flash(message, 'ok'); });
     if (data.error) flash(data.error, 'err');
+    } catch (e) {
+      if (window.obApplyConcealed) window.obApplyConcealed([], form, {});
+      throw e;
+    }
   }
 
   window.obRequestFormClose = function(options){
@@ -1884,6 +1897,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 		  // and the exact envelope is retained with an unknown intent for replay.
           headers: {
 			'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
+			'X-OneBase-Conceal-Context': (document.getElementById('main-form') || {}).getAttribute ? document.getElementById('main-form').getAttribute('data-ob-conceal-context') || '' : '',
 			'X-OneBase-Close-Intent': intentID,
 			'X-OneBase-Close-Epoch': String(envelope.epoch || ''),
 			'X-OneBase-Close-Issued-At': String(envelope.issuedAt || ''),
@@ -4951,4 +4965,37 @@ obManagedReady(function () {
       })(holders[i]);
     }
   });
+});
+
+// Revoke immediately. Enabling requires values from the same response after
+// its renderer has completed; an absent key is not an empty disclosed value.
+function obApplyConcealed(revealed, form, appliedValues, retainedValues) {
+  if (!form) return;
+  var open = {};
+  (revealed || []).forEach(function (n) { open[String(n).toLowerCase()] = true; });
+  var applied = {};
+  Object.keys(appliedValues || {}).forEach(function (n) { applied[n.toLowerCase()] = true; });
+  var retained = {};
+  Object.keys(retainedValues || {}).forEach(function (n) { retained[n.toLowerCase()] = true; });
+  form.querySelectorAll("[data-ob-concealed]").forEach(function (el) {
+    var name = String(el.getAttribute("name") || "").toLowerCase();
+    if (open[name] && (applied[name] || (!el.disabled && retained[name]))) {
+      el.disabled = false;
+    } else if (!open[name] || appliedValues !== undefined) {
+      el.disabled = true;
+      el.value = "";
+    }
+  });
+}
+window.obApplyConcealed = obApplyConcealed;
+
+// A reload carries the old server instance so the next GET revokes it.
+document.addEventListener('DOMContentLoaded', function () {
+  var form = document.getElementById('main-form');
+  var token = form && form.getAttribute('data-ob-conceal-context');
+  if (token && window.history && window.history.replaceState) {
+    var url = new URL(window.location.href);
+    url.searchParams.set('_ob_conceal', token);
+    window.history.replaceState(window.history.state, '', url.toString());
+  }
 });

@@ -878,6 +878,7 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 	// клиентом. Удаляем ключ и из полей объекта, и из признаков отправки:
 	// у существующей записи остаётся прежнее значение, у новой — умолчание.
 	removeSubmittedFormFields(r, dropAdminOnlyFields(form, fields, s.isAdmin(r)))
+	s.dropConcealedInput(r, entity, form, fields)
 
 	mergeSubmittedEntityServiceFields(r, entity, fields)
 
@@ -1048,6 +1049,9 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	if s.refuseInteractiveCreate(w, r, entity) {
 		return
 	}
+	r, finishConceal := s.beginConcealRequest(r, entity, true, nil)
+	defer finishConceal()
+
 	// Предел тела зависит от метаданных: форме с richtext-реквизитом нужен запас
 	// на порядок больше (#629). Сущность известна из маршрута — getEntity читает
 	// только URL-параметр и тела не касается, так что порядок безопасен.
@@ -1059,6 +1063,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	managedForm := pickManagedForm(entity, "object")
 	if managedForm != nil {
 		s.mergeFormAttrValues(r.Context(), r, managedForm, entity, obj)
+		s.restoreConcealControllers(r, entity, managedForm, obj)
 		if strings.TrimSpace(r.FormValue(copySourceFormField)) != "" {
 			if failed := s.restoreManagedCopyState(
 				w, r, entity, managedForm, fields, obj.Fields, obj.TablePartRows,
@@ -1797,6 +1802,9 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 	if entity == nil {
 		return
 	}
+	r, finishConceal := s.beginConcealRequest(r, entity, true, nil)
+	defer finishConceal()
+
 	// Предел тела — по метаданным сущности, см. комментарий в submit (#629).
 	r.Body = http.MaxBytesReader(w, r.Body, s.entityFormBodyLimit(r, entity))
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -1826,6 +1834,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.mergeFormAttrValues(r.Context(), r, managedForm, entity, obj)
+		s.restoreConcealControllers(r, entity, managedForm, obj)
 		hookMsgs, _, saveErr := s.saveManagedObject(r, entity, managedForm, obj, false, action, false, nil)
 		if saveErr != nil {
 			s.renderManagedObjectSaveFailure(w, r, entity, false, obj, hookMsgs, saveErr)

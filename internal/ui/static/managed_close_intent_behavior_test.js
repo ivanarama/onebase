@@ -260,6 +260,59 @@ function dispatchSubmit(app) {
   return event;
 }
 
+function concealedControl(app, enabled = false) {
+  const field = app.form.control('Секрет');
+  app.form.values.set('Секрет', enabled ? '12-34' : '');
+  field.disabled = !enabled;
+  field.getAttribute = (name) => name === 'name' ? 'Секрет' : null;
+  const query = app.form.querySelectorAll.bind(app.form);
+  app.form.querySelectorAll = (selector) => selector === '[data-ob-concealed]' ? [field] : query(selector);
+  const first = managed.indexOf('function obApplyConcealed(');
+  const last = managed.indexOf('window.obApplyConcealed = obApplyConcealed;', first);
+  vm.runInNewContext(managed.slice(first, last) + '\nwindow.obApplyConcealed = obApplyConcealed;', app.context);
+  return field;
+}
+
+test('conceal never enables an absent value or a partially rendered response', async () => {
+  for (const brokenRenderer of [false, true]) {
+    const app = runtime(async () => response({ok: true, revealed: ['секрет'], values: brokenRenderer ? {'Секрет': '12-34'} : {}}), {}, true);
+    const field = concealedControl(app);
+    if (brokenRenderer) app.context.applyTableParts = () => { throw Error('renderer failed'); };
+    await app.context.obFire('Показать', 'Нажатие');
+    assert.equal(field.disabled, true);
+    assert.equal(field.value, '');
+  }
+});
+
+test('conceal revokes before a throwing renderer and preserves readonly', async () => {
+  const app = runtime(async () => response({ok: true, revealed: [], values: {}}), {}, true);
+  const field = concealedControl(app, true);
+  field.readOnly = true;
+  app.context.applyTableParts = () => {
+    assert.equal(field.disabled, true);
+    assert.equal(field.value, '');
+    throw Error('renderer failed');
+  };
+  await app.context.obFire('Отозвать', 'Нажатие');
+  assert.equal(field.disabled, true);
+  assert.equal(field.readOnly, true);
+});
+
+test('before-post merges preserve newer disclosed input without approving its old snapshot', async () => {
+  let complete;
+  const app = runtime(() => new Promise((resolve) => { complete = resolve; }), {kind: 'document', docId: 'doc-1', beforePost: true}, true);
+  const field = concealedControl(app, true);
+  const pending = app.context.obRequestFormClose({mode: 'post'});
+  while (!complete) await new Promise((resolve) => setImmediate(resolve));
+  field.value = '56-78';
+  app.document.dispatch('input', {target: field});
+  complete(response({ok: true, values: {'Секрет': '12-34'}, revealed: ['секрет']}));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(field.disabled, false);
+  assert.equal(field.value, '56-78');
+  assert.equal((await pending).allowed, false);
+});
+
 test('close controller is single-flight and returns only its exact decision', async () => {
   let complete;
   const calls = [];

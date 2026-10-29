@@ -47,6 +47,7 @@ import (
 type formEventResponse struct {
 	OK             bool                        `json:"ok"`
 	Values         map[string]any              `json:"values,omitempty"`
+	Revealed       []string                    `json:"revealed,omitempty"`
 	TableParts     map[string][]map[string]any `json:"tableparts,omitempty"`
 	FormTables     map[string][]map[string]any `json:"formTables,omitempty"`
 	ConditionalCSS string                      `json:"conditionalCss"`
@@ -352,6 +353,9 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		respondJSON(enc, formEventResponse{Error: "entity not found: " + entityName})
 		return
 	}
+	r, finishConceal := s.beginConcealRequest(r, entity, false, closeInv)
+	defer finishConceal()
+
 	entityKind := string(entity.Kind)
 	canRead := s.can(r, entityKind, entity.Name, "read")
 	canWrite := s.can(r, entityKind, entity.Name, "write")
@@ -807,10 +811,21 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
 		return
 	}
+	concealed := s.dropConcealedInput(r, entity, form, obj.Fields)
 	// Что прислал клиент — до восстановлений и обработчика: ответ события не
 	// маскирует значение, которое клиент сам только что набрал (см.
 	// serializeManagedFormEventState).
 	r = r.WithContext(withSubmittedFormFields(r.Context(), obj.Fields))
+	// У новой записи скрытый ввод не приходит из браузера. До обработчика,
+	// который может раскрыть поле, возвращаем его объявленное умолчание;
+	// иначе раскрытый пустой контрол на submit затрёт серверное значение.
+	// Close-intent восстанавливает полное начальное состояние ниже.
+	if closeInv == nil && strings.TrimSpace(r.FormValue("_id")) == "" {
+		if err := s.applyRejectedFieldDefaults(r.Context(), entity, obj, concealed); err != nil {
+			respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
+			return
+		}
+	}
 	// Событие может вызвать Объект.Записать() до обычного submit. Удаляем
 	// присланные значения запертых полей из объекта и POST: последующее
 	// restoreUnsubmittedFields восстановит каноничное значение из БД.
@@ -822,7 +837,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		// Объект.Записать(), сохранил бы NULL — то есть запрет на правку
 		// оборачивался бы потерей объявленного значения.
 		if strings.TrimSpace(r.FormValue("_id")) == "" {
-			if err := s.applyAdminOnlyDefaults(r.Context(), entity, obj, dropped); err != nil {
+			if err := s.applyRejectedFieldDefaults(r.Context(), entity, obj, dropped); err != nil {
 				respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
 				return
 			}
@@ -969,6 +984,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// Реквизиты формы (attributes с save:false) — formToFields их не разбирает,
 	// поэтому без этого шага Объект.<Реквизит> в обработчике всегда nil.
 	s.mergeFormAttrValues(dslCtx, r, form, entity, obj)
+	s.restoreConcealControllers(r, entity, form, obj)
 
 	// Подмешать ValueTable-данные из vt.<name>.<idx>.<field>.
 	vtRows, err := parseValueTableRowsForManagedForm(r, form, entity, canWrite)
@@ -1387,6 +1403,9 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// единственное соединение. Успешный выход с открытой транзакцией считается
 	// ошибкой процедуры, чтобы конфигурационная ошибка не оставалась незаметной.
 	runErr = finishDSLExecution(txState, runErr)
+	// Cancelled BeforeClose/BeforePost revokes disclosure just like a failed handler.
+	concealSuccess := runErr == nil && !postCancelled && (closeInv == nil || !closeInv.cancelled)
+	s.finishConcealEvent(r, form, entity, obj, thisObj.assigned, concealSuccess)
 	liveCtx := txState.Ctx()
 	if closeInv != nil && thisObj.saved {
 		// BeforeClose itself may save in discard mode. Promote that durable
@@ -1904,6 +1923,7 @@ func savedFormID(this *formObjectThis) string {
 // разбирает #615, — инвариант, применённый в N−1 месте из N.
 type formEventState struct {
 	Values         map[string]any
+	Revealed       []string
 	TableParts     map[string][]map[string]any
 	FormTables     map[string][]map[string]any
 	RefOptions     map[string][]map[string]any
@@ -1917,6 +1937,7 @@ type formEventState struct {
 func (st formEventState) response(ok bool) formEventResponse {
 	return formEventResponse{
 		OK:             ok,
+		Revealed:       st.Revealed,
 		Values:         st.Values,
 		TableParts:     st.TableParts,
 		FormTables:     st.FormTables,
@@ -1942,13 +1963,13 @@ type elementStates struct {
 	Hidden   map[string]bool `json:"hidden,omitempty"`
 }
 
-// applyAdminOnlyDefaults возвращает новой записи объявленные умолчания ровно
+// applyRejectedFieldDefaults возвращает новой записи объявленные умолчания ровно
 // тех полей, значения которых сервер только что отклонил как запертые.
 //
 // Заполняются только отклонённые поля. Событие формы и сегодня не пересчитывает
 // остальные неприсланные реквизиты и не зовёт ПриСозданииНового — расширять это
 // здесь значило бы менять поведение событийного пути под видом починки запрета.
-func (s *Server) applyAdminOnlyDefaults(ctx context.Context, entity *metadata.Entity, obj *runtime.Object, names []string) error {
+func (s *Server) applyRejectedFieldDefaults(ctx context.Context, entity *metadata.Entity, obj *runtime.Object, names []string) error {
 	if s.entitySvc == nil || entity == nil || obj == nil || len(names) == 0 {
 		return nil
 	}
@@ -2031,6 +2052,8 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 		fields[key] = value
 	}
 	values := normalizeFormAttrKeys(fields, form, entity)
+	// conceal: true — выдача требует действующего серверного разрешения.
+	revealed := s.concealEventValues(ctx, form, values)
 	// Псевдо-реквизит «Ссылка» — контекст обработчика, а не значение формы:
 	// в ответ он не едет, чтобы applyValues не искал под него элемент.
 	for _, k := range []string{"ссылка", "reference", "_version"} {
@@ -2052,6 +2075,7 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 		}
 	}
 	return formEventState{
+		Revealed:       revealed,
 		Values:         values,
 		TableParts:     tableParts,
 		FormTables:     formTablesFromRows(tableParts, form),

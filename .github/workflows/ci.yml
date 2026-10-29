@@ -662,7 +662,7 @@ jobs:
     needs: [classify]
     if: ${{ always() && !cancelled() }}
     runs-on: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' && 'ubuntu-latest' || 'windows-latest' }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: Docs-only success
         if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}

@@ -112,9 +112,10 @@ type finding struct {
 // bucket — корзина находок с объяснением, что с ней делать. Совет пишем в
 // отчёте, а не в голове: отчёт читают раз в неделю и по диагонали.
 type bucket struct {
-	title    string
-	advice   string
-	findings []finding
+	title         string
+	advice        string
+	findings      []finding
+	informational bool
 }
 
 var (
@@ -243,6 +244,11 @@ func analyze(issues []issue, cfg config) []bucket {
 		title:  "ссылка на план, которого нет",
 		advice: "план обещан и не написан либо номер переехал: написать план или поправить ссылку",
 	}
+	planCorrected := bucket{
+		title:         "исправленные ссылки на планы (справочно)",
+		advice:        "актуальная ссылка уже указана ниже в треде; история сохранена и сама по себе не означает простой заявки",
+		informational: true,
+	}
 	blockerMissing := bucket{
 		title:  "Blocked-by на номер, которого нет",
 		advice: "номер выше последнего выданного в репозитории: поправить его — иначе пауза так и не разблокируется",
@@ -337,6 +343,8 @@ func analyze(issues []issue, cfg config) []bucket {
 				}
 				if fixed, ok := correctedBelow(refs, ref, cfg.plans); ok {
 					detail = fmt.Sprintf("ссылка на %s устарела — ниже в треде уже поправлено на %s", ref, fixed)
+					planCorrected.findings = append(planCorrected.findings, finding{is, detail})
+					continue
 				}
 				planMissing.findings = append(planMissing.findings, finding{is, detail})
 			}
@@ -352,7 +360,7 @@ func analyze(issues []issue, cfg config) []bucket {
 
 	// Порядок — по убыванию цены молчания. «Разблокировано» сразу за живым
 	// человеком: там не молчание, а простой готовой к работе заявки.
-	return []bucket{unanswered, unblocked, holdNoPlan, planMissing, blockerMissing, holdStale, decisionStale}
+	return []bucket{unanswered, unblocked, holdNoPlan, planMissing, blockerMissing, holdStale, decisionStale, planCorrected}
 }
 
 // maxPerIssue — сколько строк одна заявка занимает в одной корзине. Потолок
@@ -376,6 +384,9 @@ func report(w io.Writer, buckets []bucket, total int, truncated bool) {
 	// считают отдельные находки, потому что у них разные способы починки.
 	stuckIssues := make(map[int]struct{})
 	for _, b := range buckets {
+		if b.informational {
+			continue
+		}
 		for _, f := range b.findings {
 			stuckIssues[f.issue.Number] = struct{}{}
 		}
@@ -384,37 +395,37 @@ func report(w io.Writer, buckets []bucket, total int, truncated bool) {
 		say("backlogsweep: хвост чист — среди %d открытых заявок застрявших нет\n", total)
 	} else {
 		say("backlogsweep: застрявших заявок — %d (из %d открытых)\n", len(stuckIssues), total)
-		for _, b := range buckets {
-			if len(b.findings) == 0 {
-				continue
+	}
+	for _, b := range buckets {
+		if len(b.findings) == 0 {
+			continue
+		}
+		say("\n%s — %d\n%s\n", b.title, len(b.findings), b.advice)
+		// Стабильная: у одной заявки может быть несколько находок в корзине
+		// (две битые ссылки), и порядок между ними задан порядком ссылок.
+		// Обычная Slice переставляла бы их от прогона к прогону, и отчёт
+		// шевелился бы там, где ничего не изменилось.
+		sort.SliceStable(b.findings, func(i, j int) bool {
+			return b.findings[i].issue.Number < b.findings[j].issue.Number
+		})
+		for i := 0; i < len(b.findings); {
+			j := i
+			for j < len(b.findings) && b.findings[j].issue.Number == b.findings[i].issue.Number {
+				j++
 			}
-			say("\n%s — %d\n%s\n", b.title, len(b.findings), b.advice)
-			// Стабильная: у одной заявки может быть несколько находок в корзине
-			// (две битые ссылки), и порядок между ними задан порядком ссылок.
-			// Обычная Slice переставляла бы их от прогона к прогону, и отчёт
-			// шевелился бы там, где ничего не изменилось.
-			sort.SliceStable(b.findings, func(i, j int) bool {
-				return b.findings[i].issue.Number < b.findings[j].issue.Number
-			})
-			for i := 0; i < len(b.findings); {
-				j := i
-				for j < len(b.findings) && b.findings[j].issue.Number == b.findings[i].issue.Number {
-					j++
-				}
-				group := b.findings[i:j]
-				i = j
+			group := b.findings[i:j]
+			i = j
 
-				shown := group
-				if len(shown) > maxPerIssue {
-					shown = shown[:maxPerIssue]
-				}
-				for _, f := range shown {
-					say("  #%-5d %-52.52s  %s\n", f.issue.Number, f.issue.Title, f.detail)
-				}
-				if rest := len(group) - len(shown); rest > 0 {
-					say("  #%-5d %-52.52s  и ещё %d — покажутся после починки первых %d\n",
-						group[0].issue.Number, group[0].issue.Title, rest, maxPerIssue)
-				}
+			shown := group
+			if len(shown) > maxPerIssue {
+				shown = shown[:maxPerIssue]
+			}
+			for _, f := range shown {
+				say("  #%-5d %-52.52s  %s\n", f.issue.Number, f.issue.Title, f.detail)
+			}
+			if rest := len(group) - len(shown); rest > 0 {
+				say("  #%-5d %-52.52s  и ещё %d — покажутся после починки первых %d\n",
+					group[0].issue.Number, group[0].issue.Title, rest, maxPerIssue)
 			}
 		}
 	}
@@ -575,9 +586,9 @@ func planRefs(is issue) []planRef {
 // комментарием, а старый текст не тронули — ровно это в #1134 («план получил
 // номер 158, а не 157»).
 //
-// Находку это не отменяет: скрытая неотличима от «инструмент не заметил», а
-// отчёт читают ради полноты. Но помеченную строку глаз отличает от новой, и
-// знакомая строка не уносит с собой соседние.
+// История остаётся в отдельной информационной корзине, но сама по себе не
+// увеличивает счётчик застрявших заявок. Повтор старой ссылки после поправки
+// снова становится действующей находкой благодаря порядку At.
 //
 // Сравниваем по slug: переехал как раз номер. Ссылку, названную одним номером,
 // поправленной не считаем никогда — «план 158» ниже «плана 157» не значит, что
