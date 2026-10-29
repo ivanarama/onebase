@@ -685,7 +685,7 @@ type FormModule struct {
 	Procedures map[string]*FormProcedure `yaml:"-"`
 
 	// Actions — переопределение стандартных действий формы объекта. Ключи
-	// delete/save/ok/close управляют видимостью платформенных кнопок, а
+	// delete/save/ok/close/copy управляют видимостью платформенных кнопок, а
 	// attachments — панелью вложений (plan 181C, #1621); права и серверные
 	// проверки они не ослабляют.
 	Actions map[string]*FormAction `yaml:"actions,omitempty"`
