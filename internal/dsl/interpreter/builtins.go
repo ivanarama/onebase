@@ -38,6 +38,8 @@ type DSLError struct {
 	// Unwrap отдаёт её, чтобы i18nerr.Localize смог локализовать сообщение по
 	// цепочке (иначе текст сплющивался бы в строку и перевод терялся).
 	Err error
+	// Set only by an explicit configuration exception, never by host failures.
+	explicitMessage *string
 }
 
 func (e *DSLError) Error() string {
@@ -71,6 +73,30 @@ func FormatUserError(err error) string {
 
 func (e *DSLError) Unwrap() error { return e.Err }
 
+// ExplicitExceptionMessage returns the original configuration message through
+// diagnostic wrappers. A DSLError alone does not make a failure safe to display.
+func ExplicitExceptionMessage(err error) (string, bool) {
+	for err != nil {
+		var dsl *DSLError
+		if !errors.As(err, &dsl) || dsl == nil {
+			break
+		}
+		if dsl.explicitMessage != nil {
+			return *dsl.explicitMessage, true
+		}
+		err = dsl.Err
+	}
+	return "", false
+}
+
+func raiseExplicitException(args []any, file string, line int) (any, error) {
+	msg := ""
+	if len(args) > 0 {
+		msg = fmt.Sprintf("%v", args[0])
+	}
+	panic(userError{Msg: msg, File: file, Line: line, explicitMessage: &msg})
+}
+
 func raiseUserException(args []any, file string, line int) (any, error) {
 	msg := ""
 	if len(args) > 0 {
@@ -81,7 +107,7 @@ func raiseUserException(args []any, file string, line int) (any, error) {
 
 func raiseWithoutCaughtException(args []any, file string, line int) (any, error) {
 	if len(args) > 0 {
-		return raiseUserException(args, file, line)
+		return raiseExplicitException(args, file, line)
 	}
 	panic(userError{
 		Msg:  "ВызватьИсключение без аргумента допустимо только внутри блока Исключение",
@@ -97,7 +123,7 @@ var builtins = map[string]func(args []any, file string, line int) (any, error){
 	"message":  func(args []any, file string, line int) (any, error) { return nil, nil },
 
 	// ─── Ошибки ───────────────────────────────────────────────────────────
-	"error":             raiseUserException,
+	"error":             raiseExplicitException,
 	"raise":             raiseWithoutCaughtException,
 	"вызватьисключение": raiseWithoutCaughtException,
 
