@@ -3833,6 +3833,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
         var o = document.createElement('option');
         o.value = opt.id;
         o.textContent = opt._label || opt.id;
+        if (opt._style) o.setAttribute('style', opt._style);
         sel.appendChild(o);
       });
       var pickBtn = document.createElement('button');
@@ -4899,6 +4900,7 @@ function obRefreshDependentSelects(sourceEl) {
             var opt = document.createElement('option');
             opt.value = rows[j].id;
             opt.textContent = rows[j]._label != null ? rows[j]._label : rows[j].id;
+            if (rows[j]._style) opt.setAttribute('style', rows[j]._style);
             sel.appendChild(opt);
           }
           sel.value = keep ? current : '';
@@ -5109,6 +5111,7 @@ function obChoiceApplyResponse(sel, data, selectedAtRequest) {
     var opt = document.createElement('option');
     opt.value = id;
     opt.textContent = String((row && row._label) || id);
+    if (row && row._style) opt.setAttribute('style', row._style);
     if (id === selectedAtRequest) selectedPresent = true;
     sel.appendChild(opt);
   });
@@ -5276,7 +5279,8 @@ function openRefPicker(selOrId) {
     // A saved legacy value outside choice_filter stays visible in the field,
     // but must not become a candidate merely because it is an <option>.
     if (o.value && o.getAttribute('data-ob-choice-outside-filter') !== '1') {
-      localOpts.push({ id: o.value, label: o.text });
+      // choice_row_style: оформление строки переносится из <option> в подбор.
+      localOpts.push({ id: o.value, label: o.text, style: o.getAttribute('style') || '', bg: o.style ? o.style.background || '' : '' });
     }
   }
   var old = document.getElementById('_ref-picker-modal');
@@ -5370,7 +5374,9 @@ function openRefPicker(selOrId) {
   }
   function rpPaint() {
     var items = rpItems();
-    for (var i = 0; i < items.length; i++) items[i].style.background = (i === rpActive) ? '#eef2ff' : '';
+    // Активная строка — своим фоном; остальные возвращают фон оформления
+    // строки (choice_row_style), а не пустоту.
+    for (var i = 0; i < items.length; i++) items[i].style.background = (i === rpActive) ? '#eef2ff' : (items[i].getAttribute('data-ob-bg') || '');
     if (rpActive >= 0 && items[rpActive] && items[rpActive].scrollIntoView) {
       items[rpActive].scrollIntoView({ block: 'nearest' });
     }
@@ -5395,7 +5401,8 @@ function openRefPicker(selOrId) {
       item.setAttribute('data-id', opts[i].id);
       item.setAttribute('data-label', opts[i].label);
       if (opts[i].preview) item.setAttribute('data-preview', opts[i].preview);
-      item.style.cssText = 'padding:9px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:14px;color:#1e293b';
+      item.style.cssText = 'padding:9px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:14px;color:#1e293b' + (opts[i].style ? ';' + opts[i].style : '');
+      if (opts[i].bg) item.setAttribute('data-ob-bg', opts[i].bg);
       item.textContent = opts[i].label;
       (function (idx) {
         item.addEventListener('mouseenter', function () { rpActive = idx; rpPaint(); });
@@ -5519,7 +5526,7 @@ function openRefPicker(selOrId) {
           var id = row && row.id != null ? String(row.id) : '';
           var preview = '';
           if (rpPreviewField && row && row[rpPreviewField] != null) preview = String(row[rpPreviewField]);
-          return { id: id, label: String((row && row._label) || id), preview: preview };
+          return { id: id, label: String((row && row._label) || id), preview: preview, style: (row && row._style) || '', bg: (row && row._style_bg) || '' };
         }).filter(function (opt) { return opt.id !== ''; });
         renderItems(opts, keep);
         rpReveal();

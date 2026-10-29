@@ -102,7 +102,7 @@ const tplManagedForm = `
           <select class="managed-fill-control" id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if $ctx.RefFilter}}{{with index $ctx.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if $choiceCtx}} data-ref-choice-context="{{$choiceCtx}}"{{end}}{{if choiceDropdownCollapsed $el}} data-ref-choice-dropdown="false"{{end}}{{if $el.ChoiceContext}} data-ref-context="{{choiceContextJSON $el}}" data-ref-element="{{$el.Name}}" data-ref-source-entity="{{$ctx.Entity.Name}}"{{end}}{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if and ($f.InlineCreateEnabled false) (refWriteAllowed $ctx.RefWriteAccess $f.RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
             <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
             {{range managedRefOptions $ctx $el $fn}}
-            <option value="{{index . "id"}}"{{if index . "_choice_outside_filter"}} data-ob-choice-outside-filter="1"{{end}} {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
+            <option value="{{index . "id"}}"{{refOptionStyle .}}{{if index . "_choice_outside_filter"}} data-ob-choice-outside-filter="1"{{end}} {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
           {{/* Нередактируемому полю кнопка подбора не нужна — выбирать нечего, а
@@ -203,7 +203,7 @@ const tplManagedForm = `
           <select class="managed-fill-control" id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{attrRefEntity $attr.TypeRef}}"{{if $ctx.RefFilter}}{{with index $ctx.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if $choiceCtx}} data-ref-choice-context="{{$choiceCtx}}"{{end}}{{if choiceDropdownCollapsed $el}} data-ref-choice-dropdown="false"{{end}}{{if $el.ChoiceContext}} data-ref-context="{{choiceContextJSON $el}}" data-ref-element="{{$el.Name}}" data-ref-source-entity="{{$ctx.Entity.Name}}"{{end}}{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
             <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
             {{range managedRefOptions $ctx $el $fn}}
-            <option value="{{index . "id"}}"{{if index . "_choice_outside_filter"}} data-ob-choice-outside-filter="1"{{end}} {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
+            <option value="{{index . "id"}}"{{refOptionStyle .}}{{if index . "_choice_outside_filter"}} data-ob-choice-outside-filter="1"{{end}} {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
           <button type="button" data-ob-ref-picker="closest"{{if $ro}} disabled{{end}} style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
@@ -390,7 +390,7 @@ const tplManagedForm = `
               <select name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{with index (tpChoiceContexts $ctx $el) $f.Name}} data-ref-choice-context="{{.}}" data-ref-row-id="{{$i}}"{{end}}{{if $ctx.RefFilter}}{{with index $ctx.RefFilter (printf "%s.%s" $tpName $f.Name)}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and ($f.InlineCreateEnabled true) (refWriteAllowed $ctx.RefWriteAccess $f.RefEntity)}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
                 <option value="">{{if $tpReadOnly}}—{{else}}— выбрать —{{end}}</option>
                 {{range tpChoiceOptions $ctx $el $f.Name $i $tpRef}}
-                <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID $v)}}selected{{end}}{{if index . "_choice_outside_filter"}} data-ob-choice-outside-filter="1"{{end}}>{{index . "_label"}}</option>
+                <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (str (index . "id")) (refID $v)}}selected{{end}}{{if index . "_choice_outside_filter"}} data-ob-choice-outside-filter="1"{{end}}>{{index . "_label"}}</option>
                 {{end}}
               </select>
               <button type="button" data-ob-ref-picker="closest"{{if $tpReadOnly}} disabled{{end}} style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="Выбрать из списка">...</button>

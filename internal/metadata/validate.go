@@ -42,7 +42,14 @@ func Validate(entities []*Entity, enums []*Enum) error {
 	for _, en := range enums {
 		enumNames[en.Name] = true
 	}
+	byName := make(map[string]*Entity, len(entities))
 	for _, e := range entities {
+		byName[e.Name] = e
+	}
+	for _, e := range entities {
+		if err := validateChoiceRowStyle(e, byName); err != nil {
+			return err
+		}
 		for _, f := range e.Fields {
 			if f.RefEntity != "" && !entityNames[f.RefEntity] && !IsSystemRefTarget(f.RefEntity) {
 				return fmt.Errorf("entity %s: field %s references unknown entity %s", e.Name, f.Name, f.RefEntity)

@@ -175,3 +175,39 @@ test('TP snapshots read the submitted source copy for global and row-local field
  assert.equal(names.at(-1),'tp.Строки.2.Направление');
  assert.deepEqual(sources(local,{направление:'grid-row'}),{'Строки.Направление':'grid-row'});
 });
+
+// choice_row_style (#2366): оформление варианта доходит до списка ячейки-ссылки
+// и до окна подбора — и у предзагруженных вариантов, и у строк серверного поиска.
+test('the grid reference editor keeps choice_row_style for preloaded, searched and picker options',async()=>{
+ const server={items:[{id:'srv',_label:'Сервер',_style:'color:#b91c1c',_style_bg:'#fee2e2'}]};
+ const env=runtime([{Выбор:''}],()=>Promise.resolve({ok:true,json:async()=>server}));
+ const picked=[];env.window.openRefPicker=select=>picked.push(select);
+ const editorStart=managed.indexOf('  function refId('),editorEnd=managed.indexOf('  function ObNumberEditor(',editorStart);
+ vm.runInContext(managed.slice(editorStart,editorEnd),env.sandbox);
+ const container=env.sandbox.document.createElement('div');
+ const column={field:'Выбор',refEntity:'Цель'};
+ const args={row:0,item:env.rows[0],column,container,commitChanges(){},cancelChanges(){},grid:{getOptions(){return {};}}};
+ const editor=new env.sandbox.ObRefEditor('Выбор',[{id:'pre',_label:'Предзагрузка',_style:'font-weight:600',_style_bg:'#fef9c3'}],args);
+ editor.loadValue(args.item);await new Promise(setImmediate);
+ const wrapper=container.children[0],input=wrapper.children[0];
+ // 1) предзагруженный вариант в быстром списке
+ input.listeners.keydown({key:'ArrowDown',preventDefault(){},stopPropagation(){}});
+ let list=env.sandbox.document.body.children[0];
+ const pre=list.children.find(el=>/Предзагрузка/.test(el.textContent));
+ assert.ok(pre,'предзагруженный вариант в списке');
+ assert.match(pre.style.cssText,/font-weight:600/);assert.equal(pre.getAttribute('data-ob-bg'),'#fef9c3');
+ // 2) строка серверного поиска
+ input.value='Серв';input.listeners.input({});
+ await new Promise(r=>setTimeout(r,250));await new Promise(setImmediate);
+ list=env.sandbox.document.body.children[env.sandbox.document.body.children.length-1];
+ const srv=list.children.find(el=>/Сервер/.test(el.textContent));
+ assert.ok(srv,'строка серверного поиска в списке');
+ assert.match(srv.style.cssText,/color:#b91c1c/);assert.equal(srv.getAttribute('data-ob-bg'),'#fee2e2');
+ // 3) варианты, переданные в окно подбора из ячейки
+ input.value='';input.listeners.input({});
+ wrapper.children[1].listeners.click({preventDefault(){},stopPropagation(){}});
+ assert.equal(picked.length,1);
+ const opt=picked[0].options.find(o=>o.value==='pre');
+ assert.ok(opt,'вариант передан в окно подбора');assert.match(opt.getAttribute('style')||'',/font-weight:600/);
+ editor.destroy();
+});
