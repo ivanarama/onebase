@@ -189,13 +189,13 @@ func (e *Engine) Ingest(ctx context.Context, in *metadata.Intake, h Handler, env
 			inserted)
 	}
 	if !inserted {
-		return e.onExisting(ctx, in, env, key, scope, hash)
+		return e.onExisting(ctx, in, h, env, key, scope, hash)
 	}
 	return e.process(ctx, in, h, env, key, scope)
 }
 
 // onExisting разбирает случай «ключ уже занят»: дубль, карантин или несовпадение.
-func (e *Engine) onExisting(ctx context.Context, in *metadata.Intake, env Envelope, key, scope, hash string) (Result, error) {
+func (e *Engine) onExisting(ctx context.Context, in *metadata.Intake, h Handler, env Envelope, key, scope, hash string) (Result, error) {
 	row, found, err := e.Store.GetIntakeLog(ctx, in.Name, scope, key)
 	if err != nil {
 		return Result{}, err
@@ -212,6 +212,17 @@ func (e *Engine) onExisting(ctx context.Context, in *metadata.Intake, env Envelo
 			fmt.Sprintf("payload_hash: было %s, стало %s", shortHash(row.PayloadHash), shortHash(hash)), false)
 	}
 	if row.Status == storage.IntakeStatusQuarantined {
+		if in.DLQ.RetryBySender {
+			// Повтор отправителя после 503: переигрываем открытую запись
+			// handler_error тем же атомарным Replay, что и ручной разбор.
+			entry, found, err := e.Store.FindOpenIntakeDLQ(ctx, in.Name, scope, key, metadata.DLQHandlerError)
+			if err != nil {
+				return Result{}, err
+			}
+			if found {
+				return e.Replay(ctx, in, h, entry.ID)
+			}
+		}
 		return Result{Status: StatusQuarantined, Reason: "already_quarantined", ResultRef: row.ResultRef}, nil
 	}
 	if row.Status == storage.IntakeStatusReceived {

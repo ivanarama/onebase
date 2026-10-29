@@ -86,6 +86,13 @@ type IntakeIdempotency struct {
 type IntakeDLQ struct {
 	On         []string `yaml:"on"`          // handler_error | schema_mismatch | key_conflict
 	MaxRetries int      `yaml:"max_retries"` // предел авто-повторов replay (0 — только вручную)
+	// RetryBySender — отправитель сам повторяет доставку (outbox), и 202 он
+	// считает окончательным ответом. Тогда handler_error отвечает 503:
+	// событие всё равно ложится в карантин, а повтор с тем же ключом
+	// переигрывает эту запись (Replay) — до успеха или исчерпания попыток
+	// отправителя, после чего запись остаётся для ручного разбора.
+	// schema_mismatch и key_conflict повтором не исправить — им ответ прежний.
+	RetryBySender bool `yaml:"retry_by_sender"`
 }
 
 // DisplayName возвращает заголовок шлюза с учётом языка.

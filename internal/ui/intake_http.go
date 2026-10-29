@@ -108,7 +108,7 @@ func (s *Server) dispatchIntake(w http.ResponseWriter, r *http.Request) bool {
 		s.auditIntake(opCtx, r, "intake.quarantine", in.Name, env.Field(in.Idempotency.Key), res.Reason, env.CorrelationID(),
 			map[string]any{"dlq_id": res.DLQID})
 	}
-	s.writeIntakeResult(w, res)
+	s.writeIntakeResult(w, res, in.DLQ.RetryBySender)
 	return true
 }
 
@@ -186,8 +186,9 @@ func (s *Server) resolveIntakeAuth(in *metadata.Intake, w http.ResponseWriter, r
 
 // writeIntakeResult отображает бизнес-результат приёмки в HTTP-ответ (ack-политика):
 // Принято/Дубль → 200, Отклонено → 422, Карантин → 202 (принято в карантин, штормом
-// не ретраить). Тело — JSON со статусом и деталями.
-func (s *Server) writeIntakeResult(w http.ResponseWriter, res intake.Result) {
+// не ретраить; при dlq.retry_by_sender сбой обработчика — 503, см. IntakeDLQ).
+// Тело — JSON со статусом и деталями.
+func (s *Server) writeIntakeResult(w http.ResponseWriter, res intake.Result, retryBySender bool) {
 	body := map[string]any{"status": string(res.Status)}
 	if res.ResultRef != "" {
 		body["ref"] = res.ResultRef
@@ -207,6 +208,11 @@ func (s *Server) writeIntakeResult(w http.ResponseWriter, res intake.Result) {
 		code = http.StatusUnprocessableEntity
 	case intake.StatusQuarantined:
 		code = http.StatusAccepted
+		// dlq.retry_by_sender: временный сбой обработчика — 503, отправитель
+		// повторит доставку тем же ключом. Копия уже в карантине.
+		if retryBySender && res.Reason == metadata.DLQHandlerError {
+			code = http.StatusServiceUnavailable
+		}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
