@@ -238,6 +238,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"infoRegKeyValue":       infoRegKeyValue,
 		"gridLayoutAttr":        gridLayoutAttr,
 		"gridOrderAttr":         gridOrderAttr,
+		"gridWidthsAttr":        gridWidthsAttr,
 		// enterSubmitsForm — форма явно вернула себе прежний Enter-submit.
 		// Данные шаблона — карта, и ключа Form у автогенерённой формы может не
 		// быть вовсе: nil читается как «умолчание платформы», то есть навигация.

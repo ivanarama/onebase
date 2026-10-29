@@ -2842,6 +2842,43 @@ function obGridColumnIds(columns) {
   return (columns || []).map(function(c) { return c.id; });
 }
 
+// Ширины колонок, заданные пользователем мышью и сохранённые за ним
+// (data-sg-widths, «id колонки → px»). Такая ширина перебивает width формы и,
+// как объявленная (obWidth), не отдаётся автоподбору.
+var OB_GRID_WIDTH_MIN = 20, OB_GRID_WIDTH_MAX = 2000;
+function obGridParseWidths(raw) {
+  try {
+    var widths = JSON.parse(raw || "null");
+    return widths && typeof widths === "object" && !Array.isArray(widths) ? widths : null;
+  } catch (e) { return null; }
+}
+function obGridApplyWidths(columns, widths) {
+  if (!widths) return;
+  for (var i = 0; i < columns.length; i++) {
+    // Только собственные ключи: колонка «constructor» не должна получить
+    // функцию из Object.prototype вместо ширины.
+    if (!Object.prototype.hasOwnProperty.call(widths, columns[i].id)) continue;
+    var px = Math.round(Number(widths[columns[i].id]));
+    if (px >= OB_GRID_WIDTH_MIN && px <= OB_GRID_WIDTH_MAX) { columns[i].width = px; columns[i].obWidth = px; }
+  }
+}
+// obGridClampWidth — ширина в допустимом диапазоне: видимая ширина колонки
+// совпадает с той, что сохранится, без молчаливой обрезки только в POST.
+function obGridClampWidth(px) {
+  px = Math.round(Number(px));
+  return Math.min(OB_GRID_WIDTH_MAX, Math.max(OB_GRID_WIDTH_MIN, px || OB_GRID_WIDTH_MIN));
+}
+function obGridColumnWidths(columns) {
+  // Без прототипа: запись в «__proto__» создаёт собственное свойство и
+  // доезжает до JSON, а не теряется в сеттере Object.prototype.
+  var out = Object.create(null);
+  for (var i = 0; i < columns.length; i++) {
+    var px = Math.round(Number(columns[i].width));
+    out[columns[i].id] = obGridClampWidth(px);
+  }
+  return out;
+}
+
 // Grids are stored in window._obGrids = {tpName: {grid, dataView, columns}}.
 (function(){
   window._obGrids = window._obGrids || {};
@@ -2865,13 +2902,45 @@ function obGridColumnIds(columns) {
   // возвращает порядок формы.
   // Очередь общая для одного ключа, включая повторные представления таблицы.
   var gridOrderSaves = Object.create(null);
-  function enableColumnReorder(state, defaultIds) {
+  var gridWidthSaves = Object.create(null);
+  // Запись за пользователем по одному ключу таблицы: пока сервер не закончил
+  // старую запись, новую не отправляем, а более поздняя заменяет ожидающую.
+  // Ошибка не должна блокировать более позднее действие пользователя.
+  function queueGridSave(saves, url, key, field, value) {
+    if (!window.fetch) return;
+    var queue = saves[key] || (saves[key] = {running: false, pending: null});
+    queue.pending = value; // Пустая строка — сброс, null — нет ожидающей записи.
+    if (queue.running) return;
+    function sendNext() {
+      if (queue.pending === null) {
+        queue.running = false;
+        delete saves[key];
+        return;
+      }
+      var body = "grid=" + encodeURIComponent(key) + "&" + field + "=" + encodeURIComponent(queue.pending);
+      queue.pending = null;
+      queue.running = true;
+      try {
+        window.fetch(url, {
+          method: "POST", credentials: "same-origin",
+          headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: body
+        }).then(sendNext, sendNext);
+      } catch (e) { sendNext(); }
+    }
+    sendNext();
+  }
+  // Ширина колонок за пользователем, как и порядок: перетащил границу
+  // заголовка — форма открывается с той же шириной. Запоминаются ширины ВСЕХ
+  // колонок таблицы, как они видны после перетаскивания. «Стандартные колонки»
+  // возвращают и порядок, и ширины формы (defaultWidths — width из формы).
+  function enableColumnReorder(state, defaultIds, defaultWidths, hasSavedWidths) {
     var div = state.div, grid = state.grid;
     var key = div.getAttribute("data-sg-layout");
     if (!key) return;
     var host = div.parentNode;
     var resetBtn = host && host.querySelector ? host.querySelector('[data-ob-grid-order-reset]') : null;
     var dragFrom = -1;
+    var widthsSaved = !!hasSavedWidths;
     function headerCells() {
       return Array.prototype.slice.call(div.querySelectorAll(".slick-header-columns .slick-header-column"));
     }
@@ -2882,39 +2951,34 @@ function obGridColumnIds(columns) {
     function markDraggable() {
       headerCells().forEach(function(h) { h.setAttribute("draggable", "true"); });
     }
-    function save(order) {
-      if (!window.fetch) return;
-      var queue = gridOrderSaves[key] || (gridOrderSaves[key] = {running: false, pending: null});
-      queue.pending = order; // Пустая строка — сброс, null — нет ожидающей записи.
-      if (queue.running) return;
-      function sendNext() {
-        if (queue.pending === null) {
-          queue.running = false;
-          delete gridOrderSaves[key];
-          return;
-        }
-        var body = "grid=" + encodeURIComponent(key) + "&order=" + encodeURIComponent(queue.pending);
-        queue.pending = null;
-        queue.running = true;
-        // Пока сервер не закончил старую запись, новую не отправляем.
-        // Ошибка не должна блокировать более позднее действие пользователя.
-        try {
-          window.fetch("/ui/_grid-order", {
-            method: "POST", credentials: "same-origin",
-            headers: {"Content-Type": "application/x-www-form-urlencoded"}, body: body
-          }).then(sendNext, sendNext);
-        } catch (e) { sendNext(); }
-      }
-      sendNext();
+    function save(order) { queueGridSave(gridOrderSaves, "/ui/_grid-order", key, "order", order); }
+    function saveWidths(widths) { queueGridSave(gridWidthSaves, "/ui/_grid-widths", key, "widths", widths); }
+    function showReset(isDefaultOrder) {
+      if (resetBtn) resetBtn.style.display = isDefaultOrder && !widthsSaved ? "none" : "";
     }
     function applyColumns() {
       grid.setColumns(state.columns);
       markDraggable();
       try { updateTotals(state); } catch (e) {}
       var isDefault = obGridColumnIds(state.columns).join("\u0001") === defaultIds.join("\u0001");
-      if (resetBtn) resetBtn.style.display = isDefault ? "none" : "";
+      showReset(isDefault);
       return isDefault;
     }
+    if (grid.onColumnsResized) grid.onColumnsResized.subscribe(function() {
+      // Ширина из мыши становится объявленной: следующий resizeGrid её не
+      // сбрасывает и автоподбор её не трогает.
+      var cols = grid.getColumns(), clamped = false;
+      for (var i = 0; i < cols.length; i++) {
+        var w = obGridClampWidth(cols[i].width);
+        if (w !== cols[i].width) { cols[i].width = w; clamped = true; }
+        cols[i].obWidth = w;
+      }
+      // Шире предела не бывает: показываем ту ширину, что сохранится.
+      if (clamped) grid.setColumns(cols);
+      widthsSaved = true;
+      showReset(false);
+      saveWidths(JSON.stringify(obGridColumnWidths(cols)));
+    });
     markDraggable();
     if (grid.onHeaderCellRendered) {
       grid.onHeaderCellRendered.subscribe(function(e, args) {
@@ -2951,7 +3015,17 @@ function obGridColumnIds(columns) {
       resetBtn.addEventListener("click", function() {
         if (!grid.getEditorLock().commitCurrentEdit()) return;
         obGridApplyOrder(state.columns, defaultIds);
+        if (widthsSaved) {
+          for (var i = 0; i < state.columns.length; i++) {
+            var c = state.columns[i];
+            var px = Object.prototype.hasOwnProperty.call(defaultWidths, c.id) ? Number(defaultWidths[c.id]) : 0;
+            if (px > 0) { c.width = px; c.obWidth = px; } else { c.width = 120; delete c.obWidth; }
+          }
+          widthsSaved = false;
+          saveWidths("");
+        }
         applyColumns();
+        resizeGrid(state);
         save("");
       });
     }
@@ -4424,7 +4498,19 @@ function obGridColumnIds(columns) {
     try { choiceContexts=JSON.parse(div.getAttribute('data-sg-choice') || '{}') || {}; } catch(e) {}
     columns.forEach(function(col){col.choiceContext=choiceContexts[col.field] || '';});
     var defaultColumnIds = obGridColumnIds(columns);
+    // Предел ширины — сразу у колонок: SlickGrid не даёт растянуть шире
+    // maxWidth, а объявленная в форме ширина больше предела показывается той,
+    // что сохранится.
+    var defaultColumnWidths = Object.create(null);
+    for (var dw = 0; dw < columns.length; dw++) {
+      columns[dw].maxWidth = OB_GRID_WIDTH_MAX;
+      if (columns[dw].width > OB_GRID_WIDTH_MAX) columns[dw].width = OB_GRID_WIDTH_MAX;
+      if (columns[dw].obWidth > OB_GRID_WIDTH_MAX) columns[dw].obWidth = OB_GRID_WIDTH_MAX;
+      if (columns[dw].obWidth) defaultColumnWidths[columns[dw].id] = columns[dw].obWidth;
+    }
     obGridApplyOrder(columns, obGridParseOrder(div.getAttribute("data-sg-order")));
+    var savedColumnWidths = obGridParseWidths(div.getAttribute("data-sg-widths"));
+    obGridApplyWidths(columns, savedColumnWidths);
     // _ord — исходный порядок строки. Клиентская сортировка меняет ПОРЯДОК
     // ОТОБРАЖЕНИЯ (dataView.sort), но при сохранении (obGridSync) строки
     // сериализуются по _ord — чтобы сортировка «для просмотра» не переставляла
@@ -4467,14 +4553,6 @@ function obGridColumnIds(columns) {
     };
 
     var grid = new Slick.Grid(div, dataView, columns, options);
-    // Ширину, которую пользователь задал мышью, следующий resizeGrid не
-    // сбрасывает к объявленной: она и становится объявленной.
-    if (grid.onColumnsResized) grid.onColumnsResized.subscribe(function() {
-      var cols = grid.getColumns(), declared = false;
-      for (var i = 0; i < cols.length; i++) if (cols[i].obWidth) declared = true;
-      if (!declared) return;
-      for (var j = 0; j < cols.length; j++) cols[j].obWidth = cols[j].width;
-    });
 
     // Каждый DOM-host инициализируется отдельно: readonly summary должна
     // оставаться видимой рядом с writable placement той же табличной части.
@@ -4497,7 +4575,7 @@ function obGridColumnIds(columns) {
     div._obGridState = gridState;
     window._obGridViews.push(gridState);
     if(Object.keys(choiceContexts).length)Promise.resolve().then(function(){window.obRefreshTPChoiceFilters();});
-    enableColumnReorder(gridState, defaultColumnIds);
+    enableColumnReorder(gridState, defaultColumnIds, defaultColumnWidths, !!savedColumnWidths);
     var registered = window._obGrids[tpName];
     if (!registered || (!readOnly && registered.readOnly)) {
       window._obGrids[tpName] = gridState;

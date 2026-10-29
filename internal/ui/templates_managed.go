@@ -333,6 +333,7 @@ const tplManagedForm = `
        data-sg-el="{{$el.Name}}"
        {{with gridLayoutAttr $ctx $el.Name}}data-sg-layout="{{.}}"{{end}}
        {{with gridOrderAttr $ctx $el.Name}}data-sg-order="{{.}}"{{end}}
+       {{with gridWidthsAttr $ctx $el.Name}}data-sg-widths="{{.}}"{{end}}
        {{if $tpReadOnly}}data-sg-ro="1"{{end}}
        {{if and (not $tpReadOnly) (hasHandler $el "ПриИзменении")}}data-sg-recalc="1"{{end}}
        {{if $el.AutoSum}}data-sg-autosum="1"{{end}}
@@ -359,9 +360,9 @@ const tplManagedForm = `
     <button type="button" class="btn btn-sm" style="background:#fee2e2;color:#991b1b"{{if $tpReadOnly}} disabled{{else}}
       data-ob-grid-del="{{$tpName}}" title="Delete" aria-keyshortcuts="Delete"{{end}}>− Удалить строку</button>
     {{/* display:none, а не hidden: display у .btn перебивает атрибут hidden. */}}
-    {{if gridLayoutAttr $ctx $el.Name}}<button type="button" class="btn btn-sm" style="margin-left:auto;background:#f1f5f9;color:#64748b{{if not (gridOrderAttr $ctx $el.Name)}};display:none{{end}}"
+    {{if gridLayoutAttr $ctx $el.Name}}<button type="button" class="btn btn-sm" style="margin-left:auto;background:#f1f5f9;color:#64748b{{if not (or (gridOrderAttr $ctx $el.Name) (gridWidthsAttr $ctx $el.Name))}};display:none{{end}}"
       data-ob-grid-order-reset="{{$tpName}}"
-      title="{{t $ctx.Lang "Колонки можно переставлять, перетаскивая заголовок"}}">{{t $ctx.Lang "Стандартный порядок колонок"}}</button>{{end}}
+      title="{{t $ctx.Lang "Колонки можно переставлять, перетаскивая заголовок, и менять ширину, перетаскивая его границу"}}">{{t $ctx.Lang "Стандартные колонки"}}</button>{{end}}
   </div>
 {{else}}
 {{/* Маркер присутствия простой таблицы: строки — это ключи tp.X.<i>.<колонка>,
