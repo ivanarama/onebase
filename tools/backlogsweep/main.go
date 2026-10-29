@@ -284,7 +284,7 @@ func analyze(issues []issue, cfg config) []bucket {
 			}
 		}
 
-		refs := planRefs(is)
+		refs, replacements := planRefsAndReplacements(is, cfg.team)
 		blockers := blockedBy(is)
 		waiting, done, unknown := cfg.objects.classify(blockers)
 
@@ -343,6 +343,11 @@ func analyze(issues []issue, cfg config) []bucket {
 				}
 				if fixed, ok := correctedBelow(refs, ref, cfg.plans); ok {
 					detail = fmt.Sprintf("ссылка на %s устарела — ниже в треде уже поправлено на %s", ref, fixed)
+					planCorrected.findings = append(planCorrected.findings, finding{is, detail})
+					continue
+				}
+				if fixed, ok := replacedBelow(replacements, ref, cfg.plans); ok {
+					detail = fmt.Sprintf("ссылка на %s снята — явная замена ниже в треде: %s", ref, fixed)
 					planCorrected.findings = append(planCorrected.findings, finding{is, detail})
 					continue
 				}
