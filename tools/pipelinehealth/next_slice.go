@@ -183,6 +183,11 @@ func loadNextSlicePulls(client pipelineGraphQLClient, repo, owner string, issues
 			if p.Number != n {
 				return nil, fmt.Errorf("next-slice lookup returned wrong PR")
 			}
+			// An OPEN result raced the complete OPEN-PR snapshot. Reload all normal
+			// fields; this closed-PR observation cannot supply REVIEW candidates.
+			if strings.EqualFold(p.State, "OPEN") {
+				return nil, &pipelineSnapshotChurn{fmt.Sprintf("next-slice PR #%d reopened; reload complete snapshot", n)}
+			}
 			if total < 0 {
 				total = p.Comments.TotalCount
 				pull = apiPull{Number: n, Title: p.Title, Body: p.Body, HTMLURL: p.URL, State: strings.ToLower(p.State)}

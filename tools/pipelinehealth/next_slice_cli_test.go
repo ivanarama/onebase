@@ -129,3 +129,117 @@ func TestNextSlicePublicCLI(t *testing.T) {
 		})
 	}
 }
+
+func TestNextSliceReopenedPublicCLI(t *testing.T) {
+	_, file, _, _ := runtime.Caller(0)
+	root := filepath.Clean(filepath.Join(filepath.Dir(file), "../.."))
+	binary := filepath.Join(t.TempDir(), "pipelinehealth")
+	if runtime.GOOS == "windows" {
+		binary += ".exe"
+	}
+	build := exec.Command("go", "build", "-o", binary, "./tools/pipelinehealth") //nolint:gosec // fixed Go command and test-owned output
+	build.Dir = root
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build public CLI: %v\n%s", err, output)
+	}
+	helper, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := gqlTestComment("10")
+	plan["body"] = "<!-- pp:plan-ready issue=1274 pr=1329 path=Plans/159-undefined-and-typed-empty-values.md -->"
+	active := gqlTestComment("11")
+	active["body"] = "Взято в работу: #1374. <!-- pp:in-work -->"
+	issue := gqlTestIssueNode("issue-1274", 1274, []any{plan, active})
+	issue["labels"] = connection(2, []any{map[string]any{"name": "approved"}, map[string]any{"name": "in-work"}}, false, nil)
+	initial := map[string]any{"data": snapshotResult(0, nil, false, nil, 1, []any{issue}, false, nil)}
+	// The targeted query deliberately has no draft/base/labels/review fields.
+	// It observes that the old closed PR reopened, not a complete Ready PR.
+	reopened := map[string]any{"data": map[string]any{"repository": map[string]any{"pullRequest": map[string]any{
+		"number": 1374, "title": "slice", "body": "Part of #1274", "url": "https://example.test/1374", "state": "OPEN", "headRefOid": headA, "merged": false, "mergeCommit": nil,
+		"comments": emptyConnection(), "timelineItems": emptyConnection(),
+	}}}}
+	for _, tc := range []struct {
+		name     string
+		draft    bool
+		base     string
+		labels   []any
+		history  bool
+		reviewed bool
+		churn    bool
+	}{
+		{name: "reopened draft", draft: true, base: "main"},
+		{name: "reopened hold", base: "main", labels: []any{map[string]any{"name": "hold"}}},
+		{name: "reopened other base", base: "release"},
+		{name: "ready retains prior review depth", base: "main", history: true},
+		{name: "reviewed stays waiting for ship", base: "main", reviewed: true, labels: []any{map[string]any{"name": "reviewed"}}},
+		{name: "repeated reopen fails closed", churn: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			pages := []any{initial, reopened}
+			wantRequests := "3"
+			if tc.churn {
+				pages = []any{initial, reopened, initial, reopened, initial, reopened}
+				wantRequests = "6"
+			} else {
+				var comments []any
+				if tc.history || tc.reviewed {
+					comment := gqlTestComment("30")
+					previousHead := headB
+					if tc.reviewed {
+						previousHead = headA
+					}
+					comment["body"] = completion(previousHead, 20, 25)
+					comments = []any{comment}
+				}
+				full := gqlTestPullNode("pr-1374", 1374, headA, tc.labels, comments)
+				full["body"], full["isDraft"], full["baseRefName"] = "Part of #1274", tc.draft, tc.base
+				pages = append(pages, map[string]any{"data": snapshotResult(1, []any{full}, false, nil, 1, []any{issue}, false, nil)})
+			}
+			data, err := json.Marshal(pages)
+			if err != nil {
+				t.Fatal(err)
+			}
+			sequence := filepath.Join(t.TempDir(), "pages.json")
+			if err := os.WriteFile(sequence, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			command := exec.Command(binary, "-transport", "graphql", "-repo", "ivanarama/onebase", "-owner", "ivanarama", "-json") //nolint:gosec // fixed CLI and test-owned executable
+			command.Dir = root
+			command.Env = append(os.Environ(), "GH_EXE="+helper, "PIPELINEHEALTH_TEST_GH_HELPER=1", "PIPELINEHEALTH_TEST_GH_SEQUENCE="+sequence, "GH_TOKEN=", "GITHUB_TOKEN=", "GH_ENTERPRISE_TOKEN=", "GITHUB_ENTERPRISE_TOKEN=")
+			output, err := command.CombinedOutput()
+			if tc.churn {
+				if err == nil || !strings.Contains(string(output), "reopened") || json.Valid(output) {
+					t.Fatalf("repeated churn returned a report instead of failing closed: err=%v output=%s", err, output)
+				}
+			} else {
+				if err != nil {
+					t.Fatalf("public CLI failed after complete refresh: %v\n%s", err, output)
+				}
+				var got report
+				if err := json.Unmarshal(output, &got); err != nil {
+					t.Fatal(err)
+				}
+				if got.Checked != 1 || got.IssuesChecked != 1 {
+					t.Fatalf("complete refreshed snapshot was not used: %s", output)
+				}
+				if tc.history {
+					for _, queue := range [][]candidate{got.ContentReviewCandidates, got.ReviewDispatchCandidates} {
+						if len(queue) != 1 || queue[0].Number != 1374 || queue[0].Head != headA || queue[0].Depth != 1 {
+							t.Fatalf("reopened Ready PR lost its normal identity or review history: %s", output)
+						}
+					}
+				} else if len(got.ContentReviewCandidates) != 0 || len(got.ReviewDispatchCandidates) != 0 || len(got.ReviewCandidates) != 0 {
+					t.Fatalf("incomplete OPEN observation bypassed draft/base/hold/review route: %s", output)
+				}
+				if tc.reviewed && (len(got.ReviewedWaitingShip) != 1 || got.ReviewedWaitingShip[0].Number != 1374) {
+					t.Fatalf("current committed review was lost: %s", output)
+				}
+			}
+			counter, err := os.ReadFile(sequence + ".index")
+			if err != nil || string(counter) != wantRequests {
+				t.Fatalf("full snapshot refresh/bounded retry not reached: requests=%q want=%s err=%v", counter, wantRequests, err)
+			}
+		})
+	}
+}
