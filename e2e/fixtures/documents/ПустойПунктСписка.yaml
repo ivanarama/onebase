@@ -1,0 +1,7 @@
+name: ПустойПунктСписка
+title: "Проверка подписи пустого пункта списка"
+fields:
+  - name: Стадия
+    type: string
+  - name: Склад
+    type: reference:Склад

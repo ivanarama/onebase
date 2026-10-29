@@ -4888,7 +4888,7 @@ function obRefreshDependentSelects(sourceEl) {
           while (sel.options.length) sel.remove(0);
           var empty = document.createElement('option');
           empty.value = '';
-          empty.textContent = '— выбрать —';
+          empty.textContent = obEmptyOptionLabel(sel);
           sel.appendChild(empty);
           for (var j = 0; j < rows.length; j++) {
             var id = String(rows[j].id);
@@ -5077,6 +5077,28 @@ function obChoiceDispatchChange(sel) {
   }
 }
 
+// Подпись пустого пункта списка — по ТЕКУЩЕЙ доступности поля, как у
+// серверной отрисовки: доступно — «— выбрать —», только чтение — «—». Шаблон
+// подписывает пункт по состоянию на момент отрисовки, поэтому у поля, которое
+// открылось позже (readonly_when, доступность из события формы), оставалось
+// «—», а у соседних сразу доступных — «— выбрать —».
+function obEmptyOptionLabel(sel) {
+  // Поле без списка (choice_dropdown: false) пустое значение показывает
+  // пустым, как в 1С: выбирают кнопкой «…», подсказке в нём не место.
+  if (sel && sel.getAttribute && sel.getAttribute('data-ref-choice-dropdown') === 'false') return '';
+  return sel && sel.disabled ? '—' : '— выбрать —';
+}
+window.obEmptyOptionLabel = obEmptyOptionLabel;
+
+function obSyncEmptyOption(sel) {
+  if (!sel || sel.tagName !== 'SELECT' || !sel.options || !sel.options.length) return;
+  var first = sel.options[0];
+  if (first.value !== '') return;
+  var label = obEmptyOptionLabel(sel);
+  if (first.textContent !== label) first.textContent = label;
+}
+window.obSyncEmptyOption = obSyncEmptyOption;
+
 function obChoiceApplyResponse(sel, data, selectedAtRequest) {
   var rows = data && Array.isArray(data.items) ? data.items : [];
   var selectedAllowed = null;
@@ -5087,11 +5109,12 @@ function obChoiceApplyResponse(sel, data, selectedAtRequest) {
     selectedAllowed = data.selected_allowed;
   }
 
-  var blankLabel = '— выбрать —';
+  // Подпись пустого пункта — по доступности поля сейчас, а не прежняя: та
+  // могла остаться «—» от отрисовки запертого поля.
+  var blankLabel = obEmptyOptionLabel(sel);
   var selectedLabel = selectedAtRequest;
   for (var i = 0; i < sel.options.length; i++) {
     var current = sel.options[i];
-    if (!current.value && current.textContent) blankLabel = current.textContent;
     if (String(current.value) === selectedAtRequest) selectedLabel = current.textContent || selectedAtRequest;
   }
   while (sel.options.length) sel.remove(0);
