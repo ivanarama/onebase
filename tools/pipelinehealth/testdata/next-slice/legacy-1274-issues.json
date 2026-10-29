@@ -1,0 +1,117 @@
+[
+  {
+    "number": 1274,
+    "title": "Historical #1274 immediately after partial PR #1374",
+    "body": "## Что происходит\n\nСравнение числа `0` с `Неопределено` даёт **истину**:\n\n```\nПроцедура Выполнить()\n    Если 0 = Неопределено Тогда\n        Сообщить(\"1) TRUE\");\n    Иначе\n        Сообщить(\"1) FALSE\");\n    КонецЕсли;\n\n    С = Новый Соответствие;\n    С.Вставить(\"а\", 0);\n    Если С.Получить(\"а\") = Неопределено Тогда\n        Сообщить(\"1a) TRUE\");\n    Иначе\n        Сообщить(\"1a) FALSE\");\n    КонецЕсли;\nКонецПроцедуры\n```\n\nВывод `procrun`:\n\n```\n1) TRUE\n1a) TRUE\n```\n\nОжидалось `FALSE` в обоих случаях: `0` — это значение, а не «ничего».\n\n## Почему это опаснее, чем выглядит\n\nИз-за (1a) **штатная проверка «есть ли ключ в Соответствии» ломается на значении 0**.\nИдиома `Н = Карта.Получить(Имя); Если Н = Неопределено Тогда …` — единственный\nспособ отличить «ключа нет» от «ключ есть», и он молча врёт ровно для нулевого\nзначения.\n\nПоймал на прикладной задаче: загрузчик НСИ строил индекс колонок таблицы\n(`имя колонки → позиция`) и проверял наличие колонки этой идиомой. Колонка с\nпозицией **0 — то есть первая** — всегда считалась отсутствующей. Раздел выгрузки\nзагружался нулём строк, без единой ошибки и без каких-либо признаков в логе;\nотладка заняла заметно больше времени, чем сама фича, потому что подозрение падало\nна что угодно, кроме сравнения.\n\nОбход в прикладном коде — хранить позиции с единицы. Это работает, но требует\nзнать про грабли: без этого знания код выглядит правильным и молча теряет данные.\n\n## Ожидаемое поведение\n\n`0 = Неопределено` → ложь. То же для пустой строки и `Ложь`, если они сейчас ведут\nсебя так же (не проверял).\n\nПроверено на `dev` из ветки `feature/form-ref-card-button` (поверх `main` 8d225ab0), SQLite.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n",
+    "state": "open",
+    "created_at": "2026-09-01T00:00:00Z",
+    "updated_at": "2026-09-07T21:27:48Z",
+    "comments": 10,
+    "labels": [
+      {
+        "name": "approved"
+      },
+      {
+        "name": "ready-fix"
+      },
+      {
+        "name": "in-work"
+      },
+      {
+        "name": "queue:p0"
+      }
+    ],
+    "thread": [
+      {
+        "id": 5488419372,
+        "body": "**Триаж.**\nВоспроизводится: да. go test ./internal/dsl/interpreter -run TestNilNumericComparison_НеНайденоБольшеНеОтличаетсяЧерезРавенство_1136 подтверждает оба результата: «не найдено = Неопределено» и индекс 0 равны Неопределено. Это не случайная регрессия: цена явно закреплена тестом и release note #1136.\nКорень: internal/dsl/interpreter/decimal_helpers.go:325-357 подменяет nil на decimal.Zero, когда другая сторона оператора числовая; internal/dsl/interpreter/interpreter.go:1317-1324 применяет это ко всем =, <>, <, >, <=, >=. Один nil сейчас одновременно означает Неопределено из Соответствие.Получить и пустое числовое поле, поэтому оператор не может различить эти случаи.\nПлан фикса: после решения развести внутреннее Неопределено и типизированное пустое число, инвентаризировать источники nil (поля формы, БД/запрос, Найти/Получить), затем перенести нулевую семантику на границу числового типа и убрать глобальную подмену из операторов. Покрыть публичные пути procrun для пустого числового поля и отсутствующего ключа, коллекции и release note.\nСложность: крупный. Риски: сломать исправление #1136, сравнение/сортировку запросов и конфигурации, уже полагающиеся на документированное Неопределено = 0.\nКритерии автофикса не сошлись: меняется опубликованная семантика DSL и работа проходит через несколько источников значений.\n\n**Развилка.** Как одновременно сохранить нулевую семантику числового поля и отличить отсутствие значения.\n1. Сначала план: ведущая #1274, ведомых нет; ввести отдельное внутреннее представление Неопределено, а пустые поля нормализовать по их метаданному типу — цена: несколько срезов по interpreter/storage/UI и миграция тестов, зато обе 1С-идиомы становятся совместимы.\n2. Просто убрать nilAsNumericZero — цена: Неопределено снова отличается от 0, но возвращаются дефекты #1136 (пустая цена не равна нулю и неверно упорядочивается).\n3. Оставить текущую семантику и документировать ТипЗнч как обязательный признак «не найдено» — цена: кода нет, но штатная проверка Соответствие.Получить продолжает путать отсутствие с первым индексом.\nРекомендую **1**: это единственный вариант без выбора одного дефекта вместо другого; платим более крупным и поэтапным изменением рантайма.\n<!-- pp:options=1,2,3 pp:recommend=1 -->\n<!-- pp:triage -->\n\npp-triage-route-v1\nissue=1274\nissue-updated=2026-08-31T23:34:25Z\ntitle-sha256=b6ce05a17e8f2a116d24e399b4751288e7816343302e4b5e63d7df4a2e92e8c2\nbody-sha256=034a78d6d8aa3bdbcb84e2437473267b98bb4359cf74a4d7ab4aaafe328bd31e\nanalysis-sha256=e3e20355ece9d2cb3338f342c01ab72a82eda832a53432dc93aeb3a69d05ae31\ncomments-sha256=c7589873b66f7ee75b29d4a027a6afd636ae6abd5df541a4197bd603a254fa62\nlabels-sha256=2cb8722cea7a1fe83cb5117638d0c0b3ae2f957253c7e07c88403639341d4f91\nevents-watermark=none\nclass=bug\nroute=needs-decision\nmanual=false\nreply=none\n<!-- pp:triage-route-claim fingerprint-sha256=e1eb2ea2bdf1c40118dd12088c16631627c32fb2e7d3cf05093f8ea05c2617d1 owner=bf1c55b4-7719-4d2d-952d-0b01343afffd -->",
+        "created_at": "2026-09-01T03:22:20Z",
+        "updated_at": "2026-09-01T03:22:20Z",
+        "user": {
+          "login": "ivanarama"
+        }
+      },
+      {
+        "id": 5488420927,
+        "body": "<!-- pp:triage-route-labels claim=5488419372 fingerprint-sha256=e1eb2ea2bdf1c40118dd12088c16631627c32fb2e7d3cf05093f8ea05c2617d1 events-through=30319762022 labels-sha256=990c4ec4c8a10ab3d23b2d48f03af8fe3630ed40d503160541eb9c0c91f28bde -->",
+        "created_at": "2026-09-01T03:22:33Z",
+        "updated_at": "2026-09-01T03:22:33Z",
+        "user": {
+          "login": "ivanarama"
+        }
+      },
+      {
+        "id": 5488422846,
+        "body": "<!-- pp:triage-route-done claim=5488419372 fingerprint-sha256=e1eb2ea2bdf1c40118dd12088c16631627c32fb2e7d3cf05093f8ea05c2617d1 -->",
+        "created_at": "2026-09-01T03:22:51Z",
+        "updated_at": "2026-09-01T03:22:51Z",
+        "user": {
+          "login": "ivanarama"
+        }
+      },
+      {
+        "id": 5504487238,
+        "body": "```text\npp-fix-issue-handoff-v1\nissue=1274\nissue-updated=2026-09-01T15:10:19Z\ntitle-sha256=b6ce05a17e8f2a116d24e399b4751288e7816343302e4b5e63d7df4a2e92e8c2\nbody-sha256=034a78d6d8aa3bdbcb84e2437473267b98bb4359cf74a4d7ab4aaafe328bd31e\ntriage-comment=5488419372\ntriage-updated=2026-09-01T03:22:20Z\ntriage-sha256=35bc622fca34ad19deaed7d67c3e9d4c53fa172c639f734f9f19c756a4ee78b9\ncomments-sha256=cc80e26e6c71125b6d4d4b28dd2e096573a7f5544d4b15544e9485f52f42a4b7\nevents-watermark=30355065971\nlabels=approved\nchoice=recommend:1\nreason=missing-plan\n```\n\n<!-- pp:fix-issue-handoff-claim fingerprint-sha256=4dfa69434ef69d1fa404c888f2d5f5d1d74b9cf4d5270e74a7bf5201491d4ae2 reason=missing-plan owner=e9003dc8-fed0-4675-b00c-2a9a9ad5769d -->",
+        "created_at": "2026-09-02T04:42:38Z",
+        "updated_at": "2026-09-02T04:42:38Z",
+        "user": {
+          "login": "ivanarama"
+        }
+      },
+      {
+        "id": 5504507036,
+        "body": "Выбран вариант 1 («сначала план»), но в `Plans/` нет файла, связанного с #1274. Какой файл плана с границами срезов следует реализовать?\n\n<!-- pp:fix-issue-handoff-question claim=5504487238 reason=missing-plan -->",
+        "created_at": "2026-09-02T04:45:15Z",
+        "updated_at": "2026-09-02T04:45:15Z",
+        "user": {
+          "login": "ivanarama"
+        }
+      },
+      {
+        "id": 5504543730,
+        "body": "<!-- pp:fix-issue-handoff-done claim=5504487238 -->",
+        "created_at": "2026-09-02T04:50:06Z",
+        "updated_at": "2026-09-02T04:50:06Z",
+        "user": {
+          "login": "ivanarama"
+        }
+      },
+      {
+        "id": 5528491787,
+        "body": "Pipeline migration: option 1 (plan first) was already approved and the previous FIX handoff recorded reason=missing-plan. Routing this issue to the new PLAN stage; no new human decision is required. The existing queue:p0 priority is preserved.\n\n<!-- pp:plan-needed issue=1274 choice=recommend:1 source=fix-handoff:5504487238 -->",
+        "created_at": "2026-09-03T16:03:54Z",
+        "updated_at": "2026-09-03T16:03:54Z",
+        "user": {
+          "login": "ivanarama"
+        }
+      },
+      {
+        "id": 5529033112,
+        "body": "Подготовлен технический план: https://github.com/ivanarama/onebase/pull/1329\n\nПуть плана: `Plans/159-undefined-and-typed-empty-values.md`.\n\nВ PR только план и запись в индексе; продуктовый код не изменён.\n<!-- pp:plan-created issue=1274 pr=1329 path=Plans/159-undefined-and-typed-empty-values.md -->",
+        "created_at": "2026-09-03T16:46:56Z",
+        "updated_at": "2026-09-03T16:46:56Z",
+        "user": {
+          "login": "ivanarama"
+        }
+      },
+      {
+        "id": 5554501018,
+        "body": "План `Plans/159-undefined-and-typed-empty-values.md` влит через PR #1329; заявка возвращена в FIX.\n\n<!-- pp:plan-ready issue=1274 pr=1329 path=Plans/159-undefined-and-typed-empty-values.md -->\n",
+        "created_at": "2026-09-05T20:15:17Z",
+        "updated_at": "2026-09-05T20:15:17Z",
+        "user": {
+          "login": "ivanarama"
+        }
+      },
+      {
+        "id": 5574893217,
+        "body": "Взято в работу: #1374. <!-- pp:in-work -->",
+        "created_at": "2026-09-07T19:28:50Z",
+        "updated_at": "2026-09-07T19:28:50Z",
+        "user": {
+          "login": "ivanarama"
+        }
+      }
+    ]
+  }
+]

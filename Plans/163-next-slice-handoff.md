@@ -397,3 +397,12 @@ fail closed отправляет slice-PR в fallback. Label-фазы возвр
   общие golden vectors;
 - сквозной тест двух последовательных PR одной issue стабильно проходит;
 - обычные одноразовые FIX/REVIEW/MERGE маршруты не изменили поведение.
+
+
+## Уточнение bootstrap A
+
+Точная сериализация decision fingerprint и phase records зафиксирована в
+[read-only контракте next-slice v1](../docs/next-slice-v1.md).
+Это отдельный contributor bootstrap по решению 5589070829; он не разрешает
+partial FIX и не включает next-slice mutations. Ведущая #1379 остаётся на hold
+до принятого merge bootstrap; реализация B–D требует следующих отдельных PR.

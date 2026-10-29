@@ -1,0 +1,21 @@
+[
+  {
+    "number": 1374,
+    "title": "Historical partial slice A",
+    "body": "## Что сделано\n\n- Добавлен единый metadata-контракт пустых DSL-значений для чисел, булевых, строк, дат, перечислений и ссылок.\n- Формы, ValueTable, строки табличных частей, writers и lifecycle-хуки теперь материализуют типизированное пустое значение только при чтении, не меняя runtime-объект и SQL NULL.\n- Для ссылок сохраняются Type/Kind и контекстный manager; masking по-прежнему выполняется до типизации.\n- Полный TypeRef колонок ValueTable переносится во временные метаданные.\n\n## Проверки\n\n- `go build ./...`\n- `go test ./...`\n- Матричная приёмка SQLite/PostgreSQL: HTTP submit → SQL NULL без ghost-row → событие формы, ПриЗаписи и writer видят Число/Дата.\n\nВариант: 1 (рекомендация триажа)\n\nЭто срез A плана 159. Согласно нарезке плана, issue закрывает только финальный срез D, поэтому здесь намеренно нет `Fixes #1274`.\n\nPart of #1274",
+    "state": "closed",
+    "head": {
+      "sha": "c77daec53ed1fb8381ab23504896434b1ddaf060"
+    },
+    "base": {
+      "ref": "main"
+    },
+    "slice_evidence": {
+      "complete": true,
+      "merged": true,
+      "merge_sha": "c909c77247810de1bbf11008831efc72b5a8260e",
+      "merge_events": 1,
+      "declarations": []
+    }
+  }
+]

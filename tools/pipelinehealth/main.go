@@ -48,23 +48,25 @@ type apiLabel struct {
 }
 
 type apiComment struct {
-	ID        int64   `json:"id"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
-	User      apiUser `json:"user"`
-	Body      string  `json:"body"`
+	LastEditedAt *string `json:"last_edited_at,omitempty"`
+	ID           int64   `json:"id"`
+	CreatedAt    string  `json:"created_at"`
+	UpdatedAt    string  `json:"updated_at"`
+	User         apiUser `json:"user"`
+	Body         string  `json:"body"`
 }
 
 type apiPull struct {
-	Number    int    `json:"number"`
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	HTMLURL   string `json:"html_url"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-	State     string `json:"state"`
-	Draft     bool   `json:"draft"`
-	Head      struct {
+	SliceEvidence *slicePullEvidence `json:"slice_evidence,omitempty"`
+	Number        int                `json:"number"`
+	Title         string             `json:"title"`
+	Body          string             `json:"body"`
+	HTMLURL       string             `json:"html_url"`
+	CreatedAt     string             `json:"created_at"`
+	UpdatedAt     string             `json:"updated_at"`
+	State         string             `json:"state"`
+	Draft         bool               `json:"draft"`
+	Head          struct {
 		SHA string `json:"sha"`
 	} `json:"head"`
 	Base struct {
@@ -197,10 +199,14 @@ type report struct {
 	PlanCandidates           []candidate `json:"plan_candidates"`
 	FixCandidates            []candidate `json:"fix_candidates"`
 	HumanWaiting             []candidate `json:"human_waiting"`
+	NextSliceRecovery        []candidate `json:"next_slice_recovery"`
+	NextSliceHumanWaiting    []candidate `json:"next_slice_human_waiting"`
 	Findings                 []finding   `json:"findings"`
 }
 
 func main() {
+	planDir := flag.String("plan-dir", "Plans", "local selected-plan directory for next-slice observations")
+	vectors := flag.String("slice-vectors", "", "validate offline shared next-slice golden vectors; no GitHub reads")
 	repo := flag.String("repo", "ivanarama/onebase", "GitHub repository")
 	owner := flag.String("owner", "ivanarama", "trusted pipeline account")
 	contract := flag.String("contract", ".claude/skills/review-queue/SKILL.md", "active REVIEW contract")
@@ -210,6 +216,12 @@ func main() {
 	cacheDir := flag.String("cache-dir", os.Getenv("PIPELINEHEALTH_CACHE_DIR"), "persistent GitHub REST cache directory (default: user cache directory)")
 	asJSON := flag.Bool("json", false, "print machine-readable JSON")
 	flag.Parse()
+	if *vectors != "" {
+		if err := checkNextSliceVectors(*vectors); err != nil {
+			fail(err)
+		}
+		return
+	}
 
 	selectedTransport := strings.ToLower(strings.TrimSpace(*transport))
 	var prs []apiPull
@@ -245,7 +257,7 @@ func main() {
 	} else {
 		result.Scope = "conditional REST queue snapshot; mutation gates remain GraphQL"
 	}
-	analyzeIssues(&result, issues, prs, *owner)
+	analyzeIssuesWithPlans(&result, issues, prs, *owner, *planDir)
 	checkContract(&result, *contract)
 	result.finish()
 
@@ -422,7 +434,7 @@ func analyze(prs []apiPull, owner string) report {
 		Scheduler: "two-lane-safety-priority-aging-depth-number", Checked: len(prs),
 		ReviewCandidates: []candidate{}, ReviewDispatchCandidates: []candidate{}, ContentReviewCandidates: []candidate{}, ParallelReviewCandidates: []candidate{},
 		ReviewBacklog: []candidate{}, ReviewedWaitingShip: []candidate{}, MergeCandidates: []candidate{}, MergeExecutable: []candidate{}, PlanCandidates: []candidate{}, FixCandidates: []candidate{},
-		HumanWaiting: []candidate{}, Findings: []finding{},
+		HumanWaiting: []candidate{}, NextSliceRecovery: []candidate{}, NextSliceHumanWaiting: []candidate{}, Findings: []finding{},
 	}
 	now := time.Now().UTC()
 	for _, pr := range prs {
@@ -616,6 +628,9 @@ func analyze(prs []apiPull, owner string) report {
 }
 
 func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner string) {
+	analyzeIssuesWithPlans(result, issues, prs, owner, "../../Plans")
+}
+func analyzeIssuesWithPlans(result *report, issues []apiIssue, prs []apiPull, owner, planDir string) {
 	result.IssuesChecked = len(issues)
 	now := time.Now().UTC()
 	for _, issue := range issues {
@@ -679,6 +694,9 @@ func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner strin
 			Stage: "fix-issue", Priority: priority, PrioritySource: prioritySource,
 			UpdatedAt: issue.UpdatedAt,
 		}
+		if inspectNextSlice(result, issue, prs, owner, planDir, item) {
+			continue
+		}
 		if labels["hold"] || labels["manual"] {
 			continue
 		}
@@ -727,6 +745,8 @@ func analyzeIssues(result *report, issues []apiIssue, prs []apiPull, owner strin
 			result.HumanWaiting = append(result.HumanWaiting, item)
 		}
 	}
+	sortCandidates(result.NextSliceRecovery)
+	sortCandidates(result.NextSliceHumanWaiting)
 	sortCandidates(result.PlanCandidates)
 	sortCandidates(result.FixCandidates)
 	sortCandidates(result.HumanWaiting)
@@ -1246,6 +1266,9 @@ func labelSet(labels []apiLabel) map[string]bool {
 }
 
 func trustedUnedited(comment apiComment, owner string) bool {
+	if comment.LastEditedAt != nil {
+		return false
+	}
 	return comment.User.Login == owner && comment.CreatedAt != "" && comment.UpdatedAt == comment.CreatedAt
 }
 

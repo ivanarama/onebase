@@ -1,0 +1,1812 @@
+{
+  "schema": "pp-next-slice-golden-v1",
+  "vectors": [
+    {
+      "name": "linear-manifest",
+      "kind": "manifest",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z"
+    },
+    {
+      "name": "fenced-example-ignored",
+      "kind": "manifest",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "```markdown\n<!-- pp:plan-slice key=X next=missing -->\n```\n\n<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z"
+    },
+    {
+      "name": "duplicate-key",
+      "kind": "manifest",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=A next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "want_error": true
+    },
+    {
+      "name": "unknown-next",
+      "kind": "manifest",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=Z -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "want_error": true
+    },
+    {
+      "name": "cycle",
+      "kind": "manifest",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=A -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "want_error": true
+    },
+    {
+      "name": "non-ascii",
+      "kind": "manifest",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=А next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "want_error": true
+    },
+    {
+      "name": "crlf",
+      "kind": "manifest",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\r\n### Slice A\r\n\r\n<!-- pp:plan-slice key=B next=done -->\r\n### Slice B\r\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "want_error": true
+    },
+    {
+      "name": "bom",
+      "kind": "manifest",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "﻿<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "want_error": true
+    },
+    {
+      "name": "missing-key",
+      "kind": "manifest",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "want_error": true
+    },
+    {
+      "name": "marker-extra-field",
+      "kind": "manifest",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B typo=x -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "want_error": true
+    },
+    {
+      "name": "reserved-key",
+      "kind": "manifest",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=done next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "want_error": true
+    },
+    {
+      "name": "marker-not-heading",
+      "kind": "manifest",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\nparagraph\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "want_error": true
+    },
+    {
+      "name": "inline-marker",
+      "kind": "manifest",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "paragraph <!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "want_error": true
+    },
+    {
+      "name": "single-marker",
+      "kind": "manifest",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "want_error": true
+    },
+    {
+      "name": "duplicate-done",
+      "kind": "manifest",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=done -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "want_error": true
+    },
+    {
+      "name": "disconnected-cycle",
+      "kind": "manifest",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n\n<!-- pp:plan-slice key=C next=D -->\n### C\n\n<!-- pp:plan-slice key=D next=C -->\n### D\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "want_error": true
+    },
+    {
+      "name": "path-traversal",
+      "kind": "manifest",
+      "plan_path": "Plans/../159-plan.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "want_error": true
+    },
+    {
+      "name": "valid-declaration-17",
+      "kind": "declaration",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+    },
+    {
+      "name": "valid-root-18",
+      "kind": "root",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+    },
+    {
+      "name": "valid-phase-19",
+      "kind": "phase",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "<!-- pp:next-slice-labels claim=9007199254740995 fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 events-through=30719489226 labels-sha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd -->"
+    },
+    {
+      "name": "valid-phase-20",
+      "kind": "phase",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "<!-- pp:next-slice-done claim=9007199254740995 fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 -->"
+    },
+    {
+      "name": "valid-phase-21",
+      "kind": "phase",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "<!-- pp:next-slice-lease claim=9007199254740995 previous=9007199254740995 owner=11111111-1111-4111-8111-111111111111 -->"
+    },
+    {
+      "name": "record-unknown-version",
+      "kind": "declaration",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "pp-slice-declaration-v2\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->",
+      "want_error": true
+    },
+    {
+      "name": "record-duplicate-field",
+      "kind": "declaration",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "pp-slice-declaration-v1\nissue=1274\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->",
+      "want_error": true
+    },
+    {
+      "name": "record-extra-field",
+      "kind": "declaration",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->\nx=1",
+      "want_error": true
+    },
+    {
+      "name": "record-traversal",
+      "kind": "declaration",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/../159-plan.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->",
+      "want_error": true
+    },
+    {
+      "name": "record-uppercase-hash",
+      "kind": "declaration",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->",
+      "want_error": true
+    },
+    {
+      "name": "record-zero-id",
+      "kind": "declaration",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "pp-slice-declaration-v1\nissue=0\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->",
+      "want_error": true
+    },
+    {
+      "name": "record-leading-zero",
+      "kind": "declaration",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "pp-slice-declaration-v1\nissue=01274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->",
+      "want_error": true
+    },
+    {
+      "name": "record-crlf",
+      "kind": "declaration",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "pp-slice-declaration-v1\r\nissue=1274\r\nplan-path=Plans/159-undefined-and-typed-empty-values.md\r\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\r\nslice=A\r\nnext=B\r\nprevious-handoff=none\r\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\r\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\r\n<!-- pp:slice-declaration -->",
+      "want_error": true
+    },
+    {
+      "name": "record-two-final-lf",
+      "kind": "declaration",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->\n\n",
+      "want_error": true
+    },
+    {
+      "name": "record-invalid-token",
+      "kind": "declaration",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=А\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->",
+      "want_error": true
+    },
+    {
+      "name": "record-unknown-next-token",
+      "kind": "declaration",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->",
+      "want_error": true
+    },
+    {
+      "name": "root-done-disallowed",
+      "kind": "root",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=done\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->",
+      "want_error": true
+    },
+    {
+      "name": "malformed-lease",
+      "kind": "phase",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {},
+      "now": "2026-09-08T00:10:00Z",
+      "record": "<!-- pp:next-slice-lease claim=9007199254740995 previous=none owner=11111111-1111-4111-8111-111111111111 -->",
+      "want_error": true
+    },
+    {
+      "name": "merged-before-root",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": []
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "recovery",
+      "want_claim": ""
+    },
+    {
+      "name": "legacy-1274-after-1374",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [],
+        "comments": []
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "legacy-bootstrap-required",
+      "want_claim": ""
+    },
+    {
+      "name": "active-open-pr",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": true,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": []
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "active",
+      "want_claim": ""
+    },
+    {
+      "name": "closed-unmerged",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": false,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": []
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "missing-merged-event",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 0,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": []
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "two-merged-events",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 2,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": []
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "incomplete-evidence",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": false,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": []
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "human-relabel",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": true,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": []
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "late-hold",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": true,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": []
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "head-changed",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "ffffffffffffffffffffffffffffffffffffffff",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": []
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "body-changed",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\nnew body\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": []
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "previous-chain-changed",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "123",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": []
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "declaration-edited",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": true,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": []
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "declaration-deleted",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": true,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": []
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "root-without-labels",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "recovery",
+      "want_claim": "9007199254740995"
+    },
+    {
+      "name": "labels-without-done",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          },
+          {
+            "id": "9007199254740996",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:02:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "<!-- pp:next-slice-labels claim=9007199254740995 fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 events-through=30719489226 labels-sha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "recovery",
+      "want_claim": "9007199254740995"
+    },
+    {
+      "name": "done-stays-disabled",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          },
+          {
+            "id": "9007199254740996",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:02:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "<!-- pp:next-slice-labels claim=9007199254740995 fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 events-through=30719489226 labels-sha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd -->"
+          },
+          {
+            "id": "9007199254740997",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:03:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "<!-- pp:next-slice-done claim=9007199254740995 fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "recovery",
+      "want_claim": "9007199254740995"
+    },
+    {
+      "name": "done-before-labels",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          },
+          {
+            "id": "9007199254740996",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:02:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "<!-- pp:next-slice-done claim=9007199254740995 fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "labels-changed-by-human",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          },
+          {
+            "id": "9007199254740996",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:02:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "<!-- pp:next-slice-labels claim=9007199254740995 fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 events-through=30719489226 labels-sha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "equivalent-roots-bigint-order",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740997",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=22222222-2222-4222-8222-222222222222 -->"
+          },
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "recovery",
+      "want_claim": "9007199254740995"
+    },
+    {
+      "name": "conflicting-root",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          },
+          {
+            "id": "9007199254740997",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=C\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "wrong-fingerprint",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff owner=11111111-1111-4111-8111-111111111111 -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "root-edited",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": true,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "root-deleted",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": true,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "untrusted-root-ignored",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740995",
+            "author": "attacker",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "recovery",
+      "want_claim": ""
+    },
+    {
+      "name": "lease-renewal",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          },
+          {
+            "id": "9007199254740996",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:20:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "<!-- pp:next-slice-lease claim=9007199254740995 previous=9007199254740995 owner=11111111-1111-4111-8111-111111111111 -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "recovery",
+      "want_claim": "9007199254740995"
+    },
+    {
+      "name": "premature-takeover-loses",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          },
+          {
+            "id": "9007199254740996",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:20:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "<!-- pp:next-slice-lease claim=9007199254740995 previous=9007199254740995 owner=22222222-2222-4222-8222-222222222222 -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "recovery",
+      "want_claim": "9007199254740995"
+    },
+    {
+      "name": "takeover-after-expiry",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          },
+          {
+            "id": "9007199254740996",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:32:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "<!-- pp:next-slice-lease claim=9007199254740995 previous=9007199254740995 owner=22222222-2222-4222-8222-222222222222 -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:35:00Z",
+      "want_state": "recovery",
+      "want_claim": "9007199254740995"
+    },
+    {
+      "name": "phase-after-expiry",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          },
+          {
+            "id": "9007199254740996",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:32:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "<!-- pp:next-slice-labels claim=9007199254740995 fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 events-through=30719489226 labels-sha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "duplicate-comment-id",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          },
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "orphan-phase",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740996",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:02:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "<!-- pp:next-slice-labels claim=9007199254740995 fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 events-through=30719489226 labels-sha256=dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "unknown-phase",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=447b784abd7b72b9886bb2afbe79d6d70c0760de7b60165f2470b03a7f4408d8\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": [
+          {
+            "id": "9007199254740995",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:01:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-next-slice-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\ncompleted-slice=A\nnext-slice=B\npr=1374\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nmerge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\ndeclaration=9007199254740993\nprevious-handoff=none\n<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->"
+          },
+          {
+            "id": "9007199254740996",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:02:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "<!-- pp:next-slice-surprise -->"
+          }
+        ]
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    },
+    {
+      "name": "final-does-not-create-handoff",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: B\nNext-Slice: done\nFixes #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=B\nnext=done\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=e3ef0a2afb7496361f236f55d51f486dd49b4ed8e57674d571cfe6852840ea8a\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": []
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "final",
+      "want_claim": ""
+    },
+    {
+      "name": "partial-closing-leading-issue",
+      "kind": "reduce",
+      "plan_path": "Plans/159-undefined-and-typed-empty-values.md",
+      "plan": "<!-- pp:plan-slice key=A next=B -->\n### Slice A\n\n<!-- pp:plan-slice key=B next=done -->\n### Slice B\n",
+      "observation": {
+        "issue": "1274",
+        "pr": "1374",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "merge": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "body": "Slice-Issue: #1274\nSlice-Plan: Plans/159-undefined-and-typed-empty-values.md\nSlice-Key: A\nNext-Slice: B\nPart of #1274\nFixes #1274\n",
+        "previous": "none",
+        "decision_sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "complete": true,
+        "open": false,
+        "merged": true,
+        "merge_events": 1,
+        "held": false,
+        "human_intervention": false,
+        "labels_sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "declarations": [
+          {
+            "id": "9007199254740993",
+            "author": "ivanarama",
+            "created_at": "2026-09-08T00:00:00Z",
+            "edited": false,
+            "deleted": false,
+            "body": "pp-slice-declaration-v1\nissue=1274\nplan-path=Plans/159-undefined-and-typed-empty-values.md\nplan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842\nslice=A\nnext=B\nprevious-handoff=none\nhead=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\nbody-sha256=0177afeeb1611a3fe4e0789ebb510041746da784f8b3068e2bc6f2270c7491a5\n<!-- pp:slice-declaration -->"
+          }
+        ],
+        "comments": []
+      },
+      "now": "2026-09-08T00:10:00Z",
+      "want_state": "human",
+      "want_claim": ""
+    }
+  ]
+}

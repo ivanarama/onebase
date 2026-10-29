@@ -89,6 +89,7 @@ docs/*
 !docs/commercial-use.md
 !docs/licensing-confirmation-template.md
 !docs/maintenance-pipeline.md
+!docs/next-slice-v1.md
 !docs/long-identifiers.md
 # Каталоги, а не файлы по одному: `docs/*` исключает и сам каталог, а в
 # исключённый каталог git не заходит — правило вида `!docs/releases/*.md`

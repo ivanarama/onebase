@@ -56,6 +56,7 @@ query PipelineHealthSnapshot(
             fullDatabaseId
             createdAt
             updatedAt
+            lastEditedAt
             author { login }
             body
           }
@@ -94,6 +95,7 @@ query PipelineHealthSnapshot(
             fullDatabaseId
             createdAt
             updatedAt
+            lastEditedAt
             author { login }
             body
           }
@@ -127,6 +129,7 @@ query PipelineHealthNodePage(
           fullDatabaseId
           createdAt
           updatedAt
+          lastEditedAt
           author { login }
           body
         }
@@ -145,6 +148,7 @@ query PipelineHealthNodePage(
           fullDatabaseId
           createdAt
           updatedAt
+          lastEditedAt
           author { login }
           body
         }
@@ -455,6 +459,7 @@ func (actor *gqlActor) UnmarshalJSON(data []byte) error {
 }
 
 type gqlComment struct {
+	LastEditedAt   *string   `json:"lastEditedAt"`
 	FullDatabaseID string    `json:"fullDatabaseId"`
 	CreatedAt      string    `json:"createdAt"`
 	UpdatedAt      string    `json:"updatedAt"`
@@ -477,6 +482,11 @@ func (comment *gqlComment) UnmarshalJSON(data []byte) error {
 		{"body", &comment.Body},
 	} {
 		if err := decodeGQLRequired(fields, field.name, field.destination); err != nil {
+			return err
+		}
+	}
+	if raw, ok := fields["lastEditedAt"]; ok {
+		if err := json.Unmarshal(raw, &comment.LastEditedAt); err != nil {
 			return err
 		}
 	}
@@ -1033,6 +1043,10 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo, trustedOwner string
 		}
 		issues = append(issues, issue)
 	}
+	pulls, err = loadNextSlicePulls(client, repo, trustedOwner, issues, pulls)
+	if err != nil {
+		return nil, nil, err
+	}
 	return pulls, issues, nil
 }
 
@@ -1390,7 +1404,7 @@ func convertGQLComments(raw []gqlComment) ([]apiComment, error) {
 			login = item.Author.Login
 		}
 		comments = append(comments, apiComment{
-			ID: id, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
+			ID: id, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt, LastEditedAt: item.LastEditedAt,
 			User: apiUser{Login: login}, Body: item.Body,
 		})
 	}
