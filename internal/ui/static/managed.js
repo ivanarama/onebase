@@ -1233,6 +1233,8 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // optimistic version before any renderer, picker or message callback can
       // throw, so a later queued action updates the row instead of inserting it.
       applySavedIdentity(data);
+      // Обработчики ожидания: подключение/отключение таймеров из ответа.
+      if (data.idle && typeof window.obManagedApplyIdle === 'function') window.obManagedApplyIdle(data.idle);
       // The user can type after FormData was sent. An old response must not
       // navigate away or repaint those newer edits, even when the handler
       // saved the old snapshot and returned dirty=false.
@@ -1520,6 +1522,12 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   // replay ledger and another explicit close attempt needs a fresh UUID.
   var retryableClose = null;
 	var reloadRequired = false;
+  // Тик обработчика ожидания не встаёт в очередь за событием пользователя и не
+  // мешает закрытию: пока форма занята, тик пропускается молча.
+  window.obManagedIdleBusy = function(){
+    return formEventPendingCount > 0 || !!closePending || !!retryableClose || closeHandoffPending ||
+      !!beforePostState || reloadRequired || formEventWriteUnknown || manualReconcileRequired;
+  };
 	var CLOSE_EPOCH = cfg.closeEpoch == null ? '' : String(cfg.closeEpoch);
 	var closeClockServerBase = Number(cfg.closeServerNowMs);
 	if (!Number.isFinite(closeClockServerBase)) closeClockServerBase = Date.now();
@@ -4730,6 +4738,92 @@ obManagedReady(function () {
   var cfg = obManagedConfig();
   if (!cfg.autoOpen) return;
   setTimeout(function () { if (window.obFire) obFire('', 'ПриОткрытии'); }, 0);
+});
+
+// BEGIN onebase-form-idle
+// Обработчик ожидания (ПодключитьОбработчикОжидания 1С). Таймеры живут здесь,
+// в браузере: тик — обычное событие формы ОбработкаОжидания с текущими
+// значениями и подписью подключения; ответ применяется как ответ события.
+// Следующий тик ставится только после ответа предыдущего. Пока форма занята
+// другим событием, закрытием или открыто окно (вопрос, подбор) — тик
+// откладывается на секунду. На скрытой вкладке — не чаще раза в 5 интервалов
+// (и не чаще раза в 10 с); вернулись на вкладку — просроченный тик сразу.
+function obManagedIdleManager(env) {
+  var timers = {};
+  function key(p) { return String(p || '').toLowerCase(); }
+  function periodMs(t) {
+    var ms = t.interval * 1000;
+    return env.hidden() ? Math.max(ms * 5, 10000) : ms;
+  }
+  function stop(proc) {
+    var t = timers[key(proc)];
+    if (!t) return;
+    if (t.handle) env.clearTimeout(t.handle);
+    delete timers[key(proc)];
+  }
+  function schedule(t, ms) {
+    if (t.handle) env.clearTimeout(t.handle);
+    t.handle = env.setTimeout(function () { tick(t); }, Math.max(0, ms));
+  }
+  function tick(t) {
+    t.handle = null;
+    if (timers[key(t.proc)] !== t) return;
+    if (env.busy() || env.modal()) { schedule(t, 1000); return; }
+    var wait = periodMs(t) - (env.now() - t.last);
+    if (wait > 0) { schedule(t, wait); return; }
+    t.last = env.now();
+    if (t.once) delete timers[key(t.proc)];
+    var after = function () {
+      if (timers[key(t.proc)] === t) schedule(t, periodMs(t));
+    };
+    var p;
+    try { p = env.fire(t.proc, t.token); } catch (e) { p = null; }
+    Promise.resolve(p).then(after, after);
+  }
+  return {
+    apply: function (cmds) {
+      if (!cmds || !cmds.length) return;
+      cmds.forEach(function (c) {
+        if (!c || !c.proc) return;
+        stop(c.proc);
+        if (c.off) return;
+        var interval = Number(c.interval);
+        if (!(interval >= 1)) interval = 1;
+        var t = { proc: String(c.proc), interval: interval, once: !!c.once, token: String(c.token || ''), last: env.now(), handle: null };
+        timers[key(t.proc)] = t;
+        schedule(t, periodMs(t));
+      });
+    },
+    visibility: function () {
+      Object.keys(timers).forEach(function (k) {
+        var t = timers[k];
+        if (t.handle) schedule(t, periodMs(t) - (env.now() - t.last));
+      });
+    },
+    active: function () { return Object.keys(timers).map(function (k) { return timers[k].proc; }); }
+  };
+}
+// END onebase-form-idle
+obManagedReady(function () {
+  var cfg = obManagedConfig();
+  if (!cfg.url) return;
+  var mgr = obManagedIdleManager({
+    fire: function (proc, token) {
+      return window.obFire ? window.obFire('', 'ОбработкаОжидания', {_idle_proc: proc, _idle_token: token}) : null;
+    },
+    busy: function () { return typeof window.obManagedIdleBusy === 'function' && window.obManagedIdleBusy(); },
+    modal: function () {
+      return !!(document.getElementById('_question-modal') || document.getElementById('_ref-picker-modal') ||
+        document.getElementById('_item-picker-modal') || document.getElementById('_ref-create-modal') ||
+        document.getElementById('ob-managed-close-confirm'));
+    },
+    hidden: function () { return !!document.hidden; },
+    now: function () { return Date.now(); },
+    setTimeout: function (fn, ms) { return window.setTimeout(fn, ms); },
+    clearTimeout: function (h) { window.clearTimeout(h); }
+  });
+  window.obManagedApplyIdle = mgr.apply;
+  document.addEventListener('visibilitychange', mgr.visibility);
 });
 
 function obManagedTabKey(tabs) {

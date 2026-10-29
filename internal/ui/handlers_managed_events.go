@@ -62,6 +62,9 @@ type formEventResponse struct {
 	// Question != nil — обработчик фазы 1 вызвал ПоказатьВопрос: клиент
 	// рисует модал вопроса, ответ возвращается событием Ответ (#1528).
 	Question *questionPayload `json:"question,omitempty"`
+	// Idle — команды обработчиков ожидания (Подключить/ОтключитьОбработчикОжидания):
+	// браузер ставит или снимает таймер тика ОбработкаОжидания.
+	Idle []idleCommand `json:"idle,omitempty"`
 	// Navigation != nil — обработчик вызвал ОткрытьФорму: клиент переходит
 	// по серверно построенному адресу, только если форма не «грязная» (#1557).
 	Navigation *navigationPayload `json:"navigation,omitempty"`
@@ -728,6 +731,15 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 			respondJSON(enc, formEventResponse{OK: true})
 			return
 		}
+	} else if eventName == formIdleEvent && elementName == "" {
+		// Тик обработчика ожидания: процедуру называет браузер, а допускается
+		// только подключённая модулем формы (подпись подключения).
+		var idleErr error
+		procName, idleErr = s.resolveFormIdleTick(formIdleLogin(r), "entity:"+entity.Name, form, r.FormValue("_idle_proc"), r.FormValue("_idle_token"))
+		if idleErr != nil {
+			respondJSON(enc, formEventResponse{Error: idleErr.Error(), Idle: []idleCommand{{Proc: strings.TrimSpace(r.FormValue("_idle_proc")), Off: true}}})
+			return
+		}
 	} else {
 		var eligibilityErr error
 		procName, eventTarget, _, eligibilityErr = resolveBrowserFormEvent(form, elementName, eventName, false)
@@ -1297,6 +1309,12 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	vars["ПоказатьВопрос"] = questionFn
 	vars["ShowQuestion"] = questionFn
 
+	// Обработчик ожидания: команды уходят в ответ, таймер ставит браузер.
+	var idle []idleCommand
+	for k, v := range s.newFormIdleBuiltins(&idle, formIdleLogin(r), "entity:"+entity.Name, form) {
+		vars[k] = v
+	}
+
 	// Динамический список значений (НачалоВыбора): билтин ДобавитьЗначениеСписка
 	// копит пункты в sink; после Run они уходят в ответ как choiceList, и клиент
 	// заполняет ими <select> элемента ПолеСписка.
@@ -1517,6 +1535,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 			q := question
 			resp.Question = &q
 		}
+		resp.Idle = idle
 		// Обработчик мог записать форму и упасть уже после этого: id всё равно
 		// нужен клиенту, иначе повтор действия создаст второй документ.
 		resp.SavedID = savedFormID(thisObj)
@@ -1534,6 +1553,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		q := question
 		resp.Question = &q
 	}
+	resp.Idle = idle
 	resp.Cancel = postCancelled
 	if navigation != nil {
 		resp.Navigation = navigation
@@ -2645,6 +2665,16 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			respondJSON(enc, formEventResponse{OK: true})
 			return
 		}
+	} else if eventName == formIdleEvent && elementName == "" {
+		idleProc, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_idle_proc"))
+		idleToken, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_idle_token"))
+		var idleErr error
+		boundProcName, idleErr = s.resolveFormIdleTick(formIdleLogin(r), "processor:"+proc.Name, form, idleProc, idleToken)
+		if idleErr != nil {
+			opStatus = "error"
+			respondJSON(enc, formEventResponse{Error: idleErr.Error(), Idle: []idleCommand{{Proc: strings.TrimSpace(idleProc), Off: true}}})
+			return
+		}
 	} else {
 		var eligibilityErr error
 		boundProcName, eventTarget, executeFallback, eligibilityErr = resolveBrowserFormEvent(form, elementName, eventName, true)
@@ -2763,6 +2793,11 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		vars["ПоказатьВопрос"] = questionFn
 		vars["ShowQuestion"] = questionFn
 
+		var idle []idleCommand
+		for k, v := range s.newFormIdleBuiltins(&idle, formIdleLogin(r), "processor:"+proc.Name, form) {
+			vars[k] = v
+		}
+
 		var choiceItems []choiceListItem
 		choiceFn := newChoiceListBuiltin(&choiceItems)
 		vars["ДобавитьЗначениеСписка"] = choiceFn
@@ -2857,6 +2892,7 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 				q := question
 				resp.Question = &q
 			}
+			resp.Idle = idle
 			resp.Dirty = boolPtr(!formOpenEvent(elementName, eventName) && transientManagedStateDirty(obj, fieldsBefore, tablesBefore))
 			compactFormCloseDelta(&resp, closeInv)
 			respondJSON(enc, resp)
@@ -2869,6 +2905,7 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			q := question
 			resp.Question = &q
 		}
+		resp.Idle = idle
 		if navigation != nil {
 			resp.Navigation = navigation
 		}

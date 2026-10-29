@@ -619,6 +619,9 @@ func KnownBuiltinNames() map[string]struct{} {
 		"снятьпубликациюкартинки", "unpublishimage",
 		"ссылканафайл", "publicfileurl",
 		"снятьпубликациюфайла", "unpublishfile",
+		// обработчик ожидания управляемой формы (internal/ui/form_idle.go)
+		"подключитьобработчикожидания", "attachidlehandler",
+		"отключитьобработчикожидания", "detachidlehandler",
 	} {
 		names[k] = struct{}{}
 	}
