@@ -252,6 +252,13 @@ func (r *Repo) GetByID(ctx context.Context, userID string) (*User, error) {
 // Update saves editable fields on a user.
 func (r *Repo) Update(ctx context.Context, userID, fullName string, isAdmin, denyPasswdChange, showInList, aiDataAccess bool) error {
 	return r.withUserInvariantLock(ctx, func(txCtx context.Context) error {
+		return r.updateInTx(txCtx, userID, fullName, isAdmin, denyPasswdChange, showInList, aiDataAccess)
+	})
+}
+
+// updateInTx — тело Update; вызывать под withUserInvariantLock.
+func (r *Repo) updateInTx(txCtx context.Context, userID, fullName string, isAdmin, denyPasswdChange, showInList, aiDataAccess bool) error {
+	{
 		d := r.db.Dialect()
 		var currentAdmin any
 		qCurrent := fmt.Sprintf(`SELECT is_admin FROM _users WHERE id = %s`, d.Placeholder(1))
@@ -271,7 +278,7 @@ func (r *Repo) Update(ctx context.Context, userID, fullName string, isAdmin, den
 			d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4), d.Placeholder(5), d.Placeholder(6))
 		_, err := r.db.Exec(txCtx, q, fullName, isAdmin, denyPasswdChange, showInList, aiDataAccess, userID)
 		return err
-	})
+	}
 }
 
 // SetShowInList toggles the show_in_list flag for a user.

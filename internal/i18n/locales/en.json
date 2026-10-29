@@ -207,6 +207,8 @@
   "Данные были изменены и не записаны. Закрыть форму?": "Data has been changed and not saved. Close the form?",
   "Данные восстановлены, но миграция схемы не выполнена": "Data restored, but the schema migration did not run",
   "Данные сохранены": "Data saved",
+  "Логин изменён. Ваша сессия завершена — войдите заново под новым логином": "Login changed. Your session has ended — sign in again with the new login",
+  "Логин изменён, данные сохранены. Сессии пользователя завершены — он войдёт под новым логином": "Login changed and data saved. The user's sessions have ended — they will sign in with the new login",
   "Дата": "Date",
   "Дата и время": "Date and time",
   "Движений нет": "No movements",

@@ -69,6 +69,25 @@ var userRmCmd = &cobra.Command{
 	RunE:  runUserRm,
 }
 
+var userRenameCmd = &cobra.Command{
+	Use:   "rename <старый-логин> <новый-логин>",
+	Short: "Переименовать учётку (личные настройки переезжают, сессии сбрасываются)",
+	Long: `Меняет логин учётки одной транзакцией: личные настройки (режим открытия
+форм, порядок и ширины колонок, отборы и виды списков, настройки отчётов и
+журналов, личное меню) и личные варианты отчётов переезжают на новый логин,
+все сессии учётки завершаются. Пароль, второй фактор, резервные коды, роли и
+API-токены сохраняются. Журналы не меняются.
+
+Новый логин: буквы (кириллица тоже), цифры и «_ . - @», без пробелов; не занят
+другой учёткой без учёта регистра.
+
+Данные конфигурации, где логин записан строкой (например, регистр сведений
+с полем «Логин»), платформа не знает — перенесите их обработкой конфигурации:
+  onebase procrun --proc <Обработка> --set СтарыйЛогин=<старый> --set НовыйЛогин=<новый>`,
+	Args: cobra.ExactArgs(2),
+	RunE: runUserRename,
+}
+
 var userShowInListCmd = &cobra.Command{
 	Use:   "show-in-list <login>",
 	Short: "Показывать/скрывать пользователя в списках выбора (--on/--off)",
@@ -164,7 +183,7 @@ func init() {
 	user2FACmd.AddCommand(user2FASelfEnrollCmd)
 	user2FAResetCmd.Flags().BoolVar(&user2FAResetForce, "force", false,
 		"снять фактор, даже если после этого войти не сможет никто")
-	userCmd.AddCommand(userListCmd, userAddCmd, userPasswdCmd, userRmCmd, userShowInListCmd, userRoleCmd, user2FACmd)
+	userCmd.AddCommand(userListCmd, userAddCmd, userPasswdCmd, userRmCmd, userRenameCmd, userShowInListCmd, userRoleCmd, user2FACmd)
 	rootCmd.AddCommand(userCmd)
 }
 
@@ -445,6 +464,24 @@ func runUserRm(cmd *cobra.Command, args []string) error {
 	}
 	env.db.LogAction(ctx, "user_delete", "user", login, u.ID, "", "cli", "")
 	outf("Пользователь %s удалён\n", login)
+	return nil
+}
+
+func runUserRename(cmd *cobra.Command, args []string) error {
+	oldLogin, newLogin := strings.TrimSpace(args[0]), strings.TrimSpace(args[1])
+	env, err := openUserEnv(cmd)
+	if err != nil {
+		return err
+	}
+	defer env.Close()
+
+	ctx := context.Background()
+	u, err := env.repo.RenameUser(ctx, oldLogin, newLogin)
+	if err != nil {
+		return err
+	}
+	env.db.LogAction(ctx, "user_rename", "user", oldLogin+" → "+newLogin, u.ID, "", "cli", "")
+	outf("Учётка %s переименована в %s; её сессии завершены.\n", oldLogin, newLogin)
 	return nil
 }
 
