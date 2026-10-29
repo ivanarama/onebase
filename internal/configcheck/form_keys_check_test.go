@@ -210,3 +210,17 @@ elements:
 		}
 	}
 }
+
+// hint_from называет реквизит формы или объекта; опечатка — ошибка проверки,
+// а не тихо оставшаяся статическая подсказка.
+func TestCheckFormHintFromRequiresKnownAttribute(t *testing.T) {
+	ok := formKeysProject(&metadata.FormElement{Kind: metadata.FormElementButton, Name: "КнПримечание", HintFrom: "Комментарий"})
+	if issues := CheckFormHintFrom(ok); len(issues) != 0 {
+		t.Fatalf("реквизит объекта отклонён: %s", messages(issues))
+	}
+	bad := formKeysProject(&metadata.FormElement{Kind: metadata.FormElementButton, Name: "КнПримечание", HintFrom: "Коментарий"})
+	issues := CheckFormHintFrom(bad)
+	if len(issues) != 1 || !strings.Contains(issues[0].Message, "Коментарий") {
+		t.Fatalf("опечатка в hint_from не найдена: %s", messages(issues))
+	}
+}

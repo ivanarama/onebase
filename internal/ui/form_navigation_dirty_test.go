@@ -148,6 +148,7 @@ async function run(response, formDirty, concurrentEdit) {
     obSetEmbeddedDirty(v) { calls.dirty.push(v); },
     _obGrids: { Items: grid },
     obManagedApplyTablePartRefOptions() {},
+    obManagedApplyHints() {},
     applyTableParts(parts) {
       if (parts && parts.Items) rows = parts.Items.map((r, i) => ({ ...r, id: i + 1, _ord: i }));
     },

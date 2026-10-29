@@ -559,6 +559,11 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// запросе, и первое же сохранение обнулило бы всё скрытое. Отсюда же
 		// граница смысла: item_form — это ВИДИМОСТЬ, а не защита; ограничение
 		// доступа к реквизиту делается политикой поля.
+		// elHintAttrs — title (и data-ob-hint-*) элемента формы: hint_from из
+		// реквизита формы, иначе hint; у кнопки к подсказке добавляется
+		// горячая клавиша.
+		"elHintAttrs":   elHintAttrs,
+		"elHintAttrsOr": elHintAttrsOr,
 		"itemFormVisible": func(entity *metadata.Entity) []itemFormField {
 			vis, _ := splitItemFormFields(entity)
 			return vis

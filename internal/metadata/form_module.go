@@ -261,7 +261,11 @@ type FormElement struct {
 	NoGrid       bool   `yaml:"no_grid,omitempty"`  // отключить SlickGrid у ТЧ (вернуть простую таблицу)
 	AutoSum      bool   `yaml:"auto_sum,omitempty"` // ТЧ: авто Сумма = Количество × Цена по именам колонок — opt-in (#215.1)
 	Hint         string `yaml:"hint,omitempty"`     // всплывающая подсказка
-	Mask         string `yaml:"mask,omitempty"`     // регулярное выражение проверки (HTML pattern), НЕ шаблон ввода
+	// HintFrom — всплывающая подсказка из реквизита формы (`hint_from`): текст
+	// берётся из значения реквизита при отрисовке и после каждого события
+	// формы. Пустое значение — статический hint. Как title_from у колонок ТЧ.
+	HintFrom string `yaml:"hint_from,omitempty"`
+	Mask     string `yaml:"mask,omitempty"` // регулярное выражение проверки (HTML pattern), НЕ шаблон ввода
 	// InputMask — настоящая маска ввода: заполнители подставляются по мере
 	// набора, разделители ставятся сами (#763, п. 3). Отдельный ключ, потому что
 	// `mask` — это regexp, и переиспользовать его под шаблон значило бы сломать

@@ -196,6 +196,7 @@ function runtime(fetchImpl, cfgOverride = {}, productionValues = false) {
   context.parent = context;
   context.crypto = {randomUUID() { uuid++; return `00000000-0000-4000-8000-${String(uuid).padStart(12, '0')}`; }};
   context.obManagedApplyTablePartRefOptions = (value) => applied.push(['refs', value]);
+  context.obManagedApplyHints = () => {};
   context.applyTableParts = (value) => applied.push(['parts', value]);
   context.confirm = () => true;
   context.__obEmbedded = true;

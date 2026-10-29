@@ -637,7 +637,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		"original_id", "data_path", "picture", "values_picture", "width", "height",
 		"halign", "valign", "readonly", "readonly_when", "hidden_when", "use_grid", "no_grid", "auto_sum", "hint", "mask",
 		"accesskey", "hotkey", "multiline", "format", "display_format", "type", "choice", "unknown_xml", "view",
-		"scroll_x", "primary", "editable_admin_only", "choice_folders", "choice_dropdown",
+		"scroll_x", "primary", "editable_admin_only", "choice_folders", "choice_dropdown", "hint_from",
 		// Явная видимость кнопки «Открыть карточку» у поля — сильнее ключей
 		// формы (#1876).
 		"ref_card_button",
