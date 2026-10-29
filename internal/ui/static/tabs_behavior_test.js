@@ -171,6 +171,7 @@ function shell(storage, search = '', confirmClose = () => true, requestFrameClos
     document,
     sessionStorage: storage,
     location: {search, origin: 'http://127.0.0.1:8080', href: '/ui/app'},
+    history: {state: null, pushState(state) { this.state = state; }},
     URL,
     URLSearchParams,
     crypto: {
@@ -882,7 +883,8 @@ function sectionShell({fetchImpl} = {}) {
   const documentListeners = new Map();
   const windowListeners = new Map();
   const pushed = [];
-  const location = {origin: 'http://127.0.0.1:8080', pathname: '/ui/app', search: '?home=1', href: '/ui/app?home=1'};
+  const guards = [];
+  const location = {origin: 'http://127.0.0.1:8080', pathname: '/ui/app', search: '?home=1', hash: '', href: '/ui/app?home=1'};
   const setLocation = url => {
     const u = new URL(url, location.origin);
     location.pathname = u.pathname;
@@ -910,7 +912,12 @@ function sectionShell({fetchImpl} = {}) {
     URL,
     URLSearchParams,
     DOMParser: FakeDOMParser,
-    history: {pushState(state, title, url) { pushed.push(url); setLocation(url); }},
+    // Защитная запись оболочки (obGuard) — отдельно от переходов разделов.
+    history: {state: null, pushState(state, title, url) {
+      this.state = state;
+      if (state && state.obGuard) guards.push(url); else pushed.push(url);
+      setLocation(url);
+    }},
     fetch(url, options) {
       fetched.push({url, options});
       if (fetchImpl) return fetchImpl(url);
@@ -942,10 +949,14 @@ function sectionShell({fetchImpl} = {}) {
       for (const listener of documentListeners.get('click') || []) listener(event);
       return event;
     },
-    popstate(url) {
+    // Возврат к записи раздела (её положила сама оболочка) — state obSection;
+    // state null — запись не оболочки: входная страница или чужая.
+    popstate(url, state = {obSection: true}) {
       setLocation(url);
-      for (const listener of windowListeners.get('popstate') || []) listener({});
+      context.history.state = state;
+      for (const listener of windowListeners.get('popstate') || []) listener({state});
     },
+    guards() { return guards.slice(); },
     tabCount() { return elements['ob-tabstrip'].children.length; },
     markDirty(index) {
       const frame = elements['ob-tabbody'].children.filter(element => element.tagName === 'IFRAME')[index];
@@ -955,6 +966,24 @@ function sectionShell({fetchImpl} = {}) {
     },
   };
 }
+
+test('«Назад» до записи не оболочки возвращается на оболочку, не уходя со страницы', async () => {
+  const app = sectionShell();
+  app.context.obOpenTab('/ui/document/Ордер/new', 'Insert');
+  app.markDirty(0);
+  assert.deepEqual(app.guards(), ['/ui/app?home=1'], 'при загрузке — защитная запись поверх входной');
+  // «Назад» дошло до входной записи (state null): оболочка снова кладёт защиту
+  // и остаётся на месте — раздел не перезагружается, вкладка с правками жива.
+  app.popstate('/ui/app?home=1', null);
+  await app.settle();
+  assert.deepEqual(app.guards(), ['/ui/app?home=1', '/ui/app?home=1']);
+  assert.equal(app.fetched.length, 0, 'раздел не перезапрашивается');
+  assert.equal(app.tabCount(), 1);
+  // Возврат к собственной записи (защита или раздел) новую защиту не добавляет.
+  app.popstate('/ui/app?home=1', {obGuard: true});
+  await app.settle();
+  assert.equal(app.guards().length, 2);
+});
 
 test('раздел меняется без перезагрузки: незаписанная вкладка остаётся', async () => {
   const app = sectionShell();

@@ -476,23 +476,51 @@ const tplAppShell = `{{define "page-app-shell"}}
   window.obSwitchSection=switchSection;
   // «Назад»/«Вперёд» между разделами — тем же путём. Смена только отборов
   // виджетов (тот же раздел) остаётся их собственному обработчику popstate.
-  window.addEventListener('popstate',function(){
+  // Защитная запись истории: «Назад» (Alt+←, боковая кнопка мыши) не уводит
+  // со страницы оболочки. Уход выгрузил бы все вкладки, и у формы с правками
+  // браузер спрашивал «Закрыть приложение?». Оболочка держит поверх входной
+  // записи свою; «Назад», дошедшее до записи без нашей метки (входной или
+  // чужой), сразу возвращается на оболочку. Переходы между разделами — записи
+  // obSection — и «Вперёд» работают как раньше.
+  function pushHistoryGuard(){
+    try{ history.pushState({obGuard:true},'',location.pathname+location.search+location.hash); }catch(e){}
+  }
+  function isShellHistoryState(state){ return !!(state&&(state.obGuard||state.obSection)); }
+  if(!isShellHistoryState(history.state))pushHistoryGuard();
+  window.addEventListener('popstate',function(e){
     // Даже возврат к уже показанному разделу отменяет предыдущий pending fetch.
     ++sectionSeq;
+    if(!isShellHistoryState(e.state))pushHistoryGuard();
     if(sectionOf(location.href)===currentSection)return;
     switchSection(location.pathname+location.search,false);
   });
 
+  // Ссылки верхней панели тоже не уводят оболочку: логотип — как «Главная»
+  // (раздел на месте), «О программе», «Сообщить об ошибке», профиль,
+  // «Настроить меню» — во вкладке. Ссылка в новом окне (target=_blank,
+  // «Руководство») и «Выйти» (POST-форма) остаются как есть.
+  var TOPBAR_TAB=/^\/ui\/about(\/|\?|#|$)/;
   document.addEventListener('click',function(e){
     if(e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;
-    var a=e.target.closest?e.target.closest('#ob-nav a[href], .subsys-bar a[href], #ob-tabhome a[href]'):null;
-    if(!a)return;
+    var a=e.target.closest?e.target.closest('#ob-nav a[href], .subsys-bar a[href], #ob-tabhome a[href], .topbar a[href]'):null;
+    if(!a||(a.target&&a.target!=='_self'))return;
     var href=a.getAttribute('href')||'';
     var shellHome=shellHomeURL(href);
     if(shellHome){ e.preventDefault(); switchSection(shellHome,true); return; }
-    if(!openable(href))return;
+    var topbar=!!(a.closest&&a.closest('.topbar'));
+    if(!openable(href)&&!(topbar&&TOPBAR_TAB.test(href)))return;
     e.preventDefault();
     openTab(href,(a.getAttribute('title')||a.textContent||'').replace(/\s+/g,' ').trim()||'Форма');
+  });
+  // «Поиск по базе» в верхней панели — результаты во вкладке, а не уходом окна.
+  document.addEventListener('submit',function(e){
+    var f=e.target;
+    if(e.defaultPrevented||!f||!f.matches||!f.matches('.topbar form.topbar-search'))return;
+    var q=f.querySelector('input[name="q"]');
+    var text=q?String(q.value||'').trim():'';
+    e.preventDefault();
+    if(!text)return;
+    openTab('/ui/search?q='+encodeURIComponent(text),'Поиск: '+text);
   });
 
   // Снимок читаем ДО openTab: восстановление само создаёт вкладки и не должно
