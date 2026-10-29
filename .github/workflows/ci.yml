@@ -616,11 +616,18 @@ jobs:
         working-directory: e2e
         run: npx playwright install --with-deps chromium
 
+      # Compile before Playwright starts its bounded webServer readiness wait.
+      # WORK is cleaned by e2e-server.sh, so keep this executable outside it.
+      - name: Build browser smoke binary
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        run: go build -o "$RUNNER_TEMP/onebase-e2e" ./cmd/onebase
+
       - name: Run browser smoke suite
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         working-directory: e2e
         env:
           CI: '1'
+          OB_BIN: ${{ runner.temp }}/onebase-e2e
         run: npx playwright test
 
       - name: Run image viewer acceptance

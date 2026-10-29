@@ -341,6 +341,9 @@ type FormElement struct {
 	// такая колонка выглядела бы редактируемой, а редактировать нечего.
 	VirtualColumns []FormVirtualColumn `yaml:"virtual_columns,omitempty"`
 
+	// HintInline — hint печатается текстом под полем, как раньше; по умолчанию
+	// подсказка всплывающая: значок ⓘ у подписи и title.
+	HintInline bool `yaml:"hint_inline,omitempty"`
 	// Conceal hides a string object field until a successful trusted event
 	// explicitly assigns its boolean form controller (optionally НЕ/NOT).
 	// Disclosure is session/form/object-bound server state, never browser input.
