@@ -32,10 +32,11 @@ type dslReturn struct{ val any }
 // File/Line — место возбуждения (для ИнформацияОбОшибке); могут быть пустыми,
 // если ошибка поднята из метода объекта (RaiseUserError) без позиции.
 type userError struct {
-	Msg  string
-	File string
-	Line int
-	Err  error // исходная ошибка (например i18nerr) для локализации по цепочке
+	explicitMessage *string
+	Msg             string
+	File            string
+	Line            int
+	Err             error // исходная ошибка (например i18nerr) для локализации по цепочке
 }
 
 // asDSLError сохраняет место возбуждения даже после вложенного вызова или
@@ -48,7 +49,7 @@ func (u userError) asDSLError(file string, line int) *DSLError {
 	if u.Line > 0 {
 		line = u.Line
 	}
-	return &DSLError{File: file, Line: line, Msg: u.Msg, Err: u.Err}
+	return &DSLError{File: file, Line: line, Msg: u.Msg, Err: u.Err, explicitMessage: u.explicitMessage}
 }
 
 // RaiseUserError panics with a DSL user error. Предназначено для
@@ -363,7 +364,7 @@ func (i *Interpreter) evalDebugExpr(expr string, e *env) (res any, err error) {
 				if file == "" {
 					file, line = savedFile, savedLine
 				}
-				err = &DSLError{File: file, Line: line, Msg: v.Msg, Err: v.Err}
+				err = v.asDSLError(file, line)
 			default:
 				err = fmt.Errorf("%v", r)
 			}
@@ -1558,7 +1559,7 @@ func (i *Interpreter) execTry(t *ast.TryStmt, e *env) {
 			if len(args) == 0 {
 				panic(*caught)
 			}
-			return raiseUserException(args, file, line)
+			return raiseExplicitException(args, file, line)
 		})
 		// ОписаниеОшибки/ИнформацияОбОшибке доступны только внутри блока
 		// Исключение, поэтому публикуются временно. Сам блок исполняется в

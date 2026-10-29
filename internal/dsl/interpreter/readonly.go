@@ -209,7 +209,7 @@ func protectReadOnlySeen(ec *execCtx, value any, traversal *readOnlyTraversal, d
 		if value == nil {
 			return value
 		}
-		return &DSLError{File: value.File, Line: value.Line, Msg: value.Msg}
+		return &DSLError{File: value.File, Line: value.Line, Msg: value.Msg, explicitMessage: value.explicitMessage}
 	}
 	if obj, ok := value.(This); ok {
 		return &readOnlyThis{ec: ec, inner: obj}

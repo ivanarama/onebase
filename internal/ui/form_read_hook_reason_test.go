@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"fmt"
 	"html"
 	"net/http"
 	"net/http/httptest"
@@ -42,6 +43,40 @@ func TestFormEdit_OnReadAtServerDenialShowsExceptionText(t *testing.T) {
 	}
 	if strings.Contains(body, ".os:") {
 		t.Error("пользователю показан путь модуля и номер строки")
+	}
+}
+
+func TestReadHookDenied_TechnicalFailuresStayGeneric(t *testing.T) {
+	for _, body := range []string{
+		`x = Число("PRIVATE-CONVERSION-TOKEN");`,
+		`Попытка x = Число("PRIVATE-CONVERSION-TOKEN"); Исключение ВызватьИсключение; КонецПопытки;`,
+		`q = Новый Запрос("ВЫБРАТЬ PRIVATE_SQL_TOKEN ИЗ PRIVATE_MISSING_TABLE"); q.Выполнить();`,
+		`Попытка q = Новый Запрос("ВЫБРАТЬ PRIVATE_SQL_TOKEN ИЗ PRIVATE_MISSING_TABLE"); q.Выполнить(); Исключение ВызватьИсключение; КонецПопытки;`,
+	} {
+		for _, panel := range []bool{false, true} {
+			t.Run(body+fmt.Sprint(panel), func(t *testing.T) {
+				srv, ent := setupManagedEventsServer(t, "Процедура ПроверитьДоступ()\n"+body+"\nКонецПроцедуры", map[metadata.FormEventType]string{
+					metadata.FormEventType("ПриЧтенииНаСервере"): "ПроверитьДоступ",
+				}, []*metadata.FormElement{{Kind: metadata.FormElementField, Name: "Наименование", DataPath: "Объект.Наименование"}})
+				id := insertContragent(t, srv, ent, "PRIVATE-RECORD-DATA")
+				target := "/ui/catalog/" + ent.Name + "/" + id.String()
+				if panel {
+					target += "/detail-panel"
+				}
+				req := reqWithChi(http.MethodGet, target, nil, map[string]string{"kind": "catalog", "entity": ent.Name, "id": id.String()})
+				rec := httptest.NewRecorder()
+				if panel {
+					srv.detailPanelRecord(rec, req)
+				} else {
+					srv.formEdit(rec, req)
+				}
+				generic := httptest.NewRecorder()
+				srv.renderForbidden(generic, req)
+				if rec.Code != http.StatusForbidden || rec.Body.String() != generic.Body.String() {
+					t.Fatalf("technical failure must use generic 403: status=%d body=%s", rec.Code, rec.Body.String())
+				}
+			})
+		}
 	}
 }
 
