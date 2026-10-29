@@ -14,6 +14,15 @@ type Notifier interface {
 	Publish(target, name string, data any)
 }
 
+// FormNotifier — необязательная способность издателя: оповестить открытые
+// формы текущего пользователя (Оповестить 1С). Её реализует только издатель
+// запроса UI, которому известен пользователь; у фоновых заданий и тестов её
+// нет, и Оповестить там — тихий no-op, как Оповестить на сервере 1С не
+// существует вовсе.
+type FormNotifier interface {
+	NotifyForms(eventName string, param, source any)
+}
+
 // NewNotifyFunctions возвращает DSL-функции публикации уведомлений
 // (ОтправитьУведомление / PublishNotification). Если n == nil — функции
 // остаются тихим no-op (фоновые задания, тесты, не подключённая шина),
@@ -69,7 +78,36 @@ func NewNotifyFunctions(n Notifier) map[string]any {
 		n.Publish(notifyArgString(args[0]), "ui.оповещение", payload)
 		return nil, nil
 	})
+	// Оповестить(ИмяСобытия[, Параметр[, Источник]]) — как Оповестить 1С:
+	// каждая открытая форма пользователя, у которой объявлен обработчик
+	// ОбработкаОповещения, выполнит его на своём текущем состоянии. Адресата
+	// нет: оповещение уходит формам того, кто выполняет код (в 1С — формам
+	// своего клиента).
+	notifyForms := BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
+		if len(args) < 1 || len(args) > 3 {
+			return nil, fmt.Errorf("ожидаются аргументы Оповестить(ИмяСобытия[, Параметр[, Источник]])")
+		}
+		name := strings.TrimSpace(notifyArgString(args[0]))
+		if name == "" {
+			return nil, fmt.Errorf("не задано ИмяСобытия у Оповестить")
+		}
+		fn, ok := n.(FormNotifier)
+		if !ok || fn == nil {
+			return nil, nil
+		}
+		var param, source any
+		if len(args) >= 2 {
+			param = args[1]
+		}
+		if len(args) >= 3 {
+			source = args[2]
+		}
+		fn.NotifyForms(name, param, source)
+		return nil, nil
+	})
 	return map[string]any{
+		"Оповестить": notifyForms,
+		"Notify":     notifyForms,
 		"ОтправитьУведомление":           publish,
 		"PublishNotification":            publish,
 		"ПоказатьОповещениеПользователя": showNotify,

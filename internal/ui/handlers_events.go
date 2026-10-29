@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,7 +16,14 @@ import (
 
 // hubNotifier адаптирует *realtime.Hub к interpreter.Notifier: DSL-функция
 // ОтправитьУведомление(Кому, Событие, Данные) → Hub.Publish(Кому, Event{...}).
-type hubNotifier struct{ hub *realtime.Hub }
+//
+// Оповестить (NotifyForms) адресует формы пользователя, выполняющего код:
+// логин и хранилище оповещений берутся из контекста запроса.
+type hubNotifier struct {
+	hub   *realtime.Hub
+	forms *formNotifyStore
+	login string
+}
 
 func (n hubNotifier) Publish(target, name string, data any) {
 	if n.hub == nil {
@@ -25,8 +33,15 @@ func (n hubNotifier) Publish(target, name string, data any) {
 }
 
 // notifier возвращает издателя уведомлений для инжекции в DSL-переменные.
-func (s *Server) notifier() interpreter.Notifier {
-	return hubNotifier{hub: s.hub}
+func (s *Server) notifier(ctx context.Context) interpreter.Notifier {
+	n := hubNotifier{hub: s.hub}
+	if s.hub != nil {
+		n.forms = s.formNotifies()
+	}
+	if u := auth.UserFromContext(ctx); u != nil {
+		n.login = u.Login
+	}
+	return n
 }
 
 const (

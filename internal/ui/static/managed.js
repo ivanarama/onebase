@@ -4732,6 +4732,27 @@ obManagedReady(function () {
   setTimeout(function () { if (window.obFire) obFire('', 'ПриОткрытии'); }, 0);
 });
 
+// Оповестить(ИмяСобытия, Параметр, Источник) на сервере → SSE ui.оповестить
+// {id, событие} во все окна пользователя. Форма с обработчиком
+// ОбработкаОповещения отправляет его обычным событием формы — со своими
+// текущими (в том числе несохранёнными) значениями и идентификатором
+// оповещения; ответ применяется как у любого события, форма не пишется и не
+// закрывается. Без обработчика форма оповещение пропускает.
+function obManagedNotifyListener(cfg, fire) {
+  return function (ev) {
+    var d = ev && ev.detail;
+    if (!cfg || !cfg.notify || !d || !d.id || typeof fire !== 'function') return;
+    fire('', 'ОбработкаОповещения', {_notify_id: String(d.id)});
+  };
+}
+obManagedReady(function () {
+  var cfg = obManagedConfig();
+  if (!cfg.notify) return;
+  window.addEventListener('onebase:ui.оповестить', obManagedNotifyListener(cfg, function () {
+    return window.obFire ? window.obFire.apply(window, arguments) : null;
+  }));
+});
+
 function obManagedTabKey(tabs) {
   return 'obtab:' + location.pathname + ':' + (tabs.getAttribute('data-tabs') || '');
 }

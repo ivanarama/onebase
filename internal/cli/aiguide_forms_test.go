@@ -181,8 +181,10 @@ func TestAIGuide_ПеременныеКонтекстаТЧИзСловаря(t 
 		known[strings.ToLower(v)] = true
 	}
 	// Переменные вне словаря контекста ТЧ: их кладёт не addValidatedTPEventContext
-	// (ТекущаяСтраница — addPageChangeContext события ПриСменеСтраницы).
-	for _, extra := range []string{"объект", "этотобъект", "подборрезультат", "подборзапрос", "текущаястраница"} {
+	// (ТекущаяСтраница — addPageChangeContext события ПриСменеСтраницы;
+	// ИмяСобытия/Параметр/Источник — addFormNotifyContext события ОбработкаОповещения).
+	for _, extra := range []string{"объект", "этотобъект", "подборрезультат", "подборзапрос", "текущаястраница",
+		"имясобытия", "параметр", "источник"} {
 		known[extra] = true
 	}
 	for _, name := range backquoted(section) {

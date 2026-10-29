@@ -84,7 +84,7 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 		NetGuard:          s.netGuard(ctx),
 		HTTPFileMaxBytes:  s.attachmentMaxBytes(),
 		ExecGuard:         s.execGuard(ctx),
-		Notifier:          s.notifier(),
+		Notifier:          s.notifier(ctx),
 		Interp:            s.interp, // для hook-правила конфликта в ПланыОбмена.ЗагрузитьПакет
 		EmailFileResolver: s.emailAttachmentPathResolver(txState.Ctx),
 		// Подписи ссылочных констант: живой контекст, RowLabel, полевая

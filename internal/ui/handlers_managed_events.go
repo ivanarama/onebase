@@ -1353,6 +1353,11 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		respondJSON(enc, formEventResponse{Error: err.Error()})
 		return
 	}
+	// ОбработкаОповещения: что оповестили — из записи сервера по id.
+	if err := s.addFormNotifyContext(r.Context(), eventName, strings.TrimSpace(r.FormValue("_notify_id")), vars); err != nil {
+		respondJSON(enc, formEventResponse{Error: err.Error()})
+		return
+	}
 
 	if err := addEntityTPEventContext(r, entity, form, tableAuthorities, eventTarget, obj, vars); err != nil {
 		respondJSON(enc, formEventResponse{Error: err.Error()})
@@ -2822,6 +2827,12 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		}
 		page, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_page"))
 		if err := addPageChangeContext(eventName, page, eventTarget, vars); err != nil {
+			opStatus = "error"
+			respondJSON(enc, formEventResponse{Error: err.Error()})
+			return
+		}
+		notifyID, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_notify_id"))
+		if err := s.addFormNotifyContext(r.Context(), eventName, strings.TrimSpace(notifyID), vars); err != nil {
 			opStatus = "error"
 			respondJSON(enc, formEventResponse{Error: err.Error()})
 			return

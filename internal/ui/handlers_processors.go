@@ -571,6 +571,7 @@ var processorServiceFields = []string{
 	"_tp_col",
 	"_tp_col_index",
 	"_page",
+	"_notify_id",
 }
 
 func processorParamPresenceName(params []processorpkg.Param, name string) string {
