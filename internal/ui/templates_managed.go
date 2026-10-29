@@ -666,6 +666,13 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 .ob-grid .slick-row:hover .slick-cell{background:#eef4ff}
 .ob-grid .slick-cell.selected{background:#dbeafe}
 .ob-grid .slick-cell.active{box-shadow:inset 0 0 0 2px #3b82f6}
+/* Текущая строка — как в 1С: фон держится и после ухода мыши и фокуса.
+   SlickGrid ставит класс active строке текущей ячейки и не снимает его при
+   щелчке мимо таблицы. Условное оформление задаёт фон с !important, поэтому
+   и здесь !important, а селектор специфичнее правил условного оформления
+   строки и ячейки: текущую строку видно и на окрашенной. Меняется только фон —
+   цвет текста условного оформления сохраняется. */
+.ob-grid .grid-canvas .slick-row.active .slick-cell{background:#dbeafe!important}
 .ob-grid .slick-footerrow{background:#f1f5f9;border-top:2px solid #cbd5e1}
 .ob-grid .slick-footerrow-column{padding:4px 8px;border-right:1px solid #e2e8f0;color:#334155}
 .ob-grid .ob-num{text-align:right;font-variant-numeric:tabular-nums}
