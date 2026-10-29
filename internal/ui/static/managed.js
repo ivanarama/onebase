@@ -1830,7 +1830,13 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         flash(closeMessage('controllerUnavailable', 'Проверка закрытия недоступна. Форма оставлена открытой.'), 'err');
         return {allowed: false, intentId: '', error: 'controller-not-ready'};
       }
-      var mode = options.mode ? String(options.mode) : await closeChoice();
+      // Программное закрытие (команда ui.закрытьФорму из обработчика формы)
+      // человека не спрашивает: решение принял код, который сам и записал всё,
+      // что считал нужным. Диалог здесь был не просто лишним — у формы
+      // обработки «сохранить» вдобавок ничего не значит: объекта за ней нет.
+      var mode = options.mode
+        ? String(options.mode)
+        : (reason === 'programmatic' ? 'discard' : await closeChoice());
       if (mode === 'cancel') return {allowed: false, intentId: '', error: 'user-cancelled'};
       var body = await closeSnapshotBody(reason, mode);
       if (!body) return {allowed: false, intentId: '', error: 'form-state'};
