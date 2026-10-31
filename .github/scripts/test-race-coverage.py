@@ -6,6 +6,7 @@ one engine, retaining its inventory, JSON journals and validated profiles.
 """
 
 from collections import Counter
+import argparse
 import importlib.util
 from pathlib import Path
 import sys
@@ -41,8 +42,20 @@ def merge_profiles(profiles, destination):
 
 def main(argv=None):
     arguments = list(sys.argv[1:] if argv is None else argv)
-    _engine.require(len(arguments) <= 1, "expected at most one coverage filename")
-    _engine.main(["--output", arguments[0] if arguments else "coverage.out"])
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("output", nargs="?", default="coverage.out")
+    parser.add_argument("--artifacts", default="test-results")
+    for flag in ("checkpoint", "resume", "quiet"):
+        parser.add_argument("--" + flag, action="store_true")
+    parser.add_argument("--fixture", action="append", default=[])
+    parser.add_argument("--preflight", action="append", default=[])
+    args = parser.parse_args(arguments)
+    forwarded = ["--output", args.output, "--artifacts", args.artifacts]
+    forwarded += ["--" + flag for flag in ("checkpoint", "resume", "quiet") if getattr(args, flag)]
+    for flag in ("fixture", "preflight"):
+        for value in getattr(args, flag):
+            forwarded += ["--" + flag, value]
+    _engine.main(forwarded)
 
 
 if __name__ == "__main__":
