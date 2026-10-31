@@ -141,6 +141,18 @@ assert""")
             stream.write('\n# different tool binary\n')
         self.assertNotEqual(self.run_cli('--resume').returncode, 0)
 
+    def test_source_file_alias_into_artifacts_is_rejected(self):
+        (self.root / 'fixture-link').symlink_to(self.root / 'artifacts/later.txt')
+        result = self.run_cli('--checkpoint')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('symlinks are unsupported', result.stderr)
+
+    def test_source_directory_alias_into_artifacts_is_rejected(self):
+        (self.root / 'fixture-link').symlink_to(self.root / 'artifacts', target_is_directory=True)
+        result = self.run_cli('--checkpoint')
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('symlinks are unsupported', result.stderr)
+
     def test_source_mutation_during_stage_is_rejected(self):
         self.env['MUTATE_SOURCE'] = '1'
         result = self.run_cli('--checkpoint')

@@ -70,16 +70,18 @@ def input_fingerprint(artifacts, output):
     size = 0
     for directory, directories, names in os.walk(root, followlinks=False):
         parent = Path(directory)
+        require(not any((parent / d).is_symlink() for d in directories if d != ".git"),
+                "checkpoint source directory symlinks are unsupported")
         directories[:] = sorted(d for d in directories if d != ".git"
                                 and not (parent / d).resolve().is_relative_to(artifacts))
-        require(not any((parent / d).is_symlink() for d in directories),
-                "checkpoint source directory symlinks are unsupported")
         for name in sorted(names):
             p = parent / name
+            if name == ".git":
+                continue
+            require(not p.is_symlink(), "checkpoint source symlinks are unsupported")
             if (name == ".git" or p.resolve().is_relative_to(artifacts)
                     or p.resolve() in (output, output.with_name(output.name + ".tmp"))):
                 continue
-            require(not p.is_symlink(), "checkpoint source symlinks are unsupported")
             size += p.stat().st_size
             require(len(files) < 100000 and size <= 512 * 1024 * 1024,
                     "checkpoint source too large; use an isolated checkout")
@@ -91,6 +93,15 @@ def input_fingerprint(artifacts, output):
         tools[tool] = (str(Path(binary).resolve()), digest(Path(binary)))
     # Store only the digest: environment and Go proxy values can contain secrets.
     effective_go = json.loads(subprocess.check_output(["go", "env", "-json"]))
+    # A bootstrap Go binary can select another installed/downloaded toolchain.
+    # Bind its actual executable and build tools as well as the bootstrap.
+    for key, names in (("GOROOT", ["bin/go"]),
+                       ("GOTOOLDIR", ["compile", "link", "asm", "cover", "cgo", "vet"])):
+        if effective_go.get(key):
+            for name in names:
+                tool = Path(effective_go[key]) / (name + (".exe" if os.name == "nt" else ""))
+                require(tool.is_file(), f"selected Go tool is unavailable: {tool}")
+                tools[str(tool)] = digest(tool)
     # Go creates a fresh temporary work directory even for `go env`. Its
     # generated debug-prefix-map is not a changed compiler option. Normalize
     # only this exact generated path; retain every other flag and Go value.
