@@ -73,6 +73,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	s.resolveListSort(r, entity, &params)
 
 	params = s.applyListFormFilter(r, entity, params)
 
@@ -2939,6 +2940,73 @@ func parseLegacyTablePartRows(r *http.Request, entity *metadata.Entity) (map[str
 }
 
 // parseListParams reads filter, search, sort and pagination URL params.
+// resolveListSort запоминает сортировку, которую пользователь выбрал щелчком по
+// заголовку колонки, и возвращает её при следующем открытии того же списка.
+//
+// Без этого порядок жил только в адресе страницы: ушёл в другой список,
+// вернулся — и строки снова в порядке по умолчанию, хотя человек его менял.
+// Хранится как вид списка (#1485) — по пользователю и сущности. Явный ?sort
+// без sort_snapshot перекрывает и обновляет сохранённое. Сохраняется и
+// восстанавливается только поле, которое есть у сущности: исчезнувшее из
+// метаданных молча забывается.
+func (s *Server) resolveListSort(r *http.Request, entity *metadata.Entity, params *storage.ListParams) {
+	user := auth.UserFromContext(r.Context())
+	if user == nil || user.Login == "" || s.store == nil {
+		return
+	}
+	known := func(name string) bool {
+		for _, f := range entity.Fields {
+			if f.Name == name {
+				return true
+			}
+		}
+		return false
+	}
+	q := r.URL.Query()
+	if q.Has("sort_snapshot") {
+		// This is a continuation of an already rendered list, not a new
+		// preference. Apply its parsed Sort/Dir through the usual storage
+		// validation, without reading or writing another tab's choice.
+		// Malformed/incomplete snapshot state must not write settings either.
+		return
+	}
+	if params.Sort != "" {
+		if !known(params.Sort) {
+			return
+		}
+		dir := "asc"
+		if strings.EqualFold(params.Dir, "desc") {
+			dir = "desc"
+		}
+		_ = s.store.SaveListSortUserSettings(r.Context(), entity.Name, user.Login, params.Sort, dir)
+		// A header click supersedes this list's captured default state.
+		q.Del("sort_default")
+		q.Set("sort_snapshot", "1")
+		r.URL.RawQuery = q.Encode()
+		return
+	}
+	if q.Get("sort_default") == "1" {
+		// Continue the order this list opened with, without reading or writing
+		// a preference that another tab may have changed. Keep Sort/Dir intact:
+		// storage owns metadata order_by, hierarchy and document defaults.
+		return
+	}
+	field, dir, err := s.store.GetListSortUserSettings(r.Context(), entity.Name, user.Login)
+	if err != nil || field == "" || !known(field) {
+		q.Set("sort_default", "1")
+		r.URL.RawQuery = q.Encode()
+		return
+	}
+	params.Sort = field
+	params.Dir = dir
+	// Pin the restored order in this list's links, forms and refresh URL.
+	// Another tab may change the saved preference before the next page loads.
+	q.Set("sort", field)
+	q.Set("dir", dir)
+	q.Set("sort_snapshot", "1")
+	r.URL.RawQuery = q.Encode()
+}
+
 // listModeCookie — кука с per-сущностными предпочтениями режима списка
 // (pages|feed). Значение — URL-escaped JSON map: "kind/name" → режим.
 const listModeCookie = "ob_listmodes"

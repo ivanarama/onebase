@@ -2917,6 +2917,11 @@ function obInitFeed(root) {
   root = root || document;
   var more = root.querySelector('#feed-more');
   if (!more || more.__obFeedDispose) return;
+  var nextLink = more.querySelector('a[href]');
+  if (!nextLink) return;
+  // The rendered link carries the effective sort, including a restored one.
+  // Keep it bound to this list instance rather than the active browser tab.
+  var feedURL = new URL(nextLink.href, window.location.href);
   var loading = false;
   var done = false;
   var observer;
@@ -2943,10 +2948,9 @@ function obInitFeed(root) {
       return;
     }
     loading = true;
-    var sp = new URLSearchParams(window.location.search);
-    sp.set('page', n);
-    sp.set('lm', 'feed');
-    fetch(window.location.pathname + '?' + sp.toString(), { credentials: 'same-origin' })
+    feedURL.searchParams.set('page', n);
+    feedURL.searchParams.set('lm', 'feed');
+    fetch(feedURL.pathname + feedURL.search, { credentials: 'same-origin' })
       .then(function (r) { return r.text(); })
       .then(function (html) {
         // A live refresh may have replaced this feed while the GET was in flight.
