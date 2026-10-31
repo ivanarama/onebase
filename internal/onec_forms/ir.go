@@ -1,5 +1,7 @@
 package onec_forms
 
+import "github.com/ivantit66/onebase/internal/metadata"
+
 // IR — нейтральное промежуточное представление управляемой формы.
 // К нему сводятся оба формата: 1С Form.xml (через reader_xml.go) и
 // OneBase .form.yaml (через reader_yaml.go). Обратно — writer_xml.go и
@@ -40,30 +42,33 @@ type IRForm struct {
 // Kind хранит каноническое имя из 1С (InputField, Table, UsualGroup, Page, …)
 // либо OneBase-имя (ПолеВвода, Таблица, …) — нормализация в mapping_in/out.
 type IRElement struct {
-	ID         string  // внутренний id (мб совпадать с OriginalID)
-	OriginalID string  // id из Form.xml
-	Name       string  // имя элемента (как в XML attribute name=)
-	Kind       string  // тип элемента (см. elements_map.go)
-	Title      IRTitle // локализованный заголовок
-	DataPath   string  // "Объект.Контрагент", "Список.Цена"
-	Picture    string  // относительный путь к ресурсу или "stdpic:Post"
-	Values     string  // для PictureField — ValuesPicture
-	Visible    bool
-	Enabled    bool
-	Required   bool
-	ReadOnly   bool
-	Choice     bool
-	Width      int
-	Height     int
-	HAlign     string
-	VAlign     string
-	Hint       string
-	Mask       string
-	Language   string            // язык подсветки для ПолеКода (html, bsl, sql, …)
-	Events     map[string]string // 1С имя события → имя процедуры
-	Props      map[string]any    // прочие свойства элемента (TitleLocation, EditMode, …)
-	Children   []*IRElement
-	UnknownXML []byte // экзотический XML, не разобранный в IR (round-trip)
+	EntityList   *metadata.FormEntityListSpec
+	ID           string  // внутренний id (мб совпадать с OriginalID)
+	OriginalID   string  // id из Form.xml
+	Name         string  // имя элемента (как в XML attribute name=)
+	Kind         string  // тип элемента (см. elements_map.go)
+	Title        IRTitle // локализованный заголовок
+	DataPath     string  // "Объект.Контрагент", "Список.Цена"
+	Picture      string  // относительный путь к ресурсу или "stdpic:Post"
+	Values       string  // для PictureField — ValuesPicture
+	Visible      bool
+	Enabled      bool
+	Required     bool
+	ReadOnly     bool
+	Choice       bool
+	Width        int
+	Height       int
+	HAlign       string
+	VAlign       string
+	Hint         string
+	Mask         string
+	Language     string            // язык подсветки для ПолеКода (html, bsl, sql, …)
+	Events       map[string]string // 1С имя события → имя процедуры
+	Props        map[string]any    // прочие свойства элемента (TitleLocation, EditMode, …)
+	Columns      []*IRElement
+	ChoiceFilter []metadata.FormChoiceCondition
+	Children     []*IRElement
+	UnknownXML   []byte // экзотический XML, не разобранный в IR (round-trip)
 }
 
 // IRAttribute — реквизит формы (Form.xml / Attributes).

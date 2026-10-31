@@ -1,0 +1,4 @@
+name: Обращение
+fields:
+  - {name: Клиент, type: 'reference:Клиент'}
+  - {name: Комментарий, type: string}

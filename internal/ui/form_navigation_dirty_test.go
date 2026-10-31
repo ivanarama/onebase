@@ -98,12 +98,12 @@ func TestManagedNavigationRespectsResponseDirtyState(t *testing.T) {
 	const harness = `
 const fs = require('fs');
 const source = fs.readFileSync(process.argv[2], 'utf8');
-const start = source.indexOf('  async function dispatchFormEvent(snapshot){');
+const start = source.indexOf('  function refreshEventEntityLists(data, snapshot, merged) {');
 const end = source.indexOf('\n  window.obFire = function', start);
 const fireEnd = source.indexOf('\n  // One close controller', end);
 const helpersStart = source.indexOf('  function closeBodyEntries(body, predicate){');
 const helpersEnd = source.indexOf('  function setManagedFormDirty(dirty){', helpersStart);
-const mergeStart = source.indexOf('  function applyCloseResponse(data, before, current){');
+const mergeStart = source.indexOf('  function controlEditedSince(state, matches){');
 const mergeEnd = source.indexOf('\n  window.obRequestFormClose', mergeStart);
 if ([start, end, fireEnd, helpersStart, helpersEnd, mergeStart, mergeEnd].some(i => i < 0)) {
   throw new Error('managed.js behavior slices not found');

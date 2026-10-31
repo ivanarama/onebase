@@ -278,6 +278,7 @@ func irElementToMeta(el *IRElement) *metadata.FormElement {
 		return nil
 	}
 	out := &metadata.FormElement{
+		EntityList:      el.EntityList,
 		ID:              el.ID,
 		OriginalID:      el.OriginalID,
 		Name:            el.Name,

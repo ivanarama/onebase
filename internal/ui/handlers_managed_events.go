@@ -45,12 +45,14 @@ import (
 
 // formEventResponse — структура ответа JSON.
 type formEventResponse struct {
-	OK             bool                        `json:"ok"`
-	Values         map[string]any              `json:"values,omitempty"`
-	Revealed       []string                    `json:"revealed,omitempty"`
-	TableParts     map[string][]map[string]any `json:"tableparts,omitempty"`
-	FormTables     map[string][]map[string]any `json:"formTables,omitempty"`
-	ConditionalCSS string                      `json:"conditionalCss"`
+	EntityLists     map[string]entityListData   `json:"entityLists,omitempty"`
+	EntityListState string                      `json:"entityListState,omitempty"`
+	OK              bool                        `json:"ok"`
+	Values          map[string]any              `json:"values,omitempty"`
+	TableParts      map[string][]map[string]any `json:"tableparts,omitempty"`
+	FormTables      map[string][]map[string]any `json:"formTables,omitempty"`
+	ConditionalCSS  string                      `json:"conditionalCss"`
+	Revealed        []string                    `json:"revealed,omitempty"`
 	// ElementStates — состояние элементов с условиями readonly_when/hidden_when,
 	// пересчитанное по полям записи ПОСЛЕ обработчика. Без него запрет,
 	// зависящий от состояния объекта, появлялся бы только после перезагрузки
@@ -816,6 +818,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	concealed := s.dropConcealedInput(r, entity, form, obj.Fields)
+	s.mergeFormAttrValues(dslCtx, r, form, entity, obj)
 	// Что прислал клиент — до восстановлений и обработчика: ответ события не
 	// маскирует значение, которое клиент сам только что набрал (см.
 	// serializeManagedFormEventState).
@@ -828,6 +831,42 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		if err := s.applyRejectedFieldDefaults(r.Context(), entity, obj, concealed); err != nil {
 			respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
 			return
+		}
+	}
+	if hasManagedEntityLists(form) {
+		r = r.WithContext(context.WithValue(r.Context(), entityListOwnerIDKey{}, strings.TrimSpace(r.FormValue("_id"))))
+		sources := map[string]string{}
+		for path, name := range listSources(form, "") {
+			sources[path] = listSourceString(entity, form, path, listValue(obj.Fields, name))
+		}
+		clone := r.Clone(r.Context())
+		clone.Form = cloneQuery(r.Form)
+		clone.Form.Set("state", r.FormValue("_entity_list_state"))
+		restored, err := s.entityListRefreshValues(clone, entity, form, strings.TrimSpace(r.FormValue("_id")), "", sources)
+		if err != nil {
+			respondJSON(enc, formEventResponse{Error: "list source unavailable"})
+			return
+		}
+		for path, name := range listSources(form, "") {
+			if listSourceConcealed(form, name) {
+				continue
+			}
+			field := metadata.EntityListSourceField(entity, form, path)
+			if field == nil {
+				respondJSON(enc, formEventResponse{Error: "list source unavailable"})
+				return
+			}
+			value, _, err := listTypedValue(field, listValue(restored, name))
+			if err != nil {
+				respondJSON(enc, formEventResponse{Error: "list source unavailable"})
+				return
+			}
+			if value != nil && field.RefEntity != "" {
+				if ref := s.formAttrRef(dslCtx, field.RefEntity, fmt.Sprint(value)); ref != nil {
+					value = ref
+				}
+			}
+			setListValue(obj.Fields, name, value)
 		}
 	}
 	// Событие может вызвать Объект.Записать() до обычного submit. Удаляем
@@ -985,9 +1024,6 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// реквизиты именно по этой ссылке.
 	setFormSelfRef(r, entity, obj)
 
-	// Реквизиты формы (attributes с save:false) — formToFields их не разбирает,
-	// поэтому без этого шага Объект.<Реквизит> в обработчике всегда nil.
-	s.mergeFormAttrValues(dslCtx, r, form, entity, obj)
 	s.restoreConcealControllers(r, entity, form, obj)
 
 	// Подмешать ValueTable-данные из vt.<name>.<idx>.<field>.
@@ -1931,21 +1967,24 @@ func savedFormID(this *formObjectThis) string {
 // Прежняя россыпь возвратов и была бы ровно тем механизмом отказа, который
 // разбирает #615, — инвариант, применённый в N−1 месте из N.
 type formEventState struct {
-	Values         map[string]any
-	Revealed       []string
-	TableParts     map[string][]map[string]any
-	FormTables     map[string][]map[string]any
-	RefOptions     map[string][]map[string]any
-	TPRefOptions   map[string]map[string][]map[string]any
-	ConditionalCSS string
-	Messages       []string
-	ElementStates  *elementStates
-	ColumnTitles   map[string]map[string]string
+	EntityLists     map[string]entityListData
+	EntityListState string
+	Values          map[string]any
+	TableParts      map[string][]map[string]any
+	FormTables      map[string][]map[string]any
+	RefOptions      map[string][]map[string]any
+	TPRefOptions    map[string]map[string][]map[string]any
+	ConditionalCSS  string
+	Messages        []string
+	ElementStates   *elementStates
+	Revealed        []string
+	ColumnTitles    map[string]map[string]string
 }
 
 // response — единственное место, где состояние переносится в ответ.
 func (st formEventState) response(ok bool) formEventResponse {
 	return formEventResponse{
+		EntityLists: st.EntityLists, EntityListState: st.EntityListState,
 		OK:             ok,
 		Revealed:       st.Revealed,
 		Values:         st.Values,
@@ -2085,15 +2124,27 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 			msgs = append(msgs, warnings...)
 		}
 	}
+	signedID := ""
+	if hasManagedEntityLists(form) {
+		if row, err := s.store.GetByID(ctx, entity.Name, obj.ID, entity); err == nil && row != nil {
+			signedID = obj.ID.String()
+		}
+	}
+	ownerID := signedID
+	if original, _ := ctx.Value(entityListOwnerIDKey{}).(string); original != "" {
+		ownerID = original
+	}
 	return formEventState{
-		Revealed:       revealed,
-		Values:         values,
-		TableParts:     tableParts,
-		FormTables:     formTablesFromRows(tableParts, form),
-		RefOptions:     s.eventRefOptions(ctx, form, entity, values),
-		TPRefOptions:   tpRefOptions,
-		ConditionalCSS: conditionalCSS,
-		Messages:       msgs,
+		Values:          values,
+		EntityLists:     s.loadManagedEntityLists(ctx, entity, form, obj.Fields, ownerID),
+		EntityListState: s.signEntityListState(ctx, entity, form, signedID, obj.Fields),
+		TableParts:      tableParts,
+		FormTables:      formTablesFromRows(tableParts, form),
+		RefOptions:      s.eventRefOptions(ctx, form, entity, values),
+		TPRefOptions:    tpRefOptions,
+		ConditionalCSS:  conditionalCSS,
+		Messages:        msgs,
+		Revealed:        revealed,
 		// Условия readonly_when/hidden_when считаются здесь же, где известны
 		// значения ПОСЛЕ обработчика: команда, изменившая состояние объекта,
 		// сразу меняет доступность полей.

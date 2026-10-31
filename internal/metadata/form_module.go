@@ -129,6 +129,7 @@ func IsKnownFormEventType(event FormEventType) bool {
 type FormElementType string
 
 const (
+	FormElementEntityList FormElementType = "Список"
 	FormElementField      FormElementType = "ПолеВвода"      // InputField
 	FormElementLabel      FormElementType = "Надпись"        // Label
 	FormElementButton     FormElementType = "Кнопка"         // Button
@@ -164,7 +165,7 @@ var knownFormElementTypes = map[FormElementType]bool{
 	FormElementInputList: true, FormElementDatePicker: true, FormElementFormField: true,
 	FormElementTablePart: true, FormElementColumn: true, FormElementCommandBar: true,
 	FormElementPicture: true, FormElementCommandBarButton: true,
-	FormElementCodeField: true,
+	FormElementCodeField: true, FormElementEntityList: true,
 }
 
 // IsKnownFormElementType сообщает, поддерживается ли вид элемента формы движком.
@@ -196,9 +197,10 @@ const (
 
 // FormElement represents a single form element (field, button, etc.)
 type FormElement struct {
-	ID   string          `yaml:"id,omitempty"`
-	Name string          `yaml:"name,omitempty"`
-	Kind FormElementType `yaml:"kind,omitempty"`
+	EntityList *FormEntityListSpec `yaml:"-"`
+	ID         string              `yaml:"id,omitempty"`
+	Name       string              `yaml:"name,omitempty"`
+	Kind       FormElementType     `yaml:"kind,omitempty"`
 	// Title — legacy строковый заголовок. В managed-формах используется
 	// TitleMap (поле yaml:"title"); это поле не сериализуется в YAML
 	// (тег "-"), и заполняется ToFormModule из TitleMap.Get("ru") как

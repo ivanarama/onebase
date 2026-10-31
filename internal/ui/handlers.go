@@ -823,6 +823,22 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		filters, _ := data["RefFilter"].(map[string]string)
 		data["TPRefMeta"] = tpRefMetaWithFilters(ent, refWriteAccess, filters)
 	}
+	if ent, ok := data["Entity"].(*metadata.Entity); ok {
+		if form, ok := data["Form"].(*metadata.FormModule); ok {
+			values := map[string]any{}
+			switch v := data["Values"].(type) {
+			case map[string]string:
+				for k, x := range v {
+					values[k] = x
+				}
+			case map[string]any:
+				values = v
+			}
+			id, _ := data["ID"].(string)
+			data["EntityLists"] = s.loadManagedEntityLists(r.Context(), ent, form, values, id)
+			data["EntityListState"] = s.signEntityListState(r.Context(), ent, form, id, values)
+		}
+	}
 	// Same for info-register views, which key off "InfoReg" instead of "Entity".
 	if ir, ok := data["InfoReg"].(*metadata.InfoRegister); ok {
 		if _, ok := data["CanWrite"]; !ok {

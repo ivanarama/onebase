@@ -92,6 +92,7 @@ var maskHelperExempt = map[string]maskHelperExemption{
 
 	// ── Гейт стоит не здесь, а в названной функции. Тест
 	// DelegatedGatesStillMask следит, что он там действительно есть.
+	"Server.entityListRefreshValues":       {reason: "восстанавливает источники по каноничной строке владельца для read/RLS; сырая карта не сериализуется. Refresh отдаёт только проекцию loadManagedEntityLists с запретом защищённых источников и маской цели; form-event маскирует её в serializeManagedFormEventState. Публичные TestManagedEntityListPublicMatrix и TestManagedEntityListReadonlyRestorationDoesNotEchoSecret проверяют обе границы", maskedBy: "Server.loadManagedEntityLists"},
 	"docWriter.read":                       {reason: "значения кладутся в obj и маскируются на выдаче", maskedBy: "docWriter.Get"},
 	"dslRefAttrResolver.preloadIDs":        {reason: "наполняет кэш, значения отдаёт только ResolveRefAttr", maskedBy: "dslRefAttrResolver.ResolveRefAttr"},
 	"Server.restoreUnsubmittedFields":      {reason: "дочитывает неприсланные реквизиты ДЛЯ ЗАПИСИ, к клиенту они идут через сериализацию ответа (#609)", maskedBy: "Server.serializeManagedFormEventState"},

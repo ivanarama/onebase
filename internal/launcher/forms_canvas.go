@@ -238,12 +238,13 @@ func hasColumnChild(en *formdoc.ElementNode) bool {
 // Плоская карта node-id → info отдаётся вместе с холстом, чтобы клик по элементу
 // открывал панель без повторного парсинга YAML в браузере.
 type canvasElementInfo struct {
-	NodeID   string `json:"nodeId"`
-	ID       string `json:"id"`
-	Kind     string `json:"kind"`
-	Name     string `json:"name"`
-	TitleRU  string `json:"titleRu"`
-	DataPath string `json:"dataPath"`
+	EntityList *metadata.FormEntityListSpec `json:"entityList,omitempty"`
+	NodeID     string                       `json:"nodeId"`
+	ID         string                       `json:"id"`
+	Kind       string                       `json:"kind"`
+	Name       string                       `json:"name"`
+	TitleRU    string                       `json:"titleRu"`
+	DataPath   string                       `json:"dataPath"`
 	// Field — ключ `field:` элемента. Рантайм сопоставляет колонку реквизиту по
 	// data_path, field ИЛИ имени (managedTPFieldIndexForColumn), а в модель
 	// холста поле не попадало вовсе — поэтому колонка, объявленная как
@@ -319,6 +320,7 @@ func canvasModel(doc *formdoc.Doc) (map[string]canvasElementInfo, error) {
 		for _, en := range ens {
 			el := en.El
 			info := canvasElementInfo{
+				EntityList:   el.EntityList,
 				NodeID:       en.NodeID,
 				ID:           el.ID,
 				Kind:         string(el.Kind),

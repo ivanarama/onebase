@@ -1219,6 +1219,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     if (window.obGridSync && window.obGridSync() === false) return;
     const body = new URLSearchParams();
     const eventFD = fileEventFormData(form, fileHelpers);
+    const listRevision = window.obEntityLists ? window.obEntityLists.snapshot(eventFD) : null;
     eventFD.set(serviceField('_element'), elementName || '');
     eventFD.set(serviceField('_event'), eventName || '');
     eventFD.set(serviceField('_kind'), 'object');
@@ -1236,7 +1237,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     return {
 	  body: body, form: form, controlState: captureFormControlState(form), elementName: elementName,
 	  extraParams: extraParams, wasNew: !DOC_ID,
-	  editRevision: formEditState.revision,
+	  editRevision: formEditState.revision, listRevision: listRevision,
 	  eventName: eventName, pickerRequest: pickerRequest
 	};
   }
@@ -1250,10 +1251,19 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     if (versionInput && versionInput.value) snapshot.body.set(versionName, String(versionInput.value));
   }
 
+  function refreshEventEntityLists(data, snapshot, merged) {
+    if (!window.obEntityLists) return;
+    // Apply a response projection only after its values reach the live form.
+    // A merged/newer form must be read again without replaying the event.
+    var revision = !merged && formEditState.revision === snapshot.editRevision ? snapshot.listRevision : undefined;
+    window.obEntityLists.refresh(data, revision);
+  }
+
   async function dispatchFormEvent(snapshot){
     if (!snapshot || reloadRequired || formEventWriteUnknown || manualReconcileRequired) return;
     refreshQueuedFormEventIdentity(snapshot);
     var body = snapshot.body;
+    if (window.obEntityLists) { window.obEntityLists.snapshot(body); window.obEntityLists.invalidate(); }
     var form = snapshot.form;
     var elementName = snapshot.elementName;
 	var extraParams = snapshot.extraParams;
@@ -1300,12 +1310,13 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         if (currentBody && formEditState.revision === revisionBeforeRead) {
           // Reuse the close controller's field/table merge: only unchanged
           // controls may receive values from the older server snapshot.
-          applyCloseResponse(data, snapshot.body, currentBody);
+          applyCloseResponse(data, snapshot.body, currentBody, snapshot.controlState);
         } else {
           (data.messages || []).forEach(m => flash(m, 'ok'));
           if (data.error) flash(data.error, 'err');
         }
         setManagedFormDirty(true);
+        refreshEventEntityLists(data, snapshot, true);
         flash(closeMessage('navigationFormChanged', 'Форма изменилась во время выполнения команды — переход не выполнен'), 'err');
         return;
       }
@@ -1339,6 +1350,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         // эхо отправленного значения не затирает.
         if (data.values) applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
         if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
+        refreshEventEntityLists(data, snapshot, false);
         (data.messages || []).forEach(m => flash(m, 'ok'));
         if (data.error) flash(data.error, 'err');
         openItemPicker(data.pickerData, elementName, extraParams || null, snapshot.pickerRequest);
@@ -1364,7 +1376,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
           setManagedFormDirty(true);
           return;
         }
-        applyCloseResponse(data, snapshot.body, mergeBody);
+        applyCloseResponse(data, snapshot.body, mergeBody, snapshot.controlState);
         setManagedFormDirty(true);
       } else {
         if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
@@ -1377,6 +1389,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         applyFormTables(data.formTables);
       }
       if (!beforePostMerged && window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
+      refreshEventEntityLists(data, snapshot, beforePostMerged);
 	  // Server events repaint controls programmatically and therefore do not
 	  // trigger input/change. Raise dirty for unsaved handler mutations; clear
 	  // it only when this response proves a successful Object.Write and no
@@ -1614,6 +1627,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     if (window.obGridSync && window.obGridSync() === false) return null;
     var fd = fileEventFormData(form, fileHelpers);
     fd.set(serviceField('_kind'), closeFormKind());
+    if (window.obEntityLists) window.obEntityLists.snapshot(fd);
     if (DOC_ID) fd.set(serviceField('_id'), DOC_ID);
     var body = new URLSearchParams();
     fd.forEach(function(v, k){
@@ -1794,7 +1808,17 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 	}
   }
 
-  function applyCloseResponse(data, before, current){
+  function controlEditedSince(state, matches){
+    if (!state) return false;
+    var edited = false;
+    state.forEach(function(before, control){
+      if (before.editable && matches(String(control.name || '').toLowerCase()) &&
+          (controlEditRevisions.get(control) || 0) > before.revision) edited = true;
+    });
+    return edited;
+  }
+
+  function applyCloseResponse(data, before, current, controlState){
     if (!data || typeof data !== 'object') return;
     var form = window.obApplyConcealed ? document.getElementById('main-form') : null;
     if (data.ok === false || data.error || data.cancel) data.revealed = [];
@@ -1802,19 +1826,19 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 	var merging = !!(before && current);
     if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, document.getElementById('main-form'));
 	var values = merging ? filterCloseMap(data.values, function(name){
-	  return closeFieldUnchanged(before, current, name);
+	  return closeFieldUnchanged(before, current, name) && !controlEditedSince(controlState, function(key){ return key === String(name).toLowerCase(); });
 	}) : data.values;
 	var tableparts = merging ? filterCloseMap(data.tableparts, function(name){
-	  return closeTableUnchanged(before, current, 'tp', name);
+	  return closeTableUnchanged(before, current, 'tp', name) && !controlEditedSince(controlState, function(key){ return key.indexOf('tp.' + String(name).toLowerCase() + '.') === 0; });
 	}) : data.tableparts;
 	var formTables = merging ? filterCloseMap(data.formTables, function(name){
-	  return closeTableUnchanged(before, current, 'vt', name);
+	  return closeTableUnchanged(before, current, 'vt', name) && !controlEditedSince(controlState, function(key){ return key.indexOf('vt.' + String(name).toLowerCase() + '.') === 0; });
 	}) : data.formTables;
 	var refOptions = merging ? filterCloseMap(data.refOptions, function(name){
-	  return closeFieldUnchanged(before, current, name);
+	  return closeFieldUnchanged(before, current, name) && !controlEditedSince(controlState, function(key){ return key === String(name).toLowerCase(); });
 	}) : data.refOptions;
 	var tpRefOptions = merging ? filterCloseMap(data.tpRefOptions, function(name){
-	  return closeTableUnchanged(before, current, 'tp', name);
+	  return closeTableUnchanged(before, current, 'tp', name) && !controlEditedSince(controlState, function(key){ return key.indexOf('tp.' + String(name).toLowerCase() + '.') === 0; });
 	}) : data.tpRefOptions;
 	// Derived visibility/readonly/CSS was calculated for the old snapshot and
 	// cannot be merged safely after concurrent input. Data and reference
@@ -1828,6 +1852,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 	applyValues(values, refOptions);
 	applyFormTables(formTables);
     if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, document.getElementById('main-form'), values || {}, data.values || {});
+    if (!controlState && window.obEntityLists) window.obEntityLists.refresh(data);
     (data.messages || []).forEach(function(message){ flash(message, 'ok'); });
     if (data.error) flash(data.error, 'err');
     } catch (e) {
@@ -5048,6 +5073,7 @@ function obApplyConcealed(revealed, form, appliedValues, retainedValues) {
       el.value = "";
     }
   });
+  if (typeof window !== 'undefined' && window.obEntityLists && window.obEntityLists.concealChanged) window.obEntityLists.concealChanged();
 }
 window.obApplyConcealed = obApplyConcealed;
 

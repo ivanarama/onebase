@@ -9,6 +9,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"gopkg.in/yaml.v3"
 
 	"github.com/ivantit66/onebase/internal/formdoc"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -39,6 +40,7 @@ type editOpRequest struct {
 	Columns  string // insertColumns: JSON-массив [{name,title,data_path}] колонок ТЧ
 	// ChoiceFilter — JSON-массив ordered-условий [{field,op,from|value}].
 	ChoiceFilter string
+	EntityList   string
 }
 
 // columnSpec — одна колонка табличной части в команде insertColumns.
@@ -204,6 +206,35 @@ func applyEditOp(yamlSrc []byte, req editOpRequest) (editOpResult, error) {
 		}
 		selected = req.Node
 
+	case "setEntityList":
+		var data map[string]any
+		decoder := json.NewDecoder(strings.NewReader(req.EntityList))
+		decoder.UseNumber()
+		if err := decoder.Decode(&data); err != nil {
+			return editOpResult{}, err
+		}
+		allowed := map[string]bool{"entity": true, "filter": true, "order_by": true, "columns": true, "limit": true, "on_row_click": true}
+		for key, value := range data {
+			if !allowed[key] {
+				return editOpResult{}, fmt.Errorf("unknown entity list property %q", key)
+			}
+			// Decode with yaml so numeric and boolean filter values retain their types.
+			bytes, err := json.Marshal(value)
+			if err != nil {
+				return editOpResult{}, err
+			}
+			var node yaml.Node
+			if err := yaml.Unmarshal(bytes, &node); err != nil {
+				return editOpResult{}, err
+			}
+			if len(node.Content) != 1 {
+				return editOpResult{}, fmt.Errorf("invalid entity list value")
+			}
+			if err := doc.SetProp(req.Node, key, node.Content[0]); err != nil {
+				return editOpResult{}, err
+			}
+		}
+		selected = req.Node
 	case "setChoiceFilter":
 		var raw []canvasChoiceCondition
 		if err := json.Unmarshal([]byte(req.ChoiceFilter), &raw); err != nil {
@@ -277,6 +308,9 @@ func applyEditOp(yamlSrc []byte, req editOpRequest) (editOpResult, error) {
 			return editOpResult{}, fmt.Errorf("insert: не указан kind")
 		}
 		fields := map[string]any{"kind": req.Kind}
+		if req.Kind == "Список" {
+			fields["id"] = uuid.NewString()
+		}
 		if req.Name != "" {
 			fields["name"] = req.Name
 		}
@@ -421,6 +455,7 @@ func (h *handler) configuratorFormsEditOp(w http.ResponseWriter, r *http.Request
 		Options:      r.FormValue("options"),
 		Columns:      r.FormValue("columns"),
 		ChoiceFilter: r.FormValue("choice_filter"),
+		EntityList:   r.FormValue("entity_list"),
 	}
 	res, err := applyEditOp([]byte(r.FormValue("yaml")), req)
 	if err != nil {

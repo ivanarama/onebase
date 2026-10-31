@@ -85,6 +85,8 @@ type Config struct {
 }
 
 type Server struct {
+	entityListKeyOnce      sync.Once
+	entityListKey          [32]byte
 	reg                    *runtime.Registry
 	store                  *storage.DB
 	interp                 *interpreter.Interpreter
@@ -415,6 +417,7 @@ func (s *Server) Mount(r chi.Router) {
 	// кнопок (Нажатие) и полей (ПриИзменении). Возвращает JSON с
 	// обновлёнными values и сообщениями от Сообщить().
 	r.Post("/ui/{kind}/{entity}/form-event", s.handleManagedFormEvent)
+	r.Post("/ui/{kind}/{entity}/form-list-refresh", s.handleManagedListRefresh)
 	// Lifecycle close-intent is deliberately separate from /form-event:
 	// the browser cannot choose an arbitrary lifecycle event name, and the
 	// response carries a one-shot decision tied to an intent UUID.
