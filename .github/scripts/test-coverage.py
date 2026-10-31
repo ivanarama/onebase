@@ -93,6 +93,22 @@ def input_fingerprint(artifacts, output):
         tools[tool] = (str(Path(binary).resolve()), digest(Path(binary)))
     # Store only the digest: environment and Go proxy values can contain secrets.
     effective_go = json.loads(subprocess.check_output(["go", "env", "-json"]))
+    # The source walk cannot bind another module outside this checkout. Reject
+    # workspaces and external local replacements rather than reuse stale tests.
+    require(effective_go.get("GOWORK", "") in ("", "off"),
+            "checkpoint does not support Go workspaces; run without reuse")
+    modules = subprocess.check_output(["go", "list", "-m", "-json", "all"]).decode("utf-8")
+    decoder = json.JSONDecoder()
+    while modules.strip():
+        module, end = decoder.raw_decode(modules.lstrip())
+        modules = modules.lstrip()[end:]
+        require(isinstance(module, dict) and not module.get("Error"),
+                "cannot validate checkpoint module graph")
+        replacement = module.get("Replace")
+        if replacement and not replacement.get("Version"):
+            directory = replacement.get("Dir")
+            require(directory and Path(directory).resolve().is_relative_to(root),
+                    "checkpoint does not support external local Go replacements; run without reuse")
     # A bootstrap Go binary can select another installed/downloaded toolchain.
     # Bind its actual executable and build tools as well as the bootstrap.
     for key, names in (("GOROOT", ["bin/go"]),
@@ -263,6 +279,10 @@ def run(argv=None):
     save_json(STATUS_FILE, {"stage": "prepare", "status": "running"})
     for value in args.fixture:
         check_fixture_path(value)
+    for value in args.preflight:
+        package, separator, pattern = value.partition("=")
+        require(package and separator and pattern, "invalid preflight PACKAGE=REGEXP")
+        require("/" not in pattern, "preflight supports only top-level test selectors; subtest selectors are unsupported")
     checkpoint = args.checkpoint or args.resume
     state_file = args.artifacts / "checkpoints.json"
     state = {"version": 1, "fingerprint": None, "stages": {}}

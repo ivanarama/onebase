@@ -31,6 +31,9 @@ if args == ['env', '-json']:
     path = pathlib.Path('artifacts/go-env-value')
     print(json.dumps({'GOOS': path.read_text() if path.exists() else 'darwin'}))
     sys.exit(0)
+if args == ['list', '-m', '-json', 'all']:
+    print(json.dumps({'Path': 'example.com/fixture', 'Main': True}))
+    sys.exit(0)
 """)
         script = script.replace("assert '-covermode=atomic' in args", """
 if '-covermode=atomic' not in args:
@@ -189,6 +192,74 @@ assert""")
         result = self.run_cli('--preflight', fixtures.UI + '=^TestMissing$')
         self.assertNotEqual(result.returncode, 0)
         self.assertIn('matched no tests', result.stderr)
+        self.assertFalse((self.root / 'coverage.out').exists())
+
+    def real_module(self):
+        (self.root / 'go.mod').write_text('module github.com/ivantit66/onebase\n\ngo 1.26.0\n')
+        for package, count in [('internal/ui', 4), ('internal/launcher', 2), ('other', 1)]:
+            directory = self.root / package
+            directory.mkdir(parents=True)
+            name = directory.name
+            (directory / 'value.go').write_text(f'package {name}\nfunc Value() int {{ return 7 }}\n')
+            tests = '\n'.join(f'func TestCase{i}(t *testing.T) {{ t.Run("present", func(t *testing.T) {{ if Value()!=7 {{ t.Fatal(Value()) }} }}) }}' for i in range(count))
+            (directory / 'value_test.go').write_text(f'package {name}\nimport "testing"\n{tests}\n')
+
+    def real_cli(self, *args, env=None):
+        return subprocess.run([sys.executable, str(self.runner), '--quiet', *args],
+                              cwd=self.root, env=env, capture_output=True, text=True,
+                              encoding='utf8', timeout=180)
+
+    def test_real_go_external_replacement_is_rejected_before_checkpoint(self):
+        self.real_module()
+        with tempfile.TemporaryDirectory() as external:
+            dependency = Path(external)
+            (dependency / 'go.mod').write_text('module example.com/checkpointdep\n\ngo 1.26.0\n')
+            (dependency / 'value.go').write_text('package checkpointdep\nfunc Value() int { return 7 }\n')
+            with (self.root / 'go.mod').open('a') as stream:
+                stream.write(f'\nrequire example.com/checkpointdep v0.0.0\nreplace example.com/checkpointdep => "{dependency.as_posix()}"\n')
+            (self.root / 'other/value.go').write_text('package other\nimport "example.com/checkpointdep"\nfunc Value() int { return checkpointdep.Value() }\n')
+            for value in (7, 99):
+                (dependency / 'value.go').write_text(f'package checkpointdep\nfunc Value() int {{ return {value} }}\n')
+                result = self.real_cli('--checkpoint', '--artifacts', f'external-{value}')
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn('external local Go replacements', result.stderr)
+                self.assertFalse((self.root / f'external-{value}/checkpoints.json').exists())
+                self.assertFalse((self.root / 'coverage.out').exists())
+
+    def test_real_go_workspace_is_rejected_before_checkpoint(self):
+        self.real_module()
+        (self.root / 'go.work').write_text('go 1.26.0\nuse .\n')
+        result = self.real_cli('--checkpoint', env=dict(os.environ, GOWORK=str(self.root / 'go.work')))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('Go workspaces', result.stderr)
+        self.assertFalse((self.root / 'test-results/checkpoints.json').exists())
+
+    def test_real_go_internal_replacement_is_bound_by_checkpoint(self):
+        self.real_module()
+        dependency = self.root / 'dependency'
+        dependency.mkdir()
+        (dependency / 'go.mod').write_text('module example.com/checkpointdep\n\ngo 1.26.0\n')
+        (dependency / 'value.go').write_text('package checkpointdep\nfunc Value() int { return 7 }\n')
+        with (self.root / 'go.mod').open('a') as stream:
+            stream.write('\nrequire example.com/checkpointdep v0.0.0\nreplace example.com/checkpointdep => ./dependency\n')
+        (self.root / 'other/value.go').write_text('package other\nimport "example.com/checkpointdep"\nfunc Value() int { return checkpointdep.Value() }\n')
+        result = self.real_cli('--checkpoint')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        result = self.real_cli('--resume')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count('RESUME: validated'), 7)
+        (dependency / 'value.go').write_text('package checkpointdep\nfunc Value() int { return 99 }\n')
+        result = self.real_cli('--resume')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('inputs changed', result.stderr)
+        self.assertFalse((self.root / 'coverage.out').exists())
+
+    def test_real_go_missing_subtest_is_rejected_before_full_suite(self):
+        self.real_module()
+        result = self.real_cli('--preflight', fixtures.UI + '=^TestCase0$/^Missing$')
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('subtest selectors are unsupported', result.stderr)
+        self.assertFalse((self.root / 'test-results/packages.log').exists())
         self.assertFalse((self.root / 'coverage.out').exists())
 
     def test_real_go_full_checkpoint_and_resume(self):
