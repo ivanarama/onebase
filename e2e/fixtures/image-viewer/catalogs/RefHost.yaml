@@ -1,0 +1,4 @@
+name: RefHost
+fields:
+  - {name: Name, type: string}
+  - {name: Photo, type: "reference:ManagedPhoto", inline_create: true}

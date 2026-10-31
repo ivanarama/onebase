@@ -350,10 +350,49 @@ func (db *DB) SaveUserFormOpenMode(ctx context.Context, user, mode string) error
 // EffectiveFormOpenMode — итоговый режим: персональный, если задан, иначе
 // глобальный (который при отсутствии — pages).
 func (db *DB) EffectiveFormOpenMode(ctx context.Context, user string) string {
+	if db.GetFormOpenModeLocked(ctx) {
+		return db.GetFormOpenMode(ctx)
+	}
 	if p := db.GetUserFormOpenMode(ctx, user); p != "" {
 		return p
 	}
 	return db.GetFormOpenMode(ctx)
+}
+
+// formOpenModeLockedKey — режим открытия форм закреплён администратором.
+const formOpenModeLockedKey = "ui.form_open_mode_locked"
+
+// GetFormOpenModeLocked сообщает, что пользователи не меняют режим открытия
+// форм: действует только глобальный, личные ключи игнорируются. Нужно
+// рабочим местам, где форма с правками не должна быть отдельной страницей —
+// любой переход из неё спрашивал бы «уйти со страницы?» (оператор КЦ).
+func (db *DB) GetFormOpenModeLocked(ctx context.Context) bool {
+	d := db.dialect
+	var v string
+	if err := db.QueryRow(ctx, `SELECT value FROM _settings WHERE key = `+d.Placeholder(1), formOpenModeLockedKey).Scan(&v); err != nil {
+		return false
+	}
+	return strings.TrimSpace(v) == "1"
+}
+
+// SaveFormOpenModeLocked включает или снимает закрепление режима.
+func (db *DB) SaveFormOpenModeLocked(ctx context.Context, locked bool) error {
+	if err := db.EnsureSettingsSchema(ctx); err != nil {
+		return err
+	}
+	d := db.dialect
+	value := "0"
+	if locked {
+		value = "1"
+	}
+	q := fmt.Sprintf(
+		`INSERT INTO _settings (key, value) VALUES (%s, %s)
+		 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+		d.Placeholder(1), d.Placeholder(2))
+	if _, err := db.Exec(ctx, q, formOpenModeLockedKey, value); err != nil {
+		return fmt.Errorf("settings: save %s: %w", formOpenModeLockedKey, err)
+	}
+	return nil
 }
 
 // Режимы хранения бинарников (картинки поля image). Аналог двух способов

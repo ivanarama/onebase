@@ -168,6 +168,11 @@ func runDev(cmd *cobra.Command, _ []string) error {
 			return fmt.Errorf("validate scheduled jobs: %w", err)
 		}
 
+		// Check all object kinds before the first application-table ALTER.
+		if err := db.CheckLongIdents(loadCtx, proj.Entities, proj.Registers, proj.InfoRegisters, proj.AccountRegisters); err != nil {
+			return fmt.Errorf("long identifiers: %w", err)
+		}
+
 		if err := db.Migrate(loadCtx, proj.Entities); err != nil {
 			devLog.Warn("migrate failed", "err", err)
 			return fmt.Errorf("migrate: %w", err)

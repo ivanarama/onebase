@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -316,6 +317,7 @@ func (s *Server) loadRefOptionsWithMode(ctx context.Context, entity *metadata.En
 
 func (s *Server) loadInitialRefOptions(ctx context.Context, entity *metadata.Entity, values map[string]string) (map[string][]map[string]any, error) {
 	opts := make(map[string][]map[string]any)
+	dropdown := refDropdownFields(entity)
 	for _, f := range entity.Fields {
 		if f.RefEntity == "" {
 			continue
@@ -326,6 +328,11 @@ func (s *Server) loadInitialRefOptions(ctx context.Context, entity *metadata.Ent
 		}
 		refEntity := s.reg.GetEntity(f.RefEntity)
 		if refEntity == nil {
+			continue
+		}
+		// Список не нужен — нужна только подпись текущего значения (поиск по id).
+		if dropdown != nil && !dropdown[strings.ToLower(f.Name)] {
+			opts[f.Name] = s.appendSelectedRefOptions(ctx, nil, refEntity, []string{values[f.Name]})
 			continue
 		}
 		// Подчинённый справочник (owner:) показывает только элементы своего
@@ -343,6 +350,53 @@ func (s *Server) loadInitialRefOptions(ctx context.Context, entity *metadata.Ent
 		opts[f.Name] = rows
 	}
 	return opts, nil
+}
+
+// refDropdownFields — реквизиты сущности (в нижнем регистре), которые
+// управляемая форма объекта рисует выпадающим списком. nil — управляемой формы
+// нет: авто-форма рисует списком каждое ссылочное поле, предзагрузка нужна всем.
+//
+// Остальным ссылочным реквизитам первая страница справочника не нужна: элемент
+// с choice_dropdown: false шаблон всё равно сводит к текущему значению
+// (selectedRefOptionsOnly), а реквизит без элемента на форме не рисуется вовсе.
+// При этом первая страница большого справочника — полный проход таблицы с
+// сортировкой: сортировка order_by строится через CASE и индекс не использует.
+// У заявки колл-центра поле «Дом» смотрит в адресный классификатор на 2 млн
+// строк, и каждое открытие формы сортировало его ради списка, который тут же
+// выбрасывался, — десятки секунд на холодном кэше.
+//
+// Не нужна она и элементу с id и choice_filter/choice_folders: его варианты
+// считает initialChoiceOptions по id элемента (ManagedChoiceOptions), и шаблон
+// намеренно не откатывается на нефильтрованный справочник. Адрес заявки —
+// ровно такой случай: дом отбирается по улице, улица и город — по филиалу.
+//
+// Поле считается нарисованным общим списком, если хоть один элемент с таким
+// последним сегментом data_path рисует выпадающий список без своего отбора.
+// Сравнение по последнему сегменту, как у шаблона (dpField), — заведомо с
+// запасом: колонка ТЧ с тем же именем лишь сохранит прежнюю предзагрузку.
+func refDropdownFields(entity *metadata.Entity) map[string]bool {
+	form := pickManagedForm(entity, "object")
+	if form == nil {
+		return nil
+	}
+	fields := make(map[string]bool)
+	var walk func([]*metadata.FormElement)
+	walk = func(elements []*metadata.FormElement) {
+		for _, el := range elements {
+			if el == nil {
+				continue
+			}
+			dropdown := el.ChoiceDropdown == nil || *el.ChoiceDropdown
+			// Условие — то же, что у applyChoiceFilters.
+			scoped := strings.TrimSpace(el.ID) != "" && (len(el.ChoiceFilter) > 0 || el.ChoiceFolders)
+			if el.DataPath != "" && dropdown && !scoped {
+				fields[strings.ToLower(formDataPathFieldName(el.DataPath))] = true
+			}
+			walk(el.Children)
+		}
+	}
+	walk(form.Elements)
+	return fields
 }
 
 // loadInitialRefFilterOptions — варианты ссылочных полей панели «Отбор». fields —
@@ -402,11 +456,24 @@ func (s *Server) loadInitialTPRefOptions(ctx context.Context, entity *metadata.E
 			if err != nil {
 				continue
 			}
-			tpOpts[f.Name] = rows
+			tpOpts[f.Name] = compactRefOptionRows(rows)
 		}
 		result[tp.Name] = tpOpts
 	}
 	return result, nil
+}
+
+// compactRefOptionRows оставляет у варианта ссылки табличной части только то,
+// что читают шаблон и браузер: идентификатор и подпись. Вариант раньше уезжал
+// записью справочника целиком — у номенклатуры с ценами и описанием это
+// десятки полей на каждую из 50 строк каждой ссылочной колонки; страница
+// заявки с 17 табличными частями весила 2,8 МБ, ответ каждого события — 1,3 МБ.
+func compactRefOptionRows(rows []map[string]any) []map[string]any {
+	out := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, map[string]any{"id": row["id"], "_label": row["_label"]})
+	}
+	return out
 }
 
 func selectedTPRefIDs(rows []map[string]any, field string) []string {
@@ -434,35 +501,51 @@ func refValueString(v any) string {
 }
 
 func (s *Server) appendSelectedRefOptions(ctx context.Context, rows []map[string]any, refEntity *metadata.Entity, selected []string) []map[string]any {
-	seen := make(map[string]bool, len(rows)+len(selected))
+	seen := make(map[uuid.UUID]bool, len(rows)+len(selected))
 	for _, row := range rows {
-		if id := refValueString(row["id"]); id != "" {
+		if id, err := uuid.Parse(refValueString(row["id"])); err == nil {
 			seen[id] = true
 		}
 	}
+	ids := make([]uuid.UUID, 0, len(selected))
 	for _, idStr := range selected {
-		idStr = strings.TrimSpace(idStr)
-		if idStr == "" || seen[idStr] {
+		id, err := uuid.Parse(strings.TrimSpace(idStr))
+		if err != nil || seen[id] {
 			continue
 		}
-		id, err := uuid.Parse(idStr)
+		// Deduplicate before reading, including missing and inaccessible IDs.
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return rows
+	}
+	decision, err := s.rowDecision(ctx, refEntity, "read")
+	if err != nil || !decision.Allowed {
+		return rows
+	}
+	var predicate *storage.Predicate
+	if !decision.Unrestricted {
+		predicate = decision.Predicate
+	}
+	for start := 0; start < len(ids); start += refLabelBatchSize {
+		end := min(start+refLabelBatchSize, len(ids))
+		batch := ids[start:end]
+		selectedRows, err := s.store.GetByIDsFiltered(ctx, refEntity, batch, predicate)
 		if err != nil {
 			continue
 		}
-		row, err := s.store.GetByID(ctx, refEntity.Name, id, refEntity)
-		if err != nil || row == nil {
-			continue
+		// SQL result order is unspecified; keep the first selected occurrence.
+		for _, id := range batch {
+			row := selectedRows[id.String()]
+			if row == nil {
+				continue
+			}
+			// Mask before computing the label; TP HTTP options project only id/_label.
+			s.maskRecord(ctx, refEntity, row)
+			row["_label"] = firstStringField(row, refEntity)
+			rows = append(rows, row)
 		}
-		if !s.rowAllowsSelected(ctx, refEntity, row) {
-			continue
-		}
-		// План 88: замаскировать догруженную (вне первой страницы) выбранную
-		// запись до вычисления подписи и сериализации — иначе ПДн из ссылки
-		// утекли бы в JSON опций (HTML/DevTools) в обход маски списка.
-		s.maskRecord(ctx, refEntity, row)
-		row["_label"] = firstStringField(row, refEntity)
-		rows = append(rows, row)
-		seen[idStr] = true
 	}
 	return rows
 }
@@ -587,6 +670,26 @@ func (s *Server) renderForbidden(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "page-forbidden", map[string]any{})
 }
 
+// renderReadHookDenied — отказ серверного обработчика ПриЧтенииНаСервере. Текст
+// ВызватьИсключение — это сообщение конфигурации пользователю («Запрещён
+// просмотр карточки для должности…»), как Предупреждение в 1С, и страница
+// отказа показывает его вместо общего «нет прав». Технический сбой хука
+// (объект не загрузился, ошибка не из DSL) остаётся общей страницей: его
+// текст пользователю ни о чём не говорит и может раскрыть устройство базы.
+func (s *Server) renderReadHookDenied(w http.ResponseWriter, r *http.Request, denied error) {
+	var dslErr *interpreter.DSLError
+	if !errors.As(denied, &dslErr) || strings.TrimSpace(dslErr.UserMessage()) == "" {
+		s.renderForbidden(w, r)
+		return
+	}
+	// Keep the error chain for localization, but omit diagnostic source data
+	// from the copy passed to the HTTP renderer. Logs retain the original error.
+	userErr := *dslErr
+	userErr.File, userErr.Line = "", 0
+	w.WriteHeader(http.StatusForbidden)
+	s.render(w, r, "page-forbidden", map[string]any{"Reason": s.errText(r, &userErr)})
+}
+
 // can reports whether the current request may perform op on (kind, entity).
 // A nil user means auth is not configured or no users exist → open access
 // (mirrors the IsAdmin defaulting used elsewhere). Admins pass via User.Has,
@@ -623,6 +726,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	if _, ok := data["Cfg"]; !ok {
 		data["Cfg"] = s.cfg
 	}
+	s.addHelpContext(r, data)
 	// Параметры текущего запроса — из них шаблоны строят ссылки «то же самое,
 	// но с другим X» (listURL/listHidden), не собирая строку запроса по кускам
 	// и не теряя при этом чужие параметры вроде q.
@@ -675,6 +779,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		login := currentUserLogin(r)
 		data["FormOpenMode"] = s.store.EffectiveFormOpenMode(r.Context(), login)
 		data["FormOpenModePersonal"] = s.store.GetUserFormOpenMode(r.Context(), login)
+		data["FormOpenModeLocked"] = s.store.GetFormOpenModeLocked(r.Context())
 	}
 	// Default per-entity permission flags so partial render paths (e.g. validation
 	// errors) still show the right action buttons.
@@ -1158,7 +1263,7 @@ func (s *Server) enrichTPRowsWithRefs(ctx context.Context, tp metadata.TablePart
 // string-измерению (ГДЕ Склад = Строка(this.Склад)) не совпадает с движениями,
 // записанными по имени из обработок/сидов. После обогащения шапка ведёт себя
 // как при создании из обработки. Ref-параметры и reference-измерения остаются
-// корректными: unwrapArrayParams приводит *Ref к UUID. См. П.37.
+// корректными: unwrapParams приводит *Ref к UUID. См. П.37.
 func (s *Server) enrichHeaderRefs(ctx context.Context, entity *metadata.Entity, obj *runtime.Object) {
 	low := strings.ToLower
 	for _, f := range entity.Fields {

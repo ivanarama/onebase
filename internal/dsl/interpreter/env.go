@@ -229,6 +229,7 @@ func (e *env) rawFormProcs() (any, bool) {
 }
 
 func (e *env) set(name string, v any) {
+	v = FromHostValue(v)
 	name = strings.ToLower(name)
 	if e.module != nil && e.module.moduleVars[name] {
 		if _, local := e.vars[name]; !local {
@@ -241,16 +242,19 @@ func (e *env) set(name string, v any) {
 }
 
 func (e *env) setLocal(name string, v any) {
+	v = FromHostValue(v)
 	name = strings.ToLower(name)
 	e.vars[name] = v
 }
 
 func (e *env) declare(name string, v any) {
+	v = FromHostValue(v)
 	name = strings.ToLower(name)
 	e.vars[name] = v
 }
 
 func (e *env) declareModule(name string, v any) {
+	v = FromHostValue(v)
 	name = strings.ToLower(name)
 	if e.module != nil && e.module.moduleVars[name] {
 		refuseReadOnly(e.ec, "изменение модульной переменной «"+name+"»")

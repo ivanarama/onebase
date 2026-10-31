@@ -105,6 +105,9 @@ type Server struct {
 	// поэтому новый запуск снова сообщает оператору о причине обхода кэша.
 	svcCacheCookieWarned sync.Map
 	widgetCache          *widget.Cache
+	concealMu            sync.Mutex
+	concealInstances     map[string]*concealInstance
+	concealClock         func() time.Time
 	closeIntentMu        sync.Mutex
 	closeIntents         *formCloseReplayLedger
 	lockMgr              *runtime.LockManager   // #2 managed locks
@@ -356,6 +359,9 @@ func (s *Server) MountStatic(r chi.Router) {
 }
 
 func (s *Server) Mount(r chi.Router) {
+	r.Get("/ui/help", s.helpIndex)
+	r.Get("/ui/help/chapter/{chapter}", s.helpChapter)
+	r.Get("/ui/help/assets/*", s.helpAsset)
 	r.Get("/ui", s.index)
 	r.Get("/ui/", s.index)
 	r.Get("/ui/app", s.appShell)           // оболочка вкладок (issue #129/#130, фаза 1)

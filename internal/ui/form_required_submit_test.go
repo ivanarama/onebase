@@ -342,3 +342,83 @@ func TestSubmit_ManagedRequired_RemainsUIOnlyInvariant(t *testing.T) {
 		t.Fatalf("direct service write was unexpectedly rejected: %v", err)
 	}
 }
+
+// Form-local required must follow page availability on both create and edit.
+// Field.required remains a final-state invariant, including when its page is hidden.
+func TestSubmit_ManagedRequired_ConditionalPage(t *testing.T) {
+	for _, edit := range []bool{false, true} {
+		for _, tc := range []struct {
+			name        string
+			hidden      bool
+			global      bool
+			nested      bool
+			visibleCopy bool
+			allow       bool
+		}{
+			{name: "hidden", hidden: true, allow: true},
+			{name: "hidden ancestor", hidden: true, nested: true, allow: true},
+			{name: "ordinary inactive page"},
+			{name: "global required", hidden: true, global: true},
+			{name: "visible required copy", hidden: true, visibleCopy: true},
+		} {
+			t.Run(fmt.Sprintf("edit=%v/%s", edit, tc.name), func(t *testing.T) {
+				entity := managedRequiredFieldEntity(metadata.Field{Name: "Значение", Type: metadata.FieldTypeString, Required: tc.global}, true)
+				entity.Fields = append(entity.Fields, metadata.Field{Name: "Скрыть", Type: metadata.FieldTypeBool})
+				field := entity.Forms[0].Elements[0]
+				page := &metadata.FormElement{Kind: metadata.FormElementPage, Name: "Условная", HiddenWhen: "Скрыть", Children: []*metadata.FormElement{field}}
+				if tc.nested {
+					page.Children = []*metadata.FormElement{{Kind: metadata.FormElementPages, Name: "Вложенные", Children: []*metadata.FormElement{
+						{Kind: metadata.FormElementPage, Name: "Вложенная", Children: []*metadata.FormElement{field}},
+					}}}
+				}
+				entity.Forms[0].Elements = []*metadata.FormElement{
+					fieldEl("ПолеСкрыть", "Объект.Скрыть"),
+					{Kind: metadata.FormElementPages, Name: "Страницы", Children: []*metadata.FormElement{
+						{Kind: metadata.FormElementPage, Name: "Главная"}, page,
+					}},
+				}
+				if tc.visibleCopy {
+					copy := *field
+					copy.Name = "ВидимаяКопия"
+					entity.Forms[0].Elements = append(entity.Forms[0].Elements, &copy)
+				}
+				server, ctx := newSubmitTestServer(t, []*metadata.Entity{entity})
+				values := url.Values{"Значение": {""}, "Скрыть": {fmt.Sprint(tc.hidden)}}
+				params := map[string]string{"entity": entity.Name}
+				var id uuid.UUID
+				if edit {
+					id = uuid.New()
+					if err := server.store.Upsert(ctx, entity.Name, id, map[string]any{"Значение": "до", "Скрыть": false}, entity); err != nil {
+						t.Fatal(err)
+					}
+					params["id"] = id.String()
+					values.Set("_version", "1")
+				}
+				request := reqWithChi(http.MethodPost, "/ui/catalog/"+entity.Name+"/new", values, params)
+				response := httptest.NewRecorder()
+				if edit {
+					server.submitEdit(response, request)
+				} else {
+					server.submit(response, request)
+				}
+				if (response.Code == http.StatusSeeOther) != tc.allow {
+					t.Fatalf("status=%d allow=%v; body=%s", response.Code, tc.allow, response.Body.String())
+				}
+				rows, err := server.store.List(ctx, entity.Name, entity, storage.ListParams{})
+				if err != nil {
+					t.Fatal(err)
+				}
+				want := 0
+				if edit || tc.allow {
+					want = 1
+				}
+				if len(rows) != want {
+					t.Fatalf("persisted rows=%d want=%d", len(rows), want)
+				}
+				if edit && !tc.allow && fmt.Sprint(rows[0]["Значение"]) != "до" {
+					t.Fatalf("rejected edit changed the record: %#v", rows)
+				}
+			})
+		}
+	}
+}

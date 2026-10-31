@@ -65,6 +65,9 @@ type formInfo struct {
 	Kind    string            `json:"kind"`
 	Events  map[string]string `json:"events"`
 	Actions map[string]bool   `json:"actions"`
+	// Кнопка «Открыть карточку» у ссылочных полей (#1876).
+	RefCardButton    bool `json:"refCardButton"`
+	RefCardAdminOnly bool `json:"refCardAdminOnly"`
 }
 
 // boolProps — свойства элемента, значение которых интерпретируется как bool
@@ -72,6 +75,8 @@ type formInfo struct {
 var boolProps = map[string]bool{
 	"required": true, "readonly": true, "choice": true,
 	"visible": true, "enabled": true, "no_grid": true, "auto_sum": true, "equal_columns": true,
+	// Кнопка «Открыть карточку»: у поля и у формы (#1876).
+	"ref_card_button": true, "ref_card_button_admin_only": true,
 }
 
 // numProps — целочисленные свойства: пишем в YAML числом, а не строкой (иначе
@@ -247,6 +252,15 @@ func applyEditOp(yamlSrc []byte, req editOpRequest) (editOpResult, error) {
 		}
 		conditions := make([]metadata.FormChoiceCondition, 0, len(raw))
 		for i, condition := range raw {
+			// Условие запросом редактор возвращает без изменений; его текст и
+			// параметры проверяет onebase check.
+			if strings.TrimSpace(condition.Query) != "" {
+				if strings.TrimSpace(condition.Field) != "" || strings.TrimSpace(condition.Op) != "" || strings.TrimSpace(condition.From) != "" || condition.Value != nil || strings.TrimSpace(condition.Ref) != "" {
+					return editOpResult{}, fmt.Errorf("setChoiceFilter: условие %d: query несовместим с field, op, from, value и ref", i+1)
+				}
+				conditions = append(conditions, metadata.FormChoiceCondition{Query: condition.Query, Params: condition.Params})
+				continue
+			}
 			op := metadata.FormChoiceOperator(strings.TrimSpace(condition.Op))
 			if op != metadata.FormChoiceOpEqual && op != metadata.FormChoiceOpInHierarchy &&
 				op != metadata.FormChoiceOpEqualOrEmpty && op != metadata.FormChoiceOpNotInHierarchy {
@@ -397,7 +411,8 @@ func applyEditOp(yamlSrc []byte, req editOpRequest) (editOpResult, error) {
 		CanvasHTML: canvas,
 		SelectedID: selected,
 		Model:      model,
-		Form:       formInfo{TitleRU: meta.TitleRU, Kind: meta.Kind, Events: meta.Events, Actions: meta.Actions},
+		Form: formInfo{TitleRU: meta.TitleRU, Kind: meta.Kind, Events: meta.Events, Actions: meta.Actions,
+			RefCardButton: meta.RefCardButton, RefCardAdminOnly: meta.RefCardAdminOnly},
 	}, nil
 }
 

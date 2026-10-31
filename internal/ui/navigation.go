@@ -7,6 +7,7 @@ import (
 	"maps"
 	"net/http"
 	"sort"
+	"strings"
 
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/i18n"
@@ -58,15 +59,213 @@ func navDOMID(context, id string) string {
 
 func (s *Server) buildNav(r *http.Request, sub string) []navGroup {
 	if sub == "" {
-		if hp := s.reg.HomePage(); hp != nil {
-			return s.buildNavigation(r, hp.Menu, hp.Nav, true, "")
-		}
-		return s.buildFlatNav(r)
+		base, configured, flat := s.homeNavigationLayerBase(r)
+		return s.buildNavigationFromBase(r, base, configured, flat, "")
 	}
 	if current := s.reg.GetSubsystem(sub); current != nil {
 		return s.buildNavForSubsystem(r, current, sub)
 	}
 	return s.buildFlatNav(r)
+}
+
+// Keep the common layout intact until its stored layer has been composed.
+// A move may use a destination or predecessor excluded by the user's role.
+func (s *Server) homeConfigurationNavigation(r *http.Request) (navigation.Tree, bool, bool) {
+	return s.homeConfigurationNavigationForRoles(homeNavRoles(r))
+}
+
+// Include every declared role target in the authoritative layer base. A role
+// switch must not turn an existing role-only item into an unknown identity.
+// This complete tree stays server-side; the current role is projected later.
+func (s *Server) homeNavigationLayerBase(r *http.Request) (navigation.Tree, bool, bool) {
+	hp := s.reg.HomePage()
+	if hp == nil || len(hp.NavByRole) == 0 {
+		return s.homeConfigurationNavigation(r)
+	}
+	roles := make([]string, 0, len(hp.NavByRole))
+	for role := range hp.NavByRole {
+		roles = append(roles, role)
+	}
+	sort.Strings(roles)
+	base, configured, _ := s.homeConfigurationNavigationForRoles(roles)
+	_, byRole := hp.NavForRoles(homeNavRoles(r))
+	return base, configured, !byRole && hp.Nav.IsEmpty()
+}
+
+func (s *Server) homeConfigurationNavigationForRoles(roles []string) (navigation.Tree, bool, bool) {
+	hp := s.reg.HomePage()
+	if hp == nil {
+		base, configured := s.configurationNavigation(nil, nil, true, "")
+		return base, configured, true
+	}
+	base, configured := s.configurationNavigation(hp.Menu, hp.Nav, true, "")
+	contents, byRole := hp.NavForRoles(roles)
+	if !byRole {
+		return base, configured, hp.Nav.IsEmpty()
+	}
+	scoped := s.roleNavigation(contents)
+	placed := map[string]bool{}
+	for _, section := range base.Sections {
+		for _, item := range section.Items {
+			placed[item.Target] = true
+		}
+		for _, group := range section.Groups {
+			for _, item := range group.Items {
+				placed[item.Target] = true
+			}
+		}
+	}
+	// Supply targets present only in nav_by_role before composing layers. Do
+	// not append after composition: that would resurrect common hidden items.
+	for _, section := range scoped.Sections {
+		var extra []navigation.Item
+		for _, item := range section.Items {
+			if !placed[item.Target] {
+				extra = append(extra, item)
+			}
+		}
+		if len(extra) == 0 {
+			continue
+		}
+		if configured {
+			section = navigation.Section{ID: "cfg:other", Title: "Другое", Titles: map[string]string{"en": "Other"}}
+		}
+		found := false
+		for i := range base.Sections {
+			if base.Sections[i].ID == section.ID {
+				base.Sections[i].Items = append(base.Sections[i].Items, extra...)
+				found = true
+				break
+			}
+		}
+		if !found {
+			section.Items = extra
+			base.Sections = append(base.Sections, section)
+		}
+	}
+	return base, configured, false
+}
+
+// navigationHomePage — страница, чей nav_by_role задаёт меню контекста:
+// глобальная «Главная» или home_page подсистемы sub.
+func (s *Server) navigationHomePage(sub string) *metadata.HomePage {
+	if sub == "" {
+		return s.reg.HomePage()
+	}
+	if current := s.reg.GetSubsystem(sub); current != nil {
+		return current.HomePage
+	}
+	return nil
+}
+
+// projectRoleNavigation оставляет в дереве только объекты составов
+// nav_by_role ролей пользователя (hp — «Главная» или home_page подсистемы).
+// В подсистеме состав роли только сужает её меню: объекта, которого нет в
+// contents подсистемы, проекция не добавляет. Нужен там, где объект роль
+// читает ради ссылок (кладовщику — заказы из ордера), а в меню ему не место.
+func (s *Server) projectRoleNavigation(r *http.Request, hp *metadata.HomePage, tree navigation.Tree) navigation.Tree {
+	allowed := s.roleNavigationTargets(r, hp)
+	if allowed == nil {
+		return tree
+	}
+	items := func(input []navigation.Item) []navigation.Item {
+		var output []navigation.Item
+		for _, item := range input {
+			if allowed[item.Target] {
+				output = append(output, item)
+			}
+		}
+		return output
+	}
+	result := navigation.Tree{Version: tree.Version, Context: tree.Context}
+	for _, section := range tree.Sections {
+		section.Items = items(section.Items)
+		var groups []navigation.Group
+		for _, group := range section.Groups {
+			group.Items = items(group.Items)
+			if len(group.Items) > 0 {
+				groups = append(groups, group)
+			}
+		}
+		section.Groups = groups
+		if len(section.Items) > 0 || len(groups) > 0 {
+			result.Sections = append(result.Sections, section)
+		}
+	}
+	return result
+}
+
+// A nil set keeps the common menu. For the global fallback, exclude targets
+// supplied only for other roles from the full server-side layer base.
+func (s *Server) roleNavigationTargets(r *http.Request, hp *metadata.HomePage) map[string]bool {
+	contents, byRole := hp.NavForRoles(homeNavRoles(r))
+	var scoped navigation.Tree
+	if byRole {
+		scoped = s.roleNavigation(contents)
+	} else if hp != nil && hp == s.reg.HomePage() && len(hp.NavByRole) > 0 {
+		scoped, _ = s.configurationNavigation(hp.Menu, hp.Nav, true, "")
+	} else {
+		return nil
+	}
+	allowed := map[string]bool{}
+	for _, section := range scoped.Sections {
+		for _, item := range section.Items {
+			allowed[item.Target] = true
+		}
+		for _, group := range section.Groups {
+			for _, item := range group.Items {
+				allowed[item.Target] = true
+			}
+		}
+	}
+	return allowed
+}
+
+// Resolve role contents to metadata spelling before constructing targets. The
+// check command accepts these names without regard to case; tree identities and
+// RBAC still use canonical names. Do not mutate the loaded role configuration.
+func (s *Server) roleNavigation(contents *metadata.SubsystemContents) navigation.Tree {
+	objects := NavigationObjects(s.reg)
+	canonical := make(map[string]string, len(objects))
+	for _, object := range objects {
+		canonical[object.Target.Kind+":"+strings.ToLower(object.Target.Name)] = object.Target.Name
+	}
+	resolve := func(kind string, names []string) []string {
+		var resolved []string
+		for _, name := range names {
+			if actual, ok := canonical[kind+":"+strings.ToLower(strings.TrimSpace(name))]; ok {
+				resolved = append(resolved, actual)
+			}
+		}
+		return resolved
+	}
+	if contents != nil {
+		contents = &metadata.SubsystemContents{
+			Catalogs: resolve("catalog", contents.Catalogs), Documents: resolve("document", contents.Documents),
+			Registers: resolve("register", contents.Registers), InfoRegs: resolve("inforeg", contents.InfoRegs),
+			Reports: resolve("report", contents.Reports), Processors: resolve("processor", contents.Processors),
+			Journals: resolve("journal", contents.Journals), Pages: resolve("page", contents.Pages),
+		}
+	}
+	scope := navigation.NewScope(objects, contents, false)
+	tree, _ := navigation.Normalize(navContext(""), nil, scope)
+	return tree
+}
+
+// homeNavRoles — роли, по которым выбирается меню «Главной». Администратор
+// (и открытый деплой без пользователя) видит общий nav.
+func homeNavRoles(r *http.Request) []string {
+	u := auth.UserFromContext(r.Context())
+	if u == nil || u.IsAdmin {
+		return nil
+	}
+	names := make([]string, 0, len(u.Roles))
+	for _, role := range u.Roles {
+		if role != nil {
+			names = append(names, role.Name)
+		}
+	}
+	return names
 }
 
 func (s *Server) buildNavForSubsystem(r *http.Request, sub *metadata.Subsystem, name string) []navGroup {
@@ -133,6 +332,17 @@ func (s *Server) configurationNavigation(menu *metadata.Menu, contents *metadata
 	return tree, menu != nil
 }
 
+func (s *Server) adminNavigationValidationBase(base navigation.Tree) navigation.Tree {
+	hp := s.reg.HomePage()
+	if base.Context != navContext("") || hp == nil || len(hp.NavByRole) == 0 {
+		return base
+	}
+	// Administrators save against the common nav, independent of current user
+	// roles. The full application base continues to include every role target.
+	validationBase, _, _ := s.homeConfigurationNavigationForRoles(nil)
+	return validationBase
+}
+
 // The configurator preview has no store; it remains a configuration-only view.
 // Database failures and corrupt stored layers retain the safe previous layout.
 func (s *Server) adminNavigationLayer(r *http.Request, base navigation.Tree) (navigation.Tree, []navigation.Diagnostic) {
@@ -148,7 +358,7 @@ func (s *Server) adminNavigationLayer(r *http.Request, base navigation.Tree) (na
 	if setting.Exists {
 		raw = []byte(setting.Raw)
 	}
-	tree, diagnostics := navigation.Compose(base, raw, nil)
+	tree, diagnostics := navigation.ComposeWithAdminBase(base, s.adminNavigationValidationBase(base), raw, nil)
 	for _, diagnostic := range diagnostics {
 		if diagnostic.Code == "invalid-layer" {
 			slog.Warn("invalid navigation settings skipped", "context", base.Context, "layer", "admin")
@@ -159,9 +369,16 @@ func (s *Server) adminNavigationLayer(r *http.Request, base navigation.Tree) (na
 
 func (s *Server) buildNavigation(r *http.Request, menu *metadata.Menu, contents *metadata.SubsystemContents, global bool, sub string) []navGroup {
 	base, configured := s.configurationNavigation(menu, contents, global, sub)
+	return s.buildNavigationFromBase(r, base, configured, global && contents.IsEmpty(), sub)
+}
+
+func (s *Server) buildNavigationFromBase(r *http.Request, base navigation.Tree, configured, flat bool, sub string) []navGroup {
 	tree, _ := s.adminNavigationLayer(r, base)
 	tree = s.personalNavigationLayer(r, tree)
-	return s.navigationGroups(r, tree, base, configured, global && contents.IsEmpty(), sub)
+	hp := s.navigationHomePage(sub)
+	base = s.projectRoleNavigation(r, hp, base)
+	tree = s.projectRoleNavigation(r, hp, tree)
+	return s.navigationGroups(r, tree, base, configured, flat, sub)
 }
 
 func (s *Server) personalNavigationLayer(r *http.Request, base navigation.Tree) navigation.Tree {

@@ -15,6 +15,7 @@ import (
 	"github.com/ivantit66/onebase/internal/printform"
 	"github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/report"
+	"github.com/ivantit66/onebase/internal/userhelp"
 )
 
 func registryLog() *slog.Logger {
@@ -23,6 +24,7 @@ func registryLog() *slog.Logger {
 
 type Registry struct {
 	mu              sync.RWMutex
+	generation      uint64
 	entities        map[string]*metadata.Entity
 	entitySlug      map[string]*metadata.Entity // lowercase name → entity
 	registers       map[string]*metadata.Register
@@ -57,6 +59,7 @@ type Registry struct {
 	widgets         map[string]*metadata.Widget // lowercase name → widget
 	widgetOrder     []string                    // preserves load order
 	homePage        *metadata.HomePage
+	help            *userhelp.Book
 	// basedOnIndex — обратный индекс «источник → приёмники» для ввода на
 	// основании. Ключ — lowercase имя источника (документа/справочника),
 	// значение — список *Entity-приёмников, у которых в YAML указан этот
@@ -110,6 +113,7 @@ func (r *Registry) ReplaceProjectFrom(src *Registry) {
 	src.mu.RLock()
 	defer src.mu.RUnlock()
 	r.mu.Lock()
+	r.generation++
 	defer r.mu.Unlock()
 	r.entities = src.entities
 	r.entitySlug = src.entitySlug
@@ -140,7 +144,21 @@ func (r *Registry) ReplaceProjectFrom(src *Registry) {
 	r.widgets = src.widgets
 	r.widgetOrder = src.widgetOrder
 	r.homePage = src.homePage
+	r.help = src.help
 	r.basedOnIndex = src.basedOnIndex
+}
+
+func (r *Registry) LoadHelp(book *userhelp.Book) {
+	r.mu.Lock()
+	r.generation++
+	defer r.mu.Unlock()
+	r.help = book
+}
+
+func (r *Registry) Help() *userhelp.Book {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.help
 }
 
 // LoadWidgets registers dashboard widgets by name (case-insensitive).
@@ -153,6 +171,7 @@ func (r *Registry) LoadWidgets(widgets []*metadata.Widget) {
 		order = append(order, w.Name)
 	}
 	r.mu.Lock()
+	r.generation++
 	r.widgets = m
 	r.widgetOrder = order
 	r.mu.Unlock()
@@ -181,6 +200,7 @@ func (r *Registry) Widgets() []*metadata.Widget {
 // LoadHomePage stores the dashboard layout. Pass nil to reset.
 func (r *Registry) LoadHomePage(hp *metadata.HomePage) {
 	r.mu.Lock()
+	r.generation++
 	r.homePage = hp
 	r.mu.Unlock()
 }
@@ -284,6 +304,7 @@ func (r *Registry) Load(opts LoadOptions) {
 	}
 
 	r.mu.Lock()
+	r.generation++
 	r.entities = newEntities
 	r.entitySlug = newSlugs
 	r.registers = newRegs
@@ -372,6 +393,7 @@ func (r *Registry) SetExternalPrintForms(forms []*printform.PrintForm) {
 		m[key] = append(m[key], f)
 	}
 	r.mu.Lock()
+	r.generation++
 	defer r.mu.Unlock()
 	for key, list := range m {
 		cfg := r.printForms[key]
@@ -401,6 +423,7 @@ func (r *Registry) SetExternalLayoutForms(forms []*printform.LayoutForm) {
 		m[key] = append(m[key], f)
 	}
 	r.mu.Lock()
+	r.generation++
 	r.extLayoutForms = m
 	r.mu.Unlock()
 }
@@ -418,6 +441,7 @@ func (r *Registry) LoadDSLPrintForms(forms []*printform.DSLPrintForm) {
 		m[key] = append(m[key], f)
 	}
 	r.mu.Lock()
+	r.generation++
 	r.dslPrintForms = m
 	var warnings []string
 	// Дедуп YAML/.os коллизий: удаляем YAML, если есть .os с тем же именем.
@@ -488,6 +512,7 @@ func (r *Registry) LoadLayoutForms(forms []*printform.LayoutForm) {
 		m[key] = append(m[key], f)
 	}
 	r.mu.Lock()
+	r.generation++
 	r.layoutForms = m
 	var warnings []string
 	for entityKey, list := range m {
@@ -716,6 +741,7 @@ func (r *Registry) SetExternalReports(reports []*report.Report) {
 		m[rep.Name] = rep
 	}
 	r.mu.Lock()
+	r.generation++
 	defer r.mu.Unlock()
 	for name := range m {
 		if existsCI(r.reports, name) {
@@ -889,6 +915,7 @@ func (r *Registry) LoadModules(modules map[string]*ast.Program) {
 		}
 	}
 	r.mu.Lock()
+	r.generation++
 	r.moduleProcs = flat
 	r.moduleByName = byModule
 	r.moduleByFile = byFile
@@ -914,6 +941,7 @@ func (r *Registry) LoadProcessors(procs []*processor.Processor) {
 		m[p.Name] = p
 	}
 	r.mu.Lock()
+	r.generation++
 	r.processors = m
 	r.mu.Unlock()
 }
@@ -1004,6 +1032,7 @@ func (r *Registry) SetExternalProcessors(procs []*processor.Processor, programs 
 		codeMap[name] = m
 	}
 	r.mu.Lock()
+	r.generation++
 	defer r.mu.Unlock()
 	for name := range pm {
 		if existsCI(r.processors, name) {
@@ -1047,6 +1076,7 @@ func (r *Registry) LoadHTTPServices(services []*httpservice.Service) {
 		m[strings.ToLower(s.Name)] = s
 	}
 	r.mu.Lock()
+	r.generation++
 	r.httpServices = m
 	r.mu.Unlock()
 }
@@ -1091,6 +1121,7 @@ func (r *Registry) LoadPages(pages []*page.Page) {
 		m[strings.ToLower(p.Name)] = p
 	}
 	r.mu.Lock()
+	r.generation++
 	r.pages = m
 	r.mu.Unlock()
 }
@@ -1132,6 +1163,7 @@ func (r *Registry) LoadExchangePlans(plans []*metadata.ExchangePlan) {
 		m[strings.ToLower(p.Name)] = p
 	}
 	r.mu.Lock()
+	r.generation++
 	r.exchangePlans = m
 	r.mu.Unlock()
 }
@@ -1162,6 +1194,7 @@ func (r *Registry) LoadIntakes(intakes []*metadata.Intake) {
 		m[strings.ToLower(in.Name)] = in
 	}
 	r.mu.Lock()
+	r.generation++
 	r.intakes = m
 	r.mu.Unlock()
 }
@@ -1186,6 +1219,7 @@ func (r *Registry) GetIntake(name string) *metadata.Intake {
 
 func (r *Registry) LoadSubsystems(subs []*metadata.Subsystem) {
 	r.mu.Lock()
+	r.generation++
 	r.subsystems = subs
 	r.mu.Unlock()
 }
@@ -1215,6 +1249,7 @@ func (r *Registry) LoadJournals(journals []*metadata.Journal) {
 		m[strings.ToLower(j.Name)] = j
 	}
 	r.mu.Lock()
+	r.generation++
 	r.journals = m
 	r.mu.Unlock()
 }
@@ -1283,6 +1318,7 @@ func (r *Registry) LoadAccountRegisters(regs []*metadata.AccountRegister, charts
 		newCharts[strings.ToLower(c.Name)] = c
 	}
 	r.mu.Lock()
+	r.generation++
 	r.accountRegs = newRegs
 	r.chartsOfAccount = newCharts
 	r.mu.Unlock()
@@ -1319,3 +1355,6 @@ func (r *Registry) ChartsOfAccounts() []*metadata.ChartOfAccounts {
 	}
 	return out
 }
+
+// Generation changes on configuration publication, including same-content reloads.
+func (r *Registry) Generation() uint64 { r.mu.RLock(); defer r.mu.RUnlock(); return r.generation }

@@ -187,6 +187,7 @@ func sandboxBuiltinStringArg(operation string, args []any, index, maxBytes, line
 }
 
 func sandboxConcatValues(ec *execCtx, operation string, left, right any, line int) string {
+	left, right = ToHostValue(left), ToHostValue(right)
 	maxBytes := 0
 	maxDecimal := int32(0)
 	if ec != nil {
@@ -221,6 +222,7 @@ func sandboxBuiltinFormatsValues(operation string) bool {
 		"strtemplate", "стршаблон", "trimleft", "сокрл", "trimright", "сокрп",
 		"stroccurrencecount", "стрчисловхождений", "strlinecount", "стрчислострок",
 		"strgetline", "стрполучитьстроку", "strcompare", "стрсравнить",
+		"levenshteindistance", "расстояниелевенштейна",
 		"isblankstring", "пустаястрока", "titlecase", "трег", "nstr", "нстр",
 		"readjson", "прочитатьjson", "writejson", "записатьjson":
 		return true

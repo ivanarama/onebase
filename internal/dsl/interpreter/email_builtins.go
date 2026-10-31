@@ -247,6 +247,12 @@ func (e *dslEmail) CallMethod(name string, args []any) any {
 // NewEmailFunctions returns DSL functions/factories to inject into extraVars.
 // If sender is nil or not configured, functions panic with a user-friendly message.
 func NewEmailFunctions(sender EmailSender, guard NetGuard, resolvers ...EmailFileResolver) map[string]any {
+	return NewEmailFunctionsWithContext(sender, guard, nil, resolvers...)
+}
+
+// NewEmailFunctionsWithContext binds mailbox reads to the current host context.
+// The source is resolved at each call, including after DSL transaction changes.
+func NewEmailFunctionsWithContext(sender EmailSender, guard NetGuard, ctxSource CtxSource, resolvers ...EmailFileResolver) map[string]any {
 	var resolver EmailFileResolver
 	if len(resolvers) > 0 {
 		resolver = resolvers[0]
@@ -280,9 +286,12 @@ func NewEmailFunctions(sender EmailSender, guard NetGuard, resolvers ...EmailFil
 		return &dslEmail{sender: sender, guard: guard, resolver: resolver}
 	}
 
+	receive := newReceiveMailBuiltin(guard, ctxSource)
 	return map[string]any{
 		"ОтправитьПисьмо":        shorthand,
 		"SendEmail":              shorthand,
+		"ПолучитьПисьма":         receive,
+		"ReceiveEmails":          receive,
 		"__factory_ПисьмоEmail":  emailFactory,
 		"__factory_EmailMessage": emailFactory,
 	}

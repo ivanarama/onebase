@@ -120,7 +120,7 @@ func (s *Server) detailPanelRecord(w http.ResponseWriter, r *http.Request) {
 	// и видеть тот же снимок, который уже прошёл RLS и попадёт в payload.
 	if objForm != nil {
 		if denied := s.runFormReadHookOnObject(r.Context(), entity, objForm, snapshot.hookObject); denied != nil {
-			s.renderForbidden(w, r)
+			s.renderReadHookDenied(w, r, denied)
 			return
 		}
 	}

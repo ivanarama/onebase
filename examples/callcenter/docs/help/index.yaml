@@ -1,0 +1,12 @@
+title: Руководство колл-центра
+enabled: true
+auto_update: true
+chapters:
+  - id: introduction
+    title: Работа с конфигурацией
+    file: introduction.md
+  - id: calls
+    title: Регистрация звонка
+    file: calls.md
+    parent: introduction
+    objects: [document/Звонок]

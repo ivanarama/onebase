@@ -1,0 +1,10 @@
+{
+  "name": "js-yaml",
+  "version": "4.1.1",
+  "license": "MIT",
+  "tarball": "https://registry.npmjs.org/js-yaml/-/js-yaml-4.1.1.tgz",
+  "integrity": "sha512-qQKT4zQxXl8lLwBtHMWwaTcGfFOZviOJet3Oy/xmGk2gZH677CJM9EvtfdSkgWcATZhj/55JZ0rmy3myCT5lsA==",
+  "source_bundle": "package/dist/js-yaml.min.js",
+  "identity_verified": true,
+  "identity_scope": "The principal vendored JavaScript bundle matches this published archive after CRLF-to-LF normalization. Remaining vendored files are separately pinned in catalog.json; local subsets and custom styles are not claimed to be the entire upstream package."
+}

@@ -23,7 +23,7 @@ fields:
     type: string
     label: source конверта (пространство ключа)
   - name: ТелоКанон
-    type: text
+    type: string
     label: Канонизированный payload — сверка дублей и несовпадений
   - name: СсылкаРезультат
     type: string

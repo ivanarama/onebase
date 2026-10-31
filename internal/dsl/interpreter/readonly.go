@@ -73,7 +73,7 @@ func (t *readOnlyTraversal) allowChildren(count int) {
 }
 
 func protectReadOnlySeen(ec *execCtx, value any, traversal *readOnlyTraversal, depth int) any {
-	if ec == nil || ec.readOnlyReason == "" || value == nil {
+	if ec == nil || ec.readOnlyReason == "" || IsUndefined(value) {
 		return value
 	}
 	traversal.enter(ec, depth)

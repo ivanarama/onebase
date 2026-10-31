@@ -98,7 +98,7 @@ function cfgViewFile(el){
 <div class="files-grid">
   <div class="file-card">
     <h3>📤 {{t $.Lang "Выгрузить конфигурацию"}}</h3>
-    <p>{{t $.Lang "Экспортирует файлы в"}}<br><code>~/.onebase/workspace/{{.Base.ID}}/</code><br>и открывает папку.</p>
+    <p>{{t $.Lang "Экспортирует файлы в"}}<br><code>{{.WorkspacePath}}</code><br>и открывает папку.</p>
     {{if eq .Base.ConfigSource "database"}}
     <form method="POST" action="/bases/{{.Base.ID}}/config/export">
       <button class="btn-primary" type="submit">{{t $.Lang "Выгрузить"}}</button>
@@ -115,7 +115,7 @@ function cfgViewFile(el){
       <div class="fg">
         <label>{{t $.Lang "Путь к папке"}}</label>
         <div class="input-browse">
-          <input type="text" id="config-import-dir" name="path" placeholder="~/.onebase/workspace/{{.Base.ID}}">
+          <input type="text" id="config-import-dir" name="path" placeholder="{{.WorkspacePath}}">
           <button type="button" class="btn-browse" onclick="pickDir('config-import-dir','{{t $.Lang "Выберите папку конфигурации"}}')">📁</button>
         </div>
       </div>

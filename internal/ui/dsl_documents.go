@@ -635,6 +635,14 @@ type docWriter struct {
 	deletionMark bool
 }
 
+// runtimeObject exposes identity for Заполнить; Fill reloads persisted data.
+func (w *docWriter) runtimeObject() *runtime.Object {
+	if w == nil {
+		return nil
+	}
+	return w.obj
+}
+
 // setStandardAttrs берёт Проведен и ПометкаУдаления из строки шапки, прочитанной
 // из БД.
 func (w *docWriter) setStandardAttrs(row map[string]any) {
@@ -846,13 +854,15 @@ func (w *docWriter) read() error {
 // fill реализует Документы.X.СоздатьДокумент().Заполнить(Источник): запускает
 // ОбработкаЗаполнения у приёмника, переносит результат в obj.Fields/TablePartRows.
 // Источник — *interpreter.Ref либо *runtime.Object напрямую или внутри адаптера
-// lifecycle-хука. Делегирует entityservice.Fill, единую точку вызова OnFill
+// формы, документа или lifecycle-хука. Делегирует entityservice.Fill, единую точку вызова OnFill
 // вместе с UI-handler'ом.
 func (w *docWriter) fill(src any) error {
 	var srcType string
 	var srcID uuid.UUID
+	objectSource := true
 	switch v := src.(type) {
 	case *interpreter.Ref:
+		objectSource = false
 		if v == nil {
 			return fmt.Errorf("ссылка пустая")
 		}
@@ -878,12 +888,30 @@ func (w *docWriter) fill(src any) error {
 	default:
 		return fmt.Errorf("ожидается ссылка или объект, получено %T", src)
 	}
+	// UUID is allocated before the first write. The authoritative existence
+	// check is Fill's database read, using the caller's live transaction.
+	if objectSource {
+		if srcID == uuid.Nil {
+			return fmt.Errorf("основание не записано или удалено")
+		}
+		if source := w.s.reg.GetEntity(srcType); source != nil {
+			if err := w.s.checkDSLRowAccess(w.ctx(), source, "read", srcID, nil); err != nil {
+				if storage.IsNotFound(err) {
+					return fmt.Errorf("основание не записано или удалено")
+				}
+				return err
+			}
+		}
+	}
 	result, err := w.s.entitySvc.Fill(w.ctx(), entityservice.FillRequest{
 		Receiver:   w.entity,
 		SourceType: srcType,
 		SourceID:   srcID,
 	})
 	if err != nil {
+		if objectSource && storage.IsNotFound(err) {
+			return fmt.Errorf("основание не записано или удалено")
+		}
 		return err
 	}
 	if result.DSLError != "" {

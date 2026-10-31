@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/userdata"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -39,7 +40,8 @@ type DB struct {
 	// schemaOpts — режим реструктуризации схемы (план 81): пробный прогон,
 	// разрешение на удаление колонок, приёмник отчёта. Нулевое значение —
 	// прежнее поведение: применять всё безопасное, лишние колонки не трогать.
-	schemaOpts SchemaOptions
+	schemaOpts  SchemaOptions
+	migrationMu sync.Mutex
 	// ftsState — есть ли в базе схема полнотекстового поиска (план 82).
 	// Кэш на процесс: без него запись объекта в базу, ещё не прошедшую
 	// migrate, падала бы на INSERT в несуществующий _fts. См. ftsAvailable.
@@ -421,8 +423,9 @@ func defaultFilesDirForConfig(cfg *pgxpool.Config) (string, error) {
 		return filepath.Clean(configured), nil
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	appDir, err := userdata.Path()
+	home := filepath.Dir(appDir)
+	if err != nil || appDir == "" {
 		return "", fmt.Errorf("storage: determine durable files directory: home directory is unavailable; set %s to an absolute persistent path", filesDirEnv)
 	}
 	info, err := os.Stat(home)
@@ -437,7 +440,7 @@ func defaultFilesDirForConfig(cfg *pgxpool.Config) (string, error) {
 	if cfg != nil && cfg.ConnConfig != nil && cfg.ConnConfig.Database != "" {
 		dbName = cfg.ConnConfig.Database
 	}
-	return filepath.Join(home, ".onebase", "files", dbName), nil
+	return filepath.Join(appDir, "files", dbName), nil
 }
 
 func (db *DB) FilesDir() string {

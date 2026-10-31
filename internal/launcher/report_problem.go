@@ -9,13 +9,13 @@ package launcher
 
 import (
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/ivantit66/onebase/internal/bugreport"
 	oblog "github.com/ivantit66/onebase/internal/logging"
+	"github.com/ivantit66/onebase/internal/userdata"
 )
 
 const (
@@ -224,9 +224,9 @@ func (h *handler) appSupportContact(r *http.Request, baseID string) string {
 
 // reportBundlePath возвращает путь для нового пакета в профиле пользователя.
 func reportBundlePath(now time.Time) (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := userdata.Path("reports")
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(home, ".onebase", "reports", bugreport.FileName(now, "zip")), nil
+	return filepath.Join(dir, bugreport.FileName(now, "zip")), nil
 }

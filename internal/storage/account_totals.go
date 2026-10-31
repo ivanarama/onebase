@@ -23,8 +23,20 @@ import (
 
 // accountTotalsDebitCol / accountTotalsCreditCol — колонки оборота ресурса по
 // дебету и кредиту в таблице итогов бухрегистра.
-func accountTotalsDebitCol(r metadata.Field) string  { return metadata.ColumnName(r) + "_дт" }
-func accountTotalsCreditCol(r metadata.Field) string { return metadata.ColumnName(r) + "_кт" }
+func accountTotalsDebitCol(r metadata.Field) string {
+	return metadata.SQLIdent(accountTotalsDebitLogical(r))
+}
+func accountTotalsCreditCol(r metadata.Field) string {
+	return metadata.SQLIdent(accountTotalsCreditLogical(r))
+}
+
+// Логические имена оборотных колонок — до сокращения длинных имён (#1946).
+func accountTotalsDebitLogical(r metadata.Field) string {
+	return metadata.LogicalColumnName(r) + "_дт"
+}
+func accountTotalsCreditLogical(r metadata.Field) string {
+	return metadata.LogicalColumnName(r) + "_кт"
+}
 
 // accountSubcontoCols возвращает стабильные имена колонок субконто (субконто1…N).
 func accountSubcontoCols(ar *metadata.AccountRegister) []string {
@@ -61,7 +73,8 @@ func CreateAccountTotalsIndexSQL(ar *metadata.AccountRegister) string {
 	table := metadata.AccountRegTotalsTableName(ar.Name)
 	cols := append([]string{"счёт"}, accountSubcontoCols(ar)...)
 	cols = append(cols, totalsMonthCol)
-	return "CREATE INDEX IF NOT EXISTS idx_" + table + "_key ON " + table + " (" + strings.Join(cols, ", ") + ")"
+	idx := metadata.SQLIdent("idx_" + metadata.AccountRegTotalsTableLogical(ar.Name) + "_key")
+	return "CREATE INDEX IF NOT EXISTS " + idx + " ON " + table + " (" + strings.Join(cols, ", ") + ")"
 }
 
 // insertAccountTotalsSelectSQL строит INSERT в итоги: разворот проводок на
@@ -158,6 +171,16 @@ func (db *DB) syncAccountRegisterTotals(ctx context.Context, ar *metadata.Accoun
 
 func (db *DB) ensureAccountTotals(ctx context.Context, ar *metadata.AccountRegister, fingerprint string) error {
 	table := metadata.AccountRegTotalsTableName(ar.Name)
+	if err := db.renameLegacyTable(ctx, metadata.AccountRegTotalsTableLogical(ar.Name)); err != nil {
+		return err
+	}
+	var turnoverCols []string
+	for _, r := range ar.Resources {
+		turnoverCols = append(turnoverCols, accountTotalsDebitLogical(r), accountTotalsCreditLogical(r))
+	}
+	if err := db.renameLegacyColumns(ctx, table, turnoverCols); err != nil {
+		return err
+	}
 	key := accountTotalsMetaKey(ar.Name)
 	state, err := db.totalsState(ctx, key)
 	if err != nil {

@@ -1,137 +1,127 @@
-# onebase installer for Windows
-# Usage: irm https://raw.githubusercontent.com/ivanarama/onebase/main/install.ps1 | iex
-#
-# Безопасность установки (issue #781):
-#   * ассеты выбираются по ТОЧНЫМ именам, а не по wildcard, — так нельзя
-#     случайно скачать файл контрольной суммы вместо архива;
-#   * SHA-256 архива проверяется по опубликованной рядом сумме ДО распаковки —
-#     битая или подменённая на пути закачка отклоняется;
-#   * распаковка и проверка идут в отдельной staging-директории, и рабочий
-#     бинарь заменяется только после того, как новый распакован и запущен
-#     с --version;
-#   * staging гарантированно убирается (в т.ч. при ошибке).
-
-$ErrorActionPreference = "Stop"
+# Download and run this file with -File when passing parameters; do not use iex.
+# The bootstrap installs only the CLI and never silently updates an existing one.
+[CmdletBinding()]
+param(
+    [string]$Project = '',
+    [string]$Agents = '',
+    [switch]$DryRun,
+    [string]$InstallDir = (Join-Path $env:USERPROFILE '.onebase\bin'),
+    [string]$ReleaseApi = 'https://api.github.com/repos/ivanarama/onebase/releases/latest'
+)
+$ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-
-$repo       = "ivanarama/onebase"
-$installDir = "$env:USERPROFILE\.onebase\bin"
-# Имена ассетов совпадают с теми, что публикует release.yml
-# ($name = "onebase-$goos-$goarch"): для целевой платформы они стабильны и не
-# зависят от версии.
-#
-# Архитектуру определяем по PROCESSOR_ARCHITECTURE, а не считаем amd64: на
-# Windows ARM жёстко зашитый amd64-архив ставился бы под эмуляцией x64 — молча
-# медленнее, и разницы не видно до профилирования (#988, А1). Под 32-битным
-# процессом переменная врёт (даёт x86), поэтому сначала смотрим на
-# PROCESSOR_ARCHITEW6432, которую WOW64 ставит с настоящим значением.
-$arch = $env:PROCESSOR_ARCHITEW6432
-if (-not $arch) { $arch = $env:PROCESSOR_ARCHITECTURE }
-switch ($arch) {
-    "ARM64" { $goarch = "arm64" }
-    "AMD64" { $goarch = "amd64" }
-    default { throw "Архитектура '$arch' не поддерживается: сборок под неё нет." }
-}
-$zipName    = "onebase-windows-$goarch.zip"
-$shaName    = "$zipName.sha256"
-
-Write-Host "onebase installer" -ForegroundColor Cyan
-Write-Host "================================" -ForegroundColor Cyan
-
-# --- Latest release -----------------------------------------------------------
-Write-Host "Checking latest release..."
-$release = Invoke-RestMethod "https://api.github.com/repos/$repo/releases/latest"
-$version = $release.tag_name
-Write-Host "Latest version: $version"
-
-function Get-AssetUrl($name) {
-    $asset = $release.assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
-    if (-not $asset) {
-        throw "В релизе $version нет ожидаемого файла '$name'. Установка прервана."
+if ($Agents -and -not $Project) { throw '-Agents requires -Project' }
+if ($Agents) {
+    foreach ($agent in $Agents.Split(',')) {
+        if ($agent -cnotin @('claude', 'cursor', 'opencode', 'zcode')) { throw "Unknown agent: $agent" }
     }
-    return $asset.browser_download_url
 }
-
-$zipUrl = Get-AssetUrl $zipName
-$shaUrl = Get-AssetUrl $shaName
-
-# --- Staging ------------------------------------------------------------------
-# Отдельная временная директория: скачиваем, проверяем и распаковываем ЗДЕСЬ, и
-# только при полном успехе переносим результат в installDir. try/finally
-# гарантирует уборку staging даже при ошибке проверки.
-$staging = Join-Path $env:TEMP ("onebase-install-" + [Guid]::NewGuid().ToString("N"))
-New-Item -ItemType Directory -Force -Path $staging | Out-Null
-
+$InstallDir = [IO.Path]::GetFullPath($InstallDir)
+if ($Project) { $Project = [IO.Path]::GetFullPath($Project) }
+if ($DryRun) {
+    Write-Output "Dry-run: keep existing onebase, otherwise install CLI at $InstallDir"
+    if ($Project) { Write-Output "Dry-run: vibe-init project=$Project agents=$Agents (auto if empty)" }
+    return
+}
+function Assert-NotLink([string]$Path) {
+    if (Test-Path -LiteralPath $Path) {
+        $item = Get-Item -LiteralPath $Path -Force
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "Symlink/reparse point: $Path" }
+    }
+}
+Assert-NotLink $InstallDir
+$exe = Join-Path $InstallDir 'onebase.exe'
+Assert-NotLink $exe
+if (Test-Path -LiteralPath $exe) {
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw 'Installed binary is not a file' }
+} else {
+    $existing = Get-Command onebase -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($existing) { $exe = $existing.Source; Assert-NotLink $exe } else { $exe = '' }
+}
+function Test-Binary([string]$Path) {
+    & $Path --version
+    if ($LASTEXITCODE -ne 0) { throw 'Binary failed --version; existing installation preserved' }
+    if ($Project) {
+        & $Path vibe-init --help | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw 'This binary has no usable vibe-init. Update explicitly to a supporting release.' }
+    }
+}
+$staging = ''
+$publish = ''
 try {
-    $zipPath = Join-Path $staging $zipName
-    $shaPath = Join-Path $staging $shaName
-
-    Write-Host "Downloading $zipName..."
-    Invoke-WebRequest -Uri $zipUrl -OutFile $zipPath
-    Invoke-WebRequest -Uri $shaUrl -OutFile $shaPath
-
-    # --- Checksum verification (ДО распаковки) --------------------------------
-    # Формат .sha256: "<hex>  <имя_файла>" (как sha256sum / Get-FileHash-скрипт
-    # в release.yml). Берём первый токен.
-    $shaLine  = (Get-Content -Path $shaPath -Raw).Trim()
-    $expected = ($shaLine -split '\s+')[0].ToLower()
-    if ($expected -notmatch '^[0-9a-f]{64}$') {
-        throw "Файл контрольной суммы '$shaName' имеет неожиданный формат. Установка прервана."
+    if ($exe) {
+        Write-Output "Keeping existing binary: $exe"
+        Test-Binary $exe
+    } else {
+        $arch = $env:PROCESSOR_ARCHITEW6432
+        if (-not $arch) { $arch = $env:PROCESSOR_ARCHITECTURE }
+        switch ($arch) {
+            'AMD64' { $goarch = 'amd64' }
+            'ARM64' { $goarch = 'arm64' }
+            default { throw "Unsupported Windows architecture: $arch" }
+        }
+        $assetName = "onebase-windows-$goarch.zip"
+        $staging = Join-Path ([IO.Path]::GetTempPath()) ('onebase-install-' + [Guid]::NewGuid().ToString('N'))
+        New-Item -ItemType Directory -Path $staging | Out-Null
+        $release = Invoke-RestMethod -Uri $ReleaseApi
+        function Get-AssetUrl([string]$Name) {
+            $assets = @($release.assets | Where-Object { $_.name -ceq $Name })
+            if ($assets.Count -ne 1 -or -not $assets[0].browser_download_url) { throw "Missing or duplicate exact asset: $Name" }
+            return $assets[0].browser_download_url
+        }
+        $archiveUrl = Get-AssetUrl $assetName
+        $sumUrl = Get-AssetUrl "$assetName.sha256"
+        $archivePath = Join-Path $staging $assetName
+        $sumPath = Join-Path $staging 'sum'
+        Invoke-WebRequest -UseBasicParsing -Uri $archiveUrl -OutFile $archivePath
+        Invoke-WebRequest -UseBasicParsing -Uri $sumUrl -OutFile $sumPath
+        $sum = [IO.File]::ReadAllText($sumPath, [Text.Encoding]::UTF8).Trim()
+        if ($sum -notmatch ('^([0-9a-fA-F]{64})\s+' + [regex]::Escape($assetName) + '$')) { throw 'Invalid checksum record' }
+        $expected = $Matches[1].ToLowerInvariant()
+        $hasher = [Security.Cryptography.SHA256]::Create()
+        try {
+            $hashInput = [IO.File]::OpenRead($archivePath)
+            try {
+                $actual = [BitConverter]::ToString($hasher.ComputeHash($hashInput)).Replace('-', '').ToLowerInvariant()
+            } finally { $hashInput.Dispose() }
+        } finally { $hasher.Dispose() }
+        if ($actual -cne $expected) { throw 'SHA-256 mismatch' }
+        # Windows release ZIPs are flat. Stream only the exact CLI entry,
+        # never expand archive-controlled paths or select a recursive match.
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $zip = [IO.Compression.ZipFile]::OpenRead($archivePath)
+        try {
+            $entries = @($zip.Entries | Where-Object { $_.FullName -ceq 'onebase.exe' })
+            if ($entries.Count -ne 1) { throw 'Archive must contain exactly one platform CLI' }
+            $stagedExe = Join-Path $staging 'onebase.exe'
+            $source = $entries[0].Open()
+            try {
+                $target = [IO.File]::Open($stagedExe, [IO.FileMode]::CreateNew, [IO.FileAccess]::Write, [IO.FileShare]::None)
+                try { $source.CopyTo($target); $target.Flush($true) } finally { $target.Dispose() }
+            } finally { $source.Dispose() }
+        } finally { $zip.Dispose() }
+        Test-Binary $stagedExe
+        New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+        Assert-NotLink $InstallDir
+        $publish = Join-Path $InstallDir ('.onebase-publish-' + [Guid]::NewGuid().ToString('N'))
+        # Same-directory complete-file publication. Move refuses an existing
+        # target, including a concurrent installation; no delete-then-rename.
+        [IO.File]::Copy($stagedExe, $publish, $false)
+        $exe = Join-Path $InstallDir 'onebase.exe'
+        [IO.File]::Move($publish, $exe)
+        $publish = ''
+        Write-Output "Installed CLI: $exe"
     }
-    $actual = (Get-FileHash -Algorithm SHA256 -Path $zipPath).Hash.ToLower()
-    if ($actual -ne $expected) {
-        throw "Контрольная сумма не совпала для $zipName`n  ожидалось: $expected`n  получено:  $actual`nАрхив повреждён или подменён. Установка прервана."
+    if ($Project) {
+        $initArgs = @('vibe-init', $Project)
+        if ($Agents) { $initArgs += @('--agents', $Agents) }
+        & $exe @initArgs
+        if ($LASTEXITCODE -ne 0) { throw "vibe-init failed (exit $LASTEXITCODE); inspect its report before retrying" }
+    } else {
+        Write-Output "Run: & '$exe' start"
     }
-    Write-Host "Checksum OK (SHA-256)" -ForegroundColor Green
-
-    # --- Extract + verify binary ----------------------------------------------
-    $extractDir = Join-Path $staging "extract"
-    Expand-Archive -Path $zipPath -DestinationPath $extractDir -Force
-
-    $stagedExe = Get-ChildItem -Path $extractDir -Filter "onebase.exe" -Recurse | Select-Object -First 1
-    if (-not $stagedExe) {
-        throw "В архиве $zipName не найден onebase.exe. Установка прервана."
-    }
-
-    # Проверяем, что распакованный бинарь вообще запускается, — до замены
-    # рабочего. Если новый файл нерабочий, прежняя установка останется целой.
-    Write-Host "Verifying downloaded binary..."
-    & $stagedExe.FullName --version | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Скачанный onebase.exe не прошёл проверку '--version' (код $LASTEXITCODE). Установка прервана."
-    }
-
-    # --- Install (замена только после успешной проверки) ----------------------
-    Write-Host "Installing to $installDir..."
-    New-Item -ItemType Directory -Force -Path $installDir | Out-Null
-    # Переносим содержимое каталога с бинарём (onebase.exe, README, examples,
-    # а на amd64 ещё и onebase-gui.exe) в installDir, замещая прежние файлы.
-    # Копируем из каталога, где лежит проверенный onebase.exe.
-    $payloadDir = $stagedExe.Directory.FullName
-    Copy-Item -Path (Join-Path $payloadDir '*') -Destination $installDir -Recurse -Force
-
-    $exe = Join-Path $installDir "onebase.exe"
-    if (-not (Test-Path $exe)) {
-        throw "Не удалось установить onebase.exe в $installDir. Установка прервана."
-    }
+} finally {
+    if ($publish -and (Test-Path -LiteralPath $publish)) { Remove-Item -LiteralPath $publish -Force }
+    if ($staging -and (Test-Path -LiteralPath $staging)) { Remove-Item -LiteralPath $staging -Recurse -Force }
 }
-finally {
-    # Staging убираем всегда: и при успехе, и при любой ошибке выше.
-    if (Test-Path $staging) {
-        Remove-Item -Path $staging -Recurse -Force -ErrorAction SilentlyContinue
-    }
-}
-
-# --- PATH ---------------------------------------------------------------------
-$userPath = [Environment]::GetEnvironmentVariable("PATH", "User")
-if ($userPath -notlike "*$installDir*") {
-    Write-Host "Adding $installDir to PATH..."
-    [Environment]::SetEnvironmentVariable("PATH", "$userPath;$installDir", "User")
-    $env:PATH += ";$installDir"
-}
-
-Write-Host ""
-Write-Host "Установка завершена!" -ForegroundColor Green
-Write-Host "Запустите: onebase start" -ForegroundColor Yellow
-Write-Host "(Если команда не найдена, перезапустите терминал)" -ForegroundColor Gray

@@ -1,0 +1,10 @@
+{
+  "name": "rapidoc",
+  "version": "9.3.8",
+  "license": "MIT",
+  "tarball": "https://registry.npmjs.org/rapidoc/-/rapidoc-9.3.8.tgz",
+  "integrity": "sha512-eCYEbr1Xr8OJZvVCw8SXl9zBCRoLJbhNGuG5IZTHq/RWAOq/O4MafUCuFEyZHsrhLrlUcGZMa64pyhpib8fQKQ==",
+  "source_bundle": "package/dist/rapidoc-min.js",
+  "identity_verified": true,
+  "identity_scope": "The principal vendored JavaScript bundle matches this published archive after CRLF-to-LF normalization. Remaining vendored files are separately pinned in catalog.json; local subsets and custom styles are not claimed to be the entire upstream package."
+}

@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -22,8 +23,8 @@ import (
 	"github.com/ivantit66/onebase/internal/testutil/browseracceptance"
 )
 
-// Real YAML and public GET, picker, event and save routes exercise a form-local
-// reference, including the sessionStorage restore after the save redirect.
+// Real YAML and public GET, picker, event and save routes exercise both entity
+// fields and form-local references, including restore after the save redirect.
 // The existing CI entry point runs this fixture on both database dialects.
 func testHiddenRefAttrCopiesBrowserAcceptance(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
@@ -43,28 +44,34 @@ func testHiddenRefAttrCopiesBrowserAcceptance(t *testing.T) {
 		}
 		entities := []*metadata.Entity{warehouse}
 		ids := map[string]string{}
-		for _, reverse := range []bool{false, true} {
-			name := fmt.Sprintf("Ссылки%t", reverse)
-			first := `  - kind: ПолеВвода
+		localNames := map[string]bool{}
+		for _, local := range []bool{true, false} {
+			for _, reverse := range []bool{false, true} {
+				name := fmt.Sprintf("Ссылки%t%t", local, reverse)
+				first := `  - kind: ПолеВвода
     name: После
     data_path: Склад
     hidden_when: 'Режим <> "Принята"'
+    ref_card_button: true
     readonly_when: 'Заблокирован = Истина'
 `
-			second := `  - kind: ПолеВвода
+				second := `  - kind: ПолеВвода
     name: До
     data_path: Склад
     hidden_when: 'Режим = "Принята"'
+    ref_card_button: true
     readonly_when: 'Заблокирован = Истина'
 `
-			if reverse {
-				first, second = second, first
-			}
-			yaml := fmt.Sprintf(`schema: onebase.form/v1
+				if reverse {
+					first, second = second, first
+				}
+				yaml := fmt.Sprintf(`schema: onebase.form/v1
 form:
   name: ФормаОбъекта
   kind: object
   entity: %s
+  ref_card_button: false
+  ref_card_button_admin_only: true
 attributes:
   - name: Объект
     type: CatalogRef.%s
@@ -93,7 +100,10 @@ elements:
     title: {ru: Заблокировать}
     events: {Нажатие: Заблокировать}
 `, name, name, first, second)
-			source := `Процедура Проверить()
+				if !local {
+					yaml = strings.ReplaceAll(yaml, "data_path: Склад", "data_path: Объект.Склад")
+				}
+				source := `Процедура Проверить()
  Если ЗначениеЗаполнено(Объект.Склад) Тогда
   Объект.Получено = Объект.Склад.Наименование;
  Иначе
@@ -112,30 +122,35 @@ elements:
  Объект.Заблокирован = Истина;
 КонецПроцедуры
 `
-			dir := t.TempDir()
-			path := filepath.Join(dir, "объекта.form.yaml")
-			if err := os.WriteFile(path, []byte(yaml), 0600); err != nil {
-				t.Fatal(err)
+				dir := t.TempDir()
+				path := filepath.Join(dir, "объекта.form.yaml")
+				if err := os.WriteFile(path, []byte(yaml), 0600); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(dir, "объекта.form.os"), []byte(source), 0600); err != nil {
+					t.Fatal(err)
+				}
+				form, err := loader.NewManagedFormLoader().LoadFormFile(path, name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				entity := &metadata.Entity{Name: name, Kind: metadata.KindCatalog, Forms: []*metadata.FormModule{form}, Fields: []metadata.Field{
+					{Name: "Режим", Type: metadata.FieldTypeString}, {Name: "Получено", Type: metadata.FieldTypeString}, {Name: "Заблокирован", Type: metadata.FieldTypeBool},
+				}}
+				if !local {
+					entity.Fields = append(entity.Fields, metadata.Field{Name: "Склад", Type: "reference:Склад", RefEntity: "Склад"})
+				}
+				if err := db.Migrate(ctx, []*metadata.Entity{entity}); err != nil {
+					t.Fatal(err)
+				}
+				id := uuid.New()
+				if err := db.Upsert(ctx, name, id, map[string]any{"Режим": "Черновик", "Заблокирован": false}, entity); err != nil {
+					t.Fatal(err)
+				}
+				ids[name] = id.String()
+				localNames[name] = local
+				entities = append(entities, entity)
 			}
-			if err := os.WriteFile(filepath.Join(dir, "объекта.form.os"), []byte(source), 0600); err != nil {
-				t.Fatal(err)
-			}
-			form, err := loader.NewManagedFormLoader().LoadFormFile(path, name)
-			if err != nil {
-				t.Fatal(err)
-			}
-			entity := &metadata.Entity{Name: name, Kind: metadata.KindCatalog, Forms: []*metadata.FormModule{form}, Fields: []metadata.Field{
-				{Name: "Режим", Type: metadata.FieldTypeString}, {Name: "Получено", Type: metadata.FieldTypeString}, {Name: "Заблокирован", Type: metadata.FieldTypeBool},
-			}}
-			if err := db.Migrate(ctx, []*metadata.Entity{entity}); err != nil {
-				t.Fatal(err)
-			}
-			id := uuid.New()
-			if err := db.Upsert(ctx, name, id, map[string]any{"Режим": "Черновик", "Заблокирован": false}, entity); err != nil {
-				t.Fatal(err)
-			}
-			ids[name] = id.String()
-			entities = append(entities, entity)
 		}
 		reg := runtime.NewRegistry()
 		reg.Load(runtime.LoadOptions{Entities: entities})
@@ -145,7 +160,7 @@ elements:
 		s.Mount(router)
 		server := httptest.NewServer(router)
 		defer func() { s.CloseEventStreams(); server.Close(); s.Close() }()
-		fixture, err := json.Marshal(map[string]any{"ids": ids, "refs": refIDs})
+		fixture, err := json.Marshal(map[string]any{"ids": ids, "refs": refIDs, "locals": localNames})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -165,7 +180,7 @@ elements:
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, ok := row["Склад"]; ok {
+			if _, ok := row["Склад"]; ok && localNames[name] {
 				t.Fatal("form-local reference became persistent")
 			}
 		}

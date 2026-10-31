@@ -38,6 +38,24 @@ func TestVersionCommandPrintsVersion(t *testing.T) {
 	}
 }
 
+func TestVersionCommandDistribution(t *testing.T) {
+	name, ver, supplier := version.DistributionName, version.DistributionVersion, version.DistributionSupplier
+	t.Cleanup(func() {
+		version.DistributionName, version.DistributionVersion, version.DistributionSupplier = name, ver, supplier
+	})
+	version.DistributionName, version.DistributionVersion, version.DistributionSupplier = " Example ", " 2.1 ", " Supplier "
+	got := runRootVersion(t)
+	for _, want := range []string{"onebase version " + version.String(), "сборка:      Example 2.1", "поставщик:   Supplier"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %q: %s", want, got)
+		}
+	}
+	version.DistributionName, version.DistributionVersion, version.DistributionSupplier = " ", "", ""
+	if got := runRootVersion(t); strings.Contains(got, "сборка:") || strings.Contains(got, "поставщик:") {
+		t.Fatalf("empty metadata must preserve upstream output: %s", got)
+	}
+}
+
 // Ради этой строки команда и заведена: «версия не та» почти всегда означает
 // «отвечает другой бинарь», и путь отвечает на это без переписки.
 func TestVersionCommandPrintsExecutablePath(t *testing.T) {

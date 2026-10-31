@@ -48,11 +48,14 @@ func personalNavigationScope(r *http.Request, context string) storage.Navigation
 // The full trees stay on the server. Base/Desired are the permitted editing
 // surface, while runtime/preview retain the original full configuration base.
 func (s *Server) personalNavigationState(r *http.Request, sub string) (navigationEditorState, error) {
-	state, err := s.navigationEditorState(r, sub)
+	state, err := s.navigationEditorLayerState(r, sub, true)
 	if err != nil {
 		return state, err
 	}
 	state.Personal = true
+	hp := s.navigationHomePage(sub)
+	state.roleTargets = s.roleNavigationTargets(r, hp)
+	_, state.roleScoped = hp.NavForRoles(homeNavRoles(r))
 	state.configuration, state.layerBase = state.Base, state.Desired
 	adminSetting := state.Setting
 	state.Setting, err = s.store.GetNavigationSettings(r.Context(), personalNavigationScope(r, state.Base.Context))
@@ -116,7 +119,7 @@ func (s *Server) personalNavigationState(r *http.Request, sub string) (navigatio
 		}
 		return delta
 	}
-	mark(adminSetting, navigation.AdminLayer, state.configuration, "common")
+	mark(adminSetting, navigation.AdminLayer, state.adminBase, "common")
 	state.previous = mark(state.Setting, navigation.UserLayer, state.layerBase, "personal")
 	for id := range desiredNodes {
 		if strings.HasPrefix(id, "usr:") {
@@ -145,11 +148,11 @@ func (s *Server) projectPersonalNavigation(r *http.Request, tree navigation.Tree
 	empty := map[string]bool{}
 	for index, source := range []navigation.Tree{state.configuration, state.layerBase} {
 		for _, section := range source.Sections {
-			if len(section.Items) == 0 && len(section.Groups) == 0 && (index == 0 || strings.HasPrefix(section.ID, "adm:")) {
+			if !state.roleScoped && len(section.Items) == 0 && len(section.Groups) == 0 && (index == 0 || strings.HasPrefix(section.ID, "adm:")) {
 				empty[section.ID] = true
 			}
 			for _, group := range section.Groups {
-				if len(group.Items) == 0 && (index == 0 || strings.HasPrefix(group.ID, "adm:")) {
+				if !state.roleScoped && len(group.Items) == 0 && (index == 0 || strings.HasPrefix(group.ID, "adm:")) {
 					empty[group.ID] = true
 				}
 			}
@@ -159,7 +162,7 @@ func (s *Server) projectPersonalNavigation(r *http.Request, tree navigation.Tree
 		var result []navigation.Item
 		for _, item := range input {
 			resolved := navigation.ResolveItem(item, lang, "", func(key string) string { return s.tr(lang, key) }, state.Flat)
-			if s.navigationItemVisible(r, item.Object, resolved, semantic, state.Flat) {
+			if (state.roleTargets == nil || state.roleTargets[item.Target]) && s.navigationItemVisible(r, item.Object, resolved, semantic, state.Flat) {
 				result = append(result, item)
 			}
 		}
@@ -372,8 +375,8 @@ func personalNavigationVisibleDelta(state navigationEditorState, desired navigat
 }
 
 // Replace editable intent while preserving valid previous intent for nodes
-// currently outside RBAC. Re-diffing the full result removes stale references
-// without turning the permitted projection into a persisted full snapshot.
+// currently outside RBAC or the role navigation scope. Re-diffing the full
+// result removes stale references without persisting the permitted projection.
 func personalNavigationDelta(state navigationEditorState, input navigationEditorRequest) (navigation.Delta, navigation.Tree, error) {
 	editable := navigationEditorNodes(state.Base)
 	for id, title := range navigationEditorNodes(state.Desired) {

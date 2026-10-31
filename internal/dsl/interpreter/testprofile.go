@@ -219,6 +219,11 @@ func (p *TestProfile) Vars() map[string]any {
 		return "", nil
 	})
 
+	// Получение почты в onebase test никогда не обращается к реальному ящику,
+	// в том числе при выключенном net. Как HTTP-мок, возвращает пустой ответ.
+	receiveEmail := BuiltinFunc(func(_ []any, _ string, _ int) (any, error) {
+		return NewArray(nil), nil
+	})
 	return map[string]any{
 		"Часы":  &ClockRoot{clock: p.clock},
 		"Clock": &ClockRoot{clock: p.clock},
@@ -233,6 +238,7 @@ func (p *TestProfile) Vars() map[string]any {
 
 		// почта
 		"ОтправитьПисьмо": sendEmail, "SendEmail": sendEmail,
+		"ПолучитьПисьма": receiveEmail, "ReceiveEmails": receiveEmail,
 		"__factory_ПисьмоEmail": emailFactory, "__factory_EmailMessage": emailFactory,
 
 		// сеть

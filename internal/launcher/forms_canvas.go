@@ -301,6 +301,10 @@ type canvasChoiceCondition struct {
 	// Ref — постоянная ссылка (UUID записи справочника), третий вид
 	// источника (#1820).
 	Ref string `json:"ref,omitempty"`
+	// Query/Params — условие запросом. Визуальный редактор его не правит, но
+	// обязан вернуть как есть: иначе правка соседнего условия стёрла бы его.
+	Query  string            `json:"query,omitempty"`
+	Params map[string]string `json:"params,omitempty"`
 }
 
 // canvasModel разворачивает дерево формы в плоскую карту node-id → редактируемые
@@ -356,11 +360,13 @@ func canvasModel(doc *formdoc.Doc) (map[string]canvasElementInfo, error) {
 			}
 			for _, condition := range el.ChoiceFilter {
 				info.ChoiceFilter = append(info.ChoiceFilter, canvasChoiceCondition{
-					Field: condition.Field,
-					Op:    string(condition.Op),
-					From:  condition.From,
-					Value: condition.Value,
-					Ref:   condition.Ref,
+					Field:  condition.Field,
+					Op:     string(condition.Op),
+					From:   condition.From,
+					Value:  condition.Value,
+					Ref:    condition.Ref,
+					Query:  condition.Query,
+					Params: condition.Params,
 				})
 			}
 			m[en.NodeID] = info

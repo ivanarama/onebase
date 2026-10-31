@@ -48,6 +48,35 @@ type SubsystemContents struct {
 	Pages      []string // план 66: произвольные страницы на DSL
 }
 
+// merge добавляет объекты other, которых ещё нет (порядок — первого появления).
+func (c *SubsystemContents) merge(other *SubsystemContents) {
+	if other == nil {
+		return
+	}
+	add := func(dst *[]string, src []string) {
+		for _, n := range src {
+			dup := false
+			for _, have := range *dst {
+				if strings.EqualFold(have, n) {
+					dup = true
+					break
+				}
+			}
+			if !dup {
+				*dst = append(*dst, n)
+			}
+		}
+	}
+	add(&c.Documents, other.Documents)
+	add(&c.Catalogs, other.Catalogs)
+	add(&c.Reports, other.Reports)
+	add(&c.InfoRegs, other.InfoRegs)
+	add(&c.Registers, other.Registers)
+	add(&c.Processors, other.Processors)
+	add(&c.Journals, other.Journals)
+	add(&c.Pages, other.Pages)
+}
+
 // IsEmpty сообщает, что набор объектов пуст (ни одного объекта ни в одной
 // категории). Используется, чтобы отличить заданный, но пустой nav от
 // отсутствующего.
