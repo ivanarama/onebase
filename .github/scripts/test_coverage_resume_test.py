@@ -116,10 +116,16 @@ assert""")
         self.assertNotEqual(self.run_cli('--resume').returncode, 0)
 
     def test_mutable_database_context_cannot_reuse_stages(self):
-        self.env['TEST_DATABASE_URL'] = 'postgres://localhost/example'
-        result = self.run_cli('--checkpoint')
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn('isolated unit environment', result.stderr)
+        for key in ['TEST_DATABASE_URL', 'TEST_DSN', 'ONEBASE_PDF_CORPUS']:
+            with self.subTest(key=key):
+                self.env[key] = 'external-mutable-resource'
+                result = self.run_cli('--checkpoint')
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn('isolated unit environment', result.stderr)
+                del self.env[key]
+                # The next failed invocation must have a fresh artifact dir.
+                import shutil
+                shutil.rmtree(self.root / 'artifacts')
 
     def test_tampered_journal_is_rejected(self):
         self.prepare()

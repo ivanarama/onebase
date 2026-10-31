@@ -257,8 +257,8 @@ def run(argv=None):
     state = {"version": 1, "fingerprint": None, "stages": {}}
     if checkpoint:
         require(not any(os.environ.get(key) for key in (
-            "TEST_DATABASE_URL", "DATABASE_URL", "PGHOST", "ONEBASE_DATABASE_URL",
-            "TEST_BROWSER_URL", "ONEBASE_TEST_BASE_URL")),
+            "TEST_DATABASE_URL", "TEST_DSN", "DATABASE_URL", "PGHOST", "ONEBASE_DATABASE_URL",
+            "TEST_BROWSER_URL", "ONEBASE_TEST_BASE_URL", "ONEBASE_PDF_CORPUS")),
             "checkpoint requires an isolated unit environment; run external-service checks without reuse")
         state["fingerprint"] = input_fingerprint(args.artifacts, args.output)
         if args.resume:
