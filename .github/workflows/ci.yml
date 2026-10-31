@@ -756,7 +756,7 @@ jobs:
       - uses: golangci/golangci-lint-action@v8
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         with:
-          version: v2.11.4
+          version: v2.12.2
 
   postgres-integration:
     needs: [classify]
