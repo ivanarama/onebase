@@ -3707,6 +3707,7 @@ function obInitFormDelegates() {
         var body = row.parentElement;
         var index = row.sectionRowIndex;
         row.remove();
+        if (typeof window.obManagedReindexVtRows === 'function') window.obManagedReindexVtRows(body);
         if (domTable && body) {
           var next = body.rows && body.rows.length ? body.rows[Math.min(Math.max(index, 0), body.rows.length - 1)] : null;
           obDOMFinishMutation(domTable, next, false);
