@@ -17,6 +17,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 
@@ -89,9 +90,17 @@ def input_fingerprint(artifacts, output):
         require(binary is not None, f"{tool} is required")
         tools[tool] = (str(Path(binary).resolve()), digest(Path(binary)))
     # Store only the digest: environment and Go proxy values can contain secrets.
-    effective_go = subprocess.check_output(["go", "env", "-json"])
+    effective_go = json.loads(subprocess.check_output(["go", "env", "-json"]))
+    # Go creates a fresh temporary work directory even for `go env`. Its
+    # generated debug-prefix-map is not a changed compiler option. Normalize
+    # only this exact generated path; retain every other flag and Go value.
+    gcc_flags = effective_go.get("GOGCCFLAGS", "")
+    effective_go["GOGCCFLAGS"] = re.sub(
+        r"(?<!\S)(-f(?:file|debug)-prefix-map=)" + re.escape(tempfile.gettempdir())
+        + r"/go-build[0-9]+=(/tmp/go-build)(?=\s|$)",
+        r"\1<go-work>=\2", gcc_flags)
     data = {"root": str(root), "files": sorted(files), "tools": tools,
-            "environment": sorted(os.environ.items()), "go_env": effective_go.decode(),
+            "environment": sorted(os.environ.items()), "go_env": effective_go,
             "python": sys.version, "platform": sys.platform,
             "runner": digest(Path(__file__).resolve())}
     return hashlib.sha256(json.dumps(data, sort_keys=True).encode()).hexdigest()
