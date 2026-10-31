@@ -331,50 +331,94 @@ func (s *FormEntityListSpec) SourceControls(owner *Entity, form *FormModule) map
 // new list grammar is closed so a typo cannot silently widen its query.
 func (el *FormElement) UnmarshalYAML(n *yaml.Node) error {
 	type plain FormElement
-	var decoded plain
-	if err := n.Decode(&decoded); err != nil {
+	var header struct {
+		Kind FormElementType `yaml:"kind"`
+	}
+	if err := n.Decode(&header); err != nil {
 		return err
 	}
-	if decoded.Kind == FormElementEntityList {
+	wire := *n
+	wire.Content = append([]*yaml.Node(nil), n.Content...)
+	var spec *FormEntityListSpec
+	if header.Kind == FormElementEntityList {
 		allowed := map[string]bool{}
-		var keys func(reflect.Type)
-		keys = func(t reflect.Type) {
-			for i := 0; i < t.NumField(); i++ {
-				f := t.Field(i)
-				tag := f.Tag.Get("yaml")
-				if strings.Contains(tag, ",inline") {
-					ft := f.Type
-					if ft.Kind() == reflect.Pointer {
-						ft = ft.Elem()
-					}
-					keys(ft)
-					continue
-				}
-				name := strings.Split(tag, ",")[0]
-				if name != "" && name != "-" {
-					allowed[name] = true
+		for _, typ := range []reflect.Type{reflect.TypeOf(FormElement{}), reflect.TypeOf(FormEntityListSpec{})} {
+			for i := 0; i < typ.NumField(); i++ {
+				key := strings.Split(typ.Field(i).Tag.Get("yaml"), ",")[0]
+				if key != "" && key != "-" {
+					allowed[key] = true
 				}
 			}
 		}
-		keys(reflect.TypeOf(FormElement{}))
+		seen := map[string]bool{}
+		wire.Content = nil
 		for i := 0; i+1 < len(n.Content); i += 2 {
-			key, v := n.Content[i].Value, n.Content[i+1]
+			key, value := n.Content[i].Value, n.Content[i+1]
 			if !allowed[key] {
 				return fmt.Errorf("unknown entity list key %q", key)
 			}
+			if seen[key] {
+				return fmt.Errorf("duplicate entity list key %q", key)
+			}
+			seen[key] = true
 			if key == "limit" {
 				var limit int
-				if v.Tag != "!!int" || v.Decode(&limit) != nil || limit < 1 || limit > 100 {
+				if value.Tag != "!!int" || value.Decode(&limit) != nil || limit < 1 || limit > 100 {
 					return fmt.Errorf("list limit must be 1..100")
 				}
 			}
+			if key == "columns" {
+				if value.Kind == yaml.AliasNode && value.Alias != nil {
+					value = value.Alias
+				}
+				if value.Kind != yaml.SequenceNode {
+					return fmt.Errorf("list columns must be a sequence of strings")
+				}
+				for _, column := range value.Content {
+					if column.Kind == yaml.AliasNode && column.Alias != nil {
+						column = column.Alias
+					}
+					if column.Kind != yaml.ScalarNode || column.Tag != "!!str" {
+						return fmt.Errorf("list columns must be strings")
+					}
+				}
+				continue // The same public key denotes structured columns on table parts.
+			}
+			wire.Content = append(wire.Content, n.Content[i], value)
+		}
+		spec = &FormEntityListSpec{}
+		if err := n.Decode(spec); err != nil {
+			return err
 		}
 	}
-	if decoded.Kind != FormElementEntityList {
-		decoded.EntityList = nil
+	var decoded plain
+	if err := wire.Decode(&decoded); err != nil {
+		return err
 	}
+	decoded.EntityList = spec
 	*el = FormElement(decoded)
 	return nil
+}
+
+// MarshalYAML preserves the public columns key without giving the two internal
+// representations overlapping inline YAML fields.
+func (el FormElement) MarshalYAML() (any, error) {
+	type plain FormElement
+	var node yaml.Node
+	if err := node.Encode(plain(el)); err != nil {
+		return nil, err
+	}
+	if el.Kind == FormElementEntityList && el.EntityList != nil {
+		if len(el.Columns) != 0 {
+			return nil, fmt.Errorf("list cannot have table-part columns")
+		}
+		var spec yaml.Node
+		if err := spec.Encode(el.EntityList); err != nil {
+			return nil, err
+		}
+		node.Content = append(node.Content, spec.Content...)
+	}
+	return &node, nil
 }
 
 func (c FormEntityListCondition) MarshalJSON() ([]byte, error) {

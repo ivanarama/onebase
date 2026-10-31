@@ -197,7 +197,7 @@ const (
 
 // FormElement represents a single form element (field, button, etc.)
 type FormElement struct {
-	EntityList *FormEntityListSpec `yaml:",inline"`
+	EntityList *FormEntityListSpec `yaml:"-"`
 	ID         string              `yaml:"id,omitempty"`
 	Name       string              `yaml:"name,omitempty"`
 	Kind       FormElementType     `yaml:"kind,omitempty"`

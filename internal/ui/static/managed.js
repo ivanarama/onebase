@@ -180,6 +180,39 @@ function obManagedApplyTablePartRefOptions(next) {
 }
 window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 
+function obEscapeColumnTitle(text) {
+  return String(text == null ? "" : text)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// obManagedApplyColumnTitles — заголовки колонок с title_from после события
+// формы: {путь размещения ТЧ: {реквизит: заголовок}}. Меняется и описание колонки
+// (его заново рисует setColumns при перестановке), и уже нарисованная шапка.
+function obManagedApplyColumnTitles(titles) {
+  if (!titles) return;
+  // Все экземпляры сетки табличной части (рядом с редактируемой бывает
+  // сводка только для чтения), а не только канонический из _obGrids.
+  var views = (window._obGridViews || []).slice();
+  var grids = window._obGrids || {};
+  Object.keys(grids).forEach(function(tp) {
+    if (views.indexOf(grids[tp]) < 0) views.push(grids[tp]);
+  });
+  views.forEach(function(state) {
+    if (!state || !state.grid || !state.div) return;
+    var byField = titles[state.div.getAttribute("data-sg-path")];
+    if (!byField) return;
+    (state.columns || []).forEach(function(col) {
+      if (!Object.prototype.hasOwnProperty.call(byField, col.id)) return;
+      var title = obEscapeColumnTitle(byField[col.id]);
+      if (col.name === title) return;
+      col.name = title;
+      if (state.grid.updateColumnHeader) state.grid.updateColumnHeader(col.id, title);
+    });
+  });
+}
+window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
+
 // Отправляет текущие form-values + имя элемента/события в /ui/.../form-event,
 // получает JSON с новыми значениями и сообщениями от Сообщить(), применяет их.
 (function(){
@@ -492,6 +525,9 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         } else {
           inp.value = val;
         }
+        if (inp.type === 'hidden' && typeof window.obSetImageField === 'function' && inp.closest('.img-field')) {
+          window.obSetImageField(inp.closest('.img-field'), val);
+        }
       });
     });
     // A form handler may change a choice_filter source without dispatching a
@@ -592,7 +628,12 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     var hidden = st.hidden || {};
     Object.keys(hidden).forEach(function (path) {
       var el = byPath(path);
-      if (!el) return;
+      if (!el) {
+        // Страница набора СтраницыФормы своего якоря не имеет — её якорь
+        // стоит на кнопке закладки.
+        obManagedSetPageHidden(path, !!hidden[path]);
+        return;
+      }
       // Some managed elements keep their layout only in an inline display
       // declaration (checkbox and command bar use flex). Remember that value
       // before the first state update instead of erasing it on hidden=false.
@@ -693,6 +734,8 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       const hiddenNames = obManagedHiddenColumnNames(tbody);
       const rows = tps[tpName] || [];
       const refOpts = (window._tpRefOpts && window._tpRefOpts[tpName]) || {};
+      const refMeta = (obTPRefMeta()[tpName]) || {};
+      var choices={};try{choices=JSON.parse(tbody.getAttribute('data-tp-choice')||'{}')||{};}catch(e){}
       const tpEnumLabels = (window._tpEnumLabels && window._tpEnumLabels[tpName]) || {};
       const tpEnumOrder = (window._tpEnumOrder && window._tpEnumOrder[tpName]) || {};
       const hasCmd = tbody.getAttribute('data-tp-cmd') === '1';
@@ -732,16 +775,21 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
           const v = row[f.name];
           const isRef = f.type === 'reference' || f.type.indexOf('reference') === 0;
           const isEnum = f.type === 'enum' || f.type.indexOf('enum') === 0;
-          if (isRef && refOpts[f.name]) {
+          if (isRef && (refOpts[f.name] || choices[f.name])) {
             const sel = document.createElement('select');
             sel.name = 'tp.' + tpName + '.' + idx + '.' + f.name;
+            var choice=choices[f.name];
+            const meta = refMeta[f.name];
+            if (meta && meta.filter) sel.setAttribute('data-ref-filter', meta.filter);
+            if(choice) {sel.setAttribute('data-ref-choice-context',choice);sel.setAttribute('data-ref-row-id',String(idx));sel.setAttribute('data-ref-entity',f.ref.split(':').pop());}
             const empty = document.createElement('option');
             empty.value = ''; empty.textContent = '— выбрать —';
             sel.appendChild(empty);
             // v приходит сериализованным как UUID-string (serializeTablePartRows),
             // но на всякий случай учитываем и legacy-формат с GetRefUUID-методом.
             const cur = (v && typeof v === 'object' && v.GetRefUUID) ? v.GetRefUUID() : (v == null ? '' : String(v));
-            refOpts[f.name].forEach(function(opt){
+            (refOpts[f.name] || []).forEach(function(opt){
+              if(choice && String(opt.id)!==cur)return;
               const o = document.createElement('option');
               o.value = opt.id;
               o.textContent = opt._label;
@@ -749,7 +797,30 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
               sel.appendChild(o);
             });
             sel.disabled = readOnly;
-            td.appendChild(sel);
+            const wrapper = document.createElement('div');
+            wrapper.style.cssText = 'display:flex;gap:4px;align-items:center';
+            sel.setAttribute('data-ref-entity', f.ref.split(':').pop());
+            if (meta && meta.allowCreate) sel.setAttribute('data-ref-allow-create', '1');
+            wrapper.appendChild(sel);
+            const pickBtn = document.createElement('button');
+            pickBtn.type = 'button';
+            pickBtn.textContent = '...';
+            pickBtn.title = 'Выбрать из списка';
+            pickBtn.disabled = readOnly;
+            pickBtn.setAttribute('data-ob-ref-picker', 'closest');
+            pickBtn.style.cssText = 'padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0';
+            wrapper.appendChild(pickBtn);
+            if (tbody.getAttribute('data-tp-hide-ref-card') !== '1') {
+              const openBtn = document.createElement('button');
+              openBtn.type = 'button';
+              openBtn.textContent = '🔍';
+              openBtn.title = 'Открыть карточку';
+              openBtn.setAttribute('data-ob-ref-current', 'closest');
+              openBtn.setAttribute('data-ob-readonly-navigation', '1');
+              openBtn.style.cssText = 'padding:4px 7px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0';
+              wrapper.appendChild(openBtn);
+            }
+            td.appendChild(wrapper);
           } else if (isEnum && tpEnumLabels[f.name]) {
             const enumLabMap = tpEnumLabels[f.name];
             const sel = document.createElement('select');
@@ -1180,6 +1251,14 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     if (versionInput && versionInput.value) snapshot.body.set(versionName, String(versionInput.value));
   }
 
+  function refreshEventEntityLists(data, snapshot, merged) {
+    if (!window.obEntityLists) return;
+    // Apply a response projection only after its values reach the live form.
+    // A merged/newer form must be read again without replaying the event.
+    var revision = !merged && formEditState.revision === snapshot.editRevision ? snapshot.listRevision : undefined;
+    window.obEntityLists.refresh(data, revision);
+  }
+
   async function dispatchFormEvent(snapshot){
     if (!snapshot || reloadRequired || formEventWriteUnknown || manualReconcileRequired) return;
     refreshQueuedFormEventIdentity(snapshot);
@@ -1200,7 +1279,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       const res = await fetch(URL, {
         method: 'POST',
         body: body,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', 'X-OneBase-Conceal-Context': form && form.getAttribute ? form.getAttribute('data-ob-conceal-context') || '' : '' },
         credentials: 'same-origin'
       });
       const data = await res.json();
@@ -1211,6 +1290,8 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 		throw new Error('invalid form-event response');
 	  }
       responseKnown = true;
+      if (!res.ok || !data.ok || data.error || data.cancel) data.revealed = [];
+      if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form);
 	  // Even parseable JSON on non-2xx may come from an intermediary after the
 	  // application committed. No subsequent write is safe on this document.
 	  if (!res.ok) fenceUnknownResult();
@@ -1229,12 +1310,13 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         if (currentBody && formEditState.revision === revisionBeforeRead) {
           // Reuse the close controller's field/table merge: only unchanged
           // controls may receive values from the older server snapshot.
-          applyCloseResponse(data, snapshot.body, currentBody);
+          applyCloseResponse(data, snapshot.body, currentBody, snapshot.controlState);
         } else {
           (data.messages || []).forEach(m => flash(m, 'ok'));
           if (data.error) flash(data.error, 'err');
         }
         setManagedFormDirty(true);
+        refreshEventEntityLists(data, snapshot, true);
         flash(closeMessage('navigationFormChanged', 'Форма изменилась во время выполнения команды — переход не выполнен'), 'err');
         return;
       }
@@ -1258,8 +1340,17 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // Подбор фазы 1: сервер вернул pickerData — открыть диалог, не трогая
       // ТЧ (её обновит фаза 2 после «Перенести»).
       if (data.pickerData) {
-        if (window.obEntityLists) window.obEntityLists.refresh(data);
         if (snapshot.pickerRequest && !window.obPickerRequestCurrent(snapshot.pickerRequest)) return;
+        // Реквизиты шапки, поставленные обработчиком, который открыл подбор
+        // (режим многошагового действия, выбранное на прошлом шаге), нужны
+        // событию Выбор: без них оно уходило с прежними значениями, и
+        // обработчик выбора не узнавал свой подбор — выбор молча терялся.
+        if (data.dirty === true) window.obSetManagedFormDirty(true);
+        // controlState — как в обычной ветке: ввод, сделанный пока шёл запрос,
+        // эхо отправленного значения не затирает.
+        if (data.values) applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
+        if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
+        refreshEventEntityLists(data, snapshot, false);
         (data.messages || []).forEach(m => flash(m, 'ok'));
         if (data.error) flash(data.error, 'err');
         openItemPicker(data.pickerData, elementName, extraParams || null, snapshot.pickerRequest);
@@ -1271,37 +1362,72 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       if (snapshot.eventName === 'Поиск' && !data.error && typeof window.obPickerSearchEmpty === 'function') {
         window.obPickerSearchEmpty(snapshot.pickerRequest);
       }
-      // Вопрос фазы 1 (#1528): открыть модал; ответ вернётся событием Ответ
-      // через _question_answer — сервер положит его в ВопросОтвет.
-      if (data.question) {
-        if (window.obEntityLists) window.obEntityLists.refresh(data);
-        (data.messages || []).forEach(m => flash(m, 'ok'));
-        if (data.error) flash(data.error, 'err');
-        if (window.obOpenQuestion) window.obOpenQuestion(data.question, elementName);
-        return;
-      }
       // dirty=true is an authoritative safety signal and must survive a
       // partially failing renderer. Programmatic response application does
       // not emit input/change, so raise it before touching mutable DOM state.
       if (data.dirty === true) setManagedFormDirty(true);
-      if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
-      applyElementStates(data.elementStates);
-      window.obManagedApplyTablePartRefOptions(data.tpRefOptions);
-      window.applyTableParts(data.tableparts);
-      applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
-      applyChoiceList(elementName, data.choiceList);
-      applyFormTables(data.formTables);
-      if (window.obEntityLists) window.obEntityLists.refresh(data, snapshot.listRevision);
+      var beforePostMerged = beforePostSnapshot(snapshot) && formEditState.revision !== snapshot.editRevision;
+      if (beforePostMerged) {
+        // Перед ответом на вопрос сохранить свежий ввод, но принять правки
+        // обработчика в полях и таблицах, которых пользователь не касался.
+        var mergeRevision = formEditState.revision;
+        var mergeBody = await closeSnapshotBody('', '');
+        if (!mergeBody || formEditState.revision !== mergeRevision) {
+          setManagedFormDirty(true);
+          return;
+        }
+        applyCloseResponse(data, snapshot.body, mergeBody, snapshot.controlState);
+        setManagedFormDirty(true);
+      } else {
+        if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
+        applyElementStates(data.elementStates);
+        window.obManagedApplyColumnTitles(data.columnTitles);
+        window.obManagedApplyTablePartRefOptions(data.tpRefOptions);
+        window.applyTableParts(data.tableparts);
+        applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
+        applyChoiceList(elementName, data.choiceList);
+        applyFormTables(data.formTables);
+      }
+      if (!beforePostMerged && window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
+      refreshEventEntityLists(data, snapshot, beforePostMerged);
 	  // Server events repaint controls programmatically and therefore do not
 	  // trigger input/change. Raise dirty for unsaved handler mutations; clear
 	  // it only when this response proves a successful Object.Write and no
 	  // user edits followed the snapshot that was saved.
-	  if (data.dirty === false && (data.savedId || data.version)) {
+	  if (!beforePostMerged && data.dirty === false && (data.savedId || data.version)) {
 		setManagedFormDirty(formEditState.revision !== snapshot.editRevision);
 	  }
-      (data.messages || []).forEach(m => flash(m, 'ok'));
-      if (data.error) flash(data.error, 'err');
+      if (!beforePostMerged) {
+        (data.messages || []).forEach(m => flash(m, 'ok'));
+        if (data.error) flash(data.error, 'err');
+      }
       if (navigationBlocked) flash(closeMessage('navigationDirty', 'Форма содержит несохранённые изменения — переход не выполнен'), 'err');
+      // Apply the response, including disclosed values, before opening a
+      // question. Dismissing it must leave the same valid form as no question.
+      if (data.question && !beforePostSnapshot(snapshot)) {
+        if (window.obOpenQuestion) window.obOpenQuestion(data.question, elementName);
+        return;
+      }
+      if (data.question && beforePostSnapshot(snapshot) && beforePostState) {
+        // Правки и dirty уже применены. Ответ пойдёт тем же событием с новым
+        // снимком формы; закрытие вопроса мимо кнопок отменяет проведение.
+        beforePostState.questionOpen = true;
+        if (window.obOpenQuestion) window.obOpenQuestion(data.question, '', {
+          onAnswer: function(variant, extra){ runBeforePostEvent(extra || {_question_answer: variant}); },
+          onDismiss: function(){ settleBeforePost(false); }
+        });
+        else settleBeforePost(false);
+        return;
+      }
+      // Решение — после того, как событие целиком вышло из очереди (см.
+      // runBeforePostEvent): иначе проведение застало бы форму «занятой».
+      if (beforePostSnapshot(snapshot) && beforePostState) {
+        // Merging protects newer input but cannot authorize posting it: the
+        // handler checked another snapshot. A fresh user attempt must check it.
+        beforePostState.outcome = !beforePostMerged && !data.cancel && !data.error && !navigationBlocked;
+        beforePostState.approval.revision = snapshot.editRevision;
+        if (beforePostMerged) flash(closeMessage('formChanged', 'Форма изменилась во время проверки закрытия. Повторите закрытие.'), 'err');
+      }
     } catch (e) {
       // A lost/unparseable response for /new may hide a committed insert and
       // there is no identity with which to issue another safe write. Fence all
@@ -1312,11 +1438,13 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // не пишет документ (фаза 1 того же диалога), а вечный фенс делал бы
       // ошибку поиска фатальной для всей формы.
       if (!responseKnown && snapshot.wasNew && !DOC_ID && !(snapshot.pickerRequest && snapshot.pickerRequest.search)) fenceUnknownResult();
+      // A partial renderer must never leave a disclosed control submittable.
+      if (window.obApplyConcealed) window.obApplyConcealed([], form, {});
       flash('Сетевая ошибка: ' + (e && e.message ? e.message : e), 'err');
     }
   }
 
-  window.obFire = function(elementName, eventName, extraParams, pickerRequest){
+  function fireFormEvent(elementName, eventName, extraParams, pickerRequest, beforePostOwner){
 	pickerRequest = pickerRequest || (window.obPickerRequest ? window.obPickerRequest() : null);
 	if (formEventWriteUnknown || manualReconcileRequired) {
 	  flash(closeMessage('unknownResult', 'Исход операции неизвестен. Проверьте данные в отдельной вкладке и перезагрузите форму; повторная запись заблокирована.'), 'err');
@@ -1326,7 +1454,9 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	  flash(closeMessage('reloadRequired', 'Результат уже сохранён. Скопируйте текущие правки и перезагрузите форму перед продолжением.'), 'err');
 	  return Promise.resolve();
 	}
-	if (closePending || closeHandoffPending || retryableClose) {
+	if (closePending || retryableClose ||
+        (closeHandoffPending && (!beforePostOwner || beforePostOwner !== beforePostState)) ||
+        (beforePostState && beforePostOwner !== beforePostState)) {
 	  flash(closeMessage('closePending', 'Сначала завершите или восстановите проверку закрытия формы.'), 'err');
 	  return Promise.resolve();
 	}
@@ -1391,6 +1521,9 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	  formEventPendingCount = Math.max(0, formEventPendingCount - 1);
 	  formEventPending = formEventPendingCount > 0;
 	});
+  }
+  window.obFire = function(elementName, eventName, extraParams, pickerRequest){
+    return fireFormEvent(elementName, eventName, extraParams, pickerRequest);
   };
 
   // One close controller for every managed-form adapter. It snapshots the
@@ -1398,6 +1531,42 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   // applies returned state/messages first and only then returns a decision.
   // Shell/popup/standalone code decides how to destroy its own UI.
   var CLOSE_URL = String(cfg.closeUrl || '');
+  // ПередПроведением (событие уровня формы): стандартные «Провести» и «Провести
+  // и закрыть» сначала спрашивают обработчик. Он вправе отказать (Отказ) или
+  // задать вопрос — ответ возвращается тем же событием; проведение идёт, только
+  // когда обработчик ответил без отказа, без ошибки и без нового вопроса.
+  var BEFORE_POST = !!cfg.beforePost;
+  var beforePostState = null;
+  function beforePostSnapshot(snapshot){
+    return !!(snapshot && !snapshot.elementName && snapshot.eventName === 'ПередПроведением');
+  }
+  function settleBeforePost(ok){
+    var state = beforePostState;
+    beforePostState = null;
+    if (state) state.resolve(!!ok && state.approval.revision === formEditState.revision);
+  }
+  function runBeforePostEvent(extra){
+    if (!beforePostState) return;
+    beforePostState.questionOpen = false;
+    beforePostState.outcome = false;
+    // Только событие владельца может пройти через embedded handoff. Общие
+    // команды и native submit остаются заперты, в том числе пока открыт вопрос.
+    Promise.resolve(fireFormEvent('', 'ПередПроведением', extra || null, null, beforePostState)).then(function(){
+      // Ответ разобран и событие вышло из очереди. Открыт вопрос — ждём ответа;
+      // не дошло до разбора (отказ очереди, сеть) — outcome остался false.
+      if (beforePostState && !beforePostState.questionOpen) settleBeforePost(beforePostState.outcome === true);
+    });
+  }
+  function managedBeforePost(allowHandoff, approval){
+    if (!BEFORE_POST) return Promise.resolve(true);
+    if (beforePostState || formEventPending || closePending || retryableClose ||
+        (closeHandoffPending && !allowHandoff)) return Promise.resolve(false);
+    return new Promise(function(resolve){
+      beforePostState = {resolve: resolve, questionOpen: false, approval: approval || {}};
+      runBeforePostEvent(null);
+    });
+  }
+  window.obManagedBeforePost = function(){ return managedBeforePost(false); };
   var CLOSE_TIMEOUT_MS = Number(cfg.closeTimeoutMs || 30000);
   var CLOSE_MESSAGES = cfg.closeMessages || {};
   // Declared with the close controller because browser behavior tests extract
@@ -1639,23 +1808,37 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	}
   }
 
-  function applyCloseResponse(data, before, current){
+  function controlEditedSince(state, matches){
+    if (!state) return false;
+    var edited = false;
+    state.forEach(function(before, control){
+      if (before.editable && matches(String(control.name || '').toLowerCase()) &&
+          (controlEditRevisions.get(control) || 0) > before.revision) edited = true;
+    });
+    return edited;
+  }
+
+  function applyCloseResponse(data, before, current, controlState){
     if (!data || typeof data !== 'object') return;
+    var form = window.obApplyConcealed ? document.getElementById('main-form') : null;
+    if (data.ok === false || data.error || data.cancel) data.revealed = [];
+    try {
 	var merging = !!(before && current);
+    if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, document.getElementById('main-form'));
 	var values = merging ? filterCloseMap(data.values, function(name){
-	  return closeFieldUnchanged(before, current, name);
+	  return closeFieldUnchanged(before, current, name) && !controlEditedSince(controlState, function(key){ return key === String(name).toLowerCase(); });
 	}) : data.values;
 	var tableparts = merging ? filterCloseMap(data.tableparts, function(name){
-	  return closeTableUnchanged(before, current, 'tp', name);
+	  return closeTableUnchanged(before, current, 'tp', name) && !controlEditedSince(controlState, function(key){ return key.indexOf('tp.' + String(name).toLowerCase() + '.') === 0; });
 	}) : data.tableparts;
 	var formTables = merging ? filterCloseMap(data.formTables, function(name){
-	  return closeTableUnchanged(before, current, 'vt', name);
+	  return closeTableUnchanged(before, current, 'vt', name) && !controlEditedSince(controlState, function(key){ return key.indexOf('vt.' + String(name).toLowerCase() + '.') === 0; });
 	}) : data.formTables;
 	var refOptions = merging ? filterCloseMap(data.refOptions, function(name){
-	  return closeFieldUnchanged(before, current, name);
+	  return closeFieldUnchanged(before, current, name) && !controlEditedSince(controlState, function(key){ return key === String(name).toLowerCase(); });
 	}) : data.refOptions;
 	var tpRefOptions = merging ? filterCloseMap(data.tpRefOptions, function(name){
-	  return closeTableUnchanged(before, current, 'tp', name);
+	  return closeTableUnchanged(before, current, 'tp', name) && !controlEditedSince(controlState, function(key){ return key.indexOf('tp.' + String(name).toLowerCase() + '.') === 0; });
 	}) : data.tpRefOptions;
 	// Derived visibility/readonly/CSS was calculated for the old snapshot and
 	// cannot be merged safely after concurrent input. Data and reference
@@ -1663,17 +1846,40 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	// for the retry based on the current snapshot.
 	if (!merging && Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
 	if (!merging) applyElementStates(data.elementStates);
+	if (!merging) window.obManagedApplyColumnTitles(data.columnTitles);
 	window.obManagedApplyTablePartRefOptions(tpRefOptions);
 	window.applyTableParts(tableparts);
 	applyValues(values, refOptions);
 	applyFormTables(formTables);
-    if (window.obEntityLists) window.obEntityLists.refresh(data);
+    if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, document.getElementById('main-form'), values || {}, data.values || {});
+    if (!controlState && window.obEntityLists) window.obEntityLists.refresh(data);
     (data.messages || []).forEach(function(message){ flash(message, 'ok'); });
     if (data.error) flash(data.error, 'err');
+    } catch (e) {
+      if (window.obApplyConcealed) window.obApplyConcealed([], form, {});
+      throw e;
+    }
   }
 
   window.obRequestFormClose = function(options){
     options = options || {};
+    if (beforePostState) return Promise.resolve({allowed: false, intentId: '', error: 'form-event-pending'});
+    // An unknown result belongs to an already checked operation. Recover its
+    // exact payload/UUID before starting any new BeforePost handler.
+    if (BEFORE_POST && options.mode === 'post' && !options.__beforePostDone && !retryableClose && !closePending) {
+      var nextOptions = {};
+      Object.keys(options).forEach(function(key){ nextOptions[key] = options[key]; });
+      nextOptions.__beforePostDone = true;
+      var approval = {};
+      return managedBeforePost(true, approval).then(function(ok){
+        if (!ok || approval.revision !== formEditState.revision) {
+          closeHandoffPending = false;
+          return {allowed: false, intentId: '', error: 'before-post-cancelled'};
+        }
+        nextOptions.__beforePostRevision = approval.revision;
+        return window.obRequestFormClose(nextOptions);
+      });
+    }
 	if (formEventPending) {
 	  // An embedded adapter may already have raised the handoff flag before its
 	  // parent asks for this decision. This early refusal completes that handoff;
@@ -1711,6 +1917,14 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       if (mode === 'cancel') return {allowed: false, intentId: '', error: 'user-cancelled'};
       var body = await closeSnapshotBody(reason, mode);
       if (!body) return {allowed: false, intentId: '', error: 'form-state'};
+      // File reads and grid synchronization may yield or commit fresh edits
+      // after BeforePost completed. Never open a new intent under old approval.
+      if (BEFORE_POST && mode === 'post' && !retryableClose &&
+          options.__beforePostRevision !== formEditState.revision) {
+        setManagedFormDirty(true);
+        flash(closeMessage('formChanged', 'Форма изменилась во время проверки закрытия. Повторите закрытие.'), 'err');
+        return {allowed: false, intentId: '', error: 'form-changed'};
+      }
       var snapshotKey = closeSnapshotKey(body);
 	  var requestedReason = reason;
 	  var requestedMode = mode;
@@ -1766,6 +1980,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 		  // and the exact envelope is retained with an unknown intent for replay.
           headers: {
 			'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
+			'X-OneBase-Conceal-Context': (document.getElementById('main-form') || {}).getAttribute ? document.getElementById('main-form').getAttribute('data-ob-conceal-context') || '' : '',
 			'X-OneBase-Close-Intent': intentID,
 			'X-OneBase-Close-Epoch': String(envelope.epoch || ''),
 			'X-OneBase-Close-Issued-At': String(envelope.issuedAt || ''),
@@ -1937,6 +2152,47 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     return true;
   };
 
+  // «Провести»: до отправки формы — ПередПроведением. Перехват в фазе захвата,
+  // раньше остальных обработчиков отправки; после согласия форма отправляется
+  // заново той же кнопкой и проходит их как обычно.
+  // Файловое поле откладывает отправку: его обработчик отменяет наш повторный
+  // submit, ждёт FileReader и отправляет форму сам (флаг reentry). Разрешение
+  // проверенного снимка поэтому живёт дольше синхронного requestSubmit — до
+  // этого повторного submit — и годится только для той же ревизии формы:
+  // правка во время чтения требует новой проверки, а не отправки по старой.
+  function obFileSubmitReentry(form){
+    return typeof obManagedFileSubmitReentry !== 'undefined' && obManagedFileSubmitReentry.has(form);
+  }
+  document.addEventListener('submit', function(e){
+    var form = e.target;
+    if (!BEFORE_POST || !form || form.id !== 'main-form' || form.__obBeforePostApproved) return;
+    var submitter = e.submitter || null;
+    if (!submitter || submitter.name !== '_action' || submitter.value !== 'post') return;
+    var granted = form.__obBeforePostApproval || null;
+    form.__obBeforePostApproval = null;
+    // Повтор файлового обработчика для того же снимка — без второй проверки
+    // (разрешение одноразовое).
+    if (granted && obFileSubmitReentry(form) && granted.revision === formEditState.revision) return;
+    // Let the native-submit controller recover an existing close intent.
+    // BeforePost is only for a new operation, never for replay of an old one.
+    if (closePending || retryableClose) return;
+    e.preventDefault();
+    if (e.stopImmediatePropagation) e.stopImmediatePropagation();
+    else if (e.stopPropagation) e.stopPropagation();
+    var approval = {};
+    managedBeforePost(false, approval).then(function(ok){
+      if (!ok || approval.revision !== formEditState.revision) return;
+      form.__obBeforePostApproval = {revision: approval.revision};
+      form.__obBeforePostApproved = true;
+      try {
+        if (typeof form.requestSubmit === 'function') form.requestSubmit(submitter);
+        else submitter.click();
+      } finally {
+        form.__obBeforePostApproved = false;
+      }
+    });
+  }, true);
+
   // A native submit must not race an unfinished close request. A lost close
   // response is also an unknown commit outcome: BeforeClose may call
   // Object.Write even for discard. Until the exact UUID/body is replayed, a
@@ -1948,7 +2204,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
     var pending = retryableClose;
     var recoveryMode = pending && String(pending.mode || '');
     if (!form || form.id !== 'main-form') return;
-	if (formEventPending || formEventWriteUnknown || manualReconcileRequired) {
+	if (beforePostState || formEventPending || formEventWriteUnknown || manualReconcileRequired) {
 	  e.preventDefault();
 	  if (e.stopImmediatePropagation) e.stopImmediatePropagation();
 	  else if (e.stopPropagation) e.stopPropagation();
@@ -2136,6 +2392,9 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   }
   document.addEventListener('keydown', function(e){
     if (e.key !== 'Escape' && e.keyCode !== 27) return;
+    if (window.obImageViewerIsOpen && window.obImageViewerIsOpen()) {
+      window.obImageViewerClose(); consumeManagedEscape(e); return;
+    }
     var modal = document.getElementById('ob-managed-close-confirm') || document.getElementById('_ref-create-modal') || document.getElementById('_item-picker-modal') || document.getElementById('_ref-picker-modal');
     if (modal) {
       if (typeof modal._obClose === 'function') modal._obClose();
@@ -2404,7 +2663,9 @@ function obManagedInitDelegates() {
     if (btn.hasAttribute('data-ob-ref-picker')) {
       e.preventDefault();
       var pickSel = obManagedClosestSelect(btn);
-      if (pickSel && typeof openRefPicker === 'function') openRefPicker(pickSel);
+      // Тот же щелчок ловит и делегат формы в ui.js: окно — один раз.
+      if (pickSel && typeof window.obOpenRefPickerOnce === 'function') window.obOpenRefPickerOnce(e, pickSel);
+      else if (pickSel && typeof openRefPicker === 'function') openRefPicker(pickSel);
       return;
     }
     if (btn.hasAttribute('data-ob-ref-current')) {
@@ -2619,6 +2880,49 @@ function obGridMoveColumn(columns, from, to) {
   columns.splice(to, 0, col);
   return true;
 }
+// obGridKeepDeclaredWidths — у таблицы с объявленными ширинами (`width`
+// колонки), которая в видимую область не помещается, ширины сохраняются, а
+// таблица прокручивается по горизонтали. autosizeColumns подгоняет сумму
+// ширин под контейнер: при сотне колонок табеля каждая ужималась до минимума
+// и подписи превращались в «1…». Таблица без объявленных ширин или
+// помещающаяся — false: её по-прежнему растягивает autosizeColumns.
+function obGridKeepDeclaredWidths(grid, available) {
+  var cols = grid.getColumns();
+  var declared = false, total = 0;
+  for (var i = 0; i < cols.length; i++) {
+    if (cols[i].obWidth) declared = true;
+    total += cols[i].obWidth || 120;
+  }
+  if (!declared || !(available > 0) || total <= available) return false;
+  var changed = false;
+  for (var j = 0; j < cols.length; j++) {
+    var want = cols[j].obWidth || 120;
+    if (cols[j].width !== want) { cols[j].width = want; changed = true; }
+  }
+  if (changed) grid.setColumns(cols);
+  return true;
+}
+
+// obGridAutosize — подгонка помещающейся таблицы под контейнер. Свободное
+// место получают колонки без объявленной ширины: legacy-autosize SlickGrid
+// растягивает пропорционально все resizable-колонки, и `width: 130` у «Даты»
+// превращался бы в 200 с лишним. На время подгонки объявленные колонки
+// исключаются из неё (resizable=false), затем перетаскивание им возвращается.
+function obGridAutosize(grid) {
+  var cols = grid.getColumns(), locked = [];
+  for (var i = 0; i < cols.length; i++) {
+    if (!cols[i].obWidth || cols[i].resizable === false) continue;
+    cols[i].width = cols[i].obWidth;
+    cols[i].resizable = false;
+    locked.push(cols[i]);
+  }
+  try {
+    grid.autosizeColumns();
+  } finally {
+    for (var j = 0; j < locked.length; j++) locked[j].resizable = true;
+  }
+}
+
 function obGridColumnIds(columns) {
   return (columns || []).map(function(c) { return c.id; });
 }
@@ -2636,7 +2940,7 @@ function obGridColumnIds(columns) {
   function resizeGrid(g) {
     if (!g || !g.div || g.div.offsetParent === null) return;
     g.grid.resizeCanvas();
-    g.grid.autosizeColumns();
+    if (!obGridKeepDeclaredWidths(g.grid, g.div.clientWidth)) obGridAutosize(g.grid);
     updateTotals(g); // footer-ячейки пересоздаются при re-render — обновляем суммы
   }
 
@@ -2811,6 +3115,9 @@ function obGridColumnIds(columns) {
     var isOpen = false, selectedId = '', defaultValue = '';
     var refEntity = (args.column && args.column.refEntity) || '';
     var refFilter = (args.column && args.column.refFilter) || '';
+    var choiceContext = (args.column && args.column.choiceContext) || '';
+    function choiceCarrier() { return window.obTPChoiceCarrier(choiceContext, args.item, args.row, args.container.closest('form'), args.column.field, refEntity, refFilter); }
+    function requestParam() { return choiceContext ? window.obRefChoiceSnapshot(choiceCarrier()).query : filterParam(); }
     var initialFilter = '';
     try {
       if (refFilter) {
@@ -2829,7 +3136,9 @@ function obGridColumnIds(columns) {
     var serverFilter = '';
     var shown = [];        // что сейчас отрисовано в списке (для ↑/↓ и Enter)
     var activeIdx = -1;    // подсвеченный пункт списка, -1 — нет подсветки
-    var searchTimer = null, searchSeq = 0;
+    var searchTimer = null, searchSeq = 0, lastChoiceRequest = "";
+    function choiceSourceChanged(){if(!choiceContext || !input || lastChoiceRequest===requestParam())return;serverRows=[];buildList(input.value);searchServer(input.value);}
+    if(choiceContext){document.addEventListener("change",choiceSourceChanged);window._obTPChoiceEditorRefresh=choiceSourceChanged;}
 
     function label(id) {
       for (var k = 0; k < refOptsList.length; k++) {
@@ -2863,8 +3172,13 @@ function obGridColumnIds(columns) {
         seen[key] = true;
         out.push({id: o.id, _label: lbl});
       }
-      var currentFilter = filterParam();
-      for (var i = 0; i < refOptsList.length; i++) {
+      var currentFilter = requestParam();
+      if(choiceContext && args.column.choiceSeeds) {
+        var seed=args.column.choiceSeeds.get(args.item);
+        var snapshot=window.obRefChoiceSnapshot(choiceCarrier());
+        if(seed && seed.fingerprint===snapshot.fingerprint)seed.items.forEach(function(o){if(!o._choice_outside_filter)push(o);});
+      }
+      for (var i = 0; !choiceContext && i < refOptsList.length; i++) {
         if ((refOptsList[i]._ownerFilter || initialFilter) === currentFilter) push(refOptsList[i]);
       }
       if (currentFilter === serverFilter) {
@@ -2964,13 +3278,14 @@ function obGridColumnIds(columns) {
     function searchServer(q) {
       if (!refEntity || !window.fetch) return;
       var seq = ++searchSeq;
-      var requestFilter = filterParam();
+      var requestFilter = requestParam();
+      lastChoiceRequest=requestFilter;
       var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) +
                 '?limit=50&q=' + encodeURIComponent(q || '') + requestFilter;
       fetch(url, {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
         .then(function(resp) { if (!resp.ok) throw new Error('HTTP ' + resp.status); return resp.json(); })
         .then(function(data) {
-          if (seq !== searchSeq || requestFilter !== filterParam()) return; // ответ устарел
+          if (seq !== searchSeq || requestFilter !== requestParam()) return; // ответ устарел
           var keep = (activeIdx >= 0 && shown[activeIdx]) ? shown[activeIdx].id : '';
           serverRows = ((data && data.items) || []).map(function(row) {
             return {id: row && row.id != null ? String(row.id) : '', _label: String((row && row._label) || '')};
@@ -3015,6 +3330,7 @@ function obGridColumnIds(columns) {
       if (typeof window.openRefPicker !== 'function') return;
       var selEl = document.createElement('select');
       selEl.setAttribute('data-ref-entity', refEntity);
+      if(choiceContext) { selEl.setAttribute('data-ref-choice-context',choiceContext); selEl.setAttribute('data-ref-row-id',String(args.row)); selEl._obChoiceRow=args.item; selEl._obChoiceForm=args.container.closest('form'); }
       if (refFilter) selEl.setAttribute('data-ref-filter', refFilter);
       // «+ Создать» в форме подбора включается тем же признаком колонки, что и
       // в автоформе (allow_inline_create у поля ТЧ). Без переноса на временный
@@ -3027,6 +3343,9 @@ function obGridColumnIds(columns) {
         o.value = opts[k].id;
         o.textContent = opts[k]._label;
         selEl.appendChild(o);
+      }
+      if(choiceContext && selectedId && !opts.some(function(o){return String(o.id)===String(selectedId);})) {
+        var current=document.createElement('option');current.value=selectedId;current.textContent=label(selectedId)||selectedId;current.setAttribute('data-ob-choice-outside-filter','1');selEl.appendChild(current);
       }
       selEl.value = selectedId;
       selEl.addEventListener('change', function() {
@@ -3133,6 +3452,7 @@ function obGridColumnIds(columns) {
       // список уже уничтоженного редактора.
       if (searchTimer) { clearTimeout(searchTimer); searchTimer = null; }
       searchSeq++;
+      if(choiceContext){document.removeEventListener("change",choiceSourceChanged);if(window._obTPChoiceEditorRefresh===choiceSourceChanged)window._obTPChoiceEditorRefresh=null;}
       closeList();
       isOpen = false;
       if (list && list.parentElement) list.remove();
@@ -3146,6 +3466,7 @@ function obGridColumnIds(columns) {
       defaultValue = v;
       selectedId = refId(v);
       input.value = label(selectedId);
+      if(choiceContext) searchServer('');
     };
     this.serializeValue = function() { resolveTyped(); return selectedId; };
     this.applyValue = function(item, state) { item[args.column.field] = state; };
@@ -3415,8 +3736,14 @@ function obGridColumnIds(columns) {
       // Выкинуть её отсюда И оттуда значило бы стирать реквизит при записи:
       // сервер подставляет пустое значение всему, чего нет в строке.
       if (c && c.hidden) continue;
-      var col = {id: c.id, name: c.name, field: c.id, width: 120, resizable: true, sortable: true,
+      // Заголовок из реквизита формы (title_from) — текст, а шапка SlickGrid
+      // рисует подпись как HTML: экранируем.
+      var col = {id: c.id, name: c.titleFrom ? obEscapeColumnTitle(c.name) : c.name, field: c.id, width: 120, resizable: true, sortable: true,
                  metaIndex: (c && typeof c.index === "number") ? c.index : -1};
+      // Ширина из `width` элемента Колонка (или виртуальной колонки).
+      // obWidth — объявленная ширина: autosizeColumns перезаписывает width, а
+      // широкой таблице её надо вернуть (obGridKeepDeclaredWidths).
+      if (c.width) { col.width = c.width; col.obWidth = c.width; }
       if (c.virtual) {
         // Виртуальная колонка (#845): значение приехало с сервера по ссылке из
         // строки и в базе не хранится. Без редактора и в сером — иначе правка
@@ -3424,7 +3751,6 @@ function obGridColumnIds(columns) {
         col.virtual = true;
         col.focusable = false;
         col.cssClass = "ob-virtual";
-        if (c.width) col.width = c.width;
         col.formatter = function(row, cell, value) {
           if (value == null || value === "") return "";
           return "<span style='color:#64748b'>" + obManagedEscapeHTML(value) + "</span>";
@@ -4080,7 +4406,74 @@ function obGridColumnIds(columns) {
       });
     });
     if (origApplyTP) origApplyTP(tps);
+    if(window.obAttachTPChoiceContexts)window.obAttachTPChoiceContexts(document);
+    if(window.obRefreshChoiceFilters)window.obRefreshChoiceFilters();
+    if(window.obRefreshTPChoiceFilters)window.obRefreshTPChoiceFilters();
   };
+
+  // BEGIN onebase-tp-choice-refresh
+  var tpChoiceStates = new WeakMap();
+  function updateTPChoiceErrors(g, rowStates) {
+    var failed=g.dataView.getItems().some(function(row){
+      var states=rowStates.get(row);
+      return states && g.columns.some(function(col){
+        return col.choiceContext && states[col.field] && states[col.field].error;
+      });
+    });
+    if(failed)g.div.setAttribute('data-ob-choice-error','1');
+    else g.div.removeAttribute('data-ob-choice-error');
+  }
+  window.obRefreshTPChoiceFilters = function() {
+    if(window._obTPChoiceEditorRefresh)window._obTPChoiceEditorRefresh();
+    var jobs=[];
+    (window._obGridViews || []).forEach(function(g){
+      if(g.readOnly || !window.fetch || !window.obTPChoiceCarrier)return;
+      var rowStates=tpChoiceStates.get(g);
+      if(!rowStates){rowStates=new WeakMap();tpChoiceStates.set(g,rowStates);}
+      var items=g.dataView.getItems();
+      updateTPChoiceErrors(g,rowStates);
+      items.forEach(function(row,index){
+        var states=rowStates.get(row);
+        if(!states){states={};rowStates.set(row,states);}
+        g.columns.forEach(function(col){
+          if(!col.choiceContext)return;
+          var carrier=window.obTPChoiceCarrier(col.choiceContext,row,index,g.div.closest('form'),col.field,col.refEntity,col.refFilter);
+          var snapshot=window.obRefChoiceSnapshot(carrier);
+          var state=states[col.field] || (states[col.field]={seq:0});
+          var key=snapshot.fingerprint+'|'+snapshot.selected;
+          if(state.pending===key || (state.applied===key && !state.error))return;
+          var seq=++state.seq;state.pending=key;
+          var picker=document.getElementById('_ref-picker-modal');
+          if(picker && window._rpTarget && window._rpTarget._obChoiceRow===row && typeof picker._obChoiceReload==='function')picker._obChoiceReload();
+          var job=window.fetch('/ui/_ref-options/'+encodeURIComponent(col.refEntity)+'?limit=50'+snapshot.query,{credentials:'same-origin',headers:{Accept:'application/json'}})
+            .then(function(resp){if(!resp.ok)throw new Error('HTTP '+resp.status);return resp.json();})
+            .then(function(data){
+              if(state.seq!==seq || g.dataView.getItems().indexOf(row)<0)return;
+              var current=window.obRefChoiceSnapshot(carrier);
+              if(current.fingerprint!==snapshot.fingerprint || current.selected!==snapshot.selected){state.pending='';return window.obRefreshTPChoiceFilters();}
+              if(snapshot.selected && typeof data.selected_allowed!=='boolean')throw new Error('missing selected_allowed');
+              state.pending='';state.applied=key;state.error=false;
+              updateTPChoiceErrors(g,rowStates);
+              if(snapshot.selected && data.selected_allowed===false){
+                row[col.field]='';g.grid.invalidate();g.grid.render();
+                if(window.obSetManagedFormDirty)window.obSetManagedFormDirty(true);
+                return window.obRefreshTPChoiceFilters();
+              }
+            }).catch(function(){
+              if(state.seq!==seq)return;
+              state.pending='';
+              if(g.dataView.getItems().indexOf(row)<0){updateTPChoiceErrors(g,rowStates);return;}
+              var current=window.obRefChoiceSnapshot(carrier);
+              if(current.fingerprint!==snapshot.fingerprint || current.selected!==snapshot.selected)return window.obRefreshTPChoiceFilters();
+              state.error=true;updateTPChoiceErrors(g,rowStates);
+            });
+          jobs.push(job);
+        });
+      });
+    });
+    return Promise.all(jobs);
+  };
+  // END onebase-tp-choice-refresh
 
   // setupGrid инициализирует один грид. Вынесено из цикла в отдельную функцию,
   // чтобы каждый грид замыкал свои grid/dataView/tpName (иначе при нескольких
@@ -4114,6 +4507,9 @@ function obGridColumnIds(columns) {
     // алфавитный, а список должен идти в порядке объявления values:.
     var enumOrder = (window._tpEnumOrder && window._tpEnumOrder[tpName]) || {};
     var columns = buildColumns(colsRaw, refOpts, enumLabels, enumOrder);
+    var choiceContexts={};
+    try { choiceContexts=JSON.parse(div.getAttribute('data-sg-choice') || '{}') || {}; } catch(e) {}
+    columns.forEach(function(col){col.choiceContext=choiceContexts[col.field] || '';});
     var defaultColumnIds = obGridColumnIds(columns);
     obGridApplyOrder(columns, obGridParseOrder(div.getAttribute("data-sg-order")));
     // _ord — исходный порядок строки. Клиентская сортировка меняет ПОРЯДОК
@@ -4158,6 +4554,14 @@ function obGridColumnIds(columns) {
     };
 
     var grid = new Slick.Grid(div, dataView, columns, options);
+    // Ширину, которую пользователь задал мышью, следующий resizeGrid не
+    // сбрасывает к объявленной: она и становится объявленной.
+    if (grid.onColumnsResized) grid.onColumnsResized.subscribe(function() {
+      var cols = grid.getColumns(), declared = false;
+      for (var i = 0; i < cols.length; i++) if (cols[i].obWidth) declared = true;
+      if (!declared) return;
+      for (var j = 0; j < cols.length; j++) cols[j].obWidth = cols[j].width;
+    });
 
     // Каждый DOM-host инициализируется отдельно: readonly summary должна
     // оставаться видимой рядом с writable placement той же табличной части.
@@ -4168,8 +4572,18 @@ function obGridColumnIds(columns) {
       columnsMeta: colsRaw, refOpts: refOpts, div: div, readOnly: readOnly,
       tpName: tpName
     };
+    var choiceRows={};try{choiceRows=JSON.parse(div.getAttribute('data-sg-choice-rows')||'{}')||{};}catch(e){}
+    columns.forEach(function(col){
+      if(!col.choiceContext || !window.obTPChoiceCarrier)return;
+      col.choiceSeeds=new WeakMap();
+      dataView.getItems().forEach(function(row,index){
+        var carrier=window.obTPChoiceCarrier(col.choiceContext,row,index,div.closest('form'),col.field,col.refEntity,col.refFilter);
+        col.choiceSeeds.set(row,{fingerprint:window.obRefChoiceSnapshot(carrier).fingerprint,items:(choiceRows[col.field]||[])[index]||[]});
+      });
+    });
     div._obGridState = gridState;
     window._obGridViews.push(gridState);
+    if(Object.keys(choiceContexts).length)Promise.resolve().then(function(){window.obRefreshTPChoiceFilters();});
     enableColumnReorder(gridState, defaultColumnIds);
     var registered = window._obGrids[tpName];
     if (!registered || (!readOnly && registered.readOnly)) {
@@ -4183,7 +4597,7 @@ function obGridColumnIds(columns) {
     }
 
    try {
-    dataView.onRowCountChanged.subscribe(function() { grid.updateRowCount(); grid.render(); updateTotals(gridState); });
+    dataView.onRowCountChanged.subscribe(function() { grid.updateRowCount(); grid.render(); updateTotals(gridState); if(window.obRefreshTPChoiceFilters)window.obRefreshTPChoiceFilters(); });
     dataView.onRowsChanged.subscribe(function(e, args) { grid.invalidateRows(args.rows); grid.render(); });
 
     // Сортировка по клику на заголовок (колонки sortable). Порядок ОТОБРАЖЕНИЯ;
@@ -4241,6 +4655,7 @@ function obGridColumnIds(columns) {
         }
       }
       updateTotals(gridState);
+      if(window.obRefreshTPChoiceFilters)window.obRefreshTPChoiceFilters();
     });
 
     // Ячейка не прошла проверку (например, в колонке-ссылке набрано то, чего нет
@@ -4422,7 +4837,7 @@ function obManagedOwnTabParts(tabs, selector) {
 
 function obManagedSwitchTab(btn) {
   var tabs = btn && btn.closest ? btn.closest('.managed-tabs') : null;
-  if (!tabs) return;
+  if (!tabs || btn.style.display === 'none') return;
   var idx = btn.getAttribute('data-tab-idx') || '0';
   obManagedOwnTabParts(tabs, '.managed-tab-btn').forEach(function (b) { b.classList.remove('active'); });
   btn.classList.add('active');
@@ -4431,6 +4846,80 @@ function obManagedSwitchTab(btn) {
   if (content) content.style.display = 'block';
   try { sessionStorage.setItem(obManagedTabKey(tabs), idx); } catch (_) {}
   if (window._obResizeGrids) setTimeout(window._obResizeGrids, 0);
+}
+
+// obManagedSetPageHidden применяет пересчитанное событием формы условие
+// hidden_when к странице набора СтраницыФормы. Страница представлена двумя
+// узлами — кнопкой закладки и содержимым, — поэтому общий путь
+// applyElementStates (display у якоря) ей не подходит: спрятанное содержимое
+// оставило бы кнопку, а спрятанная кнопка — открытое содержимое. Прячется
+// кнопка; если она была открытой, открывается первая видимая закладка того же
+// набора, а когда видимых не осталось, гаснет и содержимое. hidden=false
+// возвращает кнопку, не переключая открытую закладку; если открытых больше
+// нет, открывает возвращённую. Это не зависит от порядка ключей hidden.
+// Страницу, скрытую уже при отрисовке, сервер не выводит, и показать её до
+// перезагрузки нечем.
+function obManagedSetPageHidden(path, hide) {
+  var btn = document.querySelector('.managed-tab-btn[data-ob-tab-path="' + (window.CSS && CSS.escape ? CSS.escape(path) : path) + '"]');
+  if (!btn) return;
+  btn.style.display = hide ? 'none' : '';
+  obManagedSyncPageRequired();
+  var tabs = btn.closest ? btn.closest('.managed-tabs') : null;
+  if (!tabs) return;
+  var siblings = obManagedOwnTabParts(tabs, '.managed-tab-btn');
+  if (!hide) {
+    for (var i = 0; i < siblings.length; i++) {
+      if (siblings[i].style.display !== 'none' && siblings[i].classList.contains('active')) return;
+    }
+    obManagedSwitchTab(btn);
+    return;
+  }
+  if (!btn.classList.contains('active')) return;
+  for (var i = 0; i < siblings.length; i++) {
+    if (siblings[i] !== btn && siblings[i].style.display !== 'none') {
+      obManagedSwitchTab(siblings[i]);
+      return;
+    }
+  }
+  btn.classList.remove('active');
+  var content = obManagedOwnTabParts(tabs, '.managed-tab-content[data-tab-content="' + (btn.getAttribute('data-tab-idx') || '0') + '"]')[0];
+  if (content) content.style.display = 'none';
+}
+
+// A conditionally hidden page cannot be filled. Suspend only its form-local
+// native required and string mask (pattern) rules. Keep controls enabled so
+// their unchanged values still post. Ordinary inactive pages keep both rules.
+// Restore the exact attributes only after every ancestor page is available;
+// Field.required and type validation remain enforced by the server.
+function obManagedSyncPageRequired() {
+  document.querySelectorAll('input[required], select[required], textarea[required], input[data-ob-form-mask][pattern], [data-ob-page-required], [data-ob-page-pattern]').forEach(function (control) {
+    var hidden = false;
+    var content = control.closest('.managed-tab-content');
+    while (content) {
+      var tabs = content.closest('.managed-tabs');
+      var idx = content.getAttribute('data-tab-content');
+      var btn = tabs && obManagedOwnTabParts(tabs, '.managed-tab-btn[data-tab-idx="' + idx + '"]')[0];
+      if (btn && btn.style.display === 'none') {
+        hidden = true;
+        break;
+      }
+      var parent = content.parentElement;
+      content = parent && parent.closest ? parent.closest('.managed-tab-content') : null;
+    }
+    ['required', 'pattern'].forEach(function (rule) {
+      if (rule === 'pattern' && !control.hasAttribute('data-ob-form-mask')) return;
+      var saved = 'data-ob-page-' + rule;
+      if (hidden && control.hasAttribute(rule)) {
+        // Remember once: another hide (or a still-hidden ancestor) must not
+        // overwrite the original value with the suspended state.
+        if (!control.hasAttribute(saved)) control.setAttribute(saved, control.getAttribute(rule));
+        control.removeAttribute(rule);
+      } else if (!hidden && control.hasAttribute(saved)) {
+        control.setAttribute(rule, control.getAttribute(saved));
+        control.removeAttribute(saved);
+      }
+    });
+  });
 }
 
 obManagedReady(function () {
@@ -4443,8 +4932,6 @@ obManagedReady(function () {
   var validationPassStarted = false;
   document.addEventListener('invalid', function (e) {
     if (validationPassStarted) return;
-    validationPassStarted = true;
-    setTimeout(function () { validationPassStarted = false; }, 0);
     var control = e.target;
     if (!control || !control.closest) return;
     var pages = [];
@@ -4454,15 +4941,28 @@ obManagedReady(function () {
       var parent = content.parentElement;
       content = parent && parent.closest ? parent.closest('.managed-tab-content') : null;
     }
-    // For nested tab groups, select every ancestor page from outer to inner:
-    // each group switches only its own pages, the inner one is set after.
-    for (var i = pages.length - 1; i >= 0; i--) {
+    // Inspect every ancestor before switching anything. A hidden_when page
+    // cannot be opened and must not consume the first-invalid slot: the next
+    // invalid control on an available page still needs to become visible.
+    var buttons = [];
+    for (var i = 0; i < pages.length; i++) {
       var page = pages[i];
       var tabs = page.closest('.managed-tabs');
       if (!tabs) continue;
       var idx = page.getAttribute('data-tab-content');
       var btn = obManagedOwnTabParts(tabs, '.managed-tab-btn[data-tab-idx="' + idx + '"]')[0];
-      if (btn) obManagedSwitchTab(btn);
+      if (btn && btn.style.display === 'none') {
+        e.preventDefault();
+        return;
+      }
+      if (btn) buttons.push(btn);
+    }
+    validationPassStarted = true;
+    setTimeout(function () { validationPassStarted = false; }, 0);
+    // Open available ancestors outer-to-inner. Each button only changes its
+    // own group, preserving selections in all other nested tab groups.
+    for (var i = buttons.length - 1; i >= 0; i--) {
+      obManagedSwitchTab(buttons[i]);
     }
   }, true);
 
@@ -4551,5 +5051,109 @@ obManagedReady(function () {
         });
       })(holders[i]);
     }
+  });
+});
+
+// Revoke immediately. Enabling requires values from the same response after
+// its renderer has completed; an absent key is not an empty disclosed value.
+function obApplyConcealed(revealed, form, appliedValues, retainedValues) {
+  if (!form) return;
+  var open = {};
+  (revealed || []).forEach(function (n) { open[String(n).toLowerCase()] = true; });
+  var applied = {};
+  Object.keys(appliedValues || {}).forEach(function (n) { applied[n.toLowerCase()] = true; });
+  var retained = {};
+  Object.keys(retainedValues || {}).forEach(function (n) { retained[n.toLowerCase()] = true; });
+  form.querySelectorAll("[data-ob-concealed]").forEach(function (el) {
+    var name = String(el.getAttribute("name") || "").toLowerCase();
+    if (open[name] && (applied[name] || (!el.disabled && retained[name]))) {
+      el.disabled = false;
+    } else if (!open[name] || appliedValues !== undefined) {
+      el.disabled = true;
+      el.value = "";
+    }
+  });
+  if (typeof window !== 'undefined' && window.obEntityLists && window.obEntityLists.concealChanged) window.obEntityLists.concealChanged();
+}
+window.obApplyConcealed = obApplyConcealed;
+
+// A reload carries the old server instance so the next GET revokes it.
+document.addEventListener('DOMContentLoaded', function () {
+  var form = document.getElementById('main-form');
+  var token = form && form.getAttribute('data-ob-conceal-context');
+  if (token && window.history && window.history.replaceState) {
+    var url = new URL(window.location.href);
+    url.searchParams.set('_ob_conceal', token);
+    window.history.replaceState(window.history.state, '', url.toString());
+  }
+});
+
+// ─── deadline_warn: поле-срок ───────────────────────────────────────────────
+//
+// Значение поля — срок: «ЧЧ:ММ» (сегодня) или дата со временем. До срока меньше
+// N минут (data-ob-deadline) — класс ob-deadline-soon, срок прошёл —
+// ob-deadline-over. Считается по часам браузера и пересчитывается каждые 15
+// секунд: форма открыта долго, а «время вышло» должно стать видно без
+// перезагрузки. Значение, которое не читается как срок, подсветки не даёт.
+function obDeadlineParse(raw, now) {
+  var v = String(raw || "").trim();
+  if (!v) return null;
+  function validTime(h, min, sec) {
+    return h <= 23 && min <= 59 && sec <= 59;
+  }
+  function dateTime(y, month, day, h, min, sec, ms, zone) {
+    if (!validTime(h, min, sec)) return null;
+    // Validate calendar components before Date can normalize an invalid day.
+    // setUTCFullYear also avoids the constructor's special handling of 0–99.
+    var utc = new Date(0);
+    utc.setUTCFullYear(y, month - 1, day);
+    utc.setUTCHours(h, min, sec, ms);
+    if (utc.getUTCFullYear() !== y || utc.getUTCMonth() !== month - 1 || utc.getUTCDate() !== day) return null;
+    if (zone) {
+      var offset = 0;
+      if (zone !== "Z") {
+        var parts = /^([+-])(\d{2}):(\d{2})$/.exec(zone);
+        if (!parts || !validTime(+parts[2], +parts[3], 0)) return null;
+        offset = (+parts[2] * 60 + +parts[3]) * (parts[1] === "+" ? 1 : -1);
+      }
+      return new Date(utc.getTime() - offset * 60000);
+    }
+    var local = new Date(0);
+    local.setFullYear(y, month - 1, day);
+    local.setHours(h, min, sec, ms);
+    if (local.getFullYear() !== y || local.getMonth() !== month - 1 || local.getDate() !== day ||
+        local.getHours() !== h || local.getMinutes() !== min || local.getSeconds() !== sec) return null;
+    return local;
+  }
+  var m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(v);
+  if (m) return dateTime(now.getFullYear(), now.getMonth() + 1, now.getDate(), +m[1], +m[2], +(m[3] || 0), 0, "");
+  m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:\d{2})?$/.exec(v);
+  if (m) return dateTime(+m[1], +m[2], +m[3], +m[4], +m[5], +(m[6] || 0), +(m[7] || "").slice(0, 3).padEnd(3, "0"), m[8]);
+  m = /^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(v);
+  if (m) return dateTime(+m[3], +m[2], +m[1], +m[4], +m[5], +(m[6] || 0), 0, "");
+  return null;
+}
+function obDeadlineState(raw, warnMinutes, now) {
+  var due = obDeadlineParse(raw, now);
+  if (!due) return "";
+  var left = due.getTime() - now.getTime();
+  if (left <= 0) return "over";
+  if (left <= warnMinutes * 60000) return "soon";
+  return "";
+}
+function obDeadlineTick() {
+  var now = new Date();
+  document.querySelectorAll("input[data-ob-deadline]").forEach(function (inp) {
+    var state = obDeadlineState(inp.value, parseFloat(inp.getAttribute("data-ob-deadline")) || 0, now);
+    inp.classList.toggle("ob-deadline-soon", state === "soon");
+    inp.classList.toggle("ob-deadline-over", state === "over");
+  });
+}
+window.obDeadlineTick = obDeadlineTick;
+obManagedReady(function () {
+  obDeadlineTick();
+  setInterval(obDeadlineTick, 15000);
+  document.addEventListener("input", function (e) {
+    if (e.target && e.target.hasAttribute && e.target.hasAttribute("data-ob-deadline")) obDeadlineTick();
   });
 });

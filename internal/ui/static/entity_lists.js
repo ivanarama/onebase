@@ -15,6 +15,21 @@
   var token = cfg.entityListState || '';
   var messages = cfg.entityListMessages || {};
   var generation = 0;
+  var disclosureExpires = Object.create(null);
+  function sourceControls(node) {
+    var paths = JSON.parse(node.getAttribute('data-ob-list-sources') || '{}');
+    return Array.from(form.querySelectorAll('[data-ob-concealed]')).filter(function(el) {
+      return Object.keys(paths).some(function(path) { return String(paths[path]).toLowerCase() === String(el.name).toLowerCase(); });
+    });
+  }
+  function concealed(node) { return sourceControls(node).some(function(el) { return el.disabled; }); }
+  function concealChanged() {
+    nodes.forEach(function(node) {
+      if (!concealed(node)) return;
+      generation++; invalidate(node); state(node, 'denied');
+    });
+  }
+
   function sources(node) {
     var paths = JSON.parse(node.getAttribute('data-ob-list-sources') || '{}');
     var body = new FormData(form), values = {};
@@ -38,13 +53,14 @@
     var revision = (node._listRevision || 0) + 1; node._listRevision = revision;
     var values = sources(node), fingerprint = JSON.stringify(values);
     state(node, 'loading');
+    if (concealed(node)) { state(node, 'denied'); return; }
     if (node._listAbort) node._listAbort.abort();
     var abort = typeof AbortController === 'function' ? new AbortController() : null; node._listAbort = abort;
     var body = new URLSearchParams();
     body.set('form', cfg.entityListForm); body.set('element', node.getAttribute('data-ob-list-id'));
     body.set('id', cfg.docId || ''); body.set('state', token); body.set('sources', fingerprint);
     try {
-      var response = await fetch(String(cfg.url).replace(/form-event$/, 'form-list-refresh'), { method: 'POST', body: body, credentials: 'same-origin', signal: abort ? abort.signal : undefined });
+      var response = await fetch(String(cfg.url).replace(/form-event$/, 'form-list-refresh'), { method: 'POST', body: body, credentials: 'same-origin', headers: {'X-OneBase-Conceal-Context': form.getAttribute('data-ob-conceal-context') || ''}, signal: abort ? abort.signal : undefined });
       var data = await response.json();
       if (!current(node, revision, fingerprint)) return;
       if (!response.ok || !data.ok) { state(node, response.status === 403 ? 'denied' : 'error'); return; }
@@ -53,6 +69,22 @@
   }
   function paint(node, list) {
       if (!list || !Array.isArray(list.rows) || !Array.isArray(list.columns)) { state(node, 'error'); return; }
+      if (concealed(node)) { state(node, 'denied'); return; }
+      var deadlines = list.disclosureExpires || {};
+      var expired = false;
+      Object.keys(deadlines).forEach(function(name) {
+        var key = name.toLowerCase(), until = deadlines[name];
+        if (!Number.isFinite(until) || until <= Date.now()) expired = true;
+        disclosureExpires[key] = until;
+        setTimeout(function() {
+          if (disclosureExpires[key] !== until) return;
+          sourceControls(node).forEach(function(el) {
+            if (String(el.name).toLowerCase() === key) { el.disabled = true; el.value = ''; }
+          });
+          concealChanged();
+        }, Math.max(0, until - Date.now()));
+      });
+      if (expired) { sourceControls(node).forEach(function(el) { el.disabled = true; el.value = ''; }); concealChanged(); state(node, 'denied'); return; }
       state(node, list.status);
       var header = node.querySelector('thead tr'), rows = node.querySelector('tbody');
       list.columns.forEach(function (text) { var th = document.createElement('th'); th.textContent = text; header.appendChild(th); });
@@ -93,6 +125,7 @@
   form.addEventListener('input', changed); form.addEventListener('change', changed);
   window.obEntityLists = {
     refresh: refreshAll,
+    concealChanged: concealChanged,
     invalidate: function () { nodes.forEach(invalidate); },
     snapshot: function (body) { body.set('_entity_list_state', token); return generation; }
   };

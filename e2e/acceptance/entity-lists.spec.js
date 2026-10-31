@@ -168,3 +168,127 @@ test('two lists refresh their own exact aliases, clear together and preserve dir
  const persisted=await page.request.get(`/ui/document/Заявка/${ids.owner}`);
  expect(await persisted.text()).toContain(`value="${persistedSourceBefore}" selected`);
 });
+
+const postOwner = n => `40000000-0000-0000-0000-${String(n).padStart(12,'0')}`;
+const note = page => page.locator('[name="Заметка"]');
+const checks = page => page.locator('[name="Проверок"]');
+const question = page => page.locator('#_question-modal');
+function postingRequests(page) {
+ const calls={events:[],writes:[]};
+ page.on('request',r=>{
+  if(r.method()!=='POST')return;
+  if(r.url().endsWith('/form-event'))calls.events.push(new URLSearchParams(r.postData()));
+  else if(!r.url().endsWith('/form-list-refresh'))calls.writes.push(r);
+ });
+ return calls;
+}
+async function readyLists(page,branch) {
+ for(const id of ['history','second-history']){
+  const widget=page.locator(`[data-ob-list-id="${id}"]`);
+  await expect(widget).toHaveAttribute('data-ob-list-state','ready');
+  await expect(widget.locator('tbody tr')).toHaveCount(2);
+  if(branch===ids.b)await expect(widget.locator('tbody')).toContainText(' B');
+  else await expect(widget.locator('tbody')).not.toContainText(' B');
+ }
+}
+async function persisted(page,id,branch,count,text='keep me') {
+ const response=await page.request.get(`/ui/document/Заявка/${id}`);
+ expect(response.status()).toBe(200);
+ const html=await response.text();
+ expect(html).toContain(`value="${branch}" selected`);
+ // Inspect actual storage through a fresh public GET, independently of the DOM.
+ // Parse the HTTP snapshot in Node: post-and-close may destroy the live page
+ // context while this independent storage assertion is running.
+ const inputs=html.match(/<input\b[^>]*>/g)||[];
+ const value=name=>{
+  const input=inputs.find(tag=>tag.includes(`name="${name}"`));
+  expect(input,`persisted input ${name}`).toBeTruthy();
+  const match=input.match(/\bvalue="([^"]*)"/);
+  expect(match,`persisted value ${name}`).toBeTruthy();
+  return match[1];
+ };
+ const values={checks:value('Проверок'),text:value('tp.Items.0.Text')};
+ expect(Number(values.checks)).toBe(count);
+ expect(values.text).toBe(text);
+}
+async function holdBeforePost(page) {
+ let release,arrived;
+ const ready=new Promise(r=>arrived=r),barrier=new Promise(r=>release=r);
+ let held=false;
+ await page.route('**/form-event',async route=>{
+  const body=new URLSearchParams(route.request().postData());
+  if(held||body.get('_event')!=='ПередПроведением')return route.continue();
+  held=true;
+  const response=await route.fetch(),bytes=await response.body();
+  arrived();await barrier;await route.fulfill({response,body:bytes});
+ });
+ return {ready,release:()=>release()};
+}
+async function post(page,close) {
+ await page.locator(close?'[data-ob-form-close="post"]':'button[name="_action"][value="post"]').click();
+}
+for(const close of [false,true])test(`before-post question merges live sources and table data, close=${close}`,async({page})=>{
+ const id=postOwner(close?2:1);await open(page,id);
+ const calls=postingRequests(page),held=await holdBeforePost(page);
+ try{
+  await post(page,close);await held.ready;
+  // A→B→A is a real new revision although its final source equals the sent one.
+  await source(page).selectOption(ids.b);await source(page).selectOption(ids.a);
+  await note(page).fill('новый ввод');
+  const cell=page.locator('[name="tp.Items.0.Text"]');await cell.fill('new table data');
+  held.release();await expect(question(page)).toBeVisible();
+  await expect(source(page)).toHaveValue(ids.a);await readyLists(page,ids.a);
+  await expect(note(page)).toHaveValue('новый ввод');await expect(cell).toHaveValue('new table data');
+  await expect(checks(page)).toHaveValue('1');
+  expect(await page.evaluate(()=>window._obFormDirty)).toBe(true);
+  await persisted(page,id,ids.a,0);expect(calls.events).toHaveLength(1);expect(calls.writes).toHaveLength(0);
+  await question(page).getByRole('button',{name:'Да',exact:true}).click();
+  await expect.poll(()=>calls.writes.length).toBe(1);
+  await expect.poll(async()=>{
+   const response=await page.request.get(`/ui/document/Заявка/${id}`);
+   return (await response.text()).includes('new table data');
+  }).toBe(true);
+  await persisted(page,id,ids.a,2,'new table data');
+  expect(calls.events.map(x=>x.get('_event'))).toEqual(['ПередПроведением','ПередПроведением']);
+  expect(calls.events[1].get('_question_answer')).toBe('Да');expect(calls.writes).toHaveLength(1);
+ }finally{held.release();}
+});
+for(const dismiss of [false,true])test(`before-post question ${dismiss?'dismissal':'cancellation'} keeps untouched handler values and never writes`,async({page})=>{
+ const id=postOwner(dismiss?4:3);await open(page,id);const calls=postingRequests(page);
+ await post(page,true);await expect(question(page)).toBeVisible();
+ await expect(source(page)).toHaveValue(ids.b);await readyLists(page,ids.b);
+ await expect(note(page)).toHaveValue('правка обработчика');await expect(checks(page)).toHaveValue('1');
+ if(dismiss)await question(page).click({position:{x:2,y:2}});
+ else{
+  const answered=page.waitForResponse(r=>r.url().endsWith('/form-event'));
+  await question(page).getByRole('button',{name:'Отмена',exact:true}).click();await answered;
+  await expect(checks(page)).toHaveValue('2');await readyLists(page,ids.b);
+ }
+ await expect(question(page)).toHaveCount(0);await persisted(page,id,ids.a,0);
+ expect(calls.events).toHaveLength(dismiss?1:2);expect(calls.writes).toHaveLength(0);
+ expect(await page.evaluate(()=>window._obFormDirty)).toBe(true);
+});
+for(const close of [false,true])test(`changed snapshot without a question needs a fresh check, close=${close}`,async({page})=>{
+ const id=postOwner(close?6:5);await open(page,id);await note(page).fill('без вопроса');
+ const calls=postingRequests(page),held=await holdBeforePost(page);
+ try{
+  await post(page,close);await held.ready;
+  await source(page).selectOption(ids.b);await source(page).selectOption(ids.a);
+  held.release();await expect(checks(page)).toHaveValue('1');await readyLists(page,ids.a);
+  await persisted(page,id,ids.a,0);expect(calls.events).toHaveLength(1);expect(calls.writes).toHaveLength(0);
+  await post(page,close);await expect.poll(()=>calls.writes.length).toBe(1);
+  await expect.poll(async()=>{
+   const r=await page.request.get(`/ui/document/Заявка/${id}`);return (await r.text()).includes(`value="${ids.b}" selected`);
+  }).toBe(true);
+  await persisted(page,id,ids.b,2);expect(calls.events).toHaveLength(2);expect(calls.writes).toHaveLength(1);
+ }finally{held.release();}
+});
+test('ordinary question retains its answer route alongside related lists',async({page})=>{
+ await open(page,postOwner(7));const calls=postingRequests(page);
+ await page.getByRole('button',{name:'Спросить',exact:true}).click();await expect(question(page)).toBeVisible();
+ await readyLists(page,ids.a);
+ await question(page).getByRole('button',{name:'Да',exact:true}).click();
+ await expect(source(page)).toHaveValue(ids.b);await readyLists(page,ids.b);
+ expect(calls.events.map(x=>x.get('_event'))).toEqual(['Нажатие','Ответ']);expect(calls.writes).toHaveLength(0);
+ await persisted(page,postOwner(7),ids.a,0);
+});

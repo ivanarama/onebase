@@ -39,6 +39,17 @@ elements:
  - kind: Список
    id: history
    name: History
+ - kind: ТабличнаяЧасть
+   id: items
+   name: Items
+   data_path: Объект.Items
+   columns:
+    - kind: ПолеВвода
+      id: items-product
+      name: Товар
+      data_path: Объект.Items.Товар
+      choice_filter:
+       - {query: "ВЫБРАТЬ Ссылка ИЗ Справочник.Товар", params: {Клиент: Объект.Клиент}}
 `
 	spec := `{"entity":"Заказ","filter":[{"field":"Клиент","op":"eq","source":"Объект.Клиент"},{"field":"Флаг","op":"eq","value":false},{"field":"Сумма","op":"eq","value":0}],"order_by":["Дата desc","Номер asc"],"limit":5,"columns":["Номер","Дата"],"on_row_click":"открыть"}`
 	response := request(h.configuratorFormsEditOp, "/forms/edit-op", url.Values{"op": {"setEntityList"}, "node": {"elements.0"}, "yaml": {yaml}, "entity_list": {spec}})
@@ -62,7 +73,7 @@ elements:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(form.Elements) != 1 || form.Elements[0].EntityList == nil || form.Elements[0].EntityList.Filter[1].Value.Tag != "!!bool" || form.Elements[0].EntityList.Filter[2].Value.Tag != "!!int" {
+	if len(form.Elements) != 2 || form.Elements[0].EntityList == nil || form.Elements[0].EntityList.Filter[1].Value.Tag != "!!bool" || form.Elements[0].EntityList.Filter[2].Value.Tag != "!!int" {
 		t.Fatalf("saved form=%+v", form.Elements)
 	}
 	bytes, err := os.ReadFile(path)
@@ -87,6 +98,11 @@ elements:
 	}
 	if got := again.Elements[0]; got.ID != "history" || got.EntityList.Filter[1].Value.Tag != "!!bool" || got.EntityList.Filter[2].Value.Tag != "!!int" || got.EntityList.OnRowClick != "открыть" {
 		t.Fatalf("IR lost specification: %+v", got)
+	}
+
+	column := again.Elements[1].Columns
+	if again.Elements[1].ID != "items" || len(column) != 1 || column[0].ID != "items-product" || column[0].Name != "Товар" || len(column[0].ChoiceFilter) != 1 || column[0].ChoiceFilter[0].Params["Клиент"] != "Объект.Клиент" {
+		t.Fatalf("IR lost table-part columns: %+v", column)
 	}
 	onec_forms.NormalizeForExport(ir)
 	if err := onec_forms.WriteFormXML(ir, filepath.Join(t.TempDir(), "Form.xml")); err == nil {

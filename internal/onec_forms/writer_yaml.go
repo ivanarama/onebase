@@ -106,26 +106,28 @@ type yamlCommandBarButton struct {
 }
 
 type yamlElement struct {
-	ID            string                       `yaml:"id,omitempty"`
-	EntityList    *metadata.FormEntityListSpec `yaml:",inline"`
-	Kind          string                       `yaml:"kind"`
-	Name          string                       `yaml:"name,omitempty"`
-	Title         map[string]string            `yaml:"title,omitempty"`
-	DataPath      string                       `yaml:"data_path,omitempty"`
-	OriginalID    string                       `yaml:"original_id,omitempty"`
-	Picture       string                       `yaml:"picture,omitempty"`
-	ValuesPicture string                       `yaml:"values_picture,omitempty"`
-	ReadOnly      bool                         `yaml:"readonly,omitempty"`
-	Required      bool                         `yaml:"required,omitempty"`
-	Choice        bool                         `yaml:"choice,omitempty"`
-	Width         int                          `yaml:"width,omitempty"`
-	Height        int                          `yaml:"height,omitempty"`
-	Hint          string                       `yaml:"hint,omitempty"`
-	Mask          string                       `yaml:"mask,omitempty"`
-	Events        map[string]string            `yaml:"events,omitempty"`
-	Props         map[string]any               `yaml:"props,omitempty"`
-	Children      []yamlElement                `yaml:"children,omitempty"`
-	UnknownXMLB64 string                       `yaml:"unknown_xml_b64,omitempty"`
+	ID            string                         `yaml:"id,omitempty"`
+	EntityList    *metadata.FormEntityListSpec   `yaml:"-"`
+	Columns       []yamlElement                  `yaml:"columns,omitempty"`
+	ChoiceFilter  []metadata.FormChoiceCondition `yaml:"choice_filter,omitempty"`
+	Kind          string                         `yaml:"kind"`
+	Name          string                         `yaml:"name,omitempty"`
+	Title         map[string]string              `yaml:"title,omitempty"`
+	DataPath      string                         `yaml:"data_path,omitempty"`
+	OriginalID    string                         `yaml:"original_id,omitempty"`
+	Picture       string                         `yaml:"picture,omitempty"`
+	ValuesPicture string                         `yaml:"values_picture,omitempty"`
+	ReadOnly      bool                           `yaml:"readonly,omitempty"`
+	Required      bool                           `yaml:"required,omitempty"`
+	Choice        bool                           `yaml:"choice,omitempty"`
+	Width         int                            `yaml:"width,omitempty"`
+	Height        int                            `yaml:"height,omitempty"`
+	Hint          string                         `yaml:"hint,omitempty"`
+	Mask          string                         `yaml:"mask,omitempty"`
+	Events        map[string]string              `yaml:"events,omitempty"`
+	Props         map[string]any                 `yaml:"props,omitempty"`
+	Children      []yamlElement                  `yaml:"children,omitempty"`
+	UnknownXMLB64 string                         `yaml:"unknown_xml_b64,omitempty"`
 }
 
 type yamlResource struct {
@@ -257,6 +259,7 @@ func commandBarToYAML(b *IRCommandBar) yamlCommandBar {
 func elementToYAML(el *IRElement) yamlElement {
 	out := yamlElement{
 
+		ID:            el.ID,
 		Kind:          el.Kind,
 		Name:          el.Name,
 		Title:         nonEmptyTitle(el.Title),
@@ -285,10 +288,34 @@ func elementToYAML(el *IRElement) yamlElement {
 	for _, c := range el.Children {
 		out.Children = append(out.Children, elementToYAML(c))
 	}
+	out.ChoiceFilter = el.ChoiceFilter
+	for _, c := range el.Columns {
+		out.Columns = append(out.Columns, elementToYAML(c))
+	}
 	if len(el.UnknownXML) > 0 {
 		out.UnknownXMLB64 = base64.StdEncoding.EncodeToString(el.UnknownXML)
 	}
 	return out
+}
+
+// MarshalYAML flattens the list specification after selecting its columns type.
+func (el yamlElement) MarshalYAML() (any, error) {
+	type plain yamlElement
+	var node yaml.Node
+	if err := node.Encode(plain(el)); err != nil {
+		return nil, err
+	}
+	if el.EntityList != nil {
+		if len(el.Columns) != 0 {
+			return nil, fmt.Errorf("list cannot have table-part columns")
+		}
+		var spec yaml.Node
+		if err := spec.Encode(el.EntityList); err != nil {
+			return nil, err
+		}
+		node.Content = append(node.Content, spec.Content...)
+	}
+	return &node, nil
 }
 
 // nonEmptyTitle возвращает map, либо nil если там нет значений с непустым контентом.

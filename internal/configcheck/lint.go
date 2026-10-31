@@ -79,9 +79,10 @@ type yamlLintSpec struct {
 }
 
 type yamlLintSchema struct {
-	keys map[string]*yamlLintSchema
-	elem *yamlLintSchema
-	free bool
+	keys   map[string]*yamlLintSchema
+	elem   *yamlLintSchema
+	values *yamlLintSchema
+	free   bool
 }
 
 func yamlLintSpecs() []yamlLintSpec {
@@ -137,6 +138,16 @@ func lintYAMLNode(label, kind, path string, node *yaml.Node, schema *yamlLintSch
 		nextPath := path + "[]"
 		for _, item := range node.Content {
 			lintYAMLNode(label, kind, nextPath, item, schema.elem, issues)
+		}
+		return
+	}
+	if node.Kind == yaml.MappingNode && schema.values != nil {
+		for i := 0; i+1 < len(node.Content); i += 2 {
+			nextPath := node.Content[i].Value
+			if path != "" {
+				nextPath = path + "." + nextPath
+			}
+			lintYAMLNode(label, kind, nextPath, node.Content[i+1], schema.values, issues)
 		}
 		return
 	}
@@ -402,11 +413,11 @@ func entityYAMLSchema() *yamlLintSchema {
 		"deadline_days": freeMap(),
 	})
 	return with(obj(
-		"name", "title", "description", "posting", "hierarchical", "hierarchy_kind",
+		"name", "title", "description", "posting", "post_caption", "post_and_close_hidden", "hierarchical", "hierarchy_kind",
 		// owner — справочник-владелец (подчинённый справочник, 1С «Владелец»).
 		"owner",
 		"presentation", "order_by", "choice_preview", "choice_preview_proc",
-		"list_form", "item_form", "based_on", "list_mode", "notify_changes", "list_refresh_on",
+		"list_form", "item_form", "based_on", "list_mode", "list_filters", "interactive_create", "notify_changes", "list_refresh_on",
 		"fulltext", "search_fields", "detail_panel",
 	), map[string]*yamlLintSchema{
 		"titles": freeMap(),
@@ -609,11 +620,12 @@ func accountRegisterYAMLSchema() *yamlLintSchema {
 func homePageYAMLSchema() *yamlLintSchema {
 	nav := obj("documents", "catalogs", "reports", "inforegs", "registers", "processors", "journals", "pages")
 	return with(obj("title", "layout", "hidden"), map[string]*yamlLintSchema{
-		"titles":  freeMap(),
-		"rows":    seq(obj("widgets")),
-		"widgets": seq(obj("name", "span")),
-		"nav":     nav,
-		"menu":    menuYAMLSchema(),
+		"titles":      freeMap(),
+		"rows":        seq(obj("widgets")),
+		"widgets":     seq(obj("name", "span")),
+		"nav":         nav,
+		"nav_by_role": {values: nav},
+		"menu":        menuYAMLSchema(),
 	})
 }
 
@@ -626,12 +638,19 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		"halign", "valign", "readonly", "readonly_when", "hidden_when", "use_grid", "no_grid", "auto_sum", "hint", "mask",
 		"accesskey", "hotkey", "multiline", "format", "display_format", "type", "choice", "unknown_xml", "view",
 		"scroll_x", "primary", "editable_admin_only", "choice_folders", "choice_dropdown",
+		// Явная видимость кнопки «Открыть карточку» у поля — сильнее ключей
+		// формы (#1876).
+		"ref_card_button",
 		// Ключи, поддержанные загрузчиком, но забытые здесь: линт объявлял их
 		// неизвестными, а гейт CI считает предупреждение ошибкой — то есть
 		// документированный «language» у kind: ПолеКода не давал примеру
 		// пройти собственную проверку (#1014).
-		"orientation", "background", "input_mask", "language", "virtual_columns",
+		"orientation", "equal_columns", "background", "input_mask", "language", "virtual_columns",
 		"entity", "order_by", "limit", "columns", "on_row_click",
+		"deadline_warn",
+		"conceal", "reveal_when",
+		"title_from",
+		"hint_inline",
 	} {
 		element.keys[k] = nil
 	}
@@ -651,7 +670,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	element.keys["children"] = seq(element)
 	element.keys["choices"] = seq(with(obj("value"), map[string]*yamlLintSchema{"title": freeMap()}))
 	element.keys["options"] = seq(with(obj("value"), map[string]*yamlLintSchema{"label": freeMap()}))
-	element.keys["choice_filter"] = seq(obj("field", "op", "from", "value", "ref"))
+	element.keys["choice_filter"] = seq(with(obj("field", "op", "from", "value", "ref", "query"), map[string]*yamlLintSchema{"params": freeMap()}))
 	element.keys["filter"] = seq(obj("field", "op", "source", "value"))
 
 	attrColumn := with(obj("id", "original_id", "name", "type", "length", "precision"), map[string]*yamlLintSchema{
@@ -673,8 +692,13 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	commandBar := obj("id", "original_id", "name", "visible")
 	commandBar.keys["buttons"] = seq(button)
 
-	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button"), map[string]*yamlLintSchema{
+	// filter — постоянный отбор формы списка (поле ListFilter), читается
+	// загрузчиком внутри блока form:.
+	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button", "ref_card_button_admin_only", "enter_submits_form"), map[string]*yamlLintSchema{
 		"title": freeMap(),
+		"filter": seq(with(obj("field", "op", "value", "roles", "query", "removable"), map[string]*yamlLintSchema{
+			"label": freeMap(),
+		})),
 	})
 	style := obj("color", "background", "bold", "italic")
 	conditional := with(obj("when", "target", "element", "table_part", "field"), map[string]*yamlLintSchema{

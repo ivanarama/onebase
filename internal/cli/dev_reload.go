@@ -96,7 +96,7 @@ func goModuleRoot(start string) (string, error) {
 		return "", fmt.Errorf("--source: разрешить символические ссылки: %w", err)
 	}
 	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil { // #nosec G703 -- Developer explicitly selects the local checkout via --source; only fixed go.mod is checked in its resolved ancestors.
 			return dir, nil
 		}
 		parent := filepath.Dir(dir)

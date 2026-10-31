@@ -284,3 +284,64 @@ func TestCheckRelatedEntityListCLI(t *testing.T) {
 		t.Fatalf("invalid list accepted: %v %s", err, out)
 	}
 }
+
+func TestCheckRelatedListAndTableColumnsCLI(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.CopyFS(dir, os.DirFS("../../examples/related-lists")); err != nil {
+		t.Fatal(err)
+	}
+	entity := filepath.Join(dir, "documents", "Обращение.yaml")
+	b, err := os.ReadFile(entity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b = append(b, []byte("tableparts:\n - name: Items\n   fields: [{name: Клиент, type: 'reference:Клиент'}]\n")...)
+	if err := os.WriteFile(entity, b, 0600); err != nil { // #nosec G703 -- Fixed documents/Обращение.yaml fixture path under t.TempDir(); no CLI or HTTP input.
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, "forms", "обращение", "object.form.yaml")
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(original) + `
+  - kind: ГруппаФормы
+    name: Row
+    orientation: horizontal
+    equal_columns: true
+  - kind: ТабличнаяЧасть
+    name: Items
+    data_path: Объект.Items
+    columns:
+      - kind: ПолеВвода
+        name: Клиент
+        id: items-client
+        data_path: Объект.Items.Клиент
+        choice_filter:
+          - query: ВЫБРАТЬ Ссылка ИЗ Справочник.Клиент
+            params: {Клиент: Объект.Клиент}
+`
+	check := func(text string) (string, error) {
+		t.Helper()
+		if err := os.WriteFile(path, []byte(text), 0600); err != nil { // #nosec G703 -- Fixed forms/обращение/object.form.yaml fixture path under t.TempDir(); no CLI or HTTP input.
+			t.Fatal(err)
+		}
+		return runCheckCmd(t, runCheck, dir, map[string]string{"lint": "true"})
+	}
+	out, err := check(text)
+	if err != nil || !strings.Contains(out, "OK:") || strings.Contains(out, "unknown") || strings.Contains(out, "неизвестн") {
+		t.Fatalf("combined columns/check/lint: %v %s", err, out)
+	}
+	for _, tc := range []struct{ name, text, want string }{
+		{"list mixed", strings.Replace(text, "columns: [Номер, ДатаВызова, Состояние, Клиент]", "columns: [Номер, {name: Клиент}]", 1), "columns"},
+		{"list unknown", strings.Replace(text, "limit: 5", "limti: 5", 1), "limti"},
+		{"filter unknown", strings.Replace(text, "params:", "paramz:", 1), "paramz"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := check(tc.text)
+			if !strings.Contains(out, tc.want) {
+				t.Fatalf("missing %q diagnostic: %v %s", tc.want, err, out)
+			}
+		})
+	}
+}

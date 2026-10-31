@@ -27,11 +27,31 @@ type entityListRow struct {
 	Marked bool     `json:"marked,omitempty"`
 }
 type entityListData struct {
-	Status  string          `json:"status"`
-	Columns []string        `json:"columns"`
-	Rows    []entityListRow `json:"rows"`
+	Status            string           `json:"status"`
+	DisclosureExpires map[string]int64 `json:"disclosureExpires,omitempty"`
+	Columns           []string         `json:"columns"`
+	Rows              []entityListRow  `json:"rows"`
 }
 type entityListOwnerIDKey struct{}
+type deniedEntityListSource struct{}
+
+func listSourceConcealed(form *metadata.FormModule, name string) bool {
+	for field := range concealedFormFields(form) {
+		if strings.EqualFold(field, name) {
+			return true
+		}
+	}
+	return false
+}
+
+// The list signature authenticates values; disclosure remains a separate live grant.
+func (s *Server) listSourceDisclosed(ctx context.Context, form *metadata.FormModule, name string) bool {
+	if !listSourceConcealed(form, name) {
+		return true
+	}
+	cr, _ := ctx.Value(concealRequestKey{}).(*concealRequest)
+	return cr != nil && cr.close == nil && s.concealedGrants(ctx, form)[strings.ToLower(name)]
+}
 
 type entityListState struct {
 	Owner, Form, ID, User, Schema string
@@ -162,8 +182,10 @@ func (s *Server) signEntityListState(ctx context.Context, owner *metadata.Entity
 	}
 	v := map[string]string{}
 	for path, name := range listSources(form, "") {
-		if !choiceAttrMasked(s.fieldDecisions(ctx, owner), name) {
-			v[path] = listSourceString(owner, form, path, listValue(values, name))
+		if !choiceAttrMasked(s.fieldDecisions(ctx, owner), name) && s.listSourceDisclosed(ctx, form, name) {
+			if _, denied := listValue(values, name).(deniedEntityListSource); !denied {
+				v[path] = listSourceString(owner, form, path, listValue(values, name))
+			}
 		}
 	}
 	schema, err := entityListSchema(form)
@@ -313,10 +335,25 @@ func (s *Server) loadManagedEntityLists(ctx context.Context, owner *metadata.Ent
 				value, err = metadata.EntityListLiteral(f, c.Value)
 			} else {
 				source := metadata.EntityListSourceField(owner, form, c.Source)
-				if choiceAttrMasked(s.fieldDecisions(ctx, owner), source.Name) {
+				if choiceAttrMasked(s.fieldDecisions(ctx, owner), source.Name) || !s.listSourceDisclosed(ctx, form, source.Name) {
 					return true
 				}
+				if listSourceConcealed(form, source.Name) {
+					cr, _ := ctx.Value(concealRequestKey{}).(*concealRequest)
+					instance, _ := cr.instance()
+					if dto.DisclosureExpires == nil {
+						dto.DisclosureExpires = map[string]int64{}
+					}
+					for name, until := range instance.grants {
+						if strings.EqualFold(name, source.Name) {
+							dto.DisclosureExpires[name] = until.UnixMilli()
+						}
+					}
+				}
 				value = listValue(values, source.Name)
+				if _, denied := value.(deniedEntityListSource); denied {
+					return true
+				}
 			}
 			if err != nil {
 				dto.Status = "error"
@@ -439,7 +476,8 @@ func (s *Server) entityListRefreshValues(r *http.Request, owner *metadata.Entity
 		values[k] = v
 	}
 	for path, name := range allowed {
-		if choiceAttrMasked(s.fieldDecisions(r.Context(), owner), name) {
+		if choiceAttrMasked(s.fieldDecisions(r.Context(), owner), name) || !s.listSourceDisclosed(r.Context(), form, name) {
+			setListValue(values, name, deniedEntityListSource{})
 			continue
 		}
 		value := sources[path]
@@ -450,6 +488,10 @@ func (s *Server) entityListRefreshValues(r *http.Request, owner *metadata.Entity
 			}
 			v, ok := signed[path]
 			if !ok {
+				if listSourceConcealed(form, name) {
+					setListValue(values, name, deniedEntityListSource{})
+					continue
+				}
 				return nil, fmt.Errorf("readonly source requires server state")
 			}
 			value = v
@@ -486,6 +528,11 @@ func (s *Server) handleManagedListRefresh(w http.ResponseWriter, r *http.Request
 		fail(http.StatusBadRequest)
 		return
 	}
+	// A refresh may observe, but never issue or extend, an existing disclosure.
+	r.PostForm.Set("_id", r.PostForm.Get("id"))
+	r.Form.Set("_id", r.PostForm.Get("id"))
+	r, finishConceal := s.beginConcealRequest(r, owner, false, nil)
+	defer finishConceal()
 	var sources map[string]string
 	if json.Unmarshal([]byte(r.PostForm.Get("sources")), &sources) != nil {
 		fail(http.StatusBadRequest)

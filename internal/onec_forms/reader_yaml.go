@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/ivantit66/onebase/internal/metadata"
+
 	"gopkg.in/yaml.v3"
 )
 
@@ -149,6 +151,7 @@ func yamlCommandBarToIR(b *yamlCommandBar) *IRCommandBar {
 func yamlElementToIR(el yamlElement) *IRElement {
 	out := &IRElement{
 
+		ID:         el.ID,
 		Kind:       el.Kind,
 		Name:       el.Name,
 		Title:      IRTitle(el.Title),
@@ -175,10 +178,39 @@ func yamlElementToIR(el yamlElement) *IRElement {
 	for _, c := range el.Children {
 		out.Children = append(out.Children, yamlElementToIR(c))
 	}
+	out.ChoiceFilter = el.ChoiceFilter
+	for _, c := range el.Columns {
+		out.Columns = append(out.Columns, yamlElementToIR(c))
+	}
 	if el.UnknownXMLB64 != "" {
 		if x, err := base64.StdEncoding.DecodeString(el.UnknownXMLB64); err == nil {
 			out.UnknownXML = x
 		}
 	}
 	return out
+}
+
+// UnmarshalYAML uses the runtime grammar for the columns union and list checks.
+func (el *yamlElement) UnmarshalYAML(n *yaml.Node) error {
+	var runtime metadata.FormElement
+	if err := n.Decode(&runtime); err != nil {
+		return err
+	}
+	type plain yamlElement
+	wire := *n
+	if runtime.Kind == metadata.FormElementEntityList {
+		wire.Content = nil
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			if n.Content[i].Value != "columns" {
+				wire.Content = append(wire.Content, n.Content[i], n.Content[i+1])
+			}
+		}
+	}
+	var decoded plain
+	if err := wire.Decode(&decoded); err != nil {
+		return err
+	}
+	decoded.EntityList = runtime.EntityList
+	*el = yamlElement(decoded)
+	return nil
 }

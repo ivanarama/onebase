@@ -23,6 +23,15 @@ import (
 func TestEntityListsBrowserAcceptance(t *testing.T) {
 	browseracceptance.Require(t)
 	f := entityListFixture(t)
+	f.owner.Posting = true
+	f.user.Roles[0].Permissions.Documents[f.owner.Name] = []string{"read", "write", "post"}
+	f.owner.Fields = append(f.owner.Fields,
+		metadata.Field{Name: "Заметка", Type: metadata.FieldTypeString},
+		metadata.Field{Name: "Проверок", Type: metadata.FieldTypeNumber})
+	f.owner.Forms[0].Handlers = map[metadata.FormEventType]string{metadata.FormEventBeforePost: "ПроверитьПроведение"}
+	f.owner.Forms[0].Elements = append(f.owner.Forms[0].Elements,
+		&metadata.FormElement{ID: "note", Name: "Заметка", Kind: metadata.FormElementField, DataPath: "Объект.Заметка"},
+		&metadata.FormElement{ID: "checks", Name: "Проверок", Kind: metadata.FormElementField, DataPath: "Объект.Проверок"})
 	// Validation accepts case-insensitive source paths; the rendered control
 	// remains select[name="Направление"]. Exercise that binding in every scenario.
 	f.owner.Forms[0].Elements[2].EntityList.Filter[0].Source = "объект.направление"
@@ -49,6 +58,30 @@ func TestEntityListsBrowserAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	code := fmt.Sprintf("Процедура ВеткаB()\n Объект.Направление = %q;\nКонецПроцедуры\nПроцедура ЗаписатьB()\n Объект.Направление = %q;\n Объект.Записать();\nКонецПроцедуры\n", f.rootB.String(), f.rootB.String())
+	code += fmt.Sprintf(`
+Процедура ПроверитьПроведение(Отказ)
+ Объект.Проверок = Объект.Проверок + 1;
+ Если ВопросОтвет = "" Тогда
+  Если Объект.Заметка = "без вопроса" Тогда
+   Объект.Направление = %q;
+   Возврат;
+  КонецЕсли;
+  Объект.Направление = %q;
+  Объект.Заметка = "правка обработчика";
+  ПоказатьВопрос("Провести со списком?", "ДаНетОтмена", "Проверка списка");
+ Иначе
+  Если ВопросОтвет <> "Да" Тогда
+   Отказ = Истина;
+  КонецЕсли;
+ КонецЕсли;
+КонецПроцедуры
+Процедура ОбычныйВопрос()
+ ПоказатьВопрос("Обычный вопрос", "ДаНет", "Вопрос");
+КонецПроцедуры
+Процедура ОтветНаВопрос()
+ Объект.Направление = %q;
+КонецПроцедуры
+`, f.rootB.String(), f.rootB.String(), f.rootB.String())
 	if err := os.WriteFile(filepath.Join(dir, "test.form.os"), []byte(code), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -58,6 +91,7 @@ func TestEntityListsBrowserAcceptance(t *testing.T) {
 	}
 	f.owner.Forms[0].ProgramAST = loaded.ProgramAST
 	f.owner.Forms[0].Elements = append(f.owner.Forms[0].Elements, &metadata.FormElement{ID: "branch-b", Name: "ВеткаB", Kind: metadata.FormElementButton, TitleMap: map[string]string{"ru": "ВеткаB"}, Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "ВеткаB"}})
+	f.owner.Forms[0].Elements = append(f.owner.Forms[0].Elements, &metadata.FormElement{ID: "ask", Name: "Спросить", Kind: metadata.FormElementButton, TitleMap: map[string]string{"ru": "Спросить"}, Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "ОбычныйВопрос", metadata.FormEventOnAnswer: "ОтветНаВопрос"}})
 
 	f.owner.TableParts = []metadata.TablePart{{Name: "Items", Fields: []metadata.Field{{Name: "Text", Type: metadata.FieldTypeString}}}}
 	f.owner.Forms[0].Elements = append(f.owner.Forms[0].Elements,
@@ -68,6 +102,15 @@ func TestEntityListsBrowserAcceptance(t *testing.T) {
 	}
 	if err := f.server.store.UpsertTablePartRows(context.Background(), f.owner.Name, "Items", f.ownerID, []map[string]any{{"Text": "keep me"}}, f.owner.TableParts[0]); err != nil {
 		t.Fatal(err)
+	}
+	for i := 1; i <= 8; i++ {
+		id := choiceHTTPUUID(0x40, i)
+		if err := f.server.store.Upsert(context.Background(), f.owner.Name, id, map[string]any{"Направление": f.rootA.String(), "Заметка": "исходная", "Проверок": 0}, f.owner); err != nil {
+			t.Fatal(err)
+		}
+		if err := f.server.store.UpsertTablePartRows(context.Background(), f.owner.Name, "Items", id, []map[string]any{{"Text": "keep me"}}, f.owner.TableParts[0]); err != nil {
+			t.Fatal(err)
+		}
 	}
 	f.server = New(f.server.reg, f.server.store, interpreter.New(), nil, Config{}, nil)
 	router := chi.NewRouter()
@@ -93,4 +136,5 @@ func TestEntityListsBrowserAcceptance(t *testing.T) {
 	if err != nil {
 		t.Fatalf("entity lists browser: %v", err)
 	}
+	t.Run("conceal", runEntityListConcealBrowserAcceptance)
 }
