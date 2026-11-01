@@ -211,3 +211,72 @@ test('the grid reference editor keeps choice_row_style for preloaded, searched a
  assert.ok(opt,'вариант передан в окно подбора');assert.match(opt.getAttribute('style')||'',/font-weight:600/);
  editor.destroy();
 });
+
+test('picker choice keeps styling in subsequent grid input',()=>{
+ const env=runtime([{Выбор:''}],()=>Promise.resolve({ok:true,json:async()=>({items:[]})}));
+ let picker;
+ env.window.openRefPicker=select=>{ picker=select; };
+ const editorStart=managed.indexOf('  function refId('),editorEnd=managed.indexOf('  function ObNumberEditor(',editorStart);
+ vm.runInContext(managed.slice(editorStart,editorEnd),env.sandbox);
+ const container=env.sandbox.document.createElement('div'), remembered=[];
+ const args={row:0,item:env.rows[0],column:{field:'Выбор',refEntity:'Цель'},container,commitChanges(){},cancelChanges(){},grid:{getOptions(){return {};}}};
+ const editor=new env.sandbox.ObRefEditor('Выбор',remembered,args);
+ const wrapper=container.children[0];
+ wrapper.children[1].listeners.click({preventDefault(){},stopPropagation(){}});
+ assert.ok(picker,'reference picker was opened by the cell');
+ // A remote search item selected outside the initial page. Even if its
+ // <option> retains all styling, the editor must also retain that styling.
+ const remote=env.sandbox.document.createElement('option');
+ remote.value='remote'; remote.textContent='Ограниченное направление';
+ remote.setAttribute('style','color:rgb(250,0,0);background:rgb(255,255,0)');
+ remote.setAttribute('data-ob-bg','rgb(255,255,0)');
+ picker.appendChild(remote); picker.value=remote.value; picker.selectedIndex=0;
+ picker.listeners.change();
+ assert.equal(remembered.length,1);
+ assert.equal(remembered[0].id,'remote');
+ assert.match(remembered[0]._style||'',/color:rgb\(250,0,0\)/,'the row selected through the picker lost its style');
+ assert.equal(remembered[0]._style_bg,'rgb(255,255,0)');
+ editor.destroy();
+});
+
+for (const existing of [false,true]) {
+ test(`reference picker transfers server styling into its selected option (existing=${existing})`,async()=>{
+  const css='color:rgb(250,0,0);background:rgb(255,255,0)',bg='rgb(255,255,0)';
+  let server={items:[{id:'remote',_label:'Ограниченное направление',_style:css,_style_bg:bg}]};
+  const env=runtime([],()=>Promise.resolve({ok:true,json:async()=>server}));
+  const doc=env.sandbox.document,create=doc.createElement,ids={};
+  doc.createElement=()=>{
+   const el=create();
+   el.hasAttribute=k=>el.getAttribute(k)!==null;
+   Object.defineProperty(el,'innerHTML',{set(){
+    el.children=[];el.options=[];
+    if(el.id==='_ref-picker-modal')for(const id of ['_rp-card','_rp-body','_rp-list','_rp-preview','_rp-status','_rp-search','_rp-cancel'])ids[id]=doc.createElement('div');
+   }});
+   el.querySelectorAll=()=>el.children.filter(c=>c.className==='_rp-item');
+   return el;
+  };
+  doc.getElementById=id=>ids[id]||null;
+  const sel=doc.createElement('select');sel.setAttribute('data-ref-entity','Направления');
+  sel.dispatchEvent=()=>{};
+  if(existing){const opt=doc.createElement('option');opt.value='remote';opt.text='Старая подпись';sel.appendChild(opt);}
+  env.sandbox.Event=class {};
+  env.sandbox.setTimeout=()=>0;
+  vm.runInContext(ui.slice(ui.indexOf('function openRefPicker(selOrId)'),ui.indexOf('\nfunction openRefCurrent(')),env.sandbox);
+  async function select(){
+   env.sandbox.openRefPicker(sel);await new Promise(setImmediate);
+   const item=ids['_rp-list'].children.find(c=>c.getAttribute('data-id')==='remote');
+   assert.ok(item,'server search row rendered');
+   ids['_rp-list'].listeners.click({target:{closest(){return item;}}});
+   assert.equal(sel.value,'remote');
+   assert.equal(sel.options.length,1,'reuse an existing option without duplicates');
+   return sel.options[0];
+  }
+  let opt=await select();
+  assert.equal(opt.getAttribute('style'),css,'only the supplied CSS survives active-row highlighting');
+  assert.equal(opt.getAttribute('data-ob-bg'),bg);
+  server={items:[{id:'remote',_label:'Без оформления'}]};
+  opt=await select();
+  assert.equal(opt.getAttribute('style'),null,'a new unstyled result clears a stale style');
+  assert.equal(opt.getAttribute('data-ob-bg'),null);
+ });
+}

@@ -27,6 +27,10 @@ const (
 	refOptionStyleBgKey = "_style_bg"
 )
 
+// Только вычисленное оформление имеет этот тип. Одноимённые реквизиты
+// справочника остаются данными и не могут стать CSS в шаблоне или проекции.
+type refOptionCSS string
+
 // choiceRowStyler — функция стиля строки для refEntity и текущего
 // пользователя, или nil: справочник без оформления либо пользователь не
 // подходит под for_user.
@@ -50,9 +54,25 @@ func (s *Server) choiceRowStyler(ctx context.Context, refEntity *metadata.Entity
 		ev = newInterpEvaluator(s.interp)
 	}
 	return func(row map[string]any) metadata.FormCellStyle {
+		// SQLite List возвращает boolean как int64, а GetByIDs — как bool.
+		// Выражения DSL должны видеть одинаковые типы на обоих путях.
+		values := make(map[string]any, len(row))
+		for key, value := range row {
+			values[key] = value
+		}
+		for _, field := range refEntity.Fields {
+			if field.Type != metadata.FieldTypeBool {
+				continue
+			}
+			for key, value := range values {
+				if strings.EqualFold(key, field.Name) {
+					values[key] = asBool(value)
+				}
+			}
+		}
 		var out metadata.FormCellStyle
 		for _, rule := range st.Rules {
-			if choiceStyleWhen(ev, rule.When, row) {
+			if choiceStyleWhen(ev, rule.When, values) {
 				out = mergeFormConditionalStyle(out, rule.Style)
 			}
 		}
@@ -64,8 +84,10 @@ func (s *Server) choiceRowStyler(ctx context.Context, refEntity *metadata.Entity
 // вычисляет и выражение; короткий путь нужен серверу без интерпретатора).
 func choiceStyleWhen(ev compose.Evaluator, when string, row map[string]any) bool {
 	if isPlainIdent(when) {
-		if v, ok := row[when]; ok {
-			return asBool(v)
+		for key, value := range row {
+			if strings.EqualFold(key, when) {
+				return asBool(value)
+			}
 		}
 	}
 	if ev == nil {
@@ -185,15 +207,19 @@ func (s *Server) choiceStyleUserMatches(ctx context.Context, u *metadata.ChoiceS
 // applyChoiceRowStyles кладёт стиль в строки вариантов выбора.
 func (s *Server) applyChoiceRowStyles(ctx context.Context, refEntity *metadata.Entity, rows []map[string]any) {
 	styler := s.choiceRowStyler(ctx, refEntity)
-	if styler == nil {
-		return
-	}
 	for _, row := range rows {
-		st := styler(row)
+		var st metadata.FormCellStyle
+		if styler != nil {
+			st = styler(row)
+		}
+		// Условия ещё могут читать одноимённые реквизиты; наружу служебные
+		// ключи выходят только после вычисления и проверки стиля.
+		delete(row, refOptionStyleKey)
+		delete(row, refOptionStyleBgKey)
 		if css := cssOfForm(st); css != "" {
-			row[refOptionStyleKey] = css
+			row[refOptionStyleKey] = refOptionCSS(css)
 			if bg := csssafe.Color(st.Background); bg != "" {
-				row[refOptionStyleBgKey] = bg
+				row[refOptionStyleBgKey] = refOptionCSS(bg)
 			}
 		}
 	}
@@ -202,9 +228,9 @@ func (s *Server) applyChoiceRowStyles(ctx context.Context, refEntity *metadata.E
 // refOptionStyle — атрибут style у <option> варианта выбора (функция шаблона).
 func refOptionStyle(row any) template.HTMLAttr {
 	m, _ := row.(map[string]any)
-	css, _ := m[refOptionStyleKey].(string)
+	css, _ := m[refOptionStyleKey].(refOptionCSS)
 	if css == "" {
 		return ""
 	}
-	return template.HTMLAttr(` style="` + html.EscapeString(css) + `"`) //nolint:gosec // G203: CSS собран из csssafe-значений и экранирован
+	return template.HTMLAttr(` style="` + html.EscapeString(string(css)) + `"`) //nolint:gosec // G203: CSS собран из csssafe-значений и экранирован
 }

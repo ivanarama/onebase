@@ -5280,7 +5280,7 @@ function openRefPicker(selOrId) {
     // but must not become a candidate merely because it is an <option>.
     if (o.value && o.getAttribute('data-ob-choice-outside-filter') !== '1') {
       // choice_row_style: оформление строки переносится из <option> в подбор.
-      localOpts.push({ id: o.value, label: o.text, style: o.getAttribute('style') || '', bg: o.style ? o.style.background || '' : '' });
+      localOpts.push({ id: o.value, label: o.text, style: o.getAttribute('style') || '', bg: o.getAttribute('data-ob-bg') || (o.style ? o.style.background || '' : '') });
     }
   }
   var old = document.getElementById('_ref-picker-modal');
@@ -5400,6 +5400,7 @@ function openRefPicker(selOrId) {
       item.className = '_rp-item';
       item.setAttribute('data-id', opts[i].id);
       item.setAttribute('data-label', opts[i].label);
+      if (opts[i].style) item.setAttribute('data-ob-style', opts[i].style);
       if (opts[i].preview) item.setAttribute('data-preview', opts[i].preview);
       item.style.cssText = 'padding:9px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:14px;color:#1e293b' + (opts[i].style ? ';' + opts[i].style : '');
       if (opts[i].bg) item.setAttribute('data-ob-bg', opts[i].bg);
@@ -5433,18 +5434,26 @@ function openRefPicker(selOrId) {
     if (!window._rpTarget) return;
     var id = item.getAttribute('data-id') || '';
     var label = item.getAttribute('data-label') || item.textContent || id;
-    var exists = false;
+    var opt = null;
     for (var i = 0; i < window._rpTarget.options.length; i++) {
       if (window._rpTarget.options[i].value === id) {
-        exists = true;
+        opt = window._rpTarget.options[i];
         break;
       }
     }
-    if (!exists && id) {
-      var opt = document.createElement('option');
+    if (!opt && id) {
+      opt = document.createElement('option');
       opt.value = id;
-      opt.textContent = label;
       window._rpTarget.appendChild(opt);
+    }
+    if (opt) {
+      opt.textContent = label;
+      // rpPaint меняет фон активной строки и добавляет геометрию диалога.
+      // В поле переносим только исходное оформление серверного варианта.
+      var css = item.getAttribute('data-ob-style') || '';
+      var bg = item.getAttribute('data-ob-bg') || '';
+      if (css) opt.setAttribute('style', css); else opt.removeAttribute('style');
+      if (bg) opt.setAttribute('data-ob-bg', bg); else opt.removeAttribute('data-ob-bg');
     }
     window._rpTarget.value = id;
     try {

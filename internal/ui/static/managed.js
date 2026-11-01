@@ -3262,6 +3262,7 @@ function obGridColumnIds(columns) {
         o.value = opts[k].id;
         o.textContent = opts[k]._label;
         if (opts[k]._style) o.setAttribute('style', opts[k]._style);
+        if (opts[k]._style_bg) o.setAttribute('data-ob-bg', opts[k]._style_bg);
         selEl.appendChild(o);
       }
       if(choiceContext && selectedId && !opts.some(function(o){return String(o.id)===String(selectedId);})) {
@@ -3272,7 +3273,9 @@ function obGridColumnIds(columns) {
         var id = selEl.value;
         if (!id) return;
         var chosen = selEl.options[selEl.selectedIndex];
-        pick({id: id, _label: chosen ? chosen.textContent : ''});
+        pick({id: id, _label: chosen ? chosen.textContent : '',
+          _style: chosen ? chosen.getAttribute('style') || '' : '',
+          _style_bg: chosen ? chosen.getAttribute('data-ob-bg') || (chosen.style && chosen.style.background) || '' : ''});
         args.commitChanges();
       });
       closeList();
