@@ -38,7 +38,14 @@ func newSubmitTestServer(t *testing.T, entities []*metadata.Entity) (*Server, co
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
+	return newSubmitTestServerOn(t, db, entities), ctx
+}
 
+// newSubmitTestServerOn — тот же сервер поверх готовой базы: матричные тесты
+// (dbtest.ForEachDialect) гоняют его и на PostgreSQL.
+func newSubmitTestServerOn(t *testing.T, db *storage.DB, entities []*metadata.Entity) *Server {
+	t.Helper()
+	ctx := context.Background()
 	if err := db.Migrate(ctx, entities); err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +75,7 @@ func newSubmitTestServer(t *testing.T, entities []*metadata.Entity) (*Server, co
 			return s.newFormObjectThisLive(ctx, ctxSrc, obj, e, nil, false)
 		},
 	}
-	return s, ctx
+	return s
 }
 
 // reqWithChi оборачивает request в chi route context с заданными URL-параметрами.

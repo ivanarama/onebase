@@ -39,6 +39,17 @@ func (db *DB) restructureEntityTable(ctx context.Context, entity *metadata.Entit
 }
 
 func (db *DB) restructureTableWithProvenance(ctx context.Context, table string, fields []metadata.Field, provenance standardFieldProvenance) error {
+	warnings, err := db.untrackedTableTypeWarnings(ctx, table, fields, false)
+	if err != nil {
+		return err
+	}
+	for _, warning := range warnings {
+		if db.schemaOpts.Warn != nil {
+			db.schemaOpts.Warn(warning)
+		} else {
+			storageLog().Warn(warning.String())
+		}
+	}
 	if !anyFieldHasID(fields) {
 		// Ни у одного поля нет устойчивого id — реструктурировать нечего,
 		// работает прежний аддитивный путь.
@@ -276,7 +287,7 @@ func sqliteRetypeExpr(col string, f metadata.Field, newSQL string) string {
 // объявленные в конфигурации пересоздаются тем же прогоном миграции
 // (ensureEntityIndexes идёт следом).
 func (db *DB) dropColumn(ctx context.Context, table, column string) error {
-	if db.IsSQLite() {
+	if db.IsSQLite() && ctx.Value(entityDDLKey{}) != table {
 		if err := db.dropIndexesOnColumn(ctx, table, column); err != nil {
 			return err
 		}
