@@ -40,6 +40,16 @@ type routingProgressCandidate struct {
 	NewHead   string `json:"new_head"`
 }
 
+// Canonical START metadata is an allowlist hint, never local factory authority.
+// The receiver still verifies its exact task/reservation and one-use start.
+type routingStartCandidate struct {
+	routingFixCandidate
+	AttemptID   string `json:"attempt_id"`
+	StartedID   string `json:"started_id"`
+	TaskID      any    `json:"task_id"`
+	AttemptUUID string `json:"attempt_uuid"`
+}
+
 type routingContext struct {
 	observations        []routingObservationInput
 	snapshots           map[int]routingSnapshot
@@ -97,10 +107,12 @@ func (context *routingContext) attach(result *report) {
 	result.RoutingObservation = &routingObservation{Version: "routing-observation-v1", Complete: context.complete && context.readersErr == nil, Items: []routingObservationItem{}}
 	fixes, settlements := []routingFixCandidate{}, []routingSettlementCandidate{}
 	progress := []routingProgressCandidate{}
+	starts := []routingStartCandidate{}
 	positive := []routingFixCandidate{}
 	technical, engineering := []candidate{}, []candidate{}
 	result.TechnicalFixCandidates, result.TechnicalFixSettlementCandidates = &fixes, &settlements
 	result.TechnicalFixProgressCandidates = &progress
+	result.TechnicalFixStartCandidates = &starts
 	result.PositiveMergeCandidates = &positive
 	result.TechnicalWaiting, result.EngineeringWaiting = &technical, &engineering
 	if context.readersErr != nil {
@@ -342,6 +354,19 @@ func (context *routingContext) consume(result *report, pr apiPull, item candidat
 				_, barrier := phases["barrier"]
 				if done || barrier || routingSettled(ledger, root.ID) {
 					return context.engineering(result, item, "canonical technical attempt has ended or is ambiguous; no second provider")
+				}
+				started, hasStart := phases["started"]
+				_, assigned := phases["assigned"]
+				_, handedOff := phases["handoff-done"]
+				executor := routingObject(root.Payload["executor"])
+				identity := routingObject(snapshot["identity"])
+				if hasStart && assigned && handedOff && executor["kind"] == "pipeline" && executor["login"] == context.trusted &&
+					identity["cross_repository"] == false && identity["head_repository"] == context.repository {
+					details := routingObject(started.Payload["details"])
+					*result.TechnicalFixStartCandidates = append(*result.TechnicalFixStartCandidates, routingStartCandidate{
+						routingFixCandidate{"fix-pr", item.Number, item.Head, source}, root.ID, started.ID,
+						details["task_id"], routingText(details["attempt_uuid"]),
+					})
 				}
 			}
 			*result.TechnicalFixCandidates = append(*result.TechnicalFixCandidates, routingFixCandidate{"fix-pr", item.Number, item.Head, source})
