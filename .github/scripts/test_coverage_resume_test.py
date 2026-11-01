@@ -234,6 +234,51 @@ assert""")
         self.assertIn('Go workspaces', result.stderr)
         self.assertFalse((self.root / 'test-results/checkpoints.json').exists())
 
+    def test_real_go_external_overlay_is_rejected_for_checkpoint_and_resume(self):
+        self.real_module()
+        # Overlay a test input, so this also covers inputs outside coverage's
+        # instrumentation. A no-op overlay must fail the positive control.
+        test_source = ('package other\nimport "testing"\n'
+                       'func TestCase0(t *testing.T) { if Value()!=%d { t.Fatal(Value()) } }\n')
+        original = self.root / 'other/value_test.go'
+        original.write_text(test_source % 99)
+        with tempfile.TemporaryDirectory() as external:
+            directory = Path(external)
+            replacement = directory / 'replacement_test.go'
+            overlay = directory / 'overlay.json'
+            overlay.write_text(json.dumps({'Replace': {
+                str(original.resolve()): str(replacement.resolve())}}))
+            env = dict(os.environ, GOFLAGS=f'-overlay={overlay}')
+            replacement.write_text(test_source % 7)
+            # Fresh execution still supports a valid intentional overlay.
+            result = self.real_cli('--artifacts', 'fresh-overlay', env=env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for action in ['--checkpoint', '--resume']:
+                result = self.real_cli(action, '--artifacts', 'overlay-rejected', env=env)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn('Go overlays', result.stderr)
+                self.assertFalse((self.root / 'overlay-rejected/checkpoints.json').exists())
+                self.assertFalse((self.root / 'coverage.out').exists())
+            # A persisted GOENV flag must also be rejected, including Go's
+            # quoted single-argument form for paths containing spaces.
+            goenv = directory / 'goenv'
+            spaced = directory / 'overlay with spaces.json'
+            spaced.write_bytes(overlay.read_bytes())
+            goenv.write_text(f'GOFLAGS="-overlay={spaced}"\n')
+            persisted = dict(os.environ, GOENV=str(goenv))
+            persisted.pop('GOFLAGS', None)
+            result = self.real_cli('--checkpoint', '--artifacts', 'persisted-overlay', env=persisted)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn('Go overlays', result.stderr)
+            self.assertFalse((self.root / 'persisted-overlay/checkpoints.json').exists())
+            # The same flag with changed external bytes executes real tests
+            # afresh and detects the failure; saved results never mask it.
+            replacement.write_text(test_source % 99)
+            result = self.real_cli('--artifacts', 'fresh-overlay-failed', env=env)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn('FAIL', result.stdout + result.stderr)
+            self.assertFalse((self.root / 'coverage.out').exists())
+
     def test_real_go_internal_replacement_is_bound_by_checkpoint(self):
         self.real_module()
         dependency = self.root / 'dependency'

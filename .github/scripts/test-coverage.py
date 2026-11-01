@@ -93,6 +93,11 @@ def input_fingerprint(artifacts, output):
         tools[tool] = (str(Path(binary).resolve()), digest(Path(binary)))
     # Store only the digest: environment and Go proxy values can contain secrets.
     effective_go = json.loads(subprocess.check_output(["go", "env", "-json"]))
+    # GOFLAGS can also come from GOENV. Overlay JSON and its replacements may
+    # live outside the source tree, so their contents are not bound by this
+    # checkpoint. Fresh runs remain available for intentional overlays.
+    require(not re.search(r"(?:^|[\s'\"])-overlay(?:=|[\s'\"]|$)", effective_go.get("GOFLAGS", "")),
+            "checkpoint does not support Go overlays; run without reuse")
     # The source walk cannot bind another module outside this checkout. Reject
     # workspaces and external local replacements rather than reuse stale tests.
     require(effective_go.get("GOWORK", "") in ("", "off"),
