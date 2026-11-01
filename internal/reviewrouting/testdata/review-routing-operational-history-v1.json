@@ -2,9 +2,9 @@
   "schema": "pp-review-routing-operational-history-golden-v1",
   "source_head": "1ebedcc79a2983086e5d13b5410870ea4cf83851",
   "source_sha256": {
-    "review_routing_wire.py": "4c4c34cc05cac42749e4afbd02aa1eb37d5a5330055bee5836aa0bbff95f6a92",
-    "review_routing_proof.py": "0de8e92383bb6171eb8b6c5f9a3ff53c5dff33896ebc020ad25e240aea77aacf",
-    "review_routing_history.py": "2daa0c3a53ace28dfaada2bd9c65b69315f35ff3b3db6cbe0eba180e14e637c4"
+    "review_routing_wire.py": "295466b2344d786907a52c27e31b5e89bcefe0c02762524fb9541508f9a221e3",
+    "review_routing_proof.py": "034edfd64b6b991cff071c03d7455bf03dc2de3112dada85b1118ff12e7bff96",
+    "review_routing_history.py": "be7e81dd49b45969c35391ae4124146fcf0d795eb0d31f48e8da4aab663b70b1"
   },
   "authority": "unverified-offline-input",
   "cases": [
@@ -4807,5 +4807,11 @@
       "accepted": false,
       "reason": "engineering resume lacks current parking/lifetime state"
     }
-  ]
+  ],
+  "initial_source_checkout_sha256": {
+    "review_routing_wire.py": "4c4c34cc05cac42749e4afbd02aa1eb37d5a5330055bee5836aa0bbff95f6a92",
+    "review_routing_proof.py": "0de8e92383bb6171eb8b6c5f9a3ff53c5dff33896ebc020ad25e240aea77aacf",
+    "review_routing_history.py": "2daa0c3a53ace28dfaada2bd9c65b69315f35ff3b3db6cbe0eba180e14e637c4"
+  },
+  "source_representation": "Git blob bytes; original CRLF checkout digests retained separately"
 }

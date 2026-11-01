@@ -136,6 +136,16 @@ func routingFootprint(snapshot map[string]any, trusted string) bool {
 	return false
 }
 
+func legacyRoutingHistory(comments []apiComment, trusted string) bool {
+	for _, comment := range comments {
+		if strings.Contains(comment.Body, "<!-- pp:review-routing-") &&
+			(comment.User.Login == trusted || strings.TrimSpace(comment.User.Login) == "") {
+			return true
+		}
+	}
+	return false
+}
+
 func routingPhases(ledger reviewrouting.Ledger, attemptID string) map[string]reviewrouting.Record {
 	result := map[string]reviewrouting.Record{}
 	for _, phase := range ledger.Phases {

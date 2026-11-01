@@ -488,6 +488,16 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 		if routing != nil && routing.consume(&result, pr, item, labels) {
 			continue
 		}
+		if routing == nil && legacyRoutingHistory(pr.Comments, owner) {
+			// Disabling the paired reader cannot erase a spent typed attempt.
+			// Unknown actors also retain the barrier; ordinary foreign markers
+			// and unrelated ghost comments remain ordinary legacy input.
+			item.Stage = "engineering-recovery"
+			result.HumanWaiting = append(result.HumanWaiting, item)
+			result.add("yellow", "routing_disabled_history", pr.Number,
+				"typed routing history requires its paired reader; unknown actors never authorize legacy fallback")
+			continue
+		}
 		currentCompletions, latestCompletion, latestOverride := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
 		legacySourceCompletions := 0
 		if headIsBaseSyncMerge(pr) {
