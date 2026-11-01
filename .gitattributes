@@ -9,6 +9,10 @@
 # roundtrip-тесты падают на «expected LF, got CRLF».
 internal/onec_forms/fixtures/* -text !eol
 
+# Protocol goldens are exact upstream Git-blob bytes; their SHA-256 manifests
+# must be identical in LF and Windows autocrlf checkouts.
+internal/reviewrouting/testdata/*.json text eol=lf
+
 # Вендоренный Monaco — минифицированные ассеты, храним байт-в-байт без
 # нормализации EOL, чтобы апгрейд версии давал чистый предсказуемый diff.
 internal/webassets/monaco/** -text !eol
@@ -48,3 +52,7 @@ internal/launcher/static/*.css text eol=lf
 internal/ui/pwa/sw.js text eol=lf
 internal/ui/pwa/offline.html text eol=lf
 internal/ui/pwa/manifest.webmanifest text eol=lf
+
+# Preserve original upstream legal documents, including whitespace and line
+# endings. Catalog pins normalize CRLF explicitly for portable validation.
+third_party/licenses/** -text -whitespace

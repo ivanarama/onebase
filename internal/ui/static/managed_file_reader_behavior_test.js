@@ -42,6 +42,7 @@ function domNode(tagName) {
 }
 
 function resetDOM() {
+  window._tpRefMeta = {};
   banner = domNode('div');
   fetchBodies = [];
   submittedBodies = [];
@@ -544,8 +545,21 @@ test('table round-trip keeps readonly controls display-only and guarded', () => 
   const tpRow = tpBody.children[0];
   assert.equal(tpRow.children[0].children[0].disabled, true, 'selection remained enabled');
   const refCell = tpRow.children[1];
-  assert.equal(refCell.children[0].disabled, true, 'reference select remained enabled');
-  assert.equal(refCell.children.length, 1, 'readonly reference regained a successful hidden mirror');
+  const descendants = node => node.children.flatMap(child => [child, ...descendants(child)]);
+  const referenceSelect = cell => {
+    const controls = descendants(cell);
+    const selects = controls.filter(node => node.tagName === 'SELECT');
+    assert.equal(selects.length, 1, 'reference control duplicated or missing');
+    assert.equal(controls.filter(node => node.tagName === 'INPUT').length, 0,
+      'reference regained a successful hidden mirror');
+    return selects[0];
+  };
+  assert.equal(referenceSelect(refCell).disabled, true, 'reference select remained enabled');
+  const referenceButtons = descendants(refCell).filter(node => node.tagName === 'BUTTON');
+  assert.equal(referenceButtons.length, 2, 'readonly reference lost picker or navigation');
+  assert.equal(referenceButtons[0].disabled, true, 'readonly picker remained enabled');
+  assert.notEqual(referenceButtons[1].disabled, true, 'readonly navigation was disabled');
+  assert.equal(referenceButtons[1].getAttribute('data-ob-readonly-navigation'), '1');
   assert.equal(tpRow.children[2].children[0].disabled, true, 'number input remained successful');
   const tpDelete = tpRow.children[3].children[0];
   assert.equal(tpDelete.disabled, true);
@@ -567,8 +581,7 @@ test('table round-trip keeps readonly controls display-only and guarded', () => 
   });
   window.applyTableParts({Редактируемые: [{Номенклатура: 'ref-2', Количество: 4}]});
   const editableRow = editableBody.children[0];
-  assert.equal(editableRow.children[0].children.length, 1, 'editable ref unexpectedly got hidden mirror');
-  assert.equal(editableRow.children[0].children[0].disabled, false);
+  assert.equal(referenceSelect(editableRow.children[0]).disabled, false);
   assert.equal(editableRow.children[1].children[0].disabled, false);
   assert.equal(editableRow.children[2].children[0].disabled, false);
   assert.equal(editableRow.children[2].children[0].onclick, undefined,
@@ -696,6 +709,37 @@ test('NoGrid add inserts empty virtual cells before delete', () => {
   assert.equal(row.children[2].getAttribute('data-ob-virtual-col'), 'Дата');
   assert.equal(row.children[1].children.length, 0);
   assert.equal(row.children[3].children[0].className, 'del-btn');
+});
+
+test('NoGrid add keeps dependent reference context and an empty date in the same row', () => {
+  resetDOM();
+  const context = JSON.stringify({form_entity: 'Заявка', form: 'Объекта',
+    element: 'Строки.Выбор', table_part: 'Строки', sources: {'Строки.Направление': 'Направление'}});
+  window._tpRefOpts = {Строки: {Выбор: [{id: 'unfiltered', _label: 'Чужой'}]}};
+  window._tpRefMeta = {};
+  window._tpEnumLabels = {};
+  window._tpEnumOrder = {};
+  const body = installTableBody('tp-body-Строки', {
+    'data-tp-fields': 'Выбор|reference:Цель,Дата|date,Направление|string',
+    'data-tp-choice': JSON.stringify({Выбор: context})
+  });
+
+  obManagedAddTpRow({getAttribute(name) {
+    return name === 'data-ob-add-tp' ? 'Строки' : null;
+  }});
+
+  const row = body.children[0];
+  const picker = row.children[0].children[0].children[0];
+  assert.equal(picker.name, 'tp.Строки.0.Выбор');
+  assert.equal(picker.getAttribute('data-ref-choice-context'), context);
+  assert.equal(picker.getAttribute('data-ref-row-id'), '0');
+  assert.equal(picker.children.length, 1, 'dependent picker must not offer unfiltered options');
+  const date = row.children[1].children[0];
+  assert.equal(date.name, 'tp.Строки.0.Дата');
+  assert.equal(date.type, 'datetime-local');
+  assert.equal(date.step, '1');
+  assert.equal(date.value || '', '', 'new date must stay empty');
+  assert.equal(row.children[2].children[0].type, 'text');
 });
 
 test('NoGrid add uses the clicked duplicate view schema', () => {

@@ -486,17 +486,8 @@ func (db *DB) GetByID(ctx context.Context, entityName string, id uuid.UUID, enti
 func (db *DB) getByID(ctx context.Context, entityName string, id uuid.UUID, entity *metadata.Entity, forUpdate bool) (map[string]any, error) {
 	d := db.dialect
 	table := metadata.TableName(entityName)
-	cols := []string{"id"}
-	for _, f := range entity.Fields {
-		cols = append(cols, metadata.ColumnName(f))
-	}
-	if entity.Kind == metadata.KindDocument {
-		cols = append(cols, "posted")
-	}
-	cols = append(cols, "deletion_mark", "_version")
-	if entity.Hierarchical {
-		cols = append(cols, "is_folder", "parent_id")
-	}
+	cols := objectReadColumns(entity)
+
 	sql := fmt.Sprintf("SELECT %s FROM %s WHERE id = %s", strings.Join(cols, ", "), table, d.Placeholder(1))
 	if forUpdate && db.IsPostgres() && HasTx(ctx) {
 		sql += " FOR UPDATE"
@@ -512,7 +503,28 @@ func (db *DB) getByID(ctx context.Context, entityName string, id uuid.UUID, enti
 		return nil, fmt.Errorf("getbyid %s: %w", entityName, err)
 	}
 
-	result := make(map[string]any, len(cols))
+	return objectReadValues(entity, dest), nil
+}
+
+// objectReadColumns and objectReadValues keep single and batched object reads
+// identical, including document, hierarchy and optimistic-lock fields.
+func objectReadColumns(entity *metadata.Entity) []string {
+	cols := []string{"id"}
+	for _, f := range entity.Fields {
+		cols = append(cols, metadata.ColumnName(f))
+	}
+	if entity.Kind == metadata.KindDocument {
+		cols = append(cols, "posted")
+	}
+	cols = append(cols, "deletion_mark", "_version")
+	if entity.Hierarchical {
+		cols = append(cols, "is_folder", "parent_id")
+	}
+	return cols
+}
+
+func objectReadValues(entity *metadata.Entity, dest []any) map[string]any {
+	result := make(map[string]any, len(dest))
 	result["id"] = normalizeValue(dest[0])
 	for i, f := range entity.Fields {
 		result[f.Name] = normalizeFieldValue(f, dest[i+1])
@@ -531,7 +543,7 @@ func (db *DB) getByID(ctx context.Context, entityName string, id uuid.UUID, enti
 		off++
 		result["parent_id"] = normalizeValue(dest[off])
 	}
-	return result, nil
+	return result
 }
 
 // normalizeValue converts pgx scan results to display-friendly Go types.
@@ -761,6 +773,26 @@ func (db *DB) listWhere(entityName string, entity *metadata.Entity, params ListP
 				args = append(args, bound)
 				argIdx++
 			}
+		case field.Type == metadata.FieldTypeBool:
+			// Булево — точное сравнение, а не подстрока: на SQLite значение
+			// хранится как 0/1, и «%Да%» не совпадал ни с одной записью. «Нет»
+			// включает незаполненное (NULL) — в карточке оно и показывается как
+			// «Нет». Непонятное значение не открывает весь список.
+			if filter.Value != "" {
+				b, ok := parseAnyBool(filter.Value)
+				switch {
+				case !ok:
+					whereParts = append(whereParts, "1 = 0")
+				case b:
+					whereParts = append(whereParts, fmt.Sprintf("%s = %s", column, d.Placeholder(argIdx)))
+					args = append(args, true)
+					argIdx++
+				default:
+					whereParts = append(whereParts, fmt.Sprintf("(%s = %s OR %s IS NULL)", column, d.Placeholder(argIdx), column))
+					args = append(args, false)
+					argIdx++
+				}
+			}
 		case field.RefEntity != "":
 			if filter.Value != "" {
 				whereParts = append(whereParts, fmt.Sprintf("%s = %s", column, d.Placeholder(argIdx)))
@@ -894,9 +926,19 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 	if err != nil {
 		return nil, fmt.Errorf("list %s: %w", entityName, err)
 	}
-	query := fmt.Sprintf("SELECT %s FROM %s%s", strings.Join(cols, ", "), table, whereClause)
+	baseSelect := fmt.Sprintf("SELECT %s FROM %s", strings.Join(cols, ", "), table)
+	query := baseSelect + whereClause
+	// split — порядок по умолчанию «пустые в конце», который этот диалект сам
+	// не даёт (см. ниже): тогда непустые и пустые читаются двумя запросами.
+	var split *nullsLastOrder
 
 	// sorting
+	// Папки впереди — только когда они перемешаны с элементами. Если отбор
+	// оставил одни элементы (выбор значения ссылки) или одни папки, is_folder
+	// у всех строк одинаков, а ключ сортировки по нему лишь мешает индексу:
+	// «первые 50 по коду» превращались в сортировку всего справочника (иерархия
+	// адресов 615 тыс. строк — 0,2–0,4 с на каждое ссылочное поле формы).
+	foldersFirst := entity.Hierarchical && !params.OnlyFolders && !params.ExcludeFolders
 	if keyset {
 		query += " ORDER BY id ASC"
 	} else if params.Sort == "" && len(entity.OrderBy) > 0 {
@@ -906,7 +948,7 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 		// дерево.
 		d := db.dialect
 		parts := make([]string, 0, len(entity.OrderBy)+1)
-		if entity.Hierarchical {
+		if foldersFirst {
 			parts = append(parts, "is_folder DESC")
 		}
 		for _, spec := range entity.OrderBy {
@@ -970,7 +1012,11 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 				break
 			}
 		}
-		query += fmt.Sprintf(" ORDER BY is_folder DESC, %s ASC", firstStrCol)
+		if foldersFirst {
+			query += fmt.Sprintf(" ORDER BY is_folder DESC, %s ASC", firstStrCol)
+		} else {
+			query += fmt.Sprintf(" ORDER BY %s ASC", firstStrCol)
+		}
 	} else {
 		orderCol := "id"
 		orderDir := "ASC"
@@ -1019,19 +1065,116 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 			}
 		}
 		if params.Sort == "" && orderCol != "id" {
-			// PostgreSQL и SQLite по-разному располагают NULL при ASC/DESC.
-			// Пустые значения оставляем в конце на обоих диалектах.
-			query += fmt.Sprintf(" ORDER BY CASE WHEN %s IS NULL THEN 1 ELSE 0 END ASC, %s %s, id ASC",
-				orderCol, orderCol, orderDir)
+			// PostgreSQL и SQLite по-разному располагают NULL при ASC/DESC, а
+			// пустые значения обязаны идти в конце на обоих. Выражение
+			// «CASE WHEN col IS NULL …» в ORDER BY это давало, но запрещало
+			// индекс: справочник на 2 млн строк сортировался целиком на каждое
+			// открытие списка (24 с при индексе по наименованию). Где диалект
+			// сам ставит NULL в конец, хватает обычного ORDER BY; где нет —
+			// непустые и пустые читаются раздельно, каждые по индексу.
+			if db.dialect.Name() == "postgres" && orderDir == "ASC" || db.dialect.Name() != "postgres" && orderDir == "DESC" {
+				query += fmt.Sprintf(" ORDER BY %s %s, id ASC", orderCol, orderDir)
+			} else {
+				split = &nullsLastOrder{col: orderCol, dir: orderDir}
+			}
 		} else {
 			query += fmt.Sprintf(" ORDER BY %s %s", orderCol, orderDir)
 		}
 	}
 
+	scan := func(query string, args []any) ([]map[string]any, error) {
+		return db.scanListRows(ctx, entityName, entity, cols, hasPredefined, query, args)
+	}
+	if split != nil {
+		if HasTx(ctx) {
+			// A borrowed PostgreSQL transaction may be READ COMMITTED and
+			// already in use: neither sharing it nor a savepoint fixes the
+			// snapshot across statements. Read this List in one statement,
+			// retaining the caller's own writes and transaction settings.
+			query += fmt.Sprintf(" ORDER BY %s %s NULLS LAST, id ASC", split.col, split.dir)
+		} else {
+			var result []map[string]any
+			err := db.WithReadSnapshot(ctx, func(readCtx context.Context) error {
+				readScan := func(query string, args []any) ([]map[string]any, error) {
+					return db.scanListRows(readCtx, entityName, entity, cols, hasPredefined, query, args)
+				}
+				var err error
+				result, err = db.listNullsLast(readCtx, entityName, table, baseSelect, whereClause, args, split, params, readScan)
+				return err
+			})
+			return result, err
+		}
+	}
 	if params.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d OFFSET %d", params.Limit, params.Offset)
 	}
+	return scan(query, args)
+}
 
+// nullsLastOrder — порядок «col dir, id», при котором строки с пустым col идут
+// последними, а диалект без CASE в ORDER BY ставит их первыми.
+type nullsLastOrder struct {
+	col string
+	dir string
+}
+
+// listNullsLast читает страницу в порядке «непустые по col, затем пустые по id»
+// двумя запросами, каждый из которых может идти по индексу: сначала непустые
+// (ORDER BY col, id + LIMIT/OFFSET страницы), и только если страница ими не
+// заполнилась — пустые с остатком смещения. Счёт непустых нужен лишь на
+// последних страницах. Результат совпадает с прежним
+// «ORDER BY CASE WHEN col IS NULL THEN 1 ELSE 0 END, col, id».
+func (db *DB) listNullsLast(ctx context.Context, entityName, table, baseSelect, whereClause string, args []any,
+	order *nullsLastOrder, params ListParams,
+	scan func(string, []any) ([]map[string]any, error)) ([]map[string]any, error) {
+	where := func(cond string) string {
+		if strings.TrimSpace(whereClause) == "" {
+			return " WHERE " + cond
+		}
+		return whereClause + " AND " + cond
+	}
+	notNull := baseSelect + where(order.col+" IS NOT NULL") + fmt.Sprintf(" ORDER BY %s %s, id ASC", order.col, order.dir)
+	isNull := baseSelect + where(order.col+" IS NULL") + " ORDER BY id ASC"
+	if params.Limit <= 0 {
+		head, err := scan(notNull, args)
+		if err != nil {
+			return nil, err
+		}
+		tail, err := scan(isNull, args)
+		if err != nil {
+			return nil, err
+		}
+		return append(head, tail...), nil
+	}
+	head, err := scan(notNull+fmt.Sprintf(" LIMIT %d OFFSET %d", params.Limit, params.Offset), args)
+	if err != nil {
+		return nil, err
+	}
+	if len(head) >= params.Limit {
+		return head, nil
+	}
+	// Страница добирается пустыми: смещение среди них — за вычетом всех
+	// непустых строк выборки.
+	var nonNull int
+	countSQL := "SELECT COUNT(*) FROM " + table + where(order.col+" IS NOT NULL")
+	if err := db.QueryRow(ctx, countSQL, args...).Scan(&nonNull); err != nil {
+		return nil, fmt.Errorf("list %s: %w", entityName, err)
+	}
+	offset := params.Offset - nonNull
+	if offset < 0 {
+		offset = 0
+	}
+	tail, err := scan(isNull+fmt.Sprintf(" LIMIT %d OFFSET %d", params.Limit-len(head), offset), args)
+	if err != nil {
+		return nil, err
+	}
+	return append(head, tail...), nil
+}
+
+// scanListRows выполняет запрос списка и разбирает строки в map по полям
+// сущности (общая часть List для одного и двух запросов).
+func (db *DB) scanListRows(ctx context.Context, entityName string, entity *metadata.Entity, cols []string,
+	hasPredefined bool, query string, args []any) ([]map[string]any, error) {
 	rows, err := db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list %s: %w", entityName, err)
