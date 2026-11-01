@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -108,5 +109,34 @@ func TestManagedForm_HintFromOnInputKinds(t *testing.T) {
 	const numberHint = "Введите число; десятичный разделитель — запятая или точка"
 	if titleIn(price) != numberHint || !regexp.MustCompile(`data-ob-hint="`+numberHint+`"`).MatchString(price) {
 		t.Errorf("пустой реквизит: у числового поля пропала штатная подсказка: %s", price)
+	}
+}
+
+// Публичный GET должен подключать динамическую и статическую подсказки к
+// ссылочным реквизитам формы с реально загруженными вариантами справочника.
+func TestManagedForm_HintFromOnFormLocalReference(t *testing.T) {
+	srv, ent, _ := attrEventServer(t, "")
+	form := ent.Forms[0]
+	form.Elements[1].HintFrom = "Наименование"
+	form.Elements[1].Hint = "Выберите склад"
+	form.Elements = append(form.Elements, &metadata.FormElement{
+		Kind: metadata.FormElementField, Name: "СтатическийСклад", DataPath: "Склад", Hint: "Статическая подсказка",
+	})
+	id := uuid.New()
+	if err := srv.store.Upsert(context.Background(), ent.Name, id, map[string]any{"Наименование": "Склад & направление"}, ent); err != nil {
+		t.Fatal(err)
+	}
+	body := renderObjectFormGET(t, srv, ent, id)
+	selects := regexp.MustCompile(`<select\b[^>]*name="Склад"[^>]*>`).FindAllString(body, -1)
+	if len(selects) != 2 || !strings.Contains(body, "Основной") {
+		t.Fatalf("не загружены варианты ссылочного реквизита: %v", selects)
+	}
+	for _, want := range []string{`title="Склад &amp; направление"`, `data-ob-hint-from="Наименование"`, `data-ob-hint="Выберите склад"`} {
+		if !strings.Contains(selects[0], want) {
+			t.Errorf("динамическая подсказка: нет %s в %s", want, selects[0])
+		}
+	}
+	if !strings.Contains(selects[1], `title="Статическая подсказка"`) {
+		t.Errorf("нет статической подсказки: %s", selects[1])
 	}
 }

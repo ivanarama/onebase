@@ -97,7 +97,8 @@ func elHintAttrsWith(ctx any, el *metadata.FormElement, hotKey, def string) temp
 
 // formHintFromValues — «реквизит → текст» для всех hint_from формы по
 // значениям после обработчика события. Пустое значение тоже отдаётся: клиент
-// по нему возвращает статический hint.
+// по нему возвращает статический hint. Отсутствующий реквизит не обновляем:
+// неразмещённый источник обработки может не участвовать в следующем событии.
 func formHintFromValues(form *metadata.FormModule, entity *metadata.Entity, values map[string]any) map[string]string {
 	if form == nil {
 		return nil
@@ -114,7 +115,10 @@ func formHintFromValues(form *metadata.FormModule, entity *metadata.Entity, valu
 		if !ok {
 			v, ok = lookupFold(header, attr)
 		}
-		if !ok || v == nil {
+		if !ok {
+			continue
+		}
+		if v == nil {
 			out[attr] = ""
 			continue
 		}

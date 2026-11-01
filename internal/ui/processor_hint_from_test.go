@@ -21,6 +21,9 @@ func TestProcessorForm_HintFromAfterEvent(t *testing.T) {
 Процедура Заполнить()
  Объект.Подсказка = "Только после 18:00";
 КонецПроцедуры
+Процедура Другое()
+ Сообщить("Другое событие");
+КонецПроцедуры
 Процедура Очистить()
  Объект.Подсказка = "";
 КонецПроцедуры
@@ -28,6 +31,7 @@ func TestProcessorForm_HintFromAfterEvent(t *testing.T) {
 	form := processorExecutionForm(
 		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "КнПримечание", Hint: "Примечание направления", HintFrom: "Подсказка"},
 		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Заполнить", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Заполнить"}},
+		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Другое", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Другое"}},
 		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Очистить", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Очистить"}},
 	)
 	form.Attributes = []*metadata.FormAttribute{{Name: "Подсказка", TypeRef: "string"}}
@@ -55,6 +59,15 @@ func TestProcessorForm_HintFromAfterEvent(t *testing.T) {
 	resp := fire("Заполнить")
 	if resp.ElementStates == nil || resp.ElementStates.Hints["Подсказка"] != "Только после 18:00" {
 		t.Fatalf("после обработчика нет подсказки в elementStates.hints: %+v", resp.ElementStates)
+	}
+	resp = fire("Другое")
+	if resp.ElementStates != nil {
+		if value, present := resp.ElementStates.Hints["Подсказка"]; present {
+			t.Fatalf("несвязанное событие перезаписало подсказку: %q", value)
+		}
+	}
+	if len(resp.Messages) != 1 || resp.Messages[0] != "Другое событие" {
+		t.Fatalf("несвязанное событие не выполнено: %+v", resp.Messages)
 	}
 	resp = fire("Очистить")
 	if resp.ElementStates == nil {
