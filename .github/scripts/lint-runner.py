@@ -55,8 +55,8 @@ def environment(args):
     target_os, target_arch = args.target.split("/")
     env = dict(os.environ)
     go = Path(shutil.which(args.go) or args.go).resolve(strict=True)
-    # go/packages invokes "go" itself. Its lookup must select the same checked
-    # launcher as module verification/exports, even with an absolute --go.
+    # Use the bootstrap only to locate the pinned installation. An older
+    # bootstrap may dispatch through a versioned executable in PATH.
     env["PATH"] = str(go.parent) + os.pathsep + env.get("PATH", "")
     analysis_go = shutil.which("go", path=env["PATH"])
     if analysis_go is None or Path(analysis_go).resolve(strict=True) != go:
@@ -67,28 +67,39 @@ def environment(args):
                GOCACHE=str(args.artifacts / "go-build"), GOTMPDIR=str(args.artifacts / "go-tmp"),
                GOLANGCI_LINT_CACHE=str(args.artifacts / "lint-cache"),
                TMP=str(args.artifacts / "tmp"), TEMP=str(args.artifacts / "tmp"))
-    return env
+    selected = json.loads(subprocess.check_output(
+        [str(go), "env", "-json", "GOROOT", "GOVERSION"],
+        cwd=args.root, env=env, timeout=60, text=True))
+    if selected["GOVERSION"] != GO:
+        raise ValueError("effective Go version differs")
+    effective_go = (Path(selected["GOROOT"]) / "bin" / ("go.exe" if os.name == "nt" else "go")).resolve(strict=True)
+    # Every actual stage, including go/packages' own lookup, executes this
+    # binary directly with toolchain switching disabled.
+    env["PATH"] = str(effective_go.parent) + os.pathsep + env["PATH"]
+    env["GOTOOLCHAIN"] = "local"
+    return env, go, effective_go
 
 
-def describe(args, env):
-    go = Path(shutil.which(args.go) or args.go).resolve(strict=True)
+def describe(args, env, go, effective_go):
     analysis_go = Path(shutil.which("go", path=env["PATH"]) or "").resolve(strict=True)
-    if analysis_go != go:
-        raise ValueError("linter Go lookup differs from the checked --go")
+    if analysis_go != effective_go:
+        raise ValueError("linter Go lookup differs from the checked effective Go")
     linter = args.linter.resolve(strict=True)
     def output(command):
         return subprocess.check_output(command, cwd=args.root, env=env, timeout=60, text=True).strip()
-    go_version = output([str(go), "version"])
+    go_version = output([str(effective_go), "version"])
     lint_version = output([str(linter), "version"])
     if not go_version.startswith("go version " + GO + " "):
         raise ValueError("expected " + GO + ": " + go_version)
     if "version " + LINTER + " " not in lint_version or "built with " + GO not in lint_version:
         raise ValueError("expected golangci-lint " + LINTER + " built with " + GO)
-    go_env = json.loads(output([str(go), "env", "-json", "GOROOT", "GOVERSION", "GOHOSTOS", "GOHOSTARCH"]))
+    go_env = json.loads(output([str(effective_go), "env", "-json", "GOROOT", "GOVERSION", "GOHOSTOS", "GOHOSTARCH"]))
     if go_env["GOVERSION"] != GO:
         raise ValueError("effective Go version differs")
-    effective_go = Path(go_env["GOROOT"]) / "bin" / ("go.exe" if os.name == "nt" else "go")
-    module = json.loads(output([str(go), "mod", "edit", "-json"]))
+    reported_go = (Path(go_env["GOROOT"]) / "bin" / effective_go.name).resolve(strict=True)
+    if reported_go != effective_go:
+        raise ValueError("effective Go root differs from its checked executable")
+    module = json.loads(output([str(effective_go), "mod", "edit", "-json"]))
     for item in module.get("Replace") or []:
         if not item["New"].get("Version"):
             local = (args.root / item["New"]["Path"]).resolve(strict=True)
@@ -100,7 +111,7 @@ def describe(args, env):
                "config_sha256": digest(args.root / ".golangci.yml"),
                "runner_sha256": digest(Path(__file__)), "python_sha256": digest(Path(sys.executable)),
                "host": {"platform": platform.platform(), "go": go_env},
-               "go": {"path": str(go), "launcher_sha256": digest(go), "effective_sha256": digest(effective_go), "version": go_version,
+               "go": {"path": str(go), "launcher_sha256": digest(go), "effective_path": str(effective_go), "effective_sha256": digest(effective_go), "version": go_version,
                       "analysis_path": str(analysis_go), "analysis_sha256": digest(analysis_go)},
                "linter": {"path": str(linter), "sha256": digest(linter), "version": lint_version},
                "profile": {key: env[key] for key in ["GOTOOLCHAIN", "GOENV", "GOOS", "GOARCH", "CGO_ENABLED", "GOMAXPROCS", "GOMEMLIMIT", "GOGC", "GOWORK", "GOFLAGS", "GOEXPERIMENT", "GOAMD64", "GOCACHEPROG", "GOPACKAGESDRIVER"]},
@@ -144,21 +155,21 @@ def main():
     args.artifacts = args.artifacts.resolve()
     if args.artifacts.is_relative_to(args.root) or args.root.is_relative_to(args.artifacts):
         parser.error("artifacts must be outside and separate from the source tree")
-    env = environment(args)
+    env, bootstrap_go, effective_go = environment(args)
     if args.action == "inspect":
-        print(json.dumps(describe(args, env), indent=2))
+        print(json.dumps(describe(args, env, bootstrap_go, effective_go), indent=2))
         return 0
     if args.expect is None:
         parser.error("run requires --expect with the reviewed inspect JSON")
     expected = json.loads(args.expect.read_text(encoding="utf-8"))
-    if expected != describe(args, env):
+    if expected != describe(args, env, bootstrap_go, effective_go):
         raise ValueError("input/tool/profile fingerprint differs; full new inspection required")
     args.artifacts.mkdir(parents=True, exist_ok=False)
     for name in ["go-build", "go-tmp", "lint-cache", "tmp"]:
         (args.artifacts / name).mkdir()
     journal = {"fingerprint": expected, "stages": [], "success": False}
     try:
-        go = expected["context"]["go"]["path"]
+        go = expected["context"]["go"]["effective_path"]
         stages = [("modules", [go, "mod", "verify"], args.stage_timeout),
                   ("exports", [go, "list", "-deps", "-test", "-export", "-p=4", "./..."], args.stage_timeout),
                   ("lint", [str(args.linter.resolve()), "run", "-v", "-j", "4", "--timeout", str(args.stage_timeout) + "s", "--config", ".golangci.yml", "--cpu-profile-path", str(args.artifacts / "lint.cpu.pprof"), "./..."], args.stage_timeout + 30)]
@@ -168,7 +179,7 @@ def main():
             journal["stages"].append(row)
             if row["exit"]:
                 raise ValueError(name + " failed with exit " + str(row["exit"]))
-            if describe(args, env) != expected:
+            if describe(args, env, bootstrap_go, effective_go) != expected:
                 raise ValueError("inputs changed during " + name)
         journal["success"] = True
     except Exception as error:

@@ -22,10 +22,12 @@ The fingerprint binds the full file tree, file modes, config, runner, Python,
 Go launcher/effective binary and versions, linter binary/version, host, target,
 resource profile and artifact location.
 
-The child PATH starts with the checked `--go` directory; go/packages uses that
-same launcher. Its resolved analysis path and hash are fingerprinted and checked
-again after each stage. `--go` must select a launcher named `go` (`go.exe` on
-Windows), so its directory cannot silently resolve another executable.
+The `--go` bootstrap locates the pinned installation once. Every analysis stage
+then executes its checked effective Go directly with `GOTOOLCHAIN=local` and
+that installation's `bin` first in the child PATH. This also binds go/packages'
+own lookup without redispatch through a versioned `go1.26.10` in PATH. Bootstrap,
+effective and analysis paths/hashes are fingerprinted and checked again after
+each stage. `--go` must select a launcher named `go` (`go.exe` on Windows).
 
 Untracked and ignored files participate;
 only the root `.git` metadata is excluded. Unreadable directories fail inspection
@@ -62,11 +64,15 @@ python3 .github/scripts/lint_runner_test.py
 The real driver regression additionally requires the pinned linter executable:
 
 ```sh
-LINT_RUNNER_TEST_LINTER=/tools/golangci-lint python3 .github/scripts/lint_runner_driver_test.py
+LINT_RUNNER_TEST_LINTER=/tools/golangci-lint LINT_RUNNER_TEST_BOOTSTRAP_GO=/tools/go1.26.3/bin/go python3 .github/scripts/lint_runner_driver_test.py
 ```
 
 It proves that both an inherited driver and PATH discovery can hide a package
 from the actual linter, then checks that the runner finds its `unused` finding.
-CI builds this test tool with Go 1.26.10 and runs both cases. These small fixture
+It also proves that a genuine older bootstrap can redispatch through a
+package-hiding versioned Go proxy, while the runner still finds the package
+using the same inspected fingerprint. The bootstrap must be a real older
+Go 1.26 installation. CI obtains Go 1.26.3, builds the linter with Go 1.26.10
+and runs all cases. These small fixture
 checks do not substitute for full lint of OneBase. The unreadable-directory
 case runs under POSIX permissions in Linux CI; Windows reports that case as skipped.
