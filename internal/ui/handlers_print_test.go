@@ -86,6 +86,20 @@ func TestPrintDocumentXLSXThroughHTTPHandler(t *testing.T) {
 	if err := f.SetCellStr("Sheet1", "A1", "{{Контрагент.Наименование}}"); err != nil {
 		t.Fatal(err)
 	}
+	if err := f.SetCellStr("Sheet1", "A2", "007"); err != nil {
+		t.Fatal(err)
+	}
+	format := "00000"
+	style, err := f.NewStyle(&excelize.Style{Font: &excelize.Font{Bold: true}, CustomNumFmt: &format})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SetCellInt("Sheet1", "A3", 7); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SetCellStyle("Sheet1", "A3", "A3", style); err != nil {
+		t.Fatal(err)
+	}
 	var template bytes.Buffer
 	if err := f.Write(&template); err != nil {
 		t.Fatal(err)
@@ -153,6 +167,19 @@ func TestPrintDocumentXLSXThroughHTTPHandler(t *testing.T) {
 					}()
 					if got, err := out.GetCellValue("Sheet1", "A1"); err != nil || got != "ООО Ромашка" {
 						t.Errorf("A1 = %q, %v", got, err)
+					}
+					for cell, want := range map[string]string{"A2": "007", "A3": "00007"} {
+						if got, err := out.GetCellValue("Sheet1", cell); err != nil || got != want {
+							t.Errorf("%s = %q, %v; want %q", cell, got, err, want)
+						}
+					}
+					styleID, err := out.GetCellStyle("Sheet1", "A3")
+					if err != nil {
+						t.Fatal(err)
+					}
+					gotStyle, err := out.GetStyle(styleID)
+					if err != nil || gotStyle.Font == nil || !gotStyle.Font.Bold || gotStyle.CustomNumFmt == nil || *gotStyle.CustomNumFmt != format {
+						t.Fatalf("template formatting changed: %+v, %v", gotStyle, err)
 					}
 				})
 			}

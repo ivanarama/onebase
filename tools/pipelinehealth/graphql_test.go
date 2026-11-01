@@ -52,6 +52,9 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	if os.Getenv("PIPELINEHEALTH_TEST_GH_HELPER") == "1" {
+		if path := os.Getenv("PIPELINEHEALTH_TEST_GH_RETRY_FIXTURE"); path != "" {
+			runGraphQLRetryFixture(path)
+		}
 		if path := os.Getenv("PIPELINEHEALTH_TEST_GH_SEQUENCE"); path != "" {
 			data, err := os.ReadFile(path) //nolint:gosec // G703: this subprocess fixture path is supplied by the parent test under t.TempDir.
 			var pages []json.RawMessage

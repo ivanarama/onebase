@@ -27,6 +27,7 @@ func TestPageForm_ImageFieldWidget(t *testing.T) {
 	data := map[string]any{
 		"Entity":        imageEntity(),
 		"IsNew":         false,
+		"CanWrite":      true,
 		"Values":        map[string]string{"Наименование": "Болт", "Картинка": "abc-123"},
 		"RefOptions":    map[string]any{},
 		"EnumOptions":   map[string]any{},

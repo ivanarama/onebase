@@ -148,9 +148,10 @@ func LoadAccountRegisterDir(dir string) ([]*AccountRegister, error) {
 }
 
 // AccountRegTableName returns the PostgreSQL table name for an account register.
-func AccountRegTableName(name string) string {
-	return "акк_" + strings.ToLower(name)
-}
+func AccountRegTableName(name string) string { return SQLIdent(AccountRegTableLogical(name)) }
+
+// AccountRegTableLogical — логическое имя таблицы бухрегистра (см. TableLogical).
+func AccountRegTableLogical(name string) string { return "акк_" + strings.ToLower(name) }
 
 // SubcontoColumn возвращает имя колонки субконто по его порядковому номеру (1-based).
 // Имя стабильно при переименовании поля субконто, что упрощает краткую запись
@@ -163,6 +164,11 @@ func SubcontoColumn(idx int) string {
 // помесячные обороты Дт/Кт по (счёт, субконто…). Отдельная от итоги_<рег>
 // накопления, чтобы имена бухрегистра и регистра накопления не сталкивались.
 func AccountRegTotalsTableName(name string) string {
+	return SQLIdent(AccountRegTotalsTableLogical(name))
+}
+
+// AccountRegTotalsTableLogical — логическое имя таблицы итогов бухрегистра.
+func AccountRegTotalsTableLogical(name string) string {
 	return "итоги_акк_" + strings.ToLower(name)
 }
 

@@ -367,6 +367,11 @@ func parseAnyUUID(v any) (uuid.UUID, bool) {
 	}
 }
 
+// ParseBoolValue — то же распознавание булева, что у отбора хранилища:
+// true/false, 1/0, да/нет, истина/ложь, yes/no. Интерфейс по нему показывает
+// значение из адреса списка (#2184).
+func ParseBoolValue(v any) (bool, bool) { return parseAnyBool(v) }
+
 func parseAnyBool(v any) (bool, bool) {
 	switch t := v.(type) {
 	case bool:
