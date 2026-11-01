@@ -68,9 +68,19 @@ func processorCarryAAD(r *http.Request, proc *processorpkg.Processor) []byte {
 	return []byte("obcarry1|" + strings.ToLower(proc.Name) + "|" + userKeyFromRequest(r))
 }
 
-// processorCarryFieldName — имя служебного поля, не совпадающее с параметром.
-func processorCarryFieldName(proc *processorpkg.Processor) string {
-	return processorServiceFieldName(proc.Params, processorCarryField)
+// processorCarryFieldName выделяет имя только для carry: параметры и реквизиты
+// конкретной формы делят пространство имён с этим скрытым полем. Остальные
+// serviceFields сохраняют прежнее распределение.
+func processorCarryFieldName(proc *processorpkg.Processor, form *metadata.FormModule) string {
+	params := append([]processorpkg.Param(nil), proc.Params...)
+	if form != nil {
+		for _, attr := range form.Attributes {
+			if attr != nil {
+				params = append(params, processorpkg.Param{Name: attr.Name})
+			}
+		}
+	}
+	return processorServiceFieldName(params, processorCarryField)
 }
 
 // sealProcessorCarry запечатывает состояние формы; пустая строка — нечего
@@ -109,7 +119,7 @@ func processorCarryPostBytes(r *http.Request, proc *processorpkg.Processor, form
 		body[name] = append([]string(nil), texts...)
 	}
 	// RawURL base64 использует только безопасные символы URLSearchParams.
-	body.Set(processorCarryFieldName(proc), strings.Repeat("a", tokenBytes))
+	body.Set(processorCarryFieldName(proc, form), strings.Repeat("a", tokenBytes))
 	escapedBytes := func(text string) int {
 		return len(url.QueryEscape(text)) + 2*strings.Count(text, "~")
 	}
@@ -155,12 +165,12 @@ func processorCarryPostBytes(r *http.Request, proc *processorpkg.Processor, form
 
 // openProcessorCarry раскрывает присланное состояние. Подделка, чужая
 // обработка или пользователь, токен до перезапуска — пустой результат.
-func (s *Server) openProcessorCarry(r *http.Request, proc *processorpkg.Processor) map[string]string {
+func (s *Server) openProcessorCarry(r *http.Request, proc *processorpkg.Processor, form *metadata.FormModule) map[string]string {
 	aead := s.processorCarryAEAD()
 	if aead == nil || proc == nil {
 		return nil
 	}
-	token, _ := processorPostFormText(r, processorCarryFieldName(proc))
+	token, _ := processorPostFormText(r, processorCarryFieldName(proc, form))
 	if token == "" || len(token) > processorCarryMaxBytes {
 		return nil
 	}
@@ -188,14 +198,30 @@ func processorCarryParam(p processorpkg.Param) bool {
 // форме: их значения в открытом ответе не нужны.
 func processorUnplaced(proc *processorpkg.Processor, form *metadata.FormModule) map[string]bool {
 	placed := map[string]bool{}
-	if form != nil {
-		form.Walk(func(el *metadata.FormElement) bool {
-			if el != nil && strings.TrimSpace(el.DataPath) != "" {
-				placed[strings.ToLower(dpFieldName(el.DataPath))] = true
+	// Колонки и произвольные потомки таблицы не размещают корневое поле,
+	// даже когда их короткий data_path совпадает с его именем.
+	walkBrowserFormElements(form, func(visit browserFormElementVisit) {
+		el := visit.element
+		if visit.parentTablePart != nil || el.Kind == metadata.FormElementTablePart {
+			return
+		}
+		path := strings.TrimSpace(el.DataPath)
+		scope, name, qualified := strings.Cut(path, ".")
+		if qualified {
+			if !strings.EqualFold(scope, "Объект") && !strings.EqualFold(scope, "Object") &&
+				!strings.EqualFold(scope, "Форма") && !strings.EqualFold(scope, "Form") {
+				return
 			}
-			return true
-		})
-	}
+			if strings.Contains(name, ".") {
+				return
+			}
+		} else {
+			name = path
+		}
+		if name != "" {
+			placed[strings.ToLower(name)] = true
+		}
+	})
 	out := map[string]bool{}
 	for _, p := range proc.Params {
 		if processorCarryParam(p) && !placed[strings.ToLower(p.Name)] {
@@ -351,7 +377,7 @@ func (s *Server) finishProcessorCarry(r *http.Request, proc *processorpkg.Proces
 	if resp.Values == nil {
 		resp.Values = map[string]any{}
 	}
-	resp.Values[processorCarryFieldName(proc)] = token
+	resp.Values[processorCarryFieldName(proc, form)] = token
 }
 
 // setProcessorCarryContext — начальное состояние формы обработки для
@@ -366,9 +392,10 @@ func (s *Server) setProcessorCarryContext(r *http.Request, data map[string]any, 
 			fields[k] = v
 		}
 	}
-	name := processorCarryFieldName(proc)
+	form := proc.ManagedForm()
+	name := processorCarryFieldName(proc, form)
 	data["ProcessorCarryAttrs"] = []string{name}
-	token, err := s.sealProcessorCarry(r, proc, proc.ManagedForm(), processorCarryValues(proc, proc.ManagedForm(), fields))
+	token, err := s.sealProcessorCarry(r, proc, form, processorCarryValues(proc, form, fields))
 	if err != nil {
 		message := s.errText(r, err)
 		if previous, ok := data["RunError"].(string); ok && previous != "" {

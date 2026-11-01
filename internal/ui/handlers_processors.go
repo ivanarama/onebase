@@ -244,7 +244,7 @@ func (s *Server) processorRun(w http.ResponseWriter, r *http.Request) {
 	}
 	// Значения без элемента на форме (служебные флаги) — из запечатанного
 	// состояния формы, как в событиях (processor_form_carry.go).
-	applyProcessorCarryParams(proc, s.openProcessorCarry(r, proc), paramValues)
+	applyProcessorCarryParams(proc, s.openProcessorCarry(r, proc, proc.ManagedForm()), paramValues)
 
 	// Обязательные параметры проверяются ДО запуска. Атрибут required в форме
 	// останавливает обычного пользователя, но он же — подсказка, а не гарантия:

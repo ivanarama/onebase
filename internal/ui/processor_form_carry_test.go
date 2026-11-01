@@ -172,7 +172,7 @@ func TestProcessorFormCarry_InitialPageSealsUnplacedDefaults(t *testing.T) {
 	if err := open.ParseForm(); err != nil {
 		t.Fatal(err)
 	}
-	if got := srv.openProcessorCarry(open, proc); got["Секрет"] != "секрет-по-умолчанию" {
+	if got := srv.openProcessorCarry(open, proc, form); got["Секрет"] != "секрет-по-умолчанию" {
 		t.Fatalf("начальный токен не раскрылся в умолчания: %v", got)
 	}
 }
@@ -274,7 +274,11 @@ func TestProcessorFormCarry_CheckboxPresence(t *testing.T) {
 			if len(second.Messages) != 1 || second.Messages[0] != tc.want {
 				t.Fatalf("checkbox state=%v, want %s", second.Messages, tc.want)
 			}
-			if !tc.unplaced && second.Values["Flag"] != (tc.want == "true") {
+			if tc.unplaced || tc.tableChild {
+				if _, exposed := second.Values["Flag"]; exposed {
+					t.Fatal("unplaced checkbox value exposed in response")
+				}
+			} else if second.Values["Flag"] != (tc.want == "true") {
 				t.Fatalf("checkbox response=%v, want %s", second.Values["Flag"], tc.want)
 			}
 			// A third event with no control must restore the newly accepted value.

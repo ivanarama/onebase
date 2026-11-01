@@ -2592,7 +2592,7 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 	}
 	// Параметры, которые браузер не присылает (нет элемента, нередактируемый,
 	// скрыт), приходят запечатанным состоянием формы (processor_form_carry.go).
-	carry := s.openProcessorCarry(r, proc)
+	carry := s.openProcessorCarry(r, proc, form)
 	applyProcessorCarryParams(proc, carry, paramValues)
 	progAny := form.ProgramAST
 	var program *ast.Program
