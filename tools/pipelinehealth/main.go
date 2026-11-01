@@ -19,6 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ivantit66/onebase/internal/reviewrouting"
 	"golang.org/x/text/encoding/charmap"
 )
 
@@ -1308,38 +1309,10 @@ func trustedUnedited(comment apiComment, owner string) bool {
 	return comment.User.Login == owner && comment.CreatedAt != "" && comment.UpdatedAt == comment.CreatedAt
 }
 
-// hasReviewAgain accepts the exact protocol line outside Markdown fenced code.
-// An unclosed fence quotes the rest of the comment, including any instructions
-// that happen to spell the marker. Fences use at least three backticks or tildes
-// and at most three leading spaces; a close must use the same character, be at
-// least as long as the opener, and contain only trailing spaces or tabs.
+// hasReviewAgain shares the established Markdown-aware marker semantics with
+// the typed reader, including historical epochs and incomplete publications.
 func hasReviewAgain(body string) bool {
-	var fence byte
-	var fenceLength int
-	for _, line := range strings.Split(body, "\n") {
-		if fence == 0 && line == "pp:review-again" {
-			return true
-		}
-		text := strings.TrimLeft(line, " ")
-		if len(line)-len(text) > 3 || len(text) < 3 || (text[0] != '`' && text[0] != '~') {
-			continue
-		}
-		length := 1
-		for length < len(text) && text[length] == text[0] {
-			length++
-		}
-		if fence != 0 {
-			if text[0] == fence && length >= fenceLength && strings.Trim(text[length:], " \t\r") == "" {
-				fence, fenceLength = 0, 0
-			}
-			continue
-		}
-		// A backtick in the info string makes a backtick opener invalid.
-		if length >= 3 && (text[0] != '`' || !strings.Contains(text[length:], "`")) {
-			fence, fenceLength = text[0], length
-		}
-	}
-	return false
+	return reviewrouting.HasReviewAgain(body)
 }
 
 func reviewDepth(comments []apiComment, owner string) int {

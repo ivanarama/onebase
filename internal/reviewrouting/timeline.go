@@ -14,7 +14,6 @@ var (
 	legacyClaim    = regexp.MustCompile(`^(?:PromptPilot service marker: REVIEW result publication claimed\.\n)?<!-- pp:review-claim ([0-9a-f]{40}) review-comment=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
 	legacyComplete = regexp.MustCompile(`^(?:PromptPilot service marker: REVIEW result committed\.\n)?<!-- pp:head-reviewed ([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
 	legacyReview   = regexp.MustCompile(`(?ms)^Reviewed-SHA: ([0-9a-f]{40})$.*^Outcome-Label: (reviewed|changes-requested|needs-decision)$.*^<!-- pp:review pp:tail=([0-9]+) -->$`)
-	manualOverride = regexp.MustCompile(`(?m)^pp:review-again$`)
 	protocolHint   = regexp.MustCompile(`(^|[^A-Za-z0-9_])pp:`)
 )
 
@@ -205,7 +204,7 @@ func epoch(items []timelineEdge, head, trusted string) (Epoch, error) {
 	}
 	for i := anchor + 1; i < len(items); i++ {
 		edge := items[i]
-		if edge.kind == "IssueComment" && actor(edge.node) == trusted && edge.node["lastEditedAt"] == nil && manualOverride.MatchString(stringValue(edge.node["body"])) {
+		if edge.kind == "IssueComment" && actor(edge.node) == trusted && edge.node["lastEditedAt"] == nil && HasReviewAgain(stringValue(edge.node["body"])) {
 			anchor = i
 		}
 	}
@@ -355,7 +354,7 @@ func VerifiedDepth(snapshot map[string]any, trusted string) (Verified, error) {
 		// reconstruction of a past epoch from today's commit-date timeline.
 		start := 0
 		for i, prior := range items[:positions[id]+1] {
-			if prior.kind == "IssueComment" && actor(prior.node) == trusted && manualOverride.MatchString(stringValue(prior.node["body"])) {
+			if prior.kind == "IssueComment" && actor(prior.node) == trusted && HasReviewAgain(stringValue(prior.node["body"])) {
 				start = i + 1
 			}
 		}
@@ -439,7 +438,7 @@ func VerifiedDepth(snapshot map[string]any, trusted string) (Verified, error) {
 			if item.kind == "PullRequestCommit" {
 				continue
 			}
-			if item.kind == "IssueComment" && actor(item.node) == trusted && manualOverride.MatchString(stringValue(item.node["body"])) {
+			if item.kind == "IssueComment" && actor(item.node) == trusted && HasReviewAgain(stringValue(item.node["body"])) {
 				return result, fmt.Errorf("typed publication crossed a review override")
 			}
 			suffix = append(suffix, item)
@@ -463,14 +462,23 @@ func VerifiedDepth(snapshot map[string]any, trusted string) (Verified, error) {
 		}
 		epochs[key] = true
 	}
-	for _, proof := range ledger.Proofs {
+	ignored := map[string]bool{}
+	for _, id := range ledger.IgnoredIDs {
+		ignored[id] = true
+	}
+	// Validate immutable context before recover, including unfinished canonical
+	// roots. Equivalent losing publications retain their original root context.
+	for _, publication := range history {
+		if publication.Payload["kind"] != "publication" || ignored[publication.ID] {
+			continue
+		}
 		prior := int64(0)
 		for _, item := range completed {
-			if item.index < positions[proof.Publication.ID] {
+			if item.index < positions[publication.ID] {
 				prior++
 			}
 		}
-		declared, _ := integer(proof.Publication.Payload["depth"], 0, 2147483647)
+		declared, _ := integer(publication.Payload["depth"], 0, 2147483647)
 		if declared != prior {
 			return result, fmt.Errorf("typed publication depth contradicts verified history")
 		}

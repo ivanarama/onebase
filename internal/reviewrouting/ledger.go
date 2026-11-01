@@ -209,14 +209,14 @@ func Reduce(input []Record, deleted []string, maxAttempts int64) (Ledger, error)
 			return result, fmt.Errorf("next attempt lacks completed post-push provenance")
 		}
 	}
-	for _, proof := range proofs {
+	for _, publication := range publications {
 		historical := int64(0)
 		for _, attempt := range attempts {
-			if before(attempt, proof.Publication) {
+			if before(attempt, publication) {
 				historical++
 			}
 		}
-		used, _ := integer(proof.Publication.Payload["budget_used"], 0, 16)
+		used, _ := integer(publication.Payload["budget_used"], 0, 16)
 		if used != historical {
 			return result, fmt.Errorf("publication budget differs from lifetime reservations")
 		}
