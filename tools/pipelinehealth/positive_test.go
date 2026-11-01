@@ -88,7 +88,7 @@ func positiveSkillFixture(t *testing.T, missing string) string {
 		if role != missing && missing != "all" {
 			data = append(data, []byte("\n"+marker+"\n")...)
 		}
-		if err := os.WriteFile(path, data, 0o600); err != nil {
+		if err := os.WriteFile(path, data, 0o600); err != nil { //nolint:gosec // G703: fixed stage names inside routingSkillFixture's t.TempDir, never fixture input.
 			t.Fatal(err)
 		}
 	}
@@ -135,9 +135,10 @@ func TestPublicPositiveQueueNeedsExplicitReadersAndTrustedShip(t *testing.T) {
 				state["labels"] = append(state["labels"].([]any), fault)
 			}
 			selectedContract := contract
-			if fault == "old-A-readers" {
+			switch fault {
+			case "old-A-readers":
 				selectedContract = positiveSkillFixture(t, "all")
-			} else if fault == "review" || fault == "fix" || fault == "merge" || fault == "tail" {
+			case "review", "fix", "merge", "tail":
 				selectedContract = positiveSkillFixture(t, fault)
 			}
 			args := []string{"-contract", selectedContract}

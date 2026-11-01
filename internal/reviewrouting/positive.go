@@ -110,7 +110,7 @@ func PositiveReview(snapshot map[string]any, trusted string, merged bool) (Posit
 	publication, pubOK := positions[proof.Publication.ID]
 	claim, claimOK := positions[proof.Claim.ID]
 	completion, doneOK := positions[proof.Completion.ID]
-	if !pubOK || !claimOK || !doneOK || !(info.anchorIndex < publication && publication < claim && claim < completion && completion < cut) {
+	if !pubOK || !claimOK || !doneOK || info.anchorIndex >= publication || publication >= claim || claim >= completion || completion >= cut {
 		return result, fmt.Errorf("positive typed REVIEW proof does not precede the exact merge boundary")
 	}
 	for _, item := range items[completion+1:] {
