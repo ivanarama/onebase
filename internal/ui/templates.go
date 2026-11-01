@@ -505,7 +505,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return s
 		},
 		// managedRefOptions keeps choice_filter options scoped to the stable
-		// element id. The same entity field may be rendered twice with different
+		// element placement. The same entity field may be rendered twice with different
 		// filters; falling back by field name is only for elements without the
 		// opt-in contract.
 		"managedRefOptions": func(ctx map[string]any, element *metadata.FormElement, field string) []map[string]any {
@@ -517,6 +517,17 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return selectedRefOptionsOnly(rows, formContextValue(ctx, field))
 			}
 			return rows
+		},
+		// An empty option page still has a reference source. Keep its picker.
+		"managedHasRefOptions": func(ctx map[string]any, element *metadata.FormElement, field string) bool {
+			if scoped, ok := ctx["ManagedChoiceOptions"].(map[*metadata.FormElement][]map[string]any); ok {
+				if _, exists := scoped[element]; exists {
+					return true
+				}
+			}
+			refs, _ := ctx["RefOptions"].(map[string][]map[string]any)
+			_, exists := refs[field]
+			return exists
 		},
 		// hideRefCard — убрать ли у поля кнопку «Открыть карточку» (🔍): явный
 		// ref_card_button поля решает сам, иначе — решение формы (HideRefCard из
@@ -1296,6 +1307,36 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return nil
 		},
+		"tpChoiceRefOptions": func(ctx map[string]any, table *metadata.FormElement, fallback map[string][]map[string]any) map[string][]map[string]any {
+			all, _ := ctx["TPChoices"].(map[*metadata.FormElement]*tpChoiceRender)
+			if all[table] == nil || len(all[table].BaseOptions) == 0 {
+				return fallback
+			}
+			options := make(map[string][]map[string]any, len(fallback))
+			for field, rows := range fallback {
+				options[field] = rows
+			}
+			for field, rows := range all[table].BaseOptions {
+				options[field] = rows
+			}
+			return options
+		},
+		"tpChoiceRefOverrides": func(ctx map[string]any, table *metadata.FormElement) map[string][]map[string]any {
+			all, _ := ctx["TPChoices"].(map[*metadata.FormElement]*tpChoiceRender)
+			if all[table] != nil {
+				return all[table].BaseOptions
+			}
+			return nil
+		},
+		"managedTPMarked": func(plan []managedTPColumn) map[string]string {
+			marked := make(map[string]string)
+			for _, column := range plan {
+				if column.Field.RefEntity != "" {
+					marked[column.Field.Name] = markedFlag(column.Field.ChoiceShowDeleted)
+				}
+			}
+			return marked
+		},
 		"tpChoiceOptions": func(ctx map[string]any, table *metadata.FormElement, field string, row int, fallback map[string][]map[string]any) []map[string]any {
 			all, _ := ctx["TPChoices"].(map[*metadata.FormElement]*tpChoiceRender)
 			if all[table] != nil && all[table].Contexts[field] != "" {
@@ -1438,8 +1479,8 @@ func isListStateQueryKey(key string) bool {
 // предзагруженную страницу справочника.
 func managedRefOptionRows(ctx map[string]any, element *metadata.FormElement, field string) []map[string]any {
 	if element != nil {
-		if scoped, ok := ctx["ManagedChoiceOptions"].(map[string][]map[string]any); ok {
-			if rows, exists := scoped[element.ID]; exists {
+		if scoped, ok := ctx["ManagedChoiceOptions"].(map[*metadata.FormElement][]map[string]any); ok {
+			if rows, exists := scoped[element]; exists {
 				return rows
 			}
 		}

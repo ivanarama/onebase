@@ -700,8 +700,14 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       const virtualNames = obManagedVirtualColumnNames(tbody);
       const hiddenNames = obManagedHiddenColumnNames(tbody);
       const rows = tps[tpName] || [];
-      const refOpts = (window._tpRefOpts && window._tpRefOpts[tpName]) || {};
+      const currentRefOpts = (window._tpRefOpts && window._tpRefOpts[tpName]) || {};
+      var refOpts = currentRefOpts;
       const refMeta = (obTPRefMeta()[tpName]) || {};
+      var refMarked = {};
+      try {
+        refOpts = Object.assign({}, refOpts, JSON.parse(tbody.getAttribute('data-tp-ref-options') || 'null') || {});
+        refMarked = JSON.parse(tbody.getAttribute('data-tp-ref-marked') || '{}') || {};
+      } catch (e) {}
       var choices={};try{choices=JSON.parse(tbody.getAttribute('data-tp-choice')||'{}')||{};}catch(e){}
       const tpEnumLabels = (window._tpEnumLabels && window._tpEnumLabels[tpName]) || {};
       const tpEnumOrder = (window._tpEnumOrder && window._tpEnumOrder[tpName]) || {};
@@ -748,6 +754,9 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
             var choice=choices[f.name];
             const meta = refMeta[f.name];
             if (meta && meta.filter) sel.setAttribute('data-ref-filter', meta.filter);
+            sel.setAttribute('data-ref-entity', f.ref.split(':').pop());
+            var marked = Object.prototype.hasOwnProperty.call(refMarked, f.name) ? refMarked[f.name] : (meta && meta.marked);
+            if (marked === '1' || marked === '0') sel.setAttribute('data-ref-marked', marked);
             if(choice) {sel.setAttribute('data-ref-choice-context',choice);sel.setAttribute('data-ref-row-id',String(idx));sel.setAttribute('data-ref-entity',f.ref.split(':').pop());}
             const empty = document.createElement('option');
             empty.value = ''; empty.textContent = '— выбрать —';
@@ -763,6 +772,16 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
               if (String(opt.id) === cur) o.selected = true;
               sel.appendChild(o);
             });
+            // A form event may select a value outside this placement's initial
+            // page. Retain that selection without offering the other page's rows.
+            if (cur && !(refOpts[f.name] || []).some(function(opt) { return String(opt.id) === cur; })) {
+              const selected = (currentRefOpts[f.name] || []).find(function(opt) { return String(opt.id) === cur; });
+              const option = document.createElement('option');
+              option.value = cur;
+              option.textContent = selected ? selected._label : cur;
+              option.selected = true;
+              sel.appendChild(option);
+            }
             sel.disabled = readOnly;
             td.appendChild(sel);
           } else if (isEnum && tpEnumLabels[f.name]) {

@@ -1050,6 +1050,7 @@ func tpRefMetaWithFilters(entity *metadata.Entity, writable map[string]bool, fil
 					"entity":      f.RefEntity,
 					"allowCreate": f.InlineCreateEnabled(true) && writable[f.RefEntity],
 					"filter":      filters[tp.Name+"."+f.Name],
+					"marked":      markedFlag(f.ChoiceShowDeleted),
 				}
 			}
 		}

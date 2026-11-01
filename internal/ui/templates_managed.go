@@ -190,14 +190,11 @@ const tplManagedForm = `
       </div>
     {{else}}
       {{$attr := attrByName $ctx.Form $fn}}
-      {{if and $attr (attrRefEntity $attr.TypeRef) (or (index $ctx.RefOptions $fn) $choiceCtx)}}
+      {{if and $attr (attrRefEntity $attr.TypeRef) (or (managedHasRefOptions $ctx $el $fn) $choiceCtx)}}
         {{/* Реквизит формы ссылочного типа — рабочий пикер выбора (фикс B): select
              из вариантов справочника (mergeFormLocalRefOptions) + кнопка подбора.
-             Условие требует ещё и загруженных опций: mergeFormLocalRefOptions
-             зовётся только из renderEntityForm и только для save:false с сущностью
-             в реестре. Формы обработок рендерят page-managed-form напрямую
-             (handlers_processors.go), и без этой проверки поле там превращалось в
-             пустой select, теряющий текущее значение при записи. Нет опций —
+             Проверяем наличие подготовленного источника, а не число вариантов:
+             страница справочника может быть пустой. Без поддержанного источника
              остаётся прежний текстовый ввод со значением. */}}
         <div class="managed-control-row" style="display:flex;gap:6px;align-items:center">
           <select class="managed-fill-control" id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{attrRefEntity $attr.TypeRef}}"{{refPickAttrs false $el.ChoiceShowDeleted}}{{if $ctx.RefFilter}}{{with index $ctx.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if $choiceCtx}} data-ref-choice-context="{{$choiceCtx}}"{{end}}{{if choiceDropdownCollapsed $el}} data-ref-choice-dropdown="false"{{end}}{{if $el.ChoiceContext}} data-ref-context="{{choiceContextJSON $el}}" data-ref-element="{{$el.Name}}" data-ref-source-entity="{{$ctx.Entity.Name}}"{{end}}{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
@@ -290,7 +287,7 @@ const tplManagedForm = `
   {{$tpName := canonicalFormTableName $ctx.Form $ctx.Entity (dpField $el.DataPath)}}
   {{$tpMeta := tablePartByName $ctx.Entity $tpName}}
   {{$tpRows := index $ctx.TablePartRows $tpName}}
-  {{$tpRef := index $ctx.TPRefOptions $tpName}}
+  {{$tpRef := tpChoiceRefOptions $ctx $el (index $ctx.TPRefOptions $tpName)}}
   {{$tpEnum := index $ctx.TPEnumLabels $tpName}}
   {{$tpCmds := tpCommandButtons $el}}
   {{$tpReadOnly := or $ro (not $ctx.CanWrite)}}
@@ -377,7 +374,7 @@ const tplManagedForm = `
         <th style="width:40px"></th>
       </tr>
     </thead>
-    <tbody id="tp-body-{{$tpName}}" {{if $tpCmds}}data-tp-cmd="1" {{end}}{{if $tpReadOnly}}data-ob-table-readonly="1" {{end}}data-tp-choice="{{jsJSON (tpChoiceContexts $ctx $el)}}" data-tp-fields="{{managedTPFieldsAttr $tpPlan}}" data-tp-hidden-cols="{{managedTPHiddenColsJSON $tpPlan}}" data-tp-virtual-cols="{{managedTPVirtualNamesJSON $tpVirtualCols}}">
+    <tbody id="tp-body-{{$tpName}}" {{if $tpCmds}}data-tp-cmd="1" {{end}}{{if $tpReadOnly}}data-ob-table-readonly="1" {{end}}data-tp-choice="{{jsJSON (tpChoiceContexts $ctx $el)}}" data-tp-ref-options="{{jsJSON (tpChoiceRefOverrides $ctx $el)}}" data-tp-ref-marked="{{jsJSON (managedTPMarked $tpPlan)}}" data-tp-fields="{{managedTPFieldsAttr $tpPlan}}" data-tp-hidden-cols="{{managedTPHiddenColsJSON $tpPlan}}" data-tp-virtual-cols="{{managedTPVirtualNamesJSON $tpVirtualCols}}">
     {{range $i, $row := $tpRows}}
       <tr{{with formRowClass $row}} class="{{.}}"{{end}} tabindex="-1" aria-selected="false">
         {{if $tpCmds}}<td style="text-align:center"><input type="checkbox" class="_tp-sel"{{if $tpReadOnly}} disabled{{end}}></td>{{end}}

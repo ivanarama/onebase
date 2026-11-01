@@ -3796,6 +3796,11 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
   var tr = document.createElement('tr');
   var refOpts = (obTPRefOpts()[tpName]) || {};
   var refMeta = (obTPRefMeta()[tpName]) || {};
+  var refMarked = {};
+  try {
+    refOpts = Object.assign({}, refOpts, JSON.parse(tbody.getAttribute('data-tp-ref-options') || 'null') || {});
+    refMarked = JSON.parse(tbody.getAttribute('data-tp-ref-marked') || '{}') || {};
+  } catch (e) {}
   var enumLabels = (obTPEnumLabels()[tpName]) || {};
   var enumOrder = (obTPEnumOrder()[tpName]) || {};
   var bools = Array.isArray(boolFields) ? boolFields : [];
@@ -3824,6 +3829,8 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
         sel.setAttribute('data-ref-entity', meta.entity);
         if (meta.allowCreate) sel.setAttribute('data-ref-allow-create', '1');
         if (meta.filter) sel.setAttribute('data-ref-filter', meta.filter);
+        var marked = Object.prototype.hasOwnProperty.call(refMarked, fn) ? refMarked[fn] : meta.marked;
+        if (marked === '1' || marked === '0') sel.setAttribute('data-ref-marked', marked);
       }
       var defOpt = document.createElement('option');
       defOpt.value = '';
