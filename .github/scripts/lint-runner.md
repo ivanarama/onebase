@@ -20,7 +20,14 @@ as native Linux execution or as passing Windows lint.
 
 The fingerprint binds the full file tree, file modes, config, runner, Python,
 Go launcher/effective binary and versions, linter binary/version, host, target,
-resource profile and artifact location. Untracked and ignored files participate;
+resource profile and artifact location.
+
+The child PATH starts with the checked `--go` directory; go/packages uses that
+same launcher. Its resolved analysis path and hash are fingerprinted and checked
+again after each stage. `--go` must select a launcher named `go` (`go.exe` on
+Windows), so its directory cannot silently resolve another executable.
+
+Untracked and ignored files participate;
 only the root `.git` metadata is excluded. Unreadable directories fail inspection
 and execution before analysis. Symlinks, external local module replacements
 and oversized trees fail closed. Local replacements entirely inside the source

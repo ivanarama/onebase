@@ -54,6 +54,13 @@ def tree_digest(root):
 def environment(args):
     target_os, target_arch = args.target.split("/")
     env = dict(os.environ)
+    go = Path(shutil.which(args.go) or args.go).resolve(strict=True)
+    # go/packages invokes "go" itself. Its lookup must select the same checked
+    # launcher as module verification/exports, even with an absolute --go.
+    env["PATH"] = str(go.parent) + os.pathsep + env.get("PATH", "")
+    analysis_go = shutil.which("go", path=env["PATH"])
+    if analysis_go is None or Path(analysis_go).resolve(strict=True) != go:
+        raise ValueError("--go must select the go/go.exe launcher in its directory")
     env.update(GOTOOLCHAIN=GO, GOENV="off", GOOS=target_os, GOARCH=target_arch,
                CGO_ENABLED="0", GOMAXPROCS="4", GOMEMLIMIT="7GiB", GOGC="100",
                GOWORK="off", GOFLAGS="", GOEXPERIMENT="", GOAMD64="v1", GOCACHEPROG="", GOPACKAGESDRIVER="off",
@@ -65,6 +72,9 @@ def environment(args):
 
 def describe(args, env):
     go = Path(shutil.which(args.go) or args.go).resolve(strict=True)
+    analysis_go = Path(shutil.which("go", path=env["PATH"]) or "").resolve(strict=True)
+    if analysis_go != go:
+        raise ValueError("linter Go lookup differs from the checked --go")
     linter = args.linter.resolve(strict=True)
     def output(command):
         return subprocess.check_output(command, cwd=args.root, env=env, timeout=60, text=True).strip()
@@ -90,7 +100,8 @@ def describe(args, env):
                "config_sha256": digest(args.root / ".golangci.yml"),
                "runner_sha256": digest(Path(__file__)), "python_sha256": digest(Path(sys.executable)),
                "host": {"platform": platform.platform(), "go": go_env},
-               "go": {"path": str(go), "launcher_sha256": digest(go), "effective_sha256": digest(effective_go), "version": go_version},
+               "go": {"path": str(go), "launcher_sha256": digest(go), "effective_sha256": digest(effective_go), "version": go_version,
+                      "analysis_path": str(analysis_go), "analysis_sha256": digest(analysis_go)},
                "linter": {"path": str(linter), "sha256": digest(linter), "version": lint_version},
                "profile": {key: env[key] for key in ["GOTOOLCHAIN", "GOENV", "GOOS", "GOARCH", "CGO_ENABLED", "GOMAXPROCS", "GOMEMLIMIT", "GOGC", "GOWORK", "GOFLAGS", "GOEXPERIMENT", "GOAMD64", "GOCACHEPROG", "GOPACKAGESDRIVER"]},
                "artifacts": str(args.artifacts), "export_deadline_seconds": args.stage_timeout,
