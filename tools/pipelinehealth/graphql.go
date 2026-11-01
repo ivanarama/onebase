@@ -216,6 +216,34 @@ type pipelineGraphQLAPIError struct {
 	messages []string
 }
 
+// Only an explicit gateway HTTP failure from gh is retryable. GraphQL errors,
+// rate limits, authentication failures and timeouts keep their normal refusal.
+type pipelineGraphQLGatewayError struct {
+	status int
+	err    error
+}
+
+func (err *pipelineGraphQLGatewayError) Error() string { return err.err.Error() }
+func (err *pipelineGraphQLGatewayError) Unwrap() error { return err.err }
+
+func pipelineGraphQLGatewayStatus(detail string) int {
+	detail = strings.TrimSpace(detail)
+	if strings.ContainsAny(detail, "\r\n") || !strings.HasPrefix(detail, "gh: ") {
+		return 0
+	}
+	code := strings.TrimPrefix(detail, "gh: HTTP ")
+	if code == detail && strings.HasSuffix(detail, ")") {
+		if index := strings.LastIndex(detail, " (HTTP "); index >= 0 {
+			code = detail[index+7 : len(detail)-1]
+		}
+	}
+	status, _ := strconv.Atoi(code)
+	if status == 502 || status == 503 || status == 504 {
+		return status
+	}
+	return 0
+}
+
 func (err *pipelineGraphQLAPIError) Error() string {
 	return truncatePipelineGraphQLDetail("GraphQL response errors: " + strings.Join(err.messages, "; "))
 }
@@ -301,8 +329,11 @@ func (client *ghPipelineGraphQLClient) Query(query string, variables map[string]
 		return fmt.Errorf("gh api graphql stderr exceeds %d bytes", maxPipelineGraphQLStderrBytes)
 	}
 
-	decodeErr := decodePipelineGraphQLResponse(stdout.Bytes(), destination)
 	if runErr != nil {
+		// A failed command must never populate the caller's destination, even
+		// if stdout contains syntactically valid partial data.
+		var discarded json.RawMessage
+		decodeErr := decodePipelineGraphQLResponse(stdout.Bytes(), &discarded)
 		if _, ok := decodeErr.(*pipelineGraphQLAPIError); ok {
 			return decodeErr
 		}
@@ -311,12 +342,13 @@ func (client *ghPipelineGraphQLClient) Query(query string, variables map[string]
 			detail = strings.TrimSpace(stdout.String())
 		}
 		detail = truncatePipelineGraphQLDetail(detail)
-		return fmt.Errorf("run gh api graphql: %w: %s", runErr, detail)
+		err := fmt.Errorf("run gh api graphql: %w: %s", runErr, detail)
+		if status := pipelineGraphQLGatewayStatus(stderr.String()); status != 0 {
+			return &pipelineGraphQLGatewayError{status: status, err: err}
+		}
+		return err
 	}
-	if decodeErr != nil {
-		return decodeErr
-	}
-	return nil
+	return decodePipelineGraphQLResponse(stdout.Bytes(), destination)
 }
 
 func runPipelineGraphQLCommand(ctx context.Context, executable string, input []byte, stdout, stderr io.Writer) error {
@@ -790,12 +822,40 @@ type limitedPipelineGraphQLClient struct {
 	used     int
 }
 
-func (client *limitedPipelineGraphQLClient) Query(query string, variables map[string]any, destination any) error {
-	if client.used >= maxPipelineGraphQLQueries {
-		return fmt.Errorf("GraphQL snapshot exceeded %d queries", maxPipelineGraphQLQueries)
+func limitPipelineGraphQLClient(client pipelineGraphQLClient) *limitedPipelineGraphQLClient {
+	if bounded, ok := client.(*limitedPipelineGraphQLClient); ok {
+		return bounded
 	}
-	client.used++
-	return client.delegate.Query(query, variables, destination)
+	return &limitedPipelineGraphQLClient{delegate: client}
+}
+
+func (client *limitedPipelineGraphQLClient) Query(query string, variables map[string]any, destination any) error {
+	// Retry one failed read, not the health command, election or publication.
+	// All physical attempts share the snapshot's existing query budget, even
+	// across a later queue-churn restart. Mutations are never retried.
+	read := strings.TrimSpace(query)
+	read = strings.TrimPrefix(read, "query")
+	readOnly := len(read) < len(strings.TrimSpace(query)) && len(read) > 0 &&
+		strings.ContainsRune(" \t\r\n({", rune(read[0]))
+	for attempt := 0; ; attempt++ {
+		if client.used >= maxPipelineGraphQLQueries {
+			return fmt.Errorf("GraphQL snapshot exceeded %d queries", maxPipelineGraphQLQueries)
+		}
+		client.used++
+		err := client.delegate.Query(query, variables, destination)
+		var gateway *pipelineGraphQLGatewayError
+		if err == nil || !readOnly || !errors.As(err, &gateway) {
+			return err
+		}
+		if attempt == 2 {
+			return fmt.Errorf("GraphQL read failed after 3 attempts: %w", err)
+		}
+		if client.used >= maxPipelineGraphQLQueries {
+			return fmt.Errorf("GraphQL snapshot exceeded %d queries: %w", maxPipelineGraphQLQueries, err)
+		}
+		fmt.Fprintf(os.Stderr, "pipelinehealth: retrying GraphQL read after HTTP %d (attempt %d/3)\n", gateway.status, attempt+2)
+		time.Sleep(time.Duration(attempt+1) * 250 * time.Millisecond)
+	}
 }
 
 // loadPipelineInputsGraphQL preserves the historical fixture matrix. In
@@ -836,13 +896,14 @@ func loadPipelineInputsGraphQL(client pipelineGraphQLClient, repo, trustedOwner,
 
 // A page count changing is transient queue churn, not permission to accept a
 // partial snapshot. Restart the entire read, at most three times, under one
-// shared query budget. Other failures remain fail-closed without retries.
+// shared query budget. The bounded client separately handles explicit gateway
+// failures of a single read; other failures remain fail-closed without retries.
 type pipelineSnapshotChurn struct{ detail string }
 
 func (err *pipelineSnapshotChurn) Error() string { return err.detail }
 
 func loadStableGraphQLSnapshot(client pipelineGraphQLClient, repo, trustedOwner string, includePulls, includeIssues bool) ([]apiPull, []apiIssue, error) {
-	bounded := &limitedPipelineGraphQLClient{delegate: client}
+	bounded := limitPipelineGraphQLClient(client)
 	for attempt := 0; ; attempt++ {
 		pulls, issues, err := loadGraphQLSnapshot(bounded, repo, trustedOwner, includePulls, includeIssues)
 		var churn *pipelineSnapshotChurn
@@ -897,7 +958,7 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo, trustedOwner string
 	if client == nil {
 		return nil, nil, fmt.Errorf("GitHub GraphQL client is required")
 	}
-	client = &limitedPipelineGraphQLClient{delegate: client}
+	client = limitPipelineGraphQLClient(client)
 	repositoryOwner, name, err := splitGitHubRepository(repo)
 	if err != nil {
 		return nil, nil, err

@@ -61,6 +61,7 @@ func WatchProjectContext(ctx context.Context, dir string, onChange func()) (<-ch
 		"printforms": {}, "processors": {}, "registers": {}, "reports": {},
 		"roles": {}, "scheduled": {}, "services": {}, "src": {},
 		"subsystems": {}, "widgets": {},
+		"docs": {},
 	}
 	return watchContext(ctx, dir, watchOpts{accept: func(path string, isDir bool, _ fsnotify.Op) bool {
 		if isDir {
@@ -73,6 +74,10 @@ func WatchProjectContext(ctx context.Context, dir string, onChange func()) (<-ch
 			return ok
 		}
 		lower := strings.ToLower(path)
+		rel, err := filepath.Rel(dir, path)
+		if err == nil && strings.HasPrefix(filepath.ToSlash(rel), "docs/help/") {
+			return true
+		}
 		return strings.HasSuffix(lower, ".yaml") ||
 			strings.HasSuffix(lower, ".yml") ||
 			strings.HasSuffix(lower, ".os")

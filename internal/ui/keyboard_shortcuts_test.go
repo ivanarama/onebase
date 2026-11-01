@@ -199,6 +199,7 @@ func TestPageListCreateKeyboardMarker(t *testing.T) {
 				"RefFilterOptions": map[string]any{},
 				"IsAdmin":          true,
 				"CanWrite":         true,
+				"CanCreate":        true,
 				"CanDelete":        true,
 				"CanUnpost":        true,
 				"Lang":             "ru",

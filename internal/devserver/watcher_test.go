@@ -23,6 +23,30 @@ func TestWatchContextStopsAndSignalsDone(t *testing.T) {
 	}
 }
 
+func TestWatchProjectReloadsHelpMarkdownAndImages(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "docs", "help", "images"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	changed := make(chan struct{}, 4)
+	done, err := WatchProjectContext(ctx, dir, func() { changed <- struct{}{} })
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cancel(); <-done }()
+	for _, file := range []string{"docs/help/call.md", "docs/help/images/call.png"} {
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(file)), []byte("updated"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-changed:
+		case <-time.After(3 * time.Second):
+			t.Fatalf("no reload for %s", file)
+		}
+	}
+}
+
 func startWatcher(t *testing.T, dir string, onChange func()) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())

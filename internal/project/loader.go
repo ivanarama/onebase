@@ -27,12 +27,14 @@ import (
 	"github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/secrets"
+	"github.com/ivantit66/onebase/internal/userhelp"
 	"github.com/ivantit66/onebase/internal/webhook"
 	"gopkg.in/yaml.v3"
 )
 
 type Project struct {
 	Dir              string
+	Help             *userhelp.Book
 	Entities         []*metadata.Entity
 	Registers        []*metadata.Register
 	InfoRegisters    []*metadata.InfoRegister
@@ -407,11 +409,15 @@ func LoadFromDB(ctx context.Context, repo *configdb.Repo) (*Project, error) {
 func Load(dir string) (*Project, error) {
 	p := &Project{
 		Dir:             dir,
+		Help:            userhelp.Load(dir),
 		Programs:        make(map[string]*ast.Program),
 		ManagerPrograms: make(map[string]*ast.Program),
 		ServicePrograms: make(map[string]*ast.Program),
 		PagePrograms:    make(map[string]*ast.Program),
 		Modules:         make(map[string]*ast.Program),
+	}
+	for _, warning := range p.Help.Warnings {
+		oblog.Component("userhelp").Warn("user documentation", "warning", warning)
 	}
 	if err := p.loadMetadata(); err != nil {
 		return nil, err

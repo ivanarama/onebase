@@ -103,11 +103,15 @@ func (s *Server) printDocument(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// printFormParam извлекает и url-декодирует параметр маршрута печати.
+// printFormParam извлекает имя формы, декодируя его ровно один раз.
 func printFormParam(r *http.Request, key string) string {
 	v := chi.URLParam(r, key)
-	if dec, err := url.PathUnescape(v); err == nil {
-		return dec
+	// chi выбирает RawPath, если он задан; смонтированный RoutePath
+	// наследует его кодирование. Иначе параметр взят из уже декодированного Path.
+	if r.URL.RawPath != "" {
+		if dec, err := url.PathUnescape(v); err == nil {
+			return dec
+		}
 	}
 	return v
 }

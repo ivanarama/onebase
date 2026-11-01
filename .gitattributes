@@ -48,3 +48,7 @@ internal/launcher/static/*.css text eol=lf
 internal/ui/pwa/sw.js text eol=lf
 internal/ui/pwa/offline.html text eol=lf
 internal/ui/pwa/manifest.webmanifest text eol=lf
+
+# Preserve original upstream legal documents, including whitespace and line
+# endings. Catalog pins normalize CRLF explicitly for portable validation.
+third_party/licenses/** -text -whitespace

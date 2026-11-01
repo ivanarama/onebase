@@ -6,6 +6,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/project"
+	"github.com/ivantit66/onebase/internal/userhelp"
 	"github.com/spf13/cobra"
 )
 
@@ -70,6 +71,9 @@ func runInit(cmd *cobra.Command, args []string) error {
 // разработчика сразу видел структуру, рабочий цикл и встроенные функции —
 // без ручных подсказок от пользователя (best-effort).
 func writeAIGuide(dir string) {
+	if err := userhelp.Scaffold(dir); err != nil {
+		outf("warning: user documentation scaffold: %v\n", err)
+	}
 	_ = os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte(generateAIGuide(environmentNote(dir))), fsmode.File)
 	// CLAUDE.md не перезаписываем, если он уже есть (мог быть кастомизирован).
 	claudePath := filepath.Join(dir, "CLAUDE.md")
