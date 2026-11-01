@@ -5,6 +5,19 @@ description: Безопасное слияние PR ivanarama/onebase через
 
 # MERGE
 
+<!-- pp:review-routing-v1-consumer stage=merge -->
+<!-- pp:positive-review-v1-consumer stage=merge -->
+
+До обычного пути прочитай
+[контракт review-routing-v1](../review-queue/references/review-routing-v1.md).
+Техническая передача, её attempt/phase/settlement и инженерная парковка не
+являются положительным ревью. Положительный typed `reviewed` допускается только
+штатным подписанным `positive-review-v1` путём, при совместимом выключенном по
+умолчанию флаге и полном paired contract. Он сохраняет исходный typed proof:
+не создавай legacy-пару и не используй ручной fallback или legacy base-sync
+как обход. Неизвестная версия, edit/delete либо неполная история закрывают
+gate соответствующей цели; остальные допустимые цели продолжаются.
+
 Обрабатывай только PR с `ship` и без `hold`/`needs-decision`. Решение человека
 старше сохранённого состояния.
 
@@ -34,10 +47,17 @@ python -m promptpilot.project_pipeline --config pipelinectl.json next merge
 - `error` — закончи `ИТОГ: НЕ СМОГ`, не обходя отказ вручную.
 
 `pipelinectl` берёт быстрый путь только для `CLEAN` PR с каноничным обычным
-review-proof, новым trusted `ship` и зелёными обязательными проверками. Перед
+либо совместимым положительным typed review-proof, trusted `ship` и зелёными
+обязательными проверками. Typed ticket имеет purpose, HMAC, конечный срок,
+полную identity/source, config и SHA-256 четырёх reader trees. Его native путь
+также проверяет, что HEAD содержит текущий main, а все обязательные проверки
+точного HEAD завершены успешно приложением GitHub Actions. Перед
 compare-and-merge он повторяет стабильный GraphQL snapshot, HEAD/label/proof и
-CI-гейты. Base-sync, carry, legacy re-ship, конфликт и recovery всегда уходят в
-полную процедуру.
+CI-гейты. Для typed источника перед PUT расходуется постоянная one-send запись;
+потерянный ответ не разрешает повтор. Если сервер подтвердит merge, следующий
+`next merge` вернёт только cleanup. Open PR с неопределённым send требует
+инженерного readback, а не второго PUT. Typed BEHIND ждёт нового независимого
+content REVIEW свежего HEAD: legacy carry ему разрешений не добавляет.
 
 До merge CLI публикует точный `pp:merge-cleanup-intent`. Если процесс оборвался
 после успешного merge, следующий запуск находит intent вне списка открытых PR и

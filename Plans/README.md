@@ -514,6 +514,15 @@
 | № | Файл | Фича | Эстимейт | Статус |
 |---|---|---|---|---|
 | 210 | [210-catalog-first-page-performance.md](210-catalog-first-page-performance.md) | Ленивая панель «Отбор» и opt-in индексы точного порядка order_by после замеров, с сохранением RLS и пагинации (#2255) | ~10–16 дней | 📋 Проектирование |
+| 212 | [212-form-opening-parameters.md](212-form-opening-parameters.md) | Общие имена и значения URL: отбор списка, даты/диапазоны и форма отчёта с/без запуска (#2389, #2359) | ~6–9 дней | 📋 Проектирование |
+| 213 | [213-tail-durable-discovery-and-backlog.md](213-tail-durable-discovery-and-backlog.md) | Долговечные cursor/backlog TAIL, восстановление после простоя и сохранение существующего trust (#1248) | ~8–12 дней | 📋 Проектирование |
+| 214 | [214-persistent-list-filter-contract.md](214-persistent-list-filter-contract.md) | Постоянные отборы списка: ошибки, false/NULL, группы без обхода RLS и lf_off (#2375, #2376) | ~6–9 дней | 📋 Проектирование |
+
+### Bootstrap: платформенные пути и транспорт
+
+| № | Файл | Фича | Эстимейт | Статус |
+|---|---|---|---|---|
+| 215 | [215-bootstrap-platform-and-transport-contract.md](215-bootstrap-platform-and-transport-contract.md) | Пути PowerShell, HTTPS без downgrade, медленная сеть, noexec и PATH-ссылки; продолжение плана 202 (#2392, #2082, #2083) | ~6,5–10 дней | 📋 Проектирование |
 
 ## Граф зависимостей (архив)
 
