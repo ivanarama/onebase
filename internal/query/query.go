@@ -28,6 +28,17 @@ type CompileOpts struct {
 	RowFilters map[SourceRef]*storage.Predicate
 	// Dialect selects the SQL flavour. nil = PgDialect (default).
 	Dialect storage.Dialect
+
+	// tablePartSources — табличные части, встреченные в запросе как
+	// источники, по синтетическому имени источника (rewriteTablePartSources).
+	tablePartSources map[string]tablePartSource
+}
+
+// tablePartSource — табличная часть объекта как источник запроса
+// («ИЗ Справочник.Мастера.СписокНаправлений КАК С», как в 1С).
+type tablePartSource struct {
+	owner *metadata.Entity
+	tp    *metadata.TablePart
 }
 
 func dialectOrDefault(d storage.Dialect) storage.Dialect {
@@ -119,6 +130,10 @@ type SourceOccurrence struct {
 type SourceRef struct {
 	Kind string
 	Name string
+	// TablePart — табличная часть объекта Name, если источник —
+	// «Справочник.Name.ТЧ». Право чтения и строковая политика — владельца,
+	// полевые политики — полей табличной части.
+	TablePart string
 }
 
 // sourcePermKind переводит ключевое слово типа источника в секцию прав User.Has.
@@ -148,6 +163,7 @@ func Compile(src string, opts CompileOpts) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	tokens, opts = rewriteTablePartSources(tokens, opts)
 	res, err := translate(tokens, opts)
 	if err != nil {
 		return res, err
@@ -162,6 +178,98 @@ func Compile(src string, opts CompileOpts) (Result, error) {
 	// LIMIT молча изменил бы результат.
 	res.SQL += " LIMIT " + strconv.FormatInt(limit, 10)
 	return res, nil
+}
+
+// rewriteTablePartSources превращает «Справочник.Владелец.ТЧ» (и документ) в
+// источник с синтетическим именем — физическим именем таблицы табличной части.
+// Её метаданные (номер строки и реквизиты ТЧ) добавляются к сущностям
+// компиляции, поэтому разбор полей, типов и авто-JOIN ссылок работает как у
+// обычного источника; SQL источника — подзапрос tablePartSourceSQL.
+//
+// Тип.Имя.Имя(…) — виртуальная таблица регистра, не трогаем; ЗНАЧЕНИЕ(…) —
+// предопределённое значение, тоже не источник.
+func rewriteTablePartSources(tokens []tok, opts CompileOpts) ([]tok, CompileOpts) {
+	var out []tok
+	var found map[string]tablePartSource
+	for i := 0; i < len(tokens); i++ {
+		if tablePartPathAt(tokens, i) {
+			if typeUpper := upperFast(tokens[i].val); isEntitySourceType(typeUpper) {
+				if owner, tp := findTablePart(opts.Entities, tokens[i+2].val, tokens[i+4].val); tp != nil {
+					name := metadata.TablePartTableName(owner.Name, tp.Name)
+					if found == nil {
+						found = map[string]tablePartSource{}
+					}
+					found[lowerFast(name)] = tablePartSource{owner: owner, tp: tp}
+					if out == nil {
+						out = append(out, tokens[:i]...)
+					}
+					out = append(out, tokens[i], tokens[i+1], tok{kind: tIdent, val: name})
+					i += 4
+					continue
+				}
+			}
+		}
+		if out != nil {
+			out = append(out, tokens[i])
+		}
+	}
+	if found == nil {
+		return tokens, opts
+	}
+	entities := make([]*metadata.Entity, 0, len(opts.Entities)+len(found))
+	entities = append(entities, opts.Entities...)
+	for name, tps := range found {
+		entities = append(entities, metadata.TablePartQueryEntity(tps.owner, tps.tp, name))
+	}
+	opts.Entities = entities
+	opts.tablePartSources = found
+	return out, opts
+}
+
+// tablePartPathAt — «Тип.Имя.Имя» с позиции i без продолжения «(» (виртуальная
+// таблица), не после точки (поле через точку) и не аргумент ЗНАЧЕНИЕ(…).
+func tablePartPathAt(tokens []tok, i int) bool {
+	if i+4 >= len(tokens) {
+		return false
+	}
+	for k, kind := range []tokKind{tIdent, tDot, tIdent, tDot, tIdent} {
+		if tokens[i+k].kind != kind {
+			return false
+		}
+	}
+	switch {
+	case i+5 < len(tokens) && tokens[i+5].kind == tLParen:
+		return false
+	case i > 0 && tokens[i-1].kind == tDot:
+		return false
+	case i > 1 && tokens[i-1].kind == tLParen && tokens[i-2].kind == tIdent && isValueKeyword(tokens[i-2].val):
+		return false
+	}
+	return true
+}
+
+func isEntitySourceType(upper string) bool {
+	return upper == "СПРАВОЧНИК" || upper == "CATALOG" || upper == "ДОКУМЕНТ" || upper == "DOCUMENT"
+}
+
+func isValueKeyword(val string) bool {
+	u := upperFast(val)
+	return u == "ЗНАЧЕНИЕ" || u == "VALUE"
+}
+
+func findTablePart(entities []*metadata.Entity, ownerName, tpName string) (*metadata.Entity, *metadata.TablePart) {
+	for _, e := range entities {
+		if e == nil || !strings.EqualFold(e.Name, ownerName) {
+			continue
+		}
+		for i := range e.TableParts {
+			if strings.EqualFold(e.TableParts[i].Name, tpName) {
+				return e, &e.TableParts[i]
+			}
+		}
+		return nil, nil
+	}
+	return nil, nil
 }
 
 // extractFirstN вырезает «ВЫБРАТЬ ПЕРВЫЕ N» (1С) / «SELECT TOP N» и возвращает N.
@@ -904,6 +1012,88 @@ func (tr *translator) standaloneSelectItem(from, to int) bool {
 	return false
 }
 
+// emitGroupingPresentation дописывает к группировке по ссылке основного
+// источника («СГРУППИРОВАТЬ ПО Д.Склад» → «д.склад_id») её представление.
+// В списке выборки и в «УПОРЯДОЧИТЬ ПО Склад» та же ссылка читается
+// наименованием из авто-JOIN, и SQLite это прощал, а PostgreSQL отвергал
+// весь запрос: «column "ref_склад.наименование" must appear in the GROUP BY
+// clause». Группы от этого не меняются: представление однозначно определено
+// идентификатором, по которому присоединена строка.
+func (tr *translator) emitGroupingPresentation(rd *refDimInfo) {
+	from, to := tr.pos-3, tr.pos
+	if tr.section != sectionGroupBy || from < 1 || !tr.standaloneGroupItem(from, to) {
+		return
+	}
+	// Только авто-JOIN основного источника этой SELECT-области. Состояние
+	// владельца сохраняется при входе во вложенный SELECT и не переносится
+	// между соседними ветвями UNION.
+	scopeID, ok := tr.sourceCtx.scopeIDAt(from)
+	if !ok || scopeID != tr.activeSelect || !tr.selectStates[scopeID].refJoinsEmitted {
+		return
+	}
+	if scope, ok := tr.sourceCtx.scopeAt(from); !ok || lowerFast(tr.tokens[from].val) != scope.mainTable {
+		return
+	}
+	tr.emit(",")
+	tr.emit(rd.displayCol())
+}
+
+// standaloneGroupItem — токены [from, to) составляют целый элемент списка
+// СГРУППИРОВАТЬ ПО, а не аргумент функции или часть выражения: перед ними
+// «ПО» или запятая списка на той же глубине скобок, после — запятая, конец
+// вложенного запроса или следующее предложение.
+func (tr *translator) standaloneGroupItem(from, to int) bool {
+	toks := tr.tokens
+	if from < 1 || to > len(toks) {
+		return false
+	}
+	nesting := 0
+	for i := from - 1; i >= 0; i-- {
+		t := toks[i]
+		switch t.kind {
+		case tRParen:
+			nesting++
+			continue
+		case tLParen:
+			if nesting == 0 {
+				return false
+			}
+			nesting--
+			continue
+		}
+		if nesting > 0 {
+			continue
+		}
+		groupBy := t.kind == tIdent && isGroupByWord(t.val)
+		if i == from-1 && t.kind != tComma && !groupBy {
+			return false
+		}
+		if groupBy {
+			break
+		}
+		if i == 0 {
+			return false
+		}
+	}
+	next := tok{kind: tEOF}
+	if to < len(toks) {
+		next = toks[to]
+	}
+	switch next.kind {
+	case tComma, tRParen, tEOF:
+		return true
+	case tIdent:
+		kw, ok := sqlKW(next.val)
+		return ok && (kw == "HAVING" || kw == "ORDER" || kw == "UNION")
+	}
+	return false
+}
+
+func isGroupByWord(s string) bool {
+	u := upperFast(s)
+	return u == "ПО" || u == "BY"
+}
+
 // transparentSelectItem расширяет простой путь до окружающих его скобок.
 // Целый элемент SELECT нужен и при разрешении проекции, и при эмиссии AS:
 // скобки функции или составного выражения не становятся частью простого пути.
@@ -916,37 +1106,39 @@ func (tr *translator) transparentSelectItem(from, to int) (int, int, bool) {
 }
 
 type translator struct {
-	tokens       []tok
-	pos          int
-	args         []any
-	params       map[string]int // param name → 1-based index in args (0 = NULL sentinel)
-	paramValues  map[string]any
-	opts         CompileOpts
-	parts        []string
-	prevWasDot   bool                          // true after emitting "." — used to resolve .Ссылка → .id
-	colMap       map[string]string             // lowercase field name → actual column name (for reference dims)
-	colTypes     map[string]metadata.FieldType // legacy-типы первого источника для проекции и ссылок
-	refDims      []refDimInfo                  // reference dimensions with auto-JOIN info
-	mainTable    string                        // main FROM table/alias (set when source is emitted)
-	mainEmitted  bool                          // главный FROM текущей SELECT-области уже эмитирован
-	section      querySection                  // current clause context
-	aliases      map[string]struct{}           // имена алиасов вывода (КАК ...) — их не квалифицируем и не CAST'им
-	sourceRefs   []SourceOccurrence            // каждое эмитированное вхождение источника
-	sources      []SourceRef                   // объекты-источники запроса (для RBAC, план 54)
-	rowFilters   []pendingRowFilter            // RLS-фильтры обычных источников, внедряемые в WHERE
-	rowsScoped   bool                          // true после внедрения rowFilters в outer WHERE
-	rowGroupOpen bool                          // открыта скобка вокруг собственного условия ГДЕ после внедрённого фильтра
-	rowApplied   []SourceRef                   // источники, к которым RLS-предикат реально внедрён (для финальной сверки)
-	parenDepth   int                           // глубина незакрытых '(' в основном потоке (VT-аргументы считает parseVTArgs)
-	sourceCtx    sourceContext                 // scoped-типы/классы источников для SELECT-кадров
-	selectStates []selectTranslationState
-	activeSelect int
-	textEqIndex  map[int]bool      // положительные сравнения ГДЕ с непустым литералом
-	unionDepths  map[int]bool      // глубины SELECT с UNION для compound ORDER BY
-	unionOrders  map[int]bool      // ORDER BY относится ко всему UNION, алиасы таблиц там недоступны
-	refCols      map[string]string // колонка вывода (lower) → сущность, на которую она ссылается (#1150)
-	derivedAs    map[int]string    // позиция закрывающей скобки → отложенный AS простой ссылки
-	mainRef      mainRefSource     // главный источник запроса: чья ссылка стоит за голым «Ссылка»
+	tokens              []tok
+	pos                 int
+	args                []any
+	params              map[string]int // param name → 1-based index in args (0 = NULL sentinel)
+	paramValues         map[string]any
+	opts                CompileOpts
+	parts               []string
+	prevWasDot          bool                          // true after emitting "." — used to resolve .Ссылка → .id
+	colMap              map[string]string             // lowercase field name → actual column name (for reference dims)
+	colTypes            map[string]metadata.FieldType // legacy-типы первого источника для проекции и ссылок
+	refDims             []refDimInfo                  // reference dimensions with auto-JOIN info
+	mainTable           string                        // main FROM table/alias (set when source is emitted)
+	mainEmitted         bool                          // главный FROM текущей SELECT-области уже эмитирован
+	section             querySection                  // current clause context
+	aliases             map[string]struct{}           // имена алиасов вывода (КАК ...) — их не квалифицируем и не CAST'им
+	sourceRefs          []SourceOccurrence            // каждое эмитированное вхождение источника
+	sources             []SourceRef                   // объекты-источники запроса (для RBAC, план 54)
+	rowFilters          []pendingRowFilter            // RLS-фильтры обычных источников, внедряемые в WHERE
+	rowsScoped          bool                          // true после внедрения rowFilters в outer WHERE
+	rowGroupOpen        bool                          // открыта скобка вокруг собственного условия ГДЕ после внедрённого фильтра
+	rowApplied          []SourceRef                   // источники, к которым RLS-предикат реально внедрён (для финальной сверки)
+	parenDepth          int                           // глубина незакрытых '(' в основном потоке (VT-аргументы считает parseVTArgs)
+	sourceCtx           sourceContext                 // scoped-типы/классы источников для SELECT-кадров
+	paramColTypes       map[int]map[string]metadata.FieldType
+	paramQualifiedTypes map[int]map[string]map[string]metadata.FieldType
+	selectStates        []selectTranslationState
+	activeSelect        int
+	textEqIndex         map[int]bool      // положительные сравнения ГДЕ с непустым литералом
+	unionDepths         map[int]bool      // глубины SELECT с UNION для compound ORDER BY
+	unionOrders         map[int]bool      // ORDER BY относится ко всему UNION, алиасы таблиц там недоступны
+	refCols             map[string]string // колонка вывода (lower) → сущность, на которую она ссылается (#1150)
+	derivedAs           map[int]string    // позиция закрывающей скобки → отложенный AS простой ссылки
+	mainRef             mainRefSource     // главный источник запроса: чья ссылка стоит за голым «Ссылка»
 
 	joinedRefs      []joinedRefSource // ссылочные поля присоединённых источников (#1385)
 	pendingRefJoins []pendingRefJoin  // авто-JOIN присоединённых источников ждут конца ПО
@@ -1307,11 +1499,63 @@ func (tr *translator) addSource(typeUpper, name string) {
 	kind := sourcePermKind(typeUpper)
 	tr.sourceRefs = append(tr.sourceRefs, SourceOccurrence{SourceRef: SourceRef{Kind: kind, Name: name}, Qualifier: sourceToTable(typeUpper, name)})
 	for _, s := range tr.sources {
-		if s.Kind == kind && s.Name == name {
+		if s.Kind == kind && s.Name == name && s.TablePart == "" {
 			return // уже зафиксирован (напр. та же сущность и в FROM, и через ссылку)
 		}
 	}
 	tr.sources = append(tr.sources, SourceRef{Kind: kind, Name: name})
+}
+
+// addTablePartSource фиксирует табличную часть как источник: RBAC проверяет
+// чтение владельца, полевые маски — поля табличной части.
+func (tr *translator) addTablePartSource(typeUpper, name string, tps tablePartSource) {
+	kind := sourcePermKind(typeUpper)
+	ref := SourceRef{Kind: kind, Name: tps.owner.Name, TablePart: tps.tp.Name}
+	tr.sourceRefs = append(tr.sourceRefs, SourceOccurrence{
+		SourceRef: ref, Qualifier: sourceToTable(typeUpper, name),
+		Virtual: true, OutputColumns: tablePartSourceColumns(tps),
+	})
+	for _, s := range tr.sources {
+		if s == ref {
+			return
+		}
+	}
+	tr.sources = append(tr.sources, ref)
+}
+
+// tablePartSourceColumns — колонки подзапроса табличной части.
+func tablePartSourceColumns(tps tablePartSource) []string {
+	cols := []string{"id", metadata.ColumnName(metadata.Field{Name: metadata.TablePartRowNumberField})}
+	for _, f := range tps.tp.Fields {
+		cols = append(cols, metadata.ColumnName(f))
+	}
+	return cols
+}
+
+// tablePartSourceSQL — подзапрос табличной части: id строки — ссылка на
+// владельца (parent_id), как «ТЧ.Ссылка» в 1С; «строка» — НомерСтроки. Строковая
+// политика владельца отбирает строки ТЧ через родителя — в том числе у
+// присоединяемой и вложенной табличной части.
+func (tr *translator) tablePartSourceSQL(typeUpper string, tps tablePartSource, alias string) (string, error) {
+	cols := []string{"parent_id AS id", "строка AS " + metadata.ColumnName(metadata.Field{Name: metadata.TablePartRowNumberField})}
+	for _, f := range tps.tp.Fields {
+		cols = append(cols, metadata.ColumnName(f))
+	}
+	where := ""
+	kind := sourcePermKind(typeUpper)
+	if pred := tr.sourceRowFilter(kind, tps.owner.Name); pred != nil {
+		cond, args, _, err := storage.PredicateSQLQualified(dialectOrDefault(tr.opts.Dialect), tps.owner, pred, len(tr.args)+1, "")
+		if err != nil {
+			return "", fmt.Errorf("row filter %s.%s: %w", kind, tps.owner.Name, err)
+		}
+		tr.args = append(tr.args, args...)
+		tr.markRowApplied(kind, tps.owner.Name)
+		if cond != "" {
+			where = " WHERE parent_id IN (SELECT id FROM " + metadata.TableName(tps.owner.Name) + " WHERE " + cond + ")"
+		}
+	}
+	return fmt.Sprintf("(SELECT %s FROM %s%s) AS %s", strings.Join(cols, ", "),
+		metadata.TablePartTableName(tps.owner.Name, tps.tp.Name), where, alias), nil
 }
 
 // addRefSource регистрирует связанную сущность авто-JOIN ссылочного поля как
@@ -1695,7 +1939,7 @@ func (tr *translator) build() string {
 }
 
 // addParam registers a named parameter and returns its SQL placeholder.
-// If the value is []any (DSL array converted by unwrapArrayParams), it expands
+// If the value is []any (DSL array converted by unwrapParams), it expands
 // to a comma-joined list of placeholders suitable for IN (...) clauses.
 func (tr *translator) addParam(name string) string {
 	v := tr.paramValues[name]
@@ -1745,6 +1989,16 @@ func (tr *translator) addParam(name string) string {
 	return d.Placeholder(tr.params[name]) + castSuffix(d, v)
 }
 
+// emptyStringAgainstRef preserves the empty-reference contract only when the
+// compared field is proven to be a reference in its own source and SELECT scope.
+func emptyStringAgainstRef(d storage.Dialect, v any, fieldType metadata.FieldType) bool {
+	if d.Name() != "postgres" || !metadata.IsReference(fieldType) {
+		return false
+	}
+	s, ok := v.(string)
+	return ok && s == ""
+}
+
 // castSuffix returns the explicit cast suffix for v on the active dialect.
 // PG benefits from "::text"/"::numeric" hints; SQLite ignores types so we
 // return "".
@@ -1789,12 +2043,25 @@ func (tr *translator) parseVTArgs() [][]tok {
 // translateFilterTokens translates a token slice to a SQL expression fragment,
 // resolving &params through the translator's shared state.
 func (tr *translator) translateFilterTokens(tokens []tok) string {
+	return tr.translateTypedFilterTokens(tokens, nil)
+}
+
+func (tr *translator) translateTypedFilterTokens(tokens []tok, fieldTypes map[string]metadata.FieldType) string {
 	var parts []string
 	for i := 0; i < len(tokens); i++ {
 		t := tokens[i]
 		switch t.kind {
 		case tParam:
-			parts = append(parts, tr.addParam(t.val))
+			var typ metadata.FieldType
+			if i >= 2 && tokens[i-2].kind == tIdent &&
+				tokens[i-1].kind == tOp && (tokens[i-1].val == "=" || tokens[i-1].val == "<>" || tokens[i-1].val == "!=") {
+				typ = fieldTypes[lowerFast(tokens[i-2].val)]
+			}
+			if emptyStringAgainstRef(dialectOrDefault(tr.opts.Dialect), tr.paramValues[t.val], typ) {
+				parts = append(parts, "NULL")
+			} else {
+				parts = append(parts, tr.addParam(t.val))
+			}
 		case tIdent:
 			upper := upperFast(t.val)
 			if kw, ok := kwMap[upper]; ok {
@@ -1926,6 +2193,61 @@ func (tr *translator) accountChartCond(ar *metadata.AccountRegister, alias strin
 	d := dialectOrDefault(tr.opts.Dialect)
 	tr.args = append(tr.args, ar.Accounts)
 	return alias + ".plan = " + d.Placeholder(len(tr.args))
+}
+
+// translateRegisterFilter переводит отбор виртуальной таблицы регистра
+// накопления или сведений («Остатки(, Склад = &С)», «СрезПоследних(, ТипЦен =
+// &Т)»). Отбор встаёт в WHERE подзапроса над таблицей регистра, где ссылочное
+// измерение — физическая колонка «склад_id»: логическое «склад» — лишь
+// псевдоним списка SELECT. SQLite видит псевдонимы в WHERE и прощал это,
+// PostgreSQL — нет («column "склад" does not exist»). Имена полей регистра на
+// время перевода разрешаются в колонки; изменения colMap откатываются.
+func (tr *translator) translateRegisterFilter(fields []metadata.Field, tokens []tok) string {
+	if tr.colMap == nil {
+		tr.colMap = make(map[string]string)
+	}
+	saved := make(map[string]*string)
+	for _, f := range fields {
+		name := lowerFast(f.Name)
+		col := metadata.ColumnName(f)
+		if col == name {
+			continue
+		}
+		if _, done := saved[name]; done {
+			continue
+		}
+		if old, ok := tr.colMap[name]; ok {
+			s := old
+			saved[name] = &s
+		} else {
+			saved[name] = nil
+		}
+		tr.colMap[name] = col
+	}
+	types := make(map[string]metadata.FieldType, len(fields))
+	for _, f := range fields {
+		types[lowerFast(f.Name)] = f.Type
+	}
+	res := tr.translateTypedFilterTokens(tokens, types)
+	for k, v := range saved {
+		if v == nil {
+			delete(tr.colMap, k)
+		} else {
+			tr.colMap[k] = *v
+		}
+	}
+	return res
+}
+
+func registerFields(reg *metadata.Register) []metadata.Field {
+	out := append([]metadata.Field{}, reg.Dimensions...)
+	out = append(out, reg.Resources...)
+	return append(out, reg.Attributes...)
+}
+
+func infoRegisterFields(ir *metadata.InfoRegister) []metadata.Field {
+	out := append([]metadata.Field{}, ir.Dimensions...)
+	return append(out, ir.Resources...)
 }
 
 // translateAccountFilter переводит токены фильтра виртуальной таблицы регистра
@@ -2470,9 +2792,9 @@ func (tr *translator) genBalances(reg *metadata.Register, args [][]tok) (string,
 			"SUM(CASE WHEN вид_движения = 'Приход' THEN "+col+" ELSE -"+col+" END) AS "+col+"остаток")
 	}
 	// атрибуты — не часть ключа измерения, но должны быть
-	// доступны в outer SELECT/WHERE. Берём MIN(col) — детерминированно
-	// и работает в обоих диалектах (TEXT/UUID сравнимы лексикографически).
-	cols = append(cols, attributeAggCols(reg.Attributes)...)
+	// доступны в outer SELECT/WHERE. Агрегат — attributeAggCols: MIN, а для
+	// ссылок и булевых на PostgreSQL — их собственные формы (см. там).
+	cols = append(cols, attributeAggCols(reg.Attributes, tr.opts.Dialect)...)
 
 	var sb strings.Builder
 	sb.WriteString("SELECT ")
@@ -2490,7 +2812,7 @@ func (tr *translator) genBalances(reg *metadata.Register, args [][]tok) (string,
 		}
 	}
 	if len(args) > 1 && len(args[1]) > 0 {
-		if s := tr.translateFilterTokens(args[1]); s != "" {
+		if s := tr.translateRegisterFilter(registerFields(reg), args[1]); s != "" {
 			conds = append(conds, s)
 		}
 	}
@@ -2728,7 +3050,7 @@ func (tr *translator) genTurnovers(reg *metadata.Register, args [][]tok) (string
 			"SUM(CASE WHEN вид_движения = 'Приход' THEN "+col+" ELSE -"+col+" END) AS "+col+"оборот",
 		)
 	}
-	cols = append(cols, attributeAggCols(reg.Attributes)...)
+	cols = append(cols, attributeAggCols(reg.Attributes, tr.opts.Dialect)...)
 
 	var sb strings.Builder
 	sb.WriteString("SELECT ")
@@ -2751,7 +3073,7 @@ func (tr *translator) genTurnovers(reg *metadata.Register, args [][]tok) (string
 	// when periodicity was detected in args[2].
 	filterTokens := filterArg(filterArgIdx, periodLevel, args)
 	if len(filterTokens) > 0 {
-		if s := tr.translateFilterTokens(filterTokens); s != "" {
+		if s := tr.translateRegisterFilter(registerFields(reg), filterTokens); s != "" {
 			conds = append(conds, s)
 		}
 	}
@@ -2886,7 +3208,7 @@ func (tr *translator) genBalancesAndTurnovers(reg *metadata.Register, args [][]t
 					" THEN -"+col+" ELSE 0 END) AS "+col+"конечный")
 		}
 	}
-	cols = append(cols, attributeAggCols(reg.Attributes)...)
+	cols = append(cols, attributeAggCols(reg.Attributes, tr.opts.Dialect)...)
 
 	var sb strings.Builder
 	sb.WriteString("SELECT ")
@@ -2899,7 +3221,7 @@ func (tr *translator) genBalancesAndTurnovers(reg *metadata.Register, args [][]t
 		conds = append(conds, "period <= "+end())
 	}
 	if hasFilter {
-		conds = append(conds, tr.translateFilterTokens(args[2]))
+		conds = append(conds, tr.translateRegisterFilter(registerFields(reg), args[2]))
 	}
 	if s, err := tr.rowFilterCondition("register", reg.Name, storage.RegisterPredicateEntity(reg), ""); err != nil {
 		return "", "", fmt.Errorf("row filter %s: %w", reg.Name, err)
@@ -2924,11 +3246,28 @@ func (tr *translator) genBalancesAndTurnovers(reg *metadata.Register, args [][]t
 // варьируется в пределах одного значения измерения, MIN отдаст
 // лексикографически минимальное; в стабильных учётных моделях такое
 // нехарактерно.
-func attributeAggCols(attrs []metadata.Field) []string {
+//
+// На PostgreSQL у uuid и boolean агрегата min нет (function min(uuid) does not
+// exist): ссылочный реквизит берётся минимумом текста с обратным приведением к
+// uuid — тот же порядок, что у SQLite, где ссылка хранится текстом, — а
+// булев — bool_and, то есть тот же минимум (ЛОЖЬ < ИСТИНА). На SQLite оба
+// хранятся TEXT/INTEGER, и MIN работает как есть.
+func attributeAggCols(attrs []metadata.Field, dialect storage.Dialect) []string {
+	pg := dialectOrDefault(dialect).Name() == "postgres"
 	out := make([]string, 0, len(attrs))
 	for _, a := range attrs {
 		col := metadata.ColumnName(a)
-		out = append(out, "MIN("+col+") AS "+col)
+		// Наружу — логическое имя, как у измерений (dimSelCols): внешний
+		// запрос и авто-JOIN ссылки обращаются к «мастер», а не к «мастер_id».
+		name := lowerFast(a.Name)
+		switch {
+		case pg && a.RefEntity != "":
+			out = append(out, "MIN("+col+"::text)::uuid AS "+name)
+		case pg && a.Type == metadata.FieldTypeBool:
+			out = append(out, "bool_and("+col+") AS "+name)
+		default:
+			out = append(out, "MIN("+col+") AS "+name)
+		}
 	}
 	return out
 }
@@ -2971,7 +3310,7 @@ func (tr *translator) genInfoSlice(ir *metadata.InfoRegister, args [][]tok, dire
 		filterIdx = 0
 	}
 	if len(args) > filterIdx && len(args[filterIdx]) > 0 {
-		if s := tr.translateFilterTokens(args[filterIdx]); s != "" {
+		if s := tr.translateRegisterFilter(infoRegisterFields(ir), args[filterIdx]); s != "" {
 			conds = append(conds, s)
 		}
 	}
@@ -3696,8 +4035,12 @@ func preScanMainRefSource(tokens []tok, opts CompileOpts) mainRefSource {
 			if !strings.EqualFold(ent.Name, name) {
 				continue
 			}
+			refEntity := ent.Name
+			if tps, ok := opts.tablePartSources[lowerFast(name)]; ok {
+				refEntity = tps.owner.Name
+			}
 			src := mainRefSource{
-				Entity:     ent.Name,
+				Entity:     refEntity,
 				Qualifiers: map[string]bool{lowerFast(name): true, lowerFast(sourceToTable(upper, name)): true},
 			}
 			if i+4 < len(tokens) && tokens[i+3].kind == tIdent && tokens[i+4].kind == tIdent {
@@ -4161,6 +4504,158 @@ func (tr *translator) addSQLiteDateParam(name string) string {
 	}
 	tr.args = append(tr.args, value)
 	return dialectOrDefault(tr.opts.Dialect).Placeholder(len(tr.args))
+}
+
+// uuidParamComparedToStringField: на PostgreSQL параметр — строка, похожая на
+// UUID (или список таких), а сравнивается он со строковым полем: «Р.Объект =
+// &Объект», «&Объект = Р.Объект», «Р.Объект В (&Объекты)». Так хранят ссылки
+// внешней системы (реестр соответствий). Обычное приведение «::uuid» давало
+// «text = uuid» (ivanarama/onebase#1981) — здесь параметр уходит текстом.
+func (tr *translator) uuidParamComparedToStringField(idx int) bool {
+	if dialectOrDefault(tr.opts.Dialect).Name() != "postgres" || idx < 0 || idx >= len(tr.tokens) ||
+		tr.tokens[idx].kind != tParam || !uuidLikeParam(tr.paramValues[tr.tokens[idx].val]) {
+		return false
+	}
+	if tr.paramFieldTypeAt(idx-2) == metadata.FieldTypeString && tr.comparisonOpAt(idx-1) {
+		return true
+	}
+	if idx >= 1 && tr.tokens[idx-1].kind == tLParen && tr.keywordAt(idx-2, "В", "IN") &&
+		tr.paramFieldTypeAt(idx-3) == metadata.FieldTypeString {
+		return true
+	}
+	if !tr.comparisonOpAt(idx + 1) {
+		return false
+	}
+	field := idx + 2
+	if field+2 < len(tr.tokens) && tr.tokens[field+1].kind == tDot {
+		field += 2
+	}
+	return tr.paramFieldTypeAt(field) == metadata.FieldTypeString
+}
+
+// paramFieldTypeAt accepts the last token of a direct field expression. A local
+// qualifier shadows outer SELECTs even when the requested field is unknown.
+// Names, suffixes and types from unrelated sources never supply a missing type.
+func (tr *translator) paramFieldTypeAt(idx int) metadata.FieldType {
+	if idx+1 < len(tr.tokens) && idx >= 0 && tr.tokens[idx+1].kind == tDot {
+		return ""
+	}
+	return tr.paramFieldTypeAtEnd(idx)
+}
+
+func (tr *translator) paramFieldTypeAtEnd(idx int) metadata.FieldType {
+	if idx < 0 || idx >= len(tr.tokens) || tr.tokens[idx].kind != tIdent {
+		return ""
+	}
+	scopeID, ok := tr.sourceCtx.scopeIDAt(idx)
+	if !ok {
+		return ""
+	}
+	name := lowerFast(tr.tokens[idx].val)
+	if idx >= 2 && tr.tokens[idx-1].kind == tDot && tr.tokens[idx-2].kind == tIdent {
+		if idx >= 3 && tr.tokens[idx-3].kind == tDot {
+			return tr.parameterReferenceAttributeType(tr.paramFieldTypeAtEnd(idx-2), name)
+		}
+		qualifier := lowerFast(tr.tokens[idx-2].val)
+		for scopeID >= 0 {
+			scope := tr.sourceCtx.scopes[scopeID]
+			_, source := scope.qualifiers[qualifier]
+			_, derived := scope.derivedAliases[qualifier]
+			if source || derived {
+				if typ, known := tr.paramQualifiedTypes[scopeID][qualifier][name]; known {
+					return typ
+				}
+				return parameterSystemRefType(scope, qualifier, name)
+			}
+			if typ, known := tr.paramQualifiedTypes[scopeID][scope.mainTable][qualifier]; known && metadata.IsReference(typ) {
+				return tr.parameterReferenceAttributeType(typ, name)
+			}
+			scopeID = scope.parent
+		}
+		return ""
+	}
+	if typ, known := tr.paramColTypes[scopeID][name]; known {
+		return typ
+	}
+	scope := tr.sourceCtx.scopes[scopeID]
+	return parameterSystemRefType(scope, scope.mainTable, name)
+}
+
+func (tr *translator) parameterReferenceAttributeType(reference metadata.FieldType, name string) metadata.FieldType {
+	if !metadata.IsReference(reference) {
+		return ""
+	}
+	for _, entity := range tr.opts.Entities {
+		if strings.EqualFold(entity.Name, metadata.RefName(reference)) {
+			for _, field := range entity.Fields {
+				if strings.EqualFold(field.Name, name) {
+					return field.Type
+				}
+			}
+			if isReferenceName(name) {
+				return reference
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
+func parameterSystemRefType(scope sourceScope, qualifier, name string) metadata.FieldType {
+	class := scope.qualifiers[qualifier]
+	if (class == sourceClassEntity && isReferenceName(name)) ||
+		(class == sourceClassRegister && name == "регистратор") {
+		return metadata.FieldType("reference:system")
+	}
+	return ""
+}
+
+func (tr *translator) emptyRefParamAt(idx int) bool {
+	if !tr.comparisonOpAt(idx - 1) {
+		return false
+	}
+	switch tr.tokens[idx-1].val {
+	case "=", "<>", "!=":
+		return emptyStringAgainstRef(dialectOrDefault(tr.opts.Dialect),
+			tr.paramValues[tr.tokens[idx].val], tr.paramFieldTypeAt(idx-2))
+	}
+	return false
+}
+
+func uuidLikeParam(v any) bool {
+	switch v := v.(type) {
+	case string:
+		return isUUID(v)
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok && isUUID(s) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// addTextParam — параметр с приведением «::text» и своим номером: тот же
+// параметр в другом месте запроса может сравниваться со ссылкой как uuid.
+func (tr *translator) addTextParam(name string) string {
+	d := dialectOrDefault(tr.opts.Dialect)
+	items, isList := tr.paramValues[name].([]any)
+	if !isList {
+		items = []any{tr.paramValues[name]}
+	}
+	var placeholders []string
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		tr.args = append(tr.args, item)
+		placeholders = append(placeholders, d.Placeholder(len(tr.args))+"::text")
+	}
+	if len(placeholders) == 0 {
+		return "NULL"
+	}
+	return strings.Join(placeholders, ", ")
 }
 
 func (tr *translator) dateFieldAt(idx int) bool {
@@ -5402,6 +5897,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		section:         sectionOther,
 		activeSelect:    -1,
 	}
+	if len(opts.Params) > 0 {
+		tr.paramColTypes, tr.paramQualifiedTypes = buildScalarColumnTypes(tokens, opts, tr.sourceCtx, newProjectionKeyResolver(tokens, opts, tr.sourceCtx))
+	}
 	tr.initSelectStates()
 	tr.assignRefJoinAliases()
 	tr.columnSources = indexColumnSources(tokens, opts, tr.sourceCtx)
@@ -5503,7 +6001,12 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			tr.advance()
 			tr.advance()
 			entity := tr.advance()
-			tr.addSource(upper, entity.val)
+			tps, isTablePart := tr.opts.tablePartSources[lowerFast(entity.val)]
+			if isTablePart {
+				tr.addTablePartSource(upper, entity.val, tps)
+			} else {
+				tr.addSource(upper, entity.val)
+			}
 			tableName := sourceToTable(upper, entity.val)
 			// Главная таблица — первый источник FROM. Присоединяемые через явный
 			// JOIN (ЛЕВОЕ СОЕДИНЕНИЕ ... ПО ...) не должны перезаписывать mainTable
@@ -5544,7 +6047,13 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 				}
 			}
 			tr.sourceRefs[len(tr.sourceRefs)-1].Qualifier = sourceAlias
-			if !isMain || tr.parenDepth > 0 {
+			if isTablePart {
+				sql, err := tr.tablePartSourceSQL(upper, tps, sourceAlias)
+				if err != nil {
+					return Result{}, err
+				}
+				tr.emit(sql)
+			} else if !isMain || tr.parenDepth > 0 {
 				filtered, ok, err := tr.rowFilteredSourceSQL(upper, entity.val, tableName, sourceAlias)
 				if err != nil {
 					return Result{}, err
@@ -5566,6 +6075,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					return Result{}, err
 				}
 			}
+
 			if tr.sourceCtx.sectionAt(sourcePos) == sectionFrom && !isMain {
 				// Присоединённый источник: его авто-JOIN'ы ждут конца ПО (#1385).
 				if scopeID, ok := tr.sourceCtx.scopeIDAt(sourcePos); ok {
@@ -5591,6 +6101,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					// иначе чтение через ссылку обходит проверку прав.
 					tr.addRefSource(rd)
 				}
+				tr.selectStates[tr.activeSelect].refJoinsEmitted = len(tr.refDims) > 0
 			}
 			tr.mainEmitted = true
 			continue
@@ -5634,6 +6145,10 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 			tr.advance()
 			if normalizeDate {
 				tr.emit(tr.addSQLiteDateParam(t.val))
+			} else if tr.emptyRefParamAt(tr.pos - 1) {
+				tr.emit("NULL")
+			} else if tr.uuidParamComparedToStringField(tr.pos - 1) {
+				tr.emit(tr.addTextParam(t.val))
 			} else {
 				tr.emit(tr.addParam(t.val))
 			}
@@ -6006,6 +6521,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 						tr.emitQualifiedColumn(c, lower)
 					} else {
 						tr.emitQualifiedColumn(lower, lower)
+					}
+					if rd := tr.findRefDim(lower); rd != nil && !nextIsDot {
+						tr.emitGroupingPresentation(rd)
 					}
 				} else {
 					tr.emitOwnColumn(lower, lower)
@@ -6746,6 +7264,10 @@ func pgCast(v any) string {
 	case time.Time:
 		return "::timestamptz"
 	case string:
+		// Строка, похожая на UUID, — ссылка. Приведение нужно: без него
+		// «(&Склад ЕСТЬ ПУСТО ИЛИ …)» не типизируется («could not determine
+		// data type of parameter»). Сравнение со строковым полем — отдельно,
+		// см. uuidParamComparedToStringField.
 		if isUUID(v) {
 			return "::uuid"
 		}

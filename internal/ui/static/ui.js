@@ -2863,7 +2863,7 @@ function obInitListDelegates() {
     var picker = e.target.closest('[data-ob-ref-picker]');
     if (picker) {
       e.preventDefault();
-      openRefPicker(picker.getAttribute('data-ob-ref-picker') || '');
+      obOpenRefPickerOnce(e, picker.getAttribute('data-ob-ref-picker') || '');
       return;
     }
     var row = e.target.closest('[data-ob-list-row]');
@@ -3677,13 +3677,13 @@ function obInitFormDelegates() {
     if (refPicker) {
       e.preventDefault();
       var pickerTarget = refPicker.getAttribute('data-ob-ref-picker') || '';
-      openRefPicker(pickerTarget === 'closest' ? obClosestSelect(refPicker) : pickerTarget);
+      obOpenRefPickerOnce(e, pickerTarget === 'closest' ? obClosestSelect(refPicker) : pickerTarget);
       return;
     }
     var refPickerSelf = e.target.closest('[data-ob-ref-picker-self]');
     if (refPickerSelf) {
       e.preventDefault();
-      openRefPicker(obClosestSelect(refPickerSelf));
+      obOpenRefPickerOnce(e, obClosestSelect(refPickerSelf));
       return;
     }
     var refCurrentSelf = e.target.closest('[data-ob-ref-current-self]');
@@ -3843,7 +3843,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
       pickBtn.setAttribute('data-ob-ref-picker-self', '');
       wrapper.appendChild(sel);
       wrapper.appendChild(pickBtn);
-      if (meta && meta.entity) {
+      if (meta && meta.entity && tbody.getAttribute('data-tp-hide-ref-card') !== '1') {
         var openBtn = document.createElement('button');
         openBtn.type = 'button';
         openBtn.textContent = '🔍';
@@ -4944,7 +4944,10 @@ function obOpenQuestion(payload, elementName, handlers) {
   modal.id = '_question-modal';
   modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
   var box = document.createElement('div');
-  box.style.cssText = 'background:#fff;border-radius:10px;padding:20px;width:460px;max-width:94vw;box-shadow:0 8px 32px rgba(0,0,0,.18)';
+  // Многострочному полю (текст ошибки, примечание) узко в 460px: окно шире, а
+  // поле занимает всю его ширину. На узком экране — не шире 94% окна.
+  var hasMultiline = (payload.fields || []).some(function (f) { return f && f.editable && f.multiline; });
+  box.style.cssText = 'background:#fff;border-radius:10px;padding:20px;width:' + (hasMultiline ? '640px' : '460px') + ';max-width:94vw;box-shadow:0 8px 32px rgba(0,0,0,.18)';
   if (payload.title) {
     var title = document.createElement('div');
     title.style.cssText = 'font-weight:600;font-size:15px;color:#1e293b;margin-bottom:8px';
@@ -4955,17 +4958,69 @@ function obOpenQuestion(payload, elementName, handlers) {
   text.style.cssText = 'font-size:14px;color:#1e293b;white-space:pre-line;margin-bottom:16px';
   text.textContent = payload.text;
   box.appendChild(text);
+  // Строки данных: итог операции (номер записанного документа, клиент, дата)
+  // и, при необходимости, поле ввода. Значения редактируемых уезжают обратно в
+  // обработчик Ответ вместе с нажатой кнопкой — переменной ДиалогПоля.
+  var inputs = {};
+  (payload.fields || []).forEach(function (field) {
+    if (!field || !field.name) return;
+    var line = document.createElement('div');
+    line.style.cssText = 'margin-bottom:10px';
+    if (field.label) {
+      var label = document.createElement('div');
+      label.style.cssText = 'font-size:12px;color:#64748b;margin-bottom:3px';
+      label.textContent = field.label;
+      line.appendChild(label);
+    }
+    if (field.editable) {
+      var input = document.createElement(field.multiline ? 'textarea' : 'input');
+      // rows — «строк» из DSL (видимых строк), по умолчанию 4.
+      if (field.multiline) input.rows = field.rows > 0 ? field.rows : 4; else input.type = 'text';
+      input.value = field.value == null ? '' : String(field.value);
+      input.style.cssText = 'width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #e2e8f0;border-radius:7px;font-size:14px;outline:none'
+        + (field.multiline ? ';resize:vertical;font-family:inherit' : '');
+      line.appendChild(input);
+      inputs[field.name] = input;
+    } else {
+      var value = document.createElement('div');
+      value.style.cssText = (field.strong
+        ? 'font-size:15px;font-weight:650;color:#0f172a'
+        : 'font-size:14px;color:#1e293b') + ';white-space:pre-line';
+      value.textContent = field.value == null ? '' : String(field.value);
+      line.appendChild(value);
+    }
+    box.appendChild(line);
+  });
+  if (payload.fields && payload.fields.length) {
+    var gap = document.createElement('div');
+    gap.style.cssText = 'height:8px';
+    box.appendChild(gap);
+  }
   var row = document.createElement('div');
-  row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+  // Два-три варианта («Да / Нет / Отмена») — в ряд справа, как привычную пару
+  // кнопок. Четыре и больше («укажите причину жалобы») — столбиком во всю
+  // ширину: в ряд они не помещались и вылезали за окно.
+  var manyVariants = payload.variants.length > 3;
+  row.style.cssText = manyVariants
+    ? 'display:flex;flex-direction:column;gap:6px;align-items:stretch;max-height:50vh;overflow-y:auto'
+    : 'display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end';
   payload.variants.forEach(function (variant) {
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = variant;
-    btn.style.cssText = 'padding:8px 16px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:14px';
+    btn.style.cssText = 'padding:8px 16px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:14px;white-space:normal'
+      + (manyVariants ? ';text-align:left;width:100%' : ';max-width:100%');
     btn.addEventListener('click', function () {
       modal.remove();
-      if (handlers && typeof handlers.onAnswer === 'function') { handlers.onAnswer(variant); return; }
-      if (typeof obFire === 'function') obFire(elementName, 'Ответ', { _question_answer: variant });
+      var extra = { _question_answer: variant };
+      var names = Object.keys(inputs);
+      if (names.length) {
+        var values = {};
+        names.forEach(function (name) { values[name] = inputs[name].value; });
+        extra._question_fields = JSON.stringify(values);
+      }
+      if (handlers && typeof handlers.onAnswer === 'function') { handlers.onAnswer(variant, extra); return; }
+      if (typeof obFire === 'function') obFire(elementName, 'Ответ', extra);
     });
     row.appendChild(btn);
   });
@@ -5259,6 +5314,28 @@ function obInitChoiceFilterRefresh() {
   document.addEventListener('change', function () { obAttachTPChoiceContexts(document); window.obRefreshChoiceFilters(); });
 }
 obReady(obInitChoiceFilterRefresh);
+
+// BEGIN onebase-ref-picker-claim
+// obOpenRefPickerOnce — один щелчок открывает окно выбора один раз. Кнопку 🔍
+// ловят несколько делегатов document: делегат списка и формы в ui.js и
+// делегат управляемой формы в managed.js. Второй вызов openRefPicker закрывал
+// только что открытое окно — его запрос отменялся (nginx 499, сервер писал
+// 500), и тот же запрос уходил заново: двойная нагрузка на каждый щелчок.
+// Отметка живёт на самом событии, поэтому следующий щелчок открывает окно как
+// обычно. Берётся только тем делегатом, который нашёл поле: делегат списка
+// видит у кнопки управляемой формы «closest», а не id, — заберёт он отметку
+// первым, и окно не откроет никто.
+function obOpenRefPickerOnce(e, selOrId) {
+  var sel = (typeof selOrId === 'string') ? (selOrId ? document.getElementById(selOrId) : null) : selOrId;
+  if (!sel) return;
+  if (e) {
+    if (e.__obRefPickerOpened) return;
+    try { e.__obRefPickerOpened = true; } catch (_) {}
+  }
+  openRefPicker(sel);
+}
+window.obOpenRefPickerOnce = obOpenRefPickerOnce;
+// END onebase-ref-picker-claim
 
 function openRefPicker(selOrId) {
   var sel = (typeof selOrId === 'string') ? document.getElementById(selOrId) : selOrId;
