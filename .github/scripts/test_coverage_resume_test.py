@@ -209,6 +209,100 @@ assert""")
                               cwd=self.root, env=env, capture_output=True, text=True,
                               encoding='utf8', timeout=180)
 
+    def modfile_fixture(self):
+        self.real_module()
+        for label, value in [('seven', 7), ('ninety-nine', 99)]:
+            directory = self.root / label
+            directory.mkdir()
+            (directory / 'go.mod').write_text('module example.com/checkpointdep\n\ngo 1.26.0\n')
+            (directory / 'value.go').write_text(f'package checkpointdep\nfunc Value() int {{ return {value} }}\n')
+        (self.root / 'other/value.go').write_text('package other\nimport "example.com/checkpointdep"\nfunc Value() int { return checkpointdep.Value() }\n')
+
+    def write_modfile(self, path, dependency):
+        path.write_text((self.root / 'go.mod').read_text()
+                        + '\nrequire example.com/checkpointdep v0.0.0\n'
+                        + f'replace example.com/checkpointdep => "{(self.root / dependency).resolve().as_posix()}"\n')
+
+    def test_real_go_external_modfile_refuses_reuse_and_fresh_execution_detects_change(self):
+        self.modfile_fixture()
+        with tempfile.TemporaryDirectory() as external:
+            alternate = Path(external) / 'alternate.mod'
+            self.write_modfile(alternate, 'seven')
+            env = dict(os.environ, GOFLAGS=f'-modfile={alternate}')
+            result = self.real_cli('--artifacts', 'fresh-modfile', env=env)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            for action in ['--checkpoint', '--resume']:
+                result = self.real_cli(action, '--artifacts', 'rejected-modfile', env=env)
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn('external or excluded Go modfiles', result.stderr)
+                self.assertFalse((self.root / 'rejected-modfile/checkpoints.json').exists())
+                self.assertFalse((self.root / 'coverage.out').exists())
+            self.write_modfile(alternate, 'ninety-nine')
+            result = self.real_cli('--artifacts', 'fresh-modfile-failed', env=env)
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn('FAIL', result.stdout + result.stderr)
+            self.assertFalse((self.root / 'coverage.out').exists())
+
+    def test_real_go_modfile_quoted_relative_and_goenv_paths_are_checked(self):
+        self.modfile_fixture()
+        with tempfile.TemporaryDirectory() as external:
+            alternate = Path(external) / 'alternate with spaces.mod'
+            self.write_modfile(alternate, 'seven')
+            goenv = Path(external) / 'goenv'
+            goenv.write_text(f'GOFLAGS="-modfile={alternate}"\n')
+            persisted = dict(os.environ, GOENV=str(goenv))
+            persisted.pop('GOFLAGS', None)
+            relative = os.path.relpath(alternate, self.root)
+            for env in [dict(os.environ, GOFLAGS=f'"-modfile={alternate}"'),
+                        dict(os.environ, GOFLAGS=f'\'-modfile={relative}\''), persisted]:
+                with self.subTest(flags=env.get('GOFLAGS', 'GOENV')):
+                    # Resume permits the existing artifact directory, but must
+                    # reject these inputs before attempting to read its state.
+                    result = self.real_cli('--resume', '--artifacts', 'quoted-rejected', env=env)
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+                    self.assertIn('external or excluded Go modfiles', result.stderr)
+                    self.assertFalse((self.root / 'quoted-rejected/checkpoints.json').exists())
+                    self.assertFalse((self.root / 'coverage.out').exists())
+
+    def test_real_go_excluded_modfile_and_sum_cannot_be_reused(self):
+        self.modfile_fixture()
+        for folder in ['artifacts', '.git']:
+            directory = self.root / folder
+            directory.mkdir(exist_ok=True)
+            alternate = directory / 'alternate.mod'
+            self.write_modfile(alternate, 'seven')
+            result = self.real_cli('--resume', '--artifacts', 'artifacts',
+                                   env=dict(os.environ, GOFLAGS=f'-modfile={alternate}'))
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            self.assertIn('external or excluded Go modfiles', result.stderr)
+            self.assertFalse((self.root / 'artifacts/checkpoints.json').exists())
+        alternate = self.root / 'alternate.mod'
+        self.write_modfile(alternate, 'seven')
+        result = self.real_cli('--checkpoint', '--artifacts', 'sum-rejected', '--output', 'alternate.sum',
+                               env=dict(os.environ, GOFLAGS='-modfile=alternate.mod'))
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('external or excluded Go modfiles', result.stderr)
+        self.assertFalse((self.root / 'sum-rejected/checkpoints.json').exists())
+        self.assertFalse((self.root / 'alternate.sum').exists())
+
+    def test_real_go_internal_modfile_is_reusable_and_its_changes_invalidate_stages(self):
+        self.modfile_fixture()
+        alternate = self.root / 'alternate.mod'
+        self.write_modfile(alternate, 'seven')
+        env = dict(os.environ, GOFLAGS='-modfile=alternate.mod')
+        result = self.real_cli('--checkpoint', env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        expected = (self.root / 'coverage.out').read_bytes()
+        result = self.real_cli('--resume', env=env)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.count('RESUME: validated'), 7)
+        self.assertEqual((self.root / 'coverage.out').read_bytes(), expected)
+        self.write_modfile(alternate, 'ninety-nine')
+        result = self.real_cli('--resume', env=env)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('inputs changed', result.stderr)
+        self.assertFalse((self.root / 'coverage.out').exists())
+
     def test_real_go_external_replacement_is_rejected_before_checkpoint(self):
         self.real_module()
         with tempfile.TemporaryDirectory() as external:

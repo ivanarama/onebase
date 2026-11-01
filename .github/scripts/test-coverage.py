@@ -62,6 +62,50 @@ def check_fixture_path(value):
         require(current.resolve().is_relative_to(root), "fixture points outside project")
 
 
+def checkpoint_modfile(flags, root, artifacts, output):
+    # GOFLAGS uses Go's quoted.Split: quotes enclose whole arguments; neither
+    # backslashes nor quoted contents are shell-escaped (including on Windows).
+    words = []
+    while flags:
+        flags = flags.lstrip(" \t\r\n")
+        if not flags:
+            break
+        if flags[0] in "\"'":
+            end = flags.find(flags[0], 1)
+            require(end >= 0, "checkpoint cannot parse quoted GOFLAGS; run without reuse")
+            words.append(flags[1:end])
+            flags = flags[end + 1:]
+        else:
+            end = re.search(r"[ \t\r\n]", flags)
+            stop = end.start() if end else len(flags)
+            words.append(flags[:stop])
+            flags = flags[stop:]
+    selected = None
+    for word in words:
+        require(word.startswith("-") and word not in ("-", "--"),
+                "checkpoint cannot parse GOFLAGS; run without reuse")
+        name, separator, value = word.partition("=")
+        if name in ("-modfile", "--modfile"):
+            require(separator, "checkpoint requires -modfile=PATH; run without reuse")
+            selected = value  # Go applies the last value, including an empty reset.
+    if not selected:
+        return
+    declared = root / selected
+    module = Path(os.path.abspath(declared))
+    require(declared.resolve() == module,
+            "checkpoint does not support external or excluded Go modfiles/sums (including aliases); run without reuse")
+    require(module.suffix == ".mod", "checkpoint requires a .mod module manifest")
+    for path in (module, module.with_suffix(".sum")):
+        resolved = path.resolve()
+        require(path == resolved and not path.is_symlink()
+                and resolved.is_relative_to(root)
+                and not any(p.casefold() == ".git" for p in resolved.relative_to(root).parts)
+                and not resolved.is_relative_to(artifacts)
+                and resolved not in (output, output.with_name(output.name + ".tmp")),
+                "checkpoint does not support external or excluded Go modfiles/sums; run without reuse")
+    require(module.is_file(), "checkpoint module manifest is unavailable")
+
+
 def input_fingerprint(artifacts, output):
     root = Path.cwd().resolve()
     artifacts, output = artifacts.resolve(), output.resolve()
@@ -93,6 +137,7 @@ def input_fingerprint(artifacts, output):
         tools[tool] = (str(Path(binary).resolve()), digest(Path(binary)))
     # Store only the digest: environment and Go proxy values can contain secrets.
     effective_go = json.loads(subprocess.check_output(["go", "env", "-json"]))
+    checkpoint_modfile(effective_go.get("GOFLAGS", ""), root, artifacts, output)
     # GOFLAGS can also come from GOENV. Overlay JSON and its replacements may
     # live outside the source tree, so their contents are not bound by this
     # checkpoint. Fresh runs remain available for intentional overlays.
