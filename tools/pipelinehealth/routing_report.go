@@ -41,6 +41,7 @@ type routingProgressCandidate struct {
 }
 
 type routingContext struct {
+	observations        []routingObservationInput
 	snapshots           map[int]routingSnapshot
 	repository, trusted string
 	maxAttempts         int64
@@ -181,7 +182,9 @@ func routingSettled(ledger reviewrouting.Ledger, attemptID string) bool {
 func (context *routingContext) consume(result *report, pr apiPull, item candidate, labels map[string]bool) bool {
 	var observedLedger *reviewrouting.Ledger
 	var observedEpoch string
-	defer func() { context.observe(result, pr, item, observedLedger, observedEpoch) }()
+	defer func() {
+		context.observations = append(context.observations, routingObservationInput{pr, item, observedLedger, observedEpoch})
+	}()
 	entry, found := context.snapshots[pr.Number]
 	if !found {
 		return context.engineering(result, item, "complete typed timeline is unavailable")

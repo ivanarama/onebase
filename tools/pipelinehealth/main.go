@@ -679,6 +679,9 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 	sortMergeCandidates(result.MergeExecutable)
 	sortCandidates(result.FixCandidates)
 	sortCandidates(result.HumanWaiting)
+	if routing != nil {
+		routing.finishObservations(&result)
+	}
 	return result
 }
 

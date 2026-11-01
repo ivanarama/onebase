@@ -44,6 +44,24 @@ func TestPublicRoutingObservationKeepsEvidenceAndLifetimeBudget(t *testing.T) {
 			if category != "" && !slices.Contains(row["categories"].([]any), any(category)) {
 				t.Fatalf("explicit evidence category became a generic decision: %v", row)
 			}
+			if test.name == "pipeline-start-spent-once" && (row["transition_kind"] != "started" || row["transition_id"] != "4003") {
+				t.Fatalf("same-second canonical event order was lost: %v", row)
+			}
 		})
+	}
+}
+
+func TestPublicRoutingObservationWaitsForLegacyDecisionElection(t *testing.T) {
+	snapshot := routingGolden(t, "two-legacy-rounds")
+	snapshot["labels"] = []any{"needs-decision"}
+	value, err := routingCLI(t, []any{routingPullFixture(t, snapshot, 42)}, "-technical-handoff", "-contract", routingSkillFixture(t, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := value["routing_observation"].(map[string]any)
+	row := observation["items"].([]any)[0].(map[string]any)
+	if len(value["human_waiting"].([]any)) != 1 || row["route"] != "decision" || row["recipient"] != "owner" ||
+		row["evidence_status"] != "unknown" || row["budget_used"] != nil || len(row["categories"].([]any)) != 0 || observation["complete"] != false {
+		t.Fatalf("legacy stop disappeared or acquired an inferred product category: %v", value)
 	}
 }

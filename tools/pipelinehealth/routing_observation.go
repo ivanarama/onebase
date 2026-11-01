@@ -30,7 +30,24 @@ type routingObservationItem struct {
 	BudgetLimit     int64            `json:"budget_limit"`
 	TransitionAt    string           `json:"transition_at,omitempty"`
 	TransitionKind  string           `json:"transition_kind,omitempty"`
+	TransitionID    string           `json:"transition_id,omitempty"`
 	Reasons         []string         `json:"reasons"`
+}
+
+type routingObservationInput struct {
+	pr     apiPull
+	item   candidate
+	ledger *reviewrouting.Ledger
+	epoch  string
+}
+
+// Legacy election and single-flight selection must finish before observing
+// their route. This never feeds display data back into election/admission.
+func (context *routingContext) finishObservations(result *report) {
+	for _, input := range context.observations {
+		context.observe(result, input.pr, input.item, input.ledger, input.epoch)
+	}
+	context.observations = nil
 }
 
 func observedContains(items []candidate, number int) bool {
@@ -61,7 +78,7 @@ func (context *routingContext) observe(result *report, pr apiPull, item candidat
 		row.Route, row.Recipient = "waiting_ship", "owner"
 	case observedContains(result.MergeCandidates, item.Number):
 		row.Route, row.Recipient = "merge", "merge"
-	case observedContains(result.ContentReviewCandidates, item.Number):
+	case observedContains(result.ContentReviewCandidates, item.Number) || observedContains(result.ReviewCandidates, item.Number):
 		row.Route, row.Recipient = "review", "independent-review"
 	}
 	for _, reason := range result.Findings {
@@ -76,6 +93,7 @@ func (context *routingContext) observe(result *report, pr apiPull, item candidat
 			proof := ledger.Proofs[len(ledger.Proofs)-1]
 			row.Source, row.EvidenceStatus = proof.Source(), "older_head_or_epoch"
 			row.TransitionAt, row.TransitionKind = proof.Completion.CreatedAt, "review-completion"
+			row.TransitionID = proof.Completion.ID
 			entry := context.snapshots[pr.Number]
 			current := row.Source["head"] == item.Head && proof.Publication.Payload["epoch"] == epoch && epoch != "" &&
 				reviewrouting.Equal(proof.Publication.Payload["identity"], entry.value["identity"]) &&
@@ -103,14 +121,16 @@ func (context *routingContext) observe(result *report, pr apiPull, item candidat
 			if routingObject(attempt.Payload["source"])["head"] == item.Head && row.Route == "technical" {
 				row.Recipient = attempt.Payload["executor"]
 			}
-			if observedLater(attempt.CreatedAt, row.TransitionAt) {
+			if observedLater(attempt.CreatedAt, attempt.ID, row.TransitionAt, row.TransitionID) {
 				row.TransitionAt, row.TransitionKind = attempt.CreatedAt, "attempt-reserved"
+				row.TransitionID = attempt.ID
 			}
 		}
 		for _, records := range [][]reviewrouting.Record{ledger.Phases, ledger.Settlements} {
 			for _, record := range records {
-				if observedLater(record.CreatedAt, row.TransitionAt) {
+				if observedLater(record.CreatedAt, record.ID, row.TransitionAt, row.TransitionID) {
 					row.TransitionAt = record.CreatedAt
+					row.TransitionID = record.ID
 					row.TransitionKind = routingText(record.Payload["phase"])
 					if row.TransitionKind == "" {
 						row.TransitionKind = routingText(record.Payload["kind"])
@@ -132,8 +152,11 @@ func routingArray(value any) []any {
 	return items
 }
 
-func observedLater(left, right string) bool {
+func observedLater(left, leftID, right, rightID string) bool {
 	l, leftErr := time.Parse(time.RFC3339Nano, left)
 	r, rightErr := time.Parse(time.RFC3339Nano, right)
-	return leftErr == nil && (rightErr != nil || l.After(r))
+	// Canonical authenticated record ids are positive decimal strings without
+	// leading zeros. Compare their numeric order without narrowing 128 digits.
+	laterID := len(leftID) > len(rightID) || len(leftID) == len(rightID) && leftID > rightID
+	return leftErr == nil && (rightErr != nil || l.After(r) || l.Equal(r) && laterID)
 }
