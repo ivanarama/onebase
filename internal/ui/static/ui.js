@@ -5907,11 +5907,11 @@ window.onebaseDevice = {
       window.dispatchEvent(ev);
     } catch (_) {}
   }
-  // В режиме вкладок SSE принадлежит оболочке. Ретранслируем уже разобранное
-  // JSON-событие во все её same-origin iframe, чтобы сохранить публичный
-  // контракт window-событий onebase:<имя> для страниц и live-панелей.
+  // SSE принадлежит верхнему окну. Каждый документ передаёт разобранное
+  // событие своим вкладкам и формам создания ссылки; вложенная форма
+  // продолжает доставку своим дочерним формам, без нового SSE-соединения.
   function forwardOnebaseEvent(msg) {
-    var frames = document.querySelectorAll('.ob-tabbody iframe');
+    var frames = document.querySelectorAll('.ob-tabbody iframe, #_ref-create-modal iframe');
     for (var i = 0; i < frames.length; i++) {
       try {
         if (frames[i].contentWindow) {
@@ -5926,11 +5926,12 @@ window.onebaseDevice = {
   }
   if (window.__obEmbedded) {
     window.addEventListener('message', function (ev) {
-      // Принимаем realtime-события только от своей same-origin оболочки.
+      // Принимаем realtime-события только от своего same-origin родителя.
       if (ev.source !== window.parent || ev.origin !== window.location.origin) return;
       var msg = ev.data;
       if (!msg || msg.source !== 'obRealtime' || typeof msg.name !== 'string' || !msg.name) return;
       emitOnebaseEvent('onebase:' + msg.name, msg.data);
+      forwardOnebaseEvent(msg);
     });
   }
   function toast(text) {

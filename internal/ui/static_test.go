@@ -180,7 +180,7 @@ func TestTabShellSingleSSEAndEventForwarding(t *testing.T) {
 	// событий: top пересылает сообщение всем вкладкам, а iframe принимает его
 	// только от своей same-origin оболочки и поднимает локальный CustomEvent.
 	for _, want := range []string{
-		"document.querySelectorAll('.ob-tabbody iframe')",
+		"document.querySelectorAll('.ob-tabbody iframe, #_ref-create-modal iframe')",
 		"frames[i].contentWindow.postMessage",
 		"source: 'obRealtime'",
 		"ev.source !== window.parent",
