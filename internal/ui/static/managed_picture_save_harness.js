@@ -58,6 +58,9 @@ assert.ok(form);
 const context = {
   window: {}, document: {getElementById: id => id === 'main-form' ? form : null, querySelector: selector => page.querySelector(selector)},
   managedRefParts: () => null, ensureRefOption: () => {},
+  // applyElementStates отдаёт путь без якоря странице набора СтраницыФормы;
+  // в этой форме закладок нет, и боевая функция вышла бы сразу — как здесь.
+  obManagedSetPageHidden: path => assert.equal(page.querySelector('[data-ob-tab-path="' + path + '"]'), null),
 };
 vm.createContext(context);
 vm.runInContext(slice('// BEGIN onebase-ro-apply-values', '// END onebase-ro-apply-values') + '\n' +
