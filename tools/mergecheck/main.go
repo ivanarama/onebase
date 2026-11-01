@@ -27,20 +27,21 @@ func main() {
 }
 
 func run() error {
-	kind := flag.String("kind", "entries", "entries or plans (only the first numeric table cell may change)")
+	kind := flag.String("kind", "entries", "entries, plans, or main-additions (exact source containing all current main lines)")
 	resolve := flag.Bool("resolve", false, "write a verified canonical union for append-only entries")
 	base := flag.String("base", "", "merge-base file")
 	ours := flag.String("ours", "", "original PR file")
 	theirs := flag.String("theirs", "", "original main file")
 	result := flag.String("result", "", "resolved file")
 	flag.Parse()
-	if (*kind != "entries" && *kind != "plans") || flag.NArg() != 0 {
-		return errors.New("expected -kind entries|plans and four file paths")
+	if (*kind != "entries" && *kind != "plans" && *kind != "main-additions") || flag.NArg() != 0 {
+		return errors.New("expected -kind entries|plans|main-additions and four file paths")
 	}
-	if *resolve && *kind != "entries" {
+	if *resolve && *kind != "entries" && *kind != "main-additions" {
 		return errors.New("-resolve is supported only for append-only entries")
 	}
 	var resolved string
+	var inputs [4]string
 	for i, path := range []string{*base, *ours, *theirs, *result} {
 		if path == "" {
 			return errors.New("-base, -ours, -theirs and -result are required")
@@ -59,9 +60,25 @@ func run() error {
 				}
 			}
 		}
+		inputs[i] = string(data)
 		if i == 3 {
 			resolved = string(data)
 		}
+	}
+	if *kind == "main-additions" {
+		if err := verifyMainAdditions(inputs[1], inputs[2]); err != nil {
+			return err
+		}
+		if *resolve {
+			if !hasConflictMarkers(resolved) {
+				return errors.New("-resolve requires an unresolved conflict file")
+			}
+			return replaceFile(*result, []byte(inputs[1]))
+		}
+		if resolved != inputs[1] {
+			return errors.New("main-additions result must equal the complete source file")
+		}
+		return nil
 	}
 	// diff3 keeps the common suffix inside BOTH additions. --union can lose
 	// that suffix from one record; --zdiff3 can move it outside the conflict.
