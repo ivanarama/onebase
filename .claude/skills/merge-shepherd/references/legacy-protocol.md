@@ -517,9 +517,10 @@ qualified-ссылка на другой repository локальной issue н�
      для других файлов. Ненулевой код и этого режима — эскалация настоящего
      конфликта. После успешного `-resolve` отдельно выполни проверку с тем же
      выбранным `-kind` (для обычных добавлений — `entries`):
-     `go run ./tools/mergecheck -kind <выбранный-режим> -base <base-file> -ours <ours-file> -theirs <theirs-file> -result <путь>`.
-     Здесь `<выбранный-режим>` — `entries` либо успешно применённый
-     `main-additions`; проверять результат нового режима через `entries` нельзя.
+     `go run ./tools/mergecheck -kind entries -base <base-file> -ours <ours-file> -theirs <theirs-file> -result <путь>`.
+     Для успешно применённого нового режима вместо предыдущей команды выполни
+     `go run ./tools/mergecheck -kind main-additions -base <base-file> -ours <ours-file> -theirs <theirs-file> -result <путь>`.
+     Новый режим проверяется через `main-additions`, обычный — через `entries`.
      Обычный режим `entries` строит `git merge-file --diff3`: принимает только вставки в
      конфликтующих блоках, сохраняет обе вставки целиком, включая повторения,
      и требует неизменности чисто слитого контекста. `--union` и сравнение
