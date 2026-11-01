@@ -476,21 +476,21 @@ const tplAppShell = `{{define "page-app-shell"}}
   window.obSwitchSection=switchSection;
   // «Назад»/«Вперёд» между разделами — тем же путём. Смена только отборов
   // виджетов (тот же раздел) остаётся их собственному обработчику popstate.
-  // Защитная запись истории: «Назад» (Alt+←, боковая кнопка мыши) не уводит
-  // со страницы оболочки. Уход выгрузил бы все вкладки, и у формы с правками
-  // браузер спрашивал «Закрыть приложение?». Оболочка держит поверх входной
-  // записи свою; «Назад», дошедшее до записи без нашей метки (входной или
-  // чужой), сразу возвращается на оболочку. Переходы между разделами — записи
-  // obSection — и «Вперёд» работают как раньше.
-  function pushHistoryGuard(){
-    try{ history.pushState({obGuard:true},'',location.pathname+location.search+location.hash); }catch(e){}
+  // Отмечаем только входную границу оболочки. При возврате к ней идём
+  // вперёд к защитной записи, не добавляя новую: pushState обрезал бы историю
+  // отборов виджетов и разделов. Их собственные записи остаются доступными
+  // для «Назад»/«Вперёд», в том числе после перезагрузки страницы.
+  function isShellHistoryState(state){ return !!(state&&(state.obGuard||state.obSection||state.obWidgetFilters)); }
+  if(!isShellHistoryState(history.state)){
+    try{
+      history.replaceState({obShellBoundary:true},'',location.pathname+location.search+location.hash);
+      history.pushState({obGuard:true},'',location.pathname+location.search+location.hash);
+    }catch(e){}
   }
-  function isShellHistoryState(state){ return !!(state&&(state.obGuard||state.obSection)); }
-  if(!isShellHistoryState(history.state))pushHistoryGuard();
   window.addEventListener('popstate',function(e){
     // Даже возврат к уже показанному разделу отменяет предыдущий pending fetch.
     ++sectionSeq;
-    if(!isShellHistoryState(e.state))pushHistoryGuard();
+    if(e.state&&e.state.obShellBoundary){ history.forward(); return; }
     if(sectionOf(location.href)===currentSection)return;
     switchSection(location.pathname+location.search,false);
   });

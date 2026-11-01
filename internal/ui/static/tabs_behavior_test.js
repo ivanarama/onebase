@@ -171,7 +171,7 @@ function shell(storage, search = '', confirmClose = () => true, requestFrameClos
     document,
     sessionStorage: storage,
     location: {search, origin: 'http://127.0.0.1:8080', href: '/ui/app'},
-    history: {state: null, pushState(state) { this.state = state; }},
+    history: {state: null, replaceState(state) { this.state = state; }, pushState(state) { this.state = state; }},
     URL,
     URLSearchParams,
     crypto: {
@@ -818,7 +818,7 @@ test('open-access deployment preserves F5 and is discarded on the first authenti
 // перезагрузка теряла введённое в незаписанных формах (браузер спрашивал
 // «Уверены, что хотите закрыть страницу?»). Оболочка берёт страницу раздела
 // фоном и подменяет строку разделов, боковое меню и рабочий стол.
-function sectionShell({fetchImpl} = {}) {
+function sectionShell({fetchImpl, initialState = null} = {}) {
   const storage = new FakeStorage();
   const elements = {};
   for (const id of ['ob-tabstrip', 'ob-tabbody', 'ob-tabempty', 'ob-tabhome', 'ob-widget-charts']) {
@@ -891,7 +891,7 @@ function sectionShell({fetchImpl} = {}) {
     location.search = u.search;
     location.href = u.pathname + u.search;
   };
-  const calls = {nav: [], dashboard: 0};
+  const calls = {nav: [], dashboard: 0, forward: 0};
   const document = {
     body: new Element('body'),
     readyState: 'complete',
@@ -913,7 +913,7 @@ function sectionShell({fetchImpl} = {}) {
     URLSearchParams,
     DOMParser: FakeDOMParser,
     // Защитная запись оболочки (obGuard) — отдельно от переходов разделов.
-    history: {state: null, pushState(state, title, url) {
+    history: {state: initialState, replaceState(state) { this.state = state; }, forward() { calls.forward++; }, pushState(state, title, url) {
       this.state = state;
       if (state && state.obGuard) guards.push(url); else pushed.push(url);
       setLocation(url);
@@ -950,7 +950,7 @@ function sectionShell({fetchImpl} = {}) {
       return event;
     },
     // Возврат к записи раздела (её положила сама оболочка) — state obSection;
-    // state null — запись не оболочки: входная страница или чужая.
+    // Входная граница имеет отдельную метку; фильтры могут иметь пустой state.
     popstate(url, state = {obSection: true}) {
       setLocation(url);
       context.history.state = state;
@@ -967,22 +967,29 @@ function sectionShell({fetchImpl} = {}) {
   };
 }
 
-test('«Назад» до записи не оболочки возвращается на оболочку, не уходя со страницы', async () => {
+test('«Назад» до входной границы идёт вперёд, сохраняя историю и незаписанную вкладку', async () => {
   const app = sectionShell();
   app.context.obOpenTab('/ui/document/Ордер/new', 'Insert');
   app.markDirty(0);
-  assert.deepEqual(app.guards(), ['/ui/app?home=1'], 'при загрузке — защитная запись поверх входной');
-  // «Назад» дошло до входной записи (state null): оболочка снова кладёт защиту
-  // и остаётся на месте — раздел не перезагружается, вкладка с правками жива.
-  app.popstate('/ui/app?home=1', null);
+  assert.deepEqual(app.guards(), ['/ui/app?home=1']);
+  app.popstate('/ui/app?home=1', {obShellBoundary: true});
   await app.settle();
-  assert.deepEqual(app.guards(), ['/ui/app?home=1', '/ui/app?home=1']);
-  assert.equal(app.fetched.length, 0, 'раздел не перезапрашивается');
+  assert.equal(app.calls.forward, 1);
+  assert.deepEqual(app.guards(), ['/ui/app?home=1'], 'новая запись обрезала бы историю вперёд');
+  assert.equal(app.fetched.length, 0);
   assert.equal(app.tabCount(), 1);
-  // Возврат к собственной записи (защита или раздел) новую защиту не добавляет.
-  app.popstate('/ui/app?home=1', {obGuard: true});
-  await app.settle();
-  assert.equal(app.guards().length, 2);
+  for (const state of [null, {}, {obGuard: true}, {obWidgetFilters: true}]) {
+    app.popstate('/ui/app?home=1', state);
+    await app.settle();
+  }
+  assert.equal(app.guards().length, 1, 'записи внутри оболочки не заменяются защитой');
+  assert.equal(app.calls.forward, 1);
+});
+
+test('перезагрузка записи фильтра не добавляет новую границу истории', () => {
+  const app = sectionShell({initialState: {obWidgetFilters: true}});
+  assert.equal(app.guards().length, 0);
+  assert.equal(app.context.history.state.obWidgetFilters, true);
 });
 
 test('раздел меняется без перезагрузки: незаписанная вкладка остаётся', async () => {
