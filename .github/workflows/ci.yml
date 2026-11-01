@@ -62,6 +62,10 @@ jobs:
           go-version-file: '.go-version'
           cache: true
 
+      - name: Lint runner public CLI contracts
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        run: python3 .github/scripts/lint_runner_test.py
+
       - name: Check for UTF-8 BOM in .go files
         run: |
           if grep -rlI $'\xEF\xBB\xBF' --include='*.go' .; then
