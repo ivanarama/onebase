@@ -14,7 +14,7 @@ import (
 
 func routingGolden(t *testing.T, name string) map[string]any {
 	t.Helper()
-	for _, filename := range []string{"review-routing-history-v1.json", "review-routing-operational-history-v1.json"} {
+	for _, filename := range []string{"review-routing-history-v1.json", "review-routing-operational-history-v1.json", "review-routing-retained-audit-v1.json"} {
 		data, err := os.ReadFile(filepath.Join("..", "..", "internal", "reviewrouting", "testdata", filename))
 		if err != nil {
 			t.Fatal(err)
@@ -231,6 +231,18 @@ func TestPublicBackdatedLaterCommitKeepsHistoricalLegacyDepth(t *testing.T) {
 	queue, err := routingCLI(t, []any{routingPullFixture(t, snapshot, 42)}, "-technical-handoff", "-contract", routingSkillFixture(t, true))
 	if err != nil || len(queue["content_review_candidates"].([]any)) != 1 || len(queue["engineering_waiting"].([]any)) != 0 {
 		t.Fatalf("backdated historical commit parked the current review: %v %v", queue, err)
+	}
+}
+
+func TestPublicRetainedTypedAuditSurvivesLaterMetadataAndCommitDates(t *testing.T) {
+	for _, name := range []string{"retained-clean", "retained-changed-labels", "retained-changed-state", "retained-changed-isDraft", "retained-backdated-before-audit", "retained-backdated-during-publication"} {
+		t.Run(name, func(t *testing.T) {
+			snapshot := routingGolden(t, name)
+			value, err := routingCLI(t, []any{routingPullFixture(t, snapshot, 42)}, "-routing-inspect", "42")
+			if err != nil || value["verified_depth"] != float64(3) || value["mutation_authorized"] != false {
+				t.Fatalf("retained historical audit lost its immutable completion: %v %v", value, err)
+			}
+		})
 	}
 }
 

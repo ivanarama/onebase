@@ -71,7 +71,7 @@ func TestSharedIdentityGoldens(t *testing.T) {
 }
 
 func TestSharedVerifiedHistoricalDepthGoldens(t *testing.T) {
-	for _, filename := range []string{"review-routing-history-v1.json", "review-routing-operational-history-v1.json"} {
+	for _, filename := range []string{"review-routing-history-v1.json", "review-routing-operational-history-v1.json", "review-routing-retained-audit-v1.json"} {
 		for _, raw := range fixture(t, filename)["cases"].([]any) {
 			item := raw.(map[string]any)
 			t.Run(filename+"/"+item["name"].(string), func(t *testing.T) {

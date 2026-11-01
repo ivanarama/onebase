@@ -109,7 +109,12 @@ func source(value any) error {
 }
 
 func audit(value any) error {
-	m, err := object(value, "snapshot_sha256 last_edge_cursor last_edge_node_id base_ref_oid")
+	m := mapValue(value)
+	fields := "snapshot_sha256 last_edge_cursor last_edge_node_id base_ref_oid"
+	if _, ok := m["history"]; ok {
+		fields += " history"
+	}
+	m, err := object(value, fields)
 	if err != nil {
 		return err
 	}
@@ -121,6 +126,41 @@ func audit(value any) error {
 	}
 	if m["last_edge_cursor"] != nil && (!wireText(m["last_edge_cursor"]) || !wireText(m["last_edge_node_id"])) {
 		return fmt.Errorf("invalid audit boundary")
+	}
+	if retained, ok := m["history"]; ok {
+		history, err := object(retained, "protocol header edges")
+		if err != nil {
+			return err
+		}
+		if history["protocol"] != "audit-history-v1" {
+			return fmt.Errorf("unsupported retained audit history")
+		}
+		if _, err := object(history["header"], "headRefOid baseRefName state isDraft identity identity_sha256 pr_key author labels labelsComplete"); err != nil {
+			return err
+		}
+		manifest, ok := history["edges"].([]any)
+		if !ok || len(manifest) > 10000 {
+			return fmt.Errorf("retained audit edge manifest is invalid or oversized")
+		}
+		cursors, ids := map[string]bool{}, map[string]bool{}
+		var cursor, id any
+		for _, raw := range manifest {
+			edge, err := object(raw, "cursor node_id")
+			if err != nil {
+				return err
+			}
+			if !wireText(edge["cursor"]) || !wireText(edge["node_id"]) {
+				return fmt.Errorf("invalid retained audit server identity")
+			}
+			cursor, id = edge["cursor"], edge["node_id"]
+			if cursors[cursor.(string)] || ids[id.(string)] {
+				return fmt.Errorf("duplicate retained audit server identity")
+			}
+			cursors[cursor.(string)], ids[id.(string)] = true, true
+		}
+		if cursor != m["last_edge_cursor"] || id != m["last_edge_node_id"] {
+			return fmt.Errorf("retained audit manifest differs from its boundary")
+		}
 	}
 	return nil
 }

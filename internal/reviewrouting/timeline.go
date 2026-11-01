@@ -391,24 +391,19 @@ func VerifiedDepth(snapshot map[string]any, trusted string) (Verified, error) {
 		if !equalValue(identity, payload["identity"]) || !equalValue(snapshot["author"], payload["author"]) {
 			return result, fmt.Errorf("historical publication identity or author differs from PR")
 		}
-		if entry.id == entry.root.ID {
-			prefix := map[string]any{}
-			for key, value := range snapshot {
-				prefix[key] = value
-			}
-			prefix["identity"], prefix["headRefOid"] = identity, identity["head_sha"]
-			prefix["identity_sha256"], err = IdentityDigest(identity)
-			if err != nil {
-				return result, err
-			}
-			prefix["edges"] = snapshot["edges"].([]any)[:positions[entry.id]]
-			binding := payload["audit"].(map[string]any)
-			observed, err := Capture(prefix)
-			if err != nil || !equalValue(observed["snapshot_sha256"], binding["snapshot_sha256"]) || observed["last_edge_cursor"] != binding["last_edge_cursor"] || observed["last_edge_node_id"] != binding["last_edge_node_id"] {
-				return result, fmt.Errorf("historical publication audit prefix is unavailable or changed")
-			}
+		publicationContext, err := Context(payload)
+		if err != nil {
+			return result, err
 		}
-		info, err := epoch(items[:positions[entry.id]+1], payload["identity"].(map[string]any)["head_sha"].(string), trusted)
+		original, err := HistoricalAudit(snapshot, mapValue(payload["audit"]), identity, mapValue(payload["author"]), positions[entry.root.ID], publicationContext, trusted)
+		if err != nil {
+			return result, err
+		}
+		originalEdges, err := edges(original)
+		if err != nil {
+			return result, err
+		}
+		info, err := epoch(originalEdges, identity["head_sha"].(string), trusted)
 		if err != nil {
 			return result, err
 		}
@@ -417,6 +412,19 @@ func VerifiedDepth(snapshot map[string]any, trusted string) (Verified, error) {
 		}
 		if info.Hash != payload["epoch"] || info.AnchorID != payload["anchor"] {
 			return result, fmt.Errorf("typed proof lacks matching historical server epoch/anchor")
+		}
+		suffix := []timelineEdge{}
+		for _, item := range items[positions[entry.root.ID] : positions[entry.id]+1] {
+			if item.kind == "PullRequestCommit" {
+				continue
+			}
+			if item.kind == "IssueComment" && actor(item.node) == trusted && manualOverride.MatchString(stringValue(item.node["body"])) {
+				return result, fmt.Errorf("typed publication crossed a review override")
+			}
+			suffix = append(suffix, item)
+		}
+		if err := epochSafety(Epoch{suffix: suffix}, trusted); err != nil {
+			return result, err
 		}
 	}
 	for _, proof := range ledger.Proofs {
