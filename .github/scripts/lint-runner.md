@@ -21,8 +21,9 @@ as native Linux execution or as passing Windows lint.
 The fingerprint binds the full file tree, file modes, config, runner, Python,
 Go launcher/effective binary and versions, linter binary/version, host, target,
 resource profile and artifact location. Untracked and ignored files participate;
-only the root `.git` metadata is excluded. Symlinks, local module replacements
-and oversized trees fail closed. Go workspace, GOENV and injected GOFLAGS are
+only the root `.git` metadata is excluded. Symlinks, external local module replacements
+and oversized trees fail closed. Local replacements entirely inside the source
+tree are included in its full digest (including third_party/webview_go). Go workspace, GOENV and injected GOFLAGS are
 disabled. Changed fingerprints require a new inspection, not editing old proof.
 
 The fixed full profile uses CGO=0, four analysis CPUs, 7 GiB Go heap soft limit,

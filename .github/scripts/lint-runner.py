@@ -77,8 +77,11 @@ def describe(args, env):
         raise ValueError("effective Go version differs")
     effective_go = Path(go_env["GOROOT"]) / "bin" / ("go.exe" if os.name == "nt" else "go")
     module = json.loads(output([str(go), "mod", "edit", "-json"]))
-    if any(not item["New"].get("Version") for item in module.get("Replace") or []):
-        raise ValueError("local replace is unsupported; external inputs cannot be bound")
+    for item in module.get("Replace") or []:
+        if not item["New"].get("Version"):
+            local = (args.root / item["New"]["Path"]).resolve(strict=True)
+            if not local.is_relative_to(args.root) or any(part.lower() == ".git" for part in local.relative_to(args.root).parts):
+                raise ValueError("external or .git local replace cannot be bound")
     if (args.root / ".go-version").read_text().strip().removeprefix("go") != GO.removeprefix("go"):
         raise ValueError("project .go-version differs from pinned profile")
     context = {"schema": 1, "root": str(args.root), "tree": tree_digest(args.root),

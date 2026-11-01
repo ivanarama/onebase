@@ -44,7 +44,7 @@ func main() {
   _=json.NewEncoder(os.Stdout).Encode(value)
  case "mod":
   if os.Args[2]=="edit" {
-   if string(control)=="local-replace" { fmt.Println(`{"Replace":[{"New":{"Path":"../outside"}}]}`) } else {fmt.Println(`{"Replace":null}`)}
+   if string(control)=="internal-replace" {fmt.Println(`{"Replace":[{"New":{"Path":"./local"}}]}`)} else if string(control)=="local-replace" { fmt.Println(`{"Replace":[{"New":{"Path":"../outside"}}]}`) } else {fmt.Println(`{"Replace":null}`)}
   } else {fmt.Println("all modules verified")}
  case "list":
   if string(control)=="mutate" { _=os.WriteFile("changed-during-export",[]byte("changed"),0600) }
@@ -166,6 +166,20 @@ class LintRunnerCLI(unittest.TestCase):
         before = heartbeat.read_bytes()
         time.sleep(0.3)
         self.assertEqual(heartbeat.read_bytes(), before, "export descendant survived timeout")
+
+    def test_internal_local_replace_is_bound_to_the_full_tree(self):
+        (self.root / "control").write_text("internal-replace")
+        local = self.root / "local"
+        local.mkdir()
+        (local / "go.mod").write_text("module local\n")
+        data = local / "source.go"
+        data.write_text("package local\n")
+        self.inspect()
+        data.write_text("package changed\n")
+        self.assertNotEqual(self.run_lint().returncode, 0)
+        self.assertFalse(self.artifacts.exists())
+        self.inspect()
+        self.assertEqual(self.run_lint().returncode, 0)
 
     def test_unbound_local_replace_and_in_tree_artifacts_rejected(self):
         (self.root / "control").write_text("local-replace")
