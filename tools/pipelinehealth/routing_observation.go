@@ -118,7 +118,7 @@ func (context *routingContext) observe(result *report, pr apiPull, item candidat
 		if len(ledger.Attempts) > 0 {
 			attempt := ledger.Attempts[len(ledger.Attempts)-1]
 			// An executor is bound to its source, not implicitly to a newer HEAD.
-			if routingObject(attempt.Payload["source"])["head"] == item.Head && row.Route == "technical" {
+			if row.EvidenceStatus == "verified_current" && row.Route == "technical" && reviewrouting.Equal(attempt.Payload["source"], row.Source) {
 				row.Recipient = attempt.Payload["executor"]
 			}
 			if observedLater(attempt.CreatedAt, attempt.ID, row.TransitionAt, row.TransitionID) {

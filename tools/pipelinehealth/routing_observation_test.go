@@ -1,8 +1,12 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
+
+	"github.com/ivantit66/onebase/internal/reviewrouting"
 )
 
 func TestPublicRoutingObservationKeepsEvidenceAndLifetimeBudget(t *testing.T) {
@@ -48,6 +52,33 @@ func TestPublicRoutingObservationKeepsEvidenceAndLifetimeBudget(t *testing.T) {
 				t.Fatalf("same-second canonical event order was lost: %v", row)
 			}
 		})
+	}
+}
+
+func TestPublicRoutingObservationDoesNotReuseExecutorFromOlderSourceAtSameHead(t *testing.T) {
+	// Retained independent public repro: A -> B -> A, a fresh source/epoch
+	// after explicit resume, and one spent lifetime slot on the original A.
+	data, err := os.ReadFile(filepath.Join("testdata", "routing-observation-reused-head.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := reviewrouting.Decode(data, 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pulls := input.([]any)
+	value, err := routingCLI(t, pulls, "-technical-handoff", "-contract", routingSkillFixture(t, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := value["routing_observation"].(map[string]any)["items"].([]any)[0].(map[string]any)
+	if row["evidence_status"] != "verified_current" || row["route"] != "technical" || row["recipient"] != "technical-fix" ||
+		row["budget_used"] != float64(1) || row["budget_limit"] != float64(2) || row["source"].(map[string]any)["publication_id"] != "7000" {
+		t.Fatalf("older attempt falsely owns the fresh full source: %v", row)
+	}
+	inspection, err := routingCLI(t, pulls, "-routing-inspect", "42")
+	if err != nil || inspection["verified_depth"] != float64(5) {
+		t.Fatalf("retained repro lost complete independently verified history: %v, %v", inspection, err)
 	}
 }
 
