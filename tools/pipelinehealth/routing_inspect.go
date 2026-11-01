@@ -6,7 +6,7 @@ import (
 	"github.com/ivantit66/onebase/internal/reviewrouting"
 )
 
-func inspectRouting(repository, trusted, fixture string, number int) (map[string]any, error) {
+func inspectRouting(repository, trusted, fixture string, number int, positivePurpose string) (map[string]any, error) {
 	value := map[string]any{"protocol": reviewrouting.Version, "purpose": "read-only-routing-inspection",
 		"repository": repository, "number": number, "mutation_authorized": false, "authority": "authenticated-read-only-snapshot"}
 	if fixture != "" {
@@ -35,5 +35,21 @@ func inspectRouting(repository, trusted, fixture string, number int) (map[string
 		return finish(err)
 	}
 	value["verified_depth"], value["ledger"] = verified.Depth, verified.Ledger.Values()
+	requireMerged := snapshot["state"] == "MERGED"
+	if positivePurpose != "" {
+		requireMerged = positivePurpose == "tail"
+		value["positive_review_purpose"] = positivePurpose
+	}
+	positive, positiveErr := reviewrouting.PositiveReview(snapshot, trusted, requireMerged)
+	if positiveErr == nil {
+		var mergeSHA, mergeEvent any
+		if positive.MergeSHA != "" {
+			mergeSHA, mergeEvent = positive.MergeSHA, positive.MergeEventID
+		}
+		value["positive_review"] = map[string]any{"descriptor": positive.Descriptor, "merge_sha": mergeSHA, "merge_event": mergeEvent,
+			"publication_created_at": positive.Proof.Publication.CreatedAt, "tail": routingObject(positive.Proof.Publication.Payload["report"])["tail"], "mutation_authorized": false}
+	} else {
+		value["positive_review_error"] = positiveErr.Error()
+	}
 	return value, nil
 }

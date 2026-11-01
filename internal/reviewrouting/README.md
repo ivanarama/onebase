@@ -1,11 +1,11 @@
 # Чтение review-routing-v1 в pipelinehealth
 
-Это часть A в разработке [#1908](https://github.com/ivanarama/onebase/issues/1908),
-связанная с [PromptPilot #151](https://github.com/ivanarama/PromptPilot/issues/151).
-Она добавляет строгую проверку истории, версионированные процедуры четырёх
-потребителей и source-bound контракты технического FIX. Приёмка точной пары,
-положительный native MERGE/TAIL (часть B) и включение конвейера (часть C)
-остаются отдельными гейтами.
+Принятый срез A ([#1908](https://github.com/ivanarama/onebase/issues/1908) /
+[PromptPilot #151](https://github.com/ivanarama/PromptPilot/issues/151)) добавляет
+строгую историю и source-bound технический FIX. Срез B (#1909 / PromptPilot #152)
+добавляет положительный typed proof для native MERGE/TAIL и парную межстадийную
+регрессию. Совместная приёмка точных версий остаётся обязательной; установка,
+Dashboard, включение и наблюдение пилота относятся к отдельному срезу C.
 По умолчанию новый режим выключен. Обычный JSON-отчёт checker не меняется.
 
 ## Публичные команды
@@ -98,9 +98,20 @@ checker публикует отдельные `fix_bridge_contract` и `fix_exec
 Их закрытые purposes совпадают с PromptPilot. Это декларации совместимости,
 а не lease, разрешение на процесс, push или merge. Изменённые процедуры находятся
 в исходниках; установленные процедуры, настройки и планировщик не обновляются.
-Typed `reviewed` с ship по-прежнему ожидает положительной native-приёмки MERGE/TAIL
-в части B и не подменяется legacy proof. Контракт четырёх процедур описан в
+Полный paired B reader дополнительно объявляет `positive_review_contract`
+(`positive-review-v1`, purposes `merge`/`tail`) и `positive_merge_candidates`.
+Положительный source содержит исходные typed ID, identity/автора, epoch и node
+IDs, а не синтетический legacy proof. Для MERGE требуются trusted ship и все
+независимые live-гейты координатора. Technical/engineering не создают merge owner.
+Контракт четырёх процедур описан в
 [канонической процедуре](../../.claude/skills/review-queue/references/review-routing-v1.md).
+
+`-routing-inspect M -routing-positive-purpose merge|tail` проверяет положительный
+source без выборки очереди и мутаций. Для `tail` нужна завершённая до единственного
+`MergedEvent` публикация текущего HEAD; после merge допустим лишь один конечный
+delete ветки без restore. JSON сохраняет `mutation_authorized:false`; при
+недостаточном proof содержит `positive_review_error`, а не новый исполнимый маршрут.
+Политика флагов и все mutation-гейты остаются во внешнем координаторе.
 
 ## Проверка совместимости
 

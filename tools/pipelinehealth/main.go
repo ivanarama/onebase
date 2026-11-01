@@ -179,6 +179,8 @@ type report struct {
 	ReviewRoutingContract            *routingContract              `json:"review_routing_contract,omitempty"`
 	FixBridgeContract                *routingPurposeContract       `json:"fix_bridge_contract,omitempty"`
 	FixExecutionContract             *routingPurposeContract       `json:"fix_execution_contract,omitempty"`
+	PositiveReviewContract           *routingPurposeContract       `json:"positive_review_contract,omitempty"`
+	PositiveMergeCandidates          *[]routingFixCandidate        `json:"positive_merge_candidates,omitempty"`
 	TechnicalFixCandidates           *[]routingFixCandidate        `json:"technical_fix_candidates,omitempty"`
 	TechnicalFixProgressCandidates   *[]routingProgressCandidate   `json:"technical_fix_progress_candidates,omitempty"`
 	TechnicalFixSettlementCandidates *[]routingSettlementCandidate `json:"technical_fix_settlement_candidates,omitempty"`
@@ -221,12 +223,16 @@ func main() {
 	technicalHandoff := flag.Bool("technical-handoff", false, "enable paired read-only review-routing-v1 diagnostics; no mutation authority")
 	routingMaxAttempts := flag.Int64("routing-max-attempts", 2, "current finite lifetime technical FIX limit, from1 to16")
 	routingInspect := flag.Int("routing-inspect", 0, "read one PR's complete typed history without queue election or mutation authority")
+	routingPositive := flag.String("routing-positive-purpose", "", "with routing-inspect: require positive merge or tail source; read-only")
 	flag.Parse()
+	if *routingPositive != "" && (*routingInspect == 0 || *routingPositive != "merge" && *routingPositive != "tail") {
+		fail(fmt.Errorf("routing-positive-purpose requires routing-inspect and merge or tail"))
+	}
 	if *routingInspect != 0 {
 		if *routingInspect < 1 || int64(*routingInspect) > 2147483647 {
 			fail(fmt.Errorf("routing-inspect requires a positive portable PR number"))
 		}
-		value, inspectionErr := inspectRouting(*repo, *owner, *fixture, *routingInspect)
+		value, inspectionErr := inspectRouting(*repo, *owner, *fixture, *routingInspect, *routingPositive)
 		if *asJSON {
 			encoder := json.NewEncoder(os.Stdout)
 			encoder.SetEscapeHTML(false)

@@ -6,6 +6,7 @@ description: Ревью открытых PR ivanarama/onebase перед мер�
 # REVIEW
 
 <!-- pp:review-routing-v1-consumer stage=review -->
+<!-- pp:positive-review-v1-consumer stage=review -->
 
 ## Версионированная техническая передача
 

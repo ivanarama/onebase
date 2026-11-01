@@ -1,4 +1,4 @@
-# Контракт REVIEW/FIX/MERGE/TAIL: review-routing-v1, часть A
+# Контракт REVIEW/FIX/MERGE/TAIL: review-routing-v1, части A/B
 
 Этот контракт дополняет канонические процедуры четырёх этапов. Он не включает
 флаги, расписания, вторую серию или новую установленную сборку. Версия в тексте
@@ -136,22 +136,49 @@ executor/delivery, сохраняет расход бюджета и допус�
 REVIEW точного нового HEAD. START не может следовать terminal fix-done;
 дубликат settlement также обязан иметь действительную lease своего владельца.
 
-## MERGE и TAIL в части A
+## Положительные потребители MERGE и TAIL
 
 Сначала фильтруется доверенный автор, затем разбираются immutable protocol
 records. Technical/engineering handoff, attempt, phase, barrier, settlement и
 resume не являются положительным REVIEW и не создают merge/single-flight
-owner или хвост. В этой части A typed `reviewed` также ждёт отдельной приёмки
-native положительного MERGE/TAIL в части B. Ручной legacy fallback, синтетическая
-review-пара и старый tail-marker не обходят эту границу.
+owner или хвост. Для положительного typed `reviewed` B требует дополнительный
+полный `positive_review_contract`: `protocol=positive-review-v1`,
+`snapshot=complete`, `purposes=[merge,tail]`, при тех же четырёх фактических
+reader trees. Каждый entry дополнительно содержит точный единственный marker
+`pp:positive-review-v1-consumer stage=<review|fix|merge|tail>`. Checker и
+координатор независимо проверяют эти B markers и совпадение полных tree hashes;
+одни совпадающие A hashes новый contract не включают. Одного нового текста, старого checker или включённого флага
+недостаточно. Неизвестная версия, edit/delete или неполная история не
+превращаются в отсутствие protocol history.
 
-Для PR с такой историей A не делает update-branch, base-sync, merge, tail
-claim/issue/drop/done. Причина ожидания сохраняется для этой цели; другие
-допустимые legacy PR продолжаются по своим полным гейтам. Неизвестная версия,
-edit/delete или неполная история не превращаются в отсутствие protocol history.
-До приёмки B нельзя менять эту процедуру одним маркером совместимости.
+`next merge` сохраняет исходные publication/claim/completion ID, их GraphQL
+node ID, полную identity/автора и текущую server epoch. Только `reviewed`
+последней завершённой публикации текущего HEAD, без незавершённого publication
+и активной парковки, может получить подписанный `typed-clean-merge-v1` ticket.
+HMAC и срок не длиннее 30 минут связывают source, config, base и четыре reader
+hash. Trusted ship, отсутствие стопов, первый исполнимый MERGE-слот,
+single-flight, свежий main в HEAD и успешные обязательные GitHub Actions checks
+проверяются независимо. Дополнительный коммит требует нового content REVIEW;
+legacy base-sync/carry не переносит typed proof.
+
+Перед intent POST и compare-and-merge все гейты повторяются после ожидания
+локального writer lock. Перед PUT постоянная source-bound one-send запись
+расходуется до последнего гейта. Потеря ответа, истечение ticket и удаление
+комментарного кэша не возвращают send. После доказанного `MergedEvent` общая
+native cleanup завершает исходный typed intent без второго merge; открытый PR
+с неопределённым send получает явное ожидание инженерного readback.
+
+Для TAIL штатная read-only команда `inspect-routing-positive --number M
+--stage tail` доказывает последнюю положительную публикацию до единственного
+`MergedEvent`, совпадение REST merge и отсутствие нового override/lifecycle.
+После merge допустим один конечный delete ветки без restore. Она возвращает
+исходный typed source и структурированные tail items, а не legacy-заключение.
+Команда не даёт write-authority: перед каждым claim/create/drop/done остаются
+обязательными native proof reread, точная source identity и собственная активная
+lease полного TAIL-протокола. Неопределённое issue create не повторяется.
 
 `ship`, CI точного HEAD, свежий main, current proof, HMAC/TTL, CAS и
-single-flight остаются отдельными обязательными гейтами. Тесты A с приватным
+single-flight остаются отдельными обязательными гейтами. Тесты с приватным
 синтетическим GitHub peer не объявляются продакшен-пилотом, метриками недели
-или завершением B/C. До завершения их гейтов рабочие флаги остаются OFF.
+или завершением C. До совместной приёмки и staging/pilot-гейтов C рабочие флаги
+остаются OFF; установленная пара не меняется из исходников автоматически.

@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"maps"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -45,6 +46,7 @@ type routingContext struct {
 	maxAttempts         int64
 	readers             map[string]string
 	readersErr          error
+	positiveReadersErr  error
 	complete            bool
 }
 
@@ -52,6 +54,11 @@ func prepareRouting(prs []apiPull, repository, trusted, contract, fixture string
 	context := &routingContext{snapshots: loadRoutingSnapshots(newGHPipelineGraphQLClient(), prs, repository, fixture),
 		repository: repository, trusted: trusted, maxAttempts: limit, complete: true}
 	context.readers, context.readersErr = reviewrouting.ConsumerTrees(filepath.Dir(filepath.Dir(contract)))
+	positiveReaders, positiveErr := reviewrouting.PositiveConsumerTrees(filepath.Dir(filepath.Dir(contract)))
+	context.positiveReadersErr = positiveErr
+	if positiveErr == nil && !maps.Equal(positiveReaders, context.readers) {
+		context.positiveReadersErr = fmt.Errorf("positive REVIEW consumer trees changed between compatibility reads")
+	}
 	for _, pr := range prs {
 		if pr.State != "open" || pr.Base.Ref != "main" {
 			continue
@@ -88,9 +95,11 @@ func prepareRouting(prs []apiPull, repository, trusted, contract, fixture string
 func (context *routingContext) attach(result *report) {
 	fixes, settlements := []routingFixCandidate{}, []routingSettlementCandidate{}
 	progress := []routingProgressCandidate{}
+	positive := []routingFixCandidate{}
 	technical, engineering := []candidate{}, []candidate{}
 	result.TechnicalFixCandidates, result.TechnicalFixSettlementCandidates = &fixes, &settlements
 	result.TechnicalFixProgressCandidates = &progress
+	result.PositiveMergeCandidates = &positive
 	result.TechnicalWaiting, result.EngineeringWaiting = &technical, &engineering
 	if context.readersErr != nil {
 		result.add("yellow", "routing_readers_incompatible", 0, context.readersErr.Error())
@@ -99,6 +108,9 @@ func (context *routingContext) attach(result *report) {
 		result.ReviewRoutingContract = &routingContract{reviewrouting.Version, "complete", context.readers}
 		result.FixBridgeContract = &routingPurposeContract{"claimed-fix-v1", "complete", []string{"author-handoff", "author-progress"}}
 		result.FixExecutionContract = &routingPurposeContract{"claimed-pipeline-fix-v1", "complete", []string{"admission", "start", "heartbeat", "progress", "settlement"}}
+		if context.positiveReadersErr == nil {
+			result.PositiveReviewContract = &routingPurposeContract{"positive-review-v1", "complete", []string{"merge", "tail"}}
+		}
 	}
 	if !context.complete {
 		result.add("yellow", "routing_snapshot_incomplete", 0, "typed routing snapshot is incomplete; no compatible contract or execution admission is advertised")
@@ -271,10 +283,25 @@ func (context *routingContext) consume(result *report, pr apiPull, item candidat
 		}
 		switch proof.Outcome() {
 		case "reviewed":
-			// Native typed MERGE/TAIL acceptance remains a separate paired gate.
-			// Never relabel this as an ordinary legacy proof or elect a loop.
+			if context.positiveReadersErr != nil {
+				return context.engineering(result, item, context.positiveReadersErr.Error())
+			}
+			positive, positiveErr := reviewrouting.PositiveReview(snapshot, context.trusted, false)
+			if positiveErr != nil {
+				return context.engineering(result, item, positiveErr.Error())
+			}
 			if labels["ship"] {
-				return context.engineering(result, item, "typed reviewed source is waiting for qualified MERGE/TAIL consumer acceptance")
+				if labels["changes-requested"] {
+					return context.engineering(result, item, "positive typed source conflicts with a blocking FIX label")
+				}
+				trustedShip, shipErr := reviewrouting.PositiveShip(snapshot, context.trusted)
+				if shipErr != nil || !trustedShip {
+					return context.engineering(result, item, "positive typed source has no trusted current-epoch ship transition")
+				}
+				item.Stage = "merge"
+				result.MergeCandidates = append(result.MergeCandidates, item)
+				*result.PositiveMergeCandidates = append(*result.PositiveMergeCandidates, routingFixCandidate{"merge", item.Number, item.Head, positive.Descriptor})
+				return true
 			}
 			result.ReviewedWaitingShip = append(result.ReviewedWaitingShip, item)
 			return true

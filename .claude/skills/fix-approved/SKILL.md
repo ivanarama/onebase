@@ -6,6 +6,7 @@ description: Реализация заявок ivanarama/onebase с меткой
 # Фикс заявок
 
 <!-- pp:review-routing-v1-consumer stage=fix -->
+<!-- pp:positive-review-v1-consumer stage=fix -->
 
 ## Уже допущенная техническая доработка
 
