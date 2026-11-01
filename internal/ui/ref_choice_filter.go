@@ -44,7 +44,7 @@ type resolvedChoiceRequest struct {
 	// Folders — элемент объявил choice_folders: группы справочника остаются в
 	// выдаче. Признак берётся из метаданных формы, а не из запроса браузера.
 	Folders bool
-	// ShowDeleted — ключ choice_show_deleted элемента (метаданные формы).
+	// ShowDeleted — эффективный ключ элемента или его реквизита.
 	ShowDeleted *bool
 }
 
@@ -117,6 +117,27 @@ func formChoiceRefEntity(owner *metadata.Entity, form *metadata.FormModule, path
 		}
 	}
 	return ""
+}
+
+// Один приоритет для первой выдачи и последующего подбора: элемент,
+// реквизит, затем справочник и режим в refOptionsMode.markedVisible.
+func formChoiceShowDeleted(owner *metadata.Entity, form *metadata.FormModule, element *metadata.FormElement) *bool {
+	if element.ChoiceShowDeleted != nil {
+		return element.ChoiceShowDeleted
+	}
+	if field, tp := metadata.FormChoiceTPField(owner, form, element); tp != "" {
+		if field != nil {
+			return field.ChoiceShowDeleted
+		}
+		return nil
+	}
+	root, name, ok := formChoicePath(element.DataPath)
+	if ok && strings.EqualFold(root, "Объект") {
+		if field, exists := entityFieldByName(owner, name); exists {
+			return field.ChoiceShowDeleted
+		}
+	}
+	return nil
 }
 
 func choiceSourceControls(element *metadata.FormElement) map[string]string {
@@ -559,7 +580,7 @@ func (s *Server) resolveChoiceRequest(r *http.Request, target *metadata.Entity) 
 		return nil, err
 	}
 
-	resolved := &resolvedChoiceRequest{Predicates: predicates, Empty: empty, Folders: element.ChoiceFolders, ShowDeleted: element.ChoiceShowDeleted}
+	resolved := &resolvedChoiceRequest{Predicates: predicates, Empty: empty, Folders: element.ChoiceFolders, ShowDeleted: formChoiceShowDeleted(owner, form, element)}
 	if selectedRaw != "" {
 		id, parseErr := uuid.Parse(selectedRaw)
 		if parseErr != nil || id == uuid.Nil {
@@ -667,6 +688,10 @@ func markOutsideChoice(rows []map[string]any, selected string) {
 // params, условия choice_filter — predicates. Значение глубокого источника
 // читает сервер, поэтому нужны owner-сущность, форма и цель.
 func (s *Server) initialChoiceOptions(ctx context.Context, owner *metadata.Entity, form *metadata.FormModule, target *metadata.Entity, element *metadata.FormElement, sources map[string]string, selected, ownerID string, ownerAsked bool) ([]map[string]any, error) {
+	mode := refOptionsChoice.withMarked(formChoiceShowDeleted(owner, form, element))
+	if len(element.ChoiceFilter) == 0 && !element.ChoiceFolders {
+		return s.initialReferenceOptionsOwned(ctx, target, mode, []string{selected}, ownerID, ownerAsked)
+	}
 	predicates, empty, err := s.choicePredicates(ctx, owner, form, target, element, sources)
 	if err != nil {
 		return nil, err
@@ -674,7 +699,7 @@ func (s *Server) initialChoiceOptions(ctx context.Context, owner *metadata.Entit
 	var rows []map[string]any
 	params, ownerOK := ownerFilterParams(target, ownerID, ownerAsked, storage.ListParams{Limit: refPickerDefaultLimit, ChoicePredicates: predicates, IncludeFolders: element.ChoiceFolders})
 	if !empty && ownerOK {
-		rows, err = s.referenceOptionsWithParams(ctx, target, refOptionsChoice.withMarked(element.ChoiceShowDeleted), params)
+		rows, err = s.referenceOptionsWithParams(ctx, target, mode, params)
 		if err != nil {
 			return nil, err
 		}
@@ -698,9 +723,9 @@ func (s *Server) initialChoiceOptions(ctx context.Context, owner *metadata.Entit
 	return rows, nil
 }
 
-// applyManagedChoiceFilters replaces only the options of elements that opted
-// into choice_filter and publishes opaque picker context for ui.js. Other
-// managed and all autogen reference fields keep the legacy path unchanged.
+// applyManagedChoiceFilters scopes initial options by element for choice_filter,
+// choice_folders and explicit choice_show_deleted overrides. Filtered elements
+// also publish opaque picker context for ui.js.
 func (s *Server) applyManagedChoiceFilters(ctx context.Context, owner *metadata.Entity, form *metadata.FormModule, data map[string]any) {
 	s.applyChoiceFilters(ctx, owner, form, "", data)
 }
@@ -725,7 +750,8 @@ func (s *Server) applyChoiceFilters(ctx context.Context, owner *metadata.Entity,
 		if element == nil || strings.TrimSpace(element.ID) == "" {
 			return true
 		}
-		if len(element.ChoiceFilter) == 0 && !element.ChoiceFolders {
+		filtered := len(element.ChoiceFilter) > 0 || element.ChoiceFolders
+		if !filtered && element.ChoiceShowDeleted == nil {
 			return true
 		}
 		if _, tpName := metadata.FormChoiceTablePart(form, element); tpName != "" {
@@ -757,6 +783,9 @@ func (s *Server) applyChoiceFilters(ctx context.Context, owner *metadata.Entity,
 			options[element.ID] = rows
 		} else {
 			options[element.ID] = nil // never fall back to an unfiltered catalog
+		}
+		if !filtered {
+			return true // the marked attribute alone is enough for later searches
 		}
 		encoded, err := json.Marshal(managedChoiceContext{
 			FormEntity: owner.Name,

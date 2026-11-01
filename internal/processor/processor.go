@@ -107,9 +107,10 @@ func (p *Processor) VirtualEntity() *metadata.Entity {
 	fields := make([]metadata.Field, 0, len(p.Params))
 	for _, param := range p.Params {
 		f := metadata.Field{
-			Name:   param.Name,
-			Title:  param.Label,
-			Titles: param.Labels,
+			Name:              param.Name,
+			Title:             param.Label,
+			Titles:            param.Labels,
+			ChoiceShowDeleted: param.ChoiceShowDeleted,
 		}
 		switch {
 		case param.Type == "string", param.Type == "text":
