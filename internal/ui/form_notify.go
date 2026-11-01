@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/realtime"
 )
@@ -125,7 +126,11 @@ func (n hubNotifier) NotifyForms(eventName string, param, source any) {
 	if n.hub == nil || n.forms == nil {
 		return
 	}
-	id := n.forms.put(&formNotification{login: n.login, event: eventName, param: param, source: source})
+	values, err := interpreter.CopyFormNotificationValues(nil, param, source)
+	if err != nil {
+		interpreter.RaiseUserError(err.Error())
+	}
+	id := n.forms.put(&formNotification{login: n.login, event: eventName, param: values[0], source: values[1]})
 	// Без replay-окна: оповещение — мгновенное событие, переподключившееся
 	// после разрыва окно не должно получить устаревшее.
 	n.hub.PublishEphemeralToLogins(realtime.Event{
@@ -139,26 +144,34 @@ var errFormNotifyUnknown = errors.New("оповещение формы уста�
 // addFormNotifyContext кладёт в обработчик ОбработкаОповещения переменные
 // ИмяСобытия, Параметр, Источник по идентификатору из запроса. Чужой,
 // выдуманный или истёкший идентификатор — отказ, а не пустые переменные.
-func (s *Server) addFormNotifyContext(ctx context.Context, eventName, id string, vars map[string]any) error {
+func (s *Server) addFormNotifyContext(ctx context.Context, ctxSrc docsCtxSource, eventName, id string, vars map[string]any) ([]any, error) {
 	if eventName != string(metadata.FormEventNotify) {
-		return nil
+		return nil, nil
 	}
 	login := ""
 	if u := auth.UserFromContext(ctx); u != nil {
 		login = u.Login
 	}
 	if id == "" {
-		return errFormNotifyUnknown
+		return nil, errFormNotifyUnknown
 	}
 	n, ok := s.formNotifies().get(id, login)
 	if !ok {
-		return errFormNotifyUnknown
+		return nil, errFormNotifyUnknown
+	}
+	resolver := s.newDSLRefAttrResolver(ctx)
+	resolver.ctxSrc = ctxSrc
+	values, err := interpreter.CopyFormNotificationValues(func(ref *interpreter.Ref) *interpreter.Ref {
+		return resolver.bindRefToContext(ref, ref.Type)
+	}, n.param, n.source)
+	if err != nil {
+		return nil, err
 	}
 	vars["ИмяСобытия"] = n.event
 	vars["EventName"] = n.event
-	vars["Параметр"] = n.param
-	vars["Parameter"] = n.param
-	vars["Источник"] = n.source
-	vars["Source"] = n.source
-	return nil
+	vars["Параметр"] = values[0]
+	vars["Parameter"] = values[0]
+	vars["Источник"] = values[1]
+	vars["Source"] = values[1]
+	return []any{n.event, values[0], values[1]}, nil
 }

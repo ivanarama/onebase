@@ -1354,7 +1354,8 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	// ОбработкаОповещения: что оповестили — из записи сервера по id.
-	if err := s.addFormNotifyContext(r.Context(), eventName, strings.TrimSpace(r.FormValue("_notify_id")), vars); err != nil {
+	notifyArgs, err := s.addFormNotifyContext(dslCtx, txState, eventName, strings.TrimSpace(r.FormValue("_notify_id")), vars)
+	if err != nil {
 		respondJSON(enc, formEventResponse{Error: err.Error()})
 		return
 	}
@@ -1397,6 +1398,9 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		if runErr == nil {
 			postCancelled = formCloseBindingCancelled(decl, entryResult.Bindings)
 		}
+	} else if notifyArgs != nil {
+		_, runErr = s.interp.CallEntrySandboxedWithBindings(decl, thisObj, notifyArgs,
+			interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, vars)
 	} else if timeout > 0 {
 		runErr = s.interp.RunSandboxed(decl, thisObj,
 			interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, nil, vars)
@@ -2832,7 +2836,8 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			return
 		}
 		notifyID, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_notify_id"))
-		if err := s.addFormNotifyContext(r.Context(), eventName, strings.TrimSpace(notifyID), vars); err != nil {
+		notifyArgs, err := s.addFormNotifyContext(dslCtx, txState, eventName, strings.TrimSpace(notifyID), vars)
+		if err != nil {
 			opStatus = "error"
 			respondJSON(enc, formEventResponse{Error: err.Error()})
 			return
@@ -2852,6 +2857,9 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			if runErr == nil {
 				closeInv.cancelled = formCloseBindingCancelled(decl, entryResult.Bindings)
 			}
+		} else if notifyArgs != nil {
+			_, runErr = s.interp.CallEntrySandboxedWithBindings(decl, thisObj, notifyArgs,
+				interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, vars)
 		} else if timeout > 0 {
 			runErr = s.interp.RunSandboxed(decl, thisObj,
 				interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, nil, vars)
