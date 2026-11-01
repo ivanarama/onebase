@@ -176,6 +176,7 @@ type finding struct {
 }
 
 type report struct {
+	RoutingObservation               *routingObservation           `json:"routing_observation,omitempty"`
 	ReviewRoutingContract            *routingContract              `json:"review_routing_contract,omitempty"`
 	FixBridgeContract                *routingPurposeContract       `json:"fix_bridge_contract,omitempty"`
 	FixExecutionContract             *routingPurposeContract       `json:"fix_execution_contract,omitempty"`
@@ -678,6 +679,9 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 	sortMergeCandidates(result.MergeExecutable)
 	sortCandidates(result.FixCandidates)
 	sortCandidates(result.HumanWaiting)
+	if routing != nil {
+		routing.finishObservations(&result)
+	}
 	return result
 }
 

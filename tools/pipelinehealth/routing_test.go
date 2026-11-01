@@ -181,7 +181,7 @@ func routingCLI(t *testing.T, pulls []any, args ...string) (map[string]any, erro
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(prs, data, 0o600); err != nil {
+	if err := os.WriteFile(prs, data, 0o600); err != nil { //nolint:gosec // G703: fixed prs.json below this helper's private t.TempDir; decoded pull contents only supply bytes, never the path.
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(issues, []byte("[]"), 0o600); err != nil {
