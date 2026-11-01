@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/userdata"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -39,7 +40,8 @@ type DB struct {
 	// schemaOpts — режим реструктуризации схемы (план 81): пробный прогон,
 	// разрешение на удаление колонок, приёмник отчёта. Нулевое значение —
 	// прежнее поведение: применять всё безопасное, лишние колонки не трогать.
-	schemaOpts SchemaOptions
+	schemaOpts  SchemaOptions
+	migrationMu sync.Mutex
 	// ftsState — есть ли в базе схема полнотекстового поиска (план 82).
 	// Кэш на процесс: без него запись объекта в базу, ещё не прошедшую
 	// migrate, падала бы на INSERT в несуществующий _fts. См. ftsAvailable.
@@ -131,6 +133,16 @@ func Connect(ctx context.Context, dsn string) (*DB, error) {
 // ConnectWithPool opens a PostgreSQL pool, sizing it from pc with precedence
 // app.yaml (pc) > explicit pool_* in the DSN > OneBase defaults.
 func ConnectWithPool(ctx context.Context, dsn string, pc PoolConfig) (*DB, error) {
+	return connectWithPool(ctx, dsn, pc, true)
+}
+
+// ConnectReadOnly opens a PostgreSQL reader without compatibility DDL. Every
+// physical connection rejects writes; schema inspection cannot publish changes.
+func ConnectReadOnly(ctx context.Context, dsn string) (*DB, error) {
+	return connectWithPool(ctx, dsn, PoolConfig{}, false)
+}
+
+func connectWithPool(ctx context.Context, dsn string, pc PoolConfig, compatibilityDDL bool) (*DB, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("storage: parse dsn: %w", err)
@@ -141,6 +153,11 @@ func ConnectWithPool(ctx context.Context, dsn string, pc PoolConfig) (*DB, error
 	}
 	applyPoolDefaults(cfg, dsn, pc)
 	applyPostgresApplicationTimeZone(cfg)
+	if !compatibilityDDL {
+		cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+		// Audit must fail rather than silently inspect only rows visible through RLS.
+		cfg.ConnConfig.RuntimeParams["row_security"] = "off"
+	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("storage: connect: %w", err)
@@ -153,8 +170,10 @@ func ConnectWithPool(ctx context.Context, dsn string, pc PoolConfig) (*DB, error
 	// (where uuid is stored as text) work on PostgreSQL without explicit
 	// casts.  WITH INOUT uses type I/O functions (uuidout→textin) directly,
 	// avoiding recursion that a custom function with ::text would cause.
-	_, _ = pool.Exec(ctx, `DROP CAST IF EXISTS (uuid AS text)`)
-	_, _ = pool.Exec(ctx, `CREATE CAST (uuid AS text) WITH INOUT AS IMPLICIT`)
+	if compatibilityDDL {
+		_, _ = pool.Exec(ctx, `DROP CAST IF EXISTS (uuid AS text)`)
+		_, _ = pool.Exec(ctx, `CREATE CAST (uuid AS text) WITH INOUT AS IMPLICIT`)
+	}
 
 	return &DB{pool: pool, filesDir: filesDir, dialect: PgDialect{}}, nil
 }
@@ -404,8 +423,9 @@ func defaultFilesDirForConfig(cfg *pgxpool.Config) (string, error) {
 		return filepath.Clean(configured), nil
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	appDir, err := userdata.Path()
+	home := filepath.Dir(appDir)
+	if err != nil || appDir == "" {
 		return "", fmt.Errorf("storage: determine durable files directory: home directory is unavailable; set %s to an absolute persistent path", filesDirEnv)
 	}
 	info, err := os.Stat(home)
@@ -420,7 +440,7 @@ func defaultFilesDirForConfig(cfg *pgxpool.Config) (string, error) {
 	if cfg != nil && cfg.ConnConfig != nil && cfg.ConnConfig.Database != "" {
 		dbName = cfg.ConnConfig.Database
 	}
-	return filepath.Join(home, ".onebase", "files", dbName), nil
+	return filepath.Join(appDir, "files", dbName), nil
 }
 
 func (db *DB) FilesDir() string {

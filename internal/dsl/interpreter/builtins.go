@@ -344,7 +344,14 @@ func builtinToString(args []any, file string, line int) (any, error) {
 		return strconv.FormatFloat(f, 'f', -1, 64), nil
 	}
 	if t, ok := args[0].(time.Time); ok {
-		return t.Format("02.01.2006 15:04:05"), nil
+		// Пустая дата — sentinel, а не момент для перевода в историческую
+		// зону (в Москве это дало бы 02:30:17). IsZero узнаёт её и после
+		// смены локации драйвером, поэтому сначала возвращаем каноничный вид.
+		if t.IsZero() {
+			return "01.01.0001 00:00:00", nil
+		}
+		// Как Час/День и Формат: показываем местные часы, сохраняя момент.
+		return t.In(time.Local).Format("02.01.2006 15:04:05"), nil
 	}
 	// Resolved reference (MapThis) — return its "наименование" field
 	if m, ok := args[0].(*MapThis); ok {
@@ -398,6 +405,9 @@ func builtinToNumber(args []any, file string, line int) (any, error) {
 	s := fmt.Sprintf("%v", args[0])
 	d, err := decimal.NewFromString(strings.ReplaceAll(s, ",", "."))
 	if err != nil {
+		if _, isString := args[0].(string); isString {
+			return raiseUserException([]any{"Преобразование значения к типу Число не может быть выполнено"}, file, line)
+		}
 		return decimal.Zero, nil
 	}
 	return d, nil

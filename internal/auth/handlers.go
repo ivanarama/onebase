@@ -59,6 +59,13 @@ input:focus,select:focus{border-color:#1a5fa8;box-shadow:0 0 0 2px rgba(26,95,16
 .sep:before,.sep:after{content:"";flex:1;height:1px;background:#e2e8f0}
 .btn-sso{display:block;text-align:center;text-decoration:none;background:#fff;color:#1a5fa8;border:1px solid #1a5fa8;margin-bottom:8px;line-height:20px}
 .btn-sso:hover{background:#f0f6ff}
+.ob-login-field{position:relative}
+.ob-login-field input{padding-right:32px}
+.ob-users-toggle{position:absolute;right:1px;top:1px;height:35px;width:30px;border:none;background:transparent;color:#555;cursor:pointer;font-size:12px}
+.ob-users{position:absolute;left:0;right:0;top:37px;z-index:10;max-height:240px;overflow:auto;list-style:none;background:#fff;border:1px solid #bbb;border-radius:3px;box-shadow:0 4px 12px rgba(0,0,0,.15)}
+.ob-users li{padding:7px 10px;font-size:14px;cursor:pointer}
+.ob-users li .ob-user-login{color:#94a3b8;font-size:12px;margin-left:6px}
+.ob-users li:hover,.ob-users li.active{background:#e8f0fb}
 </style></head>
 <body>
 <div class="box">
@@ -67,12 +74,16 @@ input:focus,select:focus{border-color:#1a5fa8;box-shadow:0 0 0 2px rgba(26,95,16
   {{if .PasswordLogin}}
   <form method="POST">
     <label>Имя пользователя</label>
-    <input name="login" autofocus autocomplete="off" {{if .Users}}list="ob-users"{{end}}>
-    {{if .Users}}<datalist id="ob-users">{{range .Users}}<option value="{{.Login}}">{{if .FullName}}{{.FullName}}{{end}}</option>{{end}}</datalist>{{end}}
+    <div class="ob-login-field">
+    <input name="login" id="ob-login" autofocus autocomplete="off"{{if .Users}} role="combobox" aria-expanded="false" aria-controls="ob-users" aria-autocomplete="list"{{end}}>
+    {{if .Users}}<button type="button" class="ob-users-toggle" id="ob-users-toggle" tabindex="-1" aria-label="Список пользователей">▼</button>
+    <ul class="ob-users" id="ob-users" role="listbox" hidden>{{range .Users}}<li role="option" data-login="{{.Login}}" data-name="{{.FullName}}">{{if .FullName}}{{.FullName}}{{if ne .FullName .Login}}<span class="ob-user-login">{{.Login}}</span>{{end}}{{else}}{{.Login}}{{end}}</li>{{end}}</ul>{{end}}
+    </div>
     <label>Пароль</label>
-    <input name="password" type="password" autocomplete="current-password">
+    <input name="password" id="ob-password" type="password" autocomplete="current-password">
     <button class="btn" type="submit">Войти</button>
   </form>
+  {{if .Users}}<script>{{.UserPickerJS}}</script>{{end}}
   {{end}}
   {{if .Providers}}
   {{if .PasswordLogin}}<div class="sep"><span>или</span></div>{{end}}
@@ -187,6 +198,7 @@ func (h *Handlers) loginPageData(r *http.Request, errMsg string) map[string]any 
 		"Providers":     providers,
 		"PasswordLogin": passwordLogin,
 		"ReturnQuery":   returnQuery,
+		"UserPickerJS":  loginUserPickerScript,
 	}
 }
 

@@ -2,12 +2,17 @@ package api
 
 import (
 	"context"
+	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/incident"
+	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/metrics"
+	"github.com/ivantit66/onebase/internal/printform"
+	"github.com/ivantit66/onebase/internal/sheet"
 	"github.com/ivantit66/onebase/internal/webhook"
 )
 
@@ -22,8 +27,15 @@ type RouteMounter interface {
 	MountDebug(chi.Router)
 }
 
+// PrintFormRenderer supplies the same masked data and declarative sheet used by UI.
+// The caller must authorise object and row access before rendering.
+type PrintFormRenderer interface {
+	BuildDeclarativeSheet(*http.Request, *metadata.Entity, uuid.UUID, *printform.LayoutForm) (*sheet.Document, *printform.RenderContext, error)
+}
+
 // AppServices are shared application services implemented by the frontend.
 type AppServices interface {
+	PrintFormRenderer
 	EntitySvc() *entityservice.Service
 	Incidents() *incident.Store
 	SSESubscriberCount() int

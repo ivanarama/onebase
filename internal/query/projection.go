@@ -77,7 +77,7 @@ func analyzeProjection(tokens []tok) ProjectionPlan {
 	end := topLevelFrom(tokens, start)
 	plan := ProjectionPlan{Simple: true}
 	unmask := newFieldSet()
-	for _, item := range splitProjectionItems(tokens[start+1 : end]) {
+	for _, item := range splitProjectionItems(tokens[selectProjectionStart(tokens, start):end]) {
 		col, used := parseProjectionItem(item)
 		plan.Columns = append(plan.Columns, col)
 		unmask.addAll(used)
@@ -139,13 +139,12 @@ func topLevelFrom(tokens []tok, start int) int {
 	return len(tokens)
 }
 
-// splitProjectionItems делит список выборки по запятым нулевой глубины,
-// отбрасывая ведущее РАЗЛИЧНЫЕ.
+// splitProjectionItems делит список выражений по запятым нулевой глубины.
 func splitProjectionItems(tokens []tok) [][]tok {
 	var items [][]tok
 	depth, from := 0, 0
 	flush := func(to int) {
-		item := trimProjectionItem(tokens[from:to])
+		item := tokens[from:to]
 		if len(item) > 0 {
 			items = append(items, item)
 		}
@@ -169,17 +168,18 @@ func splitProjectionItems(tokens []tok) [][]tok {
 	return items
 }
 
-// trimProjectionItem снимает модификаторы выборки (РАЗЛИЧНЫЕ), не относящиеся к
-// самому выражению колонки.
-func trimProjectionItem(item []tok) []tok {
-	for len(item) > 0 && item[0].kind == tIdent {
-		if kw, isKW := sqlKW(item[0].val); isKW && kw == "DISTINCT" {
-			item = item[1:]
-			continue
+// selectProjectionStart отделяет DISTINCT/ALL (РАЗЛИЧНЫЕ/ВСЕ) только сразу
+// после SELECT. Модификатор не принадлежит выражению первой колонки; в других
+// позициях, включая следующие колонки и аргументы агрегатов, токены сохраняются.
+// Исходный поток не меняется: SQL-эмиссия по-прежнему сохраняет модификатор.
+func selectProjectionStart(tokens []tok, start int) int {
+	i := start + 1
+	if i < len(tokens) && tokens[i].kind == tIdent {
+		if kw, isKW := sqlKW(tokens[i].val); isKW && (kw == "DISTINCT" || kw == "ALL") {
+			return i + 1
 		}
-		break
 	}
-	return item
+	return i
 }
 
 // parseProjectionItem разбирает один элемент выборки: возвращает колонку и

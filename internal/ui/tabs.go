@@ -77,7 +77,7 @@ const tplAppShell = `{{define "page-app-shell"}}
 .ob-tabmenu-item:hover{background:#f0f4ff;color:#1a4a80}
 @media (max-width:820px){.ob-tabhome{padding:14px}}
 </style>
-<main class="ob-shell-main" id="ob-shell-main">
+<main class="ob-shell-main" id="ob-shell-main" data-ob-tab-scope="{{.TabStorageScope}}">
   <div class="ob-tabstrip" id="ob-tabstrip" role="tablist"></div>
   <div class="ob-tabbody" id="ob-tabbody">
     <div class="ob-tabhome" id="ob-tabhome">{{template "dashboard-body" .}}</div>
@@ -316,6 +316,36 @@ const tplAppShell = `{{define "page-app-shell"}}
     }
     return norm(a)===norm(b);
   }
+  // Команда закрытия, не нашедшая вкладку, ждёт её недолго. Обработчик формы
+  // НОВОГО объекта пишет его и тут же шлёт ui.закрытьФорму по адресу с id, а
+  // команда приходит по SSE ещё до ответа на событие формы: вкладка в этот
+  // момент числится по адресу /new, и id она узнаёт только из ответа
+  // (savedId → replaceState → obFrameURLChanged). Без ожидания такая вкладка
+  // не закрывалась никогда. Ждём только смену адреса после записи — так
+  // закроется лишь сама записанная форма, а не вкладка, открытая позже.
+  var pendingCloses=[];
+  var PENDING_CLOSE_MS=15000;
+  function tabDocument(t){
+    try{ return t.frame.contentWindow.document||null; }catch(e){ return null; }
+  }
+  function rememberPendingClose(u,reason){
+    var now=Date.now();
+    pendingCloses=pendingCloses.filter(function(p){ return p.until>now && !sameURL(p.url,u); });
+    // WindowProxy переживает навигацию даже на тот же URL. Команда принадлежит
+    // только документам, уже открытым к моменту её доставки.
+    var recipients=tabs.map(function(t){ return {tab:t,document:tabDocument(t)}; });
+    pendingCloses.push({url:u,reason:reason||'programmatic',until:now+PENDING_CLOSE_MS,recipients:recipients});
+  }
+  function takePendingClose(t){
+    var now=Date.now();
+    pendingCloses=pendingCloses.filter(function(p){ return p.until>now; });
+    for(var i=0;i<pendingCloses.length;i++){
+      var p=pendingCloses[i];
+      var doc=tabDocument(t);
+      if(doc && sameURL(t.url,p.url) && p.recipients.some(function(r){ return r.tab===t && r.document===doc; })){ return pendingCloses.splice(i,1)[0]; }
+    }
+    return null;
+  }
   function closeTabByURL(url,reason){
     var u=String(url||''); if(!u)return 0;
     var n=0;
@@ -331,6 +361,7 @@ const tplAppShell = `{{define "page-app-shell"}}
         matched.push(t);
       }
     });
+    if(!matched.length){ rememberPendingClose(u,reason); return typeof window.obRequestFrameClose==='function'?Promise.resolve(0):0; }
     if(typeof window.obRequestFrameClose!=='function'){
       matched.forEach(function(t){ closeTab(t,reason||'programmatic'); if(!tabs.includes(t))n++; });
       return n;
@@ -345,6 +376,19 @@ const tplAppShell = `{{define "page-app-shell"}}
   }
   window.obCloseTabByURL=closeTabByURL;
 
+  // frameShows — фрейм вкладки сейчас показывает адрес u. obFrameURLChanged
+  // документ шлёт после replaceState, но до доставки сообщения фрейм может
+  // перейти на другую форму: WindowProxy тот же, Document новый. Запоздавшее
+  // сообщение старого документа не должно ни переписать адрес вкладки, ни
+  // отдать ей отложенное закрытие — иначе закрылась бы уже другая форма.
+  // Токен ui.js меняется с Document: одного URL недостаточно при перезагрузке
+  // того же адреса. Недоступная идентичность не разрешает закрытие.
+  function frameShows(t,u,documentToken){
+    try{
+      var child=t.frame.contentWindow;
+      return !!documentToken && documentToken===child.obFrameCloseDocumentToken && sameURL(child.location.href,u);
+    }catch(e){ return false; }
+  }
   function tabByWindow(win){ for(var i=0;i<tabs.length;i++){ if(tabs[i].frame.contentWindow===win)return tabs[i]; } return null; }
   window.addEventListener('message',function(ev){
     // Принимаем сообщения только от своего origin: иначе любой сторонний фрейм
@@ -355,7 +399,7 @@ const tplAppShell = `{{define "page-app-shell"}}
     var d=ev.data; if(!d||typeof d!=='object')return;
     if(d.source==='obOpenTab' && d.url){ var ou=String(d.url); if(!openable(ou))return; openTab(ou, d.title?String(d.title):'Форма', {allowDup:!!d.allowDup}); }
     else if(d.source==='obCloseTab'){ if(d.url){ closeTabByURL(String(d.url),d.reason||'programmatic'); } else { var ct=tabByWindow(ev.source); if(ct)closeTab(ct,d.reason||'cross',d.mode||''); } }
-    else if(d.source==='obFrameURLChanged' && d.url){ var ut=tabByWindow(ev.source); if(ut)syncFrameURL(ut,String(d.url)); }
+    else if(d.source==='obFrameURLChanged' && d.url){ var ut=tabByWindow(ev.source); if(ut && frameShows(ut,String(d.url),d.documentToken)){ syncFrameURL(ut,String(d.url)); var pc=takePendingClose(ut); if(pc)closeTab(ut,pc.reason); } }
     else if(d.source==='obSetTitle' && active && d.title){ active.title=String(d.title); active.label.textContent=active.title; active.btn.title=active.title; persist(); }
     else if(d.source==='obDirty'){ var dt=tabByWindow(ev.source); if(dt){ dt.dirty=!!d.dirty; dt.btn.classList.toggle('dirty',dt.dirty); } } // фаза 3
   });
@@ -377,13 +421,75 @@ const tplAppShell = `{{define "page-app-shell"}}
       return t.pathname+t.search;
     }catch(e){return '';}
   }
+  // Смена раздела без перезагрузки: открытые вкладки — живые фреймы, и
+  // перезагрузка оболочки теряла бы введённое в незаписанных формах (браузер
+  // спрашивал «Уверены, что хотите закрыть страницу?»). Страницу раздела берём
+  // тем же адресом, что и при переходе, и подменяем в оболочке только строку
+  // разделов, боковое меню и рабочий стол; вкладки не трогаем. Любая неудача —
+  // прежний переход, как раньше.
+  function sectionOf(href){
+    try{ var u=new URL(href, location.origin); return u.pathname+'?'+(u.searchParams.get('subsystem')||''); }catch(e){ return ''; }
+  }
+  var currentSection=sectionOf(location.href);
+  var sectionSeq=0;
+  function switchSection(url,push){
+    var seq=++sectionSeq;
+    if(typeof window.fetch!=='function'||typeof window.DOMParser!=='function'){ location.href=url; return; }
+    window.fetch(url,{credentials:'same-origin',headers:{'Accept':'text/html'}}).then(function(r){
+      if(!r.ok)throw new Error('status '+r.status);
+      return r.text().then(function(html){ return {html:html,url:r.url||url}; });
+    }).then(function(res){
+      if(seq!==sectionSeq)return;
+      var target=new URL(res.url,location.origin);
+      if(target.origin!==location.origin||!/^\/ui\/app\/?$/.test(target.pathname))throw new Error('unexpected target');
+      var doc=new window.DOMParser().parseFromString(res.html,'text/html');
+      // Partial navigation may retain live forms only within the same scope.
+      // Missing ownership also requires the normal full-page initialization.
+      var nextShell=doc.getElementById('ob-shell-main');
+      if(!STORAGE_SCOPE||!nextShell||nextShell.getAttribute('data-ob-tab-scope')!==STORAGE_SCOPE)throw new Error('shell scope differs');
+      var nextBar=doc.querySelector('.subsys-bar'), nextNav=doc.getElementById('ob-nav'), nextHome=doc.getElementById('ob-tabhome');
+      var bar=document.querySelector('.subsys-bar'), nav=document.getElementById('ob-nav');
+      if(!nextHome||!home||!!nextBar!==!!bar||!!nextNav!==!!nav)throw new Error('shell layout differs');
+      // Настройки меню остаются в topbar, но относятся к разделу из ответа.
+      // Сначала проверяем наличие обеих ссылок, до изменения рабочего стола.
+      var navigationLinks=['/ui/settings/navigation','/ui/admin/navigation'].map(function(path){
+        var selector='.topbar a[href^="'+path+'?"]';
+        var current=document.querySelector(selector), next=doc.querySelector(selector);
+        if(!!current!==!!next)throw new Error('shell navigation differs');
+        return {current:current,next:next};
+      });
+      if(bar)bar.replaceWith(document.importNode(nextBar,true));
+      if(nav)nav.replaceWith(document.importNode(nextNav,true));
+      while(home.firstChild)home.removeChild(home.firstChild);
+      Array.prototype.forEach.call(nextHome.childNodes,function(n){ home.appendChild(document.importNode(n,true)); });
+      var nextCharts=doc.getElementById('ob-widget-charts'), charts=document.getElementById('ob-widget-charts');
+      if(nextCharts&&charts)charts.textContent=nextCharts.textContent;
+      navigationLinks.forEach(function(link){ if(link.current)link.current.setAttribute('href',link.next.getAttribute('href')); });
+      if(doc.title)document.title=doc.title;
+      if(push)history.pushState({obSection:true},'',target.pathname+target.search);
+      currentSection=sectionOf(location.href);
+      setActive(null); syncEmpty();
+      if(typeof window.obInitNavSections==='function')window.obInitNavSections(document.getElementById('ob-nav'));
+      if(typeof window.obInitDashboard==='function')window.obInitDashboard();
+    }).catch(function(){ if(seq===sectionSeq)location.href=url; });
+  }
+  window.obSwitchSection=switchSection;
+  // «Назад»/«Вперёд» между разделами — тем же путём. Смена только отборов
+  // виджетов (тот же раздел) остаётся их собственному обработчику popstate.
+  window.addEventListener('popstate',function(){
+    // Даже возврат к уже показанному разделу отменяет предыдущий pending fetch.
+    ++sectionSeq;
+    if(sectionOf(location.href)===currentSection)return;
+    switchSection(location.pathname+location.search,false);
+  });
+
   document.addEventListener('click',function(e){
     if(e.defaultPrevented||e.button!==0||e.metaKey||e.ctrlKey||e.shiftKey||e.altKey)return;
     var a=e.target.closest?e.target.closest('#ob-nav a[href], .subsys-bar a[href], #ob-tabhome a[href]'):null;
     if(!a)return;
     var href=a.getAttribute('href')||'';
     var shellHome=shellHomeURL(href);
-    if(shellHome){ e.preventDefault(); location.href=shellHome; return; }
+    if(shellHome){ e.preventDefault(); switchSection(shellHome,true); return; }
     if(!openable(href))return;
     e.preventDefault();
     openTab(href,(a.getAttribute('title')||a.textContent||'').replace(/\s+/g,' ').trim()||'Форма');

@@ -32,6 +32,7 @@ func projectAIContext(proj *project.Project) string {
 
 func buildRuntimeRegistry(proj *project.Project) *runtime.Registry {
 	reg := runtime.NewRegistry()
+	reg.LoadHelp(proj.Help)
 	reg.Load(runtime.LoadOptions{
 		Entities:        proj.Entities,
 		Programs:        proj.Programs,

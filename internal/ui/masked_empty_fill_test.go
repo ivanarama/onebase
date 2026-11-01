@@ -239,9 +239,10 @@ func TestUI_FormEvent_SubmittedFieldReadPolicy(t *testing.T) {
 	}
 }
 
-// Поле под маской в управляемой форме помечено data-ob-protected и показывается
-// точками, как пароль; у пользователя без маски пометки нет.
-func TestUI_ManagedForm_ProtectedInputRenderedAsPassword(t *testing.T) {
+// Поле под маской в управляемой форме показывает маску из базы и не прячет то,
+// что пользователь набирает сам: пометки data-ob-protected и точек «как пароль»
+// больше нет. Настоящего значения в разметке по-прежнему нет.
+func TestUI_ManagedForm_MaskedValueShownTypedNotHidden(t *testing.T) {
 	cat := piiClientEntity()
 	form := managedObjectForm(fieldEl("ПолеНаименование", "Объект.Наименование"), fieldEl("ПолеТелефон", "Объект.Телефон"))
 	form.EntityName = cat.Name
@@ -265,22 +266,23 @@ func TestUI_ManagedForm_ProtectedInputRenderedAsPassword(t *testing.T) {
 		return w.Body.String()
 	}
 	masked := page(uiMaskUser([]string{"read", "write"}, nil))
-	if !strings.Contains(masked, `name="Телефон" value="••••••" data-ob-protected`) {
-		t.Fatalf("поле телефона под маской должно быть помечено data-ob-protected")
+	if !strings.Contains(masked, `name="Телефон" value="••••••"`) {
+		t.Fatalf("поле телефона под маской должно показывать маску из базы")
 	}
 	if strings.Contains(masked, "(916)111-22-33") {
 		t.Fatal("настоящего номера не должно быть в разметке")
 	}
-	if strings.Contains(masked, `name="Наименование" value="Иванов" data-ob-protected`) {
-		t.Fatal("обычное поле не должно помечаться")
+	// Набираемое пользователем не прячется: ни пометки, ни стиля точек.
+	if strings.Contains(masked, "data-ob-protected") || strings.Contains(masked, "text-security") {
+		t.Fatal("поле под маской не должно прятать набираемое точками")
 	}
 	tail := page(uiMaskUser([]string{"read", "write"}, auth.FieldPolicies{"Телефон": {Read: "mask_tail", Keep: 5}}))
-	if !strings.Contains(tail, `name="Телефон" value="•••••••••22-33"`) || strings.Contains(tail, `value="•••••••••22-33" data-ob-protected`) {
-		t.Fatal("mask_tail показывает часть номера — поле не точками")
+	if !strings.Contains(tail, `name="Телефон" value="•••••••••22-33"`) {
+		t.Fatal("mask_tail показывает часть номера")
 	}
 	full := page(uiMaskUser([]string{"read", "write"}, auth.FieldPolicies{"Телефон": {Read: "full"}}))
-	if !strings.Contains(full, `name="Телефон" value="(916)111-22-33"`) || strings.Contains(full, `value="(916)111-22-33" data-ob-protected`) {
-		t.Fatal("у пользователя без маски значение видно и поле не помечается")
+	if !strings.Contains(full, `name="Телефон" value="(916)111-22-33"`) {
+		t.Fatal("у пользователя без маски значение видно")
 	}
 }
 

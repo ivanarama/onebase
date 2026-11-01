@@ -127,3 +127,33 @@ func TestQueryRefAttrDereference_AliasesAndQualifier(t *testing.T) {
 		})
 	}
 }
+
+// Ссылки присоединённого источника должны доходить до публичного DSL с
+// правильным типом, в том числе после совмещения joinedRefs и refAttrColumn.
+func TestQueryJoinedRefCompatibilityMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ents := refAttrDerefEntities()
+		account, employee, task := ents[0], ents[1], ents[2]
+		require.NoError(t, db.Migrate(ctx, ents))
+		accountID, employeeID := uuid.New(), uuid.New()
+		require.NoError(t, db.Upsert(ctx, account.Name, accountID, map[string]any{"Наименование": "первая"}, account))
+		require.NoError(t, db.Upsert(ctx, employee.Name, employeeID, map[string]any{"Наименование": "Первый", "Учётка": accountID}, employee))
+		require.NoError(t, db.Upsert(ctx, task.Name, uuid.New(), map[string]any{"Номер": "З-1", "Исполнитель": employeeID}, task))
+		const src = `Процедура Тест()
+   Запрос = Новый Запрос;
+   Запрос.Текст = "ВЫБРАТЬ З.Исполнитель.Учётка КАК Учётка, З.Исполнитель.Ссылка КАК Сотрудник ИЗ Справочник.Сотрудник КАК С ЛЕВОЕ СОЕДИНЕНИЕ Документ.ЗадачаДереф КАК З ПО З.Исполнитель = С.Ссылка ГДЕ З.Исполнитель НЕ ЕСТЬ ПУСТО";
+   Стр = Запрос.Выполнить()[0];
+   Втор = Новый Запрос;
+   Втор.Текст = "ВЫБРАТЬ Номер ИЗ Документ.ЗадачаДереф ГДЕ Исполнитель.Учётка = &У";
+   Втор.УстановитьПараметр("У", Стр.Учётка);
+   Представление = Новый Запрос;
+   Представление.Текст = "ВЫБРАТЬ Исполнитель ИЗ Документ.ЗадачаДереф";
+   Имя = Представление.Выполнить()[0].Исполнитель;
+   Возврат ТипЗнч(Стр.Учётка) + "|" + Строка(Стр.Учётка)
+    + "|" + ТипЗнч(Стр.Сотрудник) + "|" + Строка(Стр.Сотрудник)
+    + "|" + Втор.Выполнить()[0].Номер + "|" + ТипЗнч(Имя) + "|" + Имя;
+  КонецПроцедуры`
+		assert.Equal(t, "СправочникСсылка.Учётка|"+accountID.String()+"|СправочникСсылка.Сотрудник|"+employeeID.String()+"|З-1|Строка|Первый", runOnDBEntities(t, db, ents, src))
+	})
+}

@@ -67,6 +67,7 @@ class Element {
       // вне протокола — текстовую ошибку 404.
       this.contentWindow = {
         document: this.contentDocument,
+        obFrameCloseDocumentToken: 'initial-document',
         obAnswersFrameClose: true,
         postMessage: (data, origin) => { this._posted.push({data, origin}); },
       };
@@ -269,6 +270,14 @@ function shell(storage, search = '', confirmClose = () => true, requestFrameClos
       frame.contentWindow.location = {href};
       frame.dispatch('load');
     },
+    // Сообщение фрейма без смены его адреса: так доходит запоздавший
+    // obFrameURLChanged документа, который фрейм уже покинул.
+    postFromFrame(index, data) {
+      const frame = frames()[index];
+      for (const listener of windowListeners.get('message') || []) {
+        listener({origin: context.location.origin, source: frame.contentWindow, data});
+      }
+    },
     replaceWithoutLoad(index, href) {
       const frame = frames()[index];
       frame.contentWindow.location = {href};
@@ -276,7 +285,7 @@ function shell(storage, search = '', confirmClose = () => true, requestFrameClos
         listener({
           origin: context.location.origin,
           source: frame.contentWindow,
-          data: {source: 'obFrameURLChanged', url: href}
+          data: {source: 'obFrameURLChanged', url: href, documentToken: frame.contentWindow.obFrameCloseDocumentToken}
         });
       }
     },
@@ -802,4 +811,373 @@ test('open-access deployment preserves F5 and is discarded on the first authenti
   assert.equal(app.activeIndex(),0);
   app = shell(storage);
   assert.equal(app.count(),0);
+});
+
+// Смена раздела без перезагрузки оболочки: открытые вкладки — живые фреймы, и
+// перезагрузка теряла введённое в незаписанных формах (браузер спрашивал
+// «Уверены, что хотите закрыть страницу?»). Оболочка берёт страницу раздела
+// фоном и подменяет строку разделов, боковое меню и рабочий стол.
+function sectionShell({fetchImpl} = {}) {
+  const storage = new FakeStorage();
+  const elements = {};
+  for (const id of ['ob-tabstrip', 'ob-tabbody', 'ob-tabempty', 'ob-tabhome', 'ob-widget-charts']) {
+    elements[id] = new Element('div', id);
+  }
+  elements['ob-nav'] = new Element('aside', 'ob-nav');
+  let bar = new Element('nav');
+  bar.className = 'subsys-bar';
+  const home = elements['ob-tabhome'];
+  Object.defineProperty(home, 'firstChild', {get() { return this.children[0] || null; }});
+  home.removeChild = child => child.remove();
+  home.appendChild(new Element('h2'));
+  const replaceable = element => {
+    element.replaceWith = next => {
+      if (element === bar) bar = next;
+      else elements[element.id] = next;
+      replaceable(next);
+    };
+    return element;
+  };
+  replaceable(bar);
+  replaceable(elements['ob-nav']);
+
+  const next = {
+    shell: new Element('main', 'ob-shell-main'),
+    bar: Object.assign(new Element('nav'), {className: 'subsys-bar sklad'}),
+    nav: new Element('aside', 'ob-nav'),
+    homeNodes: [new Element('h2'), new Element('div')],
+  };
+  next.shell.setAttribute('data-ob-tab-scope', scopeOf(source));
+  const navigationPaths = ['/ui/settings/navigation', '/ui/admin/navigation'];
+  const navigation = navigationPaths.map(path => {
+    const link = new Element('a');
+    link.setAttribute('href', path + '?subsystem=');
+    return link;
+  });
+  const nextNavigation = navigationPaths.map(path => {
+    const link = new Element('a');
+    link.setAttribute('href', path + '?subsystem=' + encodeURIComponent('Склад'));
+    return link;
+  });
+  function navigationLink(selector, links) {
+    const index = navigationPaths.findIndex(path => selector === '.topbar a[href^="' + path + '?"]');
+    return index < 0 ? null : links[index];
+  }
+  class FakeDOMParser {
+    parseFromString(title) {
+      return {
+        title: title === 'Главная' ? title : 'Склад',
+        querySelector(sel) { return sel === '.subsys-bar' ? next.bar : navigationLink(sel, nextNavigation); },
+        getElementById(id) {
+          if (id === 'ob-shell-main') return next.shell;
+          if (id === 'ob-nav') return next.nav;
+          if (id === 'ob-tabhome') return {childNodes: next.homeNodes};
+          if (id === 'ob-widget-charts') return {textContent: '{"склад":1}'};
+          return null;
+        },
+      };
+    }
+  }
+  const fetched = [];
+  const documentListeners = new Map();
+  const windowListeners = new Map();
+  const pushed = [];
+  const location = {origin: 'http://127.0.0.1:8080', pathname: '/ui/app', search: '?home=1', href: '/ui/app?home=1'};
+  const setLocation = url => {
+    const u = new URL(url, location.origin);
+    location.pathname = u.pathname;
+    location.search = u.search;
+    location.href = u.pathname + u.search;
+  };
+  const calls = {nav: [], dashboard: 0};
+  const document = {
+    body: new Element('body'),
+    readyState: 'complete',
+    title: 'Главная',
+    getElementById(id) { return elements[id] || null; },
+    querySelector(sel) { return sel === '.subsys-bar' ? bar : navigationLink(sel, navigation); },
+    createElement(tagName) { return new Element(tagName); },
+    importNode(node) { return node; },
+    addEventListener(type, listener) {
+      if (!documentListeners.has(type)) documentListeners.set(type, []);
+      documentListeners.get(type).push(listener);
+    },
+  };
+  const context = {
+    document,
+    sessionStorage: storage,
+    location,
+    URL,
+    URLSearchParams,
+    DOMParser: FakeDOMParser,
+    history: {pushState(state, title, url) { pushed.push(url); setLocation(url); }},
+    fetch(url, options) {
+      fetched.push({url, options});
+      if (fetchImpl) return fetchImpl(url);
+      const target = new URL(url, location.origin);
+      return Promise.resolve({ok: true, url: target.href, text: () => Promise.resolve('<html></html>')});
+    },
+    crypto: {randomUUID() { return '00000000-0000-4000-8000-000000000001'; }},
+    setTimeout() { return 1; },
+    clearTimeout() {},
+    confirm() { return true; },
+    alert() {},
+    obUIMessage(name, fallback) { return fallback; },
+    obInitNavSections(scope) { calls.nav.push(scope); },
+    obInitDashboard() { calls.dashboard++; },
+    addEventListener(type, listener) {
+      if (!windowListeners.has(type)) windowListeners.set(type, []);
+      windowListeners.get(type).push(listener);
+    },
+  };
+  context.window = context;
+  vm.runInNewContext(source, context, {filename: 'rendered-tabs-runtime.js'});
+  const settle = async () => { for (let i = 0; i < 6; i++) await new Promise(resolve => setImmediate(resolve)); };
+  return {
+    context, elements, next, fetched, pushed, calls, location, settle, navigation, nextNavigation,
+    bar: () => bar,
+    clickSection(href) {
+      const anchor = {closest() { return anchor; }, getAttribute(name) { return name === 'href' ? href : null; }, textContent: ''};
+      const event = {target: anchor, button: 0, defaultPrevented: false, preventDefault() { this.defaultPrevented = true; }};
+      for (const listener of documentListeners.get('click') || []) listener(event);
+      return event;
+    },
+    popstate(url) {
+      setLocation(url);
+      for (const listener of windowListeners.get('popstate') || []) listener({});
+    },
+    tabCount() { return elements['ob-tabstrip'].children.length; },
+    markDirty(index) {
+      const frame = elements['ob-tabbody'].children.filter(element => element.tagName === 'IFRAME')[index];
+      for (const listener of windowListeners.get('message') || []) {
+        listener({origin: location.origin, source: frame.contentWindow, data: {source: 'obDirty', dirty: true}});
+      }
+    },
+  };
+}
+
+test('раздел меняется без перезагрузки: незаписанная вкладка остаётся', async () => {
+  const app = sectionShell();
+  app.context.obOpenTab('/ui/document/Ордер/new', 'Insert');
+  app.markDirty(0);
+  const event = app.clickSection('/ui/?subsystem=Склад');
+  assert.equal(event.defaultPrevented, true);
+  await app.settle();
+
+  assert.equal(app.fetched.length, 1);
+  assert.equal(decodeURIComponent(app.fetched[0].url), '/ui/app?home=1&subsystem=Склад');
+  assert.equal(app.fetched[0].options.credentials, 'same-origin');
+  assert.deepEqual(app.pushed.map(decodeURIComponent), ['/ui/app?home=1&subsystem=Склад'], 'адрес раздела — в историю');
+  assert.equal(app.bar(), app.next.bar, 'строка разделов подменена');
+  assert.equal(app.elements['ob-nav'], app.next.nav, 'меню подменено');
+  assert.deepEqual(app.elements['ob-tabhome'].children, app.next.homeNodes, 'рабочий стол раздела');
+  assert.equal(app.elements['ob-widget-charts'].textContent, '{"склад":1}');
+  assert.equal(app.context.document.title, 'Склад');
+  assert.deepEqual(app.calls.nav, [app.next.nav]);
+  assert.equal(app.calls.dashboard, 1);
+  assert.equal(app.tabCount(), 1, 'вкладка с незаписанной формой не закрыта');
+
+  // «Назад» — тем же путём, без записи в историю.
+  app.popstate('/ui/app?home=1');
+  await app.settle();
+  assert.equal(app.fetched.length, 2);
+  assert.equal(app.fetched[1].url, '/ui/app?home=1');
+  assert.equal(app.pushed.length, 1);
+  assert.equal(app.tabCount(), 1);
+
+  // Смена только отборов виджетов того же раздела — не смена раздела.
+  app.popstate('/ui/app?home=1&w.Ордера.Филиал=1');
+  await app.settle();
+  assert.equal(app.fetched.length, 2);
+});
+
+test('раздел не загрузился — прежний переход', async () => {
+  const app = sectionShell({fetchImpl: () => Promise.resolve({ok: false, status: 403, url: '', text: () => Promise.resolve('')})});
+  app.clickSection('/ui/?subsystem=Склад');
+  await app.settle();
+  assert.equal(decodeURIComponent(app.location.href), '/ui/app?home=1&subsystem=Склад');
+  assert.equal(app.pushed.length, 0);
+  assert.equal(app.calls.dashboard, 0);
+});
+
+for (const scope of ['different-scope', '', null, 'missing-shell']) {
+  test('partial navigation requires matching ownership: ' + String(scope), async () => {
+    const app = sectionShell();
+    const bar = app.bar(), nav = app.elements['ob-nav'];
+    const nodes = app.elements['ob-tabhome'].children.slice();
+    if (scope === 'missing-shell') app.next.shell = null;
+    else if (scope === null) app.next.shell.attributes.delete('data-ob-tab-scope');
+    else app.next.shell.setAttribute('data-ob-tab-scope', scope);
+    app.clickSection('/ui/?subsystem=Склад');
+    await app.settle();
+    assert.equal(decodeURIComponent(app.location.href), '/ui/app?home=1&subsystem=Склад');
+    assert.equal(app.bar(), bar);
+    assert.equal(app.elements['ob-nav'], nav);
+    assert.deepEqual(app.elements['ob-tabhome'].children, nodes);
+    assert.equal(app.context.document.title, 'Главная');
+    assert.equal(app.calls.dashboard, 0);
+    assert.equal(app.pushed.length, 0);
+  });
+}
+
+for (const failed of [false, true]) {
+  test('Back → Forward отменяет задержанный ' + (failed ? 'отказ' : 'ответ') + ' прошлого раздела', async () => {
+    let finishBack;
+    const app = sectionShell({fetchImpl(url) {
+      if (url === '/ui/app?home=1') return new Promise(resolve => { finishBack = resolve; });
+      return Promise.resolve({ok: true, url, text: () => Promise.resolve('Склад')});
+    }});
+    app.context.obOpenTab('/ui/document/Ордер/new', 'Insert');
+    app.markDirty(0);
+    app.clickSection('/ui/?subsystem=Склад');
+    await app.settle();
+    const bar = app.bar(), nav = app.elements['ob-nav'];
+    const nodes = app.elements['ob-tabhome'].children.slice();
+    const frame = app.elements['ob-tabbody'].children.find(el => el.tagName === 'IFRAME');
+    app.popstate('/ui/app?home=1');
+    app.popstate('/ui/app?home=1&subsystem=Склад');
+    finishBack({ok: !failed, status: 503, url: '/ui/app?home=1', text: () => Promise.resolve('Главная')});
+    await app.settle();
+    assert.equal(app.context.document.title, 'Склад');
+    assert.equal(decodeURIComponent(app.location.href), '/ui/app?home=1&subsystem=Склад');
+    assert.equal(app.bar(), bar);
+    assert.equal(app.elements['ob-nav'], nav);
+    assert.deepEqual(app.elements['ob-tabhome'].children, nodes);
+    assert.equal(app.calls.dashboard, 1);
+    assert.equal(app.pushed.length, 1);
+    assert.equal(app.elements['ob-tabbody'].children.find(el => el.tagName === 'IFRAME'), frame);
+    // currentSection тоже не должен остаться от устаревшего ответа.
+    app.popstate('/ui/app?home=1&subsystem=Склад&w.Ордера.Филиал=1');
+    assert.equal(app.fetched.length, 2);
+  });
+}
+
+test('команды настройки меню используют подсистему из ответа, включая Back', async () => {
+  const app = sectionShell({fetchImpl(url) {
+    // Сервер может перенаправить на другую фактическую подсистему.
+    const target = url.includes('subsystem=') ? '/ui/app?home=1&subsystem=Фактическая' : url;
+    return Promise.resolve({ok: true, url: target, text: () => Promise.resolve('Склад')});
+  }});
+  for (const link of app.nextNavigation) {
+    const url = new URL(link.getAttribute('href'), app.location.origin);
+    url.searchParams.set('subsystem', 'Фактическая');
+    link.setAttribute('href', url.pathname + url.search);
+  }
+  app.clickSection('/ui/?subsystem=Склад');
+  await app.settle();
+  for (let i = 0; i < app.navigation.length; i++) {
+    assert.equal(app.navigation[i].getAttribute('href'), app.nextNavigation[i].getAttribute('href'));
+    assert.equal(new URL(app.navigation[i].getAttribute('href'), app.location.origin).searchParams.get('subsystem'), 'Фактическая');
+  }
+  for (const link of app.nextNavigation) {
+    const url = new URL(link.getAttribute('href'), app.location.origin);
+    url.searchParams.set('subsystem', '');
+    link.setAttribute('href', url.pathname + url.search);
+  }
+  app.popstate('/ui/app?home=1');
+  await app.settle();
+  for (const link of app.navigation) assert.equal(new URL(link.getAttribute('href'), app.location.origin).searchParams.get('subsystem'), '');
+});
+
+test('отсутствующие по правам команды меню не мешают смене раздела', async () => {
+  const app = sectionShell();
+  app.navigation.fill(null);
+  app.nextNavigation.fill(null);
+  app.clickSection('/ui/?subsystem=Склад');
+  await app.settle();
+  assert.equal(app.context.document.title, 'Склад');
+  assert.equal(app.calls.dashboard, 1);
+  assert.equal(app.pushed.length, 1);
+});
+
+test('изменение доступных команд меню вызывает переход до подмены DOM', async () => {
+  const app = sectionShell();
+  const bar = app.bar(), nav = app.elements['ob-nav'];
+  const nodes = app.elements['ob-tabhome'].children.slice();
+  app.nextNavigation[1] = null;
+  app.clickSection('/ui/?subsystem=Склад');
+  await app.settle();
+  assert.equal(decodeURIComponent(app.location.href), '/ui/app?home=1&subsystem=Склад');
+  assert.equal(app.context.document.title, 'Главная');
+  assert.equal(app.bar(), bar);
+  assert.equal(app.elements['ob-nav'], nav);
+  assert.deepEqual(app.elements['ob-tabhome'].children, nodes);
+  assert.equal(app.calls.dashboard, 0);
+  assert.equal(app.pushed.length, 0);
+});
+
+test('a close command that outran the save of a new form closes it once the id arrives', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/звонок/new', 'Звонок');
+  app.open('/ui/document/заявка/7', 'Заявка');
+  // Обработчик формы записал новый звонок и сразу прислал ui.закрытьФорму
+  // по адресу с id — по SSE раньше, чем форма получила ответ с savedId.
+  assert.equal(app.closeByURL('/ui/document/звонок/42'), 0);
+  assert.equal(app.count(), 2);
+  // Ответ пришёл: форма сменила адрес через replaceState и сообщила оболочке.
+  app.replaceWithoutLoad(0, 'http://127.0.0.1:8080/ui/document/звонок/42');
+  assert.deepEqual(app.titles(), ['Заявка']);
+});
+
+test('a waiting close command does not touch another document', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/звонок/new', 'Звонок');
+  assert.equal(app.closeByURL('/ui/document/звонок/42'), 0);
+  app.replaceWithoutLoad(0, 'http://127.0.0.1:8080/ui/document/звонок/43');
+  assert.equal(app.count(), 1);
+  // Вкладка, открытая позже обычным переходом, команду тоже не подхватывает.
+  app.open('/ui/document/звонок/42', 'Звонок 42');
+  assert.equal(app.count(), 2);
+});
+
+test('a waiting close command is used once', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/звонок/new', 'Звонок');
+  app.duplicate(0);
+  assert.equal(app.closeByURL('/ui/document/звонок/42'), 0);
+  app.replaceWithoutLoad(0, 'http://127.0.0.1:8080/ui/document/звонок/42');
+  assert.equal(app.count(), 1);
+  app.replaceWithoutLoad(0, 'http://127.0.0.1:8080/ui/document/звонок/42');
+  assert.equal(app.count(), 1);
+});
+
+// Ревью #2151: форма /new записалась, получила ui.закрытьФорму по /42 и
+// отправила obFrameURLChanged, но фрейм успел перейти на другую форму.
+// WindowProxy тот же — сообщение старого документа не должно ни переписать
+// адрес вкладки, ни закрыть новую форму.
+test('a stale url message of a left document neither renames nor closes the tab', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/call/new', 'Звонок');
+  assert.equal(app.closeByURL('/ui/document/call/42'), 0);
+  app.navigate(0, 'http://127.0.0.1:8080/ui/document/other/7');
+  app.postFromFrame(0, {source: 'obFrameURLChanged', url: '/ui/document/call/42', documentToken: 'initial-document'});
+  assert.equal(app.count(), 1);
+  assert.equal(savedTabs(storage)[0].url, '/ui/document/other/7');
+  // Тот же документ, оставшийся во фрейме, своё закрытие получает как раньше.
+  app.navigate(0, 'http://127.0.0.1:8080/ui/document/call/new');
+  assert.equal(app.closeByURL('/ui/document/call/43'), 0);
+  app.replaceWithoutLoad(0, 'http://127.0.0.1:8080/ui/document/call/43');
+  assert.equal(app.count(), 0);
+});
+
+test('a waiting close belongs to the original Document even when its replacement has the same URL', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/call/new', 'Call');
+  app.installManagedDocument(0, 'original');
+  assert.equal(app.closeByURL('/ui/document/call/42'), 0);
+  // Document changes before load; WindowProxy and the saved URL stay the same.
+  app.silentNavigate(0, 'http://127.0.0.1:8080/ui/document/call/42');
+  app.installManagedDocument(0, 'replacement');
+  app.postFromFrame(0, {source: 'obFrameURLChanged', url: '/ui/document/call/42', documentToken: 'original'});
+  assert.equal(savedTabs(storage)[0].url, '/ui/document/call/new');
+  // Even a genuine URL notification of the new Document cannot inherit the
+  // original Document's pending command.
+  app.replaceWithoutLoad(0, 'http://127.0.0.1:8080/ui/document/call/42');
+  assert.equal(app.count(), 1);
+  assert.equal(app.posted(0).length, 0);
 });

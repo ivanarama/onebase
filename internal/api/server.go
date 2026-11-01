@@ -61,6 +61,7 @@ func New(reg *runtime.Registry, store *storage.DB, interp *interpreter.Interpret
 	}
 	h := &handler{
 		reg: reg, store: store, interp: interp, entitySvc: frontend.EntitySvc(), hooks: cfg.Webhooks,
+		printForms:             frontend,
 		maxFileSizeBytes:       int64(cfg.MaxFileSizeMB) * 1024 * 1024,
 		allowedAttachmentTypes: cfg.AllowedTypes,
 	}

@@ -1,0 +1,27 @@
+schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: ПриемкаЗакрытия
+attributes:
+  - name: Объект
+    type: CatalogRef.ПриемкаЗакрытия
+    save: true
+    main: true
+events:
+  ПередЗакрытием: ПроверитьЗакрытие
+elements:
+  - kind: ПолеВвода
+    name: Наименование
+    data_path: Объект.Наименование
+  - kind: ПолеВвода
+    name: Запрет
+    data_path: Объект.Запрет
+  - kind: Кнопка
+    name: ЗаписатьЗакрыть
+    title: {ru: Записать и закрыть обработчиком}
+    events: {Нажатие: ЗаписатьЗакрыть}
+  - kind: Кнопка
+    name: Закрыть
+    title: {ru: Закрыть командой}
+    events: {Нажатие: Закрыть}

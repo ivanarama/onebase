@@ -33,6 +33,7 @@ func Execute() {
 }
 
 func init() {
+	rootCmd.PersistentFlags().Bool("portable", false, "хранить данные OneBase в .onebase рядом с программой; относительные пути — от каталога программы")
 	// Ошибку печатает showError (единая точка: stderr + при необходимости окно),
 	// поэтому cobra не должен печатать её сам — иначе вывод дублируется.
 	rootCmd.SilenceErrors = true
