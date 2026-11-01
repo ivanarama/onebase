@@ -95,3 +95,35 @@ func TestPublicPipelineStartHintRefusesStoppedOrIncompleteInputs(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicSettlementReadbackSurvivesResumeWithoutAnotherStart(t *testing.T) {
+	for _, test := range []struct {
+		name               string
+		settlement, review int
+	}{
+		{"settled-pipeline-budget-one", 1, 0},
+		{"one-resume-with-spent-budget", 1, 1},
+		{"consumed-resume-cannot-be-reused", 0, 0},
+		{"resumed-review-clears-park-without-refund", 0, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			state := routingGolden(t, test.name)
+			value, err := routingCLI(t, []any{routingPullFixture(t, state, 42)},
+				"-technical-handoff", "-contract", routingSkillFixture(t, true))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(value["technical_fix_settlement_candidates"].([]any)) != test.settlement ||
+				len(value["content_review_candidates"].([]any)) != test.review ||
+				len(value["technical_fix_start_candidates"].([]any)) != 0 {
+				t.Fatalf("administrative readback changed source/REVIEW/START routing: %+v", value)
+			}
+			if test.settlement == 1 {
+				hint := routingObject(value["technical_fix_settlement_candidates"].([]any)[0])
+				if hint["head"] != state["headRefOid"] || hint["head"] == routingObject(hint["source"])["head"] {
+					t.Fatalf("settlement readback lost exact current/old-source distinction: %+v", hint)
+				}
+			}
+		})
+	}
+}

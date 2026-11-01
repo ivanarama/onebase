@@ -241,6 +241,15 @@ func (context *routingContext) consume(result *report, pr apiPull, item candidat
 		phases := routingPhases(ledger, attempt.ID)
 		_, done := phases["fix-done"]
 		source := routingObject(attempt.Payload["source"])
+		// Keep the exact administrative target through settlement/resume POST
+		// readback. The publisher rechecks this allowlist after every write.
+		// A consumed resume or another HEAD must not revive that transaction.
+		if !done && !labels["ship"] && !labels["changes-requested"] && item.Head != source["head"] &&
+			len(ledger.Proofs) > 0 && reviewrouting.Equal(ledger.Proofs[len(ledger.Proofs)-1].Source(), source) &&
+			routingSettlementReadback(ledger, attempt.ID, item.Head) {
+			*result.TechnicalFixSettlementCandidates = append(*result.TechnicalFixSettlementCandidates,
+				routingSettlementCandidate{routingFixCandidate{"fix-pr", item.Number, item.Head, source}, attempt.ID})
+		}
 		if !routingSettled(ledger, attempt.ID) && item.Head != source["head"] {
 			if !labels["ship"] && !labels["changes-requested"] && len(ledger.Proofs) > 0 &&
 				reviewrouting.Equal(ledger.Proofs[len(ledger.Proofs)-1].Source(), source) &&
@@ -396,6 +405,27 @@ func (context *routingContext) consume(result *report, pr apiPull, item candidat
 	}
 	result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
 	return true
+}
+
+func routingSettlementReadback(ledger reviewrouting.Ledger, attemptID, head string) bool {
+	if ledger.ResumingPublicationID != "" {
+		return false
+	}
+	for _, settled := range ledger.Settlements {
+		if settled.Payload["attempt_id"] != attemptID || settled.ID != ledger.ParkingID ||
+			settled.Payload["observed_head"] != head {
+			continue
+		}
+		if ledger.ResumeID == "" {
+			return true
+		}
+		for _, resumed := range ledger.Resumes {
+			if resumed.ID == ledger.ResumeID {
+				return resumed.Payload["parking_id"] == settled.ID && resumed.Payload["head"] == head
+			}
+		}
+	}
+	return false
 }
 
 // A progress candidate is only a source-bound readback hint. The coordinator

@@ -375,7 +375,7 @@ func TestPublicRoutingFiniteBudgetAndPostPush(t *testing.T) {
 		{"fresh-technical-source", 1, 0, 0, 0, 0}, {"pipeline-start-spent-once", 1, 0, 0, 0, 0},
 		{"changed-head-with-unsettled-pipeline", 0, 0, 1, 1, 0}, {"one-fix-done-needs-review", 0, 1, 0, 0, 0},
 		{"second-technical-source-budget-one", 1, 0, 0, 0, 0}, {"two-attempts-engineering-parking", 0, 0, 0, 1, 0},
-		{"settled-pipeline-budget-one", 0, 0, 0, 1, 0}, {"one-resume-with-spent-budget", 0, 1, 0, 0, 0},
+		{"settled-pipeline-budget-one", 0, 0, 1, 1, 0}, {"one-resume-with-spent-budget", 0, 1, 1, 0, 0},
 		{"resumed-review-clears-park-without-refund", 1, 0, 0, 0, 0}, {"consumed-resume-cannot-be-reused", 0, 0, 0, 1, 0},
 		{"explicit-report-case-1", 0, 0, 0, 0, 1}, {"explicit-report-case-2", 0, 0, 0, 0, 1}, {"explicit-report-case-3", 0, 0, 0, 1, 0},
 	} {
