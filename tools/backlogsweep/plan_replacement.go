@@ -5,6 +5,10 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/text"
 )
 
 // A different slug is a scope replacement, never an inferred renumbering.
@@ -28,28 +32,8 @@ func planRefsAndReplacements(is issue, team map[string]bool) ([]planRef, []planR
 			continue
 		}
 		lines := strings.Split(c.Body, "\n")
-		var fence byte
-		var fenceLength int
-		for j, line := range lines {
-			trimmed := strings.TrimSpace(line)
-			if len(trimmed) >= 3 && (trimmed[0] == '`' || trimmed[0] == '~') {
-				n := 0
-				for n < len(trimmed) && trimmed[n] == trimmed[0] {
-					n++
-				}
-				if n >= 3 {
-					if fence == 0 {
-						fence, fenceLength = trimmed[0], n
-					} else if trimmed[0] == fence && n >= fenceLength && strings.TrimSpace(trimmed[n:]) == "" {
-						fence = 0
-					}
-					continue
-				}
-			}
-			if fence != 0 {
-				continue
-			}
-			match := planReplacementLine.FindStringSubmatch(strings.TrimSuffix(line, "\r"))
+		for _, j := range plainReplacementLines(c.Body) {
+			match := planReplacementLine.FindStringSubmatch(strings.TrimSuffix(lines[j], "\r"))
 			if match == nil || match[1] == match[2] {
 				continue
 			}
@@ -62,6 +46,36 @@ func planRefsAndReplacements(is issue, team map[string]bool) ([]planRef, []planR
 	}
 	is.Comments = comments
 	return planRefs(is), replacements
+}
+
+// Only a complete plain-text line in a top-level paragraph can declare a
+// decision. CommonMark parsing also excludes indented code, lazy quote/list
+// continuations, raw HTML and multiline inline code without guessing fences.
+func plainReplacementLines(body string) []int {
+	source := []byte(body)
+	doc := goldmark.DefaultParser().Parse(text.NewReader(source))
+	lines := strings.Split(body, "\n")
+	var result []int
+	for block := doc.FirstChild(); block != nil; block = block.NextSibling() {
+		if block.Kind() != ast.KindParagraph {
+			continue
+		}
+		for child := block.FirstChild(); child != nil; child = child.NextSibling() {
+			n, ok := child.(*ast.Text)
+			if !ok {
+				continue
+			}
+			line := strings.TrimRight(string(n.Segment.Value(source)), "\r\n")
+			if !planReplacementLine.MatchString(line) {
+				continue
+			}
+			index := strings.Count(body[:n.Segment.Start], "\n")
+			if strings.TrimSpace(line) == strings.TrimSpace(lines[index]) {
+				result = append(result, index)
+			}
+		}
+	}
+	return result
 }
 
 func replacedBelow(replacements []planReplacement, broken planRef, p plans) (planRef, bool) {
