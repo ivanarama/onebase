@@ -5,6 +5,18 @@ description: Безопасное слияние PR ivanarama/onebase через
 
 # MERGE
 
+<!-- pp:review-routing-v1-consumer stage=merge -->
+
+До обычного пути прочитай
+[контракт review-routing-v1](../review-queue/references/review-routing-v1.md).
+Техническая передача, её attempt/phase/settlement и инженерная парковка не
+являются положительным ревью. В этой части A typed `reviewed` также ждёт
+отдельной приёмки native MERGE/TAIL в части B. Для PR с доверенной историей
+`pp:review-routing-` не используй legacy-proof, ручной fallback, base-sync или
+merge-cleanup как обход: сохрани явную причину ожидания этого PR и продолжи
+другие допустимые цели. Не создавай синтетическую legacy-пару. Неизвестная
+версия, edit/delete либо неполная история закрывают gate соответствующей цели.
+
 Обрабатывай только PR с `ship` и без `hold`/`needs-decision`. Решение человека
 старше сохранённого состояния.
 
