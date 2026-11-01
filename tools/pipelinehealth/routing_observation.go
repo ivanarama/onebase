@@ -119,6 +119,11 @@ func (context *routingContext) observe(result *report, pr apiPull, item candidat
 			}
 		}
 	}
+	// A complete fetch is not a complete current classification. Unknown
+	// history or an older source cannot prove zero current product blockers.
+	if row.EvidenceStatus != "verified_current" {
+		observation.Complete = false
+	}
 	observation.Items = append(observation.Items, row)
 }
 

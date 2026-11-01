@@ -27,6 +27,9 @@ func TestPublicRoutingObservationKeepsEvidenceAndLifetimeBudget(t *testing.T) {
 			}
 			observation := value["routing_observation"].(map[string]any)
 			row := observation["items"].([]any)[0].(map[string]any)
+			if observation["complete"] != (test.evidence == "verified_current") {
+				t.Fatalf("unknown or older proof advertised a complete current classification: %v", observation)
+			}
 			if observation["version"] != "routing-observation-v1" || row["head"] != snapshot["headRefOid"] || row["number"] != float64(42) ||
 				row["route"] != test.route || row["evidence_status"] != test.evidence || row["budget_used"] != test.budget || row["budget_limit"] != float64(2) {
 				t.Fatalf("observation lost identity/category/spent budget: %v", row)
