@@ -31,7 +31,6 @@ import (
 var allowlist = map[string]allowEntry{}
 
 type allowEntry struct {
-	module     string
 	minVersion string
 	reason     string
 }

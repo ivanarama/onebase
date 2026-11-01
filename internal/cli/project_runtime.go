@@ -40,6 +40,7 @@ func registryFromProject(proj *project.Project) *runtime.Registry {
 	next.LoadAccountRegisters(proj.AccountRegisters, proj.ChartsOfAccounts)
 	next.LoadWidgets(proj.Widgets)
 	next.LoadHomePage(proj.HomePage)
+	next.LoadHelp(proj.Help)
 	return next
 }
 

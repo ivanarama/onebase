@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,8 +8,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os/exec"
-	goruntime "runtime"
 	"strings"
 	"testing"
 	"time"
@@ -24,7 +21,7 @@ import (
 // Use mounted production pages and assets: checking the overflow wrapper alone
 // misses a flex item whose intrinsic width expands beyond the mobile viewport.
 func TestListTablesMobileBrowserGeometry(t *testing.T) {
-	browser := managedLayoutTestBrowser(t)
+	browserPath := managedLayoutTestBrowser(t)
 	document := &metadata.Entity{Name: "Orders", Kind: metadata.KindDocument,
 		Fields: []metadata.Field{{Name: "Title", Type: metadata.FieldTypeString}}}
 	info := &metadata.InfoRegister{Name: "Rates",
@@ -75,7 +72,8 @@ func TestListTablesMobileBrowserGeometry(t *testing.T) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(page))
 	}))
-	defer func() { s.CloseEventStreams(); server.Close() }()
+	t.Cleanup(func() { s.CloseEventStreams(); server.Close() })
+	browser := newMobileLayoutBrowser(t, browserPath)
 	for _, width := range []int{390, 1280} {
 		for _, target := range []string{"/ui/inforeg/rates", "/ui/journal/orderjournal"} {
 			for _, empty := range []bool{false, true} {
@@ -88,7 +86,7 @@ func TestListTablesMobileBrowserGeometry(t *testing.T) {
 							path += "?f.Title=no-match"
 						}
 					}
-					got := measureListMobilePage(t, browser, server.URL+"/test-viewport?"+url.Values{"width": {fmt.Sprint(width)}, "page": {path}}.Encode(), width)
+					got := measureListMobilePage(t, browser, server.URL+"/test-viewport?"+url.Values{"width": {fmt.Sprint(width)}, "page": {path}}.Encode())
 					if got.Viewport != width {
 						t.Fatalf("viewport=%d, want %d", got.Viewport, width)
 					}
@@ -184,33 +182,16 @@ type listMobileMeasurement struct {
 	Phases                         []listMobilePhase
 }
 
-func measureListMobilePage(t *testing.T, browser, target string, width int) listMobileMeasurement {
+func measureListMobilePage(t *testing.T, browser *mobileLayoutBrowser, target string) listMobileMeasurement {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	args := []string{"--headless=new", "--disable-gpu", "--disable-background-networking", "--disable-component-update", "--disable-extensions", "--disable-sync", "--no-first-run", "--no-default-browser-check", "--force-device-scale-factor=1", fmt.Sprintf("--window-size=%d,900", width), "--user-data-dir=" + t.TempDir(), "--timeout=10000", "--dump-dom", target}
-	if goruntime.GOOS == "linux" {
-		args = append([]string{"--no-sandbox"}, args...)
-	}
-	cmd := exec.CommandContext(ctx, browser, args...) //nolint:gosec // test-only browser resolved by managedLayoutTestBrowser
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	dumped, err := cmd.Output()
+	data, err := browser.measure(ctx, target)
 	if err != nil {
-		t.Fatalf("browser: %v\n%s", err, stderr.String())
-	}
-	marker := []byte(`<script id="list-mobile-measure" type="application/json">`)
-	start := bytes.Index(dumped, marker)
-	if start < 0 {
-		t.Fatalf("measurement missing:\n%s\n%s", stderr.String(), string(dumped[max(0, len(dumped)-2500):]))
-	}
-	body := dumped[start+len(marker):]
-	end := bytes.Index(body, []byte("</script>"))
-	if end < 0 {
-		t.Fatal("unterminated browser result")
+		t.Fatalf("browser measurement: %v\n%s", err, browser.diagnostics())
 	}
 	var got listMobileMeasurement
-	if err := json.Unmarshal([]byte(html.UnescapeString(string(body[:end]))), &got); err != nil {
+	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("measurement: %v", err)
 	}
 	return got

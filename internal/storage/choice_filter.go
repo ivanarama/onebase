@@ -15,6 +15,11 @@ type ChoicePredicate struct {
 	Field string
 	Op    metadata.FormChoiceOperator
 	Value any
+	// ByIDs — условие choice_filter запросом (query): допустимы только записи
+	// с id из IDs. Список строит сервер из результата запроса, Field и Op не
+	// используются. Пустой IDs — ни одной записи.
+	ByIDs bool
+	IDs   []uuid.UUID
 }
 
 func hasExplicitChoiceFolderScope(predicates []ChoicePredicate) bool {
@@ -48,6 +53,20 @@ func choicePredicateSQL(d Dialect, entity *metadata.Entity, predicates []ChoiceP
 	next := startArg
 	seenFields := make(map[string]bool, len(predicates))
 	for i, predicate := range predicates {
+		if predicate.ByIDs {
+			if len(predicate.IDs) == 0 {
+				parts = append(parts, "1 = 0")
+				continue
+			}
+			holders := make([]string, 0, len(predicate.IDs))
+			for _, id := range predicate.IDs {
+				holders = append(holders, d.Placeholder(next))
+				args = append(args, idArg(d, id))
+				next++
+			}
+			parts = append(parts, "id IN ("+strings.Join(holders, ", ")+")")
+			continue
+		}
 		fieldName := strings.TrimSpace(predicate.Field)
 		if fieldName == "" {
 			return "", nil, startArg, fmt.Errorf("choice filter %d: field is empty", i)

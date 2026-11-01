@@ -176,7 +176,9 @@ type saveEntity struct {
 	ListRefreshOn []string  `yaml:"list_refresh_on,omitempty"`
 	ListFilters   []string  `yaml:"list_filters,omitempty"`
 	NotifyChanges bool      `yaml:"notify_changes,omitempty"`
-	TileView      yaml.Node `yaml:"tile_view,omitempty"`
+	// InteractiveCreate — указатель: явное `false` обязано пережить round-trip.
+	InteractiveCreate *bool     `yaml:"interactive_create,omitempty"`
+	TileView          yaml.Node `yaml:"tile_view,omitempty"`
 	// DetailPanel — состав боковой панели деталей (план 118C). Конфигуратор его
 	// не редактирует (прецедент tile_view), но обязан сохранить: иначе правка
 	// реквизитов из UI молча вытирала бы блок.
@@ -622,6 +624,7 @@ type cfgHomePage struct {
 
 type configuratorData struct {
 	Base             *Base
+	WorkspacePath    string
 	AppName          string
 	AppVersion       string
 	AppLogo          string

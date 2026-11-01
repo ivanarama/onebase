@@ -40,12 +40,19 @@ type navigationEditorState struct {
 	Renamed       []string
 	Origins       map[string]string
 	configuration navigation.Tree
+	adminBase     navigation.Tree
 	layerBase     navigation.Tree
 	effective     navigation.Tree
+	roleTargets   map[string]bool
+	roleScoped    bool
 	previous      navigation.Delta
 }
 
 func (s *Server) navigationEditorState(r *http.Request, sub string) (navigationEditorState, error) {
+	return s.navigationEditorLayerState(r, sub, false)
+}
+
+func (s *Server) navigationEditorLayerState(r *http.Request, sub string, personal bool) (navigationEditorState, error) {
 	var state navigationEditorState
 	if sub != "" {
 		current := s.reg.GetSubsystem(sub)
@@ -53,12 +60,12 @@ func (s *Server) navigationEditorState(r *http.Request, sub string) (navigationE
 			return state, fmt.Errorf("unknown subsystem")
 		}
 		state.Base, state.Configured = s.configurationNavigation(current.Menu, &current.Contents, false, sub)
-	} else if hp := s.reg.HomePage(); hp != nil {
-		state.Base, state.Configured = s.configurationNavigation(hp.Menu, hp.Nav, true, "")
-		state.Flat = hp.Nav.IsEmpty()
 	} else {
-		state.Base, state.Configured = s.configurationNavigation(nil, nil, true, "")
-		state.Flat = true
+		if personal {
+			state.Base, state.Configured, state.Flat = s.homeNavigationLayerBase(r)
+		} else {
+			state.Base, state.Configured, state.Flat = s.homeConfigurationNavigation(r)
+		}
 	}
 	var err error
 	state.Setting, err = s.store.GetNavigationSettings(r.Context(), storage.NavigationSettingsScope{Layer: navigation.AdminLayer, Context: state.Base.Context})
@@ -69,7 +76,8 @@ func (s *Server) navigationEditorState(r *http.Request, sub string) (navigationE
 	if state.Setting.Exists {
 		raw = []byte(state.Setting.Raw)
 	}
-	state.Desired, state.Diagnostics = navigation.Compose(state.Base, raw, nil)
+	state.adminBase = state.Base
+	state.Desired, state.Diagnostics = navigation.ComposeWithAdminBase(state.Base, s.adminNavigationValidationBase(state.Base), raw, nil)
 	return state, nil
 }
 
@@ -115,6 +123,7 @@ func (s *Server) renderNavigationEditor(w http.ResponseWriter, r *http.Request, 
 		"parent": "Расположение", "changed": "Меню изменено", "newSection": "Новый раздел", "newGroup": "Новая папка",
 		"error": "Не удалось получить предпросмотр меню", "unsaved": "Изменения меню не сохранены",
 		"reset": "Сбросить общую настройку к конфигурации?", "empty": "Добавьте раздел и верните в него объекты из палитры",
+		"palettePlaced": "Все доступные объекты уже размещены", "paletteNoMatches": "Ничего не найдено",
 		"conflict":  "Меню изменилось в другой вкладке. Загрузите актуальную версию и повторите изменения.",
 		"saveError": "Не удалось сохранить настройку меню", "reload": "Загрузить актуальную версию",
 		"reloadConfirm": "Загрузить актуальную версию и отбросить несохранённые изменения?",
@@ -151,7 +160,9 @@ func (s *Server) renderNavigationEditor(w http.ResponseWriter, r *http.Request, 
 func (s *Server) editorNavigationPreview(r *http.Request, state navigationEditorState, sub string) []NavigationPreviewSection {
 	base, desired := state.Base, state.Desired
 	if state.Personal {
-		base, desired = state.configuration, state.effective
+		hp := s.navigationHomePage(sub)
+		base = s.projectRoleNavigation(r, hp, state.configuration)
+		desired = s.projectRoleNavigation(r, hp, state.effective)
 	}
 	return navigationPreview(s.navigationGroups(r, desired, base, state.Configured, state.Flat, sub))
 }
