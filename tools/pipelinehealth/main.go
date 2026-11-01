@@ -175,13 +175,18 @@ type finding struct {
 }
 
 type report struct {
-	State            string      `json:"state"`
-	Summary          string      `json:"summary"`
-	Scope            string      `json:"scope"`
-	Scheduler        string      `json:"scheduler"`
-	Checked          int         `json:"checked"`
-	IssuesChecked    int         `json:"issues_checked"`
-	ReviewCandidates []candidate `json:"review_candidates"`
+	ReviewRoutingContract            *routingContract              `json:"review_routing_contract,omitempty"`
+	TechnicalFixCandidates           *[]routingFixCandidate        `json:"technical_fix_candidates,omitempty"`
+	TechnicalFixSettlementCandidates *[]routingSettlementCandidate `json:"technical_fix_settlement_candidates,omitempty"`
+	TechnicalWaiting                 *[]candidate                  `json:"technical_waiting,omitempty"`
+	EngineeringWaiting               *[]candidate                  `json:"engineering_waiting,omitempty"`
+	State                            string                        `json:"state"`
+	Summary                          string                        `json:"summary"`
+	Scope                            string                        `json:"scope"`
+	Scheduler                        string                        `json:"scheduler"`
+	Checked                          int                           `json:"checked"`
+	IssuesChecked                    int                           `json:"issues_checked"`
+	ReviewCandidates                 []candidate                   `json:"review_candidates"`
 	// ReviewDispatchCandidates is a wake-up hint, never a mutation allowlist.
 	ReviewDispatchCandidates []candidate `json:"review_dispatch_candidates"`
 	ReviewBacklog            []candidate `json:"review_backlog"`
@@ -209,7 +214,31 @@ func main() {
 	transport := flag.String("transport", "graphql", "GitHub read transport: graphql or rest")
 	cacheDir := flag.String("cache-dir", os.Getenv("PIPELINEHEALTH_CACHE_DIR"), "persistent GitHub REST cache directory (default: user cache directory)")
 	asJSON := flag.Bool("json", false, "print machine-readable JSON")
+	technicalHandoff := flag.Bool("technical-handoff", false, "enable paired read-only review-routing-v1 diagnostics; no mutation authority")
+	routingMaxAttempts := flag.Int64("routing-max-attempts", 2, "current finite lifetime technical FIX limit, from1 to16")
+	routingInspect := flag.Int("routing-inspect", 0, "read one PR's complete typed history without queue election or mutation authority")
 	flag.Parse()
+	if *routingInspect != 0 {
+		if *routingInspect < 1 || int64(*routingInspect) > 2147483647 {
+			fail(fmt.Errorf("routing-inspect requires a positive portable PR number"))
+		}
+		value, inspectionErr := inspectRouting(*repo, *owner, *fixture, *routingInspect)
+		if *asJSON {
+			encoder := json.NewEncoder(os.Stdout)
+			encoder.SetEscapeHTML(false)
+			if err := encoder.Encode(value); err != nil {
+				fail(err)
+			}
+		} else {
+			if _, err := fmt.Fprintf(os.Stdout, "routing inspection #%d: depth=%v, error=%v; mutation_authorized=false\n", *routingInspect, value["verified_depth"], value["error"]); err != nil {
+				fail(err)
+			}
+		}
+		if inspectionErr != nil {
+			os.Exit(1)
+		}
+		return
+	}
 
 	selectedTransport := strings.ToLower(strings.TrimSpace(*transport))
 	var prs []apiPull
@@ -239,7 +268,14 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	result := analyze(prs, *owner)
+	var routing *routingContext
+	if *technicalHandoff {
+		if selectedTransport != "graphql" || *routingMaxAttempts < 1 || *routingMaxAttempts > 16 {
+			fail(fmt.Errorf("technical handoff requires GraphQL and an explicit lifetime limit from1 to16"))
+		}
+		routing = prepareRouting(prs, *repo, *owner, *contract, *fixture, *routingMaxAttempts)
+	}
+	result := analyzeWithRouting(prs, *owner, routing)
 	if selectedTransport == "graphql" {
 		result.Scope = "complete GraphQL queue snapshot; mutation gates remain independent GraphQL proofs"
 	} else {
@@ -417,12 +453,19 @@ func loadIssues(github *githubRESTClient, repo, fixture string, skipLive bool) (
 }
 
 func analyze(prs []apiPull, owner string) report {
+	return analyzeWithRouting(prs, owner, nil)
+}
+
+func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) report {
 	result := report{
 		State: "green", Scope: "read-only queue snapshot; mutation gates remain GraphQL",
 		Scheduler: "two-lane-safety-priority-aging-depth-number", Checked: len(prs),
 		ReviewCandidates: []candidate{}, ReviewDispatchCandidates: []candidate{}, ContentReviewCandidates: []candidate{}, ParallelReviewCandidates: []candidate{},
 		ReviewBacklog: []candidate{}, ReviewedWaitingShip: []candidate{}, MergeCandidates: []candidate{}, MergeExecutable: []candidate{}, PlanCandidates: []candidate{}, FixCandidates: []candidate{},
 		HumanWaiting: []candidate{}, Findings: []finding{},
+	}
+	if routing != nil {
+		routing.attach(&result)
 	}
 	now := time.Now().UTC()
 	for _, pr := range prs {
@@ -439,6 +482,9 @@ func analyze(prs []apiPull, owner string) report {
 		depth := reviewDepth(pr.Comments, owner)
 		priority, prioritySource := queuePriority(labels, pr.CreatedAt, now)
 		item := candidate{Number: pr.Number, Title: pr.Title, URL: pr.HTMLURL, Head: pr.Head.SHA, Depth: depth, Stage: "review", Priority: priority, PrioritySource: prioritySource, UpdatedAt: pr.UpdatedAt}
+		if routing != nil && routing.consume(&result, pr, item, labels) {
+			continue
+		}
 		currentCompletions, latestCompletion, latestOverride := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
 		legacySourceCompletions := 0
 		if headIsBaseSyncMerge(pr) {
