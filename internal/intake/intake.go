@@ -226,7 +226,7 @@ func (e *Engine) onExisting(ctx context.Context, in *metadata.Intake, h Handler,
 		return Result{Status: StatusQuarantined, Reason: "already_quarantined", ResultRef: row.ResultRef}, nil
 	}
 	if row.Status == storage.IntakeStatusReceived {
-		return e.waitForExisting(ctx, in.Name, scope, key, hash)
+		return e.waitForExisting(ctx, in, scope, key, hash)
 	}
 	if row.Status != storage.IntakeStatusProcessed {
 		return Result{}, fmt.Errorf("intake %q: неизвестный статус ключа %q: %q", in.Name, key, row.Status)
@@ -234,7 +234,8 @@ func (e *Engine) onExisting(ctx context.Context, in *metadata.Intake, h Handler,
 	return resultFromLog(row, StatusDuplicate), nil
 }
 
-func (e *Engine) waitForExisting(ctx context.Context, intakeName, scope, key, hash string) (Result, error) {
+func (e *Engine) waitForExisting(ctx context.Context, in *metadata.Intake, scope, key, hash string) (Result, error) {
+	intakeName := in.Name
 	timer := time.NewTimer(e.inFlightWait())
 	defer timer.Stop()
 	ticker := time.NewTicker(10 * time.Millisecond)
@@ -262,6 +263,17 @@ func (e *Engine) waitForExisting(ctx context.Context, intakeName, scope, key, ha
 			case storage.IntakeStatusProcessed:
 				return resultFromLog(row, StatusDuplicate), nil
 			case storage.IntakeStatusQuarantined:
+				if in.DLQ.RetryBySender {
+					entry, found, err := e.Store.FindOpenIntakeDLQ(ctx, intakeName, scope, key, metadata.DLQHandlerError)
+					if err != nil {
+						return Result{}, err
+					}
+					if found {
+						// Ожидавшая доставка сохраняет 503 исходного сбоя.
+						// Replay выполняет только следующий повтор отправителя.
+						return Result{Status: StatusQuarantined, Reason: metadata.DLQHandlerError, DLQID: entry.ID, ResultRef: row.ResultRef}, nil
+					}
+				}
 				return Result{Status: StatusQuarantined, Reason: "already_quarantined", ResultRef: row.ResultRef}, nil
 			default:
 				return Result{}, fmt.Errorf("intake %q: неизвестный статус ключа %q: %q", intakeName, key, row.Status)

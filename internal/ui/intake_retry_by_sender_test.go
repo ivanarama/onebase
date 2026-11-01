@@ -2,11 +2,17 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
@@ -38,6 +44,12 @@ func newFlakyIntakeServer(t *testing.T, retryBySender bool) (*Server, *metadata.
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
+	return newFlakyIntakeServerWithDB(t, db, retryBySender)
+}
+
+func newFlakyIntakeServerWithDB(t *testing.T, db *storage.DB, retryBySender bool) (*Server, *metadata.Entity) {
+	t.Helper()
+	ctx := context.Background()
 	flag := &metadata.Entity{Name: "Флаг", Kind: metadata.KindCatalog,
 		Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}}}
 	if err := db.Migrate(ctx, []*metadata.Entity{flag}); err != nil {
@@ -123,4 +135,106 @@ func TestIntakeHTTP_WithoutRetryBySender_HandlerErrorStays202(t *testing.T) {
 	if w.Code != http.StatusAccepted || got["reason"] != "already_quarantined" {
 		t.Fatalf("повтор: code=%d body=%v", w.Code, got)
 	}
+}
+
+// Pause the real DSL handler after Ingest has committed the received key. The
+// second HTTP delivery must wait for its outcome rather than start a replay.
+type intakeHandlerPause struct {
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (*intakeHandlerPause) HookCheckBreakpoint(string, int, func(string) (bool, error)) bool {
+	return false
+}
+func (*intakeHandlerPause) HookShouldStep(string, int) bool { return false }
+func (*intakeHandlerPause) HookOnPause(string, int, map[string]any, func(string) (any, error), string) {
+}
+func (*intakeHandlerPause) HookPopFrame() {}
+func (p *intakeHandlerPause) HookPushFrame(string, int) {
+	p.once.Do(func() {
+		close(p.started)
+		<-p.release
+	})
+}
+
+func TestIntakeHTTP_OverlappingHandlerFailure(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		for _, retryBySender := range []bool{true, false} {
+			name := "legacy202"
+			wantCode := http.StatusAccepted
+			if retryBySender {
+				name = "retry503"
+				wantCode = http.StatusServiceUnavailable
+			}
+			t.Run(name, func(t *testing.T) {
+				s, _ := newFlakyIntakeServerWithDB(t, db, retryBySender)
+				pause := &intakeHandlerPause{started: make(chan struct{}), release: make(chan struct{})}
+				s.interp.DebugSource = func() interpreter.DebugHook { return pause }
+				var releaseOnce sync.Once
+				release := func() { releaseOnce.Do(func() { close(pause.release) }) }
+				defer release()
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				body := `{"event_id":"` + name + `","source":"callista","payload":{"kind":"ended"}}`
+				post := func(done chan<- *httptest.ResponseRecorder) {
+					w := httptest.NewRecorder()
+					r := httptest.NewRequest(http.MethodPost, "/hs/site/lead", strings.NewReader(body)).WithContext(ctx)
+					r.Header.Set("Content-Type", "application/json")
+					s.serviceDispatch(w, r)
+					done <- w
+				}
+				first, second := make(chan *httptest.ResponseRecorder, 1), make(chan *httptest.ResponseRecorder, 1)
+				go post(first)
+				select {
+				case <-pause.started:
+				case <-ctx.Done():
+					t.Fatal("first HTTP delivery did not enter its DSL handler")
+				}
+				go post(second)
+				select {
+				case w := <-second:
+					t.Fatalf("overlapping delivery returned before the handler: %d %s", w.Code, w.Body.String())
+				case <-time.After(100 * time.Millisecond):
+				}
+				release()
+				for _, done := range []<-chan *httptest.ResponseRecorder{first, second} {
+					select {
+					case w := <-done:
+						var got map[string]any
+						if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+							t.Fatal(err)
+						}
+						if w.Code != wantCode || got["status"] != "Карантин" {
+							t.Fatalf("code=%d body=%v, want %d quarantine", w.Code, got, wantCode)
+						}
+						if retryBySender && got["reason"] != metadata.DLQHandlerError {
+							t.Fatalf("retryable handler failure lost: %v", got)
+						}
+					case <-ctx.Done():
+						t.Fatal("overlapping HTTP deliveries did not finish")
+					}
+				}
+				entries, err := db.ListIntakeDLQ(ctx, "SiteLead", true, 10)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var found bool
+				for _, entry := range entries {
+					if entry.Key == name {
+						found = true
+						// SQLite serializes the transactions on one connection;
+						// PostgreSQL must exercise received -> quarantined waiting.
+						if db.Dialect().Name() == "postgres" && entry.Attempts != 0 {
+							t.Fatalf("overlap missed: delivery replayed DLQ: %+v", entry)
+						}
+					}
+				}
+				if !found {
+					t.Fatal("failed delivery missing from DLQ")
+				}
+			})
+		}
+	})
 }
