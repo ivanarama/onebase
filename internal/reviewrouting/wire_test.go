@@ -1,11 +1,32 @@
 package reviewrouting
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 )
+
+func TestOriginalGoldenBytesMatchPinnedUpstreamGitBlobs(t *testing.T) {
+	origin := fixture(t, "origin.json")
+	files := origin["files"].(map[string]any)
+	names := []string{"review-routing-v1.json", "review-routing-wire-v1.json", "review-routing-settlement-v1.json", "pr-identity-v1.json"}
+	if len(files) != len(names) {
+		t.Fatal("original source manifest must pin all four exact upstream artifacts")
+	}
+	for _, name := range names {
+		raw, err := os.ReadFile("testdata/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(raw)
+		if hex.EncodeToString(sum[:]) != files[name] {
+			t.Fatalf("%s bytes differ from the pinned upstream Git blob; check EOL attributes", name)
+		}
+	}
+}
 
 func fixture(t *testing.T, name string) map[string]any {
 	t.Helper()

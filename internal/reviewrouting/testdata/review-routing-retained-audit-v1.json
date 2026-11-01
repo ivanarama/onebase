@@ -1,12 +1,12 @@
 {
   "schema": "pp-review-routing-retained-audit-golden-v1",
   "authority": "unverified-offline-input",
-  "source_head": "d96327714ad396e6ded688d19880b59c5763746b",
-  "source_dirty": true,
+  "source_head": "21571a193860502104d51d8db8ad95127937b56b",
+  "source_dirty": false,
   "source_files_sha256": {
-    "promptpilot/review_routing_baseline.py": "0226849efbbaedc1869a7d48bae1f1b6c340555f97d8a6b638ef27e9afbc8b31",
-    "promptpilot/review_routing_history.py": "01ace235d4b2079575d45891b036b3317b4f5b15434cc108c694ebd63429fb6d",
-    "promptpilot/review_routing_wire.py": "5d3d8736a60cf83bc35f91791cfa7fbe4a4dfdd3e26822622a34e1653e515266",
+    "promptpilot/review_routing_baseline.py": "0abe0eb8d6575477cd88768e791bf4fe103dfed63aeb693ee93843876763fda9",
+    "promptpilot/review_routing_history.py": "e45d5d3f0e09de68e3aed5278e579514c7f4f5a3d92430c6a0bae1020d059747",
+    "promptpilot/review_routing_wire.py": "a02234a7ac4bbdeadb1e36df574bdba238cd19fa2c50f2e76c03c026b53e1596",
     "tests/test_review_routing_audit_history.py": "ed02a310e8ba505e7b0f2c09ae3bc73bedf341e9fc30392d4b1f90a534f592ba"
   },
   "cases": [
@@ -2084,5 +2084,12 @@
       "accepted": false,
       "reason": "historical audit has an unexplained independent event"
     }
-  ]
+  ],
+  "initial_source_checkout_sha256": {
+    "promptpilot/review_routing_baseline.py": "0226849efbbaedc1869a7d48bae1f1b6c340555f97d8a6b638ef27e9afbc8b31",
+    "promptpilot/review_routing_history.py": "01ace235d4b2079575d45891b036b3317b4f5b15434cc108c694ebd63429fb6d",
+    "promptpilot/review_routing_wire.py": "5d3d8736a60cf83bc35f91791cfa7fbe4a4dfdd3e26822622a34e1653e515266",
+    "tests/test_review_routing_audit_history.py": "ed02a310e8ba505e7b0f2c09ae3bc73bedf341e9fc30392d4b1f90a534f592ba"
+  },
+  "source_representation": "exact Git blob bytes; initial source checkout hashes recorded separately"
 }

@@ -15,6 +15,7 @@ var (
 	legacyComplete = regexp.MustCompile(`^(?:PromptPilot service marker: REVIEW result committed\.\n)?<!-- pp:head-reviewed ([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) epoch-sha256=([0-9a-f]{64}) -->$`)
 	legacyReview   = regexp.MustCompile(`(?ms)^Reviewed-SHA: ([0-9a-f]{40})$.*^Outcome-Label: (reviewed|changes-requested|needs-decision)$.*^<!-- pp:review pp:tail=([0-9]+) -->$`)
 	manualOverride = regexp.MustCompile(`(?m)^pp:review-again$`)
+	protocolHint   = regexp.MustCompile(`(^|[^A-Za-z0-9_])pp:`)
 )
 
 type timelineEdge struct {
@@ -48,6 +49,26 @@ func edges(snapshot map[string]any) ([]timelineEdge, error) {
 		}
 		cursors[cursor], ids[id] = true, true
 		if kind == "IssueComment" {
+			body, ok := node["body"].(string)
+			if !ok {
+				return nil, fmt.Errorf("comment body is unavailable")
+			}
+			author, present := node["author"]
+			if !present {
+				return nil, fmt.Errorf("comment actor projection is unavailable")
+			}
+			if author == nil {
+				// GitHub can return a known null for a deleted unrelated author.
+				// A protocol-looking receipt with unresolved actor remains unknown.
+				if protocolHint.MatchString(body) {
+					return nil, fmt.Errorf("protocol comment actor is unresolved")
+				}
+			} else if !wireText(mapValue(author)["login"]) {
+				return nil, fmt.Errorf("comment actor projection is malformed")
+			}
+			if _, err := serverTime(stringValue(node["createdAt"])); err != nil {
+				return nil, fmt.Errorf("comment creation time is unavailable or malformed")
+			}
 			edited, present := node["lastEditedAt"]
 			if !present {
 				return nil, fmt.Errorf("comment edit status is unavailable")

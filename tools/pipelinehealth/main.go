@@ -176,7 +176,10 @@ type finding struct {
 
 type report struct {
 	ReviewRoutingContract            *routingContract              `json:"review_routing_contract,omitempty"`
+	FixBridgeContract                *routingPurposeContract       `json:"fix_bridge_contract,omitempty"`
+	FixExecutionContract             *routingPurposeContract       `json:"fix_execution_contract,omitempty"`
 	TechnicalFixCandidates           *[]routingFixCandidate        `json:"technical_fix_candidates,omitempty"`
+	TechnicalFixProgressCandidates   *[]routingProgressCandidate   `json:"technical_fix_progress_candidates,omitempty"`
 	TechnicalFixSettlementCandidates *[]routingSettlementCandidate `json:"technical_fix_settlement_candidates,omitempty"`
 	TechnicalWaiting                 *[]candidate                  `json:"technical_waiting,omitempty"`
 	EngineeringWaiting               *[]candidate                  `json:"engineering_waiting,omitempty"`

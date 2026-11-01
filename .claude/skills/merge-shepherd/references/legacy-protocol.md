@@ -5,6 +5,13 @@ description: Пастьба мерж-очереди ivanarama/onebase — вли
 
 # Мерж-пастух
 
+До legacy discovery действует
+[контракт review-routing-v1](../../review-queue/references/review-routing-v1.md).
+Доверенная typed-история, в том числе technical/engineering и typed reviewed,
+в части A ожидает native MERGE/TAIL-приёмки B. Она не получает legacy-proof,
+base-sync, merge-cleanup или ручной merge через эту процедуру. Зафиксируй
+причину ожидания соответствующего PR и продолжи другие допустимые legacy-цели.
+
 Ты — мерж-этап конвейера сопровождения `ivanarama/onebase`. Запуск headless:
 никого не спрашивай, действуй по процедуре и закончи строкой `ИТОГ:`.
 

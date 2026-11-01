@@ -123,17 +123,25 @@ func TestRoutingSnapshotRefusesDriftPartialIdentityAndRepeatedHistory(t *testing
 func routingSkillFixture(t *testing.T, marked bool) string {
 	t.Helper()
 	root := fixtureSkillsRoot(t)
-	if marked {
-		for role, name := range map[string]string{"review": "review-queue", "fix": "fix-approved", "merge": "merge-shepherd", "tail": "tail-issues"} {
-			path := filepath.Join(root, name, "SKILL.md")
-			data, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
+	for role, name := range map[string]string{"review": "review-queue", "fix": "fix-approved", "merge": "merge-shepherd", "tail": "tail-issues"} {
+		path := filepath.Join(root, name, "SKILL.md")
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		marker := "<!-- pp:review-routing-v1-consumer stage=" + role + " -->"
+		lines := []string{}
+		for _, line := range strings.Split(string(data), "\n") {
+			if strings.TrimSuffix(line, "\r") != marker {
+				lines = append(lines, line)
 			}
-			data = append(data, []byte("\n<!-- pp:review-routing-v1-consumer stage="+role+" -->\n")...)
-			if err := os.WriteFile(path, data, 0o600); err != nil { //nolint:gosec // G703: fixed role names below fixtureSkillsRoot's t.TempDir.
-				t.Fatal(err)
-			}
+		}
+		data = []byte(strings.Join(lines, "\n"))
+		if marked {
+			data = append(data, []byte("\n"+marker+"\n")...)
+		}
+		if err := os.WriteFile(path, data, 0o600); err != nil { //nolint:gosec // G703: fixed role names below fixtureSkillsRoot's t.TempDir.
+			t.Fatal(err)
 		}
 	}
 	// Synthetic version markers qualify only this parser test. They do not
@@ -234,6 +242,18 @@ func TestPublicBackdatedLaterCommitKeepsHistoricalLegacyDepth(t *testing.T) {
 	}
 }
 
+func TestPublicKnownUnrelatedGhostAndBotCommentsDoNotParkLegacyReview(t *testing.T) {
+	for _, author := range []any{nil, map[string]any{"login": "github-actions[bot]"}} {
+		state := routingGolden(t, "two-legacy-rounds")
+		state["edges"] = append(state["edges"].([]any), map[string]any{"cursor": "UNRELATED", "node": map[string]any{
+			"__typename": "IssueComment", "id": "IC_UNRELATED", "fullDatabaseId": "99999", "createdAt": "2026-10-29T00:00:10Z", "lastEditedAt": nil, "author": author, "body": "ordinary unrelated app: status"}})
+		value, err := routingCLI(t, []any{routingPullFixture(t, state, 42)}, "-technical-handoff", "-contract", routingSkillFixture(t, true))
+		if err != nil || len(value["content_review_candidates"].([]any)) != 1 || len(value["engineering_waiting"].([]any)) != 0 {
+			t.Fatalf("known unrelated actor became unknown protocol history: %v %v", value, err)
+		}
+	}
+}
+
 func TestPublicRetainedTypedAuditSurvivesLaterMetadataAndCommitDates(t *testing.T) {
 	for _, name := range []string{"retained-clean", "retained-changed-labels", "retained-changed-state", "retained-changed-isDraft", "retained-backdated-before-audit", "retained-backdated-during-publication"} {
 		t.Run(name, func(t *testing.T) {
@@ -268,8 +288,9 @@ func TestPublicTechnicalSourceNeverBecomesLegacyMergeOrIntegrationOwner(t *testi
 					t.Fatal("FIX candidate lost its exact closed source binding")
 				}
 			}
-			if value["fix_execution_contract"] != nil {
-				t.Fatal("preparatory checker claimed complete native execution acceptance")
+			capability := routingObject(value["fix_execution_contract"])
+			if capability["protocol"] != "claimed-pipeline-fix-v1" || capability["snapshot"] != "complete" {
+				t.Fatal("complete paired readers lost their opt-in execution compatibility declaration")
 			}
 		})
 	}
@@ -281,8 +302,67 @@ func TestPublicMissingReaderNeverAdmitsTechnicalSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if value["review_routing_contract"] != nil || len(value["technical_fix_candidates"].([]any)) != 0 || len(value["engineering_waiting"].([]any)) != 1 {
+	if value["review_routing_contract"] != nil || value["fix_bridge_contract"] != nil || value["fix_execution_contract"] != nil || len(value["technical_fix_candidates"].([]any)) != 0 || len(value["engineering_waiting"].([]any)) != 1 {
 		t.Fatal("missing paired reader version was admitted")
+	}
+}
+
+func TestPublicActualCanonicalReadersBindExecutionCompatibility(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(root, ".claude", "skills", "review-queue", "SKILL.md")
+	snapshot := routingGolden(t, "fresh-technical-source")
+	value, err := routingCLI(t, []any{routingPullFixture(t, snapshot, 42)}, "-technical-handoff", "-contract", entry)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readers, err := reviewrouting.ConsumerTrees(filepath.Join(root, ".claude", "skills"))
+	want := map[string]any{}
+	for role, digest := range readers {
+		want[role] = digest
+	}
+	if err != nil || !reviewrouting.Equal(routingObject(value["review_routing_contract"])["reader_sha256"], want) {
+		t.Fatalf("actual four canonical reader trees do not bind the checker: %v %v", value, err)
+	}
+	bridge, execution := routingObject(value["fix_bridge_contract"]), routingObject(value["fix_execution_contract"])
+	if bridge["protocol"] != "claimed-fix-v1" || execution["protocol"] != "claimed-pipeline-fix-v1" || len(value["technical_fix_candidates"].([]any)) != 1 {
+		t.Fatal("actual canonical readers do not admit their explicit source-bound compatibility contract")
+	}
+}
+
+func TestPublicProgressHintBindsOldSourceAndCurrentHeadWithoutStartingAnotherFix(t *testing.T) {
+	for _, unsafe := range []bool{false, true} {
+		state := routingGolden(t, "changed-head-with-unsettled-pipeline")
+		if unsafe {
+			values := state["edges"].([]any)
+			event := map[string]any{"cursor": "UNSAFE_SOURCE_PUSH", "node": map[string]any{
+				"__typename": "HeadRefForcePushedEvent", "id": "UNSAFE_SOURCE_PUSH", "afterCommit": map[string]any{"oid": strings.Repeat("e", 40)}}}
+			state["edges"] = append(append(append([]any{}, values[:len(values)-1]...), event), values[len(values)-1])
+		}
+		value, err := routingCLI(t, []any{routingPullFixture(t, state, 42)}, "-technical-handoff", "-contract", routingSkillFixture(t, true))
+		if err != nil {
+			t.Fatal(err)
+		}
+		progress := value["technical_fix_progress_candidates"].([]any)
+		if len(value["technical_fix_candidates"].([]any)) != 0 || value["integration_owner"] != nil || (len(progress) == 1) == unsafe {
+			t.Fatalf("unsafe=%v acquired execution or lost exact progress fencing: %v", unsafe, value)
+		}
+		if len(progress) == 1 {
+			hint := routingObject(progress[0])
+			if len(hint) != 6 || hint["head"] != routingObject(hint["source"])["head"] || hint["new_head"] != state["headRefOid"] || hint["head"] == hint["new_head"] {
+				t.Fatal("progress hint lost its old source/new HEAD distinction")
+			}
+		}
+	}
+}
+
+func TestPublicCompletedFixKeepsOriginalPublisherReadbackAndElectsReview(t *testing.T) {
+	state := routingGolden(t, "one-fix-done-needs-review")
+	value, err := routingCLI(t, []any{routingPullFixture(t, state, 42)}, "-technical-handoff", "-contract", routingSkillFixture(t, true))
+	if err != nil || len(value["technical_fix_progress_candidates"].([]any)) != 1 || len(value["technical_fix_candidates"].([]any)) != 0 || len(value["technical_fix_settlement_candidates"].([]any)) != 0 || len(value["content_review_candidates"].([]any)) != 1 {
+		t.Fatalf("committed FIX lost readback or authorized another correction: %v %v", value, err)
 	}
 }
 

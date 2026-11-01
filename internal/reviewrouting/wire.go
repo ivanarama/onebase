@@ -138,6 +138,23 @@ func audit(value any) error {
 		if _, err := object(history["header"], "headRefOid baseRefName state isDraft identity identity_sha256 pr_key author labels labelsComplete"); err != nil {
 			return err
 		}
+		header := mapValue(history["header"])
+		original := map[string]any{}
+		for key, value := range header {
+			original[key] = value
+		}
+		original["baseRefOid"], original["updatedAt"], original["edges"] = m["base_ref_oid"], nil, []any{}
+		identity := mapValue(header["identity"])
+		number, err := integer(identity["pr_number"], 1, 2147483647)
+		if err != nil {
+			return err
+		}
+		if err := ValidateSnapshot(original, stringValue(identity["base_repository"]), number, stringValue(header["headRefOid"])); err != nil {
+			return fmt.Errorf("invalid retained original audit header: %w", err)
+		}
+		if header["state"] != "OPEN" || header["isDraft"] != false || header["labelsComplete"] != true {
+			return fmt.Errorf("retained original audit was not open, non-draft and complete")
+		}
 		manifest, ok := history["edges"].([]any)
 		if !ok || len(manifest) > 10000 {
 			return fmt.Errorf("retained audit edge manifest is invalid or oversized")

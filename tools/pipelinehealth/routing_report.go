@@ -15,6 +15,12 @@ type routingContract struct {
 	Readers  map[string]string `json:"reader_sha256"`
 }
 
+type routingPurposeContract struct {
+	Protocol string   `json:"protocol"`
+	Snapshot string   `json:"snapshot"`
+	Purposes []string `json:"purposes"`
+}
+
 type routingFixCandidate struct {
 	Stage  string         `json:"stage"`
 	Number int            `json:"number"`
@@ -25,6 +31,12 @@ type routingFixCandidate struct {
 type routingSettlementCandidate struct {
 	routingFixCandidate
 	AttemptID string `json:"attempt_id"`
+}
+
+type routingProgressCandidate struct {
+	routingFixCandidate
+	AttemptID string `json:"attempt_id"`
+	NewHead   string `json:"new_head"`
 }
 
 type routingContext struct {
@@ -75,20 +87,24 @@ func prepareRouting(prs []apiPull, repository, trusted, contract, fixture string
 
 func (context *routingContext) attach(result *report) {
 	fixes, settlements := []routingFixCandidate{}, []routingSettlementCandidate{}
+	progress := []routingProgressCandidate{}
 	technical, engineering := []candidate{}, []candidate{}
 	result.TechnicalFixCandidates, result.TechnicalFixSettlementCandidates = &fixes, &settlements
+	result.TechnicalFixProgressCandidates = &progress
 	result.TechnicalWaiting, result.EngineeringWaiting = &technical, &engineering
 	if context.readersErr != nil {
 		result.add("yellow", "routing_readers_incompatible", 0, context.readersErr.Error())
 	}
 	if context.complete && context.readersErr == nil {
 		result.ReviewRoutingContract = &routingContract{reviewrouting.Version, "complete", context.readers}
+		result.FixBridgeContract = &routingPurposeContract{"claimed-fix-v1", "complete", []string{"author-handoff", "author-progress"}}
+		result.FixExecutionContract = &routingPurposeContract{"claimed-pipeline-fix-v1", "complete", []string{"admission", "start", "heartbeat", "progress", "settlement"}}
 	}
 	if !context.complete {
 		result.add("yellow", "routing_snapshot_incomplete", 0, "typed routing snapshot is incomplete; no compatible contract or execution admission is advertised")
 	}
-	// The execution capability is intentionally not emitted by this preparatory
-	// checker until all four actual consumer routes pass the complete paired gate.
+	// These opt-in compatibility declarations grant no mutation/process authority.
+	// Installation and enablement still require acceptance of the exact pair.
 }
 
 func (context *routingContext) engineering(result *report, item candidate, reason string) bool {
@@ -182,10 +198,21 @@ func (context *routingContext) consume(result *report, pr apiPull, item candidat
 		phases := routingPhases(ledger, attempt.ID)
 		_, done := phases["fix-done"]
 		source := routingObject(attempt.Payload["source"])
-		if !done && !routingSettled(ledger, attempt.ID) && item.Head != source["head"] {
-			*result.TechnicalFixSettlementCandidates = append(*result.TechnicalFixSettlementCandidates,
-				routingSettlementCandidate{routingFixCandidate{"fix-pr", item.Number, item.Head, source}, attempt.ID})
-			return context.engineering(result, item, "changed HEAD requires proof of the exact old executor and original delivery before one REVIEW resume; spent budget is preserved")
+		if !routingSettled(ledger, attempt.ID) && item.Head != source["head"] {
+			if !labels["ship"] && !labels["changes-requested"] && len(ledger.Proofs) > 0 &&
+				reviewrouting.Equal(ledger.Proofs[len(ledger.Proofs)-1].Source(), source) &&
+				(!done || routingObject(phases["fix-done"].Payload["details"])["new_head"] == item.Head) &&
+				routingProgressSafe(snapshot, ledger.Proofs[len(ledger.Proofs)-1], attempt, phases, context.trusted) {
+				*result.TechnicalFixProgressCandidates = append(*result.TechnicalFixProgressCandidates,
+					routingProgressCandidate{routingFixCandidate{"fix-pr", item.Number, source["head"].(string), source}, attempt.ID, item.Head})
+			}
+			// Retain the exact completed output for the original publisher's
+			// final readback. This is neither another START nor a new attempt.
+			if !done {
+				*result.TechnicalFixSettlementCandidates = append(*result.TechnicalFixSettlementCandidates,
+					routingSettlementCandidate{routingFixCandidate{"fix-pr", item.Number, item.Head, source}, attempt.ID})
+				return context.engineering(result, item, "changed HEAD requires proof of the exact old executor and original delivery before one REVIEW resume; spent budget is preserved")
+			}
 		}
 	}
 	if ledger.ParkingID != "" {
@@ -298,4 +325,43 @@ func (context *routingContext) consume(result *report, pr apiPull, item candidat
 	}
 	result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
 	return true
+}
+
+// A progress candidate is only a source-bound readback hint. The coordinator
+// must independently prove the finite forward graph, exact trailers, current
+// identity, original process cleanup and retained local task before any write.
+func routingProgressSafe(snapshot map[string]any, proof reviewrouting.ReviewProof, attempt reviewrouting.Record, phases map[string]reviewrouting.Record, trusted string) bool {
+	if _, ok := phases["barrier"]; ok {
+		return false
+	}
+	if _, ok := phases["handoff-done"]; !ok {
+		return false
+	}
+	_, started := phases["started"]
+	if (routingObject(attempt.Payload["executor"])["kind"] == "pipeline") != started {
+		return false
+	}
+	anchor := proof.Publication.Payload["anchor"]
+	found := false
+	dangerous := map[string]bool{"HeadRefForcePushedEvent": true, "HeadRefDeletedEvent": true,
+		"HeadRefRestoredEvent": true, "BaseRefChangedEvent": true, "BaseRefForcePushedEvent": true,
+		"BaseRefDeletedEvent": true, "CommentDeletedEvent": true, "MergedEvent": true}
+	for _, raw := range snapshot["edges"].([]any) {
+		node := routingObject(routingObject(raw)["node"])
+		if node["id"] == anchor {
+			found = true
+			continue
+		}
+		if !found {
+			continue
+		}
+		if dangerous[routingText(node["__typename"])] {
+			return false
+		}
+		if node["__typename"] == "IssueComment" && routingObject(node["author"])["login"] == trusted &&
+			(node["lastEditedAt"] != nil || hasReviewAgain(routingText(node["body"]))) {
+			return false
+		}
+	}
+	return found
 }

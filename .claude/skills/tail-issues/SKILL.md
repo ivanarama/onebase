@@ -5,6 +5,17 @@ description: Заведение заявок по хвосту ревью ivanar
 
 # Хвост ревью → заявки
 
+<!-- pp:review-routing-v1-consumer stage=tail -->
+
+До выборки прочитай
+[контракт review-routing-v1](../review-queue/references/review-routing-v1.md).
+В этой части A доверенная история `pp:review-routing-` не преобразуется в
+legacy-заключение или хвост. Для такого PR не создавай issue, item claim,
+`tail-drop` или `tail-done`: сохрани причину ожидания приёмки native MERGE/TAIL
+в части B и продолжи другие корректные PR. Technical/engineering handoff и
+settlement не являются успешным ревью. Неизвестная версия, edit/delete либо
+неполная история требуют явной диагностики, а не объявления хвоста разобранным.
+
 Ты — этап конвейера сопровождения `ivanarama/onebase`, который подбирает за
 мержем. Запуск headless: никого не спрашивай, действуй по процедуре и закончи
 строкой `ИТОГ:`.
