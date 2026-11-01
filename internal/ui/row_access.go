@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -60,9 +61,23 @@ func (s *Server) applyListFormFilter(r *http.Request, entity *metadata.Entity, p
 		return params
 	}
 	user := auth.UserFromContext(r.Context())
+	off := listFormFilterOff(r)
 	var extra []storage.Predicate
-	for _, cond := range form.ListFilter {
-		pred, ok := s.listFilterPredicate(entity, cond, user)
+	for i, cond := range form.ListFilter {
+		// Снятый пользователем отбор по умолчанию не применяется; снять можно
+		// только removable-условие — адресом остальные не отключить.
+		if cond.Removable && off[i] {
+			continue
+		}
+		var (
+			pred storage.Predicate
+			ok   bool
+		)
+		if strings.TrimSpace(cond.Query) != "" {
+			pred, ok = s.listFilterQueryPredicate(r.Context(), entity, cond, user)
+		} else {
+			pred, ok = s.listFilterPredicate(entity, cond, user)
+		}
 		if !ok {
 			continue
 		}
@@ -89,6 +104,189 @@ func (s *Server) applyListFormFilter(r *http.Request, entity *metadata.Entity, p
 	combined := storage.Predicate{All: parts}
 	params.RowFilter = &combined
 	return params
+}
+
+// listFormFilterOffParam — параметр адреса списка со снятыми отборами по
+// умолчанию: номера условий filter через запятую.
+const listFormFilterOffParam = "lf_off"
+
+// listFormFilterMaxRows — сколько исходных строк условие-запрос может вернуть. Больше —
+// отбор закрывается целиком: длинный список параметров упирается в предел СУБД,
+// а молча обрезанный выглядел бы как «потерянные» записи.
+const listFormFilterMaxRows = 10000
+
+func listFormFilterOff(r *http.Request) map[int]bool {
+	off := map[int]bool{}
+	if r == nil {
+		return off
+	}
+	for _, part := range strings.Split(r.URL.Query().Get(listFormFilterOffParam), ",") {
+		var n int
+		if _, err := fmt.Sscanf(strings.TrimSpace(part), "%d", &n); err == nil && n >= 0 {
+			off[n] = true
+		}
+	}
+	return off
+}
+
+// listFormFilterToggle — переключатель снимаемого отбора над списком.
+type listFormFilterToggle struct {
+	Label string
+	On    bool
+	// Off — значение lf_off для адреса переключателя: с этим условием, если
+	// оно включено, и без него, если снято.
+	Off string
+}
+
+// listFormFilterToggles — переключатели снимаемых отборов формы списка для
+// текущего пользователя: условие, которое к нему не относится (роль,
+// администратор), переключателя не получает.
+func (s *Server) listFormFilterToggles(r *http.Request, entity *metadata.Entity) []listFormFilterToggle {
+	form := pickManagedForm(entity, "list")
+	if form == nil {
+		return nil
+	}
+	user := auth.UserFromContext(r.Context())
+	off := listFormFilterOff(r)
+	var out []listFormFilterToggle
+	for i, cond := range form.ListFilter {
+		if !cond.Removable || !listFormFilterApplies(cond, user) {
+			continue
+		}
+		next := map[int]bool{}
+		for k, v := range off {
+			next[k] = v
+		}
+		next[i] = !off[i]
+		var nums []string
+		for j := range form.ListFilter {
+			if next[j] {
+				nums = append(nums, fmt.Sprint(j))
+			}
+		}
+		out = append(out, listFormFilterToggle{
+			Label: cond.DisplayLabel(s.resolveLang(r)),
+			On:    !off[i],
+			Off:   strings.Join(nums, ","),
+		})
+	}
+	return out
+}
+
+// listFormFilterApplies — относится ли условие к пользователю: роль из roles,
+// для @ТекущийПользователь и запроса — известный пользователь не-администратор.
+func listFormFilterApplies(cond metadata.FormListCondition, user *auth.User) bool {
+	if len(cond.Roles) > 0 && !userHasAnyRole(user, cond.Roles) {
+		return false
+	}
+	if cond.Value == metadata.ListFilterCurrentUser || strings.TrimSpace(cond.Query) != "" {
+		return user != nil && user.ID != "" && !user.IsAdmin
+	}
+	return true
+}
+
+// listFilterQueryPredicate — условие запросом: «Ссылка В (первая колонка
+// результата)». Ошибка запроса или слишком длинный результат закрывают отбор
+// (пустой список), а не открывают его: правило интерфейса сломалось, и
+// показать всё вместо «своего» было бы хуже, чем ничего.
+func (s *Server) listFilterQueryPredicate(ctx context.Context, entity *metadata.Entity, cond metadata.FormListCondition, user *auth.User) (storage.Predicate, bool) {
+	if !listFormFilterApplies(cond, user) {
+		return storage.Predicate{}, false
+	}
+	closed := storage.Predicate{Field: "id", Op: "in", Value: []any{}}
+	ids, err := s.listFilterQueryIDs(ctx, cond.Query, user, nil)
+	if err != nil {
+		slog.Warn("list form filter query failed", "error", err)
+		return closed, true
+	}
+	values := make([]any, 0, len(ids))
+	for _, id := range ids {
+		values = append(values, id)
+	}
+	return storage.Predicate{Field: "id", Op: "in", Value: values}, true
+}
+
+// listFilterQueryIDs исполняет запрос условия с правами смотрящего (RLS его
+// источников действует, как у виджета) и возвращает идентификаторы из первой
+// колонки. Лимит исходных строк проверяется до удаления повторов и пропуска
+// пустых и не-UUID значений. extra — параметры запроса
+// сверх служебных (choice_filter: значения из формы); служебные
+// &ТекущийПользователь и &ТекущийЛогин ими не перекрываются.
+func (s *Server) listFilterQueryIDs(ctx context.Context, text string, user *auth.User, extra map[string]any) ([]string, error) {
+	rowFilters, err := access.QueryRowFiltersWithContext(ctx, user, s.reg.Entities(), s.reg.Registers(), s.reg.InfoRegisters(), s.reg.AccountRegisters(), access.RuntimeContext(s.reg, s.store))
+	if err != nil {
+		return nil, err
+	}
+	params := make(map[string]any, len(extra)+2)
+	for name, value := range extra {
+		params[name] = value
+	}
+	params["ТекущийПользователь"], params["ТекущийЛогин"] = nil, nil
+	if user != nil {
+		params["ТекущийПользователь"], params["ТекущийЛогин"] = user.ID, user.Login
+	}
+	compiled, err := query.Compile(text, query.CompileOpts{
+		Params:      params,
+		Entities:    s.reg.Entities(),
+		Registers:   s.reg.Registers(),
+		InfoRegs:    s.reg.InfoRegisters(),
+		AccountRegs: s.reg.AccountRegisters(),
+		RowFilters:  rowFilters,
+		Dialect:     s.store.Dialect(),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("compile: %w", err)
+	}
+	if denied := s.deniedQuerySource(ctx, compiled.Sources); denied != "" {
+		return nil, errors.New("нет доступа к источнику запроса отбора")
+	}
+	maskPlan := s.queryMaskPlan(ctx, compiled)
+	if maskPlan.Denied != "" {
+		return nil, errors.New("нет доступа к полю запроса отбора")
+	}
+	rows, cols, truncated, err := query.RunLimit(ctx, s.store, &compiled, listFormFilterMaxRows)
+	if err != nil {
+		return nil, err
+	}
+	if truncated {
+		return nil, fmt.Errorf("запрос отбора вернул больше %d строк", listFormFilterMaxRows)
+	}
+	if err := maskPlan.Apply(rows); err != nil {
+		return nil, err
+	}
+	if len(cols) == 0 {
+		return nil, errors.New("запрос отбора не вернул колонок")
+	}
+	seen := make(map[string]bool, len(rows))
+	ids := make([]string, 0, len(rows))
+	for _, row := range rows {
+		id, ok := listFilterRowID(row[cols[0]])
+		if !ok || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	return ids, nil
+}
+
+func listFilterRowID(v any) (string, bool) {
+	var raw string
+	switch t := v.(type) {
+	case nil:
+		return "", false
+	case uuid.UUID:
+		raw = t.String()
+	case []byte:
+		raw = string(t)
+	default:
+		raw = fmt.Sprint(t)
+	}
+	id, err := uuid.Parse(strings.TrimSpace(raw))
+	if err != nil || id == uuid.Nil {
+		return "", false
+	}
+	return id.String(), true
 }
 
 // listFilterPredicate переводит одно условие формы списка в предикат хранилища.

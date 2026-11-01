@@ -73,7 +73,11 @@ func openCLIStorageReadOnly(ctx context.Context, dbType, sqlitePath, dsn string)
 	return openCLIStorageMode(ctx, dbType, sqlitePath, dsn, false)
 }
 
-func openCLIStorageMode(ctx context.Context, dbType, sqlitePath, dsn string, publishRevision bool) (_ *storage.DB, resultErr error) {
+func openCLIStorageMode(ctx context.Context, dbType, sqlitePath, dsn string, publishRevision bool) (*storage.DB, error) {
+	return openCLIStorageWithMode(ctx, dbType, sqlitePath, dsn, publishRevision, false)
+}
+
+func openCLIStorageWithMode(ctx context.Context, dbType, sqlitePath, dsn string, publishRevision, readOnly bool) (_ *storage.DB, resultErr error) {
 	var (
 		lease            dblock.Lease
 		err              error
@@ -202,9 +206,17 @@ func openCLIStorageMode(ctx context.Context, dbType, sqlitePath, dsn string, pub
 
 	var db *storage.DB
 	if dbType == "sqlite" {
-		db, err = storage.ConnectSQLite(ctx, target)
+		if readOnly {
+			db, err = storage.ConnectSQLiteReadOnly(ctx, target)
+		} else {
+			db, err = storage.ConnectSQLite(ctx, target)
+		}
 	} else {
-		db, err = storage.Connect(ctx, dsn)
+		if readOnly {
+			db, err = storage.ConnectReadOnly(ctx, dsn)
+		} else {
+			db, err = storage.Connect(ctx, dsn)
+		}
 	}
 	if err != nil {
 		return nil, err

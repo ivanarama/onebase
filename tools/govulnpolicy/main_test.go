@@ -35,7 +35,7 @@ func TestPolicyCommand(t *testing.T) {
 		{"truncated", config + `{"finding":`, false},
 		{"old_pin_is_not_exempt", config + strings.ReplaceAll(finding("GO-2026-6452", "OpenReader"), "v2.11.1-0.20260930021559-01a9ff32fb3c", "v2.11.1-0.20260728235842-f98df08a8f6a"), false},
 	}
-	for _, id := range []string{"GO-2026-6452", "GO-2026-6809", "GO-2026-6684", "GO-2026-6688", "GO-2026-6689", "GO-2026-6685", "GO-2099-0001"} {
+	for _, id := range []string{"GO-2026-6452", "GO-2026-6684", "GO-2026-6688", "GO-2026-6689", "GO-2026-6685", "GO-2099-0001"} {
 		cases = append(cases, struct {
 			name, input string
 			success     bool
