@@ -116,6 +116,24 @@ class LintRunnerCLI(unittest.TestCase):
         self.assertTrue(all(x["exit"] == 0 and len(x["log_sha256"]) == 64 for x in journal["stages"]))
         self.assertNotEqual(self.run_lint().returncode, 0, "must not overwrite/reuse old result")
 
+    @unittest.skipIf(os.name == "nt", "POSIX directory permissions; exercised by Linux CI")
+    def test_unreadable_directory_rejects_inspect_and_run(self):
+        self.inspect()
+        hidden = self.root / ".unreadable"
+        hidden.mkdir()
+        (hidden / "input.txt").write_text("untracked input")
+        hidden.chmod(0)
+        self.addCleanup(hidden.chmod, 0o700)
+        # A privileged test process cannot reproduce an access denial.
+        with self.assertRaises(PermissionError):
+            list(hidden.iterdir())
+        for action in ["inspect", "run"]:
+            with self.subTest(action=action):
+                result = self.cli("inspect") if action == "inspect" else self.run_lint()
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("Permission denied", result.stderr)
+                self.assertFalse(self.artifacts.exists(), "analysis started with unreadable inputs")
+
     def test_changed_source_config_tool_and_profile_fail_before_execution(self):
         for change in ["source", "config", "tool", "profile"]:
             with self.subTest(change=change):

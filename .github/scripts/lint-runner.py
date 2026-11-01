@@ -29,7 +29,9 @@ def canonical(value):
 
 def tree_digest(root):
     rows, size = [], 0
-    for directory, dirs, files in os.walk(root, followlinks=False):
+    def walk_error(error):
+        raise error
+    for directory, dirs, files in os.walk(root, followlinks=False, onerror=walk_error):
         directory = Path(directory)
         if directory == root:
             dirs[:] = [name for name in dirs if name != ".git"]
@@ -54,7 +56,7 @@ def environment(args):
     env = dict(os.environ)
     env.update(GOTOOLCHAIN=GO, GOENV="off", GOOS=target_os, GOARCH=target_arch,
                CGO_ENABLED="0", GOMAXPROCS="4", GOMEMLIMIT="7GiB", GOGC="100",
-               GOWORK="off", GOFLAGS="", GOEXPERIMENT="", GOAMD64="v1", GOCACHEPROG="",
+               GOWORK="off", GOFLAGS="", GOEXPERIMENT="", GOAMD64="v1", GOCACHEPROG="", GOPACKAGESDRIVER="off",
                GOCACHE=str(args.artifacts / "go-build"), GOTMPDIR=str(args.artifacts / "go-tmp"),
                GOLANGCI_LINT_CACHE=str(args.artifacts / "lint-cache"),
                TMP=str(args.artifacts / "tmp"), TEMP=str(args.artifacts / "tmp"))
@@ -90,7 +92,7 @@ def describe(args, env):
                "host": {"platform": platform.platform(), "go": go_env},
                "go": {"path": str(go), "launcher_sha256": digest(go), "effective_sha256": digest(effective_go), "version": go_version},
                "linter": {"path": str(linter), "sha256": digest(linter), "version": lint_version},
-               "profile": {key: env[key] for key in ["GOTOOLCHAIN", "GOENV", "GOOS", "GOARCH", "CGO_ENABLED", "GOMAXPROCS", "GOMEMLIMIT", "GOGC", "GOWORK", "GOFLAGS", "GOEXPERIMENT", "GOAMD64", "GOCACHEPROG"]},
+               "profile": {key: env[key] for key in ["GOTOOLCHAIN", "GOENV", "GOOS", "GOARCH", "CGO_ENABLED", "GOMAXPROCS", "GOMEMLIMIT", "GOGC", "GOWORK", "GOFLAGS", "GOEXPERIMENT", "GOAMD64", "GOCACHEPROG", "GOPACKAGESDRIVER"]},
                "artifacts": str(args.artifacts), "export_deadline_seconds": args.stage_timeout,
                "lint_deadline": str(args.stage_timeout) + "s", "outer_lint_deadline_seconds": args.stage_timeout + 30}
     return {"sha256": hashlib.sha256(canonical(context)).hexdigest(), "context": context}

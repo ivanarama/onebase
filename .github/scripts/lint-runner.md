@@ -21,10 +21,13 @@ as native Linux execution or as passing Windows lint.
 The fingerprint binds the full file tree, file modes, config, runner, Python,
 Go launcher/effective binary and versions, linter binary/version, host, target,
 resource profile and artifact location. Untracked and ignored files participate;
-only the root `.git` metadata is excluded. Symlinks, external local module replacements
+only the root `.git` metadata is excluded. Unreadable directories fail inspection
+and execution before analysis. Symlinks, external local module replacements
 and oversized trees fail closed. Local replacements entirely inside the source
 tree are included in its full digest (including third_party/webview_go). Go workspace, GOENV and injected GOFLAGS are
-disabled. Changed fingerprints require a new inspection, not editing old proof.
+disabled. `GOPACKAGESDRIVER=off` is fixed and fingerprinted, disabling both an
+inherited driver and automatic `gopackagesdriver` discovery in PATH. Changed
+fingerprints require a new inspection, not editing old proof.
 
 The fixed full profile uses CGO=0, four analysis CPUs, 7 GiB Go heap soft limit,
 the unchanged project config, `go mod verify`, and full test-inclusive package
@@ -48,3 +51,15 @@ Runner regression checks use instrumented executables through the public CLI:
 ```sh
 python3 .github/scripts/lint_runner_test.py
 ```
+
+The real driver regression additionally requires the pinned linter executable:
+
+```sh
+LINT_RUNNER_TEST_LINTER=/tools/golangci-lint python3 .github/scripts/lint_runner_driver_test.py
+```
+
+It proves that both an inherited driver and PATH discovery can hide a package
+from the actual linter, then checks that the runner finds its `unused` finding.
+CI builds this test tool with Go 1.26.10 and runs both cases. These small fixture
+checks do not substitute for full lint of OneBase. The unreadable-directory
+case runs under POSIX permissions in Linux CI; Windows reports that case as skipped.
