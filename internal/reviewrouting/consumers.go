@@ -53,6 +53,10 @@ func readRegular(path string, limit int64) (data []byte, err error) {
 // ConsumerTree matches PromptPilot's complete recursive tree hash. A marker
 // declares parser version only; this function grants no operation authority.
 func ConsumerTree(root, role string) (string, error) {
+	return consumerTree(root, role, false)
+}
+
+func consumerTree(root, role string, positive bool) (string, error) {
 	name, ok := consumerRoles[role]
 	if !ok {
 		return "", fmt.Errorf("unsupported routing consumer role")
@@ -85,6 +89,18 @@ func ConsumerTree(root, role string) (string, error) {
 	}
 	if count != 1 {
 		return "", fmt.Errorf("routing consumer version marker is missing or ambiguous")
+	}
+	if positive {
+		positiveMarker := "<!-- pp:positive-review-v1-consumer stage=" + role + " -->"
+		positiveCount := 0
+		for _, line := range lines {
+			if line == positiveMarker {
+				positiveCount++
+			}
+		}
+		if positiveCount != 1 {
+			return "", fmt.Errorf("positive REVIEW consumer version marker is missing or ambiguous for %s", role)
+		}
 	}
 	var names []string
 	err = filepath.WalkDir(directory, func(path string, entry fs.DirEntry, walkErr error) error {
@@ -162,9 +178,19 @@ func ConsumerTree(root, role string) (string, error) {
 }
 
 func ConsumerTrees(root string) (map[string]string, error) {
+	return consumerTrees(root, false)
+}
+
+// PositiveConsumerTrees additionally requires explicit B support in all four
+// readers. Matching old A tree hashes cannot advertise the new consumer gate.
+func PositiveConsumerTrees(root string) (map[string]string, error) {
+	return consumerTrees(root, true)
+}
+
+func consumerTrees(root string, positive bool) (map[string]string, error) {
 	result := map[string]string{}
 	for _, role := range []string{"review", "fix", "merge", "tail"} {
-		digest, err := ConsumerTree(root, role)
+		digest, err := consumerTree(root, role, positive)
 		if err != nil {
 			return nil, err
 		}
