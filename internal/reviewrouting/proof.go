@@ -160,6 +160,9 @@ func attemptPhases(records, attempts []Record) ([]Record, error) {
 		if done["barrier"] {
 			return nil, fmt.Errorf("attempt is parked behind ambiguity barrier")
 		}
+		if done["fix-done"] {
+			return nil, fmt.Errorf("attempt already has terminal fix-done")
+		}
 		if phase == "fix-done" {
 			details := data["details"].(map[string]any)
 			digest, err := Digest(root.Payload["source"])
@@ -199,6 +202,9 @@ func attemptSettlements(records, attempts, phases []Record) ([]Record, error) {
 		if !before(root, record) || !equalValue(data["source"], root.Payload["source"]) || data["context_sha256"] != context {
 			return nil, fmt.Errorf("settlement lacks exact canonical attempt/context/source")
 		}
+		if err := ownerAt(records, root, record, "technical-attempt"); err != nil {
+			return nil, err
+		}
 		if previous, ok := settled[root.ID]; ok {
 			if !equalValue(previous.Payload, data) {
 				return nil, fmt.Errorf("conflicting attempt settlements")
@@ -231,9 +237,6 @@ func attemptSettlements(records, attempts, phases []Record) ([]Record, error) {
 		}
 		if data["executor_outcome"] != expected {
 			return nil, fmt.Errorf("settlement does not confirm this exact old executor")
-		}
-		if err := ownerAt(records, root, record, "technical-attempt"); err != nil {
-			return nil, err
 		}
 		settled[root.ID] = record
 		result = append(result, record)

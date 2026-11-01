@@ -47,6 +47,17 @@ func edges(snapshot map[string]any) ([]timelineEdge, error) {
 			return nil, fmt.Errorf("missing/duplicate timeline server identity")
 		}
 		cursors[cursor], ids[id] = true, true
+		if kind == "IssueComment" {
+			edited, present := node["lastEditedAt"]
+			if !present {
+				return nil, fmt.Errorf("comment edit status is unavailable")
+			}
+			if edited != nil {
+				if _, err := serverTime(stringValue(edited)); err != nil {
+					return nil, fmt.Errorf("comment edit status is invalid: %w", err)
+				}
+			}
+		}
 		result = append(result, timelineEdge{cursor, id, kind, node})
 	}
 	return result, nil
@@ -319,13 +330,15 @@ func VerifiedDepth(snapshot map[string]any, trusted string) (Verified, error) {
 		if err != nil {
 			return result, err
 		}
-		info, err := epoch(items[:positions[id]+1], match[1], trusted)
-		if err != nil {
-			return result, err
+		// Historical scheduling depth is a structural transaction, never a
+		// reconstruction of a past epoch from today's commit-date timeline.
+		start := 0
+		for i, prior := range items[:positions[id]+1] {
+			if prior.kind == "IssueComment" && actor(prior.node) == trusted && manualOverride.MatchString(stringValue(prior.node["body"])) {
+				start = i + 1
+			}
 		}
-		if err := epochSafety(info, trusted); err != nil {
-			return result, err
-		}
+		info := Epoch{Hash: match[4], suffix: items[start : positions[id]+1]}
 		proof, err := legacyProof(info, match[1], trusted)
 		if err != nil {
 			return result, err
@@ -368,6 +381,33 @@ func VerifiedDepth(snapshot map[string]any, trusted string) (Verified, error) {
 	}
 	for _, entry := range boundaries {
 		payload := entry.root.Payload
+		// A publication may bind an earlier HEAD, never another repository,
+		// branch, lifetime PR or author. Check unfinished roots as well.
+		identity := map[string]any{}
+		for key, value := range mapValue(snapshot["identity"]) {
+			identity[key] = value
+		}
+		identity["head_sha"] = mapValue(payload["identity"])["head_sha"]
+		if !equalValue(identity, payload["identity"]) || !equalValue(snapshot["author"], payload["author"]) {
+			return result, fmt.Errorf("historical publication identity or author differs from PR")
+		}
+		if entry.id == entry.root.ID {
+			prefix := map[string]any{}
+			for key, value := range snapshot {
+				prefix[key] = value
+			}
+			prefix["identity"], prefix["headRefOid"] = identity, identity["head_sha"]
+			prefix["identity_sha256"], err = IdentityDigest(identity)
+			if err != nil {
+				return result, err
+			}
+			prefix["edges"] = snapshot["edges"].([]any)[:positions[entry.id]]
+			binding := payload["audit"].(map[string]any)
+			observed, err := Capture(prefix)
+			if err != nil || !equalValue(observed["snapshot_sha256"], binding["snapshot_sha256"]) || observed["last_edge_cursor"] != binding["last_edge_cursor"] || observed["last_edge_node_id"] != binding["last_edge_node_id"] {
+				return result, fmt.Errorf("historical publication audit prefix is unavailable or changed")
+			}
+		}
 		info, err := epoch(items[:positions[entry.id]+1], payload["identity"].(map[string]any)["head_sha"].(string), trusted)
 		if err != nil {
 			return result, err

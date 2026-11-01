@@ -74,6 +74,7 @@ func routingPass(client pipelineGraphQLClient, repository, repositoryID string, 
 	}
 	variables := map[string]any{"owner": parts[0], "name": parts[1], "number": number, "cursor": nil}
 	var header map[string]any
+	var watermark any
 	values := []any{}
 	cursors, edgeIDs, nodeIDs := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for pageNumber := 0; pageNumber < 1000; pageNumber++ {
@@ -88,7 +89,11 @@ func routingPass(client pipelineGraphQLClient, repository, repositoryID string, 
 		if header != nil && !reviewrouting.Equal(header, page.Header) {
 			return nil, fmt.Errorf("typed PR identity/state changed during pagination")
 		}
+		if header != nil && !reviewrouting.Equal(watermark, page.UpdatedAt) {
+			return nil, fmt.Errorf("typed timeline watermark changed during pagination")
+		}
 		header = page.Header
+		watermark = page.UpdatedAt
 		for _, raw := range page.Edges {
 			edge := routingObject(raw)
 			cursor := routingText(edge["cursor"])

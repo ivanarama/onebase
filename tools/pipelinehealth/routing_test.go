@@ -216,6 +216,24 @@ func TestPublicRoutingInspectionDoesNotElectOrMutate(t *testing.T) {
 	}
 }
 
+func TestPublicBackdatedLaterCommitKeepsHistoricalLegacyDepth(t *testing.T) {
+	snapshot := routingGolden(t, "two-legacy-rounds")
+	values := snapshot["edges"].([]any)
+	extra := map[string]any{"cursor": "LATE_OLD_DATE", "node": map[string]any{
+		"__typename": "PullRequestCommit", "id": "LATE_OLD_DATE", "commit": map[string]any{"oid": strings.Repeat("9", 40)}}}
+	withCommit := append([]any{}, values[:2]...)
+	withCommit = append(withCommit, extra)
+	snapshot["edges"] = append(withCommit, values[2:]...)
+	value, err := routingCLI(t, []any{routingPullFixture(t, snapshot, 42)}, "-routing-inspect", "42")
+	if err != nil || value["verified_depth"] != float64(2) {
+		t.Fatalf("backdated commit erased historical transactions: %v %v", value, err)
+	}
+	queue, err := routingCLI(t, []any{routingPullFixture(t, snapshot, 42)}, "-technical-handoff", "-contract", routingSkillFixture(t, true))
+	if err != nil || len(queue["content_review_candidates"].([]any)) != 1 || len(queue["engineering_waiting"].([]any)) != 0 {
+		t.Fatalf("backdated historical commit parked the current review: %v %v", queue, err)
+	}
+}
+
 func TestPublicTechnicalSourceNeverBecomesLegacyMergeOrIntegrationOwner(t *testing.T) {
 	contract := routingSkillFixture(t, true)
 	for _, name := range []string{"third-typed-round", "missing-claim", "typed-invalid-epoch"} {
