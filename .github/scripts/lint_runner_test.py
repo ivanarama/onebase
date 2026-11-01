@@ -182,6 +182,12 @@ class LintRunnerCLI(unittest.TestCase):
         self.assertEqual(self.run_lint().returncode, 0)
 
     def test_unbound_local_replace_and_in_tree_artifacts_rejected(self):
+        # The outside module must really exist: a missing directory would fail
+        # even if the containment guard were accidentally removed.
+        outside = self.base / "outside"
+        outside.mkdir()
+        (outside / "go.mod").write_text("module outside\n")
+        (outside / "source.go").write_text("package outside\n")
         (self.root / "control").write_text("local-replace")
         self.assertNotEqual(self.cli("inspect").returncode, 0)
         (self.root / "control").write_text("normal")
