@@ -176,6 +176,7 @@ type finding struct {
 }
 
 type report struct {
+	RoutingObservation               *routingObservation           `json:"routing_observation,omitempty"`
 	ReviewRoutingContract            *routingContract              `json:"review_routing_contract,omitempty"`
 	FixBridgeContract                *routingPurposeContract       `json:"fix_bridge_contract,omitempty"`
 	FixExecutionContract             *routingPurposeContract       `json:"fix_execution_contract,omitempty"`
