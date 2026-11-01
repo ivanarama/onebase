@@ -72,6 +72,10 @@ func (context *routingContext) observe(result *report, pr apiPull, item candidat
 		row.Route = "paused"
 	case observedContains(*result.TechnicalWaiting, item.Number):
 		row.Route, row.Recipient = "technical", "technical-fix"
+	case observedContains(result.FixCandidates, item.Number):
+		// The completed ordinary election also routes legacy corrections to
+		// FIX. This identifies its role, not a typed category or executor.
+		row.Route, row.Recipient = "technical", "technical-fix"
 	case observedContains(result.HumanWaiting, item.Number):
 		row.Route, row.Recipient = "decision", "owner"
 	case observedContains(result.ReviewedWaitingShip, item.Number):

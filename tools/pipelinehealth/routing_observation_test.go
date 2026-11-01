@@ -96,3 +96,35 @@ func TestPublicRoutingObservationWaitsForLegacyDecisionElection(t *testing.T) {
 		t.Fatalf("legacy stop disappeared or acquired an inferred product category: %v", value)
 	}
 }
+
+func TestPublicRoutingObservationKeepsLegacyFixElection(t *testing.T) {
+	snapshot := routingGolden(t, "two-legacy-rounds")
+	snapshot["labels"] = []any{"changes-requested"}
+	pulls := []any{routingPullFixture(t, snapshot, 42)}
+	contract := routingSkillFixture(t, true)
+	plain, err := routingCLI(t, pulls, "-contract", contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err := routingCLI(t, pulls, "-technical-handoff", "-contract", contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspection, err := routingCLI(t, pulls, "-routing-inspect", "42")
+	if err != nil || inspection["verified_depth"] != float64(2) {
+		t.Fatalf("fixture lost its verified legacy review history: %v, %v", inspection, err)
+	}
+	for _, report := range []map[string]any{plain, value} {
+		fixes := report["fix_candidates"].([]any)
+		if len(fixes) != 1 || fixes[0].(map[string]any)["number"] != float64(42) {
+			t.Fatalf("observation changed the ordinary FIX election: %v", report)
+		}
+	}
+	observation := value["routing_observation"].(map[string]any)
+	row := observation["items"].([]any)[0].(map[string]any)
+	if row["route"] != "technical" || row["recipient"] != "technical-fix" ||
+		row["evidence_status"] != "unknown" || row["budget_used"] != nil ||
+		len(row["categories"].([]any)) != 0 || observation["complete"] != false {
+		t.Fatalf("legacy FIX route disappeared or acquired unverified typed evidence: %v", row)
+	}
+}
