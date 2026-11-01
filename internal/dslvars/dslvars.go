@@ -139,7 +139,7 @@ func (c Common) Build() map[string]any {
 	for k, v := range interpreter.NewHTTPFunctionsWith(c.NetGuard, interpreter.HTTPOptions{Ctx: ctxSource, MaxFileBytes: c.HTTPFileMaxBytes}) {
 		vars[k] = v
 	}
-	for k, v := range interpreter.NewEmailFunctions(c.Mailer, c.NetGuard, c.EmailFileResolver) {
+	for k, v := range interpreter.NewEmailFunctionsWithContext(c.Mailer, c.NetGuard, ctxSource, c.EmailFileResolver) {
 		vars[k] = v
 	}
 	for k, v := range interpreter.NewFileFunctions(nil) {

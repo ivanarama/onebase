@@ -179,6 +179,7 @@
 | ~~10~~ | ~~[10-subsystems.md](10-subsystems.md)~~ | ~~Подсистемы (разделы навигации)~~ | ~~2–3 дня~~ | ✅ |
 | ~~11~~ | ~~[11-account-register.md](11-account-register.md)~~ | ~~Регистр бухгалтерии (план счетов)~~ | ~~8–10 дней~~ | ✅ |
 | 44 | [44-account-subconto.md](44-account-subconto.md) | Субконто (аналитика на счетах) — продолжение 11.2 | 5–7 дней | ✅ Реализовано (тесты `accountreg_subconto`/`movements_subconto`) |
+| 177 | [177-catalog-duplicate-merge.md](177-catalog-duplicate-merge.md) | Безопасное объединение дубликатов справочника: dry-run, атомарное переприсвоение ссылок и операторский UI (#1440) | 17–23 дня | 📋 Проектирование |
 
 ### Направление Б — расширение DSL
 
@@ -426,7 +427,7 @@
 | 158 | [158-open-form-programmatically.md](158-open-form-programmatically.md) | Программное открытие форм из DSL: единый `ОписаниеОповещения` callback, предзаполнение через server store и одноразовый token, типизированная навигация и same-origin modal; поля и ограниченный ввод в диалоге вопроса — срез A2 (#1531; связанные #1528, #1557, #1624, #1877) | ~8–11.5 дней + A2 ~1.5–2 дня | 📋 Проектирование |
 | 206 | [206-wall-clock-date.md](206-wall-clock-date.md) | Тип «местное время без зоны» (`localdate` + `precision: day\|second`): что записано, то и показано в любой зоне; существующий `Дата` (момент) не трогаем. Четыре среза, закрывает #1167 и #1169 | ~1–2 недели | 📋 Проектирование |
 | 161 | [161-query-live-transaction-context.md](161-query-live-transaction-context.md) | Единый живой контекст для `Новый Запрос` внутри DSL-транзакции: read-your-writes без второго SQLite-соединения (#1216) | ~2–2,5 дня | 📋 Проектирование |
-| 159 | [159-undefined-and-typed-empty-values.md](159-undefined-and-typed-empty-values.md) | Разделить семантическое `Неопределено` и пустые реквизиты известных типов: `Неопределено <> 0`, пустое число `= 0`, без миграции SQL `NULL` (#1274) | ~5–6 дней | 📋 Проектирование |
+| 159 | [159-undefined-and-typed-empty-values.md](159-undefined-and-typed-empty-values.md) | Разделить семантическое `Неопределено` и пустые реквизиты известных типов: `Неопределено <> 0`, пустое число `= 0`, без миграции SQL `NULL` (#1274) | ~5–6 дней | ✅ Реализовано: типизированные поля и запросы, отдельное Неопределено, СодержитКлюч, миграционная документация |
 | 160 | [160-report-datetime-param.md](160-report-datetime-param.md) | Параметр отчёта со временем суток (`datetime`): сначала одна точка разбора значения вместо трёх копий (экран/выгрузка/API), затем сам тип и формат подстановки по типу (заявка #1204) | ~1–1,5 дня | 📋 Проектирование |
 | 165 | [165-standard-field-canonical-storage-and-id-recovery.md](165-standard-field-canonical-storage-and-id-recovery.md) | Каноничное хранение стандартных «Кода»/«Номера» в `numerator.field` и атомарное восстановление `std_code`/`std_number` без DDL (#1358, #1359) | ~6–8.5 дней | 📋 Проектирование |
 | 167 | [167-multiline-plain-text-fields.md](167-multiline-plain-text-fields.md) | Многострочный обычный `string`: field-level `multiline`, наследование и override в managed-форме, `height` в строках, автоформы сущности и регистра сведений (#1390) | ~4.5–6 дней | 📋 Проектирование |
@@ -488,6 +489,7 @@
 | 208 | [208-existing-date-scalars-and-register-boundaries.md](208-existing-date-scalars-and-register-boundaries.md) | Существующий date: legacy-скаляры, моментные границы регистров и единая приёмка с PR #1833/#2188 (#2290) | ~5.5–11 дней + условный пересчёт итогов | 📋 Проектирование |
 | 204 | [204-stable-order-by-pagination-and-explicit-dir.md](204-stable-order-by-pagination-and-explicit-dir.md) | Полный порядок `order_by` с `id ASC` и восстановление явного `dir` без `sort`: общий контракт страниц SQLite/PostgreSQL (#1713, #1714) | ~2.25–3.75 дня | 📋 Проектирование |
 | 209 | [209-derived-select-values-and-types.md](209-derived-select-values-and-types.md) | Значения ссылок во вложенных SELECT и доказанные типы производных колонок: числовые сравнения, пустой текст, ON и UNION, общая матрица (#2247, #2248) | ~9–14.5 дней | 📋 Проектирование |
+| 211 | [211-qualified-source-physical-columns.md](211-qualified-source-physical-columns.md) | Физическая колонка квалифицированного поля по владельцу: обе ориентации reference/bool, безопасный fallback и публичная SQLite/PostgreSQL-приёмка (#2143) | ~3–4,5 дня | 📋 Проектирование |
 
 ### Направление Х — целостность ссылок на учётные записи
 
@@ -506,6 +508,21 @@
 | № | Файл | Фича | Эстимейт | Статус |
 |---|---|---|---|---|
 | 174 | [174-configurator-lazy-panels.md](174-configurator-lazy-panels.md) | Ленивая загрузка панелей конструктора: лёгкое дерево, один защищённый HTML-фрагмент по клику, кэш несохранённых правок и защита от гонок (#1471) | ~5,5–8 дней | 📋 Проектирование |
+
+### Производительность списков и подбора
+
+| № | Файл | Фича | Эстимейт | Статус |
+|---|---|---|---|---|
+| 210 | [210-catalog-first-page-performance.md](210-catalog-first-page-performance.md) | Ленивая панель «Отбор» и opt-in индексы точного порядка order_by после замеров, с сохранением RLS и пагинации (#2255) | ~10–16 дней | 📋 Проектирование |
+| 212 | [212-form-opening-parameters.md](212-form-opening-parameters.md) | Общие имена и значения URL: отбор списка, даты/диапазоны и форма отчёта с/без запуска (#2389, #2359) | ~6–9 дней | 📋 Проектирование |
+| 213 | [213-tail-durable-discovery-and-backlog.md](213-tail-durable-discovery-and-backlog.md) | Долговечные cursor/backlog TAIL, восстановление после простоя и сохранение существующего trust (#1248) | ~8–12 дней | 📋 Проектирование |
+| 214 | [214-persistent-list-filter-contract.md](214-persistent-list-filter-contract.md) | Постоянные отборы списка: ошибки, false/NULL, группы без обхода RLS и lf_off (#2375, #2376) | ~6–9 дней | 📋 Проектирование |
+
+### Bootstrap: платформенные пути и транспорт
+
+| № | Файл | Фича | Эстимейт | Статус |
+|---|---|---|---|---|
+| 215 | [215-bootstrap-platform-and-transport-contract.md](215-bootstrap-platform-and-transport-contract.md) | Пути PowerShell, HTTPS без downgrade, медленная сеть, noexec и PATH-ссылки; продолжение плана 202 (#2392, #2082, #2083) | ~6,5–10 дней | 📋 Проектирование |
 
 ## Граф зависимостей (архив)
 

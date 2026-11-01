@@ -196,6 +196,7 @@ function runtime(fetchImpl, cfgOverride = {}, productionValues = false) {
   context.parent = context;
   context.crypto = {randomUUID() { uuid++; return `00000000-0000-4000-8000-${String(uuid).padStart(12, '0')}`; }};
   context.obManagedApplyTablePartRefOptions = (value) => applied.push(['refs', value]);
+  context.obManagedApplyColumnTitles = () => {};
   context.applyTableParts = (value) => applied.push(['parts', value]);
   context.confirm = () => true;
   context.__obEmbedded = true;
@@ -259,6 +260,59 @@ function dispatchSubmit(app) {
   app.document.dispatch('submit', event);
   return event;
 }
+
+function concealedControl(app, enabled = false) {
+  const field = app.form.control('Секрет');
+  app.form.values.set('Секрет', enabled ? '12-34' : '');
+  field.disabled = !enabled;
+  field.getAttribute = (name) => name === 'name' ? 'Секрет' : null;
+  const query = app.form.querySelectorAll.bind(app.form);
+  app.form.querySelectorAll = (selector) => selector === '[data-ob-concealed]' ? [field] : query(selector);
+  const first = managed.indexOf('function obApplyConcealed(');
+  const last = managed.indexOf('window.obApplyConcealed = obApplyConcealed;', first);
+  vm.runInNewContext(managed.slice(first, last) + '\nwindow.obApplyConcealed = obApplyConcealed;', app.context);
+  return field;
+}
+
+test('conceal never enables an absent value or a partially rendered response', async () => {
+  for (const brokenRenderer of [false, true]) {
+    const app = runtime(async () => response({ok: true, revealed: ['секрет'], values: brokenRenderer ? {'Секрет': '12-34'} : {}}), {}, true);
+    const field = concealedControl(app);
+    if (brokenRenderer) app.context.applyTableParts = () => { throw Error('renderer failed'); };
+    await app.context.obFire('Показать', 'Нажатие');
+    assert.equal(field.disabled, true);
+    assert.equal(field.value, '');
+  }
+});
+
+test('conceal revokes before a throwing renderer and preserves readonly', async () => {
+  const app = runtime(async () => response({ok: true, revealed: [], values: {}}), {}, true);
+  const field = concealedControl(app, true);
+  field.readOnly = true;
+  app.context.applyTableParts = () => {
+    assert.equal(field.disabled, true);
+    assert.equal(field.value, '');
+    throw Error('renderer failed');
+  };
+  await app.context.obFire('Отозвать', 'Нажатие');
+  assert.equal(field.disabled, true);
+  assert.equal(field.readOnly, true);
+});
+
+test('before-post merges preserve newer disclosed input without approving its old snapshot', async () => {
+  let complete;
+  const app = runtime(() => new Promise((resolve) => { complete = resolve; }), {kind: 'document', docId: 'doc-1', beforePost: true}, true);
+  const field = concealedControl(app, true);
+  const pending = app.context.obRequestFormClose({mode: 'post'});
+  while (!complete) await new Promise((resolve) => setImmediate(resolve));
+  field.value = '56-78';
+  app.document.dispatch('input', {target: field});
+  complete(response({ok: true, values: {'Секрет': '12-34'}, revealed: ['секрет']}));
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(field.disabled, false);
+  assert.equal(field.value, '56-78');
+  assert.equal((await pending).allowed, false);
+});
 
 test('close controller is single-flight and returns only its exact decision', async () => {
   let complete;
@@ -1992,5 +2046,124 @@ for (const beforePost of [false, true]) {
     assert.equal(app.form.values.get('Статус'), 'Правка обработчика');
     assert.equal(app.versionInput.value, '3');
     assert.equal(app.context._obFormDirty, true);
+  });
+}
+
+// The Go matrix supplies an actual mounted server for each database dialect.
+// Use the production modal with this controller, preserving the ordinary
+// Answer route and the separate BeforePost owner/queue and revision fences.
+if (process.env.ONEBASE_QUESTION_HTTP_URL) {
+  test('question fields mounted HTTP', {timeout: 30000}, async () => {
+    const base = process.env.ONEBASE_QUESTION_HTTP_URL;
+    const page = await fetch(base + '/ui/document/ДиалогПередПроведением/new');
+    assert.equal(page.status, 200);
+    const html = await page.text();
+    const match = html.match(/<script type="application\/json" id="ob-managed-config">([^]*?)<\/script>/);
+    assert.ok(match, 'rendered managed configuration');
+    const cfg = JSON.parse(match[1]);
+    assert.equal(cfg.beforePost, true);
+    const transport = cfg.serviceFields._question_fields;
+    assert.ok(transport && transport !== '_question_fields', 'business name must be remapped');
+    const ui = fs.readFileSync('static/ui.js', 'utf8');
+    const begin = ui.indexOf('// BEGIN onebase-question-modal');
+    const end = ui.indexOf('// END onebase-question-modal', begin);
+    assert.ok(begin >= 0 && end > begin);
+    const modal = ui.slice(begin, end);
+    function nodes(root) { return [root, ...(root.children || []).flatMap(nodes)]; }
+    async function answer(app) {
+      // A browser click is a new task after the response microtasks drain.
+      await new Promise((resolve) => setImmediate(resolve));
+      const current = app.document.getElementById('_question-modal');
+      assert.ok(current);
+      const fields = nodes(current);
+      fields.find((n) => n.tagName === 'INPUT').value = 'дежурный';
+      fields.find((n) => n.tagName === 'TEXTAREA').value = 'строка 1\nстрока 2';
+      const button = fields.find((n) => n.tagName === 'BUTTON');
+      button.dispatch('click', {target: button});
+    }
+    async function dismiss(app) {
+      await new Promise((resolve) => setImmediate(resolve));
+      const current = app.document.getElementById('_question-modal');
+      assert.ok(current);
+      current.dispatch('click', {target: current});
+    }
+    for (const mode of ['ordinary', 'ok', 'cancel', 'error', 'again', 'dismiss', 'edit']) {
+      const calls = [];
+      const responses = [];
+      let answerReceived;
+      const received = new Promise((resolve) => { answerReceived = resolve; });
+      let releaseAnswer;
+      const app = runtime(async (url, options) => {
+        const body = new URLSearchParams(options.body.toString());
+        calls.push(body);
+        const result = await fetch(base + url, {...options, body});
+        const data = await result.json();
+        responses.push(data);
+        if (mode === 'edit' && body.get('_question_answer')) {
+          answerReceived();
+          await new Promise((resolve) => { releaseAnswer = resolve; });
+        }
+        return response(data, result.ok, result.status);
+      }, cfg);
+      const opened = [];
+      const waiters = [];
+      const append = app.document.body.appendChild.bind(app.document.body);
+      app.document.body.appendChild = (child) => {
+        append(child);
+        if (child.id === '_question-modal') {
+          if (waiters.length) waiters.shift()(child);
+          else opened.push(child);
+        }
+      };
+      const nextModal = () => opened.length ? Promise.resolve(opened.shift()) : new Promise((resolve) => waiters.push(resolve));
+      let lastEvent;
+      const fire = app.context.obFire;
+      app.context.obFire = (...args) => { lastEvent = fire(...args); return lastEvent; };
+      app.form.values.set('_question_fields', 'бизнес-значение');
+      app.form.values.set('Режим', mode);
+      vm.runInNewContext(modal, app.context, {filename: 'question-modal.js'});
+      if (mode === 'ordinary') {
+        await app.context.obFire('', 'ПриОткрытии');
+        await nextModal();
+        await answer(app);
+        await lastEvent;
+        assert.ok(app.applied.some(([kind, text]) => kind === 'flash' && text === 'Ответ=Да;дежурный;строка 1\nстрока 2'));
+        assert.equal(calls.length, 2, 'ordinary Answer must be sent once');
+        assert.equal(formEventName({options: {body: calls[1]}}), 'Ответ');
+      } else {
+        let settled = false;
+        const pending = app.context.obManagedBeforePost().then((allowed) => { settled = true; return allowed; });
+        await nextModal();
+        assert.equal(calls.length, 1);
+        assert.equal(settled, false, 'question must not authorize posting');
+        if (mode === 'dismiss') {
+          await dismiss(app);
+          assert.equal(await pending, false);
+          assert.equal(calls.length, 1, 'backdrop must not send Answer');
+          continue;
+        }
+        await answer(app);
+        if (mode === 'edit') {
+          await received;
+          app.form.values.set('Наименование', 'новый ввод');
+          app.context.obSetManagedFormDirty(true);
+          releaseAnswer();
+        }
+        if (mode === 'again') {
+          await nextModal();
+          assert.equal(settled, false, 'new question must not authorize posting');
+          await dismiss(app);
+        }
+        assert.equal(await pending, mode === 'ok', JSON.stringify({mode, responses, applied: app.applied}));
+        assert.equal(calls.length, 2, 'callback must not send a parallel Answer');
+        assert.equal(calls[1].get('_event'), 'ПередПроведением');
+        if (mode !== 'error') assert.ok(app.applied.some(([kind, text]) => kind === 'flash' && text === 'ПередПроведением=Да;дежурный;строка 1\nстрока 2'));
+      }
+      assert.equal(calls[1].get('_element'), '');
+      assert.equal(calls[1].get('_question_answer'), 'Да');
+      assert.deepEqual(JSON.parse(calls[1].get(transport)), {Кому: 'дежурный', Комментарий: 'строка 1\nстрока 2'});
+      assert.equal(calls[1].get('_question_fields'), 'бизнес-значение');
+      if (mode !== 'error') assert.ok(app.applied.some(([kind, text]) => kind === 'flash' && text === 'Реквизит=бизнес-значение'));
+    }
   });
 }
