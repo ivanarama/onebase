@@ -356,6 +356,7 @@ func runPipelineGraphQLCommand(ctx context.Context, executable string, input []b
 	// interpreted by a shell.
 	//nolint:gosec
 	cmd := exec.CommandContext(ctx, executable, "api", "graphql", "--input", "-")
+	preparePipelineGraphQLCommand(cmd)
 	cmd.Stdin = bytes.NewReader(input)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
