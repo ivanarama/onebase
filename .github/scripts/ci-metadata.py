@@ -11,6 +11,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 from urllib.parse import quote
 import zipfile
@@ -31,6 +32,20 @@ def gh(endpoint, body=None, *, raw=False):
 def identity(pr):
     return (pr['head']['sha'], pr['base']['sha'], pr['base']['ref'], pr['state'],
             pr['draft'], pr.get('updated_at'), pr.get('body'), pr.get('title'))
+
+
+def missing_blob(api, endpoint):
+    try:
+        value = api(endpoint)
+        digest = value.get('sha') if isinstance(value, dict) else None
+        return digest if isinstance(digest, str) and digest else None
+    except subprocess.CalledProcessError as exc:
+        error = exc.stderr or b''
+        if isinstance(error, bytes): error = error.decode('utf-8', errors='replace')
+        # Only a real content 404 is ordinary missing evidence. Authentication,
+        # permission, rate-limit and transport errors must remain visible.
+        if not re.search(r'\(HTTP 404\)\s*$', error.strip()): raise
+        return None
 
 
 def full_proof(api, repository, run, pr, workflow_blob, epoch, now, *, completed=True):
@@ -75,7 +90,12 @@ def full_proof(api, repository, run, pr, workflow_blob, epoch, now, *, completed
         required = [j for j in jobs['jobs'] if j['name'] in REQUIRED]
         return (len(required) == len(REQUIRED) and {j['name'] for j in required} == REQUIRED
                 and all(j['status'] == 'completed' and j['conclusion'] == 'success' for j in required))
-    except (KeyError, TypeError, ValueError, OSError, zipfile.BadZipFile, subprocess.SubprocessError):
+    except subprocess.CalledProcessError as exc:
+        error = exc.stderr or b''
+        if isinstance(error, bytes): error = error.decode('utf-8', errors='replace')
+        if not re.search(r'\(HTTP 404\)\s*$', error.strip()): raise
+        return False
+    except (KeyError, TypeError, ValueError, OSError, zipfile.BadZipFile):
         return False
 
 
@@ -84,21 +104,29 @@ def handle(api, repository, number, epoch, *, now):
     pr = api(prefix + f'/pulls/{number}')
     if pr['state'] != 'open' or pr['base']['ref'] != 'main':
         return dict(action='inactive')
-    blob = api(prefix + '/contents/.github/workflows/ci.yml?ref=' + quote(pr['base']['sha'], safe=''))['sha']
+    blob = missing_blob(api, prefix + '/contents/.github/workflows/ci.yml?ref=' + quote(pr['base']['sha'], safe=''))
     # A PR must not forge the input certificate or docs/full classification.
-    trusted = True
+    trusted = blob is not None
     for path in ['.github/workflows/ci.yml', '.github/scripts/ci-inputs.py', '.github/scripts/classify-ci.sh']:
-        base_blob = api(prefix + '/contents/' + path + '?ref=' + pr['base']['sha'])['sha']
-        head_blob = api(prefix + '/contents/' + path + '?ref=' + pr['head']['sha'])['sha']
-        trusted = trusted and base_blob == head_blob
+        base_blob = missing_blob(api, prefix + '/contents/' + path + '?ref=' + pr['base']['sha'])
+        head_blob = missing_blob(api, prefix + '/contents/' + path + '?ref=' + pr['head']['sha'])
+        trusted = trusted and base_blob is not None and head_blob is not None and base_blob == head_blob
     runs = api(prefix + '/actions/workflows/ci.yml/runs?head_sha=' + pr['head']['sha'] + '&per_page=100')
     # A bounded/uncertain history can only lose reuse, never invent success.
     reuse, running = None, None
     candidates = [r for r in runs['workflow_runs'][:100] if r.get('path') == '.github/workflows/ci.yml'
                   and r.get('head_sha') == pr['head']['sha']]
     # Never reach behind a newer failure/cancellation to find an older green.
-    if candidates:
-        run = max(candidates, key=lambda r: (r.get('run_number', r['id']), r.get('run_attempt', 1)))
+    try:
+        # API list order/run_number describe creation, not execution. An old
+        # run rerun later can supersede a newer run's green result.
+        latest = max(candidates, key=lambda r: (datetime.fromisoformat(r['updated_at'].replace('Z', '+00:00')),
+                     r['id'], r['run_attempt'])) if candidates else None
+        complete = runs['total_count'] == len(runs['workflow_runs']) and len({r['id'] for r in runs['workflow_runs']}) == len(runs['workflow_runs'])
+    except (KeyError, TypeError, ValueError):
+        latest, complete = None, False
+    if latest and complete:
+        run = latest
         if trusted and full_proof(api, repository, run, pr, blob, epoch, now): reuse = run
         elif trusted and full_proof(api, repository, run, pr, blob, epoch, now, completed=False): running = run
     latest = api(prefix + f'/pulls/{number}')

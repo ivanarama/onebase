@@ -22,6 +22,7 @@ dbquery.exe
 *.prof
 
 # Test/coverage artifacts
+__pycache__/
 coverage.out
 coverage.out.report/
 *.log
