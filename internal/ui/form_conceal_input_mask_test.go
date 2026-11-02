@@ -94,7 +94,7 @@ func TestConcealInputMaskHTTPMatrix(t *testing.T) {
 						t.Fatalf("GET: %d %s", get.Code, get.Body.String())
 					}
 					attrs := concealMaskInput(t, get.Body.String(), "Секрет")
-					for k, want := range map[string]string{"type": "text", "autocomplete": "one-time-code", "data-ob-input-mask": "00-00", "placeholder": "__-__", "inputmode": "numeric", "pattern": el.Mask, "title": el.Hint, "accesskey": "s"} {
+					for k, want := range map[string]string{"type": "text", "autocomplete": "off", "data-ob-input-mask": "00-00", "placeholder": "__-__", "inputmode": "numeric", "pattern": el.Mask, "title": el.Hint, "accesskey": "s"} {
 						if got, ok := attrs[k]; !ok || got != want {
 							t.Fatalf("%s = %q (present=%v), want %q", k, got, ok, want)
 						}
