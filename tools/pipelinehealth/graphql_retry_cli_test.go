@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -53,21 +52,9 @@ func runGraphQLRetryFixture(path string) {
 }
 
 func TestGraphQLCLIGatewayReadRecovery(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	name := "pipelinehealth"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	binary := filepath.Join(t.TempDir(), name)
-	//nolint:gosec // The output path and package are fixed by this test.
-	build := exec.Command("go", "build", "-o", binary, "./tools/pipelinehealth")
-	build.Dir = root
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v\n%s", err, output)
-	}
+	root := repoRoot(t)
+	binary := pipelinehealthCLI(t)
+
 	helper, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)

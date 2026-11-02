@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, edited, ready_for_review]
+    types: [opened, synchronize, reopened, edited]
   # Ручной запуск (план 115). Без него прогон нельзя перезапустить иначе как
   # новым пушем: во время аварии GitHub Actions 2026-08-06 вебхуки были
   # задушены до ~15%, PR-события прогонов не создавали, а обязательные
@@ -48,6 +48,17 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: bash .github/scripts/classify-ci.sh
 
+      - name: Record exact full CI inputs
+        env:
+          CI_MODE: ${{ steps.diff.outputs.mode }}
+          CI_ENVIRONMENT_EPOCH: ${{ vars.CI_ENVIRONMENT_EPOCH }}
+        run: python3 .github/scripts/ci-inputs.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-inputs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ci-inputs.json
+          retention-days: 2
+
   build:
     needs: [classify]
     if: ${{ always() && !cancelled() }}
@@ -68,6 +79,10 @@ jobs:
       - name: Lint runner public CLI contracts
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: python3 .github/scripts/lint_runner_test.py
+
+      - name: CI metadata reuse contracts
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        run: python3 .github/scripts/ci_metadata_test.py
 
       # Raw commit messages can close issues even when the phrase is only an
       # example. This gate also runs for docs-only PRs and PR body edits.

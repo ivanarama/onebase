@@ -209,7 +209,7 @@ func TestIndependentSyntheticPublicInspectionTransport(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cmd := exec.Command("go", "run", ".", "-json", "-repo", "owner/repo", "-owner", "owner", "-routing-inspect", "42")
+			cmd := exec.Command(pipelinehealthCLI(t), "-json", "-repo", "owner/repo", "-owner", "owner", "-routing-inspect", "42")
 			preparePipelineGraphQLCommand(cmd)
 			cmd.Env = append(os.Environ(), "GH_EXE="+executable, "PIPELINEHEALTH_TEST_GH_HELPER=1", "PIPELINEHEALTH_TEST_GH_SEQUENCE="+path)
 			output, runErr := cmd.Output()

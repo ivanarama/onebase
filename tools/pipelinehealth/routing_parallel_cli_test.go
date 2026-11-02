@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,19 +20,9 @@ import (
 // The public command must overlap independent PR reads, while retaining both
 // complete passes and refusing a changed history anywhere in the census.
 func TestRoutingParallelCensusThroughCLI(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	binary := filepath.Join(t.TempDir(), "pipelinehealth")
-	if runtime.GOOS == "windows" {
-		binary += ".exe"
-	}
-	build := exec.Command("go", "build", "-o", binary, "./tools/pipelinehealth") //nolint:gosec // Test-owned binary path.
-	build.Dir = root
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v %s", err, output)
-	}
+	root := repoRoot(t)
+	binary := pipelinehealthCLI(t)
+
 	helper, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
