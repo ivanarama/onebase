@@ -217,7 +217,7 @@ func loadRoutingSnapshots(client pipelineGraphQLClient, prs []apiPull, repositor
 	completed := make(chan observed)
 	var workers sync.WaitGroup
 	// Keep both ordered complete passes within each PR. Only independent PRs
-	// overlap, with the same account-wide physical-query budget for all workers.
+	// overlap, sharing this snapshot's physical-query budget across all workers.
 	for range min(6, len(jobs)) {
 		workers.Add(1)
 		go func() {
