@@ -65,6 +65,10 @@ jobs:
           go-version-file: '.go-version'
           cache: true
 
+      - name: Lint runner public CLI contracts
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        run: python3 .github/scripts/lint_runner_test.py
+
       # Raw commit messages can close issues even when the phrase is only an
       # example. This gate also runs for docs-only PRs and PR body edits.
       - name: Check commit closing references
