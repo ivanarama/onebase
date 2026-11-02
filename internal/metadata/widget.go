@@ -76,6 +76,16 @@ type WidgetSource struct {
 	IDField string `yaml:"id_field"`
 }
 
+// WidgetRowStyle — оформление строки list-виджета из колонок выборки, как
+// ПриВыводеСтроки списка в 1С: Background — колонка с цветом фона строки
+// ("#RGB" или "#RRGGBB"; иное или пусто — без фона), Bold — колонка-признак
+// жирного шрифта. Колонки оформления в таблице не показываются. Цвет из
+// данных проверяется по формату: CSS из данных в страницу не попадает.
+type WidgetRowStyle struct {
+	Background string `yaml:"background"`
+	Bold       string `yaml:"bold"`
+}
+
 // WidgetFilterValue — один вариант select-фильтра list-виджета.
 type WidgetFilterValue struct {
 	Value  string            `yaml:"value"`
@@ -161,6 +171,9 @@ type Widget struct {
 	// объявленные фильтры принимаются от браузера; значения идут bind-параметрами
 	// существующего компилятора запросов, текст запроса значениями не правится.
 	Filters []WidgetFilter `yaml:"filters,omitempty"`
+	// RowStyle — оформление строк list-виджета из колонок выборки (цвет фона,
+	// жирный). Только для type: list.
+	RowStyle *WidgetRowStyle `yaml:"row_style,omitempty"`
 	// Link — куда ведёт клик по карточке (kpi). Счётчик «в карантине: 3» без
 	// ссылки заставляет искать эту очередь руками; со ссылкой карточка сама
 	// открывает список с нужным отбором. Значение — внутренний путь приложения

@@ -41,6 +41,20 @@ func splitCamel(s string) string {
 // widgetCell formats a single cell in a list-widget table according to the
 // declared format (money/number/percent/date). It is wired into the template
 // FuncMap as "wcell" and called like `{{wcell row "Field" "money"}}`.
+// widgetRowStyle — inline-стиль строки list-виджета из row_style. Значения
+// повторно проверяются здесь (только "#rrggbb" и признак bool), поэтому в
+// template.CSS не может попасть ничего, кроме цвета и font-weight.
+func widgetRowStyle(row map[string]any) template.CSS {
+	var parts []string
+	if bg := widget.NormalizeRowColor(row[widget.RowBackgroundKey]); bg != "" {
+		parts = append(parts, "background-color:"+bg, "color:"+widget.RowTextColor(bg))
+	}
+	if bold, _ := row[widget.RowBoldKey].(bool); bold {
+		parts = append(parts, "font-weight:600")
+	}
+	return template.CSS(strings.Join(parts, ";"))
+}
+
 func widgetCell(row map[string]any, field, format string) string {
 	v, ok := row[field]
 	if !ok || v == nil {
