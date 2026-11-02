@@ -52,6 +52,17 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	if os.Getenv("PIPELINEHEALTH_TEST_GH_HELPER") == "1" {
+		if endpoint := os.Getenv("PIPELINEHEALTH_TEST_GH_ROUTING_SERVER"); endpoint != "" {
+			response, err := http.Post(endpoint, "application/json", os.Stdin) //nolint:gosec // Test-owned loopback server, inherited only by the fixture subprocess.
+			if err != nil {
+				os.Exit(6)
+			}
+			_, _ = io.Copy(os.Stdout, response.Body)
+			if err := response.Body.Close(); err != nil {
+				os.Exit(7)
+			}
+			os.Exit(0)
+		}
 		if path := os.Getenv("PIPELINEHEALTH_TEST_GH_RETRY_FIXTURE"); path != "" {
 			runGraphQLRetryFixture(path)
 		}
