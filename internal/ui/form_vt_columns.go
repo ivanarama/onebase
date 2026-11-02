@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"html/template"
+	"strconv"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -13,6 +15,23 @@ type managedVTColumn struct {
 	Element  *metadata.FormElement
 	Hidden   bool
 	ReadOnly bool
+	// ElPath / CondHidden — колонка с hidden_when: путь размещения (ключ карты
+	// состояний элементов) и результат условия при отрисовке. Ячейки такой
+	// колонки всегда в разметке, а показ переключает ответ события формы.
+	ElPath     string
+	CondHidden bool
+}
+
+// HeaderStyle — стиль ячейки шапки: ширина и скрытие условием.
+func (c managedVTColumn) HeaderStyle() template.CSS {
+	style := ""
+	if c.CondHidden {
+		style = "display:none;"
+	}
+	if width := c.Width(); width > 0 {
+		style += "width:" + strconv.Itoa(width) + "px"
+	}
+	return template.CSS(style) //nolint:gosec // G203: только display:none и целая ширина 1…4000 px
 }
 
 // Width — ширина колонки в пикселях из `width` элемента Колонка; 0 — ширину
@@ -132,4 +151,41 @@ func managedVTEditable(plan []managedVTColumn) bool {
 		}
 	}
 	return false
+}
+
+// managedVTColumnsHiddenWhen — то же, что managedTPColumnsHiddenWhen, для
+// колонок ValueTable: путь размещения и состояние hidden_when при отрисовке.
+func managedVTColumnsHiddenWhen(plan []managedVTColumn, ctx map[string]any) []managedVTColumn {
+	var out []managedVTColumn
+	hidden, _ := ctx["ElHidden"].(map[string]bool)
+	for i, column := range plan {
+		if column.Hidden || column.Element == nil || strings.TrimSpace(column.Element.HiddenWhen) == "" {
+			continue
+		}
+		path := elementStatePath(ctx, column.Element)
+		if path == "" {
+			continue
+		}
+		if out == nil {
+			out = append([]managedVTColumn(nil), plan...)
+		}
+		out[i].ElPath = path
+		out[i].CondHidden = hidden[path]
+	}
+	if out == nil {
+		return plan
+	}
+	return out
+}
+
+// managedVTCondAttr — значение data-vt-cond: «колонка=путь» для колонок с
+// hidden_when. По нему клиент находит колонку ValueTable в ответе события.
+func managedVTCondAttr(plan []managedVTColumn) string {
+	parts := make([]string, 0, len(plan))
+	for _, column := range plan {
+		if column.ElPath != "" && column.Column != nil {
+			parts = append(parts, column.Column.Name+"="+column.ElPath)
+		}
+	}
+	return strings.Join(parts, ",")
 }

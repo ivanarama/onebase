@@ -106,6 +106,47 @@ function obManagedHiddenColumnNames(tbody) {
   }
 }
 
+// obManagedSetVTColumnHidden — hidden_when колонки ValueTable после события
+// формы. tbody несёт карту data-vt-cond «колонка=путь размещения»; ячейки
+// колонки в разметке есть всегда, меняется только их показ — значение
+// по-прежнему уходит на сервер. Флаг h в data-vt-flags правится тут же: по
+// нему перестраиваются строки, пришедшие в том же или следующем ответе.
+// Возвращает true, если путь принадлежит колонке хоть одной ValueTable.
+function obManagedSetVTColumnHidden(path, on) {
+  var matched = false;
+  var bodies = document.querySelectorAll ? document.querySelectorAll('tbody[data-vt-cond]') : [];
+  Array.prototype.forEach.call(bodies, function(tbody) {
+    var name = null;
+    (tbody.getAttribute('data-vt-cond') || '').split(',').forEach(function(part) {
+      var i = part.lastIndexOf('=');
+      if (i > 0 && part.slice(i + 1) === path) name = part.slice(0, i);
+    });
+    if (name === null) return;
+    matched = true;
+    var flags = (tbody.getAttribute('data-vt-flags') || '').split(',').map(function(part) {
+      var i = part.lastIndexOf(':');
+      if (i < 0 || part.slice(0, i) !== name) return part;
+      var flag = part.slice(i + 1).replace(/h/g, '');
+      return name + ':' + flag + (on ? 'h' : '');
+    });
+    tbody.setAttribute('data-vt-flags', flags.join(','));
+    var index = -1;
+    obManagedParseFieldMeta(tbody.getAttribute('data-vt-fields') || '').forEach(function(f, i) {
+      if (f.name === name) index = i;
+    });
+    var table = tbody.closest ? tbody.closest('table') : null;
+    var th = table ? table.querySelector('th[data-ob-vt-col="' + (window.CSS && CSS.escape ? CSS.escape(path) : path) + '"]') : null;
+    if (th) th.style.display = on ? 'none' : '';
+    if (index < 0) return;
+    Array.prototype.forEach.call(tbody.rows || [], function(tr) {
+      // Строка-заглушка пустой таблицы — одна ячейка на всю ширину.
+      if (!tr.cells || tr.cells.length <= index || tr.cells[0].colSpan > 1) return;
+      tr.cells[index].style.display = on ? 'none' : '';
+    });
+  });
+  return matched;
+}
+
 // Shared by the managed-form response renderer and the separate SlickGrid
 // runtime below. Keep this outside either IIFE: Slick submit/event sync must
 // be able to update the authoritative hidden payload in the real browser
@@ -627,6 +668,11 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     };
     var hidden = st.hidden || {};
     Object.keys(hidden).forEach(function (path) {
+      // Колонка табличной части якоря в DOM не имеет: её видимость — свойство
+      // описания таблицы.
+      var inGrid = window.obManagedSetGridColumnHidden ? window.obManagedSetGridColumnHidden(path, !!hidden[path]) : false;
+      var inVT = typeof obManagedSetVTColumnHidden === 'function' ? obManagedSetVTColumnHidden(path, !!hidden[path]) : false;
+      if (inGrid || inVT) return;
       var el = byPath(path);
       if (!el) {
         // Страница набора СтраницыФормы своего якоря не имеет — её якорь
@@ -2975,6 +3021,42 @@ function obGridApplyOrder(columns, order) {
   Array.prototype.push.apply(columns, out);
   return changed;
 }
+// obGridVisibleToIndex — индекс в массиве колонок по номеру видимой колонки
+// (шапка рисует только видимые). -1 — такой видимой колонки нет.
+function obGridVisibleToIndex(columns, visible) {
+  for (var i = 0, n = -1; columns && i < columns.length; i++) {
+    if (columns[i] && !columns[i].hidden && ++n === visible) return i;
+  }
+  return -1;
+}
+// obGridSetColumnHidden — видимость колонок одной таблицы с путём размещения
+// path (hidden_when элемента Колонка). Перерисовывает шапку и строки, если
+// видимость поменялась; ширины досчитывает вызывающий (resizeGrid).
+function obGridSetColumnHidden(state, path, on) {
+  var result = {matched: false, changed: false};
+  if (!state || !state.grid || !state.columns) return result;
+  state.columns.forEach(function(col) {
+    if (!col || col.obElPath !== path) return;
+    result.matched = true;
+    if (!!col.hidden === on) return;
+    col.hidden = on;
+    result.changed = true;
+  });
+  if (!result.changed) return result;
+  var grid = state.grid;
+  // Пересоздание шапки уничтожает редактор: ввод сначала принять.
+  var lock = grid.getEditorLock && grid.getEditorLock();
+  if (lock && lock.isActive() && !lock.commitCurrentEdit()) lock.cancelCurrentEdit();
+  var active = grid.getActiveCell ? grid.getActiveCell() : null;
+  grid.updateColumns();
+  // Активная ячейка в скрытой колонке — на первую видимую той же строки:
+  // строка не меняется, ПриАктивизацииСтроки не повторяется.
+  if (active && state.columns[active.cell] && state.columns[active.cell].hidden) {
+    var first = obGridVisibleToIndex(state.columns, 0);
+    if (first >= 0 && grid.setActiveCell) grid.setActiveCell(active.row, first);
+  }
+  return result;
+}
 function obGridMoveColumn(columns, from, to) {
   if (!columns || from === to || from < 0 || to < 0 || from >= columns.length || to >= columns.length) return false;
   var col = columns.splice(from, 1)[0];
@@ -2991,6 +3073,7 @@ function obGridKeepDeclaredWidths(grid, available) {
   var cols = grid.getColumns();
   var declared = false, total = 0;
   for (var i = 0; i < cols.length; i++) {
+    if (cols[i].hidden) continue;
     if (cols[i].obWidth) declared = true;
     total += cols[i].obWidth || 120;
   }
@@ -3112,7 +3195,7 @@ function obGridColumnIds(columns) {
       if (!h) return;
       // Ручка изменения ширины — своё перетаскивание SlickGrid.
       if (e.target.closest && e.target.closest(".slick-resizable-handle")) { e.preventDefault(); return; }
-      dragFrom = headerCells().indexOf(h);
+      dragFrom = obGridVisibleToIndex(state.columns, headerCells().indexOf(h));
       try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", ""); } catch (er) {}
     });
     div.addEventListener("dragover", function(e) {
@@ -3128,7 +3211,7 @@ function obGridColumnIds(columns) {
       // setColumns уничтожает редактор: сначала сохранить ввод или оставить
       // таблицу без изменений, если валидация редактора отклонила значение.
       if (!grid.getEditorLock().commitCurrentEdit()) return;
-      if (!obGridMoveColumn(state.columns, from, headerCells().indexOf(h))) return;
+      if (!obGridMoveColumn(state.columns, from, obGridVisibleToIndex(state.columns, headerCells().indexOf(h)))) return;
       var isDefault = applyColumns();
       save(isDefault ? "" : JSON.stringify(obGridColumnIds(state.columns)));
     });
@@ -3154,6 +3237,9 @@ function obGridColumnIds(columns) {
       if (typeof g.grid.getFooterRowColumn !== "function") return;
       var items = g.dataView.getItems();
       var cols = g.columnsMeta || [];
+      // Подпись — в первой ВИДИМОЙ колонке: первая по описанию бывает скрыта.
+      var labelId = null, shown = g.grid.getColumns ? g.grid.getColumns() : [];
+      for (var v = 0; v < shown.length; v++) if (shown[v] && !shown[v].hidden) { labelId = shown[v].id; break; }
       for (var i = 0; i < cols.length; i++) {
         var c = cols[i];
         var node = g.grid.getFooterRowColumn(c.id);
@@ -3167,11 +3253,34 @@ function obGridColumnIds(columns) {
           node.innerHTML = '<span style="display:block;text-align:right;font-weight:600;font-variant-numeric:tabular-nums">' +
             sum.toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2}) + "</span>";
         } else {
-          node.innerHTML = (i === 0) ? '<span style="color:#64748b">Итого</span>' : "";
+          node.innerHTML = (c.id === labelId) ? '<span style="color:#64748b">Итого</span>' : "";
         }
       }
     } catch (e) { if (window.console) console.warn("updateTotals:", e); }
   }
+  // obManagedSetGridColumnHidden — hidden_when колонки табличной части после
+  // события формы. Ключ — путь размещения элемента Колонка, тот же, что в
+  // elementStates.hidden. Колонка есть во всех представлениях таблицы (рядом
+  // с редактируемой бывает сводка только для чтения), поэтому меняются все.
+  // После смены видимости ширины пересчитываются заново: объявленные и
+  // заданные пользователем остаются, остальные растягиваются по месту.
+  // Возвращает true, если путь принадлежит колонке хоть одной таблицы, —
+  // тогда якоря в DOM у него нет и искать его там бессмысленно.
+  window.obManagedSetGridColumnHidden = function(path, on) {
+    var matched = false;
+    var views = (window._obGridViews || []).slice();
+    var grids = window._obGrids || {};
+    Object.keys(grids).forEach(function(tp) {
+      if (views.indexOf(grids[tp]) < 0) views.push(grids[tp]);
+    });
+    views.forEach(function(state) {
+      var result = obGridSetColumnHidden(state, path, on);
+      if (result.matched) matched = true;
+      if (result.changed) resizeGrid(state);
+    });
+    return matched;
+  };
+
   // _obResizeGrids — пройтись по всем гридам и пересчитать видимые. Вызывается
   // при переключении вкладок managed-формы и при ресайзе окна.
   window._obResizeGrids = function() {
@@ -3845,6 +3954,13 @@ function obGridColumnIds(columns) {
       // obWidth — объявленная ширина: autosizeColumns перезаписывает width, а
       // широкой таблице её надо вернуть (obGridKeepDeclaredWidths).
       if (c.width) { col.width = c.width; col.obWidth = c.width; }
+      // Колонка с hidden_when: остаётся в описании таблицы со своим путём
+      // размещения, а видимость задаёт нативный hidden SlickGrid. Ответ события
+      // переключает его (obManagedSetGridColumnHidden), навигация и автоширина
+      // скрытую колонку пропускают сами. Значения её ячеек по-прежнему в строке:
+      // скрывается показ, а не данные.
+      if (c.elPath) col.obElPath = c.elPath;
+      if (c.condHidden) col.hidden = true;
       if (c.virtual) {
         // Виртуальная колонка (#845): значение приехало с сервера по ссылке из
         // строки и в базе не хранится. Без редактора и в сером — иначе правка
@@ -4274,6 +4390,7 @@ function obGridColumnIds(columns) {
   function gridFirstEditableCell(g, row) {
     var cols = g.grid.getColumns() || [];
     for (var i = 0; i < cols.length; i++) {
+      if (cols[i] && cols[i].hidden) continue;
       if (g.grid.isCellEditable && !g.grid.isCellEditable(row, i)) continue;
       return i;
     }
@@ -4296,8 +4413,9 @@ function obGridColumnIds(columns) {
       if (rows > 0) grid.setActiveCell(0, gridFirstEditableCell(g, 0));
       return true;
     }
-    var cols = (grid.getColumns() || []).length;
-    if (active.row >= rows - 1 && active.cell >= cols - 1) {
+    var all = grid.getColumns() || [], lastCell = -1;
+    for (var c = 0; c < all.length; c++) if (all[c] && !all[c].hidden) lastCell = c;
+    if (active.row >= rows - 1 && active.cell >= lastCell) {
       // Конец таблицы: ни новой строки, ни записи.
       return true;
     }
