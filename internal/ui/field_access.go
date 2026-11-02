@@ -40,6 +40,13 @@ func (s *Server) maskRecord(ctx context.Context, entity *metadata.Entity, row ma
 	access.MaskRecord(s.fieldDecisions(ctx, entity), row)
 }
 
+// maskRecordWithDecisions — maskRecord с уже вычисленными решениями. Нужен
+// форме объекта: её решения зависят от сохранённой записи (pii_open_when,
+// recordFieldDecisions), а ответ события использует те же решения и для эха.
+func (s *Server) maskRecordWithDecisions(decisions map[string]access.FieldDecision, row map[string]any) {
+	access.MaskRecord(decisions, row)
+}
+
 // maskRecords masks a list of records in place.
 func (s *Server) maskRecords(ctx context.Context, entity *metadata.Entity, rows []map[string]any) {
 	access.MaskRecords(s.fieldDecisions(ctx, entity), rows)
@@ -460,6 +467,9 @@ func (s *Server) protectMaskedFieldsOnWrite(ctx context.Context, entity *metadat
 	if err != nil {
 		return nil, err
 	}
+	// pii_open_when по СОХРАНЁННОЙ записи: открытое поле пользователь видел
+	// целиком, и его правка записывается.
+	dec = s.openPIIByRecord(entity, dec, row)
 	var restored []string
 	for field, decision := range dec {
 		key, ok := maskCIKey(fields, field)
