@@ -1934,6 +1934,13 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 		  schema: cfg.closeSchema == null ? '' : String(cfg.closeSchema)
 		};
       }
+	  // Повтор закрытия после вопроса ПередЗакрытием: ответ (и поля диалога)
+	  // уходят в тело, но не в ключ снимка — форма та же, что спрашивала.
+	  if (options.__questionExtra && !(pendingRetry && pendingRetry.body)) {
+		Object.keys(options.__questionExtra).forEach(function(name){
+		  body.set(serviceField(name), String(options.__questionExtra[name]));
+		});
+	  }
 	  var intentID = String(envelope.intentId || '');
 	  mode = String(envelope.mode || 'discard');
 	  reason = String(envelope.reason || 'close');
@@ -2093,16 +2100,21 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         // replay result, so retry the same UUID. Every other correlated reply,
         // including data.ok=false, is terminal and releases the UUID.
         var requiresSavedResult = mode === 'save' || mode === 'post' || mode === 'save_and_select';
+        var closeAllowed = response.ok && data.ok === true && data.close.allowed === true &&
+            (!requiresSavedResult || data.close.saved === true);
         return {
-          allowed: response.ok && data.ok === true && data.close.allowed === true &&
-            (!requiresSavedResult || data.close.saved === true),
+          allowed: closeAllowed,
           intentId: intentID,
 		  mode: mode,
+		  reason: reason,
           error: data.error || '',
           saved: data.close.saved === true,
           savedId: data.savedId || '',
           savedLabel: data.savedLabel || '',
-          formUrl: data.close.formUrl || ''
+          formUrl: data.close.formUrl || '',
+		  // ПоказатьВопрос в ПередЗакрытием: форма осталась открытой, вопрос
+		  // покажет обёртка ниже, когда этот запрос закрытия завершится.
+		  question: !closeAllowed && data.question ? data.question : null
         };
       } catch (err) {
 		if (retryIntentAfterFailure) rememberRetry();
@@ -2118,9 +2130,39 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       }
     })();
     closeHandoffPending = false;
-    closePending = closePending.finally(function(){ closePending = null; });
+    // Single-flight: одновременные вызовы получают один и тот же промис. Он же
+    // показывает вопрос ПередЗакрытием; сам запрос освобождает очередь раньше
+    // (finally), поэтому повтор закрытия с ответом в неё не упирается.
+    closePending = closePending.finally(function(){ closePending = null; }).then(function(result){
+      return result && result.question ? askFormCloseQuestion(result, options) : result;
+    });
     return closePending;
   };
+
+  // BEGIN onebase-close-question
+  // askFormCloseQuestion — вопрос из ПередЗакрытием («Вернуться в форму
+  // звонка?»): показать и по ответу повторить закрытие тем же режимом с
+  // ВопросОтвет — решает второй ход обработчика (Отказ или закрыть). Закрытие
+  // вопроса мимо кнопок оставляет форму открытой. Повтор идёт уже после того,
+  // как первый запрос закрытия освободил очередь.
+  function askFormCloseQuestion(result, options){
+    return new Promise(function(resolve){
+      var cancelled = {allowed: false, intentId: result.intentId || '', error: 'user-cancelled'};
+      if (!window.obOpenQuestion) { resolve(cancelled); return; }
+      window.obOpenQuestion(result.question, '', {
+        onAnswer: function(variant, extra){
+          var next = {};
+          Object.keys(options || {}).forEach(function(key){ next[key] = options[key]; });
+          next.mode = result.mode;
+          next.reason = result.reason;
+          next.__questionExtra = extra || {_question_answer: variant};
+          resolve(window.obRequestFormClose(next));
+        },
+        onDismiss: function(){ resolve(cancelled); }
+      });
+    });
+  }
+  // END onebase-close-question
 
   window.obFinalizeFormClose = function(){
 	setManagedFormDirty(false);
