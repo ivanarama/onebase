@@ -160,7 +160,7 @@ func expandQuestionFields(v any) ([]questionField, error) {
 		out = append(out, questionField{
 			Name:      name,
 			Label:     pickStr(dslField(item, "заголовок", "label", "title")),
-			Value:     pickStr(dslField(item, "значение", "value")),
+			Value:     questionFieldValue(dslField(item, "значение", "value")),
 			Editable:  asBool(dslField(item, "правка", "editable")),
 			Strong:    asBool(dslField(item, "выделить", "strong")),
 			Multiline: asBool(dslField(item, "многострочное", "multiline")) || rows > 1,
@@ -172,6 +172,15 @@ func expandQuestionFields(v any) ([]questionField, error) {
 		return nil, fmt.Errorf("ПоказатьВопрос: список полей пуст")
 	}
 	return out, nil
+}
+
+// Логические значения отображаются как при Строка(Значение) в DSL.
+// pickStr использует числовой fallback, теряющий различие true и false.
+func questionFieldValue(v any) string {
+	if b, ok := v.(bool); ok {
+		return strconv.FormatBool(b)
+	}
+	return pickStr(v)
 }
 
 // parseQuestionFields разбирает значения редактируемых полей, введённые

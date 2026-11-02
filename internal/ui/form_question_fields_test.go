@@ -15,6 +15,40 @@ import (
 // Поля диалога ПоказатьВопрос: фаза 1 отдаёт их в question.fields, фаза 2
 // возвращает введённое обработчику Ответ в ДиалогПоля. Через публичный
 // form-event, как из браузера.
+func TestShowQuestion_BooleanFieldValues(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура КомандаНажатие()
+	Поля = Новый Массив;
+	Поля.Добавить(Новый Структура("имя, значение", "ИстинаПоказ", Истина));
+	Поля.Добавить(Новый Структура("имя, значение", "ЛожьПоказ", Ложь));
+	Поля.Добавить(Новый Структура("имя, значение, правка", "ИстинаВвод", Истина, Истина));
+	Поля.Добавить(Новый Структура("имя, значение, правка", "ЛожьВвод", Ложь, Истина));
+	Поля.Добавить(Новый Структура("имя, значение", "Ноль", 0));
+	Поля.Добавить(Новый Структура("имя, значение", "Число", 12.5));
+	Поля.Добавить(Новый Структура("имя, значение", "Строка", "Ложь"));
+	Поля.Добавить(Новый Структура("имя, значение", "Пусто", Неопределено));
+	ПоказатьВопрос("Результат", "ОК", "", Поля);
+КонецПроцедуры
+`, nil, []*metadata.FormElement{{
+		Kind: metadata.FormElementButton, Name: "Команда",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "КомандаНажатие"},
+	}})
+	click := url.Values{"_element": {"Команда"}, "_event": {string(metadata.FormEventOnClick)}}
+	resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, click).Body.Bytes())
+	want := []string{"true", "false", "true", "false", "0", "12.5", "Ложь", ""}
+	if !resp.OK || resp.Question == nil || len(resp.Question.Fields) != len(want) {
+		t.Fatalf("ok=%v error=%q question=%+v", resp.OK, resp.Error, resp.Question)
+	}
+	for i, field := range resp.Question.Fields {
+		if field.Value != want[i] {
+			t.Errorf("field %q value=%q, want %q", field.Name, field.Value, want[i])
+		}
+		if field.Editable != (i == 2 || i == 3) {
+			t.Errorf("field %q editable=%v", field.Name, field.Editable)
+		}
+	}
+}
+
 func TestShowQuestion_FieldsRoundTrip(t *testing.T) {
 	srv, ent := setupManagedEventsServer(t, `
 Процедура КомандаНажатие()
