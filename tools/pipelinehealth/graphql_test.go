@@ -57,8 +57,10 @@ func TestMain(m *testing.M) {
 			if err != nil {
 				os.Exit(6)
 			}
-			defer response.Body.Close()
 			_, _ = io.Copy(os.Stdout, response.Body)
+			if err := response.Body.Close(); err != nil {
+				os.Exit(7)
+			}
 			os.Exit(0)
 		}
 		if path := os.Getenv("PIPELINEHEALTH_TEST_GH_RETRY_FIXTURE"); path != "" {
