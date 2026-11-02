@@ -25,6 +25,53 @@ window.obUIMessage = function (name, fallback) {
   return String(fallback || '');
 };
 
+// Подсказки браузера в полях форм — это ПДн (замечание 26.10). Chrome ведёт
+// историю ввода по имени поля: телефон или адрес, введённый в одной заявке,
+// всплывал подсказкой в любом поле с тем же именем — в поиске заявок, в
+// задаче, у другого клиента. Историю он не ведёт и подсказок из неё не
+// показывает только при autocomplete="off" (на "one-time-code", без атрибута и
+// у type="search" — ведёт; проверено на Chromium 109). Поэтому каждое
+// текстовое поле получает "off", в том числе созданное позже: редакторы ячеек
+// SlickGrid, окна подбора, поля, дорисованные скриптом. ui.js подключён в
+// <head>, и наблюдатель видит поля ещё при разборе страницы, до первого
+// фокуса. Поля паролей и входа не трогаем, у них свои значения. Яндекс Браузер
+// на "off" не смотрит и предлагает телефоны из своего профиля (#1871): ему
+// поле с маской ввода отдаётся как "one-time-code".
+(function () {
+  var TEXT = /^(|text|search|tel|email|url|number)$/;
+  var KEEP = {'new-password': 1, 'current-password': 1, 'username': 1};
+  var yandex = /YaBrowser\//.test((window.navigator && navigator.userAgent) || '');
+  function guard(el) {
+    if (el.tagName === 'INPUT') {
+      if (!TEXT.test((el.getAttribute('type') || '').toLowerCase())) return;
+    } else if (el.tagName !== 'TEXTAREA') return;
+    var cur = (el.getAttribute('autocomplete') || '').toLowerCase();
+    if (KEEP[cur]) return;
+    var want = yandex && el.hasAttribute('data-ob-input-mask') ? 'one-time-code' : 'off';
+    if (cur !== want) el.setAttribute('autocomplete', want);
+  }
+  function scan(node) {
+    if (!node || node.nodeType !== 1) return;
+    if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA') { guard(node); return; }
+    if (!node.getElementsByTagName) return;
+    var lists = [node.getElementsByTagName('input'), node.getElementsByTagName('textarea')];
+    for (var l = 0; l < lists.length; l++) {
+      for (var i = 0; i < lists[l].length; i++) guard(lists[l][i]);
+    }
+  }
+  window.obGuardAutocomplete = scan;
+  try {
+    new MutationObserver(function (records) {
+      for (var r = 0; r < records.length; r++) {
+        var rec = records[r];
+        if (rec.type === 'attributes') { scan(rec.target); continue; }
+        for (var n = 0; n < rec.addedNodes.length; n++) scan(rec.addedNodes[n]);
+      }
+    }).observe(document.documentElement, {childList: true, subtree: true, attributes: true, attributeFilter: ['autocomplete', 'type']});
+  } catch (_) {}
+  scan(document.documentElement);
+})();
+
 // A viewer belongs to one Document and one authorized form projection. It never
 // reads hidden backing inputs or fetches extra fields to build its gallery.
 (function () {

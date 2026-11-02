@@ -43,7 +43,7 @@ func assertManagedMaskedInput(t *testing.T, body, name, mask, value, formMask st
 	if len(inputs) != 1 {
 		t.Fatalf("ожидалось одно текстовое поле %s, получено %d", name, len(inputs))
 	}
-	want := map[string]string{"autocomplete": "one-time-code", "value": value, "data-ob-input-mask": mask}
+	want := map[string]string{"autocomplete": "off", "value": value, "data-ob-input-mask": mask}
 	absent := []string{"inputmode", "data-ob-protected"}
 	if formMask != "" {
 		want["pattern"], want["data-ob-form-mask"] = formMask, ""
