@@ -513,7 +513,10 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 			legacySourceCompletions, _, _ = currentProtocolState(pr.Comments, owner, pr.HeadParents[0])
 		}
 		carryDone, carryIntentOpen, v1AbortCurrent, baseAdvanced, protocolHistory, integrationAt := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA, pr.HeadParents)
-		overrideOpen := latestOverride > latestCompletion
+		// Reopening a parked review requires a completed proof of this HEAD.
+		// A historical override must not unpark an author's later push merely
+		// because that new HEAD has no completion to consume the old marker.
+		overrideOpen := currentCompletions > 0 && latestOverride > latestCompletion
 		item.IntegrationAt = integrationAt
 		item.BaseSyncCandidate = baseSyncCandidateOf(pr, owner)
 		if baseAdvanced {
