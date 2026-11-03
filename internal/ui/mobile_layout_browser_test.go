@@ -100,10 +100,7 @@ func newMobileLayoutBrowserSize(t *testing.T, executable string, width, height i
 				t.Fatalf("invalid browser debugging endpoint: %q", data)
 			}
 			endpoint := (&url.URL{Scheme: "ws", Host: net.JoinHostPort("127.0.0.1", parts[0]), Path: parts[1]}).String()
-			conn, response, dialErr := websocket.Dial(ctx, endpoint, nil)
-			if response != nil && response.Body != nil {
-				_ = response.Body.Close()
-			}
+			conn, dialErr := dialMobileLayoutBrowser(ctx, endpoint, b.exited)
 			if dialErr != nil {
 				t.Fatalf("connect browser: %v\n%s", dialErr, b.diagnostics())
 			}
@@ -117,6 +114,73 @@ func newMobileLayoutBrowserSize(t *testing.T, executable string, width, height i
 		case <-ctx.Done():
 			t.Fatalf("browser readiness: %v\n%s", ctx.Err(), b.diagnostics())
 		case <-tick.C:
+		}
+	}
+}
+
+// A published DevTools port can precede a responsive WebSocket endpoint. Bound
+// each transport handshake within the original readiness budget; HTTP/protocol
+// failures remain terminal and no browser or test body is restarted.
+func dialMobileLayoutBrowser(ctx context.Context, endpoint string, exited <-chan struct{}) (*websocket.Conn, error) {
+	var lastTransport error
+	stateError := func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		select {
+		case <-exited:
+			return fmt.Errorf("owned browser stopped before ready")
+		default:
+			return nil
+		}
+	}
+	stopped := func(err error) (*websocket.Conn, error) {
+		return nil, fmt.Errorf("browser readiness: %w; last transport error: %v", err, lastTransport)
+	}
+	for {
+		if err := stateError(); err != nil {
+			return stopped(err)
+		}
+		attemptCtx, cancel := context.WithTimeout(ctx, time.Second)
+		finished := make(chan struct{})
+		go func() {
+			select {
+			case <-exited:
+				cancel()
+			case <-finished:
+			}
+		}()
+		conn, response, err := websocket.Dial(attemptCtx, endpoint, nil)
+		close(finished)
+		cancel()
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		if err != nil {
+			lastTransport = err
+		}
+		if stateErr := stateError(); stateErr != nil {
+			if conn != nil {
+				_ = conn.CloseNow()
+			}
+			return stopped(stateErr)
+		}
+		if err == nil {
+			return conn, nil
+		}
+		if conn != nil {
+			_ = conn.CloseNow()
+		}
+		if response != nil {
+			return nil, fmt.Errorf("browser WebSocket handshake: %w", err)
+		}
+		timer := time.NewTimer(20 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+		case <-exited:
+			timer.Stop()
+		case <-timer.C:
 		}
 	}
 }
