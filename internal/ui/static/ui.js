@@ -6898,3 +6898,134 @@ function obEnterNavigateFrom(target) {
     if (obEnterNavigateFrom(e.target)) e.preventDefault();
   });
 })();
+
+// BEGIN onebase-status-bar
+// Строка состояния внизу страницы (status_bar в config/home_page.yaml).
+// Сервер ставит в head признак <meta name="ob-status-bar" content="<секунды>">
+// только пользователю, которому строка положена; содержимое и кнопки берутся
+// из /ui/_status-bar. Слева — текст «Слева», справа — «Справа» и рядом с ним
+// кнопки. Во вкладке оболочки (страница во фрейме) строка не рисуется: она
+// уже есть у самой оболочки, и второй её экземпляр съел бы место формы.
+(function () {
+  function obStatusBarInit() {
+    // Без полноценного DOM (срезы ui.js в node-тестах) строки нет.
+    if (typeof document.querySelector !== 'function' || !document.body || typeof fetch !== 'function') return;
+    var meta = document.querySelector('meta[name="ob-status-bar"]');
+    if (!meta || window.top !== window || document.getElementById('ob-status-bar')) return;
+    var interval = parseInt(meta.getAttribute('content'), 10);
+    if (!(interval >= 1 && interval <= 60)) interval = 3;
+
+    var style = document.createElement('style');
+    style.textContent =
+      '#ob-status-bar{position:fixed;left:0;right:0;bottom:0;z-index:900;height:var(--ob-status-bar-h);' +
+      'display:flex;align-items:center;gap:12px;padding:0 12px;box-sizing:border-box;' +
+      'background:#f1f5f9;border-top:1px solid #cbd5e1;font-size:13px;color:#1f2937}' +
+      '#ob-status-bar .ob-sb-left{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
+      '#ob-status-bar .ob-sb-right{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}' +
+      '#ob-status-bar .ob-sb-buttons{display:flex;gap:6px;flex:0 0 auto}' +
+      '#ob-status-bar button{font:inherit;padding:2px 10px;border:1px solid #94a3b8;border-radius:4px;background:#fff;cursor:pointer}' +
+      '#ob-status-bar button:disabled{opacity:.6;cursor:default}' +
+      '#ob-status-bar .ob-sb-note{color:#b45309;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:40%}' +
+      '#ob-status-bar.ob-sb-error .ob-sb-left{color:#b91c1c}';
+    document.head.appendChild(style);
+
+    var bar = document.createElement('div');
+    bar.id = 'ob-status-bar';
+    bar.setAttribute('role', 'status');
+    bar.hidden = true;
+    var left = document.createElement('span'); left.className = 'ob-sb-left';
+    var note = document.createElement('span'); note.className = 'ob-sb-note';
+    var right = document.createElement('span'); right.className = 'ob-sb-right';
+    var buttons = document.createElement('span'); buttons.className = 'ob-sb-buttons';
+    bar.appendChild(left); bar.appendChild(note); bar.appendChild(right); bar.appendChild(buttons);
+    document.body.appendChild(bar);
+
+    // Высота строки — общая переменная: тело страницы получает отступ снизу, а
+    // раскладки «на высоту окна» вычитают её, чтобы строка не перекрывала форму.
+    function setHeight(on) {
+      document.documentElement.style.setProperty('--ob-status-bar-h', on ? '30px' : '0px');
+      document.body.style.paddingBottom = on ? 'var(--ob-status-bar-h)' : '';
+      try { window.dispatchEvent(new Event('resize')); } catch (e) {}
+    }
+    setHeight(false);
+
+    var noteTimer = null;
+    function showNote(text) {
+      note.textContent = text || '';
+      if (noteTimer) clearTimeout(noteTimer);
+      if (text) noteTimer = setTimeout(function () { note.textContent = ''; }, 8000);
+    }
+
+    var busy = false, shownBefore = false;
+    function render(state) {
+      if (!state || !state.visible) {
+        if (shownBefore) { bar.hidden = true; setHeight(false); shownBefore = false; }
+        return;
+      }
+      bar.classList.toggle('ob-sb-error', !!state.error);
+      left.textContent = state.error ? state.error : (state.left || '');
+      right.textContent = state.right || '';
+      var names = (state.buttons || []).map(function (b) { return b.name + '\u0001' + b.title; }).join('\u0002');
+      if (buttons.getAttribute('data-ob-sb') !== names) {
+        buttons.setAttribute('data-ob-sb', names);
+        buttons.textContent = '';
+        (state.buttons || []).forEach(function (b) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.textContent = b.title || b.name;
+          btn.setAttribute('data-ob-sb-button', b.name);
+          buttons.appendChild(btn);
+        });
+      }
+      if (!shownBefore) { bar.hidden = false; setHeight(true); shownBefore = true; }
+    }
+
+    function request(method, body) {
+      var opts = {method: method, credentials: 'same-origin', headers: {'Accept': 'application/json'}};
+      if (body) {
+        opts.headers['Content-Type'] = 'application/x-www-form-urlencoded';
+        opts.body = body;
+      }
+      return fetch('/ui/_status-bar', opts).then(function (resp) {
+        if (resp.status === 409) return resp.text().then(function (t) { showNote(t.trim()); return null; });
+        if (!resp.ok) return null;
+        return resp.json();
+      });
+    }
+
+    var timer = null;
+    function schedule() {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(poll, interval * 1000);
+    }
+    function poll() {
+      // Скрытую вкладку браузера не опрашиваем: строку там никто не видит.
+      if (document.hidden || busy) { schedule(); return; }
+      request('GET').then(function (state) { if (state) render(state); }, function () {})
+        .then(schedule, schedule);
+    }
+    document.addEventListener('visibilitychange', function () { if (!document.hidden) poll(); });
+
+    buttons.addEventListener('click', function (e) {
+      var btn = e.target && e.target.closest ? e.target.closest('[data-ob-sb-button]') : null;
+      if (!btn || busy) return;
+      busy = true;
+      Array.prototype.forEach.call(buttons.querySelectorAll('button'), function (b) { b.disabled = true; });
+      request('POST', 'button=' + encodeURIComponent(btn.getAttribute('data-ob-sb-button')))
+        .then(function (state) {
+          if (!state) return;
+          render(state);
+          showNote(state.error || state.message || '');
+        }, function () { showNote('Нет связи с сервером'); })
+        .then(function () {
+          busy = false;
+          Array.prototype.forEach.call(buttons.querySelectorAll('button'), function (b) { b.disabled = false; });
+        });
+    });
+
+    poll();
+  }
+  if (document.readyState === 'loading' && typeof document.addEventListener === 'function') document.addEventListener('DOMContentLoaded', obStatusBarInit);
+  else obStatusBarInit();
+})();
+// END onebase-status-bar
