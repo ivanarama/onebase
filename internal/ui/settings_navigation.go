@@ -77,7 +77,7 @@ func (s *Server) navigationEditorLayerState(r *http.Request, sub string, persona
 		raw = []byte(state.Setting.Raw)
 	}
 	state.adminBase = state.Base
-	state.Desired, state.Diagnostics = navigation.Compose(state.Base, raw, nil)
+	state.Desired, state.Diagnostics = navigation.ComposeWithAdminBase(state.Base, s.adminNavigationValidationBase(state.Base), raw, nil)
 	return state, nil
 }
 
@@ -123,6 +123,7 @@ func (s *Server) renderNavigationEditor(w http.ResponseWriter, r *http.Request, 
 		"parent": "Расположение", "changed": "Меню изменено", "newSection": "Новый раздел", "newGroup": "Новая папка",
 		"error": "Не удалось получить предпросмотр меню", "unsaved": "Изменения меню не сохранены",
 		"reset": "Сбросить общую настройку к конфигурации?", "empty": "Добавьте раздел и верните в него объекты из палитры",
+		"palettePlaced": "Все доступные объекты уже размещены", "paletteNoMatches": "Ничего не найдено",
 		"conflict":  "Меню изменилось в другой вкладке. Загрузите актуальную версию и повторите изменения.",
 		"saveError": "Не удалось сохранить настройку меню", "reload": "Загрузить актуальную версию",
 		"reloadConfirm": "Загрузить актуальную версию и отбросить несохранённые изменения?",

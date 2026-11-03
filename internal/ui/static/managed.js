@@ -180,6 +180,39 @@ function obManagedApplyTablePartRefOptions(next) {
 }
 window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 
+function obEscapeColumnTitle(text) {
+  return String(text == null ? "" : text)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
+// obManagedApplyColumnTitles — заголовки колонок с title_from после события
+// формы: {путь размещения ТЧ: {реквизит: заголовок}}. Меняется и описание колонки
+// (его заново рисует setColumns при перестановке), и уже нарисованная шапка.
+function obManagedApplyColumnTitles(titles) {
+  if (!titles) return;
+  // Все экземпляры сетки табличной части (рядом с редактируемой бывает
+  // сводка только для чтения), а не только канонический из _obGrids.
+  var views = (window._obGridViews || []).slice();
+  var grids = window._obGrids || {};
+  Object.keys(grids).forEach(function(tp) {
+    if (views.indexOf(grids[tp]) < 0) views.push(grids[tp]);
+  });
+  views.forEach(function(state) {
+    if (!state || !state.grid || !state.div) return;
+    var byField = titles[state.div.getAttribute("data-sg-path")];
+    if (!byField) return;
+    (state.columns || []).forEach(function(col) {
+      if (!Object.prototype.hasOwnProperty.call(byField, col.id)) return;
+      var title = obEscapeColumnTitle(byField[col.id]);
+      if (col.name === title) return;
+      col.name = title;
+      if (state.grid.updateColumnHeader) state.grid.updateColumnHeader(col.id, title);
+    });
+  });
+}
+window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
+
 // Отправляет текущие form-values + имя элемента/события в /ui/.../form-event,
 // получает JSON с новыми значениями и сообщениями от Сообщить(), применяет их.
 (function(){
@@ -764,7 +797,30 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
               sel.appendChild(o);
             });
             sel.disabled = readOnly;
-            td.appendChild(sel);
+            const wrapper = document.createElement('div');
+            wrapper.style.cssText = 'display:flex;gap:4px;align-items:center';
+            sel.setAttribute('data-ref-entity', f.ref.split(':').pop());
+            if (meta && meta.allowCreate) sel.setAttribute('data-ref-allow-create', '1');
+            wrapper.appendChild(sel);
+            const pickBtn = document.createElement('button');
+            pickBtn.type = 'button';
+            pickBtn.textContent = '...';
+            pickBtn.title = 'Выбрать из списка';
+            pickBtn.disabled = readOnly;
+            pickBtn.setAttribute('data-ob-ref-picker', 'closest');
+            pickBtn.style.cssText = 'padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0';
+            wrapper.appendChild(pickBtn);
+            if (tbody.getAttribute('data-tp-hide-ref-card') !== '1') {
+              const openBtn = document.createElement('button');
+              openBtn.type = 'button';
+              openBtn.textContent = '🔍';
+              openBtn.title = 'Открыть карточку';
+              openBtn.setAttribute('data-ob-ref-current', 'closest');
+              openBtn.setAttribute('data-ob-readonly-navigation', '1');
+              openBtn.style.cssText = 'padding:4px 7px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0';
+              wrapper.appendChild(openBtn);
+            }
+            td.appendChild(wrapper);
           } else if (isEnum && tpEnumLabels[f.name]) {
             const enumLabMap = tpEnumLabels[f.name];
             const sel = document.createElement('select');
@@ -1323,6 +1379,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       } else {
         if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
         applyElementStates(data.elementStates);
+        window.obManagedApplyColumnTitles(data.columnTitles);
         window.obManagedApplyTablePartRefOptions(data.tpRefOptions);
         window.applyTableParts(data.tableparts);
         applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
@@ -1353,7 +1410,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         // снимком формы; закрытие вопроса мимо кнопок отменяет проведение.
         beforePostState.questionOpen = true;
         if (window.obOpenQuestion) window.obOpenQuestion(data.question, '', {
-          onAnswer: function(variant){ runBeforePostEvent({_question_answer: variant}); },
+          onAnswer: function(variant, extra){ runBeforePostEvent(extra || {_question_answer: variant}); },
           onDismiss: function(){ settleBeforePost(false); }
         });
         else settleBeforePost(false);
@@ -1781,6 +1838,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	// for the retry based on the current snapshot.
 	if (!merging && Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
 	if (!merging) applyElementStates(data.elementStates);
+	if (!merging) window.obManagedApplyColumnTitles(data.columnTitles);
 	window.obManagedApplyTablePartRefOptions(tpRefOptions);
 	window.applyTableParts(tableparts);
 	applyValues(values, refOptions);
@@ -2596,7 +2654,9 @@ function obManagedInitDelegates() {
     if (btn.hasAttribute('data-ob-ref-picker')) {
       e.preventDefault();
       var pickSel = obManagedClosestSelect(btn);
-      if (pickSel && typeof openRefPicker === 'function') openRefPicker(pickSel);
+      // Тот же щелчок ловит и делегат формы в ui.js: окно — один раз.
+      if (pickSel && typeof window.obOpenRefPickerOnce === 'function') window.obOpenRefPickerOnce(e, pickSel);
+      else if (pickSel && typeof openRefPicker === 'function') openRefPicker(pickSel);
       return;
     }
     if (btn.hasAttribute('data-ob-ref-current')) {
@@ -3667,7 +3727,9 @@ function obGridColumnIds(columns) {
       // Выкинуть её отсюда И оттуда значило бы стирать реквизит при записи:
       // сервер подставляет пустое значение всему, чего нет в строке.
       if (c && c.hidden) continue;
-      var col = {id: c.id, name: c.name, field: c.id, width: 120, resizable: true, sortable: true,
+      // Заголовок из реквизита формы (title_from) — текст, а шапка SlickGrid
+      // рисует подпись как HTML: экранируем.
+      var col = {id: c.id, name: c.titleFrom ? obEscapeColumnTitle(c.name) : c.name, field: c.id, width: 120, resizable: true, sortable: true,
                  metaIndex: (c && typeof c.index === "number") ? c.index : -1};
       // Ширина из `width` элемента Колонка (или виртуальной колонки).
       // obWidth — объявленная ширина: autosizeColumns перезаписывает width, а
@@ -5100,4 +5162,74 @@ document.addEventListener('DOMContentLoaded', function () {
     url.searchParams.set('_ob_conceal', token);
     window.history.replaceState(window.history.state, '', url.toString());
   }
+});
+
+// ─── deadline_warn: поле-срок ───────────────────────────────────────────────
+//
+// Значение поля — срок: «ЧЧ:ММ» (сегодня) или дата со временем. До срока меньше
+// N минут (data-ob-deadline) — класс ob-deadline-soon, срок прошёл —
+// ob-deadline-over. Считается по часам браузера и пересчитывается каждые 15
+// секунд: форма открыта долго, а «время вышло» должно стать видно без
+// перезагрузки. Значение, которое не читается как срок, подсветки не даёт.
+function obDeadlineParse(raw, now) {
+  var v = String(raw || "").trim();
+  if (!v) return null;
+  function validTime(h, min, sec) {
+    return h <= 23 && min <= 59 && sec <= 59;
+  }
+  function dateTime(y, month, day, h, min, sec, ms, zone) {
+    if (!validTime(h, min, sec)) return null;
+    // Validate calendar components before Date can normalize an invalid day.
+    // setUTCFullYear also avoids the constructor's special handling of 0–99.
+    var utc = new Date(0);
+    utc.setUTCFullYear(y, month - 1, day);
+    utc.setUTCHours(h, min, sec, ms);
+    if (utc.getUTCFullYear() !== y || utc.getUTCMonth() !== month - 1 || utc.getUTCDate() !== day) return null;
+    if (zone) {
+      var offset = 0;
+      if (zone !== "Z") {
+        var parts = /^([+-])(\d{2}):(\d{2})$/.exec(zone);
+        if (!parts || !validTime(+parts[2], +parts[3], 0)) return null;
+        offset = (+parts[2] * 60 + +parts[3]) * (parts[1] === "+" ? 1 : -1);
+      }
+      return new Date(utc.getTime() - offset * 60000);
+    }
+    var local = new Date(0);
+    local.setFullYear(y, month - 1, day);
+    local.setHours(h, min, sec, ms);
+    if (local.getFullYear() !== y || local.getMonth() !== month - 1 || local.getDate() !== day ||
+        local.getHours() !== h || local.getMinutes() !== min || local.getSeconds() !== sec) return null;
+    return local;
+  }
+  var m = /^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(v);
+  if (m) return dateTime(now.getFullYear(), now.getMonth() + 1, now.getDate(), +m[1], +m[2], +(m[3] || 0), 0, "");
+  m = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{1,2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:\d{2})?$/.exec(v);
+  if (m) return dateTime(+m[1], +m[2], +m[3], +m[4], +m[5], +(m[6] || 0), +(m[7] || "").slice(0, 3).padEnd(3, "0"), m[8]);
+  m = /^(\d{2})\.(\d{2})\.(\d{4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(v);
+  if (m) return dateTime(+m[3], +m[2], +m[1], +m[4], +m[5], +(m[6] || 0), 0, "");
+  return null;
+}
+function obDeadlineState(raw, warnMinutes, now) {
+  var due = obDeadlineParse(raw, now);
+  if (!due) return "";
+  var left = due.getTime() - now.getTime();
+  if (left <= 0) return "over";
+  if (left <= warnMinutes * 60000) return "soon";
+  return "";
+}
+function obDeadlineTick() {
+  var now = new Date();
+  document.querySelectorAll("input[data-ob-deadline]").forEach(function (inp) {
+    var state = obDeadlineState(inp.value, parseFloat(inp.getAttribute("data-ob-deadline")) || 0, now);
+    inp.classList.toggle("ob-deadline-soon", state === "soon");
+    inp.classList.toggle("ob-deadline-over", state === "over");
+  });
+}
+window.obDeadlineTick = obDeadlineTick;
+obManagedReady(function () {
+  obDeadlineTick();
+  setInterval(obDeadlineTick, 15000);
+  document.addEventListener("input", function (e) {
+    if (e.target && e.target.hasAttribute && e.target.hasAttribute("data-ob-deadline")) obDeadlineTick();
+  });
 });

@@ -57,8 +57,12 @@ type formEventResponse struct {
 	// страницы: команда «Принять» замораживает реквизиты сразу, а форма
 	// продолжала показывать их редактируемыми.
 	ElementStates *elementStates `json:"elementStates,omitempty"`
-	Messages      []string       `json:"messages,omitempty"`
-	Error         string         `json:"error,omitempty"`
+	// ColumnTitles — заголовки колонок с title_from после обработчика:
+	// «путь размещения ТЧ → реквизит → заголовок». Шапка SlickGrid иначе
+	// оставалась бы прежней до перезагрузки страницы.
+	ColumnTitles map[string]map[string]string `json:"columnTitles,omitempty"`
+	Messages     []string                     `json:"messages,omitempty"`
+	Error        string                       `json:"error,omitempty"`
 	// Question != nil — обработчик фазы 1 вызвал ПоказатьВопрос: клиент
 	// рисует модал вопроса, ответ возвращается событием Ответ (#1528).
 	Question *questionPayload `json:"question,omitempty"`
@@ -1368,6 +1372,11 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		vars["ВопросОтвет"] = ""
 		vars["QuestionAnswer"] = ""
 	}
+	// Значения редактируемых полей диалога — структура ДиалогПоля.
+	if qf := parseQuestionFields(r.FormValue(entityQuestionFieldsName(entity, form))); qf != nil {
+		vars["ДиалогПоля"] = qf
+		vars["DialogFields"] = qf
+	}
 
 	if err := addPageChangeContext(eventName, r.FormValue("_page"), eventTarget, vars); err != nil {
 		respondJSON(enc, formEventResponse{Error: err.Error()})
@@ -1953,6 +1962,7 @@ type formEventState struct {
 	ConditionalCSS string
 	Messages       []string
 	ElementStates  *elementStates
+	ColumnTitles   map[string]map[string]string
 }
 
 // response — единственное место, где состояние переносится в ответ.
@@ -1968,6 +1978,7 @@ func (st formEventState) response(ok bool) formEventResponse {
 		ConditionalCSS: st.ConditionalCSS,
 		Messages:       st.Messages,
 		ElementStates:  st.ElementStates,
+		ColumnTitles:   st.ColumnTitles,
 	}
 }
 
@@ -2109,6 +2120,7 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 		// значения ПОСЛЕ обработчика: команда, изменившая состояние объекта,
 		// сразу меняет доступность полей.
 		ElementStates: s.formElementStates(form, entity, values, s.isAdminCtx(ctx)),
+		ColumnTitles:  managedTPColumnTitles(form, entity, values, langFromCtx(ctx)),
 	}
 }
 
@@ -2856,6 +2868,13 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		if qa, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_question_answer")); strings.TrimSpace(qa) != "" {
 			vars["ВопросОтвет"] = qa
 			vars["QuestionAnswer"] = qa
+		}
+		// Значения редактируемых полей диалога — структура ДиалогПоля.
+		if raw, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_question_fields")); strings.TrimSpace(raw) != "" {
+			if fields := parseQuestionFields(raw); fields != nil {
+				vars["ДиалогПоля"] = fields
+				vars["DialogFields"] = fields
+			}
 		}
 		page, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_page"))
 		if err := addPageChangeContext(eventName, page, eventTarget, vars); err != nil {
