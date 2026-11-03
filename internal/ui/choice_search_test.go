@@ -3,10 +3,12 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/go-chi/chi/v5"
@@ -251,5 +253,87 @@ func TestChoiceSearchIDs_Contract(t *testing.T) {
 	}
 	if _, err := choiceSearchIDs("строка"); err == nil {
 		t.Fatal("не Массив принят")
+	}
+}
+
+func TestChoiceSearchProc_EightFormConditions(t *testing.T) {
+	module := strings.Replace(choiceSearchModule, "Функция ПоискДомов(Текст, Параметры) Экспорт", `Функция ПоискДомов(Текст, Параметры) Экспорт
+	Если Текст = "empty" Тогда
+		Возврат Новый Массив;
+	КонецЕсли;`, 1)
+	f := newChoiceSearchFixture(t, module)
+	ent := f.s.reg.GetEntity("Дом")
+	yes := true
+	element := &metadata.FormElement{ID: "house-picker", Name: "Дом", Kind: metadata.FormElementField, DataPath: "Объект.Дом"}
+	for i := range 8 {
+		name := fmt.Sprintf("Флаг%d", i)
+		ent.Fields = append(ent.Fields, metadata.Field{Name: name, Type: metadata.FieldTypeBool})
+		element.ChoiceFilter = append(element.ChoiceFilter, metadata.FormChoiceCondition{Field: name, Op: metadata.FormChoiceOpEqual, Value: &yes})
+	}
+	if err := f.s.store.Migrate(t.Context(), []*metadata.Entity{ent}); err != nil {
+		t.Fatal(err)
+	}
+	for name, id := range f.houses {
+		values := map[string]any{"Наименование": name, "Улица": f.street.String()}
+		for i := range 8 {
+			values[fmt.Sprintf("Флаг%d", i)] = name != "д.150" || i != 7
+		}
+		if err := f.s.store.Upsert(t.Context(), ent.Name, id, values, ent); err != nil {
+			t.Fatal(err)
+		}
+	}
+	owner := &metadata.Entity{Name: "Адрес", Kind: metadata.KindCatalog,
+		Fields: []metadata.Field{{Name: "Дом", Type: metadata.FieldType("reference:Дом"), RefEntity: "Дом"}},
+		Forms:  []*metadata.FormModule{{Name: "ФормаОбъекта", EntityName: "Адрес", Kind: "object", LayoutKind: metadata.FormLayoutManaged, Elements: []*metadata.FormElement{element}}}}
+	f.s.reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{f.s.reg.GetEntity("Улица"), ent, owner}})
+	// Load replaces modules too: restore the same public configuration function.
+	prog, err := parser.New(lexer.New(module, "сервисадресов.module.os")).ParseProgram()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.s.reg.LoadModules(map[string]*ast.Program{"СервисАдресов": prog})
+	flt, _ := json.Marshal(map[string]string{"Улица": f.street.String()})
+	q := url.Values{"form_entity": {"Адрес"}, "form": {"ФормаОбъекта"}, "element": {"house-picker"}, "sources": {"{}"}, "flt": {string(flt)}}
+	for _, text := range []string{"", "15к1"} {
+		q.Set("q", text)
+		rec, body := getRefOptions(t, f.s, "Дом", q)
+		if rec.Code != http.StatusOK || body["total"] != float64(3) || len(searchOptionIDs(body)) != 3 {
+			t.Fatalf("q=%q: status=%d body=%s", text, rec.Code, rec.Body.String())
+		}
+		for _, id := range searchOptionIDs(body) {
+			if id == f.houses["д.150"].String() {
+				t.Fatal("eighth condition was not applied")
+			}
+		}
+	}
+	q.Set("q", "empty")
+	rec, body := getRefOptions(t, f.s, "Дом", q)
+	if rec.Code != http.StatusOK || body["total"] != float64(0) || len(searchOptionIDs(body)) != 0 || body["matched"] != true {
+		t.Fatalf("empty search with eight conditions: status=%d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestChoiceSearchProc_PostPageRejectsNegativeOffset(t *testing.T) {
+	f := newChoiceSearchFixture(t, choiceSearchModule)
+	ent := f.s.reg.GetEntity("Дом")
+	ent.Fields = append(ent.Fields, metadata.Field{Name: "ВыборДома", Type: metadata.FieldType("reference:Дом"), RefEntity: "Дом"})
+	ent.Forms = []*metadata.FormModule{{Name: "ФормаОбъекта", Kind: "object", LayoutKind: metadata.FormLayoutManaged, Elements: []*metadata.FormElement{{Name: "Дом", Kind: metadata.FormElementField, DataPath: "Объект.ВыборДома", ChoiceContext: map[string]string{"Улица": "Объект.Улица"}}}}}
+	if err := f.s.store.Migrate(t.Context(), []*metadata.Entity{ent}); err != nil {
+		t.Fatal(err)
+	}
+	body := map[string]any{"q": "15к1", "offset": 0, "source": map[string]string{"entity": "Дом", "element": "Дом"}, "filters": map[string]string{"Улица": f.street.String()}}
+	rec := postPreviewPage(t, f.s, "Дом", body, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("valid baseline status=%d: %s", rec.Code, rec.Body.String())
+	}
+	body["offset"] = -1
+	defer func() {
+		if v := recover(); v != nil {
+			t.Errorf("negative offset panicked: %v", v)
+		}
+	}()
+	rec = postPreviewPage(t, f.s, "Дом", body, nil)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status=%d, want 400: %s", rec.Code, rec.Body.String())
 	}
 }

@@ -51,6 +51,9 @@ func choiceSearchActive(ent *metadata.Entity, search string) bool {
 
 // choiceSearchPage — страница подбора по результату функции поиска.
 func (s *Server) choiceSearchPage(ctx context.Context, ent *metadata.Entity, search string, limit, offset int, extra storage.ListParams) ([]map[string]any, int, error) {
+	if offset < 0 {
+		return nil, 0, fmt.Errorf("choice search: offset must be nonnegative")
+	}
 	ids, err := s.runChoiceSearchProc(ctx, ent, strings.TrimSpace(search), extra)
 	if err != nil {
 		return nil, 0, err
@@ -60,8 +63,7 @@ func (s *Server) choiceSearchPage(ctx context.Context, ent *metadata.Entity, sea
 	params.Limit = 0
 	params.Offset = 0
 	params.Sort = ""
-	params.ChoicePredicates = append(append([]storage.ChoicePredicate(nil), extra.ChoicePredicates...),
-		storage.ChoicePredicate{ByIDs: true, IDs: ids})
+	params.ChoiceSearchIDs = append([]uuid.UUID{}, ids...)
 	rows, err := s.referenceOptionsWithParams(ctx, ent, refOptionsChoice, params)
 	if err != nil {
 		return nil, 0, err
@@ -78,7 +80,7 @@ func (s *Server) choiceSearchPage(ctx context.Context, ent *metadata.Entity, sea
 		return []map[string]any{}, total, nil
 	}
 	end := total
-	if limit > 0 && offset+limit < end {
+	if limit > 0 && limit < total-offset {
 		end = offset + limit
 	}
 	return rows[offset:end], total, nil

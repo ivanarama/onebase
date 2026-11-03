@@ -209,6 +209,7 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 	params.Limit = extra.Limit
 	params.Offset = extra.Offset
 	params.ChoicePredicates = extra.ChoicePredicates
+	params.ChoiceSearchIDs = extra.ChoiceSearchIDs
 	// choice_folders: элемент формы разрешил выбирать группы — снимаем неявный
 	// запрет подбора, но оставляем остальные его правила (активность, права).
 	if extra.IncludeFolders {
@@ -259,6 +260,7 @@ func (s *Server) referenceOptionsPageWithParams(ctx context.Context, refEntity *
 	countParams.Filters = extra.Filters
 	countParams.Search = strings.TrimSpace(search)
 	countParams.ChoicePredicates = extra.ChoicePredicates
+	countParams.ChoiceSearchIDs = extra.ChoiceSearchIDs
 	if extra.IncludeFolders {
 		countParams.IncludeFolders = true
 		countParams.ExcludeFolders = false

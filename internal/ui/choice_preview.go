@@ -180,6 +180,10 @@ func (s *Server) choicePreviewPage(w http.ResponseWriter, r *http.Request, ent *
 		http.Error(w, "invalid body", http.StatusBadRequest)
 		return
 	}
+	if body.Offset < 0 {
+		http.Error(w, "invalid offset", http.StatusBadRequest)
+		return
+	}
 	limit := body.Limit
 	if limit <= 0 {
 		limit = refPickerDefaultLimit

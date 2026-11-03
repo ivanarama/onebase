@@ -20,7 +20,10 @@ type ListParams struct {
 	Filters map[string]FilterValue
 	// ChoicePredicates are trusted, metadata-derived choice_filter conditions.
 	ChoicePredicates []ChoicePredicate
-	RowFilter        *Predicate // additional SQL-side row-level access predicate
+	// ChoiceSearchIDs limits a configuration search independently of the eight
+	// form conditions. nil means unrestricted; a non-nil empty slice denies all.
+	ChoiceSearchIDs []uuid.UUID
+	RowFilter       *Predicate // additional SQL-side row-level access predicate
 	// RowFilterEvaluated — строковый доступ был вычислен для этого списка (план
 	// 79F): хендлер прошёл через applyRowFilter/rowFilterFor (даже если политика
 	// неограничивающая — RowFilter при этом nil). Используется strict-RLS
@@ -870,6 +873,16 @@ func (db *DB) listWhere(entityName string, entity *metadata.Entity, params ListP
 	if cond, condArgs, next, err := choicePredicateSQL(d, entity, params.ChoicePredicates, argIdx); err != nil {
 		return "", nil, fmt.Errorf("choice filter: %w", err)
 	} else if cond != "" {
+		whereParts = append(whereParts, cond)
+		args = append(args, condArgs...)
+		argIdx = next
+	}
+	if params.ChoiceSearchIDs != nil {
+		cond, condArgs, next, err := choicePredicateSQL(d, entity,
+			[]ChoicePredicate{{ByIDs: true, IDs: params.ChoiceSearchIDs}}, argIdx)
+		if err != nil {
+			return "", nil, fmt.Errorf("choice search: %w", err)
+		}
 		whereParts = append(whereParts, cond)
 		args = append(args, condArgs...)
 		argIdx = next
