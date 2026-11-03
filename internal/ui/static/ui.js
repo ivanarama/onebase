@@ -3833,7 +3833,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
         var o = document.createElement('option');
         o.value = opt.id;
         o.textContent = opt._label || opt.id;
-        if (opt._style) o.setAttribute('style', opt._style);
+        if (opt['\u0000ref_style']) o.setAttribute('style', opt['\u0000ref_style']);
         sel.appendChild(o);
       });
       var pickBtn = document.createElement('button');
@@ -4900,7 +4900,7 @@ function obRefreshDependentSelects(sourceEl) {
             var opt = document.createElement('option');
             opt.value = rows[j].id;
             opt.textContent = rows[j]._label != null ? rows[j]._label : rows[j].id;
-            if (rows[j]._style) opt.setAttribute('style', rows[j]._style);
+            if (rows[j]['\u0000ref_style']) opt.setAttribute('style', rows[j]['\u0000ref_style']);
             sel.appendChild(opt);
           }
           sel.value = keep ? current : '';
@@ -5111,7 +5111,7 @@ function obChoiceApplyResponse(sel, data, selectedAtRequest) {
     var opt = document.createElement('option');
     opt.value = id;
     opt.textContent = String((row && row._label) || id);
-    if (row && row._style) opt.setAttribute('style', row._style);
+    if (row && row['\u0000ref_style']) opt.setAttribute('style', row['\u0000ref_style']);
     if (id === selectedAtRequest) selectedPresent = true;
     sel.appendChild(opt);
   });
@@ -5535,7 +5535,7 @@ function openRefPicker(selOrId) {
           var id = row && row.id != null ? String(row.id) : '';
           var preview = '';
           if (rpPreviewField && row && row[rpPreviewField] != null) preview = String(row[rpPreviewField]);
-          return { id: id, label: String((row && row._label) || id), preview: preview, style: (row && row._style) || '', bg: (row && row._style_bg) || '' };
+          return { id: id, label: String((row && row._label) || id), preview: preview, style: (row && row['\u0000ref_style']) || '', bg: (row && row['\u0000ref_style_bg']) || '' };
         }).filter(function (opt) { return opt.id !== ''; });
         renderItems(opts, keep);
         rpReveal();

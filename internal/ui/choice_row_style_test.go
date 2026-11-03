@@ -136,7 +136,7 @@ func (f *rowStyleFixture) styles(t *testing.T, u *auth.User) map[uuid.UUID]strin
 	out := map[uuid.UUID]string{}
 	for _, it := range got.Items {
 		id := uuid.MustParse(it["id"].(string))
-		st, _ := it["_style"].(string)
+		st, _ := it[refOptionStyleKey].(string)
 		out[id] = st
 	}
 	return out

@@ -107,8 +107,11 @@ func TestChoiceRowStyle_RawFieldDoesNotBecomeOptionStyle(t *testing.T) {
 			if len(got.Items) != 1 {
 				t.Fatalf("expected one option: %v", got.Items)
 			}
-			css, _ := got.Items[0]["_style"].(string)
-			if css != tc.css || got.Items[0]["_style_bg"] != nil {
+			if got.Items[0]["_style"] != "position:fixed;inset:0;color:red" || got.Items[0]["_style_bg"] != "url(/raw-field)" {
+				t.Errorf("ordinary data was changed: %v", got.Items[0])
+			}
+			css, _ := got.Items[0][refOptionStyleKey].(string)
+			if css != tc.css || got.Items[0][refOptionStyleBgKey] != nil {
 				t.Errorf("JSON must contain only computed CSS: %v", got.Items[0])
 			}
 		})

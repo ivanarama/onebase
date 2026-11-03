@@ -19,12 +19,14 @@ import (
 // Оформление строк выбора ссылок (choice_row_style справочника): выпадающий
 // список, форма подбора, быстрый ввод, ячейки ТЧ. Стиль считается на сервере
 // вместе с выдачей вариантов и едет рядом с id/_label:
-//   - _style    — CSS строки (только csssafe-цвета, жирный, курсив);
-//   - _style_bg — отдельно фон: подсветка активной строки в подборе и быстром
+//   - \x00ref_style — CSS строки (только csssafe-цвета, жирный, курсив);
+//   - \x00ref_style_bg — отдельно фон: подсветка активной строки в подборе и быстром
 //     вводе перекрашивает фон и потом возвращает именно его, а не пустоту.
 const (
-	refOptionStyleKey   = "_style"
-	refOptionStyleBgKey = "_style_bg"
+	// NUL не может входить в SQL-имя: оформление не пересекается с реквизитами,
+	// как и journalRowStyleKey. JSON передаёт NUL экранированным.
+	refOptionStyleKey   = "\x00ref_style"
+	refOptionStyleBgKey = "\x00ref_style_bg"
 )
 
 // Только вычисленное оформление имеет этот тип. Одноимённые реквизиты
@@ -212,8 +214,8 @@ func (s *Server) applyChoiceRowStyles(ctx context.Context, refEntity *metadata.E
 		if styler != nil {
 			st = styler(row)
 		}
-		// Условия ещё могут читать одноимённые реквизиты; наружу служебные
-		// ключи выходят только после вычисления и проверки стиля.
+		// Удаляем только прежнее служебное оформление. Обычные реквизиты
+		// сохраняются и для условий, и для статического choice_preview.
 		delete(row, refOptionStyleKey)
 		delete(row, refOptionStyleBgKey)
 		if css := cssOfForm(st); css != "" {
