@@ -55,6 +55,12 @@ def full_proof(api, repository, run, pr, workflow_blob, epoch, now, *, completed
             or run.get('event') not in {'pull_request', 'workflow_dispatch'}
             or run.get('path') != '.github/workflows/ci.yml'):
         return False
+    dispatch = run['event'] == 'workflow_dispatch'
+    # A branch dispatch runs HEAD rather than the PR merge checkout. It can
+    # be observed while running, but cannot substitute for completed PR proof.
+    if dispatch and (completed or run.get('head_branch') != pr['head']['ref']
+                     or (run.get('head_repository') or {}).get('full_name') != repository):
+        return False
     try:
         age = (now - datetime.fromisoformat(run['updated_at'].replace('Z', '+00:00'))).total_seconds()
         if not 0 <= age <= 6 * 3600:
@@ -77,10 +83,10 @@ def full_proof(api, repository, run, pr, workflow_blob, epoch, now, *, completed
         expected = dict(version=1, repository=repository, run_id=run['id'], run_attempt=run['run_attempt'],
                         head=pr['head']['sha'], base=pr['base']['sha'], workflow_blob=workflow_blob,
                         environment_epoch=epoch, mode='full', event=run['event'],
-                        body_sha256=hashlib.sha256((pr.get('body') or '').encode()).hexdigest())
+                        body_sha256=hashlib.sha256(('' if dispatch else pr.get('body') or '').encode()).hexdigest())
         if any(proof.get(k) != v for k, v in expected.items()):
             return False
-        if run['event'] != 'pull_request' or proof.get('checkout') != pr.get('merge_commit_sha'):
+        if proof.get('checkout') != (pr['head']['sha'] if dispatch else pr.get('merge_commit_sha')):
             return False
         if not completed:
             return True
@@ -136,6 +142,13 @@ def handle(api, repository, number, epoch, *, now):
         return dict(action='reuse', run_id=reuse['id'], url=reuse['html_url'])
     if running:
         return dict(action='full-ci-running', run_id=running['id'], url=running['html_url'])
+    # Before classify uploads its certificate (or when its context is not
+    # provable), another dispatch to this same ref would cancel the existing
+    # run. Refuse rather than claim a matching context or destroy useful work.
+    if any(r.get('event') == 'workflow_dispatch' and r.get('head_branch') == pr['head']['ref']
+           and r.get('status') in {'queued', 'in_progress'} for r in candidates):
+        raise ValueError('CI dispatch for this HEAD/ref is still running without matching input proof; '
+                         'wait for its certificate or completion before retrying Ready')
     if (pr['head'].get('repo') or {}).get('full_name') == repository:
         # workflow_dispatch executes the existing workflow and all its checks;
         # an unchanged branch/HEAD is rechecked immediately before the write.
@@ -145,18 +158,12 @@ def handle(api, repository, number, epoch, *, now):
             raise ValueError('branch HEAD changed before full CI dispatch')
         api(prefix + '/actions/workflows/ci.yml/dispatches', {'ref': branch})
         return dict(action='full-ci-dispatched', head=pr['head']['sha'])
-    # Forks retain their original pull_request token/permissions on a rerun.
-    # Never dispatch untrusted fork code under a privileged target workflow.
-    candidates = [r for r in runs['workflow_runs'] if r.get('event') == 'pull_request'
-                  and r.get('head_sha') == pr['head']['sha']
-                  and any(p.get('number') == number for p in r.get('pull_requests', []))]
-    if not candidates:
-        raise ValueError('no matching fork CI run; synchronize the branch to start full pull_request CI')
-    run = candidates[0]
-    if run['status'] != 'completed':
-        return dict(action='full-ci-running', run_id=run['id'])
-    api(prefix + f'/actions/runs/{run["id"]}/rerun', {})
-    return dict(action='full-ci-rerun', run_id=run['id'])
+    # Reruns preserve the original event, including docs-only classification.
+    # No supported safe force-full fork transport exists in this workflow.
+    # Explicitly refuse; never call a repeated light run a full CI execution.
+    raise ValueError('No matching full CI proof for this fork. A maintainer must arrange a safe full '
+                     'pull_request run for the exact HEAD/base before retrying Ready; source changes '
+                     'normally start it on synchronize. Rerunning docs-only CI cannot force full mode.')
 
 
 def main():

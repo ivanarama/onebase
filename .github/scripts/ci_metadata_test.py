@@ -127,10 +127,22 @@ class MetadataTests(unittest.TestCase):
             else: setattr(api, field, True)
             self.assertEqual(self.handle(api)['action'], 'full-ci-dispatched')
 
-    def test_fork_reruns_real_pr_context_without_privileged_code_dispatch(self):
+    def test_fork_without_full_proof_refuses_instead_of_rerunning_docs(self):
         api = API();api.pr['head']['repo']['full_name'] = 'contributor/repo';api.proof['mode'] = 'docs'
-        self.assertEqual(self.handle(api)['action'], 'full-ci-rerun')
-        self.assertEqual(api.writes, [('repos/owner/repo/actions/runs/100/rerun', {})])
+        with self.assertRaisesRegex(ValueError, 'Rerunning docs-only CI cannot force full mode'):self.handle(api)
+        self.assertEqual(api.writes, [])
+
+    def test_dispatch_is_joined_only_for_its_real_context_and_never_reused_as_pr_green(self):
+        api=API();api.run.update(event='workflow_dispatch',head_branch=api.pr['head']['ref'],head_repository=dict(full_name='owner/repo'),status='in_progress',conclusion=None)
+        api.proof.update(event='workflow_dispatch',checkout=api.pr['head']['sha'],body_sha256=hashlib.sha256(b'').hexdigest())
+        self.assertEqual(self.handle(api)['action'],'full-ci-running');self.assertEqual(api.writes,[])
+        for field,value in [('base','d'*40),('checkout','c'*40),('body_sha256','wrong'),('environment_epoch','changed')]:
+            with self.subTest(field=field):
+                saved=api.proof.copy();api.proof[field]=value
+                with self.assertRaisesRegex(ValueError,'still running without matching input proof'):self.handle(api)
+                self.assertEqual(api.writes,[]);api.proof=saved
+        api.run.update(status='completed',conclusion='success')
+        self.assertEqual(self.handle(api)['action'],'full-ci-dispatched')
 
     def test_pr_change_during_inspection_stops_all_writes(self):
         api = API();reads = 0
@@ -179,9 +191,15 @@ class PublicCLI(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):cls.temporary.cleanup()
 
-    def invoke(self, *, missing=None, late_failure=False):
+    def invoke(self, *, missing=None, late_failure=False, dispatch=False, no_artifact=False, wrong_dispatch_base=False, fork_docs=False):
         import base64
         a=API();a.run['updated_at']=datetime.now(timezone.utc).isoformat()
+        if dispatch:
+            a.run.update(event='workflow_dispatch',head_branch=a.pr['head']['ref'],head_repository=dict(full_name='owner/repo'),status='in_progress',conclusion=None)
+            a.proof.update(event='workflow_dispatch',checkout=a.pr['head']['sha'],body_sha256=hashlib.sha256(b'').hexdigest())
+            if wrong_dispatch_base:a.proof['base']='d'*40
+        if fork_docs:
+            a.pr['head']['repo']['full_name']='contributor/repo';a.proof['mode']='docs'
         runs=[a.run]
         if late_failure:
             a.run.update(id=101,run_number=101,updated_at='2026-01-01T00:00:00Z');a.proof['run_id']=101
@@ -197,6 +215,7 @@ class PublicCLI(unittest.TestCase):
         if missing is not None:responses[prefix+'/contents/.github/scripts/ci-inputs.py?ref='+('a'*40)]=dict(error=missing)
         add(prefix+'/actions/workflows/ci.yml/runs?head_sha='+('a'*40)+'&per_page=100',dict(total_count=len(runs),workflow_runs=runs))
         add(prefix+f'/actions/runs/{a.run["id"]}/artifacts?per_page=100',dict(total_count=1,artifacts=[dict(id=200,name=f'ci-inputs-{a.run["id"]}-1',expired=False,size_in_bytes=1000)]))
+        if no_artifact:add(prefix+f'/actions/runs/{a.run["id"]}/artifacts?per_page=100',dict(total_count=0,artifacts=[]))
         stream=io.BytesIO()
         with zipfile.ZipFile(stream,'w') as archive:archive.writestr('ci-inputs.json',json.dumps(a.proof))
         responses[prefix+'/actions/artifacts/200/zip']=dict(bytes=base64.b64encode(stream.getvalue()).decode())
@@ -225,6 +244,20 @@ class PublicCLI(unittest.TestCase):
 
     def test_auth_error_stops_public_cli_without_any_write(self):
         result,writes=self.invoke(missing=401);self.assertNotEqual(result.returncode,0);self.assertEqual(writes,[])
+
+    def test_inflight_dispatch_through_public_cli_never_cancels_itself(self):
+        result,writes=self.invoke(dispatch=True);self.assertEqual(result.returncode,0,result.stderr)
+        self.assertEqual(json.loads(result.stdout)['action'],'full-ci-running');self.assertEqual(writes,[])
+
+    def test_unproven_dispatch_cannot_be_joined_or_cancelled_through_public_cli(self):
+        for options in [dict(no_artifact=True),dict(wrong_dispatch_base=True)]:
+            with self.subTest(options=options):
+                result,writes=self.invoke(dispatch=True,**options)
+                self.assertNotEqual(result.returncode,0);self.assertIn('still running without matching input proof',result.stderr);self.assertEqual(writes,[])
+
+    def test_docs_only_fork_refuses_through_public_cli_without_any_write(self):
+        result,writes=self.invoke(fork_docs=True);self.assertNotEqual(result.returncode,0)
+        self.assertIn('Rerunning docs-only CI cannot force full mode',result.stderr);self.assertEqual(writes,[])
 
 
 if __name__ == '__main__': unittest.main()
