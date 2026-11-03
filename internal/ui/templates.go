@@ -263,6 +263,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return processorServiceFieldNames(proc.Params)
 		},
+		"entityIdleServiceFieldNames":    entityIdleServiceFieldNames,
 		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
 		"effectiveFormElementReadOnly":   effectiveFormElementReadOnly,
 		"effectiveFormElementRequired":   effectiveFormElementRequired,

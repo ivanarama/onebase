@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -147,6 +148,70 @@ func TestFormIdle_AttachUnknownProcIsError(t *testing.T) {
 	resp := idleFormEvent(t, srv, ent, nil, open)
 	if resp.OK || !strings.Contains(resp.Error, "НетТакой") || len(resp.Idle) != 0 {
 		t.Fatalf("подключение несуществующей процедуры: ok=%v error=%q idle=%+v", resp.OK, resp.Error, resp.Idle)
+	}
+}
+
+func TestFormIdle_TransportAvoidsObjectFields(t *testing.T) {
+	for _, entityFields := range []bool{false, true} {
+		name := "attributes"
+		if entityFields {
+			name = "entity-fields"
+		}
+		t.Run(name, func(t *testing.T) {
+			srv, ent := setupManagedEventsServer(t, idleFormModule,
+				map[metadata.FormEventType]string{metadata.FormEventOnOpen: "ПриОткрытии"}, nil)
+			declared := []string{"_idle_proc", "_idle_token", "_ob_service_idle_proc", "_ob_service_idle_token", "_OB_SERVICE_IDLE_PROC_", "_OB_SERVICE_IDLE_TOKEN_"}
+			for _, field := range declared {
+				if entityFields {
+					ent.Fields = append(ent.Fields, metadata.Field{Name: field, Type: metadata.FieldTypeString})
+				} else {
+					ent.Forms[0].Attributes = append(ent.Forms[0].Attributes, &metadata.FormAttribute{Name: field, TypeRef: "string"})
+				}
+			}
+			if err := srv.store.Migrate(t.Context(), []*metadata.Entity{ent}); err != nil {
+				t.Fatal(err)
+			}
+			page := httptest.NewRecorder()
+			srv.form(page, reqWithChi("GET", "/ui/catalog/Контрагент/new", nil, map[string]string{"entity": ent.Name, "kind": "catalog"}))
+			_, rest, found := strings.Cut(page.Body.String(), `<script type="application/json" id="ob-managed-config">`)
+			if page.Code != 200 || !found {
+				t.Fatalf("GET config: %d: %s", page.Code, page.Body.String())
+			}
+			configJSON, _, _ := strings.Cut(rest, "</script>")
+			var config struct {
+				ServiceFields map[string]string `json:"serviceFields"`
+			}
+			if err := json.Unmarshal([]byte(configJSON), &config); err != nil {
+				t.Fatal(err)
+			}
+			open := url.Values{"_event": {string(metadata.FormEventOnOpen)}}
+			poll := idleFormEvent(t, srv, ent, nil, open).Idle[0]
+			body := url.Values{"_event": {formIdleEvent}, "Наименование": {"ждёт"}}
+			for _, field := range declared {
+				body.Set(field, "значение реквизита "+field)
+			}
+			for field, value := range map[string]string{"_idle_proc": poll.Proc, "_idle_token": poll.Token} {
+				transport := config.ServiceFields[field]
+				if transport == "" {
+					transport = field
+				}
+				body.Add(transport, value)
+			}
+			resp := idleFormEvent(t, srv, ent, nil, body)
+			if !resp.OK || resp.Values["Наименование"] != "готово" {
+				t.Fatalf("valid tick with declared transport-like fields: %+v", resp)
+			}
+			for _, field := range declared {
+				if resp.Values[field] != "значение реквизита "+field {
+					t.Errorf("tick overwrote declared field %s: %v", field, resp.Values[field])
+				}
+			}
+			body.Set(config.ServiceFields["_idle_token"], "forged")
+			resp = idleFormEvent(t, srv, ent, nil, body)
+			if resp.OK || len(resp.Idle) != 1 || !resp.Idle[0].Off || resp.Idle[0].Proc != poll.Proc {
+				t.Fatalf("forged tick must stop its actual timer: %+v", resp)
+			}
+		})
 	}
 }
 

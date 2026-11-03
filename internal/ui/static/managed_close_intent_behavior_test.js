@@ -1616,6 +1616,66 @@ for (const dismiss of [false, true]) {
   });
 }
 
+test('idle transport uses the GET mapping without overwriting form attributes', async () => {
+  let sent;
+  const app = runtime((_, options) => {
+    sent = options.body;
+    return Promise.resolve(response({ok: true}));
+  }, {kind: 'catalog', docId: 'object-1', serviceFields: {
+    _idle_proc: '_ob_service_idle_proc__', _idle_token: '_ob_service_idle_token__',
+  }}, true);
+  for (const name of ['_idle_proc', '_idle_token', '_ob_service_idle_proc', '_ob_service_idle_proc_']) {
+    app.form.values.set(name, 'user ' + name);
+  }
+  await app.context.obFire('', 'ОбработкаОжидания', {_idle_proc: 'Опрос', _idle_token: 'signed'});
+  assert.equal(sent.get('_ob_service_idle_proc__'), 'Опрос');
+  assert.equal(sent.get('_ob_service_idle_token__'), 'signed');
+  for (const name of ['_idle_proc', '_idle_token', '_ob_service_idle_proc', '_ob_service_idle_proc_']) {
+    assert.deepEqual(sent.getAll(name), ['user ' + name]);
+  }
+});
+
+for (const mode of ['editor', 'insert', 'delete', 'untouched', 'noop']) {
+  test('idle response preserves concurrent table input: ' + mode, async () => {
+    let complete;
+    let activeEdit = false;
+    const app = runtime(() => new Promise(resolve => { complete = resolve; }),
+      {kind: 'document', docId: 'doc-1'}, true);
+    app.form.values.set('Статус', 'до');
+    app.form.values.set('tp_json.Строки', '[{"Количество":2},{"Количество":3}]');
+    app.context.obGridSync = () => {
+      if (activeEdit) {
+        activeEdit = false;
+        app.form.values.set('tp_json.Строки', '[{"Количество":7},{"Количество":3}]');
+        app.context.obSetManagedFormDirty(true);
+      }
+      return true;
+    };
+    app.context.applyTableParts = parts => {
+      for (const [name, rows] of Object.entries(parts || {})) app.form.values.set('tp_json.' + name, JSON.stringify(rows));
+    };
+    const pending = app.context.obFire('', 'ОбработкаОжидания', {_idle_proc: 'Опрос', _idle_token: 'signed'});
+    await waitFor(() => complete);
+    let expected = '[{"Количество":2},{"Количество":3}]';
+    if (mode === 'editor' || mode === 'noop') {
+      activeEdit = true;
+      expected = '[{"Количество":7},{"Количество":3}]';
+    } else if (mode === 'insert' || mode === 'delete') {
+      expected = mode === 'insert' ? '[{"Количество":2},{"Количество":3},{"Количество":8}]' : '[{"Количество":2}]';
+      app.form.values.set('tp_json.Строки', expected);
+      app.context.obSetManagedFormDirty(true);
+    } else {
+      expected = '[{"Количество":99},{"Количество":3}]';
+    }
+    complete(response({ok: true, dirty: mode !== 'noop', values: {Статус: 'обработчик'},
+      tableparts: {Строки: [{Количество: mode === 'noop' ? 2 : 99}, {Количество: 3}]}}));
+    await pending;
+    assert.equal(app.form.values.get('tp_json.Строки'), expected);
+    assert.equal(app.form.values.get('Статус'), 'обработчик');
+    assert.equal(app.context._obFormDirty, true);
+  });
+}
+
 test('before-post: a question response preserves newer input and merges untouched fields', async () => {
   let complete;
   let question;

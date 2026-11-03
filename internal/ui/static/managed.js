@@ -1235,6 +1235,14 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       applySavedIdentity(data);
       // Обработчики ожидания: подключение/отключение таймеров из ответа.
       if (data.idle && typeof window.obManagedApplyIdle === 'function') window.obManagedApplyIdle(data.idle);
+      var idleSnapshot = !snapshot.elementName && snapshot.eventName === 'ОбработкаОжидания';
+      // An active grid editor may not have emitted onCellChange yet. Commit
+      // it before checking the edit clock or applying an older tick response.
+      // A veto leaves the current editor and its input intact.
+      if (idleSnapshot && window.obGridSync && window.obGridSync() === false) {
+        setManagedFormDirty(true);
+        return;
+      }
       // The user can type after FormData was sent. An old response must not
       // navigate away or repaint those newer edits, even when the handler
       // saved the old snapshot and returned dirty=false.
@@ -1300,10 +1308,10 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // partially failing renderer. Programmatic response application does
       // not emit input/change, so raise it before touching mutable DOM state.
       if (data.dirty === true) setManagedFormDirty(true);
-      var beforePostMerged = beforePostSnapshot(snapshot) && formEditState.revision !== snapshot.editRevision;
-      if (beforePostMerged) {
-        // Перед ответом на вопрос сохранить свежий ввод, но принять правки
-        // обработчика в полях и таблицах, которых пользователь не касался.
+      var responseMerged = (beforePostSnapshot(snapshot) || idleSnapshot) && formEditState.revision !== snapshot.editRevision;
+      if (responseMerged) {
+        // Before-post and background ticks share the close controller's
+        // merge: retain newer input and apply updates to untouched data.
         var mergeRevision = formEditState.revision;
         var mergeBody = await closeSnapshotBody('', '');
         if (!mergeBody || formEditState.revision !== mergeRevision) {
@@ -1321,15 +1329,15 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
         applyChoiceList(elementName, data.choiceList);
         applyFormTables(data.formTables);
       }
-      if (!beforePostMerged && window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
+      if (!responseMerged && window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
 	  // Server events repaint controls programmatically and therefore do not
 	  // trigger input/change. Raise dirty for unsaved handler mutations; clear
 	  // it only when this response proves a successful Object.Write and no
 	  // user edits followed the snapshot that was saved.
-	  if (!beforePostMerged && data.dirty === false && (data.savedId || data.version)) {
+	  if (!responseMerged && data.dirty === false && (data.savedId || data.version)) {
 		setManagedFormDirty(formEditState.revision !== snapshot.editRevision);
 	  }
-      if (!beforePostMerged) {
+      if (!responseMerged) {
         (data.messages || []).forEach(m => flash(m, 'ok'));
         if (data.error) flash(data.error, 'err');
       }
@@ -1356,9 +1364,9 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       if (beforePostSnapshot(snapshot) && beforePostState) {
         // Merging protects newer input but cannot authorize posting it: the
         // handler checked another snapshot. A fresh user attempt must check it.
-        beforePostState.outcome = !beforePostMerged && !data.cancel && !data.error && !navigationBlocked;
+        beforePostState.outcome = !responseMerged && !data.cancel && !data.error && !navigationBlocked;
         beforePostState.approval.revision = snapshot.editRevision;
-        if (beforePostMerged) flash(closeMessage('formChanged', 'Форма изменилась во время проверки закрытия. Повторите закрытие.'), 'err');
+        if (responseMerged) flash(closeMessage('formChanged', 'Форма изменилась во время проверки закрытия. Повторите закрытие.'), 'err');
       }
     } catch (e) {
       // A lost/unparseable response for /new may hide a committed insert and

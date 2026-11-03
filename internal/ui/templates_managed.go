@@ -906,6 +906,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
   "beforePost" (and .Entity.Posting (hasFormHandler .Form "ПередПроведением"))
   "formAttrs" (formAttrNames .Form .Entity)
   "formAttrValues" (formAttrValues .Form .Entity .Values)
+  "serviceFields" (entityIdleServiceFieldNames .Entity .Form)
 )}}</script>
 {{end}}
 <script type="application/json" id="ob-managed-tp-ref-opts">{{jsJSON .TPRefOptions}}</script>
