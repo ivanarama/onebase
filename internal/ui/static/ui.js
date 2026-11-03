@@ -6940,11 +6940,23 @@ function obEnterNavigateFrom(target) {
     bar.appendChild(left); bar.appendChild(note); bar.appendChild(right); bar.appendChild(buttons);
     document.body.appendChild(bar);
 
-    // Высота строки — общая переменная: тело страницы получает отступ снизу, а
-    // раскладки «на высоту окна» вычитают её, чтобы строка не перекрывала форму.
+    // Высота строки — общая переменная --ob-status-bar-h. Окно приложения —
+    // body ровно на высоту экрана с внутренней прокруткой (height:100vh,
+    // overflow:hidden): ему уменьшаем высоту, отступ снизу там ушёл бы под
+    // обрез и строка перекрыла бы низ формы. Обычной прокручиваемой странице
+    // хватает отступа снизу. Раскладки «на высоту окна» вычитают переменную.
     function setHeight(on) {
-      document.documentElement.style.setProperty('--ob-status-bar-h', on ? '30px' : '0px');
-      document.body.style.paddingBottom = on ? 'var(--ob-status-bar-h)' : '';
+      var root = document.documentElement, body = document.body;
+      root.style.setProperty('--ob-status-bar-h', on ? '30px' : '0px');
+      var clipped = false;
+      try { clipped = window.getComputedStyle(body).overflowY === 'hidden'; } catch (e) {}
+      if (clipped) {
+        body.style.height = on ? 'calc(100vh - var(--ob-status-bar-h))' : '';
+        body.style.minHeight = on ? 'calc(100vh - var(--ob-status-bar-h))' : '';
+        body.style.paddingBottom = '';
+      } else {
+        body.style.paddingBottom = on ? 'var(--ob-status-bar-h)' : '';
+      }
       try { window.dispatchEvent(new Event('resize')); } catch (e) {}
     }
     setHeight(false);
