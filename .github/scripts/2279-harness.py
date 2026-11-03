@@ -17,11 +17,11 @@ def command(name,args,cwd=source,timeout=900):
 def verify(label):
  assert command(label+'-head',['git','rev-parse','HEAD']).strip()==commit
  assert command(label+'-tree',['git','rev-parse','HEAD^{tree}']).strip()==tree
- entries=command(label+'-index',['git','ls-files','--stage']).splitlines()
+ entries=command(label+'-index',['git','ls-files','--stage','-z']).rstrip('\0').split('\0')
  expected={f['path']:(f['mode'],f['oid']) for f in manifest['files']};actual={}
  for line in entries:
   mode,oid,rest=line.split(' ',2);stage,path=rest.split('\t',1);assert stage=='0';actual[path]=(mode,oid)
- assert actual==expected and len(actual)==3724
+ assert actual==expected and len(actual)==3724,dict(missing=sorted(expected.keys()-actual.keys())[:5],extra=sorted(actual.keys()-expected.keys())[:5],changed=[p for p in expected.keys()&actual.keys() if expected[p]!=actual[p]][:5])
  for f in manifest['files']:
   path=source/f['path'];assert not path.is_symlink()
   assert hashlib.sha256(path.read_bytes()).hexdigest()==f['sha256'],f['path']
@@ -62,5 +62,7 @@ try:
  assert changes=={'golang.org/x/'+name:('golang.org/x/'+name+' '+a,'golang.org/x/'+name+' '+b) for name,(a,b) in versions.items()},changes
  result['module_changes']=changes
  command('diff-check',['git','diff','--check']);result['after']=verify('after');result['status']='passed'
+except BaseException as error:
+ result['status']='failed';result['error']=type(error).__name__+': '+str(error);raise
 finally:
  (out/'result.json').write_text(json.dumps(result,ensure_ascii=False,indent=2))
