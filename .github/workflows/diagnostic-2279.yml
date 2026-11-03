@@ -1,0 +1,60 @@
+name: Diagnostic 2279 exact browser acceptance
+on:
+  push:
+    branches: [diagnostic/2279-browser-cdp-task15399]
+permissions:
+  contents: read
+jobs:
+  exact-browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: onebase
+          POSTGRES_PASSWORD: onebase
+          POSTGRES_DB: onebase_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U onebase -d onebase_test"
+          --health-interval 10s --health-timeout 5s --health-retries 5
+    env:
+      CGO_ENABLED: '1'
+      TEST_DATABASE_URL: postgres://onebase:onebase@localhost:5432/onebase_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: harness
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: d10cd92e106ff4b082aa79acf96206dddc25bd45
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: candidate/.go-version
+          cache-dependency-path: candidate/go.sum
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install real supported browser
+        working-directory: candidate/e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+          mkdir -p "$RUNNER_TEMP/2279-bin"
+          browser="$(node -e "process.stdout.write(require('@playwright/test').chromium.executablePath())")"
+          test -x "$browser"
+          ln -s "$browser" "$RUNNER_TEMP/2279-bin/google-chrome"
+          echo "$RUNNER_TEMP/2279-bin" >> "$GITHUB_PATH"
+      - name: Unchanged public HTTP browser and Node scenarios on exact source
+        run: python3 harness/.github/scripts/2279-harness.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnostic-2279-exact-browser-${{ github.run_id }}-${{ github.run_attempt }}
+          path: proof
+          if-no-files-found: error
