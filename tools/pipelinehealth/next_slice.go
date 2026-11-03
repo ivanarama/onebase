@@ -24,13 +24,19 @@ var (
 	sliceLegacyActive = regexp.MustCompile(`^Взято в работу: #([1-9][0-9]*)\. <!-- pp:in-work -->\n?$`)
 )
 
-// sliceSource only trusts exact, unedited owner records. A legacy active marker
-// is a lookup hint, never authorization to continue a slice.
+// sliceSource observes owner records even after edits, but only trusts unedited
+// payloads. A legacy active marker is a lookup hint, never authorization to
+// continue a slice.
 func sliceSource(issue apiIssue, owner string) (int, string, bool) {
 	number := 0
 	path := ""
 	protocol := false
 	for _, c := range issue.Thread {
+		if c.User.Login != owner {
+			continue
+		}
+		record := strings.Contains(c.Body, "pp:next-slice-") || strings.HasPrefix(c.Body, "pp-next-slice-v1")
+		protocol = protocol || record
 		if !trustedUnedited(c, owner) {
 			continue
 		}
@@ -40,8 +46,7 @@ func sliceSource(issue apiIssue, owner string) (int, string, bool) {
 		if m := sliceLegacyActive.FindStringSubmatch(c.Body); m != nil {
 			number, _ = strconv.Atoi(m[1])
 		}
-		if strings.Contains(c.Body, "pp:next-slice-") || strings.HasPrefix(c.Body, "pp-next-slice-v1") {
-			protocol = true
+		if record {
 			if root, err := nextslice.ParseRoot(c.Body); err == nil && root.Issue == strconv.Itoa(issue.Number) {
 				number, _ = strconv.Atoi(root.PR)
 			}

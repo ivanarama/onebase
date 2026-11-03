@@ -60,6 +60,43 @@ func TestNextSlicePublicCLI(t *testing.T) {
 	if err := json.Unmarshal(read("legacy-1374-prs.json"), &baselinePulls); err != nil {
 		t.Fatal(err)
 	}
+	ownerRecord := func(edited, sameSecond bool) func(*apiIssue, *apiPull) {
+		return func(i *apiIssue, _ *apiPull) {
+			labels := i.Labels[:0]
+			for _, label := range i.Labels {
+				if label.Name != "in-work" {
+					labels = append(labels, label)
+				}
+			}
+			i.Labels = labels
+			c := apiComment{ID: 9007199254740995, CreatedAt: "2026-09-08T00:00:00Z", UpdatedAt: "2026-09-08T00:00:00Z"}
+			c.User.Login = "ivanarama"
+			// A syntactically complete owner root survives removal of in-work.
+			c.Body = `pp-next-slice-v1
+issue=1274
+plan-path=Plans/159-undefined-and-typed-empty-values.md
+plan-sha256=1f68300b3b06d69ce90a59ca43dbad03e24f94036ae1ceb7e4a1734a9fb9c842
+completed-slice=A
+next-slice=B
+pr=1374
+head=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+merge=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+declaration=9007199254740993
+previous-handoff=none
+<!-- pp:next-slice-claim fingerprint-sha256=b31841a23b07bb0b65b3eb5e341c2b052ae91c5defe1c1726a63ef5ab0a0e9a8 owner=11111111-1111-4111-8111-111111111111 -->`
+			if edited {
+				at := "2026-09-08T00:00:01Z"
+				if sameSecond {
+					at = c.CreatedAt
+				} else {
+					c.UpdatedAt = at
+				}
+				c.LastEditedAt = &at
+			}
+			i.Thread = append(i.Thread, c)
+			i.CommentCount = len(i.Thread)
+		}
+	}
 	cases := []struct {
 		name  string
 		alter func(*apiIssue, *apiPull)
@@ -67,6 +104,9 @@ func TestNextSlicePublicCLI(t *testing.T) {
 		human int
 	}{
 		{name: "exact historical orphan", want: "legacy-bootstrap-required", human: 1},
+		{name: "owner record without in-work", alter: ownerRecord(false, false), human: 1},
+		{name: "edited owner record without in-work", alter: ownerRecord(true, false), human: 1},
+		{name: "same-second edited owner record without in-work", alter: ownerRecord(true, true), human: 1},
 		{name: "active PR", alter: func(_ *apiIssue, p *apiPull) { p.State = "open" }, human: 0},
 		{name: "closed without merge", alter: func(_ *apiIssue, p *apiPull) { p.SliceEvidence.Merged = false }, want: "human", human: 1},
 		{name: "missing merge event", alter: func(_ *apiIssue, p *apiPull) { p.SliceEvidence.MergeEvents = 0 }, want: "human", human: 1},
@@ -115,7 +155,10 @@ func TestNextSlicePublicCLI(t *testing.T) {
 			if len(got.NextSliceHumanWaiting) != tc.human {
 				t.Fatalf("human=%+v, want %d\n%s", got.NextSliceHumanWaiting, tc.human, out)
 			}
-			if tc.human > 0 && got.NextSliceHumanWaiting[0].Stage != tc.want {
+			if strings.Contains(tc.name, "owner record") && len(got.HumanWaiting) != tc.human {
+				t.Fatalf("owner record lost human routing: %s", out)
+			}
+			if tc.human > 0 && tc.want != "" && got.NextSliceHumanWaiting[0].Stage != tc.want {
 				t.Fatalf("wrong state: %s", out)
 			}
 			for _, candidate := range got.FixCandidates {
