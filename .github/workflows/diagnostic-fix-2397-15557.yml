@@ -1,0 +1,86 @@
+{
+  "name": "FIX 2397 exact Linux acceptance 15557",
+  "on": {
+    "push": {
+      "branches": [
+        "diagnostic/fix-2397-15557-linux-harness"
+      ]
+    }
+  },
+  "permissions": {
+    "contents": "read"
+  },
+  "jobs": {
+    "checks": {
+      "runs-on": "ubuntu-24.04",
+      "timeout-minutes": 60,
+      "services": {
+        "postgres": {
+          "image": "postgres:16",
+          "env": {
+            "POSTGRES_USER": "onebase_test",
+            "POSTGRES_PASSWORD": "onebase_test",
+            "POSTGRES_DB": "onebase_test"
+          },
+          "ports": [
+            "5432:5432"
+          ],
+          "options": "--health-cmd \"pg_isready -U onebase_test\" --health-interval 10s --health-timeout 5s --health-retries 5"
+        }
+      },
+      "steps": [
+        {
+          "uses": "actions/checkout@v4",
+          "with": {
+            "path": "harness",
+            "persist-credentials": false
+          }
+        },
+        {
+          "uses": "actions/checkout@v4",
+          "with": {
+            "path": "candidate",
+            "ref": "68b7630278408a6ae5582d150c50ab05276425f2",
+            "persist-credentials": false,
+            "fetch-depth": 1
+          }
+        },
+        {
+          "uses": "actions/setup-go@v5",
+          "with": {
+            "go-version": "1.26.10",
+            "cache": true,
+            "cache-dependency-path": "candidate/go.sum"
+          }
+        },
+        {
+          "name": "Exact source full checks",
+          "env": {
+            "CANDIDATE_ROOT": "${{ github.workspace }}/candidate",
+            "CANDIDATE_TREE": "cdb903df7adaef137e362bd4cb8141c77df07505",
+            "CHECK_ARTIFACTS": "${{ runner.temp }}/pp-fix2397",
+            "TEST_DATABASE_URL": "postgres://onebase_test:onebase_test@127.0.0.1:5432/onebase_test?sslmode=disable",
+            "PYTHONDONTWRITEBYTECODE": "1"
+          },
+          "run": "python3 harness/.github/checks/fix-2397-15557/remote_checks.py"
+        },
+        {
+          "name": "Preserve encrypted private evidence",
+          "if": "${{ always() }}",
+          "shell": "bash",
+          "run": "set -euo pipefail\nmkdir -p \"$RUNNER_TEMP/pp-fix2397\"\ntar --exclude=pp-fix2397/lint-cache --exclude=pp-fix2397/tools -C \"$RUNNER_TEMP\" -czf \"$RUNNER_TEMP/evidence.tgz\" pp-fix2397\nopenssl cms -encrypt -aes-256-cbc -binary -in \"$RUNNER_TEMP/evidence.tgz\" -out \"$RUNNER_TEMP/evidence.cms\" -outform DER \"harness/.github/checks/fix-2397-15557/evidence-public.pem\"\n"
+        },
+        {
+          "uses": "actions/upload-artifact@v4",
+          "if": "${{ always() }}",
+          "with": {
+            "name": "fix2397-15557-encrypted-evidence",
+            "path": "${{ runner.temp }}/evidence.cms",
+            "if-no-files-found": "error",
+            "retention-days": 2
+          }
+        }
+      ]
+    }
+  }
+}
