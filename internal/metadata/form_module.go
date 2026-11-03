@@ -241,7 +241,7 @@ type FormElement struct {
 	TitleColor    string `yaml:"title_color,omitempty"`
 	TitleBold     bool   `yaml:"title_bold,omitempty"`
 	TabTitlesBold bool   `yaml:"tab_titles_bold,omitempty"`
-	ReadOnly   bool   `yaml:"readonly,omitempty"`   // только чтение
+	ReadOnly      bool   `yaml:"readonly,omitempty"` // только чтение
 	// EditableAdminOnly — поле редактирует только администратор, остальным оно
 	// нередактируемо всегда. В отличие от ReadOnlyWhen условие тут не от данных
 	// записи, а от того, кто смотрит, поэтому вычисляется на сервере при

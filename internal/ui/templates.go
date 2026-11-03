@@ -11,8 +11,8 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
-	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/csssafe"
+	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
