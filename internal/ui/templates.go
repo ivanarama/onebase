@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/i18n"
+	"github.com/ivantit66/onebase/internal/csssafe"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
@@ -676,6 +677,23 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"elAlign": func(el *metadata.FormElement) template.CSS {
 			return template.CSS(metadata.FormElementAlignCSS(el)) //nolint:gosec // G203: стиль собран только из нормализованных значений словаря выравнивания
+		},
+		// tabTitleStyle — стиль кнопки закладки страницы: title_color/title_bold
+		// страницы и tab_titles_bold набора. Цвет идёт через --ob-tab-color: им
+		// же красится черта активной закладки (правило .managed-tab-btn.active).
+		"tabTitleStyle": func(pages, page *metadata.FormElement) template.CSS {
+			var css string
+			if page != nil {
+				if color := csssafe.Color(page.TitleColor); color != "" {
+					css += "--ob-tab-color:" + color + ";color:" + color + ";"
+				}
+			}
+			if pages != nil && pages.TabTitlesBold {
+				css += "font-weight:700;font-size:15px;"
+			} else if page != nil && page.TitleBold {
+				css += "font-weight:700;"
+			}
+			return template.CSS(css) //nolint:gosec // G203: цвет прошёл csssafe.Color, остальное — константы
 		},
 		"elBackground": func(el *metadata.FormElement) template.CSS {
 			return template.CSS(metadata.FormElementBackgroundCSS(el)) //nolint:gosec // G203: значение прошло csssafe.Color, иначе пустая строка

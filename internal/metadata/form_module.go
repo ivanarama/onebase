@@ -234,6 +234,13 @@ type FormElement struct {
 	// было.
 	ScrollX    bool   `yaml:"scroll_x,omitempty"`
 	Background string `yaml:"background,omitempty"` // фон контейнера; читается только у ГруппаФормы (#1547), цвет проверяет csssafe.Color
+	// TitleColor / TitleBold — у kind: Страница: цвет и жирность заголовка её
+	// закладки; цвет — и у нижней черты активной закладки. TabTitlesBold — у
+	// СтраницыФормы: все заголовки набора жирные и крупнее (15px). Цвет
+	// проверяет csssafe.Color, недопустимый игнорируется.
+	TitleColor    string `yaml:"title_color,omitempty"`
+	TitleBold     bool   `yaml:"title_bold,omitempty"`
+	TabTitlesBold bool   `yaml:"tab_titles_bold,omitempty"`
 	ReadOnly   bool   `yaml:"readonly,omitempty"`   // только чтение
 	// EditableAdminOnly — поле редактирует только администратор, остальным оно
 	// нередактируемо всегда. В отличие от ReadOnlyWhen условие тут не от данных
