@@ -1,10 +1,12 @@
 package ui
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
+	"unicode/utf16"
 
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -117,10 +119,27 @@ func (s *Server) writeRegisterExcel(w http.ResponseWriter, r *http.Request, name
 		s.serverError(w, r, err)
 		return
 	}
+	setCellValue := func(cell string, value any) error {
+		text := fmt.Sprint(value)
+		if raw, ok := value.([]byte); ok {
+			text = string(raw)
+		}
+		// Excelize silently truncates strings at Excel's UTF-16 limit. Check
+		// both headings and the final masked/presentation values before any
+		// attachment headers or workbook bytes are sent.
+		units := 0
+		for _, char := range text {
+			units += utf16.RuneLen(char)
+			if units > excelize.TotalCellChars {
+				return excelize.ErrCellCharsLength
+			}
+		}
+		return book.SetCellValue("Sheet1", cell, value)
+	}
 	write := func() error {
 		for col, field := range fields {
 			cell, _ := excelize.CoordinatesToCellName(col+1, 1)
-			if err := book.SetCellValue("Sheet1", cell, field.DisplayName(s.resolveLang(r))); err != nil {
+			if err := setCellValue(cell, field.DisplayName(s.resolveLang(r))); err != nil {
 				return err
 			}
 			for rowIndex, row := range rows {
@@ -130,7 +149,7 @@ func (s *Server) writeRegisterExcel(w http.ResponseWriter, r *http.Request, name
 				}
 				value = registerExcelValue(field, value)
 				cell, _ = excelize.CoordinatesToCellName(col+1, rowIndex+2)
-				if err := book.SetCellValue("Sheet1", cell, value); err != nil {
+				if err := setCellValue(cell, value); err != nil {
 					return err
 				}
 				if _, date := value.(time.Time); date {
@@ -143,6 +162,10 @@ func (s *Server) writeRegisterExcel(w http.ResponseWriter, r *http.Request, name
 		return nil
 	}
 	if err := write(); err != nil {
+		if errors.Is(err, excelize.ErrCellCharsLength) {
+			http.Error(w, fmt.Sprintf(s.tr(s.resolveLang(r), "Выгрузка в Excel отменена: текст ячейки превышает лимит %d единиц UTF-16. Файл не создан."), excelize.TotalCellChars), http.StatusBadRequest)
+			return
+		}
 		s.serverError(w, r, err)
 		return
 	}

@@ -1,4 +1,5 @@
 {
+  "Выгрузка в Excel отменена: текст ячейки превышает лимит %d единиц UTF-16. Файл не создан.": "Excel export cancelled: cell text exceeds the limit of %d UTF-16 units. No file was created.",
   "у локального источника %s нет ссылочного реквизита %s; внешняя ссылка затенена": "Local source %s has no reference field %s; the outer reference is shadowed",
   "временный каталог загрузок": "temporary upload directory",
   "временный файл параметра %s": "temporary file for parameter %s",

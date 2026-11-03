@@ -257,3 +257,117 @@ func TestRegisterExcelHTTPMatrix(t *testing.T) {
 		}
 	})
 }
+
+func TestRegisterExcelTextLimitHTTP(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		doc := &metadata.Entity{Name: "ExportDocument", Kind: metadata.KindDocument, Posting: true}
+		reg := &metadata.Register{Name: "ExportText", Dimensions: []metadata.Field{{Name: "Value", Type: metadata.FieldTypeString}}, Resources: []metadata.Field{{Name: "Amount", Type: metadata.FieldTypeNumber}}}
+		ir := &metadata.InfoRegister{Name: "ExportText", Dimensions: []metadata.Field{{Name: "ID", Type: metadata.FieldTypeString}}, Resources: []metadata.Field{{Name: "Value", Type: metadata.FieldTypeString}}}
+		if err := db.Migrate(ctx, []*metadata.Entity{doc}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.MigrateRegisters(ctx, []*metadata.Register{reg}); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+			t.Fatal(err)
+		}
+		recorder := uuid.New()
+		period := time.Date(2026, 10, 1, 11, 22, 33, 0, time.UTC)
+		if err := db.Upsert(ctx, doc.Name, recorder, map[string]any{}, doc); err != nil {
+			t.Fatal(err)
+		}
+		registry := runtime.NewRegistry()
+		registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{doc}, Registers: []*metadata.Register{reg}, InfoRegs: []*metadata.InfoRegister{ir}})
+		s := New(registry, db, interpreter.New(), nil, Config{}, nil)
+		t.Cleanup(s.Close)
+		router := chi.NewRouter()
+		s.Mount(router)
+		user := &auth.User{ID: "export-admin", IsAdmin: true}
+		for _, tc := range []struct {
+			name, value, title string
+			reject             bool
+		}{
+			{name: "formula-as-text", value: "=1+2", title: "Value"},
+			{name: "cyrillic-limit", value: strings.Repeat("я", 32767), title: "Value"},
+			{name: "cyrillic-overflow", value: strings.Repeat("я", 32768) + "TAIL", title: "Value", reject: true},
+			{name: "surrogate-limit", value: strings.Repeat("😀", 16383) + "я", title: "Value"},
+			{name: "surrogate-overflow", value: strings.Repeat("😀", 16384), title: "Value", reject: true},
+			{name: "header-limit", value: "short", title: strings.Repeat("я", 32767)},
+			{name: "header-overflow", value: "short", title: strings.Repeat("😀", 16384), reject: true},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				reg.Dimensions[0].Title, ir.Resources[0].Title = tc.title, tc.title
+				if err := db.WriteMovements(ctx, reg.Name, doc.Name, recorder, []map[string]any{{"Value": tc.value, "Amount": "1", "ВидДвижения": "Приход"}}, reg, &period); err != nil {
+					t.Fatal(err)
+				}
+				if err := db.InfoRegSet(ctx, ir, map[string]any{"ID": "row"}, map[string]any{"Value": tc.value}, nil); err != nil {
+					t.Fatal(err)
+				}
+				for _, path := range []string{"/ui/register/exporttext", "/ui/register/exporttext/balances", "/ui/inforeg/exporttext"} {
+					t.Run(path, func(t *testing.T) {
+						page := infoRegPageRequest(router, user, http.MethodGet, path, nil)
+						table, _ := registerExcelHTML(t, page.Body.String())
+						if page.Code != http.StatusOK || !strings.Contains(fmt.Sprint(table), tc.value) {
+							t.Fatalf("HTML did not preserve source text: status %d", page.Code)
+						}
+						response := infoRegPageRequest(router, user, http.MethodGet, path+"/excel", nil)
+						if tc.reject {
+							if response.Code != http.StatusBadRequest {
+								t.Fatalf("oversized text: status %d, want 400", response.Code)
+							}
+							if !strings.Contains(response.Body.String(), "32767") || !strings.Contains(response.Body.String(), "UTF-16") {
+								t.Fatalf("missing limit explanation: %q", response.Body.String())
+							}
+							if response.Header().Get("Content-Disposition") != "" || strings.Contains(response.Header().Get("Content-Type"), "spreadsheetml") || bytes.HasPrefix(response.Body.Bytes(), []byte("PK")) {
+								t.Fatal("overflow returned a workbook attachment")
+							}
+							return
+						}
+						if response.Code != http.StatusOK {
+							t.Fatalf("valid text: %d %s", response.Code, response.Body.String())
+						}
+						book, err := excelize.OpenReader(bytes.NewReader(response.Body.Bytes()))
+						if err != nil {
+							t.Fatal(err)
+						}
+						defer func() {
+							if err := book.Close(); err != nil {
+								t.Error(err)
+							}
+						}()
+						rows, err := book.GetRows("Sheet1")
+						if err != nil {
+							t.Fatal(err)
+						}
+						if len(rows) != 2 {
+							t.Fatalf("row count = %d, want header and one row", len(rows))
+						}
+						found := false
+						for col, header := range rows[0] {
+							if header != tc.title {
+								continue
+							}
+							if col >= len(rows[1]) || rows[1][col] != tc.value {
+								t.Fatal("export changed or truncated the text")
+							}
+							cell, err := excelize.CoordinatesToCellName(col+1, 2)
+							if err != nil {
+								t.Fatal(err)
+							}
+							formula, err := book.GetCellFormula("Sheet1", cell)
+							if err != nil || formula != "" {
+								t.Fatalf("text became a formula: %q (%v)", formula, err)
+							}
+							found = true
+						}
+						if !found {
+							t.Fatal("export changed or truncated the header")
+						}
+					})
+				}
+			})
+		}
+	})
+}
