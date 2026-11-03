@@ -791,7 +791,7 @@ type FormModule struct {
 // FormListCondition — одно условие постоянного отбора формы списка.
 type FormListCondition struct {
 	Field string `yaml:"field"`
-	Op    string `yaml:"op,omitempty"`    // пока только eq (умолчание)
+	Op    string `yaml:"op,omitempty"`    // eq (умолчание), ne, empty, not_empty
 	Value string `yaml:"value,omitempty"` // литерал или @ТекущийПользователь
 	// Roles — условие действует только для пользователя с одной из этих
 	// ролей; пусто — для всех. «Мои записи» нужны оператору, а сотрудник

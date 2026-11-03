@@ -245,3 +245,42 @@ func TestImportRows_CellLevelCorruptionRejectsWholeBook(t *testing.T) {
 		t.Fatalf("неверные данные здоровой книги: %v", rows)
 	}
 }
+
+// A valid prefix must never turn malformed or oversized coordinates into a
+// successful partial import after an Excel dependency update.
+func TestImportRows_RejectsInvalidCoordinatesAndLimits(t *testing.T) {
+	for _, tc := range []struct {
+		name, row string
+		want      error
+	}{
+		{"backwards_row", `<row r="0"><c r="A0"><v>1</v></c></row>`, errImportXML},
+		{"mismatched_cell_row", `<row r="3"><c r="A4"><v>1</v></c></row>`, errImportXML},
+		{"row_past_excel", `<row r="1048577"><c r="A1048577"><v>1</v></c></row>`, errImportLimit},
+		{"row_limit", `<row r="10001"><c r="A10001"><v>1</v></c></row>`, errImportLimit},
+		{"column_limit", `<row r="3"><c r="IW3"><v>1</v></c></row>`, errImportLimit},
+		{"cell_limit", `<row r="10000"><c r="CW10000"><v>1</v></c></row>`, errImportLimit},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeRawBook(t, rawBookSheet(tc.row), rawBookStrings)
+			rows, err := ImportRows(path)
+			if !errors.Is(err, tc.want) || rows != nil {
+				t.Fatalf("expected whole-book refusal %v, got rows=%v err=%v", tc.want, rows, err)
+			}
+		})
+	}
+	t.Run("byte_limit", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "oversized.xlsx")
+		f, err := os.Create(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		truncateErr := f.Truncate(32<<20 + 1)
+		closeErr := f.Close()
+		if truncateErr != nil || closeErr != nil {
+			t.Fatalf("create oversized file: %v; %v", truncateErr, closeErr)
+		}
+		if rows, err := ImportRows(path); !errors.Is(err, errImportLimit) || rows != nil {
+			t.Fatalf("expected byte-limit refusal, got rows=%v err=%v", rows, err)
+		}
+	})
+}

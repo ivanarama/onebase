@@ -1434,6 +1434,8 @@ func (s *Server) treeChildrenJSON(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Ветка дерева — тот же список: постоянный отбор формы списка действует и
+	// здесь, иначе раскрытие папки показало бы записи, скрытые в её списке.
 	params = s.applyListFormFilter(r, ent, params)
 	rows, err := s.store.List(r.Context(), ent.Name, ent, params)
 	if err != nil {
