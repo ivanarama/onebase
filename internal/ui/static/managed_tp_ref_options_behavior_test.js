@@ -55,7 +55,7 @@ test('event options clear a field without breaking its retained array', () => {
 });
 
 test('event path applies reference options before table-part rows', () => {
-  const options = source.indexOf('window.obManagedApplyTablePartRefOptions(data.tpRefOptions);');
+  const options = source.indexOf('window.obManagedApplyTablePartRefOptions(data.tpRefOptions, data.tpRefChoices);');
   const rows = source.indexOf('window.applyTableParts(data.tableparts);', options);
   assert.ok(options >= 0 && rows > options, 'tpRefOptions применяются после строк или не применяются вовсе');
 });

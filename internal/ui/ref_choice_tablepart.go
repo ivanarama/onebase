@@ -161,7 +161,7 @@ func (s *Server) applyTPChoiceFilters(ctx context.Context, owner *metadata.Entit
 				if hf, ok := ownerHolderField(owner, target.Owner); ok {
 					ownerID, asked = formValueForPath(data["Values"], "Объект."+hf.Name), true
 				}
-				rows, err := s.initialReferenceOptionsOwned(ctx, target, refOptionsChoice.withMarked(field.ChoiceShowDeleted), selectedTPRefIDs(tableRows[tp.Name], field.Name), ownerID, asked)
+				rows, err := s.initialReferenceOptionsOwned(ctx, target, refOptionsChoice.withMarked(field.ChoiceShowDeleted), nil, ownerID, asked)
 				// An empty/failed page stays scoped to this placement too.
 				render.BaseOptions[field.Name] = nil
 				if err == nil {

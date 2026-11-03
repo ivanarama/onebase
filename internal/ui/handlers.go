@@ -555,20 +555,36 @@ func (s *Server) loadInitialRefFilterOptions(ctx context.Context, entity *metada
 	return opts, nil
 }
 
+// Choices contains only the filtered page for new selections. Labels also
+// contains readable selected values outside that page; it is never a choice list.
+type tpReferenceData struct {
+	Choices map[string]map[string][]map[string]any
+	Labels  map[string]map[string][]map[string]any
+}
+
 func (s *Server) loadInitialTPRefOptions(ctx context.Context, entity *metadata.Entity, tpRows map[string][]map[string]any, formValues ...any) (map[string]map[string][]map[string]any, error) {
+	data, err := s.loadTPReferenceData(ctx, entity, tpRows, formValues...)
+	return data.Labels, err
+}
+
+func (s *Server) loadTPReferenceData(ctx context.Context, entity *metadata.Entity, tpRows map[string][]map[string]any, formValues ...any) (tpReferenceData, error) {
 	var values any
 	if len(formValues) > 0 {
 		values = formValues[0]
 	}
 	result := make(map[string]map[string][]map[string]any)
+	choices := make(map[string]map[string][]map[string]any)
 	for _, tp := range entity.TableParts {
 		tpOpts := make(map[string][]map[string]any)
+		tpChoices := make(map[string][]map[string]any)
 		for _, f := range tp.Fields {
 			if f.RefEntity == "" {
 				continue
 			}
 			tpOpts[f.Name] = []map[string]any{}
+			tpChoices[f.Name] = []map[string]any{}
 			if f.RefEntity == "_users" {
+				tpChoices[f.Name] = s.usersForSelection(ctx)
 				tpOpts[f.Name] = s.usersForSelectionIncluding(ctx, selectedTPRefIDs(tpRows[tp.Name], f.Name))
 				continue
 			}
@@ -582,15 +598,17 @@ func (s *Server) loadInitialTPRefOptions(ctx context.Context, entity *metadata.E
 					ownerID, asked = formValueForPath(values, "Объект."+hf.Name), true
 				}
 			}
-			rows, err := s.initialReferenceOptionsOwned(ctx, refEntity, refOptionsChoice.withMarked(f.ChoiceShowDeleted), selectedTPRefIDs(tpRows[tp.Name], f.Name), ownerID, asked)
+			rows, err := s.initialReferenceOptionsOwned(ctx, refEntity, refOptionsChoice.withMarked(f.ChoiceShowDeleted), nil, ownerID, asked)
 			if err != nil {
 				continue
 			}
-			tpOpts[f.Name] = compactRefOptionRows(rows)
+			tpChoices[f.Name] = compactRefOptionRows(rows)
+			tpOpts[f.Name] = compactRefOptionRows(s.appendSelectedRefOptions(ctx, rows, refEntity, selectedTPRefIDs(tpRows[tp.Name], f.Name)))
 		}
 		result[tp.Name] = tpOpts
+		choices[tp.Name] = tpChoices
 	}
-	return result, nil
+	return tpReferenceData{Choices: choices, Labels: result}, nil
 }
 
 // compactRefOptionRows оставляет у варианта ссылки табличной части только то,

@@ -153,7 +153,17 @@ function obManagedSyncRefOptionMap(target, source) {
 // The event response contains a complete option map for every returned table
 // part. Apply it before rows: formatters must know a newly assigned UUID when
 // SlickGrid invalidates and renders the updated DataView.
-function obManagedApplyTablePartRefOptions(next) {
+function obManagedApplyTablePartRefOptions(next, choices) {
+  if (choices && typeof choices === 'object') {
+    window._tpRefChoices = window._tpRefChoices || {};
+    Object.keys(choices).forEach(function(tpName) {
+      var current = window._tpRefChoices[tpName] || (window._tpRefChoices[tpName] = {});
+      obManagedSyncRefOptionMap(current, choices[tpName]);
+      // Grid pages belong to their placement (column policies can differ).
+      // Their server searches refresh choices under the live owner/filter;
+      // the common label dictionary is updated independently below.
+    });
+  }
   if (!next || typeof next !== 'object') return;
   window._tpRefOpts = window._tpRefOpts || {};
   Object.keys(next).forEach(function(tpName) {
@@ -284,6 +294,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
   // END onebase-form-attr-stash
 
   window._tpRefOpts = obManagedReadJSON('ob-managed-tp-ref-opts', window._tpRefOpts || {}) || {};
+  window._tpRefChoices = obManagedReadJSON('ob-managed-tp-ref-choices', window._tpRefChoices || null);
   window._tpEnumLabels = obManagedReadJSON('ob-managed-tp-enum-labels', window._tpEnumLabels || {}) || {};
   window._tpEnumOrder = obManagedReadJSON('ob-managed-tp-enum-order', window._tpEnumOrder || {}) || {};
 
@@ -701,7 +712,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       const hiddenNames = obManagedHiddenColumnNames(tbody);
       const rows = tps[tpName] || [];
       const currentRefOpts = (window._tpRefOpts && window._tpRefOpts[tpName]) || {};
-      var refOpts = currentRefOpts;
+      var refOpts = (window._tpRefChoices && window._tpRefChoices[tpName]) || currentRefOpts;
       const refMeta = (obTPRefMeta()[tpName]) || {};
       var refMarked = {};
       try {
@@ -1337,7 +1348,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       } else {
         if (Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
         applyElementStates(data.elementStates);
-        window.obManagedApplyTablePartRefOptions(data.tpRefOptions);
+        window.obManagedApplyTablePartRefOptions(data.tpRefOptions, data.tpRefChoices);
         window.applyTableParts(data.tableparts);
         applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
         applyChoiceList(elementName, data.choiceList);
@@ -1776,7 +1787,10 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
 	// for the retry based on the current snapshot.
 	if (!merging && Object.prototype.hasOwnProperty.call(data, 'conditionalCss')) applyFormConditionalCSS(data.conditionalCss);
 	if (!merging) applyElementStates(data.elementStates);
-	window.obManagedApplyTablePartRefOptions(tpRefOptions);
+	var tpRefChoices = merging ? filterCloseMap(data.tpRefChoices, function(name){
+      return closeTableUnchanged(before, current, 'tp', name);
+    }) : data.tpRefChoices;
+    window.obManagedApplyTablePartRefOptions(tpRefOptions, tpRefChoices);
 	window.applyTableParts(tableparts);
 	applyValues(values, refOptions);
 	applyFormTables(formTables);
@@ -3064,6 +3078,8 @@ function obGridColumnIds(columns) {
       for (var k = 0; k < refOptsList.length; k++) {
         if (String(refOptsList[k].id) === String(id)) return refOptsList[k]._label;
       }
+      var labels = (args.column && args.column.refLabels) || [];
+      for (var j = 0; j < labels.length; j++) if (String(labels[j].id) === String(id)) return labels[j]._label;
       return '';
     }
 
@@ -3072,6 +3088,8 @@ function obGridColumnIds(columns) {
     // первых 50» элемент рисовался бы в ячейке голым UUID.
     function remember(opt) {
       if (!opt || opt.id === undefined || opt.id === null || opt.id === '') return;
+      var labels = args.column && args.column.refLabels;
+      if (labels && !labels.some(function(row) { return String(row.id) === String(opt.id); })) labels.push({id: opt.id, _label: opt._label});
       for (var k = 0; k < refOptsList.length; k++) {
         if (String(refOptsList[k].id) === String(opt.id)) return;
       }
@@ -3267,7 +3285,7 @@ function obGridColumnIds(columns) {
         o.textContent = opts[k]._label;
         selEl.appendChild(o);
       }
-      if(choiceContext && selectedId && !opts.some(function(o){return String(o.id)===String(selectedId);})) {
+      if(selectedId && !opts.some(function(o){return String(o.id)===String(selectedId);})) {
         var current=document.createElement('option');current.value=selectedId;current.textContent=label(selectedId)||selectedId;current.setAttribute('data-ob-choice-outside-filter','1');selEl.appendChild(current);
       }
       selEl.value = selectedId;
@@ -3650,7 +3668,7 @@ function obGridColumnIds(columns) {
   }
 
   // Build SlickGrid columns from metadata with editors (plan 48, phase 3).
-  function buildColumns(colsMeta, refOpts, enumLabels, enumOrder) {
+  function buildColumns(colsMeta, refOpts, enumLabels, enumOrder, choiceOpts) {
     var columns = [];
     for (var i = 0; i < colsMeta.length; i++) {
       var c = colsMeta[i];
@@ -3706,10 +3724,11 @@ function obGridColumnIds(columns) {
         // allowCreate приходит из allow_inline_create поля ТЧ (сервер кладёт
         // его в data-sg-cols только когда создание разрешено).
         col.allowCreate = !!c.allowCreate;
-        var refOptsList = refOpts[c.id];
+        col.refLabels = refOpts[c.id] || [];
+        var refOptsList = (choiceOpts || refOpts)[c.id];
         if (!Array.isArray(refOptsList)) {
           refOptsList = [];
-          refOpts[c.id] = refOptsList;
+          (choiceOpts || refOpts)[c.id] = refOptsList;
         }
         col.editor = (function(refField, refOptsList) {
           return ObRefEditor.bind(null, refField, refOptsList);
@@ -3726,7 +3745,7 @@ function obGridColumnIds(columns) {
               if (value.Name)   return "<span>" + value.Name + "</span>";
               value = (value.id !== undefined) ? value.id : (value.UUID !== undefined ? value.UUID : "");
             }
-            var opts = (refOpts && refOpts[refField]) || [];
+            var opts = ((refOpts && refOpts[refField]) || []).concat((choiceOpts && choiceOpts[refField]) || []);
             for (var k = 0; k < opts.length; k++) {
               if (String(opts[k].id) === String(value)) return "<span>" + opts[k]._label + "</span>";
             }
@@ -4416,6 +4435,7 @@ function obGridColumnIds(columns) {
       return !(c && c.virtual && obManagedIsReservedVirtualColumnName(c.id));
     });
     var embeddedRefOpts = JSON.parse(div.getAttribute("data-sg-ref") || "null") || {};
+    var embeddedRefChoices = JSON.parse(div.getAttribute("data-sg-choices") || "null") || embeddedRefOpts;
     window._tpRefOpts = window._tpRefOpts || {};
     var refOpts = window._tpRefOpts[tpName];
     if (!refOpts || typeof refOpts !== "object") {
@@ -4429,7 +4449,7 @@ function obGridColumnIds(columns) {
     // applyTableParts для DOM-таблиц): в data-sg-enum порядок ключей JSON
     // алфавитный, а список должен идти в порядке объявления values:.
     var enumOrder = (window._tpEnumOrder && window._tpEnumOrder[tpName]) || {};
-    var columns = buildColumns(colsRaw, refOpts, enumLabels, enumOrder);
+    var columns = buildColumns(colsRaw, refOpts, enumLabels, enumOrder, embeddedRefChoices);
     var choiceContexts={};
     try { choiceContexts=JSON.parse(div.getAttribute('data-sg-choice') || '{}') || {}; } catch(e) {}
     columns.forEach(function(col){col.choiceContext=choiceContexts[col.field] || '';});

@@ -3764,8 +3764,16 @@ function obInitFormDelegates() {
 obReady(obInitFormDelegates);
 
 function obTPRefOpts() {
-  if (!window._tpRefOpts) window._tpRefOpts = obReadJSONScript('ob-tp-ref-opts', {});
+  if (!window._tpRefOpts) {
+    window._tpRefOpts = obReadJSONScript('ob-tp-ref-opts', {});
+    window._tpRefChoices = obReadJSONScript('ob-tp-ref-choices', null);
+  }
   return window._tpRefOpts || {};
+}
+
+function obTPRefChoices() {
+  obTPRefOpts();
+  return window._tpRefChoices || window._tpRefOpts || {};
 }
 
 function obTPRefMeta() {
@@ -3794,7 +3802,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
   var table = tbody && tbody.closest ? tbody.closest('table[data-ob-dom-table]') : null;
   var domWritable = !!(table && !obDOMTableReadOnly(table));
   var tr = document.createElement('tr');
-  var refOpts = (obTPRefOpts()[tpName]) || {};
+  var refOpts = (obTPRefChoices()[tpName]) || {};
   var refMeta = (obTPRefMeta()[tpName]) || {};
   var refMarked = {};
   try {

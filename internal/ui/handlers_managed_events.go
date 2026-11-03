@@ -94,6 +94,7 @@ type formEventResponse struct {
 	// TPRefOptions — подписи ссылок из строк табличных частей. Значения строк
 	// остаются UUID, а клиент обновляет этот словарь до перерисовки SlickGrid.
 	TPRefOptions map[string]map[string][]map[string]any `json:"tpRefOptions,omitempty"`
+	TPRefChoices map[string]map[string][]map[string]any `json:"tpRefChoices,omitempty"`
 	// Close присутствует только в ответе отдельного close-intent endpoint.
 	// Обычный /form-event не выдаёт разрешение уничтожить форму.
 	Close *formCloseDecision `json:"close,omitempty"`
@@ -1908,6 +1909,7 @@ type formEventState struct {
 	FormTables     map[string][]map[string]any
 	RefOptions     map[string][]map[string]any
 	TPRefOptions   map[string]map[string][]map[string]any
+	TPRefChoices   map[string]map[string][]map[string]any
 	ConditionalCSS string
 	Messages       []string
 	ElementStates  *elementStates
@@ -1922,6 +1924,7 @@ func (st formEventState) response(ok bool) formEventResponse {
 		FormTables:     st.FormTables,
 		RefOptions:     st.RefOptions,
 		TPRefOptions:   st.TPRefOptions,
+		TPRefChoices:   st.TPRefChoices,
 		ConditionalCSS: st.ConditionalCSS,
 		Messages:       st.Messages,
 		ElementStates:  st.ElementStates,
@@ -2045,7 +2048,7 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 	// «пересчёт на лету»: выбрал в строке другую ссылку, обработчик строки
 	// отработал — колонка приехала обновлённой.
 	s.applyVirtualTPColumns(ctx, entity, form, tableParts)
-	tpRefOptions, _ := s.loadInitialTPRefOptions(ctx, entity, tableParts, values)
+	tpRefOptions, _ := s.loadTPReferenceData(ctx, entity, tableParts, values)
 	if s.interp != nil {
 		if warnings := applyManagedFormConditionalRules(form, tableParts, values, rules, newInterpEvaluator(s.interp)); len(warnings) > 0 {
 			msgs = append(msgs, warnings...)
@@ -2056,7 +2059,8 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 		TableParts:     tableParts,
 		FormTables:     formTablesFromRows(tableParts, form),
 		RefOptions:     s.eventRefOptions(ctx, form, entity, values),
-		TPRefOptions:   tpRefOptions,
+		TPRefOptions:   tpRefOptions.Labels,
+		TPRefChoices:   tpRefOptions.Choices,
 		ConditionalCSS: conditionalCSS,
 		Messages:       msgs,
 		// Условия readonly_when/hidden_when считаются здесь же, где известны

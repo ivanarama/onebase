@@ -287,7 +287,7 @@ const tplManagedForm = `
   {{$tpName := canonicalFormTableName $ctx.Form $ctx.Entity (dpField $el.DataPath)}}
   {{$tpMeta := tablePartByName $ctx.Entity $tpName}}
   {{$tpRows := index $ctx.TablePartRows $tpName}}
-  {{$tpRef := tpChoiceRefOptions $ctx $el (index $ctx.TPRefOptions $tpName)}}
+  {{$tpRef := tpChoiceRefOptions $ctx $el (index (tpNewRefOptions $ctx) $tpName)}}
   {{$tpEnum := index $ctx.TPEnumLabels $tpName}}
   {{$tpCmds := tpCommandButtons $el}}
   {{$tpReadOnly := or $ro (not $ctx.CanWrite)}}
@@ -340,7 +340,8 @@ const tplManagedForm = `
             name — только подпись колонки: синоним реквизита, как в автоформе. */}}
        {{if $tpColEvents}}data-sg-colevents="{{$tpColEvents}}"{{end}}
        data-sg-cols='{{managedTPColumnsJSON $tpPlan $tpVirtualCols (str $ctx.Lang) $ctx.RefWriteAccess $tpName $ctx.RefFilter}}'
-       data-sg-ref='{{jsJSON $tpRef}}'
+       data-sg-ref='{{jsJSON (tpGridLabels $ctx $tpName $tpRef)}}'
+       data-sg-choices='{{jsJSON $tpRef}}'
        data-sg-choice='{{jsJSON (tpChoiceContexts $ctx $el)}}'
        data-sg-choice-rows='{{jsJSON (tpChoiceRows $ctx $el)}}'
        data-sg-enum='{{jsJSON $tpEnum}}'
@@ -386,7 +387,7 @@ const tplManagedForm = `
             <div style="display:flex;gap:4px;align-items:center">
               <select name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{refPickAttrs false $f.ChoiceShowDeleted}}{{with index (tpChoiceContexts $ctx $el) $f.Name}} data-ref-choice-context="{{.}}" data-ref-row-id="{{$i}}"{{end}}{{if $ctx.RefFilter}}{{with index $ctx.RefFilter (printf "%s.%s" $tpName $f.Name)}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and ($f.InlineCreateEnabled true) (refWriteAllowed $ctx.RefWriteAccess $f.RefEntity)}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
                 <option value="">{{if $tpReadOnly}}—{{else}}— выбрать —{{end}}</option>
-                {{range tpChoiceOptions $ctx $el $f.Name $i $tpRef}}
+                {{range tpChoiceOptions $ctx $el $f.Name $i $tpRef $tpName (refID $v)}}
                 <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID $v)}}selected{{end}}{{if index . "_choice_outside_filter"}} data-ob-choice-outside-filter="1"{{end}}>{{index . "_label"}}</option>
                 {{end}}
               </select>
@@ -906,6 +907,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 )}}</script>
 {{end}}
 <script type="application/json" id="ob-managed-tp-ref-opts">{{jsJSON .TPRefOptions}}</script>
+<script type="application/json" id="ob-managed-tp-ref-choices">{{jsJSON .TPRefChoices}}</script>
 <script type="application/json" id="ob-managed-tp-enum-labels">{{jsJSON .TPEnumLabels}}</script>
 <script type="application/json" id="ob-managed-tp-enum-order">{{jsJSON .TPEnumOrder}}</script>
 

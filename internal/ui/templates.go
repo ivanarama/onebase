@@ -1293,6 +1293,25 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
 		"managedTPColumnPlan": managedTPColumnPlan,
+		"tpNewRefOptions": func(ctx map[string]any) any {
+			if choices, ok := ctx["TPRefChoices"]; ok {
+				return choices
+			}
+			return ctx["TPRefOptions"]
+		},
+		"tpSelectedOptions": tpSelectedOptions,
+		"tpGridLabels": func(ctx map[string]any, tpName string, choices map[string][]map[string]any) map[string][]map[string]any {
+			labels, _ := ctx["TPRefOptions"].(map[string]map[string][]map[string]any)
+			tables, _ := ctx["TablePartRows"].(map[string][]map[string]any)
+			result := make(map[string][]map[string]any, len(choices))
+			for field, page := range choices {
+				for _, row := range tables[tpName] {
+					page = tpSelectedOptions(page, labels[tpName][field], refValueString(row[field]))
+				}
+				result[field] = page
+			}
+			return result
+		},
 		"tpChoiceContexts": func(ctx map[string]any, table *metadata.FormElement) map[string]string {
 			all, _ := ctx["TPChoices"].(map[*metadata.FormElement]*tpChoiceRender)
 			if all[table] != nil {
@@ -1337,7 +1356,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return marked
 		},
-		"tpChoiceOptions": func(ctx map[string]any, table *metadata.FormElement, field string, row int, fallback map[string][]map[string]any) []map[string]any {
+		"tpChoiceOptions": func(ctx map[string]any, table *metadata.FormElement, field string, row int, fallback map[string][]map[string]any, tpName, selected string) []map[string]any {
 			all, _ := ctx["TPChoices"].(map[*metadata.FormElement]*tpChoiceRender)
 			if all[table] != nil && all[table].Contexts[field] != "" {
 				rows := all[table].Options[field]
@@ -1346,7 +1365,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				}
 				return nil
 			}
-			return fallback[field]
+			labels, _ := ctx["TPRefOptions"].(map[string]map[string][]map[string]any)
+			return tpSelectedOptions(fallback[field], labels[tpName][field], selected)
 		},
 		// managedTPFieldsAttr — значение data-tp-fields в порядке отрисовки
 		// ячеек: applyTableParts перестраивает строку по этому списку, и любое
@@ -2758,7 +2778,7 @@ const tplForm = `
 </div>
 {{end}}
 
-{{range .Entity.TableParts}}{{$tp := .}}{{$tpName := .Name}}{{$tpRef := index $.TPRefOptions $tpName}}{{$tpReadOnly := not $.CanWrite}}
+{{range .Entity.TableParts}}{{$tp := .}}{{$tpName := .Name}}{{$tpRef := index (tpNewRefOptions $) $tpName}}{{$tpReadOnly := not $.CanWrite}}
 <h3>{{$tp.DisplayName $.Lang}}</h3>
 <table class="tp-table" data-ob-dom-table="{{$tpName}}" data-ob-readonly="{{if $tpReadOnly}}1{{else}}0{{end}}"
   {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}>
@@ -2776,7 +2796,7 @@ const tplForm = `
           <div style="display:flex;gap:4px;align-items:center">
             <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}" style="flex:1" data-ref-entity="{{.RefEntity}}"{{refPickAttrs false .ChoiceShowDeleted}}{{if $.RefFilter}}{{with index $.RefFilter (printf "%s.%s" $tpName $fn)}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and (.InlineCreateEnabled true) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
               <option value="">{{t $.Lang "— выбрать —"}}</option>
-              {{range index $tpRef $fn}}
+              {{range tpSelectedOptions (index $tpRef $fn) (index (index $.TPRefOptions $tpName) $fn) (refID (index $row $fn))}}
               <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID (index $row $fn))}}selected{{end}}>{{index . "_label"}}</option>
               {{end}}
             </select>
@@ -2887,7 +2907,7 @@ const tplForm = `
 {{/* Управляемая форма выводит те же варианты своим блоком
      (ob-managed-tp-ref-opts) — второй экземпляр удваивал страницу: у заявки
      колл-центра это 1,3 МБ дважды. */}}
-{{if not .Form}}<script type="application/json" id="ob-tp-ref-opts">{{jsJSON .TPRefOptions}}</script>{{end}}
+{{if not .Form}}<script type="application/json" id="ob-tp-ref-opts">{{jsJSON .TPRefOptions}}</script><script type="application/json" id="ob-tp-ref-choices">{{jsJSON .TPRefChoices}}</script>{{end}}
 <script type="application/json" id="ob-tp-ref-meta">{{jsJSON .TPRefMeta}}</script>
 {{/* Перечисления колонок ТЧ — для строк, которые добавляет JS (#1010): сервер
      их не рендерит, а без вариантов и порядка addTpRow снова поставил бы
@@ -4611,4 +4631,23 @@ func funcsListQuerySuffix(params storage.ListParams) template.URL {
 		return ""
 	}
 	return template.URL("?" + strings.Join(parts, "&")) //nolint:gosec // G203: части строки запроса пропущены через url.QueryEscape
+}
+
+// Append only this control's selected label, without changing the shared page.
+func tpSelectedOptions(choices, labels []map[string]any, selected string) []map[string]any {
+	if selected == "" {
+		return choices
+	}
+	for _, row := range choices {
+		if refValueString(row["id"]) == selected {
+			return choices
+		}
+	}
+	for _, row := range labels {
+		if refValueString(row["id"]) == selected {
+			result := append([]map[string]any(nil), choices...)
+			return append(result, row)
+		}
+	}
+	return choices
 }

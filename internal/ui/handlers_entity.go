@@ -408,14 +408,15 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 		folderOpts = s.loadFolderOptions(r.Context(), entity, values["parent_id"])
 	}
 	refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
-	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows, values)
+	tpRefOpts, _ := s.loadTPReferenceData(r.Context(), entity, tablePartRows, values)
 	s.renderEntityForm(w, r, "object", map[string]any{
 		"Entity":        entity,
 		"IsNew":         true,
 		"Values":        values,
 		"RefOptions":    refOptions,
 		"EnumOptions":   enumOpts,
-		"TPRefOptions":  tpRefOpts,
+		"TPRefOptions":  tpRefOpts.Labels,
+		"TPRefChoices":  tpRefOpts.Choices,
 		"TPEnumLabels":  tpEnumLabels,
 		"TPEnumOrder":   s.buildTPEnumOrder(entity),
 		"TPRefMeta":     tpRefMeta(entity),
@@ -929,7 +930,7 @@ func (s *Server) renderObjectFormError(w http.ResponseWriter, r *http.Request, e
 	}
 	tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, managedForm)
 	refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
-	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows, values)
+	tpRefOpts, _ := s.loadTPReferenceData(r.Context(), entity, tablePartRows, values)
 	lang := s.resolveLang(r)
 	data := map[string]any{
 		"Entity":        entity,
@@ -939,7 +940,8 @@ func (s *Server) renderObjectFormError(w http.ResponseWriter, r *http.Request, e
 		"Values":        values,
 		"RefOptions":    refOptions,
 		"EnumOptions":   s.loadEnumOptions(entity, lang),
-		"TPRefOptions":  tpRefOpts,
+		"TPRefOptions":  tpRefOpts.Labels,
+		"TPRefChoices":  tpRefOpts.Choices,
 		"TPEnumLabels":  s.buildTPEnumLabels(entity, lang),
 		"TPEnumOrder":   s.buildTPEnumOrder(entity),
 		"TPRefMeta":     tpRefMeta(entity),
@@ -1106,7 +1108,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 		values := formValues(r, entity)
 		tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, pickManagedForm(entity, "object"))
 		refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
-		tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows, values)
+		tpRefOpts, _ := s.loadTPReferenceData(r.Context(), entity, tablePartRows, values)
 		langErr := s.resolveLang(r)
 		var fOpts []map[string]any
 		if entity.Hierarchical {
@@ -1120,7 +1122,8 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 			"Values":       values,
 			"RefOptions":   refOptions,
 			"EnumOptions":  s.loadEnumOptions(entity, langErr),
-			"TPRefOptions": tpRefOpts,
+			"TPRefOptions": tpRefOpts.Labels,
+			"TPRefChoices": tpRefOpts.Choices,
 			"TPEnumLabels": s.buildTPEnumLabels(entity, langErr),
 			"TPEnumOrder":  s.buildTPEnumOrder(entity),
 			"TPRefMeta":    tpRefMeta(entity),
@@ -1690,7 +1693,7 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, vals)
-	tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tpRows, vals)
+	tpRefOpts, _ := s.loadTPReferenceData(r.Context(), entity, tpRows, vals)
 
 	editUser := auth.UserFromContext(r.Context())
 	editIsAdmin := editUser == nil || editUser.IsAdmin
@@ -1710,7 +1713,8 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 		"Values":        vals,
 		"RefOptions":    refOptions,
 		"EnumOptions":   enumOpts,
-		"TPRefOptions":  tpRefOpts,
+		"TPRefOptions":  tpRefOpts.Labels,
+		"TPRefChoices":  tpRefOpts.Choices,
 		"TPEnumLabels":  tpEnumLabelsEdit,
 		"TPEnumOrder":   s.buildTPEnumOrder(entity),
 		"TPRefMeta":     tpRefMeta(entity),
@@ -1868,7 +1872,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 		values := formValues(r, entity)
 		tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, pickManagedForm(entity, "object"))
 		refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
-		tpRefOpts2, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows, values)
+		tpRefOpts2, _ := s.loadTPReferenceData(r.Context(), entity, tablePartRows, values)
 		values["_version"] = r.FormValue("_version")
 		langSubmit := s.resolveLang(r)
 		var fOpts []map[string]any
@@ -1883,7 +1887,8 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 			"Values":       values,
 			"RefOptions":   refOptions,
 			"EnumOptions":  s.loadEnumOptions(entity, langSubmit),
-			"TPRefOptions": tpRefOpts2,
+			"TPRefOptions": tpRefOpts2.Labels,
+			"TPRefChoices": tpRefOpts2.Choices,
 			"TPEnumLabels": s.buildTPEnumLabels(entity, langSubmit),
 			"TPEnumOrder":  s.buildTPEnumOrder(entity),
 			"TPRefMeta":    tpRefMeta(entity),
