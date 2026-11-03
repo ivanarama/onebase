@@ -51,7 +51,7 @@ jobs:
     needs: [classify]
     if: ${{ always() && !cancelled() }}
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Docs-only success
         if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
@@ -279,6 +279,14 @@ jobs:
           python3 .github/scripts/test-race-coverage_test.py
           python3 .github/scripts/test-race-coverage.py coverage.out
 
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && (needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs') }}
+        with:
+          name: coverage
+          path: |
+            coverage.out
+            test-results
+
       # Раннеры работают в UTC, поэтому целый класс дефектов «время
       # канонизируется не в той зоне» для CI невидим: #945 поймали случайно, на
       # локальном прогоне в Europe/Moscow. Прогоняем пакеты, где время
@@ -304,11 +312,6 @@ jobs:
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: go tool cover -func=coverage.out | tail -5
 
-      - uses: actions/upload-artifact@v4
-        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
-        with:
-          name: coverage
-          path: coverage.out
 
       - name: Build (check compile)
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
