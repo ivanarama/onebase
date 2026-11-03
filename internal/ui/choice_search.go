@@ -94,6 +94,14 @@ func (s *Server) runChoiceSearchProc(ctx context.Context, ent *metadata.Entity, 
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", errChoiceSearch, err)
 	}
+	// The same deadline must reach SQL, including transaction acquisition;
+	// MaxWallClock alone only interrupts the interpreter between statements.
+	timeout := s.operationTimeout(opProcessorRun)
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout)
+		defer cancel()
+	}
 	tx, txCtx, berr := s.store.BeginTx(ctx)
 	if berr != nil {
 		return nil, fmt.Errorf("%w: %w", errChoiceSearch, berr)
@@ -103,7 +111,7 @@ func (s *Server) runChoiceSearchProc(ctx context.Context, ent *metadata.Entity, 
 	vars := s.buildChoiceSearchVars(txCtx, ent)
 	params := choiceSearchParams(ent, extra)
 	result, runErr := s.interp.CallSandboxed(proc, &interpreter.MapThis{M: map[string]any{}}, []any{text, params},
-		interpreter.SandboxProfile{Context: txCtx, MaxWallClock: s.operationTimeout(opProcessorRun)}, vars)
+		interpreter.SandboxProfile{Context: txCtx, MaxWallClock: timeout}, vars)
 	if runErr != nil {
 		uiLog().Warn("choice_search_proc: ошибка исполнения", "proc", name, "entity", ent.Name, "err", runErr)
 		return nil, fmt.Errorf("%w: функция поиска завершилась ошибкой", errChoiceSearch)

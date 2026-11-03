@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -335,5 +336,77 @@ func TestChoiceSearchProc_PostPageRejectsNegativeOffset(t *testing.T) {
 	rec = postPreviewPage(t, f.s, "Дом", body, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("status=%d, want 400: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestChoiceSearchProc_SQLTimeoutThroughHTTP(t *testing.T) {
+	// Five rows across thirteen aliases keep SQL busy beyond the configured
+	// second; interpreter-only deadlines cannot interrupt Query.Выполнить().
+	query := "ВЫБРАТЬ КОЛИЧЕСТВО(*) КАК Всего ИЗ Справочник.Дом КАК Д0"
+	for i := 1; i < 13; i++ {
+		query += fmt.Sprintf(" ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.Дом КАК Д%d ПО ИСТИНА", i)
+	}
+	module := fmt.Sprintf(`
+Функция ПоискДомов(Текст, Параметры) Экспорт
+	Если Текст = "быстро" Тогда
+		Возврат Новый Массив;
+	КонецЕсли;
+	З = Новый Запрос;
+	З.Текст = "%s";
+	З.Выполнить();
+	Возврат Новый Массив;
+КонецФункции
+`, query)
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		t.Run(method, func(t *testing.T) {
+			f := newChoiceSearchFixture(t, module)
+			f.s.cfg.Limits.ProcessorTimeoutSec = 1
+			ent := f.s.reg.GetEntity("Дом")
+			ent.Fields = append(ent.Fields, metadata.Field{Name: "ВыборДома", Type: metadata.FieldType("reference:Дом"), RefEntity: "Дом"})
+			ent.Forms = []*metadata.FormModule{{Name: "ФормаОбъекта", Kind: "object", LayoutKind: metadata.FormLayoutManaged, Elements: []*metadata.FormElement{{Name: "Дом", Kind: metadata.FormElementField, DataPath: "Объект.ВыборДома", ChoiceContext: map[string]string{"Улица": "Объект.Улица"}}}}}
+			if err := f.s.store.Migrate(t.Context(), []*metadata.Entity{ent}); err != nil {
+				t.Fatal(err)
+			}
+			router := chi.NewRouter()
+			router.Get("/ui/_ref-options/{entity}", f.s.refOptionsJSON)
+			router.Post("/ui/_ref-options/{entity}/page", f.s.choicePreviewPageHandler)
+			request := func(ctx context.Context, text string) *httptest.ResponseRecorder {
+				path := "/ui/_ref-options/Дом?q=" + url.QueryEscape(text)
+				raw := ""
+				if method == http.MethodPost {
+					path = "/ui/_ref-options/Дом/page"
+					body, err := json.Marshal(map[string]any{"q": text, "source": map[string]string{"entity": "Дом", "element": "Дом"}})
+					if err != nil {
+						t.Fatal(err)
+					}
+					raw = string(body)
+				}
+				rec := httptest.NewRecorder()
+				router.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(raw)).WithContext(ctx))
+				return rec
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+			defer cancel()
+			start := time.Now()
+			rec := request(ctx, "15")
+			elapsed := time.Since(start)
+			if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "error") {
+				t.Fatalf("SQL timeout: status=%d body=%s", rec.Code, rec.Body.String())
+			}
+			if ctx.Err() != nil || elapsed > 2500*time.Millisecond {
+				t.Errorf("configured 1s timeout did not stop SQL before outer deadline: elapsed=%v outer=%v", elapsed, ctx.Err())
+			}
+			if elapsed < 500*time.Millisecond {
+				t.Errorf("SQL failed before exercising the deadline: elapsed=%v", elapsed)
+			}
+			t.Logf("configured 1s SQL timeout: %v", elapsed)
+			// A fresh request must acquire SQLite's single connection after the
+			// failed search: timeout must retain the unconditional rollback.
+			nextCtx, nextCancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer nextCancel()
+			if next := request(nextCtx, "быстро"); next.Code != http.StatusOK {
+				t.Fatalf("search after rollback: status=%d body=%s", next.Code, next.Body.String())
+			}
+		})
 	}
 }
