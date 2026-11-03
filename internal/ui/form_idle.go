@@ -56,9 +56,9 @@ type idleCommand struct {
 var errFormIdleToken = errors.New("обработчик ожидания устарел — форма подключит его заново при открытии")
 
 // Entity fields and scalar form attributes share FormData with the tick.
-// Allocate its two transport names against both sets, including fallback
+// Allocate transport names against both sets, including fallback
 // names declared by the application. Rendering and POST use the same map.
-func entityIdleServiceFieldNames(entity *metadata.Entity, form *metadata.FormModule) map[string]string {
+func entityFormServiceFieldNames(entity *metadata.Entity, form *metadata.FormModule) map[string]string {
 	declared := make(map[string]bool)
 	if entity != nil {
 		for _, field := range entity.Fields {
@@ -72,7 +72,7 @@ func entityIdleServiceFieldNames(entity *metadata.Entity, form *metadata.FormMod
 			}
 		}
 	}
-	names := make(map[string]string, 2)
+	names := map[string]string{"_question_fields": entityQuestionFieldsName(entity, form)}
 	for _, name := range []string{"_idle_proc", "_idle_token"} {
 		transport := name
 		if declared[strings.ToLower(transport)] {

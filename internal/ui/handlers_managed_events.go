@@ -739,7 +739,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		// Тик обработчика ожидания: процедуру называет браузер, а допускается
 		// только подключённая модулем формы (подпись подключения).
 		var idleErr error
-		idleFields := entityIdleServiceFieldNames(entity, form)
+		idleFields := entityFormServiceFieldNames(entity, form)
 		idleProc := r.FormValue(idleFields["_idle_proc"])
 		procName, idleErr = s.resolveFormIdleTick(formIdleLogin(r), "entity:"+entity.Name, form, idleProc, r.FormValue(idleFields["_idle_token"]))
 		if idleErr != nil {

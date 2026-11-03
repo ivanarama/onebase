@@ -261,6 +261,99 @@ function dispatchSubmit(app) {
   return event;
 }
 
+function idleProbe(app) {
+  const begin = managed.indexOf('// BEGIN onebase-form-idle');
+  const end = managed.indexOf('// END onebase-form-idle');
+  vm.runInNewContext(managed.slice(begin, end), app.context);
+  let tick;
+  let now = 0;
+  let calls = 0;
+  const manager = app.context.obManagedIdleManager({
+    now: () => now, hidden: () => false, modal: () => false,
+    busy: () => app.context.obManagedIdleBusy(),
+    fire: () => { calls++; return app.context.obFire('', 'ОбработкаОжидания', {_idle_proc: 'АвтоЗапись', _idle_token: 'signed'}); },
+    setTimeout(fn) { tick = fn; return 1; }, clearTimeout() {},
+  });
+  manager.apply([{proc: 'АвтоЗапись', interval: 1, token: 'signed'}]);
+  return {async advance() { await Promise.resolve(); now += 1000; tick(); await new Promise(setImmediate); }, calls: () => calls};
+}
+
+test('idle does not autosave the old new-form snapshot during an accepted native save', async () => {
+  const app = runtime(async () => response({ok: true}));
+  const idle = idleProbe(app);
+  assert.equal(dispatchSubmit(app).defaultPrevented, false);
+  await idle.advance();
+  assert.equal(idle.calls(), 0, 'idle autosave raced the pending native POST /new');
+});
+
+test('idle remains available after a cancelled submit or native validation failure', async () => {
+  const app = runtime(async () => response({ok: true}));
+  const idle = idleProbe(app);
+  // Failed native constraint validation does not dispatch submit at all.
+  await idle.advance();
+  assert.equal(idle.calls(), 1);
+  app.document.addEventListener('submit', event => event.preventDefault());
+  assert.equal(dispatchSubmit(app).defaultPrevented, true);
+  await idle.advance();
+  assert.equal(idle.calls(), 2, 'cancelled submit permanently stopped idle');
+});
+
+test('idle observes a later submit veto after a microtask checkpoint', async () => {
+  const app = runtime(async () => response({ok: true}));
+  const idle = idleProbe(app);
+  const event = {target: app.form, defaultPrevented: false};
+  // Native dispatch can checkpoint between callbacks, unlike script-driven
+  // requestSubmit. Run the production capture listener before the late veto.
+  app.listeners.get('submit')[0](event);
+  await Promise.resolve();
+  event.defaultPrevented = true;
+  await new Promise(resolve => setTimeout(resolve, 10));
+  await idle.advance();
+  assert.equal(idle.calls(), 1, 'microtask latched a subsequently cancelled submit');
+});
+
+test('idle waits for pending file reads and remains stopped after native resubmission', async () => {
+  const app = runtime(async () => response({ok: true}));
+  const file = withFileSubmit(app);
+  const idle = idleProbe(app);
+  assert.equal(file.submit(file.submitter).defaultPrevented, true);
+  await waitFor(() => file.readPending());
+  await idle.advance();
+  assert.equal(idle.calls(), 0, 'idle raced the snapshot waiting for FileReader');
+  file.finishRead();
+  await waitFor(() => file.posts.length === 1);
+  await idle.advance();
+  assert.equal(idle.calls(), 0, 'file reentry failed to fence the native POST');
+});
+
+test('idle resumes when a file read fails without a native POST', async () => {
+  const app = runtime(async () => response({ok: true}));
+  const file = withFileSubmit(app);
+  const idle = idleProbe(app);
+  file.submit(file.submitter);
+  await waitFor(() => file.readPending());
+  file.finishRead(false);
+  await waitFor(() => !app.context.obManagedIdleBusy());
+  await idle.advance();
+  assert.equal(file.posts.length, 0);
+  assert.equal(idle.calls(), 1);
+});
+
+test('idle stays stopped after the legacy native file-submit fallback', async () => {
+  const app = runtime(async () => response({ok: true}));
+  const file = withFileSubmit(app);
+  delete app.form.requestSubmit;
+  let nativePosts = 0;
+  app.form.submit = () => { nativePosts++; };
+  const idle = idleProbe(app);
+  file.submit(file.submitter);
+  await waitFor(() => file.readPending());
+  file.finishRead();
+  await waitFor(() => nativePosts === 1);
+  await idle.advance();
+  assert.equal(idle.calls(), 0);
+});
+
 function concealedControl(app, enabled = false) {
   const field = app.form.control('Секрет');
   app.form.values.set('Секрет', enabled ? '12-34' : '');
@@ -1977,7 +2070,7 @@ function withFileSubmit(app) {
   app.context.obManagedSubmitAllowed = () => true;
   app.context.obManagedGridSubmitAllowed = () => true;
   app.context.__fileReads = () => readDone ? Promise.resolve(true) : new Promise((resolve) => {
-    finishRead = () => { readDone = true; resolve(true); };
+    finishRead = (ok = true) => { readDone = true; resolve(ok); };
   });
   const helper = {getAttribute() { return null; }};
   app.form.querySelectorAll = (selector) => selector === '[data-ob-file-content-for]' ? [helper] : [];
@@ -2002,7 +2095,7 @@ function withFileSubmit(app) {
   return {
     posts, submitter, submit,
     readPending() { return !!finishRead && !readDone; },
-    finishRead() { finishRead(); },
+    finishRead(ok = true) { finishRead(ok); },
   };
 }
 

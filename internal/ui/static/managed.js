@@ -1587,10 +1587,29 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
   // replay ledger and another explicit close attempt needs a fresh UUID.
   var retryableClose = null;
 	var reloadRequired = false;
+  // A successful native POST replaces this document only after its response.
+  // During that wait the old /new snapshot must never be sent by an idle tick.
+  var nativeSubmitPending = false;
+  var nativeSubmitEvents = [];
+  window.obManagedNativeSubmitStarted = function(){ nativeSubmitPending = true; };
+  document.addEventListener('submit', function(e){
+    if (!e.target || e.target.id !== 'main-form') return;
+    // Read the live cancellation state until the next task: a microtask may
+    // run between native listeners, before a later confirm/grid/file veto.
+    // Keep every event until then, including synchronous submit reentry.
+    nativeSubmitEvents.push(e);
+    setTimeout(function(){
+      if (!e.defaultPrevented) nativeSubmitPending = true;
+      nativeSubmitEvents.splice(nativeSubmitEvents.indexOf(e), 1);
+    }, 0);
+  }, true);
   // Тик обработчика ожидания не встаёт в очередь за событием пользователя и не
   // мешает закрытию: пока форма занята, тик пропускается молча.
   window.obManagedIdleBusy = function(){
-    return formEventPendingCount > 0 || !!closePending || !!retryableClose || closeHandoffPending ||
+    var form = document.getElementById('main-form');
+    var fileSubmitPending = form && typeof obManagedFileSubmitPending !== 'undefined' && obManagedFileSubmitPending.has(form);
+    return nativeSubmitPending || nativeSubmitEvents.some(function(e){ return !e.defaultPrevented; }) ||
+      fileSubmitPending || formEventPendingCount > 0 || !!closePending || !!retryableClose || closeHandoffPending ||
       !!beforePostState || reloadRequired || formEventWriteUnknown || manualReconcileRequired;
   };
 	var CLOSE_EPOCH = cfg.closeEpoch == null ? '' : String(cfg.closeEpoch);
@@ -2332,6 +2351,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         try {
 		  if (form.id === 'main-form') window.obSetManagedFormDirty(false);
           nativeSubmit.call(form);
+          if (form.id === 'main-form') window.obManagedNativeSubmitStarted();
         } finally {
           if (submitterInput) submitterInput.remove();
         }
