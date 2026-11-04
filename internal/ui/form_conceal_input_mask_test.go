@@ -113,8 +113,16 @@ func TestConcealInputMaskHTTPMatrix(t *testing.T) {
 					if !el.Conceal {
 						wantValue = initial
 					}
-					if attrs["value"] != wantValue || (el.Conceal && strings.Contains(get.Body.String(), initial)) {
-						t.Fatal("GET did not preserve disclosure boundary")
+					if attrs["value"] != wantValue {
+						t.Fatalf("GET did not preserve disclosure boundary: value=%q, want %q", attrs["value"], wantValue)
+					}
+					// Секрет «12-34» состоит из шестнадцатеричных цифр, и на
+					// стыке групп случайного UUID страницы (id записи, сессии)
+					// изредка складывается та же строка — проверка мигала примерно
+					// раз на сотню прогонов. UUID секретом не являются: ищем
+					// значение в странице без них.
+					if el.Conceal && strings.Contains(concealUUIDPattern.ReplaceAllString(get.Body.String(), ""), initial) {
+						t.Fatal("GET did not preserve disclosure boundary: concealed value present in page")
 					}
 					formAttrs := concealMaskInput(t, get.Body.String(), "КодФормы")
 					if formAttrs["data-ob-input-mask"] != "XX-00" || formAttrs["placeholder"] != "__-__" {
@@ -186,3 +194,6 @@ func TestConcealInputMaskHTTPMatrix(t *testing.T) {
 		}
 	}
 }
+
+// concealUUIDPattern — UUID в странице формы (записи, сессии, контекста).
+var concealUUIDPattern = regexp.MustCompile(`[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}`)
