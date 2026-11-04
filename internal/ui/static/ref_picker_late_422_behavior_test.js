@@ -33,6 +33,9 @@ function runtime({snapshot = null} = {}) {
     obRefChoiceSnapshot() { return state.snapshot; },
     obRefChoiceQuery() { return ''; },
     obRefFilterParam() { return ''; },
+    // Есть не во всех сборках (отметка помеченных, #2365); лишний параметр
+    // фабрики безвреден.
+    obRefMarkedParam() { return ''; },
     obRefFilterValues() { return {}; },
     obRefSourceValue() { return ''; },
     obChoiceSelectIsLive() { return true; },
