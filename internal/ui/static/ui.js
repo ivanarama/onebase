@@ -5493,10 +5493,23 @@ function openRefPicker(selOrId) {
         filters: obRefFilterValues(sel) || {}
       });
     }
+    // Ответ применяется, только пока он актуален: это последний запрос, диалог
+    // и поле живы, а снимок контекста выбора и выбранное значение не менялись.
+    // Проверка общая для успешного ответа и для 422 — иначе поздний отказ
+    // старого запроса (тело дочитывается уже после нового ответа) стирал бы
+    // свежий результат поиска.
+    var responseIsCurrent = function () {
+      if (seq !== requestSeq || !obChoiceSelectIsLive(sel) || !obChoiceSelectIsLive(modal)) return false;
+      if (!choiceSnapshot) return true;
+      var currentSnapshot = obRefChoiceSnapshot(sel);
+      return !!currentSnapshot && currentSnapshot.fingerprint === choiceFingerprint &&
+        (sel.value == null ? '' : String(sel.value)) === choiceSelected;
+    };
     fetch(url, fetchOptions)
       .then(function (resp) {
         if (resp.status === 422) {
           return resp.json().catch(function () { return {}; }).then(function (d) {
+            if (!responseIsCurrent()) throw new Error('choice-response-stale');
             rpPreviewField = '';
             rpReveal();
             renderItems([], '');
@@ -5515,10 +5528,7 @@ function openRefPicker(selOrId) {
         return resp.json();
       })
       .then(function (data) {
-        var currentSnapshot = obRefChoiceSnapshot(sel);
-        if (seq !== requestSeq || !obChoiceSelectIsLive(sel) || !obChoiceSelectIsLive(modal)) return;
-        if (choiceSnapshot && (!currentSnapshot || currentSnapshot.fingerprint !== choiceFingerprint ||
-            (sel.value == null ? '' : String(sel.value)) !== choiceSelected)) return;
+        if (!responseIsCurrent()) return;
         var keep = rpActiveId();
         var rows = (data && data.items) || [];
         rpPreviewField = (data && data.preview) || '';
@@ -5539,7 +5549,7 @@ function openRefPicker(selOrId) {
       .catch(function (err) {
         if (seq !== requestSeq) return;
         if (err && err.name === 'AbortError') return;
-        if (err && err.message === 'choice-search-unavailable') return;
+        if (err && (err.message === 'choice-search-unavailable' || err.message === 'choice-response-stale')) return;
         // A form-scoped picker is server-authoritative. Falling back to an
         // untrusted or stale full list would bypass choice_filter; retain the
         // already rendered filtered options and surface the failure instead.
