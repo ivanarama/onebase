@@ -25,10 +25,11 @@ const (
 )
 
 type githubRESTClient struct {
-	baseURL    *url.URL
-	token      string
-	httpClient *http.Client
-	cache      *restResponseCache
+	strictIdentity bool
+	baseURL        *url.URL
+	token          string
+	httpClient     *http.Client
+	cache          *restResponseCache
 }
 
 type restResponseCache struct {
@@ -166,6 +167,9 @@ func (client *githubRESTClient) getJSON(endpoint string, destination any) error 
 	defer func() { _ = lock.Close() }()
 
 	entry, cacheOK := client.cache.read(requestURL)
+	if cacheOK && client.strictIdentity && validateIdentityJSON(entry.Body) != nil {
+		cacheOK = false
+	}
 	var cachedValue any
 	if cacheOK {
 		cachedValue, err = decodeJSONLike(destination, entry.Body)
@@ -204,6 +208,11 @@ func (client *githubRESTClient) getJSON(endpoint string, destination any) error 
 		return fmt.Errorf("close GitHub REST response for %s: %w", endpoint, closeErr)
 	}
 
+	if client.strictIdentity && response.StatusCode == http.StatusOK {
+		if err := validateIdentityJSON(body); err != nil {
+			return err
+		}
+	}
 	if response.StatusCode == http.StatusNotModified {
 		if !cacheOK {
 			return fmt.Errorf("GitHub REST GET %s returned 304 without a valid cache entry", endpoint)
