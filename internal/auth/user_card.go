@@ -8,8 +8,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// UserCardSource selects one ordinary field of a catalog linked to the login.
-// Table-part selectors are recognized so that this release can reject them.
+// UserCardSource selects a scalar or a set from one catalog linked to the login.
 type UserCardSource struct {
 	Catalog      string `yaml:"catalog" json:"catalog"`
 	AccountField string `yaml:"account_field" json:"account_field"`
@@ -43,6 +42,9 @@ func (s *UserCardSource) UnmarshalYAML(n *yaml.Node) error {
 		default:
 			return fmt.Errorf("unknown user_card key %q", k)
 		}
+	}
+	if seen["field"] && (seen["table_part"] || seen["column"]) {
+		return fmt.Errorf("user_card field and table_part/column are mutually exclusive")
 	}
 	type plain UserCardSource
 	return n.Decode((*plain)(s))
