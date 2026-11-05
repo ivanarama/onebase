@@ -4839,7 +4839,10 @@ obManagedReady(function () {
 // откладывается на секунду. На скрытой вкладке — не чаще раза в 5 интервалов
 // (и не чаще раза в 10 с); вернулись на вкладку — просроченный тик сразу.
 function obManagedIdleManager(env) {
-  var timers = {};
+  // Без прототипа: имя процедуры — ключ, и «__proto__» или «constructor» в
+  // обычном объекте попали бы в унаследованные свойства — таймер нельзя было
+  // бы ни найти, ни удалить, и отключение не останавливало бы тики.
+  var timers = Object.create(null);
   function key(p) { return String(p || '').toLowerCase(); }
   function periodMs(t) {
     var ms = t.interval * 1000;

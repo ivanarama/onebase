@@ -106,3 +106,29 @@ test('повторное подключение той же процедуры �
   await c.advance(2000); assert.equal(fired.length, 1); assert.equal(fired[0].token, 'b');
   assert.equal(JSON.stringify(m.active()), '["Опрос"]');
 });
+
+for (const proc of ['__proto__', 'constructor', 'toString']) {
+  test(`процедура «${proc}» отключает себя в ответе тика — тики прекращаются`, async () => {
+    const c = clock();
+    const fired = [];
+    let m;
+    const e = {
+      fire(p, token) {
+        fired.push({ proc: p, token });
+        // Ответ тика: процедура вызвала ОтключитьОбработчикОжидания(себя).
+        m.apply([{ proc, off: true }]);
+        return Promise.resolve();
+      },
+      busy: () => false, modal: () => false, hidden: () => false,
+      now: c.now, setTimeout: c.setTimeout, clearTimeout: c.clearTimeout,
+    };
+    m = ctx.make(e);
+    m.apply([{ proc, interval: 1, token: 'sig' }]);
+    assert.deepEqual(Array.from(m.active()), [proc]);
+    await c.advance(1000);
+    assert.equal(fired.length, 1);
+    await c.advance(10000);
+    assert.equal(fired.length, 1, 'после отключения тиков быть не должно');
+    assert.deepEqual(Array.from(m.active()), []);
+  });
+}
