@@ -50,7 +50,7 @@ func TestRunPreSaveFormHooks_MutationReachesSave(t *testing.T) {
 	}
 
 	var msgs []string
-	if err := srv.runPreSaveFormHooks(context.Background(), ent, obj, &msgs); err != nil {
+	if err := srv.runPreSaveFormHooks(context.Background(), ent, obj, false, &msgs); err != nil {
 		t.Fatalf("runPreSaveFormHooks вернул ошибку: %v", err)
 	}
 
@@ -82,7 +82,7 @@ func TestRunPreSaveFormHooks_Abort(t *testing.T) {
 		Fields: map[string]any{"Наименование": ""}, TablePartRows: map[string][]map[string]any{}}
 
 	var msgs []string
-	err := srv.runPreSaveFormHooks(context.Background(), ent, obj, &msgs)
+	err := srv.runPreSaveFormHooks(context.Background(), ent, obj, false, &msgs)
 	if err == nil {
 		t.Fatal("ожидалась ошибка (ПередЗаписью бросил исключение), получили nil")
 	}
@@ -103,7 +103,7 @@ func TestRunPreSaveFormHooks_NoHookNoop(t *testing.T) {
 		Fields: map[string]any{"Наименование": "X"}, TablePartRows: map[string][]map[string]any{}}
 
 	var msgs []string
-	if err := srv.runPreSaveFormHooks(context.Background(), ent, obj, &msgs); err != nil {
+	if err := srv.runPreSaveFormHooks(context.Background(), ent, obj, false, &msgs); err != nil {
 		t.Fatalf("no-op ждали nil, получили %v", err)
 	}
 	if obj.Fields["Наименование"] != "X" || len(obj.Fields) != 1 {
@@ -130,7 +130,7 @@ func TestRunPreSaveFormHooks_BlocksRecursiveSaveOfSameObject(t *testing.T) {
 	}
 
 	var messages []string
-	err := srv.runPreSaveFormHooks(context.Background(), ent, obj, &messages)
+	err := srv.runPreSaveFormHooks(context.Background(), ent, obj, false, &messages)
 	if err == nil || !strings.Contains(err.Error(), "внутри обработчика записи формы") {
 		t.Fatalf("recursive Object.Write was not rejected explicitly: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestRunPreSaveFormHooks_UsesEntitySaveDeadlineInsideTransaction(t *testing.
 		Fields: fields,
 		Preflight: func(txCtx context.Context, obj *runtime.Object) error {
 			var messages []string
-			return srv.runPreSaveFormHooks(txCtx, ent, obj, &messages)
+			return srv.runPreSaveFormHooks(txCtx, ent, obj, false, &messages)
 		},
 	})
 	elapsed := time.Since(started)
