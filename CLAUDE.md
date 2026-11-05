@@ -193,6 +193,15 @@ onebase describe --project <dir>                # вся структура ко
   REST comments/labels; proof целиком предшествует `MergedEvent`, lifecycle edge
   до merge запрещён, а после merge безопасен только необязательный конечный
   delete без restore.
+  Opt-in health дополнительно выдаёт `routing_observation-v1`: точные PR/HEAD,
+  категории текущего канонического REVIEW, evidence/source, получателя, lifetime
+  расход/лимит и время именованного server event. Это отображение, не допуск.
+  Dashboard разделяет technical/engineering, product/safety, insufficient data
+  и фактические failed executions инструментов; старая/неполная история остаётся
+  неизвестной. Нельзя выводить продуктовый выбор из одной needs-decision метки,
+  сбрасывать попытки или считать паузу/PID доказательством остановленного executor.
+  Формат и операторские гейты — в `internal/reviewrouting/C-acceptance.md`;
+  установка/пилот и календарное измерение не завершаются одним merge кода.
   Перед мержем обязательное
   ревью (`reviewed` / `changes-requested`, две попытки доработки, третья — спор
   к человеку). Мерж-этап разрешает `ship` на **PR**, ставит его только человек;
