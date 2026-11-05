@@ -625,6 +625,13 @@ func (db *DB) migrateEntities(ctx context.Context, entities []*metadata.Entity) 
 	for _, e := range ordered {
 		if err := db.WithTxScope(ctx, func(ctx context.Context) error {
 			table := metadata.TableName(e.Name)
+			var usersRefs []UsersReference
+			if db.IsPostgres() {
+				usersRefs = headerUsersReferences(e)
+				if err := db.lockHeaderUsersTarget(ctx, usersRefs); err != nil {
+					return err
+				}
+			}
 			exists, err := db.TableExists(ctx, table)
 			if err != nil {
 				return err
@@ -642,6 +649,13 @@ func (db *DB) migrateEntities(ctx context.Context, entities []*metadata.Entity) 
 				}
 				before, err = db.readEntityIndexes(ctx, table)
 				if err != nil {
+					return err
+				}
+			}
+			if len(usersRefs) > 0 {
+				// Validate legacy values before rename/retype can expose them in a
+				// driver conversion error. No data repair is implicit in migration.
+				if _, err := db.checkHeaderUsersReferences(ctx, usersRefs); err != nil {
 					return err
 				}
 			}
@@ -669,6 +683,11 @@ func (db *DB) migrateEntities(ctx context.Context, entities []*metadata.Entity) 
 			for _, f := range e.Fields {
 				if err := db.AddColumnIfMissing(ctx, table, metadata.ColumnName(f), fieldType(d, f)); err != nil {
 					return fmt.Errorf("migrate %s.%s: %w", e.Name, f.Name, err)
+				}
+			}
+			if len(usersRefs) > 0 {
+				if err := db.ensureHeaderUsersReferences(ctx, usersRefs); err != nil {
+					return err
 				}
 			}
 			if err := db.AddColumnIfMissing(ctx, table, "deletion_mark", d.TypeBool()+" NOT NULL DEFAULT "+boolFalseLit(d)); err != nil {
