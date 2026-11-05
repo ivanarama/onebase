@@ -2,7 +2,6 @@ package pipelinecontract
 
 import (
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"testing"
 )
@@ -22,11 +21,10 @@ func TestTechnicalSourceQueueCLI(t *testing.T) {
 	if python == "" {
 		t.Skip("Python is unavailable; source queue public CLI suite requires Python 3")
 	}
-	scripts := filepath.Join("..", "..", ".claude", "skills", "merge-shepherd", "scripts")
-	args := []string{"-X", "utf8", "-m", "unittest", "discover", "-s", scripts, "-p", "test_source_queue.py", "-v"}
-	cmd := exec.Command("python3", args...)
+	const scripts = "../../.claude/skills/merge-shepherd/scripts"
+	cmd := exec.Command("python3", "-X", "utf8", "-m", "unittest", "discover", "-s", scripts, "-p", "test_source_queue.py", "-v")
 	if python == "python" {
-		cmd = exec.Command("python", args...)
+		cmd = exec.Command("python", "-X", "utf8", "-m", "unittest", "discover", "-s", scripts, "-p", "test_source_queue.py", "-v")
 	}
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("source queue public CLI acceptance: %v\n%s", err, output)
