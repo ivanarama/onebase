@@ -1,0 +1,53 @@
+name: Diagnostic 2279 one full PostgreSQL UI observation
+on:
+  push:
+    branches: [diagnostic/2279-observe-16987-pg]
+permissions:
+  contents: read
+jobs:
+  full-pg-ui-observation:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: onebase
+          POSTGRES_PASSWORD: onebase
+          POSTGRES_DB: onebase_test
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U onebase -d onebase_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      LANG: en_US.UTF-8
+      LC_ALL: en_US.UTF-8
+      CGO_ENABLED: '1'
+      TEST_DATABASE_URL: postgres://onebase:onebase@127.0.0.1:5432/onebase_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: harness
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: e7d9336e42c047a42dd24fe3284ccbc9c7e67c2f
+          path: candidate
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: candidate/.go-version
+          cache-dependency-path: candidate/go.sum
+      - name: Existing PostgreSQL tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client-16
+      - name: Single exact-tree PostgreSQL UI diagnostic
+        run: python3 harness/.github/scripts/2279-pg-observe.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: diagnostic-2279-pg-observe-${{ github.run_id }}-${{ github.run_attempt }}
+          path: proof
+          if-no-files-found: error
