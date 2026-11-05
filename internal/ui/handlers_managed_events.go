@@ -47,6 +47,7 @@ import (
 type formEventResponse struct {
 	OK             bool                        `json:"ok"`
 	Values         map[string]any              `json:"values,omitempty"`
+	Revealed       []string                    `json:"revealed,omitempty"`
 	TableParts     map[string][]map[string]any `json:"tableparts,omitempty"`
 	FormTables     map[string][]map[string]any `json:"formTables,omitempty"`
 	ConditionalCSS string                      `json:"conditionalCss"`
@@ -56,8 +57,12 @@ type formEventResponse struct {
 	// страницы: команда «Принять» замораживает реквизиты сразу, а форма
 	// продолжала показывать их редактируемыми.
 	ElementStates *elementStates `json:"elementStates,omitempty"`
-	Messages      []string       `json:"messages,omitempty"`
-	Error         string         `json:"error,omitempty"`
+	// ColumnTitles — заголовки колонок с title_from после обработчика:
+	// «путь размещения ТЧ → реквизит → заголовок». Шапка SlickGrid иначе
+	// оставалась бы прежней до перезагрузки страницы.
+	ColumnTitles map[string]map[string]string `json:"columnTitles,omitempty"`
+	Messages     []string                     `json:"messages,omitempty"`
+	Error        string                       `json:"error,omitempty"`
 	// Question != nil — обработчик фазы 1 вызвал ПоказатьВопрос: клиент
 	// рисует модал вопроса, ответ возвращается событием Ответ (#1528).
 	Question *questionPayload `json:"question,omitempty"`
@@ -97,6 +102,10 @@ type formEventResponse struct {
 	// Close присутствует только в ответе отдельного close-intent endpoint.
 	// Обычный /form-event не выдаёт разрешение уничтожить форму.
 	Close *formCloseDecision `json:"close,omitempty"`
+	// Cancel — обработчик ПередПроведением выставил Отказ: браузер документ не
+	// проводит. Только для этого события; вопрос (Question) тоже откладывает
+	// проведение до ответа, но отказом не является.
+	Cancel bool `json:"cancel,omitempty"`
 }
 
 type managedCloseSaveError struct {
@@ -348,6 +357,9 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		respondJSON(enc, formEventResponse{Error: "entity not found: " + entityName})
 		return
 	}
+	r, finishConceal := s.beginConcealRequest(r, entity, false, closeInv)
+	defer finishConceal()
+
 	entityKind := string(entity.Kind)
 	canRead := s.can(r, entityKind, entity.Name, "read")
 	canWrite := s.can(r, entityKind, entity.Name, "write")
@@ -653,8 +665,20 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		elementName = ""
 		eventName = string(metadata.FormEventBeforeClose)
 	}
+	beforePost := closeInv == nil && beforePostEvent(elementName, eventName)
 	progAny := form.ProgramAST
 	if progAny == nil {
+		// Posting requires the declared check to run. The historical no-op for
+		// ordinary events must not authorize posting when the module is absent.
+		if beforePost {
+			procName, _, _, eligibilityErr := resolveBrowserFormEvent(form, elementName, eventName, false)
+			if eligibilityErr != nil {
+				respondJSON(enc, formEventResponse{Error: eligibilityErr.Error()})
+			} else {
+				respondJSON(enc, formEventResponse{Error: "процедура «" + procName + "» не найдена в .form.os"})
+			}
+			return
+		}
 		if closeInv != nil {
 			if procName := resolveFormCloseHandler(form); procName != "" {
 				respondJSON(enc, formEventResponse{Error: "процедура «" + procName + "» не найдена в .form.os"})
@@ -741,7 +765,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	if procName != "" && decl == nil {
-		if closeInv != nil {
+		if closeInv != nil || beforePost {
 			respondJSON(enc, formEventResponse{Error: "процедура «" + procName + "» не найдена в .form.os"})
 			return
 		}
@@ -759,6 +783,23 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
+	// ПередПроведением: тот же контракт Отказ, что у ПередЗакрытием, — но
+	// событие обычное браузерное, без протокола закрытия.
+	var beforePostArgs []any
+	if beforePost {
+		if !entity.Posting {
+			respondJSON(enc, formEventResponse{Error: "ПередПроведением: документ «" + entity.Name + "» не проводится"})
+			return
+		}
+		if decl != nil {
+			beforePostArgs, err = validateFormCancelProcedure(decl, string(metadata.FormEventBeforePost))
+			if err != nil {
+				respondJSON(enc, formEventResponse{Error: err.Error()})
+				return
+			}
+		}
+	}
+	postCancelled := false
 
 	// Лимит richtext проверяем по СЫРОМУ значению формы до санитайза, как в
 	// parseSubmitForm/handlers_entity — иначе мега-blob обходит лимит через
@@ -774,10 +815,21 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
 		return
 	}
+	concealed := s.dropConcealedInput(r, entity, form, obj.Fields)
 	// Что прислал клиент — до восстановлений и обработчика: ответ события не
 	// маскирует значение, которое клиент сам только что набрал (см.
 	// serializeManagedFormEventState).
 	r = r.WithContext(withSubmittedFormFields(r.Context(), obj.Fields))
+	// У новой записи скрытый ввод не приходит из браузера. До обработчика,
+	// который может раскрыть поле, возвращаем его объявленное умолчание;
+	// иначе раскрытый пустой контрол на submit затрёт серверное значение.
+	// Close-intent восстанавливает полное начальное состояние ниже.
+	if closeInv == nil && strings.TrimSpace(r.FormValue("_id")) == "" {
+		if err := s.applyRejectedFieldDefaults(r.Context(), entity, obj, concealed); err != nil {
+			respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
+			return
+		}
+	}
 	// Событие может вызвать Объект.Записать() до обычного submit. Удаляем
 	// присланные значения запертых полей из объекта и POST: последующее
 	// restoreUnsubmittedFields восстановит каноничное значение из БД.
@@ -789,7 +841,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		// Объект.Записать(), сохранил бы NULL — то есть запрет на правку
 		// оборачивался бы потерей объявленного значения.
 		if strings.TrimSpace(r.FormValue("_id")) == "" {
-			if err := s.applyAdminOnlyDefaults(r.Context(), entity, obj, dropped); err != nil {
+			if err := s.applyRejectedFieldDefaults(r.Context(), entity, obj, dropped); err != nil {
 				respondJSON(enc, formEventResponse{Error: s.errText(r, err)})
 				return
 			}
@@ -936,6 +988,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// Реквизиты формы (attributes с save:false) — formToFields их не разбирает,
 	// поэтому без этого шага Объект.<Реквизит> в обработчике всегда nil.
 	s.mergeFormAttrValues(dslCtx, r, form, entity, obj)
+	s.restoreConcealControllers(r, entity, form, obj)
 
 	// Подмешать ValueTable-данные из vt.<name>.<idx>.<field>.
 	vtRows, err := parseValueTableRowsForManagedForm(r, form, entity, canWrite)
@@ -1293,6 +1346,11 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	if qa := strings.TrimSpace(r.FormValue("_question_answer")); qa != "" {
 		vars["ВопросОтвет"] = qa
 		vars["QuestionAnswer"] = qa
+	} else if beforePost {
+		// ПередПроведением приходит и без ответа, и с ответом на свой же
+		// вопрос: пустая строка отличает первый вызов от ответа.
+		vars["ВопросОтвет"] = ""
+		vars["QuestionAnswer"] = ""
 	}
 	// Значения редактируемых полей диалога — структура ДиалогПоля.
 	if qf := parseQuestionFields(r.FormValue(entityQuestionFieldsName(entity, form))); qf != nil {
@@ -1336,6 +1394,13 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		if runErr == nil {
 			closeInv.cancelled = formCloseBindingCancelled(decl, entryResult.Bindings)
 		}
+	} else if beforePost && decl != nil {
+		var entryResult interpreter.EntryCallResult
+		entryResult, runErr = s.interp.CallEntrySandboxedWithBindings(decl, thisObj, beforePostArgs,
+			interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, vars)
+		if runErr == nil {
+			postCancelled = formCloseBindingCancelled(decl, entryResult.Bindings)
+		}
 	} else if timeout > 0 {
 		runErr = s.interp.RunSandboxed(decl, thisObj,
 			interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, nil, vars)
@@ -1347,6 +1412,9 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// единственное соединение. Успешный выход с открытой транзакцией считается
 	// ошибкой процедуры, чтобы конфигурационная ошибка не оставалась незаметной.
 	runErr = finishDSLExecution(txState, runErr)
+	// Cancelled BeforeClose/BeforePost revokes disclosure just like a failed handler.
+	concealSuccess := runErr == nil && !postCancelled && (closeInv == nil || !closeInv.cancelled)
+	s.finishConcealEvent(r, form, entity, obj, thisObj.assigned, concealSuccess)
 	liveCtx := txState.Ctx()
 	if closeInv != nil && thisObj.saved {
 		// BeforeClose itself may save in discard mode. Promote that durable
@@ -1475,6 +1543,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		q := question
 		resp.Question = &q
 	}
+	resp.Cancel = postCancelled
 	if navigation != nil {
 		resp.Navigation = navigation
 	}
@@ -1707,9 +1776,10 @@ func (s *Server) managedCloseStateDirty(
 	if err != nil || persisted == nil {
 		return true
 	}
+	dialect := s.store.Dialect().Name()
 	for _, field := range entity.Fields {
 		stored, _ := maskCIKeyValue(persisted, field.Name)
-		if tpCellNorm(field, obj.Get(field.Name)) != tpCellNorm(field, stored) {
+		if tpCellNormStored(field, obj.Get(field.Name), dialect) != tpCellNormStored(field, stored, dialect) {
 			return true
 		}
 	}
@@ -1740,7 +1810,7 @@ func (s *Server) managedCloseStateDirty(
 	}
 	for _, tablePart := range entity.TableParts {
 		stored, rowsErr := s.store.GetTablePartRows(ctx, entity.Name, tablePart.Name, obj.ID, tablePart)
-		if rowsErr != nil || !tpRowsEqual(obj.TablePartRows[tablePart.Name], stored, tablePart) {
+		if rowsErr != nil || !tpRowsEqualStored(obj.TablePartRows[tablePart.Name], stored, tablePart, dialect) {
 			return true
 		}
 	}
@@ -1785,6 +1855,12 @@ func snapshotValueCI(snapshot map[string]string, name string) (string, bool) {
 // (Объект.Записать()) по-прежнему сверяется с базой.
 func formOpenEvent(elementName, eventName string) bool {
 	return elementName == "" && strings.EqualFold(eventName, string(metadata.FormEventOnOpen))
+}
+
+// beforePostEvent — проверка перед стандартным проведением (ПередПроведением
+// уровня формы).
+func beforePostEvent(elementName, eventName string) bool {
+	return elementName == "" && strings.EqualFold(eventName, string(metadata.FormEventBeforePost))
 }
 
 // transientManagedStateDirty is used by processor forms, which have no
@@ -1856,6 +1932,7 @@ func savedFormID(this *formObjectThis) string {
 // разбирает #615, — инвариант, применённый в N−1 месте из N.
 type formEventState struct {
 	Values         map[string]any
+	Revealed       []string
 	TableParts     map[string][]map[string]any
 	FormTables     map[string][]map[string]any
 	RefOptions     map[string][]map[string]any
@@ -1863,12 +1940,14 @@ type formEventState struct {
 	ConditionalCSS string
 	Messages       []string
 	ElementStates  *elementStates
+	ColumnTitles   map[string]map[string]string
 }
 
 // response — единственное место, где состояние переносится в ответ.
 func (st formEventState) response(ok bool) formEventResponse {
 	return formEventResponse{
 		OK:             ok,
+		Revealed:       st.Revealed,
 		Values:         st.Values,
 		TableParts:     st.TableParts,
 		FormTables:     st.FormTables,
@@ -1877,6 +1956,7 @@ func (st formEventState) response(ok bool) formEventResponse {
 		ConditionalCSS: st.ConditionalCSS,
 		Messages:       st.Messages,
 		ElementStates:  st.ElementStates,
+		ColumnTitles:   st.ColumnTitles,
 	}
 }
 
@@ -1894,13 +1974,13 @@ type elementStates struct {
 	Hidden   map[string]bool `json:"hidden,omitempty"`
 }
 
-// applyAdminOnlyDefaults возвращает новой записи объявленные умолчания ровно
+// applyRejectedFieldDefaults возвращает новой записи объявленные умолчания ровно
 // тех полей, значения которых сервер только что отклонил как запертые.
 //
 // Заполняются только отклонённые поля. Событие формы и сегодня не пересчитывает
 // остальные неприсланные реквизиты и не зовёт ПриСозданииНового — расширять это
 // здесь значило бы менять поведение событийного пути под видом починки запрета.
-func (s *Server) applyAdminOnlyDefaults(ctx context.Context, entity *metadata.Entity, obj *runtime.Object, names []string) error {
+func (s *Server) applyRejectedFieldDefaults(ctx context.Context, entity *metadata.Entity, obj *runtime.Object, names []string) error {
 	if s.entitySvc == nil || entity == nil || obj == nil || len(names) == 0 {
 		return nil
 	}
@@ -1983,6 +2063,8 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 		fields[key] = value
 	}
 	values := normalizeFormAttrKeys(fields, form, entity)
+	// conceal: true — выдача требует действующего серверного разрешения.
+	revealed := s.concealEventValues(ctx, form, values)
 	// Псевдо-реквизит «Ссылка» — контекст обработчика, а не значение формы:
 	// в ответ он не едет, чтобы applyValues не искал под него элемент.
 	for _, k := range []string{"ссылка", "reference", "_version"} {
@@ -2004,6 +2086,7 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 		}
 	}
 	return formEventState{
+		Revealed:       revealed,
 		Values:         values,
 		TableParts:     tableParts,
 		FormTables:     formTablesFromRows(tableParts, form),
@@ -2015,6 +2098,7 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 		// значения ПОСЛЕ обработчика: команда, изменившая состояние объекта,
 		// сразу меняет доступность полей.
 		ElementStates: s.formElementStates(form, entity, values, s.isAdminCtx(ctx)),
+		ColumnTitles:  managedTPColumnTitles(form, entity, values, langFromCtx(ctx)),
 	}
 }
 
@@ -2551,6 +2635,13 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 	if eventName == "" {
 		opStatus = "error"
 		respondJSON(enc, formEventResponse{Error: "_event required"})
+		return
+	}
+	// Проведения у обработки нет: событие уровня формы ПередПроведением ей не
+	// адресуется, даже если модуль объявил обработчик.
+	if closeInv == nil && beforePostEvent(elementName, eventName) {
+		opStatus = "error"
+		respondJSON(enc, formEventResponse{Error: "ПередПроведением: у обработки нет проведения"})
 		return
 	}
 
