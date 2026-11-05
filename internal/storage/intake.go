@@ -355,6 +355,30 @@ func (db *DB) GetIntakeDLQ(ctx context.Context, intake, id string) (IntakeDLQEnt
 	return e, true, nil
 }
 
+// FindOpenIntakeDLQ возвращает самую свежую открытую запись карантина ключа с
+// заданной причиной. Нужна повтору отправителя (dlq.retry_by_sender): он
+// приносит тот же ключ, а не ID записи.
+func (db *DB) FindOpenIntakeDLQ(ctx context.Context, intake, scope, key, reason string) (IntakeDLQEntry, bool, error) {
+	d := db.dialect
+	q := fmt.Sprintf(`
+		SELECT id, intake, key, scope, payload, reason, error, attempts, correlation_id, quarantined_at, replay_state
+		FROM _intake_dlq
+		WHERE intake = %s AND scope = %s AND key = %s AND reason = %s AND replay_state = %s
+		ORDER BY quarantined_at DESC, id DESC LIMIT 1`,
+		d.Placeholder(1), d.Placeholder(2), d.Placeholder(3), d.Placeholder(4), d.Placeholder(5))
+	var e IntakeDLQEntry
+	err := db.QueryRow(ctx, q, intake, scope, key, reason, DLQStateOpen).Scan(
+		&e.ID, &e.Intake, &e.Key, &e.Scope, &e.Payload, &e.Reason,
+		&e.Error, &e.Attempts, &e.CorrelationID, &e.QuarantinedAt, &e.ReplayState)
+	if IsNotFound(err) {
+		return IntakeDLQEntry{}, false, nil
+	}
+	if err != nil {
+		return IntakeDLQEntry{}, false, fmt.Errorf("intake: find open dlq: %w", err)
+	}
+	return e, true, nil
+}
+
 // MarkIntakeDLQReplayedIfOpen атомарно захватывает открытую запись для replay.
 // Вызывается внутри той же транзакции, что обработчик и отметка processed:
 // при любом сбое переход откатывается вместе с бизнес-записями.
