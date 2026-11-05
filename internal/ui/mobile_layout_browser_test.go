@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/url"
 	"os"
@@ -22,12 +23,60 @@ import (
 // directly. The headless --dump-dom command can time out loading an iframe or
 // waiting to exit even after its measurement script has finished (issue #2226).
 type mobileLayoutBrowser struct {
-	conn     *websocket.Conn
-	stopTree func() error
-	exited   chan struct{}
-	waitErr  error // read only after exited closes
-	logPath  string
-	nextID   int
+	conn      *websocket.Conn
+	stopTree  func() error
+	exited    chan struct{}
+	waitErr   error // read only after exited closes
+	logPath   string
+	nextID    int
+	readiness *mobileLayoutReadinessTrace
+}
+
+// Only the constructor and dial loop write this bounded, synchronous journal.
+// Process state is observed through exited; cmd.Wait remains its sole owner.
+type mobileLayoutReadinessTrace struct {
+	started time.Time
+	events  [128]string
+	count   int
+}
+
+func newMobileLayoutReadinessTrace() *mobileLayoutReadinessTrace {
+	return &mobileLayoutReadinessTrace{started: time.Now()}
+}
+
+func (r *mobileLayoutReadinessTrace) record(ctx context.Context, phase string, attempt int, since time.Time, status int, err error, exited <-chan struct{}) {
+	now := time.Now()
+	remaining := "unavailable"
+	var parentErr error
+	if ctx != nil {
+		parentErr = ctx.Err()
+		if deadline, ok := ctx.Deadline(); ok {
+			remaining = deadline.Sub(now).String()
+		}
+	}
+	processExited := false
+	select {
+	case <-exited:
+		processExited = true
+	default:
+	}
+	duration := time.Duration(0)
+	if !since.IsZero() {
+		duration = now.Sub(since)
+	}
+	r.events[r.count%len(r.events)] = fmt.Sprintf("at=%s elapsed=%s phase=%s attempt=%d duration=%s remaining=%s response=%t http_status=%d error_type=%T parent=%v process_exited=%t",
+		now.UTC().Format(time.RFC3339Nano), now.Sub(r.started), phase, attempt, duration, remaining, status != 0, status, err, parentErr, processExited)
+	r.count++
+}
+
+func (r *mobileLayoutReadinessTrace) String() string {
+	var out strings.Builder
+	fmt.Fprintf(&out, "browser readiness events=%d omitted=%d\n", r.count, max(0, r.count-len(r.events)))
+	for i := max(0, r.count-len(r.events)); i < r.count; i++ {
+		out.WriteString(r.events[i%len(r.events)])
+		out.WriteByte('\n')
+	}
+	return out.String()
 }
 
 func newMobileLayoutBrowser(t *testing.T, executable string) *mobileLayoutBrowser {
@@ -57,17 +106,27 @@ func newMobileLayoutBrowserSize(t *testing.T, executable string, width, height i
 	}
 	cmd := exec.CommandContext(processCtx, executable, args...) //nolint:gosec // closed browser allow-list, owned profile and loopback targets
 	cmd.Stdout, cmd.Stderr = log, log
+	trace := newMobileLayoutReadinessTrace()
+	launchStarted := time.Now()
+	trace.record(nil, "launch-start", 0, time.Time{}, 0, nil, nil)
 	stopTree, err := startMobileBrowserProcess(cmd)
+	trace.record(nil, "launch-end", 0, launchStarted, 0, err, nil)
 	if err != nil {
 		stop()
 		_ = log.Close()
+		(&mobileLayoutBrowser{logPath: logPath, readiness: trace}).preserveDiagnostics(t)
 		t.Fatalf("start browser: %v", err)
 	}
-	b := &mobileLayoutBrowser{exited: make(chan struct{}), logPath: logPath, stopTree: stopTree}
+	b := &mobileLayoutBrowser{exited: make(chan struct{}), logPath: logPath, stopTree: stopTree, readiness: trace}
 	go func() { b.waitErr = cmd.Wait(); close(b.exited) }()
 	t.Cleanup(func() {
 		defer stop()
-		defer func() { _ = log.Close() }()
+		defer func() {
+			_ = log.Close()
+			if t.Failed() {
+				b.preserveDiagnostics(t)
+			}
+		}()
 		if b.conn != nil {
 			_ = b.conn.CloseNow()
 		}
@@ -89,21 +148,20 @@ func newMobileLayoutBrowserSize(t *testing.T, executable string, width, height i
 	})
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
+	trace.record(ctx, "readiness-start", 0, time.Time{}, 0, nil, b.exited)
 	tick := time.NewTicker(20 * time.Millisecond)
 	defer tick.Stop()
 	for {
 		data, readErr := os.ReadFile(filepath.Join(profile, "DevToolsActivePort"))
 		parts := strings.Fields(string(data))
 		if readErr == nil && len(parts) == 2 {
+			trace.record(ctx, "devtools-port-observed", 0, time.Time{}, 0, nil, b.exited)
 			port, portErr := strconv.Atoi(parts[0])
 			if portErr != nil || port < 1 || port > 65535 || !strings.HasPrefix(parts[1], "/devtools/browser/") {
 				t.Fatalf("invalid browser debugging endpoint: %q", data)
 			}
 			endpoint := (&url.URL{Scheme: "ws", Host: net.JoinHostPort("127.0.0.1", parts[0]), Path: parts[1]}).String()
-			conn, response, dialErr := websocket.Dial(ctx, endpoint, nil)
-			if response != nil && response.Body != nil {
-				_ = response.Body.Close()
-			}
+			conn, dialErr := dialMobileLayoutBrowser(ctx, endpoint, b.exited, trace)
 			if dialErr != nil {
 				t.Fatalf("connect browser: %v\n%s", dialErr, b.diagnostics())
 			}
@@ -113,10 +171,91 @@ func newMobileLayoutBrowserSize(t *testing.T, executable string, width, height i
 		}
 		select {
 		case <-b.exited:
+			trace.record(ctx, "process-exited-before-port", 0, time.Time{}, 0, b.waitErr, b.exited)
 			t.Fatalf("browser stopped before ready: %v\n%s", b.waitErr, b.diagnostics())
 		case <-ctx.Done():
+			trace.record(ctx, "port-deadline", 0, time.Time{}, 0, ctx.Err(), b.exited)
 			t.Fatalf("browser readiness: %v\n%s", ctx.Err(), b.diagnostics())
 		case <-tick.C:
+		}
+	}
+}
+
+// A published DevTools port can precede a responsive WebSocket endpoint. Bound
+// each transport handshake within the original readiness budget; HTTP/protocol
+// failures remain terminal and no browser or test body is restarted.
+func dialMobileLayoutBrowser(ctx context.Context, endpoint string, exited <-chan struct{}, trace *mobileLayoutReadinessTrace) (*websocket.Conn, error) {
+	var lastTransport error
+	attempt := 0
+	stateError := func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		select {
+		case <-exited:
+			return fmt.Errorf("owned browser stopped before ready")
+		default:
+			return nil
+		}
+	}
+	stopped := func(err error) (*websocket.Conn, error) {
+		trace.record(ctx, "stopped", attempt, time.Time{}, 0, err, exited)
+		return nil, fmt.Errorf("browser readiness: %w; last transport error: %v", err, lastTransport)
+	}
+	for {
+		if err := stateError(); err != nil {
+			return stopped(err)
+		}
+		attemptCtx, cancel := context.WithTimeout(ctx, time.Second)
+		attempt++
+		attemptStarted := time.Now()
+		trace.record(ctx, "handshake-start", attempt, time.Time{}, 0, nil, exited)
+		finished := make(chan struct{})
+		go func() {
+			select {
+			case <-exited:
+				cancel()
+			case <-finished:
+			}
+		}()
+		conn, response, err := websocket.Dial(attemptCtx, endpoint, nil)
+		close(finished)
+		cancel()
+		status := 0
+		if response != nil {
+			status = response.StatusCode
+		}
+		trace.record(ctx, "handshake-end", attempt, attemptStarted, status, err, exited)
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		if err != nil {
+			lastTransport = err
+		}
+		if stateErr := stateError(); stateErr != nil {
+			if conn != nil {
+				_ = conn.CloseNow()
+			}
+			return stopped(stateErr)
+		}
+		if err == nil {
+			trace.record(ctx, "ready", attempt, time.Time{}, status, nil, exited)
+			return conn, nil
+		}
+		if conn != nil {
+			_ = conn.CloseNow()
+		}
+		if response != nil {
+			trace.record(ctx, "terminal-response", attempt, time.Time{}, status, err, exited)
+			return nil, fmt.Errorf("browser WebSocket handshake: %w", err)
+		}
+		timer := time.NewTimer(20 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+		case <-exited:
+			timer.Stop()
+		case <-timer.C:
 		}
 	}
 }
@@ -232,5 +371,41 @@ func (b *mobileLayoutBrowser) measureElement(ctx context.Context, target, marker
 
 func (b *mobileLayoutBrowser) diagnostics() string {
 	data, _ := os.ReadFile(b.logPath)
-	return string(data[max(0, len(data)-4000):])
+	return b.readiness.String() + string(data[max(0, len(data)-4000):])
+}
+
+func (b *mobileLayoutBrowser) preserveDiagnostics(t *testing.T) {
+	t.Helper()
+	dir := os.Getenv("ONEBASE_BROWSER_DIAGNOSTICS_DIR")
+	var err error
+	if dir == "" {
+		dir, err = os.MkdirTemp("", "onebase-browser-diagnostics-")
+	} else {
+		err = os.MkdirAll(dir, 0o700)
+	}
+	if err != nil {
+		t.Errorf("preserve owned browser diagnostics: %v", err)
+		return
+	}
+	saved, err := os.CreateTemp(dir, "browser-*.log")
+	if err != nil {
+		t.Errorf("preserve owned browser diagnostics: %v", err)
+		return
+	}
+	defer func() { _ = saved.Close() }()
+	full, err := os.Open(b.logPath)
+	if err != nil {
+		t.Errorf("read owned browser diagnostics: %v", err)
+		return
+	}
+	defer func() { _ = full.Close() }()
+	if _, err := io.WriteString(saved, b.readiness.String()); err != nil {
+		t.Errorf("preserve readiness journal: %v", err)
+		return
+	}
+	if _, err := io.Copy(saved, full); err != nil {
+		t.Errorf("preserve full owned browser stdout/stderr: %v", err)
+		return
+	}
+	t.Logf("Full owned browser diagnostics preserved privately: %s", saved.Name())
 }
