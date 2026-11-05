@@ -22,7 +22,7 @@ const refMeta = {Строки: {Клиент: {entity: 'Клиент'}}};
 const window = {_tpRefOpts: refOptions, _tpEnumLabels: {}, _tpEnumOrder: {}, obManagedSetTablePartJSON() {}};
 const document = {createElement: node, getElementById() { return body; }};
 const sandbox = {window, document, JSON, Array, Object, String, encodeURIComponent,
-  obReady() {}, obTPRefOpts() { return refOptions; }, obTPRefMeta() { return refMeta; },
+  obReady() {}, obTPRefOpts() { return refOptions; }, obTPRefChoices() { return refOptions; }, obTPRefMeta() { return refMeta; },
   obTPEnumLabels() { return {}; }, obTPEnumOrder() { return {}; },
   obManagedTableBodies() { return [body]; }, obManagedVirtualColumnNames() { return []; },
   obManagedHiddenColumnNames() { return []; }, obManagedTableReadOnly() { return input.readonly; },
