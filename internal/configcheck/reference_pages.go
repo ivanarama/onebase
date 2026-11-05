@@ -15,7 +15,7 @@ func CheckReferencePages(proj *project.Project) []Issue {
 		pages[strings.ToLower(page.Name)] = true
 	}
 	var issues []Issue
-	forEachProjectForm(proj, func(owner *metadata.Entity, form *metadata.FormModule) {
+	checkForm := func(owner *metadata.Entity, form *metadata.FormModule) {
 		walkFormElements(form.Elements, func(el *metadata.FormElement) {
 			if el == nil || el.ReferencePage == "" {
 				return
@@ -27,6 +27,18 @@ func CheckReferencePages(proj *project.Project) []Issue {
 				issues = append(issues, formKeyIssue(owner, form, el, "form.reference-page", fmt.Sprintf("страница %q не найдена", el.ReferencePage), "Укажите имя страницы из pages/*.yaml."))
 			}
 		})
-	})
+	}
+	forEachProjectForm(proj, checkForm)
+	for _, proc := range proj.Processors {
+		if proc == nil {
+			continue
+		}
+		owner := proc.VirtualEntity()
+		for _, form := range proc.Forms {
+			if form != nil {
+				checkForm(owner, form)
+			}
+		}
+	}
 	return issues
 }
