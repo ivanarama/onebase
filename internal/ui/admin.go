@@ -71,7 +71,8 @@ const tplAdminUserCard = `{{define "admin-user-card"}}` + adminHead + `
   <input type="hidden" name="action" value="update">
   <div class="form-group">
     <label>Логин</label>
-    <input type="text" value="{{.User.Login}}" readonly style="background:#f8fafc;color:#64748b;cursor:default">
+    <input type="text" name="login" value="{{.User.Login}}" autocomplete="off" required maxlength="64" pattern="[^\s]+">
+    <div style="font-size:12px;color:#94a3b8;margin-top:4px">Буквы (кириллица тоже), цифры и «_ . - @». При смене логина личные настройки пользователя переезжают на новый логин, а все его сессии завершаются — он войдёт заново под новым логином. Пароль, второй фактор и роли сохраняются.</div>
   </div>
   <div class="form-group">
     <label>Полное имя</label>
@@ -282,20 +283,39 @@ func (s *Server) adminUserCard(w http.ResponseWriter, r *http.Request) {
 		}
 		switch r.FormValue("action") {
 		case "update":
+			// Смена логина и остальные поля — одной транзакцией: если логин
+			// недопустим или занят либо карточку нельзя сохранить (последний
+			// администратор), не применяется ничего — ни логин, ни сессии.
+			oldLogin := u.Login
+			newLogin := strings.TrimSpace(r.FormValue("login"))
 			fullName := r.FormValue("full_name")
 			isAdmin := r.FormValue("is_admin") == "1"
 			denyPasswd := r.FormValue("deny_passwd_change") == "1"
 			showInList := r.FormValue("show_in_list") == "1"
 			aiData := r.FormValue("ai_data_access") == "1"
-			if err := s.authRepo.Update(r.Context(), userID, fullName, isAdmin, denyPasswd, showInList, aiData); err != nil {
+			renamed, err := s.authRepo.UpdateAndRename(r.Context(), userID, oldLogin, newLogin, fullName, isAdmin, denyPasswd, showInList, aiData)
+			if err != nil {
 				data["Error"] = s.errText(r, err)
 			} else {
+				if renamed != nil {
+					s.logSessionAudit(r, "user_rename", oldLogin+" → "+renamed.Login, userID)
+					u.Login = renamed.Login
+					data["Renamed"] = true
+					if me := auth.UserFromContext(r.Context()); me != nil && me.ID == userID {
+						data["RenamedSelf"] = true
+					}
+				}
 				u.FullName = fullName
 				u.IsAdmin = isAdmin
 				u.DenyPasswdChange = denyPasswd
 				u.ShowInList = showInList
 				u.AIDataAccess = aiData
 				data["Success"] = s.tr(lang, "Данные сохранены")
+				if data["RenamedSelf"] == true {
+					data["Success"] = s.tr(lang, "Логин изменён. Ваша сессия завершена — войдите заново под новым логином")
+				} else if data["Renamed"] == true {
+					data["Success"] = s.tr(lang, "Логин изменён, данные сохранены. Сессии пользователя завершены — он войдёт под новым логином")
+				}
 			}
 		case "reset_2fa":
 			// Административный сброс второго фактора. Без него потеря
