@@ -3108,7 +3108,8 @@ function obGridColumnIds(columns) {
       return window.obRefFilterParam(carrier);
     }
     var serverRows = [];   // последний ответ серверного поиска
-    var serverFilter = '';
+    var serverFilter = '', serverQuery = null, serverMatched = false, serverError = '';
+    function currentSearch(q) { return serverFilter === requestParam() && serverQuery === String(q == null ? '' : q); }
     var shown = [];        // что сейчас отрисовано в списке (для ↑/↓ и Enter)
     var activeIdx = -1;    // подсвеченный пункт списка, -1 — нет подсветки
     var searchTimer = null, searchSeq = 0, lastChoiceRequest = "";
@@ -3138,16 +3139,23 @@ function obGridColumnIds(columns) {
     function candidates(filter) {
       var f = String(filter == null ? '' : filter).trim().toLowerCase();
       var out = [], seen = {};
-      function push(o) {
+      function push(o, matched) {
         if (!o || o.id === undefined || o.id === null || o.id === '') return;
         var key = String(o.id);
         if (seen[key]) return;
         var lbl = String(o._label == null ? '' : o._label);
-        if (f && lbl.toLowerCase().indexOf(f) < 0) return;
+        if (f && !matched && lbl.toLowerCase().indexOf(f) < 0) return;
         seen[key] = true;
         out.push({id: o.id, _label: lbl});
       }
       var currentFilter = requestParam();
+      if (currentSearch(filter)) {
+        if (serverError) return [];
+        if (serverMatched) {
+          serverRows.forEach(function(o) { push(o, true); });
+          return out; // Пустую выдачу функции тоже нельзя дополнять seeds.
+        }
+      }
       if(choiceContext && args.column.choiceSeeds) {
         var seed=args.column.choiceSeeds.get(args.item);
         var snapshot=window.obRefChoiceSnapshot(choiceCarrier());
@@ -3156,7 +3164,7 @@ function obGridColumnIds(columns) {
       for (var i = 0; !choiceContext && i < refOptsList.length; i++) {
         if ((refOptsList[i]._ownerFilter || initialFilter) === currentFilter) push(refOptsList[i]);
       }
-      if (currentFilter === serverFilter) {
+      if (currentSearch(filter)) {
         for (var j = 0; j < serverRows.length; j++) push(serverRows[j]);
       }
       return out;
@@ -3176,7 +3184,7 @@ function obGridColumnIds(columns) {
       list.innerHTML = '';
       if (!shown.length) {
         var empty = document.createElement('div');
-        empty.textContent = 'Ничего не найдено (F4 — форма выбора)';
+        empty.textContent = (currentSearch(input.value) && serverError) || 'Ничего не найдено (F4 — форма выбора)';
         empty.style.cssText = 'padding:8px 10px;color:#94a3b8;font-style:italic';
         list.appendChild(empty);
         return;
@@ -3258,17 +3266,39 @@ function obGridColumnIds(columns) {
       var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) +
                 '?limit=50&q=' + encodeURIComponent(q || '') + requestFilter;
       fetch(url, {credentials: 'same-origin', headers: {'Accept': 'application/json'}})
-        .then(function(resp) { if (!resp.ok) throw new Error('HTTP ' + resp.status); return resp.json(); })
+        .then(function(resp) {
+          if (resp.status === 422) return resp.json().then(function(data) {
+            var err = new Error(data.error || 'HTTP 422');
+            err.choiceSearch = true;
+            throw err;
+          });
+          if (!resp.ok) throw new Error('HTTP ' + resp.status);
+          return resp.json();
+        })
         .then(function(data) {
-          if (seq !== searchSeq || requestFilter !== requestParam()) return; // ответ устарел
+          if (seq !== searchSeq || requestFilter !== requestParam() || String(q || '') !== input.value) return; // ответ устарел
           var keep = (activeIdx >= 0 && shown[activeIdx]) ? shown[activeIdx].id : '';
+          // matched: выдачу подобрала функция поиска (choice_search_proc) —
+          // подстрокой её не дофильтровываем, «15к1» не входит в «д.15, корп.1».
+          serverQuery = String(q == null ? '' : q);
+          serverMatched = !!(data && data.matched);
+          serverError = '';
+          if (serverMatched) keep = ''; // Первым остаётся результат функции, а не прежний локальный пункт.
           serverRows = ((data && data.items) || []).map(function(row) {
             return {id: row && row.id != null ? String(row.id) : '', _label: String((row && row._label) || '')};
           }).filter(function(o) { return o.id !== ''; });
           serverFilter = requestFilter;
           if (isOpen) buildList(input.value, keep);
         })
-        .catch(function() { /* сеть/ошибка — остаются предзагруженные опции */ });
+        .catch(function(err) {
+          if (!err.choiceSearch || seq !== searchSeq || requestFilter !== requestParam() || String(q || '') !== input.value) return;
+          serverRows = [];
+          serverFilter = requestFilter;
+          serverQuery = String(q == null ? '' : q);
+          serverMatched = false;
+          serverError = err.message;
+          if (isOpen) buildList(input.value);
+        });
     }
 
     function scheduleSearch(q) {
@@ -3288,9 +3318,10 @@ function obGridColumnIds(columns) {
     function resolveTyped() {
       var text = String(input.value == null ? '' : input.value).trim();
       if (text === '') { selectedId = ''; return true; }
+      if (currentSearch(input.value) && serverError) return false;
       if (text === String(label(selectedId) || '').trim()) return true; // поверх не набирали
       var low = text.toLowerCase();
-      var found = candidates(text);
+      var found = candidates(input.value);
       for (var k = 0; k < found.length; k++) { // точное совпадение подписи важнее частичного
         if (String(found[k]._label).trim().toLowerCase() === low) { pick(found[k]); return true; }
       }
@@ -3406,6 +3437,7 @@ function obGridColumnIds(columns) {
       input.addEventListener('keydown', onKeyDown);
       input.addEventListener('focus', openList);
       input.addEventListener('input', function() {
+        searchSeq++; // Старый ответ недействителен уже до следующего debounce.
         if (isOpen) buildList(input.value); else openList();
         scheduleSearch(input.value);
       });
@@ -3454,7 +3486,7 @@ function obGridColumnIds(columns) {
     };
     this.validate = function() {
       if (resolveTyped()) return {valid: true, msg: null};
-      return {valid: false, msg: 'Не найдено: «' + String(input.value).trim() + '». ↑/↓ и Enter — выбрать, F4 — форма выбора'};
+      return {valid: false, msg: (currentSearch(input.value) && serverError) || 'Не найдено: «' + String(input.value).trim() + '». ↑/↓ и Enter — выбрать, F4 — форма выбора'};
     };
     this.init();
   }

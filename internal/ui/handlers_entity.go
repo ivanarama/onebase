@@ -1325,6 +1325,10 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 			extra.IncludeFolders = choice.Folders
 		}
 		items, total, err = s.referenceOptionsPageWithParams(r.Context(), ent, r.URL.Query().Get("q"), limit, offset, extra)
+		if errors.Is(err, errChoiceSearch) {
+			s.choiceSearchUnavailable(w, r)
+			return
+		}
 		if err != nil {
 			s.serverError(w, r, err)
 			return
@@ -1341,6 +1345,11 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 		"offset": offset,
 	}
 	response["preview"] = previewField
+	// Выдачу уже подобрала функция поиска: клиент не дофильтровывает её
+	// подстрокой («15к1» не входит в «д.15, корп.1»).
+	if choiceSearchActive(ent, r.URL.Query().Get("q")) {
+		response["matched"] = true
+	}
 	if choice != nil && choice.Selected != nil {
 		allowed := false
 		if !choice.Empty && fltOK {
