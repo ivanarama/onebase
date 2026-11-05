@@ -738,11 +738,14 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			switch el.Kind {
 			case metadata.FormElementField,
 				metadata.FormElementSwitch,
-				metadata.FormElementDatePicker,
-				// Группа скрыта disabled-fieldset: её поля не отправляются, а
-				// событие может её показать (form_hidden_until.go).
-				metadata.FormElementGroupBox:
+				metadata.FormElementDatePicker:
 				return false // рисуем с display:none
+			case metadata.FormElementGroupBox:
+				// Группа скрыта disabled-fieldset: её поля не отправляются, а
+				// событие может её показать (form_hidden_until.go). Группа,
+				// скрытая константой («Истина»), не показывается никогда — её,
+				// как и прежде, не рисуем.
+				return hiddenWhenConstant(el.HiddenWhen)
 			}
 			return true // остальные типы — пропускаем как раньше
 		},

@@ -50,7 +50,11 @@ func fullyHiddenFormFields(form *metadata.FormModule, hidden map[string]bool) ma
 			}
 			path := parentPath + strconv.Itoa(next)
 			next++
-			isHidden := parentHidden || hidden[path]
+			// Скрытие константой («Истина») — служебное поле: на нём
+			// конфигурация держит состояние между событиями, и его значение
+			// ходит, как до скрытия «до ответа». Данные прячет только
+			// настоящее условие.
+			isHidden := parentHidden || (hidden[path] && !hiddenWhenConstant(el.HiddenWhen))
 			if name := hiddenFieldName(el); name != "" {
 				placed[name] = true
 				if !isHidden {
@@ -72,6 +76,14 @@ func fullyHiddenFormFields(form *metadata.FormModule, hidden map[string]bool) ma
 		out[name] = true
 	}
 	return out
+}
+
+// hiddenWhenConstant — hidden_when, всегда истинный по записи: «Истина» или
+// «true» (без учёта регистра и пробелов по краям). Так конфигурации держат
+// служебные поля формы, никогда не показываемые пользователю.
+func hiddenWhenConstant(expr string) bool {
+	e := strings.TrimSpace(expr)
+	return strings.EqualFold(e, "Истина") || strings.EqualFold(e, "true")
 }
 
 // hiddenFieldName — поле шапки или реквизит формы, который показывает элемент.

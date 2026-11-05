@@ -147,3 +147,48 @@ func toString(v any) string {
 	}
 	return fmt.Sprint(v)
 }
+
+// Служебное поле, скрытое константой (hidden_when: "Истина"), держит состояние
+// формы между событиями: его значение ходит, как до скрытия «до ответа» (#2517,
+// регресс подбора заказа мастера — терялось направление).
+func TestHiddenUntilAnswer_ConstantHiddenServiceFieldKeepsValue(t *testing.T) {
+	for _, expr := range []string{"Истина", " true "} {
+		ent := &metadata.Entity{Name: "ЗаказМастераКЦ", Kind: metadata.KindCatalog,
+			Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}}}
+		ent.Forms = []*metadata.FormModule{{
+			Name: "ФормаОбъекта", Kind: "object", EntityName: ent.Name, LayoutKind: metadata.FormLayoutManaged,
+			Attributes: []*metadata.FormAttribute{{Name: "ПодборНаправление", TypeRef: "string", Save: false}},
+			Elements: []*metadata.FormElement{
+				{Kind: metadata.FormElementField, Name: "ПолеНаим", DataPath: "Объект.Наименование"},
+				{Kind: metadata.FormElementField, Name: "ПолеНаправление", DataPath: "ПодборНаправление", HiddenWhen: expr},
+				{Kind: metadata.FormElementButton, Name: "КнопкаЗапомнить",
+					Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Запомнить"}},
+				{Kind: metadata.FormElementButton, Name: "КнопкаПрочитать",
+					Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Прочитать"}},
+			},
+			ProgramAST: mustParse(t, `
+Процедура Запомнить()
+	Объект.ПодборНаправление = "Холодильники";
+КонецПроцедуры
+
+Процедура Прочитать()
+	Объект.Наименование = "направление: " + Объект.ПодборНаправление;
+КонецПроцедуры
+`),
+		}}
+		srv, _ := newSubmitTestServer(t, []*metadata.Entity{ent})
+		resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, url.Values{
+			"_element": {"КнопкаЗапомнить"}, "_event": {string(metadata.FormEventOnClick)},
+		}).Body.Bytes())
+		if !resp.OK || toString(resp.Values["ПодборНаправление"]) != "Холодильники" {
+			t.Fatalf("hidden_when %q: значение служебного поля не пришло в values: %+v", expr, resp.Values)
+		}
+		resp = decodeFormEventResponse(t, executeFormEvent(t, srv, ent, url.Values{
+			"_element": {"КнопкаПрочитать"}, "_event": {string(metadata.FormEventOnClick)},
+			"ПодборНаправление": {toString(resp.Values["ПодборНаправление"])},
+		}).Body.Bytes())
+		if !resp.OK || toString(resp.Values["Наименование"]) != "направление: Холодильники" {
+			t.Fatalf("hidden_when %q: следующее событие не получило значение: %+v", expr, resp.Values)
+		}
+	}
+}
