@@ -692,7 +692,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 
 	// filter — постоянный отбор формы списка (поле ListFilter), читается
 	// загрузчиком внутри блока form:.
-	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button", "ref_card_button_admin_only", "enter_submits_form"), map[string]*yamlLintSchema{
+	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button", "ref_card_button_admin_only", "enter_submits_form", "tab_skip_readonly", "autofocus"), map[string]*yamlLintSchema{
 		"title": freeMap(),
 		"filter": seq(with(obj("field", "op", "value", "roles", "query", "removable"), map[string]*yamlLintSchema{
 			"label": freeMap(),
@@ -720,6 +720,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		// managed-формы (план 181C, #1621); attachment endpoint не меняется.
 		"attachments": action,
 	})
+	// tab_skip_readonly и autofocus также читаются только из form:.
 	return with(obj("schema", "entity", "name", "kind", "layout_kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll"), map[string]*yamlLintSchema{
 		"form":                   formHeader,
 		"title":                  freeMap(),
