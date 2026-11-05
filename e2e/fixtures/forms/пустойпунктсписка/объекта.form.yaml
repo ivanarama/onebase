@@ -1,0 +1,20 @@
+schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: ПустойПунктСписка
+attributes:
+  - name: Объект
+    type: DocumentRef.ПустойПунктСписка
+    save: true
+    main: true
+elements:
+  - kind: ПолеВвода
+    name: ПолеСтадии
+    data_path: Объект.Стадия
+    events:
+      ПриИзменении: СтадияПриИзменении
+  - kind: ПолеВвода
+    name: ПолеСклад
+    data_path: Объект.Склад
+    readonly_when: 'Стадия <> "открыто"'
