@@ -1,4 +1,7 @@
 {
+  "Поиск среди неразмещённых объектов": "Search unplaced objects",
+  "Здесь только объекты, которых нет в структуре меню. Скрытый объект можно вернуть в меню.": "Only objects missing from the menu structure appear here. Hidden objects can be restored to the menu.",
+  "Все доступные объекты уже размещены": "All available objects are already placed",
   "у локального источника %s нет ссылочного реквизита %s; внешняя ссылка затенена": "Local source %s has no reference field %s; the outer reference is shadowed",
   "временный каталог загрузок": "temporary upload directory",
   "временный файл параметра %s": "temporary file for parameter %s",

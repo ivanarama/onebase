@@ -17,6 +17,9 @@ type cacheFileLock struct {
 }
 
 func acquireCacheFileLock(ctx context.Context, path string) (*cacheFileLock, error) {
+	// path comes from restResponseCache.lockPath: a SHA-256 filename under
+	// the explicit operator cache directory, matching the Unix lock contract.
+	//nolint:gosec // G703: request data cannot add path segments to the digest-derived lock path.
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
