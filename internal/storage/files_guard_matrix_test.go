@@ -172,7 +172,7 @@ func TestFilesGuardModesAndLocationsMatrix(t *testing.T) {
 			}
 			filesGuardCheckSentinel(t, sentinel)
 		}
-		// db attachments still require disk; S3 streaming and deletion do not.
+		// db attachments still require disk; all S3 paths use independent temp.
 		if err := db.SaveFileStorageMode(ctx, storage.FileStorageDB); err != nil {
 			t.Fatal(err)
 		}
@@ -190,8 +190,19 @@ func TestFilesGuardModesAndLocationsMatrix(t *testing.T) {
 		ar, _, err := db.OpenAttachment(ctx, s3att.ID)
 		filesGuardRead(t, ar, err)
 		db.SetBlobStreaming(false)
-		if _, _, err := db.OpenAttachment(ctx, s3att.ID); err == nil {
-			t.Fatal("slice A materialization accepted missing root")
+		ar, _, err = db.OpenAttachment(ctx, s3att.ID)
+		filesGuardRead(t, ar, err)
+		path, cleanup, _, err := db.MaterializeAttachment(ctx, s3att.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if content, err := os.ReadFile(path); err != nil || string(content) != "payload" {
+			cleanup()
+			t.Fatalf("S3 materialization without root: %q, %v", content, err)
+		}
+		cleanup()
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("materialization cleanup: %v", err)
 		}
 		db.SetFilesDir(root)
 		ar, _, err = db.OpenAttachment(ctx, s3att.ID)

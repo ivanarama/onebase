@@ -31,6 +31,9 @@ type DB struct {
 	blobStore    BlobObjectStore // non-nil when file_storage=s3 configured
 	blobPrefix   string          // key prefix for blob objects in the bucket
 	blobStream   bool            // s3 attachments: stream via Range instead of temp file
+
+	attachmentTemp attachmentTempSpace
+
 	// rlsGuard — strict-RLS чокпоинт (план 79F). nil = выключен (по умолчанию).
 	// Когда задан, List для сущности, у которой guard возвращает true (есть
 	// строковая политика), но без вычисленного строкового доступа
@@ -473,6 +476,7 @@ func (db *DB) Close() {
 	hooks := db.closeHooks
 	db.closeHooks = nil
 	db.closeMu.Unlock()
+	db.attachmentTemp.close()
 	webhookURLScrubbed.Delete(db)
 	if db.pool != nil {
 		db.pool.Close()
