@@ -31,7 +31,7 @@ type IRForm struct {
 	Events           map[string]string // form-level events (1С имя → процедура)
 	Resources        []IRResource      // бинарные файлы из Items/
 
-	// Density — плотность раскладки формы ("" | "compact"); как и
+	// Density — плотность раскладки формы ("" | "compact" | "dense"); как и
 	// EnterSubmitsForm, настройка OneBase: в XML 1С не читается и не пишется.
 	Density string
 	// UnknownTopLevel — XML-узлы верхнего уровня, не имеющие IR-семантики

@@ -10,13 +10,19 @@ import (
 )
 
 // density: compact ставит класс плотной раскладки на <html> документа формы —
-// только этой формы; без ключа страница прежняя. Карточка открыта штатным
+// только этой формы; без ключа страница прежняя. density: dense добавляет к
+// нему свой класс: правила compact остаются в силе, dense их уточняет, а форма
+// с compact ничего от dense не получает. Карточка открыта штатным
 // обработчиком формы.
 func TestManagedFormDensityClass(t *testing.T) {
 	for _, tc := range []struct {
 		density string
-		want    bool
-	}{{"compact", true}, {"", false}} {
+		html    string // ожидаемое начало документа
+	}{
+		{"compact", `<html lang="ru" class="ob-density-compact">`},
+		{"dense", `<html lang="ru" class="ob-density-compact ob-density-dense">`},
+		{"", `<html lang="ru"><head>`},
+	} {
 		ent := layoutTestEntity(fieldEl("ПолеНаим", "Объект.Наименование"))
 		ent.Forms[0].Density = tc.density
 		srv, _ := newSubmitTestServer(t, []*metadata.Entity{ent})
@@ -27,12 +33,16 @@ func TestManagedFormDensityClass(t *testing.T) {
 			t.Fatalf("form: %d %s", rec.Code, rec.Body.String())
 		}
 		body := rec.Body.String()
-		has := strings.Contains(body, `<html lang="ru" class="ob-density-compact">`)
-		if has != tc.want {
-			t.Errorf("density=%q: класс плотной раскладки на <html> = %v, ожидалось %v", tc.density, has, tc.want)
+		if !strings.Contains(body, tc.html) {
+			t.Errorf("density=%q: на <html> ожидалось %s", tc.density, tc.html)
 		}
-		if !strings.Contains(body, `.ob-density-compact input[type=text]`) {
+		if !strings.Contains(body, `.ob-density-compact input[type=text]`) || !strings.Contains(body, `.ob-density-dense input[type=text]`) {
 			t.Error("правила плотной раскладки не попали в страницу формы")
+		}
+		// dense перекрывает compact только порядком при равной специфичности:
+		// его правила обязаны идти позже.
+		if strings.Index(body, `.ob-density-dense .form-group{`) < strings.Index(body, `.ob-density-compact .form-group{`) {
+			t.Error("правила dense стоят раньше compact и не перекроют его")
 		}
 	}
 }
