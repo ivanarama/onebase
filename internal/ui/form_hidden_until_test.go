@@ -14,8 +14,8 @@ import (
 
 // Карточка задачи без исполнителя пуста до ответа на вопрос «Установить
 // исполнителем?»: флаг ставит ПриСозданииНаСервере до отрисовки, группа с
-// описанием (в нём телефон и адрес клиента) скрыта и не отдаёт значения ни в
-// разметку, ни в ответ события; ответ «Да» показывает группу с описанием.
+// описанием скрыта (секреты закрывает conceal, а не hidden_when); ответ «Да»
+// показывает группу с описанием.
 const hiddenUntilPhone = "8-900-111-22-33"
 
 func hiddenUntilEntity(t *testing.T) *metadata.Entity {
@@ -89,9 +89,6 @@ func TestHiddenUntilAnswer_FirstRenderWithoutContent(t *testing.T) {
 		if hiddenNow != tc.wantHidden || !strings.Contains(tag, `data-ob-hidden-group="1"`) {
 			t.Fatalf("исполнитель %q: группа скрыта=%v, ожидалось %v: %s", tc.executor, hiddenNow, tc.wantHidden, tag)
 		}
-		if leaked := strings.Contains(body, hiddenUntilPhone); leaked == tc.wantHidden {
-			t.Fatalf("исполнитель %q: телефон в разметке=%v — ПриСозданииНаСервере/скрытие не сработали", tc.executor, leaked)
-		}
 	}
 }
 
@@ -117,15 +114,9 @@ func TestHiddenUntilAnswer_EventValuesAndShowAfterYes(t *testing.T) {
 		return resp
 	}
 
-	// Пока группа скрыта, значения описания в ответе нет.
 	resp := event("ПолеНаим", string(metadata.FormEventOnChange))
 	if resp.ElementStates == nil || !resp.ElementStates.Hidden["2"] {
 		t.Fatalf("группа должна оставаться скрытой: %+v", resp.ElementStates)
-	}
-	for k, v := range resp.Values {
-		if strings.EqualFold(k, "Описание") || strings.Contains(strings.TrimSpace(toString(v)), hiddenUntilPhone) {
-			t.Fatalf("значение скрытого поля ушло в ответ события: %s=%v", k, v)
-		}
 	}
 
 	// «Да»: группа показана, описание приходит из записи.
@@ -191,4 +182,70 @@ func TestHiddenUntilAnswer_ConstantHiddenServiceFieldKeepsValue(t *testing.T) {
 			t.Fatalf("hidden_when %q: следующее событие не получило значение: %+v", expr, resp.Values)
 		}
 	}
+}
+
+// Значение, которое код поставил в поле, скрытое условием (и в поле группы,
+// скрытой при открытии), приходит в values и записывается — как до #2517
+// (регресс: «Доп. информация» дисконтной карты терялась).
+func TestHiddenUntilAnswer_ConditionHiddenValuesTravelAndSave(t *testing.T) {
+	ent := &metadata.Entity{Name: "ЗвонокКЦ", Kind: metadata.KindCatalog, Fields: []metadata.Field{
+		{Name: "Наименование", Type: metadata.FieldTypeString},
+		{Name: "ДопИнфо", Type: metadata.FieldTypeString},
+		{Name: "Серия", Type: metadata.FieldTypeString},
+	}}
+	ent.Forms = []*metadata.FormModule{{
+		Name: "ФормаОбъекта", Kind: "object", EntityName: ent.Name, LayoutKind: metadata.FormLayoutManaged,
+		Attributes: []*metadata.FormAttribute{{Name: "СкрытьДоп", TypeRef: "bool", Save: false}},
+		Handlers:   map[metadata.FormEventType]string{metadata.FormEventOnCreateAtServer: "ПриСозданииНаСервереФормы"},
+		Elements: []*metadata.FormElement{
+			{Kind: metadata.FormElementField, Name: "ПолеНаим", DataPath: "Объект.Наименование"},
+			{Kind: metadata.FormElementField, Name: "ПолеДопИнфо", DataPath: "Объект.ДопИнфо", HiddenWhen: "СкрытьДоп"},
+			{Kind: metadata.FormElementGroupBox, Name: "ГруппаСерия", HiddenWhen: "СкрытьДоп",
+				Children: []*metadata.FormElement{{Kind: metadata.FormElementField, Name: "ПолеСерия", DataPath: "Объект.Серия"}}},
+			{Kind: metadata.FormElementButton, Name: "КнопкаКарта",
+				Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "КартаНажатие"}},
+		},
+		ProgramAST: mustParse(t, `
+Процедура ПриСозданииНаСервереФормы()
+	Объект.СкрытьДоп = Истина;
+КонецПроцедуры
+
+Процедура КартаНажатие()
+	Объект.ДопИнфо = "Дисконтная карта, серия ДК-5";
+	Объект.Серия = "ДК-5";
+КонецПроцедуры
+`),
+	}}
+	srv, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+	id := uuid.New()
+	if err := srv.store.Upsert(ctx, ent.Name, id, map[string]any{"Наименование": "Звонок"}, ent); err != nil {
+		t.Fatal(err)
+	}
+	if rec := executeFormEditGET(t, srv, ent, id); rec.Code != 200 || !hiddenGroupDisabled(rec.Body.String(), "ГруппаСерия") {
+		t.Fatalf("группа должна быть скрыта при открытии: %d", rec.Code)
+	}
+	resp := decodeFormEventResponse(t, executeFormEvent(t, srv, ent, url.Values{
+		"_id": {id.String()}, "_element": {"КнопкаКарта"}, "_event": {string(metadata.FormEventOnClick)},
+		"Наименование": {"Звонок"}, "СкрытьДоп": {"true"},
+	}).Body.Bytes())
+	if !resp.OK || toString(resp.Values["ДопИнфо"]) != "Дисконтная карта, серия ДК-5" || toString(resp.Values["Серия"]) != "ДК-5" {
+		t.Fatalf("значения скрытых полей должны прийти в values: %+v", resp.Values)
+	}
+	// Запись формы с этими значениями сохраняет их.
+	записатьЗаявку(t, srv, ent, id, url.Values{
+		"Наименование": {"Звонок"}, "ДопИнфо": {toString(resp.Values["ДопИнфо"])}, "Серия": {toString(resp.Values["Серия"])},
+		"СкрытьДоп": {"true"}, "_version": {"1"},
+	})
+	row, err := srv.store.GetByID(ctx, ent.Name, id, ent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if toString(row["ДопИнфо"]) != "Дисконтная карта, серия ДК-5" || toString(row["Серия"]) != "ДК-5" {
+		t.Fatalf("после записи: ДопИнфо=%v Серия=%v", row["ДопИнфо"], row["Серия"])
+	}
+}
+
+func hiddenGroupDisabled(body, name string) bool {
+	m := regexp.MustCompile(`<fieldset[^>]*data-ob-el="` + name + `"[^>]*>`).FindString(body)
+	return strings.Contains(m, " disabled") && strings.Contains(m, "display:none")
 }

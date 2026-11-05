@@ -11,9 +11,9 @@ package ui
 //     disabled): ответ события может её показать без перезагрузки. Поля внутри
 //     disabled-группы браузер не отправляет, а запись формы отсутствующие поля
 //     скрытой группы не затирает (form_partial_write.go).
-//   - Значения полей, все размещения которых скрыты условием, не уходят в
-//     браузер: ни в разметку первой отрисовки, ни в values ответа события.
-//     Значение приходит тем ответом, который поле показывает.
+//
+// Значения полей, скрытых условием, ходят как раньше: секреты закрывает
+// conceal (data-ob-conceal-context), а не hidden_when.
 
 import (
 	"context"
@@ -30,100 +30,12 @@ import (
 	"github.com/ivantit66/onebase/internal/runtime"
 )
 
-// fullyHiddenFormFields — имена полей (последний сегмент data_path), у которых
-// есть хотя бы одно размещение и все размещения скрыты условием hidden_when —
-// своим или любого контейнера-предка. hidden — карта состояний по путям
-// размещений (managedFormElementStates); пути строятся тем же правилом, что в
-// walkBrowserFormElements.
-func fullyHiddenFormFields(form *metadata.FormModule, hidden map[string]bool) map[string]bool {
-	if form == nil || len(hidden) == 0 {
-		return nil
-	}
-	placed := map[string]bool{}
-	visible := map[string]bool{}
-	var walk func([]*metadata.FormElement, string, bool)
-	walk = func(elements []*metadata.FormElement, parentPath string, parentHidden bool) {
-		next := 0
-		for _, el := range elements {
-			if el == nil {
-				continue
-			}
-			path := parentPath + strconv.Itoa(next)
-			next++
-			// Скрытие константой («Истина») — служебное поле: на нём
-			// конфигурация держит состояние между событиями, и его значение
-			// ходит, как до скрытия «до ответа». Данные прячет только
-			// настоящее условие.
-			isHidden := parentHidden || (hidden[path] && !hiddenWhenConstant(el.HiddenWhen))
-			if name := hiddenFieldName(el); name != "" {
-				placed[name] = true
-				if !isHidden {
-					visible[name] = true
-				}
-			}
-			walk(el.Children, path+".", isHidden)
-		}
-	}
-	walk(form.Elements, "", false)
-	var out map[string]bool
-	for name := range placed {
-		if visible[name] {
-			continue
-		}
-		if out == nil {
-			out = map[string]bool{}
-		}
-		out[name] = true
-	}
-	return out
-}
-
 // hiddenWhenConstant — hidden_when, всегда истинный по записи: «Истина» или
 // «true» (без учёта регистра и пробелов по краям). Так конфигурации держат
 // служебные поля формы, никогда не показываемые пользователю.
 func hiddenWhenConstant(expr string) bool {
 	e := strings.TrimSpace(expr)
 	return strings.EqualFold(e, "Истина") || strings.EqualFold(e, "true")
-}
-
-// hiddenFieldName — поле шапки или реквизит формы, который показывает элемент.
-// Табличные части, группы, страницы и колонки значений шапки не несут.
-func hiddenFieldName(el *metadata.FormElement) string {
-	switch el.Kind {
-	case metadata.FormElementTablePart, metadata.FormElementTable, metadata.FormElementColumn, metadata.FormElementGroupBox,
-		metadata.FormElementPages, metadata.FormElementPage:
-		return ""
-	}
-	dp := strings.TrimSpace(el.DataPath)
-	if dp == "" || strings.Count(dp, ".") > 1 {
-		return ""
-	}
-	return strings.ToLower(dpFieldName(dp))
-}
-
-// dropHiddenFieldValues удаляет из карты значений поля, скрытые целиком.
-func dropHiddenFieldValues(values map[string]any, hiddenFields map[string]bool) {
-	if len(hiddenFields) == 0 {
-		return
-	}
-	for k := range values {
-		if hiddenFields[strings.ToLower(k)] {
-			delete(values, k)
-		}
-	}
-}
-
-// blankHiddenFieldValues — то же для значений первой отрисовки: поле остаётся
-// в разметке скрытой группы пустым и выключенным.
-func blankHiddenFieldValues(values map[string]string, hiddenFields map[string]bool) {
-	if len(hiddenFields) == 0 {
-		return
-	}
-	for k := range values {
-		if hiddenFields[strings.ToLower(k)] {
-			values[k] = ""
-		}
-	}
 }
 
 // formCreateHook — обработчик ПриСозданииНаСервере формы, если объявлен.

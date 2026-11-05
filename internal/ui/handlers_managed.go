@@ -206,9 +206,6 @@ func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any
 		}
 		if len(hidden) > 0 {
 			data["ElHidden"] = hidden
-			if vals, ok := data["Values"].(map[string]string); ok {
-				blankHiddenFieldValues(vals, fullyHiddenFormFields(form, hidden))
-			}
 		}
 		if len(warns) > 0 {
 			data["FormWarnings"] = appendManagedFormWarnings(data["FormWarnings"], warns)
