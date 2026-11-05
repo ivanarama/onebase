@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -180,7 +181,7 @@ func (db *DB) UploadAttachment(ctx context.Context, ownerKind, ownerName string,
 		}
 		store := db.blobStore
 		key := db.attachmentObjectKey(ownerName, id)
-		cnt, err := stagePutAttachmentS3(ctx, store, key, mimeType, r, maxSizeBytes)
+		cnt, err := db.stagePutAttachmentS3(ctx, store, key, mimeType, r, maxSizeBytes)
 		if err != nil {
 			return Attachment{}, err
 		}
@@ -262,20 +263,28 @@ func (db *DB) attachmentObjectKey(ownerName string, id uuid.UUID) string {
 
 // stagePutAttachmentS3 buffers r to a temp file (bounded memory), enforces the
 // size limit, then uploads to S3 under key. Returns the byte count.
-func stagePutAttachmentS3(ctx context.Context, store BlobObjectStore, key, mime string, r io.Reader, maxSizeBytes int64) (int64, error) {
-	tmp, err := os.CreateTemp("", "onebase-att-*")
+func (db *DB) stagePutAttachmentS3(ctx context.Context, store BlobObjectStore, key, mime string, r io.Reader, maxSizeBytes int64) (int64, error) {
+	dir, cleanup, err := db.attachmentTemp.newDir()
+	if err != nil {
+		return 0, err
+	}
+	defer cleanup()
+	tmp, err := os.CreateTemp(dir, "upload-*")
 	if err != nil {
 		return 0, err
 	}
 	defer func() {
 		discardPartial(tmp, tmp.Name())
 	}()
-	n, err := io.Copy(tmp, io.LimitReader(r, maxSizeBytes+1))
+	n, err := io.Copy(tmp, io.LimitReader(attachmentContextReader{ctx, r}, maxSizeBytes+1))
 	if err != nil {
 		return 0, err
 	}
 	if n > maxSizeBytes {
 		return 0, attachmentTooLarge(maxSizeBytes)
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
 	}
 	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
 		return 0, err
@@ -319,16 +328,16 @@ func (db *DB) OpenAttachment(ctx context.Context, id uuid.UUID) (io.ReadSeekClos
 		if db.blobStream {
 			return db.blobStore.OpenReadSeeker(ctx, db.attachmentObjectKey(a.OwnerName, a.ID), a.SizeBytes), a, nil
 		}
-		dir, err := db.downloadAttachmentTemp(ctx, a)
+		dir, cleanup, err := db.downloadAttachmentTemp(ctx, a)
 		if err != nil {
 			return nil, nil, err
 		}
 		f, err := os.Open(filepath.Join(dir, a.ID.String()))
 		if err != nil {
-			removeFile(dir)
+			cleanup()
 			return nil, nil, err
 		}
-		return &tempDirFile{File: f, dir: dir}, a, nil
+		return &tempDirFile{File: f, cleanup: cleanup}, a, nil
 	}
 	if a.Loc != "" && a.Loc != FileStorageDisk {
 		return nil, nil, fmt.Errorf("attachments: attachment %s has unsupported location %q", a.ID, a.Loc)
@@ -356,11 +365,11 @@ func (db *DB) MaterializeAttachment(ctx context.Context, id uuid.UUID) (string, 
 		return "", nil, nil, err
 	}
 	if a.Loc == FileStorageS3 {
-		dir, err := db.downloadAttachmentTemp(ctx, a)
+		dir, cleanup, err := db.downloadAttachmentTemp(ctx, a)
 		if err != nil {
 			return "", nil, nil, err
 		}
-		return filepath.Join(dir, a.ID.String()), func() { removeFile(dir) }, a, nil
+		return filepath.Join(dir, a.ID.String()), cleanup, a, nil
 	}
 	if a.Loc != "" && a.Loc != FileStorageDisk {
 		return "", nil, nil, fmt.Errorf("attachments: attachment %s has unsupported location %q", a.ID, a.Loc)
@@ -402,83 +411,74 @@ func openAttachmentDiskFile(filesDir string, a *Attachment) (*os.File, error) {
 
 // downloadAttachmentTemp fetches an S3-backed attachment into a fresh temp dir
 // (file named <id>) and returns that dir. The caller owns the dir (removes it).
-func (db *DB) downloadAttachmentTemp(ctx context.Context, a *Attachment) (string, error) {
+func (db *DB) downloadAttachmentTemp(ctx context.Context, a *Attachment) (string, func(), error) {
 	if db.blobStore == nil {
-		return "", fmt.Errorf("attachments: вложение %s в S3, но клиент S3 не сконфигурирован (file_storage.s3)", a.ID)
+		return "", nil, fmt.Errorf("attachments: вложение %s в S3, но клиент S3 не сконфигурирован (file_storage.s3)", a.ID)
+	}
+	if a.SizeBytes < 0 {
+		return "", nil, fmt.Errorf("attachments: attachment %s has negative size %d", a.ID, a.SizeBytes)
 	}
 	rc, objectSize, err := db.blobStore.GetObject(ctx, db.attachmentObjectKey(a.OwnerName, a.ID))
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	defer closeRead("объект вложения в хранилище", rc)
 	if objectSize >= 0 && objectSize != a.SizeBytes {
-		return "", fmt.Errorf("attachments: S3 attachment %s size mismatch: metadata=%d object=%d", a.ID, a.SizeBytes, objectSize)
+		return "", nil, fmt.Errorf("attachments: S3 attachment %s size mismatch: metadata=%d object=%d", a.ID, a.SizeBytes, objectSize)
 	}
-	root, err := db.RequireFilesDir()
+	dir, cleanup, err := db.attachmentTemp.newDir()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	base := filepath.Join(root, "_attach_tmp")
-	if err := os.MkdirAll(base, fsmode.Dir); err != nil {
-		return "", err
-	}
-	dir, err := os.MkdirTemp(base, "att-")
-	if err != nil {
-		return "", err
-	}
+	keep := false
+	defer func() {
+		if !keep {
+			cleanup()
+		}
+	}()
 	f, err := os.Create(filepath.Join(dir, a.ID.String()))
 	if err != nil {
-		removeFile(dir)
-		return "", err
+		return "", nil, err
 	}
-	n, err := io.CopyN(f, rc, a.SizeBytes)
+	reader := attachmentContextReader{ctx, rc}
+	n, err := io.CopyN(f, reader, a.SizeBytes)
 	if err != nil {
 		discardPartial(f, dir)
-		return "", fmt.Errorf("attachments: S3 attachment %s size mismatch: metadata=%d content=%d: %w", a.ID, a.SizeBytes, n, err)
+		return "", nil, fmt.Errorf("attachments: S3 attachment %s size mismatch: metadata=%d content=%d: %w", a.ID, a.SizeBytes, n, err)
 	}
 	var extra [1]byte
-	extraN, extraErr := io.ReadFull(rc, extra[:])
+	extraN, extraErr := io.ReadFull(reader, extra[:])
 	if extraN != 0 {
 		discardPartial(f, dir)
-		return "", fmt.Errorf("attachments: S3 attachment %s contains more than metadata size %d", a.ID, a.SizeBytes)
+		return "", nil, fmt.Errorf("attachments: S3 attachment %s contains more than metadata size %d", a.ID, a.SizeBytes)
 	}
 	if extraErr != nil && !errors.Is(extraErr, io.EOF) {
 		discardPartial(f, dir)
-		return "", extraErr
+		return "", nil, extraErr
 	}
 	if err := f.Close(); err != nil {
 		removeFile(dir)
-		return "", err
+		return "", nil, err
 	}
-	return dir, nil
-}
-
-// SweepAttachmentTemp removes leftover temp materializations of S3 attachments
-// (filesDir/_attach_tmp). Safe to call at startup: those files are ephemeral
-// copies recreated on demand. It backstops the rare case where the per-request
-// context.AfterFunc cleanup cannot fire (e.g. headless procrun with a
-// non-cancellable context). Best-effort; errors are ignored.
-func (db *DB) SweepAttachmentTemp() {
-	root, err := db.RequireFilesDir()
-	if err != nil {
-		return
-	}
-	_ = os.RemoveAll(filepath.Join(root, "_attach_tmp"))
+	keep = true
+	return dir, cleanup, nil
 }
 
 // tempDirFile is an io.ReadSeekCloser over a temp file; Close closes the handle
 // and removes the enclosing temp dir.
 type tempDirFile struct {
 	*os.File
-	dir string
+	cleanup   func()
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (t *tempDirFile) Close() error {
-	err := t.File.Close()
-	// Каталог — временная материализация вложения из S3. Его неудалённость не
-	// повод подменять ошибку закрытия файла, но и терять её незачем.
-	removeFile(t.dir)
-	return err
+	t.closeOnce.Do(func() {
+		t.closeErr = t.File.Close()
+		t.cleanup()
+	})
+	return t.closeErr
 }
 
 // DeleteAttachment deletes metadata and removes the content (disk file / S3

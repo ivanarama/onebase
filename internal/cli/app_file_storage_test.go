@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -132,6 +133,15 @@ func TestApplyFileStorageS3_AttachmentEndToEnd(t *testing.T) {
 		t.Fatalf("ConnectSQLite: %v", err)
 	}
 	defer db.Close()
+	root := t.TempDir()
+	db.SetFilesDir(root)
+	legacy := filepath.Join(root, "_attach_tmp", "sentinel")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte("durable sentinel"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := db.EnsureAttachmentTable(ctx); err != nil {
 		t.Fatalf("EnsureAttachmentTable: %v", err)
 	}
@@ -142,6 +152,11 @@ func TestApplyFileStorageS3_AttachmentEndToEnd(t *testing.T) {
 	if err := applyFileStorageS3(db, appCfg); err != nil {
 		t.Fatalf("applyFileStorageS3: %v", err)
 	}
+	if got, err := os.ReadFile(legacy); err != nil || string(got) != "durable sentinel" {
+		t.Fatalf("startup changed durable tree: %q %v", got, err)
+	}
+	// After startup, even an unusable durable root must not block S3 reads.
+	db.SetFilesDir(legacy)
 	if err := db.SaveFileStorageMode(ctx, storage.FileStorageS3); err != nil {
 		t.Fatalf("SaveFileStorageMode: %v", err)
 	}
@@ -168,6 +183,27 @@ func TestApplyFileStorageS3_AttachmentEndToEnd(t *testing.T) {
 	_ = rsc.Close()
 	if !bytes.Equal(got, payload) {
 		t.Fatalf("OpenAttachment content mismatch: %q", got)
+	}
+	path, cleanup, _, err := db.MaterializeAttachment(ctx, att.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if err := applyFileStorageS3(db, appCfg); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(path); err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("startup removed live copy: %q %v", got, err)
+	}
+	db.SetBlobStreaming(true)
+	rsc, _, err = db.OpenAttachment(ctx, att.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, readErr := io.ReadAll(rsc)
+	closeErr := rsc.Close()
+	if readErr != nil || closeErr != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("streaming content: %q %v %v", got, readErr, closeErr)
 	}
 
 	if err := db.DeleteAttachment(ctx, att.ID); err != nil {
