@@ -100,7 +100,7 @@ func gridOrderRendered(t *testing.T, s *Server, u *auth.User) (layout, order str
 		return n.Type == html.ElementNode && ok
 	})
 	if reset == nil {
-		t.Fatal("нет кнопки «Стандартный порядок колонок»")
+		t.Fatal("нет кнопки «Стандартные колонки»")
 	}
 	style, _ := keyboardHTMLAttr(reset, "style")
 	return layout, order, strings.Contains(style, "display:none")
