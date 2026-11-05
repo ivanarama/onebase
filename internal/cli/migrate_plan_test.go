@@ -152,6 +152,7 @@ func TestMigrateDryRunListsLongAccountTable(t *testing.T) {
 		db.Close()
 		t.Fatal(err)
 	}
+	prepareSQLiteCLIPreview(t, db)
 	db.Close()
 	out, err := captureStdout(t, func() error {
 		return runMigrate(migrateCmdFor(t, dir, dbPath, map[string]string{"dry-run": "true"}), nil)

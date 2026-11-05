@@ -220,7 +220,7 @@ type outputLabel struct{ physical, logical string }
 func selectOutputItems(tokens []tok) [][]tok {
 	for i, t := range tokens {
 		if kw, ok := sqlKW(t.val); t.kind == tIdent && ok && kw == "SELECT" {
-			return splitProjectionItems(tokens[i+1 : topLevelFrom(tokens, i)])
+			return splitProjectionItems(tokens[selectProjectionStart(tokens, i):topLevelFrom(tokens, i)])
 		}
 	}
 	return nil
@@ -268,7 +268,7 @@ func wildcardOutputLabels(item, tokens []tok, ctx sourceContext, scopeID int, se
 			if !ok || id != child || t.kind != tIdent || !isKW || kw != "SELECT" {
 				continue
 			}
-			for _, projected := range splitProjectionItems(tokens[pos+1 : topLevelFrom(tokens, pos)]) {
+			for _, projected := range splitProjectionItems(tokens[selectProjectionStart(tokens, pos):topLevelFrom(tokens, pos)]) {
 				col := outputLabelColumn(projected)
 				if col.Star {
 					labels = append(labels, wildcardOutputLabels(projected, tokens, ctx, child, seen)...)

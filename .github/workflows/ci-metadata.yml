@@ -1,0 +1,49 @@
+name: CI metadata
+
+on:
+  pull_request_target:
+    branches: [main]
+    types: [ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: read
+  actions: write
+
+concurrency:
+  group: ci-metadata-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Privileged target event: checkout ONLY the trusted immutable base.
+      # PR text is read as data; no code, scripts or actions from its HEAD run here.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: .go-version
+      - name: Fetch PR commit objects without executing its code
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$PR_NUMBER" =~ ^[1-9][0-9]*$ && "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+          git fetch --no-tags origin "pull/$PR_NUMBER/head"
+          test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"
+      - name: Check commit closing references
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: go run ./tools/prclosecheck -event "$GITHUB_EVENT_PATH"
+      - name: Preserve proven CI or request full execution
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_ENVIRONMENT_EPOCH: ${{ vars.CI_ENVIRONMENT_EPOCH }}
+        run: python3 .github/scripts/ci-metadata.py --event "$GITHUB_EVENT_PATH"
