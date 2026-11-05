@@ -332,6 +332,17 @@ func (s *Server) configurationNavigation(menu *metadata.Menu, contents *metadata
 	return tree, menu != nil
 }
 
+func (s *Server) adminNavigationValidationBase(base navigation.Tree) navigation.Tree {
+	hp := s.reg.HomePage()
+	if base.Context != navContext("") || hp == nil || len(hp.NavByRole) == 0 {
+		return base
+	}
+	// Administrators save against the common nav, independent of current user
+	// roles. The full application base continues to include every role target.
+	validationBase, _, _ := s.homeConfigurationNavigationForRoles(nil)
+	return validationBase
+}
+
 // The configurator preview has no store; it remains a configuration-only view.
 // Database failures and corrupt stored layers retain the safe previous layout.
 func (s *Server) adminNavigationLayer(r *http.Request, base navigation.Tree) (navigation.Tree, []navigation.Diagnostic) {
@@ -347,7 +358,7 @@ func (s *Server) adminNavigationLayer(r *http.Request, base navigation.Tree) (na
 	if setting.Exists {
 		raw = []byte(setting.Raw)
 	}
-	tree, diagnostics := navigation.Compose(base, raw, nil)
+	tree, diagnostics := navigation.ComposeWithAdminBase(base, s.adminNavigationValidationBase(base), raw, nil)
 	for _, diagnostic := range diagnostics {
 		if diagnostic.Code == "invalid-layer" {
 			slog.Warn("invalid navigation settings skipped", "context", base.Context, "layer", "admin")

@@ -127,7 +127,7 @@ function pickerContext(managed = false) {
     addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
     body,
   };
-  const window = {obManagedApplyTablePartRefOptions() {}, applyTableParts() {}};
+  const window = {obManagedApplyTablePartRefOptions() {}, obManagedApplyColumnTitles() {}, applyTableParts() {}};
   window.obFire = function (element, event, params, request) { fired.push({element, event, params, request}); };
   const api = new Function(
     'document', 'window', 'obFire', 'setTimeout', 'clearTimeout', 'obReady',
@@ -827,6 +827,43 @@ for (const close of ['cancel', 'escape', 'transfer', 'other-button']) {
     choose(filterSelect(ctx, '__proto__'), 'toString');
     assert.deepEqual(visibleIds(ctx), ['linked-1'], 'повторное открытие вернуло коллизии ключей');
   });
+}
+
+for (const serverSearch of [false, true]) {
+  for (const editable of [false, true]) {
+    test(`перенос сохраняет колонки Object.prototype, серверный поиск=${serverSearch}, редактирование=${editable}`, () => {
+      const ctx = pickerContext();
+      const names = ['__proto__', 'constructor', 'toString', 'Номер'];
+      const values = Object.fromEntries(names.map((name) => [name, 'value-' + name]));
+      ctx.open({
+        columns: names.map((name) => ({name, type: 'string', editable})),
+        rows: [{id: 'prototype-row', data: values}],
+        config: {serverSearch},
+      }, 'Подбор');
+      const tr = ctx.rowsOf()[0];
+      const cb = tr.querySelector('._ip-cb');
+      if (editable) {
+        names.forEach((name) => {
+          const input = tr.querySelector('._ip-val[data-col="' + name + '"]');
+          input.value = 'edited-' + name;
+          input.dispatch('input', {target: input});
+        });
+      }
+      cb.checked = true;
+      cb.onchange();
+      ctx.transfer();
+      const choices = ctx.fired.filter((event) => event.event === 'Выбор');
+      assert.equal(choices.length, 1, 'перенос должен отправить одно событие Выбор');
+      const result = JSON.parse(choices[0].params._pick_result);
+      assert.equal(result.length, 1);
+      assert.equal(result[0].id, 'prototype-row');
+      names.forEach((name) => {
+        assert.ok(Object.prototype.hasOwnProperty.call(result[0], name),
+          'результат потерял собственную колонку ' + name);
+        assert.equal(result[0][name], (editable ? 'edited-' : 'value-') + name);
+      });
+    });
+  }
 }
 
 test('Конфиг.Ширина задаёт ширину окна, без неё — прежние 720px', () => {

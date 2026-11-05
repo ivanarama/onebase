@@ -1,4 +1,7 @@
 {
+  "Поиск среди неразмещённых объектов": "Search unplaced objects",
+  "Здесь только объекты, которых нет в структуре меню. Скрытый объект можно вернуть в меню.": "Only objects missing from the menu structure appear here. Hidden objects can be restored to the menu.",
+  "Все доступные объекты уже размещены": "All available objects are already placed",
   "у локального источника %s нет ссылочного реквизита %s; внешняя ссылка затенена": "Local source %s has no reference field %s; the outer reference is shadowed",
   "временный каталог загрузок": "temporary upload directory",
   "временный файл параметра %s": "temporary file for parameter %s",
@@ -1517,6 +1520,7 @@
   "Оператор": "Operator",
   "Поле формы (from)": "Form field (from)",
   "Постоянная ссылка (ref)": "Fixed reference (ref)",
+  "Условие запросом — правится в YAML формы:": "Query condition — edit it in the form YAML:",
   "UUID записи справочника": "Catalog record UUID",
   "Условия идут по порядку и соединяются через И. Для подбора обязателен уникальный id выше.": "Conditions are evaluated in order and joined with AND. A unique element ID above is required for filtering.",
   "Устойчивый id элемента": "Stable element ID",
@@ -1586,5 +1590,20 @@
   "Повреждённая личная настройка пропущена. Показано общее меню; сохранение или сброс исправит этот слой.": "Invalid personal settings were skipped. The common menu is shown; save or reset to repair this layer.",
   "Повреждённая общая настройка пропущена. Обратитесь к администратору базы.": "Invalid common settings were skipped. Contact your database administrator.",
   "Равные колонки": "Equal columns",
-  "Переводы поля «%s» для языка %s изменены по-разному в двух редакторах. Укажите одинаковое значение и сохраните снова": "The translation of field \"%s\" for language %s was changed differently in the two editors. Enter the same value and save again"
+  "Закрыть просмотр изображения": "Close image viewer",
+  "Предыдущее изображение": "Previous image",
+  "Следующее изображение": "Next image",
+  "Увеличить изображение": "Zoom in",
+  "Уменьшить изображение": "Zoom out",
+  "Вписать изображение": "Fit image",
+  "Исходный размер изображения": "Original image size",
+  "Открыть изображение в новой вкладке": "Open image in a new tab",
+  "Скачать изображение": "Download image",
+  "Загрузка изображения…": "Loading image\u2026",
+  "Не удалось загрузить изображение": "Could not load image",
+  "Область просмотра изображения": "Image viewport",
+  "Изменённая сборка": "Modified distribution",
+  "Поставщик сборки": "Distribution supplier",
+  "Переводы поля «%s» для языка %s изменены по-разному в двух редакторах. Укажите одинаковое значение и сохраните снова": "The translation of field \"%s\" for language %s was changed differently in the two editors. Enter the same value and save again",
+  "Результаты поиска по всему справочнику": "Search results across the whole catalog"
 }

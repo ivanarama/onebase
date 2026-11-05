@@ -1,0 +1,780 @@
+{
+  "schema": "pp-review-routing-wire-golden-v1",
+  "status": "proposed-full-A-not-activated",
+  "records": [
+    {
+      "id": "1000",
+      "created_at": "2026-10-29T00:00:00Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "publication",
+        "identity": {
+          "base_repository_id": "R_BASE",
+          "base_repository": "owner/repo",
+          "base_ref": "main",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42,
+          "head_repository_id": "R_BASE",
+          "head_repository": "owner/repo",
+          "head_ref": "ветка/проверка",
+          "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "cross_repository": false
+        },
+        "author": {
+          "id": "U_AUTHOR",
+          "login": "contributor"
+        },
+        "epoch": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "anchor": "COMMIT_0",
+        "audit": {
+          "snapshot_sha256": "5ba5d2be4f8571b705c60a0fa0d2084c535530f72374832dd8eb128550c0d518",
+          "last_edge_cursor": "C_HEAD_0",
+          "last_edge_node_id": "COMMIT_0",
+          "base_ref_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "depth": 2,
+        "budget_used": 0,
+        "max_attempts": 2,
+        "report": {
+          "routing_version": "review-routing-v1",
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "change": "Проверка поведения на точном HEAD",
+          "checks": [
+            "onebase procrun --proc Probe, exit 1"
+          ],
+          "blocking": [
+            {
+              "id": "date.html-local-zone",
+              "kind": "technical",
+              "summary": "HTML-шаблон показывает UTC вместо локального времени",
+              "evidence": {
+                "entrypoint": "onebase procrun --proc Probe",
+                "environment": "Windows, Europe/Moscow, SQLite",
+                "command": "onebase procrun --project probe --sqlite probe.sqlite --proc Probe",
+                "expected": "31.01.2026 23:59:59",
+                "actual": "31.01.2026 20:59:59",
+                "result": "exit 1, mismatch persisted date output",
+                "invariant": "HTML и string используют согласованную локальную зону"
+              }
+            }
+          ],
+          "tail": []
+        },
+        "report_sha256": "8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061",
+        "outcome": "technical-handoff",
+        "resume_id": null
+      },
+      "body": "<!-- pp:review-routing-v1 kind=publication sha256=d0fe48d9b3f35d4c0d7c0236a8cea49bcc7b105d6f09beabf7a449bab4f0342d -->\n{\"anchor\":\"COMMIT_0\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"last_edge_cursor\":\"C_HEAD_0\",\"last_edge_node_id\":\"COMMIT_0\",\"snapshot_sha256\":\"5ba5d2be4f8571b705c60a0fa0d2084c535530f72374832dd8eb128550c0d518\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":0,\"depth\":2,\"epoch\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"technical-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\",\"resume_id\":null}\n",
+      "context_sha256": "8155976d164119f4620455e5f683b6e18a07988e6eb9496118d91ea1260c3c9f"
+    },
+    {
+      "id": "1001",
+      "created_at": "2026-10-29T00:00:01Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "claim",
+        "context_sha256": "8155976d164119f4620455e5f683b6e18a07988e6eb9496118d91ea1260c3c9f",
+        "publication_id": "1000",
+        "lease_id": "1000"
+      },
+      "body": "<!-- pp:review-routing-v1 kind=claim sha256=eaa3aff7bd88abd0de6e0c88fb2e43104e648abc5710feec9703c805dcc1694a -->\n{\"context_sha256\":\"8155976d164119f4620455e5f683b6e18a07988e6eb9496118d91ea1260c3c9f\",\"kind\":\"claim\",\"lease_id\":\"1000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"1000\"}\n",
+      "context_sha256": null
+    },
+    {
+      "id": "1002",
+      "created_at": "2026-10-29T00:00:02Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "completion",
+        "context_sha256": "8155976d164119f4620455e5f683b6e18a07988e6eb9496118d91ea1260c3c9f",
+        "publication_id": "1000",
+        "claim_id": "1001",
+        "lease_id": "1000"
+      },
+      "body": "<!-- pp:review-routing-v1 kind=completion sha256=84a6112076ad921fa7bc7b691f7a1884887c6437ac8696e862fdc76b16a86949 -->\n{\"claim_id\":\"1001\",\"context_sha256\":\"8155976d164119f4620455e5f683b6e18a07988e6eb9496118d91ea1260c3c9f\",\"kind\":\"completion\",\"lease_id\":\"1000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"1000\"}\n",
+      "context_sha256": null
+    },
+    {
+      "id": "1003",
+      "created_at": "2026-10-29T00:00:03Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "attempt",
+        "context_sha256": "8155976d164119f4620455e5f683b6e18a07988e6eb9496118d91ea1260c3c9f",
+        "source": {
+          "publication_id": "1000",
+          "claim_id": "1001",
+          "completion_id": "1002",
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+          "epoch": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "report_sha256": "8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061"
+        },
+        "series": "1002",
+        "previous": null,
+        "attempt": 1,
+        "executor": {
+          "kind": "author",
+          "login": "contributor"
+        }
+      },
+      "body": "<!-- pp:review-routing-v1 kind=attempt sha256=9213282c2026b6dec7ba194a40cdbdbbe19462a9fb843f1aa318e1eb90847b2b -->\n{\"attempt\":1,\"context_sha256\":\"8155976d164119f4620455e5f683b6e18a07988e6eb9496118d91ea1260c3c9f\",\"executor\":{\"kind\":\"author\",\"login\":\"contributor\"},\"kind\":\"attempt\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"previous\":null,\"protocol\":\"review-routing-v1\",\"series\":\"1002\",\"source\":{\"claim_id\":\"1001\",\"completion_id\":\"1002\",\"epoch\":\"dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"identity_sha256\":\"001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce\",\"publication_id\":\"1000\",\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\"}}\n",
+      "context_sha256": "cd6290f4b0b6c9c461c3bc0451952a1295ba22370f63e6b681e4cf2406c881ab"
+    },
+    {
+      "id": "1004",
+      "created_at": "2026-10-29T00:00:04Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "phase",
+        "context_sha256": "cd6290f4b0b6c9c461c3bc0451952a1295ba22370f63e6b681e4cf2406c881ab",
+        "attempt_id": "1003",
+        "lease_id": "1003",
+        "phase": "assigned",
+        "details": {}
+      },
+      "body": "<!-- pp:review-routing-v1 kind=phase sha256=a9c7be794e3ce5173ad6b88363d2f615457638c7c607f0283ed42b9175c3b55c -->\n{\"attempt_id\":\"1003\",\"context_sha256\":\"cd6290f4b0b6c9c461c3bc0451952a1295ba22370f63e6b681e4cf2406c881ab\",\"details\":{},\"kind\":\"phase\",\"lease_id\":\"1003\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"phase\":\"assigned\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\"}\n",
+      "context_sha256": null
+    },
+    {
+      "id": "1005",
+      "created_at": "2026-10-29T00:00:05Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "phase",
+        "context_sha256": "cd6290f4b0b6c9c461c3bc0451952a1295ba22370f63e6b681e4cf2406c881ab",
+        "attempt_id": "1003",
+        "lease_id": "1003",
+        "phase": "handoff-done",
+        "details": {}
+      },
+      "body": "<!-- pp:review-routing-v1 kind=phase sha256=1a87e4f357e0d024c26267f1446eb0951d7daf258475b0301b0051b64b520149 -->\n{\"attempt_id\":\"1003\",\"context_sha256\":\"cd6290f4b0b6c9c461c3bc0451952a1295ba22370f63e6b681e4cf2406c881ab\",\"details\":{},\"kind\":\"phase\",\"lease_id\":\"1003\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"phase\":\"handoff-done\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\"}\n",
+      "context_sha256": null
+    },
+    {
+      "id": "1006",
+      "created_at": "2026-10-29T00:00:06Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "phase",
+        "context_sha256": "cd6290f4b0b6c9c461c3bc0451952a1295ba22370f63e6b681e4cf2406c881ab",
+        "attempt_id": "1003",
+        "lease_id": "1003",
+        "phase": "started",
+        "details": {
+          "task_id": 100,
+          "attempt_uuid": "00000000-0000-4000-8000-000000000001"
+        }
+      },
+      "body": "<!-- pp:review-routing-v1 kind=phase sha256=8093ed92b68aa92aac792737735f8b7e5475cf199527dd157d9ecf96a3bce2ce -->\n{\"attempt_id\":\"1003\",\"context_sha256\":\"cd6290f4b0b6c9c461c3bc0451952a1295ba22370f63e6b681e4cf2406c881ab\",\"details\":{\"attempt_uuid\":\"00000000-0000-4000-8000-000000000001\",\"task_id\":100},\"kind\":\"phase\",\"lease_id\":\"1003\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"phase\":\"started\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\"}\n",
+      "context_sha256": null
+    },
+    {
+      "id": "1007",
+      "created_at": "2026-10-29T00:00:07Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "phase",
+        "context_sha256": "cd6290f4b0b6c9c461c3bc0451952a1295ba22370f63e6b681e4cf2406c881ab",
+        "attempt_id": "1003",
+        "lease_id": "1003",
+        "phase": "fix-done",
+        "details": {
+          "new_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "transition": "routing-v1:1003",
+          "source_trailer": "297d82097aac2683d2de01117042f0e2c732ab2e114bedadccf795b04decee3e"
+        }
+      },
+      "body": "<!-- pp:review-routing-v1 kind=phase sha256=e8283e5e1d8596dabae5bc2e1af46ad45670e80aa54b7813127fc27825b1eb29 -->\n{\"attempt_id\":\"1003\",\"context_sha256\":\"cd6290f4b0b6c9c461c3bc0451952a1295ba22370f63e6b681e4cf2406c881ab\",\"details\":{\"new_head\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"source_trailer\":\"297d82097aac2683d2de01117042f0e2c732ab2e114bedadccf795b04decee3e\",\"transition\":\"routing-v1:1003\"},\"kind\":\"phase\",\"lease_id\":\"1003\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"phase\":\"fix-done\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\"}\n",
+      "context_sha256": null
+    },
+    {
+      "id": "1008",
+      "created_at": "2026-10-29T00:00:08Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "publication",
+        "identity": {
+          "base_repository_id": "R_BASE",
+          "base_repository": "owner/repo",
+          "base_ref": "main",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42,
+          "head_repository_id": "R_BASE",
+          "head_repository": "owner/repo",
+          "head_ref": "ветка/проверка",
+          "head_sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "cross_repository": false
+        },
+        "author": {
+          "id": "U_AUTHOR",
+          "login": "contributor"
+        },
+        "epoch": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "anchor": "COMMIT_1",
+        "audit": {
+          "snapshot_sha256": "f79a1304fac10d1b86d27850267123a799dbdf6cebc3505632387dcab6fd31c5",
+          "last_edge_cursor": "C_HEAD_1",
+          "last_edge_node_id": "COMMIT_1",
+          "base_ref_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "depth": 3,
+        "budget_used": 1,
+        "max_attempts": 2,
+        "report": {
+          "routing_version": "review-routing-v1",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "change": "Проверка поведения на точном HEAD",
+          "checks": [
+            "onebase procrun --proc Probe, exit 1"
+          ],
+          "blocking": [
+            {
+              "id": "date.html-local-zone",
+              "kind": "technical",
+              "summary": "HTML-шаблон показывает UTC вместо локального времени",
+              "evidence": {
+                "entrypoint": "onebase procrun --proc Probe",
+                "environment": "Windows, Europe/Moscow, SQLite",
+                "command": "onebase procrun --project probe --sqlite probe.sqlite --proc Probe",
+                "expected": "31.01.2026 23:59:59",
+                "actual": "31.01.2026 20:59:59",
+                "result": "exit 1, mismatch persisted date output",
+                "invariant": "HTML и string используют согласованную локальную зону"
+              }
+            }
+          ],
+          "tail": []
+        },
+        "report_sha256": "232a3c5a03b9f675ab790ab04b566b9a8f1da78fd0fc523840af4432e92ec3d9",
+        "outcome": "technical-handoff",
+        "resume_id": null
+      },
+      "body": "<!-- pp:review-routing-v1 kind=publication sha256=6a176797c5a38bbc51cba26888bf0a9c436eb52eadaeb4fd33bcc32327c1a1a6 -->\n{\"anchor\":\"COMMIT_1\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"last_edge_cursor\":\"C_HEAD_1\",\"last_edge_node_id\":\"COMMIT_1\",\"snapshot_sha256\":\"f79a1304fac10d1b86d27850267123a799dbdf6cebc3505632387dcab6fd31c5\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":1,\"depth\":3,\"epoch\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"technical-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"232a3c5a03b9f675ab790ab04b566b9a8f1da78fd0fc523840af4432e92ec3d9\",\"resume_id\":null}\n",
+      "context_sha256": "d1fbb97a97ef66fc7067e2a3f9a78acbbf2d10e7ab058c461ad597cc91d854d8"
+    },
+    {
+      "id": "1009",
+      "created_at": "2026-10-29T00:00:09Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "claim",
+        "context_sha256": "d1fbb97a97ef66fc7067e2a3f9a78acbbf2d10e7ab058c461ad597cc91d854d8",
+        "publication_id": "1008",
+        "lease_id": "1008"
+      },
+      "body": "<!-- pp:review-routing-v1 kind=claim sha256=da2265eb49e5348f449b743148e7e4468eb91be478b8a40aeddb1bb7d3a54870 -->\n{\"context_sha256\":\"d1fbb97a97ef66fc7067e2a3f9a78acbbf2d10e7ab058c461ad597cc91d854d8\",\"kind\":\"claim\",\"lease_id\":\"1008\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"1008\"}\n",
+      "context_sha256": null
+    },
+    {
+      "id": "1010",
+      "created_at": "2026-10-29T00:00:10Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "completion",
+        "context_sha256": "d1fbb97a97ef66fc7067e2a3f9a78acbbf2d10e7ab058c461ad597cc91d854d8",
+        "publication_id": "1008",
+        "claim_id": "1009",
+        "lease_id": "1008"
+      },
+      "body": "<!-- pp:review-routing-v1 kind=completion sha256=8d459c374898526217d03867879bd4eeffdfa5cb68599180ed900b1a950cf977 -->\n{\"claim_id\":\"1009\",\"context_sha256\":\"d1fbb97a97ef66fc7067e2a3f9a78acbbf2d10e7ab058c461ad597cc91d854d8\",\"kind\":\"completion\",\"lease_id\":\"1008\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"1008\"}\n",
+      "context_sha256": null
+    },
+    {
+      "id": "1011",
+      "created_at": "2026-10-29T00:00:11Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "attempt",
+        "context_sha256": "d1fbb97a97ef66fc7067e2a3f9a78acbbf2d10e7ab058c461ad597cc91d854d8",
+        "source": {
+          "publication_id": "1008",
+          "claim_id": "1009",
+          "completion_id": "1010",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "identity_sha256": "125990f0b21f07a364c34d2139e3e1ef38b8561b2e35d527cef88559471bc63d",
+          "epoch": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "report_sha256": "232a3c5a03b9f675ab790ab04b566b9a8f1da78fd0fc523840af4432e92ec3d9"
+        },
+        "series": "1002",
+        "previous": "1003",
+        "attempt": 2,
+        "executor": {
+          "kind": "author",
+          "login": "contributor"
+        }
+      },
+      "body": "<!-- pp:review-routing-v1 kind=attempt sha256=a58fa421cb516fc48a5cb7444063bb1b027fc9133fceee6b00dde24878305d1e -->\n{\"attempt\":2,\"context_sha256\":\"d1fbb97a97ef66fc7067e2a3f9a78acbbf2d10e7ab058c461ad597cc91d854d8\",\"executor\":{\"kind\":\"author\",\"login\":\"contributor\"},\"kind\":\"attempt\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"previous\":\"1003\",\"protocol\":\"review-routing-v1\",\"series\":\"1002\",\"source\":{\"claim_id\":\"1009\",\"completion_id\":\"1010\",\"epoch\":\"eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee\",\"head\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"identity_sha256\":\"125990f0b21f07a364c34d2139e3e1ef38b8561b2e35d527cef88559471bc63d\",\"publication_id\":\"1008\",\"report_sha256\":\"232a3c5a03b9f675ab790ab04b566b9a8f1da78fd0fc523840af4432e92ec3d9\"}}\n",
+      "context_sha256": "51a7dbecd72658dd0857203d07e17f657b722d8e04fc887926278d1273fc7c70"
+    },
+    {
+      "id": "1012",
+      "created_at": "2026-10-29T00:00:12Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "phase",
+        "context_sha256": "51a7dbecd72658dd0857203d07e17f657b722d8e04fc887926278d1273fc7c70",
+        "attempt_id": "1011",
+        "lease_id": "1011",
+        "phase": "assigned",
+        "details": {}
+      },
+      "body": "<!-- pp:review-routing-v1 kind=phase sha256=1d832062e268699591873c92c618a4cd87b85247e986fc811de43b0b472cd766 -->\n{\"attempt_id\":\"1011\",\"context_sha256\":\"51a7dbecd72658dd0857203d07e17f657b722d8e04fc887926278d1273fc7c70\",\"details\":{},\"kind\":\"phase\",\"lease_id\":\"1011\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"phase\":\"assigned\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\"}\n",
+      "context_sha256": null
+    },
+    {
+      "id": "1013",
+      "created_at": "2026-10-29T00:00:13Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "phase",
+        "context_sha256": "51a7dbecd72658dd0857203d07e17f657b722d8e04fc887926278d1273fc7c70",
+        "attempt_id": "1011",
+        "lease_id": "1011",
+        "phase": "handoff-done",
+        "details": {}
+      },
+      "body": "<!-- pp:review-routing-v1 kind=phase sha256=2f95590a7f952569492c8b26aca8d5e4c380d42080d84256b86b48e3a523f4e7 -->\n{\"attempt_id\":\"1011\",\"context_sha256\":\"51a7dbecd72658dd0857203d07e17f657b722d8e04fc887926278d1273fc7c70\",\"details\":{},\"kind\":\"phase\",\"lease_id\":\"1011\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"phase\":\"handoff-done\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\"}\n",
+      "context_sha256": null
+    },
+    {
+      "id": "1014",
+      "created_at": "2026-10-29T00:00:14Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "phase",
+        "context_sha256": "51a7dbecd72658dd0857203d07e17f657b722d8e04fc887926278d1273fc7c70",
+        "attempt_id": "1011",
+        "lease_id": "1011",
+        "phase": "started",
+        "details": {
+          "task_id": 101,
+          "attempt_uuid": "00000000-0000-4000-8000-000000000001"
+        }
+      },
+      "body": "<!-- pp:review-routing-v1 kind=phase sha256=ac4dd174e6bf7587cc570a18fb5c8c8f98633ea1122da3a36e069e67735a8edd -->\n{\"attempt_id\":\"1011\",\"context_sha256\":\"51a7dbecd72658dd0857203d07e17f657b722d8e04fc887926278d1273fc7c70\",\"details\":{\"attempt_uuid\":\"00000000-0000-4000-8000-000000000001\",\"task_id\":101},\"kind\":\"phase\",\"lease_id\":\"1011\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"phase\":\"started\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\"}\n",
+      "context_sha256": null
+    },
+    {
+      "id": "1015",
+      "created_at": "2026-10-29T00:00:15Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "phase",
+        "context_sha256": "51a7dbecd72658dd0857203d07e17f657b722d8e04fc887926278d1273fc7c70",
+        "attempt_id": "1011",
+        "lease_id": "1011",
+        "phase": "fix-done",
+        "details": {
+          "new_head": "cccccccccccccccccccccccccccccccccccccccc",
+          "transition": "routing-v1:1011",
+          "source_trailer": "7cb56408da5d07c5e06e797e7682e27a385629c6ef3ae81b426396c33fdb1e78"
+        }
+      },
+      "body": "<!-- pp:review-routing-v1 kind=phase sha256=c205e2b2dce7e81cbc733aeb4944c43e6b724ebd941317cff2bc58bd7ff3db42 -->\n{\"attempt_id\":\"1011\",\"context_sha256\":\"51a7dbecd72658dd0857203d07e17f657b722d8e04fc887926278d1273fc7c70\",\"details\":{\"new_head\":\"cccccccccccccccccccccccccccccccccccccccc\",\"source_trailer\":\"7cb56408da5d07c5e06e797e7682e27a385629c6ef3ae81b426396c33fdb1e78\",\"transition\":\"routing-v1:1011\"},\"kind\":\"phase\",\"lease_id\":\"1011\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"phase\":\"fix-done\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\"}\n",
+      "context_sha256": null
+    },
+    {
+      "id": "1016",
+      "created_at": "2026-10-29T00:00:16Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "publication",
+        "identity": {
+          "base_repository_id": "R_BASE",
+          "base_repository": "owner/repo",
+          "base_ref": "main",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42,
+          "head_repository_id": "R_BASE",
+          "head_repository": "owner/repo",
+          "head_ref": "ветка/проверка",
+          "head_sha": "cccccccccccccccccccccccccccccccccccccccc",
+          "cross_repository": false
+        },
+        "author": {
+          "id": "U_AUTHOR",
+          "login": "contributor"
+        },
+        "epoch": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+        "anchor": "COMMIT_2",
+        "audit": {
+          "snapshot_sha256": "158f425313c3287c8185fe0df519d5af97b29c2a26824dcef0a352bba186132b",
+          "last_edge_cursor": "C_HEAD_2",
+          "last_edge_node_id": "COMMIT_2",
+          "base_ref_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "depth": 4,
+        "budget_used": 2,
+        "max_attempts": 2,
+        "report": {
+          "routing_version": "review-routing-v1",
+          "head": "cccccccccccccccccccccccccccccccccccccccc",
+          "change": "Проверка поведения на точном HEAD",
+          "checks": [
+            "onebase procrun --proc Probe, exit 1"
+          ],
+          "blocking": [
+            {
+              "id": "date.html-local-zone",
+              "kind": "technical",
+              "summary": "HTML-шаблон показывает UTC вместо локального времени",
+              "evidence": {
+                "entrypoint": "onebase procrun --proc Probe",
+                "environment": "Windows, Europe/Moscow, SQLite",
+                "command": "onebase procrun --project probe --sqlite probe.sqlite --proc Probe",
+                "expected": "31.01.2026 23:59:59",
+                "actual": "31.01.2026 20:59:59",
+                "result": "exit 1, mismatch persisted date output",
+                "invariant": "HTML и string используют согласованную локальную зону"
+              }
+            }
+          ],
+          "tail": []
+        },
+        "report_sha256": "21f42cc8447a16ca4e7f31ee042e1281f18fcbb32373d0aa0a19fce47f754582",
+        "outcome": "engineering-handoff",
+        "resume_id": null
+      },
+      "body": "<!-- pp:review-routing-v1 kind=publication sha256=0fb665e5a24f446ce083bb53b6e92535d94197f4a7b64a67accdc20e0f32e6b0 -->\n{\"anchor\":\"COMMIT_2\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"last_edge_cursor\":\"C_HEAD_2\",\"last_edge_node_id\":\"COMMIT_2\",\"snapshot_sha256\":\"158f425313c3287c8185fe0df519d5af97b29c2a26824dcef0a352bba186132b\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":2,\"depth\":4,\"epoch\":\"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"cccccccccccccccccccccccccccccccccccccccc\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"engineering-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"cccccccccccccccccccccccccccccccccccccccc\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"21f42cc8447a16ca4e7f31ee042e1281f18fcbb32373d0aa0a19fce47f754582\",\"resume_id\":null}\n",
+      "context_sha256": "af8108eb8fc657755f587b8379ce50fc2ce0f88806051ee35e037bb6d2a144b3"
+    },
+    {
+      "id": "1017",
+      "created_at": "2026-10-29T00:00:17Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "claim",
+        "context_sha256": "af8108eb8fc657755f587b8379ce50fc2ce0f88806051ee35e037bb6d2a144b3",
+        "publication_id": "1016",
+        "lease_id": "1016"
+      },
+      "body": "<!-- pp:review-routing-v1 kind=claim sha256=7b53144a5d5f9625dd7bc62409ed72f8a9f4523113fde13c211ccaf0f5496fa2 -->\n{\"context_sha256\":\"af8108eb8fc657755f587b8379ce50fc2ce0f88806051ee35e037bb6d2a144b3\",\"kind\":\"claim\",\"lease_id\":\"1016\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"1016\"}\n",
+      "context_sha256": null
+    },
+    {
+      "id": "1018",
+      "created_at": "2026-10-29T00:00:18Z",
+      "payload": {
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "completion",
+        "context_sha256": "af8108eb8fc657755f587b8379ce50fc2ce0f88806051ee35e037bb6d2a144b3",
+        "publication_id": "1016",
+        "claim_id": "1017",
+        "lease_id": "1016"
+      },
+      "body": "<!-- pp:review-routing-v1 kind=completion sha256=b10951402ad51240741ab7f74e1eaa9e3fa3368212cbf811de1f4f13b881e644 -->\n{\"claim_id\":\"1017\",\"context_sha256\":\"af8108eb8fc657755f587b8379ce50fc2ce0f88806051ee35e037bb6d2a144b3\",\"kind\":\"completion\",\"lease_id\":\"1016\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"1016\"}\n",
+      "context_sha256": null
+    }
+  ],
+  "expected_ledger": {
+    "budget_used": 2,
+    "series": "1002",
+    "attempt_ids": [
+      "1003",
+      "1011"
+    ],
+    "proofs": [
+      {
+        "source": {
+          "publication_id": "1000",
+          "claim_id": "1001",
+          "completion_id": "1002",
+          "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+          "epoch": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+          "report_sha256": "8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061"
+        },
+        "outcome": "technical-handoff"
+      },
+      {
+        "source": {
+          "publication_id": "1008",
+          "claim_id": "1009",
+          "completion_id": "1010",
+          "head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "identity_sha256": "125990f0b21f07a364c34d2139e3e1ef38b8561b2e35d527cef88559471bc63d",
+          "epoch": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+          "report_sha256": "232a3c5a03b9f675ab790ab04b566b9a8f1da78fd0fc523840af4432e92ec3d9"
+        },
+        "outcome": "technical-handoff"
+      },
+      {
+        "source": {
+          "publication_id": "1016",
+          "claim_id": "1017",
+          "completion_id": "1018",
+          "head": "cccccccccccccccccccccccccccccccccccccccc",
+          "identity_sha256": "6ea428b435b535cb3df226af4082e862708dd7a6bb272b9bede8115f293c5201",
+          "epoch": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+          "report_sha256": "21f42cc8447a16ca4e7f31ee042e1281f18fcbb32373d0aa0a19fce47f754582"
+        },
+        "outcome": "engineering-handoff"
+      }
+    ],
+    "phases": [
+      {
+        "id": "1004",
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "phase",
+        "context_sha256": "cd6290f4b0b6c9c461c3bc0451952a1295ba22370f63e6b681e4cf2406c881ab",
+        "attempt_id": "1003",
+        "lease_id": "1003",
+        "phase": "assigned",
+        "details": {}
+      },
+      {
+        "id": "1005",
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "phase",
+        "context_sha256": "cd6290f4b0b6c9c461c3bc0451952a1295ba22370f63e6b681e4cf2406c881ab",
+        "attempt_id": "1003",
+        "lease_id": "1003",
+        "phase": "handoff-done",
+        "details": {}
+      },
+      {
+        "id": "1006",
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "phase",
+        "context_sha256": "cd6290f4b0b6c9c461c3bc0451952a1295ba22370f63e6b681e4cf2406c881ab",
+        "attempt_id": "1003",
+        "lease_id": "1003",
+        "phase": "started",
+        "details": {
+          "task_id": 100,
+          "attempt_uuid": "00000000-0000-4000-8000-000000000001"
+        }
+      },
+      {
+        "id": "1007",
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "phase",
+        "context_sha256": "cd6290f4b0b6c9c461c3bc0451952a1295ba22370f63e6b681e4cf2406c881ab",
+        "attempt_id": "1003",
+        "lease_id": "1003",
+        "phase": "fix-done",
+        "details": {
+          "new_head": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "transition": "routing-v1:1003",
+          "source_trailer": "297d82097aac2683d2de01117042f0e2c732ab2e114bedadccf795b04decee3e"
+        }
+      },
+      {
+        "id": "1012",
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "phase",
+        "context_sha256": "51a7dbecd72658dd0857203d07e17f657b722d8e04fc887926278d1273fc7c70",
+        "attempt_id": "1011",
+        "lease_id": "1011",
+        "phase": "assigned",
+        "details": {}
+      },
+      {
+        "id": "1013",
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "phase",
+        "context_sha256": "51a7dbecd72658dd0857203d07e17f657b722d8e04fc887926278d1273fc7c70",
+        "attempt_id": "1011",
+        "lease_id": "1011",
+        "phase": "handoff-done",
+        "details": {}
+      },
+      {
+        "id": "1014",
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "phase",
+        "context_sha256": "51a7dbecd72658dd0857203d07e17f657b722d8e04fc887926278d1273fc7c70",
+        "attempt_id": "1011",
+        "lease_id": "1011",
+        "phase": "started",
+        "details": {
+          "task_id": 101,
+          "attempt_uuid": "00000000-0000-4000-8000-000000000001"
+        }
+      },
+      {
+        "id": "1015",
+        "protocol": "review-routing-v1",
+        "pr": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "owner": "00000000-0000-4000-8000-000000000001",
+        "kind": "phase",
+        "context_sha256": "51a7dbecd72658dd0857203d07e17f657b722d8e04fc887926278d1273fc7c70",
+        "attempt_id": "1011",
+        "lease_id": "1011",
+        "phase": "fix-done",
+        "details": {
+          "new_head": "cccccccccccccccccccccccccccccccccccccccc",
+          "transition": "routing-v1:1011",
+          "source_trailer": "7cb56408da5d07c5e06e797e7682e27a385629c6ef3ae81b426396c33fdb1e78"
+        }
+      }
+    ],
+    "resume_ids": [],
+    "active_parking_id": "1018",
+    "active_resume_id": null,
+    "resuming_publication_id": null,
+    "ignored_ids": [],
+    "mutation_authorized": false
+  }
+}
