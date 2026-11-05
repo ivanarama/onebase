@@ -28,25 +28,27 @@ func TestAppShell_Render(t *testing.T) {
 	}
 	html := buf.String()
 	for _, want := range []string{
-		`id="ob-tabstrip"`,         // полоса вкладок
-		`id="ob-tabbody"`,          // область фреймов
-		`class="ob-shell-main"`,    // контент вместо <main>
-		`window.obOpenTab=openTab`, // движок вкладок
-		`'obTabs'`,                 // ключ sessionStorage для restore
-		`source==='obOpenTab'`,     // приём запросов из iframe
-		`source==='obCloseTab'`,    // закрытие вкладки по крестику внутри формы
-		`window.obCloseTabByURL`,   // команда ui.закрытьФорму закрывает вкладку по адресу формы
-		`<header class="topbar">`,  // переиспользован nav (хром оболочки)
-		`ob-tab-dup`,               // кнопка «новый экземпляр» (#130)
-		`{allowDup:true}`,          // дубликат = новый экземпляр
-		`source==='obDirty'`,       // фаза 3: приём флага несохранённых правок
-		`tabByWindow`,              // маршрутизация по окну-источнику
-		`beforeunload`,             // предупреждение при уходе со страницы
-		`ob-tabmenu`,               // фаза 4: контекст-меню вкладки
-		`Закрыть другие`,           // пункт контекст-меню
-		`scrollIntoView`,           // автоскролл активной вкладки
-		`shellHomeURL`,             // переход по подсистемам строит URL через searchParams
-		`#ob-tabhome a[href]`,      // ссылки рабочего стола открываются через shell
+		`id="ob-tabstrip"`,                        // полоса вкладок
+		`id="ob-tabbody"`,                         // область фреймов
+		`class="ob-shell-main"`,                   // контент вместо <main>
+		`window.obOpenTab=openTab`,                // движок вкладок
+		`'obTabs'`,                                // ключ sessionStorage для restore
+		`source==='obOpenTab'`,                    // приём запросов из iframe
+		`source==='obCloseTab'`,                   // закрытие вкладки по крестику внутри формы
+		`window.obCloseTabByURL`,                  // команда ui.закрытьФорму закрывает вкладку по адресу формы
+		`==='reset'`,                              // ?tabs=reset — аварийный сброс панели вкладок
+		`sessionStorage.removeItem(STORE_ACTIVE)`, // сброс чистит и выбранную вкладку
+		`<header class="topbar">`,                 // переиспользован nav (хром оболочки)
+		`ob-tab-dup`,                              // кнопка «новый экземпляр» (#130)
+		`{allowDup:true}`,                         // дубликат = новый экземпляр
+		`source==='obDirty'`,                      // фаза 3: приём флага несохранённых правок
+		`tabByWindow`,                             // маршрутизация по окну-источнику
+		`beforeunload`,                            // предупреждение при уходе со страницы
+		`ob-tabmenu`,                              // фаза 4: контекст-меню вкладки
+		`Закрыть другие`,                          // пункт контекст-меню
+		`scrollIntoView`,                          // автоскролл активной вкладки
+		`shellHomeURL`,                            // переход по подсистемам строит URL через searchParams
+		`#ob-tabhome a[href]`,                     // ссылки рабочего стола открываются через shell
 		// F5 в режиме вкладок не должен сбрасывать на первую: активная вкладка
 		// запоминается отдельным ключом и восстанавливается, если ещё жива.
 		`'obTabsActive'`,   // ключ sessionStorage с id/URL активной вкладки
