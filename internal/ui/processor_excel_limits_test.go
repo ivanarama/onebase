@@ -78,6 +78,7 @@ func TestProcessorBinaryParam_RejectsUnsafeExcelBeforeWriting(t *testing.T) {
 		want       string
 	}{
 		{"sparse_wide_sheet", `<row r="128"><c r="XFD128"><v>1</v></c></row>`, 0, "предел импорта"},
+		{"row_past_excel_limit", `<row r="1048577"><c r="A1048577"><v>1</v></c></row>`, 0, "предел импорта"},
 		{"row_limit", `<row r="10001"><c r="A10001"><v>1</v></c></row>`, 0, "предел импорта"},
 		{"column_limit", `<row r="3"><c r="IW3"><v>1</v></c></row>`, 0, "предел импорта"},
 		{"rectangle_limit", `<row r="4000"><c r="IV4000"><v>1</v></c></row>`, 0, "предел импорта"},
