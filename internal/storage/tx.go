@@ -251,7 +251,12 @@ func (db *DB) WithReadSnapshot(ctx context.Context, fn func(context.Context) err
 	}
 	return db.WithTx(ctx, func(txCtx context.Context) error {
 		if db.IsPostgres() {
-			if _, err := db.Exec(txCtx, "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"); err != nil {
+			// Configure only the transaction we just created, directly through
+			// its driver. DB.Exec rejects every statement in ReadOnlyContext;
+			// keep that guard and the callback's context unchanged so this
+			// internal setup cannot enable application writes.
+			tx := txCtx.Value(txKey{}).(pgx.Tx)
+			if _, err := tx.Exec(txCtx, "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"); err != nil {
 				return fmt.Errorf("read snapshot: %w", err)
 			}
 		}
