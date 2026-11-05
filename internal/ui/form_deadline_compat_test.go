@@ -79,7 +79,7 @@ func TestManagedDeadlineCompatibilityHTTPMatrix(t *testing.T) {
 							t.Fatalf("%s deadline attributes: %v", name, a)
 						}
 						if name == "Телефон" || name == "Локальное" {
-							for key, want := range map[string]string{"autocomplete": "one-time-code", "placeholder": "__:__", "pattern": text.Mask, "data-ob-form-mask": "", "data-ob-input-mask": "00:00", "inputmode": "numeric", "title": text.Hint, "data-ob-fire-change": name} {
+							for key, want := range map[string]string{"autocomplete": "off", "placeholder": "__:__", "pattern": text.Mask, "data-ob-form-mask": "", "data-ob-input-mask": "00:00", "inputmode": "numeric", "title": text.Hint, "data-ob-fire-change": name} {
 								if got, ok := a[key]; !ok || got != want {
 									t.Errorf("%s %s=%q present=%v want=%q", name, key, got, ok, want)
 								}
