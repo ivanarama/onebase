@@ -179,6 +179,7 @@
 | ~~10~~ | ~~[10-subsystems.md](10-subsystems.md)~~ | ~~Подсистемы (разделы навигации)~~ | ~~2–3 дня~~ | ✅ |
 | ~~11~~ | ~~[11-account-register.md](11-account-register.md)~~ | ~~Регистр бухгалтерии (план счетов)~~ | ~~8–10 дней~~ | ✅ |
 | 44 | [44-account-subconto.md](44-account-subconto.md) | Субконто (аналитика на счетах) — продолжение 11.2 | 5–7 дней | ✅ Реализовано (тесты `accountreg_subconto`/`movements_subconto`) |
+| 177 | [177-catalog-duplicate-merge.md](177-catalog-duplicate-merge.md) | Безопасное объединение дубликатов справочника: dry-run, атомарное переприсвоение ссылок и операторский UI (#1440) | 17–23 дня | 📋 Проектирование |
 
 ### Направление Б — расширение DSL
 
@@ -426,13 +427,14 @@
 | 158 | [158-open-form-programmatically.md](158-open-form-programmatically.md) | Программное открытие форм из DSL: единый `ОписаниеОповещения` callback, предзаполнение через server store и одноразовый token, типизированная навигация и same-origin modal; поля и ограниченный ввод в диалоге вопроса — срез A2 (#1531; связанные #1528, #1557, #1624, #1877) | ~8–11.5 дней + A2 ~1.5–2 дня | 📋 Проектирование |
 | 206 | [206-wall-clock-date.md](206-wall-clock-date.md) | Тип «местное время без зоны» (`localdate` + `precision: day\|second`): что записано, то и показано в любой зоне; существующий `Дата` (момент) не трогаем. Четыре среза, закрывает #1167 и #1169 | ~1–2 недели | 📋 Проектирование |
 | 161 | [161-query-live-transaction-context.md](161-query-live-transaction-context.md) | Единый живой контекст для `Новый Запрос` внутри DSL-транзакции: read-your-writes без второго SQLite-соединения (#1216) | ~2–2,5 дня | 📋 Проектирование |
-| 159 | [159-undefined-and-typed-empty-values.md](159-undefined-and-typed-empty-values.md) | Разделить семантическое `Неопределено` и пустые реквизиты известных типов: `Неопределено <> 0`, пустое число `= 0`, без миграции SQL `NULL` (#1274) | ~5–6 дней | 📋 Проектирование |
+| 159 | [159-undefined-and-typed-empty-values.md](159-undefined-and-typed-empty-values.md) | Разделить семантическое `Неопределено` и пустые реквизиты известных типов: `Неопределено <> 0`, пустое число `= 0`, без миграции SQL `NULL` (#1274) | ~5–6 дней | ✅ Реализовано: типизированные поля и запросы, отдельное Неопределено, СодержитКлюч, миграционная документация |
 | 160 | [160-report-datetime-param.md](160-report-datetime-param.md) | Параметр отчёта со временем суток (`datetime`): сначала одна точка разбора значения вместо трёх копий (экран/выгрузка/API), затем сам тип и формат подстановки по типу (заявка #1204) | ~1–1,5 дня | 📋 Проектирование |
 | 165 | [165-standard-field-canonical-storage-and-id-recovery.md](165-standard-field-canonical-storage-and-id-recovery.md) | Каноничное хранение стандартных «Кода»/«Номера» в `numerator.field` и атомарное восстановление `std_code`/`std_number` без DDL (#1358, #1359) | ~6–8.5 дней | 📋 Проектирование |
 | 167 | [167-multiline-plain-text-fields.md](167-multiline-plain-text-fields.md) | Многострочный обычный `string`: field-level `multiline`, наследование и override в managed-форме, `height` в строках, автоформы сущности и регистра сведений (#1390) | ~4.5–6 дней | 📋 Проектирование |
 | 168 | [168-choice-preview-context.md](168-choice-preview-context.md) | Пояснение в форме выбора: статический реквизит, пакетная DSL-функция и ограниченный контекст вызывающей формы с RBAC (#1391) | ~5.5–8 дней | 📋 Проект 2026-09-08 |
 | 169 | [169-semantic-navigation-settings.md](169-semantic-navigation-settings.md) | Смысловое mixed-kind меню: YAML-база, общая настройка администратора и персональная дельта пользователя с безопасным наследованием (#1362) | ~13–19 дней после bootstrap плана 163 | ✅ Реализован срезами A–F, 2026-10-02 |
 | 170 | [170-dependent-reference-choice-filters.md](170-dependent-reference-choice-filters.md) | Зависимый отбор ссылочного picker: server-authoritative `eq`, `in_hierarchy`, `is_folder`, одинаковый `List`/`CountList` и защита от stale browser responses (#1303) | ~6–8 дней | 📋 Проектирование |
+| 216 | [216-managed-editor-readonly-lifecycle.md](216-managed-editor-readonly-lifecycle.md) | Единое readonly backing-поля и Monaco/Quill: начальный запрет, оба перехода, поздний mount и замена DOM с реальным браузерным HTTP-сценарием (#1613) | ~4.5–7 дней | 📋 Проектирование |
 | 197 | [197-user-card-row-access.md](197-user-card-row-access.md) | Строковый доступ по карточке сотрудника: явная связь с `_users`, скаляр и набор из ТЧ, безопасный отказ и общий HTTP/DSL resolver (#1911) | ~6–9 дней | 📋 Проектирование |
 | 172 | [172-managed-form-runtime-structure.md](172-managed-form-runtime-structure.md) | Динамическая структура managed-форм: `ЭтаФорма.Элементы`, серверный instance/revision, безопасные DOM-патчи и lifecycle SlickGrid (#1263) | ~12–17 дней | 📋 Проектирование |
 | 178 | [178-attachment-link-mode.md](178-attachment-link-mode.md) | Вложения: режим `link` — платформа хранит путь, а не копию; открытие файла в программе ОС на стороне клиента, выбор режима на уровне базы и сущности, открытие из списка и inline-просмотр хранимых вложений (заявка #1480) | ~11 дней | 📋 Проектирование |
@@ -445,6 +447,7 @@
 | 205 | [205-image-viewer.md](205-image-viewer.md) | Общий просмотрщик image-полей: формы, панель и карточки, масштаб/галерея, безопасное скачивание и изоляция Esc (#1744) | ~5–7.5 дней | 📋 Проектирование |
 | 199 | [199-related-entity-form-list.md](199-related-entity-form-list.md) | Список связанных записей на managed-форме: типизированный отбор, RBAC/RLS/маски, обновление без записи и защищённая навигация (#1532) | ~9–14 дней | 📋 Проектирование |
 | 207 | [207-database-branding-from-constants.md](207-database-branding-from-constants.md) | Представление базы из строковых констант: название и эмодзи, commit-aware SSE и догоняющая сверка без перезагрузки форм (#2331) | ~7–10 дней | 📋 Проектирование |
+| 93 | [93-entity-list-appearance-and-columns.md](93-entity-list-appearance-and-columns.md) | Условное оформление списка документов, затем персональные колонки документов и справочников с повторной проверкой прав и сбросом (#2233) | ~9–14 дней | 📋 Проектирование |
 
 Повод — вопрос с внедрения «одна организация в базе, почему её не подставляют».
 Граница проведена так: в движок идёт механизм (объявление дефолта, его
@@ -488,6 +491,7 @@
 | 208 | [208-existing-date-scalars-and-register-boundaries.md](208-existing-date-scalars-and-register-boundaries.md) | Существующий date: legacy-скаляры, моментные границы регистров и единая приёмка с PR #1833/#2188 (#2290) | ~5.5–11 дней + условный пересчёт итогов | 📋 Проектирование |
 | 204 | [204-stable-order-by-pagination-and-explicit-dir.md](204-stable-order-by-pagination-and-explicit-dir.md) | Полный порядок `order_by` с `id ASC` и восстановление явного `dir` без `sort`: общий контракт страниц SQLite/PostgreSQL (#1713, #1714) | ~2.25–3.75 дня | 📋 Проектирование |
 | 209 | [209-derived-select-values-and-types.md](209-derived-select-values-and-types.md) | Значения ссылок во вложенных SELECT и доказанные типы производных колонок: числовые сравнения, пустой текст, ON и UNION, общая матрица (#2247, #2248) | ~9–14.5 дней | 📋 Проектирование |
+| 211 | [211-qualified-source-physical-columns.md](211-qualified-source-physical-columns.md) | Физическая колонка квалифицированного поля по владельцу: обе ориентации reference/bool, безопасный fallback и публичная SQLite/PostgreSQL-приёмка (#2143) | ~3–4,5 дня | 📋 Проектирование |
 
 ### Направление Х — целостность ссылок на учётные записи
 
@@ -500,12 +504,28 @@
 | № | Файл | Фича | Эстимейт | Статус |
 |---|---|---|---|---|
 | 186 | [186-managed-index-reconciliation.md](186-managed-index-reconciliation.md) | Учёт владения индексами сущностей, атомарное согласование `indexes:` с YAML и явное принятие legacy-индексов (#1566) | ~8–11 дней | 📋 Проектирование |
+| 217 | [217-legacy-schema-index-transition.md](217-legacy-schema-index-transition.md) | Переход исторических имён, карты полей и индексов: точное владение, атомарный перенос и публичная SQLite/PostgreSQL-приёмка (#2370–#2373) | ~12,5–19,5 дня | 📋 Проектирование |
 
 ### Направление Ф — производительность конструктора
 
 | № | Файл | Фича | Эстимейт | Статус |
 |---|---|---|---|---|
 | 174 | [174-configurator-lazy-panels.md](174-configurator-lazy-panels.md) | Ленивая загрузка панелей конструктора: лёгкое дерево, один защищённый HTML-фрагмент по клику, кэш несохранённых правок и защита от гонок (#1471) | ~5,5–8 дней | 📋 Проектирование |
+
+### Производительность списков и подбора
+
+| № | Файл | Фича | Эстимейт | Статус |
+|---|---|---|---|---|
+| 210 | [210-catalog-first-page-performance.md](210-catalog-first-page-performance.md) | Ленивая панель «Отбор» и opt-in индексы точного порядка order_by после замеров, с сохранением RLS и пагинации (#2255) | ~10–16 дней | 📋 Проектирование |
+| 212 | [212-form-opening-parameters.md](212-form-opening-parameters.md) | Общие имена и значения URL: отбор списка, даты/диапазоны и форма отчёта с/без запуска (#2389, #2359) | ~6–9 дней | 📋 Проектирование |
+| 213 | [213-tail-durable-discovery-and-backlog.md](213-tail-durable-discovery-and-backlog.md) | Долговечные cursor/backlog TAIL, восстановление после простоя и сохранение существующего trust (#1248) | ~8–12 дней | 📋 Проектирование |
+| 214 | [214-persistent-list-filter-contract.md](214-persistent-list-filter-contract.md) | Постоянные отборы списка: ошибки, false/NULL, группы без обхода RLS и lf_off (#2375, #2376) | ~6–9 дней | 📋 Проектирование |
+
+### Bootstrap: платформенные пути и транспорт
+
+| № | Файл | Фича | Эстимейт | Статус |
+|---|---|---|---|---|
+| 215 | [215-bootstrap-platform-and-transport-contract.md](215-bootstrap-platform-and-transport-contract.md) | Пути PowerShell, HTTPS без downgrade, медленная сеть, noexec и PATH-ссылки; продолжение плана 202 (#2392, #2082, #2083) | ~6,5–10 дней | 📋 Проектирование |
 
 ## Граф зависимостей (архив)
 

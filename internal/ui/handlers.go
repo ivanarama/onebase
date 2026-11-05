@@ -779,6 +779,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		login := currentUserLogin(r)
 		data["FormOpenMode"] = s.store.EffectiveFormOpenMode(r.Context(), login)
 		data["FormOpenModePersonal"] = s.store.GetUserFormOpenMode(r.Context(), login)
+		data["FormOpenModeLocked"] = s.store.GetFormOpenModeLocked(r.Context())
 	}
 	// Default per-entity permission flags so partial render paths (e.g. validation
 	// errors) still show the right action buttons.
@@ -1246,7 +1247,7 @@ func (s *Server) enrichTPRowsWithRefs(ctx context.Context, tp metadata.TablePart
 // string-измерению (ГДЕ Склад = Строка(this.Склад)) не совпадает с движениями,
 // записанными по имени из обработок/сидов. После обогащения шапка ведёт себя
 // как при создании из обработки. Ref-параметры и reference-измерения остаются
-// корректными: unwrapArrayParams приводит *Ref к UUID. См. П.37.
+// корректными: unwrapParams приводит *Ref к UUID. См. П.37.
 func (s *Server) enrichHeaderRefs(ctx context.Context, entity *metadata.Entity, obj *runtime.Object) {
 	low := strings.ToLower
 	for _, f := range entity.Fields {
