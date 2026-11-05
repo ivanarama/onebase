@@ -715,6 +715,12 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return false
 			}
 			set, _ := ctx["ElHidden"].(map[string]bool)
+			// Табличная часть в группе, скрытой условием при отрисовке, не
+			// рисуется: группа есть в разметке (её можно показать событием),
+			// но строки таблицы уехали бы в браузер вместе с ней.
+			if el.Kind == metadata.FormElementTablePart && hiddenAncestor(set, elementStatePath(ctx, el)) {
+				return true
+			}
 			if !set[elementStatePath(ctx, el)] {
 				return false
 			}
@@ -732,7 +738,10 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			switch el.Kind {
 			case metadata.FormElementField,
 				metadata.FormElementSwitch,
-				metadata.FormElementDatePicker:
+				metadata.FormElementDatePicker,
+				// Группа скрыта disabled-fieldset: её поля не отправляются, а
+				// событие может её показать (form_hidden_until.go).
+				metadata.FormElementGroupBox:
 				return false // рисуем с display:none
 			}
 			return true // остальные типы — пропускаем как раньше

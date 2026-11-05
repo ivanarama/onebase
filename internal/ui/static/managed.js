@@ -649,6 +649,13 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       // required validation. The server renders the same disabled fieldset
       // for the initial state; update it when hidden_when changes.
       if (el.getAttribute('data-ob-control-fieldset') === '1') el.disabled = !!hidden[path];
+      // Группа, скрытая условием при отрисовке, выключена целиком: её поля не
+      // уходят на сервер. Показанная — снова отправляет их, а таблицы внутри
+      // меряют ширину заново (в display:none она была нулевой).
+      if (el.getAttribute('data-ob-hidden-group') === '1') {
+        el.disabled = !!hidden[path];
+        if (!hidden[path] && window._obResizeGrids) setTimeout(window._obResizeGrids, 0);
+      }
     });
     var ro = st.readonly || {};
     // Свой ли это редактирующий контрол: ближайший якорь элемента формы — сам

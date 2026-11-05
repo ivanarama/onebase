@@ -145,7 +145,18 @@ func TestManagedPageCheckboxHTTPMatrix(t *testing.T) {
 					}
 					event := decodeFormEventResponse(t, body)
 					wantFlag := scenario == "checked" || checkboxPagePreservesValue(scenario)
-					if !event.OK || !asBool(event.Values["Hide"]) || asBool(event.Values["Flag"]) != wantFlag || event.ElementStates == nil {
+					// Флажок, все размещения которого на скрытой странице, не
+					// отдаёт значение в ответе события (данные скрытой страницы не
+					// уходят в браузер); его сохранность проверяет запись ниже. С
+					// видимой копией или вовсе без размещения значение едет, как и
+					// раньше.
+					flagValue, flagSent := event.Values["Flag"]
+					flagShown := scenario == "visible-copy" || scenario == "not-rendered"
+					flagOK := !flagSent
+					if flagShown {
+						flagOK = flagSent && asBool(flagValue) == wantFlag
+					}
+					if !event.OK || !asBool(event.Values["Hide"]) || !flagOK || event.ElementStates == nil {
 						t.Fatalf("hide event: %s", body)
 					}
 					hidden := false
