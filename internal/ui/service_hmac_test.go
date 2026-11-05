@@ -32,7 +32,7 @@ func TestVerifyServiceHMAC_OldSchemeCompat(t *testing.T) {
 	secret, body := "s3cr3t", []byte(`{"a":1}`)
 	r := httptest.NewRequest("POST", "/hs/svc/x", nil)
 	r.Header.Set("X-Webhook-Signature", signBody(secret, body))
-	if ok, reason := verifyServiceHMAC(secret, "svc", r, body, newReplayCache(5*time.Minute)); !ok {
+	if ok, reason := verifyServiceHMAC(secret, "svc", r, body, newReplayCache(5*time.Minute), false); !ok {
 		t.Fatalf("старая схема (подпись тела) должна проходить: %s", reason)
 	}
 }
@@ -47,10 +47,10 @@ func TestVerifyServiceHMAC_V1AndReplay(t *testing.T) {
 		r.Header.Set("X-Webhook-Signature", signV1(secret, ts, "POST", "/hs/svc/x", body))
 		return r
 	}
-	if ok, reason := verifyServiceHMAC(secret, "svc", newReq(), body, cache); !ok {
+	if ok, reason := verifyServiceHMAC(secret, "svc", newReq(), body, cache, false); !ok {
 		t.Fatalf("v1-подпись должна проходить: %s", reason)
 	}
-	if ok, reason := verifyServiceHMAC(secret, "svc", newReq(), body, cache); ok {
+	if ok, reason := verifyServiceHMAC(secret, "svc", newReq(), body, cache, false); ok {
 		t.Fatal("повтор той же v1-подписи должен отклоняться (replay)")
 	} else if !strings.Contains(reason, "replay") {
 		t.Fatalf("ожидалась причина replay, получено %q", reason)
@@ -63,7 +63,7 @@ func TestVerifyServiceHMAC_StaleTimestamp(t *testing.T) {
 	r := httptest.NewRequest("POST", "/hs/svc/x", nil)
 	r.Header.Set("X-Webhook-Timestamp", oldTs)
 	r.Header.Set("X-Webhook-Signature", signV1(secret, oldTs, "POST", "/hs/svc/x", body))
-	if ok, reason := verifyServiceHMAC(secret, "svc", r, body, newReplayCache(5*time.Minute)); ok {
+	if ok, reason := verifyServiceHMAC(secret, "svc", r, body, newReplayCache(5*time.Minute), false); ok {
 		t.Fatal("устаревшая метка времени должна отклоняться")
 	} else if !strings.Contains(reason, "окн") {
 		t.Fatalf("ожидалась причина про окно свежести, получено %q", reason)
@@ -77,7 +77,7 @@ func TestVerifyServiceHMAC_TamperedPath(t *testing.T) {
 	r := httptest.NewRequest("POST", "/hs/svc/OTHER", nil)
 	r.Header.Set("X-Webhook-Timestamp", ts)
 	r.Header.Set("X-Webhook-Signature", signV1(secret, ts, "POST", "/hs/svc/x", body))
-	if ok, _ := verifyServiceHMAC(secret, "svc", r, body, newReplayCache(5*time.Minute)); ok {
+	if ok, _ := verifyServiceHMAC(secret, "svc", r, body, newReplayCache(5*time.Minute), false); ok {
 		t.Fatal("подпись для другого пути должна отклоняться")
 	}
 }
@@ -88,7 +88,7 @@ func TestVerifyServiceHMAC_TamperedQuery(t *testing.T) {
 	r := httptest.NewRequest("POST", "/hs/svc/x?account=B", nil)
 	r.Header.Set("X-Webhook-Timestamp", ts)
 	r.Header.Set("X-Webhook-Signature", signV1(secret, ts, "POST", "/hs/svc/x?account=A", body))
-	if ok, _ := verifyServiceHMAC(secret, "svc", r, body, newReplayCache(5*time.Minute)); ok {
+	if ok, _ := verifyServiceHMAC(secret, "svc", r, body, newReplayCache(5*time.Minute), false); ok {
 		t.Fatal("подпись для другой query-строки должна отклоняться")
 	}
 }
