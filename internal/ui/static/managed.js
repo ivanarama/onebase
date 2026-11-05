@@ -1289,6 +1289,16 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       // optimistic version before any renderer, picker or message callback can
       // throw, so a later queued action updates the row instead of inserting it.
       applySavedIdentity(data);
+      // Обработчики ожидания: подключение/отключение таймеров из ответа.
+      if (data.idle && typeof window.obManagedApplyIdle === 'function') window.obManagedApplyIdle(data.idle);
+      var idleSnapshot = !snapshot.elementName && snapshot.eventName === 'ОбработкаОжидания';
+      // An active grid editor may not have emitted onCellChange yet. Commit
+      // it before checking the edit clock or applying an older tick response.
+      // A veto leaves the current editor and its input intact.
+      if (idleSnapshot && window.obGridSync && window.obGridSync() === false) {
+        setManagedFormDirty(true);
+        return;
+      }
       // The user can type after FormData was sent. An old response must not
       // navigate away or repaint those newer edits, even when the handler
       // saved the old snapshot and returned dirty=false.
@@ -1354,10 +1364,10 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       // partially failing renderer. Programmatic response application does
       // not emit input/change, so raise it before touching mutable DOM state.
       if (data.dirty === true) setManagedFormDirty(true);
-      var beforePostMerged = beforePostSnapshot(snapshot) && formEditState.revision !== snapshot.editRevision;
-      if (beforePostMerged) {
-        // Перед ответом на вопрос сохранить свежий ввод, но принять правки
-        // обработчика в полях и таблицах, которых пользователь не касался.
+      var responseMerged = (beforePostSnapshot(snapshot) || idleSnapshot) && formEditState.revision !== snapshot.editRevision;
+      if (responseMerged) {
+        // Before-post and background ticks share the close controller's
+        // merge: retain newer input and apply updates to untouched data.
         var mergeRevision = formEditState.revision;
         var mergeBody = await closeSnapshotBody('', '');
         if (!mergeBody || formEditState.revision !== mergeRevision) {
@@ -1376,15 +1386,15 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         applyChoiceList(elementName, data.choiceList);
         applyFormTables(data.formTables);
       }
-      if (!beforePostMerged && window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
+      if (!responseMerged && window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
 	  // Server events repaint controls programmatically and therefore do not
 	  // trigger input/change. Raise dirty for unsaved handler mutations; clear
 	  // it only when this response proves a successful Object.Write and no
 	  // user edits followed the snapshot that was saved.
-	  if (!beforePostMerged && data.dirty === false && (data.savedId || data.version)) {
+	  if (!responseMerged && data.dirty === false && (data.savedId || data.version)) {
 		setManagedFormDirty(formEditState.revision !== snapshot.editRevision);
 	  }
-      if (!beforePostMerged) {
+      if (!responseMerged) {
         (data.messages || []).forEach(m => flash(m, 'ok'));
         if (data.error) flash(data.error, 'err');
       }
@@ -1411,9 +1421,9 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       if (beforePostSnapshot(snapshot) && beforePostState) {
         // Merging protects newer input but cannot authorize posting it: the
         // handler checked another snapshot. A fresh user attempt must check it.
-        beforePostState.outcome = !beforePostMerged && !data.cancel && !data.error && !navigationBlocked;
+        beforePostState.outcome = !responseMerged && !data.cancel && !data.error && !navigationBlocked;
         beforePostState.approval.revision = snapshot.editRevision;
-        if (beforePostMerged) flash(closeMessage('formChanged', 'Форма изменилась во время проверки закрытия. Повторите закрытие.'), 'err');
+        if (responseMerged) flash(closeMessage('formChanged', 'Форма изменилась во время проверки закрытия. Повторите закрытие.'), 'err');
       }
     } catch (e) {
       // A lost/unparseable response for /new may hide a committed insert and
@@ -1577,6 +1587,31 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
   // replay ledger and another explicit close attempt needs a fresh UUID.
   var retryableClose = null;
 	var reloadRequired = false;
+  // A successful native POST replaces this document only after its response.
+  // During that wait the old /new snapshot must never be sent by an idle tick.
+  var nativeSubmitPending = false;
+  var nativeSubmitEvents = [];
+  window.obManagedNativeSubmitStarted = function(){ nativeSubmitPending = true; };
+  document.addEventListener('submit', function(e){
+    if (!e.target || e.target.id !== 'main-form') return;
+    // Read the live cancellation state until the next task: a microtask may
+    // run between native listeners, before a later confirm/grid/file veto.
+    // Keep every event until then, including synchronous submit reentry.
+    nativeSubmitEvents.push(e);
+    setTimeout(function(){
+      if (!e.defaultPrevented) nativeSubmitPending = true;
+      nativeSubmitEvents.splice(nativeSubmitEvents.indexOf(e), 1);
+    }, 0);
+  }, true);
+  // Тик обработчика ожидания не встаёт в очередь за событием пользователя и не
+  // мешает закрытию: пока форма занята, тик пропускается молча.
+  window.obManagedIdleBusy = function(){
+    var form = document.getElementById('main-form');
+    var fileSubmitPending = form && typeof obManagedFileSubmitPending !== 'undefined' && obManagedFileSubmitPending.has(form);
+    return nativeSubmitPending || nativeSubmitEvents.some(function(e){ return !e.defaultPrevented; }) ||
+      fileSubmitPending || formEventPendingCount > 0 || !!closePending || !!retryableClose || closeHandoffPending ||
+      !!beforePostState || reloadRequired || formEventWriteUnknown || manualReconcileRequired;
+  };
 	var CLOSE_EPOCH = cfg.closeEpoch == null ? '' : String(cfg.closeEpoch);
 	var closeClockServerBase = Number(cfg.closeServerNowMs);
 	if (!Number.isFinite(closeClockServerBase)) closeClockServerBase = Date.now();
@@ -2316,6 +2351,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         try {
 		  if (form.id === 'main-form') window.obSetManagedFormDirty(false);
           nativeSubmit.call(form);
+          if (form.id === 'main-form') window.obManagedNativeSubmitStarted();
         } finally {
           if (submitterInput) submitterInput.remove();
         }
@@ -4792,6 +4828,95 @@ obManagedReady(function () {
   var cfg = obManagedConfig();
   if (!cfg.autoOpen) return;
   setTimeout(function () { if (window.obFire) obFire('', 'ПриОткрытии'); }, 0);
+});
+
+// BEGIN onebase-form-idle
+// Обработчик ожидания (ПодключитьОбработчикОжидания 1С). Таймеры живут здесь,
+// в браузере: тик — обычное событие формы ОбработкаОжидания с текущими
+// значениями и подписью подключения; ответ применяется как ответ события.
+// Следующий тик ставится только после ответа предыдущего. Пока форма занята
+// другим событием, закрытием или открыто окно (вопрос, подбор) — тик
+// откладывается на секунду. На скрытой вкладке — не чаще раза в 5 интервалов
+// (и не чаще раза в 10 с); вернулись на вкладку — просроченный тик сразу.
+function obManagedIdleManager(env) {
+  // Без прототипа: имя процедуры — ключ, и «__proto__» или «constructor» в
+  // обычном объекте попали бы в унаследованные свойства — таймер нельзя было
+  // бы ни найти, ни удалить, и отключение не останавливало бы тики.
+  var timers = Object.create(null);
+  function key(p) { return String(p || '').toLowerCase(); }
+  function periodMs(t) {
+    var ms = t.interval * 1000;
+    return env.hidden() ? Math.max(ms * 5, 10000) : ms;
+  }
+  function stop(proc) {
+    var t = timers[key(proc)];
+    if (!t) return;
+    if (t.handle) env.clearTimeout(t.handle);
+    delete timers[key(proc)];
+  }
+  function schedule(t, ms) {
+    if (t.handle) env.clearTimeout(t.handle);
+    t.handle = env.setTimeout(function () { tick(t); }, Math.max(0, ms));
+  }
+  function tick(t) {
+    t.handle = null;
+    if (timers[key(t.proc)] !== t) return;
+    if (env.busy() || env.modal()) { schedule(t, 1000); return; }
+    var wait = periodMs(t) - (env.now() - t.last);
+    if (wait > 0) { schedule(t, wait); return; }
+    t.last = env.now();
+    if (t.once) delete timers[key(t.proc)];
+    var after = function () {
+      if (timers[key(t.proc)] === t) schedule(t, periodMs(t));
+    };
+    var p;
+    try { p = env.fire(t.proc, t.token); } catch (e) { p = null; }
+    Promise.resolve(p).then(after, after);
+  }
+  return {
+    apply: function (cmds) {
+      if (!cmds || !cmds.length) return;
+      cmds.forEach(function (c) {
+        if (!c || !c.proc) return;
+        stop(c.proc);
+        if (c.off) return;
+        var interval = Number(c.interval);
+        if (!(interval >= 1)) interval = 1;
+        var t = { proc: String(c.proc), interval: interval, once: !!c.once, token: String(c.token || ''), last: env.now(), handle: null };
+        timers[key(t.proc)] = t;
+        schedule(t, periodMs(t));
+      });
+    },
+    visibility: function () {
+      Object.keys(timers).forEach(function (k) {
+        var t = timers[k];
+        if (t.handle) schedule(t, periodMs(t) - (env.now() - t.last));
+      });
+    },
+    active: function () { return Object.keys(timers).map(function (k) { return timers[k].proc; }); }
+  };
+}
+// END onebase-form-idle
+obManagedReady(function () {
+  var cfg = obManagedConfig();
+  if (!cfg.url) return;
+  var mgr = obManagedIdleManager({
+    fire: function (proc, token) {
+      return window.obFire ? window.obFire('', 'ОбработкаОжидания', {_idle_proc: proc, _idle_token: token}) : null;
+    },
+    busy: function () { return typeof window.obManagedIdleBusy === 'function' && window.obManagedIdleBusy(); },
+    modal: function () {
+      return !!(document.getElementById('_question-modal') || document.getElementById('_ref-picker-modal') ||
+        document.getElementById('_item-picker-modal') || document.getElementById('_ref-create-modal') ||
+        document.getElementById('ob-managed-close-confirm'));
+    },
+    hidden: function () { return !!document.hidden; },
+    now: function () { return Date.now(); },
+    setTimeout: function (fn, ms) { return window.setTimeout(fn, ms); },
+    clearTimeout: function (h) { window.clearTimeout(h); }
+  });
+  window.obManagedApplyIdle = mgr.apply;
+  document.addEventListener('visibilitychange', mgr.visibility);
 });
 
 function obManagedTabKey(tabs) {
