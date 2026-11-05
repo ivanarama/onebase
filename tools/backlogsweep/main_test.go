@@ -190,9 +190,8 @@ func TestEveryBrokenPlanReferenceIsReported(t *testing.T) {
 }
 
 // Живой случай #1134: имя плана названо неверно, а следующим комментарием
-// поправлено. Находка остаётся (скрытая неотличима от «инструмент не заметил»),
-// но помечается — иначе отчёт печатает знакомую строку каждую неделю, и глаз
-// перестаёт читать не только её.
+// поправлено. История остаётся в информационной корзине, а действующая
+// отсутствующая ссылка больше не заявляется.
 func TestPlanReferenceCorrectedLaterInThreadIsMarked(t *testing.T) {
 	cfg := testConfig()
 	cfg.plans = testPlans("158-open-form.md")
@@ -200,7 +199,11 @@ func TestPlanReferenceCorrectedLaterInThreadIsMarked(t *testing.T) {
 		[2]string{"ivanarama", "поправка: план получил номер 158 — `Plans/158-open-form.md`"}),
 		"работа оформлена планом `Plans/157-open-form.md`")
 
-	got := bucketByTitle(analyze([]issue{is}, cfg), "ссылка на план, которого нет")
+	buckets := analyze([]issue{is}, cfg)
+	if got := bucketByTitle(buckets, "ссылка на план, которого нет"); len(got) != 0 {
+		t.Fatalf("поправленная ссылка осталась действующей находкой: %v", details(got))
+	}
+	got := bucketByTitle(buckets, "исправленные ссылки на планы (справочно)")
 
 	if len(got) != 1 {
 		t.Fatalf("ожидалась одна находка, получено %v", details(got))
@@ -288,7 +291,7 @@ func TestCommentsAreOrderedByCreationNotByDelivery(t *testing.T) {
 	is = commentAt(is, 0, ago(1))
 	is = commentAt(is, 1, ago(5))
 
-	got := bucketByTitle(analyze([]issue{is}, cfg), "ссылка на план, которого нет")
+	got := bucketByTitle(analyze([]issue{is}, cfg), "исправленные ссылки на планы (справочно)")
 
 	if len(got) != 1 {
 		t.Fatalf("ожидалась одна находка, получено %v", details(got))
@@ -845,5 +848,40 @@ func TestRenamedPlanIsReportedAsMovedNotMissing(t *testing.T) {
 	}
 	if !strings.Contains(got[0].detail, "устарела") || !strings.Contains(got[0].detail, "157-nav-collapse.md") {
 		t.Fatalf("ожидалось «номер переехал», получено %q", got[0].detail)
+	}
+}
+
+// A Markdown label and its destination are separate occurrences of the same
+// path. Delimiters must not become part of an invented, nonexistent filename.
+func TestPlanRefsMarkdownDelimiters(t *testing.T) {
+	for _, tc := range []struct{ name, text, file string }{
+		{"absolute", "[Plans/46-tablepart-commands-and-picker.md](https://github.com/ivanarama/onebase/blob/main/Plans/46-tablepart-commands-and-picker.md)", "46-tablepart-commands-and-picker.md"},
+		{"relative", "[Plans/46-tablepart-commands-and-picker.md](../Plans/46-tablepart-commands-and-picker.md)", "46-tablepart-commands-and-picker.md"},
+		{"reference-label", "[Plans/46-tablepart-commands-and-picker.md][plan]", "46-tablepart-commands-and-picker.md"},
+		{"inline-code", "[`Plans/46-tablepart-commands-and-picker.md`](https://example.test/Plans/46-tablepart-commands-and-picker.md#section)", "46-tablepart-commands-and-picker.md"},
+		{"ordinary-name", "Plans/46-draft.md-copy.md", "46-draft.md-copy.md"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := planRefs(withBody(mk(1, "ivanarama", ago(1), []string{"hold"}), tc.text))
+			if len(got) != 1 || got[0].Num != 46 || got[0].File != tc.file {
+				t.Fatalf("path: got %+v, want exactly %s", got, tc.file)
+			}
+		})
+	}
+}
+
+func TestMarkdownPlansKeepOnlyRealMissingFinding(t *testing.T) {
+	cfg := testConfig()
+	issues := []issue{
+		withBody(mk(1, "ivanarama", ago(1), []string{"hold"}), "[Plans/46-tablepart-commands-and-picker.md](https://example.test/Plans/46-tablepart-commands-and-picker.md)"),
+		withBody(mk(2, "ivanarama", ago(1), []string{"hold"}), "[Plans/901-missing.md](../Plans/901-missing.md)"),
+	}
+	got := bucketByTitle(analyze(issues, cfg), "ссылка на план, которого нет")
+	if len(got) != 1 || got[0].issue.Number != 2 {
+		t.Fatalf("only real missing plan #2 is expected, got %v", details(got))
+	}
+	refs := planRefs(issues[1])
+	if len(refs) != 1 || refs[0].File != "901-missing.md" {
+		t.Fatalf("missing filename must remain exact: %+v", refs)
 	}
 }

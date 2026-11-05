@@ -257,11 +257,16 @@ type FormElement struct {
 	// собственным ReadOnly.
 	ReadOnlyWhen string `yaml:"readonly_when,omitempty"`
 	HiddenWhen   string `yaml:"hidden_when,omitempty"`
-	UseGrid      bool   `yaml:"use_grid,omitempty"` // (устар.) SlickGrid теперь включён по умолчанию
-	NoGrid       bool   `yaml:"no_grid,omitempty"`  // отключить SlickGrid у ТЧ (вернуть простую таблицу)
-	AutoSum      bool   `yaml:"auto_sum,omitempty"` // ТЧ: авто Сумма = Количество × Цена по именам колонок — opt-in (#215.1)
-	Hint         string `yaml:"hint,omitempty"`     // всплывающая подсказка
-	Mask         string `yaml:"mask,omitempty"`     // регулярное выражение проверки (HTML pattern), НЕ шаблон ввода
+	// TitleFrom — у колонки табличной части (kind: Колонка): имя реквизита
+	// формы или шапки объекта, строковое значение которого заменяет заголовок
+	// колонки, пока оно не пусто. Обновляется и после событий формы — аналог
+	// Колонка.ТекстШапки 1С: шапка «1 пн … 31 ср» под выбранный месяц.
+	TitleFrom string `yaml:"title_from,omitempty"`
+	UseGrid   bool   `yaml:"use_grid,omitempty"` // (устар.) SlickGrid теперь включён по умолчанию
+	NoGrid    bool   `yaml:"no_grid,omitempty"`  // отключить SlickGrid у ТЧ (вернуть простую таблицу)
+	AutoSum   bool   `yaml:"auto_sum,omitempty"` // ТЧ: авто Сумма = Количество × Цена по именам колонок — opt-in (#215.1)
+	Hint      string `yaml:"hint,omitempty"`     // всплывающая подсказка
+	Mask      string `yaml:"mask,omitempty"`     // регулярное выражение проверки (HTML pattern), НЕ шаблон ввода
 	// InputMask — настоящая маска ввода: заполнители подставляются по мере
 	// набора, разделители ставятся сами (#763, п. 3). Отдельный ключ, потому что
 	// `mask` — это regexp, и переиспользовать его под шаблон значило бы сломать
@@ -344,6 +349,20 @@ type FormElement struct {
 	// (FormAttributeColumn). Дочерний элемент kind: ПолеВвода тоже не подошёл —
 	// такая колонка выглядела бы редактируемой, а редактировать нечего.
 	VirtualColumns []FormVirtualColumn `yaml:"virtual_columns,omitempty"`
+
+	// DeadlineWarn — поле-срок: значение («ЧЧ:ММ» сегодня или дата со временем)
+	// подсвечивается по часам браузера — меньше DeadlineWarn минут до срока
+	// жёлтым, срок прошёл — красным.
+	DeadlineWarn int `yaml:"deadline_warn,omitempty"`
+
+	// HintInline — hint печатается текстом под полем, как раньше; по умолчанию
+	// подсказка всплывающая: значок ⓘ у подписи и title.
+	HintInline bool `yaml:"hint_inline,omitempty"`
+	// Conceal hides a string object field until a successful trusted event
+	// explicitly assigns its boolean form controller (optionally НЕ/NOT).
+	// Disclosure is session/form/object-bound server state, never browser input.
+	Conceal    bool   `yaml:"conceal,omitempty"`
+	RevealWhen string `yaml:"reveal_when,omitempty"`
 }
 
 // FormChoiceOperator — закрытый набор операторов choice_filter v1.
@@ -411,13 +430,29 @@ func FormChoiceParentFieldOf(entity *Entity) *Field {
 // onebase check. Если записи с таким UUID нет или пользователь её не видит,
 // подбор пуст при любом операторе (fail-closed): иначе пропавшая папка
 // раскрыла бы весь справочник.
+//
+// Query — условие запросом вместо field/op (как filter[].query у формы списка,
+// #2181): допустимы только записи из первой колонки результата — ссылки или
+// строки с UUID. Правило «какие товарные группы есть в соответствии объектов
+// 1С для базы филиала» одним реквизитом не выражается. Params — параметры
+// запроса из формы: имя параметра → путь Объект.<Реквизит> (ссылка) или
+// Объект.<Ссылка>.<Реквизит> (ссылка или строка за одним переходом), те же
+// источники, что from. Пустой источник закрывает подбор, как у eq; ошибка
+// запроса и больше 10000 строк — тоже (fail-closed). Запрос исполняется с
+// правами пользователя: строковый доступ его источников действует, закрытые
+// источники и поля дают пустой подбор.
 type FormChoiceCondition struct {
-	Field string             `yaml:"field"`
-	Op    FormChoiceOperator `yaml:"op"`
-	From  string             `yaml:"from,omitempty"`
-	Value *bool              `yaml:"value,omitempty"`
-	Ref   string             `yaml:"ref,omitempty"`
+	Field  string             `yaml:"field,omitempty"`
+	Op     FormChoiceOperator `yaml:"op,omitempty"`
+	From   string             `yaml:"from,omitempty"`
+	Value  *bool              `yaml:"value,omitempty"`
+	Ref    string             `yaml:"ref,omitempty"`
+	Query  string             `yaml:"query,omitempty"`
+	Params map[string]string  `yaml:"params,omitempty"`
 }
+
+// IsQuery — условие задано запросом (query), а не реквизитом цели.
+func (c FormChoiceCondition) IsQuery() bool { return strings.TrimSpace(c.Query) != "" }
 
 // FormChoiceSource — разобранный источник условия подбора.
 //
@@ -686,8 +721,8 @@ type FormModule struct {
 	AutoSaveDataInSettings bool              `yaml:"auto_save_data_in_settings,omitempty"`
 	VerticalScroll         string            `yaml:"vertical_scroll,omitempty"` // auto|never|always
 	// RefCardButton — показывать ли у ссылочного ПОЛЯ ФОРМЫ кнопку «Открыть
-	// карточку» (🔍). Ячейки табличных частей ключ не затрагивает: их рисует
-	// SlickGrid в браузере, и серверной разметки кнопок там нет.
+	// карточку» (🔍), включая ячейки no_grid-ТЧ. Ячейки SlickGrid ключ не
+	// затрагивает: у них отдельный браузерный редактор.
 	// Указатель нужен, чтобы отличить явное false от отсутствующего ключа:
 	// nil и true семантически одинаковы и оба оставляют кнопку видимой. Плотная
 	// форма, повторяющая раскладку 1С, из-за этой кнопки у каждой заполненной ссылки
@@ -1070,4 +1105,16 @@ func (el *FormElement) IsContainer() bool {
 		return true
 	}
 	return false
+}
+
+// FormTitleSourceName — имя реквизита из title_from колонки: префикс «Форма.»
+// или «Объект.» (как в data_path) отбрасывается.
+func FormTitleSourceName(source string) string {
+	name := strings.TrimSpace(source)
+	for _, prefix := range []string{"Форма.", "Объект.", "Form.", "Object."} {
+		if len(name) > len(prefix) && strings.EqualFold(name[:len(prefix)], prefix) {
+			return strings.TrimSpace(name[len(prefix):])
+		}
+	}
+	return name
 }
