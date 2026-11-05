@@ -211,13 +211,13 @@ elements:
 	}
 }
 
-// density: compact проходит check без «неизвестного ключа»; неизвестное
-// значение — предупреждение form.density.
+// density: compact и dense проходят check без «неизвестного ключа»;
+// неизвестное значение — предупреждение form.density.
 func TestRunFullFormDensity(t *testing.T) {
 	for _, tc := range []struct {
 		value, want string
 		warn        bool
-	}{{"compact", "", false}, {"wide", "form.density", true}} {
+	}{{"compact", "", false}, {"dense", "", false}, {"wide", "form.density", true}} {
 		dir := t.TempDir()
 		mkFile(t, filepath.Join(dir, "documents", "звонок.yaml"), "name: Звонок\nfields:\n  - {name: Номер, type: string}\n")
 		mkFile(t, filepath.Join(dir, "forms", "звонок", "объекта.form.yaml"), "schema: onebase.form/v1\nform:\n  name: Объекта\n  kind: object\n  entity: Звонок\n  density: "+tc.value+"\nelements:\n  - kind: ПолеВвода\n    name: ПолеНомер\n    data_path: Объект.Номер\n")

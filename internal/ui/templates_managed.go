@@ -598,6 +598,27 @@ const tplManagedForm = `
 .ob-density-compact main>.card{padding:10px 12px}
 .ob-density-compact main{padding:10px 14px}
 .ob-density-compact .managed-control-row>button,.ob-density-compact .managed-control-row>a{height:28px;min-width:28px;padding:0 8px;font-size:12px;display:inline-flex;align-items:center;justify-content:center}
+/* density: dense — ещё плотнее compact: поле 25px, шрифт 12.5px, подпись
+   10.5px. На <html> стоят оба класса, поэтому всё, что dense не задаёт
+   (табличные части, вкладки), остаётся как в compact; правила ниже идут
+   после compact и перекрывают его при той же специфичности. В горизонтальной
+   группе кнопка встаёт вровень с верхом поля (подпись 12+1, у compact — 13+2),
+   флажок (13px) — по центру поля 25px: 13 + 6 (замер в браузере). */
+.ob-density-dense .form-group{margin-bottom:3px}
+.ob-density-dense label{font-size:10.5px;line-height:12px;margin-bottom:1px}
+.ob-density-dense input[type=text],.ob-density-dense input[type=datetime-local],.ob-density-dense input[type=date],.ob-density-dense input[type=number],.ob-density-dense select{height:25px;padding:2px 7px;font-size:12.5px}
+.ob-density-dense textarea{font-size:12.5px;padding:3px 7px}
+.ob-density-dense .btn{padding:3px 9px;font-size:12.5px}
+.ob-density-dense .form-group-box{padding:4px 8px 5px !important;margin-bottom:5px !important}
+.ob-density-dense .managed-group-horizontal>.managed-group-body{gap:6px}
+.ob-density-dense .managed-group-horizontal>.managed-group-body>.form-group>label{line-height:12px}
+.ob-density-dense .managed-group-horizontal>.managed-group-body:has(>.form-group:not([style*="display:none"]):not([style*="display: none"])>label)>.managed-btn,.ob-density-dense .managed-group-horizontal>.managed-group-body:has(>.form-group:not([style*="display:none"]):not([style*="display: none"])>label)>.managed-btn-layout{margin-top:13px}
+.ob-density-dense .managed-group-horizontal>.managed-group-body>.form-group.managed-checkbox{margin-top:19px}
+.ob-density-dense h3{margin:4px 0 2px !important}
+.ob-density-dense .ob-form-head{margin-bottom:4px !important}
+.ob-density-dense main>.card{padding:6px}
+.ob-density-dense main{padding:6px}
+.ob-density-dense .managed-control-row>button,.ob-density-dense .managed-control-row>a{height:25px;min-width:25px;padding:0 7px}
 .ob-grid[data-ob-choice-error="1"] { outline: 2px solid #dc2626; }
 /* deadline_warn: поле-срок подсвечивается по часам браузера (obDeadlineTick). */
 input.ob-deadline-soon,.form-group input.ob-deadline-soon[readonly]{background:#fef3c7 !important;border-color:#f59e0b !important;color:#92400e !important}

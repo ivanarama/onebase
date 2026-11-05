@@ -255,8 +255,16 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"formDensityClass": func(page any) string {
 			data, _ := page.(map[string]any)
 			form, _ := data["Form"].(*metadata.FormModule)
-			if form != nil && form.Density == metadata.FormDensityCompact {
+			if form == nil {
+				return ""
+			}
+			switch form.Density {
+			case metadata.FormDensityCompact:
 				return "ob-density-compact"
+			case metadata.FormDensityDense:
+				// dense уточняет compact: правила compact (табличные части,
+				// вкладки) действуют, dense переопределяет поля и отступы.
+				return "ob-density-compact ob-density-dense"
 			}
 			return ""
 		},
