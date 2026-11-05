@@ -800,6 +800,8 @@ jobs:
   postgres-integration:
     needs: [classify]
     if: ${{ always() && !cancelled() }}
+    # PostgreSQL 16 client is available in Ubuntu 24.04 repositories.
+    # A moving ubuntu-latest can switch to a different PostgreSQL major.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     services:
@@ -832,8 +834,8 @@ jobs:
       - name: Install PostgreSQL client (pg_dump/psql для DR-01 round-trip)
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         # Сервис — postgres:16, поэтому и клиент 16: pg_dump старее сервера
-        # отказывается снимать дамп. Образ ubuntu-24.04 закреплён для клиента 16,
-        # доступного в его базовых репозиториях; версию печатаем для диагностики.
+        # отказывается снимать дамп. Пакет есть в базовых репозиториях
+        # Ubuntu 24.04; версию печатаем для диагностики.
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client-16
