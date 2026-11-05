@@ -619,7 +619,7 @@ func accountRegisterYAMLSchema() *yamlLintSchema {
 
 func homePageYAMLSchema() *yamlLintSchema {
 	nav := obj("documents", "catalogs", "reports", "inforegs", "registers", "processors", "journals", "pages")
-	return with(obj("title", "layout", "hidden"), map[string]*yamlLintSchema{
+	return with(obj("title", "layout", "hidden", "messages", "message_seconds"), map[string]*yamlLintSchema{
 		"titles":      freeMap(),
 		"rows":        seq(obj("widgets")),
 		"widgets":     seq(obj("name", "span")),
