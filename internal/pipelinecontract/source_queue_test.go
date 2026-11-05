@@ -14,8 +14,8 @@ func TestTechnicalSourceQueueCLI(t *testing.T) {
 	}
 	var python string
 	for _, name := range pythonNames {
-		if path, err := exec.LookPath(name); err == nil {
-			python = path
+		if _, err := exec.LookPath(name); err == nil {
+			python = name
 			break
 		}
 	}
@@ -23,7 +23,11 @@ func TestTechnicalSourceQueueCLI(t *testing.T) {
 		t.Skip("Python is unavailable; source queue public CLI suite requires Python 3")
 	}
 	scripts := filepath.Join("..", "..", ".claude", "skills", "merge-shepherd", "scripts")
-	cmd := exec.Command(python, "-X", "utf8", "-m", "unittest", "discover", "-s", scripts, "-p", "test_source_queue.py", "-v")
+	args := []string{"-X", "utf8", "-m", "unittest", "discover", "-s", scripts, "-p", "test_source_queue.py", "-v"}
+	cmd := exec.Command("python3", args...)
+	if python == "python" {
+		cmd = exec.Command("python", args...)
+	}
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("source queue public CLI acceptance: %v\n%s", err, output)
 	}
