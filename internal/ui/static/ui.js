@@ -3811,8 +3811,16 @@ function obInitFormDelegates() {
 obReady(obInitFormDelegates);
 
 function obTPRefOpts() {
-  if (!window._tpRefOpts) window._tpRefOpts = obReadJSONScript('ob-tp-ref-opts', {});
+  if (!window._tpRefOpts) {
+    window._tpRefOpts = obReadJSONScript('ob-tp-ref-opts', {});
+    window._tpRefChoices = obReadJSONScript('ob-tp-ref-choices', null);
+  }
   return window._tpRefOpts || {};
+}
+
+function obTPRefChoices() {
+  obTPRefOpts();
+  return window._tpRefChoices || window._tpRefOpts || {};
 }
 
 function obTPRefMeta() {
@@ -3841,8 +3849,13 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
   var table = tbody && tbody.closest ? tbody.closest('table[data-ob-dom-table]') : null;
   var domWritable = !!(table && !obDOMTableReadOnly(table));
   var tr = document.createElement('tr');
-  var refOpts = (obTPRefOpts()[tpName]) || {};
+  var refOpts = (obTPRefChoices()[tpName]) || {};
   var refMeta = (obTPRefMeta()[tpName]) || {};
+  var refMarked = {};
+  try {
+    refOpts = Object.assign({}, refOpts, JSON.parse(tbody.getAttribute('data-tp-ref-options') || 'null') || {});
+    refMarked = JSON.parse(tbody.getAttribute('data-tp-ref-marked') || '{}') || {};
+  } catch (e) {}
   var enumLabels = (obTPEnumLabels()[tpName]) || {};
   var enumOrder = (obTPEnumOrder()[tpName]) || {};
   var bools = Array.isArray(boolFields) ? boolFields : [];
@@ -3871,6 +3884,8 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
         sel.setAttribute('data-ref-entity', meta.entity);
         if (meta.allowCreate) sel.setAttribute('data-ref-allow-create', '1');
         if (meta.filter) sel.setAttribute('data-ref-filter', meta.filter);
+        var marked = Object.prototype.hasOwnProperty.call(refMarked, fn) ? refMarked[fn] : meta.marked;
+        if (marked === '1' || marked === '0') sel.setAttribute('data-ref-marked', marked);
       }
       var defOpt = document.createElement('option');
       defOpt.value = '';
@@ -4902,6 +4917,21 @@ function obRefFilterParam(sel) {
 }
 window.obRefFilterParam = obRefFilterParam;
 
+// obRefMarkedParam — помеченные на удаление в выдаче /ui/_ref-options: поле
+// поиска по истории (data-ref-search — отбор списка, параметр отчёта) их
+// показывает, ключ choice_show_deleted поля (data-ref-marked="1"/"0")
+// перекрывает. Без признаков сервер считает поле вводом данных и помеченные
+// скрывает.
+function obRefMarkedParam(el) {
+  if (!el || !el.getAttribute) return '';
+  var out = '';
+  if (el.getAttribute('data-ref-search') === '1') out += '&search=1';
+  var marked = el.getAttribute('data-ref-marked');
+  if (marked === '1' || marked === '0') out += '&marked=' + marked;
+  return out;
+}
+window.obRefMarkedParam = obRefMarkedParam;
+
 // obRefreshDependentSelects — сменили контрагента: списки, отобранные по нему,
 // перестраиваем сразу, не дожидаясь перерисовки формы. Значение, выпавшее из
 // нового отбора, очищаем: договор чужого контрагента в поле — это молча
@@ -4925,7 +4955,7 @@ function obRefreshDependentSelects(sourceEl) {
       var filter = obRefFilterParam(sel);
       var seq = (sel._obOwnerRefreshSeq || 0) + 1;
       sel._obOwnerRefreshSeq = seq;
-      var url = '/ui/_ref-options/' + encodeURIComponent(entity) + '?limit=50' + filter;
+      var url = '/ui/_ref-options/' + encodeURIComponent(entity) + '?limit=50' + filter + obRefMarkedParam(sel);
       fetch(url, { credentials: 'same-origin', headers: { 'Accept': 'application/json' } })
         .then(function (resp) { return resp.ok ? resp.json() : null; })
         .then(function (data) {
@@ -5286,7 +5316,7 @@ function obRefreshChoiceSelect(sel, force) {
   sel.removeAttribute('data-ob-choice-error');
 
   var refEntity = sel.getAttribute('data-ref-entity') || '';
-  var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + snapshot.query;
+  var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + snapshot.query + obRefMarkedParam(sel);
   var options = { credentials: 'same-origin', headers: { 'Accept': 'application/json' } };
   if (controller) options.signal = controller.signal;
   state.promise = window.fetch(url, options)
@@ -5600,13 +5630,15 @@ function openRefPicker(selOrId) {
     // тихий откат к списку без просмотра запрещён.
     var refContextRaw = sel.getAttribute('data-ref-context') || '';
     var usePreviewPage = !!refContextRaw;
-    var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + encodeURIComponent(q || '') + choiceQuery;
+    var url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '?limit=50&q=' + encodeURIComponent(q || '') + choiceQuery + obRefMarkedParam(sel);
     // Отбор подбора: владелец подчинённого справочника.
     if (!choiceSnapshot) url += obRefFilterParam(sel);
     var fetchOptions = { credentials: 'same-origin', headers: { 'Accept': 'application/json' } };
     if (requestController) fetchOptions.signal = requestController.signal;
     if (usePreviewPage) {
       url = '/ui/_ref-options/' + encodeURIComponent(refEntity) + '/page';
+      var markedQuery = obRefMarkedParam(sel);
+      if (markedQuery) url += '?' + markedQuery.slice(1);
       fetchOptions.method = 'POST';
       fetchOptions.headers['Content-Type'] = 'application/json';
       var sourceElement = sel.getAttribute('data-ref-element') || '';

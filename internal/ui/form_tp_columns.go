@@ -128,8 +128,10 @@ func managedTPColumnPlan(el *metadata.FormElement, fields []metadata.Field) []ma
 	plan := make([]managedTPColumn, 0, len(fields))
 	for _, index := range order {
 		element := chosen[index]
+		field := managedColumnField(fields[index], element)
+		field.ChoiceShowDeleted = firstBool(element.ChoiceShowDeleted, field.ChoiceShowDeleted)
 		plan = append(plan, managedTPColumn{
-			Field:   managedColumnField(fields[index], element),
+			Field:   field,
 			Index:   index,
 			Element: element,
 		})

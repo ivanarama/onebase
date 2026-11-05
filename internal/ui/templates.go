@@ -23,11 +23,13 @@ import (
 var tmpl = template.Must(newTemplate(nil))
 
 type managedTPColumnJSON struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Type        string `json:"type"`
-	Ref         string `json:"ref,omitempty"`
-	RefFilter   string `json:"refFilter,omitempty"`
+	ID        string `json:"id"`
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Ref       string `json:"ref,omitempty"`
+	RefFilter string `json:"refFilter,omitempty"`
+	// RefMarked — ключ choice_show_deleted реквизита: "1"/"0", пусто — правило по месту.
+	RefMarked   string `json:"refMarked,omitempty"`
 	AllowCreate bool   `json:"allowCreate,omitempty"`
 	Enum        bool   `json:"enum,omitempty"`
 	// Virtual — колонка показывается, но не хранится (#845). Флаг нужен клиенту:
@@ -508,7 +510,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return s
 		},
 		// managedRefOptions keeps choice_filter options scoped to the stable
-		// element id. The same entity field may be rendered twice with different
+		// element placement. The same entity field may be rendered twice with different
 		// filters; falling back by field name is only for elements without the
 		// opt-in contract.
 		"managedRefOptions": func(ctx map[string]any, element *metadata.FormElement, field string) []map[string]any {
@@ -520,6 +522,17 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				return selectedRefOptionsOnly(rows, formContextValue(ctx, field))
 			}
 			return rows
+		},
+		// An empty option page still has a reference source. Keep its picker.
+		"managedHasRefOptions": func(ctx map[string]any, element *metadata.FormElement, field string) bool {
+			if scoped, ok := ctx["ManagedChoiceOptions"].(map[*metadata.FormElement][]map[string]any); ok {
+				if _, exists := scoped[element]; exists {
+					return true
+				}
+			}
+			refs, _ := ctx["RefOptions"].(map[string][]map[string]any)
+			_, exists := refs[field]
+			return exists
 		},
 		// hideRefCard — убрать ли у поля кнопку «Открыть карточку» (🔍): явный
 		// ref_card_button поля решает сам, иначе — решение формы (HideRefCard из
@@ -564,6 +577,13 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// запросе, и первое же сохранение обнулило бы всё скрытое. Отсюда же
 		// граница смысла: item_form — это ВИДИМОСТЬ, а не защита; ограничение
 		// доступа к реквизиту делается политикой поля.
+		// refPickAttrs — признаки поля выбора ссылки для подбора и быстрого
+		// ввода (/ui/_ref-options): data-ref-search — поиск по истории (отбор
+		// списка, параметр отчёта), где помеченные на удаление видны; data-ref-marked
+		// — ключ choice_show_deleted поля. Без признаков — ввод данных.
+		"refPickAttrs":  refPickAttrs,
+		"refSearchAttr": func() template.HTMLAttr { return refPickAttrs(true, nil) },
+		"firstBool":     firstBool,
 		"itemFormVisible": func(entity *metadata.Entity) []itemFormField {
 			vis, _ := splitItemFormFields(entity)
 			return vis
@@ -1247,6 +1267,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 					Type:        string(field.Type),
 					Ref:         field.RefEntity,
 					RefFilter:   filters[tpName+"."+field.Name],
+					RefMarked:   markedFlag(field.ChoiceShowDeleted),
 					AllowCreate: field.RefEntity != "" && field.InlineCreateEnabled(true) && refWriteAllowed(refWriteAccess, field.RefEntity),
 					Enum:        strings.HasPrefix(string(field.Type), "enum:"),
 					Hidden:      column.Hidden,
@@ -1278,6 +1299,25 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
 		"managedTPColumnPlan": managedTPColumnPlan,
+		"tpNewRefOptions": func(ctx map[string]any) any {
+			if choices, ok := ctx["TPRefChoices"]; ok {
+				return choices
+			}
+			return ctx["TPRefOptions"]
+		},
+		"tpSelectedOptions": tpSelectedOptions,
+		"tpGridLabels": func(ctx map[string]any, tpName string, choices map[string][]map[string]any) map[string][]map[string]any {
+			labels, _ := ctx["TPRefOptions"].(map[string]map[string][]map[string]any)
+			tables, _ := ctx["TablePartRows"].(map[string][]map[string]any)
+			result := make(map[string][]map[string]any, len(choices))
+			for field, page := range choices {
+				for _, row := range tables[tpName] {
+					page = tpSelectedOptions(page, labels[tpName][field], refValueString(row[field]))
+				}
+				result[field] = page
+			}
+			return result
+		},
 		// managedTPColumnsTitled — заголовки колонок из title_from по значениям
 		// формы при отрисовке; после событий их присылает columnTitles.
 		"managedTPColumnsTitled": func(plan []managedTPColumn, values any) []managedTPColumn {
@@ -1297,7 +1337,37 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return nil
 		},
-		"tpChoiceOptions": func(ctx map[string]any, table *metadata.FormElement, field string, row int, fallback map[string][]map[string]any) []map[string]any {
+		"tpChoiceRefOptions": func(ctx map[string]any, table *metadata.FormElement, fallback map[string][]map[string]any) map[string][]map[string]any {
+			all, _ := ctx["TPChoices"].(map[*metadata.FormElement]*tpChoiceRender)
+			if all[table] == nil || len(all[table].BaseOptions) == 0 {
+				return fallback
+			}
+			options := make(map[string][]map[string]any, len(fallback))
+			for field, rows := range fallback {
+				options[field] = rows
+			}
+			for field, rows := range all[table].BaseOptions {
+				options[field] = rows
+			}
+			return options
+		},
+		"tpChoiceRefOverrides": func(ctx map[string]any, table *metadata.FormElement) map[string][]map[string]any {
+			all, _ := ctx["TPChoices"].(map[*metadata.FormElement]*tpChoiceRender)
+			if all[table] != nil {
+				return all[table].BaseOptions
+			}
+			return nil
+		},
+		"managedTPMarked": func(plan []managedTPColumn) map[string]string {
+			marked := make(map[string]string)
+			for _, column := range plan {
+				if column.Field.RefEntity != "" {
+					marked[column.Field.Name] = markedFlag(column.Field.ChoiceShowDeleted)
+				}
+			}
+			return marked
+		},
+		"tpChoiceOptions": func(ctx map[string]any, table *metadata.FormElement, field string, row int, fallback map[string][]map[string]any, tpName, selected string) []map[string]any {
 			all, _ := ctx["TPChoices"].(map[*metadata.FormElement]*tpChoiceRender)
 			if all[table] != nil && all[table].Contexts[field] != "" {
 				rows := all[table].Options[field]
@@ -1306,7 +1376,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				}
 				return nil
 			}
-			return fallback[field]
+			labels, _ := ctx["TPRefOptions"].(map[string]map[string][]map[string]any)
+			return tpSelectedOptions(fallback[field], labels[tpName][field], selected)
 		},
 		// managedTPFieldsAttr — значение data-tp-fields в порядке отрисовки
 		// ячеек: applyTableParts перестраивает строку по этому списку, и любое
@@ -1439,8 +1510,8 @@ func isListStateQueryKey(key string) bool {
 // предзагруженную страницу справочника.
 func managedRefOptionRows(ctx map[string]any, element *metadata.FormElement, field string) []map[string]any {
 	if element != nil {
-		if scoped, ok := ctx["ManagedChoiceOptions"].(map[string][]map[string]any); ok {
-			if rows, exists := scoped[element.ID]; exists {
+		if scoped, ok := ctx["ManagedChoiceOptions"].(map[*metadata.FormElement][]map[string]any); ok {
+			if rows, exists := scoped[element]; exists {
 				return rows
 			}
 		}
@@ -2222,7 +2293,7 @@ const tplList = `
       <div>
         <label>{{.DisplayName $.Lang}}</label>
         <div style="display:flex;gap:4px;align-items:center">
-          <select id="flt-{{.Name}}" name="f.{{.Name}}" data-ref-entity="{{.RefEntity}}" style="flex:1;min-width:0">
+          <select id="flt-{{.Name}}" name="f.{{.Name}}" data-ref-entity="{{.RefEntity}}"{{refPickAttrs true $f.ChoiceShowDeleted}} style="flex:1;min-width:0">
             <option value="">{{t $.Lang "— все —"}}</option>
             {{range index $refOpts .Name}}
             <option value="{{index . "id"}}" {{if eq (index . "id") (filterVal $params $f.Name).Value}}selected{{end}}>{{index . "_label"}}</option>
@@ -2663,7 +2734,7 @@ const tplForm = `
   {{if isRef (str .Type)}}
     <div style="display:flex;gap:6px;align-items:center">
       {{if $ro}}<input type="hidden" name="{{$fn}}" value="{{index $.Values $fn}}">{{end}}
-      <select id="ref-{{$fn}}"{{if not $ro}} name="{{$fn}}"{{end}} style="flex:1" data-ref-entity="{{.RefEntity}}"{{if $.RefFilter}}{{with index $.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and (not $ro) (.InlineCreateEnabled false) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}>
+      <select id="ref-{{$fn}}"{{if not $ro}} name="{{$fn}}"{{end}} style="flex:1" data-ref-entity="{{.RefEntity}}"{{refPickAttrs false .ChoiceShowDeleted}}{{if $.RefFilter}}{{with index $.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and (not $ro) (.InlineCreateEnabled false) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}>
         <option value="">{{t $.Lang "— выбрать —"}}</option>
         {{range index $.RefOptions $fn}}
         <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
@@ -2721,7 +2792,7 @@ const tplForm = `
 </div>
 {{end}}
 
-{{range .Entity.TableParts}}{{$tp := .}}{{$tpName := .Name}}{{$tpRef := index $.TPRefOptions $tpName}}{{$tpReadOnly := not $.CanWrite}}
+{{range .Entity.TableParts}}{{$tp := .}}{{$tpName := .Name}}{{$tpRef := index (tpNewRefOptions $) $tpName}}{{$tpReadOnly := not $.CanWrite}}
 <h3>{{$tp.DisplayName $.Lang}}</h3>
 <table class="tp-table" data-ob-dom-table="{{$tpName}}" data-ob-readonly="{{if $tpReadOnly}}1{{else}}0{{end}}"
   {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}>
@@ -2737,9 +2808,9 @@ const tplForm = `
         <td>
         {{if isRef (str .Type)}}
           <div style="display:flex;gap:4px;align-items:center">
-            <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}" style="flex:1" data-ref-entity="{{.RefEntity}}"{{if $.RefFilter}}{{with index $.RefFilter (printf "%s.%s" $tpName $fn)}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and (.InlineCreateEnabled true) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
+            <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}" style="flex:1" data-ref-entity="{{.RefEntity}}"{{refPickAttrs false .ChoiceShowDeleted}}{{if $.RefFilter}}{{with index $.RefFilter (printf "%s.%s" $tpName $fn)}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and (.InlineCreateEnabled true) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
               <option value="">{{t $.Lang "— выбрать —"}}</option>
-              {{range index $tpRef $fn}}
+              {{range tpSelectedOptions (index $tpRef $fn) (index (index $.TPRefOptions $tpName) $fn) (refID (index $row $fn))}}
               <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID (index $row $fn))}}selected{{end}}>{{index . "_label"}}</option>
               {{end}}
             </select>
@@ -2850,7 +2921,7 @@ const tplForm = `
 {{/* Управляемая форма выводит те же варианты своим блоком
      (ob-managed-tp-ref-opts) — второй экземпляр удваивал страницу: у заявки
      колл-центра это 1,3 МБ дважды. */}}
-{{if not .Form}}<script type="application/json" id="ob-tp-ref-opts">{{jsJSON .TPRefOptions}}</script>{{end}}
+{{if not .Form}}<script type="application/json" id="ob-tp-ref-opts">{{jsJSON .TPRefOptions}}</script><script type="application/json" id="ob-tp-ref-choices">{{jsJSON .TPRefChoices}}</script>{{end}}
 <script type="application/json" id="ob-tp-ref-meta">{{jsJSON .TPRefMeta}}</script>
 {{/* Перечисления колонок ТЧ — для строк, которые добавляет JS (#1010): сервер
      их не рендерит, а без вариантов и порядка addTpRow снова поставил бы
@@ -3003,7 +3074,7 @@ const tplReport = `
         </select>
       {{else if $p.IsRef}}
         <div style="display:flex;gap:4px;align-items:center">
-          <select name="{{$pname}}" id="rp-{{$pname}}" style="flex:1;min-width:0" data-ref-entity="{{$p.RefEntity}}">
+          <select name="{{$pname}}" id="rp-{{$pname}}" style="flex:1;min-width:0" data-ref-entity="{{$p.RefEntity}}"{{refPickAttrs true $p.ChoiceShowDeleted}}>
             <option value="">{{t $.Lang "— все —"}}</option>
             {{range $p.Opts}}
               <option value="{{index . "id"}}" {{if eq $pval (str (index . "id"))}}selected{{end}}>{{index . "_label"}}</option>
@@ -3169,7 +3240,7 @@ const tplRegister = `
     <label style="font-size:11px;color:#64748b">{{.DisplayName $.Lang}}</label>
     {{if .RefEntity}}
     <div style="display:flex;gap:4px;align-items:center">
-      <select id="regflt-{{.Name}}" name="flt_{{.Name}}" data-ref-entity="{{.RefEntity}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;min-width:0">
+      <select id="regflt-{{.Name}}" name="flt_{{.Name}}" data-ref-entity="{{.RefEntity}}"{{refPickAttrs true .ChoiceShowDeleted}} style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;min-width:0">
         <option value="">— {{t $.Lang "все"}} —</option>
         {{$cur := index $flt .Name}}{{range index $refOpts .Name}}<option value="{{index . "id"}}" {{if eq (str (index . "id")) $cur}}selected{{end}}>{{index . "_label"}}</option>{{end}}
       </select>
@@ -3348,7 +3419,7 @@ const tplProcessor = `
         </select>
       {{else if isRef (str .Type)}}
         <div style="display:flex;gap:6px;align-items:center">
-          <select id="pp-{{$pname}}" name="{{$pname}}" style="flex:1" data-ref-entity="{{index $.ProcessorRefEntity $pname}}" {{if .Required}}required{{end}}>
+          <select id="pp-{{$pname}}" name="{{$pname}}" style="flex:1" data-ref-entity="{{index $.ProcessorRefEntity $pname}}"{{refPickAttrs false .ChoiceShowDeleted}} {{if .Required}}required{{end}}>
             <option value="">{{t $.Lang "— выбрать —"}}</option>
             {{with index $.RefOptions $pname}}{{range .}}<option value="{{index . "id"}}" {{if eq (index . "id") (index $.ParamValues $pname)}}selected{{end}}>{{index . "_label"}}</option>{{end}}{{end}}
           </select>
@@ -3886,7 +3957,7 @@ const tplJournal = `
       {{if index $.FilterOptions .Field}}
       {{$f := .Field}}
       <div style="display:flex;gap:4px;align-items:center">
-        <select id="jflt-{{$f}}" name="f.{{$f}}" data-ref-entity="{{index $.FilterRefEntities $f}}" style="flex:1;min-width:0">
+        <select id="jflt-{{$f}}" name="f.{{$f}}" data-ref-entity="{{index $.FilterRefEntities $f}}"{{refSearchAttr}} style="flex:1;min-width:0">
           <option value="">{{t $.Lang "— все —"}}</option>
           {{range index $.FilterOptions $f}}
           <option value="{{index . "id"}}" {{if eq (index . "id") (filterVal $params $f).Value}}selected{{end}}>{{index . "_label"}}</option>
@@ -4571,4 +4642,23 @@ func funcsListQuerySuffix(params storage.ListParams) template.URL {
 		return ""
 	}
 	return template.URL("?" + strings.Join(parts, "&")) //nolint:gosec // G203: части строки запроса пропущены через url.QueryEscape
+}
+
+// Append only this control's selected label, without changing the shared page.
+func tpSelectedOptions(choices, labels []map[string]any, selected string) []map[string]any {
+	if selected == "" {
+		return choices
+	}
+	for _, row := range choices {
+		if refValueString(row["id"]) == selected {
+			return choices
+		}
+	}
+	for _, row := range labels {
+		if refValueString(row["id"]) == selected {
+			result := append([]map[string]any(nil), choices...)
+			return append(result, row)
+		}
+	}
+	return choices
 }

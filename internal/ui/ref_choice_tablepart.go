@@ -35,8 +35,9 @@ func findTPChoiceElement(owner *metadata.Entity, form *metadata.FormModule, iden
 }
 
 type tpChoiceRender struct {
-	Contexts map[string]string
-	Options  map[string][][]map[string]any
+	Contexts    map[string]string
+	Options     map[string][][]map[string]any
+	BaseOptions map[string][]map[string]any
 }
 
 func (s *Server) applyTPChoiceFilters(ctx context.Context, owner *metadata.Entity, form *metadata.FormModule, kind string, data map[string]any) {
@@ -44,7 +45,7 @@ func (s *Server) applyTPChoiceFilters(ctx context.Context, owner *metadata.Entit
 	tableRows, _ := data["TablePartRows"].(map[string][]map[string]any)
 	form.Walk(func(el *metadata.FormElement) bool {
 		field, tp := metadata.FormChoiceTPField(owner, form, el)
-		if field == nil || tp == "" || el.ID == "" || len(el.ChoiceFilter) == 0 {
+		if field == nil || tp == "" || el.ID == "" || (len(el.ChoiceFilter) == 0 && !el.ChoiceFolders) {
 			return true
 		}
 		target := s.reg.GetEntity(field.RefEntity)
@@ -56,7 +57,7 @@ func (s *Server) applyTPChoiceFilters(ctx context.Context, owner *metadata.Entit
 		table, _ := metadata.FormChoiceTablePart(form, el)
 		render := all[table]
 		if render == nil {
-			render = &tpChoiceRender{Contexts: map[string]string{}, Options: map[string][][]map[string]any{}}
+			render = &tpChoiceRender{Contexts: map[string]string{}, Options: map[string][][]map[string]any{}, BaseOptions: map[string][]map[string]any{}}
 			all[table] = render
 		}
 		controls := choiceSourceControls(el)
@@ -120,6 +121,54 @@ func (s *Server) applyTPChoiceFilters(ctx context.Context, owner *metadata.Entit
 				options = nil
 			}
 			render.Options[field.Name] = append(render.Options[field.Name], options)
+		}
+		return true
+	})
+	// Marked-only columns need no picker identity or explicit data_path. Use
+	// the same column plan as both renderers (including field/name shorthand
+	// and first-placement wins), rather than the stricter choice_filter path.
+	form.Walk(func(table *metadata.FormElement) bool {
+		if table.Kind != metadata.FormElementTablePart {
+			return true
+		}
+		name := strings.TrimSpace(table.TablePart)
+		if name == "" {
+			name = dpFieldName(table.DataPath)
+		}
+		if name == "" {
+			name = table.Name
+		}
+		for _, tp := range owner.TableParts {
+			if !strings.EqualFold(tp.Name, name) {
+				continue
+			}
+			for _, column := range managedTPColumnPlan(table, tp.Fields) {
+				el := column.Element
+				if el == nil || el.ChoiceShowDeleted == nil || len(el.ChoiceFilter) > 0 || el.ChoiceFolders {
+					continue
+				}
+				field := column.Field
+				target := s.reg.GetEntity(field.RefEntity)
+				if target == nil {
+					continue
+				}
+				render := all[table]
+				if render == nil {
+					render = &tpChoiceRender{BaseOptions: map[string][]map[string]any{}}
+					all[table] = render
+				}
+				ownerID, asked := "", false
+				if hf, ok := ownerHolderField(owner, target.Owner); ok {
+					ownerID, asked = formValueForPath(data["Values"], "Объект."+hf.Name), true
+				}
+				rows, err := s.initialReferenceOptionsOwned(ctx, target, refOptionsChoice.withMarked(field.ChoiceShowDeleted), nil, ownerID, asked)
+				// An empty/failed page stays scoped to this placement too.
+				render.BaseOptions[field.Name] = nil
+				if err == nil {
+					render.BaseOptions[field.Name] = compactRefOptionRows(rows)
+				}
+			}
+			break
 		}
 		return true
 	})
