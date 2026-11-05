@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 func TestReferencePageHTTP(t *testing.T) {
@@ -16,6 +17,9 @@ func TestReferencePageHTTP(t *testing.T) {
 		proj := refCardProject(t, "", "    reference_page: Переписка\n    readonly: true\n", local)
 		s, ctx := newSubmitTestServer(t, proj.Entities)
 		if err := s.store.Migrate(ctx, proj.Entities); err != nil {
+			t.Fatal(err)
+		}
+		if err := s.store.Upsert(ctx, "Клиент", uuid.New(), map[string]any{"Наименование": "Клиент"}, s.reg.GetEntity("Клиент")); err != nil {
 			t.Fatal(err)
 		}
 		router := chi.NewRouter()
@@ -26,7 +30,7 @@ func TestReferencePageHTTP(t *testing.T) {
 			t.Fatalf("form status: %d", r.Code)
 		}
 		if !strings.Contains(r.Body.String(), `data-ref-page="Переписка"`) {
-			t.Fatal("YAML reference_page lost in rendered control")
+			t.Fatalf("YAML reference_page lost in rendered control (local=%v)", local)
 		}
 	}
 }
