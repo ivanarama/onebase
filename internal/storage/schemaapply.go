@@ -39,6 +39,17 @@ func (db *DB) restructureEntityTable(ctx context.Context, entity *metadata.Entit
 }
 
 func (db *DB) restructureTableWithProvenance(ctx context.Context, table string, fields []metadata.Field, provenance standardFieldProvenance) error {
+	warnings, err := db.untrackedTableTypeWarnings(ctx, table, fields, false)
+	if err != nil {
+		return err
+	}
+	for _, warning := range warnings {
+		if db.schemaOpts.Warn != nil {
+			db.schemaOpts.Warn(warning)
+		} else {
+			storageLog().Warn(warning.String())
+		}
+	}
 	if !anyFieldHasID(fields) {
 		// Ни у одного поля нет устойчивого id — реструктурировать нечего,
 		// работает прежний аддитивный путь.

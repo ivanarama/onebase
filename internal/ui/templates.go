@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
@@ -37,6 +38,10 @@ type managedTPColumnJSON struct {
 	// по-прежнему сериализуется в tp_json (план 154). Ровно наоборот к Virtual:
 	// та видима и не отправляется, эта отправляется и не видима.
 	Hidden bool `json:"hidden,omitempty"`
+	// TitleFrom — заголовок взят из реквизита формы (title_from) и потому
+	// приходит как текст: клиент экранирует его перед выводом в шапку
+	// SlickGrid, которая рисует подпись как HTML.
+	TitleFrom bool `json:"titleFrom,omitempty"`
 	// Index — позиция реквизита в метаданных табличной части. Клиент кладёт её
 	// в _tp_col_index: сервер сверяет индекс с порядком метаданных, а порядок
 	// показа с ним больше не совпадает. Для виртуальной колонки — -1.
@@ -256,6 +261,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return processorFileContentName(proc.Params, name)
 		},
+		"entityQuestionFieldsName": entityQuestionFieldsName,
 		"processorServiceFieldNames": func(proc *processorpkg.Processor) map[string]string {
 			if proc == nil {
 				return nil
@@ -392,6 +398,11 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"isRichText": func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeRichText) },
 		"isImage":    func(t any) bool { return fmt.Sprintf("%v", t) == string(metadata.FieldTypeImage) },
+		"isImageRef": func(raw any) bool {
+			value := fmt.Sprint(raw)
+			_, err := uuid.Parse(value)
+			return len(value) == 36 && err == nil
+		},
 		"fieldNamesCSV": func(fields []metadata.Field) string {
 			names := make([]string, 0, len(fields))
 			for _, f := range fields {
@@ -1240,6 +1251,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 					Enum:        strings.HasPrefix(string(field.Type), "enum:"),
 					Hidden:      column.Hidden,
 					Index:       column.Index,
+					TitleFrom:   column.Element != nil && strings.TrimSpace(column.Element.TitleFrom) != "",
+					Width:       column.Width(),
 				})
 			}
 			// Виртуальные колонки идут ПОСЛЕ реквизитов: порядок хранимых колонок
@@ -1265,6 +1278,11 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
 		"managedTPColumnPlan": managedTPColumnPlan,
+		// managedTPColumnsTitled — заголовки колонок из title_from по значениям
+		// формы при отрисовке; после событий их присылает columnTitles.
+		"managedTPColumnsTitled": func(plan []managedTPColumn, values any) []managedTPColumn {
+			return managedTPColumnsTitled(plan, values)
+		},
 		"tpChoiceContexts": func(ctx map[string]any, table *metadata.FormElement) map[string]string {
 			all, _ := ctx["TPChoices"].(map[*metadata.FormElement]*tpChoiceRender)
 			if all[table] != nil {
@@ -1507,6 +1525,18 @@ const tplHead = `
 <script type="application/json" id="ob-ui-messages">{{jsJSON (dict
   "closeNotConfirmed" (t (or $.Lang "ru") "Форма не закрыта: сервер не подтвердил закрытие.")
   "unsavedClose" (t (or $.Lang "ru") "Данные были изменены и не записаны. Закрыть форму?")
+  "imageClose" (t (or $.Lang "ru") "Закрыть просмотр изображения")
+  "imagePrevious" (t (or $.Lang "ru") "Предыдущее изображение")
+  "imageNext" (t (or $.Lang "ru") "Следующее изображение")
+  "imageZoomIn" (t (or $.Lang "ru") "Увеличить изображение")
+  "imageZoomOut" (t (or $.Lang "ru") "Уменьшить изображение")
+  "imageFit" (t (or $.Lang "ru") "Вписать изображение")
+  "imageOriginal" (t (or $.Lang "ru") "Исходный размер изображения")
+  "imageNewTab" (t (or $.Lang "ru") "Открыть изображение в новой вкладке")
+  "imageDownload" (t (or $.Lang "ru") "Скачать изображение")
+  "imageLoading" (t (or $.Lang "ru") "Загрузка изображения…")
+  "imageError" (t (or $.Lang "ru") "Не удалось загрузить изображение")
+  "imageArea" (t (or $.Lang "ru") "Область просмотра изображения")
 )}}</script>
 <script src="/static/ui.js"></script>
 <style>
@@ -1727,6 +1757,24 @@ body{padding-bottom:32px}
 .search-hit-posted{color:#16a34a;font-weight:600}
 /* Поле-картинка на форме */
 .img-field{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
+.img-preview [data-ob-image-view]{display:block;border:0;padding:0;background:transparent;cursor:zoom-in;border-radius:8px}
+.img-preview [data-ob-image-view]:focus-visible{outline:3px solid #2563eb;outline-offset:3px}
+.ob-image-viewer{margin:auto;width:96vw;height:92vh;max-width:96vw;max-height:92vh;padding:12px;border:1px solid #475569;border-radius:12px;background:#0f172a;color:#f8fafc;overflow:hidden}
+.ob-image-viewer[open]{display:flex;flex-direction:column;gap:10px}
+.ob-image-viewer::backdrop{background:rgba(0,0,0,.72)}
+.ob-image-viewer header,.ob-image-viewer nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
+.ob-image-viewer h2{color:#f8fafc;flex:1;font-size:16px;overflow-wrap:anywhere}
+.ob-image-viewer button,.ob-image-viewer a{border:1px solid #64748b;border-radius:6px;padding:6px 10px;background:#1e293b;color:#f8fafc;font:inherit;text-decoration:none;cursor:pointer}
+.ob-image-viewer button:disabled{opacity:.4;cursor:default}
+.ob-image-viewer :focus-visible{outline:3px solid #60a5fa;outline-offset:2px}
+.ob-image-viewport{flex:1;min-height:0;overflow:auto;touch-action:none;overscroll-behavior:contain;background:#020617}
+.ob-image-canvas{display:grid;place-items:center;min-width:100%;min-height:100%}
+.ob-image-canvas img[hidden]{display:none}
+.ob-image-canvas img{display:block;max-width:none;max-height:none;user-select:none;touch-action:none}
+.ob-image-viewport[data-loaded="1"]{cursor:grab}
+.ob-image-viewport[data-dragging="1"]{cursor:grabbing}
+.ob-image-status{min-height:1.4em;font-size:13px}
+@media(prefers-reduced-motion:reduce){.ob-image-viewer *{scroll-behavior:auto}}
 .img-preview img{max-width:240px;max-height:240px;border-radius:8px;border:1px solid #e2e8f0;display:block;background:#f8fafc}
 .img-actions{display:flex;gap:8px;align-items:center}
 .img-field label.btn{cursor:pointer;margin:0}
@@ -1743,7 +1791,7 @@ const tplNav = `
   <form class="topbar-search" method="get" action="/ui/search" role="search">
     <input type="search" name="q" value="{{.SearchQuery}}" placeholder="{{t $.Lang "Поиск по базе"}}" aria-label="{{t $.Lang "Поиск по базе"}}">
   </form>
-  <form method="post" action="/ui/form-mode" style="display:inline;margin:0">
+  {{if not .FormOpenModeLocked}}<form method="post" action="/ui/form-mode" style="display:inline;margin:0">
     {{if eq (printf "%v" .FormOpenMode) "tabs"}}
       <input type="hidden" name="mode" value="pages">
       <button type="submit" class="sys-btn" title="{{t $.Lang "Открывать формы отдельными страницами"}}">&#9645; {{t $.Lang "Страницы"}}</button>
@@ -1751,7 +1799,7 @@ const tplNav = `
       <input type="hidden" name="mode" value="tabs">
       <button type="submit" class="sys-btn" title="{{t $.Lang "Открывать формы во вкладках"}}">&#10697; {{t $.Lang "Вкладки"}}</button>
     {{end}}
-  </form>
+  </form>{{end}}
   <div class="sys-menu">
     <button class="sys-btn" type="button" data-ob-toggle-target="sysd">&#9881; {{t $.Lang "Система"}} &#9660;</button>
     <div class="sys-drop" id="sysd">
@@ -1761,7 +1809,7 @@ const tplNav = `
       <details class="sys-group">
         <summary>{{t $.Lang "Профиль и интерфейс"}}</summary>
         <div class="sys-group-body">
-          <div class="sys-mode-block">
+          {{if not .FormOpenModeLocked}}<div class="sys-mode-block">
             <div class="sys-mode-title">{{t $.Lang "Режим открытия форм"}}</div>
             <form method="post" action="/ui/form-mode" style="margin:0;padding:0">
               <label><input type="radio" name="mode" value="pages" {{if eq (printf "%v" .FormOpenModePersonal) "pages"}}checked{{end}}> {{t $.Lang "Отдельные страницы"}}</label>
@@ -1769,7 +1817,7 @@ const tplNav = `
               <label><input type="radio" name="mode" value="default" {{if eq (printf "%v" .FormOpenModePersonal) ""}}checked{{end}}> {{t $.Lang "По умолчанию (глобально)"}}</label>
               <button type="submit" class="sys-btn">{{t $.Lang "Применить"}}</button>
             </form>
-          </div>
+          </div>{{end}}
           {{if .HasAuth}}{{if not .DenyPasswdChange}}<a href="/ui/profile/passwd">{{t $.Lang "Сменить пароль"}}</a>{{end}}
           <a href="/ui/profile/2fa">{{t $.Lang "Второй фактор"}}</a>{{end}}
           {{if .HasPersonalNavigation}}<a href="/ui/settings/navigation?subsystem={{.CurrentSubsystem}}">{{t $.Lang "Настроить меню"}}</a>{{end}}
@@ -2151,6 +2199,7 @@ const tplList = `
   {{range .Breadcrumbs}}<span>›</span><a href="{{listURL $.Query "parent" .ID}}">{{.Label}}</a>{{end}}
 </nav>
 {{end}}
+{{if .SearchAll}}<p class="list-search-scope" style="margin:6px 0 10px;color:#64748b;font-size:13px">{{t $.Lang "Результаты поиска по всему справочнику"}}</p>{{end}}
 
 {{$entity := .Entity}}{{$params := .Params}}{{$refOpts := .RefFilterOptions}}
 <details{{if hasFilter $params}} open{{end}}>
@@ -2351,6 +2400,7 @@ const tplList = `
     </a>
   </th>
   {{end}}
+  {{if $.SearchAll}}<th>{{t $.Lang "Группа"}}</th>{{end}}
   <th style="width:90px"></th>
 </tr></thead><tbody id="list-body"
   data-ob-row-base="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}"
@@ -2383,6 +2433,7 @@ const tplList = `
     {{else if isEnum (str .Type)}}<td style="white-space:nowrap">{{enumLabel $.EnumLabels .Name (str (index $row .Name))}}</td>
     {{else}}<td style="white-space:nowrap">{{if and (eq .Name "Наименование") $.Entity.Hierarchical}}{{if $isFolder}}📁 {{else}}📄 {{end}}{{end}}{{fmtCell (index $row .Name)}}{{if and (eq .Name "Наименование") (index $row "_is_predefined")}} <span title="{{t $.Lang "Предопределённый элемент"}}" style="color:#f59e0b;font-size:11px">★</span>{{end}}</td>{{end}}
   {{end}}
+  {{if $.SearchAll}}<td style="white-space:nowrap" data-ob-list-group>{{with index $row "_group_id"}}<a href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}?parent={{.}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}">📁 {{index $row "_group_label"}}</a>{{else}}<span style="color:#94a3b8">{{t $.Lang "Корень"}}</span>{{end}}</td>{{end}}
   <td>
     {{if and $isFolder $.Entity.Hierarchical}}
       <a class="btn btn-sm btn-secondary" href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" (str (index $row "id"))}}">{{t $.Lang "▶ Войти"}}</a>
@@ -2654,10 +2705,10 @@ const tplForm = `
     {{/* Поле-картинка: скрытый input хранит ссылку (UUID), превью + загрузка/очистка.
          Без JS остаётся скрытый input — значение не теряется при записи. */}}
     {{$iv := index $.Values $fn}}
-    <div class="img-field">
+    <div class="img-field" data-ob-image-field="{{$fn}}" data-ob-image-label="{{$flabel}}">
       <input type="hidden" name="{{$fn}}" value="{{$iv}}">
-      <div class="img-preview"{{if not $iv}} style="display:none"{{end}}><img src="{{if $iv}}/ui/_image/{{$iv}}{{end}}" alt=""></div>
-      {{if not $ro}}
+      <div class="img-preview"{{if not $iv}} style="display:none"{{end}}><button type="button"{{if not (isImageRef $iv)}} disabled{{end}} data-ob-image-view data-ob-readonly-navigation="1" data-ob-image-ref="{{$iv}}" aria-label="{{$flabel}}"><img src="{{if $iv}}/ui/_image/{{$iv}}{{end}}" alt="{{$flabel}}"></button></div>
+      {{if and (not $ro) $.CanWrite}}
       <div class="img-actions">
         <label class="btn btn-sm btn-secondary">{{t $.Lang "Загрузить…"}}<input type="file" accept="image/*" style="display:none" data-ob-image-upload="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/_image"></label>
         <button type="button" class="btn btn-sm img-clear-btn" data-ob-image-clear{{if not $iv}} style="display:none"{{end}}>{{t $.Lang "Очистить"}}</button>
@@ -3554,6 +3605,10 @@ const tplAbout = `
         {{with .UpdateAvailable}}<div style="margin-top:6px;font-weight:400;font-size:13px;color:#166534">{{t $.Lang "Доступна новая версия платформы"}}: {{.}} <span style="color:#94a3b8">— {{t $.Lang "обновление выполняется из лаунчера"}}</span></div>{{end}}
       </td>
     </tr>
+    {{with .Distribution}}{{if .Present}}
+    <tr><td style="padding:14px 0;color:#64748b;font-size:14px">{{t $.Lang "Изменённая сборка"}}</td><td style="padding:14px 0;font-size:14px">{{.Name}} {{.Version}}</td></tr>
+    {{if .Supplier}}<tr><td style="padding:14px 0;color:#64748b;font-size:14px">{{t $.Lang "Поставщик сборки"}}</td><td style="padding:14px 0;font-size:14px">{{.Supplier}}</td></tr>{{end}}
+    {{end}}{{end}}
     {{if .Cfg.PlatAuthor}}
     <tr>
       <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">{{t $.Lang "Правообладатель платформы"}}</td>
@@ -4478,19 +4533,16 @@ const tplPageCustom = `
 {{end}}
 `
 
-// inputAutocomplete — значение autocomplete текстового поля управляемой формы.
-// Обычно "off" (#595). Поле с маской ввода — почти всегда телефон, а
-// автозаполнение Яндекс Браузера на "off" не смотрит и предлагает сохранённые
-// номера из своего профиля. "one-time-code" по стандарту HTML — поле кода
-// подтверждения: браузер может подставить в него пришедший одноразовый код
-// (так делает Safari), но не сохранённые телефоны. Проверено вручную: в Яндекс
-// Браузере подсказки телефонов на таком поле пропадают. Это обход для
-// телефонов, а не гарантия, что подсказок нет ни в одном браузере;
-// "new-password" тоже гасит подсказки, но зовёт менеджер паролей.
+// inputAutocomplete — значение autocomplete текстового поля управляемой формы:
+// всегда "off" (#595), и у поля с маской ввода тоже. Chrome ведёт историю ввода
+// по имени поля и не ведёт её только при "off". На "one-time-code" (так было
+// с #1871) он запоминал каждый введённый телефон и подсказывал его в любом
+// поле с тем же именем, у другого клиента. Проверено на Chromium 109:
+// autocomplete_history_manager.cc не запрашивает подсказки, если
+// should_autocomplete ложно, а ложно оно только при "off". Яндекс Браузер на
+// "off" не смотрит и предлагает телефоны из своего профиля, поэтому ему ui.js
+// отдаёт поле с маской как "one-time-code" (obGuardAutocomplete).
 func inputAutocomplete(el *metadata.FormElement) string {
-	if el != nil && el.InputMask != "" {
-		return "one-time-code"
-	}
 	return "off"
 }
 

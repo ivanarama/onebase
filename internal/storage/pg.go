@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/userdata"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -422,8 +423,9 @@ func defaultFilesDirForConfig(cfg *pgxpool.Config) (string, error) {
 		return filepath.Clean(configured), nil
 	}
 
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
+	appDir, err := userdata.Path()
+	home := filepath.Dir(appDir)
+	if err != nil || appDir == "" {
 		return "", fmt.Errorf("storage: determine durable files directory: home directory is unavailable; set %s to an absolute persistent path", filesDirEnv)
 	}
 	info, err := os.Stat(home)
@@ -438,7 +440,7 @@ func defaultFilesDirForConfig(cfg *pgxpool.Config) (string, error) {
 	if cfg != nil && cfg.ConnConfig != nil && cfg.ConnConfig.Database != "" {
 		dbName = cfg.ConnConfig.Database
 	}
-	return filepath.Join(home, ".onebase", "files", dbName), nil
+	return filepath.Join(appDir, "files", dbName), nil
 }
 
 func (db *DB) FilesDir() string {

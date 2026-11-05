@@ -261,6 +261,9 @@ func TestMigratePreview_PostgresRoleWithoutDDL(t *testing.T) {
 	require.NoError(t, err)
 	dir := t.TempDir()
 	migratePlanFixture(t, dir, false)
+	writeProcrunFixture(t, dir, "catalogs/Товар.yaml", "name: Товар\nfields:\n  - {name: Флаг, type: bool}\n")
+	_, err = admin.Exec(ctx, "CREATE TABLE "+schema+".товар (id UUID PRIMARY KEY, флаг TEXT); INSERT INTO "+schema+".товар VALUES ('00000000-0000-0000-0000-000000000001','true'); GRANT SELECT ON "+schema+".товар TO "+role)
+	require.NoError(t, err)
 	for _, rel := range []string{"config/app.yaml", "catalogs/Товар.yaml"} {
 		b, err := os.ReadFile(filepath.Join(dir, rel))
 		require.NoError(t, err)
@@ -288,10 +291,15 @@ func TestMigratePreview_PostgresRoleWithoutDDL(t *testing.T) {
 		out, err := executeMigration(t, dir, "", map[string]string{"db": readerDSN, "dry-run": "true", "config-source": source})
 		require.NoError(t, err)
 		require.Contains(t, out, "Реструктуризация")
+		require.Contains(t, out, "ПРЕДУПРЕЖДЕНИЕ")
+		require.Contains(t, out, "товар.флаг")
 	}
+	var value string
+	require.NoError(t, admin.QueryRow(ctx, "SELECT флаг FROM "+schema+".товар").Scan(&value))
+	require.Equal(t, "true", value)
 	var tables int
 	require.NoError(t, admin.QueryRow(ctx, "SELECT COUNT(*) FROM pg_tables WHERE schemaname=$1", schema).Scan(&tables))
-	require.Equal(t, 1, tables)
+	require.Equal(t, 2, tables)
 	require.Error(t, storage.WithPostgresMigrationPreview(ctx, readerDSN, func(ctx context.Context, db *storage.DB) error {
 		_, err := db.Exec(ctx, "CREATE TABLE forbidden(value TEXT)")
 		require.Error(t, err)
@@ -328,7 +336,7 @@ func TestMigratePreview_PostgresRoleWithoutDDL(t *testing.T) {
 	require.Equal(t, string(raw), definition)
 	require.Equal(t, index.Fingerprint(), signature)
 	require.NoError(t, admin.QueryRow(ctx, "SELECT COUNT(*) FROM pg_tables WHERE schemaname=$1", schema).Scan(&tables))
-	require.Equal(t, 3, tables)
+	require.Equal(t, 4, tables)
 }
 
 func TestMigratePreview_MissingTargetAppears(t *testing.T) {
@@ -377,6 +385,7 @@ func TestMigratePreview_ManagedLegacyIdentityPreservesFiles(t *testing.T) {
 			name := "Legacy" + strings.Repeat("a", 70)
 			writeProcrunFixture(t, dir, "config/app.yaml", "name: legacy-managed\n")
 			writeProcrunFixture(t, dir, "catalogs/Legacy.yaml", "name: "+name+"\nfields:\n  - {id: value, name: Value, type: string}\nindexes:\n  - {fields: [Value], unique: true}\n")
+			writeProcrunFixture(t, dir, "catalogs/Warning.yaml", "name: Warning\nfields:\n  - {name: Flag, type: string}\n")
 			_, err := executeMigration(t, dir, path, nil)
 			require.NoError(t, err)
 			db, err := openCLIStorage(t.Context(), "sqlite", path, "")
@@ -404,6 +413,7 @@ func TestMigratePreview_ManagedLegacyIdentityPreservesFiles(t *testing.T) {
 			require.NoError(t, err)
 			_, err = db.Exec(t.Context(), "UPDATE _schema_fields SET table_name=? WHERE table_name=?", old, current)
 			require.NoError(t, err)
+			writeProcrunFixture(t, dir, "catalogs/Warning.yaml", "name: Warning\nfields:\n  - {name: Flag, type: bool}\n")
 			if source == "database" {
 				repo := configdb.New(db)
 				require.NoError(t, repo.EnsureSchema(t.Context()))

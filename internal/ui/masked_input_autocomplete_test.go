@@ -17,7 +17,7 @@ import (
 
 // Проверяем совместность атрибутов в одном уникальном input из публичного GET,
 // а не совпадения в разных местах страницы или поведение браузерного профиля.
-func assertManagedMaskedInput(t *testing.T, body, name, mask, value string) {
+func assertManagedMaskedInput(t *testing.T, body, name, mask, value, formMask string) {
 	t.Helper()
 	doc, err := html.Parse(strings.NewReader(body))
 	if err != nil {
@@ -43,17 +43,28 @@ func assertManagedMaskedInput(t *testing.T, body, name, mask, value string) {
 	if len(inputs) != 1 {
 		t.Fatalf("ожидалось одно текстовое поле %s, получено %d", name, len(inputs))
 	}
-	want := map[string]string{"autocomplete": "one-time-code", "value": value, "data-ob-input-mask": mask}
-	absent := []string{"inputmode"}
+	want := map[string]string{"autocomplete": "off", "value": value, "data-ob-input-mask": mask}
+	absent := []string{"inputmode", "data-ob-protected"}
+	if formMask != "" {
+		want["pattern"], want["data-ob-form-mask"] = formMask, ""
+	} else {
+		absent = append(absent, "pattern", "data-ob-form-mask")
+	}
 	switch mask {
 	case "(000)000-00-00":
 		want["placeholder"] = "(___)___-__-__"
 		want["inputmode"] = "numeric"
-		absent = nil
+		absent = []string{"data-ob-protected"}
+		if formMask == "" {
+			absent = append(absent, "pattern", "data-ob-form-mask")
+		}
 	case "Пл0000000":
 		want["placeholder"] = "Пл_______"
 		want["inputmode"] = "numeric"
-		absent = nil
+		absent = []string{"data-ob-protected"}
+		if formMask == "" {
+			absent = append(absent, "pattern", "data-ob-form-mask")
+		}
 	case "XX-***":
 		want["placeholder"] = "__-___"
 	case "":
@@ -85,20 +96,22 @@ func TestManagedForm_MaskedInputSuppressesBrowserAutofill(t *testing.T) {
 		{"plain", "", "Обычный текст"},
 	} {
 		for _, value := range []string{"", tc.filled} {
-			t.Run(tc.name+"/"+value, func(t *testing.T) {
-				srv, ent := setupManagedEventsServer(t, ``, nil, []*metadata.FormElement{
-					{Kind: metadata.FormElementField, Name: "ПолеНаименование", DataPath: "Объект.Наименование", InputMask: tc.mask},
-					{Kind: metadata.FormElementField, Name: "ПолеЛокальное", DataPath: "Локальное", InputMask: tc.mask},
+			for _, formMask := range []string{"", "[0-9]+"} {
+				t.Run(tc.name+"/"+value+"/"+formMask, func(t *testing.T) {
+					srv, ent := setupManagedEventsServer(t, ``, nil, []*metadata.FormElement{
+						{Kind: metadata.FormElementField, Name: "ПолеНаименование", DataPath: "Объект.Наименование", InputMask: tc.mask, Mask: formMask},
+						{Kind: metadata.FormElementField, Name: "ПолеЛокальное", DataPath: "Локальное", InputMask: tc.mask, Mask: formMask},
+					})
+					ent.Forms[0].Attributes = []*metadata.FormAttribute{{Name: "Локальное", TypeRef: "string"}}
+					id := uuid.New()
+					if err := srv.store.Upsert(context.Background(), ent.Name, id, map[string]any{"Наименование": value}, ent); err != nil {
+						t.Fatal(err)
+					}
+					body := renderObjectFormGET(t, srv, ent, id)
+					assertManagedMaskedInput(t, body, "Наименование", tc.mask, value, formMask)
+					assertManagedMaskedInput(t, body, "Локальное", tc.mask, "", formMask)
 				})
-				ent.Forms[0].Attributes = []*metadata.FormAttribute{{Name: "Локальное", TypeRef: "string"}}
-				id := uuid.New()
-				if err := srv.store.Upsert(context.Background(), ent.Name, id, map[string]any{"Наименование": value}, ent); err != nil {
-					t.Fatal(err)
-				}
-				body := renderObjectFormGET(t, srv, ent, id)
-				assertManagedMaskedInput(t, body, "Наименование", tc.mask, value)
-				assertManagedMaskedInput(t, body, "Локальное", tc.mask, "")
-			})
+			}
 		}
 	}
 }
@@ -114,31 +127,33 @@ func TestManagedProcessorForm_MaskedInputAutocompleteThroughHTTP(t *testing.T) {
 		{"plain", "", "Текст & <значение>"},
 	} {
 		for _, value := range []string{"", tc.filled} {
-			t.Run(tc.name+"/"+value, func(t *testing.T) {
-				srv, _ := newSubmitTestServer(t, nil)
-				proc := &processor.Processor{
-					Name:   "ТелефоннаяОбработка",
-					Params: []processor.Param{{Name: "Параметр", Type: "string", Default: value}},
-					Forms: []*metadata.FormModule{{
-						Name: "ФормаОбработки", Kind: "object", LayoutKind: metadata.FormLayoutManaged,
-						Attributes: []*metadata.FormAttribute{{Name: "Локальное", TypeRef: "string"}},
-						Elements: []*metadata.FormElement{
-							{Kind: metadata.FormElementField, Name: "ПолеПараметр", DataPath: "Объект.Параметр", InputMask: tc.mask},
-							{Kind: metadata.FormElementField, Name: "ПолеЛокальное", DataPath: "Локальное", InputMask: tc.mask},
-						},
-					}},
-				}
-				srv.reg.LoadProcessors([]*processor.Processor{proc})
-				router := chi.NewRouter()
-				srv.Mount(router)
-				rec := httptest.NewRecorder()
-				router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/processor/"+proc.Name, nil))
-				if rec.Code != http.StatusOK {
-					t.Fatalf("GET формы обработки: статус %d: %s", rec.Code, rec.Body.String())
-				}
-				assertManagedMaskedInput(t, rec.Body.String(), "Параметр", tc.mask, value)
-				assertManagedMaskedInput(t, rec.Body.String(), "Локальное", tc.mask, "")
-			})
+			for _, formMask := range []string{"", "[0-9]+"} {
+				t.Run(tc.name+"/"+value+"/"+formMask, func(t *testing.T) {
+					srv, _ := newSubmitTestServer(t, nil)
+					proc := &processor.Processor{
+						Name:   "ТелефоннаяОбработка",
+						Params: []processor.Param{{Name: "Параметр", Type: "string", Default: value}},
+						Forms: []*metadata.FormModule{{
+							Name: "ФормаОбработки", Kind: "object", LayoutKind: metadata.FormLayoutManaged,
+							Attributes: []*metadata.FormAttribute{{Name: "Локальное", TypeRef: "string"}},
+							Elements: []*metadata.FormElement{
+								{Kind: metadata.FormElementField, Name: "ПолеПараметр", DataPath: "Объект.Параметр", InputMask: tc.mask, Mask: formMask},
+								{Kind: metadata.FormElementField, Name: "ПолеЛокальное", DataPath: "Локальное", InputMask: tc.mask, Mask: formMask},
+							},
+						}},
+					}
+					srv.reg.LoadProcessors([]*processor.Processor{proc})
+					router := chi.NewRouter()
+					srv.Mount(router)
+					rec := httptest.NewRecorder()
+					router.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/processor/"+proc.Name, nil))
+					if rec.Code != http.StatusOK {
+						t.Fatalf("GET формы обработки: статус %d: %s", rec.Code, rec.Body.String())
+					}
+					assertManagedMaskedInput(t, rec.Body.String(), "Параметр", tc.mask, value, formMask)
+					assertManagedMaskedInput(t, rec.Body.String(), "Локальное", tc.mask, "", formMask)
+				})
+			}
 		}
 	}
 }

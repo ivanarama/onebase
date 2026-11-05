@@ -189,7 +189,11 @@ func setNumberCell(f *excelize.File, sheet, axis string, value any, format strin
 		return false, nil
 	}
 	if decimals < 0 {
-		return true, f.SetCellFloat(sheet, axis, number, -1, 64)
+		bitSize := 64
+		if _, ok := value.(float32); ok {
+			bitSize = 32
+		}
+		return true, f.SetCellFloat(sheet, axis, number, -1, bitSize)
 	}
 	// Как и DecimalPlaces в excelize, ограничиваем точность до 30 знаков.
 	// Проверяем до форматирования и strings.Repeat: тег может прийти из чужого шаблона.
@@ -199,7 +203,21 @@ func setNumberCell(f *excelize.File, sheet, axis string, value any, format strin
 	// Используем то же округление, что и теги внутри текста. Иначе одна
 	// сумма может отличаться на копейку в зависимости от окружения тега.
 	rounded := printform.ApplyFormat(value, "number:"+strconv.Itoa(decimals))
-	number, err := strconv.ParseFloat(rounded, 64)
+	// An explicit text format belongs to the template author. Keep both the
+	// requested trailing zeroes and that cell type instead of writing a number
+	// whose display mask (@) cannot express the tag's decimal places.
+	styleID, err := f.GetCellStyle(sheet, axis)
+	if err != nil {
+		return true, err
+	}
+	style, err := f.GetStyle(styleID)
+	if err != nil {
+		return true, err
+	}
+	if style.NumFmt == 49 || (style.CustomNumFmt != nil && *style.CustomNumFmt == "@") {
+		return true, f.SetCellStr(sheet, axis, rounded)
+	}
+	number, err = strconv.ParseFloat(rounded, 64)
 	if err != nil {
 		return true, fmt.Errorf("parse formatted number for %s: %w", axis, err)
 	}

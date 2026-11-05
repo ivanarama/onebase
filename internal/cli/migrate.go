@@ -92,6 +92,7 @@ func runMigrate(cmd *cobra.Command, _ []string) error {
 	db.SetSchemaOptions(storage.SchemaOptions{
 		AllowDestructive: allowDestructive,
 		AdoptIndexes:     adoptions,
+		Warn:             func(w storage.SchemaTypeWarning) { outln("  ПРЕДУПРЕЖДЕНИЕ: " + w.String()) },
 		Report: func(c storage.SchemaChange, applied bool) {
 			if applied {
 				outln("  " + c.String())
@@ -123,6 +124,13 @@ func migrationPlanText(ctx context.Context, db *storage.DB, proj *project.Projec
 	var text strings.Builder
 	if err := db.CheckEntityIndexIdentity(ctx, proj.Entities); err != nil {
 		return "", err
+	}
+	warnings, err := db.UntrackedFieldTypeWarnings(ctx, proj.Entities, proj.Registers, proj.InfoRegisters)
+	if err != nil {
+		return "", err
+	}
+	for _, warning := range warnings {
+		fmt.Fprintln(&text, "  ПРЕДУПРЕЖДЕНИЕ: "+warning.String())
 	}
 	if err := printLongIdentPlan(ctx, db, proj, &text); err != nil {
 		return "", err

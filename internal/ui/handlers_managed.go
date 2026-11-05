@@ -86,6 +86,7 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 	managed := pickManagedForm(entity, kind)
 	if managed != nil {
 		data["Form"] = managed
+		s.issueConcealInstance(w, r, entity, managed, data)
 		// Фикс A: команды формы, не размещённые вручную элементом kind: Кнопка,
 		// рисуются автоматической командной панелью (иначе объявленная в commands:
 		// команда в UI не видна — её кнопку рисует только kind: Кнопка). Fire-click
@@ -163,6 +164,8 @@ func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any
 		data["FormCloseSchema"] = entityFormCloseSchema(entity, form)
 	}
 	s.prepareGridOrders(ctx, data, form)
+	// conceal: true — при открытии значение скрытого поля в разметку не попадает.
+	blankConcealedValues(form, data["Values"])
 	if css := formConditionalCSS(form); css != "" {
 		data["FormConditionalCSS"] = template.CSS(css) //nolint:gosec // G203: стиль собран cssStyle → csssafe.Color, произвольная строка в CSS не попадает
 	}

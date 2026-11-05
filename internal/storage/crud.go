@@ -926,7 +926,11 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 	if err != nil {
 		return nil, fmt.Errorf("list %s: %w", entityName, err)
 	}
-	query := fmt.Sprintf("SELECT %s FROM %s%s", strings.Join(cols, ", "), table, whereClause)
+	baseSelect := fmt.Sprintf("SELECT %s FROM %s", strings.Join(cols, ", "), table)
+	query := baseSelect + whereClause
+	// split — порядок по умолчанию «пустые в конце», который этот диалект сам
+	// не даёт (см. ниже): тогда непустые и пустые читаются двумя запросами.
+	var split *nullsLastOrder
 
 	// sorting
 	// Папки впереди — только когда они перемешаны с элементами. Если отбор
@@ -1061,19 +1065,116 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 			}
 		}
 		if params.Sort == "" && orderCol != "id" {
-			// PostgreSQL и SQLite по-разному располагают NULL при ASC/DESC.
-			// Пустые значения оставляем в конце на обоих диалектах.
-			query += fmt.Sprintf(" ORDER BY CASE WHEN %s IS NULL THEN 1 ELSE 0 END ASC, %s %s, id ASC",
-				orderCol, orderCol, orderDir)
+			// PostgreSQL и SQLite по-разному располагают NULL при ASC/DESC, а
+			// пустые значения обязаны идти в конце на обоих. Выражение
+			// «CASE WHEN col IS NULL …» в ORDER BY это давало, но запрещало
+			// индекс: справочник на 2 млн строк сортировался целиком на каждое
+			// открытие списка (24 с при индексе по наименованию). Где диалект
+			// сам ставит NULL в конец, хватает обычного ORDER BY; где нет —
+			// непустые и пустые читаются раздельно, каждые по индексу.
+			if db.dialect.Name() == "postgres" && orderDir == "ASC" || db.dialect.Name() != "postgres" && orderDir == "DESC" {
+				query += fmt.Sprintf(" ORDER BY %s %s, id ASC", orderCol, orderDir)
+			} else {
+				split = &nullsLastOrder{col: orderCol, dir: orderDir}
+			}
 		} else {
 			query += fmt.Sprintf(" ORDER BY %s %s", orderCol, orderDir)
 		}
 	}
 
+	scan := func(query string, args []any) ([]map[string]any, error) {
+		return db.scanListRows(ctx, entityName, entity, cols, hasPredefined, query, args)
+	}
+	if split != nil {
+		if HasTx(ctx) {
+			// A borrowed PostgreSQL transaction may be READ COMMITTED and
+			// already in use: neither sharing it nor a savepoint fixes the
+			// snapshot across statements. Read this List in one statement,
+			// retaining the caller's own writes and transaction settings.
+			query += fmt.Sprintf(" ORDER BY %s %s NULLS LAST, id ASC", split.col, split.dir)
+		} else {
+			var result []map[string]any
+			err := db.WithReadSnapshot(ctx, func(readCtx context.Context) error {
+				readScan := func(query string, args []any) ([]map[string]any, error) {
+					return db.scanListRows(readCtx, entityName, entity, cols, hasPredefined, query, args)
+				}
+				var err error
+				result, err = db.listNullsLast(readCtx, entityName, table, baseSelect, whereClause, args, split, params, readScan)
+				return err
+			})
+			return result, err
+		}
+	}
 	if params.Limit > 0 {
 		query += fmt.Sprintf(" LIMIT %d OFFSET %d", params.Limit, params.Offset)
 	}
+	return scan(query, args)
+}
 
+// nullsLastOrder — порядок «col dir, id», при котором строки с пустым col идут
+// последними, а диалект без CASE в ORDER BY ставит их первыми.
+type nullsLastOrder struct {
+	col string
+	dir string
+}
+
+// listNullsLast читает страницу в порядке «непустые по col, затем пустые по id»
+// двумя запросами, каждый из которых может идти по индексу: сначала непустые
+// (ORDER BY col, id + LIMIT/OFFSET страницы), и только если страница ими не
+// заполнилась — пустые с остатком смещения. Счёт непустых нужен лишь на
+// последних страницах. Результат совпадает с прежним
+// «ORDER BY CASE WHEN col IS NULL THEN 1 ELSE 0 END, col, id».
+func (db *DB) listNullsLast(ctx context.Context, entityName, table, baseSelect, whereClause string, args []any,
+	order *nullsLastOrder, params ListParams,
+	scan func(string, []any) ([]map[string]any, error)) ([]map[string]any, error) {
+	where := func(cond string) string {
+		if strings.TrimSpace(whereClause) == "" {
+			return " WHERE " + cond
+		}
+		return whereClause + " AND " + cond
+	}
+	notNull := baseSelect + where(order.col+" IS NOT NULL") + fmt.Sprintf(" ORDER BY %s %s, id ASC", order.col, order.dir)
+	isNull := baseSelect + where(order.col+" IS NULL") + " ORDER BY id ASC"
+	if params.Limit <= 0 {
+		head, err := scan(notNull, args)
+		if err != nil {
+			return nil, err
+		}
+		tail, err := scan(isNull, args)
+		if err != nil {
+			return nil, err
+		}
+		return append(head, tail...), nil
+	}
+	head, err := scan(notNull+fmt.Sprintf(" LIMIT %d OFFSET %d", params.Limit, params.Offset), args)
+	if err != nil {
+		return nil, err
+	}
+	if len(head) >= params.Limit {
+		return head, nil
+	}
+	// Страница добирается пустыми: смещение среди них — за вычетом всех
+	// непустых строк выборки.
+	var nonNull int
+	countSQL := "SELECT COUNT(*) FROM " + table + where(order.col+" IS NOT NULL")
+	if err := db.QueryRow(ctx, countSQL, args...).Scan(&nonNull); err != nil {
+		return nil, fmt.Errorf("list %s: %w", entityName, err)
+	}
+	offset := params.Offset - nonNull
+	if offset < 0 {
+		offset = 0
+	}
+	tail, err := scan(isNull+fmt.Sprintf(" LIMIT %d OFFSET %d", params.Limit-len(head), offset), args)
+	if err != nil {
+		return nil, err
+	}
+	return append(head, tail...), nil
+}
+
+// scanListRows выполняет запрос списка и разбирает строки в map по полям
+// сущности (общая часть List для одного и двух запросов).
+func (db *DB) scanListRows(ctx context.Context, entityName string, entity *metadata.Entity, cols []string,
+	hasPredefined bool, query string, args []any) ([]map[string]any, error) {
 	rows, err := db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list %s: %w", entityName, err)

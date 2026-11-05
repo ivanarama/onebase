@@ -183,30 +183,41 @@ func (q *queryProxy) CallMethod(name string, args []any) any {
 	panic(userError{Msg: "Объект Запрос не имеет метода " + name})
 }
 
-// unwrapArrayParams converts DSL params for query compilation:
+// unwrapParams converts DSL params for query compilation:
 // - *Array → []any (each item unwrapped)
 // - any reference-like value implementing GetRefUUID → UUID string
 // This ensures pgx receives plain Go types, not interpreter-specific wrappers.
-func unwrapArrayParams(params map[string]any) map[string]any {
+//
+// emptyRefAsNull: пустая
+// ссылка уходит NULL, а не пустой строкой. На PostgreSQL пустая строка в сравнении со
+// ссылочной колонкой не приводится к uuid («operator does not exist: uuid =
+// text» / «invalid input syntax for type uuid») — отбор с невыбранным полем
+// падал, хотя на SQLite работал. NULL в сравнении даёт «не совпало», как и
+// пустая строка против NULL-колонки на SQLite.
+func unwrapParams(params map[string]any, emptyRefAsNull bool) map[string]any {
 	result := make(map[string]any, len(params))
 	for k, v := range params {
 		switch val := v.(type) {
 		case *Array:
 			items := make([]any, len(val.items))
 			for i, item := range val.items {
-				items[i] = unwrapRef(item)
+				items[i] = unwrapRef(item, emptyRefAsNull)
 			}
 			result[k] = items
 		default:
-			result[k] = unwrapRef(v)
+			result[k] = unwrapRef(v, emptyRefAsNull)
 		}
 	}
 	return result
 }
 
-func unwrapRef(v any) any {
+func unwrapRef(v any, emptyRefAsNull bool) any {
 	if ref, ok := v.(interface{ GetRefUUID() string }); ok {
-		return ref.GetRefUUID()
+		id := ref.GetRefUUID()
+		if id == "" && emptyRefAsNull {
+			return nil
+		}
+		return id
 	}
 	return v
 }
@@ -215,7 +226,11 @@ func (q *queryProxy) execute() *Array {
 	if strings.TrimSpace(q.text) == "" {
 		panic(userError{Msg: "Запрос.Текст не задан"})
 	}
-	params := unwrapArrayParams(q.params)
+	pg := false
+	if d := q.db.Dialect(); d != nil {
+		pg = d.Name() == "postgres"
+	}
+	params := unwrapParams(q.params, pg)
 	ctx := q.context()
 	// #1272: транзакция активна, а сохранённый контекст запроса её не
 	// содержит — запрос ушёл бы в пул за соединением, которое держит эта же

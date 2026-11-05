@@ -149,6 +149,23 @@ jobs:
           $ldflags += " -X github.com/ivantit66/onebase/internal/selfupdate.RequireSignature=1"
           go build -tags webview "-ldflags=$ldflags" -o onebase-gui.exe ./cmd/onebase
 
+      - name: Collect licenses for the actual release binaries
+        shell: bash
+        env:
+          BUILD_VER: ${{ steps.ver.outputs.ver }}
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          binaries=(onebase)
+          if [ "$TARGET_GOOS" = windows ]; then
+            binaries=(onebase.exe)
+            if [ "$TARGET_GOARCH" = amd64 ]; then
+              binaries+=(onebase-gui.exe)
+            fi
+          fi
+          go run ./tools/licensebundle -release -out "$RUNNER_TEMP/license-bundle" -version "$BUILD_VER" "${binaries[@]}"
+
       - name: Package (Windows)
         if: matrix.goos == 'windows'
         shell: pwsh
@@ -169,6 +186,7 @@ jobs:
           }
           Copy-Item README.md "$name\" -ErrorAction SilentlyContinue
           Copy-Item examples "$name\" -Recurse -ErrorAction SilentlyContinue
+          Copy-Item "$env:RUNNER_TEMP\license-bundle\*" "$name\" -Recurse -ErrorAction Stop
           Compress-Archive -Path "$name\*" -DestinationPath "${name}.zip"
           echo "ASSET=${name}.zip" >> $env:GITHUB_ENV
 
@@ -180,6 +198,7 @@ jobs:
           cp onebase "$name/"
           cp README.md "$name/" 2>/dev/null || true
           cp -r examples "$name/" 2>/dev/null || true
+          cp -r "$RUNNER_TEMP/license-bundle/." "$name/"
           tar czf "${name}.tar.gz" "$name"
           echo "ASSET=${name}.tar.gz" >> $GITHUB_ENV
 

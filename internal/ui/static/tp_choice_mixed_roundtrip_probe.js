@@ -34,9 +34,12 @@ function DataView() { this.items = []; this.onRowCountChanged = slot(); this.onR
 DataView.prototype.setItems = function(items) { this.items = items; };
 DataView.prototype.getItems = function() { return this.items; };
 function Grid(div, dataView, columns, options) {
+  this.columns = columns;
   this.options = options;
   for (const name of ['onSort', 'onCellChange', 'onValidationError', 'onKeyDown']) this[name] = slot();
 }
+Grid.prototype.getColumns = function() { return this.columns; };
+Grid.prototype.setColumns = function(columns) { this.columns = columns; };
 Grid.prototype.getOptions = function() { return this.options; };
 Grid.prototype.getFooterRowColumn = function() { return null; };
 for (const name of ['resizeCanvas', 'autosizeColumns', 'updateRowCount', 'render', 'invalidate']) Grid.prototype[name] = function() {};

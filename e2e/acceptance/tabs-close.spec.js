@@ -34,12 +34,14 @@ test.beforeEach(async ({ page }) => {
 });
 test.afterEach(() => expect(errors).toEqual([]));
 
-async function openForm(page, suffix = 'new') {
+async function openForm(page, suffix = 'new', onVisible = () => {}) {
   // Use the shell's public open command, with the full production frame DOM.
   await page.evaluate(url => window.obOpenTab(url, 'Приемка'), ROOT + suffix);
   const handle = await frames(page).last().elementHandle();
   const frame = await handle.contentFrame();
   await expect(frame.locator('input[name="Наименование"]')).toBeVisible();
+  onVisible(frame);
+  await frame.waitForLoadState('domcontentloaded');
   return frame;
 }
 
@@ -83,6 +85,65 @@ async function persisted(page, id, name) {
   expect(response.ok()).toBe(true);
   expect(await response.text()).toContain(name);
 }
+
+test('tab close: a visible form waits for its real managed script before saving', async ({ page }) => {
+  let releaseScript, scriptBlocked, visible;
+  const scriptBarrier = new Promise(resolve => { releaseScript = resolve; });
+  const blocked = new Promise(resolve => { scriptBlocked = resolve; });
+  const shown = new Promise(resolve => { visible = resolve; });
+  const events = [];
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.endsWith('/form-event')) events.push(request);
+  });
+  const handler = async route => {
+    // Hold delivery of the actual script, without replacing its bytes or APIs.
+    const response = await route.fetch();
+    scriptBlocked();
+    await scriptBarrier;
+    await route.fulfill({ response });
+  };
+  await page.route('**/static/managed.js', handler);
+  let opened = false;
+  const opening = openForm(page, 'new?loading=1', visible).then(frame => {
+    opened = true;
+    return frame;
+  });
+  let held;
+  try {
+    await blocked;
+    const loading = await shown;
+    // onVisible only observes the real visibility boundary. Drain the promise
+    // continuation: without the load barrier openForm would already return,
+    // even though the script is still withheld. No timer race is involved.
+    await Promise.resolve();
+    expect(opened).toBe(false);
+    expect(await loading.evaluate(() => ({
+      state: document.readyState,
+      fire: typeof window.obFire,
+      close: typeof window.obRequestFormClose,
+    }))).toEqual({ state: 'loading', fire: 'undefined', close: 'undefined' });
+    expect(events).toEqual([]);
+    releaseScript();
+    const frame = await opening;
+    expect(await frame.evaluate(() => ({
+      ready: document.readyState !== 'loading',
+      fire: typeof window.obFire,
+      close: typeof window.obRequestFormClose,
+    }))).toEqual({ ready: true, fire: 'function', close: 'function' });
+    held = await holdSave(page, frame, 'saved after runtime loaded');
+    held.release();
+    await expect(frames(page)).toHaveCount(0);
+    await expect.poll(() => closes.length).toBe(1);
+    expect(closes[0].close.allowed).toBe(true);
+    expect(events).toHaveLength(1);
+    await persisted(page, held.data.savedId, 'saved after runtime loaded');
+  } finally {
+    releaseScript();
+    await opening;
+    if (held) await held.finish();
+    await page.unroute('**/static/managed.js', handler);
+  }
+});
 
 test('tab close: early SSE closes only the saved form once and a reopened object stays open', async ({ page }) => {
   const first = await openForm(page);

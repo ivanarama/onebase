@@ -77,3 +77,31 @@ func TestFormOpenMode_PersonalOverridesGlobal(t *testing.T) {
 		t.Errorf("аноним → глобальный tabs, получено %q", got)
 	}
 }
+
+// Закреплённый режим (ui.form_open_mode_locked): личные ключи перестают
+// действовать без чистки данных, после снятия закрепления — снова действуют.
+func TestFormOpenMode_LockIgnoresPersonal(t *testing.T) {
+	ctx := context.Background()
+	db := newTestDB(t)
+	if db.GetFormOpenModeLocked(ctx) {
+		t.Fatal("по умолчанию режим не закреплён")
+	}
+	if err := db.SaveFormOpenMode(ctx, FormModeTabs); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveUserFormOpenMode(ctx, "ivan", FormModePages); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SaveFormOpenModeLocked(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	if got := db.EffectiveFormOpenMode(ctx, "ivan"); got != FormModeTabs {
+		t.Errorf("при закреплении личный pages не должен действовать, получено %q", got)
+	}
+	if err := db.SaveFormOpenModeLocked(ctx, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := db.EffectiveFormOpenMode(ctx, "ivan"); got != FormModePages {
+		t.Errorf("после снятия закрепления личный pages снова действует, получено %q", got)
+	}
+}
