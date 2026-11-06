@@ -1310,6 +1310,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	vars["AddChoiceItem"] = choiceFn
 	if closeInv != nil {
 		disableDialogBuiltinsForClose(vars)
+		allowCloseQuestion(vars, questionFn, strings.TrimSpace(r.FormValue("_question_answer")) != "")
 	}
 
 	condRuntime := newFormConditionalRuntime(form)
@@ -1346,9 +1347,9 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	if qa := strings.TrimSpace(r.FormValue("_question_answer")); qa != "" {
 		vars["ВопросОтвет"] = qa
 		vars["QuestionAnswer"] = qa
-	} else if beforePost {
-		// ПередПроведением приходит и без ответа, и с ответом на свой же
-		// вопрос: пустая строка отличает первый вызов от ответа.
+	} else if beforePost || closeInv != nil {
+		// ПередПроведением и ПередЗакрытием приходят и без ответа, и с ответом
+		// на свой же вопрос: пустая строка отличает первый вызов от ответа.
 		vars["ВопросОтвет"] = ""
 		vars["QuestionAnswer"] = ""
 	}
@@ -1392,7 +1393,9 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		entryResult, runErr = s.interp.CallEntrySandboxedWithBindings(decl, thisObj, closeArgs,
 			interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, vars)
 		if runErr == nil {
-			closeInv.cancelled = formCloseBindingCancelled(decl, entryResult.Bindings)
+			// Заданный вопрос оставляет форму открытой: закрытие повторится с
+			// ответом, и решать будет уже второй ход.
+			closeInv.cancelled = formCloseBindingCancelled(decl, entryResult.Bindings) || question.Variants != nil
 		}
 	} else if beforePost && decl != nil {
 		var entryResult interpreter.EntryCallResult
@@ -2781,6 +2784,8 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		vars["AddChoiceItem"] = choiceFn
 		if closeInv != nil {
 			disableDialogBuiltinsForClose(vars)
+			qa, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_question_answer"))
+			allowCloseQuestion(vars, questionFn, strings.TrimSpace(qa) != "")
 		}
 
 		// Навигация (#1557): ОткрытьФорму(Ссылка) из формы обработки — самое
@@ -2831,6 +2836,11 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		if qa, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_question_answer")); strings.TrimSpace(qa) != "" {
 			vars["ВопросОтвет"] = qa
 			vars["QuestionAnswer"] = qa
+		} else if closeInv != nil {
+			// ПередЗакрытием без ответа — первый ход: пустая строка, как у
+			// ПередПроведением формы объекта.
+			vars["ВопросОтвет"] = ""
+			vars["QuestionAnswer"] = ""
 		}
 		// Значения редактируемых полей диалога — структура ДиалогПоля.
 		if raw, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_question_fields")); strings.TrimSpace(raw) != "" {
@@ -2858,7 +2868,7 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			entryResult, runErr = s.interp.CallEntrySandboxedWithBindings(decl, thisObj, closeArgs,
 				interpreter.SandboxProfile{Context: dslCtx, MaxWallClock: timeout}, vars)
 			if runErr == nil {
-				closeInv.cancelled = formCloseBindingCancelled(decl, entryResult.Bindings)
+				closeInv.cancelled = formCloseBindingCancelled(decl, entryResult.Bindings) || question.Variants != nil
 			}
 		} else if timeout > 0 {
 			runErr = s.interp.RunSandboxed(decl, thisObj,

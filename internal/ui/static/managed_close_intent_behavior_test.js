@@ -2167,3 +2167,46 @@ if (process.env.ONEBASE_QUESTION_HTTP_URL) {
     }
   });
 }
+
+test('BeforeClose question: answer repeats close with the answer, dismiss keeps the form open', async () => {
+  const bodies = [];
+  const app = runtime(async (url, options) => {
+    const body = capturedCloseBody(options);
+    bodies.push(body);
+    const intentId = closeIntent(options);
+    const answer = body.get('_question_answer');
+    if (!answer) {
+      return response({
+        ok: true, close: {intentId, allowed: false, saved: false},
+        question: {text: 'Заявок не найдено. Вернуться к звонку?', variants: ['Вернуться к звонку', 'Закрыть']},
+      });
+    }
+    return response({ok: true, close: {intentId, allowed: answer === 'Закрыть', saved: false}});
+  });
+  let asked = null;
+  app.context.obOpenQuestion = (payload, elementName, handlers) => { asked = {payload, handlers}; };
+  const settle = async () => { for (let i = 0; i < 20 && !asked; i++) await new Promise((r) => setTimeout(r, 0)); };
+
+  const pending = app.context.obRequestFormClose({reason: 'close', mode: 'discard'});
+  await settle();
+  assert.ok(asked, 'question from BeforeClose was not shown');
+  assert.equal(asked.payload.text, 'Заявок не найдено. Вернуться к звонку?');
+  asked.handlers.onAnswer('Закрыть', {_question_answer: 'Закрыть'});
+  const decision = await pending;
+  assert.equal(decision.allowed, true);
+  assert.equal(bodies.length, 2, 'answer must repeat the close request');
+  assert.equal(bodies[0].get('_question_answer'), null);
+  assert.equal(bodies[1].get('_question_answer'), 'Закрыть');
+  assert.equal(bodies[1].closeMode, 'discard');
+  assert.equal(bodies[1].closeReason, 'close');
+  assert.notEqual(bodies[1].closeIntent, bodies[0].closeIntent, 'the repeat is a new close intent');
+
+  asked = null;
+  const dismissed = app.context.obRequestFormClose({reason: 'close', mode: 'discard'});
+  await settle();
+  assert.ok(asked);
+  asked.handlers.onDismiss();
+  const kept = await dismissed;
+  assert.equal(kept.allowed, false);
+  assert.equal(bodies.length, 3, 'dismissing the question must not repeat the close');
+});
