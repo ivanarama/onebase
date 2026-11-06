@@ -26,6 +26,7 @@ def connect(path):
     db.execute("CREATE TABLE IF NOT EXISTS sources (key TEXT PRIMARY KEY, descriptor TEXT NOT NULL, phase TEXT NOT NULL, receipt TEXT)")
     db.execute("CREATE TABLE IF NOT EXISTS observations (key TEXT NOT NULL, phase TEXT NOT NULL, evidence_path TEXT NOT NULL, evidence_sha256 TEXT NOT NULL, PRIMARY KEY(key,phase))")
     db.execute("CREATE TABLE IF NOT EXISTS delivery_intents (key TEXT PRIMARY KEY, pin TEXT NOT NULL)")
+    db.execute("CREATE TABLE IF NOT EXISTS delivery_targets (key TEXT PRIMARY KEY, receipt TEXT NOT NULL)")
     return db
 
 
@@ -80,8 +81,9 @@ def read_scope(row):
 def deliver(db, key, native_path, series_id, directive_path, expected_digest):
     """CAS append to an actual unstarted occurrence and its template, or persist WAIT.
 
-    A crash after the native commit is safe: the immutable block is found in both
-    rows on retry. A receipt alone never permits a GitHub write; the caller must
+    The exact task and full before/after prompt hashes are durable before native
+    writes. Recovery checks that same target; it never elects a replacement.
+    A receipt alone never permits a GitHub write; the caller must
     repeat all canonical source/proof/ownership/admission gates after delivery.
     """
     if series_id <= 0:
@@ -121,6 +123,12 @@ def deliver(db, key, native_path, series_id, directive_path, expected_digest):
         # This immutable pin must survive a crash after native.commit(), even
         # when the later local receipt UPDATE fails or its transaction rolls back.
         db.commit()
+        native = sqlite3.connect(f"file:{native_path.as_posix()}?mode=rw", uri=True, timeout=10, isolation_level=None)
+        native.row_factory = sqlite3.Row
+        # All deliverers take the native lock before reacquiring the queue lock.
+        # Persisting the target below therefore cannot deadlock another deliverer
+        # holding the queue lock while waiting for this native transaction.
+        native.execute("BEGIN IMMEDIATE")
         db.execute("BEGIN IMMEDIATE")
         row = read_entry(db, key)
         read_scope(row)
@@ -130,13 +138,16 @@ def deliver(db, key, native_path, series_id, directive_path, expected_digest):
         if previous and (previous["series_id"] != series_id or previous["directive_sha256"] != expected_digest
                          or previous["native_path"] != str(native_path)):
             raise QueueError("source delivery is already pinned; do not retarget")
-        native = sqlite3.connect(f"file:{native_path.as_posix()}?mode=rw", uri=True, timeout=10, isolation_level=None)
-        native.row_factory = sqlite3.Row
-        native.execute("BEGIN IMMEDIATE")
+        target = db.execute("SELECT receipt FROM delivery_targets WHERE key=?", (key,)).fetchone()
+        receipt = json.loads(target[0]) if target is not None else None
+        if previous and (receipt is None or previous != receipt):
+            raise QueueError("delivery receipt lacks its original durable target or differs")
         series = native.execute("SELECT id,prompt,paused,ended_at FROM task_series WHERE id=?", (series_id,)).fetchone()
         if series is None or series["paused"] or series["ended_at"] is not None:
             raise QueueError("native series is paused, ended or missing")
         pending = native.execute("SELECT id,prompt,status,started_at,session_id FROM tasks WHERE series_id=? AND status IN ('pending','rate_limited') ORDER BY id", (series_id,)).fetchall()
+        if receipt and (len(pending) != 1 or pending[0]["id"] != receipt["task_id"]):
+            raise QueueError("original native occurrence changed or started; do not retarget")
         if not pending:
             native.rollback()
             db.execute("UPDATE sources SET phase='awaiting-pending-authority' WHERE key=?", (key,))
@@ -149,6 +160,29 @@ def deliver(db, key, native_path, series_id, directive_path, expected_digest):
         for kind, prompt in (("series", series["prompt"]), ("task", task["prompt"])):
             if marker in prompt and prompt.count(block) != 1:
                 raise QueueError(f"{kind} directive marker is incomplete or duplicated")
+        if receipt is None:
+            if marker in series["prompt"] or marker in task["prompt"]:
+                raise QueueError("existing directive has no durable target; do not adopt it")
+            receipt = {"series_id":series_id, "task_id":task["id"], "native_path":str(native_path),
+                       "scope_sha256":data["scope_sha256"], "directive_sha256":expected_digest,
+                       "block":block, "before":before,
+                       "after":{"series_prompt_sha256":digest((series["prompt"]+block).encode()),
+                                "task_prompt_sha256":digest((task["prompt"]+block).encode())}}
+            db.execute("INSERT INTO delivery_targets VALUES (?,?)", (key,canonical(receipt)))
+        if (receipt["series_id"] != series_id or receipt["native_path"] != str(native_path)
+                or receipt["scope_sha256"] != data["scope_sha256"]
+                or receipt["directive_sha256"] != expected_digest or receipt["block"] != block
+                or before not in (receipt["before"], receipt["after"])
+                or (previous is not None and before != receipt["after"])):
+            raise QueueError("original full native prompts changed; preserve delivery fingerprints")
+        # Survives even a crash before native commit. The native write lock keeps
+        # both prompts and occurrence state fixed while this binding is saved.
+        db.commit()
+        db.execute("BEGIN IMMEDIATE")
+        row = read_entry(db, key)
+        read_scope(row)
+        if row["phase"] not in {"prepared","awaiting-pending-authority","delivered"}:
+            raise QueueError("source phase changed after target binding")
         if block not in series["prompt"]:
             changed = native.execute("UPDATE task_series SET prompt=? WHERE id=? AND prompt=? AND paused=0 AND ended_at IS NULL",
                                      (series["prompt"] + block, series_id, series["prompt"]))
@@ -160,13 +194,8 @@ def deliver(db, key, native_path, series_id, directive_path, expected_digest):
             if changed.rowcount != 1:
                 raise QueueError("native occurrence CAS lost")
         read_scope(row)
-        receipt = {"series_id":series_id, "task_id":task["id"], "native_path":str(native_path),
-                   "scope_sha256":data["scope_sha256"], "directive_sha256":expected_digest,
-                   "block":block, "before":before,
-                   "after":{"series_prompt_sha256":digest((series["prompt"] if block in series["prompt"] else series["prompt"]+block).encode()),
-                            "task_prompt_sha256":digest((task["prompt"] if block in task["prompt"] else task["prompt"]+block).encode())}}
         native.commit()
-        # Local state can be reconstructed from the native block after a crash.
+        # Publish only the original durable receipt, including during recovery.
         db.execute("UPDATE sources SET phase='delivered',receipt=? WHERE key=?", (canonical(receipt), key))
         db.commit()
         return {"action":"delivered", "key":key, "task_id":task["id"], "series_id":series_id, "mutation_authorized":False}
@@ -186,6 +215,9 @@ def verify(db, key):
     if row["phase"] != "delivered" or not row["receipt"]:
         raise QueueError("no completed native delivery")
     receipt = json.loads(row["receipt"])
+    target = db.execute("SELECT receipt FROM delivery_targets WHERE key=?", (key,)).fetchone()
+    if target is None or target[0] != canonical(receipt):
+        raise QueueError("delivery receipt lacks its original durable target or differs")
     native = sqlite3.connect(f'file:{Path(receipt["native_path"]).as_posix()}?mode=ro', uri=True)
     try:
         series = native.execute("SELECT prompt,paused,ended_at FROM task_series WHERE id=?", (receipt["series_id"],)).fetchone()

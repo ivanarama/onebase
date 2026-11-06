@@ -88,6 +88,59 @@ class SourceQueueTests(unittest.TestCase):
         self.deliver()
         self.assertEqual(self.snapshot(),before)
 
+    def saved_delivery(self):
+        with closing(sqlite3.connect(self.queue)) as queue:
+            return queue.execute("SELECT receipt FROM sources WHERE key=?", (self.key,)).fetchone()[0]
+
+    def start_delivered_task_and_add_replacement(self):
+        self.db.execute("UPDATE tasks SET status='running',started_at='new-start',session_id='new-session' WHERE id=11")
+        self.db.execute("INSERT INTO tasks VALUES(12,4,'replacement pending task','pending',NULL,NULL)")
+        self.db.commit()
+
+    def test_repeat_delivery_cannot_move_to_replacement_task(self):
+        self.deliver()
+        receipt = self.saved_delivery()
+        self.start_delivered_task_and_add_replacement()
+        before = self.snapshot()
+        self.cli("verify", "--key", self.key, ok=False)
+        self.deliver(ok=False)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.saved_delivery(), receipt)
+        self.cli("verify", "--key", self.key, ok=False)
+
+    def test_crash_recovery_cannot_move_to_replacement_task(self):
+        with closing(sqlite3.connect(self.queue)) as queue:
+            queue.executescript("CREATE TRIGGER crash_receipt BEFORE UPDATE ON sources WHEN NEW.phase='delivered' BEGIN SELECT RAISE(FAIL,'simulated receipt failure'); END;")
+        self.deliver(ok=False)
+        self.assertIsNone(self.saved_delivery())
+        self.assertIn(self.directive.read_text(), self.snapshot()["tasks"][1][2])
+        with closing(sqlite3.connect(self.queue)) as queue:
+            queue.execute("DROP TRIGGER crash_receipt")
+            queue.commit()
+        self.start_delivered_task_and_add_replacement()
+        before = self.snapshot()
+        self.deliver(ok=False)
+        self.assertEqual(self.snapshot(), before)
+        self.assertIsNone(self.saved_delivery())
+        self.cli("verify", "--key", self.key, ok=False)
+
+    def test_repeat_delivery_cannot_adopt_external_prompt_edits(self):
+        self.deliver()
+        receipt = self.saved_delivery()
+        for table, target in (("tasks", 11), ("task_series", 4)):
+            with self.subTest(table=table):
+                original = self.db.execute(f"SELECT prompt FROM {table} WHERE id=?", (target,)).fetchone()[0]
+                self.db.execute(f"UPDATE {table} SET prompt='external decision\n'||prompt WHERE id=?", (target,))
+                self.db.commit()
+                before = self.snapshot()
+                self.cli("verify", "--key", self.key, ok=False)
+                self.deliver(ok=False)
+                self.assertEqual(self.snapshot(), before)
+                self.assertEqual(self.saved_delivery(), receipt)
+                self.cli("verify", "--key", self.key, ok=False)
+                self.db.execute(f"UPDATE {table} SET prompt=? WHERE id=?", (original, target))
+                self.db.commit()
+
     def test_started_or_session_bound_pending_refused(self):
         for field in ("started_at","session_id"):
             with self.subTest(field=field):
@@ -96,6 +149,50 @@ class SourceQueueTests(unittest.TestCase):
                 self.deliver(ok=False)
                 self.assertEqual(self.snapshot(),before)
                 self.db.execute(f"UPDATE tasks SET {field}=NULL WHERE id=11")
+
+    def test_failed_native_cas_recovers_with_original_fingerprints(self):
+        self.db.executescript("CREATE TRIGGER refuse BEFORE UPDATE ON tasks BEGIN SELECT RAISE(IGNORE); END;")
+        before = self.snapshot()
+        self.deliver(ok=False)
+        self.assertEqual(self.snapshot(), before)
+        self.db.execute("DROP TRIGGER refuse")
+        self.deliver()
+        receipt = json.loads(self.saved_delivery())
+        self.assertEqual(receipt["before"]["task_prompt_sha256"], hashlib.sha256(before["tasks"][1][2].encode()).hexdigest())
+        self.assertEqual(self.cli("verify", "--key", self.key)["task_id"], 11)
+
+    def test_crash_recovery_rejects_external_edit_without_replacing_target(self):
+        with closing(sqlite3.connect(self.queue)) as queue:
+            queue.executescript("CREATE TRIGGER crash_receipt BEFORE UPDATE ON sources WHEN NEW.phase='delivered' BEGIN SELECT RAISE(FAIL,'simulated receipt failure'); END;")
+        self.deliver(ok=False)
+        with closing(sqlite3.connect(self.queue)) as queue:
+            queue.execute("DROP TRIGGER crash_receipt")
+            target = queue.execute("SELECT receipt FROM delivery_targets").fetchone()[0]
+            queue.commit()
+        self.db.execute("UPDATE tasks SET prompt='external edit'||prompt WHERE id=11")
+        before = self.snapshot()
+        self.deliver(ok=False)
+        self.assertEqual(self.snapshot(), before)
+        self.assertIsNone(self.saved_delivery())
+        with closing(sqlite3.connect(self.queue)) as queue:
+            self.assertEqual(queue.execute("SELECT receipt FROM delivery_targets").fetchone()[0], target)
+
+    def test_repeat_does_not_restore_removed_block_or_adopt_unbound_legacy_receipt(self):
+        before = self.snapshot()
+        self.deliver()
+        receipt = self.saved_delivery()
+        self.db.execute("UPDATE tasks SET prompt=? WHERE id=11", (before["tasks"][1][2],))
+        self.db.execute("UPDATE task_series SET prompt=? WHERE id=4", (before["series"][0][1],))
+        self.deliver(ok=False)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.saved_delivery(), receipt)
+        with closing(sqlite3.connect(self.queue)) as queue:
+            queue.execute("DELETE FROM delivery_targets")
+            queue.commit()
+        self.deliver(ok=False)
+        self.cli("verify", "--key", self.key, ok=False)
+        self.assertEqual(self.snapshot(), before)
+        self.assertEqual(self.saved_delivery(), receipt)
 
     def test_manual_pause_or_ended_series_refused(self):
         for field,value in (("paused",1),("ended_at","ended")):
