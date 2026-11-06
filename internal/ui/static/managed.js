@@ -2727,6 +2727,110 @@ function obManagedInitDelegates() {
     if (fire && window.obFire) window.obFire(fire, 'ПриИзменении');
   });
 
+  // BEGIN onebase-free-choice
+  // choice_free_input (ПолеСписка): строка ввода со своим списком вариантов.
+  // Выбор варианта записывает его в строку и шлёт change — тот же путь, что
+  // ручной ввод (ПриИзменении через data-ob-fire-change). Список открывают
+  // кнопка ▾, Alt+↓ или ↓; при открытом списке ввод фильтрует варианты,
+  // ↑/↓ — выбор строки, Enter — взять, Esc — закрыть, Tab — уйти со своим текстом.
+  function obFreeChoiceParts(node) {
+    var box = node && node.closest ? node.closest('[data-ob-free-choice]') : null;
+    if (!box) return null;
+    return { box: box, input: box.querySelector('[data-ob-free-choice-input]'),
+      list: box.querySelector('.ob-free-choice-list') };
+  }
+  function obFreeChoiceOpts(p) {
+    return Array.prototype.slice.call(p.list.querySelectorAll('.ob-free-choice-opt')).filter(function (o) { return !o.hidden; });
+  }
+  function obFreeChoiceClose(p) {
+    if (!p || p.list.hidden) return;
+    p.list.hidden = true;
+    p.list.querySelectorAll('.ob-free-choice-opt.active').forEach(function (o) { o.classList.remove('active'); });
+  }
+  function obFreeChoiceOpen(p, filter) {
+    if (!p.input || p.input.readOnly || p.input.disabled) return;
+    var q = (filter || '').toLowerCase();
+    p.list.querySelectorAll('.ob-free-choice-opt').forEach(function (o) {
+      o.hidden = !!q && o.textContent.toLowerCase().indexOf(q) < 0 && (o.getAttribute('data-value') || '').toLowerCase().indexOf(q) < 0;
+    });
+    p.list.hidden = obFreeChoiceOpts(p).length === 0;
+  }
+  function obFreeChoicePick(p, opt) {
+    var v = opt.getAttribute('data-value') || '';
+    obFreeChoiceClose(p);
+    p.input.focus();
+    if (p.input.value === v) return;
+    p.input.value = v;
+    p.input.dispatchEvent(new Event('input', { bubbles: true }));
+    p.input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  function obFreeChoiceMove(p, step) {
+    var opts = obFreeChoiceOpts(p);
+    if (!opts.length) return;
+    var cur = opts.findIndex(function (o) { return o.classList.contains('active'); });
+    if (cur >= 0) opts[cur].classList.remove('active');
+    var next = cur < 0 ? (step > 0 ? 0 : opts.length - 1) : (cur + step + opts.length) % opts.length;
+    opts[next].classList.add('active');
+    opts[next].scrollIntoView({ block: 'nearest' });
+  }
+  document.addEventListener('mousedown', function (e) {
+    var t = e.target;
+    var opt = t && t.closest ? t.closest('.ob-free-choice-opt') : null;
+    if (opt) {
+      e.preventDefault(); // фокус остаётся в строке ввода
+      obFreeChoicePick(obFreeChoiceParts(opt), opt);
+      return;
+    }
+    var btn = t && t.closest ? t.closest('.ob-free-choice-btn') : null;
+    if (btn) {
+      e.preventDefault();
+      var p = obFreeChoiceParts(btn);
+      if (p.list.hidden) { obFreeChoiceOpen(p, ''); p.input.focus(); } else obFreeChoiceClose(p);
+      return;
+    }
+    document.querySelectorAll('[data-ob-free-choice] .ob-free-choice-list:not([hidden])').forEach(function (l) {
+      if (!l.parentNode.contains(t)) obFreeChoiceClose(obFreeChoiceParts(l));
+    });
+  });
+  document.addEventListener('keydown', function (e) {
+    var t = e.target;
+    if (!t || !t.hasAttribute || !t.hasAttribute('data-ob-free-choice-input')) return;
+    var p = obFreeChoiceParts(t);
+    var open = !p.list.hidden;
+    if (e.key === 'ArrowDown' || e.key === 'Down') {
+      e.preventDefault();
+      if (!open) { obFreeChoiceOpen(p, ''); return; }
+      obFreeChoiceMove(p, 1);
+    } else if (e.key === 'ArrowUp' || e.key === 'Up') {
+      if (!open) return;
+      e.preventDefault();
+      obFreeChoiceMove(p, -1);
+    } else if (e.key === 'Enter') {
+      if (!open) return;
+      var act = p.list.querySelector('.ob-free-choice-opt.active');
+      e.preventDefault(); e.stopPropagation(); // Enter со списком не отправляет форму
+      if (act) obFreeChoicePick(p, act); else obFreeChoiceClose(p);
+    } else if (e.key === 'Escape' || e.key === 'Esc') {
+      if (!open) return;
+      e.preventDefault(); e.stopPropagation(); // Esc закрывает список, а не форму
+      obFreeChoiceClose(p);
+    } else if (e.key === 'Tab') {
+      obFreeChoiceClose(p);
+    }
+  }, true);
+  document.addEventListener('input', function (e) {
+    var t = e.target;
+    if (!t || !t.hasAttribute || !t.hasAttribute('data-ob-free-choice-input') || !e.isTrusted) return;
+    var p = obFreeChoiceParts(t);
+    if (!p.list.hidden) obFreeChoiceOpen(p, t.value);
+  });
+  document.addEventListener('focusout', function (e) {
+    var t = e.target;
+    if (!t || !t.hasAttribute || !t.hasAttribute('data-ob-free-choice-input')) return;
+    obFreeChoiceClose(obFreeChoiceParts(t));
+  });
+  // END onebase-free-choice
+
   // Маска ввода (#763). `mask` — это регулярное выражение проверки, оно ничего
   // не подставляет; настоящий шаблон объявляется ключом input_mask и работает
   // здесь: заполнители 0 (цифра), X (буква), * (цифра или буква), остальные

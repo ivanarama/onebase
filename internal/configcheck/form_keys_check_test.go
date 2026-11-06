@@ -105,6 +105,12 @@ func TestCheckFormKeyPlacementWarnsAboutIgnoredKeys(t *testing.T) {
 		{"группы у неиерархического справочника", &metadata.FormElement{
 			Kind: metadata.FormElementField, Name: "ПолеФилиал", DataPath: "Объект.Филиал", ChoiceFolders: true,
 		}, "нет иерархии"},
+		{"ввод со списком у обычного поля", &metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеКомментарий", DataPath: "Объект.Комментарий", ChoiceFreeInput: true,
+		}, "choice_free_input игнорируется"},
+		{"ввод со списком без вариантов", &metadata.FormElement{
+			Kind: metadata.FormElementInputList, Name: "ПолеКомментарий", DataPath: "Объект.Комментарий", ChoiceFreeInput: true,
+		}, "choice_free_input игнорируется"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -119,6 +125,8 @@ func TestCheckFormKeyPlacementWarnsAboutIgnoredKeys(t *testing.T) {
 		&metadata.FormElement{Kind: metadata.FormElementGroupBox, Name: "Действия", Orientation: "horizontal", ScrollX: true},
 		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "КнОК", Primary: true},
 		&metadata.FormElement{Kind: metadata.FormElementField, Name: "ПолеГород", DataPath: "Объект.НаселённыйПункт", ChoiceFolders: true, ChoiceDropdown: &collapsed},
+		&metadata.FormElement{Kind: metadata.FormElementInputList, Name: "ПолеВремя", DataPath: "Объект.Комментарий", ChoiceFreeInput: true,
+			Choices: []metadata.FormChoice{{Value: "8-14"}}},
 	)
 	if warns := CheckFormKeyPlacement(good); len(warns) != 0 {
 		t.Fatalf("корректные объявления получили предупреждение: %s", messages(warns))
