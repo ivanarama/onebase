@@ -2730,9 +2730,9 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			respondJSON(enc, formEventResponse{Error: err.Error()})
 			return
 		}
-		// Реквизиты формы обработки — как у формы документа: присланное
-		// значение элемента, иначе перенесённое состояние.
-		s.mergeFormAttrValues(r.Context(), r, form, virtEntity, obj)
+		// Присланные значения реквизитов уже приняты в пределах границы ввода
+		// (processorFormObjectFromRequest); недостающие — из перенесённого
+		// состояния.
 		s.applyProcessorCarryAttrs(r, proc, form, carry, obj.Fields)
 		if closeInv != nil {
 			baseline := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, nil, nil).response(false)

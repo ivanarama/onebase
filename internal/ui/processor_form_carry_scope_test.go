@@ -194,6 +194,11 @@ func TestProcessorFormCarry_FieldNamespaceHTTP(t *testing.T) {
 				form := processorExecutionForm(&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Check", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Check"}})
 				proc := &processor.Processor{Name: "CarryFieldNamespace", Forms: []*metadata.FormModule{form}, Params: []processor.Param{{Name: "Flag", Type: "bool", Default: true}}}
 				var names []string
+				// Реквизит формы с именем на «_» — служебный: браузер его не
+				// присылает (processorRequestControlsForForm), обработчик видит
+				// пустое значение. Проверяется, что перенос не занял это имя и
+				// не подставил туда свой токен.
+				serviceAttr := map[string]bool{}
 				for _, name := range tc.params {
 					proc.Params = append(proc.Params, processor.Param{Name: name, Type: "string", Default: "initial-user-text"})
 					names = append(names, name)
@@ -201,6 +206,7 @@ func TestProcessorFormCarry_FieldNamespaceHTTP(t *testing.T) {
 				for _, name := range tc.attrs {
 					form.Attributes = append(form.Attributes, &metadata.FormAttribute{Name: name, TypeRef: "string"})
 					names = append(names, name)
+					serviceAttr[name] = strings.HasPrefix(name, "_")
 				}
 				program := "Процедура Check()\n Сообщить(Строка(Объект.Flag));\n"
 				for i, name := range names {
@@ -222,6 +228,9 @@ func TestProcessorFormCarry_FieldNamespaceHTTP(t *testing.T) {
 					for i, name := range names {
 						text := fmt.Sprintf("user-%d-event-%d", i, event)
 						body.Set(name, text)
+						if serviceAttr[name] {
+							text = ""
+						}
 						want = append(want, text)
 					}
 					resp := carryScopePost(t, router, proc.Name, body)
@@ -229,7 +238,7 @@ func TestProcessorFormCarry_FieldNamespaceHTTP(t *testing.T) {
 						t.Errorf("event %d handler=%v want=%v", event, resp.Messages, want)
 					}
 					for i, name := range names {
-						if resp.Values[name] != want[i+1] {
+						if got, _ := resp.Values[name].(string); got != want[i+1] {
 							t.Errorf("event %d: user field %s overwritten", event, name)
 						}
 					}
