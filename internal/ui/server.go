@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"crypto/cipher"
 	"html/template"
 	"net/http"
 	"sync"
@@ -85,6 +86,11 @@ type Config struct {
 }
 
 type Server struct {
+	// carryOnce/carryAEAD — ключ процесса для запечатанного состояния формы
+	// обработки между событиями (processor_form_carry.go).
+	carryOnce sync.Once
+	carryAEAD cipher.AEAD
+
 	reg                    *runtime.Registry
 	store                  *storage.DB
 	interp                 *interpreter.Interpreter
