@@ -1194,7 +1194,7 @@ window.obRefreshWidgetCard = function (card) {
     }
     if (search !== null && window.history && window.history.pushState &&
         (window.location.search || '') !== '?' + search) {
-      window.history.pushState({}, '', search ? '?' + search : window.location.pathname);
+      window.history.pushState({obWidgetFilters:true}, '', search ? '?' + search : window.location.pathname);
     }
   }
 

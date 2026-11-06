@@ -171,6 +171,7 @@ function shell(storage, search = '', confirmClose = () => true, requestFrameClos
     document,
     sessionStorage: storage,
     location: {search, origin: 'http://127.0.0.1:8080', href: '/ui/app'},
+    history: {state: null, replaceState(state) { this.state = state; }, pushState(state) { this.state = state; }},
     URL,
     URLSearchParams,
     crypto: {
@@ -817,7 +818,7 @@ test('open-access deployment preserves F5 and is discarded on the first authenti
 // перезагрузка теряла введённое в незаписанных формах (браузер спрашивал
 // «Уверены, что хотите закрыть страницу?»). Оболочка берёт страницу раздела
 // фоном и подменяет строку разделов, боковое меню и рабочий стол.
-function sectionShell({fetchImpl} = {}) {
+function sectionShell({fetchImpl, initialState = null} = {}) {
   const storage = new FakeStorage();
   const elements = {};
   for (const id of ['ob-tabstrip', 'ob-tabbody', 'ob-tabempty', 'ob-tabhome', 'ob-widget-charts']) {
@@ -882,14 +883,15 @@ function sectionShell({fetchImpl} = {}) {
   const documentListeners = new Map();
   const windowListeners = new Map();
   const pushed = [];
-  const location = {origin: 'http://127.0.0.1:8080', pathname: '/ui/app', search: '?home=1', href: '/ui/app?home=1'};
+  const guards = [];
+  const location = {origin: 'http://127.0.0.1:8080', pathname: '/ui/app', search: '?home=1', hash: '', href: '/ui/app?home=1'};
   const setLocation = url => {
     const u = new URL(url, location.origin);
     location.pathname = u.pathname;
     location.search = u.search;
     location.href = u.pathname + u.search;
   };
-  const calls = {nav: [], dashboard: 0};
+  const calls = {nav: [], dashboard: 0, forward: 0};
   const document = {
     body: new Element('body'),
     readyState: 'complete',
@@ -910,7 +912,12 @@ function sectionShell({fetchImpl} = {}) {
     URL,
     URLSearchParams,
     DOMParser: FakeDOMParser,
-    history: {pushState(state, title, url) { pushed.push(url); setLocation(url); }},
+    // Защитная запись оболочки (obGuard) — отдельно от переходов разделов.
+    history: {state: initialState, replaceState(state) { this.state = state; }, forward() { calls.forward++; }, pushState(state, title, url) {
+      this.state = state;
+      if (state && state.obGuard) guards.push(url); else pushed.push(url);
+      setLocation(url);
+    }},
     fetch(url, options) {
       fetched.push({url, options});
       if (fetchImpl) return fetchImpl(url);
@@ -942,10 +949,14 @@ function sectionShell({fetchImpl} = {}) {
       for (const listener of documentListeners.get('click') || []) listener(event);
       return event;
     },
-    popstate(url) {
+    // Возврат к записи раздела (её положила сама оболочка) — state obSection;
+    // Входная граница имеет отдельную метку; фильтры могут иметь пустой state.
+    popstate(url, state = {obSection: true}) {
       setLocation(url);
-      for (const listener of windowListeners.get('popstate') || []) listener({});
+      context.history.state = state;
+      for (const listener of windowListeners.get('popstate') || []) listener({state});
     },
+    guards() { return guards.slice(); },
     tabCount() { return elements['ob-tabstrip'].children.length; },
     markDirty(index) {
       const frame = elements['ob-tabbody'].children.filter(element => element.tagName === 'IFRAME')[index];
@@ -955,6 +966,31 @@ function sectionShell({fetchImpl} = {}) {
     },
   };
 }
+
+test('«Назад» до входной границы идёт вперёд, сохраняя историю и незаписанную вкладку', async () => {
+  const app = sectionShell();
+  app.context.obOpenTab('/ui/document/Ордер/new', 'Insert');
+  app.markDirty(0);
+  assert.deepEqual(app.guards(), ['/ui/app?home=1']);
+  app.popstate('/ui/app?home=1', {obShellBoundary: true});
+  await app.settle();
+  assert.equal(app.calls.forward, 1);
+  assert.deepEqual(app.guards(), ['/ui/app?home=1'], 'новая запись обрезала бы историю вперёд');
+  assert.equal(app.fetched.length, 0);
+  assert.equal(app.tabCount(), 1);
+  for (const state of [null, {}, {obGuard: true}, {obWidgetFilters: true}]) {
+    app.popstate('/ui/app?home=1', state);
+    await app.settle();
+  }
+  assert.equal(app.guards().length, 1, 'записи внутри оболочки не заменяются защитой');
+  assert.equal(app.calls.forward, 1);
+});
+
+test('перезагрузка записи фильтра не добавляет новую границу истории', () => {
+  const app = sectionShell({initialState: {obWidgetFilters: true}});
+  assert.equal(app.guards().length, 0);
+  assert.equal(app.context.history.state.obWidgetFilters, true);
+});
 
 test('раздел меняется без перезагрузки: незаписанная вкладка остаётся', async () => {
   const app = sectionShell();
