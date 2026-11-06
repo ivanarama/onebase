@@ -29,6 +29,9 @@ import (
 
 var maskGateFuncs = map[string]bool{
 	"maskRecord": true, "maskRecords": true,
+	// maskRecordWithDecisions — maskRecord с решениями, вычисленными заранее
+	// (форма объекта с pii_open_when по сохранённой записи).
+	"maskRecordWithDecisions": true,
 }
 
 var maskChokepointExempt = map[string]string{

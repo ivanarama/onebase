@@ -1630,7 +1630,9 @@ func (s *Server) formEdit(w http.ResponseWriter, r *http.Request) {
 	// Маскирование ПДн (план 88): значения строятся из row ниже, поэтому
 	// маскируем строку до сборки vals — на форме поле показывается замаскированным,
 	// а submitEdit защищает реальное значение от перезаписи маской.
-	s.maskRecord(r.Context(), entity, row)
+	// pii_open_when: поле, открытое условием по этой (сохранённой) записи,
+	// показывается целиком (recordFieldDecisions).
+	s.maskRecordWithDecisions(s.recordFieldDecisions(r.Context(), entity, row), row)
 	langEdit := s.resolveLang(r)
 	enumOpts := s.loadEnumOptions(entity, langEdit)
 	tpEnumLabelsEdit := s.buildTPEnumLabels(entity, langEdit)

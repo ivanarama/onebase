@@ -29,6 +29,8 @@ type rawField struct {
 	Default defaultScalar `yaml:"default"`
 	// PII — реквизит содержит персональные данные (Field.PII).
 	PII bool `yaml:"pii"`
+	// PIIOpenWhen — условие раскрытия ПДн в форме записи (Field.PIIOpenWhen).
+	PIIOpenWhen string `yaml:"pii_open_when"`
 }
 
 type rawTablePart struct {
@@ -524,7 +526,24 @@ func LoadRegisterFile(path string) (*Register, error) {
 	for _, rf := range raw.Attributes {
 		reg.Attributes = append(reg.Attributes, parseField(rf))
 	}
+	if err := rejectRegisterPIIOpenWhen(raw.Dimensions, raw.Resources, raw.Attributes); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	return reg, nil
+}
+
+// rejectRegisterPIIOpenWhen — pii_open_when живёт только у полей справочника
+// и документа: у регистра нет формы записи, где условие могло бы открыть
+// поле. Принятый и никогда не исполняемый ключ читался бы как настройка.
+func rejectRegisterPIIOpenWhen(groups ...[]rawField) error {
+	for _, fields := range groups {
+		for _, rf := range fields {
+			if strings.TrimSpace(rf.PIIOpenWhen) != "" {
+				return fmt.Errorf("поле %s: pii_open_when у регистра не поддерживается", rf.Name)
+			}
+		}
+	}
+	return nil
 }
 
 type rawInfoRegister struct {
@@ -560,6 +579,9 @@ func LoadInfoRegisterFile(path string) (*InfoRegister, error) {
 	}
 	for _, ri := range raw.Indexes {
 		ir.Indexes = append(ir.Indexes, IndexSpec{Fields: trimStringList(ri.Fields), Unique: ri.Unique})
+	}
+	if err := rejectRegisterPIIOpenWhen(raw.Dimensions, raw.Resources); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	if err := ValidateInfoRegisterIndexes(ir); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
@@ -722,7 +744,8 @@ func parseField(rf rawField) Field {
 		title = rf.Label
 	}
 	f := Field{ID: strings.TrimSpace(rf.ID), Name: rf.Name, Title: title, Titles: rf.Titles, Type: FieldType(rf.Type),
-		AllowInlineCreate: rf.AllowInlineCreate, Required: rf.Required, Default: string(rf.Default), PII: rf.PII}
+		AllowInlineCreate: rf.AllowInlineCreate, Required: rf.Required, Default: string(rf.Default), PII: rf.PII,
+		PIIOpenWhen: strings.TrimSpace(rf.PIIOpenWhen)}
 	if strings.HasPrefix(rf.Type, "reference:") {
 		f.RefEntity = strings.TrimPrefix(rf.Type, "reference:")
 	} else if strings.HasPrefix(rf.Type, "enum:") {

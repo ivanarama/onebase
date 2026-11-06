@@ -2057,8 +2057,15 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 	//
 	// serializeFieldsForEntity строит НОВУЮ карту, поэтому obj.Fields остаётся
 	// нетронутым и обработчик продолжает видеть настоящие значения.
-	echo := submittedFieldsToEcho(ctx, s.fieldDecisions(ctx, entity), obj.Fields, fields)
-	s.maskRecord(ctx, entity, fields)
+	decisions := s.fieldDecisions(ctx, entity)
+	// pii_open_when: условие — по сохранённой записи, не по присланной форме.
+	if len(decisions) > 0 && entityHasPIIOpenWhen(entity) && obj.ID != uuid.Nil {
+		if stored, err := s.store.GetByID(ctx, entity.Name, obj.ID, entity); err == nil {
+			decisions = s.openPIIByRecord(entity, decisions, stored)
+		}
+	}
+	echo := submittedFieldsToEcho(ctx, decisions, obj.Fields, fields)
+	s.maskRecordWithDecisions(decisions, fields)
 	for key, value := range echo {
 		fields[key] = value
 	}

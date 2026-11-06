@@ -60,6 +60,7 @@ func RunFullWithOptions(dir string, opts Options) Result {
 		issues = append(issues, CheckReportComposition(proj)...)
 		issues = append(issues, CheckJournalConditional(proj)...)
 		issues = append(issues, CheckFormConditional(proj)...)
+		issues = append(issues, CheckPIIOpenWhen(proj)...)
 		issues = append(issues, CheckFormElementKind(proj)...)
 		issues = append(issues, CheckFormConceal(proj)...)
 		issues = append(issues, CheckFormChoiceFilter(proj)...)
