@@ -868,6 +868,7 @@
   "Соединения (JOIN)": "Joins",
   "Создано": "Created",
   "Создать": "Create",
+  "%s (создание)": "%s (new)",
   "Создать бэкап сейчас": "Create backup now",
   "Создать макет": "Create layout",
   "Создать макет из PDF": "Create layout from PDF",
