@@ -23,6 +23,12 @@ func (d dslCatalogDeleter) DeleteCatalogRef(ctx context.Context, entity *metadat
 	return d.deleteCatalogRef(ctx, entity, id, nil)
 }
 
+// MarkCatalogRef — Справочники.X.ПометитьНаУдаление/СнятьПометку: тот же
+// markForDeletion, что у пометки из UI и REST.
+func (d dslCatalogDeleter) MarkCatalogRef(ctx context.Context, entity *metadata.Entity, id uuid.UUID, mark bool) error {
+	return d.s.markForDeletion(ctx, entity, id, mark)
+}
+
 // DeleteCatalogRefVersioned preserves the same entityservice chokepoint while
 // binding the delete to the revision read by ПолучитьОбъект().
 func (d dslCatalogDeleter) DeleteCatalogRefVersioned(ctx context.Context, entity *metadata.Entity, id uuid.UUID, expectedVersion int64) error {
