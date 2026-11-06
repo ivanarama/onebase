@@ -52,7 +52,7 @@ func widgetRowStyle(row map[string]any) template.CSS {
 	if bold, _ := row[widget.RowBoldKey].(bool); bold {
 		parts = append(parts, "font-weight:600")
 	}
-	return template.CSS(strings.Join(parts, ";"))
+	return template.CSS(strings.Join(parts, ";")) //nolint:gosec // G203: только проверенный цвет #rrggbb и font-weight
 }
 
 func widgetCell(row map[string]any, field, format string) string {
