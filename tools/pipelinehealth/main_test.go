@@ -535,7 +535,7 @@ func TestFirstReviewOfMergeHeadUsesOrdinaryMergeLane(t *testing.T) {
 		t.Fatal(err)
 	}
 	// #nosec G204 -- fixed command and test-owned fixture paths.
-	command := exec.Command("go", "run", "./tools/pipelinehealth", "-prs", pullPath,
+	command := exec.Command(pipelinehealthCLI(t), "-prs", pullPath,
 		"-issues", issuePath, "-json")
 	command.Dir = repositoryRoot
 	output, err := command.CombinedOutput()
@@ -585,7 +585,7 @@ func TestPublicCommandDoesNotAssignUnprovedLegacyOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	// #nosec G204 -- fixed command and test-owned fixture paths.
-	command := exec.Command("go", "run", "./tools/pipelinehealth", "-prs", pullPath,
+	command := exec.Command(pipelinehealthCLI(t), "-prs", pullPath,
 		"-issues", issuePath, "-json")
 	command.Dir = repositoryRoot
 	output, err := command.CombinedOutput()
@@ -1160,7 +1160,7 @@ func TestCLIIssueRouteConflictsAreReportedWithoutChangingRouting(t *testing.T) {
 		t.Fatalf("resolve repository root: %v", err)
 	}
 	// #nosec G204 -- executable and flags are fixed; variable arguments are test-owned paths from t.TempDir.
-	command := exec.Command("go", "run", "./tools/pipelinehealth", "-prs", pullPath, "-issues", issuePath, "-json")
+	command := exec.Command(pipelinehealthCLI(t), "-prs", pullPath, "-issues", issuePath, "-json")
 	command.Dir = repositoryRoot
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -1269,10 +1269,10 @@ func TestCLIReportsWhyOpenPullReferenceExcludesFixIssue(t *testing.T) {
 	// without coupling the exclusion check to the live maintenance procedures.
 	contractPath := filepath.Join(directory, "missing-contract.md")
 	// #nosec G204 -- executable and flags are fixed; variable arguments are test-owned paths from t.TempDir.
-	command := exec.Command("go", "run", "./tools/pipelinehealth", "-prs", pullPath, "-issues", issuePath,
+	command := exec.Command(pipelinehealthCLI(t), "-prs", pullPath, "-issues", issuePath,
 		"-contract", contractPath, "-json")
 	command.Dir = repositoryRoot
-	// go run writes its exit-status message to stderr; keep stdout as JSON.
+	// Keep stdout as the public CLI JSON, separate from diagnostics.
 	output, err := command.Output()
 	exitError, ok := err.(*exec.ExitError)
 	if !ok || exitError.ExitCode() != 1 {
@@ -1433,7 +1433,7 @@ func TestPublicCommandReportsRouteMismatchesAndUnfinishedHumanRoute(t *testing.T
 	}
 
 	//nolint:gosec // The executable and flags are fixed; variable arguments are test-owned temporary paths.
-	command := exec.Command("go", "run", ".", "-json", "-prs", prsPath, "-issues", issuesPath,
+	command := exec.Command(pipelinehealthCLI(t), "-json", "-prs", prsPath, "-issues", issuesPath,
 		"-contract", filepath.Join("..", "..", ".claude", "skills", "review-queue", "SKILL.md"))
 	output, err := command.CombinedOutput()
 	if err != nil {
@@ -1511,13 +1511,7 @@ func TestAbortMarkerWantsHeadParentsGate(t *testing.T) {
 // buildGhStub собирает офлайн-заглушку gh и возвращает путь к бинарю.
 func buildGhStub(t *testing.T) string {
 	t.Helper()
-	stubPath := filepath.Join(t.TempDir(), "ghstub.exe")
-	//nolint:gosec // G204: fixed package path, test-owned output directory.
-	build := exec.Command("go", "build", "-o", stubPath, "./tools/pipelinehealth/internal/ghstub")
-	build.Dir = repoRoot(t)
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build ghstub: %v\n%s", err, out)
-	}
+	stubPath := testCLIBinary(t, "ghstub")
 	return stubPath
 }
 
