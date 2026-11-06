@@ -22,6 +22,10 @@ const (
 	cacheEntryVersion = 1
 	maxResponseBytes  = 64 << 20
 	maxPaginationPage = 10_000
+	// These constants define one on-disk protocol. Changing the slot count or
+	// digest-to-slot mapping requires a different namespace.
+	restCacheNamespace = "rest-v2-lock256"
+	restCacheLockSlots = 256
 )
 
 type githubRESTClient struct {
@@ -99,15 +103,17 @@ func newGitHubRESTClientWithBase(apiBase, token, cacheDir string, httpClient *ht
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: 30 * time.Second}
 	}
-	// cacheDir is explicit trusted operator configuration, not a path derived
-	// from repository or GitHub response data.
-	//nolint:gosec // G703: writing to the operator-selected cache directory is intentional.
-	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
-		return nil, fmt.Errorf("create pipelinehealth cache directory: %w", err)
-	}
-	//nolint:gosec // G302: directories need the execute bit; 0700 is the restrictive directory mode.
-	if err := os.Chmod(cacheDir, 0o700); err != nil {
-		return nil, fmt.Errorf("secure pipelinehealth cache directory: %w", err)
+	entryDir := filepath.Join(cacheDir, restCacheNamespace)
+	for _, directory := range []string{cacheDir, entryDir, filepath.Join(entryDir, "locks")} {
+		// directory is the trusted operator-selected root or a fixed child.
+		//nolint:gosec // G703: writing to the operator-selected cache directory is intentional.
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			return nil, fmt.Errorf("create pipelinehealth cache directory: %w", err)
+		}
+		//nolint:gosec // G302: directories need the execute bit; 0700 is the restrictive directory mode.
+		if err := os.Chmod(directory, 0o700); err != nil {
+			return nil, fmt.Errorf("secure pipelinehealth cache directory: %w", err)
+		}
 	}
 	authScopeDigest := sha256.Sum256([]byte(strings.ToLower(baseURL.Host) + "\n" + strings.TrimSpace(token)))
 	return &githubRESTClient{
@@ -115,7 +121,7 @@ func newGitHubRESTClientWithBase(apiBase, token, cacheDir string, httpClient *ht
 		token:      strings.TrimSpace(token),
 		httpClient: httpClient,
 		cache: &restResponseCache{
-			dir:       cacheDir,
+			dir:       entryDir,
 			authScope: hex.EncodeToString(authScopeDigest[:]),
 		},
 	}, nil
@@ -326,13 +332,18 @@ func abbreviatedBody(body []byte) string {
 	return trimmed
 }
 
+func (cache *restResponseCache) digest(requestURL string) [sha256.Size]byte {
+	return sha256.Sum256([]byte(cache.authScope + "\napplication/vnd.github+json\n2022-11-28\n" + requestURL))
+}
+
 func (cache *restResponseCache) entryPath(requestURL string) string {
-	digest := sha256.Sum256([]byte(cache.authScope + "\napplication/vnd.github+json\n2022-11-28\n" + requestURL))
+	digest := cache.digest(requestURL)
 	return filepath.Join(cache.dir, hex.EncodeToString(digest[:])+".json")
 }
 
 func (cache *restResponseCache) lockPath(requestURL string) string {
-	return cache.entryPath(requestURL) + ".lock"
+	digest := cache.digest(requestURL)
+	return filepath.Join(cache.dir, "locks", fmt.Sprintf("%02x.lock", digest[0]))
 }
 
 func (cache *restResponseCache) read(requestURL string) (restCacheEntry, bool) {
