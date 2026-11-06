@@ -163,6 +163,14 @@ type CatalogDeleter interface {
 	DeleteCatalogRef(ctx context.Context, entity *metadata.Entity, id uuid.UUID) error
 }
 
+// CatalogMarker — хост-путь пометки на удаление записи справочника. Его
+// реализует тот же объект, что CatalogDeleter (ui-слой): пометка идёт тем же
+// путём, что из UI и REST — транзакция, версия, регистрация в планах обмена,
+// живой список. Без подключённого хоста пометка отказывает, а не обходит.
+type CatalogMarker interface {
+	MarkCatalogRef(ctx context.Context, entity *metadata.Entity, id uuid.UUID, mark bool) error
+}
+
 type optionalTxRunner interface {
 	WithTxIfNeeded(ctx context.Context, fn func(context.Context) error) error
 }
@@ -448,6 +456,12 @@ func (p *CatalogProxy) CallMethod(method string, args []any) any {
 			RaiseUserErrorWrap("Удалить("+p.entity.Name+"): "+err.Error(), err)
 		}
 		return nil
+	case "пометитьнаудаление", "markfordeletion":
+		p.markRefCall("ПометитьНаУдаление", args, true)
+		return nil
+	case "снятьпометку", "unmarkdeletion":
+		p.markRefCall("СнятьПометку", args, false)
+		return nil
 	}
 	// Fallback на модуль менеджера: Справочники.X.МойМетод(…). Если caller не
 	// подключён или процедура не объявлена — ведёт себя как раньше (nil).
@@ -460,6 +474,32 @@ func (p *CatalogProxy) CallMethod(method string, args []any) any {
 		}
 	}
 	return nil
+}
+
+// markRefCall — Справочники.X.ПометитьНаУдаление(Ссылка) / СнятьПометку(Ссылка),
+// как у Документы.X: право строки — то же, что у удаления.
+func (p *CatalogProxy) markRefCall(call string, args []any, mark bool) {
+	if len(args) == 0 {
+		RaiseUserError(call + "(" + p.entity.Name + "): не передана ссылка")
+	}
+	ref, ok := args[0].(*Ref)
+	if !ok {
+		RaiseUserError(fmt.Sprintf("%s(%s): ожидается ссылка, получено %T", call, p.entity.Name, args[0]))
+	}
+	id, err := uuid.Parse(ref.UUID)
+	if err != nil {
+		RaiseUserError(fmt.Sprintf("%s(%s): неверный идентификатор ссылки: %q", call, p.entity.Name, ref.UUID))
+	}
+	if err := p.checkRowAccess("delete", id, nil); err != nil {
+		RaiseUserErrorWrap(call+"("+p.entity.Name+"): "+err.Error(), err)
+	}
+	marker, ok := p.deleter.(CatalogMarker)
+	if !ok {
+		RaiseUserError(call + "(" + p.entity.Name + "): пометка на удаление недоступна в этом окружении")
+	}
+	if err := marker.MarkCatalogRef(p.ctx(), p.entity, id, mark); err != nil {
+		RaiseUserErrorWrap(call+"("+p.entity.Name+"): "+err.Error(), err)
+	}
 }
 
 // DeleteRef реализует RefManager — удаление записи справочника по UUID.
