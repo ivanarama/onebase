@@ -2,6 +2,7 @@
 import hashlib
 from contextlib import closing
 import json
+import os
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -76,6 +77,52 @@ class SourceQueueTests(unittest.TestCase):
         self.assertEqual(after["series"][1],before["series"][1])
         self.assertTrue(after["tasks"][1][2].startswith("pending task special instructions\n"))
         self.assertTrue(after["series"][0][1].startswith("original template\n"))
+
+    def test_native_database_uri_uses_exact_file_and_verifies_that_file(self):
+        names = ["native#selected.sqlite3", "native%23selected.sqlite3",
+                 "native selected.sqlite3", "native-выбранная.sqlite3"]
+        if os.name != "nt":  # '?' is not a valid Windows filename.
+            names.append("native?selected.sqlite3")
+        self.db.commit()
+        for index, name in enumerate(names):
+            with self.subTest(filename=name):
+                directory = self.root / str(index)
+                directory.mkdir()
+                selected = directory / name
+                decoy = directory / "native"
+                for path in (selected, decoy):
+                    with closing(sqlite3.connect(path)) as database:
+                        self.db.backup(database)
+                        if path == decoy:
+                            database.execute("UPDATE task_series SET prompt='unrelated database template' WHERE id=4")
+                            database.execute("UPDATE tasks SET prompt='unrelated database task' WHERE id=11")
+                            database.commit()
+                self.queue = directory / "queue.sqlite3"
+                self.cli("register", "--descriptor", str(self.descriptor))
+                decoy_before = decoy.read_bytes()
+                with closing(sqlite3.connect(selected)) as database:
+                    series_before = database.execute("SELECT * FROM task_series ORDER BY id").fetchall()
+                    tasks_before = database.execute("SELECT * FROM tasks ORDER BY id").fetchall()
+                    result = self.cli("deliver", "--key", self.key, "--native-db", str(selected),
+                                      "--series", "4", "--directive", str(self.directive),
+                                      "--directive-sha256", self.directive_hash)
+                    self.assertEqual(result["action"], "delivered")
+                    receipt = json.loads(self.saved_delivery())
+                    self.assertEqual(receipt["native_path"], str(selected))
+                    series_expected = [(r[0], r[1] + receipt["block"] if r[0] == 4 else r[1], *r[2:])
+                                       for r in series_before]
+                    tasks_expected = [(*r[:2], r[2] + receipt["block"] if r[0] == 11 else r[2], *r[3:])
+                                      for r in tasks_before]
+                    self.assertEqual(database.execute("SELECT * FROM task_series ORDER BY id").fetchall(), series_expected)
+                    self.assertEqual(database.execute("SELECT * FROM tasks ORDER BY id").fetchall(), tasks_expected)
+                    self.assertEqual(decoy.read_bytes(), decoy_before)
+                    self.assertEqual(self.cli("verify", "--key", self.key)["action"], "verified")
+                    database.execute("UPDATE tasks SET prompt='external edit' WHERE id=11")
+                    database.commit()
+                    selected_before_verify = selected.read_bytes()
+                    self.cli("verify", "--key", self.key, ok=False)
+                    self.assertEqual(selected.read_bytes(), selected_before_verify)
+                    self.assertEqual(decoy.read_bytes(), decoy_before)
 
     def test_repeated_delivery_and_native_commit_before_receipt_are_idempotent(self):
         self.deliver()

@@ -125,7 +125,7 @@ def deliver(db, key, native_path, series_id, directive_path, expected_digest):
         # This immutable pin must survive a crash after native.commit(), even
         # when the later local receipt UPDATE fails or its transaction rolls back.
         db.commit()
-        native = sqlite3.connect(f"file:{native_path.as_posix()}?mode=rw", uri=True, timeout=10, isolation_level=None)
+        native = sqlite3.connect(native_path.as_uri() + "?mode=rw", uri=True, timeout=10, isolation_level=None)
         native.row_factory = sqlite3.Row
         # All deliverers take the native lock before reacquiring the queue lock.
         # Persisting the target below therefore cannot deadlock another deliverer
@@ -220,7 +220,7 @@ def verify(db, key):
     target = db.execute("SELECT receipt FROM delivery_targets WHERE key=?", (key,)).fetchone()
     if target is None or target[0] != canonical(receipt):
         raise QueueError("delivery receipt lacks its original durable target or differs")
-    native = sqlite3.connect(f'file:{Path(receipt["native_path"]).as_posix()}?mode=ro', uri=True)
+    native = sqlite3.connect(Path(receipt["native_path"]).as_uri() + "?mode=ro", uri=True)
     try:
         series = native.execute("SELECT prompt,paused,ended_at FROM task_series WHERE id=?", (receipt["series_id"],)).fetchone()
         task = native.execute("SELECT prompt,status,started_at,session_id,series_id FROM tasks WHERE id=?", (receipt["task_id"],)).fetchone()
