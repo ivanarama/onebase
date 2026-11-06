@@ -2085,20 +2085,23 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 			msgs = append(msgs, warnings...)
 		}
 	}
+	elementStates := s.formElementStates(form, entity, values, s.isAdminCtx(ctx))
+	refOptions := s.eventRefOptions(ctx, form, entity, values)
+	columnTitles := managedTPColumnTitles(form, entity, values, langFromCtx(ctx))
 	return formEventState{
 		Revealed:       revealed,
 		Values:         values,
 		TableParts:     tableParts,
 		FormTables:     formTablesFromRows(tableParts, form),
-		RefOptions:     s.eventRefOptions(ctx, form, entity, values),
+		RefOptions:     refOptions,
 		TPRefOptions:   tpRefOptions,
 		ConditionalCSS: conditionalCSS,
 		Messages:       msgs,
 		// Условия readonly_when/hidden_when считаются здесь же, где известны
 		// значения ПОСЛЕ обработчика: команда, изменившая состояние объекта,
 		// сразу меняет доступность полей.
-		ElementStates: s.formElementStates(form, entity, values, s.isAdminCtx(ctx)),
-		ColumnTitles:  managedTPColumnTitles(form, entity, values, langFromCtx(ctx)),
+		ElementStates: elementStates,
+		ColumnTitles:  columnTitles,
 	}
 }
 

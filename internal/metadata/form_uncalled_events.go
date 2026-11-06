@@ -28,6 +28,7 @@ import "sort"
 // закрытую модель того, что вправе прислать браузер.
 var serverFormEventTypes = []FormEventType{
 	FormEventOnReadAtServer,
+	FormEventOnCreateAtServer,
 	FormEventBeforeWrite,
 	FormEventOnWrite,
 	FormEventAfterWrite,

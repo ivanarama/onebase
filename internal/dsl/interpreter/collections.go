@@ -124,6 +124,13 @@ func (r *Ref) CallMethod(method string, args []any) any {
 func (r *Ref) Lookup(field string) (any, bool) {
 	switch strings.ToLower(field) {
 	case "наименование", "имя", "name":
+		// Ссылка без подписи (собственная ссылка объекта формы) берёт
+		// реквизит из записи: резолвер читает его под политикой полей роли.
+		if r.Name == "" && r.AttrResolver != nil {
+			if v, ok := r.AttrResolver.ResolveRefAttr(r, field); ok && v != nil {
+				return v, true
+			}
+		}
 		return r.Name, true
 	case "ссылка", "ref":
 		return r, true
