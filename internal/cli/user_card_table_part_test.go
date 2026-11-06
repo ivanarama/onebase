@@ -10,21 +10,30 @@ import (
 func tableCardCheckFixture(t *testing.T, selector, op, typ string) string {
 	t.Helper()
 	dir := cardCheckFixture(t, "{user_card: {catalog: сотрудник, account_field: учётка, "+selector+"}}", false, typ)
-	path := filepath.Join(dir, "catalogs", "Сотрудник.yaml")
-	b, err := os.ReadFile(path)
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	path := filepath.Join("catalogs", "Сотрудник.yaml")
+	b, err := root.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	b = append(b, []byte("tableparts:\n  - name: Филиалы\n    fields:\n      - name: Филиал\n        type: string\n")...)
-	if err := os.WriteFile(path, b, 0o600); err != nil {
+	if err := root.WriteFile(path, b, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	path = filepath.Join(dir, "roles", "Сотрудник.yaml")
-	b, err = os.ReadFile(path)
+	path = filepath.Join("roles", "Сотрудник.yaml")
+	b, err = root.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(path, []byte(strings.Replace(string(b), "op: eq", "op: "+op, 1)), 0o600); err != nil {
+	if err := root.WriteFile(path, []byte(strings.Replace(string(b), "op: eq", "op: "+op, 1)), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return dir

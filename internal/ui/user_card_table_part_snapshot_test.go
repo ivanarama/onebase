@@ -217,7 +217,8 @@ func testTableCardSnapshot(t *testing.T, db *storage.DB, mode, change string) {
 		defer ticker.Stop()
 		for {
 			var waiting bool
-			if err := owner.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=$1 AND NOT granted)", uint32(lockKey)).Scan(&waiting); err != nil {
+			// objid stores the low 32 bits of the bigint advisory lock key.
+			if err := owner.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND objid=($1::bigint & 4294967295)::oid AND NOT granted)", lockKey).Scan(&waiting); err != nil {
 				t.Fatal(err)
 			}
 			if waiting {
