@@ -626,6 +626,9 @@ func homePageYAMLSchema() *yamlLintSchema {
 		"nav":         nav,
 		"nav_by_role": {values: nav},
 		"menu":        menuYAMLSchema(),
+		"status_bar": with(obj("roles", "source", "action", "interval"), map[string]*yamlLintSchema{
+			"buttons": seq(obj("name", "title")),
+		}),
 	})
 }
 
