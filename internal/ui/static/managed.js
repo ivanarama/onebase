@@ -106,6 +106,47 @@ function obManagedHiddenColumnNames(tbody) {
   }
 }
 
+// obManagedSetVTColumnHidden — hidden_when колонки ValueTable после события
+// формы. tbody несёт карту data-vt-cond «колонка=путь размещения»; ячейки
+// колонки в разметке есть всегда, меняется только их показ — значение
+// по-прежнему уходит на сервер. Флаг h в data-vt-flags правится тут же: по
+// нему перестраиваются строки, пришедшие в том же или следующем ответе.
+// Возвращает true, если путь принадлежит колонке хоть одной ValueTable.
+function obManagedSetVTColumnHidden(path, on) {
+  var matched = false;
+  var bodies = document.querySelectorAll ? document.querySelectorAll('tbody[data-vt-cond]') : [];
+  Array.prototype.forEach.call(bodies, function(tbody) {
+    var name = null;
+    (tbody.getAttribute('data-vt-cond') || '').split(',').forEach(function(part) {
+      var i = part.lastIndexOf('=');
+      if (i > 0 && part.slice(i + 1) === path) name = part.slice(0, i);
+    });
+    if (name === null) return;
+    matched = true;
+    var flags = (tbody.getAttribute('data-vt-flags') || '').split(',').map(function(part) {
+      var i = part.lastIndexOf(':');
+      if (i < 0 || part.slice(0, i) !== name) return part;
+      var flag = part.slice(i + 1).replace(/h/g, '');
+      return name + ':' + flag + (on ? 'h' : '');
+    });
+    tbody.setAttribute('data-vt-flags', flags.join(','));
+    var index = -1;
+    obManagedParseFieldMeta(tbody.getAttribute('data-vt-fields') || '').forEach(function(f, i) {
+      if (f.name === name) index = i;
+    });
+    var table = tbody.closest ? tbody.closest('table') : null;
+    var th = table ? table.querySelector('th[data-ob-vt-col="' + (window.CSS && CSS.escape ? CSS.escape(path) : path) + '"]') : null;
+    if (th) th.style.display = on ? 'none' : '';
+    if (index < 0) return;
+    Array.prototype.forEach.call(tbody.rows || [], function(tr) {
+      // Строка-заглушка пустой таблицы — одна ячейка на всю ширину.
+      if (!tr.cells || tr.cells.length <= index || tr.cells[0].colSpan > 1) return;
+      tr.cells[index].style.display = on ? 'none' : '';
+    });
+  });
+  return matched;
+}
+
 // Shared by the managed-form response renderer and the separate SlickGrid
 // runtime below. Keep this outside either IIFE: Slick submit/event sync must
 // be able to update the authoritative hidden payload in the real browser
@@ -627,6 +668,11 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     };
     var hidden = st.hidden || {};
     Object.keys(hidden).forEach(function (path) {
+      // Колонка табличной части якоря в DOM не имеет: её видимость — свойство
+      // описания таблицы.
+      var inGrid = window.obManagedSetGridColumnHidden ? window.obManagedSetGridColumnHidden(path, !!hidden[path]) : false;
+      var inVT = typeof obManagedSetVTColumnHidden === 'function' ? obManagedSetVTColumnHidden(path, !!hidden[path]) : false;
+      if (inGrid || inVT) return;
       var el = byPath(path);
       if (!el) {
         // Страница набора СтраницыФормы своего якоря не имеет — её якорь
@@ -966,52 +1012,78 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     Object.keys(vts).forEach(function(vtName){
       var tableBodies = obManagedTableBodies('vt-body-' + vtName, 'data-vt-fields');
       if (!tableBodies.length) return;
+      var before = obManagedVtRowsKey(tableBodies[0]);
       tableBodies.forEach(function(tbody){
-      var fieldsMeta = (tbody.getAttribute('data-vt-fields') || '').split(',').map(function(s){
-        var idx = s.indexOf('|');
-        if (idx < 0) return { name: s, type: 'string' };
-        return { name: s.slice(0, idx), type: (s.slice(idx + 1) || 'string').toLowerCase() };
-      });
-      var rows = vts[vtName] || [];
-      var readOnly = obManagedTableReadOnly(tbody);
-      tbody.innerHTML = '';
-      rows.forEach(function(row, idx){
-        var tr = document.createElement('tr');
-        tr.className = obFormRowClass(row);
-        fieldsMeta.forEach(function(f){
-          var td = document.createElement('td');
-          td.className = obFormCellClass(row, f.name);
-          var v = row[f.name];
-          var inp = document.createElement('input');
-          inp.name = 'vt.' + vtName + '.' + idx + '.' + f.name;
-          if (f.type === 'number') {
-            inp.type = 'number'; inp.step = 'any';
-            inp.setAttribute('data-vt-num', f.name);
-            inp.value = (v == null ? '' : v);
-          } else if (f.type === 'bool') {
-            inp.type = 'checkbox'; inp.value = 'true';
-            if (String(v) === 'true') inp.checked = true;
-            inp.disabled = readOnly;
-          } else {
-            inp.type = 'text';
-            inp.value = (v == null ? '' : v);
-          }
-          inp.disabled = readOnly;
-          td.appendChild(inp);
-          tr.appendChild(td);
+        tbody.innerHTML = '';
+        (vts[vtName] || []).forEach(function(row, idx){
+          tbody.appendChild(buildVtRow(tbody, vtName, idx, row));
         });
-        var tdDel = document.createElement('td');
-        var btn = document.createElement('button');
-        btn.type = 'button'; btn.className = 'del-btn'; btn.textContent = '×';
-        btn.disabled = readOnly;
-        if (!readOnly) btn.setAttribute('data-ob-remove-row', '');
-        tdDel.appendChild(btn);
-        tr.appendChild(tdDel);
-        tbody.appendChild(tr);
       });
-      });
+      // An unchanged event echo replaces DOM nodes, but preserves the selection.
+      // A different result set (including order or hidden values) clears it.
+      if (before !== obManagedVtRowsKey(tableBodies[0])) {
+        tableBodies.forEach(function(tbody){ obManagedVtActiveRow.delete(tbody); });
+      }
     });
   }
+  function buildVtRow(tbody, vtName, idx, row) {
+    var fields = obManagedParseFieldMeta(tbody.getAttribute('data-vt-fields') || '');
+    var flags = {};
+    (tbody.getAttribute('data-vt-flags') || '').split(',').forEach(function(part){
+      var i = part.lastIndexOf(':');
+      if (i >= 0) flags[part.slice(0, i)] = part.slice(i + 1);
+    });
+    var readOnly = obManagedTableReadOnly(tbody);
+    var tr = document.createElement('tr');
+    tr.className = obFormRowClass(row);
+    if (tbody.getAttribute('data-ob-vt-activate')) {
+      tr.setAttribute('data-ob-vt-row', String(idx));
+      tr.style.cursor = 'pointer';
+    }
+    fields.forEach(function(f){
+      var flag = flags[f.name] || '';
+      var columnReadOnly = flag.indexOf('r') >= 0;
+      var td = document.createElement('td');
+      if (flag.indexOf('h') >= 0) td.style.display = 'none';
+      td.className = obFormCellClass(row, f.name);
+      var value = row[f.name];
+      var inp = document.createElement('input');
+      inp.name = 'vt.' + vtName + '.' + idx + '.' + f.name;
+      var type = f.type.toLowerCase();
+      if (type === 'number') {
+        inp.type = 'number'; inp.step = 'any';
+        inp.setAttribute('data-vt-num', f.name);
+        inp.value = value == null ? '' : value;
+      } else if (type === 'bool') {
+        inp.type = 'checkbox'; inp.value = 'true';
+        inp.checked = String(value) === 'true';
+      } else {
+        inp.type = 'text'; inp.value = value == null ? '' : value;
+      }
+      inp.disabled = readOnly || (type === 'bool' && columnReadOnly);
+      if (type !== 'bool') inp.readOnly = columnReadOnly;
+      td.appendChild(inp);
+      // Disabled checkboxes do not participate in FormData. Only the writable
+      // placement carries a single successful value for a protected column.
+      if (type === 'bool' && columnReadOnly && !readOnly) {
+        var hidden = document.createElement('input');
+        hidden.type = 'hidden'; hidden.name = inp.name;
+        hidden.value = inp.checked ? 'true' : 'false';
+        td.appendChild(hidden);
+      }
+      tr.appendChild(td);
+    });
+    if (tbody.getAttribute('data-vt-editable') !== '0') {
+      var tdDel = document.createElement('td');
+      var btn = document.createElement('button');
+      btn.type = 'button'; btn.className = 'del-btn'; btn.textContent = '×';
+      btn.disabled = readOnly;
+      if (!readOnly) btn.setAttribute('data-ob-remove-row', '');
+      tdDel.appendChild(btn); tr.appendChild(tdDel);
+    }
+    return tr;
+  }
+  window.obBuildVtRow = buildVtRow;
   window.applyFormTables = applyFormTables;
 
   function beginFileRead(contentEl) {
@@ -1219,6 +1291,27 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     if (window.obGridSync && window.obGridSync() === false) return;
     const body = new URLSearchParams();
     const eventFD = fileEventFormData(form, fileHelpers);
+    if (eventName === 'ПриАктивизацииСтроки' && extraParams && extraParams._tp) {
+      var vtBody = obManagedTableBodies('vt-body-' + extraParams._tp, 'data-vt-fields').find(function(tbody){
+        return tbody.getAttribute('data-ob-vt-activate') === elementName;
+      });
+      if (vtBody) {
+        // Use this exact outgoing snapshot, after file/grid synchronization.
+        // The server sorts submitted indices and discards wholly empty rows.
+        var vtRows = obManagedVtPayloadRows(vtBody, eventFD);
+        if (vtRows) {
+          var vtIndex = vtRows.findIndex(function(row){ return String(row.index) === String(extraParams._tp_row); });
+          if (vtIndex < 0) {
+            obManagedVtActiveRow.delete(vtBody);
+            return;
+          }
+          extraParams._tp_row = String(vtIndex);
+        }
+        var selectedRow = String(extraParams._tp_row);
+        if (obManagedVtActiveRow.get(vtBody) === selectedRow) return;
+        obManagedVtActiveRow.set(vtBody, selectedRow);
+      }
+    }
     eventFD.set(serviceField('_element'), elementName || '');
     eventFD.set(serviceField('_event'), eventName || '');
     eventFD.set(serviceField('_kind'), 'object');
@@ -2407,32 +2500,10 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 function addVtRow(vtName, fields, tbodyOverride) {
   var tbody = tbodyOverride || document.getElementById("vt-body-" + vtName);
   if (!tbody || tbody.getAttribute('data-ob-table-readonly') === '1') return;
-  var idx = tbody.rows.length;
-  var tr = document.createElement("tr");
-  var fieldTypes = (tbody.getAttribute("data-vt-fields") || "").split(",");
-  fields.forEach(function(fn, i) {
-    var td = document.createElement("td");
-    var inp = document.createElement("input");
-    inp.name = "vt." + vtName + "." + idx + "." + fn;
-    var ft = (fieldTypes[i] || "").split("|")[1] || "";
-    if (ft === "number") {
-      inp.type = "number"; inp.step = "any";
-      inp.setAttribute("data-vt-num", fn);
-    } else if (ft === "bool") {
-      inp.type = "checkbox"; inp.value = "true";
-    } else {
-      inp.type = "text";
-    }
-    td.appendChild(inp);
-    tr.appendChild(td);
-  });
-  var tdDel = document.createElement("td");
-  var btn = document.createElement("button");
-  btn.type = "button"; btn.className = "del-btn"; btn.textContent = "×";
-  btn.setAttribute("data-ob-remove-row", "");
-  tdDel.appendChild(btn);
-  tr.appendChild(tdDel);
+  if (tbody.getAttribute('data-vt-editable') === '0') return;
+  var tr = window.obBuildVtRow(tbody, vtName, tbody.rows.length, {});
   tbody.appendChild(tr);
+  obManagedVtActiveRow.delete(tbody);
 }
 
 function obManagedClosestSelect(btn) {
@@ -2493,6 +2564,101 @@ function obManagedAddTpRow(btn) {
   if (table && window.obDOMNotifyMutation) window.obDOMNotifyMutation(table, 'add');
 }
 
+// obManagedVtRowActivated — щелчок по строке ValueTable зовёт
+// ПриАктивизацииСтроки.
+//
+// У «большой» табличной части это делает SlickGrid (data-sg-rowactivate), а
+// ValueTable рисуется простой разметкой, и подписки у неё не было вовсе: форма
+// могла объявить обработчик, а сработать он не мог. Именно такой таблицей
+// удобно показывать результат поиска, где строку выбирают щелчком.
+//
+// Подписываемся только когда обработчик объявлен (атрибут на tbody) — иначе
+// гоняли бы сеть на каждый щелчок по любой таблице формы. Повторный щелчок по
+// той же строке события не шлёт: активизация строки — это смена строки.
+// Помним индекс у конкретного tbody. Перерисовка сбрасывает выбор только
+// при изменении данных, а не при обычном эхо-ответе обработчика.
+var obManagedVtActiveRow = new WeakMap();
+
+// Both ui.js and the managed fallback delete rows. Keep the activation index
+// and every transport control (including protected bool carriers) contiguous.
+function obManagedReindexVtRows(tbody) {
+  if (!tbody || tbody.getAttribute('data-vt-fields') === null) return;
+  var vtName = tbody.getAttribute('data-ob-vt-name') || String(tbody.id || '').slice('vt-body-'.length);
+  var prefix = 'vt.' + vtName + '.';
+  obManagedVtActiveRow.delete(tbody);
+  Array.prototype.forEach.call(tbody.rows, function(tr, index){
+    if (tr.hasAttribute('data-ob-vt-row')) tr.setAttribute('data-ob-vt-row', String(index));
+    tr.querySelectorAll('[name]').forEach(function(control){
+      var name = control.getAttribute('name') || '';
+      if (name.indexOf(prefix) !== 0) return;
+      var suffix = name.slice(prefix.length);
+      var dot = suffix.indexOf('.');
+      if (dot >= 0) control.setAttribute('name', prefix + index + suffix.slice(dot));
+    });
+  });
+}
+window.obManagedReindexVtRows = obManagedReindexVtRows;
+
+// Project only declared columns from successful controls. Unknown columns do
+// not keep a row alive. Keep exact strings: "0", "false" and whitespace are
+// nonempty; an absent unchecked checkbox is different from a false carrier.
+function obManagedVtPayloadRows(tbody, data) {
+  var fields = obManagedParseFieldMeta(tbody.getAttribute('data-vt-fields') || '');
+  var vtName = tbody.getAttribute('data-ob-vt-name') || String(tbody.id || '').slice('vt-body-'.length);
+  var rows = new Map();
+  var valid = true;
+  data.forEach(function(value, name){
+    var parts = name.split('.');
+    if (parts[0].toLowerCase() !== 'vt' || (parts[1] || '').toLowerCase() !== vtName.toLowerCase()) return;
+    if (parts.length !== 4 || !/^\d+$/.test(parts[2]) || !Number.isSafeInteger(Number(parts[2]))) { valid = false; return; }
+    var field = fields.find(function(f){ return f.name.toLowerCase() === parts[3].toLowerCase(); });
+    if (!field) return;
+    var index = Number(parts[2]);
+    if (!rows.has(index)) rows.set(index, new Map());
+    var row = rows.get(index);
+    if (row.has(field.name) || typeof value !== 'string') { valid = false; return; }
+    row.set(field.name, value);
+  });
+  // With no submitted columns (a display-only table), the server retains its
+  // form state. Do not reinterpret that absence as an empty writable payload.
+  // Leave malformed/duplicate payload to the existing strict server validator.
+  if (!valid || !rows.size) return null;
+  return Array.from(rows, function(entry){ return {index: entry[0], values: fields.map(function(f){
+    return [f.name, entry[1].has(f.name) ? entry[1].get(f.name) : ''];
+  })}; }).sort(function(a, b){ return a.index - b.index; }).filter(function(row){
+    return row.values.some(function(field){ return field[1] !== ''; });
+  });
+}
+
+// Compare the normalized successful payload, so removing empty drafts in an
+// otherwise unchanged echo preserves the selected logical row. Capture this
+// once before repainting all placements, then compare after all are rebuilt.
+function obManagedVtRowsKey(tbody) {
+  var form = document.getElementById('main-form');
+  var rows = form && obManagedVtPayloadRows(tbody, new FormData(form));
+  if (rows) return JSON.stringify(rows.map(function(row){ return row.values; }));
+  // Display-only tables have no successful controls; compare their rendered
+  // values, as before, to invalidate selection when the result set changes.
+  return JSON.stringify(Array.prototype.map.call(tbody.rows, function(tr){
+    return Array.prototype.map.call(tr.children, function(td){
+      var input = td.children[0];
+      if (!input || input.tagName !== 'INPUT') return null;
+      return [input.name, input.type === 'checkbox' ? !!input.checked : String(input.value || '')];
+    });
+  }));
+}
+
+function obManagedVtRowActivated(tr) {
+  if (!tr || !tr.parentNode) return;
+  var tbody = tr.parentNode;
+  var elName = tbody.getAttribute && tbody.getAttribute('data-ob-vt-activate');
+  var vtName = tbody.getAttribute && tbody.getAttribute('data-ob-vt-name');
+  if (!elName || !vtName) return;
+  var row = tr.getAttribute('data-ob-vt-row');
+  if (row === null || row === '') return;
+  if (window.obFire) window.obFire(elName, 'ПриАктивизацииСтроки', {_tp: vtName, _tp_row: row});
+}
+
 function obManagedAddVtRow(btn) {
   var vtName = btn.getAttribute('data-ob-add-vt') || '';
   var tbody = obManagedWritableTableBody('vt-body-' + vtName, 'data-vt-fields');
@@ -2509,6 +2675,7 @@ function obManagedRemoveRow(btn) {
   var body = tr.parentElement;
   var index = tr.sectionRowIndex;
   tr.remove();
+  obManagedReindexVtRows(body);
   if (window.obSetManagedFormDirty) window.obSetManagedFormDirty(true);
   if (table && body && window.obDOMFinishMutation) {
     var next = body.rows.length ? body.rows[Math.min(Math.max(index, 0), body.rows.length - 1)] : null;
@@ -2578,6 +2745,11 @@ function obManagedInitDelegates() {
     // ui.js (из шаблона "head"), где этот же делегат уже висит на document.
     // Дублирование переключало бы display дважды (none→block→none) за один клик
     // и dropdown «Печать ▾»/«Ввести на основании» не открывался бы — issue #309.
+    // Щелчок по строке ValueTable — не кнопка, поэтому проверяем до выхода:
+    // иначе выбор строки в таблице результатов не доходил бы до обработчика.
+    var vtRow = e.target && e.target.closest ? e.target.closest('tr[data-ob-vt-row]') : null;
+    if (vtRow) obManagedVtRowActivated(vtRow);
+
     var btn = e.target && e.target.closest ? e.target.closest('[data-ob-ref-picker],[data-ob-ref-current],[data-ob-file-trigger],[data-ob-fire-click],[data-ob-grid-add],[data-ob-grid-del],[data-ob-add-tp],[data-ob-add-vt],[data-ob-remove-row],[data-ob-ref-cancel],[data-ob-form-close]') : null;
     if (!btn) return;
     if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') return;
@@ -2849,6 +3021,42 @@ function obGridApplyOrder(columns, order) {
   Array.prototype.push.apply(columns, out);
   return changed;
 }
+// obGridVisibleToIndex — индекс в массиве колонок по номеру видимой колонки
+// (шапка рисует только видимые). -1 — такой видимой колонки нет.
+function obGridVisibleToIndex(columns, visible) {
+  for (var i = 0, n = -1; columns && i < columns.length; i++) {
+    if (columns[i] && !columns[i].hidden && ++n === visible) return i;
+  }
+  return -1;
+}
+// obGridSetColumnHidden — видимость колонок одной таблицы с путём размещения
+// path (hidden_when элемента Колонка). Перерисовывает шапку и строки, если
+// видимость поменялась; ширины досчитывает вызывающий (resizeGrid).
+function obGridSetColumnHidden(state, path, on) {
+  var result = {matched: false, changed: false};
+  if (!state || !state.grid || !state.columns) return result;
+  state.columns.forEach(function(col) {
+    if (!col || col.obElPath !== path) return;
+    result.matched = true;
+    if (!!col.hidden === on) return;
+    col.hidden = on;
+    result.changed = true;
+  });
+  if (!result.changed) return result;
+  var grid = state.grid;
+  // Пересоздание шапки уничтожает редактор: ввод сначала принять.
+  var lock = grid.getEditorLock && grid.getEditorLock();
+  if (lock && lock.isActive() && !lock.commitCurrentEdit()) lock.cancelCurrentEdit();
+  var active = grid.getActiveCell ? grid.getActiveCell() : null;
+  grid.updateColumns();
+  // Активная ячейка в скрытой колонке — на первую видимую той же строки:
+  // строка не меняется, ПриАктивизацииСтроки не повторяется.
+  if (active && state.columns[active.cell] && state.columns[active.cell].hidden) {
+    var first = obGridVisibleToIndex(state.columns, 0);
+    if (first >= 0 && grid.setActiveCell) grid.setActiveCell(active.row, first);
+  }
+  return result;
+}
 function obGridMoveColumn(columns, from, to) {
   if (!columns || from === to || from < 0 || to < 0 || from >= columns.length || to >= columns.length) return false;
   var col = columns.splice(from, 1)[0];
@@ -2865,6 +3073,7 @@ function obGridKeepDeclaredWidths(grid, available) {
   var cols = grid.getColumns();
   var declared = false, total = 0;
   for (var i = 0; i < cols.length; i++) {
+    if (cols[i].hidden) continue;
     if (cols[i].obWidth) declared = true;
     total += cols[i].obWidth || 120;
   }
@@ -2986,7 +3195,7 @@ function obGridColumnIds(columns) {
       if (!h) return;
       // Ручка изменения ширины — своё перетаскивание SlickGrid.
       if (e.target.closest && e.target.closest(".slick-resizable-handle")) { e.preventDefault(); return; }
-      dragFrom = headerCells().indexOf(h);
+      dragFrom = obGridVisibleToIndex(state.columns, headerCells().indexOf(h));
       try { e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", ""); } catch (er) {}
     });
     div.addEventListener("dragover", function(e) {
@@ -3002,7 +3211,7 @@ function obGridColumnIds(columns) {
       // setColumns уничтожает редактор: сначала сохранить ввод или оставить
       // таблицу без изменений, если валидация редактора отклонила значение.
       if (!grid.getEditorLock().commitCurrentEdit()) return;
-      if (!obGridMoveColumn(state.columns, from, headerCells().indexOf(h))) return;
+      if (!obGridMoveColumn(state.columns, from, obGridVisibleToIndex(state.columns, headerCells().indexOf(h)))) return;
       var isDefault = applyColumns();
       save(isDefault ? "" : JSON.stringify(obGridColumnIds(state.columns)));
     });
@@ -3028,6 +3237,9 @@ function obGridColumnIds(columns) {
       if (typeof g.grid.getFooterRowColumn !== "function") return;
       var items = g.dataView.getItems();
       var cols = g.columnsMeta || [];
+      // Подпись — в первой ВИДИМОЙ колонке: первая по описанию бывает скрыта.
+      var labelId = null, shown = g.grid.getColumns ? g.grid.getColumns() : [];
+      for (var v = 0; v < shown.length; v++) if (shown[v] && !shown[v].hidden) { labelId = shown[v].id; break; }
       for (var i = 0; i < cols.length; i++) {
         var c = cols[i];
         var node = g.grid.getFooterRowColumn(c.id);
@@ -3041,11 +3253,34 @@ function obGridColumnIds(columns) {
           node.innerHTML = '<span style="display:block;text-align:right;font-weight:600;font-variant-numeric:tabular-nums">' +
             sum.toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2}) + "</span>";
         } else {
-          node.innerHTML = (i === 0) ? '<span style="color:#64748b">Итого</span>' : "";
+          node.innerHTML = (c.id === labelId) ? '<span style="color:#64748b">Итого</span>' : "";
         }
       }
     } catch (e) { if (window.console) console.warn("updateTotals:", e); }
   }
+  // obManagedSetGridColumnHidden — hidden_when колонки табличной части после
+  // события формы. Ключ — путь размещения элемента Колонка, тот же, что в
+  // elementStates.hidden. Колонка есть во всех представлениях таблицы (рядом
+  // с редактируемой бывает сводка только для чтения), поэтому меняются все.
+  // После смены видимости ширины пересчитываются заново: объявленные и
+  // заданные пользователем остаются, остальные растягиваются по месту.
+  // Возвращает true, если путь принадлежит колонке хоть одной таблицы, —
+  // тогда якоря в DOM у него нет и искать его там бессмысленно.
+  window.obManagedSetGridColumnHidden = function(path, on) {
+    var matched = false;
+    var views = (window._obGridViews || []).slice();
+    var grids = window._obGrids || {};
+    Object.keys(grids).forEach(function(tp) {
+      if (views.indexOf(grids[tp]) < 0) views.push(grids[tp]);
+    });
+    views.forEach(function(state) {
+      var result = obGridSetColumnHidden(state, path, on);
+      if (result.matched) matched = true;
+      if (result.changed) resizeGrid(state);
+    });
+    return matched;
+  };
+
   // _obResizeGrids — пройтись по всем гридам и пересчитать видимые. Вызывается
   // при переключении вкладок managed-формы и при ресайзе окна.
   window._obResizeGrids = function() {
@@ -3719,6 +3954,13 @@ function obGridColumnIds(columns) {
       // obWidth — объявленная ширина: autosizeColumns перезаписывает width, а
       // широкой таблице её надо вернуть (obGridKeepDeclaredWidths).
       if (c.width) { col.width = c.width; col.obWidth = c.width; }
+      // Колонка с hidden_when: остаётся в описании таблицы со своим путём
+      // размещения, а видимость задаёт нативный hidden SlickGrid. Ответ события
+      // переключает его (obManagedSetGridColumnHidden), навигация и автоширина
+      // скрытую колонку пропускают сами. Значения её ячеек по-прежнему в строке:
+      // скрывается показ, а не данные.
+      if (c.elPath) col.obElPath = c.elPath;
+      if (c.condHidden) col.hidden = true;
       if (c.virtual) {
         // Виртуальная колонка (#845): значение приехало с сервера по ссылке из
         // строки и в базе не хранится. Без редактора и в сером — иначе правка
@@ -4148,6 +4390,7 @@ function obGridColumnIds(columns) {
   function gridFirstEditableCell(g, row) {
     var cols = g.grid.getColumns() || [];
     for (var i = 0; i < cols.length; i++) {
+      if (cols[i] && cols[i].hidden) continue;
       if (g.grid.isCellEditable && !g.grid.isCellEditable(row, i)) continue;
       return i;
     }
@@ -4170,8 +4413,9 @@ function obGridColumnIds(columns) {
       if (rows > 0) grid.setActiveCell(0, gridFirstEditableCell(g, 0));
       return true;
     }
-    var cols = (grid.getColumns() || []).length;
-    if (active.row >= rows - 1 && active.cell >= cols - 1) {
+    var all = grid.getColumns() || [], lastCell = -1;
+    for (var c = 0; c < all.length; c++) if (all[c] && !all[c].hidden) lastCell = c;
+    if (active.row >= rows - 1 && active.cell >= lastCell) {
       // Конец таблицы: ни новой строки, ни записи.
       return true;
     }

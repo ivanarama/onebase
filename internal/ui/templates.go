@@ -38,6 +38,12 @@ type managedTPColumnJSON struct {
 	// по-прежнему сериализуется в tp_json (план 154). Ровно наоборот к Virtual:
 	// та видима и не отправляется, эта отправляется и не видима.
 	Hidden bool `json:"hidden,omitempty"`
+	// ElPath / CondHidden — колонка с hidden_when (managedTPColumnsHiddenWhen):
+	// путь размещения, по которому клиент находит её в elementStates.hidden
+	// ответа события, и состояние условия при отрисовке. Такая колонка, в
+	// отличие от Hidden, показывается и прячется без перезагрузки.
+	ElPath     string `json:"elPath,omitempty"`
+	CondHidden bool   `json:"condHidden,omitempty"`
 	// TitleFrom — заголовок взят из реквизита формы (title_from) и потому
 	// приходит как текст: клиент экранирует его перед выводом в шапку
 	// SlickGrid, которая рисует подпись как HTML.
@@ -1250,6 +1256,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 					AllowCreate: field.RefEntity != "" && field.InlineCreateEnabled(true) && refWriteAllowed(refWriteAccess, field.RefEntity),
 					Enum:        strings.HasPrefix(string(field.Type), "enum:"),
 					Hidden:      column.Hidden,
+					ElPath:      column.ElPath,
+					CondHidden:  column.CondHidden,
 					Index:       column.Index,
 					TitleFrom:   column.Element != nil && strings.TrimSpace(column.Element.TitleFrom) != "",
 					Width:       column.Width(),
@@ -1278,6 +1286,15 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
 		"managedTPColumnPlan": managedTPColumnPlan,
+		"managedVTColumnPlan": managedVTColumnPlan,
+		"managedVTEditable":   managedVTEditable,
+		// managedVTColumnsHiddenWhen / managedVTCondAttr — hidden_when колонок
+		// ValueTable при отрисовке и их пути для пересчёта после события.
+		"managedVTColumnsHiddenWhen": managedVTColumnsHiddenWhen,
+		"managedVTCondAttr":          managedVTCondAttr,
+		// managedTPColumnsHiddenWhen — состояние hidden_when колонок при
+		// отрисовке; после событий его присылает elementStates.hidden.
+		"managedTPColumnsHiddenWhen": managedTPColumnsHiddenWhen,
 		// managedTPColumnsTitled — заголовки колонок из title_from по значениям
 		// формы при отрисовке; после событий их присылает columnTitles.
 		"managedTPColumnsTitled": func(plan []managedTPColumn, values any) []managedTPColumn {
