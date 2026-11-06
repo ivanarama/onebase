@@ -5734,7 +5734,9 @@ function openRefCurrent(selOrId) {
   if (!sel) return;
   var refEntity = sel.getAttribute('data-ref-entity') || '';
   if (!refEntity || !sel.value) return;
-  var refURL = '/ui/_ref-open/' + encodeURIComponent(refEntity) + '/' + encodeURIComponent(sel.value);
+  var refPage = sel.getAttribute('data-ref-page') || '';
+  var refURL = refPage ? '/ui/page/' + encodeURIComponent(refPage) + '?ref=' + encodeURIComponent(sel.value)
+    : '/ui/_ref-open/' + encodeURIComponent(refEntity) + '/' + encodeURIComponent(sel.value);
   try {
     if (window.__obEmbedded && window.parent && window.parent.obOpenTab) {
       window.parent.postMessage({ source: 'obOpenTab', url: refURL, title: refEntity }, '*');

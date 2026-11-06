@@ -310,6 +310,8 @@ type FormElement struct {
 	// первые N записей, и оператор выбирает из них, не подозревая, что видит не
 	// весь список. Указатель отличает явное false от отсутствующего ключа.
 	ChoiceDropdown *bool `yaml:"choice_dropdown,omitempty"`
+	// ReferencePage opens a custom page with the selected reference UUID in ?ref= instead of its card.
+	ReferencePage string `yaml:"reference_page,omitempty"`
 	// RefCardButton — показывать ли у ЭТОГО ссылочного поля кнопку «Открыть
 	// карточку» (🔍). Явное значение у поля сильнее обоих ключей формы
 	// (ref_card_button и ref_card_button_admin_only) в обе стороны: может и
