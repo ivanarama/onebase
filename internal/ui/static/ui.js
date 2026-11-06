@@ -5036,6 +5036,8 @@ function obOpenQuestion(payload, elementName, handlers) {
     if (field.label) {
       var label = document.createElement('div');
       label.style.cssText = 'font-size:12px;color:#64748b;margin-bottom:3px';
+      // color — «важность: error» или «цветтекста», цвет уже проверен сервером.
+      if (field.color) label.style.color = field.color;
       label.textContent = field.label;
       line.appendChild(label);
     }
@@ -5046,6 +5048,7 @@ function obOpenQuestion(payload, elementName, handlers) {
       input.value = field.value == null ? '' : String(field.value);
       input.style.cssText = 'width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #e2e8f0;border-radius:7px;font-size:14px;outline:none'
         + (field.multiline ? ';resize:vertical;font-family:inherit' : '');
+      if (field.color) input.style.color = field.color;
       line.appendChild(input);
       inputs[field.name] = input;
     } else {
@@ -5054,6 +5057,7 @@ function obOpenQuestion(payload, elementName, handlers) {
         ? 'font-size:15px;font-weight:650;color:#0f172a'
         : 'font-size:14px;color:#1e293b') + ';white-space:pre-line';
       value.textContent = field.value == null ? '' : String(field.value);
+      if (field.color) value.style.color = field.color;
       line.appendChild(value);
     }
     box.appendChild(line);

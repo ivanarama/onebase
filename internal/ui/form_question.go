@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/ivantit66/onebase/internal/csssafe"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/metadata"
 )
@@ -38,6 +39,28 @@ type questionField struct {
 	Multiline bool   `json:"multiline,omitempty"`
 	// Rows — видимых строк многострочного поля; 0 — по умолчанию (4).
 	Rows int `json:"rows,omitempty"`
+	// Color — цвет подписи и значения строки: «цветтекста» (text_color),
+	// прошедший csssafe.Color, иначе красный цвет ошибки при «важность»
+	// (importance) = "error". Сервер отдаёт уже проверенный цвет, клиент
+	// применяет его как есть.
+	Color string `json:"color,omitempty"`
+}
+
+// questionErrorColor — красный текст ошибки, тот же, что у полей формы с
+// importance: error (metadata.FormElementTextColor).
+const questionErrorColor = "#b91c1c"
+
+// questionFieldColor разбирает «цветтекста»/«важность» строки диалога.
+// Недопустимый цвет не применяется, но и не гасит importance; неизвестная
+// важность — без выделения, как без ключа.
+func questionFieldColor(item any) string {
+	if c := csssafe.Color(pickStr(dslField(item, "цветтекста", "text_color", "textcolor"))); c != "" {
+		return c
+	}
+	if strings.EqualFold(strings.TrimSpace(pickStr(dslField(item, "важность", "importance"))), "error") {
+		return questionErrorColor
+	}
+	return ""
 }
 
 // newQuestionBuiltin строит билтин
@@ -120,7 +143,7 @@ func expandQuestionVariants(v any) ([]string, error) {
 func expandQuestionFields(v any) ([]questionField, error) {
 	items := iterateAny(v)
 	if items == nil {
-		return nil, fmt.Errorf("ПоказатьВопрос: Поля — массив структур {имя, заголовок, значение, правка, выделить, многострочное, строк}")
+		return nil, fmt.Errorf("ПоказатьВопрос: Поля — массив структур {имя, заголовок, значение, правка, выделить, многострочное, строк, важность, цветтекста}")
 	}
 	out := make([]questionField, 0, len(items))
 	for i, item := range items {
@@ -137,17 +160,27 @@ func expandQuestionFields(v any) ([]questionField, error) {
 		out = append(out, questionField{
 			Name:      name,
 			Label:     pickStr(dslField(item, "заголовок", "label", "title")),
-			Value:     pickStr(dslField(item, "значение", "value")),
+			Value:     questionFieldValue(dslField(item, "значение", "value")),
 			Editable:  asBool(dslField(item, "правка", "editable")),
 			Strong:    asBool(dslField(item, "выделить", "strong")),
 			Multiline: asBool(dslField(item, "многострочное", "multiline")) || rows > 1,
 			Rows:      rows,
+			Color:     questionFieldColor(item),
 		})
 	}
 	if len(out) == 0 {
 		return nil, fmt.Errorf("ПоказатьВопрос: список полей пуст")
 	}
 	return out, nil
+}
+
+// Логические значения отображаются как при Строка(Значение) в DSL.
+// pickStr использует числовой fallback, теряющий различие true и false.
+func questionFieldValue(v any) string {
+	if b, ok := v.(bool); ok {
+		return strconv.FormatBool(b)
+	}
+	return pickStr(v)
 }
 
 // parseQuestionFields разбирает значения редактируемых полей, введённые
