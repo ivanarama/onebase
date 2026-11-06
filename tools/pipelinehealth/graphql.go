@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -820,7 +821,24 @@ func isJSONNull(data []byte) bool {
 
 type limitedPipelineGraphQLClient struct {
 	delegate pipelineGraphQLClient
+	mu       sync.Mutex
 	used     int
+}
+
+func (client *limitedPipelineGraphQLClient) reserveQuery() bool {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	if client.used >= maxPipelineGraphQLQueries {
+		return false
+	}
+	client.used++
+	return true
+}
+
+func (client *limitedPipelineGraphQLClient) exhausted() bool {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	return client.used >= maxPipelineGraphQLQueries
 }
 
 func limitPipelineGraphQLClient(client pipelineGraphQLClient) *limitedPipelineGraphQLClient {
@@ -839,10 +857,9 @@ func (client *limitedPipelineGraphQLClient) Query(query string, variables map[st
 	readOnly := len(read) < len(strings.TrimSpace(query)) && len(read) > 0 &&
 		strings.ContainsRune(" \t\r\n({", rune(read[0]))
 	for attempt := 0; ; attempt++ {
-		if client.used >= maxPipelineGraphQLQueries {
+		if !client.reserveQuery() {
 			return fmt.Errorf("GraphQL snapshot exceeded %d queries", maxPipelineGraphQLQueries)
 		}
-		client.used++
 		err := client.delegate.Query(query, variables, destination)
 		var gateway *pipelineGraphQLGatewayError
 		if err == nil || !readOnly || !errors.As(err, &gateway) {
@@ -851,7 +868,7 @@ func (client *limitedPipelineGraphQLClient) Query(query string, variables map[st
 		if attempt == 2 {
 			return fmt.Errorf("GraphQL read failed after 3 attempts: %w", err)
 		}
-		if client.used >= maxPipelineGraphQLQueries {
+		if client.exhausted() {
 			return fmt.Errorf("GraphQL snapshot exceeded %d queries: %w", maxPipelineGraphQLQueries, err)
 		}
 		fmt.Fprintf(os.Stderr, "pipelinehealth: retrying GraphQL read after HTTP %d (attempt %d/3)\n", gateway.status, attempt+2)
