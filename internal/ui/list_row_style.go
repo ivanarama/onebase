@@ -142,5 +142,5 @@ func listRowStyle(row map[string]any) template.CSS {
 	if bold, _ := row[listRowBoldKey].(bool); bold {
 		parts = append(parts, "font-weight:600")
 	}
-	return template.CSS(strings.Join(parts, ";"))
+	return template.CSS(strings.Join(parts, ";")) //nolint:gosec // G203: только проверенный цвет #rrggbb и font-weight
 }
