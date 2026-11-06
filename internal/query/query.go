@@ -5818,11 +5818,48 @@ func projectionFieldNames(tokens []tok) []string {
 			add(t.val)
 			continue
 		}
-		if t.kind == tStar && projectionActive() {
+		if t.kind == tStar && projectionActive() && projectionWildcard(tokens, i) {
 			add("*")
 		}
 	}
 	return out
+}
+
+// projectionWildcard — «*» как выборка всех полей («ВЫБРАТЬ *», «Т.*»,
+// «…, *», «ПЕРВЫЕ 10 *»). Умножение («Остаток * Цена») и «КОЛИЧЕСТВО(*)»
+// полей не раскрывают: раньше они давали в ProjectionFields «*», и отчёт с
+// подзапросом отклонялся по любому защищённому полю любого источника, даже не
+// упомянутому в запросе.
+//
+// Решение — от противного и в пользу отказа: «*» считается умножением, только
+// если перед ним операнд (поле или алиас, «)», строка, параметр, число) или
+// «(» агрегата. Всё прочее — выборка всех полей, как раньше.
+func projectionWildcard(tokens []tok, i int) bool {
+	if i == 0 {
+		return true
+	}
+	prev := tokens[i-1]
+	switch prev.kind {
+	case tLParen, tRParen, tStr, tParam:
+		return false
+	case tNum:
+		// «ПЕРВЫЕ 10 *» — выборка всех полей, «2 * Цена» — умножение.
+		if i >= 2 && tokens[i-2].kind == tIdent {
+			kw := upperFast(tokens[i-2].val)
+			return kw == "ПЕРВЫЕ" || kw == "TOP"
+		}
+		return false
+	case tIdent:
+		if _, isKW := sqlKW(prev.val); isKW {
+			return true
+		}
+		switch upperFast(prev.val) {
+		case "РАЗЛИЧНЫЕ", "DISTINCT", "РАЗРЕШЕННЫЕ", "ALLOWED":
+			return true
+		}
+		return false // поле или алиас: умножение
+	}
+	return true
 }
 
 func expandReferenceProjection(fields []string, dims []refDimInfo) []string {
