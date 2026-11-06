@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -95,14 +96,23 @@ func TestMigrateMatrix_MeasurementIsNotCompatibility(t *testing.T) {
 
 func TestMigrateMatrix_ExactMethodFrequency(t *testing.T) {
 	dir := copyScanFixture(t, false)
-	if err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := fs.WalkDir(root.FS(), ".", func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if entry.IsDir() {
 			return nil
 		}
-		data, err := os.ReadFile(path)
+		data, err := root.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -110,11 +120,11 @@ func TestMigrateMatrix_ExactMethodFrequency(t *testing.T) {
 		data = bytes.ReplaceAll(data, []byte("Помощь"), []byte("КодОсновногоЯзыка"))
 		data = bytes.ReplaceAll(data, []byte("утилиты"), []byte("общегоназначения"))
 		data = bytes.ReplaceAll(data, []byte("помощь"), []byte("кодосновногоязыка"))
-		return os.WriteFile(path, data, 0600)
+		return root.WriteFile(path, data, 0600)
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Rename(filepath.Join(dir, "CommonModules", "Утилиты"), filepath.Join(dir, "CommonModules", "ОбщегоНазначения")); err != nil {
+	if err := root.Rename(filepath.Join("CommonModules", "Утилиты"), filepath.Join("CommonModules", "ОбщегоНазначения")); err != nil {
 		t.Fatal(err)
 	}
 	_, matrix := matrixJSON(t, dir)
