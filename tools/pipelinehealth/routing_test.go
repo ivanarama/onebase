@@ -188,7 +188,7 @@ func routingCLI(t *testing.T, pulls []any, args ...string) (map[string]any, erro
 		t.Fatal(err)
 	}
 	//nolint:gosec // G204: fixed public test CLI, constant test flags and private t.TempDir paths; no shell or external input.
-	command := exec.Command("go", append([]string{"run", ".", "-json", "-repo", "owner/repo", "-owner", "owner", "-prs", prs, "-issues", issues}, args...)...)
+	command := exec.Command(pipelinehealthCLI(t), append([]string{"-json", "-repo", "owner/repo", "-owner", "owner", "-prs", prs, "-issues", issues}, args...)...)
 	preparePipelineGraphQLCommand(command)
 	command.Env = append(os.Environ(), "GH_EXE="+filepath.Join(directory, "no-live-github"))
 	output, runErr := command.Output()
