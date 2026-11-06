@@ -22,7 +22,9 @@ dbquery.exe
 *.prof
 
 # Test/coverage artifacts
+__pycache__/
 coverage.out
+coverage.out.report/
 *.log
 
 # Артефакты аудита конфигураций (onebase describe --json)
@@ -68,10 +70,13 @@ Thumbs.db
 # Рабочие материалы / документация (не в публичном репо)
 docs/*
 !docs/forms.md
+!docs/configuration-help.md
 !docs/forms-1c-converter.md
 !docs/migrate-scan.md
+!docs/bsl-compatibility.md
 !docs/ai-assistant.md
 !docs/features.md
+!docs/portable.md
 !docs/mcp.md
 !docs/vibe-coding.md
 !docs/rest-api-v2.md
@@ -83,7 +88,11 @@ docs/*
 !docs/reverse-proxy.md
 !docs/release-signing.md
 !docs/self-update.md
+!docs/commercial-use.md
+!docs/licensing-confirmation-template.md
 !docs/maintenance-pipeline.md
+!docs/ci-evidence.md
+!docs/long-identifiers.md
 # Каталоги, а не файлы по одному: `docs/*` исключает и сам каталог, а в
 # исключённый каталог git не заходит — правило вида `!docs/releases/*.md`
 # не сработало бы, и новые заметки молча не попадали бы в коммит (#988, А3).

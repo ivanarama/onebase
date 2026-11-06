@@ -35,7 +35,10 @@ func (db *DB) EnsurePredefinedColumns(ctx context.Context, entities []*metadata.
 		if d.Name() == "sqlite" {
 			boolTrue = "1"
 		}
-		idxName := "idx_" + strings.ToLower(e.Name) + "_predefined"
+		idxName, err := db.indexName(ctx, table, "idx_"+strings.ToLower(e.Name)+"_predefined")
+		if err != nil {
+			return fmt.Errorf("ensure predefined index %s: %w", e.Name, err)
+		}
 		idxSQL := fmt.Sprintf(
 			`CREATE UNIQUE INDEX IF NOT EXISTS %s ON %s (_predefined_name) WHERE _is_predefined = %s`,
 			idxName, table, boolTrue)

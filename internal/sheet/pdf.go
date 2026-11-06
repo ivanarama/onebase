@@ -253,6 +253,12 @@ func (d *Document) PDF(opts PDFOptions) ([]byte, error) {
 	} else {
 		pdf = fpdf.New(orientFlag(page.Orientation), "mm", pageFormat(page.Format), "")
 	}
+	// Поле ячейки задаёт cellPadMM. Собственное поле fpdf (cMargin, по умолчанию
+	// 1 мм) иначе применяется второй раз: SplitText переносит по ширине
+	// avail−2·cMargin, а CellFormat сдвигает текст ещё на cMargin. В узкой
+	// колонке переносилось то, что помещается: «ОТ» шириной 2,4 мм — при
+	// 4,35 мм места.
+	pdf.SetCellMargin(0)
 	registerFonts(pdf)
 
 	m := page.MarginsMM

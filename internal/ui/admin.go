@@ -21,13 +21,13 @@ var adminTmpl = template.Must(template.New("admin").Parse(tplAdminUsers + tplAdm
 
 const tplAdminUsers = `{{define "admin-users"}}` + adminHead + `
 <main>
-<div class="row-top" style="max-width:800px">
+<div class="row-top" style="max-width:1100px">
   <h2>Пользователи</h2>
   <a class="btn btn-primary" href="/ui/admin/users/new">+ Добавить</a>
 </div>
-<div class="card" style="max-width:800px">
+<div class="card" style="max-width:1100px">
 {{if .Users}}
-<table>
+<div class="table-wrap"><table>
 <thead><tr>
   <th>Логин</th><th>Имя</th><th title="Администратор">Админ</th><th title="Показывать в списках выбора">В списке</th><th title="Запрет смены пароля">Пароль</th><th>Создан</th><th></th>
 </tr></thead>
@@ -40,7 +40,7 @@ const tplAdminUsers = `{{define "admin-users"}}` + adminHead + `
   <td style="text-align:center">{{if .DenyPasswdChange}}🔒{{else}}<span style="color:#cbd5e1">—</span>{{end}}</td>
   <td style="font-size:12px;color:#94a3b8">{{.CreatedAt.Format "02.01.2006"}}</td>
   <td>
-    <div style="display:flex;gap:4px">
+    <div style="display:flex;gap:4px;flex-wrap:nowrap;white-space:nowrap">
       <a class="btn btn-sm btn-secondary" href="/ui/admin/users/{{.ID}}">Карточка</a>
       <a class="btn btn-sm btn-secondary" href="/ui/admin/users/{{.ID}}/roles">Роли</a>
       <form method="POST" action="/ui/admin/users/{{.ID}}/delete" data-ob-confirm="Удалить пользователя {{.Login}}?" style="margin:0">
@@ -50,7 +50,7 @@ const tplAdminUsers = `{{define "admin-users"}}` + adminHead + `
   </td>
 </tr>{{end}}
 </tbody>
-</table>
+</table></div>
 {{else}}
 <p class="empty">Пользователей нет — вход в систему без пароля.<br>Первый пользователь должен быть администратором: после его создания вход потребуется всем.</p>
 {{end}}
@@ -205,6 +205,9 @@ const adminHead = `<!DOCTYPE html>
 body{font-family:system-ui,sans-serif;background:#f5f5f5;padding:32px}
 h2{font-size:22px;font-weight:600;margin-bottom:20px;color:#1e293b}
 .card{background:#fff;border-radius:10px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+/* Таблица шире карточки (много колонок, кнопки действий) прокручивается внутри
+   неё, а не вылезает за белую карточку. */
+.table-wrap{overflow-x:auto;max-width:100%}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th{text-align:left;padding:10px 12px;border-bottom:2px solid #e2e8f0;color:#64748b;font-weight:600}
 td{padding:10px 12px;border-bottom:1px solid #f1f5f9;color:#334155}
@@ -1197,7 +1200,7 @@ const tplAdminSessions = `{{define "admin-sessions"}}` + adminHead + `
 </div>
 {{if .AuditUsers}}
 <div class="card" style="max-width:700px">
-<table>
+<div class="table-wrap"><table>
 <thead><tr>
   <th>Логин</th><th>Последний запрос</th>
 </tr></thead>
@@ -1207,7 +1210,7 @@ const tplAdminSessions = `{{define "admin-sessions"}}` + adminHead + `
   <td style="font-size:12px;color:#94a3b8">{{.LastSeen.Format "02.01.2006 15:04:05"}}</td>
 </tr>{{end}}
 </tbody>
-</table>
+</table></div>
 </div>
 {{else if .NoAuth}}
 <div class="card" style="max-width:700px">
@@ -1224,7 +1227,7 @@ const tplAdminSessions = `{{define "admin-sessions"}}` + adminHead + `
   <div style="font-size:12px;color:#94a3b8;margin-top:6px">При превышении лимита новый вход вытесняет самую давнюю по активности сессию Предприятия этого пользователя. Сессии конфигуратора не учитываются.</div>
 </div>
 <div class="card" style="max-width:1100px">
-<table>
+<div class="table-wrap"><table>
 <thead><tr>
   <th>Логин</th><th>Имя</th><th>Вид</th><th>Вход</th><th>Активность</th><th>Сессия до</th><th>IP</th><th>Браузер</th><th style="width:150px"></th>
 </tr></thead>
@@ -1256,7 +1259,7 @@ const tplAdminSessions = `{{define "admin-sessions"}}` + adminHead + `
   </td>
 </tr>{{end}}
 </tbody>
-</table>
+</table></div>
 </div>
 {{else}}
 <div class="card" style="max-width:700px">
@@ -1307,7 +1310,7 @@ const tplAdminAPITokens = `{{define "admin-api-tokens"}}` + adminHead + `
 
 <div class="card" style="max-width:1000px">
 {{if .Tokens}}
-<table>
+<div class="table-wrap"><table>
 <thead><tr>
   <th>Название</th><th>Пользователь</th><th>Создан</th><th>Последнее использование</th><th>Срок</th><th>Статус</th><th style="width:90px"></th>
 </tr></thead>
@@ -1330,7 +1333,7 @@ const tplAdminAPITokens = `{{define "admin-api-tokens"}}` + adminHead + `
   </td>
 </tr>{{end}}
 </tbody>
-</table>
+</table></div>
 {{else}}
 <p class="empty">API-токенов ещё нет.</p>
 {{end}}
@@ -1344,7 +1347,7 @@ const tplAdminRoles = `{{define "admin-roles"}}` + adminHead + `
 <p style="color:#64748b;font-size:13px;margin-bottom:16px">Роли загружаются из файлов <code>roles/*.yaml</code> в директории проекта и синхронизируются при старте.</p>
 {{if .Roles}}
 <div class="card" style="max-width:800px">
-<table>
+<div class="table-wrap"><table>
 <thead><tr><th>Роль</th><th>Описание</th><th>Справочники</th><th>Документы</th><th>Отчёты</th></tr></thead>
 <tbody>
 {{range .Roles}}<tr>
@@ -1355,7 +1358,7 @@ const tplAdminRoles = `{{define "admin-roles"}}` + adminHead + `
   <td style="font-size:12px">{{range $k,$v := .Permissions.Reports}}{{$k}}: {{range $i,$op := $v}}{{if $i}}, {{end}}{{$op}}{{end}}<br>{{end}}</td>
 </tr>{{end}}
 </tbody>
-</table>
+</table></div>
 </div>
 {{else}}
 <div class="card" style="max-width:600px">
@@ -1374,7 +1377,7 @@ const tplAdminUserRoles = `{{define "admin-user-roles"}}` + adminHead + `
 <div class="card" style="max-width:600px">
 <form method="POST">
 {{if .AllRoles}}
-<table style="margin-bottom:16px">
+<div class="table-wrap"><table style="margin-bottom:16px">
 <thead><tr><th style="width:40px"></th><th>Роль</th><th>Описание</th></tr></thead>
 <tbody>
 {{range .AllRoles}}<tr>
@@ -1383,7 +1386,7 @@ const tplAdminUserRoles = `{{define "admin-user-roles"}}` + adminHead + `
   <td style="color:#64748b;font-size:13px">{{.Description}}</td>
 </tr>{{end}}
 </tbody>
-</table>
+</table></div>
 {{else}}
 <p class="empty" style="margin-bottom:16px">Роли не найдены. Создайте roles/*.yaml в директории проекта.</p>
 {{end}}
@@ -1434,7 +1437,7 @@ const tplAdminAudit = `{{define "admin-audit"}}` + adminHead + `
 
 <div class="card" style="max-width:1100px">
 {{if .Entries}}
-<table style="font-size:13px">
+<div class="table-wrap"><table style="font-size:13px">
 <thead><tr>
   <th>Время</th><th>Пользователь</th><th>Действие</th><th>Сущность</th><th>Поле</th><th>Старое</th><th>Новое</th>
 </tr></thead>
@@ -1449,7 +1452,7 @@ const tplAdminAudit = `{{define "admin-audit"}}` + adminHead + `
   <td style="font-size:12px;color:#16a34a;max-width:150px;word-break:break-all">{{.NewValue}}</td>
 </tr>{{end}}
 </tbody>
-</table>
+</table></div>
 <div style="padding:12px 0;display:flex;gap:8px;align-items:center">
   {{if .HasPrev}}<a class="btn btn-sm" href="?{{.PrevQuery}}" style="background:#e2e8f0;color:#475569">← Пред.</a>{{end}}
   <span style="font-size:13px;color:#64748b">Стр. {{.Page}}</span>
@@ -1480,7 +1483,7 @@ const tplAdminCleanup = `{{define "admin-cleanup"}}` + adminHead + `
 <form method="POST" action="/ui/admin/cleanup"
       data-ob-confirm="Выполнить исправления для отмеченных проверок? Сначала убедитесь, что есть резервная копия.">
 <div class="card" style="max-width:900px;margin-bottom:20px">
-<table>
+<div class="table-wrap"><table>
 <thead><tr>
   <th style="width:34px"></th><th>Проверка</th><th>Результат</th>
 </tr></thead>
@@ -1508,7 +1511,7 @@ const tplAdminCleanup = `{{define "admin-cleanup"}}` + adminHead + `
   </td>
 </tr>{{end}}
 </tbody>
-</table>
+</table></div>
 </div>
 {{if .Clean}}
 <p class="empty" style="max-width:900px">Проблем не найдено — база в порядке.</p>
@@ -1532,7 +1535,7 @@ const tplAdminWebhooks = `{{define "admin-webhooks"}}` + adminHead + `
 </div>
 <div class="card" style="max-width:1100px">
 {{if .Entries}}
-<table style="font-size:13px">
+<div class="table-wrap"><table style="font-size:13px">
 <thead><tr>
   <th>Время</th><th>Веб-хук</th><th>Событие</th><th>Сущность</th><th>Статус</th><th>Попыток</th><th>Длительность</th><th>Ошибка</th>
 </tr></thead>
@@ -1550,7 +1553,7 @@ const tplAdminWebhooks = `{{define "admin-webhooks"}}` + adminHead + `
 </tr>
 {{end}}
 </tbody>
-</table>
+</table></div>
 {{else}}
   <p class="empty">Вызовов веб-хуков ещё не было. Веб-хуки настраиваются в config/app.yaml (блок webhooks).</p>
 {{end}}
@@ -1567,7 +1570,7 @@ const tplAdminRLS = `{{define "admin-rls"}}` + adminHead + `
 <div class="card" style="max-width:1180px;margin-bottom:20px">
 <h3 style="font-size:16px;margin-bottom:12px;color:#1e293b">Row policies</h3>
 {{if .Rows}}
-<table style="font-size:13px">
+<div class="table-wrap"><table style="font-size:13px">
 <thead><tr>
   <th>Роль</th><th>Раздел</th><th>Объект</th><th>Операция</th><th>Field</th><th>Право</th><th>Статус</th><th>Auto-fill</th><th>Ошибка</th>
 </tr></thead>
@@ -1586,7 +1589,7 @@ const tplAdminRLS = `{{define "admin-rls"}}` + adminHead + `
 </tr>
 {{end}}
 </tbody>
-</table>
+</table></div>
 {{else}}
 <p class="empty">Row policies не настроены.</p>
 {{end}}
@@ -1594,7 +1597,7 @@ const tplAdminRLS = `{{define "admin-rls"}}` + adminHead + `
 
 <div class="card" style="max-width:900px">
 <h3 style="font-size:16px;margin-bottom:12px;color:#1e293b">DSL paths</h3>
-<table style="font-size:13px">
+<div class="table-wrap"><table style="font-size:13px">
 <thead><tr><th>Путь</th><th>Режим</th><th>Поведение</th></tr></thead>
 <tbody>
 {{range .DSLPaths}}
@@ -1605,7 +1608,7 @@ const tplAdminRLS = `{{define "admin-rls"}}` + adminHead + `
 </tr>
 {{end}}
 </tbody>
-</table>
+</table></div>
 </div>
 </main></body></html>
 {{end}}`
