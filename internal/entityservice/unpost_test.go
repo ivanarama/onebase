@@ -55,6 +55,46 @@ func TestUnpostHookErrorRollsBackFlagAndMovements(t *testing.T) {
 	assertUnpostState(t, db, ctx, doc, reg, id, true, 1)
 }
 
+// Удаление проведённого документа идёт через отмену проведения, как в 1С:
+// отказ ОбработкаУдаленияПроведения отменяет удаление, документ и движения на
+// месте.
+func TestDeletePostedDocumentHookRefusalKeepsDocument(t *testing.T) {
+	svc, db, ctx, doc, reg, id := newUnpostFixture(t, `
+Процедура ОбработкаУдаленияПроведения()
+  ВызватьИсключение("отмена запрещена");
+КонецПроцедуры`)
+
+	result, err := svc.Delete(ctx, doc, id)
+	if err != nil {
+		t.Fatalf("отказ хука должен возвращаться через результат, получено: %v", err)
+	}
+	if !strings.Contains(result.DSLError, "отмена запрещена") {
+		t.Fatalf("DSLError = %q", result.DSLError)
+	}
+	assertUnpostState(t, db, ctx, doc, reg, id, true, 1)
+}
+
+func TestDeletePostedDocumentRunsUnpostHook(t *testing.T) {
+	svc, db, ctx, doc, _, id := newUnpostFixture(t, `
+Процедура ОбработкаУдаленияПроведения()
+  Если ЭтотОбъект.Posted Тогда
+    ВызватьИсключение("хук увидел проведённый документ");
+  КонецЕсли;
+  Сообщить("хук отмены вызван");
+КонецПроцедуры`)
+
+	result, err := svc.Delete(ctx, doc, id)
+	if err != nil || result.DSLError != "" {
+		t.Fatalf("удаление должно пройти: err=%v dsl=%q", err, result.DSLError)
+	}
+	if len(result.DSLMessages) != 1 || result.DSLMessages[0] != "хук отмены вызван" {
+		t.Fatalf("сообщения хука = %v", result.DSLMessages)
+	}
+	if _, err := db.GetByID(ctx, doc.Name, id, doc); !storage.IsNotFound(err) {
+		t.Fatalf("документ должен быть удалён: %v", err)
+	}
+}
+
 func TestSaveExistingPostedDocumentRunsUnpostHook(t *testing.T) {
 	svc, db, ctx, doc, reg, id := newUnpostFixture(t, `
 Процедура ОбработкаУдаленияПроведения()
