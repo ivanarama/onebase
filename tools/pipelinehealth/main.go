@@ -183,6 +183,7 @@ type report struct {
 	PositiveReviewContract           *routingPurposeContract       `json:"positive_review_contract,omitempty"`
 	PositiveMergeCandidates          *[]routingFixCandidate        `json:"positive_merge_candidates,omitempty"`
 	TechnicalFixCandidates           *[]routingFixCandidate        `json:"technical_fix_candidates,omitempty"`
+	TechnicalFixStartCandidates      *[]routingStartCandidate      `json:"technical_fix_start_candidates,omitempty"`
 	TechnicalFixProgressCandidates   *[]routingProgressCandidate   `json:"technical_fix_progress_candidates,omitempty"`
 	TechnicalFixSettlementCandidates *[]routingSettlementCandidate `json:"technical_fix_settlement_candidates,omitempty"`
 	TechnicalWaiting                 *[]candidate                  `json:"technical_waiting,omitempty"`
@@ -512,7 +513,10 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 			legacySourceCompletions, _, _ = currentProtocolState(pr.Comments, owner, pr.HeadParents[0])
 		}
 		carryDone, carryIntentOpen, v1AbortCurrent, baseAdvanced, protocolHistory, integrationAt := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA, pr.HeadParents)
-		overrideOpen := latestOverride > latestCompletion
+		// Reopening a parked review requires a completed proof of this HEAD.
+		// A historical override must not unpark an author's later push merely
+		// because that new HEAD has no completion to consume the old marker.
+		overrideOpen := currentCompletions > 0 && latestOverride > latestCompletion
 		item.IntegrationAt = integrationAt
 		item.BaseSyncCandidate = baseSyncCandidateOf(pr, owner)
 		if baseAdvanced {
