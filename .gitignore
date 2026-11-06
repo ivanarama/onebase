@@ -22,6 +22,7 @@ dbquery.exe
 *.prof
 
 # Test/coverage artifacts
+__pycache__/
 coverage.out
 coverage.out.report/
 *.log
@@ -72,6 +73,7 @@ docs/*
 !docs/configuration-help.md
 !docs/forms-1c-converter.md
 !docs/migrate-scan.md
+!docs/bsl-compatibility.md
 !docs/ai-assistant.md
 !docs/features.md
 !docs/portable.md
@@ -89,6 +91,7 @@ docs/*
 !docs/commercial-use.md
 !docs/licensing-confirmation-template.md
 !docs/maintenance-pipeline.md
+!docs/ci-evidence.md
 !docs/long-identifiers.md
 # Каталоги, а не файлы по одному: `docs/*` исключает и сам каталог, а в
 # исключённый каталог git не заходит — правило вида `!docs/releases/*.md`
