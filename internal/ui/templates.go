@@ -1372,6 +1372,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"inputAutocomplete":   inputAutocomplete,
 		"inputMaskHint":       metadata.InputMaskHint,
 		"wcell":               widgetCell,
+		"wRowStyle":           widgetRowStyle,
+		"listRowStyle":        listRowStyle,
 		"echartsJSON":         echartsJSON,
 		"stageChartJSON":      stageChartJSON,
 		"stageSourceLabel":    stageSourceLabel,
@@ -1627,6 +1629,8 @@ th a:hover{color:#1e293b}
 td{padding:10px 12px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:14px}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:#f8fafc}
+tr.ob-row-styled td{color:inherit;font-weight:inherit}
+tr.ob-row-styled:hover td{background:inherit;filter:brightness(.95)}
 .btn{display:inline-block;padding:8px 18px;border-radius:7px;font-size:14px;font-weight:500;text-decoration:none;cursor:pointer;border:none;line-height:1}
 .btn-primary{background:#3b82f6;color:#fff}.btn-primary:hover{background:#2563eb}
 .btn-post{background:#e8b400;color:#1a1a1a;font-weight:700}.btn-post:hover{background:#d4a200}
@@ -1970,6 +1974,8 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 .w-list .ob-row-link{cursor:pointer}
 .w-list .ob-row-link:hover td,.w-list .ob-row-link:focus-visible td{background:#eff6ff}
 .w-list .ob-row-link:focus-visible{outline:2px solid #2563eb;outline-offset:-2px}
+.w-list tr.ob-row-styled td{color:inherit;font-weight:inherit}
+.w-list tr.ob-row-styled.ob-row-link:hover td,.w-list tr.ob-row-styled.ob-row-link:focus-visible td{background:inherit;filter:brightness(.94)}
 .w-chart{min-height:240px}
 .w-chart-canvas{width:100%;height:240px}
 .w-actions-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
@@ -2069,7 +2075,8 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
     <tbody>
     {{range .Rows}}
       {{$row := .}}
-      {{with index $row "_row_url"}}<tr class="ob-row-link" tabindex="0" data-ob-row-url="{{.}}">{{else}}<tr>{{end}}
+      {{$style := wRowStyle $row}}
+      {{with index $row "_row_url"}}<tr class="ob-row-link{{if $style}} ob-row-styled{{end}}" tabindex="0" data-ob-row-url="{{.}}"{{if $style}} style="{{$style}}"{{end}}>{{else}}<tr{{if $style}} class="ob-row-styled" style="{{$style}}"{{end}}>{{end}}
         {{range $.Columns}}
         <td{{if eq .Align "right"}} class="right"{{end}}>{{wcell $row .Field .Format}}</td>
         {{end}}
@@ -2299,7 +2306,7 @@ const tplList = `
   <th style="width:90px"></th>
 </tr></thead><tbody>
 {{range .TreeRows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}{{$depth := index $row "_depth"}}
-<tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
+{{$rowStyle := listRowStyle $row}}<tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer{{with $rowStyle}};{{.}}{{end}}"{{else}}style="cursor:pointer{{with $rowStyle}};{{.}}{{end}}"{{end}}{{if $rowStyle}} class="ob-row-styled"{{end}}
   data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
   data-ob-entity-id="{{index $row "id"}}"
   data-tree-id="{{index $row "id"}}"
@@ -2411,7 +2418,7 @@ const tplList = `
   data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
 >
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
-<tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
+{{$rowStyle := listRowStyle $row}}<tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer{{with $rowStyle}};{{.}}{{end}}"{{else}}style="cursor:pointer{{with $rowStyle}};{{.}}{{end}}"{{end}}{{if $rowStyle}} class="ob-row-styled"{{end}}
   data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
   data-ob-entity-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"

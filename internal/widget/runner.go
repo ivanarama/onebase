@@ -318,6 +318,9 @@ func (r *Runner) runList(ctx context.Context, w *metadata.Widget, params map[str
 	// именно на объявленную сущность. Любая неоднозначность — строки просто
 	// остаются некликабельными, виджет продолжает работать.
 	idCol, rawIDs := r.navigationIDs(w, cols, rows, compiled)
+	// row_style: оформление строк из колонок выборки — до resolveUUIDs, пока
+	// значения колонок сырые.
+	styleCols := applyRowStyle(w, cols, rows)
 	r.resolveUUIDs(ctx, rows)
 	if len(rawIDs) > 0 {
 		entity := r.Reg.GetEntity(w.Source.Entity)
@@ -330,12 +333,17 @@ func (r *Runner) runList(ctx context.Context, w *metadata.Widget, params map[str
 		}
 	}
 	displayCols := cols
-	if idCol != "" && len(w.Columns) == 0 {
-		// Сырой идентификатор — навигационная деталь, а не данные для таблицы:
-		// из авто-колонок (автор не объявил свои) он исключается.
+	if (idCol != "" || len(styleCols) > 0) && len(w.Columns) == 0 {
+		// Сырой идентификатор и колонки оформления (row_style) — служебные
+		// детали, а не данные для таблицы: из авто-колонок (автор не объявил
+		// свои) они исключаются.
+		hidden := map[string]bool{idCol: idCol != ""}
+		for _, c := range styleCols {
+			hidden[c] = true
+		}
 		displayCols = make([]string, 0, len(cols))
 		for _, c := range cols {
-			if c != idCol {
+			if !hidden[c] {
 				displayCols = append(displayCols, c)
 			}
 		}
