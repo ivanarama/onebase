@@ -55,7 +55,7 @@ const tplManagedForm = `
   <div class="managed-tabs" data-tabs="{{$el.Name}}"{{if hasHandler $el "ПриСменеСтраницы"}} data-ob-fire-pagechange="{{$el.Name}}"{{end}} style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elLayout $el}}">
     <div class="managed-tab-headers" style="display:flex;gap:2px;border-bottom:2px solid #e2e8f0;margin-bottom:12px">
       {{range $i, $page := $pages}}
-        <button type="button" class="managed-tab-btn{{if eq $i 0}} active{{end}}" data-tab-idx="{{$i}}" data-tab-page="{{$page.Name}}"{{with elPath $ctx $page}} data-ob-tab-path="{{.}}"{{end}} data-ob-readonly-navigation="1">
+        <button type="button" class="managed-tab-btn{{if eq $i 0}} active{{end}}" data-tab-idx="{{$i}}" data-tab-page="{{$page.Name}}"{{with elPath $ctx $page}} data-ob-tab-path="{{.}}"{{end}}{{with tabTitleStyle $el $page}} style="{{.}}"{{end}} data-ob-readonly-navigation="1">
           {{fieldTitleRU $page.TitleMap $page.Name}}
         </button>
       {{end}}
@@ -969,7 +969,7 @@ window.MonacoEnvironment = window.MonacoEnvironment || { getWorkerUrl: function 
 <style>
 .managed-tab-btn{padding:8px 14px;border:none;background:none;cursor:pointer;font-size:13px;color:#64748b;border-bottom:2px solid transparent;margin-bottom:-2px;font-family:inherit}
 .managed-tab-btn:hover{color:#1a4a80;background:#f5f8ff}
-.managed-tab-btn.active{color:#1a4a80;border-bottom-color:#1a4a80;font-weight:600}
+.managed-tab-btn.active{color:var(--ob-tab-color,#1a4a80);border-bottom-color:var(--ob-tab-color,#1a4a80);font-weight:600}
 /* Мобильная адаптация управляемых форм (этап 45): заголовки вкладок скроллятся
    по горизонтали, поля в одну колонку. ТЧ по умолчанию рендерятся SlickGrid'ом
    (.ob-grid) — у него собственный горизонтальный скролл; .tp-table (режим
