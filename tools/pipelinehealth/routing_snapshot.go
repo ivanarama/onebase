@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/ivantit66/onebase/internal/reviewrouting"
 )
@@ -197,6 +198,7 @@ func loadRoutingSnapshots(client pipelineGraphQLClient, prs []apiPull, repositor
 	if err == nil && (repo["nameWithOwner"] != repository || id == "") {
 		err = fmt.Errorf("routing repository identity is unavailable")
 	}
+	jobs := make(chan apiPull, len(prs))
 	for _, pr := range prs {
 		if pr.State != "open" || pr.Base.Ref != "main" {
 			continue
@@ -205,8 +207,30 @@ func loadRoutingSnapshots(client pipelineGraphQLClient, prs []apiPull, repositor
 			result[pr.Number] = routingSnapshot{err: err}
 			continue
 		}
-		value, readErr := stableRoutingSnapshot(bounded, repository, id, pr.Number)
-		result[pr.Number] = routingSnapshot{value, readErr}
+		jobs <- pr
+	}
+	close(jobs)
+	type observed struct {
+		number   int
+		snapshot routingSnapshot
+	}
+	completed := make(chan observed)
+	var workers sync.WaitGroup
+	// Keep both ordered complete passes within each PR. Only independent PRs
+	// overlap, sharing this snapshot's physical-query budget across all workers.
+	for range min(6, len(jobs)) {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			for pr := range jobs {
+				value, readErr := stableRoutingSnapshot(bounded, repository, id, pr.Number)
+				completed <- observed{pr.Number, routingSnapshot{value, readErr}}
+			}
+		}()
+	}
+	go func() { workers.Wait(); close(completed) }()
+	for item := range completed {
+		result[item.number] = item.snapshot
 	}
 	return result
 }
