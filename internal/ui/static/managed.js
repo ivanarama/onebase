@@ -356,9 +356,22 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     x.onclick = function(ev){ ev.stopPropagation(); d.remove(); };
     d.appendChild(x);
     b.appendChild(d);
+    // Не больше пяти плашек: новая вытесняет самую старую.
+    while (b.children.length > 5) b.removeChild(b.firstChild);
+    // Показанное ответом события помнит верхнее окно: опрос /ui/messages в
+    // режиме messages: popup не покажет то же сообщение второй раз.
+    try {
+      const top = window.top || window;
+      (top.__obFlashed = top.__obFlashed || []).push({text: text, at: Date.now()});
+    } catch (e) {}
     // Ошибки держим до закрытия крестиком (чтобы успеть прочитать/скопировать);
-    // info-сообщения сами исчезают через 5 c.
-    if (kind !== 'err') setTimeout(() => d.remove(), 5000);
+    // info-сообщения сами исчезают через message_seconds (по умолчанию 5 c).
+    if (kind !== 'err') setTimeout(() => d.remove(), flashSeconds() * 1000);
+  }
+  function flashSeconds(){
+    const m = document.querySelector ? document.querySelector('meta[name="ob-messages"]') : null;
+    const secs = m ? parseInt(m.getAttribute('data-seconds'), 10) : 0;
+    return secs > 0 ? secs : 5;
   }
   // Доступно другим скриптам (например, грид-IIFE показывает ошибки настройки).
   window.obFlash = flash;

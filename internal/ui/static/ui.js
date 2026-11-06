@@ -3432,10 +3432,93 @@ obReady(function () {
   else init();
 })();
 
+// BEGIN onebase-messages-popup
+// Режим показа сообщений (config/home_page.yaml: messages, message_seconds).
+// Метка ob-messages есть только у настроенной конфигурации; без неё — как
+// раньше: плашки событий формы и нижняя панель «Сообщения».
+function obMessagesConfig() {
+  var m = document.querySelector ? document.querySelector('meta[name="ob-messages"]') : null;
+  var secs = m ? parseInt(m.getAttribute('data-seconds'), 10) : 0;
+  return { popup: !!m && m.getAttribute('content') === 'popup', seconds: secs > 0 ? secs : 5 };
+}
+// obPickPopupMessages — какие сообщения хранилища показать плашкой: новее
+// seenAt (мс) и не показанные уже ответом события формы. flashed — список
+// {text, at} плашек формы; совпавшая запись расходуется (одна плашка формы
+// гасит одно сообщение хранилища), записи старше минуты забываются.
+function obPickPopupMessages(messages, seenAt, flashed, now) {
+  var keep = (flashed || []).filter(function (f) { return now - f.at < 60000; });
+  var show = [], last = seenAt;
+  (messages || []).forEach(function (m) {
+    var at = Date.parse(m.time);
+    if (!(at > seenAt)) return;
+    if (at > last) last = at;
+    for (var i = 0; i < keep.length; i++) {
+      if (keep[i].text === m.text) { keep.splice(i, 1); return; }
+    }
+    show.push(m);
+  });
+  return { show: show, seenAt: last, flashed: keep };
+}
+// obToast — всплывающая плашка вверху справа, общий контейнер с плашками
+// событий формы. Не больше пяти: новая вытесняет самую старую. Ошибка висит до
+// крестика, обычная — message_seconds секунд.
+function obToast(text, kind) {
+  var b = document.getElementById('ob-fmevt-banner');
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'ob-fmevt-banner';
+    b.style.cssText = 'position:fixed;top:14px;right:14px;max-width:380px;z-index:9999;display:flex;flex-direction:column;gap:6px;pointer-events:none';
+    document.body.appendChild(b);
+  }
+  var d = document.createElement('div');
+  d.style.cssText = (kind === 'err'
+    ? 'background:#fee2e2;color:#991b1b;border:1px solid #fecaca'
+    : 'background:#d1fae5;color:#065f46;border:1px solid #a7f3d0') +
+    ';padding:8px 28px 8px 12px;border-radius:6px;font-size:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);pointer-events:auto;position:relative;white-space:pre-wrap;word-break:break-word';
+  var msg = document.createElement('span');
+  msg.textContent = text;
+  d.appendChild(msg);
+  var x = document.createElement('span');
+  x.textContent = '×';
+  x.style.cssText = 'position:absolute;top:4px;right:8px;cursor:pointer;font-weight:700;opacity:.55;font-size:14px;line-height:1';
+  x.onclick = function (ev) { ev.stopPropagation(); d.remove(); };
+  d.appendChild(x);
+  b.appendChild(d);
+  while (b.children.length > 5) b.removeChild(b.firstChild);
+  if (kind !== 'err') setTimeout(function () { d.remove(); }, obMessagesConfig().seconds * 1000);
+}
+window.obToast = obToast;
+// END onebase-messages-popup
+
 (function () {
   if (window.__obMsgInit) return;
   window.__obMsgInit = true;
+  // messages: popup — нижней панели нет. Сообщения хранилища (фоновые задания,
+  // другие окна, запись формы) показываются плашкой; то, что уже показал ответ
+  // события формы, не дублируется. Видимое помнится по времени в sessionStorage
+  // — переход на другую страницу не повторяет уже показанное.
+  function initPopup() {
+    var seenAt = 0;
+    try { seenAt = parseInt(sessionStorage.getItem('obMsgSeenAt'), 10) || 0; } catch (e) {}
+    // Первая страница сессии: показать только свежее (запись формы перед
+    // переходом), а не всю историю.
+    if (!seenAt) seenAt = Date.now() - 30000;
+    function load() {
+      fetch('/ui/messages').then(function (r) { return r.json(); }).then(function (d) {
+        var picked = obPickPopupMessages(d.messages || [], seenAt, window.__obFlashed, Date.now());
+        window.__obFlashed = picked.flashed;
+        seenAt = picked.seenAt;
+        try { sessionStorage.setItem('obMsgSeenAt', String(seenAt)); } catch (e) {}
+        picked.show.forEach(function (m) { obToast(m.text, 'info'); });
+      }).catch(function () {});
+    }
+    window.obReloadMessages = load;
+    load();
+    setInterval(load, 3000);
+    document.addEventListener('submit', function () { setTimeout(load, 400); }, true);
+  }
   function init() {
+    if (obMessagesConfig().popup) { initPopup(); return; }
     if (document.getElementById('ob-msg-bar')) return;
     var bar = document.createElement('div');
     bar.id = 'ob-msg-bar';
