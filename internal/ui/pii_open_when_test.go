@@ -116,7 +116,7 @@ func TestPIIOpenWhen_ObjectFormMatrix(t *testing.T) {
 				}
 				// 3. Запись правки телефона.
 				save := do(http.MethodPost, base+"/"+id.String(), url.Values{
-					"_version": {strconv.FormatInt(version, 10)},
+					"_version":     {strconv.FormatInt(version, 10)},
 					"Наименование": {"заявка"}, "Статус": {tc.submittedStatus}, "Телефон": {typed},
 				})
 				if save.Code >= 400 {
