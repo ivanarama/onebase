@@ -3366,11 +3366,12 @@ func preScanRefDims(tokens []tok, opts CompileOpts) []refDimInfo {
 func preScanAllRefDims(tokens []tok, opts CompileOpts) []refDimInfo {
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
-		if t.kind != tIdent {
+		// Check the source shape before converting a potentially long field name.
+		if t.kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
 		upper := upperFast(t.val)
-		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(upper) {
 			continue
 		}
 		regName := tokens[i+2].val
@@ -3953,11 +3954,11 @@ func buildColMap(tokens []tok, opts CompileOpts) map[string]string {
 	vtSourceFound := false
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
-		if t.kind != tIdent {
+		if t.kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
 		upper := upperFast(t.val)
-		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(upper) {
 			continue
 		}
 		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
@@ -4016,11 +4017,11 @@ func buildColMap(tokens []tok, opts CompileOpts) map[string]string {
 func preScanMainRefSource(tokens []tok, opts CompileOpts) mainRefSource {
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
-		if t.kind != tIdent {
+		if t.kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
 		upper := upperFast(t.val)
-		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(upper) {
 			continue
 		}
 		// VT-источник (Тип.Имя.Остатки(...)) — не сущность.
@@ -4122,11 +4123,11 @@ func (tr *translator) refEntityForQualifier(pos int) string {
 func buildColTypes(tokens []tok, opts CompileOpts) map[string]metadata.FieldType {
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
-		if t.kind != tIdent {
+		if t.kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
 		upper := upperFast(t.val)
-		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(upper) {
 			continue
 		}
 		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
@@ -4951,11 +4952,11 @@ func (tr *translator) takeQualifier() string {
 func preScanMainTable(tokens []tok) string {
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
-		if t.kind != tIdent {
+		if t.kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
 		upper := upperFast(t.val)
-		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(upper) {
 			continue
 		}
 		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
@@ -5007,8 +5008,11 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 	for i := 0; i < len(tokens); i++ {
 		t := tokens[i]
 		ctx.tokenDepth[i] = depth
+		// Reuse keyword classification across the scope, section and source scans.
+		kw, keyword := "", false
 		if t.kind == tIdent {
-			if kw, ok := sqlKW(t.val); ok && kw == "SELECT" {
+			kw, keyword = sqlKW(t.val)
+			if keyword && kw == "SELECT" {
 				// UNION starts a sibling SELECT at the same depth; nested SELECT
 				// keeps every shallower parent frame active.
 				unionFirst := len(ctx.scopes)
@@ -5045,7 +5049,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 			// EXTRACT(YEAR FROM ...) содержит SQL-слово FROM внутри выражения.
 			// Секцию SELECT меняют только ключевые слова на глубине самого SELECT.
 			if t.kind == tIdent && depth == frame.depth {
-				if kw, ok := sqlKW(t.val); ok {
+				if keyword {
 					switch kw {
 					case "SELECT":
 						sections[scopeID] = sectionSelect
@@ -5065,7 +5069,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 			ctx.tokenScope[i] = scopeID
 			ctx.tokenSection[i] = sections[scopeID]
 			if sections[scopeID] == sectionSelect && t.kind == tIdent && depth == frame.depth {
-				if up := upperFast(t.val); (up == "КАК" || up == "AS") &&
+				if keyword && kw == "AS" &&
 					i+1 < len(tokens) && tokens[i+1].kind == tIdent {
 					alias := lowerFast(tokens[i+1].val)
 					ctx.scopes[scopeID].outputAliases[alias] = struct{}{}
@@ -5079,7 +5083,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 		// Производная таблица в FROM/JOIN сама является источником текущего
 		// SELECT. Без этого следующий обычный JOIN ошибочно становился mainTable.
 		if t.kind == tIdent && len(active) > 0 {
-			if kw, ok := sqlKW(t.val); ok && (kw == "FROM" || kw == "JOIN") &&
+			if keyword && (kw == "FROM" || kw == "JOIN") &&
 				i+2 < len(tokens) && tokens[i+1].kind == tLParen &&
 				tokens[i+2].kind == tIdent {
 				if nestedKW, nested := sqlKW(tokens[i+2].val); nested && nestedKW == "SELECT" {
@@ -5146,8 +5150,11 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 			}
 			continue
 		}
+		if len(active) == 0 || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+			continue
+		}
 		typeUpper := upperFast(tokens[i].val)
-		if len(active) == 0 || !isSourceType(typeUpper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(typeUpper) {
 			continue
 		}
 		scope := &ctx.scopes[active[len(active)-1].id]
