@@ -82,6 +82,7 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	vars := dslvars.Common{
 		Ctx: ctx, CtxSource: txState, Reg: s.reg, Store: s.store, Mailer: s.mailer, Movements: mc,
 		NetGuard:          s.netGuard(ctx),
+		HTTPFileMaxBytes:  s.attachmentMaxBytes(),
 		ExecGuard:         s.execGuard(ctx),
 		Notifier:          s.notifier(),
 		Interp:            s.interp, // для hook-правила конфликта в ПланыОбмена.ЗагрузитьПакет

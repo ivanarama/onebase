@@ -1,0 +1,10 @@
+{
+  "base_url": "http://127.0.0.1:8080",
+  "screenshots": [{
+    "file": "call-new.png",
+    "path": "/ui/document/Звонок/new",
+    "wait_for": "#main-form",
+    "selector": "main",
+    "hide": [".topbar"]
+  }]
+}

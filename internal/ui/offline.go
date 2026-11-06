@@ -32,6 +32,7 @@ func RunProcessorOffline(ctx context.Context, proj *project.Project, db *storage
 // переиспользовать для нескольких обработок (например, набора тестов).
 func NewOfflineServer(proj *project.Project, db *storage.DB) (*Server, *runtime.Registry, error) {
 	reg := runtime.NewRegistry()
+	reg.LoadHelp(proj.Help)
 	reg.Load(runtime.LoadOptions{
 		Entities:        proj.Entities,
 		Programs:        proj.Programs,

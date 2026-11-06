@@ -16,6 +16,7 @@ type docsCIWorkflow struct {
 	On map[string]struct {
 		Paths       []string `yaml:"paths"`
 		PathsIgnore []string `yaml:"paths-ignore"`
+		Types       []string `yaml:"types"`
 	} `yaml:"on"`
 	Jobs map[string]docsCIJob `yaml:"jobs"`
 }
@@ -92,6 +93,12 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 				lightFound = step.If == "${{ "+docs+" }}" && step.Run != ""
 				continue
 			}
+			if id == "build" && step.Name == "Check commit closing references" {
+				if step.If != "${{ github.event_name == 'pull_request' }}" {
+					t.Fatal("closing-reference gate must run for every PR, including docs-only")
+				}
+				continue
+			}
 			if id == "build" && (lightBuild[step.Name] || lightBuild[step.Uses]) {
 				if step.If != "" {
 					t.Fatalf("docs validation %s should still execute", step.Name+step.Uses)
@@ -121,7 +128,7 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 		t.Fatal("docs-only must not start PostgreSQL; a failed classifier must start it")
 	}
 	classify := w.Jobs["classify"]
-	if classify.Outputs["mode"] != "${{ steps.diff.outputs.mode }}" || len(classify.Steps) != 2 ||
+	if classify.Outputs["mode"] != "${{ steps.diff.outputs.mode }}" || len(classify.Steps) != 4 ||
 		classify.Steps[0].Uses != "actions/checkout@v4" || classify.Steps[0].With["fetch-depth"] != "0" {
 		t.Fatal("classifier must expose the actual diff result with exact commits available")
 	}
@@ -129,6 +136,59 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 	if step.ID != "diff" || step.Env["BASE_SHA"] != "${{ github.event.pull_request.base.sha }}" ||
 		step.Env["HEAD_SHA"] != "${{ github.event.pull_request.head.sha }}" || step.Env["EVENT_NAME"] != "${{ github.event_name }}" {
 		t.Fatal("classification must use immutable event SHAs, not movable refs")
+	}
+}
+
+func TestCICommitClosingGate(t *testing.T) {
+	w := docsWorkflow(t)
+	for _, event := range []string{"opened", "synchronize", "reopened", "edited"} {
+		if !slices.Contains(w.On["pull_request"].Types, event) {
+			t.Errorf("closing-reference gate must recheck pull_request %s", event)
+		}
+	}
+	var found, completeHistory bool
+	for _, step := range w.Jobs["build"].Steps {
+		if step.Uses == "actions/checkout@v4" {
+			completeHistory = step.With["fetch-depth"] == "0"
+		}
+		if step.Name == "Check commit closing references" {
+			found = step.If == "${{ github.event_name == 'pull_request' }}" &&
+				step.Run == `go run ./tools/prclosecheck -event "$GITHUB_EVENT_PATH"` && completeHistory
+		}
+	}
+	if !found {
+		t.Fatal("required build must check event data through prclosecheck with complete history")
+	}
+}
+
+func TestReadyMetadataKeepsFullCIProofAndTrustedCodeBoundary(t *testing.T) {
+	w := docsWorkflow(t)
+	if slices.Contains(w.On["pull_request"].Types, "ready_for_review") {
+		t.Fatal("Ready must validate existing full evidence before requesting another full run")
+	}
+	var metadata docsCIWorkflow
+	if err := yaml.Unmarshal([]byte(repositoryFile(t, ".github", "workflows", "ci-metadata.yml")), &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(metadata.On["pull_request_target"].Types, []string{"ready_for_review"}) {
+		t.Fatal("metadata trigger changed")
+	}
+	steps := metadata.Jobs["metadata"].Steps
+	if len(steps) != 5 || steps[0].Uses != "actions/checkout@v4" ||
+		steps[0].With["ref"] != "${{ github.event.pull_request.base.sha }}" ||
+		steps[0].With["persist-credentials"] != "false" || steps[0].With["fetch-depth"] != "0" {
+		t.Fatal("privileged event must only execute the immutable trusted base")
+	}
+	if steps[2].Env["HEAD_SHA"] != "${{ github.event.pull_request.head.sha }}" ||
+		!strings.Contains(steps[2].Run, `test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"`) ||
+		steps[3].Run != `go run ./tools/prclosecheck -event "$GITHUB_EVENT_PATH"` ||
+		steps[4].Run != `python3 .github/scripts/ci-metadata.py --event "$GITHUB_EVENT_PATH"` {
+		t.Fatal("Ready lost its actual metadata check or conservative full-CI fallback")
+	}
+	classify := w.Jobs["classify"].Steps
+	if classify[2].Run != "python3 .github/scripts/ci-inputs.py" || classify[2].Env["CI_MODE"] != "${{ steps.diff.outputs.mode }}" ||
+		classify[3].Uses != "actions/upload-artifact@v4" || classify[3].With["path"] != "ci-inputs.json" {
+		t.Fatal("full CI must retain immutable input evidence for its actual attempt")
 	}
 }
 

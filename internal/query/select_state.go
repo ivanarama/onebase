@@ -10,15 +10,16 @@ import (
 // sibling UNION branches and nested SELECTs may reuse names for different targets.
 // Keep emission state too, so returning from a subquery restores its outer FROM.
 type selectTranslationState struct {
-	colMap      map[string]string
-	colTypes    map[string]metadata.FieldType
-	refSources  map[string]bool
-	refDims     []refDimInfo
-	mainTable   string
-	mainRef     mainRefSource
-	mainEmitted bool
-	section     querySection
-	aliases     map[string]struct{}
+	colMap          map[string]string
+	colTypes        map[string]metadata.FieldType
+	refSources      map[string]bool
+	refDims         []refDimInfo
+	mainTable       string
+	mainRef         mainRefSource
+	mainEmitted     bool
+	refJoinsEmitted bool // main source auto-JOINs belong to this SELECT
+	section         querySection
+	aliases         map[string]struct{}
 }
 
 func (tr *translator) initSelectStates() {
@@ -211,7 +212,7 @@ func (tr *translator) derivedProjectionShadows(id int, name string, seen map[int
 	for i, token := range tr.tokens {
 		if scope, ok := tr.sourceCtx.scopeIDAt(i); ok && scope == id && token.kind == tIdent {
 			if kw, ok := sqlKW(token.val); ok && kw == "SELECT" {
-				start, depth = i+1, tr.sourceCtx.tokenDepth[i]
+				start, depth = selectProjectionStart(tr.tokens, i), tr.sourceCtx.tokenDepth[i]
 				break
 			}
 		}
@@ -289,7 +290,8 @@ func (tr *translator) activateSelect(id int) {
 			colMap: tr.colMap, colTypes: tr.colTypes, refDims: tr.refDims,
 			mainTable: tr.mainTable, mainRef: tr.mainRef, mainEmitted: tr.mainEmitted,
 			section: tr.section, aliases: tr.aliases,
-			refSources: tr.selectStates[tr.activeSelect].refSources,
+			refSources:      tr.selectStates[tr.activeSelect].refSources,
+			refJoinsEmitted: tr.selectStates[tr.activeSelect].refJoinsEmitted,
 		}
 	}
 	state := tr.selectStates[id]

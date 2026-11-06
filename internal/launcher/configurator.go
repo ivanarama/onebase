@@ -120,6 +120,9 @@ func (h *handler) configuratorConvert(w http.ResponseWriter, r *http.Request) {
 // с mtime новее threshold. Используется для отображения «звёздочки» в дереве
 
 func renderCfg(w http.ResponseWriter, r *http.Request, data *configuratorData) {
+	if data.Base != nil && data.WorkspacePath == "" {
+		data.WorkspacePath, _ = OnebasePath("workspace", data.Base.ID)
+	}
 	if data.Lang == "" {
 		data.Lang = resolveLang(r)
 	}
