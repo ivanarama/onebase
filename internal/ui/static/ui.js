@@ -4852,8 +4852,9 @@ function obRefFilterValues(sel) {
   return any ? out : null;
 }
 
-// Read the first value that would be submitted for this name, rather than
-// RadioNodeList.value (which only works for radios) or the first DOM copy.
+// Read the single submitted source, rather than RadioNodeList.value or the
+// first DOM copy. Multiple scalar copies are ambiguous even with equal values;
+// keep the existing first-checked value for ordinary radio/checkbox groups.
 // A hidden_when copy is disabled by its fieldset; a readonly select instead
 // submits its enabled hidden mirror. null means the source is absent, so the
 // legacy owner filter can still use the value supplied by the server.
@@ -4872,6 +4873,8 @@ function obRefSourceValue(scope, name) {
     controls = scope.querySelectorAll('[name="' + escaped + '"]');
   }
   if (!controls || !controls.length) return null;
+  var value = null;
+  var groupType = '';
   for (var i = 0; i < controls.length; i++) {
     var control = controls[i];
     if (control.disabled) continue;
@@ -4880,9 +4883,15 @@ function obRefSourceValue(scope, name) {
     var type = String(control.type || '').toLowerCase();
     if ((type === 'radio' || type === 'checkbox') && !control.checked) continue;
     if (type === 'button' || type === 'submit' || type === 'reset' || type === 'file') continue;
-    if (control.value != null) return String(control.value);
+    if (control.value == null) continue;
+    if (value !== null) {
+      if (type === groupType && (type === 'radio' || type === 'checkbox')) continue;
+      return '';
+    }
+    value = String(control.value);
+    groupType = type;
   }
-  return '';
+  return value === null ? '' : value;
 }
 
 // obRefFilterParam — тот же отбор строкой для запроса /ui/_ref-options.
