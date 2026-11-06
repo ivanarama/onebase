@@ -701,6 +701,45 @@ window.obUIMessage = function (name, fallback) {
   window.obAnswersFrameClose = true;
 })();
 
+// BEGIN onebase-page-freshness
+// Страница из кэша «Назад/Вперёд» (bfcache) — это старый DOM: скрытые поля,
+// версия объекта и кнопки на момент ухода. Сервер отдаёт страницы с no-store,
+// но часть браузеров всё равно поднимает их из bfcache, — перечитываем.
+window.addEventListener('pageshow', function (e) {
+  if (e && e.persisted) window.location.reload();
+});
+// obServerRestarted — ответ пришёл от другого запуска сервера, чем страница
+// (выпуск, обновление): серверное состояние открытой формы пропало.
+window.obServerRestarted = function (res) {
+  var meta = document.querySelector('meta[name="ob-boot"]');
+  var mine = meta && meta.getAttribute('content');
+  var theirs = res && res.headers && res.headers.get ? res.headers.get('X-OB-Boot') : null;
+  return !!(mine && theirs && mine !== theirs);
+};
+// obReloadAfterRestart — сказать об этом и перезагрузиться. Несохранённый ввод
+// не выбрасываем молча: тогда решает человек кнопкой.
+window.obReloadAfterRestart = function () {
+  if (window._obRestartNotice) return;
+  var box = document.createElement('div');
+  box.setAttribute('role', 'alert');
+  box.setAttribute('data-ob-restart-notice', '1');
+  box.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;padding:10px 16px;background:#fef3c7;color:#78350f;border-bottom:1px solid #f59e0b;font:14px sans-serif;text-align:center';
+  window._obRestartNotice = box;
+  if (window._obFormDirty) {
+    box.textContent = 'Сервер обновлён — перезагрузите страницу. Несохранённые изменения формы будут потеряны. ';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'Перезагрузить';
+    btn.addEventListener('click', function () { window.location.reload(); });
+    box.appendChild(btn);
+  } else {
+    box.textContent = 'Сервер обновлён — страница будет перезагружена.';
+    setTimeout(function () { window.location.reload(); }, 1500);
+  }
+  document.body.appendChild(box);
+};
+// END onebase-page-freshness
+
 if (window.__obEmbedded) {
   document.documentElement.className += ' ob-embedded';
   // #481: заголовок вкладки = представление записи. Сервер рендерит на карточке
