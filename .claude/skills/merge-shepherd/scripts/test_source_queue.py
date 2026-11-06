@@ -124,6 +124,54 @@ class SourceQueueTests(unittest.TestCase):
         self.assertIsNone(self.saved_delivery())
         self.cli("verify", "--key", self.key, ok=False)
 
+    def test_legacy_missing_receipt_cannot_rebind_after_blocks_removed(self):
+        original = self.snapshot()
+        with closing(sqlite3.connect(self.queue)) as queue:
+            queue.executescript("CREATE TRIGGER crash_receipt BEFORE UPDATE ON sources WHEN NEW.phase='delivered' BEGIN SELECT RAISE(FAIL,'legacy receipt failure'); END;")
+        self.deliver(ok=False)
+        self.assertIsNone(self.saved_delivery())
+        with closing(sqlite3.connect(self.queue)) as queue:
+            queue.execute("DROP TRIGGER crash_receipt")
+            # Model the exact old format, which persisted no delivery target.
+            pin = json.loads(queue.execute("SELECT pin FROM delivery_intents WHERE key=?", (self.key,)).fetchone()[0])
+            legacy_pin = json.dumps({field:pin[field] for field in
+                                     ("series_id", "native_path", "directive_sha256", "scope_sha256", "block")},
+                                    ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            queue.execute("UPDATE delivery_intents SET pin=? WHERE key=?", (legacy_pin, self.key))
+            queue.execute("DELETE FROM delivery_targets WHERE key=?", (self.key,))
+            queue.commit()
+        self.db.execute("UPDATE task_series SET prompt=? WHERE id=4", (original["series"][0][1],))
+        self.db.execute("UPDATE tasks SET prompt=? WHERE id=11", (original["tasks"][1][2],))
+        self.start_delivered_task_and_add_replacement()
+        before = self.snapshot()
+        self.deliver(ok=False)
+        self.assertEqual(self.snapshot(), before)
+        self.assertIsNone(self.saved_delivery())
+        with closing(sqlite3.connect(self.queue)) as queue:
+            self.assertEqual(queue.execute("SELECT pin FROM delivery_intents WHERE key=?", (self.key,)).fetchone()[0], legacy_pin)
+            self.assertIsNone(queue.execute("SELECT receipt FROM delivery_targets WHERE key=?", (self.key,)).fetchone())
+
+    def test_new_intent_crash_before_target_binding_recovers(self):
+        original = self.snapshot()
+        with closing(sqlite3.connect(self.queue)) as queue:
+            queue.executescript("CREATE TRIGGER crash_target BEFORE INSERT ON delivery_targets BEGIN SELECT RAISE(FAIL,'before target binding'); END;")
+        self.deliver(ok=False)
+        self.assertEqual(self.snapshot(), original)
+        self.assertIsNone(self.saved_delivery())
+        with closing(sqlite3.connect(self.queue)) as queue:
+            pin = queue.execute("SELECT pin FROM delivery_intents WHERE key=?", (self.key,)).fetchone()[0]
+            self.assertIsNone(queue.execute("SELECT receipt FROM delivery_targets WHERE key=?", (self.key,)).fetchone())
+            queue.execute("DROP TRIGGER crash_target")
+            queue.commit()
+        self.assertEqual(self.deliver()["task_id"], 11)
+        self.assertEqual(self.cli("verify", "--key", self.key)["task_id"], 11)
+        receipt = json.loads(self.saved_delivery())
+        self.assertEqual(receipt["before"], {
+            "series_prompt_sha256":hashlib.sha256(original["series"][0][1].encode()).hexdigest(),
+            "task_prompt_sha256":hashlib.sha256(original["tasks"][1][2].encode()).hexdigest()})
+        with closing(sqlite3.connect(self.queue)) as queue:
+            self.assertEqual(queue.execute("SELECT pin FROM delivery_intents WHERE key=?", (self.key,)).fetchone()[0], pin)
+
     def test_repeat_delivery_cannot_adopt_external_prompt_edits(self):
         self.deliver()
         receipt = self.saved_delivery()

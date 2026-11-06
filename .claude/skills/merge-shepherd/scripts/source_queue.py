@@ -114,7 +114,9 @@ def deliver(db, key, native_path, series_id, directive_path, expected_digest):
             raise QueueError("directive does not bind the exact scope/hash/source")
         marker = "source-queue-v1:" + digest((key + "\n" + expected_digest).encode())
         block = f"\n\n<!-- {marker} -->\n{text}\n<!-- /{marker} -->\n"
-        pin = canonical({"series_id":series_id, "native_path":str(native_path),
+        # A legacy unbound intent cannot distinguish pre-target from post-commit
+        # crashes. Never adopt it as fresh delivery authority.
+        pin = canonical({"target_binding_version":1, "series_id":series_id, "native_path":str(native_path),
                          "directive_sha256":expected_digest, "scope_sha256":data["scope_sha256"], "block":block})
         intent = db.execute("SELECT pin FROM delivery_intents WHERE key=?", (key,)).fetchone()
         if intent is not None and intent[0] != pin:
