@@ -44,7 +44,7 @@ func seedChromiumPrefs(profileDir string) error {
 	switch {
 	case err == nil:
 		if err := json.Unmarshal(data, &prefs); err != nil {
-			return fmt.Errorf("Preferences профиля %s: %w", profileDir, err)
+			return fmt.Errorf("файл Preferences профиля %s: %w", profileDir, err)
 		}
 	case !os.IsNotExist(err):
 		return err
