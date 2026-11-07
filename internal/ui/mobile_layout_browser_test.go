@@ -30,11 +30,27 @@ type mobileLayoutBrowser struct {
 	nextID   int
 }
 
-func newMobileLayoutBrowser(t *testing.T, executable string, commandPrefix ...string) *mobileLayoutBrowser {
+type mobileLayoutBrowserStartup struct {
+	commandPrefix []string
+	prepare       func(profile string)
+	stdin         *os.File
+}
+
+func newMobileLayoutBrowser(t *testing.T, executable string, startup ...mobileLayoutBrowserStartup) *mobileLayoutBrowser {
 	t.Helper()
+	if len(startup) > 1 {
+		t.Fatal("multiple browser startup configurations")
+	}
+	var fixture mobileLayoutBrowserStartup
+	if len(startup) == 1 {
+		fixture = startup[0]
+	}
 	dir := t.TempDir()
 	profile := filepath.Join(dir, "profile")
 	logPath := filepath.Join(dir, "browser.log")
+	if fixture.prepare != nil {
+		fixture.prepare(profile)
+	}
 	log, err := os.Create(logPath)
 	if err != nil {
 		t.Fatal(err)
@@ -48,9 +64,10 @@ func newMobileLayoutBrowser(t *testing.T, executable string, commandPrefix ...st
 	}
 	// The startup regression uses this test binary as a delayed launcher of the
 	// real browser. Ordinary callers pass the browser executable without a prefix.
-	args = append(append([]string(nil), commandPrefix...), args...)
+	args = append(append([]string(nil), fixture.commandPrefix...), args...)
 	cmd := exec.CommandContext(processCtx, executable, args...) //nolint:gosec // closed browser allow-list, owned profile and loopback targets
 	cmd.Stdout, cmd.Stderr = log, log
+	cmd.Stdin = fixture.stdin
 	stopTree, err := startMobileBrowserProcess(cmd)
 	if err != nil {
 		stop()

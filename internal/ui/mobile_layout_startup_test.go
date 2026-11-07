@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -33,7 +34,7 @@ func TestMobileLayoutBrowserStartupBudget(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 		start := time.Now()
-		b := newMobileLayoutBrowser(t, executable, "-test.run=^TestMobileLayoutStartupProcess$", "--")
+		b := newMobileLayoutBrowser(t, executable, mobileLayoutBrowserStartup{commandPrefix: []string{"-test.run=^TestMobileLayoutStartupProcess$", "--"}})
 		if elapsed := time.Since(start); elapsed < 31*time.Second {
 			t.Fatalf("controlled browser startup was not delayed beyond 30 seconds: %s", elapsed)
 		}
@@ -120,15 +121,21 @@ func TestMobileLayoutStartupFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { fmt.Println("owned startup fixture cleanup completed") })
+	startup := mobileLayoutBrowserStartup{commandPrefix: []string{"-test.run=^TestMobileLayoutStartupProcess$", "--"}}
 	if mode == "dial-exit" {
-		barrier := filepath.Join(t.TempDir(), "handshake-started")
+		ready, signal, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = ready.Close(); _ = signal.Close() })
+		startup.stdin = ready
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path != "/devtools/browser/controlled" || r.Header.Get("Upgrade") != "websocket" {
 				http.Error(w, "unexpected browser handshake", http.StatusBadRequest)
 				return
 			}
-			if err := os.WriteFile(barrier, []byte("started"), 0o600); err != nil {
-				t.Errorf("publish owned handshake barrier: %v", err)
+			if _, err := signal.Write([]byte{1}); err != nil {
+				t.Errorf("signal pending handshake: %v", err)
 				return
 			}
 			// This server belongs to the fixture, not the launcher: its pending
@@ -137,10 +144,19 @@ func TestMobileLayoutStartupFailure(t *testing.T) {
 			<-r.Context().Done()
 		}))
 		t.Cleanup(server.Close)
-		t.Setenv("OB_LAYOUT_STARTUP_DIAL_PORT", strconv.Itoa(server.Listener.Addr().(*net.TCPAddr).Port))
-		t.Setenv("OB_LAYOUT_STARTUP_DIAL_BARRIER", barrier)
+		port := strconv.Itoa(server.Listener.Addr().(*net.TCPAddr).Port)
+		startup.prepare = func(profile string) {
+			// The helper supplies its own t.TempDir child directly. The launcher
+			// receives an anonymous pipe, never a filesystem path to read/write.
+			if err := os.Mkdir(profile, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(profile, "DevToolsActivePort"), []byte(port+"\n/devtools/browser/controlled\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
 	}
-	newMobileLayoutBrowser(t, executable, "-test.run=^TestMobileLayoutStartupProcess$", "--")
+	newMobileLayoutBrowser(t, executable, startup)
 	t.Fatal("unready browser was accepted")
 }
 
@@ -168,35 +184,12 @@ func TestMobileLayoutStartupProcess(t *testing.T) {
 		time.Sleep(3 * time.Minute)
 		os.Exit(24)
 	case "dial-exit":
-		port := os.Getenv("OB_LAYOUT_STARTUP_DIAL_PORT")
-		parsedPort, err := strconv.Atoi(port)
-		if err != nil || parsedPort < 1 || parsedPort > 65535 {
-			t.Fatal("invalid controlled loopback port")
+		var signal [1]byte
+		if _, err := io.ReadFull(os.Stdin, signal[:]); err != nil || signal[0] != 1 {
+			t.Fatalf("pending handshake was not signalled: %v", err)
 		}
-		profile := ""
-		for _, arg := range browserArgs {
-			if value, found := strings.CutPrefix(arg, "--user-data-dir="); found {
-				profile = value
-			}
-		}
-		if !filepath.IsAbs(profile) {
-			t.Fatal("missing absolute owned browser profile")
-		}
-		if err := os.MkdirAll(profile, 0o700); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(profile, "DevToolsActivePort"), []byte(port+"\n/devtools/browser/controlled\n"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		deadline := time.Now().Add(20 * time.Second)
-		for time.Now().Before(deadline) {
-			if data, err := os.ReadFile(os.Getenv("OB_LAYOUT_STARTUP_DIAL_BARRIER")); err == nil && string(data) == "started" {
-				fmt.Fprintln(os.Stderr, "controlled startup exit during pending handshake")
-				os.Exit(23)
-			}
-			time.Sleep(20 * time.Millisecond)
-		}
-		t.Fatal("controlled handshake did not start")
+		fmt.Fprintln(os.Stderr, "controlled startup exit during pending handshake")
+		os.Exit(23)
 	case "delay":
 		time.Sleep(31 * time.Second)
 	default:
