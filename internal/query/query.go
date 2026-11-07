@@ -1217,9 +1217,9 @@ type sourceScope struct {
 	outputAliases     map[string]struct{}
 	refAliases        map[string]struct{}
 	// physicalCols — колонки обычных (не виртуальных) источников по
-	// квалификатору: имя поля в нижнем регистре → колонка БД, только там, где
-	// они различаются (ссылка → «_id»). Нужна присоединённым источникам: общая
-	// colMap строится по главному источнику и о них не знает.
+	// квалификатору: имя известного поля в нижнем регистре → колонка БД,
+	// включая тождественное отображение. Обычное поле присоединённого
+	// источника не должно заимствовать «_id» из colMap главного источника.
 	physicalCols map[string]map[string]string
 }
 
@@ -1251,6 +1251,68 @@ func (ctx sourceContext) qualifierScopeAt(tokenPos int, qualifier string) (sourc
 		return sourceScope{}, false
 	}
 	return ctx.scopes[scopeID], true
+}
+
+func (ctx sourceContext) localQualifierAt(tokenPos int, qualifier string) bool {
+	scope, ok := ctx.scopeAt(tokenPos)
+	if !ok {
+		return false
+	}
+	_, known := scope.qualifiers[qualifier]
+	return known
+}
+
+// SQLite can resolve a missing column against an outer alias even when an
+// identically named local alias exists. Reject that proven shadowing case
+// before emission; neither physical metadata nor derived output may borrow it.
+func (tr *translator) shadowedSourceColumn(pos int, name string) bool {
+	if pos < 2 || tr.tokens[pos-1].kind != tDot || (pos >= 3 && tr.tokens[pos-3].kind == tDot) {
+		return false
+	}
+	qualifier := lowerFast(tr.tokens[pos-2].val)
+	id, ok := tr.sourceCtx.qualifierScopeIDAt(pos, qualifier)
+	if !ok {
+		return false
+	}
+	scope := tr.sourceCtx.scopes[id]
+	missing := false
+	if child, derived := scope.derivedAliases[qualifier]; derived {
+		missing = tr.derivedProjectionColumnPresence(child, name, map[int]bool{}) != projectionColumnPresent
+	} else if cols := scope.physicalCols[qualifier]; cols != nil {
+		_, known := cols[name]
+		for _, physical := range cols {
+			known = known || physical == name
+		}
+		missing = !known
+	}
+	if !missing {
+		return false
+	}
+	for id = scope.parent; id >= 0; id = tr.sourceCtx.scopes[id].parent {
+		outer := tr.sourceCtx.scopes[id]
+		if child, derived := outer.derivedAliases[qualifier]; derived {
+			if tr.derivedProjectionShadows(child, name, map[int]bool{}) {
+				return true
+			}
+			continue
+		}
+		if _, declared := outer.qualifiers[qualifier]; !declared {
+			continue
+		}
+		cols := outer.physicalCols[qualifier]
+		if cols == nil {
+			return true // Generated or unknown output cannot prove absence.
+		}
+		for _, physical := range cols {
+			if physical == name {
+				return true
+			}
+		}
+		if physical, system := outer.entitySystemColumn(qualifier, name); system && physical == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (ctx sourceContext) qualifierScopeIDAt(tokenPos int, qualifier string) (int, bool) {
@@ -4178,21 +4240,22 @@ func buildColTypes(tokens []tok, opts CompileOpts) map[string]metadata.FieldType
 // отличие от buildColTypes, этот помощник применим и к виртуальной таблице:
 // имена её измерений и атрибутов сохраняются в сгенерированном подзапросе.
 // Производные имена ресурсов (например, СуммаОстаток) здесь не синтезируются.
-// sourcePhysicalColumns — колонки БД полей обычного источника, отличающиеся от
-// имени поля (ссылочные — с суффиксом «_id»). Пустая карта — переводить нечего.
+// sourcePhysicalColumns records every known field, including unchanged names.
+// An identity mapping is positive ownership evidence, not a missing mapping.
 func sourcePhysicalColumns(typeUpper, name string, opts CompileOpts) map[string]string {
 	m := map[string]string{}
 	add := func(fields []metadata.Field) {
 		for _, f := range fields {
-			if col := metadata.ColumnName(f); col != lowerFast(f.Name) {
-				m[lowerFast(f.Name)] = col
-			}
+			m[lowerFast(f.Name)] = metadata.ColumnName(f)
 		}
 	}
 	switch {
 	case isAccumRegType(typeUpper):
 		for _, reg := range opts.Registers {
 			if strings.EqualFold(reg.Name, name) {
+				for column := range accumulationRegisterProjectionKeys(reg).counts {
+					m[column] = column
+				}
 				add(reg.Dimensions)
 				add(reg.Resources)
 				add(reg.Attributes)
@@ -4202,22 +4265,38 @@ func sourcePhysicalColumns(typeUpper, name string, opts CompileOpts) map[string]
 	case isInfoRegType(typeUpper):
 		for _, ir := range opts.InfoRegs {
 			if strings.EqualFold(ir.Name, name) {
+				for column := range infoRegisterProjectionKeys(ir).counts {
+					m[column] = column
+				}
 				add(ir.Dimensions)
 				add(ir.Resources)
 				return m
 			}
 		}
 	case isAccountRegType(typeUpper):
-		return m
+		for _, ar := range opts.AccountRegs {
+			if strings.EqualFold(ar.Name, name) {
+				for column := range accountRegisterProjectionKeys(ar).counts {
+					m[column] = column
+				}
+				add(ar.Resources)
+				return m
+			}
+		}
 	default: // справочник / документ
 		for _, e := range opts.Entities {
 			if strings.EqualFold(e.Name, name) {
+				// Reuse the physical SELECT * layout, including kind-dependent
+				// system columns. DB.List intentionally exports a smaller set.
+				for column := range entityProjectionKeys(e).counts {
+					m[column] = column
+				}
 				add(e.Fields)
 				return m
 			}
 		}
 	}
-	return m
+	return nil // Unknown source metadata must not prove a field absent.
 }
 
 func sourceColumnTypes(typeUpper, name string, opts CompileOpts) map[string]metadata.FieldType {
@@ -5231,7 +5310,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 		var physCols map[string]string
 		if i+3 >= len(tokens) || tokens[i+3].kind != tDot {
 			physCols = sourcePhysicalColumns(typeUpper, tokens[i+2].val, opts)
-			if len(physCols) > 0 {
+			if physCols != nil {
 				scope.physicalCols[entityName] = physCols
 				scope.physicalCols[sourceToTable(typeUpper, tokens[i+2].val)] = physCols
 			}
@@ -5265,7 +5344,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 				if entityInfo != nil {
 					scope.entities[alias] = *entityInfo
 				}
-				if len(physCols) > 0 {
+				if physCols != nil {
 					scope.physicalCols[alias] = physCols
 				}
 				if isMain {
@@ -6357,6 +6436,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					continue
 				}
 			}
+			if prevDot && !nextIsDot && tr.shadowedSourceColumn(tr.pos-1, lower) {
+				return Result{}, i18nerr.Errorf("поле %s локального источника %s не разрешено однозначно; внешнее поле затенено", t.val, tr.tokens[tr.pos-3].val)
+			}
 			if agg, ok := sqlAgg(t.val); ok && tr.peek(0).kind == tLParen {
 				tr.emit(agg)
 			} else if kw, ok := sqlKW(t.val); ok {
@@ -6452,8 +6534,8 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					tr.emit("LIKE")
 				} else if !prevDot && !nextIsDot && tr.unionOutputAlias(lower) {
 					tr.emit(lower)
-				} else if nextIsDot && !prevDot && tr.sourceCtx.isDerivedQualifierAt(tr.pos-1, lower) {
-					// Явный алиас производной таблицы старше одноимённого поля-ссылки.
+				} else if nextIsDot && !prevDot && (tr.sourceCtx.localQualifierAt(tr.pos-1, lower) || tr.sourceCtx.isDerivedQualifierAt(tr.pos-1, lower)) {
+					// A local source alias takes precedence over a namesake field.
 					tr.emit(lower)
 				} else if rd := tr.findRefDim(lower); rd != nil && !prevDot {
 					if nextIsDot {
@@ -6520,7 +6602,11 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					case jrd != nil:
 						tr.emit(jrd.idCol)
 					default:
-						tr.emitQualifiedColumn(lower, lower)
+						col := lower
+						if physical, known := tr.joinedSourceColumn(tr.pos-1, lower); known {
+							col = physical
+						}
+						tr.emitQualifiedColumn(col, lower)
 					}
 				} else if prevDot {
 					if !nextIsDot && tr.isDerivedColumnAt(tr.pos-1) {
@@ -6554,9 +6640,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 							tr.emit(rd.idCol)
 							tr.emitDerivedReferenceAlias(rd.idCol, lower)
 						}
-					} else if c, ok2 := tr.colMap[lower]; ok2 {
-						tr.emitQualifiedColumn(c, lower)
 					} else {
+						// Qualified unknown/absent fields keep their own name. The
+						// main source cannot lend a physical column to this owner.
 						tr.emitQualifiedColumn(lower, lower)
 					}
 					if rd := tr.findRefDim(lower); rd != nil && !nextIsDot {
