@@ -263,7 +263,7 @@ func TestIdentityInventoryPublicRESTIngress(t *testing.T) {
 		}
 		if r.Method != http.MethodGet {
 			t.Errorf("unexpected mutation: %s", r.Method)
-			http.Error(w, "read only", 405)
+			http.Error(w, "read only", http.StatusMethodNotAllowed)
 			return
 		}
 		switch r.URL.Path {
