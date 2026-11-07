@@ -35,11 +35,13 @@ func TestMobileLayoutBrowserStartupBudget(t *testing.T) {
 		t.Cleanup(server.Close)
 		start := time.Now()
 		var startupBudget time.Duration
+		var requestedAt time.Time
 		var startupDeadline time.Time
 		b := newMobileLayoutBrowser(t, executable, mobileLayoutBrowserStartup{
 			commandPrefix: []string{"-test.run=^TestMobileLayoutStartupProcess$", "--"},
 			withTimeout: func(parent context.Context, budget time.Duration) (context.Context, context.CancelFunc) {
 				startupBudget = budget
+				requestedAt = time.Now()
 				ctx, cancel := context.WithTimeout(parent, budget)
 				startupDeadline, _ = ctx.Deadline()
 				return ctx, cancel
@@ -48,7 +50,7 @@ func TestMobileLayoutBrowserStartupBudget(t *testing.T) {
 		if elapsed := time.Since(start); elapsed < 31*time.Second {
 			t.Fatalf("controlled browser startup was not delayed beyond 30 seconds: %s", elapsed)
 		}
-		if startupBudget != 2*time.Minute || startupDeadline.Before(start.Add(2*time.Minute)) || startupDeadline.After(start.Add(2*time.Minute+5*time.Second)) {
+		if startupBudget != 2*time.Minute || startupDeadline.Before(requestedAt.Add(2*time.Minute)) || startupDeadline.After(requestedAt.Add(2*time.Minute+5*time.Second)) {
 			t.Fatalf("unexpected real startup budget %s or deadline %s", startupBudget, startupDeadline)
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
