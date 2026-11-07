@@ -197,13 +197,28 @@ func (tr *translator) referenceOwner(id int, name string) int {
 	return -1
 }
 
+type projectionColumnPresence uint8
+
+const (
+	projectionColumnAbsent projectionColumnPresence = iota
+	projectionColumnUnknown
+	projectionColumnPresent
+)
+
 // derivedProjectionShadows permits correlation only when the derived output
 // proves the name absent. UNION output names belong to its first SELECT; stars
 // recurse into their actual sources rather than borrowing sibling metadata.
 func (tr *translator) derivedProjectionShadows(id int, name string, seen map[int]bool) bool {
+	return tr.derivedProjectionColumnPresence(id, name, seen) != projectionColumnAbsent
+}
+
+// Keep unknown output separate from a proven local column. An unnamed
+// expression must block correlation, but cannot establish that a qualified
+// local field exists: SQLite may otherwise silently read an outer column.
+func (tr *translator) derivedProjectionColumnPresence(id int, name string, seen map[int]bool) projectionColumnPresence {
 	id = tr.sourceCtx.scopes[id].unionFirst
 	if seen[id] {
-		return true // an unprovable output must not expose an outer reference
+		return projectionColumnUnknown
 	}
 	seen[id] = true
 	defer delete(seen, id)
@@ -218,7 +233,7 @@ func (tr *translator) derivedProjectionShadows(id int, name string, seen map[int
 		}
 	}
 	if start < 0 {
-		return true
+		return projectionColumnUnknown
 	}
 	end := start
 	for ; end < len(tr.tokens); end++ {
@@ -232,53 +247,76 @@ func (tr *translator) derivedProjectionShadows(id int, name string, seen map[int
 			}
 		}
 	}
+	presence := projectionColumnAbsent
 	for _, item := range splitProjectionItems(tr.tokens[start:end]) {
 		column, _ := parseProjectionItem(item)
 		if column.Output == name {
-			return true
+			return projectionColumnPresent
 		}
 		if !column.Star {
 			if column.Output == "" {
-				return true // an unnamed expression has a database-defined name
+				presence = max(presence, projectionColumnUnknown)
 			}
 			continue
 		}
 		scope := tr.sourceCtx.scopes[id]
 		if len(item) == 3 && item[0].kind == tIdent && item[1].kind == tDot && item[2].kind == tStar {
-			if tr.starSourceShadows(scope, lowerFast(item[0].val), name, seen) {
-				return true
-			}
+			presence = max(presence, tr.starSourceColumnPresence(id, lowerFast(item[0].val), name, seen))
 			continue
 		}
 		if len(item) != 1 || item[0].kind != tStar || scope.sourceCount == 0 {
-			return true
+			presence = max(presence, projectionColumnUnknown)
+			continue
 		}
 		for qualifier := range scope.qualifiers {
-			if tr.starSourceShadows(scope, qualifier, name, seen) {
-				return true
-			}
+			presence = max(presence, tr.starSourceColumnPresence(id, qualifier, name, seen))
 		}
 		for qualifier := range scope.derivedAliases {
-			if tr.starSourceShadows(scope, qualifier, name, seen) {
-				return true
+			presence = max(presence, tr.starSourceColumnPresence(id, qualifier, name, seen))
+		}
+		// An unaliased VT has no public qualifier. Its existing source inventory
+		// still proves which logical columns a bare star exports.
+		for _, source := range tr.columnSources[id] {
+			if source.qualifier == "" {
+				if _, known := source.fields[name]; known {
+					presence = max(presence, projectionColumnPresent)
+				}
 			}
 		}
 	}
-	return false
+	return presence
 }
 
-func (tr *translator) starSourceShadows(scope sourceScope, qualifier, name string, seen map[int]bool) bool {
+func (tr *translator) starSourceColumnPresence(scopeID int, qualifier, name string, seen map[int]bool) projectionColumnPresence {
+	scope := tr.sourceCtx.scopes[scopeID]
 	if child, derived := scope.derivedAliases[qualifier]; derived {
-		return tr.derivedProjectionShadows(child, name, seen)
+		return tr.derivedProjectionColumnPresence(child, name, seen)
 	}
 	if entity, known := scope.entities[qualifier]; known {
+		for _, physical := range scope.physicalCols[qualifier] {
+			if physical == name {
+				return projectionColumnPresent
+			}
+		}
 		_, own := entity.fields[name]
 		_, system := entity.systemColumn(name)
-		return own || system
+		if own || system {
+			return projectionColumnPresent
+		}
+		return projectionColumnAbsent
+	}
+	// Reuse the source-aware inventory, including generated VT resource names.
+	// This establishes presence only; it does not infer a different output type.
+	for _, source := range tr.columnSources[scopeID] {
+		if source.qualifier == qualifier {
+			if _, known := source.fields[name]; known {
+				return projectionColumnPresent
+			}
+		}
 	}
 	// Registers, virtual tables and unknown metadata can have generated output
 	// names. Without an exact expansion, absence is not proven.
-	return true
+	return projectionColumnUnknown
 }
 
 func (tr *translator) activateSelect(id int) {
