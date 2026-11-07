@@ -30,7 +30,7 @@ type mobileLayoutBrowser struct {
 	nextID   int
 }
 
-func newMobileLayoutBrowser(t *testing.T, executable string) *mobileLayoutBrowser {
+func newMobileLayoutBrowser(t *testing.T, executable string, commandPrefix ...string) *mobileLayoutBrowser {
 	t.Helper()
 	dir := t.TempDir()
 	profile := filepath.Join(dir, "profile")
@@ -46,6 +46,9 @@ func newMobileLayoutBrowser(t *testing.T, executable string) *mobileLayoutBrowse
 	if runtime.GOOS == "linux" {
 		args = append([]string{"--no-sandbox"}, args...)
 	}
+	// The startup regression uses this test binary as a delayed launcher of the
+	// real browser. Ordinary callers pass the browser executable without a prefix.
+	args = append(append([]string(nil), commandPrefix...), args...)
 	cmd := exec.CommandContext(processCtx, executable, args...) //nolint:gosec // closed browser allow-list, owned profile and loopback targets
 	cmd.Stdout, cmd.Stderr = log, log
 	stopTree, err := startMobileBrowserProcess(cmd)
@@ -78,8 +81,18 @@ func newMobileLayoutBrowser(t *testing.T, executable string) *mobileLayoutBrowse
 			t.Errorf("browser process tree did not exit\n%s", b.diagnostics())
 		}
 	})
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	// Loaded CI runners can take more than 30 seconds both to publish the port
+	// and to accept the WebSocket. Keep one bounded startup budget, separate from
+	// each caller's measurement budget; never retry geometry/editor assertions.
+	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
 	defer cancel()
+	go func() {
+		select {
+		case <-b.exited:
+			cancel() // Also interrupt a pending WebSocket handshake on early exit.
+		case <-ctx.Done():
+		}
+	}()
 	tick := time.NewTicker(20 * time.Millisecond)
 	defer tick.Stop()
 	for {
@@ -96,6 +109,11 @@ func newMobileLayoutBrowser(t *testing.T, executable string) *mobileLayoutBrowse
 				_ = response.Body.Close()
 			}
 			if dialErr != nil {
+				select {
+				case <-b.exited:
+					t.Fatalf("browser stopped before ready: %v\n%s", b.waitErr, b.diagnostics())
+				default:
+				}
 				t.Fatalf("connect browser: %v\n%s", dialErr, b.diagnostics())
 			}
 			conn.SetReadLimit(1 << 20)
@@ -106,6 +124,11 @@ func newMobileLayoutBrowser(t *testing.T, executable string) *mobileLayoutBrowse
 		case <-b.exited:
 			t.Fatalf("browser stopped before ready: %v\n%s", b.waitErr, b.diagnostics())
 		case <-ctx.Done():
+			select {
+			case <-b.exited:
+				t.Fatalf("browser stopped before ready: %v\n%s", b.waitErr, b.diagnostics())
+			default:
+			}
 			t.Fatalf("browser readiness: %v\n%s", ctx.Err(), b.diagnostics())
 		case <-tick.C:
 		}
