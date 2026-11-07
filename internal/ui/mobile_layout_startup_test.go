@@ -34,9 +34,22 @@ func TestMobileLayoutBrowserStartupBudget(t *testing.T) {
 		}))
 		t.Cleanup(server.Close)
 		start := time.Now()
-		b := newMobileLayoutBrowser(t, executable, mobileLayoutBrowserStartup{commandPrefix: []string{"-test.run=^TestMobileLayoutStartupProcess$", "--"}})
+		var startupBudget time.Duration
+		var startupDeadline time.Time
+		b := newMobileLayoutBrowser(t, executable, mobileLayoutBrowserStartup{
+			commandPrefix: []string{"-test.run=^TestMobileLayoutStartupProcess$", "--"},
+			withTimeout: func(parent context.Context, budget time.Duration) (context.Context, context.CancelFunc) {
+				startupBudget = budget
+				ctx, cancel := context.WithTimeout(parent, budget)
+				startupDeadline, _ = ctx.Deadline()
+				return ctx, cancel
+			},
+		})
 		if elapsed := time.Since(start); elapsed < 31*time.Second {
 			t.Fatalf("controlled browser startup was not delayed beyond 30 seconds: %s", elapsed)
+		}
+		if startupBudget != 2*time.Minute || startupDeadline.Before(start.Add(2*time.Minute)) || startupDeadline.After(start.Add(2*time.Minute+5*time.Second)) {
+			t.Fatalf("unexpected real startup budget %s or deadline %s", startupBudget, startupDeadline)
 		}
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		defer cancel()
@@ -91,8 +104,8 @@ func TestMobileLayoutBrowserStartupBudget(t *testing.T) {
 				}
 			} else {
 				want = "browser readiness: context deadline exceeded"
-				if elapsed < 119*time.Second {
-					t.Fatalf("startup deadline expired before the new budget (%s):\n%s", elapsed, text)
+				if elapsed < time.Second || !strings.Contains(text, "controlled startup timer: 2m0s -> 1s") {
+					t.Fatalf("controlled startup deadline was not exercised (%s):\n%s", elapsed, text)
 				}
 			}
 			if !strings.Contains(text, want) || !strings.Contains(text, "owned startup fixture cleanup completed") {
@@ -122,6 +135,18 @@ func TestMobileLayoutStartupFailure(t *testing.T) {
 	}
 	t.Cleanup(func() { fmt.Println("owned startup fixture cleanup completed") })
 	startup := mobileLayoutBrowserStartup{commandPrefix: []string{"-test.run=^TestMobileLayoutStartupProcess$", "--"}}
+	if mode == "deadline" {
+		// Exercise real context expiry and owned-process cleanup without spending
+		// two minutes of every integration job waiting for an unready fixture.
+		// The delayed-ready case above uses the requested real startup duration.
+		startup.withTimeout = func(parent context.Context, budget time.Duration) (context.Context, context.CancelFunc) {
+			if budget != 2*time.Minute {
+				t.Fatalf("unexpected requested startup budget: %s", budget)
+			}
+			fmt.Println("controlled startup timer: 2m0s -> 1s")
+			return context.WithTimeout(parent, time.Second)
+		}
+	}
 	if mode == "dial-exit" {
 		ready, signal, err := os.Pipe()
 		if err != nil {

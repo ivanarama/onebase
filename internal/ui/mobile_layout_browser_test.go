@@ -34,6 +34,7 @@ type mobileLayoutBrowserStartup struct {
 	commandPrefix []string
 	prepare       func(profile string)
 	stdin         *os.File
+	withTimeout   func(context.Context, time.Duration) (context.Context, context.CancelFunc)
 }
 
 func newMobileLayoutBrowser(t *testing.T, executable string, startup ...mobileLayoutBrowserStartup) *mobileLayoutBrowser {
@@ -101,7 +102,11 @@ func newMobileLayoutBrowser(t *testing.T, executable string, startup ...mobileLa
 	// Loaded CI runners can take more than 30 seconds both to publish the port
 	// and to accept the WebSocket. Keep one bounded startup budget, separate from
 	// each caller's measurement budget; never retry geometry/editor assertions.
-	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
+	withTimeout := context.WithTimeout
+	if fixture.withTimeout != nil {
+		withTimeout = fixture.withTimeout
+	}
+	ctx, cancel := withTimeout(t.Context(), 120*time.Second)
 	defer cancel()
 	go func() {
 		select {
