@@ -4253,6 +4253,9 @@ func sourcePhysicalColumns(typeUpper, name string, opts CompileOpts) map[string]
 	case isAccumRegType(typeUpper):
 		for _, reg := range opts.Registers {
 			if strings.EqualFold(reg.Name, name) {
+				for column := range accumulationRegisterProjectionKeys(reg).counts {
+					m[column] = column
+				}
 				add(reg.Dimensions)
 				add(reg.Resources)
 				add(reg.Attributes)
@@ -4262,16 +4265,32 @@ func sourcePhysicalColumns(typeUpper, name string, opts CompileOpts) map[string]
 	case isInfoRegType(typeUpper):
 		for _, ir := range opts.InfoRegs {
 			if strings.EqualFold(ir.Name, name) {
+				for column := range infoRegisterProjectionKeys(ir).counts {
+					m[column] = column
+				}
 				add(ir.Dimensions)
 				add(ir.Resources)
 				return m
 			}
 		}
 	case isAccountRegType(typeUpper):
-		return nil // This path does not describe account-register physical fields.
+		for _, ar := range opts.AccountRegs {
+			if strings.EqualFold(ar.Name, name) {
+				for column := range accountRegisterProjectionKeys(ar).counts {
+					m[column] = column
+				}
+				add(ar.Resources)
+				return m
+			}
+		}
 	default: // справочник / документ
 		for _, e := range opts.Entities {
 			if strings.EqualFold(e.Name, name) {
+				// Reuse the physical SELECT * layout, including kind-dependent
+				// system columns. DB.List intentionally exports a smaller set.
+				for column := range entityProjectionKeys(e).counts {
+					m[column] = column
+				}
 				add(e.Fields)
 				return m
 			}

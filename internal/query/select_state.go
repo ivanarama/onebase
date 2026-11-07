@@ -292,12 +292,23 @@ func (tr *translator) starSourceColumnPresence(scopeID int, qualifier, name stri
 	if child, derived := scope.derivedAliases[qualifier]; derived {
 		return tr.derivedProjectionColumnPresence(child, name, seen)
 	}
-	if entity, known := scope.entities[qualifier]; known {
-		for _, physical := range scope.physicalCols[qualifier] {
+	if columns := scope.physicalCols[qualifier]; columns != nil {
+		if _, known := columns[name]; known {
+			return projectionColumnPresent
+		}
+		for _, physical := range columns {
 			if physical == name {
 				return projectionColumnPresent
 			}
 		}
+		if _, system := scope.entitySystemColumn(qualifier, name); system {
+			return projectionColumnPresent
+		}
+		// A complete ordinary-source layout outranks type placeholders such
+		// as period reserved for a nonperiodic information register.
+		return projectionColumnAbsent
+	}
+	if entity, known := scope.entities[qualifier]; known {
 		_, own := entity.fields[name]
 		_, system := entity.systemColumn(name)
 		if own || system {
