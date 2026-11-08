@@ -63,9 +63,10 @@ func TestBeforeCloseQuestionSavesOnceHTTPMatrix(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(rows) != 3 || counter.count.Load() != 3 {
-			t.Fatalf("want one write per save/post/save-and-select: rows=%d, publications=%d", len(rows), counter.count.Load())
+		if len(rows) != 9 || counter.count.Load() != 12 {
+			t.Fatalf("want nine objects and twelve actual writes: rows=%d, publications=%d", len(rows), counter.count.Load())
 		}
+		fresh := 0
 		for _, row := range rows {
 			id, err := uuid.Parse(refValueString(row["id"]))
 			if err != nil {
@@ -75,9 +76,19 @@ func TestBeforeCloseQuestionSavesOnceHTTPMatrix(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if version := persistedEntityVersion(persisted); version != 1 {
-				t.Fatalf("answer repeated a durable write: version=%d", version)
+			wantVersion := int64(1)
+			if persisted["Наименование"] == "Новая правка во время чтения файла" {
+				fresh++
+				wantVersion = 2
+			} else if persisted["Наименование"] != "Черновик" {
+				t.Fatalf("unexpected durable name: %v", persisted["Наименование"])
 			}
+			if version := persistedEntityVersion(persisted); version != wantVersion {
+				t.Fatalf("unexpected durable version: got=%d want=%d", version, wantVersion)
+			}
+		}
+		if fresh != 3 {
+			t.Fatalf("want one newly saved input per mode, got %d", fresh)
 		}
 		t.Logf("real close-question modal/controller and HTTP (%s): %s", db.Dialect().Name(), output)
 	})

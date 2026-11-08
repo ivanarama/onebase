@@ -33,6 +33,10 @@ const fileSubmitStart = managed.indexOf('  obManagedReady(restoreFormAttrs);');
 const fileSubmitEnd = managed.indexOf('  window._obFormDirty = false;', fileSubmitStart);
 assert.ok(fileSubmitStart >= 0 && fileSubmitEnd > fileSubmitStart, 'managed file-submit slice not found');
 const fileSubmitHandler = managed.slice(fileSubmitStart, fileSubmitEnd);
+const fileWaitStart = managed.indexOf('  async function awaitCurrentFileReads(');
+const fileWaitEnd = managed.indexOf('  // obFilePick', fileWaitStart);
+assert.ok(fileWaitStart >= 0 && fileWaitEnd > fileWaitStart, 'managed file-read wait not found');
+const fileReadWaiter = managed.slice(fileWaitStart, fileWaitEnd);
 
 class FakeFormData {
   constructor(form) {
@@ -48,7 +52,7 @@ class FakeFormData {
   forEach(fn) { for (const [key, value] of this.values) fn(value, key); }
 }
 
-function runtime(fetchImpl, cfgOverride = {}, productionValues = false) {
+function runtime(fetchImpl, cfgOverride = {}, productionValues = false, productionFileReads = false) {
   const applied = [];
   const assigned = [];
 	const dirtyReports = [];
@@ -212,7 +216,7 @@ function runtime(fetchImpl, cfgOverride = {}, productionValues = false) {
 		var mapped = SERVICE_FIELDS[name];
 		return typeof mapped === 'string' && mapped ? mapped : name;
 	  }
-      async function awaitCurrentFileReads(){ return true; }
+      ${productionFileReads ? fileReadWaiter : 'async function awaitCurrentFileReads(){ return true; }'}
 	  function obManagedWritableTableBody(){ return null; }
       function applyFormConditionalCSS(value){ globalThis.__applied.push(['css', value]); }
       function applyElementStates(value){ globalThis.__applied.push(['states', value]); }
@@ -2322,7 +2326,9 @@ if (process.env.ONEBASE_CLOSE_QUESTION_HTTP_URL) {
     const match = html.match(/<script type="application\/json" id="ob-managed-config">([^]*?)<\/script>/);
     assert.ok(match);
     const cfg = JSON.parse(match[1]);
-    for (const mode of ['save', 'post', 'save_and_select']) {
+    const cases = ['unchanged', 'first-read', 'second-read'].flatMap((scenario) =>
+      ['save', 'post', 'save_and_select'].map((mode) => [scenario, mode]));
+    for (const [scenario, mode] of cases) {
       const bodies = [], replies = [];
       const app = runtime(async (url, options) => {
         bodies.push(capturedCloseBody(options));
@@ -2330,7 +2336,7 @@ if (process.env.ONEBASE_CLOSE_QUESTION_HTTP_URL) {
         const data = await result.json();
         replies.push(data);
         return response(data, result.ok, result.status);
-      }, cfg);
+      }, cfg, false, true);
       app.context.crypto = {randomUUID: require('node:crypto').randomUUID};
       if (mode === 'save_and_select') app.form.values.set('_popup', '1');
       // The harness's hidden controls must participate in real FormData just
@@ -2348,10 +2354,43 @@ if (process.env.ONEBASE_CLOSE_QUESTION_HTTP_URL) {
       assert.equal(replies[0].close.saved, true, JSON.stringify(replies));
       assert.equal(replies[0].version, 1);
       assert.equal(replies[0].dirty, false);
+      let reads = 0;
+      let edited = false;
+      if (scenario !== 'unchanged') {
+        const editOnRead = scenario === 'first-read' ? 1 : 2;
+        const state = {get pending() {
+          const read = ++reads;
+          return Promise.resolve().then(() => {
+            if (read === editOnRead) {
+              edited = true;
+              app.form.values.set('Наименование', 'Новая правка во время чтения файла');
+              app.context.obSetManagedFormDirty(true);
+            }
+          });
+        }};
+        const helper = {_obFileReadState: state, getAttribute() { return null; }};
+        const query = app.form.querySelectorAll.bind(app.form);
+        app.form.querySelectorAll = (selector) => selector === '[data-ob-file-content-for]' ? [helper] : query(selector);
+      }
       const button = questionNodes(modal).find((node) => node.textContent === 'Закрыть — ошиблись номером');
       assert.ok(button);
       button.dispatch('click', {target: button});
       const decision = await pending;
+      if (scenario !== 'unchanged') {
+        assert.equal(edited, true, 'the concurrent input must actually occur');
+        assert.equal(app.form.values.get('Наименование'), 'Новая правка во время чтения файла');
+        assert.ok(!decision.allowed || replies[1].close.saved === true,
+          'new input must be saved or keep the form open: ' + JSON.stringify(replies));
+        if (replies[1].close.saved) {
+          assert.equal(bodies[1].closeMode, mode);
+          assert.equal(bodies[1].get('Наименование'), 'Новая правка во время чтения файла');
+          assert.equal(replies[1].version, 2);
+        } else {
+          assert.equal(decision.allowed, false);
+          assert.equal(app.context._obFormDirty, true);
+        }
+        continue;
+      }
       assert.equal(decision.allowed, true, JSON.stringify(replies));
       assert.equal(decision.saved, true);
       assert.equal(decision.savedId, replies[0].savedId);

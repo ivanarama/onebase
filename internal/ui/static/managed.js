@@ -1895,6 +1895,15 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       if (mode === 'cancel') return {allowed: false, intentId: '', error: 'user-cancelled'};
       var body = await closeSnapshotBody(reason, mode);
       if (!body) return {allowed: false, intentId: '', error: 'form-state'};
+      var snapshotKey = closeSnapshotKey(body);
+      // Only this final, already serialized payload may reuse the first save.
+      // A separate earlier snapshot can become stale while file reads or grid
+      // synchronization yield, turning fresh input into an unsaved discard.
+      if (previousSave && previousSave.savedSnapshotKey === snapshotKey) {
+        mode = 'discard';
+      } else {
+        previousSave = null;
+      }
       // File reads and grid synchronization may yield or commit fresh edits
       // after BeforePost completed. Never open a new intent under old approval.
       if (BEFORE_POST && mode === 'post' && !retryableClose &&
@@ -1903,7 +1912,6 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         flash(closeMessage('formChanged', 'Форма изменилась во время проверки закрытия. Повторите закрытие.'), 'err');
         return {allowed: false, intentId: '', error: 'form-changed'};
       }
-      var snapshotKey = closeSnapshotKey(body);
 	  var requestedReason = reason;
 	  var requestedMode = mode;
 	  var requestedSnapshotKey = snapshotKey;
@@ -2182,11 +2190,9 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
             // The first intent already saved/posted this exact canonical state.
             // Re-run BeforeClose with the answer, preserving its durable result
             // for the owning shell/picker, without repeating write side effects.
-            // New input or unsaved hook changes still require the original mode.
-            var current = result.savedSnapshotKey == null ? null : await closeSnapshotBody(next.reason, next.mode);
-            var alreadySaved = current && closeSnapshotKey(current) === result.savedSnapshotKey;
-            if (alreadySaved) next.mode = 'discard';
-            return continueClose(next, alreadySaved ? result : null);
+            // The continuation compares its final payload with this saved state;
+            // new input or unsaved hook changes still require the original mode.
+            return continueClose(next, result);
           })().then(resolve, function(){
             setManagedFormDirty(true);
             resolve({allowed: false, intentId: result.intentId || '', error: 'form-state'});
