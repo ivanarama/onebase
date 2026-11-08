@@ -803,6 +803,17 @@ if (window.__obEmbedded) {
     }
     return true;
   };
+  // BEGIN onebase-link-tab-title
+  // Заголовок новой вкладки по ссылке: её title, если это не подсказка горячей
+  // клавиши. У кнопки «Создать» title="Insert" aria-keyshortcuts="Insert" —
+  // вкладка называлась «Insert»; тогда берём текст ссылки, а точный заголовок
+  // («Звонок (создание)») форма пришлёт сама (ob-tab-title → obSetTitle).
+  function obLinkTabTitle(a) {
+    var t = a.getAttribute('title') || '';
+    if (t && t === a.getAttribute('aria-keyshortcuts')) t = '';
+    return (t || a.textContent || '').replace(/\s+/g, ' ').trim() || 'Форма';
+  }
+  // END onebase-link-tab-title
   document.addEventListener('click', function (e) {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     var a = e.target.closest ? e.target.closest('a[href]') : null;
@@ -812,7 +823,7 @@ if (window.__obEmbedded) {
       return;
     }
     var href = a.getAttribute('href') || '';
-    var title = (a.getAttribute('title') || a.textContent || '').replace(/\s+/g, ' ').trim() || 'Форма';
+    var title = obLinkTabTitle(a);
     if (!window.obOpenInShell(href, title)) return;
     e.preventDefault();
   });

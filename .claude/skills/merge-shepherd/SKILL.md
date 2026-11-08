@@ -28,6 +28,10 @@ gate соответствующей цели; остальные допусти�
 
 ## Обычный путь
 
+Для trusted native fallback соблюдай
+[порядок обновления runtime после долгой подготовки](references/runtime-publication-freshness.md).
+Он сохраняет все source/CI/budget-гейты и единственный scheduling gate.
+
 Если задача PromptPilot уже содержит команду `pipelinectl`, выполни её. При
 ручном запуске используй Python окружения PromptPilot:
 

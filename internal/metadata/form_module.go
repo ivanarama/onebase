@@ -255,6 +255,10 @@ type FormElement struct {
 	// Оба каскадят на потомков контейнера, как и постоянный ReadOnly (#1184).
 	// Складывается это по «ИЛИ»: ложное условие предка не отпирает потомка с
 	// собственным ReadOnly.
+	// TextBold — жирное значение поля (ПолеВвода, ПолеДаты) или текст
+	// надписи: выделить главное на форме — имя клиента в заявке. Подпись поля
+	// остаётся обычной.
+	TextBold     bool   `yaml:"text_bold,omitempty"`
 	ReadOnlyWhen string `yaml:"readonly_when,omitempty"`
 	HiddenWhen   string `yaml:"hidden_when,omitempty"`
 	// TitleFrom — у колонки табличной части (kind: Колонка): имя реквизита
