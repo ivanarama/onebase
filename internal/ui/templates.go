@@ -1630,6 +1630,7 @@ td{padding:10px 12px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:14p
 tr:last-child td{border-bottom:none}
 tr:hover td{background:#f8fafc}
 tr.ob-row-styled td{color:inherit;font-weight:inherit}
+tr.ob-row-styled[aria-selected="true"] td{color:#334155}
 tr.ob-row-styled:hover td{background:inherit;filter:brightness(.95)}
 .btn{display:inline-block;padding:8px 18px;border-radius:7px;font-size:14px;font-weight:500;text-decoration:none;cursor:pointer;border:none;line-height:1}
 .btn-primary{background:#3b82f6;color:#fff}.btn-primary:hover{background:#2563eb}
