@@ -62,6 +62,7 @@ func dslValueToTemplateDataSeen(v any, stack map[templateDataVisit]bool, depth i
 		}
 		stack[visit] = true
 		defer delete(stack, visit)
+		x.compact()
 		obj := make(map[string]any, len(x.keys))
 		for i, k := range x.keys {
 			// Ключи Соответствия произвольные; в шаблоне обращение идёт по
