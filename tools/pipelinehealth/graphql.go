@@ -1146,6 +1146,12 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo, trustedOwner string
 			return nil, nil, fmt.Errorf("PR #%d: %w", raw.Number, err)
 		}
 		pull.ExpectedBaseRepository = expectedBase
+		if needsFullCurrentReview(pull, trustedOwner) {
+			pull.FullCurrentReview, err = loadFullCurrentReview(client, pull, repo, trustedOwner)
+			if err != nil {
+				return nil, nil, err
+			}
+		}
 		pulls = append(pulls, pull)
 	}
 	issues := make([]apiIssue, 0, len(rawIssues))
