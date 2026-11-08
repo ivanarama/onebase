@@ -3101,7 +3101,7 @@ obReady(function () {
     '#ob-ai-log .m.act .btns button:disabled{opacity:.6;cursor:default}' +
     '#ob-ai-log .m.act .res{font-size:13px}' +
     '#ob-ai-log .m.act .res a{color:#2563eb;text-decoration:underline;cursor:pointer}' +
-    '#ob-msg-bar{position:fixed;left:0;right:0;bottom:0;z-index:300;background:#fff;border-top:1px solid #cbd5e1;box-shadow:0 -2px 8px rgba(0,0,0,.08);font-family:system-ui,sans-serif;font-size:13px;color:#1e293b;transform:translateY(calc(100% - 30px));transition:transform .18s ease}' +
+    '#ob-msg-bar{position:fixed;left:0;right:0;bottom:var(--ob-status-bar-h, 0px);z-index:300;background:#fff;border-top:1px solid #cbd5e1;box-shadow:0 -2px 8px rgba(0,0,0,.08);font-family:system-ui,sans-serif;font-size:13px;color:#1e293b;transform:translateY(calc(100% - 30px));transition:transform .18s ease}' +
     '#ob-msg-bar.open{transform:translateY(0)}' +
     '#ob-msg-bar.hidden{display:none}' +
     '#ob-msg-head{height:30px;display:flex;align-items:center;padding:0 10px;cursor:pointer;background:#f1f5f9;user-select:none;gap:10px}' +

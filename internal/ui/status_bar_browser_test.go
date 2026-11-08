@@ -31,6 +31,11 @@ func TestStatusBarBrowserAcceptance(t *testing.T) {
   Возврат Неопределено;
  КонецЕсли;
  Возврат Новый Структура("Слева,Справа", "call active", "operator ready");
+КонецФункции
+
+Функция Нажатие(Кнопка) Экспорт
+ Сообщить("status bar action message");
+ Возврат "action complete";
 КонецФункции`, upstream.URL), "telephony.module.os")).ParseProgram()
 	if err != nil {
 		t.Fatal(err)

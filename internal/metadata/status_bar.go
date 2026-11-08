@@ -74,8 +74,8 @@ func SplitStatusBarProc(ref string) (module, proc string, ok bool) {
 	return strings.TrimSpace(ref[:i]), strings.TrimSpace(ref[i+1:]), true
 }
 
-// Validate проверяет форму объявления; существование процедур проверяет
-// onebase check по загруженным модулям.
+// Validate проверяет форму объявления, включая формат ссылок на процедуры.
+// Существование модулей и процедур проверяется при вызове строки состояния.
 func (b *StatusBar) Validate() error {
 	if b == nil {
 		return nil
