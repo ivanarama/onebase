@@ -29,6 +29,7 @@ def main():
     need('CGO_ENABLED=1' in buildinfo and 'v2.11.4' in buildinfo, 'do not reuse CGO0/unpinned binary')
     fixtures = Path(tempfile.mkdtemp(prefix='lint-action-negative-', dir=temporary))
     action_commit = subprocess.run(['git', '-C', str(upstream), 'rev-parse', 'HEAD'], check=True, capture_output=True, text=True).stdout.strip()
+    need(action_commit == '4afd733a84b1f43292c63897423277bb7f4313a9', 'negative action differs from cold/warm official v8 source')
     reports = []
     for name in ('bad-lint', 'invalid-config'):
         fixture = fixtures / name
