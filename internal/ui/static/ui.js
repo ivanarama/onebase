@@ -2561,6 +2561,17 @@ function insertTreeRows(parentTr, rows) {
 function makeTreeRow(row) {
   var tr = document.createElement('tr');
   tr.style.cursor = 'pointer';
+  var styled = false;
+  if (/^#[0-9a-f]{6}$/i.test(row.row_background || '') && /^#[0-9a-f]{6}$/i.test(row.row_text_color || '')) {
+    tr.style.backgroundColor = row.row_background;
+    tr.style.color = row.row_text_color;
+    styled = true;
+  }
+  if (row.row_bold === true) {
+    tr.style.fontWeight = '600';
+    styled = true;
+  }
+  if (styled) tr.classList.add('ob-row-styled');
   if (row.marked) {
     tr.style.opacity = '0.45';
     tr.style.textDecoration = 'line-through';
