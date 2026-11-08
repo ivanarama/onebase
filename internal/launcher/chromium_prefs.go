@@ -46,6 +46,9 @@ func seedChromiumPrefs(profileDir string) error {
 		if err := json.Unmarshal(data, &prefs); err != nil {
 			return fmt.Errorf("файл Preferences профиля %s: %w", profileDir, err)
 		}
+		if prefs == nil {
+			return fmt.Errorf("файл Preferences профиля %s: корень JSON должен быть объектом", profileDir)
+		}
 	case !os.IsNotExist(err):
 		return err
 	}

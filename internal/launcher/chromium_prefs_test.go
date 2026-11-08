@@ -1,10 +1,14 @@
 package launcher
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func readChromiumPrefs(t *testing.T, profileDir string) map[string]any {
@@ -94,5 +98,87 @@ func TestStartIsolated_BrokenPrefsUntouched(t *testing.T) {
 	}
 	if data, _ := os.ReadFile(filepath.Join(def, "Preferences")); string(data) != "{не json" {
 		t.Errorf("битый Preferences перезаписан: %q", data)
+	}
+}
+
+// Некорректный корень Preferences не должен ни мешать открытию окна,
+// ни заменяться объектом настроек. Проверяется настоящий HTTP-маршрут лаунчера.
+func TestStartIsolated_NonObjectPrefsHTTP(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data string
+	}{
+		{"null", "null"},
+		{"null_whitespace", " \nnull\t "},
+		{"array", "[]"},
+		{"string", `"profile"`},
+		{"boolean", "false"},
+		{"number", "42"},
+		{"broken", "{не json"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fb := &fakeBrowser{}
+			h, b := newIsolatedFixture(t, fb)
+			root, err := profilesRoot(b.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			profileDir := filepath.Join(root, "profile-1")
+			def := filepath.Join(profileDir, "Default")
+			if err := os.MkdirAll(def, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			prefsPath := filepath.Join(def, "Preferences")
+			original := []byte(tc.data)
+			if err := os.WriteFile(prefsPath, original, 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			savedBundle := launcherBundle
+			t.Cleanup(func() { launcherBundle = savedBundle })
+			srv, err := NewServer(h.store, h.runner)
+			if err != nil {
+				t.Fatal(err)
+			}
+			srv.h.isoBrowser = fb
+			done := make(chan error, 1)
+			go func() { done <- srv.ListenAndServe() }()
+			client := &http.Client{Timeout: 10 * time.Second}
+			t.Cleanup(func() {
+				client.CloseIdleConnections()
+				srv.Close()
+				if err := <-done; err != nil && err != http.ErrServerClosed {
+					t.Error(err)
+				}
+			})
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost,
+				srv.URL()+"/bases/"+b.ID+"/start-isolated?mode=browser", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Origin", srv.URL())
+			res, err := client.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, readErr := io.Copy(io.Discard, res.Body)
+			closeErr := res.Body.Close()
+			if readErr != nil || closeErr != nil {
+				t.Fatalf("read=%v close=%v", readErr, closeErr)
+			}
+			if res.StatusCode != http.StatusOK || fb.calls != 1 {
+				t.Fatalf("окно должно открыться: HTTP %d, Browser.Open=%d", res.StatusCode, fb.calls)
+			}
+			if fb.dir != profileDir || fb.mode != "browser" || fb.url != h.runner.BaseURL(b)+"/ui" {
+				t.Fatalf("открыто другое окно: dir=%q mode=%q url=%q", fb.dir, fb.mode, fb.url)
+			}
+			data, err := os.ReadFile(prefsPath)
+			if err != nil || !bytes.Equal(data, original) {
+				t.Fatalf("Preferences изменён: %q, ошибка %v", data, err)
+			}
+			if _, err := os.Stat(prefsPath + ".onebase-tmp"); !os.IsNotExist(err) {
+				t.Fatalf("после отклонённого Preferences остался временный файл: %v", err)
+			}
+		})
 	}
 }
