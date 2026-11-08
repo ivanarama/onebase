@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"html/template"
 	"net/http"
@@ -206,12 +207,14 @@ func (s *Server) statusBarCall(r *http.Request, ref string, args []any) (any, er
 	if proc == nil {
 		return nil, errStatusBarProc(ref)
 	}
+	ctx, cancel := context.WithTimeout(r.Context(), statusBarCallTimeout)
+	defer cancel()
 	var msgs []string
 	mc := runtime.NewMovementsCollector("status_bar", uuid.Nil)
-	vars, txState := s.buildDSLVarsWithMessagesTx(r.Context(), mc, &msgs)
+	vars, txState := s.buildDSLVarsWithMessagesTx(ctx, mc, &msgs)
 	defer rollbackDSLExecution(txState)
 	result, err := s.interp.CallSandboxed(proc, nil, args,
-		interpreter.SandboxProfile{Context: r.Context(), MaxWallClock: statusBarCallTimeout}, vars)
+		interpreter.SandboxProfile{Context: ctx, MaxWallClock: statusBarCallTimeout}, vars)
 	return result, finishDSLExecution(txState, err)
 }
 

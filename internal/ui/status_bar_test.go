@@ -3,12 +3,16 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/go-chi/chi/v5"
 
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
@@ -188,4 +192,93 @@ func TestStatusBar_IndexPageCarriesMeta(t *testing.T) {
 			t.Fatalf("%s: признак строки в странице = %v, ожидалось %v", role, got, want)
 		}
 	}
+}
+
+// Use the mounted route and real DSL HTTP transport: an interpreter clock
+// checked only between statements cannot cancel an in-flight network call.
+func TestStatusBar_DeadlineCancelsHTTP(t *testing.T) {
+	for _, action := range []bool{false, true} {
+		t.Run(fmt.Sprintf("action=%t", action), func(t *testing.T) {
+			canceled := make(chan struct{}, 1)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				select {
+				case <-r.Context().Done():
+					canceled <- struct{}{}
+				case <-time.After(7 * time.Second):
+					_, _ = fmt.Fprint(w, "too late")
+				}
+			}))
+			defer upstream.Close()
+			source := fmt.Sprintf(`Функция Строка() Экспорт
+ HTTPПолучить("%s");
+ Возврат Новый Структура("Слева", "ready");
+КонецФункции
+Функция Нажатие(Кнопка) Экспорт
+ Возврат "ok";
+КонецФункции`, upstream.URL)
+			if action {
+				source = fmt.Sprintf(`Функция Строка() Экспорт
+ Возврат Новый Структура("Слева", "ready");
+КонецФункции
+Функция Нажатие(Кнопка) Экспорт
+ HTTPПолучить("%s");
+ Возврат "ok";
+КонецФункции`, upstream.URL)
+			}
+			s := newStatusBarTestServer(t)
+			program, err := parser.New(lexer.New(source, "telephony.module.os")).ParseProgram()
+			if err != nil {
+				t.Fatal(err)
+			}
+			s.reg.LoadModules(map[string]*ast.Program{"Телефония": program})
+			if err := s.store.SaveNetworkEnabled(t.Context(), true); err != nil {
+				t.Fatal(err)
+			}
+			server := mountedStatusBarTestServer(t, s)
+			started := time.Now()
+			var response *http.Response
+			if action {
+				response, err = http.PostForm(server.URL+"/ui/_status-bar", url.Values{"button": {"НаЛинии"}})
+			} else {
+				response, err = http.Get(server.URL + "/ui/_status-bar")
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			var state statusBarState
+			if err := json.NewDecoder(response.Body).Decode(&state); err != nil {
+				t.Fatal(err)
+			}
+			elapsed := time.Since(started)
+			if response.StatusCode != http.StatusOK || state.Error == "" || !state.Visible {
+				t.Fatalf("expected visible deadline error, status=%d state=%+v", response.StatusCode, state)
+			}
+			if elapsed < 4*time.Second || elapsed > 6500*time.Millisecond {
+				t.Fatalf("blocking HTTP must stop at the 5s deadline, elapsed=%v error=%s", elapsed, state.Error)
+			}
+			select {
+			case <-canceled:
+			case <-time.After(time.Second):
+				t.Fatal("DSL deadline did not cancel the actual HTTP request")
+			}
+			t.Logf("mounted route action=%t canceled upstream after %v: %s", action, elapsed, state.Error)
+		})
+	}
+}
+
+func mountedStatusBarTestServer(t *testing.T, s *Server) *httptest.Server {
+	t.Helper()
+	s = New(s.reg, s.store, s.interp, nil, Config{}, nil)
+	router := chi.NewRouter()
+	router.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			next.ServeHTTP(w, r.WithContext(auth.ContextWithUser(r.Context(), statusBarUser("Оператор"))))
+		})
+	})
+	s.MountStatic(router)
+	s.Mount(router)
+	server := httptest.NewServer(router)
+	t.Cleanup(func() { s.CloseEventStreams(); server.Close(); s.Close() })
+	return server
 }

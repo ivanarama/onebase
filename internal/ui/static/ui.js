@@ -6929,6 +6929,7 @@ function obEnterNavigateFrom(target) {
       '#ob-status-bar{position:fixed;left:0;right:0;bottom:0;z-index:900;height:var(--ob-status-bar-h);' +
       'display:flex;align-items:center;gap:12px;padding:0 12px;box-sizing:border-box;' +
       'background:#f1f5f9;border-top:1px solid #cbd5e1;font-size:13px;color:#1f2937}' +
+      '#ob-status-bar[hidden]{display:none}' +
       '#ob-status-bar .ob-sb-left{flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}' +
       '#ob-status-bar .ob-sb-right{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600}' +
       '#ob-status-bar .ob-sb-buttons{display:flex;gap:6px;flex:0 0 auto}' +
