@@ -195,9 +195,9 @@ const tplManagedForm = `
         {{/* Реквизит формы ссылочного типа — рабочий пикер выбора (фикс B): select
              из вариантов справочника (mergeFormLocalRefOptions) + кнопка подбора.
              Условие требует ещё и загруженных опций: mergeFormLocalRefOptions
-             зовётся только из renderEntityForm и только для save:false с сущностью
-             в реестре. Формы обработок рендерят page-managed-form напрямую
-             (handlers_processors.go), и без этой проверки поле там превращалось в
+             загружает save:false с сущностью в реестре. Для обработок опции
+             реквизита загружаются только при явном reference_page. Без этой
+             проверки поле с незагруженными опциями превращалось в
              пустой select, теряющий текущее значение при записи. Нет опций —
              остаётся прежний текстовый ввод со значением. */}}
         <div class="managed-control-row" style="display:flex;gap:6px;align-items:center">

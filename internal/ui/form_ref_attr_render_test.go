@@ -75,7 +75,7 @@ func TestRefAttrRendersPickerWithOptions(t *testing.T) {
 
 // Без загруженных опций пикер НЕ рисуется: пустой select потерял бы текущее
 // значение при записи (формы обработок рендерят page-managed-form напрямую,
-// mergeFormLocalRefOptions там не вызывается; то же при save:true и при
+// без reference_page mergeFormLocalRefOptions там не вызывается; то же при save:true и при
 // неизвестной реестру сущности). Остаётся текстовый ввод со значением.
 func TestRefAttrKeepsTextInputWithoutOptions(t *testing.T) {
 	for _, tc := range []struct {

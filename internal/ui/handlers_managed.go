@@ -139,6 +139,7 @@ func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any
 	opKind := opFormEvent
 	if processor, _ := data["IsProcessor"].(bool); processor {
 		opKind = opProcessorRun
+		s.mergeProcessorReferencePageOptions(ctx, form, data)
 	}
 	data["FormCloseTimeoutMS"] = formCloseClientTimeoutMS(s.operationTimeout(opKind))
 	data["FormCloseEpoch"] = formCloseProcessEpoch
