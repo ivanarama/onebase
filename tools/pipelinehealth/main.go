@@ -58,6 +58,8 @@ type apiComment struct {
 }
 
 type apiPull struct {
+	// Set only by the complete stable GraphQL epoch reader, never REST/JSON.
+	FullCurrentReview      bool           `json:"-"`
 	NodeID                 string         `json:"node_id"`
 	CrossRepository        *bool          `json:"-"`
 	ExpectedBaseRepository *apiRepository `json:"-"`
@@ -644,6 +646,12 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 				result.MergeCandidates = append(result.MergeCandidates, item)
 			case v1AbortCurrent && currentCompletions == 0:
 				result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
+			case pr.FullCurrentReview:
+				// Explicit full current-HEAD re-review closes its own epoch; older
+				// source reviews and a merge-shaped HEAD do not make it a carry.
+				// The independent mutation gate still proves current ship and CI.
+				item.Stage = "merge"
+				result.MergeCandidates = append(result.MergeCandidates, item)
 			case currentCompletions > 0 && depth == currentCompletions && !protocolHistory:
 				// A PR may be opened with a merge commit already at its first HEAD.
 				// With no earlier committed review or base-sync transaction, its
@@ -706,7 +714,7 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 			result.HumanWaiting = append(result.HumanWaiting, item)
 		case labels["changes-requested"] && !overrideOpen:
 			result.FixCandidates = append(result.FixCandidates, item)
-		case depth > currentCompletions && headIsBaseSyncMerge(pr) && legacySourceCompletions == 0 && !carryDone && !v1AbortCurrent:
+		case depth > currentCompletions && headIsBaseSyncMerge(pr) && legacySourceCompletions == 0 && !carryDone && !v1AbortCurrent && !pr.FullCurrentReview:
 			// A completed review of this HEAD is not enough to turn an earlier
 			// needs-decision review of a different SHA into source proof. Show the
 			// recovery before asking for ship; otherwise the owner is invited into
