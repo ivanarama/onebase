@@ -15,10 +15,6 @@ jobs:
     env:
       GOTOOLCHAIN: go1.26.10
       CGO_ENABLED: "1"
-      GOMODCACHE: ${{ runner.temp }}/lint-proof-modcache
-      GOCACHE: ${{ runner.temp }}/lint-proof-buildcache
-      GOBIN: ${{ runner.temp }}/lint-proof-cgo1-tools
-      GOLANGCI_LINT_CACHE: ${{ runner.temp }}/lint-proof-analysis-cache
     steps:
       - uses: actions/checkout@v4
         with:
@@ -33,14 +29,21 @@ jobs:
           test "$(go version | awk '{print $3}')" = go1.26.10
           test "$(go env CGO_ENABLED)" = 1
           command -v gcc
+          go version
+          gcc --version
+          GOMODCACHE="$RUNNER_TEMP/lint-proof-modcache"
+          GOCACHE="$RUNNER_TEMP/lint-proof-buildcache"
+          GOBIN="$RUNNER_TEMP/lint-proof-cgo1-tools"
+          GOLANGCI_LINT_CACHE="$RUNNER_TEMP/lint-proof-analysis-cache"
           for directory in "$GOMODCACHE" "$GOCACHE" "$GOBIN" "$GOLANGCI_LINT_CACHE"; do
             test ! -e "$directory"
             mkdir "$directory"
             test -z "$(find "$directory" -mindepth 1 -print -quit)"
           done
+          printf 'GOMODCACHE=%s\nGOCACHE=%s\nGOBIN=%s\nGOLANGCI_LINT_CACHE=%s\n' \
+            "$GOMODCACHE" "$GOCACHE" "$GOBIN" "$GOLANGCI_LINT_CACHE" >> "$GITHUB_ENV"
           mkdir "$RUNNER_TEMP/lint-install-proof"
-          go version > "$RUNNER_TEMP/lint-install-proof/toolchain.txt"
-          gcc --version >> "$RUNNER_TEMP/lint-install-proof/toolchain.txt"
+          printf 'Go1.26.10/CGO1/gcc verified before selecting new empty cache paths\n' > "$RUNNER_TEMP/lint-install-proof/toolchain.txt"
       - name: Cold CGO1 install and full normal lint
         uses: golangci/golangci-lint-action@4afd733a84b1f43292c63897423277bb7f4313a9 # official v8
         with:
