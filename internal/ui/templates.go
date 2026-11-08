@@ -1622,7 +1622,7 @@ h3{font-size:16px;font-weight:600;margin:24px 0 10px;color:#1e293b}
 .main-list .ob-list-content>.card{max-width:none}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th{text-align:left;padding:10px 12px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;background:#eef2f7}
-th a{color:#64748b;text-decoration:none}
+th a{color:inherit;text-decoration:none}
 th a:hover{color:#1e293b}
 td{padding:10px 12px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:14px}
 tr:last-child td{border-bottom:none}
