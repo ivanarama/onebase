@@ -180,6 +180,9 @@ class WorkflowContract(unittest.TestCase):
         self.assertIn("merge-multiple: false", build)
         self.assertIn("shard: [" + ", ".join(LABELS) + "]", text)
         self.assertIn("fail-fast: false", text)
+        race = text.split("\n  unit-race:\n", 1)[1].split("\n  build:\n", 1)[0]
+        self.assertLess(race.index("uses: actions/setup-go@v5"), race.index("name: Prepare private cache paths"))
+        self.assertLess(race.index("name: Prepare private cache paths"), race.index("uses: actions/cache@v4"))
         for job in ("unit-plan", "unit-race"):
             section = re.split(r"\n  [A-Za-z][\w-]*:\n", text.split("\n  " + job + ":\n", 1)[1], maxsplit=1)[0]
             # The first unindented job boundary, not nested step indentation.

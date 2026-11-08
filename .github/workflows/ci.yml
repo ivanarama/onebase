@@ -102,14 +102,16 @@ jobs:
         shard: [other, ui-1, ui-2, ui-3, ui-4, launcher-1, launcher-2]
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare private cache paths
-        run: |
-          echo "GOCACHE=$RUNNER_TEMP/race-go-build" >> "$GITHUB_ENV"
-          echo "GOMODCACHE=$RUNNER_TEMP/race-go-mod" >> "$GITHUB_ENV"
       - uses: actions/setup-go@v5
         with:
           go-version-file: '.go-version'
           cache: false
+      # setup-go runs `go env`, which can initialize cache metadata. Assign the
+      # fresh private directories only afterward, before restoring our cache.
+      - name: Prepare private cache paths
+        run: |
+          echo "GOCACHE=$RUNNER_TEMP/race-go-build" >> "$GITHUB_ENV"
+          echo "GOMODCACHE=$RUNNER_TEMP/race-go-mod" >> "$GITHUB_ENV"
       # Build/module caches only. Test results/journals/coverage are never reused.
       # A new namespace provides a measurable cold run without deleting old caches.
       - uses: actions/cache@v4
