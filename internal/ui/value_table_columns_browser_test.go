@@ -23,6 +23,7 @@ func TestValueTableColumnsBrowserAcceptance(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		t.Run("columns", func(t *testing.T) { testValueTableColumnsBrowser(t, db) })
 		t.Run("drafts", func(t *testing.T) { testValueTableDraftBrowser(t, db) })
+		t.Run("column-hidden-footer", func(t *testing.T) { testManagedColumnHiddenFooterBrowser(t, db) })
 	})
 }
 

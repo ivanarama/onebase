@@ -3237,13 +3237,20 @@ function obGridColumnIds(columns) {
       if (typeof g.grid.getFooterRowColumn !== "function") return;
       var items = g.dataView.getItems();
       var cols = g.columnsMeta || [];
+      var metaById = Object.create(null);
+      for (var m = 0; m < cols.length; m++) metaById[cols[m].id] = cols[m];
       // Подпись — в первой ВИДИМОЙ колонке: первая по описанию бывает скрыта.
       var labelId = null, shown = g.grid.getColumns ? g.grid.getColumns() : [];
       for (var v = 0; v < shown.length; v++) if (shown[v] && !shown[v].hidden) { labelId = shown[v].id; break; }
-      for (var i = 0; i < cols.length; i++) {
-        var c = cols[i];
-        var node = g.grid.getFooterRowColumn(c.id);
-        if (!node) continue;
+      // SlickGrid создаёт footer только для видимых колонок, но поиск по id
+      // использует полный индекс. Передаём индекс ячейки в видимом порядке,
+      // включая пользовательскую перестановку колонок.
+      var footerIndex = 0;
+      for (var i = 0; i < shown.length; i++) {
+        if (!shown[i] || shown[i].hidden) continue;
+        var node = g.grid.getFooterRowColumn(footerIndex++);
+        var c = metaById[shown[i].id];
+        if (!node || !c) continue;
         if (c.type === "number") {
           var sum = 0;
           for (var r = 0; r < items.length; r++) {
