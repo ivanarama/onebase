@@ -4999,10 +4999,14 @@ function refContextForRequest(sel) {
 /* ПоказатьВопрос (#1528, план 158 срез A): модал вопроса фазы 1. Ответ
    пользователя уходит событием Ответ с _question_answer — сервер кладёт его
    в переменную ВопросОтвет и вызывает обработчик Ответ того же элемента.
-   Диалог неблокирующий: клик мимо закрывает модал без ответа (обработчик фазы 1
-   сам решает, что делать без второй фазы).
+   Щелчок мимо обычного окна его не закрывает — раньше закрывал молча, без
+   события Ответ. Кнопка варианта закрывает окно и отправляет Ответ.
+   Это не блокирует прежнюю обработку Escape в managed.js: при фокусе на
+   кнопке она может запустить закрытие формы без события Ответ.
    handlers (необязательно) — {onAnswer(variant), onDismiss()}: ответ уходит не
-   событием Ответ элемента, а вызывающему (вопрос ПередПроведением). */
+   событием Ответ элемента, а вызывающему (вопрос ПередПроведением). Только
+   такому вызывающему щелчок мимо закрывает окно и зовёт onDismiss: там это
+   «не проводить», безопасный выход, а не обход ответа. */
 function obOpenQuestion(payload, elementName, handlers) {
   if (!payload || !payload.variants || !payload.variants.length) return;
   var old = document.getElementById('_question-modal');
@@ -5093,11 +5097,14 @@ function obOpenQuestion(payload, elementName, handlers) {
   });
   box.appendChild(row);
   modal.appendChild(box);
-  modal.addEventListener('click', function (ev) {
-    if (ev.target !== modal) return;
-    modal.remove();
-    if (handlers && typeof handlers.onDismiss === 'function') handlers.onDismiss();
-  });
+  // Закрыть мимо кнопок можно только вопрос с onDismiss (ПередПроведением).
+  if (handlers && typeof handlers.onDismiss === 'function') {
+    modal.addEventListener('click', function (ev) {
+      if (ev.target !== modal) return;
+      modal.remove();
+      handlers.onDismiss();
+    });
+  }
   document.body.appendChild(modal);
 }
 window.obOpenQuestion = obOpenQuestion;
