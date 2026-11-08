@@ -87,9 +87,10 @@ func verifiedFullCurrentReview(snapshot map[string]any, trusted string) bool {
 			continue
 		}
 		body := routingText(node["body"])
-		// A real or ambiguous integration/typed handoff keeps its original lane.
-		// This is intentionally conservative even for quoted/untrusted records.
-		if strings.Contains(body, "pp:base-sync-") || strings.Contains(body, "pp:review-routing-") {
+		// Integration markers stay conservative. Typed records share the body
+		// boundary classifier used by ReadRecords and the ordinary fallback;
+		// their original body and all strict parser checks remain unchanged.
+		if strings.Contains(body, "pp:base-sync-") || reviewrouting.HasRecordPrefix(body) {
 			return false
 		}
 		if node["id"] == epoch.AnchorID {

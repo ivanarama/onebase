@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/ivantit66/onebase/internal/reviewrouting"
 )
 
 // A merge-shaped HEAD has an older source review, a negative current review,
@@ -103,6 +105,15 @@ func fullCurrentReviewCLI(t *testing.T, snapshot map[string]any, expectedCalls .
 	command.Dir = repoRoot(t)
 	command.Env = append(os.Environ(), "GH_EXE="+helper, "PIPELINEHEALTH_TEST_GH_HELPER=1", "PIPELINEHEALTH_TEST_GH_SEQUENCE="+sequence)
 	output, err := command.CombinedOutput()
+	// -1 is used only for the explicit unresolved protocol-actor case: a
+	// complete public read must refuse it, never turn it into ordinary work.
+	if len(expectedCalls) == 1 && expectedCalls[0] == -1 {
+		exit, ok := err.(*exec.ExitError)
+		if !ok || exit.ExitCode() != 2 || !strings.Contains(string(output), "actor") {
+			t.Fatalf("unresolved actor did not fail the public read closed: %v\n%s", err, output)
+		}
+		return report{State: "read-refused"}
+	}
 	if exit, ok := err.(*exec.ExitError); err != nil && (!ok || exit.ExitCode() != 1 || !json.Valid(output)) {
 		t.Fatalf("public CLI failed: %v\n%s", err, output)
 	}
@@ -168,9 +179,9 @@ func TestUnprovedFullCurrentReviewKeepsLegacyLanePublicCLI(t *testing.T) {
 						edges = append(append(append([]any{}, edges[:4]...), raw), append(edges[4:index], edges[index+1:]...)...)
 					case "proof-before-override":
 						edges = append(append(append([]any{}, edges[:index]...), edges[index+1:]...), raw)
-					case "carry-intent", "carry-done", "carry-aborted", "typed-handoff":
+					case "carry-intent", "carry-done", "carry-aborted":
 						marker := map[string]string{"carry-intent": "pp:base-sync-intent", "carry-done": "pp:base-sync-done",
-							"carry-aborted": "pp:base-sync-v1-aborted", "typed-handoff": "pp:review-routing-publication-v1"}[fault]
+							"carry-aborted": "pp:base-sync-v1-aborted"}[fault]
 						node["body"] = "pp:review-again\n<!-- " + marker + " malformed -->"
 					}
 				}
@@ -187,10 +198,14 @@ func TestUnprovedFullCurrentReviewKeepsLegacyLanePublicCLI(t *testing.T) {
 					node["body"] = strings.ReplaceAll(node["body"].(string), "Outcome-Label: reviewed", "Outcome-Label: changes-requested")
 				}
 			}
-			if fault == "new-fix-handoff" {
+			if fault == "new-fix-handoff" || fault == "typed-handoff" {
+				body := "<!-- pp:fix-handoff unknown -->"
+				if fault == "typed-handoff" {
+					body = "<!-- pp:review-routing-v1 malformed -->"
+				}
 				edges = append(edges, map[string]any{"cursor": "C240", "node": map[string]any{
 					"__typename": "IssueComment", "id": "IC_240", "fullDatabaseId": "240", "createdAt": "2026-10-29T00:24:00Z",
-					"lastEditedAt": nil, "author": map[string]any{"login": "owner"}, "body": "<!-- pp:fix-handoff unknown -->"}})
+					"lastEditedAt": nil, "author": map[string]any{"login": "owner"}, "body": body}})
 			}
 			if fault == "deleted-after-proof" {
 				edges = append(edges, map[string]any{"cursor": "DELETED", "node": map[string]any{
@@ -252,5 +267,87 @@ func TestRESTFullCurrentReviewRemainsConservativePublicCLI(t *testing.T) {
 	owner := routingObject(got["integration_owner"])
 	if owner["stage"] != "legacy-integration-merge-ready" {
 		t.Fatalf("REST fixture gained unproved ordinary classification: %+v", got)
+	}
+}
+
+func fullReviewWireExample(t *testing.T) string {
+	t.Helper()
+	records, _, err := reviewrouting.ReadRecords(routingGolden(t, "third-typed-round"), "owner")
+	if err != nil || len(records) == 0 {
+		t.Fatalf("genuine shared wire fixture unavailable: %v", err)
+	}
+	wire, err := reviewrouting.Render(records[0].Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wire
+}
+
+func TestFullCurrentReviewRoutingMentionsStayOrdinaryPublicCLI(t *testing.T) {
+	wire := fullReviewWireExample(t)
+	for name, body := range map[string]string{
+		"prose":           "This explanation mentions the pp:review-routing- namespace.",
+		"inline":          "The review quotes `" + wire + "` without creating a record.",
+		"fenced":          "```json\n" + wire + "\n```",
+		"unclosed-fence":  "~~~json\n" + wire,
+		"quoted":          "> " + wire,
+		"review-consumer": "<!-- pp:review-routing-v1-consumer stage=review -->",
+		"fix-consumer":    "<!-- pp:review-routing-v1-consumer stage=fix -->",
+		"merge-consumer":  "<!-- pp:review-routing-v1-consumer stage=merge -->",
+		"tail-consumer":   "<!-- pp:review-routing-v1-consumer stage=tail -->",
+	} {
+		t.Run(name, func(t *testing.T) {
+			snapshot := fullCurrentReviewHistory(t)
+			routingMentionComment(snapshot, body)
+			got := fullCurrentReviewCLI(t, snapshot, 5)
+			if got.IntegrationOwner != nil || len(got.MergeExecutable) != 1 || got.MergeExecutable[0].Stage != "merge" {
+				t.Fatalf("ordinary mention revived the legacy integration lane: %+v", got)
+			}
+		})
+	}
+}
+
+func TestFullCurrentReviewActualRoutingRecordsStayClosedPublicCLI(t *testing.T) {
+	wire := fullReviewWireExample(t)
+	for _, fault := range []string{"genuine", "unknown-version", "malformed", "leading-space", "leading-BOM", "consumer-unknown-stage", "consumer-extra-attribute", "edited", "deleted", "unresolved-actor"} {
+		t.Run(fault, func(t *testing.T) {
+			body := wire
+			switch fault {
+			case "unknown-version":
+				body = strings.Replace(wire, "routing-v1", "routing-v2", 1)
+			case "malformed":
+				body = "<!-- pp:review-routing-v1 malformed -->"
+			case "leading-space":
+				body = " " + wire
+			case "leading-BOM":
+				body = "\ufeff" + wire
+			case "consumer-unknown-stage":
+				body = "<!-- pp:review-routing-v1-consumer stage=unknown -->"
+			case "consumer-extra-attribute":
+				body = "<!-- pp:review-routing-v1-consumer stage=review extra=yes -->"
+			}
+			snapshot := fullCurrentReviewHistory(t)
+			routingMentionComment(snapshot, body)
+			edges := snapshot["edges"].([]any)
+			node := routingObject(routingObject(edges[len(edges)-1])["node"])
+			switch fault {
+			case "edited":
+				node["lastEditedAt"] = "2026-10-29T00:25:00Z"
+			case "deleted":
+				snapshot["edges"] = append(edges, map[string]any{"cursor": "DELETED", "node": map[string]any{
+					"id": "DELETED", "__typename": "CommentDeletedEvent", "createdAt": "2026-10-29T00:25:00Z"}})
+			case "unresolved-actor":
+				node["author"] = nil
+			}
+			var got report
+			if fault == "unresolved-actor" {
+				got = fullCurrentReviewCLI(t, snapshot, -1)
+			} else {
+				got = fullCurrentReviewCLI(t, snapshot)
+			}
+			if len(got.MergeExecutable) != 0 {
+				t.Fatalf("actual/unknown record acquired ordinary execution: %+v", got)
+			}
+		})
 	}
 }
