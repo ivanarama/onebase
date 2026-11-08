@@ -5,14 +5,64 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"os/exec"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/storage"
 )
+
+// obFire consumes an actual saving DSL handler response over HTTP. A page
+// from the previous process must adopt the saved identity before fencing every
+// further write; the same-boot control continues with that identity normally.
+func TestManagedFormRestartPreservesCommittedWrite(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required for the form restart HTTP regression")
+	}
+	srv, ent := setupManagedEventsServer(t, `
+Процедура Записать(Элемент)
+	Если НЕ ЗначениеЗаполнено(Объект.Ссылка) Тогда
+		Объект.Записать();
+	КонецЕсли;
+КонецПроцедуры
+`, nil, []*metadata.FormElement{{
+		Kind: metadata.FormElementButton, Name: "Записать",
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Записать"},
+	}})
+	router := chi.NewRouter()
+	var requests atomic.Int32
+	router.Post("/ui/{kind}/{entity}/form-event", func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		srv.handleManagedFormEvent(w, r)
+	})
+	server := httptest.NewServer(router)
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, node, "--test", "--test-name-pattern", "^restart preserves committed identity", "static/managed_close_intent_behavior_test.js") //nolint:gosec // test-only executable resolved by exec.LookPath
+	cmd.Env = append(os.Environ(), "OB_RESTART_TEST_URL="+server.URL+"/ui/catalog/"+ent.Name+"/form-event", "OB_RESTART_TEST_BOOT="+uiBootID)
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("restart HTTP regression: %v\n%s", err, output)
+	}
+	if got := requests.Load(); got != 3 {
+		t.Fatalf("form-event requests = %d, want 2 same-boot and 1 changed-boot", got)
+	}
+	rows, err := srv.store.List(ctx, ent.Name, ent, storage.ListParams{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("saved rows = %d, want one per page", len(rows))
+	}
+}
 
 // Страница формы не кэшируется браузером и несёт метку запуска сервера, а
 // ответ события формы — тот же заголовок: «Назад» не поднимает старый DOM

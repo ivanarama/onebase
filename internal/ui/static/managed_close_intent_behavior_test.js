@@ -261,6 +261,69 @@ function dispatchSubmit(app) {
   return event;
 }
 
+// The Go wrapper supplies a real HTTP form-event handler and SQLite store.
+// The ordinary Node suite also runs the same client controls with a fixed reply.
+test('restart preserves committed identity and fences queued and later writes', async () => {
+  const ui = fs.readFileSync('static/ui.js', 'utf8');
+  const first = ui.indexOf('window.obServerRestarted =');
+  const last = ui.indexOf('// END onebase-page-freshness', first);
+  assert.ok(first >= 0 && last > first);
+  for (const restarted of [false, true]) {
+    let requests = 0;
+    const bodies = [];
+    let saved;
+    const boot = process.env.OB_RESTART_TEST_BOOT || 'current-process';
+    const app = runtime(async (_url, options) => {
+      requests++;
+      bodies.push(new URLSearchParams(options.body.toString()));
+      let res;
+      if (process.env.OB_RESTART_TEST_URL) {
+        res = await fetch(process.env.OB_RESTART_TEST_URL, options);
+        const data = await res.clone().json();
+        if (data.savedId) saved = data;
+      } else {
+        saved = {ok: true, savedId: 'saved-once', version: 1, dirty: false};
+        res = response(saved);
+        res.headers = {get: () => boot};
+      }
+      return res;
+    });
+    const query = app.document.querySelector.bind(app.document);
+    app.document.querySelector = (selector) => selector === 'meta[name="ob-boot"]'
+      ? {getAttribute: () => restarted ? 'previous-process' : boot} : query(selector);
+    app.context.obSetManagedFormDirty(true);
+    app.form.values.set('Наименование', restarted ? 'changed-boot' : 'same-boot');
+    vm.runInNewContext(ui.slice(first, last), app.context);
+
+    const leading = app.context.obFire('Записать', 'Нажатие');
+    const queued = app.context.obFire('Записать', 'Нажатие');
+    await Promise.all([leading, queued]);
+    assert.equal(saved.ok, true);
+    assert.ok(saved.savedId);
+    assert.ok(saved.version);
+    assert.equal(app.idInput.value, saved.savedId, 'adopt the actual committed id');
+    assert.equal(app.versionInput.value, String(saved.version));
+    assert.equal(requests, restarted ? 1 : 2, 'queued events must stop after restart');
+    assert.equal(bodies[0].get('_id'), null);
+    if (!restarted) {
+      assert.equal(bodies[1].get('_id'), saved.savedId);
+      assert.equal(bodies[1].get('_version'), String(saved.version));
+      assert.equal(app.context._obRestartNotice, undefined);
+      continue;
+    }
+
+    assert.equal(app.context._obFormDirty, true, 'retain unsaved input for recovery');
+    assert.equal(app.form.values.get('Наименование'), 'changed-boot');
+    assert.ok(app.context._obRestartNotice);
+    await app.context.obFire('Записать', 'Нажатие');
+    assert.equal(dispatchSubmit(app).defaultPrevented, true, 'native save must stop');
+    const close = await app.context.obRequestFormClose({mode: 'save', reason: 'ok'});
+    assert.equal(close.allowed, false, 'save-and-close must stop');
+    assert.equal(close.reload, true);
+    assert.equal(requests, 1, 'no write path may send another request');
+  }
+});
+
 function concealedControl(app, enabled = false) {
   const field = app.form.control('Секрет');
   app.form.values.set('Секрет', enabled ? '12-34' : '');
