@@ -120,7 +120,7 @@ jobs:
           path: |
             ${{ env.GOCACHE }}
             ${{ env.GOMODCACHE }}
-          key: coverage-shards-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.go-version', 'go.sum') }}
+          key: coverage-shards-v2-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.go-version', 'go.sum') }}
       - name: Record cold/warm cache and resources
         env:
           CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
