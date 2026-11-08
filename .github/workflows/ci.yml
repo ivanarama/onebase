@@ -59,12 +59,117 @@ jobs:
           path: ci-inputs.json
           retention-days: 2
 
-  build:
+  # Plan once from the actual checkout (the PR merge commit for PR events).
+  # Classification uncertainty must run the full suite, including these jobs.
+  unit-plan:
     needs: [classify]
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      plan-sha256: ${{ steps.plan.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: true
+      - name: Coverage runner public CLI contracts
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_coverage_test.py'
+          python3 .github/scripts/test-race-coverage_test.py
+          python3 .github/scripts/test_coverage_shards_test.py
+      - name: Plan exact race inventory
+        id: plan
+        run: |
+          python3 .github/scripts/test-coverage-shards.py plan
+          echo "sha256=$(sha256sum coverage-plan/plan.json | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: race-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage-plan
+          if-no-files-found: error
+          retention-days: 2
+
+  unit-race:
+    needs: [classify, unit-plan]
+    if: ${{ always() && !cancelled() && needs.unit-plan.result == 'success' && (needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [other, ui-1, ui-2, ui-3, ui-4, launcher-1, launcher-2]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare private cache paths
+        run: |
+          echo "GOCACHE=$RUNNER_TEMP/race-go-build" >> "$GITHUB_ENV"
+          echo "GOMODCACHE=$RUNNER_TEMP/race-go-mod" >> "$GITHUB_ENV"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: '.go-version'
+          cache: false
+      # Build/module caches only. Test results/journals/coverage are never reused.
+      # A new namespace provides a measurable cold run without deleting old caches.
+      - uses: actions/cache@v4
+        id: cache
+        with:
+          path: |
+            ${{ env.GOCACHE }}
+            ${{ env.GOMODCACHE }}
+          key: coverage-shards-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('.go-version', 'go.sum') }}
+      - name: Record cold/warm cache and resources
+        env:
+          CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          echo "cache-hit=$CACHE_HIT"
+          nproc
+          free -m
+          mkdir -p "$GOCACHE" "$GOMODCACHE"
+          if [ "$CACHE_HIT" != true ]; then
+            test -z "$(find "$GOCACHE" "$GOMODCACHE" -mindepth 1 -print -quit)"
+            echo "COLD: private build/module caches empty before Go"
+          fi
+      - uses: actions/download-artifact@v4
+        with:
+          name: race-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage-plan
+      - name: Run exact race shard
+        env:
+          PLAN_SHA: ${{ needs.unit-plan.outputs.plan-sha256 }}
+          SHARD: ${{ matrix.shard }}
+        run: |
+          python3 .github/scripts/test-coverage-shards.py run \
+            --plan coverage-plan/plan.json --plan-sha256 "$PLAN_SHA" \
+            --shard "$SHARD" --artifacts shard-result
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() }}
+        with:
+          name: race-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.shard }}
+          path: shard-result
+          if-no-files-found: error
+          retention-days: 2
+
+  build:
+    needs: [classify, unit-plan, unit-race]
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
+      # Required stable context. Skipped/cancelled/failed/missing shards fail closed.
+      - name: Require every race shard
+        env:
+          DOCS: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
+          PLAN_RESULT: ${{ needs.unit-plan.result }}
+          RACE_RESULT: ${{ needs.unit-race.result }}
+        run: |
+          if [ "$DOCS" = true ]; then
+            test "$PLAN_RESULT" = skipped && test "$RACE_RESULT" = skipped
+          else
+            test "$PLAN_RESULT" = success && test "$RACE_RESULT" = success
+          fi
       - name: Docs-only success
         if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
         run: echo "Documentation diff; full CI steps are unnecessary."
@@ -308,12 +413,26 @@ jobs:
       # -race на Linux работает без CGo-плясок (на Windows нужен gcc) и ловит
       # гонки разделяемого интерпретатора и других синглтонов (план 52/56).
       # Coverage собирается тем же прогоном, чтобы не гонять тесты дважды.
-      - name: Unit tests (-race, coverage)
+      - uses: actions/download-artifact@v4
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        with:
+          name: race-plan-${{ github.run_id }}-${{ github.run_attempt }}
+          path: coverage-plan
+      - uses: actions/download-artifact@v4
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        with:
+          pattern: race-${{ github.run_id }}-${{ github.run_attempt }}-*
+          path: race-results
+          merge-multiple: false
+      - name: Validate all journals and merge atomic coverage
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        env:
+          PLAN_SHA: ${{ needs.unit-plan.outputs.plan-sha256 }}
+          ARTIFACT_PREFIX: race-${{ github.run_id }}-${{ github.run_attempt }}-
         run: |
-          python3 -m unittest discover -s .github/scripts -p 'test_coverage_test.py'
-          python3 .github/scripts/test-race-coverage_test.py
-          python3 .github/scripts/test-race-coverage.py coverage.out
+          python3 .github/scripts/test-coverage-shards.py merge \
+            --plan coverage-plan/plan.json --plan-sha256 "$PLAN_SHA" \
+            --artifacts race-results --artifact-prefix "$ARTIFACT_PREFIX" --output coverage.out
 
       # Раннеры работают в UTC, поэтому целый класс дефектов «время
       # канонизируется не в той зоне» для CI невидим: #945 поймали случайно, на
