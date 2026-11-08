@@ -4244,8 +4244,14 @@ function obGridColumnIds(columns) {
     var rowIdx = g.dataView.getRowById(nextId);
     if (rowIdx !== undefined && g.columns.length > 0) {
       g.grid.scrollRowIntoView(rowIdx);
-      g.grid.setActiveCell(rowIdx, 0);
-      g.grid.editActiveCell();
+      // hidden_when оставляет скрытую колонку в массиве: индекс 0 может
+      // не принимать фокус. Ищем доступный редактор в текущем порядке.
+      for (var cell = 0; cell < g.columns.length; cell++) {
+        if (!g.grid.canCellBeActive(rowIdx, cell) || !g.grid.isCellEditable(rowIdx, cell)) continue;
+        g.grid.setActiveCell(rowIdx, cell);
+        g.grid.editActiveCell();
+        break;
+      }
     }
     window.obFireRowEventChain(tpName, [
       ["data-sg-rowadd", "ПриДобавленииСтроки"],

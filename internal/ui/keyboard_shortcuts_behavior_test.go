@@ -479,6 +479,8 @@ const mixedDataView = {
 const mixedGrid = {
   getEditorLock() { return {isActive() { return false; }}; },
   getActiveCell() { return {row: 0, cell: 0}; },
+  canCellBeActive(row, cell) { return row >= 0 && row < mixedItems.length && cell === 0; },
+  isCellEditable(row, cell) { return this.canCellBeActive(row, cell); },
   setActiveCell() {}, scrollRowIntoView() {}, editActiveCell() {}, invalidate() {},
   getSelectionModel() { return null; }
 };
@@ -761,6 +763,8 @@ const editorLock = {active: false, commitOK: true, isActive() { return this.acti
 const grid = {
   getEditorLock() { return editorLock; },
   getActiveCell() { return activeCell; },
+  canCellBeActive(row, cell) { return row >= 0 && row < items.length && cell === 0; },
+  isCellEditable(row, cell) { return this.canCellBeActive(row, cell); },
   setActiveCell(row, cell) { activeCell = {row, cell}; },
   getSelectionModel() { return selectionModel; },
   getSelectedRows() { selectedRowsReads++; if (!selectionModel) throw new Error('SlickGrid Selection model is not set'); return selectedRows.slice(); },
