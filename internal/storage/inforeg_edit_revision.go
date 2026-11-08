@@ -88,52 +88,6 @@ func (db *DB) fillInfoRegEditRevisions(ctx context.Context, ir *metadata.InfoReg
 		return errors.New("info register edit revisions require active transaction")
 	}
 	table := metadata.InfoRegTableName(ir.Name)
-	locators := []string{"CAST(ctid AS TEXT)"}
-	locatorWhere := "ctid = " + db.dialect.Placeholder(2) + "::tid"
-	if db.IsSQLite() {
-		cols, err := db.tableColumns(ctx, table)
-		if err != nil {
-			return err
-		}
-		locators = nil
-		for _, candidate := range []string{"rowid", "_rowid_", "oid"} {
-			shadowed := false
-			for col := range cols {
-				if strings.EqualFold(col, candidate) {
-					shadowed = true
-				}
-			}
-			if !shadowed {
-				locators = []string{quoteIdent(candidate)}
-				locatorWhere = quoteIdent(candidate) + " = " + db.dialect.Placeholder(2)
-				break
-			}
-		}
-		if len(locators) == 0 {
-			// Business columns may shadow every rowid alias. Use the actual
-			// physical PK (not metadata, which may be mid-migration).
-			rows, err := db.Query(ctx, "SELECT name FROM pragma_table_info(?) WHERE pk > 0 ORDER BY pk", table)
-			if err != nil {
-				return err
-			}
-			var conditions []string
-			for rows.Next() {
-				var name string
-				if err := rows.Scan(&name); err != nil {
-					rows.Close()
-					return err
-				}
-				locators = append(locators, quoteIdent(name))
-				conditions = append(conditions, quoteIdent(name)+" IS "+db.dialect.Placeholder(len(locators)+1))
-			}
-			err = rows.Err()
-			rows.Close()
-			if err != nil {
-				return err
-			}
-			locatorWhere = strings.Join(conditions, " AND ")
-		}
-	}
 	// Validate all existing nonempty versions before changing any of them. Invalid
 	// nonempty state is corruption, not a reason to silently revive stale forms.
 	rows, err := db.Query(ctx, "SELECT "+InfoRegEditRevisionColumn+" FROM "+table+" WHERE "+InfoRegEditRevisionColumn+" IS NOT NULL AND "+InfoRegEditRevisionColumn+" <> ''")
@@ -156,65 +110,21 @@ func (db *DB) fillInfoRegEditRevisions(ctx context.Context, ir *metadata.InfoReg
 	if err != nil {
 		return err
 	}
-	// Invalidate in one pass; backfill uses bounded batches, even on a large base.
+	// One set-based UPDATE: the generator is evaluated per physical row, so
+	// identical legacy duplicates get distinct revisions, and the cost is one
+	// pass over the table. Batches of "next 512 empty rows" rescanned the filled
+	// prefix every time: quadratic, hours for a 3-million-row register at
+	// startup. The caller's transaction/lock still rolls back the whole scope.
 	condition := InfoRegEditRevisionColumn + " IS NULL OR " + InfoRegEditRevisionColumn + " = ''"
 	if invalidate {
 		condition = "1=1"
 	}
-	if len(locators) == 0 {
-		// All SQLite rowid aliases can be business fields in a legacy keyless
-		// table. A non-deterministic scalar generates one crypto/rand UUID per
-		// matching physical row, including identical duplicates. Keep validation
-		// above this UPDATE and use the caller's existing transaction/lock so
-		// entropy, SQL or cancellation failures roll back the entire scope.
-		_, err := db.Exec(ctx, "UPDATE "+table+" SET "+InfoRegEditRevisionColumn+" = ob_inforeg_edit_revision() WHERE "+condition)
-		return err
+	generator := "gen_random_uuid()::text"
+	if db.IsSQLite() {
+		generator = "ob_inforeg_edit_revision()"
 	}
-	query := "SELECT " + strings.Join(locators, ", ") + " FROM " + table + " WHERE " + condition
-	if !invalidate {
-		query += " LIMIT 512"
-	}
-	for {
-		rows, err := db.Query(ctx, query)
-		if err != nil {
-			return err
-		}
-		var ids [][]any
-		for rows.Next() {
-			id := make([]any, len(locators))
-			ptrs := make([]any, len(id))
-			for i := range id {
-				ptrs[i] = &id[i]
-			}
-			if err := rows.Scan(ptrs...); err != nil {
-				rows.Close()
-				return err
-			}
-			ids = append(ids, id)
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return err
-		}
-		for _, id := range ids {
-			revision, err := uuid.NewRandom()
-			if err != nil {
-				return fmt.Errorf("info register %s edit revision: %w", ir.Name, err)
-			}
-			args := append([]any{revision.String()}, id...)
-			result, err := db.Exec(ctx, "UPDATE "+table+" SET "+InfoRegEditRevisionColumn+" = "+db.dialect.Placeholder(1)+" WHERE "+locatorWhere, args...)
-			if err != nil {
-				return err
-			}
-			if affected := result.RowsAffected; affected != 1 {
-				return fmt.Errorf("info register %s: row locator matched %d rows", ir.Name, affected)
-			}
-		}
-		if invalidate || len(ids) == 0 {
-			return nil
-		}
-	}
+	_, err = db.Exec(ctx, "UPDATE "+table+" SET "+InfoRegEditRevisionColumn+" = "+generator+" WHERE "+condition)
+	return err
 }
 
 // InvalidateInfoRegEditRevisions is for maintenance writers which change rows
