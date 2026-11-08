@@ -576,8 +576,19 @@ func (db *DB) migrateEntities(ctx context.Context, entities []*metadata.Entity) 
 			return err
 		}
 	}
+	// PostgreSQL headers referencing _users prepare their legacy names inside
+	// the per-source transaction below, so FK refusal rolls those changes back.
+	legacyEntities := entities
+	if db.IsPostgres() {
+		legacyEntities = make([]*metadata.Entity, 0, len(entities))
+		for _, e := range entities {
+			if len(headerUsersReferences(e)) == 0 {
+				legacyEntities = append(legacyEntities, e)
+			}
+		}
+	}
 	// Repeat under writer/table locks, before any rename or setup DDL.
-	if err := db.prepareEntityLegacyIdents(ctx, entities); err != nil {
+	if err := db.prepareEntityLegacyIdents(ctx, legacyEntities); err != nil {
 		return err
 	}
 	d := db.dialect
@@ -630,6 +641,13 @@ func (db *DB) migrateEntities(ctx context.Context, entities []*metadata.Entity) 
 				usersRefs = headerUsersReferences(e)
 				if err := db.lockHeaderUsersTarget(ctx, usersRefs); err != nil {
 					return err
+				}
+				if len(usersRefs) > 0 {
+					// Nested preparation retains its locks in this header scope.
+					// Both legacy DDL/map writes and FK DDL commit together.
+					if err := db.prepareEntityLegacyIdents(ctx, []*metadata.Entity{e}); err != nil {
+						return err
+					}
 				}
 			}
 			exists, err := db.TableExists(ctx, table)

@@ -96,9 +96,10 @@ func TestUsersReferenceHeaderEvolutionPostgres(t *testing.T) {
 			ctx := t.Context()
 			e := usersHeaderEntity()
 			before := usersHeaderEntity()
-			if mode == "added" {
+			switch mode {
+			case "added":
 				before.Fields = before.Fields[:1]
-			} else if mode == "retype" || mode == "rename" {
+			case "retype", "rename":
 				before.Fields[1].Type, before.Fields[1].RefEntity = metadata.FieldTypeString, ""
 				if mode == "rename" {
 					before.Fields[1].Name = "Previous"
@@ -158,9 +159,10 @@ func TestUsersReferenceHeaderRefusalPostgres(t *testing.T) {
 			require.NoError(t, db.Migrate(ctx, []*metadata.Entity{before}))
 			table := metadata.TableName(before.Name)
 			value := owner
-			if mode == "broken" {
+			switch mode {
+			case "broken":
 				value = uuid.NewString()
-			} else if mode == "malformed" {
+			case "malformed":
 				value = "private-invalid-user-value"
 			}
 			id := uuid.New()
@@ -318,5 +320,71 @@ func TestUsersReferenceHeaderConcurrentMigrateAndDeletePostgres(t *testing.T) {
 				require.Contains(t, migrateErr.Error(), "битых ссылок")
 			}
 		})
+	}
+}
+
+// A failed header migration must also undo the legacy preparation that precedes
+// FK validation, including physical names and the persistent field map.
+func TestUsersReferenceHeaderLegacyNormalizationRollbackPostgres(t *testing.T) {
+	for _, kind := range []metadata.Kind{metadata.KindCatalog, metadata.KindDocument} {
+		for _, mode := range []string{"broken", "late-ddl"} {
+			t.Run(string(kind)+"/"+mode, func(t *testing.T) {
+				db := usersHeaderPG(t)
+				_, owner := usersHeaderAccounts(t, db)
+				ctx := t.Context()
+				e := usersHeaderEntity()
+				e.Kind = kind
+				longField := metadata.Field{ID: "long", Name: strings.Repeat("Description", 8), Type: metadata.FieldTypeString}
+				e.Fields = append(e.Fields, longField)
+				require.NoError(t, db.Migrate(ctx, []*metadata.Entity{e}))
+				table := metadata.TableName(e.Name)
+				_, err := db.Exec(ctx, `ALTER TABLE "`+table+`" DROP CONSTRAINT "`+table+`_author_id_fkey"`)
+				require.NoError(t, err)
+				current, legacy := metadata.ColumnName(longField), strings.ToLower(longField.Name)[:63]
+				_, err = db.Exec(ctx, `ALTER TABLE "`+table+`" RENAME COLUMN "`+current+`" TO "`+legacy+`"`)
+				require.NoError(t, err)
+				_, err = db.Exec(ctx, `UPDATE _schema_fields SET column_name=$1 WHERE table_name=$2 AND field_id='long'`, legacy, table)
+				require.NoError(t, err)
+				value := owner
+				if mode == "broken" {
+					value = uuid.NewString()
+				} else {
+					name := storage.ForeignKeyName(table, "author_id", "_users")
+					_, err = db.Exec(ctx, `ALTER TABLE "`+table+`" ADD CONSTRAINT "`+name+`" CHECK (title IS NULL OR title <> 'blocked')`)
+					require.NoError(t, err)
+				}
+				id := uuid.New()
+				_, err = db.Exec(ctx, `INSERT INTO "`+table+`"(id,author_id,"`+legacy+`") VALUES($1,$2,'kept')`, id, value)
+				require.NoError(t, err)
+				snapshot := func() []string {
+					var schema, fields, rows string
+					require.NoError(t, db.QueryRow(ctx, `SELECT string_agg(attname||':'||atttypid::text,',' ORDER BY attnum) FROM pg_attribute WHERE attrelid=$1::regclass AND attnum>0 AND NOT attisdropped`, table).Scan(&schema))
+					require.NoError(t, db.QueryRow(ctx, `SELECT string_agg(field_id||':'||column_name||':'||field_type,',' ORDER BY field_id) FROM _schema_fields WHERE table_name=$1`, table).Scan(&fields))
+					require.NoError(t, db.QueryRow(ctx, `SELECT row_to_json(t)::text FROM "`+table+`" t WHERE id=$1`, id).Scan(&rows))
+					return []string{schema, fields, rows}
+				}
+				before := snapshot()
+				err = db.Migrate(ctx, []*metadata.Entity{e})
+				require.Error(t, err)
+				if mode == "broken" {
+					require.Contains(t, err.Error(), "битых ссылок на _users: 1")
+				}
+				require.Equal(t, before, snapshot(), "refusal must preserve names, field map and rows")
+				// Explicit repair permits normalization and installs the real FK.
+				if mode == "broken" {
+					_, err = db.Exec(ctx, `UPDATE "`+table+`" SET author_id=$1 WHERE id=$2`, owner, id)
+				} else {
+					_, err = db.Exec(ctx, `ALTER TABLE "`+table+`" DROP CONSTRAINT "`+storage.ForeignKeyName(table, "author_id", "_users")+`"`)
+				}
+				require.NoError(t, err)
+				require.NoError(t, db.Migrate(ctx, []*metadata.Entity{e}))
+				require.NoError(t, db.Migrate(ctx, []*metadata.Entity{e}))
+				var kept string
+				require.NoError(t, db.QueryRow(ctx, `SELECT "`+current+`" FROM "`+table+`" WHERE id=$1`, id).Scan(&kept))
+				require.Equal(t, "kept", kept)
+				_, err = db.Exec(ctx, `UPDATE "`+table+`" SET author_id=$1 WHERE id=$2`, uuid.NewString(), id)
+				require.True(t, storage.IsForeignKeyViolation(err), "repaired migration must install FK: %v", err)
+			})
+		}
 	}
 }
