@@ -1272,14 +1272,24 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', 'X-OneBase-Conceal-Context': form && form.getAttribute ? form.getAttribute('data-ob-conceal-context') || '' : '' },
         credentials: 'same-origin'
       });
+      // The new process may already have committed this command. Fence queued
+      // writes immediately, but consume its response before offering reload.
+      var serverRestarted = !!(window.obServerRestarted && window.obServerRestarted(res));
+      if (serverRestarted) reloadRequired = true;
       const data = await res.json();
       if (snapshot.pickerRequest && snapshot.pickerRequest.search && !window.obPickerRequestCurrent(snapshot.pickerRequest)) return;
 	  // A JSON proxy/error page is not a trusted application envelope. `ok` is
 	  // mandatory in every formEventResponse, including server-side failures.
       if (!data || typeof data !== 'object' || typeof data.ok !== 'boolean') {
 		throw new Error('invalid form-event response');
-	  }
+      }
       responseKnown = true;
+      if (serverRestarted) {
+        applySavedIdentity(data);
+        if (data.dirty === true) setManagedFormDirty(true);
+        window.obReloadAfterRestart();
+        return;
+      }
       if (!res.ok || !data.ok || data.error || data.cancel) data.revealed = [];
       if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form);
 	  // Even parseable JSON on non-2xx may come from an intermediary after the

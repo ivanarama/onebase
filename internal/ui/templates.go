@@ -1370,6 +1370,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// заведомо цифры, и заставлять автора объявлять это второй раз незачем.
 		"inputMaskDigitsOnly": metadata.InputMaskDigitsOnly,
 		"inputAutocomplete":   inputAutocomplete,
+		"uiBootID":            func() string { return uiBootID },
 		"inputMaskHint":       metadata.InputMaskHint,
 		"wcell":               widgetCell,
 		"echartsJSON":         echartsJSON,
@@ -1515,6 +1516,7 @@ const tplHead = `
 {{define "head"}}<!DOCTYPE html>
 <html lang="ru"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="ob-boot" content="{{uiBootID}}">
 <meta name="theme-color" content="#1e293b">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="apple-touch-icon" href="/icons/icon-192.png">
