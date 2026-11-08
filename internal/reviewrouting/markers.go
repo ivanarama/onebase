@@ -1,6 +1,27 @@
 package reviewrouting
 
-import "strings"
+import (
+	"strings"
+	"unicode"
+)
+
+// HasRecordPrefix distinguishes a wire-record candidate from prose and quoted
+// examples. Only the body boundary can introduce a record; informational
+// consumer declarations use a separate, exact existing marker format.
+// Noncanonical leading whitespace/BOM is recognized here, but Parse must still
+// receive the original body and reject it. Malformed or unknown record versions
+// must not disappear from lifetime history merely because Parse rejects them.
+func HasRecordPrefix(body string) bool {
+	boundary := strings.TrimLeftFunc(body, func(r rune) bool { return unicode.IsSpace(r) || r == '\ufeff' })
+	first, _, _ := strings.Cut(boundary, "\n")
+	first = strings.TrimSuffix(first, "\r")
+	for _, stage := range []string{"review", "fix", "merge", "tail"} {
+		if first == "<!-- pp:review-routing-v1-consumer stage="+stage+" -->" {
+			return false
+		}
+	}
+	return strings.HasPrefix(boundary, "<!-- pp:review-routing-")
+}
 
 // HasReviewAgain accepts the exact protocol line outside Markdown fenced code.
 // An unclosed fence quotes the rest of the comment, including any instructions
