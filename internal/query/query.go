@@ -2157,6 +2157,9 @@ func (tr *translator) translateTypedFilterTokens(tokens []tok, fieldTypes map[st
 			}
 			if emptyStringAgainstRef(dialectOrDefault(tr.opts.Dialect), tr.paramValues[t.val], typ) {
 				parts = append(parts, "NULL")
+			} else if dialectOrDefault(tr.opts.Dialect).Name() == "postgres" &&
+				uuidLikeParam(tr.paramValues[t.val]) && filterParamComparedToString(tokens, i, fieldTypes) {
+				parts = append(parts, tr.addTextParam(t.val))
 			} else {
 				parts = append(parts, tr.addParam(t.val))
 			}
@@ -2189,6 +2192,51 @@ func (tr *translator) translateTypedFilterTokens(tokens []tok, fieldTypes map[st
 		}
 	}
 	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+// Internal VT filters use a local token slice and the register's own fields,
+// not the outer SELECT's source context. Only direct field comparisons and
+// IN operands establish a string position; unknown expressions keep addParam.
+func filterParamComparedToString(tokens []tok, idx int, fieldTypes map[string]metadata.FieldType) bool {
+	stringField := func(i int) bool {
+		return i >= 0 && i < len(tokens) && tokens[i].kind == tIdent &&
+			(i == 0 || tokens[i-1].kind != tDot) &&
+			(i+1 == len(tokens) || tokens[i+1].kind != tDot) &&
+			fieldTypes[lowerFast(tokens[i].val)] == metadata.FieldTypeString
+	}
+	comparison := func(i int) bool {
+		if i < 0 || i >= len(tokens) || tokens[i].kind != tOp {
+			return false
+		}
+		switch tokens[i].val {
+		case "=", "<>", "!=", "<", ">", "<=", ">=":
+			return true
+		}
+		return false
+	}
+	if comparison(idx-1) && stringField(idx-2) || comparison(idx+1) && stringField(idx+2) {
+		return true
+	}
+	for i := idx - 1; i >= 0; i-- {
+		switch tokens[i].kind {
+		case tParam, tStr, tNum, tComma:
+			// Every direct item of an IN list has the same field type.
+			continue
+		case tLParen:
+			if i < 2 || tokens[i-1].kind != tIdent ||
+				(upperFast(tokens[i-1].val) != "В" && upperFast(tokens[i-1].val) != "IN") {
+				return false
+			}
+			field := i - 2
+			if tokens[field].kind == tIdent && (upperFast(tokens[field].val) == "НЕ" || upperFast(tokens[field].val) == "NOT") {
+				field--
+			}
+			return stringField(field)
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 func (tr *translator) findRegister(name string) *metadata.Register {
