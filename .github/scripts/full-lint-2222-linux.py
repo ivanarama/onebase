@@ -300,9 +300,61 @@ def validate_request(event,ident):
     return {'inputs':values,'runtime_mode':'product-full-lint','admission':admission,'packet':packet,'display_title':title,
       'native_FIX_admission_verified':False,'keeper_lifecycle_qualified':False}
 
+WIRE_ENV = {'mode':'OB2222_INPUT_MODE','task_id':'OB2222_INPUT_TASK_ID','nonce':'OB2222_INPUT_NONCE',
+  'expected_operator_sha':'OB2222_INPUT_OPERATOR_SHA','candidate_packet':'OB2222_INPUT_PACKET',
+  'candidate_admission':'OB2222_INPUT_ADMISSION','admission_sha256':'OB2222_INPUT_ADMISSION_SHA'}
+
+def save_input_capture(path,raw):
+    if path.exists():
+        need(not path.is_symlink()and path.read_bytes()==raw,'captured input changed between reads')
+    else:
+        with path.open('xb')as f:f.write(raw);f.flush();os.fsync(f.fileno())
+
+def workflow_wire(env):
+    names=set(WIRE_ENV.values());present={k for k in env if k.startswith('OB2222_INPUT_')}
+    need(present==names,'fixed workflow wire environment map missing/unknown fields')
+    need(all(type(env[name])is str for name in names),'workflow wire values must be OS strings')
+    return {'inputs':{key:env[name]for key,name in WIRE_ENV.items()}}
+
+def capture_workflow_request(event_path,evidence,ident,env):
+    t=transport_module()
+    with event_path.open('rb')as f:raw=f.read(256*1024+1)
+    complete=len(raw)<=256*1024
+    save_input_capture(evidence/'request-event.raw.json',raw)
+    shape={'raw_sha256':hashlib.sha256(raw).hexdigest(),'captured_bytes':len(raw),'capture_complete':complete,
+      'authority':'diagnostic only; historical GitHub event.inputs shape is not the wire contract'}
+    try:
+        event=t.load(raw);shape['event_type']=type(event).__name__
+        values=event.get('inputs')if isinstance(event,dict)else None;shape['inputs_type']=type(values).__name__
+        if isinstance(values,dict):
+            shape['input_keys']=sorted(values);shape['input_types']={k:type(v).__name__ for k,v in values.items()}
+            shape['missing_declared_keys']=sorted(INPUT_KEYS-set(values));shape['unknown_input_keys']=sorted(set(values)-INPUT_KEYS)
+        else:shape['missing_declared_keys']=sorted(INPUT_KEYS)
+    except Exception as error:shape['diagnostic_parse_error']=type(error).__name__+': '+str(error)
+    save_input_capture(evidence/'request-event-shape.json',t.canonical(shape))
+    need(complete,'original GitHub event exceeds256KiB capture bound')
+    mapping={'expected_environment_keys':sorted(WIRE_ENV.values()),'present_environment_keys':sorted(k for k in env if k.startswith('OB2222_INPUT_')),
+      'types':{name:type(env[name]).__name__ for name in WIRE_ENV.values()if name in env}}
+    save_input_capture(evidence/'workflow-wire-map.json',t.canonical(mapping))
+    wire=workflow_wire(env);canonical=t.canonical(wire)
+    need(len(canonical)<=256*1024,'canonical workflow wire diagnostic capture bound')
+    save_input_capture(evidence/'workflow-inputs.canonical.json',canonical)
+    save_input_capture(evidence/'workflow-inputs-binding.json',t.canonical({'wire_sha256':hashlib.sha256(canonical).hexdigest(),'wire_bytes':len(canonical),
+      'source':'fixed seven declared workflow env values','native_FIX_admission_verified':False,'product_runtime_armed':PRODUCT_RUNTIME_ARMED}))
+    return validate_request(wire,ident)
+
 def read_request(prefix,ident):
-    raw=(prefix/'input/event.json').read_bytes();need(len(raw)<=256*1024,'GitHub event bound')
-    return validate_request(json.loads(raw),ident)
+    return capture_workflow_request(prefix/'input/event.json',prefix/'evidence',ident,os.environ)
+
+def verify_wire_evidence(evidence,ident):
+    t=transport_module();raw=(evidence/'request-event.raw.json').read_bytes();shape=t.load((evidence/'request-event-shape.json').read_bytes())
+    need(len(raw)<=256*1024 and shape['capture_complete']is True and shape['captured_bytes']==len(raw)and shape['raw_sha256']==hashlib.sha256(raw).hexdigest(),'raw original event capture binding')
+    canonical=(evidence/'workflow-inputs.canonical.json').read_bytes();wire=t.load(canonical);need(t.canonical(wire)==canonical,'canonical workflow wire encoding')
+    binding=t.load((evidence/'workflow-inputs-binding.json').read_bytes())
+    need(binding=={'wire_sha256':hashlib.sha256(canonical).hexdigest(),'wire_bytes':len(canonical),'source':'fixed seven declared workflow env values','native_FIX_admission_verified':False,'product_runtime_armed':False},'canonical fixed wire binding')
+    mapping=t.load((evidence/'workflow-wire-map.json').read_bytes());names=sorted(WIRE_ENV.values())
+    need(mapping=={'expected_environment_keys':names,'present_environment_keys':names,'types':{name:'str'for name in names}},'fixed complete OS-string environment map evidence')
+    return validate_request(wire,ident)
 
 def fixed_command_plan(prefix):
     base=prefix.as_posix();go=base+'/tools/go/go/bin/go';lint=base+'/tools/lint/golangci-lint-2.11.4-linux-amd64/golangci-lint'
@@ -467,7 +519,7 @@ def verify_fixture_receipt(path,r,expected_sha,expected_run,expected_helper):
     for name,pin in r['files'].items():
         rel=Path(name);actual=evidence/rel;need(not rel.is_absolute()and '..'not in rel.parts and not actual.is_symlink()and actual.resolve().is_relative_to(evidence.resolve()),'fixture artifact path')
         total+=actual.stat().st_size;need(total<=512*1024**2 and actual.stat().st_size<=256*1024**2 and digest(actual)==pin,'fixture artifact bound/hash')
-    mandatory={'DMI.bin','meminfo-before.txt','canonical-config.yml','helper.py','transport.py','fixture-tests.py','supervisor-admission.json','supervisor-prefork.json','privilege-transition.jsonl',
+    mandatory={'request-event.raw.json','request-event-shape.json','workflow-wire-map.json','workflow-inputs.canonical.json','workflow-inputs-binding.json','DMI.bin','meminfo-before.txt','canonical-config.yml','helper.py','transport.py','fixture-tests.py','supervisor-admission.json','supervisor-prefork.json','privilege-transition.jsonl',
       'fixture-binding.json','worker/transport-fixture.command.json','worker/transport-fixture.stdout','worker/transport-fixture.stderr'}
     need(mandatory<=set(r['files']),'missing fixture raw proof')
     need(r['source_before']==r['source_after']and set(r['source_before'])=={'config','helper','transport','fixture'},'fixture unexpectedly has product tools/source drift')
@@ -493,7 +545,7 @@ def verify_fixture_receipt(path,r,expected_sha,expected_run,expected_helper):
     raw=(evidence/'worker/transport-fixture.stderr').read_bytes();need(re.search(rb'Ran 20 tests in [0-9.]+s\n\nOK\n\Z',raw)is not None and b'skipped'not in raw,'fixture all20 actual noSkip raw output')
     rec=json.loads((evidence/'worker/transport-fixture.command.json').read_bytes());prefix=PARENT.as_posix()+'/'+expected_run+'-1-'+expected_sha[:12]
     need(rec['argv']==['/usr/bin/python3','-B','-X','utf8',prefix+'/input/test_transport_cli.py']and rec['exit']==0 and 0<=rec['seconds']<=180,'fixture actual public command/terminal')
-    binding=json.loads((evidence/'fixture-binding.json').read_bytes());need(validate_request({'inputs':binding['inputs']},ident)==binding,'fixture complete mode/task/nonce/operator/data binding')
+    binding=json.loads((evidence/'fixture-binding.json').read_bytes());need(verify_wire_evidence(evidence,ident)==binding,'fixture authoritative fixed wire/mode/task/nonce/operator/data binding')
     need('downloads'not in r and not any(x.startswith('binaries/')for x in r['files']),'fixture unexpectedly prepared product tools')
     events=[json.loads(x)for x in (evidence/'privilege-transition.jsonl').read_text().splitlines()]
     stages=['no-new-privileges','clear-ambient','drop-bounding','setgroups','setgid','setuid','zero-capabilities'];expected=[('child-start','ok')]+[(stage,status)for stage in stages for status in ('before','after')]+[('exec-worker','before')]
@@ -738,6 +790,7 @@ def bootstrap():
     argv+=['--property='+x for x in props]
     argv+=['--setenv=PATH=/usr/bin:/bin','--setenv=LANG=C.UTF-8','--setenv=PYTHONUTF8=1']
     argv+=['--setenv=GITHUB_'+k.upper()+'='+v for k,v in ident.items()]
+    argv+=['--setenv='+name+'='+os.environ[name]for name in WIRE_ENV.values()]
     argv+=['/usr/bin/python3','-B','-X','utf8',str(script),'inside',str(prefix)]
     # Outside the unit this is only fixed host control-plane start/state/wait/stop/copy.
     snapshots=[]; terminal=False; successful=False; code=1; start_output=b''; start_error=b'';start_exit=None;stop_exit=None;post_stop_cgroup=None
@@ -937,6 +990,7 @@ def main():
     parser=argparse.ArgumentParser(description=__doc__);sub=parser.add_subparsers(dest='mode',required=True)
     sub.add_parser('bootstrap')
     p=sub.add_parser('plan');p.add_argument('event',type=Path)
+    p=sub.add_parser('wire-plan');p.add_argument('event',type=Path);p.add_argument('--out',type=Path,required=True);p.add_argument('--wire-env',type=Path)
     p=sub.add_parser('snapshot');p.add_argument('--root',type=Path,required=True);p.add_argument('--manifest',type=Path,required=True);p.add_argument('--expected-manifest-sha',required=True);p.add_argument('--out',type=Path,required=True)
     for name in ('inside','worker'):
         p=sub.add_parser(name);p.add_argument('prefix',type=Path)
@@ -944,6 +998,11 @@ def main():
     p=sub.add_parser('inspect-terminal');p.add_argument('controller',type=Path);p.add_argument('--expected-sha',required=True);p.add_argument('--expected-run-id',required=True)
     args=parser.parse_args()
     try:
+        if args.mode=='wire-plan':
+            ident=identity(os.environ);args.out.mkdir(mode=0o700)
+            env=transport_module().load(args.wire_env.read_bytes())if args.wire_env else os.environ
+            request=capture_workflow_request(args.event,args.out,ident,env)
+            print(json.dumps({'scope':'WIRE_DATA_PLAN_ONLY','runtime_mode':request['runtime_mode'],'display_title':request['display_title'],'product_lint_executed':False,'native_FIX_admission_verified':False,'product_runtime_armed':PRODUCT_RUNTIME_ARMED}));return 0
         if args.mode=='plan':
             ident=identity(os.environ);request=validate_request(json.loads(args.event.read_bytes()),ident)
             prefix=PARENT/(ident['run_id']+'-1-'+ident['sha'][:12]);fixture=request['runtime_mode']=='transport-fixture'

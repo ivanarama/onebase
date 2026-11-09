@@ -50,12 +50,23 @@ jobs:
           QUAL_RUN_ID: ${{ github.run_id }}
           QUAL_RUN_ATTEMPT: ${{ github.run_attempt }}
           QUAL_SHA: ${{ github.sha }}
+          OB2222_INPUT_MODE: ${{ inputs.mode }}
+          OB2222_INPUT_TASK_ID: ${{ inputs.task_id }}
+          OB2222_INPUT_NONCE: ${{ inputs.nonce }}
+          OB2222_INPUT_OPERATOR_SHA: ${{ inputs.expected_operator_sha }}
+          OB2222_INPUT_PACKET: ${{ inputs.candidate_packet }}
+          OB2222_INPUT_ADMISSION: ${{ inputs.candidate_admission }}
+          OB2222_INPUT_ADMISSION_SHA: ${{ inputs.admission_sha256 }}
         run: |
           set -euo pipefail
           sudo -n /usr/bin/env -i PATH=/usr/bin:/bin PYTHONUTF8=1 \
             GITHUB_REPOSITORY=ivanarama/onebase GITHUB_ACTOR=ivanarama \
             GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF=refs/heads/operator/2222-linux-qualification-20261109 \
             GITHUB_RUN_ID="$QUAL_RUN_ID" GITHUB_RUN_ATTEMPT="$QUAL_RUN_ATTEMPT" GITHUB_SHA="$QUAL_SHA" \
+            OB2222_INPUT_MODE="$OB2222_INPUT_MODE" OB2222_INPUT_TASK_ID="$OB2222_INPUT_TASK_ID" \
+            OB2222_INPUT_NONCE="$OB2222_INPUT_NONCE" OB2222_INPUT_OPERATOR_SHA="$OB2222_INPUT_OPERATOR_SHA" \
+            OB2222_INPUT_PACKET="$OB2222_INPUT_PACKET" OB2222_INPUT_ADMISSION="$OB2222_INPUT_ADMISSION" \
+            OB2222_INPUT_ADMISSION_SHA="$OB2222_INPUT_ADMISSION_SHA" \
             GITHUB_EVENT_PATH="$GITHUB_EVENT_PATH" RUNNER_TEMP="$RUNNER_TEMP" \
             /usr/bin/python3 -B -X utf8 "$GITHUB_WORKSPACE/.github/scripts/full-lint-2222-linux.py" bootstrap
       - name: Preserve fixture evidence, including failures
@@ -82,12 +93,23 @@ jobs:
           QUAL_RUN_ID: ${{ github.run_id }}
           QUAL_RUN_ATTEMPT: ${{ github.run_attempt }}
           QUAL_SHA: ${{ github.sha }}
+          OB2222_INPUT_MODE: ${{ inputs.mode }}
+          OB2222_INPUT_TASK_ID: ${{ inputs.task_id }}
+          OB2222_INPUT_NONCE: ${{ inputs.nonce }}
+          OB2222_INPUT_OPERATOR_SHA: ${{ inputs.expected_operator_sha }}
+          OB2222_INPUT_PACKET: ${{ inputs.candidate_packet }}
+          OB2222_INPUT_ADMISSION: ${{ inputs.candidate_admission }}
+          OB2222_INPUT_ADMISSION_SHA: ${{ inputs.admission_sha256 }}
         run: |
           set -euo pipefail
           sudo -n /usr/bin/env -i PATH=/usr/bin:/bin PYTHONUTF8=1 \
             GITHUB_REPOSITORY=ivanarama/onebase GITHUB_ACTOR=ivanarama \
             GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF=refs/heads/operator/2222-linux-qualification-20261109 \
             GITHUB_RUN_ID="$QUAL_RUN_ID" GITHUB_RUN_ATTEMPT="$QUAL_RUN_ATTEMPT" GITHUB_SHA="$QUAL_SHA" \
+            OB2222_INPUT_MODE="$OB2222_INPUT_MODE" OB2222_INPUT_TASK_ID="$OB2222_INPUT_TASK_ID" \
+            OB2222_INPUT_NONCE="$OB2222_INPUT_NONCE" OB2222_INPUT_OPERATOR_SHA="$OB2222_INPUT_OPERATOR_SHA" \
+            OB2222_INPUT_PACKET="$OB2222_INPUT_PACKET" OB2222_INPUT_ADMISSION="$OB2222_INPUT_ADMISSION" \
+            OB2222_INPUT_ADMISSION_SHA="$OB2222_INPUT_ADMISSION_SHA" \
             GITHUB_EVENT_PATH="$GITHUB_EVENT_PATH" RUNNER_TEMP="$RUNNER_TEMP" \
             /usr/bin/python3 -B -X utf8 "$GITHUB_WORKSPACE/.github/scripts/full-lint-2222-linux.py" bootstrap
       - name: Preserve full measurement evidence, including failures
