@@ -25,6 +25,15 @@ import (
 //	    args: ["--minimized"]
 //	    env:
 //	      CALLISTA_OPERATOR_API_URL: https://cc.icecorp.ru:8445
+//
+// Программа, которую ставит собственный установщик в профиль пользователя
+// (Callista 0.7.1+ — NSIS для текущего пользователя, дальше обновляется сама),
+// задаётся путём от папки профиля: exec начинается с %LOCALAPPDATA%,
+// %APPDATA%, %USERPROFILE%, %ProgramFiles% или %ProgramFiles(x86)%:
+//
+//	companions:
+//	  callista:
+//	    exec: '%LOCALAPPDATA%\Programs\@callistaoperator-desktop\callista-operator.exe'
 
 const companionManifestName = "companions.yaml"
 
@@ -79,31 +88,99 @@ func loadCompanionManifest(dir string) ([]Companion, error) {
 		if err := validateCompanionEnv(spec.Env); err != nil {
 			return nil, fmt.Errorf("%s: «%s»: %w", companionManifestName, name, err)
 		}
-		path := filepath.Join(dir, filepath.Clean(filepath.FromSlash(strings.TrimSpace(spec.Exec))))
+		path, err := resolveCompanionExec(dir, spec.Exec)
+		if err != nil {
+			return nil, fmt.Errorf("%s: «%s»: %w", companionManifestName, name, err)
+		}
 		out = append(out, Companion{Key: key, Path: path, Args: spec.Args, Dir: filepath.Dir(path), Env: spec.Env})
 	}
 	return out, nil
 }
 
 // validateCompanionExec допускает только относительный путь внутри каталога
-// лаунчера. Абсолютный путь, выход наверх и путь с диском («C:app.exe»
-// относителен текущему каталогу диска, а не лаунчера) отвергаются.
+// лаунчера или внутри папки профиля (%LOCALAPPDATA%\…, см. companionExecRoots).
+// Абсолютный путь, выход наверх и путь с диском («C:app.exe» относителен
+// текущему каталогу диска, а не лаунчера) отвергаются.
 func validateCompanionExec(exec string) error {
 	p := strings.TrimSpace(exec)
 	if p == "" {
 		return errors.New("не задан exec")
 	}
-	if filepath.IsAbs(p) || strings.HasPrefix(p, `\`) || strings.HasPrefix(p, "/") {
-		return errors.New("exec задаётся относительно каталога лаунчера, абсолютный путь не принимается")
+	where := "каталога лаунчера"
+	if strings.HasPrefix(p, "%") {
+		root, rest, err := splitCompanionExecRoot(p)
+		if err != nil {
+			return err
+		}
+		p, where = rest, "%"+root+"%"
 	}
-	if strings.Contains(p, ":") {
-		return errors.New("exec задаётся относительно каталога лаунчера, путь с указанием диска не принимается")
+	if filepath.IsAbs(p) || strings.HasPrefix(p, `\`) || strings.HasPrefix(p, "/") {
+		return fmt.Errorf("exec задаётся относительно %s, абсолютный путь не принимается", where)
+	}
+	if strings.Contains(p, ":") || strings.Contains(p, "%") {
+		return fmt.Errorf("exec задаётся относительно %s, путь с указанием диска или другой переменной не принимается", where)
 	}
 	clean := filepath.Clean(filepath.FromSlash(p))
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
-		return errors.New("exec не может выходить за каталог лаунчера")
+		return fmt.Errorf("exec не может выходить за пределы %s", where)
 	}
 	return nil
+}
+
+// companionExecRoots — переменные окружения, с которых может начинаться exec:
+// папки профиля и программ, куда ставят свои установщики. Произвольная
+// переменная (%TEMP%, %PATH%, своя) не принимается: её значение задаёт кто
+// угодно на станции, и путь ушёл бы куда угодно.
+var companionExecRoots = []string{"LOCALAPPDATA", "APPDATA", "USERPROFILE", "ProgramFiles", "ProgramFiles(x86)"}
+
+// companionGetenv — значение переменной окружения; тест подменяет.
+var companionGetenv = os.Getenv
+
+// splitCompanionExecRoot: «%LOCALAPPDATA%\Programs\x.exe» → «LOCALAPPDATA»,
+// «Programs\x.exe». Имя переменной — из companionExecRoots без учёта регистра
+// (как в Windows), после неё — разделитель и непустой путь.
+func splitCompanionExecRoot(exec string) (root, rest string, err error) {
+	end := strings.Index(exec[1:], "%")
+	if end < 0 {
+		return "", "", errors.New("exec: незакрытая переменная окружения")
+	}
+	name := exec[1 : end+1]
+	rest = exec[end+2:]
+	for _, r := range companionExecRoots {
+		if strings.EqualFold(r, name) {
+			root = r
+		}
+	}
+	if root == "" {
+		return "", "", fmt.Errorf("exec: в начале пути допускаются только %%%s%%", strings.Join(companionExecRoots, "%, %"))
+	}
+	if !strings.HasPrefix(rest, `\`) && !strings.HasPrefix(rest, "/") {
+		return "", "", fmt.Errorf("exec: после %%%s%% нужен разделитель пути", root)
+	}
+	rest = strings.TrimLeft(rest, `\/`)
+	if rest == "" {
+		return "", "", fmt.Errorf("exec: после %%%s%% не указана программа", root)
+	}
+	return root, rest, nil
+}
+
+// resolveCompanionExec — полный путь программы манифеста: от каталога
+// лаунчера или от папки профиля. Переменная не задана или задана не полным
+// путём — ошибка, а не запуск из текущего каталога.
+func resolveCompanionExec(dir, exec string) (string, error) {
+	p := strings.TrimSpace(exec)
+	if !strings.HasPrefix(p, "%") {
+		return filepath.Join(dir, filepath.Clean(filepath.FromSlash(p))), nil
+	}
+	root, rest, err := splitCompanionExecRoot(p)
+	if err != nil {
+		return "", err
+	}
+	base := strings.TrimSpace(companionGetenv(root))
+	if base == "" || !filepath.IsAbs(base) {
+		return "", fmt.Errorf("exec: переменная %%%s%% на этом компьютере не задана полным путём", root)
+	}
+	return filepath.Join(base, filepath.Clean(filepath.FromSlash(rest))), nil
 }
 
 // mergeCompanions — программы для записи базы: манифест комплекта, поверх

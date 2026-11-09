@@ -111,3 +111,76 @@ func TestCompanionsManifestRejectsUnsafePaths(t *testing.T) {
 		t.Fatalf("без манифеста: %v %v", list, err)
 	}
 }
+
+// setCompanionEnv подменяет переменные окружения, которые читает манифест.
+func setCompanionEnv(t *testing.T, env map[string]string) {
+	t.Helper()
+	saved := companionGetenv
+	companionGetenv = func(name string) string { return env[name] }
+	t.Cleanup(func() { companionGetenv = saved })
+}
+
+// Callista 0.7.1+ ставится своим установщиком в профиль пользователя и дальше
+// обновляется сама: комплект указывает путь от %LOCALAPPDATA%, окно остаётся
+// владельцем запуска (тот же ключ от сервера, те же args и env манифеста).
+func TestCompanionsManifestInstalledPath(t *testing.T) {
+	dir := t.TempDir()
+	local := t.TempDir()
+	setLauncherDir(t, dir)
+	setCompanionEnv(t, map[string]string{"LOCALAPPDATA": local})
+	exe := filepath.Join(local, "Programs", "@callistaoperator-desktop", "callista-operator.exe")
+	for _, exec := range []string{
+		`%LOCALAPPDATA%\Programs\@callistaoperator-desktop\callista-operator.exe`,
+		`%localappdata%/Programs/@callistaoperator-desktop/callista-operator.exe`,
+	} {
+		t.Run(exec, func(t *testing.T) {
+			writeManifest(t, dir, "companions:\n  callista:\n    exec: '"+exec+"'\n    args: [\"--minimized\"]\n    env:\n      CALLISTA_OPERATOR_API_URL: https://cc.example:8445\n")
+			list, err := loadCompanionManifest(dir)
+			if err != nil || len(list) != 1 {
+				t.Fatalf("манифест: %v %v", list, err)
+			}
+			if list[0].Path != exe || list[0].Dir != filepath.Dir(exe) || list[0].Env["CALLISTA_OPERATOR_API_URL"] == "" {
+				t.Fatalf("программа: %+v, ждали %s", list[0], exe)
+			}
+			f := &fakeCompanionRuntime{existing: map[string]bool{exe: true}, running: map[string]bool{}}
+			msgs := startBaseCompanions(newCompanionLauncher(f.rt()), nil, "", []string{"callista"})
+			if len(msgs) != 0 || len(f.started) != 1 || f.started[0] != "callista:"+exe+":--minimized" {
+				t.Fatalf("запуски %v, сообщения %v", f.started, msgs)
+			}
+		})
+	}
+}
+
+// Переменная — только из короткого списка папок профиля и программ; после неё
+// — путь внутри этой папки. Иначе манифест отвергается целиком.
+func TestCompanionsManifestRejectsUnsafeInstalledPaths(t *testing.T) {
+	local := t.TempDir()
+	setCompanionEnv(t, map[string]string{"LOCALAPPDATA": local, "TEMP": local, "PATH": local})
+	for _, bad := range []string{
+		`%TEMP%\callista.exe`,
+		`%PATH%\callista.exe`,
+		`%LOCALAPPDATA%\..\callista.exe`,
+		`%LOCALAPPDATA%\Programs\..\..\callista.exe`,
+		`%LOCALAPPDATA%`,
+		`%LOCALAPPDATA%\`,
+		`%LOCALAPPDATA%callista.exe`,
+		`%LOCALAPPDATA%\C:\callista.exe`,
+		`%LOCALAPPDATA%\%TEMP%\callista.exe`,
+		`%LOCALAPPDATA\callista.exe`,
+	} {
+		t.Run(bad, func(t *testing.T) {
+			dir := t.TempDir()
+			writeManifest(t, dir, "companions:\n  callista:\n    exec: '"+bad+"'\n")
+			if list, err := loadCompanionManifest(dir); err == nil {
+				t.Fatalf("принят небезопасный путь: %+v", list)
+			}
+		})
+	}
+	// Переменная не задана на станции — отказ, а не путь от текущего каталога.
+	setCompanionEnv(t, map[string]string{})
+	dir := t.TempDir()
+	writeManifest(t, dir, "companions:\n  callista:\n    exec: '%LOCALAPPDATA%/Programs/c.exe'\n")
+	if _, err := loadCompanionManifest(dir); err == nil || !strings.Contains(err.Error(), "LOCALAPPDATA") {
+		t.Fatalf("без переменной: %v", err)
+	}
+}
