@@ -487,3 +487,23 @@ func (s *Server) choiceStyleParamValues(ctx context.Context, owner *metadata.Ent
 	}
 	return out
 }
+
+// choiceValueCSS — оформление выбранного значения для самого поля
+// (choice_style_value): CSS строки выбора с этим id, с «;» впереди, чтобы
+// дописать к собственному style поля. Нет строки или оформления — пусто.
+func choiceValueCSS(rows []map[string]any, value any) template.CSS {
+	id := strings.ToLower(strings.TrimSpace(refValueString(value)))
+	if id == "" {
+		return ""
+	}
+	for _, row := range rows {
+		if strings.ToLower(refValueString(row["id"])) != id {
+			continue
+		}
+		if css, _ := row[refOptionStyleKey].(refOptionCSS); css != "" {
+			return template.CSS(";" + string(css)) //nolint:gosec // G203: CSS собран из csssafe-значений
+		}
+		return ""
+	}
+	return ""
+}

@@ -567,6 +567,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// refOptionStyle — style строки выбора ссылки (choice_row_style).
 		"refOptionStyle":    refOptionStyle,
 		"refOptionDisabled": refOptionDisabled,
+		"choiceValueCSS":    choiceValueCSS,
 		"itemFormVisible": func(entity *metadata.Entity) []itemFormField {
 			vis, _ := splitItemFormFields(entity)
 			return vis

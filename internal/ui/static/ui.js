@@ -4954,6 +4954,7 @@ function obRefreshDependentSelects(sourceEl) {
             sel.appendChild(opt);
           }
           sel.value = keep ? current : '';
+          if (typeof window !== 'undefined' && window.obPaintChoiceValue) window.obPaintChoiceValue(sel);
         })
         .catch(function () {});
     })(targets[i]);
@@ -5232,6 +5233,7 @@ function obChoiceApplyResponse(sel, data, selectedAtRequest) {
 
   var cleared = !!selectedAtRequest && selectedAllowed === false;
   sel.value = cleared ? '' : selectedAtRequest;
+  if (typeof window !== 'undefined' && window.obPaintChoiceValue) window.obPaintChoiceValue(sel);
   sel.removeAttribute('data-ob-choice-error');
   sel.removeAttribute('data-ob-choice-loading');
   sel.removeAttribute('aria-busy');
@@ -6756,6 +6758,37 @@ function initDetailPanel() {
   var st = document.createElement('style');
   st.textContent = css;
   (document.head || document.documentElement).appendChild(st);
+})();
+
+// choice_style_value: поле ссылки показывает выбранное значение тем же
+// оформлением, что строка в списке выбора (style выбранного <option>).
+// Собственный style поля (ширина и т. п.) хранится отдельно и не теряется.
+window.obPaintChoiceValue = function (sel) {
+  if (!sel || sel.tagName !== 'SELECT' || sel.getAttribute('data-ob-choice-style-value') !== '1') return;
+  var base = sel.getAttribute('data-ob-base-style');
+  if (base === null) {
+    // Сервер даёт основу в data-ob-base-style; без неё основа — нынешний style.
+    base = String(sel.getAttribute('style') || '');
+    sel.setAttribute('data-ob-base-style', base);
+  }
+  var opt = sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
+  var css = opt && opt.value ? String(opt.getAttribute('style') || '') : '';
+  sel.setAttribute('style', base + (css ? ';' + css : ''));
+};
+window.obPaintChoiceValues = function (root) {
+  var scope = root || document;
+  if (!scope || typeof scope.querySelectorAll !== 'function') return;
+  var list = scope.querySelectorAll('select[data-ob-choice-style-value="1"]');
+  for (var i = 0; i < list.length; i++) window.obPaintChoiceValue(list[i]);
+};
+if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('change', function (e) {
+  var t = e && e.target;
+  if (t && t.tagName === 'SELECT') window.obPaintChoiceValue(t);
+}, true);
+(function () {
+  function init() { window.obPaintChoiceValues(document); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();
 
 /* Индикатор выполнения у форм с data-ob-busy (обработки, отчёты).
