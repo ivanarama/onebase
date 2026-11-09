@@ -19,6 +19,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ivantit66/onebase/internal/pridentity"
+	"github.com/ivantit66/onebase/internal/reviewrouting"
 	"golang.org/x/text/encoding/charmap"
 )
 
@@ -29,6 +31,8 @@ var (
 	baseSyncIntent    = regexp.MustCompile(`(?m)^<!-- pp:base-sync-intent from=([0-9a-f]{40}) base=([0-9a-f]{40}) review-comment=([0-9]+) claim=([0-9]+) completion=([0-9]+) ship-event=([A-Za-z0-9_=-]+) previous=([0-9]+|none) -->$`)
 	baseSyncDone      = regexp.MustCompile(`(?m)^<!-- pp:base-sync-done intent=([0-9]+) from=([0-9a-f]{40}) to=([0-9a-f]{40}) base=([0-9a-f]{40}) previous=([0-9]+|none) ship-event=([A-Za-z0-9_=-]+) -->$`)
 	baseSyncV1Abort   = regexp.MustCompile(`(?m)^<!-- pp:base-sync-v1-aborted intent=([0-9]+) head=([0-9a-f]{40}) reason=commit-before-intent -->$`)
+	reviewedSHALine   = regexp.MustCompile(`(?m)^Reviewed-SHA: ([0-9a-f]{40})$`)
+	reviewOutcomeLine = regexp.MustCompile(`(?m)^Outcome-Label: (reviewed|changes-requested|needs-decision)$`)
 	triageRouteClaim  = regexp.MustCompile(`(?m)^<!-- pp:triage-route-claim fingerprint-sha256=([0-9a-f]{64}) owner=[0-9a-fA-F-]{36} -->$`)
 	triageRouteRecord = regexp.MustCompile(`(?m)(^pp-triage-route-v1\nissue=([0-9]+)\nissue-updated=[^\n]+\ntitle-sha256=[0-9a-f]{64}\nbody-sha256=[0-9a-f]{64}\nanalysis-sha256=[0-9a-f]{64}\ncomments-sha256=[0-9a-f]{64}\nlabels-sha256=[0-9a-f]{64}\nevents-watermark=(?:[0-9]+|none)\nclass=(?:bug|enhancement|question|documentation)\nroute=(ready-fix|needs-decision)\nmanual=(?:true|false)\nreply=(required|none)\n)`)
 	triageRouteLabels = regexp.MustCompile(`(?m)^<!-- pp:triage-route-labels claim=([0-9]+) fingerprint-sha256=([0-9a-f]{64}) .+ -->$`)
@@ -54,19 +58,28 @@ type apiComment struct {
 }
 
 type apiPull struct {
-	Number    int    `json:"number"`
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	HTMLURL   string `json:"html_url"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-	State     string `json:"state"`
-	Draft     bool   `json:"draft"`
-	Head      struct {
-		SHA string `json:"sha"`
+	// Set only by the complete stable GraphQL epoch reader, never REST/JSON.
+	FullCurrentReview      bool           `json:"-"`
+	NodeID                 string         `json:"node_id"`
+	CrossRepository        *bool          `json:"-"`
+	ExpectedBaseRepository *apiRepository `json:"-"`
+	Number                 int            `json:"number"`
+	Title                  string         `json:"title"`
+	Body                   string         `json:"body"`
+	HTMLURL                string         `json:"html_url"`
+	CreatedAt              string         `json:"created_at"`
+	UpdatedAt              string         `json:"updated_at"`
+	State                  string         `json:"state"`
+	Draft                  bool           `json:"draft"`
+	Head                   struct {
+		SHA  string         `json:"sha"`
+		Ref  string         `json:"ref"`
+		Repo *apiRepository `json:"repo"`
 	} `json:"head"`
 	Base struct {
-		Ref string `json:"ref"`
+		Ref  string         `json:"ref"`
+		SHA  string         `json:"sha"`
+		Repo *apiRepository `json:"repo"`
 	} `json:"base"`
 	Labels   []apiLabel   `json:"labels"`
 	Comments []apiComment `json:"-"`
@@ -92,10 +105,13 @@ type apiIssue struct {
 }
 
 type candidate struct {
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-	URL    string `json:"url"`
-	Head   string `json:"head"`
+	PRIdentity     *pridentity.PRIdentityV1 `json:"pr_identity,omitempty"`
+	IdentitySHA256 string                   `json:"identity_sha256,omitempty"`
+	BaseRefOID     string                   `json:"base_ref_oid,omitempty"`
+	Number         int                      `json:"number"`
+	Title          string                   `json:"title"`
+	URL            string                   `json:"url"`
+	Head           string                   `json:"head"`
 	// EligibilityDigest is a 160-bit prefix of a versioned SHA-256 snapshot.
 	// It reserves an issue in the scheduler; it is never mutation authority.
 	EligibilityDigest string `json:"eligibility_digest,omitempty"`
@@ -105,6 +121,63 @@ type candidate struct {
 	PrioritySource    string `json:"priority_source"`
 	UpdatedAt         string `json:"updated_at"`
 	IntegrationAt     string `json:"-"`
+	// BaseSyncCandidate описывает КАНДИДАТА на механический переход base-sync:
+	// двухродительскую форму HEAD и данные для проверок. Заполняется только для
+	// такой формы коммита; у обычного раунда доработки его нет.
+	BaseSyncCandidate *baseSyncCandidate `json:"base_sync_candidate,omitempty"`
+}
+
+// reviewPairState — насколько согласована committed-пара ревью исходной версии
+// ветки. Снимок проверяет только то, что видно в комментариях: существование
+// каждой части пары, совпадение SHA, идентификаторов и epoch между ними, а
+// также доверенность и неизменённость самих комментариев. Server-ordered epoch
+// по timeline снимок не восстанавливает — это остаётся потребителю.
+type reviewPairState string
+
+const (
+	reviewPairConsistent         reviewPairState = "consistent"
+	reviewPairMissing            reviewPairState = "missing"
+	reviewPairClaimMissing       reviewPairState = "claim_missing"
+	reviewPairClaimEpochMismatch reviewPairState = "claim_epoch_mismatch"
+	reviewPairReviewMissing      reviewPairState = "review_missing"
+	reviewPairReviewUntrusted    reviewPairState = "review_untrusted"
+	reviewPairSHAMismatch        reviewPairState = "review_sha_mismatch"
+	reviewPairOutcomeNotReviewed reviewPairState = "outcome_not_reviewed"
+)
+
+// reviewPairEvidence — то, что снимок нашёл про ревью исходной версии ветки.
+// Вердикт (OutcomeLabel) заполняется ТОЛЬКО при state=consistent: непроверенная
+// пара отдаётся идентификаторами без вердикта, чтобы её нельзя было принять за
+// готовое доказательство.
+type reviewPairEvidence struct {
+	State         reviewPairState `json:"state"`
+	SHA           string          `json:"sha,omitempty"`
+	ReviewComment int64           `json:"review_comment,omitempty"`
+	Claim         int64           `json:"claim,omitempty"`
+	Epoch         string          `json:"epoch_sha256,omitempty"`
+	Outcome       string          `json:"outcome_label,omitempty"`
+}
+
+// baseSyncCandidate — КАНДИДАТ на механический переход base-sync, а не его
+// доказательство. Снимок сообщает форму коммита и найденные данные; полностью
+// доказанным переход становится только после проверок, которые снимку
+// недоступны: предок base в текущем main, побайтовый пересчёт слияния,
+// обязательный CI на точном to и server-ordered epoch по timeline. Их список
+// отдаётся полем ConsumerMustVerify, чтобы граница ответственности читалась
+// машиной, а не подразумевалась.
+//
+// Опубликованные маркеры pp:base-sync-intent/done пересказывают ту же форму
+// коммита; opt-in путь base_sync_merge их намеренно не публикует, поэтому
+// кандидат существует и без них, а их отсутствие само по себе ничего не
+// доказывает.
+type baseSyncCandidate struct {
+	From                string              `json:"from"`
+	Base                string              `json:"base"`
+	To                  string              `json:"to"`
+	Source              string              `json:"source"`
+	FromReview          *reviewPairEvidence `json:"from_review,omitempty"`
+	CurrentHeadReviewed bool                `json:"current_head_reviewed"`
+	ConsumerMustVerify  []string            `json:"consumer_must_verify"`
 }
 
 type finding struct {
@@ -116,13 +189,28 @@ type finding struct {
 }
 
 type report struct {
-	State            string      `json:"state"`
-	Summary          string      `json:"summary"`
-	Scope            string      `json:"scope"`
-	Scheduler        string      `json:"scheduler"`
-	Checked          int         `json:"checked"`
-	IssuesChecked    int         `json:"issues_checked"`
-	ReviewCandidates []candidate `json:"review_candidates"`
+	IdentityInventoryVersion         int                           `json:"identity_inventory_version,omitempty"`
+	IdentityAuthority                string                        `json:"identity_authority,omitempty"`
+	IdentityV2Enabled                *bool                         `json:"identity_v2_enabled,omitempty"`
+	RoutingObservation               *routingObservation           `json:"routing_observation,omitempty"`
+	ReviewRoutingContract            *routingContract              `json:"review_routing_contract,omitempty"`
+	FixBridgeContract                *routingPurposeContract       `json:"fix_bridge_contract,omitempty"`
+	FixExecutionContract             *routingPurposeContract       `json:"fix_execution_contract,omitempty"`
+	PositiveReviewContract           *routingPurposeContract       `json:"positive_review_contract,omitempty"`
+	PositiveMergeCandidates          *[]routingFixCandidate        `json:"positive_merge_candidates,omitempty"`
+	TechnicalFixCandidates           *[]routingFixCandidate        `json:"technical_fix_candidates,omitempty"`
+	TechnicalFixStartCandidates      *[]routingStartCandidate      `json:"technical_fix_start_candidates,omitempty"`
+	TechnicalFixProgressCandidates   *[]routingProgressCandidate   `json:"technical_fix_progress_candidates,omitempty"`
+	TechnicalFixSettlementCandidates *[]routingSettlementCandidate `json:"technical_fix_settlement_candidates,omitempty"`
+	TechnicalWaiting                 *[]candidate                  `json:"technical_waiting,omitempty"`
+	EngineeringWaiting               *[]candidate                  `json:"engineering_waiting,omitempty"`
+	State                            string                        `json:"state"`
+	Summary                          string                        `json:"summary"`
+	Scope                            string                        `json:"scope"`
+	Scheduler                        string                        `json:"scheduler"`
+	Checked                          int                           `json:"checked"`
+	IssuesChecked                    int                           `json:"issues_checked"`
+	ReviewCandidates                 []candidate                   `json:"review_candidates"`
 	// ReviewDispatchCandidates is a wake-up hint, never a mutation allowlist.
 	ReviewDispatchCandidates []candidate `json:"review_dispatch_candidates"`
 	ReviewBacklog            []candidate `json:"review_backlog"`
@@ -150,7 +238,55 @@ func main() {
 	transport := flag.String("transport", "graphql", "GitHub read transport: graphql or rest")
 	cacheDir := flag.String("cache-dir", os.Getenv("PIPELINEHEALTH_CACHE_DIR"), "persistent GitHub REST cache directory (default: user cache directory)")
 	asJSON := flag.Bool("json", false, "print machine-readable JSON")
+	technicalHandoff := flag.Bool("technical-handoff", false, "enable paired read-only review-routing-v1 diagnostics; no mutation authority")
+	routingMaxAttempts := flag.Int64("routing-max-attempts", 2, "current finite lifetime technical FIX limit, from1 to16")
+	routingInspect := flag.Int("routing-inspect", 0, "read one PR's complete typed history without queue election or mutation authority")
+	routingPositive := flag.String("routing-positive-purpose", "", "with routing-inspect: require positive merge or tail source; read-only")
+	identityInventory := flag.Bool("pr-identity", false, "separate read-only PR identity inventory; no v2 mutation authority")
+	baseRepositoryID := flag.String("base-repository-id", "", "expected GraphQL repository ID (required with offline identity fixtures)")
 	flag.Parse()
+	if *identityInventory && *technicalHandoff {
+		fail(fmt.Errorf("PR identity inventory and technical handoff are separate read-only views"))
+	}
+	if !*identityInventory && *baseRepositoryID != "" {
+		fail(fmt.Errorf("-base-repository-id requires -pr-identity"))
+	}
+	if *identityInventory && *routingInspect != 0 {
+		fail(fmt.Errorf("PR identity inventory cannot be combined with routing inspection"))
+	}
+	if *identityInventory {
+		for _, path := range []string{*fixture, *issueFixture} {
+			if path != "" {
+				if err := validateIdentityFixture(path); err != nil {
+					fail(err)
+				}
+			}
+		}
+	}
+	if *routingPositive != "" && (*routingInspect == 0 || *routingPositive != "merge" && *routingPositive != "tail") {
+		fail(fmt.Errorf("routing-positive-purpose requires routing-inspect and merge or tail"))
+	}
+	if *routingInspect != 0 {
+		if *routingInspect < 1 || int64(*routingInspect) > 2147483647 {
+			fail(fmt.Errorf("routing-inspect requires a positive portable PR number"))
+		}
+		value, inspectionErr := inspectRouting(*repo, *owner, *fixture, *routingInspect, *routingPositive)
+		if *asJSON {
+			encoder := json.NewEncoder(os.Stdout)
+			encoder.SetEscapeHTML(false)
+			if err := encoder.Encode(value); err != nil {
+				fail(err)
+			}
+		} else {
+			if _, err := fmt.Fprintf(os.Stdout, "routing inspection #%d: depth=%v, error=%v; mutation_authorized=false\n", *routingInspect, value["verified_depth"], value["error"]); err != nil {
+				fail(err)
+			}
+		}
+		if inspectionErr != nil {
+			os.Exit(1)
+		}
+		return
+	}
 
 	selectedTransport := strings.ToLower(strings.TrimSpace(*transport))
 	var prs []apiPull
@@ -158,7 +294,9 @@ func main() {
 	var err error
 	switch selectedTransport {
 	case "graphql":
-		prs, issues, err = loadPipelineInputsGraphQL(newGHPipelineGraphQLClient(), *repo, *owner, *fixture, *issueFixture)
+		client := newGHPipelineGraphQLClient()
+		client.strictIdentity = *identityInventory
+		prs, issues, err = loadPipelineInputsGraphQL(client, *repo, *owner, *fixture, *issueFixture)
 	case "rest":
 		var github *githubRESTClient
 		if *fixture == "" {
@@ -166,10 +304,22 @@ func main() {
 			resolvedCacheDir, err = resolveCacheDir(*cacheDir)
 			if err == nil {
 				github, err = newGitHubRESTClient(resolvedCacheDir)
+				if err == nil {
+					github.strictIdentity = *identityInventory
+				}
 			}
 		}
 		if err == nil {
 			prs, err = loadPulls(github, *repo, *owner, *fixture)
+			if err == nil && *identityInventory && *fixture == "" {
+				var expected apiRepository
+				err = github.getJSON("repos/"+*repo, &expected)
+				if err == nil {
+					for i := range prs {
+						prs[i].ExpectedBaseRepository = &expected
+					}
+				}
+			}
 		}
 		if err == nil {
 			issues, err = loadIssues(github, *repo, *issueFixture, *fixture != "")
@@ -180,13 +330,31 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	result := analyze(prs, *owner)
+	var routing *routingContext
+	if *technicalHandoff {
+		if selectedTransport != "graphql" || *routingMaxAttempts < 1 || *routingMaxAttempts > 16 {
+			fail(fmt.Errorf("technical handoff requires GraphQL and an explicit lifetime limit from1 to16"))
+		}
+		routing = prepareRouting(prs, *repo, *owner, *contract, *fixture, *routingMaxAttempts)
+	}
+	analysisPulls := prs
+	var identities map[int]inventoryIdentity
+	var identityFindings []finding
+	if *identityInventory {
+		analysisPulls, identities, identityFindings = prepareIdentityInventory(prs, *repo, *baseRepositoryID)
+	}
+	result := analyzeWithRouting(analysisPulls, *owner, routing)
+	result.Checked = len(prs)
+	result.Findings = append(result.Findings, identityFindings...)
 	if selectedTransport == "graphql" {
 		result.Scope = "complete GraphQL queue snapshot; mutation gates remain independent GraphQL proofs"
 	} else {
 		result.Scope = "conditional REST queue snapshot; mutation gates remain GraphQL"
 	}
 	analyzeIssues(&result, issues, prs, *owner)
+	if *identityInventory {
+		attachIdentityInventory(&result, identities)
+	}
 	checkContract(&result, *contract)
 	result.finish()
 
@@ -358,12 +526,19 @@ func loadIssues(github *githubRESTClient, repo, fixture string, skipLive bool) (
 }
 
 func analyze(prs []apiPull, owner string) report {
+	return analyzeWithRouting(prs, owner, nil)
+}
+
+func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) report {
 	result := report{
 		State: "green", Scope: "read-only queue snapshot; mutation gates remain GraphQL",
 		Scheduler: "two-lane-safety-priority-aging-depth-number", Checked: len(prs),
 		ReviewCandidates: []candidate{}, ReviewDispatchCandidates: []candidate{}, ContentReviewCandidates: []candidate{}, ParallelReviewCandidates: []candidate{},
 		ReviewBacklog: []candidate{}, ReviewedWaitingShip: []candidate{}, MergeCandidates: []candidate{}, MergeExecutable: []candidate{}, PlanCandidates: []candidate{}, FixCandidates: []candidate{},
 		HumanWaiting: []candidate{}, Findings: []finding{},
+	}
+	if routing != nil {
+		routing.attach(&result)
 	}
 	now := time.Now().UTC()
 	for _, pr := range prs {
@@ -380,14 +555,31 @@ func analyze(prs []apiPull, owner string) report {
 		depth := reviewDepth(pr.Comments, owner)
 		priority, prioritySource := queuePriority(labels, pr.CreatedAt, now)
 		item := candidate{Number: pr.Number, Title: pr.Title, URL: pr.HTMLURL, Head: pr.Head.SHA, Depth: depth, Stage: "review", Priority: priority, PrioritySource: prioritySource, UpdatedAt: pr.UpdatedAt}
+		if routing != nil && routing.consume(&result, pr, item, labels) {
+			continue
+		}
+		if routing == nil && legacyRoutingHistory(pr.Comments, owner) {
+			// Disabling the paired reader cannot erase a spent typed attempt.
+			// Unknown actors also retain the barrier; ordinary foreign markers
+			// and unrelated ghost comments remain ordinary legacy input.
+			item.Stage = "engineering-recovery"
+			result.HumanWaiting = append(result.HumanWaiting, item)
+			result.add("yellow", "routing_disabled_history", pr.Number,
+				"typed routing history requires its paired reader; unknown actors never authorize legacy fallback")
+			continue
+		}
 		currentCompletions, latestCompletion, latestOverride := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
 		legacySourceCompletions := 0
 		if headIsBaseSyncMerge(pr) {
 			legacySourceCompletions, _, _ = currentProtocolState(pr.Comments, owner, pr.HeadParents[0])
 		}
 		carryDone, carryIntentOpen, v1AbortCurrent, baseAdvanced, protocolHistory, integrationAt := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA, pr.HeadParents)
-		overrideOpen := latestOverride > latestCompletion
+		// Reopening a parked review requires a completed proof of this HEAD.
+		// A historical override must not unpark an author's later push merely
+		// because that new HEAD has no completion to consume the old marker.
+		overrideOpen := currentCompletions > 0 && latestOverride > latestCompletion
 		item.IntegrationAt = integrationAt
+		item.BaseSyncCandidate = baseSyncCandidateOf(pr, owner)
 		if baseAdvanced {
 			result.add("yellow", "base_sync_base_advanced", pr.Number,
 				"base сдвинулся между intent и done; GraphQL gate должен проверить actual parent и ancestry")
@@ -454,6 +646,12 @@ func analyze(prs []apiPull, owner string) report {
 				result.MergeCandidates = append(result.MergeCandidates, item)
 			case v1AbortCurrent && currentCompletions == 0:
 				result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
+			case pr.FullCurrentReview:
+				// Explicit full current-HEAD re-review closes its own epoch; older
+				// source reviews and a merge-shaped HEAD do not make it a carry.
+				// The independent mutation gate still proves current ship and CI.
+				item.Stage = "merge"
+				result.MergeCandidates = append(result.MergeCandidates, item)
 			case currentCompletions > 0 && depth == currentCompletions && !protocolHistory:
 				// A PR may be opened with a merge commit already at its first HEAD.
 				// With no earlier committed review or base-sync transaction, its
@@ -516,7 +714,7 @@ func analyze(prs []apiPull, owner string) report {
 			result.HumanWaiting = append(result.HumanWaiting, item)
 		case labels["changes-requested"] && !overrideOpen:
 			result.FixCandidates = append(result.FixCandidates, item)
-		case depth > currentCompletions && headIsBaseSyncMerge(pr) && legacySourceCompletions == 0 && !carryDone && !v1AbortCurrent:
+		case depth > currentCompletions && headIsBaseSyncMerge(pr) && legacySourceCompletions == 0 && !carryDone && !v1AbortCurrent && !pr.FullCurrentReview:
 			// A completed review of this HEAD is not enough to turn an earlier
 			// needs-decision review of a different SHA into source proof. Show the
 			// recovery before asking for ship; otherwise the owner is invited into
@@ -552,6 +750,9 @@ func analyze(prs []apiPull, owner string) report {
 	sortMergeCandidates(result.MergeExecutable)
 	sortCandidates(result.FixCandidates)
 	sortCandidates(result.HumanWaiting)
+	if routing != nil {
+		routing.finishObservations(&result)
+	}
 	return result
 }
 
@@ -1040,6 +1241,143 @@ func headIsBaseSyncMerge(pr apiPull) bool {
 	return len(pr.HeadParents) == 2
 }
 
+// baseSyncCandidateOf собирает кандидата для двухродительского HEAD. Первый
+// родитель — ветка до освежения, второй — влитая основная: такой порядок
+// оставляет и update-branch, и обычное слияние основной в ветку.
+//
+// Функция ничего не доказывает и не выдаёт разрешений: она сообщает форму
+// коммита и то, что видно про ревью исходной версии в комментариях.
+func baseSyncCandidateOf(pr apiPull, owner string) *baseSyncCandidate {
+	if !headIsBaseSyncMerge(pr) {
+		return nil
+	}
+	// Ревью ТЕКУЩЕГО HEAD проверяется тем же строгим контрактом, что и ревью
+	// исходной версии: одиночный completion, сиротский claim или несовпавший
+	// epoch committed-пары не образуют. Иначе поле обещало бы потребителю
+	// пару, которой нет, — а он машинный и спорить с именем не станет.
+	current := reviewPairFor(pr.Comments, owner, pr.Head.SHA)
+	return &baseSyncCandidate{
+		From:                pr.HeadParents[0],
+		Base:                pr.HeadParents[1],
+		To:                  pr.Head.SHA,
+		Source:              "head_parents",
+		CurrentHeadReviewed: current != nil && current.State == reviewPairConsistent,
+		FromReview:          reviewPairFor(pr.Comments, owner, pr.HeadParents[0]),
+		ConsumerMustVerify: []string{
+			"base_ancestry",
+			"merge_tree",
+			"required_checks",
+			"timeline_epoch",
+		},
+	}
+}
+
+// reviewPairFor проверяет связность committed-пары ревью указанной версии
+// ветки в пределах того, что видно снимку: completion, его claim и названное
+// заключение обязаны ссылаться друг на друга, совпадать по SHA и epoch и быть
+// доверенными неотредактированными комментариями.
+//
+// Несогласованная пара отдаётся идентификаторами БЕЗ вердикта: «нашёл
+// completion» и «ревью доказано» — разные утверждения, и снимок обязан
+// различать их явно.
+func reviewPairFor(comments []apiComment, owner, sha string) *reviewPairEvidence {
+	var completion *reviewPairEvidence
+	for _, comment := range comments {
+		if !trustedUnedited(comment, owner) {
+			continue
+		}
+		for _, match := range completionLine.FindAllStringSubmatch(comment.Body, -1) {
+			if !strings.EqualFold(match[1], sha) {
+				continue
+			}
+			reviewID, err := strconv.ParseInt(match[2], 10, 64)
+			if err != nil {
+				continue
+			}
+			claimID, err := strconv.ParseInt(match[3], 10, 64)
+			if err != nil {
+				continue
+			}
+			completion = &reviewPairEvidence{
+				SHA: sha, ReviewComment: reviewID, Claim: claimID, Epoch: match[4],
+			}
+		}
+	}
+	if completion == nil {
+		return &reviewPairEvidence{State: reviewPairMissing, SHA: sha}
+	}
+
+	claim := claimEvidence(comments, owner, completion.Claim)
+	switch {
+	case claim == nil:
+		completion.State = reviewPairClaimMissing
+		return completion
+	case !strings.EqualFold(claim.head, sha) || claim.reviewComment != completion.ReviewComment:
+		completion.State = reviewPairClaimMissing
+		return completion
+	case !strings.EqualFold(claim.epoch, completion.Epoch):
+		completion.State = reviewPairClaimEpochMismatch
+		return completion
+	}
+
+	conclusion, found := reviewConclusionBody(comments, completion.ReviewComment)
+	switch {
+	case !found:
+		completion.State = reviewPairReviewMissing
+		return completion
+	case !trustedUnedited(conclusion, owner):
+		completion.State = reviewPairReviewUntrusted
+		return completion
+	}
+	head := reviewedSHALine.FindStringSubmatch(conclusion.Body)
+	if head == nil || !strings.EqualFold(head[1], sha) {
+		completion.State = reviewPairSHAMismatch
+		return completion
+	}
+	outcome := reviewOutcomeLine.FindStringSubmatch(conclusion.Body)
+	if outcome == nil || outcome[1] != "reviewed" {
+		completion.State = reviewPairOutcomeNotReviewed
+		return completion
+	}
+	completion.State = reviewPairConsistent
+	completion.Outcome = outcome[1]
+	return completion
+}
+
+type claimShape struct {
+	head          string
+	reviewComment int64
+	epoch         string
+}
+
+// claimEvidence находит заявку публикации по её идентификатору комментария.
+func claimEvidence(comments []apiComment, owner string, id int64) *claimShape {
+	for _, comment := range comments {
+		if comment.ID != id || !trustedUnedited(comment, owner) {
+			continue
+		}
+		match := claimLine.FindStringSubmatch(comment.Body)
+		if match == nil {
+			return nil
+		}
+		reviewID, err := strconv.ParseInt(match[2], 10, 64)
+		if err != nil {
+			return nil
+		}
+		return &claimShape{head: match[1], reviewComment: reviewID, epoch: match[3]}
+	}
+	return nil
+}
+
+func reviewConclusionBody(comments []apiComment, id int64) (apiComment, bool) {
+	for _, comment := range comments {
+		if comment.ID == id {
+			return comment, true
+		}
+	}
+	return apiComment{}, false
+}
+
 func labelSet(labels []apiLabel) map[string]bool {
 	set := make(map[string]bool, len(labels))
 	for _, item := range labels {
@@ -1052,38 +1390,10 @@ func trustedUnedited(comment apiComment, owner string) bool {
 	return comment.User.Login == owner && comment.CreatedAt != "" && comment.UpdatedAt == comment.CreatedAt
 }
 
-// hasReviewAgain accepts the exact protocol line outside Markdown fenced code.
-// An unclosed fence quotes the rest of the comment, including any instructions
-// that happen to spell the marker. Fences use at least three backticks or tildes
-// and at most three leading spaces; a close must use the same character, be at
-// least as long as the opener, and contain only trailing spaces or tabs.
+// hasReviewAgain shares the established Markdown-aware marker semantics with
+// the typed reader, including historical epochs and incomplete publications.
 func hasReviewAgain(body string) bool {
-	var fence byte
-	var fenceLength int
-	for _, line := range strings.Split(body, "\n") {
-		if fence == 0 && line == "pp:review-again" {
-			return true
-		}
-		text := strings.TrimLeft(line, " ")
-		if len(line)-len(text) > 3 || len(text) < 3 || (text[0] != '`' && text[0] != '~') {
-			continue
-		}
-		length := 1
-		for length < len(text) && text[length] == text[0] {
-			length++
-		}
-		if fence != 0 {
-			if text[0] == fence && length >= fenceLength && strings.Trim(text[length:], " \t\r") == "" {
-				fence, fenceLength = 0, 0
-			}
-			continue
-		}
-		// A backtick in the info string makes a backtick opener invalid.
-		if length >= 3 && (text[0] != '`' || !strings.Contains(text[length:], "`")) {
-			fence, fenceLength = text[0], length
-		}
-	}
-	return false
+	return reviewrouting.HasReviewAgain(body)
 }
 
 func reviewDepth(comments []apiComment, owner string) int {

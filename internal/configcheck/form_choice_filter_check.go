@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"github.com/google/uuid"
@@ -82,7 +83,7 @@ func validateChoiceFilterYAML(node *yaml.Node, path, file string, issues *[]Issu
 		add(node, fmt.Sprintf("%s должен быть списком условий", path))
 		return
 	}
-	allowed := map[string]bool{"field": true, "op": true, "from": true, "value": true, "ref": true}
+	allowed := map[string]bool{"field": true, "op": true, "from": true, "value": true, "ref": true, "query": true, "params": true}
 	for index, condition := range node.Content {
 		conditionPath := fmt.Sprintf("%s[%d]", path, index)
 		if condition == nil || condition.Kind != yaml.MappingNode {
@@ -96,6 +97,20 @@ func validateChoiceFilterYAML(node *yaml.Node, path, file string, issues *[]Issu
 				continue
 			}
 			switch key.Value {
+			case "query":
+				if value.Kind != yaml.ScalarNode || value.Tag != "!!str" || strings.TrimSpace(value.Value) == "" {
+					add(value, fmt.Sprintf("%s.query должен быть непустым текстом запроса", conditionPath))
+				}
+			case "params":
+				if value.Kind != yaml.MappingNode {
+					add(value, fmt.Sprintf("%s.params должен быть объектом «Имя: путь»", conditionPath))
+					break
+				}
+				for j := 0; j+1 < len(value.Content); j += 2 {
+					if v := value.Content[j+1]; v.Kind != yaml.ScalarNode || v.Tag != "!!str" {
+						add(v, fmt.Sprintf("%s.params.%s должен быть строкой-путём Объект.<Поле>", conditionPath, value.Content[j].Value))
+					}
+				}
 			case "field", "op", "from":
 				if value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
 					add(value, fmt.Sprintf("%s.%s должен быть строкой", conditionPath, key.Value))
@@ -222,6 +237,15 @@ func CheckFormChoiceFilter(proj *project.Project) []Issue {
 				seenFields := make(map[string]bool, len(el.ChoiceFilter))
 				for i, cond := range el.ChoiceFilter {
 					where := fmt.Sprintf("choice_filter[%d]", i)
+					// Условие запросом (как filter[].query формы списка, #2181):
+					// реквизит цели не задаётся, текст запроса проверяет
+					// CheckQueries, здесь — форма условия и источники параметров.
+					if cond.IsQuery() || len(cond.Params) > 0 {
+						if problem := formChoiceQueryProblem(owner, form, el, cond, entities); problem != "" {
+							add("%s: %s", where, problem)
+						}
+						continue
+					}
 					fieldName := strings.TrimSpace(cond.Field)
 					if fieldName == "" {
 						add("%s: field обязателен", where)
@@ -593,4 +617,54 @@ func formChoiceColumnSourceEntity(owner *metadata.Entity, form *metadata.FormMod
 		}
 	}
 	return nil, "row-local from не является ссылочной колонкой этой ТЧ"
+}
+
+// formChoiceQueryProblem проверяет условие choice_filter запросом. Параметры —
+// те же источники, что from: Объект.<Ссылка>, Форма.<Ссылка> или один переход
+// Объект.<Ссылка>.<Реквизит> к ссылке или строке. В колонке ТЧ — только два
+// сегмента от корня формы: строка ТЧ параметром запроса не бывает.
+func formChoiceQueryProblem(owner *metadata.Entity, form *metadata.FormModule, el *metadata.FormElement, cond metadata.FormChoiceCondition, entities map[string]*metadata.Entity) string {
+	if !cond.IsQuery() {
+		return "params допустим только вместе с query"
+	}
+	if strings.TrimSpace(cond.Field) != "" || cond.Op != "" || strings.TrimSpace(cond.From) != "" || cond.Value != nil || strings.TrimSpace(cond.Ref) != "" {
+		return "query несовместим с field, op, from, value и ref: допустимые записи задаёт первая колонка запроса"
+	}
+	_, tpName := metadata.FormChoiceTablePart(form, el)
+	names := make([]string, 0, len(cond.Params))
+	for name := range cond.Params {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		path := strings.TrimSpace(cond.Params[name])
+		trimmed := strings.TrimSpace(name)
+		if trimmed == "" || strings.ContainsAny(trimmed, " .&") {
+			return fmt.Sprintf("params: имя параметра %q — нужен идентификатор без пробелов, точек и &", name)
+		}
+		if strings.EqualFold(trimmed, "ТекущийПользователь") || strings.EqualFold(trimmed, "ТекущийЛогин") {
+			return fmt.Sprintf("params: &%s подставляется сам, задавать его не нужно", trimmed)
+		}
+		source, ok := metadata.ParseFormChoiceSource(path)
+		if !ok || (!strings.EqualFold(source.Root, "Объект") && !strings.EqualFold(source.Root, "Форма")) {
+			return fmt.Sprintf("params.%s: %q должен быть путём Объект.<Поле>, Форма.<Поле> или Объект.<Поле>.<Реквизит>", trimmed, path)
+		}
+		if tpName != "" && source.Deep() {
+			return fmt.Sprintf("params.%s: в колонке ТЧ путь параметра — ровно два сегмента", trimmed)
+		}
+		lead, leadOK := formChoiceRefSource(owner, form, source.Root+"."+source.Field, entities)
+		if !leadOK || lead == nil {
+			return fmt.Sprintf("params.%s: %s.%s не является ссылкой Объект.* или Форма.*", trimmed, source.Root, source.Field)
+		}
+		if source.Deep() {
+			attr := entityFieldFold(lead, source.Attr)
+			if attr == nil {
+				return fmt.Sprintf("params.%s: у %s нет реквизита %q", trimmed, lead.Name, source.Attr)
+			}
+			if strings.TrimSpace(attr.RefEntity) == "" && !formChoiceTextField(attr) {
+				return fmt.Sprintf("params.%s: реквизит %s.%s должен быть ссылкой или строкой", trimmed, lead.Name, attr.Name)
+			}
+		}
+	}
+	return ""
 }

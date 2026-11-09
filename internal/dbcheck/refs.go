@@ -36,7 +36,8 @@ type refColumn struct {
 	// Register != nil — колонка принадлежит регистру накопления: очистка меняет
 	// то, во что движение агрегируется, поэтому после неё нужно пересчитать итоги
 	// (план 80), иначе Остатки()/Обороты() врут молча (#619).
-	Register *metadata.Register
+	Register     *metadata.Register
+	InfoRegister *metadata.InfoRegister
 	// Manual — причина, по которой автоочистка колонку НЕ трогает. Пусто —
 	// зануляется. Причин две, и они разные: измерение регистра сведений
 	// объявлено NOT NULL и входит в PRIMARY KEY (#619), а субконто и ресурсы
@@ -210,7 +211,11 @@ func refColumns(ctx context.Context, env *Env) ([]refColumn, error) {
 		// Измерения регистра сведений — NOT NULL и в PRIMARY KEY: занулить нельзя.
 		add(ir.Name, table, ir.Dimensions, nil,
 			"измерение регистра сведений (NOT NULL) — занулить нельзя, разберите строки вручную", false, byName)
+		first := len(out)
 		add(ir.Name, table, ir.Resources, nil, "", false, byName)
+		for i := first; i < len(out); i++ {
+			out[i].InfoRegister = ir
+		}
 	}
 	// Регистр бухгалтерии — тот самый остаток, замеченный в #881: внешних ключей
 	// у его колонок нет, а проверка обходила его стороной, хотя субконто хранит
@@ -282,6 +287,30 @@ func brokenRefs(ctx context.Context, db *storage.DB, rc refColumn) (int, []strin
 }
 
 func clearBrokenRefs(ctx context.Context, db *storage.DB, rc refColumn) (int, error) {
+	if rc.InfoRegister != nil {
+		var count int
+		err := db.WithTxScope(ctx, func(txCtx context.Context) error {
+			if err := db.LockInfoRegisterForPolicyWrite(txCtx, rc.InfoRegister); err != nil {
+				return err
+			}
+			var broken int
+			if err := db.QueryRow(txCtx, "SELECT COUNT(*) FROM "+quoteIdent(rc.Table)+" WHERE "+brokenWhere(rc)).Scan(&broken); err != nil {
+				return err
+			}
+			if broken == 0 {
+				return nil
+			}
+			if err := db.InvalidateInfoRegEditRevisions(txCtx, rc.InfoRegister); err != nil {
+				return err
+			}
+			ordinary := rc
+			ordinary.InfoRegister = nil
+			var err error
+			count, err = clearBrokenRefs(txCtx, db, ordinary)
+			return err
+		})
+		return count, err
+	}
 	var count int
 	if err := db.QueryRow(ctx,
 		"SELECT COUNT(*) FROM "+quoteIdent(rc.Table)+" WHERE "+brokenWhere(rc)).Scan(&count); err != nil {
