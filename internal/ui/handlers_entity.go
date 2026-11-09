@@ -1324,7 +1324,11 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 			extra.ChoicePredicates = choice.Predicates
 			extra.IncludeFolders = choice.Folders
 		}
-		items, total, err = s.referenceOptionsPageWithParams(r.Context(), ent, r.URL.Query().Get("q"), limit, offset, extra)
+		optCtx := r.Context()
+		if choice != nil {
+			optCtx = withChoiceStyleParams(optCtx, choice.StyleParams)
+		}
+		items, total, err = s.referenceOptionsPageWithParams(optCtx, ent, r.URL.Query().Get("q"), limit, offset, extra)
 		if err != nil {
 			s.serverError(w, r, err)
 			return

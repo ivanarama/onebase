@@ -400,10 +400,12 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       if (String(sel.options[i].value) === String(val)) return;
     }
     let label = (fallbackLabel != null && fallbackLabel !== '') ? fallbackLabel : val;
+    let css = '';
     if (rows) {
       for (let i = 0; i < rows.length; i++){
         if (rows[i] && String(rows[i].id) === String(val)) {
           if (rows[i]._label != null && rows[i]._label !== '') label = rows[i]._label;
+          css = rows[i]['\u0000ref_style'] || '';
           break;
         }
       }
@@ -411,6 +413,8 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     const o = document.createElement('option');
     o.value = val;
     o.textContent = label;
+    // choice_row_style присвоенного обработчиком значения — для choice_style_value.
+    if (css) o.setAttribute('style', css);
     sel.appendChild(o);
   }
   // BEGIN onebase-ro-apply-values
@@ -530,6 +534,9 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         }
       });
     });
+    // Значения, присвоенные обработчиком, приходят без change: оформление
+    // выбранного значения (choice_style_value) перерисовываем здесь.
+    if (typeof window.obPaintChoiceValues === 'function') window.obPaintChoiceValues(form);
     // A form handler may change a choice_filter source without dispatching a
     // native change event. Re-scan fingerprints after the whole response has
     // been applied, so dependants see the final source and selected values.
@@ -793,6 +800,9 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
               const o = document.createElement('option');
               o.value = opt.id;
               o.textContent = opt._label;
+              if (opt['\u0000ref_style']) o.setAttribute('style', opt['\u0000ref_style']);
+              // Выбранное значение не блокируем: disabled-вариант браузер не отправляет.
+              if (opt['\u0000ref_disabled']) { o.setAttribute('data-ob-ref-disabled', '1'); if (String(opt.id) !== cur) o.disabled = true; }
               if (String(opt.id) === cur) o.selected = true;
               sel.appendChild(o);
             });
@@ -3130,7 +3140,7 @@ function obGridColumnIds(columns) {
       for (var k = 0; k < refOptsList.length; k++) {
         if (String(refOptsList[k].id) === String(opt.id)) return;
       }
-      refOptsList.push({id: opt.id, _label: opt._label, _ownerFilter: filterParam()});
+      refOptsList.push({id: opt.id, _label: opt._label, '\u0000ref_style': opt['\u0000ref_style'], '\u0000ref_style_bg': opt['\u0000ref_style_bg'], '\u0000ref_disabled': !!opt['\u0000ref_disabled'], _ownerFilter: filterParam()});
     }
 
     // candidates — предзагруженные опции + серверные результаты, отфильтрованные
@@ -3145,7 +3155,9 @@ function obGridColumnIds(columns) {
         var lbl = String(o._label == null ? '' : o._label);
         if (f && lbl.toLowerCase().indexOf(f) < 0) return;
         seen[key] = true;
-        out.push({id: o.id, _label: lbl});
+        // choice_row_style: оформление варианта доезжает до списка ячейки и до
+        // окна подбора — проекция не должна его терять.
+        out.push({id: o.id, _label: lbl, '\u0000ref_style': o['\u0000ref_style'] || '', '\u0000ref_style_bg': o['\u0000ref_style_bg'] || '', '\u0000ref_disabled': !!o['\u0000ref_disabled']});
       }
       var currentFilter = requestParam();
       if(choiceContext && args.column.choiceSeeds) {
@@ -3165,7 +3177,7 @@ function obGridColumnIds(columns) {
     function paintActive() {
       var nodes = list.querySelectorAll('[data-idx]');
       for (var k = 0; k < nodes.length; k++) {
-        nodes[k].style.background = (k === activeIdx) ? '#eef2ff' : '';
+        nodes[k].style.background = (k === activeIdx) ? '#eef2ff' : (nodes[k].getAttribute('data-ob-bg') || '');
       }
       if (activeIdx >= 0 && nodes[activeIdx] && nodes[activeIdx].scrollIntoView) {
         nodes[activeIdx].scrollIntoView({block: 'nearest'});
@@ -3186,12 +3198,16 @@ function obGridColumnIds(columns) {
         item.textContent = shown[k]._label;
         item.setAttribute('data-id', shown[k].id);
         item.setAttribute('data-idx', k);
-        item.style.cssText = 'padding:6px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9';
+        item.style.cssText = 'padding:6px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9' + (shown[k]['\u0000ref_style'] ? ';' + shown[k]['\u0000ref_style'] : '');
+        if (shown[k]['\u0000ref_style_bg']) item.setAttribute('data-ob-bg', shown[k]['\u0000ref_style_bg']);
+        // choice_row_style disabled: строка видна (архивная реклама), но не выбирается.
+        if (shown[k]['\u0000ref_disabled']) { item.style.cursor = 'not-allowed'; item.style.opacity = '0.7'; item.setAttribute('data-ob-ref-disabled', '1'); }
         (function(o, idx) {
           item.addEventListener('mouseenter', function() { activeIdx = idx; paintActive(); });
           // mousedown, а не click: blur поля ввода закрыл бы список раньше click.
           item.addEventListener('mousedown', function(e) {
             e.preventDefault();
+            if (o['\u0000ref_disabled']) return;
             pick(o);
             args.commitChanges();
           });
@@ -3263,7 +3279,7 @@ function obGridColumnIds(columns) {
           if (seq !== searchSeq || requestFilter !== requestParam()) return; // ответ устарел
           var keep = (activeIdx >= 0 && shown[activeIdx]) ? shown[activeIdx].id : '';
           serverRows = ((data && data.items) || []).map(function(row) {
-            return {id: row && row.id != null ? String(row.id) : '', _label: String((row && row._label) || '')};
+            return {id: row && row.id != null ? String(row.id) : '', _label: String((row && row._label) || ''), '\u0000ref_style': (row && row['\u0000ref_style']) || '', '\u0000ref_style_bg': (row && row['\u0000ref_style_bg']) || '', '\u0000ref_disabled': !!(row && row['\u0000ref_disabled'])};
           }).filter(function(o) { return o.id !== ''; });
           serverFilter = requestFilter;
           if (isOpen) buildList(input.value, keep);
@@ -3277,6 +3293,7 @@ function obGridColumnIds(columns) {
     }
 
     function pick(opt) {
+      if (opt && opt['\u0000ref_disabled']) return; // недоступную строку не выбирают ни мышью, ни Enter
       selectedId = opt.id;
       input.value = opt._label;
       remember(opt);
@@ -3290,12 +3307,12 @@ function obGridColumnIds(columns) {
       if (text === '') { selectedId = ''; return true; }
       if (text === String(label(selectedId) || '').trim()) return true; // поверх не набирали
       var low = text.toLowerCase();
-      var found = candidates(text);
+      var found = candidates(text).filter(function(o) { return !o['\u0000ref_disabled']; });
       for (var k = 0; k < found.length; k++) { // точное совпадение подписи важнее частичного
         if (String(found[k]._label).trim().toLowerCase() === low) { pick(found[k]); return true; }
       }
       if (found.length === 1) { pick(found[0]); return true; }
-      if (activeIdx >= 0 && shown[activeIdx]) { pick(shown[activeIdx]); return true; } // Tab с открытым списком
+      if (activeIdx >= 0 && shown[activeIdx] && !shown[activeIdx]['\u0000ref_disabled']) { pick(shown[activeIdx]); return true; } // Tab с открытым списком
       return false;
     }
 
@@ -3317,6 +3334,9 @@ function obGridColumnIds(columns) {
         var o = document.createElement('option');
         o.value = opts[k].id;
         o.textContent = opts[k]._label;
+        if (opts[k]['\u0000ref_style']) o.setAttribute('style', opts[k]['\u0000ref_style']);
+        if (opts[k]['\u0000ref_style_bg']) o.setAttribute('data-ob-bg', opts[k]['\u0000ref_style_bg']);
+        if (opts[k]['\u0000ref_disabled']) { o.setAttribute('data-ob-ref-disabled', '1'); if (String(opts[k].id) !== String(selectedId)) o.disabled = true; }
         selEl.appendChild(o);
       }
       if(choiceContext && selectedId && !opts.some(function(o){return String(o.id)===String(selectedId);})) {
@@ -3327,7 +3347,9 @@ function obGridColumnIds(columns) {
         var id = selEl.value;
         if (!id) return;
         var chosen = selEl.options[selEl.selectedIndex];
-        pick({id: id, _label: chosen ? chosen.textContent : ''});
+        pick({id: id, _label: chosen ? chosen.textContent : '',
+          '\u0000ref_style': chosen ? chosen.getAttribute('style') || '' : '',
+          '\u0000ref_style_bg': chosen ? chosen.getAttribute('data-ob-bg') || (chosen.style && chosen.style.background) || '' : ''});
         args.commitChanges();
       });
       closeList();

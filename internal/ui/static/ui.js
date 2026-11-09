@@ -3891,6 +3891,8 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
         var o = document.createElement('option');
         o.value = opt.id;
         o.textContent = opt._label || opt.id;
+        if (opt['\u0000ref_style']) o.setAttribute('style', opt['\u0000ref_style']);
+        if (opt['\u0000ref_disabled']) { o.disabled = true; o.setAttribute('data-ob-ref-disabled', '1'); }
         sel.appendChild(o);
       });
       var pickBtn = document.createElement('button');
@@ -4966,9 +4968,13 @@ function obRefreshDependentSelects(sourceEl) {
             var opt = document.createElement('option');
             opt.value = rows[j].id;
             opt.textContent = rows[j]._label != null ? rows[j]._label : rows[j].id;
+            if (rows[j]['\u0000ref_style']) opt.setAttribute('style', rows[j]['\u0000ref_style']);
+            // Выбранное значение не блокируем: disabled-вариант браузер не отправляет.
+            if (rows[j]['\u0000ref_disabled']) { opt.setAttribute('data-ob-ref-disabled', '1'); if (id !== String(current)) opt.disabled = true; }
             sel.appendChild(opt);
           }
           sel.value = keep ? current : '';
+          if (typeof window !== 'undefined' && window.obPaintChoiceValue) window.obPaintChoiceValue(sel);
         })
         .catch(function () {});
     })(targets[i]);
@@ -5238,6 +5244,8 @@ function obChoiceApplyResponse(sel, data, selectedAtRequest) {
     var opt = document.createElement('option');
     opt.value = id;
     opt.textContent = String((row && row._label) || id);
+    if (row && row['\u0000ref_style']) opt.setAttribute('style', row['\u0000ref_style']);
+    if (row && row['\u0000ref_disabled']) { opt.setAttribute('data-ob-ref-disabled', '1'); if (id !== selectedAtRequest) opt.disabled = true; }
     if (id === selectedAtRequest) selectedPresent = true;
     sel.appendChild(opt);
   });
@@ -5252,6 +5260,7 @@ function obChoiceApplyResponse(sel, data, selectedAtRequest) {
 
   var cleared = !!selectedAtRequest && selectedAllowed === false;
   sel.value = cleared ? '' : selectedAtRequest;
+  if (typeof window !== 'undefined' && window.obPaintChoiceValue) window.obPaintChoiceValue(sel);
   sel.removeAttribute('data-ob-choice-error');
   sel.removeAttribute('data-ob-choice-loading');
   sel.removeAttribute('aria-busy');
@@ -5427,7 +5436,8 @@ function openRefPicker(selOrId) {
     // A saved legacy value outside choice_filter stays visible in the field,
     // but must not become a candidate merely because it is an <option>.
     if (o.value && o.getAttribute('data-ob-choice-outside-filter') !== '1') {
-      localOpts.push({ id: o.value, label: o.text });
+      // choice_row_style: оформление строки переносится из <option> в подбор.
+      localOpts.push({ id: o.value, label: o.text, style: o.getAttribute('style') || '', bg: o.getAttribute('data-ob-bg') || (o.style ? o.style.background || '' : ''), disabled: o.getAttribute('data-ob-ref-disabled') === '1' });
     }
   }
   var old = document.getElementById('_ref-picker-modal');
@@ -5521,7 +5531,9 @@ function openRefPicker(selOrId) {
   }
   function rpPaint() {
     var items = rpItems();
-    for (var i = 0; i < items.length; i++) items[i].style.background = (i === rpActive) ? '#eef2ff' : '';
+    // Активная строка — своим фоном; остальные возвращают фон оформления
+    // строки (choice_row_style), а не пустоту.
+    for (var i = 0; i < items.length; i++) items[i].style.background = (i === rpActive) ? '#eef2ff' : (items[i].getAttribute('data-ob-bg') || '');
     if (rpActive >= 0 && items[rpActive] && items[rpActive].scrollIntoView) {
       items[rpActive].scrollIntoView({ block: 'nearest' });
     }
@@ -5545,8 +5557,12 @@ function openRefPicker(selOrId) {
       item.className = '_rp-item';
       item.setAttribute('data-id', opts[i].id);
       item.setAttribute('data-label', opts[i].label);
+      if (opts[i].style) item.setAttribute('data-ob-style', opts[i].style);
       if (opts[i].preview) item.setAttribute('data-preview', opts[i].preview);
-      item.style.cssText = 'padding:9px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:14px;color:#1e293b';
+      item.style.cssText = 'padding:9px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:14px;color:#1e293b' + (opts[i].style ? ';' + opts[i].style : '');
+      if (opts[i].bg) item.setAttribute('data-ob-bg', opts[i].bg);
+      // choice_row_style disabled: строка видна (архивная реклама), но не выбирается.
+      if (opts[i].disabled) { item.setAttribute('data-ob-ref-disabled', '1'); item.style.cursor = 'not-allowed'; item.style.opacity = '0.7'; }
       item.textContent = opts[i].label;
       (function (idx) {
         item.addEventListener('mouseenter', function () { rpActive = idx; rpPaint(); });
@@ -5574,26 +5590,36 @@ function openRefPicker(selOrId) {
     rpReveal();
   }
   function selectItem(item) {
-    if (!window._rpTarget) return;
+    if (!window._rpTarget) return false;
+    if (item.getAttribute('data-ob-ref-disabled') === '1') return false;
     var id = item.getAttribute('data-id') || '';
     var label = item.getAttribute('data-label') || item.textContent || id;
-    var exists = false;
+    var opt = null;
     for (var i = 0; i < window._rpTarget.options.length; i++) {
       if (window._rpTarget.options[i].value === id) {
-        exists = true;
+        opt = window._rpTarget.options[i];
         break;
       }
     }
-    if (!exists && id) {
-      var opt = document.createElement('option');
+    if (!opt && id) {
+      opt = document.createElement('option');
       opt.value = id;
-      opt.textContent = label;
       window._rpTarget.appendChild(opt);
+    }
+    if (opt) {
+      opt.textContent = label;
+      // rpPaint меняет фон активной строки и добавляет геометрию диалога.
+      // В поле переносим только исходное оформление серверного варианта.
+      var css = item.getAttribute('data-ob-style') || '';
+      var bg = item.getAttribute('data-ob-bg') || '';
+      if (css) opt.setAttribute('style', css); else opt.removeAttribute('style');
+      if (bg) opt.setAttribute('data-ob-bg', bg); else opt.removeAttribute('data-ob-bg');
     }
     window._rpTarget.value = id;
     try {
       window._rpTarget.dispatchEvent(new Event('change', { bubbles: true }));
     } catch (e) {}
+    return true;
   }
   var requestSeq = 0;
   var requestController = null;
@@ -5670,7 +5696,7 @@ function openRefPicker(selOrId) {
           var id = row && row.id != null ? String(row.id) : '';
           var preview = '';
           if (rpPreviewField && row && row[rpPreviewField] != null) preview = String(row[rpPreviewField]);
-          return { id: id, label: String((row && row._label) || id), preview: preview };
+          return { id: id, label: String((row && row._label) || id), preview: preview, style: (row && row['\u0000ref_style']) || '', bg: (row && row['\u0000ref_style_bg']) || '', disabled: !!(row && row['\u0000ref_disabled']) };
         }).filter(function (opt) { return opt.id !== ''; });
         renderItems(opts, keep);
         rpReveal();
@@ -5722,7 +5748,7 @@ function openRefPicker(selOrId) {
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (rpActive >= 0 && items[rpActive]) { selectItem(items[rpActive]); closePicker(); }
+      if (rpActive >= 0 && items[rpActive] && selectItem(items[rpActive])) closePicker();
       return;
     }
     // Esc закрываем здесь же: глобальный обработчик живёт в managed.js, а форма
@@ -5734,8 +5760,7 @@ function openRefPicker(selOrId) {
   document.getElementById('_rp-list').addEventListener('click', function (e) {
     var item = e.target.closest('._rp-item');
     if (!item) return;
-    selectItem(item);
-    closePicker();
+    if (selectItem(item)) closePicker();
   });
   var createBtn = document.getElementById('_rp-create');
   if (createBtn) {
@@ -6760,6 +6785,37 @@ function initDetailPanel() {
   var st = document.createElement('style');
   st.textContent = css;
   (document.head || document.documentElement).appendChild(st);
+})();
+
+// choice_style_value: поле ссылки показывает выбранное значение тем же
+// оформлением, что строка в списке выбора (style выбранного <option>).
+// Собственный style поля (ширина и т. п.) хранится отдельно и не теряется.
+window.obPaintChoiceValue = function (sel) {
+  if (!sel || sel.tagName !== 'SELECT' || sel.getAttribute('data-ob-choice-style-value') !== '1') return;
+  var base = sel.getAttribute('data-ob-base-style');
+  if (base === null) {
+    // Сервер даёт основу в data-ob-base-style; без неё основа — нынешний style.
+    base = String(sel.getAttribute('style') || '');
+    sel.setAttribute('data-ob-base-style', base);
+  }
+  var opt = sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex] : null;
+  var css = opt && opt.value ? String(opt.getAttribute('style') || '') : '';
+  sel.setAttribute('style', base + (css ? ';' + css : ''));
+};
+window.obPaintChoiceValues = function (root) {
+  var scope = root || document;
+  if (!scope || typeof scope.querySelectorAll !== 'function') return;
+  var list = scope.querySelectorAll('select[data-ob-choice-style-value="1"]');
+  for (var i = 0; i < list.length; i++) window.obPaintChoiceValue(list[i]);
+};
+if (typeof document !== 'undefined' && document.addEventListener) document.addEventListener('change', function (e) {
+  var t = e && e.target;
+  if (t && t.tagName === 'SELECT') window.obPaintChoiceValue(t);
+}, true);
+(function () {
+  function init() { window.obPaintChoiceValues(document); }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();
 
 /* Индикатор выполнения у форм с data-ob-busy (обработки, отчёты).

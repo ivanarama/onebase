@@ -348,7 +348,43 @@ func allSchemas() map[string]map[string]any {
 				// `presentation: [Артикул, Наименование]` — иначе редактор
 				// подчёркивал бы как ошибку ровно тот вариант, который в
 				// документации назван основным.
-				"choice_preview":      stringSchema("Реквизит, текст которого показывается в области просмотра формы выбора (диалога подбора)"),
+				"choice_preview": stringSchema("Реквизит, текст которого показывается в области просмотра формы выбора (диалога подбора)"),
+				"choice_row_style": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"description":          "Оформление строк выбора ссылок на справочник (выпадающий список, форма подбора, быстрый ввод) по реквизитам элемента",
+					"properties": map[string]any{
+						"for_roles": arrayOf(stringSchema("Роль: оформление только пользователям с одной из ролей")),
+						"for_user": map[string]any{
+							"type":                 "object",
+							"additionalProperties": false,
+							"description":          "Оформление только пользователям, у которых реквизит карточки сотрудника равен предопределённому элементу, либо функция конфигурации вернула Истина",
+							"properties": map[string]any{
+								"func":          stringSchema("«Модуль.Функция» без параметров, возвращает Булево; только чтение"),
+								"card":          stringSchema("Справочник карточки сотрудника"),
+								"account_field": stringSchema("Реквизит карточки reference:_users; можно опустить, если он один"),
+								"field":         stringSchema("Реквизит карточки"),
+								"equals":        stringSchema("<Справочник>.<предопределённый элемент>"),
+							},
+						},
+						"rules": arrayOf(map[string]any{
+							"type":                 "object",
+							"additionalProperties": false,
+							"properties": map[string]any{
+								"when":            stringSchema("Условие на реквизиты элемента: имя булева реквизита или выражение"),
+								"when_param":      stringSchema("Флаг формы, где выбирают: правило действует, если поле передало его истинным (choice_style_params поля)"),
+								"when_in_folder":  stringSchema("Предопределённая группа: правило действует для элементов в ней на любой глубине"),
+								"color_from":      stringSchema("Цвет текста из реквизита элемента: «Реквизит» или «Ссылка.Реквизит»"),
+								"background_from": stringSchema("Цвет фона из реквизита элемента: «Реквизит» или «Ссылка.Реквизит»"),
+								"disabled":        boolSchema("Строка видна, но не выбирается"),
+								"color":           stringSchema("Цвет текста: hex, rgb() или имя цвета"),
+								"background":      stringSchema("Цвет фона: hex, rgb() или имя цвета"),
+								"bold":            boolSchema("Жирный"),
+								"italic":          boolSchema("Курсив"),
+							},
+						}),
+					},
+				},
 				"choice_preview_proc": stringSchema("«Модуль.Функция», собирающая тексты просмотра формы выбора с учётом контекста подбора: Функция(Ссылки, Контекст) → Соответствие"),
 				"presentation": map[string]any{
 					"description": "Реквизит(ы) представления объекта; по умолчанию — правило по именам, «Код» последним",
@@ -582,6 +618,8 @@ func managedFormSchema() map[string]any {
 			"kind":                stringSchema("Вид элемента формы"),
 			"data_path":           stringSchema("Путь к значению элемента"),
 			"equal_columns":       boolSchema("Равная ширина детей горизонтальной ГруппаФормы без scroll_x; по умолчанию false"),
+			"choice_style_params": stringMapSchema(),
+			"choice_style_value":  boolSchema("Показывать выбранное значение поля тем же оформлением, что строку в списке выбора (choice_row_style справочника)."),
 			"choice_folders":      boolSchema("Разрешить выбор элементов и групп иерархического справочника в ссылочном поле; по умолчанию false"),
 			"choice_dropdown":     boolSchema("Предзагружать варианты в выпадающий список ссылочного поля; отсутствие ключа или true включает варианты, false оставляет плейсхолдер и текущее значение для выбора через форму подбора"),
 			"editable_admin_only": boolSchema("Разрешить редактирование поля только администратору; сервер отклоняет изменения от остальных пользователей; по умолчанию false"),

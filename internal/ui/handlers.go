@@ -236,6 +236,9 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 	for _, row := range rows {
 		row["_label"] = firstStringField(row, refEntity)
 	}
+	// choice_row_style: оформление строк выбора (по реквизитам строки и
+	// текущему пользователю) — до сжатия строк до id/_label.
+	s.applyChoiceRowStyles(ctx, refEntity, rows)
 	return rows, nil
 }
 
@@ -471,7 +474,17 @@ func (s *Server) loadInitialTPRefOptions(ctx context.Context, entity *metadata.E
 func compactRefOptionRows(rows []map[string]any) []map[string]any {
 	out := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, map[string]any{"id": row["id"], "_label": row["_label"]})
+		opt := map[string]any{"id": row["id"], "_label": row["_label"]}
+		// Оформление строки выбора (choice_row_style) едет вместе с вариантом.
+		if row[refOptionDisabledKey] == true {
+			opt[refOptionDisabledKey] = true
+		}
+		for _, k := range []string{refOptionStyleKey, refOptionStyleBgKey} {
+			if v, ok := row[k].(refOptionCSS); ok {
+				opt[k] = v
+			}
+		}
+		out = append(out, opt)
 	}
 	return out
 }
@@ -536,6 +549,7 @@ func (s *Server) appendSelectedRefOptions(ctx context.Context, rows []map[string
 			continue
 		}
 		// SQL result order is unspecified; keep the first selected occurrence.
+		appended := make([]map[string]any, 0, len(batch))
 		for _, id := range batch {
 			row := selectedRows[id.String()]
 			if row == nil {
@@ -544,8 +558,10 @@ func (s *Server) appendSelectedRefOptions(ctx context.Context, rows []map[string
 			// Mask before computing the label; TP HTTP options project only id/_label.
 			s.maskRecord(ctx, refEntity, row)
 			row["_label"] = firstStringField(row, refEntity)
-			rows = append(rows, row)
+			appended = append(appended, row)
 		}
+		s.applyChoiceRowStyles(ctx, refEntity, appended)
+		rows = append(rows, appended...)
 	}
 	return rows
 }
