@@ -236,12 +236,26 @@ const tplManagedForm = `
   {{$hChg := hasHandler $el "ПриИзменении"}}
   <div class="form-group{{if elFill $el}} ob-el-fill{{end}}{{if $el.TextBold}} ob-text-bold{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{with elLayout $el}} style="{{.}}"{{end}}>
     <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}{{if and $el.Hint (not $el.HintInline)}} <span class="ob-hint" title="{{$el.Hint}}" aria-label="{{$el.Hint}}">ⓘ</span>{{end}}</label>
+    {{if $el.ChoiceFreeInput}}
+    {{/* choice_free_input: строка ввода + свой список вариантов (1С: СписокВыбора
+         с РедактированиемТекста). Не <datalist>: Chrome подмешивает в него
+         автозаполнение. Значение — то, что в строке: выбранный вариант или
+         вписанный текст; при повторном открытии показывается как есть. */}}
+    <div class="ob-free-choice" data-ob-free-choice>
+      <input type="text" name="{{$fn}}" value="{{index $ctx.Values $fn}}" autocomplete="off" data-ob-free-choice-input{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+      <button type="button" class="ob-free-choice-btn" tabindex="-1" aria-label="Выбрать из списка" title="Выбрать из списка"{{if $ro}} disabled{{end}}>▾</button>
+      <div class="ob-free-choice-list" role="listbox" hidden>
+        {{range index $ctx.ChoiceOptions $el.Name}}<div class="ob-free-choice-opt" role="option" data-value="{{.Value}}">{{.Label}}</div>{{end}}
+      </div>
+    </div>
+    {{else}}
     <select name="{{$fn}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if and $roUnlockable (hasHandler $el "НачалоВыбора")}} data-el="{{$el.Name}}" data-ob-list-choice="{{$el.Name}}"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
       {{range index $ctx.ChoiceOptions $el.Name}}
       <option value="{{.Value}}" {{if eq .Value (index $ctx.Values $fn)}}selected{{end}}>{{.Label}}</option>
       {{end}}
     </select>
+    {{end}}
     {{if and $el.Hint $el.HintInline}}<small style="color:#94a3b8;font-size:11px">{{$el.Hint}}</small>{{end}}
   </div>
 {{else if eq (str $el.Kind) "Флажок"}}
@@ -570,6 +584,15 @@ const tplManagedForm = `
 {{template "head" .}}{{if not .IsPopup}}{{template "nav" .}}{{end}}
 {{if .TabTitle}}<meta name="ob-tab-title" content="{{.TabTitle}}">{{end}}
 <style>
+/* choice_free_input: строка ввода со своим списком вариантов. */
+.ob-free-choice{position:relative;display:flex;align-items:stretch}
+.ob-free-choice>input{flex:1 1 auto;min-width:0;border-top-right-radius:0;border-bottom-right-radius:0}
+.ob-free-choice-btn{flex:0 0 auto;width:28px;border:1px solid #e2e8f0;border-left:none;border-radius:0 7px 7px 0;background:#f8fafc;color:#475569;cursor:pointer;font-size:12px;padding:0}
+.ob-free-choice-btn:disabled{cursor:default;opacity:.5}
+.ob-free-choice-list{position:absolute;top:100%;left:0;right:0;z-index:60;max-height:240px;overflow-y:auto;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 6px 18px rgba(15,23,42,.12);margin-top:2px}
+.ob-free-choice-opt{padding:6px 10px;cursor:pointer;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ob-free-choice-opt.active,.ob-free-choice-opt:hover{background:#eef4ff}
+.ob-free-choice-opt[hidden]{display:none}
 .ob-grid[data-ob-choice-error="1"] { outline: 2px solid #dc2626; }
 /* deadline_warn: поле-срок подсвечивается по часам браузера (obDeadlineTick). */
 input.ob-deadline-soon,.form-group input.ob-deadline-soon[readonly]{background:#fef3c7 !important;border-color:#f59e0b !important;color:#92400e !important}
