@@ -14,6 +14,8 @@ const pickerSource = source.slice(source.indexOf('var obPickerSearch = {'), sour
 // После слияния с конвейером очереди событий (#1557/#1528) настоящий obFire
 // тянет за собой snapshot/dispatch и close-контроллер: вырезаем весь домен.
 const controlStateSource = managedSource.slice(managedSource.indexOf('  function controlSubmittable('), managedSource.indexOf('  function applyValues('));
+// Тост сообщений модуля (obFlashMessage) живёт в том же IIFE, что obFire.
+const messageStatusSource = managedSource.slice(managedSource.indexOf('  // BEGIN onebase-message-status'), managedSource.indexOf('  // END onebase-message-status'));
 const fireSource = managedSource.slice(managedSource.indexOf('  // obFire(elementName'), managedSource.indexOf('\n  // Отслеживание'));
 
 // Узел ровно того объёма, который трогает openItemPicker: дерево, атрибуты,
@@ -162,7 +164,7 @@ function pickerContext(managed = false) {
       // close-контроллер читает конфигурацию на инициализации.
       cfg: {},
     };
-    new Function(...Object.keys(deps), controlStateSource + fireSource)(...Object.values(deps));
+    new Function(...Object.keys(deps), messageStatusSource + controlStateSource + fireSource)(...Object.values(deps));
   }
   function modal() { return document.getElementById('_item-picker-modal'); }
   function box() { return modal() ? modal().children[0] : null; }

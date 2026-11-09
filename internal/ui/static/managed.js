@@ -362,6 +362,26 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
   }
   // Доступно другим скриптам (например, грид-IIFE показывает ошибки настройки).
   window.obFlash = flash;
+  // BEGIN onebase-message-status
+  // obMessageParts разбирает сообщение модуля: Сообщить(Текст, Статус) везёт
+  // статус невидимой меткой в начале строки — U+2063, повторённый по номеру
+  // статуса, и U+2064 (internal/msgstatus). 3 и 4 — Важное и ОченьВажное:
+  // такое сообщение показывается как ошибка и не исчезает само.
+  function obMessageParts(raw){
+    const text = raw == null ? '' : String(raw);
+    const m = /^(⁣{1,4})⁤/.exec(text);
+    if (!m) return { text: text, error: false };
+    return { text: text.slice(m[0].length), error: m[1].length >= 3 };
+  }
+  // obFlashMessage показывает сообщение модуля тостом: обычное — зелёным,
+  // со статусом Важное/ОченьВажное — красным до закрытия.
+  function obFlashMessage(raw){
+    const parts = obMessageParts(raw);
+    flash(parts.text, parts.error ? 'err' : 'ok');
+  }
+  // END onebase-message-status
+  window.obMessageParts = obMessageParts;
+  window.obFlashMessage = obFlashMessage;
   // managedRefParts распознаёт только две wire-формы ссылки. Произвольный
   // JSON-объект с похожим полем нельзя молча превращать в ссылку.
   function managedRefParts(v){
@@ -1302,7 +1322,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
           // controls may receive values from the older server snapshot.
           applyCloseResponse(data, snapshot.body, currentBody);
         } else {
-          (data.messages || []).forEach(m => flash(m, 'ok'));
+          (data.messages || []).forEach(obFlashMessage);
           if (data.error) flash(data.error, 'err');
         }
         setManagedFormDirty(true);
@@ -1339,7 +1359,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         // эхо отправленного значения не затирает.
         if (data.values) applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
         if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
-        (data.messages || []).forEach(m => flash(m, 'ok'));
+        (data.messages || []).forEach(obFlashMessage);
         if (data.error) flash(data.error, 'err');
         openItemPicker(data.pickerData, elementName, extraParams || null, snapshot.pickerRequest);
         return;
@@ -1385,7 +1405,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 		setManagedFormDirty(formEditState.revision !== snapshot.editRevision);
 	  }
       if (!beforePostMerged) {
-        (data.messages || []).forEach(m => flash(m, 'ok'));
+        (data.messages || []).forEach(obFlashMessage);
         if (data.error) flash(data.error, 'err');
       }
       if (navigationBlocked) flash(closeMessage('navigationDirty', 'Форма содержит несохранённые изменения — переход не выполнен'), 'err');
@@ -1828,7 +1848,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 	applyValues(values, refOptions);
 	applyFormTables(formTables);
     if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, document.getElementById('main-form'), values || {}, data.values || {});
-    (data.messages || []).forEach(function(message){ flash(message, 'ok'); });
+    (data.messages || []).forEach(obFlashMessage);
     if (data.error) flash(data.error, 'err');
     } catch (e) {
       if (window.obApplyConcealed) window.obApplyConcealed([], form, {});
@@ -2066,7 +2086,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 		  if (data.close && data.close.saved === true) {
 			if (currentBody) applyCloseResponse(data, body, currentBody);
 			else {
-			  (data.messages || []).forEach(function(message){ flash(message, 'ok'); });
+			  (data.messages || []).forEach(obFlashMessage);
 			  if (data.error) flash(data.error, 'err');
 			}
           }

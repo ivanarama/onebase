@@ -20,6 +20,7 @@ import (
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/mailer"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/msgstatus"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 )
@@ -1050,8 +1051,7 @@ func (s *Scheduler) runProcessor(ctx context.Context, job *metadata.ScheduledJob
 
 	var messages []string
 	msgFunc := interpreter.BuiltinFunc(func(args []any, file string, line int) (any, error) {
-		if len(args) > 0 {
-			text := fmt.Sprintf("%v", args[0])
+		if text, ok := msgstatus.FromArgs(args); ok {
 			messages = append(messages, text)
 			if msgSink != nil {
 				msgSink("", text)
@@ -1095,7 +1095,7 @@ func (s *Scheduler) runProcessor(ctx context.Context, job *metadata.ScheduledJob
 	// пустым — молча (#706). Тот же вызов, что в UI и procrun.
 	_, err := s.interp.Call(procDecl, paramsThis, interpreter.BindNamedArgs(procDecl, paramValues), dslVars)
 	err = interpreter.FinishTxExecution(txState, err)
-	output = strings.Join(messages, "\n")
+	output = strings.Join(msgstatus.StripAll(messages), "\n")
 	return output, err
 }
 

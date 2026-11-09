@@ -17,6 +17,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/msgstatus"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/webhook"
@@ -295,7 +296,7 @@ func (h *handler) createObject(kind metadata.Kind) http.HandlerFunc {
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":       result.ID.String(),
-			"messages": result.DSLMessages,
+			"messages": msgstatus.StripAll(result.DSLMessages),
 		})
 	}
 }
@@ -436,7 +437,7 @@ func (h *handler) updateObject(kind metadata.Kind) http.HandlerFunc {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":       id.String(),
-			"messages": result.DSLMessages,
+			"messages": msgstatus.StripAll(result.DSLMessages),
 		})
 	}
 }
@@ -571,7 +572,7 @@ func (h *handler) postDocument() http.HandlerFunc {
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":       id.String(),
 			"posted":   true,
-			"messages": result.DSLMessages,
+			"messages": msgstatus.StripAll(result.DSLMessages),
 		})
 	}
 }

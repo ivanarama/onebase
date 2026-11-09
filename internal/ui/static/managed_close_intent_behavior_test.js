@@ -33,6 +33,8 @@ const fileSubmitStart = managed.indexOf('  obManagedReady(restoreFormAttrs);');
 const fileSubmitEnd = managed.indexOf('  window._obFormDirty = false;', fileSubmitStart);
 assert.ok(fileSubmitStart >= 0 && fileSubmitEnd > fileSubmitStart, 'managed file-submit slice not found');
 const fileSubmitHandler = managed.slice(fileSubmitStart, fileSubmitEnd);
+// Тост сообщений модуля (obFlashMessage) живёт в том же IIFE, что контроллер.
+const messageStatus = managed.slice(managed.indexOf('  // BEGIN onebase-message-status'), managed.indexOf('  // END onebase-message-status'));
 
 class FakeFormData {
   constructor(form) {
@@ -226,7 +228,7 @@ function runtime(fetchImpl, cfgOverride = {}, productionValues = false) {
       function applyFormTables(value){ globalThis.__applied.push(['tables', value]); }
 	  function openItemPicker(value, name, extra){ globalThis.__applied.push(['picker', value, name, extra]); }
       function flash(value, kind){ globalThis.__applied.push(['flash', value, kind]); }
-  `;
+  ` + messageStatus;
   vm.runInNewContext(prefix + (productionValues ? valueRenderer + dirtyListeners : controlStateRenderer) + eventController + controller + '\n})();', context, {filename: 'managed-close-controller.js'});
   vm.runInNewContext(escapeHandler, context, {filename: 'managed-close-escape.js'});
 	return {

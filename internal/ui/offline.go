@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/debugger"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
+	"github.com/ivantit66/onebase/internal/msgstatus"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
@@ -152,5 +153,7 @@ func (s *Server) RunProcessor(ctx context.Context, reg *runtime.Registry, procNa
 	// пустым — молча, со значением по умолчанию (#706).
 	_, runErr = s.interp.Call(procDecl, paramsThis, interpreter.BindNamedArgs(procDecl, paramValues), dslVars)
 	runErr = finishDSLExecution(txState, runErr)
-	return messages, runErr, nil
+	// Вне браузера (procrun, отчёт тестов) статус сообщения не показывается —
+	// отдаём только текст.
+	return msgstatus.StripAll(messages), runErr, nil
 }

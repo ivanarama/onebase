@@ -10,6 +10,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
 	"github.com/ivantit66/onebase/internal/dsl/parser"
+	"github.com/ivantit66/onebase/internal/msgstatus"
 	"github.com/ivantit66/onebase/internal/project"
 	"github.com/spf13/cobra"
 )
@@ -80,8 +81,9 @@ func runEval(cmd *cobra.Command, args []string) error {
 
 	messages := []string{}
 	msgFunc := interpreter.BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
-		if len(args) > 0 {
-			messages = append(messages, fmt.Sprintf("%v", args[0]))
+		// Командной строке статус не нужен: печатается только текст.
+		if text, ok := msgstatus.FromArgs(args); ok {
+			messages = append(messages, msgstatus.Strip(text))
 		}
 		return nil, nil
 	})
