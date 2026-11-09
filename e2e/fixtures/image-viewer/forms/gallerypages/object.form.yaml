@@ -1,0 +1,39 @@
+schema: onebase.form/v1
+form: {name: GalleryPages, kind: object, entity: GalleryPages}
+elements:
+  - {kind: ПолеВвода, name: NameField, data_path: Объект.Name}
+  - {kind: ПолеВвода, name: OwnerField, data_path: Объект.Owner}
+  - {kind: ПолеВвода, name: HideSecondField, data_path: Объект.HideSecond}
+  - {kind: ПолеВвода, name: HideNestedField, data_path: Объект.HideNested}
+  - {kind: ПолеВвода, name: FirstField, data_path: Объект.First, title: {ru: First}}
+  - {kind: Кнопка, name: ToggleOuter, title: {ru: Toggle outer}, events: {Нажатие: ToggleOuter}}
+  - {kind: Кнопка, name: ToggleNested, title: {ru: Toggle nested}, events: {Нажатие: ToggleNested}}
+  - kind: СтраницыФормы
+    name: Pages
+    children:
+      - {kind: Страница, name: PageOne, title: {ru: One}}
+      - kind: Страница
+        name: PageTwo
+        title: {ru: Two}
+        hidden_when: 'HideSecond = Истина'
+        children:
+          - {kind: ПолеВвода, name: SecondField, data_path: Объект.Second, title: {ru: Second}}
+          - kind: СтраницыФормы
+            name: InnerPages
+            children:
+              - {kind: Страница, name: InnerOne, title: {ru: Inner one}}
+              - kind: Страница
+                name: InnerTwo
+                title: {ru: Inner two}
+                hidden_when: 'HideNested = Истина'
+                children:
+                  - {kind: ПолеВвода, name: NestedField, data_path: Объект.Nested, title: {ru: Nested}}
+  - kind: СтраницыФормы
+    name: OtherPages
+    children:
+      - {kind: Страница, name: OtherOne, title: {ru: Other one}}
+      - kind: Страница
+        name: OtherTwo
+        title: {ru: Other two}
+        children:
+          - {kind: ПолеВвода, name: OtherField, data_path: Объект.Other, title: {ru: Other}}

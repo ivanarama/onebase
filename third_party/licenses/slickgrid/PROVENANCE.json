@@ -1,0 +1,10 @@
+{
+  "name": "slickgrid",
+  "version": "5.18.6",
+  "license": "MIT",
+  "tarball": "https://registry.npmjs.org/slickgrid/-/slickgrid-5.18.6.tgz",
+  "integrity": "sha512-hBg6nnKrz5Qfjt4zL/q86irRYuY40RCziuHVZTBcelb6k0/yaG2SRARU3aETc7mIFh8DZWNFzWxsHMcGDdi3Xw==",
+  "source_bundle": "package/dist/browser/slick.grid.js",
+  "identity_verified": true,
+  "identity_scope": "The principal vendored JavaScript bundle matches this published archive after CRLF-to-LF normalization. Remaining vendored files are separately pinned in catalog.json; local subsets and custom styles are not claimed to be the entire upstream package."
+}

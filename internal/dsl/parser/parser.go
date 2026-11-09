@@ -126,12 +126,24 @@ func (p *Parser) parseProcedure() (*ast.ProcedureDecl, error) {
 	}
 	var params []token.Token
 	var defaults []ast.Expr
+	var byVal []bool
 	for p.cur.Type != token.RPAREN && p.cur.Type != token.EOF {
+		// «Знач Имя» — модификатор передачи по значению, как в 1С. Само слово
+		// остаётся допустимым именем параметра («ПустоеЗнач(Знач)»): модификатор
+		// это только тогда, когда за ним сразу идёт имя.
+		val := false
+		if p.cur.Type == token.IDENT && p.peek.Type == token.IDENT {
+			if low := strings.ToLower(p.cur.Literal); low == "знач" || low == "val" {
+				val = true
+				p.advance()
+			}
+		}
 		paramTok, err := p.expect(token.IDENT)
 		if err != nil {
 			return nil, err
 		}
 		params = append(params, paramTok)
+		byVal = append(byVal, val)
 		// Опциональное значение по умолчанию: ИмяПарам = expr (см.
 		var def ast.Expr
 		if p.cur.Type == token.ASSIGN {
@@ -143,8 +155,16 @@ func (p *Parser) parseProcedure() (*ast.ProcedureDecl, error) {
 			def = d
 		}
 		defaults = append(defaults, def)
-		if p.cur.Type == token.COMMA {
+		switch p.cur.Type {
+		case token.COMMA:
 			p.advance()
+		case token.RPAREN:
+		default:
+			// Раньше запятая была необязательной, и «Ф(Текст Тег)» молча
+			// давало два параметра — а незнакомый модификатор сдвигал все
+			// аргументы. Два имени подряд — ошибка сигнатуры.
+			return nil, fmt.Errorf("%s:%d:%d: в списке параметров %s после %q ожидалась «,» или «)», получено %q",
+				p.cur.File, p.cur.Line, p.cur.Col, nameTok.Literal, paramTok.Literal, p.cur.Literal)
 		}
 	}
 	if _, err := p.expect(token.RPAREN); err != nil {
@@ -171,7 +191,7 @@ func (p *Parser) parseProcedure() (*ast.ProcedureDecl, error) {
 		return nil, err
 	}
 	p.advance() // consume EndProcedure/EndFunction
-	return &ast.ProcedureDecl{Name: nameTok, Params: params, Defaults: defaults, Body: body, Export: exported}, nil
+	return &ast.ProcedureDecl{Name: nameTok, Params: params, Defaults: defaults, ByVal: byVal, Body: body, Export: exported}, nil
 }
 
 // isBlockEnd returns true for tokens that end a block from the outside.

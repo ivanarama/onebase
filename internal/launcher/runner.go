@@ -23,6 +23,7 @@ import (
 	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	"github.com/ivantit66/onebase/internal/processcontrol"
+	"github.com/ivantit66/onebase/internal/userdata"
 )
 
 type managedProc struct {
@@ -1009,11 +1010,11 @@ func baseLogPath(id string) (string, error) {
 	if logsDirOverride != "" {
 		return filepath.Join(logsDirOverride, id+".log"), nil
 	}
-	home, err := os.UserHomeDir()
+	root, err := userdata.Path()
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, ".onebase", "logs")
+	dir := filepath.Join(root, "logs")
 	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return "", err
 	}
@@ -1029,11 +1030,11 @@ func BaseLogPath(id string) (string, error) { return baseLogPath(id) }
 // миграции базы. Метка лежит в служебной папке лаунчера (а не в каталоге
 // конфигурации), чтобы не попадать в скан .os/.yaml и в git.
 func migrateMarkerPath(id string) (string, error) {
-	home, err := os.UserHomeDir()
+	root, err := userdata.Path()
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Join(home, ".onebase", "state")
+	dir := filepath.Join(root, "state")
 	if err := os.MkdirAll(dir, fsmode.Dir); err != nil {
 		return "", err
 	}
