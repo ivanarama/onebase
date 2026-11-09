@@ -27,6 +27,7 @@ import (
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/storage"
+	"github.com/ivantit66/onebase/internal/userdata"
 	"gopkg.in/yaml.v3"
 )
 
@@ -42,8 +43,8 @@ func (h *handler) backupDir(b *Base) string {
 	if b.Path != "" {
 		return filepath.Join(b.Path, "backups")
 	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".onebase", "backups", b.ID)
+	dir, _ := userdata.Path("backups", b.ID)
+	return dir
 }
 
 // safeBackupPath joins dir and file, guaranteeing the result stays inside dir.
