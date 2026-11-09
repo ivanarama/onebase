@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -26,6 +27,8 @@ query PipelineHealthSnapshot(
   $includeIssues: Boolean!
 ) {
   repository(owner: $owner, name: $name) {
+    id
+    nameWithOwner
     pullRequests(
       states: OPEN
       first: 100
@@ -43,6 +46,11 @@ query PipelineHealthSnapshot(
         updatedAt
         state
         isDraft
+        baseRepository { id nameWithOwner }
+        headRepository { id nameWithOwner }
+        headRefName
+        baseRefOid
+        isCrossRepository
         headRefOid
         baseRefName
         labels(first: 100) {
@@ -205,15 +213,44 @@ type pipelineGraphQLClient interface {
 // shell. GraphQL errors are parsed even when gh exits non-zero: partial data is
 // never accepted as a queue snapshot.
 type ghPipelineGraphQLClient struct {
-	executable string
-	timeout    time.Duration
-	run        pipelineGraphQLCommandRunner
+	strictIdentity bool
+	executable     string
+	timeout        time.Duration
+	run            pipelineGraphQLCommandRunner
 }
 
 type pipelineGraphQLCommandRunner func(ctx context.Context, executable string, input []byte, stdout, stderr io.Writer) error
 
 type pipelineGraphQLAPIError struct {
 	messages []string
+}
+
+// Only an explicit gateway HTTP failure from gh is retryable. GraphQL errors,
+// rate limits, authentication failures and timeouts keep their normal refusal.
+type pipelineGraphQLGatewayError struct {
+	status int
+	err    error
+}
+
+func (err *pipelineGraphQLGatewayError) Error() string { return err.err.Error() }
+func (err *pipelineGraphQLGatewayError) Unwrap() error { return err.err }
+
+func pipelineGraphQLGatewayStatus(detail string) int {
+	detail = strings.TrimSpace(detail)
+	if strings.ContainsAny(detail, "\r\n") || !strings.HasPrefix(detail, "gh: ") {
+		return 0
+	}
+	code := strings.TrimPrefix(detail, "gh: HTTP ")
+	if code == detail && strings.HasSuffix(detail, ")") {
+		if index := strings.LastIndex(detail, " (HTTP "); index >= 0 {
+			code = detail[index+7 : len(detail)-1]
+		}
+	}
+	status, _ := strconv.Atoi(code)
+	if status == 502 || status == 503 || status == 504 {
+		return status
+	}
+	return 0
 }
 
 func (err *pipelineGraphQLAPIError) Error() string {
@@ -301,8 +338,11 @@ func (client *ghPipelineGraphQLClient) Query(query string, variables map[string]
 		return fmt.Errorf("gh api graphql stderr exceeds %d bytes", maxPipelineGraphQLStderrBytes)
 	}
 
-	decodeErr := decodePipelineGraphQLResponse(stdout.Bytes(), destination)
 	if runErr != nil {
+		// A failed command must never populate the caller's destination, even
+		// if stdout contains syntactically valid partial data.
+		var discarded json.RawMessage
+		decodeErr := decodePipelineGraphQLResponse(stdout.Bytes(), &discarded)
 		if _, ok := decodeErr.(*pipelineGraphQLAPIError); ok {
 			return decodeErr
 		}
@@ -311,12 +351,18 @@ func (client *ghPipelineGraphQLClient) Query(query string, variables map[string]
 			detail = strings.TrimSpace(stdout.String())
 		}
 		detail = truncatePipelineGraphQLDetail(detail)
-		return fmt.Errorf("run gh api graphql: %w: %s", runErr, detail)
+		err := fmt.Errorf("run gh api graphql: %w: %s", runErr, detail)
+		if status := pipelineGraphQLGatewayStatus(stderr.String()); status != 0 {
+			return &pipelineGraphQLGatewayError{status: status, err: err}
+		}
+		return err
 	}
-	if decodeErr != nil {
-		return decodeErr
+	if client.strictIdentity {
+		if err := validateIdentityJSON(stdout.Bytes()); err != nil {
+			return err
+		}
 	}
-	return nil
+	return decodePipelineGraphQLResponse(stdout.Bytes(), destination)
 }
 
 func runPipelineGraphQLCommand(ctx context.Context, executable string, input []byte, stdout, stderr io.Writer) error {
@@ -324,6 +370,7 @@ func runPipelineGraphQLCommand(ctx context.Context, executable string, input []b
 	// interpreted by a shell.
 	//nolint:gosec
 	cmd := exec.CommandContext(ctx, executable, "api", "graphql", "--input", "-")
+	preparePipelineGraphQLCommand(cmd)
 	cmd.Stdin = bytes.NewReader(input)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
@@ -530,21 +577,26 @@ func (connection *gqlPullCommitConnection) UnmarshalJSON(data []byte) error {
 }
 
 type gqlPull struct {
-	NodeID      string                  `json:"id"`
-	Number      int                     `json:"number"`
-	Title       string                  `json:"title"`
-	Body        string                  `json:"body"`
-	URL         string                  `json:"url"`
-	CreatedAt   string                  `json:"createdAt"`
-	UpdatedAt   string                  `json:"updatedAt"`
-	State       string                  `json:"state"`
-	Draft       bool                    `json:"isDraft"`
-	HeadRefOID  string                  `json:"headRefOid"`
-	BaseRefName string                  `json:"baseRefName"`
-	Labels      gqlLabelConnection      `json:"labels"`
-	Comments    gqlCommentConnection    `json:"comments"`
-	Commits     gqlPullCommitConnection `json:"commits"`
-	HeadParents []string                `json:"-"`
+	BaseRepository  *gqlRepositoryIdentity  `json:"baseRepository"`
+	HeadRepository  *gqlRepositoryIdentity  `json:"headRepository"`
+	HeadRefName     string                  `json:"headRefName"`
+	BaseRefOID      string                  `json:"baseRefOid"`
+	CrossRepository *bool                   `json:"isCrossRepository"`
+	NodeID          string                  `json:"id"`
+	Number          int                     `json:"number"`
+	Title           string                  `json:"title"`
+	Body            string                  `json:"body"`
+	URL             string                  `json:"url"`
+	CreatedAt       string                  `json:"createdAt"`
+	UpdatedAt       string                  `json:"updatedAt"`
+	State           string                  `json:"state"`
+	Draft           bool                    `json:"isDraft"`
+	HeadRefOID      string                  `json:"headRefOid"`
+	BaseRefName     string                  `json:"baseRefName"`
+	Labels          gqlLabelConnection      `json:"labels"`
+	Comments        gqlCommentConnection    `json:"comments"`
+	Commits         gqlPullCommitConnection `json:"commits"`
+	HeadParents     []string                `json:"-"`
 }
 
 func (pull *gqlPull) UnmarshalJSON(data []byte) error {
@@ -573,6 +625,22 @@ func (pull *gqlPull) UnmarshalJSON(data []byte) error {
 	} {
 		if err := decodeGQLRequired(fields, field.name, field.destination); err != nil {
 			return err
+		}
+	}
+	// Optional to retain the ordinary v1 reader and historical fixtures. The
+	// explicit identity view rejects absent or contradictory identity metadata.
+	for _, field := range []struct {
+		name        string
+		destination any
+	}{
+		{"baseRepository", &pull.BaseRepository}, {"headRepository", &pull.HeadRepository},
+		{"headRefName", &pull.HeadRefName}, {"baseRefOid", &pull.BaseRefOID},
+		{"isCrossRepository", &pull.CrossRepository},
+	} {
+		if raw, ok := fields[field.name]; ok {
+			if err := json.Unmarshal(raw, field.destination); err != nil {
+				return err
+			}
 		}
 	}
 	if pull.NodeID == "" || pull.Number <= 0 || pull.State != "OPEN" || pull.HeadRefOID == "" || pull.BaseRefName == "" {
@@ -645,8 +713,10 @@ func (connection *gqlIssueConnection) UnmarshalJSON(data []byte) error {
 
 type gqlSnapshotData struct {
 	Repository *struct {
-		PullRequests *gqlPullConnection  `json:"pullRequests"`
-		Issues       *gqlIssueConnection `json:"issues"`
+		ID            string              `json:"id"`
+		NameWithOwner string              `json:"nameWithOwner"`
+		PullRequests  *gqlPullConnection  `json:"pullRequests"`
+		Issues        *gqlIssueConnection `json:"issues"`
 	} `json:"repository"`
 }
 
@@ -787,15 +857,59 @@ func isJSONNull(data []byte) bool {
 
 type limitedPipelineGraphQLClient struct {
 	delegate pipelineGraphQLClient
+	mu       sync.Mutex
 	used     int
 }
 
-func (client *limitedPipelineGraphQLClient) Query(query string, variables map[string]any, destination any) error {
+func (client *limitedPipelineGraphQLClient) reserveQuery() bool {
+	client.mu.Lock()
+	defer client.mu.Unlock()
 	if client.used >= maxPipelineGraphQLQueries {
-		return fmt.Errorf("GraphQL snapshot exceeded %d queries", maxPipelineGraphQLQueries)
+		return false
 	}
 	client.used++
-	return client.delegate.Query(query, variables, destination)
+	return true
+}
+
+func (client *limitedPipelineGraphQLClient) exhausted() bool {
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	return client.used >= maxPipelineGraphQLQueries
+}
+
+func limitPipelineGraphQLClient(client pipelineGraphQLClient) *limitedPipelineGraphQLClient {
+	if bounded, ok := client.(*limitedPipelineGraphQLClient); ok {
+		return bounded
+	}
+	return &limitedPipelineGraphQLClient{delegate: client}
+}
+
+func (client *limitedPipelineGraphQLClient) Query(query string, variables map[string]any, destination any) error {
+	// Retry one failed read, not the health command, election or publication.
+	// All physical attempts share the snapshot's existing query budget, even
+	// across a later queue-churn restart. Mutations are never retried.
+	read := strings.TrimSpace(query)
+	read = strings.TrimPrefix(read, "query")
+	readOnly := len(read) < len(strings.TrimSpace(query)) && len(read) > 0 &&
+		strings.ContainsRune(" \t\r\n({", rune(read[0]))
+	for attempt := 0; ; attempt++ {
+		if !client.reserveQuery() {
+			return fmt.Errorf("GraphQL snapshot exceeded %d queries", maxPipelineGraphQLQueries)
+		}
+		err := client.delegate.Query(query, variables, destination)
+		var gateway *pipelineGraphQLGatewayError
+		if err == nil || !readOnly || !errors.As(err, &gateway) {
+			return err
+		}
+		if attempt == 2 {
+			return fmt.Errorf("GraphQL read failed after 3 attempts: %w", err)
+		}
+		if client.exhausted() {
+			return fmt.Errorf("GraphQL snapshot exceeded %d queries: %w", maxPipelineGraphQLQueries, err)
+		}
+		fmt.Fprintf(os.Stderr, "pipelinehealth: retrying GraphQL read after HTTP %d (attempt %d/3)\n", gateway.status, attempt+2)
+		time.Sleep(time.Duration(attempt+1) * 250 * time.Millisecond)
+	}
 }
 
 // loadPipelineInputsGraphQL preserves the historical fixture matrix. In
@@ -836,13 +950,14 @@ func loadPipelineInputsGraphQL(client pipelineGraphQLClient, repo, trustedOwner,
 
 // A page count changing is transient queue churn, not permission to accept a
 // partial snapshot. Restart the entire read, at most three times, under one
-// shared query budget. Other failures remain fail-closed without retries.
+// shared query budget. The bounded client separately handles explicit gateway
+// failures of a single read; other failures remain fail-closed without retries.
 type pipelineSnapshotChurn struct{ detail string }
 
 func (err *pipelineSnapshotChurn) Error() string { return err.detail }
 
 func loadStableGraphQLSnapshot(client pipelineGraphQLClient, repo, trustedOwner string, includePulls, includeIssues bool) ([]apiPull, []apiIssue, error) {
-	bounded := &limitedPipelineGraphQLClient{delegate: client}
+	bounded := limitPipelineGraphQLClient(client)
 	for attempt := 0; ; attempt++ {
 		pulls, issues, err := loadGraphQLSnapshot(bounded, repo, trustedOwner, includePulls, includeIssues)
 		var churn *pipelineSnapshotChurn
@@ -897,7 +1012,7 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo, trustedOwner string
 	if client == nil {
 		return nil, nil, fmt.Errorf("GitHub GraphQL client is required")
 	}
-	client = &limitedPipelineGraphQLClient{delegate: client}
+	client = limitPipelineGraphQLClient(client)
 	repositoryOwner, name, err := splitGitHubRepository(repo)
 	if err != nil {
 		return nil, nil, err
@@ -912,6 +1027,7 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo, trustedOwner string
 	var rawPulls []gqlPull
 	var rawIssues []gqlIssue
 	pullTotal, issueTotal := -1, -1
+	var expectedBase *apiRepository
 	pullNodes, issueNodes := map[string]bool{}, map[string]bool{}
 
 	for !pullsDone || !issuesDone {
@@ -931,6 +1047,12 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo, trustedOwner string
 			return nil, nil, fmt.Errorf("load GitHub queue snapshot: repository %s not found", repo)
 		}
 
+		observedBase := apiRepository{NodeID: data.Repository.ID, FullName: data.Repository.NameWithOwner}
+		if expectedBase == nil {
+			expectedBase = &observedBase
+		} else if *expectedBase != observedBase {
+			return nil, nil, &pipelineSnapshotChurn{"repository identity changed during pagination"}
+		}
 		if !pullsDone {
 			connection := data.Repository.PullRequests
 			if connection == nil {
@@ -1022,6 +1144,13 @@ func loadGraphQLSnapshot(client pipelineGraphQLClient, repo, trustedOwner string
 		pull, err := convertGQLPull(raw)
 		if err != nil {
 			return nil, nil, fmt.Errorf("PR #%d: %w", raw.Number, err)
+		}
+		pull.ExpectedBaseRepository = expectedBase
+		if needsFullCurrentReview(pull, trustedOwner) {
+			pull.FullCurrentReview, err = loadFullCurrentReview(client, pull, repo, trustedOwner)
+			if err != nil {
+				return nil, nil, err
+			}
 		}
 		pulls = append(pulls, pull)
 	}
@@ -1337,19 +1466,34 @@ func convertGQLPull(raw gqlPull) (apiPull, error) {
 		return apiPull{}, err
 	}
 	pull := apiPull{
-		Number:      raw.Number,
-		Title:       raw.Title,
-		Body:        raw.Body,
-		HTMLURL:     raw.URL,
-		CreatedAt:   raw.CreatedAt,
-		UpdatedAt:   raw.UpdatedAt,
-		State:       strings.ToLower(raw.State),
-		Draft:       raw.Draft,
-		Comments:    comments,
-		HeadParents: append([]string(nil), raw.HeadParents...),
+		NodeID:          raw.NodeID,
+		CrossRepository: raw.CrossRepository,
+		Number:          raw.Number,
+		Title:           raw.Title,
+		Body:            raw.Body,
+		HTMLURL:         raw.URL,
+		CreatedAt:       raw.CreatedAt,
+		UpdatedAt:       raw.UpdatedAt,
+		State:           strings.ToLower(raw.State),
+		Draft:           raw.Draft,
+		Comments:        comments,
+		HeadParents:     append([]string(nil), raw.HeadParents...),
 	}
 	pull.Head.SHA = raw.HeadRefOID
 	pull.Base.Ref = raw.BaseRefName
+	pull.Head.Ref = raw.HeadRefName
+	pull.Base.SHA = raw.BaseRefOID
+	if raw.BaseRepository != nil {
+		pull.Base.Repo = &apiRepository{NodeID: raw.BaseRepository.ID, FullName: raw.BaseRepository.NameWithOwner}
+	}
+	if raw.HeadRepository != nil {
+		pull.Head.Repo = &apiRepository{NodeID: raw.HeadRepository.ID, FullName: raw.HeadRepository.NameWithOwner}
+	}
+	// A GraphQL response must carry the explicit flag; do not infer a missing
+	// field as REST does. A missing flag closes only the inventory view.
+	if raw.CrossRepository == nil {
+		pull.Head.Repo = nil
+	}
 	for _, label := range raw.Labels.Nodes {
 		pull.Labels = append(pull.Labels, apiLabel(label))
 	}
