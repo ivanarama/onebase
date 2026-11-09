@@ -476,6 +476,9 @@ func compactRefOptionRows(rows []map[string]any) []map[string]any {
 	for _, row := range rows {
 		opt := map[string]any{"id": row["id"], "_label": row["_label"]}
 		// Оформление строки выбора (choice_row_style) едет вместе с вариантом.
+		if row[refOptionDisabledKey] == true {
+			opt[refOptionDisabledKey] = true
+		}
 		for _, k := range []string{refOptionStyleKey, refOptionStyleBgKey} {
 			if v, ok := row[k].(refOptionCSS); ok {
 				opt[k] = v
