@@ -25,6 +25,408 @@ window.obUIMessage = function (name, fallback) {
   return String(fallback || '');
 };
 
+// Подсказки браузера в полях форм — это ПДн (замечание 26.10). Chrome ведёт
+// историю ввода по имени поля: телефон или адрес, введённый в одной заявке,
+// всплывал подсказкой в любом поле с тем же именем — в поиске заявок, в
+// задаче, у другого клиента. Историю он не ведёт и подсказок из неё не
+// показывает только при autocomplete="off" (на "one-time-code", без атрибута и
+// у type="search" — ведёт; проверено на Chromium 109). Поэтому каждое
+// текстовое поле получает "off", в том числе созданное позже: редакторы ячеек
+// SlickGrid, окна подбора, поля, дорисованные скриптом. ui.js подключён в
+// <head>, и наблюдатель видит поля ещё при разборе страницы, до первого
+// фокуса. Поля паролей и входа не трогаем, у них свои значения. Яндекс Браузер
+// на "off" не смотрит и предлагает телефоны из своего профиля (#1871): ему
+// поле с маской ввода отдаётся как "one-time-code".
+(function () {
+  var TEXT = /^(|text|search|tel|email|url|number)$/;
+  var KEEP = {'new-password': 1, 'current-password': 1, 'username': 1};
+  var yandex = /YaBrowser\//.test((window.navigator && navigator.userAgent) || '');
+  function guard(el) {
+    if (el.tagName === 'INPUT') {
+      if (!TEXT.test((el.getAttribute('type') || '').toLowerCase())) return;
+    } else if (el.tagName !== 'TEXTAREA') return;
+    var cur = (el.getAttribute('autocomplete') || '').toLowerCase();
+    if (KEEP[cur]) return;
+    var want = yandex && el.hasAttribute('data-ob-input-mask') ? 'one-time-code' : 'off';
+    if (cur !== want) el.setAttribute('autocomplete', want);
+  }
+  function scan(node) {
+    if (!node || node.nodeType !== 1) return;
+    if (node.tagName === 'INPUT' || node.tagName === 'TEXTAREA') { guard(node); return; }
+    if (!node.getElementsByTagName) return;
+    var lists = [node.getElementsByTagName('input'), node.getElementsByTagName('textarea')];
+    for (var l = 0; l < lists.length; l++) {
+      for (var i = 0; i < lists[l].length; i++) guard(lists[l][i]);
+    }
+  }
+  window.obGuardAutocomplete = scan;
+  try {
+    new MutationObserver(function (records) {
+      for (var r = 0; r < records.length; r++) {
+        var rec = records[r];
+        if (rec.type === 'attributes') { scan(rec.target); continue; }
+        for (var n = 0; n < rec.addedNodes.length; n++) scan(rec.addedNodes[n]);
+      }
+    }).observe(document.documentElement, {childList: true, subtree: true, attributes: true, attributeFilter: ['autocomplete', 'type']});
+  } catch (_) {}
+  scan(document.documentElement);
+})();
+
+// A viewer belongs to one Document and one authorized form projection. It never
+// reads hidden backing inputs or fetches extra fields to build its gallery.
+(function () {
+  var current = null;
+  var sequence = 0;
+  var uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  function validRef(ref) { return typeof ref === 'string' && uuidPattern.test(ref); }
+  function message(name) { return window.obUIMessage(name, ''); }
+  function consume(ev) {
+    ev.preventDefault();
+    ev.stopImmediatePropagation();
+  }
+  function sourceURL(ref) { return '/ui/_image/' + encodeURIComponent(ref); }
+  // Inactive tabs are part of the same presentation; hidden_when containers
+  // are not. Inspect ancestors without treating a tab's display:none as a
+  // hidden field. No values are recovered from hidden inputs.
+  function pageAvailable(content) {
+    var tabs = content.closest('.managed-tabs');
+    if (!tabs) return false;
+    var buttons = tabs.querySelectorAll('.managed-tab-btn');
+    for (var i = 0; i < buttons.length; i++) {
+      var button = buttons[i];
+      if (button.closest('.managed-tabs') !== tabs ||
+          button.getAttribute('data-tab-idx') !== content.getAttribute('data-tab-content')) continue;
+      // hidden_when hides the button, leaving the inactive content in the
+      // DOM. Match within its own set: nested/sibling sets reuse indices.
+      for (var node = button; node && node !== tabs; node = node.parentElement) {
+        if (node.hidden || node.getAttribute('aria-hidden') === 'true') return false;
+        var style = window.getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+      }
+      return true;
+    }
+    return false;
+  }
+  function projected(field, owner) {
+    for (var node = field; node && node !== owner; node = node.parentElement) {
+      if (node.hidden || node.getAttribute('aria-hidden') === 'true') return false;
+      var style = window.getComputedStyle(node);
+      if (style.visibility === 'hidden' || style.visibility === 'collapse') return false;
+      if (node.classList.contains('managed-tab-content')) {
+        if (!pageAvailable(node)) return false;
+      } else if (style.display === 'none') return false;
+    }
+    return !!owner && owner.isConnected;
+  }
+  function formGallery(owner, trigger) {
+    var items = [], seen = Object.create(null), index = -1;
+    var clicked = trigger.closest('.img-field');
+    owner.querySelectorAll('.img-field[data-ob-image-field]').forEach(function (field) {
+      if (!projected(field, owner)) return;
+      var button = field.querySelector('[data-ob-image-view]');
+      var ref = button && button.getAttribute('data-ob-image-ref');
+      var key = field.getAttribute('data-ob-image-field');
+      if (!key || !validRef(ref)) return;
+      if (Object.prototype.hasOwnProperty.call(seen, key)) {
+        if (field === clicked) {
+          index = seen[key];
+          items[index].label = field.getAttribute('data-ob-image-label') || key;
+          items[index].ref = ref;
+        }
+        return;
+      }
+      seen[key] = items.length;
+      if (field === clicked) index = items.length;
+      items.push({field: key, ref: ref, label: field.getAttribute('data-ob-image-label') || key});
+    });
+    return {items: items, index: index};
+  }
+  function releasePointer(state) {
+    if (state.drag) {
+      try { state.viewport.releasePointerCapture(state.drag.id); } catch (_) {}
+      state.drag = null;
+    }
+    state.viewport.removeAttribute('data-dragging');
+  }
+  function close() {
+    var state = current;
+    if (!state) return;
+    current = null;
+    sequence++;
+    releasePointer(state);
+    state.observer.disconnect();
+    if (state.removalObserver) state.removalObserver.disconnect();
+    window.removeEventListener('resize', state.resize);
+    if (state.image) {
+      state.image.onload = state.image.onerror = null;
+      state.image.removeAttribute('src');
+    }
+    state.dialog.close();
+    state.dialog.remove();
+    document.documentElement.style.overflow = state.overflow;
+    if (state.trigger && state.trigger.isConnected && obElementVisible(state.trigger)) state.trigger.focus();
+    else if (state.owner && state.owner.isConnected) {
+      var oldTabindex = state.owner.getAttribute('tabindex');
+      state.owner.setAttribute('tabindex', '-1');
+      state.owner.focus({preventScroll: true});
+      if (oldTabindex === null) state.owner.removeAttribute('tabindex');
+      else state.owner.setAttribute('tabindex', oldTabindex);
+    }
+  }
+  window.obImageViewerClose = close;
+  window.obImageViewerIsOpen = function () { return !!current; };
+
+  function dimensions(state) {
+    state.image.style.width = state.width * state.scale + 'px';
+    state.image.style.height = state.height * state.scale + 'px';
+    state.canvas.style.width = Math.max(state.viewport.clientWidth, state.width * state.scale) + 'px';
+    state.canvas.style.height = Math.max(state.viewport.clientHeight, state.height * state.scale) + 'px';
+    state.zoomOut.disabled = state.scale <= state.fit + 0.0001;
+    state.zoomIn.disabled = state.scale >= 8;
+    state.percent.textContent = Math.round(state.scale * 100) + ' %';
+  }
+  function setScale(state, scale, x, y) {
+    if (!state.width || current !== state) return;
+    releasePointer(state);
+    x = x == null ? state.viewport.clientWidth / 2 : x;
+    y = y == null ? state.viewport.clientHeight / 2 : y;
+    var oldX = Math.max(0, (state.canvas.clientWidth - state.width * state.scale) / 2);
+    var oldY = Math.max(0, (state.canvas.clientHeight - state.height * state.scale) / 2);
+    var imageX = (state.viewport.scrollLeft + x - oldX) / state.scale;
+    var imageY = (state.viewport.scrollTop + y - oldY) / state.scale;
+    state.scale = Math.max(state.fit, Math.min(8, scale));
+    dimensions(state);
+    var newX = Math.max(0, (state.canvas.clientWidth - state.width * state.scale) / 2);
+    var newY = Math.max(0, (state.canvas.clientHeight - state.height * state.scale) / 2);
+    state.viewport.scrollLeft = newX + imageX * state.scale - x;
+    state.viewport.scrollTop = newY + imageY * state.scale - y;
+  }
+  function fit(state) {
+    if (!state.width) return;
+    // Remove the old oversized canvas first: scrollbar size must not reduce
+    // the fit every time the dialog is resized or reopened.
+    state.image.style.width = '0px';
+    state.image.style.height = '0px';
+    state.canvas.style.width = state.canvas.style.height = '100%';
+    state.fit = Math.min(1, state.viewport.clientWidth / state.width, state.viewport.clientHeight / state.height);
+    state.fitted = true;
+    setScale(state, state.fit);
+    state.viewport.scrollLeft = state.viewport.scrollTop = 0;
+  }
+  function navigate(state, index) {
+    if (current !== state || index < 0 || index >= state.items.length) return;
+    sequence++;
+    var generation = sequence;
+    releasePointer(state);
+    state.index = index;
+    state.width = state.height = 0;
+    state.fitted = true;
+    state.prev.disabled = index === 0;
+    state.next.disabled = index === state.items.length - 1;
+    state.zoomIn.disabled = state.zoomOut.disabled = state.original.disabled = state.fitButton.disabled = true;
+    state.percent.textContent = '';
+    state.viewport.removeAttribute('data-loaded');
+    var item = state.items[index];
+    state.title.textContent = item.label;
+    state.status.textContent = message('imageLoading');
+    state.newTab.href = sourceURL(item.ref);
+    state.download.href = sourceURL(item.ref) + '?download=1';
+    if (state.image) {
+      state.image.onload = state.image.onerror = null;
+      state.image.removeAttribute('src');
+    }
+    state.canvas.replaceChildren();
+    state.canvas.style.width = state.canvas.style.height = '100%';
+    var image = document.createElement('img');
+    state.image = image;
+    image.alt = item.label;
+    image.draggable = false;
+    image.hidden = true;
+    image.onload = function () {
+      if (current !== state || sequence !== generation || !state.owner.isConnected) return;
+      if (!image.naturalWidth || !image.naturalHeight) { image.onerror(); return; }
+      state.width = image.naturalWidth;
+      state.height = image.naturalHeight;
+      state.scale = 1;
+      image.hidden = false;
+      fit(state);
+      state.fitButton.disabled = state.original.disabled = false;
+      state.viewport.setAttribute('data-loaded', '1');
+      state.status.textContent = '';
+    };
+    image.onerror = function () {
+      if (current !== state || sequence !== generation) return;
+      image.hidden = true;
+      state.status.textContent = message('imageError');
+    };
+    state.canvas.appendChild(image);
+    image.src = sourceURL(item.ref);
+  }
+  window.obImageViewerOpen = function (options) {
+    if (!options || !options.owner || options.owner.ownerDocument !== document || !options.owner.isConnected ||
+        !Array.isArray(options.items) || !Number.isInteger(options.index) || document.getElementById('ob-managed-close-confirm')) return false;
+    var items = options.items.filter(function (item) { return item && validRef(item.ref) && typeof item.field === 'string' && item.field; })
+      .map(function (item) { return {field: item.field, ref: item.ref, label: String(item.label || item.field)}; });
+    if (!items.length || items.length !== (options.items || []).length || options.index < 0 || options.index >= items.length) return false;
+    close();
+    var state = {owner: options.owner, trigger: options.trigger, items: items, index: options.index, scale: 1, fit: 1};
+    var dialog = document.createElement('dialog');
+    state.dialog = dialog;
+    dialog.className = 'ob-image-viewer';
+    dialog.id = 'ob-image-viewer';
+    dialog.setAttribute('aria-labelledby', 'ob-image-viewer-title');
+    var header = document.createElement('header');
+    state.title = document.createElement('h2');
+    state.title.id = 'ob-image-viewer-title';
+    header.appendChild(state.title);
+    var nav = document.createElement('nav');
+    function button(key, text, parent, action) {
+      var node = document.createElement('button');
+      node.type = 'button';
+      node.setAttribute('data-ob-viewer-action', key);
+      node.setAttribute('aria-label', message(key));
+      node.title = message(key);
+      node.textContent = text || message(key);
+      node.addEventListener('click', action);
+      (parent || nav).appendChild(node);
+      return node;
+    }
+    state.closeButton = button('imageClose', '×', header, close);
+    state.prev = button('imagePrevious', '←', null, function () { navigate(state, state.index - 1); });
+    state.next = button('imageNext', '→', null, function () { navigate(state, state.index + 1); });
+    function zoom(factor, x, y) { state.fitted = false; setScale(state, state.scale * factor, x, y); }
+    state.zoomOut = button('imageZoomOut', '−', null, function () { zoom(1 / 1.25); });
+    state.zoomIn = button('imageZoomIn', '+', null, function () { zoom(1.25); });
+    state.original = button('imageOriginal', '100 %', null, function () { state.fitted = false; setScale(state, 1); });
+    state.fitButton = button('imageFit', '', null, function () { fit(state); });
+    state.percent = document.createElement('output');
+    nav.appendChild(state.percent);
+    function link(key) {
+      var node = document.createElement('a');
+      node.textContent = message(key);
+      node.setAttribute('data-ob-viewer-action', key);
+      nav.appendChild(node);
+      return node;
+    }
+    state.newTab = link('imageNewTab');
+    state.newTab.target = '_blank';
+    state.newTab.rel = 'noopener noreferrer';
+    state.download = link('imageDownload');
+    state.download.setAttribute('download', '');
+    var viewport = document.createElement('div');
+    state.viewport = viewport;
+    viewport.className = 'ob-image-viewport';
+    viewport.tabIndex = 0;
+    viewport.setAttribute('role', 'region');
+    viewport.setAttribute('aria-label', message('imageArea'));
+    state.canvas = document.createElement('div');
+    state.canvas.className = 'ob-image-canvas';
+    viewport.appendChild(state.canvas);
+    state.status = document.createElement('p');
+    state.status.className = 'ob-image-status';
+    state.status.setAttribute('role', 'status');
+    state.status.setAttribute('aria-live', 'polite');
+    dialog.append(header, nav, viewport, state.status);
+    dialog.addEventListener('cancel', function (ev) { ev.preventDefault(); close(); });
+    viewport.addEventListener('wheel', function (ev) {
+      if (ev.ctrlKey || ev.metaKey || !state.width || !ev.deltaY) return;
+      ev.preventDefault();
+      var rect = viewport.getBoundingClientRect();
+      zoom(ev.deltaY < 0 ? 1.25 : 1 / 1.25, ev.clientX - rect.left, ev.clientY - rect.top);
+    }, {passive: false});
+    viewport.addEventListener('pointerdown', function (ev) {
+      if (!state.width || !ev.isPrimary || ev.button !== 0) return;
+      state.drag = {id: ev.pointerId, x: ev.clientX, y: ev.clientY, left: viewport.scrollLeft, top: viewport.scrollTop};
+      viewport.setPointerCapture(ev.pointerId);
+      viewport.setAttribute('data-dragging', '1');
+      ev.preventDefault();
+    });
+    viewport.addEventListener('pointermove', function (ev) {
+      if (!state.drag || state.drag.id !== ev.pointerId) return;
+      viewport.scrollLeft = state.drag.left + state.drag.x - ev.clientX;
+      viewport.scrollTop = state.drag.top + state.drag.y - ev.clientY;
+    });
+    viewport.addEventListener('pointerup', function () { releasePointer(state); });
+    viewport.addEventListener('pointercancel', function () { state.background = null; releasePointer(state); });
+    // Pointer capture retargets pointerup to the viewport. Coordinates and the
+    // original down target distinguish an intentional background click from a
+    // drag that ends outside the image.
+    dialog.addEventListener('pointerdown', function (ev) {
+      state.background = (ev.target === dialog || ev.target === viewport || ev.target === state.canvas)
+        ? {x: ev.clientX, y: ev.clientY} : null;
+    });
+    dialog.addEventListener('pointerup', function (ev) {
+      var start = state.background;
+      state.background = null;
+      if (!start || Math.hypot(start.x - ev.clientX, start.y - ev.clientY) > 3) return;
+      var rect = state.image && state.image.getBoundingClientRect();
+      if (rect && !state.image.hidden && ev.clientX >= rect.left && ev.clientX <= rect.right && ev.clientY >= rect.top && ev.clientY <= rect.bottom) return;
+      if (ev.target === dialog || ev.target === viewport || ev.target === state.canvas) close();
+    });
+    state.resize = function () {
+      if (current !== state || !state.width) return;
+      if (state.fitted) fit(state);
+      else {
+        state.fit = Math.min(1, viewport.clientWidth / state.width, viewport.clientHeight / state.height);
+        setScale(state, state.scale);
+      }
+    };
+    state.observer = new MutationObserver(function () {
+      if (current === state) close();
+    });
+    document.body.appendChild(dialog);
+    state.overflow = document.documentElement.style.overflow;
+    document.documentElement.style.overflow = 'hidden';
+    current = state;
+    dialog.showModal();
+    navigate(state, state.index);
+    state.closeButton.focus();
+    window.addEventListener('resize', state.resize);
+    // A changed form projection invalidates the gallery, including live
+    // upload/clear, hidden_when and managed event responses. DOM removal of
+    // the owner is watched separately without reacting to the viewer itself.
+    state.observer.observe(state.owner, {childList: true, subtree: true, attributes: true});
+    state.removalObserver = new MutationObserver(function () {
+      if (current === state && !state.owner.isConnected) close();
+    });
+    state.removalObserver.observe(document.body, {childList: true, subtree: true});
+    return true;
+  };
+  document.addEventListener('click', function (ev) {
+    var trigger = ev.target.closest && ev.target.closest('[data-ob-image-view]');
+    if (!trigger) return;
+    var owner = trigger.closest('form');
+    if (!owner) return;
+    consume(ev);
+    var gallery = formGallery(owner, trigger);
+    window.obImageViewerOpen({owner: owner, items: gallery.items, index: gallery.index, trigger: trigger});
+  }, true);
+  document.addEventListener('dblclick', function (ev) {
+    if (ev.target.closest && ev.target.closest('[data-ob-image-view]')) consume(ev);
+  }, true);
+  document.addEventListener('keydown', function (ev) {
+    if (!current) return;
+    if (ev.key === 'Escape' || ev.keyCode === 27) { consume(ev); close(); return; }
+    if (ev.key === 'Tab') {
+      var controls = Array.prototype.slice.call(current.dialog.querySelectorAll('button:not(:disabled),a[href],[tabindex="0"]'));
+      var index = controls.indexOf(document.activeElement);
+      var next = (index + (ev.shiftKey ? -1 : 1) + controls.length) % controls.length;
+      consume(ev);
+      if (controls[next]) controls[next].focus();
+      return;
+    }
+    if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight') {
+      consume(ev);
+      navigate(current, current.index + (ev.key === 'ArrowLeft' ? -1 : 1));
+      return;
+    }
+    // Native dialog keeps focus in its top layer. Stop document/grid/form
+    // shortcuts while preserving native Tab, scrolling and browser controls.
+    ev.stopImmediatePropagation();
+    if ((ev.ctrlKey || ev.metaKey) && /^(s|enter)$/i.test(ev.key)) ev.preventDefault();
+  }, true);
+})();
+
 // Same-origin request/decision protocol shared by shell tabs and reference
 // popups. The parent owns the final DOM removal; the child owns the server
 // close-intent. Correlation plus exact source/origin/document generation prevent
@@ -362,6 +764,17 @@ if (window.__obEmbedded) {
     }
     return true;
   };
+  // BEGIN onebase-link-tab-title
+  // Заголовок новой вкладки по ссылке: её title, если это не подсказка горячей
+  // клавиши. У кнопки «Создать» title="Insert" aria-keyshortcuts="Insert" —
+  // вкладка называлась «Insert»; тогда берём текст ссылки, а точный заголовок
+  // («Звонок (создание)») форма пришлёт сама (ob-tab-title → obSetTitle).
+  function obLinkTabTitle(a) {
+    var t = a.getAttribute('title') || '';
+    if (t && t === a.getAttribute('aria-keyshortcuts')) t = '';
+    return (t || a.textContent || '').replace(/\s+/g, ' ').trim() || 'Форма';
+  }
+  // END onebase-link-tab-title
   document.addEventListener('click', function (e) {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     var a = e.target.closest ? e.target.closest('a[href]') : null;
@@ -371,7 +784,7 @@ if (window.__obEmbedded) {
       return;
     }
     var href = a.getAttribute('href') || '';
-    var title = (a.getAttribute('title') || a.textContent || '').replace(/\s+/g, ' ').trim() || 'Форма';
+    var title = obLinkTabTitle(a);
     if (!window.obOpenInShell(href, title)) return;
     e.preventDefault();
   });
@@ -1598,7 +2011,8 @@ function obIsInteractiveTarget(el) {
 }
 
 function obHasBlockingModal() {
-  return !!(document.getElementById('ob-managed-close-confirm') ||
+  return !!((window.obImageViewerIsOpen && window.obImageViewerIsOpen()) ||
+    document.getElementById('ob-managed-close-confirm') ||
     document.getElementById('_ref-picker-modal') ||
     document.getElementById('_item-picker-modal') ||
     document.getElementById('_ref-create-modal'));
@@ -2507,7 +2921,7 @@ function obInitListDelegates() {
     var picker = e.target.closest('[data-ob-ref-picker]');
     if (picker) {
       e.preventDefault();
-      openRefPicker(picker.getAttribute('data-ob-ref-picker') || '');
+      obOpenRefPickerOnce(e, picker.getAttribute('data-ob-ref-picker') || '');
       return;
     }
     var row = e.target.closest('[data-ob-list-row]');
@@ -3195,6 +3609,38 @@ function obInitRichText() {
 }
 obReady(obInitRichText);
 
+// Keep repeated managed elements of one field in sync after upload/clear.
+// The caller supplies the new authorized value; gallery collection still reads
+// only the visible projection, never hidden backing fields.
+function obSetImageField(wrap, ref) {
+  if (!wrap) return;
+  var owner = wrap.closest('form');
+  var field = wrap.getAttribute('data-ob-image-field');
+  var wraps = owner && field ? owner.querySelectorAll('.img-field[data-ob-image-field]') : [wrap];
+  Array.prototype.forEach.call(wraps, function (candidate) {
+    if (candidate !== wrap && candidate.getAttribute('data-ob-image-field') !== field) return;
+    var hidden = candidate.querySelector('input[type=hidden]');
+    if (hidden) hidden.value = ref;
+    var prev = candidate.querySelector('.img-preview');
+    if (prev) {
+      prev.style.display = ref ? '' : 'none';
+      var img = prev.querySelector('img');
+      if (img) {
+        if (ref) img.src = '/ui/_image/' + encodeURIComponent(ref);
+        else img.removeAttribute('src');
+      }
+      var trigger = prev.querySelector('[data-ob-image-view]');
+      if (trigger) {
+        trigger.setAttribute('data-ob-image-ref', ref);
+        trigger.disabled = !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(ref);
+      }
+    }
+    var clear = candidate.querySelector('.img-clear-btn');
+    if (clear) clear.style.display = ref ? '' : 'none';
+  });
+}
+window.obSetImageField = obSetImageField;
+
 function obImageUpload(input, url) {
   var file = input.files && input.files[0];
   if (!file) return;
@@ -3210,15 +3656,9 @@ function obImageUpload(input, url) {
     })
     .then(function (data) {
       if (!wrap || !data || !data.ref) return;
-      wrap.querySelector('input[type=hidden]').value = data.ref;
-      var prev = wrap.querySelector('.img-preview');
-      if (prev) {
-        var img = prev.querySelector('img');
-        if (img) img.src = '/ui/_image/' + data.ref;
-        prev.style.display = '';
-      }
-      var clr = wrap.querySelector('.img-clear-btn');
-      if (clr) clr.style.display = '';
+      obSetImageField(wrap, data.ref);
+      if (typeof window.obSetManagedFormDirty === 'function') window.obSetManagedFormDirty(true);
+      else if (typeof window.obSetAutoFormDirty === 'function') window.obSetAutoFormDirty(true);
     })
     .catch(function (e) { alert('Ошибка загрузки картинки: ' + e.message); })
     .finally(function () { input.value = ''; });
@@ -3229,18 +3669,11 @@ function obImageClear(btn) {
   if (!wrap) return;
   var hidden = wrap.querySelector('input[type=hidden]');
   var changed = !!(hidden && hidden.value !== '');
-  if (hidden) hidden.value = '';
-	if (changed) {
-	  if (typeof window.obSetManagedFormDirty === 'function') window.obSetManagedFormDirty(true);
-	  else if (typeof window.obSetAutoFormDirty === 'function') window.obSetAutoFormDirty(true);
-	}
-  var prev = wrap.querySelector('.img-preview');
-  if (prev) {
-    prev.style.display = 'none';
-    var img = prev.querySelector('img');
-    if (img) img.removeAttribute('src');
+  obSetImageField(wrap, '');
+  if (changed) {
+    if (typeof window.obSetManagedFormDirty === 'function') window.obSetManagedFormDirty(true);
+    else if (typeof window.obSetAutoFormDirty === 'function') window.obSetAutoFormDirty(true);
   }
-  btn.style.display = 'none';
 }
 
 function obSplitDataList(value) {
@@ -3305,13 +3738,13 @@ function obInitFormDelegates() {
     if (refPicker) {
       e.preventDefault();
       var pickerTarget = refPicker.getAttribute('data-ob-ref-picker') || '';
-      openRefPicker(pickerTarget === 'closest' ? obClosestSelect(refPicker) : pickerTarget);
+      obOpenRefPickerOnce(e, pickerTarget === 'closest' ? obClosestSelect(refPicker) : pickerTarget);
       return;
     }
     var refPickerSelf = e.target.closest('[data-ob-ref-picker-self]');
     if (refPickerSelf) {
       e.preventDefault();
-      openRefPicker(obClosestSelect(refPickerSelf));
+      obOpenRefPickerOnce(e, obClosestSelect(refPickerSelf));
       return;
     }
     var refCurrentSelf = e.target.closest('[data-ob-ref-current-self]');
@@ -3471,7 +3904,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
       pickBtn.setAttribute('data-ob-ref-picker-self', '');
       wrapper.appendChild(sel);
       wrapper.appendChild(pickBtn);
-      if (meta && meta.entity) {
+      if (meta && meta.entity && tbody.getAttribute('data-tp-hide-ref-card') !== '1') {
         var openBtn = document.createElement('button');
         openBtn.type = 'button';
         openBtn.textContent = '🔍';
@@ -4433,8 +4866,9 @@ function obRefFilterValues(sel) {
   return any ? out : null;
 }
 
-// Read the first value that would be submitted for this name, rather than
-// RadioNodeList.value (which only works for radios) or the first DOM copy.
+// Read the single submitted source, rather than RadioNodeList.value or the
+// first DOM copy. Multiple scalar copies are ambiguous even with equal values;
+// keep the existing first-checked value for ordinary radio/checkbox groups.
 // A hidden_when copy is disabled by its fieldset; a readonly select instead
 // submits its enabled hidden mirror. null means the source is absent, so the
 // legacy owner filter can still use the value supplied by the server.
@@ -4453,6 +4887,8 @@ function obRefSourceValue(scope, name) {
     controls = scope.querySelectorAll('[name="' + escaped + '"]');
   }
   if (!controls || !controls.length) return null;
+  var value = null;
+  var groupType = '';
   for (var i = 0; i < controls.length; i++) {
     var control = controls[i];
     if (control.disabled) continue;
@@ -4461,9 +4897,15 @@ function obRefSourceValue(scope, name) {
     var type = String(control.type || '').toLowerCase();
     if ((type === 'radio' || type === 'checkbox') && !control.checked) continue;
     if (type === 'button' || type === 'submit' || type === 'reset' || type === 'file') continue;
-    if (control.value != null) return String(control.value);
+    if (control.value == null) continue;
+    if (value !== null) {
+      if (type === groupType && (type === 'radio' || type === 'checkbox')) continue;
+      return '';
+    }
+    value = String(control.value);
+    groupType = type;
   }
-  return '';
+  return value === null ? '' : value;
 }
 
 // obRefFilterParam — тот же отбор строкой для запроса /ui/_ref-options.
@@ -4560,9 +5002,15 @@ function refContextForRequest(sel) {
 /* ПоказатьВопрос (#1528, план 158 срез A): модал вопроса фазы 1. Ответ
    пользователя уходит событием Ответ с _question_answer — сервер кладёт его
    в переменную ВопросОтвет и вызывает обработчик Ответ того же элемента.
-   Диалог неблокирующий: клик мимо закрывает модал без ответа (обработчик фазы 1
-   сам решает, что делать без второй фазы). */
-function obOpenQuestion(payload, elementName) {
+   Щелчок мимо обычного окна его не закрывает — раньше закрывал молча, без
+   события Ответ. Кнопка варианта закрывает окно и отправляет Ответ.
+   Это не блокирует прежнюю обработку Escape в managed.js: при фокусе на
+   кнопке она может запустить закрытие формы без события Ответ.
+   handlers (необязательно) — {onAnswer(variant), onDismiss()}: ответ уходит не
+   событием Ответ элемента, а вызывающему (вопрос ПередПроведением). Только
+   такому вызывающему щелчок мимо закрывает окно и зовёт onDismiss: там это
+   «не проводить», безопасный выход, а не обход ответа. */
+function obOpenQuestion(payload, elementName, handlers) {
   if (!payload || !payload.variants || !payload.variants.length) return;
   var old = document.getElementById('_question-modal');
   if (old) old.remove();
@@ -4570,7 +5018,10 @@ function obOpenQuestion(payload, elementName) {
   modal.id = '_question-modal';
   modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
   var box = document.createElement('div');
-  box.style.cssText = 'background:#fff;border-radius:10px;padding:20px;width:460px;max-width:94vw;box-shadow:0 8px 32px rgba(0,0,0,.18)';
+  // Многострочному полю (текст ошибки, примечание) узко в 460px: окно шире, а
+  // поле занимает всю его ширину. На узком экране — не шире 94% окна.
+  var hasMultiline = (payload.fields || []).some(function (f) { return f && f.editable && f.multiline; });
+  box.style.cssText = 'background:#fff;border-radius:10px;padding:20px;width:' + (hasMultiline ? '640px' : '460px') + ';max-width:94vw;box-shadow:0 8px 32px rgba(0,0,0,.18)';
   if (payload.title) {
     var title = document.createElement('div');
     title.style.cssText = 'font-weight:600;font-size:15px;color:#1e293b;margin-bottom:8px';
@@ -4581,24 +5032,82 @@ function obOpenQuestion(payload, elementName) {
   text.style.cssText = 'font-size:14px;color:#1e293b;white-space:pre-line;margin-bottom:16px';
   text.textContent = payload.text;
   box.appendChild(text);
+  // Строки данных: итог операции (номер записанного документа, клиент, дата)
+  // и, при необходимости, поле ввода. Значения редактируемых уезжают обратно в
+  // обработчик Ответ вместе с нажатой кнопкой — переменной ДиалогПоля.
+  var inputs = {};
+  (payload.fields || []).forEach(function (field) {
+    if (!field || !field.name) return;
+    var line = document.createElement('div');
+    line.style.cssText = 'margin-bottom:10px';
+    if (field.label) {
+      var label = document.createElement('div');
+      label.style.cssText = 'font-size:12px;color:#64748b;margin-bottom:3px';
+      label.textContent = field.label;
+      line.appendChild(label);
+    }
+    if (field.editable) {
+      var input = document.createElement(field.multiline ? 'textarea' : 'input');
+      // rows — «строк» из DSL (видимых строк), по умолчанию 4.
+      if (field.multiline) input.rows = field.rows > 0 ? field.rows : 4; else input.type = 'text';
+      input.value = field.value == null ? '' : String(field.value);
+      input.style.cssText = 'width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #e2e8f0;border-radius:7px;font-size:14px;outline:none'
+        + (field.multiline ? ';resize:vertical;font-family:inherit' : '');
+      line.appendChild(input);
+      inputs[field.name] = input;
+    } else {
+      var value = document.createElement('div');
+      value.style.cssText = (field.strong
+        ? 'font-size:15px;font-weight:650;color:#0f172a'
+        : 'font-size:14px;color:#1e293b') + ';white-space:pre-line';
+      value.textContent = field.value == null ? '' : String(field.value);
+      line.appendChild(value);
+    }
+    box.appendChild(line);
+  });
+  if (payload.fields && payload.fields.length) {
+    var gap = document.createElement('div');
+    gap.style.cssText = 'height:8px';
+    box.appendChild(gap);
+  }
   var row = document.createElement('div');
-  row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
+  // Два-три варианта («Да / Нет / Отмена») — в ряд справа, как привычную пару
+  // кнопок. Четыре и больше («укажите причину жалобы») — столбиком во всю
+  // ширину: в ряд они не помещались и вылезали за окно.
+  var manyVariants = payload.variants.length > 3;
+  row.style.cssText = manyVariants
+    ? 'display:flex;flex-direction:column;gap:6px;align-items:stretch;max-height:50vh;overflow-y:auto'
+    : 'display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end';
   payload.variants.forEach(function (variant) {
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = variant;
-    btn.style.cssText = 'padding:8px 16px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:14px';
+    btn.style.cssText = 'padding:8px 16px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:14px;white-space:normal'
+      + (manyVariants ? ';text-align:left;width:100%' : ';max-width:100%');
     btn.addEventListener('click', function () {
       modal.remove();
-      if (typeof obFire === 'function') obFire(elementName, 'Ответ', { _question_answer: variant });
+      var extra = { _question_answer: variant };
+      var names = Object.keys(inputs);
+      if (names.length) {
+        var values = {};
+        names.forEach(function (name) { values[name] = inputs[name].value; });
+        extra._question_fields = JSON.stringify(values);
+      }
+      if (handlers && typeof handlers.onAnswer === 'function') { handlers.onAnswer(variant, extra); return; }
+      if (typeof obFire === 'function') obFire(elementName, 'Ответ', extra);
     });
     row.appendChild(btn);
   });
   box.appendChild(row);
   modal.appendChild(box);
-  modal.addEventListener('click', function (ev) {
-    if (ev.target === modal) modal.remove();
-  });
+  // Закрыть мимо кнопок можно только вопрос с onDismiss (ПередПроведением).
+  if (handlers && typeof handlers.onDismiss === 'function') {
+    modal.addEventListener('click', function (ev) {
+      if (ev.target !== modal) return;
+      modal.remove();
+      handlers.onDismiss();
+    });
+  }
   document.body.appendChild(modal);
 }
 window.obOpenQuestion = obOpenQuestion;
@@ -4882,6 +5391,28 @@ function obInitChoiceFilterRefresh() {
   document.addEventListener('change', function () { obAttachTPChoiceContexts(document); window.obRefreshChoiceFilters(); });
 }
 obReady(obInitChoiceFilterRefresh);
+
+// BEGIN onebase-ref-picker-claim
+// obOpenRefPickerOnce — один щелчок открывает окно выбора один раз. Кнопку 🔍
+// ловят несколько делегатов document: делегат списка и формы в ui.js и
+// делегат управляемой формы в managed.js. Второй вызов openRefPicker закрывал
+// только что открытое окно — его запрос отменялся (nginx 499, сервер писал
+// 500), и тот же запрос уходил заново: двойная нагрузка на каждый щелчок.
+// Отметка живёт на самом событии, поэтому следующий щелчок открывает окно как
+// обычно. Берётся только тем делегатом, который нашёл поле: делегат списка
+// видит у кнопки управляемой формы «closest», а не id, — заберёт он отметку
+// первым, и окно не откроет никто.
+function obOpenRefPickerOnce(e, selOrId) {
+  var sel = (typeof selOrId === 'string') ? (selOrId ? document.getElementById(selOrId) : null) : selOrId;
+  if (!sel) return;
+  if (e) {
+    if (e.__obRefPickerOpened) return;
+    try { e.__obRefPickerOpened = true; } catch (_) {}
+  }
+  openRefPicker(sel);
+}
+window.obOpenRefPickerOnce = obOpenRefPickerOnce;
+// END onebase-ref-picker-claim
 
 function openRefPicker(selOrId) {
   var sel = (typeof selOrId === 'string') ? document.getElementById(selOrId) : selOrId;
@@ -5388,6 +5919,13 @@ function openRefCreate(targetSelect, refEntity) {
   }
   function closeOnEscape(ev) {
     if (ev.defaultPrevented || (ev.key !== 'Escape' && ev.keyCode !== 27)) return;
+    var child = frameDocument && frameDocument.defaultView;
+    if (child && child.obImageViewerIsOpen && child.obImageViewerIsOpen()) {
+      child.obImageViewerClose();
+      ev.preventDefault();
+      ev.stopImmediatePropagation();
+      return;
+    }
     requestPopupClose();
     ev.preventDefault();
     ev.stopPropagation();

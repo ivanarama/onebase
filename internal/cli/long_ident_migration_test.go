@@ -193,6 +193,7 @@ func TestMigrateDryRunFullLegacyBesideShortOwner(t *testing.T) {
 					}
 				}
 			}
+			prepareSQLiteCLIPreview(t, db)
 			before := make([][]string, len(tables))
 			for i, table := range tables {
 				before[i], err = longIdentTableColumns(ctx, db, table)
@@ -201,6 +202,7 @@ func TestMigrateDryRunFullLegacyBesideShortOwner(t *testing.T) {
 				}
 			}
 			for attempt := 0; attempt < 2; attempt++ {
+				prepareSQLiteCLIPreview(t, db)
 				out, err := captureStdout(t, func() error {
 					return executeLongIdentCommand(t, []string{"migrate", "--project", dir, "--sqlite", path, "--dry-run"})
 				})
@@ -251,6 +253,7 @@ func TestMigrateDryRunLegacyUpgradeIsIdempotent(t *testing.T) {
 			if err := executeLongIdentCommand(t, args); err != nil {
 				t.Fatal(err)
 			}
+			prepareSQLiteCLIPreview(t, db)
 			out, err := captureStdout(t, func() error { return executeLongIdentCommand(t, append(append([]string{}, args...), "--dry-run")) })
 			if err != nil || strings.Contains(out, "Длинные имена (#1946") {
 				t.Fatalf("successful upgrade must have no pending renames: %s %v", out, err)
@@ -325,10 +328,12 @@ func TestMigrateDryRunCurrentLegacyBeforeDDL_Matrix(t *testing.T) {
 					if _, err := db.RaiseSchemaRevision(ctx); err != nil {
 						t.Fatal(err)
 					}
+					prepareSQLiteCLIPreview(t, db)
 					before := longIdentSchemaSnapshot(t, db)
 					args := append([]string{"migrate", "--project", dir}, longIdentDatabaseArgs(t, db)...)
 					var previous string
 					for attempt := 0; attempt < 2; attempt++ {
+						prepareSQLiteCLIPreview(t, db)
 						out, err := captureStdout(t, func() error { return executeLongIdentCommand(t, append(append([]string{}, args...), "--dry-run")) })
 						if err != nil || !strings.Contains(out, "КОНФЛИКТ") || !strings.Contains(out, strings.ToLower(s)) || !strings.Contains(out, strings.ToLower(l)) {
 							t.Errorf("dry-run must expose static owner conflict: %s %v", out, err)

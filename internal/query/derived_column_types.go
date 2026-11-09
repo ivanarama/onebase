@@ -6,7 +6,7 @@ import "github.com/ivantit66/onebase/internal/metadata"
 // to their derived-table aliases before calendar functions are rewritten.
 // Unknown expressions still reserve their output name, so a same-named date
 // from another source cannot supply their type.
-func buildScalarColumnTypes(tokens []tok, opts CompileOpts, ctx sourceContext) (
+func buildScalarColumnTypes(tokens []tok, opts CompileOpts, ctx sourceContext, keys *projectionKeyResolver) (
 	map[int]map[string]metadata.FieldType,
 	map[int]map[string]map[string]metadata.FieldType,
 ) {
@@ -40,7 +40,7 @@ func buildScalarColumnTypes(tokens []tok, opts CompileOpts, ctx sourceContext) (
 		if len(ctx.scopes[scopeID].derivedAliases) > 0 {
 			scoped[scopeID] = buildScopedColTypes(tokens, opts, ctx, derived)[scopeID]
 		}
-		outputs[scopeID] = scalarProjectionTypes(tokens, ctx, scopeID, scoped[scopeID], qualified[scopeID])
+		outputs[scopeID] = scalarProjectionTypes(tokens, ctx, scopeID, scoped[scopeID], qualified[scopeID], keys)
 		return outputs[scopeID]
 	}
 	for scopeID := range ctx.scopes {
@@ -51,6 +51,7 @@ func buildScalarColumnTypes(tokens []tok, opts CompileOpts, ctx sourceContext) (
 
 func scalarProjectionTypes(tokens []tok, ctx sourceContext, scopeID int,
 	fields map[string]metadata.FieldType, qualified map[string]map[string]metadata.FieldType,
+	keys *projectionKeyResolver,
 ) map[string]metadata.FieldType {
 	output := map[string]metadata.FieldType{}
 	start := -1
@@ -79,11 +80,21 @@ func scalarProjectionTypes(tokens []tok, ctx sourceContext, scopeID int,
 			}
 		}
 	}
-	for _, item := range splitProjectionItems(tokens[start+1 : end]) {
+	stars := projectionKeySet{counts: map[string]int{}, complete: true}
+	complete := true
+	physicalCounts := map[string]int{}
+	add := func(from, to int) {
+		item := tokens[from:to]
 		column, _ := parseProjectionItem(item)
-		if column.Output == "" || column.Star {
-			continue
+		if column.Star {
+			stars.add(keys.starKeys(scopeID, item))
 		}
+		key, known := keys.outputSQLKey(column, from, to)
+		complete = complete && (column.Star || known)
+		if key == "" || column.Star {
+			return
+		}
+		physicalCounts[metadata.SQLIdent(key)]++
 		typ := metadata.FieldType("")
 		if !union {
 			expr := item
@@ -92,14 +103,153 @@ func scalarProjectionTypes(tokens []tok, ctx sourceContext, scopeID int,
 					expr = item[:n-2]
 				}
 			}
-			typ = scalarProjectionExpressionType(expr, fields, qualified)
+			typ = scalarProjectionFieldTypeAt(tokens, ctx, from, from+len(expr), fields, qualified)
+			if column.Output == "" {
+				start, end := trimProjectionParentheses(tokens, from, to)
+				direct, _ := parseProjectionItem(tokens[start:end])
+				if len(direct.Path) == 0 {
+					// An implicit function name only reserves a collision;
+					// it does not extend scalar type inference.
+					typ = ""
+				}
+			}
 		}
-		if _, duplicate := output[column.Output]; duplicate {
+		if _, duplicate := output[key]; duplicate {
 			typ = ""
 		}
-		output[column.Output] = typ
+		output[key] = typ
+	}
+	depth, from := 0, selectProjectionStart(tokens, start)
+	for i := from; i < end; i++ {
+		switch tokens[i].kind {
+		case tLParen:
+			depth++
+		case tRParen:
+			depth--
+		case tComma:
+			if depth == 0 {
+				add(from, i)
+				from = i + 1
+			}
+		}
+	}
+	add(from, end)
+	// Only proven absence from every projection and wildcard preserves a type.
+	// This is independent of projection order and of the wildcard values.
+	for key := range output {
+		physical := metadata.SQLIdent(key)
+		if !complete || !stars.complete || physicalCounts[physical] != 1 || stars.counts[physical] > 0 {
+			output[key] = ""
+		}
+	}
+	// Derived consumers can spell a long output either logically or with its
+	// emitted SQLIdent. Export both only after every physical collision has
+	// invalidated the type; a third occurrence must not restore it.
+	physical := map[string]metadata.FieldType{}
+	for key, typ := range output {
+		physical[metadata.SQLIdent(key)] = typ
+	}
+	for key, typ := range physical {
+		output[key] = typ
 	}
 	return output
+}
+
+// outputSQLKey reserves names independently of expression types. The boolean
+// proves that no unaccounted identifier key can collide with a typed output.
+// Keep this separate from the masking parser, where an expression still
+// requires fail-closed field access.
+func (r *projectionKeyResolver) outputSQLKey(column ProjectionColumn, from, to int) (string, bool) {
+	tokens, ctx := r.tokens, r.ctx
+	if column.Output == "" {
+		start, end := trimProjectionParentheses(tokens, from, to)
+		column, _ = parseProjectionItem(tokens[start:end])
+		if len(column.Path) == 0 || column.Alias != "" {
+			// Only a complete call can inherit a function's SQL output name.
+			// Arithmetic, casts and other unknown expressions cannot prove absence
+			// of a collision merely because their name was not resolved.
+			if end-start >= 4 && tokens[start].kind == tIdent && tokens[start+1].kind == tLParen && tokens[end-1].kind == tRParen {
+				depth := 0
+				for i := start + 1; i < end; i++ {
+					switch tokens[i].kind {
+					case tLParen:
+						depth++
+					case tRParen:
+						depth--
+					}
+					if depth == 0 {
+						if i == end-1 {
+							fn, known := sqlAgg(tokens[start].val)
+							if !known {
+								if r.scalarRewrites == nil {
+									r.scalarRewrites = scalarFuncRewrites(dialectOrDefault(r.opts.Dialect).Name())
+								}
+								if rw, ok := r.scalarRewrites[lowerFast(tokens[start].val)]; ok &&
+									len(rw.prefix) == 2 && rw.prefix[0].kind == tIdent && rw.prefix[1].kind == tLParen &&
+									len(rw.suffix) == 1 && rw.suffix[0].kind == tRParen {
+									fn, known = rw.prefix[0].val, true
+								}
+							}
+							if known {
+								if dialectOrDefault(r.opts.Dialect).Name() == "postgres" {
+									return lowerFast(fn), true
+								}
+								// SQLite keeps the emitted call text (and wrapping parentheses),
+								// which cannot equal a direct identifier or an explicit DSL alias.
+								return "", true
+							}
+						}
+						break
+					}
+				}
+			}
+			return "", false
+		}
+		from = start
+	}
+	return projectionSQLKey(tokens, ctx, column, from+2*len(column.Path)-1), true
+}
+
+// projectionSQLKey uses the names emitted by the SQL translator. Reference
+// names, including explicit aliases, emit id; other explicit aliases remain
+// logical here so result normalization can follow RestoreLongLabels. Uniqueness
+// checks must apply metadata.SQLIdent before comparing these names.
+func projectionSQLKey(tokens []tok, ctx sourceContext, column ProjectionColumn, fieldEnd int) string {
+	if isReferenceName(column.Output) {
+		return "id"
+	}
+	if column.Alias == "" && len(column.Path) > 0 && ctx.systemColumnIdentifierAt(tokens, fieldEnd-1, map[int]bool{}) {
+		if physical, _, system := entitySystemColAlias(column.Output); system {
+			return physical
+		}
+		if physical, system := systemColAlias(column.Output); system {
+			return physical
+		}
+	}
+	return column.Output
+}
+
+// scalarProjectionFieldTypeAt resolves direct system fields by their actual
+// input SQL key too: a derived table exports posted, even when its child SELECT
+// used Проведен. A non-reserved logical alias and a same-named own field retain
+// their literal keys because the source context does not rewrite them.
+func scalarProjectionFieldTypeAt(tokens []tok, ctx sourceContext, from, to int,
+	fields map[string]metadata.FieldType, qualified map[string]map[string]metadata.FieldType,
+) metadata.FieldType {
+	start, end := trimProjectionParentheses(tokens, from, to)
+	expr := tokens[start:end]
+	if (len(expr) == 1 || len(expr) == 3 && expr[1].kind == tDot) &&
+		ctx.systemColumnIdentifierAt(tokens, end-1, map[int]bool{}) {
+		if physical, _, system := entitySystemColAlias(expr[len(expr)-1].val); system {
+			if len(expr) == 3 {
+				return qualified[lowerFast(expr[0].val)][physical]
+			}
+			if scopeID, ok := ctx.scopeIDAt(start); ok {
+				return qualified[ctx.scopes[scopeID].mainTable][physical]
+			}
+		}
+	}
+	return scalarProjectionExpressionType(expr, fields, qualified)
 }
 
 // Only a direct field and MIN/MAX of a proven field preserve its type here.
@@ -115,10 +265,20 @@ func scalarProjectionExpressionType(expr []tok, fields map[string]metadata.Field
 		}
 	}
 	if len(expr) == 1 && expr[0].kind == tIdent {
-		return fields[lowerFast(expr[0].val)]
+		return fields[projectionInputSQLKey(expr[0].val)]
 	}
 	if len(expr) == 3 && expr[0].kind == tIdent && expr[1].kind == tDot && expr[2].kind == tIdent {
-		return qualified[lowerFast(expr[0].val)][lowerFast(expr[2].val)]
+		return qualified[lowerFast(expr[0].val)][projectionInputSQLKey(expr[2].val)]
 	}
 	return ""
+}
+
+// References to a reserved alias read id too. Looking up its logical spelling
+// would lose a proven derived type or miss the collision recorded under id.
+func projectionInputSQLKey(name string) string {
+	key := lowerFast(name)
+	if isReferenceName(key) {
+		return "id"
+	}
+	return key
 }

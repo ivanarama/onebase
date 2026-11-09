@@ -624,6 +624,7 @@ type cfgHomePage struct {
 
 type configuratorData struct {
 	Base             *Base
+	WorkspacePath    string
 	AppName          string
 	AppVersion       string
 	AppLogo          string
