@@ -143,6 +143,9 @@ func TestUpdatesPage_UnrecognizedVersionIsNotCalledUpToDate(t *testing.T) {
 // dev-сборка вдобавок не проверяется фоном, поэтому «Проверено» относится к
 // чужому результату — про это тоже надо сказать.
 func TestUpdatesPage_DevBuildWarnsAboutBackgroundCheck(t *testing.T) {
+	if versionOverrideSubprocess(t) {
+		return
+	}
 	old := version.Build
 	version.Build = ""
 	t.Cleanup(func() { version.Build = old })

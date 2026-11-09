@@ -55,6 +55,12 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 			data["TabTitle"] = title
 			data["RecordTitle"] = title
 		}
+	} else if entity != nil {
+		// Новая карточка — как в 1С: «Звонок (создание)». Без этого вкладка
+		// оставалась с заголовком ссылки, открывшей её, — у кнопки «Создать»
+		// это подсказка горячей клавиши «Insert».
+		lang := s.resolveLang(r)
+		data["TabTitle"] = fmt.Sprintf(s.tr(lang, "%s (создание)"), entity.DisplayName(lang))
 	}
 	// Иерархия: при создании через управляемую форму признак группы и родитель
 	// приходят query-параметрами кнопок «📁 Группа» / «＋ в группе». Автоформа
@@ -86,6 +92,7 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 	managed := pickManagedForm(entity, kind)
 	if managed != nil {
 		data["Form"] = managed
+		s.issueConcealInstance(w, r, entity, managed, data)
 		// Фикс A: команды формы, не размещённые вручную элементом kind: Кнопка,
 		// рисуются автоматической командной панелью (иначе объявленная в commands:
 		// команда в UI не видна — её кнопку рисует только kind: Кнопка). Fire-click
@@ -163,6 +170,8 @@ func (s *Server) prepareManagedFormData(ctx context.Context, data map[string]any
 		data["FormCloseSchema"] = entityFormCloseSchema(entity, form)
 	}
 	s.prepareGridOrders(ctx, data, form)
+	// conceal: true — при открытии значение скрытого поля в разметку не попадает.
+	blankConcealedValues(form, data["Values"])
 	if css := formConditionalCSS(form); css != "" {
 		data["FormConditionalCSS"] = template.CSS(css) //nolint:gosec // G203: стиль собран cssStyle → csssafe.Color, произвольная строка в CSS не попадает
 	}
