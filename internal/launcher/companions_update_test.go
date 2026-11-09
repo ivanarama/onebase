@@ -321,3 +321,52 @@ func TestCompanionNoticeJS_EscapesText(t *testing.T) {
 		t.Fatalf("текст уведомления не экранирован: %s", js)
 	}
 }
+
+// С 0.7.1 Callista публикует установщик setup.exe вместо zip: обновление не
+// ставится, установленная версия остаётся, и та же версия не скачивается на
+// каждом запуске — до следующей.
+func TestCompanionUpdate_InstallerNotZipSkippedUntilNextVersion(t *testing.T) {
+	s := newUpdateServer(t)
+	setup := []byte("MZ это установщик, а не zip")
+	s.publish("0.7.1", setup, "")
+	c, dir := installed(t, "0.7.0-preview.6")
+	c.UpdateManifest = s.URL + "/updates/callista/operator-desktop.json"
+	downloads := 0
+	inner := s.Config.Handler
+	s.Config.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".zip") {
+			downloads++
+		}
+		inner.ServeHTTP(w, r)
+	})
+	u := testUpdater(s)
+	if _, err := u.Update(context.Background(), c); !errors.Is(err, errCompanionNotZip) {
+		t.Fatalf("установщик вместо zip: ошибка %v", err)
+	}
+	if v := fileVersionFromContent(c.Path); v != "0.7.0-preview.6" {
+		t.Fatalf("версия изменилась: %q", v)
+	}
+	if got, err := u.Update(context.Background(), c); got != "" || err != nil || downloads != 1 {
+		t.Fatalf("повтор: %q, %v, скачиваний %d — та же версия скачана снова", got, err, downloads)
+	}
+	s.publish("0.7.2", zipArchive(t, map[string]string{"callista-operator.exe": "0.7.2"}), "")
+	if got, err := u.Update(context.Background(), c); got != "0.7.2" || err != nil {
+		t.Fatalf("следующая версия (zip) не встала: %q, %v", got, err)
+	}
+	_ = dir
+}
+
+// Ссылка в списке на установщик (.exe) — не скачивается вовсе.
+func TestCompanionUpdate_InstallerURLNotDownloaded(t *testing.T) {
+	s := newUpdateServer(t)
+	s.publish("0.7.1", []byte("MZ"), "")
+	s.manifest = strings.Replace(s.manifest, "/updates/callista/downloads/op.zip", "/updates/callista/downloads/callista-operator-windows-0.7.1-x64-setup.exe", 1)
+	c, _ := installed(t, "0.7.0-preview.6")
+	c.UpdateManifest = s.URL + "/updates/callista/operator-desktop.json"
+	if _, err := testUpdater(s).Update(context.Background(), c); !errors.Is(err, errCompanionNotZip) {
+		t.Fatalf("ссылка на установщик: %v", err)
+	}
+	if got, err := testUpdater(s).Update(context.Background(), c); got != "" || err != nil {
+		t.Fatalf("повтор той же версии: %q, %v", got, err)
+	}
+}

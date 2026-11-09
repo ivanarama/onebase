@@ -38,7 +38,14 @@ const (
 	companionUpdateMaxSize       = 1 << 30 // архив больше 1 ГиБ — не программа телефонии
 	companionUpdateMaxFiles      = 20000
 	companionUpdateLockTTL       = 30 * time.Minute
+	// companionUpdateSkipSuffix — версия, которую не поставить в принципе
+	// (на сервере не zip, а, например, установщик): её не скачивать снова.
+	companionUpdateSkipSuffix = ".обновление-пропущено"
 )
+
+// errCompanionNotZip — на сервере не zip-архив программы. С 0.7.1 Callista
+// публикует установщик setup.exe: распаковать его лаунчер не может.
+var errCompanionNotZip = errors.New("архив обновления не zip (вероятно, установщик) — такой формат лаунчер не ставит")
 
 type companionUpdateManifest struct {
 	Version   string `json:"version"`
@@ -80,6 +87,12 @@ func (u *companionUpdater) Update(ctx context.Context, c Companion) (string, err
 	if !semverNewer(m.Version, installed) {
 		return "", nil
 	}
+	skip := filepath.Join(filepath.Dir(filepath.Dir(c.Path)), filepath.Base(filepath.Dir(c.Path))+companionUpdateSkipSuffix)
+	if b, err := os.ReadFile(skip); err == nil && strings.TrimSpace(string(b)) == m.Version { //nolint:gosec // G304: путь собран из каталога комплекта
+		// Эта версия уже скачивалась и оказалась не того вида (не zip):
+		// не качать её на каждом запуске. Следующая версия — снова пробуем.
+		return "", nil
+	}
 	dl, ok := m.Downloads["win32"]
 	if !ok || dl.URL == "" || dl.Size <= 0 || dl.Size > companionUpdateMaxSize || len(dl.SHA256) != 64 {
 		return "", fmt.Errorf("список обновлений %s: нет корректной сборки win32 для %s", c.UpdateManifest, m.Version)
@@ -91,6 +104,11 @@ func (u *companionUpdater) Update(ctx context.Context, c Companion) (string, err
 		return "", fmt.Errorf("список обновлений %s: архив не с того же сервера (%s)", c.UpdateManifest, dl.URL)
 	}
 
+	if strings.HasSuffix(strings.ToLower(archiveURL.Path), ".exe") {
+		// Установщик, а не архив: качать его незачем — поставить не сможем.
+		_ = os.WriteFile(skip, []byte(m.Version), 0o600)
+		return "", errCompanionNotZip
+	}
 	dir := filepath.Dir(c.Path)
 	parent, name := filepath.Dir(dir), filepath.Base(dir)
 	unlock, err := u.lock(filepath.Join(parent, name+companionUpdateStageSuffix+".lock"))
@@ -108,6 +126,9 @@ func (u *companionUpdater) Update(ctx context.Context, c Companion) (string, err
 	}
 	if err := extractCompanionArchive(archive, stage); err != nil {
 		_ = os.RemoveAll(stage)
+		if errors.Is(err, errCompanionNotZip) {
+			_ = os.WriteFile(skip, []byte(m.Version), 0o600)
+		}
 		return "", err
 	}
 	if err := placeCompanionExe(stage, filepath.Base(c.Path)); err != nil {
@@ -221,6 +242,9 @@ func (u *companionUpdater) lock(path string) (func(), error) {
 func extractCompanionArchive(archive, dst string) error {
 	r, err := zip.OpenReader(archive)
 	if err != nil {
+		if errors.Is(err, zip.ErrFormat) {
+			return errCompanionNotZip
+		}
 		return fmt.Errorf("архив обновления: %w", err)
 	}
 	defer r.Close() //nolint:errcheck // только чтение
