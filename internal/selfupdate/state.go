@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/ivantit66/onebase/internal/fsmode"
+	"github.com/ivantit66/onebase/internal/userdata"
 )
 
 // StateFileName — состояние обновлений: что известно о новых версиях, что уже
@@ -131,11 +132,11 @@ func (s State) StagedReady() bool {
 // «О программе» в Предприятии только смотрит состояние, а процесс базы может
 // работать службой под чужим профилем — создавать там каталоги незачем.
 func updatesDirPath() (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := userdata.Path("updates")
 	if err != nil {
 		return "", fmt.Errorf("selfupdate: домашний каталог: %w", err)
 	}
-	return filepath.Join(home, ".onebase", "updates"), nil
+	return dir, nil
 }
 
 // UpdatesDir возвращает ~/.onebase/updates, создавая его при необходимости.
