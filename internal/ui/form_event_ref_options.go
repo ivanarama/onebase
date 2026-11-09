@@ -25,6 +25,7 @@ import (
 // и маска ПДн. Читать запись мимо них ради подписи в <option> нельзя — иначе
 // маскированное поле утекло бы в HTML в обход плана 88.
 func (s *Server) eventRefOptions(ctx context.Context, form *metadata.FormModule, entity *metadata.Entity, values map[string]any) map[string][]map[string]any {
+	defer serverTimingSpan(ctx, "eventRefOptions")()
 	if len(values) == 0 {
 		return nil
 	}
