@@ -19,7 +19,15 @@ type fileLease struct {
 }
 
 func tryAcquireFileLease(path string, shared bool) (*fileLease, bool, error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, fsmode.SecretFile) //nolint:gosec // G703: sole caller appends a fixed lock suffix to the absolute, clean, symlink-resolved SQLite target after validatedSQLiteTargetParent rejects roots and malformed paths
+	return tryAcquireFileLeaseMode(path, shared, true)
+}
+
+func tryAcquireFileLeaseMode(path string, shared, create bool) (*fileLease, bool, error) {
+	flags := os.O_RDWR
+	if create {
+		flags |= os.O_CREATE
+	}
+	f, err := os.OpenFile(path, flags, fsmode.SecretFile) //nolint:gosec // G703: sole caller appends a fixed lock suffix to the absolute, clean, symlink-resolved SQLite target after validatedSQLiteTargetParent rejects roots and malformed paths
 	if err != nil {
 		return nil, false, err
 	}

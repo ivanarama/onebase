@@ -2,6 +2,7 @@ package configfmt
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/ivantit66/onebase/internal/configyaml"
 	"github.com/ivantit66/onebase/internal/fsmode"
 	"gopkg.in/yaml.v3"
 )
@@ -66,6 +68,9 @@ func FormatYAMLBytes(data []byte) ([]byte, error) {
 	if err := yaml.Unmarshal(data, &node); err != nil {
 		return nil, err
 	}
+	if issues := configyaml.TruncatedNumericTypes(&node); len(issues) > 0 {
+		return nil, issues[0]
+	}
 	sortYAMLNode(&node)
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
@@ -89,6 +94,10 @@ func FormatYAMLFile(path string, check bool) (alreadyFormatted bool, err error) 
 	}
 	out, err := FormatYAMLBytes(data)
 	if err != nil {
+		var numericTypeError configyaml.NumericTypeError
+		if errors.As(err, &numericTypeError) {
+			return false, fmt.Errorf("%s:%d:%d: %w", path, numericTypeError.Line, numericTypeError.Column, err)
+		}
 		return false, fmt.Errorf("%s: %w", path, err)
 	}
 	if bytes.Equal(data, out) {
