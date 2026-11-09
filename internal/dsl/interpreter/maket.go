@@ -66,6 +66,7 @@ func (m *Макет) getArea(name string) *SpreadsheetDocumentArea {
 		return nil
 	}
 	return &SpreadsheetDocumentArea{
-		Area: printform.BuildAreaCells(areaDef),
+		Area:      printform.BuildAreaCells(areaDef),
+		colWidths: m.template.ColumnWidthsPx(),
 	}
 }
