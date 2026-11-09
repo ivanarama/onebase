@@ -11,6 +11,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/langref"
 	"github.com/ivantit66/onebase/internal/fsmode"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/onec_forms"
 	"github.com/spf13/cobra"
 )
 
@@ -694,6 +695,11 @@ Vision-запрос по данным **из памяти**: принимает 
 внутреннего токена, а консоли требуют сессию администратора. Не полагайся на их
 наличие в проде; данные мутирующие операции (запись/проведение) — только явно.
 `)
+	if matrix, err := onec_forms.BuildCompatibilityMatrix(nil); err == nil {
+		b.WriteString("\n" + onec_forms.CompatibilityMarkdown(matrix))
+	} else {
+		b.WriteString("\nМатрица переноса недоступна: встроенный реестр контрактов повреждён. Не выводите совместимость из частот W040.\n")
+	}
 	return b.String()
 }
 

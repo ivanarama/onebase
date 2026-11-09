@@ -764,6 +764,17 @@ if (window.__obEmbedded) {
     }
     return true;
   };
+  // BEGIN onebase-link-tab-title
+  // Заголовок новой вкладки по ссылке: её title, если это не подсказка горячей
+  // клавиши. У кнопки «Создать» title="Insert" aria-keyshortcuts="Insert" —
+  // вкладка называлась «Insert»; тогда берём текст ссылки, а точный заголовок
+  // («Звонок (создание)») форма пришлёт сама (ob-tab-title → obSetTitle).
+  function obLinkTabTitle(a) {
+    var t = a.getAttribute('title') || '';
+    if (t && t === a.getAttribute('aria-keyshortcuts')) t = '';
+    return (t || a.textContent || '').replace(/\s+/g, ' ').trim() || 'Форма';
+  }
+  // END onebase-link-tab-title
   document.addEventListener('click', function (e) {
     if (e.defaultPrevented || e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
     var a = e.target.closest ? e.target.closest('a[href]') : null;
@@ -773,7 +784,7 @@ if (window.__obEmbedded) {
       return;
     }
     var href = a.getAttribute('href') || '';
-    var title = (a.getAttribute('title') || a.textContent || '').replace(/\s+/g, ' ').trim() || 'Форма';
+    var title = obLinkTabTitle(a);
     if (!window.obOpenInShell(href, title)) return;
     e.preventDefault();
   });
@@ -4988,10 +4999,14 @@ function refContextForRequest(sel) {
 /* ПоказатьВопрос (#1528, план 158 срез A): модал вопроса фазы 1. Ответ
    пользователя уходит событием Ответ с _question_answer — сервер кладёт его
    в переменную ВопросОтвет и вызывает обработчик Ответ того же элемента.
-   Диалог неблокирующий: клик мимо закрывает модал без ответа (обработчик фазы 1
-   сам решает, что делать без второй фазы).
+   Щелчок мимо обычного окна его не закрывает — раньше закрывал молча, без
+   события Ответ. Кнопка варианта закрывает окно и отправляет Ответ.
+   Это не блокирует прежнюю обработку Escape в managed.js: при фокусе на
+   кнопке она может запустить закрытие формы без события Ответ.
    handlers (необязательно) — {onAnswer(variant), onDismiss()}: ответ уходит не
-   событием Ответ элемента, а вызывающему (вопрос ПередПроведением). */
+   событием Ответ элемента, а вызывающему (вопрос ПередПроведением). Только
+   такому вызывающему щелчок мимо закрывает окно и зовёт onDismiss: там это
+   «не проводить», безопасный выход, а не обход ответа. */
 function obOpenQuestion(payload, elementName, handlers) {
   if (!payload || !payload.variants || !payload.variants.length) return;
   var old = document.getElementById('_question-modal');
@@ -5082,11 +5097,14 @@ function obOpenQuestion(payload, elementName, handlers) {
   });
   box.appendChild(row);
   modal.appendChild(box);
-  modal.addEventListener('click', function (ev) {
-    if (ev.target !== modal) return;
-    modal.remove();
-    if (handlers && typeof handlers.onDismiss === 'function') handlers.onDismiss();
-  });
+  // Закрыть мимо кнопок можно только вопрос с onDismiss (ПередПроведением).
+  if (handlers && typeof handlers.onDismiss === 'function') {
+    modal.addEventListener('click', function (ev) {
+      if (ev.target !== modal) return;
+      modal.remove();
+      handlers.onDismiss();
+    });
+  }
   document.body.appendChild(modal);
 }
 window.obOpenQuestion = obOpenQuestion;

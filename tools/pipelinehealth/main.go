@@ -19,6 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/ivantit66/onebase/internal/pridentity"
 	"github.com/ivantit66/onebase/internal/reviewrouting"
 	"golang.org/x/text/encoding/charmap"
 )
@@ -57,19 +58,28 @@ type apiComment struct {
 }
 
 type apiPull struct {
-	Number    int    `json:"number"`
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	HTMLURL   string `json:"html_url"`
-	CreatedAt string `json:"created_at"`
-	UpdatedAt string `json:"updated_at"`
-	State     string `json:"state"`
-	Draft     bool   `json:"draft"`
-	Head      struct {
-		SHA string `json:"sha"`
+	// Set only by the complete stable GraphQL epoch reader, never REST/JSON.
+	FullCurrentReview      bool           `json:"-"`
+	NodeID                 string         `json:"node_id"`
+	CrossRepository        *bool          `json:"-"`
+	ExpectedBaseRepository *apiRepository `json:"-"`
+	Number                 int            `json:"number"`
+	Title                  string         `json:"title"`
+	Body                   string         `json:"body"`
+	HTMLURL                string         `json:"html_url"`
+	CreatedAt              string         `json:"created_at"`
+	UpdatedAt              string         `json:"updated_at"`
+	State                  string         `json:"state"`
+	Draft                  bool           `json:"draft"`
+	Head                   struct {
+		SHA  string         `json:"sha"`
+		Ref  string         `json:"ref"`
+		Repo *apiRepository `json:"repo"`
 	} `json:"head"`
 	Base struct {
-		Ref string `json:"ref"`
+		Ref  string         `json:"ref"`
+		SHA  string         `json:"sha"`
+		Repo *apiRepository `json:"repo"`
 	} `json:"base"`
 	Labels   []apiLabel   `json:"labels"`
 	Comments []apiComment `json:"-"`
@@ -95,10 +105,13 @@ type apiIssue struct {
 }
 
 type candidate struct {
-	Number int    `json:"number"`
-	Title  string `json:"title"`
-	URL    string `json:"url"`
-	Head   string `json:"head"`
+	PRIdentity     *pridentity.PRIdentityV1 `json:"pr_identity,omitempty"`
+	IdentitySHA256 string                   `json:"identity_sha256,omitempty"`
+	BaseRefOID     string                   `json:"base_ref_oid,omitempty"`
+	Number         int                      `json:"number"`
+	Title          string                   `json:"title"`
+	URL            string                   `json:"url"`
+	Head           string                   `json:"head"`
 	// EligibilityDigest is a 160-bit prefix of a versioned SHA-256 snapshot.
 	// It reserves an issue in the scheduler; it is never mutation authority.
 	EligibilityDigest string `json:"eligibility_digest,omitempty"`
@@ -176,6 +189,9 @@ type finding struct {
 }
 
 type report struct {
+	IdentityInventoryVersion         int                           `json:"identity_inventory_version,omitempty"`
+	IdentityAuthority                string                        `json:"identity_authority,omitempty"`
+	IdentityV2Enabled                *bool                         `json:"identity_v2_enabled,omitempty"`
 	RoutingObservation               *routingObservation           `json:"routing_observation,omitempty"`
 	ReviewRoutingContract            *routingContract              `json:"review_routing_contract,omitempty"`
 	FixBridgeContract                *routingPurposeContract       `json:"fix_bridge_contract,omitempty"`
@@ -226,7 +242,27 @@ func main() {
 	routingMaxAttempts := flag.Int64("routing-max-attempts", 2, "current finite lifetime technical FIX limit, from1 to16")
 	routingInspect := flag.Int("routing-inspect", 0, "read one PR's complete typed history without queue election or mutation authority")
 	routingPositive := flag.String("routing-positive-purpose", "", "with routing-inspect: require positive merge or tail source; read-only")
+	identityInventory := flag.Bool("pr-identity", false, "separate read-only PR identity inventory; no v2 mutation authority")
+	baseRepositoryID := flag.String("base-repository-id", "", "expected GraphQL repository ID (required with offline identity fixtures)")
 	flag.Parse()
+	if *identityInventory && *technicalHandoff {
+		fail(fmt.Errorf("PR identity inventory and technical handoff are separate read-only views"))
+	}
+	if !*identityInventory && *baseRepositoryID != "" {
+		fail(fmt.Errorf("-base-repository-id requires -pr-identity"))
+	}
+	if *identityInventory && *routingInspect != 0 {
+		fail(fmt.Errorf("PR identity inventory cannot be combined with routing inspection"))
+	}
+	if *identityInventory {
+		for _, path := range []string{*fixture, *issueFixture} {
+			if path != "" {
+				if err := validateIdentityFixture(path); err != nil {
+					fail(err)
+				}
+			}
+		}
+	}
 	if *routingPositive != "" && (*routingInspect == 0 || *routingPositive != "merge" && *routingPositive != "tail") {
 		fail(fmt.Errorf("routing-positive-purpose requires routing-inspect and merge or tail"))
 	}
@@ -258,7 +294,9 @@ func main() {
 	var err error
 	switch selectedTransport {
 	case "graphql":
-		prs, issues, err = loadPipelineInputsGraphQL(newGHPipelineGraphQLClient(), *repo, *owner, *fixture, *issueFixture)
+		client := newGHPipelineGraphQLClient()
+		client.strictIdentity = *identityInventory
+		prs, issues, err = loadPipelineInputsGraphQL(client, *repo, *owner, *fixture, *issueFixture)
 	case "rest":
 		var github *githubRESTClient
 		if *fixture == "" {
@@ -266,10 +304,22 @@ func main() {
 			resolvedCacheDir, err = resolveCacheDir(*cacheDir)
 			if err == nil {
 				github, err = newGitHubRESTClient(resolvedCacheDir)
+				if err == nil {
+					github.strictIdentity = *identityInventory
+				}
 			}
 		}
 		if err == nil {
 			prs, err = loadPulls(github, *repo, *owner, *fixture)
+			if err == nil && *identityInventory && *fixture == "" {
+				var expected apiRepository
+				err = github.getJSON("repos/"+*repo, &expected)
+				if err == nil {
+					for i := range prs {
+						prs[i].ExpectedBaseRepository = &expected
+					}
+				}
+			}
 		}
 		if err == nil {
 			issues, err = loadIssues(github, *repo, *issueFixture, *fixture != "")
@@ -287,13 +337,24 @@ func main() {
 		}
 		routing = prepareRouting(prs, *repo, *owner, *contract, *fixture, *routingMaxAttempts)
 	}
-	result := analyzeWithRouting(prs, *owner, routing)
+	analysisPulls := prs
+	var identities map[int]inventoryIdentity
+	var identityFindings []finding
+	if *identityInventory {
+		analysisPulls, identities, identityFindings = prepareIdentityInventory(prs, *repo, *baseRepositoryID)
+	}
+	result := analyzeWithRouting(analysisPulls, *owner, routing)
+	result.Checked = len(prs)
+	result.Findings = append(result.Findings, identityFindings...)
 	if selectedTransport == "graphql" {
 		result.Scope = "complete GraphQL queue snapshot; mutation gates remain independent GraphQL proofs"
 	} else {
 		result.Scope = "conditional REST queue snapshot; mutation gates remain GraphQL"
 	}
 	analyzeIssues(&result, issues, prs, *owner)
+	if *identityInventory {
+		attachIdentityInventory(&result, identities)
+	}
 	checkContract(&result, *contract)
 	result.finish()
 
@@ -585,6 +646,12 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 				result.MergeCandidates = append(result.MergeCandidates, item)
 			case v1AbortCurrent && currentCompletions == 0:
 				result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
+			case pr.FullCurrentReview:
+				// Explicit full current-HEAD re-review closes its own epoch; older
+				// source reviews and a merge-shaped HEAD do not make it a carry.
+				// The independent mutation gate still proves current ship and CI.
+				item.Stage = "merge"
+				result.MergeCandidates = append(result.MergeCandidates, item)
 			case currentCompletions > 0 && depth == currentCompletions && !protocolHistory:
 				// A PR may be opened with a merge commit already at its first HEAD.
 				// With no earlier committed review or base-sync transaction, its
@@ -647,7 +714,7 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 			result.HumanWaiting = append(result.HumanWaiting, item)
 		case labels["changes-requested"] && !overrideOpen:
 			result.FixCandidates = append(result.FixCandidates, item)
-		case depth > currentCompletions && headIsBaseSyncMerge(pr) && legacySourceCompletions == 0 && !carryDone && !v1AbortCurrent:
+		case depth > currentCompletions && headIsBaseSyncMerge(pr) && legacySourceCompletions == 0 && !carryDone && !v1AbortCurrent && !pr.FullCurrentReview:
 			// A completed review of this HEAD is not enough to turn an earlier
 			// needs-decision review of a different SHA into source proof. Show the
 			// recovery before asking for ship; otherwise the owner is invited into
