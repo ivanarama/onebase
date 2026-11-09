@@ -484,6 +484,9 @@ global.document = {
     // Состояния элементов адресуются путём размещения (#1543), имя — запасной путь.
     const byPath = /^\[data-ob-el-path="([^"]*)"\]$/.exec(selector);
     if (byPath) return anchors.find((a) => a.path === byPath[1]) || null;
+    // В этих формах нет СтраницыФормы: настоящий page-helper должен найти
+    // отсутствие кнопки и завершиться, как в браузере, без подмены функции.
+    if (/^\.managed-tab-btn\[data-ob-tab-path="[^"]*"\]$/.test(selector)) return null;
     const match = /^\[data-ob-el="([^"]*)"\]$/.exec(selector);
     if (!match) throw new Error('document.querySelector: unsupported selector ' + selector);
     return anchors.find((a) => a.name === match[1]) || null;
@@ -493,6 +496,8 @@ const client = new Function(
   // Страница уже «загружена»: готовность DOM наступает сразу.
   'function obManagedReady(fn) { fn(); }\n' +
   fn('managedRefParts') + '\n' + fn('ensureRefOption') + '\n' +
+    fn('obManagedTabKey') + '\n' + fn('obManagedOwnTabParts') + '\n' + fn('obManagedSwitchTab') + '\n' +
+    fn('obManagedSetPageHidden') + '\n' + fn('obManagedSyncPageRequired') + '\n' +
     region('onebase-ro-apply-states') + '\n' + region('onebase-ro-apply-values') + '\n' +
     region('onebase-form-attr-stash') +
     '\nreturn {applyElementStates, applyValues, applyRadioValue, stashFormAttrs, restoreFormAttrs};'

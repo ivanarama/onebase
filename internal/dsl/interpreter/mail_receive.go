@@ -2,6 +2,7 @@ package interpreter
 
 import (
 	"bufio"
+	"context"
 	"crypto/tls"
 	"errors"
 	"fmt"
@@ -14,7 +15,7 @@ import (
 
 // ПолучитьПисьма(Профиль[, Параметры]) — чтение почтового ящика по POP3 или
 // IMAP (как ИнтернетПочта в 1С). Письма с сервера не удаляются никогда:
-// «новизну» ведёт вызывающий код по Ид (UIDL у POP3, UID у IMAP) и передаёт
+// «новизну» ведёт вызывающий код по Ид (UIDL у POP3, UIDVALIDITY:UID у IMAP) и передаёт
 // уже полученные в Параметры.Пропустить.
 const (
 	mailReceiveDefaultMax  = 50
@@ -50,43 +51,69 @@ var mailTLSConfig = func(host string) *tls.Config {
 	return &tls.Config{ServerName: host, MinVersion: tls.VersionTLS12}
 }
 
-func newReceiveMailBuiltin(guard NetGuard) BuiltinFunc {
-	return func(args []any, file string, line int) (any, error) {
-		checkNet(guard)
-		if len(args) < 1 {
-			panic(userError{Msg: "ПолучитьПисьма(Профиль[, Параметры]): не указан профиль", File: file, Line: line})
-		}
-		profile, err := parseMailProfile(args[0])
-		if err != nil {
-			panic(userError{Msg: "ПолучитьПисьма: " + err.Error(), File: file, Line: line})
-		}
-		var opts mailReceiveOptions
-		if len(args) >= 2 {
-			opts, err = parseMailReceiveOptions(args[1])
-		} else {
-			opts, err = parseMailReceiveOptions(nil)
-		}
-		if err != nil {
-			panic(userError{Msg: "ПолучитьПисьма: " + err.Error(), File: file, Line: line})
-		}
-		var mails []receivedMail
-		switch profile.protocol {
-		case "pop3":
-			mails, err = receivePOP3(profile, opts)
-		default:
-			mails, err = receiveIMAP(profile, opts)
-		}
-		if err != nil {
-			// Текст ошибки строится только из адреса сервера, логина и ответа
-			// сервера на команду — пароль в него не попадает (см. команды ниже).
-			panic(userError{Msg: "ПолучитьПисьма: " + profile.host + ": " + err.Error(), File: file, Line: line})
-		}
-		items := make([]any, 0, len(mails))
-		for _, m := range mails {
-			items = append(items, mailToStruct(m))
-		}
-		return NewArray(items), nil
+type receiveMailBuiltin struct {
+	guard     NetGuard
+	ctxSource CtxSource
+}
+
+func newReceiveMailBuiltin(guard NetGuard, ctxSource CtxSource) *receiveMailBuiltin {
+	return &receiveMailBuiltin{guard: guard, ctxSource: ctxSource}
+}
+
+func (b *receiveMailBuiltin) call(e *env, args []any, file string, line int) (any, error) {
+	checkNet(b.guard)
+	ctx, cancel := context.WithCancel(contextFromSource(b.ctxSource))
+	defer cancel()
+	if e.ec.context != nil {
+		stop := context.AfterFunc(e.ec.context, cancel)
+		defer stop()
+		checkExecutionContext(e.ec.context)
 	}
+	if !e.ec.deadline.IsZero() {
+		var deadlineCancel context.CancelFunc
+		ctx, deadlineCancel = context.WithDeadline(ctx, e.ec.deadline)
+		defer deadlineCancel()
+	}
+	checkExecutionContext(ctx)
+	if len(args) < 1 {
+		panic(userError{Msg: "ПолучитьПисьма(Профиль[, Параметры]): не указан профиль", File: file, Line: line})
+	}
+	profile, err := parseMailProfile(args[0])
+	if err != nil {
+		panic(userError{Msg: "ПолучитьПисьма: " + err.Error(), File: file, Line: line})
+	}
+	var opts mailReceiveOptions
+	if len(args) >= 2 {
+		opts, err = parseMailReceiveOptions(args[1])
+	} else {
+		opts, err = parseMailReceiveOptions(nil)
+	}
+	if err != nil {
+		panic(userError{Msg: "ПолучитьПисьма: " + err.Error(), File: file, Line: line})
+	}
+	var mails []receivedMail
+	switch profile.protocol {
+	case "pop3":
+		mails, err = receivePOP3(ctx, profile, opts)
+	default:
+		mails, err = receiveIMAP(ctx, profile, opts)
+	}
+	e.ec.checkDeadline()
+	checkExecutionContext(ctx)
+	// A socket deadline can wake before the context timer gets CPU time.
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		panic(dslStop{err: errSandboxTimeout})
+	}
+	if err != nil {
+		// Текст ошибки строится только из адреса сервера, логина и ответа
+		// сервера на команду — пароль в него не попадает (см. команды ниже).
+		panic(userError{Msg: "ПолучитьПисьма: " + profile.host + ": " + err.Error(), File: file, Line: line})
+	}
+	items := make([]any, 0, len(mails))
+	for _, m := range mails {
+		items = append(items, mailToStruct(m))
+	}
+	return NewArray(items), nil
 }
 
 func mailToStruct(m receivedMail) *Struct {
@@ -266,31 +293,45 @@ func parseMailReceiveOptions(v any) (mailReceiveOptions, error) {
 
 // mailConn — строковое соединение с почтовым сервером и сдвигаемым дедлайном.
 type mailConn struct {
-	conn    net.Conn
-	r       *bufio.Reader
-	timeout time.Duration
+	conn       net.Conn
+	r          *bufio.Reader
+	timeout    time.Duration
+	ctx        context.Context
+	stopCancel func() bool
 }
 
-func dialMail(p mailProfile) (*mailConn, error) {
+func dialMail(ctx context.Context, p mailProfile) (*mailConn, error) {
+	// Bound the whole connection setup, including implicit TLS, by both limits.
+	dialCtx, cancel := context.WithTimeout(ctx, p.timeout)
+	defer cancel()
 	d := net.Dialer{Timeout: p.timeout}
 	addr := net.JoinHostPort(p.host, strconv.Itoa(p.port))
-	var conn net.Conn
-	var err error
-	if p.security == "tls" {
-		conn, err = tls.DialWithDialer(&d, "tcp", addr, mailTLSConfig(p.host))
-	} else {
-		conn, err = d.Dial("tcp", addr)
-	}
+	transport, err := d.DialContext(dialCtx, "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("подключение не установлено: %w", err)
 	}
-	return &mailConn{conn: conn, r: bufio.NewReaderSize(conn, 32<<10), timeout: p.timeout}, nil
+	// Close the raw socket on cancellation: a TLS Close may itself need to
+	// write close_notify. The socket remains the same across STARTTLS.
+	stop := context.AfterFunc(ctx, func() { _ = transport.Close() })
+	c := &mailConn{conn: transport, timeout: p.timeout, ctx: ctx, stopCancel: stop}
+	if p.security == "tls" {
+		tc := tls.Client(transport, mailTLSConfig(p.host))
+		if err := tc.HandshakeContext(dialCtx); err != nil {
+			c.close()
+			return nil, fmt.Errorf("подключение TLS не установлено: %w", err)
+		}
+		c.conn = tc
+	}
+	c.r = bufio.NewReaderSize(c.conn, 32<<10)
+	return c, nil
 }
 
 func (c *mailConn) startTLS(host string) error {
 	tc := tls.Client(c.conn, mailTLSConfig(host))
-	_ = tc.SetDeadline(time.Now().Add(c.timeout))
-	if err := tc.Handshake(); err != nil {
+	if err := c.touch(); err != nil {
+		return err
+	}
+	if err := tc.HandshakeContext(c.ctx); err != nil {
 		return fmt.Errorf("STARTTLS: %w", err)
 	}
 	c.conn = tc
@@ -298,18 +339,34 @@ func (c *mailConn) startTLS(host string) error {
 	return nil
 }
 
-func (c *mailConn) touch() { _ = c.conn.SetDeadline(time.Now().Add(c.timeout)) }
+func (c *mailConn) touch() error {
+	if err := c.ctx.Err(); err != nil {
+		return err
+	}
+	deadline := time.Now().Add(c.timeout)
+	if limit, ok := c.ctx.Deadline(); ok && limit.Before(deadline) {
+		deadline = limit
+	}
+	return c.conn.SetDeadline(deadline)
+}
 
-func (c *mailConn) close() { _ = c.conn.Close() }
+func (c *mailConn) close() {
+	c.stopCancel()
+	_ = c.conn.Close()
+}
 
 func (c *mailConn) writeLine(line string) error {
-	c.touch()
+	if err := c.touch(); err != nil {
+		return err
+	}
 	_, err := io.WriteString(c.conn, line+"\r\n")
 	return err
 }
 
 func (c *mailConn) readLine() (string, error) {
-	c.touch()
+	if err := c.touch(); err != nil {
+		return "", err
+	}
 	var buf []byte
 	for {
 		chunk, isPrefix, err := c.r.ReadLine()
@@ -327,7 +384,9 @@ func (c *mailConn) readLine() (string, error) {
 }
 
 func (c *mailConn) readN(n int64) ([]byte, error) {
-	c.touch()
+	if err := c.touch(); err != nil {
+		return nil, err
+	}
 	buf := make([]byte, n)
 	_, err := io.ReadFull(c.r, buf)
 	return buf, err
@@ -345,4 +404,70 @@ func serverText(s string) string {
 		s = s[:200]
 	}
 	return strings.TrimSpace(s)
+}
+
+// readIMAPLine сохраняет обычный предел строки, но разбирает SEARCH по
+// буферным фрагментам. Ни весь ответ, ни полный список UID не накапливаются.
+func (c *mailConn) readIMAPLine(collect func(uint32)) (string, error) {
+	if collect == nil {
+		return c.readLine()
+	}
+	if err := c.touch(); err != nil {
+		return "", err
+	}
+	chunk, err := c.r.ReadSlice('\n')
+	search := len(chunk) >= 8 && strings.EqualFold(string(chunk[:8]), "* SEARCH") &&
+		(len(chunk) == 8 || chunk[8] == ' ' || chunk[8] == '\r' || chunk[8] == '\n')
+	if !search {
+		buf := append([]byte(nil), chunk...)
+		for err == bufio.ErrBufferFull {
+			chunk, err = c.r.ReadSlice('\n')
+			if len(buf)+len(chunk) > mailReceiveMaxLine {
+				return "", errors.New("слишком длинная строка ответа сервера")
+			}
+			buf = append(buf, chunk...)
+		}
+		if err != nil {
+			return "", err
+		}
+		return strings.TrimRight(string(buf), "\r\n"), nil
+	}
+	chunk = chunk[8:]
+	token := make([]byte, 0, 10)
+	emit := func() error {
+		if len(token) == 0 {
+			return nil
+		}
+		n, err := strconv.ParseUint(string(token), 10, 32)
+		if err != nil || n == 0 {
+			return errors.New("неверный UID в ответе SEARCH")
+		}
+		collect(uint32(n))
+		token = token[:0]
+		return nil
+	}
+	for {
+		for _, b := range chunk {
+			if b == ' ' || b == '\r' || b == '\n' {
+				if e := emit(); e != nil {
+					return "", e
+				}
+			} else {
+				if b < '0' || b > '9' || len(token) == 10 {
+					return "", errors.New("неверный UID в ответе SEARCH")
+				}
+				token = append(token, b)
+			}
+		}
+		if err == nil {
+			if e := emit(); e != nil {
+				return "", e
+			}
+			return "* SEARCH", nil
+		}
+		if err != bufio.ErrBufferFull {
+			return "", err
+		}
+		chunk, err = c.r.ReadSlice('\n')
+	}
 }

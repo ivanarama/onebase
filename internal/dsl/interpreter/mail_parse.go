@@ -18,7 +18,7 @@ import (
 // receivedMail — письмо, разобранное для DSL (ПолучитьПисьма). Вложения не
 // разбираются: задаче «письмо → задача» нужны отправитель, тема, дата и текст.
 type receivedMail struct {
-	ID        string // UIDL (POP3) или UID (IMAP) — ключ «уже получено»
+	ID        string // UIDL (POP3) или UIDVALIDITY:UID (IMAP) — ключ «уже получено»
 	MessageID string
 	From      string
 	FromName  string
@@ -126,6 +126,9 @@ func walkMailPart(out *receivedMail, contentType, transfer, disposition string, 
 	if depth > 10 {
 		return
 	}
+	if disp, _, err := mime.ParseMediaType(disposition); err == nil && strings.EqualFold(disp, "attachment") {
+		return
+	}
 	mediaType, params, err := mime.ParseMediaType(contentType)
 	if err != nil || mediaType == "" {
 		mediaType, params = "text/plain", map[string]string{}
@@ -148,9 +151,6 @@ func walkMailPart(out *receivedMail, contentType, transfer, disposition string, 
 			walkMailPart(out, part.Header.Get("Content-Type"), part.Header.Get("Content-Transfer-Encoding"),
 				part.Header.Get("Content-Disposition"), partBody, depth+1)
 		}
-	}
-	if disp, _, err := mime.ParseMediaType(disposition); err == nil && strings.EqualFold(disp, "attachment") {
-		return
 	}
 	switch mediaType {
 	case "text/plain":

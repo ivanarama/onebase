@@ -77,6 +77,11 @@ func (f *fakeMailServer) all() string {
 // startFakeMail запускает подставной сервер протокола proto ("pop3"/"imap").
 // tlsCfg != nil — сервер сразу TLS (POP3S/IMAPS).
 func startFakeMail(t *testing.T, proto string, tlsCfg *tls.Config, messages []string, starttls ...*tls.Config) *fakeMailServer {
+	return startFakeMailWithValidity(t, proto, tlsCfg, messages, []uint32{1001}, starttls...)
+}
+
+// validities задают UIDVALIDITY последовательных соединений одного ящика.
+func startFakeMailWithValidity(t *testing.T, proto string, tlsCfg *tls.Config, messages []string, validities []uint32, starttls ...*tls.Config) *fakeMailServer {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -91,17 +96,20 @@ func startFakeMail(t *testing.T, proto string, tlsCfg *tls.Config, messages []st
 		f.starttls = starttls[0]
 	}
 	go func() {
+		session := 0
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
 				return
 			}
+			validity := validities[min(session, len(validities)-1)]
+			session++
 			go func() {
 				defer conn.Close() //nolint:errcheck
 				if proto == "pop3" {
 					f.servePOP3(conn, messages)
 				} else {
-					f.serveIMAP(conn, messages)
+					f.serveIMAP(conn, messages, validity)
 				}
 			}()
 		}
@@ -182,7 +190,7 @@ func (f *fakeMailServer) servePOP3(conn net.Conn, messages []string) {
 	}
 }
 
-func (f *fakeMailServer) serveIMAP(conn net.Conn, messages []string) {
+func (f *fakeMailServer) serveIMAP(conn net.Conn, messages []string, validity uint32) {
 	r := bufio.NewReader(conn)
 	w := func(s string) { _, _ = conn.Write([]byte(s + "\r\n")) }
 	w("* OK fake IMAP ready")
@@ -231,12 +239,21 @@ func (f *fakeMailServer) serveIMAP(conn net.Conn, messages []string) {
 				w(tag + ` NO [AUTHENTICATIONFAILED] bad password секрет-неверный`)
 			}
 		case cmd == "SELECT":
+			if validity != 0 {
+				w(fmt.Sprintf("* OK [UIDVALIDITY %d] UIDs valid", validity))
+			}
 			w(fmt.Sprintf("* %d EXISTS", len(messages)))
 			w(tag + " OK [READ-WRITE] selected")
 		case cmd == "UID" && strings.HasPrefix(strings.ToUpper(args), "SEARCH"):
 			ids := []string{}
+			first := uint64(1)
+			if fields := strings.Fields(args); len(fields) == 4 && fields[2] == "UID" {
+				first, _ = strconv.ParseUint(strings.SplitN(fields[3], ":", 2)[0], 10, 32)
+			}
 			for i := range messages {
-				ids = append(ids, strconv.Itoa(100+i))
+				if uint64(100+i) >= first {
+					ids = append(ids, strconv.Itoa(100+i))
+				}
 			}
 			w("* SEARCH " + strings.Join(ids, " "))
 			w(tag + " OK search done")
@@ -353,7 +370,7 @@ func TestReceiveMail_SkipMaxAndMarkSeen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res := fmt.Sprint(got); strings.Count(res, ";") != 1 || !strings.HasPrefix(res, "100|") {
+	if res := fmt.Sprint(got); strings.Count(res, ";") != 1 || !strings.HasPrefix(res, "1001:100|") {
 		t.Fatalf("Максимум=1 вернул не одно письмо: %s", res)
 	}
 	if cmds := imap.all(); !strings.Contains(cmds, `UID STORE 100 +FLAGS (\Seen)`) || strings.Contains(cmds, "STORE 101") {
@@ -466,5 +483,106 @@ func TestReceiveMail_MaxSizeSkipsLargeMessages(t *testing.T) {
 		if fmt.Sprint(result) != "plain-1@example.ru;" {
 			t.Fatalf("%s: письмо больше предела должно быть пропущено: %v", proto, result)
 		}
+	}
+}
+
+// Одна папка и один UID: после смены UIDVALIDITY сохранённый Ид не должен
+// скрывать новое письмо. Стабильная UIDVALIDITY по-прежнему исключает повтор.
+func TestReceiveMail_IMAPUIDValidity(t *testing.T) {
+	srv := startFakeMailWithValidity(t, "imap", nil, []string{mailPlain}, []uint32{1001, 1001, 1002})
+	got, err := runReceive(t, mailVars("IMAP", srv.addr, "НЕТ", "секрет-1", nil, 1, false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := strings.SplitN(fmt.Sprint(got), "|", 2)[0]
+	if id != "1001:100" {
+		t.Fatalf("Ид = %q", id)
+	}
+	got, err = runReceive(t, mailVars("IMAP", srv.addr, "НЕТ", "секрет-1", []any{id}, 1, false))
+	if err != nil || got != "" {
+		t.Fatalf("повтор: %v, %v", got, err)
+	}
+	got, err = runReceive(t, mailVars("IMAP", srv.addr, "НЕТ", "секрет-1", []any{id}, 1, false))
+	if err != nil || !strings.HasPrefix(fmt.Sprint(got), "1002:100|") {
+		t.Fatalf("новая UIDVALIDITY потеряла письмо: %v, %v", got, err)
+	}
+}
+
+func TestReceiveMail_IMAPRequiresUIDValidity(t *testing.T) {
+	srv := startFakeMailWithValidity(t, "imap", nil, []string{mailPlain}, []uint32{0})
+	_, err := runReceive(t, mailVars("IMAP", srv.addr, "НЕТ", "секрет-1", nil, 1, false))
+	if err == nil || !strings.Contains(err.Error(), "UIDVALIDITY") {
+		t.Fatalf("ошибка = %v", err)
+	}
+	if strings.Contains(srv.all(), "UID FETCH") {
+		t.Fatal("чтение без стабильного Ид")
+	}
+}
+
+func TestReceiveMail_MultipartAttachmentDoesNotSupplyBody(t *testing.T) {
+	raw := "From: client@example.ru\r\nSubject: attachment\r\n" +
+		"Content-Type: multipart/mixed; boundary=OUT\r\n\r\n" +
+		"--OUT\r\nContent-Type: multipart/alternative; boundary=ATT\r\n" +
+		"Content-Disposition: attachment; filename=part.mime\r\n\r\n" +
+		"--ATT\r\nContent-Type: text/html\r\n\r\n<p>ATTACHMENT HTML</p>\r\n" +
+		"--ATT\r\nContent-Type: text/plain\r\n\r\nATTACHMENT TEXT\r\n--ATT--\r\n" +
+		"--OUT\r\nContent-Type: text/plain\r\n\r\nMAIN BODY\r\n--OUT--\r\n"
+	for _, proto := range []string{"POP3", "IMAP"} {
+		t.Run(proto, func(t *testing.T) {
+			srv := startFakeMail(t, strings.ToLower(proto), nil, []string{raw})
+			got, err := runReceive(t, mailVars(proto, srv.addr, "НЕТ", "секрет-1", nil, 1, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if text := fmt.Sprint(got); !strings.Contains(text, "MAIN BODY") || strings.Contains(text, "ATTACHMENT") {
+				t.Fatalf("тело письма = %s", text)
+			}
+		})
+	}
+}
+
+func TestReceiveMail_IMAPLargeInboxMaxOne(t *testing.T) {
+	messages := make([]string, 16000)
+	for i := range messages {
+		messages[i] = mailPlain
+	}
+	// SEARCH >64 КиБ, включая UID, разрезанный границей буфера.
+	srv := startFakeMail(t, "imap", nil, messages)
+	for _, skipCount := range []int{0, 15500} {
+		t.Run(strconv.Itoa(skipCount), func(t *testing.T) {
+			skip := make([]any, skipCount)
+			for i := range skip {
+				skip[i] = fmt.Sprintf("1001:%d", 100+i)
+			}
+			got, err := runReceive(t, mailVars("IMAP", srv.addr, "НЕТ", "секрет-1", skip, 1, false))
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := fmt.Sprintf("1001:%d|", 100+skipCount)
+			if text := fmt.Sprint(got); !strings.HasPrefix(text, want) || strings.Count(text, ";") != 1 {
+				t.Fatalf("Максимум=1: %s", text)
+			}
+		})
+	}
+}
+
+func TestReceiveMail_IMAPContinuesAfterOversizeBatch(t *testing.T) {
+	srv := startFakeMail(t, "imap", nil, []string{mailPartner, mailPlain})
+	vars := mailVars("IMAP", srv.addr, "НЕТ", "секрет-1", nil, 1, false)
+	// Подмена только исходника DSL: всё чтение идёт через публичную функцию.
+	src := strings.Replace(receiveSrc, "Итог = \"\";", "П.Вставить(\"МаксимальныйРазмер\", 200); Итог = \"\";", 1)
+	all := NewEmailFunctions(nil, nil)
+	for k, v := range vars {
+		all[k] = v
+	}
+	var got any
+	if err := New().RunWithResult(mailTestProc(t, src), nil, &got, all); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasPrefix(fmt.Sprint(got), "1001:101|") {
+		t.Fatalf("после большого письма: %v", got)
+	}
+	if !strings.Contains(srv.all(), "UID SEARCH UID 101:4294967295") {
+		t.Fatal("нет продолжения SEARCH")
 	}
 }
