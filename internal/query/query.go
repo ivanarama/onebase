@@ -4775,13 +4775,22 @@ func parameterSystemRefType(scope sourceScope, qualifier, name string) metadata.
 }
 
 func (tr *translator) emptyRefParamAt(idx int) bool {
-	if !tr.comparisonOpAt(idx - 1) {
-		return false
+	op, field := idx-1, idx-2
+	if !tr.comparisonOpAt(op) {
+		op, field = idx+1, idx+2
+		if !tr.comparisonOpAt(op) {
+			return false
+		}
+		// The resolver expects the final token, including reference navigation.
+		for field+2 < len(tr.tokens) && tr.tokens[field].kind == tIdent &&
+			tr.tokens[field+1].kind == tDot && tr.tokens[field+2].kind == tIdent {
+			field += 2
+		}
 	}
-	switch tr.tokens[idx-1].val {
+	switch tr.tokens[op].val {
 	case "=", "<>", "!=":
 		return emptyStringAgainstRef(dialectOrDefault(tr.opts.Dialect),
-			tr.paramValues[tr.tokens[idx].val], tr.paramFieldTypeAt(idx-2))
+			tr.paramValues[tr.tokens[idx].val], tr.paramFieldTypeAt(field))
 	}
 	return false
 }
