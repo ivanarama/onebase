@@ -1,0 +1,2095 @@
+{
+  "schema": "pp-review-routing-retained-audit-golden-v1",
+  "authority": "unverified-offline-input",
+  "source_head": "21571a193860502104d51d8db8ad95127937b56b",
+  "source_dirty": false,
+  "source_files_sha256": {
+    "promptpilot/review_routing_baseline.py": "0abe0eb8d6575477cd88768e791bf4fe103dfed63aeb693ee93843876763fda9",
+    "promptpilot/review_routing_history.py": "e45d5d3f0e09de68e3aed5278e579514c7f4f5a3d92430c6a0bae1020d059747",
+    "promptpilot/review_routing_wire.py": "a02234a7ac4bbdeadb1e36df574bdba238cd19fa2c50f2e76c03c026b53e1596",
+    "tests/test_review_routing_audit_history.py": "ed02a310e8ba505e7b0f2c09ae3bc73bedf341e9fc30392d4b1f90a534f592ba"
+  },
+  "cases": [
+    {
+      "name": "retained-clean",
+      "snapshot": {
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "baseRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "baseRefName": "main",
+        "state": "OPEN",
+        "isDraft": false,
+        "identity": {
+          "base_repository_id": "R_BASE",
+          "base_repository": "owner/repo",
+          "base_ref": "main",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42,
+          "head_repository_id": "R_BASE",
+          "head_repository": "owner/repo",
+          "head_ref": "ветка/проверка",
+          "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "cross_repository": false
+        },
+        "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+        "pr_key": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "author": {
+          "id": "U_AUTHOR",
+          "login": "contributor"
+        },
+        "labels": [],
+        "labelsComplete": true,
+        "updatedAt": "2026-10-29T00:00:00Z",
+        "edges": [
+          {
+            "cursor": "first",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "COMMIT",
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "cursor": "CANCHOR_100",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_100",
+              "commit": {
+                "oid": "1111111111111111111111111111111111111111"
+              }
+            }
+          },
+          {
+            "cursor": "C100",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_100",
+              "fullDatabaseId": "100",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 1111111111111111111111111111111111111111\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C101",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_101",
+              "fullDatabaseId": "101",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 1111111111111111111111111111111111111111 review-comment=100 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "C102",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_102",
+              "fullDatabaseId": "102",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 1111111111111111111111111111111111111111 review-comment=100 claim=101 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "CANCHOR_110",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_110",
+              "commit": {
+                "oid": "2222222222222222222222222222222222222222"
+              }
+            }
+          },
+          {
+            "cursor": "C110",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_110",
+              "fullDatabaseId": "110",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 2222222222222222222222222222222222222222\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C111",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_111",
+              "fullDatabaseId": "111",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 2222222222222222222222222222222222222222 review-comment=110 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "C112",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_112",
+              "fullDatabaseId": "112",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 2222222222222222222222222222222222222222 review-comment=110 claim=111 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "CCURRENT",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "CURRENT",
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "cursor": "C3000",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3000",
+              "fullDatabaseId": "3000",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=publication sha256=aa588404984f59afe92aa040a3d1bd994dc29ec6d08da482be5bd609f796495f -->\n{\"anchor\":\"CURRENT\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"history\":{\"edges\":[{\"cursor\":\"first\",\"node_id\":\"COMMIT\"},{\"cursor\":\"CANCHOR_100\",\"node_id\":\"ANCHOR_100\"},{\"cursor\":\"C100\",\"node_id\":\"IC_100\"},{\"cursor\":\"C101\",\"node_id\":\"IC_101\"},{\"cursor\":\"C102\",\"node_id\":\"IC_102\"},{\"cursor\":\"CANCHOR_110\",\"node_id\":\"ANCHOR_110\"},{\"cursor\":\"C110\",\"node_id\":\"IC_110\"},{\"cursor\":\"C111\",\"node_id\":\"IC_111\"},{\"cursor\":\"C112\",\"node_id\":\"IC_112\"},{\"cursor\":\"CCURRENT\",\"node_id\":\"CURRENT\"}],\"header\":{\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"baseRefName\":\"main\",\"headRefOid\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"identity_sha256\":\"001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce\",\"isDraft\":false,\"labels\":[],\"labelsComplete\":true,\"pr_key\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"state\":\"OPEN\"},\"protocol\":\"audit-history-v1\"},\"last_edge_cursor\":\"CCURRENT\",\"last_edge_node_id\":\"CURRENT\",\"snapshot_sha256\":\"35552d1b4df00353c7f7514c5ff6305382d908f838ccbbaabc1cf57072cd1463\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":0,\"depth\":2,\"epoch\":\"0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"technical-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\",\"resume_id\":null}\n"
+            }
+          },
+          {
+            "cursor": "C3001",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3001",
+              "fullDatabaseId": "3001",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=claim sha256=0e1455d3208cb56faf071e6c60a34beaace16608fd8ef03bc315ce5defe09d77 -->\n{\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"claim\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          },
+          {
+            "cursor": "C3002",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3002",
+              "fullDatabaseId": "3002",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=completion sha256=7efc99d38e57972037999e3380e8c977944ce3608d5c6c72bd8829f6e1c3c6fe -->\n{\"claim_id\":\"3001\",\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"completion\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          }
+        ]
+      },
+      "trusted": "owner",
+      "accepted": true,
+      "depth": 3,
+      "ledger": {
+        "budget_used": 0,
+        "series": null,
+        "attempt_ids": [],
+        "proofs": [
+          {
+            "source": {
+              "publication_id": "3000",
+              "claim_id": "3001",
+              "completion_id": "3002",
+              "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+              "epoch": "0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195",
+              "report_sha256": "8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061"
+            },
+            "outcome": "technical-handoff"
+          }
+        ],
+        "phases": [],
+        "resume_ids": [],
+        "active_parking_id": null,
+        "active_resume_id": null,
+        "resuming_publication_id": null,
+        "ignored_ids": [],
+        "mutation_authorized": false
+      },
+      "audit": {
+        "snapshot_sha256": "6f5a4857676b260eca21dc8135d361b9a0bda9bd142541848908e335ba72c357",
+        "last_edge_cursor": "C3002",
+        "last_edge_node_id": "IC_3002",
+        "base_ref_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "reason": "retained original material proves three canonical transactions"
+    },
+    {
+      "name": "retained-changed-labels",
+      "snapshot": {
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "baseRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "baseRefName": "main",
+        "state": "OPEN",
+        "isDraft": false,
+        "identity": {
+          "base_repository_id": "R_BASE",
+          "base_repository": "owner/repo",
+          "base_ref": "main",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42,
+          "head_repository_id": "R_BASE",
+          "head_repository": "owner/repo",
+          "head_ref": "ветка/проверка",
+          "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "cross_repository": false
+        },
+        "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+        "pr_key": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "author": {
+          "id": "U_AUTHOR",
+          "login": "contributor"
+        },
+        "labels": [
+          "hold"
+        ],
+        "labelsComplete": true,
+        "updatedAt": "2026-10-29T00:00:00Z",
+        "edges": [
+          {
+            "cursor": "first",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "COMMIT",
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "cursor": "CANCHOR_100",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_100",
+              "commit": {
+                "oid": "1111111111111111111111111111111111111111"
+              }
+            }
+          },
+          {
+            "cursor": "C100",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_100",
+              "fullDatabaseId": "100",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 1111111111111111111111111111111111111111\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C101",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_101",
+              "fullDatabaseId": "101",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 1111111111111111111111111111111111111111 review-comment=100 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "C102",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_102",
+              "fullDatabaseId": "102",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 1111111111111111111111111111111111111111 review-comment=100 claim=101 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "CANCHOR_110",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_110",
+              "commit": {
+                "oid": "2222222222222222222222222222222222222222"
+              }
+            }
+          },
+          {
+            "cursor": "C110",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_110",
+              "fullDatabaseId": "110",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 2222222222222222222222222222222222222222\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C111",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_111",
+              "fullDatabaseId": "111",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 2222222222222222222222222222222222222222 review-comment=110 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "C112",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_112",
+              "fullDatabaseId": "112",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 2222222222222222222222222222222222222222 review-comment=110 claim=111 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "CCURRENT",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "CURRENT",
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "cursor": "C3000",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3000",
+              "fullDatabaseId": "3000",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=publication sha256=aa588404984f59afe92aa040a3d1bd994dc29ec6d08da482be5bd609f796495f -->\n{\"anchor\":\"CURRENT\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"history\":{\"edges\":[{\"cursor\":\"first\",\"node_id\":\"COMMIT\"},{\"cursor\":\"CANCHOR_100\",\"node_id\":\"ANCHOR_100\"},{\"cursor\":\"C100\",\"node_id\":\"IC_100\"},{\"cursor\":\"C101\",\"node_id\":\"IC_101\"},{\"cursor\":\"C102\",\"node_id\":\"IC_102\"},{\"cursor\":\"CANCHOR_110\",\"node_id\":\"ANCHOR_110\"},{\"cursor\":\"C110\",\"node_id\":\"IC_110\"},{\"cursor\":\"C111\",\"node_id\":\"IC_111\"},{\"cursor\":\"C112\",\"node_id\":\"IC_112\"},{\"cursor\":\"CCURRENT\",\"node_id\":\"CURRENT\"}],\"header\":{\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"baseRefName\":\"main\",\"headRefOid\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"identity_sha256\":\"001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce\",\"isDraft\":false,\"labels\":[],\"labelsComplete\":true,\"pr_key\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"state\":\"OPEN\"},\"protocol\":\"audit-history-v1\"},\"last_edge_cursor\":\"CCURRENT\",\"last_edge_node_id\":\"CURRENT\",\"snapshot_sha256\":\"35552d1b4df00353c7f7514c5ff6305382d908f838ccbbaabc1cf57072cd1463\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":0,\"depth\":2,\"epoch\":\"0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"technical-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\",\"resume_id\":null}\n"
+            }
+          },
+          {
+            "cursor": "C3001",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3001",
+              "fullDatabaseId": "3001",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=claim sha256=0e1455d3208cb56faf071e6c60a34beaace16608fd8ef03bc315ce5defe09d77 -->\n{\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"claim\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          },
+          {
+            "cursor": "C3002",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3002",
+              "fullDatabaseId": "3002",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=completion sha256=7efc99d38e57972037999e3380e8c977944ce3608d5c6c72bd8829f6e1c3c6fe -->\n{\"claim_id\":\"3001\",\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"completion\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          }
+        ]
+      },
+      "trusted": "owner",
+      "accepted": true,
+      "depth": 3,
+      "ledger": {
+        "budget_used": 0,
+        "series": null,
+        "attempt_ids": [],
+        "proofs": [
+          {
+            "source": {
+              "publication_id": "3000",
+              "claim_id": "3001",
+              "completion_id": "3002",
+              "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+              "epoch": "0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195",
+              "report_sha256": "8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061"
+            },
+            "outcome": "technical-handoff"
+          }
+        ],
+        "phases": [],
+        "resume_ids": [],
+        "active_parking_id": null,
+        "active_resume_id": null,
+        "resuming_publication_id": null,
+        "ignored_ids": [],
+        "mutation_authorized": false
+      },
+      "audit": {
+        "snapshot_sha256": "27865d58701c3756a2462945aca74205f12d50d48ae4220af576c36edc6761ed",
+        "last_edge_cursor": "C3002",
+        "last_edge_node_id": "IC_3002",
+        "base_ref_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "reason": "retained original material proves three canonical transactions"
+    },
+    {
+      "name": "retained-changed-state",
+      "snapshot": {
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "baseRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "baseRefName": "main",
+        "state": "MERGED",
+        "isDraft": false,
+        "identity": {
+          "base_repository_id": "R_BASE",
+          "base_repository": "owner/repo",
+          "base_ref": "main",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42,
+          "head_repository_id": "R_BASE",
+          "head_repository": "owner/repo",
+          "head_ref": "ветка/проверка",
+          "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "cross_repository": false
+        },
+        "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+        "pr_key": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "author": {
+          "id": "U_AUTHOR",
+          "login": "contributor"
+        },
+        "labels": [],
+        "labelsComplete": true,
+        "updatedAt": "2026-10-29T00:00:00Z",
+        "edges": [
+          {
+            "cursor": "first",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "COMMIT",
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "cursor": "CANCHOR_100",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_100",
+              "commit": {
+                "oid": "1111111111111111111111111111111111111111"
+              }
+            }
+          },
+          {
+            "cursor": "C100",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_100",
+              "fullDatabaseId": "100",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 1111111111111111111111111111111111111111\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C101",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_101",
+              "fullDatabaseId": "101",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 1111111111111111111111111111111111111111 review-comment=100 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "C102",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_102",
+              "fullDatabaseId": "102",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 1111111111111111111111111111111111111111 review-comment=100 claim=101 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "CANCHOR_110",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_110",
+              "commit": {
+                "oid": "2222222222222222222222222222222222222222"
+              }
+            }
+          },
+          {
+            "cursor": "C110",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_110",
+              "fullDatabaseId": "110",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 2222222222222222222222222222222222222222\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C111",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_111",
+              "fullDatabaseId": "111",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 2222222222222222222222222222222222222222 review-comment=110 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "C112",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_112",
+              "fullDatabaseId": "112",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 2222222222222222222222222222222222222222 review-comment=110 claim=111 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "CCURRENT",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "CURRENT",
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "cursor": "C3000",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3000",
+              "fullDatabaseId": "3000",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=publication sha256=aa588404984f59afe92aa040a3d1bd994dc29ec6d08da482be5bd609f796495f -->\n{\"anchor\":\"CURRENT\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"history\":{\"edges\":[{\"cursor\":\"first\",\"node_id\":\"COMMIT\"},{\"cursor\":\"CANCHOR_100\",\"node_id\":\"ANCHOR_100\"},{\"cursor\":\"C100\",\"node_id\":\"IC_100\"},{\"cursor\":\"C101\",\"node_id\":\"IC_101\"},{\"cursor\":\"C102\",\"node_id\":\"IC_102\"},{\"cursor\":\"CANCHOR_110\",\"node_id\":\"ANCHOR_110\"},{\"cursor\":\"C110\",\"node_id\":\"IC_110\"},{\"cursor\":\"C111\",\"node_id\":\"IC_111\"},{\"cursor\":\"C112\",\"node_id\":\"IC_112\"},{\"cursor\":\"CCURRENT\",\"node_id\":\"CURRENT\"}],\"header\":{\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"baseRefName\":\"main\",\"headRefOid\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"identity_sha256\":\"001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce\",\"isDraft\":false,\"labels\":[],\"labelsComplete\":true,\"pr_key\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"state\":\"OPEN\"},\"protocol\":\"audit-history-v1\"},\"last_edge_cursor\":\"CCURRENT\",\"last_edge_node_id\":\"CURRENT\",\"snapshot_sha256\":\"35552d1b4df00353c7f7514c5ff6305382d908f838ccbbaabc1cf57072cd1463\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":0,\"depth\":2,\"epoch\":\"0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"technical-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\",\"resume_id\":null}\n"
+            }
+          },
+          {
+            "cursor": "C3001",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3001",
+              "fullDatabaseId": "3001",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=claim sha256=0e1455d3208cb56faf071e6c60a34beaace16608fd8ef03bc315ce5defe09d77 -->\n{\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"claim\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          },
+          {
+            "cursor": "C3002",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3002",
+              "fullDatabaseId": "3002",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=completion sha256=7efc99d38e57972037999e3380e8c977944ce3608d5c6c72bd8829f6e1c3c6fe -->\n{\"claim_id\":\"3001\",\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"completion\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          }
+        ]
+      },
+      "trusted": "owner",
+      "accepted": true,
+      "depth": 3,
+      "ledger": {
+        "budget_used": 0,
+        "series": null,
+        "attempt_ids": [],
+        "proofs": [
+          {
+            "source": {
+              "publication_id": "3000",
+              "claim_id": "3001",
+              "completion_id": "3002",
+              "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+              "epoch": "0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195",
+              "report_sha256": "8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061"
+            },
+            "outcome": "technical-handoff"
+          }
+        ],
+        "phases": [],
+        "resume_ids": [],
+        "active_parking_id": null,
+        "active_resume_id": null,
+        "resuming_publication_id": null,
+        "ignored_ids": [],
+        "mutation_authorized": false
+      },
+      "audit": {
+        "snapshot_sha256": "492ec0199dfa0963402e99c6d27c3ae482fab0e3b6697f469ffedfa19d6cfccd",
+        "last_edge_cursor": "C3002",
+        "last_edge_node_id": "IC_3002",
+        "base_ref_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "reason": "retained original material proves three canonical transactions"
+    },
+    {
+      "name": "retained-changed-isDraft",
+      "snapshot": {
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "baseRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "baseRefName": "main",
+        "state": "OPEN",
+        "isDraft": true,
+        "identity": {
+          "base_repository_id": "R_BASE",
+          "base_repository": "owner/repo",
+          "base_ref": "main",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42,
+          "head_repository_id": "R_BASE",
+          "head_repository": "owner/repo",
+          "head_ref": "ветка/проверка",
+          "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "cross_repository": false
+        },
+        "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+        "pr_key": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "author": {
+          "id": "U_AUTHOR",
+          "login": "contributor"
+        },
+        "labels": [],
+        "labelsComplete": true,
+        "updatedAt": "2026-10-29T00:00:00Z",
+        "edges": [
+          {
+            "cursor": "first",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "COMMIT",
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "cursor": "CANCHOR_100",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_100",
+              "commit": {
+                "oid": "1111111111111111111111111111111111111111"
+              }
+            }
+          },
+          {
+            "cursor": "C100",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_100",
+              "fullDatabaseId": "100",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 1111111111111111111111111111111111111111\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C101",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_101",
+              "fullDatabaseId": "101",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 1111111111111111111111111111111111111111 review-comment=100 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "C102",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_102",
+              "fullDatabaseId": "102",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 1111111111111111111111111111111111111111 review-comment=100 claim=101 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "CANCHOR_110",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_110",
+              "commit": {
+                "oid": "2222222222222222222222222222222222222222"
+              }
+            }
+          },
+          {
+            "cursor": "C110",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_110",
+              "fullDatabaseId": "110",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 2222222222222222222222222222222222222222\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C111",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_111",
+              "fullDatabaseId": "111",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 2222222222222222222222222222222222222222 review-comment=110 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "C112",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_112",
+              "fullDatabaseId": "112",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 2222222222222222222222222222222222222222 review-comment=110 claim=111 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "CCURRENT",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "CURRENT",
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "cursor": "C3000",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3000",
+              "fullDatabaseId": "3000",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=publication sha256=aa588404984f59afe92aa040a3d1bd994dc29ec6d08da482be5bd609f796495f -->\n{\"anchor\":\"CURRENT\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"history\":{\"edges\":[{\"cursor\":\"first\",\"node_id\":\"COMMIT\"},{\"cursor\":\"CANCHOR_100\",\"node_id\":\"ANCHOR_100\"},{\"cursor\":\"C100\",\"node_id\":\"IC_100\"},{\"cursor\":\"C101\",\"node_id\":\"IC_101\"},{\"cursor\":\"C102\",\"node_id\":\"IC_102\"},{\"cursor\":\"CANCHOR_110\",\"node_id\":\"ANCHOR_110\"},{\"cursor\":\"C110\",\"node_id\":\"IC_110\"},{\"cursor\":\"C111\",\"node_id\":\"IC_111\"},{\"cursor\":\"C112\",\"node_id\":\"IC_112\"},{\"cursor\":\"CCURRENT\",\"node_id\":\"CURRENT\"}],\"header\":{\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"baseRefName\":\"main\",\"headRefOid\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"identity_sha256\":\"001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce\",\"isDraft\":false,\"labels\":[],\"labelsComplete\":true,\"pr_key\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"state\":\"OPEN\"},\"protocol\":\"audit-history-v1\"},\"last_edge_cursor\":\"CCURRENT\",\"last_edge_node_id\":\"CURRENT\",\"snapshot_sha256\":\"35552d1b4df00353c7f7514c5ff6305382d908f838ccbbaabc1cf57072cd1463\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":0,\"depth\":2,\"epoch\":\"0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"technical-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\",\"resume_id\":null}\n"
+            }
+          },
+          {
+            "cursor": "C3001",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3001",
+              "fullDatabaseId": "3001",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=claim sha256=0e1455d3208cb56faf071e6c60a34beaace16608fd8ef03bc315ce5defe09d77 -->\n{\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"claim\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          },
+          {
+            "cursor": "C3002",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3002",
+              "fullDatabaseId": "3002",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=completion sha256=7efc99d38e57972037999e3380e8c977944ce3608d5c6c72bd8829f6e1c3c6fe -->\n{\"claim_id\":\"3001\",\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"completion\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          }
+        ]
+      },
+      "trusted": "owner",
+      "accepted": true,
+      "depth": 3,
+      "ledger": {
+        "budget_used": 0,
+        "series": null,
+        "attempt_ids": [],
+        "proofs": [
+          {
+            "source": {
+              "publication_id": "3000",
+              "claim_id": "3001",
+              "completion_id": "3002",
+              "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+              "epoch": "0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195",
+              "report_sha256": "8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061"
+            },
+            "outcome": "technical-handoff"
+          }
+        ],
+        "phases": [],
+        "resume_ids": [],
+        "active_parking_id": null,
+        "active_resume_id": null,
+        "resuming_publication_id": null,
+        "ignored_ids": [],
+        "mutation_authorized": false
+      },
+      "audit": {
+        "snapshot_sha256": "52e135bc264c17dca9ef758f5a8fa8951f6cef78c15edca8b2fdcc6576818862",
+        "last_edge_cursor": "C3002",
+        "last_edge_node_id": "IC_3002",
+        "base_ref_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "reason": "retained original material proves three canonical transactions"
+    },
+    {
+      "name": "retained-backdated-before-audit",
+      "snapshot": {
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "baseRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "baseRefName": "main",
+        "state": "OPEN",
+        "isDraft": false,
+        "identity": {
+          "base_repository_id": "R_BASE",
+          "base_repository": "owner/repo",
+          "base_ref": "main",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42,
+          "head_repository_id": "R_BASE",
+          "head_repository": "owner/repo",
+          "head_ref": "ветка/проверка",
+          "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "cross_repository": false
+        },
+        "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+        "pr_key": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "author": {
+          "id": "U_AUTHOR",
+          "login": "contributor"
+        },
+        "labels": [],
+        "labelsComplete": true,
+        "updatedAt": "2026-10-29T00:00:00Z",
+        "edges": [
+          {
+            "cursor": "first",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "COMMIT",
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "cursor": "CANCHOR_100",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_100",
+              "commit": {
+                "oid": "1111111111111111111111111111111111111111"
+              }
+            }
+          },
+          {
+            "cursor": "LATE_COMMIT",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "LATE_COMMIT",
+              "commit": {
+                "oid": "9999999999999999999999999999999999999999"
+              }
+            }
+          },
+          {
+            "cursor": "C100",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_100",
+              "fullDatabaseId": "100",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 1111111111111111111111111111111111111111\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C101",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_101",
+              "fullDatabaseId": "101",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 1111111111111111111111111111111111111111 review-comment=100 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "C102",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_102",
+              "fullDatabaseId": "102",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 1111111111111111111111111111111111111111 review-comment=100 claim=101 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "CANCHOR_110",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_110",
+              "commit": {
+                "oid": "2222222222222222222222222222222222222222"
+              }
+            }
+          },
+          {
+            "cursor": "C110",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_110",
+              "fullDatabaseId": "110",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 2222222222222222222222222222222222222222\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C111",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_111",
+              "fullDatabaseId": "111",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 2222222222222222222222222222222222222222 review-comment=110 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "C112",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_112",
+              "fullDatabaseId": "112",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 2222222222222222222222222222222222222222 review-comment=110 claim=111 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "CCURRENT",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "CURRENT",
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "cursor": "C3000",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3000",
+              "fullDatabaseId": "3000",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=publication sha256=aa588404984f59afe92aa040a3d1bd994dc29ec6d08da482be5bd609f796495f -->\n{\"anchor\":\"CURRENT\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"history\":{\"edges\":[{\"cursor\":\"first\",\"node_id\":\"COMMIT\"},{\"cursor\":\"CANCHOR_100\",\"node_id\":\"ANCHOR_100\"},{\"cursor\":\"C100\",\"node_id\":\"IC_100\"},{\"cursor\":\"C101\",\"node_id\":\"IC_101\"},{\"cursor\":\"C102\",\"node_id\":\"IC_102\"},{\"cursor\":\"CANCHOR_110\",\"node_id\":\"ANCHOR_110\"},{\"cursor\":\"C110\",\"node_id\":\"IC_110\"},{\"cursor\":\"C111\",\"node_id\":\"IC_111\"},{\"cursor\":\"C112\",\"node_id\":\"IC_112\"},{\"cursor\":\"CCURRENT\",\"node_id\":\"CURRENT\"}],\"header\":{\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"baseRefName\":\"main\",\"headRefOid\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"identity_sha256\":\"001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce\",\"isDraft\":false,\"labels\":[],\"labelsComplete\":true,\"pr_key\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"state\":\"OPEN\"},\"protocol\":\"audit-history-v1\"},\"last_edge_cursor\":\"CCURRENT\",\"last_edge_node_id\":\"CURRENT\",\"snapshot_sha256\":\"35552d1b4df00353c7f7514c5ff6305382d908f838ccbbaabc1cf57072cd1463\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":0,\"depth\":2,\"epoch\":\"0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"technical-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\",\"resume_id\":null}\n"
+            }
+          },
+          {
+            "cursor": "C3001",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3001",
+              "fullDatabaseId": "3001",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=claim sha256=0e1455d3208cb56faf071e6c60a34beaace16608fd8ef03bc315ce5defe09d77 -->\n{\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"claim\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          },
+          {
+            "cursor": "C3002",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3002",
+              "fullDatabaseId": "3002",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=completion sha256=7efc99d38e57972037999e3380e8c977944ce3608d5c6c72bd8829f6e1c3c6fe -->\n{\"claim_id\":\"3001\",\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"completion\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          }
+        ]
+      },
+      "trusted": "owner",
+      "accepted": true,
+      "depth": 3,
+      "ledger": {
+        "budget_used": 0,
+        "series": null,
+        "attempt_ids": [],
+        "proofs": [
+          {
+            "source": {
+              "publication_id": "3000",
+              "claim_id": "3001",
+              "completion_id": "3002",
+              "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+              "epoch": "0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195",
+              "report_sha256": "8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061"
+            },
+            "outcome": "technical-handoff"
+          }
+        ],
+        "phases": [],
+        "resume_ids": [],
+        "active_parking_id": null,
+        "active_resume_id": null,
+        "resuming_publication_id": null,
+        "ignored_ids": [],
+        "mutation_authorized": false
+      },
+      "audit": {
+        "snapshot_sha256": "f9ae3381d6a09fee58fbb407b6029bd24a4067aa01058c59b1d06626ffb94b68",
+        "last_edge_cursor": "C3002",
+        "last_edge_node_id": "IC_3002",
+        "base_ref_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "reason": "retained original material proves three canonical transactions"
+    },
+    {
+      "name": "retained-backdated-during-publication",
+      "snapshot": {
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "baseRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "baseRefName": "main",
+        "state": "OPEN",
+        "isDraft": false,
+        "identity": {
+          "base_repository_id": "R_BASE",
+          "base_repository": "owner/repo",
+          "base_ref": "main",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42,
+          "head_repository_id": "R_BASE",
+          "head_repository": "owner/repo",
+          "head_ref": "ветка/проверка",
+          "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "cross_repository": false
+        },
+        "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+        "pr_key": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "author": {
+          "id": "U_AUTHOR",
+          "login": "contributor"
+        },
+        "labels": [],
+        "labelsComplete": true,
+        "updatedAt": "2026-10-29T00:00:00Z",
+        "edges": [
+          {
+            "cursor": "first",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "COMMIT",
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "cursor": "CANCHOR_100",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_100",
+              "commit": {
+                "oid": "1111111111111111111111111111111111111111"
+              }
+            }
+          },
+          {
+            "cursor": "C100",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_100",
+              "fullDatabaseId": "100",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 1111111111111111111111111111111111111111\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C101",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_101",
+              "fullDatabaseId": "101",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 1111111111111111111111111111111111111111 review-comment=100 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "C102",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_102",
+              "fullDatabaseId": "102",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 1111111111111111111111111111111111111111 review-comment=100 claim=101 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "CANCHOR_110",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_110",
+              "commit": {
+                "oid": "2222222222222222222222222222222222222222"
+              }
+            }
+          },
+          {
+            "cursor": "C110",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_110",
+              "fullDatabaseId": "110",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 2222222222222222222222222222222222222222\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C111",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_111",
+              "fullDatabaseId": "111",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 2222222222222222222222222222222222222222 review-comment=110 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "C112",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_112",
+              "fullDatabaseId": "112",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 2222222222222222222222222222222222222222 review-comment=110 claim=111 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "CCURRENT",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "CURRENT",
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "cursor": "C3000",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3000",
+              "fullDatabaseId": "3000",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=publication sha256=aa588404984f59afe92aa040a3d1bd994dc29ec6d08da482be5bd609f796495f -->\n{\"anchor\":\"CURRENT\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"history\":{\"edges\":[{\"cursor\":\"first\",\"node_id\":\"COMMIT\"},{\"cursor\":\"CANCHOR_100\",\"node_id\":\"ANCHOR_100\"},{\"cursor\":\"C100\",\"node_id\":\"IC_100\"},{\"cursor\":\"C101\",\"node_id\":\"IC_101\"},{\"cursor\":\"C102\",\"node_id\":\"IC_102\"},{\"cursor\":\"CANCHOR_110\",\"node_id\":\"ANCHOR_110\"},{\"cursor\":\"C110\",\"node_id\":\"IC_110\"},{\"cursor\":\"C111\",\"node_id\":\"IC_111\"},{\"cursor\":\"C112\",\"node_id\":\"IC_112\"},{\"cursor\":\"CCURRENT\",\"node_id\":\"CURRENT\"}],\"header\":{\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"baseRefName\":\"main\",\"headRefOid\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"identity_sha256\":\"001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce\",\"isDraft\":false,\"labels\":[],\"labelsComplete\":true,\"pr_key\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"state\":\"OPEN\"},\"protocol\":\"audit-history-v1\"},\"last_edge_cursor\":\"CCURRENT\",\"last_edge_node_id\":\"CURRENT\",\"snapshot_sha256\":\"35552d1b4df00353c7f7514c5ff6305382d908f838ccbbaabc1cf57072cd1463\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":0,\"depth\":2,\"epoch\":\"0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"technical-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\",\"resume_id\":null}\n"
+            }
+          },
+          {
+            "cursor": "C3001",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3001",
+              "fullDatabaseId": "3001",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=claim sha256=0e1455d3208cb56faf071e6c60a34beaace16608fd8ef03bc315ce5defe09d77 -->\n{\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"claim\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          },
+          {
+            "cursor": "LATE_COMMIT",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "LATE_COMMIT",
+              "commit": {
+                "oid": "9999999999999999999999999999999999999999"
+              }
+            }
+          },
+          {
+            "cursor": "C3002",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3002",
+              "fullDatabaseId": "3002",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=completion sha256=7efc99d38e57972037999e3380e8c977944ce3608d5c6c72bd8829f6e1c3c6fe -->\n{\"claim_id\":\"3001\",\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"completion\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          }
+        ]
+      },
+      "trusted": "owner",
+      "accepted": true,
+      "depth": 3,
+      "ledger": {
+        "budget_used": 0,
+        "series": null,
+        "attempt_ids": [],
+        "proofs": [
+          {
+            "source": {
+              "publication_id": "3000",
+              "claim_id": "3001",
+              "completion_id": "3002",
+              "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+              "epoch": "0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195",
+              "report_sha256": "8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061"
+            },
+            "outcome": "technical-handoff"
+          }
+        ],
+        "phases": [],
+        "resume_ids": [],
+        "active_parking_id": null,
+        "active_resume_id": null,
+        "resuming_publication_id": null,
+        "ignored_ids": [],
+        "mutation_authorized": false
+      },
+      "audit": {
+        "snapshot_sha256": "ab75d72741852ea62b561d428137a303575630ea4f08b95ed36627109f92caf8",
+        "last_edge_cursor": "C3002",
+        "last_edge_node_id": "IC_3002",
+        "base_ref_oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      "reason": "retained original material proves three canonical transactions"
+    },
+    {
+      "name": "retained-missing-original-node",
+      "snapshot": {
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "baseRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "baseRefName": "main",
+        "state": "OPEN",
+        "isDraft": false,
+        "identity": {
+          "base_repository_id": "R_BASE",
+          "base_repository": "owner/repo",
+          "base_ref": "main",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42,
+          "head_repository_id": "R_BASE",
+          "head_repository": "owner/repo",
+          "head_ref": "ветка/проверка",
+          "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "cross_repository": false
+        },
+        "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+        "pr_key": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "author": {
+          "id": "U_AUTHOR",
+          "login": "contributor"
+        },
+        "labels": [],
+        "labelsComplete": true,
+        "updatedAt": "2026-10-29T00:00:00Z",
+        "edges": [
+          {
+            "cursor": "CANCHOR_100",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_100",
+              "commit": {
+                "oid": "1111111111111111111111111111111111111111"
+              }
+            }
+          },
+          {
+            "cursor": "C100",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_100",
+              "fullDatabaseId": "100",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 1111111111111111111111111111111111111111\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C101",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_101",
+              "fullDatabaseId": "101",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 1111111111111111111111111111111111111111 review-comment=100 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "C102",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_102",
+              "fullDatabaseId": "102",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 1111111111111111111111111111111111111111 review-comment=100 claim=101 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "CANCHOR_110",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_110",
+              "commit": {
+                "oid": "2222222222222222222222222222222222222222"
+              }
+            }
+          },
+          {
+            "cursor": "C110",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_110",
+              "fullDatabaseId": "110",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 2222222222222222222222222222222222222222\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C111",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_111",
+              "fullDatabaseId": "111",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 2222222222222222222222222222222222222222 review-comment=110 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "C112",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_112",
+              "fullDatabaseId": "112",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 2222222222222222222222222222222222222222 review-comment=110 claim=111 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "CCURRENT",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "CURRENT",
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "cursor": "C3000",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3000",
+              "fullDatabaseId": "3000",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=publication sha256=aa588404984f59afe92aa040a3d1bd994dc29ec6d08da482be5bd609f796495f -->\n{\"anchor\":\"CURRENT\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"history\":{\"edges\":[{\"cursor\":\"first\",\"node_id\":\"COMMIT\"},{\"cursor\":\"CANCHOR_100\",\"node_id\":\"ANCHOR_100\"},{\"cursor\":\"C100\",\"node_id\":\"IC_100\"},{\"cursor\":\"C101\",\"node_id\":\"IC_101\"},{\"cursor\":\"C102\",\"node_id\":\"IC_102\"},{\"cursor\":\"CANCHOR_110\",\"node_id\":\"ANCHOR_110\"},{\"cursor\":\"C110\",\"node_id\":\"IC_110\"},{\"cursor\":\"C111\",\"node_id\":\"IC_111\"},{\"cursor\":\"C112\",\"node_id\":\"IC_112\"},{\"cursor\":\"CCURRENT\",\"node_id\":\"CURRENT\"}],\"header\":{\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"baseRefName\":\"main\",\"headRefOid\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"identity_sha256\":\"001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce\",\"isDraft\":false,\"labels\":[],\"labelsComplete\":true,\"pr_key\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"state\":\"OPEN\"},\"protocol\":\"audit-history-v1\"},\"last_edge_cursor\":\"CCURRENT\",\"last_edge_node_id\":\"CURRENT\",\"snapshot_sha256\":\"35552d1b4df00353c7f7514c5ff6305382d908f838ccbbaabc1cf57072cd1463\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":0,\"depth\":2,\"epoch\":\"0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"technical-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\",\"resume_id\":null}\n"
+            }
+          },
+          {
+            "cursor": "C3001",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3001",
+              "fullDatabaseId": "3001",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=claim sha256=0e1455d3208cb56faf071e6c60a34beaace16608fd8ef03bc315ce5defe09d77 -->\n{\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"claim\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          },
+          {
+            "cursor": "C3002",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3002",
+              "fullDatabaseId": "3002",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=completion sha256=7efc99d38e57972037999e3380e8c977944ce3608d5c6c72bd8829f6e1c3c6fe -->\n{\"claim_id\":\"3001\",\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"completion\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          }
+        ]
+      },
+      "trusted": "owner",
+      "accepted": false,
+      "reason": "historical audit original nodes are missing or reordered"
+    },
+    {
+      "name": "retained-changed-original-node",
+      "snapshot": {
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "baseRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "baseRefName": "main",
+        "state": "OPEN",
+        "isDraft": false,
+        "identity": {
+          "base_repository_id": "R_BASE",
+          "base_repository": "owner/repo",
+          "base_ref": "main",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42,
+          "head_repository_id": "R_BASE",
+          "head_repository": "owner/repo",
+          "head_ref": "ветка/проверка",
+          "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "cross_repository": false
+        },
+        "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+        "pr_key": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "author": {
+          "id": "U_AUTHOR",
+          "login": "contributor"
+        },
+        "labels": [],
+        "labelsComplete": true,
+        "updatedAt": "2026-10-29T00:00:00Z",
+        "edges": [
+          {
+            "cursor": "first",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "COMMIT",
+              "commit": {
+                "oid": "ffffffffffffffffffffffffffffffffffffffff"
+              }
+            }
+          },
+          {
+            "cursor": "CANCHOR_100",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_100",
+              "commit": {
+                "oid": "1111111111111111111111111111111111111111"
+              }
+            }
+          },
+          {
+            "cursor": "C100",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_100",
+              "fullDatabaseId": "100",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 1111111111111111111111111111111111111111\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C101",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_101",
+              "fullDatabaseId": "101",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 1111111111111111111111111111111111111111 review-comment=100 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "C102",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_102",
+              "fullDatabaseId": "102",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 1111111111111111111111111111111111111111 review-comment=100 claim=101 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "CANCHOR_110",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_110",
+              "commit": {
+                "oid": "2222222222222222222222222222222222222222"
+              }
+            }
+          },
+          {
+            "cursor": "C110",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_110",
+              "fullDatabaseId": "110",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 2222222222222222222222222222222222222222\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C111",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_111",
+              "fullDatabaseId": "111",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 2222222222222222222222222222222222222222 review-comment=110 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "C112",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_112",
+              "fullDatabaseId": "112",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 2222222222222222222222222222222222222222 review-comment=110 claim=111 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "CCURRENT",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "CURRENT",
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "cursor": "C3000",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3000",
+              "fullDatabaseId": "3000",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=publication sha256=aa588404984f59afe92aa040a3d1bd994dc29ec6d08da482be5bd609f796495f -->\n{\"anchor\":\"CURRENT\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"history\":{\"edges\":[{\"cursor\":\"first\",\"node_id\":\"COMMIT\"},{\"cursor\":\"CANCHOR_100\",\"node_id\":\"ANCHOR_100\"},{\"cursor\":\"C100\",\"node_id\":\"IC_100\"},{\"cursor\":\"C101\",\"node_id\":\"IC_101\"},{\"cursor\":\"C102\",\"node_id\":\"IC_102\"},{\"cursor\":\"CANCHOR_110\",\"node_id\":\"ANCHOR_110\"},{\"cursor\":\"C110\",\"node_id\":\"IC_110\"},{\"cursor\":\"C111\",\"node_id\":\"IC_111\"},{\"cursor\":\"C112\",\"node_id\":\"IC_112\"},{\"cursor\":\"CCURRENT\",\"node_id\":\"CURRENT\"}],\"header\":{\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"baseRefName\":\"main\",\"headRefOid\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"identity_sha256\":\"001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce\",\"isDraft\":false,\"labels\":[],\"labelsComplete\":true,\"pr_key\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"state\":\"OPEN\"},\"protocol\":\"audit-history-v1\"},\"last_edge_cursor\":\"CCURRENT\",\"last_edge_node_id\":\"CURRENT\",\"snapshot_sha256\":\"35552d1b4df00353c7f7514c5ff6305382d908f838ccbbaabc1cf57072cd1463\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":0,\"depth\":2,\"epoch\":\"0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"technical-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\",\"resume_id\":null}\n"
+            }
+          },
+          {
+            "cursor": "C3001",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3001",
+              "fullDatabaseId": "3001",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=claim sha256=0e1455d3208cb56faf071e6c60a34beaace16608fd8ef03bc315ce5defe09d77 -->\n{\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"claim\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          },
+          {
+            "cursor": "C3002",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3002",
+              "fullDatabaseId": "3002",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=completion sha256=7efc99d38e57972037999e3380e8c977944ce3608d5c6c72bd8829f6e1c3c6fe -->\n{\"claim_id\":\"3001\",\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"completion\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          }
+        ]
+      },
+      "trusted": "owner",
+      "accepted": false,
+      "reason": "historical publication audit prefix is unavailable or changed"
+    },
+    {
+      "name": "retained-unexplained-independent-event",
+      "snapshot": {
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "baseRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "baseRefName": "main",
+        "state": "OPEN",
+        "isDraft": false,
+        "identity": {
+          "base_repository_id": "R_BASE",
+          "base_repository": "owner/repo",
+          "base_ref": "main",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42,
+          "head_repository_id": "R_BASE",
+          "head_repository": "owner/repo",
+          "head_ref": "ветка/проверка",
+          "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "cross_repository": false
+        },
+        "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+        "pr_key": {
+          "base_repository_id": "R_BASE",
+          "pr_id": "PR_NODE_42",
+          "pr_number": 42
+        },
+        "author": {
+          "id": "U_AUTHOR",
+          "login": "contributor"
+        },
+        "labels": [],
+        "labelsComplete": true,
+        "updatedAt": "2026-10-29T00:00:00Z",
+        "edges": [
+          {
+            "cursor": "first",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "COMMIT",
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "cursor": "CANCHOR_100",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_100",
+              "commit": {
+                "oid": "1111111111111111111111111111111111111111"
+              }
+            }
+          },
+          {
+            "cursor": "UNKNOWN_EVENT",
+            "node": {
+              "__typename": "LabeledEvent",
+              "id": "UNKNOWN_EVENT",
+              "label": {
+                "name": "hold"
+              }
+            }
+          },
+          {
+            "cursor": "C100",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_100",
+              "fullDatabaseId": "100",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 1111111111111111111111111111111111111111\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C101",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_101",
+              "fullDatabaseId": "101",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 1111111111111111111111111111111111111111 review-comment=100 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "C102",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_102",
+              "fullDatabaseId": "102",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 1111111111111111111111111111111111111111 review-comment=100 claim=101 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+            }
+          },
+          {
+            "cursor": "CANCHOR_110",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "ANCHOR_110",
+              "commit": {
+                "oid": "2222222222222222222222222222222222222222"
+              }
+            }
+          },
+          {
+            "cursor": "C110",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_110",
+              "fullDatabaseId": "110",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "Reviewed-SHA: 2222222222222222222222222222222222222222\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+            }
+          },
+          {
+            "cursor": "C111",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_111",
+              "fullDatabaseId": "111",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-claim 2222222222222222222222222222222222222222 review-comment=110 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "C112",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_112",
+              "fullDatabaseId": "112",
+              "createdAt": "2026-10-29T00:00:00Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:head-reviewed 2222222222222222222222222222222222222222 review-comment=110 claim=111 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+            }
+          },
+          {
+            "cursor": "CCURRENT",
+            "node": {
+              "__typename": "PullRequestCommit",
+              "id": "CURRENT",
+              "commit": {
+                "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            }
+          },
+          {
+            "cursor": "C3000",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3000",
+              "fullDatabaseId": "3000",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=publication sha256=aa588404984f59afe92aa040a3d1bd994dc29ec6d08da482be5bd609f796495f -->\n{\"anchor\":\"CURRENT\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"history\":{\"edges\":[{\"cursor\":\"first\",\"node_id\":\"COMMIT\"},{\"cursor\":\"CANCHOR_100\",\"node_id\":\"ANCHOR_100\"},{\"cursor\":\"C100\",\"node_id\":\"IC_100\"},{\"cursor\":\"C101\",\"node_id\":\"IC_101\"},{\"cursor\":\"C102\",\"node_id\":\"IC_102\"},{\"cursor\":\"CANCHOR_110\",\"node_id\":\"ANCHOR_110\"},{\"cursor\":\"C110\",\"node_id\":\"IC_110\"},{\"cursor\":\"C111\",\"node_id\":\"IC_111\"},{\"cursor\":\"C112\",\"node_id\":\"IC_112\"},{\"cursor\":\"CCURRENT\",\"node_id\":\"CURRENT\"}],\"header\":{\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"baseRefName\":\"main\",\"headRefOid\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"identity_sha256\":\"001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce\",\"isDraft\":false,\"labels\":[],\"labelsComplete\":true,\"pr_key\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"state\":\"OPEN\"},\"protocol\":\"audit-history-v1\"},\"last_edge_cursor\":\"CCURRENT\",\"last_edge_node_id\":\"CURRENT\",\"snapshot_sha256\":\"35552d1b4df00353c7f7514c5ff6305382d908f838ccbbaabc1cf57072cd1463\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":0,\"depth\":2,\"epoch\":\"0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"technical-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\",\"resume_id\":null}\n"
+            }
+          },
+          {
+            "cursor": "C3001",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3001",
+              "fullDatabaseId": "3001",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=claim sha256=0e1455d3208cb56faf071e6c60a34beaace16608fd8ef03bc315ce5defe09d77 -->\n{\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"claim\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          },
+          {
+            "cursor": "C3002",
+            "node": {
+              "__typename": "IssueComment",
+              "id": "IC_3002",
+              "fullDatabaseId": "3002",
+              "createdAt": "2026-10-29T00:00:01Z",
+              "lastEditedAt": null,
+              "author": {
+                "login": "owner"
+              },
+              "body": "<!-- pp:review-routing-v1 kind=completion sha256=7efc99d38e57972037999e3380e8c977944ce3608d5c6c72bd8829f6e1c3c6fe -->\n{\"claim_id\":\"3001\",\"context_sha256\":\"b2e324f0f015bf6be43200cddc40bf57061c45958d4cfc3e37a4edd4a9a60f23\",\"kind\":\"completion\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+            }
+          }
+        ]
+      },
+      "trusted": "owner",
+      "accepted": false,
+      "reason": "historical audit has an unexplained independent event"
+    }
+  ],
+  "initial_source_checkout_sha256": {
+    "promptpilot/review_routing_baseline.py": "0226849efbbaedc1869a7d48bae1f1b6c340555f97d8a6b638ef27e9afbc8b31",
+    "promptpilot/review_routing_history.py": "01ace235d4b2079575d45891b036b3317b4f5b15434cc108c694ebd63429fb6d",
+    "promptpilot/review_routing_wire.py": "5d3d8736a60cf83bc35f91791cfa7fbe4a4dfdd3e26822622a34e1653e515266",
+    "tests/test_review_routing_audit_history.py": "ed02a310e8ba505e7b0f2c09ae3bc73bedf341e9fc30392d4b1f90a534f592ba"
+  },
+  "source_representation": "exact Git blob bytes; initial source checkout hashes recorded separately"
+}

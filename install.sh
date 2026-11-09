@@ -121,5 +121,15 @@ if [ -n "$project" ]; then
     [ -z "$agents" ] || set -- "$@" --agents "$agents"
     "$exe" "$@"
 else
-    printf 'Run: "%s" start\n' "$exe"
+    # Print one POSIX shell literal; double quotes would still expand path text.
+    printf "Run: '"
+    remaining=$exe
+    while :; do
+        case "$remaining" in
+            *"'"*)
+                printf '%s' "${remaining%%\'*}" "'\\''"
+                remaining=${remaining#*\'} ;;
+            *) printf "%s' start\n" "$remaining"; break ;;
+        esac
+    done
 fi

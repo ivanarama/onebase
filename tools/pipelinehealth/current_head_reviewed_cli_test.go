@@ -66,7 +66,7 @@ func pipelinehealthJSON(t *testing.T, pulls []apiPull) report {
 		t.Fatal(err)
 	}
 	//nolint:gosec // Исполняемый файл и флаги фиксированы; переменные аргументы — временные пути самого теста.
-	command := exec.Command("go", "run", ".", "-json", "-prs", prsPath, "-issues", issuesPath,
+	command := exec.Command(pipelinehealthCLI(t), "-json", "-prs", prsPath, "-issues", issuesPath,
 		"-contract", filepath.Join("..", "..", ".claude", "skills", "review-queue", "SKILL.md"))
 	output, err := command.CombinedOutput()
 	if err != nil {
