@@ -41,7 +41,11 @@ func startFakeSMTP(t *testing.T, tlsCfg, starttls *tls.Config, mechs string) *fa
 		ln = tls.NewListener(ln, tlsCfg)
 	}
 	f := &fakeSMTP{addr: ln.Addr().String()}
-	t.Cleanup(func() { ln.Close() })
+	t.Cleanup(func() {
+		if err := ln.Close(); err != nil {
+			t.Errorf("close fake SMTP listener: %v", err)
+		}
+	})
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -57,10 +61,18 @@ func startFakeSMTP(t *testing.T, tlsCfg, starttls *tls.Config, mechs string) *fa
 func (f *fakeSMTP) serve(conn net.Conn, starttls *tls.Config, mechs string) {
 	defer conn.Close() //nolint:errcheck
 	r := bufio.NewReader(conn)
-	w := func(s string) { conn.Write([]byte(s + "\r\n")) } //nolint:errcheck
+	var writeErr error
+	w := func(s string) {
+		if writeErr == nil {
+			_, writeErr = conn.Write([]byte(s + "\r\n"))
+		}
+	}
 	w("220 fake ESMTP")
 	tlsDone := false
 	for {
+		if writeErr != nil {
+			return
+		}
 		line, err := r.ReadString('\n')
 		if err != nil {
 			return
@@ -81,7 +93,6 @@ func (f *fakeSMTP) serve(conn net.Conn, starttls *tls.Config, mechs string) {
 				return
 			}
 			conn, r, tlsDone = tc, bufio.NewReader(tc), true
-			w = func(s string) { tc.Write([]byte(s + "\r\n")) } //nolint:errcheck
 		case strings.HasPrefix(up, "AUTH PLAIN"):
 			raw, _ := base64.StdEncoding.DecodeString(strings.TrimSpace(line[len("AUTH PLAIN"):]))
 			parts := strings.Split(string(raw), "\x00")
