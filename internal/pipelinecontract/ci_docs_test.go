@@ -153,7 +153,7 @@ func TestCICommitClosingGate(t *testing.T) {
 		}
 		if step.Name == "Check commit closing references" {
 			found = step.If == "${{ github.event_name == 'pull_request' }}" &&
-				step.Run == `go run ./tools/prclosecheck -event "$GITHUB_EVENT_PATH"` && completeHistory
+				step.Run == `go run ./tools/prclosecheck -event "$GITHUB_EVENT_PATH" -checkout-merge "$GITHUB_SHA"` && completeHistory
 		}
 	}
 	if !found {

@@ -88,7 +88,7 @@ jobs:
       # example. This gate also runs for docs-only PRs and PR body edits.
       - name: Check commit closing references
         if: ${{ github.event_name == 'pull_request' }}
-        run: go run ./tools/prclosecheck -event "$GITHUB_EVENT_PATH"
+        run: go run ./tools/prclosecheck -event "$GITHUB_EVENT_PATH" -checkout-merge "$GITHUB_SHA"
 
       - name: Check for UTF-8 BOM in .go files
         run: |
