@@ -149,6 +149,23 @@ jobs:
           $ldflags += " -X github.com/ivantit66/onebase/internal/selfupdate.RequireSignature=1"
           go build -tags webview "-ldflags=$ldflags" -o onebase-gui.exe ./cmd/onebase
 
+      - name: Collect licenses for the actual release binaries
+        shell: bash
+        env:
+          BUILD_VER: ${{ steps.ver.outputs.ver }}
+          TARGET_GOOS: ${{ matrix.goos }}
+          TARGET_GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          binaries=(onebase)
+          if [ "$TARGET_GOOS" = windows ]; then
+            binaries=(onebase.exe)
+            if [ "$TARGET_GOARCH" = amd64 ]; then
+              binaries+=(onebase-gui.exe)
+            fi
+          fi
+          go run ./tools/licensebundle -release -out "$RUNNER_TEMP/license-bundle" -version "$BUILD_VER" "${binaries[@]}"
+
       - name: Package (Windows)
         if: matrix.goos == 'windows'
         shell: pwsh
@@ -169,6 +186,7 @@ jobs:
           }
           Copy-Item README.md "$name\" -ErrorAction SilentlyContinue
           Copy-Item examples "$name\" -Recurse -ErrorAction SilentlyContinue
+          Copy-Item "$env:RUNNER_TEMP\license-bundle\*" "$name\" -Recurse -ErrorAction Stop
           Compress-Archive -Path "$name\*" -DestinationPath "${name}.zip"
           echo "ASSET=${name}.zip" >> $env:GITHUB_ENV
 
@@ -180,6 +198,7 @@ jobs:
           cp onebase "$name/"
           cp README.md "$name/" 2>/dev/null || true
           cp -r examples "$name/" 2>/dev/null || true
+          cp -r "$RUNNER_TEMP/license-bundle/." "$name/"
           tar czf "${name}.tar.gz" "$name"
           echo "ASSET=${name}.tar.gz" >> $GITHUB_ENV
 
@@ -208,10 +227,12 @@ jobs:
   verify-ci:
     name: Require green CI for this commit
     runs-on: ubuntu-latest
-    # Свой дедлайн ожидания CI — 30 минут (см. шаг ниже); лимит job'а стоит
+    # CI build допускает 60 минут после classify; ждём до 75 минут, чтобы
+    # полный успешный прогон успел завершиться вместе с зависимыми jobs.
+    # Лимит job'а стоит
     # чуть выше, чтобы срабатывал внутренний с внятным сообщением, а этот
     # оставался страховкой на случай зависания самого раннера.
-    timeout-minutes: 40
+    timeout-minutes: 85
     permissions:
       # contents:read нужен появившемуся checkout: объявленные на джобе
       # permissions ЗАМЕЩАЮТ умолчание workflow, а не дополняют его.
@@ -254,7 +275,7 @@ jobs:
           # они проверяют другой ref. Не требуем успеха от ВСЕХ запусков этого
           # SHA: старый cancelled run (или отменённая первая попытка перед rerun)
           # не должен навсегда отравлять уже успешную проверку push@main.
-          deadline=$(( $(date +%s) + 1800 ))
+          deadline=$(( $(date +%s) + 4500 ))
           while :; do
             runs=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&branch=main&event=push&per_page=100" \
               --jq '[.workflow_runs[] | {status: .status, conclusion: .conclusion, event: .event, branch: .head_branch, attempt: .run_attempt}]')
@@ -271,7 +292,7 @@ jobs:
               exit 1
             fi
             if [ "$(date +%s)" -ge "$deadline" ]; then
-              echo "::error::Не дождались успешного CI для $SHA за 30 минут. Публикация отменена."
+              echo "::error::Не дождались успешного CI для $SHA за 75 минут. Публикация отменена."
               echo "$runs" | jq .
               exit 1
             fi

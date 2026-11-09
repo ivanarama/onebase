@@ -212,7 +212,11 @@ func restoredFKSnapshot(t *testing.T, db *storage.DB) string {
 	return snapshot
 }
 
-func archiveWithMissingFKTarget(t *testing.T, data []byte, target string) []byte {
+func archiveWithMissingFKTarget(t *testing.T, data []byte, target string, tables ...string) []byte {
+	table := "a"
+	if len(tables) > 0 {
+		table = tables[0]
+	}
 	t.Helper()
 	zr, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
@@ -234,7 +238,7 @@ func archiveWithMissingFKTarget(t *testing.T, data []byte, target string) []byte
 		if closeErr != nil {
 			t.Fatal(closeErr)
 		}
-		if entry.Name == "data/a.jsonl" {
+		if entry.Name == "data/"+table+".jsonl" {
 			if !bytes.Contains(body, []byte(target)) {
 				t.Fatal("archive has no A reference to replace")
 			}

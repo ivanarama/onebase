@@ -139,6 +139,7 @@ func preflightRun(t *testing.T, db *storage.DB, dir string, extra map[string]str
 			t.Fatal(err)
 		}
 	}
+	prepareSQLiteCLIPreview(t, db)
 	before := preflightSnapshot(t, db)
 	out, err := captureStdout(t, func() error { return migrateCmd.RunE(cmd, nil) })
 	if after := preflightSnapshot(t, db); !reflect.DeepEqual(before, after) {

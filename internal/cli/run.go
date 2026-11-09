@@ -240,6 +240,11 @@ func runServer(cmd *cobra.Command, args []string) error {
 // схема расходится с конфигурацией и чем это лечится. Сужение точности числа с
 // этой правкой тоже считается потерей данных, см. SchemaChange.Destructive.
 func migrateServerSchema(ctx context.Context, db *storage.DB, proj *project.Project) error {
+	// Check all object kinds before the first application-table ALTER.
+	if err := db.CheckLongIdents(ctx, proj.Entities, proj.Registers, proj.InfoRegisters, proj.AccountRegisters); err != nil {
+		return fmt.Errorf("long identifiers: %w", err)
+	}
+
 	var deferredSchema []string
 	db.SetSchemaOptions(storage.SchemaOptions{
 		Report: func(c storage.SchemaChange, applied bool) {

@@ -19,7 +19,7 @@ func TestConfluencePublishRoundTrip(t *testing.T) {
 			dir := fixture(t)
 			// Exercise ordinary Markdown and escaping in the body sent by the
 			// concrete HTTP publisher, including Confluence image namespaces.
-			write(t, dir, "docs/help/operator.md", "# Оператор\n\n[Оформить звонок](operator/calls.md#call)\n\nFirst line  \nSecond line\n\n---\n\n&copy; &nbsp; & <text> \"quoted\" справка\n")
+			write(t, dir, "docs/help/operator.md", "# Оператор\n\n[Оформить звонок](operator/calls.md#call)\n\nFirst line  \nSecond line\n\n---\n\n&copy; &nbsp; & <text> \"quoted\" справка\n"+autolinkFixture)
 			b := userhelp.Load(dir)
 			versions, bodies := map[string]int{}, map[string]string{}
 			creates, updates, uploads := 0, 0, 0
@@ -136,6 +136,9 @@ func TestConfluencePublishRoundTrip(t *testing.T) {
 					}
 					if id == "101" && (tags["br"] != 1 || tags["hr"] != 1) {
 						t.Errorf("Markdown line break or rule lost: %s", storage)
+					}
+					if id == "101" {
+						assertAutolinkPolicy(t, storage)
 					}
 					updates++
 					versions[id]++

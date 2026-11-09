@@ -1378,6 +1378,11 @@ function addChoiceFilterEditor(panel, info) {
   note.textContent = {{jsString (t $.Lang "Условия идут по порядку и соединяются через И. Для подбора обязателен уникальный id выше.")}};
   panel.appendChild(note);
   var conditions = (info.choiceFilter || []).map(function (condition) {
+    // Условие запросом здесь не правится — только показывается и
+    // сохраняется как есть (текст и параметры — в YAML формы).
+    if (typeof condition.query === 'string' && condition.query !== '') {
+      return { mode: 'query', query: condition.query, params: condition.params || {} };
+    }
     var hasValue = Object.prototype.hasOwnProperty.call(condition, 'value') && typeof condition.value === 'boolean';
     var hasRef = typeof condition.ref === 'string' && condition.ref !== '';
     return {
@@ -1392,6 +1397,7 @@ function addChoiceFilterEditor(panel, info) {
   var nodeAtEdit = _selected;
   function payload() {
     return conditions.map(function (condition) {
+      if (condition.mode === 'query') return { query: condition.query, params: condition.params };
       var out = { field: condition.field, op: condition.op };
       if (condition.mode === 'value') out.value = !!condition.value;
       else if (condition.mode === 'ref') out.ref = condition.ref;
@@ -1408,6 +1414,13 @@ function addChoiceFilterEditor(panel, info) {
     wrap.innerHTML = '';
     conditions.forEach(function (condition, index) {
       var card = document.createElement('div'); card.className = 'prop-choice-card';
+      if (condition.mode === 'query') {
+        var queryRow = document.createElement('div'); queryRow.className = 'prop-hint';
+        queryRow.textContent = {{jsString (t $.Lang "Условие запросом — правится в YAML формы:")}} + ' ' + condition.query;
+        card.appendChild(queryRow);
+        wrap.appendChild(card);
+        return;
+      }
 
       var fieldRow = document.createElement('div'); fieldRow.className = 'prop-row';
       var fieldLabel = document.createElement('label'); fieldLabel.textContent = 'field';
