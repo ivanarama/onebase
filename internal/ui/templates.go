@@ -249,6 +249,20 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			form, _ := v.(*metadata.FormModule)
 			return form != nil && form.EnterSubmitsForm
 		},
+		// processorBinaryParam — параметр обработки type: binary с этим именем
+		// (nil — не обработка или параметр другого типа). Управляемая форма
+		// рисует для него настоящее поле файла: байты уходят multipart-ом.
+		"processorBinaryParam": func(proc *processorpkg.Processor, name string) *processorpkg.Param {
+			if proc == nil {
+				return nil
+			}
+			for i := range proc.Params {
+				if strings.EqualFold(proc.Params[i].Name, name) && proc.Params[i].Type == processorBinaryParamType {
+					return &proc.Params[i]
+				}
+			}
+			return nil
+		},
 		"processorParamPresenceName": func(proc *processorpkg.Processor, name string) string {
 			if proc == nil {
 				return processorParamPresencePrefix + name
@@ -3327,8 +3341,9 @@ const tplProcessor = `
       <label>{{.DisplayLabel $.Lang}}{{if .Required}} <span style="color:#dc2626">*</span>{{end}}</label>
       {{/* Двоичный файл уходит как есть: обработка получит путь к временной
            копии. Поле такое же, как у text-файла, — разница только в том, что
-           попадает в значение параметра. */}}
-      <input type="file" name="{{$pname}}" {{if .Required}}required{{end}}>
+           попадает в значение параметра. multiple: true — пачка файлов,
+           обработка получит Массив Структур. */}}
+      <input type="file" name="{{$pname}}"{{if .Multiple}} multiple{{end}} {{if .Required}}required{{end}}>
     </div>
     {{else if eq .Type "text"}}
     <div class="form-group" style="margin-bottom:0;grid-column:1/-1">

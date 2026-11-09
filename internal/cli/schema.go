@@ -219,6 +219,7 @@ func allSchemas() map[string]map[string]any {
 			"default":  map[string]any{"description": "Значение параметра по умолчанию"},
 			"options":  arrayOf(stringSchema("Значение")),
 			"required": boolSchema("Обязательный параметр"),
+			"multiple": boolSchema("type: binary — несколько файлов сразу: DSL получает Массив Структур {Путь, ИмяФайла, Размер, ТипMIME}"),
 		},
 	}
 	detailPanelTab := map[string]any{
