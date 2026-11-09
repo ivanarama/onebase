@@ -1,23 +1,50 @@
-name: OneBase 2222 synthetic Linux qualification
+name: OneBase 2222 bounded Linux mechanical runtime
+run-name: onebase-2222:${{ inputs.task_id }}:${{ inputs.nonce }}
 on:
   workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        required: true
+        default: transport-fixture
+        options:
+          - transport-fixture
+          - product-full-lint
+      task_id:
+        type: string
+        required: true
+      nonce:
+        type: string
+        required: true
+      expected_operator_sha:
+        type: string
+        required: true
+      candidate_packet:
+        type: string
+        default: ''
+      candidate_admission:
+        type: string
+        default: ''
+      admission_sha256:
+        type: string
+        default: ''
 permissions:
   contents: read
 concurrency:
-  group: onebase-2222-synthetic-qualification-${{ github.ref }}
+  group: onebase-2222-mechanical-runtime-${{ github.ref }}
   cancel-in-progress: false
 jobs:
-  qualification-2222-synthetic-linux:
-    if: github.repository == 'ivanarama/onebase' && github.actor == 'ivanarama' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/operator/2222-linux-qualification-20261109' && github.run_attempt == 1
+  qualification-2222-transport-cli-linux:
+    if: inputs.mode == 'transport-fixture' && github.repository == 'ivanarama/onebase' && github.actor == 'ivanarama' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/operator/2222-linux-qualification-20261109' && github.run_attempt == 1
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
           fetch-depth: 1
-      - name: One synthetic qualification in one restricted cgroup
+      - name: One transport fixture in the qualified restricted unit
         shell: bash
         env:
           QUAL_RUN_ID: ${{ github.run_id }}
@@ -29,13 +56,45 @@ jobs:
             GITHUB_REPOSITORY=ivanarama/onebase GITHUB_ACTOR=ivanarama \
             GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF=refs/heads/operator/2222-linux-qualification-20261109 \
             GITHUB_RUN_ID="$QUAL_RUN_ID" GITHUB_RUN_ATTEMPT="$QUAL_RUN_ATTEMPT" GITHUB_SHA="$QUAL_SHA" \
-            RUNNER_TEMP="$RUNNER_TEMP" \
-            /usr/bin/python3 -B -X utf8 "$GITHUB_WORKSPACE/.github/scripts/qualify-2222-linux.py" bootstrap
-      - name: Preserve qualification evidence, including failures
+            GITHUB_EVENT_PATH="$GITHUB_EVENT_PATH" RUNNER_TEMP="$RUNNER_TEMP" \
+            /usr/bin/python3 -B -X utf8 "$GITHUB_WORKSPACE/.github/scripts/full-lint-2222-linux.py" bootstrap
+      - name: Preserve fixture evidence, including failures
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: qualification-2222-synthetic-${{ github.run_id }}-${{ github.run_attempt }}
+          name: transport-fixture-2222-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/onebase-2222-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 14
+  measurement-2222-product-full-lint-linux:
+    if: inputs.mode == 'product-full-lint' && github.repository == 'ivanarama/onebase' && github.actor == 'ivanarama' && github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/operator/2222-linux-qualification-20261109' && github.run_attempt == 1
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+      - name: One full candidate measurement after upstream Native and keeper admission
+        shell: bash
+        env:
+          QUAL_RUN_ID: ${{ github.run_id }}
+          QUAL_RUN_ATTEMPT: ${{ github.run_attempt }}
+          QUAL_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          sudo -n /usr/bin/env -i PATH=/usr/bin:/bin PYTHONUTF8=1 \
+            GITHUB_REPOSITORY=ivanarama/onebase GITHUB_ACTOR=ivanarama \
+            GITHUB_EVENT_NAME=workflow_dispatch GITHUB_REF=refs/heads/operator/2222-linux-qualification-20261109 \
+            GITHUB_RUN_ID="$QUAL_RUN_ID" GITHUB_RUN_ATTEMPT="$QUAL_RUN_ATTEMPT" GITHUB_SHA="$QUAL_SHA" \
+            GITHUB_EVENT_PATH="$GITHUB_EVENT_PATH" RUNNER_TEMP="$RUNNER_TEMP" \
+            /usr/bin/python3 -B -X utf8 "$GITHUB_WORKSPACE/.github/scripts/full-lint-2222-linux.py" bootstrap
+      - name: Preserve full measurement evidence, including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: product-full-lint-2222-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/onebase-2222-qualification-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: error
           retention-days: 14
