@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Mechanical candidate full lint; dispatch requires upstream Native FIX and keeper admission."""
 import argparse
+import ast
 import ctypes
 import hashlib
 import json
@@ -260,7 +261,7 @@ def child_identity(uid, expected_cgroup):
             'cgroup':relative,'write_denied':denied,'host_ipc':ipc,'pid':os.getpid(),'ppid':os.getppid()}
 
 TRANSPORT_SHA = '0757623e8c82b7e3f68f844fffae146bfdb20663bfd23262e8110afaed470eeb'
-PRODUCT_RUNTIME_ARMED = False  # Requires a separately reviewed fresh Native/cutover revision.
+PRODUCT_RUNTIME_ARMED = True  # Mechanical role only; genuine upstream Native/keeper admission remains mandatory.
 SOURCE_SHA = '22cac7a508365b4b9a6dd5ff97090a6447b15531'
 OWNER_CONTRACT_SHA = 'd6baed03bf74e5150d6eceb96e7c35137df24a73ab06cff7adf2e22c778649c9'
 PROOF_EPOCH = '2360ab12ac3e79356ab9a526883f27dac78f37bfbd770144afdfc1a1722402fe'
@@ -346,15 +347,27 @@ def capture_workflow_request(event_path,evidence,ident,env):
 def read_request(prefix,ident):
     return capture_workflow_request(prefix/'input/event.json',prefix/'evidence',ident,os.environ)
 
-def verify_wire_evidence(evidence,ident):
+def producer_arm_state(evidence,expected_helper):
+    path=evidence/'helper.py'
+    need(path.is_file()and not path.is_symlink()and path.stat().st_size<=256*1024 and digest(path)==expected_helper,'externally pinned producer Source for arm state')
+    tree=ast.parse(path.read_bytes());values=[node.value for node in tree.body if isinstance(node,ast.Assign)and any(isinstance(target,ast.Name)and target.id=='PRODUCT_RUNTIME_ARMED'for target in node.targets)]
+    need(len(values)==1 and isinstance(values[0],ast.Constant)and type(values[0].value)is bool,'one literal producer arm state required')
+    return values[0].value
+
+def verify_wire_evidence(evidence,ident,expected_mode,expected_helper):
+    armed=producer_arm_state(evidence,expected_helper)
+    need(expected_mode in {'transport-fixture','product-full-lint'},'exact expected wire mode')
     t=transport_module();raw=(evidence/'request-event.raw.json').read_bytes();shape=t.load((evidence/'request-event-shape.json').read_bytes())
     need(len(raw)<=256*1024 and shape['capture_complete']is True and shape['captured_bytes']==len(raw)and shape['raw_sha256']==hashlib.sha256(raw).hexdigest(),'raw original event capture binding')
     canonical=(evidence/'workflow-inputs.canonical.json').read_bytes();wire=t.load(canonical);need(t.canonical(wire)==canonical,'canonical workflow wire encoding')
     binding=t.load((evidence/'workflow-inputs-binding.json').read_bytes())
-    need(binding=={'wire_sha256':hashlib.sha256(canonical).hexdigest(),'wire_bytes':len(canonical),'source':'fixed seven declared workflow env values','native_FIX_admission_verified':False,'product_runtime_armed':False},'canonical fixed wire binding')
+    need(binding=={'wire_sha256':hashlib.sha256(canonical).hexdigest(),'wire_bytes':len(canonical),'source':'fixed seven declared workflow env values','native_FIX_admission_verified':False,'product_runtime_armed':armed},'canonical fixed wire binding')
     mapping=t.load((evidence/'workflow-wire-map.json').read_bytes());names=sorted(WIRE_ENV.values())
     need(mapping=={'expected_environment_keys':names,'present_environment_keys':names,'types':{name:'str'for name in names}},'fixed complete OS-string environment map evidence')
-    return validate_request(wire,ident)
+    request=validate_request(wire,ident)
+    need(request['runtime_mode']==expected_mode,'wire/receipt runtime mode mismatch')
+    need(expected_mode!='product-full-lint'or armed,'unarmed producer cannot qualify product analysis')
+    return request
 
 def fixed_command_plan(prefix):
     base=prefix.as_posix();go=base+'/tools/go/go/bin/go';lint=base+'/tools/lint/golangci-lint-2.11.4-linux-amd64/golangci-lint'
@@ -484,6 +497,8 @@ def verify_product_evidence(evidence,r,expected_admission):
     need(admission==r['candidate']and admission['format']=='onebase-candidate-admission-v1'and set(admission)=={'format','context','tree','manifest_sha256','packet_sha256'},'candidate admission schema')
     ctx=t.context(admission['context']);need(ctx['source']==SOURCE_SHA and ctx['owner_contract_sha256']==OWNER_CONTRACT_SHA and ctx['proof_epoch']==PROOF_EPOCH and ctx['operator_sha']==r['identity']['sha']and ctx['purpose']=='admitted-candidate','candidate source/proof/operator binding')
     need(binding['display_title']=='onebase-2222:'+ctx['task_id']+':'+ctx['nonce']and binding['dispatch_inputs_ascii_bytes']<=60000 and binding['native_FIX_admission_verified']is False and binding['keeper_lifecycle_qualified']is False,'candidate mechanical scope')
+    wire=verify_wire_evidence(evidence,r['identity'],'product-full-lint',r['source_before']['helper'])
+    need(wire['admission']==admission and wire['inputs']['admission_sha256']==expected_admission and wire['display_title']==binding['display_title']and len(t.canonical(wire['inputs']))==binding['dispatch_inputs_ascii_bytes'],'product authoritative wire/admission/title/size binding')
     worker=evidence/'worker';before_raw=(worker/'candidate-before-manifest.json').read_bytes();after_raw=(worker/'candidate-after-manifest.json').read_bytes()
     before=t.validate_manifest(t.load(before_raw));after=t.validate_manifest(t.load(after_raw))
     need(before_raw==after_raw==t.canonical(before)and before==after and t.digest(before_raw)==admission['manifest_sha256']==r['worker']['candidate_manifest_sha256']and before['tree']==admission['tree'],'complete candidate before/after modes/blobs/tree')
@@ -498,7 +513,7 @@ def verify_product_evidence(evidence,r,expected_admission):
     prep=json.loads((worker/'module-download-env.json').read_bytes());need(prep==r['worker']['module_download_env']=={**r['worker']['env'],**MODULE_PREP}and 'GOFLAGS'not in prep,'fixed credential-free dependency prep environment')
     inventory=(worker/'product-inventory.stdout').read_text().splitlines();need(inventory==r['worker']['product_inventory']and inventory and len(inventory)==len(set(inventory)),'raw complete product inventory')
     need(digest(evidence/'transport.py')==TRANSPORT_SHA==r['source_before']['transport']and digest(evidence/'fixture-tests.py')==FIXTURE_SHA==r['source_before']['fixture'],'frozen composition dependencies')
-    mandatory={'candidate-binding.json','candidate-reconstructed-manifest.json','candidate-reconstruct-commands.json','public-fetch-commands.json','source.commit','main.commit','base.commit','transport.py','fixture-tests.py',
+    mandatory={'request-event.raw.json','request-event-shape.json','workflow-wire-map.json','workflow-inputs.canonical.json','workflow-inputs-binding.json','candidate-binding.json','candidate-reconstructed-manifest.json','candidate-reconstruct-commands.json','public-fetch-commands.json','source.commit','main.commit','base.commit','transport.py','fixture-tests.py',
       'worker/candidate-before-manifest.json','worker/candidate-after-manifest.json','worker/candidate-go.mod','worker/candidate-go.sum','worker/module-cache-validation.json','worker/module-download-env.json','worker/product-analysis-start.json',
       *('unit-runtime-start.'+x for x in ('stdout','stderr','command.json'))}
     mandatory|={name+'-public-fetch.'+suffix for name in ('source','main')for suffix in ('stdout','stderr','command.json')}
@@ -545,7 +560,7 @@ def verify_fixture_receipt(path,r,expected_sha,expected_run,expected_helper):
     raw=(evidence/'worker/transport-fixture.stderr').read_bytes();need(re.search(rb'Ran 20 tests in [0-9.]+s\n\nOK\n\Z',raw)is not None and b'skipped'not in raw,'fixture all20 actual noSkip raw output')
     rec=json.loads((evidence/'worker/transport-fixture.command.json').read_bytes());prefix=PARENT.as_posix()+'/'+expected_run+'-1-'+expected_sha[:12]
     need(rec['argv']==['/usr/bin/python3','-B','-X','utf8',prefix+'/input/test_transport_cli.py']and rec['exit']==0 and 0<=rec['seconds']<=180,'fixture actual public command/terminal')
-    binding=json.loads((evidence/'fixture-binding.json').read_bytes());need(verify_wire_evidence(evidence,ident)==binding,'fixture authoritative fixed wire/mode/task/nonce/operator/data binding')
+    binding=json.loads((evidence/'fixture-binding.json').read_bytes());need(verify_wire_evidence(evidence,ident,'transport-fixture',expected_helper)==binding,'fixture authoritative fixed wire/mode/task/nonce/operator/data binding')
     need('downloads'not in r and not any(x.startswith('binaries/')for x in r['files']),'fixture unexpectedly prepared product tools')
     events=[json.loads(x)for x in (evidence/'privilege-transition.jsonl').read_text().splitlines()]
     stages=['no-new-privileges','clear-ambient','drop-bounding','setgroups','setgid','setuid','zero-capabilities'];expected=[('child-start','ok')]+[(stage,status)for stage in stages for status in ('before','after')]+[('exec-worker','before')]
@@ -989,6 +1004,7 @@ def verify_controller(path, receipt):
 def main():
     parser=argparse.ArgumentParser(description=__doc__);sub=parser.add_subparsers(dest='mode',required=True)
     sub.add_parser('bootstrap')
+    p=sub.add_parser('inspect-wire');p.add_argument('evidence',type=Path);p.add_argument('--identity',type=Path,required=True);p.add_argument('--expected-helper-sha',required=True);p.add_argument('--expected-mode',choices=['transport-fixture','product-full-lint'],required=True)
     p=sub.add_parser('plan');p.add_argument('event',type=Path)
     p=sub.add_parser('wire-plan');p.add_argument('event',type=Path);p.add_argument('--out',type=Path,required=True);p.add_argument('--wire-env',type=Path)
     p=sub.add_parser('snapshot');p.add_argument('--root',type=Path,required=True);p.add_argument('--manifest',type=Path,required=True);p.add_argument('--expected-manifest-sha',required=True);p.add_argument('--out',type=Path,required=True)
@@ -998,6 +1014,10 @@ def main():
     p=sub.add_parser('inspect-terminal');p.add_argument('controller',type=Path);p.add_argument('--expected-sha',required=True);p.add_argument('--expected-run-id',required=True)
     args=parser.parse_args()
     try:
+        if args.mode=='inspect-wire':
+            ident=json.loads(args.identity.read_bytes());need(identity({'GITHUB_'+k.upper():v for k,v in ident.items()})==ident,'wire data identity')
+            request=verify_wire_evidence(args.evidence,ident,args.expected_mode,args.expected_helper_sha)
+            print(json.dumps({'verified':True,'scope':'wire-data-only','runtime_mode':request['runtime_mode'],'producer_armed':producer_arm_state(args.evidence,args.expected_helper_sha),'product_lint_executed':False,'native_FIX_admission_verified':False}));return 0
         if args.mode=='wire-plan':
             ident=identity(os.environ);args.out.mkdir(mode=0o700)
             env=transport_module().load(args.wire_env.read_bytes())if args.wire_env else os.environ
