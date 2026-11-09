@@ -1269,7 +1269,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       const res = await fetch(URL, {
         method: 'POST',
         body: body,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', 'X-OneBase-Conceal-Context': form && form.getAttribute ? form.getAttribute('data-ob-conceal-context') || '' : '' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', 'X-OneBase-Conceal-Context': form && form.getAttribute ? form.getAttribute('data-ob-conceal-context') || '' : '', 'X-OneBase-Shell': (typeof window.obShellId === 'function' ? window.obShellId() : '') },
         credentials: 'same-origin'
       });
       const data = await res.json();
@@ -1956,6 +1956,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
           headers: {
 			'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
 			'X-OneBase-Conceal-Context': (document.getElementById('main-form') || {}).getAttribute ? document.getElementById('main-form').getAttribute('data-ob-conceal-context') || '' : '',
+			'X-OneBase-Shell': (typeof window.obShellId === 'function' ? window.obShellId() : ''),
 			'X-OneBase-Close-Intent': intentID,
 			'X-OneBase-Close-Epoch': String(envelope.epoch || ''),
 			'X-OneBase-Close-Issued-At': String(envelope.issuedAt || ''),

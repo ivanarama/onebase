@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -15,18 +16,77 @@ import (
 
 // hubNotifier адаптирует *realtime.Hub к interpreter.Notifier: DSL-функция
 // ОтправитьУведомление(Кому, Событие, Данные) → Hub.Publish(Кому, Event{...}).
-type hubNotifier struct{ hub *realtime.Hub }
+//
+// Команды формы самому себе (ui.открытьФорму / ui.закрытьФорму из обработчика
+// формы) уходят только в оболочку, откуда пришло событие. Иначе у
+// пользователя с двумя вкладками браузера форма открывалась копией и во
+// второй — с повторным ПриОткрытии, — а закрыть копию в фоновой вкладке
+// команде было нечем, и пользователь работал в незакрытой форме.
+type hubNotifier struct {
+	hub   *realtime.Hub
+	shell string
+	login string
+}
 
 func (n hubNotifier) Publish(target, name string, data any) {
 	if n.hub == nil {
 		return
 	}
-	n.hub.Publish(target, realtime.Event{Name: name, Data: data})
+	ev := realtime.Event{Name: name, Data: data}
+	if n.shell != "" && n.login != "" && target == n.login && shellScopedEvent(name) {
+		ev.Shell = n.shell
+	}
+	n.hub.Publish(target, ev)
+}
+
+// shellScopedEvent — команды, которые относятся к оболочке-источнику, а не ко
+// всем сеансам пользователя. Тосты и обновление списков по-прежнему идут во
+// все оболочки: там они уместны.
+func shellScopedEvent(name string) bool {
+	return name == "ui.открытьФорму" || name == "ui.закрытьФорму"
 }
 
 // notifier возвращает издателя уведомлений для инжекции в DSL-переменные.
-func (s *Server) notifier() interpreter.Notifier {
-	return hubNotifier{hub: s.hub}
+// Адрес оболочки и логин берутся из контекста запроса: у фоновых заданий их
+// нет, и уведомление уходит всем сеансам, как раньше.
+func (s *Server) notifier(ctx context.Context) interpreter.Notifier {
+	n := hubNotifier{hub: s.hub, shell: shellIDFrom(ctx)}
+	if u := auth.UserFromContext(ctx); u != nil {
+		n.login = u.Login
+	}
+	return n
+}
+
+// shellHeader — адрес оболочки в запросах формы (managed.js). Адрес — id
+// верхнего окна браузера, тот же, с которым оно подписано на /ui/events.
+const shellHeader = "X-OneBase-Shell"
+
+type shellIDKey struct{}
+
+// withShellID кладёт в контекст адрес оболочки из запроса. Адрес — случайный
+// id окна; всё, что на него не похоже, отбрасывается.
+func withShellID(ctx context.Context, raw string) context.Context {
+	if id := validShellID(raw); id != "" {
+		return context.WithValue(ctx, shellIDKey{}, id)
+	}
+	return ctx
+}
+
+func shellIDFrom(ctx context.Context) string {
+	id, _ := ctx.Value(shellIDKey{}).(string)
+	return id
+}
+
+func validShellID(raw string) string {
+	if raw == "" || len(raw) > 64 {
+		return ""
+	}
+	for _, c := range raw {
+		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || c == '-') {
+			return ""
+		}
+	}
+	return raw
 }
 
 const (
@@ -67,7 +127,7 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	lastID, _ := strconv.ParseInt(r.Header.Get("Last-Event-ID"), 10, 64)
-	_, ch, cancel := s.hub.SubscribeSince(userID, login, roles, lastID)
+	_, ch, cancel := s.hub.SubscribeShellSince(userID, login, roles, validShellID(r.URL.Query().Get("shell")), lastID)
 	defer cancel()
 
 	h := w.Header()
