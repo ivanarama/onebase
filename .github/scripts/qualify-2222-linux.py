@@ -370,6 +370,29 @@ def workload_terminal(snapshot, unit, description):
     return ((v.get('ActiveState'),v.get('SubState'))in {('active','exited'),('failed','failed'),('inactive','dead')}
             and v.get('ExecMainCode')in {'1','2','3'}and re.fullmatch('[0-9]+',v.get('ExecMainStatus',''))is not None)
 
+def cleanup_terminal(snapshot, unit, description, invocation):
+    """A failed service may remain failed after a successful stop. It is not PASS."""
+    v=snapshot['fields']
+    if v.get('LoadState')=='not-found':return True  # Only after an exact own stop returned0.
+    if not workload_terminal(snapshot,unit,description):return False
+    need(v.get('InvocationID')==invocation,'post-stop unit incarnation changed')
+    need(v.get('ControlGroup')in ('','/system.slice/'+unit),'post-stop cgroup identity')
+    return (v.get('ActiveState'),v.get('SubState'))in {('inactive','dead'),('failed','failed')}
+
+def unit_exit_success(before, after):
+    """Terminal diagnostics are collectable even if a late service failure wins."""
+    b=before['fields'];a=after['fields']
+    before_ok=b.get('ActiveState')=='active'and b.get('SubState')=='exited'and b.get('ExecMainCode')=='1'and b.get('ExecMainStatus')=='0'and b.get('Result')=='success'
+    if not before_ok:return False
+    # A collected unit is accepted only by the caller's preceding exact own stop
+    # and empty-cgroup gate. A retained unit must still have a successful result.
+    if a.get('LoadState')=='not-found':
+        return (a.get('MainPID')in (None,'','0')and a.get('ActiveState')in (None,'','inactive')
+                and a.get('SubState')in (None,'','dead')and a.get('Result')in (None,'','success')
+                and a.get('ExecMainStatus')in (None,'','0')and a.get('ExecMainCode')in (None,'','0','1'))
+    return (a.get('ActiveState')=='inactive'and a.get('SubState')=='dead'
+            and a.get('ExecMainCode')=='1'and a.get('ExecMainStatus')=='0'and a.get('Result')=='success')
+
 def bootstrap():
     need(sys.platform=='linux'and os.geteuid()==0,'bootstrap only root on ephemeral Linux runner')
     ident=identity(os.environ)
@@ -397,7 +420,7 @@ def bootstrap():
     argv+=['--setenv=GITHUB_'+k.upper()+'='+v for k,v in ident.items()]
     argv+=['/usr/bin/python3','-B','-X','utf8',str(script),'inside',str(prefix)]
     # Outside the unit this is only fixed host control-plane start/state/wait/stop/copy.
-    snapshots=[]; terminal=False; successful=False; code=1; start_output=b''; start_error=b'';start_exit=None;stop_exit=None
+    snapshots=[]; terminal=False; successful=False; code=1; start_output=b''; start_error=b'';start_exit=None;stop_exit=None;post_stop_cgroup=None
     try:
         p=subprocess.run(argv,capture_output=True,timeout=30)
         start_exit=p.returncode
@@ -411,32 +434,46 @@ def bootstrap():
             invocation=current
             if done:
                 v=snap['fields']
-                successful=v['ActiveState']=='active'and v['SubState']=='exited'and v['ExecMainCode']=='1'and v['ExecMainStatus']=='0'and v['Result']=='success'
                 # Keep the successful exited unit loaded until its state is captured,
                 # then stop only that exact empty, incarnation-bound owned service.
                 stopped=subprocess.run(['/usr/bin/systemctl','stop',unit],capture_output=True,timeout=30)
                 stop_exit=stopped.returncode
                 need(stopped.returncode==0,'own unit stop outcome UNKNOWN')
                 after=unit_snapshot(unit);snapshots.append(after);v2=after['fields']
-                need((after['exit']==0 and v2.get('ActiveState')=='inactive'and v2.get('MainPID')=='0')or v2.get('LoadState')=='not-found','own unit terminal cleanup UNKNOWN')
+                need(cleanup_terminal(after,unit,description,invocation),'own unit terminal cleanup UNKNOWN')
                 procs=Path('/sys/fs/cgroup/system.slice')/unit/'cgroup.procs'
-                need(not procs.exists()or not procs.read_text().strip(),'own unit descendants remain after stop')
+                exists=procs.exists();remaining=[int(x)for x in procs.read_text().split()]if exists else[]
+                post_stop_cgroup={'path':str(procs),'exists':exists,'procs':remaining}
+                need(not remaining,'own unit descendants remain after stop')
+                successful=unit_exit_success(snap,after)
                 terminal=True;code=0 if successful else 1;break
             time.sleep(5)
         need(terminal,'unit state deadline/UNKNOWN; no restart')
     except BaseException as error:
         start_error+=('\ncontroller: '+type(error).__name__+': '+str(error)).encode()
     (prefix/'systemd-run.stdout').write_bytes(start_output);(prefix/'systemd-run.stderr').write_bytes(start_error)
+    journal_exit=None
+    if terminal:
+        # Scoped control-plane diagnostics also retain manager/setup failures that
+        # occurred before the inside Python process could write a receipt.
+        try:
+            journal=subprocess.run(['/usr/bin/journalctl','--unit='+unit,'--no-pager','--output=short-iso'],capture_output=True,timeout=15)
+            journal_exit=journal.returncode;jout,jerr=journal.stdout,journal.stderr
+        except subprocess.TimeoutExpired as error:
+            journal_exit=124;jout,jerr=error.stdout or b'',error.stderr or b''
+        except OSError as error:
+            journal_exit=127;jout,jerr=b'',str(error).encode()
+        (prefix/'unit-journal.stdout').write_bytes(jout);(prefix/'unit-journal.stderr').write_bytes(jerr)
     target=Path(os.environ['RUNNER_TEMP'])/('onebase-2222-qualification-'+ident['run_id']+'-'+ident['run_attempt'])
     need(target.parent.resolve()==Path(os.environ['RUNNER_TEMP']).resolve()and not target.exists(),'artifact destination')
     target.mkdir()
     for name in ('systemd-run.stdout','systemd-run.stderr'):shutil.copyfile(prefix/name,target/name)
     if terminal:
-        for name in ('service.stdout','service.stderr'):
+        for name in ('service.stdout','service.stderr','unit-journal.stdout','unit-journal.stderr'):
             if (prefix/name).exists():shutil.copyfile(prefix/name,target/name)
         if (prefix/'evidence').exists():shutil.copytree(prefix/'evidence',target/'evidence')
     write_json(target/'controller.json',{'identity':ident,'controller_exit':code,'unit_snapshots':snapshots,
-       'start_exit':start_exit,'stop_exit':stop_exit,
+       'start_exit':start_exit,'stop_exit':stop_exit,'post_stop_cgroup':post_stop_cgroup,'journal_exit':journal_exit,
        'terminal_wait_observed':terminal,'runtime_prefix':str(prefix),'scope':'synthetic-only; no Mac keeper or product qualification',
        'unknown_or_failure_remains_parked':True})
     print(json.dumps({'artifact':str(target),'controller_exit':code,'terminal_wait_observed':terminal}))
@@ -517,10 +554,11 @@ def verify(path, expected_sha, expected_run, expected_helper, data=None):
         need(len(header)==64 and header[:6]==b'\x7fELF\x02\x01'and struct.unpack_from('<H',header,18)[0]==62 and digest(binary)==r['source_before'][name],'preserved Linux amd64 executable/hash')
     return {'verified':True,'scope':'synthetic environment only; product lint remains parked','sha':expected_sha,'run_id':expected_run}
 
-def verify_controller(path, receipt):
+def inspect_terminal_controller(path, expected_sha, expected_run):
     raw=Path(path).read_bytes();need(len(raw)<=2*1024*1024,'controller bound')
-    c=json.loads(raw);ident=receipt['identity']
-    need(c['identity']==ident and c['controller_exit']==0 and c['start_exit']==0 and c['stop_exit']==0 and c['terminal_wait_observed']is True,'controller terminal outcome UNKNOWN/nonzero')
+    c=json.loads(raw);ident=c['identity']
+    need(identity({'GITHUB_'+k.upper():v for k,v in ident.items()})==ident and ident['sha']==expected_sha and ident['run_id']==expected_run,'controller external source/run binding')
+    need(type(c['controller_exit'])is int and c['controller_exit']in (0,1)and c['start_exit']==0 and c['stop_exit']==0 and c['terminal_wait_observed']is True,'controller terminal outcome UNKNOWN/nonzero start/stop')
     snapshots=c['unit_snapshots'];need(isinstance(snapshots,list)and len(snapshots)>=2,'terminal snapshots missing')
     unit='ob2222-qual-'+ident['run_id']+'-1.service'
     description='OneBase2222 synthetic sha='+ident['sha']+' run='+ident['run_id']+' attempt=1'
@@ -530,8 +568,18 @@ def verify_controller(path, receipt):
         need(fields==snap['fields'],'unit raw field mismatch')
     before,after=snapshots[-2],snapshots[-1]
     need(workload_terminal(before,unit,description),'unit workload not terminal')
-    v=before['fields'];need(v['ActiveState']=='active'and v['SubState']=='exited'and v['ExecMainCode']=='1'and v['ExecMainStatus']=='0'and v['Result']=='success'and v['ExecMainPID']==str(receipt['resources_after']['pid'])and v['ControlGroup']==receipt['resources_after']['cgroup'],'successful runtime unit binding')
-    v=after['fields'];need((after['exit']==0 and v.get('ActiveState')=='inactive'and v.get('MainPID')=='0')or v.get('LoadState')=='not-found','unit cleanup not terminal')
+    need(cleanup_terminal(after,unit,description,before['fields']['InvocationID']),'unit cleanup not terminal')
+    cg=c['post_stop_cgroup'];need(cg['path']=='/sys/fs/cgroup/system.slice/'+unit+'/cgroup.procs'and type(cg['exists'])is bool and cg['procs']==[],'remaining or unproved own cgroup processes')
+    successful=unit_exit_success(before,after)
+    need(c['controller_exit']==(0 if successful else 1),'failure changed to success or controller contradiction')
+    return {'terminal':True,'unit_exit_success':successful,'controller_outcome':'success'if successful else'failure',
+            'environment_qualification':'not_evaluated','controller':c}
+
+def verify_controller(path, receipt):
+    result=inspect_terminal_controller(path,receipt['identity']['sha'],receipt['identity']['run_id'])
+    c=result['controller'];need(c['identity']==receipt['identity']and result['unit_exit_success']is True,'failed unit is not qualified')
+    v=c['unit_snapshots'][-2]['fields']
+    need(v['ExecMainPID']==str(receipt['resources_after']['pid'])and v['ControlGroup']==receipt['resources_after']['cgroup'],'successful runtime unit binding')
     return True
 
 def main():
@@ -540,12 +588,16 @@ def main():
     for name in ('inside','worker'):
         p=sub.add_parser(name);p.add_argument('prefix',type=Path)
     p=sub.add_parser('verify');p.add_argument('receipt',type=Path);p.add_argument('--controller',required=True,type=Path);p.add_argument('--expected-sha',required=True);p.add_argument('--expected-run-id',required=True);p.add_argument('--expected-helper-sha',required=True)
+    p=sub.add_parser('inspect-terminal');p.add_argument('controller',type=Path);p.add_argument('--expected-sha',required=True);p.add_argument('--expected-run-id',required=True)
     args=parser.parse_args()
     try:
         if args.mode=='verify':
             value=verify(args.receipt,args.expected_sha,args.expected_run_id,args.expected_helper_sha)
             verify_controller(args.controller,json.loads(args.receipt.read_bytes()))
             print(json.dumps(value));return 0
+        if args.mode=='inspect-terminal':
+            value=inspect_terminal_controller(args.controller,args.expected_sha,args.expected_run_id)
+            value.pop('controller');print(json.dumps(value));return 0
         if args.mode=='bootstrap':return bootstrap()
         need(sys.platform=='linux','Linux runtime subcommand only')
         need(args.prefix.parent==PARENT and re.fullmatch(r'[1-9][0-9]{0,19}-1-[0-9a-f]{12}',args.prefix.name)and args.prefix.resolve()==args.prefix,'owned runtime prefix')
