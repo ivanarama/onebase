@@ -1,0 +1,16 @@
+fields:
+  - name: Наименование
+    type: string
+  - name: Описание
+    type: string
+  - name: Руководитель
+    type: reference:Исполнитель
+  - name: ДатаНачала
+    type: date
+  - name: ДатаЗавершения
+    type: date
+  - name: Статус
+    type: enum:СтатусПроекта
+hierarchical: true
+name: Проект
+title: Проект

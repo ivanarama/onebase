@@ -1,0 +1,11 @@
+dimensions:
+  - name: Задача
+    type: reference:Задача
+  - name: Очередь
+    type: reference:Очередь
+# Очередь задач: позиция в очереди по каждой очереди.
+name: ОчередьЗадач
+resources:
+  - name: Позиция
+    type: number
+title: Очередь задач

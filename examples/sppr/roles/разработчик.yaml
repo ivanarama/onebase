@@ -1,0 +1,29 @@
+description: Реализует функции, ведёт трассировку, закрывает задачи
+name: Разработчик
+permissions:
+  catalogs:
+    ВидДеятельности: [read]
+    Исполнитель: [read]
+    ОбъектМетаданных: [read, write]
+    Очередь: [read]
+    Подсистема: [read]
+    Проект: [read]
+    Сценарий: [read]
+    Функция: [read]
+  documents:
+    Задача: [read, write]
+    Комментарий: [read, write]
+    Ошибка: [read, write, post, unpost]
+    УчётВремени: [read, write]
+  inforegs:
+    ЗатратыВремени: [read]
+    ОчередьЗадач: [read, write]
+    РезультатыПроверки: [read]
+    СвязиФункций: [read]
+    Трассировка: [read, write]
+  processors:
+    ЭкспортIDEF0: [run]
+  reports:
+    ДеревоФункций: [run]
+    ПросроченныеЗадачи: [run]
+    ТрассировкаФункции: [run]

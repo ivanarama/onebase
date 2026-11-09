@@ -1,0 +1,12 @@
+fields:
+  - name: Наименование
+    type: string
+  - name: Email
+    type: string
+  - label: Роль проекта (Проектировщик, Аналитик…)
+    name: РольПроекта
+    type: string
+  - name: ЧасоваяСтавка
+    type: number
+name: Исполнитель
+title: Исполнитель

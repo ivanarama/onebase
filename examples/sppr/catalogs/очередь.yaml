@@ -1,0 +1,7 @@
+fields:
+  - name: Наименование
+    type: string
+  - name: Проект
+    type: reference:Проект
+name: Очередь
+title: Очередь

@@ -1,0 +1,39 @@
+description: Ведёт дерево функций, объекты метаданных, сценарии
+name: Проектировщик
+permissions:
+  catalogs:
+    ВидДеятельности: [read]
+    Исполнитель: [read]
+    Механизм: [read, write]
+    ОбъектМетаданных: [read, write]
+    Очередь: [read]
+    Подсистема: [read, write]
+    ПравилоПроверки: [read]
+    Проект: [read, write]
+    ПрофильПользователя: [read, write]
+    Роль: [read, write]
+    Сценарий: [read, write]
+    Функция: [read, write]
+  documents:
+    Задача: [read, write]
+    Комментарий: [read, write]
+    Ошибка: [read]
+    ПубликацияПравила: [read]
+    УчётВремени: [read]
+  inforegs:
+    ВерсииОбъектов: [read, write]
+    ДействующиеПравила: [read]
+    КонтрольОбъектов: [read, write]
+    ОчередьЗадач: [read]
+    ПланыЗанятости: [read, write]
+    РезультатыПроверки: [read]
+    СвязиФункций: [read, write]
+    Трассировка: [read, write]
+  processors:
+    ЭкспортIDEF0: [run]
+  reports:
+    ДеревоФункций: [run]
+    ПокрытиеФункций: [run]
+    ПросроченныеЗадачи: [run]
+    РезультатыАудита: [run]
+    ТрассировкаФункции: [run]

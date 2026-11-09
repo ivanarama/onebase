@@ -1,0 +1,37 @@
+fields:
+  - name: Имя
+    type: string
+  - name: Тип
+    type: enum:ТипОбъектаМетаданных
+  - label: Файл конфигурации (catalogs/…, documents/…)
+    name: ПутьФайла
+    type: string
+  - name: Описание
+    type: string
+  - name: Функция
+    type: reference:Функция
+  - name: Проект
+    type: reference:Проект
+  - name: Статус
+    type: enum:СтатусОбъекта
+  - name: Контроль
+    type: enum:СтатусКонтроля
+  - name: Ответственный
+    type: reference:Исполнитель
+# Метаданные целевого проекта, зафиксированные в базе проектирования: чем
+# функция становится в коде. Связь с функцией и путь файла — предмет аудита
+# («объект без функции», «функция без объекта»).
+fulltext: [Имя, Описание]
+name: ОбъектМетаданных
+tableparts:
+  - fields:
+      - name: ИмяРеквизита
+        type: string
+      - name: ТипРеквизита
+        type: string
+      - name: Обязательный
+        type: bool
+      - name: Описание
+        type: string
+    name: Реквизиты
+title: Объект метаданных

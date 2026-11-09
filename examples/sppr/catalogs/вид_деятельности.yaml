@@ -1,0 +1,5 @@
+fields:
+  - name: Наименование
+    type: string
+name: ВидДеятельности
+title: Вид деятельности

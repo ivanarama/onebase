@@ -1,0 +1,8 @@
+contents:
+  catalogs: [ПравилоПроверки]
+  documents: [Ошибка, ПубликацияПравила]
+  processors: [АудитПравил]
+  reports: [РезультатыАудита]
+name: Ошибки
+order: 30
+title: Ошибки и аудит

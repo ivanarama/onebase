@@ -1,0 +1,12 @@
+fields:
+  - name: Дата
+    type: date
+  - name: Задача
+    type: reference:Задача
+  - name: Автор
+    type: string
+  - name: Текст
+    type: string
+# Протокол взаимодействия по задаче: ответы, уточнения, договорённости.
+name: Комментарий
+title: Комментарий

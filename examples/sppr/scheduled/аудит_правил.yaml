@@ -1,0 +1,11 @@
+enabled: true
+name: АудитПравил
+on_error: continue
+params:
+  НаДату:
+    label: На дату
+    value: "{{today}}"
+processor: АудитПравил
+schedule: "0 8 * * *"
+timeout: 60
+title: Ежедневный аудит формальных правил

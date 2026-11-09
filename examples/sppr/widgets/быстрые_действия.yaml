@@ -1,0 +1,12 @@
+items:
+  - entity: Задача
+    label: Задача
+  - entity: Ошибка
+    label: Ошибка
+  - label: Аудит правил
+    url: /ui/processor/аудитправил
+  - label: Где застряло
+    url: /ui/stages
+name: БыстрыеДействия
+title: Быстрые действия
+type: actions

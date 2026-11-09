@@ -1,0 +1,41 @@
+description: Утверждает функции, публикует правила, планирует занятость
+name: Руководитель
+permissions:
+  catalogs:
+    ВидДеятельности: [read, write]
+    Исполнитель: [read, write]
+    Механизм: [read, write]
+    ОбъектМетаданных: [read, write]
+    Очередь: [read, write]
+    Подсистема: [read, write]
+    ПравилоПроверки: [read, write]
+    Проект: [read, write]
+    ПрофильПользователя: [read, write]
+    Роль: [read, write]
+    Сценарий: [read, write]
+    Функция: [read, write]
+  documents:
+    Задача: [read, write, post, unpost]
+    Комментарий: [read, write]
+    Ошибка: [read, write, post, unpost]
+    ПубликацияПравила: [read, write, post, unpost]
+    УчётВремени: [read, write]
+  inforegs:
+    ВерсииОбъектов: [read, write]
+    ДействующиеПравила: [read]
+    ЗатратыВремени: [read]
+    ИсторияСтатусовЗадач: [read]
+    КонтрольОбъектов: [read, write]
+    ОчередьЗадач: [read, write]
+    ПланыЗанятости: [read, write]
+    РезультатыПроверки: [read]
+    СвязиФункций: [read, write]
+    Трассировка: [read, write]
+  processors_default: allow
+  reports:
+    ДеревоФункций: [run]
+    ЗадачиПоИсполнителям: [run]
+    ПокрытиеФункций: [run]
+    ПросроченныеЗадачи: [run]
+    РезультатыАудита: [run]
+    ТрассировкаФункции: [run]

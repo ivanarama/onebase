@@ -133,3 +133,6 @@ e2e/node_modules/
 e2e/test-results/
 e2e/playwright-report/
 govulnpolicy.exe
+
+# Собственническая документация методики (не является частью репозитория)
+sppr2doc/

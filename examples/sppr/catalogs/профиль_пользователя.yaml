@@ -1,0 +1,19 @@
+fields:
+  - name: Имя
+    type: string
+  - name: Роль
+    type: reference:Роль
+  - name: Ответственный
+    type: reference:Исполнитель
+hierarchical: true
+# Пользователи целевого проекта и их роли: видимость функции определяется
+# профилем, аудит проверяет «функция без роли», «профиль без роли».
+name: ПрофильПользователя
+tableparts:
+  - fields:
+      - name: ИмяПользователя
+        type: string
+      - name: Email
+        type: string
+    name: Пользователи
+title: Профиль пользователя

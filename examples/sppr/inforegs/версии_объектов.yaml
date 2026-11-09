@@ -1,0 +1,14 @@
+dimensions:
+  - name: Объект
+    type: reference:ОбъектМетаданных
+# Версии объектов метаданных: описание изменения на дату, автор, статус.
+name: ВерсииОбъектов
+periodic: true
+resources:
+  - name: Описание
+    type: string
+  - name: Автор
+    type: string
+  - name: Статус
+    type: enum:СтатусОбъекта
+title: Версии объектов

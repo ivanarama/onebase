@@ -1,0 +1,19 @@
+fields:
+  - name: Имя
+    type: string
+  - label: Имя файла роли (roles/…)
+    name: ФайлРоли
+    type: string
+  - name: Описание
+    type: string
+  - name: Проект
+    type: reference:Проект
+# Роли соответствуют roles/*.yaml целевого проекта. Функция видна роли —
+# проверка «роль без функции» и «функция без роли».
+name: Роль
+tableparts:
+  - fields:
+      - name: Функция
+        type: reference:Функция
+    name: Функции
+title: Роль

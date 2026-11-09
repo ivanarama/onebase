@@ -1,0 +1,17 @@
+dimensions:
+  - name: Исполнитель
+    type: reference:Исполнитель
+  - name: Проект
+    type: reference:Проект
+  - name: Задача
+    type: reference:Задача
+  - name: ВидДеятельности
+    type: reference:ВидДеятельности
+# Затраты времени по задачам и видам деятельности (движение документа
+# УчётВремени).
+name: ЗатратыВремени
+periodic: true
+resources:
+  - name: Часы
+    type: number
+title: Затраты времени

@@ -1,0 +1,19 @@
+dimensions:
+  - name: Правило
+    type: reference:ПравилоПроверки
+# Действующая версия правила аудита (effective-dating): период = дата
+# вступления в силу. Пишется проведением документа ПубликацияПравила.
+name: ДействующиеПравила
+periodic: true
+resources:
+  - name: Важность
+    type: enum:ВажностьПравила
+  - name: Текст
+    type: string
+  - name: Статус
+    type: enum:СтатусПубликации
+  - name: Опубликовал
+    type: string
+  - name: Основание
+    type: string
+title: Действующие правила

@@ -1,0 +1,18 @@
+fields:
+  - name: Наименование
+    type: string
+  - name: Описание
+    type: string
+  - name: Статус
+    type: enum:СтатусФункции
+  - name: Проект
+    type: reference:Проект
+# Встраиваемые механизмы: они не входят в дерево функций, поэтому живут
+# отдельным справочником (правило IDEF0).
+name: Механизм
+tableparts:
+  - fields:
+      - name: ИмяОбъекта
+        type: string
+    name: Объекты
+title: Встраиваемый механизм

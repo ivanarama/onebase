@@ -1,0 +1,59 @@
+fields:
+  - name: Номер
+    type: string
+  - name: Дата
+    type: date
+  - name: Заголовок
+    type: string
+  - name: Описание
+    type: string
+  - name: Проект
+    type: reference:Проект
+  - name: Функция
+    type: reference:Функция
+  - name: Тип
+    type: enum:ТипЗадачи
+  - name: Статус
+    type: enum:СтатусЗадачи
+  - name: Приоритет
+    type: enum:Приоритет
+  - name: Исполнитель
+    type: reference:Исполнитель
+  - name: Автор
+    type: string
+  - name: Срок
+    type: date
+  - name: Оценка
+    type: number
+  - name: Родитель
+    type: reference:Задача
+fulltext: [Заголовок, Описание]
+# Задача проектирования/разработки. Маршрут статусов объявлен платформе
+# (план 121): гейт переходов стоит в слое хранения, его не обойти ни формой,
+# ни обработкой, ни REST; история переходов пишется модулем.
+name: Задача
+numerator:
+  length: 6
+  period: year
+  prefix: "SPPR-"
+posting: true
+stages:
+  deadline_days: {ВРаботе: 5, НаПроверке: 2, Принята: 3}
+  enforce: strict
+  field: Статус
+  order: [Новая, Принята, ВРаботе, НаПроверке, Выполнена, Отменена]
+  transitions:
+    - {from: Новая, to: [Принята, Отменена]}
+    - {from: Принята, to: [ВРаботе, Отменена]}
+    - {from: ВРаботе, to: [НаПроверке]}
+    - {from: НаПроверке, to: [Выполнена, ВРаботе]}
+    - {from: Выполнена, to: [ВРаботе]}
+    - {from: Отменена, to: [Новая]}
+tableparts:
+  - fields:
+      - name: Задача
+        type: reference:Задача
+      - name: Тип
+        type: enum:ТипСвязиЗадач
+    name: Связи
+title: Задача

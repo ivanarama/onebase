@@ -1,0 +1,19 @@
+fields:
+  - name: Имя
+    type: string
+  - name: Описание
+    type: string
+  - name: Проект
+    type: reference:Проект
+hierarchical: true
+# Подсистемы целевого проекта: какие объекты в них входят. Аудит проверяет
+# «подсистема без объекта» и «объект вне подсистемы».
+name: Подсистема
+tableparts:
+  - fields:
+      - name: ТипОбъекта
+        type: enum:ТипОбъектаМетаданных
+      - name: ИмяОбъекта
+        type: string
+    name: Объекты
+title: Подсистема

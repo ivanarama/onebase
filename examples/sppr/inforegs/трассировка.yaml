@@ -1,0 +1,19 @@
+dimensions:
+  - name: Функция
+    type: reference:Функция
+  - name: Объект
+    type: reference:ОбъектМетаданных
+indexes:
+  - fields: [Функция]
+  - fields: [Объект]
+# Трассировка: функция → объект метаданных → файл → коммит → задача. Срез
+# агента: по функции видно, чем она реализована и чем подтверждена.
+name: Трассировка
+resources:
+  - name: ПутьФайла
+    type: string
+  - name: Коммит
+    type: string
+  - name: Задача
+    type: reference:Задача
+title: Трассировка функции

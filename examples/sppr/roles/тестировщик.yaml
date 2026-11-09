@@ -1,0 +1,22 @@
+description: Ведёт сценарии, подтверждает результаты аудита
+name: Тестировщик
+permissions:
+  catalogs:
+    Исполнитель: [read]
+    ОбъектМетаданных: [read]
+    Проект: [read]
+    Сценарий: [read, write]
+    Функция: [read]
+  documents:
+    Задача: [read]
+    Комментарий: [read, write]
+    Ошибка: [read, write, post, unpost]
+  inforegs:
+    ДействующиеПравила: [read]
+    РезультатыПроверки: [read, write]
+    Трассировка: [read]
+  processors:
+    АудитПравил: [run]
+  reports:
+    ПокрытиеФункций: [run]
+    РезультатыАудита: [run]

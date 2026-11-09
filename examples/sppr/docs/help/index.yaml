@@ -1,0 +1,26 @@
+auto_update: true
+chapters:
+  - file: introduction.md
+    id: introduction
+    title: Что хранит проектная база
+  - file: model.md
+    id: model
+    parent: introduction
+    title: Функциональная модель
+  - file: traceability.md
+    id: traceability
+    objects: [catalog/ОбъектМетаданных]
+    parent: introduction
+    title: Трассировка функций и файлов
+  - file: tasks.md
+    id: tasks
+    objects: [document/Задача]
+    parent: introduction
+    title: Задачи и маршрут статусов
+  - file: audit.md
+    id: audit
+    objects: [catalog/ПравилоПроверки, document/ПубликацияПравила]
+    parent: introduction
+    title: Аудит формальных правил
+enabled: true
+title: Руководство проектной базы СППР

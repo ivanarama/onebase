@@ -1,0 +1,28 @@
+fields:
+  - name: Наименование
+    type: string
+  - name: Функция
+    type: reference:Функция
+  - name: Вид
+    type: enum:ВидСценария
+  - label: Текст сценария (Gherkin)
+    name: Текст
+    type: string
+  - name: Актуален
+    type: bool
+  - name: Проект
+    type: reference:Проект
+fulltext: [Наименование, Текст]
+# Тестовый сценарий Gherkin, привязанный к функции. Сценарий — основание
+# утверждения функции; аудит проверяет «функция без сценария».
+name: Сценарий
+tableparts:
+  - fields:
+      - name: Шаг
+        type: string
+      - name: Действие
+        type: string
+      - name: Ожидание
+        type: string
+    name: Шаги
+title: Тестовый сценарий
