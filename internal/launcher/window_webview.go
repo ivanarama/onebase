@@ -132,7 +132,14 @@ func OpenEnterpriseWindow(url, title, baseID string) error {
 	var setup func(webview.WebView)
 	if baseID != "" {
 		launcher := newCompanionLauncher(systemCompanionRuntime)
+		launcher.update = systemCompanionUpdater.Update
+		launcher.rollback = rollbackCompanionUpdate
 		setup = func(w webview.WebView) {
+			// Итог фонового обновления приходит из другой горутины: показ —
+			// через очередь окна.
+			launcher.notify = func(msg string) {
+				w.Dispatch(func() { w.Eval(companionNoticeJS(msg)) })
+			}
 			err := w.Bind("obLauncherCompanions", func(keys []string) []string {
 				store, err := NewStore()
 				if err != nil {

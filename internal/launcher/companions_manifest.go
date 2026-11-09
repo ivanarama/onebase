@@ -3,6 +3,7 @@ package launcher
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -25,6 +26,12 @@ import (
 //	    args: ["--minimized"]
 //	    env:
 //	      CALLISTA_OPERATOR_API_URL: https://cc.icecorp.ru:8445
+//	    update:
+//	      manifest: https://cc01.icecorp.ru/updates/callista/operator-desktop.json
+//
+// update.manifest — список обновлений программы на её сервере (формат Callista:
+// version + downloads.win32{url, size, sha256}): перед запуском лаунчер ставит
+// версию новее установленной (companions_update.go).
 
 const companionManifestName = "companions.yaml"
 
@@ -40,6 +47,13 @@ type companionManifestSpec struct {
 	Args []string `yaml:"args"`
 	// Env — переменные окружения программы поверх окружения лаунчера.
 	Env map[string]string `yaml:"env"`
+	// Update — откуда брать обновления программы.
+	Update companionUpdateSpec `yaml:"update"`
+}
+
+type companionUpdateSpec struct {
+	// Manifest — https-адрес списка обновлений; пусто — программа не обновляется.
+	Manifest string `yaml:"manifest"`
 }
 
 // launcherDir — каталог исполняемого файла лаунчера; тест подменяет.
@@ -79,8 +93,12 @@ func loadCompanionManifest(dir string) ([]Companion, error) {
 		if err := validateCompanionEnv(spec.Env); err != nil {
 			return nil, fmt.Errorf("%s: «%s»: %w", companionManifestName, name, err)
 		}
+		if err := validateCompanionUpdateManifest(spec.Update.Manifest); err != nil {
+			return nil, fmt.Errorf("%s: «%s»: %w", companionManifestName, name, err)
+		}
 		path := filepath.Join(dir, filepath.Clean(filepath.FromSlash(strings.TrimSpace(spec.Exec))))
-		out = append(out, Companion{Key: key, Path: path, Args: spec.Args, Dir: filepath.Dir(path), Env: spec.Env})
+		out = append(out, Companion{Key: key, Path: path, Args: spec.Args, Dir: filepath.Dir(path), Env: spec.Env,
+			UpdateManifest: strings.TrimSpace(spec.Update.Manifest)})
 	}
 	return out, nil
 }
@@ -122,6 +140,8 @@ func mergeCompanions(manifest, record []Companion) []Companion {
 			if len(c.Env) == 0 {
 				c.Env = out[i].Env
 			}
+			// Обновления комплект ставит только в свою папку: программу по
+			// пути станции лаунчер не трогает.
 			out[i] = c
 			continue
 		}
@@ -129,6 +149,21 @@ func mergeCompanions(manifest, record []Companion) []Companion {
 		out = append(out, c)
 	}
 	return out
+}
+
+// validateCompanionUpdateManifest — адрес списка обновлений: только https с
+// хостом. Скачанный архив проверяется по SHA-256 из этого списка, поэтому сам
+// список обязан приходить по защищённому каналу.
+func validateCompanionUpdateManifest(raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return errors.New("update.manifest — полный адрес https://… списка обновлений")
+	}
+	return nil
 }
 
 // companionEnvName — имя переменной окружения: латиница, цифры и «_», не с цифры.

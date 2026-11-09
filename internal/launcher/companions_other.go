@@ -9,3 +9,7 @@ import "os/exec"
 func companionProcessRunning(string) bool { return false }
 
 func detachCompanion(*exec.Cmd) {}
+
+// companionFileVersion — версии из ресурса exe вне Windows нет: обновление не
+// сравнивает и ничего не ставит.
+func companionFileVersion(string) string { return "" }

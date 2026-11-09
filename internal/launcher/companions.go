@@ -1,6 +1,7 @@
 package launcher
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -8,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/ivantit66/onebase/internal/companions"
 )
@@ -38,6 +40,9 @@ type Companion struct {
 	// манифеста комплекта): например CALLISTA_OPERATOR_API_URL закрепляет
 	// адрес сервера телефонии в клиенте.
 	Env map[string]string `yaml:"env,omitempty"`
+	// UpdateManifest — адрес списка обновлений (только из манифеста комплекта,
+	// в ibases.yaml не хранится): перед запуском лаунчер ставит новую версию.
+	UpdateManifest string `yaml:"-"`
 }
 
 // NormalizeCompanionKey приводит ключ к нижнему регистру и проверяет его.
@@ -191,11 +196,23 @@ type companionLauncher struct {
 	rt      companionRuntime
 	mu      sync.Mutex
 	handled map[string]bool
+
+	// update — обновление программы перед запуском (companions_update.go);
+	// nil — без обновлений. Идёт в фоне: окно Предприятия не ждёт скачивания.
+	update   func(ctx context.Context, c Companion) (string, error)
+	rollback func(c Companion) error
+	// notify показывает оператору итог фонового обновления; nil — не показывать.
+	notify func(msg string)
+	bg     sync.WaitGroup
 }
 
 func newCompanionLauncher(rt companionRuntime) *companionLauncher {
 	return &companionLauncher{rt: rt, handled: map[string]bool{}}
 }
+
+// companionUpdateTimeout — сколько ждать скачивания и установки, прежде чем
+// запустить установленную версию.
+const companionUpdateTimeout = 15 * time.Minute
 
 // Start запускает программы записи для ключей, которые назвал сервер, и
 // возвращает сообщения об ошибках для показа пользователю. Ключ без программы
@@ -225,6 +242,13 @@ func (l *companionLauncher) Start(list []Companion, keys []string) []string {
 			continue
 		}
 		if l.rt.running(c.Path) {
+			// Уже работает — возможно, идёт разговор: ни обновлять, ни
+			// запускать второй раз. Обновится при следующем запуске.
+			continue
+		}
+		if c.UpdateManifest != "" && l.update != nil {
+			l.bg.Add(1)
+			go l.updateAndStart(*c)
 			continue
 		}
 		if err := l.rt.start(*c); err != nil {
@@ -232,6 +256,53 @@ func (l *companionLauncher) Start(list []Companion, keys []string) []string {
 		}
 	}
 	return msgs
+}
+
+// updateAndStart — фоновая часть запуска программы со списком обновлений:
+// проверить список и поставить новую версию, затем запустить. Сбой обновления
+// не мешает запуску установленной версии — он только пишется в журнал.
+func (l *companionLauncher) updateAndStart(c Companion) {
+	defer l.bg.Done()
+	ctx, cancel := context.WithTimeout(context.Background(), companionUpdateTimeout)
+	version, err := l.update(ctx, c)
+	cancel()
+	if err != nil {
+		respondLog().Warn("обновление сопутствующей программы не выполнено, запускается установленная", "key", c.Key, "err", err)
+		version = ""
+	}
+	if startErr := l.rt.start(c); startErr != nil {
+		if version != "" && l.rollback != nil {
+			respondLog().Warn("новая версия сопутствующей программы не запустилась, возвращается прежняя", "key", c.Key, "version", version, "err", startErr)
+			if rbErr := l.rollback(c); rbErr == nil {
+				if again := l.rt.start(c); again == nil {
+					l.say(fmt.Sprintf("%s %s не запустилась — оставлена прежняя версия.", companionTitle(c.Key), version))
+					return
+				}
+			} else {
+				respondLog().Warn("прежняя версия сопутствующей программы не вернулась", "key", c.Key, "err", rbErr)
+			}
+		}
+		l.say(fmt.Sprintf("Не удалось запустить «%s» (%s): %v", c.Key, c.Path, startErr))
+		return
+	}
+	if version != "" {
+		respondLog().Info("сопутствующая программа обновлена", "key", c.Key, "version", version)
+		l.say(fmt.Sprintf("%s обновлена до версии %s.", companionTitle(c.Key), version))
+	}
+}
+
+func (l *companionLauncher) say(msg string) {
+	if l.notify != nil {
+		l.notify(msg)
+	}
+}
+
+// companionTitle — имя программы для сообщения оператору.
+func companionTitle(key string) string {
+	if strings.EqualFold(key, "callista") {
+		return "Callista"
+	}
+	return "«" + key + "»"
 }
 
 // startBaseCompanions — запуск для записи базы baseID: программы манифеста
