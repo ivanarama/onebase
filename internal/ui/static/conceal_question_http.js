@@ -67,9 +67,13 @@ const send = (value) => process.stdout.write(JSON.stringify(value) + '\n');
       await answer;
       assert.equal(calls, 2);
     } else {
+      // Вопрос модальный: щелчок мимо окна его не закрывает и не отвечает.
       modal.dispatch('click', {target: modal});
-      assert.equal(app.document.getElementById('_question-modal'), null);
+      assert.ok(app.document.getElementById('_question-modal'), 'backdrop must not close the modal question');
       assert.equal(calls, 1, 'backdrop must not send an answer');
+      // Остальное сценария проверяет форму, оставшуюся без ответа: окно
+      // снимаем напрямую, пользователю такого выхода нет.
+      modal.remove();
     }
   }
   if (config.action === 'edit' || config.action === 'clear') {
