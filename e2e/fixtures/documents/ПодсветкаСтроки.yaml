@@ -1,0 +1,12 @@
+name: ПодсветкаСтроки
+title: "Проверка подсветки текущей строки"
+fields:
+  - name: Комментарий
+    type: string
+tableparts:
+  - name: Строки
+    fields:
+      - name: Описание
+        type: string
+      - name: Количество
+        type: number

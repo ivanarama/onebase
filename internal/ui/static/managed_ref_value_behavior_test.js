@@ -32,7 +32,7 @@ function control(tagName, type) {
   return el;
 }
 
-function runtime(controls) {
+function runtime(controls, window = {}) {
   const form = {
     querySelector(selector) {
       if (selector.startsWith('[data-ob-file-content-for=')) return null;
@@ -57,7 +57,7 @@ function runtime(controls) {
       extract('ensureRefOption') + '\n' +
       extract('applyValues') + '\n' +
       'return {managedRefParts, applyValues};',
-  )(document, {});
+  )(document, window);
 }
 
 function responseFixture() {
@@ -107,4 +107,22 @@ test('arbitrary JSON object is not mistaken for a reference', () => {
   assert.equal(api.managedRefParts({id: 'not-a-reference', Name: 'payload'}), null);
   assert.equal(api.managedRefParts({UUID: 'not-a-reference', payload: true}), null);
   assert.equal(api.managedRefParts({UUID: {nested: true}, Name: 'payload'}), null);
+});
+
+// With ui.js loaded, image hidden controls synchronize their visible copies;
+// other hidden attributes still keep the server UUID without becoming images.
+test('form-event updates image projection and preserves ordinary hidden references', () => {
+  const ref = {UUID: '11111111-1111-1111-1111-111111111111', Name: 'Фото'};
+  const image = control('INPUT', 'hidden');
+  const hidden = control('INPUT', 'hidden');
+  const wrap = {};
+  image.closest = (selector) => { assert.equal(selector, '.img-field'); return wrap; };
+  hidden.closest = () => null;
+  const updates = [];
+  runtime({Фото: image, Хранилище: hidden}, {
+    obSetImageField(candidate, value) { updates.push({candidate, value}); }
+  }).applyValues({Фото: ref, Хранилище: ref}, null);
+  assert.equal(image.value, ref.UUID);
+  assert.equal(hidden.value, ref.UUID);
+  assert.deepEqual(updates, [{candidate: wrap, value: ref.UUID}]);
 });

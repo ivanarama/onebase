@@ -20,6 +20,7 @@ func startMobileBrowserProcess(cmd *exec.Cmd) (func() error, error) {
 	}
 	limits := windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION{}
 	limits.BasicLimitInformation.LimitFlags = windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+	//nolint:gosec // G103: synchronous WinAPI receives our correctly typed local struct and its exact sizeof, not input-derived memory.
 	if _, err := windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation, uintptr(unsafe.Pointer(&limits)), uint32(unsafe.Sizeof(limits))); err != nil {
 		_ = windows.CloseHandle(job)
 		return nil, err
@@ -28,6 +29,7 @@ func startMobileBrowserProcess(cmd *exec.Cmd) (func() error, error) {
 		_ = windows.CloseHandle(job)
 		return nil, err
 	}
+	//nolint:gosec // G115: cmd.Start gets a DWORD ProcessId; uint32 reverses Go syscall.StartProcess widening to int.
 	process, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE, false, uint32(cmd.Process.Pid))
 	if err == nil {
 		err = windows.AssignProcessToJobObject(job, process)

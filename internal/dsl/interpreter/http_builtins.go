@@ -2,14 +2,24 @@ package interpreter
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
 const maxDSLHTTPResponseBytes int64 = 16 << 20
+
+// DefaultDSLHTTPFileBytes — предел тела ответа, которое HTTPСоединение пишет
+// в выходной файл. Совпадает с пределом загрузки вложений по умолчанию:
+// скачанный файл обычно тут же прикрепляется (ПрисоединитьФайл), и больший
+// файл всё равно не прошёл бы в хранилище. Хост задаёт свой предел через
+// HTTPOptions.MaxFileBytes.
+const DefaultDSLHTTPFileBytes int64 = 50 << 20
 
 // ─── dslHTTPConnection ────────────────────────────────────────────────────────
 
@@ -20,26 +30,41 @@ type dslHTTPConnection struct {
 	timeout time.Duration
 	guard   NetGuard
 	ctx     CtxSource
+	// fileGuard проверяется перед записью ответа в выходной файл: файловая
+	// возможность не должна открываться через сетевую. Песочница с запретом
+	// файлов ставит его на фабрике (applySandboxVars).
+	fileGuard    FileGuard
+	maxFileBytes int64
 }
 
+// Получить(Запрос[, ИмяВыходногоФайла]) и ОтправитьДля(Запрос[, Метод[,
+// ИмяВыходногоФайла]]): непустое ИмяВыходногоФайла — как в 1С, тело ответа
+// пишется в файл побайтно и в строку не читается.
 func (c *dslHTTPConnection) CallMethod(name string, args []any) any {
 	switch name {
 	case "получить", "get":
 		req := asHTTPRequest(args, 0, "HTTPСоединение.Получить")
-		return c.do(req, "GET")
+		return c.do(req, "GET", strArg(args, 1), "HTTPСоединение.Получить")
 	case "отправитьдля", "sendfor":
 		req := asHTTPRequest(args, 0, "HTTPСоединение.ОтправитьДля")
 		method := "POST"
 		if len(args) >= 2 {
 			method = strings.ToUpper(fmt.Sprintf("%v", args[1]))
 		}
-		return c.do(req, method)
+		return c.do(req, method, strArg(args, 2), "HTTPСоединение.ОтправитьДля")
 	}
 	panic(userError{Msg: "HTTPСоединение: неизвестный метод " + name})
 }
 
-func (c *dslHTTPConnection) do(req *dslHTTPRequest, method string) *dslHTTPResponse {
+func (c *dslHTTPConnection) do(req *dslHTTPRequest, method, outFile, caller string) *dslHTTPResponse {
 	checkNet(c.guard)
+	// Запрет файлов и путь проверяются ДО запроса: иначе ответ скачивался бы
+	// впустую, а песочница узнавала бы о записи только после сетевого вызова.
+	var outPath string
+	if outFile != "" {
+		checkFile(c.fileGuard)
+		outPath = safePathOrRaise(caller, outFile)
+	}
 	scheme := "http"
 	if c.https {
 		scheme = "https"
@@ -72,12 +97,64 @@ func (c *dslHTTPConnection) do(req *dslHTTPRequest, method string) *dslHTTPRespo
 		panic(userError{Msg: "HTTPСоединение: " + err.Error()})
 	}
 	defer resp.Body.Close() //nolint:errcheck,gosec // G104: bodyclose распознаёт только прямой вызов; тело прочитано, закрытие вторично
+	if outPath != "" {
+		writeDSLHTTPResponseFile(ctx, resp.Body, outPath, c.fileLimit(), caller)
+		return &dslHTTPResponse{
+			statusCode: resp.StatusCode,
+			headers:    resp.Header,
+			bodyFile:   outPath,
+		}
+	}
 	bodyBytes := readDSLHTTPResponseContext(ctx, resp.Body, "HTTPСоединение")
 	return &dslHTTPResponse{
 		statusCode: resp.StatusCode,
 		headers:    resp.Header,
 		body:       string(bodyBytes),
 	}
+}
+
+func (c *dslHTTPConnection) fileLimit() int64 {
+	if c.maxFileBytes > 0 {
+		return c.maxFileBytes
+	}
+	return DefaultDSLHTTPFileBytes
+}
+
+// writeDSLHTTPResponseFile пишет тело во временный файл рядом с целевым и
+// переименовывает его только после успешного чтения всего тела в пределах
+// лимита. Любая ошибка (обрыв, дедлайн, превышение) удаляет временный файл:
+// по пути ИмяВыходногоФайла не остаётся обрезанного содержимого.
+func writeDSLHTTPResponseFile(ctx context.Context, body io.Reader, path string, limit int64, caller string) {
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.part") //nolint:gosec // G703: путь прошёл safePathOrRaise, как у остальных файловых builtins
+	if err != nil {
+		panic(userError{Msg: caller + ": " + err.Error()})
+	}
+	tmpName := tmp.Name()
+	done := false
+	defer func() {
+		if !done {
+			_ = tmp.Close()
+			_ = os.Remove(tmpName)
+		}
+	}()
+	n, err := io.Copy(tmp, io.LimitReader(body, limit+1))
+	if err != nil {
+		checkExecutionContext(ctx)
+		panic(userError{Msg: caller + ": ошибка чтения ответа: " + err.Error()})
+	}
+	checkExecutionContext(ctx)
+	if n > limit {
+		panic(userError{Msg: fmt.Sprintf("%s: ответ превышает лимит %d байт", caller, limit)})
+	}
+	// Close пишущей стороны проверяем: он сбрасывает буфер, и без проверки
+	// файл мог бы остаться усечённым при сообщении об успехе.
+	if err := tmp.Close(); err != nil {
+		panic(userError{Msg: caller + ": " + err.Error()})
+	}
+	if err := os.Rename(tmpName, path); err != nil { //nolint:gosec // G703: путь прошёл safePathOrRaise, как у остальных файловых builtins
+		panic(userError{Msg: caller + ": " + err.Error()})
+	}
+	done = true
 }
 
 // ─── dslHTTPRequest ───────────────────────────────────────────────────────────
@@ -110,6 +187,8 @@ type dslHTTPResponse struct {
 	statusCode int
 	headers    http.Header
 	body       string
+	// bodyFile — путь, куда записано тело (ИмяВыходногоФайла); тогда body пуст.
+	bodyFile string
 }
 
 // Get implements This — allows Ответ.КодСостояния property access.
@@ -126,7 +205,13 @@ func (r *dslHTTPResponse) Set(field string, val any) {}
 func (r *dslHTTPResponse) CallMethod(name string, args []any) any {
 	switch name {
 	case "получитьтелокакстроку", "getbodyasstring":
+		if r.bodyFile != "" {
+			// Как в 1С: тело ушло в файл, строкового тела у ответа нет.
+			return nil
+		}
 		return r.body
+	case "получитьимяфайлатела", "getbodyfilename":
+		return r.bodyFile
 	case "получитьзаголовок", "getheader":
 		if len(args) > 0 {
 			return r.headers.Get(fmt.Sprintf("%v", args[0]))
@@ -153,14 +238,28 @@ func checkNet(guard NetGuard) {
 
 // ─── NewHTTPFunctions ─────────────────────────────────────────────────────────
 
+// HTTPOptions — необязательные настройки HTTP-клиента DSL.
+type HTTPOptions struct {
+	// Ctx — источник контекста исполнения (дедлайн и отмена запроса).
+	Ctx CtxSource
+	// MaxFileBytes — предел тела, записываемого в ИмяВыходногоФайла;
+	// 0 → DefaultDSLHTTPFileBytes.
+	MaxFileBytes int64
+}
+
 // NewHTTPFunctions returns factories and shorthands to inject into DSL extraVars.
 // guard (может быть nil) проверяется в момент сетевого вызова — предохранитель
 // сети читается свежим, переключение в конфигураторе действует без перезапуска.
 func NewHTTPFunctions(guard NetGuard, ctxSources ...CtxSource) map[string]any {
-	ctxSource := firstCtxSource(ctxSources)
+	return NewHTTPFunctionsWith(guard, HTTPOptions{Ctx: firstCtxSource(ctxSources)})
+}
+
+// NewHTTPFunctionsWith — NewHTTPFunctions с явными настройками.
+func NewHTTPFunctionsWith(guard NetGuard, opts HTTPOptions) map[string]any {
+	ctxSource := opts.Ctx
 	m := map[string]any{
-		"__factory_HTTPСоединение": newHTTPConnFactory(guard, ctxSource),
-		"__factory_HTTPConnection": newHTTPConnFactory(guard, ctxSource),
+		"__factory_HTTPСоединение": newHTTPConnFactory(guard, ctxSource, opts.MaxFileBytes),
+		"__factory_HTTPConnection": newHTTPConnFactory(guard, ctxSource, opts.MaxFileBytes),
 		"__factory_HTTPЗапрос":     newHTTPReqFactory(),
 		"__factory_HTTPRequest":    newHTTPReqFactory(),
 	}
@@ -263,13 +362,14 @@ func readDSLHTTPResponseContext(ctx context.Context, body io.Reader, caller stri
 	return data
 }
 
-func newHTTPConnFactory(guard NetGuard, ctxSource CtxSource) func([]any) any {
+func newHTTPConnFactory(guard NetGuard, ctxSource CtxSource, maxFileBytes int64) func([]any) any {
 	return func(args []any) any {
 		conn := &dslHTTPConnection{
-			host:    strArg(args, 0),
-			timeout: 30 * time.Second,
-			guard:   guard,
-			ctx:     ctxSource,
+			host:         strArg(args, 0),
+			timeout:      30 * time.Second,
+			guard:        guard,
+			ctx:          ctxSource,
+			maxFileBytes: maxFileBytes,
 		}
 		if len(args) >= 2 {
 			conn.port = int(floatArg(args, 1))
@@ -296,6 +396,21 @@ func newHTTPReqFactory() func([]any) any {
 		}
 	}
 }
+
+// denyHTTPFileOutput оборачивает фабрику HTTPСоединение так, что созданное
+// соединение отказывается писать ответ в файл. Сетевой guard и остальные
+// настройки исходной фабрики сохраняются.
+func denyHTTPFileOutput(factory func([]any) any, deny FileGuard) func([]any) any {
+	return func(args []any) any {
+		v := factory(args)
+		if conn, ok := v.(*dslHTTPConnection); ok {
+			conn.fileGuard = deny
+		}
+		return v
+	}
+}
+
+var errHTTPFileDenied = errors.New("файловые операции запрещены в этом режиме (песочница)")
 
 func asHTTPRequest(args []any, i int, caller string) *dslHTTPRequest {
 	if i < len(args) {

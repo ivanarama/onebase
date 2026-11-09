@@ -89,21 +89,29 @@ type FormMeta struct {
 	Kind    string
 	Events  map[string]string
 	Actions map[string]bool // имя действия → visible (по умолчанию true)
+	// RefCardButton — form.ref_card_button (по умолчанию true: кнопка есть).
+	RefCardButton bool
+	// RefCardAdminOnly — form.ref_card_button_admin_only (#1876).
+	RefCardAdminOnly bool
 }
 
 // FormMeta декодирует корневые свойства формы для панели свойств.
 func (d *Doc) FormMeta() (FormMeta, error) {
-	var fm FormMeta
+	fm := FormMeta{RefCardButton: true}
 	top := d.topMapping()
 	if f := mappingValue(top, "form"); f != nil {
 		var block struct {
-			Title map[string]string `yaml:"title"`
-			Kind  string            `yaml:"kind"`
+			Title            map[string]string `yaml:"title"`
+			Kind             string            `yaml:"kind"`
+			RefCardButton    *bool             `yaml:"ref_card_button"`
+			RefCardAdminOnly bool              `yaml:"ref_card_button_admin_only"`
 		}
 		if err := f.Decode(&block); err != nil {
 			return fm, fmt.Errorf("formdoc: декод form: %w", err)
 		}
 		fm.Kind = block.Kind
+		fm.RefCardButton = block.RefCardButton == nil || *block.RefCardButton
+		fm.RefCardAdminOnly = block.RefCardAdminOnly
 		if block.Title != nil {
 			fm.TitleRU = block.Title["ru"]
 		}

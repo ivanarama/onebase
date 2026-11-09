@@ -1,6 +1,7 @@
 package interpreter
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -10,8 +11,8 @@ import (
 // receivePOP3 забирает письма по POP3 (RFC 1939) без удаления с сервера:
 // UIDL — ключ «уже получено», LIST — размер до загрузки, RETR — само письмо.
 // DELE не отправляется никогда.
-func receivePOP3(p mailProfile, opts mailReceiveOptions) ([]receivedMail, error) {
-	c, err := dialMail(p)
+func receivePOP3(ctx context.Context, p mailProfile, opts mailReceiveOptions) ([]receivedMail, error) {
+	c, err := dialMail(ctx, p)
 	if err != nil {
 		return nil, err
 	}
