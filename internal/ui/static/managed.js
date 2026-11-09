@@ -2578,7 +2578,7 @@ function obManagedInitDelegates() {
     // ui.js (из шаблона "head"), где этот же делегат уже висит на document.
     // Дублирование переключало бы display дважды (none→block→none) за один клик
     // и dropdown «Печать ▾»/«Ввести на основании» не открывался бы — issue #309.
-    var btn = e.target && e.target.closest ? e.target.closest('[data-ob-ref-picker],[data-ob-ref-current],[data-ob-file-trigger],[data-ob-fire-click],[data-ob-grid-add],[data-ob-grid-del],[data-ob-add-tp],[data-ob-add-vt],[data-ob-remove-row],[data-ob-ref-cancel],[data-ob-form-close]') : null;
+    var btn = e.target && e.target.closest ? e.target.closest('[data-ob-ref-picker],[data-ob-ref-clear],[data-ob-ref-current],[data-ob-file-trigger],[data-ob-fire-click],[data-ob-grid-add],[data-ob-grid-del],[data-ob-add-tp],[data-ob-add-vt],[data-ob-remove-row],[data-ob-ref-cancel],[data-ob-form-close]') : null;
     if (!btn) return;
     if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') return;
 
@@ -2641,6 +2641,13 @@ function obManagedInitDelegates() {
       // Тот же щелчок ловит и делегат формы в ui.js: окно — один раз.
       if (pickSel && typeof window.obOpenRefPickerOnce === 'function') window.obOpenRefPickerOnce(e, pickSel);
       else if (pickSel && typeof openRefPicker === 'function') openRefPicker(pickSel);
+      return;
+    }
+    if (btn.hasAttribute('data-ob-ref-clear')) {
+      e.preventDefault();
+      var clearRoot = btn.parentElement;
+      var clearSel = clearRoot && clearRoot.querySelector ? clearRoot.querySelector('select') : null;
+      if (clearSel && typeof window.obRefNoListClear === 'function') window.obRefNoListClear(clearSel);
       return;
     }
     if (btn.hasAttribute('data-ob-ref-current')) {

@@ -1,0 +1,18 @@
+schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: ПолеБезСписка
+attributes:
+  - name: Объект
+    type: DocumentRef.ПолеБезСписка
+    save: true
+    main: true
+elements:
+  - kind: ПолеВвода
+    name: ПолеСклад
+    data_path: Объект.Склад
+    choice_dropdown: false
+  - kind: ПолеВвода
+    name: ПолеКомментарий
+    data_path: Объект.Комментарий

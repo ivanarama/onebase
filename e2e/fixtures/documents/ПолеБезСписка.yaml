@@ -1,0 +1,7 @@
+name: ПолеБезСписка
+title: "Проверка поля без выпадающего списка"
+fields:
+  - name: Склад
+    type: reference:Склад
+  - name: Комментарий
+    type: string
