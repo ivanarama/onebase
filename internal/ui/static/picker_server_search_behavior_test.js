@@ -127,7 +127,7 @@ function pickerContext(managed = false) {
     addEventListener(type, fn) { (this.listeners[type] = this.listeners[type] || []).push(fn); },
     body,
   };
-  const window = {obManagedApplyTablePartRefOptions() {}, applyTableParts() {}};
+  const window = {obManagedApplyTablePartRefOptions() {}, obManagedApplyColumnTitles() {}, applyTableParts() {}};
   window.obFire = function (element, event, params, request) { fired.push({element, event, params, request}); };
   const api = new Function(
     'document', 'window', 'obFire', 'setTimeout', 'clearTimeout', 'obReady',

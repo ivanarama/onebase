@@ -73,12 +73,6 @@ func openCLIStorageReadOnly(ctx context.Context, dbType, sqlitePath, dsn string)
 	return openCLIStorageMode(ctx, dbType, sqlitePath, dsn, false)
 }
 
-// openCLIStorageMigrationPlan preserves the lifetime/restore/revision gates and
-// uses database-enforced read-only connections, without publishing a revision.
-func openCLIStorageMigrationPlan(ctx context.Context, dbType, sqlitePath, dsn string) (*storage.DB, error) {
-	return openCLIStorageWithMode(ctx, dbType, sqlitePath, dsn, false, true)
-}
-
 func openCLIStorageMode(ctx context.Context, dbType, sqlitePath, dsn string, publishRevision bool) (*storage.DB, error) {
 	return openCLIStorageWithMode(ctx, dbType, sqlitePath, dsn, publishRevision, false)
 }
