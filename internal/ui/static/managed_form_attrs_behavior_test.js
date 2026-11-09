@@ -59,6 +59,7 @@ function runtime(cfg, controls = []) {
     ${extract('controlSubmittable')}
     ${extract('captureFormControlState')}
     ${extract('fileEventFormData')}
+    ${extract('obBinaryFileFields')}
     ${extract('snapshotFormEvent')}
     return {ensureFormAttrControls, applyValues, snapshotFormEvent};
   `)(document, {}, cfg, FormData);

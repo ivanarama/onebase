@@ -424,8 +424,10 @@ type processorUploadFile interface {
 // обязан отложить Cleanup сразу после получения значений.
 type processorTempFiles struct {
 	createTemp func(dir, pattern string) (processorUploadFile, error)
-	// Only save appends paths returned by os.CreateTemp, never request paths.
+	// Only save appends paths returned by createTemp and directories returned
+	// by os.MkdirTemp, never request paths.
 	paths []string
+	dirs  []string
 }
 
 func (t *processorTempFiles) Cleanup() {
@@ -433,11 +435,16 @@ func (t *processorTempFiles) Cleanup() {
 		return
 	}
 	for _, path := range t.paths {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) { //nolint:gosec // G703: paths contains only CreateTemp results; save rejects separators in the uploaded extension.
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) { //nolint:gosec // G703: paths contains only createTemp results inside our MkdirTemp directories.
 			oblog.Component("processor").Warn("временный файл параметра не удалён", "path", path, "err", err)
 		}
 	}
-	t.paths = nil
+	for _, dir := range t.dirs {
+		if err := os.RemoveAll(dir); err != nil { //nolint:gosec // G703: dirs contains only os.MkdirTemp results under the upload directory.
+			oblog.Component("processor").Warn("временный каталог параметра не удалён", "path", dir, "err", err)
+		}
+	}
+	t.paths, t.dirs = nil, nil
 }
 
 // processorUploadTempDir — куда класть временный файл. В demo-режиме он обязан
@@ -450,25 +457,72 @@ func processorUploadTempDir() string {
 	return os.TempDir()
 }
 
-// saveProcessorUpload кладёт загруженные байты во временный файл и возвращает
-// путь. Расширение сохраняется: excelize открывает книгу по содержимому, но
-// человек, которому файл покажут в ошибке, читает имя.
-func (t *processorTempFiles) save(paramName, fileName string, data []byte) (string, error) {
-	dir := processorUploadTempDir()
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return "", i18nerr.Wrapf(err, "временный каталог загрузок")
+// processorUploadBaseName — имя файла, как его прислал браузер, без каталогов
+// (Windows-браузеры присылали полный путь «C:akepath\…»).
+func processorUploadBaseName(fileName string) string {
+	name := strings.ReplaceAll(fileName, `\`, "/")
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
 	}
-	ext := strings.ToLower(filepath.Ext(fileName))
-	if len(ext) > 16 || strings.ContainsAny(ext, `/\`) {
-		ext = ""
-	}
-	createTemp := t.createTemp
-	if createTemp == nil {
-		createTemp = func(dir, pattern string) (processorUploadFile, error) {
-			return os.CreateTemp(dir, pattern)
+	return strings.TrimSpace(name)
+}
+
+// processorUploadSafeName — имя временной копии: исходное имя, из которого
+// убрано всё, что недопустимо в имени файла на Windows и Linux. Каждая копия
+// лежит в своём каталоге, поэтому совпадение имён двух файлов не мешает.
+func processorUploadSafeName(fileName string) string {
+	name := []rune(processorUploadBaseName(fileName))
+	for i, r := range name {
+		if r < 0x20 || r == 0x7f || strings.ContainsRune(`<>:"/\|?*`, r) {
+			name[i] = '_'
 		}
 	}
-	f, err := createTemp(dir, "upload-*"+ext)
+	out := strings.TrimRight(strings.TrimSpace(string(name)), ". ")
+	ext := strings.ToLower(filepath.Ext(out))
+	if len(ext) > 16 {
+		ext = ""
+	}
+	stem := strings.TrimSuffix(out, filepath.Ext(out))
+	// Имя ограничено 120 байтами вместе с расширением: так путь остаётся
+	// короче предела Windows даже в глубоком временном каталоге.
+	for len(stem)+len(ext) > 120 && stem != "" {
+		r := []rune(stem)
+		stem = string(r[:len(r)-1])
+	}
+	if stem == "" || stem == "." || stem == ".." {
+		stem = "file"
+	}
+	switch strings.ToUpper(strings.TrimSpace(strings.SplitN(stem, ".", 2)[0])) {
+	case "CON", "PRN", "AUX", "NUL",
+		"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+		"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9":
+		stem = "_" + stem
+	}
+	return stem + ext
+}
+
+// save кладёт загруженные байты во временную копию и возвращает путь к ней.
+// Копия лежит в отдельном временном каталоге под исходным именем файла: так
+// обработка узнаёт имя (последний сегмент пути) — в 1С кассир грузит пачку
+// сканов, и заявка определяется по имени файла. Расширение сохраняется:
+// excelize открывает книгу по содержимому, но человек читает имя в ошибке.
+func (t *processorTempFiles) save(paramName, fileName string, data []byte) (string, error) {
+	base := processorUploadTempDir()
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		return "", i18nerr.Wrapf(err, "временный каталог загрузок")
+	}
+	dir, err := os.MkdirTemp(base, "upload-*")
+	if err != nil {
+		return "", i18nerr.Wrapf(err, "временный каталог загрузок")
+	}
+	t.dirs = append(t.dirs, dir)
+	createTemp := t.createTemp
+	if createTemp == nil {
+		createTemp = func(dir, name string) (processorUploadFile, error) {
+			return os.OpenFile(filepath.Join(dir, name), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600) //nolint:gosec // G304: dir is our MkdirTemp result, name is sanitized and has no separators.
+		}
+	}
+	f, err := createTemp(dir, processorUploadSafeName(fileName))
 	if err != nil {
 		return "", i18nerr.Wrapf(err, "временный файл параметра %s", paramName)
 	}
@@ -479,13 +533,78 @@ func (t *processorTempFiles) save(paramName, fileName string, data []byte) (stri
 		writeErr = closeErr
 	}
 	if writeErr != nil {
-		if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) { //nolint:gosec // G703: path is f.Name() from CreateTemp in our temp directory; the uploaded extension cannot contain separators.
+		if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) { //nolint:gosec // G703: path is the createTemp result inside our temp directory.
 			oblog.Component("processor").Warn("временный файл параметра не удалён", "path", path, "err", removeErr)
 		}
 		return "", i18nerr.Wrapf(writeErr, "временный файл параметра %s", paramName)
 	}
 	t.paths = append(t.paths, path)
 	return path, nil
+}
+
+// processorMultipleFilesMax — сколько файлов принимает один параметр
+// multiple: пачка сканов из каталога, а не произвольный архив.
+const processorMultipleFilesMax = 200
+
+// processorMultipleBodyFactor — сколько лимитов вложения занимает в теле
+// запроса один параметр multiple: true.
+const processorMultipleBodyFactor = 10
+
+// processorMultipleUploads — файлы параметра multiple: true. Каждый файл не
+// больше лимита вложений; DSL получает Массив Структур {Путь, ИмяФайла,
+// Размер, ТипMIME} в порядке выбора. nil — поле в запросе не участвовало.
+func processorMultipleUploads(r *http.Request, p processorpkg.Param, fieldNames []string, maxFileSize int64, temps *processorTempFiles) (*interpreter.Array, error) {
+	if r.MultipartForm == nil {
+		return nil, nil
+	}
+	var items []any
+	seen := false
+	for _, fieldName := range fieldNames {
+		headers, ok := r.MultipartForm.File[fieldName]
+		if !ok {
+			if _, sent := r.MultipartForm.Value[fieldName]; sent {
+				seen = true
+			}
+			continue
+		}
+		seen = true
+		for _, header := range headers {
+			if header == nil || (header.Filename == "" && header.Size == 0) {
+				continue // «файл не выбран» — браузер шлёт пустую часть
+			}
+			if len(items) >= processorMultipleFilesMax {
+				return nil, i18nerr.Errorf("параметр %s: больше %d файлов за один запуск", p.Name, processorMultipleFilesMax)
+			}
+			file, err := header.Open()
+			if err != nil {
+				return nil, fmt.Errorf("файл-параметр %s: %w", p.Name, err)
+			}
+			data, readErr := readUploadedBytes(file, maxFileSize)
+			closeRead("загруженный файл параметра", file)
+			if readErr != nil {
+				return nil, readErr
+			}
+			path, err := temps.save(p.Name, header.Filename, data)
+			if err != nil {
+				return nil, err
+			}
+			mimeType := strings.TrimSpace(header.Header.Get("Content-Type"))
+			if mimeType == "" {
+				mimeType = http.DetectContentType(data)
+			}
+			items = append(items, interpreter.NewOrderedStruct(
+				[]string{"Путь", "ИмяФайла", "Размер", "ТипMIME"},
+				[]any{path, processorUploadBaseName(header.Filename), float64(len(data)), mimeType},
+			))
+		}
+	}
+	if !seen {
+		return nil, nil
+	}
+	if items == nil {
+		items = []any{}
+	}
+	return interpreter.NewArray(items), nil
 }
 
 // decodeUploadText tries UTF-8; falls back to Windows-1251.
@@ -518,7 +637,16 @@ func processorFormBodyLimit(r *http.Request, maxFileSize int64, controls process
 			fileParams[key] = true
 		}
 	}
-	fileCount := int64(len(fileParams))
+	// Параметр multiple несёт пачку файлов: каждый не больше лимита вложения,
+	// всего — до processorMultipleBodyFactor таких лимитов.
+	fileCount := int64(0)
+	for key := range fileParams {
+		if controls.multipleFiles[key] {
+			fileCount += processorMultipleBodyFactor
+		} else {
+			fileCount++
+		}
+	}
 	if fileCount == 0 {
 		return defaultFormMemoryBytes
 	}
@@ -640,11 +768,13 @@ func processorAllocatedAuxiliaryParamName(params []processorpkg.Param, prefix, n
 // отрисованы текущей формой обработки. Префиксы _ob_present_ и _fc_ сами по
 // себе ничего не доказывают: такие имена разрешены у обычных параметров.
 type processorRequestControls struct {
-	paramFields      map[string][]string
-	formAttrFields   map[string][]string
-	fileInputs       map[string][]string
-	boolPresence     map[string][]string
-	fileContent      map[string][]string
+	paramFields    map[string][]string
+	formAttrFields map[string][]string
+	fileInputs     map[string][]string
+	boolPresence   map[string][]string
+	fileContent    map[string][]string
+	// multipleFiles — параметры multiple: true (несколько файлов в одном поле).
+	multipleFiles    map[string]bool
 	formTables       map[string]metadata.FormTableDefinition
 	tableAuthorities map[string]managedFormTableAuthority
 	formTablesErr    error
@@ -667,9 +797,15 @@ func processorRequestControlsForForm(proc *processorpkg.Processor, form *metadat
 		fileInputs:       make(map[string][]string),
 		boolPresence:     make(map[string][]string),
 		fileContent:      make(map[string][]string),
+		multipleFiles:    make(map[string]bool),
 		formTables:       formTables,
 		tableAuthorities: tableAuthorities,
 		formTablesErr:    formTablesErr,
+	}
+	for _, p := range params {
+		if p.Multiple && p.Type == processorBinaryParamType {
+			controls.multipleFiles[strings.ToLower(p.Name)] = true
+		}
 	}
 	if form == nil {
 		for _, p := range params {
@@ -783,6 +919,16 @@ func (s *Server) processorParamValuesFromRequest(
 				}
 				if _, present := processorControlText(r, paramFields); present {
 					return nil, temps, i18nerr.Errorf(processorBinaryViaObFireMessage, p.Name)
+				}
+				continue
+			}
+			if p.Multiple {
+				files, err := processorMultipleUploads(r, p, controls.fileInputs[paramKey], maxFileSize, temps)
+				if err != nil {
+					return nil, temps, err
+				}
+				if files != nil {
+					values[p.Name] = files
 				}
 				continue
 			}

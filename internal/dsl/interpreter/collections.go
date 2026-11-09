@@ -345,6 +345,18 @@ func NewStructFromMap(m map[string]any) *Struct {
 	return s
 }
 
+// NewOrderedStruct — Структура с полями в заданном порядке (Для Каждого
+// обходит их так же). Длины keys и vals совпадают.
+func NewOrderedStruct(keys []string, vals []any) *Struct {
+	s := &Struct{vals: make(map[string]any, len(keys))}
+	for i, k := range keys {
+		kl := strings.ToLower(k)
+		s.keys = append(s.keys, kl)
+		s.vals[kl] = vals[i]
+	}
+	return s
+}
+
 func newStruct(args []any) *Struct {
 	s := &Struct{vals: make(map[string]any)}
 	if len(args) == 0 {

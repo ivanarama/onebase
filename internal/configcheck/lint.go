@@ -533,7 +533,7 @@ func roleYAMLSchema() *yamlLintSchema {
 }
 
 func processorYAMLSchema() *yamlLintSchema {
-	param := with(obj("name", "type", "label", "default", "options", "required"), map[string]*yamlLintSchema{"labels": freeMap()})
+	param := with(obj("name", "type", "label", "default", "options", "required", "multiple"), map[string]*yamlLintSchema{"labels": freeMap()})
 	return with(obj("name", "title", "kind"), map[string]*yamlLintSchema{
 		"titles": freeMap(),
 		"params": seq(param),
