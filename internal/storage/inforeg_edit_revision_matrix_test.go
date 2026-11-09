@@ -509,3 +509,38 @@ func TestInfoRegEditPhysicalPeriodSpellingMatrix(t *testing.T) {
 		}
 	})
 }
+
+// Заполнение версий при миграции — один проход: каждая из тысяч строк получает
+// свою версию, пустых не остаётся. Прежние пачки «следующие 512 пустых» давали
+// тот же результат, но квадратичное время на больших регистрах.
+func TestInfoRegEditRevisionMigrateBackfillManyRowsMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := context.Background()
+		ir := revisionRegister("RevisionBulkBackfill")
+		table := metadata.InfoRegTableName(ir.Name)
+		if _, err := db.Exec(ctx, "CREATE TABLE "+table+" (key TEXT PRIMARY KEY, value TEXT)"); err != nil {
+			t.Fatal(err)
+		}
+		const rows = 3000
+		for i := 0; i < rows; i++ {
+			if _, err := db.Exec(ctx, "INSERT INTO "+table+" (key,value) VALUES ("+db.Dialect().Placeholder(1)+", 'A')", fmt.Sprintf("k%d", i)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{ir}); err != nil {
+			t.Fatal(err)
+		}
+		var empty, distinct int
+		col := storage.InfoRegEditRevisionColumn
+		if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM "+table+" WHERE "+col+" IS NULL OR "+col+" = ''").Scan(&empty); err != nil {
+			t.Fatal(err)
+		}
+		if err := db.QueryRow(ctx, "SELECT COUNT(DISTINCT "+col+") FROM "+table).Scan(&distinct); err != nil {
+			t.Fatal(err)
+		}
+		if empty != 0 || distinct != rows {
+			t.Fatalf("backfill: пустых %d, различных версий %d из %d", empty, distinct, rows)
+		}
+		readRevision(t, db, ir, storage.InfoRegEditKey{Dimensions: map[string]any{"Key": "k1234"}})
+	})
+}
