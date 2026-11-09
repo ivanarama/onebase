@@ -1839,6 +1839,36 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
   window.obRequestFormClose = function(options){
     options = options || {};
     if (beforePostState) return Promise.resolve({allowed: false, intentId: '', error: 'form-event-pending'});
+	if (formEventPending && !options.__awaitedFormEvent) {
+	  // Закрытие ждёт текущее событие формы вместо немедленного отказа. Отказ
+	  // был ложным в двух частых сценариях: обработчик закрывает форму своей
+	  // же командой ui.закрытьФорму (уведомление приходит по SSE, пока его
+	  // собственный запрос ещё в полёте — и повторить закрытие некому, форма
+	  // не закрывалась никогда), и «Закрыть» сразу после правки поля — уход
+	  // фокуса запускает ПриИзменении, и пользователь жал второй раз.
+	  //
+	  // Ждём ровно один круг очереди: если к её концу подоспело новое событие,
+	  // отказываем как прежде — иначе поток событий откладывал бы закрытие
+	  // навсегда. Ожидание ограничено таймаутом самого закрытия. Нативный
+	  // submit по-прежнему не проходит, пока событие в очереди.
+	  var awaited = new Promise(function(resolve){
+	    var done = false, timer = null;
+	    var finish = function(){
+	      if (done) return;
+	      done = true;
+	      if (timer) clearTimeout(timer);
+	      resolve();
+	    };
+	    timer = setTimeout(finish, CLOSE_TIMEOUT_MS);
+	    formEventQueue.catch(function(){}).then(finish);
+	  });
+	  return awaited.then(function(){
+	    var next = {};
+	    Object.keys(options).forEach(function(key){ next[key] = options[key]; });
+	    next.__awaitedFormEvent = true;
+	    return window.obRequestFormClose(next);
+	  });
+	}
     // An unknown result belongs to an already checked operation. Recover its
     // exact payload/UUID before starting any new BeforePost handler.
     if (BEFORE_POST && options.mode === 'post' && !options.__beforePostDone && !retryableClose && !closePending) {
@@ -1857,7 +1887,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     }
 	if (formEventPending) {
 	  // An embedded adapter may already have raised the handoff flag before its
-	  // parent asks for this decision. This early refusal completes that handoff;
+	  // parent asks for this decision. This refusal completes that handoff;
 	  // leaving it set would permanently block later form events and submits.
 	  closeHandoffPending = false;
 	  flash(closeMessage('operationPending', 'Команда формы ещё выполняется. Дождитесь её завершения и повторите закрытие.'), 'err');
