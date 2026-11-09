@@ -134,3 +134,12 @@ func TestCheckFormBackground_ButtonSupported(t *testing.T) {
 		t.Fatalf("невалидный цвет кнопки — form.background-color: %+v", warns)
 	}
 }
+
+// У СтраницыФормы фон действует (весь набор), предупреждения нет.
+func TestCheckFormBackground_PagesSilent(t *testing.T) {
+	warns := CheckFormBackground(projWithElement(&metadata.FormElement{
+		Kind: metadata.FormElementPages, Name: "Закладки", Background: "#fffaf0"}))
+	if len(warns) != 0 {
+		t.Fatalf("background у СтраницыФормы не должен предупреждать: %+v", warns)
+	}
+}

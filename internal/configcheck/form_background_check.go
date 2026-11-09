@@ -35,7 +35,7 @@ func CheckFormBackground(proj *project.Project) []Issue {
 					Object:       object,
 					Kind:         "Управляемая форма",
 					Code:         "form.background-kind",
-					Message:      fmt.Sprintf("элемент %q (%s): ключ background игнорируется — фон поддерживают только ГруппаФормы и Кнопка", formElementName(el), el.Kind),
+					Message:      fmt.Sprintf("элемент %q (%s): ключ background игнорируется — фон поддерживают только ГруппаФормы, СтраницыФормы и Кнопка", formElementName(el), el.Kind),
 					SuggestedFix: "Перенесите background на объемлющую ГруппаФормы или удалите ключ.",
 				})
 				return
