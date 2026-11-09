@@ -34,7 +34,7 @@ func CheckUserCardPolicies(dir string, proj *project.Project, roles []*auth.Role
 						err = validateRoleRowPolicy(policies, op, raw, target.meta, projEntityLookup(proj))
 					}
 					if err != nil {
-						issues = append(issues, Issue{File: files[strings.ToLower(role.Name)], Object: role.Name, Kind: "Роль", Code: "rls.invalid-user-card", Message: fmt.Sprintf("user_card policy %s.%s.%s: %v", kind, object, op, err), SuggestedFix: "Исправьте источник user_card, типы полей и оператор; разрешён скалярный eq/ne."})
+						issues = append(issues, Issue{File: files[strings.ToLower(role.Name)], Object: role.Name, Kind: "Роль", Code: "rls.invalid-user-card", Message: fmt.Sprintf("user_card policy %s.%s.%s: %v", kind, object, op, err), SuggestedFix: "Исправьте источник user_card, типы полей и оператор: скалярный field — eq/ne, table_part и column — in/not_in."})
 					}
 				}
 			}
