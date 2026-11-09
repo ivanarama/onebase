@@ -50,14 +50,21 @@ func (s *Server) prepareGridOrders(ctx context.Context, data map[string]any, for
 		user = u.Login
 	}
 	orders := map[string]string{}
+	widths := map[string]string{}
 	for _, el := range gridTableElements(form.Elements, nil) {
 		if order := s.store.GetFormGridOrder(ctx, base+"/"+el.Name, user); len(order) > 0 {
 			if raw, err := json.Marshal(order); err == nil {
 				orders[el.Name] = string(raw)
 			}
 		}
+		if w := s.store.GetFormGridWidths(ctx, base+"/"+el.Name, user); len(w) > 0 {
+			if raw, err := json.Marshal(w); err == nil {
+				widths[el.Name] = string(raw)
+			}
+		}
 	}
 	data["GridOrders"] = orders
+	data["GridWidths"] = widths
 }
 
 // gridTableElements — элементы-таблицы формы (на любой глубине групп и страниц).
@@ -90,6 +97,54 @@ func gridOrderAttr(ctx any, elName string) string {
 	m, _ := ctx.(map[string]any)
 	orders, _ := m["GridOrders"].(map[string]string)
 	return orders[elName]
+}
+
+// gridWidthsAttr — значение data-sg-widths: сохранённые ширины колонок.
+func gridWidthsAttr(ctx any, elName string) string {
+	m, _ := ctx.(map[string]any)
+	widths, _ := m["GridWidths"].(map[string]string)
+	return widths[elName]
+}
+
+// Ширина колонки, которую принимает сервер: уже 20 px колонку не ухватить
+// мышью, шире 2000 px — не ширина, а ошибка или подбор ключа.
+const (
+	gridWidthMin = 20
+	gridWidthMax = 2000
+)
+
+// gridWidthsSave — POST /ui/_grid-widths: grid=<вид/объект/форма/элемент>,
+// widths=<JSON-объект «id колонки → ширина»>; пустой widths — ширины формы.
+// Ключ проверяется так же, как у порядка колонок.
+func (s *Server) gridWidthsSave(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
+	grid := strings.TrimSpace(r.FormValue("grid"))
+	if !s.gridOrderKeyAllowed(r, grid) {
+		http.Error(w, "таблица формы не найдена", http.StatusNotFound)
+		return
+	}
+	var widths map[string]int
+	if raw := strings.TrimSpace(r.FormValue("widths")); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &widths); err != nil {
+			http.Error(w, "widths: ожидался JSON-объект «колонка → ширина»", http.StatusBadRequest)
+			return
+		}
+	}
+	if len(widths) > gridOrderMaxColumns {
+		http.Error(w, "widths: слишком много колонок", http.StatusBadRequest)
+		return
+	}
+	for id, px := range widths {
+		if id == "" || len(id) > gridOrderMaxIDLen || px < gridWidthMin || px > gridWidthMax {
+			http.Error(w, "widths: некорректная колонка или ширина", http.StatusBadRequest)
+			return
+		}
+	}
+	if err := s.store.SaveFormGridWidths(r.Context(), grid, currentUserLogin(r), widths); err != nil {
+		s.serverError(w, r, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // gridOrderSave — POST /ui/_grid-order: grid=<вид/объект/форма/элемент>,
