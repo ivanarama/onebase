@@ -204,10 +204,10 @@ function shell(storage, search = '', confirmClose = () => true, requestFrameClos
     closeByURL(url) { return context.obCloseTabByURL(url); },
     confirms() { return confirms; },
     alerts() { return alerts; },
-    post(data, frameIndex) {
+    post(data, frameIndex, origin = context.location.origin) {
       const source = frameIndex === undefined ? context : frames()[frameIndex].contentWindow;
       for (const listener of windowListeners.get('message') || []) {
-        listener({origin: context.location.origin, source, data});
+        listener({origin, source, data});
       }
     },
     markDirty(index, dirty = true) {
@@ -257,6 +257,7 @@ function shell(storage, search = '', confirmClose = () => true, requestFrameClos
     count() { return strip.children.length; },
     activeIndex() { return strip.children.findIndex(button => button.classList.contains('active')); },
     titles() { return strip.children.map(button => button.title); },
+    labels() { return strip.children.map(button => button.children[0].textContent); },
     click(index) { strip.children[index].dispatch('click'); },
     close(index) { strip.children[index].children[2].dispatch('click'); },
     duplicate(index) { strip.children[index].children[1].dispatch('click'); },
@@ -350,6 +351,82 @@ test('duplicate URLs keep separate stable IDs and restore the active copy', () =
   assert.deepEqual(app.titles(), ['first', 'second']);
   assert.deepEqual(savedTabs(storage).map(tab => tab.id), beforeTabs.map(tab => tab.id));
   assert.deepEqual(savedActive(storage), beforeActive);
+});
+
+test('a delayed title from an inactive loading frame updates that tab and survives reload', () => {
+  const storage = new FakeStorage();
+  let app = shell(storage);
+  app.open('/ui/a', 'A');
+  app.markLoading(0);
+  app.open('/ui/b', 'B');
+  const active = savedActive(storage);
+
+  app.post({source: 'obSetTitle', title: 'A loaded'}, 0);
+  assert.deepEqual(app.titles(), ['A loaded', 'B']);
+  assert.deepEqual(app.labels(), ['A loaded', 'B']);
+  assert.deepEqual(savedTabs(storage).map(tab => tab.title), ['A loaded', 'B']);
+  assert.equal(app.activeIndex(), 1);
+  assert.deepEqual(savedActive(storage), active);
+
+  app = shell(storage);
+  assert.deepEqual(app.titles(), ['A loaded', 'B']);
+  assert.deepEqual(app.labels(), ['A loaded', 'B']);
+  assert.equal(app.activeIndex(), 1);
+  assert.deepEqual(savedActive(storage), active);
+});
+
+test('a title message selects its frame identity when two tabs share the same URL', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/document/new', 'first');
+  app.open('/ui/document/new', 'second', {allowDup: true});
+  const ids = savedTabs(storage).map(tab => tab.id);
+  const title = '<b>first loaded</b>';
+
+  app.post({source: 'obSetTitle', title}, 0);
+  assert.deepEqual(app.titles(), [title, 'second']);
+  assert.deepEqual(app.labels(), [title, 'second']);
+  assert.deepEqual(savedTabs(storage).map(tab => tab.id), ids);
+  assert.deepEqual(savedTabs(storage).map(tab => tab.title), [title, 'second']);
+  assert.equal(app.activeIndex(), 1);
+});
+
+test('unknown or foreign title senders are ignored and the active frame can still rename itself', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/a', 'A');
+  app.open('/ui/b', 'B');
+  const before = storage.getItem('obTabs');
+  const active = savedActive(storage);
+
+  app.post({source: 'obSetTitle', title: 'unknown'});
+  app.post({source: 'obSetTitle', title: 'foreign'}, 0, 'https://example.invalid');
+  app.post({source: 'obSetTitle', title: ''}, 0);
+  assert.deepEqual(app.titles(), ['A', 'B']);
+  assert.deepEqual(app.labels(), ['A', 'B']);
+  assert.equal(storage.getItem('obTabs'), before);
+  assert.deepEqual(savedActive(storage), active);
+
+  app.post({source: 'obSetTitle', title: 'B loaded'}, 1);
+  assert.deepEqual(app.titles(), ['A', 'B loaded']);
+  assert.deepEqual(app.labels(), ['A', 'B loaded']);
+  assert.deepEqual(savedTabs(storage).map(tab => tab.title), ['A', 'B loaded']);
+  assert.equal(app.activeIndex(), 1);
+});
+
+test('a known frame can update its title while the shell home is selected', () => {
+  const storage = new FakeStorage();
+  let app = openThree(storage);
+  app = shell(storage, '?home=1');
+  const active = savedActive(storage);
+  assert.equal(app.activeIndex(), -1);
+
+  app.post({source: 'obSetTitle', title: 'A loaded'}, 0);
+  assert.deepEqual(app.titles(), ['A loaded', 'B', 'C']);
+  assert.deepEqual(app.labels(), ['A loaded', 'B', 'C']);
+  assert.deepEqual(savedTabs(storage).map(tab => tab.title), ['A loaded', 'B', 'C']);
+  assert.equal(app.activeIndex(), -1);
+  assert.deepEqual(savedActive(storage), active);
 });
 
 test('same-origin iframe navigation refreshes persistence, restore and URL deduplication', () => {

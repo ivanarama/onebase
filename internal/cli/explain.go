@@ -230,6 +230,7 @@ func runReportExplain(cmd *cobra.Command, args []string) error {
 					// SQL обёрнут в подзапрос, поэтому query.Run тут не подходит;
 					// приведение зовём явно — иначе выборка показывала бы 1/0
 					// на SQLite и true/false на PostgreSQL.
+					querylang.RestoreLongLabels(&compiled, rows, cols)
 					querylang.NormalizeColumns(&compiled, rows)
 					out.Columns, out.Rows = cols, rows
 				}

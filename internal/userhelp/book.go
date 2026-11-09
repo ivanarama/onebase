@@ -304,12 +304,18 @@ func markdown() goldmark.Markdown {
 	)
 }
 
+func allowedHelpLink(destination string) bool {
+	u, err := url.Parse(destination)
+	return err == nil && (u.Scheme == "https" || u.Scheme == "http" || u.Scheme == "mailto")
+}
+
 // Render rewrites relative links for the selected delivery channel. Raw HTML
 // and dangerous URL schemes remain disabled by the Markdown renderer.
 func (b *Book) Render(c *Chapter, chapterURL, assetURL func(string) string) (string, error) {
 	md := markdown()
 	src := []byte(c.Markdown)
 	doc := md.Parser().Parse(text.NewReader(src))
+	var blockedAutolinks []*ast.AutoLink
 	if err := ast.Walk(doc, func(n ast.Node, entering bool) (ast.WalkStatus, error) {
 		if entering {
 			switch n := n.(type) {
@@ -328,16 +334,26 @@ func (b *Book) Render(c *Chapter, chapterURL, assetURL func(string) string) (str
 						n.Destination = nil
 					}
 				} else if dest := string(n.Destination); !strings.HasPrefix(dest, "#") {
-					u, err := url.Parse(dest)
-					if err != nil || (u.Scheme != "https" && u.Scheme != "http" && u.Scheme != "mailto") {
+					if !allowedHelpLink(dest) {
 						n.Destination = nil
 					}
+				}
+			case *ast.AutoLink:
+				if n.AutoLinkType != ast.AutoLinkEmail && !allowedHelpLink(string(n.URL(src))) {
+					blockedAutolinks = append(blockedAutolinks, n)
 				}
 			}
 		}
 		return ast.WalkContinue, nil
 	}); err != nil {
 		return "", err
+	}
+	// Replace after traversal so adjacent autolinks are all visited. String
+	// nodes retain the label and use the renderer's normal HTML escaping.
+	for _, link := range blockedAutolinks {
+		if parent := link.Parent(); parent != nil {
+			parent.ReplaceChild(parent, link, ast.NewString(link.Label(src)))
+		}
 	}
 	var out bytes.Buffer
 	err := md.Renderer().Render(&out, src, doc)

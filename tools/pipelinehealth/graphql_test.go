@@ -12,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -40,6 +39,9 @@ func TestMain(m *testing.M) {
 		}
 		http.DefaultTransport = restCLITestTransport{endpoint: endpoint, transport: http.DefaultTransport}
 		os.Args = []string{os.Args[0], "-transport", "rest", "-json"}
+		if os.Getenv("PIPELINEHEALTH_TEST_PR_IDENTITY") == "1" {
+			os.Args = append(os.Args, "-pr-identity")
+		}
 		if owner := os.Getenv("PIPELINEHEALTH_TEST_REST_OWNER"); owner != "" {
 			os.Args = append(os.Args, "-owner", owner)
 		}
@@ -52,6 +54,20 @@ func TestMain(m *testing.M) {
 		os.Exit(0)
 	}
 	if os.Getenv("PIPELINEHEALTH_TEST_GH_HELPER") == "1" {
+		if endpoint := os.Getenv("PIPELINEHEALTH_TEST_GH_ROUTING_SERVER"); endpoint != "" {
+			response, err := http.Post(endpoint, "application/json", os.Stdin) //nolint:gosec // Test-owned loopback server, inherited only by the fixture subprocess.
+			if err != nil {
+				os.Exit(6)
+			}
+			_, _ = io.Copy(os.Stdout, response.Body)
+			if err := response.Body.Close(); err != nil {
+				os.Exit(7)
+			}
+			os.Exit(0)
+		}
+		if path := os.Getenv("PIPELINEHEALTH_TEST_GH_RETRY_FIXTURE"); path != "" {
+			runGraphQLRetryFixture(path)
+		}
 		if path := os.Getenv("PIPELINEHEALTH_TEST_GH_SEQUENCE"); path != "" {
 			data, err := os.ReadFile(path) //nolint:gosec // G703: this subprocess fixture path is supplied by the parent test under t.TempDir.
 			var pages []json.RawMessage
@@ -72,7 +88,9 @@ func TestMain(m *testing.M) {
 		_, _ = io.WriteString(os.Stdout, os.Getenv("PIPELINEHEALTH_TEST_GH_RESPONSE"))
 		os.Exit(0)
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	cleanupCLIBinaries()
+	os.Exit(code)
 }
 
 type graphQLCall struct {
@@ -316,22 +334,9 @@ func TestGraphQLProductionIngressPreservesNullableAuthor(t *testing.T) {
 }
 
 func TestGraphQLCLIRejectsIncompleteConnections(t *testing.T) {
-	repositoryRoot, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	binaryName := "pipelinehealth"
-	if runtime.GOOS == "windows" {
-		binaryName += ".exe"
-	}
-	binaryPath := filepath.Join(t.TempDir(), binaryName)
-	// Both the executable name and output path are fixed by the test.
-	//nolint:gosec
-	build := exec.Command("go", "build", "-o", binaryPath, "./tools/pipelinehealth")
-	build.Dir = repositoryRoot
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build pipelinehealth CLI: %v\n%s", err, output)
-	}
+	repositoryRoot := repoRoot(t)
+	binaryPath := pipelinehealthCLI(t)
+
 	helperPath, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -376,7 +381,7 @@ func TestGraphQLCLIRejectsIncompleteConnections(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			// binaryPath is built by this test inside t.TempDir, not supplied by input.
+			// The binary is compiled once in this test process's owned directory.
 			//nolint:gosec
 			command := exec.Command(binaryPath, "-transport", "graphql", "-json")
 			command.Dir = repositoryRoot
@@ -453,22 +458,9 @@ func TestGraphQLSnapshotMapsRESTSemanticsAndLargeDatabaseID(t *testing.T) {
 }
 
 func TestGraphQLCLILoadsUnshippedReviewedMergeParentsBeforeAskingForShip(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	temporary := t.TempDir()
-	name := "pipelinehealth"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	binary := filepath.Join(temporary, name)
-	//nolint:gosec // executable/output paths are fixed by this test
-	build := exec.Command("go", "build", "-o", binary, "./tools/pipelinehealth")
-	build.Dir = root
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v %s", err, output)
-	}
+	root := repoRoot(t)
+	binary := pipelinehealthCLI(t)
+
 	helper, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -757,22 +749,10 @@ func TestGraphQLProductionIngressRetriesIssueChurnAndReloadsPulls(t *testing.T) 
 }
 
 func TestGraphQLCLIRetriesIssueCountChurn(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
+	root := repoRoot(t)
 	temporary := t.TempDir()
-	name := "pipelinehealth"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	binary := filepath.Join(temporary, name)
-	//nolint:gosec // executable/output paths are fixed by this test
-	build := exec.Command("go", "build", "-o", binary, "./tools/pipelinehealth")
-	build.Dir = root
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v %s", err, output)
-	}
+	binary := pipelinehealthCLI(t)
+
 	helper, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)

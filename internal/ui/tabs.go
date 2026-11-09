@@ -400,7 +400,7 @@ const tplAppShell = `{{define "page-app-shell"}}
     if(d.source==='obOpenTab' && d.url){ var ou=String(d.url); if(!openable(ou))return; openTab(ou, d.title?String(d.title):'Форма', {allowDup:!!d.allowDup}); }
     else if(d.source==='obCloseTab'){ if(d.url){ closeTabByURL(String(d.url),d.reason||'programmatic'); } else { var ct=tabByWindow(ev.source); if(ct)closeTab(ct,d.reason||'cross',d.mode||''); } }
     else if(d.source==='obFrameURLChanged' && d.url){ var ut=tabByWindow(ev.source); if(ut && frameShows(ut,String(d.url),d.documentToken)){ syncFrameURL(ut,String(d.url)); var pc=takePendingClose(ut); if(pc)closeTab(ut,pc.reason); } }
-    else if(d.source==='obSetTitle' && active && d.title){ active.title=String(d.title); active.label.textContent=active.title; active.btn.title=active.title; persist(); }
+    else if(d.source==='obSetTitle' && d.title){ var tt=tabByWindow(ev.source); if(tt){ tt.title=String(d.title); tt.label.textContent=tt.title; tt.btn.title=tt.title; persist(); } }
     else if(d.source==='obDirty'){ var dt=tabByWindow(ev.source); if(dt){ dt.dirty=!!d.dirty; dt.btn.classList.toggle('dirty',dt.dirty); } } // фаза 3
   });
 
