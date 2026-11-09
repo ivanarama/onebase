@@ -5644,24 +5644,42 @@ function openRefPicker(selOrId) {
         filters: obRefFilterValues(sel) || {}
       });
     }
+    // Ответ применяется, только пока он актуален: это последний запрос, диалог
+    // и поле живы, а снимок контекста выбора и выбранное значение не менялись.
+    // Проверка общая для успешного ответа и для 422 — иначе поздний отказ
+    // старого запроса (тело дочитывается уже после нового ответа) стирал бы
+    // свежий результат поиска.
+    var responseIsCurrent = function () {
+      if (seq !== requestSeq || !obChoiceSelectIsLive(sel) || !obChoiceSelectIsLive(modal)) return false;
+      if (!choiceSnapshot) return true;
+      var currentSnapshot = obRefChoiceSnapshot(sel);
+      return !!currentSnapshot && currentSnapshot.fingerprint === choiceFingerprint &&
+        (sel.value == null ? '' : String(sel.value)) === choiceSelected;
+    };
     fetch(url, fetchOptions)
       .then(function (resp) {
         if (resp.status === 422) {
-          // Пояснение недоступно: блокируем выбор (fail-closed, инвариант 10).
-          rpPreviewField = '';
-          rpReveal();
-          renderItems([], '');
-          if (status) status.textContent = 'Пояснение недоступно: повторите запрос';
-          throw new Error('preview-unavailable');
+          return resp.json().catch(function () { return {}; }).then(function (d) {
+            if (!responseIsCurrent()) throw new Error('choice-response-stale');
+            rpPreviewField = '';
+            rpReveal();
+            renderItems([], '');
+            // Сломана функция поиска (choice_search_proc): показываем её отказ,
+            // а не результат подстроки — тихий откат скрыл бы ошибку.
+            if (d && d.preview !== false && d.error) {
+              if (status) status.textContent = String(d.error);
+              throw new Error('choice-search-unavailable');
+            }
+            // Пояснение недоступно: блокируем выбор (fail-closed, инвариант 10).
+            if (status) status.textContent = 'Пояснение недоступно: повторите запрос';
+            throw new Error('preview-unavailable');
+          });
         }
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         return resp.json();
       })
       .then(function (data) {
-        var currentSnapshot = obRefChoiceSnapshot(sel);
-        if (seq !== requestSeq || !obChoiceSelectIsLive(sel) || !obChoiceSelectIsLive(modal)) return;
-        if (choiceSnapshot && (!currentSnapshot || currentSnapshot.fingerprint !== choiceFingerprint ||
-            (sel.value == null ? '' : String(sel.value)) !== choiceSelected)) return;
+        if (!responseIsCurrent()) return;
         var keep = rpActiveId();
         var rows = (data && data.items) || [];
         rpPreviewField = (data && data.preview) || '';
@@ -5682,6 +5700,7 @@ function openRefPicker(selOrId) {
       .catch(function (err) {
         if (seq !== requestSeq) return;
         if (err && err.name === 'AbortError') return;
+        if (err && (err.message === 'choice-search-unavailable' || err.message === 'choice-response-stale')) return;
         // A form-scoped picker is server-authoritative. Falling back to an
         // untrusted or stale full list would bypass choice_filter; retain the
         // already rendered filtered options and surface the failure instead.

@@ -197,6 +197,7 @@ type saveEntity struct {
 	OrderBy           yaml.Node `yaml:"order_by,omitempty"`
 	ChoicePreview     string    `yaml:"choice_preview,omitempty"`
 	ChoicePreviewProc string    `yaml:"choice_preview_proc,omitempty"`
+	ChoiceSearchProc  string    `yaml:"choice_search_proc,omitempty"`
 }
 
 type saveRegister struct {
