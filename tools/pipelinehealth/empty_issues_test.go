@@ -136,7 +136,7 @@ func TestGraphQLCLIDiagnosesIssuesWithoutComments(t *testing.T) {
 		t.Fatal(err)
 	}
 	//nolint:gosec // executable is Go; paths are controlled by this test.
-	command := exec.Command("go", "run", "./tools/pipelinehealth", "-transport", "graphql", "-json")
+	command := exec.Command(pipelinehealthCLI(t), "-transport", "graphql", "-json")
 	command.Dir = root
 	command.Env = append(os.Environ(), "GH_EXE="+helper, "PIPELINEHEALTH_TEST_GH_HELPER=1", "PIPELINEHEALTH_TEST_GH_SEQUENCE="+sequence)
 	output, err := command.CombinedOutput()

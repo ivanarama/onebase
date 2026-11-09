@@ -1,0 +1,17 @@
+name: Viewer
+permissions:
+  catalogs:
+    AutoPhoto: [read]
+    ManagedPhoto: [read]
+  row_access:
+    catalogs:
+      AutoPhoto:
+        read: {field: Owner, op: eq, value: {user: login}}
+      ManagedPhoto:
+        read: {field: Owner, op: eq, value: {user: login}}
+  field_access:
+    catalogs:
+      AutoPhoto:
+        Secret: {read: hide}
+      ManagedPhoto:
+        Secret: {read: mask_all}
