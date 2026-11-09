@@ -38,6 +38,10 @@ type managedTPColumnJSON struct {
 	// по-прежнему сериализуется в tp_json (план 154). Ровно наоборот к Virtual:
 	// та видима и не отправляется, эта отправляется и не видима.
 	Hidden bool `json:"hidden,omitempty"`
+	// TitleFrom — заголовок взят из реквизита формы (title_from) и потому
+	// приходит как текст: клиент экранирует его перед выводом в шапку
+	// SlickGrid, которая рисует подпись как HTML.
+	TitleFrom bool `json:"titleFrom,omitempty"`
 	// Index — позиция реквизита в метаданных табличной части. Клиент кладёт её
 	// в _tp_col_index: сервер сверяет индекс с порядком метаданных, а порядок
 	// показа с ним больше не совпадает. Для виртуальной колонки — -1.
@@ -257,6 +261,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return processorFileContentName(proc.Params, name)
 		},
+		"entityQuestionFieldsName": entityQuestionFieldsName,
 		"processorServiceFieldNames": func(proc *processorpkg.Processor) map[string]string {
 			if proc == nil {
 				return nil
@@ -1246,6 +1251,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 					Enum:        strings.HasPrefix(string(field.Type), "enum:"),
 					Hidden:      column.Hidden,
 					Index:       column.Index,
+					TitleFrom:   column.Element != nil && strings.TrimSpace(column.Element.TitleFrom) != "",
 					Width:       column.Width(),
 				})
 			}
@@ -1272,6 +1278,11 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
 		"managedTPColumnPlan": managedTPColumnPlan,
+		// managedTPColumnsTitled — заголовки колонок из title_from по значениям
+		// формы при отрисовке; после событий их присылает columnTitles.
+		"managedTPColumnsTitled": func(plan []managedTPColumn, values any) []managedTPColumn {
+			return managedTPColumnsTitled(plan, values)
+		},
 		"tpChoiceContexts": func(ctx map[string]any, table *metadata.FormElement) map[string]string {
 			all, _ := ctx["TPChoices"].(map[*metadata.FormElement]*tpChoiceRender)
 			if all[table] != nil {
@@ -1566,11 +1577,11 @@ body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;height:
 .sys-mode-block .sys-btn{margin-top:6px;background:#e2e8f0;color:#334155;font-size:12px;padding:6px 10px}
 .sys-logout{position:sticky;bottom:-4px;background:#fff;z-index:1;margin:0;padding:0;box-shadow:0 -3px 8px rgba(15,23,42,.06)}
 .tbl{width:100%;border-collapse:collapse}
-.tbl th{text-align:left;padding:8px 10px;border-bottom:2px solid #e2e8f0;color:#64748b;font-weight:600;font-size:12px;position:sticky;top:0;background:#fff}
+.tbl th{text-align:left;padding:8px 10px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;font-size:12px;position:sticky;top:0;background:#eef2f7}
 .tbl td{padding:6px 10px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:13px}
 .tbl tr:hover td{background:#f8fafc}
 .report-composed{width:100%;border-collapse:collapse;font-size:13px}
-.report-composed thead th{position:sticky;top:38px;background:#fff;z-index:5;text-align:left;padding:8px 10px;border-bottom:2px solid #e2e8f0;color:#64748b;font-weight:600;font-size:12px}
+.report-composed thead th{position:sticky;top:38px;background:#eef2f7;z-index:5;text-align:left;padding:8px 10px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;font-size:12px}
 .report-composed td{padding:6px 10px;border-bottom:1px solid #f1f5f9;color:#334155}
 .report-composed td.num{font-variant-numeric:tabular-nums}
 .report-composed tr.grp:hover td{background:#f8fafc}
@@ -1610,8 +1621,8 @@ h3{font-size:16px;font-weight:600;margin:24px 0 10px;color:#1e293b}
 .main-list .ob-list-content{width:100%}
 .main-list .ob-list-content>.card{max-width:none}
 table{width:100%;border-collapse:collapse;font-size:14px}
-th{text-align:left;padding:10px 12px;border-bottom:2px solid #e2e8f0;color:#64748b;font-weight:600}
-th a{color:#64748b;text-decoration:none}
+th{text-align:left;padding:10px 12px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;background:#eef2f7}
+th a{color:inherit;text-decoration:none}
 th a:hover{color:#1e293b}
 td{padding:10px 12px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:14px}
 tr:last-child td{border-bottom:none}
@@ -1647,7 +1658,7 @@ details[open] summary::before{content:"▼ "}
 .filter-body input,.filter-body select{padding:7px 10px;font-size:13px}
 .filter-actions{padding:0 20px 16px;display:flex;gap:10px}
 .tp-table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
-.tp-table th{background:#f8fafc;padding:8px 10px;text-align:left;font-size:12px;color:#475569;font-weight:600;border-bottom:2px solid #e2e8f0;white-space:nowrap}
+.tp-table th{background:#eef2f7;padding:8px 10px;text-align:left;font-size:12px;color:#334155;font-weight:600;border-bottom:2px solid #cbd5e1;white-space:nowrap}
 .tp-table td{padding:5px 6px;border-bottom:1px solid #e2e8f0;border-right:1px solid #eef2f7;vertical-align:middle}
 .tp-table tbody tr:nth-child(even) td{background:#f1f5f9}
 .tp-table tbody tr:hover td{background:#eef4ff}
@@ -1952,7 +1963,7 @@ a.w-kpi-link{display:block;text-decoration:none;color:#0f172a}
 a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 .w-list{overflow-x:auto}
 .w-list table{margin-top:4px;font-size:13px}
-.w-list th{padding:6px 8px;font-size:11px;color:#64748b;border-bottom:1px solid #e2e8f0;text-align:left;background:transparent}
+.w-list th{padding:6px 8px;font-size:11px;color:#334155;font-weight:600;border-bottom:2px solid #cbd5e1;text-align:left;background:#eef2f7}
 .w-list td{padding:6px 8px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155}
 .w-list td.right{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .w-list tr:last-child td{border-bottom:none}
@@ -2620,7 +2631,7 @@ const tplForm = `
 {{end}}{{/* end if not .IsPopup */}}
 
 <div class="card">
-<form id="main-form" method="POST" data-ob-dirty-watch="1"{{if enterSubmitsForm (index . "Form")}} data-ob-enter-submits="1"{{end}}>
+<form id="main-form" method="POST" autocomplete="off" data-ob-dirty-watch="1"{{if enterSubmitsForm (index . "Form")}} data-ob-enter-submits="1"{{end}}>
 {{if and (not .IsNew) (index .Values "_version")}}<input type="hidden" name="_version" value="{{index .Values "_version"}}">{{end}}
 {{if .IsPopup}}<input type="hidden" name="_popup" value="1">{{end}}
 {{if .Entity.Hierarchical}}
@@ -2753,7 +2764,7 @@ const tplForm = `
         {{else if eq (str .Type) "date"}}
           {{/* Поле даты, а не текст: в текстовом поле стояла сырая метка
                «2026-10-19T09:15:30». */}}
-          {{if $tpReadOnly}}<input type="text" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{fmtDate (index $row $fn)}}" disabled data-ob-date-text>{{else}}<input type="datetime-local" step="1" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{tpDateInput (index $row $fn)}}"
+          {{if $tpReadOnly}}<input type="text" autocomplete="off" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{fmtDate (index $row $fn)}}" disabled data-ob-date-text>{{else}}<input type="datetime-local" step="1" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{tpDateInput (index $row $fn)}}"
             data-ob-tp-recalc>{{end}}
         {{else if eq (str .Type) "bool"}}
           {{/* Флажок, а не текст (#1010): в текстовом поле стояло сырое
@@ -2761,7 +2772,7 @@ const tplForm = `
                истиной только «true» — пересохранение формы снимало флажок. */}}
           <input type="checkbox" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="true"{{if checked (index $row $fn)}} checked{{end}}{{if $tpReadOnly}} disabled{{end}}>
         {{else}}
-          <input type="text" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{index $row $fn}}"
+          <input type="text" autocomplete="off" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{index $row $fn}}"
             data-ob-tp-recalc{{if $tpReadOnly}} disabled{{end}}>
         {{end}}
         </td>
@@ -4522,19 +4533,16 @@ const tplPageCustom = `
 {{end}}
 `
 
-// inputAutocomplete — значение autocomplete текстового поля управляемой формы.
-// Обычно "off" (#595). Поле с маской ввода — почти всегда телефон, а
-// автозаполнение Яндекс Браузера на "off" не смотрит и предлагает сохранённые
-// номера из своего профиля. "one-time-code" по стандарту HTML — поле кода
-// подтверждения: браузер может подставить в него пришедший одноразовый код
-// (так делает Safari), но не сохранённые телефоны. Проверено вручную: в Яндекс
-// Браузере подсказки телефонов на таком поле пропадают. Это обход для
-// телефонов, а не гарантия, что подсказок нет ни в одном браузере;
-// "new-password" тоже гасит подсказки, но зовёт менеджер паролей.
+// inputAutocomplete — значение autocomplete текстового поля управляемой формы:
+// всегда "off" (#595), и у поля с маской ввода тоже. Chrome ведёт историю ввода
+// по имени поля и не ведёт её только при "off". На "one-time-code" (так было
+// с #1871) он запоминал каждый введённый телефон и подсказывал его в любом
+// поле с тем же именем, у другого клиента. Проверено на Chromium 109:
+// autocomplete_history_manager.cc не запрашивает подсказки, если
+// should_autocomplete ложно, а ложно оно только при "off". Яндекс Браузер на
+// "off" не смотрит и предлагает телефоны из своего профиля, поэтому ему ui.js
+// отдаёт поле с маской как "one-time-code" (obGuardAutocomplete).
 func inputAutocomplete(el *metadata.FormElement) string {
-	if el != nil && el.InputMask != "" {
-		return "one-time-code"
-	}
 	return "off"
 }
 
