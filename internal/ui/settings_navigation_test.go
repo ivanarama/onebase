@@ -516,3 +516,54 @@ func TestNavigationSettings_LegacyExplicitTitleBackToConfiguration(t *testing.T)
 	}
 	heading("alice", original)
 }
+
+func TestNavigationSettings_PaletteMessagesThroughHTTP(t *testing.T) {
+	f := newNavigationHTTPFixture(t)
+	bundle, err := i18n.Load(i18n.EmbeddedLocales, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.server.cfg.Bundle = bundle
+	f.server.tmpl, err = newTemplate(bundle)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, lang := range []string{"ru", "en"} {
+		f.server.cfg.Lang = lang
+		for _, route := range []struct{ path, login string }{
+			{"/ui/admin/navigation?subsystem=School", "admin"},
+			{"/ui/settings/navigation?subsystem=School", "alice"},
+		} {
+			t.Run(lang+route.path, func(t *testing.T) {
+				rec := f.request(t, "GET", route.path, route.login, nil)
+				decodeNavigationBootstrap(t, rec)
+				doc, err := html.Parse(strings.NewReader(rec.Body.String()))
+				if err != nil {
+					t.Fatal(err)
+				}
+				filter := semanticFind(doc, "id", "navigation-filter")
+				if filter == nil || semanticAttr(filter, "aria-describedby") != "navigation-palette-hint" || semanticFind(doc, "id", "navigation-palette-hint") == nil {
+					t.Fatal("palette search must have an associated explanation")
+				}
+				node := semanticFind(doc, "id", "navigation-editor-data")
+				var bootstrap struct {
+					Labels map[string]string `json:"labels"`
+				}
+				if err := json.Unmarshal([]byte(node.FirstChild.Data), &bootstrap); err != nil {
+					t.Fatal(err)
+				}
+				for key, message := range map[string]string{"palettePlaced": "Все доступные объекты уже размещены", "paletteNoMatches": "Ничего не найдено"} {
+					if want := bundle.T(lang, message); bootstrap.Labels[key] != want || (lang == "en" && want == message) {
+						t.Errorf("%s = %q, want localized %q", key, bootstrap.Labels[key], want)
+					}
+				}
+				for _, key := range []string{"Поиск среди неразмещённых объектов", "Здесь только объекты, которых нет в структуре меню. Скрытый объект можно вернуть в меню."} {
+					want := bundle.T(lang, key)
+					if !strings.Contains(rec.Body.String(), want) || (lang == "en" && want == key) {
+						t.Errorf("missing localized palette explanation %q", want)
+					}
+				}
+			})
+		}
+	}
+}

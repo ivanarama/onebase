@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -525,35 +526,51 @@ func refValueString(v any) string {
 }
 
 func (s *Server) appendSelectedRefOptions(ctx context.Context, rows []map[string]any, refEntity *metadata.Entity, selected []string) []map[string]any {
-	seen := make(map[string]bool, len(rows)+len(selected))
+	seen := make(map[uuid.UUID]bool, len(rows)+len(selected))
 	for _, row := range rows {
-		if id := refValueString(row["id"]); id != "" {
+		if id, err := uuid.Parse(refValueString(row["id"])); err == nil {
 			seen[id] = true
 		}
 	}
+	ids := make([]uuid.UUID, 0, len(selected))
 	for _, idStr := range selected {
-		idStr = strings.TrimSpace(idStr)
-		if idStr == "" || seen[idStr] {
+		id, err := uuid.Parse(strings.TrimSpace(idStr))
+		if err != nil || seen[id] {
 			continue
 		}
-		id, err := uuid.Parse(idStr)
+		// Deduplicate before reading, including missing and inaccessible IDs.
+		seen[id] = true
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return rows
+	}
+	decision, err := s.rowDecision(ctx, refEntity, "read")
+	if err != nil || !decision.Allowed {
+		return rows
+	}
+	var predicate *storage.Predicate
+	if !decision.Unrestricted {
+		predicate = decision.Predicate
+	}
+	for start := 0; start < len(ids); start += refLabelBatchSize {
+		end := min(start+refLabelBatchSize, len(ids))
+		batch := ids[start:end]
+		selectedRows, err := s.store.GetByIDsFiltered(ctx, refEntity, batch, predicate)
 		if err != nil {
 			continue
 		}
-		row, err := s.store.GetByID(ctx, refEntity.Name, id, refEntity)
-		if err != nil || row == nil {
-			continue
+		// SQL result order is unspecified; keep the first selected occurrence.
+		for _, id := range batch {
+			row := selectedRows[id.String()]
+			if row == nil {
+				continue
+			}
+			// Mask before computing the label; TP HTTP options project only id/_label.
+			s.maskRecord(ctx, refEntity, row)
+			row["_label"] = firstStringField(row, refEntity)
+			rows = append(rows, row)
 		}
-		if !s.rowAllowsSelected(ctx, refEntity, row) {
-			continue
-		}
-		// План 88: замаскировать догруженную (вне первой страницы) выбранную
-		// запись до вычисления подписи и сериализации — иначе ПДн из ссылки
-		// утекли бы в JSON опций (HTML/DevTools) в обход маски списка.
-		s.maskRecord(ctx, refEntity, row)
-		row["_label"] = firstStringField(row, refEntity)
-		rows = append(rows, row)
-		seen[idStr] = true
 	}
 	return rows
 }
@@ -678,6 +695,26 @@ func (s *Server) renderForbidden(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "page-forbidden", map[string]any{})
 }
 
+// renderReadHookDenied — отказ серверного обработчика ПриЧтенииНаСервере. Текст
+// ВызватьИсключение — это сообщение конфигурации пользователю («Запрещён
+// просмотр карточки для должности…»), как Предупреждение в 1С, и страница
+// отказа показывает его вместо общего «нет прав». Технический сбой хука
+// (объект не загрузился, ошибка не из DSL) остаётся общей страницей: его
+// текст пользователю ни о чём не говорит и может раскрыть устройство базы.
+func (s *Server) renderReadHookDenied(w http.ResponseWriter, r *http.Request, denied error) {
+	var dslErr *interpreter.DSLError
+	if !errors.As(denied, &dslErr) || strings.TrimSpace(dslErr.UserMessage()) == "" {
+		s.renderForbidden(w, r)
+		return
+	}
+	// Keep the error chain for localization, but omit diagnostic source data
+	// from the copy passed to the HTTP renderer. Logs retain the original error.
+	userErr := *dslErr
+	userErr.File, userErr.Line = "", 0
+	w.WriteHeader(http.StatusForbidden)
+	s.render(w, r, "page-forbidden", map[string]any{"Reason": s.errText(r, &userErr)})
+}
+
 // can reports whether the current request may perform op on (kind, entity).
 // A nil user means auth is not configured or no users exist → open access
 // (mirrors the IsAdmin defaulting used elsewhere). Admins pass via User.Has,
@@ -768,6 +805,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		login := currentUserLogin(r)
 		data["FormOpenMode"] = s.store.EffectiveFormOpenMode(r.Context(), login)
 		data["FormOpenModePersonal"] = s.store.GetUserFormOpenMode(r.Context(), login)
+		data["FormOpenModeLocked"] = s.store.GetFormOpenModeLocked(r.Context())
 	}
 	// Default per-entity permission flags so partial render paths (e.g. validation
 	// errors) still show the right action buttons.
@@ -1235,7 +1273,7 @@ func (s *Server) enrichTPRowsWithRefs(ctx context.Context, tp metadata.TablePart
 // string-измерению (ГДЕ Склад = Строка(this.Склад)) не совпадает с движениями,
 // записанными по имени из обработок/сидов. После обогащения шапка ведёт себя
 // как при создании из обработки. Ref-параметры и reference-измерения остаются
-// корректными: unwrapArrayParams приводит *Ref к UUID. См. П.37.
+// корректными: unwrapParams приводит *Ref к UUID. См. П.37.
 func (s *Server) enrichHeaderRefs(ctx context.Context, entity *metadata.Entity, obj *runtime.Object) {
 	low := strings.ToLower
 	for _, f := range entity.Fields {
