@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tarfile
 import time
+import traceback
 import urllib.request
 
 CONFIG_SHA = '323463bba50bded33ec9bdebe2c3cdd3c1eb33d06b40b8d13d56303ba7b90b22'
@@ -131,6 +132,35 @@ def resource_snapshot():
     return {'cgroup':relative,'raw':raw,'events':events,'ancestors':ancestors,
             'peak':int(raw['memory.peak']),'pid':os.getpid()}
 
+def privilege_state():
+    status={line.split(':',1)[0]:line.split(':',1)[1].strip()for line in Path('/proc/self/status').read_text().splitlines()if ':'in line}
+    return {'uid':os.getuid(),'euid':os.geteuid(),'gid':os.getgid(),'egid':os.getegid(),
+      'groups':os.getgroups(),'nnp':int(status['NoNewPrivs']),
+      'caps':{k:status[k]for k in ('CapInh','CapPrm','CapEff','CapBnd','CapAmb')},'pid':os.getpid(),'ppid':os.getppid()}
+
+def supervisor_snapshot():
+    state=privilege_state();allowed=sum(1<<cap for cap in (0,1,6,7,8))
+    return {'uid':state['uid'],'nnp':state['nnp'],'effective_caps':state['caps']['CapEff'],
+      'caps':state['caps'],'allowed_caps':allowed,'required_caps':allowed}
+
+def require_supervisor(snapshot):
+    allowed=sum(1<<cap for cap in (0,1,6,7,8));caps=snapshot['caps']
+    need(snapshot['uid']==0 and snapshot['nnp']==1 and snapshot['allowed_caps']==snapshot['required_caps']==allowed,'supervisor root/NNP/fixed capability policy')
+    need(set(caps)=={'CapInh','CapPrm','CapEff','CapBnd','CapAmb'}and all(int(v,16)&~allowed==0 for v in caps.values()),'supervisor capability ceiling')
+    need(snapshot['effective_caps']==caps['CapEff'],'supervisor actual/claimed effective capability drift')
+    need(int(caps['CapEff'],16)==allowed and int(caps['CapPrm'],16)==allowed and int(caps['CapBnd'],16)==allowed,'required supervisor effective/permitted capability missing before validation')
+    need(int(caps['CapAmb'],16)==(1<<7)and int(caps['CapInh'],16)&(1<<7),'supervisor requested ambient SETUID readback')
+
+def trace_privilege(fd, stage, status, error=None):
+    try:
+        record={'stage':stage,'status':status,'state':privilege_state()}
+        if error is not None:record['error']={'type':type(error).__name__,'errno':getattr(error,'errno',None),'message':str(error)}
+        raw=(json.dumps(record,sort_keys=True)+'\n').encode('utf8')
+        if os.write(fd,raw)!=len(raw):raise OSError('short privilege audit write')
+        os.fsync(fd)
+    except BaseException as audit_error:
+        raise RuntimeError('privilege audit failed at '+stage+'/'+status+': '+str(audit_error))from audit_error
+
 def command(evidence, name, argv, env, cwd, timeout=120):
     start=time.monotonic()
     try:
@@ -173,18 +203,36 @@ def unpack(archive, target):
                 with tar.extractfile(item)as source,dest.open('xb')as output: shutil.copyfileobj(source,output,1024*1024)
                 dest.chmod(0o755 if item.mode & 0o111 else 0o644)
 
-def clear_and_drop(uid):
+def clear_and_drop(uid, trace_fd):
     libc=ctypes.CDLL(None,use_errno=True)
-    need(libc.prctl(38,1,0,0,0)==0,'NoNewPrivileges')
-    need(libc.prctl(47,4,0,0,0)==0,'ambient capability clear')
-    for cap in range(64):
-        if libc.prctl(24,cap,0,0,0)!=0:
-            need(ctypes.get_errno()==22,'bounding capability drop')
-    os.setgroups([]); os.setgid(uid); os.setuid(uid)
+    def call(stage, operation):
+        trace_privilege(trace_fd,stage,'before')
+        try:operation()
+        except BaseException as error:
+            try:trace_privilege(trace_fd,stage,'error',error)
+            except BaseException as audit_error:
+                try:print('additional privilege audit failure at '+stage+': '+str(audit_error),file=sys.stderr,flush=True)
+                except BaseException:pass  # Keep the original operation exception active.
+            raise  # Preserve the original failing syscall/stage traceback.
+        trace_privilege(trace_fd,stage,'after')
+    def prctl(option, value, description):
+        if libc.prctl(option,value,0,0,0)!=0:raise OSError(ctypes.get_errno(),description)
+    def drop_bounding():
+        for cap in range(64):
+            if libc.prctl(24,cap,0,0,0)!=0 and ctypes.get_errno()!=22:raise OSError(ctypes.get_errno(),'bounding capability drop '+str(cap))
+    trace_privilege(trace_fd,'child-start','ok')
+    call('no-new-privileges',lambda:prctl(38,1,'NoNewPrivileges'))
+    call('clear-ambient',lambda:prctl(47,4,'ambient capability clear'))
+    call('drop-bounding',drop_bounding)
+    call('setgroups',lambda:os.setgroups([]))
+    call('setgid',lambda:os.setgid(uid))
+    call('setuid',lambda:os.setuid(uid))
     class Header(ctypes.Structure): _fields_=[('version',ctypes.c_uint),('pid',ctypes.c_int)]
     class Data(ctypes.Structure): _fields_=[('effective',ctypes.c_uint),('permitted',ctypes.c_uint),('inheritable',ctypes.c_uint)]
     h=Header(0x20080522,0); data=(Data*2)()
-    need(libc.capset(ctypes.byref(h),data)==0,'capability zero')
+    def zero_capabilities():
+        if libc.capset(ctypes.byref(h),data)!=0:raise OSError(ctypes.get_errno(),'capability zero')
+    call('zero-capabilities',zero_capabilities)
 
 def child_identity(uid, expected_cgroup):
     status={line.split(':',1)[0]:line.split(':',1)[1].strip()for line in Path('/proc/self/status').read_text().splitlines()if ':'in line}
@@ -261,13 +309,10 @@ def inside(prefix, ident):
     try:
         need(os.geteuid()==0 and platform.system()=='Linux'and platform.machine()=='x86_64','native Linux amd64 root setup')
         need(not any(re.search('TOKEN|SECRET|PASSWORD|CREDENTIAL',k)for k in os.environ),'service credential environment')
-        parent_status={line.split(':',1)[0]:line.split(':',1)[1].strip()for line in Path('/proc/self/status').read_text().splitlines()if ':'in line}
-        allowed_caps=sum(1<<cap for cap in (0,1,6,7,8))
-        need(parent_status['NoNewPrivs']=='1'and int(parent_status['CapEff'],16)&~allowed_caps==0,'supervisor minimal caps/NNP')
-        parent_caps={k:parent_status[k]for k in ('CapInh','CapPrm','CapEff','CapBnd','CapAmb')}
-        need(all(int(x,16)&~allowed_caps==0 for x in parent_caps.values()),'supervisor capability sets')
-        report['supervisor']={'uid':os.geteuid(),'nnp':1,'effective_caps':parent_status['CapEff'],'caps':parent_caps,'allowed_caps':allowed_caps}
+        report['supervisor']=supervisor_snapshot()
+        write_json(evidence/'supervisor-admission.json',report['supervisor'])
         before=resource_snapshot(); report['resources_before']=before
+        require_supervisor(report['supervisor'])  # Before host qualification/downloads.
         mem_raw=Path('/proc/meminfo').read_text(); (evidence/'meminfo-before.txt').write_text(mem_raw)
         mem=parse_meminfo(mem_raw)
         dmi=Path('/sys/firmware/dmi/tables/DMI').read_bytes(); need(len(dmi)<=2*1024*1024,'DMI bound')
@@ -323,13 +368,26 @@ def inside(prefix, ident):
         write_json(prefix/'input/worker.json',{'uid':uid,'cgroup':before['cgroup']})
         env={**ENV_FIXED,'PATH':str(binaries['go'].parent)+':/usr/bin:/bin','PYTHONUTF8':'1',
              **{key:str(work/value)for key,value in {'HOME':'home','TMPDIR':'tmp','GOCACHE':'gocache','GOPATH':'gopath','GOMODCACHE':'gomodcache'}.items()}}
+        report['supervisor_prefork']=supervisor_snapshot()
+        write_json(evidence/'supervisor-prefork.json',report['supervisor_prefork'])
+        require_supervisor(report['supervisor_prefork'])
+        trace_fd=os.open(evidence/'privilege-transition.jsonl',os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_APPEND,0o644)
+        os.set_inheritable(trace_fd,False)
         child=os.fork()
         if child==0:
             try:
-                clear_and_drop(uid)
+                clear_and_drop(uid,trace_fd)
+                trace_privilege(trace_fd,'exec-worker','before')
                 os.execve('/usr/bin/python3',['/usr/bin/python3','-B','-X','utf8',str(Path(__file__)),'worker',str(prefix)],env)
             except BaseException as error:
-                print('restricted child failed: '+str(error),file=sys.stderr,flush=True);os._exit(1)
+                try:
+                    print('restricted child failed before worker: '+str(error),file=sys.stderr,flush=True)
+                    traceback.print_exception(type(error),error,error.__traceback__)
+                    try:trace_privilege(trace_fd,'child-transition','error',error)
+                    except BaseException as audit_error:
+                        print('additional child-transition audit failure: '+str(audit_error),file=sys.stderr,flush=True)
+                finally:os._exit(1)  # Never fall through into the supervisor, even if diagnostics fail.
+        os.close(trace_fd)
         _,status=os.waitpid(child,0)
         need(os.waitstatus_to_exitcode(status)==0,'restricted child nonzero')
         report['worker']=json.loads((work/'worker-result.json').read_text())
@@ -403,7 +461,7 @@ def bootstrap():
     prefix.mkdir(mode=0o755); (prefix/'input').mkdir()
     script=prefix/'input/qualify-2222-linux.py';shutil.copyfile(__file__,script)
     config=Path(__file__).resolve().parents[2]/'.golangci.yml';shutil.copyfile(config,prefix/'input/canonical-config.yml')
-    props=['User=root','Group=root','NoNewPrivileges=yes','CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_SETUID CAP_SETGID CAP_SETPCAP',
+    props=['User=root','Group=root','NoNewPrivileges=yes','CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_SETUID CAP_SETGID CAP_SETPCAP','AmbientCapabilities=CAP_SETUID',
       'ProtectControlGroups=yes','ProtectSystem=strict','ProtectHome=yes','ProtectKernelTunables=yes','ProtectKernelModules=yes',
       'ProtectKernelLogs=yes','PrivateDevices=yes','PrivateTmp=yes','RestrictNamespaces=yes','RestrictSUIDSGID=yes','LockPersonality=yes',
       'ProtectClock=yes','ProtectHostname=yes','SystemCallArchitectures=native','Delegate=no','UMask=0022',
@@ -488,8 +546,7 @@ def verify(path, expected_sha, expected_run, expected_helper, data=None):
     ident=r['identity'];need(identity({'GITHUB_'+k.upper():v for k,v in ident.items()})==ident,'receipt identity')
     need(ident['sha']==expected_sha and ident['run_id']==expected_run,'external source/run binding')
     h=r['host'];need(h['sysname']=='Linux'and h['machine']=='x86_64'and h['physical_source']=='SMBIOS-type17'and h['assigned_bytes']>=HOST_CLASS and h['MemAvailable']>=LIMIT,'actual native physical/free capacity')
-    supervisor=r['supervisor'];allowed_caps=sum(1<<cap for cap in (0,1,6,7,8))
-    need(supervisor['uid']==0 and supervisor['nnp']==1 and supervisor['allowed_caps']==allowed_caps and int(supervisor['effective_caps'],16)&~allowed_caps==0 and set(supervisor['caps'])=={'CapInh','CapPrm','CapEff','CapBnd','CapAmb'}and all(int(v,16)&~allowed_caps==0 for v in supervisor['caps'].values()),'supervisor privileges')
+    require_supervisor(r['supervisor']);require_supervisor(r['supervisor_prefork'])
     a,b=r['resources_before'],r['resources_after']
     expected_cgroup='/system.slice/ob2222-qual-'+expected_run+'-1.service'
     need(a['cgroup']==b['cgroup']==expected_cgroup and a['pid']==b['pid']and type(b['pid'])is int and b['pid']>1 and b['peak']<=LIMIT,'cgroup/peak/PID mismatch')
@@ -521,7 +578,8 @@ def verify(path, expected_sha, expected_run, expected_helper, data=None):
         need(digest(actual)==pin,'artifact byte drift: '+name)
     mandatory={'DMI.bin','canonical-config.yml','helper.py','meminfo-before.txt',
       'go-releases.json','lint-checksums.txt','worker/go-version.stdout','worker/go-env.stdout',
-      'worker/lint-version.stdout','worker/configured-linters.stdout','binaries/go','binaries/lint','binaries/go.LICENSE.txt','binaries/lint.LICENSE.txt','worker/synthetic-lint-cpu.pprof'}
+      'worker/lint-version.stdout','worker/configured-linters.stdout','binaries/go','binaries/lint','binaries/go.LICENSE.txt','binaries/lint.LICENSE.txt','worker/synthetic-lint-cpu.pprof',
+      'supervisor-admission.json','supervisor-prefork.json','privilege-transition.jsonl'}
     expected_prefix=PARENT.as_posix()+'/'+ident['run_id']+'-1-'+ident['sha'][:12];go=expected_prefix+'/tools/go/go/bin/go';lint=expected_prefix+'/tools/lint/golangci-lint-2.11.4-linux-amd64/golangci-lint'
     commands={'go-version':[go,'version'],'go-env':[go,'env','-json','GOHOSTOS','GOHOSTARCH','GOOS','GOARCH','CGO_ENABLED','GOTOOLCHAIN'],
       'lint-version':[lint,'version','--short'],'configured-linters':[lint,'linters','--json','--config',expected_prefix+'/input/canonical-config.yml'],
@@ -532,6 +590,7 @@ def verify(path, expected_sha, expected_run, expected_helper, data=None):
     mandatory|={f'worker/{name}.{suffix}'for name in commands for suffix in ('command.json','stdout','stderr')}
     need(mandatory<=set(r['files']),'missing raw artifact evidence')
     evidence=Path(path).parent
+    need(json.loads((evidence/'supervisor-admission.json').read_bytes())==r['supervisor']and json.loads((evidence/'supervisor-prefork.json').read_bytes())==r['supervisor_prefork'],'raw supervisor admission/prefork state')
     physical,count=assigned_memory((evidence/'DMI.bin').read_bytes())
     need(physical==h['assigned_bytes']and count==h['populated_devices']and parse_meminfo((evidence/'meminfo-before.txt').read_text())=={k:h[k]for k in ('MemTotal','MemAvailable')},'raw capacity derivation mismatch')
     need(digest(evidence/'canonical-config.yml')==CONFIG_SHA and digest(evidence/'helper.py')==expected_helper,'raw config/helper binding')
@@ -552,6 +611,16 @@ def verify(path, expected_sha, expected_run, expected_helper, data=None):
         binary=evidence/'binaries'/name
         with binary.open('rb')as stream:header=stream.read(64)
         need(len(header)==64 and header[:6]==b'\x7fELF\x02\x01'and struct.unpack_from('<H',header,18)[0]==62 and digest(binary)==r['source_before'][name],'preserved Linux amd64 executable/hash')
+    stages=['no-new-privileges','clear-ambient','drop-bounding','setgroups','setgid','setuid','zero-capabilities']
+    events=[json.loads(line)for line in (evidence/'privilege-transition.jsonl').read_text().splitlines()]
+    expected=[('child-start','ok')]+[(stage,status)for stage in stages for status in ('before','after')]+[('exec-worker','before')]
+    need([(e['stage'],e['status'])for e in events]==expected,'privilege transition stage/error evidence')
+    for event in events:
+        state=event['state'];need(state['pid']==c['pid']and state['ppid']==c['ppid']and state['nnp']==1 and set(state['caps'])==set(c['caps'])and all(int(v,16)&~451==0 for v in state['caps'].values()),'transition process/capability ceiling')
+    after_stage={e['stage']:e['state']for e in events if e['status']=='after'}
+    need(int(after_stage['clear-ambient']['caps']['CapAmb'],16)==0 and int(after_stage['drop-bounding']['caps']['CapBnd'],16)==0,'ambient/bounding transition')
+    need(after_stage['setgroups']['groups']==[]and after_stage['setgid']['gid']==after_stage['setgid']['egid']==c['gid']and after_stage['setuid']['uid']==after_stage['setuid']['euid']==c['uid'],'groups/GID/UID transition')
+    end=events[-1]['state'];need(end['uid']==end['euid']==c['uid']and end['gid']==end['egid']==c['gid']and end['groups']==[]and all(int(v,16)==0 for v in end['caps'].values()),'pre-exec restricted identity/capability zero')
     return {'verified':True,'scope':'synthetic environment only; product lint remains parked','sha':expected_sha,'run_id':expected_run}
 
 def inspect_terminal_controller(path, expected_sha, expected_run):
