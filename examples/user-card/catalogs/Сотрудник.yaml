@@ -8,3 +8,8 @@ fields:
     type: string
 indexes:
   - fields: [Учётка]
+tableparts:
+  - name: Филиалы
+    fields:
+      - name: Филиал
+        type: string

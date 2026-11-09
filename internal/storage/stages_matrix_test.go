@@ -748,6 +748,27 @@ func TestStagesSurviveFieldRename(t *testing.T) {
 		after.Fields[1].ID = "state"
 		after.Fields[1].Name = "СостояниеЗаявки"
 		after.Stages.Field = "СостояниеЗаявки"
+		// The index dependency gate applies to stage indexes too. A rename
+		// requires an explicit maintenance step; history must survive afterwards.
+		if err := db.Migrate(ctx, []*metadata.Entity{after}); err == nil || !strings.Contains(err.Error(), "blocked by index") {
+			t.Fatalf("indexed stage rename must fail before DDL: %v", err)
+		}
+		actions, _, err := db.PlanEntityIndexes(ctx, []*metadata.Entity{before})
+		if err != nil {
+			t.Fatal(err)
+		}
+		removed := false
+		for _, a := range actions {
+			if strings.HasPrefix(a.Index.Name, "idx_stage_") {
+				if _, err := db.Exec(ctx, "DROP INDEX "+a.Index.Name); err != nil {
+					t.Fatal(err)
+				}
+				removed = true
+			}
+		}
+		if !removed {
+			t.Fatal("stage index was lost before explicit removal")
+		}
 		if err := db.Migrate(ctx, []*metadata.Entity{after}); err != nil {
 			t.Fatalf("миграция после переименования: %v", err)
 		}

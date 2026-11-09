@@ -66,8 +66,8 @@ func UsersReferences(entities []*metadata.Entity, registers []*metadata.Register
 }
 
 // UsersReferencePlan reports observed schema and data, without applying DDL or repairs.
-// An absent constraint is a proposal for later migration slices, not a promise
-// that the current ordinary migrate command can install it.
+// Inventory also covers sources not yet wired into ordinary migration. An
+// absent constraint alone does not imply that migrate can install it there.
 type UsersReferencePlan struct {
 	Reference    UsersReference
 	ActualColumn string
