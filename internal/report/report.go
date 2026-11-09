@@ -12,6 +12,10 @@ type Param struct {
 	Label   string            `yaml:"label"`   // display label; falls back to Name
 	Labels  map[string]string `yaml:"labels"`  // per-language labels (lang code → translation)
 	Options []string          `yaml:"options"` // for type: select
+	// ChoiceShowDeleted — для reference-параметра: показывать ли в выборе
+	// помеченные на удаление (`choice_show_deleted`). nil — показывать с
+	// отметкой: параметр отчёта ищет по истории, а не вводит данные.
+	ChoiceShowDeleted *bool `yaml:"choice_show_deleted"`
 	// Default — значение параметра, когда пользователь его не задал. Понимает ту
 	// же грамматику подстановок, что параметры виджетов и регламентных заданий
 	// ({{today}}, {{now|-7d}} и т.п.). Раньше линтер ключ `default` принимал, а

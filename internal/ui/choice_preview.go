@@ -262,7 +262,8 @@ func (s *Server) choicePreviewPage(w http.ResponseWriter, r *http.Request, ent *
 	total := 0
 	var err error
 	if filterOK {
-		items, total, err = s.referenceOptionsPageWithParams(r.Context(), ent, body.Q, limit, body.Offset, params)
+		mode := refOptionsModeFromRequest(r).withMarked(element.ChoiceShowDeleted)
+		items, total, err = s.referenceOptionsPageWithParams(withLang(r.Context(), s.resolveLang(r)), ent, mode, body.Q, limit, body.Offset, params)
 	}
 	if err != nil {
 		s.serverError(w, r, err)

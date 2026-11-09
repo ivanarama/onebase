@@ -690,6 +690,7 @@ dynamicTbody = {
 };
 dynamicTable.tBodies = [dynamicTbody];
 function obTPRefOpts() { return {}; }
+function obTPRefChoices() { return {}; }
 function obTPRefMeta() { return {}; }
 function obTPEnumLabels() { return {}; }
 function obTPEnumOrder() { return {}; }

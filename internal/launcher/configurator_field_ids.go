@@ -263,6 +263,9 @@ func carryFieldKeys(f, old saveField) saveField {
 	if !f.PII {
 		f.PII = old.PII
 	}
+	if f.ChoiceShowDeleted == nil {
+		f.ChoiceShowDeleted = old.ChoiceShowDeleted
+	}
 	return f
 }
 

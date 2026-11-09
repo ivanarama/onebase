@@ -18,7 +18,7 @@ for (const [k, v] of Object.entries(input.attrs)) body.setAttribute(k, v);
 const document = {createElement: node, getElementById() { return body; }};
 const window = {_tpRefOpts: {}, _tpEnumLabels: {}, _tpEnumOrder: {}, obManagedSetTablePartJSON() {}};
 const sandbox = {window, document, JSON, Array, Object, String, Date, isNaN,
-  obReady() {}, obTPRefOpts() { return {}; }, obTPRefMeta() { return {}; },
+  obReady() {}, obTPRefOpts() { return {}; }, obTPRefChoices() { return {}; }, obTPRefMeta() { return {}; },
   obTPEnumLabels() { return {}; }, obTPEnumOrder() { return {}; },
   obManagedTableBodies() { return [body]; }, obManagedVirtualColumnNames() { return []; },
   obManagedHiddenColumnNames() { return []; }, obManagedTableReadOnly() { return input.readonly; },

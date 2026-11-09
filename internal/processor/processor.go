@@ -17,6 +17,10 @@ type Param struct {
 	Labels  map[string]string `yaml:"labels"`  // переводы подписи по языкам (lang code → перевод)
 	Default any               `yaml:"default"` // значение по умолчанию
 	Options []string          `yaml:"options"` // для type: choice — список вариантов выбора
+	// ChoiceShowDeleted — для reference-параметра: показывать ли в выборе
+	// помеченные на удаление (`choice_show_deleted`). nil — скрывать: параметр
+	// обработки — ввод данных.
+	ChoiceShowDeleted *bool `yaml:"choice_show_deleted"`
 
 	// Required помечает параметр обязательным: форма не отправится пустой, а
 	// сервер откажет до запуска. Нужен прежде всего файловым параметрам —
@@ -103,9 +107,10 @@ func (p *Processor) VirtualEntity() *metadata.Entity {
 	fields := make([]metadata.Field, 0, len(p.Params))
 	for _, param := range p.Params {
 		f := metadata.Field{
-			Name:   param.Name,
-			Title:  param.Label,
-			Titles: param.Labels,
+			Name:              param.Name,
+			Title:             param.Label,
+			Titles:            param.Labels,
+			ChoiceShowDeleted: param.ChoiceShowDeleted,
 		}
 		switch {
 		case param.Type == "string", param.Type == "text":

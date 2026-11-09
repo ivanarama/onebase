@@ -272,7 +272,7 @@ func (s *Server) loadRefOpts(ctx context.Context, fields []metadata.Field, value
 		if refEntity == nil {
 			continue
 		}
-		rows, err := s.initialReferenceOptions(ctx, refEntity, refOptionsFilter, []string{values[f.Name]})
+		rows, err := s.initialReferenceOptions(ctx, refEntity, refOptionsFilter.withMarked(f.ChoiceShowDeleted), []string{values[f.Name]})
 		if err != nil {
 			continue
 		}

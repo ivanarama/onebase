@@ -175,3 +175,26 @@ test('TP snapshots read the submitted source copy for global and row-local field
  assert.equal(names.at(-1),'tp.Строки.2.Направление');
  assert.deepEqual(sources(local,{направление:'grid-row'}),{'Строки.Направление':'grid-row'});
 });
+
+for (const marked of ['1','0','']) {
+ for (const action of ['button','alt-down']) {
+  test(`grid picker preserves deletion policy ${marked || 'inherited'} via ${action}`,async()=>{
+   const calls=[],picked=[];
+   const env=runtime([{Выбор:''}],url=>{calls.push(url);return Promise.resolve({ok:true,json:async()=>({items:[]})});});
+   env.window.openRefPicker=select=>picked.push(select);
+   const start=managed.indexOf('  function refId('),end=managed.indexOf('  function ObNumberEditor(',start);
+   vm.runInContext(managed.slice(start,end),env.sandbox);
+   const container=env.sandbox.document.createElement('div');
+   const args={row:0,item:env.rows[0],column:{field:'Выбор',refEntity:'Цель',refMarked:marked,choiceContext:env.context},container,commitChanges(){},cancelChanges(){},grid:{getOptions(){return {};}}};
+   const editor=new env.sandbox.ObRefEditor('Выбор',[],args);
+   editor.loadValue(args.item);await new Promise(setImmediate);
+   assert.equal(new URLSearchParams(calls[0].split('?')[1]).get('marked'),marked || null);
+   const wrapper=container.children[0];
+   if(action==='button')wrapper.children[1].listeners.click({preventDefault(){},stopPropagation(){}});
+   else wrapper.children[0].listeners.keydown({key:'ArrowDown',altKey:true,preventDefault(){},stopPropagation(){}});
+   assert.equal(picked.length,1);
+   assert.equal(picked[0].getAttribute('data-ref-marked'),marked || null);
+   editor.destroy();
+  });
+ }
+}

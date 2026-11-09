@@ -22,6 +22,8 @@ type rawField struct {
 	// AllowInlineCreate — pointer to differ unset from explicit false. nil
 	// means «keep context default» (true в шапке, false в ТЧ).
 	AllowInlineCreate *bool `yaml:"allow_inline_create"`
+	// ChoiceShowDeleted — choice_show_deleted (см. Field.ChoiceShowDeleted).
+	ChoiceShowDeleted *bool `yaml:"choice_show_deleted"`
 	Required          bool  `yaml:"required"`
 	// Default — значение по умолчанию при создании нового объекта (план 153).
 	// Читается строкой: и `сейчас`, и `12`, и `Истина` попадают сюда как есть,
@@ -136,13 +138,15 @@ type rawEntity struct {
 	ListForm      []string `yaml:"list_form"`
 	// ItemForm принимает и строку, и запись {name: X, readonly: true} —
 	// см. rawItemFormField.
-	ItemForm      []rawItemFormField `yaml:"item_form"`
-	BasedOn       []string           `yaml:"based_on"`
-	Activity      *rawActivity       `yaml:"activity"`
-	ListMode      string             `yaml:"list_mode"`
-	ListRefreshOn []string           `yaml:"list_refresh_on"`
-	ListFilters   []string           `yaml:"list_filters"`
-	NotifyChanges bool               `yaml:"notify_changes"`
+	ItemForm []rawItemFormField `yaml:"item_form"`
+	BasedOn  []string           `yaml:"based_on"`
+	Activity *rawActivity       `yaml:"activity"`
+	// ChoiceShowDeleted — choice_show_deleted (см. Entity.ChoiceShowDeleted).
+	ChoiceShowDeleted *bool    `yaml:"choice_show_deleted"`
+	ListMode          string   `yaml:"list_mode"`
+	ListRefreshOn     []string `yaml:"list_refresh_on"`
+	ListFilters       []string `yaml:"list_filters"`
+	NotifyChanges     bool     `yaml:"notify_changes"`
 	// InteractiveCreate — указатель: отсутствие ключа значит «можно».
 	InteractiveCreate *bool           `yaml:"interactive_create"`
 	TileView          *rawTileView    `yaml:"tile_view"`
@@ -343,6 +347,7 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 	e.OrderBy = raw.OrderBy.values()
 	e.ChoicePreview = strings.TrimSpace(raw.ChoicePreview)
 	e.ChoicePreviewProc = strings.TrimSpace(raw.ChoicePreviewProc)
+	e.ChoiceShowDeleted = raw.ChoiceShowDeleted
 	if raw.Numerator != nil {
 		n := &Numerator{
 			Prefix:     raw.Numerator.Prefix,
@@ -722,7 +727,7 @@ func parseField(rf rawField) Field {
 		title = rf.Label
 	}
 	f := Field{ID: strings.TrimSpace(rf.ID), Name: rf.Name, Title: title, Titles: rf.Titles, Type: FieldType(rf.Type),
-		AllowInlineCreate: rf.AllowInlineCreate, Required: rf.Required, Default: string(rf.Default), PII: rf.PII}
+		AllowInlineCreate: rf.AllowInlineCreate, ChoiceShowDeleted: rf.ChoiceShowDeleted, Required: rf.Required, Default: string(rf.Default), PII: rf.PII}
 	if strings.HasPrefix(rf.Type, "reference:") {
 		f.RefEntity = strings.TrimPrefix(rf.Type, "reference:")
 	} else if strings.HasPrefix(rf.Type, "enum:") {
