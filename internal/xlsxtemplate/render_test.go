@@ -427,3 +427,58 @@ func TestRenderBytesNumericRoundingMatchesMixedText(t *testing.T) {
 		})
 	}
 }
+
+// Исходная разрядность float32 не должна превращаться в двоичный хвост в XLSX.
+func TestRenderBytesPreservesUnformattedFloatPrecision(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		value any
+		want  string
+	}{
+		{"float32", float32(1.2), "1.2"},
+		{"negative float32", float32(-1.2), "-1.2"},
+		{"float64", 1.20000004768371, "1.20000004768371"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			must := func(err error) {
+				t.Helper()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			f := excelize.NewFile()
+			must(f.SetCellStr("Sheet1", "A1", "{{Amount}}"))
+			must(f.SetCellStr("Sheet1", "A3", "{{Items.Amount}}"))
+			must(f.SetCellFormula("Sheet1", "B1", "SUM(A1:A1)"))
+			must(f.SetCellFormula("Sheet1", "B3", "SUM(A3:A3)"))
+			custom := "0.0000"
+			style, err := f.NewStyle(&excelize.Style{CustomNumFmt: &custom})
+			must(err)
+			must(f.SetCellStyle("Sheet1", "A3", "A3", style))
+			var input bytes.Buffer
+			must(f.Write(&input))
+			must(f.Close())
+			result, err := RenderBytes(input.Bytes(), &printform.RenderContext{
+				Document: map[string]any{"Amount": tc.value},
+				TableParts: map[string][]map[string]any{"Items": {
+					{"Amount": tc.value}, {"Amount": tc.value},
+				}},
+			})
+			must(err)
+			out, err := excelize.OpenReader(bytes.NewReader(result))
+			must(err)
+			defer func() { must(out.Close()) }()
+			for _, axis := range []string{"A1", "A3", "A4"} {
+				assertNumberCell(t, out, "Sheet1", axis, tc.want)
+				formula := "B" + axis[1:]
+				got, err := out.CalcCellValue("Sheet1", formula)
+				must(err)
+				if got != tc.want {
+					t.Errorf("SUM of %s = %q, want %q", axis, got, tc.want)
+				}
+			}
+			assertNumFmt(t, out, "Sheet1", "A3", custom)
+			assertNumFmt(t, out, "Sheet1", "A4", custom)
+		})
+	}
+}

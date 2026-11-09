@@ -219,6 +219,10 @@ func DemoReset(ctx context.Context, db *storage.DB, backupPath string) (report *
 	if err := migrateSchema(ctx, db, "database", ""); err != nil {
 		return report, fmt.Errorf("demo reset schema: %w", err)
 	}
+	idents, err := loadLegacyImportIdents(ctx, db, "database", "")
+	if err != nil {
+		return report, fmt.Errorf("demo reset identifiers: %w", err)
+	}
 	if err := clearDemoSnapshotTables(ctx, db); err != nil {
 		return report, err
 	}
@@ -226,7 +230,7 @@ func DemoReset(ctx context.Context, db *storage.DB, backupPath string) (report *
 	// Импортируем data/, пропуская таблицы авторизации
 	dataDir := filepath.Join(tmpDir, "data")
 	if _, err := os.Stat(dataDir); err == nil {
-		if err := importDir(ctx, db, dataDir, report, authTables); err != nil {
+		if err := importDirWithIdents(ctx, db, dataDir, report, authTables, idents); err != nil {
 			return report, fmt.Errorf("demo reset data: %w", err)
 		}
 	}
@@ -255,7 +259,7 @@ func DemoReset(ctx context.Context, db *storage.DB, backupPath string) (report *
 		}
 		// Подбираем оставшиеся системные таблицы, не вошедшие в sysOrder
 		// (например, _scheduled_runs если он не в authTables, или новые таблицы).
-		if err := importDir(ctx, db, sysDir, report, authTables, sysOrder); err != nil {
+		if err := importDirWithIdents(ctx, db, sysDir, report, authTables, idents, sysOrder); err != nil {
 			return report, fmt.Errorf("demo reset system rest: %w", err)
 		}
 	}
