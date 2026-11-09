@@ -35,6 +35,7 @@ func chromiumCandidates() []string {
 func isolatedBrowserCommand(profileDir, url string) (*exec.Cmd, error) {
 	for _, p := range chromiumCandidates() {
 		if _, err := os.Stat(p); err == nil {
+			//nolint:gosec // G204: fixed browser names under local OS install directories; URL/profile are separate arguments, no shell.
 			return exec.Command(p, chromiumArgs(profileDir, url)...), nil
 		}
 	}
