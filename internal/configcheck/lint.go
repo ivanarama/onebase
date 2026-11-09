@@ -413,11 +413,11 @@ func entityYAMLSchema() *yamlLintSchema {
 		"deadline_days": freeMap(),
 	})
 	return with(obj(
-		"name", "title", "description", "posting", "hierarchical", "hierarchy_kind",
+		"name", "title", "description", "posting", "post_caption", "post_and_close_hidden", "hierarchical", "hierarchy_kind",
 		// owner — справочник-владелец (подчинённый справочник, 1С «Владелец»).
 		"owner",
 		"presentation", "order_by", "choice_preview", "choice_preview_proc",
-		"list_form", "item_form", "based_on", "list_mode", "notify_changes", "list_refresh_on",
+		"list_form", "item_form", "based_on", "list_mode", "list_filters", "interactive_create", "notify_changes", "list_refresh_on",
 		"fulltext", "search_fields", "detail_panel",
 	), map[string]*yamlLintSchema{
 		"titles": freeMap(),
@@ -645,7 +645,11 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		// неизвестными, а гейт CI считает предупреждение ошибкой — то есть
 		// документированный «language» у kind: ПолеКода не давал примеру
 		// пройти собственную проверку (#1014).
-		"orientation", "background", "input_mask", "language", "virtual_columns",
+		"orientation", "equal_columns", "background", "text_bold", "input_mask", "language", "virtual_columns",
+		"deadline_warn",
+		"conceal", "reveal_when",
+		"title_from",
+		"hint_inline",
 	} {
 		element.keys[k] = nil
 	}
@@ -665,7 +669,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	element.keys["children"] = seq(element)
 	element.keys["choices"] = seq(with(obj("value"), map[string]*yamlLintSchema{"title": freeMap()}))
 	element.keys["options"] = seq(with(obj("value"), map[string]*yamlLintSchema{"label": freeMap()}))
-	element.keys["choice_filter"] = seq(obj("field", "op", "from", "value", "ref"))
+	element.keys["choice_filter"] = seq(with(obj("field", "op", "from", "value", "ref", "query"), map[string]*yamlLintSchema{"params": freeMap()}))
 
 	attrColumn := with(obj("id", "original_id", "name", "type", "length", "precision"), map[string]*yamlLintSchema{
 		"title": freeMap(),
