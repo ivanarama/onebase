@@ -137,10 +137,10 @@ func TestReferencePreloadOnFormOpenHTTP(t *testing.T) {
 					t.Fatalf("List calibration: rows=%d, reads=%d", len(rows), maxReads)
 				}
 			}
-			// Collapsed/outside_form читают только выбранную подпись по id.
+			// Collapsed читает только выбранную подпись по id; outside_form не читает ничего.
 			// Scoped сначала сохраняет эту подпись, затем получает scoped-список.
 			// Обычный dropdown уже содержит выбранную строку, добавлять её не надо.
-			if !tc.empty && (!tc.present || !tc.dropdown || tc.scoped) {
+			if tc.present && !tc.empty && (!tc.dropdown || tc.scoped) {
 				maxReads++
 			}
 			reg := runtime.NewRegistry()

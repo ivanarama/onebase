@@ -151,15 +151,19 @@ func (s *Server) refreshFieldsWrittenByHandler(
 	// попадает в Fields под именем метаданных, а присваивание в обработчике —
 	// через Object.Set, то есть в нижнем регистре. После «Объект.Канал = …» в
 	// карте лежат ОБА ключа, и сравнение по одному из них давало случайный ответ.
+	//
+	// Индекс по нижнему регистру строится один раз: перебор всех ключей на
+	// каждое поле (поля × ключи вызовов strings.ToLower по кириллице) у
+	// заявки колл-центра стоил 130–175 мс на событие. Новые ключи цикл ниже
+	// добавляет только для полей, которых в карте не было, — индекс для
+	// остальных полей от этого не устаревает.
+	keyIndex := make(map[string][]string, len(obj.Fields))
+	for k := range obj.Fields {
+		low := strings.ToLower(k)
+		keyIndex[low] = append(keyIndex[low], k)
+	}
 	fieldKeys := func(name string) []string {
-		var keys []string
-		low := strings.ToLower(name)
-		for k := range obj.Fields {
-			if strings.ToLower(k) == low {
-				keys = append(keys, k)
-			}
-		}
-		return keys
+		return keyIndex[strings.ToLower(name)]
 	}
 	readOnly := readOnlyFormFields(form)
 	// Редактируемый Флажок — единственный элемент, для которого отсутствие ключа
@@ -197,6 +201,7 @@ func (s *Server) refreshFieldsWrittenByHandler(
 		return true
 	}
 
+	endScan := serverTimingSpan(ctx, "refreshScan")
 	need := false
 	for _, f := range entity.Fields {
 		if stale(f) {
@@ -204,15 +209,17 @@ func (s *Server) refreshFieldsWrittenByHandler(
 			break
 		}
 	}
+	endScan()
 	if !need {
 		return
 	}
 	// Ошибку чтения глотаем: событие не должно падать из-за того, что запись
 	// удалили параллельно — форма просто останется с прежними значениями.
-	row, err := s.store.GetByID(ctx, entity.Name, obj.ID, entity)
+	row, err := s.recordForRequest(ctx, entity, obj.ID)
 	if err != nil || row == nil {
 		return
 	}
+	defer serverTimingSpan(ctx, "refreshApply")()
 	for _, f := range entity.Fields {
 		if !stale(f) {
 			continue

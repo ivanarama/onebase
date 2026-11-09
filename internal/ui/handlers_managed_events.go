@@ -338,6 +338,12 @@ func (s *Server) installFormCloseAccessRecheck(
 func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Request, closeInv *formCloseInvocation) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
+	// prepare — разбор запроса, сборка объекта и чтение базы до обработчика.
+	endPrepare := serverTimingSpan(r.Context(), "prepare")
+	// Счётчик записей этого запроса: строки ТЧ после обработчика перечитываются,
+	// только если обработчик писал в базу (storage.WithWriteCounter).
+	writeCtx, requestWrites := storage.WithWriteCounter(r.Context())
+	r = r.WithContext(withRequestRecordCache(writeCtx, requestWrites))
 
 	// Сущность резолвим ДО разбора тела: от неё зависит предел (#629). Пределы не
 	// композируются — прежняя пара «1 МиБ, затем limitMultipartRequest на 52 МиБ»
@@ -910,7 +916,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		if closeInv != nil {
-			persisted, loadErr := s.store.GetByID(dslCtx, entity.Name, obj.ID, entity)
+			persisted, loadErr := s.recordForRequest(dslCtx, entity, obj.ID)
 			if loadErr != nil {
 				if storage.IsNotFound(loadErr) {
 					finishTerminalClose()
@@ -1387,6 +1393,11 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// клиент покажет красный баннер и не закроет форму.
 	var runErr error
 	timeout := interpreter.ClampWallClock(opCtx, s.operationTimeout(opFormEvent))
+	endPrepare()
+	// Счётчик записей до обработчика: строки ТЧ перечитываются после него,
+	// только если за это время в базу кто-то писал (см. storage.WriteSeq).
+	writesBefore := requestWrites.Load()
+	endDSL := serverTimingSpan(r.Context(), "dsl")
 	if closeInv != nil {
 		var entryResult interpreter.EntryCallResult
 		entryResult, runErr = s.interp.CallEntrySandboxedWithBindings(decl, thisObj, closeArgs,
@@ -1412,6 +1423,10 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// единственное соединение. Успешный выход с открытой транзакцией считается
 	// ошибкой процедуры, чтобы конфигурационная ошибка не оставалась незаметной.
 	runErr = finishDSLExecution(txState, runErr)
+	endDSL()
+	if n := requestWrites.Load() - writesBefore; n > 0 {
+		serverTimingNote(r.Context(), "handlerWrites", fmt.Sprintf("%d: %s", n, strings.Join(requestWrites.Sample(), " | ")))
+	}
 	// Cancelled BeforeClose/BeforePost revokes disclosure just like a failed handler.
 	concealSuccess := runErr == nil && !postCancelled && (closeInv == nil || !closeInv.cancelled)
 	s.finishConcealEvent(r, form, entity, obj, thisObj.assigned, concealSuccess)
@@ -1434,16 +1449,21 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// случайный uuid, поэтому obj.ID != uuid.Nil истинно ВСЕГДА и каждое событие
 	// на «Создать» уходило бы в базу за несуществующей строкой. Ровно эта ловушка
 	// описана выше у restoreUnsubmittedFields.
+	endRefresh := serverTimingSpan(r.Context(), "refresh")
 	if (existingRecord || savedFormID(thisObj) != "") && (closeInv == nil || !closeInv.saved) {
 		s.refreshFieldsWrittenByHandler(liveCtx, r, entity, form, obj, fieldsBefore)
 	}
-	if existingRecord && tpDBBefore != nil && !thisObj.saved {
+	// Без единой записи в базу за время обработчика строки ТЧ в ней те же,
+	// что до него, — перечитывать их незачем (у заявки колл-центра это 17
+	// запросов на событие). Запись через общий модуль (#579) сдвигает счётчик.
+	if existingRecord && tpDBBefore != nil && !thisObj.saved && requestWrites.Load() != writesBefore {
 		s.refreshTablePartsWrittenByHandler(liveCtx, entity, obj, tpBefore, tpDBBefore)
 	}
+	endRefresh()
 	var closePersisted map[string]any
 	var closePersistedErr error
 	if closeInv != nil && obj.ID != uuid.Nil && (existingFormID != "" || closeInv.saved) {
-		closePersisted, closePersistedErr = s.store.GetByID(liveCtx, entity.Name, obj.ID, entity)
+		closePersisted, closePersistedErr = s.recordForRequest(liveCtx, entity, obj.ID)
 		switch {
 		case storage.IsNotFound(closePersistedErr):
 			// A trusted handler may delete or replace the row through another
@@ -1509,17 +1529,25 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// lifecycle calls. Programmatic values/TableParts/FormTables do not emit DOM
 	// input events; without this signal an unsaved command mutation on a clean
 	// form could be silently discarded by the next Close.
+	endDirty := serverTimingSpan(r.Context(), "dirty")
 	dirty := transientManagedStateDirty(obj, fieldsBefore, tpBefore)
 	if existingRecord || thisObj.saved || (closeInv != nil && closeInv.saved) {
-		dirty = s.managedCloseStateDirty(liveCtx, entity, form, obj, fieldsBefore, tpBefore)
+		// Без записей за время обработчика строки ТЧ в базе — те же, что в
+		// снимке до него: повторно их не читаем.
+		var storedTP map[string][]map[string]any
+		if requestWrites.Load() == writesBefore {
+			storedTP = tpDBBefore
+		}
+		dirty = s.managedCloseStateDirtyWithRows(liveCtx, entity, form, obj, fieldsBefore, tpBefore, storedTP)
 	}
+	endDirty()
 	if formOpenEvent(elementName, eventName) && !thisObj.saved {
 		dirty = false
 	}
 	eventDirty := boolPtr(dirty)
 	if runErr != nil {
 		opStatus = operationStatus(opCtx, runErr)
-		resp := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs).response(false)
+		resp := s.serializeManagedFormEventState(withTPRefDelta(r.Context(), form, tpBefore, obj.TablePartRows), form, entity, obj, condRuntime.rules, msgs).response(false)
 		resp.Error = interpreter.FormatUserError(runErr)
 		resp.PickerData = picker
 		if question.Variants != nil {
@@ -1537,7 +1565,9 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	}
 
 	opStatus = "ok"
-	resp := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs).response(true)
+	endSerialize := serverTimingSpan(r.Context(), "serialize")
+	resp := s.serializeManagedFormEventState(withTPRefDelta(r.Context(), form, tpBefore, obj.TablePartRows), form, entity, obj, condRuntime.rules, msgs).response(true)
+	endSerialize()
 	resp.PickerData = picker
 	if question.Variants != nil {
 		q := question
@@ -1552,6 +1582,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	resp.Version = versionWrittenByHandler(thisObj)
 	resp.Dirty = eventDirty
 	compactFormCloseDelta(&resp, closeInv)
+	defer serverTimingSpan(r.Context(), "encode")()
 	respondJSON(enc, resp)
 }
 
@@ -1756,30 +1787,40 @@ func mergePersistedFieldsUnchanged(entity *metadata.Entity, persisted, fields ma
 	}
 }
 
-// managedCloseStateDirty compares the final state returned to the browser
+// managedCloseStateDirtyWithRows compares the final state returned to the browser
 // with the durable record after BeforeClose. Entity fields/table parts are
 // compared with storage; form-only attributes and ValueTables are compared
 // with their pre-handler snapshot because they have no durable counterpart.
 // Read failures are fail-safe: the form stays dirty instead of risking loss.
-func (s *Server) managedCloseStateDirty(
+//
+// Строки ТЧ из базы можно передать готовыми (storedTP): событие формы, за
+// время обработчика которого в базу никто не писал, берёт их из снимка до
+// обработчика. nil — читать из базы.
+func (s *Server) managedCloseStateDirtyWithRows(
 	ctx context.Context,
 	entity *metadata.Entity,
 	form *metadata.FormModule,
 	obj *runtime.Object,
 	fieldsBefore map[string]string,
 	tpBefore map[string][]map[string]any,
+	storedTP map[string][]map[string]any,
 ) bool {
 	if s == nil || s.store == nil || entity == nil || obj == nil || obj.ID == uuid.Nil {
 		return true
 	}
-	persisted, err := s.store.GetByID(ctx, entity.Name, obj.ID, entity)
+	persisted, err := s.recordForRequest(ctx, entity, obj.ID)
 	if err != nil || persisted == nil {
 		return true
 	}
 	dialect := s.store.Dialect().Name()
+	// Индексы вместо перебора на каждое поле (ci_index.go): obj.Get и
+	// maskCIKeyValue — O(ключей), а полей у заявки сотни. Карты в цикле не
+	// меняются.
+	persistedKeys := newCIIndex(persisted, equalFoldKey)
+	liveKeys := newCIIndex(obj.Fields, strings.ToLower)
 	for _, field := range entity.Fields {
-		stored, _ := maskCIKeyValue(persisted, field.Name)
-		if tpCellNormStored(field, obj.Get(field.Name), dialect) != tpCellNormStored(field, stored, dialect) {
+		_, stored, _ := ciGet(persisted, persistedKeys, field.Name)
+		if tpCellNormStored(field, objectGetIndexed(obj, liveKeys, field.Name), dialect) != tpCellNormStored(field, stored, dialect) {
 			return true
 		}
 	}
@@ -1809,7 +1850,11 @@ func (s *Server) managedCloseStateDirty(
 		}
 	}
 	for _, tablePart := range entity.TableParts {
-		stored, rowsErr := s.store.GetTablePartRows(ctx, entity.Name, tablePart.Name, obj.ID, tablePart)
+		stored, cached := storedTP[tablePart.Name]
+		var rowsErr error
+		if !cached {
+			stored, rowsErr = s.store.GetTablePartRows(ctx, entity.Name, tablePart.Name, obj.ID, tablePart)
+		}
 		if rowsErr != nil || !tpRowsEqualStored(obj.TablePartRows[tablePart.Name], stored, tablePart, dialect) {
 			return true
 		}
@@ -1897,6 +1942,12 @@ func snapshotStringMapsEqual(left, right map[string]string) bool {
 		return false
 	}
 	for name, value := range left {
+		// Тот же ключ с тем же значением — один из исходов перебора ниже, и
+		// самый частый: снимки строятся из одной карты. Перебор (O(ключей) на
+		// каждый ключ) остаётся для расхождений.
+		if other, ok := right[name]; ok && other == value {
+			continue
+		}
 		other, ok := snapshotValueCI(right, name)
 		if !ok || other != value {
 			return false
@@ -2097,9 +2148,14 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 		// Условия readonly_when/hidden_when считаются здесь же, где известны
 		// значения ПОСЛЕ обработчика: команда, изменившая состояние объекта,
 		// сразу меняет доступность полей.
-		ElementStates: s.formElementStates(form, entity, values, s.isAdminCtx(ctx)),
+		ElementStates: s.timedFormElementStates(ctx, form, entity, values),
 		ColumnTitles:  managedTPColumnTitles(form, entity, values, langFromCtx(ctx)),
 	}
+}
+
+func (s *Server) timedFormElementStates(ctx context.Context, form *metadata.FormModule, entity *metadata.Entity, values map[string]any) *elementStates {
+	defer serverTimingSpan(ctx, "elementStates")()
+	return s.formElementStates(form, entity, values, s.isAdminCtx(ctx))
 }
 
 // serializeFieldsForEntity нормализует имена полей к оригинальному регистру
