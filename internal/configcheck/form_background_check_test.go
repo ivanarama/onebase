@@ -27,9 +27,9 @@ func TestCheckFormBackground_InvalidColorWarns(t *testing.T) {
 
 func TestCheckFormBackground_NonGroupKindWarns(t *testing.T) {
 	warns := CheckFormBackground(projWithElement(&metadata.FormElement{
-		Kind:       metadata.FormElementField,
-		Name:       "ПолеНаименование",
-		DataPath:   "Объект.Наименование",
+		Kind:       metadata.FormElementCheckbox,
+		Name:       "ФлажокАктивен",
+		DataPath:   "Объект.Активен",
 		Background: "#e8f5e9",
 	}))
 	if len(warns) != 1 {
@@ -132,5 +132,26 @@ func TestCheckFormBackground_ButtonSupported(t *testing.T) {
 	}))
 	if len(warns) != 1 || warns[0].Code != "form.background-color" {
 		t.Fatalf("невалидный цвет кнопки — form.background-color: %+v", warns)
+	}
+}
+
+// ПолеВвода красит сам ввод: background и border_color у него действуют,
+// у других видов border_color игнорируется, нераспознанный цвет называется.
+func TestCheckFormBackground_FieldColors(t *testing.T) {
+	field := func(bg, border string) *metadata.FormElement {
+		return &metadata.FormElement{Kind: metadata.FormElementField, Name: "ПолеПриёмДо",
+			DataPath: "Объект.Наименование", Background: bg, BorderColor: border}
+	}
+	if warns := CheckFormBackground(projWithElement(field("#fff6e6", "#e0a23a"))); len(warns) != 0 {
+		t.Fatalf("допустимые цвета ПолеВвода не должны предупреждать: %+v", warns)
+	}
+	warns := CheckFormBackground(projWithElement(field("", "рыжий-в-полоску")))
+	if len(warns) != 1 || warns[0].Code != "form.background-color" {
+		t.Fatalf("нераспознанный border_color: %+v", warns)
+	}
+	warns = CheckFormBackground(projWithElement(&metadata.FormElement{
+		Kind: metadata.FormElementGroupBox, Name: "Группа", BorderColor: "#e0a23a"}))
+	if len(warns) != 1 || warns[0].Code != "form.background-kind" {
+		t.Fatalf("border_color у группы должен быть назван игнорируемым: %+v", warns)
 	}
 }
