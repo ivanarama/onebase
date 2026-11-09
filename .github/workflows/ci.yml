@@ -785,6 +785,7 @@ jobs:
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         with:
           version: v2.11.4
+          install-mode: goinstall
 
       - name: Real lint runner driver regression
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
