@@ -329,7 +329,12 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     document.body.appendChild(b);
     return b;
   }
-  function flash(text, kind){
+  function flash(text, kind, messageID){
+    try {
+      const top = window.top || window;
+      if (messageID && top.obMessagesConfig && top.obMessagesConfig().popup &&
+          top.obClaimMessage && !top.obClaimMessage(messageID)) return;
+    } catch (e) {}
     const b = ensureBanner();
     const d = document.createElement('div');
     const palette = kind === 'err'
@@ -356,9 +361,16 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     x.onclick = function(ev){ ev.stopPropagation(); d.remove(); };
     d.appendChild(x);
     b.appendChild(d);
+    // Не больше пяти плашек: новая вытесняет самую старую.
+    while (b.children.length > 5) b.removeChild(b.firstChild);
     // Ошибки держим до закрытия крестиком (чтобы успеть прочитать/скопировать);
-    // info-сообщения сами исчезают через 5 c.
-    if (kind !== 'err') setTimeout(() => d.remove(), 5000);
+    // info-сообщения сами исчезают через message_seconds (по умолчанию 5 c).
+    if (kind !== 'err') setTimeout(() => d.remove(), flashSeconds() * 1000);
+  }
+  function flashSeconds(){
+    const m = document.querySelector ? document.querySelector('meta[name="ob-messages"]') : null;
+    const secs = m ? parseInt(m.getAttribute('data-seconds'), 10) : 0;
+    return secs > 0 ? secs : 5;
   }
   // Доступно другим скриптам (например, грид-IIFE показывает ошибки настройки).
   window.obFlash = flash;
@@ -1302,7 +1314,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
           // controls may receive values from the older server snapshot.
           applyCloseResponse(data, snapshot.body, currentBody);
         } else {
-          (data.messages || []).forEach(m => flash(m, 'ok'));
+          (data.messages || []).forEach((message, index) => flash(message, 'ok', (data.messageIDs || [])[index]));
           if (data.error) flash(data.error, 'err');
         }
         setManagedFormDirty(true);
@@ -1339,7 +1351,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         // эхо отправленного значения не затирает.
         if (data.values) applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
         if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
-        (data.messages || []).forEach(m => flash(m, 'ok'));
+        (data.messages || []).forEach((message, index) => flash(message, 'ok', (data.messageIDs || [])[index]));
         if (data.error) flash(data.error, 'err');
         openItemPicker(data.pickerData, elementName, extraParams || null, snapshot.pickerRequest);
         return;
@@ -1385,7 +1397,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 		setManagedFormDirty(formEditState.revision !== snapshot.editRevision);
 	  }
       if (!beforePostMerged) {
-        (data.messages || []).forEach(m => flash(m, 'ok'));
+        (data.messages || []).forEach((message, index) => flash(message, 'ok', (data.messageIDs || [])[index]));
         if (data.error) flash(data.error, 'err');
       }
       if (navigationBlocked) flash(closeMessage('navigationDirty', 'Форма содержит несохранённые изменения — переход не выполнен'), 'err');
@@ -1828,7 +1840,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 	applyValues(values, refOptions);
 	applyFormTables(formTables);
     if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, document.getElementById('main-form'), values || {}, data.values || {});
-    (data.messages || []).forEach(function(message){ flash(message, 'ok'); });
+    (data.messages || []).forEach((message, index) => flash(message, 'ok', (data.messageIDs || [])[index]));
     if (data.error) flash(data.error, 'err');
     } catch (e) {
       if (window.obApplyConcealed) window.obApplyConcealed([], form, {});
@@ -2066,7 +2078,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 		  if (data.close && data.close.saved === true) {
 			if (currentBody) applyCloseResponse(data, body, currentBody);
 			else {
-			  (data.messages || []).forEach(function(message){ flash(message, 'ok'); });
+			  (data.messages || []).forEach((message, index) => flash(message, 'ok', (data.messageIDs || [])[index]));
 			  if (data.error) flash(data.error, 'err');
 			}
           }
