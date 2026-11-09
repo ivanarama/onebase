@@ -24,7 +24,21 @@ func TestSchemaFormPublishesChoiceFilterContract(t *testing.T) {
 	if choice["type"] != "array" || choice["minItems"] != float64(1) || choice["maxItems"] != float64(8) {
 		t.Fatalf("choice_filter bounds = %#v", choice)
 	}
-	condition := schemaAt(t, choice, "items")
+	// Условие — либо обычное (field/op + один источник), либо запросом
+	// (query + params, как filter[].query формы списка).
+	kinds, ok := schemaAt(t, choice, "items")["oneOf"].([]any)
+	if !ok || len(kinds) != 2 {
+		t.Fatalf("choice_filter items must be oneOf condition/query condition: %#v", choice["items"])
+	}
+	condition, _ := kinds[0].(map[string]any)
+	queryCondition, _ := kinds[1].(map[string]any)
+	if queryCondition["additionalProperties"] != false || schemaAt(t, queryCondition, "properties", "query")["type"] != "string" ||
+		schemaAt(t, queryCondition, "properties", "params")["type"] != "object" {
+		t.Fatalf("query condition contract = %#v", queryCondition)
+	}
+	if names, _ := queryCondition["required"].([]any); len(names) != 1 || names[0] != "query" {
+		t.Fatalf("query condition must require query: %#v", queryCondition["required"])
+	}
 	if condition["additionalProperties"] != false {
 		t.Fatalf("condition must reject unknown keys: %#v", condition)
 	}

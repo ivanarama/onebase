@@ -152,3 +152,55 @@ func TestParams_HasFormModeRadio(t *testing.T) {
 		}
 	}
 }
+
+// Закреплённый администратором режим: личный ключ не действует, оба
+// переключателя (кнопка в шапке и блок в «Системе») не показываются, а прямой
+// POST /ui/form-mode отвечает 403 и ничего не пишет. Повод — оператор в личном
+// режиме «страниц», где любой переход уводит форму звонка («Закрыть приложение?»).
+func TestFormMode_LockedByAdmin(t *testing.T) {
+	s := newServerForFormMode(t)
+	ctx := context.Background()
+	asIvan := func(req *http.Request) *http.Request {
+		return req.WithContext(auth.ContextWithUser(req.Context(), &auth.User{Login: "ivan"}))
+	}
+	// Глобально pages, у ivan личный tabs: без закрепления /ui уводит его в оболочку.
+	if err := s.store.SaveUserFormOpenMode(ctx, "ivan", storage.FormModeTabs); err != nil {
+		t.Fatal(err)
+	}
+	rec := httptest.NewRecorder()
+	s.index(rec, asIvan(httptest.NewRequest(http.MethodGet, "/ui", nil)))
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("без закрепления личный tabs обязан вести в оболочку: %d", rec.Code)
+	}
+
+	if err := s.store.SaveFormOpenModeLocked(ctx, true); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	s.index(rec, asIvan(httptest.NewRequest(http.MethodGet, "/ui", nil)))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("при закреплении действует глобальный pages, ждали 200, получено %d", rec.Code)
+	}
+	if body := rec.Body.String(); strings.Contains(body, "/ui/form-mode") || strings.Contains(body, `class="sys-mode-block"`) {
+		t.Error("при закреплении переключатели режима должны быть скрыты")
+	}
+
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/ui/form-mode", strings.NewReader("mode=pages"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	s.setFormMode(rec, asIvan(req))
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("POST /ui/form-mode при закреплении: %d, ждали 403", rec.Code)
+	}
+	if got := s.store.GetUserFormOpenMode(ctx, "ivan"); got != storage.FormModeTabs {
+		t.Errorf("отказанный POST не должен менять личный режим, получено %q", got)
+	}
+	// Анонимная сессия меняет глобальный режим — и её путь закрыт так же.
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/ui/form-mode", strings.NewReader("mode=tabs"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	s.setFormMode(rec, req)
+	if rec.Code != http.StatusForbidden || s.store.GetFormOpenMode(ctx) != storage.FormModePages {
+		t.Errorf("анонимный POST при закреплении: код %d, глобальный %q", rec.Code, s.store.GetFormOpenMode(ctx))
+	}
+}
