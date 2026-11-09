@@ -155,6 +155,9 @@ func (db *DB) MigrateInfoRegisters(ctx context.Context, regs []*metadata.InfoReg
 }
 
 func (db *DB) migrateInfoRegister(ctx context.Context, ir *metadata.InfoRegister) error {
+	if err := db.validateInfoRegEditRevisionSchema(ctx, ir); err != nil {
+		return err
+	}
 	d := db.dialect
 	if err := db.renameLegacyTable(ctx, metadata.InfoRegTableLogical(ir.Name)); err != nil {
 		return fmt.Errorf("migrate info register %s: %w", ir.Name, err)
@@ -206,6 +209,14 @@ func (db *DB) migrateInfoRegister(ctx context.Context, ir *metadata.InfoRegister
 		if err := db.AddColumnIfMissing(ctx, table, metadata.ColumnName(f), fieldType(d, f)); err != nil {
 			return fmt.Errorf("migrate info register %s.%s: %w", ir.Name, f.Name, err)
 		}
+	}
+	if err := db.AddColumnIfMissing(ctx, table, InfoRegEditRevisionColumn, d.TypeText()); err != nil {
+		return fmt.Errorf("migrate info register %s edit revision: %w", ir.Name, err)
+	}
+	// Backfill before a SQLite PK rebuild so its intersection copy preserves
+	// every revision. The enclosing scope rolls back DDL and backfill together.
+	if err := db.fillInfoRegEditRevisions(ctx, ir, false); err != nil {
+		return err
 	}
 	// фактический PK таблицы может не
 	// совпадать с pkCols(ir) — наследие старого CREATE до того как
@@ -576,8 +587,19 @@ func (db *DB) migrateEntities(ctx context.Context, entities []*metadata.Entity) 
 			return err
 		}
 	}
+	// PostgreSQL headers referencing _users prepare their legacy names inside
+	// the per-source transaction below, so FK refusal rolls those changes back.
+	legacyEntities := entities
+	if db.IsPostgres() {
+		legacyEntities = make([]*metadata.Entity, 0, len(entities))
+		for _, e := range entities {
+			if len(headerUsersReferences(e)) == 0 {
+				legacyEntities = append(legacyEntities, e)
+			}
+		}
+	}
 	// Repeat under writer/table locks, before any rename or setup DDL.
-	if err := db.prepareEntityLegacyIdents(ctx, entities); err != nil {
+	if err := db.prepareEntityLegacyIdents(ctx, legacyEntities); err != nil {
 		return err
 	}
 	d := db.dialect
@@ -625,6 +647,20 @@ func (db *DB) migrateEntities(ctx context.Context, entities []*metadata.Entity) 
 	for _, e := range ordered {
 		if err := db.WithTxScope(ctx, func(ctx context.Context) error {
 			table := metadata.TableName(e.Name)
+			var usersRefs []UsersReference
+			if db.IsPostgres() {
+				usersRefs = headerUsersReferences(e)
+				if err := db.lockHeaderUsersTarget(ctx, usersRefs); err != nil {
+					return err
+				}
+				if len(usersRefs) > 0 {
+					// Nested preparation retains its locks in this header scope.
+					// Both legacy DDL/map writes and FK DDL commit together.
+					if err := db.prepareEntityLegacyIdents(ctx, []*metadata.Entity{e}); err != nil {
+						return err
+					}
+				}
+			}
 			exists, err := db.TableExists(ctx, table)
 			if err != nil {
 				return err
@@ -642,6 +678,13 @@ func (db *DB) migrateEntities(ctx context.Context, entities []*metadata.Entity) 
 				}
 				before, err = db.readEntityIndexes(ctx, table)
 				if err != nil {
+					return err
+				}
+			}
+			if len(usersRefs) > 0 {
+				// Validate legacy values before rename/retype can expose them in a
+				// driver conversion error. No data repair is implicit in migration.
+				if _, err := db.checkHeaderUsersReferences(ctx, usersRefs); err != nil {
 					return err
 				}
 			}
@@ -669,6 +712,11 @@ func (db *DB) migrateEntities(ctx context.Context, entities []*metadata.Entity) 
 			for _, f := range e.Fields {
 				if err := db.AddColumnIfMissing(ctx, table, metadata.ColumnName(f), fieldType(d, f)); err != nil {
 					return fmt.Errorf("migrate %s.%s: %w", e.Name, f.Name, err)
+				}
+			}
+			if len(usersRefs) > 0 {
+				if err := db.ensureHeaderUsersReferences(ctx, usersRefs); err != nil {
+					return err
 				}
 			}
 			if err := db.AddColumnIfMissing(ctx, table, "deletion_mark", d.TypeBool()+" NOT NULL DEFAULT "+boolFalseLit(d)); err != nil {
