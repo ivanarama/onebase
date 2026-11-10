@@ -267,7 +267,7 @@ const tplAppShell = `{{define "page-app-shell"}}
   }
   function openTab(url,title,opts){
     opts=opts||{};
-    if(!opts.allowDup){ for(var i=0;i<tabs.length;i++){ if(tabs[i].url===url){ if(!opts.restoring)setActive(tabs[i]); return tabs[i]; } } }
+    if(!opts.allowDup){ for(var i=0;i<tabs.length;i++){ if(sameTabURL(tabs[i].url,url)){ if(!opts.restoring)setActive(tabs[i]); return tabs[i]; } } }
     var btn=document.createElement('div'); btn.className='ob-tab'; btn.setAttribute('role','tab'); btn.title=title||'Форма'; // фаза 4: тултип полного заголовка
     var lab=document.createElement('span'); lab.className='ob-tab-label'; lab.textContent=title||'Форма'; btn.appendChild(lab);
     var dup=document.createElement('span'); dup.className='ob-tab-dup'; dup.textContent='⧉'; dup.title='Открыть ещё один экземпляр'; btn.appendChild(dup);
@@ -290,6 +290,19 @@ const tplAppShell = `{{define "page-app-shell"}}
     return t;
   }
   window.obOpenTab=openTab;
+  // The widget, saved form and notification may spell the same record path
+  // differently (entity case, raw Unicode, percent-escape case). Reuse its
+  // existing iframe so its edit buffer and optimistic version stay together.
+  // Unlike a close command, opening must preserve query/fragment semantics.
+  function sameTabURL(a,b){
+    if(a===b)return true;
+    try{
+      var left=new URL(String(a),location.origin), right=new URL(String(b),location.origin);
+      var path=decodeURIComponent(left.pathname).toLowerCase();
+      if(!/^\/ui\/(document|catalog)\/[^/]+\/[^/]+$/.test(path))return false;
+      return left.origin===right.origin && left.search===right.search && left.hash===right.hash && sameURL(a,b);
+    }catch(e){return false;}
+  }
   // Закрыть вкладку(и) по АДРЕСУ формы — команда ui.закрытьФорму (план 87).
   // Адрес, а не «активная вкладка»: событие приходит в оболочку, и какая вкладка
   // активна в момент доставки, зависит от порядка команд. Команда применяется
