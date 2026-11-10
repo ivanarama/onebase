@@ -27,6 +27,11 @@ chapters:
     objects: [document/Задача]
     parent: introduction
     title: Задачи и маршрут статусов
+  - file: features.md
+    id: features
+    objects: [processor/ТестыКаркаса]
+    parent: introduction
+    title: Тестовые сценарии Gherkin
   - file: audit.md
     id: audit
     objects: [catalog/ПравилоПроверки, document/ПубликацияПравила]
