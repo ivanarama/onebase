@@ -22,6 +22,13 @@ func roleRowAccessSchema() map[string]any {
 	rows := map[string]any{"type": "object", "properties": map[string]any{"catalogs": section, "documents": section, "registers": section, "inforegs": section}}
 	role := looseNamedSchema("OneBase RBAC role")
 	role["$defs"] = map[string]any{"rowPolicy": policy}
-	role["properties"].(map[string]any)["permissions"] = map[string]any{"type": "object", "properties": map[string]any{"row_access": rows}}
+	fieldPolicy := map[string]any{"type": "object", "properties": map[string]any{
+		"read":     stringSchema("full | mask_tail | mask_city | mask_all | hide"),
+		"keep":     map[string]any{"type": "integer"},
+		"disclose": map[string]any{"type": "boolean", "description": "false forbids disclosure despite the object-level right; omitted preserves existing behavior"},
+	}}
+	fieldSection := map[string]any{"type": "object", "additionalProperties": map[string]any{"type": "object", "additionalProperties": fieldPolicy}}
+	fields := map[string]any{"type": "object", "properties": map[string]any{"catalogs": fieldSection, "documents": fieldSection, "registers": fieldSection, "inforegs": fieldSection}}
+	role["properties"].(map[string]any)["permissions"] = map[string]any{"type": "object", "properties": map[string]any{"row_access": rows, "field_access": fields}}
 	return role
 }
