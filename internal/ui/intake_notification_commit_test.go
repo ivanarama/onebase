@@ -56,6 +56,10 @@ func TestIntakeHTTP_NotificationAfterCommit(t *testing.T) {
 				if err := db.SaveNetworkEnabled(ctx, true); err != nil {
 					t.Fatal(err)
 				}
+				var baseline int
+				if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM звонок").Scan(&baseline); err != nil {
+					t.Fatal(err)
+				}
 				src := `Функция Обработать(Конверт) Экспорт
     Док = Документы.Звонок.Создать();
     Док.Записать();
@@ -112,6 +116,17 @@ func TestIntakeHTTP_NotificationAfterCommit(t *testing.T) {
 					t.Errorf("notification escaped before commit: %+v", ev)
 				default:
 				}
+				if !db.IsSQLite() {
+					// PostgreSQL readers on another connection cannot see the new
+					// document yet. SQLite uses a single pooled connection.
+					var visible int
+					if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM звонок").Scan(&visible); err != nil {
+						t.Fatal(err)
+					}
+					if visible != baseline {
+						t.Fatalf("uncommitted document visible: %d, baseline %d", visible, baseline)
+					}
+				}
 				release()
 				var w *httptest.ResponseRecorder
 				select {
@@ -124,9 +139,8 @@ func TestIntakeHTTP_NotificationAfterCommit(t *testing.T) {
 					if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM звонок").Scan(&count); err != nil {
 						t.Fatal(err)
 					}
-					// The successful subtest left one document; rollback adds none.
-					if count != 1 {
-						t.Fatalf("rollback document count=%d, want 1", count)
+					if count != baseline {
+						t.Fatalf("rollback document count=%d, want %d", count, baseline)
 					}
 					select {
 					case ev := <-events:
