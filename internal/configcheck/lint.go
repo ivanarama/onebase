@@ -650,6 +650,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		"conceal", "reveal_when",
 		"title_from",
 		"hint_inline",
+		"frame",
 	} {
 		element.keys[k] = nil
 	}
