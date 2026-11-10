@@ -56,11 +56,19 @@ func TestDocumentObjectSnapshotKeepsHeaderVersion(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					defer owner.Close(context.Background())
+					defer func() {
+						if err := owner.Close(context.Background()); err != nil {
+							t.Error(err)
+						}
+					}()
 					if _, err = owner.Exec(ctx, "SELECT pg_advisory_lock($1)", lockKey); err != nil {
 						t.Fatal(err)
 					}
-					defer owner.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", lockKey)
+					defer func() {
+						if _, err := owner.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", lockKey); err != nil {
+							t.Error(err)
+						}
+					}()
 					_, err = db.Exec(ctx, fmt.Sprintf(`CREATE FUNCTION onebase_doc_snapshot_probe(v bigint) RETURNS bigint LANGUAGE plpgsql VOLATILE AS $$ BEGIN PERFORM pg_advisory_xact_lock(%d); RETURN v; END $$`, lockKey))
 					if err != nil {
 						t.Fatal(err)
