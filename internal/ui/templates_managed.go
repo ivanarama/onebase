@@ -582,7 +582,7 @@ const tplManagedForm = `
 .ob-density-compact textarea{font-size:13px;padding:4px 8px}
 .ob-density-compact .btn{padding:4px 10px;font-size:13px}
 /* У групп и отдельных страниц исходные отступы заданы inline, как у вкладок. */
-.ob-density-compact .form-group-box{padding:6px 10px 8px !important;margin-bottom:8px !important}
+.ob-density-compact .form-group-box:not(.ob-group-plain){padding:6px 10px 8px !important;margin-bottom:8px !important}
 .ob-density-compact .managed-tabs{padding:8px 10px !important;margin-bottom:8px !important}
 .ob-density-compact .managed-tab-headers{margin-bottom:8px !important}
 .ob-density-compact .managed-tab-btn{padding:5px 12px;font-size:13px}
@@ -611,7 +611,7 @@ const tplManagedForm = `
 .ob-density-dense input[type=text],.ob-density-dense input[type=datetime-local],.ob-density-dense input[type=date],.ob-density-dense input[type=number],.ob-density-dense select{height:25px;padding:2px 7px;font-size:12.5px}
 .ob-density-dense textarea{font-size:12.5px;padding:3px 7px}
 .ob-density-dense .btn{padding:3px 9px;font-size:12.5px}
-.ob-density-dense .form-group-box{padding:4px 8px 5px !important;margin-bottom:5px !important}
+.ob-density-dense .form-group-box:not(.ob-group-plain){padding:4px 8px 5px !important;margin-bottom:5px !important}
 .ob-density-dense .managed-group-horizontal>.managed-group-body{gap:6px}
 .ob-density-dense .managed-group-horizontal>.managed-group-body>.form-group>label{line-height:12px}
 .ob-density-dense .managed-group-horizontal>.managed-group-body:has(>.form-group:not([style*="display:none"]):not([style*="display: none"])>label)>.managed-btn,.ob-density-dense .managed-group-horizontal>.managed-group-body:has(>.form-group:not([style*="display:none"]):not([style*="display: none"])>label)>.managed-btn-layout{margin-top:13px}
