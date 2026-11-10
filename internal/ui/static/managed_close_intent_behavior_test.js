@@ -465,6 +465,25 @@ test('dirty processor offers an explicit close-without-saving choice and never s
 	assert.deepEqual(modes, ['discard']);
 });
 
+test('unbound programmatic close preserves dirty confirmation', async () => {
+  const modes = [];
+  const app = runtime(async (url, options) => {
+    const intentId = closeIntent(options);
+    modes.push(closeMode(options));
+    return response({ok: true, close: {intentId, allowed: true, saved: false}});
+  }, {kind: 'processor'});
+  app.context._obFormDirty = true;
+
+  const pending = app.context.obRequestFormClose({reason: 'programmatic'});
+  await Promise.resolve();
+  const modal = app.document.getElementById('ob-managed-close-confirm');
+  assert.ok(modal, 'an unbound URL command discarded a dirty form');
+  const row = modal.children[0].children[2];
+  row.dispatch('click', {target: row.children[1]});
+  assert.equal((await pending).allowed, false);
+  assert.deepEqual(modes, []);
+});
+
 test('clean discard becomes dirty when denied BeforeClose returns unsaved state', async () => {
   const app = runtime(async (url, options) => {
     const intentId = closeIntent(options);

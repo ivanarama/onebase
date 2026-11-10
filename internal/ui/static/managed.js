@@ -1266,10 +1266,12 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 	// диалог уже не тот — ответ некуда применять.
 	if (snapshot.pickerRequest && snapshot.pickerRequest.search && !window.obPickerRequestCurrent(snapshot.pickerRequest)) return;
     try {
+      var closeSource = freshCloseIntentID();
+      programmaticCloseSource = {token: closeSource, revision: snapshot.editRevision};
       const res = await fetch(URL, {
         method: 'POST',
         body: body,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', 'X-OneBase-Conceal-Context': form && form.getAttribute ? form.getAttribute('data-ob-conceal-context') || '' : '' },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', 'X-OneBase-Conceal-Context': form && form.getAttribute ? form.getAttribute('data-ob-conceal-context') || '' : '', 'X-OneBase-Form-Close-Source': closeSource },
         credentials: 'same-origin'
       });
       const data = await res.json();
@@ -1560,6 +1562,14 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
   // this whole concurrency domain. obFire is defined above but only invoked
   // after this IIFE has initialized every shared state variable.
   var formEventQueue = Promise.resolve();
+  var programmaticCloseSource = null;
+  // SSE can arrive before its form-event response. Wait only for our exact
+  // snapshot. The controller rechecks and consumes it in the child document.
+  window.obPrepareProgrammaticClose = function(source){
+    var snapshot = programmaticCloseSource;
+    if (!source || !snapshot || snapshot.token !== source) return Promise.resolve('');
+    return formEventQueue;
+  };
   var formEventPendingCount = 0;
   var formEventPending = false;
   var formEventWriteUnknown = false;
@@ -1888,10 +1898,22 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         flash(closeMessage('controllerUnavailable', 'Проверка закрытия недоступна. Форма оставлена открытой.'), 'err');
         return {allowed: false, intentId: '', error: 'controller-not-ready'};
       }
-      var mode = options.mode ? String(options.mode) : await closeChoice();
+      // Recheck after the asynchronous shell bridge: input may have changed
+      // since preparation, and another copy has its own independent token.
+      var sourceSnapshot = programmaticCloseSource;
+      var ownSource = reason === 'programmatic' && options.closeSource && sourceSnapshot &&
+        sourceSnapshot.token === options.closeSource;
+      if (ownSource) programmaticCloseSource = null;
+      var automaticDiscard = !options.mode && ownSource && sourceSnapshot.revision === formEditState.revision;
+      var mode = options.mode
+        ? String(options.mode)
+        : (automaticDiscard ? 'discard' : await closeChoice());
       if (mode === 'cancel') return {allowed: false, intentId: '', error: 'user-cancelled'};
       var body = await closeSnapshotBody(reason, mode);
       if (!body) return {allowed: false, intentId: '', error: 'form-state'};
+      if (automaticDiscard && sourceSnapshot.revision !== formEditState.revision) {
+        return {allowed: false, intentId: '', error: 'form-changed'};
+      }
       // File reads and grid synchronization may yield or commit fresh edits
       // after BeforePost completed. Never open a new intent under old approval.
       if (BEFORE_POST && mode === 'post' && !retryableClose &&
