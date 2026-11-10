@@ -12,6 +12,11 @@ chapters:
     objects: [catalog/ОбъектМетаданных, inforeg/Трассировка]
     parent: introduction
     title: Мост метаданных целевого проекта
+  - file: assign.md
+    id: assign
+    objects: [catalog/ОбъектМетаданных, inforeg/Трассировка]
+    parent: introduction
+    title: Расстановка функций по импортированному описанию
   - file: traceability.md
     id: traceability
     objects: [catalog/ОбъектМетаданных]
