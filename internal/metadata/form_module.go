@@ -232,7 +232,12 @@ type FormElement struct {
 	// а прокручивается. Нужна ряду кнопок: перенос рвёт панель действий пополам,
 	// и половина кнопок читается как отдельный блок. По умолчанию перенос, как
 	// было.
-	ScrollX    bool   `yaml:"scroll_x,omitempty"`
+	ScrollX bool `yaml:"scroll_x,omitempty"`
+	// Frame — рамка ГруппаФормы: frame: false убирает рамку, внутренние
+	// отступы и заголовок, оставляя только раскладку детей. Так собирают
+	// строку полей внутри раздела (как в карточке 1С: рамка у раздела, а не у
+	// каждой строки). nil и true — рамка, как было.
+	Frame      *bool  `yaml:"frame,omitempty"`
 	Background string `yaml:"background,omitempty"` // фон контейнера; читается только у ГруппаФормы (#1547), цвет проверяет csssafe.Color
 	ReadOnly   bool   `yaml:"readonly,omitempty"`   // только чтение
 	// EditableAdminOnly — поле редактирует только администратор, остальным оно
@@ -693,6 +698,13 @@ type FormCellStyle struct {
 }
 
 // FormModule represents a form module with event handlers
+// FormDensityCompact — плотная раскладка формы (FormModule.Density).
+const FormDensityCompact = "compact"
+
+// FormDensityDense — ещё плотнее compact (поле 25px, шрифт 12.5px, подпись
+// 10.5px): для формы, которой compact не хватает, чтобы влезть в экран.
+const FormDensityDense = "dense"
+
 type FormModule struct {
 	EntityName string                    `yaml:"entity,omitempty"`
 	Name       string                    `yaml:"name,omitempty"`
@@ -760,6 +772,12 @@ type FormModule struct {
 	// вводящий данные потоком (#1486). Ctrl+S, Ctrl+Enter и кнопки записи
 	// работают всегда, независимо от этого ключа.
 	EnterSubmitsForm bool `yaml:"enter_submits_form,omitempty"`
+	// Density — плотность раскладки этой формы: "" — обычная, "compact" —
+	// плотная (поле 28px, шрифт 13px, подпись 11px, меньшие отступы), "dense"
+	// — ещё плотнее (поле 25px, шрифт 12.5px, подпись 10.5px). Нужна рабочим
+	// формам, которые обязаны поместиться в экран без прокрутки, не меняя
+	// остальные страницы системы.
+	Density string `yaml:"density,omitempty"`
 	// OneCMeta — служебный блок, используемый только конвертером 1С,
 	// рантайм его игнорирует. Может содержать version, unknown_xml и т.п.
 	OneCMeta map[string]any `yaml:"oneC_meta,omitempty"`
@@ -1117,4 +1135,9 @@ func FormTitleSourceName(source string) string {
 		}
 	}
 	return name
+}
+
+// Frameless — ГруппаФормы с frame: false: без рамки, отступов и заголовка.
+func (el *FormElement) Frameless() bool {
+	return el != nil && el.Kind == FormElementGroupBox && el.Frame != nil && !*el.Frame
 }
