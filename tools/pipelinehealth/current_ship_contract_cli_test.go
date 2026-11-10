@@ -67,13 +67,21 @@ func TestCurrentStickyConsumerContractPublicCLI(t *testing.T) {
 	} {
 		t.Run(guarantee, func(t *testing.T) {
 			root := fixtureSkillsRoot(t)
-			path := filepath.Join(root, "merge-shepherd", "references", "legacy-protocol.md")
-			data, err := os.ReadFile(path)
+			files, err := os.OpenRoot(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := files.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			data, err := files.ReadFile("merge-shepherd/references/legacy-protocol.md")
 			if err != nil {
 				t.Fatal(err)
 			}
 			broken := strings.ReplaceAll(string(data), guarantee, "missing-current-ship-guarantee")
-			if err := os.WriteFile(path, []byte(broken), 0o600); err != nil {
+			if err := files.WriteFile("merge-shepherd/references/legacy-protocol.md", []byte(broken), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			got := currentShipContractCLI(t, root)
