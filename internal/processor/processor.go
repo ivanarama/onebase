@@ -120,6 +120,13 @@ func (p *Processor) VirtualEntity() *metadata.Entity {
 			enumName := "_" + param.Name + "_choice"
 			f.Type = metadata.FieldType("enum:" + enumName)
 			f.EnumName = enumName
+		case strings.HasPrefix(param.Type, "enum:"):
+			// Перечисление конфигурации — как у поля сущности: форма берёт
+			// значения и подписи (titles) из перечисления. Раньше такой
+			// параметр падал в default и становился строкой — Переключатель
+			// и список оставались без вариантов.
+			f.Type = metadata.FieldType(param.Type)
+			f.EnumName = strings.TrimPrefix(param.Type, "enum:")
 		case strings.HasPrefix(param.Type, "reference:"):
 			f.Type = metadata.FieldType("reference:" + strings.TrimPrefix(param.Type, "reference:"))
 			f.RefEntity = strings.TrimPrefix(param.Type, "reference:")
