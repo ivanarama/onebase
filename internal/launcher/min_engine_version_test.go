@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/configdb"
@@ -20,9 +22,33 @@ import (
 // Exercise the HTTP launch endpoint and its visible return page, including
 // database-backed manifests. A private comparison alone would miss a dead call.
 func TestStartMinimumEngineVersionWarning(t *testing.T) {
-	previous := version.Build
+	const childEnv = "ONEBASE_MIN_ENGINE_VERSION_WARNING_CHILD"
+	const childSentinel = "isolated-http-v1"
+	if child := os.Getenv(childEnv); child != childSentinel {
+		if child != "" {
+			t.Fatalf("unexpected minimum engine warning child sentinel: %q", child)
+		}
+		// Other HTTP tests may leave update watchers reading version.Build.
+		// Keep this artificial launcher version entirely in a fresh process.
+		deadline := time.Now().Add(30 * time.Second)
+		if outer, ok := t.Deadline(); ok && outer.Add(-5*time.Second).Before(deadline) {
+			deadline = outer.Add(-5 * time.Second)
+		}
+		ctx, cancel := context.WithDeadline(t.Context(), deadline)
+		defer cancel()
+		cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestStartMinimumEngineVersionWarning$", "-test.v", "-test.timeout=30s") //nolint:gosec // Fixed test pattern in the current test executable.
+		cmd.Env = append(os.Environ(), childEnv+"="+childSentinel)
+		cmd.WaitDelay = 5 * time.Second
+		output, err := cmd.CombinedOutput()
+		if err != nil || ctx.Err() != nil {
+			t.Fatalf("minimum engine warning HTTP subprocess: %v; context: %v\n%s", err, ctx.Err(), output)
+		}
+		t.Logf("minimum engine warning HTTP subprocess:\n%s", output)
+		return
+	}
+	// This child runs only this test, sets Build before any HTTP goroutines,
+	// and waits for each httptest.Server cleanup before exiting.
 	version.Build = "v9.0.0"
-	t.Cleanup(func() { version.Build = previous })
 	for _, source := range []string{"file", "database"} {
 		for _, requirement := range []string{"2.0.0", "1.2.3", "1.0.0", ""} {
 			t.Run(source+"/"+requirement, func(t *testing.T) {

@@ -2,6 +2,7 @@ package access
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -25,7 +26,8 @@ type QueryMaskPlan struct {
 	// byColumn — решения по имени результирующей колонки (нижний регистр).
 	byColumn map[string]FieldDecision
 	// byField — решения по именам полей для проекции «*»: имена колонок
-	// результата там совпадают с колонками таблиц.
+	// результата после query.RestoreLongLabels совпадают с логическими
+	// именами колонок таблиц.
 	byField map[string]FieldDecision
 	// deniedReason уточняет причину отказа в тексте ошибки. Пусто — обычный
 	// отказ «поле под маской в отборе/агрегате».
@@ -35,6 +37,25 @@ type QueryMaskPlan struct {
 // Empty сообщает, что маскировать нечего и запрос разрешён.
 func (p QueryMaskPlan) Empty() bool {
 	return p.Denied == "" && len(p.byColumn) == 0 && len(p.byField) == 0
+}
+
+// sourceMeta — метаданные источника для полевых политик. У табличной части
+// («Справочник.X.ТЧ») — её поля (номер строки и реквизиты ТЧ), а не поля
+// владельца: иначе ПДн строк ТЧ ушли бы из запроса без маски.
+func sourceMeta(kind, name, tablePart string, lookup func(kind, name string) *metadata.Entity) *metadata.Entity {
+	if lookup == nil {
+		return nil
+	}
+	meta := lookup(kind, name)
+	if meta == nil || tablePart == "" {
+		return meta
+	}
+	for i := range meta.TableParts {
+		if strings.EqualFold(meta.TableParts[i].Name, tablePart) {
+			return metadata.TablePartQueryEntity(meta, &meta.TableParts[i], meta.Name)
+		}
+	}
+	return nil
 }
 
 // QueryMaskPlanFor строит план маскирования результата скомпилированного
@@ -122,6 +143,18 @@ func QueryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name str
 		if prev, exists := plan.byColumn[col.Output]; !exists || lessRestrictive(prev, dec) {
 			plan.byColumn[col.Output] = dec
 		}
+	}
+	// Wildcard ambiguity is checked against physical SQL columns above. Rows
+	// reach Apply after Run/RunLimit restores the selected logical labels.
+	if len(plan.byField) > 0 && len(res.LongIdents) > 0 {
+		restored := make(map[string]FieldDecision, len(plan.byField))
+		for column, dec := range plan.byField {
+			if logical, ok := res.LongIdents[column]; ok {
+				column = logical
+			}
+			restored[column] = dec
+		}
+		plan.byField = restored
 	}
 	return plan
 }
@@ -212,7 +245,7 @@ func maskedSourceFields(u *auth.User, sources []query.SourceRef, lookup func(kin
 	for _, src := range sources {
 		var meta *metadata.Entity
 		if lookup != nil {
-			meta = lookup(src.Kind, src.Name)
+			meta = sourceMeta(src.Kind, src.Name, src.TablePart, lookup)
 		}
 		for field, dec := range FieldDecisions(u, src.Kind, src.Name, meta) {
 			put(byField, field, dec)
@@ -273,7 +306,7 @@ func wildcardSourceColumnCounts(sources []query.SourceOccurrence, qualifier stri
 		if lookup == nil {
 			return nil
 		}
-		meta := lookup(src.Kind, src.Name)
+		meta := sourceMeta(src.Kind, src.Name, src.TablePart, lookup)
 		if meta == nil {
 			return nil
 		}

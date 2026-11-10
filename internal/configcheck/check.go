@@ -447,6 +447,20 @@ func CheckQueries(proj *project.Project) []Issue {
 			})
 		}
 	}
+	for _, lq := range listFormFilterQueries(proj) {
+		o := opts
+		o.Params = listFormFilterQueryParams()
+		if _, err := query.Compile(lq.query, o); err != nil {
+			issues = append(issues, Issue{File: lq.file, Object: lq.object, Kind: "Форма списка (запрос отбора)", Message: err.Error()})
+		}
+	}
+	for _, cq := range choiceFilterQueries(proj) {
+		o := opts
+		o.Params = cq.params
+		if _, err := query.Compile(cq.query, o); err != nil {
+			issues = append(issues, Issue{File: cq.file, Object: cq.object, Kind: "Управляемая форма (запрос choice_filter)", Message: err.Error()})
+		}
+	}
 	for _, rep := range proj.Reports {
 		if rep.Query == "" {
 			continue
@@ -513,7 +527,95 @@ func CheckQueriesExecutable(proj *project.Project, validate func(sqlText string)
 		}
 		check(rep.Query, "reports/"+rep.Name+".yaml", rep.Name, "Отчёт (исполнение запроса)", params)
 	}
+	for _, lq := range listFormFilterQueries(proj) {
+		check(lq.query, lq.file, lq.object, "Форма списка (исполнение запроса отбора)", listFormFilterQueryParams())
+	}
+	for _, cq := range choiceFilterQueries(proj) {
+		check(cq.query, cq.file, cq.object, "Управляемая форма (исполнение запроса choice_filter)", cq.params)
+	}
 	return issues
+}
+
+// listFormFilterQuery — запрос условия постоянного отбора формы списка
+// (filter: query). Сломанный запрос рантайм закрывает пустым списком, поэтому
+// ловить его надо здесь, а не по жалобе «список пуст».
+type listFormFilterQuery struct {
+	query, file, object string
+}
+
+func listFormFilterQueries(proj *project.Project) []listFormFilterQuery {
+	var out []listFormFilterQuery
+	for _, e := range proj.Entities {
+		if e == nil {
+			continue
+		}
+		for _, f := range e.Forms {
+			if f == nil || !strings.EqualFold(f.Kind, "list") {
+				continue
+			}
+			file := f.SourcePath
+			if file == "" {
+				file = "forms/" + strings.ToLower(e.Name) + "/списка.form.yaml"
+			}
+			for _, c := range f.ListFilter {
+				if strings.TrimSpace(c.Query) != "" {
+					out = append(out, listFormFilterQuery{query: c.Query, file: file, object: e.Name})
+				}
+			}
+		}
+	}
+	return out
+}
+
+// choiceFilterQuery — запрос условия choice_filter (query): сломанный рантайм
+// закрывает пустым подбором, поэтому ловить его надо здесь.
+type choiceFilterQuery struct {
+	query, file, object string
+	params              map[string]any
+}
+
+func choiceFilterQueries(proj *project.Project) []choiceFilterQuery {
+	var out []choiceFilterQuery
+	collect := func(object string, forms []*metadata.FormModule, label func(*metadata.FormModule) string) {
+		for _, f := range forms {
+			if f == nil {
+				continue
+			}
+			f.Walk(func(el *metadata.FormElement) bool {
+				if el == nil {
+					return true
+				}
+				for _, c := range el.ChoiceFilter {
+					if !c.IsQuery() {
+						continue
+					}
+					params := listFormFilterQueryParams()
+					for name := range c.Params {
+						params[strings.TrimSpace(name)] = nil
+					}
+					out = append(out, choiceFilterQuery{query: c.Query, file: label(f), object: object, params: params})
+				}
+				return true
+			})
+		}
+	}
+	for _, e := range proj.Entities {
+		if e != nil {
+			collect(e.Name, e.Forms, func(f *metadata.FormModule) string { return formFileLabel(e, f) })
+		}
+	}
+	for _, p := range proj.Processors {
+		if p != nil {
+			collect(p.Name, p.Forms, func(f *metadata.FormModule) string { return procFormFileLabel(p.Name, f) })
+		}
+	}
+	return out
+}
+
+// listFormFilterQueryParams — служебные параметры запроса отбора: их
+// подставляет рантайм списка.
+func listFormFilterQueryParams() map[string]any {
+	return map[string]any{"ТекущийПользователь": nil, "ТекущийЛогин": nil}
 }
 
 // ParseDSL runs the lexer and parser on a snippet, then validates function

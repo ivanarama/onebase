@@ -134,16 +134,27 @@ func TestNumeratorsRoot_ScopeRequiredAndSeparated(t *testing.T) {
 }
 
 func TestNumeratorsRoot_UsesLiveTransactionContext(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "numerator.db"))
+	parent := t.Context()
+	if deadline, ok := t.Deadline(); ok {
+		var cancelDeadline context.CancelFunc
+		parent, cancelDeadline = context.WithDeadline(parent, deadline)
+		defer cancelDeadline()
+	}
+	// Открытие файловой БД и схема не расходуют бюджет проверки транзакции.
+	setupCtx, cancelSetup := context.WithTimeout(parent, 30*time.Second)
+	defer cancelSetup()
+	db, err := storage.ConnectSQLite(setupCtx, filepath.Join(t.TempDir(), "numerator.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	if err := db.EnsureNumeratorSchema(ctx); err != nil {
+	if err := db.EnsureNumeratorSchema(setupCtx); err != nil {
 		t.Fatal(err)
 	}
+	cancelSetup()
+
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
+	defer cancel()
 	reg := &fakeNumReg{ents: map[string]*metadata.Entity{
 		"Договоры": {Name: "Договоры", Numerator: &metadata.Numerator{Length: 4, Period: "none"}},
 	}}
