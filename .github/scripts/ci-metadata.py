@@ -49,8 +49,11 @@ def missing_blob(api, endpoint):
 
 
 def full_proof(api, repository, run, pr, workflow_blob, epoch, now, *, completed=True):
-    if ((completed and (run.get('status') != 'completed' or run.get('conclusion') != 'success'))
-            or (not completed and run.get('status') not in {'queued', 'in_progress'})
+    bench_failure = completed and run.get('conclusion') == 'failure'
+    if ((completed and (run.get('status') != 'completed'
+                        or run.get('conclusion') not in {'success', 'failure'}))
+            or (not completed and (run.get('status') not in {'queued', 'in_progress'}
+                                   or run.get('conclusion') is not None))
             or run.get('head_sha') != pr['head']['sha']
             or run.get('event') not in {'pull_request', 'workflow_dispatch'}
             or run.get('path') != '.github/workflows/ci.yml'):
@@ -67,7 +70,9 @@ def full_proof(api, repository, run, pr, workflow_blob, epoch, now, *, completed
             return False
         prefix = f'repos/{repository}/actions/runs/{run["id"]}'
         artifacts = api(prefix + '/artifacts?per_page=100')
-        if artifacts['total_count'] > 100:
+        if (artifacts['total_count'] > 100
+                or (bench_failure and (type(artifacts['total_count']) is not int
+                                       or artifacts['total_count'] != len(artifacts['artifacts'])))):
             return False
         name = f'ci-inputs-{run["id"]}-{run["run_attempt"]}'
         found = [a for a in artifacts['artifacts'] if a['name'] == name and not a['expired'] and a['size_in_bytes'] <= 65536]
@@ -94,8 +99,24 @@ def full_proof(api, repository, run, pr, workflow_blob, epoch, now, *, completed
         if jobs['total_count'] > 100:
             return False
         required = [j for j in jobs['jobs'] if j['name'] in REQUIRED]
-        return (len(required) == len(REQUIRED) and {j['name'] for j in required} == REQUIRED
-                and all(j['status'] == 'completed' and j['conclusion'] == 'success' for j in required))
+        if not (len(required) == len(REQUIRED) and {j['name'] for j in required} == REQUIRED
+                and all(j['status'] == 'completed' and j['conclusion'] == 'success' for j in required)):
+            return False
+        if not bench_failure:
+            return True
+        # A failed workflow is reusable only for the single optional bench
+        # failure. Require the entire attempt's unambiguous job inventory;
+        # neither the workflow nor bench is relabelled as successful.
+        listed = jobs['jobs']
+        return (type(jobs['total_count']) is int and jobs['total_count'] == len(listed)
+                and all(type(j.get('id')) is int and j['id'] > 0
+                        and isinstance(j.get('name'), str) and j['name'] for j in listed)
+                and len({j['id'] for j in listed}) == len(listed)
+                and len({j['name'] for j in listed}) == len(listed)
+                and sum(j['name'] == 'bench' for j in listed) == 1
+                and all(j['status'] == 'completed'
+                        and j['conclusion'] == ('failure' if j['name'] == 'bench' else 'success')
+                        for j in listed))
     except subprocess.CalledProcessError as exc:
         error = exc.stderr or b''
         if isinstance(error, bytes): error = error.decode('utf-8', errors='replace')

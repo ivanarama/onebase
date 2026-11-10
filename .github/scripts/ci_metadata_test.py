@@ -34,7 +34,8 @@ class API:
                           base='b'*40, checkout='c'*40, workflow_blob='workflow', mode='full',
                           environment_epoch='', event='pull_request',
                           body_sha256=hashlib.sha256(b'Fixes #1').hexdigest())
-        self.jobs = [dict(name=n, status='completed', conclusion='success') for n in ci.REQUIRED]
+        self.jobs = [dict(id=i, name=n, status='completed', conclusion='success')
+                     for i, n in enumerate(sorted(ci.REQUIRED), 1)]
         self.changed_blob = False
         self.bad_archive = False
 
@@ -49,6 +50,8 @@ class API:
         if f'/attempts/{self.run["run_attempt"]}/jobs?' in endpoint: return dict(total_count=len(self.jobs), jobs=self.jobs)
         if f'/runs/{self.run["id"]}/artifacts?' in endpoint:
             return dict(total_count=1, artifacts=[dict(id=200, name=f'ci-inputs-{self.run["id"]}-{self.run["run_attempt"]}', expired=False, size_in_bytes=1000)])
+        if '/artifacts?per_page=100' in endpoint:
+            return dict(total_count=0, artifacts=[])
         if '/artifacts/200/zip' in endpoint:
             if self.bad_archive: return b'broken'
             stream = io.BytesIO()
@@ -159,7 +162,7 @@ class MetadataTests(unittest.TestCase):
 GH_STUB = r'''
 package main
 import("encoding/json";"fmt";"io";"os")
-type response struct { Body json.RawMessage `json:"body"`; Bytes []byte `json:"bytes"`; Error int `json:"error"` }
+type response struct { Body json.RawMessage `json:"body"`; Bytes []byte `json:"bytes"`; Error int `json:"error"`; Transport string `json:"transport"` }
 func main(){
  data,err:=os.ReadFile(os.Getenv("METADATA_CLI_FIXTURE"));if err!=nil{panic(err)}
  var responses map[string]response;if json.Unmarshal(data,&responses)!=nil{panic("fixture JSON")}
@@ -173,6 +176,7 @@ func main(){
   fmt.Print("{}");return
  }
  r,ok:=responses[endpoint];if !ok{fmt.Fprintln(os.Stderr,"unexpected offline endpoint:",endpoint);os.Exit(93)}
+ if r.Transport!=""{fmt.Fprintln(os.Stderr,r.Transport);os.Exit(1)}
  if r.Error!=0{fmt.Fprintf(os.Stderr,"gh: fixture error (HTTP %d)\n",r.Error);fmt.Printf("{\"status\":\"%d\"}",r.Error);os.Exit(1)}
  if r.Bytes!=nil{os.Stdout.Write(r.Bytes)}else{os.Stdout.Write(r.Body)}
 }
@@ -191,7 +195,7 @@ class PublicCLI(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):cls.temporary.cleanup()
 
-    def invoke(self, *, missing=None, late_failure=False, dispatch=False, no_artifact=False, wrong_dispatch_base=False, fork_docs=False):
+    def invoke(self, *, missing=None, late_failure=False, dispatch=False, no_artifact=False, wrong_dispatch_base=False, fork_docs=False, configure=None, edit_responses=None):
         import base64
         a=API();a.run['updated_at']=datetime.now(timezone.utc).isoformat()
         if dispatch:
@@ -200,6 +204,7 @@ class PublicCLI(unittest.TestCase):
             if wrong_dispatch_base:a.proof['base']='d'*40
         if fork_docs:
             a.pr['head']['repo']['full_name']='contributor/repo';a.proof['mode']='docs'
+        if configure:configure(a)
         runs=[a.run]
         if late_failure:
             a.run.update(id=101,run_number=101,updated_at='2026-01-01T00:00:00Z');a.proof['run_id']=101
@@ -216,11 +221,13 @@ class PublicCLI(unittest.TestCase):
         add(prefix+'/actions/workflows/ci.yml/runs?head_sha='+('a'*40)+'&per_page=100',dict(total_count=len(runs),workflow_runs=runs))
         add(prefix+f'/actions/runs/{a.run["id"]}/artifacts?per_page=100',dict(total_count=1,artifacts=[dict(id=200,name=f'ci-inputs-{a.run["id"]}-1',expired=False,size_in_bytes=1000)]))
         if no_artifact:add(prefix+f'/actions/runs/{a.run["id"]}/artifacts?per_page=100',dict(total_count=0,artifacts=[]))
+        if late_failure:add(prefix+'/actions/runs/100/artifacts?per_page=100',dict(total_count=0,artifacts=[]))
         stream=io.BytesIO()
         with zipfile.ZipFile(stream,'w') as archive:archive.writestr('ci-inputs.json',json.dumps(a.proof))
         responses[prefix+'/actions/artifacts/200/zip']=dict(bytes=base64.b64encode(stream.getvalue()).decode())
         add(prefix+f'/actions/runs/{a.run["id"]}/attempts/1/jobs?per_page=100',dict(total_count=len(a.jobs),jobs=a.jobs))
         add(prefix+'/git/ref/heads/feature%2Fexample',dict(object=dict(sha='a'*40)))
+        if edit_responses:edit_responses(responses)
         fixture=self.root/'responses.json';fixture.write_text(json.dumps(responses),encoding='utf-8')
         calls=self.root/'calls.jsonl';calls.unlink(missing_ok=True)
         event=self.root/'event.json';event.write_text(json.dumps(dict(number=42)),encoding='utf-8')
@@ -258,6 +265,125 @@ class PublicCLI(unittest.TestCase):
     def test_docs_only_fork_refuses_through_public_cli_without_any_write(self):
         result,writes=self.invoke(fork_docs=True);self.assertNotEqual(result.returncode,0)
         self.assertIn('Rerunning docs-only CI cannot force full mode',result.stderr);self.assertEqual(writes,[])
+
+
+    @staticmethod
+    def failed_bench(a):
+        a.pr['head']['repo']['full_name'] = 'contributor/repo'
+        a.run['conclusion'] = 'failure'
+        a.jobs += [dict(id=90, name='classify', status='completed', conclusion='success'),
+                   dict(id=91, name='bench', status='completed', conclusion='failure')]
+
+    def assert_refused(self, configure=None, edit_responses=None):
+        def setup(a):
+            self.failed_bench(a)
+            if configure:configure(a)
+        result, writes = self.invoke(configure=setup, edit_responses=edit_responses)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertNotIn('unexpected offline endpoint', result.stderr)
+        self.assertNotIn('panic:', result.stderr)
+        self.assertEqual(writes, [])
+
+    def test_only_failed_bench_reuses_exact_full_proof_without_writes(self):
+        result, writes = self.invoke(configure=self.failed_bench)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['action'], 'reuse')
+        self.assertEqual(writes, [])
+
+    def test_failed_bench_requires_every_required_job_exactly_once_and_successful(self):
+        for name in sorted(ci.REQUIRED):
+            for fault in ['failure', 'skipped', 'cancelled', 'timed_out', None, 'missing', 'duplicate']:
+                with self.subTest(name=name, fault=fault):
+                    def configure(a):
+                        job = next(j for j in a.jobs if j['name'] == name)
+                        if fault == 'missing':a.jobs.remove(job)
+                        elif fault == 'duplicate':a.jobs.append(dict(job, id=95))
+                        else:job['conclusion'] = fault
+                    self.assert_refused(configure)
+
+    def test_failed_bench_rejects_other_unsuccessful_or_incomplete_jobs(self):
+        for conclusion in ['failure', 'skipped', 'cancelled', 'timed_out', 'unknown', None]:
+            with self.subTest(conclusion=conclusion):
+                self.assert_refused(lambda a: a.jobs.append(dict(id=92, name='extra', status='completed', conclusion=conclusion)))
+        for status in ['queued', 'in_progress', 'unknown', None]:
+            with self.subTest(status=status):
+                self.assert_refused(lambda a: a.jobs[-2].update(status=status))
+        for conclusion in ['cancelled', 'timed_out', 'unknown', None]:
+            with self.subTest(workflow=conclusion):
+                self.assert_refused(lambda a: a.run.update(conclusion=conclusion))
+        for status in ['queued', 'in_progress', 'unknown', None]:
+            with self.subTest(workflow_status=status):
+                self.assert_refused(lambda a: a.run.update(status=status))
+
+    def test_failed_bench_rejects_missing_duplicate_or_incomplete_bench(self):
+        self.assert_refused(lambda a: a.jobs.pop())
+        self.assert_refused(lambda a: a.jobs.append(dict(a.jobs[-1], id=92)))
+        for field, value in [('conclusion', 'success'), ('conclusion', 'skipped'),
+                             ('conclusion', 'cancelled'), ('conclusion', 'timed_out'),
+                             ('conclusion', None), ('status', 'in_progress')]:
+            with self.subTest(field=field, value=value):
+                self.assert_refused(lambda a: a.jobs[-1].update({field: value}))
+
+    def test_failed_bench_requires_complete_unambiguous_job_and_artifact_lists(self):
+        for count in [0, 9, 11, 101, '10', True]:
+            with self.subTest(count=count):
+                def edit(responses):
+                    responses['repos/owner/repo/actions/runs/100/attempts/1/jobs?per_page=100']['body']['total_count'] = count
+                self.assert_refused(edit_responses=edit)
+        self.assert_refused(lambda a: a.jobs.append(dict(a.jobs[-2])))
+        self.assert_refused(lambda a: a.jobs[-2].update(id=a.jobs[-1]['id']))
+        self.assert_refused(lambda a: a.jobs[-2].pop('id'))
+        self.assert_refused(lambda a: a.jobs[-2].pop('name'))
+        for count in [0, 2, 101]:
+            with self.subTest(artifacts=count):
+                def edit(responses):
+                    responses['repos/owner/repo/actions/runs/100/artifacts?per_page=100']['body']['total_count'] = count
+                self.assert_refused(edit_responses=edit)
+
+    def test_failed_bench_still_requires_exact_current_full_certificate(self):
+        fields = [('version', 2), ('repository', 'other/repo'), ('run_id', 101),
+                  ('run_attempt', 2), ('head', 'd'*40), ('base', 'd'*40),
+                  ('checkout', 'd'*40), ('workflow_blob', 'other'),
+                  ('body_sha256', 'other'), ('environment_epoch', 'other'),
+                  ('mode', 'docs'), ('event', 'workflow_dispatch')]
+        for field, value in fields:
+            with self.subTest(field=field):
+                self.assert_refused(lambda a: a.proof.update({field: value}))
+        self.assert_refused(lambda a: a.run.update(updated_at='2026-01-01T00:00:00Z'))
+        self.assert_refused(lambda a: a.run.update(event='workflow_dispatch'))
+        for fault in ['missing', 'expired', 'duplicate', 'corrupt']:
+            with self.subTest(artifact=fault):
+                def edit(responses):
+                    value = responses['repos/owner/repo/actions/runs/100/artifacts?per_page=100']['body']
+                    if fault == 'missing':value.update(total_count=0, artifacts=[])
+                    elif fault == 'expired':value['artifacts'][0]['expired'] = True
+                    elif fault == 'duplicate':value.update(total_count=2, artifacts=value['artifacts']*2)
+                    else:responses['repos/owner/repo/actions/artifacts/200/zip'] = dict(bytes='YnJva2Vu')
+                self.assert_refused(edit_responses=edit)
+
+    def test_failed_bench_does_not_hide_auth_transport_or_newer_failure(self):
+        for code in [401, 403, 429, 502]:
+            for endpoint in ['repos/owner/repo/actions/runs/100/artifacts?per_page=100',
+                             'repos/owner/repo/actions/artifacts/200/zip',
+                             'repos/owner/repo/actions/runs/100/attempts/1/jobs?per_page=100']:
+                with self.subTest(code=code, endpoint=endpoint):
+                    self.assert_refused(edit_responses=lambda r: r.update({endpoint: dict(error=code)}))
+        self.assert_refused(edit_responses=lambda r: r.update({
+            'repos/owner/repo/actions/runs/100/attempts/1/jobs?per_page=100':
+                dict(transport='gh: connection reset by peer')}))
+        def newer_failure(responses):
+            runs = responses['repos/owner/repo/actions/workflows/ci.yml/runs?head_sha='+('a'*40)+'&per_page=100']['body']
+            old = runs['workflow_runs'][0]
+            old['conclusion'] = 'success'
+            runs.update(total_count=2, workflow_runs=[old, dict(old, id=101, conclusion='failure')])
+            responses['repos/owner/repo/actions/runs/101/artifacts?per_page=100'] = dict(body=dict(total_count=0, artifacts=[]))
+        self.assert_refused(edit_responses=newer_failure)
+        for fault in ['truncated', 'duplicate']:
+            def edit(responses):
+                runs = responses['repos/owner/repo/actions/workflows/ci.yml/runs?head_sha='+('a'*40)+'&per_page=100']['body']
+                if fault == 'truncated':runs['total_count'] = 101
+                else:runs.update(total_count=2, workflow_runs=runs['workflow_runs']*2)
+            with self.subTest(history=fault):self.assert_refused(edit_responses=edit)
 
 
 if __name__ == '__main__': unittest.main()
