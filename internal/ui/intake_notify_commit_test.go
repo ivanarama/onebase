@@ -115,7 +115,7 @@ func TestIntakeHTTP_NotificationFollowsCommit(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer stream.Body.Close()
+				defer func() { _ = stream.Body.Close() }()
 				body := fmt.Sprintf(`{"event_id":"notification-%v","source":"synthetic","fail":%v}`, rollback, rollback)
 				type result struct {
 					code int
@@ -129,7 +129,7 @@ func TestIntakeHTTP_NotificationFollowsCommit(t *testing.T) {
 					if err != nil {
 						return result{err: err}
 					}
-					defer response.Body.Close()
+					defer func() { _ = response.Body.Close() }()
 					data, err := io.ReadAll(response.Body)
 					return result{code: response.StatusCode, body: string(data), err: err}
 				}
@@ -270,7 +270,7 @@ func TestProcessorHTTP_NotificationUsesLiveTransaction(t *testing.T) {
 					req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 					response, err := http.DefaultClient.Do(req)
 					if err == nil {
-						defer response.Body.Close()
+						defer func() { _ = response.Body.Close() }()
 						body, readErr := io.ReadAll(response.Body)
 						err = readErr
 						if response.StatusCode != http.StatusOK {
