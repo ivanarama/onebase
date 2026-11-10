@@ -1,0 +1,16 @@
+schema: onebase.form/v1
+form:
+  name: ФормаОбработки
+  kind: object
+  entity: ПриемкаКомандыЗакрытия
+attributes:
+  - name: Текст
+    type: string
+elements:
+  - kind: ПолеВвода
+    name: Текст
+    data_path: Объект.Текст
+  - kind: Кнопка
+    name: Закрыть
+    title: {ru: Закрыть командой}
+    events: {Нажатие: Закрыть}
