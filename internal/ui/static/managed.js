@@ -1250,6 +1250,16 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         return tbody.getAttribute('data-ob-vt-activate') === elementName;
       });
       if (vtBody) {
+        // A queued activation can outlive the search rows cleared by the
+        // preceding handler. An empty payload also occurs for display-only
+        // tables, so verify the clicked row still exists before using it.
+        var rowExists = Array.prototype.some.call(vtBody.rows, function(row){
+          return row.getAttribute('data-ob-vt-row') === String(extraParams._tp_row);
+        });
+        if (!rowExists) {
+          obManagedVtActiveRow.delete(vtBody);
+          return;
+        }
         // Use this exact outgoing snapshot, after file/grid synchronization.
         // The server sorts submitted indices and discards wholly empty rows.
         var vtRows = obManagedVtPayloadRows(vtBody, eventFD);

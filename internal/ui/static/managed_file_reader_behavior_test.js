@@ -945,6 +945,58 @@ test('ValueTable activation survives a real obFire echo but resets on changed da
   }
 });
 
+test('ValueTable queued activation stops after the handler clears search results', async (t) => {
+  for (const selectedIndex of [0, 1]) {
+    await t.test(`queued row ${selectedIndex}`, async () => {
+      resetDOM();
+      const tbody = installTableBody('vt-body-Results', {
+        'data-vt-fields': 'Name|string,ID|string', 'data-vt-flags': 'Name:r,ID:rh',
+        'data-vt-editable': '0', 'data-vt-empty': 'No search results',
+        'data-ob-vt-activate': 'Results', 'data-ob-vt-name': 'Results'
+      });
+      const originalFetch = global.fetch;
+      const originalFire = window.obFire;
+      const pending = [];
+      const calls = [];
+      let completeFirst;
+      global.fetch = (_url, options) => {
+        calls.push(new URLSearchParams(options.body));
+        if (calls.length === 1) return new Promise(resolve => { completeFirst = resolve; });
+        return Promise.resolve({ok: true, json: async () => ({ok: true})});
+      };
+      window.obFire = (...args) => {
+        const event = originalFire(...args);
+        pending.push(event);
+        return event;
+      };
+      const click = row => {
+        for (const listener of documentListeners.get('click') || []) {
+          listener({target: {closest(selector) { return selector === 'tr[data-ob-vt-row]' ? row : null; }}});
+        }
+      };
+      try {
+        window.applyFormTables({Results: [{Name: 'synthetic first', ID: 'one'}, {Name: 'synthetic second', ID: 'two'}]});
+        click(tbody.children[0]);
+        await new Promise(setImmediate);
+        assert.equal(typeof completeFirst, 'function', 'first activation did not reach the endpoint');
+        click(tbody.children[selectedIndex]);
+        completeFirst({ok: true, json: async () => ({ok: true, formTables: {Results: []}})});
+        await Promise.all(pending);
+        assert.equal(calls.length, 1, 'queued activation sent an index after all result rows were removed');
+        assert.equal(tbody.rows.filter(row => row.hasAttribute('data-ob-vt-row')).length, 0);
+        window.applyFormTables({Results: [{Name: 'new search', ID: 'three'}]});
+        click(tbody.children[0]);
+        await pending[pending.length - 1];
+        assert.equal(calls.length, 2, 'a new search result at the same index must still activate');
+        assert.equal(calls[1].get('_tp_row'), '0');
+      } finally {
+        global.fetch = originalFetch;
+        window.obFire = originalFire;
+      }
+    });
+  }
+});
+
 test('ValueTable delegated add preserves column flags, bool carriers and activation', () => {
   resetDOM();
   const tbody = installTableBody('vt-body-Results', {
