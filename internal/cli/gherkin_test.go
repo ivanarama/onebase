@@ -113,6 +113,22 @@ func TestGherkinCompileRejectsUnmatchedStep(t *testing.T) {
 	if err := os.WriteFile(feature, []byte("Функция: Чужой\nСценарий: С\n  Дано шаг которого нет в реестре\n  Тогда трассировка содержит запись функции «2.1» для объекта «x»\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// скомпилированные обработки каркаса лежат в репозитории: убираем их из
+	// копии, чтобы проверка «отказ отменил запись» не была пустой
+	for _, pattern := range []string{"processors/тестрасстановка*.yaml", "src/тестрасстановка*.proc.os"} {
+		matches, err := filepath.Glob(filepath.Join(projectDir, pattern))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(matches) == 0 {
+			t.Fatalf("в копии каркаса нет скомпилированной обработки по шаблону %s", pattern)
+		}
+		for _, p := range matches {
+			if err := os.Remove(p); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
 	out, err := captureStdout(t, func() error {
 		rootCmd.SetArgs([]string{"gherkin", "compile", "--project", projectDir})
 		return rootCmd.Execute()
