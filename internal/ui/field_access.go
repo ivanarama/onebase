@@ -510,6 +510,10 @@ func (s *Server) discloseField(w http.ResponseWriter, r *http.Request) {
 	if !s.rowAllowed(w, r, entity, "read", row) {
 		return // rowAllowed already rendered 403
 	}
+	if access.FieldDiscloseDenied(auth.UserFromContext(r.Context()), string(entity.Kind), entity.Name, field.Name) {
+		s.renderForbidden(w, r)
+		return
+	}
 	_, masked := s.fieldDecisions(r.Context(), entity)[field.Name]
 	if masked {
 		if !s.can(r, string(entity.Kind), entity.Name, "disclose") {

@@ -145,9 +145,15 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	// Для фоновых заданий ссылка пустая — ЗначениеЗаполнено() = Ложь.
 	var curUserID, curUserLogin, curUserFullName string
 	var curUserAdmin bool
+	curUserRoles := []any{}
 	curUserRef := &interpreter.Ref{Type: metadata.SystemUsersEntity}
 	if u := auth.UserFromContext(ctx); u != nil {
 		curUserID, curUserLogin, curUserFullName, curUserAdmin = u.ID, u.Login, u.FullName, u.IsAdmin
+		for _, role := range u.Roles {
+			if role != nil {
+				curUserRoles = append(curUserRoles, role.Name)
+			}
+		}
 		label := u.FullName
 		if label == "" {
 			label = u.Login
@@ -156,9 +162,9 @@ func (s *Server) buildDSLVarsTx(ctx context.Context, mc *runtime.MovementsCollec
 	}
 	userObj := &interpreter.MapThis{M: map[string]any{
 		"ИД": curUserID, "Имя": curUserLogin, "ПолноеИмя": curUserFullName, "Админ": curUserAdmin,
-		"Ссылка": curUserRef,
-		"ID":     curUserID, "Login": curUserLogin, "FullName": curUserFullName, "IsAdmin": curUserAdmin,
-		"Ref": curUserRef,
+		"Ссылка": curUserRef, "Роли": curUserRoles,
+		"ID": curUserID, "Login": curUserLogin, "FullName": curUserFullName, "IsAdmin": curUserAdmin,
+		"Ref": curUserRef, "Roles": curUserRoles,
 	}}
 	currentUserFn := interpreter.BuiltinFunc(func(_ []any, _ string, _ int) (any, error) {
 		return userObj, nil
