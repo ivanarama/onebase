@@ -693,6 +693,13 @@ type FormCellStyle struct {
 }
 
 // FormModule represents a form module with event handlers
+// FormDensityCompact — плотная раскладка формы (FormModule.Density).
+const FormDensityCompact = "compact"
+
+// FormDensityDense — ещё плотнее compact (поле 25px, шрифт 12.5px, подпись
+// 10.5px): для формы, которой compact не хватает, чтобы влезть в экран.
+const FormDensityDense = "dense"
+
 type FormModule struct {
 	EntityName string                    `yaml:"entity,omitempty"`
 	Name       string                    `yaml:"name,omitempty"`
@@ -760,6 +767,12 @@ type FormModule struct {
 	// вводящий данные потоком (#1486). Ctrl+S, Ctrl+Enter и кнопки записи
 	// работают всегда, независимо от этого ключа.
 	EnterSubmitsForm bool `yaml:"enter_submits_form,omitempty"`
+	// Density — плотность раскладки этой формы: "" — обычная, "compact" —
+	// плотная (поле 28px, шрифт 13px, подпись 11px, меньшие отступы), "dense"
+	// — ещё плотнее (поле 25px, шрифт 12.5px, подпись 10.5px). Нужна рабочим
+	// формам, которые обязаны поместиться в экран без прокрутки, не меняя
+	// остальные страницы системы.
+	Density string `yaml:"density,omitempty"`
 	// OneCMeta — служебный блок, используемый только конвертером 1С,
 	// рантайм его игнорирует. Может содержать version, unknown_xml и т.п.
 	OneCMeta map[string]any `yaml:"oneC_meta,omitempty"`

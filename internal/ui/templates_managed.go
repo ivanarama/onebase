@@ -570,6 +570,56 @@ const tplManagedForm = `
 {{template "head" .}}{{if not .IsPopup}}{{template "nav" .}}{{end}}
 {{if .TabTitle}}<meta name="ob-tab-title" content="{{.TabTitle}}">{{end}}
 <style>
+/* density: compact (form.density) — плотная раскладка ЭТОЙ формы: поле 28px,
+   шрифт 13px, подпись 11px, меньшие отступы групп и вкладок. Класс стоит на
+   <html> документа формы (каждая вкладка — свой документ), поэтому другие
+   страницы системы не меняются. Выравнивание кнопок и флажков в горизонтальной
+   группе пересчитано под новую высоту подписи (13+2 вместо 18+5). */
+.ob-density-compact .form-group{margin-bottom:6px}
+.ob-density-compact label{font-size:11px;line-height:13px;margin-bottom:2px}
+.ob-density-compact input[type=text],.ob-density-compact input[type=datetime-local],.ob-density-compact input[type=date],.ob-density-compact input[type=number],.ob-density-compact select{height:28px;padding:3px 8px;font-size:13px;border-radius:5px}
+.ob-density-compact textarea{font-size:13px;padding:4px 8px}
+.ob-density-compact .btn{padding:4px 10px;font-size:13px}
+/* У групп и отдельных страниц исходные отступы заданы inline, как у вкладок. */
+.ob-density-compact .form-group-box{padding:6px 10px 8px !important;margin-bottom:8px !important}
+.ob-density-compact .managed-tabs{padding:8px 10px !important;margin-bottom:8px !important}
+.ob-density-compact .managed-tab-headers{margin-bottom:8px !important}
+.ob-density-compact .managed-tab-btn{padding:5px 12px;font-size:13px}
+.ob-density-compact .managed-group-horizontal>.managed-group-body{gap:8px}
+.ob-density-compact .managed-group-horizontal>.managed-group-body>.form-group>label{line-height:13px}
+.ob-density-compact .managed-group-horizontal>.managed-group-body:has(>.form-group:not([style*="display:none"]):not([style*="display: none"])>label)>.managed-btn,.ob-density-compact .managed-group-horizontal>.managed-group-body:has(>.form-group:not([style*="display:none"]):not([style*="display: none"])>label)>.managed-btn-layout{margin-top:15px}
+.ob-density-compact .managed-group-horizontal>.managed-group-body>.form-group.managed-checkbox{margin-top:20px}
+.ob-density-compact .tp-table th{padding:4px 6px;font-size:11px}
+.ob-density-compact .tp-table td{padding:2px 4px}
+.ob-density-compact .tp-table input{height:24px;padding:2px 6px;font-size:13px}
+.ob-density-compact h3{margin:6px 0 4px !important;font-size:13px !important}
+.ob-density-compact .ob-form-head{margin-bottom:6px !important}
+.ob-density-compact .ob-form-head h2{font-size:17px}
+.ob-density-compact .ob-form-actions{margin-bottom:6px !important}
+.ob-density-compact main>.card{padding:10px 12px}
+.ob-density-compact main{padding:10px 14px}
+.ob-density-compact .managed-control-row>button,.ob-density-compact .managed-control-row>a{height:28px;min-width:28px;padding:0 8px;font-size:12px;display:inline-flex;align-items:center;justify-content:center}
+/* density: dense — ещё плотнее compact: поле 25px, шрифт 12.5px, подпись
+   10.5px. На <html> стоят оба класса, поэтому всё, что dense не задаёт
+   (табличные части, вкладки), остаётся как в compact; правила ниже идут
+   после compact и перекрывают его при той же специфичности. В горизонтальной
+   группе кнопка встаёт вровень с верхом поля (подпись 12+1, у compact — 13+2),
+   флажок (13px) — по центру поля 25px: 13 + 6 (замер в браузере). */
+.ob-density-dense .form-group{margin-bottom:3px}
+.ob-density-dense label{font-size:10.5px;line-height:12px;margin-bottom:1px}
+.ob-density-dense input[type=text],.ob-density-dense input[type=datetime-local],.ob-density-dense input[type=date],.ob-density-dense input[type=number],.ob-density-dense select{height:25px;padding:2px 7px;font-size:12.5px}
+.ob-density-dense textarea{font-size:12.5px;padding:3px 7px}
+.ob-density-dense .btn{padding:3px 9px;font-size:12.5px}
+.ob-density-dense .form-group-box{padding:4px 8px 5px !important;margin-bottom:5px !important}
+.ob-density-dense .managed-group-horizontal>.managed-group-body{gap:6px}
+.ob-density-dense .managed-group-horizontal>.managed-group-body>.form-group>label{line-height:12px}
+.ob-density-dense .managed-group-horizontal>.managed-group-body:has(>.form-group:not([style*="display:none"]):not([style*="display: none"])>label)>.managed-btn,.ob-density-dense .managed-group-horizontal>.managed-group-body:has(>.form-group:not([style*="display:none"]):not([style*="display: none"])>label)>.managed-btn-layout{margin-top:13px}
+.ob-density-dense .managed-group-horizontal>.managed-group-body>.form-group.managed-checkbox{margin-top:19px}
+.ob-density-dense h3{margin:4px 0 2px !important}
+.ob-density-dense .ob-form-head{margin-bottom:4px !important}
+.ob-density-dense main>.card{padding:6px}
+.ob-density-dense main{padding:6px}
+.ob-density-dense .managed-control-row>button,.ob-density-dense .managed-control-row>a{height:25px;min-width:25px;padding:0 7px}
 .ob-grid[data-ob-choice-error="1"] { outline: 2px solid #dc2626; }
 /* deadline_warn: поле-срок подсвечивается по часам браузера (obDeadlineTick). */
 input.ob-deadline-soon,.form-group input.ob-deadline-soon[readonly]{background:#fef3c7 !important;border-color:#f59e0b !important;color:#92400e !important}
@@ -686,7 +736,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 {{end}}
 {{if .FormConditionalCSS}}<style>{{.FormConditionalCSS}}</style>{{end}}
 <main>
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;max-width:1400px">
+<div class="ob-form-head" style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;max-width:1400px">
   <h2 style="margin-bottom:0">
     {{if .IsProcessor}}{{.Processor.DisplayName $.Lang}}{{else}}{{if .IsNew}}{{t $.Lang "Создать"}} — {{.Entity.DisplayName $.Lang}}{{else}}{{if .RecordTitle}}{{.RecordTitle}}{{else}}{{t $.Lang "Редактировать"}} — {{.Entity.DisplayName $.Lang}}{{end}}{{end}}{{end}}
     <span style="font-size:11px;color:#10b981;background:#d1fae5;padding:2px 8px;border-radius:10px;vertical-align:middle;font-weight:500" title="Управляемая форма из forms/{{if .IsProcessor}}{{lower .Processor.Name}}{{else}}{{lower .Entity.Name}}{{end}}/">◇ managed</span>
@@ -706,7 +756,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 {{if not .IsProcessor}}{{template "stage-route" .}}{{end}}
 
 {{if not .IsPopup}}
-<div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+<div class="ob-form-actions" style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
   {{if .IsProcessor}}
   {{/* Кнопка «Выполнить» скрыта: managed-форма использует свои кнопки (Предпросмотр, Записать, ЗаписатьИПровести) */}}
   {{else}}
