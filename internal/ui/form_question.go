@@ -46,8 +46,7 @@ type questionField struct {
 	Color string `json:"color,omitempty"`
 }
 
-// questionErrorColor — красный текст ошибки, тот же, что у полей формы с
-// importance: error (metadata.FormElementTextColor).
+// Локальный красный цвет ошибки для поля вопроса.
 const questionErrorColor = "#b91c1c"
 
 // questionFieldColor разбирает «цветтекста»/«важность» строки диалога.
