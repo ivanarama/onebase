@@ -1217,9 +1217,9 @@ type sourceScope struct {
 	outputAliases     map[string]struct{}
 	refAliases        map[string]struct{}
 	// physicalCols — колонки обычных (не виртуальных) источников по
-	// квалификатору: имя поля в нижнем регистре → колонка БД, только там, где
-	// они различаются (ссылка → «_id»). Нужна присоединённым источникам: общая
-	// colMap строится по главному источнику и о них не знает.
+	// квалификатору: имя известного поля в нижнем регистре → колонка БД,
+	// включая тождественное отображение. Обычное поле присоединённого
+	// источника не должно заимствовать «_id» из colMap главного источника.
 	physicalCols map[string]map[string]string
 }
 
@@ -1251,6 +1251,68 @@ func (ctx sourceContext) qualifierScopeAt(tokenPos int, qualifier string) (sourc
 		return sourceScope{}, false
 	}
 	return ctx.scopes[scopeID], true
+}
+
+func (ctx sourceContext) localQualifierAt(tokenPos int, qualifier string) bool {
+	scope, ok := ctx.scopeAt(tokenPos)
+	if !ok {
+		return false
+	}
+	_, known := scope.qualifiers[qualifier]
+	return known
+}
+
+// SQLite can resolve a missing column against an outer alias even when an
+// identically named local alias exists. Reject that proven shadowing case
+// before emission; neither physical metadata nor derived output may borrow it.
+func (tr *translator) shadowedSourceColumn(pos int, name string) bool {
+	if pos < 2 || tr.tokens[pos-1].kind != tDot || (pos >= 3 && tr.tokens[pos-3].kind == tDot) {
+		return false
+	}
+	qualifier := lowerFast(tr.tokens[pos-2].val)
+	id, ok := tr.sourceCtx.qualifierScopeIDAt(pos, qualifier)
+	if !ok {
+		return false
+	}
+	scope := tr.sourceCtx.scopes[id]
+	missing := false
+	if child, derived := scope.derivedAliases[qualifier]; derived {
+		missing = tr.derivedProjectionColumnPresence(child, name, map[int]bool{}) != projectionColumnPresent
+	} else if cols := scope.physicalCols[qualifier]; cols != nil {
+		_, known := cols[name]
+		for _, physical := range cols {
+			known = known || physical == name
+		}
+		missing = !known
+	}
+	if !missing {
+		return false
+	}
+	for id = scope.parent; id >= 0; id = tr.sourceCtx.scopes[id].parent {
+		outer := tr.sourceCtx.scopes[id]
+		if child, derived := outer.derivedAliases[qualifier]; derived {
+			if tr.derivedProjectionShadows(child, name, map[int]bool{}) {
+				return true
+			}
+			continue
+		}
+		if _, declared := outer.qualifiers[qualifier]; !declared {
+			continue
+		}
+		cols := outer.physicalCols[qualifier]
+		if cols == nil {
+			return true // Generated or unknown output cannot prove absence.
+		}
+		for _, physical := range cols {
+			if physical == name {
+				return true
+			}
+		}
+		if physical, system := outer.entitySystemColumn(qualifier, name); system && physical == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (ctx sourceContext) qualifierScopeIDAt(tokenPos int, qualifier string) (int, bool) {
@@ -1706,6 +1768,42 @@ func (tr *translator) rowFilterCondition(kind, name string, meta *metadata.Entit
 	return "(" + sql + ")", nil
 }
 
+// infoRegPublicColumns preserves the pre-revision physical projection even
+// for SELECT * and joined/derived sources. Local edit state cannot enter DSL,
+// reports or an outer wildcard through a raw table source.
+func (tr *translator) infoRegPublicColumns(typeUpper, name string) string {
+	if !isInfoRegType(typeUpper) {
+		return "*"
+	}
+	ir := tr.findInfoRegister(name)
+	if ir == nil {
+		return "*"
+	} // runtime callers supply register metadata
+	var cols []string
+	if ir.Periodic {
+		cols = append(cols, "period")
+	}
+	for _, f := range ir.Dimensions {
+		cols = append(cols, metadata.ColumnName(f))
+	}
+	for _, f := range ir.Resources {
+		cols = append(cols, metadata.ColumnName(f))
+	}
+	cols = append(cols, "recorder", "recorder_type", "updated_at")
+	return strings.Join(cols, ", ")
+}
+
+func (tr *translator) emitPublicSource(typeUpper, name, table, alias string, hasAlias bool) {
+	if cols := tr.infoRegPublicColumns(typeUpper, name); cols != "*" {
+		tr.emit("(SELECT " + cols + " FROM " + table + ") AS " + alias)
+		return
+	}
+	tr.emit(table)
+	if hasAlias {
+		tr.emit("AS " + alias)
+	}
+}
+
 func (tr *translator) rowFilteredSourceSQL(typeUpper, name, tableName, alias string) (string, bool, error) {
 	kind := sourcePermKind(typeUpper)
 	pred := tr.sourceRowFilter(kind, name)
@@ -1722,7 +1820,7 @@ func (tr *translator) rowFilteredSourceSQL(typeUpper, name, tableName, alias str
 	}
 	tr.args = append(tr.args, args...)
 	tr.markRowApplied(kind, name)
-	return fmt.Sprintf("(SELECT * FROM %s WHERE %s) AS %s", tableName, sql, alias), true, nil
+	return fmt.Sprintf("(SELECT %s FROM %s WHERE %s) AS %s", tr.infoRegPublicColumns(typeUpper, name), tableName, sql, alias), true, nil
 }
 
 func (tr *translator) pendingRowFilterConditions() ([]string, error) {
@@ -2059,6 +2157,9 @@ func (tr *translator) translateTypedFilterTokens(tokens []tok, fieldTypes map[st
 			}
 			if emptyStringAgainstRef(dialectOrDefault(tr.opts.Dialect), tr.paramValues[t.val], typ) {
 				parts = append(parts, "NULL")
+			} else if dialectOrDefault(tr.opts.Dialect).Name() == "postgres" &&
+				uuidLikeParam(tr.paramValues[t.val]) && filterParamComparedToString(tokens, i, fieldTypes) {
+				parts = append(parts, tr.addTextParam(t.val))
 			} else {
 				parts = append(parts, tr.addParam(t.val))
 			}
@@ -2091,6 +2192,51 @@ func (tr *translator) translateTypedFilterTokens(tokens []tok, fieldTypes map[st
 		}
 	}
 	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+// Internal VT filters use a local token slice and the register's own fields,
+// not the outer SELECT's source context. Only direct field comparisons and
+// IN operands establish a string position; unknown expressions keep addParam.
+func filterParamComparedToString(tokens []tok, idx int, fieldTypes map[string]metadata.FieldType) bool {
+	stringField := func(i int) bool {
+		return i >= 0 && i < len(tokens) && tokens[i].kind == tIdent &&
+			(i == 0 || tokens[i-1].kind != tDot) &&
+			(i+1 == len(tokens) || tokens[i+1].kind != tDot) &&
+			fieldTypes[lowerFast(tokens[i].val)] == metadata.FieldTypeString
+	}
+	comparison := func(i int) bool {
+		if i < 0 || i >= len(tokens) || tokens[i].kind != tOp {
+			return false
+		}
+		switch tokens[i].val {
+		case "=", "<>", "!=", "<", ">", "<=", ">=":
+			return true
+		}
+		return false
+	}
+	if comparison(idx-1) && stringField(idx-2) || comparison(idx+1) && stringField(idx+2) {
+		return true
+	}
+	for i := idx - 1; i >= 0; i-- {
+		switch tokens[i].kind {
+		case tParam, tStr, tNum, tComma:
+			// Every direct item of an IN list has the same field type.
+			continue
+		case tLParen:
+			if i < 2 || tokens[i-1].kind != tIdent ||
+				(upperFast(tokens[i-1].val) != "В" && upperFast(tokens[i-1].val) != "IN") {
+				return false
+			}
+			field := i - 2
+			if tokens[field].kind == tIdent && (upperFast(tokens[field].val) == "НЕ" || upperFast(tokens[field].val) == "NOT") {
+				field--
+			}
+			return stringField(field)
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 func (tr *translator) findRegister(name string) *metadata.Register {
@@ -3366,11 +3512,12 @@ func preScanRefDims(tokens []tok, opts CompileOpts) []refDimInfo {
 func preScanAllRefDims(tokens []tok, opts CompileOpts) []refDimInfo {
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
-		if t.kind != tIdent {
+		// Check the source shape before converting a potentially long field name.
+		if t.kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
 		upper := upperFast(t.val)
-		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(upper) {
 			continue
 		}
 		regName := tokens[i+2].val
@@ -3953,11 +4100,11 @@ func buildColMap(tokens []tok, opts CompileOpts) map[string]string {
 	vtSourceFound := false
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
-		if t.kind != tIdent {
+		if t.kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
 		upper := upperFast(t.val)
-		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(upper) {
 			continue
 		}
 		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
@@ -4016,11 +4163,11 @@ func buildColMap(tokens []tok, opts CompileOpts) map[string]string {
 func preScanMainRefSource(tokens []tok, opts CompileOpts) mainRefSource {
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
-		if t.kind != tIdent {
+		if t.kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
 		upper := upperFast(t.val)
-		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(upper) {
 			continue
 		}
 		// VT-источник (Тип.Имя.Остатки(...)) — не сущность.
@@ -4122,11 +4269,11 @@ func (tr *translator) refEntityForQualifier(pos int) string {
 func buildColTypes(tokens []tok, opts CompileOpts) map[string]metadata.FieldType {
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
-		if t.kind != tIdent {
+		if t.kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
 		upper := upperFast(t.val)
-		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(upper) {
 			continue
 		}
 		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
@@ -4141,21 +4288,22 @@ func buildColTypes(tokens []tok, opts CompileOpts) map[string]metadata.FieldType
 // отличие от buildColTypes, этот помощник применим и к виртуальной таблице:
 // имена её измерений и атрибутов сохраняются в сгенерированном подзапросе.
 // Производные имена ресурсов (например, СуммаОстаток) здесь не синтезируются.
-// sourcePhysicalColumns — колонки БД полей обычного источника, отличающиеся от
-// имени поля (ссылочные — с суффиксом «_id»). Пустая карта — переводить нечего.
+// sourcePhysicalColumns records every known field, including unchanged names.
+// An identity mapping is positive ownership evidence, not a missing mapping.
 func sourcePhysicalColumns(typeUpper, name string, opts CompileOpts) map[string]string {
 	m := map[string]string{}
 	add := func(fields []metadata.Field) {
 		for _, f := range fields {
-			if col := metadata.ColumnName(f); col != lowerFast(f.Name) {
-				m[lowerFast(f.Name)] = col
-			}
+			m[lowerFast(f.Name)] = metadata.ColumnName(f)
 		}
 	}
 	switch {
 	case isAccumRegType(typeUpper):
 		for _, reg := range opts.Registers {
 			if strings.EqualFold(reg.Name, name) {
+				for column := range accumulationRegisterProjectionKeys(reg).counts {
+					m[column] = column
+				}
 				add(reg.Dimensions)
 				add(reg.Resources)
 				add(reg.Attributes)
@@ -4165,22 +4313,38 @@ func sourcePhysicalColumns(typeUpper, name string, opts CompileOpts) map[string]
 	case isInfoRegType(typeUpper):
 		for _, ir := range opts.InfoRegs {
 			if strings.EqualFold(ir.Name, name) {
+				for column := range infoRegisterProjectionKeys(ir).counts {
+					m[column] = column
+				}
 				add(ir.Dimensions)
 				add(ir.Resources)
 				return m
 			}
 		}
 	case isAccountRegType(typeUpper):
-		return m
+		for _, ar := range opts.AccountRegs {
+			if strings.EqualFold(ar.Name, name) {
+				for column := range accountRegisterProjectionKeys(ar).counts {
+					m[column] = column
+				}
+				add(ar.Resources)
+				return m
+			}
+		}
 	default: // справочник / документ
 		for _, e := range opts.Entities {
 			if strings.EqualFold(e.Name, name) {
+				// Reuse the physical SELECT * layout, including kind-dependent
+				// system columns. DB.List intentionally exports a smaller set.
+				for column := range entityProjectionKeys(e).counts {
+					m[column] = column
+				}
 				add(e.Fields)
 				return m
 			}
 		}
 	}
-	return m
+	return nil // Unknown source metadata must not prove a field absent.
 }
 
 func sourceColumnTypes(typeUpper, name string, opts CompileOpts) map[string]metadata.FieldType {
@@ -4611,13 +4775,22 @@ func parameterSystemRefType(scope sourceScope, qualifier, name string) metadata.
 }
 
 func (tr *translator) emptyRefParamAt(idx int) bool {
-	if !tr.comparisonOpAt(idx - 1) {
-		return false
+	op, field := idx-1, idx-2
+	if !tr.comparisonOpAt(op) {
+		op, field = idx+1, idx+2
+		if !tr.comparisonOpAt(op) {
+			return false
+		}
+		// The resolver expects the final token, including reference navigation.
+		for field+2 < len(tr.tokens) && tr.tokens[field].kind == tIdent &&
+			tr.tokens[field+1].kind == tDot && tr.tokens[field+2].kind == tIdent {
+			field += 2
+		}
 	}
-	switch tr.tokens[idx-1].val {
+	switch tr.tokens[op].val {
 	case "=", "<>", "!=":
 		return emptyStringAgainstRef(dialectOrDefault(tr.opts.Dialect),
-			tr.paramValues[tr.tokens[idx].val], tr.paramFieldTypeAt(idx-2))
+			tr.paramValues[tr.tokens[idx].val], tr.paramFieldTypeAt(field))
 	}
 	return false
 }
@@ -4951,11 +5124,11 @@ func (tr *translator) takeQualifier() string {
 func preScanMainTable(tokens []tok) string {
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
-		if t.kind != tIdent {
+		if t.kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
 		upper := upperFast(t.val)
-		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(upper) {
 			continue
 		}
 		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
@@ -5007,8 +5180,11 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 	for i := 0; i < len(tokens); i++ {
 		t := tokens[i]
 		ctx.tokenDepth[i] = depth
+		// Reuse keyword classification across the scope, section and source scans.
+		kw, keyword := "", false
 		if t.kind == tIdent {
-			if kw, ok := sqlKW(t.val); ok && kw == "SELECT" {
+			kw, keyword = sqlKW(t.val)
+			if keyword && kw == "SELECT" {
 				// UNION starts a sibling SELECT at the same depth; nested SELECT
 				// keeps every shallower parent frame active.
 				unionFirst := len(ctx.scopes)
@@ -5045,7 +5221,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 			// EXTRACT(YEAR FROM ...) содержит SQL-слово FROM внутри выражения.
 			// Секцию SELECT меняют только ключевые слова на глубине самого SELECT.
 			if t.kind == tIdent && depth == frame.depth {
-				if kw, ok := sqlKW(t.val); ok {
+				if keyword {
 					switch kw {
 					case "SELECT":
 						sections[scopeID] = sectionSelect
@@ -5065,7 +5241,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 			ctx.tokenScope[i] = scopeID
 			ctx.tokenSection[i] = sections[scopeID]
 			if sections[scopeID] == sectionSelect && t.kind == tIdent && depth == frame.depth {
-				if up := upperFast(t.val); (up == "КАК" || up == "AS") &&
+				if keyword && kw == "AS" &&
 					i+1 < len(tokens) && tokens[i+1].kind == tIdent {
 					alias := lowerFast(tokens[i+1].val)
 					ctx.scopes[scopeID].outputAliases[alias] = struct{}{}
@@ -5079,7 +5255,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 		// Производная таблица в FROM/JOIN сама является источником текущего
 		// SELECT. Без этого следующий обычный JOIN ошибочно становился mainTable.
 		if t.kind == tIdent && len(active) > 0 {
-			if kw, ok := sqlKW(t.val); ok && (kw == "FROM" || kw == "JOIN") &&
+			if keyword && (kw == "FROM" || kw == "JOIN") &&
 				i+2 < len(tokens) && tokens[i+1].kind == tLParen &&
 				tokens[i+2].kind == tIdent {
 				if nestedKW, nested := sqlKW(tokens[i+2].val); nested && nestedKW == "SELECT" {
@@ -5146,8 +5322,11 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 			}
 			continue
 		}
+		if len(active) == 0 || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+			continue
+		}
 		typeUpper := upperFast(tokens[i].val)
-		if len(active) == 0 || !isSourceType(typeUpper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(typeUpper) {
 			continue
 		}
 		scope := &ctx.scopes[active[len(active)-1].id]
@@ -5188,7 +5367,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 		var physCols map[string]string
 		if i+3 >= len(tokens) || tokens[i+3].kind != tDot {
 			physCols = sourcePhysicalColumns(typeUpper, tokens[i+2].val, opts)
-			if len(physCols) > 0 {
+			if physCols != nil {
 				scope.physicalCols[entityName] = physCols
 				scope.physicalCols[sourceToTable(typeUpper, tokens[i+2].val)] = physCols
 			}
@@ -5222,7 +5401,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 				if entityInfo != nil {
 					scope.entities[alias] = *entityInfo
 				}
-				if len(physCols) > 0 {
+				if physCols != nil {
 					scope.physicalCols[alias] = physCols
 				}
 				if isMain {
@@ -6061,16 +6240,10 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 				if ok {
 					tr.emit(filtered)
 				} else {
-					tr.emit(tableName)
-					if hasAlias {
-						tr.emit("AS " + sourceAlias)
-					}
+					tr.emitPublicSource(upper, entity.val, tableName, sourceAlias, hasAlias)
 				}
 			} else {
-				tr.emit(tableName)
-				if hasAlias {
-					tr.emit("AS " + sourceAlias)
-				}
+				tr.emitPublicSource(upper, entity.val, tableName, sourceAlias, hasAlias)
 				if err := tr.addPendingRowFilter(upper, entity.val, sourceAlias); err != nil {
 					return Result{}, err
 				}
@@ -6320,6 +6493,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					continue
 				}
 			}
+			if prevDot && !nextIsDot && tr.shadowedSourceColumn(tr.pos-1, lower) {
+				return Result{}, i18nerr.Errorf("поле %s локального источника %s не разрешено однозначно; внешнее поле затенено", t.val, tr.tokens[tr.pos-3].val)
+			}
 			if agg, ok := sqlAgg(t.val); ok && tr.peek(0).kind == tLParen {
 				tr.emit(agg)
 			} else if kw, ok := sqlKW(t.val); ok {
@@ -6415,8 +6591,8 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					tr.emit("LIKE")
 				} else if !prevDot && !nextIsDot && tr.unionOutputAlias(lower) {
 					tr.emit(lower)
-				} else if nextIsDot && !prevDot && tr.sourceCtx.isDerivedQualifierAt(tr.pos-1, lower) {
-					// Явный алиас производной таблицы старше одноимённого поля-ссылки.
+				} else if nextIsDot && !prevDot && (tr.sourceCtx.localQualifierAt(tr.pos-1, lower) || tr.sourceCtx.isDerivedQualifierAt(tr.pos-1, lower)) {
+					// A local source alias takes precedence over a namesake field.
 					tr.emit(lower)
 				} else if rd := tr.findRefDim(lower); rd != nil && !prevDot {
 					if nextIsDot {
@@ -6483,7 +6659,11 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					case jrd != nil:
 						tr.emit(jrd.idCol)
 					default:
-						tr.emitQualifiedColumn(lower, lower)
+						col := lower
+						if physical, known := tr.joinedSourceColumn(tr.pos-1, lower); known {
+							col = physical
+						}
+						tr.emitQualifiedColumn(col, lower)
 					}
 				} else if prevDot {
 					if !nextIsDot && tr.isDerivedColumnAt(tr.pos-1) {
@@ -6517,9 +6697,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 							tr.emit(rd.idCol)
 							tr.emitDerivedReferenceAlias(rd.idCol, lower)
 						}
-					} else if c, ok2 := tr.colMap[lower]; ok2 {
-						tr.emitQualifiedColumn(c, lower)
 					} else {
+						// Qualified unknown/absent fields keep their own name. The
+						// main source cannot lend a physical column to this owner.
 						tr.emitQualifiedColumn(lower, lower)
 					}
 					if rd := tr.findRefDim(lower); rd != nil && !nextIsDot {
