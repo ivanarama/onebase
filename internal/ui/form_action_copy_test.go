@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -45,27 +44,24 @@ func TestManagedFormActionCopyVisible_HTTP(t *testing.T) {
 				Fields: []metadata.Field{{Name: "Тема", Type: metadata.FieldTypeString}},
 				Forms:  []*metadata.FormModule{fm}}
 			s, ctx := newSubmitTestServer(t, []*metadata.Entity{ent})
+			router := chi.NewRouter()
+			s.Mount(router)
 			id := uuid.New()
 			if err := s.store.Upsert(ctx, ent.Name, id, map[string]any{"Тема": "Течёт кран"}, ent); err != nil {
 				t.Fatal(err)
 			}
-			get := func(handler func(http.ResponseWriter, *http.Request), target string, params map[string]string) string {
+			get := func(target string) string {
 				t.Helper()
-				req := httptest.NewRequest("GET", target, nil)
-				route := chi.NewRouteContext()
-				for k, v := range params {
-					route.URLParams.Add(k, v)
-				}
-				req = req.WithContext(context.WithValue(ctx, chi.RouteCtxKey, route))
+				req := httptest.NewRequest(http.MethodGet, target, nil).WithContext(ctx)
 				rec := httptest.NewRecorder()
-				handler(rec, req)
+				router.ServeHTTP(rec, req)
 				if rec.Code != 200 {
 					t.Fatalf("GET %s: %d %s", target, rec.Code, rec.Body.String())
 				}
 				return rec.Body.String()
 			}
 
-			card := get(s.formEdit, "/ui/catalog/звонок/"+id.String(), map[string]string{"kind": "catalog", "entity": "звонок", "id": id.String()})
+			card := get("/ui/catalog/звонок/" + id.String())
 			if !strings.Contains(card, "ПолеТема") {
 				t.Fatal("карточка не отрисовала форму из YAML")
 			}
@@ -74,9 +70,13 @@ func TestManagedFormActionCopyVisible_HTTP(t *testing.T) {
 			}
 
 			// Право создания и прямое копирование ключ не трогает.
-			fresh := get(s.form, "/ui/catalog/звонок/new?copy="+id.String(), map[string]string{"entity": "звонок"})
+			fresh := get("/ui/catalog/звонок/new?copy=" + id.String())
 			if !strings.Contains(fresh, "Течёт кран") {
 				t.Fatal("прямой адрес ?copy= перестал копировать значения")
+			}
+			list := get("/ui/catalog/звонок")
+			if !strings.Contains(list, "data-ob-list-create") {
+				t.Fatal("кнопка «Создать» должна сохраняться при любом actions.copy.visible")
 			}
 		})
 	}

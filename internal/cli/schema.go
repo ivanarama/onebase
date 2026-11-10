@@ -613,6 +613,19 @@ func managedFormSchema() map[string]any {
 		"additionalProperties": true,
 		"properties": map[string]any{
 			"schema": stringSchema("Версия схемы, сейчас onebase.form/v1"),
+			"actions": map[string]any{
+				"type":                 "object",
+				"additionalProperties": true,
+				"properties": map[string]any{
+					"copy": map[string]any{
+						"type":                 "object",
+						"additionalProperties": false,
+						"properties": map[string]any{
+							"visible": boolSchema("false — скрыть кнопку «Скопировать»; отсутствие ключа или true сохраняет кнопку при праве создания. Право создания, «Создать» и прямой адрес ?copy= не меняются"),
+						},
+					},
+				},
+			},
 			"form": map[string]any{
 				"type":                 "object",
 				"additionalProperties": true,

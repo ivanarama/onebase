@@ -351,3 +351,48 @@ func TestFullCurrentReviewActualRoutingRecordsStayClosedPublicCLI(t *testing.T) 
 		})
 	}
 }
+
+func TestFullCurrentReviewBaseSyncMentionsStayOrdinaryPublicCLI(t *testing.T) {
+	for name, body := range map[string]string{
+		"actual-2439-explanation": "Однако в полной timeline отсутствует trusted ship исходного HEAD до этого base-sync; пары pp:base-sync-intent/done также нет.",
+		"inline-code":             "The missing `<!-- pp:base-sync-intent malformed -->` is an explanation.",
+		"inline-HTML":             "This text mentions <!-- pp:base-sync-done malformed --> as an example.",
+		"fenced":                  "```html\n<!-- pp:base-sync-intent malformed -->\n```",
+		"unclosed-fence":          "~~~html\n<!-- pp:base-sync-done malformed -->",
+		"quoted":                  "> <!-- pp:base-sync-v1-aborted malformed -->",
+	} {
+		t.Run(name, func(t *testing.T) {
+			snapshot := fullCurrentReviewHistory(t)
+			routingMentionComment(snapshot, body)
+			got := fullCurrentReviewCLI(t, snapshot, 5)
+			if got.IntegrationOwner != nil || len(got.MergeExecutable) != 1 || got.MergeExecutable[0].Stage != "merge" ||
+				hasFinding(got, "legacy_source_review_missing") {
+				t.Fatalf("ordinary explanation revived legacy integration: %+v", got)
+			}
+		})
+	}
+}
+
+func TestFullCurrentReviewBaseSyncCandidatesStayClosedPublicCLI(t *testing.T) {
+	for name, body := range map[string]string{
+		"intent":            "<!-- pp:base-sync-intent malformed -->",
+		"done":              "<!-- pp:base-sync-done malformed -->",
+		"aborted":           "<!-- pp:base-sync-v1-aborted malformed -->",
+		"unknown-version":   "<!-- pp:base-sync-v9-intent malformed -->",
+		"leading-space":     " <!-- pp:base-sync-intent malformed -->",
+		"leading-BOM":       "\ufeff<!-- pp:base-sync-done malformed -->",
+		"after-prose":       "Prepared by the ordinary protocol.\n<!-- pp:base-sync-intent malformed -->",
+		"after-closed-code": "```\nexample\n```\n<!-- pp:base-sync-done malformed -->",
+	} {
+		t.Run(name, func(t *testing.T) {
+			snapshot := fullCurrentReviewHistory(t)
+			routingMentionComment(snapshot, body)
+			got := fullCurrentReviewCLI(t, snapshot)
+			for _, candidate := range got.MergeExecutable {
+				if candidate.Stage == "merge" {
+					t.Fatalf("actual or malformed integration candidate acquired ordinary lane: %+v", got)
+				}
+			}
+		})
+	}
+}
