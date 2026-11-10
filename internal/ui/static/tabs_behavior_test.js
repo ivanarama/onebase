@@ -167,10 +167,18 @@ function shell(storage, search = '', confirmClose = () => true, requestFrameClos
   let uuid = 0;
   let confirms = 0;
   let alerts = 0;
+  const location = new URL('/ui/app' + search, 'http://127.0.0.1:8080');
+  const replacements = [];
   const context = {
     document,
     sessionStorage: storage,
-    location: {search, origin: 'http://127.0.0.1:8080', href: '/ui/app'},
+    location,
+    history: {
+      replaceState(state, title, url) {
+        replacements.push(url);
+        location.href = new URL(url, location).href;
+      }
+    },
     URL,
     URLSearchParams,
     crypto: {
@@ -200,6 +208,8 @@ function shell(storage, search = '', confirmClose = () => true, requestFrameClos
   const strip = elements['ob-tabstrip'];
   const frames = () => elements['ob-tabbody'].children.filter(element => element.tagName === 'IFRAME');
   return {
+    location,
+    replacements,
     open(url, title, options) { return context.obOpenTab(url, title, options); },
     closeByURL(url) { return context.obCloseTabByURL(url); },
     confirms() { return confirms; },
@@ -330,6 +340,28 @@ test('F5 restores the selected middle tab without hydration overwriting it', () 
   assert.equal(app.count(), 3);
   assert.equal(app.activeIndex(), 1);
   assert.deepEqual(savedActive(storage), before);
+});
+
+test('tabs reset clears saved tabs once and preserves other query parameters and hash', () => {
+  const storage = new FakeStorage();
+  let app = openThree(storage);
+  app.click(1);
+  assert.equal(savedActive(storage).url, '/ui/b');
+
+  app = shell(storage, '?tabs=reset&home=1&filter=a%26b#details');
+  assert.equal(app.count(), 0);
+  assert.equal(savedActive(storage), null);
+  assert.equal(app.location.pathname, '/ui/app');
+  assert.equal(app.location.search, '?home=1&filter=a%26b');
+  assert.equal(app.location.hash, '#details');
+  assert.deepEqual(app.replacements, ['/ui/app?home=1&filter=a%26b#details']);
+
+  app.open('/ui/after-reset', 'After reset');
+  const cleanedAddress = app.location.search + app.location.hash;
+  app = shell(storage, cleanedAddress);
+  assert.equal(app.count(), 1);
+  assert.equal(savedActive(storage).url, '/ui/after-reset');
+  assert.deepEqual(app.replacements, []);
 });
 
 test('duplicate URLs keep separate stable IDs and restore the active copy', () => {
