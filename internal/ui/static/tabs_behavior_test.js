@@ -460,13 +460,14 @@ test('return notification reuses a saved Cyrillic card across URL encodings and 
   app.markDirty(0);
   // A saved form reports the entity spelling used by the server. The iframe
   // and its unsaved values must survive a return command from another form.
-  app.navigate(0, '/ui/document/' + encodeURIComponent('А_Задача') + '/' + id);
+  app.navigate(0, '/ui/document/' + encodeURIComponent('А_Задача') + '/' + id + '?_ob_conceal=synthetic-form-token');
   app.open('/ui/processor/Search', 'Search');
   app.post({source: 'obOpenTab', url: notificationURL, title: 'Task'}, 1);
   assert.equal(app.count(), 2, 'return opened another task document');
   assert.equal(app.activeIndex(), 0);
   assert.strictEqual(app.open(notificationURL, 'Task'), task);
   assert.equal(task.dirty, true, 'return lost the edit state');
+  assert.ok(savedTabs(storage)[0].url.endsWith('?_ob_conceal=synthetic-form-token'), 'return replaced the live form context');
 });
 
 test('same record with distinct parameters, fragments or an explicit duplicate keeps separate tabs', () => {

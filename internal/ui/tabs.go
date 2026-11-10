@@ -300,7 +300,11 @@ const tplAppShell = `{{define "page-app-shell"}}
       var left=new URL(String(a),location.origin), right=new URL(String(b),location.origin);
       var path=decodeURIComponent(left.pathname).toLowerCase();
       if(!/^\/ui\/(document|catalog)\/[^/]+\/[^/]+$/.test(path))return false;
-      return left.origin===right.origin && left.search===right.search && left.hash===right.hash && sameURL(a,b);
+      // This server-issued token identifies the live conceal/reveal context,
+      // not another business form. Keep the iframe and its token untouched.
+      var leftQuery=new URLSearchParams(left.search), rightQuery=new URLSearchParams(right.search);
+      leftQuery.delete('_ob_conceal'); rightQuery.delete('_ob_conceal');
+      return left.origin===right.origin && leftQuery.toString()===rightQuery.toString() && left.hash===right.hash && sameURL(a,b);
     }catch(e){return false;}
   }
   // Закрыть вкладку(и) по АДРЕСУ формы — команда ui.закрытьФорму (план 87).
