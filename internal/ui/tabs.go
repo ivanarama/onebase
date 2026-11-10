@@ -206,7 +206,7 @@ const tplAppShell = `{{define "page-app-shell"}}
     t.btn.classList.toggle('dirty',false);
     return true;
   }
-  function closeTab(t,reason,mode){
+  function closeTab(t,reason,mode,source){
     var i=tabs.indexOf(t); if(i<0)return false;
     if(t.closePromise)return t.closePromise;
     // Автогенерируемая страница без managed-конфига не имеет close lifecycle.
@@ -222,7 +222,7 @@ const tplAppShell = `{{define "page-app-shell"}}
       if(t.dirty && !window.confirm('В этой вкладке есть несохранённые изменения. Закрыть вкладку?'))return false;
       return removeTab(t);
     }
-    t.closePromise=Promise.resolve(window.obRequestFrameClose(t.frame,reason||'close',mode||'')).then(function(decision){
+    t.closePromise=Promise.resolve(window.obRequestFrameClose(t.frame,reason||'close',mode||'',source||'')).then(function(decision){
       if(!decision||decision.allowed!==true){
         if(decision&&(decision.error==='timeout'||decision.error==='post-message')&&window.alert)window.alert(closeFailureMessage());
         return false;
@@ -328,13 +328,13 @@ const tplAppShell = `{{define "page-app-shell"}}
   function tabDocument(t){
     try{ return t.frame.contentWindow.document||null; }catch(e){ return null; }
   }
-  function rememberPendingClose(u,reason){
+  function rememberPendingClose(u,reason,source){
     var now=Date.now();
     pendingCloses=pendingCloses.filter(function(p){ return p.until>now && !sameURL(p.url,u); });
     // WindowProxy переживает навигацию даже на тот же URL. Команда принадлежит
     // только документам, уже открытым к моменту её доставки.
     var recipients=tabs.map(function(t){ return {tab:t,document:tabDocument(t)}; });
-    pendingCloses.push({url:u,reason:reason||'programmatic',until:now+PENDING_CLOSE_MS,recipients:recipients});
+    pendingCloses.push({url:u,reason:reason||'programmatic',source:source,until:now+PENDING_CLOSE_MS,recipients:recipients});
   }
   function takePendingClose(t){
     var now=Date.now();
@@ -346,7 +346,24 @@ const tplAppShell = `{{define "page-app-shell"}}
     }
     return null;
   }
-  function closeTabByURL(url,reason){
+  function closeCommandTab(t,reason,source){
+    // A refused duplicate can precede the active command source. Its next
+    // confirmation must be visible instead of blocking in a hidden iframe.
+    if(t.dirty)setActive(t);
+    if(!source || (reason && reason!=='programmatic'))return closeTab(t,reason||'programmatic');
+    var doc=tabDocument(t);
+    var prepared='';
+    try{
+      var child=t.frame.contentWindow;
+      if(typeof child.obPrepareProgrammaticClose!=='function')return closeTab(t,reason||'programmatic');
+      prepared=child.obPrepareProgrammaticClose(source);
+    }catch(e){ return Promise.resolve(false); }
+    return Promise.resolve(prepared).then(function(){
+      if(!doc || doc!==tabDocument(t))return false;
+      return closeTab(t,reason||'programmatic','',source);
+    });
+  }
+  function closeTabByURL(url,reason,source){
     var u=String(url||''); if(!u)return 0;
     var n=0;
     // syncFrameURL перед сверкой: форма, записавшая НОВЫЙ объект, меняет свой
@@ -361,7 +378,7 @@ const tplAppShell = `{{define "page-app-shell"}}
         matched.push(t);
       }
     });
-    if(!matched.length){ rememberPendingClose(u,reason); return typeof window.obRequestFrameClose==='function'?Promise.resolve(0):0; }
+    if(!matched.length){ rememberPendingClose(u,reason,source); return typeof window.obRequestFrameClose==='function'?Promise.resolve(0):0; }
     if(typeof window.obRequestFrameClose!=='function'){
       matched.forEach(function(t){ closeTab(t,reason||'programmatic'); if(!tabs.includes(t))n++; });
       return n;
@@ -369,7 +386,7 @@ const tplAppShell = `{{define "page-app-shell"}}
     var chain=Promise.resolve();
     matched.forEach(function(t){
       chain=chain.then(function(){
-        return Promise.resolve(closeTab(t,reason||'programmatic')).then(function(closed){if(closed)n++;});
+        return Promise.resolve(closeCommandTab(t,reason,source)).then(function(closed){if(closed)n++;});
       });
     });
     return chain.then(function(){return n;});
@@ -398,9 +415,9 @@ const tplAppShell = `{{define "page-app-shell"}}
     if(ev.origin!==location.origin)return;
     var d=ev.data; if(!d||typeof d!=='object')return;
     if(d.source==='obOpenTab' && d.url){ var ou=String(d.url); if(!openable(ou))return; openTab(ou, d.title?String(d.title):'Форма', {allowDup:!!d.allowDup}); }
-    else if(d.source==='obCloseTab'){ if(d.url){ closeTabByURL(String(d.url),d.reason||'programmatic'); } else { var ct=tabByWindow(ev.source); if(ct)closeTab(ct,d.reason||'cross',d.mode||''); } }
-    else if(d.source==='obFrameURLChanged' && d.url){ var ut=tabByWindow(ev.source); if(ut && frameShows(ut,String(d.url),d.documentToken)){ syncFrameURL(ut,String(d.url)); var pc=takePendingClose(ut); if(pc)closeTab(ut,pc.reason); } }
-    else if(d.source==='obSetTitle' && active && d.title){ active.title=String(d.title); active.label.textContent=active.title; active.btn.title=active.title; persist(); }
+    else if(d.source==='obCloseTab'){ if(d.url){ closeTabByURL(String(d.url),d.reason||'programmatic',d.closeSource); } else { var ct=tabByWindow(ev.source); if(ct)closeTab(ct,d.reason||'cross',d.mode||''); } }
+    else if(d.source==='obFrameURLChanged' && d.url){ var ut=tabByWindow(ev.source); if(ut && frameShows(ut,String(d.url),d.documentToken)){ syncFrameURL(ut,String(d.url)); var pc=takePendingClose(ut); if(pc)closeCommandTab(ut,pc.reason,pc.source); } }
+    else if(d.source==='obSetTitle' && d.title){ var tt=tabByWindow(ev.source); if(tt){ tt.title=String(d.title); tt.label.textContent=tt.title; tt.btn.title=tt.title; persist(); } }
     else if(d.source==='obDirty'){ var dt=tabByWindow(ev.source); if(dt){ dt.dirty=!!d.dirty; dt.btn.classList.toggle('dirty',dt.dirty); } } // фаза 3
   });
 

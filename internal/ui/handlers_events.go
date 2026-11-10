@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/realtime"
@@ -15,13 +16,32 @@ import (
 
 // hubNotifier адаптирует *realtime.Hub к interpreter.Notifier: DSL-функция
 // ОтправитьУведомление(Кому, Событие, Данные) → Hub.Publish(Кому, Event{...}).
-type hubNotifier struct{ hub *realtime.Hub }
+type hubNotifier struct {
+	hub         *realtime.Hub
+	closeSource string
+}
 
 func (n hubNotifier) Publish(target, name string, data any) {
 	if n.hub == nil {
 		return
 	}
-	n.hub.Publish(target, realtime.Event{Name: name, Data: data})
+	ev := realtime.Event{Name: name, Data: data}
+	if name == "ui.закрытьФорму" {
+		ev.CloseSource = n.closeSource
+	}
+	n.hub.Publish(target, ev)
+}
+
+// Only this request's opaque snapshot token can identify its originating form.
+// A missing/invalid token keeps ordinary dirty confirmation in every recipient.
+func (s *Server) bindFormCloseSource(vars map[string]any, r *http.Request) {
+	source := r.Header.Get("X-OneBase-Form-Close-Source")
+	if _, err := uuid.Parse(source); err != nil {
+		return
+	}
+	for key, value := range interpreter.NewNotifyFunctions(hubNotifier{hub: s.hub, closeSource: source}) {
+		vars[key] = value
+	}
 }
 
 // notifier возвращает издателя уведомлений для инжекции в DSL-переменные.
@@ -110,7 +130,11 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 			// Кадр — дефолтное message-событие с {name,data} в JSON: клиент один
 			// раз парсит и ретранслирует в window CustomEvent('onebase:<name>'),
 			// поэтому имена событий не нужно согласовывать с сервером заранее.
-			frame, err := json.Marshal(map[string]any{"name": ev.Name, "data": ev.Data, "system": ev.System})
+			payload := map[string]any{"name": ev.Name, "data": ev.Data, "system": ev.System}
+			if ev.CloseSource != "" {
+				payload["closeSource"] = ev.CloseSource
+			}
+			frame, err := json.Marshal(payload)
 			if err != nil {
 				continue
 			}
