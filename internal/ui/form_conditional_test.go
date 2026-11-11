@@ -37,7 +37,7 @@ func TestApplyManagedFormConditionalStyles(t *testing.T) {
 		t.Fatalf("second row should not be styled: %q", got)
 	}
 	css := formConditionalCSS(form)
-	for _, want := range []string{rowClass, cellClass, "background:#fee2e2!important", "font-style:italic!important"} {
+	for _, want := range []string{rowClass, cellClass, "background:var(--ob-danger-hi)!important", "font-style:italic!important"} {
 		if !strings.Contains(css, want) {
 			t.Fatalf("CSS missing %q:\n%s", want, css)
 		}
@@ -56,7 +56,7 @@ func TestManagedFormConditionalRenderNoGrid(t *testing.T) {
 	applyManagedFormConditionalStyles(form, rows, nil, newInterpEvaluator(interpreter.New()))
 
 	html := renderConditionalManagedForm(t, ent, form, rows)
-	for _, want := range []string{`<tr class="ob-cfr-`, `<td class="ob-cfc-`, "background:#fee2e2!important"} {
+	for _, want := range []string{`<tr class="ob-cfr-`, `<td class="ob-cfc-`, "background:var(--ob-danger-hi)!important"} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("rendered no_grid form missing %q:\n%s", want, html)
 		}
@@ -108,7 +108,7 @@ func TestManagedFormEventStateAddsConditionalClasses(t *testing.T) {
 	if formRowClass(row) == "" || formCellClass(row, "Сумма") == "" {
 		t.Fatalf("event state missing conditional classes: %+v", row)
 	}
-	if !strings.Contains(css, "background:#fee2e2!important") {
+	if !strings.Contains(css, "background:var(--ob-danger-hi)!important") {
 		t.Fatalf("event state missing conditional CSS:\n%s", css)
 	}
 }
@@ -143,7 +143,7 @@ func TestFormConditionalRuntimeAddAndClear(t *testing.T) {
 		t.Fatalf("unexpected rule: %+v", rule)
 	}
 	css := formConditionalRulesCSS(rt.rules)
-	for _, want := range []string{"background:#fee2e2!important", "color:#991b1b!important", "font-weight:bold!important"} {
+	for _, want := range []string{"background:var(--ob-danger-hi)!important", "color:var(--ob-danger-ink)!important", "font-weight:bold!important"} {
 		if !strings.Contains(css, want) {
 			t.Fatalf("CSS missing %q:\n%s", want, css)
 		}
@@ -204,7 +204,7 @@ func TestManagedFormEventAddsConditionalFormattingRule(t *testing.T) {
 	if !strings.HasPrefix(cellClass, "ob-cfc-") {
 		t.Fatalf("cell class not applied: %+v", rows[0])
 	}
-	for _, want := range []string{cellClass, "background:#fee2e2!important", "color:#991b1b!important", "font-weight:bold!important"} {
+	for _, want := range []string{cellClass, "background:var(--ob-danger-hi)!important", "color:var(--ob-danger-ink)!important", "font-weight:bold!important"} {
 		if !strings.Contains(resp.ConditionalCSS, want) {
 			t.Fatalf("conditionalCss missing %q:\n%s", want, resp.ConditionalCSS)
 		}

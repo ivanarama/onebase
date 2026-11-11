@@ -160,6 +160,23 @@ func formConditionalRulesCSS(rules []metadata.FormCondRule) string {
 	return b.String()
 }
 
+// stylePaletteTokens — цвета enterprise-палитры (те же значения, что у
+// токенов themeTokensCSS) становятся токенами: правило оформления красится
+// через тему, а не жёстким hex. Произвольный цвет конфигурации остаётся как
+// есть — токен для него не выдумывается.
+var stylePaletteTokens = map[string]string{
+	"#fee2e2": "var(--ob-danger-hi)",
+	"#991b1b": "var(--ob-danger-ink)",
+}
+
+func cssTokenize(style string) string {
+	for hex, tok := range stylePaletteTokens {
+		style = strings.ReplaceAll(style, strings.ToLower(hex), tok)
+		style = strings.ReplaceAll(style, strings.ToUpper(hex), tok)
+	}
+	return style
+}
+
 func cssImportant(style string) string {
 	var parts []string
 	for _, p := range strings.Split(style, ";") {
@@ -167,6 +184,7 @@ func cssImportant(style string) string {
 		if p == "" {
 			continue
 		}
+		p = cssTokenize(p)
 		if !strings.Contains(p, "!important") {
 			p += "!important"
 		}

@@ -20,6 +20,64 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+const themeTokensCSS = `/* Токены палитры enterprise-UI (план 218). Светлые значения точно равны
+   прежним hardcoded-цветам — светлая тема не меняется ни на пиксель. Тема
+   выбирается атрибутом data-theme на <html> (plan 218): значения dark-токенов
+   согласованы с тёмной шапкой, контраст текстов зафиксирован тестами.
+   Выбор режима (light|dark|system) живёт в localStorage, сервер о нём не
+   знает; head-скрипт /static/ui.js ставит data-theme до первой отрисовки. */
+:root{
+--ob-bg:#f5f5f5;--ob-surface:#fff;--ob-surface-2:#f8fafc;--ob-surface-3:#f1f5f9;--ob-zebra:#fafbfc;
+--ob-text:#1e293b;--ob-text-strong:#334155;--ob-text-2:#475569;--ob-text-3:#64748b;--ob-text-4:#94a3b8;
+--ob-border:#e2e8f0;--ob-border-2:#cbd5e1;--ob-row-hover:#f8fafc;--ob-head-bg:#eef2f7;--ob-input-bg:#fff;
+--ob-btn-2-bg:#e2e8f0;--ob-btn-2-text:#374151;--ob-btn-2-hover:#cbd5e1;
+--ob-accent:#3b82f6;--ob-accent-hover:#2563eb;--ob-link:#3b82f6;--ob-link-2:#1d4ed8;
+--ob-hover-blue:#eef2ff;--ob-hover-blue-2:#eef4ff;--ob-highlight:#e5e7eb;
+--ob-error-bg:#fef2f2;--ob-error-border:#fecaca;--ob-error-text:#dc2626;
+--ob-nav-bg:#1e293b;--ob-nav-text:#cbd5e1;--ob-nav-hover-bg:#334155;--ob-nav-hover-text:#fff;
+--ob-topbar-bg:#1e293b;--ob-topbar-text:#fff;--ob-topbar-accent:#7dd3fc;--ob-subsys-bg:#0f172a;
+--ob-field-border:#475569;--ob-field-bg:#334155;--ob-field-text:#f1f5f9;
+--ob-posted:#16a34a;--ob-flag:#dc2626;
+--ob-kpi-ink:#0f172a;--ob-link-hover:#1a4a80;--ob-danger-ink:#b91c1c;
+--ob-dirty:#e8b400;--ob-chip-hover:#dbeafe;--ob-danger-hi:#fee2e2;--ob-hover-soft:#f0f4ff;
+--ob-row-line:#ddd;
+--ob-af-hd-bg:#f0f3f8;--ob-af-hd-ink:#1a3a6a;--ob-af-hd-hover:#e8eeff;--ob-af-border:#d0d7e3;
+--ob-emerald:#10b981;--ob-emerald-bg:#d1fae5;--ob-green-100:#dcfce7;--ob-green-800:#166534;
+--ob-indigo-bg:#eef2ff;--ob-indigo-ink:#3730a3;--ob-indigo-border:#c7d2fe;
+--ob-indigo-hover:#e0e7ff;--ob-warn-strong:#7c2d12;--ob-violet:#8b5cf6;--ob-hint-bg:#fef9c3;
+--ob-green:#22c55e;--ob-orange:#f97316;--ob-amber-bg:#fffbeb;--ob-amber-border:#fde68a;--ob-amber-ink:#92400e;
+--ob-post-bg:#e8b400;--ob-post-ink:#1a1a1a;--ob-post-hover:#d4a200;--ob-red-border:#fca5a5;
+--ob-ok-bg:#f0fdf4;--ob-ok-border:#86efac;--ob-ok-text:#15803d;
+--ob-warn-bg:#fff7ed;--ob-warn-border:#fdba74;--ob-warn-text:#9a3412;
+--ob-danger:#ef4444;--ob-amber:#f59e0b}
+html[data-theme="light"]{color-scheme:light}
+html[data-theme="dark"]{
+--ob-bg:#0b1220;--ob-surface:#111c2e;--ob-surface-2:#16223a;--ob-surface-3:#1c2a44;--ob-zebra:#141f34;
+--ob-text:#e2e8f0;--ob-text-strong:#dbe4ef;--ob-text-2:#cbd5e1;--ob-text-3:#94a3b8;--ob-text-4:#8fa5bd;
+--ob-border:#2b3a55;--ob-border-2:#3b4c6d;--ob-row-hover:#223052;--ob-head-bg:#1e2c46;--ob-input-bg:#111c2e;
+--ob-btn-2-bg:#223052;--ob-btn-2-text:#e2e8f0;--ob-btn-2-hover:#2b3a55;
+--ob-accent:#3b82f6;--ob-accent-hover:#2563eb;--ob-link:#60a5fa;--ob-link-2:#93c5fd;
+--ob-hover-blue:#1e2b4d;--ob-hover-blue-2:#1c2a44;--ob-highlight:#2a3a57;
+--ob-error-bg:#3b1220;--ob-error-border:#7f1d1d;--ob-error-text:#f87171;
+--ob-nav-bg:#0b1220;--ob-nav-text:#cbd5e1;--ob-nav-hover-bg:#1c2a44;--ob-nav-hover-text:#fff;
+--ob-topbar-bg:#0b1220;--ob-topbar-text:#fff;--ob-topbar-accent:#7dd3fc;--ob-subsys-bg:#060c18;
+--ob-field-border:#334155;--ob-field-bg:#1c2a44;--ob-field-text:#e2e8f0;
+--ob-posted:#4ade80;--ob-flag:#f87171;
+--ob-kpi-ink:#e2e8f0;--ob-link-hover:#93c5fd;--ob-danger-ink:#f87171;
+--ob-dirty:#fbbf24;--ob-chip-hover:#223052;--ob-danger-hi:#3b1220;--ob-hover-soft:#1e2b4d;
+--ob-row-line:#2b3a55;
+--ob-af-hd-bg:#1e2c46;--ob-af-hd-ink:#93c5fd;--ob-af-hd-hover:#263452;--ob-af-border:#3b4c6d;
+--ob-emerald:#34d399;--ob-emerald-bg:#123324;--ob-green-100:#123324;--ob-green-800:#4ade80;
+--ob-indigo-bg:#2a2a4e;--ob-indigo-ink:#a5b4fc;--ob-indigo-border:#3b3b63;
+--ob-indigo-hover:#2a2a4e;--ob-warn-strong:#7c2d12;--ob-violet:#6d28d9;--ob-hint-bg:#3b3417;
+--ob-green:#4ade80;--ob-orange:#fb923c;--ob-amber-bg:#3a2b08;--ob-amber-border:#6b5a1d;--ob-amber-ink:#fbbf24;
+--ob-post-bg:#fbbf24;--ob-post-ink:#111c2e;--ob-post-hover:#f59e0b;--ob-red-border:#7f1d1d;
+--ob-ok-bg:#12291a;--ob-ok-border:#2f5d3b;--ob-ok-text:#4ade80;
+--ob-warn-bg:#2b1d0b;--ob-warn-border:#6b4a1d;--ob-warn-text:#fbbf24;
+--ob-danger:#b91c1c;--ob-amber:#d97706;
+color-scheme:dark}
+html[data-theme="dark"] body{color:var(--ob-text)}`
+
 var tmpl = template.Must(newTemplate(nil))
 
 type managedTPColumnJSON struct {
@@ -235,6 +293,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		return key
 	}
 	return template.FuncMap{
+		"trimPx":                strings.TrimSuffix,
 		"refWriteAllowed":       refWriteAllowed,
 		"listFilterPanelFields": listFilterPanelFields,
 		"listFilterChoices":     listFilterChoices,
@@ -1508,8 +1567,117 @@ func normalizedFormHotkey(value string) string {
 }
 
 func templateSource() string {
-	return tplHead + tplNav + tplHelp + tplIndex + tplList + tplForm + tplManagedForm + tplRegister + tplReport + tplProcessor + tplAgentSettings + tplPOS + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants + tplHistory + tplStages + tplJournal + tplScheduled + tplAccountReg + tplQueryBuilder + tplAllFunctions + tplSearch + tplQueryConsole + tplCodeConsole + tplGengen + tplForbidden + tplReportProblem + tplPageCustom + tplAppShell + tplNavigationSettings
+	return tplHead + tplNav + tplHelp + tplIndex + tplList + tplForm + tplManagedForm + tplRegister + tplReport + tplProcessor + tplAgentSettings + tplPOS + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants + tplHistory + tplStages + tplJournal + tplScheduled + tplAccountReg + tplQueryBuilder + tplAllFunctions + tplSearch + tplQueryConsole + tplCodeConsole + tplGengen + tplForbidden + tplReportProblem + tplPageCustom + tplAppShell + tplNavigationSettings + tplThemeCSS
 }
+
+const tplThemeCSS = `
+{{define "page-theme-css"}}
+{{template "head" .}}{{template "nav" .}}
+<main style="max-width:1000px">
+<h2>{{t $.Lang "Стили интерфейса"}}</h2>
+<p style="color:var(--ob-text-2);font-size:13px;margin-bottom:12px">
+  {{t $.Lang "Стили конфигурация хранит в ui.css в корне проекта; он подключается после встроенных стилей, пересборка движка не нужна. Форма правит элемент за элементом, а ui.css генерируется из настроек."}}
+</p>
+{{if .Msg}}<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-ok-text);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">{{.Msg}}</div>{{end}}
+{{if .Err}}<div class="error" style="max-width:1000px;margin-bottom:16px">{{.Err}}</div>{{end}}
+
+<div class="card" style="margin-bottom:16px">
+  <div style="display:flex;gap:24px;flex-wrap:wrap;font-size:13px;color:var(--ob-text-2)">
+    <span><b>{{t $.Lang "Файл:"}}</b> <code>{{.Path}}</code></span>
+    <span><b>{{t $.Lang "Состояние:"}}</b> {{if .Exists}}{{t $.Lang "есть, подключается"}}{{else}}{{t $.Lang "нет — страницы на встроенных стилях"}}{{end}}</span>
+    {{if .Exists}}<span><b>{{t $.Lang "Размер:"}}</b> {{.Size}} </span>{{end}}
+    {{if .Edited}}<span><b>{{t $.Lang "Изменён:"}}</b> {{.Edited}}</span>{{end}}
+  </div>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+    <form method="POST" action="/ui/admin/theme-css/default" style="margin:0">
+      <input type="hidden" name="el" value="{{.Sel}}">
+      <button class="btn btn-secondary" type="submit">{{t $.Lang "По умолчанию"}}</button>
+    </form>
+    {{if .Exists}}<form method="POST" action="/ui/admin/theme-css/reset" style="margin:0">
+      <input type="hidden" name="el" value="{{.Sel}}">
+      <button class="btn btn-danger" type="submit">{{t $.Lang "Удалить файл"}}</button>
+    </form>{{end}}
+  </div>
+</div>
+
+<form method="GET" action="/ui/admin/theme-css" style="margin-bottom:16px;display:flex;gap:10px;align-items:center">
+  <label style="font-size:14px;color:var(--ob-text-2)">{{t $.Lang "Элемент"}}</label>
+  <select name="el" onchange="this.form.submit()" style="min-width:320px;padding:9px 12px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:6px;font-size:14px">
+    {{range .Catalog}}<option value="{{.ID}}"{{if eq $.Sel .ID}} selected{{end}}>{{.Name}}</option>{{end}}
+  </select>
+</form>
+
+<form method="POST" action="/ui/admin/theme-css/save">
+  <input type="hidden" name="el" value="{{.Sel}}">
+  <div class="card" style="margin-bottom:16px">
+    <h3 style="margin-bottom:14px">{{.Element.Name}}</h3>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px 16px">
+      {{range .Element.Props}}
+      <div class="form-group" style="margin:0">
+        <label style="font-size:12px;color:var(--ob-text-3)">{{t $.Lang .Label}}</label>
+        {{$v := index $.Vals .Key}}
+        {{if eq .Kind "color"}}
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="text" name="p_{{.Key}}" value="{{$v}}" data-saved="{{$v}}" placeholder="#000000" style="flex:1;padding:8px 10px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:6px;font-size:14px">
+            <span data-ob-swatch title="{{t $.Lang "Выбрать цвет"}}" style="width:26px;height:26px;border-radius:6px;border:1px solid var(--ob-border);cursor:pointer;{{if $v}}background:{{$v}};{{end}}"></span>
+          </div>
+          <input type="color" data-ob-picker hidden>
+        {{else if eq .Kind "size"}}
+          <input type="number" min="1" max="400" name="p_{{.Key}}" value="{{trimPx $v "px"}}" style="width:100%;padding:8px 10px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:6px;font-size:14px">
+        {{else if eq .Kind "weight"}}
+          <select name="p_{{.Key}}" style="width:100%;padding:8px 10px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:6px;font-size:14px">
+            <option value=""{{if not $v}} selected{{end}}>{{t $.Lang "— не задано"}}</option>
+            <option value="normal"{{if eq $v "normal"}} selected{{end}}>{{t $.Lang "Обычное"}}</option>
+            <option value="bold"{{if eq $v "bold"}} selected{{end}}>{{t $.Lang "Жирное"}}</option>
+          </select>
+        {{else if eq .Kind "family"}}
+          <select name="p_{{.Key}}" style="width:100%;padding:8px 10px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:6px;font-size:14px">
+            <option value=""{{if not $v}} selected{{end}}>{{t $.Lang "— не задано"}}</option>
+            {{range $.Families}}<option value="{{.}}"{{if eq $v .}} selected{{end}}>{{.}}</option>{{end}}
+          </select>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+    <p style="font-size:12px;color:var(--ob-text-3);margin-top:10px">{{t $.Lang "Пустое поле — свойство не задаётся, действует встроенный стиль."}}</p>
+  </div>
+
+  <label style="font-size:14px;color:var(--ob-text-2)">{{t $.Lang "Свободный CSS (дописывается в ui.css перед сгенерированными правилами)"}}</label>
+  <textarea name="raw" rows="8" spellcheck="false" style="width:100%;font-family:ui-monospace,monospace;font-size:13px;padding:10px 12px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:7px;margin-bottom:12px">{{.Raw}}</textarea>
+
+  <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+    <button class="btn btn-primary" type="submit">{{t $.Lang "Применить"}}</button>
+    <button class="btn btn-secondary" type="submit" formaction="/ui/admin/theme-css/reset-element" formnovalidate>{{t $.Lang "Сбросить"}}</button>
+    <a class="btn btn-secondary" href="/ui/">{{t $.Lang "Закрыть"}}</a>
+  </div>
+</form>
+<script>
+(function () {
+  document.querySelectorAll(".form-group").forEach(function (g) {
+    var t = g.querySelector("input[data-saved]");
+    if (!t) return;
+    var picker = g.querySelector("input[data-ob-picker]");
+    var sw = g.querySelector("[data-ob-swatch]");
+    var hex6 = function (v) {
+      if (/^#[0-9a-fA-F]{6}$/.test(v)) return v;
+      if (/^#[0-9a-fA-F]{3}$/.test(v)) return "#" + v[1] + v[1] + v[2] + v[2] + v[3] + v[3];
+      return "";
+    };
+    var sync = function (v) {
+      var h = hex6(v);
+      sw.style.background = h ? h : "transparent";
+      if (h) picker.value = h;
+    };
+    sync(t.value);
+    t.addEventListener("input", function () { sync(t.value); });
+    picker.addEventListener("change", function () { t.value = picker.value; sync(picker.value); });
+    sw.addEventListener("click", function () { picker.click(); });
+  });
+})();
+</script>
+</main></body></html>
+{{end}}
+`
 
 const tplHead = `
 {{define "head"}}<!DOCTYPE html>
@@ -1542,6 +1710,13 @@ const tplHead = `
 <style>
 .ob-embedded .topbar,.ob-embedded .subsys-bar,.ob-embedded #ob-nav{display:none!important}
 *{box-sizing:border-box;margin:0;padding:0}
+/* Токены палитры enterprise-UI (план 218). Светлые значения точно равны
+   прежним hardcoded-цветам — светлая тема не меняется ни на пиксель. Тема
+   выбирается атрибутом data-theme на <html> (plan 218): значения dark-токенов
+   согласованы с тёмной шапкой, контраст текстов зафиксирован тестами.
+   Выбор режима (light|dark|system) живёт в localStorage, сервер о нём не
+   знает; head-скрипт /static/ui.js ставит data-theme до первой отрисовки. */
+` + themeTokensCSS + `
 /* height:100vh + overflow:hidden — окно приложения ровно по экрану. С одним лишь
    min-height:100vh страницу растягивало САМОЕ ВЫСОКОЕ содержимое (обычно длинное
    меню слева): при окне 908px тело становилось 1283px, вместе с ним росла
@@ -1550,48 +1725,49 @@ const tplHead = `
    то есть уезжал под нижний край. Прокрутка никуда не делась: меню и рабочая
    область прокручиваются каждая сама (overflow-y:auto). На узком экране правило
    снимается — там страница прокручивается целиком, см. media-запрос ниже. */
-body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;height:100vh;min-height:100vh;overflow:hidden;background:#f5f5f5}
-.topbar{background:#1e293b;color:#fff;padding:0 16px;display:flex;align-items:center;height:38px;flex-shrink:0;position:sticky;top:0;z-index:100}
-.topbar-title{font-size:14px;font-weight:600;color:#7dd3fc;flex:1}
+body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;height:100vh;min-height:100vh;overflow:hidden;background:var(--ob-bg)}
+.topbar{background:var(--ob-topbar-bg);color:var(--ob-topbar-text);padding:0 16px;display:flex;align-items:center;height:38px;flex-shrink:0;position:sticky;top:0;z-index:100}
+.topbar-title{font-size:14px;font-weight:600;color:var(--ob-topbar-accent);flex:1}
 .sys-menu{position:relative}
-.sys-btn{background:none;border:none;color:#cbd5e1;cursor:pointer;font-size:15px;padding:6px 10px;border-radius:5px;line-height:1}
-.sys-btn:hover{background:#334155;color:#fff}
-.sys-drop{display:none;position:absolute;right:0;top:calc(100% + 4px);background:#fff;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);width:300px;max-width:calc(100vw - 16px);max-height:calc(100vh - 50px);max-height:calc(100dvh - 50px);overflow-y:auto;overscroll-behavior:contain;padding:4px 0;z-index:200}
+.sys-btn{background:none;border:none;color:var(--ob-nav-text);cursor:pointer;font-size:15px;padding:6px 10px;border-radius:5px;line-height:1}
+.sys-btn:hover{background:var(--ob-nav-hover-bg);color:var(--ob-nav-hover-text)}
+.sys-drop{display:none;position:absolute;right:0;top:calc(100% + 4px);background:var(--ob-surface);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.18);width:300px;max-width:calc(100vw - 16px);max-height:calc(100vh - 50px);max-height:calc(100dvh - 50px);overflow-y:auto;overscroll-behavior:contain;padding:4px 0;z-index:200}
 .sys-drop.open{display:block}
-.sys-drop>a,.sys-drop>button{display:block;padding:10px 16px;color:#334155;text-decoration:none;font-size:14px;width:100%;text-align:left;background:none;border:none;cursor:pointer;border-bottom:1px solid #f1f5f9}
+.sys-drop>a,.sys-drop>button{display:block;padding:10px 16px;color:var(--ob-text-strong);text-decoration:none;font-size:14px;width:100%;text-align:left;background:none;border:none;cursor:pointer;border-bottom:1px solid var(--ob-surface-3)}
 .sys-drop>:last-child>a,.sys-drop>a:last-child,.sys-drop>button:last-child{border-bottom:none}
-.sys-drop>a:hover,.sys-drop>button:hover{background:#f1f5f9}
-.sys-drop details.sys-group{margin:0;max-width:none;background:#fff;border-radius:0;box-shadow:none;border-bottom:1px solid #f1f5f9}
-.sys-drop .sys-group>summary{display:flex;align-items:center;gap:8px;padding:10px 16px;color:#334155;font-size:14px;font-weight:600;cursor:pointer;list-style:none;user-select:none}
+.sys-drop>a:hover,.sys-drop>button:hover{background:var(--ob-surface-3)}
+.sys-drop details.sys-group{margin:0;max-width:none;background:var(--ob-surface);border-radius:0;box-shadow:none;border-bottom:1px solid var(--ob-surface-3)}
+.sys-drop .sys-group>summary{display:flex;align-items:center;gap:8px;padding:10px 16px;color:var(--ob-text-strong);font-size:14px;font-weight:600;cursor:pointer;list-style:none;user-select:none}
 .sys-drop .sys-group>summary::-webkit-details-marker{display:none}
 .sys-drop .sys-group>summary::before{content:""}
-.sys-drop .sys-group>summary::after{content:"▸";margin-left:auto;color:#94a3b8;font-size:12px;transition:transform .12s ease}
+.sys-drop .sys-group>summary::after{content:"▸";margin-left:auto;color:var(--ob-text-4);font-size:12px;transition:transform .12s ease}
 .sys-drop .sys-group[open]>summary::after{content:"▸";transform:rotate(90deg)}
-.sys-drop .sys-group>summary:hover{background:#f8fafc;color:#1d4ed8}
-.sys-group-body{padding:2px 0 5px;background:#f8fafc}
-.sys-group-body>a{display:block;padding:8px 16px 8px 34px;color:#475569;text-decoration:none;font-size:13px;border-top:1px solid #f1f5f9}
-.sys-group-body>a:hover{background:#eef2ff;color:#1d4ed8}
-.sys-mode-block{padding:9px 16px 10px 34px;border-top:1px solid #f1f5f9}
-.sys-mode-title{font-size:12px;color:#64748b;margin-bottom:6px;font-weight:600}
-.sys-mode-block label{display:block;font-size:13px;padding:2px 0;cursor:pointer;color:#475569}
-.sys-mode-block .sys-btn{margin-top:6px;background:#e2e8f0;color:#334155;font-size:12px;padding:6px 10px}
-.sys-logout{position:sticky;bottom:-4px;background:#fff;z-index:1;margin:0;padding:0;box-shadow:0 -3px 8px rgba(15,23,42,.06)}
+.sys-drop .sys-group>summary:hover{background:var(--ob-surface-2);color:var(--ob-link-2)}
+.sys-group-body{padding:2px 0 5px;background:var(--ob-surface-2)}
+.sys-group-body>a{display:block;padding:8px 16px 8px 34px;color:var(--ob-text-2);text-decoration:none;font-size:13px;border-top:1px solid var(--ob-surface-3)}
+.sys-group-body>a:hover{background:var(--ob-hover-blue);color:var(--ob-link-2)}
+.sys-mode-block{padding:9px 16px 10px 34px;border-top:1px solid var(--ob-surface-3)}
+.sys-mode-title{font-size:12px;color:var(--ob-text-3);margin-bottom:6px;font-weight:600}
+.sys-mode-block label,.sys-theme-block label{display:block;font-size:13px;padding:2px 0;cursor:pointer;color:var(--ob-text-2)}
+.sys-theme-block{padding:9px 16px 10px 34px;border-top:1px solid var(--ob-surface-3)}
+.sys-mode-block .sys-btn{margin-top:6px;background:var(--ob-surface-3);color:var(--ob-text-strong);font-size:12px;padding:6px 10px}
+.sys-logout{position:sticky;bottom:-4px;background:var(--ob-surface);z-index:1;margin:0;padding:0;box-shadow:0 -3px 8px rgba(15,23,42,.06)}
 .tbl{width:100%;border-collapse:collapse}
-.tbl th{text-align:left;padding:8px 10px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;font-size:12px;position:sticky;top:0;background:#eef2f7}
-.tbl td{padding:6px 10px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:13px}
-.tbl tr:hover td{background:#f8fafc}
+.tbl th{text-align:left;padding:8px 10px;border-bottom:2px solid var(--ob-border-2);color:var(--ob-text-strong);font-weight:600;font-size:12px;position:sticky;top:0;background:var(--ob-head-bg)}
+.tbl td{padding:6px 10px;border-bottom:1px solid var(--ob-surface-3);color:var(--ob-text-strong);font-size:13px}
+.tbl tr:hover td{background:var(--ob-row-hover)}
 .report-composed{width:100%;border-collapse:collapse;font-size:13px}
-.report-composed thead th{position:sticky;top:38px;background:#eef2f7;z-index:5;text-align:left;padding:8px 10px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;font-size:12px}
-.report-composed td{padding:6px 10px;border-bottom:1px solid #f1f5f9;color:#334155}
+.report-composed thead th{position:sticky;top:38px;background:var(--ob-head-bg);z-index:5;text-align:left;padding:8px 10px;border-bottom:2px solid var(--ob-border-2);color:var(--ob-text-strong);font-weight:600;font-size:12px}
+.report-composed td{padding:6px 10px;border-bottom:1px solid var(--ob-surface-3);color:var(--ob-text-strong)}
 .report-composed td.num{font-variant-numeric:tabular-nums}
-.report-composed tr.grp:hover td{background:#f8fafc}
-.report-composed tr.grand td{font-weight:700;border-top:2px solid #e2e8f0}
-.report-composed.rep-lines-v td,.report-composed.rep-lines-v th{border-bottom:none;border-right:1px solid #eef2f7}
+.report-composed tr.grp:hover td{background:var(--ob-row-hover)}
+.report-composed tr.grand td{font-weight:700;border-top:2px solid var(--ob-border)}
+.report-composed.rep-lines-v td,.report-composed.rep-lines-v th{border-bottom:none;border-right:1px solid var(--ob-head-bg)}
 .report-composed.rep-lines-v td:last-child,.report-composed.rep-lines-v th:last-child{border-right:none}
-.report-composed.rep-lines-both td,.report-composed.rep-lines-both th{border-right:1px solid #eef2f7}
+.report-composed.rep-lines-both td,.report-composed.rep-lines-both th{border-right:1px solid var(--ob-head-bg)}
 .report-composed.rep-lines-both td:last-child,.report-composed.rep-lines-both th:last-child{border-right:none}
 .report-composed.rep-lines-none td,.report-composed.rep-lines-none th{border-bottom:none}
-.report-composed.rep-zebra tbody tr:nth-child(even){background:#fafbfc}
+.report-composed.rep-zebra tbody tr:nth-child(even){background:var(--ob-zebra)}
 /* min-height:0 у строки и её колонок: у flex-элемента min-height по умолчанию
    auto, поэтому он не может стать ниже своего содержимого — и длинное меню
    растягивало всю страницу, несмотря на overflow:hidden выше. */
@@ -1599,89 +1775,89 @@ body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;height:
 /* Оформление меню привязано к #ob-nav, а не к голому aside: детальная панель —
    тоже <aside> с белым фоном, и унаследованный color:#fff делал её значения
    белыми на белом (#1670). */
-#ob-nav{width:210px;background:#1e293b;color:#fff;padding:16px 0;flex-shrink:0;overflow-y:auto;min-height:0}
-aside .sec{font-size:11px;text-transform:uppercase;color:#94a3b8;margin:14px 12px 4px;letter-spacing:.05em}
-aside a{display:block;padding:6px 14px;color:#cbd5e1;text-decoration:none;font-size:14px;margin:1px 6px;border-radius:5px;line-height:1.3;overflow-wrap:break-word}
-aside a:hover{background:#334155;color:#fff}
+#ob-nav{width:210px;background:var(--ob-nav-bg);color:var(--ob-nav-text);padding:16px 0;flex-shrink:0;overflow-y:auto;min-height:0}
+aside .sec{font-size:11px;text-transform:uppercase;color:var(--ob-text-4);margin:14px 12px 4px;letter-spacing:.05em}
+aside a{display:block;padding:6px 14px;color:var(--ob-nav-text);text-decoration:none;font-size:14px;margin:1px 6px;border-radius:5px;line-height:1.3;overflow-wrap:break-word}
+aside a:hover{background:var(--ob-nav-hover-bg);color:var(--ob-nav-hover-text)}
 aside details.navsec{margin:0;max-width:none;background:transparent;border-radius:0;box-shadow:none}
-aside details.navsec>summary{padding:0;font-size:11px;text-transform:uppercase;color:#94a3b8;margin:14px 12px 4px;letter-spacing:.05em;cursor:pointer;list-style:none;user-select:none}
+aside details.navsec>summary{padding:0;font-size:11px;text-transform:uppercase;color:var(--ob-text-4);margin:14px 12px 4px;letter-spacing:.05em;cursor:pointer;list-style:none;user-select:none}
 aside details.navsec>summary::-webkit-details-marker{display:none}
-aside details.navsec>summary::before{content:"\25B8";display:inline-block;width:1em;color:#64748b}
+aside details.navsec>summary::before{content:"\25B8";display:inline-block;width:1em;color:var(--ob-text-3)}
 aside details.navsec[open]>summary::before{content:"\25BE"}
-aside details.navsec>summary:hover{color:#cbd5e1}
+aside details.navsec>summary:hover{color:var(--ob-nav-text)}
 aside details.navfolder{margin-left:12px}
 aside details.navfolder>summary{text-transform:none;font-size:12px;margin-top:8px}
 aside .navfolder-title{margin-left:12px;text-transform:none}
 aside .navfolder-items>a{padding-left:26px}
 main{flex:1;padding:28px;overflow-y:auto;min-height:0;min-width:0}
-h2{font-size:22px;font-weight:600;margin-bottom:20px;color:#1e293b}
-h3{font-size:16px;font-weight:600;margin:24px 0 10px;color:#1e293b}
-.card{background:#fff;border-radius:10px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,.1);max-width:1400px}
+h2{font-size:22px;font-weight:600;margin-bottom:20px;color:var(--ob-text)}
+h3{font-size:16px;font-weight:600;margin:24px 0 10px;color:var(--ob-text)}
+.card{background:var(--ob-surface);border-radius:10px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,.1);max-width:1400px}
 .main-list .card,.main-list .row-top,.main-list details,.main-list .breadcrumb{max-width:1600px}
 .main-list .ob-list-content{width:100%}
 .main-list .ob-list-content>.card{max-width:none}
 table{width:100%;border-collapse:collapse;font-size:14px}
-th{text-align:left;padding:10px 12px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;background:#eef2f7}
+th{text-align:left;padding:10px 12px;border-bottom:2px solid var(--ob-border-2);color:var(--ob-text-strong);font-weight:600;background:var(--ob-head-bg)}
 th a{color:inherit;text-decoration:none}
-th a:hover{color:#1e293b}
-td{padding:10px 12px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:14px}
+th a:hover{color:var(--ob-text)}
+td{padding:10px 12px;border-bottom:1px solid var(--ob-surface-3);color:var(--ob-text-strong);font-size:14px}
 tr:last-child td{border-bottom:none}
-tr:hover td{background:#f8fafc}
-.btn{display:inline-block;padding:8px 18px;border-radius:7px;font-size:14px;font-weight:500;text-decoration:none;cursor:pointer;border:none;line-height:1}
-.btn-primary{background:#3b82f6;color:#fff}.btn-primary:hover{background:#2563eb}
-.btn-post{background:#e8b400;color:#1a1a1a;font-weight:700}.btn-post:hover{background:#d4a200}
-.btn-secondary{background:#e2e8f0;color:#374151}.btn-secondary:hover{background:#cbd5e1}
-.btn-cancel{background:transparent;color:#64748b;border:1px solid #e2e8f0}.btn-cancel:hover{background:#f1f5f9}
+tr:hover td{background:var(--ob-row-hover)}
+.btn{display:inline-block;padding:8px 18px;border-radius:7px;font-size:14px;font-weight:500;text-decoration:none;cursor:pointer;border:none;line-height:1;background:var(--ob-btn-2-bg);color:var(--ob-btn-2-text)}
+.btn-primary{background:var(--ob-accent);color:#fff}.btn-primary:hover{background:var(--ob-accent-hover)}
+.btn-post{background:var(--ob-post-bg);color:var(--ob-post-ink);font-weight:700}.btn-post:hover{background:var(--ob-post-hover)}
+.btn-secondary{background:var(--ob-btn-2-bg);color:var(--ob-btn-2-text)}.btn-secondary:hover{background:var(--ob-btn-2-hover)}
+.btn-cancel{background:transparent;color:var(--ob-text-3);border:1px solid var(--ob-border)}.btn-cancel:hover{background:var(--ob-surface-3)}
 .btn-sm{padding:5px 12px;font-size:13px}
 /* Кнопка, которой сейчас нечего делать (нет выбранной строки списка): гасим вид,
    но не ставим disabled — клик по ней объясняет причину. */
 .btn[aria-disabled="true"]{opacity:.5}
-.btn-danger{background:#ef4444;color:#fff}.btn-danger:hover{background:#dc2626}
+.btn-danger{background:var(--ob-danger);color:#fff}.btn-danger:hover{background:var(--ob-flag)}
 .form-group{margin-bottom:16px}
-label{display:block;font-size:13px;font-weight:500;margin-bottom:5px;color:#475569}
-input[type=text],input[type=datetime-local],input[type=date],input[type=number],select{width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:7px;font-size:14px;outline:none;background:#fff}
-input:focus,select:focus{border-color:#3b82f6;box-shadow:0 0 0 3px rgba(59,130,246,.15)}
+label{display:block;font-size:13px;font-weight:500;margin-bottom:5px;color:var(--ob-text-2)}
+input[type=text],input[type=datetime-local],input[type=date],input[type=number],select{width:100%;padding:9px 12px;border:1px solid var(--ob-border);border-radius:7px;font-size:14px;outline:none;background:var(--ob-input-bg)}
+input:focus,select:focus{border-color:var(--ob-accent);box-shadow:0 0 0 3px rgba(59,130,246,.15)}
 /* Реквизит «только просмотр» (item_form: readonly, #1011): видно, что поле не
    для ввода. Без этого readonly-поле неотличимо от обычного, и пользователь
    решает, что форма сломалась, когда в него не печатается. */
-input[readonly],textarea[readonly],select:disabled,input:disabled{background:#f1f5f9;color:#475569;cursor:default}
-.error{background:#fef2f2;border:1px solid #fecaca;color:#dc2626;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px}
-.empty{color:#94a3b8;text-align:center;padding:48px;font-size:15px}
+input[readonly],textarea[readonly],select:disabled,input:disabled{background:var(--ob-surface-3);color:var(--ob-text-2);cursor:default}
+.error{background:var(--ob-error-bg);border:1px solid var(--ob-error-border);color:var(--ob-error-text);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px}
+.empty{color:var(--ob-text-4);text-align:center;padding:48px;font-size:15px}
 .row-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;max-width:1400px}
-details{margin-bottom:16px;max-width:1400px;background:#fff;border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
-details summary{padding:12px 20px;font-weight:600;font-size:14px;cursor:pointer;color:#475569;list-style:none}
+details{margin-bottom:16px;max-width:1400px;background:var(--ob-surface);border-radius:10px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+details summary{padding:12px 20px;font-weight:600;font-size:14px;cursor:pointer;color:var(--ob-text-2);list-style:none}
 details summary::-webkit-details-marker{display:none}
 details summary::before{content:"▶ ";font-size:11px}
 details[open] summary::before{content:"▼ "}
 .filter-body{padding:0 20px 16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
-.filter-body label{font-size:12px;color:#64748b;margin-bottom:3px}
+.filter-body label{font-size:12px;color:var(--ob-text-3);margin-bottom:3px}
 .filter-body input,.filter-body select{padding:7px 10px;font-size:13px}
 .filter-actions{padding:0 20px 16px;display:flex;gap:10px}
-.tp-table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
-.tp-table th{background:#eef2f7;padding:8px 10px;text-align:left;font-size:12px;color:#334155;font-weight:600;border-bottom:2px solid #cbd5e1;white-space:nowrap}
-.tp-table td{padding:5px 6px;border-bottom:1px solid #e2e8f0;border-right:1px solid #eef2f7;vertical-align:middle}
-.tp-table tbody tr:nth-child(even) td{background:#f1f5f9}
-.tp-table tbody tr:hover td{background:#eef4ff}
+.tp-table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px;border:1px solid var(--ob-border);border-radius:8px;overflow:hidden}
+.tp-table th{background:var(--ob-head-bg);padding:8px 10px;text-align:left;font-size:12px;color:var(--ob-text-strong);font-weight:600;border-bottom:2px solid var(--ob-border-2);white-space:nowrap}
+.tp-table td{padding:5px 6px;border-bottom:1px solid var(--ob-border);border-right:1px solid var(--ob-head-bg);vertical-align:middle}
+.tp-table tbody tr:nth-child(even) td{background:var(--ob-surface-3)}
+.tp-table tbody tr:hover td{background:var(--ob-hover-blue-2)}
 /* Подбор: фон ячеек сохраняет выделение поверх зебры и наведения. */
-#_item-picker-modal .tp-table tbody tr._ip-row-highlight td{background:#e5e7eb}
+#_item-picker-modal .tp-table tbody tr._ip-row-highlight td{background:var(--ob-highlight)}
 /* Инпуты прозрачны, чтобы зебра/выделение строки просвечивали; на фокусе — белый фон. */
 .tp-table input,.tp-table select{padding:5px 8px;font-size:13px;border:1px solid transparent;border-radius:5px;width:100%;background:transparent;transition:border-color .15s,box-shadow .15s,background .15s}
-.tp-table input:hover,.tp-table select:hover{border-color:#e2e8f0}
-.tp-table input:focus,.tp-table select:focus{outline:none;background:#fff;border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.15)}
+.tp-table input:hover,.tp-table select:hover{border-color:var(--ob-border)}
+.tp-table input:focus,.tp-table select:focus{outline:none;background:var(--ob-surface);border-color:var(--ob-accent);box-shadow:0 0 0 2px rgba(59,130,246,.15)}
 .tp-table input[type=number]{text-align:right;font-variant-numeric:tabular-nums;-moz-appearance:textfield}
 .tp-table input[type=number]::-webkit-inner-spin-button,.tp-table input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
-.tp-table .del-btn{background:none;border:none;color:#94a3b8;cursor:pointer;font-size:15px;padding:0 4px;transition:color .15s}
-.tp-table .del-btn:hover{color:#ef4444}
-.tp-table .tp-footer td{font-weight:600;border-top:2px solid #e2e8f0;background:#f8fafc;font-variant-numeric:tabular-nums}
-.subsys-bar{background:#0f172a;display:flex;padding:0 12px;gap:2px;flex-shrink:0}
-.subsys-bar a{display:inline-block;padding:7px 18px;color:#94a3b8;text-decoration:none;font-size:13px;font-weight:500;border-bottom:3px solid transparent;transition:color .15s}
-.subsys-bar a:hover{color:#e2e8f0;background:rgba(255,255,255,.04)}
-.subsys-bar a.active{color:#7dd3fc;border-bottom-color:#3b82f6}
+.tp-table .del-btn{background:none;border:none;color:var(--ob-text-4);cursor:pointer;font-size:15px;padding:0 4px;transition:color .15s}
+.tp-table .del-btn:hover{color:var(--ob-danger)}
+.tp-table .tp-footer td{font-weight:600;border-top:2px solid var(--ob-border);background:var(--ob-surface-2);font-variant-numeric:tabular-nums}
+.subsys-bar{background:var(--ob-subsys-bg);display:flex;padding:0 12px;gap:2px;flex-shrink:0}
+.subsys-bar a{display:inline-block;padding:7px 18px;color:var(--ob-text-4);text-decoration:none;font-size:13px;font-weight:500;border-bottom:3px solid transparent;transition:color .15s}
+.subsys-bar a:hover{color:var(--ob-nav-hover-text);background:rgba(255,255,255,.04)}
+.subsys-bar a.active{color:var(--ob-topbar-accent);border-bottom-color:var(--ob-accent)}
 .subsys-bar a .ob-icon{width:15px;height:15px;vertical-align:-3px;margin-right:6px;opacity:.85}
 .subsys-bar a:hover .ob-icon,.subsys-bar a.active .ob-icon{opacity:1}
-.breadcrumb{display:flex;align-items:center;gap:6px;font-size:13px;color:#64748b;margin-bottom:12px;max-width:1400px;flex-wrap:wrap}
-.breadcrumb a{color:#3b82f6;text-decoration:none}.breadcrumb a:hover{text-decoration:underline}
-.breadcrumb span{color:#94a3b8;padding:0 2px}
+.breadcrumb{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--ob-text-3);margin-bottom:12px;max-width:1400px;flex-wrap:wrap}
+.breadcrumb a{color:var(--ob-link);text-decoration:none}.breadcrumb a:hover{text-decoration:underline}
+.breadcrumb span{color:var(--ob-text-4);padding:0 2px}
 /* Чтобы контент не накрывало панелью сообщений */
 body{padding-bottom:32px}
 /* Стили плавающих виджетов (ИИ-помощник, панель сообщений) инжектирует сам
@@ -1691,8 +1867,8 @@ body{padding-bottom:32px}
    узких экранах — десктопная вёрстка выше остаётся неизменной. ===== */
 /* Гамбургер виден на любой ширине (план 157): на узком экране он выдвигает
    шторку, на широком — схлопывает панель объектов, отдавая её 210px форме. */
-.nav-toggle{display:inline-flex;align-items:center;justify-content:center;background:none;border:none;color:#cbd5e1;font-size:20px;cursor:pointer;padding:4px 12px 4px 0;line-height:1}
-.nav-toggle:hover{color:#fff}
+.nav-toggle{display:inline-flex;align-items:center;justify-content:center;background:none;border:none;color:var(--ob-nav-text);font-size:20px;cursor:pointer;padding:4px 12px 4px 0;line-height:1}
+.nav-toggle:hover{color:var(--ob-nav-hover-text)}
 /* Схлопывание — только широкий экран: на узком ширину панели забирает сама
    шторка, и nav-collapsed не должен вмешиваться в nav-open. Разведение по
    брейкпоинту делает классы независимыми — пересечься при ресайзе им негде.
@@ -1722,51 +1898,51 @@ body{padding-bottom:32px}
   main table.tbl-plain{display:table;white-space:normal;overflow:visible}
 }
 /* ===== Плиточный режим списка (Фаза 1a) ===== */
-.view-switch{display:inline-flex;border:1px solid #e2e8f0;border-radius:7px;overflow:hidden;flex-shrink:0}
-.view-switch .view-btn{padding:6px 11px;color:#64748b;text-decoration:none;font:inherit;font-size:15px;line-height:1;background:#fff;border:0;border-right:1px solid #e2e8f0;cursor:pointer}
+.view-switch{display:inline-flex;border:1px solid var(--ob-border);border-radius:7px;overflow:hidden;flex-shrink:0}
+.view-switch .view-btn{padding:6px 11px;color:var(--ob-text-3);text-decoration:none;font:inherit;font-size:15px;line-height:1;background:var(--ob-surface);border:0;border-right:1px solid var(--ob-border);cursor:pointer}
 .view-switch .view-btn:last-child{border-right:none}
-.view-switch .view-btn:hover{background:#f1f5f9}
-.view-switch .view-btn.active{background:#3b82f6;color:#fff}
+.view-switch .view-btn:hover{background:var(--ob-surface-3)}
+.view-switch .view-btn.active{background:var(--ob-accent);color:#fff}
 .tile-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:14px}
-.tile-card{position:relative;display:flex;flex-direction:column;border:1px solid #e2e8f0;border-radius:10px;padding:14px;background:#fff;cursor:pointer;transition:box-shadow .15s,border-color .15s}
-.tile-card:hover{box-shadow:0 4px 14px rgba(0,0,0,.1);border-color:#cbd5e1}
-.tile-card.tile-selected{border-color:#3b82f6;box-shadow:0 0 0 2px rgba(59,130,246,.25)}
+.tile-card{position:relative;display:flex;flex-direction:column;border:1px solid var(--ob-border);border-radius:10px;padding:14px;background:var(--ob-surface);cursor:pointer;transition:box-shadow .15s,border-color .15s}
+.tile-card:hover{box-shadow:0 4px 14px rgba(0,0,0,.1);border-color:var(--ob-border-2)}
+.tile-card.tile-selected{border-color:var(--ob-accent);box-shadow:0 0 0 2px rgba(59,130,246,.25)}
 .tile-card.tile-deleted{opacity:.5}
 .tile-card.tile-deleted .tile-title{text-decoration:line-through}
-.tile-img{width:100%;aspect-ratio:4/3;border-radius:8px;background:#f1f5f9 center/cover no-repeat;margin-bottom:10px;display:flex;align-items:center;justify-content:center;color:#cbd5e1;font-size:34px;flex-shrink:0}
-.tile-title{font-size:15px;font-weight:600;color:#1e293b;margin-bottom:8px;word-break:break-word}
-.tile-subtitle{font-size:13px;color:#64748b;margin-top:-4px;margin-bottom:8px;word-break:break-word}
-.tile-posted{color:#16a34a;font-weight:700}
-.tile-field{font-size:12.5px;color:#475569;margin-bottom:3px;display:flex;gap:5px;flex-wrap:wrap}
-.tile-label{color:#94a3b8;flex-shrink:0}
-.tile-val{color:#334155;word-break:break-word}
+.tile-img{width:100%;aspect-ratio:4/3;border-radius:8px;background:var(--ob-surface-3) center/cover no-repeat;margin-bottom:10px;display:flex;align-items:center;justify-content:center;color:var(--ob-border-2);font-size:34px;flex-shrink:0}
+.tile-title{font-size:15px;font-weight:600;color:var(--ob-text);margin-bottom:8px;word-break:break-word}
+.tile-subtitle{font-size:13px;color:var(--ob-text-3);margin-top:-4px;margin-bottom:8px;word-break:break-word}
+.tile-posted{color:var(--ob-posted);font-weight:700}
+.tile-field{font-size:12.5px;color:var(--ob-text-2);margin-bottom:3px;display:flex;gap:5px;flex-wrap:wrap}
+.tile-label{color:var(--ob-text-4);flex-shrink:0}
+.tile-val{color:var(--ob-text-strong);word-break:break-word}
 .tile-foot{margin-top:auto;padding-top:10px}
 /* Глобальный поиск (план 82): строка в шапке и страница результатов */
 .topbar-search{display:flex;align-items:center;margin:0 6px}
-.topbar-search input{width:210px;max-width:34vw;padding:5px 10px;border:1px solid #475569;border-radius:5px;font-size:13px;background:#334155;color:#f1f5f9}
-.topbar-search input::placeholder{color:#94a3b8}
-.topbar-search input:focus{outline:none;border-color:#7dd3fc;background:#1e293b}
+.topbar-search input{width:210px;max-width:34vw;padding:5px 10px;border:1px solid var(--ob-field-border);border-radius:5px;font-size:13px;background:var(--ob-field-bg);color:var(--ob-field-text)}
+.topbar-search input::placeholder{color:var(--ob-text-4)}
+.topbar-search input:focus{outline:none;border-color:var(--ob-topbar-accent);background:var(--ob-topbar-bg)}
 .search-results{display:flex;flex-direction:column;gap:8px}
-.search-hit{display:block;padding:11px 14px;border:1px solid #e2e8f0;border-radius:8px;background:#fff;text-decoration:none;transition:box-shadow .15s,border-color .15s}
-.search-hit:hover{box-shadow:0 4px 14px rgba(0,0,0,.08);border-color:#cbd5e1}
-.search-hit-title{font-size:15px;font-weight:600;color:#1e293b;word-break:break-word}
+.search-hit{display:block;padding:11px 14px;border:1px solid var(--ob-border);border-radius:8px;background:var(--ob-surface);text-decoration:none;transition:box-shadow .15s,border-color .15s}
+.search-hit:hover{box-shadow:0 4px 14px rgba(0,0,0,.08);border-color:var(--ob-border-2)}
+.search-hit-title{font-size:15px;font-weight:600;color:var(--ob-text);word-break:break-word}
 .search-hit-deleted{text-decoration:line-through;opacity:.6}
-.search-hit-meta{margin-top:4px;display:flex;gap:10px;flex-wrap:wrap;font-size:12.5px;color:#94a3b8}
-.search-hit-entity{color:#64748b}
-.search-hit-flag{color:#dc2626}
-.search-hit-posted{color:#16a34a;font-weight:600}
+.search-hit-meta{margin-top:4px;display:flex;gap:10px;flex-wrap:wrap;font-size:12.5px;color:var(--ob-text-4)}
+.search-hit-entity{color:var(--ob-text-3)}
+.search-hit-flag{color:var(--ob-flag)}
+.search-hit-posted{color:var(--ob-posted);font-weight:700}
 /* Поле-картинка на форме */
 .img-field{display:flex;flex-direction:column;gap:8px;align-items:flex-start}
 .img-preview [data-ob-image-view]{display:block;border:0;padding:0;background:transparent;cursor:zoom-in;border-radius:8px}
-.img-preview [data-ob-image-view]:focus-visible{outline:3px solid #2563eb;outline-offset:3px}
-.ob-image-viewer{margin:auto;width:96vw;height:92vh;max-width:96vw;max-height:92vh;padding:12px;border:1px solid #475569;border-radius:12px;background:#0f172a;color:#f8fafc;overflow:hidden}
+.img-preview [data-ob-image-view]:focus-visible{outline:3px solid var(--ob-accent-hover);outline-offset:3px}
+.ob-image-viewer{margin:auto;width:96vw;height:92vh;max-width:96vw;max-height:92vh;padding:12px;border:1px solid var(--ob-border-2);border-radius:12px;background:var(--ob-subsys-bg);color:#f8fafc;overflow:hidden}
 .ob-image-viewer[open]{display:flex;flex-direction:column;gap:10px}
 .ob-image-viewer::backdrop{background:rgba(0,0,0,.72)}
 .ob-image-viewer header,.ob-image-viewer nav{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex-shrink:0}
 .ob-image-viewer h2{color:#f8fafc;flex:1;font-size:16px;overflow-wrap:anywhere}
-.ob-image-viewer button,.ob-image-viewer a{border:1px solid #64748b;border-radius:6px;padding:6px 10px;background:#1e293b;color:#f8fafc;font:inherit;text-decoration:none;cursor:pointer}
+.ob-image-viewer button,.ob-image-viewer a{border:1px solid #64748b;border-radius:6px;padding:6px 10px;background:var(--ob-nav-bg);color:#f8fafc;font:inherit;text-decoration:none;cursor:pointer}
 .ob-image-viewer button:disabled{opacity:.4;cursor:default}
-.ob-image-viewer :focus-visible{outline:3px solid #60a5fa;outline-offset:2px}
+.ob-image-viewer :focus-visible{outline:3px solid var(--ob-link);outline-offset:2px}
 .ob-image-viewport{flex:1;min-height:0;overflow:auto;touch-action:none;overscroll-behavior:contain;background:#020617}
 .ob-image-canvas{display:grid;place-items:center;min-width:100%;min-height:100%}
 .ob-image-canvas img[hidden]{display:none}
@@ -1775,10 +1951,11 @@ body{padding-bottom:32px}
 .ob-image-viewport[data-dragging="1"]{cursor:grabbing}
 .ob-image-status{min-height:1.4em;font-size:13px}
 @media(prefers-reduced-motion:reduce){.ob-image-viewer *{scroll-behavior:auto}}
-.img-preview img{max-width:240px;max-height:240px;border-radius:8px;border:1px solid #e2e8f0;display:block;background:#f8fafc}
+.img-preview img{max-width:240px;max-height:240px;border-radius:8px;border:1px solid var(--ob-border);display:block;background:var(--ob-surface-2)}
 .img-actions{display:flex;gap:8px;align-items:center}
 .img-field label.btn{cursor:pointer;margin:0}
 </style>
+{{if .ThemeCSS}}<link rel="stylesheet" href="/ui/theme.css">{{end}}
 </head><body data-ob-dev="{{if .Cfg.Dev}}1{{else}}0{{end}}">
 {{end}}
 `
@@ -1787,7 +1964,7 @@ const tplNav = `
 {{define "nav"}}
 <header class="topbar">
   <button class="nav-toggle" type="button" aria-label="{{t $.Lang "Меню"}}" title="{{t $.Lang "Меню"}}" aria-controls="ob-nav" aria-expanded="false" data-ob-nav-toggle>&#9776;</button>
-  <a href="/ui/" class="topbar-title" style="text-decoration:none;color:inherit" title="{{t $.Lang "Главная"}}">{{if .Cfg.Logo}}<img src="/ui/logo" alt="" style="height:22px;max-width:90px;vertical-align:middle;margin-right:6px;border-radius:2px">{{end}}⚡ {{if .Cfg.AppName}}{{.Cfg.AppName}}{{else}}onebase{{end}}</a>
+  <a href="/ui/" class="topbar-title" style="text-decoration:none;color:inherit" title="{{if .IsAdmin}}Конфигурация: {{.Cfg.ConfigSource}} · {{.Cfg.ConfigLocation}}{{if .Cfg.DatabaseLocation}} · {{if eq .Cfg.DatabaseType "sqlite"}}SQLite{{else}}PostgreSQL{{end}} · {{.Cfg.DatabaseLocation}}{{end}}{{else}}{{t $.Lang "Главная"}}{{end}}">{{if .Cfg.Logo}}<img src="/ui/logo" alt="" style="height:22px;max-width:90px;vertical-align:middle;margin-right:6px;border-radius:2px">{{end}}⚡ {{if .Cfg.AppName}}{{.Cfg.AppName}}{{else}}onebase{{end}}</a>
   <form class="topbar-search" method="get" action="/ui/search" role="search">
     <input type="search" name="q" value="{{.SearchQuery}}" placeholder="{{t $.Lang "Поиск по базе"}}" aria-label="{{t $.Lang "Поиск по базе"}}">
   </form>
@@ -1818,6 +1995,13 @@ const tplNav = `
               <button type="submit" class="sys-btn">{{t $.Lang "Применить"}}</button>
             </form>
           </div>{{end}}
+          <div class="sys-theme-block">
+            <div class="sys-mode-title">{{t $.Lang "Тема оформления"}}</div>
+            <label><input type="radio" name="ui-theme" value="light" data-ob-theme-radio> {{t $.Lang "Светлая"}}</label>
+            <label><input type="radio" name="ui-theme" value="dark" data-ob-theme-radio> {{t $.Lang "Тёмная"}}</label>
+            <label><input type="radio" name="ui-theme" value="system" data-ob-theme-radio> {{t $.Lang "Как в системе"}}</label>
+          </div>
+          {{if .IsAdmin}}<a href="/ui/admin/theme-css">{{t $.Lang "Стили интерфейса"}}</a>{{end}}
           {{if .HasAuth}}{{if not .DenyPasswdChange}}<a href="/ui/profile/passwd">{{t $.Lang "Сменить пароль"}}</a>{{end}}
           <a href="/ui/profile/2fa">{{t $.Lang "Второй фактор"}}</a>{{end}}
           {{if .HasPersonalNavigation}}<a href="/ui/settings/navigation?subsystem={{.CurrentSubsystem}}">{{t $.Lang "Настроить меню"}}</a>{{end}}
@@ -1886,12 +2070,12 @@ const tplNav = `
         </div>
       </details>
       {{end}}
-      <form class="sys-logout" method="POST" action="/logout"><button type="submit" style="display:block;width:100%;padding:10px 16px;color:#dc2626;text-decoration:none;font-size:14px;text-align:left;background:none;border:none;border-top:1px solid #f1f5f9;cursor:pointer">{{t $.Lang "Выйти"}}</button></form>
+      <form class="sys-logout" method="POST" action="/logout"><button type="submit" style="display:block;width:100%;padding:10px 16px;color:var(--ob-error-text);text-decoration:none;font-size:14px;text-align:left;background:none;border:none;border-top:1px solid var(--ob-surface-3);cursor:pointer">{{t $.Lang "Выйти"}}</button></form>
     </div>
   </div>
 </header>
 {{if .Cfg.DemoMode}}
-<div style="background:#f59e0b;color:#fff;text-align:center;padding:6px 16px;font-size:13px;font-weight:600;letter-spacing:.02em">
+<div style="background:var(--ob-amber);color:#fff;text-align:center;padding:6px 16px;font-size:13px;font-weight:600;letter-spacing:.02em">
   ⚠️ {{t $.Lang "ДЕМО-РЕЖИМ"}}{{if .Cfg.DemoMessage}} — {{.Cfg.DemoMessage}}{{end}}
 </div>
 {{end}}
@@ -1908,7 +2092,7 @@ const tplNav = `
 {{end}}
 <div class="app-body">
 <aside id="ob-nav">
-  {{if not .Subsystems}}<a href="/ui/" style="display:block;padding:12px 14px 8px;color:#7dd3fc;font-weight:700;font-size:15px;text-decoration:none">{{t $.Lang "Главная"}}</a>{{end}}
+  {{if not .Subsystems}}<a href="/ui/" style="display:block;padding:12px 14px 8px;color:var(--ob-topbar-accent);font-weight:700;font-size:15px;text-decoration:none">{{t $.Lang "Главная"}}</a>{{end}}
   {{if .CollapsibleNav}}
   {{range .Nav}}
   <details class="navsec" id="{{.DOMID}}" data-nav-id="{{.ID}}" data-navsec="{{.DOMID}}"{{if .LegacyTitle}} data-navsec-legacy="{{.LegacyTitle}}"{{end}}{{if .Open}} open{{end}}>
@@ -1946,44 +2130,44 @@ const tplIndex = `
 /* Виджеты с табличным/широким содержимым шире компактных KPI */
 .dash-row > .w-card-list,.dash-row > .w-card-chart,.dash-row > .w-card-recent{flex:1 1 360px}
 .dash-grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
-.w-card{background:#fff;border-radius:10px;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.08);display:flex;flex-direction:column;min-height:120px}
+.w-card{background:var(--ob-surface);border-radius:10px;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.08);display:flex;flex-direction:column;min-height:120px}
 .w-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;min-height:24px}
-.w-title{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;font-weight:600;flex:1;min-width:0}
-.w-refresh{border:0;background:transparent;color:#64748b;border-radius:6px;padding:3px 5px;line-height:1;cursor:pointer;font-size:15px}
-.w-refresh:hover{background:#f1f5f9;color:#1d4ed8}.w-refresh:focus-visible{outline:2px solid #60a5fa;outline-offset:2px}
+.w-title{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ob-text-3);font-weight:600;flex:1;min-width:0}
+.w-refresh{border:0;background:transparent;color:var(--ob-text-3);border-radius:6px;padding:3px 5px;line-height:1;cursor:pointer;font-size:15px}
+.w-refresh:hover{background:var(--ob-surface-3);color:var(--ob-link-2)}.w-refresh:focus-visible{outline:2px solid var(--ob-link);outline-offset:2px}
 .w-refresh[disabled]{cursor:wait;opacity:.55}.w-card.ob-widget-loading .w-refresh{animation:ob-widget-spin .8s linear infinite}
 @keyframes ob-widget-spin{to{transform:rotate(360deg)}}
-.w-refresh-status{font-size:12px;color:#b91c1c;margin-top:7px;min-height:0}
-.w-kpi-value{font-size:32px;font-weight:700;color:#0f172a;line-height:1.1;white-space:nowrap}
-.w-kpi-sub{font-size:12px;color:#94a3b8;margin-top:6px}
+.w-refresh-status{font-size:12px;color:var(--ob-danger-ink);margin-top:7px;min-height:0}
+.w-kpi-value{font-size:32px;font-weight:700;color:var(--ob-kpi-ink);line-height:1.1;white-space:nowrap}
+.w-kpi-sub{font-size:12px;color:var(--ob-text-4);margin-top:6px}
 /* Кликабельный счётчик: остаётся числом (тот же кегль и цвет), но ведёт себя
    как ссылка — подчёркивание только при наведении, чтобы карточка не выглядела
    пестрее соседних. */
-a.w-kpi-link{display:block;text-decoration:none;color:#0f172a}
-a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
+a.w-kpi-link{display:block;text-decoration:none;color:var(--ob-kpi-ink)}
+a.w-kpi-link:hover{color:var(--ob-link-hover);text-decoration:underline}
 .w-list{overflow-x:auto}
 .w-list table{margin-top:4px;font-size:13px}
-.w-list th{padding:6px 8px;font-size:11px;color:#334155;font-weight:600;border-bottom:2px solid #cbd5e1;text-align:left;background:#eef2f7}
-.w-list td{padding:6px 8px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155}
+.w-list th{padding:6px 8px;font-size:11px;color:var(--ob-text-strong);font-weight:600;border-bottom:2px solid var(--ob-border-2);text-align:left;background:var(--ob-head-bg)}
+.w-list td{padding:6px 8px;border-bottom:1px solid var(--ob-surface-3);font-size:13px;color:var(--ob-text-strong)}
 .w-list td.right{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .w-list tr:last-child td{border-bottom:none}
 .w-list .ob-row-link{cursor:pointer}
-.w-list .ob-row-link:hover td,.w-list .ob-row-link:focus-visible td{background:#eff6ff}
-.w-list .ob-row-link:focus-visible{outline:2px solid #2563eb;outline-offset:-2px}
+.w-list .ob-row-link:hover td,.w-list .ob-row-link:focus-visible td{background:var(--ob-hover-blue)}
+.w-list .ob-row-link:focus-visible{outline:2px solid var(--ob-accent-hover);outline-offset:-2px}
 .w-chart{min-height:240px}
 .w-chart-canvas{width:100%;height:240px}
 .w-actions-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
-.w-actions-row a{display:inline-block;padding:7px 14px;border-radius:7px;background:#3b82f6;color:#fff;text-decoration:none;font-size:13px;font-weight:500}
-.w-actions-row a:hover{background:#2563eb}
-.w-recent-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:13px}
+.w-actions-row a{display:inline-block;padding:7px 14px;border-radius:7px;background:var(--ob-accent);color:var(--ob-topbar-text);text-decoration:none;font-size:13px;font-weight:500}
+.w-actions-row a:hover{background:var(--ob-accent-hover)}
+.w-recent-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--ob-surface-3);font-size:13px}
 .w-recent-row:last-child{border-bottom:none}
-.w-recent-row .e{color:#64748b;font-size:11px;text-transform:uppercase;letter-spacing:.04em;flex-shrink:0;min-width:140px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.w-recent-row a{color:#3b82f6;text-decoration:none;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.w-recent-row .e{color:var(--ob-text-3);font-size:11px;text-transform:uppercase;letter-spacing:.04em;flex-shrink:0;min-width:140px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.w-recent-row a{color:var(--ob-link);text-decoration:none;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .w-recent-row a:hover{text-decoration:underline}
-.w-recent-row .ts{color:#94a3b8;font-size:11px;flex-shrink:0;font-variant-numeric:tabular-nums}
-.w-error{background:#fef2f2;color:#dc2626;font-size:12px;padding:6px 10px;border-radius:6px;margin-top:6px;font-family:Consolas,monospace}
-.w-empty{color:#94a3b8;font-size:13px;padding:6px 0;font-style:italic}
-.w-default-hint{color:#64748b;font-size:13px;margin:6px 0 14px}
+.w-recent-row .ts{color:var(--ob-text-4);font-size:11px;flex-shrink:0;font-variant-numeric:tabular-nums}
+.w-error{background:var(--ob-error-bg);color:var(--ob-error-text);font-size:12px;padding:6px 10px;border-radius:6px;margin-top:6px;font-family:Consolas,monospace}
+.w-empty{color:var(--ob-text-4);font-size:13px;padding:6px 0;font-style:italic}
+.w-default-hint{color:var(--ob-text-3);font-size:13px;margin:6px 0 14px}
 </style>
 {{end}}
 
@@ -2182,12 +2366,12 @@ const tplList = `
     {{/* На свежем списке строка не выбрана — кнопка приходит с сервера уже
          приглушённой, дальше её состояние ведёт ui.js по выделению. */}}
     <button type="button" id="list-actions-btn" class="btn btn-secondary" data-ob-list-actions aria-disabled="true" title="{{t $.Lang "Сначала выберите строку списка"}}">⚙ {{t $.Lang "Действия"}} ▾</button>
-    <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{listExcelSuffix .Params .ListFormOff}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
+    <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{listExcelSuffix .Params .ListFormOff}}" style="background:var(--ob-posted);color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
   </div>
 </div>
 <form method="GET" style="display:flex;gap:8px;margin-bottom:12px;max-width:460px">
-  <input type="text" id="ob-list-search" name="q" value="{{.Params.Search}}" placeholder="{{t $.Lang "Поиск..."}}" style="flex:1;padding:7px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:14px" data-ob-list-search data-ob-auto-submit="320" title="Ctrl+F" aria-keyshortcuts="Control+F">
-  {{if .Params.Search}}<a class="btn btn-sm" href="{{listURL $.Query "q" ""}}" style="background:#e2e8f0;color:#475569;align-self:center">✕</a>{{end}}
+  <input type="text" id="ob-list-search" name="q" value="{{.Params.Search}}" placeholder="{{t $.Lang "Поиск..."}}" style="flex:1;padding:7px 12px;border:1px solid var(--ob-border);border-radius:6px;font-size:14px" data-ob-list-search data-ob-auto-submit="320" title="Ctrl+F" aria-keyshortcuts="Control+F">
+  {{if .Params.Search}}<a class="btn btn-sm" href="{{listURL $.Query "q" ""}}" style="background:var(--ob-btn-2-bg);color:var(--ob-text-2);align-self:center">✕</a>{{end}}
   {{/* Форма владеет только q — остальное состояние списка (вид, папка,
        отбор, сортировка, раздел) уезжает скрытыми полями, иначе поиск
        выкидывал бы из плитки и из папки. */}}
@@ -2199,7 +2383,7 @@ const tplList = `
   {{range .Breadcrumbs}}<span>›</span><a href="{{listURL $.Query "parent" .ID}}">{{.Label}}</a>{{end}}
 </nav>
 {{end}}
-{{if .SearchAll}}<p class="list-search-scope" style="margin:6px 0 10px;color:#64748b;font-size:13px">{{t $.Lang "Результаты поиска по всему справочнику"}}</p>{{end}}
+{{if .SearchAll}}<p class="list-search-scope" style="margin:6px 0 10px;color:var(--ob-text-3);font-size:13px">{{t $.Lang "Результаты поиска по всему справочнику"}}</p>{{end}}
 
 {{$entity := .Entity}}{{$params := .Params}}{{$refOpts := .RefFilterOptions}}
 <details{{if hasFilter $params}} open{{end}}>
@@ -2228,7 +2412,7 @@ const tplList = `
             <option value="{{index . "id"}}" {{if eq (index . "id") (filterVal $params $f.Name).Value}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
-          <button type="button" data-ob-ref-picker="flt-{{$f.Name}}" style="padding:7px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
+          <button type="button" data-ob-ref-picker="flt-{{$f.Name}}" style="padding:7px 10px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
         </div>
       </div>
     {{else if eq (str .Type) "bool"}}{{$raw := (filterVal $params .Name).Value}}{{$bv := boolFilterValue $raw}}
@@ -2256,7 +2440,7 @@ const tplList = `
   </div>
   <div class="filter-actions">
     <button class="btn btn-primary btn-sm" type="submit">{{t $.Lang "Применить"}}</button>
-    <a class="btn btn-sm" href="{{listURL $.Query "f.*" ""}}" style="background:#e2e8f0;color:#475569">{{t $.Lang "Сбросить"}}</a>
+    <a class="btn btn-sm" href="{{listURL $.Query "f.*" ""}}" style="background:var(--ob-btn-2-bg);color:var(--ob-text-2)">{{t $.Lang "Сбросить"}}</a>
   </div>
   {{/* Форма владеет отбором f.* — поиск, вид, папку и сортировку переносим. */}}
   {{if .TreeView}}{{listHidden $.Query "f.*" "view"}}{{else}}{{listHidden $.Query "f.*"}}{{end}}
@@ -2320,11 +2504,11 @@ const tplList = `
             style="background:none;border:none;cursor:pointer;padding:0 2px;font-size:13px">▶</button>
           📁
         {{else}}📄{{end}}
-        {{if eq (str $col.Type) "date"}}{{fmtDate (index $row $col.Name)}}{{else if eq (str $col.Type) "bool"}}{{fmtBool (index $row $col.Name)}}{{else if isRichText (str $col.Type)}}{{richPlain (index $row $col.Name)}}{{else if isEnum (str $col.Type)}}{{enumLabel $.EnumLabels $col.Name (str (index $row $col.Name))}}{{else}}{{fmtCell (index $row $col.Name)}}{{end}}{{if index $row "_is_predefined"}} <span title="{{t $.Lang "Предопределённый"}}" style="color:#f59e0b;font-size:11px">★</span>{{end}}
+        {{if eq (str $col.Type) "date"}}{{fmtDate (index $row $col.Name)}}{{else if eq (str $col.Type) "bool"}}{{fmtBool (index $row $col.Name)}}{{else if isRichText (str $col.Type)}}{{richPlain (index $row $col.Name)}}{{else if isEnum (str $col.Type)}}{{enumLabel $.EnumLabels $col.Name (str (index $row $col.Name))}}{{else}}{{fmtCell (index $row $col.Name)}}{{end}}{{if index $row "_is_predefined"}} <span title="{{t $.Lang "Предопределённый"}}" style="color:var(--ob-amber);font-size:11px">★</span>{{end}}
       </td>
     {{else if eq (str $col.Type) "date"}}<td>{{fmtDate (index $row $col.Name)}}</td>
     {{else if eq (str $col.Type) "bool"}}<td>{{fmtBool (index $row $col.Name)}}</td>
-    {{else if isRichText (str $col.Type)}}<td style="color:#64748b">{{richPlain (index $row $col.Name)}}</td>
+    {{else if isRichText (str $col.Type)}}<td style="color:var(--ob-text-3)">{{richPlain (index $row $col.Name)}}</td>
     {{else if isEnum (str $col.Type)}}<td>{{enumLabel $.EnumLabels $col.Name (str (index $row $col.Name))}}</td>
     {{else}}<td>{{fmtCell (index $row $col.Name)}}</td>{{end}}
   {{end}}
@@ -2367,7 +2551,7 @@ const tplList = `
   <div class="tile-img"{{if $iv}} style="background-image:url('/ui/_image/{{$iv}}')"{{end}}>{{if not $iv}}🖼{{end}}</div>
   {{end}}
   {{with $tile.TitleField}}
-    <div class="tile-title">{{if $.Entity.Hierarchical}}{{if $isFolder}}📁 {{else}}📄 {{end}}{{end}}{{fmtCell (index $row .Name)}}{{if index $row "_is_predefined"}} <span title="{{t $.Lang "Предопределённый элемент"}}" style="color:#f59e0b;font-size:11px">★</span>{{end}}{{if eq (str $.Entity.Kind) "document"}}{{if index $row "posted"}} <span class="tile-posted" title="{{t $.Lang "Проведён"}}">✓</span>{{end}}{{end}}</div>
+    <div class="tile-title">{{if $.Entity.Hierarchical}}{{if $isFolder}}📁 {{else}}📄 {{end}}{{end}}{{fmtCell (index $row .Name)}}{{if index $row "_is_predefined"}} <span title="{{t $.Lang "Предопределённый элемент"}}" style="color:var(--ob-amber);font-size:11px">★</span>{{end}}{{if eq (str $.Entity.Kind) "document"}}{{if index $row "posted"}} <span class="tile-posted" title="{{t $.Lang "Проведён"}}">✓</span>{{end}}{{end}}</div>
   {{end}}
   {{with $tile.SubtitleField}}{{$v := index $row .Name}}{{if hasValue $v}}
     <div class="tile-subtitle">{{if eq (str .Type) "date"}}{{fmtDate $v}}{{else if eq (str .Type) "bool"}}{{fmtBool $v}}{{else if isRichText (str .Type)}}{{richPlain $v}}{{else if isEnum (str .Type)}}{{enumLabel $.EnumLabels .Name (str $v)}}{{else}}{{fmtCell $v}}{{end}}</div>
@@ -2422,18 +2606,18 @@ const tplList = `
 >
   {{if eq (str $.Entity.Kind) "document"}}
     <td style="text-align:center">
-      {{if index $row "posted"}}<span style="color:#16a34a;font-weight:700" title="{{t $.Lang "Проведён"}}">✓</span>{{else}}<span style="color:#94a3b8" title="{{t $.Lang "Не проведён"}}">—</span>{{end}}
+      {{if index $row "posted"}}<span style="color:var(--ob-posted);font-weight:700" title="{{t $.Lang "Проведён"}}">✓</span>{{else}}<span style="color:var(--ob-text-4)" title="{{t $.Lang "Не проведён"}}">—</span>{{end}}
     </td>
   {{end}}
   {{range listColumns $.Entity}}
     {{if eq (str .Type) "date"}}<td style="white-space:nowrap">{{fmtDate (index $row .Name)}}</td>
     {{else if eq (str .Type) "bool"}}<td style="white-space:nowrap">{{fmtBool (index $row .Name)}}</td>
     {{else if isImage (str .Type)}}<td>{{$iv := index $row .Name}}{{if $iv}}<img src="/ui/_image/{{$iv}}" style="height:34px;width:34px;object-fit:cover;border-radius:5px;vertical-align:middle" alt="">{{else}}<span style="color:#cbd5e1">—</span>{{end}}</td>
-    {{else if isRichText (str .Type)}}<td style="white-space:nowrap;color:#64748b">{{richPlain (index $row .Name)}}</td>
+    {{else if isRichText (str .Type)}}<td style="white-space:nowrap;color:var(--ob-text-3)">{{richPlain (index $row .Name)}}</td>
     {{else if isEnum (str .Type)}}<td style="white-space:nowrap">{{enumLabel $.EnumLabels .Name (str (index $row .Name))}}</td>
-    {{else}}<td style="white-space:nowrap">{{if and (eq .Name "Наименование") $.Entity.Hierarchical}}{{if $isFolder}}📁 {{else}}📄 {{end}}{{end}}{{fmtCell (index $row .Name)}}{{if and (eq .Name "Наименование") (index $row "_is_predefined")}} <span title="{{t $.Lang "Предопределённый элемент"}}" style="color:#f59e0b;font-size:11px">★</span>{{end}}</td>{{end}}
+    {{else}}<td style="white-space:nowrap">{{if and (eq .Name "Наименование") $.Entity.Hierarchical}}{{if $isFolder}}📁 {{else}}📄 {{end}}{{end}}{{fmtCell (index $row .Name)}}{{if and (eq .Name "Наименование") (index $row "_is_predefined")}} <span title="{{t $.Lang "Предопределённый элемент"}}" style="color:var(--ob-amber);font-size:11px">★</span>{{end}}</td>{{end}}
   {{end}}
-  {{if $.SearchAll}}<td style="white-space:nowrap" data-ob-list-group>{{with index $row "_group_id"}}<a href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}?parent={{.}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}">📁 {{index $row "_group_label"}}</a>{{else}}<span style="color:#94a3b8">{{t $.Lang "Корень"}}</span>{{end}}</td>{{end}}
+  {{if $.SearchAll}}<td style="white-space:nowrap" data-ob-list-group>{{with index $row "_group_id"}}<a href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}?parent={{.}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}">📁 {{index $row "_group_label"}}</a>{{else}}<span style="color:var(--ob-text-4)">{{t $.Lang "Корень"}}</span>{{end}}</td>{{end}}
   <td>
     {{if and $isFolder $.Entity.Hierarchical}}
       <a class="btn btn-sm btn-secondary" href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" (str (index $row "id"))}}">{{t $.Lang "▶ Войти"}}</a>
@@ -2456,15 +2640,15 @@ const tplList = `
   <a class="btn btn-secondary btn-sm" href="{{listURL $.Query "page" (str .NextPage) "lm" "feed"}}">{{t $.Lang "Показать ещё"}}</a>
 </div>
 {{end}}
-{{if gt .Total 0}}<div style="color:#94a3b8;font-size:12px;margin-top:8px;text-align:center">{{t $.Lang "Загружено:"}} <span id="feed-loaded">{{len .Rows}}</span> {{t $.Lang "из"}} {{.Total}}</div>{{end}}
+{{if gt .Total 0}}<div style="color:var(--ob-text-4);font-size:12px;margin-top:8px;text-align:center">{{t $.Lang "Загружено:"}} <span id="feed-loaded">{{len .Rows}}</span> {{t $.Lang "из"}} {{.Total}}</div>{{end}}
 {{else if gt .TotalPages 1}}
 <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
   {{if .HasPrev}}<a class="btn btn-secondary btn-sm" href="{{listURL $.Query "page" (str .PrevPage)}}">{{t $.Lang "← Назад"}}</a>{{end}}
-  <span style="color:#64748b;font-size:13px">{{t $.Lang "Стр."}} {{.Page}} {{t $.Lang "из"}} {{.TotalPages}} ({{.Total}} {{t $.Lang "записей"}})</span>
+  <span style="color:var(--ob-text-3);font-size:13px">{{t $.Lang "Стр."}} {{.Page}} {{t $.Lang "из"}} {{.TotalPages}} ({{.Total}} {{t $.Lang "записей"}})</span>
   {{if .HasNext}}<a class="btn btn-secondary btn-sm" href="{{listURL $.Query "page" (str .NextPage)}}">{{t $.Lang "Вперёд →"}}</a>{{end}}
 </div>
 {{else if gt .Total 0}}
-<div style="color:#94a3b8;font-size:12px;margin-top:8px">{{t $.Lang "Всего:"}} {{.Total}}</div>
+<div style="color:var(--ob-text-4);font-size:12px;margin-top:8px">{{t $.Lang "Всего:"}} {{.Total}}</div>
 {{end}}
 </div>
 {{template "detail-panel" .}}
@@ -2518,9 +2702,9 @@ const tplForm = `
   <h2 style="margin-bottom:0">{{if .IsNew}}{{t $.Lang "Создать"}} — {{.Entity.DisplayName $.Lang}}{{else}}{{if .RecordTitle}}{{.RecordTitle}}{{else}}{{t $.Lang "Редактировать"}} — {{.Entity.DisplayName $.Lang}}{{end}}{{end}}</h2>
   {{template "context-help" .}}
   {{if .IsPopup}}
-  <a href="#" data-ob-popup-cancel title="{{t $.Lang "Закрыть"}}" style="font-size:22px;line-height:1;color:#94a3b8;text-decoration:none;padding:2px 8px;border-radius:5px;background:#f1f5f9;font-weight:300">×</a>
+  <a href="#" data-ob-popup-cancel title="{{t $.Lang "Закрыть"}}" style="font-size:22px;line-height:1;color:var(--ob-text-4);text-decoration:none;padding:2px 8px;border-radius:5px;background:var(--ob-surface-3);font-weight:300">×</a>
   {{else}}
-  <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}" data-ob-close-tab title="{{t $.Lang "Закрыть"}}" style="font-size:22px;line-height:1;color:#94a3b8;text-decoration:none;padding:2px 8px;border-radius:5px;background:#f1f5f9;font-weight:300">×</a>
+  <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}" data-ob-close-tab title="{{t $.Lang "Закрыть"}}" style="font-size:22px;line-height:1;color:var(--ob-text-4);text-decoration:none;padding:2px 8px;border-radius:5px;background:var(--ob-surface-3);font-weight:300">×</a>
   {{end}}
 </div>
 {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
@@ -2531,9 +2715,9 @@ const tplForm = `
   {{if .Entity.Posting}}
     {{if not .IsNew}}
       {{if eq (index .Values "posted") "true"}}
-        <span style="color:#16a34a;font-weight:600;font-size:13px">✓ {{t $.Lang "Проведён"}}</span>
+        <span style="color:var(--ob-posted);font-weight:600;font-size:13px">✓ {{t $.Lang "Проведён"}}</span>
       {{else}}
-        <span style="color:#94a3b8;font-size:13px">{{t $.Lang "Не проведён"}}</span>
+        <span style="color:var(--ob-text-4);font-size:13px">{{t $.Lang "Не проведён"}}</span>
       {{end}}
     {{end}}
   {{end}}
@@ -2545,7 +2729,7 @@ const tplForm = `
     {{end}}
     {{if not .IsNew}}
       {{if eq (index .Values "posted") "true"}}
-        {{if $.CanUnpost}}<button class="btn btn-sm" style="background:#e2e8f0;color:#374151" form="form-unpost" type="submit">{{t $.Lang "Отменить проведение"}}</button>{{end}}
+        {{if $.CanUnpost}}<button class="btn btn-sm" style="background:var(--ob-btn-2-bg);color:#374151" form="form-unpost" type="submit">{{t $.Lang "Отменить проведение"}}</button>{{end}}
       {{end}}
     {{end}}
   {{end}}
@@ -2563,20 +2747,20 @@ const tplForm = `
     {{if or .AllPrintForms .HasPrintProc}}
     <div style="position:relative">
       <button type="button" class="btn btn-sm btn-secondary" data-ob-toggle-next>{{t $.Lang "Печать"}} ▾</button>
-      <div style="display:none;position:absolute;top:100%;left:0;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);min-width:200px;z-index:50;margin-top:4px">
+      <div style="display:none;position:absolute;top:100%;left:0;background:var(--ob-surface);border:1px solid var(--ob-border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);min-width:200px;z-index:50;margin-top:4px">
         {{range .AllPrintForms}}
-        <div style="display:flex;align-items:center;border-bottom:1px solid #f1f5f9">
+        <div style="display:flex;align-items:center;border-bottom:1px solid var(--ob-surface-3)">
           <a href="/ui/{{lower (str $.Entity.Kind)}}/{{$.Entity.Name}}/{{$.ID}}/print/{{.Name}}" target="_blank"
-             style="flex:1;display:block;padding:9px 16px;color:#334155;text-decoration:none;font-size:13px">{{.Name}}{{if .External}} <span style="color:#94a3b8;font-size:11px">({{t $.Lang "внешняя"}})</span>{{end}}</a>
+             style="flex:1;display:block;padding:9px 16px;color:var(--ob-text-strong);text-decoration:none;font-size:13px">{{.Name}}{{if .External}} <span style="color:var(--ob-text-4);font-size:11px">({{t $.Lang "внешняя"}})</span>{{end}}</a>
           <a href="/ui/{{lower (str $.Entity.Kind)}}/{{$.Entity.Name}}/{{$.ID}}/print/{{.Name}}/pdf" target="_blank"
-             style="padding:9px 14px;color:#16a34a;text-decoration:none;font-size:12px;font-weight:600">PDF</a>
+             style="padding:9px 14px;color:var(--ob-posted);text-decoration:none;font-size:12px;font-weight:600">PDF</a>
 		  {{if .HasXLSX}}<a href="/ui/{{lower (str $.Entity.Kind)}}/{{$.Entity.Name}}/{{$.ID}}/print/{{.Name}}/xlsx"
-		     style="padding:9px 14px;color:#15803d;text-decoration:none;font-size:12px;font-weight:600">Excel</a>{{end}}
+		     style="padding:9px 14px;color:var(--ob-ok-text);text-decoration:none;font-size:12px;font-weight:600">Excel</a>{{end}}
         </div>
         {{end}}
         {{if .HasPrintProc}}
         <a href="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/print/_module" target="_blank"
-           style="display:block;padding:9px 16px;color:#334155;text-decoration:none;font-size:13px;border-bottom:1px solid #f1f5f9">📋 {{t $.Lang "Печать (модуль)"}}</a>
+           style="display:block;padding:9px 16px;color:var(--ob-text-strong);text-decoration:none;font-size:13px;border-bottom:1px solid var(--ob-surface-3)">📋 {{t $.Lang "Печать (модуль)"}}</a>
         {{end}}
       </div>
     </div>
@@ -2584,10 +2768,10 @@ const tplForm = `
     {{if .BasedOnActions}}
     <div style="position:relative">
       <button type="button" class="btn btn-sm btn-secondary" data-ob-toggle-next>{{t $.Lang "Ввести на основании"}} ▾</button>
-      <div style="display:none;position:absolute;top:100%;left:0;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);min-width:200px;z-index:50;margin-top:4px">
+      <div style="display:none;position:absolute;top:100%;left:0;background:var(--ob-surface);border:1px solid var(--ob-border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);min-width:200px;z-index:50;margin-top:4px">
         {{range .BasedOnActions}}
         <a href="{{.URL}}&based_on_id={{$.ID}}"
-           style="display:block;padding:9px 16px;color:#334155;text-decoration:none;font-size:13px;border-bottom:1px solid #f1f5f9">{{.Label}}</a>
+           style="display:block;padding:9px 16px;color:var(--ob-text-strong);text-decoration:none;font-size:13px;border-bottom:1px solid var(--ob-surface-3)">{{.Label}}</a>
         {{end}}
       </div>
     </div>
@@ -2609,16 +2793,16 @@ const tplForm = `
   {{range $regName, $rows := .DocMovements}}
   {{$columns := index $.DocMovementColumns $regName}}
   <details style="display:inline">
-    <summary style="display:inline;cursor:pointer;font-size:12px;padding:4px 10px;background:#f0f4ff;color:#1a4a80;border-radius:4px;font-weight:600;list-style:none">
+    <summary style="display:inline;cursor:pointer;font-size:12px;padding:4px 10px;background:var(--ob-hover-soft);color:var(--ob-link-hover);border-radius:4px;font-weight:600;list-style:none">
       {{$regName}} ({{len $rows}}) ▾
     </summary>
-    <div style="position:absolute;z-index:100;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);margin-top:4px;min-width:300px;max-height:300px;overflow:auto">
+    <div style="position:absolute;z-index:100;background:var(--ob-surface);border:1px solid var(--ob-border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);margin-top:4px;min-width:300px;max-height:300px;overflow:auto">
       <table class="list-tbl" style="font-size:12px;margin:0">
         <tr>{{if $columns.ShowLineNumber}}<th>{{t $.Lang "№"}}</th>{{end}}{{if $columns.ShowKind}}<th>{{t $.Lang "Вид"}}</th>{{end}}{{$first := index $rows 0}}{{range $k, $v := $first}}{{if and (ne $k "line_number") (ne $k "вид_движения")}}<th>{{$k}}</th>{{end}}{{end}}</tr>
         {{range $i, $row := $rows}}
         <tr>
           {{if $columns.ShowLineNumber}}<td>{{index $row "line_number"}}</td>{{end}}
-          {{if $columns.ShowKind}}<td>{{$kind := index $row "вид_движения"}}{{if eq $kind "Приход"}}<span style="color:#16a34a">▲</span>{{else if eq $kind "Расход"}}<span style="color:#dc2626">▼</span>{{else}}{{$kind}}{{end}}</td>{{end}}
+          {{if $columns.ShowKind}}<td>{{$kind := index $row "вид_движения"}}{{if eq $kind "Приход"}}<span style="color:var(--ob-posted)">▲</span>{{else if eq $kind "Расход"}}<span style="color:var(--ob-error-text)">▼</span>{{else}}{{$kind}}{{end}}</td>{{end}}
           {{range $k, $v := $row}}{{if and (ne $k "line_number") (ne $k "вид_движения")}}<td>{{if eq $k "period"}}{{fmtDate $v}}{{else}}{{$v}}{{end}}</td>{{end}}{{end}}
         </tr>
         {{end}}
@@ -2659,7 +2843,7 @@ const tplForm = `
      плюс скрытый input-двойник: отключённый select браузер не отправляет вовсе,
      и без двойника сборка полей формы обнулила бы реквизит при записи. */}}
 <div class="form-group">
-  <label>{{$flabel}}{{if $ro}} <span style="color:#94a3b8;font-size:11px;font-weight:400">({{t $.Lang "только просмотр"}})</span>{{end}}</label>
+  <label>{{$flabel}}{{if $ro}} <span style="color:var(--ob-text-4);font-size:11px;font-weight:400">({{t $.Lang "только просмотр"}})</span>{{end}}</label>
   {{if isRef (str .Type)}}
     <div style="display:flex;gap:6px;align-items:center">
       {{if $ro}}<input type="hidden" name="{{$fn}}" value="{{index $.Values $fn}}">{{end}}
@@ -2669,10 +2853,10 @@ const tplForm = `
         <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
         {{end}}
       </select>
-      {{if not $ro}}<button type="button" data-ob-ref-picker="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;white-space:nowrap;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>{{end}}
+      {{if not $ro}}<button type="button" data-ob-ref-picker="ref-{{$fn}}" style="padding:8px 12px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px;white-space:nowrap;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>{{end}}
       {{/* «Открыть карточку» остаётся и в режиме просмотра: посмотреть, на что
            ссылается служебный реквизит, — ровно то, зачем его показывают. */}}
-      <button type="button" data-ob-ref-current="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
+      <button type="button" data-ob-ref-current="ref-{{$fn}}" style="padding:8px 12px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
     </div>
   {{else if isEnum (str .Type)}}
     {{if $ro}}<input type="hidden" name="{{$fn}}" value="{{index $.Values $fn}}">{{end}}
@@ -2743,8 +2927,8 @@ const tplForm = `
               <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID (index $row $fn))}}selected{{end}}>{{index . "_label"}}</option>
               {{end}}
             </select>
-            <button type="button" data-ob-ref-picker-self style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}"{{if $tpReadOnly}} disabled{{end}}>...</button>
-            <button type="button" data-ob-ref-current-self style="padding:4px 7px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
+            <button type="button" data-ob-ref-picker-self style="padding:4px 8px;border:1px solid var(--ob-border);border-radius:5px;background:var(--ob-surface-2);cursor:pointer;font-size:12px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}"{{if $tpReadOnly}} disabled{{end}}>...</button>
+            <button type="button" data-ob-ref-current-self style="padding:4px 7px;border:1px solid var(--ob-border);border-radius:5px;background:var(--ob-surface-2);cursor:pointer;font-size:12px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
           </div>
         {{else if eq (str .Type) "number"}}
           <input type="number" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{index $row $fn}}"
@@ -2758,7 +2942,7 @@ const tplForm = `
           <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}"{{if $tpReadOnly}} disabled{{end}}>
             <option value="">{{t $.Lang "— выбрать —"}}</option>
             {{range tpEnumOptions $.TPEnumLabels $.TPEnumOrder $tpName $fn (index $row $fn)}}
-            <option value="{{.Value}}"{{if .Selected}} selected{{end}}{{if .Unknown}} style="color:#dc2626"{{end}}>{{if .Unknown}}⚠ {{end}}{{.Label}}</option>
+            <option value="{{.Value}}"{{if .Selected}} selected{{end}}{{if .Unknown}} style="color:var(--ob-error-text)"{{end}}>{{if .Unknown}}⚠ {{end}}{{.Label}}</option>
             {{end}}
           </select>
         {{else if eq (str .Type) "date"}}
@@ -2785,7 +2969,7 @@ const tplForm = `
     {{range .Fields}}{{if eq (str .Type) "number"}}<td class="tp-total" data-tp-total="{{$tpName}}.{{.Name}}" style="text-align:right;font-variant-numeric:tabular-nums">0</td>{{else}}<td></td>{{end}}{{end}}<td></td>
   </tr></tfoot>
 </table>
-<button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin-bottom:8px"
+<button type="button" class="btn btn-sm" style="background:var(--ob-btn-2-bg);color:var(--ob-text-2);margin-bottom:8px"
   data-ob-add-tp-row data-tp-name="{{$tpName}}" data-tp-fields="{{fieldNamesCSV .Fields}}" data-tp-num-fields="{{numberFieldNamesCSV .Fields}}" data-tp-bool-fields="{{boolFieldNamesCSV .Fields}}" data-tp-date-fields="{{dateFieldNamesCSV .Fields}}"
   {{if $tpReadOnly}}disabled{{else}}title="Insert" aria-keyshortcuts="Insert"{{end}}>
   + {{t $.Lang "Добавить строку"}}
@@ -2821,8 +3005,8 @@ const tplForm = `
 {{if and (not .IsNew) (not .IsPopup) (not .IsProcessor)}}
 <div class="card" style="margin-top:16px" data-ob-attachments data-attachments-url="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/attachments">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-    <h3 style="margin:0;font-size:14px;font-weight:600;color:#374151">{{t $.Lang "Вложения"}}</h3>
-    <span id="att-count" style="color:#94a3b8;font-size:12px"></span>
+    <h3 style="margin:0;font-size:14px;font-weight:600;color:var(--ob-text-strong)">{{t $.Lang "Вложения"}}</h3>
+    <span id="att-count" style="color:var(--ob-text-4);font-size:12px"></span>
   </div>
   <div id="att-list" style="margin-bottom:12px"></div>
   <form id="att-upload-form" method="POST" enctype="multipart/form-data"
@@ -2870,11 +3054,11 @@ const tplReport = `
 {{$pdf := printf "/ui/report/%s/export/pdf%s" (lower .Report.Name) $q}}
 <div style="display:flex;justify-content:flex-end;gap:8px;margin-bottom:8px">
   {{if eq (lower .Report.OutputFormat) "pdf"}}
-  <a class="btn btn-sm" href="{{$pdf}}" style="background:#dc2626;color:#fff" title="{{t $.Lang "Запустить выгрузку PDF"}}">{{t $.Lang "PDF"}}</a>
-  <a class="btn btn-sm" href="{{$excel}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Запустить выгрузку Excel"}}">{{t $.Lang "Excel"}}</a>
+  <a class="btn btn-sm" href="{{$pdf}}" style="background:var(--ob-flag);color:#fff" title="{{t $.Lang "Запустить выгрузку PDF"}}">{{t $.Lang "PDF"}}</a>
+  <a class="btn btn-sm" href="{{$excel}}" style="background:var(--ob-posted);color:#fff" title="{{t $.Lang "Запустить выгрузку Excel"}}">{{t $.Lang "Excel"}}</a>
   {{else}}
-  <a class="btn btn-sm" href="{{$excel}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Запустить выгрузку Excel"}}">{{t $.Lang "Excel"}}</a>
-  <a class="btn btn-sm" href="{{$pdf}}" style="background:#dc2626;color:#fff" title="{{t $.Lang "Запустить выгрузку PDF"}}">{{t $.Lang "PDF"}}</a>
+  <a class="btn btn-sm" href="{{$excel}}" style="background:var(--ob-posted);color:#fff" title="{{t $.Lang "Запустить выгрузку Excel"}}">{{t $.Lang "Excel"}}</a>
+  <a class="btn btn-sm" href="{{$pdf}}" style="background:var(--ob-flag);color:#fff" title="{{t $.Lang "Запустить выгрузку PDF"}}">{{t $.Lang "PDF"}}</a>
   {{end}}
 </div>
 {{end}}
@@ -2885,11 +3069,11 @@ const tplReport = `
 <p><a href="/ui/export-jobs">{{t $.Lang "Мои выгрузки"}}</a></p>
 <div class="card" style="max-width:720px">
   <div style="display:grid;grid-template-columns:140px 1fr;gap:8px 16px;margin-bottom:16px">
-    <div style="color:#64748b">{{t $.Lang "Отчёт"}}</div><div>{{.Job.Name}}</div>
-    <div style="color:#64748b">{{t $.Lang "Формат"}}</div><div>{{.JobFormatLabel}}</div>
-    <div style="color:#64748b">{{t $.Lang "Статус"}}</div><div>{{t $.Lang .JobStatusLabel}}</div>
-    <div style="color:#64748b">{{t $.Lang "Создано"}}</div><div>{{.CreatedAtText}}</div>
-    {{if .JobDone}}<div style="color:#64748b">{{t $.Lang "Доступно до"}}</div><div>{{.ExpiresAtText}}</div>{{end}}
+    <div style="color:var(--ob-text-3)">{{t $.Lang "Отчёт"}}</div><div>{{.Job.Name}}</div>
+    <div style="color:var(--ob-text-3)">{{t $.Lang "Формат"}}</div><div>{{.JobFormatLabel}}</div>
+    <div style="color:var(--ob-text-3)">{{t $.Lang "Статус"}}</div><div>{{t $.Lang .JobStatusLabel}}</div>
+    <div style="color:var(--ob-text-3)">{{t $.Lang "Создано"}}</div><div>{{.CreatedAtText}}</div>
+    {{if .JobDone}}<div style="color:var(--ob-text-3)">{{t $.Lang "Доступно до"}}</div><div>{{.ExpiresAtText}}</div>{{end}}
   </div>
   {{if .JobDone}}
     <a class="btn btn-primary" href="{{.DownloadURL}}">{{t $.Lang "Скачать файл"}}</a>
@@ -2898,10 +3082,10 @@ const tplReport = `
     <div class="alert alert-error" style="margin-bottom:12px">{{.Job.Error}}</div>
     <a class="btn btn-sm" href="{{.BackURL}}">{{t $.Lang "К отчёту"}}</a>
   {{else}}
-    <div style="height:6px;background:#e2e8f0;border-radius:3px;overflow:hidden;margin-bottom:12px">
-      <div style="height:100%;width:45%;background:#2563eb"></div>
+    <div style="height:6px;background:var(--ob-btn-2-bg);border-radius:3px;overflow:hidden;margin-bottom:12px">
+      <div style="height:100%;width:45%;background:var(--ob-accent-hover)"></div>
     </div>
-    <p style="margin:0;color:#475569">{{t $.Lang "Файл готовится в фоне. Страница обновится автоматически."}}</p>
+    <p style="margin:0;color:var(--ob-text-2)">{{t $.Lang "Файл готовится в фоне. Страница обновится автоматически."}}</p>
     <script>setTimeout(function(){ window.location.reload(); }, 2000);</script>
   {{end}}
 </div>
@@ -3009,8 +3193,8 @@ const tplReport = `
               <option value="{{index . "id"}}" {{if eq $pval (str (index . "id"))}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
-          <button type="button" data-ob-ref-picker="rp-{{$pname}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
-          <button type="button" data-ob-ref-current="rp-{{$pname}}" style="padding:6px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
+          <button type="button" data-ob-ref-picker="rp-{{$pname}}" style="padding:6px 10px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
+          <button type="button" data-ob-ref-current="rp-{{$pname}}" style="padding:6px 9px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
         </div>
       {{else}}
         <input type="text" name="{{$pname}}" value="{{$pval}}">
@@ -3026,7 +3210,7 @@ const tplReport = `
 {{end}}
 {{if and .ReportCols .ReportSettingsJSON}}
 <details class="card report-block" data-block="settings" style="margin-bottom:16px">
-<summary>{{t $.Lang "Настройка отчёта"}}{{if .UserSettings}} <span style="background:#fef3c7;color:#92400e;border-radius:6px;padding:1px 8px;font-size:12px;font-weight:600">{{t $.Lang "изменено"}}</span>{{end}}</summary>
+<summary>{{t $.Lang "Настройка отчёта"}}{{if .UserSettings}} <span style="background:var(--ob-amber-bg);color:var(--ob-amber-ink);border-radius:6px;padding:1px 8px;font-size:12px;font-weight:600">{{t $.Lang "изменено"}}</span>{{end}}</summary>
 <form method="POST" data-ob-rs-before-submit>
   {{range .ReportParams}}<input type="hidden" name="{{.Name}}" value="{{str (index $.ParamValues .Name)}}">{{end}}
   <input type="hidden" name="__variant" value="{{.ActiveVariant}}">
@@ -3122,7 +3306,7 @@ const tplReport = `
 </details>
 {{end}}
 {{if .QueryError}}<div class="error">{{t $.Lang "Ошибка запроса:"}} {{.QueryError}}</div>{{end}}
-{{if .QueryWarning}}<div class="card" style="background:#fffbeb;border-color:#fde68a;margin-bottom:8px;padding:8px 12px">{{.QueryWarning}}</div>{{end}}
+{{if .QueryWarning}}<div class="card" style="background:var(--ob-amber-bg);border-color:#fde68a;margin-bottom:8px;padding:8px 12px">{{.QueryWarning}}</div>{{end}}
 {{if .ChartOption}}
 <details class="card report-block" data-block="chart" open style="margin-bottom:16px">
 <summary>{{t $.Lang "Диаграмма"}}</summary>
@@ -3132,8 +3316,8 @@ const tplReport = `
 <script src="/vendor/echarts/echarts.min.js"></script>
 {{end}}
 {{if .ComposedHTML}}
-{{if .Capped}}<div class="card" style="background:#fffbeb;border-color:#fde68a;margin-bottom:8px;padding:8px 12px">{{t $.Lang "Показаны первые строки — данных больше потолка."}}</div>{{end}}
-{{if .ComposeWarnings}}<div class="card" style="background:#fef2f2;border-color:#fecaca;margin-bottom:8px;padding:8px 12px"><strong>{{t $.Lang "Предупреждения компоновки:"}}</strong><ul style="margin:4px 0 0;padding-left:20px">{{range .ComposeWarnings}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+{{if .Capped}}<div class="card" style="background:var(--ob-amber-bg);border-color:#fde68a;margin-bottom:8px;padding:8px 12px">{{t $.Lang "Показаны первые строки — данных больше потолка."}}</div>{{end}}
+{{if .ComposeWarnings}}<div class="card" style="background:var(--ob-error-bg);border-color:#fecaca;margin-bottom:8px;padding:8px 12px"><strong>{{t $.Lang "Предупреждения компоновки:"}}</strong><ul style="margin:4px 0 0;padding-left:20px">{{range .ComposeWarnings}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
 {{template "report-export-buttons" .}}
 <details class="card report-block" data-block="data" open>
 <summary>{{t $.Lang "Данные"}}</summary>
@@ -3166,37 +3350,37 @@ const tplRegister = `
   {{listHidden .Context}}
   {{range .Fields}}
   <div style="display:flex;flex-direction:column;gap:2px">
-    <label style="font-size:11px;color:#64748b">{{.DisplayName $.Lang}}</label>
+    <label style="font-size:11px;color:var(--ob-text-3)">{{.DisplayName $.Lang}}</label>
     {{if .RefEntity}}
     <div style="display:flex;gap:4px;align-items:center">
-      <select id="regflt-{{.Name}}" name="flt_{{.Name}}" data-ref-entity="{{.RefEntity}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;min-width:0">
+      <select id="regflt-{{.Name}}" name="flt_{{.Name}}" data-ref-entity="{{.RefEntity}}" style="padding:6px 10px;border:1px solid var(--ob-border);border-radius:6px;font-size:13px;min-width:0">
         <option value="">— {{t $.Lang "все"}} —</option>
         {{$cur := index $flt .Name}}{{range index $refOpts .Name}}<option value="{{index . "id"}}" {{if eq (str (index . "id")) $cur}}selected{{end}}>{{index . "_label"}}</option>{{end}}
       </select>
-      <button type="button" data-ob-ref-picker="regflt-{{.Name}}" style="padding:6px 9px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
+      <button type="button" data-ob-ref-picker="regflt-{{.Name}}" style="padding:6px 9px;border:1px solid var(--ob-border);border-radius:6px;background:var(--ob-surface-2);cursor:pointer;font-size:12px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
     </div>
     {{else}}
-    <input type="text" name="flt_{{.Name}}" value="{{index $flt .Name}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px">
+    <input type="text" name="flt_{{.Name}}" value="{{index $flt .Name}}" style="padding:6px 10px;border:1px solid var(--ob-border);border-radius:6px;font-size:13px">
     {{end}}
   </div>
   {{end}}
   {{if .ShowFromTo}}
   <div style="display:flex;flex-direction:column;gap:2px">
-    <label style="font-size:11px;color:#64748b">{{t $.Lang "с"}}</label>
-    <input type="date" name="from" value="{{index $flt "from"}}" style="padding:5px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px">
+    <label style="font-size:11px;color:var(--ob-text-3)">{{t $.Lang "с"}}</label>
+    <input type="date" name="from" value="{{index $flt "from"}}" style="padding:5px 10px;border:1px solid var(--ob-border);border-radius:6px;font-size:13px">
   </div>
   <div style="display:flex;flex-direction:column;gap:2px">
-    <label style="font-size:11px;color:#64748b">{{t $.Lang "по"}}</label>
-    <input type="date" name="to" value="{{index $flt "to"}}" style="padding:5px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px">
+    <label style="font-size:11px;color:var(--ob-text-3)">{{t $.Lang "по"}}</label>
+    <input type="date" name="to" value="{{index $flt "to"}}" style="padding:5px 10px;border:1px solid var(--ob-border);border-radius:6px;font-size:13px">
   </div>
   {{else if .ShowToOnly}}
   <div style="display:flex;flex-direction:column;gap:2px">
-    <label style="font-size:11px;color:#64748b">{{t $.Lang "на дату"}}</label>
-    <input type="date" name="to" value="{{index $flt "to"}}" style="padding:5px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px">
+    <label style="font-size:11px;color:var(--ob-text-3)">{{t $.Lang "на дату"}}</label>
+    <input type="date" name="to" value="{{index $flt "to"}}" style="padding:5px 10px;border:1px solid var(--ob-border);border-radius:6px;font-size:13px">
   </div>
   {{end}}
   <button class="btn btn-sm btn-primary" type="submit">{{t $.Lang "Отобрать"}}</button>
-  {{if .HasFilters}}<a class="btn btn-sm" href="{{.ResetURL}}" style="background:#e2e8f0;color:#475569">{{t $.Lang "Сбросить"}}</a>{{end}}
+  {{if .HasFilters}}<a class="btn btn-sm" href="{{.ResetURL}}" style="background:var(--ob-btn-2-bg);color:var(--ob-text-2)">{{t $.Lang "Сбросить"}}</a>{{end}}
 </form>
 {{end}}
 
@@ -3205,7 +3389,7 @@ const tplRegister = `
 <main>
 <div class="row-top">
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "движения"}}</h2>
-  {{if .CanViewBalances}}<a class="btn btn-sm" href="/ui/register/{{lower .Register.Name}}/balances" style="background:#e2e8f0;color:#475569">{{t $.Lang "Остатки →"}}</a>{{end}}
+  {{if .CanViewBalances}}<a class="btn btn-sm" href="/ui/register/{{lower .Register.Name}}/balances" style="background:var(--ob-btn-2-bg);color:var(--ob-text-2)">{{t $.Lang "Остатки →"}}</a>{{end}}
 </div>
 {{template "reg-filter-form" (dict "Fields" .FilterFields "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" .ShowPeriodFilter "ShowToOnly" false "HasFilters" .HasFilters "ResetURL" (printf "/ui/register/%s" (lower .Register.Name)) "Lang" $.Lang)}}
 <div class="card">
@@ -3219,8 +3403,8 @@ const tplRegister = `
   {{range .VisibleAttributes}}<th>{{.DisplayName $.Lang}}</th>{{end}}
 </tr></thead><tbody>
 {{range .Rows}}{{$row := .}}<tr>
-  {{if $.ShowMovementKind}}<td>{{$v := index $row "вид_движения"}}{{if eq (str $v) "Приход"}}<span style="color:#16a34a;font-weight:600">▲ {{$v}}</span>{{else if eq (str $v) "Расход"}}<span style="color:#dc2626;font-weight:600">▼ {{$v}}</span>{{else}}{{$v}}{{end}}</td>{{end}}
-  {{if $.ShowRecorder}}<td style="font-size:12px;color:#475569">{{if index $row "recorder_label"}}{{index $row "recorder_label"}}{{else}}{{index $row "recorder_type"}}{{end}}</td>{{end}}
+  {{if $.ShowMovementKind}}<td>{{$v := index $row "вид_движения"}}{{if eq (str $v) "Приход"}}<span style="color:var(--ob-posted);font-weight:600">▲ {{$v}}</span>{{else if eq (str $v) "Расход"}}<span style="color:var(--ob-error-text);font-weight:600">▼ {{$v}}</span>{{else}}{{$v}}{{end}}</td>{{end}}
+  {{if $.ShowRecorder}}<td style="font-size:12px;color:var(--ob-text-2)">{{if index $row "recorder_label"}}{{index $row "recorder_label"}}{{else}}{{index $row "recorder_type"}}{{end}}</td>{{end}}
   {{range $.VisibleDimensions}}<td>{{index $row .Name}}</td>{{end}}
   {{range $.VisibleResources}}<td>{{index $row .Name}}</td>{{end}}
   {{range $.VisibleAttributes}}<td>{{index $row .Name}}</td>{{end}}
@@ -3236,7 +3420,7 @@ const tplRegister = `
 <main>
 <div class="row-top">
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "остатки"}}</h2>
-  <a class="btn btn-sm" href="/ui/register/{{lower .Register.Name}}" style="background:#e2e8f0;color:#475569">{{t $.Lang "← Движения"}}</a>
+  <a class="btn btn-sm" href="/ui/register/{{lower .Register.Name}}" style="background:var(--ob-btn-2-bg);color:var(--ob-text-2)">{{t $.Lang "← Движения"}}</a>
 </div>
 {{template "reg-filter-form" (dict "Fields" .FilterFields "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" false "ShowToOnly" .ShowPeriodFilter "HasFilters" .HasFilters "ResetURL" (printf "/ui/register/%s/balances" (lower .Register.Name)) "Lang" $.Lang)}}
 <div class="card">
@@ -3262,7 +3446,7 @@ const tplDeleteMarked = `
 {{template "head" .}}{{template "nav" .}}
 <main>
 <h2>{{t $.Lang "Удалить помеченные"}}</h2>
-{{if .Deleted}}<div style="background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">
+{{if .Deleted}}<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-posted);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">
   {{t $.Lang "Удалено:"}} {{.Deleted}}{{if .Skipped}} &nbsp;·&nbsp; {{t $.Lang "Пропущено (есть ссылки):"}} {{.Skipped}}{{end}}
 </div>{{end}}
 {{if .Entries}}
@@ -3273,7 +3457,7 @@ const tplDeleteMarked = `
 {{range .Entries}}<tr>
   <td><a href="/ui/{{lower .Kind}}/{{lower .EntityName}}/{{.ID}}">{{.EntityName}}</a></td>
   <td>{{.Label}}</td>
-  <td>{{if .HasRefs}}<span style="color:#ef4444">{{t $.Lang "Есть ссылки — не будет удалён"}}</span>{{else}}<span style="color:#16a34a">{{t $.Lang "Будет удалён"}}</span>{{end}}</td>
+  <td>{{if .HasRefs}}<span style="color:var(--ob-danger)">{{t $.Lang "Есть ссылки — не будет удалён"}}</span>{{else}}<span style="color:var(--ob-posted)">{{t $.Lang "Будет удалён"}}</span>{{end}}</td>
 </tr>{{end}}
 </tbody></table>
 </div>
@@ -3315,7 +3499,7 @@ const tplProcessor = `
     </div>
     {{else if eq .Type "file"}}
     <div class="form-group" style="margin-bottom:0;grid-column:1/-1">
-      <label>{{.DisplayLabel $.Lang}}{{if .Required}} <span style="color:#dc2626">*</span>{{end}}</label>
+      <label>{{.DisplayLabel $.Lang}}{{if .Required}} <span style="color:var(--ob-error-text)">*</span>{{end}}</label>
       {{/* Файл нельзя вернуть в поле после перезагрузки — это запрет браузера, а
            не недоделка. Поэтому после запуска поле пустое, и повторное
            «Выполнить» без файла обязано останавливаться здесь, а не улетать на
@@ -3324,7 +3508,7 @@ const tplProcessor = `
     </div>
     {{else if eq .Type "binary"}}
     <div class="form-group" style="margin-bottom:0;grid-column:1/-1">
-      <label>{{.DisplayLabel $.Lang}}{{if .Required}} <span style="color:#dc2626">*</span>{{end}}</label>
+      <label>{{.DisplayLabel $.Lang}}{{if .Required}} <span style="color:var(--ob-error-text)">*</span>{{end}}</label>
       {{/* Двоичный файл уходит как есть: обработка получит путь к временной
            копии. Поле такое же, как у text-файла, — разница только в том, что
            попадает в значение параметра. */}}
@@ -3337,7 +3521,7 @@ const tplProcessor = `
     </div>
     {{else}}
     <div class="form-group" style="margin-bottom:0">
-      <label>{{.DisplayLabel $.Lang}}{{if .Required}} <span style="color:#dc2626">*</span>{{end}}</label>
+      <label>{{.DisplayLabel $.Lang}}{{if .Required}} <span style="color:var(--ob-error-text)">*</span>{{end}}</label>
       {{if eq .Type "date"}}
         <input type="date" name="{{$pname}}" value="{{index $.ParamValues $pname}}" {{if .Required}}required{{end}}>
       {{else if eq .Type "number"}}
@@ -3352,8 +3536,8 @@ const tplProcessor = `
             <option value="">{{t $.Lang "— выбрать —"}}</option>
             {{with index $.RefOptions $pname}}{{range .}}<option value="{{index . "id"}}" {{if eq (index . "id") (index $.ParamValues $pname)}}selected{{end}}>{{index . "_label"}}</option>{{end}}{{end}}
           </select>
-          <button type="button" data-ob-ref-picker="pp-{{$pname}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
-          <button type="button" data-ob-ref-current="pp-{{$pname}}" style="padding:6px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
+          <button type="button" data-ob-ref-picker="pp-{{$pname}}" style="padding:6px 10px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
+          <button type="button" data-ob-ref-current="pp-{{$pname}}" style="padding:6px 9px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
         </div>
       {{else}}
         <input type="text" name="{{$pname}}" value="{{index $.ParamValues $pname}}" {{if .Required}}required{{end}}>
@@ -3383,7 +3567,7 @@ const tplProcessor = `
   <div class="error">{{.RunError}}</div>
 {{else if .Messages}}
   <table class="tbl-plain"><tbody>
-  {{range .Messages}}<tr><td style="font-family:monospace;font-size:13px;padding:6px 12px;border-bottom:1px solid #f1f5f9">{{.}}</td></tr>{{end}}
+  {{range .Messages}}<tr><td style="font-family:monospace;font-size:13px;padding:6px 12px;border-bottom:1px solid var(--ob-surface-3)">{{.}}</td></tr>{{end}}
   </tbody></table>
 {{else}}
   <p class="empty">{{t $.Lang "Выполнено без сообщений"}}</p>
@@ -3400,7 +3584,7 @@ const tplAgentSettings = `
 <main>
 <h2>Настройки агента оборудования</h2>
 <div class="card" style="max-width:560px">
-  <p style="color:#64748b;font-size:14px;margin-bottom:16px">Адрес и токен локального <b>device-agent</b> на этой машине кассира (<code>onebase device-agent</code>). Хранятся в браузере (localStorage) — у каждого рабочего места свои, на сервер не отправляются.</p>
+  <p style="color:var(--ob-text-3);font-size:14px;margin-bottom:16px">Адрес и токен локального <b>device-agent</b> на этой машине кассира (<code>onebase device-agent</code>). Хранятся в браузере (localStorage) — у каждого рабочего места свои, на сервер не отправляются.</p>
   <div class="form-group">
     <label>Адрес агента</label>
     <input type="text" id="ag-url" placeholder="http://127.0.0.1:8765">
@@ -3439,7 +3623,7 @@ const tplPOS = `
 {{template "head" .}}{{template "nav" .}}
 <main>
 <h2>Рабочее место кассира</h2>
-<p style="color:#64748b;font-size:13px;margin:-12px 0 16px">Команды идут из браузера в <b>локальный агент</b> этой машины. Адрес/токен — в <a href="/ui/settings/agent">настройках агента</a>. Если связи нет, проверьте, что запущен <code>onebase device-agent</code>.</p>
+<p style="color:var(--ob-text-3);font-size:13px;margin:-12px 0 16px">Команды идут из браузера в <b>локальный агент</b> этой машины. Адрес/токен — в <a href="/ui/settings/agent">настройках агента</a>. Если связи нет, проверьте, что запущен <code>onebase device-agent</code>.</p>
 
 <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:16px;max-width:1000px">
 
@@ -3462,12 +3646,12 @@ const tplPOS = `
 
   <div class="card">
     <h3 style="margin-top:0">Фискальный чек (ККТ)</h3>
-    <p style="color:#64748b;font-size:12px;margin-bottom:12px">Использует данные блока «Чек». Ставка НДС — 20%, признак — товар (демо).</p>
+    <p style="color:var(--ob-text-3);font-size:12px;margin-bottom:12px">Использует данные блока «Чек». Ставка НДС — 20%, признак — товар (демо).</p>
     <div class="form-group"><label>ККТ: драйвер / адрес сервиса</label>
       <div style="display:flex;gap:8px"><input type="text" id="pos-kkt-drv" value="atol_kkt" style="flex:1"><input type="text" id="pos-kkt-port" placeholder="127.0.0.1:16732" style="flex:1"></div>
     </div>
     <button class="btn btn-post btn-sm" type="button" id="pos-fiscal">Пробить фискальный чек</button>
-    <div id="pos-fiscal-res" style="font-size:12px;color:#475569;margin-top:10px;font-family:monospace"></div>
+    <div id="pos-fiscal-res" style="font-size:12px;color:var(--ob-text-2);margin-top:10px;font-family:monospace"></div>
   </div>
 
   <div class="card">
@@ -3486,7 +3670,7 @@ const tplPOS = `
     </div>
     <div class="form-group"><label>Сумма</label><input type="number" id="pos-pay-sum" value="100"></div>
     <button class="btn btn-primary btn-sm" type="button" id="pos-pay-go">Оплатить картой</button>
-    <div id="pos-pay-res" style="font-size:12px;color:#475569;margin-top:10px;font-family:monospace"></div>
+    <div id="pos-pay-res" style="font-size:12px;color:var(--ob-text-2);margin-top:10px;font-family:monospace"></div>
   </div>
 
   <div class="card">
@@ -3505,7 +3689,7 @@ const tplPOS = `
 
 <div class="card" style="max-width:1000px;margin-top:16px">
   <h3 style="margin-top:0">Журнал операций</h3>
-  <div id="pos-log" style="font-family:Consolas,monospace;font-size:12px;color:#334155;max-height:180px;overflow-y:auto"><span style="color:#94a3b8">пусто</span></div>
+  <div id="pos-log" style="font-family:Consolas,monospace;font-size:12px;color:var(--ob-text-strong);max-height:180px;overflow-y:auto"><span style="color:var(--ob-text-4)">пусто</span></div>
 </div>
 
 <script>
@@ -3522,7 +3706,7 @@ const tplPOS = `
     if(logEmpty){logBox.innerHTML='';logEmpty=false;}
     var t=new Date().toLocaleTimeString();
     var line=document.createElement('div');
-    line.style.cssText='padding:3px 0;border-bottom:1px solid #f1f5f9;color:'+(ok===false?'#dc2626':(ok?'#16a34a':'#334155'));
+    line.style.cssText='padding:3px 0;border-bottom:1px solid var(--ob-surface-3);color:'+(ok===false?'#dc2626':(ok?'#16a34a':'#334155'));
     line.textContent='['+t+'] '+msg;
     logBox.appendChild(line);logBox.scrollTop=logBox.scrollHeight;
   }
@@ -3589,83 +3773,83 @@ const tplAbout = `
   <table class="tbl-plain" style="width:100%;border-collapse:collapse">
     {{if .User}}
     <tr>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;width:180px;font-size:14px">{{t $.Lang "Пользователь"}}</td>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-size:14px">
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);color:var(--ob-text-3);width:180px;font-size:14px">{{t $.Lang "Пользователь"}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);font-size:14px">
         <span style="font-weight:600">{{.User.Login}}</span>
-        {{if .User.FullName}}<span style="color:#64748b;margin-left:8px">{{.User.FullName}}</span>{{end}}
-        {{if .User.IsAdmin}}<span style="margin-left:8px;background:#dbeafe;color:#1d4ed8;font-size:11px;padding:2px 7px;border-radius:10px;font-weight:600">{{t $.Lang "Администратор"}}</span>{{end}}
+        {{if .User.FullName}}<span style="color:var(--ob-text-3);margin-left:8px">{{.User.FullName}}</span>{{end}}
+        {{if .User.IsAdmin}}<span style="margin-left:8px;background:var(--ob-chip-hover);color:var(--ob-link-2);font-size:11px;padding:2px 7px;border-radius:10px;font-weight:600">{{t $.Lang "Администратор"}}</span>{{end}}
       </td>
     </tr>
     {{end}}
     <tr>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;width:180px;font-size:14px">{{t $.Lang "Версия платформы"}}</td>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-weight:600;font-size:14px">onebase {{if .Cfg.PlatVersion}}{{.Cfg.PlatVersion}}{{else}}dev{{end}}{{if .Cfg.PlatDate}}<span style="color:#94a3b8;font-weight:400"> · {{.Cfg.PlatDate}}{{if .Cfg.PlatCommit}} · {{.Cfg.PlatCommit}}{{end}}</span>{{end}}
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);color:var(--ob-text-3);width:180px;font-size:14px">{{t $.Lang "Версия платформы"}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);font-weight:600;font-size:14px">onebase {{if .Cfg.PlatVersion}}{{.Cfg.PlatVersion}}{{else}}dev{{end}}{{if .Cfg.PlatDate}}<span style="color:var(--ob-text-4);font-weight:400"> · {{.Cfg.PlatDate}}{{if .Cfg.PlatCommit}} · {{.Cfg.PlatCommit}}{{end}}</span>{{end}}
         {{/* Только уведомление: процесс базы своим бинарём не распоряжается —
              он может быть службой. Обновляют платформу из лаунчера. */}}
-        {{with .UpdateAvailable}}<div style="margin-top:6px;font-weight:400;font-size:13px;color:#166534">{{t $.Lang "Доступна новая версия платформы"}}: {{.}} <span style="color:#94a3b8">— {{t $.Lang "обновление выполняется из лаунчера"}}</span></div>{{end}}
+        {{with .UpdateAvailable}}<div style="margin-top:6px;font-weight:400;font-size:13px;color:#166534">{{t $.Lang "Доступна новая версия платформы"}}: {{.}} <span style="color:var(--ob-text-4)">— {{t $.Lang "обновление выполняется из лаунчера"}}</span></div>{{end}}
       </td>
     </tr>
     {{with .Distribution}}{{if .Present}}
-    <tr><td style="padding:14px 0;color:#64748b;font-size:14px">{{t $.Lang "Изменённая сборка"}}</td><td style="padding:14px 0;font-size:14px">{{.Name}} {{.Version}}</td></tr>
-    {{if .Supplier}}<tr><td style="padding:14px 0;color:#64748b;font-size:14px">{{t $.Lang "Поставщик сборки"}}</td><td style="padding:14px 0;font-size:14px">{{.Supplier}}</td></tr>{{end}}
+    <tr><td style="padding:14px 0;color:var(--ob-text-3);font-size:14px">{{t $.Lang "Изменённая сборка"}}</td><td style="padding:14px 0;font-size:14px">{{.Name}} {{.Version}}</td></tr>
+    {{if .Supplier}}<tr><td style="padding:14px 0;color:var(--ob-text-3);font-size:14px">{{t $.Lang "Поставщик сборки"}}</td><td style="padding:14px 0;font-size:14px">{{.Supplier}}</td></tr>{{end}}
     {{end}}{{end}}
     {{if .Cfg.PlatAuthor}}
     <tr>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">{{t $.Lang "Правообладатель платформы"}}</td>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-size:14px">{{.Cfg.PlatAuthor}}{{if .Cfg.PlatLicense}} · {{.Cfg.PlatLicense}}{{end}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);color:var(--ob-text-3);font-size:14px">{{t $.Lang "Правообладатель платформы"}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);font-size:14px">{{.Cfg.PlatAuthor}}{{if .Cfg.PlatLicense}} · {{.Cfg.PlatLicense}}{{end}}</td>
     </tr>
     {{end}}
     {{if .Cfg.AppName}}
     <tr>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">{{t $.Lang "Конфигурация"}}</td>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-size:14px;font-weight:600">{{.Cfg.AppName}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);color:var(--ob-text-3);font-size:14px">{{t $.Lang "Конфигурация"}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);font-size:14px;font-weight:600">{{.Cfg.AppName}}</td>
     </tr>
     {{end}}
     {{if .Cfg.AppVersion}}
     <tr>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">{{t $.Lang "Версия конфигурации"}}</td>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-size:14px">{{.Cfg.AppVersion}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);color:var(--ob-text-3);font-size:14px">{{t $.Lang "Версия конфигурации"}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);font-size:14px">{{.Cfg.AppVersion}}</td>
     </tr>
     {{end}}
     {{if .Cfg.AppAuthor}}
     <tr>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">{{t $.Lang "Автор конфигурации"}}</td>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-size:14px">{{.Cfg.AppAuthor}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);color:var(--ob-text-3);font-size:14px">{{t $.Lang "Автор конфигурации"}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);font-size:14px">{{.Cfg.AppAuthor}}</td>
     </tr>
     {{end}}
     {{if .Cfg.AppCopyright}}
     <tr>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">{{t $.Lang "Правообладатель"}}</td>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-size:14px">{{.Cfg.AppCopyright}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);color:var(--ob-text-3);font-size:14px">{{t $.Lang "Правообладатель"}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);font-size:14px">{{.Cfg.AppCopyright}}</td>
     </tr>
     {{end}}
     {{if .Cfg.AppLicense}}
     <tr>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">{{t $.Lang "Лицензия конфигурации"}}</td>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-size:14px">{{.Cfg.AppLicense}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);color:var(--ob-text-3);font-size:14px">{{t $.Lang "Лицензия конфигурации"}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);font-size:14px">{{.Cfg.AppLicense}}</td>
     </tr>
     {{end}}
     {{if .Cfg.ConfigSource}}
     <tr>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">{{t $.Lang "Хранение конфигурации"}}</td>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-size:14px;color:#475569">{{if eq .Cfg.ConfigSource "database"}}{{t $.Lang "В базе данных"}}{{else}}{{t $.Lang "Файлы"}}{{end}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);color:var(--ob-text-3);font-size:14px">{{t $.Lang "Хранение конфигурации"}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);font-size:14px;color:var(--ob-text-2)">{{if eq .Cfg.ConfigSource "database"}}{{t $.Lang "В базе данных"}}{{else}}{{t $.Lang "Файлы"}}{{end}}</td>
     </tr>
     {{end}}
     {{if and .IsAdmin .Cfg.ConfigLocation}}
     <tr>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">{{t $.Lang "Расположение конфигурации"}}</td>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#475569;word-break:break-all">{{.Cfg.ConfigLocation}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);color:var(--ob-text-3);font-size:14px">{{t $.Lang "Расположение конфигурации"}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);font-size:13px;color:var(--ob-text-2);word-break:break-all">{{.Cfg.ConfigLocation}}</td>
     </tr>
     {{end}}
     {{if .Cfg.DatabaseLocation}}
     <tr>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">{{t $.Lang "База данных"}}</td>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-size:13px;color:#475569;word-break:break-all">{{if eq .Cfg.DatabaseType "sqlite"}}SQLite{{else}}PostgreSQL{{end}}{{if .IsAdmin}} · {{.Cfg.DatabaseLocation}}{{end}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);color:var(--ob-text-3);font-size:14px">{{t $.Lang "База данных"}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);font-size:13px;color:var(--ob-text-2);word-break:break-all">{{if eq .Cfg.DatabaseType "sqlite"}}SQLite{{else}}PostgreSQL{{end}}{{if .IsAdmin}} · {{.Cfg.DatabaseLocation}}{{end}}</td>
     </tr>
     {{end}}
     <tr>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;color:#64748b;font-size:14px">{{t $.Lang "Метаданные"}}</td>
-      <td style="padding:14px 0;border-bottom:1px solid #f1f5f9;font-size:14px">
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);color:var(--ob-text-3);font-size:14px">{{t $.Lang "Метаданные"}}</td>
+      <td style="padding:14px 0;border-bottom:1px solid var(--ob-surface-3);font-size:14px">
         {{t $.Lang "Справочники:"}} {{.Catalogs}} &nbsp;·&nbsp;
         {{t $.Lang "Документы:"}} {{.Documents}} &nbsp;·&nbsp;
         {{t $.Lang "Регистры:"}} {{.Registers}} &nbsp;·&nbsp;
@@ -3686,7 +3870,7 @@ const tplInfoReg = `
 {{template "head" .}}{{template "nav" .}}
 <main>
 <div class="row-top">
-  <h2>{{.InfoReg.DisplayName $.Lang}}{{if .InfoReg.Periodic}} <span style="font-size:13px;color:#64748b;font-weight:400">({{t $.Lang "периодический"}})</span>{{end}}</h2>
+  <h2>{{.InfoReg.DisplayName $.Lang}}{{if .InfoReg.Periodic}} <span style="font-size:13px;color:var(--ob-text-3);font-weight:400">({{t $.Lang "периодический"}})</span>{{end}}</h2>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     {{template "list-refresh" (dict "URL" .RequestURI "Lang" $.Lang)}}
     {{if .CanWrite}}<a class="btn" href="/ui/inforeg/{{lower .InfoReg.Name}}/new">+ {{t $.Lang "Добавить запись"}}</a>{{end}}
@@ -3727,7 +3911,7 @@ const tplInfoReg = `
 <div data-ob-inforeg-pagination style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
   <span>{{t $.Lang "Всего:"}} {{.Total}}</span>
   {{if .HasPrev}}<a class="btn btn-secondary btn-sm" rel="prev" href="{{.PrevURL}}">{{t $.Lang "← Назад"}}</a>{{end}}
-  <span style="color:#64748b;font-size:13px">{{t $.Lang "Стр."}} {{.Page}} {{t $.Lang "из"}} {{.TotalPages}}</span>
+  <span style="color:var(--ob-text-3);font-size:13px">{{t $.Lang "Стр."}} {{.Page}} {{t $.Lang "из"}} {{.TotalPages}}</span>
   {{if .HasNext}}<a class="btn btn-secondary btn-sm" rel="next" href="{{.NextURL}}">{{t $.Lang "Вперёд →"}}</a>{{end}}
 </div>
 </main></div></body></html>
@@ -3743,7 +3927,7 @@ const tplInfoReg = `
 {{end}}
 <main>
 <h2>{{.InfoReg.DisplayName $.Lang}} — {{t $.Lang "новая запись"}}</h2>
-{{if .Error}}<div style="background:#fef2f2;border:1px solid #fecaca;color:#dc2626;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">{{.Error}}</div>{{end}}
+{{if .Error}}<div style="background:var(--ob-error-bg);border:1px solid var(--ob-error-border);color:var(--ob-error-text);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">{{.Error}}</div>{{end}}
 <div class="card" style="max-width:560px">
 <form method="POST">
   {{if .InfoReg.Periodic}}
@@ -3756,15 +3940,15 @@ const tplInfoReg = `
   {{range .InfoReg.Dimensions}}
   {{$dn := .Name}}
   <div class="form-row">
-    <label>{{.DisplayName $.Lang}} <span style="color:#94a3b8;font-size:11px">[{{t $.Lang "измерение"}}]</span></label>
+    <label>{{.DisplayName $.Lang}} <span style="color:var(--ob-text-4);font-size:11px">[{{t $.Lang "измерение"}}]</span></label>
     {{if .RefEntity}}
     <div style="display:flex;gap:4px;align-items:center">
       <select name="{{$dn}}" id="ird-{{$dn}}" style="flex:1;min-width:0" data-ref-entity="{{.RefEntity}}">
         <option value="">{{t $.Lang "— выбрать —"}}</option>
         {{range index $.RefOpts $dn}}<option value="{{index . "id"}}" {{if eq (index $.Values $dn) (index . "id")}}selected{{end}}>{{index . "_label"}}</option>{{end}}
       </select>
-      <button type="button" data-ob-ref-picker="ird-{{$dn}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
-      <button type="button" data-ob-ref-current="ird-{{$dn}}" style="padding:6px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
+      <button type="button" data-ob-ref-picker="ird-{{$dn}}" style="padding:6px 10px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
+      <button type="button" data-ob-ref-current="ird-{{$dn}}" style="padding:6px 9px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
     </div>
     {{else}}
     <input type="text" name="{{$dn}}" value="{{index $.Values $dn}}">
@@ -3802,13 +3986,13 @@ const tplConstants = `
 {{template "head" .}}{{template "nav" .}}
 <main>
 <h2>{{t $.Lang "Константы"}}</h2>
-{{if .Saved}}<div style="background:#f0fdf4;border:1px solid #86efac;color:#15803d;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">✓ {{t $.Lang "Константы сохранены"}}</div>{{end}}
-{{if .Error}}<div style="background:#fef2f2;border:1px solid #fca5a5;color:#b91c1c;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">⚠ {{.Error}}</div>{{end}}
+{{if .Saved}}<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-ok-text);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">✓ {{t $.Lang "Константы сохранены"}}</div>{{end}}
+{{if .Error}}<div style="background:var(--ob-error-bg);border:1px solid var(--ob-red-border);color:var(--ob-danger-ink);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">⚠ {{.Error}}</div>{{end}}
 <div class="card" style="max-width:700px">
 <form method="POST" action="/ui/constants">
 {{range .Constants}}{{$c := .}}
 <div class="form-group">
-  <label>{{.DisplayLabel $.Lang}}{{if .Required}} <span style="color:#dc2626" title="{{t $.Lang "Обязательное поле"}}">*</span>{{end}}</label>
+  <label>{{.DisplayLabel $.Lang}}{{if .Required}} <span style="color:var(--ob-error-text)" title="{{t $.Lang "Обязательное поле"}}">*</span>{{end}}</label>
   {{if .RefEntity}}
     <div style="display:flex;gap:6px;align-items:center">
       <select id="const-{{.Name}}" name="{{.Name}}" data-ref-entity="{{.RefEntity}}" style="flex:1;min-width:0"{{if .Required}} required{{end}}>
@@ -3817,8 +4001,8 @@ const tplConstants = `
         <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values $c.Name)}}selected{{end}}>{{index . "_label"}}</option>
         {{end}}
       </select>
-      <button type="button" data-ob-ref-picker="const-{{$c.Name}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
-      <button type="button" data-ob-ref-current="const-{{$c.Name}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
+      <button type="button" data-ob-ref-picker="const-{{$c.Name}}" style="padding:8px 12px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
+      <button type="button" data-ob-ref-current="const-{{$c.Name}}" style="padding:8px 12px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
     </div>
   {{else if .EnumName}}
     <select name="{{.Name}}"{{if .Required}} required{{end}}>
@@ -3859,10 +4043,10 @@ const tplJournal = `
   <h2>{{.Journal.DisplayName $.Lang}}</h2>
   <div style="display:flex;align-items:center;gap:12px">
     {{template "list-refresh" (dict "URL" .RequestURI "Lang" $.Lang)}}
-    <span style="color:#94a3b8;font-size:13px">{{t $.Lang "Всего:"}} {{.Total}}</span>
+    <span style="color:var(--ob-text-4);font-size:13px">{{t $.Lang "Всего:"}} {{.Total}}</span>
     {{/* listQuerySuffix, а не filterQuery: тут строка запроса начинается, а не
          продолжается — с «&» отбор уезжал в путь и ссылка давала 404. */}}
-    <a class="btn btn-sm" href="/ui/journal/{{lower .Journal.Name}}/excel{{listQuerySuffix .Params}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
+    <a class="btn btn-sm" href="/ui/journal/{{lower .Journal.Name}}/excel{{listQuerySuffix .Params}}" style="background:var(--ob-posted);color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
   </div>
 </div>
 {{$j := .Journal}}{{$params := .Params}}{{$fmts := .ColFormats}}
@@ -3892,7 +4076,7 @@ const tplJournal = `
           <option value="{{index . "id"}}" {{if eq (index . "id") (filterVal $params $f).Value}}selected{{end}}>{{index . "_label"}}</option>
           {{end}}
         </select>
-        <button type="button" data-ob-ref-picker="jflt-{{$f}}" style="padding:7px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
+        <button type="button" data-ob-ref-picker="jflt-{{$f}}" style="padding:7px 10px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
       </div>
       {{else}}
       <input type="text" name="f.{{.Field}}" value="{{(filterVal $params .Field).Value}}">
@@ -3903,14 +4087,14 @@ const tplJournal = `
   </div>
   <div class="filter-actions">
     <button class="btn btn-primary btn-sm" type="submit">{{t $.Lang "Применить"}}</button>
-    <a class="btn btn-sm" href="{{listURL $.Query "f.*" ""}}" style="background:#e2e8f0;color:#475569">{{t $.Lang "Сбросить"}}</a>
+    <a class="btn btn-sm" href="{{listURL $.Query "f.*" ""}}" style="background:var(--ob-btn-2-bg);color:var(--ob-text-2)">{{t $.Lang "Сбросить"}}</a>
   </div>
   {{if $.CurrentSubsystem}}<input type="hidden" name="subsystem" value="{{$.CurrentSubsystem}}">{{end}}
   </form>
 </details>
 
 <details class="card report-block" data-block="journal-settings" style="margin-bottom:16px">
-  <summary>{{t $.Lang "Настройка списка"}}{{if .JournalSettingsActive}} <span style="background:#fef3c7;color:#92400e;border-radius:6px;padding:1px 8px;font-size:12px;font-weight:600">{{t $.Lang "изменено"}}</span>{{end}}</summary>
+  <summary>{{t $.Lang "Настройка списка"}}{{if .JournalSettingsActive}} <span style="background:var(--ob-amber-bg);color:var(--ob-amber-ink);border-radius:6px;padding:1px 8px;font-size:12px;font-weight:600">{{t $.Lang "изменено"}}</span>{{end}}</summary>
   <form method="POST" action="/ui/journal/{{lower .Journal.Name}}/settings/save" data-ob-jl-before-submit>
     <input type="hidden" name="__return" value="{{.RequestURI}}">
     <input type="hidden" name="__journal_settings" id="jl-settings-json" value="{{.JournalSettingsJSON}}">
@@ -3940,7 +4124,7 @@ const tplJournal = `
   </form>
 </details>
 
-{{if .JournalWarnings}}<div class="card" style="background:#fef2f2;border-color:#fecaca;margin-bottom:8px;padding:8px 12px"><strong>{{t $.Lang "Предупреждения журнала:"}}</strong><ul style="margin:4px 0 0;padding-left:20px">{{range .JournalWarnings}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
+{{if .JournalWarnings}}<div class="card" style="background:var(--ob-error-bg);border-color:#fecaca;margin-bottom:8px;padding:8px 12px"><strong>{{t $.Lang "Предупреждения журнала:"}}</strong><ul style="margin:4px 0 0;padding-left:20px">{{range .JournalWarnings}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
 <div style="margin-bottom:8px">{{template "detail-panel-toggle" .}}</div>
 <div class="ob-list-wrap">
 <div class="card">
@@ -3991,7 +4175,7 @@ const tplHistory = `
 <main>
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;max-width:900px">
   <h2 style="margin-bottom:0">{{t $.Lang "История изменений"}} — {{.EntityName}}</h2>
-  <a href="{{.BackURL}}" style="font-size:22px;line-height:1;color:#94a3b8;text-decoration:none;padding:2px 8px;border-radius:5px;background:#f1f5f9;font-weight:300">×</a>
+  <a href="{{.BackURL}}" style="font-size:22px;line-height:1;color:var(--ob-text-4);text-decoration:none;padding:2px 8px;border-radius:5px;background:var(--ob-surface-3);font-weight:300">×</a>
 </div>
 {{/* Этапы (план 121): переходы пишутся всегда, даже когда журнал регистрации
      выключен, поэтому идут отдельной таблицей выше него. */}}
@@ -4004,11 +4188,11 @@ const tplHistory = `
 </tr></thead>
 <tbody>
 {{range .StageHistory}}<tr>
-  <td style="white-space:nowrap;color:#94a3b8">{{.At.Format "02.01.2006 15:04:05"}}</td>
+  <td style="white-space:nowrap;color:var(--ob-text-4)">{{.At.Format "02.01.2006 15:04:05"}}</td>
   <td>{{.UserLogin}}</td>
-  <td style="color:#94a3b8">{{if .From}}{{.From}}{{else}}— {{t $.Lang "создание"}} —{{end}}</td>
-  <td style="color:#1d4ed8;font-weight:600">{{.To}}{{if .Violation}} <span title="{{t $.Lang "Переход не предусмотрен маршрутом и прошёл только потому, что маршрут объявлен в режиме warn"}}" style="color:#b45309;font-weight:600">⚠</span>{{end}}</td>
-  <td style="color:#94a3b8;font-size:12px">{{stageSourceLabel .Source}}</td>
+  <td style="color:var(--ob-text-4)">{{if .From}}{{.From}}{{else}}— {{t $.Lang "создание"}} —{{end}}</td>
+  <td style="color:var(--ob-link-2);font-weight:600">{{.To}}{{if .Violation}} <span title="{{t $.Lang "Переход не предусмотрен маршрутом и прошёл только потому, что маршрут объявлен в режиме warn"}}" style="color:var(--ob-warn-text);font-weight:600">⚠</span>{{end}}</td>
+  <td style="color:var(--ob-text-4);font-size:12px">{{stageSourceLabel .Source}}</td>
 </tr>{{end}}
 </tbody>
 </table>
@@ -4022,12 +4206,12 @@ const tplHistory = `
 </tr></thead>
 <tbody>
 {{range .Entries}}<tr>
-  <td style="white-space:nowrap;color:#94a3b8">{{.At.Format "02.01.2006 15:04:05"}}</td>
+  <td style="white-space:nowrap;color:var(--ob-text-4)">{{.At.Format "02.01.2006 15:04:05"}}</td>
   <td>{{.UserLogin}}</td>
-  <td><span style="font-family:monospace;font-size:11px;background:#f1f5f9;padding:2px 6px;border-radius:4px">{{.Action}}</span></td>
+  <td><span style="font-family:monospace;font-size:11px;background:var(--ob-surface-3);padding:2px 6px;border-radius:4px">{{.Action}}</span></td>
   <td style="font-family:monospace;font-size:12px">{{.Field}}</td>
-  <td style="color:#dc2626;font-size:12px">{{.OldValue}}</td>
-  <td style="color:#16a34a;font-size:12px">{{.NewValue}}</td>
+  <td style="color:var(--ob-error-text);font-size:12px">{{.OldValue}}</td>
+  <td style="color:var(--ob-posted);font-size:12px">{{.NewValue}}</td>
 </tr>{{end}}
 </tbody>
 </table>
@@ -4051,15 +4235,15 @@ const tplStages = `
 {{if and (not .IsNew) .StageRoute}}
 <div class="card" style="max-width:1400px;margin-bottom:12px;padding:12px 16px">
   <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px">
-    <span style="font-size:12px;color:#94a3b8;text-transform:uppercase;letter-spacing:.04em">{{t $.Lang "Этап"}}</span>
+    <span style="font-size:12px;color:var(--ob-text-4);text-transform:uppercase;letter-spacing:.04em">{{t $.Lang "Этап"}}</span>
     {{if .StageRoute.OffRoute}}
-      <span style="font-size:13px;font-weight:600;color:#b45309">{{t $.Lang "вне маршрута"}}</span>
+      <span style="font-size:13px;font-weight:600;color:var(--ob-warn-text)">{{t $.Lang "вне маршрута"}}</span>
     {{else if .StageRoute.Label}}
-      <span style="font-size:13px;font-weight:600;color:#1d4ed8">{{.StageRoute.Label}}</span>
+      <span style="font-size:13px;font-weight:600;color:var(--ob-link-2)">{{.StageRoute.Label}}</span>
     {{else}}
-      <span style="font-size:13px;color:#94a3b8">{{t $.Lang "не задан"}}</span>
+      <span style="font-size:13px;color:var(--ob-text-4)">{{t $.Lang "не задан"}}</span>
     {{end}}
-    <a href="/ui/stages/{{lower .Entity.Name}}" style="font-size:12px;color:#64748b;margin-left:auto">{{t $.Lang "Где застряло"}} →</a>
+    <a href="/ui/stages/{{lower .Entity.Name}}" style="font-size:12px;color:var(--ob-text-3);margin-left:auto">{{t $.Lang "Где застряло"}} →</a>
   </div>
   <div class="ob-stage-route" data-ob-stage-option="{{stageChartJSON .StageRoute}}" style="height:90px"></div>
 </div>
@@ -4101,8 +4285,8 @@ const tplStages = `
 <div class="card" style="margin-bottom:20px">
   <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px;flex-wrap:wrap">
     <h3 style="margin:0;font-size:15px">{{$rep.Entity.DisplayName $.Lang}}</h3>
-    <span style="color:#94a3b8;font-size:12px">{{t $.Lang "реквизит"}}: {{$rep.Field}}</span>
-    <a href="{{$rep.ListURL}}" style="font-size:12px;color:#64748b;margin-left:auto">{{t $.Lang "К списку"}} →</a>
+    <span style="color:var(--ob-text-4);font-size:12px">{{t $.Lang "реквизит"}}: {{$rep.Field}}</span>
+    <a href="{{$rep.ListURL}}" style="font-size:12px;color:var(--ob-text-3);margin-left:auto">{{t $.Lang "К списку"}} →</a>
   </div>
   <div id="ob-stage-report-{{$ri}}" style="height:110px;margin-bottom:8px"></div>
   <table style="font-size:13px">
@@ -4118,15 +4302,15 @@ const tplStages = `
   {{range $rep.Rows}}<tr>
     <td>{{.Label}}</td>
     <td style="text-align:right">{{.Count}}</td>
-    <td style="text-align:right;color:#94a3b8">{{if .DeadlineDays}}{{.DeadlineDays}}{{else}}—{{end}}</td>
-    <td style="text-align:right">{{if .Overdue}}<span style="color:#dc2626;font-weight:600">{{.Overdue}}</span>{{else}}—{{end}}</td>
-    <td style="text-align:right;color:#94a3b8">{{if .Unknown}}{{.Unknown}}{{else}}—{{end}}</td>
-    <td style="color:#94a3b8">{{if .Since.IsZero}}—{{else}}{{.Since.Format "02.01.2006"}}{{end}}</td>
+    <td style="text-align:right;color:var(--ob-text-4)">{{if .DeadlineDays}}{{.DeadlineDays}}{{else}}—{{end}}</td>
+    <td style="text-align:right">{{if .Overdue}}<span style="color:var(--ob-error-text);font-weight:600">{{.Overdue}}</span>{{else}}—{{end}}</td>
+    <td style="text-align:right;color:var(--ob-text-4)">{{if .Unknown}}{{.Unknown}}{{else}}—{{end}}</td>
+    <td style="color:var(--ob-text-4)">{{if .Since.IsZero}}—{{else}}{{.Since.Format "02.01.2006"}}{{end}}</td>
   </tr>{{end}}
   </tbody>
   </table>
   {{if $rep.OffRoute}}
-  <p style="margin-top:10px;font-size:13px;color:#b45309">
+  <p style="margin-top:10px;font-size:13px;color:var(--ob-warn-text)">
     {{t $.Lang "Вне маршрута"}}: {{$rep.OffRoute}} —
     {{t $.Lang "состояние этих объектов не объявлено в order. Включение enforce: strict отвергнет их первую же правку."}}
   </p>
@@ -4154,7 +4338,7 @@ const tplScheduled = `
 <main>
 <div class="row-top">
   <h2>{{t $.Lang "Регламентные задания"}}</h2>
-  <span style="color:#94a3b8;font-size:13px">{{t $.Lang "Всего:"}} {{len .JobRows}}</span>
+  <span style="color:var(--ob-text-4);font-size:13px">{{t $.Lang "Всего:"}} {{len .JobRows}}</span>
 </div>
 <div class="card">
 {{if .JobRows}}
@@ -4171,17 +4355,17 @@ const tplScheduled = `
 {{range .JobRows}}
 {{$job := .Job}}
 <tr>
-  <td><strong>{{$job.Title}}</strong><br><small style="color:#94a3b8">{{$job.Name}}</small></td>
+  <td><strong>{{$job.Title}}</strong><br><small style="color:var(--ob-text-4)">{{$job.Name}}</small></td>
   <td><code>{{$job.Schedule}}</code></td>
   <td>{{$job.Processor}}</td>
-  <td>{{if .State.OverrideSet}}{{if .State.EffectiveOn}}<span style="color:#22c55e">{{t $.Lang "✓ включено администратором"}}</span>{{else}}<span style="color:#94a3b8">{{t $.Lang "— выключено администратором"}}</span>{{end}}{{else}}{{if $job.Enabled}}<span style="color:#22c55e">{{t $.Lang "✓ активно"}}</span>{{else}}<span style="color:#94a3b8">{{t $.Lang "— отключено"}}</span>{{end}}{{end}}</td>
+  <td>{{if .State.OverrideSet}}{{if .State.EffectiveOn}}<span style="color:var(--ob-green)">{{t $.Lang "✓ включено администратором"}}</span>{{else}}<span style="color:var(--ob-text-4)">{{t $.Lang "— выключено администратором"}}</span>{{end}}{{else}}{{if $job.Enabled}}<span style="color:var(--ob-green)">{{t $.Lang "✓ активно"}}</span>{{else}}<span style="color:var(--ob-text-4)">{{t $.Lang "— отключено"}}</span>{{end}}{{end}}</td>
   <td>
     {{if .LastRun}}
       {{$r := .LastRun}}
       <span style="color:{{if eq $r.Status "success"}}#22c55e{{else if eq $r.Status "error"}}#ef4444{{else if eq $r.Status "timeout"}}#f97316{{else}}#94a3b8{{end}}">{{$r.Status}}</span>
-      <br><small style="color:#94a3b8">{{fmtDate $r.StartedAt}}</small>
+      <br><small style="color:var(--ob-text-4)">{{fmtDate $r.StartedAt}}</small>
     {{else}}
-      <span style="color:#94a3b8">—</span>
+      <span style="color:var(--ob-text-4)">—</span>
     {{end}}
   </td>
   <td>
@@ -4208,7 +4392,7 @@ const tplScheduled = `
 <main>
 <div class="row-top">
   <h2>{{t $.Lang "Очередь фоновых заданий"}}</h2>
-  <span style="color:#94a3b8;font-size:13px">
+  <span style="color:var(--ob-text-4);font-size:13px">
     {{t $.Lang "Исполнителей:"}} {{.Workers}}{{if .InFlight}} · {{t $.Lang "в работе:"}} {{.InFlight}}{{end}}
   </span>
 </div>
@@ -4216,21 +4400,21 @@ const tplScheduled = `
 <div class="card"><p class="empty">{{t $.Lang "Очередь недоступна в этом режиме работы сервера."}}</p></div>
 {{else}}
 {{if not .Enabled}}
-<div class="card" style="margin-bottom:16px;border-left:3px solid #f97316">
+<div class="card" style="margin-bottom:16px;border-left:3px solid var(--ob-orange)">
   {{t $.Lang "Очередь выключена настройкой queue.workers: 0 — задачи не принимаются и не исполняются."}}
 </div>
 {{end}}
 {{if .Degraded}}
-<div class="card" style="margin-bottom:16px;border-left:3px solid #f97316">
+<div class="card" style="margin-bottom:16px;border-left:3px solid var(--ob-orange)">
   {{t $.Lang "База на SQLite: параллелизм недоступен, работает один исполнитель. Пул на 16–32 исполнителя требует PostgreSQL."}}
 </div>
 {{end}}
 <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px">
 {{range .Cards}}
   <a href="/ui/admin/queue{{if not .Active}}?status={{.Status}}{{end}}" class="card"
-     style="flex:1 1 150px;text-decoration:none;color:inherit;padding:12px 16px;{{if .Active}}outline:2px solid #2563eb{{end}}">
+     style="flex:1 1 150px;text-decoration:none;color:inherit;padding:12px 16px;{{if .Active}}outline:2px solid var(--ob-accent-hover){{end}}">
     <div style="font-size:24px;font-weight:600">{{.Count}}</div>
-    <div style="color:#64748b;font-size:13px">{{t $.Lang .Title}}</div>
+    <div style="color:var(--ob-text-3);font-size:13px">{{t $.Lang .Title}}</div>
   </a>
 {{end}}
 </div>
@@ -4250,14 +4434,14 @@ const tplScheduled = `
 <tr>
   <td>
     <strong>{{.JobName}}</strong>
-    <br><small style="color:#94a3b8" title="{{.ID}}">{{.ShortID}}</small>
-    {{if .Key}}<br><small style="color:#94a3b8">{{t $.Lang "ключ:"}} {{.Key}}</small>{{end}}
+    <br><small style="color:var(--ob-text-4)" title="{{.ID}}">{{.ShortID}}</small>
+    {{if .Key}}<br><small style="color:var(--ob-text-4)">{{t $.Lang "ключ:"}} {{.Key}}</small>{{end}}
   </td>
   <td><small>{{.Params}}</small></td>
   <td>
     <span style="color:{{if eq .Status "done"}}#22c55e{{else if eq .Status "dead"}}#ef4444{{else if eq .Status "running"}}#2563eb{{else}}#94a3b8{{end}}">{{.Status}}</span>
-    {{if .RetryAt}}<br><small style="color:#94a3b8">{{t $.Lang "повтор в"}} {{fmtDate .RetryAt}}</small>{{end}}
-    {{if .Error}}<br><small style="color:#ef4444">{{.Error}}</small>{{end}}
+    {{if .RetryAt}}<br><small style="color:var(--ob-text-4)">{{t $.Lang "повтор в"}} {{fmtDate .RetryAt}}</small>{{end}}
+    {{if .Error}}<br><small style="color:var(--ob-danger)">{{.Error}}</small>{{end}}
   </td>
   <td>{{.Attempts}} / {{.MaxAttempts}}</td>
   <td>{{if .CreatedAt}}<small>{{fmtDate .CreatedAt}}</small>{{else}}—{{end}}</td>
@@ -4290,24 +4474,24 @@ const tplScheduled = `
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px">
   <div>
     <h2 style="margin-bottom:4px">{{.Job.DisplayName $.Lang}}</h2>
-    <small style="color:#94a3b8">{{.Job.Name}}</small>
+    <small style="color:var(--ob-text-4)">{{.Job.Name}}</small>
   </div>
-  <a href="/ui/admin/scheduled" style="font-size:22px;line-height:1;color:#94a3b8;text-decoration:none;padding:2px 8px;border-radius:5px;background:#f1f5f9">×</a>
+  <a href="/ui/admin/scheduled" style="font-size:22px;line-height:1;color:var(--ob-text-4);text-decoration:none;padding:2px 8px;border-radius:5px;background:var(--ob-surface-3)">×</a>
 </div>
 
 <div class="card" style="margin-bottom:20px">
 <table class="tbl-plain" style="width:100%;border-collapse:collapse">
-  <tr><td style="padding:6px 12px;color:#64748b;width:160px">{{t $.Lang "Расписание"}}</td><td><code>{{.Job.Schedule}}</code></td></tr>
-  <tr><td style="padding:6px 12px;color:#64748b">{{t $.Lang "Обработка"}}</td><td>{{.Job.Processor}}</td></tr>
-  <tr><td style="padding:6px 12px;color:#64748b">{{t $.Lang "При ошибке"}}</td><td>{{.Job.OnError}}</td></tr>
-  <tr><td style="padding:6px 12px;color:#64748b">{{t $.Lang "Таймаут"}}</td><td>{{.Job.Timeout}} {{t $.Lang "сек."}}</td></tr>
-  <tr><td style="padding:6px 12px;color:#64748b">{{t $.Lang "Состояние"}}</td><td>
-    {{if .State.OverrideSet}}{{if .State.EffectiveOn}}<span style="color:#22c55e">{{t $.Lang "✓ включено администратором"}}</span>{{else}}<span style="color:#94a3b8">{{t $.Lang "— выключено администратором"}}</span>{{end}}{{else}}{{if .Job.Enabled}}<span style="color:#22c55e">{{t $.Lang "✓ активно"}}</span>{{else}}<span style="color:#94a3b8">{{t $.Lang "— отключено"}}</span>{{end}}{{end}}
+  <tr><td style="padding:6px 12px;color:var(--ob-text-3);width:160px">{{t $.Lang "Расписание"}}</td><td><code>{{.Job.Schedule}}</code></td></tr>
+  <tr><td style="padding:6px 12px;color:var(--ob-text-3)">{{t $.Lang "Обработка"}}</td><td>{{.Job.Processor}}</td></tr>
+  <tr><td style="padding:6px 12px;color:var(--ob-text-3)">{{t $.Lang "При ошибке"}}</td><td>{{.Job.OnError}}</td></tr>
+  <tr><td style="padding:6px 12px;color:var(--ob-text-3)">{{t $.Lang "Таймаут"}}</td><td>{{.Job.Timeout}} {{t $.Lang "сек."}}</td></tr>
+  <tr><td style="padding:6px 12px;color:var(--ob-text-3)">{{t $.Lang "Состояние"}}</td><td>
+    {{if .State.OverrideSet}}{{if .State.EffectiveOn}}<span style="color:var(--ob-green)">{{t $.Lang "✓ включено администратором"}}</span>{{else}}<span style="color:var(--ob-text-4)">{{t $.Lang "— выключено администратором"}}</span>{{end}}{{else}}{{if .Job.Enabled}}<span style="color:var(--ob-green)">{{t $.Lang "✓ активно"}}</span>{{else}}<span style="color:var(--ob-text-4)">{{t $.Lang "— отключено"}}</span>{{end}}{{end}}
   </td></tr>
 </table>
 </div>
 
-{{if .Msg}}<div style="background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:1000px">✓ {{.Msg}}</div>{{end}}
+{{if .Msg}}<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-posted);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:1000px">✓ {{.Msg}}</div>{{end}}
 {{if .Err}}<div class="error" style="max-width:1000px;margin-bottom:16px">{{.Err}}</div>{{end}}
 
 <div style="display:flex;gap:8px;margin-bottom:20px;flex-wrap:wrap">
@@ -4344,8 +4528,8 @@ const tplScheduled = `
     </span>
   </td>
   <td>{{.DurationMs}} {{t $.Lang "мс"}}</td>
-  <td style="max-width:400px;white-space:pre-wrap;font-size:12px;color:#475569">{{.Output}}</td>
-  <td style="max-width:300px;white-space:pre-wrap;font-size:12px;color:#ef4444">{{.Error}}</td>
+  <td style="max-width:400px;white-space:pre-wrap;font-size:12px;color:var(--ob-text-2)">{{.Output}}</td>
+  <td style="max-width:300px;white-space:pre-wrap;font-size:12px;color:var(--ob-danger)">{{.Error}}</td>
 </tr>
 {{end}}
 </tbody></table>
@@ -4363,7 +4547,7 @@ const tplAccountReg = `
 <main>
 <div class="row-top">
   <h2>{{.Chart.DisplayName $.Lang}}</h2>
-  <span style="color:#94a3b8;font-size:13px">{{len .Rows}} {{t $.Lang "счетов"}}</span>
+  <span style="color:var(--ob-text-4);font-size:13px">{{len .Rows}} {{t $.Lang "счетов"}}</span>
 </div>
 <div class="card">
 {{if .Rows}}
@@ -4378,12 +4562,12 @@ const tplAccountReg = `
 <tr>
   <td><code>{{index . "code"}}</code></td>
   <td>{{index . "name"}}</td>
-  <td style="color:#64748b;font-size:13px">
+  <td style="color:var(--ob-text-3);font-size:13px">
     {{if eq (str (index . "kind")) "active"}}{{t $.Lang "активный"}}
     {{else if eq (str (index . "kind")) "passive"}}{{t $.Lang "пассивный"}}
     {{else}}{{t $.Lang "активно-пассивный"}}{{end}}
   </td>
-  <td style="color:#94a3b8;font-size:12px">{{index . "parent"}}</td>
+  <td style="color:var(--ob-text-4);font-size:12px">{{index . "parent"}}</td>
 </tr>
 {{end}}
 </tbody></table>
@@ -4420,7 +4604,7 @@ const tplAccountReg = `
   <td><code>{{index . "счёткт"}}</code></td>
   {{range $.Register.Resources}}<td>{{str (index $row (lower .Name))}}</td>{{end}}
   {{range $i, $s := $.Register.Subconto}}<td>{{str (index $row (print "субконто" (add $i 1)))}}</td>{{end}}
-  <td style="color:#94a3b8;font-size:12px">{{index . "регистратор"}}</td>
+  <td style="color:var(--ob-text-4);font-size:12px">{{index . "регистратор"}}</td>
 </tr>
 {{end}}
 </tbody></table>
@@ -4438,8 +4622,8 @@ const tplAccountReg = `
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "Остатки по счетам"}}</h2>
   <div style="display:flex;gap:8px;align-items:center">
     <form method="GET" style="display:flex;gap:8px;align-items:center">
-      <label style="color:#64748b;font-size:13px">{{t $.Lang "На дату:"}}</label>
-      <input type="date" name="date" value="{{.AsOf}}" style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:4px">
+      <label style="color:var(--ob-text-3);font-size:13px">{{t $.Lang "На дату:"}}</label>
+      <input type="date" name="date" value="{{.AsOf}}" style="padding:4px 8px;border:1px solid var(--ob-border);border-radius:4px">
       <button class="btn btn-primary btn-sm" type="submit">{{t $.Lang "Применить"}}</button>
     </form>
     <a class="btn btn-secondary" href="/ui/accountreg/{{lower .Register.Name}}">{{t $.Lang "Проводки"}}</a>
@@ -4493,16 +4677,16 @@ const tplPageCustom = `
   {{if .PageError}}<div class="error">{{.PageError}}</div>{{end}}
   {{range $i, $b := .PageBlocks}}
     {{if eq $b.Kind "heading"}}<h3>{{$b.Text}}</h3>
-    {{else if eq $b.Kind "paragraph"}}<p style="margin-bottom:14px;color:#334155;font-size:14px;line-height:1.55;max-width:900px">{{$b.Text}}</p>
-    {{else if eq $b.Kind "kpi"}}<div class="card" style="display:inline-block;min-width:200px;margin:0 12px 14px 0;padding:16px 20px;vertical-align:top">{{if $b.Label}}<div style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:#64748b;font-weight:600;margin-bottom:6px">{{$b.Label}}</div>{{end}}<div style="font-size:28px;font-weight:700;color:#0f172a;line-height:1.1">{{$b.Value}}</div></div>
+    {{else if eq $b.Kind "paragraph"}}<p style="margin-bottom:14px;color:var(--ob-text-strong);font-size:14px;line-height:1.55;max-width:900px">{{$b.Text}}</p>
+    {{else if eq $b.Kind "kpi"}}<div class="card" style="display:inline-block;min-width:200px;margin:0 12px 14px 0;padding:16px 20px;vertical-align:top">{{if $b.Label}}<div style="font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ob-text-3);font-weight:600;margin-bottom:6px">{{$b.Label}}</div>{{end}}<div style="font-size:28px;font-weight:700;color:var(--ob-kpi-ink);line-height:1.1">{{$b.Value}}</div></div>
     {{else if eq $b.Kind "button"}}{{if $b.Action}}<form method="post" action="{{$.PageActionBase}}{{$b.Action}}{{$.PageQuery}}" style="display:inline-block;margin:0 8px 14px 0"><button type="submit" class="btn btn-primary">{{$b.Text}}</button></form>{{else}}<a href="{{$b.URL}}" class="btn btn-primary" style="margin:0 8px 14px 0">{{$b.Text}}</a>{{end}}
-    {{else if eq $b.Kind "divider"}}<hr style="border:none;border-top:1px solid #e2e8f0;margin:18px 0;max-width:1400px">
+    {{else if eq $b.Kind "divider"}}<hr style="border:none;border-top:1px solid var(--ob-border);margin:18px 0;max-width:1400px">
     {{else if eq $b.Kind "raw"}}<div class="card" style="margin-bottom:14px">{{pageRaw $b.HTML}}</div>
     {{else if eq $b.Kind "list"}}
     <div class="card" style="margin-bottom:14px;max-width:900px">
       {{if $b.Title}}<h3 style="margin-top:0">{{$b.Title}}</h3>{{end}}
-      <ul style="margin:0;padding-left:20px;color:#334155;font-size:14px;line-height:1.7">
-        {{range $b.Items}}<li>{{if .URL}}<a href="{{.URL}}" style="color:#3b82f6;text-decoration:none">{{.Text}}</a>{{else}}{{.Text}}{{end}}</li>{{end}}
+      <ul style="margin:0;padding-left:20px;color:var(--ob-text-strong);font-size:14px;line-height:1.7">
+        {{range $b.Items}}<li>{{if .URL}}<a href="{{.URL}}" style="color:var(--ob-accent);text-decoration:none">{{.Text}}</a>{{else}}{{.Text}}{{end}}</li>{{end}}
       </ul>
     </div>
     {{else if eq $b.Kind "chart"}}
@@ -4517,7 +4701,7 @@ const tplPageCustom = `
       <table>
         <thead><tr>{{range $b.ColumnLabels}}<th>{{.}}</th>{{end}}</tr></thead>
         <tbody>
-        {{range $b.Rows}}{{$row := .}}<tr>{{range $cols}}{{$c := index $row.Cells .}}<td>{{if $c.URL}}<a href="{{$c.URL}}" style="color:#3b82f6;text-decoration:none">{{$c.Text}}</a>{{else}}{{$c.Text}}{{end}}</td>{{end}}</tr>
+        {{range $b.Rows}}{{$row := .}}<tr>{{range $cols}}{{$c := index $row.Cells .}}<td>{{if $c.URL}}<a href="{{$c.URL}}" style="color:var(--ob-accent);text-decoration:none">{{$c.Text}}</a>{{else}}{{$c.Text}}{{end}}</td>{{end}}</tr>
         {{end}}
         </tbody>
       </table>

@@ -32,8 +32,8 @@ const tplManagedForm = `
 {{/* Кнопка, скрытая hidden_when при отрисовке, рисуется с display:none, а не пропускается: иначе после события формы, снявшего условие, показать её нечем — «Утвердить» после «ОК» появлялась только при повторном открытии. Остальные виды пока пропускаются (поля — #1914). Защитой hidden_when не служит: событие кнопки сервер принимает и без неё в разметке. */}}
 {{if and (elHidden $ctx $el) (ne (str $el.Kind) "Кнопка")}}
 {{else if eq (str $el.Kind) "ГруппаФормы"}}
-  <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}{{if $el.ScrollX}} managed-group-scrollx{{end}}{{if $el.UsesEqualColumns}} ob-equal-columns{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elBackground $el}}{{elLayout $el}}">
-    {{if $el.TitleMap}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
+  <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}{{if $el.ScrollX}} managed-group-scrollx{{end}}{{if $el.UsesEqualColumns}} ob-equal-columns{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="border:1px solid var(--ob-border);border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elBackground $el}}{{elLayout $el}}">
+    {{if $el.TitleMap}}<legend style="font-weight:600;color:var(--ob-text-2);padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
     <div class="managed-group-body">
       {{range $el.Children}}{{template "managed-element" (dict "El" . "Ctx" $ctx)}}{{end}}
     </div>
@@ -52,8 +52,8 @@ const tplManagedForm = `
   {{/* ПриСменеСтраницы: клиент шлёт событие набору со щелчком по закладке
        и именем открытой страницы (data-tab-page) — только если обработчик
        объявлен, иначе переключение остаётся чисто клиентским. */}}
-  <div class="managed-tabs" data-tabs="{{$el.Name}}"{{if hasHandler $el "ПриСменеСтраницы"}} data-ob-fire-pagechange="{{$el.Name}}"{{end}} style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elLayout $el}}">
-    <div class="managed-tab-headers" style="display:flex;gap:2px;border-bottom:2px solid #e2e8f0;margin-bottom:12px">
+  <div class="managed-tabs" data-tabs="{{$el.Name}}"{{if hasHandler $el "ПриСменеСтраницы"}} data-ob-fire-pagechange="{{$el.Name}}"{{end}} style="border:1px solid var(--ob-border);border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elLayout $el}}">
+    <div class="managed-tab-headers" style="display:flex;gap:2px;border-bottom:2px solid var(--ob-border);margin-bottom:12px">
       {{range $i, $page := $pages}}
         <button type="button" class="managed-tab-btn{{if eq $i 0}} active{{end}}" data-tab-idx="{{$i}}" data-tab-page="{{$page.Name}}"{{with elPath $ctx $page}} data-ob-tab-path="{{.}}"{{end}} data-ob-readonly-navigation="1">
           {{fieldTitleRU $page.TitleMap $page.Name}}
@@ -69,8 +69,8 @@ const tplManagedForm = `
 {{else if eq (str $el.Kind) "Страница"}}
   {{/* Отдельная страница вне набора СтраницыФормы (её можно добавить на холсте) —
        рендерим как именованный блок с детьми, а не «рендеринг не реализован». */}}
-  <fieldset class="form-group-box" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elLayout $el}}">
-    {{if $el.TitleMap}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
+  <fieldset class="form-group-box" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="border:1px solid var(--ob-border);border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elLayout $el}}">
+    {{if $el.TitleMap}}<legend style="font-weight:600;color:var(--ob-text-2);padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
     {{range $el.Children}}{{template "managed-element" (dict "El" . "Ctx" $ctx)}}{{end}}
   </fieldset>
 {{else if eq (str $el.Kind) "ПолеКода"}}
@@ -83,12 +83,12 @@ const tplManagedForm = `
        браузер не умеет сфокусировать скрытый invalid-контрол; соответствующая
        серверная проверка обязательности всё равно действует. */}}
   <div class="form-group{{if elFill $el}} ob-el-fill{{end}}{{if $el.TextBold}} ob-text-bold{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{with elLayout $el}} style="{{.}}"{{end}}>
-    <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}{{if and $el.Hint (not $el.HintInline)}} <span class="ob-hint" title="{{$el.Hint}}" aria-label="{{$el.Hint}}">ⓘ</span>{{end}}</label>
+    <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:var(--ob-error-text)">*</span>{{end}}{{if and $el.Hint (not $el.HintInline)}} <span class="ob-hint" title="{{$el.Hint}}" aria-label="{{$el.Hint}}">ⓘ</span>{{end}}</label>
     <textarea name="{{$fn}}" autocomplete="off" class="code-field" rows="12" spellcheck="false"
       style="width:100%;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:13px"
       {{if $el.AccessKey}}accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>{{index $ctx.Values $fn}}</textarea>
-    {{if not $ro}}<div class="code-editor" data-code-language="{{if $el.Language}}{{$el.Language}}{{else}}plaintext{{end}}" style="height:320px;border:1px solid #e2e8f0;border-radius:8px"></div>{{end}}
-    {{if and $el.Hint $el.HintInline}}<small style="color:#94a3b8;font-size:11px">{{$el.Hint}}</small>{{end}}
+    {{if not $ro}}<div class="code-editor" data-code-language="{{if $el.Language}}{{$el.Language}}{{else}}plaintext{{end}}" style="height:320px;border:1px solid var(--ob-border);border-radius:8px"></div>{{end}}
+    {{if and $el.Hint $el.HintInline}}<small style="color:var(--ob-text-4);font-size:11px">{{$el.Hint}}</small>{{end}}
   </div>
 {{else if eq (str $el.Kind) "ПолеВвода"}}
   {{$fn := dpField $el.DataPath}}
@@ -96,7 +96,7 @@ const tplManagedForm = `
   {{$hChg := hasHandler $el "ПриИзменении"}}
   {{$choiceCtx := managedChoiceContext $ctx $el}}
   {{if $el.HiddenWhen}}<fieldset class="form-group ob-managed-control{{if elFill $el}} ob-el-fill{{end}}{{if $el.TextBold}} ob-text-bold{{end}}" data-ob-el="{{$el.Name}}" data-ob-control-fieldset="1"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{if elHiddenStyle $ctx $el}} disabled{{end}}{{with elLayoutEx $ctx $el}} style="{{.}}"{{end}}>{{else}}<div class="form-group{{if elFill $el}} ob-el-fill{{end}}{{if $el.TextBold}} ob-text-bold{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{with elLayout $el}} style="{{.}}"{{end}}>{{end}}
-    <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}{{if and $el.Hint (not $el.HintInline)}} <span class="ob-hint" title="{{$el.Hint}}" aria-label="{{$el.Hint}}">ⓘ</span>{{end}}</label>
+    <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:var(--ob-error-text)">*</span>{{end}}{{if and $el.Hint (not $el.HintInline)}} <span class="ob-hint" title="{{$el.Hint}}" aria-label="{{$el.Hint}}">ⓘ</span>{{end}}</label>
     {{if $f}}
       {{if isRef (str $f.Type)}}
         <div class="managed-control-row" style="display:flex;gap:6px;align-items:center">
@@ -114,10 +114,10 @@ const tplManagedForm = `
           {{/* Кнопки привязаны к select этой копии элемента: общий ref-{{$fn}}
                может сначала встретиться у скрытой по hidden_when копии. */}}
           {{if $roUnlockable}}
-          <button type="button" data-ob-ref-picker="closest" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
+          <button type="button" data-ob-ref-picker="closest" style="padding:8px 12px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px">…</button>
           {{end}}
           {{if and (or (not $ro) (index $ctx.Values $fn)) (not (hideRefCard $ctx $el)) (refHasCard $f.RefEntity)}}
-          <button type="button" data-ob-ref-current="closest" data-ob-readonly-navigation="1" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
+          <button type="button" data-ob-ref-current="closest" data-ob-readonly-navigation="1" style="padding:8px 12px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
           {{end}}
           {{if or $ro $el.ReadOnlyWhen}}{{/* план 181C/#1672: disabled select браузер не отправляет — зеркало возит значение записи (см. managed.js) */}}<input type="hidden" name="{{$fn}}" value="{{index $ctx.Values $fn}}" id="ro-mirror-{{$fn}}" data-ob-ro-mirror="1"{{if not $ro}} disabled{{end}}>{{end}}
         </div>
@@ -171,7 +171,7 @@ const tplManagedForm = `
           {{if not $ro}}
           <textarea name="{{if $ctx.IsProcessor}}{{processorFileContentName $ctx.Processor $fn}}{{else}}_fc_{{$fn}}{{end}}" id="file-content-{{$el.Name}}" data-ob-file-content-for="{{$fn}}" data-ob-file-path="file-path-{{$el.Name}}" style="display:none"></textarea>
           <input type="file" id="file-pick-{{$el.Name}}" style="display:none" data-ob-file-pick-path="file-path-{{$el.Name}}" data-ob-file-pick-content="file-content-{{$el.Name}}">
-          <button type="button" data-ob-file-trigger="file-pick-{{$el.Name}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;white-space:nowrap" title="Выбрать файл">…</button>
+          <button type="button" data-ob-file-trigger="file-pick-{{$el.Name}}" style="padding:8px 12px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px;white-space:nowrap" title="Выбрать файл">…</button>
           {{end}}
         </div>
       {{else if $el.Multiline}}
@@ -186,7 +186,7 @@ const tplManagedForm = `
         {{if not $ro}}
         <textarea name="{{if $ctx.IsProcessor}}{{processorFileContentName $ctx.Processor $fn}}{{else}}_fc_{{$fn}}{{end}}" id="file-content-{{$el.Name}}" data-ob-file-content-for="{{$fn}}" data-ob-file-path="file-path-{{$el.Name}}" style="display:none"></textarea>
         <input type="file" id="file-pick-{{$el.Name}}" style="display:none" data-ob-file-pick-path="file-path-{{$el.Name}}" data-ob-file-pick-content="file-content-{{$el.Name}}">
-        <button type="button" data-ob-file-trigger="file-pick-{{$el.Name}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;white-space:nowrap" title="Выбрать файл">…</button>
+        <button type="button" data-ob-file-trigger="file-pick-{{$el.Name}}" style="padding:8px 12px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px;white-space:nowrap" title="Выбрать файл">…</button>
         {{end}}
       </div>
     {{else}}
@@ -207,9 +207,9 @@ const tplManagedForm = `
             <option value="{{index . "id"}}"{{if index . "_choice_outside_filter"}} data-ob-choice-outside-filter="1"{{end}} {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
-          <button type="button" data-ob-ref-picker="closest"{{if $ro}} disabled{{end}} style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
+          <button type="button" data-ob-ref-picker="closest"{{if $ro}} disabled{{end}} style="padding:8px 12px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px">…</button>
           {{if and (or (not $ro) (index $ctx.Values $fn)) (not (hideRefCard $ctx $el)) (refHasCard (attrRefEntity $attr.TypeRef))}}
-          <button type="button" data-ob-ref-current="closest" data-ob-readonly-navigation="1" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
+          <button type="button" data-ob-ref-current="closest" data-ob-readonly-navigation="1" style="padding:8px 12px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
           {{end}}
         </div>
       {{else if $attr}}
@@ -221,11 +221,11 @@ const tplManagedForm = `
       {{else}}
         {{/* Ни поля сущности, ни реквизита формы с таким именем — почти всегда
              опечатка в data_path: подсвечиваем, чтобы это не осталось незамеченным. */}}
-        <input type="text" name="{{$fn}}" value="{{index $ctx.Values $fn}}" placeholder="{{$fn}}" style="background:#fef9c3"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}
+        <input type="text" name="{{$fn}}" value="{{index $ctx.Values $fn}}" placeholder="{{$fn}}" style="background:var(--ob-hint-bg)"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}
           title="Реквизит формы '{{$el.DataPath}}' не найден среди полей сущности"{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       {{end}}
     {{end}}
-    {{if and $el.Hint $el.HintInline}}<small style="color:#94a3b8;font-size:11px">{{$el.Hint}}</small>{{end}}
+    {{if and $el.Hint $el.HintInline}}<small style="color:var(--ob-text-4);font-size:11px">{{$el.Hint}}</small>{{end}}
   {{if $el.HiddenWhen}}</fieldset>{{else}}</div>{{end}}
 {{else if eq (str $el.Kind) "ПолеСписка"}}
   {{/* Реквизит со списком значений (аналог 1С СписокВыбора): <select> из
@@ -235,14 +235,14 @@ const tplManagedForm = `
   {{$fn := dpField $el.DataPath}}
   {{$hChg := hasHandler $el "ПриИзменении"}}
   <div class="form-group{{if elFill $el}} ob-el-fill{{end}}{{if $el.TextBold}} ob-text-bold{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{with elLayout $el}} style="{{.}}"{{end}}>
-    <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}{{if and $el.Hint (not $el.HintInline)}} <span class="ob-hint" title="{{$el.Hint}}" aria-label="{{$el.Hint}}">ⓘ</span>{{end}}</label>
+    <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:var(--ob-error-text)">*</span>{{end}}{{if and $el.Hint (not $el.HintInline)}} <span class="ob-hint" title="{{$el.Hint}}" aria-label="{{$el.Hint}}">ⓘ</span>{{end}}</label>
     <select name="{{$fn}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if and $roUnlockable (hasHandler $el "НачалоВыбора")}} data-el="{{$el.Name}}" data-ob-list-choice="{{$el.Name}}"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
       <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
       {{range index $ctx.ChoiceOptions $el.Name}}
       <option value="{{.Value}}" {{if eq .Value (index $ctx.Values $fn)}}selected{{end}}>{{.Label}}</option>
       {{end}}
     </select>
-    {{if and $el.Hint $el.HintInline}}<small style="color:#94a3b8;font-size:11px">{{$el.Hint}}</small>{{end}}
+    {{if and $el.Hint $el.HintInline}}<small style="color:var(--ob-text-4);font-size:11px">{{$el.Hint}}</small>{{end}}
   </div>
 {{else if eq (str $el.Kind) "Флажок"}}
   {{$fn := dpField $el.DataPath}}
@@ -254,11 +254,11 @@ const tplManagedForm = `
     <input type="hidden" name="{{if $ctx.IsProcessor}}{{processorParamPresenceName $ctx.Processor $fn}}{{else}}_ob_present_{{$fn}}{{end}}" value="1" data-ob-checkbox-presence="1"{{if $ro}} disabled{{end}}>
     <input type="checkbox" id="cb-{{$fn}}" name="{{$fn}}" value="true"{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}
       {{if eq (index $ctx.Values $fn) "true"}}checked{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
-    <label for="cb-{{$fn}}" style="margin-bottom:0;cursor:pointer">{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}{{if and $el.Hint (not $el.HintInline)}} <span class="ob-hint" title="{{$el.Hint}}" aria-label="{{$el.Hint}}">ⓘ</span>{{end}}</label>
-    {{if and $el.Hint $el.HintInline}}<small style="color:#94a3b8;font-size:11px;flex-basis:100%">{{$el.Hint}}</small>{{end}}
+    <label for="cb-{{$fn}}" style="margin-bottom:0;cursor:pointer">{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:var(--ob-error-text)">*</span>{{end}}{{if and $el.Hint (not $el.HintInline)}} <span class="ob-hint" title="{{$el.Hint}}" aria-label="{{$el.Hint}}">ⓘ</span>{{end}}</label>
+    {{if and $el.Hint $el.HintInline}}<small style="color:var(--ob-text-4);font-size:11px;flex-basis:100%">{{$el.Hint}}</small>{{end}}
   </div>
 {{else if eq (str $el.Kind) "Надпись"}}
-  <div class="form-decoration{{if $el.TextBold}} ob-text-bold{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="padding:6px 0;color:#475569;font-size:13px;{{elLayout $el}}">
+  <div class="form-decoration{{if $el.TextBold}} ob-text-bold{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="padding:6px 0;color:var(--ob-text-2);font-size:13px;{{elLayout $el}}">
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </div>
 {{else if eq (str $el.Kind) "Кнопка"}}
@@ -281,7 +281,7 @@ const tplManagedForm = `
     {{$pictureWidth := elPictureSize $el.Width}}{{$pictureHeight := elPictureSize $el.Height}}
     <img src="/static/forms/{{$el.Picture}}" alt="{{$el.Name}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="max-width:{{if $pictureWidth}}{{$pictureWidth}}px{{else}}100px{{end}};max-height:{{if $pictureHeight}}{{$pictureHeight}}px{{else}}100px{{end}}">
   {{else}}
-    <span data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="color:#cbd5e1">[Картинка: {{$el.Name}}]</span>
+    <span data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="color:var(--ob-text-4)">[Картинка: {{$el.Name}}]</span>
   {{end}}
   </div>
 {{else if eq (str $el.Kind) "ТабличнаяЧасть"}}
@@ -318,7 +318,7 @@ const tplManagedForm = `
     {{$cmdRO := or $tpReadOnly (effectiveFormElementReadOnly $ctx.Form .)}}
     {{$clickAction := hasHandler . "Нажатие"}}
     {{$hotKey := ""}}{{if and (not $cmdRO) $clickAction}}{{$hotKey = normalizedFormHotkey .HotKey}}{{end}}
-    <button type="button" class="btn btn-sm" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;{{elLayout .}}"
+    <button type="button" class="btn btn-sm" style="background:var(--ob-indigo-bg);color:var(--ob-indigo-ink);border:1px solid var(--ob-indigo-border);{{elLayout .}}"
       {{if .AccessKey}}accesskey="{{.AccessKey}}" {{end}}{{if $hotKey}}data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}" {{end}}{{if $cmdRO}}disabled{{end}}{{if and (not $cmdRO) $clickAction}} data-ob-fire-click="{{.Name}}" data-ob-fire-tp="{{$tpName}}"{{end}}>
       {{fieldTitleRU .TitleMap .Name}}
     </button>
@@ -355,12 +355,12 @@ const tplManagedForm = `
        {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}></div>
   {{if not $tpReadOnly}}<input type="hidden" name="tp_json.{{$tpName}}" id="tp-json-{{$tpName}}" value="">{{end}}
   <div style="display:flex;gap:6px;margin-top:4px">
-    <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569"{{if $tpReadOnly}} disabled{{else}}
+    <button type="button" class="btn btn-sm" style="background:var(--ob-btn-2-bg);color:var(--ob-text-2)"{{if $tpReadOnly}} disabled{{else}}
       data-ob-grid-add="{{$tpName}}" title="Insert" aria-keyshortcuts="Insert"{{end}}>+ Добавить строку</button>
-    <button type="button" class="btn btn-sm" style="background:#fee2e2;color:#991b1b"{{if $tpReadOnly}} disabled{{else}}
+    <button type="button" class="btn btn-sm" style="background:var(--ob-danger-hi);color:var(--ob-danger-ink)"{{if $tpReadOnly}} disabled{{else}}
       data-ob-grid-del="{{$tpName}}" title="Delete" aria-keyshortcuts="Delete"{{end}}>− Удалить строку</button>
     {{/* display:none, а не hidden: display у .btn перебивает атрибут hidden. */}}
-    {{if gridLayoutAttr $ctx $el.Name}}<button type="button" class="btn btn-sm" style="margin-left:auto;background:#f1f5f9;color:#64748b{{if not (gridOrderAttr $ctx $el.Name)}};display:none{{end}}"
+    {{if gridLayoutAttr $ctx $el.Name}}<button type="button" class="btn btn-sm" style="margin-left:auto;background:var(--ob-surface-3);color:var(--ob-text-3){{if not (gridOrderAttr $ctx $el.Name)}};display:none{{end}}"
       data-ob-grid-order-reset="{{$tpName}}"
       title="{{t $ctx.Lang "Колонки можно переставлять, перетаскивая заголовок"}}">{{t $ctx.Lang "Стандартный порядок колонок"}}</button>{{end}}
   </div>
@@ -396,8 +396,8 @@ const tplManagedForm = `
                 <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID $v)}}selected{{end}}{{if index . "_choice_outside_filter"}} data-ob-choice-outside-filter="1"{{end}}>{{index . "_label"}}</option>
                 {{end}}
               </select>
-              <button type="button" data-ob-ref-picker="closest"{{if $tpReadOnly}} disabled{{end}} style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="Выбрать из списка">...</button>
-              {{if not $ctx.HideRefCard}}<button type="button" data-ob-ref-current="closest" data-ob-readonly-navigation="1" style="padding:4px 7px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="Открыть карточку">🔍</button>{{end}}
+              <button type="button" data-ob-ref-picker="closest"{{if $tpReadOnly}} disabled{{end}} style="padding:4px 8px;border:1px solid var(--ob-border);border-radius:5px;background:var(--ob-surface-2);cursor:pointer;font-size:12px;flex-shrink:0" title="Выбрать из списка">...</button>
+              {{if not $ctx.HideRefCard}}<button type="button" data-ob-ref-current="closest" data-ob-readonly-navigation="1" style="padding:4px 7px;border:1px solid var(--ob-border);border-radius:5px;background:var(--ob-surface-2);cursor:pointer;font-size:12px;flex-shrink:0" title="Открыть карточку">🔍</button>{{end}}
             </div>
           {{else if eq (str $f.Type) "number"}}
             <input type="number" step="any" name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}" value="{{$v}}" data-tp-num="{{$f.Name}}"{{if $tpReadOnly}} disabled{{else}} data-ob-recalc-tp-row{{end}}>
@@ -409,7 +409,7 @@ const tplManagedForm = `
             <select name="tp.{{$tpName}}.{{$i}}.{{$f.Name}}"{{if $tpReadOnly}} disabled{{end}}>
               <option value="">{{if $tpReadOnly}}—{{else}}— выбрать —{{end}}</option>
               {{range tpEnumOptions $ctx.TPEnumLabels $ctx.TPEnumOrder $tpName $f.Name $v}}
-              <option value="{{.Value}}"{{if .Selected}} selected{{end}}{{if .Unknown}} style="color:#dc2626"{{end}}>{{if .Unknown}}⚠ {{end}}{{.Label}}</option>
+              <option value="{{.Value}}"{{if .Selected}} selected{{end}}{{if .Unknown}} style="color:var(--ob-error-text)"{{end}}>{{if .Unknown}}⚠ {{end}}{{.Label}}</option>
               {{end}}
             </select>
           {{else if eq (str $f.Type) "date"}}
@@ -438,7 +438,7 @@ const tplManagedForm = `
       {{range $c := $tpPlan}}{{$f := $c.Field}}{{if $c.Hidden}}<td style="display:none"></td>{{else if eq (str $f.Type) "number"}}<td class="tp-total" data-tp-total="{{$tpName}}.{{$f.Name}}" style="text-align:right;font-variant-numeric:tabular-nums">0</td>{{else}}<td></td>{{end}}{{end}}{{range $tpVirtualCols}}<td></td>{{end}}<td></td>
     </tr></tfoot>
   </table>
-  <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin:0 0 12px"{{if $tpReadOnly}} disabled{{else}}
+  <button type="button" class="btn btn-sm" style="background:var(--ob-btn-2-bg);color:var(--ob-text-2);margin:0 0 12px"{{if $tpReadOnly}} disabled{{else}}
     data-ob-add-tp="{{$tpName}}" data-ob-element="{{$el.Name}}" title="Insert" aria-keyshortcuts="Insert"{{end}}>
     + Добавить строку
   </button>
@@ -459,7 +459,7 @@ const tplManagedForm = `
     {{$cmdRO := or $tpReadOnly (effectiveFormElementReadOnly $ctx.Form .)}}
     {{$clickAction := hasHandler . "Нажатие"}}
     {{$hotKey := ""}}{{if and (not $cmdRO) $clickAction}}{{$hotKey = normalizedFormHotkey .HotKey}}{{end}}
-    <button type="button" class="btn btn-sm" style="background:#eef2ff;color:#3730a3;border:1px solid #c7d2fe;{{elLayout .}}"
+    <button type="button" class="btn btn-sm" style="background:var(--ob-indigo-bg);color:var(--ob-indigo-ink);border:1px solid var(--ob-indigo-border);{{elLayout .}}"
       {{if .AccessKey}}accesskey="{{.AccessKey}}" {{end}}{{if $hotKey}}data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}" {{end}}{{if $cmdRO}}disabled{{else if $clickAction}}data-ob-fire-click="{{.Name}}" data-ob-fire-tp="{{$tpName}}"{{end}}>
       {{fieldTitleRU .TitleMap .Name}}
     </button>
@@ -493,13 +493,13 @@ const tplManagedForm = `
     {{end}}
     </tbody>
   </table>
-  <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569;margin:0 0 12px"{{if $tpReadOnly}} disabled{{else}}
+  <button type="button" class="btn btn-sm" style="background:var(--ob-btn-2-bg);color:var(--ob-text-2);margin:0 0 12px"{{if $tpReadOnly}} disabled{{else}}
     data-ob-add-vt="{{$tpName}}"{{end}}>
     + Добавить строку
   </button>
   {{if $vtLayout}}</div>{{end}}
   {{else}}
-  <div style="background:#fef9c3;padding:8px;border-radius:6px;font-size:12px;color:#92400e">
+  <div style="background:var(--ob-hint-bg);padding:8px;border-radius:6px;font-size:12px;color:var(--ob-amber-ink)">
     Табличная часть «{{$tpName}}» не найдена в метаданных сущности.
   </div>
   {{end}}
@@ -513,9 +513,9 @@ const tplManagedForm = `
   {{$hChg := hasHandler $el "ПриИзменении"}}
   {{$dv := index $ctx.Values $fn}}
   {{if $el.HiddenWhen}}<fieldset class="form-group ob-managed-control{{if elFill $el}} ob-el-fill{{end}}{{if $el.TextBold}} ob-text-bold{{end}}" data-ob-el="{{$el.Name}}" data-ob-control-fieldset="1"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{if elHiddenStyle $ctx $el}} disabled{{end}}{{with elLayoutEx $ctx $el}} style="{{.}}"{{end}}>{{else}}<div class="form-group{{if elFill $el}} ob-el-fill{{end}}{{if $el.TextBold}} ob-text-bold{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{with elLayout $el}} style="{{.}}"{{end}}>{{end}}
-    <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}{{if and $el.Hint (not $el.HintInline)}} <span class="ob-hint" title="{{$el.Hint}}" aria-label="{{$el.Hint}}">ⓘ</span>{{end}}</label>
+    <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:var(--ob-error-text)">*</span>{{end}}{{if and $el.Hint (not $el.HintInline)}} <span class="ob-hint" title="{{$el.Hint}}" aria-label="{{$el.Hint}}">ⓘ</span>{{end}}</label>
     <input type="date" name="{{$fn}}" value="{{if ge (len $dv) 10}}{{slice $dv 0 10}}{{else}}{{$dv}}{{end}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} readonly{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
-    {{if and $el.Hint $el.HintInline}}<small style="color:#94a3b8;font-size:11px">{{$el.Hint}}</small>{{end}}
+    {{if and $el.Hint $el.HintInline}}<small style="color:var(--ob-text-4);font-size:11px">{{$el.Hint}}</small>{{end}}
   {{if $el.HiddenWhen}}</fieldset>{{else}}</div>{{end}}
 {{else if eq (str $el.Kind) "Переключатель"}}
   {{/* Поле с набором значений: радио-переключатель (по умолчанию) или список
@@ -534,7 +534,7 @@ const tplManagedForm = `
        события, который её показывает (applyValues, #1759). */}}
   {{$radioMark := not (elHiddenStyle $ctx $el)}}
   {{if $el.HiddenWhen}}<fieldset class="form-group ob-managed-control{{if elFill $el}} ob-el-fill{{end}}{{if $el.TextBold}} ob-text-bold{{end}}" data-ob-el="{{$el.Name}}" data-ob-control-fieldset="1"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{if elHiddenStyle $ctx $el}} disabled{{end}}{{with elLayoutEx $ctx $el}} style="{{.}}"{{end}}>{{else}}<div class="form-group{{if elFill $el}} ob-el-fill{{end}}{{if $el.TextBold}} ob-text-bold{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{with elLayout $el}} style="{{.}}"{{end}}>{{end}}
-    <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:#dc2626">*</span>{{end}}{{if and $el.Hint (not $el.HintInline)}} <span class="ob-hint" title="{{$el.Hint}}" aria-label="{{$el.Hint}}">ⓘ</span>{{end}}</label>
+    <label>{{fieldTitleRU $el.TitleMap $fn}}{{if $effectiveReq}} <span style="color:var(--ob-error-text)">*</span>{{end}}{{if and $el.Hint (not $el.HintInline)}} <span class="ob-hint" title="{{$el.Hint}}" aria-label="{{$el.Hint}}">ⓘ</span>{{end}}</label>
     {{if eq $el.View "select"}}
       <select name="{{$fn}}"{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
         <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
@@ -553,14 +553,14 @@ const tplManagedForm = `
         {{end}}
       </div>
     {{end}}
-    {{if and $el.Hint $el.HintInline}}<small style="color:#94a3b8;font-size:11px">{{$el.Hint}}</small>{{end}}
+    {{if and $el.Hint $el.HintInline}}<small style="color:var(--ob-text-4);font-size:11px">{{$el.Hint}}</small>{{end}}
   {{if $el.HiddenWhen}}</fieldset>{{else}}</div>{{end}}
 {{else if eq (str $el.Kind) "СтраницаКоманднаяПанель"}}
   {{/* пропускаем — отрисовывается через toolbar в обвязке формы */}}
 {{else if eq (str $el.Kind) "КоманднаяПанель"}}
   {{/* пропускаем — отрисовывается через toolbar в обвязке формы */}}
 {{else}}
-  <div class="form-group" style="background:#fef9c3;padding:8px;border-radius:6px;font-size:11px;color:#92400e">
+  <div class="form-group" style="background:var(--ob-hint-bg);padding:8px;border-radius:6px;font-size:11px;color:var(--ob-amber-ink)">
     Элемент «{{$el.Name}}» типа «{{$el.Kind}}»: рендеринг не реализован.
   </div>
 {{end}}
@@ -570,10 +570,10 @@ const tplManagedForm = `
 {{template "head" .}}{{if not .IsPopup}}{{template "nav" .}}{{end}}
 {{if .TabTitle}}<meta name="ob-tab-title" content="{{.TabTitle}}">{{end}}
 <style>
-.ob-grid[data-ob-choice-error="1"] { outline: 2px solid #dc2626; }
+.ob-grid[data-ob-choice-error="1"] { outline: 2px solid var(--ob-flag); }
 /* deadline_warn: поле-срок подсвечивается по часам браузера (obDeadlineTick). */
-input.ob-deadline-soon,.form-group input.ob-deadline-soon[readonly]{background:#fef3c7 !important;border-color:#f59e0b !important;color:#92400e !important}
-input.ob-deadline-over,.form-group input.ob-deadline-over[readonly]{background:#fee2e2 !important;border-color:#ef4444 !important;color:#991b1b !important;font-weight:600}
+input.ob-deadline-soon,.form-group input.ob-deadline-soon[readonly]{background:var(--ob-amber-bg) !important;border-color:var(--ob-amber) !important;color:var(--ob-amber-ink) !important}
+input.ob-deadline-over,.form-group input.ob-deadline-over[readonly]{background:var(--ob-danger-hi) !important;border-color:var(--ob-danger) !important;color:var(--ob-danger-ink) !important;font-weight:600}
 .ob-managed-control{border:0;padding:0;min-width:0}
 .managed-group-horizontal>.managed-group-body{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
 /* scroll_x: ряд действий не рвётся на вторую строку, а прокручивается. */
@@ -582,7 +582,7 @@ input.ob-deadline-over,.form-group input.ob-deadline-over[readonly]{background:#
 /* ValueTable с заданной высотой прокручивается внутри своего блока, шапка
    колонок остаётся на месте. overflow:hidden таблицы (скругление углов)
    сделал бы её саму контейнером прокрутки, и sticky шапка не держалась бы. */
-.ob-hint{display:inline-block;margin-left:4px;color:#94a3b8;font-size:12px;font-weight:400;cursor:help}
+.ob-hint{display:inline-block;margin-left:4px;color:var(--ob-text-4);font-size:12px;font-weight:400;cursor:help}
 .managed-vt-scroll{overflow-y:auto}
 .managed-vt-scroll>.tp-table{overflow:visible;margin-bottom:0}
 .managed-vt-scroll>.tp-table thead th{position:sticky;top:0;z-index:1}
@@ -639,7 +639,7 @@ main>.card{max-width:none}
    Флажок и переключатель исключены: appearance:none стирает сам квадратик,
    и нередактируемая галка превращалась в подпись без индикатора. */
 .form-group input[readonly],.form-group input:disabled:not([type=checkbox]):not([type=radio]),.form-group select:disabled,.form-group textarea[readonly]{
-  background:#f8fafc;border-color:#eef2f7;color:#334155;cursor:default;opacity:1;-webkit-appearance:none;appearance:none}
+  background:var(--ob-surface-2);border-color:var(--ob-head-bg);color:var(--ob-text-strong);cursor:default;opacity:1;-webkit-appearance:none;appearance:none}
 /* Раскладка элемента (#1185): height задаёт высоту ВНЕШНЕГО блока, а тянуться
    на остаток должен сам ввод — иначе «высота 200» растянула бы пустое место под
    полем, оставив поле прежним. Подпись сверху сохраняет свою высоту. */
@@ -653,34 +653,34 @@ main>.card{max-width:none}
 /* Сетевой сбой зависимого подбора виден прямо на поле, но не раскрывает
    локальный полный список: ui.js оставляет прежние варианты и значение. */
 select[data-ref-choice-context][data-ob-choice-loading="1"]{cursor:progress}
-select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;background:#fef2f2;box-shadow:0 0 0 1px #fecaca}
+select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:var(--ob-error-text);background:var(--ob-error-bg);box-shadow:0 0 0 1px var(--ob-error-border)}
 ` + metadata.FormEqualColumnsCSS + `
 </style>
 {{if hasGridTP .Form}}
 <link rel="stylesheet" href="/vendor/slickgrid/slick.grid.css">
 <link rel="stylesheet" href="/vendor/slickgrid/slick-default-theme.css">
 <style>
-.ob-grid{font-size:13px;border:1px solid #cbd5e1;border-radius:6px;overflow:hidden}
-.ob-grid .slick-header-columns{background:#eef2f7;border-bottom:2px solid #cbd5e1}
-.ob-grid .slick-header-column{font-weight:600;color:#334155;background:#eef2f7;font-size:12px;padding:6px 8px;border-right:1px solid #cbd5e1}
-.ob-grid .slick-header-column:hover{background:#e2e8f0}
+.ob-grid{font-size:13px;border:1px solid var(--ob-border-2);border-radius:6px;overflow:hidden}
+.ob-grid .slick-header-columns{background:var(--ob-head-bg);border-bottom:2px solid var(--ob-border-2)}
+.ob-grid .slick-header-column{font-weight:600;color:var(--ob-text-strong);background:var(--ob-head-bg);font-size:12px;padding:6px 8px;border-right:1px solid var(--ob-border-2)}
+.ob-grid .slick-header-column:hover{background:var(--ob-btn-2-bg)}
 /* Зебра — на строке; ячейки прозрачны, чтобы фон строки просвечивал. */
-.ob-grid .slick-cell{padding:4px 8px;border-right:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;background:transparent}
-.ob-grid .slick-row.odd{background:#f6f8fb}
-.ob-grid .slick-row:hover .slick-cell{background:#eef4ff}
-.ob-grid .slick-cell.selected{background:#dbeafe}
-.ob-grid .slick-cell.active{box-shadow:inset 0 0 0 2px #3b82f6}
+.ob-grid .slick-cell{padding:4px 8px;border-right:1px solid var(--ob-border);border-bottom:1px solid var(--ob-border);background:transparent}
+.ob-grid .slick-row.odd{background:var(--ob-zebra)}
+.ob-grid .slick-row:hover .slick-cell{background:var(--ob-hover-blue-2)}
+.ob-grid .slick-cell.selected{background:var(--ob-chip-hover)}
+.ob-grid .slick-cell.active{box-shadow:inset 0 0 0 2px var(--ob-accent)}
 /* Текущая строка — как в 1С: фон держится и после ухода мыши и фокуса.
    SlickGrid ставит класс active строке текущей ячейки и не снимает его при
    щелчке мимо таблицы. Условное оформление задаёт фон с !important, поэтому
    и здесь !important, а селектор специфичнее правил условного оформления
    строки и ячейки: текущую строку видно и на окрашенной. Меняется только фон —
    цвет текста условного оформления сохраняется. */
-.ob-grid .grid-canvas .slick-row.active .slick-cell{background:#dbeafe!important}
-.ob-grid .slick-footerrow{background:#f1f5f9;border-top:2px solid #cbd5e1}
-.ob-grid .slick-footerrow-column{padding:4px 8px;border-right:1px solid #e2e8f0;color:#334155}
+.ob-grid .grid-canvas .slick-row.active .slick-cell{background:var(--ob-chip-hover)!important}
+.ob-grid .slick-footerrow{background:var(--ob-surface-3);border-top:2px solid var(--ob-border-2)}
+.ob-grid .slick-footerrow-column{padding:4px 8px;border-right:1px solid var(--ob-border);color:var(--ob-text-strong)}
 .ob-grid .ob-num{text-align:right;font-variant-numeric:tabular-nums}
-.ob-grid .ob-ref{color:#2563eb;cursor:pointer}
+.ob-grid .ob-ref{color:var(--ob-accent-hover);cursor:pointer}
 .ob-grid .ob-ref:hover{text-decoration:underline}
 </style>
 {{end}}
@@ -689,13 +689,13 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;max-width:1400px">
   <h2 style="margin-bottom:0">
     {{if .IsProcessor}}{{.Processor.DisplayName $.Lang}}{{else}}{{if .IsNew}}{{t $.Lang "Создать"}} — {{.Entity.DisplayName $.Lang}}{{else}}{{if .RecordTitle}}{{.RecordTitle}}{{else}}{{t $.Lang "Редактировать"}} — {{.Entity.DisplayName $.Lang}}{{end}}{{end}}{{end}}
-    <span style="font-size:11px;color:#10b981;background:#d1fae5;padding:2px 8px;border-radius:10px;vertical-align:middle;font-weight:500" title="Управляемая форма из forms/{{if .IsProcessor}}{{lower .Processor.Name}}{{else}}{{lower .Entity.Name}}{{end}}/">◇ managed</span>
+    <span style="font-size:11px;color:var(--ob-emerald);background:var(--ob-emerald-bg);padding:2px 8px;border-radius:10px;vertical-align:middle;font-weight:500" title="Управляемая форма из forms/{{if .IsProcessor}}{{lower .Processor.Name}}{{else}}{{lower .Entity.Name}}{{end}}/">◇ managed</span>
   </h2>
   {{template "context-help" .}}
   {{if .IsPopup}}
-  <a href="#" data-ob-ref-cancel title="Закрыть" style="font-size:22px;line-height:1;color:#94a3b8;text-decoration:none;padding:2px 8px;border-radius:5px;background:#f1f5f9;font-weight:300">×</a>
+  <a href="#" data-ob-ref-cancel title="Закрыть" style="font-size:22px;line-height:1;color:var(--ob-text-4);text-decoration:none;padding:2px 8px;border-radius:5px;background:var(--ob-surface-3);font-weight:300">×</a>
   {{else}}
-  <a href="{{if .IsProcessor}}/ui/{{else}}/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}{{end}}" data-ob-close-tab title="Закрыть" style="font-size:22px;line-height:1;color:#94a3b8;text-decoration:none;padding:2px 8px;border-radius:5px;background:#f1f5f9;font-weight:300">×</a>
+  <a href="{{if .IsProcessor}}/ui/{{else}}/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}{{end}}" data-ob-close-tab title="Закрыть" style="font-size:22px;line-height:1;color:var(--ob-text-4);text-decoration:none;padding:2px 8px;border-radius:5px;background:var(--ob-surface-3);font-weight:300">×</a>
   {{end}}
 </div>
 {{if .Error}}<div class="error">{{.Error}}</div>{{end}}
@@ -713,9 +713,9 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
   {{if .Entity.Posting}}
     {{if not .IsNew}}
       {{if eq (index .Values "posted") "true"}}
-        <span style="color:#16a34a;font-weight:600;font-size:13px">✓ {{t $.Lang "Проведён"}}</span>
+        <span style="color:var(--ob-posted);font-weight:600;font-size:13px">✓ {{t $.Lang "Проведён"}}</span>
       {{else}}
-        <span style="color:#94a3b8;font-size:13px">{{t $.Lang "Не проведён"}}</span>
+        <span style="color:var(--ob-text-4);font-size:13px">{{t $.Lang "Не проведён"}}</span>
       {{end}}
     {{end}}
   {{end}}
@@ -726,7 +726,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
     {{end}}
     {{if not .IsNew}}
       {{if eq (index .Values "posted") "true"}}
-        {{if $.CanUnpost}}<button class="btn btn-sm" style="background:#e2e8f0;color:#374151" form="form-unpost" type="submit">{{t $.Lang "Отменить проведение"}}</button>{{end}}
+        {{if $.CanUnpost}}<button class="btn btn-sm" style="background:var(--ob-btn-2-bg);color:#374151" form="form-unpost" type="submit">{{t $.Lang "Отменить проведение"}}</button>{{end}}
       {{end}}
     {{end}}
   {{end}}
@@ -743,20 +743,20 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
     {{if or .AllPrintForms .HasPrintProc}}
     <div style="position:relative">
       <button type="button" class="btn btn-sm btn-secondary" data-ob-toggle-next>{{t $.Lang "Печать"}} ▾</button>
-      <div style="display:none;position:absolute;top:100%;left:0;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);min-width:200px;z-index:50;margin-top:4px">
+      <div style="display:none;position:absolute;top:100%;left:0;background:var(--ob-surface);border:1px solid var(--ob-border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);min-width:200px;z-index:50;margin-top:4px">
         {{range .AllPrintForms}}
-        <div style="display:flex;align-items:center;border-bottom:1px solid #f1f5f9">
+        <div style="display:flex;align-items:center;border-bottom:1px solid var(--ob-surface-3)">
           <a href="/ui/{{lower (str $.Entity.Kind)}}/{{$.Entity.Name}}/{{$.ID}}/print/{{.Name}}" target="_blank"
-             style="flex:1;display:block;padding:9px 16px;color:#334155;text-decoration:none;font-size:13px">{{.Name}}{{if .External}} <span style="color:#94a3b8;font-size:11px">({{t $.Lang "внешняя"}})</span>{{end}}</a>
+             style="flex:1;display:block;padding:9px 16px;color:var(--ob-text-strong);text-decoration:none;font-size:13px">{{.Name}}{{if .External}} <span style="color:var(--ob-text-4);font-size:11px">({{t $.Lang "внешняя"}})</span>{{end}}</a>
           <a href="/ui/{{lower (str $.Entity.Kind)}}/{{$.Entity.Name}}/{{$.ID}}/print/{{.Name}}/pdf" target="_blank"
-             style="padding:9px 14px;color:#16a34a;text-decoration:none;font-size:12px;font-weight:600">PDF</a>
+             style="padding:9px 14px;color:var(--ob-posted);text-decoration:none;font-size:12px;font-weight:600">PDF</a>
 		  {{if .HasXLSX}}<a href="/ui/{{lower (str $.Entity.Kind)}}/{{$.Entity.Name}}/{{$.ID}}/print/{{.Name}}/xlsx"
-		     style="padding:9px 14px;color:#15803d;text-decoration:none;font-size:12px;font-weight:600">Excel</a>{{end}}
+		     style="padding:9px 14px;color:var(--ob-ok-text);text-decoration:none;font-size:12px;font-weight:600">Excel</a>{{end}}
         </div>
         {{end}}
         {{if .HasPrintProc}}
         <a href="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/print/_module" target="_blank"
-           style="display:block;padding:9px 16px;color:#334155;text-decoration:none;font-size:13px;border-bottom:1px solid #f1f5f9">📋 {{t $.Lang "Печать (модуль)"}}</a>
+           style="display:block;padding:9px 16px;color:var(--ob-text-strong);text-decoration:none;font-size:13px;border-bottom:1px solid var(--ob-surface-3)">📋 {{t $.Lang "Печать (модуль)"}}</a>
         {{end}}
       </div>
     </div>
@@ -764,10 +764,10 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
     {{if .BasedOnActions}}
     <div style="position:relative;display:inline-block">
       <button type="button" class="btn btn-sm btn-secondary" data-ob-toggle-next>{{t $.Lang "Ввести на основании"}} ▾</button>
-      <div style="display:none;position:absolute;top:100%;left:0;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);min-width:200px;z-index:50;margin-top:4px">
+      <div style="display:none;position:absolute;top:100%;left:0;background:var(--ob-surface);border:1px solid var(--ob-border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.1);min-width:200px;z-index:50;margin-top:4px">
         {{range .BasedOnActions}}
         <a href="{{.URL}}&based_on_id={{$.ID}}"
-           style="display:block;padding:9px 16px;color:#334155;text-decoration:none;font-size:13px;border-bottom:1px solid #f1f5f9">{{.Label}}</a>
+           style="display:block;padding:9px 16px;color:var(--ob-text-strong);text-decoration:none;font-size:13px;border-bottom:1px solid var(--ob-surface-3)">{{.Label}}</a>
         {{end}}
       </div>
     </div>
@@ -796,16 +796,16 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
   {{range $regName, $rows := .DocMovements}}
   {{$columns := index $.DocMovementColumns $regName}}
   <details style="display:inline">
-    <summary style="display:inline;cursor:pointer;font-size:12px;padding:4px 10px;background:#f0f4ff;color:#1a4a80;border-radius:4px;font-weight:600;list-style:none">
+    <summary style="display:inline;cursor:pointer;font-size:12px;padding:4px 10px;background:var(--ob-hover-soft);color:var(--ob-link-hover);border-radius:4px;font-weight:600;list-style:none">
       {{$regName}} ({{len $rows}}) ▾
     </summary>
-    <div style="position:absolute;z-index:100;background:#fff;border:1px solid #e2e8f0;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);margin-top:4px;min-width:300px;max-height:300px;overflow:auto">
+    <div style="position:absolute;z-index:100;background:var(--ob-surface);border:1px solid var(--ob-border);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.12);margin-top:4px;min-width:300px;max-height:300px;overflow:auto">
       <table class="list-tbl" style="font-size:12px;margin:0">
         <tr>{{if $columns.ShowLineNumber}}<th>№</th>{{end}}{{if $columns.ShowKind}}<th>Вид</th>{{end}}{{$first := index $rows 0}}{{range $k, $v := $first}}{{if and (ne $k "line_number") (ne $k "вид_движения")}}<th>{{$k}}</th>{{end}}{{end}}</tr>
         {{range $i, $row := $rows}}
         <tr>
           {{if $columns.ShowLineNumber}}<td>{{index $row "line_number"}}</td>{{end}}
-          {{if $columns.ShowKind}}<td>{{$kind := index $row "вид_движения"}}{{if eq $kind "Приход"}}<span style="color:#16a34a">▲</span>{{else if eq $kind "Расход"}}<span style="color:#dc2626">▼</span>{{else}}{{$kind}}{{end}}</td>{{end}}
+          {{if $columns.ShowKind}}<td>{{$kind := index $row "вид_движения"}}{{if eq $kind "Приход"}}<span style="color:var(--ob-posted)">▲</span>{{else if eq $kind "Расход"}}<span style="color:var(--ob-error-text)">▼</span>{{else}}{{$kind}}{{end}}</td>{{end}}
           {{range $k, $v := $row}}{{if and (ne $k "line_number") (ne $k "вид_движения")}}<td>{{if eq $k "period"}}{{fmtDate $v}}{{else}}{{$v}}{{end}}</td>{{end}}{{end}}
         </tr>
         {{end}}
@@ -834,7 +834,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 {{$commandBarReadOnly := elReadOnly $ctx $commandBarElement}}
 {{if $commandBarElement}}{{$commandBarReadOnly = or $commandBarReadOnly (effectiveFormElementReadOnly .Form $commandBarElement)}}{{end}}
 {{if and .FormCommands (not $commandBarHidden)}}
-<div class="managed-command-bar"{{if $commandBarElement}} data-ob-el="{{$commandBarElement.Name}}" data-ob-el-path="{{elPath $ctx $commandBarElement}}"{{end}} style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 16px;padding-bottom:12px;border-bottom:1px solid #e2e8f0">
+<div class="managed-command-bar"{{if $commandBarElement}} data-ob-el="{{$commandBarElement.Name}}" data-ob-el-path="{{elPath $ctx $commandBarElement}}"{{end}} style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 16px;padding-bottom:12px;border-bottom:1px solid var(--ob-border)">
   {{range .FormCommands}}
   <button type="button" class="btn btn-secondary" style="margin:0" data-ob-fire-click="{{.Name}}"{{if $commandBarReadOnly}} disabled{{end}}>{{fieldTitleRU .Title .Name}}</button>
   {{end}}
@@ -967,11 +967,11 @@ window.MonacoEnvironment = window.MonacoEnvironment || { getWorkerUrl: function 
      видом, а .active переопределяет цвет/border (выше по специфичности
      не получается без !important — поэтому используем именно класс). */}}
 <style>
-.managed-tab-btn{padding:8px 14px;border:none;background:none;cursor:pointer;font-size:13px;color:#64748b;border-bottom:2px solid transparent;margin-bottom:-2px;font-family:inherit}
-.managed-tab-btn:hover{color:#1a4a80;background:#f5f8ff}
+.managed-tab-btn{padding:8px 14px;border:none;background:none;cursor:pointer;font-size:13px;color:var(--ob-text-3);border-bottom:2px solid transparent;margin-bottom:-2px;font-family:inherit}
+.managed-tab-btn:hover{color:var(--ob-link-hover);background:var(--ob-hover-soft)}
 /* text_bold у поля формы: жирное значение (ввод, список, надпись), подпись обычная. */
 .ob-text-bold input,.ob-text-bold textarea,.ob-text-bold select,.form-decoration.ob-text-bold{font-weight:700}
-.managed-tab-btn.active{color:#1a4a80;border-bottom-color:#1a4a80;font-weight:600}
+.managed-tab-btn.active{color:var(--ob-link-hover);border-bottom-color:var(--ob-link-hover);font-weight:600}
 /* Мобильная адаптация управляемых форм (этап 45): заголовки вкладок скроллятся
    по горизонтали, поля в одну колонку. ТЧ по умолчанию рендерятся SlickGrid'ом
    (.ob-grid) — у него собственный горизонтальный скролл; .tp-table (режим

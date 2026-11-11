@@ -112,15 +112,15 @@ const tplHelp = `
 {{if .HelpChapter}}<article class="help-content" aria-label="{{.HelpChapter.Title}}">{{.HelpBody}}</article>{{end}}
 </div></main><style>
 .help-main{max-width:1200px;width:100%;box-sizing:border-box;margin:0 auto;padding:24px}
-.help-title{font-size:24px;margin:0 0 18px;color:#334155}
+.help-title{font-size:24px;margin:0 0 18px;color:var(--ob-text-strong)}
 .help-query{display:flex;gap:8px;max-width:640px;margin:0 0 24px}
-.help-query input{flex:1;min-width:0;padding:10px 12px;border:1px solid #cbd5e1;border-radius:7px;font:inherit}
+.help-query input{flex:1;min-width:0;padding:10px 12px;border:1px solid var(--ob-border-2);border-radius:7px;font:inherit}
 .help-layout{display:grid;grid-template-columns:minmax(180px,240px) minmax(0,1fr);gap:20px;align-items:start}
-.help-toc,.help-content{background:#fff;border:1px solid #e2e8f0;border-radius:10px;padding:20px}
-.help-toc h2{font-size:14px;color:#64748b;margin:0 0 12px}.help-toc ul{list-style:none;padding:0;margin:0}
-.help-toc a{display:block;padding:7px 0;color:#1d4ed8;text-decoration:none;font-size:14px}.help-toc a[aria-current]{font-weight:600}
+.help-toc,.help-content{background:var(--ob-surface);border:1px solid var(--ob-border);border-radius:10px;padding:20px}
+.help-toc h2{font-size:14px;color:var(--ob-text-3);margin:0 0 12px}.help-toc ul{list-style:none;padding:0;margin:0}
+.help-toc a{display:block;padding:7px 0;color:var(--ob-link-2);text-decoration:none;font-size:14px}.help-toc a[aria-current]{font-weight:600}
 .help-content{line-height:1.65;overflow-wrap:anywhere}.help-content>:first-child{margin-top:0}.help-content h1{font-size:26px}
-.help-content img{max-width:100%;height:auto}.help-content pre{overflow:auto;padding:12px;background:#f1f5f9}.help-content table{border-collapse:collapse}.help-content td,.help-content th{border:1px solid #cbd5e1;padding:6px}
+.help-content img{max-width:100%;height:auto}.help-content pre{overflow:auto;padding:12px;background:var(--ob-surface-3)}.help-content table{border-collapse:collapse}.help-content td,.help-content th{border:1px solid var(--ob-border-2);padding:6px}
 @media(max-width:800px){.help-layout{grid-template-columns:1fr}.help-main{padding:16px}}
 </style>
 </div></body></html>{{end}}

@@ -43,7 +43,7 @@
       return node.object && node.object.title || node.target || node.id;
     }
     function button(text, action) {
-      var el = element('button', text); el.type = 'button';
+      var el = element('button', text); el.type = 'button'; el.className = 'btn btn-sm';
       el.addEventListener('click', action); return el;
     }
     function synchronize() {
@@ -113,6 +113,7 @@
         var row = element('div'); row.className = 'navigation-row' + (entry.node.id === selected ? ' selected' : '');
         row.dataset.kind = entry.kind; row.draggable = true;
         var choose = button(label(entry.node), function () { selected = entry.node.id; renderTree(true); tree.querySelector('[data-node-id="'+selected+'"]').focus(); });
+        choose.className = 'btn btn-secondary';
         choose.dataset.nodeId = entry.node.id;
         row.appendChild(choose);
         if (data.personal) row.appendChild(element('small', labels[(data.origins || {})[entry.node.id] || 'personal']));

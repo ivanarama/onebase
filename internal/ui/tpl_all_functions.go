@@ -7,7 +7,7 @@ const tplAllFunctions = `
 <h2>{{t $.Lang "Все функции"}}</h2>
 <div style="margin-bottom:14px">
   <input id="af-search" type="text" placeholder="{{t $.Lang "Поиск по имени объекта..."}}" autofocus data-ob-af-search
-    style="width:100%;padding:9px 14px;border:1px solid #d0d7e3;border-radius:6px;font-size:14px">
+    style="width:100%;padding:9px 14px;border:1px solid var(--ob-af-border);border-radius:6px;font-size:14px;background:var(--ob-input-bg);color:var(--ob-text)">
 </div>
 
 {{if .HasPOS}}
@@ -93,14 +93,14 @@ const tplAllFunctions = `
 
 </main>
 <style>
-.af-group{margin-bottom:8px;border:1px solid #e2e8f0;border-radius:6px;overflow:hidden}
-.af-group-hd{padding:10px 14px;background:#f0f3f8;font-weight:600;font-size:13px;color:#1a3a6a;cursor:pointer;display:flex;align-items:center;gap:6px}
-.af-group-hd:hover{background:#e8eeff}
-.af-cnt{font-size:11px;color:#94a3b8;font-weight:400}
+.af-group{margin-bottom:8px;border:1px solid var(--ob-border);border-radius:6px;overflow:hidden}
+.af-group-hd{padding:10px 14px;background:var(--ob-af-hd-bg);font-weight:600;font-size:13px;color:var(--ob-af-hd-ink);cursor:pointer;display:flex;align-items:center;gap:6px}
+.af-group-hd:hover{background:var(--ob-af-hd-hover)}
+.af-cnt{font-size:11px;color:var(--ob-text-4);font-weight:400}
 .af-group-body{display:none;padding:4px 0}
 .af-group.open .af-group-body{display:block}
-.af-link{display:block;padding:7px 14px;font-size:13px;color:#334155;text-decoration:none}
-.af-link:hover{background:#f0f4ff;color:#1a4a80}
+.af-link{display:block;padding:7px 14px;font-size:13px;color:var(--ob-text-strong);text-decoration:none}
+.af-link:hover{background:var(--ob-hover-soft);color:var(--ob-link-hover)}
 .af-link.hidden{display:none}
 </style>
 <script>

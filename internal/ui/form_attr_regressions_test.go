@@ -227,14 +227,14 @@ func TestManagedFormRendersDeclaredScalarAttrWithoutWarning(t *testing.T) {
 		t.Fatalf("ExecuteTemplate: %v", err)
 	}
 	html := buf.String()
-	if strings.Contains(html, `name="Телефон" value="" placeholder="Телефон" style="background:#fef9c3"`) {
+	if strings.Contains(html, `name="Телефон" value="" placeholder="Телефон" style="background:var(--ob-hint-bg)"`) {
 		t.Error("объявленный реквизит формы подсвечен как ненайденное поле")
 	}
 	if !strings.Contains(html, `name="Телефон"`) {
 		t.Error("поле объявленного реквизита формы не отрисовано")
 	}
 	// Опечатка в data_path по-прежнему видна.
-	if !strings.Contains(html, `name="Тлефон" value="" placeholder="Тлефон" style="background:#fef9c3"`) {
+	if !strings.Contains(html, `name="Тлефон" value="" placeholder="Тлефон" style="background:var(--ob-hint-bg)"`) {
 		t.Error("необъявленный data_path потерял предупреждающую подсветку")
 	}
 }

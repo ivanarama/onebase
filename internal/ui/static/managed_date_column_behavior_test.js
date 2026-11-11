@@ -78,7 +78,7 @@ test('старые метки с зоной разбираются тексто�
 
 test('не-дата показывается красным, а не как обычный текст', () => {
   const out = obManagedFormatDate('не дата');
-  assert.match(out, /color:#dc2626/);
+  assert.match(out, /color:var\(--ob-error-text\)/);
   assert.match(out, /не дата/);
 });
 

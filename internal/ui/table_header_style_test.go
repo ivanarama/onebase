@@ -139,7 +139,7 @@ func checkHeaderRules(t *testing.T, page, body string, selectors ...string) {
 			t.Errorf("%s: в стилях нет правила %s", page, sel)
 			continue
 		}
-		for _, want := range []string{"background:#eef2f7", "color:#334155", "font-weight:600", "border-bottom:2px solid #cbd5e1"} {
+		for _, want := range []string{"background:var(--ob-head-bg)", "color:var(--ob-text-strong)", "font-weight:600", "border-bottom:2px solid var(--ob-border-2)"} {
 			if !strings.Contains(rule, want) {
 				t.Errorf("%s, шапка %s: нет %s в %q", page, sel, want, strings.TrimSpace(rule))
 			}

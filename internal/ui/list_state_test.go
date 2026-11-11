@@ -60,7 +60,7 @@ func renderListState(t *testing.T, query url.Values, params storage.ListParams, 
 
 var (
 	viewBtnRe     = regexp.MustCompile(`<a class="view-btn[^"]*" href="([^"]*)"`)
-	clearBtnRe    = regexp.MustCompile(`<a class="btn btn-sm" href="([^"]*)" style="background:#e2e8f0;color:#475569;align-self:center">`)
+	clearBtnRe    = regexp.MustCompile(`<a class="btn btn-sm" href="([^"]*)" style="background:var\(--ob-btn-2-bg\);color:var\(--ob-text-2\);align-self:center">`)
 	sortLinkRe    = regexp.MustCompile(`<a href="(\?[^"]*sort=[^"]*)"`)
 	hiddenInputRe = regexp.MustCompile(`<input type="hidden" name="([^"]*)" value="([^"]*)">`)
 )
@@ -220,7 +220,7 @@ func TestListFilterFormKeepsSearch(t *testing.T) {
 		}
 	}
 
-	reset := regexp.MustCompile(`<a class="btn btn-sm" href="([^"]*)" style="background:#e2e8f0;color:#475569">`).FindStringSubmatch(page)
+	reset := regexp.MustCompile(`<a class="btn btn-sm" href="([^"]*)" style="background:var\(--ob-btn-2-bg\);color:var\(--ob-text-2\)">`).FindStringSubmatch(page)
 	if reset == nil {
 		t.Fatal("в панели отбора нет ссылки «Сбросить»")
 	}

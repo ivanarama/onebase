@@ -7,10 +7,10 @@ const tplQueryConsole = `
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
   <h2 style="margin:0">{{t $.Lang "Консоль запросов"}}</h2>
   <div style="display:flex;gap:8px;align-items:center">
-    <button data-ob-qc-action="exec" class="btn" style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px">{{t $.Lang "▶ Выполнить"}}</button>
-    <button data-ob-qc-action="toggle-builder" class="btn" style="background:#e2e8f0;color:#475569;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px" id="qc-builder-btn">{{t $.Lang "Конструктор"}}</button>
-    <button data-ob-qc-action="clear" style="background:none;border:1px solid #e2e8f0;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px;color:#64748b">{{t $.Lang "Очистить"}}</button>
-    <span id="qc-status" style="font-size:12px;color:#64748b"></span>
+    <button data-ob-qc-action="exec" class="btn" style="background:var(--ob-accent);color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px">{{t $.Lang "▶ Выполнить"}}</button>
+    <button data-ob-qc-action="toggle-builder" class="btn" style="background:var(--ob-btn-2-bg);color:var(--ob-text-2);border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px" id="qc-builder-btn">{{t $.Lang "Конструктор"}}</button>
+    <button data-ob-qc-action="clear" style="background:none;border:1px solid var(--ob-border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px;color:var(--ob-text-3)">{{t $.Lang "Очистить"}}</button>
+    <span id="qc-status" style="font-size:12px;color:var(--ob-text-3)"></span>
   </div>
 </div>
 
@@ -26,12 +26,12 @@ const tplQueryConsole = `
   <option value="">{{t $.Lang "— выбрать —"}}</option>
 </select>
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-  <span style="font-size:12px;color:#64748b;flex-shrink:0;width:70px">{{t $.Lang "Псевдоним:"}}</span>
+  <span style="font-size:12px;color:var(--ob-text-3);flex-shrink:0;width:70px">{{t $.Lang "Псевдоним:"}}</span>
   <input id="qb-main-alias" type="text" placeholder="{{t $.Lang "напр. Прод"}}" data-ob-qb-main-alias
-    style="width:110px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px 6px">
+    style="width:110px;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px 6px">
 </div>
 <div id="qb-vt-param" style="display:none;margin-top:4px">
-  <label style="font-size:12px;color:#64748b">{{t $.Lang "Параметры виртуальной таблицы"}}</label>
+  <label style="font-size:12px;color:var(--ob-text-3)">{{t $.Lang "Параметры виртуальной таблицы"}}</label>
   <input id="qb-vt-param-val" type="text" data-ob-qb-vt-param style="width:100%;margin-top:4px" placeholder="{{t $.Lang "например: &НаДату"}}">
 </div>
 </div>
@@ -39,17 +39,17 @@ const tplQueryConsole = `
 <div class="card" style="margin-bottom:10px">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Соединения"}}</h3>
-  <button data-ob-qb-action="add-join" style="background:#dbeafe;color:#1d4ed8;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "+ Добавить"}}</button>
+  <button data-ob-qb-action="add-join" style="background:var(--ob-chip-hover);color:var(--ob-link-2);border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "+ Добавить"}}</button>
 </div>
-<div id="qb-joins"><p style="font-size:12px;color:#94a3b8;margin:0" id="qb-joins-hint">{{t $.Lang "Нет соединений"}}</p></div>
+<div id="qb-joins"><p style="font-size:12px;color:var(--ob-text-4);margin:0" id="qb-joins-hint">{{t $.Lang "Нет соединений"}}</p></div>
 </div>
 
 <div class="card" style="margin-bottom:10px">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Поля (ВЫБРАТЬ)"}}</h3>
   <div style="display:flex;gap:4px">
-    <button data-ob-qb-action="all-fields" data-ob-qb-all-fields="true" style="background:#e2e8f0;color:#475569;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "Все"}}</button>
-    <button data-ob-qb-action="all-fields" data-ob-qb-all-fields="false" style="background:#e2e8f0;color:#475569;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "Сброс"}}</button>
+    <button data-ob-qb-action="all-fields" data-ob-qb-all-fields="true" style="background:var(--ob-btn-2-bg);color:var(--ob-text-2);border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "Все"}}</button>
+    <button data-ob-qb-action="all-fields" data-ob-qb-all-fields="false" style="background:var(--ob-btn-2-bg);color:var(--ob-text-2);border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "Сброс"}}</button>
   </div>
 </div>
 <div id="qb-fields-list" style="max-height:200px;overflow-y:auto"></div>
@@ -58,7 +58,7 @@ const tplQueryConsole = `
 <div class="card" style="margin-bottom:10px">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Условия (ГДЕ)"}}</h3>
-  <button data-ob-qb-action="add-cond" style="background:#dbeafe;color:#1d4ed8;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "+ Условие"}}</button>
+  <button data-ob-qb-action="add-cond" style="background:var(--ob-chip-hover);color:var(--ob-link-2);border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "+ Условие"}}</button>
 </div>
 <div id="qb-conds"></div>
 </div>
@@ -66,7 +66,7 @@ const tplQueryConsole = `
 <div class="card">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Сортировка"}}</h3>
-  <button data-ob-qb-action="add-order" style="background:#dbeafe;color:#1d4ed8;border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "+ Поле"}}</button>
+  <button data-ob-qb-action="add-order" style="background:var(--ob-chip-hover);color:var(--ob-link-2);border:none;border-radius:4px;padding:2px 8px;font-size:12px;cursor:pointer">{{t $.Lang "+ Поле"}}</button>
 </div>
 <div id="qb-orders"></div>
 </div>
@@ -76,22 +76,22 @@ const tplQueryConsole = `
 <div>
 <div class="card">
 <h3 style="margin-top:0">{{t $.Lang "Параметры запроса"}}</h3>
-<p style="font-size:12px;color:#64748b;margin-bottom:8px">{{t $.Lang "Значения &Параметров для выполнения"}}</p>
+<p style="font-size:12px;color:var(--ob-text-3);margin-bottom:8px">{{t $.Lang "Значения &Параметров для выполнения"}}</p>
 <div id="qb-params" style="font-size:13px">—</div>
 <div style="margin-top:12px">
-  <button data-ob-qb-action="apply-editor" style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px">{{t $.Lang "Применить к редактору"}}</button>
+  <button data-ob-qb-action="apply-editor" style="background:var(--ob-accent);color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px">{{t $.Lang "Применить к редактору"}}</button>
 </div>
 </div>
 </div>
 
-<div id="qb-debug" style="display:none;background:#fef3c7;color:#92400e;font-size:12px;padding:6px 10px;border-radius:4px;margin-bottom:8px;max-height:120px;overflow-y:auto;white-space:pre-wrap"></div>
+<div id="qb-debug" style="display:none;background:var(--ob-amber-bg);color:var(--ob-amber-ink);font-size:12px;padding:6px 10px;border-radius:4px;margin-bottom:8px;max-height:120px;overflow-y:auto;white-space:pre-wrap"></div>
 </div><!-- /grid -->
 </div><!-- /qc-builder -->
 
 <!-- Monaco editor -->
 <div class="card" style="margin-bottom:12px">
-<div id="qc-editor" style="height:260px;border:1px solid #e2e8f0;border-radius:6px"></div>
-<textarea id="qc-textarea" style="display:none;width:100%;height:260px;font-family:Consolas,monospace;font-size:14px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;box-sizing:border-box;resize:vertical">ВЫБРАТЬ *
+<div id="qc-editor" style="height:260px;border:1px solid var(--ob-border);border-radius:6px"></div>
+<textarea id="qc-textarea" style="display:none;width:100%;height:260px;font-family:Consolas,monospace;font-size:14px;padding:10px;border:1px solid var(--ob-border);border-radius:6px;box-sizing:border-box;resize:vertical">ВЫБРАТЬ *
 ИЗ </textarea>
 </div>
 
@@ -99,16 +99,16 @@ const tplQueryConsole = `
 <div class="card" style="margin-bottom:12px" id="qc-params-card">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Параметры"}}</h3>
-  <button data-ob-qc-action="detect-params" style="background:#dbeafe;color:#1d4ed8;border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px">{{t $.Lang "Заполнить из запроса"}}</button>
+  <button data-ob-qc-action="detect-params" style="background:var(--ob-chip-hover);color:var(--ob-link-2);border:none;border-radius:4px;padding:4px 12px;cursor:pointer;font-size:12px">{{t $.Lang "Заполнить из запроса"}}</button>
 </div>
-<div id="qc-params" style="font-size:13px"><span style="color:#94a3b8">{{t $.Lang "Нажмите «Заполнить из запроса» или введите вручную"}}</span></div>
+<div id="qc-params" style="font-size:13px"><span style="color:var(--ob-text-4)">{{t $.Lang "Нажмите «Заполнить из запроса» или введите вручную"}}</span></div>
 </div>
 
 <!-- Results -->
 <div class="card" id="qc-results-card" style="display:none">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Результат"}}</h3>
-  <span id="qc-result-info" style="font-size:12px;color:#64748b"></span>
+  <span id="qc-result-info" style="font-size:12px;color:var(--ob-text-3)"></span>
 </div>
 <div style="overflow-x:auto;max-height:400px;overflow-y:auto">
 <table id="qc-result-table" class="tbl" style="font-size:13px;white-space:nowrap">
@@ -118,8 +118,8 @@ const tplQueryConsole = `
 </div>
 </div>
 
-<div id="qc-error" class="card" style="display:none;border-color:#fca5a5;background:#fef2f2">
-  <pre style="margin:0;font-size:13px;color:#991b1b;white-space:pre-wrap"></pre>
+<div id="qc-error" class="card" style="display:none;border-color:var(--ob-red-border);background:var(--ob-error-bg)">
+  <pre style="margin:0;font-size:13px;color:var(--ob-danger-ink);white-space:pre-wrap"></pre>
 </div>
 
 </main>
@@ -177,13 +177,13 @@ function qcToggleBuilder() {
   var btn = document.getElementById('qc-builder-btn');
   if (el.style.display === 'none') {
     el.style.display = '';
-    btn.style.background = '#3b82f6';
+    btn.style.background = 'var(--ob-accent)';
     btn.style.color = '#fff';
     qcParseQueryToBuilder();
   } else {
     qbApplyToEditor();
     el.style.display = 'none';
-    btn.style.background = '#e2e8f0';
+    btn.style.background = 'var(--ob-btn-2-bg)';
     btn.style.color = '#475569';
   }
 }
@@ -256,7 +256,7 @@ function qcParseQueryToBuilder() {
   }
   if (!_joins.length) {
     document.getElementById('qb-joins').innerHTML =
-      '<p style="font-size:12px;color:#94a3b8;margin:0" id="qb-joins-hint">Нет соединений</p>';
+      '<p style="font-size:12px;color:var(--ob-text-4);margin:0" id="qb-joins-hint">Нет соединений</p>';
   }
 
   // 3. Parse SELECT fields
@@ -447,7 +447,7 @@ function qcClear() {
   qcSetValue('ВЫБРАТЬ *\nИЗ ');
   document.getElementById('qc-results-card').style.display = 'none';
   document.getElementById('qc-error').style.display = 'none';
-  document.getElementById('qc-params').innerHTML = '<span style="color:#94a3b8">Нажмите «Заполнить из запроса» или введите вручную</span>';
+  document.getElementById('qc-params').innerHTML = '<span style="color:var(--ob-text-4)">Нажмите «Заполнить из запроса» или введите вручную</span>';
 }
 
 function qcDetectParams() {
@@ -458,7 +458,7 @@ function qcDetectParams() {
   while ((m = re.exec(code)) !== null) { found[m[1]] = true; }
   var names = Object.keys(found);
   if (!names.length) {
-    document.getElementById('qc-params').innerHTML = '<span style="color:#94a3b8">Параметры не найдены</span>';
+    document.getElementById('qc-params').innerHTML = '<span style="color:var(--ob-text-4)">Параметры не найдены</span>';
     return;
   }
   // Ask backend to detect types
@@ -484,20 +484,20 @@ function qcDetectParams() {
       else if (t.indexOf('reference:') === 0) hint = t.replace('reference:', '');
       else hint = 'Строка';
       html += '<div class="qc-param-row" data-type="'+t+'" data-name="'+escHtml(name)+'" style="display:flex;gap:8px;align-items:center;margin-bottom:6px">'
-        + '<span style="width:140px;font-size:13px;font-weight:600;color:#334155">&amp;'+escHtml(name)+'</span>'
-        + '<span style="font-size:11px;color:#94a3b8;min-width:90px">'+escHtml(hint)+'</span>';
+        + '<span style="width:140px;font-size:13px;font-weight:600;color:var(--ob-text-strong)">&amp;'+escHtml(name)+'</span>'
+        + '<span style="font-size:11px;color:var(--ob-text-4);min-width:90px">'+escHtml(hint)+'</span>';
       if (t.indexOf('reference:') === 0) {
         var entityType = t.replace('reference:', '');
         html += '<div style="flex:1;display:flex;gap:4px;position:relative">'
           + '<div style="flex:1;position:relative">'
-          + '<input class="qc-pn" autocomplete="off" placeholder="введите для поиска" style="width:100%;box-sizing:border-box;font-size:13px;border:1px solid #e2e8f0;border-radius:4px;padding:4px 8px">'
+          + '<input class="qc-pn" autocomplete="off" placeholder="введите для поиска" style="width:100%;box-sizing:border-box;font-size:13px;border:1px solid var(--ob-border);border-radius:4px;padding:4px 8px">'
           + '<input class="qc-pv" type="hidden" value="'+escHtml(prev)+'">'
-          + '<div class="qc-suggest-list" style="display:none;position:absolute;top:100%;left:0;right:0;border:1px solid #e2e8f0;border-radius:4px;background:#fff;z-index:100;max-height:180px;overflow-y:auto;box-shadow:0 4px 8px rgba(0,0,0,.12)"></div>'
+          + '<div class="qc-suggest-list" style="display:none;position:absolute;top:100%;left:0;right:0;border:1px solid var(--ob-border);border-radius:4px;background:var(--ob-surface);z-index:100;max-height:180px;overflow-y:auto;box-shadow:0 4px 8px rgba(0,0,0,.12)"></div>'
           + '</div>'
-          + '<button type="button" data-ob-qc-open-picker data-ob-qc-picker-entity="'+escHtml(entityType)+'" title="Выбрать из справочника" style="padding:4px 8px;font-size:13px;border:1px solid #e2e8f0;border-radius:4px;background:#f8fafc;cursor:pointer;white-space:nowrap">...</button>'
+          + '<button type="button" data-ob-qc-open-picker data-ob-qc-picker-entity="'+escHtml(entityType)+'" title="Выбрать из справочника" style="padding:4px 8px;font-size:13px;border:1px solid var(--ob-border);border-radius:4px;background:var(--ob-surface-2);cursor:pointer;white-space:nowrap">...</button>'
           + '</div>';
       } else {
-        html += '<input class="qc-pv" value="'+escHtml(prev)+'" placeholder="значение" style="flex:1;font-size:13px;border:1px solid #e2e8f0;border-radius:4px;padding:4px 8px">';
+        html += '<input class="qc-pv" value="'+escHtml(prev)+'" placeholder="значение" style="flex:1;font-size:13px;border:1px solid var(--ob-border);border-radius:4px;padding:4px 8px">';
       }
       html += '</div>';
     });
@@ -511,9 +511,9 @@ function qcDetectParams() {
         if ((row.dataset.name || '') === name) prev = row.querySelector('.qc-pv').value;
       });
       html += '<div class="qc-param-row" data-type="string" data-name="'+escHtml(name)+'" style="display:flex;gap:8px;align-items:center;margin-bottom:6px">'
-        + '<span style="width:140px;font-size:13px;font-weight:600;color:#334155">&amp;'+escHtml(name)+'</span>'
-        + '<span style="font-size:11px;color:#94a3b8;width:60px">Строка</span>'
-        + '<input class="qc-pv" value="'+escHtml(prev)+'" placeholder="значение" style="flex:1;font-size:13px;border:1px solid #e2e8f0;border-radius:4px;padding:4px 8px">'
+        + '<span style="width:140px;font-size:13px;font-weight:600;color:var(--ob-text-strong)">&amp;'+escHtml(name)+'</span>'
+        + '<span style="font-size:11px;color:var(--ob-text-4);width:60px">Строка</span>'
+        + '<input class="qc-pv" value="'+escHtml(prev)+'" placeholder="значение" style="flex:1;font-size:13px;border:1px solid var(--ob-border);border-radius:4px;padding:4px 8px">'
         + '</div>';
     });
     document.getElementById('qc-params').innerHTML = html;
@@ -554,7 +554,7 @@ function qbSetSource(id){
   document.getElementById('qb-conds').innerHTML = '';
   document.getElementById('qb-orders').innerHTML = '';
   _joins = [];
-  document.getElementById('qb-joins').innerHTML = '<p style="font-size:12px;color:#94a3b8;margin:0" id="qb-joins-hint">Нет соединений</p>';
+  document.getElementById('qb-joins').innerHTML = '<p style="font-size:12px;color:var(--ob-text-4);margin:0" id="qb-joins-hint">Нет соединений</p>';
   document.getElementById('qb-main-alias').value = '';
   var vtDiv = document.getElementById('qb-vt-param');
   if(src && src.vtParam){ vtDiv.style.display=''; document.getElementById('qb-vt-param-val').value=src.vtParam; }
@@ -600,16 +600,16 @@ function qbAddJoin(){
   var jid = Date.now();
   var div = document.createElement('div');
   div.dataset.jid = jid;
-  div.style.cssText = 'border:1px solid #e2e8f0;border-radius:6px;padding:8px;margin-bottom:8px;background:#f8fafc';
+  div.style.cssText = 'border:1px solid var(--ob-border);border-radius:6px;padding:8px;margin-bottom:8px;background:var(--ob-surface-2)';
   var row1 = document.createElement('div');
   row1.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap';
   var typeSel = document.createElement('select');
-  typeSel.style.cssText = 'width:126px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px 4px';
+  typeSel.style.cssText = 'width:126px;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px 4px';
   [['ЛЕВОЕ','⬅ ЛЕВОЕ'],['ВНУТРЕННЕЕ','✕ ВНУТРЕННЕЕ'],['ПРАВОЕ','➡ ПРАВОЕ'],['ПОЛНОЕ','⟺ ПОЛНОЕ']].forEach(function(x){
     var o = document.createElement('option'); o.value=x[0]; o.textContent=x[1]; typeSel.appendChild(o);
   });
   var srcSel = document.createElement('select');
-  srcSel.style.cssText = 'flex:1;min-width:140px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px 4px';
+  srcSel.style.cssText = 'flex:1;min-width:140px;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px 4px';
   var o0 = document.createElement('option'); o0.value=''; o0.textContent='— источник —'; srcSel.appendChild(o0);
   var jgroups = {};
   _schema.forEach(function(s){ if(!jgroups[s.group]) jgroups[s.group]=[]; jgroups[s.group].push(s); });
@@ -620,21 +620,21 @@ function qbAddJoin(){
   });
   var aliasInp = document.createElement('input');
   aliasInp.type='text'; aliasInp.placeholder='Псевдоним';
-  aliasInp.style.cssText = 'width:86px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px 4px';
+  aliasInp.style.cssText = 'width:86px;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px 4px';
   var del = document.createElement('button');
   del.type='button'; del.textContent='×';
-  del.style.cssText = 'background:none;border:none;color:#ef4444;cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;padding:0 2px';
+  del.style.cssText = 'background:none;border:none;color:var(--ob-danger);cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;padding:0 2px';
   del.addEventListener('click', function(){
     div.remove(); _joins=_joins.filter(function(j){ return j.id!==jid; });
-    if(!_joins.length) document.getElementById('qb-joins').innerHTML='<p style="font-size:12px;color:#94a3b8;margin:0" id="qb-joins-hint">Нет соединений</p>';
+    if(!_joins.length) document.getElementById('qb-joins').innerHTML='<p style="font-size:12px;color:var(--ob-text-4);margin:0" id="qb-joins-hint">Нет соединений</p>';
     qbRebuildAllFields();
   });
   row1.appendChild(typeSel); row1.appendChild(srcSel); row1.appendChild(aliasInp); row1.appendChild(del);
   var row2 = document.createElement('div');
   row2.style.cssText = 'display:flex;gap:6px;align-items:center';
-  var onLabel = document.createElement('span'); onLabel.textContent='ПО:'; onLabel.style.cssText='font-size:12px;font-weight:600;color:#475569;flex-shrink:0;width:26px';
+  var onLabel = document.createElement('span'); onLabel.textContent='ПО:'; onLabel.style.cssText='font-size:12px;font-weight:600;color:var(--ob-text-2);flex-shrink:0;width:26px';
   var onInp = document.createElement('input'); onInp.type='text'; onInp.placeholder='Псевд1.Поле = Псевд2.Ссылка';
-  onInp.style.cssText = 'flex:1;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px 6px';
+  onInp.style.cssText = 'flex:1;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px 6px';
   row2.appendChild(onLabel); row2.appendChild(onInp);
   div.appendChild(row1); div.appendChild(row2);
   document.getElementById('qb-joins').appendChild(div);
@@ -653,7 +653,7 @@ function qbAddJoin(){
 function renderFields(){
   var div = document.getElementById('qb-fields-list');
   div.innerHTML = '';
-  if(!_curFields.length){ div.innerHTML='<p style="font-size:12px;color:#94a3b8;margin:4px 0">Сначала выберите источник</p>'; return; }
+  if(!_curFields.length){ div.innerHTML='<p style="font-size:12px;color:var(--ob-text-4);margin:4px 0">Сначала выберите источник</p>'; return; }
   var lastPrefix = null;
   _curFields.forEach(function(f){
     var dotIdx = f.name.indexOf('.');
@@ -661,7 +661,7 @@ function renderFields(){
     if(prefix && prefix !== lastPrefix){
       lastPrefix = prefix;
       var sep = document.createElement('div');
-      sep.style.cssText = 'font-size:11px;font-weight:600;color:#64748b;margin:6px 0 2px;padding-left:2px;border-top:1px solid #f1f5f9;padding-top:4px';
+      sep.style.cssText = 'font-size:11px;font-weight:600;color:var(--ob-text-3);margin:6px 0 2px;padding-left:2px;border-top:1px solid var(--ob-surface-3);padding-top:4px';
       sep.textContent = prefix;
       div.appendChild(sep);
     }
@@ -674,14 +674,14 @@ function renderFields(){
     lbl.title = f.name; lbl.style.cssText='flex:1;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
     lbl.addEventListener('click', function(){ chk.click(); });
     var aggSel = document.createElement('select');
-    aggSel.style.cssText = 'font-size:11px;padding:1px 3px;border:1px solid #e2e8f0;border-radius:4px;width:90px';
+    aggSel.style.cssText = 'font-size:11px;padding:1px 3px;border:1px solid var(--ob-border);border-radius:4px;width:90px';
     ['','СУММА','КОЛИЧЕСТВО','МИНИМУМ','МАКСИМУМ','СРЕДНЕЕ'].forEach(function(a){
       var o=document.createElement('option'); o.value=a; o.textContent=a||'— нет —'; aggSel.appendChild(o);
     });
     if(_selFields[f.name]) aggSel.value=_selFields[f.name].agg||'';
     aggSel.addEventListener('change', function(){ if(_selFields[f.name]) _selFields[f.name].agg=aggSel.value; qbGenerate(); });
     var aliasInp = document.createElement('input'); aliasInp.type='text'; aliasInp.placeholder='КАК';
-    aliasInp.style.cssText='font-size:11px;width:70px;padding:1px 4px;border:1px solid #e2e8f0;border-radius:4px';
+    aliasInp.style.cssText='font-size:11px;width:70px;padding:1px 4px;border:1px solid var(--ob-border);border-radius:4px';
     if(_selFields[f.name]) aliasInp.value=_selFields[f.name].alias||'';
     aliasInp.addEventListener('input', function(){ if(_selFields[f.name]) _selFields[f.name].alias=aliasInp.value.trim(); qbGenerate(); });
     row.appendChild(chk); row.appendChild(lbl); row.appendChild(aggSel); row.appendChild(aliasInp);
@@ -701,20 +701,20 @@ function qbAddCond(){
   var div = document.createElement('div');
   div.style.cssText = 'display:flex;gap:4px;margin-bottom:6px;align-items:center;flex-wrap:wrap';
   var fsel = document.createElement('select');
-  fsel.style.cssText = 'flex:1;min-width:100px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px';
+  fsel.style.cssText = 'flex:1;min-width:100px;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px';
   _curFields.forEach(function(f){ var o=document.createElement('option'); o.value=f.name; o.textContent=f.name; fsel.appendChild(o); });
   var opSel = document.createElement('select');
-  opSel.style.cssText = 'width:100px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px';
+  opSel.style.cssText = 'width:100px;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px';
   ['=','<>','>','<','>=','<=','ЕСТЬ ПУСТО','НЕ ЕСТЬ ПУСТО','ПОДОБНО','В'].forEach(function(op){
     var o=document.createElement('option'); o.value=op; o.textContent=op; opSel.appendChild(o);
   });
   var valInp = document.createElement('input'); valInp.type='text'; valInp.placeholder='&Параметр или значение';
-  valInp.style.cssText = 'flex:1;min-width:80px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px 4px';
+  valInp.style.cssText = 'flex:1;min-width:80px;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px 4px';
   opSel.addEventListener('change', function(){ var noVal=opSel.value==='ЕСТЬ ПУСТО'||opSel.value==='НЕ ЕСТЬ ПУСТО'; valInp.style.display=noVal?'none':''; qbGenerate(); });
   fsel.addEventListener('change', function(){ qbGenerate(); });
   valInp.addEventListener('input', function(){ qbGenerate(); });
   var del = document.createElement('button'); del.type='button'; del.textContent='×';
-  del.style.cssText = 'background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;line-height:1';
+  del.style.cssText = 'background:none;border:none;color:var(--ob-danger);cursor:pointer;font-size:16px;line-height:1';
   del.addEventListener('click', function(){ div.remove(); qbGenerate(); });
   div.appendChild(fsel); div.appendChild(opSel); div.appendChild(valInp); div.appendChild(del);
   document.getElementById('qb-conds').appendChild(div);
@@ -725,13 +725,13 @@ function qbAddOrder(){
   var div = document.createElement('div');
   div.style.cssText = 'display:flex;gap:4px;margin-bottom:6px;align-items:center';
   var fsel = document.createElement('select');
-  fsel.style.cssText = 'flex:1;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px';
+  fsel.style.cssText = 'flex:1;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px';
   _curFields.forEach(function(f){ var o=document.createElement('option'); o.value=f.name; o.textContent=f.name; fsel.appendChild(o); });
   var dirSel = document.createElement('select');
-  dirSel.style.cssText = 'width:80px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px';
+  dirSel.style.cssText = 'width:80px;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px';
   [['ВОЗР','↑ ВОЗР'],['УБЫВ','↓ УБЫВ']].forEach(function(x){ var o=document.createElement('option'); o.value=x[0]; o.textContent=x[1]; dirSel.appendChild(o); });
   var del = document.createElement('button'); del.type='button'; del.textContent='×';
-  del.style.cssText = 'background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;line-height:1';
+  del.style.cssText = 'background:none;border:none;color:var(--ob-danger);cursor:pointer;font-size:16px;line-height:1';
   del.addEventListener('click', function(){ div.remove(); qbGenerate(); });
   fsel.addEventListener('change', function(){ qbGenerate(); });
   dirSel.addEventListener('change', function(){ qbGenerate(); });
@@ -809,8 +809,8 @@ function qbGenerate(){
     var row = document.createElement('div');
     row.className = 'qc-param-row';
     row.style.cssText = 'display:flex;gap:8px;align-items:center;margin-bottom:6px';
-    row.innerHTML = '<input class="qc-pk" value="'+p+'" readonly style="width:120px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:4px 6px;background:#f1f5f9">'
-      + '<input class="qc-pv" placeholder="значение" style="flex:1;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:4px 6px">';
+    row.innerHTML = '<input class="qc-pk" value="'+p+'" readonly style="width:120px;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:4px 6px;background:var(--ob-surface-3)">'
+      + '<input class="qc-pv" placeholder="значение" style="flex:1;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:4px 6px">';
     paramDiv.appendChild(row);
   });
 
@@ -913,7 +913,7 @@ document.addEventListener('input', function(e) {
         var id = String(item.id || '');
         var label = escHtml(qcItemLabel(item));
         html += '<div class="qc-suggest-item" data-id="' + escHtml(id) + '" data-label="' + label + '"'
-          + ' style="padding:6px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid #f1f5f9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
+          + ' style="padding:6px 10px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--ob-surface-3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'
           + label + '</div>';
       });
       list.innerHTML = html;
@@ -945,10 +945,10 @@ function qcOpenPicker(btn, entityType) {
     modal = document.createElement('div');
     modal.id = 'qc-picker-modal';
     modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:1000;display:flex;align-items:center;justify-content:center';
-    modal.innerHTML = '<div style="background:#fff;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.2);width:480px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column">'
-      + '<div style="padding:12px 16px;border-bottom:1px solid #e2e8f0;display:flex;gap:8px;align-items:center">'
-      + '<input id="qc-picker-q" placeholder="Поиск..." autocomplete="off" style="flex:1;font-size:14px;border:1px solid #e2e8f0;border-radius:4px;padding:6px 10px">'
-      + '<button type="button" data-ob-qc-picker-close style="background:none;border:none;font-size:18px;cursor:pointer;color:#94a3b8;padding:0 4px">&times;</button>'
+    modal.innerHTML = '<div style="background:var(--ob-surface);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.2);width:480px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column">'
+      + '<div style="padding:12px 16px;border-bottom:1px solid var(--ob-border);display:flex;gap:8px;align-items:center">'
+      + '<input id="qc-picker-q" placeholder="Поиск..." autocomplete="off" style="flex:1;font-size:14px;border:1px solid var(--ob-border);border-radius:4px;padding:6px 10px">'
+      + '<button type="button" data-ob-qc-picker-close style="background:none;border:none;font-size:18px;cursor:pointer;color:var(--ob-text-4);padding:0 4px">&times;</button>'
       + '</div>'
       + '<div id="qc-picker-list" style="overflow-y:auto;flex:1;min-height:80px"></div>'
       + '</div>';
@@ -963,7 +963,7 @@ function qcOpenPicker(btn, entityType) {
     document.getElementById('qc-picker-q').value = '';
   }
   document.getElementById('qc-picker-q').setAttribute('data-ob-qc-picker-entity', entityType);
-  document.getElementById('qc-picker-list').innerHTML = '<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">Загрузка...</div>';
+  document.getElementById('qc-picker-list').innerHTML = '<div style="padding:16px;text-align:center;color:var(--ob-text-4);font-size:13px">Загрузка...</div>';
   qcPickerSearch(entityType, '');
 }
 
@@ -975,7 +975,7 @@ function qcPickerSearch(entityType, q) {
     .then(function(data) {
       var items = data.items || [];
       if (!items.length) {
-        list.innerHTML = '<div style="padding:16px;text-align:center;color:#94a3b8;font-size:13px">Ничего не найдено</div>';
+        list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--ob-text-4);font-size:13px">Ничего не найдено</div>';
         return;
       }
       var html = '';
@@ -983,9 +983,9 @@ function qcPickerSearch(entityType, q) {
         var id = String(item.id || '');
         var label = qcItemLabel(item);
         html += '<div class="qc-picker-item" data-id="' + escHtml(id) + '" data-label="' + escHtml(label) + '"'
-          + ' style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid #f8fafc;display:flex;gap:12px;align-items:center">';
+          + ' style="padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--ob-surface-2);display:flex;gap:12px;align-items:center">';
         if (item.code != null) {
-          html += '<span style="color:#94a3b8;font-size:11px;min-width:60px">' + escHtml(String(item.code)) + '</span>';
+          html += '<span style="color:var(--ob-text-4);font-size:11px;min-width:60px">' + escHtml(String(item.code)) + '</span>';
           html += '<span>' + escHtml(String(item.name || '')) + '</span>';
         } else {
           html += '<span>' + escHtml(String(item.name || id)) + '</span>';
@@ -994,7 +994,7 @@ function qcPickerSearch(entityType, q) {
       });
       list.innerHTML = html;
     }).catch(function() {
-      list.innerHTML = '<div style="padding:16px;text-align:center;color:#ef4444;font-size:13px">Ошибка загрузки</div>';
+      list.innerHTML = '<div style="padding:16px;text-align:center;color:var(--ob-danger);font-size:13px">Ошибка загрузки</div>';
     });
 }
 
@@ -1019,14 +1019,14 @@ const tplCodeConsole = `
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
   <h2 style="margin:0">{{t $.Lang "Консоль кода"}}</h2>
   <div style="display:flex;gap:8px;align-items:center">
-    <button data-ob-cc-action="exec" class="btn" style="background:#3b82f6;color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px">{{t $.Lang "▶ Выполнить"}}</button>
-    <button data-ob-cc-action="clear" style="background:none;border:1px solid #e2e8f0;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px;color:#64748b">{{t $.Lang "Очистить"}}</button>
+    <button data-ob-cc-action="exec" class="btn" style="background:var(--ob-accent);color:#fff;border:none;border-radius:6px;padding:6px 16px;cursor:pointer;font-size:13px">{{t $.Lang "▶ Выполнить"}}</button>
+    <button data-ob-cc-action="clear" style="background:none;border:1px solid var(--ob-border);border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px;color:var(--ob-text-3)">{{t $.Lang "Очистить"}}</button>
   </div>
 </div>
 
 <div class="card" style="margin-bottom:12px">
-<div id="cc-editor" style="height:320px;border:1px solid #e2e8f0;border-radius:6px"></div>
-<textarea id="cc-textarea" style="display:none;width:100%;height:320px;font-family:'Cascadia Code',Consolas,monospace;font-size:13px;padding:10px;border:1px solid #e2e8f0;border-radius:6px;box-sizing:border-box;resize:vertical;tab-size:2">// Введите DSL-код
+<div id="cc-editor" style="height:320px;border:1px solid var(--ob-border);border-radius:6px"></div>
+<textarea id="cc-textarea" style="display:none;width:100%;height:320px;font-family:'Cascadia Code',Consolas,monospace;font-size:13px;padding:10px;border:1px solid var(--ob-border);border-radius:6px;box-sizing:border-box;resize:vertical;tab-size:2">// Введите DSL-код
 Сообщить("Привет из консоли!");
 </textarea>
 </div>
@@ -1034,9 +1034,9 @@ const tplCodeConsole = `
 <div class="card">
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
   <h3 style="margin:0">{{t $.Lang "Результат"}}</h3>
-  <button data-ob-cc-action="clear-output" style="background:none;border:1px solid #e2e8f0;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px;color:#64748b">{{t $.Lang "Очистить"}}</button>
+  <button data-ob-cc-action="clear-output" style="background:none;border:1px solid var(--ob-border);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px;color:var(--ob-text-3)">{{t $.Lang "Очистить"}}</button>
 </div>
-<div id="cc-output" style="background:#1e293b;color:#e2e8f0;font-family:'Cascadia Code',Consolas,monospace;font-size:13px;padding:12px 16px;border-radius:6px;min-height:120px;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-word"></div>
+<div id="cc-output" style="background:var(--ob-nav-bg);color:var(--ob-btn-2-bg);font-family:'Cascadia Code',Consolas,monospace;font-size:13px;padding:12px 16px;border-radius:6px;min-height:120px;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-word"></div>
 </div>
 
 </main>
@@ -1088,7 +1088,7 @@ if(typeof require !== 'undefined') {
 function ccExec() {
   var code = window.ccEditor ? window.ccEditor.getValue() : document.getElementById('cc-textarea').value;
   var out = document.getElementById('cc-output');
-  out.innerHTML += '<div style="color:#94a3b8;border-bottom:1px solid #334155;padding:2px 0;font-size:11px">--- ' + new Date().toLocaleTimeString() + ' ---</div>';
+  out.innerHTML += '<div style="color:var(--ob-text-4);border-bottom:1px solid #334155;padding:2px 0;font-size:11px">--- ' + new Date().toLocaleTimeString() + ' ---</div>';
   fetch('/ui/dev/code-exec', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -1100,14 +1100,14 @@ function ccExec() {
       });
     }
     if(data.error) {
-      out.innerHTML += '<div style="color:#fca5a5">' + escHtml(data.error) + '</div>';
+      out.innerHTML += '<div style="color:var(--ob-red-border)">' + escHtml(data.error) + '</div>';
     }
     if((!data.output || !data.output.length) && !data.error) {
-      out.innerHTML += '<div style="color:#94a3b8">(без вывода)</div>';
+      out.innerHTML += '<div style="color:var(--ob-text-4)">(без вывода)</div>';
     }
     out.scrollTop = out.scrollHeight;
   }).catch(function(e) {
-    out.innerHTML += '<div style="color:#fca5a5">Ошибка сети: ' + e.message + '</div>';
+    out.innerHTML += '<div style="color:var(--ob-red-border)">Ошибка сети: ' + e.message + '</div>';
   });
 }
 

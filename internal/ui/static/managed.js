@@ -333,8 +333,8 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     const b = ensureBanner();
     const d = document.createElement('div');
     const palette = kind === 'err'
-      ? 'background:#fee2e2;color:#991b1b;border:1px solid #fecaca'
-      : 'background:#d1fae5;color:#065f46;border:1px solid #a7f3d0';
+      ? 'background:var(--ob-danger-hi);color:var(--ob-danger-ink);border:1px solid var(--ob-error-border)'
+      : 'background:var(--ob-emerald-bg);color:var(--ob-ok-text);border:1px solid var(--ob-ok-border)';
     d.style.cssText = palette + ';padding:8px 28px 8px 12px;border-radius:6px;font-size:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);pointer-events:auto;cursor:copy;position:relative;white-space:pre-wrap;word-break:break-word';
     const msg = document.createElement('span');
     msg.textContent = text;
@@ -346,7 +346,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       try {
         if (navigator.clipboard && navigator.clipboard.writeText) { navigator.clipboard.writeText(text); }
         else { const ta=document.createElement('textarea'); ta.value=text; document.body.appendChild(ta); ta.select(); document.execCommand('copy'); ta.remove(); }
-        const prev = d.style.boxShadow; d.style.boxShadow='0 0 0 2px #16a34a';
+        const prev = d.style.boxShadow; d.style.boxShadow='0 0 0 2px var(--ob-posted)';
         setTimeout(function(){ d.style.boxShadow=prev; }, 600);
       } catch(e){}
     };
@@ -808,7 +808,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
             pickBtn.title = 'Выбрать из списка';
             pickBtn.disabled = readOnly;
             pickBtn.setAttribute('data-ob-ref-picker', 'closest');
-            pickBtn.style.cssText = 'padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0';
+            pickBtn.style.cssText = 'padding:4px 8px;border:1px solid var(--ob-border);border-radius:5px;background:var(--ob-surface-2);cursor:pointer;font-size:12px;flex-shrink:0';
             wrapper.appendChild(pickBtn);
             if (tbody.getAttribute('data-tp-hide-ref-card') !== '1') {
               const openBtn = document.createElement('button');
@@ -817,7 +817,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
               openBtn.title = 'Открыть карточку';
               openBtn.setAttribute('data-ob-ref-current', 'closest');
               openBtn.setAttribute('data-ob-readonly-navigation', '1');
-              openBtn.style.cssText = 'padding:4px 7px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0';
+              openBtn.style.cssText = 'padding:4px 7px;border:1px solid var(--ob-border);border-radius:5px;background:var(--ob-surface-2);cursor:pointer;font-size:12px;flex-shrink:0';
               wrapper.appendChild(openBtn);
             }
             td.appendChild(wrapper);
@@ -851,7 +851,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
               const stale = document.createElement('option');
               stale.value = cur;
               stale.textContent = '⚠ ' + cur;
-              stale.style.color = '#dc2626';
+              stale.style.color = 'var(--ob-error-text)';
               stale.selected = true;
               sel.appendChild(stale);
             }
@@ -1644,17 +1644,17 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     overlay.setAttribute('aria-labelledby', 'ob-managed-close-confirm-title');
     overlay.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.42);z-index:12000;display:flex;align-items:center;justify-content:center;padding:16px';
     var box = document.createElement('div');
-    box.style.cssText = 'width:min(420px,100%);background:#fff;border-radius:12px;box-shadow:0 18px 50px rgba(15,23,42,.28);padding:22px';
+    box.style.cssText = 'width:min(420px,100%);background:var(--ob-surface);border-radius:12px;box-shadow:0 18px 50px rgba(15,23,42,.28);padding:22px';
     var title = document.createElement('div');
     title.id = 'ob-managed-close-confirm-title';
     title.textContent = closeMessage('dirtyTitle', 'Данные были изменены.');
-    title.style.cssText = 'font-size:16px;font-weight:650;color:#0f172a;margin-bottom:6px';
+    title.style.cssText = 'font-size:16px;font-weight:650;color:var(--ob-kpi-ink);margin-bottom:6px';
     var question = document.createElement('div');
     var processorForm = cfg.kind === 'processor';
     question.textContent = processorForm
       ? closeMessage('processorQuestion', 'Закрыть без сохранения?')
       : closeMessage('dirtyQuestion', 'Сохранить изменения?');
-    question.style.cssText = 'font-size:14px;color:#475569;margin-bottom:20px';
+    question.style.cssText = 'font-size:14px;color:var(--ob-text-2);margin-bottom:20px';
     var row = document.createElement('div');
     row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap';
     function button(label, value, primary){
@@ -1663,8 +1663,8 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       btn.textContent = label;
       btn.setAttribute('data-ob-close-choice', value);
       btn.style.cssText = primary
-        ? 'border:1px solid #2563eb;background:#2563eb;color:#fff;border-radius:7px;padding:7px 16px;cursor:pointer'
-        : 'border:1px solid #cbd5e1;background:#fff;color:#334155;border-radius:7px;padding:7px 16px;cursor:pointer';
+        ? 'border:1px solid var(--ob-accent);background:var(--ob-accent);color:#fff;border-radius:7px;padding:7px 16px;cursor:pointer'
+        : 'border:1px solid var(--ob-border-2);background:var(--ob-input-bg);color:var(--ob-text);border-radius:7px;padding:7px 16px;cursor:pointer';
       return btn;
     }
 	var yes = processorForm ? null : button(closeMessage('yes', 'Да'), 'save', true);
@@ -3063,7 +3063,7 @@ function obGridColumnIds(columns) {
           node.innerHTML = '<span style="display:block;text-align:right;font-weight:600;font-variant-numeric:tabular-nums">' +
             sum.toLocaleString("ru-RU", {minimumFractionDigits: 0, maximumFractionDigits: 2}) + "</span>";
         } else {
-          node.innerHTML = (i === 0) ? '<span style="color:#64748b">Итого</span>' : "";
+          node.innerHTML = (i === 0) ? '<span style="color:var(--ob-text-3)">Итого</span>' : "";
         }
       }
     } catch (e) { if (window.console) console.warn("updateTotals:", e); }
@@ -3187,7 +3187,7 @@ function obGridColumnIds(columns) {
     function paintActive() {
       var nodes = list.querySelectorAll('[data-idx]');
       for (var k = 0; k < nodes.length; k++) {
-        nodes[k].style.background = (k === activeIdx) ? '#eef2ff' : '';
+        nodes[k].style.background = (k === activeIdx) ? 'var(--ob-indigo-bg)' : '';
       }
       if (activeIdx >= 0 && nodes[activeIdx] && nodes[activeIdx].scrollIntoView) {
         nodes[activeIdx].scrollIntoView({block: 'nearest'});
@@ -3199,7 +3199,7 @@ function obGridColumnIds(columns) {
       if (!shown.length) {
         var empty = document.createElement('div');
         empty.textContent = 'Ничего не найдено (F4 — форма выбора)';
-        empty.style.cssText = 'padding:8px 10px;color:#94a3b8;font-style:italic';
+        empty.style.cssText = 'padding:8px 10px;color:var(--ob-text-4);font-style:italic';
         list.appendChild(empty);
         return;
       }
@@ -3208,7 +3208,7 @@ function obGridColumnIds(columns) {
         item.textContent = shown[k]._label;
         item.setAttribute('data-id', shown[k].id);
         item.setAttribute('data-idx', k);
-        item.style.cssText = 'padding:6px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9';
+        item.style.cssText = 'padding:6px 10px;cursor:pointer;border-bottom:1px solid var(--ob-surface-3)';
         (function(o, idx) {
           item.addEventListener('mouseenter', function() { activeIdx = idx; paintActive(); });
           // mousedown, а не click: blur поля ввода закрыл бы список раньше click.
@@ -3415,7 +3415,7 @@ function obGridColumnIds(columns) {
       dropBtn.type = 'button';
       dropBtn.textContent = '…';
       dropBtn.title = 'Выбрать из списка (F4)';
-      dropBtn.style.cssText = 'border:none;background:none;cursor:pointer;font-size:12px;padding:0 4px;color:#2563eb;flex-shrink:0';
+      dropBtn.style.cssText = 'border:none;background:none;cursor:pointer;font-size:12px;padding:0 4px;color:var(--ob-accent-hover);flex-shrink:0';
 
       wrapper.appendChild(input);
       wrapper.appendChild(dropBtn);
@@ -3423,7 +3423,7 @@ function obGridColumnIds(columns) {
 
       list = document.createElement('div');
       list.setAttribute('data-ob-ref-list', refField);
-      list.style.cssText = 'position:fixed;z-index:9999;background:#fff;border:1px solid #e2e8f0;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);max-height:200px;overflow-y:auto;min-width:160px;font-size:13px';
+      list.style.cssText = 'position:fixed;z-index:9999;background:var(--ob-input-bg);border:1px solid var(--ob-border);border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,.12);max-height:200px;overflow-y:auto;min-width:160px;font-size:13px';
 
       input.addEventListener('keydown', onKeyDown);
       input.addEventListener('focus', openList);
@@ -3513,7 +3513,7 @@ function obGridColumnIds(columns) {
     this.init = function() {
       select = document.createElement('select');
       select.className = 'editor-enum';
-      select.style.cssText = 'width:100%;height:100%;border:none;outline:none;font-size:13px;background:#fff';
+      select.style.cssText = 'width:100%;height:100%;border:none;outline:none;font-size:13px;background:var(--ob-input-bg)';
       var empty = document.createElement('option');
       empty.value = '';
       empty.textContent = '';
@@ -3550,7 +3550,7 @@ function obGridColumnIds(columns) {
         staleOption = document.createElement('option');
         staleOption.value = defaultValue;
         staleOption.textContent = '⚠ ' + defaultValue;
-        staleOption.style.color = '#dc2626';
+        staleOption.style.color = 'var(--ob-error-text)';
         select.appendChild(staleOption);
       }
       select.value = defaultValue;
@@ -3630,7 +3630,7 @@ function obGridColumnIds(columns) {
       // Значение есть, но датой не является. Показываем красным, а не как
       // обычный текст: иначе испорченные данные выглядят нормальными — тот же
       // приём, что у перечисления с неизвестным значением.
-      return "<span style='color:#dc2626' title='Значение не является датой'>"
+      return "<span style='color:var(--ob-error-text)' title='Значение не является датой'>"
         + obManagedEscapeHTML(String(value)) + "</span>";
     }
     if (parts.time && parts.time !== '00:00') {
@@ -3750,7 +3750,7 @@ function obGridColumnIds(columns) {
         col.cssClass = "ob-virtual";
         col.formatter = function(row, cell, value) {
           if (value == null || value === "") return "";
-          return "<span style='color:#64748b'>" + obManagedEscapeHTML(value) + "</span>";
+          return "<span style='color:var(--ob-text-3)'>" + obManagedEscapeHTML(value) + "</span>";
         };
         columns.push(col);
         continue;
@@ -3766,8 +3766,8 @@ function obGridColumnIds(columns) {
           var n = Number(String(value).replace(',', '.'));
           if (isNaN(n)) return "<span>" + value + "</span>";
           var s = n.toLocaleString("ru-RU", {minimumFractionDigits:0, maximumFractionDigits:2});
-          if (n < 0) return "<span style='color:#dc2626;font-weight:600'>" + s + "</span>";
-          if (warn && n > 0) return "<span style='color:#ea580c;font-weight:600'>" + s + "</span>";
+          if (n < 0) return "<span style='color:var(--ob-error-text);font-weight:600'>" + s + "</span>";
+          if (warn && n > 0) return "<span style='color:var(--ob-orange);font-weight:600'>" + s + "</span>";
           return "<span>" + s + "</span>";
         }; })(warnPos);
       } else if (c.ref) {
@@ -3821,7 +3821,7 @@ function obGridColumnIds(columns) {
             // Значения нет в перечислении — показываем красным, а не как
             // обычную подпись: иначе испорченные данные выглядят нормальными.
             if (lbl == null) {
-              return "<span style='color:#dc2626' title='Значения нет в перечислении'>" + obManagedEscapeHTML(String(value)) + "</span>";
+              return "<span style='color:var(--ob-error-text)' title='Значения нет в перечислении'>" + obManagedEscapeHTML(String(value)) + "</span>";
             }
             return "<span>" + lbl + "</span>";
           };
@@ -3831,8 +3831,8 @@ function obGridColumnIds(columns) {
         col.editor = Slick.Editors.Checkbox;
         col.formatter = function(row, cell, value) {
           var on = (value === true || value === "true" || value === 1 || value === "1");
-          return on ? '<span style="color:#16a34a;font-weight:700">✓</span>'
-                    : '<span style="color:#cbd5e1">—</span>';
+          return on ? '<span style="color:var(--ob-posted);font-weight:700">✓</span>'
+                    : '<span style="color:var(--ob-text-4)">—</span>';
         };
       } else if (c.type === "date") {
         // До #1077 ветки для даты здесь не было вовсе: колонка падала в else,

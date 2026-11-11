@@ -181,7 +181,7 @@ func formatEpoch(sec int64) string {
 const tplIntakeMonitor = `{{define "intake-monitor"}}` + adminHead + `
 <main>
 <h2>Входная приёмка</h2>
-{{if .Msg}}<div style="background:#f0fdf4;border:1px solid #86efac;color:#15803d;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:960px">✓ {{.Msg}}</div>{{end}}
+{{if .Msg}}<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-ok-text);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:960px">✓ {{.Msg}}</div>{{end}}
 {{if .Err}}<div class="error" style="max-width:960px;margin-bottom:16px">{{.Err}}</div>{{end}}
 {{if not .Intakes}}
 <div class="card" style="max-width:960px"><p class="empty">Входные шлюзы не настроены. Добавьте <code>intake/&lt;имя&gt;.yaml</code> в конфигурацию.</p></div>
@@ -190,21 +190,21 @@ const tplIntakeMonitor = `{{define "intake-monitor"}}` + adminHead + `
 {{$intake := .Name}}
 <div class="card" style="margin-bottom:20px;max-width:960px">
   <div class="row-top">
-    <h3 style="font-size:18px;color:#1e293b">{{.Name}}</h3>
-    <span style="color:#64748b;font-size:13px"><code>{{.Transport}}</code> {{if .WS}}{{.WS.URL}}{{else}}{{.Endpoint}}{{end}} · auth: {{.Auth}}</span>
+    <h3 style="font-size:18px;color:var(--ob-text)">{{.Name}}</h3>
+    <span style="color:var(--ob-text-3);font-size:13px"><code>{{.Transport}}</code> {{if .WS}}{{.WS.URL}}{{else}}{{.Endpoint}}{{end}} · auth: {{.Auth}}</span>
   </div>
-  <p style="font-size:13px;color:#475569;margin:6px 0 14px">
-    Обработано: <b>{{.Processed}}</b> · В карантине: <b style="color:{{if .OpenDLQ}}#b45309{{else}}#15803d{{end}}">{{.OpenDLQ}}</b>
+  <p style="font-size:13px;color:var(--ob-text-2);margin:6px 0 14px">
+    Обработано: <b>{{.Processed}}</b> · В карантине: <b style="color:{{if .OpenDLQ}}var(--ob-warn-text){{else}}var(--ob-ok-text){{end}}">{{.OpenDLQ}}</b>
   </p>
   {{with .WS}}
-  <p style="font-size:13px;color:#475569;margin:-8px 0 14px">
+  <p style="font-size:13px;color:var(--ob-text-2);margin:-8px 0 14px">
     Соединение:
-    {{if .Connected}}<b style="color:#15803d">подключено</b>{{if .Since}} с {{.Since}}{{end}}
-    {{else if .Blocked}}<b style="color:#b45309">заблокировано</b> <span style="color:#64748b">({{.Blocked}})</span>
-    {{else}}<b style="color:#b91c1c">разорвано</b>{{if .LastError}} <span style="color:#64748b" title="{{.LastError}}">— {{.LastError}}</span>{{end}}{{end}}
+    {{if .Connected}}<b style="color:var(--ob-ok-text)">подключено</b>{{if .Since}} с {{.Since}}{{end}}
+    {{else if .Blocked}}<b style="color:var(--ob-warn-text)">заблокировано</b> <span style="color:var(--ob-text-3)">({{.Blocked}})</span>
+    {{else}}<b style="color:var(--ob-danger-ink)">разорвано</b>{{if .LastError}} <span style="color:var(--ob-text-3)" title="{{.LastError}}">— {{.LastError}}</span>{{end}}{{end}}
     · Последнее сообщение: {{if .LastMessage}}{{.LastMessage}}{{else}}—{{end}}
-    · Реконнектов: {{.Reconnects}} · Принято: {{.Received}}{{if .HandlerErrors}} · <span style="color:#b45309">Не принято: {{.HandlerErrors}}</span>{{end}}
-    · Отправлено: {{.Sent}}{{if .SendErrors}} · <span style="color:#b45309">Ошибок отправки: {{.SendErrors}}</span>{{end}}
+    · Реконнектов: {{.Reconnects}} · Принято: {{.Received}}{{if .HandlerErrors}} · <span style="color:var(--ob-warn-text)">Не принято: {{.HandlerErrors}}</span>{{end}}
+    · Отправлено: {{.Sent}}{{if .SendErrors}} · <span style="color:var(--ob-warn-text)">Ошибок отправки: {{.SendErrors}}</span>{{end}}
   </p>
   {{end}}
   {{if .DLQ}}
@@ -215,10 +215,10 @@ const tplIntakeMonitor = `{{define "intake-monitor"}}` + adminHead + `
   <tbody>
   {{range .DLQ}}<tr>
     <td><b>{{.Key}}</b></td>
-    <td style="color:#b45309">{{.Reason}}</td>
-    <td style="color:#64748b;font-size:12px;max-width:280px;overflow:hidden;text-overflow:ellipsis" title="{{.Error}}">{{.Error}}</td>
+    <td style="color:var(--ob-warn-text)">{{.Reason}}</td>
+    <td style="color:var(--ob-text-3);font-size:12px;max-width:280px;overflow:hidden;text-overflow:ellipsis" title="{{.Error}}">{{.Error}}</td>
     <td style="text-align:center">{{.Attempts}}</td>
-    <td style="color:#94a3b8;font-size:12px">{{.When}}</td>
+    <td style="color:var(--ob-text-4);font-size:12px">{{.When}}</td>
     <td style="text-align:right">
       {{if .CanReplay}}
       <form method="POST" action="/ui/admin/intake/replay" style="margin:0" onsubmit="return confirm('Повторить обработку события {{.Key}}?')">
@@ -226,7 +226,7 @@ const tplIntakeMonitor = `{{define "intake-monitor"}}` + adminHead + `
         <input type="hidden" name="dlq_id" value="{{.ID}}">
         <button class="btn btn-sm btn-primary" type="submit">Повторить</button>
       </form>
-      {{else}}<span style="color:#94a3b8;font-size:12px">Требует разбора</span>{{end}}
+      {{else}}<span style="color:var(--ob-text-4);font-size:12px">Требует разбора</span>{{end}}
     </td>
   </tr>{{end}}
   </tbody>

@@ -178,15 +178,15 @@ test('color строки: подпись и значение красятся, �
   app.window.obOpenQuestion({
     text: 'Заявка принята', variants: ['ОК'],
     fields: [
-      { name: 'обмен1с', label: '1С', value: 'НЕ выгружена: таймаут', color: '#b91c1c' },
+      { name: 'обмен1с', label: '1С', value: 'НЕ выгружена: таймаут', color: 'var(--ob-danger-ink)' },
       { name: 'номер', label: 'Номер', value: 'ЗК-17' },
       { name: 'Примечание', label: 'Примечание', value: 'x', editable: true, color: '#0055aa' },
     ],
   }, 'Команда');
   const nodes = walk(app.__modalNode(), []);
   const byText = (t) => nodes.find((n) => n._text === t);
-  assert.equal(byText('НЕ выгружена: таймаут').style.color, '#b91c1c', 'значение красное');
-  assert.equal(byText('1С').style.color, '#b91c1c', 'подпись красная');
+  assert.equal(byText('НЕ выгружена: таймаут').style.color, 'var(--ob-danger-ink)', 'значение красное');
+  assert.equal(byText('1С').style.color, 'var(--ob-danger-ink)', 'подпись красная');
   assert.equal(byText('ЗК-17').style.color, undefined, 'строка без color не меняется');
   assert.equal(byText('Номер').style.color, undefined);
   assert.equal(nodes.find((n) => n.tag === 'input').style.color, '#0055aa', 'поле ввода тоже');

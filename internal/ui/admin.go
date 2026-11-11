@@ -33,12 +33,12 @@ const tplAdminUsers = `{{define "admin-users"}}` + adminHead + `
 </tr></thead>
 <tbody>
 {{range .Users}}<tr>
-  <td><a href="/ui/admin/users/{{.ID}}" style="color:#1d4ed8;font-weight:600;text-decoration:none">{{.Login}}</a></td>
-  <td style="color:#475569">{{.FullName}}</td>
-  <td style="text-align:center">{{if .IsAdmin}}<span style="color:#16a34a;font-weight:700">✓</span>{{end}}</td>
-  <td style="text-align:center">{{if .ShowInList}}<span style="color:#2563eb;font-weight:700">✓</span>{{else}}<span style="color:#cbd5e1">—</span>{{end}}</td>
-  <td style="text-align:center">{{if .DenyPasswdChange}}🔒{{else}}<span style="color:#cbd5e1">—</span>{{end}}</td>
-  <td style="font-size:12px;color:#94a3b8">{{.CreatedAt.Format "02.01.2006"}}</td>
+  <td><a href="/ui/admin/users/{{.ID}}" style="color:var(--ob-link-2);font-weight:600;text-decoration:none">{{.Login}}</a></td>
+  <td style="color:var(--ob-text-2)">{{.FullName}}</td>
+  <td style="text-align:center">{{if .IsAdmin}}<span style="color:var(--ob-posted);font-weight:700">✓</span>{{end}}</td>
+  <td style="text-align:center">{{if .ShowInList}}<span style="color:var(--ob-accent-hover);font-weight:700">✓</span>{{else}}<span style="color:var(--ob-border-2)">—</span>{{end}}</td>
+  <td style="text-align:center">{{if .DenyPasswdChange}}🔒{{else}}<span style="color:var(--ob-border-2)">—</span>{{end}}</td>
+  <td style="font-size:12px;color:var(--ob-text-4)">{{.CreatedAt.Format "02.01.2006"}}</td>
   <td>
     <div style="display:flex;gap:4px;flex-wrap:nowrap;white-space:nowrap">
       <a class="btn btn-sm btn-secondary" href="/ui/admin/users/{{.ID}}">Карточка</a>
@@ -60,9 +60,9 @@ const tplAdminUsers = `{{define "admin-users"}}` + adminHead + `
 
 const tplAdminUserCard = `{{define "admin-user-card"}}` + adminHead + `
 <main>
-<div style="margin-bottom:16px"><a href="/ui/admin/users" style="color:#64748b;font-size:13px;text-decoration:none">← Пользователи</a></div>
+<div style="margin-bottom:16px"><a href="/ui/admin/users" style="color:var(--ob-text-3);font-size:13px;text-decoration:none">← Пользователи</a></div>
 <h2>{{.User.Login}}</h2>
-{{if .Success}}<div style="background:#f0fdf4;border:1px solid #86efac;color:#15803d;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:560px">✓ {{.Success}}</div>{{end}}
+{{if .Success}}<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-ok-text);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:560px">✓ {{.Success}}</div>{{end}}
 {{if .Error}}<div class="error" style="max-width:560px">{{.Error}}</div>{{end}}
 
 <div class="card" style="max-width:560px;margin-bottom:16px">
@@ -71,7 +71,7 @@ const tplAdminUserCard = `{{define "admin-user-card"}}` + adminHead + `
   <input type="hidden" name="action" value="update">
   <div class="form-group">
     <label>Логин</label>
-    <input type="text" value="{{.User.Login}}" readonly style="background:#f8fafc;color:#64748b;cursor:default">
+    <input type="text" value="{{.User.Login}}" readonly style="background:var(--ob-surface-2);color:var(--ob-text-3);cursor:default">
   </div>
   <div class="form-group">
     <label>Полное имя</label>
@@ -91,13 +91,13 @@ const tplAdminUserCard = `{{define "admin-user-card"}}` + adminHead + `
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
       <input type="checkbox" name="show_in_list" value="1" {{if .User.ShowInList}}checked{{end}}> Показывать в списках выбора
     </label>
-    <div style="font-size:12px;color:#94a3b8;margin-top:4px;margin-left:24px">Пользователь будет доступен для выбора в полях типа «Ответственный» и т.п.</div>
+    <div style="font-size:12px;color:var(--ob-text-4);margin-top:4px;margin-left:24px">Пользователь будет доступен для выбора в полях типа «Ответственный» и т.п.</div>
   </div>
   <div class="form-group">
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
       <input type="checkbox" name="ai_data_access" value="1" {{if .User.AIDataAccess}}checked{{end}}> Доступ ИИ-чата к данным (без прав администратора)
     </label>
-    <div style="font-size:12px;color:#dc2626;margin-top:4px;margin-left:24px">⚠ Действует только если в настройках базы (конфигуратор → ИИ-помощник → «Доступ ИИ-чата к данным») выбран режим <b>rbac</b> или <b>all</b>. В <b>rbac</b> запросы ассистента фильтруются по правам чтения пользователя; в <b>all</b> — доступ ко всем данным без проверки прав. По умолчанию (<b>admin_only</b>) флаг не действует. Результаты запросов передаются внешнему LLM-провайдеру; обращения пишутся в журнал ИИ (_ai_audit).</div>
+    <div style="font-size:12px;color:var(--ob-error-text);margin-top:4px;margin-left:24px">⚠ Действует только если в настройках базы (конфигуратор → ИИ-помощник → «Доступ ИИ-чата к данным») выбран режим <b>rbac</b> или <b>all</b>. В <b>rbac</b> запросы ассистента фильтруются по правам чтения пользователя; в <b>all</b> — доступ ко всем данным без проверки прав. По умолчанию (<b>admin_only</b>) флаг не действует. Результаты запросов передаются внешнему LLM-провайдеру; обращения пишутся в журнал ИИ (_ai_audit).</div>
   </div>
   <button class="btn btn-primary" type="submit">Сохранить</button>
 </form>
@@ -107,18 +107,18 @@ const tplAdminUserCard = `{{define "admin-user-card"}}` + adminHead + `
 <h3 style="margin-bottom:16px">Второй фактор</h3>
 {{if .TwoFactor}}
   {{if .TwoFactor.Enabled}}
-  <p style="font-size:14px;color:#15803d;font-weight:600;margin-bottom:8px">✓ Включён</p>
-  <p style="font-size:13px;color:#475569;margin-bottom:12px">Осталось резервных кодов: <b>{{.TwoFactor.BackupCodesLeft}}</b>. Сброс нужен, когда пользователь потерял аутентификатор и резервные коды: после сброса он настроит второй фактор заново при следующем входе.</p>
+  <p style="font-size:14px;color:var(--ob-ok-text);font-weight:600;margin-bottom:8px">✓ Включён</p>
+  <p style="font-size:13px;color:var(--ob-text-2);margin-bottom:12px">Осталось резервных кодов: <b>{{.TwoFactor.BackupCodesLeft}}</b>. Сброс нужен, когда пользователь потерял аутентификатор и резервные коды: после сброса он настроит второй фактор заново при следующем входе.</p>
   <form method="POST" data-ob-confirm="Сбросить второй фактор пользователя {{.User.Login}}?">
     <input type="hidden" name="action" value="reset_2fa">
     <button class="btn btn-danger" type="submit">Сбросить второй фактор</button>
   </form>
   {{else}}
-  <p style="font-size:14px;color:#64748b;margin-bottom:12px">Выключен.</p>
-  <p style="font-size:13px;color:#475569;margin-bottom:12px">Если политика базы требует второй фактор, пользователь привязывает его при входе. Пока самопривязка по паролю выключена (значение по умолчанию), для привязки нужен одноразовый <b>код привязки</b>: выдайте его и передайте пользователю — он введёт код после пароля. Без кода привязать фактор по одному паролю нельзя. Код действует {{.BindTicketTTLHours}} ч; новый заменяет прежний.</p>
+  <p style="font-size:14px;color:var(--ob-text-3);margin-bottom:12px">Выключен.</p>
+  <p style="font-size:13px;color:var(--ob-text-2);margin-bottom:12px">Если политика базы требует второй фактор, пользователь привязывает его при входе. Пока самопривязка по паролю выключена (значение по умолчанию), для привязки нужен одноразовый <b>код привязки</b>: выдайте его и передайте пользователю — он введёт код после пароля. Без кода привязать фактор по одному паролю нельзя. Код действует {{.BindTicketTTLHours}} ч; новый заменяет прежний.</p>
   {{if .BindTicket}}
-  <div class="secret" style="font-family:Consolas,monospace;font-size:15px;letter-spacing:1px;background:#f0fdf4;border:1px solid #86efac;border-radius:5px;padding:10px;text-align:center;margin-bottom:8px;word-break:break-all">{{.BindTicket}}</div>
-  <p style="font-size:12px;color:#b45309;margin-bottom:12px">Покажите код пользователю сейчас — второй раз он не отобразится.</p>
+  <div class="secret" style="font-family:Consolas,monospace;font-size:15px;letter-spacing:1px;background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);border-radius:5px;padding:10px;text-align:center;margin-bottom:8px;word-break:break-all">{{.BindTicket}}</div>
+  <p style="font-size:12px;color:var(--ob-warn-text);margin-bottom:12px">Покажите код пользователю сейчас — второй раз он не отобразится.</p>
   {{end}}
   <form method="POST">
     <input type="hidden" name="action" value="issue_bind_ticket">
@@ -126,7 +126,7 @@ const tplAdminUserCard = `{{define "admin-user-card"}}` + adminHead + `
   </form>
   {{end}}
 {{else}}
-  <p style="font-size:13px;color:#94a3b8">Состояние недоступно.</p>
+  <p style="font-size:13px;color:var(--ob-text-4)">Состояние недоступно.</p>
 {{end}}
 </div>
 
@@ -142,7 +142,7 @@ const tplAdminUserCard = `{{define "admin-user-card"}}` + adminHead + `
     <label>Повторите пароль</label>
     <input type="password" name="confirm_password" autocomplete="new-password" minlength="{{.MinPasswordLength}}" {{if .PasswordRequired}}required{{end}}>
   </div>
-  <button class="btn" type="submit" style="background:#f59e0b;color:#fff">Изменить пароль</button>
+  <button class="btn" type="submit" style="background:var(--ob-amber);color:#fff">Изменить пароль</button>
 </form>
 </div>
 </main></body></html>
@@ -152,7 +152,7 @@ const tplAdminUserForm = `{{define "admin-user-form"}}` + adminHead + `
 <main>
 <h2>Добавить пользователя</h2>
 {{if .Error}}<div class="error" style="max-width:500px">{{.Error}}</div>{{end}}
-{{if .FirstUser}}<div style="background:#fff7ed;border:1px solid #fdba74;color:#9a3412;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:500px">После создания первого пользователя вход в систему потребуется всем, включая вас. Первый пользователь должен быть администратором — иначе управлять учётными записями будет некому.</div>{{end}}
+{{if .FirstUser}}<div style="background:var(--ob-warn-bg);border:1px solid var(--ob-warn-border);color:var(--ob-warn-text);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:500px">После создания первого пользователя вход в систему потребуется всем, включая вас. Первый пользователь должен быть администратором — иначе управлять учётными записями будет некому.</div>{{end}}
 <div class="card" style="max-width:500px">
 <form method="POST">
   <div class="form-group">
@@ -186,11 +186,11 @@ const tplAdminUserForm = `{{define "admin-user-form"}}` + adminHead + `
     <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
       <input type="checkbox" name="ai_data_access" value="1"> Доступ ИИ-чата к данным (без прав администратора)
     </label>
-    <div style="font-size:12px;color:#dc2626;margin-top:4px;margin-left:24px">⚠ Действует только в режиме rbac/all (конфигуратор → ИИ-помощник). В rbac запросы фильтруются по правам чтения пользователя; результаты уходят внешнему LLM-провайдеру.</div>
+    <div style="font-size:12px;color:var(--ob-error-text);margin-top:4px;margin-left:24px">⚠ Действует только в режиме rbac/all (конфигуратор → ИИ-помощник). В rbac запросы фильтруются по правам чтения пользователя; результаты уходят внешнему LLM-провайдеру.</div>
   </div>
   <div style="display:flex;gap:12px;margin-top:8px">
     <button class="btn btn-primary" type="submit">Создать</button>
-    <a class="btn" href="/ui/admin/users" style="background:#e2e8f0;color:#475569">Отмена</a>
+    <a class="btn" href="/ui/admin/users" style="background:var(--ob-btn-2-bg);color:var(--ob-btn-2-text)">Отмена</a>
   </div>
 </form>
 </div>
@@ -202,30 +202,32 @@ const adminHead = `<!DOCTYPE html>
 <script src="/static/ui.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:system-ui,sans-serif;background:#f5f5f5;padding:32px}
-h2{font-size:22px;font-weight:600;margin-bottom:20px;color:#1e293b}
-.card{background:#fff;border-radius:10px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+` + themeTokensCSS + `body{font-family:system-ui,sans-serif;background:var(--ob-bg);padding:32px}
+h2{font-size:22px;font-weight:600;margin-bottom:20px;color:var(--ob-text)}
+.card{background:var(--ob-surface);border-radius:10px;padding:24px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
 /* Таблица шире карточки (много колонок, кнопки действий) прокручивается внутри
    неё, а не вылезает за белую карточку. */
 .table-wrap{overflow-x:auto;max-width:100%}
 table{width:100%;border-collapse:collapse;font-size:14px}
-th{text-align:left;padding:10px 12px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;background:#eef2f7}
-td{padding:10px 12px;border-bottom:1px solid #f1f5f9;color:#334155}
+th{text-align:left;padding:10px 12px;border-bottom:2px solid var(--ob-border-2);color:var(--ob-text-strong);font-weight:600;background:var(--ob-head-bg)}
+td{padding:10px 12px;border-bottom:1px solid var(--ob-surface-3);color:var(--ob-text-strong)}
 tr:last-child td{border-bottom:none}
 .btn{display:inline-block;padding:8px 18px;border-radius:7px;font-size:14px;font-weight:500;text-decoration:none;cursor:pointer;border:none}
-.btn-primary{background:#3b82f6;color:#fff}.btn-primary:hover{background:#2563eb}
+.btn-primary{background:var(--ob-accent);color:#fff}.btn-primary:hover{background:var(--ob-accent-hover)}
 .btn-sm{padding:5px 12px;font-size:13px}
-.btn-danger{background:#ef4444;color:#fff}.btn-danger:hover{background:#dc2626}
+.btn-danger{background:var(--ob-danger);color:#fff}.btn-danger:hover{background:var(--ob-error-text)}
 .form-group{margin-bottom:16px}
-label{display:block;font-size:13px;font-weight:500;margin-bottom:5px;color:#475569}
-input[type=text],input[type=password],input[type=date],select{width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:7px;font-size:14px;background:#fff}
-input:focus{border-color:#3b82f6;outline:none}
-.error{background:#fef2f2;border:1px solid #fecaca;color:#dc2626;padding:12px;border-radius:7px;margin-bottom:16px;font-size:14px}
-.empty{color:#94a3b8;text-align:center;padding:32px;font-size:14px}
+label{display:block;font-size:13px;font-weight:500;margin-bottom:5px;color:var(--ob-text-2)}
+input[type=text],input[type=password],input[type=date],select{width:100%;padding:9px 12px;border:1px solid var(--ob-border);border-radius:7px;font-size:14px;background:var(--ob-input-bg)}
+input:focus{border-color:var(--ob-accent);outline:none}
+.error{background:var(--ob-error-bg);border:1px solid var(--ob-error-border);color:var(--ob-error-text);padding:12px;border-radius:7px;margin-bottom:16px;font-size:14px}
+.empty{color:var(--ob-text-4);text-align:center;padding:32px;font-size:14px}
 .row-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
-</style></head><body>
+</style>
+{{if .ThemeCSS}}<link rel="stylesheet" href="/ui/theme.css">{{end}}
+</head><body>
 <div style="margin-bottom:16px">
-  <a href="/ui" style="color:#64748b;font-size:13px;text-decoration:none">← Главная</a>
+  <a href="/ui" style="color:var(--ob-text-3);font-size:13px;text-decoration:none">← Главная</a>
 </div>`
 
 func (s *Server) adminUsers(w http.ResponseWriter, r *http.Request) {
@@ -1153,10 +1155,10 @@ const tplAdminPasswd = `{{define "admin-passwd"}}` + adminHead + `
 <main>
 <div class="row-top" style="max-width:500px">
   <h2>Смена пароля{{if .UserLogin}} — {{.UserLogin}}{{end}}</h2>
-  <a class="btn" href="{{.BackURL}}" style="background:#e2e8f0;color:#475569">← Назад</a>
+  <a class="btn" href="{{.BackURL}}" style="background:var(--ob-btn-2-bg);color:var(--ob-btn-2-text)">← Назад</a>
 </div>
 {{if .Error}}<div class="error" style="max-width:500px">{{.Error}}</div>{{end}}
-{{if .Success}}<div style="background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a;padding:12px;border-radius:7px;margin-bottom:16px;max-width:500px;font-size:14px">Пароль успешно изменён.</div>{{end}}
+{{if .Success}}<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-posted);padding:12px;border-radius:7px;margin-bottom:16px;max-width:500px;font-size:14px">Пароль успешно изменён.</div>{{end}}
 <div class="card" style="max-width:500px">
 <form method="POST">
   {{if .NeedOld}}
@@ -1175,17 +1177,17 @@ const tplAdminPasswd = `{{define "admin-passwd"}}` + adminHead + `
   </div>
   <div style="display:flex;gap:12px;margin-top:8px">
     <button class="btn btn-primary" type="submit">Сохранить</button>
-    <a class="btn" href="{{.BackURL}}" style="background:#e2e8f0;color:#475569">Отмена</a>
+    <a class="btn" href="{{.BackURL}}" style="background:var(--ob-btn-2-bg);color:var(--ob-btn-2-text)">Отмена</a>
   </div>
 </form>
 </div>
 {{if .SelfService}}
 <div class="card" style="max-width:500px;margin-top:16px">
   <h3 style="margin-bottom:8px">Сессии</h3>
-  {{if .OthersOut}}<div style="background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a;padding:10px;border-radius:7px;margin-bottom:12px;font-size:13px">Остальные сессии завершены.</div>{{end}}
-  <p style="color:#64748b;font-size:13px;margin-bottom:12px">Завершить все ваши сессии на других устройствах и в других окнах. Текущее окно продолжит работать.</p>
+  {{if .OthersOut}}<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-posted);padding:10px;border-radius:7px;margin-bottom:12px;font-size:13px">Остальные сессии завершены.</div>{{end}}
+  <p style="color:var(--ob-text-3);font-size:13px;margin-bottom:12px">Завершить все ваши сессии на других устройствах и в других окнах. Текущее окно продолжит работать.</p>
   <form method="POST" action="/ui/profile/logout-others" data-ob-confirm="Выйти со всех устройств, кроме текущего?">
-    <button class="btn" type="submit" style="background:#fee2e2;color:#b91c1c">Выйти со всех устройств</button>
+    <button class="btn" type="submit" style="background:var(--ob-danger-hi);color:var(--ob-danger-ink)">Выйти со всех устройств</button>
   </form>
 </div>
 {{end}}
@@ -1196,7 +1198,7 @@ const tplAdminSessions = `{{define "admin-sessions"}}` + adminHead + `
 <main>
 <div class="row-top" style="max-width:700px">
   <h2>Активные пользователи</h2>
-  <a class="btn" href="/ui/admin/sessions" style="background:#e2e8f0;color:#475569;font-size:13px">Обновить</a>
+  <a class="btn" href="/ui/admin/sessions" style="background:var(--ob-btn-2-bg);color:var(--ob-btn-2-text);font-size:13px">Обновить</a>
 </div>
 {{if .AuditUsers}}
 <div class="card" style="max-width:700px">
@@ -1207,7 +1209,7 @@ const tplAdminSessions = `{{define "admin-sessions"}}` + adminHead + `
 <tbody>
 {{range .AuditUsers}}<tr>
   <td><strong>{{.Login}}</strong></td>
-  <td style="font-size:12px;color:#94a3b8">{{.LastSeen.Format "02.01.2006 15:04:05"}}</td>
+  <td style="font-size:12px;color:var(--ob-text-4)">{{.LastSeen.Format "02.01.2006 15:04:05"}}</td>
 </tr>{{end}}
 </tbody>
 </table></div>
@@ -1219,12 +1221,12 @@ const tplAdminSessions = `{{define "admin-sessions"}}` + adminHead + `
 {{else if .Sessions}}
 <div class="card" style="max-width:1100px;margin-bottom:16px">
   <form method="POST" action="/ui/admin/sessions/limit" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-    <label style="font-size:13px;color:#475569">Максимум сессий на пользователя (0 — без ограничения)</label>
+    <label style="font-size:13px;color:var(--ob-text-2)">Максимум сессий на пользователя (0 — без ограничения)</label>
     <input type="number" name="limit" value="{{.Limit}}" min="0" max="99" style="width:80px">
     <button class="btn btn-sm btn-primary" type="submit">Сохранить</button>
-    {{if .LimitSaved}}<span style="color:#16a34a;font-size:13px">✓ Сохранено</span>{{end}}
+    {{if .LimitSaved}}<span style="color:var(--ob-posted);font-size:13px">✓ Сохранено</span>{{end}}
   </form>
-  <div style="font-size:12px;color:#94a3b8;margin-top:6px">При превышении лимита новый вход вытесняет самую давнюю по активности сессию Предприятия этого пользователя. Сессии конфигуратора не учитываются.</div>
+  <div style="font-size:12px;color:var(--ob-text-4);margin-top:6px">При превышении лимита новый вход вытесняет самую давнюю по активности сессию Предприятия этого пользователя. Сессии конфигуратора не учитываются.</div>
 </div>
 <div class="card" style="max-width:1100px">
 <div class="table-wrap"><table>
@@ -1233,14 +1235,14 @@ const tplAdminSessions = `{{define "admin-sessions"}}` + adminHead + `
 </tr></thead>
 <tbody>
 {{range .Sessions}}<tr>
-  <td><strong>{{.Login}}</strong>{{if .IsAdmin}} <span title="Администратор" style="color:#3b82f6">★</span>{{end}}</td>
+  <td><strong>{{.Login}}</strong>{{if .IsAdmin}} <span title="Администратор" style="color:var(--ob-accent)">★</span>{{end}}</td>
   <td>{{.FullName}}</td>
   <td style="font-size:12px">{{.KindLabel}}</td>
-  <td style="font-size:12px;color:#94a3b8">{{if .CreatedAt.IsZero}}—{{else}}{{.CreatedAt.Format "02.01 15:04"}}{{end}}</td>
-  <td style="font-size:12px;color:#94a3b8">{{if .LastSeenAt.IsZero}}—{{else}}{{.LastSeenAt.Format "02.01 15:04"}}{{end}}</td>
-  <td style="font-size:12px;color:#94a3b8">{{.ExpiresAt.Format "02.01.2006 15:04"}}</td>
-  <td style="font-size:12px;color:#94a3b8">{{.IP}}</td>
-  <td style="font-size:12px;color:#94a3b8">{{.ShortUA}}</td>
+  <td style="font-size:12px;color:var(--ob-text-4)">{{if .CreatedAt.IsZero}}—{{else}}{{.CreatedAt.Format "02.01 15:04"}}{{end}}</td>
+  <td style="font-size:12px;color:var(--ob-text-4)">{{if .LastSeenAt.IsZero}}—{{else}}{{.LastSeenAt.Format "02.01 15:04"}}{{end}}</td>
+  <td style="font-size:12px;color:var(--ob-text-4)">{{.ExpiresAt.Format "02.01.2006 15:04"}}</td>
+  <td style="font-size:12px;color:var(--ob-text-4)">{{.IP}}</td>
+  <td style="font-size:12px;color:var(--ob-text-4)">{{.ShortUA}}</td>
   <td>
     <div style="display:flex;gap:4px">
       {{if .PublicID}}
@@ -1253,7 +1255,7 @@ const tplAdminSessions = `{{define "admin-sessions"}}` + adminHead + `
       {{end}}
       <form method="POST" action="/ui/admin/sessions/{{.Login}}/kick" style="margin:0"
             data-ob-confirm="Принудительно завершить все сессии {{.Login}}?">
-        <button class="btn btn-sm" type="submit" style="background:#fee2e2;color:#b91c1c" title="Завершить все сессии пользователя">Все</button>
+        <button class="btn btn-sm" type="submit" style="background:var(--ob-danger-hi);color:var(--ob-danger-ink)" title="Завершить все сессии пользователя">Все</button>
       </form>
     </div>
   </td>
@@ -1273,11 +1275,11 @@ const tplAdminAPITokens = `{{define "admin-api-tokens"}}` + adminHead + `
 <main>
 <div class="row-top" style="max-width:1000px">
   <h2>API-токены</h2>
-  <a class="btn" href="/ui/admin/api-tokens" style="background:#e2e8f0;color:#475569;font-size:13px">Обновить</a>
+  <a class="btn" href="/ui/admin/api-tokens" style="background:var(--ob-btn-2-bg);color:var(--ob-btn-2-text);font-size:13px">Обновить</a>
 </div>
 {{if .Error}}<div class="error" style="max-width:1000px">{{.Error}}</div>{{end}}
 {{if .CreatedToken}}
-<div style="background:#f0fdf4;border:1px solid #86efac;color:#166534;padding:14px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:1000px">
+<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-ok-text);padding:14px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:1000px">
   <div style="font-weight:700;margin-bottom:8px">Токен создан. Скопируйте его сейчас: позже он не будет показан.</div>
   <input type="text" value="{{.CreatedToken}}" readonly data-ob-select-on-click style="font-family:monospace">
 </div>
@@ -1318,13 +1320,13 @@ const tplAdminAPITokens = `{{define "admin-api-tokens"}}` + adminHead + `
 {{range .Tokens}}<tr>
   <td><strong>{{.Name}}</strong></td>
   <td>{{.UserLogin}}</td>
-  <td style="font-size:12px;color:#94a3b8">{{.CreatedAt.Format "02.01.2006 15:04"}}</td>
-  <td style="font-size:12px;color:#94a3b8">{{if .LastUsedAt}}{{.LastUsedAt.Format "02.01.2006 15:04"}}{{else}}—{{end}}</td>
-  <td style="font-size:12px;color:#94a3b8">{{if .ExpiresAt}}{{.ExpiresAt.Format "02.01.2006 15:04"}}{{else}}без срока{{end}}</td>
-  <td>{{if .RevokedAt}}<span style="color:#dc2626">отозван</span>{{else if .Expired}}<span style="color:#f59e0b">истёк</span>{{else}}<span style="color:#16a34a">активен</span>{{end}}</td>
+  <td style="font-size:12px;color:var(--ob-text-4)">{{.CreatedAt.Format "02.01.2006 15:04"}}</td>
+  <td style="font-size:12px;color:var(--ob-text-4)">{{if .LastUsedAt}}{{.LastUsedAt.Format "02.01.2006 15:04"}}{{else}}—{{end}}</td>
+  <td style="font-size:12px;color:var(--ob-text-4)">{{if .ExpiresAt}}{{.ExpiresAt.Format "02.01.2006 15:04"}}{{else}}без срока{{end}}</td>
+  <td>{{if .RevokedAt}}<span style="color:var(--ob-error-text)">отозван</span>{{else if .Expired}}<span style="color:var(--ob-amber)">истёк</span>{{else}}<span style="color:var(--ob-posted)">активен</span>{{end}}</td>
   <td>
     {{if .RevokedAt}}
-    <span style="color:#cbd5e1">—</span>
+    <span style="color:var(--ob-border-2)">—</span>
     {{else}}
     <form method="POST" action="/ui/admin/api-tokens/{{.ID}}/revoke" data-ob-confirm="Отозвать API-токен {{.Name}}?" style="margin:0">
       <button class="btn btn-sm btn-danger" type="submit">Отозвать</button>
@@ -1344,7 +1346,7 @@ const tplAdminAPITokens = `{{define "admin-api-tokens"}}` + adminHead + `
 const tplAdminRoles = `{{define "admin-roles"}}` + adminHead + `
 <main>
 <h2>Роли и права доступа</h2>
-<p style="color:#64748b;font-size:13px;margin-bottom:16px">Роли загружаются из файлов <code>roles/*.yaml</code> в директории проекта и синхронизируются при старте.</p>
+<p style="color:var(--ob-text-3);font-size:13px;margin-bottom:16px">Роли загружаются из файлов <code>roles/*.yaml</code> в директории проекта и синхронизируются при старте.</p>
 {{if .Roles}}
 <div class="card" style="max-width:800px">
 <div class="table-wrap"><table>
@@ -1352,7 +1354,7 @@ const tplAdminRoles = `{{define "admin-roles"}}` + adminHead + `
 <tbody>
 {{range .Roles}}<tr>
   <td><strong>{{.Name}}</strong></td>
-  <td style="color:#64748b">{{.Description}}</td>
+  <td style="color:var(--ob-text-3)">{{.Description}}</td>
   <td style="font-size:12px">{{range $k,$v := .Permissions.Catalogs}}{{$k}}: {{range $i,$op := $v}}{{if $i}}, {{end}}{{$op}}{{end}}<br>{{end}}</td>
   <td style="font-size:12px">{{range $k,$v := .Permissions.Documents}}{{$k}}: {{range $i,$op := $v}}{{if $i}}, {{end}}{{$op}}{{end}}<br>{{end}}</td>
   <td style="font-size:12px">{{range $k,$v := .Permissions.Reports}}{{$k}}: {{range $i,$op := $v}}{{if $i}}, {{end}}{{$op}}{{end}}<br>{{end}}</td>
@@ -1372,7 +1374,7 @@ const tplAdminUserRoles = `{{define "admin-user-roles"}}` + adminHead + `
 <main>
 <div class="row-top" style="max-width:600px">
   <h2>Роли пользователя: {{.UserLogin}}</h2>
-  <a class="btn" href="/ui/admin/users" style="background:#e2e8f0;color:#475569">← Назад</a>
+  <a class="btn" href="/ui/admin/users" style="background:var(--ob-btn-2-bg);color:var(--ob-btn-2-text)">← Назад</a>
 </div>
 <div class="card" style="max-width:600px">
 <form method="POST">
@@ -1383,7 +1385,7 @@ const tplAdminUserRoles = `{{define "admin-user-roles"}}` + adminHead + `
 {{range .AllRoles}}<tr>
   <td><input type="checkbox" name="role_id" value="{{.ID}}" {{if index $.UserRoleIDs .ID}}checked{{end}}></td>
   <td><strong>{{.Name}}</strong></td>
-  <td style="color:#64748b;font-size:13px">{{.Description}}</td>
+  <td style="color:var(--ob-text-3);font-size:13px">{{.Description}}</td>
 </tr>{{end}}
 </tbody>
 </table></div>
@@ -1401,14 +1403,14 @@ const tplAdminAudit = `{{define "admin-audit"}}` + adminHead + `
 <div class="row-top" style="max-width:1100px">
   <h2>Журнал изменений</h2>
 </div>
-<form method="GET" action="" style="max-width:1100px;background:#fff;border-radius:10px;padding:16px 20px;box-shadow:0 1px 3px rgba(0,0,0,.1);margin-bottom:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
+<form method="GET" action="" style="max-width:1100px;background:var(--ob-surface);border-radius:10px;padding:16px 20px;box-shadow:0 1px 3px rgba(0,0,0,.1);margin-bottom:16px;display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end">
   <div>
-    <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px">Пользователь</label>
-    <input type="text" name="user" value="{{.Filter.UserLogin}}" placeholder="логин" style="padding:7px 10px;font-size:13px;border:1px solid #e2e8f0;border-radius:7px;width:140px">
+    <label style="display:block;font-size:12px;color:var(--ob-text-3);margin-bottom:4px">Пользователь</label>
+    <input type="text" name="user" value="{{.Filter.UserLogin}}" placeholder="логин" style="padding:7px 10px;font-size:13px;border:1px solid var(--ob-border);border-radius:7px;width:140px;background:var(--ob-input-bg);color:var(--ob-text)">
   </div>
   <div>
-    <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px">Действие</label>
-    <select name="action" style="padding:7px 10px;font-size:13px;border:1px solid #e2e8f0;border-radius:7px">
+    <label style="display:block;font-size:12px;color:var(--ob-text-3);margin-bottom:4px">Действие</label>
+    <select name="action" style="padding:7px 10px;font-size:13px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-input-bg);color:var(--ob-text)">
       <option value="">— все —</option>
       <option value="create" {{if eq .Filter.Action "create"}}selected{{end}}>create</option>
       <option value="update" {{if eq .Filter.Action "update"}}selected{{end}}>update</option>
@@ -1420,19 +1422,19 @@ const tplAdminAudit = `{{define "admin-audit"}}` + adminHead + `
     </select>
   </div>
   <div>
-    <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px">Сущность</label>
-    <input type="text" name="entity" value="{{.Filter.EntityName}}" placeholder="имя" style="padding:7px 10px;font-size:13px;border:1px solid #e2e8f0;border-radius:7px;width:140px">
+    <label style="display:block;font-size:12px;color:var(--ob-text-3);margin-bottom:4px">Сущность</label>
+    <input type="text" name="entity" value="{{.Filter.EntityName}}" placeholder="имя" style="padding:7px 10px;font-size:13px;border:1px solid var(--ob-border);border-radius:7px;width:140px;background:var(--ob-input-bg);color:var(--ob-text)">
   </div>
   <div>
-    <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px">С даты</label>
-    <input type="date" name="date_from" value="{{.Filter.DateFromStr}}" style="padding:7px 10px;font-size:13px;border:1px solid #e2e8f0;border-radius:7px">
+    <label style="display:block;font-size:12px;color:var(--ob-text-3);margin-bottom:4px">С даты</label>
+    <input type="date" name="date_from" value="{{.Filter.DateFromStr}}" style="padding:7px 10px;font-size:13px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-input-bg);color:var(--ob-text)">
   </div>
   <div>
-    <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px">По дату</label>
-    <input type="date" name="date_to" value="{{.Filter.DateToStr}}" style="padding:7px 10px;font-size:13px;border:1px solid #e2e8f0;border-radius:7px">
+    <label style="display:block;font-size:12px;color:var(--ob-text-3);margin-bottom:4px">По дату</label>
+    <input type="date" name="date_to" value="{{.Filter.DateToStr}}" style="padding:7px 10px;font-size:13px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-input-bg);color:var(--ob-text)">
   </div>
   <button class="btn btn-primary btn-sm" type="submit">Найти</button>
-  <a class="btn btn-sm" href="/ui/admin/audit" style="background:#e2e8f0;color:#475569">Сбросить</a>
+  <a class="btn btn-sm" href="/ui/admin/audit" style="background:var(--ob-btn-2-bg);color:var(--ob-btn-2-text)">Сбросить</a>
 </form>
 
 <div class="card" style="max-width:1100px">
@@ -1443,20 +1445,20 @@ const tplAdminAudit = `{{define "admin-audit"}}` + adminHead + `
 </tr></thead>
 <tbody>
 {{range .Entries}}<tr>
-  <td style="white-space:nowrap;color:#94a3b8">{{.At.Format "02.01.2006 15:04:05"}}</td>
+  <td style="white-space:nowrap;color:var(--ob-text-4)">{{.At.Format "02.01.2006 15:04:05"}}</td>
   <td>{{.UserLogin}}</td>
-  <td><span style="font-family:monospace;font-size:11px;background:#f1f5f9;padding:2px 6px;border-radius:4px">{{.Action}}</span></td>
-  <td style="font-size:12px">{{if .EntityName}}<strong>{{.EntityName}}</strong>{{if .RecordID}}<br><span style="color:#94a3b8">{{.RecordID}}</span>{{end}}{{end}}</td>
+  <td><span style="font-family:monospace;font-size:11px;background:var(--ob-surface-3);padding:2px 6px;border-radius:4px">{{.Action}}</span></td>
+  <td style="font-size:12px">{{if .EntityName}}<strong>{{.EntityName}}</strong>{{if .RecordID}}<br><span style="color:var(--ob-text-4)">{{.RecordID}}</span>{{end}}{{end}}</td>
   <td style="font-family:monospace;font-size:11px">{{.Field}}</td>
-  <td style="font-size:12px;color:#dc2626;max-width:150px;word-break:break-all">{{.OldValue}}</td>
-  <td style="font-size:12px;color:#16a34a;max-width:150px;word-break:break-all">{{.NewValue}}</td>
+  <td style="font-size:12px;color:var(--ob-error-text);max-width:150px;word-break:break-all">{{.OldValue}}</td>
+  <td style="font-size:12px;color:var(--ob-posted);max-width:150px;word-break:break-all">{{.NewValue}}</td>
 </tr>{{end}}
 </tbody>
 </table></div>
 <div style="padding:12px 0;display:flex;gap:8px;align-items:center">
-  {{if .HasPrev}}<a class="btn btn-sm" href="?{{.PrevQuery}}" style="background:#e2e8f0;color:#475569">← Пред.</a>{{end}}
-  <span style="font-size:13px;color:#64748b">Стр. {{.Page}}</span>
-  {{if .HasNext}}<a class="btn btn-sm" href="?{{.NextQuery}}" style="background:#e2e8f0;color:#475569">След. →</a>{{end}}
+  {{if .HasPrev}}<a class="btn btn-sm" href="?{{.PrevQuery}}" style="background:var(--ob-btn-2-bg);color:var(--ob-btn-2-text)">← Пред.</a>{{end}}
+  <span style="font-size:13px;color:var(--ob-text-3)">Стр. {{.Page}}</span>
+  {{if .HasNext}}<a class="btn btn-sm" href="?{{.NextQuery}}" style="background:var(--ob-btn-2-bg);color:var(--ob-btn-2-text)">След. →</a>{{end}}
 </div>
 {{else}}
 <p class="empty">Записей не найдено.</p>
@@ -1471,12 +1473,12 @@ const tplAdminAudit = `{{define "admin-audit"}}` + adminHead + `
 const tplAdminCleanup = `{{define "admin-cleanup"}}` + adminHead + `
 <main>
 <h2>Диагностика базы</h2>
-<p style="color:#64748b;font-size:14px;margin-bottom:20px">
+<p style="color:var(--ob-text-3);font-size:14px;margin-bottom:20px">
   Те же проверки, что у команды <code>onebase doctor</code>. Сама по себе страница
   ничего не меняет — исправления выполняются только для отмеченных проверок.
 </p>
 {{if .Fixing}}
-<div style="background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">
+<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-posted);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">
   Исправлено: {{.FixedTotal}}. Ниже — состояние базы после исправления.
 </div>
 {{end}}
@@ -1493,21 +1495,21 @@ const tplAdminCleanup = `{{define "admin-cleanup"}}` + adminHead + `
     {{if and .CanFix .Findings}}<input type="checkbox" name="fix" value="{{.Check}}" title="исправить">{{end}}
   </td>
   <td style="white-space:nowrap;vertical-align:top">
-    {{if eq (printf "%s" .Severity) "error"}}<span style="color:#ef4444;font-weight:600">●</span>
-    {{else if eq (printf "%s" .Severity) "warn"}}<span style="color:#f59e0b;font-weight:600">●</span>
-    {{else}}<span style="color:#16a34a">●</span>{{end}}
+    {{if eq (printf "%s" .Severity) "error"}}<span style="color:var(--ob-danger);font-weight:600">●</span>
+    {{else if eq (printf "%s" .Severity) "warn"}}<span style="color:var(--ob-amber);font-weight:600">●</span>
+    {{else}}<span style="color:var(--ob-posted)">●</span>{{end}}
     {{.Title}}
   </td>
   <td style="vertical-align:top">
     {{.Summary}}
-    {{if .Error}}<div style="color:#ef4444;font-size:13px;margin-top:4px">{{.Error}}</div>{{end}}
+    {{if .Error}}<div style="color:var(--ob-error-text);font-size:13px;margin-top:4px">{{.Error}}</div>{{end}}
     {{range .Findings}}
-      <div style="font-size:13px;color:#475569;margin-top:4px">
+      <div style="font-size:13px;color:var(--ob-text-2);margin-top:4px">
         {{.Object}}: {{.Detail}}{{if .Count}} ({{.Count}}){{end}}
-        {{if .Examples}}<div style="color:#94a3b8">например: {{range $i, $e := .Examples}}{{if $i}}, {{end}}{{$e}}{{end}}</div>{{end}}
+        {{if .Examples}}<div style="color:var(--ob-text-4)">например: {{range $i, $e := .Examples}}{{if $i}}, {{end}}{{$e}}{{end}}</div>{{end}}
       </div>
     {{end}}
-    {{if and .FixHint (not .Fixed)}}<div style="font-size:13px;color:#64748b;margin-top:4px">→ {{.FixHint}}</div>{{end}}
+    {{if and .FixHint (not .Fixed)}}<div style="font-size:13px;color:var(--ob-text-3);margin-top:4px">→ {{.FixHint}}</div>{{end}}
   </td>
 </tr>{{end}}
 </tbody>
@@ -1517,8 +1519,8 @@ const tplAdminCleanup = `{{define "admin-cleanup"}}` + adminHead + `
 <p class="empty" style="max-width:900px">Проблем не найдено — база в порядке.</p>
 {{else}}
 <button class="btn btn-danger" type="submit">Исправить отмеченное</button>
-<a class="btn" href="/ui" style="background:#e2e8f0;color:#475569;margin-left:8px">Отмена</a>
-<p style="color:#64748b;font-size:13px;margin-top:10px;max-width:900px">
+<a class="btn" href="/ui" style="background:var(--ob-btn-2-bg);color:var(--ob-btn-2-text);margin-left:8px">Отмена</a>
+<p style="color:var(--ob-text-3);font-size:13px;margin-top:10px;max-width:900px">
   Исправления меняют данные. Перед запуском снимите резервную копию.
 </p>
 {{end}}
@@ -1546,10 +1548,10 @@ const tplAdminWebhooks = `{{define "admin-webhooks"}}` + adminHead + `
   <td>{{.Webhook}}</td>
   <td>{{.Event}}</td>
   <td>{{.Entity}}</td>
-  <td>{{if and (ge .StatusCode 200) (lt .StatusCode 300)}}<span style="color:#16a34a">{{.StatusCode}}</span>{{else}}<span style="color:#dc2626">{{if .StatusCode}}{{.StatusCode}}{{else}}—{{end}}</span>{{end}}</td>
+  <td>{{if and (ge .StatusCode 200) (lt .StatusCode 300)}}<span style="color:var(--ob-posted)">{{.StatusCode}}</span>{{else}}<span style="color:var(--ob-error-text)">{{if .StatusCode}}{{.StatusCode}}{{else}}—{{end}}</span>{{end}}</td>
   <td>{{.Attempts}}</td>
   <td>{{.DurationMs}} мс</td>
-  <td style="color:#dc2626;max-width:340px;overflow:hidden;text-overflow:ellipsis">{{.Error}}</td>
+  <td style="color:var(--ob-error-text);max-width:340px;overflow:hidden;text-overflow:ellipsis">{{.Error}}</td>
 </tr>
 {{end}}
 </tbody>
@@ -1568,7 +1570,7 @@ const tplAdminRLS = `{{define "admin-rls"}}` + adminHead + `
 </div>
 
 <div class="card" style="max-width:1180px;margin-bottom:20px">
-<h3 style="font-size:16px;margin-bottom:12px;color:#1e293b">Row policies</h3>
+<h3 style="font-size:16px;margin-bottom:12px;color:var(--ob-text)">Row policies</h3>
 {{if .Rows}}
 <div class="table-wrap"><table style="font-size:13px">
 <thead><tr>
@@ -1582,10 +1584,10 @@ const tplAdminRLS = `{{define "admin-rls"}}` + adminHead + `
   <td>{{.Kind}} {{.Object}}</td>
   <td><code>{{.Op}}</code></td>
   <td><code>{{.Field}}</code></td>
-  <td>{{if .Permission}}<span style="color:#16a34a">да</span>{{else}}<span style="color:#dc2626">нет</span>{{end}}</td>
-  <td>{{if eq .Status "active"}}<span style="color:#16a34a">active</span>{{else if eq .Status "ignored"}}<span style="color:#b45309">ignored</span>{{else}}<span style="color:#dc2626">{{.Status}}</span>{{end}}</td>
+  <td>{{if .Permission}}<span style="color:var(--ob-posted)">да</span>{{else}}<span style="color:var(--ob-error-text)">нет</span>{{end}}</td>
+  <td>{{if eq .Status "active"}}<span style="color:var(--ob-posted)">active</span>{{else if eq .Status "ignored"}}<span style="color:var(--ob-warn-text)">ignored</span>{{else}}<span style="color:var(--ob-error-text)">{{.Status}}</span>{{end}}</td>
   <td>{{.AutoFill}}</td>
-  <td style="color:#dc2626;max-width:360px">{{.Error}}</td>
+  <td style="color:var(--ob-error-text);max-width:360px">{{.Error}}</td>
 </tr>
 {{end}}
 </tbody>
@@ -1596,14 +1598,14 @@ const tplAdminRLS = `{{define "admin-rls"}}` + adminHead + `
 </div>
 
 <div class="card" style="max-width:900px">
-<h3 style="font-size:16px;margin-bottom:12px;color:#1e293b">DSL paths</h3>
+<h3 style="font-size:16px;margin-bottom:12px;color:var(--ob-text)">DSL paths</h3>
 <div class="table-wrap"><table style="font-size:13px">
 <thead><tr><th>Путь</th><th>Режим</th><th>Поведение</th></tr></thead>
 <tbody>
 {{range .DSLPaths}}
 <tr>
   <td style="font-weight:600">{{.Path}}</td>
-  <td>{{if eq .Mode "trusted"}}<span style="color:#b45309">trusted</span>{{else}}<span style="color:#16a34a">user</span>{{end}}</td>
+  <td>{{if eq .Mode "trusted"}}<span style="color:var(--ob-warn-text)">trusted</span>{{else}}<span style="color:var(--ob-posted)">user</span>{{end}}</td>
   <td>{{.Detail}}</td>
 </tr>
 {{end}}

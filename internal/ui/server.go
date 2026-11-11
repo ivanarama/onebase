@@ -354,6 +354,8 @@ func (s *Server) tr(lang, key string) string {
 // revalidation but no longer pays for auth on each 304.
 func (s *Server) MountStatic(r chi.Router) {
 	mountStatic(r)
+	// Внешние стили конфигурации — не секрет, вне auth-стека (план 111).
+	r.Get("/ui/theme.css", s.themeCSS)
 }
 
 func (s *Server) Mount(r chi.Router) {
@@ -528,6 +530,11 @@ func (s *Server) Mount(r chi.Router) {
 
 	// Admin: orphan movements cleanup
 	r.Get("/ui/admin/cleanup", s.adminCleanup)
+	r.Get("/ui/admin/theme-css", s.adminThemeCSS)
+	r.Post("/ui/admin/theme-css/save", s.adminThemeCSSSave)
+	r.Post("/ui/admin/theme-css/reset", s.adminThemeCSSReset)
+	r.Post("/ui/admin/theme-css/reset-element", s.adminThemeCSSElementReset)
+	r.Post("/ui/admin/theme-css/default", s.adminThemeCSSDefault)
 	r.Post("/ui/admin/cleanup", s.adminCleanup)
 
 	// Admin: external print forms (внешний контур расширяемости)

@@ -726,6 +726,12 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	if _, ok := data["Cfg"]; !ok {
 		data["Cfg"] = s.cfg
 	}
+	// Внешний файл стилей конфигурации (ui.css в корне проекта): ссылка
+	// подключается только когда файл есть, без файла страницы живут ровно на
+	// встроенных стилях и сборка движка не нужна.
+	if _, ok := data["ThemeCSS"]; !ok {
+		data["ThemeCSS"] = s.hasThemeCSS()
+	}
 	s.addHelpContext(r, data)
 	// Параметры текущего запроса — из них шаблоны строят ссылки «то же самое,
 	// но с другим X» (listURL/listHidden), не собирая строку запроса по кускам

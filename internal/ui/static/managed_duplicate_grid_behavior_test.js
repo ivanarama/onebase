@@ -114,7 +114,7 @@ test('virtual SlickGrid formatter escapes HTML', () => {
   const attack = `<img src=x onerror=alert(1)>&"'`;
   assert.equal(
     formatter(0, 0, attack),
-    "<span style='color:#64748b'>&lt;img src=x onerror=alert(1)&gt;&amp;&quot;&#39;</span>"
+    "<span style='color:var(--ob-text-3)'>&lt;img src=x onerror=alert(1)&gt;&amp;&quot;&#39;</span>"
   );
 });
 
