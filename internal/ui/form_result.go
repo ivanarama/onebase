@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
+	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/widget"
 )
@@ -50,6 +51,24 @@ type resultFormContext struct {
 type resultFormPayload struct {
 	URL   string `json:"url"`
 	Token string `json:"token"`
+}
+
+// An explicit result handoff consumes transient scalar display state. It does
+// not relax the ordinary dirty contract, durable fields, service state or TPs.
+func resultHandoffForm(entity *metadata.Entity, form *metadata.FormModule) *metadata.FormModule {
+	if form == nil {
+		return form
+	}
+	view := *form
+	view.Attributes = nil
+	for _, attr := range form.Attributes {
+		if attr != nil && !attr.Save && !attr.MainAttribute && formAttrIsScalar(attr) &&
+			entityField(entity, attr.Name) == nil && !entityServiceFieldName(attr.Name) {
+			continue
+		}
+		view.Attributes = append(view.Attributes, attr)
+	}
+	return &view
 }
 
 func resultFormOwner(r *http.Request) string {

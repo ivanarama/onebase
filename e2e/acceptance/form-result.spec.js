@@ -67,6 +67,39 @@ test('origin BeforeClose veto prevents false success and preserves source', asyn
   expect(frame.isDetached()).toBe(false);
 });
 
+test('unsaved entity mutation in BeforeClose prevents result handoff', async ({page}) => {
+  const frame = await order(page, 'CLOSE-MUTATION-50', 'mutate-on-close');
+  const response = page.waitForResponse(r => r.url().includes('/Orders/form-close-intent'));
+  await accept(frame);
+  const data = await (await response).json();
+  expect(data.dirty).toBe(true);
+  await expect(frame.locator('input[name="Комментарий"]')).toHaveValue('unsaved close mutation');
+  await expect.poll(() => frame.evaluate(() => window._obFormDirty)).toBe(true);
+  await expect(origins(page)).toHaveCount(1);
+  await expect(results(page)).toHaveCount(0);
+});
+
+test('input during pending close decision is not consumed as display state', async ({page}) => {
+  const frame = await order(page, 'CLOSE-LATE-51');
+  let arrived, release;
+  const reached = new Promise(resolve => { arrived = resolve; });
+  const barrier = new Promise(resolve => { release = resolve; });
+  await page.route('**/ui/document/Orders/form-close-intent', async route => {
+    const response = await route.fetch();
+    arrived();
+    await barrier;
+    await route.fulfill({response});
+  });
+  await accept(frame);
+  await reached;
+  await frame.locator('input[name="Комментарий"]').fill('late during close');
+  release();
+  await expect.poll(() => frame.evaluate(() => window._obFormDirty)).toBe(true);
+  await expect(frame.locator('input[name="Комментарий"]')).toHaveValue('late during close');
+  await expect(origins(page)).toHaveCount(1);
+  await expect(results(page)).toHaveCount(0);
+});
+
 test('two results of one processor: close only current, and honor its own veto', async ({page}) => {
   await accept(await order(page, 'FIRST-45', 'veto'));
   const first = await lastResult(page);

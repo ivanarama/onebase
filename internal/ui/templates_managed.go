@@ -890,9 +890,9 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 <script type="application/json" id="ob-managed-config">{{jsJSON (dict
   "kind" "processor"
   "entity" .Processor.Name
-  "url" (printf "/ui/processor/%s/form-event%s" (lower .Processor.Name) .ResultQuery)
+  "url" (printf "/ui/processor/%s/form-event%s" (lower .Processor.Name) (or .ResultQuery ""))
   "resultForm" .IsResultForm
-  "closeUrl" (printf "/ui/processor/%s/form-close-intent%s" (lower .Processor.Name) .ResultQuery)
+  "closeUrl" (printf "/ui/processor/%s/form-close-intent%s" (lower .Processor.Name) (or .ResultQuery ""))
   "closeTimeoutMs" .FormCloseTimeoutMS
   "closeEpoch" .FormCloseEpoch
   "closeClientId" .FormCloseClientID

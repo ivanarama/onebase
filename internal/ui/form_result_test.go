@@ -161,3 +161,51 @@ func TestResultFormFailureDoesNotPublish(t *testing.T) {
 		}
 	}
 }
+
+func TestResultFormConsumesOnlyTransientDisplayAfterSave(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		for _, scenario := range []string{"handoff", "ordinary", "entity-mutation"} {
+			t.Run(map[bool]string{false: "new", true: "existing"}[existing]+"/"+scenario, func(t *testing.T) {
+				s, e, _ := resultTestServer(t)
+				f := e.Forms[0]
+				f.Attributes = append(f.Attributes, &metadata.FormAttribute{Name: "DisplayText", TypeRef: "string", Save: false})
+				tail := ""
+				if scenario == "entity-mutation" {
+					tail += "Объект.Наименование = \"not saved\";\n"
+				}
+				if scenario != "ordinary" {
+					tail += "ОткрытьФормуРезультата(\"Результат\", Объект.Ссылка, \"Документ\");"
+				}
+				f.ProgramAST = mustParse(t, `
+Процедура Завершить()
+  Объект.Записать();
+  Объект.DisplayText = "computed after the durable save";
+  `+tail+`
+КонецПроцедуры`)
+				values := url.Values{"_event": {"Нажатие"}, "_element": {"Завершить"}, "Наименование": {"saved"}}
+				if existing {
+					id := uuid.New()
+					if err := s.store.Upsert(context.Background(), e.Name, id, map[string]any{"Наименование": "before"}, e); err != nil {
+						t.Fatal(err)
+					}
+					values.Set("_id", id.String())
+				}
+				resp := resultSourceEvent(t, s, e, values)
+				switch scenario {
+				case "handoff":
+					if !resp.OK || resp.ResultForm == nil || resp.Dirty == nil || *resp.Dirty {
+						t.Fatalf("explicit handoff rejected consumed display state: %+v", resp)
+					}
+				case "ordinary":
+					if !resp.OK || resp.ResultForm != nil || resp.Dirty == nil || !*resp.Dirty {
+						t.Fatalf("ordinary form dirty contract was weakened: %+v", resp)
+					}
+				case "entity-mutation":
+					if resp.OK || resp.ResultForm != nil || resp.Dirty == nil || !*resp.Dirty {
+						t.Fatalf("unsaved entity state passed the handoff: %+v", resp)
+					}
+				}
+			})
+		}
+	}
+}

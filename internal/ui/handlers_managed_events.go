@@ -1563,12 +1563,14 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 			resp.OK = false
 			resp.Error = "форма результата несовместима с вопросом или навигацией в том же ответе"
 		} else {
-			payload, resultErr := s.prepareResultForm(r, requestedResult, thisObj, dirty)
+			handoffDirty := s.managedCloseStateDirty(liveCtx, entity, resultHandoffForm(entity, form), obj, fieldsBefore, tpBefore)
+			payload, resultErr := s.prepareResultForm(r, requestedResult, thisObj, handoffDirty)
 			if resultErr != nil {
 				resp.OK = false
 				resp.Error = resultErr.Error()
 			} else {
 				resp.ResultForm = payload
+				resp.Dirty = boolPtr(false) // explicit handoff consumed only transient scalar view state
 			}
 		}
 	}

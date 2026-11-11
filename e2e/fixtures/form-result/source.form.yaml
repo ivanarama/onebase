@@ -4,6 +4,10 @@ form:
   kind: object
   entity: Orders
   title_proc: DisplayTitle
+attributes:
+  - name: DisplayText
+    type: string
+    save: false
 events:
   ПередЗакрытием: BeforeClose
 elements:
