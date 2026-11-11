@@ -1108,6 +1108,19 @@ func checkContract(result *report, path string) {
 			"в merge-shepherd contract нет гарантий merge-cleanup (pp:merge-cleanup-intent / complete merge-cleanup)")
 		return
 	}
+	// A current full content review has its own sticky authorization lane. An
+	// older merge-shaped HEAD must not force its consumer back into legacy carry.
+	for _, required := range []string{
+		"Полное содержательное REVIEW текущего HEAD не является legacy reauthorization",
+		"исторический ship первого родителя не требуется",
+		"Это правило не применяется к одному лишь интеграционному REVIEW",
+	} {
+		if !strings.Contains(string(mergeData), required) {
+			result.add("red", "unsafe_current_ship_contract", 0,
+				"активный MERGE contract не различает полное REVIEW текущего HEAD и legacy reauthorization")
+			return
+		}
+	}
 	for _, name := range []string{"triage-issues", "plan-approved", "fix-approved", "review-queue", "merge-shepherd", "tail-issues"} {
 		data, err := readContract(filepath.Join(skillsRoot, name, "SKILL.md"))
 		if err != nil {

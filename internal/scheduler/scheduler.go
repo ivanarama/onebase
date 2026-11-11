@@ -1063,6 +1063,11 @@ func (s *Scheduler) runProcessor(ctx context.Context, job *metadata.ScheduledJob
 	paramValues := make(map[string]any)
 	for _, p := range proc.Params {
 		if v, ok := resolvedParams[p.Name]; ok {
+			// УникальныйИдентификатор из параметров задачи очереди хранилище
+			// возвращает uuid.UUID — в модуль он приходит тем же типом DSL.
+			if id, isUUID := v.(uuid.UUID); isUUID {
+				v = interpreter.NewUUIDValue(id)
+			}
 			paramValues[p.Name] = v
 		}
 	}
