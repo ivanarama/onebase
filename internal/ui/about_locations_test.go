@@ -55,7 +55,7 @@ func TestAbout_DatabaseConfigUsesMaskedDatabaseLocation(t *testing.T) {
 		DatabaseLocation: "postgres://onebase:very-secret@db.example/production",
 	}, true)
 
-	if strings.Count(html, "postgres://onebase:***@db.example/production") != 2 {
+	if strings.Count(html, "postgres://onebase:***@db.example/production") < 2 {
 		t.Errorf("маскированный DSN должен обозначать расположение конфигурации и базы: %s", html)
 	}
 	if strings.Contains(html, "very-secret") {

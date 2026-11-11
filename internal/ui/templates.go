@@ -20,6 +20,50 @@ import (
 	"github.com/shopspring/decimal"
 )
 
+const themeTokensCSS = `/* Токены палитры enterprise-UI (план 218). Светлые значения точно равны
+   прежним hardcoded-цветам — светлая тема не меняется ни на пиксель. Тема
+   выбирается атрибутом data-theme на <html> (plan 218): значения dark-токенов
+   согласованы с тёмной шапкой, контраст текстов зафиксирован тестами.
+   Выбор режима (light|dark|system) живёт в localStorage, сервер о нём не
+   знает; head-скрипт /static/ui.js ставит data-theme до первой отрисовки. */
+:root{
+--ob-bg:#f5f5f5;--ob-surface:#fff;--ob-surface-2:#f8fafc;--ob-surface-3:#f1f5f9;--ob-zebra:#fafbfc;
+--ob-text:#1e293b;--ob-text-strong:#334155;--ob-text-2:#475569;--ob-text-3:#64748b;--ob-text-4:#94a3b8;
+--ob-border:#e2e8f0;--ob-border-2:#cbd5e1;--ob-row-hover:#f8fafc;--ob-head-bg:#eef2f7;--ob-input-bg:#fff;
+--ob-btn-2-bg:#e2e8f0;--ob-btn-2-text:#374151;--ob-btn-2-hover:#cbd5e1;
+--ob-accent:#3b82f6;--ob-accent-hover:#2563eb;--ob-link:#3b82f6;--ob-link-2:#1d4ed8;
+--ob-hover-blue:#eef2ff;--ob-hover-blue-2:#eef4ff;--ob-highlight:#e5e7eb;
+--ob-error-bg:#fef2f2;--ob-error-border:#fecaca;--ob-error-text:#dc2626;
+--ob-nav-bg:#1e293b;--ob-nav-text:#cbd5e1;--ob-nav-hover-bg:#334155;--ob-nav-hover-text:#fff;
+--ob-topbar-bg:#1e293b;--ob-topbar-text:#fff;--ob-topbar-accent:#7dd3fc;--ob-subsys-bg:#0f172a;
+--ob-field-border:#475569;--ob-field-bg:#334155;--ob-field-text:#f1f5f9;
+--ob-posted:#16a34a;--ob-flag:#dc2626;
+--ob-kpi-ink:#0f172a;--ob-link-hover:#1a4a80;--ob-danger-ink:#b91c1c;
+--ob-dirty:#e8b400;--ob-chip-hover:#dbeafe;--ob-danger-hi:#fee2e2;--ob-hover-soft:#f0f4ff;
+--ob-ok-bg:#f0fdf4;--ob-ok-border:#86efac;--ob-ok-text:#15803d;
+--ob-warn-bg:#fff7ed;--ob-warn-border:#fdba74;--ob-warn-text:#9a3412;
+--ob-danger:#ef4444;--ob-amber:#f59e0b}
+html[data-theme="light"]{color-scheme:light}
+html[data-theme="dark"]{
+--ob-bg:#0b1220;--ob-surface:#111c2e;--ob-surface-2:#16223a;--ob-surface-3:#1c2a44;--ob-zebra:#141f34;
+--ob-text:#e2e8f0;--ob-text-strong:#dbe4ef;--ob-text-2:#cbd5e1;--ob-text-3:#94a3b8;--ob-text-4:#8fa5bd;
+--ob-border:#2b3a55;--ob-border-2:#3b4c6d;--ob-row-hover:#223052;--ob-head-bg:#1e2c46;--ob-input-bg:#111c2e;
+--ob-btn-2-bg:#223052;--ob-btn-2-text:#e2e8f0;--ob-btn-2-hover:#2b3a55;
+--ob-accent:#3b82f6;--ob-accent-hover:#2563eb;--ob-link:#60a5fa;--ob-link-2:#93c5fd;
+--ob-hover-blue:#1e2b4d;--ob-hover-blue-2:#1c2a44;--ob-highlight:#2a3a57;
+--ob-error-bg:#3b1220;--ob-error-border:#7f1d1d;--ob-error-text:#f87171;
+--ob-nav-bg:#0b1220;--ob-nav-text:#cbd5e1;--ob-nav-hover-bg:#1c2a44;--ob-nav-hover-text:#fff;
+--ob-topbar-bg:#0b1220;--ob-topbar-text:#fff;--ob-topbar-accent:#7dd3fc;--ob-subsys-bg:#060c18;
+--ob-field-border:#334155;--ob-field-bg:#1c2a44;--ob-field-text:#e2e8f0;
+--ob-posted:#4ade80;--ob-flag:#f87171;
+--ob-kpi-ink:#e2e8f0;--ob-link-hover:#93c5fd;--ob-danger-ink:#f87171;
+--ob-dirty:#fbbf24;--ob-chip-hover:#223052;--ob-danger-hi:#3b1220;--ob-hover-soft:#1e2b4d;
+--ob-ok-bg:#12291a;--ob-ok-border:#2f5d3b;--ob-ok-text:#4ade80;
+--ob-warn-bg:#2b1d0b;--ob-warn-border:#6b4a1d;--ob-warn-text:#fbbf24;
+--ob-danger:#b91c1c;--ob-amber:#d97706;
+color-scheme:dark}
+html[data-theme="dark"] body{color:var(--ob-text)}`
+
 var tmpl = template.Must(newTemplate(nil))
 
 type managedTPColumnJSON struct {
@@ -1548,32 +1592,7 @@ const tplHead = `
    согласованы с тёмной шапкой, контраст текстов зафиксирован тестами.
    Выбор режима (light|dark|system) живёт в localStorage, сервер о нём не
    знает; head-скрипт /static/ui.js ставит data-theme до первой отрисовки. */
-:root{
---ob-bg:#f5f5f5;--ob-surface:#fff;--ob-surface-2:#f8fafc;--ob-surface-3:#f1f5f9;--ob-zebra:#fafbfc;
---ob-text:#1e293b;--ob-text-strong:#334155;--ob-text-2:#475569;--ob-text-3:#64748b;--ob-text-4:#94a3b8;
---ob-border:#e2e8f0;--ob-border-2:#cbd5e1;--ob-row-hover:#f8fafc;--ob-head-bg:#eef2f7;--ob-input-bg:#fff;
---ob-btn-2-bg:#e2e8f0;--ob-btn-2-text:#374151;--ob-btn-2-hover:#cbd5e1;
---ob-accent:#3b82f6;--ob-accent-hover:#2563eb;--ob-link:#3b82f6;--ob-link-2:#1d4ed8;
---ob-hover-blue:#eef2ff;--ob-hover-blue-2:#eef4ff;--ob-highlight:#e5e7eb;
---ob-error-bg:#fef2f2;--ob-error-border:#fecaca;--ob-error-text:#dc2626;
---ob-nav-bg:#1e293b;--ob-nav-text:#cbd5e1;--ob-nav-hover-bg:#334155;--ob-nav-hover-text:#fff;
---ob-topbar-bg:#1e293b;--ob-topbar-text:#fff;--ob-topbar-accent:#7dd3fc;--ob-subsys-bg:#0f172a;
---ob-field-border:#475569;--ob-field-bg:#334155;--ob-field-text:#f1f5f9;
---ob-posted:#16a34a;--ob-flag:#dc2626}
-html[data-theme="light"]{color-scheme:light}
-html[data-theme="dark"]{
---ob-bg:#0b1220;--ob-surface:#111c2e;--ob-surface-2:#16223a;--ob-surface-3:#1c2a44;--ob-zebra:#141f34;
---ob-text:#e2e8f0;--ob-text-strong:#dbe4ef;--ob-text-2:#cbd5e1;--ob-text-3:#94a3b8;--ob-text-4:#8fa5bd;
---ob-border:#2b3a55;--ob-border-2:#3b4c6d;--ob-row-hover:#223052;--ob-head-bg:#1e2c46;--ob-input-bg:#111c2e;
---ob-btn-2-bg:#223052;--ob-btn-2-text:#e2e8f0;--ob-btn-2-hover:#2b3a55;
---ob-accent:#3b82f6;--ob-accent-hover:#2563eb;--ob-link:#60a5fa;--ob-link-2:#93c5fd;
---ob-hover-blue:#1e2b4d;--ob-hover-blue-2:#1c2a44;--ob-highlight:#2a3a57;
---ob-error-bg:#3b1220;--ob-error-border:#7f1d1d;--ob-error-text:#f87171;
---ob-nav-bg:#0b1220;--ob-nav-text:#cbd5e1;--ob-nav-hover-bg:#1c2a44;--ob-nav-hover-text:#fff;
---ob-topbar-bg:#0b1220;--ob-topbar-text:#fff;--ob-topbar-accent:#7dd3fc;--ob-subsys-bg:#060c18;
---ob-field-border:#334155;--ob-field-bg:#1c2a44;--ob-field-text:#e2e8f0;
---ob-posted:#4ade80;--ob-flag:#f87171;
-color-scheme:dark}
+` + themeTokensCSS + `
 /* height:100vh + overflow:hidden — окно приложения ровно по экрану. С одним лишь
    min-height:100vh страницу растягивало САМОЕ ВЫСОКОЕ содержимое (обычно длинное
    меню слева): при окне 908px тело становилось 1283px, вместе с ним росла
@@ -1820,7 +1839,7 @@ const tplNav = `
 {{define "nav"}}
 <header class="topbar">
   <button class="nav-toggle" type="button" aria-label="{{t $.Lang "Меню"}}" title="{{t $.Lang "Меню"}}" aria-controls="ob-nav" aria-expanded="false" data-ob-nav-toggle>&#9776;</button>
-  <a href="/ui/" class="topbar-title" style="text-decoration:none;color:inherit" title="{{t $.Lang "Главная"}}">{{if .Cfg.Logo}}<img src="/ui/logo" alt="" style="height:22px;max-width:90px;vertical-align:middle;margin-right:6px;border-radius:2px">{{end}}⚡ {{if .Cfg.AppName}}{{.Cfg.AppName}}{{else}}onebase{{end}}</a>
+  <a href="/ui/" class="topbar-title" style="text-decoration:none;color:inherit" title="{{if .IsAdmin}}Конфигурация: {{.Cfg.ConfigSource}} · {{.Cfg.ConfigLocation}}{{if .Cfg.DatabaseLocation}} · {{if eq .Cfg.DatabaseType "sqlite"}}SQLite{{else}}PostgreSQL{{end}} · {{.Cfg.DatabaseLocation}}{{end}}{{else}}{{t $.Lang "Главная"}}{{end}}">{{if .Cfg.Logo}}<img src="/ui/logo" alt="" style="height:22px;max-width:90px;vertical-align:middle;margin-right:6px;border-radius:2px">{{end}}⚡ {{if .Cfg.AppName}}{{.Cfg.AppName}}{{else}}onebase{{end}}</a>
   <form class="topbar-search" method="get" action="/ui/search" role="search">
     <input type="search" name="q" value="{{.SearchQuery}}" placeholder="{{t $.Lang "Поиск по базе"}}" aria-label="{{t $.Lang "Поиск по базе"}}">
   </form>
@@ -1985,39 +2004,39 @@ const tplIndex = `
 /* Виджеты с табличным/широким содержимым шире компактных KPI */
 .dash-row > .w-card-list,.dash-row > .w-card-chart,.dash-row > .w-card-recent{flex:1 1 360px}
 .dash-grid{display:grid;grid-template-columns:repeat(12,1fr);gap:14px}
-.w-card{background:#fff;border-radius:10px;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.08);display:flex;flex-direction:column;min-height:120px}
+.w-card{background:var(--ob-surface);border-radius:10px;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.08);display:flex;flex-direction:column;min-height:120px}
 .w-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;min-height:24px}
 .w-title{font-size:12px;text-transform:uppercase;letter-spacing:.05em;color:var(--ob-text-3);font-weight:600;flex:1;min-width:0}
 .w-refresh{border:0;background:transparent;color:var(--ob-text-3);border-radius:6px;padding:3px 5px;line-height:1;cursor:pointer;font-size:15px}
-.w-refresh:hover{background:var(--ob-surface-3);color:var(--ob-link-2)}.w-refresh:focus-visible{outline:2px solid #60a5fa;outline-offset:2px}
+.w-refresh:hover{background:var(--ob-surface-3);color:var(--ob-link-2)}.w-refresh:focus-visible{outline:2px solid var(--ob-link);outline-offset:2px}
 .w-refresh[disabled]{cursor:wait;opacity:.55}.w-card.ob-widget-loading .w-refresh{animation:ob-widget-spin .8s linear infinite}
 @keyframes ob-widget-spin{to{transform:rotate(360deg)}}
-.w-refresh-status{font-size:12px;color:#b91c1c;margin-top:7px;min-height:0}
-.w-kpi-value{font-size:32px;font-weight:700;color:#0f172a;line-height:1.1;white-space:nowrap}
+.w-refresh-status{font-size:12px;color:var(--ob-danger-ink);margin-top:7px;min-height:0}
+.w-kpi-value{font-size:32px;font-weight:700;color:var(--ob-kpi-ink);line-height:1.1;white-space:nowrap}
 .w-kpi-sub{font-size:12px;color:var(--ob-text-4);margin-top:6px}
 /* Кликабельный счётчик: остаётся числом (тот же кегль и цвет), но ведёт себя
    как ссылка — подчёркивание только при наведении, чтобы карточка не выглядела
    пестрее соседних. */
-a.w-kpi-link{display:block;text-decoration:none;color:#0f172a}
-a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
+a.w-kpi-link{display:block;text-decoration:none;color:var(--ob-kpi-ink)}
+a.w-kpi-link:hover{color:var(--ob-link-hover);text-decoration:underline}
 .w-list{overflow-x:auto}
 .w-list table{margin-top:4px;font-size:13px}
 .w-list th{padding:6px 8px;font-size:11px;color:var(--ob-text-strong);font-weight:600;border-bottom:2px solid var(--ob-border-2);text-align:left;background:var(--ob-head-bg)}
-.w-list td{padding:6px 8px;border-bottom:1px solid #f1f5f9;font-size:13px;color:var(--ob-text-strong)}
+.w-list td{padding:6px 8px;border-bottom:1px solid var(--ob-surface-3);font-size:13px;color:var(--ob-text-strong)}
 .w-list td.right{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .w-list tr:last-child td{border-bottom:none}
 .w-list .ob-row-link{cursor:pointer}
 .w-list .ob-row-link:hover td,.w-list .ob-row-link:focus-visible td{background:var(--ob-hover-blue)}
-.w-list .ob-row-link:focus-visible{outline:2px solid #2563eb;outline-offset:-2px}
+.w-list .ob-row-link:focus-visible{outline:2px solid var(--ob-accent-hover);outline-offset:-2px}
 .w-chart{min-height:240px}
 .w-chart-canvas{width:100%;height:240px}
 .w-actions-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
-.w-actions-row a{display:inline-block;padding:7px 14px;border-radius:7px;background:#3b82f6;color:#fff;text-decoration:none;font-size:13px;font-weight:500}
-.w-actions-row a:hover{background:#2563eb}
-.w-recent-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid #f1f5f9;font-size:13px}
+.w-actions-row a{display:inline-block;padding:7px 14px;border-radius:7px;background:var(--ob-accent);color:var(--ob-topbar-text);text-decoration:none;font-size:13px;font-weight:500}
+.w-actions-row a:hover{background:var(--ob-accent-hover)}
+.w-recent-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--ob-surface-3);font-size:13px}
 .w-recent-row:last-child{border-bottom:none}
 .w-recent-row .e{color:var(--ob-text-3);font-size:11px;text-transform:uppercase;letter-spacing:.04em;flex-shrink:0;min-width:140px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.w-recent-row a{color:#3b82f6;text-decoration:none;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.w-recent-row a{color:var(--ob-link);text-decoration:none;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .w-recent-row a:hover{text-decoration:underline}
 .w-recent-row .ts{color:var(--ob-text-4);font-size:11px;flex-shrink:0;font-variant-numeric:tabular-nums}
 .w-error{background:var(--ob-error-bg);color:var(--ob-error-text);font-size:12px;padding:6px 10px;border-radius:6px;margin-top:6px;font-family:Consolas,monospace}

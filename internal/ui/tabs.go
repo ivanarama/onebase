@@ -58,23 +58,23 @@ const tplAppShell = `{{define "page-app-shell"}}
 {{template "dashboard-style" .}}
 <style>
 .ob-shell-main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;padding:0}
-.ob-tabstrip{display:flex;gap:2px;background:#e2e8f0;padding:4px 6px 0;overflow-x:auto;flex-shrink:0;min-height:34px}
-.ob-tab{display:inline-flex;align-items:center;gap:6px;background:#f1f5f9;border:1px solid #cbd5e1;border-bottom:none;border-radius:6px 6px 0 0;padding:5px 8px 5px 12px;font-size:12px;color:#334155;cursor:pointer;white-space:nowrap;max-width:230px}
-.ob-tab.active{background:#fff;color:#1a4a80;font-weight:600}
-.ob-tab.dirty .ob-tab-label::after{content:" •";color:#e8b400;font-weight:700}
+.ob-tabstrip{display:flex;gap:2px;background:var(--ob-btn-2-bg);padding:4px 6px 0;overflow-x:auto;flex-shrink:0;min-height:34px}
+.ob-tab{display:inline-flex;align-items:center;gap:6px;background:var(--ob-surface-3);border:1px solid var(--ob-border-2);border-bottom:none;border-radius:6px 6px 0 0;padding:5px 8px 5px 12px;font-size:12px;color:var(--ob-text-strong);cursor:pointer;white-space:nowrap;max-width:230px}
+.ob-tab.active{background:var(--ob-surface);color:var(--ob-link-hover);font-weight:600}
+.ob-tab.dirty .ob-tab-label::after{content:" •";color:var(--ob-dirty);font-weight:700}
 .ob-tab-label{overflow:hidden;text-overflow:ellipsis}
-.ob-tab-dup{color:#94a3b8;font-size:12px;line-height:1;border-radius:3px;padding:0 3px}
-.ob-tab-dup:hover{color:#1a4a80;background:#dbeafe}
-.ob-tab-close{color:#94a3b8;font-size:14px;line-height:1;border-radius:3px;padding:0 3px}
-.ob-tab-close:hover{color:#dc2626;background:#fee2e2}
-.ob-tabbody{flex:1;position:relative;background:#f5f5f5;min-height:0}
-.ob-tabhome{position:absolute;inset:0;overflow:auto;padding:28px;background:#f5f5f5}
+.ob-tab-dup{color:var(--ob-text-4);font-size:12px;line-height:1;border-radius:3px;padding:0 3px}
+.ob-tab-dup:hover{color:var(--ob-link-hover);background:var(--ob-chip-hover)}
+.ob-tab-close{color:var(--ob-text-4);font-size:14px;line-height:1;border-radius:3px;padding:0 3px}
+.ob-tab-close:hover{color:var(--ob-error-text);background:var(--ob-danger-hi)}
+.ob-tabbody{flex:1;position:relative;background:var(--ob-bg);min-height:0}
+.ob-tabhome{position:absolute;inset:0;overflow:auto;padding:28px;background:var(--ob-bg)}
 .ob-tabbody iframe{position:absolute;inset:0;width:100%;height:100%;border:0;display:none}
 .ob-tabbody iframe.active{display:block}
-.ob-tabempty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:14px;padding:20px;text-align:center}
-.ob-tabmenu{position:fixed;z-index:10000;background:#fff;border:1px solid #cbd5e1;border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px 0;min-width:150px;font-size:12px}
-.ob-tabmenu-item{padding:6px 14px;cursor:pointer;color:#334155}
-.ob-tabmenu-item:hover{background:#f0f4ff;color:#1a4a80}
+.ob-tabempty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--ob-text-4);font-size:14px;padding:20px;text-align:center}
+.ob-tabmenu{position:fixed;z-index:10000;background:var(--ob-surface);border:1px solid var(--ob-border-2);border-radius:6px;box-shadow:0 4px 16px rgba(0,0,0,.18);padding:4px 0;min-width:150px;font-size:12px}
+.ob-tabmenu-item{padding:6px 14px;cursor:pointer;color:var(--ob-text-strong)}
+.ob-tabmenu-item:hover{background:var(--ob-hover-soft);color:var(--ob-link-hover)}
 @media (max-width:820px){.ob-tabhome{padding:14px}}
 </style>
 <main class="ob-shell-main" id="ob-shell-main" data-ob-tab-scope="{{.TabStorageScope}}">
