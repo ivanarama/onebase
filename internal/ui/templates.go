@@ -1622,8 +1622,8 @@ const tplThemeCSS = `
             <span data-ob-swatch style="width:26px;height:26px;border-radius:6px;border:1px solid var(--ob-border);{{if $v}}background:{{$v}};{{end}}"></span>
           </div>
           <div style="display:flex;gap:6px;margin-top:4px">
-            <button class="btn btn-sm" type="button" data-ob-color-pick>{{t $.Lang "Выбрать"}}</button>
             <button class="btn btn-sm" type="button" data-ob-color-cancel>{{t $.Lang "Отмена"}}</button>
+            <button class="btn btn-sm" type="button" data-ob-color-pick>{{t $.Lang "Выбрать"}}</button>
           </div>
           <input type="color" data-ob-picker hidden>
         {{else if eq .Kind "size"}}
