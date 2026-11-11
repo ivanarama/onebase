@@ -1405,18 +1405,18 @@ function obInitAttachments() {
         if (!cnt || !list) return;
         cnt.textContent = atts.length ? atts.length + ' файл(ов)' : '';
         if (!atts.length) {
-          list.innerHTML = '<p style="color:#94a3b8;font-size:13px;margin:0">Нет вложений</p>';
+          list.innerHTML = '<p style="color:var(--ob-text-4);font-size:13px;margin:0">Нет вложений</p>';
           return;
         }
         list.innerHTML = '';
         atts.forEach(function (a) {
           var row = document.createElement('div');
-          row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f1f5f9';
+          row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--ob-surface-3)';
           var nameEl = document.createElement('span');
           nameEl.style.cssText = 'flex:1;font-size:13px;word-break:break-all';
           nameEl.textContent = String(a.filename == null ? '' : a.filename);
           var sizeEl = document.createElement('span');
-          sizeEl.style.cssText = 'color:#94a3b8;font-size:12px;white-space:nowrap';
+          sizeEl.style.cssText = 'color:var(--ob-text-4);font-size:12px;white-space:nowrap';
           sizeEl.textContent = fmtSize(a.size_bytes);
           var aid = encodeURIComponent(String(a.id));
           var dl = document.createElement('a');
@@ -1894,7 +1894,7 @@ function listOpen(url, title) {
 }
 
 function listSelPaint(el, on) {
-  el.querySelectorAll('td').forEach(function (td) { td.style.background = on ? '#dbeafe' : ''; });
+  el.querySelectorAll('td').forEach(function (td) { td.style.background = on ? 'var(--ob-chip-hover)' : ''; });
   el.classList.toggle('tile-selected', on);
 }
 
@@ -2685,7 +2685,7 @@ function makeTreeRow(row) {
       if (row.predefined) {
         var star = document.createElement('span');
         star.title = obListLabel('predefined', 'Предопределённый');
-        star.style.cssText = 'color:#f59e0b;font-size:11px';
+        star.style.cssText = 'color:var(--ob-amber);font-size:11px';
         star.textContent = ' ★';
         td.appendChild(star);
       }
@@ -3121,56 +3121,56 @@ obReady(function () {
   var st = document.createElement('style');
   st.id = 'ob-widget-style';
   st.textContent =
-    '#ob-ai-btn{position:fixed;right:18px;bottom:44px;z-index:320;width:48px;height:48px;border-radius:50%;background:#2563eb;color:#fff;border:none;cursor:pointer;font-size:22px;box-shadow:0 4px 14px rgba(37,99,235,.4)}' +
-    '#ob-ai-btn:hover{background:#1d4ed8}' +
-    '#ob-ai-panel{position:fixed;right:18px;bottom:44px;z-index:321;width:440px;max-width:calc(100vw - 24px);height:540px;max-height:calc(100vh - 80px);background:#fff;border:1px solid #cbd5e1;border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.22);display:none;flex-direction:column;overflow:hidden;font-family:system-ui,sans-serif}' +
+    '#ob-ai-btn{position:fixed;right:18px;bottom:44px;z-index:320;width:48px;height:48px;border-radius:50%;background:var(--ob-accent);color:#fff;border:none;cursor:pointer;font-size:22px;box-shadow:0 4px 14px rgba(37,99,235,.4)}' +
+    '#ob-ai-btn:hover{background:var(--ob-accent-hover)}' +
+    '#ob-ai-panel{position:fixed;right:18px;bottom:44px;z-index:321;width:440px;max-width:calc(100vw - 24px);height:540px;max-height:calc(100vh - 80px);background:var(--ob-input-bg);border:1px solid var(--ob-border-2);border-radius:12px;box-shadow:0 8px 32px rgba(0,0,0,.22);display:none;flex-direction:column;overflow:hidden;font-family:system-ui,sans-serif}' +
     '#ob-ai-panel.open{display:flex}' +
-    '#ob-ai-head{background:#2563eb;color:#fff;padding:10px 14px;display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px}' +
+    '#ob-ai-head{background:var(--ob-accent);color:#fff;padding:10px 14px;display:flex;align-items:center;gap:8px;font-weight:600;font-size:14px}' +
     '#ob-ai-head .sp{flex:1}' +
     '#ob-ai-head button{background:none;border:none;color:#fff;cursor:pointer;font-size:18px;line-height:1}' +
-    '#ob-ai-log{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;background:#f8fafc}' +
+    '#ob-ai-log{flex:1;overflow-y:auto;padding:12px;display:flex;flex-direction:column;gap:10px;background:var(--ob-surface-2)}' +
     '#ob-ai-log .m{max-width:85%;padding:8px 11px;border-radius:12px;font-size:13px;line-height:1.4;white-space:pre-wrap;word-break:break-word}' +
-    '#ob-ai-log .m.u{align-self:flex-end;background:#2563eb;color:#fff;border-bottom-right-radius:3px}' +
-    '#ob-ai-log .m.a{align-self:flex-start;background:#fff;border:1px solid #e2e8f0;color:#1e293b;border-bottom-left-radius:3px;white-space:normal;max-width:92%;overflow-x:auto}' +
+    '#ob-ai-log .m.u{align-self:flex-end;background:var(--ob-accent);color:#fff;border-bottom-right-radius:3px}' +
+    '#ob-ai-log .m.a{align-self:flex-start;background:var(--ob-input-bg);border:1px solid var(--ob-border);color:var(--ob-text);border-bottom-left-radius:3px;white-space:normal;max-width:92%;overflow-x:auto}' +
     '#ob-ai-log .m.a p{margin:0 0 6px}' +
     '#ob-ai-log .m.a p:last-child{margin-bottom:0}' +
     '#ob-ai-log .m.a h1,#ob-ai-log .m.a h2,#ob-ai-log .m.a h3,#ob-ai-log .m.a h4{font-size:13px;font-weight:700;margin:8px 0 4px}' +
     '#ob-ai-log .m.a ul,#ob-ai-log .m.a ol{margin:4px 0;padding-left:20px}' +
     '#ob-ai-log .m.a li{margin:2px 0}' +
-    '#ob-ai-log .m.a a{color:#2563eb;text-decoration:underline}' +
-    '#ob-ai-log .m.a code{background:#f1f5f9;border-radius:3px;padding:1px 4px;font-family:ui-monospace,Consolas,monospace;font-size:12px}' +
-    '#ob-ai-log .m.a pre{background:#f1f5f9;border-radius:6px;padding:8px;overflow-x:auto;margin:6px 0}' +
+    '#ob-ai-log .m.a a{color:var(--ob-accent-hover);text-decoration:underline}' +
+    '#ob-ai-log .m.a code{background:var(--ob-surface-3);border-radius:3px;padding:1px 4px;font-family:ui-monospace,Consolas,monospace;font-size:12px}' +
+    '#ob-ai-log .m.a pre{background:var(--ob-surface-3);border-radius:6px;padding:8px;overflow-x:auto;margin:6px 0}' +
     '#ob-ai-log .m.a pre code{background:none;padding:0}' +
     // Таблица живёт в собственной скролл-обёртке .tw и держит естественную
     // ширину; ячейкам возвращаем word-break:normal — иначе наследованный от .m
     // break-word даёт min-width колонки в один символ и текст жмётся посимвольно.
     '#ob-ai-log .m.a .tw{overflow-x:auto;margin:6px 0}' +
     '#ob-ai-log .m.a table{border-collapse:collapse;margin:0;font-size:12px;width:max-content}' +
-    '#ob-ai-log .m.a th,#ob-ai-log .m.a td{border:1px solid #e2e8f0;padding:4px 7px;text-align:left;vertical-align:top;word-break:normal;max-width:240px}' +
-    '#ob-ai-log .m.a th{background:#f1f5f9;font-weight:600;white-space:nowrap}' +
-    '#ob-ai-log .m.a tbody tr:nth-child(even){background:#f8fafc}' +
-    '#ob-ai-log .m.err{align-self:stretch;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c}' +
-    '#ob-ai-log .hint{color:#94a3b8;font-size:12px;text-align:center;margin:auto 0}' +
-    '#ob-ai-foot{border-top:1px solid #e2e8f0;padding:8px;display:flex;gap:6px;background:#fff}' +
-    '#ob-ai-input{flex:1;resize:none;border:1px solid #cbd5e1;border-radius:8px;padding:8px;font-size:13px;font-family:inherit;max-height:90px}' +
-    '#ob-ai-send{background:#2563eb;color:#fff;border:none;border-radius:8px;padding:0 14px;cursor:pointer;font-size:14px}' +
+    '#ob-ai-log .m.a th,#ob-ai-log .m.a td{border:1px solid var(--ob-border);padding:4px 7px;text-align:left;vertical-align:top;word-break:normal;max-width:240px}' +
+    '#ob-ai-log .m.a th{background:var(--ob-surface-3);font-weight:600;white-space:nowrap}' +
+    '#ob-ai-log .m.a tbody tr:nth-child(even){background:var(--ob-surface-2)}' +
+    '#ob-ai-log .m.err{align-self:stretch;background:var(--ob-error-bg);border:1px solid var(--ob-error-border);color:var(--ob-danger-ink)}' +
+    '#ob-ai-log .hint{color:var(--ob-text-4);font-size:12px;text-align:center;margin:auto 0}' +
+    '#ob-ai-foot{border-top:1px solid var(--ob-border);padding:8px;display:flex;gap:6px;background:#fff}' +
+    '#ob-ai-input{flex:1;resize:none;border:1px solid var(--ob-border-2);border-radius:8px;padding:8px;font-size:13px;font-family:inherit;max-height:90px}' +
+    '#ob-ai-send{background:var(--ob-accent);color:#fff;border:none;border-radius:8px;padding:0 14px;cursor:pointer;font-size:14px}' +
     '#ob-ai-send:disabled{opacity:.5;cursor:default}' +
     '#ob-ai-rs{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:ew-resize;touch-action:none;z-index:2}' +
     '#ob-ai-rs:hover,#ob-ai-rs.drag{background:rgba(37,99,235,.25)}' +
-    '#ob-ai-log .m.act{align-self:stretch;max-width:100%;background:#eef2ff;border:1px solid #c7d2fe;color:#1e293b;white-space:normal}' +
+    '#ob-ai-log .m.act{align-self:stretch;max-width:100%;background:var(--ob-indigo-bg);border:1px solid var(--ob-indigo-border);color:var(--ob-text);white-space:normal}' +
     '#ob-ai-log .m.act .lbl{white-space:pre-wrap;margin-bottom:8px}' +
     '#ob-ai-log .m.act .btns{display:flex;gap:8px}' +
-    '#ob-ai-log .m.act .btns button{background:#2563eb;color:#fff;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px}' +
-    '#ob-ai-log .m.act .btns button.sec{background:#e2e8f0;color:#334155}' +
+    '#ob-ai-log .m.act .btns button{background:var(--ob-accent);color:#fff;border:none;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px}' +
+    '#ob-ai-log .m.act .btns button.sec{background:var(--ob-btn-2-bg);color:var(--ob-text-strong)}' +
     '#ob-ai-log .m.act .btns button:disabled{opacity:.6;cursor:default}' +
     '#ob-ai-log .m.act .res{font-size:13px}' +
-    '#ob-ai-log .m.act .res a{color:#2563eb;text-decoration:underline;cursor:pointer}' +
+    '#ob-ai-log .m.act .res a{color:var(--ob-accent-hover);text-decoration:underline;cursor:pointer}' +
     '#ob-msg-bar{position:fixed;left:0;right:0;bottom:0;z-index:300;background:var(--ob-surface);border-top:1px solid var(--ob-border-2);box-shadow:0 -2px 8px rgba(0,0,0,.08);font-family:system-ui,sans-serif;font-size:13px;color:var(--ob-text);transform:translateY(calc(100% - 30px));transition:transform .18s ease}' +
     '#ob-msg-bar.open{transform:translateY(0)}' +
     '#ob-msg-bar.hidden{display:none}' +
     '#ob-msg-head{height:30px;display:flex;align-items:center;padding:0 10px;cursor:pointer;background:var(--ob-surface-3);user-select:none;gap:10px}' +
     '#ob-msg-head .ttl{font-weight:600;color:var(--ob-text-strong);flex:1;display:flex;align-items:center;gap:8px}' +
-    '#ob-msg-head .cnt{background:#ef4444;color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:700;min-width:18px;text-align:center;display:none}' +
+    '#ob-msg-head .cnt{background:var(--ob-danger);color:#fff;border-radius:10px;padding:1px 8px;font-size:11px;font-weight:700;min-width:18px;text-align:center;display:none}' +
     '#ob-msg-head .cnt.show{display:inline-block}' +
     '#ob-msg-head .arr{color:var(--ob-text-3);font-size:11px;width:14px;text-align:center}' +
     '#ob-msg-bar.open #ob-msg-head .arr{transform:rotate(180deg)}' +
@@ -4595,7 +4595,7 @@ function openItemPicker(payload, elementName, eventContext, request) {
   var btnOk = document.createElement('button');
   btnOk.type = 'button';
   btnOk.textContent = single ? 'Выбрать' : 'Перенести в документ';
-  btnOk.style.cssText = 'padding:7px 18px;border:1px solid #2563eb;border-radius:7px;background:#2563eb;color:#fff;cursor:pointer;font-size:13px;font-weight:600';
+  btnOk.style.cssText = 'padding:7px 18px;border:1px solid var(--ob-accent);border-radius:7px;background:var(--ob-accent);color:#fff;cursor:pointer;font-size:13px;font-weight:600';
   foot.appendChild(btnCancel);
   if (noSelect) btnCancel.textContent = 'Закрыть';
   else foot.appendChild(btnOk);
@@ -5071,15 +5071,15 @@ function obOpenQuestion(payload, elementName, handlers) {
   // Многострочному полю (текст ошибки, примечание) узко в 460px: окно шире, а
   // поле занимает всю его ширину. На узком экране — не шире 94% окна.
   var hasMultiline = (payload.fields || []).some(function (f) { return f && f.editable && f.multiline; });
-  box.style.cssText = 'background:#fff;border-radius:10px;padding:20px;width:' + (hasMultiline ? '640px' : '460px') + ';max-width:94vw;box-shadow:0 8px 32px rgba(0,0,0,.18)';
+  box.style.cssText = 'background:var(--ob-surface);border-radius:10px;padding:20px;width:' + (hasMultiline ? '640px' : '460px') + ';max-width:94vw;box-shadow:0 8px 32px rgba(0,0,0,.18)';
   if (payload.title) {
     var title = document.createElement('div');
-    title.style.cssText = 'font-weight:600;font-size:15px;color:#1e293b;margin-bottom:8px';
+    title.style.cssText = 'font-weight:600;font-size:15px;color:var(--ob-text);margin-bottom:8px';
     title.textContent = payload.title;
     box.appendChild(title);
   }
   var text = document.createElement('div');
-  text.style.cssText = 'font-size:14px;color:#1e293b;white-space:pre-line;margin-bottom:16px';
+  text.style.cssText = 'font-size:14px;color:var(--ob-text);white-space:pre-line;margin-bottom:16px';
   text.textContent = payload.text;
   box.appendChild(text);
   // Строки данных: итог операции (номер записанного документа, клиент, дата)
@@ -5092,7 +5092,7 @@ function obOpenQuestion(payload, elementName, handlers) {
     line.style.cssText = 'margin-bottom:10px';
     if (field.label) {
       var label = document.createElement('div');
-      label.style.cssText = 'font-size:12px;color:#64748b;margin-bottom:3px';
+      label.style.cssText = 'font-size:12px;color:var(--ob-text-3);margin-bottom:3px';
       // color — «важность: error» или «цветтекста», цвет уже проверен сервером.
       if (field.color) label.style.color = field.color;
       label.textContent = field.label;
@@ -5103,7 +5103,7 @@ function obOpenQuestion(payload, elementName, handlers) {
       // rows — «строк» из DSL (видимых строк), по умолчанию 4.
       if (field.multiline) input.rows = field.rows > 0 ? field.rows : 4; else input.type = 'text';
       input.value = field.value == null ? '' : String(field.value);
-      input.style.cssText = 'width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid #e2e8f0;border-radius:7px;font-size:14px;outline:none'
+      input.style.cssText = 'width:100%;box-sizing:border-box;padding:8px 10px;border:1px solid var(--ob-border);border-radius:7px;font-size:14px;outline:none'
         + (field.multiline ? ';resize:vertical;font-family:inherit' : '');
       if (field.color) input.style.color = field.color;
       line.appendChild(input);
@@ -5111,8 +5111,8 @@ function obOpenQuestion(payload, elementName, handlers) {
     } else {
       var value = document.createElement('div');
       value.style.cssText = (field.strong
-        ? 'font-size:15px;font-weight:650;color:#0f172a'
-        : 'font-size:14px;color:#1e293b') + ';white-space:pre-line';
+        ? 'font-size:15px;font-weight:650;color:var(--ob-kpi-ink)'
+        : 'font-size:14px;color:var(--ob-text)') + ';white-space:pre-line';
       value.textContent = field.value == null ? '' : String(field.value);
       if (field.color) value.style.color = field.color;
       line.appendChild(value);
@@ -5136,7 +5136,7 @@ function obOpenQuestion(payload, elementName, handlers) {
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = variant;
-    btn.style.cssText = 'padding:8px 16px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:14px;white-space:normal'
+    btn.style.cssText = 'padding:8px 16px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:14px;white-space:normal'
       + (manyVariants ? ';text-align:left;width:100%' : ';max-width:100%');
     btn.addEventListener('click', function () {
       modal.remove();
@@ -5497,24 +5497,24 @@ function openRefPicker(selOrId) {
   // Ширина зависит от preview в первом ответе. До него скрываем именно этот
   // диалог, а не независимый openItemPicker; rpReveal покажет его после layout.
   modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center;visibility:hidden';
-  var inner = '<div id="_rp-card" style="background:#fff;border-radius:10px;padding:20px;width:480px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.18)">';
-  inner += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-weight:600;font-size:15px;color:#1e293b">Выбор из списка</div>';
+  var inner = '<div id="_rp-card" style="background:var(--ob-surface);border-radius:10px;padding:20px;width:480px;max-width:95vw;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 8px 32px rgba(0,0,0,.18)">';
+  inner += '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><div style="font-weight:600;font-size:15px;color:var(--ob-text)">Выбор из списка</div>';
   if (allowCreate && refEntity) {
-    inner += '<button type="button" id="_rp-create" style="padding:5px 12px;border:1px solid #16a34a;border-radius:6px;background:#f0fdf4;cursor:pointer;font-size:12px;font-weight:600;color:#16a34a" title="Создать новый">+ Создать</button>';
+    inner += '<button type="button" id="_rp-create" style="padding:5px 12px;border:1px solid var(--ob-posted);border-radius:6px;background:var(--ob-ok-bg);cursor:pointer;font-size:12px;font-weight:600;color:var(--ob-posted)" title="Создать новый">+ Создать</button>';
   }
   inner += '</div>';
-  inner += '<input id="_rp-search" type="text" placeholder="Поиск..." autocomplete="off" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;font-size:14px;margin-bottom:10px;outline:none">';
+  inner += '<input id="_rp-search" type="text" placeholder="Поиск..." autocomplete="off" style="padding:8px 12px;border:1px solid var(--ob-border);border-radius:7px;font-size:14px;margin-bottom:10px;outline:none">';
   // Список и область просмотра — РЯДОМ, и высота у обоих не зависит от того,
   // есть ли у строки текст. Просмотр под списком не годился дважды: длинный
   // список уводил его за нижний край, а появление и исчезновение текста при
   // переводе курсора меняло высоту диалога — он прыгал под мышью.
   inner += '<div id="_rp-body" style="display:flex;gap:12px;align-items:stretch;flex:1;min-height:0">';
-  inner += '<div id="_rp-list" style="overflow-y:auto;flex:1 1 auto;min-width:0;border:1px solid #e2e8f0;border-radius:7px"></div>';
+  inner += '<div id="_rp-list" style="overflow-y:auto;flex:1 1 auto;min-width:0;border:1px solid var(--ob-border);border-radius:7px"></div>';
   // Колонки просмотра нет вовсе, пока сущность не объявила choice_preview:
   // подбор по остальным справочникам остаётся ровно таким, каким был.
-  inner += '<div id="_rp-preview" style="display:none;flex:0 0 340px;padding:12px 14px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;font-size:13px;line-height:1.5;color:#334155;white-space:pre-wrap;overflow-y:auto"></div>';
+  inner += '<div id="_rp-preview" style="display:none;flex:0 0 340px;padding:12px 14px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);font-size:13px;line-height:1.5;color:var(--ob-text-strong);white-space:pre-wrap;overflow-y:auto"></div>';
   inner += '</div>';
-  inner += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px"><div id="_rp-status" style="font-size:12px;color:#94a3b8"></div><button type="button" id="_rp-cancel" style="padding:6px 18px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">Отмена</button></div>';
+  inner += '<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:12px"><div id="_rp-status" style="font-size:12px;color:var(--ob-text-4)"></div><button type="button" id="_rp-cancel" style="padding:6px 18px;border:1px solid var(--ob-border);border-radius:7px;background:var(--ob-surface-2);cursor:pointer;font-size:13px">Отмена</button></div>';
   inner += '</div>';
   modal.innerHTML = inner;
   document.body.appendChild(modal);
@@ -5574,11 +5574,11 @@ function openRefPicker(selOrId) {
     box.textContent = text || '—';
     // Сохраняем переносы строк и пробелы обычного текста.
     box.style.whiteSpace = 'pre-wrap';
-    box.style.color = text ? '#334155' : '#cbd5e1';
+    box.style.color = text ? 'var(--ob-text-strong)' : 'var(--ob-text-4)';
   }
   function rpPaint() {
     var items = rpItems();
-    for (var i = 0; i < items.length; i++) items[i].style.background = (i === rpActive) ? '#eef2ff' : '';
+    for (var i = 0; i < items.length; i++) items[i].style.background = (i === rpActive) ? 'var(--ob-indigo-bg)' : '';
     if (rpActive >= 0 && items[rpActive] && items[rpActive].scrollIntoView) {
       items[rpActive].scrollIntoView({ block: 'nearest' });
     }
@@ -5592,7 +5592,7 @@ function openRefPicker(selOrId) {
     rpActive = -1;
     if (!opts || opts.length === 0) {
       var empty = document.createElement('div');
-      empty.style.cssText = 'padding:16px;color:#94a3b8;font-size:13px;text-align:center';
+      empty.style.cssText = 'padding:16px;color:var(--ob-text-4);font-size:13px;text-align:center';
       empty.textContent = 'Список пуст';
       list.appendChild(empty);
       return;
@@ -5603,7 +5603,7 @@ function openRefPicker(selOrId) {
       item.setAttribute('data-id', opts[i].id);
       item.setAttribute('data-label', opts[i].label);
       if (opts[i].preview) item.setAttribute('data-preview', opts[i].preview);
-      item.style.cssText = 'padding:9px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:14px;color:#1e293b';
+      item.style.cssText = 'padding:9px 14px;cursor:pointer;border-bottom:1px solid var(--ob-surface-3);font-size:14px;color:var(--ob-text)';
       item.textContent = opts[i].label;
       (function (idx) {
         item.addEventListener('mouseenter', function () { rpActive = idx; rpPaint(); });
@@ -5830,19 +5830,19 @@ function openRefCreate(targetSelect, refEntity) {
   modal.id = '_ref-create-modal';
   modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.5);z-index:10000;display:flex;align-items:center;justify-content:center';
   var box = document.createElement('div');
-  box.style.cssText = 'background:#fff;border-radius:10px;width:780px;max-width:95vw;height:78vh;max-height:680px;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.22);overflow:hidden';
+  box.style.cssText = 'background:var(--ob-surface);border-radius:10px;width:780px;max-width:95vw;height:78vh;max-height:680px;display:flex;flex-direction:column;box-shadow:0 12px 40px rgba(0,0,0,.22);overflow:hidden';
   var toolbar = document.createElement('div');
-  toolbar.style.cssText = 'display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:8px 10px;border-bottom:1px solid #e2e8f0;background:#f8fafc';
+  toolbar.style.cssText = 'display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:8px 10px;border-bottom:1px solid var(--ob-border);background:var(--ob-surface-2)';
   var cancelBtn = document.createElement('button');
   cancelBtn.type = 'button';
   cancelBtn.setAttribute('data-ob-ref-create-cancel', '1');
   cancelBtn.textContent = 'Отмена';
-  cancelBtn.style.cssText = 'padding:5px 10px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#475569;cursor:pointer';
+  cancelBtn.style.cssText = 'padding:5px 10px;border:1px solid var(--ob-border-2);border-radius:6px;background:var(--ob-input-bg);color:var(--ob-text);cursor:pointer';
   var closeBtn = document.createElement('button');
   closeBtn.type = 'button';
   closeBtn.setAttribute('aria-label', 'Закрыть');
   closeBtn.textContent = '×';
-  closeBtn.style.cssText = 'padding:1px 9px;border:0;background:transparent;color:#64748b;cursor:pointer;font-size:24px;line-height:1';
+  closeBtn.style.cssText = 'padding:1px 9px;border:0;background:transparent;color:var(--ob-text-3);cursor:pointer;font-size:24px;line-height:1';
   toolbar.appendChild(cancelBtn);
   toolbar.appendChild(closeBtn);
   var iframe = document.createElement('iframe');
@@ -6153,7 +6153,7 @@ window.onebaseDevice = {
       (document.body || document.documentElement).appendChild(box);
     }
     var el = document.createElement('div');
-    el.style.cssText = 'background:#1f2937;color:#fff;padding:10px 14px;border-radius:8px;box-shadow:0 6px 16px rgba(0,0,0,.25);font-size:14px;line-height:1.35;opacity:0;transition:opacity .2s';
+    el.style.cssText = 'background:var(--ob-nav-bg);color:#fff;padding:10px 14px;border-radius:8px;box-shadow:0 6px 16px rgba(0,0,0,.25);font-size:14px;line-height:1.35;opacity:0;transition:opacity .2s';
     el.textContent = text;
     box.appendChild(el);
     afterPaint(function () { el.style.opacity = '1'; });
@@ -6177,7 +6177,7 @@ window.onebaseDevice = {
       (document.body || document.documentElement).appendChild(box);
     }
     var el = document.createElement('div');
-    el.style.cssText = 'position:relative;background:#065f46;color:#fff;padding:12px 28px 12px 14px;border-radius:8px;box-shadow:0 6px 16px rgba(0,0,0,.3);font-size:14px;line-height:1.4';
+    el.style.cssText = 'position:relative;background:var(--ob-ok-text);color:#fff;padding:12px 28px 12px 14px;border-radius:8px;box-shadow:0 6px 16px rgba(0,0,0,.3);font-size:14px;line-height:1.4';
     var head = document.createElement('div');
     head.style.cssText = 'font-weight:600;margin-bottom:4px';
     head.textContent = '📞 Входящий звонок';
@@ -6301,7 +6301,7 @@ window.onebaseDevice = {
     var important = String(d['важность'] || '') === 'важное';
     var link = d['ссылка'];
     var el = document.createElement('div');
-    el.style.cssText = 'position:relative;background:' + (important ? '#7c2d12' : '#1f2937') + ';color:#fff;padding:12px 28px 12px 14px;border-radius:8px;box-shadow:0 6px 16px rgba(0,0,0,.3);font-size:14px;line-height:1.4' + (link ? ';cursor:pointer' : '');
+    el.style.cssText = 'position:relative;background:' + (important ? 'var(--ob-warn-strong)' : 'var(--ob-nav-bg)') + ';color:#fff;padding:12px 28px 12px 14px;border-radius:8px;box-shadow:0 6px 16px rgba(0,0,0,.3);font-size:14px;line-height:1.4' + (link ? ';cursor:pointer' : '');
     if (d['заголовок']) {
       var head = document.createElement('div');
       head.style.cssText = 'font-weight:600;margin-bottom:4px';
@@ -6797,24 +6797,24 @@ function initDetailPanel() {
   var css = '' +
     '.ob-list-wrap{display:flex;gap:12px;align-items:flex-start}' +
     '.ob-list-wrap>.card,.ob-list-content{flex:1 1 auto;min-width:0}' +
-    '.ob-detail{position:relative;flex:0 0 auto;width:320px;background:#fff;border:1px solid #e2e8f0;' +
+    '.ob-detail{position:relative;flex:0 0 auto;width:320px;background:var(--ob-input-bg);border:1px solid var(--ob-border);' +
     'border-radius:8px;padding:0;align-self:stretch;max-height:calc(100vh - 160px);overflow:auto}' +
     '.ob-detail-grip{position:absolute;left:-4px;top:0;bottom:0;width:8px;cursor:col-resize}' +
     '.ob-detail-body{padding:12px 14px}' +
     '.ob-detail-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px}' +
-    '.ob-detail-close{border:0;background:transparent;color:#94a3b8;cursor:pointer;font-size:14px}' +
+    '.ob-detail-close{border:0;background:transparent;color:var(--ob-text-4);cursor:pointer;font-size:14px}' +
     '.ob-detail-tabs{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:10px}' +
-    '.ob-detail-tab{border:1px solid #e2e8f0;background:#f8fafc;border-radius:6px;padding:3px 9px;' +
-    'font-size:12px;cursor:pointer;color:#475569}' +
-    '.ob-detail-tab.active{background:#e0e7ff;border-color:#c7d2fe;color:#3730a3}' +
-    '.ob-detail-field{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid #f1f5f9;font-size:13px}' +
-    '.ob-detail-label{flex:0 0 42%;color:#64748b}' +
+    '.ob-detail-tab{border:1px solid var(--ob-border);background:var(--ob-surface-2);border-radius:6px;padding:3px 9px;' +
+    'font-size:12px;cursor:pointer;color:var(--ob-text-2)}' +
+    '.ob-detail-tab.active{background:var(--ob-indigo-hover);border-color:var(--ob-indigo-border);color:var(--ob-indigo-ink)}' +
+    '.ob-detail-field{display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--ob-surface-3);font-size:13px}' +
+    '.ob-detail-label{flex:0 0 42%;color:var(--ob-text-3)}' +
     '.ob-detail-value{flex:1 1 auto;word-break:break-word}' +
     '.ob-detail-field-image{display:block;overflow:hidden}' +
     '.ob-detail-field-image .ob-detail-label{display:block;margin-bottom:6px}' +
     '.ob-detail-image{display:block;width:100%;height:auto;max-width:100%;max-height:calc(100vh - 260px);' +
     'object-fit:contain;object-position:center;border-radius:6px}' +
-    '.ob-detail-empty{color:#94a3b8;font-size:13px;margin:4px 0 0}' +
+    '.ob-detail-empty{color:var(--ob-text-4);font-size:13px;margin:4px 0 0}' +
     /* Узкий экран: третья колонка недопустима — панель уходит под список. */
     '@media(max-width:820px){.ob-list-wrap{flex-direction:column;align-items:stretch}.ob-detail{width:auto!important;max-height:none}}';
   var st = document.createElement('style');

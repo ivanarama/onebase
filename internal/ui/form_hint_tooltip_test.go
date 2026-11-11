@@ -43,13 +43,13 @@ func TestManagedFormHintIsTooltipByDefault(t *testing.T) {
 	for _, want := range []string{
 		`<span class="ob-hint" title="Особо гарантийный документ" aria-label="Особо гарантийный документ">ⓘ</span></label>`,
 		`<span class="ob-hint" title="Клиент с особыми условиями" aria-label="Клиент с особыми условиями">ⓘ</span></label>`,
-		`<small style="color:#94a3b8;font-size:11px">видно под полем</small>`,
+		`<small style="color:var(--ob-text-4);font-size:11px">видно под полем</small>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("нет %q:\n%s", want, body)
 		}
 	}
-	if strings.Contains(body, `<small style="color:#94a3b8;font-size:11px">Особо гарантийный документ</small>`) {
+	if strings.Contains(body, `<small style="color:var(--ob-text-4);font-size:11px">Особо гарантийный документ</small>`) {
 		t.Error("hint списка «Да/Нет» напечатан текстом под полем, а должен всплывать")
 	}
 	if strings.Contains(body, `title="видно под полем" aria-label`) {

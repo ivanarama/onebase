@@ -227,13 +227,13 @@ const tplAdminExtForms = `{{define "admin-extforms"}}` + adminHead + `
 <div class="row-top" style="max-width:1000px">
   <h2>Внешние печатные формы</h2>
 </div>
-<p style="color:#64748b;font-size:13px;margin-bottom:16px;max-width:1000px">
+<p style="color:var(--ob-text-3);font-size:13px;margin-bottom:16px;max-width:1000px">
   Формы из внешнего контура хранятся в базе и не входят в версионируемую конфигурацию проekta.
   Это позволяет добавлять печатные формы без правки и передеплоя конфигурации проекта. Поддерживается
   «голый» YAML печатной формы или бандл <code>*.obform</code>. Форма с именем, совпадающим с формой
   конфигурации, не перекрывает её — основной остаётся форма конфигурации.
 </p>
-{{if .Msg}}<div style="background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:1000px">✓ {{.Msg}}</div>{{end}}
+{{if .Msg}}<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-posted);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:1000px">✓ {{.Msg}}</div>{{end}}
 {{if .Err}}<div class="error" style="max-width:1000px">{{.Err}}</div>{{end}}
 
 <div class="card" style="max-width:1000px;margin-bottom:20px">
@@ -254,11 +254,11 @@ const tplAdminExtForms = `{{define "admin-extforms"}}` + adminHead + `
 {{range .Forms}}<tr>
   <td><strong>{{.Document}}</strong></td>
   <td>{{.Name}}</td>
-  <td>{{if .Enabled}}<span style="color:#16a34a;font-weight:600">включена</span>{{else}}<span style="color:#94a3b8">выключена</span>{{end}}</td>
-  <td style="color:#475569">{{.Author}}</td>
-  <td style="color:#475569">{{.Version}}</td>
-  <td style="color:#475569">{{.UploadedBy}}</td>
-  <td style="font-size:12px;color:#94a3b8">{{.UploadedAt.Format "02.01.2006 15:04"}}</td>
+  <td>{{if .Enabled}}<span style="color:var(--ob-posted);font-weight:600">включена</span>{{else}}<span style="color:var(--ob-text-4)">выключена</span>{{end}}</td>
+  <td style="color:var(--ob-text-2)">{{.Author}}</td>
+  <td style="color:var(--ob-text-2)">{{.Version}}</td>
+  <td style="color:var(--ob-text-2)">{{.UploadedBy}}</td>
+  <td style="font-size:12px;color:var(--ob-text-4)">{{.UploadedAt.Format "02.01.2006 15:04"}}</td>
   <td>
     <div style="display:flex;gap:4px">
       <form method="POST" action="/ui/admin/extforms/{{.ID}}/toggle" style="margin:0">

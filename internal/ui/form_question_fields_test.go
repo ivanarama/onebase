@@ -267,7 +267,7 @@ func TestShowQuestion_FieldColor(t *testing.T) {
 	if !resp.OK || resp.Question == nil {
 		t.Fatalf("ok=%v error=%q question=%+v", resp.OK, resp.Error, resp.Question)
 	}
-	want := []string{"#b91c1c", "#b91c1c", "#0055aa", "#b91c1c", "", "", ""}
+	want := []string{"var(--ob-danger-ink)", "var(--ob-danger-ink)", "#0055aa", "var(--ob-danger-ink)", "", "", ""}
 	if len(resp.Question.Fields) != len(want) {
 		t.Fatalf("fields=%+v", resp.Question.Fields)
 	}

@@ -220,7 +220,7 @@ func TestGlobalSearch_EmptyQueryRendersForm(t *testing.T) {
 	if !strings.Contains(body, `action="/ui/search"`) {
 		t.Fatalf("страница поиска должна показывать форму:\n%s", body)
 	}
-	if strings.Contains(body, `<p style="color:#64748b">`) {
+	if strings.Contains(body, `<p style="color:var(--ob-text-3)">`) {
 		// Само по себе «Ничего не найдено» в body легитимно: bootstrap-словарь
 		// страницы (window.OB_I18N) несёт ключ для статического JS. Неудачный
 		// поиск — это параграф с сообщением, а не словарь.

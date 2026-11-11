@@ -258,17 +258,17 @@ const tplAdminExtProcessors = `{{define "admin-extprocessors"}}` + adminHead + `
 <div class="row-top" style="max-width:1100px">
   <h2>Внешние обработки</h2>
 </div>
-<div style="background:#fef3c7;border:1px solid #fcd34d;color:#92400e;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:13px;max-width:1100px">
+<div style="background:var(--ob-amber-bg);border:1px solid var(--ob-amber-border);color:var(--ob-amber-ink);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:13px;max-width:1100px">
   ⚠️ Внешняя обработка исполняет произвольный DSL-код с полными правами платформы (запросы, движения,
   HTTP, файлы). Загружайте только код из доверенного источника. По умолчанию обработку запускает
   только администратор; чтобы её могли запускать обычные пользователи, пометьте её «доверенной».
 </div>
-{{if .Msg}}<div style="background:#f0fdf4;border:1px solid #bbf7d0;color:#16a34a;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:1100px">✓ {{.Msg}}</div>{{end}}
+{{if .Msg}}<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-posted);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:1100px">✓ {{.Msg}}</div>{{end}}
 {{if .Err}}<div class="error" style="max-width:1100px">{{.Err}}</div>{{end}}
 
 <div class="card" style="max-width:1100px;margin-bottom:20px">
 <h3 style="margin-bottom:8px;font-size:16px">Загрузить обработку</h3>
-<p style="color:#64748b;font-size:12px;margin-bottom:12px">YAML с метаданными (name, params) и полем <code>code</code> (исходник .proc.os с процедурой Выполнить()), либо бандл *.obform.</p>
+<p style="color:var(--ob-text-3);font-size:12px;margin-bottom:12px">YAML с метаданными (name, params) и полем <code>code</code> (исходник .proc.os с процедурой Выполнить()), либо бандл *.obform.</p>
 <form method="POST" action="/ui/admin/extprocessors" enctype="multipart/form-data" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
   <input type="file" name="file" accept=".yaml,.yml,.obform" required>
   <button class="btn btn-primary" type="submit">Загрузить</button>
@@ -284,12 +284,12 @@ const tplAdminExtProcessors = `{{define "admin-extprocessors"}}` + adminHead + `
 <tbody>
 {{range .Procs}}<tr>
   <td><strong>{{.Name}}</strong></td>
-  <td>{{if .Enabled}}<span style="color:#16a34a;font-weight:600">включена</span>{{else}}<span style="color:#94a3b8">выключена</span>{{end}}</td>
-  <td>{{if .Trusted}}<span style="color:#2563eb;font-weight:600">да</span>{{else}}<span style="color:#94a3b8">нет (только админ)</span>{{end}}</td>
-  <td style="color:#475569">{{.Author}}</td>
-  <td style="color:#475569">{{.Version}}</td>
-  <td style="color:#475569">{{.UploadedBy}}</td>
-  <td style="font-size:12px;color:#94a3b8">{{.UploadedAt.Format "02.01.2006 15:04"}}</td>
+  <td>{{if .Enabled}}<span style="color:var(--ob-posted);font-weight:600">включена</span>{{else}}<span style="color:var(--ob-text-4)">выключена</span>{{end}}</td>
+  <td>{{if .Trusted}}<span style="color:var(--ob-accent-hover);font-weight:600">да</span>{{else}}<span style="color:var(--ob-text-4)">нет (только админ)</span>{{end}}</td>
+  <td style="color:var(--ob-text-2)">{{.Author}}</td>
+  <td style="color:var(--ob-text-2)">{{.Version}}</td>
+  <td style="color:var(--ob-text-2)">{{.UploadedBy}}</td>
+  <td style="font-size:12px;color:var(--ob-text-4)">{{.UploadedAt.Format "02.01.2006 15:04"}}</td>
   <td>
     <div style="display:flex;gap:4px;flex-wrap:wrap">
       <form method="POST" action="/ui/admin/extprocessors/{{.ID}}/toggle" style="margin:0">

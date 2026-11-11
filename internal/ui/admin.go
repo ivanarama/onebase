@@ -223,7 +223,9 @@ input:focus{border-color:var(--ob-accent);outline:none}
 .error{background:var(--ob-error-bg);border:1px solid var(--ob-error-border);color:var(--ob-error-text);padding:12px;border-radius:7px;margin-bottom:16px;font-size:14px}
 .empty{color:var(--ob-text-4);text-align:center;padding:32px;font-size:14px}
 .row-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px}
-</style></head><body>
+</style>
+{{if .ThemeCSS}}<link rel="stylesheet" href="/ui/theme.css">{{end}}
+</head><body>
 <div style="margin-bottom:16px">
   <a href="/ui" style="color:var(--ob-text-3);font-size:13px;text-decoration:none">← Главная</a>
 </div>`

@@ -354,6 +354,8 @@ func (s *Server) tr(lang, key string) string {
 // revalidation but no longer pays for auth on each 304.
 func (s *Server) MountStatic(r chi.Router) {
 	mountStatic(r)
+	// Внешние стили конфигурации — не секрет, вне auth-стека (план 111).
+	r.Get("/ui/theme.css", s.themeCSS)
 }
 
 func (s *Server) Mount(r chi.Router) {

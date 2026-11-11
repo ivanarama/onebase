@@ -48,7 +48,7 @@ function qbSetSource(id){
   // Clear joins when main source changes
   _joins = [];
   document.getElementById('qb-joins').innerHTML =
-    '<p style="font-size:12px;color:#94a3b8;margin:0" id="qb-joins-hint">Нет соединений</p>';
+    '<p style="font-size:12px;color:var(--ob-text-4);margin:0" id="qb-joins-hint">Нет соединений</p>';
   document.getElementById('qb-main-alias').value = '';
 
   var vtDiv = document.getElementById('qb-vt-param');
@@ -132,21 +132,21 @@ function qbAddJoin(){
   var jid = Date.now();
   var div = document.createElement('div');
   div.dataset.jid = jid;
-  div.style.cssText = 'border:1px solid #e2e8f0;border-radius:6px;padding:8px;margin-bottom:8px;background:#f8fafc';
+  div.style.cssText = 'border:1px solid var(--ob-border);border-radius:6px;padding:8px;margin-bottom:8px;background:var(--ob-surface-2)';
 
   // Row 1: type + source + alias + delete
   var row1 = document.createElement('div');
   row1.style.cssText = 'display:flex;gap:6px;align-items:center;margin-bottom:6px;flex-wrap:wrap';
 
   var typeSel = document.createElement('select');
-  typeSel.style.cssText = 'width:126px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px 4px';
+  typeSel.style.cssText = 'width:126px;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px 4px';
   [['ЛЕВОЕ','⬅ ЛЕВОЕ'],['ВНУТРЕННЕЕ','✕ ВНУТРЕННЕЕ'],['ПРАВОЕ','➡ ПРАВОЕ'],['ПОЛНОЕ','⟺ ПОЛНОЕ']].forEach(function(x){
     var o = document.createElement('option'); o.value=x[0]; o.textContent=x[1];
     typeSel.appendChild(o);
   });
 
   var srcSel = document.createElement('select');
-  srcSel.style.cssText = 'flex:1;min-width:140px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px 4px';
+  srcSel.style.cssText = 'flex:1;min-width:140px;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px 4px';
   var o0 = document.createElement('option'); o0.value=''; o0.textContent='— источник —';
   srcSel.appendChild(o0);
   var jgroups = {};
@@ -162,17 +162,17 @@ function qbAddJoin(){
 
   var aliasInp = document.createElement('input');
   aliasInp.type='text'; aliasInp.placeholder='Псевдоним';
-  aliasInp.style.cssText = 'width:86px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px 4px';
+  aliasInp.style.cssText = 'width:86px;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px 4px';
 
   var del = document.createElement('button');
   del.type='button'; del.textContent='×';
-  del.style.cssText = 'background:none;border:none;color:#ef4444;cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;padding:0 2px';
+  del.style.cssText = 'background:none;border:none;color:var(--ob-danger);cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;padding:0 2px';
   del.addEventListener('click', function(){
     div.remove();
     _joins = _joins.filter(function(j){ return j.id !== jid; });
     if(!_joins.length){
       document.getElementById('qb-joins').innerHTML =
-        '<p style="font-size:12px;color:#94a3b8;margin:0" id="qb-joins-hint">Нет соединений</p>';
+        '<p style="font-size:12px;color:var(--ob-text-4);margin:0" id="qb-joins-hint">Нет соединений</p>';
     }
     qbRebuildAllFields();
   });
@@ -185,11 +185,11 @@ function qbAddJoin(){
   row2.style.cssText = 'display:flex;gap:6px;align-items:center';
   var onLabel = document.createElement('span');
   onLabel.textContent = 'ПО:';
-  onLabel.style.cssText = 'font-size:12px;font-weight:600;color:#475569;flex-shrink:0;width:26px';
+  onLabel.style.cssText = 'font-size:12px;font-weight:600;color:var(--ob-text-2);flex-shrink:0;width:26px';
   var onInp = document.createElement('input');
   onInp.type='text';
   onInp.placeholder='Псевд1.Поле = Псевд2.Ссылка';
-  onInp.style.cssText = 'flex:1;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px 6px';
+  onInp.style.cssText = 'flex:1;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px 6px';
   row2.appendChild(onLabel); row2.appendChild(onInp);
 
   div.appendChild(row1); div.appendChild(row2);
@@ -220,7 +220,7 @@ function renderFields(){
   var div = document.getElementById('qb-fields-list');
   div.innerHTML = '';
   if(!_curFields.length){
-    div.innerHTML = '<p style="font-size:12px;color:#94a3b8;margin:4px 0">Сначала выберите источник</p>';
+    div.innerHTML = '<p style="font-size:12px;color:var(--ob-text-4);margin:4px 0">Сначала выберите источник</p>';
     return;
   }
 
@@ -232,7 +232,7 @@ function renderFields(){
     if(prefix && prefix !== lastPrefix){
       lastPrefix = prefix;
       var sep = document.createElement('div');
-      sep.style.cssText = 'font-size:11px;font-weight:600;color:#64748b;margin:6px 0 2px;padding-left:2px;border-top:1px solid #f1f5f9;padding-top:4px';
+      sep.style.cssText = 'font-size:11px;font-weight:600;color:var(--ob-text-3);margin:6px 0 2px;padding-left:2px;border-top:1px solid var(--ob-surface-3);padding-top:4px';
       sep.textContent = prefix + ' (' + (prefix === document.getElementById('qb-main-alias').value.trim() ? 'основная таблица' : 'присоединённая') + ')';
       div.appendChild(sep);
     }
@@ -257,7 +257,7 @@ function renderFields(){
     lbl.addEventListener('click', function(){ chk.click(); });
 
     var aggSel = document.createElement('select');
-    aggSel.style.cssText = 'font-size:11px;padding:1px 3px;border:1px solid #e2e8f0;border-radius:4px;width:90px';
+    aggSel.style.cssText = 'font-size:11px;padding:1px 3px;border:1px solid var(--ob-border);border-radius:4px;width:90px';
     ['','СУММА','КОЛИЧЕСТВО','МИНИМУМ','МАКСИМУМ','СРЕДНЕЕ'].forEach(function(a){
       var o=document.createElement('option'); o.value=a; o.textContent=a||'— нет —';
       aggSel.appendChild(o);
@@ -270,7 +270,7 @@ function renderFields(){
 
     var aliasInp = document.createElement('input');
     aliasInp.type='text'; aliasInp.placeholder='КАК';
-    aliasInp.style.cssText = 'font-size:11px;width:70px;padding:1px 4px;border:1px solid #e2e8f0;border-radius:4px';
+    aliasInp.style.cssText = 'font-size:11px;width:70px;padding:1px 4px;border:1px solid var(--ob-border);border-radius:4px';
     if(_selFields[f.name]) aliasInp.value = _selFields[f.name].alias || '';
     aliasInp.addEventListener('input', function(){
       if(_selFields[f.name]) _selFields[f.name].alias = aliasInp.value.trim();
@@ -297,20 +297,20 @@ function qbAddCond(){
   div.style.cssText = 'display:flex;gap:4px;margin-bottom:6px;align-items:center;flex-wrap:wrap';
 
   var fsel = document.createElement('select');
-  fsel.style.cssText = 'flex:1;min-width:100px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px';
+  fsel.style.cssText = 'flex:1;min-width:100px;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px';
   _curFields.forEach(function(f){
     var o=document.createElement('option'); o.value=f.name; o.textContent=f.name; fsel.appendChild(o);
   });
 
   var opSel = document.createElement('select');
-  opSel.style.cssText = 'width:100px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px';
+  opSel.style.cssText = 'width:100px;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px';
   ['=','<>','>','<','>=','<=','ЕСТЬ ПУСТО','НЕ ЕСТЬ ПУСТО','ПОДОБНО','В'].forEach(function(op){
     var o=document.createElement('option'); o.value=op; o.textContent=op; opSel.appendChild(o);
   });
 
   var valInp = document.createElement('input');
   valInp.type='text'; valInp.placeholder='&Параметр или значение';
-  valInp.style.cssText = 'flex:1;min-width:80px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px 4px';
+  valInp.style.cssText = 'flex:1;min-width:80px;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px 4px';
 
   opSel.addEventListener('change', function(){
     var noVal = opSel.value==='ЕСТЬ ПУСТО'||opSel.value==='НЕ ЕСТЬ ПУСТО';
@@ -322,7 +322,7 @@ function qbAddCond(){
 
   var del = document.createElement('button');
   del.type='button'; del.textContent='×';
-  del.style.cssText = 'background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;line-height:1';
+  del.style.cssText = 'background:none;border:none;color:var(--ob-danger);cursor:pointer;font-size:16px;line-height:1';
   del.addEventListener('click', function(){ div.remove(); qbGenerate(); });
 
   div.appendChild(fsel); div.appendChild(opSel); div.appendChild(valInp); div.appendChild(del);
@@ -336,20 +336,20 @@ function qbAddOrder(){
   div.style.cssText = 'display:flex;gap:4px;margin-bottom:6px;align-items:center';
 
   var fsel = document.createElement('select');
-  fsel.style.cssText = 'flex:1;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px';
+  fsel.style.cssText = 'flex:1;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px';
   _curFields.forEach(function(f){
     var o=document.createElement('option'); o.value=f.name; o.textContent=f.name; fsel.appendChild(o);
   });
 
   var dirSel = document.createElement('select');
-  dirSel.style.cssText = 'width:80px;font-size:12px;border:1px solid #e2e8f0;border-radius:4px;padding:2px';
+  dirSel.style.cssText = 'width:80px;font-size:12px;border:1px solid var(--ob-border);border-radius:4px;padding:2px';
   [['ВОЗР','↑ ВОЗР'],['УБЫВ','↓ УБЫВ']].forEach(function(x){
     var o=document.createElement('option'); o.value=x[0]; o.textContent=x[1]; dirSel.appendChild(o);
   });
 
   var del = document.createElement('button');
   del.type='button'; del.textContent='×';
-  del.style.cssText = 'background:none;border:none;color:#ef4444;cursor:pointer;font-size:16px;line-height:1';
+  del.style.cssText = 'background:none;border:none;color:var(--ob-danger);cursor:pointer;font-size:16px;line-height:1';
   del.addEventListener('click', function(){ div.remove(); qbGenerate(); });
 
   fsel.addEventListener('change', function(){ qbGenerate(); });
@@ -457,7 +457,7 @@ function qbGenerate(){
   var pList = Object.keys(params);
   var paramDiv = document.getElementById('qb-params');
   paramDiv.innerHTML = pList.length
-    ? pList.map(function(p){ return '<code style="background:#f1f5f9;padding:2px 6px;border-radius:4px;margin-right:4px">'+p+'</code>'; }).join('')
+    ? pList.map(function(p){ return '<code style="background:var(--ob-surface-3);padding:2px 6px;border-radius:4px;margin-right:4px">'+p+'</code>'; }).join('')
     : '—';
 
   // DSL fragment (multiline string with | continuation)

@@ -14,17 +14,17 @@ import (
 
 const tplProfile2FA = `{{define "profile-2fa"}}` + adminHead + `
 <main>
-<div style="margin-bottom:16px"><a href="/ui" style="color:#64748b;font-size:13px;text-decoration:none">← Главная</a></div>
+<div style="margin-bottom:16px"><a href="/ui" style="color:var(--ob-text-3);font-size:13px;text-decoration:none">← Главная</a></div>
 <h2>Второй фактор</h2>
 {{if .Error}}<div class="error" style="max-width:620px">{{.Error}}</div>{{end}}
-{{if .Success}}<div style="background:#f0fdf4;border:1px solid #86efac;color:#15803d;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:620px">✓ {{.Success}}</div>{{end}}
+{{if .Success}}<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-ok-text);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:620px">✓ {{.Success}}</div>{{end}}
 
 {{if .Codes}}
 <div class="card" style="max-width:620px;margin-bottom:16px">
   <h3 style="margin-bottom:10px">Резервные коды</h3>
-  <p style="font-size:13px;color:#475569;margin-bottom:12px">Сохраните их: каждый работает один раз и заменяет код из приложения, если телефон недоступен. Показываются только сейчас.</p>
+  <p style="font-size:13px;color:var(--ob-text-2);margin-bottom:12px">Сохраните их: каждый работает один раз и заменяет код из приложения, если телефон недоступен. Показываются только сейчас.</p>
   <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;font-family:Consolas,monospace;font-size:15px">
-    {{range .Codes}}<span style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:5px;padding:6px;text-align:center">{{.}}</span>{{end}}
+    {{range .Codes}}<span style="background:var(--ob-surface-2);border:1px solid var(--ob-border);border-radius:5px;padding:6px;text-align:center">{{.}}</span>{{end}}
   </div>
 </div>
 {{end}}
@@ -32,9 +32,9 @@ const tplProfile2FA = `{{define "profile-2fa"}}` + adminHead + `
 {{if .Setup}}
 <div class="card" style="max-width:620px">
   <h3 style="margin-bottom:10px">Подключение приложения</h3>
-  <p style="font-size:13px;color:#475569;margin-bottom:12px">Отсканируйте QR-код приложением-аутентификатором (Google Authenticator, Aegis, 1Password и совместимые) или введите ключ вручную, затем подтвердите кодом из приложения.</p>
+  <p style="font-size:13px;color:var(--ob-text-2);margin-bottom:12px">Отсканируйте QR-код приложением-аутентификатором (Google Authenticator, Aegis, 1Password и совместимые) или введите ключ вручную, затем подтвердите кодом из приложения.</p>
   <div style="text-align:center;margin-bottom:12px"><img src="/ui/profile/2fa/qr" width="220" height="220" alt="QR-код"></div>
-  <div style="font-family:Consolas,monospace;font-size:14px;letter-spacing:1px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:5px;padding:8px;text-align:center;margin-bottom:16px;word-break:break-all">{{.Secret}}</div>
+  <div style="font-family:Consolas,monospace;font-size:14px;letter-spacing:1px;background:var(--ob-surface-2);border:1px solid var(--ob-border);border-radius:5px;padding:8px;text-align:center;margin-bottom:16px;word-break:break-all">{{.Secret}}</div>
   <form method="POST">
     <input type="hidden" name="action" value="confirm">
     <div class="form-group">
@@ -42,26 +42,26 @@ const tplProfile2FA = `{{define "profile-2fa"}}` + adminHead + `
       <input type="text" name="code" autocomplete="one-time-code" inputmode="numeric" placeholder="123456" autofocus>
     </div>
     <button class="btn btn-primary" type="submit">Включить второй фактор</button>
-    <a class="btn btn-sm" href="/ui/profile/2fa" style="background:#e2e8f0;color:#334155;margin-left:8px">Отмена</a>
+    <a class="btn btn-sm" href="/ui/profile/2fa" style="background:var(--ob-btn-2-bg);color:var(--ob-text-strong);margin-left:8px">Отмена</a>
   </form>
 </div>
 {{else}}
 <div class="card" style="max-width:620px;margin-bottom:16px">
   <h3 style="margin-bottom:10px">Состояние</h3>
   {{if .Info.Enabled}}
-    <p style="font-size:14px;color:#15803d;font-weight:600;margin-bottom:8px">✓ Второй фактор включён</p>
-    <p style="font-size:13px;color:#475569">Осталось резервных кодов: <b>{{.Info.BackupCodesLeft}}</b></p>
-    {{if .Info.SecretPlaintext}}<p style="font-size:13px;color:#b45309;margin-top:8px">⚠ Секрет хранится в базе открытым текстом: мастер-ключ (ONEBASE_MASTER_KEY, план 83) не был задан в момент включения. Задайте ключ и переподключите приложение.</p>{{end}}
+    <p style="font-size:14px;color:var(--ob-ok-text);font-weight:600;margin-bottom:8px">✓ Второй фактор включён</p>
+    <p style="font-size:13px;color:var(--ob-text-2)">Осталось резервных кодов: <b>{{.Info.BackupCodesLeft}}</b></p>
+    {{if .Info.SecretPlaintext}}<p style="font-size:13px;color:var(--ob-warn-text);margin-top:8px">⚠ Секрет хранится в базе открытым текстом: мастер-ключ (ONEBASE_MASTER_KEY, план 83) не был задан в момент включения. Задайте ключ и переподключите приложение.</p>{{end}}
   {{else}}
-    <p style="font-size:14px;color:#64748b;margin-bottom:8px">Второй фактор выключен.</p>
-    {{if .Required}}<p style="font-size:13px;color:#b45309">⚠ Политика базы требует второй фактор для вашей учётной записи — при следующем входе его придётся настроить.</p>{{end}}
+    <p style="font-size:14px;color:var(--ob-text-3);margin-bottom:8px">Второй фактор выключен.</p>
+    {{if .Required}}<p style="font-size:13px;color:var(--ob-warn-text)">⚠ Политика базы требует второй фактор для вашей учётной записи — при следующем входе его придётся настроить.</p>{{end}}
   {{end}}
 </div>
 
 {{if .Info.Enabled}}
 <div class="card" style="max-width:620px;margin-bottom:16px">
   <h3 style="margin-bottom:10px">Новые резервные коды</h3>
-  <p style="font-size:13px;color:#475569;margin-bottom:12px">Прежние коды перестанут работать. Подтвердите паролем или кодом из приложения.</p>
+  <p style="font-size:13px;color:var(--ob-text-2);margin-bottom:12px">Прежние коды перестанут работать. Подтвердите паролем или кодом из приложения.</p>
   <form method="POST">
     <input type="hidden" name="action" value="codes">
     <div class="form-group">
@@ -73,7 +73,7 @@ const tplProfile2FA = `{{define "profile-2fa"}}` + adminHead + `
 </div>
 <div class="card" style="max-width:620px;margin-bottom:16px">
   <h3 style="margin-bottom:10px">Привязать другое устройство</h3>
-  <p style="font-size:13px;color:#475569;margin-bottom:12px">Прежний аутентификатор и все резервные коды перестанут работать. Подтвердите паролем или текущим кодом.</p>
+  <p style="font-size:13px;color:var(--ob-text-2);margin-bottom:12px">Прежний аутентификатор и все резервные коды перестанут работать. Подтвердите паролем или текущим кодом.</p>
   <form method="POST">
     <input type="hidden" name="action" value="start">
     <div class="form-group">
@@ -86,7 +86,7 @@ const tplProfile2FA = `{{define "profile-2fa"}}` + adminHead + `
 <div class="card" style="max-width:620px">
   <h3 style="margin-bottom:10px">Отключить второй фактор</h3>
   {{if .Required}}
-  <p style="font-size:13px;color:#b45309">Политика базы требует второй фактор для вашей учётной записи — отключить его нельзя.</p>
+  <p style="font-size:13px;color:var(--ob-warn-text)">Политика базы требует второй фактор для вашей учётной записи — отключить его нельзя.</p>
   {{else}}
   <form method="POST" data-ob-confirm="Отключить второй фактор?">
     <input type="hidden" name="action" value="disable">

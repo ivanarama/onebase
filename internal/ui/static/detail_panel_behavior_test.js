@@ -161,6 +161,6 @@ test('detail panel values do not inherit the nav white-on-dark aside styling', (
   const uiSource = fs.readFileSync(path.join(__dirname, 'ui.js'), 'utf8');
   const panelRule = uiSource.match(/\.ob-detail\{[^}]*\}/);
   assert.ok(panelRule, 'ui.js должен задавать правило .ob-detail');
-  assert.match(panelRule[0], /background:#fff/);
+  assert.match(panelRule[0], /background:var\(--ob-input-bg\)/);
   assert.doesNotMatch(panelRule[0], /color:#fff/);
 });

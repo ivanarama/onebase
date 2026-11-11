@@ -19,7 +19,7 @@ const tplAdminAuth = `{{define "admin-auth"}}` + adminHead + `
 <main>
 <h2>Аутентификация</h2>
 {{if .Error}}<div class="error" style="max-width:820px">{{.Error}}</div>{{end}}
-{{if .Success}}<div style="background:#f0fdf4;border:1px solid #86efac;color:#15803d;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:820px">✓ {{.Success}}</div>{{end}}
+{{if .Success}}<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-ok-text);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:820px">✓ {{.Success}}</div>{{end}}
 
 <div class="card" style="max-width:820px;margin-bottom:16px">
   <h3 style="margin-bottom:14px">Политики входа</h3>
@@ -31,22 +31,22 @@ const tplAdminAuth = `{{define "admin-auth"}}` + adminHead + `
     </div>
     <div class="form-group">
       <label>Требовать второй фактор от ролей</label>
-      <select name="require_2fa_roles" multiple size="{{.RoleSelectSize}}" style="width:100%;padding:8px;border:1px solid #e2e8f0;border-radius:7px">
+      <select name="require_2fa_roles" multiple size="{{.RoleSelectSize}}" style="width:100%;padding:8px;border:1px solid var(--ob-border);border-radius:7px">
         {{range .Roles}}<option value="{{.Name}}" {{if index $.RoleSelected .Name}}selected{{end}}>{{.Name}}</option>{{end}}
       </select>
-      <div style="font-size:12px;color:#94a3b8;margin-top:4px">Учётная запись такой роли без второго фактора не войдёт: при следующем входе система потребует настроить его — по коду привязки от администратора (карточка пользователя → «Выдать код привязки»), если самопривязка ниже выключена.</div>
+      <div style="font-size:12px;color:var(--ob-text-4);margin-top:4px">Учётная запись такой роли без второго фактора не войдёт: при следующем входе система потребует настроить его — по коду привязки от администратора (карточка пользователя → «Выдать код привязки»), если самопривязка ниже выключена.</div>
     </div>
     <div class="form-group">
       <label style="display:flex;align-items:center;gap:8px;font-weight:400;cursor:pointer">
         <input type="checkbox" name="allow_self_enroll_2fa" value="1" {{if .Policy.SelfEnroll2FA}}checked{{end}}> Разрешить самостоятельную привязку второго фактора на входе (без кода привязки)
       </label>
-      <div style="font-size:12px;color:#dc2626;margin-top:4px">⚠ По умолчанию выключено. Если включить, привязать второй фактор к учётной записи сможет любой, кто предъявил её пароль (для утёкшего пароля — закрепление доступа). Включайте только там, где второй фактор раздаётся массово; иначе выдавайте код привязки в карточке пользователя.</div>
+      <div style="font-size:12px;color:var(--ob-error-text);margin-top:4px">⚠ По умолчанию выключено. Если включить, привязать второй фактор к учётной записи сможет любой, кто предъявил её пароль (для утёкшего пароля — закрепление доступа). Включайте только там, где второй фактор раздаётся массово; иначе выдавайте код привязки в карточке пользователя.</div>
     </div>
     <div class="form-group">
       <label style="display:flex;align-items:center;gap:8px;font-weight:400;cursor:pointer">
         <input type="checkbox" name="sso_only" value="1" {{if .Policy.SSOOnly}}checked{{end}}> Только единый вход (запретить локальные пароли)
       </label>
-      <div style="font-size:12px;color:#dc2626;margin-top:4px">⚠ При неработающем провайдере в базу нельзя будет войти. Аварийный вход по паролю включается переменной окружения <b>ONEBASE_ALLOW_PASSWORD_LOGIN=1</b> у процесса базы. API-токены (REST v2) политике не подчиняются.</div>
+      <div style="font-size:12px;color:var(--ob-error-text);margin-top:4px">⚠ При неработающем провайдере в базу нельзя будет войти. Аварийный вход по паролю включается переменной окружения <b>ONEBASE_ALLOW_PASSWORD_LOGIN=1</b> у процесса базы. API-токены (REST v2) политике не подчиняются.</div>
     </div>
     <button class="btn btn-primary" type="submit">Сохранить политики</button>
   </form>
@@ -58,13 +58,13 @@ const tplAdminAuth = `{{define "admin-auth"}}` + adminHead + `
     <div class="form-group">
       <label>{{.PasswordMinLengthLabel}}</label>
       <input type="number" name="password_min_length" min="1" max="{{.MaxPasswordLength}}" value="{{.PasswordMinLength}}" placeholder="{{.EffectivePasswordMinLength}}" style="width:120px">
-      <div style="font-size:12px;color:#94a3b8;margin-top:4px">{{.PasswordMinLengthRangeHint}} {{.EffectivePasswordMinLengthLabel}} <strong>{{.EffectivePasswordMinLength}}</strong> ({{.PasswordMinLengthSource}}). {{.PasswordMinLengthInheritHint}}</div>
+      <div style="font-size:12px;color:var(--ob-text-4);margin-top:4px">{{.PasswordMinLengthRangeHint}} {{.EffectivePasswordMinLengthLabel}} <strong>{{.EffectivePasswordMinLength}}</strong> ({{.PasswordMinLengthSource}}). {{.PasswordMinLengthInheritHint}}</div>
     </div>
     <div class="form-group">
       <label style="display:flex;align-items:center;gap:8px;font-weight:400;cursor:pointer">
         <input type="checkbox" name="allow_empty_passwords" value="1" {{if .Policy.AllowEmptyPasswords}}checked{{end}}> {{.AllowEmptyPasswordsLabel}}
       </label>
-      <div style="font-size:12px;color:#dc2626;margin-top:4px">⚠ {{.EmptyPasswordWarning}}{{if .EmptyPasswordsByEnv}} {{.EmptyPasswordEnvHint}}{{end}}</div>
+      <div style="font-size:12px;color:var(--ob-error-text);margin-top:4px">⚠ {{.EmptyPasswordWarning}}{{if .EmptyPasswordsByEnv}} {{.EmptyPasswordEnvHint}}{{end}}</div>
     </div>
     <button class="btn btn-primary" type="submit">{{.SavePasswordPolicyLabel}}</button>
   </form>
@@ -77,10 +77,10 @@ const tplAdminAuth = `{{define "admin-auth"}}` + adminHead + `
   <thead><tr><th>Идентификатор</th><th>Название</th><th>Issuer</th><th>Вкл.</th><th></th></tr></thead>
   <tbody>
   {{range .Providers}}<tr>
-    <td><a href="/ui/admin/auth/providers/{{.ID}}" style="color:#1d4ed8;font-weight:600;text-decoration:none">{{.ID}}</a></td>
+    <td><a href="/ui/admin/auth/providers/{{.ID}}" style="color:var(--ob-link-2);font-weight:600;text-decoration:none">{{.ID}}</a></td>
     <td>{{.Name}}</td>
-    <td style="font-size:12px;color:#64748b">{{.Issuer}}</td>
-    <td style="text-align:center">{{if .Enabled}}<span style="color:#16a34a;font-weight:700">✓</span>{{else}}<span style="color:#cbd5e1">—</span>{{end}}</td>
+    <td style="font-size:12px;color:var(--ob-text-3)">{{.Issuer}}</td>
+    <td style="text-align:center">{{if .Enabled}}<span style="color:var(--ob-posted);font-weight:700">✓</span>{{else}}<span style="color:var(--ob-text-4)">—</span>{{end}}</td>
     <td>
       <form method="POST" action="/ui/admin/auth/providers/{{.ID}}/delete" data-ob-confirm="Удалить провайдера {{.ID}}?" style="margin:0">
         <button class="btn btn-sm btn-danger" type="submit">Удалить</button>
@@ -99,14 +99,14 @@ const tplAdminAuth = `{{define "admin-auth"}}` + adminHead + `
 
 const tplAdminAuthProvider = `{{define "admin-auth-provider"}}` + adminHead + `
 <main>
-<div style="margin-bottom:16px"><a href="/ui/admin/auth" style="color:#64748b;font-size:13px;text-decoration:none">← Аутентификация</a></div>
+<div style="margin-bottom:16px"><a href="/ui/admin/auth" style="color:var(--ob-text-3);font-size:13px;text-decoration:none">← Аутентификация</a></div>
 <h2>{{if .IsNew}}Новый провайдер{{else}}Провайдер {{.P.ID}}{{end}}</h2>
 {{if .Error}}<div class="error" style="max-width:720px">{{.Error}}</div>{{end}}
 <div class="card" style="max-width:720px">
 <form method="POST">
   <div class="form-group">
     <label>Идентификатор (в адресе возврата)</label>
-    <input type="text" name="id" value="{{.P.ID}}" {{if not .IsNew}}readonly style="background:#f8fafc;color:#64748b"{{end}} placeholder="keycloak">
+    <input type="text" name="id" value="{{.P.ID}}" {{if not .IsNew}}readonly style="background:var(--ob-surface-2);color:var(--ob-text-3)"{{end}} placeholder="keycloak">
   </div>
   <div class="form-group">
     <label>Название кнопки на форме входа</label>
@@ -115,7 +115,7 @@ const tplAdminAuthProvider = `{{define "admin-auth-provider"}}` + adminHead + `
   <div class="form-group">
     <label>Issuer</label>
     <input type="text" name="issuer" value="{{.P.Issuer}}" placeholder="https://id.example.com/realms/main">
-    <div style="font-size:12px;color:#94a3b8;margin-top:4px">Метаданные читаются из &lt;issuer&gt;/.well-known/openid-configuration. Адрес возврата (redirect_uri) для регистрации у провайдера: <b>{{.RedirectURI}}</b></div>
+    <div style="font-size:12px;color:var(--ob-text-4);margin-top:4px">Метаданные читаются из &lt;issuer&gt;/.well-known/openid-configuration. Адрес возврата (redirect_uri) для регистрации у провайдера: <b>{{.RedirectURI}}</b></div>
   </div>
   <div class="form-group">
     <label>client_id</label>
@@ -124,7 +124,7 @@ const tplAdminAuthProvider = `{{define "admin-auth-provider"}}` + adminHead + `
   <div class="form-group">
     <label>client_secret</label>
     <input type="text" name="client_secret" value="{{.SecretDisplay}}" placeholder="env:OIDC_SECRET или значение">
-    <div style="font-size:12px;color:#94a3b8;margin-top:4px">Можно указать ссылку на секрет (env:ИМЯ, file:/путь) — она разыменовывается в момент обращения к провайдеру. {{if .HasMasterKey}}Введённое значение будет зашифровано мастер-ключом.{{else}}⚠ Мастер-ключ (ONEBASE_MASTER_KEY) не задан — значение ляжет в настройки открытым текстом.{{end}} Пусто = оставить прежнее.</div>
+    <div style="font-size:12px;color:var(--ob-text-4);margin-top:4px">Можно указать ссылку на секрет (env:ИМЯ, file:/путь) — она разыменовывается в момент обращения к провайдеру. {{if .HasMasterKey}}Введённое значение будет зашифровано мастер-ключом.{{else}}⚠ Мастер-ключ (ONEBASE_MASTER_KEY) не задан — значение ляжет в настройки открытым текстом.{{end}} Пусто = оставить прежнее.</div>
   </div>
   <div class="form-group">
     <label>Запрашиваемые scope (через пробел)</label>
@@ -140,8 +140,8 @@ const tplAdminAuthProvider = `{{define "admin-auth-provider"}}` + adminHead + `
   </div>
   <div class="form-group">
     <label>Правила маппинга ролей</label>
-    <textarea name="role_mappings" rows="5" style="width:100%;padding:9px 12px;border:1px solid #e2e8f0;border-radius:7px;font-family:Consolas,monospace;font-size:13px">{{.RoleMappings}}</textarea>
-    <div style="font-size:12px;color:#94a3b8;margin-top:4px">По строке на правило: <code>claim = значение -&gt; Роль</code>. Чтобы правило выдавало права администратора, укажите справа <code>*admin</code> (можно вместе с ролью: <code>Бухгалтер, *admin</code>). Пример: <code>groups = erp-buh -&gt; Бухгалтер</code></div>
+    <textarea name="role_mappings" rows="5" style="width:100%;padding:9px 12px;border:1px solid var(--ob-border);border-radius:7px;font-family:Consolas,monospace;font-size:13px">{{.RoleMappings}}</textarea>
+    <div style="font-size:12px;color:var(--ob-text-4);margin-top:4px">По строке на правило: <code>claim = значение -&gt; Роль</code>. Чтобы правило выдавало права администратора, укажите справа <code>*admin</code> (можно вместе с ролью: <code>Бухгалтер, *admin</code>). Пример: <code>groups = erp-buh -&gt; Бухгалтер</code></div>
   </div>
   <div class="form-group">
     <label style="display:flex;align-items:center;gap:8px;font-weight:400;cursor:pointer">
@@ -157,7 +157,7 @@ const tplAdminAuthProvider = `{{define "admin-auth-provider"}}` + adminHead + `
     <label style="display:flex;align-items:center;gap:8px;font-weight:400;cursor:pointer">
       <input type="checkbox" name="trust_mfa" value="1" {{if .P.TrustMFA}}checked{{end}}> Провайдер сам обеспечивает второй фактор
     </label>
-    <div style="font-size:12px;color:#94a3b8;margin-top:4px">Без этого флага после входа через провайдера действует локальная политика второго фактора.</div>
+    <div style="font-size:12px;color:var(--ob-text-4);margin-top:4px">Без этого флага после входа через провайдера действует локальная политика второго фактора.</div>
   </div>
   <button class="btn btn-primary" type="submit">Сохранить</button>
 </form>

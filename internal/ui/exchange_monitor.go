@@ -122,7 +122,7 @@ func (s *Server) exchangeMonitorRedirect(w http.ResponseWriter, r *http.Request,
 const tplExchangeMonitor = `{{define "exchange-monitor"}}` + adminHead + `
 <main>
 <h2>Обмен данными</h2>
-{{if .Msg}}<div style="background:#f0fdf4;border:1px solid #86efac;color:#15803d;padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:900px">✓ {{.Msg}}</div>{{end}}
+{{if .Msg}}<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-ok-text);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px;max-width:900px">✓ {{.Msg}}</div>{{end}}
 {{if .Err}}<div class="error" style="max-width:900px;margin-bottom:16px">{{.Err}}</div>{{end}}
 {{if not .Plans}}
 <div class="card" style="max-width:900px"><p class="empty">Планы обмена не настроены. Добавьте <code>exchange/&lt;имя&gt;.yaml</code> в конфигурацию.</p></div>
@@ -131,12 +131,12 @@ const tplExchangeMonitor = `{{define "exchange-monitor"}}` + adminHead + `
 {{$plan := .Name}}
 <div class="card" style="margin-bottom:20px;max-width:900px">
   <div class="row-top">
-    <h3 style="font-size:18px;color:#1e293b">{{.Name}}</h3>
-    <span style="color:#64748b;font-size:13px">правило конфликта: {{.Conflict}}</span>
+    <h3 style="font-size:18px;color:var(--ob-text)">{{.Name}}</h3>
+    <span style="color:var(--ob-text-3);font-size:13px">правило конфликта: {{.Conflict}}</span>
   </div>
-  <p style="font-size:13px;color:#475569;margin:6px 0 14px">
-    Текущий узел: {{if .ThisNode}}<b>{{.ThisNode}}</b>{{else}}<span style="color:#dc2626">не задан</span> — <code>onebase exchange init</code>{{end}}
-    {{if not .HasToken}} · <span style="color:#b45309">токен онлайн-обмена не задан</span>{{end}}
+  <p style="font-size:13px;color:var(--ob-text-2);margin:6px 0 14px">
+    Текущий узел: {{if .ThisNode}}<b>{{.ThisNode}}</b>{{else}}<span style="color:var(--ob-error-text)">не задан</span> — <code>onebase exchange init</code>{{end}}
+    {{if not .HasToken}} · <span style="color:var(--ob-warn-text)">токен онлайн-обмена не задан</span>{{end}}
   </p>
   <table>
   <thead><tr>
@@ -145,19 +145,19 @@ const tplExchangeMonitor = `{{define "exchange-monitor"}}` + adminHead + `
     <th style="text-align:center">Отпр.</th><th style="text-align:center">Подтв.</th><th style="text-align:center">Принято</th><th></th>
   </tr></thead>
   <tbody>
-  {{range .Nodes}}<tr{{if .IsThis}} style="background:#f8fafc"{{end}}>
-    <td><b>{{.Code}}</b>{{if .IsThis}} <span style="color:#2563eb;font-size:12px">← этот</span>{{end}}</td>
-    <td style="color:#475569">{{.Name}}</td>
+  {{range .Nodes}}<tr{{if .IsThis}} style="background:var(--ob-surface-2)"{{end}}>
+    <td><b>{{.Code}}</b>{{if .IsThis}} <span style="color:var(--ob-accent-hover);font-size:12px">← этот</span>{{end}}</td>
+    <td style="color:var(--ob-text-2)">{{.Name}}</td>
     <td style="text-align:center;font-weight:600">{{.Queue}}</td>
-    <td style="text-align:center;color:#94a3b8">{{.Sent}}</td>
-    <td style="text-align:center;color:#94a3b8">{{.Ack}}</td>
-    <td style="text-align:center;color:#94a3b8">{{.Recv}}</td>
+    <td style="text-align:center;color:var(--ob-text-4)">{{.Sent}}</td>
+    <td style="text-align:center;color:var(--ob-text-4)">{{.Ack}}</td>
+    <td style="text-align:center;color:var(--ob-text-4)">{{.Recv}}</td>
     <td style="text-align:right">
       {{if .Online}}<form method="POST" action="/ui/admin/exchange/sync" style="margin:0">
         <input type="hidden" name="plan" value="{{$plan}}">
         <input type="hidden" name="node" value="{{.Code}}">
         <button class="btn btn-sm btn-primary" type="submit">Синхронизировать</button>
-      </form>{{else if .IsThis}}<span style="color:#cbd5e1">—</span>{{else}}<span style="color:#cbd5e1" title="нет url или токена">оффлайн</span>{{end}}</td>
+      </form>{{else if .IsThis}}<span style="color:var(--ob-text-4)">—</span>{{else}}<span style="color:var(--ob-text-4)" title="нет url или токена">оффлайн</span>{{end}}</td>
   </tr>{{end}}
   </tbody>
   </table>

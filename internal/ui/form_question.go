@@ -47,7 +47,7 @@ type questionField struct {
 }
 
 // Локальный красный цвет ошибки для поля вопроса.
-const questionErrorColor = "#b91c1c"
+const questionErrorColor = "var(--ob-danger-ink)"
 
 // questionFieldColor разбирает «цветтекста»/«важность» строки диалога.
 // Недопустимый цвет не применяется, но и не гасит importance; неизвестная
