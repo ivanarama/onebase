@@ -1,6 +1,8 @@
 package incident
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime/debug"
@@ -33,8 +35,23 @@ func Recoverer(s *Store, userOf UserFunc) func(http.Handler) http.Handler {
 				if rec == http.ErrAbortHandler {
 					panic(rec)
 				}
-				stack := string(debug.Stack())
 				text := fmt.Sprintf("%v", rec)
+				if errors.Is(r.Context().Err(), context.Canceled) {
+					// Клиент уже ушёл (закрыли вкладку, удалили iframe формы,
+					// новый запрос отменил прежний), и обработчик оборвался на
+					// первой же операции с отменённым контекстом — часто паникой
+					// DSL-уровня («Предзагрузка реквизитов …: context canceled»).
+					// Отвечать некому, и это не сбой сервера: как serverError в ui,
+					// отдаём 499 без инцидента и без ERROR, иначе журнал и монитор
+					// получают «паники», которых не было. Контекст запроса
+					// отменяется только разрывом соединения; таймауты операций
+					// дают DeadlineExceeded и остаются инцидентом.
+					oblog.Component("http").Info("запрос прерван клиентом",
+						"where", WhereOf(r), "reason", text)
+					w.WriteHeader(StatusClientClosedRequest)
+					return
+				}
+				stack := string(debug.Stack())
 				var id string
 				if s != nil {
 					user := ""
@@ -57,6 +74,9 @@ func Recoverer(s *Store, userOf UserFunc) func(http.Handler) http.Handler {
 		})
 	}
 }
+
+// StatusClientClosedRequest — 499 nginx: клиент закрыл соединение до ответа.
+const StatusClientClosedRequest = 499
 
 // Message — то, что видит пользователь вместо страницы. Код инцидента идёт
 // последним и отдельным предложением, чтобы его было видно и в узком тосте, и
