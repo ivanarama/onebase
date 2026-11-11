@@ -11,13 +11,20 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/processor"
+	"github.com/ivantit66/onebase/internal/userhelp"
 )
 
 func helpChapterURL(id string) string { return "/ui/help/chapter/" + url.PathEscape(id) }
 
+// helpAllowed — admin_only закрывает руководство целиком всем, кроме
+// администратора: пункт меню, страницы, главы и картинки.
+func (s *Server) helpAllowed(r *http.Request, b *userhelp.Book) bool {
+	return !b.AdminOnly || s.isAdmin(r)
+}
+
 func (s *Server) addHelpContext(r *http.Request, data map[string]any) {
 	b := s.reg.Help()
-	data["HasHelp"] = b.Available()
+	data["HasHelp"] = b.Available() && s.helpAllowed(r, b)
 	if !b.Available() {
 		return
 	}
@@ -40,9 +47,9 @@ func (s *Server) addHelpContext(r *http.Request, data map[string]any) {
 		form = f.Name
 	}
 	if c := b.Context(kind+"/"+name, form); c != nil {
-		// context_help_admin_only: the button stays in place, but only an
-		// administrator gets a link. Others see a disabled button without href.
-		if b.ContextHelpAdminOnly && !s.isAdmin(r) {
+		// admin_only: the button stays in place, but only an administrator
+		// gets a link. Others see a disabled button without href.
+		if !s.helpAllowed(r, b) {
 			data["HelpDisabled"] = true
 			return
 		}
@@ -56,6 +63,10 @@ func (s *Server) helpIndex(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if !s.helpAllowed(r, b) {
+		s.renderForbidden(w, r)
+		return
+	}
 	query := r.URL.Query().Get("q")
 	s.render(w, r, "page-help", map[string]any{"HelpBook": b, "HelpChapters": b.Search(query), "HelpQuery": query})
 }
@@ -64,6 +75,10 @@ func (s *Server) helpChapter(w http.ResponseWriter, r *http.Request) {
 	b := s.reg.Help()
 	if !b.Available() {
 		http.NotFound(w, r)
+		return
+	}
+	if !s.helpAllowed(r, b) {
+		s.renderForbidden(w, r)
 		return
 	}
 	c := b.Find(chi.URLParam(r, "chapter"))
@@ -86,6 +101,10 @@ func (s *Server) helpAsset(w http.ResponseWriter, r *http.Request) {
 	b := s.reg.Help()
 	if !b.Available() {
 		http.NotFound(w, r)
+		return
+	}
+	if !s.helpAllowed(r, b) {
+		s.renderForbidden(w, r)
 		return
 	}
 	name := chi.URLParam(r, "*")

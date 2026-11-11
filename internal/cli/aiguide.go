@@ -180,8 +180,8 @@ docs/help/ в той же задаче. Дополняй существующу�
 Если index.yaml отсутствует, можно создать каркас: onebase docs init --project .
 Явное указание владельца не вести документацию имеет приоритет.
 
-index.yaml содержит title, enabled, auto_update, необязательный
-context_help_admin_only (true — кнопка «Справка» в формах кликабельна только
+index.yaml содержит title, enabled, auto_update, необязательный admin_only
+(true — руководство, включая кнопку «Справка» в формах, открывается только
 администратору) и chapters. Глава: id (латиница,
 цифры, дефис, подчёркивание), title, file (путь .md относительно docs/help/),
 необязательные parent (id предыдущей главы), objects (например document/Звонок)
