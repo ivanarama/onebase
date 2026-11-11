@@ -95,3 +95,46 @@ test('page action error remains an error after redirect until closed', async ({ 
   await error.getByText('×', { exact: true }).click();
   await expect(error).toHaveCount(0);
 });
+
+
+test('event delivered after switching tabs remains visible in the shell exactly once', async ({ page }) => {
+  await page.goto('/ui/app');
+  await page.evaluate(() => window.obOpenTab('/ui/catalog/PopupProbe/new', 'Popup'));
+  const handle = await page.locator('#ob-tabbody iframe').last().elementHandle();
+  const form = await handle.contentFrame();
+  await expect(form.locator('[data-ob-el="Notify"]')).toBeVisible();
+  let releaseEvent, releasePoll, received;
+  const eventBarrier = new Promise(resolve => { releaseEvent = resolve; });
+  const pollBarrier = new Promise(resolve => { releasePoll = resolve; });
+  await page.route('**/ui/messages', async route => {
+    await pollBarrier;
+    await route.continue();
+  });
+  await page.route('**/form-event', async route => {
+    const response = await route.fetch();
+    received = await response.json();
+    await eventBarrier;
+    await route.fulfill({ response });
+  });
+  try {
+    await form.locator('[data-ob-el="Notify"]').click();
+    await expect.poll(() => received?.messages?.length).toBe(1);
+    await page.evaluate(() => window.obOpenTab('/ui/page/PopupPage', 'Other'));
+    await expect.poll(() => handle.evaluate(el => getComputedStyle(el).display)).toBe('none');
+    releaseEvent();
+    await expect(toast(page).filter({ hasText: 'same-message' })).toBeVisible();
+    await expect(toast(form).filter({ hasText: 'same-message' })).toHaveCount(0);
+    releasePoll();
+    await page.unrouteAll({ behavior: 'wait' });
+    await page.evaluate(() => window.obReloadMessages());
+    const stored = await (await page.request.get('/ui/messages')).json();
+    expect(stored.messages).toHaveLength(1);
+    expect(stored.messages[0].id).toBe(received.messageIDs[0]);
+    await expect(toast(page).filter({ hasText: 'same-message' })).toHaveCount(1);
+    await expect(toast(form).filter({ hasText: 'same-message' })).toHaveCount(0);
+  } finally {
+    releaseEvent();
+    releasePoll();
+    await page.unrouteAll({ behavior: 'wait' });
+  }
+});
