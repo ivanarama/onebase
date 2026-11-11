@@ -1588,6 +1588,16 @@ const tplThemeCSS = `
     {{if .Exists}}<span><b>{{t $.Lang "Размер:"}}</b> {{.Size}} </span>{{end}}
     {{if .Edited}}<span><b>{{t $.Lang "Изменён:"}}</b> {{.Edited}}</span>{{end}}
   </div>
+  <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+    <form method="POST" action="/ui/admin/theme-css/default" style="margin:0">
+      <input type="hidden" name="el" value="{{.Sel}}">
+      <button class="btn btn-secondary" type="submit">{{t $.Lang "По умолчанию"}}</button>
+    </form>
+    {{if .Exists}}<form method="POST" action="/ui/admin/theme-css/reset" style="margin:0">
+      <input type="hidden" name="el" value="{{.Sel}}">
+      <button class="btn btn-danger" type="submit">{{t $.Lang "Удалить файл"}}</button>
+    </form>{{end}}
+  </div>
 </div>
 
 <form method="GET" action="/ui/admin/theme-css" style="margin-bottom:16px;display:flex;gap:10px;align-items:center">
@@ -1607,7 +1617,15 @@ const tplThemeCSS = `
         <label style="font-size:12px;color:var(--ob-text-3)">{{t $.Lang .Label}}</label>
         {{$v := index $.Vals .Key}}
         {{if eq .Kind "color"}}
-          <input type="color" name="p_{{.Key}}" value="{{$v}}" style="width:100%;height:34px;padding:2px;background:var(--ob-input-bg);border:1px solid var(--ob-border);border-radius:6px">
+          <div style="display:flex;gap:6px;align-items:center">
+            <input type="text" name="p_{{.Key}}" value="{{$v}}" data-saved="{{$v}}" placeholder="#000000" style="flex:1;padding:8px 10px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:6px;font-size:14px">
+            <span data-ob-swatch style="width:26px;height:26px;border-radius:6px;border:1px solid var(--ob-border);{{if $v}}background:{{$v}};{{end}}"></span>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:4px">
+            <button class="btn btn-sm" type="button" data-ob-color-pick>{{t $.Lang "Выбрать"}}</button>
+            <button class="btn btn-sm" type="button" data-ob-color-cancel>{{t $.Lang "Отмена"}}</button>
+          </div>
+          <input type="color" data-ob-picker hidden>
         {{else if eq .Kind "size"}}
           <input type="number" min="1" max="400" name="p_{{.Key}}" value="{{trimPx $v "px"}}" style="width:100%;padding:8px 10px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:6px;font-size:14px">
         {{else if eq .Kind "weight"}}
@@ -1631,13 +1649,37 @@ const tplThemeCSS = `
   <label style="font-size:14px;color:var(--ob-text-2)">{{t $.Lang "Свободный CSS (дописывается в ui.css перед сгенерированными правилами)"}}</label>
   <textarea name="raw" rows="8" spellcheck="false" style="width:100%;font-family:ui-monospace,monospace;font-size:13px;padding:10px 12px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:7px;margin-bottom:12px">{{.Raw}}</textarea>
 
-  <div style="display:flex;gap:8px;flex-wrap:wrap">
+  <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
     <button class="btn btn-primary" type="submit">{{t $.Lang "Применить"}}</button>
-    <button class="btn btn-secondary" type="submit" formaction="/ui/admin/theme-css/reset-element" formnovalidate>{{t $.Lang "Сбросить элемент"}}</button>
-    {{if .Exists}}<button class="btn btn-danger" type="submit" formaction="/ui/admin/theme-css/reset" formnovalidate>{{t $.Lang "Удалить файл"}}</button>{{end}}
-    <a class="btn btn-secondary" href="/ui/">{{t $.Lang "Открыть интерфейс"}}</a>
+    <button class="btn btn-secondary" type="submit" formaction="/ui/admin/theme-css/reset-element" formnovalidate>{{t $.Lang "Сбросить"}}</button>
+    <a class="btn btn-secondary" href="/ui/">{{t $.Lang "Закрыть"}}</a>
   </div>
 </form>
+<script>
+(function () {
+  document.querySelectorAll(".form-group").forEach(function (g) {
+    var t = g.querySelector("input[data-saved]");
+    if (!t) return;
+    var picker = g.querySelector("input[data-ob-picker]");
+    var sw = g.querySelector("[data-ob-swatch]");
+    var hex6 = function (v) {
+      if (/^#[0-9a-fA-F]{6}$/.test(v)) return v;
+      if (/^#[0-9a-fA-F]{3}$/.test(v)) return "#" + v[1] + v[1] + v[2] + v[2] + v[3] + v[3];
+      return "";
+    };
+    var sync = function (v) {
+      var h = hex6(v);
+      sw.style.background = h ? h : "transparent";
+      if (h) picker.value = h;
+    };
+    sync(t.value);
+    t.addEventListener("input", function () { sync(t.value); });
+    picker.addEventListener("change", function () { t.value = picker.value; sync(picker.value); });
+    g.querySelector("[data-ob-color-pick]").addEventListener("click", function () { picker.click(); });
+    g.querySelector("[data-ob-color-cancel]").addEventListener("click", function () { t.value = t.dataset.saved; sync(t.value); });
+  });
+})();
+</script>
 </main></body></html>
 {{end}}
 `
@@ -1964,6 +2006,7 @@ const tplNav = `
             <label><input type="radio" name="ui-theme" value="dark" data-ob-theme-radio> {{t $.Lang "Тёмная"}}</label>
             <label><input type="radio" name="ui-theme" value="system" data-ob-theme-radio> {{t $.Lang "Как в системе"}}</label>
           </div>
+          {{if .IsAdmin}}<a href="/ui/admin/theme-css">{{t $.Lang "Стили интерфейса"}}</a>{{end}}
           {{if .HasAuth}}{{if not .DenyPasswdChange}}<a href="/ui/profile/passwd">{{t $.Lang "Сменить пароль"}}</a>{{end}}
           <a href="/ui/profile/2fa">{{t $.Lang "Второй фактор"}}</a>{{end}}
           {{if .HasPersonalNavigation}}<a href="/ui/settings/navigation?subsystem={{.CurrentSubsystem}}">{{t $.Lang "Настроить меню"}}</a>{{end}}
@@ -2020,7 +2063,6 @@ const tplNav = `
           <a href="/ui/admin/extforms">{{t $.Lang "Внешние печатные формы"}}</a>
           <a href="/ui/admin/extreports">{{t $.Lang "Внешние отчёты"}}</a>
           <a href="/ui/admin/extprocessors">{{t $.Lang "Внешние обработки"}}</a>
-          <a href="/ui/admin/theme-css">{{t $.Lang "Стили интерфейса"}}</a>
         </div>
       </details>
       <details class="sys-group">

@@ -54,9 +54,21 @@ var themeElementCatalog = []themeElement{
 		{"background", "Цвет фона", "color"},
 		{"color", "Цвет текста", "color"},
 	}},
-	{ID: "nav", Selector: "#ob-nav", Name: "Боковая навигация", Props: []themeProp{
+	{ID: "sysbtn", Selector: ".sys-btn", Name: "Кнопка шапки (Система, Вкладки)", Props: []themeProp{
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+	}},
+	{ID: "tabs", Selector: ".subsys-bar a", Name: "Вкладки разделов", Props: []themeProp{
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+	}},
+	{ID: "nav", Selector: "#ob-nav", Name: "Боковая навигация (фон)", Props: []themeProp{
 		{"background", "Цвет фона", "color"},
 		{"color", "Цвет текста", "color"},
+	}},
+	{ID: "navlink", Selector: "#ob-nav a", Name: "Ссылка навигации", Props: []themeProp{
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
 	}},
 	{ID: "card", Selector: ".card", Name: "Карточка (панель формы)", Props: []themeProp{
 		{"background", "Цвет фона", "color"},
@@ -70,6 +82,21 @@ var themeElementCatalog = []themeElement{
 		{"font-weight", "Начертание", "weight"},
 		{"color", "Цвет текста", "color"},
 	}},
+	{ID: "sec", Selector: ".sec", Name: "Заголовок секции", Props: []themeProp{
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+		{"font-weight", "Начертание", "weight"},
+	}},
+	{ID: "label", Selector: ".form-group label", Name: "Подпись поля", Props: []themeProp{
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+	}},
+	{ID: "input", Selector: ".form-group input, .form-group select", Name: "Поле ввода / выбор", Props: []themeProp{
+		{"background", "Цвет фона", "color"},
+		{"color", "Цвет текста", "color"},
+		{"border-color", "Цвет границы", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+	}},
 	{ID: "btn", Selector: ".btn", Name: "Кнопка (обычная)", Props: []themeProp{
 		{"background", "Цвет фона", "color"},
 		{"color", "Цвет текста", "color"},
@@ -82,47 +109,29 @@ var themeElementCatalog = []themeElement{
 		{"color", "Цвет текста", "color"},
 		{"border-radius", "Скругление (px)", "size"},
 	}},
-	{ID: "input", Selector: ".form-group input, .form-group select", Name: "Поле ввода / выбор", Props: []themeProp{
-		{"background", "Цвет фона", "color"},
-		{"color", "Цвет текста", "color"},
-		{"border-color", "Цвет границы", "color"},
-		{"font-size", "Размер текста (px)", "size"},
-	}},
-	{ID: "thead", Selector: "table th", Name: "Заголовок таблицы", Props: []themeProp{
-		{"background", "Цвет фона", "color"},
-		{"color", "Цвет текста", "color"},
-		{"font-size", "Размер текста (px)", "size"},
-	}},
-	{ID: "tbody", Selector: "table td", Name: "Строка таблицы", Props: []themeProp{
-		{"background", "Цвет фона", "color"},
-		{"color", "Цвет текста", "color"},
-		{"font-size", "Размер текста (px)", "size"},
-	}},
-	{ID: "label", Selector: ".form-group label", Name: "Подпись поля", Props: []themeProp{
-		{"color", "Цвет текста", "color"},
-		{"font-size", "Размер текста (px)", "size"},
-	}},
-	{ID: "navlink", Selector: "#ob-nav a", Name: "Ссылка навигации", Props: []themeProp{
-		{"color", "Цвет текста", "color"},
-		{"font-size", "Размер текста (px)", "size"},
-	}},
-	{ID: "sysbtn", Selector: ".sys-btn", Name: "Кнопка шапки (Система, Вкладки)", Props: []themeProp{
-		{"color", "Цвет текста", "color"},
-		{"font-size", "Размер текста (px)", "size"},
-	}},
-	{ID: "tabs", Selector: ".subsys-bar a", Name: "Вкладки разделов", Props: []themeProp{
-		{"color", "Цвет текста", "color"},
-		{"font-size", "Размер текста (px)", "size"},
-	}},
-	{ID: "rowlink", Selector: ".ob-row-link", Name: "Ссылка строки списка", Props: []themeProp{
-		{"color", "Цвет текста", "color"},
-		{"font-size", "Размер текста (px)", "size"},
-	}},
 	{ID: "breadcrumb", Selector: ".breadcrumb", Name: "Хлебные ссылки", Props: []themeProp{
 		{"color", "Цвет текста", "color"},
 		{"font-size", "Размер текста (px)", "size"},
 	}},
 	{ID: "table", Selector: ".tbl", Name: "Таблица (целиком)", Props: []themeProp{
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+	}},
+	{ID: "thead", Selector: ".tbl th", Name: "Заголовок таблицы", Props: []themeProp{
+		{"background", "Цвет фона", "color"},
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+	}},
+	{ID: "tbody", Selector: ".tbl td", Name: "Строка таблицы", Props: []themeProp{
+		{"background", "Цвет фона", "color"},
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+	}},
+	{ID: "rowtop", Selector: ".row-top", Name: "Верх строк списка", Props: []themeProp{
+		{"background", "Цвет фона", "color"},
+		{"color", "Цвет текста", "color"},
+	}},
+	{ID: "rowlink", Selector: ".ob-row-link", Name: "Ссылка строки списка", Props: []themeProp{
 		{"color", "Цвет текста", "color"},
 		{"font-size", "Размер текста (px)", "size"},
 	}},
@@ -144,15 +153,35 @@ var themeElementCatalog = []themeElement{
 		{"color", "Цвет текста", "color"},
 		{"border-color", "Цвет границы", "color"},
 	}},
-	{ID: "rowtop", Selector: ".row-top", Name: "Верх строк списка", Props: []themeProp{
-		{"background", "Цвет фона", "color"},
-		{"color", "Цвет текста", "color"},
-	}},
-	{ID: "sec", Selector: ".sec", Name: "Заголовок секции", Props: []themeProp{
-		{"color", "Цвет текста", "color"},
-		{"font-size", "Размер текста (px)", "size"},
-		{"font-weight", "Начертание", "weight"},
-	}},
+}
+
+// themeElementDefaults — стандартные стили элементов (значения светлой темы
+// встроенного стиля, internal/ui/templates.go). «По умолчанию» заполняет файл
+// ими: правки идут от стандартных значений, а не от пустых полей.
+var themeElementDefaults = map[string]map[string]string{
+	"body":        {"font-family": "system-ui", "font-size": "16px", "color": "#1e293b", "background": "#f5f5f5"},
+	"topbar":      {"background": "#1e293b", "color": "#ffffff"},
+	"sysbtn":      {"color": "#cbd5e1", "font-size": "15px"},
+	"tabs":        {"color": "#94a3b8", "font-size": "13px"},
+	"nav":         {"background": "#1e293b", "color": "#cbd5e1"},
+	"navlink":     {"color": "#cbd5e1", "font-size": "14px"},
+	"card":        {"background": "#ffffff", "color": "#1e293b", "border-color": "#e2e8f0", "border-radius": "10px", "padding": "24px"},
+	"heading":     {"font-size": "22px", "font-weight": "bold", "color": "#1e293b"},
+	"sec":         {"color": "#94a3b8", "font-size": "11px", "font-weight": "normal"},
+	"label":       {"color": "#475569", "font-size": "13px"},
+	"input":       {"background": "#ffffff", "color": "#1e293b", "border-color": "#475569", "font-size": "14px"},
+	"btn":         {"background": "#e2e8f0", "color": "#374151", "border-color": "#cbd5e1", "font-size": "14px", "border-radius": "7px"},
+	"btn-primary": {"background": "#3b82f6", "color": "#ffffff", "border-radius": "7px"},
+	"breadcrumb":  {"color": "#64748b", "font-size": "13px"},
+	"table":       {"color": "#1e293b", "font-size": "14px"},
+	"thead":       {"background": "#eef2f7", "color": "#334155", "font-size": "12px"},
+	"tbody":       {"background": "#ffffff", "color": "#334155", "font-size": "13px"},
+	"rowtop":      {"background": "#ffffff", "color": "#1e293b"},
+	"rowlink":     {"color": "#3b82f6", "font-size": "14px"},
+	"search":      {"background": "#ffffff", "color": "#1e293b", "border-color": "#e2e8f0"},
+	"searchhit":   {"background": "#ffffff", "color": "#1e293b"},
+	"empty":       {"color": "#94a3b8", "font-size": "15px"},
+	"error":       {"background": "#fef2f2", "color": "#dc2626", "border-color": "#fecaca"},
 }
 
 // themeFontFamilies — ограниченный список: форма не позволяет вписать в CSS
@@ -414,6 +443,31 @@ func (s *Server) themeCSSApply(w http.ResponseWriter, r *http.Request, st themeC
 		return
 	}
 	s.themeCSSPage(w, r, st, sel, msg, "")
+}
+
+// adminThemeCSSDefault — «По умолчанию»: заполняет настройки стандартными
+// стилями встроенной светлой темы — файл генерируется из них, поля формы
+// показывают стандартные значения. Свободный CSS не трогается.
+func (s *Server) adminThemeCSSDefault(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		s.renderForbidden(w, r)
+		return
+	}
+	lang := s.resolveLang(r)
+	if s.cfg.ConfigLocation == "" {
+		s.themeCSSPage(w, r, s.loadThemeSettings(), r.FormValue("el"), "", s.tr(lang, "расположение конфигурации неизвестно — стили писать некуда"))
+		return
+	}
+	st := s.loadThemeSettings()
+	st.Elements = map[string]map[string]string{}
+	for id, vals := range themeElementDefaults {
+		cp := make(map[string]string, len(vals))
+		for k, v := range vals {
+			cp[k] = v
+		}
+		st.Elements[id] = cp
+	}
+	s.themeCSSApply(w, r, st, r.FormValue("el"), s.tr(lang, "файл заполнен стандартными стилями"))
 }
 
 func (s *Server) adminThemeCSSReset(w http.ResponseWriter, r *http.Request) {

@@ -273,3 +273,30 @@ func TestThemeCSSAdminFormRejectsOversize(t *testing.T) {
 		t.Error("файл сверх потолка записан")
 	}
 }
+
+// «По умолчанию» заполняет настройки стандартными стилями встроенной светлой
+// темы — поля формы и ui.css получают стандартные значения.
+func TestThemeCSSAdminFormDefaultFillsStandard(t *testing.T) {
+	s := newThemeTestServer(t)
+	dir := s.cfg.ConfigLocation
+	form := url.Values{}
+	form.Set("el", "topbar")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/ui/admin/theme-css/default", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	s.adminThemeCSSDefault(rec, req)
+
+	st := s.loadThemeSettings()
+	for id, want := range themeElementDefaults {
+		if st.Elements[id]["background"] != want["background"] {
+			t.Errorf("%s: фон %q, ждали %q", id, st.Elements[id]["background"], want["background"])
+		}
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "ui.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(body), ".topbar{background:#1e293b;color:#ffffff}") {
+		t.Errorf("стандартное правило шапки не сгенерировано: %q", body)
+	}
+}
