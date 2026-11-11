@@ -293,6 +293,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		return key
 	}
 	return template.FuncMap{
+		"trimPx":                strings.TrimSuffix,
 		"refWriteAllowed":       refWriteAllowed,
 		"listFilterPanelFields": listFilterPanelFields,
 		"listFilterChoices":     listFilterChoices,
@@ -1575,7 +1576,7 @@ const tplThemeCSS = `
 <main style="max-width:1000px">
 <h2>{{t $.Lang "Стили интерфейса"}}</h2>
 <p style="color:var(--ob-text-2);font-size:13px;margin-bottom:12px">
-  {{t $.Lang "Файл ui.css в корне конфигурации подключается после встроенных стилей и переопределяет их; пересборка движка не нужна. Файл читается с диска при каждом запросе, поэтому сохранение действует сразу."}}
+  {{t $.Lang "Стили конфигурация хранит в ui.css в корне проекта; он подключается после встроенных стилей, пересборка движка не нужна. Форма правит элемент за элементом, а ui.css генерируется из настроек."}}
 </p>
 {{if .Msg}}<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-ok-text);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">{{.Msg}}</div>{{end}}
 {{if .Err}}<div class="error" style="max-width:1000px;margin-bottom:16px">{{.Err}}</div>{{end}}
@@ -1589,24 +1590,53 @@ const tplThemeCSS = `
   </div>
 </div>
 
+<form method="GET" action="/ui/admin/theme-css" style="margin-bottom:16px;display:flex;gap:10px;align-items:center">
+  <label style="font-size:14px;color:var(--ob-text-2)">{{t $.Lang "Элемент"}}</label>
+  <select name="el" onchange="this.form.submit()" style="min-width:320px;padding:9px 12px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:6px;font-size:14px">
+    {{range .Catalog}}<option value="{{.ID}}"{{if eq $.Sel .ID}} selected{{end}}>{{.Name}}</option>{{end}}
+  </select>
+</form>
+
 <form method="POST" action="/ui/admin/theme-css/save">
-  <textarea name="css" rows="22" spellcheck="false" style="width:100%;font-family:ui-monospace,monospace;font-size:13px;padding:10px 12px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:7px;margin-bottom:12px">{{.CSS}}</textarea>
+  <input type="hidden" name="el" value="{{.Sel}}">
+  <div class="card" style="margin-bottom:16px">
+    <h3 style="margin-bottom:14px">{{.Element.Name}}</h3>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px 16px">
+      {{range .Element.Props}}
+      <div class="form-group" style="margin:0">
+        <label style="font-size:12px;color:var(--ob-text-3)">{{t $.Lang .Label}}</label>
+        {{$v := index $.Vals .Key}}
+        {{if eq .Kind "color"}}
+          <input type="color" name="p_{{.Key}}" value="{{$v}}" style="width:100%;height:34px;padding:2px;background:var(--ob-input-bg);border:1px solid var(--ob-border);border-radius:6px">
+        {{else if eq .Kind "size"}}
+          <input type="number" min="1" max="400" name="p_{{.Key}}" value="{{$v | trimPx "px"}}" style="width:100%;padding:8px 10px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:6px;font-size:14px">
+        {{else if eq .Kind "weight"}}
+          <select name="p_{{.Key}}" style="width:100%;padding:8px 10px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:6px;font-size:14px">
+            <option value=""{{if not $v}} selected{{end}}>{{t $.Lang "— не задано"}}</option>
+            <option value="normal"{{if eq $v "normal"}} selected{{end}}>{{t $.Lang "Обычное"}}</option>
+            <option value="bold"{{if eq $v "bold"}} selected{{end}}>{{t $.Lang "Жирное"}}</option>
+          </select>
+        {{else if eq .Kind "family"}}
+          <select name="p_{{.Key}}" style="width:100%;padding:8px 10px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:6px;font-size:14px">
+            <option value=""{{if not $v}} selected{{end}}>{{t $.Lang "— не задано"}}</option>
+            {{range $.Families}}<option value="{{.}}"{{if eq $v .}} selected{{end}}>{{.}}</option>{{end}}
+          </select>
+        {{end}}
+      </div>
+      {{end}}
+    </div>
+    <p style="font-size:12px;color:var(--ob-text-3);margin-top:10px">{{t $.Lang "Пустое поле — свойство не задаётся, действует встроенный стиль."}}</p>
+  </div>
+
+  <label style="font-size:14px;color:var(--ob-text-2)">{{t $.Lang "Свободный CSS (дописывается в ui.css перед сгенерированными правилами)"}}</label>
+  <textarea name="raw" rows="8" spellcheck="false" style="width:100%;font-family:ui-monospace,monospace;font-size:13px;padding:10px 12px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:7px;margin-bottom:12px">{{.Raw}}</textarea>
+
   <div style="display:flex;gap:8px">
     <button class="btn btn-primary" type="submit">{{t $.Lang "Сохранить"}}</button>
     {{if .Exists}}<button class="btn btn-danger" type="submit" formaction="/ui/admin/theme-css/reset" formnovalidate>{{t $.Lang "Удалить файл"}}</button>{{end}}
     <a class="btn btn-secondary" href="/ui/">{{t $.Lang "Открыть интерфейс"}}</a>
   </div>
 </form>
-
-<div class="card">
-  <h3 style="margin-bottom:10px">{{t $.Lang "Подсказка"}}</h3>
-  <p style="font-size:13px;color:var(--ob-text-2);margin-bottom:8px">
-    {{t $.Lang "Переопределяются токены палитры (--ob-*) и классовые правила. Инлайн-стили шаблонов внешним CSS не перебиваются."}}
-  </p>
-  <p style="font-size:13px;color:var(--ob-text-3)">
-    {{t $.Lang "Пример: body{background:#101018} — сменить подложку всей конфигурации."}}
-  </p>
-</div>
 </main></body></html>
 {{end}}
 `
