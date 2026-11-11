@@ -1619,11 +1619,7 @@ const tplThemeCSS = `
         {{if eq .Kind "color"}}
           <div style="display:flex;gap:6px;align-items:center">
             <input type="text" name="p_{{.Key}}" value="{{$v}}" data-saved="{{$v}}" placeholder="#000000" style="flex:1;padding:8px 10px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:6px;font-size:14px">
-            <span data-ob-swatch style="width:26px;height:26px;border-radius:6px;border:1px solid var(--ob-border);{{if $v}}background:{{$v}};{{end}}"></span>
-          </div>
-          <div style="display:flex;gap:6px;margin-top:4px">
-            <button class="btn btn-sm" type="button" data-ob-color-cancel>{{t $.Lang "Отмена"}}</button>
-            <button class="btn btn-sm" type="button" data-ob-color-pick>{{t $.Lang "Выбрать"}}</button>
+            <span data-ob-swatch title="{{t $.Lang "Выбрать цвет"}}" style="width:26px;height:26px;border-radius:6px;border:1px solid var(--ob-border);cursor:pointer;{{if $v}}background:{{$v}};{{end}}"></span>
           </div>
           <input type="color" data-ob-picker hidden>
         {{else if eq .Kind "size"}}
@@ -1675,8 +1671,7 @@ const tplThemeCSS = `
     sync(t.value);
     t.addEventListener("input", function () { sync(t.value); });
     picker.addEventListener("change", function () { t.value = picker.value; sync(picker.value); });
-    g.querySelector("[data-ob-color-pick]").addEventListener("click", function () { picker.click(); });
-    g.querySelector("[data-ob-color-cancel]").addEventListener("click", function () { t.value = t.dataset.saved; sync(t.value); });
+    sw.addEventListener("click", function () { picker.click(); });
   });
 })();
 </script>
