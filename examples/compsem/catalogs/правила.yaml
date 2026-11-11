@@ -1,0 +1,65 @@
+# Правило разбора (ТЗ §3.1): девять колонок поставки свёрнуты в карточку;
+# позиции — табличная часть и регистр для отбора по главному слову.
+name: Правила
+title: Правило
+fields:
+  - name: Код
+    type: string
+  - name: Вид
+    type: enum:ВидПравила
+  - name: Ключ
+    type: string
+    description: ключ правила (лемма в верхнем регистре или КЛ_…)
+  - name: ЧастьРечи
+    type: string
+  - name: Класс
+    type: reference:Классы
+  - name: Основа
+    type: string
+    description: главное слово правила
+  - name: Печать
+    type: string
+    description: рецепт печати col7
+  - name: Заполнение
+    type: string
+    description: заполнение мира col6
+  - name: Профиль
+    type: reference:Профили_вывода
+  - name: ВидОтвет
+    type: enum:ВидОтвета
+  - name: Статус
+    type: enum:СтатусПравила
+  - name: СобственныйПриоритет
+    type: number
+  - name: Набор
+    type: reference:Наборы_предлогов
+  - name: Версия
+    type: number
+    description: версия поставки знания
+tableparts:
+  - name: Позиции
+    fields:
+      - name: Порядок
+        type: number
+      - name: Роль
+        type: enum:РольИменного
+      - name: Падеж
+        type: string
+      - name: Предлог
+        type: string
+      - name: ЧастьРечи
+        type: string
+      - name: Класс_требуемый
+        type: reference:Классы
+  - name: Действия
+    fields:
+      - name: Глагол
+        type: string
+      - name: Тип
+        type: string
+      - name: Класс_результат
+        type: reference:Классы
+      - name: Свойство
+        type: reference:Свойства
+      - name: Полный
+        type: bool

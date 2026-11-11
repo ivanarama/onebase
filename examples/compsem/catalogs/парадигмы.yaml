@@ -1,0 +1,12 @@
+# Парадигма слова (ТЗ §3.1): набор форм, метка, покрытие разбора.
+name: Парадигмы
+title: Парадигма
+fields:
+  - name: Наименование
+    type: string
+  - name: Код
+    type: string
+  - name: Метка
+    type: string
+  - name: Покрыта
+    type: bool

@@ -1,0 +1,17 @@
+# Свойство класса (ТЗ §3.1): вид значения, открытость перечисления.
+name: Свойства
+title: Свойство
+fields:
+  - name: Код
+    type: string
+  - name: Наименование
+    type: string
+  - name: Класс
+    type: reference:Классы
+  - name: Вид
+    type: enum:ВидСвойства
+  - name: Полный
+    type: bool
+    description: перечисление закрыто («==»)
+  - name: Описание
+    type: string

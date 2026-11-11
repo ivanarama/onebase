@@ -1,0 +1,20 @@
+# Кандидаты ответа (ТЗ §4.3): N кандидатов на момент, победитель по приоритету.
+name: Кандидаты_ответа
+title: Кандидат ответа
+dimensions:
+  - name: Текст
+    type: reference:Текст
+  - name: Момент
+    type: number
+  - name: Экземпляр
+    type: string
+  - name: Класс
+    type: reference:Классы
+resources:
+  - name: Число
+    type: number
+  - name: Победил
+    type: bool
+recorder: false
+indexes:
+  - fields: [Текст, Момент]

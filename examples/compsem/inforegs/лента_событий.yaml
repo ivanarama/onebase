@@ -1,0 +1,25 @@
+# Лента событий текста (ТЗ §2.2): движения writes по проведению текста; снятие —
+# вид события «снятие».
+name: Лента_событий
+title: Лента событий
+dimensions:
+  - name: Текст
+    type: reference:Текст
+  - name: Момент
+    type: number
+  - name: Экземпляр
+    type: string
+  - name: Свойство
+    type: reference:Свойства
+resources:
+  - name: Вид
+    type: enum:ВидСобытия
+  - name: Значение
+    type: string
+  - name: Источник
+    type: string
+  - name: Порождённый
+    type: bool
+recorder: false
+indexes:
+  - fields: [Текст, Экземпляр, Свойство, Момент]

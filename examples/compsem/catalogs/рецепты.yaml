@@ -1,0 +1,21 @@
+# Рецепт вывода (ТЗ §3.2): последовательность элементов, класс, профиль.
+name: Рецепты
+title: Рецепт
+fields:
+  - name: Наименование
+    type: string
+  - name: Класс
+    type: reference:Классы
+  - name: Профиль
+    type: reference:Профили_вывода
+  - name: Статус
+    type: enum:СтатусПравила
+tableparts:
+  - name: Элементы
+    fields:
+      - name: Тип
+        type: string
+      - name: Значение
+        type: string
+      - name: Обязательный
+        type: bool

@@ -1,0 +1,29 @@
+# Текст (ТЗ §2.2, §4.3): номер, дата, источник, маршрут статусов, профиль вывода.
+name: Текст
+title: Текст
+posting: true
+fields:
+  - name: Номер
+    type: string
+  - name: Дата
+    type: date
+  - name: ИсходныйТекст
+    type: string
+  - name: Источник
+    type: string
+  - name: Статус
+    type: enum:СтатусТекста
+  - name: Профиль
+    type: reference:Профили_вывода
+stages:
+  enforce: strict
+  field: Статус
+  order: [Новая, Разобрана, Подтверждена, ОтветДан]
+  transitions:
+    - {from: Новая, to: [Разобрана]}
+    - {from: Разобрана, to: [Подтверждена]}
+    - {from: Подтверждена, to: [ОтветДан]}
+numerator:
+  prefix: "TEXT-"
+  length: 6
+  period: year

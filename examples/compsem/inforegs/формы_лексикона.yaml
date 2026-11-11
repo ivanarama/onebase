@@ -1,0 +1,17 @@
+# Форма слова → класс и парадигма (ТЗ §2.1): горячий путь разбора, срез по точному
+# совпадению формы, словарь ведёт загрузка знания.
+name: Формы_лексикона
+title: Форма лексикона
+dimensions:
+  - name: Форма
+    type: string
+resources:
+  - name: Класс
+    type: reference:Классы
+  - name: Парадигма
+    type: reference:Парадигмы
+  - name: Метка
+    type: string
+recorder: false
+indexes:
+  - fields: [Форма]

@@ -1,0 +1,23 @@
+# Позиции правил (ТЗ §3.1): свёртка col5+col7 для отбора по главному слову,
+# набору и порядку; пишется загрузкой знания.
+name: Позиции_правил
+title: Позиция правила
+dimensions:
+  - name: Правило
+    type: reference:Правила
+  - name: Порядок
+    type: number
+resources:
+  - name: Роль
+    type: enum:РольИменного
+  - name: Падеж
+    type: string
+  - name: Предлог
+    type: string
+  - name: ЧастьРечи
+    type: string
+  - name: Класс_требуемый
+    type: reference:Классы
+recorder: false
+indexes:
+  - fields: [Правило, Порядок]

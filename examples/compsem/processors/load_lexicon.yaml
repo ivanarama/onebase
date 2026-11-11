@@ -1,0 +1,15 @@
+# Загрузка словаря точных форм (ТЗ §2.1, приложение §6): words.txt +
+# paradigms.txt; форма слова — ключ горячего пути разбора.
+name: load_lexicon
+title: Загрузить словарь форм
+kind: data
+params:
+  - name: Слова
+    type: file
+  - name: Парадигмы
+    type: file
+  - name: Версия
+    type: number
+source:
+  file: src/load_lexicon.proc.os
+  module: LoadLexicon

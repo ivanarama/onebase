@@ -1,0 +1,21 @@
+# Класс мира (ТЗ §3.1): имя класса, род, иерархия, открытость (ограничение «==»).
+name: Классы
+title: Класс
+hierarchical: true
+fields:
+  - name: Наименование
+    type: string
+  - name: Код
+    type: string
+  - name: Род
+    type: string
+  - name: Категория
+    type: string
+  - name: Ограничение
+    type: bool
+    description: «==» — класс закрыт для расширения
+  - name: Иерархия
+    type: bool
+    description: класс наследует свойства родителей
+  - name: Полный
+    type: bool

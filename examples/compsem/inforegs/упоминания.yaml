@@ -1,0 +1,16 @@
+# Упоминания (ТЗ §4.1): форма → экземпляр по тексту и клаузе.
+name: Упоминания
+title: Упоминание
+dimensions:
+  - name: Текст
+    type: reference:Текст
+  - name: Клауза
+    type: string
+  - name: Форма
+    type: string
+resources:
+  - name: Экземпляр
+    type: string
+recorder: false
+indexes:
+  - fields: [Текст, Форма]

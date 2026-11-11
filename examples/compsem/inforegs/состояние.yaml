@@ -1,0 +1,24 @@
+# Состояние мира (ТЗ §4.2): срез последних по (Текст, Экземпляр, Свойство).
+name: Состояние
+title: Состояние мира
+dimensions:
+  - name: Текст
+    type: reference:Текст
+  - name: Момент
+    type: number
+  - name: Экземпляр
+    type: string
+  - name: Свойство
+    type: reference:Свойства
+resources:
+  - name: Вид
+    type: enum:ВидСобытия
+  - name: Значение
+    type: string
+  - name: Порождённый
+    type: bool
+  - name: Источник
+    type: string
+recorder: false
+indexes:
+  - fields: [Текст, Экземпляр, Свойство, Момент]

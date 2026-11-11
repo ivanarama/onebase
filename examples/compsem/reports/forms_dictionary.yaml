@@ -1,0 +1,7 @@
+# Словарь точных форм (ТЗ §6): интерфейс наблюдения — форма, класс, парадигма;
+# read-only, без ручных правок (правка идёт загрузкой знания).
+name: forms_dictionary
+title: Словарь форм
+source:
+  file: reports/forms_dictionary.report.os
+  module: FormsDictionary

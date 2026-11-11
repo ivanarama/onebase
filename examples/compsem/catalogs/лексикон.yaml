@@ -1,0 +1,14 @@
+# Лексикон (ТЗ §3.1): лемма, класс, парадигма, статус проверки.
+name: Лексикон
+title: Лексема
+fields:
+  - name: Наименование
+    type: string
+  - name: Код
+    type: string
+  - name: Класс
+    type: reference:Классы
+  - name: Парадигма
+    type: reference:Парадигмы
+  - name: Статус
+    type: enum:СтатусПроверки

@@ -1,0 +1,19 @@
+# Исполнитель вывода (ТЗ §6): чтение мира, сборка и печать ответа.
+name: Вывод_и_ответы
+title: Вывод и ответы
+permissions:
+  catalogs:
+    Правила: [read]
+    Рецепты: [read]
+    Профили_вывода: [read]
+    Коды_отказов: [read]
+  documents:
+    Текст: [read, post]
+  inforegs:
+    Формы_лексикона: [read]
+    Позиции_правил: [read]
+    Кандидаты_ответа: [read]
+    Состояние: [read]
+    Упоминания: [read]
+  reports:
+    forms_dictionary: [read]

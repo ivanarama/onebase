@@ -1,0 +1,28 @@
+# Профиль владельца знания (ТЗ §6): загрузка поставки, статусы лексикона,
+# чтение знания; утверждение правила остаётся человеку.
+name: Владелец_знания
+title: Владелец знания
+permissions:
+  catalogs:
+    Классы: [read, write]
+    Свойства: [read, write]
+    Лексикон: [read, write]
+    Парадигмы: [read, write]
+    Правила: [read, write]
+    Рецепты: [read, write]
+    Наборы_падежей: [read, write]
+    Наборы_предлогов: [read, write]
+    Профили_вывода: [read, write]
+    Коды_отказов: [read, write]
+    Золотые_кейсы: [read, write]
+  documents:
+    Текст: [read]
+  inforegs:
+    Формы_лексикона: [read]
+    Позиции_правил: [read]
+    Кандидаты_ответа: [read]
+  reports:
+    forms_dictionary: [read]
+  processors:
+    load_rules: [run]
+    load_lexicon: [run]
