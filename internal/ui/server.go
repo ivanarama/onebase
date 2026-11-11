@@ -533,6 +533,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/admin/theme-css", s.adminThemeCSS)
 	r.Post("/ui/admin/theme-css/save", s.adminThemeCSSSave)
 	r.Post("/ui/admin/theme-css/reset", s.adminThemeCSSReset)
+	r.Post("/ui/admin/theme-css/reset-element", s.adminThemeCSSElementReset)
 	r.Post("/ui/admin/cleanup", s.adminCleanup)
 
 	// Admin: external print forms (внешний контур расширяемости)

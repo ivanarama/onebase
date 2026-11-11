@@ -1609,7 +1609,7 @@ const tplThemeCSS = `
         {{if eq .Kind "color"}}
           <input type="color" name="p_{{.Key}}" value="{{$v}}" style="width:100%;height:34px;padding:2px;background:var(--ob-input-bg);border:1px solid var(--ob-border);border-radius:6px">
         {{else if eq .Kind "size"}}
-          <input type="number" min="1" max="400" name="p_{{.Key}}" value="{{$v | trimPx "px"}}" style="width:100%;padding:8px 10px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:6px;font-size:14px">
+          <input type="number" min="1" max="400" name="p_{{.Key}}" value="{{trimPx $v "px"}}" style="width:100%;padding:8px 10px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:6px;font-size:14px">
         {{else if eq .Kind "weight"}}
           <select name="p_{{.Key}}" style="width:100%;padding:8px 10px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:6px;font-size:14px">
             <option value=""{{if not $v}} selected{{end}}>{{t $.Lang "— не задано"}}</option>
@@ -1631,8 +1631,9 @@ const tplThemeCSS = `
   <label style="font-size:14px;color:var(--ob-text-2)">{{t $.Lang "Свободный CSS (дописывается в ui.css перед сгенерированными правилами)"}}</label>
   <textarea name="raw" rows="8" spellcheck="false" style="width:100%;font-family:ui-monospace,monospace;font-size:13px;padding:10px 12px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:7px;margin-bottom:12px">{{.Raw}}</textarea>
 
-  <div style="display:flex;gap:8px">
-    <button class="btn btn-primary" type="submit">{{t $.Lang "Сохранить"}}</button>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <button class="btn btn-primary" type="submit">{{t $.Lang "Применить"}}</button>
+    <button class="btn btn-secondary" type="submit" formaction="/ui/admin/theme-css/reset-element" formnovalidate>{{t $.Lang "Сбросить элемент"}}</button>
     {{if .Exists}}<button class="btn btn-danger" type="submit" formaction="/ui/admin/theme-css/reset" formnovalidate>{{t $.Lang "Удалить файл"}}</button>{{end}}
     <a class="btn btn-secondary" href="/ui/">{{t $.Lang "Открыть интерфейс"}}</a>
   </div>

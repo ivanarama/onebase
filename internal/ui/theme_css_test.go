@@ -133,9 +133,16 @@ func TestRenderInjectsThemeCSS(t *testing.T) {
 } // Форма администратора «Стили интерфейса»: форма правит элемент за элементом,
 // настройки живут в JSON, а ui.css — сгенерированный из них артефакт; сброс
 // удаляет оба файла, страницы возвращаются на встроенные стили.
+func newThemeTestServer(t *testing.T) *Server {
+	t.Helper()
+	s := newServerForFormMode(t)
+	s.cfg = Config{ConfigLocation: t.TempDir(), AppName: "тест"}
+	return s
+}
+
 func TestThemeCSSAdminFormSaveAndReset(t *testing.T) {
-	dir := t.TempDir()
-	s := &Server{cfg: Config{ConfigLocation: dir, AppName: "тест"}}
+	s := newThemeTestServer(t)
+	dir := s.cfg.ConfigLocation
 
 	form := url.Values{}
 	form.Set("el", "topbar")
@@ -146,7 +153,8 @@ func TestThemeCSSAdminFormSaveAndReset(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/ui/admin/theme-css/save", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	s.adminThemeCSSSave(rec, req)
-	if rec.Code != http.StatusSeeOther {
+	// «Применить» рендерит форму на месте: без перезагрузки страницы.
+	if rec.Code != http.StatusOK {
 		t.Fatalf("код %d после сохранения", rec.Code)
 	}
 
@@ -183,11 +191,51 @@ func TestThemeCSSAdminFormSaveAndReset(t *testing.T) {
 	}
 }
 
+// Сброс редактируемого элемента снимает его свойства, свободный CSS и
+// остальные элементы остаются.
+func TestThemeCSSAdminFormElementReset(t *testing.T) {
+	s := newThemeTestServer(t)
+	dir := s.cfg.ConfigLocation
+
+	form := url.Values{}
+	form.Set("el", "topbar")
+	form.Set("p_background", "#123456")
+	form.Set("raw", "h3{color:#336699}")
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/ui/admin/theme-css/save", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	s.adminThemeCSSSave(rec, req)
+
+	form = url.Values{}
+	form.Set("el", "topbar")
+	req = httptest.NewRequest(http.MethodPost, "/ui/admin/theme-css/reset-element", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	s.adminThemeCSSElementReset(httptest.NewRecorder(), req)
+
+	st := s.loadThemeSettings()
+	if _, ok := st.Elements["topbar"]; ok {
+		t.Errorf("свойства элемента не сняты: %v", st.Elements)
+	}
+	if st.Raw != "h3{color:#336699}" {
+		t.Errorf("свободный CSS задет сбросом: %q", st.Raw)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "ui.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), ".topbar{") {
+		t.Errorf("правило элемента осталось в файле: %q", body)
+	}
+	if !strings.Contains(string(body), "h3{color:#336699}") {
+		t.Errorf("свободный CSS потерян: %q", body)
+	}
+}
+
 // Значение формы не должно превращаться в произвольный текст CSS: форма
 // принимает цвет, размер и начертание по своим правилам, всё остальное — пусто.
 func TestThemeCSSFormSanitizesValues(t *testing.T) {
-	dir := t.TempDir()
-	s := &Server{cfg: Config{ConfigLocation: dir, AppName: "тест"}}
+	s := newThemeTestServer(t)
+	dir := s.cfg.ConfigLocation
 	form := url.Values{}
 	form.Set("el", "body")
 	form.Set("p_background", "red;body{display:none}")
@@ -212,8 +260,8 @@ func TestThemeCSSFormSanitizesValues(t *testing.T) {
 }
 
 func TestThemeCSSAdminFormRejectsOversize(t *testing.T) {
-	dir := t.TempDir()
-	s := &Server{cfg: Config{ConfigLocation: dir, AppName: "тест"}}
+	s := newThemeTestServer(t)
+	dir := s.cfg.ConfigLocation
 	big := strings.Repeat("a", themeCSSMaxBytes+1)
 	form := url.Values{}
 	form.Set("raw", big)

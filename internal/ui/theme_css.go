@@ -98,6 +98,61 @@ var themeElementCatalog = []themeElement{
 		{"color", "Цвет текста", "color"},
 		{"font-size", "Размер текста (px)", "size"},
 	}},
+	{ID: "label", Selector: ".form-group label", Name: "Подпись поля", Props: []themeProp{
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+	}},
+	{ID: "navlink", Selector: "#ob-nav a", Name: "Ссылка навигации", Props: []themeProp{
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+	}},
+	{ID: "sysbtn", Selector: ".sys-btn", Name: "Кнопка шапки (Система, Вкладки)", Props: []themeProp{
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+	}},
+	{ID: "tabs", Selector: ".subsys-bar a", Name: "Вкладки разделов", Props: []themeProp{
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+	}},
+	{ID: "rowlink", Selector: ".ob-row-link", Name: "Ссылка строки списка", Props: []themeProp{
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+	}},
+	{ID: "breadcrumb", Selector: ".breadcrumb", Name: "Хлебные ссылки", Props: []themeProp{
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+	}},
+	{ID: "table", Selector: ".tbl", Name: "Таблица (целиком)", Props: []themeProp{
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+	}},
+	{ID: "search", Selector: ".search-results", Name: "Панель поиска", Props: []themeProp{
+		{"background", "Цвет фона", "color"},
+		{"color", "Цвет текста", "color"},
+		{"border-color", "Цвет границы", "color"},
+	}},
+	{ID: "searchhit", Selector: ".search-hit", Name: "Строка поиска", Props: []themeProp{
+		{"background", "Цвет фона", "color"},
+		{"color", "Цвет текста", "color"},
+	}},
+	{ID: "empty", Selector: ".empty", Name: "Пустой список", Props: []themeProp{
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+	}},
+	{ID: "error", Selector: ".error", Name: "Блок ошибки", Props: []themeProp{
+		{"background", "Цвет фона", "color"},
+		{"color", "Цвет текста", "color"},
+		{"border-color", "Цвет границы", "color"},
+	}},
+	{ID: "rowtop", Selector: ".row-top", Name: "Верх строк списка", Props: []themeProp{
+		{"background", "Цвет фона", "color"},
+		{"color", "Цвет текста", "color"},
+	}},
+	{ID: "sec", Selector: ".sec", Name: "Заголовок секции", Props: []themeProp{
+		{"color", "Цвет текста", "color"},
+		{"font-size", "Размер текста (px)", "size"},
+		{"font-weight", "Начертание", "weight"},
+	}},
 }
 
 // themeFontFamilies — ограниченный список: форма не позволяет вписать в CSS
@@ -212,29 +267,21 @@ func (s *Server) themeCSS(w http.ResponseWriter, r *http.Request) {
 	w.Write(data)
 }
 
-// adminThemeCSS — форма настройки внешних стилей. Выбранное поле списка
-// элементов подставляет свои свойства; сохранение пишет JSON настроек и
-// генерирует ui.css, сброс удаляет оба файла.
-func (s *Server) adminThemeCSS(w http.ResponseWriter, r *http.Request) {
-	if !s.isAdmin(r) {
-		s.renderForbidden(w, r)
-		return
-	}
-	sel := r.URL.Query().Get("el")
-	if sel == "" {
-		sel = "body"
-	}
-	var cur *themeElement
+// themeCSSElement — элемент каталога по ключу формы; неизвестный ключ
+// возвращается к первому: форма всегда показывает хоть что-то.
+func themeCSSElement(sel string) *themeElement {
 	for i, el := range themeElementCatalog {
 		if el.ID == sel {
-			cur = &themeElementCatalog[i]
-			break
+			return &themeElementCatalog[i]
 		}
 	}
-	if cur == nil {
-		cur = &themeElementCatalog[0]
-	}
-	st := s.loadThemeSettings()
+	return &themeElementCatalog[0]
+}
+
+// themeCSSPage — форма, данные которой собраны из текущих настроек: сохранение
+// и сброс элемента рендерят форму на месте, без перезагрузки страницы.
+func (s *Server) themeCSSPage(w http.ResponseWriter, r *http.Request, st themeCSSSettings, sel, msg, errMsg string) {
+	cur := themeCSSElement(sel)
 	vals := st.Elements[cur.ID]
 	if vals == nil {
 		vals = map[string]string{}
@@ -252,9 +299,21 @@ func (s *Server) adminThemeCSS(w http.ResponseWriter, r *http.Request) {
 		"Exists":   s.hasThemeCSS(),
 		"Size":     len(data),
 		"Edited":   formatThemeCSSEdited(fi),
-		"Msg":      r.URL.Query().Get("msg"),
-		"Err":      r.URL.Query().Get("err"),
+		"Msg":      msg,
+		"Err":      errMsg,
 	})
+}
+
+// adminThemeCSS — форма настройки внешних стилей. Выбранное поле списка
+// элементов подставляет свои свойства; сохранение пишет JSON настроек и
+// генерирует ui.css, сброс удаляет оба файла.
+func (s *Server) adminThemeCSS(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		s.renderForbidden(w, r)
+		return
+	}
+	s.themeCSSPage(w, r, s.loadThemeSettings(), r.URL.Query().Get("el"),
+		r.URL.Query().Get("msg"), r.URL.Query().Get("err"))
 }
 
 func formatThemeCSSEdited(st os.FileInfo) string {
@@ -271,22 +330,22 @@ func (s *Server) adminThemeCSSSave(w http.ResponseWriter, r *http.Request) {
 	}
 	lang := s.resolveLang(r)
 	if s.cfg.ConfigLocation == "" {
-		s.themeCSSRedirect(w, r, "", s.tr(lang, "расположение конфигурации неизвестно — стили писать некуда"))
+		s.themeCSSPage(w, r, s.loadThemeSettings(), r.FormValue("el"), "", s.tr(lang, "расположение конфигурации неизвестно — стили писать некуда"))
 		return
 	}
 	if err := r.ParseForm(); err != nil {
-		s.themeCSSRedirect(w, r, "", s.tr(lang, "не удалось прочитать форму")+": "+s.errText(r, err))
+		s.themeCSSPage(w, r, s.loadThemeSettings(), r.FormValue("el"), "", s.tr(lang, "не удалось прочитать форму")+": "+s.errText(r, err))
 		return
 	}
 	st := s.loadThemeSettings()
+	sel := r.FormValue("el")
 	raw := r.FormValue("raw")
 	if len(raw) > themeCSSMaxBytes {
-		s.themeCSSRedirect(w, r, "", fmt.Sprintf("%s: %d %s, %s %d %s", s.tr(lang, "свободный CSS"), len(raw), s.tr(lang, "байт"), s.tr(lang, "можно не больше"), themeCSSMaxBytes, s.tr(lang, "байт")))
+		s.themeCSSPage(w, r, st, sel, "", fmt.Sprintf("%s: %d %s, %s %d %s", s.tr(lang, "свободный CSS"), len(raw), s.tr(lang, "байт"), s.tr(lang, "можно не больше"), themeCSSMaxBytes, s.tr(lang, "байт")))
 		return
 	}
 	st.Raw = raw
 
-	sel := r.FormValue("el")
 	for _, el := range themeElementCatalog {
 		if el.ID != sel {
 			continue
@@ -303,29 +362,58 @@ func (s *Server) adminThemeCSSSave(w http.ResponseWriter, r *http.Request) {
 			}
 			vals[p.Key] = v
 		}
-		st.Elements[el.ID] = vals
+		if len(vals) == 0 {
+			delete(st.Elements, el.ID)
+		} else {
+			st.Elements[el.ID] = vals
+		}
 		break
 	}
+	s.themeCSSApply(w, r, st, sel, s.tr(lang, "применено — страницы перезагрузите, пересборка движка не нужна"))
+}
 
+// adminThemeCSSElementReset — сброс редактируемого элемента: его свойства
+// снимаются, действует встроенный стиль; свободный CSS и остальные элементы
+// не трогаются.
+func (s *Server) adminThemeCSSElementReset(w http.ResponseWriter, r *http.Request) {
+	if !s.isAdmin(r) {
+		s.renderForbidden(w, r)
+		return
+	}
+	lang := s.resolveLang(r)
+	if s.cfg.ConfigLocation == "" {
+		s.themeCSSPage(w, r, s.loadThemeSettings(), r.FormValue("el"), "", s.tr(lang, "расположение конфигурации неизвестно — стили писать некуда"))
+		return
+	}
+	st := s.loadThemeSettings()
+	sel := themeCSSElement(r.FormValue("el")).ID
+	delete(st.Elements, sel)
+	s.themeCSSApply(w, r, st, sel, s.tr(lang, "свойства элемента сброшены — действует встроенный стиль"))
+}
+
+// themeCSSApply — запись настроек и генерируемого ui.css, форма остаётся на
+// месте: сообщение показывается тем же рендером.
+func (s *Server) themeCSSApply(w http.ResponseWriter, r *http.Request, st themeCSSSettings, sel, msg string) {
+	lang := s.resolveLang(r)
 	out, err := json.MarshalIndent(st, "", "  ")
 	if err != nil {
-		s.themeCSSRedirect(w, r, "", s.tr(lang, "не удалось собрать настройки стилей"))
+		s.themeCSSPage(w, r, st, sel, "", s.tr(lang, "не удалось собрать настройки стилей"))
 		return
 	}
 	if err := os.WriteFile(themeCSSSettingsPath(s.cfg.ConfigLocation), out, 0o644); err != nil {
-		s.themeCSSRedirect(w, r, "", s.tr(lang, "не удалось записать настройки стилей")+": "+s.errText(r, err))
+		s.themeCSSPage(w, r, st, sel, "", s.tr(lang, "не удалось записать настройки стилей")+": "+s.errText(r, err))
 		return
 	}
 	css := renderThemeCSS(st)
 	if len(css) > themeCSSMaxBytes {
-		s.themeCSSRedirect(w, r, "", s.tr(lang, "сгенерированный файл стилей слишком большой"))
+		s.themeCSSPage(w, r, st, sel, "", s.tr(lang, "сгенерированный файл стилей слишком большой"))
 		return
 	}
 	if err := os.WriteFile(s.themeCSSPath(), []byte(css), 0o644); err != nil {
-		s.themeCSSRedirect(w, r, "", s.tr(lang, "не удалось записать файл стилей")+": "+s.errText(r, err))
+		s.themeCSSPage(w, r, st, sel, "", s.tr(lang, "не удалось записать файл стилей")+": "+s.errText(r, err))
 		return
 	}
-	s.themeCSSRedirect(w, r, s.tr(lang, "стили сохранены — страницы перезагрузите, пересборка движка не нужна"), "")
+	s.themeCSSPage(w, r, st, sel, msg, "")
 }
 
 func (s *Server) adminThemeCSSReset(w http.ResponseWriter, r *http.Request) {
@@ -335,36 +423,14 @@ func (s *Server) adminThemeCSSReset(w http.ResponseWriter, r *http.Request) {
 	}
 	lang := s.resolveLang(r)
 	if !s.hasThemeCSS() {
-		s.themeCSSRedirect(w, r, "", s.tr(lang, "файла стилей нет"))
+		s.themeCSSPage(w, r, s.loadThemeSettings(), r.FormValue("el"), "", s.tr(lang, "файла стилей нет"))
 		return
 	}
 	if err := os.Remove(s.themeCSSPath()); err != nil {
-		s.themeCSSRedirect(w, r, "", s.tr(lang, "не удалось удалить файл стилей")+": "+s.errText(r, err))
+		s.themeCSSPage(w, r, s.loadThemeSettings(), r.FormValue("el"), "", s.tr(lang, "не удалось удалить файл стилей")+": "+s.errText(r, err))
 		return
 	}
 	_ = os.Remove(themeCSSSettingsPath(s.cfg.ConfigLocation))
-	s.themeCSSRedirect(w, r, s.tr(lang, "файл стилей удалён — страницы снова на встроенных стилях"), "")
-}
-
-func (s *Server) themeCSSRedirect(w http.ResponseWriter, r *http.Request, msg, errMsg string) {
-	q := "msg=" + themeCSSQueryEscape(strings.TrimSpace(msg))
-	if errMsg != "" {
-		q = "err=" + themeCSSQueryEscape(strings.TrimSpace(errMsg))
-	}
-	http.Redirect(w, r, "/ui/admin/theme-css?"+q, http.StatusSeeOther)
-}
-
-func themeCSSQueryEscape(s string) string {
-	var b strings.Builder
-	for _, ch := range s {
-		switch {
-		case ch >= 'a' && ch <= 'z', ch >= 'A' && ch <= 'Z', ch >= '0' && ch <= '9':
-			b.WriteRune(ch)
-		case ch == ' ':
-			b.WriteString("%20")
-		default:
-			b.WriteString(fmt.Sprintf("%%%02X", ch))
-		}
-	}
-	return b.String()
+	s.themeCSSPage(w, r, themeCSSSettings{Elements: map[string]map[string]string{}}, r.FormValue("el"),
+		s.tr(lang, "файл стилей удалён — страницы снова на встроенных стилях"), "")
 }
