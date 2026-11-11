@@ -911,7 +911,7 @@ jobs:
       - name: Real lint runner driver regression
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         env:
-          GOTOOLCHAIN: go1.26.10
+          GOTOOLCHAIN: go1.26.11
           CGO_ENABLED: "0"
         run: |
           set -euo pipefail
