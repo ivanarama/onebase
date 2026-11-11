@@ -191,7 +191,21 @@ const tplManagedForm = `
       </div>
     {{else}}
       {{$attr := attrByName $ctx.Form $fn}}
-      {{if and $attr (attrRefEntity $attr.TypeRef) (or (index $ctx.RefOptions $fn) $choiceCtx)}}
+      {{if and $attr (isImage $attr.TypeRef)}}
+        {{/* Картинка-реквизит формы (save:false) — тот же просмотрщик, что у
+             image-поля объекта; UUID остаётся состоянием формы, не документа. */}}
+        {{$iv := index $ctx.Values $fn}}{{$imageLabel := fieldTitleRU $el.TitleMap $fn}}
+        <div class="img-field" data-ob-image-field="{{$fn}}" data-ob-image-label="{{$imageLabel}}">
+          <input type="hidden" name="{{$fn}}" value="{{$iv}}">
+          <div class="img-preview"{{if not $iv}} style="display:none"{{end}}><button type="button"{{if not (isImageRef $iv)}} disabled{{end}} data-ob-image-view data-ob-readonly-navigation="1" data-ob-image-ref="{{$iv}}" aria-label="{{$imageLabel}}"><img src="{{if $iv}}/ui/_image/{{$iv}}{{end}}" alt="{{$imageLabel}}"></button></div>
+          {{if and (not $ro) $ctx.CanWrite}}
+          <div class="img-actions">
+            <label class="btn btn-sm btn-secondary">{{t $ctx.Lang "Загрузить…"}}<input type="file" accept="image/*" style="display:none" data-ob-image-upload="/ui/{{lower (str $ctx.Entity.Kind)}}/{{lower $ctx.Entity.Name}}/_image"></label>
+            <button type="button" class="btn btn-sm img-clear-btn" data-ob-image-clear{{if not $iv}} style="display:none"{{end}}>{{t $ctx.Lang "Очистить"}}</button>
+          </div>
+          {{end}}
+        </div>
+      {{else if and $attr (attrRefEntity $attr.TypeRef) (or (index $ctx.RefOptions $fn) $choiceCtx)}}
         {{/* Реквизит формы ссылочного типа — рабочий пикер выбора (фикс B): select
              из вариантов справочника (mergeFormLocalRefOptions) + кнопка подбора.
              Условие требует ещё и загруженных опций: mergeFormLocalRefOptions
