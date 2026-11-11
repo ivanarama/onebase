@@ -59,8 +59,7 @@ func resultHandoffForm(entity *metadata.Entity, form *metadata.FormModule) *meta
 	if form == nil {
 		return form
 	}
-	view := *form
-	view.Attributes = nil
+	view := &metadata.FormModule{}
 	for _, attr := range form.Attributes {
 		if attr != nil && !attr.Save && !attr.MainAttribute && formAttrIsScalar(attr) &&
 			entityField(entity, attr.Name) == nil && !entityServiceFieldName(attr.Name) {
@@ -68,7 +67,7 @@ func resultHandoffForm(entity *metadata.Entity, form *metadata.FormModule) *meta
 		}
 		view.Attributes = append(view.Attributes, attr)
 	}
-	return &view
+	return view
 }
 
 func resultFormOwner(r *http.Request) string {
