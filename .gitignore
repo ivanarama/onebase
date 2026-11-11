@@ -120,6 +120,8 @@ loadtest/reports/
 *.db-wal
 # Lifetime-lock базы (internal/dblock); остаётся после жёсткого kill сервера
 *.onebase.lock
+# Миграционный lock прогона (internal/migrate)
+*.onebase.migrate.lock
 # Рабочие файлы самообновления (internal/selfupdate); заводятся рядом с бинарём
 .onebase-update.lock
 .onebase-update.intent.lock
