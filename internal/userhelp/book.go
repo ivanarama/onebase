@@ -32,6 +32,10 @@ type Manifest struct {
 	Enabled    *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	AutoUpdate *bool         `yaml:"auto_update,omitempty" json:"auto_update,omitempty"`
 	Chapters   []ChapterSpec `yaml:"chapters" json:"chapters"`
+
+	// ContextHelpAdminOnly leaves the form button visible to everyone but
+	// clickable only for administrators. It is UI configuration, not access control.
+	ContextHelpAdminOnly bool `yaml:"context_help_admin_only,omitempty" json:"context_help_admin_only,omitempty"`
 }
 
 // Chapters appear in manifest order. Parent must refer to an earlier chapter.
@@ -58,12 +62,13 @@ type Asset struct {
 
 // Book is immutable after Load. Callers must not change its slices or maps.
 type Book struct {
-	Title      string
-	Enabled    bool
-	AutoUpdate bool
-	Chapters   []Chapter
-	Assets     map[string]Asset
-	Warnings   []string
+	Title                string
+	Enabled              bool
+	AutoUpdate           bool
+	ContextHelpAdminOnly bool
+	Chapters             []Chapter
+	Assets               map[string]Asset
+	Warnings             []string
 }
 
 var chapterID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]*$`)
@@ -117,6 +122,7 @@ func Load(projectDir string) *Book {
 	if m.AutoUpdate != nil {
 		b.AutoUpdate = *m.AutoUpdate
 	}
+	b.ContextHelpAdminOnly = m.ContextHelpAdminOnly
 	if !b.Enabled {
 		return b
 	}

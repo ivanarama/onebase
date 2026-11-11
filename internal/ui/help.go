@@ -40,6 +40,12 @@ func (s *Server) addHelpContext(r *http.Request, data map[string]any) {
 		form = f.Name
 	}
 	if c := b.Context(kind+"/"+name, form); c != nil {
+		// context_help_admin_only: the button stays in place, but only an
+		// administrator gets a link. Others see a disabled button without href.
+		if b.ContextHelpAdminOnly && !s.isAdmin(r) {
+			data["HelpDisabled"] = true
+			return
+		}
 		data["HelpURL"] = helpChapterURL(c.ID)
 	}
 }
@@ -101,7 +107,7 @@ func (s *Server) helpAsset(w http.ResponseWriter, r *http.Request) {
 }
 
 const tplHelp = `
-{{define "context-help"}}{{if .HelpURL}}<a class="btn" data-ob-context-help href="{{.HelpURL}}" target="_blank" rel="noopener">? {{t .Lang "Справка"}}</a>{{end}}{{end}}
+{{define "context-help"}}{{if .HelpURL}}<a class="btn" data-ob-context-help href="{{.HelpURL}}" target="_blank" rel="noopener">? {{t .Lang "Справка"}}</a>{{else if .HelpDisabled}}<a class="btn" data-ob-context-help role="link" aria-disabled="true" title="{{t .Lang "Справка доступна только администратору"}}" style="opacity:.5;cursor:not-allowed">? {{t .Lang "Справка"}}</a>{{end}}{{end}}
 {{define "page-help"}}{{template "head" .}}{{template "nav" .}}
 <main class="help-main">
 <h1 class="help-title">{{.HelpBook.Title}}</h1>
