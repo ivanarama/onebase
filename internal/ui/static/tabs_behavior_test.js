@@ -364,6 +364,30 @@ test('tabs reset clears saved tabs once and preserves other query parameters and
   assert.deepEqual(app.replacements, []);
 });
 
+test('tabs reset survives the authenticated hidden-home redirect', () => {
+  const resetSource = tabsSource(fs.readFileSync(process.env.ONEBASE_TABS_RESET_HTML, 'utf8'));
+  assert.ok(resetSource, 'redirect target must render the tabs runtime');
+  const storage = new FakeStorage();
+  const render = search => shell(storage, search, () => true, null, null, false, resetSource);
+  let app = render('');
+  app.open('/ui/a', 'A');
+  app.open('/ui/b', 'B');
+  assert.equal(app.count(), 2);
+  assert.equal(savedActive(storage).url, '/ui/b');
+
+  app = render(process.env.ONEBASE_TABS_RESET_QUERY);
+  assert.equal(app.count(), 0);
+  assert.equal(savedActive(storage), null);
+  assert.equal(app.location.search, '?home=1&subsystem=Sales');
+  assert.deepEqual(app.replacements, ['/ui/app?home=1&subsystem=Sales']);
+
+  app.open('/ui/after-reset', 'After reset');
+  app = render(app.location.search);
+  assert.equal(app.count(), 1);
+  assert.equal(savedActive(storage).url, '/ui/after-reset');
+  assert.deepEqual(app.replacements, []);
+});
+
 test('duplicate URLs keep separate stable IDs and restore the active copy', () => {
   const storage = new FakeStorage();
   let app = shell(storage);
