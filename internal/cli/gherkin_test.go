@@ -48,7 +48,7 @@ func TestGherkinCompileRunsCompiledTestsOnSkeleton(t *testing.T) {
 	if err != nil {
 		t.Fatalf("onebase gherkin compile: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "Тестов: 3") {
+	if !strings.Contains(out, "Тестов: 11") {
 		t.Fatalf("компиляция не посчитала строки примеров:\n%s", out)
 	}
 	yamlPath := filepath.Join(projectDir, "processors", "тестрасстановкафункций_объект.yaml")
