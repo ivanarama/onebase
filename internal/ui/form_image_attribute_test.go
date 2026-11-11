@@ -29,7 +29,7 @@ func TestFormImageAttributeHTTP(t *testing.T) {
 				t.Fatalf("GET status %d: %s", rec.Code, rec.Body.String())
 			}
 			html := rec.Body.String()
-			for _, want := range []string{`data-ob-image-field="Preview"`, `type="hidden" name="Preview"`, `data-ob-image-view`, `data-ob-readonly-navigation="1"`} {
+			for _, want := range []string{`data-ob-image-field="Preview"`, `type="hidden" name="Preview"`, `data-ob-image-view`, `data-ob-image-download`, `data-ob-readonly-navigation="1"`} {
 				if !strings.Contains(html, want) {
 					t.Errorf("GET missing image attribute markup %q", want)
 				}

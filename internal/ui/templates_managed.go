@@ -198,6 +198,7 @@ const tplManagedForm = `
         <div class="img-field" data-ob-image-field="{{$fn}}" data-ob-image-label="{{$imageLabel}}">
           <input type="hidden" name="{{$fn}}" value="{{$iv}}">
           <div class="img-preview"{{if not $iv}} style="display:none"{{end}}><button type="button"{{if not (isImageRef $iv)}} disabled{{end}} data-ob-image-view data-ob-readonly-navigation="1" data-ob-image-ref="{{$iv}}" aria-label="{{$imageLabel}}"><img src="{{if $iv}}/ui/_image/{{$iv}}{{end}}" alt="{{$imageLabel}}"></button></div>
+          <a class="btn btn-sm" data-ob-image-download data-ob-readonly-navigation="1" download{{if isImageRef $iv}} href="/ui/_image/{{$iv}}?download=1"{{else}} style="display:none"{{end}}>{{t $ctx.Lang "Скачать"}}</a>
           {{if and (not $ro) $ctx.CanWrite}}
           <div class="img-actions">
             <label class="btn btn-sm btn-secondary">{{t $ctx.Lang "Загрузить…"}}<input type="file" accept="image/*" style="display:none" data-ob-image-upload="/ui/{{lower (str $ctx.Entity.Kind)}}/{{lower $ctx.Entity.Name}}/_image"></label>

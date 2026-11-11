@@ -3729,6 +3729,13 @@ function obSetImageField(wrap, ref) {
         trigger.disabled = !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(ref);
       }
     }
+    var download = candidate.querySelector('[data-ob-image-download]');
+    if (download) {
+      var validRef = /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(ref);
+      download.style.display = validRef ? '' : 'none';
+      if (validRef) download.href = '/ui/_image/' + encodeURIComponent(ref) + '?download=1';
+      else download.removeAttribute('href');
+    }
     var clear = candidate.querySelector('.img-clear-btn');
     if (clear) clear.style.display = ref ? '' : 'none';
   });
