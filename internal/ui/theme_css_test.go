@@ -296,7 +296,7 @@ func TestThemeCSSAdminFormDefaultFillsStandard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(body), ".topbar{background:#1e293b;color:#ffffff}") {
+	if !strings.Contains(string(body), ".topbar{background:var(--ob-topbar-bg);color:var(--ob-topbar-text)}") {
 		t.Errorf("стандартное правило шапки не сгенерировано: %q", body)
 	}
 }

@@ -158,30 +158,32 @@ var themeElementCatalog = []themeElement{
 // themeElementDefaults — стандартные стили элементов (значения светлой темы
 // встроенного стиля, internal/ui/templates.go). «По умолчанию» заполняет файл
 // ими: правки идут от стандартных значений, а не от пустых полей.
+// Стандартные значения — токены базового стиля, а не фиксированные hex:
+// файл «по умолчанию» не должен перебивать тёмную тему.
 var themeElementDefaults = map[string]map[string]string{
-	"body":        {"font-family": "system-ui", "font-size": "16px", "color": "#1e293b", "background": "#f5f5f5"},
-	"topbar":      {"background": "#1e293b", "color": "#ffffff"},
-	"sysbtn":      {"color": "#cbd5e1", "font-size": "15px"},
-	"tabs":        {"color": "#94a3b8", "font-size": "13px"},
-	"nav":         {"background": "#1e293b", "color": "#cbd5e1"},
-	"navlink":     {"color": "#cbd5e1", "font-size": "14px"},
-	"card":        {"background": "#ffffff", "color": "#1e293b", "border-color": "#e2e8f0", "border-radius": "10px", "padding": "24px"},
-	"heading":     {"font-size": "22px", "font-weight": "bold", "color": "#1e293b"},
-	"sec":         {"color": "#94a3b8", "font-size": "11px", "font-weight": "normal"},
-	"label":       {"color": "#475569", "font-size": "13px"},
-	"input":       {"background": "#ffffff", "color": "#1e293b", "border-color": "#475569", "font-size": "14px"},
-	"btn":         {"background": "#e2e8f0", "color": "#374151", "border-color": "#cbd5e1", "font-size": "14px", "border-radius": "7px"},
-	"btn-primary": {"background": "#3b82f6", "color": "#ffffff", "border-radius": "7px"},
-	"breadcrumb":  {"color": "#64748b", "font-size": "13px"},
-	"table":       {"color": "#1e293b", "font-size": "14px"},
-	"thead":       {"background": "#eef2f7", "color": "#334155", "font-size": "12px"},
-	"tbody":       {"background": "#ffffff", "color": "#334155", "font-size": "13px"},
-	"rowtop":      {"background": "#ffffff", "color": "#1e293b"},
-	"rowlink":     {"color": "#3b82f6", "font-size": "14px"},
-	"search":      {"background": "#ffffff", "color": "#1e293b", "border-color": "#e2e8f0"},
-	"searchhit":   {"background": "#ffffff", "color": "#1e293b"},
-	"empty":       {"color": "#94a3b8", "font-size": "15px"},
-	"error":       {"background": "#fef2f2", "color": "#dc2626", "border-color": "#fecaca"},
+	"body":        {"font-family": "system-ui", "font-size": "16px", "color": "var(--ob-text)", "background": "var(--ob-bg)"},
+	"topbar":      {"background": "var(--ob-topbar-bg)", "color": "var(--ob-topbar-text)"},
+	"sysbtn":      {"color": "var(--ob-nav-text)", "font-size": "15px"},
+	"tabs":        {"color": "var(--ob-text-4)", "font-size": "13px"},
+	"nav":         {"background": "var(--ob-nav-bg)", "color": "var(--ob-nav-text)"},
+	"navlink":     {"color": "var(--ob-nav-text)", "font-size": "14px"},
+	"card":        {"background": "var(--ob-surface)", "color": "var(--ob-text)", "border-color": "var(--ob-border)", "border-radius": "10px", "padding": "24px"},
+	"heading":     {"font-size": "22px", "font-weight": "bold", "color": "var(--ob-text)"},
+	"sec":         {"color": "var(--ob-text-4)", "font-size": "11px", "font-weight": "normal"},
+	"label":       {"color": "var(--ob-text-2)", "font-size": "13px"},
+	"input":       {"background": "var(--ob-input-bg)", "color": "var(--ob-text)", "border-color": "var(--ob-field-border)", "font-size": "14px"},
+	"btn":         {"background": "var(--ob-btn-2-bg)", "color": "var(--ob-btn-2-text)", "border-color": "var(--ob-border-2)", "font-size": "14px", "border-radius": "7px"},
+	"btn-primary": {"background": "var(--ob-accent)", "color": "#ffffff", "border-radius": "7px"},
+	"breadcrumb":  {"color": "var(--ob-text-3)", "font-size": "13px"},
+	"table":       {"color": "var(--ob-text-strong)", "font-size": "14px"},
+	"thead":       {"background": "var(--ob-head-bg)", "color": "var(--ob-text-strong)", "font-size": "12px"},
+	"tbody":       {"background": "var(--ob-surface)", "color": "var(--ob-text-strong)", "font-size": "13px"},
+	"rowtop":      {"background": "var(--ob-surface)", "color": "var(--ob-text)"},
+	"rowlink":     {"color": "var(--ob-link)", "font-size": "14px"},
+	"search":      {"background": "var(--ob-surface)", "color": "var(--ob-text)", "border-color": "var(--ob-border)"},
+	"searchhit":   {"background": "var(--ob-surface)", "color": "var(--ob-text)"},
+	"empty":       {"color": "var(--ob-text-4)", "font-size": "15px"},
+	"error":       {"background": "var(--ob-error-bg)", "color": "var(--ob-error-text)", "border-color": "var(--ob-error-border)"},
 }
 
 // themeFontFamilies — ограниченный список: форма не позволяет вписать в CSS
@@ -216,6 +218,10 @@ func (s *Server) loadThemeSettings() themeCSSSettings {
 var themeColorRe = regexp.MustCompile(`^#[0-9a-fA-F]{3}$|^#[0-9a-fA-F]{6}$`)
 var themeSizeRe = regexp.MustCompile(`^[0-9]{1,4}$`)
 
+// themeTokenRe — стандартные значения формы живут токенами базового стиля;
+// в генерируемый CSS попадает толькоvar(--ob-...) вида.
+var themeTokenRe = regexp.MustCompile(`^var\(--ob-[a-z0-9-]+\)$`)
+
 // themeSanitizeValue — форма принимает ограниченные значения; произвольный
 // текст в генерируемый CSS не попадает.
 func themeSanitizeValue(kind, v string) string {
@@ -224,6 +230,9 @@ func themeSanitizeValue(kind, v string) string {
 	case "color":
 		if themeColorRe.MatchString(v) {
 			return strings.ToLower(v)
+		}
+		if themeTokenRe.MatchString(v) {
+			return v
 		}
 		return ""
 	case "size":
