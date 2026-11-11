@@ -1566,8 +1566,50 @@ func normalizedFormHotkey(value string) string {
 }
 
 func templateSource() string {
-	return tplHead + tplNav + tplHelp + tplIndex + tplList + tplForm + tplManagedForm + tplRegister + tplReport + tplProcessor + tplAgentSettings + tplPOS + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants + tplHistory + tplStages + tplJournal + tplScheduled + tplAccountReg + tplQueryBuilder + tplAllFunctions + tplSearch + tplQueryConsole + tplCodeConsole + tplGengen + tplForbidden + tplReportProblem + tplPageCustom + tplAppShell + tplNavigationSettings
+	return tplHead + tplNav + tplHelp + tplIndex + tplList + tplForm + tplManagedForm + tplRegister + tplReport + tplProcessor + tplAgentSettings + tplPOS + tplAbout + tplDeleteMarked + tplInfoReg + tplConstants + tplHistory + tplStages + tplJournal + tplScheduled + tplAccountReg + tplQueryBuilder + tplAllFunctions + tplSearch + tplQueryConsole + tplCodeConsole + tplGengen + tplForbidden + tplReportProblem + tplPageCustom + tplAppShell + tplNavigationSettings + tplThemeCSS
 }
+
+const tplThemeCSS = `
+{{define "page-theme-css"}}
+{{template "head" .}}{{template "nav" .}}
+<main style="max-width:1000px">
+<h2>{{t $.Lang "Стили интерфейса"}}</h2>
+<p style="color:var(--ob-text-2);font-size:13px;margin-bottom:12px">
+  {{t $.Lang "Файл ui.css в корне конфигурации подключается после встроенных стилей и переопределяет их; пересборка движка не нужна. Файл читается с диска при каждом запросе, поэтому сохранение действует сразу."}}
+</p>
+{{if .Msg}}<div style="background:var(--ob-ok-bg);border:1px solid var(--ob-ok-border);color:var(--ob-ok-text);padding:12px 16px;border-radius:7px;margin-bottom:16px;font-size:14px">{{.Msg}}</div>{{end}}
+{{if .Err}}<div class="error" style="max-width:1000px;margin-bottom:16px">{{.Err}}</div>{{end}}
+
+<div class="card" style="margin-bottom:16px">
+  <div style="display:flex;gap:24px;flex-wrap:wrap;font-size:13px;color:var(--ob-text-2)">
+    <span><b>{{t $.Lang "Файл:"}}</b> <code>{{.Path}}</code></span>
+    <span><b>{{t $.Lang "Состояние:"}}</b> {{if .Exists}}{{t $.Lang "есть, подключается"}}{{else}}{{t $.Lang "нет — страницы на встроенных стилях"}}{{end}}</span>
+    {{if .Exists}}<span><b>{{t $.Lang "Размер:"}}</b> {{.Size}} </span>{{end}}
+    {{if .Edited}}<span><b>{{t $.Lang "Изменён:"}}</b> {{.Edited}}</span>{{end}}
+  </div>
+</div>
+
+<form method="POST" action="/ui/admin/theme-css/save">
+  <textarea name="css" rows="22" spellcheck="false" style="width:100%;font-family:ui-monospace,monospace;font-size:13px;padding:10px 12px;background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:7px;margin-bottom:12px">{{.CSS}}</textarea>
+  <div style="display:flex;gap:8px">
+    <button class="btn btn-primary" type="submit">{{t $.Lang "Сохранить"}}</button>
+    {{if .Exists}}<button class="btn btn-danger" type="submit" formaction="/ui/admin/theme-css/reset" formnovalidate>{{t $.Lang "Удалить файл"}}</button>{{end}}
+    <a class="btn btn-secondary" href="/ui/">{{t $.Lang "Открыть интерфейс"}}</a>
+  </div>
+</form>
+
+<div class="card">
+  <h3 style="margin-bottom:10px">{{t $.Lang "Подсказка"}}</h3>
+  <p style="font-size:13px;color:var(--ob-text-2);margin-bottom:8px">
+    {{t $.Lang "Переопределяются токены палитры (--ob-*) и классовые правила. Инлайн-стили шаблонов внешним CSS не перебиваются."}}
+  </p>
+  <p style="font-size:13px;color:var(--ob-text-3)">
+    {{t $.Lang "Пример: body{background:#101018} — сменить подложку всей конфигурации."}}
+  </p>
+</div>
+</main></body></html>
+{{end}}
+`
 
 const tplHead = `
 {{define "head"}}<!DOCTYPE html>
@@ -1947,6 +1989,7 @@ const tplNav = `
           <a href="/ui/admin/extforms">{{t $.Lang "Внешние печатные формы"}}</a>
           <a href="/ui/admin/extreports">{{t $.Lang "Внешние отчёты"}}</a>
           <a href="/ui/admin/extprocessors">{{t $.Lang "Внешние обработки"}}</a>
+          <a href="/ui/admin/theme-css">{{t $.Lang "Стили интерфейса"}}</a>
         </div>
       </details>
       <details class="sys-group">

@@ -130,3 +130,43 @@ func TestRenderInjectsThemeCSS(t *testing.T) {
 		t.Error("при файле стилей конфигурации render не подключил ссылку")
 	}
 }
+// Форма администратора «Стили интерфейса»: сохранение пишет файл проекта,
+// сброс удаляет его — страницы возвращаются на встроенные стили.
+func TestThemeCSSAdminFormSaveAndReset(t *testing.T) {
+	dir := t.TempDir()
+	s := &Server{cfg: Config{ConfigLocation: dir, AppName: "тест"}}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/ui/admin/theme-css/save", strings.NewReader("css=body%7Bcolor%3A%23fff%7D"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	s.adminThemeCSSSave(rec, req)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("код %d после сохранения", rec.Code)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, "ui.css"))
+	if err != nil {
+		t.Fatalf("файл стилей не записан: %v", err)
+	}
+	if string(body) != "body{color:#fff}" {
+		t.Errorf("файл %q", body)
+	}
+
+	rec = httptest.NewRecorder()
+	s.adminThemeCSSReset(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/ui/admin/theme-css/reset", nil))
+	if _, err := os.Stat(filepath.Join(dir, "ui.css")); !os.IsNotExist(err) {
+		t.Error("после сброса файл стилей остался")
+	}
+}
+
+func TestThemeCSSAdminFormRejectsOversize(t *testing.T) {
+	dir := t.TempDir()
+	s := &Server{cfg: Config{ConfigLocation: dir, AppName: "тест"}}
+	big := strings.Repeat("a", themeCSSMaxBytes+1)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/ui/admin/theme-css/save", strings.NewReader("css="+big))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	s.adminThemeCSSSave(rec, req)
+	if _, err := os.Stat(filepath.Join(dir, "ui.css")); err == nil {
+		t.Error("файл сверх потолка записан")
+	}
+}
