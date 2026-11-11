@@ -1,6 +1,6 @@
 """Public CLI acceptance with real Go/golangci-lint and a package-hiding driver.
 
-LINT_RUNNER_TEST_LINTER must identify 2.11.4 built with Go 1.26.10.
+LINT_RUNNER_TEST_LINTER must identify 2.11.4 built with Go 1.26.11.
 No downloaded tool or mocked analysis is substituted by this test.
 """
 import json
@@ -82,7 +82,7 @@ class ExternalDriverCLI(unittest.TestCase):
             root = base / "source"
             root.mkdir()
             (root / "go.mod").write_text("module example.com/lint-fixture\n\ngo 1.26.0\n")
-            (root / ".go-version").write_text("1.26.10\n")
+            (root / ".go-version").write_text("1.26.11\n")
             shutil.copy2(RUNNER.parents[2] / ".golangci.yml", root / ".golangci.yml")
             for package, content in [("clean", "func Value() int { return 7 }"),
                                      ("bad", "func neverUsed() {}")]:
@@ -91,7 +91,7 @@ class ExternalDriverCLI(unittest.TestCase):
                 (directory / "value.go").write_text(f"package {package}\n{content}\n")
             real_go = str(Path(shutil.which("go")).resolve(strict=True))
             marker = base / "proxy-called"
-            env = dict(os.environ, GOTOOLCHAIN="go1.26.10", GOENV="off", GOWORK="off",
+            env = dict(os.environ, GOTOOLCHAIN="go1.26.11", GOENV="off", GOWORK="off",
                        GOFLAGS="", CGO_ENABLED="0", GOPACKAGESDRIVER="off",
                        REAL_TEST_GO=real_go, GO_PROXY_CALLED=str(marker))
             original_path = env["PATH"]
@@ -128,7 +128,7 @@ class ExternalDriverCLI(unittest.TestCase):
                 root = base / "source"
                 root.mkdir()
                 (root / "go.mod").write_text("module example.com/lint-fixture\n\ngo 1.26.0\n")
-                (root / ".go-version").write_text("1.26.10\n")
+                (root / ".go-version").write_text("1.26.11\n")
                 shutil.copy2(RUNNER.parents[2] / ".golangci.yml", root / ".golangci.yml")
                 for package, content in [("clean", "func Value() int { return 7 }"),
                                          ("bad", "func neverUsed() {}")]:
@@ -136,7 +136,7 @@ class ExternalDriverCLI(unittest.TestCase):
                     directory.mkdir()
                     (directory / "value.go").write_text(f"package {package}\n{content}\n")
                 marker = base / "driver-called"
-                env = dict(os.environ, GOTOOLCHAIN="go1.26.10", GOENV="off", GOWORK="off",
+                env = dict(os.environ, GOTOOLCHAIN="go1.26.11", GOENV="off", GOWORK="off",
                            GOFLAGS="", CGO_ENABLED="0", DRIVER_CALLED=str(marker))
                 if mode == "variable":
                     env["GOPACKAGESDRIVER"] = str(self.driver)
@@ -173,8 +173,8 @@ class ExternalDriverCLI(unittest.TestCase):
         version = subprocess.check_output([str(bootstrap), "version"], env=local_env, text=True)
         self.assertTrue(version.startswith("go version go1.26."), version)
         self.assertLess(tuple(map(int, version.split()[2].removeprefix("go").split("."))),
-                        (1, 26, 10), "bootstrap must actually predate the pinned Go")
-        selected_env = dict(local_env, GOTOOLCHAIN="go1.26.10")
+                        (1, 26, 11), "bootstrap must actually predate the pinned Go")
+        selected_env = dict(local_env, GOTOOLCHAIN="go1.26.11")
         goroot = subprocess.check_output([str(bootstrap), "env", "GOROOT"], env=selected_env, text=True).strip()
         effective = Path(goroot) / "bin" / ("go.exe" if os.name == "nt" else "go")
         with tempfile.TemporaryDirectory() as temporary:
@@ -182,7 +182,7 @@ class ExternalDriverCLI(unittest.TestCase):
             root = base / "source"
             root.mkdir()
             (root / "go.mod").write_text("module example.com/lint-fixture\n\ngo 1.26.0\n")
-            (root / ".go-version").write_text("1.26.10\n")
+            (root / ".go-version").write_text("1.26.11\n")
             shutil.copy2(RUNNER.parents[2] / ".golangci.yml", root / ".golangci.yml")
             for package, content in [("clean", "func Value() int { return 7 }"),
                                      ("bad", "func neverUsed() {}")]:
@@ -191,7 +191,7 @@ class ExternalDriverCLI(unittest.TestCase):
                 (directory / "value.go").write_text(f"package {package}\n{content}\n")
             shadow = base / "shadow"
             shadow.mkdir()
-            shutil.copy2(self.go_proxy, shadow / ("go1.26.10.exe" if os.name == "nt" else "go1.26.10"))
+            shutil.copy2(self.go_proxy, shadow / ("go1.26.11.exe" if os.name == "nt" else "go1.26.11"))
             marker = base / "versioned-proxy-called"
             env = dict(selected_env, GOPACKAGESDRIVER="off", GOFLAGS="", CGO_ENABLED="0",
                        REAL_TEST_GO=str(effective), GO_PROXY_CALLED=str(marker))
@@ -202,7 +202,7 @@ class ExternalDriverCLI(unittest.TestCase):
             expected = base / "inputs.json"
             expected.write_text(inspected.stdout, encoding="utf8")
             env["PATH"] = str(shadow) + os.pathsep + env["PATH"]
-            # A genuine older Go dispatches through go1.26.10 in PATH, letting
+            # A genuine older Go dispatches through go1.26.11 in PATH, letting
             # the proxy hide bad from the real linter without changing inputs.
             control_env = dict(env, PATH=str(bootstrap.parent) + os.pathsep + env["PATH"])
             control = subprocess.run([str(self.linter), "run", "--timeout", "60s", "./..."],

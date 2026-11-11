@@ -235,6 +235,7 @@ func trustedReadOnlyCallbackValue(value any) bool {
 	switch value.(type) {
 	case time.Time, *time.Time, time.Duration,
 		decimal.Decimal, *decimal.Decimal,
+		UUIDValue,
 		json.Number,
 		[]byte:
 		return true

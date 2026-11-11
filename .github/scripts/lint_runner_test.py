@@ -32,15 +32,15 @@ func main() {
  }
  control,_:=os.ReadFile("control")
  if strings.Contains(filepath.Base(exe),"golangci") {
-  if os.Args[1]=="version" { fmt.Println("golangci-lint has version 2.11.4 built with go1.26.10");return }
+  if os.Args[1]=="version" { fmt.Println("golangci-lint has version 2.11.4 built with go1.26.11");return }
   if string(control)=="lint-fail" { fmt.Println("actual lint finding");os.Exit(3) }
   fmt.Println("full lint completed")
   return
  }
  switch os.Args[1] {
- case "version":fmt.Println("go version go1.26.10 windows/amd64")
+ case "version":fmt.Println("go version go1.26.11 windows/amd64")
  case "env":
-  value:=map[string]string{"GOROOT":filepath.Dir(filepath.Dir(exe)),"GOVERSION":"go1.26.10","GOHOSTOS":"fixture","GOHOSTARCH":"amd64"}
+  value:=map[string]string{"GOROOT":filepath.Dir(filepath.Dir(exe)),"GOVERSION":"go1.26.11","GOHOSTOS":"fixture","GOHOSTARCH":"amd64"}
   _=json.NewEncoder(os.Stdout).Encode(value)
  case "mod":
   if os.Args[2]=="edit" {
@@ -76,7 +76,7 @@ class LintRunnerCLI(unittest.TestCase):
         self.base = Path(self.temp.name)
         self.root = self.base / "source"
         self.root.mkdir()
-        (self.root / ".go-version").write_text("1.26.10\n")
+        (self.root / ".go-version").write_text("1.26.11\n")
         (self.root / ".golangci.yml").write_text('version: "2"\n')
         (self.root / "go.mod").write_text("module fixture\n")
         (self.root / "control").write_text("normal")

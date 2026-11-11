@@ -11,7 +11,7 @@ import subprocess
 import sys
 import time
 
-GO = "go1.26.10"
+GO = "go1.26.11"
 LINTER = "2.11.4"
 
 
