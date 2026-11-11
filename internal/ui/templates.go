@@ -1526,6 +1526,7 @@ const tplHead = `
 {{with $.Lang}}<script>window.OB_I18N = {"Ничего не найдено": {{t . "Ничего не найдено"}}};</script>{{end}}
 <script type="application/json" id="ob-ui-messages">{{jsJSON (dict
   "closeNotConfirmed" (t (or $.Lang "ru") "Форма не закрыта: сервер не подтвердил закрытие.")
+  "statusBarNetworkError" (t (or $.Lang "ru") "Нет связи с сервером")
   "unsavedClose" (t (or $.Lang "ru") "Данные были изменены и не записаны. Закрыть форму?")
   "imageClose" (t (or $.Lang "ru") "Закрыть просмотр изображения")
   "imagePrevious" (t (or $.Lang "ru") "Предыдущее изображение")

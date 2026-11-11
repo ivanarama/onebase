@@ -1605,5 +1605,10 @@
   "Изменённая сборка": "Modified distribution",
   "Поставщик сборки": "Distribution supplier",
   "Переводы поля «%s» для языка %s изменены по-разному в двух редакторах. Укажите одинаковое значение и сохраните снова": "The translation of field \"%s\" for language %s was changed differently in the two editors. Enter the same value and save again",
-  "Результаты поиска по всему справочнику": "Search results across the whole catalog"
+  "Результаты поиска по всему справочнику": "Search results across the whole catalog",
+  "Нет связи с сервером": "No connection to the server",
+  "строка состояния недоступна": "Status bar unavailable",
+  "кнопка не найдена": "Button not found",
+  "кнопка сейчас недоступна": "The button is currently unavailable",
+  "строка состояния: процедура «%s» не найдена в общих модулях": "status bar: procedure «%s» was not found in shared modules"
 }

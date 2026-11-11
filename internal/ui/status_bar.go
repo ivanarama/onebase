@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"html/template"
 	"net/http"
 	"strconv"
@@ -96,7 +97,7 @@ func (s *Server) statusBarPress(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
 	bar := s.statusBarFor(r)
 	if bar == nil {
-		http.Error(w, "строка состояния недоступна", http.StatusNotFound)
+		http.Error(w, s.tr(s.resolveLang(r), "строка состояния недоступна"), http.StatusNotFound)
 		return
 	}
 	name := strings.TrimSpace(r.FormValue("button"))
@@ -108,7 +109,7 @@ func (s *Server) statusBarPress(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if button == nil {
-		http.Error(w, "кнопка не найдена", http.StatusNotFound)
+		http.Error(w, s.tr(s.resolveLang(r), "кнопка не найдена"), http.StatusNotFound)
 		return
 	}
 	// Кнопка должна быть показана этому пользователю сейчас: функция строки
@@ -121,7 +122,7 @@ func (s *Server) statusBarPress(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !state.Visible || !shown {
-		http.Error(w, "кнопка сейчас недоступна", http.StatusConflict)
+		http.Error(w, s.tr(s.resolveLang(r), "кнопка сейчас недоступна"), http.StatusConflict)
 		return
 	}
 	result, err := s.statusBarCall(r, bar.Action, []any{button.Name})
@@ -201,11 +202,11 @@ func statusBarText(v any) string {
 func (s *Server) statusBarCall(r *http.Request, ref string, args []any) (any, error) {
 	module, name, ok := metadata.SplitStatusBarProc(ref)
 	if !ok || s.interp == nil {
-		return nil, errStatusBarProc(ref)
+		return nil, s.statusBarProcError(r, ref)
 	}
 	proc := s.reg.GetModuleNamespacedProc(module, name)
 	if proc == nil {
-		return nil, errStatusBarProc(ref)
+		return nil, s.statusBarProcError(r, ref)
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), statusBarCallTimeout)
 	defer cancel()
@@ -218,10 +219,8 @@ func (s *Server) statusBarCall(r *http.Request, ref string, args []any) (any, er
 	return result, finishDSLExecution(txState, err)
 }
 
-type errStatusBarProc string
-
-func (e errStatusBarProc) Error() string {
-	return "строка состояния: процедура «" + string(e) + "» не найдена в общих модулях"
+func (s *Server) statusBarProcError(r *http.Request, ref string) error {
+	return fmt.Errorf(s.tr(s.resolveLang(r), "строка состояния: процедура «%s» не найдена в общих модулях"), ref)
 }
 
 func writeStatusBar(w http.ResponseWriter, state statusBarState) {

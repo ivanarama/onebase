@@ -7038,7 +7038,7 @@ function obEnterNavigateFrom(target) {
           if (!state) return;
           render(state);
           showNote(state.error || state.message || '');
-        }, function () { showNote('Нет связи с сервером'); })
+        }, function () { showNote(window.obUIMessage('statusBarNetworkError', 'Нет связи с сервером')); })
         .then(function () {
           busy = false;
           Array.prototype.forEach.call(buttons.querySelectorAll('button'), function (b) { b.disabled = false; });

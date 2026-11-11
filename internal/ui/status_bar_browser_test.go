@@ -46,7 +46,11 @@ func TestStatusBarBrowserAcceptance(t *testing.T) {
 	}
 	s.reg.HomePage().StatusBar.Interval = 1
 	server := mountedStatusBarTestServer(t, s)
-	browseracceptance.Run(t, "status-bar", map[string]string{"OB_ACCEPTANCE_URL": server.URL})
+	english := mountedLocalizedStatusBarTestServer(t, newStatusBarTestServer(t), "en", "Оператор")
+	browseracceptance.Run(t, "status-bar", map[string]string{
+		"OB_ACCEPTANCE_URL":               server.URL,
+		"OB_ACCEPTANCE_STATUS_BAR_EN_URL": english.URL,
+	})
 	if calls.Load() < 3 {
 		t.Fatalf("visible/hidden/visible source calls incomplete: %d", calls.Load())
 	}
