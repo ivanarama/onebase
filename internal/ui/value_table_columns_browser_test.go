@@ -25,6 +25,7 @@ func TestValueTableColumnsBrowserAcceptance(t *testing.T) {
 		t.Run("drafts", func(t *testing.T) { testValueTableDraftBrowser(t, db) })
 		t.Run("column-hidden-footer", func(t *testing.T) { testManagedColumnHiddenFooterBrowser(t, db) })
 		t.Run("column-hidden-add-row", func(t *testing.T) { testManagedColumnHiddenAddRowBrowser(t, db) })
+		t.Run("column-hidden-copy-row", func(t *testing.T) { testManagedColumnHiddenCopyRowBrowser(t, db) })
 	})
 }
 

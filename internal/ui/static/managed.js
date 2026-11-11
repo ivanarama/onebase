@@ -4358,8 +4358,13 @@ function obGridColumnIds(columns) {
     var rowIdx = g.dataView.getRowById(nextId);
     if (rowIdx !== undefined) {
       g.grid.scrollRowIntoView(rowIdx);
-      g.grid.setActiveCell(rowIdx, 0);
-      g.grid.editActiveCell();
+      var copyColumns = g.grid.getColumns();
+      for (var cell = 0; cell < copyColumns.length; cell++) {
+        if (!g.grid.canCellBeActive(rowIdx, cell) || !g.grid.isCellEditable(rowIdx, cell)) continue;
+        g.grid.setActiveCell(rowIdx, cell);
+        g.grid.editActiveCell();
+        break;
+      }
     }
     updateTotals(g);
     window.obFireRowEventChain(tpName, [
