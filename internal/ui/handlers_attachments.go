@@ -37,12 +37,19 @@ func (s *Server) attachmentsList(w http.ResponseWriter, r *http.Request) {
 		s.serverError(w, r, err)
 		return
 	}
-	if atts == nil {
-		atts = []storage.Attachment{}
+	// audio — тип для встроенного проигрывателя: панель вложений рисует
+	// <audio> только по нему, не угадывая тип по имени сама.
+	type attachmentListItem struct {
+		storage.Attachment
+		Audio string `json:"audio,omitempty"`
+	}
+	items := make([]attachmentListItem, 0, len(atts))
+	for _, a := range atts {
+		items = append(items, attachmentListItem{Attachment: a, Audio: attachmentAudioType(a.MimeType, a.Filename)})
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	respondJSONTo(w, atts)
+	respondJSONTo(w, items)
 }
 
 // attachmentUpload handles file upload for a record.
@@ -132,7 +139,14 @@ func (s *Server) attachmentDownload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setFileSecurityHeaders(w.Header())
-	setFileContentHeaders(w.Header(), att.MimeType, att.Filename, attachmentInlineType(att.MimeType))
+	contentType, inline := att.MimeType, attachmentInlineType(att.MimeType)
+	// Аудио — встроенному проигрывателю: inline и с типом, который он играет.
+	// ServeContent отвечает на Range, поэтому ползунок работает без полной
+	// загрузки записи.
+	if audio := attachmentAudioType(att.MimeType, att.Filename); audio != "" {
+		contentType, inline = audio, true
+	}
+	setFileContentHeaders(w.Header(), contentType, att.Filename, inline)
 	http.ServeContent(w, r, att.Filename, att.UploadedAt, f)
 }
 

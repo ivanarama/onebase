@@ -63,7 +63,7 @@ func TestAttachmentHTTP_InlineMIMEPolicy(t *testing.T) {
 		{"image/svg+xml", false}, {"text/html", false},
 		{"application/xhtml+xml", false}, {"image/bmp", false},
 		{"image/tiff", false}, {"image/avif", false},
-		{"video/mp4", false}, {"audio/mpeg", false},
+		{"video/mp4", false}, {"audio/mpeg", true},
 		{"image/png-unknown", false}, {"text/plain-unknown", false},
 	}
 	for _, tc := range cases {
@@ -81,6 +81,11 @@ func TestAttachmentHTTP_InlineMIMEPolicy(t *testing.T) {
 				wantDisposition, wantType := "attachment", "application/octet-stream"
 				if tc.inline {
 					wantDisposition, wantType = "inline", mimeType
+				}
+				// Аудио играет встроенный проигрыватель: тип отдаётся
+				// канонический, без параметров и регистра присланного.
+				if audio := attachmentAudioType(mimeType, filename); audio != "" {
+					wantType = audio
 				}
 				disposition, params, err := mime.ParseMediaType(w.Header().Get("Content-Disposition"))
 				if err != nil || disposition != wantDisposition || params["filename"] != filename {
