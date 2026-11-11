@@ -150,7 +150,7 @@ test('detail panel values do not inherit the nav white-on-dark aside styling', (
   const templates = fs.readFileSync(path.join(__dirname, '..', 'templates.go'), 'utf8');
   // Навигация сохраняет своё оформление — тёмный фон и белые ссылки, но
   // адресованные точно: меню #ob-nav, а не все <aside> страницы.
-  assert.match(templates, /#ob-nav\{width:210px;background:#1e293b;color:#fff;/);
+  assert.match(templates, /#ob-nav\{width:210px;background:var\(--ob-nav-bg\);color:var\(--ob-nav-text\);/);
   assert.equal((templates.match(/(^|[^-\w])aside\{/g) || []).length, 0,
     'голый селектор aside{ возвращает общий стиль панели меню обеим панелям');
   assert.equal((templates.match(/nav-open aside/g) || []).length, 0,
