@@ -53,7 +53,7 @@ func TestCILintRunnerDriverEntryPoint(t *testing.T) {
 set -eu
 case "$1" in
   install)
-    test "$GOTOOLCHAIN" = go1.26.10
+    test "$GOTOOLCHAIN" = go1.26.11
     test "$CGO_ENABLED" = 0
     test "$2" = github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4
     test "$#" = 2

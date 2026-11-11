@@ -173,7 +173,7 @@ class ExternalDriverCLI(unittest.TestCase):
         version = subprocess.check_output([str(bootstrap), "version"], env=local_env, text=True)
         self.assertTrue(version.startswith("go version go1.26."), version)
         self.assertLess(tuple(map(int, version.split()[2].removeprefix("go").split("."))),
-                        (1, 26, 10), "bootstrap must actually predate the pinned Go")
+                        (1, 26, 11), "bootstrap must actually predate the pinned Go")
         selected_env = dict(local_env, GOTOOLCHAIN="go1.26.11")
         goroot = subprocess.check_output([str(bootstrap), "env", "GOROOT"], env=selected_env, text=True).strip()
         effective = Path(goroot) / "bin" / ("go.exe" if os.name == "nt" else "go")
