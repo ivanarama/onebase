@@ -100,10 +100,43 @@ test('input during pending close decision is not consumed as display state', asy
   await expect(results(page)).toHaveCount(0);
 });
 
+test('result is a centred modal dialog with one title, one cross and content height', async ({page}) => {
+  await accept(await order(page, 'MODAL-50'));
+  const mini = await lastResult(page);
+  await expect(mini.locator('input[name="DisplayNumber"]')).toHaveValue('MODAL-50');
+  const dialog = page.locator('.ob-result-form');
+  await expect(dialog).toHaveAttribute('aria-modal', 'true');
+  await expect(page.locator('.ob-result-overlay')).toHaveCount(1);
+  // One header: the shell's title and cross; the form's own header is hidden.
+  await expect(dialog.locator('button[aria-label="Close"]')).toHaveCount(1);
+  await expect(mini.locator('.ob-form-head')).toBeHidden();
+  await expect(dialog.locator('[id^="ob-result-title-"]')).not.toHaveText('');
+  // Centred in the viewport.
+  const box = await dialog.boundingBox();
+  const view = page.viewportSize();
+  expect(Math.abs(box.x + box.width / 2 - view.width / 2)).toBeLessThanOrEqual(2);
+  expect(Math.abs(box.y + box.height / 2 - view.height / 2)).toBeLessThanOrEqual(2);
+  // Height follows the content: nothing is clipped and no empty tail is left.
+  await expect.poll(() => mini.locator('main').evaluate(main => main.scrollHeight - main.clientHeight)).toBeLessThanOrEqual(1);
+  const tail = await mini.locator('main').evaluate(main => {
+    const last = [...main.children].filter(c => c.offsetParent !== null).pop();
+    return main.getBoundingClientRect().bottom - last.getBoundingClientRect().bottom;
+  });
+  expect(tail).toBeLessThanOrEqual(40);
+  // Modal: the shell under the backdrop does not take the pointer.
+  const hit = await page.evaluate(() => document.elementFromPoint(5, 5).closest('.ob-result-overlay') !== null);
+  expect(hit).toBe(true);
+  await page.locator('.ob-result-form button[aria-label="Close"]').click();
+  await expect(page.locator('.ob-result-overlay')).toHaveCount(0);
+});
+
 test('two results of one processor: close only current, and honor its own veto', async ({page}) => {
   await accept(await order(page, 'FIRST-45', 'veto'));
   const first = await lastResult(page);
-  await accept(await order(page, 'SECOND-46'));
+  // The first result is modal over the shell (its backdrop takes the pointer),
+  // so the second source is accepted programmatically through the same handler.
+  const secondSource = await order(page, 'SECOND-46');
+  await secondSource.getByRole('button', {name:'Accept',exact:true}).evaluate(button => button.click());
   const second = await lastResult(page);
   await expect(results(page)).toHaveCount(2);
   await second.getByRole('button', {name:'Close',exact:true}).click();

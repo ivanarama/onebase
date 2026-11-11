@@ -686,7 +686,9 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 {{end}}
 {{if .FormConditionalCSS}}<style>{{.FormConditionalCSS}}</style>{{end}}
 <main>
-<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;max-width:1400px">
+{{/* В окне формы результата заголовок и крестик рисует оболочка (tabs.go):
+     собственная шапка формы дала бы второй заголовок и второй ×. */}}
+<div class="ob-form-head" style="display:{{if .IsResultForm}}none{{else}}flex{{end}};justify-content:space-between;align-items:center;margin-bottom:20px;max-width:1400px">
   <h2 style="margin-bottom:0">
     <span data-ob-form-title>{{if .DisplayTitleConfigured}}{{.RecordTitle}}{{else}}{{if .IsProcessor}}{{.Processor.DisplayName $.Lang}}{{else}}{{if .IsNew}}{{t $.Lang "Создать"}} — {{.Entity.DisplayName $.Lang}}{{else}}{{if .RecordTitle}}{{.RecordTitle}}{{else}}{{t $.Lang "Редактировать"}} — {{.Entity.DisplayName $.Lang}}{{end}}{{end}}{{end}}{{end}}</span>
     <span style="font-size:11px;color:#10b981;background:#d1fae5;padding:2px 8px;border-radius:10px;vertical-align:middle;font-weight:500" title="Управляемая форма из forms/{{if .IsProcessor}}{{lower .Processor.Name}}{{else}}{{lower .Entity.Name}}{{end}}/">◇ managed</span>

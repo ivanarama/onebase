@@ -447,17 +447,52 @@ const tplAppShell = `{{define "page-app-shell"}}
       return u.pathname+u.search;
     }catch(_){return '';}
   }
+  // Result form is a centred modal dialog like a native message box: a dimmed
+  // backdrop, one title and one cross (the form's own header is hidden inside),
+  // height following the content. Close/Escape/veto still go through
+  // closeResultFrame and the form's close-intent.
+  function fitResultFrame(t,round){
+    try{
+      var doc=t.frame.contentDocument, main=doc&&doc.querySelector('main');
+      if(!doc||!doc.body||!main)return;
+      var mr=main.getBoundingClientRect(), chrome=doc.documentElement.clientHeight-mr.height, content;
+      if(main.scrollHeight>main.clientHeight+1){
+        content=main.scrollHeight; // too short: the overflow is the exact content height
+      }else{
+        var bottom=0; // too tall or exact: measure the laid-out children to shrink
+        for(var c=main.firstElementChild;c;c=c.nextElementSibling){
+          if(c.offsetParent===null&&getComputedStyle(c).position!=='fixed')continue;
+          var r=c.getBoundingClientRect(), mb=parseFloat(getComputedStyle(c).marginBottom)||0;
+          bottom=Math.max(bottom,r.bottom+mb-mr.top+main.scrollTop);
+        }
+        content=bottom+(parseFloat(getComputedStyle(main).paddingBottom)||0);
+      }
+      var natural=Math.ceil(chrome+content);
+      if(natural>0&&Math.abs(natural-t.frame.offsetHeight)>1){
+        t.frame.style.height=natural+'px';
+        // Re-measure once laid out: a shrink estimate is confirmed or grown to scrollHeight.
+        if((round||0)<4)requestAnimationFrame(function(){fitResultFrame(t,(round||0)+1);});
+      }
+    }catch(_){}
+  }
   function showResultFrame(payload,url){
-    var panel=document.createElement('section');panel.className='ob-result-form';panel.setAttribute('role','dialog');panel.setAttribute('aria-modal','false');
-    panel.style.cssText='position:fixed;z-index:9000;top:100px;right:24px;width:600px;max-width:calc(100vw - 32px);height:420px;max-height:calc(100vh - 120px);background:white;border:1px solid #94a3b8;border-radius:8px;box-shadow:0 8px 36px rgba(0,0,0,.25);display:flex;flex-direction:column';
-    var head=document.createElement('div');head.style.cssText='display:flex;justify-content:space-between;align-items:center;padding:4px 10px;flex-shrink:0;border-bottom:1px solid #cbd5e1';
-    var label=document.createElement('span');label.textContent='';head.appendChild(label);
-    var cross=document.createElement('button');cross.type='button';cross.textContent='×';cross.setAttribute('aria-label','Close');cross.style.cssText='font-size:24px;border:0;background:transparent;cursor:pointer';head.appendChild(cross);
-    var frame=document.createElement('iframe');frame.src=url;frame.name='ob-result-'+payload.token;frame.style.cssText='flex:1;width:100%;min-height:0;border:0';
-    var t={panel:panel,frame:frame,label:label,btn:cross,token:payload.token};resultFrames.push(t);
+    var overlay=document.createElement('div');overlay.className='ob-result-overlay';
+    overlay.style.cssText='position:fixed;inset:0;z-index:9000;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:16px;box-sizing:border-box';
+    var panel=document.createElement('section');panel.className='ob-result-form';panel.setAttribute('role','dialog');panel.setAttribute('aria-modal','true');
+    panel.style.cssText='width:600px;max-width:100%;max-height:calc(100vh - 32px);background:white;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.3);display:flex;flex-direction:column;overflow:hidden';
+    var head=document.createElement('div');head.style.cssText='display:flex;justify-content:space-between;align-items:center;gap:12px;padding:14px 12px 4px 20px;flex-shrink:0';
+    var label=document.createElement('span');label.textContent='';label.style.cssText='font-size:16px;font-weight:600;color:#1e293b;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';head.appendChild(label);
+    var cross=document.createElement('button');cross.type='button';cross.textContent='×';cross.setAttribute('aria-label','Close');cross.style.cssText='font-size:22px;line-height:1;color:#94a3b8;border:0;background:transparent;cursor:pointer;padding:2px 8px;border-radius:5px';head.appendChild(cross);
+    var frame=document.createElement('iframe');frame.src=url;frame.name='ob-result-'+payload.token;frame.style.cssText='display:block;width:100%;height:160px;min-height:0;flex:0 1 auto;border:0';
+    panel.setAttribute('aria-labelledby',(label.id='ob-result-title-'+payload.token));
+    var t={panel:overlay,frame:frame,label:label,btn:cross,token:payload.token};resultFrames.push(t);
     cross.addEventListener('click',function(){closeResultFrame(t);});
-    panel.addEventListener('keydown',function(ev){if(ev.key==='Escape'){ev.preventDefault();closeResultFrame(t);}});
-    panel.appendChild(head);panel.appendChild(frame);document.body.appendChild(panel);cross.focus();
+    overlay.addEventListener('keydown',function(ev){if(ev.key==='Escape'){ev.preventDefault();closeResultFrame(t);}});
+    frame.addEventListener('load',function(){
+      fitResultFrame(t);
+      try{ if(typeof ResizeObserver==='function'){var ro=new ResizeObserver(function(){fitResultFrame(t);});var m=frame.contentDocument.querySelector('main');if(m){for(var c=m.firstElementChild;c;c=c.nextElementSibling)ro.observe(c);}} }catch(_){}
+    });
+    panel.appendChild(head);panel.appendChild(frame);overlay.appendChild(panel);document.body.appendChild(overlay);cross.focus();
   }
   function resultMessage(ev,d){
     var mini=resultByWindow(ev.source);
