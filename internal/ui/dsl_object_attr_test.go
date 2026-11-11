@@ -3,7 +3,6 @@ package ui
 import (
 	"context"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -211,28 +210,37 @@ func TestObjectAttributeValue(t *testing.T) {
 		t.Errorf("DSL ref attr sample result = %v, ожидалось A-1|A-1", result)
 	}
 
-	// Resolver формы поддерживает безопасное одиночное чтение. Ссылочный
-	// результат этого чтения не получает неявной возможности делать следующий
-	// запрос: вместо прежнего тихого nil DSL должен назвать явную функцию.
+	// Точечный доступ к ссылке читает известное поле, отсутствующее свойство
+	// отдаёт Неопределено — тот же контракт, что и у поля объекта. Ссылочный
+	// результат одиночного чтения не получает неявной возможности делать
+	// следующий запрос: цепочка обрывается на Неопределено, а явное чтение
+	// реквизита делает ЗначениеРеквизитаОбъекта.
 	src = `Функция Тест()
   Возврат Объект.ОсновнаяНоменклатура.Поставщик.ИНН;
 КонецФункции`
 	prog, err = parser.New(lexer.New(src, "test.os")).ParseProgram()
 	if err != nil {
-		t.Fatalf("parse unsupported double dereference: %v", err)
+		t.Fatalf("parse ref chain dereference: %v", err)
 	}
 	result = nil
 	err = interp.RunWithResult(prog.Procedures[0], thisObj, &result, map[string]any{"Объект": thisObj})
-	if err == nil {
-		t.Fatal("двойное разыменование ссылки молча вернуло Неопределено")
+	if err != nil {
+		t.Fatalf("цепочка разыменования ссылки: %v", err)
 	}
-	for _, want := range []string{
-		"Реквизит ссылки «ИНН» недоступен через точку",
-		`ЗначениеРеквизитаОбъекта(Ссылка, "ИНН")`,
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("ошибка двойного разыменования не содержит %q: %v", want, err)
-		}
+	if !interpreter.IsUndefined(result) {
+		t.Errorf("цепочка разыменования дала %v, ожидалось Неопределено", result)
+	}
+	// Явная функция читает реквизит найденной ссылки — цепочка через неё работает.
+	Поставщик, err := s.objectAttributeValue(ctx, []any{номРеф, "Поставщик"})
+	if err != nil {
+		t.Fatalf("явный реквизит Поставщик: %v", err)
+	}
+	ИНН, err := s.objectAttributeValue(ctx, []any{Поставщик, "ИНН"})
+	if err != nil {
+		t.Fatalf("явный реквизит ИНН: %v", err)
+	}
+	if ИНН != "7701234567" {
+		t.Errorf("явная цепочка дала %v, ожидалось 7701234567", ИНН)
 	}
 
 	// Неизвестный реквизит → ошибка, а не тихий nil.

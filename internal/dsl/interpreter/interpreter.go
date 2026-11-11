@@ -644,9 +644,9 @@ func (i *Interpreter) evalExprUnchecked(expr ast.Expr, e *env) any {
 		case *Ref:
 			value, ok := o.Lookup(field)
 			if !ok {
-				RaiseUserError("Реквизит ссылки «" + v.Field.Literal +
-					"» недоступен через точку — используйте ЗначениеРеквизитаОбъекта(Ссылка, \"" +
-					v.Field.Literal + "\")")
+				// Точечный доступ к ссылке читает известное поле, а отсутствующее
+				// свойство отдаёт Неопределено — тот же контракт, что и у поля объекта.
+				return protectReadOnly(e.ec, nil)
 			}
 			return protectReadOnly(e.ec, value)
 		case *Map:

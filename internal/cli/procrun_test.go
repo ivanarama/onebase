@@ -54,11 +54,11 @@ func TestRunProcrunEnsuresAuditSchema(t *testing.T) {
 	}
 }
 
-// onebase check не выводит тип локальной переменной из результата НайтиПо… и
-// потому не может доказать, что последующее чтение идёт у ссылки. Публичный
-// runtime-путь обязан хотя бы завершиться явной ошибкой с рабочей подсказкой,
-// а не продолжить выполнение со значением Неопределено.
-func TestCheckAndProcrunRejectImplicitReferenceAttributeAtRuntime(t *testing.T) {
+// Точечный доступ к ссылке читает известное поле (Наименование), отсутствующее
+// свойство отдаёт Неопределено — тот же контракт, что и у поля объекта. Ссылка
+// из НайтиПо… не несёт резолвера реквизитов, поэтому Реквизит.Телефон читается
+// только явной функцией ЗначениеРеквизитаОбъекта.
+func TestCheckAndProcrunReferenceDotAccess(t *testing.T) {
 	projectDir := t.TempDir()
 	writeProcrunFixture(t, projectDir, "config/app.yaml", "name: ref-member-test\nversion: \"1.0\"\n")
 	writeProcrunFixture(t, projectDir, "catalogs/Клиент.yaml", `name: Клиент
@@ -75,7 +75,9 @@ fields:
     Клиент.Телефон = "+79161234567";
     Клиент.Записать();
     СсылкаКлиента = Справочники.Клиент.НайтиПоНаименованию("Иванов");
-    Сообщить(СсылкаКлиента.Телефон);
+    Сообщить("имя=" + СсылкаКлиента.Наименование);
+    Сообщить("точка=" + Строка(СсылкаКлиента.Телефон));
+    Сообщить("явно=" + ЗначениеРеквизитаОбъекта(СсылкаКлиента, "Телефон"));
 КонецПроцедуры
 `)
 
@@ -121,16 +123,21 @@ fields:
 		}
 	}
 
-	err = runProcrun(cmd, nil)
-	if err == nil {
-		t.Fatal("procrun молча принял чтение Ссылка.Телефон")
+	out, err := captureStdout(t, func() error {
+		return runProcrun(cmd, nil)
+	})
+	if err != nil {
+		t.Fatalf("runProcrun: %v", err)
 	}
+	// Строка(Неопределено) даёт пустую строку (контракт to_string_test.go),
+	// отсутствующее свойство ссылки — тот же результат, что пустое поле.
 	for _, want := range []string{
-		"Реквизит ссылки «Телефон» недоступен через точку",
-		`ЗначениеРеквизитаОбъекта(Ссылка, "Телефон")`,
+		"имя=Иванов",
+		"точка=",
+		"явно=+79161234567",
 	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("ошибка procrun не содержит %q: %v", want, err)
+		if !strings.Contains(out, want) {
+			t.Errorf("stdout procrun не содержит %q: %q", want, out)
 		}
 	}
 }
