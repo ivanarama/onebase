@@ -40,6 +40,8 @@ const themeTokensCSS = `/* Токены палитры enterprise-UI (план 2
 --ob-posted:#16a34a;--ob-flag:#dc2626;
 --ob-kpi-ink:#0f172a;--ob-link-hover:#1a4a80;--ob-danger-ink:#b91c1c;
 --ob-dirty:#e8b400;--ob-chip-hover:#dbeafe;--ob-danger-hi:#fee2e2;--ob-hover-soft:#f0f4ff;
+--ob-row-line:#ddd;
+--ob-af-hd-bg:#f0f3f8;--ob-af-hd-ink:#1a3a6a;--ob-af-hd-hover:#e8eeff;--ob-af-border:#d0d7e3;
 --ob-ok-bg:#f0fdf4;--ob-ok-border:#86efac;--ob-ok-text:#15803d;
 --ob-warn-bg:#fff7ed;--ob-warn-border:#fdba74;--ob-warn-text:#9a3412;
 --ob-danger:#ef4444;--ob-amber:#f59e0b}
@@ -58,6 +60,8 @@ html[data-theme="dark"]{
 --ob-posted:#4ade80;--ob-flag:#f87171;
 --ob-kpi-ink:#e2e8f0;--ob-link-hover:#93c5fd;--ob-danger-ink:#f87171;
 --ob-dirty:#fbbf24;--ob-chip-hover:#223052;--ob-danger-hi:#3b1220;--ob-hover-soft:#1e2b4d;
+--ob-row-line:#2b3a55;
+--ob-af-hd-bg:#1e2c46;--ob-af-hd-ink:#93c5fd;--ob-af-hd-hover:#263452;--ob-af-border:#3b4c6d;
 --ob-ok-bg:#12291a;--ob-ok-border:#2f5d3b;--ob-ok-text:#4ade80;
 --ob-warn-bg:#2b1d0b;--ob-warn-border:#6b4a1d;--ob-warn-text:#fbbf24;
 --ob-danger:#b91c1c;--ob-amber:#d97706;

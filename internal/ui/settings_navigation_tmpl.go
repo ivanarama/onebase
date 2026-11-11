@@ -10,7 +10,7 @@ const tplNavigationSettings = `
 <label>{{t .Lang "Раздел"}} <select name="subsystem">
 <option value="">{{t .Lang "Главная"}}</option>
 {{range .Subsystems}}<option value="{{.Name}}" {{if eq .Name $.NavigationSubsystem}}selected{{end}}>{{.DisplayName $.Lang}}</option>{{end}}
-</select></label><button type="submit">{{t .Lang "Открыть"}}</button>
+</select></label><button class="btn btn-secondary" type="submit">{{t .Lang "Открыть"}}</button>
 </form>
 {{if .NavigationSaved}}<p role="status">{{t .Lang "Меню сохранено"}}</p>{{end}}
 {{if .NavigationMessage}}<p role="alert" class="error">{{.NavigationMessage}}</p><a href="{{.NavigationPath}}?subsystem={{.NavigationSubsystem}}">{{t .Lang "Загрузить актуальную версию"}}</a>{{end}}
@@ -26,12 +26,12 @@ const tplNavigationSettings = `
 {{if .NavigationPersonal}}<input type="hidden" name="base_revision" value="{{.NavigationBaseRevision}}"><input id="navigation-renamed" type="hidden" name="renamed" value="[]">{{end}}
 <button type="submit" class="btn btn-primary">{{t .Lang "Сохранить"}}</button>
 </form>
-<button id="navigation-add-section" type="button">{{t .Lang "Добавить раздел"}}</button>
-<button id="navigation-add-group" type="button">{{t .Lang "Добавить папку"}}</button>
+<button class="btn btn-secondary" id="navigation-add-section" type="button">{{t .Lang "Добавить раздел"}}</button>
+<button class="btn btn-secondary" id="navigation-add-group" type="button">{{t .Lang "Добавить папку"}}</button>
 <form id="navigation-reset" method="POST" action="{{.NavigationPath}}/reset" data-ob-confirm="{{t .Lang .NavigationResetConfirm}}">
 <input type="hidden" name="subsystem" value="{{.NavigationSubsystem}}">
 <input type="hidden" name="revision" value="{{.NavigationRevision}}">
-<button type="submit">{{t .Lang .NavigationResetLabel}}</button>
+<button class="btn btn-secondary" type="submit">{{t .Lang .NavigationResetLabel}}</button>
 </form>
 </div>
 <div id="navigation-status" role="alert"></div><div id="navigation-live" aria-live="polite" style="min-height:1.5em"></div>
@@ -48,12 +48,12 @@ const tplNavigationSettings = `
 </main></div>
 <style>
 .navigation-editor-layout{display:grid;grid-template-columns:minmax(0,1fr)minmax(240px,320px);gap:16px;margin:16px 0}
-.navigation-editor-layout .card{padding:16px}.navigation-row{display:flex;align-items:center;gap:6px;padding:6px;flex-wrap:wrap;border-bottom:1px solid #ddd}
+.navigation-editor-layout .card{padding:16px}.navigation-row{display:flex;align-items:center;gap:6px;padding:6px;flex-wrap:wrap;border-bottom:1px solid var(--ob-row-line)}
 .navigation-row button:first-child{flex:1 1 160px;text-align:left;min-width:120px;max-width:100%;font-family:inherit;font-size:1rem;overflow-wrap:anywhere}
 .navigation-row[data-kind=section] button:first-child{font-size:1.05rem;font-weight:700}.navigation-row[data-kind=group] button:first-child{font-weight:600}
 .navigation-row[data-kind=group]{margin-left:18px}.navigation-row[data-kind=item]{margin-left:36px}
-.navigation-row.selected{background:#e8f0fe}.navigation-row:focus-within{outline:2px solid #2563eb}
-#navigation-properties label{display:flex;gap:6px;margin:10px 0;align-items:center}#navigation-palette>div{display:flex;gap:6px;padding:6px;align-items:center}#navigation-palette span{flex:1;overflow-wrap:anywhere}
+.navigation-row.selected{background:var(--ob-chip-hover)}.navigation-row:focus-within{outline:2px solid var(--ob-accent-hover)}
+#navigation-settings select,#navigation-settings input[type=search]{background:var(--ob-input-bg);color:var(--ob-text);border:1px solid var(--ob-border);border-radius:7px;padding:8px 12px;font-size:14px}#navigation-properties label{display:flex;gap:6px;margin:10px 0;align-items:center}#navigation-palette>div{display:flex;gap:6px;padding:6px;align-items:center}#navigation-palette span{flex:1;overflow-wrap:anywhere}
 #navigation-palette [data-kind=section]>span{font-weight:700}#navigation-palette [data-kind=group]>span{font-weight:600}
 #navigation-preview{font-size:1rem;overflow-wrap:anywhere}#navigation-preview h3{font-size:1.05em;font-weight:700}#navigation-preview summary{font-size:1em;font-weight:600}
 @media(max-width:850px){.navigation-editor-layout{grid-template-columns:1fr}}
