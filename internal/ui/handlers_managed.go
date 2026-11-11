@@ -111,6 +111,14 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 		// точка покрывает все пути рендера (new/edit/повторный показ с ошибкой).
 		data["ChoiceOptions"] = loadChoiceOptions(managed, s.resolveLang(r))
 		s.prepareManagedFormData(r.Context(), data, managed)
+		if title, err := s.managedFormTitle(r.Context(), entity, managed, titleObjectFromData(entity, data)); title != nil {
+			if err != nil {
+				http.Error(w, "form title evaluation failed", http.StatusInternalServerError)
+				return
+			}
+			data["RecordTitle"], data["TabTitle"] = *title, *title
+			data["DisplayTitleConfigured"] = true
+		}
 		s.render(w, r, "page-managed-form", data)
 		return
 	}

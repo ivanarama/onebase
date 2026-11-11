@@ -1,0 +1,25 @@
+schema: onebase.form/v1
+form:
+  name: Completion
+  kind: object
+  entity: Completion
+attributes:
+  - name: DisplayNumber
+    type: string
+    save: false
+events:
+  ПриОткрытии: OnOpen
+  ПередЗакрытием: BeforeClose
+elements:
+  - kind: ПолеВвода
+    name: DisplayNumber
+    data_path: Форма.DisplayNumber
+    readonly: true
+  - kind: Кнопка
+    name: Next
+    title: {ru: Next}
+    events: {Нажатие: Next}
+  - kind: Кнопка
+    name: Close
+    title: {ru: Close}
+    events: {Нажатие: Close}

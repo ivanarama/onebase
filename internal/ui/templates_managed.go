@@ -688,7 +688,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 <main>
 <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;max-width:1400px">
   <h2 style="margin-bottom:0">
-    {{if .IsProcessor}}{{.Processor.DisplayName $.Lang}}{{else}}{{if .IsNew}}{{t $.Lang "Создать"}} — {{.Entity.DisplayName $.Lang}}{{else}}{{if .RecordTitle}}{{.RecordTitle}}{{else}}{{t $.Lang "Редактировать"}} — {{.Entity.DisplayName $.Lang}}{{end}}{{end}}{{end}}
+    <span data-ob-form-title>{{if .DisplayTitleConfigured}}{{.RecordTitle}}{{else}}{{if .IsProcessor}}{{.Processor.DisplayName $.Lang}}{{else}}{{if .IsNew}}{{t $.Lang "Создать"}} — {{.Entity.DisplayName $.Lang}}{{else}}{{if .RecordTitle}}{{.RecordTitle}}{{else}}{{t $.Lang "Редактировать"}} — {{.Entity.DisplayName $.Lang}}{{end}}{{end}}{{end}}{{end}}</span>
     <span style="font-size:11px;color:#10b981;background:#d1fae5;padding:2px 8px;border-radius:10px;vertical-align:middle;font-weight:500" title="Управляемая форма из forms/{{if .IsProcessor}}{{lower .Processor.Name}}{{else}}{{lower .Entity.Name}}{{end}}/">◇ managed</span>
   </h2>
   {{template "context-help" .}}
@@ -890,8 +890,9 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 <script type="application/json" id="ob-managed-config">{{jsJSON (dict
   "kind" "processor"
   "entity" .Processor.Name
-  "url" (printf "/ui/processor/%s/form-event" (lower .Processor.Name))
-  "closeUrl" (printf "/ui/processor/%s/form-close-intent" (lower .Processor.Name))
+  "url" (printf "/ui/processor/%s/form-event%s" (lower .Processor.Name) .ResultQuery)
+  "resultForm" .IsResultForm
+  "closeUrl" (printf "/ui/processor/%s/form-close-intent%s" (lower .Processor.Name) .ResultQuery)
   "closeTimeoutMs" .FormCloseTimeoutMS
   "closeEpoch" .FormCloseEpoch
   "closeClientId" .FormCloseClientID

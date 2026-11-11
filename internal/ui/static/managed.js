@@ -1291,6 +1291,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       // optimistic version before any renderer, picker or message callback can
       // throw, so a later queued action updates the row instead of inserting it.
       applySavedIdentity(data);
+      if (typeof data.formTitle === "string" && formEditState.revision === snapshot.editRevision && window.obApplyFormTitle) window.obApplyFormTitle(data.formTitle);
       // The user can type after FormData was sent. An old response must not
       // navigate away or repaint those newer edits, even when the handler
       // saved the old snapshot and returned dirty=false.
@@ -1323,10 +1324,12 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       if (data.navigation && data.navigation.url) {
         var savedByResponse = data.dirty === false && !!(data.savedId || data.version);
         if (data.dirty !== true && (!window._obFormDirty || savedByResponse)) {
-          window.location.assign(data.navigation.url);
-          return;
+          if (!cfg.resultForm) {
+            window.location.assign(data.navigation.url);
+            return;
+          }
         }
-        navigationBlocked = true;
+        if (!cfg.resultForm || data.dirty === true || (window._obFormDirty && !savedByResponse)) navigationBlocked = true;
       }
       // Подбор фазы 1: сервер вернул pickerData — открыть диалог, не трогая
       // ТЧ (её обновит фаза 2 после «Перенести»).
@@ -1393,6 +1396,23 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       if (navigationBlocked) flash(closeMessage('navigationDirty', 'Форма содержит несохранённые изменения — переход не выполнен'), 'err');
       // Apply the response, including disclosed values, before opening a
       // question. Dismissing it must leave the same valid form as no question.
+      // Handoff is deferred until this event leaves the queue. The shell owns
+      // the new frame and removes this exact source only after close-intent.
+      if (data.ok && !data.error && !data.cancel && formEditState.revision === snapshot.editRevision) {
+        var resultMessage = null;
+        if (data.resultForm) { pendingResultSnapshot={token:data.resultForm.token,revision:snapshot.editRevision,documentToken:window.obFrameCloseDocumentToken}; resultMessage = {source:'obFormResult',result:data.resultForm}; }
+        else if (cfg.resultForm && !navigationBlocked && (data.closeResultForm || data.navigation)) {
+          resultMessage = {source:'obResultAction',navigation:data.navigation || null,closeSelf:!!data.closeResultForm};
+        }
+        if (resultMessage && window.parent && window.parent !== window) {
+          resultMessage.sourceURL = window.location.href;
+          resultMessage.documentToken = window.obFrameCloseDocumentToken;
+          setTimeout(function(){
+            if (formEditState.revision === snapshot.editRevision) window.parent.postMessage(resultMessage,window.location.origin);
+          },0);
+          return;
+        }
+      }
       if (data.question && !beforePostSnapshot(snapshot)) {
         if (window.obOpenQuestion) window.obOpenQuestion(data.question, elementName);
         return;
@@ -1575,6 +1595,12 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
   var formEventWriteUnknown = false;
 	var manualReconcileRequired = false;
   var formEditState = {revision: 0};
+  var pendingResultSnapshot = null;
+  window.obResultHandoffCurrent = function(token){
+    return !!pendingResultSnapshot && pendingResultSnapshot.token === token &&
+      pendingResultSnapshot.revision === formEditState.revision &&
+      pendingResultSnapshot.documentToken === window.obFrameCloseDocumentToken;
+  };
   var closePending = null;
   // Embedded OK/post first crosses a postMessage boundary before the parent
   // asks this child for its close decision. Keep native submit fail-closed in
@@ -2611,7 +2637,7 @@ function obManagedInitDelegates() {
       if (window.__obEmbedded && mode !== 'save_and_select' && window.parent && window.parent !== window) {
         if (typeof window.obBeginManagedCloseHandoff === 'function') window.obBeginManagedCloseHandoff();
         try {
-          window.parent.postMessage({source: 'obCloseTab', reason: reason, mode: mode}, window.location.origin);
+          window.parent.postMessage({source: 'obCloseTab', reason: reason, mode: mode, sourceURL:window.location.href, documentToken:window.obFrameCloseDocumentToken}, window.location.origin);
         } catch (_) {
           if (typeof window.obCancelManagedCloseHandoff === 'function') window.obCancelManagedCloseHandoff();
         }

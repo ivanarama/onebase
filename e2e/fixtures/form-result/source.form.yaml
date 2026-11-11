@@ -1,0 +1,22 @@
+schema: onebase.form/v1
+form:
+  name: Order
+  kind: object
+  entity: Orders
+  title_proc: DisplayTitle
+events:
+  ПередЗакрытием: BeforeClose
+elements:
+  - kind: ПолеВвода
+    name: Номер
+    data_path: Объект.Номер
+  - kind: ПолеВвода
+    name: Комментарий
+    data_path: Объект.Комментарий
+  - kind: ПолеВвода
+    name: Block
+    data_path: Объект.Block
+  - kind: Кнопка
+    name: Accept
+    title: {ru: Accept}
+    events: {Нажатие: Accept}
