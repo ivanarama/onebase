@@ -1278,6 +1278,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
 		"managedTPColumnPlan": managedTPColumnPlan,
+		// messagesMeta — режим показа сообщений интерфейса (home_page: messages).
+		"messagesMeta": messagesMetaHTML,
 		// managedTPColumnsTitled — заголовки колонок из title_from по значениям
 		// формы при отрисовке; после событий их присылает columnTitles.
 		"managedTPColumnsTitled": func(plan []managedTPColumn, values any) []managedTPColumn {
@@ -1538,7 +1540,7 @@ const tplHead = `
   "imageError" (t (or $.Lang "ru") "Не удалось загрузить изображение")
   "imageArea" (t (or $.Lang "ru") "Область просмотра изображения")
 )}}</script>
-<script src="/static/ui.js"></script>
+{{messagesMeta .}}<script src="/static/ui.js"></script>
 <style>
 .ob-embedded .topbar,.ob-embedded .subsys-bar,.ob-embedded #ob-nav{display:none!important}
 *{box-sizing:border-box;margin:0;padding:0}

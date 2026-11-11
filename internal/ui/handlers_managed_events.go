@@ -62,6 +62,7 @@ type formEventResponse struct {
 	// оставалась бы прежней до перезагрузки страницы.
 	ColumnTitles map[string]map[string]string `json:"columnTitles,omitempty"`
 	Messages     []string                     `json:"messages,omitempty"`
+	MessageIDs   []string                     `json:"messageIDs,omitempty"`
 	Error        string                       `json:"error,omitempty"`
 	// Question != nil — обработчик фазы 1 вызвал ПоказатьВопрос: клиент
 	// рисует модал вопроса, ответ возвращается событием Ответ (#1528).
@@ -336,6 +337,7 @@ func (s *Server) installFormCloseAccessRecheck(
 }
 
 func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Request, closeInv *formCloseInvocation) {
+	r = withMessageReceipts(r)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
 
@@ -895,7 +897,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 				message = s.errText(r, defaultsErr)
 			}
 			w.WriteHeader(http.StatusBadRequest)
-			respondJSON(enc, formEventResponse{Error: message, Messages: newRes.DSLMessages, Dirty: boolPtr(true)})
+			respondJSON(enc, formEventResponse{Error: message, Messages: newRes.DSLMessages, MessageIDs: messageReceiptIDs(r.Context(), newRes.DSLMessages), Dirty: boolPtr(true)})
 			return
 		}
 	}
@@ -1940,6 +1942,7 @@ type formEventState struct {
 	TPRefOptions   map[string]map[string][]map[string]any
 	ConditionalCSS string
 	Messages       []string
+	MessageIDs     []string
 	ElementStates  *elementStates
 	ColumnTitles   map[string]map[string]string
 }
@@ -1956,6 +1959,7 @@ func (st formEventState) response(ok bool) formEventResponse {
 		TPRefOptions:   st.TPRefOptions,
 		ConditionalCSS: st.ConditionalCSS,
 		Messages:       st.Messages,
+		MessageIDs:     st.MessageIDs,
 		ElementStates:  st.ElementStates,
 		ColumnTitles:   st.ColumnTitles,
 	}
@@ -2045,7 +2049,7 @@ func adminOnlyElementPaths(form *metadata.FormModule) []string {
 func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metadata.FormModule, entity *metadata.Entity, obj *runtime.Object, rules []metadata.FormCondRule, msgs []string) formEventState {
 	conditionalCSS := formConditionalRulesCSS(rules)
 	if obj == nil {
-		return formEventState{ConditionalCSS: conditionalCSS, Messages: msgs}
+		return formEventState{ConditionalCSS: conditionalCSS, Messages: msgs, MessageIDs: messageReceiptIDs(ctx, msgs)}
 	}
 	fields := serializeFieldsForEntity(obj.Fields, entity)
 	// Маска накладывается ЗДЕСЬ, на пути к клиенту, а не при чтении из БД
@@ -2095,6 +2099,7 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 		TPRefOptions:   tpRefOptions,
 		ConditionalCSS: conditionalCSS,
 		Messages:       msgs,
+		MessageIDs:     messageReceiptIDs(ctx, msgs),
 		// Условия readonly_when/hidden_when считаются здесь же, где известны
 		// значения ПОСЛЕ обработчика: команда, изменившая состояние объекта,
 		// сразу меняет доступность полей.
@@ -2458,6 +2463,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Request, closeInv *formCloseInvocation) {
+	r = withMessageReceipts(r)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
 
@@ -2940,15 +2946,17 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		if err != nil {
 			opStatus = operationStatus(opCtx, err)
 			respondJSON(enc, formEventResponse{
-				OK:       false,
-				Messages: msgs,
-				Error:    interpreter.FormatUserError(err),
+				OK:         false,
+				Messages:   msgs,
+				MessageIDs: messageReceiptIDs(r.Context(), msgs),
+				Error:      interpreter.FormatUserError(err),
 			})
 			return
 		}
 		respondJSON(enc, formEventResponse{
-			OK:       true,
-			Messages: msgs,
+			OK:         true,
+			Messages:   msgs,
+			MessageIDs: messageReceiptIDs(r.Context(), msgs),
 		})
 		return
 	}

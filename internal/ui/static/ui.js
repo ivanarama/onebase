@@ -3444,10 +3444,106 @@ obReady(function () {
   else init();
 })();
 
+// BEGIN onebase-messages-popup
+// Режим показа сообщений (config/home_page.yaml: messages, message_seconds).
+// Метка ob-messages есть только у настроенной конфигурации; без неё — как
+// раньше: плашки событий формы и нижняя панель «Сообщения».
+function obMessagesConfig() {
+  var m = document.querySelector ? document.querySelector('meta[name="ob-messages"]') : null;
+  var secs = m ? parseInt(m.getAttribute('data-seconds'), 10) : 0;
+  return { popup: !!m && m.getAttribute('content') === 'popup', seconds: secs > 0 ? secs : 5 };
+}
+// Only server timestamps define the initial history boundary. IDs identify
+// messages across poll/form responses, including identical texts and reloads.
+function obPickPopupMessages(messages, seenAt) {
+  var show = [], last = seenAt;
+  (messages || []).forEach(function (m) {
+    var at = Date.parse(m.time);
+    if (!(at >= seenAt)) return;
+    if (at > last) last = at;
+    show.push(m);
+  });
+  return { show: show, seenAt: last };
+}
+function obClaimMessage(id) {
+  if (!id) return true; // A local warning has no store identity.
+  var ids = window.__obMessageIDs;
+  if (!ids) {
+    try { ids = JSON.parse(sessionStorage.getItem('obMessageIDs') || '[]'); } catch (e) {}
+    if (!Array.isArray(ids)) ids = [];
+    window.__obMessageIDs = ids;
+  }
+  if (ids.indexOf(id) !== -1) return false;
+  ids.push(id);
+  // The store keeps 200 entries. Retain twice that many recent receipts.
+  if (ids.length > 400) ids.splice(0, ids.length - 400);
+  try { sessionStorage.setItem('obMessageIDs', JSON.stringify(ids)); } catch (e) {}
+  return true;
+}
+window.obClaimMessage = obClaimMessage;
+// obToast — всплывающая плашка вверху справа, общий контейнер с плашками
+// событий формы. Не больше пяти: новая вытесняет самую старую. Ошибка висит до
+// крестика, обычная — message_seconds секунд.
+function obToast(text, kind) {
+  var b = document.getElementById('ob-fmevt-banner');
+  if (!b) {
+    b = document.createElement('div');
+    b.id = 'ob-fmevt-banner';
+    b.style.cssText = 'position:fixed;top:14px;right:14px;max-width:380px;z-index:9999;display:flex;flex-direction:column;gap:6px;pointer-events:none';
+    document.body.appendChild(b);
+  }
+  var d = document.createElement('div');
+  d.style.cssText = (kind === 'err'
+    ? 'background:#fee2e2;color:#991b1b;border:1px solid #fecaca'
+    : 'background:#d1fae5;color:#065f46;border:1px solid #a7f3d0') +
+    ';padding:8px 28px 8px 12px;border-radius:6px;font-size:12px;box-shadow:0 1px 3px rgba(0,0,0,.08);pointer-events:auto;position:relative;white-space:pre-wrap;word-break:break-word';
+  var msg = document.createElement('span');
+  msg.textContent = text;
+  d.appendChild(msg);
+  var x = document.createElement('span');
+  x.textContent = '×';
+  x.style.cssText = 'position:absolute;top:4px;right:8px;cursor:pointer;font-weight:700;opacity:.55;font-size:14px;line-height:1';
+  x.onclick = function (ev) { ev.stopPropagation(); d.remove(); };
+  d.appendChild(x);
+  b.appendChild(d);
+  while (b.children.length > 5) b.removeChild(b.firstChild);
+  if (kind !== 'err') setTimeout(function () { d.remove(); }, obMessagesConfig().seconds * 1000);
+}
+window.obToast = obToast;
+// END onebase-messages-popup
+
 (function () {
   if (window.__obMsgInit) return;
   window.__obMsgInit = true;
+  // messages: popup — нижней панели нет. Сообщения хранилища (фоновые задания,
+  // другие окна, запись формы) показываются плашкой; идентичные записи из ответа
+  // события формы не дублируются. Курсор и ID сохраняются в sessionStorage
+  // — переход на другую страницу не повторяет уже показанное.
+  function initPopup() {
+    var seenAt = 0;
+    try { seenAt = parseInt(sessionStorage.getItem('obMsgSeenAtV2'), 10) || 0; } catch (e) {}
+    function load() {
+      return fetch('/ui/messages').then(function (r) { return r.json(); }).then(function (d) {
+        var serverNow = Date.parse(d.serverTime);
+        if (!isFinite(serverNow)) return;
+        // A fresh session shows the recent server history. Never compare the
+        // browser clock with server timestamps, even after a redirect/reload.
+        if (!seenAt || seenAt > serverNow) seenAt = serverNow - 30000;
+        var picked = obPickPopupMessages(d.messages || [], seenAt);
+        seenAt = picked.seenAt;
+        try { sessionStorage.setItem('obMsgSeenAtV2', String(seenAt)); } catch (e) {}
+        picked.show.forEach(function (m) {
+          if (obClaimMessage(m.id)) obToast(m.text, m.kind);
+        });
+      }).catch(function () {});
+    }
+    window.obReloadMessages = load;
+    load();
+    setInterval(load, 3000);
+    document.addEventListener('submit', function () { setTimeout(load, 400); }, true);
+  }
   function init() {
+    if (obMessagesConfig().popup) { initPopup(); return; }
     if (document.getElementById('ob-msg-bar')) return;
     var bar = document.createElement('div');
     bar.id = 'ob-msg-bar';
