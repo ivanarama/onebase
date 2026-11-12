@@ -1,15 +1,22 @@
 package ui
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/metadata"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compose"
+	"github.com/ivantit66/onebase/internal/runtime"
+	"github.com/ivantit66/onebase/internal/storage"
 	"golang.org/x/net/html"
 )
 
@@ -151,4 +158,58 @@ func nodeTextOf(n *html.Node) string {
 	}
 	walk(n)
 	return b.String()
+}
+
+// Поле, которое одновременно detail_link (переход «→» по UUID) и колонка
+// detail_fields, показывается представлением ссылки, а не UUID. Переход
+// продолжает вести на UUID записи.
+func TestReportDetailFieldSameAsDetailLinkShowsLabelHTTP(t *testing.T) {
+	ctx := context.Background()
+	db, err := storage.ConnectSQLite(ctx, filepath.Join(t.TempDir(), "link.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close() })
+	order := &metadata.Entity{Name: "Заявка", Kind: metadata.KindCatalog, Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}}}
+	if err := db.Migrate(ctx, []*metadata.Entity{order}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.EnsureSettingsSchema(ctx); err != nil {
+		t.Fatal(err)
+	}
+	id := uuid.New()
+	if err := db.Upsert(ctx, order.Name, id, map[string]any{"Наименование": "PT-R-A"}, order); err != nil {
+		t.Fatal(err)
+	}
+	rep := &reportpkg.Report{
+		Name:  "второйкруг",
+		Query: `ВЫБРАТЬ З.Ссылка КАК ПервыйКругЗаявка, "Мастер" КАК Мастер, 1 КАК Штраф ИЗ Справочник.Заявка КАК З`,
+		Composition: &reportpkg.Composition{
+			Groupings: []string{"Мастер"}, Detail: true,
+			DetailLink: "ПервыйКругЗаявка", DetailEntity: "Заявка",
+			DetailFields: []reportpkg.DetailField{{Field: "ПервыйКругЗаявка", Title: "Заявка"}},
+			Measures:     []reportpkg.Measure{{Field: "Штраф"}},
+		},
+	}
+	registry := runtime.NewRegistry()
+	registry.Load(runtime.LoadOptions{Entities: []*metadata.Entity{order}, Reports: []*reportpkg.Report{rep}})
+	s := &Server{store: db, reg: registry}
+	t.Cleanup(s.Close)
+	router := chi.NewRouter()
+	s.Mount(router)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/ui/report/"+url.PathEscape("второйкруг")+"?__run=1", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("report returned %d: %s", w.Code, w.Body.String())
+	}
+	page := w.Body.String()
+	if !strings.Contains(page, `<td class="detail-field" style="">PT-R-A</td>`) {
+		t.Fatalf("detail_fields column does not show the reference label: %s", page)
+	}
+	if strings.Contains(page, `<td class="detail-field" style="">`+id.String()) {
+		t.Fatal("detail_fields column shows the UUID")
+	}
+	if !strings.Contains(page, `href="/ui/document/`+url.PathEscape("Заявка")+`/`+id.String()+`"`) {
+		t.Fatalf("drill-down no longer links to the record UUID: %s", page)
+	}
 }

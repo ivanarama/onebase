@@ -101,7 +101,7 @@ func (h *htmlComposeSink) detailFieldCells(vals map[string]any, styles map[strin
 	for _, d := range h.spec.DetailFields {
 		v := ""
 		if vals != nil {
-			v = fmtDetailVal(vals[d.Field])
+			v = fmtDetailVal(detailFieldValue(h.spec, vals, d.Field))
 		}
 		h.b.WriteString(`<td class="detail-field" style="` + html.EscapeString(cssOf(styles[d.Field])) + `">` + html.EscapeString(v) + `</td>`)
 	}
@@ -315,6 +315,21 @@ func composeFloat(v any) float64 {
 		return f
 	}
 	return 0
+}
+
+// reportDetailLinkLabelKey — служебный ключ строки отчёта с представлением
+// ссылки из колонки detail_link: сама колонка хранит UUID для перехода «→».
+const reportDetailLinkLabelKey = "_ob_detail_link_label"
+
+// detailFieldValue — значение поля детальной записи. Поле, которое служит и
+// detail_link, показывается представлением ссылки, а не её UUID.
+func detailFieldValue(spec *report.Composition, vals map[string]any, field string) any {
+	if spec != nil && spec.DetailLink != "" && strings.EqualFold(field, spec.DetailLink) {
+		if label, ok := vals[reportDetailLinkLabelKey]; ok {
+			return label
+		}
+	}
+	return vals[field]
 }
 
 // detailFieldTitle — заголовок колонки детальной записи (пустой = имя поля).

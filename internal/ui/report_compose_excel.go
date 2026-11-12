@@ -78,9 +78,10 @@ func (e *excelComposeSink) rowWithDetail(label string, detail, vals map[string]a
 		if detail == nil {
 			continue
 		}
-		if _, ok := detailMoment(detail[d.Field]); ok {
-			r[off+i] = fmtDetailVal(detail[d.Field])
-		} else if v := detail[d.Field]; v != nil {
+		value := detailFieldValue(e.spec, detail, d.Field)
+		if _, ok := detailMoment(value); ok {
+			r[off+i] = fmtDetailVal(value)
+		} else if v := value; v != nil {
 			r[off+i] = v
 		}
 	}
