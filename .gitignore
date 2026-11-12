@@ -68,6 +68,7 @@ Thumbs.db
 *.swp
 
 # Рабочие материалы / документация (не в публичном репо)
+/bases/
 docs/*
 !docs/forms.md
 !docs/configuration-help.md

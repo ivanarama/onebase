@@ -18,6 +18,7 @@ try {
 // В режиме system тема разрешается по prefers-color-scheme и следует за сменой
 // системной темы без перезагрузки.
 window.OB_UI_THEME_KEY = 'obUITheme';
+window.OB_UI_THEME_LISTENERS = [];
 (function () {
   var mode = 'system';
   try {
@@ -31,6 +32,9 @@ window.OB_UI_THEME_KEY = 'obUITheme';
     var el = document.documentElement;
     el.setAttribute('data-theme', dark ? 'dark' : 'light');
     el.setAttribute('data-theme-mode', mode);
+    for (var i = 0; i < window.OB_UI_THEME_LISTENERS.length; i++) {
+      try { window.OB_UI_THEME_LISTENERS[i](); } catch (_) {}
+    }
   }
   function setMode(m) {
     if (m !== 'light' && m !== 'dark' && m !== 'system') return;
@@ -43,12 +47,66 @@ window.OB_UI_THEME_KEY = 'obUITheme';
   }
   apply();
   window.OB_UI_THEME_SET = setMode;
+  window.OB_UI_THEME_SUBSCRIBE = function (fn) {
+    window.OB_UI_THEME_LISTENERS.push(fn);
+    try { fn(); } catch (_) {}
+  };
   if (mq) {
     var onSysChange = function () { if (mode === 'system') apply(); };
     if (mq.addEventListener) mq.addEventListener('change', onSysChange);
     else if (mq.addListener) mq.addListener(onSysChange);
   }
 })();
+
+// Тема Monaco для enterprise-UI-консолей. Tема живёт токенами --ob-* и
+// attribute data-theme на <html> (head-скрипт выше). Monaco принимает literal
+// hex, CSS-переменные не понимает, поэтому имена тем задаются фиксированным
+// палитром, согласованным с токенами. obMonacoDefine вызывается перед
+// monaco.editor.create: после определения тем setTheme ставит текущую.
+// Подписка на смену data-theme переключает Monaco вживую, без перезагрузки.
+window.obMonacoThemeName = function () {
+  return document.documentElement.getAttribute('data-theme') === 'dark' ? 'ob-ui-dark' : 'ob-ui-light';
+};
+window.obMonacoDefine = function (monaco) {
+  monaco.editor.defineTheme('ob-ui-light', {
+    base: 'vs', inherit: true, rules: [], colors: {
+      'editor.background': '#ffffff',
+      'editor.foreground': '#1e293b',
+      'editor.lineHighlightBackground': '#f8fafc',
+      'editorLineNumber.foreground': '#94a3b8',
+      'editorLineNumber.activeForeground': '#1e293b',
+      'editor.selectionBackground': '#eef2ff',
+      'editorCursor.foreground': '#3b82f6'
+    }
+  });
+  monaco.editor.defineTheme('ob-ui-dark', {
+    base: 'vs-dark', inherit: true, rules: [
+      { token: 'keyword', foreground: 'c792ea', fontstyle: 'bold' },
+      { token: 'type', foreground: '82aaff' },
+      { token: 'variable.predefined', foreground: 'ff5370', fontstyle: 'bold' },
+      { token: 'string', foreground: 'c3e88d' },
+      { token: 'number', foreground: 'f78c6c' },
+      { token: 'comment', foreground: '546e7a', fontstyle: 'italic' }
+    ], colors: {
+      'editor.background': '#111c2e',
+      'editor.foreground': '#e2e8f0',
+      'editor.lineHighlightBackground': '#16223a',
+      'editorLineNumber.foreground': '#8fa5bd',
+      'editorLineNumber.activeForeground': '#dbe4ef',
+      'editor.selectionBackground': '#2a3a57',
+      'editorCursor.foreground': '#3b82f6'
+    }
+  });
+  window.obMonacoThemeName = function () {
+    return document.documentElement.getAttribute('data-theme') === 'dark' ? 'ob-ui-dark' : 'ob-ui-light';
+  };
+  monaco.editor.setTheme(window.obMonacoThemeName());
+  if (window.OB_UI_THEME_SUBSCRIBE) {
+    window.OB_UI_THEME_SUBSCRIBE(function () {
+      monaco.editor.setTheme(window.obMonacoThemeName());
+    });
+  }
+};
 
 // Вкладочная оболочка (issue #129/#130): когда страница открыта во фрейме
 // оболочки /ui/app, прячем хром (топбар/подсистемы) — навигация идёт из оболочки.

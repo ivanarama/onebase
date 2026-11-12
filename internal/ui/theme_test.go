@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"fmt"
+	"html/template"
 	"math"
 	"regexp"
 	"strings"
@@ -102,6 +103,9 @@ var contrastPairs = []struct{ fg, bg string }{
 	{"--ob-field-text", "--ob-field-bg"},
 	{"--ob-btn-2-text", "--ob-btn-2-bg"},
 	{"--ob-error-text", "--ob-error-bg"},
+	{"--ob-console-ink", "--ob-nav-bg"},
+	{"--ob-console-err", "--ob-nav-bg"},
+	{"--ob-text-4", "--ob-nav-bg"},
 }
 
 // Базовый <style> объявляет токены и режим темы; light-токены при этом равны
@@ -238,4 +242,106 @@ func TestTheme_OverlaySurfacesUseTokens(t *testing.T) {
 			t.Errorf("в JS-оверраях нет %q (окно подбора / контекстное меню / панель сообщений)", want)
 		}
 	}
+}
+
+// Консоли (запросов, кода) следуют теме enterprise-UI. Monaco принимает
+// literal-цвета, поэтому ui.js объявляет об-ui-light/ob-ui-dark с палитрой,
+// согласованной с --ob-* токенами, и подписывается на смену data-theme.
+// В шаблонах консолей не остаётся фиксированных light-hex (#475569, #334155)
+// и theme:'vs' — иначе в тёмном режиме редактор и вывод останутся белыми.
+func TestTheme_DevConsolesFollowTheme(t *testing.T) {
+	js := string(uiJS)
+
+	// Monaco-помощник в ui.js.
+	for _, want := range []string{
+		"window.obMonacoThemeName",
+		"window.obMonacoDefine",
+		"defineTheme('ob-ui-light'",
+		"defineTheme('ob-ui-dark'",
+		"monaco.editor.setTheme(window.obMonacoThemeName())",
+		"window.OB_UI_THEME_SUBSCRIBE(function () {",
+	} {
+		if !strings.Contains(js, want) {
+			t.Errorf("в ui.js нет %q (Monaco-помощник темы)", want)
+		}
+	}
+	if !strings.Contains(js, "documentElement.getAttribute('data-theme')") {
+		t.Error("obMonacoThemeName читает data-theme не с documentElement")
+	}
+	// Monaco не понимает CSS-переменные — цвета literal-hex.
+	if !strings.Contains(js, "'editor.background': '#ffffff'") {
+		t.Error("light-режим Monaco не согласован с --ob-surface (light #fff)")
+	}
+	if !strings.Contains(js, "'editor.background': '#111c2e'") {
+		t.Error("dark-режим Monaco не согласован с --ob-surface (dark #111c2e)")
+	}
+
+	// Шаблоны консолей вызывают помощник и не держат фиксированный light-хром.
+	data := map[string]any{
+		"Cfg": Config{AppName: "Test"}, "Lang": "ru",
+		"Nav": nil, "Subsystems": nil, "SearchQuery": "", "FormOpenMode": "pages",
+		"Schema": template.JS("[]"),
+	}
+	for _, name := range []string{"page-query-console", "page-code-console"} {
+		var buf bytes.Buffer
+		if err := tmpl.ExecuteTemplate(&buf, name, data); err != nil {
+			t.Fatalf("ExecuteTemplate %s: %v", name, err)
+		}
+		html := buf.String()
+		if !strings.Contains(html, "window.obMonacoDefine(monaco)") {
+			t.Errorf("%s: редактор не определяeт темы ob-ui-light/ob-ui-dark", name)
+		}
+		if strings.Contains(html, "theme: 'vs'") {
+			t.Errorf("%s: theme:'vs' заперт — в тёмном режиме редактор останется белым", name)
+		}
+		if !strings.Contains(html, "window.obMonacoThemeName()") {
+			t.Errorf("%s: тема Monaco не берётся из data-theme", name)
+		}
+	}
+
+	// Консоль запросов: переключатель конструктора красится токеном, а не
+	// фиксированным #475569.
+	var qbuf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&qbuf, "page-query-console", data); err != nil {
+		t.Fatalf("ExecuteTemplate page-query-console: %v", err)
+	}
+	qhtml := consoleMain(t, qbuf.String())
+	if !strings.Contains(qhtml, "btn.style.color = 'var(--ob-text-2)'") {
+		t.Error("qcToggleBuilder красит выключенный конструктор фиксированным light-hex")
+	}
+
+	// Консоль кода: вывод и разделитель — токены, #334155 не остаётся.
+	// Проверка по <main>, чтобы не задеть <head> (там токены light-палитры
+	// и #334155 как значение токена).
+	var cbuf bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&cbuf, "page-code-console", data); err != nil {
+		t.Fatalf("ExecuteTemplate page-code-console: %v", err)
+	}
+	chtml := consoleMain(t, cbuf.String())
+	for _, want := range []string{
+		"var(--ob-console-ink)",
+		"var(--ob-console-sep)",
+		"var(--ob-console-err)",
+	} {
+		if !strings.Contains(chtml, want) {
+			t.Errorf("консоль кода не красит вывод токеном %q", want)
+		}
+	}
+	for _, banned := range []string{"#334155", "var(--ob-red-border)", "var(--ob-btn-2-bg)"} {
+		if strings.Contains(chtml, banned) {
+			t.Errorf("консоль кода держит фиксированный light-токен %q — в тёмном режиме контраст сломан", banned)
+		}
+	}
+}
+
+// consoleMain возвращает содержимое страницы после <main> — тело консоли и
+// её <script>-и, не трогая <head> (там токены light-палитры содержат
+// фиксированные hex, они в head легальны: это значения самих токенов).
+func consoleMain(t *testing.T, html string) string {
+	t.Helper()
+	i := strings.Index(html, "<main")
+	if i < 0 {
+		t.Fatalf("в рендере консоли нет <main>")
+	}
+	return html[i:]
 }

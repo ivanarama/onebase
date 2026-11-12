@@ -49,7 +49,8 @@ const themeTokensCSS = `/* Токены палитры enterprise-UI (план 2
 --ob-post-bg:#e8b400;--ob-post-ink:#1a1a1a;--ob-post-hover:#d4a200;--ob-red-border:#fca5a5;
 --ob-ok-bg:#f0fdf4;--ob-ok-border:#86efac;--ob-ok-text:#15803d;
 --ob-warn-bg:#fff7ed;--ob-warn-border:#fdba74;--ob-warn-text:#9a3412;
---ob-danger:#ef4444;--ob-amber:#f59e0b}
+--ob-danger:#ef4444;--ob-amber:#f59e0b;
+--ob-console-ink:#e2e8f0;--ob-console-err:#f87171;--ob-console-sep:#334155}
 html[data-theme="light"]{color-scheme:light}
 html[data-theme="dark"]{
 --ob-bg:#0b1220;--ob-surface:#111c2e;--ob-surface-2:#16223a;--ob-surface-3:#1c2a44;--ob-zebra:#141f34;
@@ -75,6 +76,7 @@ html[data-theme="dark"]{
 --ob-ok-bg:#12291a;--ob-ok-border:#2f5d3b;--ob-ok-text:#4ade80;
 --ob-warn-bg:#2b1d0b;--ob-warn-border:#6b4a1d;--ob-warn-text:#fbbf24;
 --ob-danger:#b91c1c;--ob-amber:#d97706;
+--ob-console-ink:#fff;--ob-console-err:#f87171;--ob-console-sep:#8fa5bd;
 color-scheme:dark}
 html[data-theme="dark"] body{color:var(--ob-text)}`
 

@@ -159,10 +159,11 @@ require(['vs/editor/editor.main'], function() {
       ]
     }
   });
+  window.obMonacoDefine(monaco);
   window.qcEditor = monaco.editor.create(document.getElementById('qc-editor'), {
     value: 'ВЫБРАТЬ *\nИЗ ',
     language: 'onebase-query',
-    theme: 'vs',
+    theme: window.obMonacoThemeName(),
     minimap: { enabled: false },
     automaticLayout: true,
     fontSize: 14,
@@ -184,7 +185,7 @@ function qcToggleBuilder() {
     qbApplyToEditor();
     el.style.display = 'none';
     btn.style.background = 'var(--ob-btn-2-bg)';
-    btn.style.color = '#475569';
+    btn.style.color = 'var(--ob-text-2)';
   }
 }
 
@@ -1036,7 +1037,7 @@ const tplCodeConsole = `
   <h3 style="margin:0">{{t $.Lang "Результат"}}</h3>
   <button data-ob-cc-action="clear-output" style="background:none;border:1px solid var(--ob-border);border-radius:4px;padding:2px 8px;cursor:pointer;font-size:12px;color:var(--ob-text-3)">{{t $.Lang "Очистить"}}</button>
 </div>
-<div id="cc-output" style="background:var(--ob-nav-bg);color:var(--ob-btn-2-bg);font-family:'Cascadia Code',Consolas,monospace;font-size:13px;padding:12px 16px;border-radius:6px;min-height:120px;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-word"></div>
+<div id="cc-output" style="background:var(--ob-nav-bg);color:var(--ob-console-ink);font-family:'Cascadia Code',Consolas,monospace;font-size:13px;padding:12px 16px;border-radius:6px;min-height:120px;max-height:400px;overflow-y:auto;white-space:pre-wrap;word-break:break-word"></div>
 </div>
 
 </main>
@@ -1072,10 +1073,11 @@ if(typeof require !== 'undefined') {
     });
     document.getElementById('cc-editor').style.display = 'block';
     document.getElementById('cc-textarea').style.display = 'none';
+    window.obMonacoDefine(monaco);
     window.ccEditor = monaco.editor.create(document.getElementById('cc-editor'), {
       value: '// Введите DSL-код\nСообщить("Привет из консоли!");\n',
       language: 'onebase-dsl',
-      theme: 'vs',
+      theme: window.obMonacoThemeName(),
       minimap: { enabled: false },
       automaticLayout: true,
       fontSize: 14,
@@ -1088,7 +1090,7 @@ if(typeof require !== 'undefined') {
 function ccExec() {
   var code = window.ccEditor ? window.ccEditor.getValue() : document.getElementById('cc-textarea').value;
   var out = document.getElementById('cc-output');
-  out.innerHTML += '<div style="color:var(--ob-text-4);border-bottom:1px solid #334155;padding:2px 0;font-size:11px">--- ' + new Date().toLocaleTimeString() + ' ---</div>';
+  out.innerHTML += '<div style="color:var(--ob-text-4);border-bottom:1px solid var(--ob-console-sep);padding:2px 0;font-size:11px">--- ' + new Date().toLocaleTimeString() + ' ---</div>';
   fetch('/ui/dev/code-exec', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -1100,14 +1102,14 @@ function ccExec() {
       });
     }
     if(data.error) {
-      out.innerHTML += '<div style="color:var(--ob-red-border)">' + escHtml(data.error) + '</div>';
+      out.innerHTML += '<div style="color:var(--ob-console-err)">' + escHtml(data.error) + '</div>';
     }
     if((!data.output || !data.output.length) && !data.error) {
       out.innerHTML += '<div style="color:var(--ob-text-4)">(без вывода)</div>';
     }
     out.scrollTop = out.scrollHeight;
   }).catch(function(e) {
-    out.innerHTML += '<div style="color:var(--ob-red-border)">Ошибка сети: ' + e.message + '</div>';
+    out.innerHTML += '<div style="color:var(--ob-console-err)">Ошибка сети: ' + e.message + '</div>';
   });
 }
 
