@@ -476,7 +476,8 @@ func constantsYAMLSchema() *yamlLintSchema {
 
 func widgetYAMLSchema() *yamlLintSchema {
 	return with(obj("name", "type", "title", "query", "format", "compare_to", "limit", "chart_kind", "chart_type", "x_field", "y_fields", "entities", "scope", "link", "refresh_on"), map[string]*yamlLintSchema{
-		"source": obj("entity", "id_field"),
+		"source":    obj("entity", "id_field"),
+		"row_style": obj("background", "bold"),
 		"filters": seq(with(obj("name", "label", "type", "param"), map[string]*yamlLintSchema{
 			"labels": freeMap(),
 			"values": seq(with(obj("value", "label"), map[string]*yamlLintSchema{
@@ -701,6 +702,9 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		"filter": seq(with(obj("field", "op", "value", "roles", "query", "removable"), map[string]*yamlLintSchema{
 			"label": freeMap(),
 		})),
+		"row_style": with(obj("background_from", "bold_from"), map[string]*yamlLintSchema{
+			"rules": seq(obj("field", "equals", "background", "bold")),
+		}),
 	})
 	style := obj("color", "background", "bold", "italic")
 	conditional := with(obj("when", "target", "element", "table_part", "field"), map[string]*yamlLintSchema{
