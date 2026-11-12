@@ -148,6 +148,34 @@ func infoRegisterProjectionKeys(reg *metadata.InfoRegister) projectionKeySet {
 	return out
 }
 
+// These ordinary-source inventories match CreateRegisterSQL and
+// migrateAccountReg. They establish presence only: starKeys keeps the existing
+// conservative wildcard type/collision policy for these register kinds.
+func accumulationRegisterProjectionKeys(reg *metadata.Register) projectionKeySet {
+	out := projectionKeySet{counts: map[string]int{
+		"id": 1, "recorder": 1, "recorder_type": 1, "line_number": 1, "period": 1, "вид_движения": 1,
+	}, complete: true}
+	for _, fields := range [][]metadata.Field{reg.Dimensions, reg.Resources, reg.Attributes} {
+		for _, field := range fields {
+			out.counts[metadata.ColumnName(field)] = 1
+		}
+	}
+	return out
+}
+
+func accountRegisterProjectionKeys(reg *metadata.AccountRegister) projectionKeySet {
+	out := projectionKeySet{counts: map[string]int{
+		"id": 1, "period": 1, "регистратор": 1, "регистратор_тип": 1, "счётдт": 1, "счёткт": 1,
+	}, complete: true}
+	for _, field := range reg.Resources {
+		out.counts[metadata.ColumnName(field)] = 1
+	}
+	for i := range reg.Subconto {
+		out.counts[metadata.SubcontoColumn(i+1)] = 1
+	}
+	return out
+}
+
 // scopeKeys recursively follows derived boundaries, reserving unknown-type
 // expressions with explicit aliases too. No type is inferred by this resolver.
 func (r *projectionKeyResolver) scopeKeys(scopeID int) projectionKeySet {

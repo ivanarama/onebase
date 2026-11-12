@@ -736,6 +736,10 @@ func (i *Interpreter) construct(typeName string, args []any, e *env, displayName
 	case "шаблонhtml", "htmltemplate":
 		// План 125, по той же причине встроенным типом.
 		return NewHTMLTemplateObject(args)
+	case "уникальныйидентификатор", "uuid":
+		// Встроенным типом по той же причине: ключ идемпотентности нужен и в
+		// форме, и в фоновом задании.
+		return newUUIDValue(args)
 	}
 	// Расширяемые типы через env: "__factory_<ИмяТипа>"
 	if factory, ok := e.get("__factory_" + typeName); ok {
@@ -1439,6 +1443,13 @@ func equalSandboxed(a, b any, ec *execCtx, line int) bool {
 			return at.Equal(bt)
 		}
 	}
+	// УникальныйИдентификатор равен только такому же значению: строка с тем же
+	// текстом — другой тип, как в 1С (refKey сравнил бы их по тексту).
+	au, aIsUUID := unwrapReadOnly(a).(UUIDValue)
+	bu, bIsUUID := unwrapReadOnly(b).(UUIDValue)
+	if aIsUUID || bIsUUID {
+		return aIsUUID && bIsUUID && au == bu
+	}
 	// Числа сравниваем по значению (decimal.Equal), а не строково: иначе
 	// decimal(5) и int64(5) или 0.10 и 0.1 могли бы разойтись. Строки/ссылки —
 	// по-прежнему через refKey.
@@ -1480,6 +1491,9 @@ func compareSandboxed(a, b any, ec *execCtx, line int) int {
 	}
 	if IsUndefined(b) {
 		return 1
+	}
+	if order, handled := compareUUIDValues(a, b); handled {
+		return order
 	}
 	// Даты сравниваем хронологически, а не как строки.
 	if at, ok := a.(time.Time); ok {

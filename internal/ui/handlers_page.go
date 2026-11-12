@@ -203,7 +203,7 @@ func (s *Server) pageAction(w http.ResponseWriter, r *http.Request) {
 	if runErr = finishDSLExecution(txState, runErr); runErr != nil {
 		// Ошибку действия кладём в стор сообщений: после редиректа страница
 		// перерисуется штатно, а баннер не потеряется.
-		s.messages.Push(userKeyFromRequest(r), s.errText(r, runErr))
+		s.messages.PushError(userKeyFromRequest(r), s.errText(r, runErr))
 	}
 
 	http.Redirect(w, r, "/ui/page/"+pg.Name+pageQuery(r), http.StatusSeeOther)

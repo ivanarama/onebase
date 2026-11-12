@@ -765,6 +765,11 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		// панели разделов на всех страницах.
 		data["HideHome"] = s.hideGlobalHome()
 	}
+	if _, ok := data["MessagesMode"]; !ok {
+		if hp := s.messagesModeData(); hp != nil {
+			data["MessagesMode"] = hp
+		}
+	}
 	if _, ok := data["CollapsibleNav"]; !ok {
 		data["CollapsibleNav"] = s.store.GetNavCollapsible(r.Context())
 	}

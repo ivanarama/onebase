@@ -1214,6 +1214,7 @@ func redactUnreadableSavedFormResponse(response *formEventResponse) {
 	response.ElementStates = nil
 	response.ColumnTitles = nil
 	response.Messages = nil
+	response.MessageIDs = nil
 	response.PickerData = nil
 	response.ChoiceList = nil
 	response.SavedLabel = ""
