@@ -1629,6 +1629,15 @@ th a:hover{color:#1e293b}
 td{padding:10px 12px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:14px}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:#f8fafc}
+/* app.yaml ui.list_density: compact — плотные списки, журналы, регистры и
+   виджеты-списки, как в 1С: 12px, строка ≈ 22px, видимые границы строк и
+   столбцов. Табличные части, «ключ — значение» и всё внутри формы объекта
+   (#main-form) не трогаются. */
+.ob-compact-lists main table:not(.tp-table):not(.tbl-plain):not(#main-form *){font-size:12px}
+.ob-compact-lists main table:not(.tp-table):not(.tbl-plain):not(#main-form *) th,
+.ob-compact-lists main table:not(.tp-table):not(.tbl-plain):not(#main-form *) td{padding:2px 6px;font-size:12px;line-height:17px;border:1px solid #cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:420px}
+.ob-compact-lists main table:not(.tp-table):not(.tbl-plain):not(#main-form *) th{background:#e8edf3;border-bottom:1px solid #94a3b8;font-weight:600}
+.ob-compact-lists main table:not(.tp-table):not(.tbl-plain):not(#main-form *) tr:last-child td{border-bottom:1px solid #cbd5e1}
 .btn{display:inline-block;padding:8px 18px;border-radius:7px;font-size:14px;font-weight:500;text-decoration:none;cursor:pointer;border:none;line-height:1}
 .btn-primary{background:#3b82f6;color:#fff}.btn-primary:hover{background:#2563eb}
 .btn-post{background:#e8b400;color:#1a1a1a;font-weight:700}.btn-post:hover{background:#d4a200}
@@ -1781,7 +1790,7 @@ body{padding-bottom:32px}
 .img-actions{display:flex;gap:8px;align-items:center}
 .img-field label.btn{cursor:pointer;margin:0}
 </style>
-</head><body data-ob-dev="{{if .Cfg.Dev}}1{{else}}0{{end}}">
+</head><body data-ob-dev="{{if .Cfg.Dev}}1{{else}}0{{end}}"{{if .Cfg.CompactLists}} class="ob-compact-lists"{{end}}>
 {{end}}
 `
 
