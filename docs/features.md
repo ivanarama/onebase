@@ -8876,7 +8876,7 @@ side_panel:
 видимости по ролям. Без этих ключей видимость прежняя.
 
 `Widget.background` и `config/home_page.yaml side_panel.background` задают
-безопасный CSS-цвет контейнера (hex, именованный цвет, rgb/rgba/hsl по правилам
+безопасный CSS-цвет контейнера (hex, именованный цвет, rgb/rgba по правилам
 csssafe.Color). Недопустимый цвет не выводится и диагностируется check.
 
 `Widget.row_style.color` — колонка query с цветом текста `#RGB`/`#RRGGBB`.
