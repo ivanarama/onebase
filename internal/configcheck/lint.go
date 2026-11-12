@@ -432,9 +432,13 @@ func entityYAMLSchema() *yamlLintSchema {
 		"numerator": with(obj("prefix", "length", "period", "scope", "base_prefix", "unique"), map[string]*yamlLintSchema{
 			"field": with(obj("title", "label", "required", "default", "pii"), map[string]*yamlLintSchema{"titles": freeMap()}),
 		}),
-		"predefined":   seq(with(obj("name"), map[string]*yamlLintSchema{"fields": freeMap()})),
-		"tile_view":    obj("image", "title", "subtitle", "fields"),
-		"activity":     obj("field", "default_scope", "hide_from_choice"),
+		"predefined": seq(with(obj("name"), map[string]*yamlLintSchema{"fields": freeMap()})),
+		"tile_view":  obj("image", "title", "subtitle", "fields"),
+		"activity":   obj("field", "default_scope", "hide_from_choice"),
+		"choice_row_style": with(obj("for_roles"), map[string]*yamlLintSchema{
+			"for_user": obj("func", "card", "account_field", "field", "equals"),
+			"rules":    seq(obj("when", "color", "background", "bold", "italic")),
+		}),
 		"detail_panel": detailPanel,
 		"stages":       stages,
 	})

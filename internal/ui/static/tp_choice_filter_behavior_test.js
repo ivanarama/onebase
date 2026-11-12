@@ -175,3 +175,133 @@ test('TP snapshots read the submitted source copy for global and row-local field
  assert.equal(names.at(-1),'tp.Строки.2.Направление');
  assert.deepEqual(sources(local,{направление:'grid-row'}),{'Строки.Направление':'grid-row'});
 });
+
+// choice_row_style (#2366): оформление варианта доходит до списка ячейки-ссылки
+// и до окна подбора — и у предзагруженных вариантов, и у строк серверного поиска.
+test('the grid reference editor keeps choice_row_style for preloaded, searched and picker options',async()=>{
+ const server={items:[{id:'srv',_label:'Сервер','\u0000ref_style':'color:#b91c1c','\u0000ref_style_bg':'#fee2e2'}]};
+ const env=runtime([{Выбор:''}],()=>Promise.resolve({ok:true,json:async()=>server}));
+ const picked=[];env.window.openRefPicker=select=>picked.push(select);
+ const editorStart=managed.indexOf('  function refId('),editorEnd=managed.indexOf('  function ObNumberEditor(',editorStart);
+ vm.runInContext(managed.slice(editorStart,editorEnd),env.sandbox);
+ const container=env.sandbox.document.createElement('div');
+ const column={field:'Выбор',refEntity:'Цель'};
+ const args={row:0,item:env.rows[0],column,container,commitChanges(){},cancelChanges(){},grid:{getOptions(){return {};}}};
+ const editor=new env.sandbox.ObRefEditor('Выбор',[{id:'pre',_label:'Предзагрузка','\u0000ref_style':'font-weight:600','\u0000ref_style_bg':'#fef9c3'}],args);
+ editor.loadValue(args.item);await new Promise(setImmediate);
+ const wrapper=container.children[0],input=wrapper.children[0];
+ // 1) предзагруженный вариант в быстром списке
+ input.listeners.keydown({key:'ArrowDown',preventDefault(){},stopPropagation(){}});
+ let list=env.sandbox.document.body.children[0];
+ const pre=list.children.find(el=>/Предзагрузка/.test(el.textContent));
+ assert.ok(pre,'предзагруженный вариант в списке');
+ assert.match(pre.style.cssText,/font-weight:600/);assert.equal(pre.getAttribute('data-ob-bg'),'#fef9c3');
+ // 2) строка серверного поиска
+ input.value='Серв';input.listeners.input({});
+ await new Promise(r=>setTimeout(r,250));await new Promise(setImmediate);
+ list=env.sandbox.document.body.children[env.sandbox.document.body.children.length-1];
+ const srv=list.children.find(el=>/Сервер/.test(el.textContent));
+ assert.ok(srv,'строка серверного поиска в списке');
+ assert.match(srv.style.cssText,/color:#b91c1c/);assert.equal(srv.getAttribute('data-ob-bg'),'#fee2e2');
+ // 3) варианты, переданные в окно подбора из ячейки
+ input.value='';input.listeners.input({});
+ wrapper.children[1].listeners.click({preventDefault(){},stopPropagation(){}});
+ assert.equal(picked.length,1);
+ const opt=picked[0].options.find(o=>o.value==='pre');
+ assert.ok(opt,'вариант передан в окно подбора');assert.match(opt.getAttribute('style')||'',/font-weight:600/);
+ editor.destroy();
+});
+
+test('picker choice keeps styling in subsequent grid input',()=>{
+ const env=runtime([{Выбор:''}],()=>Promise.resolve({ok:true,json:async()=>({items:[]})}));
+ let picker;
+ env.window.openRefPicker=select=>{ picker=select; };
+ const editorStart=managed.indexOf('  function refId('),editorEnd=managed.indexOf('  function ObNumberEditor(',editorStart);
+ vm.runInContext(managed.slice(editorStart,editorEnd),env.sandbox);
+ const container=env.sandbox.document.createElement('div'), remembered=[];
+ const args={row:0,item:env.rows[0],column:{field:'Выбор',refEntity:'Цель'},container,commitChanges(){},cancelChanges(){},grid:{getOptions(){return {};}}};
+ const editor=new env.sandbox.ObRefEditor('Выбор',remembered,args);
+ const wrapper=container.children[0];
+ wrapper.children[1].listeners.click({preventDefault(){},stopPropagation(){}});
+ assert.ok(picker,'reference picker was opened by the cell');
+ // A remote search item selected outside the initial page. Even if its
+ // <option> retains all styling, the editor must also retain that styling.
+ const remote=env.sandbox.document.createElement('option');
+ remote.value='remote'; remote.textContent='Ограниченное направление';
+ remote.setAttribute('style','color:rgb(250,0,0);background:rgb(255,255,0)');
+ remote.setAttribute('data-ob-bg','rgb(255,255,0)');
+ picker.appendChild(remote); picker.value=remote.value; picker.selectedIndex=0;
+ picker.listeners.change();
+ assert.equal(remembered.length,1);
+ assert.equal(remembered[0].id,'remote');
+ assert.match(remembered[0]['\u0000ref_style']||'',/color:rgb\(250,0,0\)/,'the row selected through the picker lost its style');
+ assert.equal(remembered[0]['\u0000ref_style_bg'],'rgb(255,255,0)');
+ editor.destroy();
+});
+
+for (const existing of [false,true]) {
+ test(`reference picker transfers server styling into its selected option (existing=${existing})`,async()=>{
+  const css='color:rgb(250,0,0);background:rgb(255,255,0)',bg='rgb(255,255,0)';
+  const raw='position:fixed;<img src=x onerror=alert(1)>\nПамятка';
+  let server={preview:'_style',items:[{id:'remote',_label:'Ограниченное направление',_style:raw,_style_bg:'url(/ordinary)','\u0000ref_style':css,'\u0000ref_style_bg':bg}]};
+  const env=runtime([],()=>Promise.resolve({ok:true,json:async()=>server}));
+  const doc=env.sandbox.document,create=doc.createElement,ids={};
+  doc.createElement=()=>{
+   const el=create();
+   el.hasAttribute=k=>el.getAttribute(k)!==null;
+   Object.defineProperty(el,'innerHTML',{set(){
+    el.children=[];el.options=[];
+    if(el.id==='_ref-picker-modal')for(const id of ['_rp-card','_rp-body','_rp-list','_rp-preview','_rp-status','_rp-search','_rp-cancel'])ids[id]=doc.createElement('div');
+   }});
+   el.querySelectorAll=()=>el.children.filter(c=>c.className==='_rp-item');
+   return el;
+  };
+  doc.getElementById=id=>ids[id]||null;
+  const sel=doc.createElement('select');sel.setAttribute('data-ref-entity','Направления');
+  sel.dispatchEvent=()=>{};
+  if(existing){const opt=doc.createElement('option');opt.value='remote';opt.text='Старая подпись';sel.appendChild(opt);}
+  env.sandbox.Event=class {};
+  env.sandbox.setTimeout=()=>0;
+  vm.runInContext(ui.slice(ui.indexOf('function openRefPicker(selOrId)'),ui.indexOf('\nfunction openRefCurrent(')),env.sandbox);
+  async function select(){
+   env.sandbox.openRefPicker(sel);await new Promise(setImmediate);
+   const item=ids['_rp-list'].children.find(c=>c.getAttribute('data-id')==='remote');
+   assert.ok(item,'server search row rendered');
+   assert.ok(!item.style.cssText.includes('position:fixed'),'ordinary data must never become CSS');
+   assert.equal(ids['_rp-preview'].textContent,raw,'preview uses the exact ordinary text through textContent');
+   ids['_rp-list'].listeners.click({target:{closest(){return item;}}});
+   assert.equal(sel.value,'remote');
+   assert.equal(sel.options.length,1,'reuse an existing option without duplicates');
+   return sel.options[0];
+  }
+  let opt=await select();
+  assert.equal(opt.getAttribute('style'),css,'only the supplied CSS survives active-row highlighting');
+  assert.equal(opt.getAttribute('data-ob-bg'),bg);
+  server={preview:'_style_bg',items:[{id:'remote',_label:'Без оформления',_style:'position:fixed',_style_bg:raw}]};
+  opt=await select();
+  assert.equal(opt.getAttribute('style'),null,'a new unstyled result clears a stale style');
+  assert.equal(opt.getAttribute('data-ob-bg'),null);
+ });
+}
+
+for (const styled of [false,true]) {
+ test(`grid search separates ordinary style fields from computed CSS (${styled})`,async()=>{
+  const raw='position:fixed;inset:0;<img src=x onerror=alert(1)>',css='color:red';
+  const row={id:'raw',_label:'Данные',_style:raw,_style_bg:'url(/ordinary)'};
+  if(styled){row['\u0000ref_style']=css;row['\u0000ref_style_bg']='#fef9c3';}
+  const env=runtime([{Выбор:''}],()=>Promise.resolve({ok:true,json:async()=>({items:[row]})}));
+  const start=managed.indexOf('  function refId('),end=managed.indexOf('  function ObNumberEditor(',start);
+  vm.runInContext(managed.slice(start,end),env.sandbox);
+  const container=env.sandbox.document.createElement('div');
+  const args={row:0,item:env.rows[0],column:{field:'Выбор',refEntity:'Цель'},container,commitChanges(){},cancelChanges(){},grid:{getOptions(){return {};}}};
+  const editor=new env.sandbox.ObRefEditor('Выбор',[],args);
+  const input=container.children[0].children[0];input.value='Дан';input.listeners.input({});
+  await new Promise(r=>setTimeout(r,250));await new Promise(setImmediate);
+  const list=env.sandbox.document.body.children.at(-1),item=list.children.find(x=>x.textContent==='Данные');
+  assert.ok(item,'actual reference editor rendered server search row');
+  assert.ok(!item.style.cssText.includes('position:fixed'),'ordinary data must never become CSS');
+  assert.equal(item.style.cssText.includes(';'+css),styled);
+  assert.equal(item.getAttribute('data-ob-bg'),styled?'#fef9c3':null);
+  editor.destroy();
+ });
+}

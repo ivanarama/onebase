@@ -3988,6 +3988,7 @@ function addTpRow(tpName, fields, numFields, idx, tbodyOverride, virtualFields, 
         var o = document.createElement('option');
         o.value = opt.id;
         o.textContent = opt._label || opt.id;
+        if (opt['\u0000ref_style']) o.setAttribute('style', opt['\u0000ref_style']);
         sel.appendChild(o);
       });
       var pickBtn = document.createElement('button');
@@ -5063,6 +5064,7 @@ function obRefreshDependentSelects(sourceEl) {
             var opt = document.createElement('option');
             opt.value = rows[j].id;
             opt.textContent = rows[j]._label != null ? rows[j]._label : rows[j].id;
+            if (rows[j]['\u0000ref_style']) opt.setAttribute('style', rows[j]['\u0000ref_style']);
             sel.appendChild(opt);
           }
           sel.value = keep ? current : '';
@@ -5339,6 +5341,7 @@ function obChoiceApplyResponse(sel, data, selectedAtRequest) {
     var opt = document.createElement('option');
     opt.value = id;
     opt.textContent = String((row && row._label) || id);
+    if (row && row['\u0000ref_style']) opt.setAttribute('style', row['\u0000ref_style']);
     if (id === selectedAtRequest) selectedPresent = true;
     sel.appendChild(opt);
   });
@@ -5528,7 +5531,8 @@ function openRefPicker(selOrId) {
     // A saved legacy value outside choice_filter stays visible in the field,
     // but must not become a candidate merely because it is an <option>.
     if (o.value && o.getAttribute('data-ob-choice-outside-filter') !== '1') {
-      localOpts.push({ id: o.value, label: o.text });
+      // choice_row_style: оформление строки переносится из <option> в подбор.
+      localOpts.push({ id: o.value, label: o.text, style: o.getAttribute('style') || '', bg: o.getAttribute('data-ob-bg') || (o.style ? o.style.background || '' : '') });
     }
   }
   var old = document.getElementById('_ref-picker-modal');
@@ -5622,7 +5626,9 @@ function openRefPicker(selOrId) {
   }
   function rpPaint() {
     var items = rpItems();
-    for (var i = 0; i < items.length; i++) items[i].style.background = (i === rpActive) ? '#eef2ff' : '';
+    // Активная строка — своим фоном; остальные возвращают фон оформления
+    // строки (choice_row_style), а не пустоту.
+    for (var i = 0; i < items.length; i++) items[i].style.background = (i === rpActive) ? '#eef2ff' : (items[i].getAttribute('data-ob-bg') || '');
     if (rpActive >= 0 && items[rpActive] && items[rpActive].scrollIntoView) {
       items[rpActive].scrollIntoView({ block: 'nearest' });
     }
@@ -5646,8 +5652,10 @@ function openRefPicker(selOrId) {
       item.className = '_rp-item';
       item.setAttribute('data-id', opts[i].id);
       item.setAttribute('data-label', opts[i].label);
+      if (opts[i].style) item.setAttribute('data-ob-style', opts[i].style);
       if (opts[i].preview) item.setAttribute('data-preview', opts[i].preview);
-      item.style.cssText = 'padding:9px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:14px;color:#1e293b';
+      item.style.cssText = 'padding:9px 14px;cursor:pointer;border-bottom:1px solid #f1f5f9;font-size:14px;color:#1e293b' + (opts[i].style ? ';' + opts[i].style : '');
+      if (opts[i].bg) item.setAttribute('data-ob-bg', opts[i].bg);
       item.textContent = opts[i].label;
       (function (idx) {
         item.addEventListener('mouseenter', function () { rpActive = idx; rpPaint(); });
@@ -5678,18 +5686,26 @@ function openRefPicker(selOrId) {
     if (!window._rpTarget) return;
     var id = item.getAttribute('data-id') || '';
     var label = item.getAttribute('data-label') || item.textContent || id;
-    var exists = false;
+    var opt = null;
     for (var i = 0; i < window._rpTarget.options.length; i++) {
       if (window._rpTarget.options[i].value === id) {
-        exists = true;
+        opt = window._rpTarget.options[i];
         break;
       }
     }
-    if (!exists && id) {
-      var opt = document.createElement('option');
+    if (!opt && id) {
+      opt = document.createElement('option');
       opt.value = id;
-      opt.textContent = label;
       window._rpTarget.appendChild(opt);
+    }
+    if (opt) {
+      opt.textContent = label;
+      // rpPaint меняет фон активной строки и добавляет геометрию диалога.
+      // В поле переносим только исходное оформление серверного варианта.
+      var css = item.getAttribute('data-ob-style') || '';
+      var bg = item.getAttribute('data-ob-bg') || '';
+      if (css) opt.setAttribute('style', css); else opt.removeAttribute('style');
+      if (bg) opt.setAttribute('data-ob-bg', bg); else opt.removeAttribute('data-ob-bg');
     }
     window._rpTarget.value = id;
     try {
@@ -5771,7 +5787,7 @@ function openRefPicker(selOrId) {
           var id = row && row.id != null ? String(row.id) : '';
           var preview = '';
           if (rpPreviewField && row && row[rpPreviewField] != null) preview = String(row[rpPreviewField]);
-          return { id: id, label: String((row && row._label) || id), preview: preview };
+          return { id: id, label: String((row && row._label) || id), preview: preview, style: (row && row['\u0000ref_style']) || '', bg: (row && row['\u0000ref_style_bg']) || '' };
         }).filter(function (opt) { return opt.id !== ''; });
         renderItems(opts, keep);
         rpReveal();
