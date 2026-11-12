@@ -6,6 +6,7 @@ import (
 	"html/template"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/ivantit66/onebase/internal/csssafe"
 	"github.com/ivantit66/onebase/internal/report"
@@ -25,6 +26,9 @@ func renderComposedTable(res *compose.Result, spec *report.Composition) template
 	}
 	b.WriteString(`>`)
 	b.WriteString(`<thead><tr><th>` + html.EscapeString(strings.Join(spec.Groupings, " / ")) + `</th>`)
+	for _, d := range spec.DetailFields {
+		b.WriteString(`<th class="detail-field">` + html.EscapeString(detailFieldTitle(d)) + `</th>`)
+	}
 	for _, m := range spec.Measures {
 		b.WriteString(`<th class="num" style="` + html.EscapeString(measureAlign(m)) + `">` + html.EscapeString(measureTitle(m)) + `</th>`)
 	}
@@ -86,6 +90,23 @@ func (h *htmlComposeSink) groupMarker(level int) string {
 // оформление по styles[поле]. Общий код для строк группы, подытога и детали
 // (раньше один и тот же цикл был скопирован трижды).
 func (h *htmlComposeSink) measureCells(vals map[string]any, styles map[string]report.CellStyle) {
+	h.detailFieldCells(nil, nil)
+	h.measureOnlyCells(vals, styles)
+}
+
+// detailFieldCells — ячейки полей детальной записи. Строки групп и итогов
+// передают nil: колонки есть, значений в них нет.
+func (h *htmlComposeSink) detailFieldCells(vals map[string]any, styles map[string]report.CellStyle) {
+	for _, d := range h.spec.DetailFields {
+		v := ""
+		if vals != nil {
+			v = fmtDetailVal(vals[d.Field])
+		}
+		h.b.WriteString(`<td class="detail-field" style="` + html.EscapeString(cssOf(styles[d.Field])) + `">` + html.EscapeString(v) + `</td>`)
+	}
+}
+
+func (h *htmlComposeSink) measureOnlyCells(vals map[string]any, styles map[string]report.CellStyle) {
 	for _, m := range h.spec.Measures {
 		cell := joinStyles(measureAlign(m), cssOf(styles[m.Field]))
 		h.b.WriteString(`<td class="num" style="` + html.EscapeString(cell) + `">` + html.EscapeString(fmtMeasure(vals[m.Field], m)) + `</td>`)
@@ -118,7 +139,8 @@ func (h *htmlComposeSink) detail(d compose.DetailRow, level int, path string) {
 	if !linked {
 		fmt.Fprintf(h.b, `<td style="padding-left:%dpx"></td>`, 8+level*18)
 	}
-	h.measureCells(d.Values, d.Styles)
+	h.detailFieldCells(d.Values, d.Styles)
+	h.measureOnlyCells(d.Values, d.Styles)
 	h.b.WriteString(`</tr>`)
 }
 
@@ -292,6 +314,29 @@ func composeFloat(v any) float64 {
 		return f
 	}
 	return 0
+}
+
+// detailFieldTitle — заголовок колонки детальной записи (пустой = имя поля).
+func detailFieldTitle(d report.DetailField) string {
+	if d.Title != "" {
+		return d.Title
+	}
+	return d.Field
+}
+
+// fmtDetailVal — значение поля детальной записи: дата — по-русски (время
+// только если оно есть), остальное — как fmtVal.
+func fmtDetailVal(v any) string {
+	if t, ok := v.(time.Time); ok {
+		if t.IsZero() {
+			return ""
+		}
+		if t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 {
+			return t.Format("02.01.2006")
+		}
+		return t.Format("02.01.2006 15:04:05")
+	}
+	return fmtVal(v)
 }
 
 func fmtVal(v any) string {

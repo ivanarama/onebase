@@ -64,6 +64,14 @@ func Parse(f url.Values) (*report.Composition, bool) {
 	c.Detail = f.Get("comp.detail") != ""
 	c.DetailLink = strings.TrimSpace(f.Get("comp.detail_link"))
 	c.DetailEntity = strings.TrimSpace(f.Get("comp.detail_entity"))
+	// Поля детальной записи редактируются в YAML; форма конфигуратора несёт
+	// их скрытыми полями, чтобы сохранение отчёта их не теряло.
+	for _, i := range rowIndexes(f, "comp.detail_field.", ".field") {
+		p := "comp.detail_field." + strconv.Itoa(i)
+		if fld := strings.TrimSpace(f.Get(p + ".field")); fld != "" {
+			c.DetailFields = append(c.DetailFields, report.DetailField{Field: fld, Title: strings.TrimSpace(f.Get(p + ".title"))})
+		}
+	}
 
 	// Сортировка
 	for _, i := range rowIndexes(f, "comp.sort.", ".field") {
