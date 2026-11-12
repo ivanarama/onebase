@@ -31,7 +31,7 @@ const (
 // Связанная запись читается только при праве чтения и строковом доступе и
 // тоже маскируется; недоступная — просто не даёт оформления.
 func (s *Server) applyListRowStyle(ctx context.Context, entity *metadata.Entity, rows []map[string]any) {
-	form := pickManagedForm(entity, "list")
+	form := pickManagedFormCtx(ctx, entity, "list")
 	if form == nil || form.ListRowStyle == nil || len(rows) == 0 {
 		return
 	}

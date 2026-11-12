@@ -56,7 +56,7 @@ func (s *Server) applyRowFilter(w http.ResponseWriter, r *http.Request, entity *
 // задания, анонимные пути) не применяется вовсе: подставить туда нечего,
 // а отбор «по никому» показал бы пустой список и выглядел бы поломкой.
 func (s *Server) applyListFormFilter(r *http.Request, entity *metadata.Entity, params storage.ListParams) storage.ListParams {
-	form := pickManagedForm(entity, "list")
+	form := pickManagedFormCtx(r.Context(), entity, "list")
 	if form == nil || len(form.ListFilter) == 0 {
 		return params
 	}
@@ -130,7 +130,7 @@ type listFormFilterToggle struct {
 // текущего пользователя: условие, которое к нему не относится (роль,
 // администратор), переключателя не получает.
 func (s *Server) listFormFilterToggles(r *http.Request, entity *metadata.Entity) []listFormFilterToggle {
-	form := pickManagedForm(entity, "list")
+	form := pickManagedFormCtx(r.Context(), entity, "list")
 	if form == nil {
 		return nil
 	}

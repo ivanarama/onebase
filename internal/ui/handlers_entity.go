@@ -1393,6 +1393,7 @@ type treeChildRow struct {
 func (s *Server) treeChildrenJSON(w http.ResponseWriter, r *http.Request) {
 	name := chi.URLParam(r, "entity")
 	ent := s.reg.GetEntity(name)
+	ent = entityWithUserListForm(r.Context(), ent)
 	if ent == nil {
 		if decoded, err := url.PathUnescape(name); err == nil {
 			ent = s.reg.GetEntityBySlug(decoded)

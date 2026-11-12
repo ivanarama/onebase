@@ -41,10 +41,7 @@ func pickManagedFormForUser(entity *metadata.Entity, kind string, user *auth.Use
 		return nil
 	}
 	kindLower := strings.ToLower(kind)
-	// Ролевой выбор — только у формы объекта: списки и подбор выбираются и в
-	// путях без пользователя (плитка, панель деталей), и форма с условием там
-	// не выбирается вовсе, чтобы пути не разошлись.
-	roleAware := user != nil && kindLower == "object"
+	roleAware := user != nil && (kindLower == "object" || kindLower == "list")
 	var plain *metadata.FormModule
 	for _, fm := range entity.Forms {
 		if fm == nil || !fm.IsManaged() {
