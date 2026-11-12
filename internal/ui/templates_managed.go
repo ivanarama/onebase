@@ -345,7 +345,7 @@ const tplManagedForm = `
        {{/* id — имя реквизита (по нему идёт привязка данных и разбор tp.*),
             name — только подпись колонки: синоним реквизита, как в автоформе. */}}
        {{if $tpColEvents}}data-sg-colevents="{{$tpColEvents}}"{{end}}
-       data-sg-cols='{{managedTPColumnsJSON $tpPlan $tpVirtualCols (str $ctx.Lang) $ctx.RefWriteAccess $tpName $ctx.RefFilter}}'
+       data-sg-cols='{{managedTPColumnsJSON $ctx $tpPlan $tpVirtualCols (str $ctx.Lang) $ctx.RefWriteAccess $tpName $ctx.RefFilter}}'
        data-sg-ref='{{jsJSON $tpRef}}'
        data-sg-choice='{{jsJSON (tpChoiceContexts $ctx $el)}}'
        data-sg-choice-rows='{{jsJSON (tpChoiceRows $ctx $el)}}'

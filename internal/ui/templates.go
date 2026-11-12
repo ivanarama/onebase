@@ -46,6 +46,26 @@ type managedTPColumnJSON struct {
 	// в _tp_col_index: сервер сверяет индекс с порядком метаданных, а порядок
 	// показа с ним больше не совпадает. Для виртуальной колонки — -1.
 	Index int `json:"index"`
+	// ReadOnly — колонка не редактируется: readonly элемента колонки или его
+	// readonly_when (своё либо предка), вычисленное при отрисовке. Path — путь
+	// элемента колонки в дереве формы: по нему ответ события формы присылает
+	// новое состояние readonly_when, и сетка снимает/возвращает редактор.
+	ReadOnly bool   `json:"readOnly,omitempty"`
+	Path     string `json:"path,omitempty"`
+}
+
+// tpColumnReadOnly — запрет колонки табличной части: свой readonly элемента
+// колонки либо вычисленное при отрисовке readonly_when (своё или предка) —
+// та же карта ElReadOnly, что у полей шапки.
+func tpColumnReadOnly(ctx map[string]any, el *metadata.FormElement) bool {
+	if el == nil {
+		return false
+	}
+	if el.ReadOnly {
+		return true
+	}
+	set, _ := ctx["ElReadOnly"].(map[string]bool)
+	return set[elementStatePath(ctx, el)]
 }
 
 func refWriteAllowed(access any, entity string) bool {
@@ -1231,7 +1251,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
-		"managedTPColumnsJSON": func(plan []managedTPColumn, virtual []metadata.FormVirtualColumn, lang string, refWriteAccess any, tpName string, refFilters any) template.JS {
+		"managedTPColumnsJSON": func(ctx map[string]any, plan []managedTPColumn, virtual []metadata.FormVirtualColumn, lang string, refWriteAccess any, tpName string, refFilters any) template.JS {
 			filters, _ := refFilters.(map[string]string)
 			fields := make([]metadata.Field, 0, len(plan))
 			for _, column := range plan {
@@ -1253,6 +1273,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 					Index:       column.Index,
 					TitleFrom:   column.Element != nil && strings.TrimSpace(column.Element.TitleFrom) != "",
 					Width:       column.Width(),
+					ReadOnly:    tpColumnReadOnly(ctx, column.Element),
+					Path:        elementStatePath(ctx, column.Element),
 				})
 			}
 			// Виртуальные колонки идут ПОСЛЕ реквизитов: порядок хранимых колонок
