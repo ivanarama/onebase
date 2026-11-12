@@ -38,7 +38,7 @@ type Report struct {
 	Query       string            `yaml:"query"`
 	ChartProc   string            `yaml:"chart_proc"`
 	Composition *Composition      `yaml:"composition"` // nil = плоская таблица (старое поведение)
-	Variants    []ReportVariant   `yaml:"variants"`    // доп. именованные компоновки по тому же запросу
+	Variants    []ReportVariant   `yaml:"variants"`    // именованные компоновки и источники данных
 	// OutputFormat — предпочтительный формат выгрузки отчёта (issue #218): пусто|html
 	// (интерактивный просмотр + кнопки Excel/PDF), pdf, excel или совместимый
 	// legacy-синоним excel_html. Реальная выгрузка идёт через /ui/report/<name>/pdf
@@ -51,12 +51,14 @@ type Report struct {
 	External bool `yaml:"-"`
 }
 
-// ReportVariant — именованная компоновка по тому же запросу отчёта («вариант
-// отчёта», как в 1С). На форме отчёта пользователь выбирает вариант; пустой
-// выбор соответствует основному блоку composition.
+// ReportVariant — именованный вариант компоновки и данных отчёта. Пустой Query
+// наследует основной запрос; Filters задают постоянный отбор до лимита строк.
+// Пустой выбор соответствует основному запросу и блоку composition.
 type ReportVariant struct {
-	Name        string       `yaml:"name"`
-	Composition *Composition `yaml:"composition"`
+	Name        string          `yaml:"name"`
+	Composition *Composition    `yaml:"composition"`
+	Query       string          `yaml:"query,omitempty"`
+	Filters     []VariantFilter `yaml:"filters,omitempty"`
 }
 
 // Composition описывает настройки компоновки данных отчёта.

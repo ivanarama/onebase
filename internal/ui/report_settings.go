@@ -105,7 +105,7 @@ func (s *Server) reportSettingsForRequest(r *http.Request, rep *reportpkg.Report
 		}
 		if p, err := s.store.GetReportPreset(r.Context(), rep.Name, user, presetID); err == nil && p != nil {
 			if st, err := reportpkg.ParseUserSettings(p.SettingsJSON); err == nil {
-				return reportSettingsRequest{Settings: st, ActivePresetID: p.ID}
+				return reportSettingsRequest{Settings: reportSettingsWithRequestVariant(r, st), ActivePresetID: p.ID}
 			}
 		}
 		return reportSettingsRequest{Settings: reportSettingsWithRequestVariant(r, nil), ActivePresetID: standardReportPresetID}
@@ -113,7 +113,7 @@ func (s *Server) reportSettingsForRequest(r *http.Request, rep *reportpkg.Report
 
 	if p, err := s.store.GetDefaultReportPreset(r.Context(), rep.Name, user); err == nil && p != nil {
 		if st, err := reportpkg.ParseUserSettings(p.SettingsJSON); err == nil {
-			return reportSettingsRequest{Settings: st, ActivePresetID: p.ID}
+			return reportSettingsRequest{Settings: reportSettingsWithRequestVariant(r, st), ActivePresetID: p.ID}
 		}
 	}
 
