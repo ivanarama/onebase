@@ -631,6 +631,10 @@ func homePageYAMLSchema() *yamlLintSchema {
 		"nav":         nav,
 		"nav_by_role": {values: nav},
 		"menu":        menuYAMLSchema(),
+		"side_panel": with(obj("widget", "width", "hide_on_home"), map[string]*yamlLintSchema{
+			"roles":        seq(obj()),
+			"except_roles": seq(obj()),
+		}),
 	})
 }
 
