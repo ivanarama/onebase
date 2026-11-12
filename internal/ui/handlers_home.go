@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/csssafe"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -207,9 +208,13 @@ func (s *Server) homeDashboardData(r *http.Request) map[string]any {
 		s.decorateRefreshResult(r, wMeta, &res, runner)
 		return res
 	}
+	hiddenByPanel := s.hiddenOnHomeBySidePanel(r)
 	for _, group := range groups {
 		rowRes := make([]widget.Result, 0, len(group))
 		for _, wMeta := range group {
+			if hiddenByPanel != nil && hiddenByPanel(wMeta.Name) {
+				continue // правая панель этого пользователя заменяет виджет (hide_on_home)
+			}
 			res := run(wMeta)
 			// Нет прав на источник — карточку не показываем: ошибка «нет
 			// доступа» на чужом рабочем столе только пугает пользователя.
@@ -261,6 +266,9 @@ func refreshableWidgetType(t metadata.WidgetType) bool {
 }
 
 func (s *Server) decorateRefreshResult(r *http.Request, wMeta *metadata.Widget, res *widget.Result, runner *widget.Runner) {
+	if res != nil && wMeta != nil {
+		res.Background = csssafe.Color(wMeta.Background)
+	}
 	if res == nil || !refreshableWidgetType(metadata.WidgetType(res.Type)) {
 		return
 	}
@@ -295,12 +303,20 @@ func (s *Server) dashboardWidget(r *http.Request, name string) *metadata.Widget 
 	if subsystem != "" && s.reg.GetSubsystem(subsystem) == nil {
 		return nil
 	}
+	// Виджет правой панели оболочки обновляется тем же маршрутом, даже если
+	// на главной этого пользователя его нет (hide_on_home).
+	if _, panel := s.sidePanelFor(r); panel != nil && strings.EqualFold(panel.Name, name) {
+		return panel
+	}
 	hp := s.effectiveHomePage(subsystem)
 	honorRows := hp != nil && hp.Layout == "rows"
 	groups, _ := homePageWidgetGroups(hp, s.reg, honorRows)
 	for _, group := range groups {
 		for _, candidate := range group {
 			if strings.EqualFold(candidate.Name, name) {
+				if !widget.VisibleFor(candidate, auth.UserFromContext(r.Context())) {
+					return nil
+				}
 				return candidate
 			}
 		}

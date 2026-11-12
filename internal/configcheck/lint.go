@@ -475,8 +475,9 @@ func constantsYAMLSchema() *yamlLintSchema {
 }
 
 func widgetYAMLSchema() *yamlLintSchema {
-	return with(obj("name", "type", "title", "query", "format", "compare_to", "limit", "chart_kind", "chart_type", "x_field", "y_fields", "entities", "scope", "link", "refresh_on"), map[string]*yamlLintSchema{
-		"source": obj("entity", "id_field"),
+	return with(obj("name", "type", "title", "query", "format", "compare_to", "limit", "chart_kind", "chart_type", "x_field", "y_fields", "entities", "scope", "link", "refresh_on", "roles", "except_roles", "background"), map[string]*yamlLintSchema{
+		"source":    obj("entity", "id_field"),
+		"row_style": obj("background", "bold", "color"),
 		"filters": seq(with(obj("name", "label", "type", "param"), map[string]*yamlLintSchema{
 			"labels": freeMap(),
 			"values": seq(with(obj("value", "label"), map[string]*yamlLintSchema{
@@ -630,6 +631,10 @@ func homePageYAMLSchema() *yamlLintSchema {
 		"nav":         nav,
 		"nav_by_role": {values: nav},
 		"menu":        menuYAMLSchema(),
+		"side_panel": with(obj("widget", "width", "hide_on_home", "background"), map[string]*yamlLintSchema{
+			"roles":        seq(obj()),
+			"except_roles": seq(obj()),
+		}),
 	})
 }
 
@@ -697,10 +702,15 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	// filter — постоянный отбор формы списка (поле ListFilter), читается
 	// загрузчиком внутри блока form:.
 	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button", "ref_card_button_admin_only", "enter_submits_form"), map[string]*yamlLintSchema{
+		"roles":        seq(obj()),
+		"except_roles": seq(obj()),
 		"title": freeMap(),
 		"filter": seq(with(obj("field", "op", "value", "roles", "query", "removable"), map[string]*yamlLintSchema{
 			"label": freeMap(),
 		})),
+		"row_style": with(obj("background_from", "bold_from", "color_from"), map[string]*yamlLintSchema{
+			"rules": seq(obj("field", "equals", "background", "bold", "color")),
+		}),
 	})
 	style := obj("color", "background", "bold", "italic")
 	conditional := with(obj("when", "target", "element", "table_part", "field"), map[string]*yamlLintSchema{

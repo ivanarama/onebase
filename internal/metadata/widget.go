@@ -76,6 +76,17 @@ type WidgetSource struct {
 	IDField string `yaml:"id_field"`
 }
 
+// WidgetRowStyle — оформление строки list-виджета из колонок выборки, как
+// ПриВыводеСтроки списка в 1С: Background — колонка с цветом фона строки
+// ("#RGB" или "#RRGGBB"; иное или пусто — без фона), Bold — колонка-признак
+// жирного шрифта. Колонки оформления в таблице не показываются. Цвет из
+// данных проверяется по формату: CSS из данных в страницу не попадает.
+type WidgetRowStyle struct {
+	Background string `yaml:"background"`
+	Bold       string `yaml:"bold"`
+	Color      string `yaml:"color"`
+}
+
 // WidgetFilterValue — один вариант select-фильтра list-виджета.
 type WidgetFilterValue struct {
 	Value  string            `yaml:"value"`
@@ -135,23 +146,26 @@ func (f WidgetFilter) ReferenceEntity() string {
 
 // Widget describes a single dashboard widget loaded from widgets/<Name>.yaml.
 type Widget struct {
-	Name      string            `yaml:"name"`
-	Type      WidgetType        `yaml:"type"`
-	Title     string            `yaml:"title"`
-	Titles    map[string]string `yaml:"titles"` // переводы заголовка по языкам
-	Query     string            `yaml:"query"`
-	Params    map[string]string `yaml:"params"`     // raw {{today|...}} templates
-	Format    string            `yaml:"format"`     // kpi: money | number | percent
-	CompareTo string            `yaml:"compare_to"` // kpi: prev_period (optional)
-	Limit     int               `yaml:"limit"`      // list / recent
-	Columns   []WidgetColumn    `yaml:"columns"`    // list
-	ChartKind string            `yaml:"chart_kind"` // chart: bar | line | pie
-	ChartType string            `yaml:"chart_type"` // legacy alias for chart_kind
-	XField    string            `yaml:"x_field"`    // chart
-	YFields   []string          `yaml:"y_fields"`   // chart
-	Items     []WidgetAction    `yaml:"items"`      // actions
-	Entities  []string          `yaml:"entities"`   // recent — filter to these entity names
-	Scope     string            `yaml:"scope"`      // recent: current_user | all
+	Roles       []string          `yaml:"roles,omitempty"`
+	ExceptRoles []string          `yaml:"except_roles,omitempty"`
+	Background  string            `yaml:"background,omitempty"`
+	Name        string            `yaml:"name"`
+	Type        WidgetType        `yaml:"type"`
+	Title       string            `yaml:"title"`
+	Titles      map[string]string `yaml:"titles"` // переводы заголовка по языкам
+	Query       string            `yaml:"query"`
+	Params      map[string]string `yaml:"params"`     // raw {{today|...}} templates
+	Format      string            `yaml:"format"`     // kpi: money | number | percent
+	CompareTo   string            `yaml:"compare_to"` // kpi: prev_period (optional)
+	Limit       int               `yaml:"limit"`      // list / recent
+	Columns     []WidgetColumn    `yaml:"columns"`    // list
+	ChartKind   string            `yaml:"chart_kind"` // chart: bar | line | pie
+	ChartType   string            `yaml:"chart_type"` // legacy alias for chart_kind
+	XField      string            `yaml:"x_field"`    // chart
+	YFields     []string          `yaml:"y_fields"`   // chart
+	Items       []WidgetAction    `yaml:"items"`      // actions
+	Entities    []string          `yaml:"entities"`   // recent — filter to these entity names
+	Scope       string            `yaml:"scope"`      // recent: current_user | all
 	// Source — навигация строк list-виджета: клик по строке открывает карточку
 	// записи Source.Entity по идентификатору из колонки Source.IDField. У
 	// kpi/chart/recent/actions навигации строк нет, и check такое объявление
@@ -161,6 +175,9 @@ type Widget struct {
 	// объявленные фильтры принимаются от браузера; значения идут bind-параметрами
 	// существующего компилятора запросов, текст запроса значениями не правится.
 	Filters []WidgetFilter `yaml:"filters,omitempty"`
+	// RowStyle — оформление строк list-виджета из колонок выборки (цвет фона,
+	// жирный). Только для type: list.
+	RowStyle *WidgetRowStyle `yaml:"row_style,omitempty"`
 	// Link — куда ведёт клик по карточке (kpi). Счётчик «в карантине: 3» без
 	// ссылки заставляет искать эту очередь руками; со ссылкой карточка сама
 	// открывает список с нужным отбором. Значение — внутренний путь приложения

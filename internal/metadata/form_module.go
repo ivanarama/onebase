@@ -743,6 +743,8 @@ type FormModule struct {
 	// по реквизиту связанной записи. Значение — литерал или @ТекущийПользователь
 	// (идентификатор учётной записи смотрящего).
 	ListFilter []FormListCondition `yaml:"filter,omitempty"`
+	// ListRowStyle — оформление строк формы списка (`row_style`), только kind: list.
+	ListRowStyle *FormListRowStyle `yaml:"row_style,omitempty"`
 
 	// RefCardButtonAdminOnly — кнопку «Открыть карточку» видит только
 	// администратор (#1876). Оператору справочники вести не положено, и лупа у
@@ -754,6 +756,13 @@ type FormModule struct {
 	// ref_card_button: false формы (скрыть у всех) → этот ключ. Это настройка
 	// интерфейса, не защита: карточку по прямому адресу и запись решают права.
 	RefCardButtonAdminOnly bool `yaml:"ref_card_button_admin_only,omitempty"`
+	// Roles / ExceptRoles — для кого эта форма объекта/списка (form.roles,
+	// form.except_roles). Из форм одного вида выбирается первая подходящая
+	// пользователю форма с ролевым условием, иначе — первая без условия: так
+	// «компактная задача для всех, кроме ОператорКЦ» не зависит от порядка
+	// файлов. Это выбор интерфейса, не защита: права на объект те же.
+	Roles       []string `yaml:"roles,omitempty"`
+	ExceptRoles []string `yaml:"except_roles,omitempty"`
 	// EnterSubmitsForm возвращает ПРЕЖНЕЕ поведение клавиши Enter: обычное
 	// нажатие может отправить форму (неявный HTML-submit). По умолчанию платформа
 	// переводит Enter в навигацию по полям — как в 1С и как ожидает оператор,
@@ -790,6 +799,28 @@ type FormModule struct {
 	// чтобы новые id из редактора не пересекались с диапазоном 1С.
 	idCounter int        `yaml:"-"`
 	idMu      sync.Mutex `yaml:"-"`
+}
+
+// FormListRowStyle — оформление строк формы списка (`row_style` в блоке form:),
+// как ПриВыводеСтроки динамического списка 1С. Фон — первое совпавшее правило
+// Rules, иначе цвет из пути BackgroundFrom; жирный — по признаку из пути
+// BoldFrom. Пути — реквизиты записи, через точку по ссылкам
+// (Реклама.ЦветЗадачиВСписке.Цвет). Цвет принимается только как #RGB/#RRGGBB.
+type FormListRowStyle struct {
+	Rules          []FormListRowStyleRule `yaml:"rules,omitempty"`
+	BackgroundFrom string                 `yaml:"background_from,omitempty"`
+	ColorFrom      string                 `yaml:"color_from,omitempty"`
+	BoldFrom       string                 `yaml:"bold_from,omitempty"`
+}
+
+// FormListRowStyleRule — «значение пути равно Equals → фон Background» и/или
+// жирный шрифт.
+type FormListRowStyleRule struct {
+	Field      string `yaml:"field"`
+	Equals     string `yaml:"equals"`
+	Background string `yaml:"background,omitempty"`
+	Bold       bool   `yaml:"bold,omitempty"`
+	Color      string `yaml:"color,omitempty"`
 }
 
 // FormListCondition — одно условие постоянного отбора формы списка.
