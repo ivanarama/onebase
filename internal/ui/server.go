@@ -392,6 +392,10 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/_widget/{name}", s.widgetPartial)
 
 	r.Get("/ui/{kind}/{entity}", s.list)
+	// «Настройка списка» за пользователем: статический сегмент list-settings
+	// побеждает {id} в chi.
+	r.Post("/ui/{kind}/{entity}/list-settings/save", s.listSettingsSave)
+	r.Post("/ui/{kind}/{entity}/list-settings/reset", s.listSettingsReset)
 	r.Get("/ui/{kind}/{entity}/new", s.form)
 	r.Post("/ui/{kind}/{entity}/new", s.submit)
 	// Inline-создание элемента справочника из ссылочного поля документа
