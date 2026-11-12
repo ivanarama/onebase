@@ -17,8 +17,8 @@ type cacheFileLock struct {
 }
 
 func acquireCacheFileLock(ctx context.Context, path string) (*cacheFileLock, error) {
-	// path is produced by restResponseCache.lockPath from a SHA-256 digest under
-	// the explicit operator-selected cache directory.
+	// path names a permanent digest slot in the selected REST namespace.
+	// Never unlink or replace it: waiters may still hold the original inode.
 	//nolint:gosec // G703: path cannot contain request-controlled path segments.
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {

@@ -173,6 +173,25 @@ test('четыре и больше вариантов — столбиком с 
   assert.match(row.style.cssText, /overflow-y:auto/);
 });
 
+test('color строки: подпись и значение красятся, без color — прежний вид', () => {
+  const app = setup();
+  app.window.obOpenQuestion({
+    text: 'Заявка принята', variants: ['ОК'],
+    fields: [
+      { name: 'обмен1с', label: '1С', value: 'НЕ выгружена: таймаут', color: '#b91c1c' },
+      { name: 'номер', label: 'Номер', value: 'ЗК-17' },
+      { name: 'Примечание', label: 'Примечание', value: 'x', editable: true, color: '#0055aa' },
+    ],
+  }, 'Команда');
+  const nodes = walk(app.__modalNode(), []);
+  const byText = (t) => nodes.find((n) => n._text === t);
+  assert.equal(byText('НЕ выгружена: таймаут').style.color, '#b91c1c', 'значение красное');
+  assert.equal(byText('1С').style.color, '#b91c1c', 'подпись красная');
+  assert.equal(byText('ЗК-17').style.color, undefined, 'строка без color не меняется');
+  assert.equal(byText('Номер').style.color, undefined);
+  assert.equal(nodes.find((n) => n.tag === 'input').style.color, '#0055aa', 'поле ввода тоже');
+});
+
 test('обработчики вызывающего получают ответ и закрытие мимо кнопок вместо события Ответ', () => {
   const app = setup();
   const answers = [];
@@ -228,4 +247,19 @@ test('callback без ввода получает только ответ; backd
   modal.listeners.get('click')({target: modal});
   assert.equal(dismissed, 1);
   assert.equal(answers.length, 1);
+});
+
+test('модальный вопрос: щелчок мимо окна не закрывает его и не отвечает', () => {
+  const app = setup();
+  fired.length = 0;
+  app.window.obOpenQuestion(payload, 'Команда');
+  const modal = app.__modalNode();
+  modal.click(); // щелчок по затемнённому фону
+  assert.ok(app.document.getElementById('_question-modal'), 'окно вопроса осталось');
+  assert.equal(fired.length, 0, 'без кнопки ответ не уходит');
+  const buttons = [];
+  (function walk(n) { if (n.tag === 'button') buttons.push(n); (n.children || []).forEach(walk); })(modal);
+  buttons[0].click();
+  assert.equal(app.document.getElementById('_question-modal'), null, 'кнопка закрывает окно');
+  assert.deepEqual(fired.map((f) => [f[0], f[1], f[2]._question_answer]), [['Команда', 'Ответ', 'Да']]);
 });

@@ -28,7 +28,11 @@ type docsCIJob struct {
 	RunsOn   string `yaml:"runs-on"`
 	Outputs  map[string]string
 	Services map[string]struct{ Image string }
-	Steps    []struct {
+	Strategy struct {
+		FailFast *bool `yaml:"fail-fast"`
+		Matrix   struct{ Shard []string }
+	}
+	Steps []struct {
 		ID   string
 		Name string
 		Uses string
@@ -67,6 +71,7 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 	lightBuild := map[string]bool{
 		"actions/checkout@v4": true, "actions/setup-go@v5": true,
 		"Check for UTF-8 BOM in .go files": true, "Plan numbers are unique": true,
+		"Require every race shard": true, // A small result gate, not a test/workload bypass.
 	}
 	for _, id := range append(branchProtectionContexts(t), "smoke_matrix", "bench") {
 		job, ok := w.Jobs[id]
@@ -81,6 +86,10 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 			continue
 		}
 		wantIf := "${{ always() && !cancelled() }}"
+		if id == "build" {
+			// Unlike the workers, the required aggregate must also reject cancellation.
+			wantIf = "${{ always() }}"
+		}
 		if id == "bench" {
 			wantIf = "${{ always() && !cancelled() && github.event_name == 'pull_request' }}"
 		}
@@ -128,7 +137,7 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 		t.Fatal("docs-only must not start PostgreSQL; a failed classifier must start it")
 	}
 	classify := w.Jobs["classify"]
-	if classify.Outputs["mode"] != "${{ steps.diff.outputs.mode }}" || len(classify.Steps) != 2 ||
+	if classify.Outputs["mode"] != "${{ steps.diff.outputs.mode }}" || len(classify.Steps) != 4 ||
 		classify.Steps[0].Uses != "actions/checkout@v4" || classify.Steps[0].With["fetch-depth"] != "0" {
 		t.Fatal("classifier must expose the actual diff result with exact commits available")
 	}
@@ -139,9 +148,54 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 	}
 }
 
+func TestCIShardDAGKeepsRequiredBuildFailClosed(t *testing.T) {
+	w := docsWorkflow(t)
+	full := "needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs'"
+	plan := w.Jobs["unit-plan"]
+	race := w.Jobs["unit-race"]
+	build := w.Jobs["build"]
+	if plan.If != "${{ always() && !cancelled() && ("+full+") }}" ||
+		!slices.Equal(plan.Needs, []string{"classify"}) ||
+		plan.Outputs["plan-sha256"] != "${{ steps.plan.outputs.sha256 }}" {
+		t.Fatal("planning must run on classifier failure and export its independent plan SHA")
+	}
+	if race.If != "${{ always() && !cancelled() && needs.unit-plan.result == 'success' && ("+full+") }}" ||
+		!slices.Equal(race.Needs, []string{"classify", "unit-plan"}) ||
+		race.Strategy.FailFast == nil || *race.Strategy.FailFast ||
+		!slices.Equal(race.Strategy.Matrix.Shard, []string{"other", "ui-1", "ui-2", "ui-3", "ui-4", "launcher-1", "launcher-2"}) {
+		t.Fatal("all seven original shards must run without fail-fast or docs/failure bypass")
+	}
+	if build.If != "${{ always() }}" || !slices.Equal(build.Needs, []string{"classify", "unit-plan", "unit-race"}) {
+		t.Fatal("required build must observe failed, missing, skipped and cancelled shard jobs")
+	}
+	gateFound, mergeFound, runFound := false, false, false
+	for _, step := range build.Steps {
+		if step.Name == "Require every race shard" {
+			gateFound = step.If == "" &&
+				step.Env["DOCS"] == "${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}" &&
+				step.Env["PLAN_RESULT"] == "${{ needs.unit-plan.result }}" && step.Env["RACE_RESULT"] == "${{ needs.unit-race.result }}" &&
+				strings.Contains(step.Run, `test "$PLAN_RESULT" = success && test "$RACE_RESULT" = success`) &&
+				strings.Contains(step.Run, `test "$PLAN_RESULT" = skipped && test "$RACE_RESULT" = skipped`)
+		}
+		if step.Name == "Validate all journals and merge atomic coverage" {
+			mergeFound = step.If == "${{ "+full+" }}" && step.Env["PLAN_SHA"] == "${{ needs.unit-plan.outputs.plan-sha256 }}" &&
+				strings.Contains(step.Run, `--plan-sha256 "$PLAN_SHA"`) && strings.Contains(step.Run, "test-coverage-shards.py merge")
+		}
+	}
+	for _, step := range race.Steps {
+		if step.Name == "Run exact race shard" {
+			runFound = step.Env["PLAN_SHA"] == "${{ needs.unit-plan.outputs.plan-sha256 }}" &&
+				strings.Contains(step.Run, `--plan-sha256 "$PLAN_SHA"`) && strings.Contains(step.Run, "test-coverage-shards.py run")
+		}
+	}
+	if !gateFound || !mergeFound || !runFound {
+		t.Fatal("required build lost its explicit result gate, independent plan hash or full journal/profile validation")
+	}
+}
+
 func TestCICommitClosingGate(t *testing.T) {
 	w := docsWorkflow(t)
-	for _, event := range []string{"opened", "synchronize", "reopened", "edited", "ready_for_review"} {
+	for _, event := range []string{"opened", "synchronize", "reopened", "edited"} {
 		if !slices.Contains(w.On["pull_request"].Types, event) {
 			t.Errorf("closing-reference gate must recheck pull_request %s", event)
 		}
@@ -153,11 +207,42 @@ func TestCICommitClosingGate(t *testing.T) {
 		}
 		if step.Name == "Check commit closing references" {
 			found = step.If == "${{ github.event_name == 'pull_request' }}" &&
-				step.Run == `go run ./tools/prclosecheck -event "$GITHUB_EVENT_PATH"` && completeHistory
+				step.Run == `go run ./tools/prclosecheck -event "$GITHUB_EVENT_PATH" -checkout-merge "$GITHUB_SHA"` && completeHistory
 		}
 	}
 	if !found {
 		t.Fatal("required build must check event data through prclosecheck with complete history")
+	}
+}
+
+func TestReadyMetadataKeepsFullCIProofAndTrustedCodeBoundary(t *testing.T) {
+	w := docsWorkflow(t)
+	if slices.Contains(w.On["pull_request"].Types, "ready_for_review") {
+		t.Fatal("Ready must validate existing full evidence before requesting another full run")
+	}
+	var metadata docsCIWorkflow
+	if err := yaml.Unmarshal([]byte(repositoryFile(t, ".github", "workflows", "ci-metadata.yml")), &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(metadata.On["pull_request_target"].Types, []string{"ready_for_review"}) {
+		t.Fatal("metadata trigger changed")
+	}
+	steps := metadata.Jobs["metadata"].Steps
+	if len(steps) != 5 || steps[0].Uses != "actions/checkout@v4" ||
+		steps[0].With["ref"] != "${{ github.event.pull_request.base.sha }}" ||
+		steps[0].With["persist-credentials"] != "false" || steps[0].With["fetch-depth"] != "0" {
+		t.Fatal("privileged event must only execute the immutable trusted base")
+	}
+	if steps[2].Env["HEAD_SHA"] != "${{ github.event.pull_request.head.sha }}" ||
+		!strings.Contains(steps[2].Run, `test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"`) ||
+		steps[3].Run != `go run ./tools/prclosecheck -event "$GITHUB_EVENT_PATH"` ||
+		steps[4].Run != `python3 .github/scripts/ci-metadata.py --event "$GITHUB_EVENT_PATH"` {
+		t.Fatal("Ready lost its actual metadata check or conservative full-CI fallback")
+	}
+	classify := w.Jobs["classify"].Steps
+	if classify[2].Run != "python3 .github/scripts/ci-inputs.py" || classify[2].Env["CI_MODE"] != "${{ steps.diff.outputs.mode }}" ||
+		classify[3].Uses != "actions/upload-artifact@v4" || classify[3].With["path"] != "ci-inputs.json" {
+		t.Fatal("full CI must retain immutable input evidence for its actual attempt")
 	}
 }
 

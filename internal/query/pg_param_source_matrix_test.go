@@ -26,7 +26,9 @@ func TestParameterFieldSourceMatrix(t *testing.T) {
 		}}
 		store := &metadata.Entity{Name: "СкладПараметра", Kind: metadata.KindCatalog, Fields: []metadata.Field{{Name: "Наименование", Type: metadata.FieldTypeString}, {Name: "Регион", Type: metadata.FieldType("reference:СкладПараметра"), RefEntity: "СкладПараметра"}}}
 		text.Fields = append(text.Fields, metadata.Field{Name: "Ответственный", Type: metadata.FieldType("reference:" + store.Name), RefEntity: store.Name})
-		doc := &metadata.Entity{Name: "ДокПараметра", Kind: metadata.KindDocument}
+		doc := &metadata.Entity{Name: "ДокПараметра", Kind: metadata.KindDocument, Fields: []metadata.Field{
+			{Name: "Склад", Type: metadata.FieldType("reference:" + store.Name), RefEntity: store.Name},
+		}}
 		entities := []*metadata.Entity{text, store, doc}
 		reg := &metadata.Register{Name: "ОстаткиПараметра", Dimensions: []metadata.Field{
 			{Name: "Склад", Type: metadata.FieldType("reference:" + store.Name), RefEntity: store.Name},
@@ -47,7 +49,7 @@ func TestParameterFieldSourceMatrix(t *testing.T) {
 			{store, id, map[string]any{"Наименование": "склад"}},
 			{text, uuid.New(), map[string]any{"Наименование": "пусто", "Внешний_id": "", "Склад": "", "Ответственный": id}},
 			{text, uuid.New(), map[string]any{"Наименование": "uuid", "Внешний_id": id.String(), "Склад": id.String(), "Ответственный": id}},
-			{doc, docID, map[string]any{}},
+			{doc, docID, map[string]any{"Склад": id}},
 		} {
 			if err := db.Upsert(ctx, row.e.Name, row.id, row.fields, row.e); err != nil {
 				t.Fatal(err)
@@ -76,6 +78,11 @@ func TestParameterFieldSourceMatrix(t *testing.T) {
 		}
 		vt := `РегистрНакопления.ОстаткиПараметра.Остатки() КАК О`
 		joined := `Справочник.ТекстПараметра КАК Т ВНУТРЕННЕЕ СОЕДИНЕНИЕ ` + vt + ` ПО 1 = 1`
+		// Preserve each dialect's existing field-first empty-reference semantics.
+		var emptyReferenceUnequal []string
+		if db.Dialect().Name() == "sqlite" {
+			emptyReferenceUnequal = []string{"пусто", "uuid"}
+		}
 		for _, tc := range []struct {
 			name, src string
 			param     any
@@ -92,15 +99,39 @@ func TestParameterFieldSourceMatrix(t *testing.T) {
 			{"joined text UUID parameter first", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ ` + vt + ` ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.ТекстПараметра КАК Т ПО 1 = 1 ГДЕ &П = Т.Склад`, id.String(), []string{"uuid"}},
 			{"joined text UUID list", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ ` + vt + ` ВНУТРЕННЕЕ СОЕДИНЕНИЕ Справочник.ТекстПараметра КАК Т ПО 1 = 1 ГДЕ Т.Склад В (&П)`, []any{id.String()}, []string{"uuid"}},
 			{"virtual reference empty", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ ` + joined + ` ГДЕ О.Склад = &П`, "", nil},
+			{"document reference empty", `ВЫБРАТЬ "документ" КАК Метка ИЗ Документ.ДокПараметра КАК Д ГДЕ Д.Склад = &П`, "", nil},
+			{"document reference empty parameter first", `ВЫБРАТЬ "документ" КАК Метка ИЗ Документ.ДокПараметра КАК Д ГДЕ &П = Д.Склад`, "", nil},
+			{"document reference UUID parameter first", `ВЫБРАТЬ "документ" КАК Метка ИЗ Документ.ДокПараметра КАК Д ГДЕ &П = Д.Склад`, id.String(), []string{"документ"}},
+			{"catalog reference empty parameter first", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ Справочник.ТекстПараметра КАК Т ГДЕ &П = Т.Ответственный`, "", nil},
+			{"virtual reference empty parameter first", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ ` + joined + ` ГДЕ &П = О.Склад`, "", nil},
+			{"virtual reference empty unequal", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ ` + joined + ` ГДЕ О.Склад <> &П`, "", emptyReferenceUnequal},
+			{"virtual reference empty unequal parameter first", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ ` + joined + ` ГДЕ &П <> О.Склад`, "", emptyReferenceUnequal},
+			{"virtual reference empty bang unequal", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ ` + joined + ` ГДЕ О.Склад != &П`, "", emptyReferenceUnequal},
+			{"virtual reference empty bang unequal parameter first", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ ` + joined + ` ГДЕ &П != О.Склад`, "", emptyReferenceUnequal},
 			{"entity reference empty", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ Справочник.ТекстПараметра КАК Т ГДЕ Т.Ссылка = &П`, "", nil},
+			{"entity reference empty parameter first", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ Справочник.ТекстПараметра КАК Т ГДЕ &П = Т.Ссылка`, "", nil},
 			{"recorder reference empty", `ВЫБРАТЬ Р.Склад КАК Метка ИЗ РегистрНакопления.ОстаткиПараметра КАК Р ГДЕ Р.Регистратор = &П`, "", nil},
+			{"recorder reference empty parameter first", `ВЫБРАТЬ Р.Склад КАК Метка ИЗ РегистрНакопления.ОстаткиПараметра КАК Р ГДЕ &П = Р.Регистратор`, "", nil},
 			{"navigation reference empty", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ Справочник.ТекстПараметра КАК Т ГДЕ Т.Ответственный.Регион = &П`, "", nil},
+			{"navigation reference empty parameter first", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ Справочник.ТекстПараметра КАК Т ГДЕ &П = Т.Ответственный.Регион`, "", nil},
 			{"short navigation reference empty", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ Справочник.ТекстПараметра КАК Т ГДЕ Ответственный.Регион = &П`, "", nil},
+			{"short navigation reference empty parameter first", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ Справочник.ТекстПараметра КАК Т ГДЕ &П = Ответственный.Регион`, "", nil},
+			{"joined empty text parameter first", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ ` + joined + ` ГДЕ &П = Т.Склад`, "", []string{"пусто"}},
+			{"joined empty text unequal parameter first", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ ` + joined + ` ГДЕ &П <> Т.Склад`, "", []string{"uuid"}},
+			{"joined empty text bang unequal parameter first", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ ` + joined + ` ГДЕ &П != Т.Склад`, "", []string{"uuid"}},
+			{"reused empty reference then text", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ ` + joined + ` ГДЕ &П = О.Склад ИЛИ &П = Т.Склад`, "", []string{"пусто"}},
+			{"reused empty text then reference", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ ` + joined + ` ГДЕ &П = Т.Склад ИЛИ &П = О.Склад`, "", []string{"пусто"}},
+			{"reused UUID text then reference", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ ` + joined + ` ГДЕ &П = Т.Склад И &П = О.Склад`, id.String(), []string{"uuid"}},
+			{"reused UUID reference then text", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ ` + joined + ` ГДЕ &П = О.Склад И &П = Т.Склад`, id.String(), []string{"uuid"}},
 			{"register filter text suffix", `ВЫБРАТЬ О.Текст_id КАК Метка ИЗ РегистрНакопления.ОстаткиПараметра.Остатки(, Текст_id = &П) КАК О`, "", []string{""}},
 			{"derived text empty", `ВЫБРАТЬ Д.Метка ИЗ (ВЫБРАТЬ Т.Наименование КАК Метка, Т.Внешний_id КАК Значение ИЗ Справочник.ТекстПараметра КАК Т) КАК Д ГДЕ Д.Значение = &П`, "", []string{"пусто"}},
+			{"derived text empty parameter first", `ВЫБРАТЬ Д.Метка ИЗ (ВЫБРАТЬ Т.Наименование КАК Метка, Т.Внешний_id КАК Значение ИЗ Справочник.ТекстПараметра КАК Т) КАК Д ГДЕ &П = Д.Значение`, "", []string{"пусто"}},
 			{"derived text UUID", `ВЫБРАТЬ Д.Метка ИЗ (ВЫБРАТЬ Т.Наименование КАК Метка, Т.Склад КАК Значение ИЗ Справочник.ТекстПараметра КАК Т) КАК Д ГДЕ Д.Значение = &П`, id.String(), []string{"uuid"}},
 			{"nested qualifier shadows outer text", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ Справочник.ТекстПараметра КАК Т ГДЕ Т.Наименование = "uuid" И EXISTS (ВЫБРАТЬ Т.Склад ИЗ ` + strings.ReplaceAll(vt, "КАК О", "КАК Т") + ` ГДЕ Т.Склад = &П)`, id.String(), []string{"uuid"}},
+			{"nested empty reference shadows outer text", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ Справочник.ТекстПараметра КАК Т ГДЕ EXISTS (ВЫБРАТЬ Т.Склад ИЗ ` + strings.ReplaceAll(vt, "КАК О", "КАК Т") + ` ГДЕ &П = Т.Склад)`, "", nil},
+			{"nested empty text shadows outer reference", `ВЫБРАТЬ "остаток" КАК Метка ИЗ ` + strings.ReplaceAll(vt, "КАК О", "КАК Т") + ` ГДЕ EXISTS (ВЫБРАТЬ Т.Склад ИЗ Справочник.ТекстПараметра КАК Т ГДЕ &П = Т.Склад)`, "", []string{"остаток"}},
 			{"union separate types", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ Справочник.ТекстПараметра КАК Т ГДЕ Склад = &П ОБЪЕДИНИТЬ ВСЕ ВЫБРАТЬ "остаток" КАК Метка ИЗ ` + vt + ` ГДЕ Склад = &П`, id.String(), []string{"uuid", "остаток"}},
+			{"union separate empty types parameter first", `ВЫБРАТЬ Т.Наименование КАК Метка ИЗ Справочник.ТекстПараметра КАК Т ГДЕ &П = Склад ОБЪЕДИНИТЬ ВСЕ ВЫБРАТЬ "остаток" КАК Метка ИЗ ` + vt + ` ГДЕ &П = Склад`, "", []string{"пусто"}},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				res, err := query.Compile(tc.src, query.CompileOpts{Entities: entities, Registers: []*metadata.Register{reg}, Params: map[string]any{"П": tc.param}, Dialect: db.Dialect()})

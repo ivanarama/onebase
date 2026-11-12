@@ -187,6 +187,9 @@ func valueToJSONSeen(v any, stack map[jsonValueVisit]bool, depth int) any {
 			return nil
 		}
 		return x.UUID
+	case UUIDValue:
+		// УникальныйИдентификатор — строкой в каноническом виде.
+		return x.String()
 	case decimal.Decimal:
 		// json.Number маршалится как число без кавычек. По умолчанию shopspring
 		// сериализует decimal строкой ("30"), что ломает совместимость с JSON-числами.

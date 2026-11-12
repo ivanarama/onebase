@@ -40,6 +40,16 @@ type routingProgressCandidate struct {
 	NewHead   string `json:"new_head"`
 }
 
+// Canonical START metadata is an allowlist hint, never local factory authority.
+// The receiver still verifies its exact task/reservation and one-use start.
+type routingStartCandidate struct {
+	routingFixCandidate
+	AttemptID   string `json:"attempt_id"`
+	StartedID   string `json:"started_id"`
+	TaskID      any    `json:"task_id"`
+	AttemptUUID string `json:"attempt_uuid"`
+}
+
 type routingContext struct {
 	observations        []routingObservationInput
 	snapshots           map[int]routingSnapshot
@@ -97,10 +107,12 @@ func (context *routingContext) attach(result *report) {
 	result.RoutingObservation = &routingObservation{Version: "routing-observation-v1", Complete: context.complete && context.readersErr == nil, Items: []routingObservationItem{}}
 	fixes, settlements := []routingFixCandidate{}, []routingSettlementCandidate{}
 	progress := []routingProgressCandidate{}
+	starts := []routingStartCandidate{}
 	positive := []routingFixCandidate{}
 	technical, engineering := []candidate{}, []candidate{}
 	result.TechnicalFixCandidates, result.TechnicalFixSettlementCandidates = &fixes, &settlements
 	result.TechnicalFixProgressCandidates = &progress
+	result.TechnicalFixStartCandidates = &starts
 	result.PositiveMergeCandidates = &positive
 	result.TechnicalWaiting, result.EngineeringWaiting = &technical, &engineering
 	if context.readersErr != nil {
@@ -143,7 +155,7 @@ func routingFootprint(snapshot map[string]any, trusted string) bool {
 			return true
 		}
 		if node["__typename"] == "IssueComment" && routingObject(node["author"])["login"] == trusted &&
-			(strings.Contains(routingText(node["body"]), "pp:review-routing-") || node["lastEditedAt"] != nil) {
+			(reviewrouting.HasRecordPrefix(routingText(node["body"])) || node["lastEditedAt"] != nil) {
 			return true
 		}
 	}
@@ -152,7 +164,7 @@ func routingFootprint(snapshot map[string]any, trusted string) bool {
 
 func legacyRoutingHistory(comments []apiComment, trusted string) bool {
 	for _, comment := range comments {
-		if strings.Contains(comment.Body, "<!-- pp:review-routing-") &&
+		if reviewrouting.HasRecordPrefix(comment.Body) &&
 			(comment.User.Login == trusted || strings.TrimSpace(comment.User.Login) == "") {
 			return true
 		}
@@ -229,6 +241,15 @@ func (context *routingContext) consume(result *report, pr apiPull, item candidat
 		phases := routingPhases(ledger, attempt.ID)
 		_, done := phases["fix-done"]
 		source := routingObject(attempt.Payload["source"])
+		// Keep the exact administrative target through settlement/resume POST
+		// readback. The publisher rechecks this allowlist after every write.
+		// A consumed resume or another HEAD must not revive that transaction.
+		if !done && !labels["ship"] && !labels["changes-requested"] && item.Head != source["head"] &&
+			len(ledger.Proofs) > 0 && reviewrouting.Equal(ledger.Proofs[len(ledger.Proofs)-1].Source(), source) &&
+			routingSettlementReadback(ledger, attempt.ID, item.Head) {
+			*result.TechnicalFixSettlementCandidates = append(*result.TechnicalFixSettlementCandidates,
+				routingSettlementCandidate{routingFixCandidate{"fix-pr", item.Number, item.Head, source}, attempt.ID})
+		}
 		if !routingSettled(ledger, attempt.ID) && item.Head != source["head"] {
 			if !labels["ship"] && !labels["changes-requested"] && len(ledger.Proofs) > 0 &&
 				reviewrouting.Equal(ledger.Proofs[len(ledger.Proofs)-1].Source(), source) &&
@@ -343,6 +364,19 @@ func (context *routingContext) consume(result *report, pr apiPull, item candidat
 				if done || barrier || routingSettled(ledger, root.ID) {
 					return context.engineering(result, item, "canonical technical attempt has ended or is ambiguous; no second provider")
 				}
+				started, hasStart := phases["started"]
+				_, assigned := phases["assigned"]
+				_, handedOff := phases["handoff-done"]
+				executor := routingObject(root.Payload["executor"])
+				identity := routingObject(snapshot["identity"])
+				if hasStart && assigned && handedOff && executor["kind"] == "pipeline" && executor["login"] == context.trusted &&
+					identity["cross_repository"] == false && identity["head_repository"] == context.repository {
+					details := routingObject(started.Payload["details"])
+					*result.TechnicalFixStartCandidates = append(*result.TechnicalFixStartCandidates, routingStartCandidate{
+						routingFixCandidate{"fix-pr", item.Number, item.Head, source}, root.ID, started.ID,
+						details["task_id"], routingText(details["attempt_uuid"]),
+					})
+				}
 			}
 			*result.TechnicalFixCandidates = append(*result.TechnicalFixCandidates, routingFixCandidate{"fix-pr", item.Number, item.Head, source})
 			return context.technical(result, item, "one source-bound technical attempt; execution still requires the independent public admission/START gate")
@@ -371,6 +405,27 @@ func (context *routingContext) consume(result *report, pr apiPull, item candidat
 	}
 	result.ContentReviewCandidates = append(result.ContentReviewCandidates, item)
 	return true
+}
+
+func routingSettlementReadback(ledger reviewrouting.Ledger, attemptID, head string) bool {
+	if ledger.ResumingPublicationID != "" {
+		return false
+	}
+	for _, settled := range ledger.Settlements {
+		if settled.Payload["attempt_id"] != attemptID || settled.ID != ledger.ParkingID ||
+			settled.Payload["observed_head"] != head {
+			continue
+		}
+		if ledger.ResumeID == "" {
+			return true
+		}
+		for _, resumed := range ledger.Resumes {
+			if resumed.ID == ledger.ResumeID {
+				return resumed.Payload["parking_id"] == settled.ID && resumed.Payload["head"] == head
+			}
+		}
+	}
+	return false
 }
 
 // A progress candidate is only a source-bound readback hint. The coordinator
