@@ -1610,6 +1610,6 @@
   "Поставщик сборки": "Distribution supplier",
   "Переводы поля «%s» для языка %s изменены по-разному в двух редакторах. Укажите одинаковое значение и сохраните снова": "The translation of field \"%s\" for language %s was changed differently in the two editors. Enter the same value and save again",
   "Результаты поиска по всему справочнику": "Search results across the whole catalog",
-  "????? ?? ???????? ??????? ??????": "Filter by selected cell value",
-  "????? ?????": "Clear filters"
+  "Отбор по значению текущей ячейки": "Filter by selected cell value",
+  "Снять отбор": "Clear filters"
 }

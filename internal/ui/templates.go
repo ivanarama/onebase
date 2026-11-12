@@ -2399,8 +2399,8 @@ const tplList = `
 {{else}}
 {{/* ===== LIST VIEW (default) ===== */}}
 <div style="display:flex;gap:8px;margin-bottom:8px">
-<button type="button" class="btn btn-sm btn-secondary" data-ob-cell-filter disabled>{{t $.Lang "????? ?? ???????? ??????? ??????"}}</button>
-<button type="button" class="btn btn-sm btn-secondary" data-ob-cell-filter-clear>{{t $.Lang "????? ?????"}}</button>
+<button type="button" class="btn btn-sm btn-secondary" data-ob-cell-filter disabled>{{t $.Lang "Отбор по значению текущей ячейки"}}</button>
+<button type="button" class="btn btn-sm btn-secondary" data-ob-cell-filter-clear>{{t $.Lang "Снять отбор"}}</button>
 </div>
 {{if .Rows}}
 <div style="overflow-x:auto">
