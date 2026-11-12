@@ -47,6 +47,9 @@ type Config struct {
 	PlatCommit       string // короткий git SHA сборки (version.Commit())
 	PlatDate         string // дата коммита сборки, дд.мм.гг (version.CommitDate())
 	Logo             string // path to logo file (png/svg/jpg)
+	// CompactLists — app.yaml ui.list_density: compact: плотные списки и
+	// виджеты-списки (класс ob-compact-lists на <body>).
+	CompactLists bool
 	Mailer           *mailer.Mailer
 	MaxFileSizeMB    int      // 0 = use default 50
 	AllowedTypes     []string // attachments.allowed_types (расширения); пусто = без ограничений
