@@ -1987,13 +1987,13 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 .w-recent-row .ts{color:#94a3b8;font-size:11px;flex-shrink:0;font-variant-numeric:tabular-nums}
 .w-error{background:#fef2f2;color:#dc2626;font-size:12px;padding:6px 10px;border-radius:6px;margin-top:6px;font-family:Consolas,monospace}
 .w-empty{color:#94a3b8;font-size:13px;padding:6px 0;font-style:italic}
-/* Compact list widgets keep filters above the rows, including narrow cards. */
-.ob-compact-lists .w-card-list .w-filters{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:6px 10px;align-items:end;margin-bottom:8px}
-.ob-compact-lists .w-card-list .w-filter{display:flex;flex-direction:column;gap:2px;min-width:0;max-width:260px;margin:0;font-size:12px;line-height:16px}
-.ob-compact-lists .w-card-list .w-filter>span{min-width:0;overflow-wrap:anywhere}
-.ob-compact-lists .w-card-list .w-filter input,.ob-compact-lists .w-card-list .w-filter select{box-sizing:border-box;min-width:0;width:100%;max-width:100%;height:30px;padding:4px 6px;font-size:12px;border:1px solid #cbd5e1;border-radius:4px}
-.ob-compact-lists .w-card-list .w-filter-reset{justify-self:start;max-width:100%;min-height:30px;padding:4px 10px;border:1px solid #cbd5e1;border-radius:4px;background:#f1f5f9;color:#334155;cursor:pointer}
-@media(max-width:640px){.ob-compact-lists .w-card-list .w-filters{grid-template-columns:minmax(0,1fr)}.ob-compact-lists .w-card-list .w-filter{max-width:none}}
+/* List-widget filters share a row by default and wrap only when it is full. */
+.w-card-list .w-filters{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:flex-end;margin-bottom:8px}
+.w-card-list .w-filter{display:flex;flex-direction:column;flex:1 1 110px;gap:2px;min-width:0;max-width:220px;margin:0;font-size:12px;line-height:16px}
+.w-card-list .w-filter>span{min-width:0;overflow-wrap:anywhere}
+.w-card-list .w-filter input,.w-card-list .w-filter select{box-sizing:border-box;min-width:0;width:100%;max-width:100%;height:30px;padding:4px 6px;font-size:12px;border:1px solid #cbd5e1;border-radius:4px}
+.w-card-list .w-filter-reset{flex:0 0 auto;max-width:100%;min-height:30px;padding:4px 10px;border:1px solid #cbd5e1;border-radius:4px;background:#f1f5f9;color:#334155;cursor:pointer}
+@media(max-width:640px){.w-card-list .w-filters{flex-direction:column;align-items:stretch}.w-card-list .w-filter{flex:0 0 auto;max-width:none}.w-card-list .w-filter-reset{align-self:flex-start}}
 .w-default-hint{color:#64748b;font-size:13px;margin:6px 0 14px}
 </style>
 {{end}}
