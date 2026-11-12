@@ -91,7 +91,7 @@ func TestServerFormEvents_ЗапускаютсяСервером(t *testing.T) {
 					TablePartRows: map[string][]map[string]any{},
 				}
 				var msgs []string
-				err := srv.runPreSaveFormHooks(ctx, ent, obj, &msgs)
+				err := srv.runPreSaveFormHooks(ctx, ent, obj, false, &msgs)
 				if err == nil {
 					t.Fatalf("%s не исполнился: запись не отменена", event)
 				}
