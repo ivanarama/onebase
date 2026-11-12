@@ -7,7 +7,6 @@ package ui
 import (
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compose"
@@ -79,8 +78,8 @@ func (e *excelComposeSink) rowWithDetail(label string, detail, vals map[string]a
 		if detail == nil {
 			continue
 		}
-		if t, ok := detail[d.Field].(time.Time); ok {
-			r[off+i] = fmtDetailVal(t)
+		if _, ok := detailMoment(detail[d.Field]); ok {
+			r[off+i] = fmtDetailVal(detail[d.Field])
 		} else if v := detail[d.Field]; v != nil {
 			r[off+i] = v
 		}

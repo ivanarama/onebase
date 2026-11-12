@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/ivantit66/onebase/internal/csssafe"
+	"github.com/ivantit66/onebase/internal/query"
 	"github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compose"
 	"github.com/ivantit66/onebase/internal/widget"
@@ -324,19 +325,43 @@ func detailFieldTitle(d report.DetailField) string {
 	return d.Field
 }
 
-// fmtDetailVal — значение поля детальной записи: дата — по-русски (время
-// только если оно есть), остальное — как fmtVal.
+// fmtDetailVal — значение поля детальной записи: дата — по-русски в местном
+// времени приложения (время, только если оно есть), остальное — как fmtVal.
+// Момент приходит и time.Time (в зоне драйвера: SQLite — UTC), и строкой
+// (колонка запроса без типа, «2026-11-20T09:00:00Z»): обе формы — одна дата.
 func fmtDetailVal(v any) string {
-	if t, ok := v.(time.Time); ok {
-		if t.IsZero() {
-			return ""
-		}
-		if t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 {
-			return t.Format("02.01.2006")
-		}
-		return t.Format("02.01.2006 15:04:05")
+	t, ok := detailMoment(v)
+	if !ok {
+		return fmtVal(v)
 	}
-	return fmtVal(v)
+	if t.IsZero() {
+		return ""
+	}
+	t = t.In(time.Local)
+	if t.Hour() == 0 && t.Minute() == 0 && t.Second() == 0 {
+		return t.Format("02.01.2006")
+	}
+	return t.Format("02.01.2006 15:04:05")
+}
+
+// detailMoment распознаёт момент: time.Time или строку, начинающуюся с
+// ГГГГ-ММ-ДД и разбираемую как момент. Прочие строки остаются текстом.
+func detailMoment(v any) (time.Time, bool) {
+	switch x := v.(type) {
+	case time.Time:
+		return x, true
+	case string:
+		if len(x) < 10 || x[4] != '-' || x[7] != '-' {
+			return time.Time{}, false
+		}
+		for _, i := range []int{0, 1, 2, 3, 5, 6, 8, 9} {
+			if x[i] < '0' || x[i] > '9' {
+				return time.Time{}, false
+			}
+		}
+		return query.ToDateValue(x)
+	}
+	return time.Time{}, false
 }
 
 func fmtVal(v any) string {

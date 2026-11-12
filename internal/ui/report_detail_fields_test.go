@@ -91,34 +91,50 @@ func TestReportDetailFieldsHTTP(t *testing.T) {
 }
 
 func TestComposedRowsDetailFields(t *testing.T) {
-	day := time.Date(2026, 11, 12, 0, 0, 0, 0, time.UTC)
-	stamp := time.Date(2026, 11, 12, 14, 5, 9, 0, time.UTC)
+	moscow, err := time.LoadLocation("Europe/Moscow")
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved := time.Local
+	time.Local = moscow
+	t.Cleanup(func() { time.Local = saved })
+	// Как отдаёт SQLite: местная полночь 12.11 — это 21:00 UTC 11.11; момент
+	// без типа колонки приходит строкой RFC3339 в UTC.
+	day := time.Date(2026, 11, 11, 21, 0, 0, 0, time.UTC)
+	stamp := time.Date(2026, 11, 12, 11, 5, 9, 0, time.UTC)
 	spec := &reportpkg.Composition{
 		Groupings:    []string{"Мастер"},
 		Detail:       true,
 		Measures:     []reportpkg.Measure{{Field: "Штраф"}},
-		DetailFields: []reportpkg.DetailField{{Field: "Номер", Title: "Номер заявки"}, {Field: "Дата"}, {Field: "Установлен"}},
+		DetailFields: []reportpkg.DetailField{{Field: "Номер", Title: "Номер заявки"}, {Field: "Дата"}, {Field: "Установлен"}, {Field: "Отказ"}, {Field: "Код"}},
 	}
-	res, err := compose.Compose([]compose.Row{{"Мастер": "Иванов", "Номер": "СИНТ-001", "Дата": day, "Установлен": stamp, "Штраф": 2}}, *spec, nil)
+	res, err := compose.Compose([]compose.Row{{"Мастер": "Иванов", "Номер": "СИНТ-001", "Дата": day, "Установлен": stamp, "Отказ": "2026-11-20T09:00:00Z", "Код": "2026-ТЕСТ", "Штраф": 2}}, *spec, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	headers, rows := composedRows(res, spec)
-	if strings.Join(headers, "|") != "Мастер|Номер заявки|Дата|Установлен|Штраф" {
+	if strings.Join(headers, "|") != "Мастер|Номер заявки|Дата|Установлен|Отказ|Код|Штраф" {
 		t.Fatalf("headers %q", headers)
 	}
 	if len(rows) != 2 {
 		t.Fatalf("rows %v", rows)
 	}
 	group, detail := rows[0], rows[1]
-	if group[1] != nil || group[2] != nil || group[3] != nil {
-		t.Fatalf("group row has detail values: %v", group)
+	for i := 1; i <= 5; i++ {
+		if group[i] != nil {
+			t.Fatalf("group row has detail values: %v", group)
+		}
 	}
-	if detail[1] != "СИНТ-001" || detail[2] != "12.11.2026" || detail[3] != "12.11.2026 14:05:09" {
+	// Даты — в местном времени; строка-момент — тоже дата; текст остаётся текстом.
+	if detail[1] != "СИНТ-001" || detail[2] != "12.11.2026" || detail[3] != "12.11.2026 14:05:09" ||
+		detail[4] != "20.11.2026 12:00:00" || detail[5] != "2026-ТЕСТ" {
 		t.Fatalf("detail row %v", detail)
 	}
-	if v, ok := detail[4].(float64); !ok || v != 2 {
-		t.Fatalf("measure cell %#v", detail[4])
+	if v, ok := detail[6].(float64); !ok || v != 2 {
+		t.Fatalf("measure cell %#v", detail[6])
+	}
+	if got := fmtDetailVal("2026-11-20T09:00:00Z"); got != "20.11.2026 12:00:00" {
+		t.Fatalf("HTML detail value %q", got)
 	}
 }
 
