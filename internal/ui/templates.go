@@ -1631,7 +1631,8 @@ h3{font-size:16px;font-weight:600;margin:24px 0 10px;color:#1e293b}
 .ob-entity-list>.row-top{margin-bottom:8px}
 .ob-entity-list>.row-top h2{margin:0}
 .ob-entity-list>form{margin-bottom:8px!important}
-.ob-entity-list>details{margin-bottom:8px}
+.ob-entity-list>details{margin-bottom:8px!important}
+.ob-entity-list>.ob-list-settings{padding:0}
 .ob-entity-list>details>summary{padding:8px 12px}
 .ob-entity-list .ob-list-content>.card{padding:12px}
 table{width:100%;border-collapse:collapse;font-size:14px}
