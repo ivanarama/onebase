@@ -183,6 +183,8 @@ type formYAMLDoc struct {
 		ListFilter []metadata.FormListCondition `yaml:"filter"`
 		// «🔍 только администратору» (#1876).
 		RefCardButtonAdminOnly bool `yaml:"ref_card_button_admin_only"`
+		Roles                  []string `yaml:"roles"`
+		ExceptRoles            []string `yaml:"except_roles"`
 		// EnterSubmitsForm — форма возвращает себе прежний Enter-submit (#1486).
 		EnterSubmitsForm bool `yaml:"enter_submits_form"`
 	} `yaml:"form"`
@@ -237,6 +239,8 @@ func (mfl *ManagedFormLoader) parseYAML(data []byte, entityNameFallback string) 
 		RefCardButton:          doc.Form.RefCardButton,
 		ListFilter:             doc.Form.ListFilter,
 		RefCardButtonAdminOnly: doc.Form.RefCardButtonAdminOnly,
+		Roles:                  doc.Form.Roles,
+		ExceptRoles:            doc.Form.ExceptRoles,
 		EnterSubmitsForm:       doc.Form.EnterSubmitsForm,
 		Attributes:             doc.Attributes,
 		Commands:               doc.Commands,
