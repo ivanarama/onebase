@@ -3,6 +3,7 @@ form:
   name: Completion
   kind: object
   entity: Completion
+  title: {ru: Order accepted}
 attributes:
   - name: DisplayNumber
     type: string

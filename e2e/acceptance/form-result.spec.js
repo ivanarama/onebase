@@ -110,7 +110,8 @@ test('result is a centred modal dialog with one title, one cross and content hei
   // One header: the shell's title and cross; the form's own header is hidden.
   await expect(dialog.locator('button[aria-label="Close"]')).toHaveCount(1);
   await expect(mini.locator('.ob-form-head')).toBeHidden();
-  await expect(dialog.locator('[id^="ob-result-title-"]')).not.toHaveText('');
+  // The dialog title is the form's title, not the processor name.
+  await expect(dialog.locator('[id^="ob-result-title-"]')).toHaveText('Order accepted');
   // Centred in the viewport.
   const box = await dialog.boundingBox();
   const view = page.viewportSize();
@@ -123,6 +124,17 @@ test('result is a centred modal dialog with one title, one cross and content hei
     return main.getBoundingClientRect().bottom - last.getBoundingClientRect().bottom;
   });
   expect(tail).toBeLessThanOrEqual(40);
+  // A page whose whole document scrolls (body not clamped to the viewport)
+  // still gets the dialog fitted to its content, not left at the initial height.
+  await mini.locator('body').evaluate(body => {
+    const style = body.ownerDocument.createElement('style');
+    style.textContent = 'body{height:auto!important;min-height:0!important;overflow:visible!important} main{flex:none!important;overflow:visible!important}';
+    body.ownerDocument.head.appendChild(style);
+    const spacer = body.ownerDocument.createElement('div'); spacer.style.height = '260px'; spacer.className = 'test-spacer';
+    body.querySelector('main').appendChild(spacer);
+  });
+  await expect.poll(() => mini.locator('html').evaluate(html => html.scrollHeight - html.clientHeight)).toBeLessThanOrEqual(1);
+  await expect.poll(() => mini.locator('.test-spacer').evaluate(el => el.getBoundingClientRect().bottom <= el.ownerDocument.documentElement.clientHeight + 1)).toBe(true);
   // Modal: the shell under the backdrop does not take the pointer.
   const hit = await page.evaluate(() => document.elementFromPoint(5, 5).closest('.ob-result-overlay') !== null);
   expect(hit).toBe(true);
@@ -137,8 +149,10 @@ test('two results of one processor: close only current, and honor its own veto',
   // so the second source is accepted programmatically through the same handler.
   const secondSource = await order(page, 'SECOND-46');
   await secondSource.getByRole('button', {name:'Accept',exact:true}).evaluate(button => button.click());
-  const second = await lastResult(page);
+  // Wait for the second dialog itself: the first one is already visible.
   await expect(results(page)).toHaveCount(2);
+  const second = await lastResult(page);
+  await expect(second.locator('input[name="DisplayNumber"]')).toHaveValue('SECOND-46');
   await second.getByRole('button', {name:'Close',exact:true}).click();
   await expect(results(page)).toHaveCount(1);
   expect(second.isDetached()).toBe(true);

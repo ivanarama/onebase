@@ -451,27 +451,33 @@ const tplAppShell = `{{define "page-app-shell"}}
   // backdrop, one title and one cross (the form's own header is hidden inside),
   // height following the content. Close/Escape/veto still go through
   // closeResultFrame and the form's close-intent.
+  // Height of the result document's content, whichever element scrolls: a
+  // clamped page (body 100vh, main scrolls) or a page whose document scrolls.
   function fitResultFrame(t,round){
     try{
-      var doc=t.frame.contentDocument, main=doc&&doc.querySelector('main');
+      var doc=t.frame.contentDocument, win=t.frame.contentWindow, main=doc&&doc.querySelector('main');
       if(!doc||!doc.body||!main)return;
-      var mr=main.getBoundingClientRect(), chrome=doc.documentElement.clientHeight-mr.height, content;
+      var html=doc.documentElement, y=win.scrollY||0, mr=main.getBoundingClientRect(), inner;
       if(main.scrollHeight>main.clientHeight+1){
-        content=main.scrollHeight; // too short: the overflow is the exact content height
+        inner=main.scrollHeight; // main is clipped: its overflow is the exact content height
       }else{
-        var bottom=0; // too tall or exact: measure the laid-out children to shrink
+        var bottom=0; // main fits or is stretched: measure its laid-out children
         for(var c=main.firstElementChild;c;c=c.nextElementSibling){
           if(c.offsetParent===null&&getComputedStyle(c).position!=='fixed')continue;
           var r=c.getBoundingClientRect(), mb=parseFloat(getComputedStyle(c).marginBottom)||0;
           bottom=Math.max(bottom,r.bottom+mb-mr.top+main.scrollTop);
         }
-        content=bottom+(parseFloat(getComputedStyle(main).paddingBottom)||0);
+        inner=bottom+(parseFloat(getComputedStyle(main).paddingBottom)||0);
       }
-      var natural=Math.ceil(chrome+content);
+      var mainTop=mr.top+y, mainBottom=mr.bottom+y;
+      var after=Math.max(0,Math.max(html.scrollHeight,html.clientHeight)-mainBottom);
+      // Only viewport-independent measures feed the height (main's children,
+      // its clipped overflow, what follows main), so the fit cannot run away.
+      var natural=Math.ceil(mainTop+inner+after);
       if(natural>0&&Math.abs(natural-t.frame.offsetHeight)>1){
         t.frame.style.height=natural+'px';
-        // Re-measure once laid out: a shrink estimate is confirmed or grown to scrollHeight.
-        if((round||0)<4)requestAnimationFrame(function(){fitResultFrame(t,(round||0)+1);});
+        // Re-measure once laid out until the height is stable.
+        if((round||0)<6)requestAnimationFrame(function(){fitResultFrame(t,(round||0)+1);});
       }
     }catch(_){}
   }
@@ -490,7 +496,7 @@ const tplAppShell = `{{define "page-app-shell"}}
     overlay.addEventListener('keydown',function(ev){if(ev.key==='Escape'){ev.preventDefault();closeResultFrame(t);}});
     frame.addEventListener('load',function(){
       fitResultFrame(t);
-      try{ if(typeof ResizeObserver==='function'){var ro=new ResizeObserver(function(){fitResultFrame(t);});var m=frame.contentDocument.querySelector('main');if(m){for(var c=m.firstElementChild;c;c=c.nextElementSibling)ro.observe(c);}} }catch(_){}
+      try{ if(typeof ResizeObserver==='function'){var ro=new ResizeObserver(function(){fitResultFrame(t);});var d=frame.contentDocument,m=d.querySelector('main');ro.observe(d.body);if(m){for(var c=m.firstElementChild;c;c=c.nextElementSibling)ro.observe(c);}} }catch(_){}
     });
     panel.appendChild(head);panel.appendChild(frame);overlay.appendChild(panel);document.body.appendChild(overlay);cross.focus();
   }
