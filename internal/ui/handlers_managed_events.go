@@ -383,7 +383,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		envelopeRawID := value("_id")
 		routeKind := strings.ToLower(strings.TrimSpace(chi.URLParam(r, "kind")))
 		routeKey := "entity|" + routeKind + "|" + strings.ToLower(entity.Name) + "|" + envelopeFormKind + "|" + envelopeRawID
-		currentForm := pickManagedForm(entity, envelopeFormKind)
+		currentForm := pickManagedFormCtx(r.Context(), entity, envelopeFormKind)
 		renderedSchema := value("_close_schema")
 		currentSchema := entityFormCloseSchema(entity, currentForm)
 		if renderedSchema == "" || renderedSchema != currentSchema {
@@ -461,7 +461,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		if formKind == "" {
 			formKind = "object"
 		}
-		form = pickManagedForm(entity, formKind)
+		form = pickManagedFormCtx(r.Context(), entity, formKind)
 		return nil
 	}
 	if closeInv != nil {
