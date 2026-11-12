@@ -214,7 +214,7 @@ func TestPageList_ManagedListFormUsesElementColumnTitle(t *testing.T) {
 		t.Fatalf("GET списка: code = %d, body: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	headerStart := strings.Index(body, "<table><thead><tr>")
+	headerStart := strings.Index(body, "data-ob-list-table") // шапка самой таблицы списка, не окна настройки
 	if headerStart < 0 {
 		t.Fatalf("страница списка не содержит заголовок таблицы: %s", body)
 	}

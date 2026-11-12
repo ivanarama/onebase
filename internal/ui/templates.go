@@ -311,10 +311,15 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return fmt.Sprintf("%v", v)
 		},
-		"isRef":       func(t any) bool { return strings.HasPrefix(fmt.Sprintf("%v", t), "reference:") },
-		"isEnum":      func(t any) bool { return strings.HasPrefix(fmt.Sprintf("%v", t), "enum:") },
-		"tileView":    resolveTileView,
-		"listColumns": resolveListColumns,
+		"isRef":              func(t any) bool { return strings.HasPrefix(fmt.Sprintf("%v", t), "reference:") },
+		"isEnum":             func(t any) bool { return strings.HasPrefix(fmt.Sprintf("%v", t), "enum:") },
+		"tileView":           resolveTileView,
+		"listColumns":        resolveListColumns,
+		"listColumnFields":   listColumnFields,
+		"defaultListColumns": func(e *metadata.Entity) []listColumnUI { return listSettingsColumns(e, nil) },
+		"listColumnsFixed":   listColumnsFixed,
+		"listColumnWidth":    listColumnWidth,
+		"listTableWidth":     listTableWidth,
 		// liveListRefreshOn (план 87, ступень A): имена событий живого списка через
 		// пробел для атрибута data-ob-refresh-on. Пусто — список статичный.
 		"liveListRefreshOn": func(e *metadata.Entity) string {
@@ -1724,6 +1729,17 @@ body{padding-bottom:32px}
   main table.tbl-plain{display:table;white-space:normal;overflow:visible}
 }
 /* ===== Плиточный режим списка (Фаза 1a) ===== */
+/* «Настройка списка»: заданные пользователем ширины — фиксированная
+   раскладка, длинное значение обрезается многоточием; край заголовка тянется. */
+table.ob-list-fixed{table-layout:fixed}
+table.ob-list-fixed td,table.ob-list-fixed th{overflow:hidden;text-overflow:ellipsis}
+th.ob-ls-th{position:relative}
+th.ob-ls-th.ob-ls-drop{box-shadow:inset 3px 0 0 #3b82f6}
+.ob-ls-resize{position:absolute;top:0;right:-3px;bottom:0;width:7px;cursor:col-resize;z-index:1}
+.ob-ls-resize:hover,.ob-ls-resize.dragging{background:rgba(59,130,246,.35)}
+.ob-list-settings tr.ls-col-row{cursor:grab}
+.ob-list-settings tr.ls-col-row.ob-ls-drop td{box-shadow:inset 0 2px 0 #3b82f6}
+.ls-grip{color:#94a3b8;cursor:grab;user-select:none}
 .view-switch{display:inline-flex;border:1px solid #e2e8f0;border-radius:7px;overflow:hidden;flex-shrink:0}
 .view-switch .view-btn{padding:6px 11px;color:#64748b;text-decoration:none;font:inherit;font-size:15px;line-height:1;background:#fff;border:0;border-right:1px solid #e2e8f0;cursor:pointer}
 .view-switch .view-btn:last-child{border-right:none}
@@ -2138,6 +2154,8 @@ const tplList = `
 
 {{define "page-list"}}
 {{template "head" .}}{{template "nav" .}}
+{{/* Колонки списка с «Настройкой списка» пользователя; без неё — как в конфигурации. */}}
+{{$listCols := .ListColumns}}{{if not $listCols}}{{$listCols = defaultListColumns .Entity}}{{end}}
 <main class="main-list">
 <div class="row-top">
   <h2>{{.Entity.DisplayName $.Lang}}</h2>
@@ -2280,6 +2298,41 @@ const tplList = `
   {{end}}
 </details>
 
+{{if not .TilesView}}
+<details class="card report-block ob-list-settings" data-block="list-settings" style="margin-bottom:12px">
+  <summary>{{t $.Lang "Настройка списка"}}{{if .ListSettingsActive}} <span style="background:#fef3c7;color:#92400e;border-radius:6px;padding:1px 8px;font-size:12px;font-weight:600">{{t $.Lang "изменено"}}</span>{{end}}</summary>
+  <form method="POST" action="{{.ListSettingsURL}}/save" data-ob-ls-before-submit style="padding:0 16px 12px">
+    <input type="hidden" name="__return" value="{{.RequestURI}}">
+    <input type="hidden" name="__list_settings" data-ob-ls-json value="{{.ListSettingsJSON}}">
+    <table class="tbl-plain" style="width:auto;margin:8px 0 12px">
+      <thead><tr>
+        <th style="text-align:left">{{t $.Lang "Поле"}}</th>
+        <th style="padding:0 10px">{{t $.Lang "Показывать"}}</th>
+        <th style="padding:0 10px">{{t $.Lang "Ширина, px"}}</th>
+        <th style="width:90px"></th>
+      </tr></thead>
+      <tbody data-ob-ls-columns>
+      {{range .ListSettingsColumns}}
+        <tr class="ls-col-row" data-field="{{.Field.Name}}" draggable="true">
+          <td><span class="ls-grip" title="{{t $.Lang "Перетащите, чтобы изменить порядок"}}">⠿</span> {{.Field.DisplayName $.Lang}}</td>
+          <td style="text-align:center"><input type="checkbox" class="ls-visible" aria-label="{{t $.Lang "Показывать"}}"{{if .Visible}} checked{{end}}></td>
+          <td style="text-align:center"><input type="number" class="ls-width" min="40" max="1200" step="1" style="width:80px" placeholder="{{t $.Lang "авто"}}" aria-label="{{t $.Lang "Ширина, px"}}" value="{{if .Width}}{{.Width}}{{end}}"></td>
+          <td style="white-space:nowrap;text-align:right">
+            <button type="button" class="btn btn-sm" data-ob-ls-move="-1" title="{{t $.Lang "Вверх"}}">↑</button>
+            <button type="button" class="btn btn-sm" data-ob-ls-move="1" title="{{t $.Lang "Вниз"}}">↓</button>
+          </td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary" type="submit">{{t $.Lang "Сохранить"}}</button>
+      <button class="btn" type="submit" formaction="{{.ListSettingsURL}}/reset">{{t $.Lang "Стандартные настройки"}}</button>
+    </div>
+  </form>
+</details>
+{{end}}
+
 {{$obRefresh := liveListRefreshOn .Entity}}
 <div class="ob-list-wrap">
 <div class="ob-list-content" data-ob-live="{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}"{{if $obRefresh}} data-ob-refresh-on="{{$obRefresh}}"{{end}}>
@@ -2287,7 +2340,7 @@ const tplList = `
 {{if .TreeView}}
 {{/* ===== TREE VIEW ===== */}}
 {{if .TreeRows}}
-{{$treeCols := listColumns .Entity}}
+{{$treeCols := listColumnFields $listCols}}
 <div style="overflow-x:auto">
 <table
   data-ob-row-base="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}"
@@ -2392,14 +2445,17 @@ const tplList = `
 {{else}}
 {{/* ===== LIST VIEW (default) ===== */}}
 {{if .Rows}}
+{{$fixed := listColumnsFixed $listCols}}
 <div style="overflow-x:auto">
-<table><thead><tr>
+<table data-ob-list-table data-ob-ls-save="{{.ListSettingsURL}}/save" data-ob-ls-state="{{.ListSettingsJSON}}"{{if $fixed}} class="ob-list-fixed" style="width:{{listTableWidth $listCols (eq (str .Entity.Kind) "document") $.SearchAll}}px"{{end}}>
+{{if $fixed}}<colgroup>{{if eq (str .Entity.Kind) "document"}}<col style="width:36px">{{end}}{{range $listCols}}<col data-ob-ls-col="{{.Field.Name}}" style="width:{{listColumnWidth .}}px">{{end}}{{if $.SearchAll}}<col style="width:160px">{{end}}<col style="width:90px"></colgroup>{{end}}
+<thead><tr>
   {{if eq (str .Entity.Kind) "document"}}<th style="width:36px">✓</th>{{end}}
-  {{range listColumns .Entity}}
-  <th>
-    <a href="{{listURL $.Query "sort" .Name "dir" (nextDir $params .Name)}}">
-      {{.DisplayName $.Lang}} {{sortIcon $params .Name}}
-    </a>
+  {{range $listCols}}
+  <th class="ob-ls-th" data-ob-ls-field="{{.Field.Name}}" draggable="true">
+    <a href="{{listURL $.Query "sort" .Field.Name "dir" (nextDir $params .Field.Name)}}" draggable="false">
+      {{.Field.DisplayName $.Lang}} {{sortIcon $params .Field.Name}}
+    </a><span class="ob-ls-resize" data-ob-ls-resize title="{{t $.Lang "Ширина колонки"}}"></span>
   </th>
   {{end}}
   {{if $.SearchAll}}<th>{{t $.Lang "Группа"}}</th>{{end}}
@@ -2427,7 +2483,7 @@ const tplList = `
       {{if index $row "posted"}}<span style="color:#16a34a;font-weight:700" title="{{t $.Lang "Проведён"}}">✓</span>{{else}}<span style="color:#94a3b8" title="{{t $.Lang "Не проведён"}}">—</span>{{end}}
     </td>
   {{end}}
-  {{range listColumns $.Entity}}
+  {{range listColumnFields $listCols}}
     {{if eq (str .Type) "date"}}<td style="white-space:nowrap">{{fmtDate (index $row .Name)}}</td>
     {{else if eq (str .Type) "bool"}}<td style="white-space:nowrap">{{fmtBool (index $row .Name)}}</td>
     {{else if isImage (str .Type)}}<td>{{$iv := index $row .Name}}{{if $iv}}<img src="/ui/_image/{{$iv}}" style="height:34px;width:34px;object-fit:cover;border-radius:5px;vertical-align:middle" alt="">{{else}}<span style="color:#cbd5e1">—</span>{{end}}</td>

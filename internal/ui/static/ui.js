@@ -1722,9 +1722,187 @@ function obInitJournalDelegates() {
   }, true);
 }
 
+// «Настройка списка» документов и справочников (за пользователем, _settings):
+// окно с галочками, ширинами и порядком (↑/↓ или перетаскивание строки), а
+// прямо в шапке списка — перетаскивание колонки и края заголовка. Изменение
+// в шапке сохраняется сразу (fetch → 204).
+function lsRows() {
+  return Array.prototype.slice.call(document.querySelectorAll('[data-ob-ls-columns] .ls-col-row'));
+}
+
+function lsCollect() {
+  var cols = lsRows().map(function (row) {
+    var cb = row.querySelector('.ls-visible');
+    var wi = row.querySelector('.ls-width');
+    var w = wi ? parseInt(wi.value || '0', 10) : 0;
+    var c = { field: row.getAttribute('data-field') || '', visible: !!(cb && cb.checked) };
+    if (w > 0) c.width = w;
+    return c;
+  });
+  var hidden = document.querySelector('[data-ob-ls-json]');
+  if (hidden) hidden.value = JSON.stringify({ columns: cols });
+}
+
+function lsState(table) {
+  try { return JSON.parse(table.getAttribute('data-ob-ls-state') || '{}') || {}; } catch (e) { return {}; }
+}
+
+function lsSave(table, state) {
+  var body = new URLSearchParams();
+  body.set('__list_settings', JSON.stringify(state));
+  return fetch(table.getAttribute('data-ob-ls-save'), {
+    method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'obListSettings' },
+    body: body.toString()
+  }).then(function (resp) {
+    if (!resp.ok) throw new Error('HTTP ' + resp.status);
+    table.setAttribute('data-ob-ls-state', JSON.stringify(state));
+  });
+}
+
+function lsFieldEq(a, b) { return String(a || '').toLowerCase() === String(b || '').toLowerCase(); }
+
+function obInitListSettings() {
+  if (window.__obListSettings) return;
+  window.__obListSettings = true;
+  document.addEventListener('click', function (e) {
+    if (!e.target.closest) return;
+    if (e.target.closest('[data-ob-ls-resize]')) { e.preventDefault(); e.stopPropagation(); return; } // край не сортирует
+    var move = e.target.closest('[data-ob-ls-move]');
+    if (!move) return;
+    e.preventDefault();
+    var tr = move.closest('tr');
+    var dir = parseInt(move.getAttribute('data-ob-ls-move') || '0', 10);
+    if (!tr || !tr.parentNode) return;
+    if (dir < 0 && tr.previousElementSibling) tr.parentNode.insertBefore(tr, tr.previousElementSibling);
+    if (dir > 0 && tr.nextElementSibling) tr.parentNode.insertBefore(tr.nextElementSibling, tr);
+  }, true);
+  document.addEventListener('submit', function (e) {
+    var form = e.target;
+    if (form && form.matches && form.matches('[data-ob-ls-before-submit]')) lsCollect();
+  }, true);
+
+  // Перетаскивание: строки окна настройки и колонки шапки.
+  var dragKind = '', dragField = '';
+  var clearDrop = function () {
+    document.querySelectorAll('.ob-ls-drop').forEach(function (n) { n.classList.remove('ob-ls-drop'); });
+  };
+  document.addEventListener('dragstart', function (e) {
+    if (!e.target.closest) return;
+    var th = e.target.closest('th[data-ob-ls-field]');
+    var row = th ? null : e.target.closest('.ls-col-row');
+    if (!th && !row) return;
+    dragKind = th ? 'th' : 'row';
+    dragField = th ? th.getAttribute('data-ob-ls-field') : row.getAttribute('data-field');
+    try { e.dataTransfer.effectAllowed = 'move'; e.dataTransfer.setData('text/plain', dragField); } catch (err) {}
+  });
+  document.addEventListener('dragover', function (e) {
+    if (!dragKind || !e.target.closest) return;
+    var target = dragKind === 'th' ? e.target.closest('th[data-ob-ls-field]') : e.target.closest('.ls-col-row');
+    if (!target) return;
+    e.preventDefault();
+    clearDrop();
+    target.classList.add('ob-ls-drop');
+  });
+  document.addEventListener('dragend', function () { dragKind = ''; clearDrop(); });
+  document.addEventListener('drop', function (e) {
+    if (!dragKind || !e.target.closest) return;
+    var kind = dragKind; dragKind = '';
+    clearDrop();
+    if (kind === 'row') {
+      var row = e.target.closest('.ls-col-row');
+      if (!row) return;
+      e.preventDefault();
+      var src = lsRows().filter(function (r) { return lsFieldEq(r.getAttribute('data-field'), dragField); })[0];
+      if (src && src !== row) row.parentNode.insertBefore(src, row);
+      return;
+    }
+    var th = e.target.closest('th[data-ob-ls-field]');
+    var table = th && th.closest('table[data-ob-list-table]');
+    if (!th || !table) return;
+    e.preventDefault();
+    var to = th.getAttribute('data-ob-ls-field');
+    if (lsFieldEq(to, dragField)) return;
+    var state = lsState(table);
+    var cols = (state.columns || []).slice();
+    var from = -1;
+    cols.forEach(function (c, i) { if (lsFieldEq(c.field, dragField)) from = i; });
+    if (from < 0) return;
+    var moved = cols.splice(from, 1)[0];
+    var at = -1;
+    cols.forEach(function (c, i) { if (lsFieldEq(c.field, to)) at = i; });
+    if (at < 0) return;
+    cols.splice(at, 0, moved);
+    state.columns = cols;
+    lsSave(table, state).then(function () { location.reload(); }).catch(function () {});
+  });
+
+  // Ширина колонки — перетаскиванием правого края заголовка.
+  document.addEventListener('mousedown', function (e) {
+    if (e.button !== 0 || !e.target.closest) return;
+    var grip = e.target.closest('[data-ob-ls-resize]');
+    if (!grip) return;
+    var th = grip.closest('th[data-ob-ls-field]');
+    var table = th && th.closest('table[data-ob-list-table]');
+    if (!th || !table) return;
+    e.preventDefault();
+    e.stopPropagation();
+    // Перед первой правкой фиксируем текущие ширины всех колонок: дальше
+    // раскладка фиксированная, и соседние колонки не «прыгают».
+    var ths = Array.prototype.slice.call(table.querySelectorAll('thead th'));
+    var widths = ths.map(function (h) { return Math.round(h.getBoundingClientRect().width); });
+    var total = widths.reduce(function (a, b) { return a + b; }, 0);
+    var cg = table.querySelector('colgroup');
+    if (!cg) {
+      cg = document.createElement('colgroup');
+      widths.forEach(function (w, i) {
+        var c = document.createElement('col');
+        c.style.width = w + 'px';
+        var f = ths[i].getAttribute('data-ob-ls-field');
+        if (f) c.setAttribute('data-ob-ls-col', f);
+        cg.appendChild(c);
+      });
+      table.insertBefore(cg, table.firstChild);
+    }
+    var idx = ths.indexOf(th);
+    var col = cg.children[idx];
+    if (!col) return;
+    table.classList.add('ob-list-fixed');
+    table.style.width = total + 'px';
+    var startX = e.clientX, startW = widths[idx], baseTotal = total - startW;
+    var width = startW;
+    grip.classList.add('dragging');
+    var onMove = function (ev) {
+      width = Math.max(40, Math.min(1200, Math.round(startW + ev.clientX - startX)));
+      col.style.width = width + 'px';
+      table.style.width = (baseTotal + width) + 'px';
+    };
+    var onUp = function () {
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+      grip.classList.remove('dragging');
+      var state = lsState(table);
+      var byField = {};
+      ths.forEach(function (h, i) {
+        var f = h.getAttribute('data-ob-ls-field');
+        if (f) byField[f.toLowerCase()] = i === idx ? width : widths[i];
+      });
+      (state.columns || []).forEach(function (c) {
+        var w = byField[String(c.field || '').toLowerCase()];
+        if (w) c.width = w;
+      });
+      lsSave(table, state).catch(function () {});
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, true);
+}
+
+
 obReady(function () {
   obInitReportDelegates();
   obInitJournalDelegates();
+  obInitListSettings();
   obPresetReportSettings();
   obInitReportCompositionControls();
   obInitReportBlocks();
