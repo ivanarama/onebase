@@ -914,6 +914,15 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 	}
 
 	action = r.FormValue("_action") //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
+	// «Записать» в управляемой форме ПРОВЕДЁННОГО документа перепроводит его,
+	// как в 1С (ПараметрыЗаписи.РежимЗаписи = Проведение), — а не снимает
+	// проведение. Только кнопка формы: DSL Объект.Записать(), REST и автоформа
+	// не меняются. Без права «Провести» остаётся прежняя запись.
+	if action == "" && existingID != nil && entity.Posting && form != nil && s.can(r, string(entity.Kind), entity.Name, "post") {
+		if row, err := s.store.GetByID(r.Context(), entity.Name, *existingID, entity); err == nil && asBool(row["posted"]) {
+			action = "post"
+		}
+	}
 	isPostingAct := entity.Posting && (action == "post" || action == "post_and_close")
 	if isPostingAct && !s.requirePerm(w, r, string(entity.Kind), entity.Name, "post") {
 		return
