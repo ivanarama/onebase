@@ -55,6 +55,10 @@ type Result struct {
 	// list / recent
 	Rows    []map[string]any
 	Columns []ColumnSpec
+	// User-specific presentation, filled after the shared query cache.
+	WidthsURL    string
+	ColumnWidths map[string]int
+	TableWidth   int
 
 	// chart
 	Chart *ChartData

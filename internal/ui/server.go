@@ -390,6 +390,7 @@ func (s *Server) Mount(r chi.Router) {
 	// Частичная перерисовка одной карточки дашборда (план 182A). Статический
 	// сегмент обязан идти до catch-all маршрута сущности.
 	r.Get("/ui/_widget/{name}", s.widgetPartial)
+	r.Post("/ui/_widget/{name}/widths", s.widgetColumnWidthsSave)
 
 	r.Get("/ui/{kind}/{entity}", s.list)
 	r.Get("/ui/{kind}/{entity}/new", s.form)
