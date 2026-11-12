@@ -1675,8 +1675,10 @@ details[open] summary::before{content:"▼ "}
 .tp-table .del-btn{background:none;border:none;color:#94a3b8;cursor:pointer;font-size:15px;padding:0 4px;transition:color .15s}
 .tp-table .del-btn:hover{color:#ef4444}
 .tp-table .tp-footer td{font-weight:600;border-top:2px solid #e2e8f0;background:#f8fafc;font-variant-numeric:tabular-nums}
-.subsys-bar{background:#0f172a;display:flex;padding:0 12px;gap:2px;flex-shrink:0}
-.subsys-bar a{display:inline-block;padding:7px 18px;color:#94a3b8;text-decoration:none;font-size:13px;font-weight:500;border-bottom:3px solid transparent;transition:color .15s}
+.subsys-bar{display:flex;align-self:stretch;flex:1 1 auto;min-width:0;padding:0 0 0 16px;gap:2px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;white-space:nowrap}
+.subsys-bar::-webkit-scrollbar{display:none}
+.topbar:has(.subsys-bar) .topbar-title{flex:0 0 auto}
+.subsys-bar a{display:inline-flex;align-items:center;flex-shrink:0;padding:0 16px;color:#94a3b8;text-decoration:none;font-size:13px;font-weight:500;border-bottom:3px solid transparent;border-top:3px solid transparent;transition:color .15s}
 .subsys-bar a:hover{color:#e2e8f0;background:rgba(255,255,255,.04)}
 .subsys-bar a.active{color:#7dd3fc;border-bottom-color:#3b82f6}
 .subsys-bar a .ob-icon{width:15px;height:15px;vertical-align:-3px;margin-right:6px;opacity:.85}
@@ -1790,6 +1792,20 @@ const tplNav = `
 <header class="topbar">
   <button class="nav-toggle" type="button" aria-label="{{t $.Lang "Меню"}}" title="{{t $.Lang "Меню"}}" aria-controls="ob-nav" aria-expanded="false" data-ob-nav-toggle>&#9776;</button>
   <a href="/ui/" class="topbar-title" style="text-decoration:none;color:inherit" title="{{t $.Lang "Главная"}}">{{if .Cfg.Logo}}<img src="/ui/logo" alt="" style="height:22px;max-width:90px;vertical-align:middle;margin-right:6px;border-radius:2px">{{end}}⚡ {{if .Cfg.AppName}}{{.Cfg.AppName}}{{else}}onebase{{end}}</a>
+  {{/* Разделы (подсистемы) — вкладками в самой тёмной полосе справа от
+       названия, а не отдельной строкой под ней: строка съедала ~34px высоты
+       рабочей области. Не помещаются — прокручиваются внутри полосы. */}}
+  {{if .Subsystems}}
+  <nav class="subsys-bar">
+    {{$home := t $.Lang "Главная"}}
+    {{/* #304: home_page.hidden прячет ведущую «Главную» — навигация только по разделам. */}}
+    {{if not .HideHome}}<a href="/ui/" class="{{if not .CurrentSubsystem}}active{{end}}">{{$home}}</a>{{end}}
+    {{/* #215.2: не дублируем ведущую «Главная», если в базе есть одноимённая
+         подсистема (её представление совпадает с меткой домашней ссылки). Когда
+         ведущей ссылки нет (HideHome), одноимённый раздел, наоборот, показываем. */}}
+    {{range .Subsystems}}{{if or $.HideHome (ne (.DisplayName $.Lang) $home)}}<a href="/ui/?subsystem={{.Name}}" class="{{if eq .Name $.CurrentSubsystem}}active{{end}}">{{lucideIcon .Icon}}{{.DisplayName $.Lang}}</a>{{end}}{{end}}
+  </nav>
+  {{end}}
   <form class="topbar-search" method="get" action="/ui/search" role="search">
     <input type="search" name="q" value="{{.SearchQuery}}" placeholder="{{t $.Lang "Поиск по базе"}}" aria-label="{{t $.Lang "Поиск по базе"}}">
   </form>
@@ -1896,17 +1912,6 @@ const tplNav = `
 <div style="background:#f59e0b;color:#fff;text-align:center;padding:6px 16px;font-size:13px;font-weight:600;letter-spacing:.02em">
   ⚠️ {{t $.Lang "ДЕМО-РЕЖИМ"}}{{if .Cfg.DemoMessage}} — {{.Cfg.DemoMessage}}{{end}}
 </div>
-{{end}}
-{{if .Subsystems}}
-<nav class="subsys-bar">
-  {{$home := t $.Lang "Главная"}}
-  {{/* #304: home_page.hidden прячет ведущую «Главную» — навигация только по разделам. */}}
-  {{if not .HideHome}}<a href="/ui/" class="{{if not .CurrentSubsystem}}active{{end}}">{{$home}}</a>{{end}}
-  {{/* #215.2: не дублируем ведущую «Главная», если в базе есть одноимённая
-       подсистема (её представление совпадает с меткой домашней ссылки). Когда
-       ведущей ссылки нет (HideHome), одноимённый раздел, наоборот, показываем. */}}
-  {{range .Subsystems}}{{if or $.HideHome (ne (.DisplayName $.Lang) $home)}}<a href="/ui/?subsystem={{.Name}}" class="{{if eq .Name $.CurrentSubsystem}}active{{end}}">{{lucideIcon .Icon}}{{.DisplayName $.Lang}}</a>{{end}}{{end}}
-</nav>
 {{end}}
 <div class="app-body">
 <aside id="ob-nav">
