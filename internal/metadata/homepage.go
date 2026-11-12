@@ -20,6 +20,70 @@ type HomePageRow struct {
 	Widgets []string `yaml:"widgets"`
 }
 
+// HomeSidePanel — правая панель оболочки: виджет из widgets/, ширина по
+// умолчанию (пользователь меняет её перетаскиванием), кому показывать.
+type HomeSidePanel struct {
+	Widget string `yaml:"widget"`
+	Width  int    `yaml:"width,omitempty"`
+	// Roles — только этим ролям; ExceptRoles — всем, кроме этих (сравнение без
+	// учёта регистра). Без пользователя (режим без авторизации) панель видна,
+	// если Roles не задан.
+	Roles       []string `yaml:"roles,omitempty"`
+	ExceptRoles []string `yaml:"except_roles,omitempty"`
+	// HideOnHome — что не показывать на главной тому, кому видна панель:
+	// `true` — сам виджет панели (не дублируется), список имён — перечисленные
+	// виджеты главной (например, широкий список задач, когда в панели узкий).
+	HideOnHome HomeHideOnHome `yaml:"hide_on_home,omitempty"`
+}
+
+// HomeHideOnHome — значение side_panel.hide_on_home: булево или список имён
+// виджетов главной.
+type HomeHideOnHome struct {
+	// Panel — скрыть на главной сам виджет панели (`hide_on_home: true`).
+	Panel bool `json:"panel,omitempty"`
+	// Widgets — скрыть перечисленные виджеты главной (`hide_on_home: [A, B]`).
+	Widgets []string `json:"widgets,omitempty"`
+}
+
+func (h *HomeHideOnHome) UnmarshalYAML(node *yaml.Node) error {
+	switch node.Kind {
+	case yaml.ScalarNode:
+		var b bool
+		if err := node.Decode(&b); err != nil {
+			return fmt.Errorf("line %d: hide_on_home — true/false или список виджетов", node.Line)
+		}
+		*h = HomeHideOnHome{Panel: b}
+		return nil
+	case yaml.SequenceNode:
+		var list []string
+		if err := node.Decode(&list); err != nil {
+			return fmt.Errorf("line %d: hide_on_home — список имён виджетов: %w", node.Line, err)
+		}
+		out := HomeHideOnHome{}
+		for _, name := range list {
+			if name = strings.TrimSpace(name); name != "" {
+				out.Widgets = append(out.Widgets, name)
+			}
+		}
+		*h = out
+		return nil
+	}
+	return fmt.Errorf("line %d: hide_on_home — true/false или список виджетов", node.Line)
+}
+
+// Hides — скрывается ли на главной виджет name при виджете панели panelWidget.
+func (h HomeHideOnHome) Hides(name, panelWidget string) bool {
+	if h.Panel && strings.EqualFold(strings.TrimSpace(name), strings.TrimSpace(panelWidget)) {
+		return true
+	}
+	for _, w := range h.Widgets {
+		if strings.EqualFold(w, strings.TrimSpace(name)) {
+			return true
+		}
+	}
+	return false
+}
+
 // HomePage describes the dashboard layout for /ui/.
 type HomePage struct {
 	Title   string            `yaml:"title"`
@@ -52,6 +116,10 @@ type HomePage struct {
 	// Читаются только у глобальной config/home_page.yaml.
 	Messages       string `yaml:"messages,omitempty"`
 	MessageSeconds int    `yaml:"message_seconds,omitempty"`
+	// SidePanel — закреплённая правая панель оболочки вкладок с виджетом
+	// (как полоса «Задачи» 1С). Читается только у глобальной
+	// config/home_page.yaml.
+	SidePanel *HomeSidePanel `yaml:"side_panel,omitempty"`
 }
 
 // Режимы показа сообщений (HomePage.Messages).
