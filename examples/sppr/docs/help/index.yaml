@@ -37,5 +37,10 @@ chapters:
     objects: [catalog/ПравилоПроверки, document/ПубликацияПравила]
     parent: introduction
     title: Аудит формальных правил
+  - file: process.md
+    id: process
+    objects: [catalog/Процесс]
+    parent: introduction
+    title: Процесс и его шаги
 enabled: true
 title: Руководство проектной базы СППР
