@@ -7045,3 +7045,55 @@ function obEnterNavigateFrom(target) {
     if (obEnterNavigateFrom(e.target)) e.preventDefault();
   });
 })();
+
+// BEGIN widget-column-widths
+// Delegated handles survive widget refresh and the shell side-panel redraw.
+(function () {
+  function grid(grip) {
+    var th = grip.closest('th[data-ob-widget-column]');
+    var table = th && th.closest('table[data-ob-widget-widths]');
+    if (!table) return null;
+    var heads = Array.prototype.slice.call(table.querySelectorAll('thead th'));
+    var widths = heads.map(function(h) { return Math.round(h.getBoundingClientRect().width); });
+    var cg = table.querySelector('colgroup');
+    if (!cg) {
+      cg = document.createElement('colgroup');
+      widths.forEach(function(px) { var col = document.createElement('col'); col.style.width = px + 'px'; cg.appendChild(col); });
+      table.insertBefore(cg, table.firstChild);
+    }
+    table.classList.add('ob-widget-fixed');
+    return {table:table,heads:heads,widths:widths,cols:cg.children,index:heads.indexOf(th)};
+  }
+  function apply(g, px) {
+    px = Math.max(40, Math.min(1200, Math.round(px)));
+    g.widths[g.index] = px;
+    g.cols[g.index].style.width = px + 'px';
+    g.table.style.width = g.widths.reduce(function(a,b) { return a+b; },0) + 'px';
+  }
+  function save(g) {
+    if (!g.table.isConnected) return;
+    var widths = Object.create(null);
+    g.heads.forEach(function(h,i) { widths[h.getAttribute('data-ob-widget-column')] = Math.max(40, Math.min(1200, g.widths[i])); });
+    var data = new URLSearchParams(); data.set('widths', JSON.stringify(widths));
+    fetch(g.table.getAttribute('data-ob-widget-widths'), {method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:data.toString()})
+      .then(function(response) { if (!response.ok) throw new Error('width save'); })
+      .catch(function() { var card=g.table.closest('[data-ob-widget-card]'); var status=card&&card.querySelector('[data-ob-widget-status]'); if(status)status.textContent=card.getAttribute('data-refresh-error')||'Не удалось обновить виджет'; });
+  }
+  document.addEventListener('click', function(e) { if (e.target.closest && e.target.closest('[data-ob-widget-column-grip]')) { e.preventDefault(); e.stopPropagation(); } },true);
+  document.addEventListener('mousedown', function(e) {
+    if(e.button!==0||!e.target.closest)return;
+    var grip=e.target.closest('[data-ob-widget-column-grip]');if(!grip)return;
+    var g=grid(grip);if(!g)return;
+    e.preventDefault();e.stopPropagation();
+    var startX=e.clientX,startWidth=g.widths[g.index];
+    var move=function(ev) { apply(g,startWidth+ev.clientX-startX); };
+    var up=function() { document.removeEventListener('mousemove',move);document.removeEventListener('mouseup',up);save(g); };
+    document.addEventListener('mousemove',move);document.addEventListener('mouseup',up);
+  },true);
+  document.addEventListener('keydown',function(e) {
+    if(!e.target.matches||!e.target.matches('[data-ob-widget-column-grip]')||(e.key!=='ArrowLeft'&&e.key!=='ArrowRight'))return;
+    var g=grid(e.target);if(!g)return;
+    e.preventDefault();e.stopPropagation();apply(g,g.widths[g.index]+(e.key==='ArrowRight'?10:-10));save(g);
+  },true);
+})();
+// END widget-column-widths

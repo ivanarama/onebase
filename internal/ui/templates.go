@@ -1583,6 +1583,8 @@ body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;height:
 .tbl{width:100%;border-collapse:collapse}
 .tbl th{text-align:left;padding:8px 10px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;font-size:12px;position:sticky;top:0;background:#eef2f7}
 .tbl td{padding:6px 10px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:13px}
+.ob-list-wrap table th,.ob-list-wrap table td,.list-tbl th,.list-tbl td,.tp-table th{border-right:1px solid #cbd5e1}
+.ob-list-wrap table th:last-child,.ob-list-wrap table td:last-child,.list-tbl th:last-child,.list-tbl td:last-child,.tp-table th:last-child{border-right:none}
 .tbl tr:hover td{background:#f8fafc}
 .report-composed{width:100%;border-collapse:collapse;font-size:13px}
 .report-composed thead th{position:sticky;top:38px;background:#eef2f7;z-index:5;text-align:left;padding:8px 10px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;font-size:12px}
@@ -1624,6 +1626,14 @@ h3{font-size:16px;font-weight:600;margin:24px 0 10px;color:#1e293b}
 .main-list .card,.main-list .row-top,.main-list details,.main-list .breadcrumb{max-width:1600px}
 .main-list .ob-list-content{width:100%}
 .main-list .ob-list-content>.card{max-width:none}
+/* Only entity lists: keep the header, search, filters and table close together. */
+.ob-entity-list{padding:16px}
+.ob-entity-list>.row-top{margin-bottom:8px}
+.ob-entity-list>.row-top h2{margin:0}
+.ob-entity-list>form{margin-bottom:8px!important}
+.ob-entity-list>details{margin-bottom:8px}
+.ob-entity-list>details>summary{padding:8px 12px}
+.ob-entity-list .ob-list-content>.card{padding:12px}
 table{width:100%;border-collapse:collapse;font-size:14px}
 th{text-align:left;padding:10px 12px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;background:#eef2f7}
 th a{color:inherit;text-decoration:none}
@@ -1971,6 +1981,13 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 .w-list td{padding:6px 8px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155}
 .w-list td.right{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .w-list tr:last-child td{border-bottom:none}
+.w-list th,.w-list td{border-right:1px solid #cbd5e1}
+.w-list th:last-child,.w-list td:last-child{border-right:none}
+.w-list th[data-ob-widget-column]{position:relative}
+.ob-widget-column-grip{position:absolute;top:0;right:-3px;bottom:0;width:7px;cursor:col-resize;z-index:2;touch-action:none}
+.ob-widget-column-grip:hover,.ob-widget-column-grip:focus{background:#60a5fa}
+.w-list table.ob-widget-fixed{table-layout:fixed;min-width:0}
+.w-list table.ob-widget-fixed th,.w-list table.ob-widget-fixed td{overflow:hidden;text-overflow:ellipsis}
 .w-list .ob-row-link{cursor:pointer}
 .w-list .ob-row-link:hover td,.w-list .ob-row-link:focus-visible td{background:#eff6ff}
 .w-list .ob-row-link:focus-visible{outline:2px solid #2563eb;outline-offset:-2px}
@@ -2068,8 +2085,9 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 {{define "widget-list-body"}}
 <div class="w-list">
   {{if .Rows}}
-  <table>
-    <thead><tr>{{range .Columns}}<th{{if eq .Align "right"}} style="text-align:right"{{end}}>{{.Label}}</th>{{end}}</tr></thead>
+  <table{{if .WidthsURL}} data-ob-widget-widths="{{.WidthsURL}}"{{end}}{{if .TableWidth}} class="ob-widget-fixed" style="width:{{.TableWidth}}px"{{end}}>
+    {{if .TableWidth}}<colgroup>{{range .Columns}}<col style="width:{{index $.ColumnWidths .Field}}px">{{end}}</colgroup>{{end}}
+    <thead><tr>{{range .Columns}}<th data-ob-widget-column="{{.Field}}"{{if eq .Align "right"}} style="text-align:right"{{end}}>{{.Label}}{{if $.WidthsURL}}<span class="ob-widget-column-grip" data-ob-widget-column-grip role="separator" aria-orientation="vertical" tabindex="0" aria-label="{{.Label}}"></span>{{end}}</th>{{end}}</tr></thead>
     <tbody>
     {{range .Rows}}
       {{$row := .}}
@@ -2140,7 +2158,7 @@ const tplList = `
 
 {{define "page-list"}}
 {{template "head" .}}{{template "nav" .}}
-<main class="main-list">
+<main class="main-list ob-entity-list">
 <div class="row-top">
   <h2>{{.Entity.DisplayName $.Lang}}</h2>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
