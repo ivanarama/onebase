@@ -462,22 +462,29 @@ func CheckQueries(proj *project.Project) []Issue {
 		}
 	}
 	for _, rep := range proj.Reports {
-		if rep.Query == "" {
-			continue
-		}
 		params := map[string]any{}
 		for _, p := range rep.Params {
 			params[p.Name] = nil
 		}
-		o := opts
-		o.Params = params
-		if _, err := query.Compile(rep.Query, o); err != nil {
-			issues = append(issues, Issue{
-				File:    "reports/" + rep.Name + ".yaml",
-				Object:  rep.Name,
-				Kind:    "Отчёт (запрос)",
-				Message: err.Error(),
-			})
+		names := []string{""}
+		for _, v := range rep.Variants {
+			names = append(names, v.Name)
+		}
+		for _, name := range names {
+			text, values, err := rep.QueryForVariant(name, params)
+			o := opts
+			o.Params = values
+			if err == nil && strings.TrimSpace(text) != "" {
+				_, err = query.Compile(text, o)
+			}
+			if err != nil {
+				issues = append(issues, Issue{
+					File:    "reports/" + rep.Name + ".yaml",
+					Object:  rep.Name,
+					Kind:    "Отчёт (запрос)",
+					Message: fmt.Sprintf("вариант %q: %v", name, err),
+				})
+			}
 		}
 	}
 	return issues
@@ -525,7 +532,16 @@ func CheckQueriesExecutable(proj *project.Project, validate func(sqlText string)
 		for _, p := range rep.Params {
 			params[p.Name] = nil
 		}
-		check(rep.Query, "reports/"+rep.Name+".yaml", rep.Name, "Отчёт (исполнение запроса)", params)
+		names := []string{""}
+		for _, v := range rep.Variants {
+			names = append(names, v.Name)
+		}
+		for _, name := range names {
+			text, values, err := rep.QueryForVariant(name, params)
+			if err == nil {
+				check(text, "reports/"+rep.Name+".yaml", rep.Name, "Отчёт (исполнение запроса), вариант "+name, values)
+			}
+		}
 	}
 	for _, lq := range listFormFilterQueries(proj) {
 		check(lq.query, lq.file, lq.object, "Форма списка (исполнение запроса отбора)", listFormFilterQueryParams())

@@ -178,19 +178,29 @@ func (s *Server) validateReportQuery(ctx context.Context, rep *report.Report) er
 	for _, p := range rep.Params {
 		params[p.Name] = ""
 	}
-	compiled, err := query.Compile(rep.Query, query.CompileOpts{
-		Entities:    s.reg.Entities(),
-		Registers:   s.reg.Registers(),
-		InfoRegs:    s.reg.InfoRegisters(),
-		AccountRegs: s.reg.AccountRegisters(),
-		Params:      params,
-		Dialect:     s.store.Dialect(),
-	})
-	if err != nil {
-		return fmt.Errorf("запрос не компилируется: %w", err)
+	names := []string{""}
+	for _, v := range rep.Variants {
+		names = append(names, v.Name)
 	}
-	if err := s.store.ValidateQuery(ctx, compiled.SQL); err != nil {
-		return fmt.Errorf("запрос не исполняется: %w", err)
+	for _, name := range names {
+		text, values, err := rep.QueryForVariant(name, params)
+		if err != nil {
+			return err
+		}
+		compiled, err := query.Compile(text, query.CompileOpts{
+			Entities:    s.reg.Entities(),
+			Registers:   s.reg.Registers(),
+			InfoRegs:    s.reg.InfoRegisters(),
+			AccountRegs: s.reg.AccountRegisters(),
+			Params:      values,
+			Dialect:     s.store.Dialect(),
+		})
+		if err != nil {
+			return fmt.Errorf("вариант %q: запрос не компилируется: %w", name, err)
+		}
+		if err := s.store.ValidateQuery(ctx, compiled.SQL); err != nil {
+			return fmt.Errorf("вариант %q: запрос не исполняется: %w", name, err)
+		}
 	}
 	return nil
 }
