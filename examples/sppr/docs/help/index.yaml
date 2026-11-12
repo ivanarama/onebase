@@ -42,5 +42,10 @@ chapters:
     objects: [catalog/Процесс]
     parent: introduction
     title: Процесс и его шаги
+  - file: roles.md
+    id: roles
+    objects: [catalog/Роль, catalog/ПрофильПользователя, catalog/Исполнитель]
+    parent: introduction
+    title: Роли и исполнители
 enabled: true
 title: Руководство проектной базы СППР
