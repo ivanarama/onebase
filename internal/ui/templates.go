@@ -1377,6 +1377,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"inputMaskHint":       metadata.InputMaskHint,
 		"wcell":               widgetCell,
 		"wRowStyle":           widgetRowStyle,
+		"wBackground":         widgetBackgroundStyle,
 		"listRowStyle":        listRowStyle,
 		"echartsJSON":         echartsJSON,
 		"stageChartJSON":      stageChartJSON,
@@ -2025,7 +2026,7 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 {{end}}
 
 {{define "widget-card"}}
-<div class="w-card w-card-{{.Type}}"{{if .PartialURL}} data-ob-widget-card data-widget-name="{{.Name}}" data-widget-url="{{.PartialURL}}" data-refresh-error="{{.RefreshError}}"{{if .RefreshOn}} data-ob-refresh-on="{{.RefreshOn}}" data-ob-live="widget/{{.Name}}"{{end}}{{end}}>
+<div class="w-card w-card-{{.Type}}"{{with .Background}} style="{{wBackground .}}"{{end}}{{if .PartialURL}} data-ob-widget-card data-widget-name="{{.Name}}" data-widget-url="{{.PartialURL}}" data-refresh-error="{{.RefreshError}}"{{if .RefreshOn}} data-ob-refresh-on="{{.RefreshOn}}" data-ob-live="widget/{{.Name}}"{{end}}{{end}}>
   {{if or .Title .PartialURL}}
   <div class="w-head">
     {{if .Title}}<div class="w-title">{{.Title}}</div>{{end}}

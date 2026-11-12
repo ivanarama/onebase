@@ -36,6 +36,7 @@ func navigationContainerSchema(home bool) map[string]any {
 		props["side_panel"] = map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{
 			"widget":       stringSchema("Виджет правой панели оболочки"),
 			"width":        map[string]any{"type": "integer"},
+			"background":   stringSchema("Безопасный CSS-цвет фона правой панели"),
 			"roles":        names,
 			"except_roles": names,
 			"hide_on_home": map[string]any{

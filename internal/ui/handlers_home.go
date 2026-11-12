@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/csssafe"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -265,6 +266,9 @@ func refreshableWidgetType(t metadata.WidgetType) bool {
 }
 
 func (s *Server) decorateRefreshResult(r *http.Request, wMeta *metadata.Widget, res *widget.Result, runner *widget.Runner) {
+	if res != nil && wMeta != nil {
+		res.Background = csssafe.Color(wMeta.Background)
+	}
 	if res == nil || !refreshableWidgetType(metadata.WidgetType(res.Type)) {
 		return
 	}
@@ -310,6 +314,9 @@ func (s *Server) dashboardWidget(r *http.Request, name string) *metadata.Widget 
 	for _, group := range groups {
 		for _, candidate := range group {
 			if strings.EqualFold(candidate.Name, name) {
+				if !widget.VisibleFor(candidate, auth.UserFromContext(r.Context())) {
+					return nil
+				}
 				return candidate
 			}
 		}

@@ -487,8 +487,10 @@ func allSchemas() map[string]map[string]any {
 			"additionalProperties": false,
 			"properties": map[string]any{
 				"name": stringSchema("Имя"), "type": enumSchema("kpi", "list", "chart", "actions", "recent"), "title": stringSchema("Заголовок"), "titles": stringMapSchema(),
-				"query": stringSchema("Запрос"), "params": stringMapSchema(), "format": stringSchema("money|number|percent"), "compare_to": stringSchema("prev_period"), "limit": map[string]any{"type": "integer"},
-				"columns":    arrayOf(map[string]any{"type": "object", "properties": map[string]any{"field": stringSchema("Поле"), "label": stringSchema("Подпись"), "labels": stringMapSchema(), "format": stringSchema("Формат"), "align": stringSchema("left|right|center")}}),
+				"query": stringSchema("Запрос"), "params": stringMapSchema(), "format": stringSchema("money|number|percent|date|time"), "compare_to": stringSchema("prev_period"), "limit": map[string]any{"type": "integer"},
+				"roles": arrayOf(stringSchema("Разрешённая роль")), "except_roles": arrayOf(stringSchema("Исключённая роль")), "background": stringSchema("Безопасный CSS-цвет фона контейнера"),
+				"row_style":  map[string]any{"type": "object", "properties": map[string]any{"background": stringSchema("Колонка цвета фона"), "bold": stringSchema("Колонка признака жирного"), "color": stringSchema("Колонка цвета текста #RGB/#RRGGBB")}},
+				"columns":    arrayOf(map[string]any{"type": "object", "properties": map[string]any{"field": stringSchema("Поле"), "label": stringSchema("Подпись"), "labels": stringMapSchema(), "format": stringSchema("money|number|percent|date|time (HH:mm:ss, местная зона)"), "align": stringSchema("left|right|center")}}),
 				"chart_kind": stringSchema("bar|line|pie"), "chart_type": stringSchema("legacy alias: bar|line|pie"), "x_field": stringSchema("Поле X"), "y_fields": arrayOf(stringSchema("Поле Y")),
 				"items":    arrayOf(map[string]any{"type": "object", "properties": map[string]any{"label": stringSchema("Подпись"), "labels": stringMapSchema(), "entity": stringSchema("Объект"), "url": stringSchema("URL"), "new_tab": boolSchema("Открывать в новой вкладке")}}),
 				"entities": arrayOf(stringSchema("Объект")), "scope": stringSchema("current_user|all"),
@@ -651,6 +653,10 @@ func managedFormSchema() map[string]any {
 				"properties": map[string]any{
 					"ref_card_button":            boolSchema("false — убрать кнопку «Открыть карточку» у всех ссылочных полей формы"),
 					"ref_card_button_admin_only": boolSchema("true — кнопку «Открыть карточку» видит только администратор; настройка интерфейса, не защита"),
+					"row_style": map[string]any{"type": "object", "properties": map[string]any{
+						"background_from": stringSchema("Путь цвета фона"), "bold_from": stringSchema("Путь признака жирного"), "color_from": stringSchema("Путь цвета текста"),
+						"rules": arrayOf(map[string]any{"type": "object", "properties": map[string]any{"field": stringSchema("Путь значения"), "equals": stringSchema("Литерал или @ТекущийПользователь (ID учётки)"), "background": stringSchema("#RGB/#RRGGBB"), "color": stringSchema("#RGB/#RRGGBB"), "bold": boolSchema("Жирный шрифт")}}),
+					}},
 				},
 			},
 			"elements": arrayOf(element),

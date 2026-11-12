@@ -38,7 +38,8 @@ type Result struct {
 	// RefreshOn — имена событий для клиентской подписки карточки (план 182B),
 	// пробелом разделённые для атрибута data-ob-refresh-on. Заполняется вместе
 	// с остальными презентационными полями после Run.
-	RefreshOn string
+	RefreshOn  string
+	Background string
 	// Filters — презентационные модели контролов интерактивных фильтров
 	// (план 182D), заполняются HTTP-слоем после Run вместе с PartialURL.
 	Filters []FilterControl
@@ -208,6 +209,9 @@ func (r *Runner) Run(ctx context.Context, w *metadata.Widget) Result {
 
 // RunWithOptions executes a widget with explicit effective options.
 func (r *Runner) RunWithOptions(ctx context.Context, w *metadata.Widget, opts RunOptions) Result {
+	if !VisibleFor(w, r.User) {
+		return Result{Name: w.Name, Type: string(w.Type), Title: w.Title, AccessDenied: true}
+	}
 	params := make(map[string]any, len(w.Params)+len(opts.Params))
 	for k, v := range w.Params {
 		params[k] = v

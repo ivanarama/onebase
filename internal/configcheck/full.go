@@ -57,6 +57,7 @@ func RunFullWithOptions(dir string, opts Options) Result {
 		issues = append(issues, CheckWidgetRefreshOn(proj)...)
 		issues = append(issues, CheckWidgetSource(proj)...)
 		issues = append(issues, CheckWidgetRowStyle(proj)...)
+		issues = append(issues, CheckWidgetAppearance(proj)...)
 		issues = append(issues, CheckWidgetFilters(proj)...)
 		issues = append(issues, CheckReportComposition(proj)...)
 		issues = append(issues, CheckJournalConditional(proj)...)

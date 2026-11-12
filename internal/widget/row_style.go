@@ -81,12 +81,16 @@ func applyRowStyle(w *metadata.Widget, cols []string, rows []map[string]any) []s
 	}
 	bgCol := resolveFieldName(cols, w.RowStyle.Background)
 	boldCol := resolveFieldName(cols, w.RowStyle.Bold)
+	colorCol := resolveFieldName(cols, w.RowStyle.Color)
 	var styleCols []string
 	if bgCol != "" {
 		styleCols = append(styleCols, bgCol)
 	}
 	if boldCol != "" {
 		styleCols = append(styleCols, boldCol)
+	}
+	if colorCol != "" {
+		styleCols = append(styleCols, colorCol)
 	}
 	for _, row := range rows {
 		if bgCol != "" {
@@ -97,6 +101,11 @@ func applyRowStyle(w *metadata.Widget, cols []string, rows []map[string]any) []s
 		}
 		if boldCol != "" && rowStyleTruthy(row[boldCol]) {
 			row[RowBoldKey] = true
+		}
+		if colorCol != "" {
+			if color := NormalizeRowColor(row[colorCol]); color != "" {
+				row[RowTextColorKey] = color
+			}
 		}
 	}
 	return styleCols

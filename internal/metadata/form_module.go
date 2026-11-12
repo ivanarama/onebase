@@ -802,6 +802,7 @@ type FormModule struct {
 type FormListRowStyle struct {
 	Rules          []FormListRowStyleRule `yaml:"rules,omitempty"`
 	BackgroundFrom string                 `yaml:"background_from,omitempty"`
+	ColorFrom      string                 `yaml:"color_from,omitempty"`
 	BoldFrom       string                 `yaml:"bold_from,omitempty"`
 }
 
@@ -812,6 +813,7 @@ type FormListRowStyleRule struct {
 	Equals     string `yaml:"equals"`
 	Background string `yaml:"background,omitempty"`
 	Bold       bool   `yaml:"bold,omitempty"`
+	Color      string `yaml:"color,omitempty"`
 }
 
 // FormListCondition — одно условие постоянного отбора формы списка.

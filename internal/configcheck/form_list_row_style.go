@@ -41,7 +41,7 @@ func CheckFormListRowStyle(proj *project.Project) []Issue {
 				continue
 			}
 			rs := form.ListRowStyle
-			if len(rs.Rules) == 0 && rs.BackgroundFrom == "" && rs.BoldFrom == "" {
+			if len(rs.Rules) == 0 && rs.BackgroundFrom == "" && rs.BoldFrom == "" && rs.ColorFrom == "" {
 				add("row_style пуст: задайте rules, background_from или bold_from")
 			}
 			checkPath := func(where, path string) {
@@ -56,11 +56,14 @@ func CheckFormListRowStyle(proj *project.Project) []Issue {
 				} else {
 					checkPath(where+".field", rule.Field)
 				}
-				if rule.Background == "" && !rule.Bold {
+				if rule.Background == "" && !rule.Bold && rule.Color == "" {
 					add(where + ": правило ничего не оформляет — задайте background или bold")
 				}
 				if rule.Background != "" && widget.NormalizeRowColor(rule.Background) == "" {
 					add(fmt.Sprintf("%s.background: %q — не цвет #RGB или #RRGGBB", where, rule.Background))
+				}
+				if rule.Color != "" && widget.NormalizeRowColor(rule.Color) == "" {
+					add(where + ".color: не цвет #RGB или #RRGGBB")
 				}
 			}
 			if rs.BackgroundFrom != "" {
@@ -68,6 +71,9 @@ func CheckFormListRowStyle(proj *project.Project) []Issue {
 			}
 			if rs.BoldFrom != "" {
 				checkPath("bold_from", rs.BoldFrom)
+			}
+			if rs.ColorFrom != "" {
+				checkPath("color_from", rs.ColorFrom)
 			}
 		}
 	}

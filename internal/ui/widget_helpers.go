@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/ivantit66/onebase/internal/csssafe"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/widget"
 	"github.com/shopspring/decimal"
@@ -52,10 +53,14 @@ func widgetRowStyle(row map[string]any) template.CSS {
 	if bold, _ := row[widget.RowBoldKey].(bool); bold {
 		parts = append(parts, "font-weight:600")
 	}
+	if color := widget.NormalizeRowColor(row[widget.RowTextColorKey]); color != "" && color != widget.RowTextColor(widget.NormalizeRowColor(row[widget.RowBackgroundKey])) {
+		parts = append(parts, "color:"+color)
+	}
 	return template.CSS(strings.Join(parts, ";")) //nolint:gosec // G203: только проверенный цвет #rrggbb и font-weight
 }
 
 func widgetCell(row map[string]any, field, format string) string {
+	format = strings.ToLower(format)
 	v, ok := row[field]
 	if !ok || v == nil {
 		return ""
@@ -68,8 +73,11 @@ func widgetCell(row map[string]any, field, format string) string {
 	case "percent":
 		f := toFloatForCell(v)
 		return fmt.Sprintf("%.1f%%", f)
-	case "date":
+	case "date", "time":
 		if t, ok := v.(time.Time); ok {
+			if format == "time" {
+				return t.In(time.Local).Format("15:04:05")
+			}
 			return widgetDate(t)
 		}
 		if s, ok := v.(string); ok && len(s) >= 10 {
@@ -82,9 +90,15 @@ func widgetCell(row map[string]any, field, format string) string {
 				"2006-01-02T15:04", "2006-01-02",
 			} {
 				if t, err := time.ParseInLocation(layout, s, time.Local); err == nil {
+					if format == "time" {
+						return t.In(time.Local).Format("15:04:05")
+					}
 					return widgetDate(t)
 				}
 			}
+		}
+		if format == "time" {
+			return ""
 		}
 		return fmt.Sprintf("%v", v)
 	}
@@ -104,6 +118,14 @@ func widgetDate(t time.Time) string {
 		return t.Format("02.01.2006")
 	}
 	return t.Format("02.01.2006 15:04")
+}
+
+func widgetBackgroundStyle(raw any) template.CSS {
+	text, _ := raw.(string)
+	if color := csssafe.Color(text); color != "" {
+		return template.CSS("background-color:" + color)
+	} //nolint:gosec // G203: csssafe.Color accepts only a safe CSS color.
+	return ""
 }
 
 // echartsJSON serializes ChartData into an ECharts option payload, ready for

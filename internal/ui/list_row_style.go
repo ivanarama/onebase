@@ -18,6 +18,7 @@ import (
 const (
 	listRowBackgroundKey = "\x00list_row_bg"
 	listRowBoldKey       = "\x00list_row_bold"
+	listRowColorKey      = "\x00list_row_fg"
 )
 
 // applyListRowStyle — оформление строк формы списка (row_style формы kind:
@@ -37,22 +38,39 @@ func (s *Server) applyListRowStyle(ctx context.Context, entity *metadata.Entity,
 	style := form.ListRowStyle
 	cache := map[string]map[string]any{}
 	for _, row := range rows {
-		bg, bold := "", false
+		bg, bold, color := "", false, ""
 		for _, rule := range style.Rules {
 			v := s.listRowPathValue(ctx, entity, row, rule.Field, cache)
-			if v == nil || strings.TrimSpace(fmt.Sprint(v)) != strings.TrimSpace(rule.Equals) {
+			equals := rule.Equals
+			if equals == metadata.ListFilterCurrentUser {
+				u := auth.UserFromContext(ctx)
+				if u == nil || u.ID == "" {
+					continue
+				}
+				equals = u.ID
+			}
+			if v == nil || strings.TrimSpace(fmt.Sprint(v)) != strings.TrimSpace(equals) {
 				continue
 			}
 			if c := widget.NormalizeRowColor(rule.Background); c != "" && bg == "" {
 				bg = c
 			}
 			bold = bold || rule.Bold
+			if c := widget.NormalizeRowColor(rule.Color); c != "" && color == "" {
+				color = c
+			}
 		}
 		if bg == "" && style.BackgroundFrom != "" {
 			bg = widget.NormalizeRowColor(s.listRowPathValue(ctx, entity, row, style.BackgroundFrom, cache))
 		}
 		if !bold && style.BoldFrom != "" {
 			bold = listRowTruthy(s.listRowPathValue(ctx, entity, row, style.BoldFrom, cache))
+		}
+		if color == "" && style.ColorFrom != "" {
+			color = widget.NormalizeRowColor(s.listRowPathValue(ctx, entity, row, style.ColorFrom, cache))
+		}
+		if color != "" {
+			row[listRowColorKey] = color
 		}
 		if bg != "" {
 			row[listRowBackgroundKey] = bg
@@ -141,6 +159,9 @@ func listRowStyle(row map[string]any) template.CSS {
 	}
 	if bold, _ := row[listRowBoldKey].(bool); bold {
 		parts = append(parts, "font-weight:600")
+	}
+	if color := widget.NormalizeRowColor(row[listRowColorKey]); color != "" {
+		parts = append(parts, "color:"+color)
 	}
 	return template.CSS(strings.Join(parts, ";")) //nolint:gosec // G203: только проверенный цвет #rrggbb и font-weight
 }

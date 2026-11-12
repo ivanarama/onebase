@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/csssafe"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/widget"
 )
@@ -25,7 +26,7 @@ func (s *Server) sidePanelFor(r *http.Request) (*metadata.HomeSidePanel, *metada
 		return nil, nil
 	}
 	w := s.reg.GetWidget(strings.TrimSpace(sp.Widget))
-	if w == nil {
+	if w == nil || !widget.VisibleFor(w, auth.UserFromContext(r.Context())) {
 		return nil, nil
 	}
 	return sp, w
@@ -84,7 +85,7 @@ func (s *Server) sidePanelData(r *http.Request) map[string]any {
 	if width <= 0 {
 		width = sidePanelDefaultWidth
 	}
-	return map[string]any{"Card": res, "Width": width}
+	return map[string]any{"Card": res, "Width": width, "Background": csssafe.Color(sp.Background)}
 }
 
 // hiddenOnHomeBySidePanel — проверка «этот виджет главной пользователю не

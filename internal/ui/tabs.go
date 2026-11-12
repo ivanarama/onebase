@@ -96,7 +96,7 @@ body.ob-side-dragging iframe{pointer-events:none}
     <div class="ob-tabempty" id="ob-tabempty" style="display:none">{{t $.Lang "Откройте объект из меню слева"}}</div>
   </div>
 </main>
-{{with .SidePanel}}<aside class="ob-side-panel" id="ob-side-panel" data-ob-side-width="{{.Width}}" style="width:{{.Width}}px" aria-label="{{.Card.Title}}"><div class="ob-side-resize" data-ob-side-resize title="{{t $.Lang "Ширина панели"}}"></div>{{template "widget-card" .Card}}</aside>{{end}}
+{{with .SidePanel}}<aside class="ob-side-panel" id="ob-side-panel" data-ob-side-width="{{.Width}}" style="width:{{.Width}}px;{{wBackground .Background}}" aria-label="{{.Card.Title}}"><div class="ob-side-resize" data-ob-side-resize title="{{t $.Lang "Ширина панели"}}"></div>{{template "widget-card" .Card}}</aside>{{end}}
 {{template "dashboard-scripts" .}}
 <script>
 (function(){
