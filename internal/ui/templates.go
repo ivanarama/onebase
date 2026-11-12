@@ -806,6 +806,24 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		// formActionVisible — видимость стандартного действия managed-формы.
 		// Отсутствующий ключ и visible:nil сохраняют платформенное умолчание.
+		// choiceOptionsWithCurrent — варианты поля со списком плюс его текущее
+		// значение, если среди них его нет: 1С показывает значение поля и тогда,
+		// когда список строится только в НачалоВыбора.
+		"choiceOptionsWithCurrent": func(opts []EnumOption, current any) []EnumOption {
+			cur := ""
+			if current != nil {
+				cur = fmt.Sprint(current)
+			}
+			if cur == "" {
+				return opts
+			}
+			for _, o := range opts {
+				if o.Value == cur {
+					return opts
+				}
+			}
+			return append(append([]EnumOption(nil), opts...), EnumOption{Value: cur, Label: cur})
+		},
 		"formActionVisible": func(form *metadata.FormModule, name string) bool {
 			if form == nil || form.Actions == nil {
 				return true
