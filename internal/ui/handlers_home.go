@@ -211,8 +211,8 @@ func (s *Server) homeDashboardData(r *http.Request) map[string]any {
 	for _, group := range groups {
 		rowRes := make([]widget.Result, 0, len(group))
 		for _, wMeta := range group {
-			if hiddenByPanel != "" && strings.EqualFold(wMeta.Name, hiddenByPanel) {
-				continue // уже в правой панели оболочки этого пользователя
+			if hiddenByPanel != nil && hiddenByPanel(wMeta.Name) {
+				continue // правая панель этого пользователя заменяет виджет (hide_on_home)
 			}
 			res := run(wMeta)
 			// Нет прав на источник — карточку не показываем: ошибка «нет

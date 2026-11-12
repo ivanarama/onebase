@@ -21,6 +21,10 @@ import (
 // (hide_on_home), а обновление виджета панели (/ui/_widget) работает и
 // тогда. Тест — YAML проекта → project.Load → GET /ui/app и /ui/_widget.
 func sidePanelProject(t *testing.T) *project.Project {
+	return sidePanelProjectWith(t, "true")
+}
+
+func sidePanelProjectWith(t *testing.T, hideOnHome string) *project.Project {
 	t.Helper()
 	dir := t.TempDir()
 	write := func(rel, body string) {
@@ -44,14 +48,25 @@ columns:
   - field: Описание
     label: Задача
 `)
+	write("widgets/списокзадач.yaml", `name: СписокЗадач
+type: list
+title: Все задачи
+query: ВЫБРАТЬ Ссылка, Описание ИЗ Документ.Задача
+source:
+  entity: Задача
+columns:
+  - field: Описание
+    label: Задача
+`)
 	write("config/home_page.yaml", `title: Главная
 widgets:
   - name: МоиЗадачи
+  - name: СписокЗадач
 side_panel:
   widget: МоиЗадачи
   width: 300
   except_roles: [ОператорКЦ]
-  hide_on_home: true
+  hide_on_home: `+hideOnHome+`
 `)
 	proj, err := project.Load(dir)
 	if err != nil {
@@ -133,7 +148,7 @@ func TestShellSidePanelByRoleThroughHTTP(t *testing.T) {
 			if home == nil {
 				t.Fatal("no home")
 			}
-			inHome := refCardNode(home, "div", "data-ob-widget-card") != nil
+			inHome := homeWidgetNames(home)["МоиЗадачи"]
 			if inHome != tc.widgetHome {
 				t.Fatalf("widget on home=%t, want %t", inHome, tc.widgetHome)
 			}
@@ -143,6 +158,75 @@ func TestShellSidePanelByRoleThroughHTTP(t *testing.T) {
 	if rec := get("/ui/_widget/"+url.PathEscape("МоиЗадачи"), user("СотрудникОТК")); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Проверить жалобу") {
 		t.Fatalf("panel widget partial: %d %.300s", rec.Code, rec.Body.String())
 	}
+}
+
+// hide_on_home списком: в панели узкий виджет, а на главной тем, кому видна
+// панель, не показывается перечисленный широкий список; сам виджет панели на
+// главной остаётся, у ОператорКЦ (панели нет) главная прежняя.
+func TestShellSidePanelHideOnHomeListThroughHTTP(t *testing.T) {
+	proj := sidePanelProjectWith(t, "[СписокЗадач]")
+	s, _ := newSubmitTestServer(t, proj.Entities)
+	s.reg.LoadWidgets(proj.Widgets)
+	s.reg.LoadHomePage(proj.HomePage)
+	router := chi.NewRouter()
+	s.Mount(router)
+	for _, tc := range []struct {
+		role             string
+		panel, mine, all bool
+	}{
+		{"СотрудникОТК", true, true, false},
+		{"ОператорКЦ", false, true, true},
+	} {
+		t.Run(tc.role, func(t *testing.T) {
+			u := &auth.User{Login: tc.role, Roles: []*auth.Role{{Name: tc.role, Permissions: auth.Permission{
+				Documents: map[string][]string{"Задача": {"read"}},
+			}}}}
+			req := httptest.NewRequest(http.MethodGet, "/ui/app", nil)
+			req = req.WithContext(auth.ContextWithUser(req.Context(), u))
+			rec := httptest.NewRecorder()
+			router.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET /ui/app: %d %.400s", rec.Code, rec.Body.String())
+			}
+			doc, err := html.Parse(strings.NewReader(rec.Body.String()))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if panel := elementByID(doc, "ob-side-panel"); (panel != nil) != tc.panel {
+				t.Fatalf("side panel present=%t, want %t", panel != nil, tc.panel)
+			}
+			home := elementByID(doc, "ob-tabhome")
+			if home == nil {
+				t.Fatal("no home")
+			}
+			names := homeWidgetNames(home)
+			if names["СписокЗадач"] != tc.all {
+				t.Fatalf("wide widget on home=%t, want %t (%v)", names["СписокЗадач"], tc.all, names)
+			}
+			if names["МоиЗадачи"] != tc.mine {
+				t.Fatalf("panel widget on home=%t, want %t (%v)", names["МоиЗадачи"], tc.mine, names)
+			}
+		})
+	}
+}
+
+// homeWidgetNames — имена виджетов, чьи карточки есть под узлом.
+func homeWidgetNames(n *html.Node) map[string]bool {
+	out := map[string]bool{}
+	var walk func(*html.Node)
+	walk = func(n *html.Node) {
+		if n.Type == html.ElementNode && n.Data == "div" {
+			if _, ok := managedHTMLAttr(n, "data-ob-widget-card"); ok {
+				name, _ := managedHTMLAttr(n, "data-widget-name")
+				out[name] = true
+			}
+		}
+		for ch := n.FirstChild; ch != nil; ch = ch.NextSibling {
+			walk(ch)
+		}
+	}
+	walk(n)
+	return out
 }
 
 func sidePanelText(n *html.Node) string {

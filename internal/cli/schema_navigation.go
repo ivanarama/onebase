@@ -38,7 +38,10 @@ func navigationContainerSchema(home bool) map[string]any {
 			"width":        map[string]any{"type": "integer"},
 			"roles":        names,
 			"except_roles": names,
-			"hide_on_home": boolSchema("Не показывать этот виджет на главной тем, кому видна панель"),
+			"hide_on_home": map[string]any{
+				"description": "Что не показывать на главной тем, кому видна панель: true — сам виджет панели, список — перечисленные виджеты главной",
+				"oneOf":       []any{map[string]any{"type": "boolean"}, names},
+			},
 		}}
 	} else {
 		props["name"] = stringSchema("Имя подсистемы")

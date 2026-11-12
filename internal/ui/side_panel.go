@@ -87,12 +87,13 @@ func (s *Server) sidePanelData(r *http.Request) map[string]any {
 	return map[string]any{"Card": res, "Width": width}
 }
 
-// hiddenOnHomeBySidePanel — имя виджета, который этому пользователю не
-// показывается на главной: он уже в его правой панели (side_panel.hide_on_home).
-func (s *Server) hiddenOnHomeBySidePanel(r *http.Request) string {
+// hiddenOnHomeBySidePanel — проверка «этот виджет главной пользователю не
+// показывать»: кому видна правая панель, тому side_panel.hide_on_home прячет
+// сам виджет панели (true) или перечисленные виджеты. nil — ничего не прячем.
+func (s *Server) hiddenOnHomeBySidePanel(r *http.Request) func(name string) bool {
 	sp, w := s.sidePanelFor(r)
-	if sp == nil || !sp.HideOnHome {
-		return ""
+	if sp == nil || (!sp.HideOnHome.Panel && len(sp.HideOnHome.Widgets) == 0) {
+		return nil
 	}
-	return w.Name
+	return func(name string) bool { return sp.HideOnHome.Hides(name, w.Name) }
 }
