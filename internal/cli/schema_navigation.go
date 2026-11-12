@@ -33,6 +33,13 @@ func navigationContainerSchema(home bool) map[string]any {
 		props["layout"] = enumSchema("auto", "grid", "rows")
 		props["rows"] = arrayOf(map[string]any{"type": "object", "properties": map[string]any{"widgets": names}})
 		props["widgets"] = arrayOf(map[string]any{"type": "object", "properties": map[string]any{"name": stringSchema("Виджет"), "span": map[string]any{"type": "integer"}}})
+		props["side_panel"] = map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{
+			"widget":       stringSchema("Виджет правой панели оболочки"),
+			"width":        map[string]any{"type": "integer"},
+			"roles":        names,
+			"except_roles": names,
+			"hide_on_home": boolSchema("Не показывать этот виджет на главной тем, кому видна панель"),
+		}}
 	} else {
 		props["name"] = stringSchema("Имя подсистемы")
 		props["icon"] = stringSchema("Имя иконки Lucide")

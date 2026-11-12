@@ -20,6 +20,21 @@ type HomePageRow struct {
 	Widgets []string `yaml:"widgets"`
 }
 
+// HomeSidePanel — правая панель оболочки: виджет из widgets/, ширина по
+// умолчанию (пользователь меняет её перетаскиванием), кому показывать.
+type HomeSidePanel struct {
+	Widget string `yaml:"widget"`
+	Width  int    `yaml:"width,omitempty"`
+	// Roles — только этим ролям; ExceptRoles — всем, кроме этих (сравнение без
+	// учёта регистра). Без пользователя (режим без авторизации) панель видна,
+	// если Roles не задан.
+	Roles       []string `yaml:"roles,omitempty"`
+	ExceptRoles []string `yaml:"except_roles,omitempty"`
+	// HideOnHome — тому, кому видна панель, этот же виджет на главной не
+	// показывается (не дублируется).
+	HideOnHome bool `yaml:"hide_on_home,omitempty"`
+}
+
 // HomePage describes the dashboard layout for /ui/.
 type HomePage struct {
 	Title   string            `yaml:"title"`
@@ -52,6 +67,10 @@ type HomePage struct {
 	// Читаются только у глобальной config/home_page.yaml.
 	Messages       string `yaml:"messages,omitempty"`
 	MessageSeconds int    `yaml:"message_seconds,omitempty"`
+	// SidePanel — закреплённая правая панель оболочки вкладок с виджетом
+	// (как полоса «Задачи» 1С). Читается только у глобальной
+	// config/home_page.yaml.
+	SidePanel *HomeSidePanel `yaml:"side_panel,omitempty"`
 }
 
 // Режимы показа сообщений (HomePage.Messages).

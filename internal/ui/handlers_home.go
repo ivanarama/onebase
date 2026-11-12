@@ -207,9 +207,13 @@ func (s *Server) homeDashboardData(r *http.Request) map[string]any {
 		s.decorateRefreshResult(r, wMeta, &res, runner)
 		return res
 	}
+	hiddenByPanel := s.hiddenOnHomeBySidePanel(r)
 	for _, group := range groups {
 		rowRes := make([]widget.Result, 0, len(group))
 		for _, wMeta := range group {
+			if hiddenByPanel != "" && strings.EqualFold(wMeta.Name, hiddenByPanel) {
+				continue // уже в правой панели оболочки этого пользователя
+			}
 			res := run(wMeta)
 			// Нет прав на источник — карточку не показываем: ошибка «нет
 			// доступа» на чужом рабочем столе только пугает пользователя.
@@ -294,6 +298,11 @@ func (s *Server) dashboardWidget(r *http.Request, name string) *metadata.Widget 
 	subsystem := r.URL.Query().Get("subsystem")
 	if subsystem != "" && s.reg.GetSubsystem(subsystem) == nil {
 		return nil
+	}
+	// Виджет правой панели оболочки обновляется тем же маршрутом, даже если
+	// на главной этого пользователя его нет (hide_on_home).
+	if _, panel := s.sidePanelFor(r); panel != nil && strings.EqualFold(panel.Name, name) {
+		return panel
 	}
 	hp := s.effectiveHomePage(subsystem)
 	honorRows := hp != nil && hp.Layout == "rows"
