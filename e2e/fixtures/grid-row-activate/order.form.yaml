@@ -1,0 +1,21 @@
+schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Orders
+elements:
+  - kind: ПолеВвода
+    name: ПолеВыбор
+    data_path: Объект.Selected
+  - kind: Кнопка
+    name: Find
+    title: {ru: Find}
+    events: {Нажатие: FindClick}
+  - kind: ТабличнаяЧасть
+    name: TabResults
+    data_path: Объект.Results
+    events: {ПриАктивизацииСтроки: RowActivated}
+    children:
+      - kind: Колонка
+        name: ColName
+        data_path: Объект.Results.Name
