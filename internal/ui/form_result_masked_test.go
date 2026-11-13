@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"net/url"
 	"strings"
 	"testing"
@@ -26,6 +27,7 @@ func TestResultFormProtectedSavedView(t *testing.T) {
 					if err := s.store.Migrate(context.Background(), []*metadata.Entity{entity}); err != nil {
 						t.Fatal(err)
 					}
+					s.entitySvc = s.newEntityService(nil)
 					form := entity.Forms[0]
 					form.Elements = append(form.Elements, &metadata.FormElement{Kind: metadata.FormElementField, Name: "Note", DataPath: "Объект.Note"})
 					body := "Объект.Записать();"
@@ -71,7 +73,11 @@ func TestResultFormProtectedSavedView(t *testing.T) {
 						} else if response.OK || response.ResultForm != nil {
 							t.Fatalf("unsaved state passed guard: %+v", response)
 						}
-						if strings.Contains(strings.Join(response.Messages, " "), secret) {
+						encoded, err := json.Marshal(response)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if strings.Contains(string(encoded), secret) {
 							t.Fatal("response disclosed protected value")
 						}
 						stored, err := s.store.GetByID(context.Background(), entity.Name, id, entity)
