@@ -669,6 +669,24 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       if (el.getAttribute('data-ob-control-fieldset') === '1') el.disabled = !!hidden[path];
     });
     var ro = st.readonly || {};
+    // readonly_when колонок табличной части: колонка сетки — не DOM-элемент с
+    // data-ob-el-path, её состояние применяется к столбцу SlickGrid.
+    (window._obGridViews || []).forEach(function (gs) {
+      if (!gs || !gs.grid || gs.readOnly) return;
+      var cols = gs.grid.getColumns(), changed = false;
+      cols.forEach(function (col, idx) {
+        if (!col.obPath || !Object.prototype.hasOwnProperty.call(ro, col.obPath)) return;
+        var on = !!ro[col.obPath];
+        if (!!col.obReadOnly === on) return;
+        var active = gs.grid.getActiveCell && gs.grid.getActiveCell();
+        if (on && active && active.cell === idx && gs.grid.getEditorLock && gs.grid.getEditorLock().isActive()) {
+          gs.grid.getEditorLock().cancelCurrentEdit();
+        }
+        obSetGridColumnReadOnly(col, on);
+        changed = true;
+      });
+      if (changed) { gs.grid.setColumns(cols); gs.grid.invalidate(); }
+    });
     // Свой ли это редактирующий контрол: ближайший якорь элемента формы — сам
     // el. У контрола вложенного элемента якорь ближе, и его состояние приедет
     // отдельной строкой карты. Навигацию (переход к выбранной ссылке, вкладки)
@@ -3872,10 +3890,24 @@ function obGridColumnIds(columns) {
       } else {
         col.editor = Slick.Editors.Text;
       }
+      // readonly / readonly_when колонки: без редактора. Редактор
+      // сохраняется — ответ события формы может снять запрет (path).
+      col.obEditor = col.editor;
+      col.obPath = c.path || "";
+      if (c.readOnly) obSetGridColumnReadOnly(col, true);
       columns.push(col);
     }
     return columns;
   }
+
+  // obSetGridColumnReadOnly снимает/возвращает редактор колонки сетки.
+  function obSetGridColumnReadOnly(col, on) {
+    col.obReadOnly = !!on;
+    col.editor = on ? undefined : col.obEditor;
+    var css = (col.cssClass || "").replace(/(^|\s)ob-col-readonly(?=\s|$)/g, "").trim();
+    col.cssClass = on ? (css ? css + " ob-col-readonly" : "ob-col-readonly") : css;
+  }
+  window.obSetGridColumnReadOnly = obSetGridColumnReadOnly;
 
   // Serialize ref value
   function refId(v) {
