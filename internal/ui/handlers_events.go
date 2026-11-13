@@ -12,6 +12,7 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/realtime"
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // hubNotifier адаптирует *realtime.Hub к interpreter.Notifier: DSL-функция
@@ -19,6 +20,7 @@ import (
 type hubNotifier struct {
 	hub         *realtime.Hub
 	closeSource string
+	ctxSource   interpreter.CtxSource
 }
 
 func (n hubNotifier) Publish(target, name string, data any) {
@@ -29,24 +31,31 @@ func (n hubNotifier) Publish(target, name string, data any) {
 	if name == "ui.закрытьФорму" {
 		ev.CloseSource = n.closeSource
 	}
-	n.hub.Publish(target, ev)
+	// A recipient can immediately fetch the referenced object on another DB
+	// connection. Never publish provisional state, including from a DSL
+	// transaction started after this notifier was constructed.
+	publish := func() { n.hub.Publish(target, ev) }
+	if n.ctxSource != nil && storage.DeferUntilTxCommit(n.ctxSource.Ctx(), publish) {
+		return
+	}
+	publish()
 }
 
 // Only this request's opaque snapshot token can identify its originating form.
 // A missing/invalid token keeps ordinary dirty confirmation in every recipient.
-func (s *Server) bindFormCloseSource(vars map[string]any, r *http.Request) {
+func (s *Server) bindFormCloseSource(vars map[string]any, r *http.Request, ctxSource interpreter.CtxSource) {
 	source := r.Header.Get("X-OneBase-Form-Close-Source")
 	if _, err := uuid.Parse(source); err != nil {
 		return
 	}
-	for key, value := range interpreter.NewNotifyFunctions(hubNotifier{hub: s.hub, closeSource: source}) {
+	for key, value := range interpreter.NewNotifyFunctions(hubNotifier{hub: s.hub, closeSource: source, ctxSource: ctxSource}) {
 		vars[key] = value
 	}
 }
 
 // notifier возвращает издателя уведомлений для инжекции в DSL-переменные.
-func (s *Server) notifier() interpreter.Notifier {
-	return hubNotifier{hub: s.hub}
+func (s *Server) notifier(ctxSource interpreter.CtxSource) interpreter.Notifier {
+	return hubNotifier{hub: s.hub, ctxSource: ctxSource}
 }
 
 const (
