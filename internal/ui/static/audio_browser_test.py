@@ -6,7 +6,7 @@ proof = os.environ.get('ONEBASE_AUDIO_PROOF_DIR')
 if proof:
     Path(proof).mkdir(parents=True, exist_ok=True)
 with sync_playwright() as p:
-    browser = p.chromium.launch(headless=True)
+    browser = p.chromium.launch(headless=True, executable_path=os.environ.get("ONEBASE_AUDIO_CHROMIUM"))
     try:
         page = browser.new_page(viewport={'width':1100,'height':760})
         requests, events, metadata, errors = [], [], [], []
