@@ -1799,10 +1799,17 @@ func (s *Server) managedCloseStateDirty(
 	if err != nil || persisted == nil {
 		return true
 	}
+	// Save restores durable PII internally, then returns the handler's masked
+	// view. Either the durable value or its current authorized view is clean.
+	// Compare copies: never disclose the durable value through the live object.
+	persistedView := cloneRecord(persisted)
+	s.maskRecord(ctx, entity, persistedView)
 	dialect := s.store.Dialect().Name()
 	for _, field := range entity.Fields {
 		stored, _ := maskCIKeyValue(persisted, field.Name)
-		if tpCellNormStored(field, obj.Get(field.Name), dialect) != tpCellNormStored(field, stored, dialect) {
+		liveNorm := tpCellNormStored(field, obj.Get(field.Name), dialect)
+		view, _ := maskCIKeyValue(persistedView, field.Name)
+		if liveNorm != tpCellNormStored(field, stored, dialect) && liveNorm != tpCellNormStored(field, view, dialect) {
 			return true
 		}
 	}
