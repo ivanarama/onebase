@@ -8738,6 +8738,6 @@ choice_filter:
 **Для владельца: readonly контекст формы результата.**
 `КонтекстФормыРезультата()` / `ResultFormContext()` возвращает текущего actor,
 обработку, проверенную типизированную ссылку и стабильный non-bearer UUIDv8
-контекста. Только result-command; ordinary/missing/foreign/expired и подмена
+контекста. Только Нажатие/объявленный Ответ result-command; ordinary/missing/foreign/expired и подмена
 обработки/ссылки отказывают без UI-команд, записи и HTTP. Существующие способы
 закрытия формы и гарды не изменены. См. docs/forms.md.

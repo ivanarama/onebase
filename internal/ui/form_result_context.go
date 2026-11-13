@@ -29,8 +29,20 @@ func resultContextNonce(token string) string {
 }
 
 func resultContextCommandAllowed(target browserFormEventTarget, event string, closing bool) bool {
-	return !closing && event == string(metadata.FormEventOnClick) &&
-		(target.command != nil || (target.element != nil && target.element.Kind == metadata.FormElementButton))
+	if closing || (event != string(metadata.FormEventOnClick) && event != string(metadata.FormEventOnAnswer)) {
+		return false
+	}
+	// A metadata command's Action is the declared handler for both phases.
+	// Buttons have separate handlers: an Answer-only button is not a result
+	// command continuation. A posted _question_answer grants no authority.
+	if target.command != nil {
+		return strings.TrimSpace(target.command.Action) != ""
+	}
+	el := target.element
+	if el == nil || el.Kind != metadata.FormElementButton || strings.TrimSpace(el.Handlers[metadata.FormEventOnClick]) == "" {
+		return false
+	}
+	return event == string(metadata.FormEventOnClick) || strings.TrimSpace(el.Handlers[metadata.FormEventOnAnswer]) != ""
 }
 
 func (s *Server) resultContextBuiltin(r *http.Request, processorName string, allowed bool) interpreter.BuiltinFunc {
