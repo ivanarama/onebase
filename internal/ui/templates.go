@@ -1563,7 +1563,7 @@ const tplHead = `
   "imageError" (t (or $.Lang "ru") "Не удалось загрузить изображение")
   "imageArea" (t (or $.Lang "ru") "Область просмотра изображения")
 )}}</script>
-{{messagesMeta .}}<script src="/static/ui.js"></script>{{if .UseShortDateInput}}<script type="application/json" id="ob-date-input-i18n">{{jsJSON (dict "invalid" (t $.Lang "Введите корректную дату"))}}</script><script src="/static/date-input.js"></script>{{end}}{{if .CompactReport}}<script src="/static/report-controls.js"></script>{{end}}{{if .CompactReport}}<style id="ob-report-density-css">
+{{messagesMeta .}}<script src="/static/ui.js"></script>{{if .Cfg.UIEnhancements}}<script src="/static/list-controls.js"></script>{{end}}{{if .UseShortDateInput}}<script type="application/json" id="ob-date-input-i18n">{{jsJSON (dict "invalid" (t $.Lang "Введите корректную дату"))}}</script><script src="/static/date-input.js"></script>{{end}}{{if .CompactReport}}<script src="/static/report-controls.js"></script>{{end}}{{if .CompactReport}}<style id="ob-report-density-css">
 .ob-report-compact{padding:8px 12px}
 .ob-report-compact.ob-report-dense{padding:6px 10px}
 .ob-report-titlebar{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;margin-bottom:4px}
@@ -1736,6 +1736,15 @@ details[open] summary::before{content:"▼ "}
 .filter-actions{padding:0 20px 16px;display:flex;gap:10px}
 
 /* List controls retain their separate rows; only their vertical density changes. */
+{{if .Cfg.UIEnhancements}}
+/* List controls retain their separate rows; only their vertical density changes. */
+/* Keep the existing vertical order; only controls and gaps become thinner. */
+.ob-list-panels>form,.ob-list-panels>.row-top form{gap:4px 8px!important;margin-bottom:4px!important}
+.ob-list-panels>form input,.ob-list-panels>form select,.ob-list-panels>form button,.ob-list-panels>.row-top input,.ob-list-panels>.row-top select{height:26px!important;box-sizing:border-box;padding:2px 6px!important;font-size:12px!important;min-width:0}
+.ob-list-panels>form>div{min-width:0;max-width:240px}
+.ob-list-panels>details>form{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:flex-end;padding:0 8px 4px}
+.ob-list-panels>.card,.ob-list-panels .ob-list-wrap>.card{padding:4px 8px}
+.ob-list-panels>.row-top .btn{height:26px;box-sizing:border-box;padding:2px 8px;font-size:12px;line-height:20px}
 .ob-list-panels>.row-top{margin-bottom:4px}
 .ob-list-panels>.row-top h2{margin:0}
 .ob-list-panels>.ob-list-search{margin-bottom:4px!important}
@@ -1761,8 +1770,12 @@ details[open] summary::before{content:"▼ "}
 .ob-list-panels .ob-list-settings [data-ob-ls-move]{height:22px;padding:0 6px;line-height:20px}
 .ob-list-panels .ob-list-content>.card{padding:4px 8px}
 .ob-list-panels .ob-list-cell-filters{gap:6px!important;margin-bottom:4px!important;flex-wrap:wrap}
-.ob-list-panels .ob-list-cell-filters .btn{min-height:0;height:24px;box-sizing:border-box;padding:1px 8px;font-size:12px;line-height:20px}
+/* A distinct border remains visible over a form's blue conditional background. */
+#main-form .tp-table tr[aria-selected="true"]>td{background:#93c5fd!important;box-shadow:inset 0 2px #1d4ed8,inset 0 -2px #1d4ed8}
+#main-form .tp-table tr[aria-selected="true"]>td:first-child{border-left:3px solid #1d4ed8}
 
+.ob-list-panels .ob-list-cell-filters .btn{min-height:0;height:24px;box-sizing:border-box;padding:1px 8px;font-size:12px;line-height:20px}
+{{end}}
 .tp-table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
 .tp-table th{background:#eef2f7;padding:8px 10px;text-align:left;font-size:12px;color:#334155;font-weight:600;border-bottom:2px solid #cbd5e1;white-space:nowrap}
 .tp-table td{padding:5px 6px;border-bottom:1px solid #e2e8f0;border-right:1px solid #eef2f7;vertical-align:middle}
@@ -2073,9 +2086,18 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 .w-list td{padding:6px 8px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155}
 .w-list td.right{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .w-list tr:last-child td{border-bottom:none}
+.w-list th,.w-list td{border-right:1px solid #cbd5e1}
+.w-list th:last-child,.w-list td:last-child{border-right:none}
+.w-list th[data-ob-widget-column]{position:relative}
+.ob-widget-column-grip{position:absolute;top:0;right:-3px;bottom:0;width:7px;cursor:col-resize;z-index:2;touch-action:none}
+.ob-widget-column-grip:hover,.ob-widget-column-grip:focus{background:#60a5fa}
+.w-list table.ob-widget-fixed{table-layout:fixed;min-width:0}
+.w-list table.ob-widget-fixed th,.w-list table.ob-widget-fixed td{overflow:hidden;text-overflow:ellipsis}
 .w-list .ob-row-link{cursor:pointer}
 .w-list .ob-row-link:hover td,.w-list .ob-row-link:focus-visible td{background:#eff6ff}
 .w-list .ob-row-link:focus-visible{outline:2px solid #2563eb;outline-offset:-2px}
+.w-list tr.ob-row-styled td{color:inherit;font-weight:inherit}
+.w-list tr.ob-row-styled.ob-row-link:hover td,.w-list tr.ob-row-styled.ob-row-link:focus-visible td{background:inherit;filter:brightness(.94)}
 .w-chart{min-height:240px}
 .w-chart-canvas{width:100%;height:240px}
 .w-actions-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
@@ -2089,6 +2111,14 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 .w-recent-row .ts{color:#94a3b8;font-size:11px;flex-shrink:0;font-variant-numeric:tabular-nums}
 .w-error{background:#fef2f2;color:#dc2626;font-size:12px;padding:6px 10px;border-radius:6px;margin-top:6px;font-family:Consolas,monospace}
 .w-empty{color:#94a3b8;font-size:13px;padding:6px 0;font-style:italic}
+/* List-widget filters share a row by default and wrap only when it is full. */
+.w-card-list .w-filters{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:flex-end;margin-bottom:8px}
+.w-card-list .w-filter{display:flex;flex-direction:column;flex:1 1 110px;gap:2px;min-width:0;max-width:220px;margin:0;font-size:12px;line-height:16px}
+.w-card-list .w-filter>span{min-width:0;overflow-wrap:anywhere}
+.w-card-list .w-filter input,.w-card-list .w-filter select{box-sizing:border-box;min-width:0;width:100%;max-width:100%;height:30px;padding:4px 6px;font-size:12px;border:1px solid #cbd5e1;border-radius:4px}
+.w-card-list .w-filter-reset{flex:0 0 auto;max-width:100%;min-height:30px;padding:4px 10px;border:1px solid #cbd5e1;border-radius:4px;background:#f1f5f9;color:#334155;cursor:pointer}
+@media(max-width:640px){.w-card-list .w-filters{flex-direction:column;align-items:stretch}.w-card-list .w-filter{flex:0 0 auto;max-width:none}.w-card-list .w-filter-reset{align-self:flex-start}}{{if .Cfg.UIEnhancements}}
+
 
 /* BEGIN widget-list-controls */
 .ob-dashboard-title{margin:0 0 6px}
@@ -2105,7 +2135,7 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 .ob-widget-fill .w-list th{position:sticky;top:0;z-index:1}
 .ob-widget-fill .w-refresh-status:empty{display:none}
 /* END widget-list-controls */
-
+{{end}}
 .w-default-hint{color:#64748b;font-size:13px;margin:6px 0 14px}
 </style>
 {{end}}
@@ -2270,7 +2300,7 @@ const tplList = `
 
 {{define "page-list"}}
 {{template "head" .}}{{template "nav" .}}
-<main class="main-list ob-list-panels" data-ob-list-panel-scope="{{.ListPanelScope}}">
+<main class="main-list{{if .Cfg.UIEnhancements}} ob-list-panels{{end}}"{{if .Cfg.UIEnhancements}} data-ob-list-panel-scope="{{.ListPanelScope}}"{{end}}>
 <div class="row-top">
   <h2>{{.Entity.DisplayName $.Lang}}</h2>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -2319,7 +2349,7 @@ const tplList = `
     <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{listExcelSuffix .Params .ListFormOff}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
   </div>
 </div>
-<form class="ob-list-search" method="GET" style="display:flex;gap:8px;margin-bottom:12px;max-width:460px">
+<form{{if .Cfg.UIEnhancements}} class="ob-list-search"{{end}} method="GET" style="display:flex;gap:8px;margin-bottom:12px;max-width:460px">
   <input type="text" id="ob-list-search" name="q" value="{{.Params.Search}}" placeholder="{{t $.Lang "Поиск..."}}" style="flex:1;padding:7px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:14px" data-ob-list-search data-ob-auto-submit="320" title="Ctrl+F" aria-keyshortcuts="Control+F">
   {{if .Params.Search}}<a class="btn btn-sm" href="{{listURL $.Query "q" ""}}" style="background:#e2e8f0;color:#475569;align-self:center">✕</a>{{end}}
   {{/* Форма владеет только q — остальное состояние списка (вид, папка,
@@ -2336,7 +2366,7 @@ const tplList = `
 {{if .SearchAll}}<p class="list-search-scope" style="margin:6px 0 10px;color:#64748b;font-size:13px">{{t $.Lang "Результаты поиска по всему справочнику"}}</p>{{end}}
 
 {{$entity := .Entity}}{{$params := .Params}}{{$refOpts := .RefFilterOptions}}
-<details class="ob-list-filters" data-ob-list-panel="filters">
+<details{{if .Cfg.UIEnhancements}} class="ob-list-filters" data-ob-list-panel="filters"{{end}}>
   <summary>{{t $.Lang "Отбор"}}</summary>
   <form method="GET" action="">
   <div class="filter-body">
@@ -3350,7 +3380,7 @@ const tplRegister = `
 
 {{define "page-register-movements"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .Cfg.UIEnhancements}} class="ob-list-panels" data-ob-list-panel-scope="{{.ListPanelScope}}"{{end}}>
 <div class="row-top">
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "движения"}}</h2>
   {{if .CanViewBalances}}<a class="btn btn-sm" href="/ui/register/{{lower .Register.Name}}/balances" style="background:#e2e8f0;color:#475569">{{t $.Lang "Остатки →"}}</a>{{end}}
@@ -3381,7 +3411,7 @@ const tplRegister = `
 
 {{define "page-register-balances"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .Cfg.UIEnhancements}} class="ob-list-panels" data-ob-list-panel-scope="{{.ListPanelScope}}"{{end}}>
 <div class="row-top">
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "остатки"}}</h2>
   <a class="btn btn-sm" href="/ui/register/{{lower .Register.Name}}" style="background:#e2e8f0;color:#475569">{{t $.Lang "← Движения"}}</a>
@@ -3832,7 +3862,7 @@ const tplAbout = `
 const tplInfoReg = `
 {{define "page-inforeg-list"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .Cfg.UIEnhancements}} class="ob-list-panels" data-ob-list-panel-scope="{{.ListPanelScope}}"{{end}}>
 <div class="row-top">
   <h2>{{.InfoReg.DisplayName $.Lang}}{{if .InfoReg.Periodic}} <span style="font-size:13px;color:#64748b;font-weight:400">({{t $.Lang "периодический"}})</span>{{end}}</h2>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -3841,7 +3871,7 @@ const tplInfoReg = `
   </div>
 </div>
 {{template "reg-filter-form" (dict "Fields" .FilterFields "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" .InfoReg.Periodic "ShowToOnly" false "HasFilters" .HasFilters "ResetURL" .ResetURL "Context" .FilterContext "Lang" $.Lang)}}
-<div style="margin-bottom:8px">{{template "detail-panel-toggle" .}}</div>
+{{if not .Cfg.HideListDetailPanel}}<div style="margin-bottom:8px">{{template "detail-panel-toggle" .}}</div>{{end}}
 <div class="ob-list-wrap">
 <div class="card">
 {{if .Rows}}
@@ -4002,7 +4032,7 @@ const tplConstants = `
 const tplJournal = `
 {{define "page-journal"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .Cfg.UIEnhancements}} class="ob-list-panels" data-ob-list-panel-scope="{{.ListPanelScope}}"{{end}}>
 <div class="row-top">
   <h2>{{.Journal.DisplayName $.Lang}}</h2>
   <div style="display:flex;align-items:center;gap:12px">
@@ -4089,7 +4119,7 @@ const tplJournal = `
 </details>
 
 {{if .JournalWarnings}}<div class="card" style="background:#fef2f2;border-color:#fecaca;margin-bottom:8px;padding:8px 12px"><strong>{{t $.Lang "Предупреждения журнала:"}}</strong><ul style="margin:4px 0 0;padding-left:20px">{{range .JournalWarnings}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
-<div style="margin-bottom:8px">{{template "detail-panel-toggle" .}}</div>
+{{if not .Cfg.HideListDetailPanel}}<div style="margin-bottom:8px">{{template "detail-panel-toggle" .}}</div>{{end}}
 <div class="ob-list-wrap">
 <div class="card">
 {{if .Rows}}
@@ -4508,7 +4538,7 @@ const tplScheduled = `
 const tplAccountReg = `
 {{define "page-accounts"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .Cfg.UIEnhancements}} class="ob-list-panels" data-ob-list-panel-scope="{{.ListPanelScope}}"{{end}}>
 <div class="row-top">
   <h2>{{.Chart.DisplayName $.Lang}}</h2>
   <span style="color:#94a3b8;font-size:13px">{{len .Rows}} {{t $.Lang "счетов"}}</span>
@@ -4544,7 +4574,7 @@ const tplAccountReg = `
 
 {{define "page-accountreg-movements"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .Cfg.UIEnhancements}} class="ob-list-panels" data-ob-list-panel-scope="{{.ListPanelScope}}"{{end}}>
 <div class="row-top">
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "Проводки"}}</h2>
   <a class="btn btn-secondary" href="/ui/accountreg/{{lower .Register.Name}}/balances">{{t $.Lang "Остатки"}}</a>
@@ -4581,7 +4611,7 @@ const tplAccountReg = `
 
 {{define "page-accountreg-balances"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .Cfg.UIEnhancements}} class="ob-list-panels" data-ob-list-panel-scope="{{.ListPanelScope}}"{{end}}>
 <div class="row-top">
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "Остатки по счетам"}}</h2>
   <div style="display:flex;gap:8px;align-items:center">

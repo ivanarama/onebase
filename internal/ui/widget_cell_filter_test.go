@@ -48,6 +48,7 @@ func TestWidgetCellFilterHTTPMatrix(t *testing.T) {
 		reg.LoadWidgets([]*metadata.Widget{meta})
 		reg.LoadHomePage(&metadata.HomePage{Layout: "rows", Rows: []metadata.HomePageRow{{Widgets: []string{meta.Name}}}})
 		s := &Server{reg: reg, store: db, widgetCache: widget.NewCache(time.Minute), messages: NewMessageStore()}
+		s.cfg.UIEnhancements = true
 		router := chi.NewRouter()
 		router.Use(func(next http.Handler) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

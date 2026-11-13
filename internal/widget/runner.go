@@ -192,9 +192,10 @@ type Runner struct {
 // are resolved and merged here. Fresh bypasses the exact cache entry and
 // replaces it after a successful run.
 type RunOptions struct {
-	Params     map[string]any
-	CellFilter *CellFilter
-	Fresh      bool
+	Params            map[string]any
+	CellFilter        *CellFilter
+	CaptureCellValues bool
+	Fresh             bool
 }
 
 // New creates a Runner. The Resolve hook is optional — when non-nil it is
@@ -252,16 +253,19 @@ func (r *Runner) RunWithOptions(ctx context.Context, w *metadata.Widget, opts Ru
 	}
 
 	if opts.CellFilter != nil {
-		return r.runOnce(ctx, w, params, opts.CellFilter)
+		return r.runOnce(ctx, w, params, opts.CellFilter, true)
 	}
 	if r.Cache != nil && w.Type != metadata.WidgetTypeActions {
 		security, cacheable := securityFingerprint(r.User)
 		if !cacheable {
-			return r.runOnce(ctx, w, params, nil)
+			return r.runOnce(ctx, w, params, nil, opts.CaptureCellValues)
 		}
 		paramsKey, cacheable := paramsFingerprint(params)
 		if !cacheable {
-			return r.runOnce(ctx, w, params, nil)
+			return r.runOnce(ctx, w, params, nil, opts.CaptureCellValues)
+		}
+		if opts.CaptureCellValues {
+			paramsKey += "|cell-values"
 		}
 		key := cacheKey(w.Name, r.CurrentUser, security, paramsKey)
 		if !opts.Fresh {
@@ -269,7 +273,7 @@ func (r *Runner) RunWithOptions(ctx context.Context, w *metadata.Widget, opts Ru
 				return cached
 			}
 		}
-		res := r.runOnce(ctx, w, params, nil)
+		res := r.runOnce(ctx, w, params, nil, opts.CaptureCellValues)
 		// Don't cache transient errors — they're often "compile" errors during
 		// the editing loop, and a stale failure looks worse than a fresh retry.
 		if res.Error == "" {
@@ -277,16 +281,20 @@ func (r *Runner) RunWithOptions(ctx context.Context, w *metadata.Widget, opts Ru
 		}
 		return res
 	}
-	return r.runOnce(ctx, w, params, nil)
+	return r.runOnce(ctx, w, params, nil, opts.CaptureCellValues)
 }
 
-func (r *Runner) runOnce(ctx context.Context, w *metadata.Widget, params map[string]any, cellFilter *CellFilter) Result {
+func (r *Runner) runOnce(ctx context.Context, w *metadata.Widget, params map[string]any, cellFilter *CellFilter, capture bool) Result {
 	res := Result{Name: w.Name, Type: string(w.Type), Title: w.Title, Link: safeWidgetLink(w.Link)}
 	switch w.Type {
 	case metadata.WidgetTypeKPI:
 		r.runKPI(ctx, w, params, &res)
 	case metadata.WidgetTypeList:
-		r.runList(ctx, w, params, &res, cellFilter)
+		if capture || cellFilter != nil {
+			r.runListEnhanced(ctx, w, params, &res, cellFilter)
+		} else {
+			r.runList(ctx, w, params, &res)
+		}
 	case metadata.WidgetTypeChart:
 		r.runChart(ctx, w, params, &res)
 	case metadata.WidgetTypeActions:
@@ -313,7 +321,47 @@ func (r *Runner) runKPI(ctx context.Context, w *metadata.Widget, params map[stri
 	res.KPI = &KPIResult{Value: val, Display: formatKPI(val, w.Format)}
 }
 
-func (r *Runner) runList(ctx context.Context, w *metadata.Widget, params map[string]any, res *Result, filter *CellFilter) {
+func (r *Runner) runList(ctx context.Context, w *metadata.Widget, params map[string]any, res *Result) {
+	rows, cols, compiled, err := r.runQuery(ctx, w, params)
+	if err != nil {
+		setResultError(res, err)
+		return
+	}
+	if w.Limit > 0 && len(rows) > w.Limit {
+		rows = rows[:w.Limit]
+	}
+	// Навигация строк (план 182C): сырой идентификатор забирается ДО
+	// resolveUUIDs, колонка обязана быть подтверждённой компилятором ссылкой
+	// именно на объявленную сущность. Любая неоднозначность — строки просто
+	// остаются некликабельными, виджет продолжает работать.
+	idCol, rawIDs := r.navigationIDs(w, cols, rows, compiled)
+	r.resolveUUIDs(ctx, rows)
+	if len(rawIDs) > 0 {
+		entity := r.Reg.GetEntity(w.Source.Entity)
+		for i, row := range rows {
+			id, perr := uuid.Parse(rawIDs[i])
+			if perr != nil || id == uuid.Nil || entity == nil {
+				continue // пустой/битый id оставляет конкретную строку некликабельной
+			}
+			row["_row_url"] = "/ui/" + string(entity.Kind) + "/" + entity.Name + "/" + rawIDs[i]
+		}
+	}
+	displayCols := cols
+	if idCol != "" && len(w.Columns) == 0 {
+		// Сырой идентификатор — навигационная деталь, а не данные для таблицы:
+		// из авто-колонок (автор не объявил свои) он исключается.
+		displayCols = make([]string, 0, len(cols))
+		for _, c := range cols {
+			if c != idCol {
+				displayCols = append(displayCols, c)
+			}
+		}
+	}
+	res.Rows = rows
+	res.Columns = columnsForList(w, displayCols)
+}
+
+func (r *Runner) runListEnhanced(ctx context.Context, w *metadata.Widget, params map[string]any, res *Result, filter *CellFilter) {
 	rows, cols, compiled, err := r.runQuery(ctx, w, params)
 	if err != nil {
 		setResultError(res, err)

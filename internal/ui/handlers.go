@@ -730,7 +730,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	}
 	prepareDefaultFormDensity(name, data)
 	prepareReportControls(name, data)
-	if name == "page-list" {
+	if isListControlsPage(name) && s.uiEnhancementsAllowed(r) {
 		scope := "open-access"
 		if user := auth.UserFromContext(r.Context()); user != nil {
 			if user.ID != "" {

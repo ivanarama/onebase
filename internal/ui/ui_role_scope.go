@@ -45,3 +45,13 @@ func (s *Server) uiConfigForRequest(r *http.Request, supplied ...Config) Config 
 	}
 	return cfg
 }
+
+// All business list templates share scoped compact controls; administrative
+// scheduler/queue pages intentionally retain their own layout.
+func isListControlsPage(name string) bool {
+	switch name {
+	case "page-list", "page-inforeg-list", "page-register-movements", "page-register-balances", "page-journal", "page-accounts", "page-accountreg-movements", "page-accountreg-balances":
+		return true
+	}
+	return false
+}

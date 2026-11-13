@@ -17,7 +17,10 @@ func widgetCellFilterKey(w *metadata.Widget) string {
 	return "c." + base64.RawURLEncoding.EncodeToString([]byte(w.Name))
 }
 
-func parseWidgetCellFilter(r *http.Request, w *metadata.Widget) (*widget.CellFilter, error) {
+func (s *Server) parseWidgetCellFilter(r *http.Request, w *metadata.Widget) (*widget.CellFilter, error) {
+	if !s.uiEnhancementsAllowed(r) {
+		return nil, nil
+	}
 	values, present := r.URL.Query()[widgetCellFilterKey(w)]
 	if !present {
 		return nil, nil
@@ -49,17 +52,17 @@ func parseWidgetCellFilter(r *http.Request, w *metadata.Widget) (*widget.CellFil
 	return &filter, nil
 }
 
-func lenientWidgetCellFilter(r *http.Request, w *metadata.Widget) *widget.CellFilter {
-	filter, _ := parseWidgetCellFilter(r, w)
+func (s *Server) lenientWidgetCellFilter(r *http.Request, w *metadata.Widget) *widget.CellFilter {
+	filter, _ := s.parseWidgetCellFilter(r, w)
 	return filter
 }
 
 func (s *Server) prepareWidgetCellFilter(r *http.Request, w *metadata.Widget, res *widget.Result) {
-	if w == nil || res.Type != "list" {
+	if w == nil || res.Type != "list" || !s.uiEnhancementsAllowed(r) {
 		return
 	}
 	res.CellFilterKey = widgetCellFilterKey(w)
-	if filter := lenientWidgetCellFilter(r, w); filter != nil {
+	if filter := s.lenientWidgetCellFilter(r, w); filter != nil {
 		encoded, _ := json.Marshal(filter)
 		res.CellFilterJSON = string(encoded)
 	}

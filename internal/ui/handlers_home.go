@@ -202,7 +202,7 @@ func (s *Server) homeDashboardData(r *http.Request) map[string]any {
 		// Фильтры полной страницы (план 182D): URL-значения применяются к данным
 		// толерантно — мусор трактуется как пустой отбор, страница не ломается.
 		// Иначе после F5 контролы заполнены, а строки неотфильтрованы.
-		res := runner.RunWithOptions(r.Context(), wMeta, widget.RunOptions{Params: lenientWidgetFilterParams(r, wMeta), CellFilter: lenientWidgetCellFilter(r, wMeta)})
+		res := runner.RunWithOptions(r.Context(), wMeta, widget.RunOptions{Params: lenientWidgetFilterParams(r, wMeta), CellFilter: s.lenientWidgetCellFilter(r, wMeta), CaptureCellValues: s.uiEnhancementsAllowed(r)})
 		res.Title = wMeta.DisplayTitle(lang)
 		s.decorateRefreshResult(r, wMeta, &res, runner)
 		return res
@@ -271,7 +271,7 @@ func (s *Server) decorateRefreshResult(r *http.Request, wMeta *metadata.Widget, 
 	rawValues := map[string]string{}
 	if wMeta != nil {
 		rawValues = widgetFilterRawValues(r, wMeta)
-		if filter := lenientWidgetCellFilter(r, wMeta); filter != nil {
+		if filter := s.lenientWidgetCellFilter(r, wMeta); filter != nil {
 			rawValues[widgetCellFilterKey(wMeta)] = res.CellFilterJSON
 		}
 	}
@@ -334,7 +334,7 @@ func (s *Server) widgetPartial(w http.ResponseWriter, r *http.Request) {
 	for key := range widgetFilterKeys(wMeta) {
 		allowed[key] = true
 	}
-	if wMeta.Type == metadata.WidgetTypeList {
+	if s.uiEnhancementsAllowed(r) && wMeta.Type == metadata.WidgetTypeList {
 		allowed[widgetCellFilterKey(wMeta)] = true
 	}
 	for key := range r.URL.Query() {
@@ -343,7 +343,7 @@ func (s *Server) widgetPartial(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	cellFilter, cellErr := parseWidgetCellFilter(r, wMeta)
+	cellFilter, cellErr := s.parseWidgetCellFilter(r, wMeta)
 	if cellErr != nil {
 		http.Error(w, "unsupported widget parameter", http.StatusBadRequest)
 		return
@@ -377,7 +377,7 @@ func (s *Server) widgetPartial(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	res := runner.RunWithOptions(r.Context(), wMeta, widget.RunOptions{Params: filterParams, Fresh: true, CellFilter: cellFilter})
+	res := runner.RunWithOptions(r.Context(), wMeta, widget.RunOptions{Params: filterParams, Fresh: true, CellFilter: cellFilter, CaptureCellValues: s.uiEnhancementsAllowed(r)})
 	res.Title = wMeta.DisplayTitle(s.resolveLang(r))
 	if res.InvalidCellFilter {
 		http.Error(w, "unsupported widget parameter", http.StatusBadRequest)
