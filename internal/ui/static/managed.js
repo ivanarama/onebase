@@ -1301,6 +1301,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 		throw new Error('invalid form-event response');
 	  }
       responseKnown = true;
+      if (window.obAudioFilterResponse) window.obAudioFilterResponse(data, snapshot);
       if (!res.ok || !data.ok || data.error || data.cancel) data.revealed = [];
       if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form);
 	  // Even parseable JSON on non-2xx may come from an intermediary after the
@@ -1395,6 +1396,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         window.applyTableParts(data.tableparts);
         applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
         applyChoiceList(elementName, data.choiceList);
+        if (window.obAudioApply) window.obAudioApply(data);
         applyFormTables(data.formTables);
       }
       if (!beforePostMerged && window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
@@ -1531,6 +1533,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 	});
   }
   window.obFire = function(elementName, eventName, extraParams, pickerRequest){
+    if (window.obAudioBeforeEvent) extraParams = window.obAudioBeforeEvent(elementName, eventName, extraParams);
     return fireFormEvent(elementName, eventName, extraParams, pickerRequest);
   };
 
