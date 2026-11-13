@@ -45,6 +45,8 @@ import (
 
 // formEventResponse — структура ответа JSON.
 type formEventResponse struct {
+	UICommands     []uiResponseCommand         `json:"uiCommands,omitempty"`
+	RefreshLive    bool                        `json:"refreshLive,omitempty"`
 	OK             bool                        `json:"ok"`
 	Values         map[string]any              `json:"values,omitempty"`
 	Revealed       []string                    `json:"revealed,omitempty"`
@@ -336,6 +338,9 @@ func (s *Server) installFormCloseAccessRecheck(
 }
 
 func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Request, closeInv *formCloseInvocation) {
+	if closeInv == nil {
+		r = withUIResponseCommands(r)
+	}
 	r = r.WithContext(withShellID(r.Context(), r.Header.Get(shellHeader)))
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
@@ -1553,6 +1558,9 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	resp.Version = versionWrittenByHandler(thisObj)
 	resp.Dirty = eventDirty
 	compactFormCloseDelta(&resp, closeInv)
+	if closeInv == nil {
+		attachUIResponseCommands(r, &resp, thisObj.saved)
+	}
 	respondJSON(enc, resp)
 }
 
@@ -2458,6 +2466,9 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Request, closeInv *formCloseInvocation) {
+	if closeInv == nil {
+		r = withUIResponseCommands(r)
+	}
 	r = r.WithContext(withShellID(r.Context(), r.Header.Get(shellHeader)))
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
@@ -2896,6 +2907,9 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		resp.ChoiceList = choiceItems
 		resp.Dirty = boolPtr(!formOpenEvent(elementName, eventName) && transientManagedStateDirty(obj, fieldsBefore, tablesBefore))
 		compactFormCloseDelta(&resp, closeInv)
+		if closeInv == nil {
+			attachUIResponseCommands(r, &resp, false)
+		}
 		respondJSON(enc, resp)
 		return
 	}

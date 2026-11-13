@@ -6307,6 +6307,45 @@ window.onebaseDevice = {
     return false;
   }
   // END onebase-dev-system-handler
+  // BEGIN onebase-ui-response-commands
+  var uiCommandIDs = new Set();
+  function deliverServerMessage(msg) {
+    if (!msg || !msg.name) return;
+    if (typeof msg.commandId === 'string' && /^[a-f0-9-]{36}$/.test(msg.commandId)) {
+      if (uiCommandIDs.has(msg.commandId)) return;
+      uiCommandIDs.add(msg.commandId);
+      if (uiCommandIDs.size > 128) uiCommandIDs.delete(uiCommandIDs.values().next().value);
+    }
+    emitOnebaseEvent('onebase:' + msg.name, msg.data);
+    forwardOnebaseEvent(msg);
+    if (msg.name === 'уведомление' || msg.name === 'notify') {
+      toast(typeof msg.data === 'string' ? msg.data : JSON.stringify(msg.data));
+    }
+  }
+  function applyUIResponse(commands, refreshLive) {
+    (Array.isArray(commands) ? commands : []).slice(0,64).forEach(function (msg) {
+      if (msg && (msg.name === 'ui.открытьФорму' || msg.name === 'ui.закрытьФорму')) deliverServerMessage(msg);
+    });
+    if (refreshLive && (!window.__obEvents || window.__obEvents.readyState !== 1)) {
+      emitOnebaseEvent('onebase:__oblive_refresh_all__', null);
+      forwardOnebaseEvent({name:'__oblive_refresh_all__',data:null});
+    }
+  }
+  window.obApplyUIResponse = function (commands, refreshLive) {
+    if (window.__obEmbedded) {
+      window.parent.postMessage({source:'obUIResponse',commands:commands,refreshLive:!!refreshLive},window.location.origin);
+    } else applyUIResponse(commands,refreshLive);
+  };
+  if (!window.__obEmbedded) {
+    window.addEventListener('message', function (ev) {
+      if (ev.origin !== window.location.origin || !ev.data || ev.data.source !== 'obUIResponse') return;
+      var frames = document.querySelectorAll('iframe');
+      for (var i=0; i<frames.length; i++) {
+        if (frames[i].contentWindow === ev.source) { applyUIResponse(ev.data.commands,ev.data.refreshLive); return; }
+      }
+    });
+  }
+  // END onebase-ui-response-commands
   // BEGIN onebase-sse-reconnect (public lifecycle tested with EventSource)
   var sseOpened = false;
   var sseRetry = null;
@@ -6317,7 +6356,7 @@ window.onebaseDevice = {
   var sseResuming = false;
   function retryEvents() {
     if (ssePaused || sseRetry !== null) return;
-    var delay = sseBackoff + Math.floor(Math.random() * 250);
+    var delay = Math.min(5000, sseBackoff + Math.floor(Math.random() * 250));
     sseBackoff = Math.min(sseBackoff * 2, 5000);
     sseRetry = setTimeout(function () { sseRetry = null; connect(); }, delay);
   }
@@ -6336,12 +6375,13 @@ window.onebaseDevice = {
     window.__obEvents = es;
     es.onopen = function () {
       if (ssePaused || window.__obEvents !== es) return;
+      var resumed = sseResuming;
       sseBackoff = 1000;
       sseResuming = false;
       // План 87: служебные события данные.* не переигрываются из replay-окна.
       // После РЕконнекта (не первого open) просим живые списки перечитаться —
       // один актуальный GET безопаснее, чем догадка по устаревшему снимку прав.
-      if (sseOpened) {
+      if (sseOpened || resumed) {
         emitOnebaseEvent('onebase:__oblive_refresh_all__', null);
         forwardOnebaseEvent({ name: '__oblive_refresh_all__', data: null });
       }
@@ -6367,12 +6407,7 @@ window.onebaseDevice = {
       // look-alike name remains an ordinary onebase:<name> event.
       var devEnabled = !!(document.body && document.body.getAttribute('data-ob-dev') === '1');
       if (obHandleDevSystem(msg, devEnabled, devState, function () { location.reload(); })) return;
-      if (!msg.name) return;
-      emitOnebaseEvent('onebase:' + msg.name, msg.data);
-      forwardOnebaseEvent(msg);
-      if (msg.name === 'уведомление' || msg.name === 'notify') {
-        toast(typeof msg.data === 'string' ? msg.data : JSON.stringify(msg.data));
-      }
+      deliverServerMessage(msg);
     };
     es.onerror = function () {
       if (window.__obEvents !== es) return;

@@ -1269,7 +1269,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       const res = await fetch(URL, {
         method: 'POST',
         body: body,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', 'X-OneBase-Conceal-Context': form && form.getAttribute ? form.getAttribute('data-ob-conceal-context') || '' : '', 'X-OneBase-Shell': (typeof window.obShellId === 'function' ? window.obShellId() : '') },
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', 'X-OneBase-Conceal-Context': form && form.getAttribute ? form.getAttribute('data-ob-conceal-context') || '' : '', 'X-OneBase-UI-Commands': '1', 'X-OneBase-Shell': (typeof window.obShellId === 'function' ? window.obShellId() : '') },
         credentials: 'same-origin'
       });
       const data = await res.json();
@@ -1387,6 +1387,14 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       if (!beforePostMerged) {
         (data.messages || []).forEach(m => flash(m, 'ok'));
         if (data.error) flash(data.error, 'err');
+      }
+      // Apply committed self-commands only after state/dirty reconciliation and
+      // after leaving the event queue. The shell deduplicates the SSE copy and
+      // still uses normal form-close lifecycle; this never clears native edits.
+      if (res.ok && data.ok && !data.error && !data.cancel && !data.deferred && !data.question && window.obApplyUIResponse) {
+        setTimeout(function () {
+          window.obApplyUIResponse(data.uiCommands || [], !!data.refreshLive);
+        },0);
       }
       if (navigationBlocked) flash(closeMessage('navigationDirty', 'Форма содержит несохранённые изменения — переход не выполнен'), 'err');
       // Apply the response, including disclosed values, before opening a

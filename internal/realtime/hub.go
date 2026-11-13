@@ -21,10 +21,11 @@ const rolePrefix = "роль:"
 // Event — одно уведомление: имя события и произвольные данные (сериализуются в
 // JSON на стороне SSE-эндпоинта).
 type Event struct {
-	ID     int64
-	Name   string
-	Data   any
-	System string
+	CommandID string // stable across SSE and the initiating form response
+	ID        int64
+	Name      string
+	Data      any
+	System    string
 	// Shell — адрес оболочки (верхнего окна браузера), которой адресовано
 	// событие. Непустой — событие получает только подписчик этой оболочки;
 	// подписчик без адреса (страница со старым ui.js) получает его, как
