@@ -40,26 +40,32 @@ func pickManagedFormForUser(entity *metadata.Entity, kind string, user *auth.Use
 	if entity == nil {
 		return nil
 	}
+	return pickManagedFromForms(entity.Forms, kind, user, strings.EqualFold(kind, "object"))
+}
+
+// Processor forms historically accept any kind, including blank/custom. Keep
+// that behavior while resolving the same role selector for every HTTP path.
+func pickProcessorManagedFormCtx(ctx context.Context, proc *processorpkg.Processor) *metadata.FormModule {
+	if proc == nil {
+		return nil
+	}
+	return pickManagedFromForms(proc.Forms, "", auth.UserFromContext(ctx), true)
+}
+
+func pickManagedFromForms(forms []*metadata.FormModule, kind string, user *auth.User, roleAware bool) *metadata.FormModule {
 	kindLower := strings.ToLower(kind)
-	// Ролевой выбор — только у формы объекта: списки и подбор выбираются и в
-	// путях без пользователя (плитка, панель деталей), и форма с условием там
-	// не выбирается вовсе, чтобы пути не разошлись.
-	roleAware := user != nil && kindLower == "object"
 	var plain *metadata.FormModule
-	for _, fm := range entity.Forms {
-		if fm == nil || !fm.IsManaged() {
+	for _, fm := range forms {
+		if fm == nil || !fm.IsManaged() || (kindLower != "" && !strings.EqualFold(fm.Kind, kindLower)) {
 			continue
 		}
-		if kindLower != "" && strings.ToLower(fm.Kind) != kindLower {
-			continue
-		}
-		if len(fm.Roles) == 0 && len(fm.ExceptRoles) == 0 {
+		if len(fm.Roles) == 0 && len(fm.ExceptRoles) == 0 && !fm.IncludeAdmin {
 			if plain == nil {
 				plain = fm
 			}
 			continue
 		}
-		if roleAware && formRolesMatch(fm, user) {
+		if roleAware && user != nil && formRolesMatch(fm, user) {
 			return fm
 		}
 	}
@@ -85,6 +91,9 @@ func formRolesMatch(fm *metadata.FormModule, user *auth.User) bool {
 		if has(name) {
 			return false
 		}
+	}
+	if fm.IncludeAdmin && user != nil && user.IsAdmin {
+		return true
 	}
 	if len(fm.Roles) == 0 {
 		return true

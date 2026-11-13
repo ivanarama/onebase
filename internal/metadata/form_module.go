@@ -761,6 +761,8 @@ type FormModule struct {
 	// файлов. Это выбор интерфейса, не защита: права на объект те же.
 	Roles       []string `yaml:"roles,omitempty"`
 	ExceptRoles []string `yaml:"except_roles,omitempty"`
+	// IncludeAdmin includes is_admin in this presentation selector; exclusions win.
+	IncludeAdmin bool `yaml:"include_admin,omitempty"`
 	// EnterSubmitsForm возвращает ПРЕЖНЕЕ поведение клавиши Enter: обычное
 	// нажатие может отправить форму (неявный HTML-submit). По умолчанию платформа
 	// переводит Enter в навигацию по полям — как в 1С и как ожидает оператор,
