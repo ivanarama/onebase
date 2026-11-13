@@ -16,6 +16,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dslvars"
+	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/exchange"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -427,8 +428,9 @@ type entityHookThis struct {
 // stored fields and values supplied by this operation. The assignment map is
 // shared so writes in either the module or its hook have the same export policy.
 type entityHookXDTOState struct {
-	loaded   bool
-	assigned map[string]bool
+	loaded         bool
+	assigned       map[string]bool
+	serverAssigned map[string]bool
 }
 
 func (o *entityHookThis) XDTOObject() *runtime.Object { return o.runtimeObject() }
@@ -553,6 +555,12 @@ func (s *Server) runOnWriteCtx(ctx context.Context, obj *runtime.Object, mc *run
 	if len(source) > 0 {
 		xdtoState = source[0]
 	}
+	var serverAssigned map[string]bool
+	if xdtoState != nil {
+		serverAssigned = xdtoState.serverAssigned
+	}
+	finishAssignmentQuery := entityservice.InstallServerAssignedFieldQuery(vars, serverAssigned)
+	defer finishAssignmentQuery()
 	runErr := s.runEntityHook(ctx, proc, obj, vars, xdtoState)
 	if runErr = finishDSLExecution(txState, runErr); runErr != nil {
 		return interpreter.FormatUserError(runErr), msgs

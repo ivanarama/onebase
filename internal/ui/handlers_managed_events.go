@@ -133,6 +133,7 @@ const (
 // permission, row-filter, required, optimistic-version, form-hook and
 // entityservice semantics live here exactly once.
 func (s *Server) saveManagedObject(r *http.Request, entity *metadata.Entity, form *metadata.FormModule, obj *runtime.Object, isNew bool, action string, requireReadableResult bool, onCommitted func(uuid.UUID, int64)) ([]string, int64, error) {
+	defer func() { obj.TakeServerFieldAssignments() }()
 	if !s.can(r, string(entity.Kind), entity.Name, "write") || isNew && !s.canInteractiveCreate(r, entity) {
 		return nil, 0, &managedCloseSaveError{status: http.StatusForbidden, kind: managedSaveForbidden, message: "доступ запрещён"}
 	}
@@ -193,7 +194,8 @@ func (s *Server) saveManagedObject(r *http.Request, entity *metadata.Entity, for
 	}
 	result, err := s.entitySvc.Save(r.Context(), entityservice.SaveRequest{
 		Entity: entity, ID: obj.ID, IsNew: isNew, Fields: obj.Fields,
-		TablePartRows: obj.TablePartRows, Action: action, ExpectedVersion: expectedVersion,
+		ServerAssignments: obj.TakeServerFieldAssignments(),
+		TablePartRows:     obj.TablePartRows, Action: action, ExpectedVersion: expectedVersion,
 		Preflight: func(txCtx context.Context, saveObj *runtime.Object) error {
 			if !isNew {
 				return nil
