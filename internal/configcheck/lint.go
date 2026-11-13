@@ -720,6 +720,9 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		// ok.post — «ОК» проводит документ, как в 1С.
 		"ok":    obj("visible", "post"),
 		"close": action,
+		// cancel.visible:false убирает подвальную «Отмена» формы обработки, у
+		// которой своя кнопка закрытия; ×, Escape и закрытие формы не меняются.
+		"cancel": action,
 		// attachments.visible:false скрывает панель вложений выбранной
 		// managed-формы (план 181C, #1621); attachment endpoint не меняется.
 		"attachments": action,

@@ -483,6 +483,10 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     Object.keys(values).forEach(function(k){
       const v = values[k];
       const key = window.CSS && CSS.escape ? CSS.escape(k) : k;
+      // view: text — значение реквизита показано текстом рядом со скрытым input.
+      form.querySelectorAll('[data-ob-value="' + key + '"]').forEach(function(node){
+        node.textContent = v == null ? '' : String(v);
+      });
       // Пропускаем файловые поля: не подставляем содержимое в поле пути
       const fc = form.querySelector('[data-ob-file-content-for="' + key + '"]');
       if (fc) return;

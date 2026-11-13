@@ -90,6 +90,16 @@ const tplManagedForm = `
     {{if not $ro}}<div class="code-editor" data-code-language="{{if $el.Language}}{{$el.Language}}{{else}}plaintext{{end}}" style="height:320px;border:1px solid #e2e8f0;border-radius:8px"></div>{{end}}
     {{if and $el.Hint $el.HintInline}}<small style="color:#94a3b8;font-size:11px">{{$el.Hint}}</small>{{end}}
   </div>
+{{else if and (eq (str $el.Kind) "ПолеВвода") (or (eq $el.View "text") (eq $el.View "text-strong"))}}
+  {{/* view: text / text-strong — значение реквизита текстом с подписью сверху,
+       как поля прежнего диалога сообщения 1С. Только чтение; значение уходит
+       с формой без изменений (скрытый input), ответ события обновляет текст. */}}
+  {{$fn := dpField $el.DataPath}}{{$v := index $ctx.Values $fn}}
+  <div class="form-group ob-view-text" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{$lay := elLayoutEx $ctx $el}}{{if $lay}} style="{{$lay}}"{{end}}>
+    <div class="ob-view-text-label" style="font-size:12px;color:#64748b;margin-bottom:2px">{{fieldTitleRU $el.TitleMap $fn}}</div>
+    <div class="ob-view-text-value" data-ob-value="{{$fn}}" style="font-size:{{if eq $el.View "text-strong"}}16px;font-weight:700{{else}}14px{{end}};color:#1e293b;white-space:pre-wrap;overflow-wrap:anywhere">{{$v}}</div>
+    <input type="hidden" name="{{$fn}}" value="{{$v}}">
+  </div>
 {{else if eq (str $el.Kind) "ПолеВвода"}}
   {{$fn := dpField $el.DataPath}}
   {{$f := fieldByName $ctx.Entity $fn}}
@@ -850,7 +860,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
   <a href="#" data-ob-ref-cancel class="btn btn-cancel">Отмена</a>
   {{else if .IsProcessor}}
   {{/* Кнопка «Выполнить» скрыта: managed-форма использует свои кнопки */}}
-  <a href="/ui/" data-ob-close-tab data-ob-close-reason="close" class="btn btn-cancel">Отмена</a>
+  {{if formActionVisible .Form "cancel"}}<a href="/ui/" data-ob-close-tab data-ob-close-reason="close" class="btn btn-cancel">Отмена</a>{{end}}
   {{else}}
   {{if and .CanWrite (formActionVisible .Form "save")}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form" title="Ctrl+S" aria-keyshortcuts="Control+S">{{t $.Lang "Записать"}}</button>{{end}}
   {{if and .CanWrite (formActionVisible .Form "ok")}}<button class="btn btn-primary" type="button" data-ob-form-close="{{if and .Entity.Posting .CanPost .Form.OKPosts (ne (index .Values "deletion_mark") "true")}}post{{else}}save{{end}}" data-ob-close-reason="ok" data-ob-close-href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}">{{t $.Lang "ОК"}}</button>{{end}}

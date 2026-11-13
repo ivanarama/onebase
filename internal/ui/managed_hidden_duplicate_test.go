@@ -456,6 +456,8 @@ const form = {
     throw new Error('form.querySelector: unsupported selector ' + selector);
   },
   querySelectorAll(selector) {
+    // view: text — текстовых носителей значения в этой форме нет.
+    if (selector.startsWith('[data-ob-value=')) return [];
     const byName = /^\[name="([^"]*)"\]$/.exec(selector);
     if (byName) return controls.filter((c) => c.name === byName[1]);
     const radios = /^input\[type="radio"\]\[name="([^"]*)"\]$/.exec(selector);
