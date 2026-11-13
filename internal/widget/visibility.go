@@ -8,7 +8,7 @@ import (
 
 // Role visibility narrows display; source permissions and row access still apply.
 func VisibleFor(w *metadata.Widget, user *auth.User) bool {
-	if w == nil {
+	if w == nil || !OverridesVisible(w.RoleOverrides, user) {
 		return false
 	}
 	has := func(name string) bool {

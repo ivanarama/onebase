@@ -267,7 +267,7 @@ func refreshableWidgetType(t metadata.WidgetType) bool {
 
 func (s *Server) decorateRefreshResult(r *http.Request, wMeta *metadata.Widget, res *widget.Result, runner *widget.Runner) {
 	if res != nil && wMeta != nil {
-		res.Background = csssafe.Color(wMeta.Background)
+		res.Background = csssafe.Color(widget.OverrideBackground(wMeta.Background, wMeta.RoleOverrides, auth.UserFromContext(r.Context())))
 	}
 	if res == nil || !refreshableWidgetType(metadata.WidgetType(res.Type)) {
 		return

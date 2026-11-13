@@ -474,10 +474,15 @@ func constantsYAMLSchema() *yamlLintSchema {
 	})
 }
 
+func roleOverrideYAMLSchema() *yamlLintSchema {
+	return seq(with(obj("include_admin", "background", "visible"), map[string]*yamlLintSchema{"roles": seq(obj()), "except_roles": seq(obj())}))
+}
+
 func widgetYAMLSchema() *yamlLintSchema {
 	return with(obj("name", "type", "title", "query", "format", "compare_to", "limit", "chart_kind", "chart_type", "x_field", "y_fields", "entities", "scope", "link", "refresh_on", "roles", "except_roles", "background"), map[string]*yamlLintSchema{
-		"source":    obj("entity", "id_field"),
-		"row_style": obj("background", "bold", "color"),
+		"role_overrides": roleOverrideYAMLSchema(),
+		"source":         obj("entity", "id_field"),
+		"row_style":      obj("background", "bold", "color"),
 		"filters": seq(with(obj("name", "label", "type", "param"), map[string]*yamlLintSchema{
 			"labels": freeMap(),
 			"values": seq(with(obj("value", "label"), map[string]*yamlLintSchema{
@@ -632,8 +637,9 @@ func homePageYAMLSchema() *yamlLintSchema {
 		"nav_by_role": {values: nav},
 		"menu":        menuYAMLSchema(),
 		"side_panel": with(obj("widget", "width", "hide_on_home", "background"), map[string]*yamlLintSchema{
-			"roles":        seq(obj()),
-			"except_roles": seq(obj()),
+			"roles":          seq(obj()),
+			"except_roles":   seq(obj()),
+			"role_overrides": roleOverrideYAMLSchema(),
 		}),
 	})
 }

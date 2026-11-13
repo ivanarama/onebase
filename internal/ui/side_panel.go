@@ -35,6 +35,9 @@ func (s *Server) sidePanelFor(r *http.Request) (*metadata.HomeSidePanel, *metada
 // sidePanelRolesMatch: ни одной роли из except_roles и (если roles задан) хотя
 // бы одна роль из roles. Без пользователя — видна, если roles не задан.
 func sidePanelRolesMatch(sp *metadata.HomeSidePanel, user *auth.User) bool {
+	if sp == nil || !widget.OverridesVisible(sp.RoleOverrides, user) {
+		return false
+	}
 	has := func(name string) bool {
 		if user == nil {
 			return false
@@ -85,7 +88,7 @@ func (s *Server) sidePanelData(r *http.Request) map[string]any {
 	if width <= 0 {
 		width = sidePanelDefaultWidth
 	}
-	return map[string]any{"Card": res, "Width": width, "Background": csssafe.Color(sp.Background)}
+	return map[string]any{"Card": res, "Width": width, "Background": csssafe.Color(widget.OverrideBackground(sp.Background, sp.RoleOverrides, auth.UserFromContext(r.Context())))}
 }
 
 // hiddenOnHomeBySidePanel — проверка «этот виджет главной пользователю не

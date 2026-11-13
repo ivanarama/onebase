@@ -23,9 +23,10 @@ type HomePageRow struct {
 // HomeSidePanel — правая панель оболочки: виджет из widgets/, ширина по
 // умолчанию (пользователь меняет её перетаскиванием), кому показывать.
 type HomeSidePanel struct {
-	Widget     string `yaml:"widget"`
-	Width      int    `yaml:"width,omitempty"`
-	Background string `yaml:"background,omitempty"`
+	Widget        string         `yaml:"widget"`
+	Width         int            `yaml:"width,omitempty"`
+	RoleOverrides []RoleOverride `yaml:"role_overrides,omitempty"`
+	Background    string         `yaml:"background,omitempty"`
 	// Roles — только этим ролям; ExceptRoles — всем, кроме этих (сравнение без
 	// учёта регистра). Без пользователя (режим без авторизации) панель видна,
 	// если Roles не задан.

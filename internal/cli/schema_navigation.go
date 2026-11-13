@@ -1,5 +1,13 @@
 package cli
 
+func roleOverridesSchema() map[string]any {
+	return arrayOf(map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{
+		"roles": arrayOf(stringSchema("Allowed role")), "except_roles": arrayOf(stringSchema("Excluded role")),
+		"include_admin": boolSchema("Include administrators unless explicitly excluded"),
+		"background":    stringSchema("Safe CSS background color; empty clears the background"), "visible": boolSchema("Narrow widget visibility"),
+	}})
+}
+
 func navigationContainerSchema(home bool) map[string]any {
 	names := arrayOf(stringSchema("Имя объекта"))
 	contents := map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{
@@ -34,11 +42,12 @@ func navigationContainerSchema(home bool) map[string]any {
 		props["rows"] = arrayOf(map[string]any{"type": "object", "properties": map[string]any{"widgets": names}})
 		props["widgets"] = arrayOf(map[string]any{"type": "object", "properties": map[string]any{"name": stringSchema("Виджет"), "span": map[string]any{"type": "integer"}}})
 		props["side_panel"] = map[string]any{"type": "object", "additionalProperties": false, "properties": map[string]any{
-			"widget":       stringSchema("Виджет правой панели оболочки"),
-			"width":        map[string]any{"type": "integer"},
-			"background":   stringSchema("Безопасный CSS-цвет фона правой панели"),
-			"roles":        names,
-			"except_roles": names,
+			"widget":         stringSchema("Виджет правой панели оболочки"),
+			"width":          map[string]any{"type": "integer"},
+			"background":     stringSchema("Безопасный CSS-цвет фона правой панели"),
+			"roles":          names,
+			"except_roles":   names,
+			"role_overrides": roleOverridesSchema(),
 			"hide_on_home": map[string]any{
 				"description": "Что не показывать на главной тем, кому видна панель: true — сам виджет панели, список — перечисленные виджеты главной",
 				"oneOf":       []any{map[string]any{"type": "boolean"}, names},
