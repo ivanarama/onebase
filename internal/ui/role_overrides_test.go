@@ -31,6 +31,7 @@ func TestRoleOverridesThroughHTTP(t *testing.T) {
 	w.Background = "#f1ead6"
 	w.RoleOverrides = cfg.Overrides
 	actions := s.reg.GetWidget("Действия")
+	actions.Items = []metadata.WidgetAction{{Label: "RoleOverrideActionProof", URL: "/ui/"}}
 	hidden := false
 	actions.RoleOverrides = []metadata.RoleOverride{{Roles: []string{"OTK", "Chief"}, ExceptRoles: []string{"Operator", "Messenger"}, IncludeAdmin: true, Visible: &hidden}}
 	sp := &metadata.HomeSidePanel{Widget: w.Name, Background: w.Background, RoleOverrides: cfg.Overrides}
@@ -87,7 +88,7 @@ func TestRoleOverridesThroughHTTP(t *testing.T) {
 			if home == nil {
 				t.Fatal("no home container")
 			}
-			visible := homeWidgetNames(home)[actions.Name]
+			visible := strings.Contains(sidePanelText(home), "RoleOverrideActionProof")
 			if visible == tc.cold {
 				t.Fatalf("quick actions visible=%v, scoped hide=%v", visible, tc.cold)
 			}
