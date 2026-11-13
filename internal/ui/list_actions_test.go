@@ -128,7 +128,9 @@ func TestPageList_ActionsButtonStartsInactive(t *testing.T) {
 	if !strings.Contains(html, `title="Сначала выберите строку списка"`) {
 		t.Error("приглушённая кнопка не объясняет причину в title")
 	}
-	if strings.Contains(html, `disabled>`) || strings.Contains(html, ` disabled `) {
+	buttonStart := strings.Index(html, `id="list-actions-btn"`)
+	buttonTag := html[buttonStart : buttonStart+strings.Index(html[buttonStart:], ">")+1]
+	if strings.Contains(buttonTag, `disabled>`) || strings.Contains(buttonTag, ` disabled `) {
 		t.Error("на кнопке атрибут disabled: браузер погасит клик, и объяснить причину будет негде")
 	}
 	// Приглушение — это стиль по aria-disabled, а не отдельный класс: иначе

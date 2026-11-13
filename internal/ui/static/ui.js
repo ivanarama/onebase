@@ -2608,6 +2608,12 @@ function makeTreeRow(row) {
   var treeCell = row.tree_cell || 0;
   for (var i = 0; i < cells.length; i++) {
     var td = document.createElement('td');
+    var cellFilter = (row.cell_filters || [])[i];
+    if (cellFilter && cellFilter.field) {
+      td.setAttribute('data-ob-cell', cellFilter.field);
+      td.setAttribute('data-ob-cell-value', cellFilter.value);
+      td.setAttribute('data-ob-cell-type', cellFilter.type);
+    }
     if (i === treeCell) {
       var indent = document.createElement('span');
       indent.style.display = 'inline-block';
@@ -2668,12 +2674,46 @@ function listBasedOnItems(tr, cfg) {
   }, []);
 }
 
+var obListActiveCell = null;
+function obCellFilterApply() {
+  if (!obListActiveCell || !obListActiveCell.isConnected) return;
+  var field=obListActiveCell.getAttribute('data-ob-cell'), value=obListActiveCell.getAttribute('data-ob-cell-value');
+  var type=obListActiveCell.getAttribute('data-ob-cell-type');
+  var target=new URL(window.location.href);
+  ['','.eq','.from','.to'].forEach(function(suffix) { target.searchParams.delete('f.'+field+suffix); });
+  if (type==='date') { target.searchParams.set('f.'+field+'.from',value);target.searchParams.set('f.'+field+'.to',value); }
+  else { target.searchParams.set('f.'+field+'.eq',value); }
+  ['page','cursor','sort_snapshot'].forEach(function(k) { target.searchParams.delete(k); });
+  window.location.href=target.toString();
+}
+function obCellFiltersClear() {
+  var target=new URL(window.location.href),keys=[];
+  target.searchParams.forEach(function(_,k) { if(k.indexOf('f.')===0)keys.push(k); });
+  keys.forEach(function(k) { target.searchParams.delete(k); });
+  ['page','cursor','sort_snapshot'].forEach(function(k) { target.searchParams.delete(k); });
+  window.location.href=target.toString();
+}
+function obCellFilterSelect(target) {
+  var cell=target.closest&&target.closest('td[data-ob-cell]');
+  if(!cell)return;
+  if(obListActiveCell)obListActiveCell.classList.remove('ob-cell-current');
+  obListActiveCell=cell;cell.classList.add('ob-cell-current');
+  var button=document.querySelector('[data-ob-cell-filter]');if(button)button.disabled=false;
+}
+
 function listMenuItems(tr) {
   var cfg = obListConfig();
   var labels = cfg.labels || {};
   var isPredefined = tr.dataset.predefined === '1';
   var isFolder = tr.dataset.isFolder === '1';
   var items = [];
+  if(obListActiveCell && obListActiveCell.closest('tr')===tr) {
+    var cellButton=document.querySelector('[data-ob-cell-filter]');
+    items.push({label:cellButton?cellButton.textContent:'Filter by selected value',fn:obCellFilterApply});
+  }
+  var clearButton=typeof document!=='undefined' && document.querySelector ? document.querySelector('[data-ob-cell-filter-clear]') : null;
+  if(clearButton)items.push({label:clearButton.textContent,fn:obCellFiltersClear});
+
   if (isFolder) {
     items.push({ label: labels.enterGroup || '▶ Войти в группу', fn: function () { window.location.href = obRowUrl(tr, 'folder'); } });
     items.push({ label: labels.edit || 'Редактировать', fn: function () { listOpen(obRowUrl(tr, 'open')); } });
@@ -2910,6 +2950,13 @@ function obRestoreListSearchFocus() {
 // END onebase-list-search-restore
 
 function obInitListDelegates() {
+document.addEventListener('mousedown',function(e) { obCellFilterSelect(e.target); },true);
+document.addEventListener('contextmenu',function(e) { obCellFilterSelect(e.target); },true);
+document.addEventListener('click',function(e) {
+  if(!e.target.closest)return;
+  if(e.target.closest('[data-ob-cell-filter]')) { e.preventDefault();obCellFilterApply(); }
+  else if(e.target.closest('[data-ob-cell-filter-clear]')) { e.preventDefault();obCellFiltersClear(); }
+},true);
   if (window.__obListDelegates) return;
   window.__obListDelegates = true;
   document.addEventListener('click', function (e) {
