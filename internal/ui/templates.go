@@ -2398,7 +2398,7 @@ const tplList = `
 {{end}}
 {{else}}
 {{/* ===== LIST VIEW (default) ===== */}}
-<div style="display:flex;gap:8px;margin-bottom:8px">
+<div class="ob-list-cell-filters" style="display:flex;gap:8px;margin-bottom:8px">
 <button type="button" class="btn btn-sm btn-secondary" data-ob-cell-filter disabled>{{t $.Lang "Отбор по значению текущей ячейки"}}</button>
 <button type="button" class="btn btn-sm btn-secondary" data-ob-cell-filter-clear>{{t $.Lang "Снять отбор"}}</button>
 </div>
