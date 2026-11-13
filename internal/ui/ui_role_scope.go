@@ -33,5 +33,15 @@ func (s *Server) uiConfigForRequest(r *http.Request, supplied ...Config) Config 
 		cfg.HideAttachments = false
 		cfg.DefaultFormDensity = ""
 	}
+	reportRoles, reportExcept := cfg.UIRoles, cfg.UIExceptRoles
+	if cfg.UIReportRoles != nil {
+		reportRoles = cfg.UIReportRoles
+	}
+	if cfg.UIReportExceptRoles != nil {
+		reportExcept = cfg.UIReportExceptRoles
+	}
+	if !auth.RoleScopeMatches(auth.UserFromContext(r.Context()), reportRoles, reportExcept, len(reportRoles) > 0) {
+		cfg.DefaultReportDensity = ""
+	}
 	return cfg
 }

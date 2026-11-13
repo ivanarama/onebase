@@ -729,6 +729,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		data["Cfg"] = s.uiConfigForRequest(r)
 	}
 	prepareDefaultFormDensity(name, data)
+	prepareReportControls(name, data)
 	s.addHelpContext(r, data)
 	// Параметры текущего запроса — из них шаблоны строят ссылки «то же самое,
 	// но с другим X» (listURL/listHidden), не собирая строку запроса по кускам

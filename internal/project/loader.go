@@ -207,14 +207,18 @@ type QueueConfig struct {
 // AppConfig holds the optional config/app.yaml metadata.
 // UIConfig — оформление интерфейса базы.
 type UIConfig struct {
-	FormRoles       []string `yaml:"form_roles,omitempty"`
-	FormExceptRoles []string `yaml:"form_except_roles,omitempty"`
-	Roles           []string `yaml:"roles,omitempty"`
-	ExceptRoles     []string `yaml:"except_roles,omitempty"`
-	FormDensity     string   `yaml:"form_density,omitempty"`
-	ListDetailPanel *bool    `yaml:"list_detail_panel,omitempty"`
-	ListRowActions  *bool    `yaml:"list_row_actions,omitempty"`
-	Attachments     *bool    `yaml:"attachments,omitempty"`
+	ReportRoles       []string `yaml:"report_roles,omitempty"`
+	ReportExceptRoles []string `yaml:"report_except_roles,omitempty"`
+	ReportDensity     string   `yaml:"report_density,omitempty"`
+	ShortDateInput    bool     `yaml:"short_date_input,omitempty"`
+	FormRoles         []string `yaml:"form_roles,omitempty"`
+	FormExceptRoles   []string `yaml:"form_except_roles,omitempty"`
+	Roles             []string `yaml:"roles,omitempty"`
+	ExceptRoles       []string `yaml:"except_roles,omitempty"`
+	FormDensity       string   `yaml:"form_density,omitempty"`
+	ListDetailPanel   *bool    `yaml:"list_detail_panel,omitempty"`
+	ListRowActions    *bool    `yaml:"list_row_actions,omitempty"`
+	Attachments       *bool    `yaml:"attachments,omitempty"`
 	// ListDensity: "" — прежний вид; "compact" — плотные списки, журналы,
 	// регистры и виджеты-списки: шрифт 12px, строка ≈ 22px, видимые границы
 	// строк и столбцов (как списки 1С).
@@ -358,6 +362,9 @@ func LoadConfig(dir string) (*AppConfig, error) {
 		return nil, errors.Join(fmt.Errorf("project: parse %s: %w", path, err), configFileNote(path))
 	}
 	var extra any
+	if cfg.UI != nil && cfg.UI.ReportDensity != "" && cfg.UI.ReportDensity != "compact" && cfg.UI.ReportDensity != "dense" {
+		return nil, fmt.Errorf("ui.report_density must be compact or dense")
+	}
 	if cfg.UI != nil && cfg.UI.FormDensity != "" && cfg.UI.FormDensity != "compact" && cfg.UI.FormDensity != "dense" {
 		return nil, fmt.Errorf("ui.form_density must be compact or dense")
 	}

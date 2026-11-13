@@ -1,4 +1,5 @@
 {
+  "Введите корректную дату": "Enter a valid date",
   "поле %s локального источника %s не разрешено однозначно; внешнее поле затенено": "Field %s of local source %s cannot be resolved unambiguously; the outer field is shadowed",
   "Строковый доступ по карточке сотрудника": "Row access from an employee card",
   "Настройте источник в YAML роли. Для набора из ТЧ используйте in/not_in; пустой или невалидный набор закрывает политику целиком. Матрица прав сохраняет эту настройку. Карточки и их филиалы должен изменять только администратор.": "Configure the source in the role YAML. Use in/not_in for a table-part set; an empty or invalid set denies the whole policy. The permission matrix preserves this setting. Only administrators should change the cards and their branches.",

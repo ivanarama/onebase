@@ -15,6 +15,9 @@ func TestLoadUIRolesAndSwitches(t *testing.T) {
 		{"all-explicit", "name: Demo\nui:\n  roles: []\n", true, false},
 		{"scoped", "name: Demo\nui:\n  roles: [OTK]\n  except_roles: [Operator, Messenger]\n  list_detail_panel: false\n  list_row_actions: false\n  attachments: false\n  form_density: dense\n", true, false},
 		{"bad-density", "name: Demo\nui:\n  form_density: denes\n", false, true},
+		{"date-only", "name: Demo\nui:\n  short_date_input: true\n", false, false},
+		{"report-only", "name: Demo\nui:\n  report_density: compact\n  report_roles: []\n  report_except_roles: [Operator, Messenger]\n", false, false},
+		{"bad-report-density", "name: Demo\nui:\n  report_density: typo\n", false, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()

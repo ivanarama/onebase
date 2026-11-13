@@ -69,6 +69,10 @@ func prepareServerRuntime(ctx context.Context, cmd *cobra.Command, db *storage.D
 		uiCfg.HideAttachments = !appCfg.AttachmentsEnabled()
 		uiCfg.UIEnhancements = appCfg.UIEnhancementsConfigured()
 		if appCfg.UI != nil {
+			uiCfg.UIReportRoles = appCfg.UI.ReportRoles
+			uiCfg.UIReportExceptRoles = appCfg.UI.ReportExceptRoles
+			uiCfg.DefaultReportDensity = appCfg.UI.ReportDensity
+			uiCfg.ShortDateInput = appCfg.UI.ShortDateInput
 			uiCfg.UIRoles = appCfg.UI.Roles
 			uiCfg.UIFormRoles = appCfg.UI.FormRoles
 			uiCfg.UIFormExceptRoles = appCfg.UI.FormExceptRoles

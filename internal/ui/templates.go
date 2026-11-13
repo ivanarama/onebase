@@ -1562,7 +1562,29 @@ const tplHead = `
   "imageError" (t (or $.Lang "ru") "Не удалось загрузить изображение")
   "imageArea" (t (or $.Lang "ru") "Область просмотра изображения")
 )}}</script>
-{{messagesMeta .}}<script src="/static/ui.js"></script>
+{{messagesMeta .}}<script src="/static/ui.js"></script>{{if .UseShortDateInput}}<script type="application/json" id="ob-date-input-i18n">{{jsJSON (dict "invalid" (t $.Lang "Введите корректную дату"))}}</script><script src="/static/date-input.js"></script>{{end}}{{if .CompactReport}}<script src="/static/report-controls.js"></script>{{end}}{{if .CompactReport}}<style id="ob-report-density-css">
+.ob-report-compact{padding:8px 12px}
+.ob-report-compact.ob-report-dense{padding:6px 10px}
+.ob-report-titlebar{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;margin-bottom:4px}
+.ob-report-titlebar>h2{flex:1;margin:0;font-size:18px;line-height:24px}
+.ob-report-commandbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.ob-report-commandbar>div{margin:0!important;gap:6px!important}
+.ob-report-compact .btn{padding:3px 8px;font-size:12px;line-height:18px}
+.ob-report-compact>.report-block{margin-bottom:4px!important;padding:0;border-radius:2px;box-shadow:none}
+.ob-report-compact .report-block>summary{padding:3px 8px;font-size:12px;line-height:18px}
+.ob-report-compact .report-block>form{padding:4px 8px}
+.ob-report-compact form[data-ob-report-params]{display:flex;flex-wrap:wrap;align-items:end;gap:4px 8px}
+.ob-report-compact .ob-report-param-grid{display:contents!important}
+.ob-report-compact .form-group{margin-bottom:4px!important}
+.ob-report-compact form[data-ob-report-params] .form-group{flex:0 1 180px;min-width:120px;max-width:240px!important}
+.ob-report-compact label{font-size:12px;line-height:16px;margin-bottom:2px}
+.ob-report-compact input:not([type=checkbox]):not([type=radio]),.ob-report-compact select{min-height:0;height:26px;padding:2px 6px;font-size:12px}
+.ob-report-compact .card{padding:4px 8px}
+.ob-report-compact table th{padding:3px 6px}
+.ob-report-compact table td{padding:2px 6px}
+.ob-report-compact .report-block>form>div[style*="margin-bottom"]{margin-bottom:4px!important;gap:4px 8px!important}
+@media(max-width:640px){.ob-report-titlebar{align-items:flex-start}.ob-report-commandbar{width:100%}}
+</style>{{end}}
 {{if .AutoFormDensity}}<style id="ob-auto-form-density-css">
 /* Only role-selected automatic forms receive these rules; no new JS/SQL. */
 .ob-auto-form-density{--ob-auto-gap:8px;--ob-auto-pad:12px;--ob-auto-height:28px;--ob-auto-font:13px}
@@ -3007,15 +3029,24 @@ const tplReport = `
 {{end}}
 {{define "page-report"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .CompactReport}} class="ob-report-compact{{if eq .ReportDensity "dense"}} ob-report-dense{{end}}"{{end}}>
+{{if .CompactReport}}<div class="ob-report-titlebar">
+<h2>{{.Report.DisplayName $.Lang}}</h2>
+<div class="ob-report-commandbar">
+  {{if not (or .ReportParams .Report.Variants .ReportPresets)}}<form id="ob-report-params" method="POST" hidden>{{if .UserSettings}}<input type="hidden" name="__settings" value="{{if .ReportSettingsJSON}}{{.ReportSettingsJSON}}{{else}}{{.UserSettings.JSON}}{{end}}">{{end}}</form>{{end}}
+  <button class="btn btn-primary" type="submit" form="ob-report-params">{{t $.Lang "Сформировать"}}</button>
+  {{if or .Cols .ComposedHTML}}{{template "report-export-buttons" .}}{{end}}
+  <a class="btn btn-sm" href="/ui/export-jobs">{{t $.Lang "Мои выгрузки"}}</a>
+</div>
+</div>{{else}}
 <h2>{{.Report.DisplayName $.Lang}}</h2>
 <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
   <a class="btn btn-sm" href="/ui/export-jobs">{{t $.Lang "Мои выгрузки"}}</a>
-</div>
+</div>{{end}}
 {{if or .ReportParams .Report.Variants .ReportPresets}}
 <details class="card report-block" data-block="params" open style="margin-bottom:16px">
 <summary>{{t $.Lang "Параметры"}}</summary>
-<form method="POST">
+<form method="POST"{{if .CompactReport}} id="ob-report-params" data-ob-report-params{{end}}>
   {{if .UserSettings}}<input type="hidden" name="__settings" value="{{if .ReportSettingsJSON}}{{.ReportSettingsJSON}}{{else}}{{.UserSettings.JSON}}{{end}}">{{end}}
   {{if .ReportPresets}}
   <div class="form-group" style="margin-bottom:16px;max-width:360px">
@@ -3036,7 +3067,7 @@ const tplReport = `
   </div>
   {{end}}
   {{if .ReportParams}}
-  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px">
+  <div{{if .CompactReport}} class="ob-report-param-grid"{{end}} style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px">
   {{range .ReportParams}}{{$p := .}}{{$pname := .Name}}{{$pval := str (index $.ParamValues .Name)}}
     {{if $p.IsBool}}
     <div class="form-group" style="margin-bottom:0">
@@ -3083,7 +3114,7 @@ const tplReport = `
   {{end}}
   </div>
   {{end}}
-  <button class="btn btn-primary" type="submit">{{t $.Lang "Сформировать"}}</button>
+  {{if not .CompactReport}}<button class="btn btn-primary" type="submit">{{t $.Lang "Сформировать"}}</button>{{end}}
 </form>
 </details>
 {{end}}
@@ -3197,7 +3228,7 @@ const tplReport = `
 {{if .ComposedHTML}}
 {{if .Capped}}<div class="card" style="background:#fffbeb;border-color:#fde68a;margin-bottom:8px;padding:8px 12px">{{t $.Lang "Показаны первые строки — данных больше потолка."}}</div>{{end}}
 {{if .ComposeWarnings}}<div class="card" style="background:#fef2f2;border-color:#fecaca;margin-bottom:8px;padding:8px 12px"><strong>{{t $.Lang "Предупреждения компоновки:"}}</strong><ul style="margin:4px 0 0;padding-left:20px">{{range .ComposeWarnings}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
-{{template "report-export-buttons" .}}
+{{if not .CompactReport}}{{template "report-export-buttons" .}}{{end}}
 <details class="card report-block" data-block="data" open>
 <summary>{{t $.Lang "Данные"}}</summary>
 <div class="rc-toolbar" style="margin-bottom:8px;display:flex;gap:8px"><button type="button" id="rc-expand" class="btn btn-sm">{{t $.Lang "Развернуть всё"}}</button><button type="button" id="rc-collapse" class="btn btn-sm">{{t $.Lang "Свернуть всё"}}</button></div>
@@ -3205,7 +3236,7 @@ const tplReport = `
 </details>
 {{end}}
 {{if .Cols}}
-{{template "report-export-buttons" .}}
+{{if not .CompactReport}}{{template "report-export-buttons" .}}{{end}}
 <div class="card">
 {{if .Rows}}
 <table><thead><tr>{{range .Cols}}<th>{{.}}</th>{{end}}</tr></thead>
