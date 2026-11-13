@@ -18,7 +18,7 @@ import (
 func TestResultFormProtectedSavedView(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		for _, policy := range []string{"mask_all", "hide"} {
-			for _, scenario := range []string{"clean", "edited-visible", "edited-protected", "not-written"} {
+			for _, scenario := range []string{"clean", "edited-visible", "edited-protected", "not-written", "navigate-clean", "navigate-edited"} {
 				t.Run(policy+"/"+scenario, func(t *testing.T) {
 					s, entity, proc := resultTestServer(t)
 					s.store = db
@@ -37,7 +37,14 @@ func TestResultFormProtectedSavedView(t *testing.T) {
 					case "not-written":
 						body = ""
 					}
-					form.ProgramAST = mustParse(t, "Процедура Завершить()\n"+body+`ОткрытьФормуРезультата("Результат", Объект.Ссылка, "Документ");`+"\nКонецПроцедуры")
+					command := body + `ОткрытьФормуРезультата("Результат", Объект.Ссылка, "Документ");`
+					if strings.HasPrefix(scenario, "navigate-") {
+						command = `ОткрытьФорму(Объект.Ссылка);`
+						if scenario == "navigate-edited" {
+							command = `Объект.Note = "unsaved-visible";` + command
+						}
+					}
+					form.ProgramAST = mustParse(t, "Процедура Завершить()\n"+command+"\nКонецПроцедуры")
 					user := &auth.User{ID: "masked-owner", Login: "masked-owner", Roles: []*auth.Role{{Permissions: auth.Permission{
 						Catalogs: map[string][]string{entity.Name: {"read", "write"}}, Processors: map[string][]string{proc.Name: {"run"}},
 						FieldAccess: auth.FieldAccess{Catalogs: map[string]auth.FieldPolicies{entity.Name: {"Наименование": {Read: policy}}}},
@@ -53,7 +60,11 @@ func TestResultFormProtectedSavedView(t *testing.T) {
 					}
 					for attempt := 0; attempt < 2; attempt++ {
 						response := resultSourceEvent(t, s, entity, values, user)
-						if scenario == "clean" {
+						if strings.HasPrefix(scenario, "navigate-") {
+							if !response.OK || response.Navigation == nil || response.Dirty == nil || *response.Dirty != (scenario == "navigate-edited") {
+								t.Fatalf("navigation dirty proof: %+v", response)
+							}
+						} else if scenario == "clean" {
 							if !response.OK || response.ResultForm == nil || response.Dirty == nil || *response.Dirty {
 								t.Fatalf("saved view refused attempt %d: %+v", attempt, response)
 							}
