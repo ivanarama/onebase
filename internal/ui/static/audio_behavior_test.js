@@ -1,9 +1,9 @@
 ﻿const fs = require('fs'), vm = require('vm'), assert = require('assert/strict');
 const code = fs.readFileSync(__dirname + '/audio.js', 'utf8');
-function deferred() { let resolve; const promise = new Promise(r => resolve = r); return {promise,resolve}; }
+function deferred() { let resolve,reject; const promise = new Promise((r,j) => {resolve=r;reject=j}); return {promise,resolve,reject}; }
 function fixture(attrs = {}) {
  const listeners = {}, mediaAttrs = {}, requests = [], prepared = [];
- const media = {preload:'', paused:true, currentTime:0, plays:0, loads:0,
+ const media = {preload:'', paused:true, currentTime:0, plays:0, loads:0, error:null,
   addEventListener(){}, getAttribute(k){return mediaAttrs[k] || null},
   setAttribute(k,v){mediaAttrs[k]=v}, removeAttribute(k){delete mediaAttrs[k]},
   load(){this.loads++}, pause(){this.paused=true}, play(){this.plays++;this.paused=false;return Promise.resolve()}};
@@ -47,5 +47,27 @@ function fixture(attrs = {}) {
  auto.requests[0].d.resolve({ok:true,json:()=>Promise.resolve([{id:idB,mime_type:'audio/wav',filename:'b.wav'}])});await load;
  assert.equal(auto.media.getAttribute('src'),'/ui/attachments/'+idB+'/download');assert.equal(auto.media.plays,1);
  auto.stop();await auto.click();assert.equal(auto.requests.length,1);
- console.log('PASS: lazy init, late Play A/selection B, caption, source UUID, pause/resume/no duplicate audit, stop/retry, disabled/error, lazy auto metadata');
+ // A native Pause can reject play() before playback has settled, even when
+ // cached metadata and a valid source remain. This is cancellation, not a
+ // decoder/network failure. Follow the real first/resume/stop/restart path.
+ const early=fixture({'data-audio-play-event':'','data-audio-metadata-url':'/ui/catalog/Recordings/'+idA+'/attachments'});
+ const first=early.click();early.requests[0].d.resolve({ok:true,json:()=>Promise.resolve([{id:idB,mime_type:'audio/wav',filename:'cached.wav'}])});await first;
+ early.media.pause();await early.click();early.stop();
+ const pendingMedia=deferred();early.media.play=function(){this.plays++;this.paused=false;return pendingMedia.promise};
+ const restarting=early.click();early.media.pause();pendingMedia.reject(Object.assign(new Error('play interrupted by pause'),{name:'AbortError'}));await restarting;
+ assert.equal(early.media.error,null);assert.equal(early.media.paused,true);assert.equal(early.status.textContent,'','early native Pause must not show a playback error');
+ early.media.play=function(){this.plays++;this.paused=false;return Promise.resolve()};await early.click();
+ assert.equal(early.media.paused,false);assert.equal(early.requests.length,1);assert.equal(early.prepared.length,0);
+ // Both actual media failures and policy failures still report an error.
+ for(const [errorName,mediaError] of [['AbortError',{code:2}],['NotAllowedError',null]]) {
+  const failed=fixture({'data-audio-source':idA});failed.media.error=mediaError;
+  failed.media.play=function(){this.paused=true;return Promise.reject(Object.assign(new Error(errorName),{name:errorName}))};
+  await failed.click();assert.equal(failed.status.textContent,'error',errorName+' must not hide a real failure');
+ }
+ // Cancelling a previous generation cannot clear the next row's loading state.
+ const obsolete=fixture({'data-audio-source':idA}), cancelled=deferred();
+ obsolete.media.play=function(){this.paused=false;return cancelled.promise};const old=obsolete.click();
+ obsolete.window.obAudioBeforeEvent('Calls','ПриАктивизацииСтроки');cancelled.reject(Object.assign(new Error('old'),{name:'AbortError'}));await old;
+ assert.equal(obsolete.status.textContent,'loading');assert.equal(obsolete.media.getAttribute('src'),null);
+ console.log('PASS: lazy init, late Play A/selection B, caption, source UUID, pause/resume/no duplicate audit, stop/retry, disabled/error, lazy auto metadata, early native Pause cancellation/retry, real errors, stale AbortError generation');
 })().catch(e=>{console.error(e);process.exitCode=1});

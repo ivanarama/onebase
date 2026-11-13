@@ -83,8 +83,13 @@
         await p.media.play();
         if (!current()) { p.media.pause(); return; }
         status(p, '');
-      } catch (_) {
-        if (epoch === generation && ticket === p.ticket) status(p, root.getAttribute('data-audio-error'));
+      } catch (error) {
+        if (epoch === generation && ticket === p.ticket) {
+          // Native Pause can cancel a still-pending play(). It leaves no
+          // MediaError; actual media/policy failures must remain visible.
+          var paused = error && error.name === 'AbortError' && p.media.paused && !p.media.error;
+          status(p, paused ? '' : root.getAttribute('data-audio-error'));
+        }
       } finally {
         if (ticket === p.ticket) p.waiting = false;
       }
