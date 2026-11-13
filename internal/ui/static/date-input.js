@@ -8,14 +8,13 @@
     return el && el.tagName === 'INPUT' && !el.disabled && !el.readOnly &&
       (editing.has(el) || el.type === 'date' || el.type === 'datetime-local');
   }
-  function begin(el, deleting) {
+  function begin(el) {
     if (editing.has(el)) return;
     editing.set(el, {type: el.type, value: el.value});
     // Let the browser perform the following key/paste edit on this same input:
     // it generates a real input event, including the form's native dirty state.
     el.type = 'text';
-    el.value = deleting ? editing.get(el).value : '';
-    if (deleting && el.select) el.select();
+    el.value = '';
   }
   function pad(value, n) { return String(value).padStart(n || 2, '0'); }
   function normalized(text, state) {
@@ -72,7 +71,7 @@
       if (!(typeof window.obEnterNavigateFrom === 'function' && window.obEnterNavigateFrom(el))) el.blur();
       return;
     }
-    if (!editing.has(el) && (/^\d$/.test(event.key) || event.key === 'Backspace' || event.key === 'Delete')) begin(el, event.key === 'Backspace' || event.key === 'Delete');
+    if (!editing.has(el) && /^\d$/.test(event.key)) begin(el);
   }, true);
   document.addEventListener('paste', function (event) {
     if (dateInput(event.target) && event.clipboardData && event.clipboardData.getData('text').trim()) begin(event.target);

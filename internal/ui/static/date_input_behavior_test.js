@@ -13,7 +13,7 @@ function setup(type='date',value=''){
    blur(){this.blurred++;fire('blur',{target:this});}};
  function fire(name,extra={}){const ev={target:input,preventDefault(){this.defaultPrevented=true;},stopPropagation(){this.cancelBubble=true;},...extra};for(const fn of handlers[name]||[])fn(ev);return ev;}
  vm.runInNewContext(code,{document,window:{},Date:Clock,WeakMap,Event:class{constructor(type){this.type=type;}}});
- function key(key){const ev=fire('keydown',{key});if(!ev.defaultPrevented){if(key==='Enter')input.submitted=true;else if(input.type==='text' && (/^.$/.test(key)||key==='Backspace'||key==='Delete')){if(input.selected){input.value='';input.selected=false;}if(key!=='Backspace'&&key!=='Delete')input.value+=key;else input.value=input.value.slice(0,-1);input.trustedInputs++;fire('input',{isTrusted:true});}}return ev;}
+ function key(key){const ev=fire('keydown',{key});if(!ev.defaultPrevented){if(key==='Enter')input.submitted=true;else if(input.type!=='text' && (key==='Delete'||key==='Backspace')){input.value='';input.trustedInputs++;fire('input',{isTrusted:true});}else if(input.type==='text' && (/^.$/.test(key)||key==='Backspace'||key==='Delete')){if(input.selected){input.value='';input.selected=false;}if(key!=='Backspace'&&key!=='Delete')input.value+=key;else input.value=input.value.slice(0,-1);input.trustedInputs++;fire('input',{isTrusted:true});}}return ev;}
  return {input,key,fire,events,type(text){for(const ch of text)key(ch);}};
 }
 for(const [typed,expected] of [['7','2026-11-07'],['07','2026-11-07'],['7.2','2026-02-07'],['07/02','2026-02-07'],['0702','2026-02-07'],['29.02.2024','2024-02-29'],['29022024','2024-02-29'],['2024-02-29','2024-02-29']]){
