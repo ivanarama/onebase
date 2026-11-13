@@ -63,22 +63,7 @@ func prepareServerRuntime(ctx context.Context, cmd *cobra.Command, db *storage.D
 		}
 		uiCfg.Limits = runtimeLimitsFromApp(appCfg.Limits)
 		uiCfg.POSEnabled = appCfg.POSEnabled()
-		uiCfg.CompactLists = appCfg.CompactLists()
-		uiCfg.HideListDetailPanel = !appCfg.ListDetailPanelEnabled()
-		uiCfg.HideListRowActions = !appCfg.ListRowActionsEnabled()
-		uiCfg.HideAttachments = !appCfg.AttachmentsEnabled()
-		uiCfg.UIEnhancements = appCfg.UIEnhancementsConfigured()
-		if appCfg.UI != nil {
-			uiCfg.UIReportRoles = appCfg.UI.ReportRoles
-			uiCfg.UIReportExceptRoles = appCfg.UI.ReportExceptRoles
-			uiCfg.DefaultReportDensity = appCfg.UI.ReportDensity
-			uiCfg.ShortDateInput = appCfg.UI.ShortDateInput
-			uiCfg.UIRoles = appCfg.UI.Roles
-			uiCfg.UIFormRoles = appCfg.UI.FormRoles
-			uiCfg.UIFormExceptRoles = appCfg.UI.FormExceptRoles
-			uiCfg.UIExceptRoles = appCfg.UI.ExceptRoles
-			uiCfg.DefaultFormDensity = appCfg.UI.FormDensity
-		}
+		applyAppUIPresentation(&uiCfg, appCfg)
 	}
 	bundle, err := i18n.Load(i18n.EmbeddedLocales, filepath.Join(proj.Dir, "locales"))
 	if err != nil {
