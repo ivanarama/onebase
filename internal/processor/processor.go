@@ -37,6 +37,9 @@ type Processor struct {
 	Params     []Param                `yaml:"params"`
 	TableParts []metadata.TablePart   `yaml:"table_parts"`
 	Forms      []*metadata.FormModule `yaml:"-"`
+	// ResultCapabilities is a closed readonly lookup declaration, usable only
+	// with a server-validated result-form context. No catalog data is returned.
+	ResultCapabilities map[string]ResultCapability `yaml:"result_capabilities,omitempty"`
 
 	// External помечает обработку из внешнего контура (таблица
 	// _ext_processors), а не из конфигурации проекта. Trusted — признак того,

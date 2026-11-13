@@ -449,6 +449,9 @@ func Load(dir string) (*Project, error) {
 	if err := p.loadProcessorForms(); err != nil {
 		return nil, err
 	}
+	if err := p.validateResultCapabilities(); err != nil {
+		return nil, err
+	}
 	if err := p.loadHTTPServices(); err != nil {
 		return nil, err
 	}

@@ -533,10 +533,12 @@ func roleYAMLSchema() *yamlLintSchema {
 }
 
 func processorYAMLSchema() *yamlLintSchema {
+	capability := obj("register", "reference_field", "owner_field", "enabled_field", "source_entity", "source_id_field", "source_version_field", "observed_at_field", "max_age_seconds")
 	param := with(obj("name", "type", "label", "default", "options", "required"), map[string]*yamlLintSchema{"labels": freeMap()})
 	return with(obj("name", "title", "kind"), map[string]*yamlLintSchema{
-		"titles": freeMap(),
-		"params": seq(param),
+		"result_capabilities": {values: capability},
+		"titles":              freeMap(),
+		"params":              seq(param),
 		// Processor table parts are transient runtime values. Unlike entity table
 		// parts they have no storage writer enforcing required, so accepting the
 		// key here would advertise an invariant the platform does not provide.

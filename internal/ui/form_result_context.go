@@ -51,43 +51,15 @@ func (s *Server) resultContextBuiltin(r *http.Request, processorName string, all
 		if !allowed || len(args) != 0 {
 			return deny()
 		}
+		c, valid := s.checkedResultFormContext(r, processorName)
+		if !valid {
+			return deny()
+		}
 		u := auth.UserFromContext(r.Context())
-		tokens := r.URL.Query()[resultContextQuery]
-		if u == nil || u.ID == "" || u.Login == "" || len(tokens) != 1 || tokens[0] == "" {
-			return deny()
-		}
-		c, err := s.readResultForm(r, processorName)
-		if err != nil || c == nil || time.Now().After(c.expires) {
-			return deny()
-		}
-		// Legacy processors may silently pin a forged parameter back to the
-		// server binding. This guard refuses it before a new worker can start.
-		if values, present := processorPostFormValues(r, c.request.parameter); present {
-			if len(values) != 1 {
-				return deny()
-			}
-			posted, err := uuid.Parse(strings.TrimSpace(values[0]))
-			bound, boundErr := uuid.Parse(c.request.reference.UUID)
-			if err != nil || boundErr != nil || posted != bound {
-				return deny()
-			}
-		}
 		proc := s.reg.GetProcessor(processorName)
 		entity := s.reg.GetEntity(c.request.reference.Type)
-		boundID, parseErr := uuid.Parse(c.request.reference.UUID)
-		if proc == nil || entity == nil || s.store == nil || parseErr != nil || boundID == uuid.Nil {
-			return deny()
-		}
-		// An unrestricted/admin permission decision alone does not prove that
-		// the record still exists. Read only its ID, with the current RLS in SQL.
-		params, filterErr := s.rowFilterFor(r.Context(), entity, "read", storage.ListParams{})
-		if filterErr != nil {
-			return deny()
-		}
-		rows, readErr := s.store.GetFieldsByIDsFiltered(r.Context(), entity, []uuid.UUID{boundID}, nil, params.RowFilter)
-		if readErr != nil || rows[boundID.String()] == nil || time.Now().After(c.expires) {
-			return deny()
-		}
+		boundID := uuid.MustParse(c.request.reference.UUID)
+		tokens := r.URL.Query()[resultContextQuery]
 		// Copies have no manager/resolver hooks: merely reading the guard cannot
 		// write or perform an extra lazy attribute lookup through the reference.
 		ref := &interpreter.Ref{Kind: entity.Kind, Type: entity.Name,
@@ -98,4 +70,48 @@ func (s *Server) resultContextBuiltin(r *http.Request, processorName string, all
 			"ИДКонтекста": resultContextNonce(tokens[0]),
 		}), nil
 	}
+}
+
+// checkedResultFormContext is shared by the readonly identity and boolean
+// readers. Even a read-only result proof requires a current actor, exact
+// immutable binding, read/RLS and actual parent existence.
+func (s *Server) checkedResultFormContext(r *http.Request, processorName string) (*resultFormContext, bool) {
+	u := auth.UserFromContext(r.Context())
+	tokens := r.URL.Query()[resultContextQuery]
+	if u == nil || u.ID == "" || u.Login == "" || len(tokens) != 1 || tokens[0] == "" {
+		return nil, false
+	}
+	c, err := s.readResultForm(r, processorName)
+	if err != nil || c == nil || time.Now().After(c.expires) {
+		return nil, false
+	}
+	// Legacy processors may silently pin a forged parameter back to the
+	// server binding. This guard refuses it before a new worker can start.
+	if values, present := processorPostFormValues(r, c.request.parameter); present {
+		if len(values) != 1 {
+			return nil, false
+		}
+		posted, err := uuid.Parse(strings.TrimSpace(values[0]))
+		bound, boundErr := uuid.Parse(c.request.reference.UUID)
+		if err != nil || boundErr != nil || posted != bound {
+			return nil, false
+		}
+	}
+	proc := s.reg.GetProcessor(processorName)
+	entity := s.reg.GetEntity(c.request.reference.Type)
+	boundID, parseErr := uuid.Parse(c.request.reference.UUID)
+	if proc == nil || entity == nil || s.store == nil || parseErr != nil || boundID == uuid.Nil {
+		return nil, false
+	}
+	// An unrestricted/admin permission decision alone does not prove that
+	// the record still exists. Read only its ID, with the current RLS in SQL.
+	params, filterErr := s.rowFilterFor(r.Context(), entity, "read", storage.ListParams{})
+	if filterErr != nil {
+		return nil, false
+	}
+	rows, readErr := s.store.GetFieldsByIDsFiltered(r.Context(), entity, []uuid.UUID{boundID}, nil, params.RowFilter)
+	if readErr != nil || rows[boundID.String()] == nil || time.Now().After(c.expires) {
+		return nil, false
+	}
+	return c, true
 }

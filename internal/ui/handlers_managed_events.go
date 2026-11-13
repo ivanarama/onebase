@@ -2844,6 +2844,9 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		vars["ЗакрытьФормуРезультата"], vars["CloseResultForm"] = closeResultFn, closeResultFn
 		resultContextFn := s.resultContextBuiltin(r, proc.Name, resultContextCommandAllowed(eventTarget, eventName, closeInv != nil))
 		vars["КонтекстФормыРезультата"], vars["ResultFormContext"] = resultContextFn, resultContextFn
+		capabilityEvent := eventName == string(metadata.FormEventOnOpen) || eventName == string(metadata.FormEventOnClick) || eventName == string(metadata.FormEventOnAnswer)
+		capabilityFn := s.resultCapabilityBuiltin(r, proc, txState, closeInv == nil && capabilityEvent)
+		vars["ВозможностьФормыРезультата"], vars["ResultFormCapability"] = capabilityFn, capabilityFn
 		var navigation *navigationPayload
 		if closeInv == nil {
 			navFn := newNavigationBuiltin(&navigation, s.reg, s.store, auth.UserFromContext(r.Context()))
