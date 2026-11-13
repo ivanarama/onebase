@@ -651,6 +651,7 @@ func managedFormSchema() map[string]any {
 				"properties": map[string]any{
 					"ref_card_button":            boolSchema("false — убрать кнопку «Открыть карточку» у всех ссылочных полей формы"),
 					"ref_card_button_admin_only": boolSchema("true — кнопку «Открыть карточку» видит только администратор; настройка интерфейса, не защита"),
+					"group_titles":               stringSchema("bold — жирные тёмные заголовки групп и таблиц этой формы; без ключа стандартное оформление"),
 				},
 			},
 			"elements": arrayOf(element),
