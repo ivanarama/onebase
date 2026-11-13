@@ -4422,9 +4422,15 @@ function obGridColumnIds(columns) {
         });
         g.dataView.setItems(items);
         g.grid.invalidate();
-        if (active && active.row < items.length) {
-          g.grid.setActiveCell(active.row, active.cell);
+        if (g.suppressRowActivation) g.suppressRowActivation(true);
+        try {
+          if (active && active.row < items.length) {
+            g.grid.setActiveCell(active.row, active.cell);
+          }
+        } finally {
+          if (g.suppressRowActivation) g.suppressRowActivation(false);
         }
+        if (g.resetRowActivation) g.resetRowActivation();
         updateTotals(g);
       });
     });
@@ -4769,7 +4775,20 @@ function obGridColumnIds(columns) {
       var actElName = div.getAttribute("data-sg-el") || tpName;
       var actTimer = null;
       var actLastRow = -1;
+      var actSuppressed = false;
+      // Новые строки с сервера (поиск, перезаполнение): прежняя «последняя
+      // активированная строка» к ним не относится. Без сброса щелчок по строке
+      // с тем же индексом молча игнорировался — при единственном результате
+      // выбрать строку было невозможно. Возврат курсора на прежнюю позицию
+      // после замены данных событие не шлёт (suppress): строку выбирает
+      // пользователь, а не перерисовка.
+      gridState.resetRowActivation = function() {
+        actLastRow = -1;
+        if (actTimer) { clearTimeout(actTimer); actTimer = null; }
+      };
+      gridState.suppressRowActivation = function(on) { actSuppressed = !!on; };
       var fireRowActivated = function(args) {
+        if (actSuppressed) return;
         var row = (args && typeof args.row === "number") ? args.row : -1;
         if (row < 0 || row === actLastRow) return;
         actLastRow = row;
@@ -4782,6 +4801,10 @@ function obGridColumnIds(columns) {
         }, 250);
       };
       grid.onActiveCellChanged.subscribe(function(e, args) { fireRowActivated(args); });
+      // Щелчок по уже активной ячейке активную ячейку не меняет — после замены
+      // данных курсор стоит на той же строке, и без onClick выбрать её было
+      // нечем. Повторный щелчок по той же строке по-прежнему не шлёт событие.
+      if (grid.onClick) grid.onClick.subscribe(function(e, args) { fireRowActivated(args); });
       // Клик по строке при включённом выделении строк не всегда меняет активную
       // ячейку (например, повторный клик по уже активной строке после
       // перерисовки), поэтому слушаем и выделение.
