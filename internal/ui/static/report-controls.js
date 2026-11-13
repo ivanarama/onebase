@@ -19,7 +19,7 @@
     var el = event.target;
     if (!el || !el.closest || !el.closest('main.ob-report-compact') || !el.closest('form[data-ob-report-params]')) return;
     if (el.tagName !== 'INPUT' && el.tagName !== 'SELECT') return;
-    if (['button','submit','reset','file','checkbox','radio','hidden'].indexOf(String(el.type || '').toLowerCase()) >= 0) return;
+    if (['button','submit','reset','file','hidden'].indexOf(String(el.type || '').toLowerCase()) >= 0) return;
     event.preventDefault(); event.stopPropagation();
     var controls = Array.from(el.form.querySelectorAll('input,select,textarea')).filter(function (field) {
       return !field.disabled && !field.readOnly && field.type !== 'hidden' && field.getClientRects().length;

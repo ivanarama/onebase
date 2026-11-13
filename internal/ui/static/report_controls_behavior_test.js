@@ -17,3 +17,8 @@ test('Enter at last parameter blurs without submitting',()=>{const c=fixture();c
 test('ordinary operator page and modifiers stay unchanged',()=>{let c=fixture(false);assert.equal(c.dispatch('keydown',c.fields[0]).defaultPrevented,undefined);c=fixture();assert.equal(c.dispatch('keydown',c.fields[0],{ctrlKey:true}).defaultPrevented,undefined);});
 test('Generate button keeps native keyboard activation',()=>{const c=fixture();const e=c.dispatch('keydown',{...c.fields[0],tagName:'BUTTON',type:'submit'});assert.equal(e.defaultPrevented,undefined);});
 test('variant change clears stale settings but waits for Generate',()=>{const c=fixture();const el=c.fields[0];el.closest=selector=>selector==='main.ob-report-compact'?{}:selector==='form[data-ob-report-params]'?c.form:selector==='[data-ob-report-variant-submit]'?el:null;const e=c.dispatch('change',el);assert.equal(e.stopped,true);assert.equal(c.calls.length,1);assert.equal(c.preset.value,'__standard');});
+
+test('Enter completes boolean parameters without submitting or toggling them',()=>{
+ for(const type of ['checkbox','radio']){const c=fixture();c.fields[0].type=type;c.fields[0].checked=true;
+  const e=c.dispatch('keydown',c.fields[0]);assert.equal(e.defaultPrevented,true);assert.equal(c.fields[0].checked,true);assert.equal(c.fields[1].focused,true);}
+});
