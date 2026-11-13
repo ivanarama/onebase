@@ -128,6 +128,12 @@ func IsKnownFormEventType(event FormEventType) bool {
 // FormElementType represents types of form elements
 type FormElementType string
 
+// FormElementAudio is a lazy, authenticated attachment player. Its Play event
+// prepares an attachment only when the user requests playback.
+const FormElementAudio FormElementType = "Аудиоплеер"
+
+const FormEventAudioPlay FormEventType = "Воспроизведение"
+
 const (
 	FormElementField      FormElementType = "ПолеВвода"      // InputField
 	FormElementLabel      FormElementType = "Надпись"        // Label
