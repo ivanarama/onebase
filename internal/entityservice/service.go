@@ -371,6 +371,13 @@ type SaveRequest struct {
 	Fields        map[string]any
 	TablePartRows map[string][]map[string]any
 
+	// MergeExistingFields is opt-in for partial REST updates. Inside the save
+	// transaction, load the current header before entity hooks and overlay only
+	// supplied keys (including explicit nil/false/zero/empty values). A CAS token
+	// protects the hydrated snapshot even when a legacy client omits If-Match.
+	// UI and DSL callers retain their existing object construction semantics.
+	MergeExistingFields bool
+
 	// Preflight runs in the save transaction after auto-numbering and before
 	// caller-independent enrichment, provisional persistence and entity hooks.
 	// It is intended for row access and form-level BeforeWrite/OnWrite checks
@@ -517,6 +524,23 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			if err := req.Preflight(txCtx, obj); err != nil {
 				return err
 			}
+		}
+		if req.MergeExistingFields && !req.IsNew {
+			stored, err := s.Store.GetByID(txCtx, req.Entity.Name, req.ID, req.Entity)
+			if err != nil {
+				return err
+			}
+			version, ok := stored["_version"].(int64)
+			if !ok || version < 1 {
+				return errors.New("partial update: invalid stored version")
+			}
+			if req.ExpectedVersion != nil && *req.ExpectedVersion != version {
+				return storage.ErrVersionConflict
+			}
+			if req.ExpectedVersion == nil {
+				req.ExpectedVersion = &version
+			}
+			obj.Fields = effectiveSaveFields(partialUpdateHeader(req.Entity, stored), obj.Fields)
 		}
 		// Form hooks dereference rich values before returning to persistence,
 		// including pseudo fields. Restore the authoritative self reference for

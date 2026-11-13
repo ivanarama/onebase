@@ -256,13 +256,14 @@ func (h *handler) updateObjectV2(kind metadata.Kind) http.HandlerFunc {
 		}
 
 		result, err := h.entitySvc.Save(r.Context(), entityservice.SaveRequest{
-			Entity:          entity,
-			ID:              id,
-			IsNew:           false,
-			Fields:          body.Fields,
-			TablePartRows:   body.TablePartRows,
-			Action:          body.Action,
-			ExpectedVersion: expectedVersion,
+			Entity:              entity,
+			ID:                  id,
+			IsNew:               false,
+			MergeExistingFields: true,
+			Fields:              body.Fields,
+			TablePartRows:       body.TablePartRows,
+			Action:              body.Action,
+			ExpectedVersion:     expectedVersion,
 		})
 		writeSaveResultV2(w, result, err, id, false)
 	}
