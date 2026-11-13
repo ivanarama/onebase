@@ -947,6 +947,9 @@ func (w *docWriter) write() error {
 // транзакции, а не утекают навсегда. Зеркалит entityservice.Save
 // (service.go: lockCollector + defer ReleaseAll).
 func (w *docWriter) withLockScope(fn func(ctx context.Context) error) error {
+	// Beginning the transaction may fail before writeInContext can consume
+	// the journal. Even that failed attempt must not authorize a later retry.
+	defer func() { w.obj.TakeServerFieldAssignments() }()
 	base := w.ctx()
 	if runtime.LockCollectorFromContext(base) != nil {
 		return w.s.store.WithTxScope(base, fn)

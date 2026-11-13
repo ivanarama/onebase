@@ -7,6 +7,7 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -50,6 +51,24 @@ func TestServerAssignedFieldFailedSaveMatrix(t *testing.T) {
 		row, err := db.GetByID(ctx, entity.Name, id, entity)
 		if err != nil || row["_version"] != int64(1) || row["Executor"] != "" || row["Note"] != "initial" {
 			t.Fatalf("rollback changed row %v %v", row, err)
+		}
+		// A failure while opening the scope occurs before the OnWrite edge.
+		// It still consumes the attempt; reconnecting cannot borrow its marks.
+		cancelled, cancel := context.WithCancel(ctx)
+		cancel()
+		version := int64(1)
+		writer := &docWriter{s: s, ctxSrc: interpreter.NewStaticCtx(cancelled), entity: entity, obj: &runtime.Object{Type: entity.Name, Kind: entity.Kind, ID: id, Fields: map[string]any{"Executor": "", "Note": "retry"}}, loaded: true, expectedVersion: &version}
+		writer.Set("Executor", "owner")
+		if err := writer.write(); err == nil {
+			t.Fatal("cancelled scope unexpectedly saved")
+		}
+		writer.ctxSrc = interpreter.NewStaticCtx(ctx)
+		if err := writer.write(); err == nil || !strings.Contains(err.Error(), "requires proof") {
+			t.Fatalf("failed scope retained witness: %v", err)
+		}
+		row, err = db.GetByID(ctx, entity.Name, id, entity)
+		if err != nil || row["_version"] != int64(1) {
+			t.Fatalf("scope retry persisted: %v %v", row, err)
 		}
 	})
 }
