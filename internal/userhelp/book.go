@@ -32,6 +32,11 @@ type Manifest struct {
 	Enabled    *bool         `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	AutoUpdate *bool         `yaml:"auto_update,omitempty" json:"auto_update,omitempty"`
 	Chapters   []ChapterSpec `yaml:"chapters" json:"chapters"`
+
+	// AdminOnly closes the guide to everyone except administrators: the menu
+	// item is hidden, /ui/help pages and assets answer 403, and the form button
+	// stays visible but disabled.
+	AdminOnly bool `yaml:"admin_only,omitempty" json:"admin_only,omitempty"`
 }
 
 // Chapters appear in manifest order. Parent must refer to an earlier chapter.
@@ -61,6 +66,7 @@ type Book struct {
 	Title      string
 	Enabled    bool
 	AutoUpdate bool
+	AdminOnly  bool
 	Chapters   []Chapter
 	Assets     map[string]Asset
 	Warnings   []string
@@ -117,6 +123,7 @@ func Load(projectDir string) *Book {
 	if m.AutoUpdate != nil {
 		b.AutoUpdate = *m.AutoUpdate
 	}
+	b.AdminOnly = m.AdminOnly
 	if !b.Enabled {
 		return b
 	}
