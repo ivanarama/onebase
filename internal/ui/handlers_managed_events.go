@@ -45,6 +45,7 @@ import (
 
 // formEventResponse — структура ответа JSON.
 type formEventResponse struct {
+	AudioStops     []string                    `json:"audioStops,omitempty"`
 	OK             bool                        `json:"ok"`
 	Values         map[string]any              `json:"values,omitempty"`
 	Revealed       []string                    `json:"revealed,omitempty"`
@@ -1315,6 +1316,8 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		disableDialogBuiltinsForClose(vars)
 	}
 
+	var audioStops []string
+	addFormAudioBuiltins(vars, form, &audioStops)
 	condRuntime := newFormConditionalRuntime(form)
 	for k, v := range condRuntime.builtins() {
 		vars[k] = v
@@ -1524,6 +1527,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		opStatus = operationStatus(opCtx, runErr)
 		resp := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs).response(false)
 		resp.Error = interpreter.FormatUserError(runErr)
+		resp.AudioStops = audioStops
 		resp.PickerData = picker
 		if question.Variants != nil {
 			q := question
@@ -1541,6 +1545,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 
 	opStatus = "ok"
 	resp := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs).response(true)
+	resp.AudioStops = audioStops
 	resp.PickerData = picker
 	if question.Variants != nil {
 		q := question
@@ -2809,6 +2814,8 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			vars["OpenForm"] = navFn
 		}
 
+		var audioStops []string
+		addFormAudioBuiltins(vars, form, &audioStops)
 		condRuntime := newFormConditionalRuntime(form)
 		for k, v := range condRuntime.builtins() {
 			vars[k] = v
@@ -2879,6 +2886,7 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			opStatus = operationStatus(opCtx, runErr)
 			resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(false)
 			resp.Error = interpreter.FormatUserError(runErr)
+			resp.AudioStops = audioStops
 			resp.PickerData = picker
 			if question.Variants != nil {
 				q := question
@@ -2891,6 +2899,7 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		}
 
 		resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(true)
+		resp.AudioStops = audioStops
 		resp.PickerData = picker
 		if question.Variants != nil {
 			q := question

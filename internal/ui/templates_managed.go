@@ -271,6 +271,9 @@ const tplManagedForm = `
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </button>
   {{if $buttonLayout}}</div>{{end}}
+{{else if eq (str $el.Kind) "Аудиоплеер"}}
+  {{$source := audioField $el.DataPath}}{{$title := audioField $el.TitleFrom}}
+  {{template "ob-audio-controls" (dict "Name" $el.Name "Lang" $ctx.Lang "SourceField" $source "TitleField" $title "Source" (audioSource $ctx $source) "Title" (or (audioValue $ctx $title) (fieldTitleRU $el.TitleMap $el.Name)) "ReadOnly" $ro "Hidden" (elHidden $ctx $el) "Path" (elPath $ctx $el) "PlayEvent" (hasHandler $el "Воспроизведение"))}}
 {{else if eq (str $el.Kind) "ПолеКартинки"}}
   {{/* width/height здесь ограничивают САМУ картинку — так было до общего
        контракта раскладки (#1185), и менять смысл ключей значило бы перестроить
@@ -940,6 +943,8 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 {{else}}
 <script src="/static/managed.js"></script>
 {{end}}
+
+{{if hasAudioPlayer .Form}}<script src="/static/audio.js"></script>{{end}}
 
 {{if hasCodeField .Form}}
 {{/* Редактор кода для kind: ПолеКода. Monaco уже встроен в бинарь (его же

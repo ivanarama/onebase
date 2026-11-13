@@ -278,7 +278,9 @@ type IndexSpec struct {
 }
 
 type Entity struct {
-	Name string
+	// AudioPlayer opts the object form into the audio-only attachment renderer.
+	AudioPlayer bool
+	Name        string
 	// Title — человекочитаемое представление (аналог «Синонима» в 1С).
 	// Если пусто, в интерфейсе показывается Name.
 	Title string
