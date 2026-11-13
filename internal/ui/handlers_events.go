@@ -126,7 +126,20 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	lastID, _ := strconv.ParseInt(r.Header.Get("Last-Event-ID"), 10, 64)
+	cursor := r.Header.Get("Last-Event-ID")
+	if cursor == "" {
+		cursor = r.URL.Query().Get("last_event_id")
+	}
+	lastID, parseErr := strconv.ParseInt(cursor, 10, 64)
+	if parseErr != nil || lastID < 0 {
+		lastID = 0
+	}
+	resumeProtocol := r.URL.Query().Get("resume_protocol") == "1"
+	if resumeProtocol && r.URL.Query().Get("resume") == "1" && (lastID == 0 || (r.URL.Query().Get("generation") != "" && r.URL.Query().Get("generation") != s.hub.Generation())) {
+		// Internal -1 means all still-buffered events. Authentication, current
+		// roles and shell matching stay in Hub; no replay on a fresh page.
+		lastID = -1
+	}
 	_, ch, cancel := s.hub.SubscribeShellSince(userID, login, roles, validShellID(r.URL.Query().Get("shell")), lastID)
 	defer cancel()
 
@@ -137,6 +150,16 @@ func (s *Server) eventsStream(w http.ResponseWriter, r *http.Request) {
 	h.Set("X-Accel-Buffering", "no") // не буферизировать за reverse-proxy (nginx)
 	w.WriteHeader(http.StatusOK)
 	flusher.Flush()
+	if resumeProtocol {
+		frame, err := json.Marshal(map[string]any{"system": "stream-generation", "data": s.hub.Generation()})
+		if err != nil {
+			return
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", frame); err != nil {
+			return
+		}
+		flusher.Flush()
+	}
 
 	// Dev-режим: сервер представляется меткой своего запуска. Клиент сравнивает
 	// её с прошлой и, увидев другую, перечитывает страницу — так браузер

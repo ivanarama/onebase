@@ -6307,15 +6307,37 @@ window.onebaseDevice = {
     return false;
   }
   // END onebase-dev-system-handler
+  // BEGIN onebase-sse-reconnect (public lifecycle tested with EventSource)
   var sseOpened = false;
+  var sseRetry = null;
+  var sseBackoff = 1000;
+  var ssePaused = false;
+  var sseLastID = '';
+  var sseGeneration = '';
+  var sseResuming = false;
+  function retryEvents() {
+    if (ssePaused || sseRetry !== null) return;
+    var delay = sseBackoff + Math.floor(Math.random() * 250);
+    sseBackoff = Math.min(sseBackoff * 2, 5000);
+    sseRetry = setTimeout(function () { sseRetry = null; connect(); }, delay);
+  }
   var devState = { generation: null };
   function connect() {
     if (typeof EventSource === 'undefined') return;
-    if (window.__obEvents) return;
+    if (ssePaused || window.__obEvents) return;
     var shell = obShellId();
-    var es = new EventSource('/ui/events' + (shell ? '?shell=' + encodeURIComponent(shell) : ''));
+    var eventsURL = '/ui/events' + (shell ? '?shell=' + encodeURIComponent(shell) : '');
+    eventsURL += (shell ? '&' : '?') + 'resume_protocol=1';
+    if (sseResuming) eventsURL += '&resume=1';
+    if (sseGeneration) eventsURL += '&generation=' + encodeURIComponent(sseGeneration);
+    if (sseLastID) eventsURL += '&last_event_id=' + encodeURIComponent(sseLastID);
+    var es;
+    try { es = new EventSource(eventsURL); } catch (_) { sseResuming = true; retryEvents(); return; }
     window.__obEvents = es;
     es.onopen = function () {
+      if (ssePaused || window.__obEvents !== es) return;
+      sseBackoff = 1000;
+      sseResuming = false;
       // План 87: служебные события данные.* не переигрываются из replay-окна.
       // После РЕконнекта (не первого open) просим живые списки перечитаться —
       // один актуальный GET безопаснее, чем догадка по устаревшему снимку прав.
@@ -6326,6 +6348,8 @@ window.onebaseDevice = {
       sseOpened = true;
     };
     es.onmessage = function (ev) {
+      if (ssePaused || window.__obEvents !== es) return;
+      if (/^[1-9][0-9]{0,18}$/.test(String(ev.lastEventId || ''))) sseLastID = String(ev.lastEventId);
       var msg;
       try {
         msg = JSON.parse(ev.data);
@@ -6333,6 +6357,11 @@ window.onebaseDevice = {
         return;
       }
       if (!msg) return;
+      if (msg.system === 'stream-generation' && typeof msg.data === 'string') {
+        if (sseGeneration && sseGeneration !== msg.data) sseLastID = '';
+        sseGeneration = msg.data;
+        return;
+      }
       // Only the server can create a system envelope, and the rendered page
       // must independently opt in to dev behavior. A DSL notification with a
       // look-alike name remains an ordinary onebase:<name> event.
@@ -6345,7 +6374,15 @@ window.onebaseDevice = {
         toast(typeof msg.data === 'string' ? msg.data : JSON.stringify(msg.data));
       }
     };
-    es.onerror = function () {};
+    es.onerror = function () {
+      if (window.__obEvents !== es) return;
+      // A non-200 response can permanently close native EventSource. Own the
+      // retry for both CLOSED and CONNECTING, with exactly one active stream.
+      window.__obEvents = null;
+      es.close();
+      sseResuming = true;
+      retryEvents();
+    };
   }
   // Вкладочная оболочка (issue #322/#323): единственный SSE-поток /ui/events
   // держит верхнее окно оболочки. Во фрейме не подключаемся — иначе N вкладок =
@@ -6358,15 +6395,18 @@ window.onebaseDevice = {
     // otherwise block the next page on HTTP/1.1. A restored document reconnects
     // and uses the existing reconnect refresh path to catch up on live data.
     window.addEventListener('pagehide', function () {
+      ssePaused = true;
+      if (sseRetry !== null) { clearTimeout(sseRetry); sseRetry = null; }
       if (window.__obEvents) window.__obEvents.close();
       window.__obEvents = null;
     });
     window.addEventListener('pageshow', function (ev) {
-      if (ev.persisted) connect();
+      if (ev.persisted) { ssePaused = false; sseResuming = true; connect(); }
     });
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', connect);
     else connect();
   }
+  // END onebase-sse-reconnect
 })();
 
 // BEGIN onebase-live-list

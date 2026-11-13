@@ -62,7 +62,7 @@ func TestStaticUIJS(t *testing.T) {
 		"data-ob-attachments",
 		"data-ob-select-on-click",
 		"window.onebaseDevice",
-		"new EventSource('/ui/events' + (shell ? '?shell=' + encodeURIComponent(shell) : ''))",
+		"new EventSource(eventsURL)",
 		"window.requestAnimationFrame ||",
 		"document.createEvent('CustomEvent')",
 		"msg.name === 'уведомление'",

@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // rolePrefix — адрес вида "роль:Оператор" доставляет событие всем подписчикам с
@@ -49,11 +51,12 @@ type subscriber struct {
 
 // Hub — потокобезопасный реестр подписчиков.
 type Hub struct {
-	mu     sync.Mutex
-	subs   map[string]*subscriber
-	seq    int64
-	recent []recentEvent
-	closed bool
+	generation string
+	mu         sync.Mutex
+	subs       map[string]*subscriber
+	seq        int64
+	recent     []recentEvent
+	closed     bool
 }
 
 type recentEvent struct {
@@ -64,8 +67,11 @@ type recentEvent struct {
 
 // NewHub создаёт пустую шину.
 func NewHub() *Hub {
-	return &Hub{subs: make(map[string]*subscriber)}
+	return &Hub{subs: make(map[string]*subscriber), generation: uuid.NewString()}
 }
+
+// Generation identifies this in-memory replay window; it changes on restart.
+func (h *Hub) Generation() string { return h.generation }
 
 // Subscribe регистрирует подписчика и возвращает его id, канал событий и функцию
 // отписки. cancel закрывает канал и удаляет подписчика; вызывать при завершении
@@ -236,7 +242,7 @@ func (h *Hub) appendRecentLocked(target string, ev Event, now time.Time) {
 }
 
 func (h *Hub) replayLocked(s *subscriber, lastID int64, now time.Time) {
-	if lastID <= 0 {
+	if lastID == 0 {
 		return
 	}
 	cutoff := now.Add(-recentTTL)
