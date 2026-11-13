@@ -713,6 +713,7 @@ type FormModule struct {
 
 	// Поля, добавленные планом 37 для управляемых форм.
 	LayoutKind             string            `yaml:"layout_kind,omitempty"`      // "managed"|"autogen" (пусто=autogen)
+	TitleProc              string            `yaml:"title_proc,omitempty"`       // display-only function of this form
 	Title                  map[string]string `yaml:"title,omitempty"`            // локализованный заголовок формы
 	OriginalID             string            `yaml:"original_id,omitempty"`      // id корневого узла из 1С
 	Attributes             []*FormAttribute  `yaml:"attributes,omitempty"`       // реквизиты формы
