@@ -202,7 +202,7 @@ func (s *Server) homeDashboardData(r *http.Request) map[string]any {
 		// Фильтры полной страницы (план 182D): URL-значения применяются к данным
 		// толерантно — мусор трактуется как пустой отбор, страница не ломается.
 		// Иначе после F5 контролы заполнены, а строки неотфильтрованы.
-		res := runner.RunWithOptions(r.Context(), wMeta, widget.RunOptions{Params: lenientWidgetFilterParams(r, wMeta)})
+		res := runner.RunWithOptions(r.Context(), wMeta, widget.RunOptions{Params: lenientWidgetFilterParams(r, wMeta), CellFilter: lenientWidgetCellFilter(r, wMeta)})
 		res.Title = wMeta.DisplayTitle(lang)
 		s.decorateRefreshResult(r, wMeta, &res, runner)
 		return res
@@ -261,6 +261,9 @@ func refreshableWidgetType(t metadata.WidgetType) bool {
 }
 
 func (s *Server) decorateRefreshResult(r *http.Request, wMeta *metadata.Widget, res *widget.Result, runner *widget.Runner) {
+	if res != nil {
+		s.prepareWidgetCellFilter(r, wMeta, res)
+	}
 	if res == nil || !refreshableWidgetType(metadata.WidgetType(res.Type)) {
 		return
 	}
@@ -268,6 +271,9 @@ func (s *Server) decorateRefreshResult(r *http.Request, wMeta *metadata.Widget, 
 	rawValues := map[string]string{}
 	if wMeta != nil {
 		rawValues = widgetFilterRawValues(r, wMeta)
+		if filter := lenientWidgetCellFilter(r, wMeta); filter != nil {
+			rawValues[widgetCellFilterKey(wMeta)] = res.CellFilterJSON
+		}
 	}
 	if wMeta == nil {
 		res.PartialURL = widgetPartialURL(res.Name, nil, subsystem, nil)
@@ -328,11 +334,19 @@ func (s *Server) widgetPartial(w http.ResponseWriter, r *http.Request) {
 	for key := range widgetFilterKeys(wMeta) {
 		allowed[key] = true
 	}
+	if wMeta.Type == metadata.WidgetTypeList {
+		allowed[widgetCellFilterKey(wMeta)] = true
+	}
 	for key := range r.URL.Query() {
 		if !allowed[key] {
 			http.Error(w, "unsupported widget parameter", http.StatusBadRequest)
 			return
 		}
+	}
+	cellFilter, cellErr := parseWidgetCellFilter(r, wMeta)
+	if cellErr != nil {
+		http.Error(w, "unsupported widget parameter", http.StatusBadRequest)
+		return
 	}
 	filterParams, err := parseWidgetFilterParams(r, wMeta)
 	if err != nil {
@@ -363,8 +377,12 @@ func (s *Server) widgetPartial(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	res := runner.RunWithOptions(r.Context(), wMeta, widget.RunOptions{Params: filterParams, Fresh: true})
+	res := runner.RunWithOptions(r.Context(), wMeta, widget.RunOptions{Params: filterParams, Fresh: true, CellFilter: cellFilter})
 	res.Title = wMeta.DisplayTitle(s.resolveLang(r))
+	if res.InvalidCellFilter {
+		http.Error(w, "unsupported widget parameter", http.StatusBadRequest)
+		return
+	}
 	if res.AccessDenied {
 		http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 		return

@@ -1395,6 +1395,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"inputMaskDigitsOnly": metadata.InputMaskDigitsOnly,
 		"inputAutocomplete":   inputAutocomplete,
 		"inputMaskHint":       metadata.InputMaskHint,
+		"wCellAttrs":          widgetCellAttrs,
 		"wcell":               widgetCell,
 		"echartsJSON":         echartsJSON,
 		"stageChartJSON":      stageChartJSON,
@@ -2088,12 +2089,29 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 .w-recent-row .ts{color:#94a3b8;font-size:11px;flex-shrink:0;font-variant-numeric:tabular-nums}
 .w-error{background:#fef2f2;color:#dc2626;font-size:12px;padding:6px 10px;border-radius:6px;margin-top:6px;font-family:Consolas,monospace}
 .w-empty{color:#94a3b8;font-size:13px;padding:6px 0;font-style:italic}
+
+/* BEGIN widget-list-controls */
+.ob-dashboard-title{margin:0 0 6px}
+.dash{gap:8px}
+.dash-row{gap:8px}
+.dash .w-card-list{padding:6px 10px;min-height:0}
+.dash .w-card-list .w-head{margin-bottom:4px}
+.w-card-list .w-cell-filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px}
+.w-cell-filters .btn{box-sizing:border-box;min-height:0;height:24px;padding:1px 8px;font-size:12px;line-height:20px}
+.w-list td.ob-widget-cell-selected{outline:2px solid #2563eb;outline-offset:-2px}
+.w-card-list.ob-widget-fill{box-sizing:border-box;min-height:180px}
+.ob-widget-fill>[data-ob-widget-body]{flex:1;min-height:0;display:flex;flex-direction:column}
+.ob-widget-fill .w-list{flex:1;min-height:0;overflow:auto}
+.ob-widget-fill .w-list th{position:sticky;top:0;z-index:1}
+.ob-widget-fill .w-refresh-status:empty{display:none}
+/* END widget-list-controls */
+
 .w-default-hint{color:#64748b;font-size:13px;margin:6px 0 14px}
 </style>
 {{end}}
 
 {{define "dashboard-body"}}
-  <h2 style="margin-bottom:14px">{{.HomeTitle}}</h2>
+  <h2 class="ob-dashboard-title">{{.HomeTitle}}</h2>
   {{if .DefaultedHome}}<div class="w-default-hint">Стартовая страница не настроена — показаны последние документы из аудита. Создайте <code>config/home_page.yaml</code> и виджеты в <code>widgets/</code>, чтобы оформить дашборд.</div>{{end}}
   <div class="dash">
     {{range .WidgetRows}}
@@ -2139,6 +2157,13 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
     <button type="button" class="w-filter-reset" data-ob-filter-reset>{{.ResetLabel}}</button>
   </div>
   {{end}}
+  {{if .CellFilterKey}}
+  <div class="w-cell-filters">
+    <input type="hidden" data-ob-filter="{{.CellFilterKey}}" data-ob-widget-cell-input value="{{.CellFilterJSON}}">
+    <button type="button" class="btn btn-sm btn-secondary" data-ob-widget-cell-apply disabled>{{.CellFilterLabel}}</button>
+    <button type="button" class="btn btn-sm btn-secondary" data-ob-widget-cell-clear{{if not .CellFilterJSON}} disabled{{end}}>{{.CellFilterClearLabel}}</button>
+  </div>
+  {{end}}
   <div data-ob-widget-body>
   {{template "widget-body" .}}
   </div>
@@ -2176,7 +2201,7 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
       {{$row := .}}
       {{with index $row "_row_url"}}<tr class="ob-row-link" tabindex="0" data-ob-row-url="{{.}}">{{else}}<tr>{{end}}
         {{range $.Columns}}
-        <td{{if eq .Align "right"}} class="right"{{end}}>{{wcell $row .Field .Format}}</td>
+        <td {{wCellAttrs $row .Field}}{{if eq .Align "right"}} class="right"{{end}}>{{wcell $row .Field .Format}}</td>
         {{end}}
       </tr>
     {{end}}
