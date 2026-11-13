@@ -181,6 +181,8 @@ type formYAMLDoc struct {
 		RefCardButton *bool `yaml:"ref_card_button"`
 		// Постоянный отбор формы списка (metadata.FormListCondition).
 		ListFilter []metadata.FormListCondition `yaml:"filter"`
+		// Оформление строк формы списка (metadata.FormListRowStyle).
+		RowStyle *metadata.FormListRowStyle `yaml:"row_style"`
 		// «🔍 только администратору» (#1876).
 		RefCardButtonAdminOnly bool `yaml:"ref_card_button_admin_only"`
 		// EnterSubmitsForm — форма возвращает себе прежний Enter-submit (#1486).
@@ -236,6 +238,7 @@ func (mfl *ManagedFormLoader) parseYAML(data []byte, entityNameFallback string) 
 		VerticalScroll:         doc.Form.VerticalScroll,
 		RefCardButton:          doc.Form.RefCardButton,
 		ListFilter:             doc.Form.ListFilter,
+		ListRowStyle:           doc.Form.RowStyle,
 		RefCardButtonAdminOnly: doc.Form.RefCardButtonAdminOnly,
 		EnterSubmitsForm:       doc.Form.EnterSubmitsForm,
 		Attributes:             doc.Attributes,

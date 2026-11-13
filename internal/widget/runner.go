@@ -38,7 +38,8 @@ type Result struct {
 	// RefreshOn — имена событий для клиентской подписки карточки (план 182B),
 	// пробелом разделённые для атрибута data-ob-refresh-on. Заполняется вместе
 	// с остальными презентационными полями после Run.
-	RefreshOn string
+	RefreshOn  string
+	Background string
 	// Filters — презентационные модели контролов интерактивных фильтров
 	// (план 182D), заполняются HTTP-слоем после Run вместе с PartialURL.
 	Filters []FilterControl
@@ -208,6 +209,9 @@ func (r *Runner) Run(ctx context.Context, w *metadata.Widget) Result {
 
 // RunWithOptions executes a widget with explicit effective options.
 func (r *Runner) RunWithOptions(ctx context.Context, w *metadata.Widget, opts RunOptions) Result {
+	if !VisibleFor(w, r.User) {
+		return Result{Name: w.Name, Type: string(w.Type), Title: w.Title, AccessDenied: true}
+	}
 	params := make(map[string]any, len(w.Params)+len(opts.Params))
 	for k, v := range w.Params {
 		params[k] = v
@@ -318,6 +322,9 @@ func (r *Runner) runList(ctx context.Context, w *metadata.Widget, params map[str
 	// именно на объявленную сущность. Любая неоднозначность — строки просто
 	// остаются некликабельными, виджет продолжает работать.
 	idCol, rawIDs := r.navigationIDs(w, cols, rows, compiled)
+	// row_style: оформление строк из колонок выборки — до resolveUUIDs, пока
+	// значения колонок сырые.
+	styleCols := applyRowStyle(w, cols, rows)
 	r.resolveUUIDs(ctx, rows)
 	if len(rawIDs) > 0 {
 		entity := r.Reg.GetEntity(w.Source.Entity)
@@ -330,12 +337,17 @@ func (r *Runner) runList(ctx context.Context, w *metadata.Widget, params map[str
 		}
 	}
 	displayCols := cols
-	if idCol != "" && len(w.Columns) == 0 {
-		// Сырой идентификатор — навигационная деталь, а не данные для таблицы:
-		// из авто-колонок (автор не объявил свои) он исключается.
+	if (idCol != "" || len(styleCols) > 0) && len(w.Columns) == 0 {
+		// Сырой идентификатор и колонки оформления (row_style) — служебные
+		// детали, а не данные для таблицы: из авто-колонок (автор не объявил
+		// свои) они исключаются.
+		hidden := map[string]bool{idCol: idCol != ""}
+		for _, c := range styleCols {
+			hidden[c] = true
+		}
 		displayCols = make([]string, 0, len(cols))
 		for _, c := range cols {
-			if c != idCol {
+			if !hidden[c] {
 				displayCols = append(displayCols, c)
 			}
 		}

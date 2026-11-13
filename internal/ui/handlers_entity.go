@@ -151,6 +151,8 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	// Маскирование ПДн (план 88) — до resolveRefs: если чувствительное поле
 	// ссылочное, скрытый UUID уже не резолвится в подпись.
 	s.maskRecords(r.Context(), entity, rows)
+	// row_style формы списка — после маски и до разрешения ссылок.
+	s.applyListRowStyle(r.Context(), entity, rows)
 	s.resolveRefs(r.Context(), entity, rows)
 	markActivityRows(entity, rows)
 	if searchAll {
@@ -169,6 +171,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 			Limit:              storage.MaxListPageSize,
 		})
 		s.maskRecords(r.Context(), entity, allRows)
+		s.applyListRowStyle(r.Context(), entity, allRows)
 		s.resolveRefs(r.Context(), entity, allRows)
 		markActivityRows(entity, allRows)
 		treeRows = buildCatalogTree(allRows)
