@@ -17,6 +17,8 @@ import (
 	"unicode/utf8"
 )
 
+// Keep root pages small: each node also loads label and comment connections.
+// Cursor pagination below still reads every PR, issue and nested comment.
 const pipelineHealthSnapshotQuery = `
 query PipelineHealthSnapshot(
   $owner: String!
@@ -31,7 +33,7 @@ query PipelineHealthSnapshot(
     nameWithOwner
     pullRequests(
       states: OPEN
-      first: 100
+      first: 20
       after: $pullCursor
       orderBy: {field: CREATED_AT, direction: ASC}
     ) @include(if: $includePulls) {
@@ -77,7 +79,7 @@ query PipelineHealthSnapshot(
     }
     issues(
       states: OPEN
-      first: 100
+      first: 20
       after: $issueCursor
       orderBy: {field: CREATED_AT, direction: ASC}
     ) @include(if: $includeIssues) {
