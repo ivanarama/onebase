@@ -1664,9 +1664,28 @@ function obInitReportCompositionControls() {
   if (collapseBtn) collapseBtn.addEventListener('click', setAll(false));
 }
 
+function obInitListPanels() {
+  var root = document.querySelector('main.ob-list-panels');
+  if (!root) return;
+  var scope = root.getAttribute('data-ob-list-panel-scope') || 'open-access';
+  root.querySelectorAll('details[data-ob-list-panel], details.ob-list-settings').forEach(function (panel) {
+    if (panel._obListPanelInit) return;
+    panel._obListPanelInit = true;
+    var name = panel.getAttribute('data-ob-list-panel') || 'settings';
+    var key = 'ob-list-panel:v1:' + encodeURIComponent(scope) + ':' + location.pathname + ':' + name;
+    var saved = null;
+    try { saved = localStorage.getItem(key); } catch (e) {}
+    panel.open = saved === '1';
+    panel.addEventListener('toggle', function () {
+      try { localStorage.setItem(key, panel.open ? '1' : '0'); } catch (e) {}
+    });
+  });
+}
+
 function obInitReportBlocks() {
   try {
     document.querySelectorAll('details.report-block').forEach(function (el) {
+      if (el.classList && el.classList.contains('ob-list-settings')) return;
       var key = 'rb-' + location.pathname + '-' + el.dataset.block;
       var saved = localStorage.getItem(key);
       if (saved === '1') el.open = true;
@@ -1728,6 +1747,7 @@ obReady(function () {
   obPresetReportSettings();
   obInitReportCompositionControls();
   obInitReportBlocks();
+  obInitListPanels();
 });
 
 // Выделенная строка списка — ссылка на DOM-узел, а не id: команды меню читают
