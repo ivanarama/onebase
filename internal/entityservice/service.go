@@ -457,6 +457,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 		Fields:        req.Fields,
 		TablePartRows: req.TablePartRows,
 	}
+	defer func() { obj.TakeServerFieldAssignments() }()
 
 	// Псевдо-реквизит «Ссылка» самого объекта (аналог 1С). Без него this.Ссылка
 	// в OnWrite/OnPost не указывал на сам документ — из-за чего запись ссылки на

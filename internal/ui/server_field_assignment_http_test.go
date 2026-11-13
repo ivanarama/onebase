@@ -27,7 +27,15 @@ func TestServerAssignedFieldFailedSaveMatrix(t *testing.T) {
 		entity := &metadata.Entity{Name: "ProofRetry", Kind: metadata.KindDocument, Fields: []metadata.Field{{Name: "Executor", Type: metadata.FieldTypeString}, {Name: "Note", Type: metadata.FieldTypeString}}}
 		s := newSubmitTestServerOn(t, db, []*metadata.Entity{entity})
 		s.entitySvc = s.newEntityService(nil)
+		baseMakeThis := s.entitySvc.MakeThis
+		var hookObject *runtime.Object
+		s.entitySvc.MakeThis = func(c context.Context, src interpreter.CtxSource, obj *runtime.Object, e *metadata.Entity) interpreter.This {
+			hookObject = obj
+			return baseMakeThis(c, src, obj, e)
+		}
 		s.reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{entity}, Programs: map[string]*ast.Program{entity.Name: mustParse(t, `Процедура ПриЗаписи()
+this.Note=this.Note;
+Если ServerAssignedField("Note") Тогда ВызватьИсключение("hook setter cannot authorize its own current Save"); КонецЕсли;
 Если НЕ ServerAssignedField("Executor") Тогда ВызватьИсключение("requires proof"); КонецЕсли;
 Если this.Note="reject" Тогда ВызватьИсключение("expected rejection"); КонецЕсли;
 КонецПроцедуры`)}})
@@ -44,9 +52,15 @@ func TestServerAssignedFieldFailedSaveMatrix(t *testing.T) {
 		if err != nil || !strings.Contains(first.DSLError, "expected rejection") {
 			t.Fatalf("first: %+v %v", first, err)
 		}
+		if hookObject == nil || hookObject.TakeServerFieldAssignments() != nil {
+			t.Fatal("hook object retained setter journal after failed Save")
+		}
 		second, err := s.entitySvc.Save(ctx, entityservice.SaveRequest{Entity: entity, ID: id, Fields: map[string]any{"Executor": "owner", "Note": "retry"}, ServerAssignments: proof})
 		if err != nil || !strings.Contains(second.DSLError, "requires proof") {
 			t.Fatalf("second: %+v %v", second, err)
+		}
+		if hookObject.TakeServerFieldAssignments() != nil {
+			t.Fatal("retry retained hook setter journal")
 		}
 		row, err := db.GetByID(ctx, entity.Name, id, entity)
 		if err != nil || row["_version"] != int64(1) || row["Executor"] != "" || row["Note"] != "initial" {
