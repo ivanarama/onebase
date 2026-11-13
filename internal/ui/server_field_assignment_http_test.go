@@ -63,6 +63,7 @@ func TestServerAssignedFieldFormHTTPMatrix(t *testing.T) {
 			version      int64
 		}{
 			{"genuine-accept", `Объект.Executor="owner"; Объект.Accepted=ТекущаяДата(); Объект.Записать();`, false, true, 2},
+			{"two-field-multi-read", `Объект.Executor="owner"; Объект.ТипЗадачи="kind"; Объект.Note="multi"; Объект.Записать();`, false, true, 2},
 			{"binding-self-date-not-proof", `Объект.Записать();`, true, false, 1},
 			{"other-field-not-proof", `Объект.Note="changed"; Объект.Записать();`, true, false, 1},
 			{"second-save-not-proof", `Объект.Executor="owner"; Объект.Записать(); Объект.Записать();`, false, false, 2},
@@ -72,7 +73,7 @@ func TestServerAssignedFieldFormHTTPMatrix(t *testing.T) {
 			{"docwriter-genuine", `Другой=Объект.Other.ПолучитьОбъект(); Другой.Executor="owner"; Другой.Записать();`, false, true, 1},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
-				entity := &metadata.Entity{Name: "TaskProof", Kind: metadata.KindDocument, Fields: []metadata.Field{{Name: "Executor", Type: metadata.FieldTypeString}, {Name: "Note", Type: metadata.FieldTypeString}, {Name: "Accepted", Type: metadata.FieldTypeDate}, {Name: "Other", Type: "reference:TaskProof", RefEntity: "TaskProof"}}}
+				entity := &metadata.Entity{Name: "TaskProof", Kind: metadata.KindDocument, Fields: []metadata.Field{{Name: "Executor", Type: metadata.FieldTypeString}, {Name: "Note", Type: metadata.FieldTypeString}, {Name: "Accepted", Type: metadata.FieldTypeDate}, {Name: "Other", Type: "reference:TaskProof", RefEntity: "TaskProof"}, {Name: "ТипЗадачи", Type: metadata.FieldTypeString}}}
 				form := managedObjectForm(fieldEl("Executor", "Объект.Executor"), fieldEl("Note", "Объект.Note"), fieldEl("Accepted", "Объект.Accepted"), maskEventButton("Accept", "Accept"))
 				form.EntityName = entity.Name
 				entity.Forms = []*metadata.FormModule{form}
@@ -82,6 +83,13 @@ func TestServerAssignedFieldFormHTTPMatrix(t *testing.T) {
 Если this.Executor = "owner" И НЕ ПолеНазначеноСервером("Executor") Тогда ВызватьИсключение("executor requires server assignment"); КонецЕсли;
 Если ServerAssignedField("DoesNotExist") ИЛИ ServerAssignedField(42) Тогда ВызватьИсключение("invalid field proof"); КонецЕсли;
 Если this.Note = "reject" Тогда ВызватьИсключение("expected rejection"); КонецЕсли;
+Если this.Note = "multi" Тогда
+ Если НЕ ServerAssignedField("Executor") ИЛИ НЕ ПолеНазначеноСервером("ТипЗадачи")
+  ИЛИ НЕ ServerAssignedField("ТипЗадачи") ИЛИ НЕ ПолеНазначеноСервером("Executor")
+  ИЛИ НЕ ServerAssignedField("Executor") ИЛИ НЕ ServerAssignedField("ТипЗадачи") Тогда
+  ВызватьИсключение("getter consumed multi-field witness");
+ КонецЕсли;
+КонецЕсли;
 КонецПроцедуры`)}})
 				id, other := uuid.New(), uuid.New()
 				for _, row := range []struct {

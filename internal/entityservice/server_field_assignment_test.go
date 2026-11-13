@@ -1,9 +1,24 @@
 package entityservice
 
 import (
-	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"testing"
+
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 )
+
+func TestServerAssignedFieldTwoFieldsReadonly(t *testing.T) {
+	vars := map[string]any{}
+	finish := InstallServerAssignedFieldQuery(vars, map[string]bool{"исполнитель": true, "типзадачи": true})
+	defer finish()
+	for _, alias := range []string{"ПолеНазначеноСервером", "ServerAssignedField"} {
+		fn := vars[alias].(interpreter.BuiltinFunc)
+		for _, name := range []string{"Исполнитель", "ТипЗадачи", "ТипЗадачи", "Исполнитель", "Исполнитель", "ТипЗадачи"} {
+			if value, err := fn([]any{name}, "", 0); value != true || err != nil {
+				t.Fatalf("%s(%s): %v %v", alias, name, value, err)
+			}
+		}
+	}
+}
 
 func TestServerAssignedFieldQueryScope(t *testing.T) {
 	vars := map[string]any{}
