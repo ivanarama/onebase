@@ -1041,6 +1041,9 @@ function obWidgetController(card) {
         if (!payload || typeof payload.html !== 'string') throw new Error('invalid widget response');
         obDisposeWidgetChart(card);
         body.innerHTML = payload.html;
+        card._obSelectedWidgetCell = null;
+        var cellApply = card.querySelector('[data-ob-widget-cell-apply]');
+        if (cellApply) cellApply.disabled = true;
         if (payload.chart) obInitWidgetChart(card, payload.chart);
         return true;
       }).catch(function (error) {
@@ -1063,6 +1066,29 @@ function obWidgetController(card) {
   card._obWidgetController = controller;
   return controller;
 }
+
+function obFillDashboardLists() {
+  document.querySelectorAll('.dash').forEach(function (dash) {
+    if (window.ResizeObserver && !dash._obFillObserver) {
+      dash._obFillObserver = new ResizeObserver(function () { requestAnimationFrame(obFillDashboardLists); });
+      dash._obFillObserver.observe(dash);
+    }
+    var rows = dash.querySelectorAll('.dash-row');
+    if (!rows.length) return;
+    var row = rows[rows.length - 1];
+    row.querySelectorAll('.w-card-list').forEach(function (card) {
+      if (!card.getClientRects().length) return;
+      // Its natural top also works when the home container has been scrolled.
+      var container = card.closest('#ob-tabhome') || card.closest('main');
+      var bottom = container ? Math.min(innerHeight, container.getBoundingClientRect().bottom) : innerHeight;
+      var top = card.getBoundingClientRect().top + (container ? container.scrollTop : 0);
+      card.classList.add('ob-widget-fill');
+      var height = Math.max(180, Math.floor(bottom - top - 8)) + 'px';
+      if (card.style.height !== height) card.style.height = height;
+    });
+  });
+}
+window.addEventListener('resize', obFillDashboardLists);
 
 function obInitWidgetControllers() {
   var cards = document.querySelectorAll('[data-ob-widget-card]');
@@ -1112,7 +1138,7 @@ window.obRefreshWidgetCard = function (card) {
   document.addEventListener('click', function (ev) {
     var el = rowOf(ev.target);
     if (!el) return;
-    if (ev.target.closest('a, button, select, input, textarea, label')) return;
+    if (ev.target.closest('a, button, select, input, textarea, label, [data-ob-widget-cell]')) return;
     try {
       var sel = window.getSelection && window.getSelection();
       if (sel && String(sel).length > 0) return;
@@ -1127,7 +1153,53 @@ window.obRefreshWidgetCard = function (card) {
     go(el);
   });
 })();
+document.addEventListener('dblclick', function (ev) {
+  var cell = ev.target.closest && ev.target.closest('[data-ob-widget-cell]');
+  var row = cell && cell.closest('[data-ob-row-url]');
+  if (!row) return;
+  var url = row.getAttribute('data-ob-row-url');
+  var title = row.querySelector('td').textContent.trim();
+  if (typeof window.obOpenTab === 'function') window.obOpenTab(url, title);
+  else if (!(window.obOpenInShell && window.obOpenInShell(url, title))) window.location.assign(url);
+});
 // END onebase-widget-row-nav
+
+// Widget cells keep their original typed token, even when a reference is shown as a caption.
+(function () {
+  function cardOf(el) { return el && el.closest && el.closest('[data-ob-widget-card]'); }
+  function change(card, value) {
+    var input = card.querySelector('[data-ob-widget-cell-input]');
+    if (!input) return;
+    input.value = value;
+    input.dispatchEvent(new Event('change', {bubbles:true}));
+    var clear = card.querySelector('[data-ob-widget-cell-clear]');
+    if (clear) clear.disabled = !value;
+  }
+  function select(cell, card) {
+    card.querySelectorAll('.ob-widget-cell-selected').forEach(function (el) { el.classList.remove('ob-widget-cell-selected'); });
+    cell.classList.add('ob-widget-cell-selected');
+    card._obSelectedWidgetCell = cell;
+    var button = card.querySelector('[data-ob-widget-cell-apply]');
+    if (button) button.disabled = false;
+  }
+  document.addEventListener('click', function (ev) {
+    var el = ev.target;
+    var card = cardOf(el);
+    if (!card || !el.closest) return;
+    var cell = el.closest('[data-ob-widget-cell]');
+    if (cell && !el.closest('a,button,input,select,textarea')) { select(cell,card); return; }
+    if (el.closest('[data-ob-widget-cell-clear]')) { change(card,''); return; }
+    if (!el.closest('[data-ob-widget-cell-apply]')) return;
+    cell = card._obSelectedWidgetCell;
+    if (!cell || !card.contains(cell)) return;
+    change(card,JSON.stringify({field:cell.getAttribute('data-ob-widget-cell'),value:cell.getAttribute('data-ob-widget-cell-value')}));
+  });
+  document.addEventListener('focusin', function (ev) {
+    var cell = ev.target.closest && ev.target.closest('[data-ob-widget-cell]');
+    var card = cardOf(cell);
+    if (cell && card) select(cell,card);
+  });
+})();
 
 // BEGIN onebase-widget-filters
 /* План 182D (#1620): интерактивные фильтры list-виджета. Изменение контрола
@@ -1188,6 +1260,9 @@ window.obRefreshWidgetCard = function (card) {
   }
 
   function applyEndpoint(card, endpoint, search) {
+    var cellInput = card.querySelector && card.querySelector('[data-ob-widget-cell-input]');
+    var cellClear = card.querySelector && card.querySelector('[data-ob-widget-cell-clear]');
+    if (cellInput && cellClear) cellClear.disabled = !cellInput.value;
     var previous = card.getAttribute('data-widget-url') || '';
     if (previous !== endpoint) {
       card.setAttribute('data-widget-url', endpoint);
@@ -1277,6 +1352,7 @@ function obInitReportChart() {
 window.obInitDashboard = function () {
   obInitMappedCharts('ob-widget-charts', '.w-chart-canvas[data-widget]', 'data-widget', 'chart init failed', true);
   obInitWidgetControllers();
+  obFillDashboardLists();
   if (window.obInitLiveList) window.obInitLiveList();
 };
 
