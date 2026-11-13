@@ -537,10 +537,12 @@ func roleYAMLSchema() *yamlLintSchema {
 }
 
 func processorYAMLSchema() *yamlLintSchema {
+	capability := obj("register", "reference_field", "owner_field", "enabled_field", "source_entity", "source_id_field", "source_version_field", "observed_at_field", "max_age_seconds")
 	param := with(obj("name", "type", "label", "default", "options", "required"), map[string]*yamlLintSchema{"labels": freeMap()})
 	return with(obj("name", "title", "kind"), map[string]*yamlLintSchema{
-		"titles": freeMap(),
-		"params": seq(param),
+		"result_capabilities": {values: capability},
+		"titles":              freeMap(),
+		"params":              seq(param),
 		// Processor table parts are transient runtime values. Unlike entity table
 		// parts they have no storage writer enforcing required, so accepting the
 		// key here would advertise an invariant the platform does not provide.
@@ -696,7 +698,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 
 	// filter — постоянный отбор формы списка (поле ListFilter), читается
 	// загрузчиком внутри блока form:.
-	formHeader := with(obj("entity", "name", "kind", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button", "ref_card_button_admin_only", "enter_submits_form"), map[string]*yamlLintSchema{
+	formHeader := with(obj("entity", "name", "kind", "title_proc", "original_id", "auto_save_settings", "auto_save_data_in_settings", "vertical_scroll", "ref_card_button", "ref_card_button_admin_only", "enter_submits_form"), map[string]*yamlLintSchema{
 		"title": freeMap(),
 		"filter": seq(with(obj("field", "op", "value", "roles", "query", "removable"), map[string]*yamlLintSchema{
 			"label": freeMap(),
@@ -1383,6 +1385,7 @@ func collectTablePartHandlerProcs(form *metadata.FormModule) map[string]bool {
 }
 
 func collectFormHandlerRoots(form *metadata.FormModule, roots map[string]bool) {
+	addRoot(roots, form.TitleProc)
 	for _, handler := range form.Handlers {
 		addRoot(roots, handler)
 	}
