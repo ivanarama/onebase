@@ -218,7 +218,7 @@ func TestRESTPartialUpdateHTTPMatrix(t *testing.T) {
 							t.Fatalf("race results %v", codes)
 						}
 						row, err := db.GetByID(ctx, entity.Name, id, entity)
-						if err != nil || row["_version"] != int64(2) || !(fmt.Sprint(row["Done"]) == "true" || fmt.Sprint(row["Done"]) == "1") {
+						if err != nil || row["_version"] != int64(2) || (fmt.Sprint(row["Done"]) != "true" && fmt.Sprint(row["Done"]) != "1") {
 							t.Fatalf("lost update: %v, %v", row, err)
 						}
 					})
