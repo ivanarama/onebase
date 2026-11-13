@@ -714,7 +714,7 @@ if (window.__obEmbedded) {
         var mt = document.querySelector('meta[name="ob-tab-title"]');
         var tt = mt && mt.getAttribute('content');
         if (tt && window.parent && window.parent !== window) {
-          window.parent.postMessage({ source: 'obSetTitle', title: tt }, window.location.origin);
+          window.parent.postMessage({ source: 'obSetTitle', title: tt, url: window.location.href, documentToken: window.obFrameCloseDocumentToken }, window.location.origin);
         }
       } catch (_) {}
     }
@@ -756,7 +756,7 @@ if (window.__obEmbedded) {
       beganManagedHandoff = true;
     }
     try {
-      shell.postMessage({ source: 'obCloseTab', reason: reason || 'cross' }, window.location.origin);
+      shell.postMessage({ source: 'obCloseTab', sourceURL:window.location.href, documentToken:window.obFrameCloseDocumentToken, reason: reason || 'cross' }, window.location.origin);
     } catch (_) {
       if (beganManagedHandoff && typeof window.obCancelManagedCloseHandoff === 'function') {
         window.obCancelManagedCloseHandoff();
@@ -7045,3 +7045,14 @@ function obEnterNavigateFrom(target) {
     if (obEnterNavigateFrom(e.target)) e.preventDefault();
   });
 })();
+
+// Display-only managed form title; never writes a form field.
+window.obApplyFormTitle = function(title) {
+  if (typeof title !== 'string') return;
+  var label = document.querySelector('[data-ob-form-title]');
+  if (label) label.textContent = title;
+  var meta = document.querySelector('meta[name="ob-tab-title"]');
+  if (meta) meta.setAttribute('content', title);
+  document.title = title;
+  if (window.parent && window.parent !== window) window.parent.postMessage({source:'obSetTitle',title:title,url:window.location.href,documentToken:window.obFrameCloseDocumentToken},window.location.origin);
+};
