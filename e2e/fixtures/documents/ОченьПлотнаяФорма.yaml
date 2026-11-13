@@ -1,0 +1,9 @@
+name: ОченьПлотнаяФорма
+title: "Проверка самой плотной формы"
+fields:
+  - name: Текст
+    type: string
+  - name: Признак
+    type: boolean
+  - name: Контрагент
+    type: reference:Контрагент

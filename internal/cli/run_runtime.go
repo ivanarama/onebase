@@ -63,6 +63,7 @@ func prepareServerRuntime(ctx context.Context, cmd *cobra.Command, db *storage.D
 		}
 		uiCfg.Limits = runtimeLimitsFromApp(appCfg.Limits)
 		uiCfg.POSEnabled = appCfg.POSEnabled()
+		applyAppUIPresentation(&uiCfg, appCfg)
 	}
 	bundle, err := i18n.Load(i18n.EmbeddedLocales, filepath.Join(proj.Dir, "locales"))
 	if err != nil {

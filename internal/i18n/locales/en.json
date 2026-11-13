@@ -1,4 +1,5 @@
 {
+  "Введите корректную дату": "Enter a valid date",
   "поле %s локального источника %s не разрешено однозначно; внешнее поле затенено": "Field %s of local source %s cannot be resolved unambiguously; the outer field is shadowed",
   "Строковый доступ по карточке сотрудника": "Row access from an employee card",
   "Настройте источник в YAML роли. Для набора из ТЧ используйте in/not_in; пустой или невалидный набор закрывает политику целиком. Матрица прав сохраняет эту настройку. Карточки и их филиалы должен изменять только администратор.": "Configure the source in the role YAML. Use in/not_in for a table-part set; an empty or invalid set denies the whole policy. The permission matrix preserves this setting. Only administrators should change the cards and their branches.",
@@ -501,7 +502,7 @@
   "Нижнее": "Bottom",
   "Нижняя": "Bottom",
   "Низ": "Bottom",
-  "Ничего не найдено": "No matches found",
+  "Ничего не найдено": "Nothing found",
   "Ничего не найдено по запросу": "Nothing found for query",
   "Ничего не найдено.": "Nothing found.",
   "Новая печатная форма": "New print form",
@@ -899,7 +900,6 @@
   "Руководство пользователя": "User guide",
   "Поиск по справке": "Search help",
   "Оглавление": "Contents",
-  "Ничего не найдено": "Nothing found",
   "Справка по встроенному языку": "Built-in language reference",
   "Справочник": "Catalog",
   "Справочники": "Catalogs",
@@ -1603,11 +1603,13 @@
   "Исходный размер изображения": "Original image size",
   "Открыть изображение в новой вкладке": "Open image in a new tab",
   "Скачать изображение": "Download image",
-  "Загрузка изображения…": "Loading image\u2026",
+  "Загрузка изображения…": "Loading image…",
   "Не удалось загрузить изображение": "Could not load image",
   "Область просмотра изображения": "Image viewport",
   "Изменённая сборка": "Modified distribution",
   "Поставщик сборки": "Distribution supplier",
   "Переводы поля «%s» для языка %s изменены по-разному в двух редакторах. Укажите одинаковое значение и сохраните снова": "The translation of field \"%s\" for language %s was changed differently in the two editors. Enter the same value and save again",
-  "Результаты поиска по всему справочнику": "Search results across the whole catalog"
+  "Результаты поиска по всему справочнику": "Search results across the whole catalog",
+  "Отбор по значению текущей ячейки": "Filter by selected cell value",
+  "Снять отбор": "Clear filter"
 }

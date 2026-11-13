@@ -736,8 +736,23 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	if data == nil {
 		data = make(map[string]any)
 	}
-	if _, ok := data["Cfg"]; !ok {
-		data["Cfg"] = s.cfg
+	if supplied, ok := data["Cfg"].(Config); ok {
+		data["Cfg"] = s.uiConfigForRequest(r, supplied)
+	} else if _, ok := data["Cfg"]; !ok {
+		data["Cfg"] = s.uiConfigForRequest(r)
+	}
+	prepareDefaultFormDensity(name, data)
+	prepareReportControls(name, data)
+	if isListControlsPage(name) && s.uiEnhancementsAllowed(r) {
+		scope := "open-access"
+		if user := auth.UserFromContext(r.Context()); user != nil {
+			if user.ID != "" {
+				scope = "id:" + user.ID
+			} else {
+				scope = "login:" + user.Login
+			}
+		}
+		data["ListPanelScope"] = scope
 	}
 	s.addHelpContext(r, data)
 	// Параметры текущего запроса — из них шаблоны строят ссылки «то же самое,

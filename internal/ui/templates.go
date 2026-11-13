@@ -249,6 +249,28 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			form, _ := v.(*metadata.FormModule)
 			return form != nil && form.EnterSubmitsForm
 		},
+		// formDensityClass — класс плотности раскладки на <html> страницы формы
+		// (form.density) либо ролевой default плотности объектной/processor-формы.
+		// Явная плотность формы всегда приоритетнее default.
+		"formDensityClass": func(page any) string {
+			data, _ := page.(map[string]any)
+			form, _ := data["Form"].(*metadata.FormModule)
+			density, _ := data["DefaultFormDensity"].(string)
+			if form != nil && form.Density != "" {
+				density = form.Density
+			}
+			class := ""
+			switch density {
+			case metadata.FormDensityCompact:
+				class = "ob-density-compact"
+			case metadata.FormDensityDense:
+				class = "ob-density-compact ob-density-dense"
+			}
+			if active, _ := data["AutoFormDensity"].(bool); active && class != "" {
+				class += " ob-auto-form-density"
+			}
+			return class
+		},
 		"processorParamPresenceName": func(proc *processorpkg.Processor, name string) string {
 			if proc == nil {
 				return processorParamPresencePrefix + name
@@ -1375,6 +1397,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"inputMaskDigitsOnly": metadata.InputMaskDigitsOnly,
 		"inputAutocomplete":   inputAutocomplete,
 		"inputMaskHint":       metadata.InputMaskHint,
+		"wCellAttrs":          widgetCellAttrs,
 		"wcell":               widgetCell,
 		"echartsJSON":         echartsJSON,
 		"stageChartJSON":      stageChartJSON,
@@ -1517,7 +1540,7 @@ func templateSource() string {
 
 const tplHead = `
 {{define "head"}}<!DOCTYPE html>
-<html lang="ru"><head><meta charset="UTF-8">
+<html lang="ru"{{with formDensityClass .}} class="{{.}}"{{end}}><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#1e293b">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -1542,8 +1565,51 @@ const tplHead = `
   "imageError" (t (or $.Lang "ru") "Не удалось загрузить изображение")
   "imageArea" (t (or $.Lang "ru") "Область просмотра изображения")
 )}}</script>
-{{messagesMeta .}}<script src="/static/ui.js"></script>
-<style>
+{{messagesMeta .}}<script src="/static/ui.js"></script>{{if .Cfg.UIEnhancements}}<script src="/static/list-controls.js"></script>{{end}}{{if .UseShortDateInput}}<script type="application/json" id="ob-date-input-i18n">{{jsJSON (dict "invalid" (t $.Lang "Введите корректную дату"))}}</script><script src="/static/date-input.js"></script>{{end}}{{if .CompactReport}}<script src="/static/report-controls.js"></script>{{end}}{{if .CompactReport}}<style id="ob-report-density-css">
+.ob-report-compact{padding:8px 12px}
+.ob-report-compact.ob-report-dense{padding:6px 10px}
+.ob-report-titlebar{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;margin-bottom:4px}
+.ob-report-titlebar>h2{flex:1;margin:0;font-size:18px;line-height:24px}
+.ob-report-commandbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.ob-report-commandbar>div{margin:0!important;gap:6px!important}
+.ob-report-compact .btn{padding:3px 8px;font-size:12px;line-height:18px}
+.ob-report-compact>.report-block{margin-bottom:4px!important;padding:0;border-radius:2px;box-shadow:none}
+.ob-report-compact .report-block>summary{padding:3px 8px;font-size:12px;line-height:18px}
+.ob-report-compact .report-block>form{padding:4px 8px}
+.ob-report-compact form[data-ob-report-params]{display:flex;flex-wrap:wrap;align-items:end;gap:4px 8px}
+.ob-report-compact .ob-report-param-grid{display:contents!important}
+.ob-report-compact .form-group{margin-bottom:4px!important}
+.ob-report-compact form[data-ob-report-params] .form-group{flex:0 1 180px;min-width:120px;max-width:240px!important}
+.ob-report-compact label{font-size:12px;line-height:16px;margin-bottom:2px}
+.ob-report-compact input:not([type=checkbox]):not([type=radio]),.ob-report-compact select{min-height:0;height:26px;padding:2px 6px;font-size:12px}
+.ob-report-compact .card{padding:4px 8px}
+.ob-report-compact table th{padding:3px 6px}
+.ob-report-compact table td{padding:2px 6px}
+.ob-report-compact .report-block>form>div[style*="margin-bottom"]{margin-bottom:4px!important;gap:4px 8px!important}
+@media(max-width:640px){.ob-report-titlebar{align-items:flex-start}.ob-report-commandbar{width:100%}}
+</style>{{end}}
+{{if .AutoFormDensity}}<style id="ob-auto-form-density-css">
+/* Only role-selected automatic forms receive these rules; no new JS/SQL. */
+.ob-auto-form-density{--ob-auto-gap:8px;--ob-auto-pad:12px;--ob-auto-height:28px;--ob-auto-font:13px}
+.ob-auto-form-density.ob-density-dense{--ob-auto-gap:4px;--ob-auto-pad:6px;--ob-auto-height:25px;--ob-auto-font:12.5px}
+.ob-auto-form-density main{padding:var(--ob-auto-pad)}
+.ob-auto-form-density main>h2,.ob-auto-form-density main>div:first-child h2{font-size:18px;margin-bottom:var(--ob-auto-gap)}
+.ob-auto-form-density main>div[style*="margin-bottom"]{margin-bottom:var(--ob-auto-gap)!important;gap:6px!important}
+.ob-auto-form-density .card{padding:var(--ob-auto-pad)}
+.ob-auto-form-density .form-group{margin-bottom:var(--ob-auto-gap)}
+.ob-auto-form-density label{font-size:12px;line-height:14px;margin-bottom:2px}
+.ob-auto-form-density input[type=text],.ob-auto-form-density input[type=date],.ob-auto-form-density input[type=datetime-local],.ob-auto-form-density input[type=number],.ob-auto-form-density select{height:var(--ob-auto-height);padding:2px 7px;font-size:var(--ob-auto-font)}
+.ob-auto-form-density textarea{padding:3px 7px;font-size:var(--ob-auto-font)}
+.ob-auto-form-density .btn{padding:4px 9px;font-size:var(--ob-auto-font)}
+.ob-auto-form-density [data-ob-ref-picker],.ob-auto-form-density [data-ob-ref-current]{height:var(--ob-auto-height);padding:2px 6px!important;font-size:var(--ob-auto-font)!important}
+.ob-auto-form-density form>div[style*="display:grid"]{gap:var(--ob-auto-gap)!important;margin-bottom:var(--ob-auto-gap)!important}
+.ob-auto-form-density h3{margin:var(--ob-auto-gap) 0 4px!important;font-size:14px!important}
+.ob-auto-form-density details{margin-bottom:var(--ob-auto-gap)}
+.ob-auto-form-density details summary{padding:4px 8px;font-size:12px}
+.ob-auto-form-density .tp-table th{padding:4px 6px;font-size:12px}
+.ob-auto-form-density .tp-table td{padding:2px 4px}
+</style>
+{{end}}<style>
 .ob-embedded .topbar,.ob-embedded .subsys-bar,.ob-embedded #ob-nav{display:none!important}
 *{box-sizing:border-box;margin:0;padding:0}
 /* height:100vh + overflow:hidden — окно приложения ровно по экрану. С одним лишь
@@ -1631,6 +1697,15 @@ th a:hover{color:#1e293b}
 td{padding:10px 12px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:14px}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:#f8fafc}
+/* app.yaml ui.list_density: compact — плотные списки, журналы, регистры и
+   виджеты-списки, как в 1С: 12px, строка ≈ 22px, видимые границы строк и
+   столбцов. Табличные части, «ключ — значение» и всё внутри формы объекта
+   (#main-form) не трогаются. */
+.ob-compact-lists main table:not(.tp-table):not(.tbl-plain):not(#main-form *){font-size:12px}
+.ob-compact-lists main table:not(.tp-table):not(.tbl-plain):not(#main-form *) th,
+.ob-compact-lists main table:not(.tp-table):not(.tbl-plain):not(#main-form *) td{padding:2px 6px;font-size:12px;line-height:17px;border:1px solid #cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:420px}
+.ob-compact-lists main table:not(.tp-table):not(.tbl-plain):not(#main-form *) th{background:#e8edf3;border-bottom:1px solid #94a3b8;font-weight:600}
+.ob-compact-lists main table:not(.tp-table):not(.tbl-plain):not(#main-form *) tr:last-child td{border-bottom:1px solid #cbd5e1}
 .btn{display:inline-block;padding:8px 18px;border-radius:7px;font-size:14px;font-weight:500;text-decoration:none;cursor:pointer;border:none;line-height:1}
 .btn-primary{background:#3b82f6;color:#fff}.btn-primary:hover{background:#2563eb}
 .btn-post{background:#e8b400;color:#1a1a1a;font-weight:700}.btn-post:hover{background:#d4a200}
@@ -1661,6 +1736,48 @@ details[open] summary::before{content:"▼ "}
 .filter-body label{font-size:12px;color:#64748b;margin-bottom:3px}
 .filter-body input,.filter-body select{padding:7px 10px;font-size:13px}
 .filter-actions{padding:0 20px 16px;display:flex;gap:10px}
+
+/* List controls retain their separate rows; only their vertical density changes. */
+{{if .Cfg.UIEnhancements}}
+/* List controls retain their separate rows; only their vertical density changes. */
+/* Keep the existing vertical order; only controls and gaps become thinner. */
+.ob-list-panels>form,.ob-list-panels>.row-top form{gap:4px 8px!important;margin-bottom:4px!important}
+.ob-list-panels>form input,.ob-list-panels>form select,.ob-list-panels>form button,.ob-list-panels>.row-top input,.ob-list-panels>.row-top select{height:26px!important;box-sizing:border-box;padding:2px 6px!important;font-size:12px!important;min-width:0}
+.ob-list-panels>form>div{min-width:0;max-width:240px}
+.ob-list-panels>details>form{display:flex;flex-wrap:wrap;gap:4px 8px;align-items:flex-end;padding:0 8px 4px}
+.ob-list-panels>.card,.ob-list-panels .ob-list-wrap>.card{padding:4px 8px}
+.ob-list-panels>.row-top .btn{height:26px;box-sizing:border-box;padding:2px 8px;font-size:12px;line-height:20px}
+.ob-list-panels>.row-top{margin-bottom:4px}
+.ob-list-panels>.row-top h2{margin:0}
+.ob-list-panels>.ob-list-search{margin-bottom:4px!important}
+.ob-list-panels>.ob-list-search input{height:26px;box-sizing:border-box;padding:2px 8px!important;font-size:12px!important}
+.ob-list-panels>details{margin-bottom:4px!important;border-radius:0;box-shadow:none;background:transparent;padding:0}
+.ob-list-panels>details>summary{padding:3px 8px;font-size:12px;line-height:18px}
+.ob-list-panels .ob-list-filters>form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:4px 8px;padding:0 8px 4px}
+.ob-list-panels .filter-body{display:contents}
+.ob-list-panels .filter-body>div{flex:0 1 170px;min-width:0}
+.ob-list-panels .filter-body label{margin:0;line-height:16px}
+.ob-list-panels .filter-body input,.ob-list-panels .filter-body select{box-sizing:border-box;width:100%;height:26px;padding:2px 6px;font-size:12px}
+.ob-list-panels .filter-actions{padding:0;gap:6px;align-items:center}
+.ob-list-panels .filter-actions .btn,.ob-list-panels .filter-body button{height:26px;box-sizing:border-box;padding:2px 8px!important;font-size:12px!important;line-height:20px}
+.ob-list-panels .ob-filter-more{margin:2px 0 0!important;box-shadow:none;background:transparent}
+.ob-list-panels .ob-filter-more>summary{padding:2px 8px;font-size:12px;line-height:18px}
+.ob-list-panels .ob-filter-more>form,.ob-list-panels .ob-list-settings>form{padding:0 8px 4px!important}
+.ob-list-panels .ob-list-settings table{margin:0 0 4px!important}
+.ob-list-panels .ob-list-settings th{height:24px;padding:1px 6px!important;font-size:12px;line-height:18px}
+.ob-list-panels .ob-list-settings td{height:28px;box-sizing:border-box;padding:1px 6px!important;font-size:12px;line-height:18px}
+.ob-list-panels .ls-width{height:24px;box-sizing:border-box;padding:1px 4px;font-size:12px;line-height:20px}
+.ob-list-panels .ls-visible{width:14px;height:14px;margin:0;vertical-align:middle}
+.ob-list-panels .ob-list-settings .btn{height:24px;box-sizing:border-box;padding:1px 8px;font-size:12px;line-height:20px}
+.ob-list-panels .ob-list-settings [data-ob-ls-move]{height:22px;padding:0 6px;line-height:20px}
+.ob-list-panels .ob-list-content>.card{padding:4px 8px}
+.ob-list-panels .ob-list-cell-filters{gap:6px!important;margin-bottom:4px!important;flex-wrap:wrap}
+/* A distinct border remains visible over a form's blue conditional background. */
+#main-form .tp-table tr[aria-selected="true"]>td{background:#93c5fd!important;box-shadow:inset 0 2px #1d4ed8,inset 0 -2px #1d4ed8}
+#main-form .tp-table tr[aria-selected="true"]>td:first-child{border-left:3px solid #1d4ed8}
+
+.ob-list-panels .ob-list-cell-filters .btn{min-height:0;height:24px;box-sizing:border-box;padding:1px 8px;font-size:12px;line-height:20px}
+{{end}}
 .tp-table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
 .tp-table th{background:#eef2f7;padding:8px 10px;text-align:left;font-size:12px;color:#334155;font-weight:600;border-bottom:2px solid #cbd5e1;white-space:nowrap}
 .tp-table td{padding:5px 6px;border-bottom:1px solid #e2e8f0;border-right:1px solid #eef2f7;vertical-align:middle}
@@ -1783,7 +1900,7 @@ body{padding-bottom:32px}
 .img-actions{display:flex;gap:8px;align-items:center}
 .img-field label.btn{cursor:pointer;margin:0}
 </style>
-</head><body data-ob-dev="{{if .Cfg.Dev}}1{{else}}0{{end}}">
+</head><body data-ob-dev="{{if .Cfg.Dev}}1{{else}}0{{end}}"{{if .Cfg.CompactLists}} class="ob-compact-lists"{{end}}>
 {{end}}
 `
 
@@ -1971,9 +2088,18 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 .w-list td{padding:6px 8px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155}
 .w-list td.right{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .w-list tr:last-child td{border-bottom:none}
+.w-list th,.w-list td{border-right:1px solid #cbd5e1}
+.w-list th:last-child,.w-list td:last-child{border-right:none}
+.w-list th[data-ob-widget-column]{position:relative}
+.ob-widget-column-grip{position:absolute;top:0;right:-3px;bottom:0;width:7px;cursor:col-resize;z-index:2;touch-action:none}
+.ob-widget-column-grip:hover,.ob-widget-column-grip:focus{background:#60a5fa}
+.w-list table.ob-widget-fixed{table-layout:fixed;min-width:0}
+.w-list table.ob-widget-fixed th,.w-list table.ob-widget-fixed td{overflow:hidden;text-overflow:ellipsis}
 .w-list .ob-row-link{cursor:pointer}
 .w-list .ob-row-link:hover td,.w-list .ob-row-link:focus-visible td{background:#eff6ff}
 .w-list .ob-row-link:focus-visible{outline:2px solid #2563eb;outline-offset:-2px}
+.w-list tr.ob-row-styled td{color:inherit;font-weight:inherit}
+.w-list tr.ob-row-styled.ob-row-link:hover td,.w-list tr.ob-row-styled.ob-row-link:focus-visible td{background:inherit;filter:brightness(.94)}
 .w-chart{min-height:240px}
 .w-chart-canvas{width:100%;height:240px}
 .w-actions-row{display:flex;flex-wrap:wrap;gap:8px;margin-top:4px}
@@ -1987,12 +2113,37 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 .w-recent-row .ts{color:#94a3b8;font-size:11px;flex-shrink:0;font-variant-numeric:tabular-nums}
 .w-error{background:#fef2f2;color:#dc2626;font-size:12px;padding:6px 10px;border-radius:6px;margin-top:6px;font-family:Consolas,monospace}
 .w-empty{color:#94a3b8;font-size:13px;padding:6px 0;font-style:italic}
+/* List-widget filters share a row by default and wrap only when it is full. */
+.w-card-list .w-filters{display:flex;flex-wrap:wrap;gap:6px 8px;align-items:flex-end;margin-bottom:8px}
+.w-card-list .w-filter{display:flex;flex-direction:column;flex:1 1 110px;gap:2px;min-width:0;max-width:220px;margin:0;font-size:12px;line-height:16px}
+.w-card-list .w-filter>span{min-width:0;overflow-wrap:anywhere}
+.w-card-list .w-filter input,.w-card-list .w-filter select{box-sizing:border-box;min-width:0;width:100%;max-width:100%;height:30px;padding:4px 6px;font-size:12px;border:1px solid #cbd5e1;border-radius:4px}
+.w-card-list .w-filter-reset{flex:0 0 auto;max-width:100%;min-height:30px;padding:4px 10px;border:1px solid #cbd5e1;border-radius:4px;background:#f1f5f9;color:#334155;cursor:pointer}
+@media(max-width:640px){.w-card-list .w-filters{flex-direction:column;align-items:stretch}.w-card-list .w-filter{flex:0 0 auto;max-width:none}.w-card-list .w-filter-reset{align-self:flex-start}}{{if .Cfg.UIEnhancements}}
+
+
+/* BEGIN widget-list-controls */
+.ob-dashboard-title{margin:0 0 6px}
+.dash{gap:8px}
+.dash-row{gap:8px}
+.dash .w-card-list{padding:6px 10px;min-height:0}
+.dash .w-card-list .w-head{margin-bottom:4px}
+.w-card-list .w-cell-filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:4px}
+.w-cell-filters .btn{box-sizing:border-box;min-height:0;height:24px;padding:1px 8px;font-size:12px;line-height:20px}
+.w-list td.ob-widget-cell-selected{outline:2px solid #2563eb;outline-offset:-2px}
+.w-card-list.ob-widget-fill{box-sizing:border-box;min-height:180px}
+.ob-widget-fill>[data-ob-widget-body]{flex:1;min-height:0;display:flex;flex-direction:column}
+.ob-widget-fill .w-list{flex:1;min-height:0;overflow:auto}
+.ob-widget-fill .w-list th{position:sticky;top:0;z-index:1}
+.ob-widget-fill .w-refresh-status:empty{display:none}
+/* END widget-list-controls */
+{{end}}
 .w-default-hint{color:#64748b;font-size:13px;margin:6px 0 14px}
 </style>
 {{end}}
 
 {{define "dashboard-body"}}
-  <h2 style="margin-bottom:14px">{{.HomeTitle}}</h2>
+  <h2 class="ob-dashboard-title">{{.HomeTitle}}</h2>
   {{if .DefaultedHome}}<div class="w-default-hint">Стартовая страница не настроена — показаны последние документы из аудита. Создайте <code>config/home_page.yaml</code> и виджеты в <code>widgets/</code>, чтобы оформить дашборд.</div>{{end}}
   <div class="dash">
     {{range .WidgetRows}}
@@ -2038,6 +2189,13 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
     <button type="button" class="w-filter-reset" data-ob-filter-reset>{{.ResetLabel}}</button>
   </div>
   {{end}}
+  {{if .CellFilterKey}}
+  <div class="w-cell-filters">
+    <input type="hidden" data-ob-filter="{{.CellFilterKey}}" data-ob-widget-cell-input value="{{.CellFilterJSON}}">
+    <button type="button" class="btn btn-sm btn-secondary" data-ob-widget-cell-apply disabled>{{.CellFilterLabel}}</button>
+    <button type="button" class="btn btn-sm btn-secondary" data-ob-widget-cell-clear{{if not .CellFilterJSON}} disabled{{end}}>{{.CellFilterClearLabel}}</button>
+  </div>
+  {{end}}
   <div data-ob-widget-body>
   {{template "widget-body" .}}
   </div>
@@ -2075,7 +2233,7 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
       {{$row := .}}
       {{with index $row "_row_url"}}<tr class="ob-row-link" tabindex="0" data-ob-row-url="{{.}}">{{else}}<tr>{{end}}
         {{range $.Columns}}
-        <td{{if eq .Align "right"}} class="right"{{end}}>{{wcell $row .Field .Format}}</td>
+        <td {{wCellAttrs $row .Field}}{{if eq .Align "right"}} class="right"{{end}}>{{wcell $row .Field .Format}}</td>
         {{end}}
       </tr>
     {{end}}
@@ -2114,6 +2272,7 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 
 const tplList = `
 {{define "detail-panel"}}
+{{if not .Cfg.HideListDetailPanel}}
 <aside class="ob-detail" id="ob-detail" hidden data-ob-default-width="{{detailPanelDefaultWidth .Entity}}" aria-label="{{t $.Lang "Детали записи"}}">
   <div class="ob-detail-grip" data-ob-detail-grip title="{{t $.Lang "Потяните, чтобы изменить ширину"}}"></div>
   <div class="ob-detail-body">
@@ -2127,11 +2286,14 @@ const tplList = `
   </div>
 </aside>
 {{end}}
+{{end}}
 
 {{define "detail-panel-toggle"}}
+{{if not .Cfg.HideListDetailPanel}}
 <div class="view-switch">
   <button class="view-btn" type="button" data-ob-detail-toggle aria-controls="ob-detail" aria-expanded="false" title="{{t $.Lang "Детали записи"}}">▤</button>
 </div>
+{{end}}
 {{end}}
 
 {{define "list-refresh"}}
@@ -2140,7 +2302,7 @@ const tplList = `
 
 {{define "page-list"}}
 {{template "head" .}}{{template "nav" .}}
-<main class="main-list">
+<main class="main-list{{if .Cfg.UIEnhancements}} ob-list-panels{{end}}"{{if .Cfg.UIEnhancements}} data-ob-list-panel-scope="{{.ListPanelScope}}"{{end}}>
 <div class="row-top">
   <h2>{{.Entity.DisplayName $.Lang}}</h2>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -2189,7 +2351,7 @@ const tplList = `
     <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{listExcelSuffix .Params .ListFormOff}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
   </div>
 </div>
-<form method="GET" style="display:flex;gap:8px;margin-bottom:12px;max-width:460px">
+<form{{if .Cfg.UIEnhancements}} class="ob-list-search"{{end}} method="GET" style="display:flex;gap:8px;margin-bottom:12px;max-width:460px">
   <input type="text" id="ob-list-search" name="q" value="{{.Params.Search}}" placeholder="{{t $.Lang "Поиск..."}}" style="flex:1;padding:7px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:14px" data-ob-list-search data-ob-auto-submit="320" title="Ctrl+F" aria-keyshortcuts="Control+F">
   {{if .Params.Search}}<a class="btn btn-sm" href="{{listURL $.Query "q" ""}}" style="background:#e2e8f0;color:#475569;align-self:center">✕</a>{{end}}
   {{/* Форма владеет только q — остальное состояние списка (вид, папка,
@@ -2206,7 +2368,7 @@ const tplList = `
 {{if .SearchAll}}<p class="list-search-scope" style="margin:6px 0 10px;color:#64748b;font-size:13px">{{t $.Lang "Результаты поиска по всему справочнику"}}</p>{{end}}
 
 {{$entity := .Entity}}{{$params := .Params}}{{$refOpts := .RefFilterOptions}}
-<details{{if hasFilter $params}} open{{end}}>
+<details{{if .Cfg.UIEnhancements}} class="ob-list-filters" data-ob-list-panel="filters"{{end}}>
   <summary>{{t $.Lang "Отбор"}}</summary>
   <form method="GET" action="">
   <div class="filter-body">
@@ -2300,7 +2462,7 @@ const tplList = `
   data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
 ><thead><tr>
   {{range $treeCols}}<th>{{.DisplayName $.Lang}}</th>{{end}}
-  <th style="width:90px"></th>
+  {{if not $.Cfg.HideListRowActions}}<th style="width:90px"></th>{{end}}
 </tr></thead><tbody>
 {{range .TreeRows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}{{$depth := index $row "_depth"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
@@ -2332,6 +2494,7 @@ const tplList = `
     {{else if isEnum (str $col.Type)}}<td>{{enumLabel $.EnumLabels $col.Name (str (index $row $col.Name))}}</td>
     {{else}}<td>{{fmtCell (index $row $col.Name)}}</td>{{end}}
   {{end}}
+  {{if not $.Cfg.HideListRowActions}}
   <td>
     {{if $isFolder}}
       <a class="btn btn-sm btn-secondary" href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "view" "" "parent" (str (index $row "id"))}}">{{t $.Lang "▶ Войти"}}</a>
@@ -2339,6 +2502,7 @@ const tplList = `
       <a class="btn btn-sm btn-primary" href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "Открыть"}}</a>
     {{end}}
   </td>
+  {{end}}
 </tr>{{end}}
 </tbody></table>
 </div>
@@ -2405,7 +2569,7 @@ const tplList = `
   </th>
   {{end}}
   {{if $.SearchAll}}<th>{{t $.Lang "Группа"}}</th>{{end}}
-  <th style="width:90px"></th>
+  {{if not $.Cfg.HideListRowActions}}<th style="width:90px"></th>{{end}}
 </tr></thead><tbody id="list-body"
   data-ob-row-base="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}"
   data-ob-row-subsystem="{{$.CurrentSubsystem}}"
@@ -2438,6 +2602,7 @@ const tplList = `
     {{else}}<td style="white-space:nowrap">{{if and (eq .Name "Наименование") $.Entity.Hierarchical}}{{if $isFolder}}📁 {{else}}📄 {{end}}{{end}}{{fmtCell (index $row .Name)}}{{if and (eq .Name "Наименование") (index $row "_is_predefined")}} <span title="{{t $.Lang "Предопределённый элемент"}}" style="color:#f59e0b;font-size:11px">★</span>{{end}}</td>{{end}}
   {{end}}
   {{if $.SearchAll}}<td style="white-space:nowrap" data-ob-list-group>{{with index $row "_group_id"}}<a href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}?parent={{.}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}">📁 {{index $row "_group_label"}}</a>{{else}}<span style="color:#94a3b8">{{t $.Lang "Корень"}}</span>{{end}}</td>{{end}}
+  {{if not $.Cfg.HideListRowActions}}
   <td>
     {{if and $isFolder $.Entity.Hierarchical}}
       <a class="btn btn-sm btn-secondary" href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" (str (index $row "id"))}}">{{t $.Lang "▶ Войти"}}</a>
@@ -2445,6 +2610,7 @@ const tplList = `
       <a class="btn btn-sm btn-primary" href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "Открыть"}}</a>
     {{end}}
   </td>
+  {{end}}
 </tr>{{end}}
 </tbody></table>
 </div>
@@ -2475,6 +2641,7 @@ const tplList = `
 </div>
 </main>
 <script type="application/json" id="ob-list-config">{{jsJSON (dict
+  "hideRowActions" .Cfg.HideListRowActions
   "isAdmin" .IsAdmin
   "canWrite" .CanWrite
   "canDelete" .CanDelete
@@ -2822,7 +2989,7 @@ const tplForm = `
      роуты POST /ui/<kind>/<entity>/<id>/attachments). Показывается для
      сохранённой записи объекта (не новая, не попап, не обработка). */}}
 {{define "ob-attachments"}}
-{{if and (not .IsNew) (not .IsPopup) (not .IsProcessor)}}
+{{if and (not .Cfg.HideAttachments) (not .IsNew) (not .IsPopup) (not .IsProcessor)}}
 <div class="card" style="margin-top:16px" data-ob-attachments data-attachments-url="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/attachments">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
     <h3 style="margin:0;font-size:14px;font-weight:600;color:#374151">{{t $.Lang "Вложения"}}</h3>
@@ -2948,15 +3115,24 @@ const tplReport = `
 {{end}}
 {{define "page-report"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .CompactReport}} class="ob-report-compact{{if eq .ReportDensity "dense"}} ob-report-dense{{end}}"{{end}}>
+{{if .CompactReport}}<div class="ob-report-titlebar">
+<h2>{{.Report.DisplayName $.Lang}}</h2>
+<div class="ob-report-commandbar">
+  {{if not (or .ReportParams .Report.Variants .ReportPresets)}}<form id="ob-report-params" method="POST" hidden>{{if .UserSettings}}<input type="hidden" name="__settings" value="{{if .ReportSettingsJSON}}{{.ReportSettingsJSON}}{{else}}{{.UserSettings.JSON}}{{end}}">{{end}}</form>{{end}}
+  <button class="btn btn-primary" type="submit" form="ob-report-params">{{t $.Lang "Сформировать"}}</button>
+  {{if or .Cols .ComposedHTML}}{{template "report-export-buttons" .}}{{end}}
+  <a class="btn btn-sm" href="/ui/export-jobs">{{t $.Lang "Мои выгрузки"}}</a>
+</div>
+</div>{{else}}
 <h2>{{.Report.DisplayName $.Lang}}</h2>
 <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
   <a class="btn btn-sm" href="/ui/export-jobs">{{t $.Lang "Мои выгрузки"}}</a>
-</div>
+</div>{{end}}
 {{if or .ReportParams .Report.Variants .ReportPresets}}
 <details class="card report-block" data-block="params" open style="margin-bottom:16px">
 <summary>{{t $.Lang "Параметры"}}</summary>
-<form method="POST">
+<form method="POST"{{if .CompactReport}} id="ob-report-params" data-ob-report-params{{end}}>
   {{if .UserSettings}}<input type="hidden" name="__settings" value="{{if .ReportSettingsJSON}}{{.ReportSettingsJSON}}{{else}}{{.UserSettings.JSON}}{{end}}">{{end}}
   {{if .ReportPresets}}
   <div class="form-group" style="margin-bottom:16px;max-width:360px">
@@ -2977,7 +3153,7 @@ const tplReport = `
   </div>
   {{end}}
   {{if .ReportParams}}
-  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px">
+  <div{{if .CompactReport}} class="ob-report-param-grid"{{end}} style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px">
   {{range .ReportParams}}{{$p := .}}{{$pname := .Name}}{{$pval := str (index $.ParamValues .Name)}}
     {{if $p.IsBool}}
     <div class="form-group" style="margin-bottom:0">
@@ -3024,7 +3200,7 @@ const tplReport = `
   {{end}}
   </div>
   {{end}}
-  <button class="btn btn-primary" type="submit">{{t $.Lang "Сформировать"}}</button>
+  {{if not .CompactReport}}<button class="btn btn-primary" type="submit">{{t $.Lang "Сформировать"}}</button>{{end}}
 </form>
 </details>
 {{end}}
@@ -3138,7 +3314,7 @@ const tplReport = `
 {{if .ComposedHTML}}
 {{if .Capped}}<div class="card" style="background:#fffbeb;border-color:#fde68a;margin-bottom:8px;padding:8px 12px">{{t $.Lang "Показаны первые строки — данных больше потолка."}}</div>{{end}}
 {{if .ComposeWarnings}}<div class="card" style="background:#fef2f2;border-color:#fecaca;margin-bottom:8px;padding:8px 12px"><strong>{{t $.Lang "Предупреждения компоновки:"}}</strong><ul style="margin:4px 0 0;padding-left:20px">{{range .ComposeWarnings}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
-{{template "report-export-buttons" .}}
+{{if not .CompactReport}}{{template "report-export-buttons" .}}{{end}}
 <details class="card report-block" data-block="data" open>
 <summary>{{t $.Lang "Данные"}}</summary>
 <div class="rc-toolbar" style="margin-bottom:8px;display:flex;gap:8px"><button type="button" id="rc-expand" class="btn btn-sm">{{t $.Lang "Развернуть всё"}}</button><button type="button" id="rc-collapse" class="btn btn-sm">{{t $.Lang "Свернуть всё"}}</button></div>
@@ -3146,7 +3322,7 @@ const tplReport = `
 </details>
 {{end}}
 {{if .Cols}}
-{{template "report-export-buttons" .}}
+{{if not .CompactReport}}{{template "report-export-buttons" .}}{{end}}
 <div class="card">
 {{if .Rows}}
 <table><thead><tr>{{range .Cols}}<th>{{.}}</th>{{end}}</tr></thead>
@@ -3206,7 +3382,7 @@ const tplRegister = `
 
 {{define "page-register-movements"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .Cfg.UIEnhancements}} class="ob-list-panels" data-ob-list-panel-scope="{{.ListPanelScope}}"{{end}}>
 <div class="row-top">
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "движения"}}</h2>
   {{if .CanViewBalances}}<a class="btn btn-sm" href="/ui/register/{{lower .Register.Name}}/balances" style="background:#e2e8f0;color:#475569">{{t $.Lang "Остатки →"}}</a>{{end}}
@@ -3237,7 +3413,7 @@ const tplRegister = `
 
 {{define "page-register-balances"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .Cfg.UIEnhancements}} class="ob-list-panels" data-ob-list-panel-scope="{{.ListPanelScope}}"{{end}}>
 <div class="row-top">
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "остатки"}}</h2>
   <a class="btn btn-sm" href="/ui/register/{{lower .Register.Name}}" style="background:#e2e8f0;color:#475569">{{t $.Lang "← Движения"}}</a>
@@ -3688,7 +3864,7 @@ const tplAbout = `
 const tplInfoReg = `
 {{define "page-inforeg-list"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .Cfg.UIEnhancements}} class="ob-list-panels" data-ob-list-panel-scope="{{.ListPanelScope}}"{{end}}>
 <div class="row-top">
   <h2>{{.InfoReg.DisplayName $.Lang}}{{if .InfoReg.Periodic}} <span style="font-size:13px;color:#64748b;font-weight:400">({{t $.Lang "периодический"}})</span>{{end}}</h2>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -3697,7 +3873,7 @@ const tplInfoReg = `
   </div>
 </div>
 {{template "reg-filter-form" (dict "Fields" .FilterFields "Filter" .Filter "RefOpts" .RefOpts "ShowFromTo" .InfoReg.Periodic "ShowToOnly" false "HasFilters" .HasFilters "ResetURL" .ResetURL "Context" .FilterContext "Lang" $.Lang)}}
-<div style="margin-bottom:8px">{{template "detail-panel-toggle" .}}</div>
+{{if not .Cfg.HideListDetailPanel}}<div style="margin-bottom:8px">{{template "detail-panel-toggle" .}}</div>{{end}}
 <div class="ob-list-wrap">
 <div class="card">
 {{if .Rows}}
@@ -3858,7 +4034,7 @@ const tplConstants = `
 const tplJournal = `
 {{define "page-journal"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .Cfg.UIEnhancements}} class="ob-list-panels" data-ob-list-panel-scope="{{.ListPanelScope}}"{{end}}>
 <div class="row-top">
   <h2>{{.Journal.DisplayName $.Lang}}</h2>
   <div style="display:flex;align-items:center;gap:12px">
@@ -3945,7 +4121,7 @@ const tplJournal = `
 </details>
 
 {{if .JournalWarnings}}<div class="card" style="background:#fef2f2;border-color:#fecaca;margin-bottom:8px;padding:8px 12px"><strong>{{t $.Lang "Предупреждения журнала:"}}</strong><ul style="margin:4px 0 0;padding-left:20px">{{range .JournalWarnings}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
-<div style="margin-bottom:8px">{{template "detail-panel-toggle" .}}</div>
+{{if not .Cfg.HideListDetailPanel}}<div style="margin-bottom:8px">{{template "detail-panel-toggle" .}}</div>{{end}}
 <div class="ob-list-wrap">
 <div class="card">
 {{if .Rows}}
@@ -4364,7 +4540,7 @@ const tplScheduled = `
 const tplAccountReg = `
 {{define "page-accounts"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .Cfg.UIEnhancements}} class="ob-list-panels" data-ob-list-panel-scope="{{.ListPanelScope}}"{{end}}>
 <div class="row-top">
   <h2>{{.Chart.DisplayName $.Lang}}</h2>
   <span style="color:#94a3b8;font-size:13px">{{len .Rows}} {{t $.Lang "счетов"}}</span>
@@ -4400,7 +4576,7 @@ const tplAccountReg = `
 
 {{define "page-accountreg-movements"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .Cfg.UIEnhancements}} class="ob-list-panels" data-ob-list-panel-scope="{{.ListPanelScope}}"{{end}}>
 <div class="row-top">
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "Проводки"}}</h2>
   <a class="btn btn-secondary" href="/ui/accountreg/{{lower .Register.Name}}/balances">{{t $.Lang "Остатки"}}</a>
@@ -4437,7 +4613,7 @@ const tplAccountReg = `
 
 {{define "page-accountreg-balances"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .Cfg.UIEnhancements}} class="ob-list-panels" data-ob-list-panel-scope="{{.ListPanelScope}}"{{end}}>
 <div class="row-top">
   <h2>{{.Register.DisplayName $.Lang}} — {{t $.Lang "Остатки по счетам"}}</h2>
   <div style="display:flex;gap:8px;align-items:center">

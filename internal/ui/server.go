@@ -30,30 +30,46 @@ import (
 
 // Config holds static info shown in «О программе».
 type Config struct {
-	AppName          string
-	AppVersion       string
-	AppAuthor        string // автор конфигурации (app.yaml: author)
-	AppCopyright     string // правообладатель конфигурации (app.yaml: copyright)
-	AppLicense       string // лицензия конфигурации (app.yaml: license)
-	AppSupport       string // куда сообщать об ошибках этой конфигурации (app.yaml: support, план 116)
-	PlatAuthor       string // правообладатель платформы (version.Author)
-	PlatLicense      string // лицензия платформы (version.License)
-	DSN              string // legacy PostgreSQL location; use DatabaseLocation in UI
-	DatabaseType     string // "postgres" or "sqlite"
-	DatabaseLocation string // PostgreSQL DSN or absolute SQLite file path
-	ConfigSource     string // "file" or "database"
-	ConfigLocation   string // absolute project path or database location
-	PlatVersion      string
-	PlatCommit       string // короткий git SHA сборки (version.Commit())
-	PlatDate         string // дата коммита сборки, дд.мм.гг (version.CommitDate())
-	Logo             string // path to logo file (png/svg/jpg)
-	Mailer           *mailer.Mailer
-	MaxFileSizeMB    int      // 0 = use default 50
-	AllowedTypes     []string // attachments.allowed_types (расширения); пусто = без ограничений
-	DemoMode         bool
-	DemoMessage      string
-	Lang             string       // base language from config
-	Bundle           *i18n.Bundle // translations
+	UIReportRoles        []string
+	UIReportExceptRoles  []string
+	DefaultReportDensity string
+	ShortDateInput       bool
+	UIFormRoles          []string
+	UIFormExceptRoles    []string
+	AppName              string
+	AppVersion           string
+	AppAuthor            string // автор конфигурации (app.yaml: author)
+	AppCopyright         string // правообладатель конфигурации (app.yaml: copyright)
+	AppLicense           string // лицензия конфигурации (app.yaml: license)
+	AppSupport           string // куда сообщать об ошибках этой конфигурации (app.yaml: support, план 116)
+	PlatAuthor           string // правообладатель платформы (version.Author)
+	PlatLicense          string // лицензия платформы (version.License)
+	DSN                  string // legacy PostgreSQL location; use DatabaseLocation in UI
+	DatabaseType         string // "postgres" or "sqlite"
+	DatabaseLocation     string // PostgreSQL DSN or absolute SQLite file path
+	ConfigSource         string // "file" or "database"
+	ConfigLocation       string // absolute project path or database location
+	PlatVersion          string
+	PlatCommit           string // короткий git SHA сборки (version.Commit())
+	PlatDate             string // дата коммита сборки, дд.мм.гг (version.CommitDate())
+	Logo                 string // path to logo file (png/svg/jpg)
+	// CompactLists — app.yaml ui.list_density: compact: плотные списки и
+	// виджеты-списки (класс ob-compact-lists на <body>).
+	CompactLists        bool
+	HideListDetailPanel bool
+	HideListRowActions  bool
+	HideAttachments     bool
+	UIEnhancements      bool
+	UIRoles             []string
+	UIExceptRoles       []string
+	DefaultFormDensity  string
+	Mailer              *mailer.Mailer
+	MaxFileSizeMB       int      // 0 = use default 50
+	AllowedTypes        []string // attachments.allowed_types (расширения); пусто = без ограничений
+	DemoMode            bool
+	DemoMessage         string
+	Lang                string       // base language from config
+	Bundle              *i18n.Bundle // translations
 	// DebugToken — общий секрет для debug API. Пустой → debug-маршруты не
 	// монтируются (см. api.New). Непустой → каждый запрос к /debug/global/*
 	// должен нести его в заголовке X-OneBase-Debug-Token.
