@@ -49,14 +49,21 @@ type Config struct {
 	Logo             string // path to logo file (png/svg/jpg)
 	// CompactLists — app.yaml ui.list_density: compact: плотные списки и
 	// виджеты-списки (класс ob-compact-lists на <body>).
-	CompactLists bool
-	Mailer           *mailer.Mailer
-	MaxFileSizeMB    int      // 0 = use default 50
-	AllowedTypes     []string // attachments.allowed_types (расширения); пусто = без ограничений
-	DemoMode         bool
-	DemoMessage      string
-	Lang             string       // base language from config
-	Bundle           *i18n.Bundle // translations
+	CompactLists        bool
+	HideListDetailPanel bool
+	HideListRowActions  bool
+	HideAttachments     bool
+	UIEnhancements      bool
+	UIRoles             []string
+	UIExceptRoles       []string
+	DefaultFormDensity  string
+	Mailer              *mailer.Mailer
+	MaxFileSizeMB       int      // 0 = use default 50
+	AllowedTypes        []string // attachments.allowed_types (расширения); пусто = без ограничений
+	DemoMode            bool
+	DemoMessage         string
+	Lang                string       // base language from config
+	Bundle              *i18n.Bundle // translations
 	// DebugToken — общий секрет для debug API. Пустой → debug-маршруты не
 	// монтируются (см. api.New). Непустой → каждый запрос к /debug/global/*
 	// должен нести его в заголовке X-OneBase-Debug-Token.

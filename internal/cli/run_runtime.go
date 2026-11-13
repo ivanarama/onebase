@@ -64,6 +64,15 @@ func prepareServerRuntime(ctx context.Context, cmd *cobra.Command, db *storage.D
 		uiCfg.Limits = runtimeLimitsFromApp(appCfg.Limits)
 		uiCfg.POSEnabled = appCfg.POSEnabled()
 		uiCfg.CompactLists = appCfg.CompactLists()
+		uiCfg.HideListDetailPanel = !appCfg.ListDetailPanelEnabled()
+		uiCfg.HideListRowActions = !appCfg.ListRowActionsEnabled()
+		uiCfg.HideAttachments = !appCfg.AttachmentsEnabled()
+		uiCfg.UIEnhancements = appCfg.UIEnhancementsConfigured()
+		if appCfg.UI != nil {
+			uiCfg.UIRoles = appCfg.UI.Roles
+			uiCfg.UIExceptRoles = appCfg.UI.ExceptRoles
+			uiCfg.DefaultFormDensity = appCfg.UI.FormDensity
+		}
 	}
 	bundle, err := i18n.Load(i18n.EmbeddedLocales, filepath.Join(proj.Dir, "locales"))
 	if err != nil {
