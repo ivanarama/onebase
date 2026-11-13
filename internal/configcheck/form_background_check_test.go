@@ -134,3 +134,22 @@ func TestCheckFormBackground_ButtonSupported(t *testing.T) {
 		t.Fatalf("невалидный цвет кнопки — form.background-color: %+v", warns)
 	}
 }
+
+// Цвет шапки таблицы действует только у ТабличнаяЧасть; нераспознанный цвет
+// называется, допустимый — молча.
+func TestCheckFormBackground_TableHeaderColors(t *testing.T) {
+	tp := &metadata.FormElement{Kind: metadata.FormElementTablePart, Name: "ТЧИсторияЗаявок",
+		DataPath: "Объект.Наименование", HeaderBackground: "#f1ead6", HeaderBorderColor: "#efe3c2"}
+	if warns := CheckFormBackground(projWithElement(tp)); len(warns) != 0 {
+		t.Fatalf("допустимые цвета шапки не должны предупреждать: %+v", warns)
+	}
+	tp.HeaderBorderColor = "бежевый-в-крапинку"
+	if warns := CheckFormBackground(projWithElement(tp)); len(warns) != 1 || warns[0].Code != "form.background-color" {
+		t.Fatalf("нераспознанный header_border_color: %+v", warns)
+	}
+	warns := CheckFormBackground(projWithElement(&metadata.FormElement{
+		Kind: metadata.FormElementField, Name: "ПолеТема", DataPath: "Объект.Наименование", HeaderBackground: "#f1ead6"}))
+	if len(warns) != 1 || warns[0].Code != "form.background-kind" {
+		t.Fatalf("header_background у поля должен быть назван игнорируемым: %+v", warns)
+	}
+}

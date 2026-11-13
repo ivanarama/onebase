@@ -26,6 +26,33 @@ func CheckFormBackground(proj *project.Project) []Issue {
 			return
 		}
 		walkFormElements(form.Elements, func(el *metadata.FormElement) {
+			for _, hk := range []struct{ key, value string }{
+				{"header_background", el.HeaderBackground},
+				{"header_border_color", el.HeaderBorderColor},
+			} {
+				if strings.TrimSpace(hk.value) == "" {
+					continue
+				}
+				if el.Kind != metadata.FormElementTablePart {
+					warns = append(warns, Issue{
+						File:         label,
+						Object:       object,
+						Kind:         "Управляемая форма",
+						Code:         "form.background-kind",
+						Message:      fmt.Sprintf("элемент %q (%s): ключ %s игнорируется — цвет шапки есть только у ТабличнаяЧасть", formElementName(el), el.Kind, hk.key),
+						SuggestedFix: "Удалите ключ или перенесите его на ТабличнаяЧасть.",
+					})
+				} else if csssafe.Color(hk.value) == "" {
+					warns = append(warns, Issue{
+						File:         label,
+						Object:       object,
+						Kind:         "Управляемая форма",
+						Code:         "form.background-color",
+						Message:      fmt.Sprintf("%s %q: %s %q — не распознанный цвет, шапка останется обычной", el.Kind, formElementName(el), hk.key, hk.value),
+						SuggestedFix: "Допустимы hex (#rrggbb, #rgb), rgb(...) и именованные CSS-цвета.",
+					})
+				}
+			}
 			if strings.TrimSpace(el.Background) == "" {
 				return
 			}
