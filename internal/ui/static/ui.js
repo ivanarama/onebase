@@ -6336,12 +6336,12 @@ window.onebaseDevice = {
       window.parent.postMessage({source:'obUIResponse',commands:commands,refreshLive:!!refreshLive},window.location.origin);
     } else applyUIResponse(commands,refreshLive);
   };
-  if (!window.__obEmbedded) {
+  {
     window.addEventListener('message', function (ev) {
       if (ev.origin !== window.location.origin || !ev.data || ev.data.source !== 'obUIResponse') return;
       var frames = document.querySelectorAll('iframe');
       for (var i=0; i<frames.length; i++) {
-        if (frames[i].contentWindow === ev.source) { applyUIResponse(ev.data.commands,ev.data.refreshLive); return; }
+        if (frames[i].contentWindow === ev.source) { window.obApplyUIResponse(ev.data.commands,ev.data.refreshLive); return; }
       }
     });
   }
