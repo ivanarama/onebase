@@ -70,6 +70,8 @@ func prepareServerRuntime(ctx context.Context, cmd *cobra.Command, db *storage.D
 		uiCfg.UIEnhancements = appCfg.UIEnhancementsConfigured()
 		if appCfg.UI != nil {
 			uiCfg.UIRoles = appCfg.UI.Roles
+			uiCfg.UIFormRoles = appCfg.UI.FormRoles
+			uiCfg.UIFormExceptRoles = appCfg.UI.FormExceptRoles
 			uiCfg.UIExceptRoles = appCfg.UI.ExceptRoles
 			uiCfg.DefaultFormDensity = appCfg.UI.FormDensity
 		}

@@ -3,8 +3,8 @@ package auth
 import "strings"
 
 // RoleScopeMatches selects presentation only. Exclusions always win, including
-// for an administrator carrying an excluded role. includeAdmin without roles
-// selects administrators only; a scope without selectors matches everyone.
+// for an administrator carrying an excluded role. An empty allowlist matches
+// every non-excluded role; includeAdmin adds admins to a nonempty allowlist.
 func RoleScopeMatches(user *User, roles, exceptRoles []string, includeAdmin bool) bool {
 	has := func(want string) bool {
 		if user == nil {
@@ -26,7 +26,7 @@ func RoleScopeMatches(user *User, roles, exceptRoles []string, includeAdmin bool
 		return true
 	}
 	if len(roles) == 0 {
-		return !includeAdmin
+		return true
 	}
 	for _, name := range roles {
 		if has(name) {

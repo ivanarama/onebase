@@ -82,3 +82,32 @@ func TestUIAttachmentsGlobalSwitchOverridesVisibleTrue(t *testing.T) {
 		}
 	}
 }
+
+func TestUIFormScopeCanIncludeOtherNonOperatorRoles(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		roles        []string
+		admin, forms bool
+	}{
+		{"other", []string{"Warehouse"}, false, true}, {"no-roles", nil, false, true},
+		{"admin", nil, true, true}, {"operator", []string{"Operator"}, false, false},
+		{"mixed", []string{"Warehouse", "Messenger"}, false, false}, {"admin-operator", []string{"Operator"}, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &Server{cfg: Config{UIEnhancements: true, UIRoles: []string{"OTK"}, UIExceptRoles: []string{"Operator", "Messenger"}, UIFormRoles: []string{}, UIFormExceptRoles: []string{"Operator", "Messenger"}, HideAttachments: true, DefaultFormDensity: "dense", HideListDetailPanel: true}}
+			u := &auth.User{IsAdmin: tc.admin}
+			for _, role := range tc.roles {
+				u.Roles = append(u.Roles, &auth.Role{Name: role})
+			}
+			req := httptest.NewRequest("GET", "/ui/", nil)
+			req = req.WithContext(auth.ContextWithUser(req.Context(), u))
+			cfg := s.uiConfigForRequest(req)
+			if cfg.HideAttachments != tc.forms || (cfg.DefaultFormDensity != "") != tc.forms {
+				t.Fatalf("wrong form scope: %+v", cfg)
+			}
+			if !tc.admin && cfg.HideListDetailPanel {
+				t.Fatal("broader form scope expanded list scope")
+			}
+		})
+	}
+}

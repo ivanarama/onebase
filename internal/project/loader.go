@@ -207,6 +207,8 @@ type QueueConfig struct {
 // AppConfig holds the optional config/app.yaml metadata.
 // UIConfig — оформление интерфейса базы.
 type UIConfig struct {
+	FormRoles       []string `yaml:"form_roles,omitempty"`
+	FormExceptRoles []string `yaml:"form_except_roles,omitempty"`
 	Roles           []string `yaml:"roles,omitempty"`
 	ExceptRoles     []string `yaml:"except_roles,omitempty"`
 	FormDensity     string   `yaml:"form_density,omitempty"`
@@ -238,7 +240,7 @@ func (c *AppConfig) AttachmentsEnabled() bool {
 // New presentation controls are opt-in; the existing list_density alone keeps
 // its original behavior. An explicit roles: [] opts in for every role.
 func (c *AppConfig) UIEnhancementsConfigured() bool {
-	return c != nil && c.UI != nil && (c.UI.Roles != nil || c.UI.ExceptRoles != nil ||
+	return c != nil && c.UI != nil && (c.UI.Roles != nil || c.UI.ExceptRoles != nil || c.UI.FormRoles != nil || c.UI.FormExceptRoles != nil ||
 		c.UI.ListDetailPanel != nil || c.UI.ListRowActions != nil || c.UI.Attachments != nil || c.UI.FormDensity != "")
 }
 

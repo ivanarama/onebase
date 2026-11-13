@@ -21,6 +21,15 @@ func (s *Server) uiConfigForRequest(r *http.Request, supplied ...Config) Config 
 	if !cfg.UIEnhancements {
 		cfg.HideListDetailPanel = false
 		cfg.HideListRowActions = false
+	}
+	formRoles, formExcept := cfg.UIRoles, cfg.UIExceptRoles
+	if cfg.UIFormRoles != nil {
+		formRoles = cfg.UIFormRoles
+	}
+	if cfg.UIFormExceptRoles != nil {
+		formExcept = cfg.UIFormExceptRoles
+	}
+	if !s.cfg.UIEnhancements || !auth.RoleScopeMatches(auth.UserFromContext(r.Context()), formRoles, formExcept, len(formRoles) > 0) {
 		cfg.HideAttachments = false
 		cfg.DefaultFormDensity = ""
 	}

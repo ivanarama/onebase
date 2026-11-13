@@ -24,7 +24,7 @@ func TestRoleScopeExclusionsWinOverAdminAndMixedRoles(t *testing.T) {
 			}
 		})
 	}
-	if RoleScopeMatches(nil, nil, nil, true) || !RoleScopeMatches(nil, nil, nil, false) {
-		t.Fatal("empty scope/admin-only semantics")
+	if !RoleScopeMatches(nil, nil, nil, true) || !RoleScopeMatches(nil, nil, nil, false) {
+		t.Fatal("empty allowlist must match all non-excluded users")
 	}
 }
