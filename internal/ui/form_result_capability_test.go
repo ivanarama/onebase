@@ -33,7 +33,7 @@ func TestResultCapabilityHTTPMatrix(t *testing.T) {
 			t.Fatal(err)
 		}
 		binding := processor.ResultCapability{Register: ir.Name, ReferenceField: "Parent", OwnerField: "Owner", EnabledField: "Enabled", SourceEntity: source.Name, SourceIDField: "SourceID", SourceVersionField: "SourceVersion", ObservedAtField: "Observed", MaxAgeSeconds: 300}
-		for _, mode := range []string{"valid", "valid-admin", "open", "answer", "false-flag", "wrong-owner", "wrong-parent", "stale-proof", "future-proof", "bad-source-id", "wrong-source-version", "unknown-name", "ordinary", "foreign", "expired-context", "forged-parent", "index-read-denied", "index-rls-denied", "parent-rls-denied", "masked-index", "writable-index", "save-headless", "mark-headless", "unmark-headless", "delete-headless", "save-rollback", "mark-rollback"} {
+		for _, mode := range []string{"valid", "valid-admin", "open", "answer", "transaction", "false-flag", "wrong-owner", "wrong-parent", "stale-proof", "future-proof", "bad-source-id", "wrong-source-version", "unknown-name", "ordinary", "foreign", "expired-context", "forged-parent", "index-read-denied", "index-rls-denied", "parent-rls-denied", "masked-index", "writable-index", "save-headless", "mark-headless", "unmark-headless", "delete-headless", "save-rollback", "mark-rollback"} {
 			t.Run(mode, func(t *testing.T) {
 				form := processorExecutionForm(&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Probe", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Probe", metadata.FormEventOnAnswer: "Probe"}})
 				form.Handlers = map[metadata.FormEventType]string{metadata.FormEventOnOpen: "Probe"}
@@ -48,6 +48,13 @@ func TestResultCapabilityHTTPMatrix(t *testing.T) {
 Сообщить("disabled");
 КонецЕсли;
 КонецПроцедуры`)
+				if mode == "transaction" {
+					form.ProgramAST = mustParse(t, `Процедура Probe()
+НачатьТранзакцию();
+Если ResultFormCapability("Note") Тогда Сообщить("enabled"); Иначе Сообщить("disabled"); КонецЕсли;
+ЗафиксироватьТранзакцию();
+КонецПроцедуры`)
+				}
 				proc := &processor.Processor{Name: "CapabilityResult", Params: []processor.Param{{Name: "Parent", Type: "reference:" + parent.Name}}, Forms: []*metadata.FormModule{form}, ResultCapabilities: map[string]processor.ResultCapability{"Note": binding}}
 				reg := runtime.NewRegistry()
 				reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{parent, source}, InfoRegs: []*metadata.InfoRegister{ir}})
@@ -159,7 +166,7 @@ func TestResultCapabilityHTTPMatrix(t *testing.T) {
 					body.Set("Parent", uuid.NewString())
 				}
 				response := resultContextEvent(t, s, proc, payload, body, actor)
-				want := mode == "valid" || mode == "valid-admin" || mode == "open" || mode == "answer" || strings.HasSuffix(mode, "-rollback")
+				want := mode == "valid" || mode == "valid-admin" || mode == "open" || mode == "answer" || mode == "transaction" || strings.HasSuffix(mode, "-rollback")
 				got := response.OK && len(response.Messages) == 1 && response.Messages[0] == "enabled"
 				if got != want {
 					t.Fatalf("capability=%v want%v, response=%+v", got, want, response)
