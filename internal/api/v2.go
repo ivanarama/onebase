@@ -249,21 +249,16 @@ func (h *handler) updateObjectV2(kind metadata.Kind) http.HandlerFunc {
 			return
 		}
 
-		// План 88: масковый пользователь не перезаписывает реальное значение.
-		if err := h.protectMaskedFieldsOnWrite(r.Context(), entity, id, body.Fields); err != nil {
-			writeError(w, http.StatusInternalServerError, err.Error(), "", 0)
-			return
-		}
-
 		result, err := h.entitySvc.Save(r.Context(), entityservice.SaveRequest{
-			Entity:              entity,
-			ID:                  id,
-			IsNew:               false,
-			MergeExistingFields: true,
-			Fields:              body.Fields,
-			TablePartRows:       body.TablePartRows,
-			Action:              body.Action,
-			ExpectedVersion:     expectedVersion,
+			Entity:               entity,
+			ID:                   id,
+			IsNew:                false,
+			MergeExistingFields:  true,
+			PreparePartialUpdate: h.preparePartialUpdate(entity, body.Action),
+			Fields:               body.Fields,
+			TablePartRows:        body.TablePartRows,
+			Action:               body.Action,
+			ExpectedVersion:      expectedVersion,
 		})
 		writeSaveResultV2(w, result, err, id, false)
 	}

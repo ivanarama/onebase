@@ -57,18 +57,11 @@ func (h *handler) maskRecords(ctx context.Context, entity *metadata.Entity, rows
 	access.MaskRecords(h.fieldDecisions(ctx, entity), rows)
 }
 
-// protectMaskedFieldsOnWrite restores the real stored value for every field
+// protectMaskedFieldsFromRow restores the real stored value for every field
 // masked or hidden for this user before a REST update, mirroring the UI guard —
 // a masked user cannot overwrite the real value with the mask or a crafted one.
-func (h *handler) protectMaskedFieldsOnWrite(ctx context.Context, entity *metadata.Entity, id uuid.UUID, fields map[string]any) error {
+func (h *handler) protectMaskedFieldsFromRow(ctx context.Context, entity *metadata.Entity, row, fields map[string]any) {
 	dec := h.fieldDecisions(ctx, entity)
-	if len(dec) == 0 || fields == nil {
-		return nil
-	}
-	row, err := h.store.GetByID(ctx, entity.Name, id, entity)
-	if err != nil {
-		return err
-	}
 	for field, decision := range dec {
 		key, ok := restCIKey(fields, field)
 		if !ok {
@@ -84,7 +77,6 @@ func (h *handler) protectMaskedFieldsOnWrite(ctx context.Context, entity *metada
 			delete(fields, key)
 		}
 	}
-	return nil
 }
 
 func restCIKey(m map[string]any, field string) (string, bool) {

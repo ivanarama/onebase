@@ -42,11 +42,14 @@ func TestRESTPartialUpdateHTTPMatrix(t *testing.T) {
 				{Name: "Owner", Type: metadata.FieldTypeString},
 				{Name: "Type", Type: metadata.FieldTypeString},
 				{Name: "Secret", Type: metadata.FieldTypeString},
-				{Name: "Reference", Type: "reference:PatchReference", RefEntity: ref.Name},
+				{Name: "Target", Type: "reference:PatchReference", RefEntity: ref.Name},
 				{Name: "Date", Type: metadata.FieldTypeDate},
 			}, TableParts: []metadata.TablePart{{Name: "Lines", Fields: []metadata.Field{{Name: "Text", Type: metadata.FieldTypeString}}}}}
 			entities = append(entities, entity)
 			programs[entity.Name] = mustParseProgram(t, `Процедура OnWrite()
+    Если ServerAssignedField("Done") ИЛИ ПолеНазначеноСервером("Note") Тогда
+        ВызватьИсключение("REST must not mint server assignment proof");
+    КонецЕсли;
     Если this.Type = "guard" И this.Done = Истина Тогда
         ВызватьИсключение("pending verification");
     КонецЕсли;
@@ -78,18 +81,18 @@ func TestRESTPartialUpdateHTTPMatrix(t *testing.T) {
 					policies := auth.RowPolicies{"write": {Field: "Owner", Op: "eq", Value: auth.RowValue{User: "login"}}}
 					mask := auth.FieldPolicies{"Secret": {Read: "mask_all"}}
 					if entity.Kind == metadata.KindCatalog {
-						perm.Catalogs = map[string][]string{entity.Name: {"write"}}
+						perm.Catalogs = map[string][]string{entity.Name: {"read", "write"}}
 						perm.RowAccess.Catalogs = map[string]auth.RowPolicies{entity.Name: policies}
 						perm.FieldAccess.Catalogs = map[string]auth.FieldPolicies{entity.Name: mask}
 					} else {
-						perm.Documents = map[string][]string{entity.Name: {"write"}}
+						perm.Documents = map[string][]string{entity.Name: {"read", "write"}}
 						perm.RowAccess.Documents = map[string]auth.RowPolicies{entity.Name: policies}
 						perm.FieldAccess.Documents = map[string]auth.FieldPolicies{entity.Name: mask}
 					}
 					user := apiUser("owner", perm)
 					seed := func(owner, typ string, done bool) uuid.UUID {
 						id := uuid.New()
-						fields := map[string]any{"Note": "old", "Done": done, "Flag": true, "Count": 7, "Owner": owner, "Type": typ, "Secret": "real-secret", "Reference": refID.String(), "Date": time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)}
+						fields := map[string]any{"Note": "old", "Done": done, "Flag": true, "Count": 7, "Owner": owner, "Type": typ, "Secret": "real-secret", "Target": refID.String(), "Date": time.Date(2026, 11, 13, 10, 0, 0, 0, time.UTC)}
 						if err := db.Upsert(ctx, entity.Name, id, fields, entity); err != nil {
 							t.Fatal(err)
 						}
@@ -129,9 +132,11 @@ func TestRESTPartialUpdateHTTPMatrix(t *testing.T) {
 					}{
 						{"omitted-header-and-tableparts", map[string]any{"Note": "new"}, "owner", "ordinary", 200},
 						{"explicit-false-zero-empty", map[string]any{"Done": false, "Flag": false, "Count": 0, "Note": ""}, "owner", "ordinary", 200},
-						{"explicit-null", map[string]any{"Flag": nil, "Count": nil, "Note": nil, "Reference": nil, "Date": nil}, "owner", "ordinary", 200},
+						{"explicit-null", map[string]any{"Flag": nil, "Count": nil, "Note": nil, "Target": nil, "Date": nil}, "owner", "ordinary", 200},
 						{"masked-crafted-given", map[string]any{"Note": "new", "Secret": "crafted"}, "owner", "ordinary", 200},
 						{"masked-absent", map[string]any{"Note": "new"}, "owner", "ordinary", 200},
+						{"masked-explicit-null-preserved", map[string]any{"Secret": nil}, "owner", "ordinary", 200},
+						{"explicit-empty-tablepart", map[string]any{"__tableparts": map[string]any{"Lines": []any{}}}, "owner", "ordinary", 200},
 						{"foreign-row-denied", map[string]any{"Note": "new"}, "other", "ordinary", 403},
 						{"given-owner-change-denied", map[string]any{"Owner": "other"}, "owner", "ordinary", 403},
 						{"object-guard-sees-omitted-type", map[string]any{"Done": true}, "owner", "guard", 422},
@@ -173,7 +178,8 @@ func TestRESTPartialUpdateHTTPMatrix(t *testing.T) {
 								t.Fatalf("version=%v want %d", after["_version"], wantVersion)
 							}
 							rows, err := db.GetTablePartRows(ctx, entity.Name, "Lines", id, entity.TableParts[0])
-							if err != nil || len(rows) != 1 || rows[0]["Text"] != "keep" {
+							_, clearTP := tc.patch["__tableparts"]
+							if err != nil || (clearTP && len(rows) != 0) || (!clearTP && (len(rows) != 1 || rows[0]["Text"] != "keep")) {
 								t.Fatalf("tableparts=%v, %v", rows, err)
 							}
 						})

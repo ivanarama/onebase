@@ -377,6 +377,12 @@ type SaveRequest struct {
 	// protects the hydrated snapshot even when a legacy client omits If-Match.
 	// UI and DSL callers retain their existing object construction semantics.
 	MergeExistingFields bool
+	// PreparePartialUpdate checks/sanitizes the incoming key map against the
+	// same stored snapshot used by hydration and CAS. It runs before merging.
+	PreparePartialUpdate func(context.Context, map[string]any, map[string]any) error
+	// ServerAssignments is opaque one-attempt provenance from a trusted DSL
+	// setter. REST/binding/hydration never populate it; only OnWrite sees it.
+	ServerAssignments *runtime.ServerFieldAssignments
 
 	// Preflight runs in the save transaction after auto-numbering and before
 	// caller-independent enrichment, provisional persistence and entity hooks.
@@ -435,6 +441,7 @@ type SaveResult struct {
 // как err != nil (включая storage.ErrVersionConflict при !IsNew с конфликтом
 // версий — caller должен проверить errors.Is).
 func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error) {
+	serverAssigned := req.ServerAssignments.Consume(req.Entity, req.ID)
 	if err := storage.CheckWriteAllowed(ctx); err != nil {
 		return SaveResult{}, err
 	}
@@ -540,6 +547,11 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			if req.ExpectedVersion == nil {
 				req.ExpectedVersion = &version
 			}
+			if req.PreparePartialUpdate != nil {
+				if err := req.PreparePartialUpdate(txCtx, stored, obj.Fields); err != nil {
+					return err
+				}
+			}
 			obj.Fields = effectiveSaveFields(partialUpdateHeader(req.Entity, stored), obj.Fields)
 		}
 		// Form hooks dereference rich values before returning to persistence,
@@ -593,7 +605,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 			writeMovements = runtime.NewMovementsCollector(req.Entity.Name, req.ID).WillPersist()
 			SetPeriodFromFields(writeMovements, req.Entity, obj.Fields)
 		}
-		if err := s.runSaveHook(txCtx, req.Entity, obj, writeProc, writeMovements, &msgs, lockCollector); err != nil {
+		if err := s.runSaveHook(txCtx, req.Entity, obj, writeProc, writeMovements, &msgs, lockCollector, serverAssigned); err != nil {
 			return err
 		}
 		if isPosting {
@@ -616,7 +628,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 				return err
 			}
 			SetPeriodFromFields(mc, req.Entity, intermediate)
-			if err := s.runSaveHook(txCtx, req.Entity, obj, s.Reg.GetProcedure(req.Entity.Name, "OnPost"), mc, &msgs, lockCollector); err != nil {
+			if err := s.runSaveHook(txCtx, req.Entity, obj, s.Reg.GetProcedure(req.Entity.Name, "OnPost"), mc, &msgs, lockCollector, nil); err != nil {
 				return err
 			}
 		}
@@ -796,7 +808,7 @@ func (s *Service) Save(ctx context.Context, req SaveRequest) (SaveResult, error)
 // runSaveHook owns one timeout/DSL transaction execution while keeping the
 // storage transaction and lock scope shared by both phases of a posting save.
 func (s *Service) runSaveHook(ctx context.Context, entity *metadata.Entity, obj *runtime.Object,
-	proc *ast.ProcedureDecl, mc *runtime.MovementsCollector, msgs *[]string, locks *runtime.LockCollector) error {
+	proc *ast.ProcedureDecl, mc *runtime.MovementsCollector, msgs *[]string, locks *runtime.LockCollector, serverAssigned map[string]bool) error {
 	if proc != nil {
 		hookCtx, cancel := s.hookExecutionContext(runtime.ContextWithLockCollector(ctx, locks))
 		defer cancel()
@@ -805,6 +817,11 @@ func (s *Service) runSaveHook(ctx context.Context, entity *metadata.Entity, obj 
 		if s.BuildVars != nil {
 			vars, txState = s.BuildVars(hookCtx, mc, msgs)
 		}
+		if vars == nil {
+			vars = map[string]any{}
+		}
+		finishAssignmentQuery := InstallServerAssignedFieldQuery(vars, serverAssigned)
+		defer finishAssignmentQuery()
 		defer interpreter.RollbackTxExecution(txState)
 		var this interpreter.This = obj
 		if s.MakeThis != nil {
