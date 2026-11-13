@@ -9,6 +9,7 @@ with sync_playwright() as p:
     browser = p.chromium.launch(headless=True, executable_path=os.environ.get("ONEBASE_AUDIO_CHROMIUM"))
     try:
         page = browser.new_page(viewport={'width':1100,'height':760})
+        page.set_default_timeout(7000)
         requests, events, metadata, errors = [], [], [], []
         page.on('request', lambda r: requests.append(r.url))
         page.on('pageerror', lambda e: errors.append(str(e)))
@@ -18,7 +19,7 @@ with sync_playwright() as p:
             if r.url.endswith('/attachments'):
                 metadata.append(r.json())
         page.on('response', response)
-        page.goto(base+'/ui/catalog/Calls/new', wait_until='networkidle')
+        page.goto(base+'/ui/catalog/Calls/new', wait_until='domcontentloaded')
         player = page.locator('[data-ob-audio]')
         media = page.locator('[data-ob-audio-media]')
         assert player.count() == 1
@@ -54,7 +55,7 @@ with sync_playwright() as p:
         if proof: page.screenshot(path=str(Path(proof)/'02-managed-after-call-b.png'))
         page.locator('[data-ob-audio-stop]').click()
         requests.clear()
-        page.goto(base+'/ui/catalog/Recordings/'+owner,wait_until='networkidle')
+        page.goto(base+'/ui/catalog/Recordings/'+owner,wait_until='domcontentloaded')
         assert page.locator('[data-ob-audio]').count()==1
         assert not page.locator('[data-ob-attachments],#att-upload-form').count()
         assert not any('/attachments' in u for u in requests), requests
@@ -73,10 +74,13 @@ with sync_playwright() as p:
         assert len(metadata)==1 and media.get_attribute('src')==attachment
         if proof: page.screenshot(path=str(Path(proof)/'03-auto-audio-only.png'))
         requests.clear()
-        page.goto(base+'/ui/catalog/Ordinary/new',wait_until='networkidle')
+        page.goto(base+'/ui/catalog/Ordinary/new',wait_until='domcontentloaded')
         assert page.locator('[data-ob-audio]').count()==0
         assert not any('/static/audio.js' in u for u in requests)
         assert not errors,errors
         print(json.dumps({'public_http_browser':'PASS','play_preparations':2,'metadata_lists':1,'range':206,'silent_wav':True,'ordinary_audio_asset_requests':0,'js_errors':errors}))
+    except Exception:
+        print(json.dumps({'errors':errors,'events':events,'requests':requests,'player':page.locator('[data-ob-audio]').evaluate_all('(xs)=>xs.map(x=>x.outerHTML)'), 'media':page.locator('audio').evaluate_all('(xs)=>xs.map(a=>({src:a.getAttribute("src"),paused:a.paused,error:a.error&&a.error.message,ready:a.readyState,time:a.currentTime}))')},ensure_ascii=True),flush=True)
+        raise
     finally:
         browser.close()

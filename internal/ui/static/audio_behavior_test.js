@@ -16,7 +16,7 @@ function fixture(attrs = {}) {
  const window={addEventListener(){},obFire(name,event){const d=deferred(),extra=window.obAudioBeforeEvent(name,event);prepared.push({name,event,extra,d});return d.promise}};
  const context={window,document:{querySelectorAll(){return [root]}},fetch(url){const d=deferred();requests.push({url,d});return d.promise}};
  vm.runInNewContext(code,context);
- function respond(item,data){window.obAudioFilterResponse(data,{extraParams:item.extra,eventName:item.event});window.obAudioApply(data);item.d.resolve();}
+ function respond(item,data){window.obAudioFilterResponse(data,{extraParams:item.extra,eventName:item.event,elementName:item.name});window.obAudioApply(data);item.d.resolve();}
  return {window,media,play,caption,status,requests,prepared,click:()=>listeners.click(),stop:()=>stopClick(),respond};
 }
 (async()=>{
@@ -39,6 +39,8 @@ function fixture(attrs = {}) {
  f.window.obAudioApply({ok:true,audioStops:['Player']});assert.equal(f.media.getAttribute('src'),null);
  f.play.disabled=true;await f.click();assert.equal(f.prepared.length,2);
  const stopped=fixture();const pending=stopped.click();stopped.stop();stopped.respond(stopped.prepared[0],{ok:true,values:{Source:idA}});await pending;assert.equal(stopped.media.plays,0);await stopped.click();assert.equal(stopped.media.plays,1);
+ const changed=fixture();const oldPlay=changed.click();changed.window.obAudioApply({ok:true,values:{Source:idB}});changed.respond(changed.prepared[0],{ok:true,values:{Source:idA}});await oldPlay;assert.equal(changed.media.plays,0);
+ const skipped=fixture();const row=skipped.window.obFire('Table','ПриАктивизацииСтроки');skipped.prepared[0].d.resolve();await row;const retry=skipped.click();assert.equal(skipped.prepared.length,2);skipped.respond(skipped.prepared[1],{ok:true,values:{Source:idB}});await retry;assert.equal(skipped.media.plays,1);
  const invalid=fixture({'data-audio-source':'https://bad.invalid/?token=x'});const i=invalid.click();assert.equal(invalid.prepared.length,1);invalid.respond(invalid.prepared[0],{ok:false,error:'failed',values:{Source:idA}});await i;assert.equal(invalid.media.plays,0);
  const auto=fixture({'data-audio-play-event':'','data-audio-metadata-url':'/ui/catalog/Recordings/'+idA+'/attachments'});
  assert.equal(auto.requests.length,0);const load=auto.click();assert.equal(auto.requests.length,1);assert.equal(auto.media.plays,0);

@@ -106,6 +106,7 @@
   window.obAudioFilterResponse = function (data, snapshot) {
     var sent = snapshot.extraParams && snapshot.extraParams._ob_audio_generation;
     var stale = sent !== undefined && String(sent) !== String(generation);
+    data._obAudioPreparing = !stale && data.ok && !data.error && snapshot.eventName === 'Воспроизведение' ? snapshot.elementName : '';
     players.forEach(function (p) {
       if (stale || !data.ok || data.error) {
         removeValue(data.values, p.sourceField);
@@ -128,8 +129,8 @@
         if (p.id !== next) {
           // Preparation may change empty -> attachment while its Play awaits.
           // Stop old media without invalidating that same in-flight user intent.
-          var ticket = p.ticket;
-          stop(p); p.ticket = ticket;
+          var ticket = p.ticket, keepIntent = p.waiting && data._obAudioPreparing === p.name;
+          stop(p); if (keepIntent) p.ticket = ticket;
           p.id = next;
         }
       }
@@ -138,5 +139,19 @@
       if (disabled(p) && p.media.getAttribute('src')) stop(p);
     });
   };
+  // A duplicate/invalid grid activation can be discarded before HTTP. It still
+  // settles obFire's promise, so release this generation's playback lock too.
+  var originalFire = window.obFire;
+  if (typeof originalFire === 'function') {
+    window.obFire = function (name, event) {
+      var result = originalFire.apply(this, arguments), epoch = generation;
+      if (event !== 'ПриАктивизацииСтроки') return result;
+      return Promise.resolve(result).finally(function () {
+        if (epoch === generation) players.forEach(function (p) {
+          if (p.blocked) { p.blocked = false; status(p, ''); }
+        });
+      });
+    };
+  }
   window.addEventListener('pagehide', function () { players.forEach(stop); });
 }());

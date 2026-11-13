@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/realtime"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -33,6 +34,7 @@ func TestAudioPlayerBrowserHTTP(t *testing.T) {
 	calls := &metadata.Entity{Name: "Calls", Kind: metadata.KindCatalog, Fields: []metadata.Field{{Name: "Name", Type: metadata.FieldTypeString}}}
 	ordinary := &metadata.Entity{Name: "Ordinary", Kind: metadata.KindCatalog}
 	s, ctx := newSubmitTestServer(t, []*metadata.Entity{recordings, calls, ordinary})
+	s.hub = realtime.NewHub()
 	s.store.SetFilesDir(t.TempDir())
 	if err := s.store.EnsureAttachmentTable(ctx); err != nil {
 		t.Fatal(err)
@@ -69,6 +71,7 @@ func TestAudioPlayerBrowserHTTP(t *testing.T) {
 `, second.ID.String(), first.ID.String())),
 	}}
 	router := chi.NewRouter()
+	s.MountStatic(router)
 	s.Mount(router)
 	var playRequests, metadataRequests, mediaRequests atomic.Int64
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
