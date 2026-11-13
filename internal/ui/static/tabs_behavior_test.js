@@ -79,6 +79,12 @@ class Element {
     this.classList.reset(value);
   }
 
+  set src(value) {
+    this._src = String(value);
+    if (this.contentWindow) this.contentWindow.location = {href: new URL(this._src, 'http://127.0.0.1:8080').href};
+  }
+  get src() { return this._src || ''; }
+
   get className() {
     return this._className;
   }
@@ -209,6 +215,11 @@ function shell(storage, search = '', confirmClose = () => true, requestFrameClos
       for (const listener of windowListeners.get('message') || []) {
         listener({origin, source, data});
       }
+    },
+    postTitle(index, title, origin = context.location.origin) {
+      const frame = frames()[index];
+      const data = {source:'obSetTitle', title, url:frame.contentWindow.location.href, documentToken:frame.contentWindow.obFrameCloseDocumentToken};
+      for (const listener of windowListeners.get('message') || []) listener({origin, source:frame.contentWindow, data});
     },
     markDirty(index, dirty = true) {
       const frame = frames()[index];
@@ -361,7 +372,7 @@ test('a delayed title from an inactive loading frame updates that tab and surviv
   app.open('/ui/b', 'B');
   const active = savedActive(storage);
 
-  app.post({source: 'obSetTitle', title: 'A loaded'}, 0);
+  app.postTitle(0, 'A loaded');
   assert.deepEqual(app.titles(), ['A loaded', 'B']);
   assert.deepEqual(app.labels(), ['A loaded', 'B']);
   assert.deepEqual(savedTabs(storage).map(tab => tab.title), ['A loaded', 'B']);
@@ -383,7 +394,7 @@ test('a title message selects its frame identity when two tabs share the same UR
   const ids = savedTabs(storage).map(tab => tab.id);
   const title = '<b>first loaded</b>';
 
-  app.post({source: 'obSetTitle', title}, 0);
+  app.postTitle(0, title);
   assert.deepEqual(app.titles(), [title, 'second']);
   assert.deepEqual(app.labels(), [title, 'second']);
   assert.deepEqual(savedTabs(storage).map(tab => tab.id), ids);
@@ -400,14 +411,14 @@ test('unknown or foreign title senders are ignored and the active frame can stil
   const active = savedActive(storage);
 
   app.post({source: 'obSetTitle', title: 'unknown'});
-  app.post({source: 'obSetTitle', title: 'foreign'}, 0, 'https://example.invalid');
+  app.postTitle(0, 'foreign', 'https://example.invalid');
   app.post({source: 'obSetTitle', title: ''}, 0);
   assert.deepEqual(app.titles(), ['A', 'B']);
   assert.deepEqual(app.labels(), ['A', 'B']);
   assert.equal(storage.getItem('obTabs'), before);
   assert.deepEqual(savedActive(storage), active);
 
-  app.post({source: 'obSetTitle', title: 'B loaded'}, 1);
+  app.postTitle(1, 'B loaded');
   assert.deepEqual(app.titles(), ['A', 'B loaded']);
   assert.deepEqual(app.labels(), ['A', 'B loaded']);
   assert.deepEqual(savedTabs(storage).map(tab => tab.title), ['A', 'B loaded']);
@@ -421,7 +432,7 @@ test('a known frame can update its title while the shell home is selected', () =
   const active = savedActive(storage);
   assert.equal(app.activeIndex(), -1);
 
-  app.post({source: 'obSetTitle', title: 'A loaded'}, 0);
+  app.postTitle(0, 'A loaded');
   assert.deepEqual(app.titles(), ['A loaded', 'B', 'C']);
   assert.deepEqual(app.labels(), ['A loaded', 'B', 'C']);
   assert.deepEqual(savedTabs(storage).map(tab => tab.title), ['A loaded', 'B', 'C']);
@@ -1257,4 +1268,20 @@ test('a waiting close belongs to the original Document even when its replacement
   app.replaceWithoutLoad(0, 'http://127.0.0.1:8080/ui/document/call/42');
   assert.equal(app.count(), 1);
   assert.equal(app.posted(0).length, 0);
+});
+
+
+test('title metadata rejects missing, wrong and stale document generations', () => {
+  const storage = new FakeStorage();
+  const app = shell(storage);
+  app.open('/ui/a', 'A');
+  const url = 'http://127.0.0.1:8080/ui/a';
+  app.post({source:'obSetTitle',title:'missing',url},0);
+  app.post({source:'obSetTitle',title:'wrong',url,documentToken:'wrong'},0);
+  app.post({source:'obSetTitle',title:'missing URL',documentToken:'initial-document'},0);
+  app.installManagedDocument(0,'next-document',()=>true);
+  app.post({source:'obSetTitle',title:'stale',url,documentToken:'initial-document'},0);
+  assert.deepEqual(app.titles(),['A']);
+  app.postTitle(0,'current');
+  assert.deepEqual(app.titles(),['current']);
 });

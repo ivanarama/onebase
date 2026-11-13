@@ -108,6 +108,8 @@ type Server struct {
 	concealClock         func() time.Time
 	closeIntentMu        sync.Mutex
 	closeIntents         *formCloseReplayLedger
+	resultFormMu         sync.Mutex
+	resultForms          map[string]resultFormContext
 	lockMgr              *runtime.LockManager   // #2 managed locks
 	entitySvc            *entityservice.Service // упсёрт + ТЧ + движения + проведение + удаление, разделяется с api
 	entitySvcOnce        sync.Once              // ленивая сборка для серверов, собранных напрямую (тесты, offline)
@@ -437,6 +439,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Post("/ui/journal/{name}/settings/reset", s.journalSettingsReset)
 	r.Get("/ui/processor/{name}", s.processorForm)
 	r.Post("/ui/processor/{name}", s.processorRun)
+	r.Post("/ui/_form-result/{token}/release", s.releaseResultForm)
 	r.Post("/ui/processor/{name}/form-event", s.handleProcessorFormEvent)
 	r.Post("/ui/processor/{name}/form-close-intent", s.handleProcessorFormCloseIntent)
 
