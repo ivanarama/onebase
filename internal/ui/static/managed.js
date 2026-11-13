@@ -564,13 +564,22 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     const sel = document.querySelector('select[data-el="' + (window.CSS && CSS.escape ? CSS.escape(elName) : elName) + '"]');
     if (!sel) return;
     const cur = sel.value;
+    const curText = sel.selectedIndex >= 0 && sel.options[sel.selectedIndex] ? sel.options[sel.selectedIndex].textContent : cur;
     while (sel.options.length) sel.remove(0);
     const o0 = document.createElement('option'); o0.value = ''; o0.textContent = '— выбрать —'; sel.appendChild(o0);
+    let kept = cur === '';
     for (let i = 0; i < list.length; i++){
       const o = document.createElement('option');
       o.value = list[i].value;
       o.textContent = (list[i].label != null && list[i].label !== '') ? list[i].label : list[i].value;
-      if (String(list[i].value) === String(cur)) o.selected = true;
+      if (String(list[i].value) === String(cur)) { o.selected = true; kept = true; }
+      sel.appendChild(o);
+    }
+    // Значения нет в новом списке — оставляем его выбранным, как 1С: иначе
+    // открытие списка без выбора молча стирало бы сохранённое значение.
+    if (!kept) {
+      const o = document.createElement('option');
+      o.value = cur; o.textContent = curText || cur; o.selected = true;
       sel.appendChild(o);
     }
   }
