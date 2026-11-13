@@ -462,8 +462,14 @@ func (i *Interpreter) execStmt(s ast.Stmt, e *env) {
 				}
 			}
 		case *Map:
-			for idx, key := range items.keys {
-				e.setLocal(v.Var.Literal, &KeyValue{Key: key, Value: items.vals[idx]})
+			items.compact()
+			keys, vals := items.keys, items.vals
+			for idx, key := range keys {
+				// Удалённый внутри цикла ключ пропускается (в срезе — метка).
+				if isMapTombstone(key) {
+					continue
+				}
+				e.setLocal(v.Var.Literal, &KeyValue{Key: key, Value: vals[idx]})
 				if !i.execLoopBody(v.Body, e) {
 					break
 				}

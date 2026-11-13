@@ -110,6 +110,7 @@ func protectReadOnlySeen(ec *execCtx, value any, traversal *readOnlyTraversal, d
 		if collection == nil {
 			return collection
 		}
+		collection.compact()
 		remaining := maxReadOnlyTraversalNodes - traversal.nodes
 		if len(collection.keys) > remaining || len(collection.vals) > remaining-len(collection.keys) {
 			traversal.allowChildren(maxReadOnlyTraversalNodes)

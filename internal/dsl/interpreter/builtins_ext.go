@@ -27,7 +27,7 @@ func isBlankVal(v any) bool {
 	case *Array:
 		return len(t.items) == 0
 	case *Map:
-		return len(t.keys) == 0
+		return t.count() == 0
 	case *Ref:
 		return isEmptyRefUUID(t.UUID)
 	case time.Time:

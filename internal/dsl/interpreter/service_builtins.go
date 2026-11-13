@@ -305,6 +305,7 @@ func (r *DSLServiceResponse) BodyBytes() []byte    { return r.body }
 
 // HeadersMap разворачивает Соответствие-заголовки в обычную карту строк.
 func (r *DSLServiceResponse) HeadersMap() map[string]string {
+	r.headers.compact()
 	out := make(map[string]string, len(r.headers.keys))
 	for i, k := range r.headers.keys {
 		out[fmt.Sprintf("%v", k)] = fmt.Sprintf("%v", r.headers.vals[i])

@@ -100,6 +100,7 @@ func valueToJSONSeen(v any, stack map[jsonValueVisit]bool, depth int) any {
 		}
 		stack[visit] = true
 		defer delete(stack, visit)
+		x.compact()
 		obj := make(map[string]any, len(x.keys))
 		for i, k := range x.keys {
 			obj[fmt.Sprintf("%v", k)] = valueToJSONSeen(x.vals[i], stack, depth+1)
