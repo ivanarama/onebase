@@ -318,7 +318,6 @@ func (r *Runner) runList(ctx context.Context, w *metadata.Widget, params map[str
 	// именно на объявленную сущность. Любая неоднозначность — строки просто
 	// остаются некликабельными, виджет продолжает работать.
 	idCol, rawIDs := r.navigationIDs(w, cols, rows, compiled)
-	r.resolveUUIDs(ctx, rows)
 	if len(rawIDs) > 0 {
 		entity := r.Reg.GetEntity(w.Source.Entity)
 		for i, row := range rows {
@@ -342,6 +341,11 @@ func (r *Runner) runList(ctx context.Context, w *metadata.Widget, params map[str
 	}
 	res.Rows = rows
 	res.Columns = columnsForList(w, displayCols)
+	visible := make(map[string]bool, len(res.Columns))
+	for _, col := range res.Columns {
+		visible[col.Field] = true
+	}
+	r.resolveUUIDsForColumns(ctx, rows, visible)
 }
 
 func (r *Runner) runChart(ctx context.Context, w *metadata.Widget, params map[string]any, res *Result) {
@@ -530,9 +534,19 @@ func (r *Runner) runRecent(ctx context.Context, w *metadata.Widget, res *Result)
 // ui.resolveUUIDsInReport but kept inside the widget package to avoid a
 // circular import.
 func (r *Runner) resolveUUIDs(ctx context.Context, rows []map[string]any) {
+	r.resolveUUIDsForColumns(ctx, rows, nil)
+}
+
+// Hidden navigation/style columns never reach the rendered table. Looking up
+// their UUIDs can scan every readable entity for each row without showing a
+// single label. Visible columns keep the same lookup, masking and row access.
+func (r *Runner) resolveUUIDsForColumns(ctx context.Context, rows []map[string]any, visible map[string]bool) {
 	uuidToLabel := make(map[string]string)
 	for _, row := range rows {
-		for _, v := range row {
+		for col, v := range row {
+			if visible != nil && !visible[col] {
+				continue
+			}
 			if str, ok := v.(string); ok {
 				if _, err := uuid.Parse(str); err == nil {
 					uuidToLabel[str] = ""
@@ -581,6 +595,9 @@ func (r *Runner) resolveUUIDs(ctx context.Context, rows []map[string]any) {
 	}
 	for _, row := range rows {
 		for col, v := range row {
+			if visible != nil && !visible[col] {
+				continue
+			}
 			if str, ok := v.(string); ok {
 				if label, found := uuidToLabel[str]; found && label != "" {
 					row[col] = label
