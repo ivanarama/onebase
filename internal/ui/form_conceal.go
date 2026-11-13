@@ -144,7 +144,7 @@ func (cr *concealRequest) instance() (*concealInstance, string) {
 			formKind = kind
 		}
 	}
-	form := pickManagedForm(cr.entity, formKind)
+	form := pickManagedFormCtx(cr.request.Context(), cr.entity, formKind)
 	if !valid || e.authorization != authorization || e.generation != s.reg.Generation() || e.store != s.store || e.entity != cr.entity || e.form != form || e.object != object || e.schema != entityFormCloseSchema(cr.entity, form) || !s.concealNow().Before(e.expires) {
 		delete(s.concealInstances, token)
 		return nil, token
