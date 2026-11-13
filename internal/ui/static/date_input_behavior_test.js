@@ -28,3 +28,10 @@ test('Escape restores the previous native date',()=>{const c=setup('date','2020-
 test('Delete remains a real edit before committing empty',()=>{const c=setup('date','2020-01-02');c.key('Delete');c.key('Enter');assert.equal(c.input.value,'');assert.equal(c.input.type,'date');assert.equal(c.input.trustedInputs,1);});
 test('unmodified native date Enter does not submit',()=>{const c=setup('date','2026-11-13');c.key('Enter');assert.equal(c.input.type,'date');assert.equal(c.input.value,'2026-11-13');assert.equal(c.input.submitted,undefined);assert.equal(c.input.blurred,1);});
 test('readonly and modifier behavior stays native',()=>{const c=setup('date','2026-11-13');c.input.readOnly=true;c.type('7');assert.equal(c.input.type,'date');assert.equal(c.input.value,'2026-11-13');const ev=c.fire('keydown',{key:'Enter',ctrlKey:true});assert.equal(ev.defaultPrevented,undefined);});
+
+test('readonly date Enter never submits or changes the native value',()=>{
+ const c=setup('date','2026-11-13');c.input.readOnly=true;
+ const ev=c.key('Enter');assert.equal(ev.defaultPrevented,true);
+ assert.equal(c.input.value,'2026-11-13');assert.equal(c.input.type,'date');
+ assert.equal(c.input.submitted,undefined);assert.equal(c.input.trustedInputs,0);
+});

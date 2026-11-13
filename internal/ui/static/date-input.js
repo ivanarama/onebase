@@ -60,7 +60,16 @@
   }
   document.addEventListener('keydown', function (event) {
     var el = event.target;
-    if (!dateInput(el) || event.isComposing || event.ctrlKey || event.altKey || event.metaKey) return;
+    if (event.isComposing || event.ctrlKey || event.altKey || event.metaKey) return;
+    // Read-only dates also consume Enter instead of submitting the enclosing
+    // form; their value and edit state remain untouched.
+    if (el && el.tagName === 'INPUT' && !el.disabled && el.readOnly &&
+        (el.type === 'date' || el.type === 'datetime-local') && event.key === 'Enter') {
+      event.preventDefault(); event.stopPropagation();
+      if (!(typeof window.obEnterNavigateFrom === 'function' && window.obEnterNavigateFrom(el))) el.blur();
+      return;
+    }
+    if (!dateInput(el)) return;
     if (event.key === 'Escape' && editing.has(el)) {
       var state = editing.get(el); el.setCustomValidity(''); el.type = state.type; el.value = state.value; editing.delete(el);
       event.preventDefault(); event.stopPropagation(); return;
