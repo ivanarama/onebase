@@ -695,6 +695,7 @@ const cfgTabTree = `{{define "tab-tree"}}
             <div class="fg" style="flex:1"><label>{{t $.Lang "Поле-ссылка"}}</label>
               <input type="text" name="comp.detail_link" value="{{if .Composition}}{{.Composition.DetailLink}}{{end}}" placeholder="{{t $.Lang "колонка запроса с UUID документа"}}" title="{{t $.Lang "колонка запроса с UUID документа"}}" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"></div>
             <div class="fg" style="flex:1"><label>{{t $.Lang "Сущность (расшифровка)"}}</label>
+              {{if .Composition}}{{range $i, $d := .Composition.DetailFields}}<input type="hidden" name="comp.detail_field.{{$i}}.field" value="{{$d.Field}}"><input type="hidden" name="comp.detail_field.{{$i}}.title" value="{{$d.Title}}">{{end}}{{end}}
               <input type="text" name="comp.detail_entity" value="{{if .Composition}}{{.Composition.DetailEntity}}{{end}}" placeholder="{{t $.Lang "имя документа для перехода"}}" title="{{t $.Lang "имя документа для перехода"}}" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"></div>
           </div>
           <div class="section-hd" style="margin-top:12px">{{t $.Lang "Сортировка"}}
