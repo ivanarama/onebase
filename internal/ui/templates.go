@@ -249,6 +249,28 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			form, _ := v.(*metadata.FormModule)
 			return form != nil && form.EnterSubmitsForm
 		},
+		// formDensityClass — класс плотности раскладки на <html> страницы формы
+		// (form.density) либо ролевой default плотности объектной/processor-формы.
+		// Явная плотность формы всегда приоритетнее default.
+		"formDensityClass": func(page any) string {
+			data, _ := page.(map[string]any)
+			form, _ := data["Form"].(*metadata.FormModule)
+			density, _ := data["DefaultFormDensity"].(string)
+			if form != nil && form.Density != "" {
+				density = form.Density
+			}
+			class := ""
+			switch density {
+			case metadata.FormDensityCompact:
+				class = "ob-density-compact"
+			case metadata.FormDensityDense:
+				class = "ob-density-compact ob-density-dense"
+			}
+			if active, _ := data["AutoFormDensity"].(bool); active && class != "" {
+				class += " ob-auto-form-density"
+			}
+			return class
+		},
 		"processorParamPresenceName": func(proc *processorpkg.Processor, name string) string {
 			if proc == nil {
 				return processorParamPresencePrefix + name
@@ -1517,7 +1539,7 @@ func templateSource() string {
 
 const tplHead = `
 {{define "head"}}<!DOCTYPE html>
-<html lang="ru"><head><meta charset="UTF-8">
+<html lang="ru"{{with formDensityClass .}} class="{{.}}"{{end}}><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#1e293b">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -1542,8 +1564,51 @@ const tplHead = `
   "imageError" (t (or $.Lang "ru") "Не удалось загрузить изображение")
   "imageArea" (t (or $.Lang "ru") "Область просмотра изображения")
 )}}</script>
-{{messagesMeta .}}<script src="/static/ui.js"></script>
-<style>
+{{messagesMeta .}}<script src="/static/ui.js"></script>{{if .UseShortDateInput}}<script type="application/json" id="ob-date-input-i18n">{{jsJSON (dict "invalid" (t $.Lang "Введите корректную дату"))}}</script><script src="/static/date-input.js"></script>{{end}}{{if .CompactReport}}<script src="/static/report-controls.js"></script>{{end}}{{if .CompactReport}}<style id="ob-report-density-css">
+.ob-report-compact{padding:8px 12px}
+.ob-report-compact.ob-report-dense{padding:6px 10px}
+.ob-report-titlebar{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;margin-bottom:4px}
+.ob-report-titlebar>h2{flex:1;margin:0;font-size:18px;line-height:24px}
+.ob-report-commandbar{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.ob-report-commandbar>div{margin:0!important;gap:6px!important}
+.ob-report-compact .btn{padding:3px 8px;font-size:12px;line-height:18px}
+.ob-report-compact>.report-block{margin-bottom:4px!important;padding:0;border-radius:2px;box-shadow:none}
+.ob-report-compact .report-block>summary{padding:3px 8px;font-size:12px;line-height:18px}
+.ob-report-compact .report-block>form{padding:4px 8px}
+.ob-report-compact form[data-ob-report-params]{display:flex;flex-wrap:wrap;align-items:end;gap:4px 8px}
+.ob-report-compact .ob-report-param-grid{display:contents!important}
+.ob-report-compact .form-group{margin-bottom:4px!important}
+.ob-report-compact form[data-ob-report-params] .form-group{flex:0 1 180px;min-width:120px;max-width:240px!important}
+.ob-report-compact label{font-size:12px;line-height:16px;margin-bottom:2px}
+.ob-report-compact input:not([type=checkbox]):not([type=radio]),.ob-report-compact select{min-height:0;height:26px;padding:2px 6px;font-size:12px}
+.ob-report-compact .card{padding:4px 8px}
+.ob-report-compact table th{padding:3px 6px}
+.ob-report-compact table td{padding:2px 6px}
+.ob-report-compact .report-block>form>div[style*="margin-bottom"]{margin-bottom:4px!important;gap:4px 8px!important}
+@media(max-width:640px){.ob-report-titlebar{align-items:flex-start}.ob-report-commandbar{width:100%}}
+</style>{{end}}
+{{if .AutoFormDensity}}<style id="ob-auto-form-density-css">
+/* Only role-selected automatic forms receive these rules; no new JS/SQL. */
+.ob-auto-form-density{--ob-auto-gap:8px;--ob-auto-pad:12px;--ob-auto-height:28px;--ob-auto-font:13px}
+.ob-auto-form-density.ob-density-dense{--ob-auto-gap:4px;--ob-auto-pad:6px;--ob-auto-height:25px;--ob-auto-font:12.5px}
+.ob-auto-form-density main{padding:var(--ob-auto-pad)}
+.ob-auto-form-density main>h2,.ob-auto-form-density main>div:first-child h2{font-size:18px;margin-bottom:var(--ob-auto-gap)}
+.ob-auto-form-density main>div[style*="margin-bottom"]{margin-bottom:var(--ob-auto-gap)!important;gap:6px!important}
+.ob-auto-form-density .card{padding:var(--ob-auto-pad)}
+.ob-auto-form-density .form-group{margin-bottom:var(--ob-auto-gap)}
+.ob-auto-form-density label{font-size:12px;line-height:14px;margin-bottom:2px}
+.ob-auto-form-density input[type=text],.ob-auto-form-density input[type=date],.ob-auto-form-density input[type=datetime-local],.ob-auto-form-density input[type=number],.ob-auto-form-density select{height:var(--ob-auto-height);padding:2px 7px;font-size:var(--ob-auto-font)}
+.ob-auto-form-density textarea{padding:3px 7px;font-size:var(--ob-auto-font)}
+.ob-auto-form-density .btn{padding:4px 9px;font-size:var(--ob-auto-font)}
+.ob-auto-form-density [data-ob-ref-picker],.ob-auto-form-density [data-ob-ref-current]{height:var(--ob-auto-height);padding:2px 6px!important;font-size:var(--ob-auto-font)!important}
+.ob-auto-form-density form>div[style*="display:grid"]{gap:var(--ob-auto-gap)!important;margin-bottom:var(--ob-auto-gap)!important}
+.ob-auto-form-density h3{margin:var(--ob-auto-gap) 0 4px!important;font-size:14px!important}
+.ob-auto-form-density details{margin-bottom:var(--ob-auto-gap)}
+.ob-auto-form-density details summary{padding:4px 8px;font-size:12px}
+.ob-auto-form-density .tp-table th{padding:4px 6px;font-size:12px}
+.ob-auto-form-density .tp-table td{padding:2px 4px}
+</style>
+{{end}}<style>
 .ob-embedded .topbar,.ob-embedded .subsys-bar,.ob-embedded #ob-nav{display:none!important}
 *{box-sizing:border-box;margin:0;padding:0}
 /* height:100vh + overflow:hidden — окно приложения ровно по экрану. С одним лишь
@@ -1631,6 +1696,15 @@ th a:hover{color:#1e293b}
 td{padding:10px 12px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:14px}
 tr:last-child td{border-bottom:none}
 tr:hover td{background:#f8fafc}
+/* app.yaml ui.list_density: compact — плотные списки, журналы, регистры и
+   виджеты-списки, как в 1С: 12px, строка ≈ 22px, видимые границы строк и
+   столбцов. Табличные части, «ключ — значение» и всё внутри формы объекта
+   (#main-form) не трогаются. */
+.ob-compact-lists main table:not(.tp-table):not(.tbl-plain):not(#main-form *){font-size:12px}
+.ob-compact-lists main table:not(.tp-table):not(.tbl-plain):not(#main-form *) th,
+.ob-compact-lists main table:not(.tp-table):not(.tbl-plain):not(#main-form *) td{padding:2px 6px;font-size:12px;line-height:17px;border:1px solid #cbd5e1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:420px}
+.ob-compact-lists main table:not(.tp-table):not(.tbl-plain):not(#main-form *) th{background:#e8edf3;border-bottom:1px solid #94a3b8;font-weight:600}
+.ob-compact-lists main table:not(.tp-table):not(.tbl-plain):not(#main-form *) tr:last-child td{border-bottom:1px solid #cbd5e1}
 .btn{display:inline-block;padding:8px 18px;border-radius:7px;font-size:14px;font-weight:500;text-decoration:none;cursor:pointer;border:none;line-height:1}
 .btn-primary{background:#3b82f6;color:#fff}.btn-primary:hover{background:#2563eb}
 .btn-post{background:#e8b400;color:#1a1a1a;font-weight:700}.btn-post:hover{background:#d4a200}
@@ -1783,7 +1857,7 @@ body{padding-bottom:32px}
 .img-actions{display:flex;gap:8px;align-items:center}
 .img-field label.btn{cursor:pointer;margin:0}
 </style>
-</head><body data-ob-dev="{{if .Cfg.Dev}}1{{else}}0{{end}}">
+</head><body data-ob-dev="{{if .Cfg.Dev}}1{{else}}0{{end}}"{{if .Cfg.CompactLists}} class="ob-compact-lists"{{end}}>
 {{end}}
 `
 
@@ -2114,6 +2188,7 @@ a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 
 const tplList = `
 {{define "detail-panel"}}
+{{if not .Cfg.HideListDetailPanel}}
 <aside class="ob-detail" id="ob-detail" hidden data-ob-default-width="{{detailPanelDefaultWidth .Entity}}" aria-label="{{t $.Lang "Детали записи"}}">
   <div class="ob-detail-grip" data-ob-detail-grip title="{{t $.Lang "Потяните, чтобы изменить ширину"}}"></div>
   <div class="ob-detail-body">
@@ -2127,11 +2202,14 @@ const tplList = `
   </div>
 </aside>
 {{end}}
+{{end}}
 
 {{define "detail-panel-toggle"}}
+{{if not .Cfg.HideListDetailPanel}}
 <div class="view-switch">
   <button class="view-btn" type="button" data-ob-detail-toggle aria-controls="ob-detail" aria-expanded="false" title="{{t $.Lang "Детали записи"}}">▤</button>
 </div>
+{{end}}
 {{end}}
 
 {{define "list-refresh"}}
@@ -2300,7 +2378,7 @@ const tplList = `
   data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
 ><thead><tr>
   {{range $treeCols}}<th>{{.DisplayName $.Lang}}</th>{{end}}
-  <th style="width:90px"></th>
+  {{if not $.Cfg.HideListRowActions}}<th style="width:90px"></th>{{end}}
 </tr></thead><tbody>
 {{range .TreeRows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}{{$depth := index $row "_depth"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
@@ -2332,6 +2410,7 @@ const tplList = `
     {{else if isEnum (str $col.Type)}}<td>{{enumLabel $.EnumLabels $col.Name (str (index $row $col.Name))}}</td>
     {{else}}<td>{{fmtCell (index $row $col.Name)}}</td>{{end}}
   {{end}}
+  {{if not $.Cfg.HideListRowActions}}
   <td>
     {{if $isFolder}}
       <a class="btn btn-sm btn-secondary" href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "view" "" "parent" (str (index $row "id"))}}">{{t $.Lang "▶ Войти"}}</a>
@@ -2339,6 +2418,7 @@ const tplList = `
       <a class="btn btn-sm btn-primary" href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "Открыть"}}</a>
     {{end}}
   </td>
+  {{end}}
 </tr>{{end}}
 </tbody></table>
 </div>
@@ -2405,7 +2485,7 @@ const tplList = `
   </th>
   {{end}}
   {{if $.SearchAll}}<th>{{t $.Lang "Группа"}}</th>{{end}}
-  <th style="width:90px"></th>
+  {{if not $.Cfg.HideListRowActions}}<th style="width:90px"></th>{{end}}
 </tr></thead><tbody id="list-body"
   data-ob-row-base="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}"
   data-ob-row-subsystem="{{$.CurrentSubsystem}}"
@@ -2438,6 +2518,7 @@ const tplList = `
     {{else}}<td style="white-space:nowrap">{{if and (eq .Name "Наименование") $.Entity.Hierarchical}}{{if $isFolder}}📁 {{else}}📄 {{end}}{{end}}{{fmtCell (index $row .Name)}}{{if and (eq .Name "Наименование") (index $row "_is_predefined")}} <span title="{{t $.Lang "Предопределённый элемент"}}" style="color:#f59e0b;font-size:11px">★</span>{{end}}</td>{{end}}
   {{end}}
   {{if $.SearchAll}}<td style="white-space:nowrap" data-ob-list-group>{{with index $row "_group_id"}}<a href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}?parent={{.}}{{if $.CurrentSubsystem}}&subsystem={{$.CurrentSubsystem}}{{end}}">📁 {{index $row "_group_label"}}</a>{{else}}<span style="color:#94a3b8">{{t $.Lang "Корень"}}</span>{{end}}</td>{{end}}
+  {{if not $.Cfg.HideListRowActions}}
   <td>
     {{if and $isFolder $.Entity.Hierarchical}}
       <a class="btn btn-sm btn-secondary" href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" (str (index $row "id"))}}">{{t $.Lang "▶ Войти"}}</a>
@@ -2445,6 +2526,7 @@ const tplList = `
       <a class="btn btn-sm btn-primary" href="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/{{index $row "id"}}{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "Открыть"}}</a>
     {{end}}
   </td>
+  {{end}}
 </tr>{{end}}
 </tbody></table>
 </div>
@@ -2475,6 +2557,7 @@ const tplList = `
 </div>
 </main>
 <script type="application/json" id="ob-list-config">{{jsJSON (dict
+  "hideRowActions" .Cfg.HideListRowActions
   "isAdmin" .IsAdmin
   "canWrite" .CanWrite
   "canDelete" .CanDelete
@@ -2822,7 +2905,7 @@ const tplForm = `
      роуты POST /ui/<kind>/<entity>/<id>/attachments). Показывается для
      сохранённой записи объекта (не новая, не попап, не обработка). */}}
 {{define "ob-attachments"}}
-{{if and (not .IsNew) (not .IsPopup) (not .IsProcessor)}}
+{{if and (not .Cfg.HideAttachments) (not .IsNew) (not .IsPopup) (not .IsProcessor)}}
 <div class="card" style="margin-top:16px" data-ob-attachments data-attachments-url="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/attachments">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
     <h3 style="margin:0;font-size:14px;font-weight:600;color:#374151">{{t $.Lang "Вложения"}}</h3>
@@ -2948,15 +3031,24 @@ const tplReport = `
 {{end}}
 {{define "page-report"}}
 {{template "head" .}}{{template "nav" .}}
-<main>
+<main{{if .CompactReport}} class="ob-report-compact{{if eq .ReportDensity "dense"}} ob-report-dense{{end}}"{{end}}>
+{{if .CompactReport}}<div class="ob-report-titlebar">
+<h2>{{.Report.DisplayName $.Lang}}</h2>
+<div class="ob-report-commandbar">
+  {{if not (or .ReportParams .Report.Variants .ReportPresets)}}<form id="ob-report-params" method="POST" hidden>{{if .UserSettings}}<input type="hidden" name="__settings" value="{{if .ReportSettingsJSON}}{{.ReportSettingsJSON}}{{else}}{{.UserSettings.JSON}}{{end}}">{{end}}</form>{{end}}
+  <button class="btn btn-primary" type="submit" form="ob-report-params">{{t $.Lang "Сформировать"}}</button>
+  {{if or .Cols .ComposedHTML}}{{template "report-export-buttons" .}}{{end}}
+  <a class="btn btn-sm" href="/ui/export-jobs">{{t $.Lang "Мои выгрузки"}}</a>
+</div>
+</div>{{else}}
 <h2>{{.Report.DisplayName $.Lang}}</h2>
 <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
   <a class="btn btn-sm" href="/ui/export-jobs">{{t $.Lang "Мои выгрузки"}}</a>
-</div>
+</div>{{end}}
 {{if or .ReportParams .Report.Variants .ReportPresets}}
 <details class="card report-block" data-block="params" open style="margin-bottom:16px">
 <summary>{{t $.Lang "Параметры"}}</summary>
-<form method="POST">
+<form method="POST"{{if .CompactReport}} id="ob-report-params" data-ob-report-params{{end}}>
   {{if .UserSettings}}<input type="hidden" name="__settings" value="{{if .ReportSettingsJSON}}{{.ReportSettingsJSON}}{{else}}{{.UserSettings.JSON}}{{end}}">{{end}}
   {{if .ReportPresets}}
   <div class="form-group" style="margin-bottom:16px;max-width:360px">
@@ -2977,7 +3069,7 @@ const tplReport = `
   </div>
   {{end}}
   {{if .ReportParams}}
-  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px">
+  <div{{if .CompactReport}} class="ob-report-param-grid"{{end}} style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px">
   {{range .ReportParams}}{{$p := .}}{{$pname := .Name}}{{$pval := str (index $.ParamValues .Name)}}
     {{if $p.IsBool}}
     <div class="form-group" style="margin-bottom:0">
@@ -3024,7 +3116,7 @@ const tplReport = `
   {{end}}
   </div>
   {{end}}
-  <button class="btn btn-primary" type="submit">{{t $.Lang "Сформировать"}}</button>
+  {{if not .CompactReport}}<button class="btn btn-primary" type="submit">{{t $.Lang "Сформировать"}}</button>{{end}}
 </form>
 </details>
 {{end}}
@@ -3138,7 +3230,7 @@ const tplReport = `
 {{if .ComposedHTML}}
 {{if .Capped}}<div class="card" style="background:#fffbeb;border-color:#fde68a;margin-bottom:8px;padding:8px 12px">{{t $.Lang "Показаны первые строки — данных больше потолка."}}</div>{{end}}
 {{if .ComposeWarnings}}<div class="card" style="background:#fef2f2;border-color:#fecaca;margin-bottom:8px;padding:8px 12px"><strong>{{t $.Lang "Предупреждения компоновки:"}}</strong><ul style="margin:4px 0 0;padding-left:20px">{{range .ComposeWarnings}}<li>{{.}}</li>{{end}}</ul></div>{{end}}
-{{template "report-export-buttons" .}}
+{{if not .CompactReport}}{{template "report-export-buttons" .}}{{end}}
 <details class="card report-block" data-block="data" open>
 <summary>{{t $.Lang "Данные"}}</summary>
 <div class="rc-toolbar" style="margin-bottom:8px;display:flex;gap:8px"><button type="button" id="rc-expand" class="btn btn-sm">{{t $.Lang "Развернуть всё"}}</button><button type="button" id="rc-collapse" class="btn btn-sm">{{t $.Lang "Свернуть всё"}}</button></div>
@@ -3146,7 +3238,7 @@ const tplReport = `
 </details>
 {{end}}
 {{if .Cols}}
-{{template "report-export-buttons" .}}
+{{if not .CompactReport}}{{template "report-export-buttons" .}}{{end}}
 <div class="card">
 {{if .Rows}}
 <table><thead><tr>{{range .Cols}}<th>{{.}}</th>{{end}}</tr></thead>

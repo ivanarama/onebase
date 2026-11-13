@@ -736,9 +736,13 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	if data == nil {
 		data = make(map[string]any)
 	}
-	if _, ok := data["Cfg"]; !ok {
-		data["Cfg"] = s.cfg
+	if supplied, ok := data["Cfg"].(Config); ok {
+		data["Cfg"] = s.uiConfigForRequest(r, supplied)
+	} else if _, ok := data["Cfg"]; !ok {
+		data["Cfg"] = s.uiConfigForRequest(r)
 	}
+	prepareDefaultFormDensity(name, data)
+	prepareReportControls(name, data)
 	s.addHelpContext(r, data)
 	// Параметры текущего запроса — из них шаблоны строят ссылки «то же самое,
 	// но с другим X» (listURL/listHidden), не собирая строку запроса по кускам

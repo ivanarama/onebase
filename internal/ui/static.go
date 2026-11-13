@@ -16,6 +16,12 @@ var uiJS []byte
 //go:embed static/managed.js
 var managedJS []byte
 
+//go:embed static/date-input.js
+var dateInputJS []byte
+
+//go:embed static/report-controls.js
+var reportControlsJS []byte
+
 //go:embed static/query-builder.js
 var queryBuilderJS []byte
 
@@ -26,6 +32,8 @@ var settingsNavigationJS []byte
 var (
 	uiJSETag                 = assetETag(uiJS)
 	managedJSETag            = assetETag(managedJS)
+	dateInputJSETag          = assetETag(dateInputJS)
+	reportControlsJSETag     = assetETag(reportControlsJS)
 	queryBuilderJSETag       = assetETag(queryBuilderJS)
 	settingsNavigationJSETag = assetETag(settingsNavigationJS)
 )
@@ -58,6 +66,10 @@ func serveAppJS(w http.ResponseWriter, r *http.Request, body []byte, etag string
 // тем же путём, что и в конфигураторе лаунчера, чтобы рабочий стол и
 // предпросмотр виджетов рисовались идентично.
 func mountStatic(r chi.Router) {
+	r.Get("/static/date-input.js", func(w http.ResponseWriter, req *http.Request) { serveAppJS(w, req, dateInputJS, dateInputJSETag) })
+	r.Get("/static/report-controls.js", func(w http.ResponseWriter, req *http.Request) {
+		serveAppJS(w, req, reportControlsJS, reportControlsJSETag)
+	})
 	r.Get("/static/settings-navigation.js", func(w http.ResponseWriter, req *http.Request) {
 		serveAppJS(w, req, settingsNavigationJS, settingsNavigationJSETag)
 	})
