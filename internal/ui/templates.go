@@ -250,23 +250,26 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return form != nil && form.EnterSubmitsForm
 		},
 		// formDensityClass — класс плотности раскладки на <html> страницы формы
-		// (form.density). Данные страницы — карта с ключом Form только у
-		// управляемой формы; у остальных страниц класса нет.
+		// (form.density) либо ролевой default плотности объектной/processor-формы.
+		// Явная плотность формы всегда приоритетнее default.
 		"formDensityClass": func(page any) string {
 			data, _ := page.(map[string]any)
 			form, _ := data["Form"].(*metadata.FormModule)
-			if form == nil {
-				return ""
+			density, _ := data["DefaultFormDensity"].(string)
+			if form != nil && form.Density != "" {
+				density = form.Density
 			}
-			switch form.Density {
+			class := ""
+			switch density {
 			case metadata.FormDensityCompact:
-				return "ob-density-compact"
+				class = "ob-density-compact"
 			case metadata.FormDensityDense:
-				// dense уточняет compact: правила compact (табличные части,
-				// вкладки) действуют, dense переопределяет поля и отступы.
-				return "ob-density-compact ob-density-dense"
+				class = "ob-density-compact ob-density-dense"
 			}
-			return ""
+			if active, _ := data["AutoFormDensity"].(bool); active && class != "" {
+				class += " ob-auto-form-density"
+			}
+			return class
 		},
 		"processorParamPresenceName": func(proc *processorpkg.Processor, name string) string {
 			if proc == nil {
@@ -1560,7 +1563,28 @@ const tplHead = `
   "imageArea" (t (or $.Lang "ru") "Область просмотра изображения")
 )}}</script>
 {{messagesMeta .}}<script src="/static/ui.js"></script>
-<style>
+{{if .AutoFormDensity}}<style id="ob-auto-form-density-css">
+/* Only role-selected automatic forms receive these rules; no new JS/SQL. */
+.ob-auto-form-density{--ob-auto-gap:8px;--ob-auto-pad:12px;--ob-auto-height:28px;--ob-auto-font:13px}
+.ob-auto-form-density.ob-density-dense{--ob-auto-gap:4px;--ob-auto-pad:6px;--ob-auto-height:25px;--ob-auto-font:12.5px}
+.ob-auto-form-density main{padding:var(--ob-auto-pad)}
+.ob-auto-form-density main>h2,.ob-auto-form-density main>div:first-child h2{font-size:18px;margin-bottom:var(--ob-auto-gap)}
+.ob-auto-form-density main>div[style*="margin-bottom"]{margin-bottom:var(--ob-auto-gap)!important;gap:6px!important}
+.ob-auto-form-density .card{padding:var(--ob-auto-pad)}
+.ob-auto-form-density .form-group{margin-bottom:var(--ob-auto-gap)}
+.ob-auto-form-density label{font-size:12px;line-height:14px;margin-bottom:2px}
+.ob-auto-form-density input[type=text],.ob-auto-form-density input[type=date],.ob-auto-form-density input[type=datetime-local],.ob-auto-form-density input[type=number],.ob-auto-form-density select{height:var(--ob-auto-height);padding:2px 7px;font-size:var(--ob-auto-font)}
+.ob-auto-form-density textarea{padding:3px 7px;font-size:var(--ob-auto-font)}
+.ob-auto-form-density .btn{padding:4px 9px;font-size:var(--ob-auto-font)}
+.ob-auto-form-density [data-ob-ref-picker],.ob-auto-form-density [data-ob-ref-current]{height:var(--ob-auto-height);padding:2px 6px!important;font-size:var(--ob-auto-font)!important}
+.ob-auto-form-density form>div[style*="display:grid"]{gap:var(--ob-auto-gap)!important;margin-bottom:var(--ob-auto-gap)!important}
+.ob-auto-form-density h3{margin:var(--ob-auto-gap) 0 4px!important;font-size:14px!important}
+.ob-auto-form-density details{margin-bottom:var(--ob-auto-gap)}
+.ob-auto-form-density details summary{padding:4px 8px;font-size:12px}
+.ob-auto-form-density .tp-table th{padding:4px 6px;font-size:12px}
+.ob-auto-form-density .tp-table td{padding:2px 4px}
+</style>
+{{end}}<style>
 .ob-embedded .topbar,.ob-embedded .subsys-bar,.ob-embedded #ob-nav{display:none!important}
 *{box-sizing:border-box;margin:0;padding:0}
 /* height:100vh + overflow:hidden — окно приложения ровно по экрану. С одним лишь
