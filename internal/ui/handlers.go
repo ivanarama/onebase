@@ -739,6 +739,17 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	if _, ok := data["Cfg"]; !ok {
 		data["Cfg"] = s.cfg
 	}
+	if name == "page-list" {
+		scope := "open-access"
+		if user := auth.UserFromContext(r.Context()); user != nil {
+			if user.ID != "" {
+				scope = "id:" + user.ID
+			} else {
+				scope = "login:" + user.Login
+			}
+		}
+		data["ListPanelScope"] = scope
+	}
 	s.addHelpContext(r, data)
 	// Параметры текущего запроса — из них шаблоны строят ссылки «то же самое,
 	// но с другим X» (listURL/listHidden), не собирая строку запроса по кускам

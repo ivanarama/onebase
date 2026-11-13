@@ -1661,6 +1661,35 @@ details[open] summary::before{content:"▼ "}
 .filter-body label{font-size:12px;color:#64748b;margin-bottom:3px}
 .filter-body input,.filter-body select{padding:7px 10px;font-size:13px}
 .filter-actions{padding:0 20px 16px;display:flex;gap:10px}
+
+/* List controls retain their separate rows; only their vertical density changes. */
+.ob-list-panels>.row-top{margin-bottom:4px}
+.ob-list-panels>.row-top h2{margin:0}
+.ob-list-panels>.ob-list-search{margin-bottom:4px!important}
+.ob-list-panels>.ob-list-search input{height:26px;box-sizing:border-box;padding:2px 8px!important;font-size:12px!important}
+.ob-list-panels>details{margin-bottom:4px!important;border-radius:0;box-shadow:none;background:transparent;padding:0}
+.ob-list-panels>details>summary{padding:3px 8px;font-size:12px;line-height:18px}
+.ob-list-panels .ob-list-filters>form{display:flex;flex-wrap:wrap;align-items:flex-end;gap:4px 8px;padding:0 8px 4px}
+.ob-list-panels .filter-body{display:contents}
+.ob-list-panels .filter-body>div{flex:0 1 170px;min-width:0}
+.ob-list-panels .filter-body label{margin:0;line-height:16px}
+.ob-list-panels .filter-body input,.ob-list-panels .filter-body select{box-sizing:border-box;width:100%;height:26px;padding:2px 6px;font-size:12px}
+.ob-list-panels .filter-actions{padding:0;gap:6px;align-items:center}
+.ob-list-panels .filter-actions .btn,.ob-list-panels .filter-body button{height:26px;box-sizing:border-box;padding:2px 8px!important;font-size:12px!important;line-height:20px}
+.ob-list-panels .ob-filter-more{margin:2px 0 0!important;box-shadow:none;background:transparent}
+.ob-list-panels .ob-filter-more>summary{padding:2px 8px;font-size:12px;line-height:18px}
+.ob-list-panels .ob-filter-more>form,.ob-list-panels .ob-list-settings>form{padding:0 8px 4px!important}
+.ob-list-panels .ob-list-settings table{margin:0 0 4px!important}
+.ob-list-panels .ob-list-settings th{height:24px;padding:1px 6px!important;font-size:12px;line-height:18px}
+.ob-list-panels .ob-list-settings td{height:28px;box-sizing:border-box;padding:1px 6px!important;font-size:12px;line-height:18px}
+.ob-list-panels .ls-width{height:24px;box-sizing:border-box;padding:1px 4px;font-size:12px;line-height:20px}
+.ob-list-panels .ls-visible{width:14px;height:14px;margin:0;vertical-align:middle}
+.ob-list-panels .ob-list-settings .btn{height:24px;box-sizing:border-box;padding:1px 8px;font-size:12px;line-height:20px}
+.ob-list-panels .ob-list-settings [data-ob-ls-move]{height:22px;padding:0 6px;line-height:20px}
+.ob-list-panels .ob-list-content>.card{padding:4px 8px}
+.ob-list-panels .ob-list-cell-filters{gap:6px!important;margin-bottom:4px!important;flex-wrap:wrap}
+.ob-list-panels .ob-list-cell-filters .btn{min-height:0;height:24px;box-sizing:border-box;padding:1px 8px;font-size:12px;line-height:20px}
+
 .tp-table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
 .tp-table th{background:#eef2f7;padding:8px 10px;text-align:left;font-size:12px;color:#334155;font-weight:600;border-bottom:2px solid #cbd5e1;white-space:nowrap}
 .tp-table td{padding:5px 6px;border-bottom:1px solid #e2e8f0;border-right:1px solid #eef2f7;vertical-align:middle}
@@ -2140,7 +2169,7 @@ const tplList = `
 
 {{define "page-list"}}
 {{template "head" .}}{{template "nav" .}}
-<main class="main-list">
+<main class="main-list ob-list-panels" data-ob-list-panel-scope="{{.ListPanelScope}}">
 <div class="row-top">
   <h2>{{.Entity.DisplayName $.Lang}}</h2>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -2189,7 +2218,7 @@ const tplList = `
     <a class="btn btn-sm" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/excel{{listExcelSuffix .Params .ListFormOff}}" style="background:#16a34a;color:#fff" title="{{t $.Lang "Скачать Excel"}}">{{t $.Lang "Excel ↓"}}</a>
   </div>
 </div>
-<form method="GET" style="display:flex;gap:8px;margin-bottom:12px;max-width:460px">
+<form class="ob-list-search" method="GET" style="display:flex;gap:8px;margin-bottom:12px;max-width:460px">
   <input type="text" id="ob-list-search" name="q" value="{{.Params.Search}}" placeholder="{{t $.Lang "Поиск..."}}" style="flex:1;padding:7px 12px;border:1px solid #e2e8f0;border-radius:6px;font-size:14px" data-ob-list-search data-ob-auto-submit="320" title="Ctrl+F" aria-keyshortcuts="Control+F">
   {{if .Params.Search}}<a class="btn btn-sm" href="{{listURL $.Query "q" ""}}" style="background:#e2e8f0;color:#475569;align-self:center">✕</a>{{end}}
   {{/* Форма владеет только q — остальное состояние списка (вид, папка,
@@ -2206,7 +2235,7 @@ const tplList = `
 {{if .SearchAll}}<p class="list-search-scope" style="margin:6px 0 10px;color:#64748b;font-size:13px">{{t $.Lang "Результаты поиска по всему справочнику"}}</p>{{end}}
 
 {{$entity := .Entity}}{{$params := .Params}}{{$refOpts := .RefFilterOptions}}
-<details{{if hasFilter $params}} open{{end}}>
+<details class="ob-list-filters" data-ob-list-panel="filters">
   <summary>{{t $.Lang "Отбор"}}</summary>
   <form method="GET" action="">
   <div class="filter-body">
