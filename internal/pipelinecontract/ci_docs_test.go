@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
@@ -13,7 +14,8 @@ import (
 )
 
 type docsCIWorkflow struct {
-	On map[string]struct {
+	Env map[string]string
+	On  map[string]struct {
 		Paths       []string `yaml:"paths"`
 		PathsIgnore []string `yaml:"paths-ignore"`
 		Types       []string `yaml:"types"`
@@ -22,6 +24,7 @@ type docsCIWorkflow struct {
 }
 
 type docsCIJob struct {
+	Env      map[string]string
 	Name     string
 	Needs    []string
 	If       string
@@ -145,6 +148,49 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 	if step.ID != "diff" || step.Env["BASE_SHA"] != "${{ github.event.pull_request.base.sha }}" ||
 		step.Env["HEAD_SHA"] != "${{ github.event.pull_request.head.sha }}" || step.Env["EVENT_NAME"] != "${{ github.event_name }}" {
 		t.Fatal("classification must use immutable event SHAs, not movable refs")
+	}
+}
+
+func TestCIShardNodeRuntimeCoupled(t *testing.T) {
+	w := docsWorkflow(t)
+	exact := regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
+	envRef := regexp.MustCompile(`^\$\{\{ env\.([A-Za-z_][A-Za-z0-9_]*) \}\}$`)
+	producerVersion := ""
+	for _, id := range []string{"unit-plan", "unit-race", "build"} {
+		job := w.Jobs[id]
+		version, condition, consumers := "", "", 0
+		for _, step := range job.Steps {
+			if step.Uses == "actions/setup-node@v4" {
+				version, condition = step.With["node-version"], step.If
+				if match := envRef.FindStringSubmatch(version); match != nil {
+					version = w.Env[match[1]]
+					for _, env := range []map[string]string{job.Env, step.Env} {
+						if value, ok := env[match[1]]; ok {
+							version = value
+						}
+					}
+				}
+				if !exact.MatchString(version) {
+					t.Fatalf("%s requires an exact Node patch version, got %q", id, version)
+				}
+			}
+			mode := map[string]string{"unit-plan": "plan", "unit-race": "run", "build": "merge"}[id]
+			if !strings.Contains(step.Run, "test-coverage-shards.py "+mode) {
+				continue
+			}
+			consumers++
+			if version == "" || condition != "" && condition != step.If {
+				t.Fatalf("%s can fingerprint Node before installing its runtime", id)
+			}
+			if id == "unit-plan" {
+				producerVersion = version
+			} else if version != producerVersion {
+				t.Fatalf("%s uses Node %q, producer uses %q", id, version, producerVersion)
+			}
+		}
+		if consumers != 1 {
+			t.Fatalf("%s: expected one real plan consumer, got %d", id, consumers)
+		}
 	}
 }
 

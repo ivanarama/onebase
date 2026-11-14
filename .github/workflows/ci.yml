@@ -17,6 +17,10 @@ on:
 permissions:
   contents: read
 
+# Every race-plan producer/consumer fingerprints this exact Node runtime.
+env:
+  RACE_NODE_VERSION: '24.22.2'
+
 # Отменять устаревшие прогоны того же ref (QUAL-04): новый push в ту же ветку/PR
 # снимает предыдущий незавершённый прогон, чтобы зависшие/лишние runs не
 # потребляли раннеры бесконечно. По ref, а не глобально, — параллельные ветки
@@ -74,6 +78,9 @@ jobs:
         with:
           go-version-file: '.go-version'
           cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.RACE_NODE_VERSION }}
       - name: Coverage runner public CLI contracts
         run: |
           python3 -m unittest discover -s .github/scripts -p 'test_coverage_test.py'
@@ -106,6 +113,9 @@ jobs:
         with:
           go-version-file: '.go-version'
           cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.RACE_NODE_VERSION }}
       # setup-go runs `go env`, which can initialize cache metadata. Assign the
       # fresh private directories only afterward, before restoring our cache.
       - name: Prepare private cache paths
@@ -182,6 +192,11 @@ jobs:
         with:
           go-version-file: '.go-version'
           cache: true
+
+      - uses: actions/setup-node@v4
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        with:
+          node-version: ${{ env.RACE_NODE_VERSION }}
 
       - name: Lint runner public CLI contracts
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
@@ -347,7 +362,8 @@ jobs:
       # просто не открывается (issue #684). Синтаксис — не всё, но именно он
       # отделяет «кнопка работает иначе» от «страница не работает вовсе».
       #
-      # node предустановлен на ubuntu-latest, ставить нечего. Вендоренные бандлы
+      # Node is pinned above together with the race-plan producer and consumers.
+      # Вендоренные бандлы
       # (webassets, rapidoc, third_party) исключены — они не наши.
       - name: JS syntax check
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
