@@ -106,6 +106,7 @@ type rawStages struct {
 }
 
 type rawEntity struct {
+	AudioPlayer        bool              `yaml:"audio_player"`
 	Name               string            `yaml:"name"`
 	Title              string            `yaml:"title"`
 	Description        string            `yaml:"description"`
@@ -264,6 +265,7 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 	e.NotifyChanges = raw.NotifyChanges
 	e.NoInteractiveCreate = raw.InteractiveCreate != nil && !*raw.InteractiveCreate
 	e.ListFilters = trimStringList(raw.ListFilters)
+	e.AudioPlayer = raw.AudioPlayer
 	if raw.TileView != nil {
 		e.TileView = &TileView{
 			Image:    strings.TrimSpace(raw.TileView.Image),

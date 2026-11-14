@@ -13,6 +13,9 @@ import (
 //go:embed static/ui.js
 var uiJS []byte
 
+//go:embed static/audio.js
+var audioJS []byte
+
 //go:embed static/managed.js
 var managedJS []byte
 
@@ -24,6 +27,7 @@ var settingsNavigationJS []byte
 
 // ETag'и приложенческого JS считаются один раз при старте по содержимому.
 var (
+	audioJSETag              = assetETag(audioJS)
 	uiJSETag                 = assetETag(uiJS)
 	managedJSETag            = assetETag(managedJS)
 	queryBuilderJSETag       = assetETag(queryBuilderJS)
@@ -58,6 +62,9 @@ func serveAppJS(w http.ResponseWriter, r *http.Request, body []byte, etag string
 // тем же путём, что и в конфигураторе лаунчера, чтобы рабочий стол и
 // предпросмотр виджетов рисовались идентично.
 func mountStatic(r chi.Router) {
+	r.Get("/static/audio.js", func(w http.ResponseWriter, req *http.Request) {
+		serveAppJS(w, req, audioJS, audioJSETag)
+	})
 	r.Get("/static/settings-navigation.js", func(w http.ResponseWriter, req *http.Request) {
 		serveAppJS(w, req, settingsNavigationJS, settingsNavigationJSETag)
 	})

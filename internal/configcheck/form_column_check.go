@@ -66,7 +66,7 @@ func CheckFormTablePartColumns(proj *project.Project) []Issue {
 					SuggestedFix: fix,
 				})
 			}
-			if el.Kind != metadata.FormElementColumn || parent == nil || parent.Kind != metadata.FormElementTablePart {
+			if el.Kind != metadata.FormElementAudio && (el.Kind != metadata.FormElementColumn || parent == nil || parent.Kind != metadata.FormElementTablePart) {
 				add("title_from действует только у колонки табличной части",
 					"перенесите title_from на элемент kind: Колонка внутри kind: ТабличнаяЧасть")
 				return
