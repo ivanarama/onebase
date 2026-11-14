@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/realtime"
@@ -54,9 +55,14 @@ func TestAudioPlayerBrowserHTTP(t *testing.T) {
 	binary.LittleEndian.PutUint32(wav[40:], uint32(len(wav)-44))
 	first := uploadHTTPAttachment(t, s, recordings, "alice", "call-a.wav", "audio/wav", "", string(wav))
 	second := uploadHTTPAttachment(t, s, recordings, "alice", "call-b.wav", "audio/wav", "", string(wav))
+	callID := uuid.New()
+	if err := s.store.Upsert(ctx, calls.Name, callID, map[string]any{"Name": "Own synthetic call"}, calls); err != nil {
+		t.Fatal(err)
+	}
 	calls.Forms = []*metadata.FormModule{{Name: "Form", Kind: "object", EntityName: calls.Name, LayoutKind: metadata.FormLayoutManaged,
 		Attributes: []*metadata.FormAttribute{{Name: "Source", TypeRef: "string"}, {Name: "Caption", TypeRef: "string"}, {Name: "Choice", TypeRef: "string"}},
 		Elements: []*metadata.FormElement{
+			{Kind: metadata.FormElementField, Name: "EditableName", DataPath: "Объект.Name"},
 			{Kind: metadata.FormElementAudio, Name: "Player", DataPath: "Объект.Source", TitleFrom: "Объект.Caption", TitleMap: map[string]string{"ru": "Call A"}, Handlers: map[metadata.FormEventType]string{metadata.FormEventAudioPlay: "Prepare"}},
 			{Kind: metadata.FormElementButton, Name: "SelectB", TitleMap: map[string]string{"ru": "Select B"}, Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "SelectB"}},
 		},
@@ -87,20 +93,24 @@ func TestAudioPlayerBrowserHTTP(t *testing.T) {
 		if strings.HasSuffix(r.URL.Path, "/download") {
 			mediaRequests.Add(1)
 		}
-		router.ServeHTTP(w, r.WithContext(auth.ContextWithUser(r.Context(), &auth.User{Login: "alice", IsAdmin: true})))
+		router.ServeHTTP(w, r.WithContext(auth.ContextWithUser(r.Context(), &auth.User{ID: "own-audio", Login: "alice", IsAdmin: true})))
 	})
 	server := httptest.NewServer(handler)
 	defer server.Close()
 	testCtx, cancel := context.WithTimeout(t.Context(), 55*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(testCtx, python, "static/audio_browser_test.py", server.URL, first.OwnerID.String(), first.ID.String(), second.ID.String())
+	cmd := exec.CommandContext(testCtx, python, "static/audio_browser_test.py", server.URL, first.OwnerID.String(), first.ID.String(), second.ID.String(), callID.String())
 	hideAudioTestProcess(cmd)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("browser HTTP smoke: %v\n%s", err, out)
 	}
 	t.Log(string(bytes.TrimSpace(out)))
-	if playRequests.Load() != 2 || metadataRequests.Load() != 1 || mediaRequests.Load() < 3 {
+	if playRequests.Load() != 3 || metadataRequests.Load() != 1 || mediaRequests.Load() < 3 {
 		t.Fatalf("HTTP counts play=%d metadata=%d media=%d", playRequests.Load(), metadataRequests.Load(), mediaRequests.Load())
+	}
+	stored, err := s.store.GetByID(ctx, calls.Name, callID, calls)
+	if err != nil || stored["Name"] != "Own synthetic call" || stored["_version"] != int64(1) {
+		t.Fatalf("audio test unexpectedly saved edited call: %v", err)
 	}
 }

@@ -1,7 +1,7 @@
 import json, os, sys
 from pathlib import Path
 from playwright.sync_api import sync_playwright
-base, owner, first, second = sys.argv[1:]
+base, owner, first, second, call_id = sys.argv[1:]
 proof = os.environ.get('ONEBASE_AUDIO_PROOF_DIR')
 if proof:
     Path(proof).mkdir(parents=True, exist_ok=True)
@@ -32,13 +32,14 @@ with sync_playwright() as p:
             if r.url.endswith('/attachments'):
                 metadata.append(r.json())
         page.on('response', response)
-        page.goto(base+'/ui/catalog/Calls/new', wait_until='domcontentloaded')
+        page.goto(base+'/ui/catalog/Calls/'+call_id, wait_until='domcontentloaded')
         player = page.locator('[data-ob-audio]')
         media = page.locator('[data-ob-audio-media]')
         assert player.count() == 1
         assert media.get_attribute('preload') == 'none' and media.get_attribute('src') is None
         assert not any('/attachments' in u for u in requests)
         compact('managed-initial')
+        assert page.evaluate('window._obFormDirty') is False
         if proof: page.screenshot(path=str(Path(proof)/'01-managed-before-play.png'))
         media.evaluate('(a)=>a.muted=true')
         page.locator('[data-ob-audio-play]').click()
@@ -46,6 +47,7 @@ with sync_playwright() as p:
         assert media.get_attribute('src') == '/ui/attachments/'+first+'/download'
         assert page.locator('[data-ob-audio-caption]').inner_text() == 'Call A'
         assert len(events)==1, events
+        assert events[-1].get('dirty') is False and page.evaluate('window._obFormDirty') is False
         page.locator('[data-ob-audio-play]').click()
         assert media.evaluate('(a)=>a.paused')
         page.locator('[data-ob-audio-play]').click()
@@ -88,9 +90,26 @@ with sync_playwright() as p:
         assert media.evaluate('(a)=>a.currentTime')>=0.7
         assert page.evaluate('window._audioNativeChanges')==[]
         assert page.evaluate('window._obFormDirty')==dirty_before
+        assert dirty_before is False
         compact('keyboard-pointer-seek-volume-no-dirty')
         if proof: page.screenshot(path=str(Path(proof)/'02-managed-after-call-b.png'))
         page.locator('[data-ob-audio-stop]').click()
+        # A genuine trusted input must survive a fresh server Play, not only a
+        # cached media resume. Keep that edited page open throughout the test.
+        page.locator('input[name="Name"]').fill('Own real unsaved edit')
+        page.locator('input[name="Name"]').press('Tab')
+        assert page.evaluate('window._obFormDirty') is True
+        page.locator('[data-ob-fire-click="SelectB"]').click()
+        page.locator('[data-ob-audio-play]').click()
+        page.wait_for_function('()=>document.querySelector("audio").currentTime>0.05')
+        assert events[-1].get('dirty') is True and page.evaluate('window._obFormDirty') is True
+        assert page.locator('input[name="Name"]').input_value()=='Own real unsaved edit'
+        dirty_page=page
+        page=browser.new_page(viewport={'width':1100,'height':760})
+        page.set_default_timeout(7000)
+        page.on('request',lambda r:requests.append(r.url))
+        page.on('pageerror',lambda e:errors.append(str(e)))
+        page.on('response',response)
         requests.clear()
         page.goto(base+'/ui/catalog/Recordings/'+owner,wait_until='domcontentloaded')
         assert page.locator('[data-ob-audio]').count()==1
@@ -116,7 +135,9 @@ with sync_playwright() as p:
         assert page.locator('[data-ob-audio]').count()==0
         assert not any('/static/audio.js' in u for u in requests)
         assert not errors,errors
-        result={'public_http_browser':'PASS','geometry':geometry,'play_preparations':2,'metadata_lists':1,'range':206,'silent_wav':True,'native_early_pause':'AbortError/status empty','seek_volume_native_input_change_events':[],'dirty_unchanged':True,'ordinary_audio_asset_requests':0,'js_errors':errors}
+        assert dirty_page.evaluate('window._obFormDirty') is True
+        assert dirty_page.locator('input[name="Name"]').input_value()=='Own real unsaved edit'
+        result={'public_http_browser':'PASS','geometry':geometry,'play_preparations':3,'metadata_lists':1,'range':206,'silent_wav':True,'native_early_pause':'AbortError/status empty','seek_volume_native_input_change_events':[],'initial_dirty':False,'after_clean_server_Play_dirty':False,'dirty_unchanged':True,'real_native_edit_after_fresh_server_Play_dirty':True,'real_native_edit_retained':True,'Save_invoked':False,'ordinary_audio_asset_requests':0,'js_errors':errors}
         if proof: (Path(proof)/'receipt.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
         print(json.dumps(result))
     except Exception:
