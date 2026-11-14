@@ -671,6 +671,7 @@ const cfgTabTree = `{{define "tab-tree"}}
               <td><select name="comp.measure.{{$i}}.agg" style="padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">
                 <option value="sum" {{if eq $m.Agg "sum"}}selected{{end}}>sum</option>
                 <option value="count" {{if eq $m.Agg "count"}}selected{{end}}>count</option>
+                <option value="count_distinct" {{if eq $m.Agg "count_distinct"}}selected{{end}}>count_distinct</option>
                 <option value="avg" {{if eq $m.Agg "avg"}}selected{{end}}>avg</option>
                 <option value="min" {{if eq $m.Agg "min"}}selected{{end}}>min</option>
                 <option value="max" {{if eq $m.Agg "max"}}selected{{end}}>max</option></select></td>
