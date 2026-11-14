@@ -393,19 +393,16 @@ func tpCellValue(row map[string]any, name string) any {
 // TEXT/numeric), ссылки (*Ref из обогащения ↔ сырой UUID из базы) иначе давали
 // бы ложное «пользователь правил грид», и строки ТЧ не перечитывались бы.
 func tpCellNorm(f metadata.Field, v any) string {
+	if f.RefEntity != "" || metadata.IsReference(f.Type) {
+		if id, known := dirtyReferenceIdentity(v); known {
+			return id
+		}
+	}
 	if ref, ok := v.(*interpreter.Ref); ok {
 		if ref == nil || ref.UUID == uuid.Nil.String() {
 			return ""
 		}
 		return ref.UUID
-	}
-	if f.RefEntity != "" {
-		if idStr, id, ok := uuidFromValue(v); ok {
-			if id == uuid.Nil {
-				return ""
-			}
-			return idStr
-		}
 	}
 	switch f.Type {
 	case metadata.FieldTypeDate:
@@ -458,6 +455,47 @@ func tpCellNorm(f metadata.Field, v any) string {
 		return ""
 	}
 	return fmt.Sprintf("%v", v)
+}
+
+// References are compared by identity, never by their label/Go wrapper. Use
+// the same UUID-provider value/pointer contract as storage, without looking up
+// the target or altering the actual object. Malformed nonempty IDs stay
+// nonempty so they cannot silently become a clean empty reference.
+func dirtyReferenceIdentity(value any) (string, bool) {
+	if value == nil {
+		return "", true
+	}
+	rv := reflect.ValueOf(value)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		if rv.IsNil() {
+			return "", true
+		}
+	}
+	raw, known := snapshotReferenceUUID(value)
+	if !known {
+		switch v := value.(type) {
+		case string:
+			raw = v
+		case uuid.UUID:
+			raw = v.String()
+		case [16]byte:
+			raw = uuid.UUID(v).String()
+		default:
+			return "", false
+		}
+	}
+	if raw == "" {
+		return "", true
+	}
+	id, err := uuid.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return raw, true
+	}
+	if id == uuid.Nil {
+		return "", true
+	}
+	return id.String(), true
 }
 
 // dateCellInstant — момент времени значения даты: time.Time из формы и
