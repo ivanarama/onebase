@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/report"
@@ -23,7 +24,8 @@ func TestReportRelativeContextRESTMatrix(t *testing.T) {
 		router := chi.NewRouter()
 		h.mountV2(router)
 		w := httptest.NewRecorder()
-		router.ServeHTTP(w, httptest.NewRequest("GET", "/api/v2/report/Relative?composition=1", nil))
+		permission := auth.Permission{Reports: map[string][]string{rep.Name: {"run"}}}
+		router.ServeHTTP(w, withUser(httptest.NewRequest("GET", "/api/v2/report/Relative?composition=1", nil), apiUser("report-reader", permission)))
 		if w.Code != 200 {
 			t.Fatalf("REST: %d %s", w.Code, w.Body.String())
 		}
