@@ -104,7 +104,7 @@ with sync_playwright() as p:
         page.wait_for_url(base+'/ui/catalog/calls')
         assert len(close_events)==1 and close_modes==['discard'],close_events
         assert close_events[0].get('ok') and close_events[0].get('close',{}).get('allowed'),close_events
-        assert close_events[0].get('dirty') is False,close_events
+        assert close_events[0].get('close',{}).get('saved') is False,close_events
         assert not close_events[0].get('savedId') and not close_events[0].get('version'),close_events
         assert not page.locator('#ob-managed-close-confirm').count()
         page.goto(base+'/ui/catalog/Calls/'+call_id,wait_until='domcontentloaded')
