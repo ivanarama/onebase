@@ -1613,5 +1613,8 @@
   "Не удалось воспроизвести запись": "Could not play the recording",
   "Записи нет": "No recording",
   "Подготовка записи…": "Preparing recording…",
-  "Воспроизвести": "Play"
+  "Воспроизвести": "Play",
+  "Пауза": "Pause",
+  "Позиция воспроизведения": "Playback position",
+  "Громкость": "Volume"
 }

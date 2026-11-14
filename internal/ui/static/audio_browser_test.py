@@ -10,7 +10,20 @@ with sync_playwright() as p:
     try:
         page = browser.new_page(viewport={'width':1100,'height':760})
         page.set_default_timeout(7000)
-        requests, events, metadata, errors = [], [], [], []
+        requests, events, metadata, errors, geometry = [], [], [], [], []
+        def compact(label):
+            m=page.locator('[data-ob-audio]').evaluate('''r=>{
+              const b=r.getBoundingClientRect(),a=r.querySelector('audio');
+              return {height:b.height,width:b.width,display:getComputedStyle(r).display,
+                controls:a.controls,hidden:a.hidden,
+                children:Array.from(r.children).filter(e=>e!==a&&e.getBoundingClientRect().width>0).map(e=>{
+                  const q=e.getBoundingClientRect();return {tag:e.tagName,y:q.y-b.y,h:q.height};}),
+                seek:r.querySelector('[data-ob-audio-seek]').getBoundingClientRect().width};}''')
+            assert 28<=m['height']<=30.5 and m['width']<=600.5,m
+            assert not m['controls'] and m['hidden'] and m['display']=='inline-flex',m
+            assert 39.5<=m['seek']<=120.5,m
+            assert all(-0.5<=c['y'] and c['y']+c['h']<=m['height']+0.5 for c in m['children']),m
+            geometry.append({'label':label,**m})
         page.on('request', lambda r: requests.append(r.url))
         page.on('pageerror', lambda e: errors.append(str(e)))
         def response(r):
@@ -25,6 +38,7 @@ with sync_playwright() as p:
         assert player.count() == 1
         assert media.get_attribute('preload') == 'none' and media.get_attribute('src') is None
         assert not any('/attachments' in u for u in requests)
+        compact('managed-initial')
         if proof: page.screenshot(path=str(Path(proof)/'01-managed-before-play.png'))
         media.evaluate('(a)=>a.muted=true')
         page.locator('[data-ob-audio-play]').click()
@@ -37,6 +51,16 @@ with sync_playwright() as p:
         page.locator('[data-ob-audio-play]').click()
         page.wait_for_function('()=>!document.querySelector("audio").paused')
         assert len(events)==1
+        # Capture the actual native rejection while returning the SAME Promise.
+        media.evaluate('''a=>{const native=a.play;a._playErrors=[];a.play=function(...args){
+          const p=Reflect.apply(native,this,args);p.catch(e=>a._playErrors.push(e.name));return p;};}''')
+        page.locator('[data-ob-audio-stop]').click()
+        page.evaluate('''()=>{document.querySelector('[data-ob-audio-play]').click();document.querySelector('audio').pause();}''')
+        page.wait_for_function('()=>document.querySelector("audio")._playErrors.includes("AbortError")')
+        assert page.locator('[data-ob-audio-status]').inner_text()==''
+        compact('native-early-pause')
+        page.locator('[data-ob-audio-play]').click()
+        page.wait_for_function('()=>!document.querySelector("audio").paused')
         page.locator('[data-ob-audio-stop]').click()
         assert media.get_attribute('src') is None and media.evaluate('(a)=>a.paused')
         page.locator('[data-ob-audio-play]').click()
@@ -49,14 +73,28 @@ with sync_playwright() as p:
         page.wait_for_function('()=>document.querySelector("audio").currentTime>0.05')
         assert media.get_attribute('src') == '/ui/attachments/'+second+'/download'
         assert len(events)==3 and all(e.get('ok') for e in events), events
-        media.evaluate('(a)=>{a.volume=0.4;a.currentTime=0.7}')
-        assert abs(media.evaluate('(a)=>a.volume')-0.4)<0.01
+        page.locator('[data-ob-audio-play]').click()
+        assert media.evaluate('(a)=>a.paused')
+        dirty_before=page.evaluate('window._obFormDirty')
+        page.evaluate('''()=>{window._audioNativeChanges=[];['input','change'].forEach(t=>document.addEventListener(t,e=>{
+          if(e.target.closest('[data-ob-audio]'))window._audioNativeChanges.push(t);},true));}''')
+        page.locator('[data-ob-audio-seek]').press('Home')
+        page.locator('[data-ob-audio-seek]').press('ArrowRight')
+        seek=page.locator('[data-ob-audio-seek]').bounding_box()
+        page.mouse.click(seek['x']+seek['width']*0.7,seek['y']+seek['height']/2)
+        page.locator('[data-ob-audio-volume]').press('Home')
+        page.locator('[data-ob-audio-volume]').press('ArrowRight')
+        assert abs(media.evaluate('(a)=>a.volume')-0.05)<0.01
         assert media.evaluate('(a)=>a.currentTime')>=0.7
+        assert page.evaluate('window._audioNativeChanges')==[]
+        assert page.evaluate('window._obFormDirty')==dirty_before
+        compact('keyboard-pointer-seek-volume-no-dirty')
         if proof: page.screenshot(path=str(Path(proof)/'02-managed-after-call-b.png'))
         page.locator('[data-ob-audio-stop]').click()
         requests.clear()
         page.goto(base+'/ui/catalog/Recordings/'+owner,wait_until='domcontentloaded')
         assert page.locator('[data-ob-audio]').count()==1
+        compact('auto-audio-only')
         assert not page.locator('[data-ob-attachments],#att-upload-form').count()
         assert not any('/attachments' in u for u in requests), requests
         media=page.locator('[data-ob-audio-media]')
@@ -78,7 +116,9 @@ with sync_playwright() as p:
         assert page.locator('[data-ob-audio]').count()==0
         assert not any('/static/audio.js' in u for u in requests)
         assert not errors,errors
-        print(json.dumps({'public_http_browser':'PASS','play_preparations':2,'metadata_lists':1,'range':206,'silent_wav':True,'ordinary_audio_asset_requests':0,'js_errors':errors}))
+        result={'public_http_browser':'PASS','geometry':geometry,'play_preparations':2,'metadata_lists':1,'range':206,'silent_wav':True,'native_early_pause':'AbortError/status empty','seek_volume_native_input_change_events':[],'dirty_unchanged':True,'ordinary_audio_asset_requests':0,'js_errors':errors}
+        if proof: (Path(proof)/'receipt.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
+        print(json.dumps(result))
     except Exception:
         print(json.dumps({'errors':errors,'events':events,'requests':requests,'player':page.locator('[data-ob-audio]').evaluate_all('(xs)=>xs.map(x=>x.outerHTML)'), 'media':page.locator('audio').evaluate_all('(xs)=>xs.map(a=>({src:a.getAttribute("src"),paused:a.paused,error:a.error&&a.error.message,ready:a.readyState,time:a.currentTime}))')},ensure_ascii=True),flush=True)
         raise

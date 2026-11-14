@@ -37,12 +37,12 @@ func TestAudioPlayerRenderIsLazyAndOptional(t *testing.T) {
 		t.Fatal(err)
 	}
 	html := b.String()
-	for _, want := range []string{"data-ob-audio-play", "data-ob-audio-stop", `preload="none"`, "Call &lt;A&gt;"} {
+	for _, want := range []string{"data-ob-audio-play", "data-ob-audio-stop", "data-ob-audio-time", "data-ob-audio-seek", "data-ob-audio-volume", `height:30px`, `max-width:600px`, `preload="none"`, "Call &lt;A&gt;"} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("missing %s in %s", want, html)
 		}
 	}
-	for _, bad := range []string{"secret.invalid", "src=", "autoplay"} {
+	for _, bad := range []string{"secret.invalid", "src=", "autoplay", "data-ob-audio-media controls", `<input`} {
 		if strings.Contains(html, bad) {
 			t.Fatalf("lazy player leaked %s", bad)
 		}

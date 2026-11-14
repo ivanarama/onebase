@@ -19,7 +19,59 @@
     if (!values || !key) return;
     Object.keys(values).forEach(function (k) { if (k.toLowerCase() === key.toLowerCase()) delete values[k]; });
   }
-  function status(p, text) { p.status.textContent = text || ''; }
+  function status(p, text) { p.status.textContent = text || ''; p.status.title = text || ''; }
+  function clock(seconds) {
+    seconds = Number.isFinite(seconds) && seconds > 0 ? Math.floor(seconds) : 0;
+    var minutes = Math.floor(seconds / 60), tail = String(seconds % 60).padStart(2, '0');
+    return minutes + ':' + tail;
+  }
+  function sync(p) {
+    var duration = Number.isFinite(p.media.duration) && p.media.duration > 0 ? p.media.duration : 0;
+    if (p.time) p.time.textContent = clock(p.media.currentTime) + ' / ' + clock(duration);
+    p.play.textContent = p.media.paused ? '▶' : '⏸';
+    var title = p.root.getAttribute(p.media.paused ? 'data-audio-play-label' : 'data-audio-pause-label');
+    if (title) { p.play.title = title; if (p.play.setAttribute) p.play.setAttribute('aria-label', title); }
+    if (p.seek) {
+      var percent = duration ? Math.max(0, Math.min(1, p.media.currentTime / duration)) : 0;
+      p.seek.setAttribute('aria-valuenow', String(Math.round(percent * 100)));
+      p.seek.setAttribute('aria-valuetext', clock(p.media.currentTime) + ' / ' + clock(duration));
+      p.seek.setAttribute('aria-disabled', String(!duration || p.blocked));
+      p.seek.style.setProperty('--ob-audio-progress', (percent * 100) + '%');
+    }
+    if (p.volume) {
+      var level = p.media.muted ? 0 : p.media.volume;
+      p.volume.setAttribute('aria-valuenow', String(Math.round(level * 100)));
+      p.volume.title = p.volume.getAttribute('aria-label') + ': ' + Math.round(level * 100) + '%';
+      p.volume.style.setProperty('--ob-audio-progress', (level * 100) + '%');
+    }
+  }
+  // Sliders emit no form input/change events and have no name/value carrier.
+  // Seeking and volume must never mark the business object as locally edited.
+  function slider(element, read, write, enabled) {
+    if (!element) return;
+    function point(e) {
+      if (!enabled()) return;
+      var rect = element.getBoundingClientRect();
+      if (rect.width) write(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));
+    }
+    element.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0 || !enabled()) return;
+      e.preventDefault(); element.focus(); element.setPointerCapture(e.pointerId); point(e);
+    });
+    element.addEventListener('pointermove', function (e) { if (element.hasPointerCapture(e.pointerId)) point(e); });
+    function release(e) { if (element.hasPointerCapture(e.pointerId)) element.releasePointerCapture(e.pointerId); }
+    element.addEventListener('pointerup', release); element.addEventListener('pointercancel', release);
+    element.addEventListener('keydown', function (e) {
+      if (!enabled()) return;
+      var next = read();
+      if (e.key === 'ArrowRight' || e.key === 'ArrowUp') next += 0.05;
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') next -= 0.05;
+      else if (e.key === 'Home') next = 0;
+      else if (e.key === 'End') next = 1;
+      else return;
+      e.preventDefault(); e.stopPropagation(); write(Math.max(0, Math.min(1, next)));
+    });
+  }
   function stop(p) {
     p.ticket++;
     p.waiting = false;
@@ -28,6 +80,7 @@
     // Abort active media transfers, but keep the prepared attachment identity.
     p.media.removeAttribute('src');
     p.media.load();
+    sync(p);
   }
   function disabled(p) {
     return p.blocked || p.play.disabled || p.waiting || p.root.style.display === 'none' || !!p.root.closest('[hidden],fieldset[disabled]');
@@ -41,17 +94,28 @@
     var p = {
       root: root, media: root.querySelector('[data-ob-audio-media]'), play: root.querySelector('[data-ob-audio-play]'),
       caption: root.querySelector('[data-ob-audio-caption]'), status: root.querySelector('[data-ob-audio-status]'),
+      time: root.querySelector('[data-ob-audio-time]'), seek: root.querySelector('[data-ob-audio-seek]'), volume: root.querySelector('[data-ob-audio-volume]'),
       name: root.getAttribute('data-audio-name'), sourceField: root.getAttribute('data-audio-source-field'),
       titleField: root.getAttribute('data-audio-title-field'), id: source(root.getAttribute('data-audio-source')),
       metadataURL: root.getAttribute('data-audio-metadata-url') || '',
       prepare: !!root.getAttribute('data-audio-play-event'), ticket: 0, waiting: false, blocked: false
     };
     p.media.preload = 'none';
+    ['loadedmetadata', 'durationchange', 'timeupdate', 'play', 'pause', 'ended', 'emptied', 'volumechange'].forEach(function (event) {
+      p.media.addEventListener(event, function () { sync(p); });
+    });
+    slider(p.seek, function () { return p.media.currentTime / p.media.duration; }, function (fraction) {
+      p.media.currentTime = fraction * p.media.duration; sync(p);
+    }, function () { return !p.blocked && !!p.media.getAttribute('src') && Number.isFinite(p.media.duration) && p.media.duration > 0; });
+    slider(p.volume, function () { return p.media.muted ? 0 : p.media.volume; }, function (fraction) {
+      p.media.volume = fraction; p.media.muted = false; sync(p);
+    }, function () { return true; });
+    sync(p);
     root.querySelector('[data-ob-audio-stop]').addEventListener('click', function () { stop(p); status(p, ''); });
     p.media.addEventListener('error', function () { if (p.media.getAttribute('src')) status(p, root.getAttribute('data-audio-error')); });
     p.play.addEventListener('click', async function () {
       if (disabled(p)) return;
-      if (p.media.getAttribute('src') && !p.media.paused) { p.media.pause(); return; }
+      if (p.media.getAttribute('src') && !p.media.paused) { p.media.pause(); sync(p); return; }
       var epoch = generation, ticket = ++p.ticket;
       function current() { return generation === epoch && ticket === p.ticket && !p.blocked && !disabled(p) && root.isConnected; }
       try {
@@ -81,6 +145,7 @@
         var url = '/ui/attachments/' + p.id + '/download';
         if (p.media.getAttribute('src') !== url) p.media.setAttribute('src', url);
         await p.media.play();
+        sync(p);
         if (!current()) { p.media.pause(); return; }
         status(p, '');
       } catch (error) {
@@ -139,7 +204,7 @@
           p.id = next;
         }
       }
-      if (title !== undefined) p.caption.textContent = String(title || '');
+      if (title !== undefined) { p.caption.textContent = String(title || ''); p.caption.title = String(title || ''); }
       if ((data.audioStops || []).some(function (name) { return String(name).toLowerCase() === p.name.toLowerCase(); })) stop(p);
       if (disabled(p) && p.media.getAttribute('src')) stop(p);
     });
