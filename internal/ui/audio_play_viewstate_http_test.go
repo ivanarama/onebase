@@ -21,14 +21,14 @@ import (
 
 // Go through the public event route on a persisted object. Only the exact
 // native player's transient source/caption are view state, not a blanket
-// exemption for save:false attributes, object fields or arbitrary commands.
+// exemption for save:false attributes or persisted object fields.
 func TestAudioPlayViewStateHTTPMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		ctx := context.Background()
 		for _, tc := range []struct {
-			name, source, extra                                       string
-			editName, editFlag, saveSource, sharedInput, otherCommand bool
-			wantDirty                                                 bool
+			name, source, extra                                                       string
+			editName, editFlag, saveSource, sharedInput, readonlySource, otherCommand bool
+			wantDirty                                                                 bool
 		}{
 			{name: "only-player-view-fields", source: "Source"},
 			{name: "real-native-header-input", source: "Source", editName: true, wantDirty: true},
@@ -37,7 +37,9 @@ func TestAudioPlayViewStateHTTPMatrix(t *testing.T) {
 			{name: "unrelated-transient-attribute", source: "Source", extra: `Объект.Note = "unsent note";`, wantDirty: true},
 			{name: "saved-form-attribute", source: "Source", saveSource: true, wantDirty: true},
 			{name: "shared-editable-binding", source: "Source", sharedInput: true, wantDirty: true},
-			{name: "ordinary-command-is-not-play", source: "Source", otherCommand: true, wantDirty: true},
+			{name: "selection-command-prepares-player", source: "Source", otherCommand: true},
+			{name: "readonly-display-shares-source", source: "Source", sharedInput: true, readonlySource: true},
+			{name: "selection-with-real-input", source: "Source", otherCommand: true, editName: true, wantDirty: true},
 			{name: "real-table-part-change", source: "Source", extra: `Ряд = Объект.Lines.Добавить(); Ряд.Text = "unsaved row";`, wantDirty: true},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
@@ -55,7 +57,7 @@ func TestAudioPlayViewStateHTTPMatrix(t *testing.T) {
 					},
 				}
 				if tc.sharedInput {
-					form.Elements = append(form.Elements, &metadata.FormElement{Kind: metadata.FormElementField, Name: "EditableSource", DataPath: "Объект.Source"})
+					form.Elements = append(form.Elements, &metadata.FormElement{Kind: metadata.FormElementField, Name: "EditableSource", DataPath: "Объект.Source", ReadOnly: tc.readonlySource})
 				}
 				form.ProgramAST = mustParse(t, "Процедура Prepare()\nОбъект."+tc.source+" = \"11111111-1111-4111-8111-111111111111\";\nОбъект.Caption = \"Call A\";\n"+tc.extra+"\nКонецПроцедуры")
 				entity.Forms = []*metadata.FormModule{form}
@@ -159,30 +161,13 @@ func TestAudioPlayViewStateProcessorHTTPMatrix(t *testing.T) {
 	})
 }
 
-func TestAudioPlayViewStateProjectionBoundaries(t *testing.T) {
+func TestAudioViewStateFieldsBoundaries(t *testing.T) {
 	for _, name := range []string{"id", "_id", "_version", "parent_id", "is_folder", "posted", "deletion_mark", "Ссылка", "Reference"} {
 		t.Run(name, func(t *testing.T) {
 			form := &metadata.FormModule{Attributes: []*metadata.FormAttribute{{Name: name, TypeRef: "string"}}, Elements: []*metadata.FormElement{{Kind: metadata.FormElementAudio, Name: "Player", DataPath: "Объект." + name}}}
-			projected, excluded := audioPlaybackComparison(form, nil, "Player", string(metadata.FormEventAudioPlay))
-			if projected != form || len(excluded) != 0 {
-				t.Fatal("service identity was classified as player view state")
+			if len(audioViewStateFields(form, nil)) != 0 {
+				t.Fatal("service field was classified as audio view state")
 			}
 		})
-	}
-	form := &metadata.FormModule{Attributes: []*metadata.FormAttribute{{Name: "Source", TypeRef: "string"}}, Elements: []*metadata.FormElement{{Kind: metadata.FormElementAudio, Name: "Player", DataPath: "Объект.Source"}}}
-	for _, event := range []string{"ПередЗакрытием", "ПередЗаписью", "Нажатие", "ПриИзменении", "Ответ"} {
-		projected, excluded := audioPlaybackComparison(form, nil, "Player", event)
-		if projected != form || len(excluded) != 0 {
-			t.Fatalf("ordinary %s received a player dirty exception", event)
-		}
-	}
-	projected, excluded := audioPlaybackComparison(form, nil, "Other", string(metadata.FormEventAudioPlay))
-	if projected != form || len(excluded) != 0 {
-		t.Fatal("foreign player name received an exception")
-	}
-	form.Elements = append(form.Elements, form.Elements[0])
-	projected, excluded = audioPlaybackComparison(form, nil, "Player", string(metadata.FormEventAudioPlay))
-	if projected != form || len(excluded) != 0 {
-		t.Fatal("ambiguous player received an exception")
 	}
 }

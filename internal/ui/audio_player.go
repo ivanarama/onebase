@@ -9,55 +9,47 @@ import (
 	"strings"
 )
 
-// Only the exact native player's nonpersistent carriers are playback view
-// state. Never exempt entity/service fields, saved attributes or a carrier
-// shared with another control. This projection is for AudioPlay, not Close.
-func audioPlaybackComparison(form *metadata.FormModule, entity *metadata.Entity, element, event string) (*metadata.FormModule, map[string]bool) {
-	if form == nil || event != string(metadata.FormEventAudioPlay) {
-		return form, nil
-	}
-	var player *metadata.FormElement
-	matches := 0
-	walkBrowserFormElements(form, func(v browserFormElementVisit) {
-		if v.element.Kind == metadata.FormElementAudio && strings.EqualFold(v.element.Name, element) {
-			player = v.element
-			matches++
-		}
-	})
-	if matches != 1 {
-		return form, nil
+// Audio source/caption bindings are display state for the lifetime of the
+// form, not only during the AudioPlay callback. Selecting a row, preparing a
+// cached recording or clearing it on Close must not turn that state into an
+// unsaved object edit. Persisted fields and editable bindings are never exempt.
+func audioViewStateFields(form *metadata.FormModule, entity *metadata.Entity) map[string]bool {
+	if form == nil {
+		return nil
 	}
 	key := func(path string) string { return strings.ToLower(strings.TrimSpace(dpFieldName(path))) }
-	wanted := map[string]bool{key(player.DataPath): true, key(player.TitleFrom): true}
+	wanted := map[string]bool{}
+	walkBrowserFormElements(form, func(v browserFormElementVisit) {
+		if v.element.Kind == metadata.FormElementAudio {
+			wanted[key(v.element.DataPath)] = true
+			wanted[key(v.element.TitleFrom)] = true
+		}
+	})
+	if len(wanted) == 0 {
+		return nil
+	}
 	fields := map[string]bool{}
 	for _, attr := range form.Attributes {
-		if attr == nil || attr.Save || attr.MainAttribute || !formAttrIsScalar(attr) || audioPlaybackServiceField(attr.Name) || (entity != nil && entityField(entity, attr.Name) != nil) {
+		if attr == nil || attr.Save || attr.MainAttribute || !formAttrIsScalar(attr) || audioPlaybackServiceField(attr.Name) || entityField(entity, attr.Name) != nil {
 			continue
 		}
 		typ := strings.ToLower(strings.TrimSpace(attr.TypeRef))
 		if typ != "string" && !strings.HasPrefix(typ, "string(") && typ != "строка" && !strings.HasPrefix(typ, "строка(") {
 			continue
 		}
-		if name := strings.ToLower(strings.TrimSpace(attr.Name)); wanted[name] {
+		if name := key(attr.Name); wanted[name] {
 			fields[name] = true
 		}
 	}
 	walkBrowserFormElements(form, func(v browserFormElementVisit) {
-		if v.element.Kind != metadata.FormElementAudio {
-			delete(fields, key(v.element.DataPath))
+		if v.element.Kind == metadata.FormElementAudio || v.effectiveReadOnly || v.element.Kind == metadata.FormElementLabel {
+			return
 		}
+		// A second editable control owns real user input, including a control
+		// that is only conditionally readonly. Keep its ordinary dirty guard.
+		delete(fields, key(v.element.DataPath))
 	})
-	if len(fields) == 0 {
-		return form, nil
-	}
-	projected := *form
-	projected.Attributes = nil
-	for _, attr := range form.Attributes {
-		if attr == nil || !fields[strings.ToLower(strings.TrimSpace(attr.Name))] {
-			projected.Attributes = append(projected.Attributes, attr)
-		}
-	}
-	return &projected, fields
+	return fields
 }
 
 func audioPlaybackServiceField(name string) bool {

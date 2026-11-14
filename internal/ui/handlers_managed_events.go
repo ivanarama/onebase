@@ -1515,14 +1515,10 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// lifecycle calls. Programmatic values/TableParts/FormTables do not emit DOM
 	// input events; without this signal an unsaved command mutation on a clean
 	// form could be silently discarded by the next Close.
-	comparisonForm := form
-	var audioViewFields map[string]bool
-	if closeInv == nil {
-		comparisonForm, audioViewFields = audioPlaybackComparison(form, entity, elementName, eventName)
-	}
+	audioViewFields := audioViewStateFields(form, entity)
 	dirty := transientAudioPlaybackDirty(obj, fieldsBefore, tpBefore, audioViewFields)
 	if existingRecord || thisObj.saved || (closeInv != nil && closeInv.saved) {
-		dirty = s.managedCloseStateDirty(liveCtx, entity, comparisonForm, obj, fieldsBefore, tpBefore)
+		dirty = s.managedCloseStateDirty(liveCtx, entity, form, obj, fieldsBefore, tpBefore)
 	}
 	if formOpenEvent(elementName, eventName) && !thisObj.saved {
 		dirty = false
@@ -1827,8 +1823,12 @@ func (s *Server) managedCloseStateDirty(
 			return true
 		}
 	}
+	viewFields := audioViewStateFields(form, entity)
 	for _, attr := range form.Attributes {
 		if attr == nil || attr.MainAttribute || entityField(entity, attr.Name) != nil || entityServiceFieldName(attr.Name) {
+			continue
+		}
+		if viewFields[strings.ToLower(strings.TrimSpace(attr.Name))] {
 			continue
 		}
 		if strings.EqualFold(attr.TypeRef, "ValueTable") {
@@ -2887,16 +2887,12 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			runErr = s.interp.Run(decl, thisObj, vars)
 		}
 		runErr = finishDSLExecution(txState, runErr)
-		var audioViewFields map[string]bool
-		if closeInv == nil && eventName == string(metadata.FormEventAudioPlay) {
-			// Parameters remain business inputs even if a same-name form
-			// attribute also happens to be bound to the player.
-			protected := &metadata.Entity{}
-			for _, param := range proc.Params {
-				protected.Fields = append(protected.Fields, metadata.Field{Name: param.Name})
-			}
-			_, audioViewFields = audioPlaybackComparison(form, protected, elementName, eventName)
+		// Parameters remain business inputs; player display state does not.
+		protected := &metadata.Entity{}
+		for _, param := range proc.Params {
+			protected.Fields = append(protected.Fields, metadata.Field{Name: param.Name})
 		}
+		audioViewFields := audioViewStateFields(form, protected)
 		if runErr != nil {
 			opStatus = operationStatus(opCtx, runErr)
 			resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(false)

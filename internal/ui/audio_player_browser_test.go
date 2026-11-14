@@ -60,6 +60,7 @@ func TestAudioPlayerBrowserHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls.Forms = []*metadata.FormModule{{Name: "Form", Kind: "object", EntityName: calls.Name, LayoutKind: metadata.FormLayoutManaged,
+		Handlers: map[metadata.FormEventType]string{metadata.FormEventBeforeClose: "ReleaseAudio"},
 		// Match the target nonoperator form: the generic attachment panel is
 		// hidden independently of the native player and its lazy Play request.
 		Actions:    map[string]*metadata.FormAction{"attachments": {Visible: boolPtr(false)}},
@@ -73,6 +74,9 @@ func TestAudioPlayerBrowserHTTP(t *testing.T) {
 Процедура Prepare(Элемент)
  Если Объект.Choice = "B" Тогда Объект.Source = "%s"; Объект.Caption = "Call B";
  Иначе Объект.Source = "%s"; Объект.Caption = "Call A"; КонецЕсли;
+КонецПроцедуры
+Процедура ReleaseAudio(Отказ)
+ Объект.Source = ""; Объект.Caption = "No recording";
 КонецПроцедуры
 Процедура SelectB(Элемент)
  ОстановитьАудио("Player"); Объект.Source = ""; Объект.Caption = "Call B"; Объект.Choice = "B";
