@@ -21,6 +21,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dsl/lexer"
 	"github.com/ivantit66/onebase/internal/dsl/parser"
+	"github.com/ivantit66/onebase/internal/dsl/token"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/printform"
 	"github.com/ivantit66/onebase/internal/processor"
@@ -797,12 +798,40 @@ func CheckReportComposition(proj *project.Project) []Issue {
 			groups[g] = true
 		}
 		measures := map[string]bool{}
+		measureNames := map[string]bool{}
+		for _, m := range c.Measures {
+			measureNames[strings.ToLower(m.Field)] = true
+		}
 		for _, m := range c.Measures {
 			measures[m.Field] = true
 			if m.Expr != "" {
 				// Вычисляемый показатель: агрегат необязателен, но выражение валидируем.
 				if err := parseReturnExpr(m.Expr); err != nil {
 					add(repName, prefix+"ошибка выражения показателя \""+m.Field+"\": "+err.Error())
+				}
+				// Context aliases refer to declared measures, never arbitrary source
+				// columns. Keep discovery bounded like the formula evaluator.
+				if len(m.Expr) <= 128<<10 {
+					lx := lexer.New(m.Expr, "")
+					for n := 0; n < 1024; n++ {
+						t := lx.NextToken()
+						if t.Type == token.EOF {
+							break
+						}
+						if t.Type != token.IDENT || measureNames[strings.ToLower(t.Literal)] {
+							continue
+						}
+						scope, field, ok := report.MeasureReference(t.Literal)
+						if !ok {
+							continue
+						}
+						if !measureNames[strings.ToLower(field)] {
+							add(repName, prefix+"неизвестный показатель контекста: "+t.Literal)
+						}
+						if scope != "grand" && len(c.Columns) == 0 {
+							add(repName, prefix+"контекст колонок требует columns: "+t.Literal)
+						}
+					}
 				}
 			} else if !aggs[m.Agg] {
 				add(repName, prefix+"неизвестный агрегат: "+m.Agg)

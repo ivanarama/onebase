@@ -49,6 +49,7 @@ type CrossResult struct {
 	Cols     []CrossCol     `json:"cols"`      // упорядоченные колонки (путь × показатель)
 	Rows     []*CrossRow    `json:"rows"`      // дерево строк (верхний уровень)
 	RowTotal map[string]any `json:"row_total"` // итог по каждой колонке (ключ = CrossCol.Key())
+	Grand    map[string]any `json:"grand"`     // aggregate of original rows across both axes
 	RowCount int            `json:"row_count"`
 	Capped   bool           `json:"capped"`
 	// Warnings — runtime-проблемы компоновки (ошибки вычисляемых показателей и
@@ -74,8 +75,15 @@ func ComposeCrossN(rows []Row, spec report.Composition, ev Evaluator, maxRows in
 	}
 	wc := &warnCollector{}
 	res.Cols = crossColumns(rows, spec)
-	res.Rows = buildCrossRows(rows, spec, 0, ev, wc)
-	res.RowTotal = crossCells(rows, spec, ev, wc)
+	res.Grand = aggregate(rows, spec.Measures, ev, wc)
+	ctx := crossContext{grand: res.Grand}
+	for _, col := range res.Cols {
+		if col.MeasureIdx == 0 {
+			ctx.paths = append(ctx.paths, col.Path)
+		}
+	}
+	res.Rows = buildCrossRows(rows, spec, 0, ev, wc, ctx)
+	res.RowTotal = crossCells(rows, spec, ev, wc, ctx)
 	res.Warnings = wc.msgs
 	return res, nil
 }
@@ -159,7 +167,7 @@ func crossColumns(rows []Row, spec report.Composition) []CrossCol {
 // агрегирует показатели по колонкам (crossCells по строкам узла). Сиблинги
 // каждого уровня сортируются по spec.Sort (issue #27): прежде строки шли строго
 // в порядке выборки, тогда как колонки уже сортировались — несимметрично.
-func buildCrossRows(rows []Row, spec report.Composition, level int, ev Evaluator, wc *warnCollector) []*CrossRow {
+func buildCrossRows(rows []Row, spec report.Composition, level int, ev Evaluator, wc *warnCollector, ctx crossContext) []*CrossRow {
 	if level >= len(spec.Groupings) {
 		return nil
 	}
@@ -175,7 +183,7 @@ func buildCrossRows(rows []Row, spec report.Composition, level int, ev Evaluator
 	}
 	out := make([]*CrossRow, 0, len(order))
 	for _, k := range order {
-		cells, styles := crossAgg(buckets[k], spec, ev, wc)
+		cells, styles := crossAgg(buckets[k], spec, ev, wc, ctx)
 		cr := &CrossRow{
 			Field:  field,
 			Key:    k,
@@ -184,7 +192,7 @@ func buildCrossRows(rows []Row, spec report.Composition, level int, ev Evaluator
 			Styles: styles,
 		}
 		if level+1 < len(spec.Groupings) {
-			cr.Children = buildCrossRows(buckets[k], spec, level+1, ev, wc)
+			cr.Children = buildCrossRows(buckets[k], spec, level+1, ev, wc, ctx)
 		}
 		out = append(out, cr)
 	}
@@ -221,8 +229,8 @@ func sortCrossRows(rows []*CrossRow, spec report.Composition) {
 
 // crossCells агрегирует показатели по каждому пути колонки (без оформления) —
 // для итоговой строки RowTotal.
-func crossCells(rows []Row, spec report.Composition, ev Evaluator, wc *warnCollector) map[string]any {
-	cells, _ := crossAgg(rows, spec, ev, wc)
+func crossCells(rows []Row, spec report.Composition, ev Evaluator, wc *warnCollector, ctx crossContext) map[string]any {
+	cells, _ := crossAgg(rows, spec, ev, wc, ctx)
 	return cells
 }
 
@@ -240,27 +248,35 @@ func crossCells(rows []Row, spec report.Composition, ev Evaluator, wc *warnColle
 //
 // wc собирает предупреждения исполнения показателей/условий (issue #26): прежде
 // кросс-режим терял их (wc=nil) — теперь они прокидываются в CrossResult.Warnings.
-func crossAgg(rows []Row, spec report.Composition, ev Evaluator, wc *warnCollector) (map[string]any, map[string]report.CellStyle) {
+type crossContext struct {
+	grand Row
+	paths [][]any
+}
+
+func crossAgg(rows []Row, spec report.Composition, ev Evaluator, wc *warnCollector, ctx crossContext) (map[string]any, map[string]report.CellStyle) {
 	byPath := map[string][]Row{}
-	paths := map[string][]any{}
-	var pathOrder []string
 	for _, r := range rows {
 		p := colPath(r, spec)
 		k := pathKey(p)
-		if _, ok := byPath[k]; !ok {
-			pathOrder = append(pathOrder, k)
-		}
 		byPath[k] = append(byPath[k], r)
-		paths[k] = p
 	}
 	cells := map[string]any{}
 	var styles map[string]report.CellStyle
-	for _, k := range pathOrder {
+	var previous, first Row
+	for pi, p := range ctx.paths {
+		k := pathKey(p)
 		sub := byPath[k]
+		if len(sub) == 0 {
+			previous = nil
+			continue
+		}
 		// agg — field-keyed: служит для вычисления Expr и условий оформления.
-		agg := aggregate(sub, spec.Measures, ev, wc)
+		agg := aggregateContext(sub, spec.Measures, ev, wc, measureContext{grand: ctx.grand, previous: previous, first: first, firstSelf: pi == 0})
+		if pi == 0 {
+			first = agg
+		}
+		previous = agg
 		st := evalStyles(agg, spec, ev, wc)
-		p := paths[k]
 		for mi, m := range spec.Measures {
 			ck := colKey(p, mi)
 			if m.Expr != "" {
