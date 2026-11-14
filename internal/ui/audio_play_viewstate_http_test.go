@@ -19,24 +19,32 @@ import (
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
-// Go through the public event route on a persisted object. Only the exact
-// native player's transient source/caption are view state, not a blanket
-// exemption for save:false attributes or persisted object fields.
+// Public form events: save:false form state does not modify the object;
+// persistent fields and table parts still do. Nullable legacy booleans use
+// the same false representation as untouched form controls.
 func TestAudioPlayViewStateHTTPMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		ctx := context.Background()
 		for _, tc := range []struct {
 			name, source, extra                                                       string
 			editName, editFlag, saveSource, sharedInput, readonlySource, otherCommand bool
+			nullFlag, omitFlag, storedTrue, saveNote                                  bool
 			wantDirty                                                                 bool
 		}{
 			{name: "only-player-view-fields", source: "Source"},
+			{name: "legacy-null-bool-false", source: "Source", nullFlag: true},
+			{name: "legacy-null-bool-ordinary-command", source: "Source", nullFlag: true, otherCommand: true},
+			{name: "omitted-false-bool", source: "Source", omitFlag: true},
+			{name: "nullable-bool-real-true-edit", source: "Source", nullFlag: true, editFlag: true, wantDirty: true},
+			{name: "true-bool-real-false-edit", source: "Source", storedTrue: true, wantDirty: true},
+			{name: "saved-note-is-dirty", source: "Source", saveNote: true, extra: `Объект.Note = "unsaved note";`, wantDirty: true},
+			{name: "service-bool-reference", source: "Source", extra: `Объект.Available = Истина;`},
 			{name: "real-native-header-input", source: "Source", editName: true, wantDirty: true},
 			{name: "real-boolean-input", source: "Source", editFlag: true, wantDirty: true},
 			{name: "entity-source-is-not-view-state", source: "StoredSource", wantDirty: true},
-			{name: "unrelated-transient-attribute", source: "Source", extra: `Объект.Note = "unsent note";`, wantDirty: true},
+			{name: "unrelated-transient-attribute", source: "Source", extra: `Объект.Note = "unsent note";`},
 			{name: "saved-form-attribute", source: "Source", saveSource: true, wantDirty: true},
-			{name: "shared-editable-binding", source: "Source", sharedInput: true, wantDirty: true},
+			{name: "shared-editable-binding", source: "Source", sharedInput: true},
 			{name: "selection-command-prepares-player", source: "Source", otherCommand: true},
 			{name: "readonly-display-shares-source", source: "Source", sharedInput: true, readonlySource: true},
 			{name: "selection-with-real-input", source: "Source", otherCommand: true, editName: true, wantDirty: true},
@@ -50,7 +58,7 @@ func TestAudioPlayViewStateHTTPMatrix(t *testing.T) {
 					t.Fatal(err)
 				}
 				form := &metadata.FormModule{Name: "Form", Kind: "object", EntityName: entity.Name, LayoutKind: metadata.FormLayoutManaged,
-					Attributes: []*metadata.FormAttribute{{Name: "Source", TypeRef: "string", Save: tc.saveSource}, {Name: "Caption", TypeRef: "string"}, {Name: "Note", TypeRef: "string"}},
+					Attributes: []*metadata.FormAttribute{{Name: "Source", TypeRef: "string", Save: tc.saveSource}, {Name: "Caption", TypeRef: "string"}, {Name: "Note", TypeRef: "string", Save: tc.saveNote}, {Name: "Available", TypeRef: "bool"}},
 					Elements: []*metadata.FormElement{
 						{Kind: metadata.FormElementAudio, Name: "Player", DataPath: "Объект." + tc.source, TitleFrom: "Объект.Caption", Handlers: map[metadata.FormEventType]string{metadata.FormEventAudioPlay: "Prepare"}},
 						{Kind: metadata.FormElementButton, Name: "Other", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Prepare"}},
@@ -68,10 +76,23 @@ func TestAudioPlayViewStateHTTPMatrix(t *testing.T) {
 				s := &Server{store: db, reg: reg, interp: interp, lockMgr: runtime.NewLockManager(), messages: NewMessageStore()}
 				s.entitySvc = s.newEntityService(nil)
 				id := uuid.New()
-				if err := db.Upsert(ctx, entity.Name, id, map[string]any{"Name": "own", "StoredSource": "old", "Flag": false}, entity); err != nil {
+				var storedFlag any = tc.storedTrue
+				if tc.nullFlag {
+					storedFlag = nil
+				}
+				if err := db.Upsert(ctx, entity.Name, id, map[string]any{"Name": "own", "StoredSource": "old", "Flag": storedFlag}, entity); err != nil {
 					t.Fatal(err)
 				}
+				if tc.nullFlag {
+					stored, err := db.GetByID(ctx, entity.Name, id, entity)
+					if err != nil || stored["Flag"] != nil {
+						t.Fatal("fixture must contain a real SQL NULL boolean")
+					}
+				}
 				body := url.Values{"_kind": {"object"}, "_form": {"Form"}, "_id": {id.String()}, "_version": {"1"}, "_element": {"Player"}, "_event": {string(metadata.FormEventAudioPlay)}, "Name": {"own"}, "StoredSource": {"old"}, "Flag": {"false"}, "Source": {""}, "Caption": {""}, "Note": {""}}
+				if tc.omitFlag {
+					body.Del("Flag")
+				}
 				if tc.editName {
 					body.Set("Name", "real unsaved edit")
 				}
@@ -118,9 +139,9 @@ func TestAudioPlayViewStateProcessorHTTPMatrix(t *testing.T) {
 		}{
 			{name: "view-only"},
 			{name: "real-parameter-change", extra: `Объект.Name = "changed parameter";`, want: true},
-			{name: "other-transient-note", extra: `Объект.Note = "unsent note";`, want: true},
+			{name: "other-transient-note", extra: `Объект.Note = "unsent note";`},
 			{name: "saved-source", saved: true, want: true},
-			{name: "shared-source", shared: true, want: true},
+			{name: "shared-source", shared: true},
 			{name: "source-is-business-parameter", sourceParam: true, want: true},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
@@ -165,7 +186,7 @@ func TestAudioViewStateFieldsBoundaries(t *testing.T) {
 	for _, name := range []string{"id", "_id", "_version", "parent_id", "is_folder", "posted", "deletion_mark", "Ссылка", "Reference"} {
 		t.Run(name, func(t *testing.T) {
 			form := &metadata.FormModule{Attributes: []*metadata.FormAttribute{{Name: name, TypeRef: "string"}}, Elements: []*metadata.FormElement{{Kind: metadata.FormElementAudio, Name: "Player", DataPath: "Объект." + name}}}
-			if len(audioViewStateFields(form, nil)) != 0 {
+			if len(formViewStateFields(form, nil)) != 0 {
 				t.Fatal("service field was classified as audio view state")
 			}
 		})

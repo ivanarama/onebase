@@ -9,46 +9,28 @@ import (
 	"strings"
 )
 
-// Audio source/caption bindings are display state for the lifetime of the
-// form, not only during the AudioPlay callback. Selecting a row, preparing a
-// cached recording or clearing it on Close must not turn that state into an
-// unsaved object edit. Persisted fields and editable bindings are never exempt.
-func audioViewStateFields(form *metadata.FormModule, entity *metadata.Entity) map[string]bool {
+// Unsaved form attributes are presentation state, independently of controls
+// bound to them. Entity fields, service fields and persistent table parts keep
+// their normal dirty comparison even if an attribute reuses their name.
+func formViewStateFields(form *metadata.FormModule, entity *metadata.Entity) map[string]bool {
 	if form == nil {
-		return nil
-	}
-	key := func(path string) string { return strings.ToLower(strings.TrimSpace(dpFieldName(path))) }
-	wanted := map[string]bool{}
-	walkBrowserFormElements(form, func(v browserFormElementVisit) {
-		if v.element.Kind == metadata.FormElementAudio {
-			wanted[key(v.element.DataPath)] = true
-			wanted[key(v.element.TitleFrom)] = true
-		}
-	})
-	if len(wanted) == 0 {
 		return nil
 	}
 	fields := map[string]bool{}
 	for _, attr := range form.Attributes {
-		if attr == nil || attr.Save || attr.MainAttribute || !formAttrIsScalar(attr) || audioPlaybackServiceField(attr.Name) || entityField(entity, attr.Name) != nil {
+		if attr == nil || attr.Save || attr.MainAttribute || audioPlaybackServiceField(attr.Name) || entityField(entity, attr.Name) != nil {
 			continue
 		}
-		typ := strings.ToLower(strings.TrimSpace(attr.TypeRef))
-		if typ != "string" && !strings.HasPrefix(typ, "string(") && typ != "строка" && !strings.HasPrefix(typ, "строка(") {
-			continue
+		persistentTable := false
+		if entity != nil {
+			for _, tp := range entity.TableParts {
+				persistentTable = persistentTable || strings.EqualFold(tp.Name, attr.Name)
+			}
 		}
-		if name := key(attr.Name); wanted[name] {
-			fields[name] = true
+		if !persistentTable {
+			fields[strings.ToLower(strings.TrimSpace(attr.Name))] = true
 		}
 	}
-	walkBrowserFormElements(form, func(v browserFormElementVisit) {
-		if v.element.Kind == metadata.FormElementAudio || v.effectiveReadOnly || v.element.Kind == metadata.FormElementLabel {
-			return
-		}
-		// A second editable control owns real user input, including a control
-		// that is only conditionally readonly. Keep its ordinary dirty guard.
-		delete(fields, key(v.element.DataPath))
-	})
 	return fields
 }
 
@@ -63,7 +45,7 @@ func audioPlaybackServiceField(name string) bool {
 	return false
 }
 
-func transientAudioPlaybackDirty(obj *runtime.Object, before map[string]string, tables map[string][]map[string]any, excluded map[string]bool) bool {
+func transientManagedFormDirty(obj *runtime.Object, before map[string]string, tables map[string][]map[string]any, excluded map[string]bool) bool {
 	if len(excluded) == 0 || obj == nil {
 		return transientManagedStateDirty(obj, before, tables)
 	}
@@ -82,7 +64,19 @@ func transientAudioPlaybackDirty(obj *runtime.Object, before map[string]string, 
 			prior[name] = value
 		}
 	}
-	return transientManagedStateDirty(&projection, prior, tables)
+	projection.TablePartRows = make(map[string][]map[string]any, len(obj.TablePartRows))
+	for name, rows := range obj.TablePartRows {
+		if !excluded[strings.ToLower(name)] {
+			projection.TablePartRows[name] = rows
+		}
+	}
+	priorTables := make(map[string][]map[string]any, len(tables))
+	for name, rows := range tables {
+		if !excluded[strings.ToLower(name)] {
+			priorTables[name] = rows
+		}
+	}
+	return transientManagedStateDirty(&projection, prior, priorTables)
 }
 
 func hasAudioPlayer(form *metadata.FormModule) bool {

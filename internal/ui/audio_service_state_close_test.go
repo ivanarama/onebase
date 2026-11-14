@@ -39,16 +39,16 @@ func TestAudioServiceStateCloseMatrix(t *testing.T) {
 		}{
 			{name: "close-clears-view-state"},
 			{name: "source-is-saved", saved: true, want: true},
-			{name: "source-has-editable-binding", editable: true, want: true},
+			{name: "source-has-editable-binding", editable: true},
 			{name: "real-entity-before-or-after-play", nameEdit: true, want: true},
 			{name: "real-bool-before-or-after-play", flagEdit: true, want: true},
 			{name: "real-form-note-before-or-after-play", noteEdit: true, want: true},
 			{name: "real-table-part-before-or-after-play", tableEdit: true, want: true},
-			{name: "non-player-form-stays-guarded", noPlayer: true, want: true},
+			{name: "non-player-form-stays-guarded", noPlayer: true},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				form := &metadata.FormModule{Name: "OwnForm", Attributes: []*metadata.FormAttribute{
-					{Name: "Source", TypeRef: "string", Save: tc.saved}, {Name: "Caption", TypeRef: "string"}, {Name: "Note", TypeRef: "string"},
+					{Name: "Source", TypeRef: "string", Save: tc.saved}, {Name: "Caption", TypeRef: "string"}, {Name: "Note", TypeRef: "string", Save: true},
 				}}
 				if !tc.noPlayer {
 					form.Elements = []*metadata.FormElement{{Kind: metadata.FormElementAudio, Name: "Player", DataPath: "Объект.Source", TitleFrom: "Объект.Caption"},
