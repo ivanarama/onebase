@@ -3,9 +3,9 @@
 //
 //	go run ./tools/prclosecheck -event "$GITHUB_EVENT_PATH"
 //
-// Only base..head from the immutable pull_request event is scanned. Commit
-// messages are raw text (even a negative example can close an issue); body
-// declarations must occupy their own top-level line outside code/comments.
+// By default the immutable event base..head is scanned. Actions may explicitly
+// bind a verified synthetic merge checkout to use its actual base instead of a
+// stale event base. Raw commit messages require standalone body declarations.
 package main
 
 import (
@@ -58,14 +58,21 @@ type event struct {
 
 func main() {
 	path := flag.String("event", "", "path to the pull_request event JSON")
+	checkout := flag.String("checkout-merge", "", "exact synthetic merge checkout SHA (Actions GITHUB_SHA)")
 	flag.Parse()
-	if err := check(*path); err != nil {
+	var selectedCheckout *string
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "checkout-merge" {
+			selectedCheckout = checkout
+		}
+	})
+	if err := check(*path, selectedCheckout); err != nil {
 		fmt.Fprintln(os.Stderr, "prclosecheck:", err)
 		os.Exit(1)
 	}
 }
 
-func check(path string) error {
+func check(path string, checkout *string) error {
 	if path == "" {
 		return fmt.Errorf("-event is required")
 	}
@@ -99,7 +106,36 @@ func check(path string) error {
 			return err
 		}
 	}
-	commits, err := git("rev-list", pr.Base.SHA+".."+pr.Head.SHA, "--")
+	base := pr.Base.SHA
+	if checkout != nil {
+		if !shaRE.MatchString(*checkout) {
+			return fmt.Errorf("-checkout-merge must be a complete lowercase commit SHA")
+		}
+		head, err := git("rev-parse", "--verify", "HEAD")
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(head) != *checkout {
+			return fmt.Errorf("local HEAD does not match -checkout-merge")
+		}
+		parents, err := git("rev-list", "--parents", "-n", "1", *checkout, "--")
+		if err != nil {
+			return err
+		}
+		parts := strings.Fields(parents)
+		if len(parts) != 3 || parts[0] != *checkout {
+			return fmt.Errorf("checkout merge must have exactly two parents")
+		}
+		if parts[2] != pr.Head.SHA {
+			return fmt.Errorf("checkout merge second parent does not match event head")
+		}
+		if _, err := git("merge-base", "--is-ancestor", pr.Base.SHA, parts[1]); err != nil {
+			return fmt.Errorf("event base is not a proven ancestor of checkout base: %w", err)
+		}
+		base = parts[1]
+		fmt.Printf("prclosecheck: event base %s; checkout base %s; head %s; checkout %s\n", pr.Base.SHA, base, pr.Head.SHA, *checkout)
+	}
+	commits, err := git("rev-list", base+".."+pr.Head.SHA, "--")
 	if err != nil {
 		return err
 	}

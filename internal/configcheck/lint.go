@@ -432,9 +432,13 @@ func entityYAMLSchema() *yamlLintSchema {
 		"numerator": with(obj("prefix", "length", "period", "scope", "base_prefix", "unique"), map[string]*yamlLintSchema{
 			"field": with(obj("title", "label", "required", "default", "pii"), map[string]*yamlLintSchema{"titles": freeMap()}),
 		}),
-		"predefined":   seq(with(obj("name"), map[string]*yamlLintSchema{"fields": freeMap()})),
-		"tile_view":    obj("image", "title", "subtitle", "fields"),
-		"activity":     obj("field", "default_scope", "hide_from_choice"),
+		"predefined": seq(with(obj("name"), map[string]*yamlLintSchema{"fields": freeMap()})),
+		"tile_view":  obj("image", "title", "subtitle", "fields"),
+		"activity":   obj("field", "default_scope", "hide_from_choice"),
+		"choice_row_style": with(obj("for_roles"), map[string]*yamlLintSchema{
+			"for_user": obj("func", "card", "account_field", "field", "equals"),
+			"rules":    seq(obj("when", "color", "background", "bold", "italic")),
+		}),
 		"detail_panel": detailPanel,
 		"stages":       stages,
 	})
@@ -619,7 +623,7 @@ func accountRegisterYAMLSchema() *yamlLintSchema {
 
 func homePageYAMLSchema() *yamlLintSchema {
 	nav := obj("documents", "catalogs", "reports", "inforegs", "registers", "processors", "journals", "pages")
-	return with(obj("title", "layout", "hidden"), map[string]*yamlLintSchema{
+	return with(obj("title", "layout", "hidden", "messages", "message_seconds"), map[string]*yamlLintSchema{
 		"titles":      freeMap(),
 		"rows":        seq(obj("widgets")),
 		"widgets":     seq(obj("name", "span")),
@@ -645,7 +649,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		// неизвестными, а гейт CI считает предупреждение ошибкой — то есть
 		// документированный «language» у kind: ПолеКода не давал примеру
 		// пройти собственную проверку (#1014).
-		"orientation", "equal_columns", "background", "input_mask", "language", "virtual_columns",
+		"orientation", "equal_columns", "background", "text_bold", "input_mask", "language", "virtual_columns",
 		"deadline_warn",
 		"conceal", "reveal_when",
 		"title_from",

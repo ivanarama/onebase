@@ -113,12 +113,14 @@ const markStart = source.indexOf('  function _obMarkDirty(');
 const markEnd = source.indexOf('  document.addEventListener', markStart);
 const gridHelpersStart = source.indexOf('  function reindexOrd(items) {');
 const gridHelpersEnd = source.indexOf('  // obGridCopyRow', gridHelpersStart);
+const closeIDStart = source.indexOf('  function freshCloseIntentID(){');
+const closeIDEnd = source.indexOf('  function closeFormKind(){', closeIDStart);
 const moveStart = source.indexOf('  window.obGridMoveRow = function(tpName, delta) {');
 const moveEnd = source.indexOf('  function rememberActiveGrid', moveStart);
-if ([dirtyEnd, markStart, markEnd, gridHelpersStart, gridHelpersEnd, moveStart, moveEnd].some(i => i < 0)) {
+if ([dirtyEnd, markStart, markEnd, gridHelpersStart, gridHelpersEnd, moveStart, moveEnd, closeIDStart, closeIDEnd].some(i => i < 0)) {
   throw new Error('managed.js dirty/grid behavior slices not found');
 }
-const fnSource = source.slice(helpersEnd, dirtyEnd) + source.slice(markStart, markEnd) +
+const fnSource = source.slice(closeIDStart, closeIDEnd) + source.slice(helpersEnd, dirtyEnd) + source.slice(markStart, markEnd) +
   source.slice(gridHelpersStart, gridHelpersEnd) + source.slice(moveStart, moveEnd) +
   source.slice(helpersStart, helpersEnd) + source.slice(mergeStart, mergeEnd) +
   source.slice(start, fireEnd);
@@ -160,6 +162,7 @@ async function run(response, formDirty, concurrentEdit) {
     reloadRequired: false, formEventWriteUnknown: false, manualReconcileRequired: false,
     formEditState,
     formEventQueue: Promise.resolve(), formEventPendingCount: 0, formEventPending: false,
+    programmaticCloseSource: null,
     closePending: null, closeHandoffPending: false, retryableClose: null,
     // Вопрос перед проведением (ПередПроведением) живёт в контроллере закрытия,
     // вне вырезки; навигации он не касается.

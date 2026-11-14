@@ -564,6 +564,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		// запросе, и первое же сохранение обнулило бы всё скрытое. Отсюда же
 		// граница смысла: item_form — это ВИДИМОСТЬ, а не защита; ограничение
 		// доступа к реквизиту делается политикой поля.
+		// refOptionStyle — style строки выбора ссылки (choice_row_style).
+		"refOptionStyle": refOptionStyle,
 		"itemFormVisible": func(entity *metadata.Entity) []itemFormField {
 			vis, _ := splitItemFormFields(entity)
 			return vis
@@ -1278,6 +1280,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
 		"managedTPColumnPlan": managedTPColumnPlan,
+		// messagesMeta — режим показа сообщений интерфейса (home_page: messages).
+		"messagesMeta": messagesMetaHTML,
 		// managedTPColumnsTitled — заголовки колонок из title_from по значениям
 		// формы при отрисовке; после событий их присылает columnTitles.
 		"managedTPColumnsTitled": func(plan []managedTPColumn, values any) []managedTPColumn {
@@ -1538,7 +1542,7 @@ const tplHead = `
   "imageError" (t (or $.Lang "ru") "Не удалось загрузить изображение")
   "imageArea" (t (or $.Lang "ru") "Область просмотра изображения")
 )}}</script>
-<script src="/static/ui.js"></script>
+{{messagesMeta .}}<script src="/static/ui.js"></script>
 <style>
 .ob-embedded .topbar,.ob-embedded .subsys-bar,.ob-embedded #ob-nav{display:none!important}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -1577,11 +1581,11 @@ body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;height:
 .sys-mode-block .sys-btn{margin-top:6px;background:#e2e8f0;color:#334155;font-size:12px;padding:6px 10px}
 .sys-logout{position:sticky;bottom:-4px;background:#fff;z-index:1;margin:0;padding:0;box-shadow:0 -3px 8px rgba(15,23,42,.06)}
 .tbl{width:100%;border-collapse:collapse}
-.tbl th{text-align:left;padding:8px 10px;border-bottom:2px solid #e2e8f0;color:#64748b;font-weight:600;font-size:12px;position:sticky;top:0;background:#fff}
+.tbl th{text-align:left;padding:8px 10px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;font-size:12px;position:sticky;top:0;background:#eef2f7}
 .tbl td{padding:6px 10px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:13px}
 .tbl tr:hover td{background:#f8fafc}
 .report-composed{width:100%;border-collapse:collapse;font-size:13px}
-.report-composed thead th{position:sticky;top:38px;background:#fff;z-index:5;text-align:left;padding:8px 10px;border-bottom:2px solid #e2e8f0;color:#64748b;font-weight:600;font-size:12px}
+.report-composed thead th{position:sticky;top:38px;background:#eef2f7;z-index:5;text-align:left;padding:8px 10px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;font-size:12px}
 .report-composed td{padding:6px 10px;border-bottom:1px solid #f1f5f9;color:#334155}
 .report-composed td.num{font-variant-numeric:tabular-nums}
 .report-composed tr.grp:hover td{background:#f8fafc}
@@ -1621,8 +1625,8 @@ h3{font-size:16px;font-weight:600;margin:24px 0 10px;color:#1e293b}
 .main-list .ob-list-content{width:100%}
 .main-list .ob-list-content>.card{max-width:none}
 table{width:100%;border-collapse:collapse;font-size:14px}
-th{text-align:left;padding:10px 12px;border-bottom:2px solid #e2e8f0;color:#64748b;font-weight:600}
-th a{color:#64748b;text-decoration:none}
+th{text-align:left;padding:10px 12px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;background:#eef2f7}
+th a{color:inherit;text-decoration:none}
 th a:hover{color:#1e293b}
 td{padding:10px 12px;border-bottom:1px solid #f1f5f9;color:#334155;font-size:14px}
 tr:last-child td{border-bottom:none}
@@ -1658,7 +1662,7 @@ details[open] summary::before{content:"▼ "}
 .filter-body input,.filter-body select{padding:7px 10px;font-size:13px}
 .filter-actions{padding:0 20px 16px;display:flex;gap:10px}
 .tp-table{width:100%;border-collapse:collapse;font-size:13px;margin-bottom:8px;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden}
-.tp-table th{background:#f8fafc;padding:8px 10px;text-align:left;font-size:12px;color:#475569;font-weight:600;border-bottom:2px solid #e2e8f0;white-space:nowrap}
+.tp-table th{background:#eef2f7;padding:8px 10px;text-align:left;font-size:12px;color:#334155;font-weight:600;border-bottom:2px solid #cbd5e1;white-space:nowrap}
 .tp-table td{padding:5px 6px;border-bottom:1px solid #e2e8f0;border-right:1px solid #eef2f7;vertical-align:middle}
 .tp-table tbody tr:nth-child(even) td{background:#f1f5f9}
 .tp-table tbody tr:hover td{background:#eef4ff}
@@ -1972,7 +1976,7 @@ a.w-kpi-link{display:block;text-decoration:none;color:#0f172a}
 a.w-kpi-link:hover{color:#1a4a80;text-decoration:underline}
 .w-list{overflow-x:auto}
 .w-list table{margin-top:4px;font-size:13px}
-.w-list th{padding:6px 8px;font-size:11px;color:#64748b;border-bottom:1px solid #e2e8f0;text-align:left;background:transparent}
+.w-list th{padding:6px 8px;font-size:11px;color:#334155;font-weight:600;border-bottom:2px solid #cbd5e1;text-align:left;background:#eef2f7}
 .w-list td{padding:6px 8px;border-bottom:1px solid #f1f5f9;font-size:13px;color:#334155}
 .w-list td.right{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .w-list tr:last-child td{border-bottom:none}
@@ -2234,7 +2238,7 @@ const tplList = `
           <select id="flt-{{.Name}}" name="f.{{.Name}}" data-ref-entity="{{.RefEntity}}" style="flex:1;min-width:0">
             <option value="">{{t $.Lang "— все —"}}</option>
             {{range index $refOpts .Name}}
-            <option value="{{index . "id"}}" {{if eq (index . "id") (filterVal $params $f.Name).Value}}selected{{end}}>{{index . "_label"}}</option>
+            <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (filterVal $params $f.Name).Value}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
           <button type="button" data-ob-ref-picker="flt-{{$f.Name}}" style="padding:7px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
@@ -2640,7 +2644,7 @@ const tplForm = `
 {{end}}{{/* end if not .IsPopup */}}
 
 <div class="card">
-<form id="main-form" method="POST" data-ob-dirty-watch="1"{{if enterSubmitsForm (index . "Form")}} data-ob-enter-submits="1"{{end}}>
+<form id="main-form" method="POST" autocomplete="off" data-ob-dirty-watch="1"{{if enterSubmitsForm (index . "Form")}} data-ob-enter-submits="1"{{end}}>
 {{if and (not .IsNew) (index .Values "_version")}}<input type="hidden" name="_version" value="{{index .Values "_version"}}">{{end}}
 {{if .IsPopup}}<input type="hidden" name="_popup" value="1">{{end}}
 {{if .Entity.Hierarchical}}
@@ -2656,7 +2660,7 @@ const tplForm = `
   <select name="parent_id">
     <option value="">{{t $.Lang "— корень —"}}</option>
     {{range .FolderOptions}}
-    <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values "parent_id")}}selected{{end}}>{{index . "_label"}}</option>
+    <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (index $.Values "parent_id")}}selected{{end}}>{{index . "_label"}}</option>
     {{end}}
   </select>
 </div>
@@ -2675,7 +2679,7 @@ const tplForm = `
       <select id="ref-{{$fn}}"{{if not $ro}} name="{{$fn}}"{{end}} style="flex:1" data-ref-entity="{{.RefEntity}}"{{if $.RefFilter}}{{with index $.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and (not $ro) (.InlineCreateEnabled false) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}>
         <option value="">{{t $.Lang "— выбрать —"}}</option>
         {{range index $.RefOptions $fn}}
-        <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
+        <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (index $.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
         {{end}}
       </select>
       {{if not $ro}}<button type="button" data-ob-ref-picker="ref-{{$fn}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;white-space:nowrap;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>{{end}}
@@ -2749,7 +2753,7 @@ const tplForm = `
             <select name="tp.{{$tpName}}.{{$i}}.{{$fn}}" style="flex:1" data-ref-entity="{{.RefEntity}}"{{if $.RefFilter}}{{with index $.RefFilter (printf "%s.%s" $tpName $fn)}} data-ref-filter="{{.}}"{{end}}{{end}}{{if and (.InlineCreateEnabled true) (refWriteAllowed $.RefWriteAccess .RefEntity)}} data-ref-allow-create="1"{{end}}{{if $tpReadOnly}} disabled{{end}}>
               <option value="">{{t $.Lang "— выбрать —"}}</option>
               {{range index $tpRef $fn}}
-              <option value="{{index . "id"}}" {{if eq (str (index . "id")) (refID (index $row $fn))}}selected{{end}}>{{index . "_label"}}</option>
+              <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (str (index . "id")) (refID (index $row $fn))}}selected{{end}}>{{index . "_label"}}</option>
               {{end}}
             </select>
             <button type="button" data-ob-ref-picker-self style="padding:4px 8px;border:1px solid #e2e8f0;border-radius:5px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}"{{if $tpReadOnly}} disabled{{end}}>...</button>
@@ -2773,7 +2777,7 @@ const tplForm = `
         {{else if eq (str .Type) "date"}}
           {{/* Поле даты, а не текст: в текстовом поле стояла сырая метка
                «2026-10-19T09:15:30». */}}
-          {{if $tpReadOnly}}<input type="text" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{fmtDate (index $row $fn)}}" disabled data-ob-date-text>{{else}}<input type="datetime-local" step="1" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{tpDateInput (index $row $fn)}}"
+          {{if $tpReadOnly}}<input type="text" autocomplete="off" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{fmtDate (index $row $fn)}}" disabled data-ob-date-text>{{else}}<input type="datetime-local" step="1" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{tpDateInput (index $row $fn)}}"
             data-ob-tp-recalc>{{end}}
         {{else if eq (str .Type) "bool"}}
           {{/* Флажок, а не текст (#1010): в текстовом поле стояло сырое
@@ -2781,7 +2785,7 @@ const tplForm = `
                истиной только «true» — пересохранение формы снимало флажок. */}}
           <input type="checkbox" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="true"{{if checked (index $row $fn)}} checked{{end}}{{if $tpReadOnly}} disabled{{end}}>
         {{else}}
-          <input type="text" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{index $row $fn}}"
+          <input type="text" autocomplete="off" name="tp.{{$tpName}}.{{$i}}.{{$fn}}" value="{{index $row $fn}}"
             data-ob-tp-recalc{{if $tpReadOnly}} disabled{{end}}>
         {{end}}
         </td>
@@ -3015,7 +3019,7 @@ const tplReport = `
           <select name="{{$pname}}" id="rp-{{$pname}}" style="flex:1;min-width:0" data-ref-entity="{{$p.RefEntity}}">
             <option value="">{{t $.Lang "— все —"}}</option>
             {{range $p.Opts}}
-              <option value="{{index . "id"}}" {{if eq $pval (str (index . "id"))}}selected{{end}}>{{index . "_label"}}</option>
+              <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq $pval (str (index . "id"))}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
           <button type="button" data-ob-ref-picker="rp-{{$pname}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
@@ -3180,7 +3184,7 @@ const tplRegister = `
     <div style="display:flex;gap:4px;align-items:center">
       <select id="regflt-{{.Name}}" name="flt_{{.Name}}" data-ref-entity="{{.RefEntity}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:6px;font-size:13px;min-width:0">
         <option value="">— {{t $.Lang "все"}} —</option>
-        {{$cur := index $flt .Name}}{{range index $refOpts .Name}}<option value="{{index . "id"}}" {{if eq (str (index . "id")) $cur}}selected{{end}}>{{index . "_label"}}</option>{{end}}
+        {{$cur := index $flt .Name}}{{range index $refOpts .Name}}<option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (str (index . "id")) $cur}}selected{{end}}>{{index . "_label"}}</option>{{end}}
       </select>
       <button type="button" data-ob-ref-picker="regflt-{{.Name}}" style="padding:6px 9px;border:1px solid #e2e8f0;border-radius:6px;background:#f8fafc;cursor:pointer;font-size:12px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
     </div>
@@ -3359,7 +3363,7 @@ const tplProcessor = `
         <div style="display:flex;gap:6px;align-items:center">
           <select id="pp-{{$pname}}" name="{{$pname}}" style="flex:1" data-ref-entity="{{index $.ProcessorRefEntity $pname}}" {{if .Required}}required{{end}}>
             <option value="">{{t $.Lang "— выбрать —"}}</option>
-            {{with index $.RefOptions $pname}}{{range .}}<option value="{{index . "id"}}" {{if eq (index . "id") (index $.ParamValues $pname)}}selected{{end}}>{{index . "_label"}}</option>{{end}}{{end}}
+            {{with index $.RefOptions $pname}}{{range .}}<option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (index $.ParamValues $pname)}}selected{{end}}>{{index . "_label"}}</option>{{end}}{{end}}
           </select>
           <button type="button" data-ob-ref-picker="pp-{{$pname}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
           <button type="button" data-ob-ref-current="pp-{{$pname}}" style="padding:6px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
@@ -3770,7 +3774,7 @@ const tplInfoReg = `
     <div style="display:flex;gap:4px;align-items:center">
       <select name="{{$dn}}" id="ird-{{$dn}}" style="flex:1;min-width:0" data-ref-entity="{{.RefEntity}}">
         <option value="">{{t $.Lang "— выбрать —"}}</option>
-        {{range index $.RefOpts $dn}}<option value="{{index . "id"}}" {{if eq (index $.Values $dn) (index . "id")}}selected{{end}}>{{index . "_label"}}</option>{{end}}
+        {{range index $.RefOpts $dn}}<option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index $.Values $dn) (index . "id")}}selected{{end}}>{{index . "_label"}}</option>{{end}}
       </select>
       <button type="button" data-ob-ref-picker="ird-{{$dn}}" style="padding:6px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
       <button type="button" data-ob-ref-current="ird-{{$dn}}" style="padding:6px 9px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Открыть карточку"}}">🔍</button>
@@ -3823,7 +3827,7 @@ const tplConstants = `
       <select id="const-{{.Name}}" name="{{.Name}}" data-ref-entity="{{.RefEntity}}" style="flex:1;min-width:0"{{if .Required}} required{{end}}>
         <option value="">{{t $.Lang "— не выбрано —"}}</option>
         {{range index $.RefOpts .Name}}
-        <option value="{{index . "id"}}" {{if eq (index . "id") (index $.Values $c.Name)}}selected{{end}}>{{index . "_label"}}</option>
+        <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (index $.Values $c.Name)}}selected{{end}}>{{index . "_label"}}</option>
         {{end}}
       </select>
       <button type="button" data-ob-ref-picker="const-{{$c.Name}}" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
@@ -3898,7 +3902,7 @@ const tplJournal = `
         <select id="jflt-{{$f}}" name="f.{{$f}}" data-ref-entity="{{index $.FilterRefEntities $f}}" style="flex:1;min-width:0">
           <option value="">{{t $.Lang "— все —"}}</option>
           {{range index $.FilterOptions $f}}
-          <option value="{{index . "id"}}" {{if eq (index . "id") (filterVal $params $f).Value}}selected{{end}}>{{index . "_label"}}</option>
+          <option value="{{index . "id"}}"{{refOptionStyle .}} {{if eq (index . "id") (filterVal $params $f).Value}}selected{{end}}>{{index . "_label"}}</option>
           {{end}}
         </select>
         <button type="button" data-ob-ref-picker="jflt-{{$f}}" style="padding:7px 10px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px;flex-shrink:0" title="{{t $.Lang "Выбрать из списка"}}">...</button>
