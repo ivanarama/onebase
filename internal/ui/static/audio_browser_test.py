@@ -29,12 +29,19 @@ with sync_playwright() as p:
         def response(r):
             if r.request.method == 'POST' and '/form-event' in r.url:
                 events.append(r.json())
-            if r.request.method == 'POST' and '/form-close-intent' in r.url:
-                close_events.append(r.json())
-                close_modes.append(r.request.headers.get('x-onebase-close-mode'))
             if r.url.endswith('/attachments'):
                 metadata.append(r.json())
         page.on('response', response)
+        # Chrome109 may evict a completed response body on the immediately
+        # following standard Close navigation. Forward the exact native
+        # request once and retain its response before passing it unchanged to
+        # the product controller; no dirty state or close decision is patched.
+        def relay_close(route):
+            reply=route.fetch()
+            close_events.append(reply.json())
+            close_modes.append(route.request.headers.get('x-onebase-close-mode'))
+            route.fulfill(response=reply)
+        page.route('**/form-close-intent',relay_close)
         page.goto(base+'/ui/catalog/Calls/'+call_id, wait_until='domcontentloaded')
         player = page.locator('[data-ob-audio]')
         media = page.locator('[data-ob-audio-media]')
