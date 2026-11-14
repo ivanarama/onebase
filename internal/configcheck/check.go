@@ -779,7 +779,7 @@ func unsupportedProcessorKeys(path string) []string {
 // (без выполнения запроса). Проверка полей против колонок запроса — Stage 3.
 func CheckReportComposition(proj *project.Project) []Issue {
 	var issues []Issue
-	aggs := map[string]bool{"": true, "sum": true, "count": true, "avg": true, "min": true, "max": true}
+	aggs := map[string]bool{"": true, "sum": true, "count": true, "count_distinct": true, "avg": true, "min": true, "max": true}
 	dirs := map[string]bool{"": true, "asc": true, "desc": true}
 	ctypes := map[string]bool{"bar": true, "line": true, "pie": true}
 	aligns := map[string]bool{"": true, "left": true, "right": true, "center": true}

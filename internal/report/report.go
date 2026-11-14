@@ -77,7 +77,7 @@ type Composition struct {
 // Measure описывает измеримый показатель (поле + агрегат) в компоновке.
 type Measure struct {
 	Field  string `yaml:"field"`
-	Agg    string `yaml:"agg"` // sum|count|avg|min|max ("" = sum)
+	Agg    string `yaml:"agg"` // sum|count|count_distinct|avg|min|max ("" = sum)
 	Title  string `yaml:"title"`
 	Align  string `yaml:"align"`  // left|right|center ("" = right)
 	Format string `yaml:"format"` // "" | "#,##0.00" | "#,##0" | "0.0%" и т.п.
