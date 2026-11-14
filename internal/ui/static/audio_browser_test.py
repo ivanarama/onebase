@@ -10,7 +10,7 @@ with sync_playwright() as p:
     try:
         page = browser.new_page(viewport={'width':1100,'height':760})
         page.set_default_timeout(7000)
-        requests, events, metadata, errors, geometry = [], [], [], [], []
+        requests, events, metadata, errors, geometry, close_events, close_modes = [], [], [], [], [], [], []
         def compact(label):
             m=page.locator('[data-ob-audio]').evaluate('''r=>{
               const b=r.getBoundingClientRect(),a=r.querySelector('audio');
@@ -29,6 +29,9 @@ with sync_playwright() as p:
         def response(r):
             if r.request.method == 'POST' and '/form-event' in r.url:
                 events.append(r.json())
+            if r.request.method == 'POST' and '/form-close-intent' in r.url:
+                close_events.append(r.json())
+                close_modes.append(r.request.headers.get('x-onebase-close-mode'))
             if r.url.endswith('/attachments'):
                 metadata.append(r.json())
         page.on('response', response)
@@ -87,6 +90,21 @@ with sync_playwright() as p:
         compact('keyboard-pointer-seek-volume-no-dirty')
         if proof: page.screenshot(path=str(Path(proof)/'02-managed-clean-controls.png'))
         page.locator('[data-ob-audio-stop]').click()
+        # Click the actual standard Close control. No explicit discard mode,
+        # no dirty setter, no patched lifecycle: clean state must choose the
+        # existing discard intent and navigate without any save prompt.
+        page.locator('button[data-ob-form-close=""]').click()
+        page.wait_for_url(base+'/ui/catalog/calls')
+        assert len(close_events)==1 and close_modes==['discard'],close_events
+        assert close_events[0].get('ok') and close_events[0].get('close',{}).get('allowed'),close_events
+        assert close_events[0].get('dirty') is False,close_events
+        assert not close_events[0].get('savedId') and not close_events[0].get('version'),close_events
+        assert not page.locator('#ob-managed-close-confirm').count()
+        page.goto(base+'/ui/catalog/Calls/'+call_id,wait_until='domcontentloaded')
+        assert page.evaluate('window._obFormDirty') is False
+        player=page.locator('[data-ob-audio]')
+        media=page.locator('[data-ob-audio-media]')
+        media.evaluate('(a)=>a.muted=true')
         # A genuine trusted input must survive a fresh server Play, not only a
         # cached media resume. Keep that edited page open throughout the test.
         page.locator('input[name="Name"]').fill('Own real unsaved edit')
@@ -104,6 +122,15 @@ with sync_playwright() as p:
         assert len(events)==3 and all(e.get('ok') for e in events), events
         assert events[-1].get('dirty') is True and page.evaluate('window._obFormDirty') is True
         assert page.locator('input[name="Name"]').input_value()=='Own real unsaved edit'
+        # The very same Close control must protect a genuine native edit.
+        page.locator('button[data-ob-form-close=""]').click()
+        page.locator('#ob-managed-close-confirm').wait_for(state='visible')
+        assert len(close_events)==1
+        page.locator('[data-ob-close-choice="cancel"]').click()
+        assert page.url==base+'/ui/catalog/Calls/'+call_id
+        assert page.evaluate('window._obFormDirty') is True
+        assert page.locator('input[name="Name"]').input_value()=='Own real unsaved edit'
+        assert len(close_events)==1
         dirty_page=page
         page=browser.new_page(viewport={'width':1100,'height':760})
         page.set_default_timeout(7000)
@@ -137,7 +164,7 @@ with sync_playwright() as p:
         assert not errors,errors
         assert dirty_page.evaluate('window._obFormDirty') is True
         assert dirty_page.locator('input[name="Name"]').input_value()=='Own real unsaved edit'
-        result={'public_http_browser':'PASS','geometry':geometry,'play_preparations':2,'metadata_lists':1,'range':206,'silent_wav':True,'native_early_pause':'AbortError/status empty','seek_volume_native_input_change_events':[],'initial_dirty':False,'after_clean_server_Play_dirty':False,'dirty_unchanged':True,'real_native_edit_after_fresh_server_Play_dirty':True,'real_native_edit_retained':True,'Save_invoked':False,'ordinary_audio_asset_requests':0,'js_errors':errors}
+        result={'public_http_browser':'PASS','geometry':geometry,'play_preparations':2,'metadata_lists':1,'range':206,'silent_wav':True,'native_early_pause':'AbortError/status empty','seek_volume_native_input_change_events':[],'initial_dirty':False,'after_clean_server_Play_dirty':False,'dirty_unchanged':True,'real_native_edit_after_fresh_server_Play_dirty':True,'real_native_edit_retained':True,'Save_invoked':False,'clean_standard_Close':'allowed/discard/noSave/noPrompt','real_edit_standard_Close':'prompt/Cancel/noSave/editRetained','ordinary_audio_asset_requests':0,'js_errors':errors}
         if proof: (Path(proof)/'receipt.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
         print(json.dumps(result))
     except Exception:

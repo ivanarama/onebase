@@ -79,8 +79,15 @@ func TestAudioPlayerBrowserHTTP(t *testing.T) {
 	router := chi.NewRouter()
 	s.MountStatic(router)
 	s.Mount(router)
-	var playRequests, metadataRequests, mediaRequests atomic.Int64
+	var playRequests, metadataRequests, mediaRequests, closeRequests, saveRequests atomic.Int64
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "POST" {
+			if strings.HasSuffix(r.URL.Path, "/form-close-intent") {
+				closeRequests.Add(1)
+			} else if !strings.HasSuffix(r.URL.Path, "/form-event") {
+				saveRequests.Add(1)
+			}
+		}
 		if r.Method == "POST" && strings.HasSuffix(r.URL.Path, "/form-event") {
 			_ = r.ParseForm()
 			if r.Form.Get("_event") == string(metadata.FormEventAudioPlay) {
@@ -108,6 +115,9 @@ func TestAudioPlayerBrowserHTTP(t *testing.T) {
 	t.Log(string(bytes.TrimSpace(out)))
 	if playRequests.Load() != 2 || metadataRequests.Load() != 1 || mediaRequests.Load() < 3 {
 		t.Fatalf("HTTP counts play=%d metadata=%d media=%d", playRequests.Load(), metadataRequests.Load(), mediaRequests.Load())
+	}
+	if closeRequests.Load() != 1 || saveRequests.Load() != 0 {
+		t.Fatalf("expected one clean discard intent and no Save: close=%d save=%d", closeRequests.Load(), saveRequests.Load())
 	}
 	stored, err := s.store.GetByID(ctx, calls.Name, callID, calls)
 	if err != nil || stored["Name"] != "Own synthetic call" || stored["_version"] != int64(1) {
