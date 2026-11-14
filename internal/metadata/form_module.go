@@ -76,7 +76,7 @@ const (
 )
 
 var knownFormEventTypes = map[FormEventType]bool{
-	FormEventOnOpen: true, FormEventOnReadAtServer: true,
+	FormEventAudioPlay: true, FormEventOnOpen: true, FormEventOnReadAtServer: true,
 	FormEventBeforeWrite: true, FormEventOnWrite: true, FormEventAfterWrite: true,
 	FormEventBeforeClose: true, FormEventOnClose: true, FormEventOnActivate: true,
 	FormEventItemChoice: true, FormEventStartChoice: true, FormEventOnChange: true,
@@ -128,6 +128,12 @@ func IsKnownFormEventType(event FormEventType) bool {
 // FormElementType represents types of form elements
 type FormElementType string
 
+// FormElementAudio is a lazy, authenticated attachment player. Its Play event
+// prepares an attachment only when the user requests playback.
+const FormElementAudio FormElementType = "Аудиоплеер"
+
+const FormEventAudioPlay FormEventType = "Воспроизведение"
+
 const (
 	FormElementField      FormElementType = "ПолеВвода"      // InputField
 	FormElementLabel      FormElementType = "Надпись"        // Label
@@ -164,7 +170,7 @@ var knownFormElementTypes = map[FormElementType]bool{
 	FormElementInputList: true, FormElementDatePicker: true, FormElementFormField: true,
 	FormElementTablePart: true, FormElementColumn: true, FormElementCommandBar: true,
 	FormElementPicture: true, FormElementCommandBarButton: true,
-	FormElementCodeField: true,
+	FormElementCodeField: true, FormElementAudio: true,
 }
 
 // IsKnownFormElementType сообщает, поддерживается ли вид элемента формы движком.

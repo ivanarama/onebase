@@ -235,6 +235,11 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		return key
 	}
 	return template.FuncMap{
+		"hasAudioPlayer":        hasAudioPlayer,
+		"audioField":            metadata.FormTitleSourceName,
+		"audioValue":            audioValue,
+		"audioSource":           audioSource,
+		"audioOnlyMode":         audioOnlyMode,
 		"refWriteAllowed":       refWriteAllowed,
 		"listFilterPanelFields": listFilterPanelFields,
 		"listFilterChoices":     listFilterChoices,
@@ -2822,6 +2827,7 @@ const tplForm = `
      роуты POST /ui/<kind>/<entity>/<id>/attachments). Показывается для
      сохранённой записи объекта (не новая, не попап, не обработка). */}}
 {{define "ob-attachments"}}
+{{if audioOnlyMode .}}{{template "ob-audio-only" .}}{{else}}
 {{if and (not .IsNew) (not .IsPopup) (not .IsProcessor)}}
 <div class="card" style="margin-top:16px" data-ob-attachments data-attachments-url="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/attachments">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
@@ -2837,6 +2843,32 @@ const tplForm = `
     </button>
   </form>
 </div>
+{{end}}
+{{end}}
+
+{{end}}
+
+{{define "ob-audio-controls"}}
+<style>[data-ob-audio]{display:inline-flex}</style>
+<div data-ob-audio data-audio-name="{{.Name}}" data-audio-source-field="{{.SourceField}}" data-audio-title-field="{{.TitleField}}" data-audio-source="{{.Source}}" data-audio-play-event="{{if .PlayEvent}}1{{end}}" data-audio-metadata-url="{{.MetadataURL}}" data-ob-el="{{.Name}}"{{with .Path}} data-ob-el-path="{{.}}"{{end}} style="display:inline-flex;align-items:center;vertical-align:middle;gap:4px;width:100%;max-width:600px;min-width:0;height:30px;padding:0;overflow:hidden;white-space:nowrap;{{if .Hidden}}display:none;{{end}}" data-audio-error="{{t .Lang "Не удалось воспроизвести запись"}}" data-audio-empty="{{t .Lang "Записи нет"}}" data-audio-loading="{{t .Lang "Подготовка записи…"}}" data-audio-play-label="{{t .Lang "Воспроизвести"}}" data-audio-pause-label="{{t .Lang "Пауза"}}">
+  <span data-ob-audio-caption title="{{.Title}}" style="font-size:12px;font-weight:600;flex:1 1 240px;max-width:280px;min-width:0;overflow:hidden;text-overflow:ellipsis">{{.Title}}</span>
+  <button type="button" class="btn btn-secondary" data-ob-audio-play aria-label="{{t .Lang "Воспроизвести"}}" title="{{t .Lang "Воспроизвести"}}" style="flex:0 0 24px;width:24px;height:24px;min-height:24px;padding:0;line-height:1;font-size:13px"{{if .ReadOnly}} disabled{{end}}>▶</button>
+  <button type="button" class="btn btn-secondary" data-ob-audio-stop aria-label="{{t .Lang "Остановить"}}" title="{{t .Lang "Остановить"}}" style="flex:0 0 24px;width:24px;height:24px;min-height:24px;padding:0;line-height:1;font-size:13px">■</button>
+  <span data-ob-audio-time style="font-size:11px;font-variant-numeric:tabular-nums;flex:0 0 auto">0:00 / 0:00</span>
+  <div data-ob-audio-seek role="slider" tabindex="0" aria-label="{{t .Lang "Позиция воспроизведения"}}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" aria-disabled="true" style="display:flex;align-items:center;flex:1 1 100px;max-width:120px;min-width:40px;height:18px;cursor:pointer;touch-action:none">
+    <span style="height:3px;background:#cbd5e1;width:100%;border-radius:2px"><span style="display:block;height:100%;width:var(--ob-audio-progress,0%);background:#2563eb;border-radius:2px"></span></span>
+  </div>
+  <div data-ob-audio-volume role="slider" tabindex="0" aria-label="{{t .Lang "Громкость"}}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100" style="display:flex;align-items:center;flex:0 1 36px;min-width:24px;height:18px;cursor:pointer;touch-action:none">
+    <span style="height:3px;background:#cbd5e1;width:100%;border-radius:2px"><span style="display:block;height:100%;width:var(--ob-audio-progress,100%);background:#64748b;border-radius:2px"></span></span>
+  </div>
+  <audio data-ob-audio-media preload="none" hidden></audio>
+  <span data-ob-audio-status role="status" aria-live="polite" style="flex:0 1 auto;max-width:200px;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:11px"></span>
+</div>
+{{end}}
+{{define "ob-audio-only"}}
+{{if and (not .IsNew) (not .IsPopup) (not .IsProcessor)}}
+{{template "ob-audio-controls" (dict "Name" "attachment-audio" "Title" .Entity.Title "Lang" .Lang "MetadataURL" (printf "/ui/%s/%s/%s/attachments" (lower (str .Entity.Kind)) .Entity.Name .ID))}}
+<script src="/static/audio.js"></script>
 {{end}}
 {{end}}
 

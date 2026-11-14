@@ -45,6 +45,7 @@ import (
 
 // formEventResponse — структура ответа JSON.
 type formEventResponse struct {
+	AudioStops     []string                    `json:"audioStops,omitempty"`
 	OK             bool                        `json:"ok"`
 	Values         map[string]any              `json:"values,omitempty"`
 	Revealed       []string                    `json:"revealed,omitempty"`
@@ -1315,6 +1316,8 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		disableDialogBuiltinsForClose(vars)
 	}
 
+	var audioStops []string
+	addFormAudioBuiltins(vars, form, &audioStops)
 	condRuntime := newFormConditionalRuntime(form)
 	for k, v := range condRuntime.builtins() {
 		vars[k] = v
@@ -1512,9 +1515,14 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	// lifecycle calls. Programmatic values/TableParts/FormTables do not emit DOM
 	// input events; without this signal an unsaved command mutation on a clean
 	// form could be silently discarded by the next Close.
-	dirty := transientManagedStateDirty(obj, fieldsBefore, tpBefore)
+	comparisonForm := form
+	var audioViewFields map[string]bool
+	if closeInv == nil {
+		comparisonForm, audioViewFields = audioPlaybackComparison(form, entity, elementName, eventName)
+	}
+	dirty := transientAudioPlaybackDirty(obj, fieldsBefore, tpBefore, audioViewFields)
 	if existingRecord || thisObj.saved || (closeInv != nil && closeInv.saved) {
-		dirty = s.managedCloseStateDirty(liveCtx, entity, form, obj, fieldsBefore, tpBefore)
+		dirty = s.managedCloseStateDirty(liveCtx, entity, comparisonForm, obj, fieldsBefore, tpBefore)
 	}
 	if formOpenEvent(elementName, eventName) && !thisObj.saved {
 		dirty = false
@@ -1524,6 +1532,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		opStatus = operationStatus(opCtx, runErr)
 		resp := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs).response(false)
 		resp.Error = interpreter.FormatUserError(runErr)
+		resp.AudioStops = audioStops
 		resp.PickerData = picker
 		if question.Variants != nil {
 			q := question
@@ -1541,6 +1550,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 
 	opStatus = "ok"
 	resp := s.serializeManagedFormEventState(r.Context(), form, entity, obj, condRuntime.rules, msgs).response(true)
+	resp.AudioStops = audioStops
 	resp.PickerData = picker
 	if question.Variants != nil {
 		q := question
@@ -2809,6 +2819,8 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			vars["OpenForm"] = navFn
 		}
 
+		var audioStops []string
+		addFormAudioBuiltins(vars, form, &audioStops)
 		condRuntime := newFormConditionalRuntime(form)
 		for k, v := range condRuntime.builtins() {
 			vars[k] = v
@@ -2875,22 +2887,34 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			runErr = s.interp.Run(decl, thisObj, vars)
 		}
 		runErr = finishDSLExecution(txState, runErr)
+		var audioViewFields map[string]bool
+		if closeInv == nil && eventName == string(metadata.FormEventAudioPlay) {
+			// Parameters remain business inputs even if a same-name form
+			// attribute also happens to be bound to the player.
+			protected := &metadata.Entity{}
+			for _, param := range proc.Params {
+				protected.Fields = append(protected.Fields, metadata.Field{Name: param.Name})
+			}
+			_, audioViewFields = audioPlaybackComparison(form, protected, elementName, eventName)
+		}
 		if runErr != nil {
 			opStatus = operationStatus(opCtx, runErr)
 			resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(false)
 			resp.Error = interpreter.FormatUserError(runErr)
+			resp.AudioStops = audioStops
 			resp.PickerData = picker
 			if question.Variants != nil {
 				q := question
 				resp.Question = &q
 			}
-			resp.Dirty = boolPtr(!formOpenEvent(elementName, eventName) && transientManagedStateDirty(obj, fieldsBefore, tablesBefore))
+			resp.Dirty = boolPtr(!formOpenEvent(elementName, eventName) && transientAudioPlaybackDirty(obj, fieldsBefore, tablesBefore, audioViewFields))
 			compactFormCloseDelta(&resp, closeInv)
 			respondJSON(enc, resp)
 			return
 		}
 
 		resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(true)
+		resp.AudioStops = audioStops
 		resp.PickerData = picker
 		if question.Variants != nil {
 			q := question
@@ -2900,7 +2924,7 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			resp.Navigation = navigation
 		}
 		resp.ChoiceList = choiceItems
-		resp.Dirty = boolPtr(!formOpenEvent(elementName, eventName) && transientManagedStateDirty(obj, fieldsBefore, tablesBefore))
+		resp.Dirty = boolPtr(!formOpenEvent(elementName, eventName) && transientAudioPlaybackDirty(obj, fieldsBefore, tablesBefore, audioViewFields))
 		compactFormCloseDelta(&resp, closeInv)
 		respondJSON(enc, resp)
 		return

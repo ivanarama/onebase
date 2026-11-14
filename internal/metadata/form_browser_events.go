@@ -23,6 +23,7 @@ type browserFormEventRule struct {
 }
 
 var browserFormEventRules = []browserFormEventRule{
+	{kinds: []FormElementType{FormElementAudio}, events: []FormEventType{FormEventAudioPlay}},
 	{
 		kinds:  []FormElementType{FormElementButton},
 		events: []FormEventType{FormEventOnClick, FormEventOnSearch, FormEventOnChoice, FormEventOnAnswer},
