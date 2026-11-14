@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -22,6 +23,8 @@ func TestEffectiveAccessObjectHookREST(t *testing.T) {
 КонецЕсли;
 КонецПроцедуры`)
 			h, _ := newAPITestHandler(t, []*metadata.Entity{masters, warehouse}, map[string]*ast.Program{masters.Name: prog})
+			router := chi.NewRouter()
+			router.Post("/catalogs/{entity}", h.createObject(metadata.KindCatalog))
 			r := reqWithEntity("POST", "/catalogs/А_Мастера", []byte(`{"Наименование":"own-synthetic"}`), map[string]string{"entity": masters.Name}, nil)
 			u := apiUser("own", auth.Permission{Catalogs: map[string][]string{masters.Name: {"read", "write"}}})
 			switch mode {
@@ -34,7 +37,7 @@ func TestEffectiveAccessObjectHookREST(t *testing.T) {
 				r = withUser(r, u)
 			}
 			w := httptest.NewRecorder()
-			h.createObject(metadata.KindCatalog).ServeHTTP(w, r)
+			router.ServeHTTP(w, r)
 			if mode == "union" || mode == "admin" {
 				if w.Code != http.StatusCreated {
 					t.Fatalf("create: %d %s", w.Code, w.Body.String())

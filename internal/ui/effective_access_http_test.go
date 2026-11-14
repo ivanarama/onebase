@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"context"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -24,6 +23,8 @@ func TestEffectiveAccessFormEventHTTP(t *testing.T) {
 КонецПроцедуры`)
 	proc := &processor.Processor{Name: "EffectiveAccess", Forms: []*metadata.FormModule{form}}
 	s, _ := newProcessorFormEventExecutionServer(t, proc, nil)
+	router := chi.NewRouter()
+	router.Post("/ui/processor/{name}/form-event", s.handleProcessorFormEvent)
 	s.reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{{Name: "А_Мастера", Kind: metadata.KindCatalog}, {Name: "Склады", Kind: metadata.KindCatalog}}})
 	base := &auth.Role{Name: "OTK", Permissions: auth.Permission{Catalogs: map[string][]string{"А_Мастера": {"write"}}, Processors: map[string][]string{proc.Name: {"run"}}}}
 	extra := &auth.Role{Name: "WarehouseExtra", Permissions: auth.Permission{Catalogs: map[string][]string{"Склады": {"write"}}, Processors: map[string][]string{}}}
@@ -41,14 +42,11 @@ func TestEffectiveAccessFormEventHTTP(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			r := httptest.NewRequest("POST", "/ui/processor/EffectiveAccess/form-event", strings.NewReader(processorClickBody("Check").Encode()))
 			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-			route := chi.NewRouteContext()
-			route.URLParams.Add("name", proc.Name)
-			r = r.WithContext(context.WithValue(r.Context(), chi.RouteCtxKey, route))
 			if tc.user != nil {
 				r = r.WithContext(auth.ContextWithUser(r.Context(), tc.user))
 			}
 			w := httptest.NewRecorder()
-			s.handleProcessorFormEvent(w, r)
+			router.ServeHTTP(w, r)
 			resp := decodeFormEventResponse(t, w.Body.Bytes())
 			if !resp.OK || len(resp.Messages) != 1 || resp.Messages[0] != tc.want {
 				t.Fatalf("response: %+v", resp)
