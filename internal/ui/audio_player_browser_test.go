@@ -106,7 +106,7 @@ func TestAudioPlayerBrowserHTTP(t *testing.T) {
 		t.Fatalf("browser HTTP smoke: %v\n%s", err, out)
 	}
 	t.Log(string(bytes.TrimSpace(out)))
-	if playRequests.Load() != 3 || metadataRequests.Load() != 1 || mediaRequests.Load() < 3 {
+	if playRequests.Load() != 2 || metadataRequests.Load() != 1 || mediaRequests.Load() < 3 {
 		t.Fatalf("HTTP counts play=%d metadata=%d media=%d", playRequests.Load(), metadataRequests.Load(), mediaRequests.Load())
 	}
 	stored, err := s.store.GetByID(ctx, calls.Name, callID, calls)

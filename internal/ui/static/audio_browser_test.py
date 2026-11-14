@@ -68,13 +68,6 @@ with sync_playwright() as p:
         page.locator('[data-ob-audio-play]').click()
         page.wait_for_function('()=>!document.querySelector("audio").paused')
         assert len(events)==1
-        page.locator('[data-ob-fire-click="SelectB"]').click()
-        page.wait_for_function('()=>document.querySelector("[data-ob-audio-caption]").textContent==="Call B"')
-        assert media.get_attribute('src') is None
-        page.locator('[data-ob-audio-play]').click()
-        page.wait_for_function('()=>document.querySelector("audio").currentTime>0.05')
-        assert media.get_attribute('src') == '/ui/attachments/'+second+'/download'
-        assert len(events)==3 and all(e.get('ok') for e in events), events
         page.locator('[data-ob-audio-play]').click()
         assert media.evaluate('(a)=>a.paused')
         dirty_before=page.evaluate('window._obFormDirty')
@@ -92,16 +85,23 @@ with sync_playwright() as p:
         assert page.evaluate('window._obFormDirty')==dirty_before
         assert dirty_before is False
         compact('keyboard-pointer-seek-volume-no-dirty')
-        if proof: page.screenshot(path=str(Path(proof)/'02-managed-after-call-b.png'))
+        if proof: page.screenshot(path=str(Path(proof)/'02-managed-clean-controls.png'))
         page.locator('[data-ob-audio-stop]').click()
         # A genuine trusted input must survive a fresh server Play, not only a
         # cached media resume. Keep that edited page open throughout the test.
         page.locator('input[name="Name"]').fill('Own real unsaved edit')
         page.locator('input[name="Name"]').press('Tab')
         assert page.evaluate('window._obFormDirty') is True
+        # SelectB is deliberately an ordinary command changing Choice as well
+        # as playback carriers. Its dirty semantics are outside AudioPlay's
+        # narrow exception, so exercise it only after the genuine native edit.
         page.locator('[data-ob-fire-click="SelectB"]').click()
+        page.wait_for_function('()=>document.querySelector("[data-ob-audio-caption]").textContent==="Call B"')
+        assert media.get_attribute('src') is None
         page.locator('[data-ob-audio-play]').click()
         page.wait_for_function('()=>document.querySelector("audio").currentTime>0.05')
+        assert media.get_attribute('src') == '/ui/attachments/'+second+'/download'
+        assert len(events)==3 and all(e.get('ok') for e in events), events
         assert events[-1].get('dirty') is True and page.evaluate('window._obFormDirty') is True
         assert page.locator('input[name="Name"]').input_value()=='Own real unsaved edit'
         dirty_page=page
@@ -137,7 +137,7 @@ with sync_playwright() as p:
         assert not errors,errors
         assert dirty_page.evaluate('window._obFormDirty') is True
         assert dirty_page.locator('input[name="Name"]').input_value()=='Own real unsaved edit'
-        result={'public_http_browser':'PASS','geometry':geometry,'play_preparations':3,'metadata_lists':1,'range':206,'silent_wav':True,'native_early_pause':'AbortError/status empty','seek_volume_native_input_change_events':[],'initial_dirty':False,'after_clean_server_Play_dirty':False,'dirty_unchanged':True,'real_native_edit_after_fresh_server_Play_dirty':True,'real_native_edit_retained':True,'Save_invoked':False,'ordinary_audio_asset_requests':0,'js_errors':errors}
+        result={'public_http_browser':'PASS','geometry':geometry,'play_preparations':2,'metadata_lists':1,'range':206,'silent_wav':True,'native_early_pause':'AbortError/status empty','seek_volume_native_input_change_events':[],'initial_dirty':False,'after_clean_server_Play_dirty':False,'dirty_unchanged':True,'real_native_edit_after_fresh_server_Play_dirty':True,'real_native_edit_retained':True,'Save_invoked':False,'ordinary_audio_asset_requests':0,'js_errors':errors}
         if proof: (Path(proof)/'receipt.json').write_text(json.dumps(result,ensure_ascii=False,indent=2),encoding='utf-8')
         print(json.dumps(result))
     except Exception:
