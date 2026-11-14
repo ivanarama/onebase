@@ -60,6 +60,9 @@ func TestAudioPlayerBrowserHTTP(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls.Forms = []*metadata.FormModule{{Name: "Form", Kind: "object", EntityName: calls.Name, LayoutKind: metadata.FormLayoutManaged,
+		// Match the target nonoperator form: the generic attachment panel is
+		// hidden independently of the native player and its lazy Play request.
+		Actions:    map[string]*metadata.FormAction{"attachments": {Visible: boolPtr(false)}},
 		Attributes: []*metadata.FormAttribute{{Name: "Source", TypeRef: "string"}, {Name: "Caption", TypeRef: "string"}, {Name: "Choice", TypeRef: "string"}},
 		Elements: []*metadata.FormElement{
 			{Kind: metadata.FormElementField, Name: "EditableName", DataPath: "Объект.Name"},
