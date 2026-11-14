@@ -36,6 +36,7 @@ const (
 type Result struct {
 	Columns  []string       `json:"columns"`
 	Groups   []*Group       `json:"groups"`
+	Details  []DetailRow    `json:"details,omitempty"` // flat composition without a synthetic group
 	Grand    map[string]any `json:"grand"`
 	RowCount int            `json:"row_count"`
 	Capped   bool           `json:"capped"`
@@ -96,6 +97,9 @@ func ComposeN(rows []Row, spec report.Composition, ev Evaluator, maxRows int) (*
 	}
 	wc := &warnCollector{}
 	res.Groups = buildGroups(rows, spec, 0, ev, wc)
+	if len(spec.Groupings) == 0 && spec.Detail {
+		res.Details = buildDetails(rows, spec, ev, wc)
+	}
 	res.Grand = aggregate(rows, spec.Measures, ev, wc)
 	res.Warnings = wc.msgs
 	return res, nil
