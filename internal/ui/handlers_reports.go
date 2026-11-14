@@ -251,7 +251,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		}
 		queryValues[p.Name] = v
 	}
-	compiled, err := s.compileQueryWithRowAccess(opCtx, rep.Query, queryValues)
+	compiled, err := s.compileReportVariantQuery(opCtx, rep, variant, queryValues)
 	reportParams := s.buildReportParams(opCtx, s.resolveLang(r), rep.Params, paramValues)
 	if err != nil {
 		opStatus = "error"
@@ -682,7 +682,11 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 		}
 		paramValues[p.Name] = v
 	}
-	compiled, err := s.compileQueryWithRowAccess(ctx, rep.Query, paramValues)
+	variant := r.FormValue("__variant")
+	if settings != nil {
+		variant = settings.Variant
+	}
+	compiled, err := s.compileReportVariantQuery(ctx, rep, variant, paramValues)
 	if err != nil {
 		return nil, nil, newReportExportError(http.StatusBadRequest, "query compile error", err)
 	}
