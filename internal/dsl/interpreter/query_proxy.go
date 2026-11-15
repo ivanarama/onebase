@@ -254,18 +254,18 @@ func (q *queryProxy) execute() *Array {
 		})
 	}
 	if err != nil {
-		panic(userError{Msg: "Ошибка запроса: " + err.Error()})
+		panic(userError{Msg: "Ошибка запроса: " + err.Error(), Err: err})
 	}
 	rows, err := q.db.QueryAll(ctx, res.SQL, res.Args...)
 	if err != nil {
-		panic(userError{Msg: "Ошибка выполнения SQL: " + err.Error() + "\nSQL: " + res.SQL})
+		panic(userError{Msg: "Ошибка выполнения SQL: " + err.Error() + "\nSQL: " + res.SQL, Err: err})
 	}
 	query.RestoreLongLabels(&res, rows, nil)
 	var guarded GuardedColumns
 	if q.guard != nil {
 		guarded, err = q.guard(ctx, res, rows)
 		if err != nil {
-			panic(userError{Msg: "Запрос: " + err.Error()})
+			panic(userError{Msg: "Запрос: " + err.Error(), Err: err})
 		}
 	}
 	query.NormalizeColumns(&res, rows)
