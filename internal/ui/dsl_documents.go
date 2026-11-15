@@ -588,9 +588,11 @@ func (p *docProxy) LoadObject(uuidStr string) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	version, err := p.s.store.EntityVersion(p.ctx(), p.entity.Name, id)
-	if err != nil {
-		return nil, err
+	// The CAS token belongs to the header just loaded, not to a later SELECT.
+	// A concurrent writer may commit while table parts/refs are being loaded.
+	version, ok := row["_version"].(int64)
+	if !ok {
+		return nil, fmt.Errorf("объект %s/%s: не прочитана версия", p.entity.Name, id)
 	}
 	w := &docWriter{
 		s:               p.s,
@@ -842,9 +844,9 @@ func (w *docWriter) read() error {
 	for _, tp := range w.entity.TableParts {
 		w.s.enrichTPRowsWithRefs(w.ctx(), tp, tpRows[tp.Name])
 	}
-	version, err := w.s.store.EntityVersion(w.ctx(), w.entity.Name, w.obj.ID)
-	if err != nil {
-		return err
+	version, ok := row["_version"].(int64)
+	if !ok {
+		return fmt.Errorf("объект %s/%s: не прочитана версия", w.entity.Name, w.obj.ID)
 	}
 	w.expectedVersion = &version
 	w.loaded = true
