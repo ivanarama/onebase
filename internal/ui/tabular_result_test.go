@@ -3,9 +3,12 @@ package ui
 import (
 	"bytes"
 	"context"
+	"embed"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -26,6 +29,41 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
+//go:embed testdata/tabular-result
+var tabularExampleFiles embed.FS
+
+func tabularExampleProject(t *testing.T) *project.Project {
+	t.Helper()
+	dir := t.TempDir()
+	const prefix = "testdata/tabular-result"
+	err := fs.WalkDir(tabularExampleFiles, prefix, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == prefix {
+			return nil
+		}
+		target := filepath.Join(dir, filepath.FromSlash(strings.TrimPrefix(path, prefix+"/")))
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0700)
+		}
+		data, err := tabularExampleFiles.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0600)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	proj, err := project.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(proj.Close)
+	return proj
+}
+
 func tabularHTTP(s *Server, actor *auth.User, session, method, path string, body url.Values) *httptest.ResponseRecorder {
 	router := chi.NewRouter()
 	s.Mount(router)
@@ -40,11 +78,7 @@ func tabularHTTP(s *Server, actor *auth.User, session, method, path string, body
 
 func TestTabularLayoutReportHTTPMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
-		proj, err := project.Load(filepath.Join("..", "..", "examples", "tabular-result"))
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer proj.Close()
+		proj := tabularExampleProject(t)
 		s, user, _ := tabularFixture(t, db)
 		s.reg.Load(runtime.LoadOptions{Reports: proj.Reports, Programs: proj.Programs})
 		s.reg.LoadLayoutForms(proj.LayoutForms)
