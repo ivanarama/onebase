@@ -9,6 +9,8 @@ import (
 
 	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
+	reportpkg "github.com/ivantit66/onebase/internal/report"
+	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -54,7 +56,7 @@ func TestTabularSizeHTTPMatrix(t *testing.T) {
 					body = "Д.Ячейка(1,1).Текст=\"ok\";Ш=Д.Область(1,1,21000,1);Д.ПовторитьПриПечати(Ш,Истина);"
 				}
 				prog := mustParse(t, "Функция Build()\nД=Новый ТабличныйДокумент;\n"+body+"\nВозврат Д;\nКонецФункции")
-				s.reg.LoadModules(map[string]*ast.Program{rep.Name: prog})
+				s.reg.Load(runtime.LoadOptions{Programs: map[string]*ast.Program{rep.Name: prog}, Reports: []*reportpkg.Report{rep}})
 				var before, after goruntime.MemStats
 				goruntime.ReadMemStats(&before)
 				start := time.Now()
