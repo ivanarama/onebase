@@ -307,6 +307,9 @@ func (s *Server) attachTabularResults(w http.ResponseWriter, r *http.Request, sc
 	resp.TabularDocuments = make(map[string]string, len(f.tabular))
 	for name, doc := range f.tabular {
 		fieldScope := scope
+		if scope.Kind != "processor" && f.obj != nil && f.obj.ID != uuid.Nil {
+			fieldScope.ID = f.obj.ID.String()
+		}
 		fieldScope.Field = name
 		f.form.Walk(func(el *metadata.FormElement) bool {
 			if el != nil && el.Kind == metadata.FormElementSpreadsheet && strings.EqualFold(formDataPathFieldName(el.DataPath), name) && el.Handlers[metadata.FormEventDrilldown] != "" {

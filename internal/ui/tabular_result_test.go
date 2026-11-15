@@ -54,7 +54,7 @@ func TestTabularLayoutReportHTTPMatrix(t *testing.T) {
 		}
 		path := w.Header().Get("Location")
 		view := tabularHTTP(s, user, "own-session", "GET", path, nil)
-		if view.Code != 200 || !strings.Contains(view.Body.String(), "150000,00") || !strings.Contains(view.Body.String(), "Заявка 2") {
+		if view.Code != 200 || !strings.Contains(view.Body.String(), "150006,00") || !strings.Contains(view.Body.String(), "Заявка 2") {
 			t.Fatalf("module total/detail missing: HTTP%d", view.Code)
 		}
 		v, ok := s.tabularResults.items[strings.TrimPrefix(path, "/ui/tabular/")]

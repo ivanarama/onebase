@@ -1,5 +1,8 @@
-name: View
-kind: object
+schema: onebase.form/v1
+form:
+  name: View
+  kind: object
+  entity: TabularProcessor
 attributes:
   - name: Результат
     type: SpreadsheetDocument
@@ -7,7 +10,8 @@ attributes:
 elements:
   - name: Построить
     kind: Кнопка
-    title: Сформировать
+    title:
+      ru: Сформировать
     events:
       Нажатие: Сформировать
   - name: ТабДок

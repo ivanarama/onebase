@@ -2,9 +2,10 @@ package sheet
 
 import (
 	"fmt"
-	"github.com/shopspring/decimal"
 	"strconv"
 	"strings"
+
+	"github.com/shopspring/decimal"
 )
 
 // Reference is an inert typed drilldown, never an arbitrary URL or command.
@@ -60,6 +61,10 @@ func (d *Document) Snapshot() *Document {
 		for k, c := range d.HeaderArea.Cells {
 			if c != nil {
 				v := *c
+				if c.Drilldown != nil {
+					ref := *c.Drilldown
+					v.Drilldown = &ref
+				}
 				a.Cells[k] = &v
 			}
 		}

@@ -87,5 +87,5 @@ func (s *Server) addTabularDrilldownVars(r *http.Request, scope tabularScope, fo
 
 func installTabularLayouts(vars map[string]any, root *tabularLayouts) {
 	vars["Макеты"] = root
-	vars["ПолучитьМакет"] = func(args []any) any { return root.CallMethod("Получить", args) }
+	vars["ПолучитьМакет"] = interpreter.BuiltinFunc(func(args []any, _ string, _ int) (any, error) { return root.CallMethod("Получить", args), nil })
 }
