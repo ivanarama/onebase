@@ -123,6 +123,22 @@ func (d *Document) XLSX() ([]byte, error) {
 			}
 		}
 	}
+	// Excelize keeps the template's A1 dimension when writing cells/styles.
+	// Streaming readers trust it, so include empty styled cells and merge spans,
+	// not only the last non-empty value. Width/height maps alone are not content.
+	dimension := "A1"
+	if maxRow >= 0 && maxCol >= 0 {
+		last, err := excelize.CoordinatesToCellName(maxCol+1, maxRow+1)
+		if err != nil {
+			return nil, err
+		}
+		if last != "A1" {
+			dimension += ":" + last
+		}
+	}
+	if err := f.SetSheetDimension(sheetName, dimension); err != nil {
+		return nil, err
+	}
 	buf, err := f.WriteToBuffer()
 	if err != nil {
 		return nil, err
