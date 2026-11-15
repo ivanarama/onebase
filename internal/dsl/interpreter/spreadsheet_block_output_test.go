@@ -30,7 +30,9 @@ func TestSpreadsheetBlockOutputDSL(t *testing.T) {
 			}
 			o := runtime.NewObject("Own", metadata.KindDocument)
 			i := New()
-			if e = i.Run(p.Procedures[0], o, map[string]any{"Макет": NewMaket(lt)}); e != nil {
+			vars := NewSpreadsheetFunctions()
+			vars["Макет"] = NewMaket(lt)
+			if e = i.Run(p.Procedures[0], o, vars); e != nil {
 				t.Fatal(e)
 			}
 			d, ok := o.Get("Result").(*SpreadsheetDocument)
