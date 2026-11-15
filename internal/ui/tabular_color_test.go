@@ -85,7 +85,7 @@ func TestTabularDrilldownColorHTTPMatrix(t *testing.T) {
 					t.Fatalf("link style=%q color=%q", attr(link, "style"), color)
 				}
 				href := attr(link, "href")
-				if !strings.HasPrefix(href, path+"/drilldown") {
+				if !strings.HasPrefix(href, path+"/cell?row=0&col=0") {
 					t.Fatal("changed protected route")
 				}
 				follow := tabularHTTP(s, actor, "own-color-session", http.MethodGet, href, nil)
