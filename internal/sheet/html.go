@@ -164,7 +164,13 @@ tr:nth-child(even) td{background:#f8fafc}
 					text += img
 				}
 				if (cell.Drilldown != nil || (cell.DrilldownPayload != nil && opts.ParentDrilldown)) && opts.DrilldownURL != nil {
-					text = `<a data-sheet-drilldown="1" target="_blank" rel="noopener" href="` + escapeHTML(opts.DrilldownURL(row, col)) + `">` + text + `</a>`
+					linkStyle := ""
+					// Explicit safe cell color also applies to its drilldown text. Keep the
+					// ordinary browser link color when the cell has no valid explicit color.
+					if safeColor(cell.TextColor) != "" {
+						linkStyle = ` style="color:inherit"`
+					}
+					text = `<a data-sheet-drilldown="1" target="_blank" rel="noopener"` + linkStyle + ` href="` + escapeHTML(opts.DrilldownURL(row, col)) + `">` + text + `</a>`
 				}
 			}
 
