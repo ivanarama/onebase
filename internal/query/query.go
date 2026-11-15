@@ -4835,7 +4835,25 @@ func (tr *translator) dateFieldAt(idx int) bool {
 	if idx < 0 || idx >= len(tr.tokens) || tr.tokens[idx].kind != tIdent {
 		return false
 	}
-	return tr.colTypes[lowerFast(tr.tokens[idx].val)] == metadata.FieldTypeDate
+	originalIdx := idx
+	// A field to the right of a parameter starts at its qualifier (P.Date),
+	// whereas a field to the left ends at Date.
+	if idx+2 < len(tr.tokens) && tr.tokens[idx+1].kind == tDot && tr.tokens[idx+2].kind == tIdent {
+		idx += 2
+	}
+	name := lowerFast(tr.tokens[idx].val)
+	if qualifier := tr.columnQualifierAt(idx); qualifier != "" {
+		if scope, ok := tr.sourceCtx.qualifierScopeAt(idx, qualifier); ok && scope.qualifiers[qualifier] == sourceClassEntity {
+			// Known qualified object fields belong to their own SELECT/source,
+			// not to colTypes of the first source (which may be a table part).
+			if typ, _, known := tr.columnTypeAt(idx, name, qualifier); known {
+				return typ == metadata.FieldTypeDate
+			}
+		}
+	}
+	// Preserve the existing unqualified/unknown-source and register rules.
+	// Registers have a separate SQLite storage-format contract (#2188).
+	return tr.colTypes[lowerFast(tr.tokens[originalIdx].val)] == metadata.FieldTypeDate
 }
 
 func (tr *translator) timeParamAt(idx int) bool {
