@@ -60,7 +60,7 @@ func TestTabularPayloadHTTPMatrix(t *testing.T) {
 				}
 				if strings.HasPrefix(mode, "question-") {
 					form.Elements[1].Handlers[metadata.FormEventOnAnswer] = "Expand"
-					source = strings.ReplaceAll(source, "Процедура Expand()", "Процедура Expand()\nЕсли ВопросОтвет=\"\" Тогда ПоказатьВопрос(\"Создать документ?\",\"ДаНет\");Возврат;КонецЕсли;\nЕсли ВопросОтвет<>\"Да\" Тогда Возврат;КонецЕсли;")
+					source = strings.ReplaceAll(source, "Процедура Expand()", "Процедура Expand()\nЕсли Не ЗначениеЗаполнено(ВопросОтвет) Тогда ПоказатьВопрос(\"Создать документ?\",\"ДаНет\");Возврат;КонецЕсли;\nЕсли ВопросОтвет<>\"Да\" Тогда Возврат;КонецЕсли;")
 				}
 				form.ProgramAST = mustParse(t, strings.ReplaceAll(source, "OWNNAME", name))
 				proc := &processor.Processor{Name: "PayloadProcessor", Forms: []*metadata.FormModule{form}}
