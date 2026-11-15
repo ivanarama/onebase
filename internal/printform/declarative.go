@@ -219,6 +219,7 @@ func lookupParam(params map[string]string, name string) (string, bool) {
 // границы: Borders приоритетнее legacy-пресета Border.
 func layoutCellToSheet(ld LayoutCell) *sheet.Cell {
 	cell := sheet.NewCell(ld.Text)
+	cell.Format = ld.Format
 	cell.Value = ld.Text
 	cell.Bold = ld.Bold
 	cell.Italic = ld.Italic

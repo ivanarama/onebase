@@ -1,7 +1,10 @@
 package sheet
 
 import (
+	"archive/zip"
+	"bytes"
 	"fmt"
+	"io"
 	"regexp"
 	"strconv"
 	"strings"
@@ -31,6 +34,10 @@ func (d *Document) XLSX() ([]byte, error) {
 	if len(d.Cells) == 0 {
 		maxRow, maxCol = -1, -1
 	}
+	collapsed, outlineLevel, err := d.xlsxView(f, sheetName, maxRow)
+	if err != nil {
+		return nil, err
+	}
 
 	for col, px := range d.ColWidths {
 		if px <= 0 || col < 1 {
@@ -55,7 +62,11 @@ func (d *Document) XLSX() ([]byte, error) {
 
 	styles := map[string]int{}
 	styleFor := func(st *excelize.Style) (int, error) {
-		key := fmt.Sprintf("%+v|%+v|%+v|%+v|%v", st.Font, st.Fill, st.Alignment, st.Border, st.NumFmt)
+		custom := ""
+		if st.CustomNumFmt != nil {
+			custom = *st.CustomNumFmt
+		}
+		key := fmt.Sprintf("%+v|%+v|%+v|%+v|%v|%s", st.Font, st.Fill, st.Alignment, st.Border, st.NumFmt, custom)
 		if id, ok := styles[key]; ok {
 			return id, nil
 		}
@@ -116,7 +127,153 @@ func (d *Document) XLSX() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if outlineLevel > 0 {
+		return xlsxOutlineXML(buf.Bytes(), collapsed, outlineLevel)
+	}
 	return buf.Bytes(), nil
+}
+
+// xlsxView keeps grouping as worksheet metadata; all cell values are retained.
+func (d *Document) xlsxView(f *excelize.File, sh string, maxRow int) (map[int]bool, int, error) {
+	grid := !d.HideGrid
+	if err := f.SetSheetView(sh, 0, &excelize.ViewOptions{ShowGridLines: &grid}); err != nil {
+		return nil, 0, err
+	}
+	rows, cols := max(d.FreezeRows, 0), max(d.FreezeCols, 0)
+	if rows > 0 || cols > 0 {
+		ref, err := excelize.CoordinatesToCellName(cols+1, rows+1)
+		if err != nil {
+			return nil, 0, err
+		}
+		pane := "bottomRight"
+		if rows == 0 {
+			pane = "topRight"
+		}
+		if cols == 0 {
+			pane = "bottomLeft"
+		}
+		if err = f.SetPanes(sh, &excelize.Panes{Freeze: true, XSplit: cols, YSplit: rows, TopLeftCell: ref, ActivePane: pane}); err != nil {
+			return nil, 0, err
+		}
+	}
+	orientation := "portrait"
+	if orientLandscape(d.Page.Orientation) {
+		orientation = "landscape"
+	}
+	size := 9
+	if n := map[string]int{"a3": 8, "a4": 9, "a5": 11, "a6": 70, "letter": 1, "legal": 5, "tabloid": 3}[strings.ToLower(strings.TrimSpace(d.Page.Format))]; n != 0 {
+		size = n
+	}
+	if err := f.SetPageLayout(sh, &excelize.PageLayoutOptions{Orientation: &orientation, Size: &size}); err != nil {
+		return nil, 0, err
+	}
+	if d.RepeatHeader && d.HeaderArea != nil && d.HeaderArea.Rows() > 0 {
+		ref := fmt.Sprintf("'%s'!$1:$%d", strings.ReplaceAll(sh, "'", "''"), d.HeaderArea.Rows())
+		if err := f.SetDefinedName(&excelize.DefinedName{Name: "_xlnm.Print_Titles", Scope: sh, RefersTo: ref}); err != nil {
+			return nil, 0, err
+		}
+	}
+	collapsed := map[int]bool{}
+	if maxRow < 0 || len(d.Groups) == 0 {
+		return collapsed, 0, nil
+	}
+	below := false
+	if err := f.SetSheetProps(sh, &excelize.SheetPropsOptions{OutlineSummaryBelow: &below}); err != nil {
+		return nil, 0, err
+	}
+	levels := make([]int, maxRow+1)
+	hidden := make([]bool, maxRow+1)
+	maxLevel := 0
+	for _, g := range d.ResolvedGroups() {
+		header := max(g.HeaderEnd, g.Start)
+		end := min(g.End, maxRow)
+		if header < 0 || header >= end {
+			continue
+		}
+		level := min(max(g.Level, 1), 7)
+		maxLevel = max(maxLevel, level)
+		for r := header + 1; r <= end; r++ {
+			levels[r] = max(levels[r], level)
+			hidden[r] = hidden[r] || !g.Expanded
+		}
+		if !g.Expanded {
+			collapsed[header+1] = true
+		}
+	}
+	for r, level := range levels {
+		if level > 0 && level <= 7 {
+			if err := f.SetRowOutlineLevel(sh, r+1, uint8(level)); err != nil {
+				return nil, 0, err
+			}
+		}
+		if level > 0 || collapsed[r+1] {
+			if err := f.SetRowVisible(sh, r+1, !hidden[r]); err != nil {
+				return nil, 0, err
+			}
+		}
+	}
+	return collapsed, maxLevel, nil
+}
+
+var xlsxRowTag = regexp.MustCompile(`<row\b[^>]*>`)
+var xlsxRowNumber = regexp.MustCompile(`\br="([0-9]+)"`)
+var xlsxSheetFormat = regexp.MustCompile(`<sheetFormatPr\b`)
+
+// Excelize exposes row levels/visibility, but not the summary-row collapsed
+// marker or outlineLevelRow. Complete those attributes in our own generated
+// workbook; Copy preserves every other ZIP entry without recompression.
+func xlsxOutlineXML(data []byte, collapsed map[int]bool, level int) ([]byte, error) {
+	z, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		return nil, err
+	}
+	var output bytes.Buffer
+	w := zip.NewWriter(&output)
+	for _, entry := range z.File {
+		if entry.Name != "xl/worksheets/sheet1.xml" {
+			if err = w.Copy(entry); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		r, openErr := entry.Open()
+		if openErr != nil {
+			return nil, openErr
+		}
+		// G110: input is the workbook generated just above, never an upload.
+		xml, readErr := io.ReadAll(r) //nolint:gosec
+		closeErr := r.Close()
+		if readErr != nil {
+			return nil, readErr
+		}
+		if closeErr != nil {
+			return nil, closeErr
+		}
+		xml = xlsxRowTag.ReplaceAllFunc(xml, func(tag []byte) []byte {
+			m := xlsxRowNumber.FindSubmatch(tag)
+			if len(m) == 0 {
+				return tag
+			}
+			row, _ := strconv.Atoi(string(m[1]))
+			if !collapsed[row] {
+				return tag
+			}
+			return bytes.Replace(tag, []byte("<row"), []byte(`<row collapsed="1"`), 1)
+		})
+		xml = xlsxSheetFormat.ReplaceAll(xml, []byte(fmt.Sprintf(`<sheetFormatPr outlineLevelRow="%d"`, level)))
+		h := entry.FileHeader
+		part, createErr := w.CreateHeader(&h)
+		if createErr != nil {
+			return nil, createErr
+		}
+		if _, err = part.Write(xml); err != nil {
+			return nil, err
+		}
+	}
+	if err = w.Close(); err != nil {
+		return nil, err
+	}
+	return output.Bytes(), nil
 }
 
 func pxToExcelWidth(px float64) float64 {
@@ -163,6 +320,10 @@ func xlsxCellStyle(cell *Cell) (*excelize.Style, bool) {
 			st.NumFmt = 22 // дата и время
 		}
 	}
+	if format := cell.ExcelFormat(); strings.TrimSpace(format) != "" {
+		st.NumFmt = 0
+		st.CustomNumFmt = &format
+	}
 	return st, isDate
 }
 
@@ -183,7 +344,7 @@ func setXLSXValue(f *excelize.File, sheetName, ref string, cell *Cell, isDate bo
 			return f.SetCellValue(sheetName, ref, v)
 		}
 	}
-	text := cell.Text
+	text := cell.DisplayText()
 	if text == "" && cell.RichHTML != "" {
 		text = stripTags(cell.RichHTML)
 	}

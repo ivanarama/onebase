@@ -68,6 +68,7 @@ func (b *CellBorders) IsZero() bool {
 // LayoutCell defines a single cell in a layout template.
 // A cell can contain either static text or a named parameter placeholder.
 type LayoutCell struct {
+	Format      string       `yaml:"format,omitempty"`
 	Text        string       `yaml:"text,omitempty"`
 	Parameter   string       `yaml:"parameter,omitempty"`
 	Bold        bool         `yaml:"bold,omitempty"`

@@ -379,7 +379,7 @@ func (d *Document) computeRowHeightsMM(pdf *fpdf.Fpdf, maxRow int, colWidths []f
 		h := minRowMM
 		for col := 0; col < len(colWidths); col++ {
 			cell := d.GetCell(row, col)
-			if cell == nil || (cell.Text == "" && cell.RichHTML == "") {
+			if cell == nil || (cell.DisplayText() == "" && cell.RichHTML == "") {
 				continue
 			}
 			// Ширина для переноса с учётом colspan.
@@ -414,7 +414,7 @@ func (a *Area) computeAreaRowHeightsMM(pdf *fpdf.Fpdf, colWidths []float64) []fl
 		h := minRowMM
 		for c := 0; c < cols && c < len(colWidths); c++ {
 			cell := a.Cells[fmt.Sprintf("%d,%d", r, c)]
-			if cell == nil || cell.Text == "" {
+			if cell == nil || (cell.DisplayText() == "" && cell.RichHTML == "") {
 				continue
 			}
 			cw := colWidths[c]
@@ -446,7 +446,7 @@ func cellHeightMM(pdf *fpdf.Fpdf, cell *Cell, cw float64) float64 {
 	}
 	family, style := resolveFont(cell.FontFamily, cell.Bold, cell.Italic)
 	pdf.SetFont(family, style, fs)
-	lines := len(wrapText(pdf, cell.Text, avail))
+	lines := len(wrapText(pdf, cell.DisplayText(), avail))
 	return float64(lines)*lineH + 2*cellPadMM
 }
 
@@ -534,7 +534,7 @@ func drawCell(pdf *fpdf.Fpdf, cell *Cell, x, y, w, h float64) {
 	}
 
 	// Текст.
-	if cell.Text != "" {
+	if text := cell.DisplayText(); text != "" {
 		family, style := resolveFont(cell.FontFamily, cell.Bold, cell.Italic)
 		fs := fontSizeOr(cell)
 		pdf.SetFont(family, style, fs)
@@ -551,7 +551,7 @@ func drawCell(pdf *fpdf.Fpdf, cell *Cell, x, y, w, h float64) {
 		if avail <= 0 {
 			avail = w
 		}
-		lines := wrapText(pdf, cell.Text, avail)
+		lines := wrapText(pdf, text, avail)
 		textH := float64(len(lines)) * lineH
 
 		// Вертикальное выравнивание блока текста.
