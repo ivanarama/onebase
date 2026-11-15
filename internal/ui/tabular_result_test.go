@@ -177,7 +177,11 @@ func TestTabularReportResultHTTPMatrix(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer book.Close()
+				defer func() {
+					if err := book.Close(); err != nil {
+						t.Error(err)
+					}
+				}()
 				raw, err := book.GetCellValue("Лист1", "A2", excelize.Options{RawCellValue: true})
 				if err != nil || raw != "12.5" {
 					t.Fatalf("numeric value %q %v", raw, err)
