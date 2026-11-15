@@ -97,7 +97,11 @@ func TestTabularDrilldownColorHTTPMatrix(t *testing.T) {
 				if e != nil {
 					t.Fatal(e)
 				}
-				defer f.Close()
+				defer func() {
+					if err := f.Close(); err != nil {
+						t.Error(err)
+					}
+				}()
 				if color != "" {
 					sid, e := f.GetCellStyle(f.GetSheetList()[0], "A1")
 					if e != nil {

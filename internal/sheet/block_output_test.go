@@ -208,7 +208,11 @@ func TestTabularBlockOutput(t *testing.T) {
 		if e != nil {
 			t.Fatal(e)
 		}
-		defer f.Close()
+		defer func() {
+			if err := f.Close(); err != nil {
+				t.Error(err)
+			}
+		}()
 		sheet := f.GetSheetList()[0]
 		for ref, want := range map[string]string{"A1": "LEFT", "B1": "12.50", "B2": "RIGHT", "A3": "NEXT"} {
 			got, e := f.GetCellValue(sheet, ref)

@@ -75,7 +75,9 @@ func TestTabularHorizontalBlockHTTPMatrix(t *testing.T) {
 						t.Fatalf("export %s=%q want %q", ref, got, want)
 					}
 				}
-				f.Close()
+				if err := f.Close(); err != nil {
+					t.Fatal(err)
+				}
 				pdf := tabularHTTP(s, actor, "own-block-session", http.MethodGet, path+"/pdf", nil)
 				if pdf.Code != 200 || !bytes.HasPrefix(pdf.Body.Bytes(), []byte("%PDF-")) {
 					t.Fatal("PDF unavailable")
