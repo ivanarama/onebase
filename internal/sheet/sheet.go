@@ -24,8 +24,8 @@ import (
 // Колоночные/строчные размеры (ШиринаКолонки/ВысотаСтроки) живут на Document
 // в ColWidths/RowHeights и при рендере накладываются на колонку/строку целиком.
 type Cell struct {
-	Format string
-	Drilldown *Reference
+	Format     string
+	Drilldown  *Reference
 	Text       string
 	Value      any
 	Align      string // left, center, right, justify
@@ -183,13 +183,13 @@ func DefaultPageSetup() PageSetup {
 // (HTML/PDF) и операции вывода — методы этого пакета; DSL-протокол поверх —
 // в interpreter.SpreadsheetDocument, делегирующем сюда.
 type Document struct {
-	Groups []RowGroup
+	Groups     []RowGroup
 	FreezeRows int
 	FreezeCols int
-	HideGrid bool
-	Cells    map[CellKey]*Cell // (row,col) -> cell
-	RowCount int
-	ColCount int
+	HideGrid   bool
+	Cells      map[CellKey]*Cell // (row,col) -> cell
+	RowCount   int
+	ColCount   int
 	// ColWidths/RowHeights — размеры колонок/строк (1-based индекс → размер в px).
 	// ШиринаКолонки/ВысотаСтроки пишут сюда, НЕ материализуя ячейки; HTML-рендер
 	// накладывает их на колонку/строку целиком. PDF-рендер конвертирует px → мм.

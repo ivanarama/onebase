@@ -18,7 +18,7 @@ func TestLayoutFormatReachesTabularExport(t *testing.T) {
 	}
 	area := BuildAreaCells(lt.Area("Body"))
 	cell := area.Cells["0,0"]
-	if cell == nil || cell.Format != "ЧДЦ=2" || cell.ExcelFormat() != "0.00" {
+	if cell == nil || cell.Format != "ЧДЦ=2" || cell.ExcelFormat() != "#,##0.00" {
 		t.Fatalf("format not propagated: %+v", cell)
 	}
 }

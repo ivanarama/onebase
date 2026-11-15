@@ -573,6 +573,7 @@ func KnownBuiltinNames() map[string]struct{} {
 	// без отдельной фабрики (см. ui/handlers.go и scheduler/scheduler.go).
 	for _, k := range []string{
 		"сообщить", "message",
+		"получитьмакет",
 		"описаниеошибки", "errordescription",
 		"информацияобошибке", "errorinfo",
 		"вычислить", "eval",

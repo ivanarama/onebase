@@ -2,6 +2,7 @@ package interpreter_test
 
 import (
 	"bytes"
+	"encoding/base64"
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
@@ -22,35 +23,24 @@ const tabDocMailSrc = `
   Сумма.Значение = 1250.5;
   Сумма.Текст = "1 250,50";
   ТабДок.ШиринаКолонки(1, 145);
-  Письмо = Новый ПисьмоEmail;
-  Письмо.Кому = "brigada@iceberg.test";
-  Письмо.Тема = "Заявки на завтра";
-  Письмо.Текст = "Во вложении";
-  Письмо.ДобавитьВложение("заявки.xlsx", ТабДок.Записать("заявки.xlsx", "xlsx"), , Истина);
-  Письмо.Отправить();
+  Возврат ТабДок.Записать("заявки.xlsx", "xlsx");
 `
 
-// ТабличныйДокумент.Записать(…, "xlsx") → вложение письма: в тестовом профиле
-// onebase test письмо ложится в Мок.Email с именем вложения.
-func TestSpreadsheetXLSXAttachmentInMockEmail(t *testing.T) {
-	profile := interpreter.NewTestProfile()
-	profile.Reset()
-	src := "Функция Тест()" + tabDocMailSrc + `  Возврат Строка(Мок.Email.Количество()) + "|" + Строка(Мок.Email[0].Вложений) + "|" + Мок.Email[0].ИменаВложений[0];
-КонецФункции`
-	vars := withSpreadsheet(profile.Vars())
-	assert.Equal(t, "1|1|заявки.xlsx", runHTTPSrc(t, src, vars))
+// Base64 export does not depend on optional email-profile extensions.
+func TestSpreadsheetXLSXBase64Export(t *testing.T) {
+	value := runHTTPSrc(t, "Функция Тест()"+tabDocMailSrc+"КонецФункции", withSpreadsheet(map[string]any{}))
+	data, err := base64.StdEncoding.DecodeString(value.(string))
+	require.NoError(t, err)
+	require.True(t, bytes.HasPrefix(data, []byte("PK")))
 }
 
 // Вложение — настоящая книга Excel с оформлением документа: шапка жирная,
 // объединена, число — числом, ширина колонки сохранена.
 func TestSpreadsheetXLSXAttachmentIsWorkbook(t *testing.T) {
-	s := &profileSender{}
-	runHTTPSrc(t, "Процедура Тест()"+tabDocMailSrc+"КонецПроцедуры", withSpreadsheet(interpreter.NewEmailFunctions(s, nil)))
-	require.Equal(t, 1, s.sent)
-	require.Len(t, s.msg.Files, 1)
-	att := s.msg.Files[0]
-	assert.Contains(t, att.MimeType, "spreadsheetml")
-	f, err := excelize.OpenReader(bytes.NewReader(att.Data))
+	value := runHTTPSrc(t, "Функция Тест()"+tabDocMailSrc+"КонецФункции", withSpreadsheet(map[string]any{}))
+	data, err := base64.StdEncoding.DecodeString(value.(string))
+	require.NoError(t, err)
+	f, err := excelize.OpenReader(bytes.NewReader(data))
 	require.NoError(t, err, "вложение не открывается как xlsx")
 	defer f.Close() //nolint:errcheck
 	v, _ := f.GetCellValue("Лист1", "A1")

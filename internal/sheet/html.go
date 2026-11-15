@@ -13,8 +13,12 @@ import (
 // при пустом PDFURL вывод бит-в-бит совпадает с прежним (кнопка → window.print()).
 // Точная семантика повторяет прежний toHTML из interpreter.
 type HTMLOptions struct {
-	BackURL string
-	PDFURL  string
+	BackURL         string
+	PDFURL          string
+	XLSXURL         string
+	Embedded        bool
+	ParentDrilldown bool
+	DrilldownURL    func(row, col int) string
 }
 
 // HTMLString рендерит документ в HTML, используя BackURL из самого документа.
@@ -59,7 +63,9 @@ tr:nth-child(even) td{background:#f8fafc}
 <div class="doc-toolbar">
 `)
 	// Кнопка «Назад»: ссылка на документ если задан BackURL, иначе history.back().
-	if opts.BackURL != "" {
+	if opts.Embedded {
+		// An embedded native form field needs no independent history control.
+	} else if opts.BackURL != "" {
 		sb.WriteString(`<a class="btn btn-back" href="` + escapeHTML(opts.BackURL) + `">&#8592; Назад</a>`)
 	} else {
 		sb.WriteString(`<button class="btn-back" onclick="history.back()">&#8592; Назад</button>`)
@@ -74,6 +80,9 @@ tr:nth-child(even) td{background:#f8fafc}
 	} else {
 		sb.WriteString(`<button onclick="window.print()">&#128196; PDF</button>`)
 	}
+	if opts.XLSXURL != "" {
+		sb.WriteString(`<a class="btn" href="` + escapeHTML(opts.XLSXURL) + `">XLSX</a>`)
+	}
 	sb.WriteString(`
 </div>
 <div class="doc-content">
@@ -85,13 +94,22 @@ tr:nth-child(even) td{background:#f8fafc}
 	covered := make(map[CellKey]bool)
 
 	for row := 0; row <= maxRow; row++ {
-		sb.WriteString("<tr>")
+		if opts.XLSXURL != "" {
+			fmt.Fprintf(&sb, `<tr data-sheet-row="%d">`, row)
+		} else {
+			sb.WriteString("<tr>")
+		}
 		for col := 0; col <= maxCol; col++ {
 			if covered[CellKey{row, col}] {
 				continue
 			}
 
 			cell := d.GetCell(row, col)
+			if d.HideGrid && cell != nil && !hasPerSideBorders(cell) && cell.Border == "all" {
+				copy := *cell
+				copy.Border = "none"
+				cell = &copy
+			}
 			// Эффективные размеры: колоночная/строчная (1-based индексы на
 			// Document) имеют приоритет, иначе — индивидуальный размер ячейки.
 			width := d.ColWidths[col+1]
@@ -133,10 +151,13 @@ tr:nth-child(even) td{background:#f8fafc}
 					// длинные строки/картинки, чтобы richtext не разъезжался.
 					text = `<div class="rich" style="overflow-wrap:break-word;word-break:break-word">` + cell.RichHTML + `</div>`
 				} else {
-					text = escapeHTML(cell.Text)
+					text = escapeHTML(cell.DisplayText())
 				}
 				if img := pictureHTML(cell.Picture); img != "" {
 					text += img
+				}
+				if cell.Drilldown != nil && opts.DrilldownURL != nil {
+					text = `<a data-sheet-drilldown="1" target="_blank" rel="noopener" href="` + escapeHTML(opts.DrilldownURL(row, col)) + `">` + text + `</a>`
 				}
 			}
 
@@ -148,10 +169,11 @@ tr:nth-child(even) td{background:#f8fafc}
 		}
 		sb.WriteString("</tr>\n")
 	}
-
-	sb.WriteString(`</table>
-</div>
-</body>
+	sb.WriteString("</table>\n</div>\n")
+	if opts.XLSXURL != "" {
+		d.viewerScript(&sb, opts.ParentDrilldown)
+	}
+	sb.WriteString(`</body>
 </html>`)
 	return sb.String()
 }

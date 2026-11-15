@@ -251,6 +251,13 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		}
 		queryValues[p.Name] = v
 	}
+	if rep.ResultProc != "" && strings.TrimSpace(rep.Query) == "" {
+		if err := s.runTabularReport(w, r.WithContext(opCtx), rep, queryValues, nil); err != nil {
+			opStatus = "error"
+			http.Error(w, s.errText(r, err), 500)
+		}
+		return
+	}
 	compiled, err := s.compileQueryWithRowAccess(opCtx, rep.Query, queryValues)
 	reportParams := s.buildReportParams(opCtx, s.resolveLang(r), rep.Params, paramValues)
 	if err != nil {
@@ -335,6 +342,13 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 			"ActivePresetID":     rs.ActivePresetID,
 			"ActivePreset":       activePreset,
 		})
+		return
+	}
+	if rep.ResultProc != "" {
+		if err := s.runTabularReport(w, r.WithContext(opCtx), rep, queryValues, rows); err != nil {
+			opStatus = "error"
+			http.Error(w, s.errText(r, err), 500)
+		}
 		return
 	}
 	detailLinkCol := ""

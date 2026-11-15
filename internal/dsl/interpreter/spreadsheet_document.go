@@ -110,7 +110,11 @@ func (a *SpreadsheetDocumentArea) setProperty(field string, v any) {
 	cols := a.Area.Cols()
 	switch strings.ToLower(field) {
 	case "формат", "format":
-		for r:=0;r<rows;r++ {for c:=0;c<cols;c++ {a.Area.GetOrCreateCell(r,c).Format=strArg([]any{v},0)}}
+		for r := 0; r < rows; r++ {
+			for c := 0; c < cols; c++ {
+				a.Area.GetOrCreateCell(r, c).Format = strArg([]any{v}, 0)
+			}
+		}
 	case "текст", "text":
 		text := strArg([]any{v}, 0)
 		for r := 0; r < rows; r++ {
@@ -281,6 +285,8 @@ func (d *SpreadsheetDocument) Set(field string, v any) {
 		d.Doc.Page.Orientation = normalizeOrientation(strArg([]any{v}, 0))
 	case "размерстраницы", "pagesize", "format":
 		d.Doc.Page.Format = strings.TrimSpace(strArg([]any{v}, 0))
+	case "имяфайла", "filename":
+		d.Doc.FileName = strArg([]any{v}, 0)
 	case "поляпечати", "printmargins", "margins":
 		d.setMargins(v)
 	case "фиксациясверху", "fixedtop":
@@ -417,11 +423,14 @@ func (d *SpreadsheetDocument) put(args []any) any {
 	}
 	start := d.Doc.CurrentRow
 	d.Doc.Put(area.Area)
-	if len(args)>1 {
-		level:=int(toFloatOr0(args[1]))
-		if level>0 && level<=7 {
-			expanded:=true; if len(args)>3 {expanded=truthy(args[3])}
-			d.Doc.Groups=append(d.Doc.Groups,sheet.RowGroup{Start:start,HeaderEnd:d.Doc.CurrentRow-1,Level:level,Title:strArg(args,2),Expanded:expanded})
+	if len(args) > 1 {
+		level := int(toFloatOr0(args[1]))
+		if level > 0 && level <= 7 {
+			expanded := true
+			if len(args) > 3 {
+				expanded = truthy(args[3])
+			}
+			d.Doc.Groups = append(d.Doc.Groups, sheet.RowGroup{Start: start, HeaderEnd: d.Doc.CurrentRow - 1, Level: level, Title: strArg(args, 2), Expanded: expanded})
 		}
 	}
 	return nil
@@ -653,14 +662,17 @@ func (w *SpreadsheetDocumentCellWrapper) Get(field string) any {
 func (w *SpreadsheetDocumentCellWrapper) Set(field string, v any) {
 	switch strings.ToLower(field) {
 	case "формат", "format":
-		w.cell.Format=strArg([]any{v},0)
+		w.cell.Format = strArg([]any{v}, 0)
 	case "расшифровка", "drilldown":
-		w.cell.Drilldown=nil
-		if r,ok:=v.(*Ref);ok && r!=nil && r.Type!="" {w.cell.Drilldown=&sheet.Reference{Entity:r.Type,ID:r.UUID}}
+		w.cell.Drilldown = nil
+		if r, ok := v.(*Ref); ok && r != nil && r.Type != "" {
+			w.cell.Drilldown = &sheet.Reference{Entity: r.Type, ID: r.UUID}
+		}
 	case "текст", "text":
 		w.cell.Text = strArg([]any{v}, 0)
 	case "значение", "value":
 		w.cell.Value = v
+		w.cell.Text = strArg([]any{v}, 0)
 	case "ширина", "width":
 		w.cell.Width = toFloatOr0(v)
 	case "высота", "height":

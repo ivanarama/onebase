@@ -23,6 +23,7 @@ type browserFormEventRule struct {
 }
 
 var browserFormEventRules = []browserFormEventRule{
+	{kinds: []FormElementType{FormElementSpreadsheet}, events: []FormEventType{FormEventDrilldown}},
 	{
 		kinds:  []FormElementType{FormElementButton},
 		events: []FormEventType{FormEventOnClick, FormEventOnSearch, FormEventOnChoice, FormEventOnAnswer},

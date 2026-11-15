@@ -1,0 +1,15 @@
+name: View
+kind: object
+attributes:
+  - name: Результат
+    type: SpreadsheetDocument
+    save: false
+elements:
+  - name: Построить
+    kind: Кнопка
+    title: Сформировать
+    events:
+      Нажатие: Сформировать
+  - name: ТабДок
+    kind: ПолеТабличногоДокумента
+    data_path: Объект.Результат
