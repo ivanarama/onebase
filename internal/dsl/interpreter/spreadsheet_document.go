@@ -109,6 +109,8 @@ func (a *SpreadsheetDocumentArea) setProperty(field string, v any) {
 	rows := a.Area.Rows()
 	cols := a.Area.Cols()
 	switch strings.ToLower(field) {
+	case "формат", "format":
+		for r:=0;r<rows;r++ {for c:=0;c<cols;c++ {a.Area.GetOrCreateCell(r,c).Format=strArg([]any{v},0)}}
 	case "текст", "text":
 		text := strArg([]any{v}, 0)
 		for r := 0; r < rows; r++ {
@@ -281,6 +283,12 @@ func (d *SpreadsheetDocument) Set(field string, v any) {
 		d.Doc.Page.Format = strings.TrimSpace(strArg([]any{v}, 0))
 	case "поляпечати", "printmargins", "margins":
 		d.setMargins(v)
+	case "фиксациясверху", "fixedtop":
+		d.Doc.FreezeRows = int(toFloatOr0(v))
+	case "фиксацияслева", "fixedleft":
+		d.Doc.FreezeCols = int(toFloatOr0(v))
+	case "отображатьсетку", "showgrid":
+		d.Doc.HideGrid = !truthy(v)
 	}
 }
 
@@ -321,6 +329,8 @@ func (d *SpreadsheetDocument) CallMethod(name string, args []any) any {
 	switch name {
 	case "вывести", "put":
 		return d.put(args)
+	case "начатьавтогруппировкустрок", "закончитьавтогруппировкустрок", "startautogroupingrows", "endautogroupingrows":
+		return nil // Output levels define boundaries; render resolves the final end.
 	case "присоединить", "append":
 		return d.append(args)
 	case "область", "area":
@@ -405,7 +415,15 @@ func (d *SpreadsheetDocument) put(args []any) any {
 	if !ok {
 		return nil
 	}
+	start := d.Doc.CurrentRow
 	d.Doc.Put(area.Area)
+	if len(args)>1 {
+		level:=int(toFloatOr0(args[1]))
+		if level>0 && level<=7 {
+			expanded:=true; if len(args)>3 {expanded=truthy(args[3])}
+			d.Doc.Groups=append(d.Doc.Groups,sheet.RowGroup{Start:start,HeaderEnd:d.Doc.CurrentRow-1,Level:level,Title:strArg(args,2),Expanded:expanded})
+		}
+	}
 	return nil
 }
 
@@ -634,6 +652,11 @@ func (w *SpreadsheetDocumentCellWrapper) Get(field string) any {
 
 func (w *SpreadsheetDocumentCellWrapper) Set(field string, v any) {
 	switch strings.ToLower(field) {
+	case "формат", "format":
+		w.cell.Format=strArg([]any{v},0)
+	case "расшифровка", "drilldown":
+		w.cell.Drilldown=nil
+		if r,ok:=v.(*Ref);ok && r!=nil && r.Type!="" {w.cell.Drilldown=&sheet.Reference{Entity:r.Type,ID:r.UUID}}
 	case "текст", "text":
 		w.cell.Text = strArg([]any{v}, 0)
 	case "значение", "value":
