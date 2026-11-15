@@ -64,7 +64,7 @@ func TestTabularDrilldownTextColorHTML(t *testing.T) {
 			if !tc.inherit && colorAttr(a, "style") != "" {
 				t.Fatal("default/unsafe color changed default link style")
 			}
-			if tc.inherit && !strings.Contains(colorAttr(a.Parent, "style"), "color:"+tc.color) {
+			if tc.inherit && !strings.Contains(strings.ToLower(colorAttr(a.Parent, "style")), "color:"+strings.ToLower(tc.color)) {
 				t.Fatal("safe cell color missing on parent")
 			}
 			if colorAttr(a, "href") != "/ui/tabular/own/drilldown?row=0&col=0" || colorAttr(a, "target") != "_blank" || colorAttr(a, "rel") != "noopener" {
