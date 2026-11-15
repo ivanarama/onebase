@@ -11,6 +11,7 @@ import (
 // Reference is an inert typed drilldown, never an arbitrary URL or command.
 type Reference struct{ Entity, ID string }
 type RowGroup struct {
+	Closed                       bool
 	Start, HeaderEnd, End, Level int
 	Title                        string
 	Expanded                     bool
@@ -20,9 +21,11 @@ func (d *Document) ResolvedGroups() []RowGroup {
 	maxRow, _ := d.ContentBounds()
 	groups := append([]RowGroup(nil), d.Groups...)
 	for i := range groups {
-		groups[i].End = maxRow
+		if !groups[i].Closed {
+			groups[i].End = maxRow
+		}
 		for j := i + 1; j < len(groups); j++ {
-			if groups[j].Level <= groups[i].Level {
+			if groups[j].Level <= groups[i].Level && groups[j].Start <= groups[i].End {
 				groups[i].End = groups[j].Start - 1
 				break
 			}

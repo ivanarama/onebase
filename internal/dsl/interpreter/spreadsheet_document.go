@@ -335,8 +335,16 @@ func (d *SpreadsheetDocument) CallMethod(name string, args []any) any {
 	switch name {
 	case "вывести", "put":
 		return d.put(args)
-	case "начатьавтогруппировкустрок", "закончитьавтогруппировкустрок", "startautogroupingrows", "endautogroupingrows":
-		return nil // Output levels define boundaries; render resolves the final end.
+	case "начатьавтогруппировкустрок", "startautogroupingrows":
+		return nil // Output levels define the hierarchy.
+	case "закончитьавтогруппировкустрок", "endautogroupingrows":
+		for i := range d.Doc.Groups {
+			if !d.Doc.Groups[i].Closed {
+				d.Doc.Groups[i].End = d.Doc.CurrentRow - 1
+				d.Doc.Groups[i].Closed = true
+			}
+		}
+		return nil // A following ungrouped total stays outside the last group.
 	case "присоединить", "append":
 		return d.append(args)
 	case "область", "area":
