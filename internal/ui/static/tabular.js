@@ -1,6 +1,16 @@
 (function(){
  'use strict';
  if(window.obApplyTabularDocuments)return;
+ window.obOpenTabularQuestion=function(question,elementName,eventName,extra,fire){
+  if(!extra||typeof extra._tabular_token!=='string'||(eventName!=='ОбработкаРасшифровки'&&eventName!=='Ответ')||typeof window.obOpenQuestion!=='function')return false;
+  var captured=Object.assign({},extra);
+  window.obOpenQuestion(question,elementName,{onAnswer:function(variant,fields){
+   var next=Object.assign({},captured,fields||{_question_answer:variant});
+   ['_tabular_token','_tabular_row','_tabular_col'].forEach(function(key){next[key]=captured[key];});
+   return fire(elementName,'Ответ',next);
+  }});
+  return true;
+ };
  window.obApplyTabularDocuments=function(results){
   if(!results)return;
   document.querySelectorAll('iframe[data-ob-tabular-field]').forEach(function(frame){

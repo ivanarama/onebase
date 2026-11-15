@@ -1208,7 +1208,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	thisObj := s.newFormObjectThisLive(dslCtx, txState, obj, entity, form, isNewForHandler)
 	thisObj.layouts = &tabularLayouts{s: s, owner: entity.Name}
 	installTabularLayouts(vars, thisObj.layouts)
-	if eventName == string(metadata.FormEventDrilldown) {
+	if eventName == string(metadata.FormEventDrilldown) || (eventName == string(metadata.FormEventOnAnswer) && eventTarget.element != nil && eventTarget.element.Kind == metadata.FormElementSpreadsheet) {
 		if err := s.addTabularDrilldownVars(r, tabularScope{Kind: string(entity.Kind), Name: entity.Name, ID: rawID}, form, elementName, vars, thisObj.refResolver); err != nil {
 			respondJSON(enc, formEventResponse{Error: err.Error()})
 			return
@@ -2768,7 +2768,7 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		thisObj := s.newFormObjectThisLive(dslCtx, txState, obj, virtEntity, form, false)
 		thisObj.layouts = &tabularLayouts{s: s, owner: proc.Name}
 		installTabularLayouts(vars, thisObj.layouts)
-		if eventName == string(metadata.FormEventDrilldown) {
+		if eventName == string(metadata.FormEventDrilldown) || (eventName == string(metadata.FormEventOnAnswer) && eventTarget.element != nil && eventTarget.element.Kind == metadata.FormElementSpreadsheet) {
 			if err := s.addTabularDrilldownVars(r, tabularScope{Kind: "processor", Name: proc.Name}, form, elementName, vars, thisObj.refResolver); err != nil {
 				respondJSON(enc, formEventResponse{Error: err.Error()})
 				return

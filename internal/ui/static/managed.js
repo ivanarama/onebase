@@ -1415,6 +1415,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       // Apply the response, including disclosed values, before opening a
       // question. Dismissing it must leave the same valid form as no question.
       if (data.question && !beforePostSnapshot(snapshot)) {
+        if (window.obOpenTabularQuestion && window.obOpenTabularQuestion(data.question, elementName, snapshot.eventName, extraParams, fireFormEvent)) return;
         if (window.obOpenQuestion) window.obOpenQuestion(data.question, elementName);
         return;
       }

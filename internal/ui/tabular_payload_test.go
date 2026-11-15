@@ -18,7 +18,7 @@ import (
 
 func TestTabularPayloadHTTPMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
-		for _, mode := range []string{"nested-roundtrip", "tampered-client-data", "current-rls-denied", "foreign-session", "wrong-cell", "expired", "callback-copy", "export-does-not-call"} {
+		for _, mode := range []string{"nested-roundtrip", "tampered-client-data", "current-rls-denied", "foreign-session", "wrong-cell", "expired", "callback-copy", "export-does-not-call", "question-answer", "question-current-rls-denied"} {
 			t.Run(mode, func(t *testing.T) {
 				ctx := context.Background()
 				s, user, _ := tabularFixture(t, db)
@@ -37,6 +37,7 @@ func TestTabularPayloadHTTPMatrix(t *testing.T) {
 				user.Roles[0].Permissions.RowAccess = auth.RowAccess{Catalogs: map[string]auth.RowPolicies{target.Name: {"read": {Field: "Owner", Op: "eq", Value: auth.RowValue{User: "login"}}}}}
 				form := processorExecutionForm(&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Build", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Build"}}, &metadata.FormElement{Kind: metadata.FormElementSpreadsheet, Name: "Sheet", DataPath: "Объект.Result", Handlers: map[metadata.FormEventType]string{metadata.FormEventDrilldown: "Expand"}})
 				form.Attributes = []*metadata.FormAttribute{{Name: "Result", TypeRef: "SpreadsheetDocument"}}
+				form.Elements[1].ReadOnly = true
 				source := `Процедура Build()
       Д=Новый ТабличныйДокумент;
       Д.Ячейка(1,1).Текст="Detail";
@@ -56,6 +57,10 @@ func TestTabularPayloadHTTPMatrix(t *testing.T) {
      КонецПроцедуры`
 				if mode == "export-does-not-call" {
 					source = strings.ReplaceAll(source, "Мастер=Расшифровка[0][0].Master;", "ВызватьИсключение \"callback reached\";")
+				}
+				if strings.HasPrefix(mode, "question-") {
+					form.Elements[1].Handlers[metadata.FormEventOnAnswer] = "Expand"
+					source = strings.ReplaceAll(source, "Процедура Expand()", "Процедура Expand()\nЕсли ВопросОтвет=\"\" Тогда ПоказатьВопрос(\"Создать документ?\",\"ДаНет\");Возврат;КонецЕсли;\nЕсли ВопросОтвет<>\"Да\" Тогда Возврат;КонецЕсли;")
 				}
 				form.ProgramAST = mustParse(t, strings.ReplaceAll(source, "OWNNAME", name))
 				proc := &processor.Processor{Name: "PayloadProcessor", Forms: []*metadata.FormModule{form}}
@@ -77,6 +82,21 @@ func TestTabularPayloadHTTPMatrix(t *testing.T) {
 				}
 				body := url.Values{"_element": {"Sheet"}, "_event": {"ОбработкаРасшифровки"}, "_tabular_token": {strings.TrimPrefix(path, "/ui/tabular/")}, "_tabular_row": {"0"}, "_tabular_col": {"0"}}
 				session := "own-session"
+				if strings.HasPrefix(mode, "question-") {
+					first := tabularHTTP(s, user, session, "POST", endpoint, body)
+					q := decodeFormEventResponse(t, first.Body.Bytes())
+					if !q.OK || q.Question == nil || q.Navigation != nil {
+						t.Fatalf("question bridge failed: %s", first.Body.String())
+					}
+					body.Set("_event", "Ответ")
+					body.Set("_question_answer", "Да")
+					if mode == "question-current-rls-denied" {
+						fields["Owner"] = "other"
+						if err := db.Upsert(ctx, target.Name, id, fields, target); err != nil {
+							t.Fatal(err)
+						}
+					}
+				}
 				switch mode {
 				case "tampered-client-data":
 					body.Set("_tabular_payload", `{"Amount":1000000}`)
@@ -102,7 +122,7 @@ func TestTabularPayloadHTTPMatrix(t *testing.T) {
 				}
 				click := tabularHTTP(s, user, session, "POST", endpoint, body)
 				reply := decodeFormEventResponse(t, click.Body.Bytes())
-				positive := mode == "nested-roundtrip" || mode == "tampered-client-data" || mode == "callback-copy"
+				positive := mode == "nested-roundtrip" || mode == "tampered-client-data" || mode == "callback-copy" || mode == "question-answer"
 				if positive {
 					if !reply.OK || reply.Navigation == nil || !strings.Contains(reply.Navigation.URL, id.String()) {
 						t.Fatalf("callback failed: %s", click.Body.String())

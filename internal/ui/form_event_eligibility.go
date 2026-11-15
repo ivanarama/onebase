@@ -93,7 +93,7 @@ func resolveBrowserFormEvent(form *metadata.FormModule, elementName, eventName s
 		el := visit.element
 		target.element = el
 		target.parentTablePart = visit.parentTablePart
-		if visit.effectiveReadOnly && (el.Kind != metadata.FormElementSpreadsheet || event != metadata.FormEventDrilldown) {
+		if visit.effectiveReadOnly && (el.Kind != metadata.FormElementSpreadsheet || (event != metadata.FormEventDrilldown && event != metadata.FormEventOnAnswer)) {
 			return "", target, false, fmt.Errorf("элемент формы %q доступен только для чтения", el.Name)
 		}
 		if !browserEventAllowedForElement(el.Kind, event) {
