@@ -191,6 +191,7 @@ type Document struct {
 	FreezeRows int
 	FreezeCols int
 	HideGrid   bool
+	AutoScale  bool              // print width fit: one uniform scale, without changing screen/data
 	Cells      map[CellKey]*Cell // (row,col) -> cell
 	RowCount   int
 	ColCount   int

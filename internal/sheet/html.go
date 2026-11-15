@@ -15,6 +15,7 @@ import (
 type HTMLOptions struct {
 	BackURL         string
 	PDFURL          string
+	PrintURL        string // native PDF print preview for uniformly scaled documents
 	XLSXURL         string
 	Embedded        bool
 	ParentDrilldown bool
@@ -70,9 +71,15 @@ tr:nth-child(even) td{background:#f8fafc}
 	} else {
 		sb.WriteString(`<button class="btn-back" onclick="history.back()">&#8592; Назад</button>`)
 	}
-	sb.WriteString(`
+	if opts.PrintURL != "" {
+		sb.WriteString(`
+<a class="btn btn-print" target="_blank" rel="noopener" href="` + escapeHTML(opts.PrintURL) + `">&#128424; Печать</a>
+`)
+	} else {
+		sb.WriteString(`
 <button class="btn-print" onclick="window.print()">&#128424; Печать</button>
 `)
+	}
 	// Кнопка «PDF»: при заданном PDFURL — ссылка на серверный PDF, иначе
 	// прежнее поведение (window.print()) — бит-в-бит как раньше.
 	if opts.PDFURL != "" {

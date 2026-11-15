@@ -167,6 +167,10 @@ func registerFonts(pdf *fpdf.Fpdf) {
 // computeColWidths из printform/pdf.go (там работали строки "%"/"mm"; здесь —
 // числовые px из модели). colCount — число колонок (0-based maxCol+1).
 func (d *Document) resolveColumnWidthsMM(usable float64, colCount int) []float64 {
+	return d.columnWidthsMM(usable, colCount, true)
+}
+
+func (d *Document) columnWidthsMM(usable float64, colCount int, clamp bool) []float64 {
 	widths := make([]float64, colCount)
 	used := 0.0
 	free := make([]int, 0, colCount)
@@ -205,7 +209,7 @@ func (d *Document) resolveColumnWidthsMM(usable float64, colCount int) []float64
 	for _, w := range widths {
 		sum += w
 	}
-	if sum > usable && sum > 0 {
+	if clamp && sum > usable && sum > 0 {
 		scale := usable / sum
 		for c := range widths {
 			widths[c] *= scale
@@ -275,7 +279,35 @@ func (d *Document) PDF(opts PDFOptions) ([]byte, error) {
 
 	maxRow, maxCol := d.ContentBounds()
 	colCount := maxCol + 1
-	colWidths := d.resolveColumnWidthsMM(usable, colCount)
+	colWidths := d.columnWidthsMM(usable, colCount, !d.AutoScale)
+	printScale := 1.0
+	if d.AutoScale {
+		naturalWidth := 0.0
+		for _, width := range colWidths {
+			naturalWidth += width
+		}
+		if naturalWidth > usable && usable > 0 {
+			printScale = usable / naturalWidth
+		}
+		// Coordinates/font sizes/heights/borders stay in the original layout.
+		// The page transformation scales them together; pagination uses the same
+		// virtual page height. There is no integer font rounding or rewrapping
+		// into the already compressed physical column widths.
+		pageBottom = m.Top + (pageH-m.Top-m.Bottom)/printScale
+	}
+	beginScale := func() {
+		if printScale < 1 {
+			pdf.TransformBegin()
+			pdf.TransformScaleXY(100*printScale, m.Left, m.Top)
+		}
+	}
+	addPage := func() {
+		if printScale < 1 {
+			pdf.TransformEnd()
+		}
+		pdf.AddPage()
+		beginScale()
+	}
 
 	// Левый край колонки (мм) для быстрого позиционирования.
 	colX := make([]float64, colCount+1)
@@ -321,12 +353,13 @@ func (d *Document) PDF(opts PDFOptions) ([]byte, error) {
 		return hy
 	}
 
+	beginScale()
 	for row := 0; row <= maxRow; row++ {
 		rh := rowHeights[row]
 
 		// Явный разрыв страницы перед строкой.
 		if breakBefore[row] && row > 0 {
-			pdf.AddPage()
+			addPage()
 			y = m.Top
 			if d.RepeatHeader && d.HeaderArea != nil {
 				y = drawHeader()
@@ -335,7 +368,7 @@ func (d *Document) PDF(opts PDFOptions) ([]byte, error) {
 
 		// Авто-разрыв: строка не помещается на текущей странице.
 		if y+rh > pageBottom && row > 0 {
-			pdf.AddPage()
+			addPage()
 			y = m.Top
 			if d.RepeatHeader && d.HeaderArea != nil {
 				y = drawHeader()
@@ -346,6 +379,9 @@ func (d *Document) PDF(opts PDFOptions) ([]byte, error) {
 		y += rh
 	}
 
+	if printScale < 1 {
+		pdf.TransformEnd()
+	}
 	var w byteWriter
 	if err := pdf.Output(&w); err != nil {
 		return nil, err

@@ -164,7 +164,16 @@ func (d *Document) xlsxView(f *excelize.File, sh string, maxRow int) (map[int]bo
 	if n := map[string]int{"a3": 8, "a4": 9, "a5": 11, "a6": 70, "letter": 1, "legal": 5, "tabloid": 3}[strings.ToLower(strings.TrimSpace(d.Page.Format))]; n != 0 {
 		size = n
 	}
-	if err := f.SetPageLayout(sh, &excelize.PageLayoutOptions{Orientation: &orientation, Size: &size}); err != nil {
+	layout := &excelize.PageLayoutOptions{Orientation: &orientation, Size: &size}
+	if d.AutoScale {
+		one, zero := 1, 0
+		layout.FitToWidth, layout.FitToHeight = &one, &zero
+		fit := true
+		if err := f.SetSheetProps(sh, &excelize.SheetPropsOptions{FitToPage: &fit}); err != nil {
+			return nil, 0, err
+		}
+	}
+	if err := f.SetPageLayout(sh, layout); err != nil {
 		return nil, 0, err
 	}
 	if d.RepeatHeader && d.HeaderArea != nil && d.HeaderArea.Rows() > 0 {

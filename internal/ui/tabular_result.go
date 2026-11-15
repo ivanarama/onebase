@@ -206,7 +206,7 @@ func (s *Server) tabularView(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "private, no-store")
 	base := "/ui/tabular/" + url.PathEscape(token)
 	switch chi.URLParam(r, "format") {
-	case "xlsx", "pdf":
+	case "xlsx", "pdf", "print":
 		_, finish, allowed := s.beginOperation(r, opReportExport, v.scope.Name)
 		if !allowed {
 			http.Error(w, "export limit", http.StatusTooManyRequests)
@@ -216,6 +216,10 @@ func (s *Server) tabularView(w http.ResponseWriter, r *http.Request) {
 		var data []byte
 		var err error
 		ext := chi.URLParam(r, "format")
+		printPreview := ext == "print"
+		if printPreview {
+			ext = "pdf"
+		}
 		if ext == "xlsx" {
 			data, err = v.doc.XLSX()
 			w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
@@ -237,7 +241,11 @@ func (s *Server) tabularView(w http.ResponseWriter, r *http.Request) {
 			}
 			return c
 		}, name)
-		w.Header().Set("Content-Disposition", "attachment; filename*=UTF-8''"+url.PathEscape(strings.TrimSuffix(name, "."+ext)+"."+ext))
+		disposition := "attachment"
+		if printPreview {
+			disposition = "inline"
+		}
+		w.Header().Set("Content-Disposition", disposition+"; filename*=UTF-8''"+url.PathEscape(strings.TrimSuffix(name, "."+ext)+"."+ext))
 		_, _ = w.Write(data)
 	case "cell":
 		row, e1 := strconv.Atoi(r.URL.Query().Get("row"))
@@ -264,7 +272,11 @@ func (s *Server) tabularView(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
-		_, _ = w.Write([]byte(v.doc.HTML(sheet.HTMLOptions{PDFURL: base + "/pdf", XLSXURL: base + "/xlsx", Embedded: v.scope.Form != "", ParentDrilldown: v.scope.CustomDrilldown, DrilldownURL: func(row, col int) string {
+		printURL := ""
+		if v.doc.AutoScale {
+			printURL = base + "/print"
+		}
+		_, _ = w.Write([]byte(v.doc.HTML(sheet.HTMLOptions{PDFURL: base + "/pdf", PrintURL: printURL, XLSXURL: base + "/xlsx", Embedded: v.scope.Form != "", ParentDrilldown: v.scope.CustomDrilldown, DrilldownURL: func(row, col int) string {
 			return base + "/cell?row=" + strconv.Itoa(row) + "&col=" + strconv.Itoa(col)
 		}})))
 	}

@@ -285,6 +285,8 @@ func (d *SpreadsheetDocument) Get(field string) any {
 	switch strings.ToLower(field) {
 	case "ориентациястраницы", "pageorientation", "orientation":
 		return d.Doc.Page.Orientation
+	case "автомасштаб", "autoscale":
+		return d.Doc.AutoScale
 	case "размерстраницы", "pagesize", "format":
 		return d.Doc.Page.Format
 	}
@@ -300,6 +302,8 @@ func (d *SpreadsheetDocument) Set(field string, v any) {
 	switch strings.ToLower(field) {
 	case "ориентациястраницы", "pageorientation", "orientation":
 		d.Doc.Page.Orientation = normalizeOrientation(strArg([]any{v}, 0))
+	case "автомасштаб", "autoscale":
+		d.Doc.AutoScale = truthy(v)
 	case "размерстраницы", "pagesize", "format":
 		d.Doc.Page.Format = strings.TrimSpace(strArg([]any{v}, 0))
 	case "имяфайла", "filename":
