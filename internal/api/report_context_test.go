@@ -23,7 +23,11 @@ import (
 func TestAPIReportTrustedContextMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		ctx := context.Background()
-		user, err := auth.NewRepo(db).Create(ctx, "context-api-alice", "test-context-password", "Alice", true)
+		repo := auth.NewRepo(db)
+		if err := repo.EnsureSchema(ctx); err != nil {
+			t.Fatal(err)
+		}
+		user, err := repo.Create(ctx, "context-api-alice", "test-context-password", "Alice", true)
 		if err != nil {
 			t.Fatal(err)
 		}
