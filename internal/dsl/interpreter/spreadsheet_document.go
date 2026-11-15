@@ -474,7 +474,22 @@ func (d *SpreadsheetDocument) append(args []any) any {
 	if !ok {
 		return nil
 	}
+	oldBottom := d.Doc.CurrentRow
 	d.Doc.Append(area.Area)
+	// The joined area's local widths move with its horizontal cell offset.
+	// Explicit document widths keep their existing precedence.
+	for col, px := range area.colWidths {
+		if col >= 1 && col <= area.Area.Cols() && d.Doc.ColumnWidth(d.Doc.CurrentCol+col) <= 0 {
+			d.Doc.SetColumnWidth(d.Doc.CurrentCol+col, px)
+		}
+	}
+	// A taller horizontal header remains part of that grouped output header.
+	if len(d.Doc.Groups) > 0 && d.Doc.CurrentRow > oldBottom {
+		g := &d.Doc.Groups[len(d.Doc.Groups)-1]
+		if g.HeaderEnd == oldBottom-1 {
+			g.HeaderEnd = d.Doc.CurrentRow - 1
+		}
+	}
 	return nil
 }
 
