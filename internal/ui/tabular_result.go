@@ -81,7 +81,10 @@ func (s *Server) publishTabular(w http.ResponseWriter, r *http.Request, scope ta
 		return "", err
 	}
 	maxRow, maxCol := doc.ContentBounds()
-	if maxRow > 20000 || maxCol > 512 || len(doc.Cells) > 50000 || (maxRow+1)*(maxCol+1) > 100000 {
+	// A 67-column KPI with 830 rows uses 53,893 styled cells. Keep the
+	// occupied-cell budget within the existing 100,000-position rectangle;
+	// byte/payload/row/column budgets below remain independent and unchanged.
+	if maxRow > 20000 || maxCol > 512 || len(doc.Cells) > 100000 || (maxRow+1)*(maxCol+1) > 100000 {
 		return "", fmt.Errorf("табличный документ превышает предел просмотра")
 	}
 	bytes := 0
