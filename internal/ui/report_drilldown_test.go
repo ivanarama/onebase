@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
