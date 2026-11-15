@@ -41,6 +41,7 @@ func (d *Document) Snapshot() *Document {
 	for k, c := range d.Cells {
 		if c != nil {
 			v := *c
+			v.DrilldownPayload = c.DrilldownPayload.Clone()
 			if c.Drilldown != nil {
 				r := *c.Drilldown
 				v.Drilldown = &r
@@ -64,6 +65,7 @@ func (d *Document) Snapshot() *Document {
 		for k, c := range d.HeaderArea.Cells {
 			if c != nil {
 				v := *c
+				v.DrilldownPayload = c.DrilldownPayload.Clone()
 				if c.Drilldown != nil {
 					ref := *c.Drilldown
 					v.Drilldown = &ref

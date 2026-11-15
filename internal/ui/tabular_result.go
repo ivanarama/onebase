@@ -104,6 +104,13 @@ func (s *Server) publishTabular(w http.ResponseWriter, r *http.Request, scope ta
 		return "", fmt.Errorf("табличный документ превышает предел просмотра")
 	}
 	frozen := doc.Snapshot()
+	payloadBytes, err := interpreter.FreezeTabularDrilldowns(frozen)
+	if err != nil {
+		return "", err
+	}
+	if bytes+payloadBytes > 8<<20 {
+		return "", fmt.Errorf("табличный документ превышает предел просмотра")
+	}
 	for key, c := range frozen.Cells {
 		if key.Row < 0 || key.Col < 0 || c.ColSpan > 512 || c.RowSpan > 20000 {
 			return "", fmt.Errorf("некорректная область табличного документа")

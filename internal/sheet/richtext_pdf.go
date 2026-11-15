@@ -341,6 +341,9 @@ func drawRichBlockSegs(pdf *fpdf.Fpdf, blk richBlock, family string, fs, lineH, 
 		if seg.italic {
 			style += "I"
 		}
+		if cell.Underline {
+			style += "U"
+		}
 		pdf.SetFont(family, style, fs)
 		// Разбиваем сегмент на слова и пробелы (отдельные токены) и переносим по
 		// ширине. Пробел-разделитель — самостоятельный токен, поэтому ширина строки

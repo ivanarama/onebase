@@ -88,6 +88,10 @@ func (a *SpreadsheetDocumentArea) setParameter(name string, value any) {
 // Get allows accessing cells via dot notation (Area.R1C1) or properties (Area.Параметры).
 func (a *SpreadsheetDocumentArea) Get(field string) any {
 	switch strings.ToLower(field) {
+	case "подчеркивание", "подчёркивание", "underline":
+		return a.Area.GetOrCreateCell(0, 0).Underline
+	case "расшифровка", "drilldown":
+		return a.Area.GetOrCreateCell(0, 0).DrilldownSource
 	case "текст", "text":
 		if cell, ok := a.Area.Cells["0,0"]; ok {
 			return cell.Text
@@ -109,6 +113,19 @@ func (a *SpreadsheetDocumentArea) setProperty(field string, v any) {
 	rows := a.Area.Rows()
 	cols := a.Area.Cols()
 	switch strings.ToLower(field) {
+	case "подчеркивание", "подчёркивание", "underline":
+		for r := 0; r < rows; r++ {
+			for c := 0; c < cols; c++ {
+				a.Area.GetOrCreateCell(r, c).Underline = truthy(v)
+			}
+		}
+	case "расшифровка", "drilldown":
+		for r := 0; r < rows; r++ {
+			for c := 0; c < cols; c++ {
+				w := &SpreadsheetDocumentCellWrapper{cell: a.Area.GetOrCreateCell(r, c)}
+				w.Set("расшифровка", v)
+			}
+		}
 	case "формат", "format":
 		for r := 0; r < rows; r++ {
 			for c := 0; c < cols; c++ {
@@ -639,6 +656,10 @@ type SpreadsheetDocumentCellWrapper struct {
 
 func (w *SpreadsheetDocumentCellWrapper) Get(field string) any {
 	switch strings.ToLower(field) {
+	case "расшифровка", "drilldown":
+		return w.cell.DrilldownSource
+	case "подчеркивание", "подчёркивание", "underline":
+		return w.cell.Underline
 	case "текст", "text":
 		return w.cell.Text
 	case "значение", "value":
@@ -673,6 +694,8 @@ func (w *SpreadsheetDocumentCellWrapper) Set(field string, v any) {
 		w.cell.Format = strArg([]any{v}, 0)
 	case "расшифровка", "drilldown":
 		w.cell.Drilldown = nil
+		w.cell.DrilldownPayload = nil
+		w.cell.DrilldownSource = v
 		if r, ok := v.(*Ref); ok && r != nil && r.Type != "" {
 			w.cell.Drilldown = &sheet.Reference{Entity: r.Type, ID: r.UUID}
 		}
@@ -693,6 +716,8 @@ func (w *SpreadsheetDocumentCellWrapper) Set(field string, v any) {
 		w.cell.Bold = truthy(v)
 	case "курсив", "italic":
 		w.cell.Italic = truthy(v)
+	case "подчеркивание", "подчёркивание", "underline":
+		w.cell.Underline = truthy(v)
 	case "размершрифта", "fontsize":
 		w.cell.FontSize = int(toFloatOr0(v))
 	case "цветфона", "backcolor":

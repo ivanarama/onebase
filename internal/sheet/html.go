@@ -156,7 +156,7 @@ tr:nth-child(even) td{background:#f8fafc}
 				if img := pictureHTML(cell.Picture); img != "" {
 					text += img
 				}
-				if cell.Drilldown != nil && opts.DrilldownURL != nil {
+				if (cell.Drilldown != nil || (cell.DrilldownPayload != nil && opts.ParentDrilldown)) && opts.DrilldownURL != nil {
 					text = `<a data-sheet-drilldown="1" target="_blank" rel="noopener" href="` + escapeHTML(opts.DrilldownURL(row, col)) + `">` + text + `</a>`
 				}
 			}
@@ -208,6 +208,9 @@ func buildCellStyle(cell *Cell, width, height float64) string {
 	if cell.Italic {
 		styles = append(styles, "font-style:italic")
 	}
+	if cell.Underline {
+		styles = append(styles, "text-decoration:underline")
+	}
 	if cell.FontSize > 0 && cell.FontSize != 10 {
 		styles = append(styles, fmt.Sprintf("font-size:%dpt", cell.FontSize))
 	}
@@ -253,6 +256,9 @@ func borderStyles(cell *Cell) []string {
 	if strings.EqualFold(cell.Border, "none") {
 		return []string{"border:none"}
 	}
+	if strings.EqualFold(cell.Border, "hair") {
+		return []string{"border:" + cssBorder("hair")}
+	}
 	return nil
 }
 
@@ -271,6 +277,8 @@ func cssBorder(side string) string {
 		return "1.5px solid #000"
 	case "thick":
 		return "2px solid #000"
+	case "hair":
+		return "0.25pt solid #000"
 	default: // thin
 		return "1px solid #000"
 	}

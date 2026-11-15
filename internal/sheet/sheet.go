@@ -24,20 +24,24 @@ import (
 // Колоночные/строчные размеры (ШиринаКолонки/ВысотаСтроки) живут на Document
 // в ColWidths/RowHeights и при рендере накладываются на колонку/строку целиком.
 type Cell struct {
-	Format     string
-	Drilldown  *Reference
-	Text       string
-	Value      any
-	Align      string // left, center, right, justify
-	Vertical   string // top, center, bottom
-	Width      float64
-	Height     float64
-	Bold       bool
-	Italic     bool
-	FontSize   int
-	FontFamily string
-	BackColor  string
-	TextColor  string
+	Format    string
+	Drilldown *Reference
+	// Builder data stays server-side. Only the validated neutral tree is cached.
+	DrilldownSource  any             `json:"-"`
+	DrilldownPayload *DrilldownValue `json:"-"`
+	Text             string
+	Value            any
+	Align            string // left, center, right, justify
+	Vertical         string // top, center, bottom
+	Width            float64
+	Height           float64
+	Bold             bool
+	Italic           bool
+	Underline        bool
+	FontSize         int
+	FontFamily       string
+	BackColor        string
+	TextColor        string
 	// Border — legacy-пресет рамки ("all"/""/"thin"/"thick"/"none"). Если задана
 	// хотя бы одна из per-side границ (BorderLeft/Top/Right/Bottom), она имеет
 	// приоритет над этим пресетом при рендере (html.go/pdf.go).

@@ -445,6 +445,9 @@ func cellHeightMM(pdf *fpdf.Fpdf, cell *Cell, cw float64) float64 {
 		avail = cw
 	}
 	family, style := resolveFont(cell.FontFamily, cell.Bold, cell.Italic)
+	if cell.Underline {
+		style += "U"
+	}
 	pdf.SetFont(family, style, fs)
 	lines := len(wrapText(pdf, cell.DisplayText(), avail))
 	return float64(lines)*lineH + 2*cellPadMM
@@ -536,6 +539,9 @@ func drawCell(pdf *fpdf.Fpdf, cell *Cell, x, y, w, h float64) {
 	// Текст.
 	if text := cell.DisplayText(); text != "" {
 		family, style := resolveFont(cell.FontFamily, cell.Bold, cell.Italic)
+		if cell.Underline {
+			style += "U"
+		}
 		fs := fontSizeOr(cell)
 		pdf.SetFont(family, style, fs)
 		if cell.TextColor != "" {
@@ -659,6 +665,8 @@ func drawCellBorder(pdf *fpdf.Fpdf, cell *Cell, x, y, w, h float64) {
 		return
 	case "thick":
 		lw = 0.5
+	case "hair":
+		lw = 0.25 * ptToMM
 	case "thin", "all":
 		lw = 0.2
 	default:
@@ -699,6 +707,8 @@ func sideWidthMM(side string) float64 {
 		return 0.4
 	case "thick":
 		return 0.6
+	case "hair":
+		return 0.25 * ptToMM
 	default: // thin
 		return 0.2
 	}

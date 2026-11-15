@@ -304,6 +304,9 @@ func xlsxCellStyle(cell *Cell) (*excelize.Style, bool) {
 	if st.Font.Size <= 0 {
 		st.Font.Size = 10
 	}
+	if cell.Underline {
+		st.Font.Underline = "single"
+	}
 	if c := xlsxColor(cell.TextColor); c != "" {
 		st.Font.Color = c
 	}
@@ -401,6 +404,8 @@ func xlsxBorders(cell *Cell) []excelize.Border {
 			style = 2
 		case "thick":
 			style = 5
+		case "hair":
+			style = 7
 		default:
 			style = 1
 		}
