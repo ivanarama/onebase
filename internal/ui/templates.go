@@ -1450,6 +1450,22 @@ func managedRefOptionRows(ctx map[string]any, element *metadata.FormElement, fie
 	if element != nil {
 		if scoped, ok := ctx["ManagedChoiceOptions"].(map[string][]map[string]any); ok {
 			if rows, exists := scoped[element.ID]; exists {
+				// A scoped choice page may exclude the current persisted value.
+				// Keep only that bound display option from the object's ref data;
+				// never fall back to the unfiltered candidate list.
+				selected := formContextValue(ctx, field)
+				if len(selectedRefOptionsOnly(rows, selected)) == 0 {
+					if refs, ok := ctx["RefOptions"].(map[string][]map[string]any); ok {
+						for _, row := range selectedRefOptionsOnly(refs[field], selected) {
+							copyRow := make(map[string]any, len(row)+1)
+							for key, value := range row {
+								copyRow[key] = value
+							}
+							copyRow["_choice_outside_filter"] = true
+							rows = append(append([]map[string]any(nil), rows...), copyRow)
+						}
+					}
+				}
 				return rows
 			}
 		}
