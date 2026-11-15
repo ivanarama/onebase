@@ -29,6 +29,7 @@ func TestReportFlatDetailsHTTP(t *testing.T) {
 		return w.Body.Bytes()
 	}
 	body := string(get("/ui/report/Flat?__run=1"))
+	assertFlatReportColumns(t, body, 1)
 	if strings.Count(body, `class="det"`) != 2 || strings.Contains(body, `class="grp"`) || !strings.Contains(body, ">7</td>") || !strings.Contains(body, ">2</td>") {
 		t.Fatalf("flat screen missing details: %s", body)
 	}
@@ -45,7 +46,7 @@ func TestReportFlatDetailsHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 4 || rows[1][1] != "7" || rows[2][1] != "2" || rows[3][1] != "9" {
+	if len(rows) != 4 || len(rows[0]) != 1 || rows[0][0] != "Amount" || rows[1][0] != "7" || rows[2][0] != "2" || rows[3][0] != "9" {
 		t.Fatalf("flat XLSX: %v", rows)
 	}
 	if pdf := get("/ui/report/Flat/pdf"); !bytes.HasPrefix(pdf, []byte("%PDF")) {
