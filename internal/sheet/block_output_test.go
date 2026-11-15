@@ -157,6 +157,26 @@ func TestTabularBlockOutput(t *testing.T) {
 			t.Fatalf("A002 drifted: %dx%d", r+1, c+1)
 		}
 	})
+	t.Run("grouped_taller_header", func(t *testing.T) {
+		d := NewDocument()
+		d.Put(outputTestArea(1, 1, "HEAD"))
+		d.Groups = []RowGroup{{Start: 0, HeaderEnd: 0, Level: 1, Expanded: true}}
+		d.Append(outputTestArea(3, 1, "RIGHT"))
+		if d.Groups[0].HeaderEnd != 2 {
+			t.Fatal("horizontal header height not reflected in group")
+		}
+	})
+	t.Run("draw_does_not_extend_previous_group_header", func(t *testing.T) {
+		d := NewDocument()
+		d.Put(outputTestArea(1, 1, "HEAD"))
+		d.Groups = []RowGroup{{Start: 0, HeaderEnd: 0, Level: 1, Expanded: true}}
+		d.Draw("own-placeholder")
+		d.Append(outputTestArea(3, 1, "NEWBLOCK"))
+		if d.Groups[0].HeaderEnd != 0 {
+			t.Fatal("new block extended previous grouped header")
+		}
+		requireOutputCell(t, d, 1, 1, "NEWBLOCK")
+	})
 	t.Run("copy_values_styles_and_export_coordinates", func(t *testing.T) {
 		d := NewDocument()
 		left := outputTestArea(2, 1, "LEFT")

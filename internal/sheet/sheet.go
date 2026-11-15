@@ -285,11 +285,19 @@ func (d *Document) Append(area *Area) {
 		}
 		d.outputValid = true
 	}
+	oldBottom := d.outputBottom
 	left := d.outputRight
 	rows, cols := d.copyOutputArea(area, d.outputTop, left)
 	d.outputRight = left + cols
 	d.outputBottom = max(d.outputBottom, d.outputTop+rows)
 	d.CurrentRow, d.CurrentCol = d.outputBottom, left
+	// Extend only this block's grouped header, never a previous block after Draw/EndPage.
+	if len(d.Groups) > 0 && d.outputBottom > oldBottom {
+		g := &d.Groups[len(d.Groups)-1]
+		if g.Start == d.outputTop && g.HeaderEnd == oldBottom-1 {
+			g.HeaderEnd = d.outputBottom - 1
+		}
+	}
 }
 
 // copyOutputArea preserves cell values/styles/spans and reserves the declared
