@@ -3158,10 +3158,11 @@ const tplReport = `
 {{template "report-export-buttons" .}}
 <div class="card">
 {{if .Rows}}
-<table><thead><tr>{{range .Cols}}<th>{{.}}</th>{{end}}</tr></thead>
+<table><thead><tr>{{range .Cols}}<th>{{.}}</th>{{end}}{{if .Drilldowns}}{{if .Drilldowns.HasRows}}<th>{{.Drilldowns.RowTitle}}</th>{{end}}{{end}}</tr></thead>
 <tbody>
 {{range .Rows}}{{$row := .}}<tr>
-  {{range $.Cols}}<td>{{fmtCell (index $row .)}}</td>{{end}}
+  {{range $.Cols}}<td>{{if $.Drilldowns}}{{$.Drilldowns.Cell . $row (fmtCell (index $row .))}}{{else}}{{fmtCell (index $row .)}}{{end}}</td>{{end}}
+  {{if $.Drilldowns}}{{if $.Drilldowns.HasRows}}<td>{{$.Drilldowns.Row $row}}</td>{{end}}{{end}}
 </tr>{{end}}
 </tbody></table>
 {{else}}<p class="empty">{{t $.Lang "Нет данных"}}</p>{{end}}
