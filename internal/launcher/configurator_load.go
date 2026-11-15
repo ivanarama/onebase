@@ -412,7 +412,7 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 			rv.ChartSource = src
 		}
 		for _, p := range rep.Params {
-			rv.Params = append(rv.Params, cfgParam{Name: p.Name, Type: p.Type, Label: p.Label, Labels: p.Labels})
+			rv.Params = append(rv.Params, cfgParam{Name: p.Name, Type: p.Type, Label: p.Label, Labels: p.Labels, ContextBound: p.Context != nil})
 		}
 		data.Reports = append(data.Reports, rv)
 	}

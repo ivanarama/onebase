@@ -478,10 +478,11 @@ type cfgRegister struct {
 }
 
 type cfgParam struct {
-	Name   string
-	Type   string
-	Label  string
-	Labels map[string]string
+	Name         string
+	Type         string
+	Label        string
+	Labels       map[string]string
+	ContextBound bool // report-only; editable names/types must not erase server bindings
 }
 
 type cfgReport struct {
