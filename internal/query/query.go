@@ -50,8 +50,11 @@ func dialectOrDefault(d storage.Dialect) storage.Dialect {
 
 // Result holds compiled PostgreSQL SQL and positional arguments.
 type Result struct {
-	SQL  string
-	Args []any
+	// Limited records an author-supplied FIRST/LIMIT. Runtime result filters
+	// cannot pretend this already bounded source is the full report dataset.
+	Limited bool
+	SQL     string
+	Args    []any
 	// Sources перечисляет объекты-источники запроса (для объектного RBAC, план 54).
 	// Имя — исходное имя сущности/регистра; Kind — секция прав ("catalog"|
 	// "document"|"register"|"inforeg"; "" — для неизвестных типов).
@@ -176,6 +179,7 @@ func Compile(src string, opts CompileOpts) (Result, error) {
 	// он окажется после WHERE/GROUP/HAVING/ORDER BY. Составные запросы выше
 	// отклоняются: ПЕРВЫЕ относится к отдельной ветви ОБЪЕДИНИТЬ, а глобальный
 	// LIMIT молча изменил бы результат.
+	res.Limited = true
 	res.SQL += " LIMIT " + strconv.FormatInt(limit, 10)
 	return res, nil
 }
