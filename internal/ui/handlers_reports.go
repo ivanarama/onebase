@@ -278,7 +278,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 	// чтения, а поле под маской в отборе/группировке/агрегате отклоняет отчёт —
 	// имена результирующих колонок могут быть заменены КАК/AS и сами по себе не
 	// годятся как security provenance.
-	maskPlan := s.queryMaskPlan(opCtx, compiled)
+	maskPlan := s.reportOutputMaskPlan(opCtx, compiled)
 	if maskPlan.Denied != "" {
 		opStatus = "error"
 		s.render(w, r, "page-report", map[string]any{
@@ -341,7 +341,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 	if comp != nil {
 		detailLinkCol = comp.DetailLink
 	}
-	s.resolveUUIDsInReport(opCtx, rows, detailLinkCol)
+	s.resolveUUIDsInReport(opCtx, rows, detailLinkCol, compiled.RefColumns)
 
 	// Пользовательские отборы применяются к строкам до компоновки (план 70).
 	if comp != nil && settings != nil && len(settings.Filters) > 0 {
@@ -488,7 +488,11 @@ func (s *Server) runChartProc(ctx context.Context, rep *reportpkg.Report, rows [
 // resolveUUIDsInReport replaces UUID-looking strings in report rows with entity
 // display names. skipCol (если непустой) исключается из подстановки — нужен для
 // колонки detail_link, где UUID должен остаться для ссылки на документ (issue #87).
-func (s *Server) resolveUUIDsInReport(ctx context.Context, rows []map[string]any, skipCol string) {
+func (s *Server) resolveUUIDsInReport(ctx context.Context, rows []map[string]any, skipCol string, typed ...map[string]string) {
+	if len(typed) > 0 {
+		s.resolveTypedReportReferences(ctx, rows, skipCol, typed[0])
+		return
+	}
 	uuidToLabel := make(map[string]string)
 	for _, row := range rows {
 		for _, v := range row {
@@ -509,7 +513,7 @@ func (s *Server) resolveUUIDsInReport(ctx context.Context, rows []map[string]any
 			}
 			id, _ := uuid.Parse(idStr)
 			if refRow, err := s.store.GetByID(ctx, entity.Name, id, entity); err == nil {
-				uuidToLabel[idStr] = s.maskedRecordLabel(ctx, entity, refRow)
+				uuidToLabel[idStr] = s.reportOutputRecordLabel(ctx, entity, refRow)
 			}
 		}
 	}
@@ -689,7 +693,7 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 	if denied := s.deniedQuerySource(ctx, compiled.Sources); denied != "" {
 		return nil, nil, newReportExportError(http.StatusForbidden, "source access", fmt.Errorf("нет доступа к объекту: %s", denied))
 	}
-	maskPlan := s.queryMaskPlan(ctx, compiled)
+	maskPlan := s.reportOutputMaskPlan(ctx, compiled)
 	if maskPlan.Denied != "" {
 		return nil, nil, newReportExportError(http.StatusForbidden, "masked field", fmt.Errorf("отчёт содержит защищённое поле: %s", maskPlan.Denied))
 	}
@@ -716,7 +720,7 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 	if comp != nil {
 		detailLinkCol = comp.DetailLink
 	}
-	s.resolveUUIDsInReport(ctx, data, detailLinkCol)
+	s.resolveUUIDsInReport(ctx, data, detailLinkCol, compiled.RefColumns)
 
 	// Пользовательские отборы (план 70) — до компоновки, как в runReport.
 	if comp != nil && settings != nil && len(settings.Filters) > 0 {

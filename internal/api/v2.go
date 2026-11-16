@@ -11,6 +11,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/access"
+	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
@@ -420,7 +422,7 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "forbidden source: "+denied, "", 0)
 			return
 		}
-		maskPlan := h.queryMaskPlan(r.Context(), compiled)
+		maskPlan := access.ReportOutputQueryMaskPlan(auth.UserFromContext(r.Context()), compiled, h.sourceMeta)
 		if maskPlan.Denied != "" {
 			writeError(w, http.StatusForbidden, "masked field: "+maskPlan.Denied, "", 0)
 			return
