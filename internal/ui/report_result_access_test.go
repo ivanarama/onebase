@@ -53,8 +53,9 @@ func TestReportResultQueryAccessStatusMatrix(t *testing.T) {
 		}
 		programs := map[string]*ast.Program{
 			"AccessWithQuery": mustParse(t, body(text, false)), "AccessQueryless": mustParse(t, body(text, false)), "AccessRethrow": mustParse(t, body(text, true)),
-			"AccessFakeText":   mustParse(t, `Функция Build() ВызватьИсключение "нет доступа к объекту: ResultAccessSource"; КонецФункции`),
-			"AccessBadQuery":   mustParse(t, body(`ВЫБРАТЬ`, false)),
+			"AccessFakeText": mustParse(t, `Функция Build() ВызватьИсключение "нет доступа к объекту: ResultAccessSource"; КонецФункции`),
+			// PostgreSQL accepts a zero-column SELECT; an unmatched parenthesis is invalid on both dialects.
+			"AccessBadQuery":   mustParse(t, body(`ВЫБРАТЬ (`, false)),
 			"AccessSQLFailure": mustParse(t, body(`ВЫБРАТЬ Name ИЗ Справочник.ResultAccessMissing`, false)),
 		}
 		reg := runtime.NewRegistry()
