@@ -30,13 +30,30 @@ func (d *Document) XLSX() ([]byte, error) {
 	if err := f.SetSheetName("Sheet1", sheetName); err != nil {
 		return nil, err
 	}
+	collapsed, outlineLevel, err := d.writeXLSXSheet(f, sheetName)
+	if err != nil {
+		return nil, err
+	}
+	buf, err := f.WriteToBuffer()
+	if err != nil {
+		return nil, err
+	}
+	if outlineLevel > 0 {
+		return xlsxOutlineXML(buf.Bytes(), collapsed, outlineLevel)
+	}
+	return buf.Bytes(), nil
+}
+
+// writeXLSXSheet is shared by single-document and named-workbook exports.
+// It never creates, copies or serializes another workbook.
+func (d *Document) writeXLSXSheet(f *excelize.File, sheetName string) (map[int]bool, int, error) {
 	maxRow, maxCol := d.ContentBounds()
 	if len(d.Cells) == 0 {
 		maxRow, maxCol = -1, -1
 	}
 	collapsed, outlineLevel, err := d.xlsxView(f, sheetName, maxRow)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 
 	for col, px := range d.ColWidths {
@@ -48,7 +65,7 @@ func (d *Document) XLSX() ([]byte, error) {
 			continue
 		}
 		if err := f.SetColWidth(sheetName, name, name, pxToExcelWidth(px)); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 	for row, px := range d.RowHeights {
@@ -56,7 +73,7 @@ func (d *Document) XLSX() ([]byte, error) {
 			continue
 		}
 		if err := f.SetRowHeight(sheetName, row, px*0.75); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 	}
 
@@ -86,15 +103,15 @@ func (d *Document) XLSX() ([]byte, error) {
 			}
 			ref, err := excelize.CoordinatesToCellName(col+1, row+1)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			st, isDate := xlsxCellStyle(cell)
 			if err := setXLSXValue(f, sheetName, ref, cell, isDate); err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			id, err := styleFor(st)
 			if err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			// Объединение: стиль на весь диапазон, иначе Excel рисует рамку
 			// только у левой верхней ячейки.
@@ -103,14 +120,14 @@ func (d *Document) XLSX() ([]byte, error) {
 				cs, rs := max(cell.ColSpan, 1), max(cell.RowSpan, 1)
 				last, err = excelize.CoordinatesToCellName(col+cs, row+rs)
 				if err != nil {
-					return nil, err
+					return nil, 0, err
 				}
 				if err := f.MergeCell(sheetName, ref, last); err != nil {
-					return nil, err
+					return nil, 0, err
 				}
 			}
 			if err := f.SetCellStyle(sheetName, ref, last, id); err != nil {
-				return nil, err
+				return nil, 0, err
 			}
 			// Индивидуальная ширина/высота ячейки — на колонку/строку, если
 			// колоночной/строчной не задано.
@@ -130,23 +147,16 @@ func (d *Document) XLSX() ([]byte, error) {
 	if maxRow >= 0 && maxCol >= 0 {
 		last, err := excelize.CoordinatesToCellName(maxCol+1, maxRow+1)
 		if err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		if last != "A1" {
 			dimension += ":" + last
 		}
 	}
 	if err := f.SetSheetDimension(sheetName, dimension); err != nil {
-		return nil, err
+		return nil, 0, err
 	}
-	buf, err := f.WriteToBuffer()
-	if err != nil {
-		return nil, err
-	}
-	if outlineLevel > 0 {
-		return xlsxOutlineXML(buf.Bytes(), collapsed, outlineLevel)
-	}
-	return buf.Bytes(), nil
+	return collapsed, outlineLevel, nil
 }
 
 // xlsxView keeps grouping as worksheet metadata; all cell values are retained.
@@ -247,7 +257,20 @@ var xlsxSheetFormat = regexp.MustCompile(`<sheetFormatPr\b`)
 // Excelize exposes row levels/visibility, but not the summary-row collapsed
 // marker or outlineLevelRow. Complete those attributes in our own generated
 // workbook; Copy preserves every other ZIP entry without recompression.
+type xlsxSheetOutline struct {
+	collapsed map[int]bool
+	level     int
+}
+
 func xlsxOutlineXML(data []byte, collapsed map[int]bool, level int) ([]byte, error) {
+	return xlsxWorkbookOutlineXML(data, map[string]xlsxSheetOutline{
+		"xl/worksheets/sheet1.xml": {collapsed: collapsed, level: level},
+	})
+}
+
+// This only completes outline metadata in the one file generated above; it
+// does not combine independently generated XLSX/ZIP documents.
+func xlsxWorkbookOutlineXML(data []byte, outlines map[string]xlsxSheetOutline) ([]byte, error) {
 	z, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, err
@@ -255,7 +278,8 @@ func xlsxOutlineXML(data []byte, collapsed map[int]bool, level int) ([]byte, err
 	var output bytes.Buffer
 	w := zip.NewWriter(&output)
 	for _, entry := range z.File {
-		if entry.Name != "xl/worksheets/sheet1.xml" {
+		outline, apply := outlines[entry.Name]
+		if !apply {
 			if err = w.Copy(entry); err != nil {
 				return nil, err
 			}
@@ -280,12 +304,12 @@ func xlsxOutlineXML(data []byte, collapsed map[int]bool, level int) ([]byte, err
 				return tag
 			}
 			row, _ := strconv.Atoi(string(m[1]))
-			if !collapsed[row] {
+			if !outline.collapsed[row] {
 				return tag
 			}
 			return bytes.Replace(tag, []byte("<row"), []byte(`<row collapsed="1"`), 1)
 		})
-		xml = xlsxSheetFormat.ReplaceAll(xml, []byte(fmt.Sprintf(`<sheetFormatPr outlineLevelRow="%d"`, level)))
+		xml = xlsxSheetFormat.ReplaceAll(xml, []byte(fmt.Sprintf(`<sheetFormatPr outlineLevelRow="%d"`, outline.level)))
 		h := entry.FileHeader
 		part, createErr := w.CreateHeader(&h)
 		if createErr != nil {

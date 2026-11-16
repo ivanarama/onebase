@@ -763,7 +763,9 @@ func newSpreadsheetDocument(args []any) any {
 // NewSpreadsheetFunctions returns a map of spreadsheet-related functions and factories.
 func NewSpreadsheetFunctions() map[string]any {
 	return map[string]any{
-		"__factory_ТабличныйДокумент":   newSpreadsheetDocument,
-		"__factory_SpreadsheetDocument": newSpreadsheetDocument,
+		"__factory_ТабличныйДокумент":        newSpreadsheetDocument,
+		"__factory_SpreadsheetDocument":      newSpreadsheetDocument,
+		"__factory_КнигаТабличныхДокументов": newSpreadsheetWorkbook,
+		"__factory_SpreadsheetWorkbook":      newSpreadsheetWorkbook,
 	}
 }
