@@ -651,18 +651,12 @@ func reportExportOpStatus(ctx context.Context, err error) string {
 	return operationStatus(ctx, err)
 }
 
-// reportExcel runs a report query with GET params and returns XLSX.
-// reportExportRows вычисляет табличные данные отчёта для выгрузки (Excel/PDF):
+// reportExportTable вычисляет данные и стили отчёта для выгрузки (Excel/PDF):
 // заголовки и строки с учётом эффективной компоновки (план 70), кросс-таблицы
 // (pivot) или плоского результата. Параметры берутся из query-строки (экспорт —
 // GET). HTTP-ответ об ошибке пишет вызывающий. Общий код reportExcel и reportPDF
 // (issue #218) — чтобы обе выгрузки шли из одних и тех же данных и не расходились
 // с экраном (runReport использует те же crossSheetRows/composedRows).
-func (s *Server) reportExportRows(r *http.Request, rep *reportpkg.Report) (headers []string, rows [][]any, err error) {
-	headers, rows, _, err = s.reportExportTable(r, rep)
-	return headers, rows, err
-}
-
 func (s *Server) reportExportTable(r *http.Request, rep *reportpkg.Report) (headers []string, rows [][]any, styles []excel.RowStyle, err error) {
 	opCtx, finish, ok := s.beginOperation(r, opReportExport, rep.Name)
 	if !ok {

@@ -4,12 +4,15 @@ import (
 	"fmt"
 	"html"
 	"html/template"
+	"math"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/csssafe"
 	"github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compose"
+	"github.com/ivantit66/onebase/internal/sheet"
 	"github.com/ivantit66/onebase/internal/widget"
 )
 
@@ -143,7 +146,37 @@ func (h *htmlComposeSink) grand(grand map[string]any) {
 }
 
 func cssOf(s report.CellStyle) string {
-	return cssStyle(s.Color, s.Background, s.Bold, s.Italic)
+	color := s.Color
+	if csssafe.Color(color) == "" {
+		color = reportBackgroundForeground(s.Background)
+	}
+	return cssStyle(color, s.Background, s.Bold, s.Italic)
+}
+
+// An explicit opaque background keeps the same foreground in either theme.
+// Pick the higher-contrast black/white text only when Color was not supplied.
+// Shared form/journal cssStyle semantics are deliberately unchanged.
+func reportBackgroundForeground(background string) string {
+	rgb := sheet.ColorRGB(background)
+	if rgb == "" {
+		return ""
+	}
+	value, err := strconv.ParseUint(rgb, 16, 24)
+	if err != nil {
+		return ""
+	}
+	linear := func(channel uint64) float64 {
+		c := float64(channel) / 255
+		if c <= 0.04045 {
+			return c / 12.92
+		}
+		return math.Pow((c+0.055)/1.055, 2.4)
+	}
+	luminance := 0.2126*linear((value>>16)&255) + 0.7152*linear((value>>8)&255) + 0.0722*linear(value&255)
+	if (luminance+0.05)/0.05 >= 1.05/(luminance+0.05) {
+		return "#000"
+	}
+	return "#fff"
 }
 
 func cssStyle(color, background string, bold, italic bool) string {

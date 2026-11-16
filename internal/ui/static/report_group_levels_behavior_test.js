@@ -65,3 +65,41 @@ test('tabular document uses the same levels without export URLs or changing sour
   rows[0].cells[0].children[0].click();assert.equal(rows[1].hidden,true);
   assert.equal(groups.every(g=>g.Expanded),true);
 });
+
+test('actual cross renderer leaves retain Cyrillic and one-character labels', () => {
+  // The Go wrapper supplies actual renderCrossTable HTML. Direct Node runs
+  // retain a minimal fixture for the same no-fold DOM branch.
+  const fixtures=process.argv[2] ? JSON.parse(fs.readFileSync(process.argv[2],'utf8')) : [
+    '<tr class="grp" data-group="/Север" data-level="0"><td>Север</td></tr>' +
+    '<tr class="grp" data-group="/Я" data-level="0"><td>Я</td></tr>' +
+    '<tr class="grp" data-group="/▶Север" data-level="0"><td>▶Север</td></tr>'
+  ];
+  const src=fs.readFileSync('static/ui.js','utf8');
+  const code=src.slice(src.indexOf('function rcBuildView('),src.indexOf('function obInitReportBlocks('));
+  for(const fixture of fixtures){
+    const panel=element(),block={querySelector:()=>panel,querySelectorAll:()=>panel.children};
+    const groups=Array.from(fixture.matchAll(/<tr class="grp"([^>]*)>([\s\S]*?)<\/tr>/g),match=>{
+      const tr=element(),cell=element(),attrs=match[1];
+      for(const name of ['data-group','data-level']) tr.setAttribute(name,attrs.match(new RegExp(name+'="([^"]*)"'))[1]);
+      const content=match[2].match(/<td[^>]*>([\s\S]*?)<\/td>/)[1];
+      cell.textContent=content.replace(/<[^>]*>/g,'');
+      const fold=content.includes('class="rc-fold"') ? button() : null;
+      if(fold) fold.setAttribute('aria-expanded',content.match(/aria-expanded="([^"]*)"/)[1]);
+      cell.querySelector=()=>fold;tr.querySelector=()=>cell;tr.fold=fold;tr.cell=cell;return tr;
+    });
+    const leaves=groups.filter(g=>!g.fold);
+    const labels=leaves.map(g=>g.cell.textContent);
+    assert.equal(leaves.length,3);
+    assert.deepEqual(new Set(labels),new Set(['Север','Я','▶Север']));
+    const body={querySelectorAll:selector=>selector==='tr.grp'?groups:[],querySelector:()=>null};
+    const table=element();table.tBodies=[body];table.closest=()=>block;
+    const document={querySelectorAll:()=>[table],createElement:()=>button()};
+    const context={document};vm.createContext(context);vm.runInContext(code,context);
+    context.obInitReportCompositionControls();
+    for(let round=0;round<3;round++){
+      for(const level of panel.children) level.click();
+      for(const group of groups.filter(g=>g.fold)){group.fold.click();group.fold.click();}
+      assert.deepEqual(leaves.map(g=>g.cell.textContent),labels);
+    }
+  }
+});

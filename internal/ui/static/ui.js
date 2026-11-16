@@ -1628,9 +1628,9 @@ function rcBuildView(table) {
         g.button.setAttribute('aria-expanded', String(g.open));
         return;
       }
-      var mark = g.open ? '▼' : '▶';
-      var text = g.cell.textContent;
-      if (text.charAt(0) !== mark) g.cell.textContent = mark + text.slice(1);
+      // Current renderers use a button for every collapsible group. A row
+      // without one is a leaf: its entire text is the label, including any
+      // leading triangle that belongs to the value itself.
     });
     tbody.querySelectorAll('tr.det').forEach(function (tr) {
       var g = byPath[tr.getAttribute('data-parent') || ''];
