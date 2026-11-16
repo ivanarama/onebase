@@ -1033,6 +1033,7 @@
   "Шаг с заходом (F11)": "Step into (F11)",
   "Ширина колонки (напр. 120px, 30mm, пусто = авто). %-ширины печатью НЕ поддерживаются.": "Column width (e.g. 120px, 30mm, empty = auto). % widths are NOT supported when printing.",
   "Ширина колонки (напр. 120px, 30mm, пусто = авто):": "Column width (e.g. 120px, 30mm, empty = auto):",
+  "Ширина панели": "Panel width",
   "Ширины колонок": "Column widths",
   "Шрифт": "Font",
   "Экспорт в ZIP": "Export to ZIP",
