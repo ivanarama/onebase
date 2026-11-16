@@ -79,5 +79,17 @@ func ReportOutputFilterAllowed(meta *metadata.Entity, field string) bool {
 // role masking. Use only at report boundaries; cards and ordinary queries keep
 // their existing permissions. Filters/grouping on protected data fail closed.
 func ReportOutputQueryMaskPlan(u *auth.User, res query.Result, lookup func(kind, name string) *metadata.Entity) QueryMaskPlan {
+	for _, source := range res.SourceOccurrences {
+		if !source.Virtual || source.TablePart != "" {
+			continue
+		}
+		// VT membership can use hidden partition/order fields that never occur
+		// in the written projection. Until an authorized operation graph proves
+		// those dependencies, unused protected metadata is not proof of safety.
+		meta := sourceMeta(source.Kind, source.Name, "", lookup)
+		if meta == nil || len(ReportOutputDecisions(meta)) != 0 {
+			return QueryMaskPlan{Denied: source.Name}
+		}
+	}
 	return queryMaskPlanFor(u, res, lookup, true)
 }
