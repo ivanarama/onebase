@@ -199,6 +199,10 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) *reportpkg.Re
 }
 
 func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpkg.Report, paramValues map[string]any) {
+	if err := s.validateReportChoiceValues(r.Context(), rep, paramValues); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	opCtx, finish, ok := s.beginOperation(r, opReportRun, rep.Name)
 	if !ok {
 		http.Error(w, "слишком много одновременно выполняемых отчётов, повторите позже", http.StatusTooManyRequests)
@@ -539,6 +543,7 @@ func applyResolvedLabels(rows []map[string]any, uuidToLabel map[string]string, s
 
 // reportParamUI is a template-friendly wrapper around a report parameter.
 type reportParamUI struct {
+	Choice reportpkg.Param
 	Name   string
 	Label  string
 	Type   string // raw type string
@@ -561,9 +566,10 @@ func (s *Server) buildReportParams(ctx context.Context, lang string, params []re
 	out := make([]reportParamUI, 0, len(params))
 	for _, p := range params {
 		ui := reportParamUI{
-			Name:  p.Name,
-			Label: p.DisplayLabel(lang),
-			Type:  p.Type,
+			Choice: p,
+			Name:   p.Name,
+			Label:  p.DisplayLabel(lang),
+			Type:   p.Type,
 		}
 		switch {
 		case p.Type == "date":
@@ -582,7 +588,7 @@ func (s *Server) buildReportParams(ctx context.Context, lang string, params []re
 			entityName := strings.TrimPrefix(p.Type, "reference:")
 			ui.RefEntity = entityName
 			if entity := s.reg.GetEntity(entityName); entity != nil {
-				rows, _ := s.initialReferenceOptions(ctx, entity, refOptionsChoice, []string{refValueString(values[p.Name])})
+				rows, _ := s.reportReferenceOptions(ctx, p, values, entity)
 				ui.Opts = rows
 			}
 		}
@@ -681,6 +687,9 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 			v = val // как на экране: негодное значение остаётся строкой
 		}
 		paramValues[p.Name] = v
+	}
+	if err := s.validateReportChoiceValues(ctx, rep, paramValues); err != nil {
+		return nil, nil, newReportExportError(http.StatusBadRequest, "report parameters", err)
 	}
 	compiled, err := s.compileQueryWithRowAccess(ctx, rep.Query, paramValues)
 	if err != nil {

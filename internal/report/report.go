@@ -12,6 +12,11 @@ type Param struct {
 	Label   string            `yaml:"label"`   // display label; falls back to Name
 	Labels  map[string]string `yaml:"labels"`  // per-language labels (lang code → translation)
 	Options []string          `yaml:"options"` // for type: select
+	// ChoiceFilter связывает ссылочный выбор с другими параметрами отчёта.
+	// Пустой ведущий параметр не ограничивает выбор (поиск по всем филиалам).
+	ChoiceFilter []ParamChoiceFilter `yaml:"choice_filter,omitempty"`
+	// ChoiceLabelSuffix — ссылочный реквизит, чья подпись добавляется в скобках.
+	ChoiceLabelSuffix string `yaml:"choice_label_suffix,omitempty"`
 	// Default — значение параметра, когда пользователь его не задал. Понимает ту
 	// же грамматику подстановок, что параметры виджетов и регламентных заданий
 	// ({{today}}, {{now|-7d}} и т.п.). Раньше линтер ключ `default` принимал, а
@@ -28,6 +33,11 @@ type Param struct {
 	// хранят время суток, и «Дата <= &По» с полночью теряло всё, что было в этот
 	// день после 00:00.
 	PeriodEnd bool `yaml:"period_end"`
+}
+
+type ParamChoiceFilter struct {
+	Field string `yaml:"field"`
+	Param string `yaml:"param"`
 }
 
 type Report struct {

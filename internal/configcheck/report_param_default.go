@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/project"
+	"github.com/ivantit66/onebase/internal/report"
 )
 
 // CheckLintReports validates advisory report settings that require the loaded
@@ -19,6 +20,9 @@ func CheckLintReports(proj *project.Project) []Issue {
 	for _, rep := range proj.Reports {
 		if rep == nil {
 			continue
+		}
+		if err := report.ValidateParamChoices(rep, proj.Entities); err != nil {
+			issues = append(issues, Issue{File: "reports/" + rep.Name + ".yaml", Object: rep.Name, Kind: "Отчёт", Code: "report.choice", Message: err.Error()})
 		}
 		for _, param := range rep.Params {
 			if param.PeriodEnd && param.Type != "date" {

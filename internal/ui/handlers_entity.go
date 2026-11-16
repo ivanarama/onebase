@@ -1331,6 +1331,13 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	// Динамический preview (choice_preview_proc) обслуживается POST /page:
+	if choice != nil && choice.ReportParam != nil {
+		s.reportChoiceLabels(r.Context(), *choice.ReportParam, ent, items)
+		// A report picker returns only its public option representation.
+		for i, row := range items {
+			items[i] = map[string]any{"id": row["id"], "_label": row["_label"]}
+		}
+	}
 	// GET остаётся статическим и обратно совместимым (план 168, инвариант 1).
 	previewField := canonicalChoicePreviewField(ent)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
