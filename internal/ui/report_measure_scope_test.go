@@ -6,6 +6,7 @@ import (
 	"github.com/xuri/excelize/v2"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 
 	reportpkg "github.com/ivantit66/onebase/internal/report"
@@ -122,5 +123,70 @@ func TestReportMeasureScopeHTTPExports(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("PDF input has %d grand values", count)
+	}
+}
+
+func TestReportMeasureScopeDuplicateFieldPreset(t *testing.T) {
+	grand := reportpkg.Measure{Field: "Days", Agg: "sum", Expr: "17", Scope: []string{reportpkg.MeasureScopeGrand}}
+	master := reportpkg.Measure{Field: "Days", Agg: "avg", Expr: "23", Scope: []string{"Master"}}
+	for _, tc := range []struct {
+		name      string
+		requested []reportpkg.Measure
+		expected  []reportpkg.Measure
+	}{
+		{"sum_only", []reportpkg.Measure{{Field: "days", Agg: "sum", Expr: "999", Scope: []string{"Master"}}}, []reportpkg.Measure{grand}},
+		{"avg_only", []reportpkg.Measure{{Field: "Days", Agg: "avg"}}, []reportpkg.Measure{master}},
+		{"both", []reportpkg.Measure{{Field: "Days", Agg: "sum"}, {Field: "Days", Agg: "avg"}}, []reportpkg.Measure{grand, master}},
+		{"reordered", []reportpkg.Measure{{Field: "Days", Agg: "avg"}, {Field: "Days", Agg: "sum"}}, []reportpkg.Measure{master, grand}},
+		{"default_sum", []reportpkg.Measure{{Field: "Days"}}, []reportpkg.Measure{grand}},
+		{"unknown_agg_preserves_trusted", []reportpkg.Measure{{Field: "Days", Agg: "max"}}, []reportpkg.Measure{grand, master}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			base := &reportpkg.Composition{Groupings: []string{"Master"}, Columns: []string{"Month"}, Measures: []reportpkg.Measure{grand, master}}
+			rep := &reportpkg.Report{Variants: []reportpkg.ReportVariant{{Name: "V", Composition: base}}}
+			settings := &reportpkg.UserReportSettings{Variant: "V", Composition: &reportpkg.Composition{Measures: tc.requested}}
+			raw, err := settings.JSON()
+			if err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := reportpkg.ParseUserSettings(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := effectiveComposition(rep, parsed)
+			if len(got.Measures) != len(tc.expected) {
+				t.Fatalf("resource count=%d, want%d", len(got.Measures), len(tc.expected))
+			}
+			for i, want := range tc.expected {
+				m := got.Measures[i]
+				if m.Field != want.Field || m.Agg != want.Agg || m.Expr != want.Expr || !reflect.DeepEqual(m.Scope, want.Scope) {
+					t.Fatalf("resource%d identity/semantics mixed: got%+v want%+v", i, m, want)
+				}
+			}
+		})
+	}
+}
+
+func TestReportMeasureScopeSameFieldAggIsAmbiguous(t *testing.T) {
+	first := reportpkg.Measure{Field: "Days", Agg: "sum", Expr: "17", Scope: []string{reportpkg.MeasureScopeGrand}}
+	second := reportpkg.Measure{Field: "Days", Agg: "sum", Expr: "23", Scope: []string{"Master"}}
+	base := &reportpkg.Composition{Groupings: []string{"Master"}, Columns: []string{"Month"}, Measures: []reportpkg.Measure{first, second}}
+	rep := &reportpkg.Report{Composition: base}
+	settings := &reportpkg.UserReportSettings{Composition: &reportpkg.Composition{Measures: []reportpkg.Measure{{Field: "Days", Agg: "sum", Expr: "999", Scope: []string{"Master"}}}}}
+	raw, err := settings.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := reportpkg.ParseUserSettings(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := effectiveComposition(rep, parsed)
+	if !reflect.DeepEqual(got.Measures, base.Measures) {
+		t.Fatalf("ambiguous preset guessed a resource: got%+v want%+v", got.Measures, base.Measures)
+	}
+	got.Measures[0].Scope[0] = "changed"
+	if base.Measures[0].Scope[0] != reportpkg.MeasureScopeGrand {
+		t.Fatal("fallback result mutated trusted metadata")
 	}
 }
