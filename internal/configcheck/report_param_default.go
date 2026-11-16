@@ -21,9 +21,6 @@ func CheckLintReports(proj *project.Project) []Issue {
 		if rep == nil {
 			continue
 		}
-		if err := report.ValidateParamChoices(rep, proj.Entities); err != nil {
-			issues = append(issues, Issue{File: "reports/" + rep.Name + ".yaml", Object: rep.Name, Kind: "Отчёт", Code: "report.choice", Message: err.Error()})
-		}
 		for _, param := range rep.Params {
 			if param.PeriodEnd && param.Type != "date" {
 				issues = append(issues, Issue{
@@ -59,6 +56,20 @@ func CheckLintReports(proj *project.Project) []Issue {
 				Message:      fmt.Sprintf("параметр %q имеет default %q, которого нет в options", param.Name, defaultValue),
 				SuggestedFix: "Укажите в default одно из значений options либо добавьте нужное значение в options.",
 			})
+		}
+	}
+	return issues
+}
+
+// CheckReportParamChoices is a correctness gate, independent of advisory lint.
+func CheckReportParamChoices(proj *project.Project) []Issue {
+	var issues []Issue
+	for _, rep := range proj.Reports {
+		if rep == nil {
+			continue
+		}
+		if err := report.ValidateParamChoices(rep, proj.Entities); err != nil {
+			issues = append(issues, Issue{File: "reports/" + rep.Name + ".yaml", Object: rep.Name, Kind: "Отчёт", Code: "report.choice", Message: err.Error()})
 		}
 	}
 	return issues

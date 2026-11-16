@@ -43,6 +43,17 @@ func ValidateParamChoices(rep *Report, entities []*metadata.Entity) error {
 				return fmt.Errorf("parameter %s: invalid choice field/parameter %s/%s", p.Name, c.Field, c.Param)
 			}
 		}
+		seen := map[string]bool{}
+		if len(p.ChoiceFilter) > 8 {
+			return fmt.Errorf("parameter %s: maximum is 8 choice conditions", p.Name)
+		}
+		for _, c := range p.ChoiceFilter {
+			key := strings.ToLower(c.Field)
+			if seen[key] {
+				return fmt.Errorf("parameter %s: duplicate choice field %s", p.Name, c.Field)
+			}
+			seen[key] = true
+		}
 		if p.ChoiceLabelSuffix != "" {
 			f := field(e, p.ChoiceLabelSuffix)
 			if f == nil || f.RefEntity == "" {

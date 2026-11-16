@@ -411,6 +411,10 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, err.Error(), "", 0)
 			return
 		}
+		if err := h.validateReportChoiceValues(r.Context(), rep, params); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error(), "", 0)
+			return
+		}
 		compiled, err := h.compileQueryWithRowAccess(r.Context(), rep.Query, params)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "query compile error: "+err.Error(), "", 0)
