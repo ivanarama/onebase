@@ -580,7 +580,7 @@ const tplManagedForm = `
 .ob-density-compact input[type=text],.ob-density-compact input[type=datetime-local],.ob-density-compact input[type=date],.ob-density-compact input[type=number],.ob-density-compact select{height:28px;padding:3px 8px;font-size:13px;border-radius:5px}
 .ob-density-compact textarea{font-size:13px;padding:4px 8px}
 .ob-density-compact .btn{padding:4px 10px;font-size:13px}
-.ob-density-compact .form-group-box{padding:6px 10px 8px;margin-bottom:8px}
+.ob-density-compact .form-group-box{padding:6px 10px 8px !important;margin-bottom:8px !important}
 .ob-density-compact .managed-tabs{padding:8px 10px !important;margin-bottom:8px !important}
 .ob-density-compact .managed-tab-headers{margin-bottom:8px !important}
 .ob-density-compact .managed-tab-btn{padding:5px 12px;font-size:13px}
