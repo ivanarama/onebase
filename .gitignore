@@ -134,3 +134,5 @@ e2e/test-results/
 e2e/playwright-report/
 govulnpolicy.exe
 !docs/report-result-filters.md
+
+!docs/report-row-source.md

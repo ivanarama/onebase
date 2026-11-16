@@ -17,14 +17,16 @@ type Lookup func(kind, name string) *metadata.Entity
 type Allowed func(source query.SourceRef, meta *metadata.Entity, field string, uuid bool) bool
 
 type Field struct {
-	Values      []string        `json:"values,omitempty"`
-	Name        string          `json:"name"`
-	Type        string          `json:"type"`
-	RefEntity   string          `json:"ref_entity,omitempty"`
-	EnumName    string          `json:"enum_name,omitempty"`
-	Operators   []string        `json:"operators"`
-	Source      query.SourceRef `json:"-"`
-	SourceField string          `json:"-"`
+	Values          []string        `json:"values,omitempty"`
+	Name            string          `json:"name"`
+	Type            string          `json:"type"`
+	RefEntity       string          `json:"ref_entity,omitempty"`
+	EnumName        string          `json:"enum_name,omitempty"`
+	Operators       []string        `json:"operators"`
+	Source          query.SourceRef `json:"-"`
+	SourceField     string          `json:"-"`
+	SourceTablePart string          `json:"-"`
+	SourcePath      []string        `json:"-"`
 }
 
 // Schema rejects ambiguous/derived output. Aliases only name a proven column.
@@ -48,7 +50,7 @@ func Schema(res query.Result, lookup Lookup, allowed Allowed) []Field {
 			continue
 		}
 		source, path, ok := sourcePath(res.SourceOccurrences, col.Path)
-		if !ok || source.Virtual || source.Kind == "" {
+		if !ok || (source.Virtual && source.TablePart == "") || source.Kind == "" {
 			continue
 		}
 		meta := lookup(source.Kind, source.Name)
@@ -71,7 +73,7 @@ func Schema(res query.Result, lookup Lookup, allowed Allowed) []Field {
 		var desc typedempty.Descriptor
 		sourceField := ""
 		isUUID := false
-		if len(path) == 1 && (strings.EqualFold(path[0], "Ссылка") || strings.EqualFold(path[0], "Ref")) && source.TablePart == "" && res.RefColumns[name] != "" && strings.EqualFold(res.RefColumns[name], source.Name) {
+		if len(path) == 1 && (strings.EqualFold(path[0], "Ссылка") || strings.EqualFold(path[0], "Ref")) && res.RefColumns[name] != "" && strings.EqualFold(res.RefColumns[name], source.Name) {
 			desc = typedempty.Descriptor{Type: metadata.FieldType("reference:" + source.Name), RefEntity: source.Name}
 			sourceField = path[0]
 			isUUID = true
@@ -109,7 +111,7 @@ func Schema(res query.Result, lookup Lookup, allowed Allowed) []Field {
 		if !allowed(source.SourceRef, meta, sourceField, isUUID) {
 			continue
 		}
-		f := Field{Name: name, Type: string(desc.Type), RefEntity: desc.RefEntity, EnumName: desc.EnumName, Source: source.SourceRef, SourceField: sourceField}
+		f := Field{Name: name, Type: string(desc.Type), RefEntity: desc.RefEntity, EnumName: desc.EnumName, Source: source.SourceRef, SourceField: sourceField, SourceTablePart: source.TablePart, SourcePath: append([]string(nil), col.Path...)}
 		f.Operators = operators(f)
 		if len(f.Operators) > 0 {
 			out = append(out, f)
