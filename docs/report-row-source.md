@@ -104,3 +104,54 @@ SQL как trusted variant и сам не реализует B30 variant.Query. 
 Одно добавление YAML ключа не запускает enrichment текущим бинарником. Конфиги
 A004/A005 не менялись. Подключение к обычному compose и общему output/snapshot
 контракту остаётся отдельной дельтой после совместимого B30/ENG06/ENG16.
+
+
+## Host input frame v1: inputs-only foundation
+
+`CaptureInputFrame(ctx, db, registry, report, request, preset, codeLookup)` получает
+**принятые HOST значения**, уже нормализованные действующим transport parser,
+в `AcceptedParameter{Text, Parsed}`. Этот Go тип не надо декодировать из клиентского
+JSON как evidence. Имена разрешаются по текущим metadata Param; конкретный parsed
+scalar type/ref root проверяются. Text используется для presence, не для определения
+доверия. Request приоритетнее preset; принятый __has/пустой текст остаётся user-input.
+
+Private handle связывает canonical report/variant, template/module/profile hash,
+metadata generation+fingerprint, actor/role/attrs, strict compiled SQL/args/RLS,
+FormatVersion2 и input slot/source/presence/type/ref/typed digest. Для старого source
+model варианты меняют composition и используют основной query; B30 variant.Query
+должен отдельно выбираться host из доверенных metadata, не из client SQL.
+
+`value`, `explicit-empty`, `missing` различаются; false и0 не становятся missing.
+Равные typed bytes из request/preset/default сохраняют разные kind/channel.
+Отсутствие принятого значения использует только штатный empty-value parser;
+сохраняются metadata default-expression identity и missing user controls.
+Непустой metadata default с clock/constant/context зависимостями пока STOP до
+отдельного host binding. Timezone — server-context, не fixed literal. Digests и
+raw values остаются private; неизвестный слот/descriptor/type/root отклоняется.
+
+`frame.Revalidate` повторяет текущий strict compile/object/field/report/RLS/mandatory
+boundary и сверяет metadata/actor до/после loader, registry identity/generation,
+module/profile/query/input fingerprints. Host передаёт свежий авторизованный ctx;
+helper не загружает DB session/roles вместо middleware. Registry maps сортируются
+для canonical fingerprints, SourceRef-key RLS map записывается sorted snapshot.
+DB/registry/timezone process identity также проверяются. Неизвестный host state
+кодеком не превращается в `{}`. Marshal/Unmarshal JSON отвергаются, fmt/String
+показывают только ReportInputFrame; Inspect возвращает redacted copies без значений
+и private digests. Клиентским literal/JSON такой handle не создать.
+
+`program_evidence` связывает lexical AST literal с exact module/profile/node/type/
+typed value, не с равенством строк. Чужой same-valued AST node и mutation invalid.
+Для потенциальных `.Text/.Текст` assignment фиксируются отдельные statement/value
+ordinals; concat/variable/function result/compound assignment не получает lexical
+literal proof. Даже static node ВСЕГДА требует receiver/control bindings. Date
+literal дополнительно требует timezone context. Этот ledger не наблюдает текущий
+runtime Query.Text provenance и не разрешает protected-operation recipe.
+
+**InputFrame не является successful producer receipt или final filter schema.**
+Он не читает result rows, не запускает DSL, не переносит input values в interpreter
+и не расширяет текущий readonly capability profile. Existing Result/Column/JSON
+по-прежнему не authority. Полный frame all data/control origins, masked originals+
+minimal DSL subset, actual query text taint, readonly effectiveFilters, extra schema
+и единый UI/API/export/background/current-auth snapshot остаются отдельными шагами.
+Native literal1/DateDiff/bare ref presentation/protected Адрес остаются current STOP.
+Новых exceptions/callback allow/карточных правил этим кодом не введено; ENG06 HOLD.

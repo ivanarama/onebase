@@ -67,6 +67,7 @@ type execution struct {
 	origins                      []Origin
 	originKeys                   map[string]bool
 	queries, readRows, readBytes int
+	lastCompile                  *compileSnapshot
 }
 
 // Run owns compilation and all database reads. It has no caller-provided raw
@@ -237,6 +238,7 @@ func (e *execution) compile(ctx context.Context, text string, params map[string]
 	if !res.Projection.Simple || len(fields) == 0 || len(fields) != len(res.Projection.Columns) {
 		return query.Result{}, fmt.Errorf("row source: тип или происхождение проекции не доказаны")
 	}
+	e.lastCompile = &compileSnapshot{Result: res, RowFilters: filters}
 	e.fields[res.SQL] = fields
 	for _, f := range fields {
 		key := fmt.Sprintf("%q/%q/%q/%q/%q", f.Source.Kind, f.Source.Name, f.SourceTablePart, f.SourceField, f.Type)

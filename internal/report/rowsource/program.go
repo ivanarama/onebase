@@ -31,6 +31,7 @@ type program struct {
 	procedures map[string]*ast.ProcedureDecl
 	entry      *ast.ProcedureDecl
 	operations map[string]bool
+	evidence   *programEvidence
 }
 
 func compileProgram(code, entry string) (*program, error) {
@@ -45,7 +46,11 @@ func compileProgram(code, entry string) (*program, error) {
 	if len(tree.Body) > 0 {
 		return nil, fmt.Errorf("row source: исполняемое тело модуля запрещено")
 	}
-	p := &program{procedures: map[string]*ast.ProcedureDecl{}, operations: map[string]bool{}}
+	evidence, err := newProgramEvidence(code)
+	if err != nil {
+		return nil, err
+	}
+	p := &program{procedures: map[string]*ast.ProcedureDecl{}, operations: map[string]bool{}, evidence: evidence}
 	for _, proc := range tree.Procedures {
 		name := strings.ToLower(proc.Name.Literal)
 		if p.procedures[name] != nil {
@@ -88,12 +93,16 @@ func (p *program) block(body []ast.Stmt, nodes *int, depth int) error {
 		if err := sourceBudget(nodes, depth); err != nil {
 			return err
 		}
+		statementOrdinal := *nodes
 		var err error
 		switch v := stmt.(type) {
 		case *ast.VarDecl, *ast.BreakStmt, *ast.ContinueStmt:
 		case *ast.AssignStmt:
 			if err = expr(v.Target); err == nil {
 				err = expr(v.Value)
+			}
+			if err == nil && p.evidence != nil {
+				p.evidence.recordTextSite(v, statementOrdinal)
 			}
 		case *ast.ExprStmt:
 			err = expr(v.X)
@@ -137,10 +146,16 @@ func (p *program) block(body []ast.Stmt, nodes *int, depth int) error {
 	return nil
 }
 
-func (p *program) expr(value ast.Expr, nodes *int, depth int) error {
+func (p *program) expr(value ast.Expr, nodes *int, depth int) (err error) {
 	if err := sourceBudget(nodes, depth); err != nil {
 		return err
 	}
+	ordinal := *nodes
+	defer func() {
+		if err == nil && p.evidence != nil {
+			err = p.evidence.recordLiteral(value, ordinal)
+		}
+	}()
 	child := func(e ast.Expr) error { return p.expr(e, nodes, depth+1) }
 	args := func(values []ast.Expr) error {
 		for _, e := range values {

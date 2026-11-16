@@ -8823,3 +8823,19 @@ loader его `.rep.os`. Права запуска проверяются до �
 `row_source` в рабочий YAML ещё не активирует преобразование. Для будущей настройки
 нужен совместимый общий adapter, сохранение lineage/типов/отборов/масок во всех
 выводах и snapshot. Существующий `result_proc` с готовым ТабДок — другой выход.
+
+
+## Источник строк: private input evidence (source foundation)
+<!-- status: testing -->
+<!-- date: 2026-11-16 -->
+
+Source API CaptureInputFrame связывает принятые host параметры с metadata слотами,
+отчётом/вариантом, module/profile, actor/RLS/policy и текущей registry. Request,
+preset, explicit-empty и missing не смешиваются с fixed literals; false/0 сохраняются.
+Повторная проверка отклоняет изменённый контекст, Inspect даёт только копию без raw
+values/digests, JSON не создаёт capability. Lexical AST ledger отдельно различает
+literal node и динамический query text, сохраняя обязательность control proof.
+
+Это inputs-only фундамент для разработчика, без final schema/allow, новой DSL
+переменной или готового runtime SDK. Все текущие unknown/protected input STOP,
+ограничения native A004/A005 и общий ENG06 integration HOLD сохраняются.
