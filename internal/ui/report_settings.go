@@ -39,21 +39,6 @@ type reportSettingsRequest struct {
 	ActivePresetID string
 }
 
-// readReportSettings разбирает пользовательские настройки из поля __settings
-// запроса (FormValue читает и POST-форму, и GET-query). Пустое или повреждённое
-// значение → nil (поведение отчёта по умолчанию).
-func readReportSettings(r *http.Request) *reportpkg.UserReportSettings {
-	raw := r.FormValue("__settings")
-	if raw == "" {
-		return nil
-	}
-	s, err := reportpkg.ParseUserSettings(raw)
-	if err != nil {
-		return nil
-	}
-	return s
-}
-
 // reportSettingsWithRequestVariant накладывает явный __variant из запроса поверх
 // настроек отчёта. Это важно для селектора вариантов: обычный submit формы шлёт
 // только __variant, без __settings, но выбранный вариант всё равно должен менять

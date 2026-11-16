@@ -83,7 +83,9 @@ func TestReportResultFilterMountedHTTPAndExports(t *testing.T) {
 					t.Fatal(err)
 				}
 				b, err := io.ReadAll(r)
-				r.Close()
+				if err := r.Close(); err != nil {
+					t.Fatal(err)
+				}
 				if err != nil {
 					t.Fatal(err)
 				}
