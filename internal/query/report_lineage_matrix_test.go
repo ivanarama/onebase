@@ -158,6 +158,28 @@ func TestReportLineageRejectsUnknownAndAmbiguous(t *testing.T) {
 	}
 }
 
+func TestReportLineageNamespaceAndStaleRLS(t *testing.T) {
+	entities := reportLineageEntities()
+	entities = append(entities, &metadata.Entity{Name: entities[0].Name, Kind: metadata.KindCatalog, Fields: entities[0].Fields})
+	if _, p, err := query.CompileReportLineage("ВЫБРАТЬ A.Number КАК N ИЗ Документ.LineageRequests КАК A", query.CompileOpts{Entities: entities}); err == nil || p != nil {
+		t.Fatal("catalog/document sameName supplied a different compiler metadata type")
+	}
+	opts := query.CompileOpts{Entities: reportLineageEntities(), Params: map[string]any{"Owner": "reader"}}
+	res, p, err := query.CompileReportLineage("ВЫБРАТЬ A.Number КАК N ИЗ Документ.LineageRequests КАК A ГДЕ A.Owner=&Owner", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts.RowFilters = map[query.SourceRef]*storage.Predicate{{Kind: "document", Name: "LineageRequests"}: {Field: "Owner", Op: "eq", Value: "other"}}
+	if p.Matches(res, opts) {
+		t.Fatal("stale RLS receipt accepted")
+	}
+	opts.RowFilters = nil
+	opts.Params["Owner"] = "other"
+	if p.Matches(res, opts) {
+		t.Fatal("changed input binding accepted")
+	}
+}
+
 func TestReportLineageReceiptAndReferenceRoot(t *testing.T) {
 	opts := query.CompileOpts{Entities: reportLineageEntities(), Params: map[string]any{"Owner": "reader"}}
 	res, p, err := query.CompileReportLineage("ВЫБРАТЬ A.Branch.Ссылка КАК BranchID,A.Branch.Title КАК BranchTitle ИЗ Документ.LineageRequests КАК A ГДЕ A.Owner=&Owner", opts)
