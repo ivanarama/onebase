@@ -826,10 +826,10 @@ var methodDescriptors = []Descriptor{
 		Signature: "ТабличныйДокумент.Записать(ИмяФайла, ТипФайла)",
 		Params: []Param{
 			{Name: "ИмяФайла", Type: "строка"},
-			{Name: "ТипФайла", Type: "строка", Optional: true, Doc: "html (по умолчанию), pdf или txt"},
+			{Name: "ТипФайла", Type: "строка", Optional: true, Doc: "html (по умолчанию), pdf, txt, xlsx; xls/xls97 — синонимы xlsx"},
 		},
 		Returns: "строка",
-		Doc:     "Сохраняет документ в файл указанного типа и возвращает его текстовое/HTML‑представление.",
+		Doc:     "Сериализует документ и возвращает HTML/текст либо base64 для PDF/XLSX. Передачу полученного содержимого выполняет вызывающий код.",
 	},
 	{
 		Name: "очистить", Display: "Очистить", Aliases: []string{"Clear"},
@@ -1276,6 +1276,13 @@ var methodDescriptors = []Descriptor{
 		Kind: KindMethod, Object: "Страница",
 		Signature: "Страница.Разделитель()",
 		Doc:       "Добавляет горизонтальный разделитель.",
+	},
+	{
+		Name: "встроитьсервис", Display: "ВстроитьСервис", Aliases: []string{"EmbedService"},
+		Kind: KindMethod, Object: "Страница",
+		Signature: "Страница.ВстроитьСервис(Путь, Заголовок)",
+		Params:    []Param{{Name: "Путь", Type: "строка"}, {Name: "Заголовок", Type: "строка"}},
+		Doc:       "Открывает интерфейс локального HTTP-сервиса /hs/ внутри страницы OneBase. Если это единственный блок, он занимает рабочую область. Внешние адреса и переходы между каталогами запрещены; права сервиса проверяются отдельно при загрузке. Для встраивания у сервиса требуется security_headers.frame_options: SAMEORIGIN или отсутствие frame_options; DENY запрещает показ во фрейме.",
 	},
 	{
 		Name: "добавитьсыройhtml", Display: "ДобавитьСыройHTML", Aliases: []string{"СыройHTML", "AddRawHTML", "RawHTML"},

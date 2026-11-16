@@ -30,6 +30,10 @@ func NewSpreadsheetDocumentCell(text string) *SpreadsheetDocumentCell {
 type SpreadsheetDocumentArea struct {
 	document *SpreadsheetDocument
 	Area     *sheet.Area
+	// colWidths — ширины колонок макета (1-based px), из которого взята
+	// область: Вывести переносит их в документ, как 1С переносит ширины
+	// колонок макета.
+	colWidths map[int]float64
 }
 
 func (a *SpreadsheetDocumentArea) CallMethod(name string, args []any) any {
@@ -450,6 +454,12 @@ func (d *SpreadsheetDocument) put(args []any) any {
 	if !ok {
 		return nil
 	}
+	// Ширины колонок макета — только незаданные: ШиринаКолонки модуля главнее.
+	for col, px := range area.colWidths {
+		if d.Doc.ColumnWidth(col) <= 0 {
+			d.Doc.SetColumnWidth(col, px)
+		}
+	}
 	start := d.Doc.CurrentRow
 	d.Doc.Put(area.Area)
 	if len(args) > 1 {
@@ -475,6 +485,13 @@ func (d *SpreadsheetDocument) append(args []any) any {
 		return nil
 	}
 	d.Doc.Append(area.Area)
+	// The joined area's local widths move with its horizontal cell offset.
+	// Explicit document widths keep their existing precedence.
+	for col, px := range area.colWidths {
+		if col >= 1 && col <= area.Area.Cols() && d.Doc.ColumnWidth(d.Doc.CurrentCol+col) <= 0 {
+			d.Doc.SetColumnWidth(d.Doc.CurrentCol+col, px)
+		}
+	}
 	return nil
 }
 
