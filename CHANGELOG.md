@@ -27,6 +27,8 @@
 
 ## Не выпущено
 
+- Source-only row_source: private Query.Text ledger binds actual assignments to AST sites and Query instances; matching strings never establish literal provenance. No runtime adapter or new report permission is enabled.
+
 Добавлен исходниковый private input-frame API для будущего readonly источника строк: связывает host-параметры с текущими metadata/actor/RLS, различает user/default origins и отвергает JSON evidence. Это ещё не подключение runtime и не разрешение final schema; обычные отчёты/карточки и текущие ограничения доступа сохранены.
 
 Исходниковый readonly row-source API умеет брать entry и добавленные колонки из зарегистрированного конфигурационного отчёта, с проверкой права запуска и смены registry до чтения. Это ещё не runtime-подключение: один ключ `row_source` не включает преобразование в текущем SDK. Обычные Query/карточки не менялись.

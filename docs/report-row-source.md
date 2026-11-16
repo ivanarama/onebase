@@ -155,3 +155,25 @@ minimal DSL subset, actual query text taint, readonly effectiveFilters, extra sc
 и единый UI/API/export/background/current-auth snapshot остаются отдельными шагами.
 Native literal1/DateDiff/bare ref presentation/protected Адрес остаются current STOP.
 Новых exceptions/callback allow/карточных правил этим кодом не введено; ENG06 HOLD.
+
+### Actual Query.Text assignment ledger (source only)
+
+The private host ledger now lowers validated plain `.Text`/`.Текст` assignments
+to per-site host callbacks before interpreting the pure module. It evaluates the
+right-hand side before the receiver, once each, as ordinary DSL assignment does.
+The callback records the actual opaque Query instance, text version and original
+AST site. Only the exact direct StringLit node may retain lexical evidence.
+A variable, concatenation, function return, ordinary structure property or a
+same-valued subsequent/compound assignment cannot inherit that evidence.
+
+Each additional Query execution records private typed digests of the text and
+normalized parameters. The trace is bounded with the query budget, excluded from
+JSON and redacted when formatted. Cross-execution Query receivers are rejected.
+Non-query Text fields retain ordinary structure assignment semantics.
+
+All sites retain unresolved control lineage, including literals inside branches.
+Dynamic text additionally retains unresolved data lineage. This observation
+ledger does not authorize protected comparisons and does not implement full
+runtime origin propagation, a successful producer seal or final filter schema.
+No additional SQL expressions/fields become allowed. Purity profile version is
+now `rowsource-pure/2`; old input-frame profile hashes cannot carry forward.

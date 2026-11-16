@@ -10,10 +10,12 @@ import (
 // opaqueQuery is a kernel-owned readonly adapter. It never enters the ordinary
 // Query proxy's typedempty codec and never formats host context or DB objects.
 type opaqueQuery struct {
-	execution *execution
-	ctx       context.Context
-	text      string
-	params    map[string]any
+	execution             *execution
+	ctx                   context.Context
+	text                  string
+	params                map[string]any
+	identity, textVersion int
+	textBinding           queryTextBinding
 }
 
 func (q *opaqueQuery) Get(name string) any {
@@ -32,6 +34,8 @@ func (q *opaqueQuery) Set(name string, value any) {
 			interpreter.RaiseUserError("row source: текст запроса должен быть строкой")
 		}
 		q.text = text
+		q.textVersion++
+		q.textBinding = queryTextBinding{object: q.identity, version: q.textVersion, controlRequired: true, dataRequired: true}
 		return
 	}
 	interpreter.RaiseUserError("row source: неизвестное свойство Запроса")
@@ -63,6 +67,9 @@ func (q *opaqueQuery) CallMethod(name string, args []any) any {
 				interpreter.RaiseUserErrorWrap("row source: недопустимый параметр", err)
 			}
 			params[key] = converted
+		}
+		if err := q.recordTextRead(params); err != nil {
+			interpreter.RaiseUserErrorWrap("row source: text trace rejected", err)
 		}
 		compiled, err := q.execution.compile(q.ctx, q.text, params)
 		if err != nil {

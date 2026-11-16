@@ -15,7 +15,7 @@ import (
 // Lexical evidence is private and is not authorization, an execution receipt or
 // a final filter schema. A static AST value still needs receiver/data/control
 // bindings before it can participate in any protected-operation recipe.
-const pureProfileVersion = "rowsource-pure/1"
+const pureProfileVersion = "rowsource-pure/2"
 
 type literalEvidence struct {
 	module, profile [32]byte

@@ -52,11 +52,12 @@ type Column struct {
 	Origins               []Origin `json:"-"`
 }
 type Result struct {
-	Rows         []map[string]any
-	Columns      []Column
-	ModuleSHA256 [32]byte `json:"-"`
-	Generation   uint64   `json:"-"`
-	Operations   []string `json:"-"`
+	Rows          []map[string]any
+	Columns       []Column
+	ModuleSHA256  [32]byte `json:"-"`
+	Generation    uint64   `json:"-"`
+	Operations    []string `json:"-"`
+	queryEvidence *queryExecutionEvidence
 }
 
 type execution struct {
@@ -68,6 +69,8 @@ type execution struct {
 	originKeys                   map[string]bool
 	queries, readRows, readBytes int
 	lastCompile                  *compileSnapshot
+	queryIdentity                int
+	textReads                    []queryTextRead
 }
 
 // Run owns compilation and all database reads. It has no caller-provided raw
@@ -137,8 +140,14 @@ func runWithGeneration(ctx context.Context, db *storage.DB, reg *runtime.Registr
 	interp.StrictLexicalScope = true
 	interp.MaxRecursionDepth = 32
 	interp.LookupProc = func(name string) *ast.ProcedureDecl { return p.procedures[strings.ToLower(name)] }
-	factory := func(args []any) any { return &opaqueQuery{execution: e, ctx: ctx, params: map[string]any{}} }
+	factory := func(args []any) any {
+		e.queryIdentity++
+		q := &opaqueQuery{execution: e, ctx: ctx, params: map[string]any{}, identity: e.queryIdentity}
+		q.textBinding = queryTextBinding{object: q.identity, controlRequired: true, dataRequired: true}
+		return q
+	}
 	vars := map[string]any{"Результат": values, "__factory_Запрос": factory, "__factory_Query": factory}
+	p.bindTextSites(e, vars)
 	profile := interpreter.RestrictedProfile()
 	profile.Context = ctx
 	profile.MaxLoopIters = 100000
@@ -157,7 +166,7 @@ func runWithGeneration(ctx context.Context, db *storage.DB, reg *runtime.Registr
 		return nil, err
 	}
 	digest := sha256.Sum256([]byte(src.Code))
-	result := &Result{Rows: output, ModuleSHA256: digest, Generation: generation, Operations: p.operationNames()}
+	result := &Result{Rows: output, ModuleSHA256: digest, Generation: generation, Operations: p.operationNames(), queryEvidence: &queryExecutionEvidence{reads: e.textReads}}
 	for _, field := range fields {
 		result.Columns = append(result.Columns, Column{Name: field.Name, Type: field.Type, RefEntity: field.RefEntity, Origins: []Origin{fieldOrigin(field)}})
 	}
