@@ -67,7 +67,7 @@ func contextDescriptor(p Param, lookup access.EntityLookup) (storage.UserCardDes
 		if c.User != "id" && c.User != "login" {
 			return storage.UserCardDescriptor{}, fmt.Errorf("context user must be id or login")
 		}
-		if p.Type != "string" && !(c.User == "id" && p.Type == "reference:_users") {
+		if p.Type != "string" && (c.User != "id" || p.Type != "reference:_users") {
 			return storage.UserCardDescriptor{}, fmt.Errorf("context user source has incompatible parameter type %q", p.Type)
 		}
 		return storage.UserCardDescriptor{}, nil
