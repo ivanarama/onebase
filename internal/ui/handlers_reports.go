@@ -350,7 +350,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 	if comp != nil {
 		detailLinkCol = comp.DetailLink
 	}
-	s.resolveUUIDsInReport(opCtx, rows, detailLinkCol)
+	s.resolveUUIDsInReport(opCtx, rows, detailLinkCol, compiled.RefColumns)
 
 	if comp != nil {
 		ev := newInterpEvaluator(s.interp)
@@ -492,7 +492,11 @@ func (s *Server) runChartProc(ctx context.Context, rep *reportpkg.Report, rows [
 // resolveUUIDsInReport replaces UUID-looking strings in report rows with entity
 // display names. skipCol (если непустой) исключается из подстановки — нужен для
 // колонки detail_link, где UUID должен остаться для ссылки на документ (issue #87).
-func (s *Server) resolveUUIDsInReport(ctx context.Context, rows []map[string]any, skipCol string) {
+func (s *Server) resolveUUIDsInReport(ctx context.Context, rows []map[string]any, skipCol string, typed ...map[string]string) {
+	if len(typed) > 0 {
+		s.resolveTypedReportReferences(ctx, rows, skipCol, typed[0])
+		return
+	}
 	uuidToLabel := make(map[string]string)
 	for _, row := range rows {
 		for _, v := range row {
@@ -513,7 +517,7 @@ func (s *Server) resolveUUIDsInReport(ctx context.Context, rows []map[string]any
 			}
 			id, _ := uuid.Parse(idStr)
 			if refRow, err := s.store.GetByID(ctx, entity.Name, id, entity); err == nil {
-				uuidToLabel[idStr] = s.maskedRecordLabel(ctx, entity, refRow)
+				uuidToLabel[idStr] = s.reportOutputRecordLabel(ctx, entity, refRow)
 			}
 		}
 	}
@@ -727,7 +731,7 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 	if comp != nil {
 		detailLinkCol = comp.DetailLink
 	}
-	s.resolveUUIDsInReport(ctx, data, detailLinkCol)
+	s.resolveUUIDsInReport(ctx, data, detailLinkCol, compiled.RefColumns)
 
 	// Если отчёт использует компоновщик — строим дерево групп/итогов.
 	if comp != nil {
