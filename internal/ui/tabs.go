@@ -81,8 +81,16 @@ const tplAppShell = `{{define "page-app-shell"}}
 @media (max-width:820px){.ob-tabhome{padding:14px}}
 /* Правая панель оболочки (home_page.yaml side_panel): видна при любых
    вкладках, рабочая область сужается; ширину меняют перетаскиванием края. */
-.ob-side-panel{flex-shrink:0;position:relative;border-left:1px solid #cbd5e1;background:#fff;overflow:auto;min-width:180px;max-width:60vw}
+.ob-side-panel{flex-shrink:0;position:relative;border-left:1px solid #cbd5e1;background:#fff;overflow:auto;min-width:180px;max-width:60vw;display:flex;flex-direction:column}
 .ob-side-panel .w-card{margin:0;border:0;border-radius:0;box-shadow:none;padding:8px 10px}
+/* Карточка панели — на всю высоту полосы, как ob-widget-fill главной: заголовок
+   и кнопки отбора сверху, строки списка прокручиваются внутри, горизонтальная
+   прокрутка — у нижнего края полосы, шапка таблицы остаётся видна. */
+.ob-side-panel>.w-card{flex:1 1 auto;min-height:0;box-sizing:border-box}
+.ob-side-panel>.w-card>[data-ob-widget-body]{flex:1;min-height:0;display:flex;flex-direction:column}
+.ob-side-panel>.w-card .w-list{flex:1;min-height:0;overflow:auto}
+.ob-side-panel>.w-card .w-list th{position:sticky;top:0;z-index:1}
+.ob-side-panel>.w-card>.w-refresh-status:empty{display:none}
 .ob-side-resize{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:2}
 body.ob-side-dragging{cursor:col-resize;user-select:none}
 body.ob-side-dragging iframe{pointer-events:none}

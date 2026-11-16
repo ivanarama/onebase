@@ -16,6 +16,14 @@ test('side panel sits right of the tabs, opens rows as tabs and keeps its width'
   const body = await page.locator('#ob-tabbody').boundingBox();
   expect(body.x + body.width).toBeLessThanOrEqual(box.x + 1);
 
+  // Список панели — на всю высоту полосы: при одной строке нижний край списка
+  // (а с ним горизонтальная прокрутка) у низа полосы, а не под последней строкой.
+  const list = await panel.locator('.w-list').boundingBox();
+  const cardPadBottom = await panel.locator('.w-card').evaluate((el) => parseFloat(getComputedStyle(el).paddingBottom));
+  expect(Math.abs((box.y + box.height - cardPadBottom) - (list.y + list.height))).toBeLessThanOrEqual(2);
+  const rowBox = await panel.locator('[data-ob-row-url]').first().boundingBox();
+  expect(list.y + list.height - (rowBox.y + rowBox.height)).toBeGreaterThan(100);
+
   // Строка виджета панели открывает объект вкладкой оболочки.
   await panel.locator('[data-ob-row-url]').first().click();
   await expect(page.locator('.ob-tab')).toHaveCount(1);
