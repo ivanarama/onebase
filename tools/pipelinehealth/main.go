@@ -552,6 +552,9 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 			return pr.Comments[i].CreatedAt < pr.Comments[j].CreatedAt
 		})
 		labels := labelSet(pr.Labels)
+		if labels["manual"] {
+			continue
+		}
 		depth := reviewDepth(pr.Comments, owner)
 		priority, prioritySource := queuePriority(labels, pr.CreatedAt, now)
 		item := candidate{Number: pr.Number, Title: pr.Title, URL: pr.HTMLURL, Head: pr.Head.SHA, Depth: depth, Stage: "review", Priority: priority, PrioritySource: prioritySource, UpdatedAt: pr.UpdatedAt}
@@ -569,9 +572,12 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 			continue
 		}
 		currentCompletions, latestCompletion, latestOverride := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
-		legacySourceCompletions := 0
+		legacySourceReviewed := false
 		if headIsBaseSyncMerge(pr) {
-			legacySourceCompletions, _, _ = currentProtocolState(pr.Comments, owner, pr.HeadParents[0])
+			// Completion markers include negative outcomes and incomplete publications.
+			// Only a complete positive transaction proves the content source.
+			sourceReview := reviewPairFor(pr.Comments, owner, pr.HeadParents[0])
+			legacySourceReviewed = sourceReview != nil && sourceReview.State == reviewPairConsistent
 		}
 		carryDone, carryIntentOpen, v1AbortCurrent, baseAdvanced, protocolHistory, integrationAt := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA, pr.HeadParents)
 		// Reopening a parked review requires a completed proof of this HEAD.
@@ -660,7 +666,7 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 				// independent mutation gate still proves review, ship and CI.
 				item.Stage = "merge"
 				result.MergeCandidates = append(result.MergeCandidates, item)
-			case depth > currentCompletions && headIsBaseSyncMerge(pr) && legacySourceCompletions == 0:
+			case depth > currentCompletions && headIsBaseSyncMerge(pr) && !legacySourceReviewed:
 				// A legacy integration review cannot reconstruct the first parent's
 				// content proof. Do not grant this PR single-flight ownership only to
 				// have the independent GraphQL gate reject it on every retry.
@@ -714,7 +720,7 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 			result.HumanWaiting = append(result.HumanWaiting, item)
 		case labels["changes-requested"] && !overrideOpen:
 			result.FixCandidates = append(result.FixCandidates, item)
-		case depth > currentCompletions && headIsBaseSyncMerge(pr) && legacySourceCompletions == 0 && !carryDone && !v1AbortCurrent && !pr.FullCurrentReview:
+		case depth > currentCompletions && headIsBaseSyncMerge(pr) && !legacySourceReviewed && !carryDone && !v1AbortCurrent && !pr.FullCurrentReview && !overrideOpen:
 			// A completed review of this HEAD is not enough to turn an earlier
 			// needs-decision review of a different SHA into source proof. Show the
 			// recovery before asking for ship; otherwise the owner is invited into
@@ -1209,6 +1215,9 @@ func needsHeadParents(pr apiPull, owner string) bool {
 		return false
 	}
 	labels := labelSet(pr.Labels)
+	if labels["manual"] {
+		return false
+	}
 	if labels["ship"] || abortMarkerWantsHeadParents(pr, owner) {
 		return true
 	}
