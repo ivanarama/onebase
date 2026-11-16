@@ -43,7 +43,7 @@ func NewWorkbook() *Workbook { return &Workbook{} }
 func (b *Workbook) SheetCount() int { return len(b.sheets) }
 
 func validWorkbookSheetName(name string) bool {
-	if strings.TrimSpace(name) == "" || utf8.RuneCountInString(name) > 31 ||
+	if !utf8.ValidString(name) || strings.TrimSpace(name) == "" || utf8.RuneCountInString(name) > 31 ||
 		strings.HasPrefix(name, "'") || strings.HasSuffix(name, "'") ||
 		strings.ContainsAny(name, `[]:*?/\`) {
 		return false

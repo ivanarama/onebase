@@ -58,6 +58,7 @@ func TestWorkbookNamesAndSheetBudget(t *testing.T) {
 	require.ErrorContains(t, book.AddSheet("Overflow", NewDocument()), "sheets")
 	require.Equal(t, MaxWorkbookSheets, book.SheetCount())
 	require.Error(t, NewWorkbook().AddSheet("Nil", nil))
+	require.Error(t, NewWorkbook().AddSheet(string([]byte{0xff}), NewDocument()))
 	_, err := NewWorkbook().XLSX()
 	require.Error(t, err)
 }
