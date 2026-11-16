@@ -1,0 +1,14 @@
+document: TabularReport
+columns:
+  - width: 240px
+  - width: 120px
+areas:
+  - name: Итог
+    rows:
+      - cells:
+          - text: Итого
+            bold: true
+          - parameter: Сумма
+            format: ЧГ=0;ЧДЦ=2
+            align: right
+            bold: true
