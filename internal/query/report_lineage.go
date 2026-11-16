@@ -369,7 +369,7 @@ func (p *reportLineageParser) list(clause string) error {
 		if err != nil {
 			return err
 		}
-		if e.op == "number" {
+		if lineageOrdinalExpression(e) {
 			return fmt.Errorf("report lineage: ordinal use unsupported")
 		}
 		p.uses = append(p.uses, reportUse{clause, e})
@@ -901,4 +901,11 @@ func lineageUniqueEntity(entities []*metadata.Entity, name string) (*metadata.En
 		}
 	}
 	return found, found != nil
+}
+
+func lineageOrdinalExpression(e *reportExpr) bool {
+	if e.op == "number" {
+		return true
+	}
+	return (e.op == "unary+" || e.op == "unary-") && len(e.args) == 1 && lineageOrdinalExpression(e.args[0])
 }

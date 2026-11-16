@@ -85,3 +85,40 @@ func TestPlatform2ReportLineagePositiveReceipt(t *testing.T) {
 		t.Fatal("detached view changed private receipt")
 	}
 }
+
+// Independent platform counterexamples use MIN output and a simultaneous
+// args/environment base64/bytes collision, rather than the literal/decimal case.
+func TestReportLineagePlatformCounterexamples(t *testing.T) {
+	opts := query.CompileOpts{Entities: reportLineageEntities(), Params: map[string]any{"Owner": "eA=="}}
+	_, p, err := query.CompileReportLineage(`SELECT MIN(A.Number) AS Phone,COUNT(*) AS N FROM Document.LineageRequests AS A GROUP BY Phone`, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := false
+	for _, u := range p.Uses() {
+		walkReportExpression(u.Expression, func(e query.ReportExpression) {
+			for _, o := range e.Origins {
+				if o.Field == "Phone" {
+					seen = true
+				}
+			}
+		})
+	}
+	if !seen {
+		t.Fatal("input Phone replaced by MIN(Number) output alias")
+	}
+	res, p, err := query.CompileReportLineage(`SELECT A.Number AS N FROM Document.LineageRequests AS A WHERE A.Owner=&Owner`, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.Matches(res, opts) {
+		t.Fatal("fresh receipt rejected")
+	}
+	changed := res
+	changed.Args = append([]any(nil), res.Args...)
+	changed.Args[0] = []byte("x")
+	opts.Params["Owner"] = []byte("x")
+	if p.Matches(changed, opts) {
+		t.Fatal("simultaneous args/environment string->bytes JSON collision accepted")
+	}
+}

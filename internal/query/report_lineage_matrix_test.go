@@ -140,6 +140,8 @@ func TestReportLineageRejectsUnknownAndAmbiguous(t *testing.T) {
 		"duplicate_output":      "ВЫБРАТЬ A.Number КАК N,A.Phone КАК N ИЗ Документ.LineageRequests КАК A",
 		"ambiguous_bare":        "ВЫБРАТЬ Number КАК N ИЗ Документ.LineageRequests КАК A ВНУТРЕННЕЕ СОЕДИНЕНИЕ Документ.LineageRequests КАК B ПО A.Phone=B.Phone",
 		"duplicate_qualifier":   "ВЫБРАТЬ A.Number КАК N ИЗ Документ.LineageRequests КАК A ВНУТРЕННЕЕ СОЕДИНЕНИЕ Документ.LineageRequests КАК A ПО A.Phone=A.Phone",
+		"unary_ordinal":         "ВЫБРАТЬ A.Phone КАК HiddenPhone,A.Number КАК N ИЗ Документ.LineageRequests КАК A УПОРЯДОЧИТЬ ПО +1",
+		"unary_group_ordinal":   "ВЫБРАТЬ A.Phone КАК HiddenPhone ИЗ Документ.LineageRequests КАК A СГРУППИРОВАТЬ ПО +1",
 		"ordinal":               "ВЫБРАТЬ A.Number КАК N ИЗ Документ.LineageRequests КАК A УПОРЯДОЧИТЬ ПО 1",
 		"trailing":              "ВЫБРАТЬ A.Number КАК N ИЗ Документ.LineageRequests КАК A INVALID",
 	} {
