@@ -72,10 +72,10 @@ func (d *reportDrilldownRenderer) Cell(field string, row map[string]any, label s
 	if d != nil {
 		for i, a := range d.rep.Drilldowns {
 			if a.Field != "" && strings.EqualFold(a.Field, field) {
-				return template.HTML(d.link(i, a, row, label))
+				return template.HTML(d.link(i, a, row, label)) //nolint:gosec // Generated internal route and escaped label.
 			}
 		}
-	} //nolint:gosec // Generated internal route and escaped label.
+	}
 	return template.HTML(html.EscapeString(label)) //nolint:gosec // Escaped text.
 }
 func (d *reportDrilldownRenderer) Row(row map[string]any) template.HTML {
