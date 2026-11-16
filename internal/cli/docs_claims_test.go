@@ -11,8 +11,8 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/langref"
 )
 
-var languageCountsPattern = regexp.MustCompile(`([0-9]+) функций, ([0-9]+) метод(?:ов|а)`)
-var fullLanguageCountsPattern = regexp.MustCompile(`([0-9]+) функций,\s+([0-9]+) метод(?:ов|а)\s+объектов,\s+([0-9]+) конструкций(?:\s+и|,)\s+([0-9]+) элементов языка запросов`)
+var languageCountsPattern = regexp.MustCompile(`([0-9]+) функци(?:й|и), ([0-9]+) метод(?:ов|а)`)
+var fullLanguageCountsPattern = regexp.MustCompile(`([0-9]+) функци(?:й|и),\s+([0-9]+) метод(?:ов|а)\s+объектов,\s+([0-9]+) конструкций(?:\s+языка)?(?:\s+и|,)\s+([0-9]+) элементов языка запросов`)
 
 func TestPublicDocsLanguageCountsUpToDate(t *testing.T) {
 	counts := make(map[langref.Kind]int)
@@ -26,6 +26,7 @@ func TestPublicDocsLanguageCountsUpToDate(t *testing.T) {
 	}{
 		{path: "../../README.md", wantClaims: 1},
 		{path: "../../QUICKSTART.md", wantClaims: 2},
+		{path: "../../docs/features.md", wantClaims: 1},
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			text := readDocForClaimTest(t, tc.path)

@@ -735,6 +735,18 @@ var functionDescriptors = []Descriptor{
 		Group: "Число",
 	},
 	{
+		Name: "случайноечисло", Display: "СлучайноеЧисло", Aliases: []string{"RandomNumber"}, Kind: KindFunc,
+		Signature: "СлучайноеЧисло(Минимум, Максимум)",
+		Params: []Param{
+			{Name: "Минимум", Type: "число", Doc: "включительная нижняя граница"},
+			{Name: "Максимум", Type: "число", Doc: "включительная верхняя граница"},
+		},
+		Returns: "число",
+		Doc:     "Возвращает криптографически стойкое случайное целое число в указанном включительном диапазоне.",
+		Example: "Номер = СлучайноеЧисло(1, 10);",
+		Group:   "Число",
+	},
+	{
 		Name: "окр", Display: "Окр", Aliases: []string{"Round"}, Kind: KindFunc,
 		Signature: "Окр(Число[, Точность, Режим])",
 		Params: []Param{
