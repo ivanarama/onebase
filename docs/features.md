@@ -8851,3 +8851,10 @@ Source API `row_source.inputs: [Request, Note]` оставляет DSL толь�
 Без inputs сохраняется прежний source kernel профиль. Это пока отдельный source
 срез: существующие UI/API/background handlers и SDK не подключены, native
 A004/A005 с literal1/DateDiff/protected Address им не объявляются готовыми.
+## SQL provenance: portable strict source API
+<!-- status: testing -->
+<!-- date: 2026-11-16 -->
+
+CompileReportLineage/Outputs/Uses/Matches дают серверу проверяемое происхождение
+одного SELECT с JOIN. Это source foundation без runtime/allow и без изменения
+обычных запросов/карточек. Контракт и STOP-границы: docs/report-query-lineage.md.

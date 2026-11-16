@@ -136,3 +136,5 @@ govulnpolicy.exe
 !docs/report-result-filters.md
 !docs/report-row-source.md
 !docs/provenance-digest.md
+
+!docs/report-query-lineage.md
