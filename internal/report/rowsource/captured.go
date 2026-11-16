@@ -21,12 +21,16 @@ func RunCapturedInputs(ctx context.Context, db *storage.DB, reg *runtime.Registr
 	if err != nil {
 		return nil, err
 	}
-	result, err := runWithInputSubset(ctx, db, reg, selected.initial, selected.source, &selected.generation, selected.subset)
+	result, err := runWithProofProfile(ctx, db, reg, selected.initial, selected.source, &selected.generation, selected.subset, true)
 	if err != nil {
 		return nil, err
 	}
 	if err = frame.Revalidate(ctx, db, reg); err != nil {
 		return nil, err
 	}
+	// Retain the exact successful input identity privately. This still grants no
+	// successful producer/final-schema permission: runtime control is unresolved.
+	identity := frame.state.identity
+	result.queryEvidence.frame = &identity
 	return result, nil
 }

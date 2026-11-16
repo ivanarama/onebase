@@ -27,6 +27,8 @@
 
 ## Не выпущено
 
+- Source-only captured row_source candidate profile: adds strict SQL proof/current-policy rechecks before reads and invalidates older frame policy hashes. Unsupported/navigation/unbound parameter cases now STOP in the captured path. Ordinary Run/RunRegistered and live handlers are unchanged; compile/test evidence is tracked separately by exact source under the assigned allocation lane.
+
 - Source-only row_source.inputs selects an explicit DSL subset of already proven initial columns; other safe originals stay host-side and retain order/types. Omitted inputs preserves the earlier source contract; protected/unknown originals remain rejected and no current report handler is enabled.
 
 - Source-only row_source: RunCapturedInputs validates the private host input frame before and after kernel execution; stale identity returns no result. This adds no handler wiring, final-schema permission or persisted snapshot trust.

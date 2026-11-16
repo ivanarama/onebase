@@ -24,7 +24,11 @@ type queryTextRead struct {
 	binding          queryTextBinding
 	text, parameters [32]byte
 }
-type queryExecutionEvidence struct{ reads []queryTextRead }
+type queryExecutionEvidence struct {
+	frame    *frameIdentity
+	reads    []queryTextRead
+	sqlReads []*guardedSQLProof // exact private receipts; inspection JSON cannot replace them
+}
 
 func (*queryExecutionEvidence) Format(s fmt.State, _ rune) {
 	_, _ = io.WriteString(s, "ReportQueryEvidence")

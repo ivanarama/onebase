@@ -61,6 +61,7 @@ type Result struct {
 }
 
 type execution struct {
+	report                       string
 	db                           *storage.DB
 	reg                          *runtime.Registry
 	lookup                       resultfilter.Lookup
@@ -71,6 +72,10 @@ type execution struct {
 	lastCompile                  *compileSnapshot
 	queryIdentity                int
 	textReads                    []queryTextRead
+	requireSQLProof              bool
+	sqlProofs                    map[string]*guardedSQLProof
+	lastSQLProof                 *guardedSQLProof
+	sqlReads                     []*guardedSQLProof
 }
 
 // Run owns compilation and all database reads. It has no caller-provided raw
@@ -85,6 +90,12 @@ func runWithGeneration(ctx context.Context, db *storage.DB, reg *runtime.Registr
 }
 
 func runWithInputSubset(ctx context.Context, db *storage.DB, reg *runtime.Registry, initial Query, src Source, expectedGeneration *uint64, subset []string) (*Result, error) {
+	return runWithProofProfile(ctx, db, reg, initial, src, expectedGeneration, subset, false)
+}
+
+// Only the captured host-input path opts into this narrower proof profile.
+// The ordinary kernel and registered source retain their existing contract.
+func runWithProofProfile(ctx context.Context, db *storage.DB, reg *runtime.Registry, initial Query, src Source, expectedGeneration *uint64, subset []string, requireProof bool) (*Result, error) {
 	if db == nil || reg == nil {
 		return nil, fmt.Errorf("row source: неизвестный отчёт")
 	}
@@ -116,7 +127,7 @@ func runWithInputSubset(ctx context.Context, db *storage.DB, reg *runtime.Regist
 	}
 	ctx, cancel := context.WithTimeout(storage.ReadOnlyContext(ctx), 10*time.Second)
 	defer cancel()
-	e := &execution{db: db, reg: reg, lookup: resultfilter.RegistryLookup(reg), fields: map[string][]resultfilter.Field{}, originKeys: map[string]bool{}}
+	e := &execution{db: db, reg: reg, lookup: resultfilter.RegistryLookup(reg), fields: map[string][]resultfilter.Field{}, originKeys: map[string]bool{}, requireSQLProof: requireProof, report: src.Report}
 	compiled, err := e.compile(ctx, initial.Text, initial.Params)
 	if err != nil {
 		return nil, err
@@ -180,7 +191,7 @@ func runWithInputSubset(ctx context.Context, db *storage.DB, reg *runtime.Regist
 		return nil, err
 	}
 	digest := sha256.Sum256([]byte(src.Code))
-	result := &Result{Rows: output, ModuleSHA256: digest, Generation: generation, Operations: p.operationNames(), queryEvidence: &queryExecutionEvidence{reads: e.textReads}}
+	result := &Result{Rows: output, ModuleSHA256: digest, Generation: generation, Operations: p.operationNames(), queryEvidence: &queryExecutionEvidence{reads: e.textReads, sqlReads: e.sqlReads}}
 	for _, field := range fields {
 		result.Columns = append(result.Columns, Column{Name: field.Name, Type: field.Type, RefEntity: field.RefEntity, Origins: []Origin{fieldOrigin(field)}})
 	}
@@ -234,11 +245,17 @@ func (e *execution) compile(ctx context.Context, text string, params map[string]
 		return query.Result{}, fmt.Errorf("row source: превышен лимит запросов")
 	}
 	user := auth.UserFromContext(ctx)
-	filters, err := access.QueryRowFiltersWithContext(ctx, user, e.reg.Entities(), e.reg.Registers(), e.reg.InfoRegisters(), e.reg.AccountRegisters(), access.RuntimeContext(e.reg, e.db))
+	opts, err := e.compileOptions(ctx, params)
 	if err != nil {
 		return query.Result{}, err
 	}
-	res, err := query.Compile(text, query.CompileOpts{Params: params, Entities: e.reg.Entities(), Registers: e.reg.Registers(), InfoRegs: e.reg.InfoRegisters(), AccountRegs: e.reg.AccountRegisters(), Dialect: e.db.Dialect(), RowFilters: filters})
+	var res query.Result
+	var receipt *query.ReportLineage
+	if e.requireSQLProof {
+		res, receipt, err = query.CompileReportLineage(text, opts)
+	} else {
+		res, err = query.Compile(text, opts)
+	}
 	if err != nil {
 		return query.Result{}, err
 	}
@@ -261,7 +278,18 @@ func (e *execution) compile(ctx context.Context, text string, params map[string]
 	if !res.Projection.Simple || len(fields) == 0 || len(fields) != len(res.Projection.Columns) {
 		return query.Result{}, fmt.Errorf("row source: тип или происхождение проекции не доказаны")
 	}
-	e.lastCompile = &compileSnapshot{Result: res, RowFilters: filters}
+	if e.requireSQLProof {
+		guarded, err := e.guardSQLProof(ctx, res, opts, receipt)
+		if err != nil {
+			return query.Result{}, err
+		}
+		if e.sqlProofs == nil {
+			e.sqlProofs = map[string]*guardedSQLProof{}
+		}
+		e.sqlProofs[res.SQL] = guarded
+		e.lastSQLProof = guarded
+	}
+	e.lastCompile = &compileSnapshot{Result: res, RowFilters: opts.RowFilters}
 	e.fields[res.SQL] = fields
 	for _, f := range fields {
 		key := fmt.Sprintf("%q/%q/%q/%q/%q", f.Source.Kind, f.Source.Name, f.SourceTablePart, f.SourceField, f.Type)
@@ -337,6 +365,11 @@ func inputAliases(res query.Result, fields []resultfilter.Field) map[string]stri
 func (e *execution) QueryAll(ctx context.Context, sql string, args ...any) ([]map[string]any, error) {
 	if e.fields[sql] == nil {
 		return nil, fmt.Errorf("row source: запрос без host proof")
+	}
+	if e.requireSQLProof {
+		if err := e.revalidateSQLRead(ctx, sql, args); err != nil {
+			return nil, err
+		}
 	}
 	var out []map[string]any
 	_, err := e.db.VisitQuery(ctx, sql, args, func(row map[string]any, columns []string) (bool, error) {

@@ -86,10 +86,10 @@ type inputBinding struct {
 	UserControlled                             bool // absence/default never loses its user-controllable slot
 }
 type frameIdentity struct {
-	Report, Variant, Policy, Timezone, Dialect                string
-	Generation                                                uint64
-	CodecFormat                                               int
-	Query, Module, Profile, Metadata, Actor, Compiled, Inputs [32]byte
+	Report, Variant, Policy, Timezone, Dialect                          string
+	Generation                                                          uint64
+	CodecFormat                                                         int
+	Query, Module, Profile, Metadata, Actor, Compiled, Inputs, SQLProof [32]byte
 }
 type inputFrameState struct {
 	identity frameIdentity
@@ -107,7 +107,7 @@ type compileSnapshot struct {
 	RowFilters map[query.SourceRef]*storage.Predicate
 }
 
-const framePolicyVersion = "rowsource-strict-inputs/b3-c5/1"
+const framePolicyVersion = "rowsource-strict-inputs/b3-c5/sql-proof-e1/1"
 
 func (InputFrame) String() string             { return "ReportInputFrame" }
 func (InputFrame) GoString() string           { return "ReportInputFrame" }
@@ -562,10 +562,14 @@ func captureFrameIdentity(ctx context.Context, db *storage.DB, reg *runtime.Regi
 	if err != nil {
 		return id, fmt.Errorf("row source: unsupported input snapshot: %w", err)
 	}
-	e := &execution{db: db, reg: reg, lookup: resultfilter.RegistryLookup(reg), fields: map[string][]resultfilter.Field{}, originKeys: map[string]bool{}}
+	e := &execution{db: db, reg: reg, lookup: resultfilter.RegistryLookup(reg), fields: map[string][]resultfilter.Field{}, originKeys: map[string]bool{}, requireSQLProof: true, report: rep.Name}
 	if _, err := e.compile(ctx, rep.Query, params); err != nil {
 		return id, err
 	}
+	if e.lastSQLProof == nil {
+		return id, fmt.Errorf("row source: captured SQL proof missing")
+	}
+	id.SQLProof = e.lastSQLProof.inspection
 	type rowFilterSnapshot struct {
 		Source    query.SourceRef
 		Predicate *storage.Predicate

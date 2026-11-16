@@ -223,3 +223,29 @@ validated by the runtime compile boundary, not by a name in this list.
 This slice does not enable protected masked/native passthrough. SQL literal1,
 DateDiff, bare reference presentation and protected Address require their separate
 compiler/owner proofs and remain STOP. No current app config/handler/SDK is wired.
+
+### Captured-only strict SQL proof sidecar (source candidate)
+
+The proposed captured-input path uses portable CompileReportLineage with only
+kernel-built CompileOpts and retains the immutable receipt privately. Every
+Outputs/Uses expression is checked; every Use remains a membership/control input
+for all outputs. Each origin must be a unique current canonical source field in
+its exact FROM occurrence and pass ordinary object/field and mandatory report
+policy. The first adapter conservatively rejects multi-hop navigation and
+unbound/ambiguous SQL parameters; it adds no operator declassification.
+
+The existing all-column Schema is retained. Literal1, DateDiff, bare reference
+presentations, masked/protected originals and unknown expressions remain STOP.
+Ordinary Run/RunRegistered keep their previous compile path. CaptureInputFrame and
+RunCapturedInputs opt into this narrower proof profile; older frame policy hashes
+are invalidated. Captured proof inspection is privately bound to input identity.
+Execution/compile evidence is recorded separately for the exact source commit;
+this description does not claim full runtime or native acceptance.
+
+Before each database read, the exact receipt/typed arguments are rechecked against
+current metadata/RLS/object/field/output decisions. Host DB/registry/dialect and
+timezone identity are separate guards because SQL Matches does not prove them.
+Actual successful reads retain private receipts; JSON/inspection/result aliases
+cannot create one. Input kind, runtime Query.Text staticness/control, current
+session authorization, producer seal and final filter schema remain separate.
+No handler/SDK/native activation is included, and ENG06/ENG12 HOLD remains.
