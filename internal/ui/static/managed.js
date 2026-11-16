@@ -811,6 +811,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
               const o = document.createElement('option');
               o.value = opt.id;
               o.textContent = opt._label;
+              if (opt['\u0000ref_style']) o.setAttribute('style', opt['\u0000ref_style']);
               if (String(opt.id) === cur) o.selected = true;
               sel.appendChild(o);
             });
@@ -3170,7 +3171,7 @@ function obGridColumnIds(columns) {
       for (var k = 0; k < refOptsList.length; k++) {
         if (String(refOptsList[k].id) === String(opt.id)) return;
       }
-      refOptsList.push({id: opt.id, _label: opt._label, _ownerFilter: filterParam()});
+      refOptsList.push({id: opt.id, _label: opt._label, '\u0000ref_style': opt['\u0000ref_style'], '\u0000ref_style_bg': opt['\u0000ref_style_bg'], _ownerFilter: filterParam()});
     }
 
     // candidates — предзагруженные опции + серверные результаты, отфильтрованные
@@ -3185,7 +3186,9 @@ function obGridColumnIds(columns) {
         var lbl = String(o._label == null ? '' : o._label);
         if (f && lbl.toLowerCase().indexOf(f) < 0) return;
         seen[key] = true;
-        out.push({id: o.id, _label: lbl});
+        // choice_row_style: оформление варианта доезжает до списка ячейки и до
+        // окна подбора — проекция не должна его терять.
+        out.push({id: o.id, _label: lbl, '\u0000ref_style': o['\u0000ref_style'] || '', '\u0000ref_style_bg': o['\u0000ref_style_bg'] || ''});
       }
       var currentFilter = requestParam();
       if(choiceContext && args.column.choiceSeeds) {
@@ -3205,7 +3208,7 @@ function obGridColumnIds(columns) {
     function paintActive() {
       var nodes = list.querySelectorAll('[data-idx]');
       for (var k = 0; k < nodes.length; k++) {
-        nodes[k].style.background = (k === activeIdx) ? '#eef2ff' : '';
+        nodes[k].style.background = (k === activeIdx) ? '#eef2ff' : (nodes[k].getAttribute('data-ob-bg') || '');
       }
       if (activeIdx >= 0 && nodes[activeIdx] && nodes[activeIdx].scrollIntoView) {
         nodes[activeIdx].scrollIntoView({block: 'nearest'});
@@ -3226,7 +3229,8 @@ function obGridColumnIds(columns) {
         item.textContent = shown[k]._label;
         item.setAttribute('data-id', shown[k].id);
         item.setAttribute('data-idx', k);
-        item.style.cssText = 'padding:6px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9';
+        item.style.cssText = 'padding:6px 10px;cursor:pointer;border-bottom:1px solid #f1f5f9' + (shown[k]['\u0000ref_style'] ? ';' + shown[k]['\u0000ref_style'] : '');
+        if (shown[k]['\u0000ref_style_bg']) item.setAttribute('data-ob-bg', shown[k]['\u0000ref_style_bg']);
         (function(o, idx) {
           item.addEventListener('mouseenter', function() { activeIdx = idx; paintActive(); });
           // mousedown, а не click: blur поля ввода закрыл бы список раньше click.
@@ -3303,7 +3307,7 @@ function obGridColumnIds(columns) {
           if (seq !== searchSeq || requestFilter !== requestParam()) return; // ответ устарел
           var keep = (activeIdx >= 0 && shown[activeIdx]) ? shown[activeIdx].id : '';
           serverRows = ((data && data.items) || []).map(function(row) {
-            return {id: row && row.id != null ? String(row.id) : '', _label: String((row && row._label) || '')};
+            return {id: row && row.id != null ? String(row.id) : '', _label: String((row && row._label) || ''), '\u0000ref_style': (row && row['\u0000ref_style']) || '', '\u0000ref_style_bg': (row && row['\u0000ref_style_bg']) || ''};
           }).filter(function(o) { return o.id !== ''; });
           serverFilter = requestFilter;
           if (isOpen) buildList(input.value, keep);
@@ -3357,6 +3361,8 @@ function obGridColumnIds(columns) {
         var o = document.createElement('option');
         o.value = opts[k].id;
         o.textContent = opts[k]._label;
+        if (opts[k]['\u0000ref_style']) o.setAttribute('style', opts[k]['\u0000ref_style']);
+        if (opts[k]['\u0000ref_style_bg']) o.setAttribute('data-ob-bg', opts[k]['\u0000ref_style_bg']);
         selEl.appendChild(o);
       }
       if(choiceContext && selectedId && !opts.some(function(o){return String(o.id)===String(selectedId);})) {
@@ -3367,7 +3373,9 @@ function obGridColumnIds(columns) {
         var id = selEl.value;
         if (!id) return;
         var chosen = selEl.options[selEl.selectedIndex];
-        pick({id: id, _label: chosen ? chosen.textContent : ''});
+        pick({id: id, _label: chosen ? chosen.textContent : '',
+          '\u0000ref_style': chosen ? chosen.getAttribute('style') || '' : '',
+          '\u0000ref_style_bg': chosen ? chosen.getAttribute('data-ob-bg') || (chosen.style && chosen.style.background) || '' : ''});
         args.commitChanges();
       });
       closeList();
