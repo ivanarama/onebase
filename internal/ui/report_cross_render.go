@@ -31,6 +31,10 @@ func measureByIdx(spec *report.Composition) func(compose.CrossCol) report.Measur
 }
 
 func renderCrossTable(cr *compose.CrossResult, spec *report.Composition) template.HTML {
+	return renderCrossTablePresented(cr, spec, reportCompositionPresentation{})
+}
+
+func renderCrossTablePresented(cr *compose.CrossResult, spec *report.Composition, presentation reportCompositionPresentation) template.HTML {
 	measureAt := measureByIdx(spec)
 	multiMeasure := len(spec.Measures) > 1
 
@@ -38,7 +42,7 @@ func renderCrossTable(cr *compose.CrossResult, spec *report.Composition) templat
 	b.WriteString(`<table class="` + appearanceClass(spec) + ` report-cross">`)
 
 	// Шапка: первый столбец — строковые измерения; далее по колонке на CrossCol.
-	b.WriteString(`<thead><tr><th>` + html.EscapeString(strings.Join(spec.Groupings, " / ")) + `</th>`)
+	b.WriteString(`<thead><tr><th>` + html.EscapeString(presentation.groupHeader(spec)) + `</th>`)
 	for _, c := range cr.Cols {
 		m := measureAt(c)
 		b.WriteString(`<th class="num" style="` + html.EscapeString(measureAlign(m)) + `">` +
@@ -48,11 +52,11 @@ func renderCrossTable(cr *compose.CrossResult, spec *report.Composition) templat
 
 	// Тело: дерево строк.
 	for _, row := range cr.Rows {
-		writeCrossRow(&b, row, cr.Cols, measureAt, 0)
+		writeCrossRow(&b, row, cr.Cols, measureAt, 0, "", spec)
 	}
 
-	// Нижняя строка ВСЕГО — итоги по колонкам.
-	b.WriteString(`<tr class="grand"><td>ВСЕГО</td>`)
+	// Общий итог по колонкам.
+	b.WriteString(`<tr class="grand"><td>` + html.EscapeString(presentation.grandTitle()) + `</td>`)
 	for _, c := range cr.Cols {
 		m := measureAt(c)
 		b.WriteString(`<td class="num" style="` + html.EscapeString(measureAlign(m)) + `">` +
@@ -64,13 +68,23 @@ func renderCrossTable(cr *compose.CrossResult, spec *report.Composition) templat
 
 // writeCrossRow рисует строку дерева и рекурсивно её детей с нарастающим отступом.
 // Узлы с детьми (промежуточные группы) несут подытоги по колонкам.
-func writeCrossRow(b *strings.Builder, row *compose.CrossRow, cols []compose.CrossCol, measureAt func(compose.CrossCol) report.Measure, level int) {
+func writeCrossRow(b *strings.Builder, row *compose.CrossRow, cols []compose.CrossCol, measureAt func(compose.CrossCol) report.Measure, level int, parentPath string, spec *report.Composition) {
 	pad := fmt.Sprintf("padding-left:%dpx", 8+level*18)
-	cls := "rc-leaf"
-	if len(row.Children) > 0 {
-		cls = "rc-group"
+	path := parentPath + "/" + pathSeg(fmtVal(row.Key))
+	rowStyle := "--rc-group-fill:" + composedGroupFill(level, len(spec.Groupings)) + ";--rc-group-dark:" + composedGroupDarkFill(level, len(spec.Groupings))
+	depth, collapsed := collapseLevel(spec)
+	if collapsed && level > depth {
+		rowStyle += ";display:none"
 	}
-	fmt.Fprintf(b, `<tr class="%s"><td style="%s">%s</td>`, cls, pad, html.EscapeString(fmtVal(row.Key)))
+	marker := ""
+	if len(row.Children) > 0 {
+		open, text := !collapsed || level < depth, "+"
+		if open {
+			text = "−"
+		}
+		marker = fmt.Sprintf(`<button type="button" class="rc-fold" aria-expanded="%t" aria-label="%s">%s</button> `, open, html.EscapeString(fmtVal(row.Key)), text)
+	}
+	fmt.Fprintf(b, `<tr class="grp" data-group="%s" data-level="%d" style="%s"><td style="%s">%s%s</td>`, html.EscapeString(path), level, html.EscapeString(rowStyle), pad, marker, html.EscapeString(fmtVal(row.Key)))
 	for _, c := range cols {
 		m := measureAt(c)
 		ck := c.Key()
@@ -79,7 +93,7 @@ func writeCrossRow(b *strings.Builder, row *compose.CrossRow, cols []compose.Cro
 	}
 	b.WriteString(`</tr>`)
 	for _, ch := range row.Children {
-		writeCrossRow(b, ch, cols, measureAt, level+1)
+		writeCrossRow(b, ch, cols, measureAt, level+1, path, spec)
 	}
 }
 

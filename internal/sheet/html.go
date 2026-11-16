@@ -101,7 +101,7 @@ tr:nth-child(even) td{background:#f8fafc}
 	covered := make(map[CellKey]bool)
 
 	for row := 0; row <= maxRow; row++ {
-		if opts.XLSXURL != "" {
+		if opts.XLSXURL != "" || len(d.Groups) > 0 {
 			fmt.Fprintf(&sb, `<tr data-sheet-row="%d">`, row)
 		} else {
 			sb.WriteString("<tr>")
@@ -183,7 +183,7 @@ tr:nth-child(even) td{background:#f8fafc}
 		sb.WriteString("</tr>\n")
 	}
 	sb.WriteString("</table>\n</div>\n")
-	if opts.XLSXURL != "" {
+	if opts.XLSXURL != "" || len(d.Groups) > 0 {
 		d.viewerScript(&sb, opts.ParentDrilldown)
 	}
 	sb.WriteString(`</body>

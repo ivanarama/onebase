@@ -392,7 +392,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 			}
 			s.render(w, r, "page-report", map[string]any{
 				"Report":             rep,
-				"ComposedHTML":       renderCrossTable(cr, comp),
+				"ComposedHTML":       renderCrossTablePresented(cr, comp, s.compositionPresentation(rep, comp, &compiled, s.resolveLang(r))),
 				"Capped":             cr.Capped,
 				"ComposeWarnings":    cr.Warnings,
 				"ParamValues":        paramValues,
@@ -430,7 +430,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		}
 		s.render(w, r, "page-report", map[string]any{
 			"Report":             rep,
-			"ComposedHTML":       renderComposedTable(res, comp),
+			"ComposedHTML":       renderComposedTablePresented(res, comp, s.compositionPresentation(rep, comp, &compiled, s.resolveLang(r))),
 			"Capped":             res.Capped,
 			"ComposeWarnings":    res.Warnings,
 			"ChartOption":        chartOption,
@@ -638,6 +638,7 @@ type reportExportStats struct {
 	rows      int
 	truncated bool
 	attrs     []slog.Attr
+	rowStyles []excel.RowStyle
 }
 
 func reportExportOpStatus(ctx context.Context, err error) string {
@@ -658,9 +659,14 @@ func reportExportOpStatus(ctx context.Context, err error) string {
 // (issue #218) — чтобы обе выгрузки шли из одних и тех же данных и не расходились
 // с экраном (runReport использует те же crossSheetRows/composedRows).
 func (s *Server) reportExportRows(r *http.Request, rep *reportpkg.Report) (headers []string, rows [][]any, err error) {
+	headers, rows, _, err = s.reportExportTable(r, rep)
+	return headers, rows, err
+}
+
+func (s *Server) reportExportTable(r *http.Request, rep *reportpkg.Report) (headers []string, rows [][]any, styles []excel.RowStyle, err error) {
 	opCtx, finish, ok := s.beginOperation(r, opReportExport, rep.Name)
 	if !ok {
-		return nil, nil, newReportExportError(http.StatusTooManyRequests, "export limit", fmt.Errorf("слишком много одновременно выполняемых выгрузок, повторите позже"))
+		return nil, nil, nil, newReportExportError(http.StatusTooManyRequests, "export limit", fmt.Errorf("слишком много одновременно выполняемых выгрузок, повторите позже"))
 	}
 	stats := &reportExportStats{}
 	opStatus := "ok"
@@ -669,12 +675,15 @@ func (s *Server) reportExportRows(r *http.Request, rep *reportpkg.Report) (heade
 	headers, rows, err = s.reportExportRowsWithContext(opCtx, r, rep, stats)
 	if err != nil {
 		opStatus = reportExportOpStatus(opCtx, err)
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return headers, rows, nil
+	return headers, rows, stats.rowStyles, nil
 }
 
 func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Request, rep *reportpkg.Report, stats *reportExportStats) (headers []string, rows [][]any, err error) {
+	if stats != nil {
+		stats.rowStyles = nil
+	}
 	r = r.WithContext(ctx)
 	settings := s.reportSettingsForRequest(r, rep).Settings
 	comp := effectiveComposition(rep, settings)
@@ -753,14 +762,20 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 			if cerr != nil {
 				return nil, nil, newReportExportError(http.StatusInternalServerError, "compose error", cerr)
 			}
-			h, xr := crossSheetRows(cr, comp)
+			h, xr, styles := crossSheetRowsPresented(cr, comp, s.compositionPresentation(rep, comp, &compiled, s.resolveLang(r)))
+			if stats != nil {
+				stats.rowStyles = styles
+			}
 			return h, xr, nil
 		}
 		res, cerr := compose.Compose(data, *comp, ev)
 		if cerr != nil {
 			return nil, nil, newReportExportError(http.StatusInternalServerError, "compose error", cerr)
 		}
-		h, xr := composedRows(res, comp)
+		h, xr, styles := composedRowsPresented(res, comp, s.compositionPresentation(rep, comp, &compiled, s.resolveLang(r)))
+		if stats != nil {
+			stats.rowStyles = styles
+		}
 		return h, xr, nil
 	}
 
@@ -784,12 +799,12 @@ func (s *Server) reportExcel(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePerm(w, r, "report", rep.Name, "run") {
 		return
 	}
-	headers, rows, err := s.reportExportRows(r, rep)
+	headers, rows, styles, err := s.reportExportTable(r, rep)
 	if err != nil {
 		s.writeReportExportError(w, r, err)
 		return
 	}
-	data, err := excel.ExportList(headers, rows)
+	data, err := excel.ExportListWithRowStyles(headers, rows, styles)
 	if err != nil {
 		http.Error(w, "Excel error: "+s.errText(r, err), 500)
 		return

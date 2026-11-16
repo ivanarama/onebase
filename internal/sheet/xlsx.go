@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ivantit66/onebase/internal/csssafe"
 	"github.com/shopspring/decimal"
 	"github.com/xuri/excelize/v2"
 )
@@ -467,6 +468,15 @@ var xlsxNamedColors = map[string]string{
 }
 
 var xlsxRGBRe = regexp.MustCompile(`^rgba?\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*,\s*(\d{1,3})`)
+
+// ColorRGB returns a safe export color in RRGGBB form. Unsupported CSS and
+// transparent values return an empty string, so callers retain their defaults.
+func ColorRGB(s string) string {
+	if csssafe.Color(s) == "" || strings.HasPrefix(strings.ToLower(strings.TrimSpace(s)), "rgba(") {
+		return ""
+	}
+	return xlsxColor(s)
+}
 
 // xlsxColor — цвет документа (#rgb, #rrggbb, rgb(), CSS-имя) в RRGGBB; "" —
 // цвет не задан или не распознан.

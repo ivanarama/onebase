@@ -149,7 +149,7 @@ func TestRenderComposedTable(t *testing.T) {
 	}
 	res, _ := compose.Compose(rows, spec, nil)
 	out := string(renderComposedTable(res, &spec))
-	for _, want := range []string{"Иванов", "Петров", "150", "Сумма, ₽", "ВСЕГО", "data-group", "<table"} {
+	for _, want := range []string{"Иванов", "Петров", "150", "Сумма, ₽", "Итого", "data-group", "<table"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("HTML не содержит %q:\n%s", want, out)
 		}
