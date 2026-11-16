@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 )
 
@@ -23,7 +24,7 @@ func TestDateMaskBrowserReportEditing(t *testing.T) {
 		{Name: "Day", Type: "date"}, {Name: "Moment", Type: "datetime"},
 	}}
 	fixture := newReportExportTestServer(t, rep)
-	s := New(fixture.reg, fixture.store, fixture.interp, nil, Config{ShortDateInput: true}, nil)
+	s := New(fixture.reg, fixture.store, interpreter.New(), nil, Config{ShortDateInput: true}, nil)
 	t.Cleanup(s.Close)
 	router := chi.NewRouter()
 	router.Use(func(next http.Handler) http.Handler {
