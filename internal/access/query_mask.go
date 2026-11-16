@@ -237,10 +237,6 @@ func applyDecision(row map[string]any, key string, dec FieldDecision) {
 // имени поля и, отдельно, по имени колонки таблицы (для проекции «*»). Третья
 // карта — обратная: логическое имя поля → его физические колонки, чтобы явную
 // проекцию ссылки сопоставлять с той же колонкой, которую покрывает «*».
-func maskedSourceFields(u *auth.User, sources []query.SourceRef, lookup func(kind, name string) *metadata.Entity) (byField, byColumn map[string]FieldDecision, fieldColumns map[string][]string) {
-	return maskedSourceFieldsWithOutput(u, sources, lookup, false)
-}
-
 func maskedSourceFieldsWithOutput(u *auth.User, sources []query.SourceRef, lookup func(kind, name string) *metadata.Entity, reportOutput bool) (byField, byColumn map[string]FieldDecision, fieldColumns map[string][]string) {
 	if !reportOutput && (u == nil || (u.IsAdmin && !MaskAdmin())) {
 		return nil, nil, nil
@@ -262,12 +258,7 @@ func maskedSourceFieldsWithOutput(u *auth.User, sources []query.SourceRef, looku
 		}
 		decisions := FieldDecisions(u, src.Kind, src.Name, meta)
 		if reportOutput {
-			if decisions == nil {
-				decisions = map[string]FieldDecision{}
-			}
-			for field, dec := range ReportOutputDecisions(meta) {
-				decisions[field] = dec
-			}
+			decisions = ReportOutputFieldDecisions(u, src.Kind, src.Name, meta)
 		}
 		for field, dec := range decisions {
 			put(byField, field, dec)

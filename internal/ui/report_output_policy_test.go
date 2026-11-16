@@ -28,19 +28,19 @@ func TestReportOutputPrivacyHTTPMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		ctx := context.Background()
 		entity := &metadata.Entity{Name: "SensitiveDoc", Kind: metadata.KindDocument, Presentation: []string{"Label"}, Fields: []metadata.Field{
-			{Name: "Label", Type: metadata.FieldTypeString}, {Name: "Phone", Type: metadata.FieldTypeString, PII: true}, {Name: "Address", Type: metadata.FieldTypeString, PII: true}, {Name: "Amount", Type: metadata.FieldTypeNumber},
+			{Name: "Label", Type: metadata.FieldTypeString}, {Name: "Phone", Type: metadata.FieldTypeString, PII: true}, {Name: "Address", Type: metadata.FieldTypeString, ReportPII: true}, {Name: "City", Type: metadata.FieldTypeString}, {Name: "Amount", Type: metadata.FieldTypeNumber},
 		}}
 		if err := db.Migrate(ctx, []*metadata.Entity{entity}); err != nil {
 			t.Fatal(err)
 		}
-		rep := &reportpkg.Report{Name: "Privacy", Query: "ВЫБРАТЬ Ссылка КАК Doc, Amount ИЗ Документ.SensitiveDoc"}
+		rep := &reportpkg.Report{Name: "Privacy", Query: "ВЫБРАТЬ Ссылка КАК Doc, Amount, City ИЗ Документ.SensitiveDoc"}
 		reg := runtime.NewRegistry()
 		reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{entity}, Reports: []*reportpkg.Report{rep}})
 		s := &Server{store: db, reg: reg, interp: interpreter.New(), lockMgr: runtime.NewLockManager(), messages: NewMessageStore(), ops: newOperationLimiter()}
 		id := uuid.New()
 		write := func(label, phone, address string) {
 			t.Helper()
-			if err := db.Upsert(ctx, entity.Name, id, map[string]any{"Label": label, "Phone": phone, "Address": address, "Amount": 12345}, entity); err != nil {
+			if err := db.Upsert(ctx, entity.Name, id, map[string]any{"Label": label, "Phone": phone, "Address": address, "City": "SAFE_CITY", "Amount": 12345}, entity); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -132,6 +132,9 @@ func TestReportOutputPrivacyHTTPMatrix(t *testing.T) {
 				baselinePDF := pdfPages(request("pdf", user))
 				if !strings.Contains(baselineHTML, id.String()) || !strings.Contains(baselineXLSX, "12345") {
 					t.Fatal("lost UUID or ordinary measure")
+				}
+				if !composed && !strings.Contains(baselineHTML, "SAFE_CITY") {
+					t.Fatal("safe city was hidden")
 				}
 				write("Request 79990009987 HOUSE_987 FLAT_654", "79990009987", "HOUSE_987 FLAT_654")
 				changedHTML := string(request("html", user))

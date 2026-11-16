@@ -31,6 +31,9 @@ func (s *Server) fieldDecisions(ctx context.Context, entity *metadata.Entity) ma
 // heterogeneous journal rows). The synthetic metadata still canonicalises
 // policy names to the exact row keys.
 func (s *Server) fieldDecisionsFor(ctx context.Context, kind, name string, meta *metadata.Entity) map[string]access.FieldDecision {
+	if access.IsReportOutput(ctx) {
+		return access.ReportOutputFieldDecisions(auth.UserFromContext(ctx), kind, name, meta)
+	}
 	return access.FieldDecisions(auth.UserFromContext(ctx), kind, name, meta)
 }
 
@@ -392,6 +395,12 @@ func canonicalDSLField(entity *metadata.Entity, field string) string {
 // (UUID → label), bypassing the list/form masking chokepoints; mask first so a
 // sensitive first string field cannot leak through reports, widgets or audit.
 func (s *Server) maskedRecordLabel(ctx context.Context, entity *metadata.Entity, row map[string]any) string {
+	if access.IsReportOutput(ctx) && len(access.ReportOutputDecisions(entity)) > 0 {
+		if id := row["id"]; id != nil {
+			return fmt.Sprint(id)
+		}
+		return ""
+	}
 	s.maskRecord(ctx, entity, row)
 	return firstStringField(row, entity)
 }
@@ -401,6 +410,9 @@ func (s *Server) maskedRecordLabel(ctx context.Context, entity *metadata.Entity,
 // filter, grouping or aggregate — where an output mask protects nothing — still
 // denies the whole query (plan.Denied).
 func (s *Server) queryMaskPlan(ctx context.Context, res query.Result) access.QueryMaskPlan {
+	if access.IsReportOutput(ctx) {
+		return access.ReportOutputQueryMaskPlan(auth.UserFromContext(ctx), res, s.sourceMeta)
+	}
 	return access.QueryMaskPlanFor(auth.UserFromContext(ctx), res, s.sourceMeta)
 }
 

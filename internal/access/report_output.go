@@ -1,12 +1,37 @@
 package access
 
 import (
+	"context"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
 )
+
+type reportOutputContextKey struct{}
+
+// WithReportOutput marks a server-selected report execution. No request header,
+// browser context or global process flag can enable/disable this policy.
+func WithReportOutput(ctx context.Context) context.Context {
+	return context.WithValue(ctx, reportOutputContextKey{}, true)
+}
+
+func IsReportOutput(ctx context.Context) bool {
+	v, _ := ctx.Value(reportOutputContextKey{}).(bool)
+	return v
+}
+
+func ReportOutputFieldDecisions(u *auth.User, kind, name string, meta *metadata.Entity) map[string]FieldDecision {
+	decisions := FieldDecisions(u, kind, name, meta)
+	if decisions == nil {
+		decisions = map[string]FieldDecision{}
+	}
+	for field, decision := range ReportOutputDecisions(meta) {
+		decisions[field] = decision
+	}
+	return decisions
+}
 
 // ReportOutputDecisions is mandatory output policy, independent of roles and
 // admin/disclosure privileges. Full addresses are hidden rather than parsed
@@ -17,7 +42,7 @@ func ReportOutputDecisions(meta *metadata.Entity) map[string]FieldDecision {
 	}
 	out := map[string]FieldDecision{}
 	for _, field := range meta.Fields {
-		if field.PII {
+		if field.PII || field.ReportPII {
 			out[field.Name] = FieldDecision{Strategy: FieldHide}
 		}
 	}

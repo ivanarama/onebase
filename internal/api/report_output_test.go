@@ -13,7 +13,7 @@ import (
 
 func TestAPIV2ReportOutputPrivacy(t *testing.T) {
 	entity := &metadata.Entity{Name: "Protected", Kind: metadata.KindCatalog, Presentation: []string{"Label"}, Fields: []metadata.Field{
-		{Name: "Label", Type: metadata.FieldTypeString}, {Name: "Phone", Type: metadata.FieldTypeString, PII: true}, {Name: "Address", Type: metadata.FieldTypeString, PII: true}, {Name: "Amount", Type: metadata.FieldTypeNumber},
+		{Name: "Label", Type: metadata.FieldTypeString}, {Name: "Phone", Type: metadata.FieldTypeString, PII: true}, {Name: "Address", Type: metadata.FieldTypeString, ReportPII: true}, {Name: "Amount", Type: metadata.FieldTypeNumber},
 	}}
 	rep := &reportpkg.Report{Name: "Privacy", Query: "ВЫБРАТЬ Ссылка КАК Doc, Phone КАК Contact, Address, Label, Amount ИЗ Справочник.Protected", Composition: &reportpkg.Composition{Groupings: []string{"Doc"}, Measures: []reportpkg.Measure{{Field: "Amount", Agg: "sum"}}, Detail: true}}
 	h, ctx := newAPITestHandlerWithReports(t, []*metadata.Entity{entity}, []*reportpkg.Report{rep}, nil)

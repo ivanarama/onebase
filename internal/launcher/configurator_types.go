@@ -55,7 +55,8 @@ type saveField struct {
 	// конфигурацию и не виден в `onebase check` — поле просто молча
 	// открывается всем ролям, которые про него не высказались. Полноту
 	// вложенных ключей сторожит TestSaveField_CoversAllRawKeys.
-	PII bool `yaml:"pii,omitempty"`
+	PII       bool `yaml:"pii,omitempty"`
+	ReportPII bool `yaml:"report_pii,omitempty"`
 }
 
 type saveTP struct {
@@ -95,12 +96,13 @@ type saveNumeratorEdit struct {
 // saveStandardField mirrors the user properties of metadata.rawNumeratorField.
 // The standard name, string type and stable ID are derived from entity kind.
 type saveStandardField struct {
-	Title    string            `yaml:"title,omitempty"`
-	Label    string            `yaml:"label,omitempty"`
-	Titles   map[string]string `yaml:"titles,omitempty"`
-	Required bool              `yaml:"required,omitempty"`
-	Default  string            `yaml:"default,omitempty"`
-	PII      bool              `yaml:"pii,omitempty"`
+	Title     string            `yaml:"title,omitempty"`
+	Label     string            `yaml:"label,omitempty"`
+	Titles    map[string]string `yaml:"titles,omitempty"`
+	Required  bool              `yaml:"required,omitempty"`
+	Default   string            `yaml:"default,omitempty"`
+	PII       bool              `yaml:"pii,omitempty"`
+	ReportPII bool              `yaml:"report_pii,omitempty"`
 }
 
 // savePredefined — предопределённые элементы справочника. inline map нужен,

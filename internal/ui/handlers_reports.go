@@ -13,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/access"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/excel"
 	"github.com/ivantit66/onebase/internal/query"
@@ -195,6 +196,7 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) *reportpkg.Re
 		http.Error(w, "unknown report: "+name, 404)
 		return nil
 	}
+	*r = *r.WithContext(access.WithReportOutput(r.Context()))
 	return rep
 }
 
@@ -451,6 +453,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 }
 
 func (s *Server) runChartProc(ctx context.Context, rep *reportpkg.Report, rows []map[string]any, paramValues map[string]any) map[string]any {
+	ctx = access.WithReportOutput(ctx)
 	procDecl := s.reg.GetProcedure(rep.Name, rep.ChartProc)
 	if procDecl == nil {
 		procDecl = s.reg.GetModuleProc(rep.ChartProc)
@@ -658,6 +661,7 @@ func (s *Server) reportExportRows(r *http.Request, rep *reportpkg.Report) (heade
 }
 
 func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Request, rep *reportpkg.Report, stats *reportExportStats) (headers []string, rows [][]any, err error) {
+	ctx = access.WithReportOutput(ctx)
 	r = r.WithContext(ctx)
 	settings := s.reportSettingsForRequest(r, rep).Settings
 	comp := effectiveComposition(rep, settings)

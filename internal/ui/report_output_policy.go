@@ -20,7 +20,10 @@ func (s *Server) reportOutputMaskPlan(ctx context.Context, compiled query.Result
 // a technical title built without reading any personal field or presentation.
 func (s *Server) reportOutputRecordLabel(ctx context.Context, entity *metadata.Entity, row map[string]any) string {
 	if len(access.ReportOutputDecisions(entity)) > 0 {
-		return fmt.Sprint(row["id"])
+		if id := row["id"]; id != nil {
+			return fmt.Sprint(id)
+		}
+		return ""
 	}
 	return s.maskedRecordLabel(ctx, entity, row)
 }

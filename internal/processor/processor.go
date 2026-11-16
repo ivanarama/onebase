@@ -33,6 +33,8 @@ type Processor struct {
 	// Kind помечает роль обработки. Пусто — обычная обработка. "test" — тест
 	// уровня конфигурации: попадает в дискавери `onebase test` (план 136) и
 	// прячется из общего списка обработок пользователя.
+	// "report" — обработка-отчёт: HTTP/managed/offline DSL исполняется с
+	// обязательной отчётной политикой ПДн, не с исключениями обычной карточки.
 	Kind       string                 `yaml:"kind"`
 	Params     []Param                `yaml:"params"`
 	TableParts []metadata.TablePart   `yaml:"table_parts"`
@@ -56,6 +58,10 @@ type Processor struct {
 // IsTest сообщает, что обработка — тест уровня конфигурации (kind: test).
 func (p *Processor) IsTest() bool {
 	return strings.EqualFold(p.Kind, "test")
+}
+
+func (p *Processor) IsReport() bool {
+	return p != nil && strings.EqualFold(p.Kind, "report")
 }
 
 // DisplayLabel возвращает подпись параметра с учётом языка.

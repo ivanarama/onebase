@@ -18,6 +18,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/access"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/i18n/i18nerr"
 	oblog "github.com/ivantit66/onebase/internal/logging"
@@ -394,6 +395,9 @@ func (s *Server) getProcessor(w http.ResponseWriter, r *http.Request) *processor
 	}
 	if !s.requirePerm(w, r, "processor", proc.Name, "run") {
 		return nil
+	}
+	if proc.IsReport() {
+		*r = *r.WithContext(access.WithReportOutput(r.Context()))
 	}
 	return proc
 }
