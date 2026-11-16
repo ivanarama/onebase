@@ -59,3 +59,8 @@ source-срез не закрывает принятый отчёт совпад
 не затеняет исходное защищённое поле. GROUP BY по одному лишь output alias без
 доказанного исходного поля сейчас STOP; ORDER BY использует output alias в
 соответствии со своим SQL приоритетом. Обычный Query/compiler не меняется.
+
+Явные output aliases Ссылка/Ref/Reference/id в строгом профиле пока STOP:
+обычный compiler имеет для них особую canonicalization и GROUP rewrite.
+Стандартные A.Ссылка и A.Ссылка AS Request сохраняют UUID/root proof.
+Это ограничение opt-in lineage, обычный Query/карточки/переходы не меняются.

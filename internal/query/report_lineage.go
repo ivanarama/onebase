@@ -273,6 +273,13 @@ func (p *reportLineageParser) parse() error {
 			if p.peek().kind != tIdent || p.kw() != "" {
 				return fmt.Errorf("report lineage: output alias")
 			}
+			// The ordinary compiler canonicalizes reference aliases and may
+			// rewrite GROUP into the SELECT expression. This opt-in profile
+			// refuses that special case until both bindings share one proof.
+			alias := lowerFast(p.peek().val)
+			if isReferenceName(alias) || alias == "id" {
+				return fmt.Errorf("report lineage: reserved reference output alias")
+			}
 			p.pos++
 		}
 		column, _ := parseProjectionItem(p.tokens[from:p.pos])
