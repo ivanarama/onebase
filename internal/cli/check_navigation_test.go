@@ -105,3 +105,52 @@ func TestCheckMenuPlacement(t *testing.T) {
 		t.Fatalf("nested menu silently ignored: %v %s", err, out)
 	}
 }
+
+func TestCheckRecursiveNavigation(t *testing.T) {
+	const menu = `menu:
+  sections:
+  - id: reports
+    title: Отчёты
+    nodes:
+    - id: direct
+      target: catalog:Товар
+    - id: masters
+      title: Мастера
+      nodes:
+      - id: held
+        title: Заявки на руках
+        nodes:
+        - id: command
+          target: report:ПоТовару
+    - id: last
+      target: document:Order
+`
+	for _, tc := range []struct{ name, menu, diagnostic string }{
+		{"valid", menu, ""},
+		{"membership", strings.Replace(menu, "report:ПоТовару", "report:Missing", 1), "navigation.membership"},
+		{"duplicate", strings.Replace(menu, "id: command", "id: direct", 1), "navigation.duplicate-id"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := runCheckCmd(t, runCheck, semanticCheckFixture(t, tc.menu), map[string]string{"json": "true", "lint": "true"})
+			var result configcheck.Result
+			if parseErr := json.Unmarshal([]byte(out), &result); parseErr != nil {
+				t.Fatal(parseErr, out)
+			}
+			if tc.diagnostic == "" {
+				if err != nil || !result.OK {
+					t.Fatalf("valid recursive menu: %v %s", err, out)
+				}
+				return
+			}
+			if err == nil || result.OK {
+				t.Fatal("invalid recursive menu accepted")
+			}
+			for _, issue := range result.Issues {
+				if issue.Code == tc.diagnostic {
+					return
+				}
+			}
+			t.Fatalf("missing %s: %s", tc.diagnostic, out)
+		})
+	}
+}

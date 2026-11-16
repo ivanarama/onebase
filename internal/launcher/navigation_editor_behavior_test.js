@@ -15,7 +15,7 @@ function harness(pageBootstrap = bootstrap) {
   function element(tag = 'div') {
     const listeners = new Map();
     const node = {
-      tagName: tag, children: [], dataset: {}, value: '', textContent: '', className: '', disabled: false,
+      style: {}, tagName: tag, children: [], dataset: {}, value: '', textContent: '', className: '', disabled: false,
       classList: {add() {}, remove() {}},
       replaceChildren() { this.children = []; },
       appendChild(child) { this.children.push(child); child.parentElement = this; return child; },
@@ -199,4 +199,30 @@ test('self-drop of items, folders and sections leaves order and clean state unch
   }
   await settle();
   assert.equal(h.calls.length, calls);
+});
+
+function recursiveHarness() {
+ const data=harness().window.OB_MENU_EDITOR;
+ data.menu={sections:[{id:'root',title:'Root',nodes:[{id:'first',target:'catalog:A'},{id:'masters',title:'Masters',roles:['Teacher'],nodes:[{id:'held',title:'Held',nodes:[{id:'b',target:'catalog:B'}]}]},{id:'last',target:'document:Order'}]}]};
+ return harness('window.OB_MENU_EDITOR='+JSON.stringify(data)+';');
+}
+test('recursive configurator moves mixed siblings and retains nested nodes and source roles',async()=>{
+ const h=recursiveHarness(),menu=h.window.OB_MENU_EDITOR.menu;
+ h.row('masters').fire('keydown',{altKey:true,key:'ArrowUp'});
+ assert.deepEqual(Array.from(menu.sections[0].nodes,n=>n.id),['masters','first','last']);
+ h.row('b').fire('keydown',{altKey:true,key:'ArrowLeft'});
+ assert.deepEqual(Array.from(menu.sections[0].nodes[0].nodes,n=>n.id),['held','b']);
+ h.row('b').fire('keydown',{altKey:true,key:'ArrowRight'});
+ assert.equal(menu.sections[0].nodes[0].nodes[0].nodes[0].id,'b');
+ assert.deepEqual(Array.from(menu.sections[0].nodes[0].roles),['Teacher']);
+ h.row('held').querySelector('button').click();h.get('add-group').click();
+ assert.equal(menu.sections[0].nodes[0].nodes[0].nodes.length,2);
+ const before=JSON.stringify(menu);
+ h.row('masters').fire('drop',{dataTransfer:transferred('masters')});
+ h.row('held').fire('drop',{dataTransfer:transferred('masters')});
+ assert.equal(JSON.stringify(menu),before,'ancestor must not move into descendant');
+ await settle();await h.get('save').click();
+ const saved=JSON.parse(h.calls.at(-1).options.body);
+ assert.equal(saved.menu.sections[0].nodes[0].nodes[0].nodes[0].id,'b');
+ assert.equal(saved.menu.sections[0].groups,undefined);
 });

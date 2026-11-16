@@ -24,6 +24,10 @@
       return el;
     }
     function walk(value, fn) {
+      if (value.version === 2) {
+        function children(list,parent,section,depth) {(list||[]).forEach(function(node,index){fn({node:node,list:list,index:index,parent:parent,section:section,kind:node.target?'item':'group',depth:depth});if(!node.target)children(node.nodes,node,section,depth+1);});}
+        (value.sections||[]).forEach(function(section,index){fn({node:section,list:value.sections,index:index,parent:null,section:section,kind:'section',depth:0});children(section.nodes,section,section,1);});return;
+      }
       (value.sections || []).forEach(function (section, index) {
         fn({node:section, list:value.sections, index:index, parent:null, section:section, kind:'section'});
         (section.items || []).forEach(function (item, i) { fn({node:item, list:section.items, index:i, parent:section, section:section, kind:'item'}); });
@@ -72,7 +76,23 @@
         if (focus) focus.focus();
       }
     }
+    function recursiveParent(entry,parent) {
+      if(!entry||!parent||entry.kind==='section'||parent.kind==='item')return false;
+      for(var p=parent;p;p=p.parent?find(p.parent.id):null)if(p.node.id===entry.node.id)return false;
+      return true;
+    }
+    function recursiveMove(id,direction) {
+      var entry=find(id);if(!entry)return;
+      if(direction==='in'){
+        var target;for(var i=entry.index-1;i>=0;i--)if(!entry.list[i].target){target=find(entry.list[i].id);break;}
+        if(target&&recursiveParent(entry,target))relocate(id,target.node.id);
+      }else if(direction==='out'&&entry.parent&&entry.parent!==entry.section){
+        var parent=find(entry.parent.id);if(!parent||!parent.parent)return;
+        entry.list.splice(entry.index,1);parent.list.splice(parent.index+1,0,entry.node);changed(id);
+      }
+    }
     function move(id, direction) {
+      if(desired.version===2&&(direction==='in'||direction==='out')){if(!submitting)recursiveMove(id,direction);return;}
       if (submitting) return;
       var entry = find(id); if (!entry) return;
       if (direction === 'up' || direction === 'down') {
@@ -91,6 +111,7 @@
     }
     function relocate(id, parentID) {
       var entry = find(id), parent = find(parentID);
+      if(desired.version===2){if(submitting||!recursiveParent(entry,parent))return;entry.list.splice(entry.index,1);(parent.node.nodes||(parent.node.nodes=[])).push(entry.node);changed(id);return;}
       if (submitting || !entry || !parent || entry.kind === 'section' || parent.kind === 'item' || entry.kind === 'group' && parent.kind !== 'section') return;
       entry.list.splice(entry.index, 1);
       var field = entry.kind === 'group' ? 'groups' : 'items';
@@ -100,6 +121,11 @@
     function drop(id, targetID) {
       if (submitting || id === targetID) return;
       var entry = find(id), target = find(targetID); if (!entry || !target) return;
+      if(desired.version===2){
+        if(target.kind!=='item'&&(entry.kind!==target.kind||entry.parent!==target.parent)){relocate(id,targetID);return;}
+        if(entry.kind==='section'&&target.kind!=='section'||entry.kind!=='section'&&target.kind==='section'||entry.kind!=='section'&&!recursiveParent(entry,find(target.parent.id)))return;
+        entry.list.splice(entry.index,1);target=find(targetID);target.list.splice(target.index,0,entry.node);changed(id);return;
+      }
       if (entry.kind === target.kind) {
         entry.list.splice(entry.index, 1); target = find(targetID);
         target.list.splice(target.index, 0, entry.node); changed(id);
@@ -111,7 +137,7 @@
       tree.replaceChildren();
       walk(desired, function (entry) {
         var row = element('div'); row.className = 'navigation-row' + (entry.node.id === selected ? ' selected' : '');
-        row.dataset.kind = entry.kind; row.draggable = true;
+        row.dataset.kind = entry.kind; row.draggable = true; if(desired.version===2)row.style.marginLeft=(entry.depth*14)+"px";
         var choose = button(label(entry.node), function () { selected = entry.node.id; renderTree(true); tree.querySelector('[data-node-id="'+selected+'"]').focus(); });
         choose.dataset.nodeId = entry.node.id;
         row.appendChild(choose);
@@ -120,8 +146,8 @@
           var control = button(labels[direction], function () { move(entry.node.id, direction); });
           control.dataset.action = direction;
           control.disabled = submitting || (direction === 'up' && entry.index === 0) || (direction === 'down' && entry.index === entry.list.length-1) ||
-            (direction === 'in' && (entry.kind !== 'item' || entry.parent !== entry.section || !(entry.section.groups || []).length)) ||
-            (direction === 'out' && (entry.kind !== 'item' || entry.parent === entry.section));
+            (direction === 'in' && (desired.version===2 ? entry.kind==='section'||!entry.list.slice(0,entry.index).some(function(n){return !n.target;}) : entry.kind !== 'item' || entry.parent !== entry.section || !(entry.section.groups || []).length)) ||
+            (direction === 'out' && (desired.version===2 ? !entry.parent||entry.parent===entry.section : entry.kind !== 'item' || entry.parent === entry.section));
           row.appendChild(control);
         });
         row.appendChild(button(entry.node.id.indexOf(ownedPrefix) === 0 || entry.node.id.indexOf('new:') === 0 ? labels.remove : labels.hide, function () {
@@ -159,7 +185,7 @@
       if (entry.kind !== 'section') {
         var parent = element('select');
         walk(desired, function (destination) {
-          if (destination.kind === 'section' || entry.kind === 'item' && destination.kind === 'group') {
+          if (desired.version===2 ? recursiveParent(entry,destination) : destination.kind === 'section' || entry.kind === 'item' && destination.kind === 'group') {
             var option = element('option', label(destination.node)); option.value = destination.node.id; parent.appendChild(option);
           }
         });
@@ -171,6 +197,14 @@
     function restore(id) {
       if (submitting || find(id)) return;
       var original = find(id, data.base); if (!original) return;
+      if(desired.version===2){
+        function ensure(id){if(find(id))return;var old=find(id,data.base);if(old.parent)ensure(old.parent.id);var node=clone(old.node);node.nodes=[];if(old.parent){var parent=find(old.parent.id).node;(parent.nodes||(parent.nodes=[])).push(node);}else desired.sections.push(node);}
+        if(original.parent)ensure(original.parent.id);
+        function remainingRecursive(input){return(input||[]).filter(function(n){return !find(n.id);}).map(function(n){n=clone(n);if(!n.target)n.nodes=remainingRecursive(n.nodes);return n;});}
+        var restored=clone(original.node);if(!restored.target)restored.nodes=remainingRecursive(restored.nodes);
+        if(original.parent){var container=find(original.parent.id).node;(container.nodes||(container.nodes=[])).push(restored);}else desired.sections.push(restored);
+        changed(id);return;
+      }
       function ensureParent(parentID) {
         if (find(parentID)) return;
         var ancestor = find(parentID, data.base);
@@ -234,6 +268,8 @@
           (value || []).forEach(function(item){var li = element('li'), link = decorated('a', item.label, item.icon); link.href = item.url; li.appendChild(link); list.appendChild(li);});
           container.appendChild(list);
         }
+        function nodes(input,parent){(input||[]).forEach(function(n){if(n.url){var link=decorated('a',n.label,n.icon);link.href=n.url;var line=element('div');line.appendChild(link);parent.appendChild(line);}else{var d=element('details');d.open=true;d.appendChild(decorated('summary',n.title,n.icon));nodes(n.nodes,d);parent.appendChild(d);}});}
+        nodes(section.nodes,preview);
         items(section.items, preview);
         (section.groups || []).forEach(function(group){var folder = element('details'); folder.open = true; folder.appendChild(decorated('summary', group.title, group.icon)); items(group.items, folder); preview.appendChild(folder);});
       });
@@ -248,12 +284,13 @@
     }
     document.getElementById('navigation-add-section').addEventListener('click', function () {
       if (submitting) return;
-      var node = {id:'new:'+ (++counter), title:labels.newSection, items:[], groups:[]};
+      var node = {id:'new:'+ (++counter), title:labels.newSection}; if(desired.version===2)node.nodes=[];else{node.items=[];node.groups=[];}
       desired.sections = desired.sections || []; desired.sections.push(node); changed(node.id);
     });
     document.getElementById('navigation-add-group').addEventListener('click', function () {
       if (submitting) return;
       var entry = find(selected), section = entry ? entry.section : (desired.sections || [])[0]; if (!section) return;
+      if(desired.version===2){var parent=entry?(entry.kind==='item'?entry.parent:entry.node):section;var node={id:'new:'+(++counter),title:labels.newGroup,nodes:[]};(parent.nodes||(parent.nodes=[])).push(node);changed(node.id);return;}
       var node = {id:'new:'+ (++counter), title:labels.newGroup, items:[]};
       section.groups = section.groups || []; section.groups.push(node); changed(node.id);
     });

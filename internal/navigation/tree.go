@@ -15,6 +15,7 @@ const (
 	MaxSections = 100
 	MaxGroups   = 500
 	MaxItems    = 5000
+	MaxDepth    = metadata.MaxMenuFolderDepth
 )
 
 // Object is a metadata projection, independent of HTTP, SQL and user access.
@@ -91,6 +92,8 @@ type Section struct {
 	Icon          string            `json:"icon,omitempty"`
 	Items         []Item            `json:"items,omitempty"`
 	Groups        []Group           `json:"groups,omitempty"`
+	Nodes         []Node            `json:"nodes,omitempty"`
+	RoleClauses   [][]string        `json:"role_clauses,omitempty"`
 }
 
 type Group struct {
@@ -102,12 +105,13 @@ type Group struct {
 }
 
 type Item struct {
-	ID     string            `json:"id"`
-	Target string            `json:"target"`
-	Title  string            `json:"title"`
-	Titles map[string]string `json:"titles,omitempty"`
-	Icon   string            `json:"icon,omitempty"`
-	Object Object            `json:"object"`
+	ID          string            `json:"id"`
+	Target      string            `json:"target"`
+	Title       string            `json:"title"`
+	Titles      map[string]string `json:"titles,omitempty"`
+	Icon        string            `json:"icon,omitempty"`
+	Object      Object            `json:"object"`
+	RoleClauses [][]string        `json:"role_clauses,omitempty"`
 }
 
 type Diagnostic struct {
@@ -123,6 +127,9 @@ var nodeID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,62}$`)
 // absent menu projects the legacy sections; an explicit menu appends unplaced
 // allowed targets to the reserved section cfg:other.
 func Normalize(context string, menu *metadata.Menu, scope Scope) (Tree, []Diagnostic) {
+	if usesRecursiveMenu(menu) {
+		return normalizeRecursive(context, menu, scope)
+	}
 	tree := Tree{Version: 1, Context: context}
 	if menu == nil {
 		tree.Sections = cloneSections(scope.Sections)
@@ -238,6 +245,7 @@ func copyTitles(input map[string]string) map[string]string {
 func cloneObject(o Object) Object { o.Titles = copyTitles(o.Titles); return o }
 func cloneItem(i Item) Item {
 	i.Titles = copyTitles(i.Titles)
+	i.RoleClauses = cloneClauses(i.RoleClauses)
 	i.Object = cloneObject(i.Object)
 	return i
 }
@@ -245,6 +253,17 @@ func cloneSections(input []Section) []Section {
 	var output []Section
 	for _, s := range input {
 		s.Titles = copyTitles(s.Titles)
+		s.RoleClauses = cloneClauses(s.RoleClauses)
+		s.Nodes = CloneNodes(s.Nodes)
+		s.Groups = append([]Group(nil), s.Groups...)
+		for j := range s.Groups {
+			g := &s.Groups[j]
+			g.Titles = copyTitles(g.Titles)
+			g.Items = append([]Item(nil), g.Items...)
+			for k := range g.Items {
+				g.Items[k] = cloneItem(g.Items[k])
+			}
+		}
 		var items []Item
 		for _, i := range s.Items {
 			items = append(items, cloneItem(i))

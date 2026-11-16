@@ -84,10 +84,13 @@ const (
 	navigationYAMLSection
 	navigationYAMLGroup
 	navigationYAMLItem
+	navigationYAMLNode
 )
 
 func navigationYAMLChildRole(parent navigationYAMLRole, field string) navigationYAMLRole {
 	switch {
+	case (parent == navigationYAMLSection || parent == navigationYAMLNode) && field == "nodes":
+		return navigationYAMLNode
 	case parent == navigationYAMLMenu && field == "sections":
 		return navigationYAMLSection
 	case parent == navigationYAMLSection && field == "groups":
@@ -100,7 +103,7 @@ func navigationYAMLChildRole(parent navigationYAMLRole, field string) navigation
 }
 
 func navigationYAMLNodeID(n *yaml.Node, role navigationYAMLRole) string {
-	if n == nil || n.Kind != yaml.MappingNode || (role != navigationYAMLSection && role != navigationYAMLGroup && role != navigationYAMLItem) {
+	if n == nil || n.Kind != yaml.MappingNode || (role != navigationYAMLSection && role != navigationYAMLGroup && role != navigationYAMLItem && role != navigationYAMLNode) {
 		return ""
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {
