@@ -3014,6 +3014,11 @@ const tplReport = `
         <select name="{{$pname}}">
           {{range $p.Options}}<option value="{{.}}" {{if eq . $pval}}selected{{end}}>{{if .}}{{.}}{{else}}{{t $.Lang "— все —"}}{{end}}</option>{{end}}
         </select>
+      {{else if $p.IsEnum}}
+        <select name="{{$pname}}">
+          <option value="" {{if eq $pval ""}}selected{{end}}>{{t $.Lang "— все —"}}</option>
+          {{range $p.EnumOptions}}<option value="{{.Value}}" {{if eq .Value $pval}}selected{{end}}>{{.Label}}</option>{{end}}
+        </select>
       {{else if $p.IsRef}}
         <div style="display:flex;gap:4px;align-items:center">
           <select name="{{$pname}}" id="rp-{{$pname}}" style="flex:1;min-width:0" data-ref-entity="{{$p.RefEntity}}">
