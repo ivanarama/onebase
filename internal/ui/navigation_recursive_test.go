@@ -215,7 +215,7 @@ func TestRecursiveNavigationBrowser(t *testing.T) {
 	if python == "" {
 		python = "python"
 	}
-	cmd := exec.CommandContext(ctx, python, filepath.Join("testdata", "recursive_navigation_browser.py"))
+	cmd := exec.CommandContext(ctx, python, filepath.Join("testdata", "recursive_navigation_browser.py")) //nolint:gosec // Optional test-only local Python; fixed script and authenticated loopback fixture.
 	artifacts := os.Getenv("OB_RECURSIVE_MENU_ARTIFACTS")
 	if artifacts == "" {
 		artifacts = t.TempDir()

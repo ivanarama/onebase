@@ -60,7 +60,8 @@ func (s *Server) projectRecursiveNavigation(r *http.Request, tree navigation.Tre
 				}
 			} else {
 				n.Nodes, childMeaning = nodes(n.Nodes)
-				if !childMeaning && !(acl && keep != nil && (strings.HasPrefix(n.ID, "usr:") || keep[n.ID] != "")) {
+				retainEmpty := acl && keep != nil && (strings.HasPrefix(n.ID, "usr:") || keep[n.ID] != "")
+				if !childMeaning && !retainEmpty {
 					continue
 				}
 			}
