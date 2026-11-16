@@ -1564,7 +1564,7 @@ const tplHead = `
   "imageError" (t (or $.Lang "ru") "Не удалось загрузить изображение")
   "imageArea" (t (or $.Lang "ru") "Область просмотра изображения")
 )}}</script>
-{{messagesMeta .}}<script src="/static/ui.js"></script>{{if .UseShortDateInput}}<script type="application/json" id="ob-date-input-i18n">{{jsJSON (dict "invalid" (t $.Lang "Введите корректную дату"))}}</script><script src="/static/date-input.js"></script>{{end}}{{if .CompactReport}}<script src="/static/report-controls.js"></script>{{end}}{{if .CompactReport}}<style id="ob-report-density-css">
+{{messagesMeta .}}<script src="/static/ui.js"></script>{{if .UseShortDateInput}}<script type="application/json" id="ob-date-input-i18n">{{jsJSON (dict "invalid" (t $.Lang "Введите корректную дату") "incompleteDate" (t $.Lang "Введите дату полностью: ДД.ММ.ГГГГ") "incompleteDatetime" (t $.Lang "Введите дату и время полностью: ДД.ММ.ГГГГ ЧЧ:ММ:СС") "calendar" (t $.Lang "Открыть календарь"))}}</script><script src="/static/date-input.js"></script>{{end}}{{if .CompactReport}}<script src="/static/report-controls.js"></script>{{end}}{{if .CompactReport}}<style id="ob-report-density-css">
 .ob-report-compact{padding:8px 12px}
 .ob-report-compact.ob-report-dense{padding:6px 10px}
 .ob-report-titlebar{display:flex;align-items:center;gap:6px 12px;flex-wrap:wrap;margin-bottom:4px}
