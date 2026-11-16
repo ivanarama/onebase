@@ -221,6 +221,15 @@ func applyEditOp(yamlSrc []byte, req editOpRequest) (editOpResult, error) {
 		}
 		conditions := make([]metadata.FormChoiceCondition, 0, len(raw))
 		for i, condition := range raw {
+			// Условие запросом редактор возвращает без изменений; его текст и
+			// параметры проверяет onebase check.
+			if strings.TrimSpace(condition.Query) != "" {
+				if strings.TrimSpace(condition.Field) != "" || strings.TrimSpace(condition.Op) != "" || strings.TrimSpace(condition.From) != "" || condition.Value != nil || strings.TrimSpace(condition.Ref) != "" {
+					return editOpResult{}, fmt.Errorf("setChoiceFilter: условие %d: query несовместим с field, op, from, value и ref", i+1)
+				}
+				conditions = append(conditions, metadata.FormChoiceCondition{Query: condition.Query, Params: condition.Params})
+				continue
+			}
 			op := metadata.FormChoiceOperator(strings.TrimSpace(condition.Op))
 			if op != metadata.FormChoiceOpEqual && op != metadata.FormChoiceOpInHierarchy &&
 				op != metadata.FormChoiceOpEqualOrEmpty && op != metadata.FormChoiceOpNotInHierarchy {

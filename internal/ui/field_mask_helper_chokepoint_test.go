@@ -41,7 +41,7 @@ var maskHelperGateFuncs = map[string]bool{
 // ЗначенияРеквизитовОбъектов, и без него утечка в этой функции была бы
 // сканеру не видна.
 var maskHelperStoreReads = map[string]bool{
-	"List": true, "GetByID": true, "GetFieldsByIDs": true, "ListMarked": true,
+	"List": true, "GetByID": true, "GetFieldsByIDs": true, "GetByIDsFiltered": true, "ListMarked": true,
 }
 
 // maskHelperExemption — почему функция читает store без маски. maskedBy != ""
@@ -59,6 +59,7 @@ var maskHelperExempt = map[string]maskHelperExemption{
 	"Server.matchRowPredicateResult":       {reason: "RLS: строка нужна для вычисления предиката, наружу идут bool/error"},
 	"Server.rowAllowedID":                  {reason: "RLS: наружу идёт bool"},
 	"Server.rowAllowedUpdate":              {reason: "RLS: наружу идёт bool"},
+	"Server.choiceStyleUserMatches":        {reason: "choice_row_style: реквизит карточки текущего пользователя сравнивается с предопределённым элементом, наружу идёт bool (есть оформление или нет)"},
 	"Server.rowAllowsIDResult":             {reason: "RLS: наружу идут bool/error"},
 	"Server.installFormCloseAccessRecheck": {reason: "финальный RLS-гейт close-intent: строка только решает terminal/redaction и клиенту не отдаётся"},
 	"Server.checkDSLRowAccess":             {reason: "RLS для DSL: наружу идёт ошибка ErrRowAccessDenied"},

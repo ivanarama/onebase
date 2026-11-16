@@ -311,3 +311,33 @@ func TestSettingsPasswordPolicyLocalizesNewControls(t *testing.T) {
 		}
 	}
 }
+
+// Флажок «Закрепить режим» в «Параметрах базы»: сохраняется публичной точкой
+// входа конфигуратора, отображается на странице, снимается тем же путём.
+func TestSettingsFormOpenModeLock(t *testing.T) {
+	_, saveSettings, _, settingsHTML, dbPath := policyBase(t, "form-mode-lock")
+	if strings.Contains(settingsHTML(), `id="st-formlock" checked`) {
+		t.Fatal("по умолчанию режим не закреплён")
+	}
+	locked := func() bool {
+		db, err := storage.ConnectSQLite(context.Background(), dbPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer db.Close()
+		return db.GetFormOpenModeLocked(context.Background())
+	}
+	if rec := saveSettings(`{"list_page_size":50,"form_open_mode":"tabs","form_open_mode_locked":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("сохранение: %d %s", rec.Code, rec.Body.String())
+	}
+	if !locked() || !strings.Contains(settingsHTML(), `id="st-formlock" checked`) {
+		t.Fatal("флажок закрепления не сохранился")
+	}
+	// Запрос без поля (старый клиент) закрепление не трогает.
+	if rec := saveSettings(`{"list_page_size":50}`); rec.Code != http.StatusOK || !locked() {
+		t.Fatalf("запрос без поля снял закрепление: %d", rec.Code)
+	}
+	if rec := saveSettings(`{"list_page_size":50,"form_open_mode_locked":false}`); rec.Code != http.StatusOK || locked() {
+		t.Fatalf("снятие закрепления: %d", rec.Code)
+	}
+}

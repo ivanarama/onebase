@@ -18,17 +18,12 @@ import (
 // GitHub API and ghstub only for authentication; GraphQL uses ghstub responses.
 func TestV1AbortPublicCLITransports(t *testing.T) {
 	stub := buildGhStub(t)
-	binary := filepath.Join(t.TempDir(), "pipelinehealth.exe")
-	//nolint:gosec // G204: fixed package and test-owned executable path.
-	build := exec.Command("go", "build", "-o", binary, "./tools/pipelinehealth")
-	build.Dir = repoRoot(t)
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v %s", err, output)
-	}
+	binary := pipelinehealthCLI(t)
 	helper, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, transport := range []string{"rest", "graphql"} {
 		t.Run(transport, func(t *testing.T) {
 			for _, tc := range []struct {

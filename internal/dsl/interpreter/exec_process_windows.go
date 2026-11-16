@@ -59,7 +59,7 @@ func runExecCommand(cmd *exec.Cmd) error {
 	process, err := windows.OpenProcess(
 		windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE,
 		false,
-		uint32(cmd.Process.Pid),
+		uint32(cmd.Process.Pid), //nolint:gosec // G115: reverses Go syscall.StartProcess conversion from Windows DWORD ProcessId to int.
 	)
 	if err == nil {
 		err = windows.AssignProcessToJobObject(job, process)

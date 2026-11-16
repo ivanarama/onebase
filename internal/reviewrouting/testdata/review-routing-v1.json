@@ -1,0 +1,199 @@
+{
+  "schema": "pp-review-routing-golden-v1",
+  "status": "proposed-A1-offline-only",
+  "cases": [
+    {
+      "name": "technical",
+      "report": {
+        "routing_version": "review-routing-v1",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "change": "Проверка поведения на точном HEAD",
+        "checks": [
+          "onebase procrun --proc Probe, exit 1"
+        ],
+        "blocking": [
+          {
+            "id": "date.html-local-zone",
+            "kind": "technical",
+            "summary": "HTML-шаблон показывает UTC вместо локального времени",
+            "evidence": {
+              "entrypoint": "onebase procrun --proc Probe",
+              "environment": "Windows, Europe/Moscow, SQLite",
+              "command": "onebase procrun --project probe --sqlite probe.sqlite --proc Probe",
+              "expected": "31.01.2026 23:59:59",
+              "actual": "31.01.2026 20:59:59",
+              "result": "exit 1, mismatch persisted date output",
+              "invariant": "HTML и string используют согласованную локальную зону"
+            }
+          }
+        ],
+        "tail": []
+      },
+      "classification": "technical",
+      "canonical_record": "{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]}\n",
+      "sha256": "8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061"
+    },
+    {
+      "name": "product",
+      "report": {
+        "routing_version": "review-routing-v1",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "change": "Проверка поведения на точном HEAD",
+        "checks": [
+          "onebase procrun --proc Probe, exit 1"
+        ],
+        "blocking": [
+          {
+            "id": "date.display-policy",
+            "kind": "product",
+            "summary": "Выбрать политику отображения даты",
+            "evidence": {
+              "options": [
+                {
+                  "number": 1,
+                  "behavior": "Локальная зона пользователя",
+                  "consequences": "Соответствует string()"
+                },
+                {
+                  "number": 2,
+                  "behavior": "Всегда UTC",
+                  "consequences": "Одинаково на всех серверах"
+                }
+              ],
+              "recommendation": {
+                "number": 1,
+                "reason": "Совместимость с текущим string()"
+              }
+            }
+          }
+        ],
+        "tail": []
+      },
+      "classification": "product",
+      "canonical_record": "{\"blocking\":[{\"evidence\":{\"options\":[{\"behavior\":\"Локальная зона пользователя\",\"consequences\":\"Соответствует string()\",\"number\":1},{\"behavior\":\"Всегда UTC\",\"consequences\":\"Одинаково на всех серверах\",\"number\":2}],\"recommendation\":{\"number\":1,\"reason\":\"Совместимость с текущим string()\"}},\"id\":\"date.display-policy\",\"kind\":\"product\",\"summary\":\"Выбрать политику отображения даты\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]}\n",
+      "sha256": "deae5c329e13919834b64bde2266c4464f6ef21f5f76d8e25b4f6031306b1383"
+    },
+    {
+      "name": "safety_exception",
+      "report": {
+        "routing_version": "review-routing-v1",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "change": "Проверка поведения на точном HEAD",
+        "checks": [
+          "onebase procrun --proc Probe, exit 1"
+        ],
+        "blocking": [
+          {
+            "id": "fork.execution-policy",
+            "kind": "safety_exception",
+            "summary": "Нужно решение о границе исполнения",
+            "evidence": {
+              "boundary": "Код внешнего fork на машине с credentials",
+              "requested_exception": "Не выполнять до отдельной политики изолированного runner"
+            }
+          }
+        ],
+        "tail": []
+      },
+      "classification": "safety_exception",
+      "canonical_record": "{\"blocking\":[{\"evidence\":{\"boundary\":\"Код внешнего fork на машине с credentials\",\"requested_exception\":\"Не выполнять до отдельной политики изолированного runner\"},\"id\":\"fork.execution-policy\",\"kind\":\"safety_exception\",\"summary\":\"Нужно решение о границе исполнения\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]}\n",
+      "sha256": "252bfff71dd630c67deef322556dcacfe89967ec8952ff017d135e6b3b43be47"
+    },
+    {
+      "name": "insufficient_data",
+      "report": {
+        "routing_version": "review-routing-v1",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "change": "Проверка поведения на точном HEAD",
+        "checks": [
+          "onebase procrun --proc Probe, exit 1"
+        ],
+        "blocking": [
+          {
+            "id": "date.missing-reproduction",
+            "kind": "insufficient_data",
+            "summary": "Нет воспроизведения на целевом HEAD",
+            "evidence": {
+              "missing": "Нет PostgreSQL/UTC результата",
+              "verification": "Запустить публичный CLI на точном HEAD в UTC с PostgreSQL"
+            }
+          }
+        ],
+        "tail": []
+      },
+      "classification": "insufficient_data",
+      "canonical_record": "{\"blocking\":[{\"evidence\":{\"missing\":\"Нет PostgreSQL/UTC результата\",\"verification\":\"Запустить публичный CLI на точном HEAD в UTC с PostgreSQL\"},\"id\":\"date.missing-reproduction\",\"kind\":\"insufficient_data\",\"summary\":\"Нет воспроизведения на целевом HEAD\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]}\n",
+      "sha256": "d752f7d768b227f3d620cbe4612620d77c9f0211586903e61adbce7f926ab12c"
+    },
+    {
+      "name": "mixed",
+      "report": {
+        "routing_version": "review-routing-v1",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "change": "Проверка поведения на точном HEAD",
+        "checks": [
+          "onebase procrun --proc Probe, exit 1"
+        ],
+        "blocking": [
+          {
+            "id": "date.html-local-zone",
+            "kind": "technical",
+            "summary": "HTML-шаблон показывает UTC вместо локального времени",
+            "evidence": {
+              "entrypoint": "onebase procrun --proc Probe",
+              "environment": "Windows, Europe/Moscow, SQLite",
+              "command": "onebase procrun --project probe --sqlite probe.sqlite --proc Probe",
+              "expected": "31.01.2026 23:59:59",
+              "actual": "31.01.2026 20:59:59",
+              "result": "exit 1, mismatch persisted date output",
+              "invariant": "HTML и string используют согласованную локальную зону"
+            }
+          },
+          {
+            "id": "date.display-policy",
+            "kind": "product",
+            "summary": "Выбрать политику отображения даты",
+            "evidence": {
+              "options": [
+                {
+                  "number": 1,
+                  "behavior": "Локальная зона пользователя",
+                  "consequences": "Соответствует string()"
+                },
+                {
+                  "number": 2,
+                  "behavior": "Всегда UTC",
+                  "consequences": "Одинаково на всех серверах"
+                }
+              ],
+              "recommendation": {
+                "number": 1,
+                "reason": "Совместимость с текущим string()"
+              }
+            }
+          }
+        ],
+        "tail": []
+      },
+      "classification": "mixed_blockers",
+      "canonical_record": "{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"},{\"evidence\":{\"options\":[{\"behavior\":\"Локальная зона пользователя\",\"consequences\":\"Соответствует string()\",\"number\":1},{\"behavior\":\"Всегда UTC\",\"consequences\":\"Одинаково на всех серверах\",\"number\":2}],\"recommendation\":{\"number\":1,\"reason\":\"Совместимость с текущим string()\"}},\"id\":\"date.display-policy\",\"kind\":\"product\",\"summary\":\"Выбрать политику отображения даты\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]}\n",
+      "sha256": "b115d937416644e4cff391791ea12ca282589b66ad5af0109a008964974c23d4"
+    },
+    {
+      "name": "empty",
+      "report": {
+        "routing_version": "review-routing-v1",
+        "head": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "change": "Проверка поведения на точном HEAD",
+        "checks": [
+          "onebase procrun --proc Probe, exit 1"
+        ],
+        "blocking": [],
+        "tail": []
+      },
+      "classification": "no_blockers",
+      "canonical_record": "{\"blocking\":[],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]}\n",
+      "sha256": "ac6611c7fdbf5af79fe151fcd57648cd9fd4fd5fa6461186929e0bcb3fe94a93"
+    }
+  ]
+}

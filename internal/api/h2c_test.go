@@ -112,3 +112,35 @@ func TestH2CUpstreamDisabledByDefault(t *testing.T) {
 		t.Fatalf("status = %d, ожидали 200", resp.StatusCode)
 	}
 }
+
+// Обычный HTTP/1.1 остаётся доступен на том же listener при обоих режимах h2c.
+func TestH2CUpstreamHTTP1(t *testing.T) {
+	for _, enabled := range []string{"", "1"} {
+		name := "disabled"
+		if enabled == "1" {
+			name = "enabled"
+		}
+		t.Run(name, func(t *testing.T) {
+			t.Setenv("ONEBASE_H2C", enabled)
+			addr := serveH2CTestServer(t)
+			protocols := new(http.Protocols)
+			protocols.SetHTTP1(true)
+			client := &http.Client{
+				Timeout:   5 * time.Second,
+				Transport: &http.Transport{Protocols: protocols},
+			}
+			t.Cleanup(client.CloseIdleConnections)
+			resp, err := client.Get("http://" + addr + "/health")
+			if err != nil {
+				t.Fatalf("HTTP/1.1 GET /health: %v", err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			if resp.Proto != "HTTP/1.1" {
+				t.Fatalf("proto = %q, ожидали HTTP/1.1", resp.Proto)
+			}
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("status = %d, ожидали 200", resp.StatusCode)
+			}
+		})
+	}
+}

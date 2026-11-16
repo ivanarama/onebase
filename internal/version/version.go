@@ -2,12 +2,34 @@ package version
 
 import (
 	"runtime/debug"
+	"strings"
 	"sync"
 	"time"
 )
 
 // Build is set via -ldflags="-X github.com/ivantit66/onebase/internal/version.Build=v1.2.3"
 var Build = ""
+
+// Distribution metadata is optional and set by a fork's supplier using -ldflags
+// -X. It identifies their build without changing the upstream platform version,
+// configuration metadata, licensing notices or update policy.
+var DistributionName, DistributionVersion, DistributionSupplier string
+
+type Distribution struct {
+	Name, Version, Supplier string
+}
+
+func DistributionInfo() Distribution {
+	return Distribution{
+		Name:     strings.TrimSpace(DistributionName),
+		Version:  strings.TrimSpace(DistributionVersion),
+		Supplier: strings.TrimSpace(DistributionSupplier),
+	}
+}
+
+func (d Distribution) Present() bool {
+	return d.Name != "" || d.Version != "" || d.Supplier != ""
+}
 
 // Правообладатель и лицензия платформы (план 69). Единый источник для экрана
 // «О программе». Совпадают с файлом LICENSE в корне репозитория.

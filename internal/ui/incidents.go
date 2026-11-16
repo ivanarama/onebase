@@ -6,6 +6,8 @@ package ui
 // ни со строкой журнала, ни со стеком.
 
 import (
+	"context"
+	"errors"
 	"net/http"
 
 	"github.com/ivantit66/onebase/internal/incident"
@@ -37,7 +39,26 @@ func (s *Server) recordIncident(r *http.Request, err error) string {
 // НЕ проводим: несуществующая страница и отказ в доступе — не инциденты, и
 // засорять ими журнал значит утопить в нём настоящие сбои.
 func (s *Server) serverError(w http.ResponseWriter, r *http.Request, err error) {
+	if clientGone(r) {
+		// Клиент сам бросил запрос (новый запрос подбора отменил прежний,
+		// закрыли вкладку): отвечать некому, а это не сбой сервера. 499 — как
+		// пишет такой запрос nginx; инцидента нет, иначе журнал и монитор
+		// захлёбывались бы «ошибками», которых не было.
+		w.WriteHeader(statusClientClosedRequest)
+		return
+	}
 	http.Error(w, incident.WithCode(s.errText(r, err), s.recordIncident(r, err)), http.StatusInternalServerError)
+}
+
+// statusClientClosedRequest — 499 nginx: клиент закрыл соединение до ответа.
+const statusClientClosedRequest = 499
+
+// clientGone — контекст запроса отменён: клиент ушёл. Контекст запроса
+// отменяется только разрывом соединения (или по завершении обработчика), а
+// сбой хранилища или таймаут операции его не отменяют: у них свой контекст
+// (DeadlineExceeded), и они остаются обычной ошибкой 500.
+func clientGone(r *http.Request) bool {
+	return r != nil && errors.Is(r.Context().Err(), context.Canceled)
 }
 
 // recordBackgroundPanic регистрирует панику, перехваченную вне HTTP-цепочки

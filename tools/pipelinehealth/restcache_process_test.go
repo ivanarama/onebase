@@ -22,6 +22,8 @@ const restLoaderProcessEnv = "ONEBASE_TEST_REST_LOADER"
 
 type restLoaderProcessConfig struct {
 	Base, Root, Loader, Worker string
+	Repository, Token          string
+	Legacy                     bool
 	PinOwnerHTTP               bool
 }
 
@@ -69,10 +71,20 @@ func TestRESTCacheLoaderProcess(t *testing.T) {
 	if err := json.Unmarshal([]byte(configuration), &config); err != nil {
 		t.Fatal(err)
 	}
-	client, err := newGitHubRESTClientWithBase(config.Base, "test-token", config.Root,
-		&http.Client{Transport: restLoaderTransport{http.DefaultTransport, config.Worker, config.PinOwnerHTTP}})
-	if err != nil {
-		t.Fatal(err)
+	if config.Token == "" {
+		config.Token = "test-token"
+	}
+	if config.Repository == "" {
+		config.Repository = "ivanarama/onebase"
+	}
+	var client *githubRESTClient
+	var err error
+	if !config.Legacy {
+		client, err = newGitHubRESTClientWithBase(config.Base, config.Token, config.Root,
+			&http.Client{Transport: restLoaderTransport{http.DefaultTransport, config.Worker, config.PinOwnerHTTP}})
+		if err != nil {
+			t.Fatal(err)
+		}
 	}
 	output := json.NewEncoder(os.Stdout)
 	if err := output.Encode(restLoaderMessage{Phase: "ready"}); err != nil {
@@ -86,16 +98,20 @@ func TestRESTCacheLoaderProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	result := restLoaderMessage{Phase: "done"}
-	switch config.Loader {
-	case "pulls":
-		result.Snapshot.Pulls, err = loadPulls(client, "ivanarama/onebase", "ivanarama", "")
-		for _, pull := range result.Snapshot.Pulls {
-			result.Snapshot.PullComments = append(result.Snapshot.PullComments, pull.Comments)
+	if config.Legacy {
+		result.Snapshot, err = loadLegacyRESTFixture(config)
+	} else {
+		switch config.Loader {
+		case "pulls":
+			result.Snapshot.Pulls, err = loadPulls(client, config.Repository, "ivanarama", "")
+			for _, pull := range result.Snapshot.Pulls {
+				result.Snapshot.PullComments = append(result.Snapshot.PullComments, pull.Comments)
+			}
+		case "issues":
+			result.Snapshot.Issues, err = loadIssues(client, config.Repository, "", false)
+		default:
+			t.Fatalf("unknown loader %q", config.Loader)
 		}
-	case "issues":
-		result.Snapshot.Issues, err = loadIssues(client, "ivanarama/onebase", "", false)
-	default:
-		t.Fatalf("unknown loader %q", config.Loader)
 	}
 	if err != nil {
 		result.Error = err.Error()
@@ -239,19 +255,20 @@ type restLoaderRequest struct {
 }
 
 type restLoaderServer struct {
-	server   *httptest.Server
-	root     string
-	loader   string
-	listPath string
-	fixtures map[string][]byte
-	expected restLoaderSnapshot
-	entered  chan restLoaderRequest
-	release  chan struct{}
-	resumeB  chan struct{}
-	exited   chan struct{}
-	mu       sync.Mutex
-	requests []restLoaderRequest
-	active   map[string]map[*http.Request]struct{}
+	server      *httptest.Server
+	root        string
+	loader      string
+	listPath    string
+	fixtures    map[string][]byte
+	expected    restLoaderSnapshot
+	entered     chan restLoaderRequest
+	release     chan struct{}
+	resumeB     chan struct{}
+	exited      chan struct{}
+	mu          sync.Mutex
+	mixedLegacy bool
+	requests    []restLoaderRequest
+	active      map[string]map[*http.Request]struct{}
 }
 
 func newRESTLoaderServer(t *testing.T, loader string, holdB bool) *restLoaderServer {
@@ -303,12 +320,16 @@ func newRESTLoaderServer(t *testing.T, loader string, holdB bool) *restLoaderSer
 		observation := restLoaderRequest{request.Header.Get("X-Test-Worker"), request.URL.Path, request.Header.Get("If-None-Match")}
 		harness.mu.Lock()
 		harness.requests = append(harness.requests, observation)
-		if harness.active[observation.Path] == nil {
-			harness.active[observation.Path] = make(map[*http.Request]struct{})
+		activeKey := observation.Path
+		if harness.mixedLegacy && observation.Worker == "A" {
+			activeKey = "legacy:" + activeKey
 		}
-		harness.active[observation.Path][request] = struct{}{}
+		if harness.active[activeKey] == nil {
+			harness.active[activeKey] = make(map[*http.Request]struct{})
+		}
+		harness.active[activeKey][request] = struct{}{}
 		active := 0
-		for live := range harness.active[observation.Path] {
+		for live := range harness.active[activeKey] {
 			// A killed client's socket can close before its server handler's
 			// deferred cleanup is scheduled. Count only live HTTP requests.
 			if live.Context().Err() == nil {
@@ -318,7 +339,7 @@ func newRESTLoaderServer(t *testing.T, loader string, holdB bool) *restLoaderSer
 		harness.mu.Unlock()
 		defer func() {
 			harness.mu.Lock()
-			delete(harness.active[observation.Path], request)
+			delete(harness.active[activeKey], request)
 			harness.mu.Unlock()
 		}()
 		if active != 1 {
@@ -439,7 +460,8 @@ func (harness *restLoaderServer) disk(t *testing.T, populated bool) {
 	t.Helper()
 	// Independent envelope inspection, not cache.read/write or a private lock
 	// shortcut. Missing entries are allowed only before a successful loader.
-	paths, err := filepath.Glob(filepath.Join(harness.root, "*.json"))
+	directory := filepath.Join(harness.root, restCacheNamespace)
+	paths, err := filepath.Glob(filepath.Join(directory, "*.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -469,7 +491,7 @@ func (harness *restLoaderServer) disk(t *testing.T, populated bool) {
 			t.Fatalf("invalid cache entry %s: %+v", path, entry)
 		}
 	}
-	paths, err = filepath.Glob(filepath.Join(harness.root, ".pipelinehealth-cache-*"))
+	paths, err = filepath.Glob(filepath.Join(directory, ".pipelinehealth-cache-*"))
 	if err != nil || len(paths) != 0 {
 		t.Fatalf("temporary cache files after loader: %v, %v", paths, err)
 	}
@@ -486,6 +508,7 @@ func TestRESTCacheProcesses(t *testing.T) {
 				if request := h.entry(t, "A"); request.ETag != "" {
 					t.Fatal("cold owner supplied an ETag")
 				}
+				identity := h.slotIdentity(t)
 				b, c := h.child(t, "B", false), h.child(t, "C", false)
 				b.load(t)
 				c.load(t)
@@ -514,6 +537,7 @@ func TestRESTCacheProcesses(t *testing.T) {
 					}
 				}
 				h.disk(t, true)
+				h.assertSlotIdentity(t, identity)
 			})
 			for _, warm := range []bool{false, true} {
 				t.Run(fmt.Sprintf("killed_owner_warm_%t", warm), func(t *testing.T) {
@@ -527,6 +551,7 @@ func TestRESTCacheProcesses(t *testing.T) {
 					a := h.child(t, "A", false)
 					a.load(t)
 					h.entry(t, "A")
+					identity := h.slotIdentity(t)
 					b := h.child(t, "B", false)
 					b.load(t)
 					h.blocked(t, b)
@@ -539,6 +564,7 @@ func TestRESTCacheProcesses(t *testing.T) {
 					close(h.resumeB)
 					h.success(t, b)
 					h.disk(t, true)
+					h.assertSlotIdentity(t, identity)
 				})
 			}
 			t.Run("killed_waiter", func(t *testing.T) {
@@ -546,6 +572,7 @@ func TestRESTCacheProcesses(t *testing.T) {
 				a := h.child(t, "A", false)
 				a.load(t)
 				h.entry(t, "A")
+				identity := h.slotIdentity(t)
 				b := h.child(t, "B", false)
 				b.load(t)
 				h.blocked(t, b)
@@ -560,12 +587,14 @@ func TestRESTCacheProcesses(t *testing.T) {
 				}
 				h.success(t, c)
 				h.disk(t, true)
+				h.assertSlotIdentity(t, identity)
 			})
 			t.Run("waiter_45_second_budget", func(t *testing.T) {
 				h := newRESTLoaderServer(t, loader, false)
 				a := h.child(t, "A", true)
 				a.load(t)
 				h.entry(t, "A")
+				identity := h.slotIdentity(t)
 				b := h.child(t, "B", false)
 				started := time.Now()
 				b.load(t)
@@ -587,6 +616,7 @@ func TestRESTCacheProcesses(t *testing.T) {
 				}
 				h.success(t, c)
 				h.disk(t, true)
+				h.assertSlotIdentity(t, identity)
 			})
 		})
 	}

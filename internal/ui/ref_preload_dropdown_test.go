@@ -28,15 +28,15 @@ func TestReferencePreloadOnFormOpenHTTP(t *testing.T) {
 	for _, tc := range []struct {
 		name                                      string
 		managed, present, dropdown, scoped, empty bool
-		wantOptions, maxReads                     int
+		wantOptions                               int
 	}{
-		{name: "dropdown", managed: true, present: true, dropdown: true, wantOptions: 8, maxReads: 16},
-		{name: "collapsed", managed: true, present: true, wantOptions: 1, maxReads: 1},
-		{name: "collapsed_empty", managed: true, present: true, empty: true, maxReads: 0},
-		{name: "outside_form", managed: true, dropdown: true, maxReads: 1},
-		{name: "scoped", managed: true, present: true, dropdown: true, scoped: true, wantOptions: 2, maxReads: 5},
-		{name: "automatic", present: true, dropdown: true, wantOptions: 8, maxReads: 16},
-		{name: "automatic_empty", present: true, dropdown: true, empty: true, wantOptions: 8, maxReads: 16},
+		{name: "dropdown", managed: true, present: true, dropdown: true, wantOptions: 8},
+		{name: "collapsed", managed: true, present: true, wantOptions: 1},
+		{name: "collapsed_empty", managed: true, present: true, empty: true},
+		{name: "outside_form", managed: true, dropdown: true},
+		{name: "scoped", managed: true, present: true, dropdown: true, scoped: true, wantOptions: 2},
+		{name: "automatic", present: true, dropdown: true, wantOptions: 8},
+		{name: "automatic_empty", present: true, dropdown: true, empty: true, wantOptions: 8},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
@@ -95,8 +95,9 @@ func TestReferencePreloadOnFormOpenHTTP(t *testing.T) {
 
 			// View сохраняет схему и данные и добавляет наблюдение только при
 			// фактическом чтении Наименование. Поиск по id читает одну подпись,
-			// общая страница читает восемь строк, scoped-страница — две.
-			// SQLite вычисляет имя дважды: в SELECT и в ORDER BY.
+			// общая страница возвращает восемь строк, scoped-страница — две.
+			// Число вычислений view зависит от SQL-плана, а не только от числа
+			// строк: один List может исполнять несколько SELECT и COUNT.
 			columns, err := db.QueryAll(ctx, `PRAGMA table_info("товары")`)
 			if err != nil {
 				t.Fatal(err)
@@ -117,6 +118,31 @@ func TestReferencePreloadOnFormOpenHTTP(t *testing.T) {
 			if _, err := db.Exec(ctx, `CREATE VIEW "товары" AS SELECT `+strings.Join(projection, ",")+` FROM "preload_rows"`); err != nil {
 				t.Fatal(err)
 			}
+			// Калибруем ровно один разрешённый публичный List на той же fixture.
+			// У цели нет owner/activity/RLS; UI исключает группы, ограничивает
+			// страницу и для scoped добавляет только Доступен = true.
+			params := storage.ListParams{Limit: refPickerDefaultLimit, ExcludeFolders: true}
+			if tc.scoped {
+				params.ChoicePredicates = []storage.ChoicePredicate{{Field: "Доступен", Op: metadata.FormChoiceOpEqual, Value: true}}
+			}
+			maxReads := int64(0)
+			if tc.present && tc.dropdown {
+				reads.Store(0)
+				rows, err := db.List(ctx, target.Name, target, params)
+				if err != nil {
+					t.Fatal(err)
+				}
+				maxReads = reads.Load()
+				if len(rows) != tc.wantOptions || maxReads == 0 {
+					t.Fatalf("List calibration: rows=%d, reads=%d", len(rows), maxReads)
+				}
+			}
+			// Collapsed/outside_form читают только выбранную подпись по id.
+			// Scoped сначала сохраняет эту подпись, затем получает scoped-список.
+			// Обычный dropdown уже содержит выбранную строку, добавлять её не надо.
+			if !tc.empty && (!tc.present || !tc.dropdown || tc.scoped) {
+				maxReads++
+			}
 			reg := runtime.NewRegistry()
 			reg.Load(runtime.LoadOptions{Entities: entities})
 			server := &Server{reg: reg, store: db}
@@ -131,11 +157,30 @@ func TestReferencePreloadOnFormOpenHTTP(t *testing.T) {
 				t.Fatalf("form status=%d: %s", recorder.Code, recorder.Body.String())
 			}
 			gotReads := reads.Load()
-			if gotReads > int64(tc.maxReads) {
-				t.Errorf("read %d reference labels, want at most %d (unnecessary preload)", gotReads, tc.maxReads)
+			if gotReads > maxReads {
+				t.Errorf("read %d reference labels, want at most %d (unnecessary preload)", gotReads, maxReads)
 			}
-			if tc.maxReads > 0 && gotReads == 0 {
+			if maxReads > 0 && gotReads == 0 {
 				t.Error("probe did not observe reference reads")
+			}
+			t.Logf("HTTP label computations=%d, budget=%d", gotReads, maxReads)
+			// Отрицательный контроль: настоящий дополнительный List после GET
+			// обязан нарушить ту же границу, даже если UI выбросил его результат.
+			// Scoped отдельно проверяет и повтор scoped, и лишний общий список.
+			controls := []storage.ListParams{params}
+			if tc.scoped {
+				controls = append(controls, storage.ListParams{Limit: refPickerDefaultLimit, ExcludeFolders: true})
+			}
+			for i, extra := range controls {
+				reads.Store(gotReads)
+				if _, err := db.List(ctx, target.Name, target, extra); err != nil {
+					t.Fatal(err)
+				}
+				if withExtra := reads.Load(); withExtra <= maxReads {
+					t.Errorf("negative control %d: extra List reads=%d did not exceed budget=%d", i, withExtra, maxReads)
+				} else {
+					t.Logf("negative control %d: extra List reads=%d exceeds budget=%d", i, withExtra, maxReads)
+				}
 			}
 			document, err := html.Parse(strings.NewReader(recorder.Body.String()))
 			if err != nil {
@@ -166,14 +211,21 @@ func TestReferencePreloadOnFormOpenHTTP(t *testing.T) {
 					label = option.FirstChild.Data
 				}
 				options[id] = label
-				if id == selected.String() {
-					if _, ok := htmlAttribute(option, "selected"); ok {
-						selectedCount++
+				if _, ok := htmlAttribute(option, "selected"); ok {
+					selectedCount++
+					if id != selected.String() {
+						t.Errorf("unexpected selected option %s", id)
 					}
 				}
 			}
 			if len(options) != tc.wantOptions {
 				t.Fatalf("options=%v, want %d", options, tc.wantOptions)
+			}
+			for i := 1; i <= tc.wantOptions; i++ {
+				id := fmt.Sprintf("00000000-0000-0000-0000-%012d", i)
+				if options[id] != fmt.Sprintf("Товар %d", i) {
+					t.Errorf("option %s label=%q", id, options[id])
+				}
 			}
 			if !tc.empty && (options[selected.String()] != "Товар 1" || selectedCount != 1) {
 				t.Fatalf("selected label/value lost: %v, selected=%d", options, selectedCount)

@@ -135,3 +135,15 @@ func TestEnvironmentNote(t *testing.T) {
 		t.Error("generateAIGuide(envBlock) должно включать блок «Окружение»")
 	}
 }
+
+func TestAIGuideCommand_MailIdentifiers(t *testing.T) {
+	guide := runAIGuideCommand(t)
+	for _, want := range []string{"UIDVALIDITY:UID", "отдельно по протоколу, серверу, пользователю", "Старые числовые", "письма могут прийти повторно"} {
+		if !strings.Contains(guide, want) {
+			t.Errorf("generated guide missing mail contract %q", want)
+		}
+	}
+	if strings.Contains(guide, "POP3 и UID у IMAP") {
+		t.Error("generated guide retains obsolete IMAP identity")
+	}
+}

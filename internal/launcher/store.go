@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/fsmode"
+	"github.com/ivantit66/onebase/internal/userdata"
 	"gopkg.in/yaml.v3"
 )
 
@@ -83,11 +84,10 @@ func (e *BasePortConflictError) Error() string {
 }
 
 func NewStore() (*Store, error) {
-	home, err := os.UserHomeDir()
+	dir, err := userdata.Path()
 	if err != nil {
 		return nil, fmt.Errorf("launcher: home dir: %w", err)
 	}
-	dir := filepath.Join(home, ".onebase")
 	// 0700, а не 0755: каталог принадлежит одному пользователю — сервис,
 	// установленный через `onebase service install --user`, работает со своим
 	// HOME и сюда не заглядывает. Существующему каталогу MkdirAll права не
@@ -236,7 +236,23 @@ func decodeBaseNode(node *yaml.Node) (*Base, error) {
 	if err := node.Decode(&base); err != nil {
 		return nil, err
 	}
+	resolveBasePaths(&base)
 	return &base, nil
+}
+
+func resolveBasePaths(base *Base) {
+	base.Path = userdata.Resolve(base.Path)
+	base.DBPath = userdata.Resolve(base.DBPath)
+}
+
+func baseForStorePersistence(base *Base) *Base {
+	if base == nil {
+		return nil
+	}
+	copy := *base
+	copy.Path = userdata.StorePath(base.Path)
+	copy.DBPath = userdata.StorePath(base.DBPath)
+	return &copy
 }
 
 var managedBaseYAMLKeys = []string{
@@ -249,7 +265,7 @@ var managedBaseYAMLKeys = []string{
 // mapping instead of disappearing on an ordinary open/reorder/edit.
 func patchBaseNode(target *yaml.Node, base *Base) error {
 	var encoded yaml.Node
-	if err := encoded.Encode(base); err != nil {
+	if err := encoded.Encode(baseForStorePersistence(base)); err != nil {
 		return err
 	}
 	if encoded.Kind != yaml.MappingNode {
@@ -307,6 +323,11 @@ func decodeStoreBases(doc *yaml.Node) ([]*Base, error) {
 	if bases == nil {
 		bases = []*Base{}
 	}
+	for _, base := range bases {
+		if base != nil {
+			resolveBasePaths(base)
+		}
+	}
 	if err := validateStoreBases(bases); err != nil {
 		return nil, err
 	}
@@ -339,7 +360,11 @@ func setStoreBases(doc *yaml.Node, bases []*Base) error {
 		bases = []*Base{}
 	}
 	var value yaml.Node
-	if err := value.Encode(bases); err != nil {
+	portableBases := make([]*Base, 0, len(bases))
+	for _, base := range bases {
+		portableBases = append(portableBases, baseForStorePersistence(base))
+	}
+	if err := value.Encode(portableBases); err != nil {
 		return err
 	}
 	return setStoreMappingValue(root, "bases", &value)
@@ -746,7 +771,7 @@ func (s *Store) Add(b *Base) error {
 			}
 		}
 		var value yaml.Node
-		if err := value.Encode(b); err != nil {
+		if err := value.Encode(baseForStorePersistence(b)); err != nil {
 			return false, err
 		}
 		bases.Content = append(bases.Content, &value)
@@ -905,10 +930,9 @@ func (s *Store) Remove(id string) error {
 
 // OnebasePath returns the ~/.onebase directory path.
 func OnebasePath(sub ...string) (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := userdata.Path()
 	if err != nil {
 		return "", err
 	}
-	parts := append([]string{home, ".onebase"}, sub...)
-	return filepath.Join(parts...), nil
+	return filepath.Join(append([]string{dir}, sub...)...), nil
 }

@@ -338,3 +338,69 @@ func (l *postgresLease) Close() error {
 	// explicit unlock query could not be delivered because the connection died.
 	return conn.Close(ctx)
 }
+
+// AcquireSQLiteMigration serializes migrators independently of the lifetime
+// lease already held by ordinary consumers. It never replaces that lease.
+func AcquireSQLiteMigration(path string) (Lease, error) {
+	canonical, err := CanonicalSQLitePath(path)
+	if err != nil {
+		return nil, err
+	}
+	if isMemorySQLite(canonical) {
+		return noopLease{}, nil
+	}
+	if _, err := validatedSQLiteTargetParent(canonical); err != nil {
+		return nil, err
+	}
+	l, ok, err := tryAcquireFileLease(canonical+".onebase.migrate.lock", false)
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, ErrLocked
+	}
+	return l, nil
+}
+
+// AcquireSQLitePreviewTarget takes the normal exclusive lifetime lock without
+// creating a directory or lock file. Missing databases are planned in memory.
+func AcquireSQLitePreviewTarget(path string) (Lease, string, bool, error) {
+	canonical, err := CanonicalSQLitePath(path)
+	if err != nil {
+		return nil, "", false, err
+	}
+	if isMemorySQLite(canonical) {
+		return noopLease{}, canonical, false, nil
+	}
+	info, err := os.Stat(canonical)
+	if errors.Is(err, os.ErrNotExist) {
+		return noopLease{}, canonical, false, nil
+	}
+	if err != nil {
+		return nil, "", false, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, "", false, errors.New("preview database is not a regular file")
+	}
+	lockPath := canonical + ".onebase.lock"
+	before, err := os.Lstat(lockPath)
+	if err != nil {
+		return nil, "", false, fmt.Errorf("preview requires an existing lifetime lock file: %w", err)
+	}
+	if !before.Mode().IsRegular() {
+		return nil, "", false, errors.New("preview lock file is not a regular file")
+	}
+	lease, ok, err := tryAcquireFileLeaseMode(lockPath, false, false)
+	if err != nil {
+		return nil, "", false, err
+	}
+	if !ok {
+		return nil, "", false, ErrLocked
+	}
+	after, err := os.Stat(lockPath)
+	if err != nil || !os.SameFile(before, after) {
+		_ = lease.Close()
+		return nil, "", false, errors.New("preview lock file changed")
+	}
+	return lease, canonical, true, nil
+}

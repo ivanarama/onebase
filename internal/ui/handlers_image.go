@@ -131,6 +131,18 @@ func (s *Server) imageServe(w http.ResponseWriter, r *http.Request) {
 	// SVG со скриптом (загруженный до ужесточения проверки типа), при прямом
 	// открытии /image/{id} он будет инертен. На отрисовку через <img> не влияет.
 	w.Header().Set("Content-Disposition", "inline")
+	if r.URL.Query().Get("download") == "1" {
+		// Имя не зависит от пользовательских query/metadata. Доступ и поток
+		// остаются теми же, что при показе исходника через <img>.
+		ext := map[string]string{
+			"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif",
+			"image/webp": ".webp", "image/bmp": ".bmp", "image/x-icon": ".ico",
+		}[b.Mime]
+		if ext == "" {
+			ext = ".bin"
+		}
+		w.Header().Set("Content-Disposition", `attachment; filename="image-`+id.String()+ext+`"`)
+	}
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
 	// Ответ уже начат — статус не поменять. Картинка, дописанная наполовину,
 	// видна пользователю сразу, а причина обрыва почти всегда внешняя.

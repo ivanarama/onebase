@@ -2,8 +2,12 @@ package ui
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync/atomic"
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/project"
@@ -12,7 +16,7 @@ import (
 
 // runProfileTests собирает проект из набора тест-обработок (имя → код),
 // мигрирует :memory: и прогоняет их. Возвращает результат для проверок.
-func runProfileTests(t *testing.T, procs map[string]string) TestRunResult {
+func runProfileTests(t *testing.T, procs map[string]string, netEnabled ...bool) TestRunResult {
 	t.Helper()
 	dir := t.TempDir()
 	procDir := filepath.Join(dir, "processors")
@@ -47,6 +51,15 @@ func runProfileTests(t *testing.T, procs map[string]string) TestRunResult {
 		t.Fatalf("Migrate: %v", err)
 	}
 
+	if len(netEnabled) > 0 {
+		value := "0"
+		if netEnabled[0] {
+			value = "1"
+		}
+		if err := db.SaveSetting(ctx, "net.enabled", value); err != nil {
+			t.Fatal(err)
+		}
+	}
 	res, err := RunTests(ctx, proj, db, TestRunOptions{})
 	if err != nil {
 		t.Fatalf("RunTests: %v", err)
@@ -132,4 +145,51 @@ func TestProfile_HttpExecAiMocks(t *testing.T) {
 			"КонецПроцедуры\n",
 	})
 	requireCaseOK(t, res, "NetTest")
+}
+
+func TestProfile_ReceiveEmailsNeverConnects(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		t.Run(strconv.FormatBool(enabled), func(t *testing.T) {
+			ln, err := net.Listen("tcp", "127.0.0.1:0")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer ln.Close() //nolint:errcheck
+			var connections atomic.Int32
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				for {
+					conn, err := ln.Accept()
+					if err != nil {
+						return
+					}
+					connections.Add(1)
+					_ = conn.Close()
+				}
+			}()
+			host, port, _ := net.SplitHostPort(ln.Addr().String())
+			procs := map[string]string{}
+			for _, proto := range []string{"POP3", "IMAP"} {
+				for i, name := range []string{"ПолучитьПисьма", "ReceiveEmails"} {
+					procs[fmt.Sprintf("Receive%s%d", proto, i)] = fmt.Sprintf(`
+Процедура Выполнить()
+ Профиль = Новый Структура("Протокол, Сервер, Порт, Пользователь, Пароль, Защита, Таймаут", "%s", "%s", %s, "test", "test", "НЕТ", 1);
+ Письма = %s(Профиль, Новый Структура("ОтметитьПрочитанными", Истина));
+ Утверждать.Равно(Письма.Количество(), 0, "пустой ответ мока");
+КонецПроцедуры
+`, proto, host, port, name)
+				}
+			}
+			res := runProfileTests(t, procs, enabled)
+			_ = ln.Close()
+			<-done
+			if connections.Load() != 0 {
+				t.Errorf("реальных подключений: %d", connections.Load())
+			}
+			for name := range procs {
+				requireCaseOK(t, res, name)
+			}
+		})
+	}
 }

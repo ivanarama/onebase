@@ -1,0 +1,93 @@
+{
+  "schema": "pp-pr-identity-v1-golden",
+  "cases": [
+    {
+      "name": "same-repository",
+      "graphql": {
+        "id": "PR_NODE_42",
+        "number": 42,
+        "state": "OPEN",
+        "isDraft": false,
+        "baseRepository": {
+          "id": "R_BASE",
+          "nameWithOwner": "owner/repo"
+        },
+        "baseRefName": "main",
+        "baseRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "headRepository": {
+          "id": "R_BASE",
+          "nameWithOwner": "owner/repo"
+        },
+        "headRefName": "ветка/проверка",
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "isCrossRepository": false
+      },
+      "rest": {
+        "node_id": "PR_NODE_42",
+        "number": 42,
+        "base": {
+          "repo": {
+            "node_id": "R_BASE",
+            "full_name": "owner/repo"
+          },
+          "ref": "main",
+          "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "head": {
+          "repo": {
+            "node_id": "R_BASE",
+            "full_name": "owner/repo"
+          },
+          "ref": "ветка/проверка",
+          "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "canonical_utf8_hex": "70702d70722d6964656e746974792d76310a626173652d7265706f7369746f72792d69643d525f424153450a626173652d7265706f7369746f72793d6f776e65722f7265706f0a626173652d7265663d6d61696e0a70722d69643d50525f4e4f44455f34320a70722d6e756d6265723d34320a686561642d7265706f7369746f72792d69643d525f424153450a686561642d7265706f7369746f72793d6f776e65722f7265706f0a686561642d7265663dd0b2d0b5d182d0bad0b02fd0bfd180d0bed0b2d0b5d180d0bad0b00a686561642d7368613d616161616161616161616161616161616161616161616161616161616161616161616161616161610a63726f73732d7265706f7369746f72793d66616c73650a",
+      "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce"
+    },
+    {
+      "name": "fork",
+      "graphql": {
+        "id": "PR_NODE_42",
+        "number": 42,
+        "state": "OPEN",
+        "isDraft": false,
+        "baseRepository": {
+          "id": "R_BASE",
+          "nameWithOwner": "owner/repo"
+        },
+        "baseRefName": "main",
+        "baseRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "headRepository": {
+          "id": "R_FORK",
+          "nameWithOwner": "contributor/repo"
+        },
+        "headRefName": "ветка/проверка",
+        "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "isCrossRepository": true
+      },
+      "rest": {
+        "node_id": "PR_NODE_42",
+        "number": 42,
+        "base": {
+          "repo": {
+            "node_id": "R_BASE",
+            "full_name": "owner/repo"
+          },
+          "ref": "main",
+          "sha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "head": {
+          "repo": {
+            "node_id": "R_FORK",
+            "full_name": "contributor/repo"
+          },
+          "ref": "ветка/проверка",
+          "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      },
+      "canonical_utf8_hex": "70702d70722d6964656e746974792d76310a626173652d7265706f7369746f72792d69643d525f424153450a626173652d7265706f7369746f72793d6f776e65722f7265706f0a626173652d7265663d6d61696e0a70722d69643d50525f4e4f44455f34320a70722d6e756d6265723d34320a686561642d7265706f7369746f72792d69643d525f464f524b0a686561642d7265706f7369746f72793d636f6e7472696275746f722f7265706f0a686561642d7265663dd0b2d0b5d182d0bad0b02fd0bfd180d0bed0b2d0b5d180d0bad0b00a686561642d7368613d616161616161616161616161616161616161616161616161616161616161616161616161616161610a63726f73732d7265706f7369746f72793d747275650a",
+      "identity_sha256": "7589b90bb912cde60adb2ae6b8f9466a8ea4551c256b759e549c976a156a6dc8"
+    }
+  ]
+}

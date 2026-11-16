@@ -17,6 +17,12 @@ import (
 // no-op). Для авторизованного пользователя пишется персональный режим.
 func (s *Server) setFormMode(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, defaultFormMemoryBytes)
+	// Режим закреплён администратором: переключатель скрыт, и обойти его
+	// прямым запросом нельзя — иначе закрепление держалось бы на разметке.
+	if s.store.GetFormOpenModeLocked(r.Context()) {
+		http.Error(w, "режим открытия форм закреплён администратором", http.StatusForbidden)
+		return
+	}
 	mode := r.FormValue("mode")
 	login := currentUserLogin(r)
 	var err error

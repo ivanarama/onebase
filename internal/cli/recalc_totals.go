@@ -64,6 +64,11 @@ func runRecalcTotals(cmd *cobra.Command, _ []string) error {
 	}
 	defer proj.Close()
 
+	// Check all object kinds before the first application-table ALTER.
+	if err := db.CheckLongIdents(ctx, proj.Entities, proj.Registers, proj.InfoRegisters, proj.AccountRegisters); err != nil {
+		return fmt.Errorf("long identifiers: %w", err)
+	}
+
 	// Итоговые таблицы должны существовать (на случай первого запуска).
 	if err := db.MigrateRegisters(ctx, proj.Registers); err != nil {
 		return fmt.Errorf("migrate registers: %w", err)

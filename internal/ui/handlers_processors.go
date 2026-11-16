@@ -564,6 +564,7 @@ var processorServiceFields = []string{
 	"_pick_result",
 	"_pick_query",
 	"_pick_fields",
+	"_question_fields",
 	"_tp",
 	"_tp_selected",
 	"_tp_row",
@@ -640,6 +641,7 @@ func processorAllocatedAuxiliaryParamName(params []processorpkg.Param, prefix, n
 // себе ничего не доказывают: такие имена разрешены у обычных параметров.
 type processorRequestControls struct {
 	paramFields      map[string][]string
+	formAttrFields   map[string][]string
 	fileInputs       map[string][]string
 	boolPresence     map[string][]string
 	fileContent      map[string][]string
@@ -661,6 +663,7 @@ func processorRequestControlsForForm(proc *processorpkg.Processor, form *metadat
 	}
 	controls := processorRequestControls{
 		paramFields:      make(map[string][]string),
+		formAttrFields:   make(map[string][]string),
 		fileInputs:       make(map[string][]string),
 		boolPresence:     make(map[string][]string),
 		fileContent:      make(map[string][]string),
@@ -699,6 +702,15 @@ func processorRequestControlsForForm(proc *processorpkg.Processor, form *metadat
 		fieldName := dpFieldName(el.DataPath)
 		p, ok := paramsByName[strings.ToLower(fieldName)]
 		if !ok {
+			// Only declared scalar attributes with an editable browser control
+			// may carry state. Parameters retain their existing conversion path;
+			// main attributes and service/helper names are never client state.
+			attr := findScalarFormAttribute(form, fieldName)
+			if attr == nil || attr.MainAttribute || entityServiceFieldName(attr.Name) || strings.HasPrefix(attr.Name, "_") {
+				return
+			}
+			key := strings.ToLower(attr.Name)
+			controls.formAttrFields[key] = appendUniqueProcessorControl(controls.formAttrFields[key], fieldName)
 			return
 		}
 		paramKey := strings.ToLower(p.Name)
@@ -893,7 +905,7 @@ func processorControlText(r *http.Request, allowed []string) (string, bool) {
 }
 
 // processorFormObjectFromRequest builds the object visible to a bound .form.os
-// handler from the same validated parameter values as the processor call. It
+// handler from validated parameters and editable scalar form-attribute controls. It
 // deliberately does not use buildObjectFromForm: that generic entity helper
 // reads r.FormValue and therefore accepts query values and every entity field,
 // including controls which this processor form did not render as editable.
@@ -907,6 +919,16 @@ func processorFormObjectFromRequest(
 	fields := make(map[string]any, len(paramValues))
 	for name, value := range paramValues {
 		fields[name] = value
+	}
+	if form != nil {
+		for _, attr := range form.Attributes {
+			if !formAttrIsScalar(attr) {
+				continue
+			}
+			if raw, present := processorControlText(r, controls.formAttrFields[strings.ToLower(attr.Name)]); present {
+				fields[attr.Name] = typeFormAttrValue(attr.TypeRef, raw)
+			}
+		}
 	}
 	rows, err := processorFormTableRowsFromRequest(r, entity, form, controls.formTables)
 	if err != nil {

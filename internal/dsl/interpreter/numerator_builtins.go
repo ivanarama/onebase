@@ -94,28 +94,28 @@ func (r *NumeratorsRoot) nextNumber(args []any) any {
 			fields["дата"] = d
 		case map[string]any:
 			for k, value := range v {
-				fields[k] = unwrapRef(value)
+				fields[k] = unwrapRef(value, false)
 			}
 		case *MapThis:
 			if v != nil {
 				for k, value := range v.M {
-					fields[k] = unwrapRef(value)
+					fields[k] = unwrapRef(value, false)
 				}
 			}
 		case *Struct:
 			if v != nil {
 				for _, k := range v.Fields() {
-					fields[k] = unwrapRef(v.Get(k))
+					fields[k] = unwrapRef(v.Get(k), false)
 				}
 			}
 		default:
-			explicitScope = unwrapRef(v)
+			explicitScope = unwrapRef(v, false)
 		}
 	}
 	if entity.Numerator != nil {
 		num := entity.Numerator
 		if len(args) >= 3 {
-			explicitScope = unwrapRef(args[2])
+			explicitScope = unwrapRef(args[2], false)
 		}
 		if num.Scope != "" {
 			hasScope := false

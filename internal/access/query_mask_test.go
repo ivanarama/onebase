@@ -1,6 +1,7 @@
 package access_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/ivantit66/onebase/internal/access"
@@ -60,11 +61,54 @@ func TestQueryMaskPlan_DeniesFilterGroupAndAggregate(t *testing.T) {
 		`ВЫБРАТЬ Адрес ИЗ Справочник.Клиент ГДЕ Телефон = "+79161234455"`,
 		`ВЫБРАТЬ Телефон, КОЛИЧЕСТВО(Возраст) КАК К ИЗ Справочник.Клиент СГРУППИРОВАТЬ ПО Телефон`,
 		`ВЫБРАТЬ МАКСИМУМ(Телефон) КАК М ИЗ Справочник.Клиент`,
+		`ВЫБРАТЬ (Телефон) ИЗ Справочник.Клиент`,
+		`ВЫБРАТЬ (((К.Телефон))) КАК Контакт ИЗ Справочник.Клиент КАК К`,
 		`ВЫБРАТЬ Адрес ИЗ Справочник.Клиент УПОРЯДОЧИТЬ ПО Телефон`,
 	} {
 		if plan := access.QueryMaskPlanFor(u, compileForMask(t, src), lookupClient); plan.Denied == "" {
 			t.Fatalf("%s: защищённое поле вне простой колонки должно отклонять запрос", src)
 		}
+	}
+}
+
+// ALL and DISTINCT belong to SELECT, so the first protected field must still
+// reach the same masking and filter-denial path as an ordinary projection.
+func TestQueryMaskPlan_SelectModifiersKeepNestedDenial(t *testing.T) {
+	u := maskUser(auth.FieldPolicies{"Телефон": {Read: "mask_tail", Keep: 4}})
+	for _, prefix := range []string{"ВЫБРАТЬ ВСЕ", "SELECT ALL", "ВЫБРАТЬ РАЗЛИЧНЫЕ", "SELECT DISTINCT"} {
+		t.Run(prefix, func(t *testing.T) {
+			for _, suffix := range []string{"", ` ГДЕ Телефон = "+79161234455"`} {
+				src := prefix + " Телефон КАК Контакт ИЗ Справочник.Клиент" + suffix
+				plan := access.QueryMaskPlanFor(u, compileForMask(t, src), lookupClient)
+				if suffix != "" {
+					if plan.Denied == "" {
+						t.Fatal("protected filter must remain denied")
+					}
+					continue
+				}
+				if plan.Denied != "" {
+					t.Fatal(plan.Denied)
+				}
+				rows := []map[string]any{{"контакт": "+79161234455"}}
+				if err := plan.Apply(rows); err != nil {
+					t.Fatal(err)
+				}
+				if rows[0]["контакт"] != "••••••••4455" {
+					t.Fatalf("first field was not masked: %v", rows)
+				}
+			}
+			// A modifier in the outer scope must not turn a protected nested
+			// expression or UNION into a simple, maskable projection.
+			for _, src := range []string{
+				`ВЫБРАТЬ Телефон ИЗ Справочник.Клиент ОБЪЕДИНИТЬ ВСЕ ВЫБРАТЬ Адрес ИЗ Справочник.Клиент`,
+				`ВЫБРАТЬ Телефон ИЗ Справочник.Клиент ГДЕ Телефон В (ВЫБРАТЬ Телефон ИЗ Справочник.Клиент)`,
+			} {
+				src = strings.ReplaceAll(src, "ВЫБРАТЬ", prefix)
+				if plan := access.QueryMaskPlanFor(u, compileForMask(t, src), lookupClient); plan.Denied == "" {
+					t.Fatal("complex protected query must remain denied")
+				}
+			}
+		})
 	}
 }
 
