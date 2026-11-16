@@ -74,3 +74,33 @@ metadata/policy проверками; PG/native общая приёмка. Sourc
 ENG06 runtime пока HOLD. Основные native выражения/литералы, не имеющие доказанного
 compiler типа/lineage, сейчас отклоняются; это намеренный предел первого ядра.
 Сложные исходные A004/A005 этим тестом ещё не объявляются принятыми.
+
+
+## Зарегистрированное определение (следующий source-срез)
+
+Модель `report.RowSourceDefinition` содержит фиксированную `procedure` и до32
+`columns: [{name: Работы, type: string}]` в `row_source`. Допустимы только scalar
+string/number/bool/date/datetime; reference extra и internal/повторные имена
+отклоняются. `onebase check` и YAML lint проверяют форму определения.
+
+`rowsource.RunRegistered(ctx, db, registry, canonicalReportName, initialQuery,
+trustedCodeLookup)` выбирает entry/extra schema из текущего зарегистрированного
+отчёта. Loader получает каноническое имя этого отчёта и читает только его `.rep.os`.
+External reports в этом первом профиле отклоняются до loader: им нужен отдельный
+доказанный источник модуля. Loader является доверенным host loader, не callback из request/DSL. Код не берётся из
+preset/запроса/возвращаемого descriptor. report.run и корректность metadata
+проверяются до loader; ошибки/cancel/reload не дают частичного результата. Схема
+копируется до загрузки, а private expected generation проверяется при входе Run
+и затем обычной end-of-execution проверкой. Изменение роли после загрузки тоже
+повторно проверяет Run. Все kernel read/RLS/ordinary field/report gates прежние.
+
+InitialQuery обязан поступать от host после выбора доверенного варианта B30 и
+нормализации типов объявленных параметров. Этот helper не принимает клиентский
+SQL как trusted variant и сам не реализует B30 variant.Query. CodeLookup обязан
+уважать context и быть ограниченным loader конфигурации, не общий module runner.
+
+Это API и metadata source-срез. **Существующие HTTP/API/export/background handlers
+на него ещё не переключены, runtime SDK с работающим row_source не опубликован.**
+Одно добавление YAML ключа не запускает enrichment текущим бинарником. Конфиги
+A004/A005 не менялись. Подключение к обычному compose и общему output/snapshot
+контракту остаётся отдельной дельтой после совместимого B30/ENG06/ENG16.

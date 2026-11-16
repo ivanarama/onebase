@@ -73,10 +73,17 @@ type execution struct {
 // Query/guard callback that could silently bypass RLS or mandatory report policy.
 // No partial result is returned on any budget, policy, schema or identity error.
 func Run(ctx context.Context, db *storage.DB, reg *runtime.Registry, initial Query, src Source) (*Result, error) {
+	return runWithGeneration(ctx, db, reg, initial, src, nil)
+}
+
+func runWithGeneration(ctx context.Context, db *storage.DB, reg *runtime.Registry, initial Query, src Source, expectedGeneration *uint64) (*Result, error) {
 	if db == nil || reg == nil {
 		return nil, fmt.Errorf("row source: неизвестный отчёт")
 	}
 	generation := reg.Generation()
+	if expectedGeneration != nil && generation != *expectedGeneration {
+		return nil, fmt.Errorf("row source: конфигурация изменилась после выбора источника")
+	}
 	if reg.GetReport(src.Report) == nil {
 		return nil, fmt.Errorf("row source: неизвестный отчёт")
 	}

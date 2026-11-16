@@ -855,6 +855,9 @@ func CheckReportComposition(proj *project.Project) []Issue {
 		}
 	}
 	for _, rep := range proj.Reports {
+		for _, msg := range rep.RowSource.Errors() {
+			add(rep.Name, msg)
+		}
 		checkComp(rep.Name, "", rep.Composition)
 		for _, v := range rep.Variants {
 			checkComp(rep.Name, "вариант \""+v.Name+"\": ", v.Composition)
