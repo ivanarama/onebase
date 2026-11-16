@@ -65,11 +65,11 @@ func QueryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name str
 }
 
 func queryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name string) *metadata.Entity, reportOutput bool) QueryMaskPlan {
-	if reportOutput {
-		for _, src := range res.Sources {
-			if sourceMeta(src.Kind, src.Name, src.TablePart, lookup) == nil {
-				return QueryMaskPlan{Denied: src.Name}
-			}
+	// An unresolved source cannot prove the absence of default PII, including
+	// in ordinary DSL/card queries. Never turn ambiguous metadata into no mask.
+	for _, src := range res.Sources {
+		if sourceMeta(src.Kind, src.Name, src.TablePart, lookup) == nil {
+			return QueryMaskPlan{Denied: src.Name}
 		}
 	}
 	masked, columns, fieldColumns := maskedSourceFieldsWithOutput(u, res.Sources, lookup, reportOutput)
