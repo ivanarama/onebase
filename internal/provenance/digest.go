@@ -28,6 +28,9 @@ func inputsSupported(values []any) bool {
 		if nodes > 65536 || depth > 32 {
 			return false
 		}
+		if value != nil && !inputTypeAllowed(reflect.TypeOf(value), 0) {
+			return false
+		}
 		switch value.(type) {
 		case nil, bool, string, int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64, []byte, time.Time, uuid.UUID, decimal.Decimal:
 			return true
@@ -78,6 +81,9 @@ type encoder struct {
 
 func typedDigest(value any) ([32]byte, bool) {
 	e := encoder{h: sha256.New()}
+	if !e.text("onebase/provenance/v2") {
+		return [32]byte{}, false
+	}
 	if !e.value(reflect.ValueOf(value), 0) {
 		return [32]byte{}, false
 	}
@@ -110,7 +116,7 @@ func (e *encoder) value(v reflect.Value, depth int) bool {
 	if !v.IsValid() {
 		return e.text("untyped-nil")
 	}
-	if !e.text(v.Type().PkgPath() + ":" + v.Type().String()) {
+	if !e.typeIdentity(v.Type(), 0) {
 		return false
 	}
 	if v.CanInterface() {
