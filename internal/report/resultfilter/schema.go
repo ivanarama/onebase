@@ -16,6 +16,7 @@ type Lookup func(kind, name string) *metadata.Entity
 type Allowed func(source query.SourceRef, meta *metadata.Entity, field string, uuid bool) bool
 
 type Field struct {
+	Values      []string        `json:"values,omitempty"`
 	Name        string          `json:"name"`
 	Type        string          `json:"type"`
 	RefEntity   string          `json:"ref_entity,omitempty"`

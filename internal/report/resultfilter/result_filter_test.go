@@ -98,7 +98,7 @@ func TestReportResultFilterPublicSchemaAndValidation(t *testing.T) {
 	}
 	allowed := func(query.SourceRef, *metadata.Entity, string, bool) bool { return true }
 	for _, src := range []string{
-		"??????? ?????? 1 ?.Title ??? alias ?? ??????????.FilterProbe ??? ?",
+		"ВЫБРАТЬ ПЕРВЫЕ 1 П.Title КАК alias ИЗ Справочник.FilterProbe КАК П",
 		"ВЫБРАТЬ П.Title КАК alias, П.Amount КАК alias ИЗ Справочник.FilterProbe КАК П",
 		"ВЫБРАТЬ П.Title КАК alias, П.Amount+1 КАК alias ИЗ Справочник.FilterProbe КАК П",
 		"ВЫБРАТЬ П.* ИЗ Справочник.FilterProbe КАК П",
