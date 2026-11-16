@@ -214,6 +214,7 @@ type capturedExecution struct {
 	initial    Query
 	source     Source
 	generation uint64
+	subset     []string
 }
 
 // Return an immutable host execution selection only after the complete current
@@ -272,7 +273,7 @@ func (f *InputFrame) revalidatedExecution(ctx context.Context, db *storage.DB, r
 	for _, col := range rep.RowSource.Columns {
 		src.Extras = append(src.Extras, Extra{Name: col.Name, Type: col.Type})
 	}
-	return &capturedExecution{initial: Query{Text: rep.Query, Params: params}, source: src, generation: id.Generation}, nil
+	return &capturedExecution{initial: Query{Text: rep.Query, Params: params}, source: src, generation: id.Generation, subset: cloneInputSubset(rep.RowSource.Inputs)}, nil
 }
 
 func captureVariant(rep *report.Report, request, preset *string) (string, inputBinding, error) {

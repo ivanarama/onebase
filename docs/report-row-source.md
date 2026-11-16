@@ -195,3 +195,31 @@ lineage and masked-original/minimal-DSL channels remain pending. It does not
 inject input values, effectiveFilters or ambient globals into DSL, activate a
 report handler, or enable additional SQL/native expressions. Source-main variants
 still share the canonical report query; B30 per-variant adaptation is separate.
+
+### Explicit initial DSL input subset (source only)
+
+Trusted `row_source.inputs: [Request, Note]` selects 1..128 unique initial result
+columns for DSL. Names select from the existing strict compiler-proven schema;
+they do not prove source lineage, type or authority. Every original output column
+still passes the unchanged all-column schema/read/RLS/ordinary/mandatory policy
+before SQL. Protected, unknown expression or unknown reference output still STOP,
+even when excluded from the DSL subset. This is data minimization, not a new ACL.
+
+RunRegistered and RunCapturedInputs copy that selection and construct fresh DSL
+structures containing only its typed columns and their compiler-proven aliases.
+The other proven originals remain host-side. Exact private row identity/order is
+checked after DSL; the output is rebuilt from host originals plus typed extras.
+An injected excluded original is rejected. Repeated UUIDs remain separate rows.
+The full original output retains its previous driver/value representation for
+ordinary compose; the DSL typed scalar codec remains unchanged.
+
+Omitting `inputs` preserves the earlier all-proven-columns source kernel behavior;
+explicit empty, duplicate/internal/unknown names reject. The explicit subset is
+bound by captured metadata identity. Additional Query projections still pass the
+same strict independent schema checks and are not granted access to masked data.
+YAML/check validate definition shape; actual column membership/type/lineage are
+validated by the runtime compile boundary, not by a name in this list.
+
+This slice does not enable protected masked/native passthrough. SQL literal1,
+DateDiff, bare reference presentation and protected Address require their separate
+compiler/owner proofs and remain STOP. No current app config/handler/SDK is wired.

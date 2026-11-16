@@ -508,7 +508,7 @@ func reportYAMLSchema() *yamlLintSchema {
 		"chart":       obj("type", "category", "series"),
 	})
 	return with(obj("name", "title", "query", "chart_proc", "output_format"), map[string]*yamlLintSchema{
-		"row_source": with(obj("procedure"), map[string]*yamlLintSchema{"columns": seq(obj("name", "type"))}),
+		"row_source": with(obj("procedure"), map[string]*yamlLintSchema{"columns": seq(obj("name", "type")), "inputs": seq(nil)}),
 		"titles":     freeMap(),
 		// У отчёта «required» НЕТ намеренно: report.Param такого поля не знает,
 		// и разрешённый линтом ключ молча ничего бы не делал. Обязательность

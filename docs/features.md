@@ -8839,3 +8839,15 @@ literal node и динамический query text, сохраняя обяза
 Это inputs-only фундамент для разработчика, без final schema/allow, новой DSL
 переменной или готового runtime SDK. Все текущие unknown/protected input STOP,
 ограничения native A004/A005 и общий ENG06 integration HOLD сохраняются.
+
+## Явные входные колонки преобразователя строк отчёта
+<!-- status: testing -->
+<!-- date: 2026-11-16 -->
+
+Source API `row_source.inputs: [Request, Note]` оставляет DSL только выбранные
+колонки из уже доказанной безопасной схемы; остальные originals остаются у host
+и возвращаются в обычный compose с сохранением порядка/дубликатов/значений.
+Неизвестная lineage и защищённые original колонки по-прежнему отклоняются.
+Без inputs сохраняется прежний source kernel профиль. Это пока отдельный source
+срез: существующие UI/API/background handlers и SDK не подключены, native
+A004/A005 с literal1/DateDiff/protected Address им не объявляются готовыми.

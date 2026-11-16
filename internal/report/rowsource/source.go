@@ -81,6 +81,10 @@ func Run(ctx context.Context, db *storage.DB, reg *runtime.Registry, initial Que
 }
 
 func runWithGeneration(ctx context.Context, db *storage.DB, reg *runtime.Registry, initial Query, src Source, expectedGeneration *uint64) (*Result, error) {
+	return runWithInputSubset(ctx, db, reg, initial, src, expectedGeneration, nil)
+}
+
+func runWithInputSubset(ctx context.Context, db *storage.DB, reg *runtime.Registry, initial Query, src Source, expectedGeneration *uint64, subset []string) (*Result, error) {
 	if db == nil || reg == nil {
 		return nil, fmt.Errorf("row source: неизвестный отчёт")
 	}
@@ -130,9 +134,19 @@ func runWithGeneration(ctx context.Context, db *storage.DB, reg *runtime.Registr
 			return nil, fmt.Errorf("row source: добавленное поле пересекается с DSL именем исходного поля")
 		}
 	}
+	dslFields, err := selectDSLFields(fields, subset)
+	if err != nil {
+		return nil, err
+	}
 	rows, values, baseline, err := e.dataset(ctx, compiled)
 	if err != nil {
 		return nil, err
+	}
+	if subset != nil {
+		values, baseline, err = minimalInputRows(rows, dslFields, e.reg, inputAliases(compiled, dslFields))
+		if err != nil {
+			return nil, err
+		}
 	}
 	// New interpreter with no runtime/common-module lookup, ambient globals,
 	// object managers, message callbacks, attachments, transactions or secrets.
@@ -161,7 +175,7 @@ func runWithGeneration(ctx context.Context, db *storage.DB, reg *runtime.Registr
 	if reg.Generation() != generation {
 		return nil, fmt.Errorf("row source: конфигурация изменилась во время выполнения")
 	}
-	output, err := outputRows(returned, rows, baseline, fields, src.Extras)
+	output, err := outputRows(returned, rows, baseline, dslFields, src.Extras)
 	if err != nil {
 		return nil, err
 	}

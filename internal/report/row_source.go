@@ -9,8 +9,11 @@ import (
 // trusted .rep.os module. It is separate from a ready-TabDoc result procedure.
 // HTTP/runtime integration is deliberately not implied by this metadata model.
 type RowSourceDefinition struct {
-	Procedure string            `yaml:"procedure"`
-	Columns   []RowSourceColumn `yaml:"columns"`
+	Procedure string `yaml:"procedure"`
+	// Inputs is a trusted explicit DSL subset of already proven initial columns.
+	// nil preserves the legacy all-proven-columns kernel contract.
+	Inputs  []string          `yaml:"inputs,omitempty"`
+	Columns []RowSourceColumn `yaml:"columns"`
 }
 type RowSourceColumn struct {
 	Name string `yaml:"name"`
@@ -27,6 +30,19 @@ func (d *RowSourceDefinition) Errors() []string {
 	}
 	if len(d.Columns) == 0 || len(d.Columns) > 32 {
 		out = append(out, "источник строк: требуется от 1 до 32 добавленных колонок")
+	}
+	if d.Inputs != nil {
+		if len(d.Inputs) == 0 || len(d.Inputs) > 128 {
+			out = append(out, "источник строк: требуется от 1 до 128 входных колонок")
+		}
+		inputNames := map[string]bool{}
+		for _, name := range d.Inputs {
+			key := strings.ToLower(name)
+			if !rowSourceName(name) || inputNames[key] {
+				out = append(out, "источник строк: неверное или повторное имя входной колонки")
+			}
+			inputNames[key] = true
+		}
 	}
 	seen := map[string]bool{}
 	for _, c := range d.Columns {

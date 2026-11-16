@@ -21,7 +21,7 @@ func RunCapturedInputs(ctx context.Context, db *storage.DB, reg *runtime.Registr
 	if err != nil {
 		return nil, err
 	}
-	result, err := runWithGeneration(ctx, db, reg, selected.initial, selected.source, &selected.generation)
+	result, err := runWithInputSubset(ctx, db, reg, selected.initial, selected.source, &selected.generation, selected.subset)
 	if err != nil {
 		return nil, err
 	}

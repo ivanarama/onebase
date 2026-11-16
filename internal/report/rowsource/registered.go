@@ -44,6 +44,7 @@ func RunRegistered(ctx context.Context, db *storage.DB, reg *runtime.Registry, n
 	// Copy before calling the host loader. A registry replacement during loading
 	// must invalidate this exact definition rather than mix old entry/schema and
 	// new RLS/metadata. Run checks this generation again, closing the handoff race.
+	subset := cloneInputSubset(rep.RowSource.Inputs)
 	src := Source{Report: rep.Name, Entry: rep.RowSource.Procedure}
 	for _, c := range rep.RowSource.Columns {
 		src.Extras = append(src.Extras, Extra{Name: c.Name, Type: c.Type})
@@ -56,5 +57,5 @@ func RunRegistered(ctx context.Context, db *storage.DB, reg *runtime.Registry, n
 		return nil, err
 	}
 	src.Code = code
-	return runWithGeneration(ctx, db, reg, initial, src, &generation)
+	return runWithInputSubset(ctx, db, reg, initial, src, &generation, subset)
 }

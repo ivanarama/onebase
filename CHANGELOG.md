@@ -27,6 +27,8 @@
 
 ## Не выпущено
 
+- Source-only row_source.inputs selects an explicit DSL subset of already proven initial columns; other safe originals stay host-side and retain order/types. Omitted inputs preserves the earlier source contract; protected/unknown originals remain rejected and no current report handler is enabled.
+
 - Source-only row_source: RunCapturedInputs validates the private host input frame before and after kernel execution; stale identity returns no result. This adds no handler wiring, final-schema permission or persisted snapshot trust.
 
 - Source-only row_source: private Query.Text ledger binds actual assignments to AST sites and Query instances; matching strings never establish literal provenance. No runtime adapter or new report permission is enabled.
