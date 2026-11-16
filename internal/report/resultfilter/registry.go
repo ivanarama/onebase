@@ -1,10 +1,11 @@
 package resultfilter
 
 import (
+	"strings"
+
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
-	"strings"
 )
 
 // RegistryLookup is kind-aware. A catalog cannot lend its fields to a register

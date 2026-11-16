@@ -2,12 +2,13 @@ package ui
 
 import (
 	"context"
+	"net/http"
+
 	"github.com/ivantit66/onebase/internal/access"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/query"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/resultfilter"
-	"net/http"
 )
 
 func (s *Server) reportResultFilterFields(ctx context.Context, res query.Result) []resultfilter.Field {

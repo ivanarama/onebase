@@ -1,11 +1,12 @@
 package resultfilter
 
 import (
+	"strings"
+
 	"github.com/ivantit66/onebase/internal/access"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
-	"strings"
 )
 
 // ReportAllowed combines the mandatory report gate with ordinary object and

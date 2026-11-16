@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
+
 	"github.com/ivantit66/onebase/internal/query"
 	"github.com/ivantit66/onebase/internal/storage"
-	"time"
 )
 
 var ErrScanLimit = errors.New("отбор не завершён: превышен предел исходных строк; уточните параметры отчёта")

@@ -3,10 +3,11 @@
 package resultfilter
 
 import (
+	"strings"
+
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
 	"github.com/ivantit66/onebase/internal/typedempty"
-	"strings"
 )
 
 type Lookup func(kind, name string) *metadata.Entity

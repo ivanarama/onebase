@@ -2,8 +2,9 @@ package ui
 
 import (
 	_ "embed"
-	"github.com/go-chi/chi/v5"
 	"net/http"
+
+	"github.com/go-chi/chi/v5"
 )
 
 //go:embed static/report-result-filter.js

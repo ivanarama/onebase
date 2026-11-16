@@ -3,6 +3,9 @@ package resultfilter_test
 import (
 	"context"
 	"errors"
+	"testing"
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -11,8 +14,6 @@ import (
 	"github.com/ivantit66/onebase/internal/report/resultfilter"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/shopspring/decimal"
-	"testing"
-	"time"
 )
 
 func TestReportResultFilterBeforeLimitMatrix(t *testing.T) {
@@ -127,6 +128,7 @@ func TestReportResultFilterPublicSchemaAndValidation(t *testing.T) {
 		{reportpkg.Filter{Field: "s", Op: "is_null"}, map[string]any{"s": nil}, true},
 		{reportpkg.Filter{Field: "s", Op: "eq", Value: ""}, map[string]any{"s": ""}, true},
 		{reportpkg.Filter{Field: "s", Op: "contains", Value: "%_'"}, map[string]any{"s": "a%_'b"}, true},
+		{reportpkg.Filter{Field: "s", Op: "contains", Value: "ПрИвЕт"}, map[string]any{"s": "пример: ПРИВЕТ"}, true},
 	} {
 		p, err := resultfilter.New(fields, []reportpkg.Filter{tc.filter}, nil)
 		if err != nil {

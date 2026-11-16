@@ -2,13 +2,14 @@ package resultfilter
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/query"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/shopspring/decimal"
-	"strconv"
-	"strings"
-	"time"
 )
 
 const MaxConditions = 64
@@ -205,7 +206,7 @@ func (p *Plan) Match(row map[string]any) (bool, error) {
 				return false, fmt.Errorf("неверный строковый тип результата")
 			}
 			if c.op == "contains" {
-				if !strings.Contains(s, target) {
+				if !strings.Contains(strings.ToLower(s), strings.ToLower(target)) {
 					return false, nil
 				}
 				continue

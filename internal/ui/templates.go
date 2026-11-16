@@ -3058,6 +3058,7 @@ const tplReport = `
     <label style="display:flex;gap:6px;align-items:center;padding-bottom:8px"><input type="checkbox" name="__preset_default" value="1" {{if .ActivePreset}}{{if .ActivePreset.IsDefault}}checked{{end}}{{end}}> {{t $.Lang "по умолчанию"}}</label>
   </div>
   <input type="hidden" name="__settings" id="rs-json"{{if .ReportSettingsJSON}} value="{{.ReportSettingsJSON}}" data-base="{{.ReportSettingsJSON}}"{{else if .UserSettings}} value="{{.UserSettings.JSON}}" data-base="{{.UserSettings.JSON}}"{{end}}>
+{{if or .ReportHasComposition .Report.Composition}}
   <table style="width:auto;margin-bottom:12px">
     <thead><tr>
       <th style="text-align:left">{{t $.Lang "Поле"}}</th>
@@ -3072,6 +3073,7 @@ const tplReport = `
     </tr>{{end}}
     </tbody>
   </table>
+{{end}}
   <script type="application/json" id="report-result-filter-fields">{{jsJSON .ReportFilterFields}}</script>
  <script src="/static/report-result-filter.js" defer></script>
  <div class="rs-filters" style="margin:12px 0">
@@ -3115,6 +3117,7 @@ const tplReport = `
       <button type="button" class="btn btn-sm" data-ob-remove-row=".rs-filter-row">×</button>
     </div>
   </template>
+{{if or .ReportHasComposition .Report.Composition}}
   <div class="rs-appearance" style="margin:12px 0;display:flex;gap:16px;align-items:center;flex-wrap:wrap">
     <label>{{t $.Lang "Линии сетки"}}
       <select id="rs-lines" style="margin-left:6px">
@@ -3129,6 +3132,7 @@ const tplReport = `
       <input type="number" id="rs-collapse-to" min="0" step="1" placeholder="—" title="{{t $.Lang "Пусто — отчёт открывается развёрнутым; 0 — видны только группы верхнего уровня"}}" style="margin-left:6px;width:64px">
     </label>
   </div>
+{{end}}
   <div style="display:flex;gap:8px;flex-wrap:wrap">
     <button class="btn btn-primary" type="submit">{{t $.Lang "Применить"}}</button>
     <button class="btn" type="submit" name="__preset_action" value="save" formaction="/ui/report/{{lower .Report.Name}}/settings/save">{{t $.Lang "Сохранить вариант"}}</button>

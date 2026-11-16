@@ -2,12 +2,13 @@ package api
 
 import (
 	"errors"
+	"net/http"
+
 	"github.com/ivantit66/onebase/internal/access"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/query"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/resultfilter"
-	"net/http"
 )
 
 func (h *handler) reportResultFilterSettings(r *http.Request, rep *reportpkg.Report, res query.Result) (*reportpkg.UserReportSettings, *resultfilter.Plan, error) {

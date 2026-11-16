@@ -6,9 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/storage"
-	"io"
 )
 
 const MaxSettingsBytes = 64 * 1024
@@ -21,6 +22,9 @@ func ParseSettings(raw string) (*reportpkg.UserReportSettings, error) {
 	}
 	if len(raw) > MaxSettingsBytes {
 		return nil, fmt.Errorf("настройки отчёта слишком велики")
+	}
+	if trimmed := bytes.TrimSpace([]byte(raw)); len(trimmed) == 0 || trimmed[0] != '{' {
+		return nil, fmt.Errorf("некорректные настройки отчёта")
 	}
 	var settings reportpkg.UserReportSettings
 	dec := json.NewDecoder(bytes.NewBufferString(raw))
