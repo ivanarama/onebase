@@ -54,7 +54,9 @@ func TestSpreadsheetWorkbookDSLTwoNamedSnapshots(t *testing.T) {
 		assert.Equal(t, tc.number, got)
 		kind, err := f.GetCellType(tc.name, "A1")
 		require.NoError(t, err)
-		assert.Equal(t, excelize.CellTypeNumber, kind)
+		// OOXML's absent t attribute is numeric too; Excelize reports it as
+		// CellTypeUnset. Shared/inline strings must still fail this assertion.
+		assert.True(t, kind == excelize.CellTypeNumber || kind == excelize.CellTypeUnset)
 		id, err := f.GetCellStyle(tc.name, "A1")
 		require.NoError(t, err)
 		style, err := f.GetStyle(id)
