@@ -177,3 +177,21 @@ ledger does not authorize protected comparisons and does not implement full
 runtime origin propagation, a successful producer seal or final filter schema.
 No additional SQL expressions/fields become allowed. Purity profile version is
 now `rowsource-pure/2`; old input-frame profile hashes cannot carry forward.
+
+### Execution from captured host inputs (source only)
+
+`RunCapturedInputs(ctx, db, registry, frame)` accepts only a private InputFrame.
+It revalidates that frame and takes an immutable canonical query/module/entry/
+extra-schema/typed-parameter snapshot from the matching metadata. It then runs
+the guarded kernel with the captured generation and revalidates the complete
+input identity again before returning any result. A stale actor, module, query,
+metadata, RLS/context, database identity or cancellation rejects the whole result.
+Client JSON cannot supply query/code/schema or reconstruct the private frame.
+The caller must pass a fresh host-authorized context, as for frame revalidation.
+
+This helper returns ordinary mutable `Result` data; it does not mint a successful
+producer receipt, final filter schema or snapshot capability. Full data/control
+lineage and masked-original/minimal-DSL channels remain pending. It does not
+inject input values, effectiveFilters or ambient globals into DSL, activate a
+report handler, or enable additional SQL/native expressions. Source-main variants
+still share the canonical report query; B30 per-variant adaptation is separate.

@@ -206,52 +206,73 @@ func CaptureInputFrame(ctx context.Context, db *storage.DB, reg *runtime.Registr
 // against the current supplied host actor and registry. It reads no result rows
 // and grants no permission for a final schema or persisted snapshot.
 func (f *InputFrame) Revalidate(ctx context.Context, db *storage.DB, reg *runtime.Registry) error {
+	_, err := f.revalidatedExecution(ctx, db, reg)
+	return err
+}
+
+type capturedExecution struct {
+	initial    Query
+	source     Source
+	generation uint64
+}
+
+// Return an immutable host execution selection only after the complete current
+// identity matches. This is private: a public Result/JSON cannot provide it.
+func (f *InputFrame) revalidatedExecution(ctx context.Context, db *storage.DB, reg *runtime.Registry) (*capturedExecution, error) {
 	if f == nil || f.state == nil || f.state.seal == nil {
-		return fmt.Errorf("row source: input frame missing")
+		return nil, fmt.Errorf("row source: input frame missing")
 	}
 	s := f.state
 	if db != s.db || reg != s.registry || time.Local != s.timezone {
-		return fmt.Errorf("row source: input frame host changed")
+		return nil, fmt.Errorf("row source: input frame host changed")
 	}
 	ctx, cancel := context.WithTimeout(storage.ReadOnlyContext(ctx), 10*time.Second)
 	defer cancel()
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	rep := reg.GetReport(s.identity.Report)
 	if rep == nil || rep.External || rep.RowSource == nil {
-		return fmt.Errorf("row source: input frame report changed")
+		return nil, fmt.Errorf("row source: input frame report changed")
 	}
 	if u := auth.UserFromContext(ctx); u != nil && !u.Has("report", rep.Name, "run") {
-		return fmt.Errorf("row source: report run denied")
+		return nil, fmt.Errorf("row source: report run denied")
 	}
 	metadataBefore, err := frameMetadataDigest(reg, rep)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	actorBefore, err := frameActorDigest(ctx)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	code, err := s.code(ctx, rep.Name)
 	if err != nil {
-		return fmt.Errorf("row source: module unavailable")
+		return nil, fmt.Errorf("row source: module unavailable")
 	}
 	p, err := compileProgram(code, rep.RowSource.Procedure)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	id, err := captureFrameIdentity(ctx, db, reg, rep, s.identity.Variant, s.params, s.inputs, p.evidence)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	if id != s.identity || reg.Generation() != id.Generation || id.Metadata != metadataBefore || id.Actor != actorBefore || time.Local != s.timezone {
-		return fmt.Errorf("row source: stale input frame")
+		return nil, fmt.Errorf("row source: stale input frame")
 	}
-	return nil
+	params := make(map[string]any, len(s.params))
+	for key, value := range s.params {
+		params[key] = value
+	}
+	src := Source{Report: rep.Name, Entry: rep.RowSource.Procedure, Code: code}
+	for _, col := range rep.RowSource.Columns {
+		src.Extras = append(src.Extras, Extra{Name: col.Name, Type: col.Type})
+	}
+	return &capturedExecution{initial: Query{Text: rep.Query, Params: params}, source: src, generation: id.Generation}, nil
 }
 
 func captureVariant(rep *report.Report, request, preset *string) (string, inputBinding, error) {
