@@ -9,6 +9,7 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
+	"github.com/ivantit66/onebase/internal/runtime"
 )
 
 func TestAPIV2ReportOutputPrivacy(t *testing.T) {
@@ -47,5 +48,19 @@ func TestAPIV2ReportOutputPrivacy(t *testing.T) {
 			t.Fatalf("PII filter allowed: %d %s", w.Code, w.Body.String())
 		}
 		rep.Query = old
+	}
+}
+
+func TestAPIV2ReportPrivacyUsesSourceKind(t *testing.T) {
+	cat := &metadata.Entity{Name: "Shared", Kind: metadata.KindCatalog, Fields: []metadata.Field{{Name: "Phone", Type: metadata.FieldTypeString}}}
+	ir := &metadata.InfoRegister{Name: "Shared", Dimensions: []metadata.Field{{Name: "Phone", Type: metadata.FieldTypeString, PII: true}}}
+	rep := &reportpkg.Report{Name: "KindPrivacy", Query: "ВЫБРАТЬ Phone ИЗ РегистрСведений.Shared ГДЕ Phone = &Value", Params: []reportpkg.Param{{Name: "Value", Type: "string"}}}
+	h, _ := newAPITestHandlerWithReports(t, []*metadata.Entity{cat}, []*reportpkg.Report{rep}, nil)
+	h.reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{cat}, InfoRegs: []*metadata.InfoRegister{ir}, Reports: []*reportpkg.Report{rep}})
+	w := httptest.NewRecorder()
+	r := reqWithEntity("GET", "/api/v2/report/KindPrivacy?Value=synthetic", nil, map[string]string{"name": rep.Name}, nil)
+	h.runReportV2().ServeHTTP(w, withUser(r, &auth.User{IsAdmin: true}))
+	if w.Code != 403 {
+		t.Fatalf("wrong source metadata bypassed mandatory mask: %d %s", w.Code, w.Body.String())
 	}
 }

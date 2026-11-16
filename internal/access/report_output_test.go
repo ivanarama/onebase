@@ -60,3 +60,10 @@ func TestReportOutputPolicyMandatoryForEveryRole(t *testing.T) {
 		t.Fatal("ordinary admin policy changed")
 	}
 }
+
+func TestReportOutputPolicyUnknownSourceFailsClosed(t *testing.T) {
+	res := query.Result{Sources: []query.SourceRef{{Kind: "catalog", Name: "Missing"}}}
+	if plan := access.ReportOutputQueryMaskPlan(&auth.User{IsAdmin: true}, res, nil); plan.Denied == "" {
+		t.Fatal("unresolved source silently removed mandatory report protection")
+	}
+}

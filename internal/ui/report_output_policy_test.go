@@ -162,3 +162,18 @@ func TestReportOutputPrivacyHTTPMatrix(t *testing.T) {
 		}
 	})
 }
+
+func TestReportOutputPrivacyUsesSourceKindHTTP(t *testing.T) {
+	cat := &metadata.Entity{Name: "Shared", Kind: metadata.KindCatalog, Fields: []metadata.Field{{Name: "Phone", Type: metadata.FieldTypeString}}}
+	ir := &metadata.InfoRegister{Name: "Shared", Dimensions: []metadata.Field{{Name: "Phone", Type: metadata.FieldTypeString, PII: true}}}
+	rep := &reportpkg.Report{Name: "KindPrivacy", Query: "ВЫБРАТЬ Phone ИЗ РегистрСведений.Shared ГДЕ Phone = &Value", Params: []reportpkg.Param{{Name: "Value", Type: "string"}}}
+	s, _ := newSubmitTestServer(t, []*metadata.Entity{cat})
+	s.reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{cat}, InfoRegs: []*metadata.InfoRegister{ir}, Reports: []*reportpkg.Report{rep}})
+	w := httptest.NewRecorder()
+	r := reqWithChi("GET", "/ui/report/KindPrivacy?__run=1&Value=synthetic", nil, map[string]string{"name": rep.Name})
+	r = r.WithContext(auth.ContextWithUser(r.Context(), &auth.User{IsAdmin: true}))
+	s.reportForm(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "защищённое поле") {
+		t.Fatalf("mandatory source-kind gate missing: status %d", w.Code)
+	}
+}
