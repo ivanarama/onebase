@@ -1323,6 +1323,45 @@ Lock охватывает чтение entry, HTTP и атомарную зам�
 закреплённый операторский checker или его `health_command`. Выпуск и установка
 нового checker остаются отдельной операторской поставкой после проверок.
 
+### Read-only identity: срез A плана 196
+
+Отдельное представление идентичности PR запускается явно:
+
+```bash
+go run ./tools/pipelinehealth -pr-identity -json
+go run ./tools/pipelinehealth -pr-identity -transport rest -json
+# Полностью офлайн: ожидаемые имя и GraphQL ID репозитория задаются явно.
+go run ./tools/pipelinehealth -pr-identity -prs pulls.json \
+  -repo owner/repo -base-repository-id R_BASE -json
+```
+
+В candidates добавляются `pr_identity`, `identity_sha256` и `base_ref_oid`.
+Identity включает GraphQL ID и точные имена base/head repository, PR ID/номер,
+base/head ref, HEAD SHA и `cross_repository`. REST использует `node_id`, а не
+числовой database ID. Ожидаемый base ID берётся из корневого GitHub repository;
+`-base-repository-id` дополнительно закрепляет его и обязателен для fixtures.
+Пустые или противоречивые поля, удалённый fork, non-main base и Draft исключают
+PR из этого представления с finding `invalid_pr_identity`. Валидные PR сохраняют
+свои поля и порядок очереди. Неверная identity не снимает блокировку issue,
+ссылающейся на уже открытый PR.
+
+Каноническая запись `pp-pr-identity-v1` — строгая UTF-8 без BOM и нормализации,
+с LF и завершающим LF. `base_ref_oid` находится вне digest: движение main само
+по себе не меняет identity содержательного HEAD. Режим отвергает некорректную
+UTF-8, одиночные escaped UTF-16 surrogates и неоднозначный JSON; предел одного
+JSON-входа — 8 MiB. Общая golden fixture в
+`internal/pridentity/testdata/pr-identity-v1.json` побайтно взята из принятого
+[PromptPilot #196](https://github.com/ivanarama/PromptPilot/pull/196), merge
+`85ca7fce7062ac39ab02ded45cc212e33fe0da0b`; кириллический ref проверяется теми
+же ожидаемыми байтами и SHA-256 на Windows и Linux.
+
+Выдача содержит `identity_inventory_version: 1`, `identity_authority: read-only`
+и `identity_v2_enabled: false`. Это диагностический срез A, не lease, proof или
+разрешение на исполнение кода fork, push, review либо merge. Обычный режим и
+установленный PromptPilot продолжают прежний протокол. Совмещать этот режим с
+`-technical-handoff` или `-routing-inspect` нельзя; v2 и изоляция fork принадлежат
+следующим срезам. Родительская #1245 остаётся открыта до завершения плана.
+
 ### Экономичный путь `pipelinectl`
 
 Обычные REVIEW и уже готовые CLEAN MERGE запускаются через общий CLI

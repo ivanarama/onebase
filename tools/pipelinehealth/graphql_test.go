@@ -39,6 +39,9 @@ func TestMain(m *testing.M) {
 		}
 		http.DefaultTransport = restCLITestTransport{endpoint: endpoint, transport: http.DefaultTransport}
 		os.Args = []string{os.Args[0], "-transport", "rest", "-json"}
+		if os.Getenv("PIPELINEHEALTH_TEST_PR_IDENTITY") == "1" {
+			os.Args = append(os.Args, "-pr-identity")
+		}
 		if owner := os.Getenv("PIPELINEHEALTH_TEST_REST_OWNER"); owner != "" {
 			os.Args = append(os.Args, "-owner", owner)
 		}

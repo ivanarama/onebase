@@ -155,7 +155,7 @@ func routingFootprint(snapshot map[string]any, trusted string) bool {
 			return true
 		}
 		if node["__typename"] == "IssueComment" && routingObject(node["author"])["login"] == trusted &&
-			(strings.Contains(routingText(node["body"]), "pp:review-routing-") || node["lastEditedAt"] != nil) {
+			(reviewrouting.HasRecordPrefix(routingText(node["body"])) || node["lastEditedAt"] != nil) {
 			return true
 		}
 	}
@@ -164,7 +164,7 @@ func routingFootprint(snapshot map[string]any, trusted string) bool {
 
 func legacyRoutingHistory(comments []apiComment, trusted string) bool {
 	for _, comment := range comments {
-		if strings.Contains(comment.Body, "<!-- pp:review-routing-") &&
+		if reviewrouting.HasRecordPrefix(comment.Body) &&
 			(comment.User.Login == trusted || strings.TrimSpace(comment.User.Login) == "") {
 			return true
 		}
