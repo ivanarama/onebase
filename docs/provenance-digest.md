@@ -37,3 +37,11 @@ Portable source is extracted from the reviewed ENG16 typed encoder, with tests
 for JSON collisions, nested types, metadata/actor/RLS shapes, method bypass,
 unknown capabilities, cycles and budgets. No output-policy/PII runtime behavior
 is switched by importing this package.
+
+FormatVersion=2 fixes composite identity: every unnamed pointer/slice/array/map
+component is encoded recursively, with full import path of named children,
+before nil/empty and byte fast paths. Unproved instantiated generic names STOP.
+InputDigest checks declared element/value/key type independently of values,
+including nil/empty containers and zero-length arrays. Empty any containers stay
+allowed, their present dynamic values are checked separately. V1 digests are
+invalidated; host evidence must bind FormatVersion and recompute from typed data.
