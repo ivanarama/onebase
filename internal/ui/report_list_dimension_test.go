@@ -63,7 +63,9 @@ func TestOrdinaryReportXLSXUsedRangeMatrix(t *testing.T) {
 					t.Fatal(err)
 				}
 				raw, err := io.ReadAll(r)
-				r.Close()
+				if closeErr := r.Close(); closeErr != nil {
+					t.Fatal(closeErr)
+				}
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -90,7 +92,11 @@ func TestOrdinaryReportXLSXUsedRangeMatrix(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer f.Close()
+			defer func() {
+				if err := f.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}()
 			rows, err := f.GetRows("Лист1")
 			if err != nil {
 				t.Fatal(err)
@@ -99,11 +105,11 @@ func TestOrdinaryReportXLSXUsedRangeMatrix(t *testing.T) {
 				t.Fatal("ordinary report rows/totals changed")
 			}
 			if dir := os.Getenv("ONEBASE_TEST_XLSX_DIR"); dir != "" {
-				if err := os.MkdirAll(dir, 0700); err != nil {
+				if err := os.MkdirAll(dir, 0700); err != nil { // #nosec G703 -- Opt-in test artifact directory supplied by the trusted test runner.
 					t.Fatal(err)
 				}
 				name := "ordinary-" + db.Dialect().Name() + "-" + mode + ".xlsx"
-				if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, name), data, 0600); err != nil { // #nosec G703 -- Trusted runner directory; the filename uses only fixed test fixture labels.
 					t.Fatal(err)
 				}
 			}

@@ -52,7 +52,9 @@ func TestListXLSXUsedRange(t *testing.T) {
 						t.Fatal(err)
 					}
 					raw, err := io.ReadAll(r)
-					r.Close()
+					if closeErr := r.Close(); closeErr != nil {
+						t.Fatal(closeErr)
+					}
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -76,7 +78,11 @@ func TestListXLSXUsedRange(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer f.Close()
+				defer func() {
+					if err := f.Close(); err != nil {
+						t.Fatal(err)
+					}
+				}()
 				if tc.name == "ragged-wide" {
 					if v, err := f.GetCellValue("Лист1", "C2"); err != nil || v != "3" {
 						t.Fatal("ragged data changed")
