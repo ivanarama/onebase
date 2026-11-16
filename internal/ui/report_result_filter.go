@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/ivantit66/onebase/internal/access"
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/query"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
@@ -26,9 +25,6 @@ func (s *Server) reportResultFilterPlan(ctx context.Context, res query.Result, s
 		filters = settings.Filters
 	}
 	return resultfilter.New(s.reportResultFilterFields(ctx, res), filters, resultfilter.RegistryEnums(s.reg))
-}
-func (s *Server) reportResultOutputMask(ctx context.Context, res query.Result) access.QueryMaskPlan {
-	return access.ReportOutputQueryMaskPlan(auth.UserFromContext(ctx), res, resultfilter.RegistryLookup(s.reg))
 }
 func (s *Server) runReportResultRows(ctx context.Context, res *query.Result, settings *reportpkg.UserReportSettings, maxRows int) ([]map[string]any, []string, bool, error) {
 	plan, err := s.reportResultFilterPlan(ctx, *res, settings)

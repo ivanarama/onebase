@@ -31,9 +31,6 @@ func (h *handler) reportResultFilterSettings(r *http.Request, rep *reportpkg.Rep
 	plan, err := resultfilter.New(fields, filters, resultfilter.RegistryEnums(h.reg))
 	return loaded.Settings, plan, err
 }
-func (h *handler) reportResultOutputMask(r *http.Request, res query.Result) access.QueryMaskPlan {
-	return access.ReportOutputQueryMaskPlan(auth.UserFromContext(r.Context()), res, resultfilter.RegistryLookup(h.reg))
-}
 func (h *handler) runReportResultFilteredV2(w http.ResponseWriter, r *http.Request, rep *reportpkg.Report, res *query.Result, mask access.QueryMaskPlan, settings *reportpkg.UserReportSettings, plan *resultfilter.Plan, page, limit int) {
 	composed := wantsReportComposition(r.URL.Query())
 	offset, ok := reportPageOffset(page, limit)

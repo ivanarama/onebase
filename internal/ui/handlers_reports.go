@@ -287,7 +287,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		http.Error(w, s.errText(r, err), http.StatusBadRequest)
 		return
 	}
-	maskPlan := s.reportResultOutputMask(opCtx, compiled)
+	maskPlan := s.reportOutputMaskPlan(opCtx, compiled)
 	if maskPlan.Denied != "" {
 		opStatus = "error"
 		s.render(w, r, "page-report", map[string]any{
@@ -704,7 +704,7 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 	if _, err := s.reportResultFilterPlan(ctx, compiled, settings); err != nil {
 		return nil, nil, newReportExportError(http.StatusBadRequest, "report filter", err)
 	}
-	maskPlan := s.reportResultOutputMask(ctx, compiled)
+	maskPlan := s.reportOutputMaskPlan(ctx, compiled)
 	if maskPlan.Denied != "" {
 		return nil, nil, newReportExportError(http.StatusForbidden, "masked field", fmt.Errorf("отчёт содержит защищённое поле: %s", maskPlan.Denied))
 	}
