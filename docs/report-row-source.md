@@ -45,6 +45,14 @@ AST разрешает присваивания, var, if, foreach/numeric for, r
 СтрСоединить/СтрРазделить, Символ, ПустаяСтрока, ЗначениеЗаполнено, ТипЗнч
 и явно перечисленные английские синонимы. Новый builtin не открывается автоматически.
 
+Начальная выборка и каждый дополнительный Запрос используют **один** dataset/input
+кодек kernel. Общий interpreter/query_proxy не участвует и не изменялся: SQL NULL
+не подменяется typedempty, JOIN number материализуется как то же точное число.
+Технические implicit ref/DSL aliases получаются только из compiler mappings,
+не могут быть перезаписаны extra и проверяются как immutable часть DSL input.
+Параметры Query допускают bounded scalar/ref/array данные, отвергают cycles и
+capabilities; namespace lookup/RLS/mandatory policy до чтения сохранены.
+
 RestrictedProfile запрещает сеть/файлы/exec/secrets; storage.ReadOnlyContext
 действует на границе БД. Лимиты: 10 секунд, 100000 loop iterations, 256 запросов,
 50000 исходных/100000 суммарно прочитанных строк, 8MiB входов/выхода, 1MiB значение,

@@ -19,7 +19,7 @@ type originalRow struct {
 	values map[string]any
 }
 
-func inputRows(rows []map[string]any, fields []resultfilter.Field, reg *runtime.Registry) (*interpreter.Array, []originalRow, error) {
+func inputRows(rows []map[string]any, fields []resultfilter.Field, reg *runtime.Registry, aliases map[string]string) (*interpreter.Array, []originalRow, error) {
 	if len(fields) == 0 {
 		return nil, nil, fmt.Errorf("row source: вход без схемы")
 	}
@@ -50,6 +50,17 @@ func inputRows(rows []map[string]any, fields []resultfilter.Field, reg *runtime.
 			}
 			converted[field.Name] = typed
 			saved[strings.ToLower(field.Name)] = copyValue(typed)
+		}
+		for alias, target := range aliases {
+			if _, exists := saved[alias]; exists {
+				continue
+			}
+			value, exists := saved[target]
+			if !exists {
+				return nil, nil, fmt.Errorf("row source: DSL alias без исходного поля")
+			}
+			converted[alias] = copyValue(value)
+			saved[alias] = copyValue(value)
 		}
 		record := interpreter.NewStructFromMap(converted)
 		items = append(items, record)
@@ -158,6 +169,11 @@ func outputRows(returned any, original []map[string]any, baseline []originalRow,
 	allowed := map[string]bool{}
 	for _, field := range fields {
 		allowed[strings.ToLower(field.Name)] = true
+	}
+	for _, row := range baseline {
+		for key := range row.values {
+			allowed[key] = true
+		}
 	}
 	for _, extra := range extras {
 		allowed[strings.ToLower(extra.Name)] = true

@@ -112,19 +112,14 @@ func Run(ctx context.Context, db *storage.DB, reg *runtime.Registry, initial Que
 			return nil, fmt.Errorf("row source: добавленное поле пересекается с исходным")
 		}
 	}
-	rows, err := e.QueryAll(ctx, compiled.SQL, compiled.Args...)
-	if err != nil {
-		return nil, err
+
+	aliases := inputAliases(compiled, fields)
+	for alias := range aliases {
+		if seen[strings.ToLower(alias)] {
+			return nil, fmt.Errorf("row source: добавленное поле пересекается с DSL именем исходного поля")
+		}
 	}
-	query.RestoreLongLabels(&compiled, rows, nil)
-	if _, err = e.guard(ctx, compiled, rows); err != nil {
-		return nil, err
-	}
-	query.NormalizeColumns(&compiled, rows)
-	if len(rows) > maxRows {
-		return nil, fmt.Errorf("row source: превышен лимит исходных строк")
-	}
-	values, baseline, err := inputRows(rows, fields, reg)
+	rows, values, baseline, err := e.dataset(ctx, compiled)
 	if err != nil {
 		return nil, err
 	}
@@ -134,11 +129,7 @@ func Run(ctx context.Context, db *storage.DB, reg *runtime.Registry, initial Que
 	interp.StrictLexicalScope = true
 	interp.MaxRecursionDepth = 32
 	interp.LookupProc = func(name string) *ast.ProcedureDecl { return p.procedures[strings.ToLower(name)] }
-	makeQuery := interpreter.NewQueryFactoryGuarded(ctx, e, reg, e.compile, e.guard)
-	factory := func(args []any) any {
-		value := makeQuery(args)
-		return &opaqueQuery{value: value.(interpreter.This), methods: value.(interpreter.MethodCallable)}
-	}
+	factory := func(args []any) any { return &opaqueQuery{execution: e, ctx: ctx, params: map[string]any{}} }
 	vars := map[string]any{"Результат": values, "__factory_Запрос": factory, "__factory_Query": factory}
 	profile := interpreter.RestrictedProfile()
 	profile.Context = ctx
@@ -250,26 +241,67 @@ func (e *execution) compile(ctx context.Context, text string, params map[string]
 	return res, nil
 }
 
-func (e *execution) guard(ctx context.Context, res query.Result, rows []map[string]any) (interpreter.GuardedColumns, error) {
+// dataset is the only database-result -> DSL boundary for both initial and
+// additional queries. Ordinary interpreter/query_proxy materialization is never
+// involved: its typed-empty policy deliberately differs from this kernel.
+func (e *execution) dataset(ctx context.Context, res query.Result) ([]map[string]any, *interpreter.Array, []originalRow, error) {
+	rows, err := e.QueryAll(ctx, res.SQL, res.Args...)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	query.RestoreLongLabels(&res, rows, nil)
 	plan := access.ReportOutputQueryMaskPlan(auth.UserFromContext(ctx), res, e.lookup)
 	if plan.Denied != "" {
-		return nil, fmt.Errorf("row source: защищённое чтение запрещено")
+		return nil, nil, nil, fmt.Errorf("row source: защищённое чтение запрещено")
 	}
 	tracked, err := plan.ApplyTracked(rows)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
-	// A guard that changed or removed an input invalidates its scalar proof;
-	// do not turn masked data into a plausible typed empty value in DSL.
 	for _, row := range tracked {
 		if len(row) > 0 {
-			return nil, fmt.Errorf("row source: замаскированный вход запрещён")
+			return nil, nil, nil, fmt.Errorf("row source: замаскированный вход запрещён")
 		}
 	}
-	_, _, err = inputRows(rows, e.fields[res.SQL], e.reg)
-	return interpreter.GuardedColumns(tracked), err
+	query.NormalizeColumns(&res, rows)
+	if len(rows) > maxRows {
+		return nil, nil, nil, fmt.Errorf("row source: превышен лимит строк источника")
+	}
+	fields := e.fields[res.SQL]
+	values, baseline, err := inputRows(rows, fields, e.reg, inputAliases(res, fields))
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return rows, values, baseline, nil
 }
-func (e *execution) Dialect() storage.Dialect { return e.db.Dialect() }
+
+// These are compiler-proven alternate names for an existing scalar, not new
+// data sources. They are supplied consistently in initial and additional rows.
+func inputAliases(res query.Result, fields []resultfilter.Field) map[string]string {
+	available := map[string]bool{}
+	for _, f := range fields {
+		available[strings.ToLower(f.Name)] = true
+	}
+	aliases := map[string]string{}
+	for alias, target := range res.DSLColumnAliases {
+		if logical, ok := res.LongIdents[target]; ok {
+			target = logical
+		}
+		alias, target = strings.ToLower(alias), strings.ToLower(target)
+		if available[target] && !available[alias] {
+			aliases[alias] = target
+		}
+	}
+	if available["id"] && res.RefColumns["id"] != "" {
+		for _, alias := range []string{"ссылка", "reference", "ref"} {
+			if !available[alias] {
+				aliases[alias] = "id"
+			}
+		}
+	}
+	return aliases
+}
+
 func (e *execution) QueryAll(ctx context.Context, sql string, args ...any) ([]map[string]any, error) {
 	if e.fields[sql] == nil {
 		return nil, fmt.Errorf("row source: запрос без host proof")
@@ -298,19 +330,3 @@ func (e *execution) QueryAll(ctx context.Context, sql string, args ...any) ([]ma
 	}
 	return out, nil
 }
-
-// Query's host implementation contains context, database and guard callbacks.
-// Only its declared DSL interface may escape; string conversion must never use
-// fmt's default structural formatting on that host object.
-type opaqueQuery struct {
-	value   interpreter.This
-	methods interpreter.MethodCallable
-}
-
-func (q *opaqueQuery) Get(name string) any        { return q.value.Get(name) }
-func (q *opaqueQuery) Set(name string, value any) { q.value.Set(name, value) }
-func (q *opaqueQuery) CallMethod(name string, args []any) any {
-	return q.methods.CallMethod(name, args)
-}
-func (*opaqueQuery) String() string   { return "Запрос" }
-func (*opaqueQuery) TypeName() string { return "Запрос" }
