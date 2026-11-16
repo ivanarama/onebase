@@ -67,3 +67,29 @@ func TestReportOutputPolicyUnknownSourceFailsClosed(t *testing.T) {
 		t.Fatal("unresolved source silently removed mandatory report protection")
 	}
 }
+
+func TestOrdinaryMaskUnknownSourceFailsClosedWithoutChangingKnownSource(t *testing.T) {
+	meta := &metadata.Entity{Name: "Known", Kind: metadata.KindCatalog, Fields: []metadata.Field{{Name: "Phone", Type: metadata.FieldTypeString, PII: true}}}
+	compiled, err := query.Compile("ВЫБРАТЬ Phone ИЗ Справочник.Known", query.CompileOpts{Entities: []*metadata.Entity{meta}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &auth.User{Roles: []*auth.Role{{Permissions: auth.Permission{Catalogs: map[string][]string{meta.Name: {"read"}}}}}}
+	for _, user := range []*auth.User{nil, {IsAdmin: true}, reader} {
+		if plan := access.QueryMaskPlanFor(user, compiled, nil); plan.Denied == "" {
+			t.Fatal("unresolved ordinary source silently removed PII policy")
+		}
+		rows := []map[string]any{{"phone": "79990009987"}}
+		plan := access.QueryMaskPlanFor(user, compiled, func(_, _ string) *metadata.Entity { return meta })
+		if err := plan.Apply(rows); err != nil {
+			t.Fatal(err)
+		}
+		if user == reader {
+			if rows[0]["phone"] == "79990009987" {
+				t.Fatal("known-source reader lost default mask")
+			}
+		} else if rows[0]["phone"] != "79990009987" {
+			t.Fatal("ordinary known-source admin/nil privileges changed")
+		}
+	}
+}
