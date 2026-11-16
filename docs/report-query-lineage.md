@@ -33,7 +33,9 @@ Outputs() не доказывает безопасность отчёта. Бу�
 пользовательского оракула и разрешённые фиксированные серверные операции.
 
 `receipt.Matches(result, opts)` проверяет SHA256 скомпилированного Result и
-окружения metadata/params/row filters. Смена SQL/args/projection/metadata/RLS
+окружения metadata/params/row filters. Типы кодируются явно, без вызова
+произвольного MarshalJSON; decimal/string, bytes/string и NULL/typed nil не
+схлопываются. Неизвестный SQL argument type/capability даёт STOP. Смена SQL/args/projection/metadata/RLS
 инвалидирует receipt. Actor/read/роли, registry generation, snapshot, модуль,
 выбранный отчёт/пресет этот helper сам не авторизует: host должен связать их
 с текущим проверенным выполнением. Сериализация private receipt не переносит
@@ -52,3 +54,8 @@ PostgreSQL требует общего разрешённого пакета с 
 oracle/presets/export tests, independent review и native/PG/SDK пачка. Этот
 source-срез не закрывает принятый отчёт совпадений как готовый и не разрешает
 его отказом заменить совместимое исполнение. Карточки/A108/field_access не меняет.
+
+У GROUP BY разрешаются исходные поля и явные выражения: совпавший output alias
+не затеняет исходное защищённое поле. GROUP BY по одному лишь output alias без
+доказанного исходного поля сейчас STOP; ORDER BY использует output alias в
+соответствии со своим SQL приоритетом. Обычный Query/compiler не меняется.

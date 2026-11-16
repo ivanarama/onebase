@@ -83,8 +83,10 @@ func (p *ReportLineage) Matches(res Result, opts CompileOpts) bool {
 	return ok && b == p.environmentDigest
 }
 func lineageResultDigest(res Result) ([32]byte, bool) {
-	b, err := json.Marshal(res)
-	return sha256.Sum256(b), err == nil
+	if !lineageArgumentsSupported(res.Args) {
+		return [32]byte{}, false
+	}
+	return lineageTypedDigest(res)
 }
 func lineageEnvironmentDigest(opts CompileOpts) ([32]byte, bool) {
 	type filter struct {
@@ -97,10 +99,20 @@ func lineageEnvironmentDigest(opts CompileOpts) ([32]byte, bool) {
 	}
 	sort.Slice(filters, func(i, j int) bool {
 		a, b := filters[i].Key, filters[j].Key
-		return a.Kind+"/"+a.Name+"/"+a.TablePart < b.Kind+"/"+b.Name+"/"+b.TablePart
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.Name != b.Name {
+			return a.Name < b.Name
+		}
+		return a.TablePart < b.TablePart
 	})
-	b, err := json.Marshal([]any{opts.Entities, opts.Registers, opts.InfoRegs, opts.AccountRegs, opts.Params, filters})
-	return sha256.Sum256(b), err == nil
+	for _, value := range opts.Params {
+		if !lineageArgumentsSupported([]any{value}) {
+			return [32]byte{}, false
+		}
+	}
+	return lineageTypedDigest([]any{opts.Entities, opts.Registers, opts.InfoRegs, opts.AccountRegs, opts.Params, filters})
 }
 
 type reportExpr struct {
@@ -179,7 +191,7 @@ func CompileReportLineage(src string, opts CompileOpts) (Result, *ReportLineage,
 	out := &ReportLineage{}
 	seen := map[string]bool{}
 	for _, column := range p.outputs {
-		view, err := p.bind(column.expr, false, 0)
+		view, err := p.bind(column.expr, "", 0)
 		if err != nil {
 			return Result{}, nil, err
 		}
@@ -190,7 +202,7 @@ func CompileReportLineage(src string, opts CompileOpts) (Result, *ReportLineage,
 		out.outputs = append(out.outputs, ReportLineageOutput{column.name, view})
 	}
 	for _, use := range p.uses {
-		view, err := p.bind(use.expr, use.clause == "group" || use.clause == "order", 0)
+		view, err := p.bind(use.expr, use.clause, 0)
 		if err != nil {
 			return Result{}, nil, err
 		}
@@ -665,7 +677,7 @@ func (p *reportLineageParser) call(name string, depth int) (*reportExpr, error) 
 	}
 	return p.newExpr(op, "", args...)
 }
-func (p *reportLineageParser) bind(e *reportExpr, aliases bool, depth int) (ReportExpression, error) {
+func (p *reportLineageParser) bind(e *reportExpr, clause string, depth int) (ReportExpression, error) {
 	if depth > 64 {
 		return ReportExpression{}, fmt.Errorf("report lineage: bind depth")
 	}
@@ -682,10 +694,10 @@ func (p *reportLineageParser) bind(e *reportExpr, aliases bool, depth int) (Repo
 	case "row-count":
 		view.Type = metadata.FieldTypeNumber
 	case "field":
-		if aliases && len(e.path) == 1 {
+		if clause == "order" && len(e.path) == 1 {
 			for _, out := range p.outputs {
 				if strings.EqualFold(out.name, e.path[0]) {
-					v, err := p.bind(out.expr, false, depth+1)
+					v, err := p.bind(out.expr, "", depth+1)
 					if err != nil {
 						return view, err
 					}
@@ -700,7 +712,7 @@ func (p *reportLineageParser) bind(e *reportExpr, aliases bool, depth int) (Repo
 		}
 	default:
 		for _, arg := range e.args {
-			child, err := p.bind(arg, false, depth+1)
+			child, err := p.bind(arg, "", depth+1)
 			if err != nil {
 				return view, err
 			}
