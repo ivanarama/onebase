@@ -3,6 +3,7 @@ package launcher
 import (
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compform"
@@ -33,6 +34,11 @@ func applyReportComposition(raw []byte, f url.Values) ([]byte, error) {
 	}
 	if root.Kind != yaml.DocumentNode || len(root.Content) == 0 || root.Content[0].Kind != yaml.MappingNode {
 		return nil, fmt.Errorf("applyReportComposition: ожидалось YAML-отображение в корне отчёта")
+	}
+	if c != nil {
+		if errs := c.MeasureCalculationErrors(); len(errs) > 0 {
+			return nil, fmt.Errorf("%s", strings.Join(errs, "; "))
+		}
 	}
 	var val any
 	if c != nil {

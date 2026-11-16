@@ -65,6 +65,9 @@ func ComposeCross(rows []Row, spec report.Composition, ev Evaluator) (*CrossResu
 
 // ComposeCrossN — ComposeCross с явным потолком строк (как ComposeN).
 func ComposeCrossN(rows []Row, spec report.Composition, ev Evaluator, maxRows int) (*CrossResult, error) {
+	if err := validateCalculations(spec); err != nil {
+		return nil, err
+	}
 	rows = alignRowKeys(rows, spec)
 	res := &CrossResult{Columns: spec.Columns, RowCount: len(rows)}
 	if maxRows > 0 && len(rows) > maxRows {
@@ -271,13 +274,14 @@ func crossAggScoped(rows []Row, spec report.Composition, ev Evaluator, wc *warnC
 				cells[ck] = nil
 				continue
 			}
+			m = m.AtLevel(level)
 			if m.Expr != "" {
 				// Вычисляемый показатель: значение уже посчитано в field-keyed agg.
 				cells[ck] = agg[m.Field]
 			} else {
 				// Обычный показатель — считаем независимо по индексу, чтобы
 				// показатели с одинаковым Field не затирали друг друга.
-				cells[ck] = aggMeasure(sub, m)
+				cells[ck] = aggMeasureAtLevel(sub, m, level, wc)
 			}
 			if len(st) == 0 {
 				continue

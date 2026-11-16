@@ -6,6 +6,8 @@
 package compform
 
 import (
+	"encoding/json"
+	"io"
 	"net/url"
 	"sort"
 	"strconv"
@@ -49,13 +51,14 @@ func Parse(f url.Values) (*report.Composition, bool) {
 			continue
 		}
 		c.Measures = append(c.Measures, report.Measure{
-			Field:  fld,
-			Agg:    f.Get(p + ".agg"),
-			Title:  strings.TrimSpace(f.Get(p + ".title")),
-			Align:  f.Get(p + ".align"),
-			Format: strings.TrimSpace(f.Get(p + ".format")),
-			Expr:   strings.TrimSpace(f.Get(p + ".expr")),
-			Scope:  parseMeasureScope(f.Get(p + ".scope")),
+			Field:        fld,
+			Agg:          f.Get(p + ".agg"),
+			Title:        strings.TrimSpace(f.Get(p + ".title")),
+			Align:        f.Get(p + ".align"),
+			Format:       strings.TrimSpace(f.Get(p + ".format")),
+			Expr:         strings.TrimSpace(f.Get(p + ".expr")),
+			Scope:        parseMeasureScope(f.Get(p + ".scope")),
+			Calculations: parseCalculations(f.Get(p + ".calculations")),
 		})
 	}
 
@@ -214,4 +217,27 @@ func parseMeasureScope(raw string) []string {
 		}
 	}
 	return scope
+}
+
+// Invalid submitted metadata remains visibly invalid; it must never silently
+// erase a trusted calculation when a configurator form is saved.
+func parseCalculations(raw string) []report.MeasureCalculation {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	invalid := func() []report.MeasureCalculation { return []report.MeasureCalculation{{Level: ""}} }
+	if len(raw) > 64<<10 {
+		return invalid()
+	}
+	var rules []report.MeasureCalculation
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&rules); err != nil {
+		return invalid()
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		return invalid()
+	}
+	return rules
 }

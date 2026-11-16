@@ -495,7 +495,7 @@ func widgetYAMLSchema() *yamlLintSchema {
 }
 
 func reportYAMLSchema() *yamlLintSchema {
-	measure := with(obj("field", "agg", "title", "align", "format", "expr"), map[string]*yamlLintSchema{"scope": seq(nil)})
+	measure := with(obj("field", "agg", "title", "align", "format", "expr"), map[string]*yamlLintSchema{"scope": seq(nil), "calculations": seq(obj("level", "agg", "expr", "group_by", "inner_agg"))})
 	sortKey := obj("field", "dir")
 	style := obj("color", "background", "bold", "italic")
 	conditional := with(obj("when", "field"), map[string]*yamlLintSchema{"style": style})

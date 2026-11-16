@@ -2911,7 +2911,7 @@ function compAddMeasure(id){var t=document.getElementById(id);var i=0;for(var r=
   scope.placeholder=T("все уровни");
   scope.title=T("$grand — общий итог; $detail — детали; имена группировок через запятую");}
 
-function compReindexMeasure(id){var t=document.getElementById(id);var k=0;for(var r=0;r<t.rows.length;r++){var ins=t.rows[r].querySelectorAll('input,select');if(ins.length<2)continue;ins[0].name='comp.measure.'+k+'.field';ins[1].name='comp.measure.'+k+'.agg';if(ins[2])ins[2].name='comp.measure.'+k+'.title';if(ins[3])ins[3].name='comp.measure.'+k+'.align';if(ins[4])ins[4].name='comp.measure.'+k+'.format';if(ins[5])ins[5].name='comp.measure.'+k+'.expr';if(ins[6])ins[6].name='comp.measure.'+k+'.scope';k++;}}
+function compReindexMeasure(id){var t=document.getElementById(id);var k=0;for(var r=0;r<t.rows.length;r++){var ins=t.rows[r].querySelectorAll('input,select');if(ins.length<2)continue;ins[0].name='comp.measure.'+k+'.field';ins[1].name='comp.measure.'+k+'.agg';if(ins[2])ins[2].name='comp.measure.'+k+'.title';if(ins[3])ins[3].name='comp.measure.'+k+'.align';if(ins[4])ins[4].name='comp.measure.'+k+'.format';if(ins[5])ins[5].name='comp.measure.'+k+'.expr';if(ins[6])ins[6].name='comp.measure.'+k+'.scope';if(ins[7])ins[7].name='comp.measure.'+k+'.calculations';k++;}}
 function compAddSort(id){var t=document.getElementById(id);var i=t.rows.length;var tr=t.insertRow();
   tr.innerHTML='<td><input type="text" name="comp.sort.'+i+'.field" style="width:100%"></td>'+
   '<td><select name="comp.sort.'+i+'.dir"><option>asc</option><option>desc</option></select></td>'+

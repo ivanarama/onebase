@@ -44,6 +44,7 @@ var cfgTmpl = template.Must(template.New("cfg").Funcs(template.FuncMap{
 	"lucideNames":       ui.LucideNames,
 	"lucideAliasesJSON": ui.LucideAliasesJSON,
 	"lucideSpriteURL":   ui.LucideSpriteURL,
+	"jsonText":          func(v any) string { b, _ := json.Marshal(v); return string(b) },
 	"js": func(v any) template.JS {
 		// json.Marshal экранирует <, >, & в \uXXXX; возвращаем template.JS,
 		// чтобы html/template не экранировал повторно (двойное экранирование).

@@ -189,6 +189,15 @@ func effectiveComposition(rep *reportpkg.Report, s *reportpkg.UserReportSettings
 		return nil
 	}
 	if s == nil || s.Composition == nil {
+		// Preserve the legacy shared read-only pointer for existing reports.
+		// New mutable rule slices must be detached from the trusted registry.
+		for _, m := range base.Measures {
+			if len(m.Calculations) > 0 {
+				out := *base
+				out.Measures = cloneTrustedMeasures(base.Measures)
+				return &out
+			}
+		}
 		return base
 	}
 	return mergeUserComposition(base, s.Composition)
@@ -359,7 +368,7 @@ func mergeUserComposition(base, u *reportpkg.Composition) *reportpkg.Composition
 				break
 			}
 			agg := firstNonEmpty(m.Agg, baseMeasure.Agg)
-			if len(candidates) > 1 {
+			if len(candidates) > 1 || len(baseMeasure.Calculations) > 0 {
 				agg = baseMeasure.Agg
 			}
 			field := m.Field
@@ -374,8 +383,9 @@ func mergeUserComposition(base, u *reportpkg.Composition) *reportpkg.Composition
 				Format: firstNonEmpty(m.Format, baseMeasure.Format),
 				// Expr НЕ из пользовательского ввода: берём доверенное значение
 				// по имени поля; если показателя нет в доверенной — Expr пуст.
-				Expr:  baseMeasure.Expr,
-				Scope: append([]string(nil), baseMeasure.Scope...),
+				Expr:         baseMeasure.Expr,
+				Scope:        append([]string(nil), baseMeasure.Scope...),
+				Calculations: append([]reportpkg.MeasureCalculation(nil), baseMeasure.Calculations...),
 			}
 			measures = append(measures, safe)
 		}
@@ -726,6 +736,9 @@ func cloneTrustedMeasures(in []reportpkg.Measure) []reportpkg.Measure {
 	}
 	out := append([]reportpkg.Measure(nil), in...)
 	for i := range out {
+		if in[i].Calculations != nil {
+			out[i].Calculations = append([]reportpkg.MeasureCalculation{}, in[i].Calculations...)
+		}
 		if in[i].Scope != nil {
 			out[i].Scope = append([]string{}, in[i].Scope...)
 		}

@@ -87,6 +87,9 @@ func Compose(rows []Row, spec report.Composition, ev Evaluator) (*Result, error)
 }
 
 func ComposeN(rows []Row, spec report.Composition, ev Evaluator, maxRows int) (*Result, error) {
+	if err := validateCalculations(spec); err != nil {
+		return nil, err
+	}
 	rows = alignRowKeys(rows, spec)
 	res := &Result{RowCount: len(rows)}
 	if maxRows > 0 && len(rows) > maxRows {
@@ -416,6 +419,9 @@ func normalizeGroupKey(v any) any {
 // Строки выравниваются по spec (alignRowKeys) — поэтому field и поля мер
 // находятся регистронезависимо, как и в основном своде.
 func GroupByField(rows []Row, spec report.Composition, field string, ev Evaluator) (keys []any, subtotals map[any]map[string]any) {
+	if err := validateCalculations(spec); err != nil {
+		return nil, nil
+	}
 	rows = alignRowKeys(rows, spec)
 	buckets := map[any][]Row{}
 	for _, r := range rows {
@@ -442,7 +448,7 @@ func aggregateScoped(rows []Row, measures []report.Measure, ev Evaluator, wc *wa
 	active := make([]report.Measure, 0, len(measures))
 	for _, m := range measures {
 		if m.InScope(level) {
-			active = append(active, m)
+			active = append(active, m.AtLevel(level))
 		} else {
 			out[m.Field] = nil
 		}
@@ -453,7 +459,7 @@ func aggregateScoped(rows []Row, measures []report.Measure, ev Evaluator, wc *wa
 		if m.Expr != "" {
 			continue // вычисляемые — во второй проход
 		}
-		out[m.Field] = aggMeasure(rows, m)
+		out[m.Field] = aggMeasureAtLevel(rows, m, level, wc)
 	}
 	// Второй проход: вычисляемые показатели. Порядок определяется зависимостями
 	// (Expr, ссылающийся на другой Expr, вычисляется после него) — порядок
