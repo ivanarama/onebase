@@ -195,13 +195,14 @@ func allSchemas() map[string]map[string]any {
 		"additionalProperties": false,
 		"required":             []string{"name", "type"},
 		"properties": map[string]any{
-			"name":       stringSchema("Имя параметра"),
-			"type":       stringSchema("Тип параметра"),
-			"label":      stringSchema("Подпись"),
-			"labels":     stringMapSchema(),
-			"default":    stringSchema("Значение параметра по умолчанию"),
-			"options":    arrayOf(stringSchema("Значение")),
-			"period_end": boolSchema("Для type: date — использовать конец выбранного дня (23:59:59)"),
+			"name":         stringSchema("Имя параметра"),
+			"type":         stringSchema("Тип параметра"),
+			"label":        stringSchema("Подпись"),
+			"labels":       stringMapSchema(),
+			"default":      stringSchema("Значение параметра по умолчанию"),
+			"options":      arrayOf(stringSchema("Значение")),
+			"period_end":   boolSchema("Для type: date — использовать конец выбранного дня (23:59:59)"),
+			"visible_when": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"param", "equals"}, "properties": map[string]any{"param": stringSchema("Другой bool-параметр отчёта"), "equals": boolSchema("Значение флажка, при котором поле видно")}},
 		},
 	}
 	// Параметр ОБРАБОТКИ знает обязательность, параметр отчёта — нет

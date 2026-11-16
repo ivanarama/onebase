@@ -2989,18 +2989,18 @@ const tplReport = `
   <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px;margin-bottom:16px">
   {{range .ReportParams}}{{$p := .}}{{$pname := .Name}}{{$pval := str (index $.ParamValues .Name)}}
     {{if $p.IsBool}}
-    <div class="form-group" style="margin-bottom:0">
+    <div class="form-group" style="margin-bottom:0"{{with $p.VisibilityJSON}} data-report-param-visible="{{.}}"{{end}}{{if $p.Hidden}} hidden{{end}}>
       {{/* Снятый checkbox браузер не отправляет вовсе — маркер __has. говорит
            серверу, что флажок на форме был, и снятую галку не заменят
            значением по умолчанию. */}}
       <input type="hidden" name="__has.{{$pname}}" value="1">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-        <input type="checkbox" name="{{$pname}}" value="true" {{if index $.ParamValues $pname}}checked{{end}}>
+        <input type="checkbox" name="{{$pname}}" value="true" {{if $p.Checked $.ParamValues}}checked{{end}}>
         <span>{{$p.Label}}</span>
       </label>
     </div>
     {{else}}
-    <div class="form-group" style="margin-bottom:0">
+    <div class="form-group" style="margin-bottom:0"{{with $p.VisibilityJSON}} data-report-param-visible="{{.}}"{{end}}{{if $p.Hidden}} hidden{{end}}>
       <label>{{$p.Label}}</label>
       {{if $p.IsDate}}
         <input type="date" name="{{$pname}}" value="{{$pval}}">
@@ -3035,6 +3035,7 @@ const tplReport = `
   {{end}}
   <button class="btn btn-primary" type="submit">{{t $.Lang "Сформировать"}}</button>
 </form>
+{{if .ReportParams}}<script src="/static/report_params.js" defer></script>{{end}}
 </details>
 {{end}}
 {{if and .ReportCols .ReportSettingsJSON}}
