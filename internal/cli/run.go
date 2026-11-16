@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os/signal"
 	"sync"
 	"syscall"
@@ -696,4 +697,20 @@ func runtimeLimitsFromApp(l *project.LimitsConfig) ui.RuntimeLimits {
 		HTTPServiceConcurrency: l.HTTPServiceConcurrency,
 		SlowOperationMS:        l.SlowOperationMS,
 	}
+}
+
+// runtimeUIStyle переводит app.yaml: ui.style в значение для ui.Config.
+//
+// Неизвестный стиль не роняет запуск: опечатка в оформлении не должна делать
+// базу недоступной. Пользователь получает обычный вид и предупреждение в
+// журнале, а `onebase check` называет ту же опечатку ошибкой заранее.
+func runtimeUIStyle(cfg *project.AppConfig, log *slog.Logger) string {
+	style, err := cfg.NormalizedUIStyle()
+	if err != nil {
+		if log != nil {
+			log.Warn("ignoring unknown ui.style", "err", err)
+		}
+		return project.UIStyleClassic
+	}
+	return style
 }

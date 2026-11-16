@@ -122,6 +122,13 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 		data.AppCopyright = appCfg.Copyright
 		data.AppLicense = appCfg.License
 		data.AppSupport = appCfg.Support
+		// Неизвестное значение показываем как есть: пользователь должен видеть,
+		// что записано в файле, а не пустой список с потерянной опечаткой.
+		if style, styleErr := appCfg.NormalizedUIStyle(); styleErr == nil {
+			data.AppUIStyle = style
+		} else {
+			data.AppUIStyle = appCfg.UI.Style
+		}
 	}
 	if launcherBundle != nil {
 		data.AvailableLangs = launcherBundle.Available()

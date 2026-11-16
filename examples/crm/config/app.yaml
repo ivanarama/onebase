@@ -3,3 +3,5 @@ version: "1.0"
 author: Иван Титов
 copyright: © 2026 Иван Титов
 license: MIT
+ui:
+  style: new-style

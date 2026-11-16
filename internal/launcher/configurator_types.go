@@ -636,6 +636,7 @@ type configuratorData struct {
 	AppCopyright     string
 	AppLicense       string
 	AppSupport       string // куда сообщать об ошибках этой конфигурации (план 116)
+	AppUIStyle       string // вид форм: classic | new-style (app.yaml: ui.style)
 	AvailableLangs   []i18n.Lang
 	DSNMasked        string
 	Tab              string             // "tree" | "convert" | "files"

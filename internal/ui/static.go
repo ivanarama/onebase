@@ -22,12 +22,22 @@ var queryBuilderJS []byte
 //go:embed static/settings-navigation.js
 var settingsNavigationJS []byte
 
+// themeNewStyleCSS — таблица стилей нового вида форм (app.yaml: ui.style:
+// new-style). Отдельным файлом, а не внутри tplHead: файл крупный, и держать
+// его в строковом литерале шаблона значило бы перекомпилировать Go ради
+// правки цвета. Подключается только при включённом виде, поэтому у баз с
+// classic лишнего запроса нет.
+//
+//go:embed static/theme-new-style.css
+var themeNewStyleCSS []byte
+
 // ETag'и приложенческого JS считаются один раз при старте по содержимому.
 var (
 	uiJSETag                 = assetETag(uiJS)
 	managedJSETag            = assetETag(managedJS)
 	queryBuilderJSETag       = assetETag(queryBuilderJS)
 	settingsNavigationJSETag = assetETag(settingsNavigationJS)
+	themeNewStyleCSSETag     = assetETag(themeNewStyleCSS)
 )
 
 func assetETag(b []byte) string {
@@ -42,7 +52,15 @@ func assetETag(b []byte) string {
 // no-cache заставляет клиента ревалидировать: при совпадении ETag ответ — 304
 // без повторной передачи тела, поэтому свежесть не стоит лишнего трафика.
 func serveAppJS(w http.ResponseWriter, r *http.Request, body []byte, etag string) {
-	w.Header().Set("Content-Type", "application/javascript; charset=utf-8")
+	serveAppAsset(w, r, body, etag, "application/javascript; charset=utf-8")
+}
+
+// serveAppAsset отдаёт встроенный ассет приложения с ревалидацией по ETag.
+// Общая часть для JS и тем: имя файла фиксированное, содержимое меняется с
+// каждым билдом, поэтому immutable-кэш отдавал бы устаревший файл после
+// обновления движка.
+func serveAppAsset(w http.ResponseWriter, r *http.Request, body []byte, etag, contentType string) {
+	w.Header().Set("Content-Type", contentType)
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "no-cache")
 	if match := r.Header.Get("If-None-Match"); match != "" && match == etag {
@@ -69,6 +87,9 @@ func mountStatic(r chi.Router) {
 	})
 	r.Get("/static/query-builder.js", func(w http.ResponseWriter, req *http.Request) {
 		serveAppJS(w, req, queryBuilderJS, queryBuilderJSETag)
+	})
+	r.Get("/static/theme-new-style.css", func(w http.ResponseWriter, req *http.Request) {
+		serveAppAsset(w, req, themeNewStyleCSS, themeNewStyleCSSETag, "text/css; charset=utf-8")
 	})
 	r.Handle("/vendor/echarts/*", http.StripPrefix("/vendor/echarts/", webassets.EChartsHandler()))
 	// Monaco editor — инструменты разработчика (консоль кода/запросов, отладчик)
