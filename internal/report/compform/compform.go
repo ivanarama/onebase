@@ -55,6 +55,7 @@ func Parse(f url.Values) (*report.Composition, bool) {
 			Align:  f.Get(p + ".align"),
 			Format: strings.TrimSpace(f.Get(p + ".format")),
 			Expr:   strings.TrimSpace(f.Get(p + ".expr")),
+			Scope:  parseMeasureScope(f.Get(p + ".scope")),
 		})
 	}
 
@@ -203,4 +204,14 @@ func rowIndexes(f url.Values, prefix, suffix string) []int {
 	}
 	sort.Ints(out)
 	return out
+}
+
+func parseMeasureScope(raw string) []string {
+	var scope []string
+	for _, level := range strings.Split(raw, ",") {
+		if level = strings.TrimSpace(level); level != "" {
+			scope = append(scope, level)
+		}
+	}
+	return scope
 }

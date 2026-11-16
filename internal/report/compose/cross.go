@@ -175,7 +175,7 @@ func buildCrossRows(rows []Row, spec report.Composition, level int, ev Evaluator
 	}
 	out := make([]*CrossRow, 0, len(order))
 	for _, k := range order {
-		cells, styles := crossAgg(buckets[k], spec, ev, wc)
+		cells, styles := crossAggScoped(buckets[k], spec, ev, wc, field)
 		cr := &CrossRow{
 			Field:  field,
 			Key:    k,
@@ -241,6 +241,10 @@ func crossCells(rows []Row, spec report.Composition, ev Evaluator, wc *warnColle
 // wc собирает предупреждения исполнения показателей/условий (issue #26): прежде
 // кросс-режим терял их (wc=nil) — теперь они прокидываются в CrossResult.Warnings.
 func crossAgg(rows []Row, spec report.Composition, ev Evaluator, wc *warnCollector) (map[string]any, map[string]report.CellStyle) {
+	return crossAggScoped(rows, spec, ev, wc, report.MeasureScopeGrand)
+}
+
+func crossAggScoped(rows []Row, spec report.Composition, ev Evaluator, wc *warnCollector, level string) (map[string]any, map[string]report.CellStyle) {
 	byPath := map[string][]Row{}
 	paths := map[string][]any{}
 	var pathOrder []string
@@ -258,11 +262,15 @@ func crossAgg(rows []Row, spec report.Composition, ev Evaluator, wc *warnCollect
 	for _, k := range pathOrder {
 		sub := byPath[k]
 		// agg — field-keyed: служит для вычисления Expr и условий оформления.
-		agg := aggregate(sub, spec.Measures, ev, wc)
+		agg := aggregateScoped(sub, spec.Measures, ev, wc, level)
 		st := evalStyles(agg, spec, ev, wc)
 		p := paths[k]
 		for mi, m := range spec.Measures {
 			ck := colKey(p, mi)
+			if !m.InScope(level) {
+				cells[ck] = nil
+				continue
+			}
 			if m.Expr != "" {
 				// Вычисляемый показатель: значение уже посчитано в field-keyed agg.
 				cells[ck] = agg[m.Field]

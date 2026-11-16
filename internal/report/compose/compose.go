@@ -180,7 +180,7 @@ func buildGroups(rows []Row, spec report.Composition, level int, ev Evaluator, w
 			Field:     field,
 			Key:       k,
 			Count:     len(buckets[k]),
-			Subtotals: aggregate(buckets[k], spec.Measures, ev, wc),
+			Subtotals: aggregateScoped(buckets[k], spec.Measures, ev, wc, field),
 		}
 		// Условное оформление группы/подытога вычисляется по её подытогам плюс
 		// собственному полю группировки (field→Key) — чтобы правило вида
@@ -235,7 +235,27 @@ func evalStyles(row Row, spec report.Composition, ev Evaluator, wc *warnCollecto
 func buildDetails(rows []Row, spec report.Composition, ev Evaluator, wc *warnCollector) []DetailRow {
 	out := make([]DetailRow, 0, len(rows))
 	for _, r := range rows {
-		out = append(out, DetailRow{Values: r, Styles: evalStyles(r, spec, ev, wc)})
+		values := r
+		cloned := false
+		for _, m := range spec.Measures {
+			if !m.InScope(report.MeasureScopeDetail) {
+				// Clone once before blanking; input still feeds grand/group totals.
+				if !cloned {
+					values = make(Row, len(r))
+					for key, value := range r {
+						values[key] = value
+					}
+					cloned = true
+				}
+				for key := range values {
+					if strings.EqualFold(key, m.Field) {
+						values[key] = nil
+					}
+				}
+				values[m.Field] = nil
+			}
+		}
+		out = append(out, DetailRow{Values: values, Styles: evalStyles(values, spec, ev, wc)})
 	}
 	sortDetails(out, spec)
 	return out
@@ -408,13 +428,26 @@ func GroupByField(rows []Row, spec report.Composition, field string, ev Evaluato
 	subtotals = make(map[any]map[string]any, len(buckets))
 	for k, rs := range buckets {
 		// Предупреждения уже собраны основным проходом Compose — здесь nil-приёмник.
-		subtotals[k] = aggregate(rs, spec.Measures, ev, nil)
+		subtotals[k] = aggregateScoped(rs, spec.Measures, ev, nil, field)
 	}
 	return keys, subtotals
 }
 
 func aggregate(rows []Row, measures []report.Measure, ev Evaluator, wc *warnCollector) map[string]any {
+	return aggregateScoped(rows, measures, ev, wc, report.MeasureScopeGrand)
+}
+
+func aggregateScoped(rows []Row, measures []report.Measure, ev Evaluator, wc *warnCollector, level string) map[string]any {
 	out := map[string]any{}
+	active := make([]report.Measure, 0, len(measures))
+	for _, m := range measures {
+		if m.InScope(level) {
+			active = append(active, m)
+		} else {
+			out[m.Field] = nil
+		}
+	}
+	measures = active
 	// Первый проход: обычные показатели (не вычисляемые).
 	for _, m := range measures {
 		if m.Expr != "" {

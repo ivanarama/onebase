@@ -792,6 +792,9 @@ func CheckReportComposition(proj *project.Project) []Issue {
 		if c == nil {
 			return
 		}
+		for _, err := range c.MeasureScopeErrors() {
+			add(repName, prefix+err)
+		}
 		groups := map[string]bool{}
 		for _, g := range c.Groupings {
 			groups[g] = true

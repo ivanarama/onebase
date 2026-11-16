@@ -82,6 +82,9 @@ type Measure struct {
 	Align  string `yaml:"align"`  // left|right|center ("" = right)
 	Format string `yaml:"format"` // "" | "#,##0.00" | "#,##0" | "0.0%" и т.п.
 	Expr   string `yaml:"expr"`   // непустое = вычисляемый показатель (DSL-выражение по другим полям)
+	// Scope limits resource values to named row groupings, $grand and/or $detail.
+	// Empty means every level, preserving existing reports.
+	Scope []string `yaml:"scope,omitempty" json:",omitempty"`
 }
 
 // Totals управляет выводом итогов в отчёте.
