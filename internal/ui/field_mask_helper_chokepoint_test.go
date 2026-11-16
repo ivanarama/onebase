@@ -32,6 +32,9 @@ var maskHelperGateFuncs = map[string]bool{
 	// maskedRecordLabel зовёт maskRecord и отдаёт наружу только представление
 	// (field_access.go:82) — законная точка наложения маски.
 	"maskedRecordLabel": true,
+	// Protected report labels emit only a technical UUID; the ordinary path
+	// delegates to maskedRecordLabel. This is a masking gate, not an exemption.
+	"reportOutputRecordLabel": true,
 	// maskDSLValue — та же полевая политика для одиночного значения в DSL.
 	"maskDSLValue": true,
 }
@@ -267,5 +270,12 @@ func TestFieldMaskHelperChokepoint_DelegatedGatesStillMask(t *testing.T) {
 		t.Fatalf("делегированные гейты маскирования сломаны (%d):\n  %s\n\n"+
 			"Либо верните маску в названную функцию, либо наложите её на месте чтения.",
 			len(broken), strings.Join(broken, "\n  "))
+	}
+}
+
+func TestFieldMaskHelperChokepoint_ReportOutputStillMasks(t *testing.T) {
+	facts := maskHelperScan(t)
+	if helper, ok := facts["Server.reportOutputRecordLabel"]; !ok || !helper.gated {
+		t.Fatal("report output label must retain its delegated masking gate")
 	}
 }

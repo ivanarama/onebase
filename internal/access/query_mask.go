@@ -65,6 +65,13 @@ func QueryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name str
 }
 
 func queryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name string) *metadata.Entity, reportOutput bool) QueryMaskPlan {
+	if reportOutput {
+		for _, src := range res.Sources {
+			if sourceMeta(src.Kind, src.Name, src.TablePart, lookup) == nil {
+				return QueryMaskPlan{Denied: src.Name}
+			}
+		}
+	}
 	masked, columns, fieldColumns := maskedSourceFieldsWithOutput(u, res.Sources, lookup, reportOutput)
 	if len(masked) == 0 {
 		return QueryMaskPlan{}
@@ -237,10 +244,6 @@ func applyDecision(row map[string]any, key string, dec FieldDecision) {
 // имени поля и, отдельно, по имени колонки таблицы (для проекции «*»). Третья
 // карта — обратная: логическое имя поля → его физические колонки, чтобы явную
 // проекцию ссылки сопоставлять с той же колонкой, которую покрывает «*».
-func maskedSourceFields(u *auth.User, sources []query.SourceRef, lookup func(kind, name string) *metadata.Entity) (byField, byColumn map[string]FieldDecision, fieldColumns map[string][]string) {
-	return maskedSourceFieldsWithOutput(u, sources, lookup, false)
-}
-
 func maskedSourceFieldsWithOutput(u *auth.User, sources []query.SourceRef, lookup func(kind, name string) *metadata.Entity, reportOutput bool) (byField, byColumn map[string]FieldDecision, fieldColumns map[string][]string) {
 	if !reportOutput && (u == nil || (u.IsAdmin && !MaskAdmin())) {
 		return nil, nil, nil

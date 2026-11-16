@@ -12,6 +12,8 @@ import (
 	"github.com/ivantit66/onebase/internal/query"
 )
 
+// Shared mandatory report boundary. sourceMeta resolves the exact source kind;
+// UI/filters should reuse this helper rather than bypass it with another plan.
 func (s *Server) reportOutputMaskPlan(ctx context.Context, compiled query.Result) access.QueryMaskPlan {
 	return access.ReportOutputQueryMaskPlan(auth.UserFromContext(ctx), compiled, s.sourceMeta)
 }

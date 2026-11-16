@@ -420,7 +420,7 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "forbidden source: "+denied, "", 0)
 			return
 		}
-		maskPlan := h.reportResultOutputMask(r, compiled)
+		maskPlan := h.queryMaskPlan(r.Context(), compiled)
 		if maskPlan.Denied != "" {
 			writeError(w, http.StatusForbidden, "masked field: "+maskPlan.Denied, "", 0)
 			return
