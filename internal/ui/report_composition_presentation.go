@@ -7,6 +7,7 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
 	"github.com/ivantit66/onebase/internal/report"
+	"github.com/ivantit66/onebase/internal/storage"
 )
 
 // Presentation belongs to one request, never to persisted report metadata or
@@ -68,15 +69,26 @@ func (s *Server) reportProjectionMetadata(compiled *query.Result, output string)
 	if projection == nil {
 		return nil
 	}
+	qualified := false
+	for _, source := range compiled.SourceOccurrences {
+		if len(projection.Path) > 1 && (strings.EqualFold(projection.Path[0], source.Qualifier) || strings.EqualFold(projection.Path[0], source.Name)) {
+			qualified = true
+		}
+	}
 	var result *metadata.Field
 	for _, source := range compiled.SourceOccurrences {
 		path := projection.Path
 		if len(path) > 1 && (strings.EqualFold(path[0], source.Qualifier) || strings.EqualFold(path[0], source.Name)) {
 			path = path[1:]
+		} else if qualified {
+			continue
 		} else if len(path) > 2 && strings.EqualFold(path[1], source.Name) {
 			path = path[2:]
 		}
-		entity := s.sourceMeta(source.Kind, source.Name)
+		entity := s.reportPresentationSourceMeta(source)
+		if entity == nil {
+			return nil
+		}
 		var found *metadata.Field
 		for index, part := range path {
 			found = nil
@@ -109,6 +121,42 @@ func (s *Server) reportProjectionMetadata(compiled *query.Result, output string)
 		}
 	}
 	return result
+}
+
+// Display metadata obeys the compiler's source kind. This request-local lookup
+// does not change shared access policy; unresolved provenance keeps the alias.
+func (s *Server) reportPresentationSourceMeta(source query.SourceOccurrence) *metadata.Entity {
+	if source.Virtual && source.TablePart == "" {
+		return nil // Output names alone do not prove a derived column's field.
+	}
+	var entity *metadata.Entity
+	switch strings.ToLower(source.Kind) {
+	case "catalog", "document":
+		if e := s.reg.GetEntity(source.Name); e != nil && strings.EqualFold(string(e.Kind), source.Kind) {
+			entity = e
+		}
+	case "inforeg":
+		entity = storage.InfoRegisterPredicateEntity(s.reg.GetInfoRegister(source.Name))
+	case "register":
+		reg, account := s.reg.GetRegister(source.Name), s.reg.GetAccountRegister(source.Name)
+		if reg != nil && account != nil {
+			return nil // The permission kind does not distinguish these namespaces.
+		}
+		if reg != nil {
+			entity = storage.RegisterPredicateEntity(reg)
+		} else if account != nil {
+			entity = storage.AccountRegisterPredicateEntity(account)
+		}
+	}
+	if entity == nil || source.TablePart == "" {
+		return entity
+	}
+	for i := range entity.TableParts {
+		if strings.EqualFold(entity.TableParts[i].Name, source.TablePart) {
+			return metadata.TablePartQueryEntity(entity, &entity.TableParts[i], entity.Name)
+		}
+	}
+	return nil
 }
 
 // Groups fade from the same pale shade for screen and exports; details have
