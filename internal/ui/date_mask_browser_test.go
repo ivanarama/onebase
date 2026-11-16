@@ -22,8 +22,9 @@ func TestDateMaskBrowserReportEditing(t *testing.T) {
 	rep := &reportpkg.Report{Name: "DateMaskProbe", Query: "ВЫБРАТЬ 1 КАК Marker", Params: []reportpkg.Param{
 		{Name: "Day", Type: "date"}, {Name: "Moment", Type: "datetime"},
 	}}
-	s := newReportExportTestServer(t, rep)
-	s.cfg.ShortDateInput = true
+	fixture := newReportExportTestServer(t, rep)
+	s := New(fixture.reg, fixture.store, fixture.interp, nil, Config{ShortDateInput: true}, nil)
+	t.Cleanup(s.Close)
 	router := chi.NewRouter()
 	router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

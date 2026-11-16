@@ -143,6 +143,7 @@
   document.addEventListener('keydown',function (e) {
     var el=e.target; if (e.isComposing) return;
     if (e.altKey && e.key==='ArrowDown' && eligible(el) && typeof el.showPicker==='function') {e.preventDefault(); e.stopPropagation(); openCalendar(el); return;}
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase()==='v' && eligible(el)) {begin(el); return;}
     if (e.ctrlKey || e.altKey || e.metaKey) return;
     if (el && el.tagName==='INPUT' && !el.disabled && el.readOnly && (editing.has(el) || el.type==='date' || el.type==='datetime-local') && e.key==='Enter') {
       e.preventDefault(); e.stopPropagation();

@@ -77,6 +77,12 @@ test('letters are not inserted into the fixed template',()=>{
 test('Escape restores the original canonical field',()=>{
   const c=setup('date','2020-01-02');c.focus();c.input.select();c.type('16');c.key('Escape');assert.equal(c.input.value,'2020-01-02');assert.equal(c.input.type,'date');assert.equal(c.input.error,'');
 });
+
+for (const modifier of ['ctrlKey','metaKey']) test('paste shortcut reopens mask after Escape: '+modifier,()=>{
+  const c=setup('date','2020-01-02');c.focus();c.key('Escape');
+  const e=c.key('v',{[modifier]:true});assert.equal(e.defaultPrevented,undefined);assert.equal(c.input.type,'text');
+  c.paste('16112026');c.key('Enter');assert.equal(c.input.value,'2026-11-16');
+});
 test('readonly Enter neither submits nor changes the value',()=>{
   const c=setup('date','2026-11-16');c.input.readOnly=true;c.focus();const e=c.key('Enter');assert.equal(e.defaultPrevented,true);assert.equal(c.input.type,'date');assert.equal(c.input.value,'2026-11-16');assert.deepEqual(c.events,[]);
 });
