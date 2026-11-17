@@ -60,15 +60,15 @@ func compareUUIDValues(a, b any) (int, bool) {
 // (регистр не важен): фигурные скобки и «urn:uuid:» uuid.Parse пропустил бы,
 // и одна и та же метка писалась бы в журналы по-разному.
 func newUUIDValue(args []any) UUIDValue {
+	if len(args) > 1 {
+		RaiseUserError(fmt.Sprintf("Новый УникальныйИдентификатор: ожидается не больше одного аргумента, получено %d", len(args)))
+	}
 	if len(args) == 0 || args[0] == nil {
 		id, err := uuid.NewRandom()
 		if err != nil {
 			RaiseUserError("УникальныйИдентификатор: не удалось получить случайное значение: " + err.Error())
 		}
 		return UUIDValue{id: id}
-	}
-	if len(args) > 1 {
-		RaiseUserError(fmt.Sprintf("Новый УникальныйИдентификатор: ожидается не больше одного аргумента, получено %d", len(args)))
 	}
 	switch v := unwrapReadOnly(args[0]).(type) {
 	case UUIDValue:

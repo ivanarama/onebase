@@ -90,6 +90,15 @@ func TestUUIDValue_BadStringIsClearError(t *testing.T) {
 	}
 }
 
+func TestUUIDValue_RejectsExtraArgumentsBeforeUndefined(t *testing.T) {
+	_, err := runUUIDFunc(t, `Функция Тест()
+	Возврат Новый УникальныйИдентификатор(Неопределено, "ignored");
+КонецФункции`)
+	if err == nil || !strings.Contains(err.Error(), "ожидается не больше одного аргумента, получено 2") {
+		t.Fatalf("ждали ошибку о лишнем аргументе, получили %v", err)
+	}
+}
+
 // Хост получает значение и может вернуть его в DSL (параметр фонового
 // задания): тип и текст сохраняются.
 func TestUUIDValue_HostRoundTrip(t *testing.T) {
