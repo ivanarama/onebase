@@ -97,3 +97,46 @@ func TestMenuReportVariantEditorRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+// Команда «Создать» (action: new) переживает предпросмотр и сохранение меню
+// из конфигуратора; action у отчёта — отказ без изменения источника.
+func TestMenuActionNewEditorRoundTrip(t *testing.T) {
+	for _, mode := range []string{"file", "database"} {
+		t.Run(mode, func(t *testing.T) {
+			const source = "subsystems/custom-school.yaml"
+			h, b := newNavigationEditorFixture(t, mode, source)
+			if err := h.writeConfigFileRaw(context.Background(), b, "reports/Work.yaml", []byte("name: Work\nquery: ВЫБРАТЬ 1 КАК Amount\n")); err != nil {
+				t.Fatal(err)
+			}
+			raw := strings.Replace(navigationEditorFixture, "contents:\n", "contents:\n  reports: [Work]\n", 1)
+			if err := h.writeConfigFileRaw(context.Background(), b, source, []byte(raw)); err != nil {
+				t.Fatal(err)
+			}
+			data := readNavigationEditorData(t, navigationEditorHTTP(h, http.MethodGet, "?subsystem=School", ""))
+			section := &data.Menu.Sections[0]
+			section.Items, section.Groups = nil, nil
+			section.Nodes = []metadata.MenuNode{{ID: "add", Target: "document:Order", Action: "new", Title: "Добавить жалобу"}}
+			body := navigationEditorBody(t, "School", data.Menu)
+			preview := readNavigationEditorData(t, navigationEditorHTTP(h, http.MethodPost, "/preview", body))
+			u, err := url.Parse(preview.Preview[0].Nodes[0].URL)
+			if err != nil || !strings.HasSuffix(u.Path, "/ui/document/Order/new") {
+				t.Fatal("preview lost action new", u, err)
+			}
+			readNavigationEditorData(t, navigationEditorHTTP(h, http.MethodPost, "/save", body))
+			again := readNavigationEditorData(t, navigationEditorHTTP(h, http.MethodGet, "?subsystem=School", ""))
+			if again.Menu.Sections[0].Nodes[0].Action != "new" {
+				t.Fatal("saved menu lost action new")
+			}
+			before, _ := h.readConfigFileRaw(context.Background(), b, source)
+			again.Menu.Sections[0].Nodes[0] = metadata.MenuNode{ID: "add", Target: "report:Work", Action: "new"}
+			bad := navigationEditorHTTP(h, http.MethodPost, "/save", navigationEditorBody(t, "School", again.Menu))
+			if bad.Code != http.StatusBadRequest {
+				t.Fatal("action new on a report saved", bad.Code)
+			}
+			after, _ := h.readConfigFileRaw(context.Background(), b, source)
+			if string(after) != string(before) {
+				t.Fatal("failed save changed source")
+			}
+		})
+	}
+}

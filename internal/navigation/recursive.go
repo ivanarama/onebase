@@ -155,15 +155,22 @@ func normalizeRecursive(context string, menu *metadata.Menu, scope Scope) (Tree,
 					add("navigation.variant", raw.ID, "variant must name an existing report variant", false)
 					continue
 				}
-				binding := target.key() + "\x00" + raw.Variant
+				if msg := actionProblem(raw.Action, target); msg != "" {
+					add("navigation.action", raw.ID, msg, false)
+					continue
+				}
+				binding := target.key() + "\x00" + raw.Variant + "\x00" + raw.Action
 				if seen[binding] {
 					add("navigation.duplicate-target", raw.ID, "duplicate target in one parent", true)
 				}
 				seen[binding], placed[target.key()] = true, true
-				n.Target, n.Variant, n.Object = object.Target.String(), raw.Variant, cloneObject(object)
+				n.Target, n.Variant, n.Action, n.Object = object.Target.String(), raw.Variant, raw.Action, cloneObject(object)
 			} else {
 				if raw.Variant != "" {
 					add("navigation.variant", raw.ID, "variant requires a report command", false)
+				}
+				if raw.Action != "" {
+					add("navigation.action", raw.ID, "action requires a command", false)
 				}
 				folders++
 				if raw.Nodes == nil {
@@ -232,7 +239,7 @@ func normalizeRecursive(context string, menu *metadata.Menu, scope Scope) (Tree,
 func legacyMenuNodes(items []metadata.MenuItem) []metadata.MenuNode {
 	output := make([]metadata.MenuNode, 0, len(items))
 	for _, i := range items {
-		output = append(output, metadata.MenuNode{ID: i.ID, Target: i.Target, Variant: i.Variant, Title: i.Title, Titles: i.Titles, Icon: i.Icon})
+		output = append(output, metadata.MenuNode{ID: i.ID, Target: i.Target, Variant: i.Variant, Action: i.Action, Title: i.Title, Titles: i.Titles, Icon: i.Icon})
 	}
 	return output
 }

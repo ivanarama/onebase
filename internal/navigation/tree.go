@@ -69,9 +69,22 @@ func ResolveItem(item Item, lang, context string, translate func(string) string,
 	label := DisplayTitle(item.Title, item.Titles, lang)
 	if label == "" {
 		label = item.Object.Label(lang, translate, flat)
+		if item.Action == ActionNew {
+			label = translate("Создать") + ": " + label
+		}
 	}
 	t := item.Object.Target
 	link := t.URL(context)
+	if item.Action == ActionNew {
+		// Новый объект — тот же маршрут формы, что кнопка «Создать» списка; в
+		// меню видна только ролям с правом create.
+		// Контекст подсистемы приходит в запросе (?subsystem=…): «/new» — к пути.
+		if u, err := url.Parse(link); err == nil {
+			u.Path, u.RawPath = u.Path+"/new", ""
+			link = u.String()
+		}
+		return ResolvedItem{ID: item.ID, Label: label, URL: link, Kind: t.Kind, Name: t.Name, Action: "create"}
+	}
 	if item.Variant != "" && t.Kind == "report" {
 		// A fixed configuration variant opens with standard settings, rather
 		// than an unrelated personal default preset overriding its composition.
@@ -121,9 +134,11 @@ type Group struct {
 }
 
 type Item struct {
-	ID          string            `json:"id"`
-	Target      string            `json:"target"`
-	Variant     string            `json:"variant,omitempty"`
+	ID      string `json:"id"`
+	Target  string `json:"target"`
+	Variant string `json:"variant,omitempty"`
+	// Action "new" — команда создаёт документ/элемент (metadata.MenuNode.Action).
+	Action      string            `json:"action,omitempty"`
 	Title       string            `json:"title"`
 	Titles      map[string]string `json:"titles,omitempty"`
 	Icon        string            `json:"icon,omitempty"`
@@ -191,12 +206,16 @@ func Normalize(context string, menu *metadata.Menu, scope Scope) (Tree, []Diagno
 				add("navigation.variant", item.ID, "variant должен именовать существующий вариант отчёта", false)
 				continue
 			}
-			binding := target.key() + "\x00" + item.Variant
+			if msg := actionProblem(item.Action, target); msg != "" {
+				add("navigation.action", item.ID, msg, false)
+				continue
+			}
+			binding := target.key() + "\x00" + item.Variant + "\x00" + item.Action
 			if seen[binding] {
 				add("navigation.duplicate-target", item.ID, "повтор target в одном родителе: "+item.Target, true)
 			}
 			seen[binding], placed[target.key()] = true, true
-			output = append(output, Item{ID: "cfg:" + item.ID, Target: object.Target.String(), Variant: item.Variant, Title: item.Title,
+			output = append(output, Item{ID: "cfg:" + item.ID, Target: object.Target.String(), Variant: item.Variant, Action: item.Action, Title: item.Title,
 				Titles: copyTitles(item.Titles), Icon: metadata.NormalizeIconName(item.Icon), Object: cloneObject(object)})
 		}
 		return output
@@ -306,4 +325,22 @@ func DisplayTitle(title string, titles map[string]string, lang string) string {
 		return v
 	}
 	return title
+}
+
+// ActionNew — команда меню создаёт новый документ или элемент справочника.
+const ActionNew = "new"
+
+// actionProblem — причина отказа action команды: допустим только "new" и
+// только у документа или справочника.
+func actionProblem(action string, target Target) string {
+	switch action {
+	case "":
+		return ""
+	case ActionNew:
+		if target.Kind == "document" || target.Kind == "catalog" {
+			return ""
+		}
+		return "action: new допустим только у document: или catalog:"
+	}
+	return fmt.Sprintf("неизвестный action %q: допустим только new", action)
 }

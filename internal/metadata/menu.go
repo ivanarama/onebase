@@ -61,8 +61,11 @@ type MenuNode struct {
 	Icon    string            `yaml:"icon,omitempty" json:"icon,omitempty"`
 	Target  string            `yaml:"target,omitempty" json:"target,omitempty"`
 	Variant string            `yaml:"variant,omitempty" json:"variant,omitempty"`
-	Nodes   []MenuNode        `yaml:"nodes,omitempty" json:"nodes,omitempty"`
-	Roles   []string          `yaml:"roles,omitempty" json:"roles,omitempty"`
+	// Action — что делает команда: "" открывает список/форму объекта, "new" —
+	// новый документ или элемент справочника (команда 1С «Создать»).
+	Action string     `yaml:"action,omitempty" json:"action,omitempty"`
+	Nodes  []MenuNode `yaml:"nodes,omitempty" json:"nodes,omitempty"`
+	Roles  []string   `yaml:"roles,omitempty" json:"roles,omitempty"`
 }
 
 func menuYAMLField(node *yaml.Node, key string) (*yaml.Node, bool) {
@@ -108,6 +111,9 @@ func checkMenuNodeShape(root *yaml.Node) error {
 			if _, exists := menuYAMLField(child, "variant"); exists {
 				return fmt.Errorf("menu variant requires a report command")
 			}
+			if _, exists := menuYAMLField(child, "action"); exists {
+				return fmt.Errorf("menu action requires a command")
+			}
 			if !hasNodes || depth > MaxMenuFolderDepth {
 				return fmt.Errorf("menu folder requires nodes and depth at most %d", MaxMenuFolderDepth)
 			}
@@ -144,6 +150,7 @@ type MenuItem struct {
 	ID      string            `yaml:"id" json:"id"`
 	Target  string            `yaml:"target" json:"target"`
 	Variant string            `yaml:"variant,omitempty" json:"variant,omitempty"`
+	Action  string            `yaml:"action,omitempty" json:"action,omitempty"` // см. MenuNode.Action
 	Title   string            `yaml:"title,omitempty" json:"title,omitempty"`
 	Titles  map[string]string `yaml:"titles,omitempty" json:"titles,omitempty"`
 	Icon    string            `yaml:"icon,omitempty" json:"icon,omitempty"`
