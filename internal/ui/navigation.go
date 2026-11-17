@@ -300,6 +300,9 @@ func NavigationObjects(reg *runtime.Registry) []navigation.Object {
 	for _, o := range reg.Reports() {
 		add("report", o.Name, o.DisplayName(""), o.Titles)
 		objects[len(objects)-1].External = o.External
+		for _, variant := range o.Variants {
+			objects[len(objects)-1].Variants = append(objects[len(objects)-1].Variants, variant.Name)
+		}
 	}
 	for _, o := range reg.Processors() {
 		add("processor", o.Name, o.DisplayName(""), o.Titles)

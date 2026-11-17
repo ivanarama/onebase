@@ -29,6 +29,9 @@ func navigationObjects(p *project.Project) []navigation.Object {
 	for _, r := range p.Reports {
 		add("report", r.Name, r.DisplayName(""), r.Titles)
 		objects[len(objects)-1].External = r.External
+		for _, variant := range r.Variants {
+			objects[len(objects)-1].Variants = append(objects[len(objects)-1].Variants, variant.Name)
+		}
 	}
 	for _, r := range p.Processors {
 		add("processor", r.Name, r.DisplayName(""), r.Titles)

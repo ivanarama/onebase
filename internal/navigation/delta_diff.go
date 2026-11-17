@@ -35,7 +35,7 @@ func Diff(base, desired Tree, layer Layer) (Delta, error) {
 			}
 			continue
 		}
-		if node.kind != old.kind || node.kind == itemNode && node.item.Target != old.item.Target {
+		if node.kind != old.kind || node.kind == itemNode && (node.item.Target != old.item.Target || node.item.Variant != old.item.Variant) {
 			return Delta{}, fmt.Errorf("navigation: target or node kind changed")
 		}
 		if node.title == old.title && !maps.Equal(node.titles, old.titles) && len(node.titles) != 0 {

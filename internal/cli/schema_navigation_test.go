@@ -31,6 +31,13 @@ func TestSchemaSemanticNavigation(t *testing.T) {
 				t.Fatal("groups must reject unknown nesting")
 			}
 			item := section["items"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+			if item["variant"].(map[string]any)["type"] != "string" {
+				t.Fatal("menu item variant missing from schema")
+			}
+			command := schema["$defs"].(map[string]any)["navigationNode"].(map[string]any)["oneOf"].([]any)[0].(map[string]any)["properties"].(map[string]any)
+			if command["variant"].(map[string]any)["type"] != "string" {
+				t.Fatal("recursive command variant missing from schema")
+			}
 			pattern := regexp.MustCompile(item["target"].(map[string]any)["pattern"].(string))
 			for _, v := range []string{"catalog:Classes", "register:Attendance:movements", "system:constants", "document:Приказ"} {
 				if !pattern.MatchString(v) {

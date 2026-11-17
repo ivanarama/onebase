@@ -55,13 +55,14 @@ type MenuSection struct {
 // MenuNode is one ordered command or folder. A command has a typed target;
 // a folder has nodes. The strict menu decoder rejects ambiguous combinations.
 type MenuNode struct {
-	ID     string            `yaml:"id" json:"id"`
-	Title  string            `yaml:"title,omitempty" json:"title,omitempty"`
-	Titles map[string]string `yaml:"titles,omitempty" json:"titles,omitempty"`
-	Icon   string            `yaml:"icon,omitempty" json:"icon,omitempty"`
-	Target string            `yaml:"target,omitempty" json:"target,omitempty"`
-	Nodes  []MenuNode        `yaml:"nodes,omitempty" json:"nodes,omitempty"`
-	Roles  []string          `yaml:"roles,omitempty" json:"roles,omitempty"`
+	ID      string            `yaml:"id" json:"id"`
+	Title   string            `yaml:"title,omitempty" json:"title,omitempty"`
+	Titles  map[string]string `yaml:"titles,omitempty" json:"titles,omitempty"`
+	Icon    string            `yaml:"icon,omitempty" json:"icon,omitempty"`
+	Target  string            `yaml:"target,omitempty" json:"target,omitempty"`
+	Variant string            `yaml:"variant,omitempty" json:"variant,omitempty"`
+	Nodes   []MenuNode        `yaml:"nodes,omitempty" json:"nodes,omitempty"`
+	Roles   []string          `yaml:"roles,omitempty" json:"roles,omitempty"`
 }
 
 func menuYAMLField(node *yaml.Node, key string) (*yaml.Node, bool) {
@@ -104,6 +105,9 @@ func checkMenuNodeShape(root *yaml.Node) error {
 				}
 				continue
 			}
+			if _, exists := menuYAMLField(child, "variant"); exists {
+				return fmt.Errorf("menu variant requires a report command")
+			}
 			if !hasNodes || depth > MaxMenuFolderDepth {
 				return fmt.Errorf("menu folder requires nodes and depth at most %d", MaxMenuFolderDepth)
 			}
@@ -137,11 +141,12 @@ type MenuGroup struct {
 }
 
 type MenuItem struct {
-	ID     string            `yaml:"id" json:"id"`
-	Target string            `yaml:"target" json:"target"`
-	Title  string            `yaml:"title,omitempty" json:"title,omitempty"`
-	Titles map[string]string `yaml:"titles,omitempty" json:"titles,omitempty"`
-	Icon   string            `yaml:"icon,omitempty" json:"icon,omitempty"`
+	ID      string            `yaml:"id" json:"id"`
+	Target  string            `yaml:"target" json:"target"`
+	Variant string            `yaml:"variant,omitempty" json:"variant,omitempty"`
+	Title   string            `yaml:"title,omitempty" json:"title,omitempty"`
+	Titles  map[string]string `yaml:"titles,omitempty" json:"titles,omitempty"`
+	Icon    string            `yaml:"icon,omitempty" json:"icon,omitempty"`
 }
 
 // Aliases are intentionally excluded from this bounded, identity-based format.

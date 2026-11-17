@@ -14,6 +14,7 @@ func navigationContainerSchema(home bool) map[string]any {
 	}
 	item := node()
 	item["target"] = map[string]any{"type": "string", "pattern": `^(?:(?:catalog|document|inforeg|report|processor|journal|page):[^:/\s?#%<>&]+|register:[^:/\s?#%<>&]+:(?:movements|balances)|system:constants)$`}
+	item["variant"] = stringSchema("Имя существующего варианта отчёта")
 	itemSchema := map[string]any{"type": "object", "additionalProperties": false, "required": []string{"id", "target"}, "properties": item}
 	group := node()
 	group["items"] = arrayOf(itemSchema)
@@ -25,6 +26,7 @@ func navigationContainerSchema(home bool) map[string]any {
 	nodeRef := map[string]any{"$ref": "#/$defs/navigationNode"}
 	command := node()
 	command["target"], command["roles"] = item["target"], roles
+	command["variant"] = item["variant"]
 	folder := node()
 	folder["nodes"], folder["roles"] = arrayOf(nodeRef), roles
 	recursiveNode := map[string]any{"oneOf": []any{

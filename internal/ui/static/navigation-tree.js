@@ -8,9 +8,11 @@
  function ancestors(link) { for(var p=link.parentElement;p;p=p.parentElement)if(p.matches('details.navtree')){p.open=true;reflect(p);} }
  function active(root) {
   var current=new URL(location.href);
+  var variant=current.searchParams.get('__variant');
+  if(variant===null){var selected=document.querySelector('select[name="__variant"], input[name="__variant"]');variant=selected?selected.value:'';}
   root.querySelectorAll('a[href]').forEach(function(link){
    var target=new URL(link.href);
-   if(target.pathname===current.pathname && target.searchParams.get('subsystem')===current.searchParams.get('subsystem'))ancestors(link);
+   if(target.pathname===current.pathname && target.searchParams.get('subsystem')===current.searchParams.get('subsystem') && (target.searchParams.get('__variant')||'')===variant)ancestors(link);
   });
  }
  function init() {
