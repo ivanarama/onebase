@@ -13,10 +13,10 @@ import (
 
 func TestSourceCostPublicCLIReceiptAndClosedFailures(t *testing.T) {
 	root, binary := repoRoot(t), pipelinehealthCLI(t)
-	helper, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Reuse the standalone fixture executable, rather than spawning this entire
+	// race-instrumented test binary once per physical GraphQL request. The meter
+	// and all assertions still run under the ordinary parent race test.
+	helper := buildGhStub(t)
 	preview := func(cost int) graphQLRetryStep {
 		return graphQLRetryStep{Output: json.RawMessage(sourceCostResponse(t, cost, false))}
 	}
@@ -93,7 +93,7 @@ func TestSourceCostPublicCLIReceiptAndClosedFailures(t *testing.T) {
 			//nolint:gosec // Executable is built from this test's public CLI package.
 			command := exec.Command(binary, args...)
 			command.Dir = root
-			command.Env = append(os.Environ(), "GH_EXE="+helper, "PIPELINEHEALTH_TEST_GH_HELPER=1", "PIPELINEHEALTH_TEST_GH_RETRY_FIXTURE="+path)
+			command.Env = append(os.Environ(), "GH_EXE="+helper, "GHSTUB_GRAPHQL_RETRY_FIXTURE="+path)
 			output, runErr := command.Output()
 			exit := 0
 			if runErr != nil {
