@@ -135,6 +135,15 @@ ${name === 'RowsDelete' ? '' : '    events: {ПриАктивизацииСтр�
   }, { timeout: 30_000 }).toBe(200);
 });
 
+// Each browser context shares this suite's server-side anonymous message log.
+test.beforeEach(async ({ page }) => {
+  const cleared = await page.request.post(`${base}/ui/messages/clear`);
+  expect(cleared.status()).toBe(204);
+  const listed = await page.request.get(`${base}/ui/messages`);
+  expect(listed.status()).toBe(200);
+  expect((await listed.json()).messages).toEqual([]);
+});
+
 test.afterAll(async () => {
   if (server && server.exitCode === null && server.signalCode === null) {
     const exited = new Promise(resolve => server.once('exit', resolve));
