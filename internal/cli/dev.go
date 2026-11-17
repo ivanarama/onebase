@@ -314,6 +314,7 @@ func runDev(cmd *cobra.Command, _ []string) error {
 		}
 		uiCfg.Limits = runtimeLimitsFromApp(appCfg.Limits)
 		uiCfg.POSEnabled = appCfg.POSEnabled()
+		uiCfg.FormStyle = runtimeUIStyle(appCfg, nil)
 		if appCfg.Email != nil {
 			m := mailer.New(mailer.Config{
 				SMTPHost:    appCfg.Email.SMTPHost,

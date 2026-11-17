@@ -252,6 +252,46 @@ type AppConfig struct {
 	// приложению: РМК, встроенный в каждый экземпляр, у казначейства или
 	// склада — чужой пункт меню, который пользователь читает как ошибку.
 	Features *FeaturesConfig `yaml:"features,omitempty"`
+	// UI — оформление интерфейса. Необязательно: без блока вид остаётся
+	// прежним (classic).
+	UI *UIConfig `yaml:"ui,omitempty"`
+}
+
+// UIConfig — оформление пользовательского интерфейса.
+type UIConfig struct {
+	// Style выбирает вид форм: "classic" (по умолчанию) или "new-style" —
+	// плотная компоновка нового вида: поля в рамке с небольшим скруглением,
+	// заголовки групп как закладки, сетка табличных частей с разделителями
+	// ячеек. Пустая строка означает classic.
+	Style string `yaml:"style,omitempty"`
+}
+
+// Стили оформления, которые понимает платформа.
+const (
+	// UIStyleClassic — вид по умолчанию: скруглённые карточки, мягкие тени.
+	UIStyleClassic = "classic"
+	// UIStyleNew — плотная компоновка нового вида.
+	UIStyleNew = "new-style"
+)
+
+// NormalizedUIStyle приводит значение style к одному из известных. Неизвестное
+// значение не подменяется молча на classic: подмена скрыла бы опечатку
+// (`style: new_style` вместо `new-style`), и пользователь искал бы причину
+// «стиль не применился» в кэше браузера. Пустое значение — законное умолчание.
+func (c *AppConfig) NormalizedUIStyle() (string, error) {
+	if c == nil || c.UI == nil {
+		return UIStyleClassic, nil
+	}
+	style := strings.ToLower(strings.TrimSpace(c.UI.Style))
+	switch style {
+	case "", UIStyleClassic:
+		return UIStyleClassic, nil
+	case UIStyleNew:
+		return UIStyleNew, nil
+	default:
+		return "", fmt.Errorf("config/app.yaml: ui.style: неизвестный стиль %q (допустимо: %s, %s)",
+			c.UI.Style, UIStyleClassic, UIStyleNew)
+	}
 }
 
 // FeaturesConfig — явный opt-in доменных возможностей. Умолчание у каждой —

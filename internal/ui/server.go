@@ -54,6 +54,11 @@ type Config struct {
 	DemoMessage      string
 	Lang             string       // base language from config
 	Bundle           *i18n.Bundle // translations
+	// FormStyle — выбранный вид форм (app.yaml: ui.style). Для нового вида
+	// шаблон страницы подключает таблицу стилей /static/theme-new-style.css.
+	// Пустая строка и "classic" означают вид по умолчанию и ничего не
+	// подключают.
+	FormStyle string
 	// DebugToken — общий секрет для debug API. Пустой → debug-маршруты не
 	// монтируются (см. api.New). Непустой → каждый запрос к /debug/global/*
 	// должен нести его в заголовке X-OneBase-Debug-Token.
@@ -83,6 +88,18 @@ type Config struct {
 	// обновлять страницу под руками у пользователя, стирая заполненную форму.
 	Dev bool
 }
+
+// newStyleFormStyle — значение ui.style, включающее таблицу стилей нового вида.
+// Совпадает с project.UIStyleNew; локальная константа нужна, чтобы шаблонный
+// слой не тянул за собой весь пакет project ради одной строки.
+const newStyleFormStyle = "new-style"
+
+// NewStyleFormStyle сообщает, включён ли новый плотный вид форм (app.yaml:
+// ui.style: new-style). Шаблон "head" по нему подключает
+// /static/theme-new-style.css и вешает класс на <html>: без класса таблица
+// стилей не действует ни на что, поэтому её подключение при выключенном виде
+// было бы лишним запросом.
+func (c Config) NewStyleFormStyle() bool { return c.FormStyle == newStyleFormStyle }
 
 type Server struct {
 	reg                    *runtime.Registry

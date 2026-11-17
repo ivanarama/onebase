@@ -1609,5 +1609,10 @@
   "Изменённая сборка": "Modified distribution",
   "Поставщик сборки": "Distribution supplier",
   "Переводы поля «%s» для языка %s изменены по-разному в двух редакторах. Укажите одинаковое значение и сохраните снова": "The translation of field \"%s\" for language %s was changed differently in the two editors. Enter the same value and save again",
-  "Результаты поиска по всему справочнику": "Search results across the whole catalog"
+  "Результаты поиска по всему справочнику": "Search results across the whole catalog",
+  "Вид форм": "Form style",
+  "Обычный": "Standard",
+  "Новый вид — плотная компоновка": "New style — compact layout",
+  "Действует на карточки документов и справочников после перезапуска базы. Списки и отчёты не меняются.": "Applies to document and catalog cards after the base restarts. Lists and reports are unchanged.",
+  "Неизвестный вид формы": "Unknown form style"
 }

@@ -1517,7 +1517,7 @@ func templateSource() string {
 
 const tplHead = `
 {{define "head"}}<!DOCTYPE html>
-<html lang="ru"><head><meta charset="UTF-8">
+<html lang="ru"{{if .Cfg.NewStyleFormStyle}} class="ob-style-new"{{end}}><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="theme-color" content="#1e293b">
 <link rel="manifest" href="/manifest.webmanifest">
@@ -1543,6 +1543,7 @@ const tplHead = `
   "imageArea" (t (or $.Lang "ru") "Область просмотра изображения")
 )}}</script>
 {{messagesMeta .}}<script src="/static/ui.js"></script>
+{{if .Cfg.NewStyleFormStyle}}<link rel="stylesheet" href="/static/theme-new-style.css">{{end}}
 <style>
 .ob-embedded .topbar,.ob-embedded .subsys-bar,.ob-embedded #ob-nav{display:none!important}
 *{box-sizing:border-box;margin:0;padding:0}
@@ -2643,7 +2644,7 @@ const tplForm = `
 {{end}}
 {{end}}{{/* end if not .IsPopup */}}
 
-<div class="card">
+<div class="card ob-form-card">
 <form id="main-form" method="POST" autocomplete="off" data-ob-dirty-watch="1"{{if enterSubmitsForm (index . "Form")}} data-ob-enter-submits="1"{{end}}>
 {{if and (not .IsNew) (index .Values "_version")}}<input type="hidden" name="_version" value="{{index .Values "_version"}}">{{end}}
 {{if .IsPopup}}<input type="hidden" name="_popup" value="1">{{end}}

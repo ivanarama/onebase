@@ -262,6 +262,14 @@ const cfgTabTree = `{{define "tab-tree"}}
         <div class="hint">{{t $.Lang "Язык по умолчанию для пользователей этой базы"}}</div>
       </div>
       <div class="fg" style="margin-top:10px">
+        <label>{{t $.Lang "Вид форм"}}</label>
+        <select name="app_ui_style" style="padding:6px 8px;border:1px solid #d0d7e3;border-radius:4px;font-size:13px">
+          <option value="classic"{{selIf $.AppUIStyle "classic"}}>{{t $.Lang "Обычный"}}</option>
+          <option value="new-style"{{selIf $.AppUIStyle "new-style"}}>{{t $.Lang "Новый вид — плотная компоновка"}}</option>
+        </select>
+        <div class="hint">{{t $.Lang "Действует на карточки документов и справочников после перезапуска базы. Списки и отчёты не меняются."}}</div>
+      </div>
+      <div class="fg" style="margin-top:10px">
         <label>{{t $.Lang "Логотип"}}</label>
         <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px">
           <img id="logo-preview" src="{{if .AppLogo}}/bases/{{.Base.ID}}/configurator/logo{{end}}" style="max-height:48px;max-width:120px;border:1px solid #e2e8f0;border-radius:4px;padding:2px;{{if not .AppLogo}}display:none{{end}}">

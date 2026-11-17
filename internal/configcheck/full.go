@@ -42,6 +42,13 @@ func RunFullWithOptions(dir string, opts Options) Result {
 	}
 	if appCfgErr == nil {
 		warnings = append(warnings, deprecatedAppConfigWarnings(appCfg)...)
+		if _, err := appCfg.NormalizedUIStyle(); err != nil {
+			issues = append(issues, Issue{
+				File: "config/app.yaml", Code: "config.unknown-ui-style",
+				Message:      err.Error(),
+				SuggestedFix: "Укажите style: classic или style: new-style (либо уберите блок ui).",
+			})
+		}
 		if warning := version.MinimumWarning(appCfg.MinEngineVersion); warning != nil {
 			warnings = append(warnings, Issue{
 				File: "config/app.yaml", Code: "config.min-engine-version",

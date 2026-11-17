@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/ivantit66/onebase/internal/configdb"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/project"
 	"github.com/ivantit66/onebase/internal/ui"
 	"gopkg.in/yaml.v3"
 )
@@ -259,6 +260,10 @@ func (h *handler) configuratorSaveApp(w http.ResponseWriter, r *http.Request) {
 	newCopyright := strings.TrimSpace(r.FormValue("app_copyright"))
 	newLicense := strings.TrimSpace(r.FormValue("app_license"))
 	newSupport := strings.TrimSpace(r.FormValue("app_support"))
+	newUIStyle := strings.ToLower(strings.TrimSpace(r.FormValue("app_ui_style")))
+	// Форма могла прийти от старой страницы без поля вида. Тогда ключ не трогаем
+	// вовсе — иначе сохранение имени стёрло бы выставленный вид формы.
+	_, styleSent := r.Form["app_ui_style"]
 	existingLogo := strings.TrimSpace(r.FormValue("app_logo_existing"))
 	removeLogo := r.FormValue("app_logo_remove") == "1"
 
@@ -267,6 +272,18 @@ func (h *handler) configuratorSaveApp(w http.ResponseWriter, r *http.Request) {
 		data.Error = tr(lang, "Имя конфигурации не может быть пустым")
 		renderCfg(w, r, data)
 		return
+	}
+
+	// Вид формы приходит из выпадающего списка, но проверяем значение всё равно:
+	// подставленное значение не должно попасть в app.yaml и превратиться в
+	// ошибку `onebase check` на следующем запуске.
+	if styleSent {
+		if _, err := (&project.AppConfig{UI: &project.UIConfig{Style: newUIStyle}}).NormalizedUIStyle(); err != nil {
+			data := h.loadCfgData(r.Context(), b, "tree")
+			data.Error = tr(lang, "Неизвестный вид формы") + ": " + newUIStyle
+			renderCfg(w, r, data)
+			return
+		}
 	}
 
 	// Determine logo path
@@ -312,7 +329,7 @@ func (h *handler) configuratorSaveApp(w http.ResponseWriter, r *http.Request) {
 	// доступа S3, limits, db (issue #656).
 	rawApp, _ := h.readConfigFileRaw(r.Context(), b, appConfigPath)
 	out, appErr := updateAppYAML(rawApp, func(doc *yaml.Node) error {
-		return setAppYAMLFields(doc, []appYAMLField{
+		if err := setAppYAMLFields(doc, []appYAMLField{
 			{"name", newName}, // пустое имя отсечено выше
 			{"version", strOrNil(newVersion)},
 			{"lang", strOrNil(newLang)},
@@ -321,7 +338,29 @@ func (h *handler) configuratorSaveApp(w http.ResponseWriter, r *http.Request) {
 			{"copyright", strOrNil(newCopyright)},
 			{"license", strOrNil(newLicense)},
 			{"support", strOrNil(newSupport)},
-		})
+		}); err != nil {
+			return err
+		}
+		// ui.style — вложенный ключ. Значение classic удаляет style, а опустевший
+		// блок ui убирается целиком: иначе после возврата к виду по умолчанию в
+		// файле оставался бы «ui: {}».
+		if styleSent {
+			style := any(nil)
+			if newUIStyle != "" && newUIStyle != project.UIStyleClassic {
+				style = newUIStyle
+			}
+			uiMap, err := yamlSubMap(doc, "ui")
+			if err != nil {
+				return err
+			}
+			if err := setYAMLMapField(uiMap, "style", style); err != nil {
+				return err
+			}
+			if len(uiMap.Content) == 0 {
+				return setYAMLMapField(doc, "ui", nil)
+			}
+		}
+		return nil
 	})
 	if appErr != nil {
 		data := h.loadCfgData(r.Context(), b, "tree")

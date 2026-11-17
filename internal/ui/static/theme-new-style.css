@@ -1,0 +1,323 @@
+/* Новый вид форм — включается в config/app.yaml:
+ *
+ *   ui:
+ *     style: new-style
+ *
+ * Всё здесь висит под html.ob-style-new, поэтому при выключенном виде файл не
+ * влияет ни на одно правило интерфейса. Область — формы документов и
+ * справочников (.card вокруг #main-form): списки, отчёты и панель разделов
+ * остаются прежними, иначе изменение внешнего вида формы тянуло бы за собой
+ * весь интерфейс.
+ *
+ * Геометрия и палитра: плотная компоновка — рамка поля 1px, небольшие
+ * скругления (2px у поля и кнопки, 4px у блока),
+ * строка формы высотой 24px, кегль 10pt, нейтральный серый текст, синий
+ * акцент только у активной закладки и ссылок. Цвета — :root-переменные, чтобы
+ * правка палитры не означала правку каждого правила.
+ */
+html.ob-style-new {
+  --obn-border: #b3b3b3;
+  --obn-field-border: #a0a0a0;
+  --obn-text: #4b4b4b;
+  --obn-muted: #8a8a8a;
+  --obn-accent: #1c55ae;
+  --obn-focus: #146c8d;
+  --obn-head-bg: #e6e6e6;
+  --obn-row-alt: #f2f2f2;
+  --obn-disabled-bg: #eaeaea;
+  --obn-mark-bg: #fdf1a5;
+  --obn-mark-border: #d78e4e;
+  --obn-row-h: 24px;
+  --obn-font-size: 13px;
+  /* Небольшие скругления: плотная компоновка остаётся плотной, но углы не
+     режут глаз. Отдельные переменные на элемент и на контейнер — у кнопки и
+     поля радиус 2px, у карточки и табличной части 4px, чтобы вложенность
+     читалась: чем крупнее блок, тем мягче угол. */
+  --obn-radius: 2px;
+  --obn-radius-block: 4px;
+}
+
+/* ── Карточка формы ───────────────────────────────────────────────────────── */
+html.ob-style-new .card.ob-form-card {
+  background: #fff;
+  border: 1px solid var(--obn-border);
+  border-radius: var(--obn-radius-block);
+  box-shadow: none;
+  padding: 12px 14px;
+}
+
+/* ── Поле формы ───────────────────────────────────────────────────────────── */
+html.ob-style-new .card.ob-form-card label {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--obn-text);
+  margin-bottom: 2px;
+}
+html.ob-style-new .card.ob-form-card .form-group {
+  margin-bottom: 8px;
+}
+html.ob-style-new .card.ob-form-card input[type=text],
+html.ob-style-new .card.ob-form-card input[type=email],
+html.ob-style-new .card.ob-form-card input[type=password],
+html.ob-style-new .card.ob-form-card input[type=search],
+html.ob-style-new .card.ob-form-card input[type=url],
+html.ob-style-new .card.ob-form-card input[type=tel],
+html.ob-style-new .card.ob-form-card input[type=datetime-local],
+html.ob-style-new .card.ob-form-card input[type=date],
+html.ob-style-new .card.ob-form-card input[type=number],
+html.ob-style-new .card.ob-form-card select,
+html.ob-style-new .card.ob-form-card textarea {
+  min-height: var(--obn-row-h);
+  height: var(--obn-row-h);
+  padding: 1px 6px;
+  border: 1px solid var(--obn-field-border);
+  border-radius: var(--obn-radius);
+  box-shadow: none;
+  font-size: var(--obn-font-size);
+  line-height: 1.2;
+  color: var(--obn-text);
+  background: #fff;
+}
+html.ob-style-new .card.ob-form-card textarea {
+  height: auto;
+  min-height: calc(var(--obn-row-h) * 2);
+  padding: 3px 6px;
+}
+html.ob-style-new .card.ob-form-card input:focus,
+html.ob-style-new .card.ob-form-card select:focus,
+html.ob-style-new .card.ob-form-card textarea:focus {
+  outline: 1px solid var(--obn-focus);
+  outline-offset: -1px;
+  border-color: var(--obn-focus);
+  box-shadow: none;
+}
+/* Поле «только просмотр»: рамка остаётся, фон гаснет — как у неактивной
+   ячейки, чтобы отличать от пустого поля, но не читать как ошибку. */
+html.ob-style-new .card.ob-form-card input[readonly],
+html.ob-style-new .card.ob-form-card textarea[readonly],
+html.ob-style-new .card.ob-form-card input:disabled,
+html.ob-style-new .card.ob-form-card select:disabled {
+  background: var(--obn-disabled-bg);
+  color: var(--obn-text);
+  cursor: default;
+}
+html.ob-style-new .card.ob-form-card input[type=checkbox],
+html.ob-style-new .card.ob-form-card input[type=radio] {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--obn-focus);
+  vertical-align: -2px;
+}
+
+/* ── Кнопки ───────────────────────────────────────────────────────────────── */
+html.ob-style-new .card.ob-form-card .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--obn-row-h);
+  padding: 2px 14px;
+  border: 1px solid var(--obn-field-border);
+  border-radius: var(--obn-radius);
+  background: linear-gradient(#fdfdfd, #e6e6e6);
+  color: var(--obn-text);
+  font-size: var(--obn-font-size);
+  font-weight: 400;
+  line-height: 1.2;
+  box-shadow: none;
+  text-shadow: none;
+}
+html.ob-style-new .card.ob-form-card .btn:hover {
+  background: linear-gradient(#fff, #efefef);
+  border-color: #8a8a8a;
+}
+html.ob-style-new .card.ob-form-card .btn:active {
+  background: linear-gradient(#dcdcdc, #e6e6e6);
+}
+html.ob-style-new .card.ob-form-card .btn:focus-visible {
+  outline: 1px solid var(--obn-focus);
+  outline-offset: -2px;
+}
+html.ob-style-new .card.ob-form-card .btn:disabled,
+html.ob-style-new .card.ob-form-card .btn[aria-disabled="true"] {
+  opacity: 1;
+  color: var(--obn-muted);
+  background: var(--obn-disabled-bg);
+  border-color: var(--obn-border);
+}
+/* Основное действие формы — выделено цветом рамки и текста, а не заливкой:
+   сплошная заливка в плотной компоновке перетягивает внимание с данных. */
+html.ob-style-new .card.ob-form-card .btn-primary {
+  background: linear-gradient(#f4fafd, #e3f1f8);
+  border-color: #40a7e3;
+  color: var(--obn-accent);
+  font-weight: 600;
+}
+html.ob-style-new .card.ob-form-card .btn-primary:hover {
+  background: linear-gradient(#fff, #eaf6fc);
+  border-color: var(--obn-focus);
+}
+/* Проведение: жёлтая заливка — единственное место, где она уместна, потому что
+   действие необратимо меняет остатки. */
+html.ob-style-new .card.ob-form-card .btn-post {
+  background: linear-gradient(#fdf7d8, var(--obn-mark-bg));
+  border-color: var(--obn-mark-border);
+  color: #6b4400;
+  font-weight: 600;
+}
+html.ob-style-new .card.ob-form-card .btn-post:hover {
+  background: linear-gradient(#fefbee, #faeaa4);
+  border-color: #b8793c;
+}
+html.ob-style-new .card.ob-form-card .btn-danger {
+  background: linear-gradient(#fdf3f3, #f6dede);
+  border-color: #c9a0a0;
+  color: #a52a2a;
+}
+html.ob-style-new .card.ob-form-card .btn-danger:hover {
+  background: linear-gradient(#fdf7f7, #f2d0d0);
+  border-color: #b06d6d;
+}
+html.ob-style-new .card.ob-form-card .btn-cancel {
+  background: transparent;
+  border-color: transparent;
+  color: var(--obn-accent);
+  text-decoration: underline;
+}
+html.ob-style-new .card.ob-form-card .btn-cancel:hover {
+  background: #eef4f9;
+  border-color: var(--obn-border);
+  text-decoration: none;
+}
+html.ob-style-new .card.ob-form-card .btn-sm {
+  min-height: 20px;
+  padding: 1px 8px;
+  font-size: 12px;
+}
+
+/* ── Группы и закладки формы ──────────────────────────────────────────────── */
+html.ob-style-new .card.ob-form-card .form-group-box,
+html.ob-style-new .card.ob-form-card .managed-tabs {
+  border: 1px solid var(--obn-border);
+  border-radius: var(--obn-radius-block);
+  padding: 8px 10px;
+  margin-bottom: 10px;
+}
+html.ob-style-new .card.ob-form-card .form-group-box > legend {
+  padding: 0 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--obn-text);
+}
+html.ob-style-new .card.ob-form-card .managed-tab-headers {
+  gap: 0;
+  border-bottom: 1px solid var(--obn-border);
+  margin-bottom: 8px;
+}
+html.ob-style-new .card.ob-form-card .managed-tab-btn {
+  margin: 0 -1px -1px 0;
+  padding: 3px 14px;
+  border: 1px solid var(--obn-border);
+  /* У закладки скругляются только верхние углы: нижний край лежит на линии
+     заголовков, и скругление там дало бы щель между закладкой и содержимым. */
+  border-radius: var(--obn-radius) var(--obn-radius) 0 0;
+  background: var(--obn-head-bg);
+  color: var(--obn-text);
+  font-size: 12px;
+  line-height: 1.4;
+}
+html.ob-style-new .card.ob-form-card .managed-tab-btn:hover {
+  background: #efefef;
+}
+html.ob-style-new .card.ob-form-card .managed-tab-btn.active {
+  background: #fff;
+  border-bottom-color: #fff;
+  color: var(--obn-accent);
+  font-weight: 600;
+}
+/* Командная панель формы — полоса без тени, кнопки вплотную. */
+html.ob-style-new .card.ob-form-card .managed-command-bar {
+  gap: 4px;
+  padding-bottom: 8px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid var(--obn-border);
+}
+html.ob-style-new .card.ob-form-card .managed-command-bar .btn {
+  margin: 0;
+}
+
+/* ── Табличные части ──────────────────────────────────────────────────────── */
+html.ob-style-new .card.ob-form-card .tp-table {
+  border: 1px solid var(--obn-border);
+  border-radius: var(--obn-radius-block);
+  /* overflow:hidden обрезает углы по радиусу у таблицы с border-collapse:
+     без него рамка скругляется, а фон шапки вылезает за неё квадратом. */
+  overflow: hidden;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+html.ob-style-new .card.ob-form-card .tp-table th {
+  padding: 3px 6px;
+  border: 1px solid var(--obn-border);
+  border-top: none;
+  background: var(--obn-head-bg);
+  color: var(--obn-text);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+html.ob-style-new .card.ob-form-card .tp-table td {
+  padding: 2px 4px;
+  border: 1px solid #d4d4d4;
+  vertical-align: middle;
+}
+html.ob-style-new .card.ob-form-card .tp-table tbody tr:nth-child(even) td {
+  background: var(--obn-row-alt);
+}
+html.ob-style-new .card.ob-form-card .tp-table tbody tr:hover td {
+  background: #e8f0fe;
+}
+/* Правка ячейки: рамка поля не удваивается поверх линии сетки. */
+html.ob-style-new .card.ob-form-card .tp-table input,
+html.ob-style-new .card.ob-form-card .tp-table select {
+  height: 22px;
+  min-height: 22px;
+  padding: 0 4px;
+  border-color: transparent;
+  border-radius: var(--obn-radius);
+  background: transparent;
+  font-size: 12px;
+}
+html.ob-style-new .card.ob-form-card .tp-table input:hover,
+html.ob-style-new .card.ob-form-card .tp-table select:hover {
+  border-color: var(--obn-field-border);
+}
+html.ob-style-new .card.ob-form-card .tp-table input:focus,
+html.ob-style-new .card.ob-form-card .tp-table select:focus {
+  background: #fff;
+  border-color: var(--obn-focus);
+  outline: none;
+  box-shadow: none;
+}
+html.ob-style-new .card.ob-form-card .tp-table .tp-footer td {
+  background: var(--obn-head-bg);
+  border-top: 1px solid var(--obn-border);
+  font-weight: 600;
+}
+
+/* ── Сообщения и подсказки ────────────────────────────────────────────────── */
+html.ob-style-new .card.ob-form-card .error {
+  border-radius: var(--obn-radius-block);
+  border-color: #c9a0a0;
+  background: #fdf1f1;
+  color: #a52a2a;
+  padding: 8px 10px;
+  font-size: 12px;
+}
+html.ob-style-new .card.ob-form-card .ob-hint {
+  color: var(--obn-muted);
+}
+/* Недозаполненный обязательный реквизит: пунктир под полем, как у пометки о
+   незаполненности — заметно, но не превращает форму в набор красных рамок. */
+html.ob-style-new .card.ob-form-card input:required:invalid:not(:focus):not(:placeholder-shown) {
+  border-color: #c9a0a0;
+}

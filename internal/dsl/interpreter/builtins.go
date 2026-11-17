@@ -1,9 +1,11 @@
 package interpreter
 
 import (
+	cryptorand "crypto/rand"
 	"errors"
 	"fmt"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -278,16 +280,18 @@ var builtins = map[string]func(args []any, file string, line int) (any, error){
 	},
 
 	// ─── Математика ───────────────────────────────────────────────────────
-	"round": builtinRound,
-	"окр":   builtinRound,
-	"abs":   builtinAbs,
-	"абс":   builtinAbs,
-	"int":   builtinTrunc,
-	"цел":   builtinTrunc,
-	"max":   builtinMax,
-	"макс":  builtinMax,
-	"min":   builtinMin,
-	"мин":   builtinMin,
+	"round":          builtinRound,
+	"окр":            builtinRound,
+	"abs":            builtinAbs,
+	"абс":            builtinAbs,
+	"int":            builtinTrunc,
+	"цел":            builtinTrunc,
+	"max":            builtinMax,
+	"макс":           builtinMax,
+	"min":            builtinMin,
+	"мин":            builtinMin,
+	"randomnumber":   randomNumberBuiltin,
+	"случайноечисло": randomNumberBuiltin,
 
 	// ─── JSON ─────────────────────────────────────────────────────────────
 	"прочитатьjson": builtinReadJSON,
@@ -473,6 +477,34 @@ func builtinMin(args []any, file string, line int) (any, error) {
 		return a, nil
 	}
 	return b, nil
+}
+
+func randomNumberBuiltin(args []any, file string, line int) (any, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("СлучайноеЧисло: ожидаются 2 аргумента, получено %d", len(args))
+	}
+	minimum, minimumOK := toFloat(args[0])
+	maximum, maximumOK := toFloat(args[1])
+	const maxExactInteger = float64(1 << 53)
+	if !minimumOK || !maximumOK || math.IsNaN(minimum) || math.IsNaN(maximum) ||
+		math.IsInf(minimum, 0) || math.IsInf(maximum, 0) ||
+		math.Trunc(minimum) != minimum || math.Trunc(maximum) != maximum ||
+		minimum < -maxExactInteger || maximum > maxExactInteger {
+		return nil, fmt.Errorf("СлучайноеЧисло: границы должны быть конечными целыми числами в диапазоне -9007199254740992..9007199254740992")
+	}
+	if minimum > maximum {
+		return nil, fmt.Errorf("СлучайноеЧисло: минимальная граница не может быть больше максимальной")
+	}
+	minInt := int64(minimum)
+	maxInt := int64(maximum)
+	span := big.NewInt(maxInt)
+	span.Sub(span, big.NewInt(minInt))
+	span.Add(span, big.NewInt(1))
+	randomOffset, err := cryptorand.Int(cryptorand.Reader, span)
+	if err != nil {
+		return nil, fmt.Errorf("СлучайноеЧисло: не удалось получить случайное значение: %w", err)
+	}
+	return float64(minInt) + float64(randomOffset.Int64()), nil
 }
 
 // toTime приводит аргумент функций работы с датой к time.Time — это единственная
