@@ -1,6 +1,8 @@
 name: Оператор
 description: Базовая роль — работа с документами и справочниками
 permissions:
+  processors:
+    Тест: [run]
   catalogs:
     Контрагент: [read, write]
   documents:
