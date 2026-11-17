@@ -21,7 +21,6 @@ func TestMenuReportVariantBrowserControllerInNode(t *testing.T) {
 		t.Skip("node is not installed")
 	}
 	cmd := exec.Command(node, "--test", "static/navigation_tree_behavior_test.js") //nolint:gosec // Fixed local test and executable resolved with LookPath.
-	hideAudioTestProcess(cmd)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("menu controller: %v\n%s", err, out)
 	}
@@ -30,9 +29,14 @@ func TestMenuReportVariantBrowserControllerInNode(t *testing.T) {
 func TestMenuReportVariantHTTPSelectionAndPermissions(t *testing.T) {
 	f := newNavigationHTTPFixture(t)
 	const full = "Полный + по филиалам / & ?"
-	rep := &reportpkg.Report{Name: "MenuVariants", Query: `ВЫБРАТЬ "MENU_BASE_SOURCE" КАК Marker`, Composition: &reportpkg.Composition{Detail: true}, Variants: []reportpkg.ReportVariant{
-		{Name: full, Query: `ВЫБРАТЬ "MENU_FULL_SOURCE" КАК Marker`, Composition: &reportpkg.Composition{Detail: true}},
-		{Name: "Итоговый", Query: `ВЫБРАТЬ "MENU_TOTAL_SOURCE" КАК Marker`, Composition: &reportpkg.Composition{Detail: true}},
+	// Варианты различаются компоновкой: заголовок показателя доказывает, что
+	// открылся именно выбранный вариант.
+	variantComposition := func(title string) *reportpkg.Composition {
+		return &reportpkg.Composition{Measures: []reportpkg.Measure{{Field: "N", Agg: "sum", Title: title}}, Totals: reportpkg.Totals{Grand: true}}
+	}
+	rep := &reportpkg.Report{Name: "MenuVariants", Query: `ВЫБРАТЬ 1 КАК N`, Composition: variantComposition("MENU_BASE_SOURCE"), Variants: []reportpkg.ReportVariant{
+		{Name: full, Composition: variantComposition("MENU_FULL_SOURCE")},
+		{Name: "Итоговый", Composition: variantComposition("MENU_TOTAL_SOURCE")},
 	}}
 	f.server.reg.Load(runtime.LoadOptions{Entities: f.server.reg.Entities(), Reports: []*reportpkg.Report{rep}})
 	f.server.reg.LoadSubsystems([]*metadata.Subsystem{{Name: "School", Contents: metadata.SubsystemContents{Reports: []string{rep.Name}}, Menu: &metadata.Menu{Sections: []metadata.MenuSection{{
@@ -90,7 +94,7 @@ func TestMenuReportVariantHTTPSelectionAndPermissions(t *testing.T) {
 		}
 		run := f.request(t, http.MethodPost, path, "alice", nil)
 		if run.Code != http.StatusOK || !strings.Contains(run.Body.String(), tc.marker) {
-			t.Fatalf("menu variant did not execute its own query: %d %s", run.Code, run.Body.String())
+			t.Fatalf("menu variant did not apply its own composition: %d %s", run.Code, run.Body.String())
 		}
 	}
 	state := f.personalEditor(t, "alice", "School")
