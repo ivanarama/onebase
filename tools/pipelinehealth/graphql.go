@@ -215,6 +215,7 @@ type pipelineGraphQLClient interface {
 // shell. GraphQL errors are parsed even when gh exits non-zero: partial data is
 // never accepted as a queue snapshot.
 type ghPipelineGraphQLClient struct {
+	sourceCost     *sourceGraphQLMeter
 	strictIdentity bool
 	executable     string
 	timeout        time.Duration
@@ -308,6 +309,13 @@ func newGHPipelineGraphQLClient() *ghPipelineGraphQLClient {
 }
 
 func (client *ghPipelineGraphQLClient) Query(query string, variables map[string]any, destination any) error {
+	if client.sourceCost != nil {
+		return client.queryWithSourceCost(query, variables, destination)
+	}
+	return client.queryUnmetered(query, variables, destination)
+}
+
+func (client *ghPipelineGraphQLClient) queryUnmetered(query string, variables map[string]any, destination any) error {
 	payload, err := json.Marshal(struct {
 		Query     string         `json:"query"`
 		Variables map[string]any `json:"variables"`
@@ -361,6 +369,11 @@ func (client *ghPipelineGraphQLClient) Query(query string, variables map[string]
 	}
 	if client.strictIdentity {
 		if err := validateIdentityJSON(stdout.Bytes()); err != nil {
+			return err
+		}
+	}
+	if client.sourceCost != nil {
+		if err := validateSourceGraphQLEnvelope(stdout.Bytes()); err != nil {
 			return err
 		}
 	}
