@@ -589,7 +589,7 @@ func (s *Server) buildReportParams(ctx context.Context, lang string, params []re
 			entityName := strings.TrimPrefix(p.Type, "reference:")
 			ui.RefEntity = entityName
 			if entity := s.reg.GetEntity(entityName); entity != nil {
-				rows, _ := s.initialReferenceOptions(ctx, entity, refOptionsChoice, []string{refValueString(values[p.Name])})
+				rows, _ := s.reportParamReferenceOptions(ctx, entity, []string{refValueString(values[p.Name])})
 				ui.Opts = rows
 			}
 		}
