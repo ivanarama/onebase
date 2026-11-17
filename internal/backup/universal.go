@@ -20,6 +20,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/text/encoding/charmap"
 
@@ -437,6 +438,9 @@ func dumpTableJSONL(ctx context.Context, db *storage.DB, tableName string, w io.
 
 		obj := make(map[string]any, len(cols))
 		for i, col := range cols {
+			if strings.HasPrefix(tableName, "инфо_") && col == storage.InfoRegEditRevisionColumn {
+				continue // local concurrency state is never portable business data
+			}
 			obj[col] = marshalValue(vals[i], byCols[col])
 		}
 		line, err := json.Marshal(obj)
@@ -2762,6 +2766,10 @@ func importTableJSONL(ctx context.Context, db *storage.DB, tableName, filePath s
 			}
 		}
 
+		if strings.HasPrefix(tableName, "инфо_") {
+			delete(raw, storage.InfoRegEditRevisionColumn)
+		}
+
 		// Discover columns on every row. Older exporters did not guarantee that
 		// the first row populated every column, so checking only that row could
 		// silently discard a column that first appeared later in the archive.
@@ -2805,6 +2813,15 @@ func importTableJSONL(ctx context.Context, db *storage.DB, tableName, filePath s
 // so that the PG driver does not fail with "cannot find encode plan for bool (OID 16)".
 func insertRow(ctx context.Context, db *storage.DB, tableName string, raw map[string]json.RawMessage, btypes map[string]bool, existingCols map[string]bool, jsonCols map[string]bool, boolCols map[string]bool, byteaCols map[string]bool, typedCols map[string]bool) error {
 	d := db.Dialect()
+	if strings.HasPrefix(tableName, "инфо_") && existingCols[storage.InfoRegEditRevisionColumn] {
+		// Ignore any supplied revision, including from a native/older exporter.
+		// Every restored row starts a new local lifetime.
+		revision, err := uuid.NewRandom()
+		if err != nil {
+			return fmt.Errorf("restore info register edit revision: %w", err)
+		}
+		raw[storage.InfoRegEditRevisionColumn] = json.RawMessage(strconv.Quote(revision.String()))
+	}
 
 	cols := make([]string, 0, len(raw))
 	args := make([]any, 0, len(raw))

@@ -343,7 +343,11 @@ func (s *Server) choiceQueryPredicate(ctx context.Context, owner *metadata.Entit
 	}
 	ids, err := s.listFilterQueryIDs(ctx, condition.Query, auth.UserFromContext(ctx), params)
 	if err != nil {
-		slog.Warn("choice_filter query failed", "error", err)
+		// Отменённый клиентом запрос — не сбой правила: предупреждение в журнале
+		// только запутало бы разбор («choice_filter query failed: context canceled»).
+		if ctx.Err() == nil {
+			slog.Warn("choice_filter query failed", "error", err)
+		}
 		return storage.ChoicePredicate{}, true, nil
 	}
 	predicate := storage.ChoicePredicate{ByIDs: true, IDs: make([]uuid.UUID, 0, len(ids))}

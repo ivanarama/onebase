@@ -564,6 +564,7 @@ var processorServiceFields = []string{
 	"_pick_result",
 	"_pick_query",
 	"_pick_fields",
+	"_question_fields",
 	"_tp",
 	"_tp_selected",
 	"_tp_row",

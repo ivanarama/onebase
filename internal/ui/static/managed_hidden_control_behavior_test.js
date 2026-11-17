@@ -26,10 +26,10 @@ function fn(name) {
 
 // Копия реквизита «Улица»: fieldset элемента формы с input внутри. Скрытая по
 // hidden_when копия остаётся в DOM, но fieldset отключён — input не отправляется.
-function copy(initiallyHidden, value) {
+function copy(anchor, value) {
   const fieldset = {
-    style: {display: initiallyHidden ? 'none' : ''},
-    disabled: initiallyHidden,
+    style: {display: anchor.hidden ? 'none' : ''},
+    disabled: anchor.disabled,
     getAttribute(name) { return name === 'data-ob-control-fieldset' ? '1' : null; },
     querySelectorAll() { return []; },
   };
@@ -41,12 +41,39 @@ function copy(initiallyHidden, value) {
   return {fieldset, input};
 }
 
+// Go-обвязка передаёт пути из публичной отрисовки и настоящие ответы события.
+// Без неё остаётся самостоятельная smoke-проверка с двумя путями размещения.
+const fixture = process.env.OB_HIDDEN_CONTROL_FIXTURE
+  ? JSON.parse(fs.readFileSync(process.env.OB_HIDDEN_CONTROL_FIXTURE, 'utf8'))
+  : {
+    page: {
+      anchors: [
+        {path: '1', name: 'First', hidden: false, disabled: false},
+        {path: '2', name: 'Second', hidden: true, disabled: true},
+      ],
+      controls: [
+        {name: 'Улица', value: 'Старая', anchors: [0]},
+        {name: 'Улица', value: 'Старая', anchors: [1]},
+      ],
+    },
+    responses: [
+      {elementStates: {hidden: {'1': true, '2': false}}, values: {Улица: 'Новая'}},
+      {elementStates: {hidden: {'1': false, '2': true}}, values: {Улица: 'Обновлённая'}},
+    ],
+  };
+
 test('hidden_when: ответ события доходит до всех копий реквизита, отправляется новое значение', () => {
-  // Сначала видна первая копия, вторая скрыта; обработчик меняет их местами и
-  // пишет новое значение. Показанная копия стоит в DOM второй — до неё ответ
-  // раньше не доходил (#1759).
-  const copies = {First: copy(false, 'old value'), Second: copy(true, 'old value')};
-  const inputs = Object.values(copies).map((c) => c.input);
+  // Обработчик меняет видимую и скрытую копии местами и пишет новое значение.
+  // Go запускает оба порядка в DOM: ответ обязан дойти и до второй копии (#1759).
+  const controls = fixture.page.controls.filter((c) => c.name === 'Улица');
+  assert.equal(controls.length, 2, 'в публичной разметке нужны обе копии');
+  const copies = new Map(controls.map((c) => {
+    const anchor = fixture.page.anchors[c.anchors[0]];
+    assert.ok(anchor.path && anchor.path !== anchor.name, 'путь размещения отличается от имени');
+    return [anchor.path, copy(anchor, c.value)];
+  }));
+  assert.equal(copies.size, 2, 'каждая копия имеет свой путь размещения');
+  const inputs = [...copies.values()].map((c) => c.input);
   const form = {
     querySelector() { return null; },
     querySelectorAll(selector) { return selector === '[name="Улица"]' ? inputs : []; },
@@ -54,8 +81,9 @@ test('hidden_when: ответ события доходит до всех коп
   const document = {
     getElementById(id) { return id === 'main-form' ? form : null; },
     querySelector(selector) {
-      const match = /^\[data-ob-el="([^"]+)"\]$/.exec(selector);
-      return match && copies[match[1]] ? copies[match[1]].fieldset : null;
+      const match = /^\[data-ob-el-path="([^"]+)"\]$/.exec(selector);
+      assert.ok(match, 'состояния должны адресоваться путём размещения: ' + selector);
+      return copies.get(match[1])?.fieldset || null;
     },
   };
   const window = {CSS: null};
@@ -65,14 +93,23 @@ test('hidden_when: ответ события доходит до всех коп
       '\nreturn {applyElementStates, applyValues};')(window, document, null);
   const submitted = () => inputs.filter((input) => !input.fieldset.disabled).map((input) => input.value);
 
-  assert.deepEqual(submitted(), ['old value']);
-  // Порядок клиента (обработка ответа в managed.js): состояния, затем значения.
-  client.applyElementStates({hidden: {First: true, Second: false}});
-  client.applyValues({Улица: 'new value'});
-  assert.equal(copies.First.fieldset.style.display, 'none');
-  assert.equal(copies.Second.fieldset.style.display, '');
-  assert.equal(copies.First.fieldset.disabled, true);
-  assert.equal(copies.Second.fieldset.disabled, false);
-  assert.deepEqual(inputs.map((input) => input.value), ['new value', 'new value']);
-  assert.deepEqual(submitted(), ['new value']);
+  assert.deepEqual(submitted(), ['Старая']);
+  const initialHidden = [...copies.values()].map((c) => c.fieldset.disabled);
+  assert.equal(initialHidden.filter(Boolean).length, 1);
+  assert.equal(fixture.responses.length, 2);
+  fixture.responses.forEach((response, step) => {
+    // Порядок клиента (обработка ответа в managed.js): состояния, затем значения.
+    client.applyElementStates(response.elementStates);
+    client.applyValues(response.values);
+    [...copies.entries()].forEach(([path, c], index) => {
+      const hidden = step === 0 ? !initialHidden[index] : initialHidden[index];
+      assert.equal(response.elementStates.hidden[path], hidden, 'сервер переключил обе копии');
+      assert.equal(c.fieldset.style.display, hidden ? 'none' : '');
+      assert.equal(c.fieldset.disabled, hidden);
+    });
+    const value = step === 0 ? 'Новая' : 'Обновлённая';
+    assert.equal(response.values.Улица, value);
+    assert.deepEqual(inputs.map((input) => input.value), [value, value]);
+    assert.deepEqual(submitted(), [value]);
+  });
 });
