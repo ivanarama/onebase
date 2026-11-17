@@ -189,6 +189,7 @@ type finding struct {
 }
 
 type report struct {
+	SourceGraphQLUsage               *sourceGraphQLUsage           `json:"source_graphql_usage,omitempty"`
 	IdentityInventoryVersion         int                           `json:"identity_inventory_version,omitempty"`
 	IdentityAuthority                string                        `json:"identity_authority,omitempty"`
 	IdentityV2Enabled                *bool                         `json:"identity_v2_enabled,omitempty"`
@@ -244,7 +245,26 @@ func main() {
 	routingPositive := flag.String("routing-positive-purpose", "", "with routing-inspect: require positive merge or tail source; read-only")
 	identityInventory := flag.Bool("pr-identity", false, "separate read-only PR identity inventory; no v2 mutation authority")
 	baseRepositoryID := flag.String("base-repository-id", "", "expected GraphQL repository ID (required with offline identity fixtures)")
+	sourceBudget := flag.Int64("source-graphql-budget", 0, "optional finite point allowance for source-graphql-cost-v1")
+	sourceNonce := flag.String("source-graphql-nonce", "", "optional32-character hex caller nonce for source-graphql-cost-v1")
 	flag.Parse()
+	var sourceMeter *sourceGraphQLMeter
+	sourceOptIn := false
+	flag.Visit(func(value *flag.Flag) {
+		if value.Name == "source-graphql-budget" || value.Name == "source-graphql-nonce" {
+			sourceOptIn = true
+		}
+	})
+	if sourceOptIn {
+		if !*asJSON || *transport != "graphql" || *fixture != "" || *issueFixture != "" || *routingInspect != 0 || *identityInventory {
+			fail(fmt.Errorf("source GraphQL cost requires live full GraphQL JSON report, without fixtures or separate inspections"))
+		}
+		var costErr error
+		sourceMeter, costErr = newSourceGraphQLMeter(*sourceBudget, *sourceNonce, *repo, *owner, *contract)
+		if costErr != nil {
+			fail(costErr)
+		}
+	}
 	if *identityInventory && *technicalHandoff {
 		fail(fmt.Errorf("PR identity inventory and technical handoff are separate read-only views"))
 	}
@@ -295,6 +315,7 @@ func main() {
 	switch selectedTransport {
 	case "graphql":
 		client := newGHPipelineGraphQLClient()
+		client.sourceCost = sourceMeter
 		client.strictIdentity = *identityInventory
 		prs, issues, err = loadPipelineInputsGraphQL(client, *repo, *owner, *fixture, *issueFixture)
 	case "rest":
@@ -328,14 +349,16 @@ func main() {
 		err = fmt.Errorf("unknown GitHub transport %q; expected graphql or rest", *transport)
 	}
 	if err != nil {
-		fail(err)
+		sourceGraphQLFailure(sourceMeter, err)
 	}
 	var routing *routingContext
 	if *technicalHandoff {
 		if selectedTransport != "graphql" || *routingMaxAttempts < 1 || *routingMaxAttempts > 16 {
 			fail(fmt.Errorf("technical handoff requires GraphQL and an explicit lifetime limit from1 to16"))
 		}
-		routing = prepareRouting(prs, *repo, *owner, *contract, *fixture, *routingMaxAttempts)
+		client := newGHPipelineGraphQLClient()
+		client.sourceCost = sourceMeter
+		routing = prepareRoutingWithClient(client, prs, *repo, *owner, *contract, *fixture, *routingMaxAttempts)
 	}
 	analysisPulls := prs
 	var identities map[int]inventoryIdentity
@@ -357,6 +380,14 @@ func main() {
 	}
 	checkContract(&result, *contract)
 	result.finish()
+	if sourceMeter != nil {
+		complete := routing == nil || routing.complete && routing.readersErr == nil && routing.positiveReadersErr == nil
+		usage := sourceMeter.receipt(complete)
+		if !usage.Complete {
+			sourceGraphQLFailure(sourceMeter, fmt.Errorf("full source GraphQL cost proof is incomplete: %s", usage.Reason))
+		}
+		result.SourceGraphQLUsage = &usage
+	}
 
 	if *asJSON {
 		encoder := json.NewEncoder(os.Stdout)
