@@ -35,6 +35,13 @@ html.ob-style-new {
      читалась: чем крупнее блок, тем мягче угол. */
   --obn-radius: 2px;
   --obn-radius-block: 4px;
+  /* Шаг между элементами одной группы — минимальный: плотная компоновка не
+     должна разъезжаться от того, что сосед оказался вложенной группой.
+     Вложенная группа отделяется чуть сильнее, иначе её рамка сливается с
+     рамками полей и граница блока перестаёт читаться: два соседних блока дают
+     4 px (2 px gap + по 1 px с каждой стороны), поле рядом с блоком — 2 px. */
+  --obn-gap: 2px;
+  --obn-gap-group: 1px;
 }
 
 /* ── Карточка формы ───────────────────────────────────────────────────────── */
@@ -207,6 +214,101 @@ html.ob-style-new .card.ob-form-card .form-group-box > legend {
   font-size: 12px;
   font-weight: 600;
   color: var(--obn-text);
+}
+/* Группа без рамки (bordered: false): рамка и внутренние отступы сняты, от
+   группы остаётся только раскладка детей. Правило специфичнее правила группы в
+   этом же файле — иначе тема вернула бы рамку ключу, который её снимает. */
+html.ob-style-new .card.ob-form-card fieldset.form-group-box.ob-group-plain {
+  border: 0;
+  border-radius: 0;
+  padding: 0;
+  background: transparent;
+}
+
+/* ── Расположение элементов группы ────────────────────────────────────────────
+   Вариант группировки задаёт сама группа (orientation), и он действует только на
+   её непосредственных детей: горизонтальный ставит их в ряд друг за другом,
+   вертикальный — столбцом. Вложенность сохраняется, потому что раскладку каждой
+   группы задаёт её собственный класс, а не класс родителя: внутренняя группа со
+   своим вариантом не переставляет соседей и не наследует вариант внешней.
+   Незаданный orientation означает вертикаль — ровно как в обычном виде. Значение
+   по умолчанию для НОВОЙ группы (горизонталь) конструктор пишет в YAML явно,
+   поэтому уже написанные формы не поедут без единой правки в них.
+   Расстояние минимальное и задаётся gap самой группы: собственные margin детей
+   внутри группы сняты, иначе отступ удваивался бы. */
+html.ob-style-new .card.ob-form-card .managed-group-vertical > .managed-group-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--obn-gap);
+  align-items: stretch;
+}
+html.ob-style-new .card.ob-form-card .managed-group-horizontal > .managed-group-body {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--obn-gap);
+  align-items: flex-start;
+}
+/* Прокрутка сильнее варианта группировки: scroll_x прямо просит «не переносить»,
+   и перенос из правила выше отменил бы его молча. */
+html.ob-style-new .card.ob-form-card .managed-group-scrollx > .managed-group-body {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+/* Ширина поля в ряду — прежняя (260 px, но не уже 180): у флекс-элемента без неё
+   поле ввода сжимается по содержимому и схлопывается почти в ноль. */
+html.ob-style-new .card.ob-form-card .managed-group-horizontal > .managed-group-body > .form-group {
+  flex: 0 1 260px;
+  min-width: 180px;
+}
+/* Отступ между детьми даёт gap группы: собственные margin элементов сложились
+   бы с ним и превратили минимальные 2 px в 10. Кнопка и картинка в столбце не
+   растягиваются на всю ширину — растянутая кнопка читается как поле ввода. */
+html.ob-style-new .card.ob-form-card .managed-group-body > .form-group,
+html.ob-style-new .card.ob-form-card .managed-group-body > .managed-btn,
+html.ob-style-new .card.ob-form-card .managed-group-body > .managed-btn-layout,
+html.ob-style-new .card.ob-form-card .managed-group-body > .form-decoration,
+html.ob-style-new .card.ob-form-card .managed-group-body > .form-picture {
+  margin: 0;
+}
+html.ob-style-new .card.ob-form-card .managed-group-body > :is(.managed-btn, .managed-btn-layout, .form-picture, .form-decoration) {
+  align-self: flex-start;
+}
+/* Колонка-группа в ряду сжимается вместе с окном: без min-width:0 флекс-элемент
+   не становится уже своего содержимого и выталкивает соседа на новую строку. */
+html.ob-style-new .card.ob-form-card .managed-group-horizontal > .managed-group-body > .form-group-box {
+  min-width: 0;
+}
+/* Вложенная группа отделена чуть сильнее остальных детей: её рамка должна
+   читаться как граница блока, а не как рамка ещё одного поля. По 1 px с каждой
+   стороны плюс gap дают ровно 4 px между двумя соседними группами.
+   Вертикальные поля нужны с !important: рамку группы общий рендер задаёт inline
+   `margin-bottom:14px`, а inline-объявление сильнее любого селектора — без этого
+   минимальный шаг получился бы только в ряду, а в столбце остался бы прежним,
+   то есть ровно там, где он и виден.
+   Горизонтальные — наоборот, без !important: при `halign: center/right` рендер
+   ставит inline `margin-left:auto`, и это осмысленное выравнивание группы, а не
+   украшение, которое надо перебивать. */
+html.ob-style-new .card.ob-form-card .managed-group-body > .form-group-box {
+  margin-block: var(--obn-gap-group) !important;
+  margin-inline: var(--obn-gap-group);
+}
+/* Равные колонки задают свой шаг (12 px) в общем режиме раскладки; в плотной
+   компоновке он тоже минимальный. Правка только через gap — ширину детей режим
+   задаёт сам, !important'ом. */
+html.ob-style-new .card.ob-form-card .ob-equal-columns > .managed-group-body {
+  gap: var(--obn-gap);
+}
+/* Кнопки и флажок встают вровень с полем ряда, а не с его подписью: над вводом
+   идёт подпись (12 px кегля плюс 2 px отступа), поэтому им нужен тот же сдвиг.
+   Правило применяется только когда в ряду есть поле с подписью — ряд из одних
+   кнопок выравнивать не с чем. */
+html.ob-style-new .card.ob-form-card .managed-group-horizontal > .managed-group-body:has(> .form-group > label) > .managed-btn,
+html.ob-style-new .card.ob-form-card .managed-group-horizontal > .managed-group-body:has(> .form-group > label) > .managed-btn-layout {
+  margin-top: 18px;
+}
+html.ob-style-new .card.ob-form-card .managed-group-horizontal > .managed-group-body > .form-group.managed-checkbox {
+  margin-top: 18px;
 }
 html.ob-style-new .card.ob-form-card .managed-tab-headers {
   gap: 0;

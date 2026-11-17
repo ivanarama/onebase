@@ -682,6 +682,18 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"elBackground": func(el *metadata.FormElement) template.CSS {
 			return template.CSS(metadata.FormElementBackgroundCSS(el)) //nolint:gosec // G203: значение прошло csssafe.Color, иначе пустая строка
 		},
+		// elGroupStyle — style группы: фон и раскладка. Рамки и внутренних отступов
+		// здесь НЕТ: они в CSS (.form-group-box и .ob-group-plain), иначе ключ
+		// bordered: false не мог бы их снять (inline-стиль сильнее класса), а вид
+		// формы — переопределить оформление группы своим.
+		"elGroupStyle": func(el *metadata.FormElement) template.CSS {
+			return template.CSS(metadata.FormElementBackgroundCSS(el) + metadata.FormElementLayoutCSS(el)) //nolint:gosec // G203: оба слагаемых нормализованы (csssafe.Color и словари раскладки)
+		},
+		// groupPlainClass — класс группы без рамки: одна строка на шаблон,
+		// холст и предпросмотр конструктора (metadata.FormGroupPlainClass).
+		"groupPlainClass": func() string {
+			return metadata.FormGroupPlainClass
+		},
 		"elFill": func(el *metadata.FormElement) bool {
 			return metadata.FormElementFillsHeight(el)
 		},

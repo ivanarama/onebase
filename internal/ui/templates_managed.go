@@ -32,8 +32,19 @@ const tplManagedForm = `
 {{/* Кнопка, скрытая hidden_when при отрисовке, рисуется с display:none, а не пропускается: иначе после события формы, снявшего условие, показать её нечем — «Утвердить» после «ОК» появлялась только при повторном открытии. Остальные виды пока пропускаются (поля — #1914). Защитой hidden_when не служит: событие кнопки сервер принимает и без неё в разметке. */}}
 {{if and (elHidden $ctx $el) (ne (str $el.Kind) "Кнопка")}}
 {{else if eq (str $el.Kind) "ГруппаФормы"}}
-  <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}{{if $el.ScrollX}} managed-group-scrollx{{end}}{{if $el.UsesEqualColumns}} ob-equal-columns{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elBackground $el}}{{elLayout $el}}">
-    {{if $el.TitleMap}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
+  {{/* Вариант группировки вешается классом всегда: managed-group-horizontal у
+       горизонтальной группы, managed-group-vertical у остальных (в том числе
+       когда ключ не задан — раскладка тогда вертикальная, как была). Класс
+       вертикали в обычном виде ничего не меняет, а в новом задаёт минимальный шаг
+       между элементами столбца.
+       Рамка и внутренние отступы заданы правилом .form-group-box, а не inline-
+       стилем: иначе ключ bordered: false не мог бы их снять (inline сильнее
+       класса) и вид формы не мог бы переопределить оформление группы. Заголовок
+       убирает show_title: false.
+       Вложенность рендерится рекурсией: каждая группа раскладывает только своих
+       детей, и вариант родителя на вложенную группу не переносится. */}}
+  <fieldset class="form-group-box{{if $el.HorizontalGrouping}} managed-group-horizontal{{else}} managed-group-vertical{{end}}{{if $el.ScrollX}} managed-group-scrollx{{end}}{{if $el.UsesEqualColumns}} ob-equal-columns{{end}}{{if not $el.GroupBordered}} {{groupPlainClass}}{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{with elGroupStyle $el}} style="{{.}}"{{end}}>
+    {{if and $el.TitleMap $el.GroupTitleVisible}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
     <div class="managed-group-body">
       {{range $el.Children}}{{template "managed-element" (dict "El" . "Ctx" $ctx)}}{{end}}
     </div>
@@ -575,6 +586,15 @@ const tplManagedForm = `
 input.ob-deadline-soon,.form-group input.ob-deadline-soon[readonly]{background:#fef3c7 !important;border-color:#f59e0b !important;color:#92400e !important}
 input.ob-deadline-over,.form-group input.ob-deadline-over[readonly]{background:#fee2e2 !important;border-color:#ef4444 !important;color:#991b1b !important;font-weight:600}
 .ob-managed-control{border:0;padding:0;min-width:0}
+/* Рамка и внутренние отступы группы. Раньше они стояли inline-стилем, и ключ
+   bordered: false не мог их снять. Селектор с именем элемента (fieldset) выбран
+   намеренно: правила медиазапроса ниже (.form-group-box{padding:10px 12px})
+   специфичностью не выше, а inline-стиль раньше их и вовсе перебивал — то есть
+   на узком экране оформление группы обязано остаться прежним, а не «поехать»
+   оттого, что ключ перестал быть inline. */
+fieldset.form-group-box{border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px}
+/* Группа без рамки: остаётся только раскладка детей. */
+fieldset.form-group-box.ob-group-plain{border:0;border-radius:0;padding:0}
 .managed-group-horizontal>.managed-group-body{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
 /* scroll_x: ряд действий не рвётся на вторую строку, а прокручивается. */
 .managed-group-scrollx>.managed-group-body{flex-wrap:nowrap;overflow-x:auto}

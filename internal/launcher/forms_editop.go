@@ -73,6 +73,10 @@ type formInfo struct {
 var boolProps = map[string]bool{
 	"required": true, "readonly": true, "choice": true,
 	"visible": true, "enabled": true, "no_grid": true, "auto_sum": true, "equal_columns": true,
+	// Оформление группы: оба ключа включены по умолчанию, поэтому false пишется
+	// булевым скаляром (строка "false" не декодируется в *bool и уронила бы
+	// загрузку формы).
+	"show_title": true, "bordered": true,
 	// Кнопка «Открыть карточку»: у поля и у формы (#1876).
 	"ref_card_button": true, "ref_card_button_admin_only": true,
 }
@@ -291,6 +295,15 @@ func applyEditOp(yamlSrc []byte, req editOpRequest) (editOpResult, error) {
 		// (follow-up #164, слайс C).
 		if (&metadata.FormElement{Kind: metadata.FormElementType(req.Kind)}).IsContainer() {
 			fields["children"] = []any{}
+		}
+		// Вариант группировки новой группы пишется в YAML ЯВНО, и пишется
+		// горизонтальным: ряд реквизитов — самый частый случай, и вариант должен
+		// быть виден в YAML, а не прятаться в умолчании рендера. Рендер по-прежнему
+		// считает незаданный ключ вертикальным, поэтому формы, написанные до
+		// появления вариантов, не меняются. Смена варианта в панели свойств тоже
+		// пишет значение явно, а не удаляет ключ.
+		if metadata.FormElementType(req.Kind) == metadata.FormElementGroupBox {
+			fields["orientation"] = "horizontal"
 		}
 		newID, err := doc.InsertElement(req.Parent, req.Index, fields)
 		if err != nil {

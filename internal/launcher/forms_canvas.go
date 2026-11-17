@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"html"
-	"strings"
 
 	"github.com/ivantit66/onebase/internal/formdoc"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -90,14 +89,22 @@ func renderCanvasElement(buf *bytes.Buffer, en *formdoc.ElementNode, selectedID 
 	switch el.Kind {
 	case metadata.FormElementGroupBox, metadata.FormElementCommandBar:
 		groupClass := "fc-group"
-		if strings.EqualFold(el.Orientation, "horizontal") {
+		if el.HorizontalGrouping() {
 			groupClass += " fc-group-horizontal"
 		}
 		if el.UsesEqualColumns() {
 			groupClass += " ob-equal-columns"
 		}
-		fmt.Fprintf(buf, `<fieldset class="%s" data-node-id="%s" data-kind="%s"%s><legend class="fc-pick">%s</legend>`,
-			elWrapClass(groupClass, id, selectedID), id, kind, groupStyleAttr(el), title)
+		// Группа без рамки и без заголовка выглядит на холсте так же, как в
+		// рантайме: иначе по холсту нельзя понять, что настройка сработала.
+		if !el.GroupBordered() {
+			groupClass += " " + metadata.FormGroupPlainClass
+		}
+		fmt.Fprintf(buf, `<fieldset class="%s" data-node-id="%s" data-kind="%s"%s>`,
+			elWrapClass(groupClass, id, selectedID), id, kind, groupStyleAttr(el))
+		if el.GroupTitleVisible() {
+			fmt.Fprintf(buf, `<legend class="fc-pick">%s</legend>`, title)
+		}
 		renderCanvasChildren(buf, id, en.Children, selectedID)
 		buf.WriteString(`</fieldset>`)
 
@@ -271,6 +278,11 @@ type canvasElementInfo struct {
 	// Orientation — раскладка детей контейнера: ""/"vertical" или "horizontal".
 	Orientation  string `json:"orientation"`
 	EqualColumns bool   `json:"equalColumns"`
+	// ShowTitle / Bordered — оформление группы: заголовок (<legend>) и рамка с
+	// внутренними отступами. Оба включены по умолчанию, поэтому панель свойств
+	// показывает их уже отмеченными, а YAML получает ключ только при отказе.
+	ShowTitle bool `json:"showTitle"`
+	Bordered  bool `json:"bordered"`
 	// Background — безопасный CSS-цвет фона ГруппаФормы и Кнопка. В модель передаётся
 	// исходное значение: панель редактирует YAML, а canvas/preview применяют
 	// его только через FormElementBackgroundCSS.
@@ -341,6 +353,8 @@ func canvasModel(doc *formdoc.Doc) (map[string]canvasElementInfo, error) {
 				AutoSum:      el.AutoSum,
 				Orientation:  el.Orientation,
 				EqualColumns: el.EqualColumns,
+				ShowTitle:    el.GroupTitleVisible(),
+				Bordered:     el.GroupBordered(),
 				Background:   el.Background,
 				View:         el.View,
 			}

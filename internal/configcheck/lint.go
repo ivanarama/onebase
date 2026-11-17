@@ -650,6 +650,9 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		// документированный «language» у kind: ПолеКода не давал примеру
 		// пройти собственную проверку (#1014).
 		"orientation", "equal_columns", "background", "text_bold", "input_mask", "language", "virtual_columns",
+		// Оформление группы: заголовок и рамка. Оба ключа читает рендер
+		// (GroupTitleVisible/GroupBordered), оба включены по умолчанию.
+		"show_title", "bordered",
 		"deadline_warn",
 		"conceal", "reveal_when",
 		"title_from",

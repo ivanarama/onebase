@@ -263,11 +263,18 @@ const tplFormsEditor = `
 .fc-drop-page.fc-drop-over{background:#fde9c8;color:#9a5b1a;border-color:#e0b87a}
 .fc-el{border:1px solid transparent;border-radius:6px;padding:3px 5px;cursor:pointer}
 .fc-el.fc-selected{outline:2px solid #1a4a80;background:#eef4ff}
+/* Группа без рамки (bordered: false) — на холсте тоже без границы и отступов,
+   иначе настройку не проверить до сохранения. Специфичнее .fc-el и .fc-group:
+   рамку и отступы задают они. */
+.fc-el.ob-group-plain{border:0;padding:0}
 .fc-dragging{opacity:.4}
 [data-node-id]{cursor:grab}
 .fc-pick:hover{background:#f5f8ff}
 .fc-group{border:1px solid #e2e8f0;padding:5px 9px;margin:1px 0}
 .fc-group>legend{font-weight:600;color:#475569;padding:0 5px;font-size:12px}
+/* Группа без рамки (bordered: false) — на холсте тоже без границы и отступов,
+   иначе настройку не проверить до сохранения. */
+.fc-group.ob-group-plain{border:0;padding:0}
 /* Раскладка горизонтальной группы на холсте повторяет рантайм
    (managed-group-horizontal в internal/ui/templates_managed.go): те же flex,
    min-width и gap — иначе форма с шириной 400 у полей переносилась в
@@ -1155,12 +1162,29 @@ function renderProps() {
   }
   if (info.kind === 'ГруппаФормы') {
     addCheckProp(panel, {{jsString (t $.Lang "Равные колонки")}}, 'equal_columns', info.equalColumns);
+    // Обе галки оформления включены по умолчанию: снятая галка пишет
+    // show_title/bordered: false, поставленная — удаляет ключ. Так форма без этих
+    // ключей остаётся прежней, а не обрастает «true» при каждом сохранении.
+    // addCheckRaw, а не addCheckProp: addCheckProp на снятии пишет пустую строку,
+    // а этот ключ декодируется в *bool и пустую строку не примет.
+    addCheckRaw(panel, {{jsString (t $.Lang "Отображать заголовок")}}, info.showTitle, function (ch) {
+      if (ch) editOp({ op: 'delProp', node: _selected, key: 'show_title' }, true);
+      else setProp('show_title', 'false');
+    });
+    addCheckRaw(panel, {{jsString (t $.Lang "Выделять группу")}}, info.bordered, function (ch) {
+      if (ch) editOp({ op: 'delProp', node: _selected, key: 'bordered' }, true);
+      else setProp('bordered', 'false');
+    });
+    // Вариант группировки пишется в YAML ЯВНО в обе стороны. Раньше «вертикально»
+    // означало «удалить ключ», и это работало, пока удалённый ключ означал ровно
+    // вертикаль. Новая группа создаётся уже с orientation: horizontal, поэтому
+    // удаление ключа вернуло бы не вертикаль, а умолчание рендера — выбор
+    // переставал бы выглядеть сохранённым.
     addSelectRaw(panel, 'Расположение реквизитов', info.orientation === 'horizontal' ? 'horizontal' : 'vertical', [
-      { value: 'vertical', label: 'Вертикально' },
-      { value: 'horizontal', label: 'Горизонтально' }
+      { value: 'horizontal', label: 'Горизонтально' },
+      { value: 'vertical', label: 'Вертикально' }
     ], function (v) {
-      if (v === 'horizontal') setProp('orientation', 'horizontal');
-      else editOp({ op: 'delProp', node: _selected, key: 'orientation' }, true);
+      setProp('orientation', v === 'vertical' ? 'vertical' : 'horizontal');
     });
   }
   if (info.kind === 'ТабличнаяЧасть') {
@@ -1780,6 +1804,8 @@ h2{margin:0 0 14px;color:#1a4a80;font-size:16px;display:flex;align-items:center;
 .tag{font-size:11px;background:#d1fae5;color:#059669;padding:2px 8px;border-radius:10px}
 fieldset{border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:12px}
 legend{font-weight:600;color:#475569;padding:0 6px;font-size:12px}
+/* bordered: false — группа без рамки и внутренних отступов, как в рантайме. */
+fieldset.ob-group-plain{border:0;border-radius:0;padding:0}
 .group-horizontal>.group-body{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start}
 /* Flex, min-width и вложенные группы — как в рантайме
    (managed-group-horizontal в internal/ui/templates_managed.go), иначе
@@ -1867,14 +1893,27 @@ func renderPreviewElement(buf *bytes.Buffer, el *metadata.FormElement, tabsCount
 	}
 	switch el.Kind {
 	case metadata.FormElementGroupBox:
-		cls := ""
-		if el.Orientation == "horizontal" {
-			cls = ` class="group-horizontal"`
-			if el.UsesEqualColumns() {
-				cls = ` class="group-horizontal ob-equal-columns"`
-			}
+		var classes []string
+		if el.HorizontalGrouping() {
+			classes = append(classes, "group-horizontal")
 		}
-		fmt.Fprintf(buf, `<fieldset%s%s><legend>%s</legend><div class="group-body">`, cls, groupStyleAttr(el), html.EscapeString(title))
+		if el.UsesEqualColumns() {
+			classes = append(classes, "ob-equal-columns")
+		}
+		// Группа без рамки (bordered: false) должна выглядеть в предпросмотре так
+		// же, как в рантайме: иначе настройку нельзя проверить до сохранения.
+		if !el.GroupBordered() {
+			classes = append(classes, metadata.FormGroupPlainClass)
+		}
+		cls := ""
+		if len(classes) > 0 {
+			cls = ` class="` + strings.Join(classes, " ") + `"`
+		}
+		fmt.Fprintf(buf, `<fieldset%s%s>`, cls, groupStyleAttr(el))
+		if el.GroupTitleVisible() {
+			fmt.Fprintf(buf, `<legend>%s</legend>`, html.EscapeString(title))
+		}
+		buf.WriteString(`<div class="group-body">`)
 		for _, c := range el.Children {
 			renderPreviewElement(buf, c, tabsCounter, tps)
 		}

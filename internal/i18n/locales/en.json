@@ -1594,6 +1594,8 @@
   "Повреждённая личная настройка пропущена. Показано общее меню; сохранение или сброс исправит этот слой.": "Invalid personal settings were skipped. The common menu is shown; save or reset to repair this layer.",
   "Повреждённая общая настройка пропущена. Обратитесь к администратору базы.": "Invalid common settings were skipped. Contact your database administrator.",
   "Равные колонки": "Equal columns",
+  "Отображать заголовок": "Show group title",
+  "Выделять группу": "Draw group frame",
   "Закрыть просмотр изображения": "Close image viewer",
   "Предыдущее изображение": "Previous image",
   "Следующее изображение": "Next image",

@@ -95,10 +95,18 @@ func CheckFormKeyPlacement(proj *project.Project) []Issue {
 			if el == nil {
 				return
 			}
-			if el.ScrollX && (el.Kind != metadata.FormElementGroupBox || !strings.EqualFold(el.Orientation, "horizontal")) {
+			if el.ScrollX && (el.Kind != metadata.FormElementGroupBox || !el.HorizontalGrouping()) {
 				warns = append(warns, formKeyIssue(owner, form, el, "form.scroll-x",
 					"ключ scroll_x игнорируется — прокрутка вместо переноса есть только у ГруппаФормы с orientation: horizontal",
 					"Задайте orientation: horizontal у группы или уберите ключ."))
+			}
+			// Заголовок и рамку рисует только группа: у поля эти ключи ничего не
+			// меняют, а форма с ними выглядит настроенной.
+			if !metadata.FormElementSupportsGroupFrame(el.Kind) &&
+				(el.ShowTitle != nil || el.Bordered != nil) {
+				warns = append(warns, formKeyIssue(owner, form, el, "form.group-frame",
+					fmt.Sprintf("ключи show_title/bordered игнорируются — заголовок и рамку рисует только kind: %s", metadata.FormElementGroupBox),
+					"Уберите ключ или перенесите его на объемлющую группу."))
 			}
 			if el.Primary && el.Kind != metadata.FormElementButton {
 				warns = append(warns, formKeyIssue(owner, form, el, "form.primary",

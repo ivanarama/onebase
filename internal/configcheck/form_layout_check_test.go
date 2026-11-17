@@ -46,6 +46,31 @@ func TestCheckFormLayout_KnownValuesSilent(t *testing.T) {
 	}
 }
 
+// Вариант группировки вне словаря — предупреждение, а не молчание: иначе
+// «orientation: horizontally» тихо даёт вертикальную раскладку, и искать причину
+// придётся глазами по форме.
+func TestCheckFormLayout_UnknownOrientationWarns(t *testing.T) {	warns := CheckFormLayout(projWithElement(&metadata.FormElement{
+		Kind:        metadata.FormElementGroupBox,
+		Name:        "Группа",
+		Orientation: "horizontally",
+	}))
+	if len(warns) != 1 || warns[0].Code != "form.layout-orientation" {
+		t.Fatalf("ожидалось предупреждение form.layout-orientation, получено: %+v", warns)
+	}
+	for _, v := range metadata.FormGroupOrientationValues {
+		if !strings.Contains(warns[0].SuggestedFix, v) {
+			t.Errorf("в подсказке нет значения %q: %s", v, warns[0].SuggestedFix)
+		}
+	}
+	for _, ok := range []string{"", "horizontal", "Vertical"} {
+		if warns := CheckFormLayout(projWithElement(&metadata.FormElement{
+			Kind: metadata.FormElementGroupBox, Name: "Группа", Orientation: ok,
+		})); len(warns) != 0 {
+			t.Errorf("orientation %q помечен зря: %+v", ok, warns)
+		}
+	}
+}
+
 func TestCheckFormLayout_BadSizeWarns(t *testing.T) {
 	cases := []struct {
 		name     string

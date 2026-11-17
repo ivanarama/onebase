@@ -206,10 +206,65 @@ func NormalizeFormLayoutSize(n int) int {
 	return n
 }
 
+// HorizontalGrouping — вариант группировки детей группы: true только при явном
+// orientation: horizontal (регистр и лишние пробелы не важны).
+//
+// Незаданный ключ остаётся ВЕРТИКАЛЬНЫМ. Это не мелочь: формы, написанные до
+// появления вложенных групп, не должны поехать оттого, что конструктор теперь
+// создаёт новые группы горизонтальными. Поэтому умолчание новой группы пишется
+// в YAML явно (см. applyEditOp), а рендер читает только то, что написано.
+func (el *FormElement) HorizontalGrouping() bool {
+	return el != nil && strings.EqualFold(strings.TrimSpace(el.Orientation), "horizontal")
+}
+
+// FormGroupOrientationValues — словарь вариантов группировки группы. Порядок
+// фиксирован: он же порядок вариантов в панели свойств и в сообщении check.
+var FormGroupOrientationValues = []string{"horizontal", "vertical"}
+
+// NormalizeFormGroupOrientation приводит orientation к словарю. Пустая строка —
+// «ключ не задан», это допустимо (вертикальная раскладка по умолчанию).
+// ok=false — значение не из словаря: рендер его игнорирует, а check предупреждает.
+func NormalizeFormGroupOrientation(s string) (string, bool) {
+	switch v := strings.ToLower(strings.TrimSpace(s)); v {
+	case "":
+		return "", true
+	case "horizontal", "vertical":
+		return v, true
+	default:
+		return "", false
+	}
+}
+
+// FormGroupPlainClass — класс группы без рамки (bordered: false). Держим его
+// здесь, а не россыпью строк: класс пишет шаблон рантайма, повторяют холст и
+// предпросмотр конструктора, а правила для него есть и в обычном виде, и в новом.
+// Разойдись они — «группа без рамки» молча вернула бы рамку на одной из страниц.
+const FormGroupPlainClass = "ob-group-plain"
+
+// FormElementSupportsGroupFrame — виды элементов, у которых ключи show_title и
+// bordered что-то меняют: заголовок (<legend>) и рамку рисует только группа.
+func FormElementSupportsGroupFrame(kind FormElementType) bool {
+	return kind == FormElementGroupBox
+}
+
+// GroupTitleVisible — показывать заголовок группы. Умолчание — да: у всех форм,
+// написанных до появления ключа, show_title отсутствует, и они обязаны остаться
+// с заголовком.
+func (el *FormElement) GroupTitleVisible() bool {
+	return el == nil || el.ShowTitle == nil || *el.ShowTitle
+}
+
+// GroupBordered — рисовать у группы рамку и внутренние отступы. Умолчание — да.
+// bordered: false оставляет от группы только раскладку детей: полоса кнопок или
+// строка реквизитов перестаёт читаться отдельным блоком.
+func (el *FormElement) GroupBordered() bool {
+	return el == nil || el.Bordered == nil || *el.Bordered
+}
+
 // UsesEqualColumns включает режим только у горизонтальной группы без scroll_x.
 // В остальных случаях check сообщает, почему настройка не применяется.
 func (el *FormElement) UsesEqualColumns() bool {
-	return el != nil && el.Kind == FormElementGroupBox && el.Orientation == "horizontal" && el.EqualColumns && !el.ScrollX
+	return el != nil && el.Kind == FormElementGroupBox && el.HorizontalGrouping() && el.EqualColumns && !el.ScrollX
 }
 
 // FormEqualColumnsCSS — единый режим для runtime, preview и холста. Группа

@@ -96,6 +96,14 @@ func layoutDiagnostics(el *metadata.FormElement) []layoutDiagnostic {
 			fix: "Допустимые значения: " + strings.Join(metadata.FormVAlignValues, ", ") + " (middle — синоним center).",
 		})
 	}
+	if _, ok := metadata.NormalizeFormGroupOrientation(el.Orientation); !ok {
+		out = append(out, layoutDiagnostic{
+			code: "form.layout-orientation",
+			msg: fmt.Sprintf("orientation: %q — значение не из словаря, группа разложит детей вертикально",
+				strings.TrimSpace(el.Orientation)),
+			fix: "Допустимые значения: " + strings.Join(metadata.FormGroupOrientationValues, ", ") + ".",
+		})
+	}
 	out = append(out, layoutSizeDiagnostic("width", el.Width)...)
 	out = append(out, layoutSizeDiagnostic("height", el.Height)...)
 

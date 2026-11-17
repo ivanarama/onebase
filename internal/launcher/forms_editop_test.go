@@ -240,6 +240,8 @@ func TestApplyEditOp_Delete(t *testing.T) {
 
 // insert контейнера (группа) даёт явный пустой children в YAML и узел-container
 // в модели — чтобы внутрь сразу можно было ронять поля (follow-up #164, слайс C).
+// Вариант группировки новой группы пишется в YAML явно: горизонталь — умолчание
+// НОВОЙ группы, а формы без ключа остаются вертикальными.
 func TestApplyEditOp_InsertContainer(t *testing.T) {
 	res, err := applyEditOp([]byte(canvasSample), editOpRequest{
 		Op: "insert", Parent: "", Index: 1, Kind: "ГруппаФормы", Name: "Группа2", TitleRU: "Реквизиты",
@@ -250,11 +252,66 @@ func TestApplyEditOp_InsertContainer(t *testing.T) {
 	if !strings.Contains(res.YAML, "children: []") {
 		t.Errorf("у новой группы нет явного пустого children:\n%s", res.YAML)
 	}
+	if !strings.Contains(res.YAML, "orientation: horizontal") {
+		t.Errorf("у новой группы нет явного orientation: horizontal:\n%s", res.YAML)
+	}
 	info, ok := res.Model[res.SelectedID]
 	if !ok || !info.Container {
 		t.Errorf("новый узел не container: id=%q info=%+v", res.SelectedID, info)
 	}
+	if info.Orientation != "horizontal" {
+		t.Errorf("ориентация новой группы = %q, ожидалась horizontal", info.Orientation)
+	}
 }
+
+// Вложенную группу можно вставить внутрь другой группы, а не только на верхний
+// уровень: путь parent — node-id контейнера, и он же остаётся рабочим для
+// произвольной глубины.
+func TestApplyEditOp_InsertNestedGroup(t *testing.T) {
+	res, err := applyEditOp([]byte(nestedGroupsSample), editOpRequest{
+		Op: "insert", Parent: "elements.0.children.1", Index: 0, Kind: "ГруппаФормы", Name: "Подгруппа", TitleRU: "Подгруппа",
+	})
+	if err != nil {
+		t.Fatalf("insert во вложенную группу: %v", err)
+	}
+	if !strings.Contains(res.YAML, "Вложенная") && !strings.Contains(res.YAML, "Подгруппа") {
+		t.Fatalf("группа не попала в YAML:\n%s", res.YAML)
+	}
+	info, ok := res.Model[res.SelectedID]
+	if !ok || !info.Container {
+		t.Fatalf("вложенный узел не container: id=%q info=%+v", res.SelectedID, info)
+	}
+	// Node-id вложенной вставки начинается с пути родителя — иначе следующая
+	// вставка внутрь неё ушла бы в чужое место дерева.
+	if !strings.HasPrefix(res.SelectedID, "elements.0.children.1.children.") {
+		t.Errorf("node-id вложенной группы = %q", res.SelectedID)
+	}
+}
+
+// nestedGroupsSample — дерево из двух уровней: внешняя горизонтальная группа с
+// вертикальной подгруппой и второй горизонтальной подгруппой.
+const nestedGroupsSample = `schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: Заказ
+elements:
+  - kind: ГруппаФормы
+    name: Шапка
+    orientation: horizontal
+    children:
+      - kind: ГруппаФормы
+        name: Левая
+        orientation: vertical
+        children:
+          - kind: ПолеВвода
+            name: ПолеНомер
+            data_path: Объект.Номер
+      - kind: ГруппаФормы
+        name: Правая
+        orientation: horizontal
+        children: []
+`
 
 // insert табличной части: в YAML kind ТабличнаяЧасть с data_path и пустым
 // children (контейнер колонок), узел становится выбранным container (D1).
