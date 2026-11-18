@@ -271,8 +271,8 @@ function shell(storage, search = '', confirmClose = () => true, requestFrameClos
     titles() { return strip.children.map(button => button.title); },
     labels() { return strip.children.map(button => button.children[0].textContent); },
     click(index) { strip.children[index].dispatch('click'); },
-    close(index) { strip.children[index].children[2].dispatch('click'); },
-    duplicate(index) { strip.children[index].children[1].dispatch('click'); },
+    close(index) { strip.children[index].children.find(child => child.className === 'ob-tab-close').dispatch('click'); },
+    duplicate(index) { strip.children[index].children.find(child => child.className === 'ob-tab-dup').dispatch('click'); },
     // Адрес сменился без перезагрузки фрейма (history.replaceState после записи
     // нового объекта): location новый, события load нет.
     silentNavigate(index, href) {
@@ -485,14 +485,14 @@ test('history replacement refreshes persistence, restore and URL deduplication w
 
 test('duplicate uses the refreshed URL and unsafe frame locations are ignored', () => {
   const storage = new FakeStorage();
-  const createURL = '/ui/document/purchase/new';
-  const cardURL = '/ui/document/purchase/42';
+  const reportURL = '/ui/report/Purchases';
+  const variantURL = '/ui/report/Purchases?variant=Monthly';
   const app = shell(storage);
-  app.open(createURL, 'Purchase');
-  app.navigate(0, 'http://127.0.0.1:8080' + cardURL);
+  app.open(reportURL, 'Purchases');
+  app.navigate(0, 'http://127.0.0.1:8080' + variantURL);
 
   app.duplicate(0);
-  assert.deepEqual(savedTabs(storage).map(tab => tab.url), [cardURL, cardURL]);
+  assert.deepEqual(savedTabs(storage).map(tab => tab.url), [variantURL, variantURL]);
 
   const before = storage.getItem('obTabs');
   app.navigate(0, 'https://example.invalid/ui/document/purchase/99');
@@ -685,7 +685,7 @@ test('missing bridge keeps dirty protection for another non-managed duplicate', 
   const storage = new FakeStorage();
   const app = shell(storage);
   app.open('/ui/document/обращение/1', 'Обращение');
-  app.duplicate(0);
+  app.open('/ui/document/обращение/1', 'Обращение', {allowDup: true});
   app.markDirty(1);
   assert.equal(app.closeByURL('/ui/document/обращение/1'), 2);
   assert.equal(app.count(), 0);
@@ -696,7 +696,7 @@ test('repeated fallback close cannot bypass a rejected non-managed confirmation'
   const storage = new FakeStorage();
   const app = shell(storage, '', () => false);
   app.open('/ui/document/обращение/1', 'Обращение');
-  app.duplicate(0);
+  app.open('/ui/document/обращение/1', 'Обращение', {allowDup: true});
   app.markDirty(1);
 
   assert.equal(app.closeByURL('/ui/document/обращение/1'), 1);
@@ -1225,7 +1225,7 @@ test('a waiting close command is used once', () => {
   const storage = new FakeStorage();
   const app = shell(storage);
   app.open('/ui/document/звонок/new', 'Звонок');
-  app.duplicate(0);
+  app.open('/ui/document/звонок/new', 'Звонок', {allowDup: true});
   assert.equal(app.closeByURL('/ui/document/звонок/42'), 0);
   app.replaceWithoutLoad(0, 'http://127.0.0.1:8080/ui/document/звонок/42');
   assert.equal(app.count(), 1);

@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/realtime"
 	"github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/stretchr/testify/require"
@@ -23,6 +24,7 @@ func TestTabsDuplicateControlThroughPublicPages(t *testing.T) {
 	catalog := &metadata.Entity{Name: "TabClient", Kind: metadata.KindCatalog,
 		Fields: []metadata.Field{{Name: "Title", Type: metadata.FieldTypeString}}}
 	s, ctx := newSubmitTestServer(t, []*metadata.Entity{doc, catalog})
+	s.hub = realtime.NewHub()
 	s.reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{doc, catalog}, Reports: []*report.Report{
 		{Name: "TabReport", Title: "Проверка отчёта", Query: "ВЫБРАТЬ 1 КАК Число"},
 	}})
