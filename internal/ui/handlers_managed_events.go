@@ -2752,6 +2752,9 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		}
 		vars, txState := s.buildDSLVarsWithMessagesTx(dslCtx, mc, &msgs)
 		s.bindFormCloseSource(vars, r)
+		if !proc.External && eventName == string(metadata.FormEventOnClick) {
+			s.bindPhoneComparison(vars, txState.Ctx, eventTarget)
+		}
 		defer rollbackDSLExecution(txState)
 		thisObj := s.newFormObjectThisLive(dslCtx, txState, obj, virtEntity, form, false)
 		vars["Объект"] = thisObj
