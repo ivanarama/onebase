@@ -77,7 +77,7 @@ func CheckFormChoiceFolders(proj *project.Project) []Issue {
 // CheckFormKeyPlacement предупреждает о ключах, которые в этом месте рантайм не
 // применит: scroll_x вне горизонтальной группы, primary вне кнопки,
 // choice_dropdown и choice_folders вне ссылочного поля, choice_folders у
-// неиерархического справочника.
+// неиерархического справочника, input_by_string вне ссылочного поля на справочник.
 func CheckFormKeyPlacement(proj *project.Project) []Issue {
 	if proj == nil {
 		return nil
@@ -119,6 +119,25 @@ func CheckFormKeyPlacement(proj *project.Project) []Issue {
 					warns = append(warns, formKeyIssue(owner, form, el, "form.ref-card-button",
 						fmt.Sprintf("ключ ref_card_button игнорируется — data_path %q не выбирает ссылку, кнопки «Открыть карточку» у поля нет", el.DataPath),
 						"Оставьте ключ только у ссылочного поля ввода."))
+				}
+			}
+			// Ввод по строке — подсказка по наименованию справочника. У поля,
+			// которое не выбирает ссылку, ключ ничего не делает: рантайм поле не
+			// превращает, а обещание в конфигурации остаётся.
+			if el.InputByString {
+				target, ok := formChoiceRefSource(owner, form, el.DataPath, entities)
+				if el.Kind != metadata.FormElementField || !ok || target == nil || target.Kind != metadata.KindCatalog {
+					warns = append(warns, formKeyIssue(owner, form, el, "form.input-by-string",
+						fmt.Sprintf("ключ input_by_string игнорируется — data_path %q не выбирает ссылку на справочник", el.DataPath),
+						"Оставьте ключ только у ссылочного поля ввода."))
+				}
+				// Маска ввода раскладывает заполнители в набираемый текст, а ввод по
+				// строке подставляет наименование из справочника — вдвоём они не
+				// работают: видимое поле ввода по строке маску не применяет.
+				if strings.TrimSpace(el.InputMask) != "" {
+					warns = append(warns, formKeyIssue(owner, form, el, "form.input-by-string",
+						"ключи input_by_string и input_mask вместе не работают — поле ввода по строке подставляет наименование, а не набирает его по шаблону",
+						"Оставьте один из ключей: шаблон ввода — для свободного текста, ввод по строке — для ссылки."))
 				}
 			}
 			if !el.ChoiceFolders && el.ChoiceDropdown == nil {

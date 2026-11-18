@@ -840,6 +840,26 @@ var _entity = {{jsString .EditingForm.Entity}};
 var _tablePartsList = {{jsonObj .EditingFormTableParts}};
 var _tableParts = {};
 (_tablePartsList || []).forEach(function (tp) { _tableParts[tp.name] = tp.columns || []; });
+// Реквизиты объекта: по ним панель свойств решает, уместна ли галка «Ввод по
+// строке» — она имеет смысл только у ссылочного поля (см. fieldIsRef).
+var _objAttrs = {{jsonObj .EditingFormAttrs}};
+// Типы объявленных реквизитов формы (блок attributes:) — приезжают с каждым
+// ответом /forms/edit-op, потому что конструктор не держит метаданные сущности.
+var _attrTypes = {};
+function fieldIsRef(dataPath) {
+  var name = String(dataPath || '');
+  var dot = name.lastIndexOf('.');
+  if (dot >= 0) name = name.slice(dot + 1);
+  if (!name) return false;
+  var lower = name.toLowerCase();
+  for (var i = 0; i < (_objAttrs || []).length; i++) {
+    if (String(_objAttrs[i].name).toLowerCase() !== lower) continue;
+    var t = String(_objAttrs[i].type || '').toLowerCase();
+    return t.indexOf('reference:') === 0 || !!_objAttrs[i].refEntity;
+  }
+  var declared = String((_attrTypes || {})[lower] || '').toLowerCase();
+  return declared.indexOf('catalogref.') === 0 || declared.indexOf('documentref.') === 0;
+}
 var _selected = '';   // текущая цель правки: node-id элемента ИЛИ "form"
 var _lastEl = '';     // последний выбранный элемент (для закладки «Элемент»)
 var _model = {};      // node-id → свойства (для панели свойств)
@@ -911,6 +931,7 @@ function editOp(params, mutating) {
       host.classList.remove('fc-canvas-disabled');
       _model = resp.model || {};
       _form = resp.form || {};
+      _attrTypes = resp.attrTypes || {};
       _selected = resp.selectedId || '';
       if (_selected && _selected !== 'form') _lastEl = _selected; // запоминаем элемент для закладки «Элемент»
       renderCanvasHTML(resp.canvasHtml || '');
@@ -1153,6 +1174,16 @@ function renderProps() {
       addTextProp(panel, 'Шаблон ввода (00.00.00)', 'input_mask', info.inputMask || '');
       addTextProp(panel, 'Проверка значения (регулярное выражение)', 'mask', info.mask || '');
       addCheckRaw(panel, 'Файловое поле', info.fileType, function (ch) { setProp('type', ch ? 'file' : ''); });
+      // Ввод по строке — только у поля, которое выбирает ссылку на справочник:
+      // у строкового реквизита подсказка по наименованию ничего не ищет, и
+      // галка была бы ловушкой. Ключ один и тот же в рантайме и в YAML;
+      // снятая галка удаляет его, а не пишет false — умолчание и есть «выкл.».
+      if (fieldIsRef(info.dataPath)) {
+        addCheckRaw(panel, {{jsString (t $.Lang "Ввод по строке")}}, info.inputByString, function (ch) {
+          if (ch) setProp('input_by_string', 'true');
+          else editOp({ op: 'delProp', node: _selected, key: 'input_by_string' }, true);
+        });
+      }
       addTextProp(panel, {{jsString (t $.Lang "Устойчивый id элемента")}}, 'id', info.id || '');
       addChoiceFilterEditor(panel, info);
     }

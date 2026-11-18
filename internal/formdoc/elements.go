@@ -133,6 +133,31 @@ func (d *Doc) FormMeta() (FormMeta, error) {
 	return fm, nil
 }
 
+// FormAttributeTypes — объявленные реквизиты формы (блок attributes:) картой
+// «имя в нижнем регистре → тип». Нужны панели свойств: визуальный конструктор
+// не держит метаданные сущности, и решить, ссылочный ли реквизит формы, он может
+// только по объявленному типу (`CatalogRef.Контрагенты`).
+func (d *Doc) FormAttributeTypes() (map[string]string, error) {
+	seq := mappingValue(d.topMapping(), "attributes")
+	if seq == nil || seq.Kind != yaml.SequenceNode {
+		return nil, nil
+	}
+	out := make(map[string]string, len(seq.Content))
+	for i, item := range seq.Content {
+		var attr struct {
+			Name string `yaml:"name"`
+			Type string `yaml:"type"`
+		}
+		if err := item.Decode(&attr); err != nil {
+			return nil, fmt.Errorf("formdoc: декод реквизита формы %d: %w", i, err)
+		}
+		if attr.Name != "" {
+			out[strings.ToLower(attr.Name)] = attr.Type
+		}
+	}
+	return out, nil
+}
+
 // NodeByID разрешает node-id в узел элемента (mapping). Сегменты чередуются:
 // ключ mapping-узла либо индекс sequence-узла. Несуществующий путь — ошибка.
 func (d *Doc) NodeByID(id string) (*yaml.Node, error) {

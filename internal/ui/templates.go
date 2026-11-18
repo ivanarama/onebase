@@ -535,6 +535,25 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		"choiceDropdownCollapsed": func(element *metadata.FormElement) bool {
 			return element != nil && element.ChoiceDropdown != nil && !*element.ChoiceDropdown
 		},
+		// refOptionLabel — подпись текущего значения ссылочного поля для видимого
+		// текста ввода по строке (input_by_string). Значение хранится UUID, а
+		// оператору нужен текст: берём подпись варианта, загруженного сервером;
+		// варианта нет (значение вне отбора или страницы) — пусто, и тогда поле
+		// остаётся пустым, а не показывает UUID.
+		"refOptionLabel": func(ctx map[string]any, element *metadata.FormElement, field string) string {
+			selected := formContextValue(ctx, field)
+			if selected == "" {
+				return ""
+			}
+			for _, row := range managedRefOptionRows(ctx, element, field) {
+				if refValueString(row["id"]) == selected {
+					if label, _ := row["_label"].(string); label != "" {
+						return label
+					}
+				}
+			}
+			return ""
+		},
 		// adminOnlyLocked — поле заперто, потому что смотрит не администратор.
 		// Тот же запрет входит в ответы событий формы и в разбор записи: иначе
 		// ложное readonly_when разблокировало бы поле после первого round trip.

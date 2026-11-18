@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -1316,15 +1317,40 @@ func (s *Server) refOptionsJSON(w http.ResponseWriter, r *http.Request) {
 	// контрагент, потом договор. Связи параметров выбора (план 170) едут своим
 	// контрактом choice и в flt не попадают.
 	base, fltOK := refOptionsFilters(ent, r.URL.Query().Get("flt"), storage.ListParams{})
+	// by=name — подсказка ввода по строке (input_by_string) ищет ТОЛЬКО по
+	// наименованию: общий поиск q идёт по всем строковым реквизитам и табличным
+	// частям, и «Ива» находила бы ещё адрес с примечанием, хотя поле обещает
+	// поиск по наименованию.
+	//
+	// Короткий ввод не ищется: подстрока из одного-двух символов совпадает почти
+	// со всем справочником, а LIKE '%x%' по большой таблице — самая дорогая форма
+	// запроса. Порог тот же, что на клиенте (refInputByStringMinChars): сервер не
+	// верит клиенту на слово.
+	search := strings.TrimSpace(r.URL.Query().Get("q"))
+	noResults := false
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("by")), "name") {
+		field := refNameSearchField(ent)
+		if field == "" || utf8.RuneCountInString(search) < refInputByStringMinChars {
+			noResults = true
+		} else {
+			if base.Filters == nil {
+				base.Filters = map[string]storage.FilterValue{}
+			}
+			base.Filters[field] = storage.FilterValue{Value: search}
+			// Отбор уже несёт набранный текст: общий поиск расширил бы выдачу
+			// обратно до всех строковых реквизитов.
+			search = ""
+		}
+	}
 	items := make([]map[string]any, 0)
 	total := 0
-	if fltOK && (choice == nil || !choice.Empty) {
+	if fltOK && (choice == nil || !choice.Empty) && !noResults {
 		extra := base
 		if choice != nil {
 			extra.ChoicePredicates = choice.Predicates
 			extra.IncludeFolders = choice.Folders
 		}
-		items, total, err = s.referenceOptionsPageWithParams(r.Context(), ent, r.URL.Query().Get("q"), limit, offset, extra)
+		items, total, err = s.referenceOptionsPageWithParams(r.Context(), ent, search, limit, offset, extra)
 		if err != nil {
 			s.serverError(w, r, err)
 			return

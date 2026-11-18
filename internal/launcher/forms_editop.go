@@ -55,6 +55,11 @@ type editOpResult struct {
 	SelectedID string
 	Model      map[string]canvasElementInfo
 	Form       formInfo
+	// AttrTypes — объявленные реквизиты формы: имя → тип. Панель свойств по
+	// типу решает, показывать ли ключи, которые имеют смысл только у ссылки
+	// (input_by_string). Без этой карты конструктор показал бы галку у
+	// строкового реквизита формы, где рантайм её не применит.
+	AttrTypes map[string]string
 }
 
 // formInfo — корневые свойства формы для панели «Свойства формы» (batch B2/B3).
@@ -79,6 +84,8 @@ var boolProps = map[string]bool{
 	"show_title": true, "bordered": true,
 	// Кнопка «Открыть карточку»: у поля и у формы (#1876).
 	"ref_card_button": true, "ref_card_button_admin_only": true,
+	// Ввод по строке у ссылочного поля.
+	"input_by_string": true,
 }
 
 // numProps — целочисленные свойства: пишем в YAML числом, а не строкой (иначе
@@ -385,11 +392,16 @@ func applyEditOp(yamlSrc []byte, req editOpRequest) (editOpResult, error) {
 	if err != nil {
 		return editOpResult{}, err
 	}
+	attrTypes, err := doc.FormAttributeTypes()
+	if err != nil {
+		return editOpResult{}, err
+	}
 	return editOpResult{
 		YAML:       string(out),
 		CanvasHTML: canvas,
 		SelectedID: selected,
 		Model:      model,
+		AttrTypes:  attrTypes,
 		Form: formInfo{TitleRU: meta.TitleRU, Kind: meta.Kind, Events: meta.Events, Actions: meta.Actions,
 			RefCardButton: meta.RefCardButton, RefCardAdminOnly: meta.RefCardAdminOnly},
 	}, nil
@@ -403,6 +415,7 @@ type editOpResponse struct {
 	SelectedID string                       `json:"selectedId,omitempty"`
 	Model      map[string]canvasElementInfo `json:"model,omitempty"`
 	Form       *formInfo                    `json:"form,omitempty"`
+	AttrTypes  map[string]string            `json:"attrTypes,omitempty"`
 	Errors     []string                     `json:"errors,omitempty"`
 }
 
@@ -448,5 +461,6 @@ func (h *handler) configuratorFormsEditOp(w http.ResponseWriter, r *http.Request
 		SelectedID: res.SelectedID,
 		Model:      res.Model,
 		Form:       &form,
+		AttrTypes:  res.AttrTypes,
 	})
 }

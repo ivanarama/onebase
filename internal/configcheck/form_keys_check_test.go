@@ -106,6 +106,12 @@ func TestCheckFormKeyPlacementWarnsAboutIgnoredKeys(t *testing.T) {
 		{"ключи подбора у строкового поля", &metadata.FormElement{
 			Kind: metadata.FormElementField, Name: "ПолеКомментарий", DataPath: "Объект.Комментарий", ChoiceDropdown: &collapsed,
 		}, "не выбирает ссылку"},
+		{"ввод по строке у строкового поля", &metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеКомментарий", DataPath: "Объект.Комментарий", InputByString: true,
+		}, "input_by_string"},
+		{"ввод по строке вместе с маской", &metadata.FormElement{
+			Kind: metadata.FormElementField, Name: "ПолеФилиал", DataPath: "Объект.Филиал", InputByString: true, InputMask: "00",
+		}, "input_mask"},
 		{"группы у неиерархического справочника", &metadata.FormElement{
 			Kind: metadata.FormElementField, Name: "ПолеФилиал", DataPath: "Объект.Филиал", ChoiceFolders: true,
 		}, "нет иерархии"},
@@ -130,6 +136,7 @@ func TestCheckFormKeyPlacementWarnsAboutIgnoredKeys(t *testing.T) {
 		&metadata.FormElement{Kind: metadata.FormElementGroupBox, Name: "БезЗаголовка", ShowTitle: groupFrameBool(false)},
 		&metadata.FormElement{Kind: metadata.FormElementButton, Name: "КнОК", Primary: true},
 		&metadata.FormElement{Kind: metadata.FormElementField, Name: "ПолеГород", DataPath: "Объект.НаселённыйПункт", ChoiceFolders: true, ChoiceDropdown: &collapsed},
+		&metadata.FormElement{Kind: metadata.FormElementField, Name: "ПолеФилиал", DataPath: "Объект.Филиал", InputByString: true},
 	)
 	if warns := CheckFormKeyPlacement(good); len(warns) != 0 {
 		t.Fatalf("корректные объявления получили предупреждение: %s", messages(warns))

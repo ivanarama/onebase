@@ -330,6 +330,15 @@ type FormElement struct {
 	ChoiceDropdown *bool `yaml:"choice_dropdown,omitempty"`
 	// ReferencePage opens a custom page with the selected reference UUID in ?ref= instead of its card.
 	ReferencePage string `yaml:"reference_page,omitempty"`
+	// InputByString — «ввод по строке» у ссылочного поля: вместо списка
+	// вариантов пользователь набирает часть наименования, а браузер предлагает
+	// подходящие элементы справочника выпадающим списком (1С: ввод по строке).
+	// Поиск начинается с трёх символов и идёт по реквизиту «Наименование»;
+	// единственный найденный вариант подставляется сам, при пустой выдаче поле
+	// пишет «не найдено». Ключ меняет только вид ввода: значение по-прежнему
+	// хранится ссылкой, а форма подбора, кнопка 🔍 и choice_filter работают как
+	// прежде. По умолчанию выключено — у существующих форм вид поля не меняется.
+	InputByString bool `yaml:"input_by_string,omitempty"`
 	// RefCardButton — показывать ли у ЭТОГО ссылочного поля кнопку «Открыть
 	// карточку» (🔍). Явное значение у поля сильнее обоих ключей формы
 	// (ref_card_button и ref_card_button_admin_only) в обе стороны: может и

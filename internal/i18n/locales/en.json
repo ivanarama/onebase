@@ -1528,6 +1528,8 @@
   "UUID записи справочника": "Catalog record UUID",
   "Условия идут по порядку и соединяются через И. Для подбора обязателен уникальный id выше.": "Conditions are evaluated in order and joined with AND. A unique element ID above is required for filtering.",
   "Устойчивый id элемента": "Stable element ID",
+  "Ввод по строке": "Type-ahead input",
+  "Начните вводить наименование": "Start typing the name",
   "Команда формы ещё выполняется. Дождитесь её завершения.": "A form command is still running. Wait for it to finish.",
   "Форма изменилась во время выполнения команды — переход не выполнен": "The form changed while the command was running — navigation was not performed",
   "Форма содержит несохранённые изменения — переход не выполнен": "The form has unsaved changes — navigation was not performed",

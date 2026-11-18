@@ -19,7 +19,13 @@ var cfgTmpl = template.Must(template.New("cfg").Funcs(template.FuncMap{
 		}
 		return key
 	},
-	"selIf": func(a, b string) string {
+	// selIf подставляет атрибут selected в <option>. Возвращать нужно именно
+	// template.HTMLAttr: html/template в позиции имени атрибута (сразу после
+	// закрывающей кавычки) считает обычную строку небезопасной и заменяет её на
+	// «ZgotmplZ». Из-за этого выбранный пункт списка не помечался вовсе, и форма
+	// показывала первый пункт — «Обычный» вид форм и язык «По умолчанию» — хотя
+	// сохранённое значение в app.yaml было другим.
+	"selIf": func(a, b string) template.HTMLAttr {
 		if a == b {
 			return " selected"
 		}

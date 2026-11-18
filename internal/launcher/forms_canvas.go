@@ -296,6 +296,10 @@ type canvasElementInfo struct {
 	// визуального редактора plan 170/C. Указатель отличает value:false от
 	// отсутствующего value (режим from).
 	ChoiceFilter []canvasChoiceCondition `json:"choiceFilter"`
+	// InputByString — «ввод по строке» у ссылочного поля: подсказка по
+	// наименованию вместо списка. Ключ показывается в панели свойств, поэтому
+	// он входит в модель холста (рантайм читает его сам, см. FormElement).
+	InputByString bool `json:"inputByString"`
 }
 
 // canvasOption — значение набора Переключателя для редактора опций (C1).
@@ -355,8 +359,9 @@ func canvasModel(doc *formdoc.Doc) (map[string]canvasElementInfo, error) {
 				EqualColumns: el.EqualColumns,
 				ShowTitle:    el.GroupTitleVisible(),
 				Bordered:     el.GroupBordered(),
-				Background:   el.Background,
-				View:         el.View,
+				Background:    el.Background,
+				View:          el.View,
+				InputByString: el.InputByString,
 			}
 			if el.TitleMap != nil {
 				info.TitleRU = el.TitleMap["ru"]

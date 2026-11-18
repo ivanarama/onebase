@@ -184,12 +184,42 @@ const (
 	refPickerMaxLimit     = 100
 )
 
+// refInputByStringMinChars — сколько символов нужно набрать, чтобы поле с
+// input_by_string начало искать. Тот же порог проверяет сервер: клиент не
+// должен слать запрос, совпадающий с половиной справочника, а сервер не должен
+// верить клиенту на слово.
+const refInputByStringMinChars = 3
+
 func (s *Server) refListParamsForMode(refEntity *metadata.Entity, mode refOptionsMode) storage.ListParams {
 	params := storage.ListParams{ExcludeFolders: true}
 	if mode == refOptionsChoice && refEntity != nil && refEntity.Activity != nil && refEntity.Activity.HideFromChoice {
 		params.ActivityScope = metadata.ActivityScopeActive
 	}
 	return params
+}
+
+// refNameSearchField — реквизит, по которому ищет подсказка ввода по строке
+// (input_by_string). По требованию это «Наименование»; у сущности без такого
+// реквизита берётся первый кандидат представления (metadata.LabelFields), чтобы
+// подсказка не оказалась мёртвой на импортированном справочнике с другим
+// названием реквизита. Пустая строка — искать не по чему.
+func refNameSearchField(entity *metadata.Entity) string {
+	if entity == nil {
+		return ""
+	}
+	for _, f := range entity.Fields {
+		if strings.EqualFold(f.Name, "Наименование") && f.Type == metadata.FieldTypeString && f.RefEntity == "" {
+			return f.Name
+		}
+	}
+	// Справочник с переименованным реквизитом (импорт, английские имена): берём
+	// первый кандидат представления — его и показывает подсказка.
+	for _, f := range metadata.LabelFields(entity) {
+		if f.Type == metadata.FieldTypeString && f.RefEntity == "" {
+			return f.Name
+		}
+	}
+	return ""
 }
 
 func (s *Server) referenceOptions(ctx context.Context, refEntity *metadata.Entity, mode refOptionsMode) ([]map[string]any, error) {

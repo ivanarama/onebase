@@ -111,12 +111,28 @@ const tplManagedForm = `
     {{if $f}}
       {{if isRef (str $f.Type)}}
         <div class="managed-control-row" style="display:flex;gap:6px;align-items:center">
-          <select class="managed-fill-control" id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{with $el.ReferencePage}} data-ref-page="{{.}}"{{end}}{{if $ctx.RefFilter}}{{with index $ctx.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if $choiceCtx}} data-ref-choice-context="{{$choiceCtx}}"{{end}}{{if choiceDropdownCollapsed $el}} data-ref-choice-dropdown="false"{{end}}{{if $el.ChoiceContext}} data-ref-context="{{choiceContextJSON $el}}" data-ref-element="{{$el.Name}}" data-ref-source-entity="{{$ctx.Entity.Name}}"{{end}}{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if and ($f.InlineCreateEnabled false) (refWriteAllowed $ctx.RefWriteAccess $f.RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+          {{/* input_by_string: <select> остаётся носителем значения (UUID) и всей
+               прочей механики — кнопка подбора, отбор и зеркало readonly находят
+               его здесь же. Видимое текстовое поле и выпадающий список создаёт
+               managed.js; он же прячет select. Без JS поле остаётся обычным
+               списком, а не пустым вводом. native required переезжает на текст:
+               скрытый select браузер не может сфокусировать. */}}
+          <select class="managed-fill-control" id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{$f.RefEntity}}"{{if $el.InputByString}} data-ob-ref-typing="1"{{end}}{{with $el.ReferencePage}} data-ref-page="{{.}}"{{end}}{{if $ctx.RefFilter}}{{with index $ctx.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if $choiceCtx}} data-ref-choice-context="{{$choiceCtx}}"{{end}}{{if choiceDropdownCollapsed $el}} data-ref-choice-dropdown="false"{{end}}{{if $el.ChoiceContext}} data-ref-context="{{choiceContextJSON $el}}" data-ref-element="{{$el.Name}}" data-ref-source-entity="{{$ctx.Entity.Name}}"{{end}}{{if and $req (not $ro) (not $el.InputByString)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if and ($f.InlineCreateEnabled false) (refWriteAllowed $ctx.RefWriteAccess $f.RefEntity)}} data-ref-allow-create="1"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
             <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
             {{range managedRefOptions $ctx $el $fn}}
             <option value="{{index . "id"}}"{{refOptionStyle .}}{{if index . "_choice_outside_filter"}} data-ob-choice-outside-filter="1"{{end}} {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
+          {{if $el.InputByString}}
+          {{/* Видимый ввод по строке: пока скрипт не отработал, поле остаётся
+               обычным списком (прогрессивное улучшение) — managed.js прячет
+               select и показывает этот ввод. Одно совпадение подставляется
+               само, пустая выдача пишет «не найдено». */}}
+          <div class="ob-ref-combo" style="position:relative;flex:1;min-width:0;display:none">
+            <input type="text" autocomplete="off" class="managed-fill-control" style="width:100%" value="{{refOptionLabel $ctx $el $fn}}" data-ob-ref-text="ref-{{$fn}}" placeholder="{{t $ctx.Lang "Начните вводить наименование"}}"{{if and $req (not $ro)}} required{{end}}{{if $ro}} readonly{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}>
+            <div class="ob-ref-suggest" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:60;background:#fff;border:1px solid #e2e8f0;border-radius:7px;box-shadow:0 6px 16px rgba(15,23,42,.16);max-height:240px;overflow-y:auto;font-size:13px"></div>
+          </div>
+          {{end}}
           {{/* Нередактируемому полю кнопка подбора не нужна — выбирать нечего, а
                серая «…» рядом заставляет читать значение как незаполненный ввод.
                «Открыть карточку» остаётся и остаётся РАБОЧЕЙ: посмотреть связанный
@@ -212,12 +228,19 @@ const tplManagedForm = `
              пустой select, теряющий текущее значение при записи. Нет опций —
              остаётся прежний текстовый ввод со значением. */}}
         <div class="managed-control-row" style="display:flex;gap:6px;align-items:center">
-          <select class="managed-fill-control" id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{attrRefEntity $attr.TypeRef}}"{{with $el.ReferencePage}} data-ref-page="{{.}}"{{end}}{{if $ctx.RefFilter}}{{with index $ctx.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if $choiceCtx}} data-ref-choice-context="{{$choiceCtx}}"{{end}}{{if choiceDropdownCollapsed $el}} data-ref-choice-dropdown="false"{{end}}{{if $el.ChoiceContext}} data-ref-context="{{choiceContextJSON $el}}" data-ref-element="{{$el.Name}}" data-ref-source-entity="{{$ctx.Entity.Name}}"{{end}}{{if and $req (not $ro)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
+          <select class="managed-fill-control" id="ref-{{$fn}}" name="{{$fn}}" style="flex:1" data-ref-entity="{{attrRefEntity $attr.TypeRef}}"{{if $el.InputByString}} data-ob-ref-typing="1"{{end}}{{with $el.ReferencePage}} data-ref-page="{{.}}"{{end}}{{if $ctx.RefFilter}}{{with index $ctx.RefFilter $fn}} data-ref-filter="{{.}}"{{end}}{{end}}{{if $choiceCtx}} data-ref-choice-context="{{$choiceCtx}}"{{end}}{{if choiceDropdownCollapsed $el}} data-ref-choice-dropdown="false"{{end}}{{if $el.ChoiceContext}} data-ref-context="{{choiceContextJSON $el}}" data-ref-element="{{$el.Name}}" data-ref-source-entity="{{$ctx.Entity.Name}}"{{end}}{{if and $req (not $ro) (not $el.InputByString)}} required{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and $roUnlockable $hChg}} data-ob-fire-change="{{$el.Name}}"{{end}}>
             <option value="">{{if $ro}}—{{else}}— выбрать —{{end}}</option>
             {{range managedRefOptions $ctx $el $fn}}
             <option value="{{index . "id"}}"{{refOptionStyle .}}{{if index . "_choice_outside_filter"}} data-ob-choice-outside-filter="1"{{end}} {{if eq (index . "id") (index $ctx.Values $fn)}}selected{{end}}>{{index . "_label"}}</option>
             {{end}}
           </select>
+          {{if $el.InputByString}}
+          {{/* Видимый ввод по строке (см. ветку поля сущности): скрипт прячет select и показывает этот ввод; без скрипта остаётся список. */}}
+          <div class="ob-ref-combo" style="position:relative;flex:1;min-width:0;display:none">
+            <input type="text" autocomplete="off" class="managed-fill-control" style="width:100%" value="{{refOptionLabel $ctx $el $fn}}" data-ob-ref-text="ref-{{$fn}}" placeholder="{{t $ctx.Lang "Начните вводить наименование"}}"{{if and $req (not $ro)}} required{{end}}{{if $ro}} readonly{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}>
+            <div class="ob-ref-suggest" style="display:none;position:absolute;left:0;right:0;top:100%;z-index:60;background:#fff;border:1px solid #e2e8f0;border-radius:7px;box-shadow:0 6px 16px rgba(15,23,42,.16);max-height:240px;overflow-y:auto;font-size:13px"></div>
+          </div>
+          {{end}}
           <button type="button" data-ob-ref-picker="closest"{{if $ro}} disabled{{end}} style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px">…</button>
           {{if and (or (not $ro) (index $ctx.Values $fn)) (not (hideRefCard $ctx $el)) (refHasCard (attrRefEntity $attr.TypeRef))}}
           <button type="button" data-ob-ref-current="closest" data-ob-readonly-navigation="1" style="padding:8px 12px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:13px" title="Открыть карточку">🔍</button>
