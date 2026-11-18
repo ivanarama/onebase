@@ -632,6 +632,8 @@ const cfgTabTree = `{{define "tab-tree"}}
           <div class="fg" style="margin-top:12px">
             <label>{{t $.Lang "Процедура диаграммы"}} (chart_proc)</label>
             <input type="text" name="chart_proc" value="{{.ChartProc}}" placeholder="СформироватьДиаграмму">
+            <label>result_proc (ТабличныйДокумент)</label>
+            <input type="text" name="result_proc" value="{{.ResultProc}}">
           </div>
           <div class="section-hd" style="margin-top:8px">{{t $.Lang "Код диаграммы"}} (.rep.os) <span class="edit-hint">({{t $.Lang "кликните для редактирования"}})</span></div>
           <div class="code-wrap">
