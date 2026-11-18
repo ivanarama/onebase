@@ -89,6 +89,18 @@ class Element {
     return child;
   }
 
+  get parentNode() {
+    return this.parentElement;
+  }
+
+  insertBefore(child, reference) {
+    const index = this.children.indexOf(reference);
+    assert.notEqual(index, -1);
+    child.parentElement = this;
+    this.children.splice(index, 0, child);
+    return child;
+  }
+
   remove() {
     if (!this.parentElement) return;
     const index = this.parentElement.children.indexOf(this);
