@@ -1486,6 +1486,7 @@
   "Откройте редактор модуля и поставьте курсор": "Open the module editor and place the cursor",
   "Отчёт содержит защищённое поле и не может быть построен под текущей ролью": "The report contains a protected field and cannot be generated for the current role",
   "Результат отчёта усечён лимитом строк. Уточните параметры или увеличьте report_max_rows.": "The report result was truncated by the row limit. Refine the parameters or increase report_max_rows.",
+  "Табличный документ не сформирован: входной запрос превысил report_max_rows. Уточните параметры отчёта.": "The tabular document was not generated: its input query exceeded report_max_rows. Refine the report parameters.",
   "Сохранено": "Saved",
   "Сохранить изменения?": "Save changes?",
   "Закрыть без сохранения?": "Close without saving?",
