@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
+	"mime"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -29,6 +30,7 @@ type tabularScope struct {
 }
 type tabularResult struct {
 	doc        *sheet.Document
+	workbook   *workbookDownload
 	owner      [32]byte
 	scope      tabularScope
 	expires    time.Time
@@ -63,20 +65,24 @@ func tabularOwner(r *http.Request) ([32]byte, error) {
 	return sha256.Sum256(data), nil
 }
 
-func (s *Server) publishTabular(w http.ResponseWriter, r *http.Request, scope tabularScope, doc *sheet.Document) (string, error) {
-	if doc == nil {
-		return "", nil
-	}
+func ensureTabularOwner(w http.ResponseWriter, r *http.Request) ([32]byte, error) {
 	if _, err := tabularOwner(r); err != nil {
 		// Anonymous local deployments still bind results to a private browser session.
 		if auth.UserFromContext(r.Context()) != nil {
-			return "", err
+			return [32]byte{}, err
 		}
 		c := &http.Cookie{Name: "onebase_tabular_view", Value: uuid.NewString(), Path: "/ui", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode}
 		http.SetCookie(w, c)
 		r.AddCookie(c)
 	}
-	owner, err := tabularOwner(r)
+	return tabularOwner(r)
+}
+
+func (s *Server) publishTabular(w http.ResponseWriter, r *http.Request, scope tabularScope, doc *sheet.Document) (string, error) {
+	if doc == nil {
+		return "", nil
+	}
+	owner, err := ensureTabularOwner(w, r)
 	if err != nil {
 		return "", err
 	}
@@ -133,6 +139,10 @@ func (s *Server) publishTabular(w http.ResponseWriter, r *http.Request, scope ta
 			}
 		}
 	}
+	return s.storeTabularResult(&tabularResult{doc: frozen, scope: scope, owner: owner}), nil
+}
+
+func (s *Server) storeTabularResult(result *tabularResult) string {
 	store := &s.tabularResults
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -140,22 +150,34 @@ func (s *Server) publishTabular(w http.ResponseWriter, r *http.Request, scope ta
 		store.items = make(map[string]*tabularResult)
 	}
 	now := time.Now()
-	oldest := ""
+	oldest, oldestWorkbook := "", ""
+	workbooks := 0
 	for k, v := range store.items {
 		if now.After(v.expires) {
 			delete(store.items, k)
 			continue
 		}
+		if v.workbook != nil {
+			workbooks++
+			if oldestWorkbook == "" || v.expires.Before(store.items[oldestWorkbook].expires) {
+				oldestWorkbook = k
+			}
+		}
 		if oldest == "" || v.expires.Before(store.items[oldest].expires) {
 			oldest = k
 		}
+	}
+	if result.workbook != nil && workbooks >= 2 {
+		delete(store.items, oldestWorkbook)
 	}
 	if len(store.items) >= 16 && oldest != "" {
 		delete(store.items, oldest)
 	}
 	token := uuid.NewString()
-	store.items[token] = &tabularResult{doc: frozen, scope: scope, owner: owner, expires: now.Add(15 * time.Minute), generation: s.reg.Generation()}
-	return "/ui/tabular/" + token, nil
+	result.expires = now.Add(15 * time.Minute)
+	result.generation = s.reg.Generation()
+	store.items[token] = result
+	return "/ui/tabular/" + token
 }
 
 func (s *Server) readableTabular(r *http.Request, token string) (*tabularResult, bool) {
@@ -204,6 +226,16 @@ func (s *Server) tabularView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
+	if v.workbook != nil {
+		if chi.URLParam(r, "format") != "xlsx" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+		w.Header().Set("Content-Disposition", mime.FormatMediaType("attachment", map[string]string{"filename": v.workbook.name}))
+		writeDownload(w, v.workbook.name, v.workbook.data)
+		return
+	}
 	base := "/ui/tabular/" + url.PathEscape(token)
 	switch chi.URLParam(r, "format") {
 	case "xlsx", "pdf", "print":

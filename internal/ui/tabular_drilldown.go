@@ -38,7 +38,7 @@ func (s *Server) addTabularDrilldownVars(r *http.Request, scope tabularScope, fo
 		return values[0]
 	}
 	v, ok := s.readableTabular(r, read("_tabular_token"))
-	if !ok || v.scope.Kind != scope.Kind || v.scope.Name != scope.Name || v.scope.ID != scope.ID || v.scope.Form != form.Name {
+	if !ok || v.doc == nil || v.scope.Kind != scope.Kind || v.scope.Name != scope.Name || v.scope.ID != scope.ID || v.scope.Form != form.Name {
 		return fmt.Errorf("расшифровка недоступна")
 	}
 	bound := false

@@ -1,6 +1,7 @@
 package interpreter
 
 import (
+	"context"
 	"encoding/base64"
 	"strings"
 
@@ -18,6 +19,12 @@ func newSpreadsheetWorkbook(args []any) any {
 		RaiseUserError("SpreadsheetWorkbook constructor takes no arguments")
 	}
 	return &SpreadsheetWorkbook{book: sheet.NewWorkbook()}
+}
+
+func (b *SpreadsheetWorkbook) XLSX() ([]byte, error) { return b.book.XLSX() }
+
+func (b *SpreadsheetWorkbook) UpdateXLSXFile(ctx context.Context, dir, filename string) ([]byte, error) {
+	return b.book.UpdateXLSXFile(ctx, dir, filename)
 }
 
 func (b *SpreadsheetWorkbook) KnownMethods() (string, []string) {
@@ -57,7 +64,7 @@ func (b *SpreadsheetWorkbook) CallMethod(name string, args []any) any {
 		if len(args) == 2 && !strings.EqualFold(strArg(args, 1), "xlsx") {
 			RaiseUserError("SpreadsheetWorkbook supports only the xlsx format")
 		}
-		data, err := b.book.XLSX()
+		data, err := b.XLSX()
 		if err != nil {
 			RaiseUserError(err.Error())
 		}

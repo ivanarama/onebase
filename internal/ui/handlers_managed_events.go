@@ -45,13 +45,14 @@ import (
 
 // formEventResponse — структура ответа JSON.
 type formEventResponse struct {
-	TabularDocuments map[string]string           `json:"tabularDocuments,omitempty"`
-	OK               bool                        `json:"ok"`
-	Values           map[string]any              `json:"values,omitempty"`
-	Revealed         []string                    `json:"revealed,omitempty"`
-	TableParts       map[string][]map[string]any `json:"tableparts,omitempty"`
-	FormTables       map[string][]map[string]any `json:"formTables,omitempty"`
-	ConditionalCSS   string                      `json:"conditionalCss"`
+	WorkbookDownloadURL string                      `json:"workbookDownloadUrl,omitempty"`
+	TabularDocuments    map[string]string           `json:"tabularDocuments,omitempty"`
+	OK                  bool                        `json:"ok"`
+	Values              map[string]any              `json:"values,omitempty"`
+	Revealed            []string                    `json:"revealed,omitempty"`
+	TableParts          map[string][]map[string]any `json:"tableparts,omitempty"`
+	FormTables          map[string][]map[string]any `json:"formTables,omitempty"`
+	ConditionalCSS      string                      `json:"conditionalCss"`
 	// ElementStates — состояние элементов с условиями readonly_when/hidden_when,
 	// пересчитанное по полям записи ПОСЛЕ обработчика. Без него запрет,
 	// зависящий от состояния объекта, появлялся бы только после перезагрузки
@@ -1301,6 +1302,10 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 
 	// Навигация (#1557, план 158 срез B): ОткрытьФорму(Ссылка) кладёт в ответ
 	// canonical URL; доставляется только инициировавшей вкладке, с recheck прав.
+	var workbook *workbookDownload
+	if closeInv == nil && eventName == string(metadata.FormEventOnClick) {
+		bindWorkbookCommands(opCtx, w, r, vars, &workbook)
+	}
 	var navigation *navigationPayload
 	navFn := newNavigationBuiltin(&navigation, s.reg, s.store, auth.UserFromContext(r.Context()))
 	vars["ОткрытьФорму"] = navFn
@@ -1564,7 +1569,12 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	resp.Version = versionWrittenByHandler(thisObj)
 	resp.Dirty = eventDirty
 	if closeInv == nil {
-		s.attachTabularResults(w, r, tabularScope{Kind: string(entity.Kind), Name: entity.Name, ID: rawID, Form: form.Name}, thisObj, &resp)
+		scope := tabularScope{Kind: string(entity.Kind), Name: entity.Name, ID: rawID, Form: form.Name}
+		s.attachTabularResults(w, r, scope, thisObj, &resp)
+		if thisObj.obj != nil && thisObj.obj.ID != uuid.Nil {
+			scope.ID = thisObj.obj.ID.String()
+		}
+		s.attachWorkbook(r, scope, workbook, &resp)
 	}
 	compactFormCloseDelta(&resp, closeInv)
 	respondJSON(enc, resp)
@@ -2822,6 +2832,10 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		// на другой объект. Запрет уже поставил disableDialogBuiltinsForClose
 		// выше; регистрация здесь его перезаписывала. Условие надёжнее простой
 		// перестановки строк: при следующей правке порядка запрет не потеряется.
+		var workbook *workbookDownload
+		if !proc.External && closeInv == nil && eventName == string(metadata.FormEventOnClick) {
+			bindWorkbookCommands(opCtx, w, r, vars, &workbook)
+		}
 		var navigation *navigationPayload
 		if closeInv == nil {
 			navFn := newNavigationBuiltin(&navigation, s.reg, s.store, auth.UserFromContext(r.Context()))
@@ -2922,7 +2936,9 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		resp.ChoiceList = choiceItems
 		resp.Dirty = boolPtr(!formOpenEvent(elementName, eventName) && transientManagedStateDirty(obj, fieldsBefore, tablesBefore))
 		if closeInv == nil {
-			s.attachTabularResults(w, r, tabularScope{Kind: "processor", Name: proc.Name, Form: form.Name}, thisObj, &resp)
+			scope := tabularScope{Kind: "processor", Name: proc.Name, Form: form.Name}
+			s.attachTabularResults(w, r, scope, thisObj, &resp)
+			s.attachWorkbook(r, scope, workbook, &resp)
 		}
 		compactFormCloseDelta(&resp, closeInv)
 		respondJSON(enc, resp)

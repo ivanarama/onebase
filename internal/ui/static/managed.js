@@ -1310,6 +1310,15 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       // optimistic version before any renderer, picker or message callback can
       // throw, so a later queued action updates the row instead of inserting it.
       applySavedIdentity(data);
+      if (res.ok && data.ok && !data.error && !data.cancel &&
+          /^\/ui\/tabular\/[0-9a-f-]{36}\/xlsx$/.test(data.workbookDownloadUrl || '')) {
+        var download = document.createElement('a');
+        download.href = data.workbookDownloadUrl;
+        download.download = '';
+        document.body.appendChild(download);
+        download.click();
+        download.remove();
+      }
       // The user can type after FormData was sent. An old response must not
       // navigate away or repaint those newer edits, even when the handler
       // saved the old snapshot and returned dirty=false.
