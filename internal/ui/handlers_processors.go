@@ -572,6 +572,9 @@ var processorServiceFields = []string{
 	"_tp_col",
 	"_tp_col_index",
 	"_page",
+	"_tabular_token",
+	"_tabular_row",
+	"_tabular_col",
 }
 
 func processorParamPresenceName(params []processorpkg.Param, name string) string {
