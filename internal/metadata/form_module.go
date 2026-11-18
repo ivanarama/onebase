@@ -258,7 +258,10 @@ type FormElement struct {
 	// TextBold — жирное значение поля (ПолеВвода, ПолеДаты) или текст
 	// надписи: выделить главное на форме — имя клиента в заявке. Подпись поля
 	// остаётся обычной.
-	TextBold     bool   `yaml:"text_bold,omitempty"`
+	TextBold bool `yaml:"text_bold,omitempty"`
+
+	// LabelColor задаёт цвет подписи элемента ПолеВвода.
+	LabelColor   string `yaml:"label_color,omitempty"`
 	ReadOnlyWhen string `yaml:"readonly_when,omitempty"`
 	HiddenWhen   string `yaml:"hidden_when,omitempty"`
 	// TitleFrom — у колонки табличной части (kind: Колонка): имя реквизита

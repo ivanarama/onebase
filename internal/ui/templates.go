@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/csssafe"
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
@@ -627,6 +628,13 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			}
 			return initial
 		},
+		"fieldLabelStyle": func(el *metadata.FormElement) template.CSS {
+			if color := csssafe.Color(el.LabelColor); color != "" {
+				return template.CSS("color:" + color + ";") //nolint:gosec // G203: цвет проверен csssafe.Color
+			}
+			return ""
+		},
+
 		// fieldTitleRU достаёт ru-вариант из map[string]string или возвращает fallback.
 		"fieldTitleRU": func(m map[string]string, fallback string) string {
 			if v, ok := m["ru"]; ok && v != "" {
