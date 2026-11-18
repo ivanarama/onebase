@@ -521,7 +521,7 @@ func TestStoreTempIsUniquePrivateAndLeavesPredictablePathUntouched(t *testing.T)
 		t.Fatalf("temp не уникален: first=%q second=%q legacy=%q", first, second, legacy)
 	}
 	for _, temp := range []string{first, second} {
-		if filepath.Dir(temp) != dir {
+		if filepath.Dir(temp) != filepath.Clean(dir) {
 			t.Errorf("temp создан не рядом с registry: %s", temp)
 		}
 		if runtime.GOOS != "windows" {
