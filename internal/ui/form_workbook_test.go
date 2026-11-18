@@ -3,9 +3,11 @@ package ui
 import (
 	"bytes"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -27,12 +29,13 @@ func TestManagedWorkbookDownloadAndUpdateHTTP(t *testing.T) {
 			&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Build", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Build"}},
 			&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Replace", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Replace"}},
 			&metadata.FormElement{Kind: metadata.FormElementButton, Name: "ReplaceAgain", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "ReplaceAgain"}},
+			&metadata.FormElement{Kind: metadata.FormElementButton, Name: "AddOther", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "AddOther"}},
 		)
-		form.ProgramAST = mustParse(t, `Функция MakeBook(Число)
+		form.ProgramAST = mustParse(t, `Функция MakeBook(Число, ИмяЛиста = "Итого")
   Лист = Новый ТабличныйДокумент;
   Лист.Ячейка(1,1).Значение = Число;
   Книга = Новый КнигаТабличныхДокументов;
-  Книга.ДобавитьЛист("Итого", Лист);
+  Книга.ДобавитьЛист(ИмяЛиста, Лист);
   Возврат Книга;
 КонецФункции
 Процедура Build()
@@ -44,32 +47,46 @@ func TestManagedWorkbookDownloadAndUpdateHTTP(t *testing.T) {
 КонецПроцедуры
 Процедура ReplaceAgain()
   ЗаменитьЛистыExcel("Отчёт 400.xlsx", MakeBook(43));
+КонецПроцедуры
+Процедура AddOther()
+  ЗаменитьЛистыExcel("Отчёт 400.xlsx", MakeBook(44, "Период"));
 КонецПроцедуры`)
 		proc := &processor.Processor{Name: "WorkbookTest", Forms: []*metadata.FormModule{form}}
 		s.reg.LoadProcessors([]*processor.Processor{proc})
 		user.Roles[0].Permissions.Processors = map[string][]string{proc.Name: {"run"}}
 		base := "/ui/processor/" + proc.Name
 		require.Equal(t, http.StatusOK, tabularHTTP(s, user, "own", "GET", base, nil).Code)
-		click := func(session, button string) formEventResponse {
+		clickRequest := func(session, button string) *httptest.ResponseRecorder {
 			body := url.Values{"_form": {form.Name}, "_element": {button}, "_event": {"Нажатие"}}
-			w := tabularHTTP(s, user, session, "POST", base+"/form-event", body)
+			return tabularHTTP(s, user, session, "POST", base+"/form-event", body)
+		}
+		click := func(session, button string) formEventResponse {
+			w := clickRequest(session, button)
 			require.Equal(t, http.StatusOK, w.Code)
 			return decodeFormEventResponse(t, w.Body.Bytes())
+		}
+		assertCell := func(data []byte, sheet, want string) {
+			f, err := excelize.OpenReader(bytes.NewReader(data))
+			require.NoError(t, err)
+			value, err := f.GetCellValue(sheet, "A1")
+			require.NoError(t, err)
+			require.Equal(t, want, value)
+			require.NoError(t, f.Close())
+		}
+		download := func(session string, resp formEventResponse) *httptest.ResponseRecorder {
+			return tabularHTTP(s, user, session, "GET", resp.WorkbookDownloadURL, nil)
+		}
+		assertDownload := func(w *httptest.ResponseRecorder, sheet, want string) []byte {
+			require.Equal(t, http.StatusOK, w.Code)
+			require.Contains(t, w.Header().Get("Content-Disposition"), "attachment")
+			assertCell(w.Body.Bytes(), sheet, want)
+			return w.Body.Bytes()
 		}
 		read := func(session string, resp formEventResponse, want string) []byte {
 			require.True(t, resp.OK, resp.Error)
 			require.Contains(t, resp.WorkbookDownloadURL, "/ui/tabular/")
-			require.Equal(t, http.StatusNotFound, tabularHTTP(s, user, "foreign", "GET", resp.WorkbookDownloadURL, nil).Code)
-			w := tabularHTTP(s, user, session, "GET", resp.WorkbookDownloadURL, nil)
-			require.Equal(t, http.StatusOK, w.Code)
-			require.Contains(t, w.Header().Get("Content-Disposition"), "attachment")
-			f, err := excelize.OpenReader(bytes.NewReader(w.Body.Bytes()))
-			require.NoError(t, err)
-			value, err := f.GetCellValue("Итого", "A1")
-			require.NoError(t, err)
-			require.Equal(t, want, value)
-			require.NoError(t, f.Close())
-			return w.Body.Bytes()
+			require.Equal(t, http.StatusNotFound, download("foreign", resp).Code)
+			return assertDownload(download(session, resp), "Итого", want)
 		}
 		missing := click("own", "Replace")
 		require.False(t, missing.OK)
@@ -91,7 +108,51 @@ func TestManagedWorkbookDownloadAndUpdateHTTP(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, result, disk)
 
-		for i := 3; i < maxWorkbookDownloads; i++ {
+		runTogether := func(actions ...func()) {
+			var group sync.WaitGroup
+			start := make(chan struct{})
+			for _, action := range actions {
+				group.Go(func() {
+					<-start
+					action()
+				})
+			}
+			close(start)
+			group.Wait()
+		}
+		var previous, replaceTotal, addPeriod *httptest.ResponseRecorder
+		runTogether(
+			func() { previous = download("own", first) },
+			func() { replaceTotal = clickRequest("total", "Replace") },
+			func() { addPeriod = clickRequest("period", "AddOther") },
+		)
+		require.Equal(t, newFile, assertDownload(previous, "Итого", "41"))
+		require.Equal(t, http.StatusOK, replaceTotal.Code)
+		require.Equal(t, http.StatusOK, addPeriod.Code)
+		total := decodeFormEventResponse(t, replaceTotal.Body.Bytes())
+		period := decodeFormEventResponse(t, addPeriod.Body.Bytes())
+		require.True(t, total.OK, total.Error)
+		require.True(t, period.OK, period.Error)
+		require.NotEmpty(t, total.WorkbookDownloadURL)
+		require.NotEmpty(t, period.WorkbookDownloadURL)
+		require.NotEqual(t, total.WorkbookDownloadURL, period.WorkbookDownloadURL)
+		var totalDownload, periodDownload *httptest.ResponseRecorder
+		runTogether(
+			func() { totalDownload = download("total", total) },
+			func() { periodDownload = download("period", period) },
+		)
+		totalFile := assertDownload(totalDownload, "Итого", "42")
+		periodFile := assertDownload(periodDownload, "Период", "44")
+		require.Equal(t, http.StatusNotFound, download("total", period).Code)
+		require.Equal(t, http.StatusNotFound, download("period", total).Code)
+		disk, err = os.ReadFile(path)
+		require.NoError(t, err)
+		assertCell(disk, "Итого", "42")
+		assertCell(disk, "Период", "44")
+		require.True(t, bytes.Equal(disk, totalFile) || bytes.Equal(disk, periodFile))
+		result = disk
+
+		for i := 5; i < maxWorkbookDownloads; i++ {
 			next := click("third", "Build")
 			require.True(t, next.OK, next.Error)
 			require.NotEmpty(t, next.WorkbookDownloadURL)

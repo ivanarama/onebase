@@ -8,12 +8,17 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/google/uuid"
 )
 
-const workbookUpdateLock = ".onebase-xlsx.lock"
+const (
+	workbookUpdateLock = ".onebase-xlsx.lock"
+	workbookLockWait   = 10 * time.Second
+	workbookLockPoll   = 25 * time.Millisecond
+)
 
 // UpdateXLSXFile accepts only an existing file immediately inside a
 // server-administered directory that browser users cannot modify directly.
@@ -37,7 +42,7 @@ func (b *Workbook) UpdateXLSXFile(ctx context.Context, dir, filename string) ([]
 		return nil, fmt.Errorf("не удалось открыть каталог отчётов")
 	}
 	defer root.Close() //nolint:errcheck
-	lease, err := lockWorkbookDirectory(root)
+	lease, err := lockWorkbookDirectory(ctx, root)
 	if err != nil {
 		return nil, err
 	}
@@ -80,7 +85,7 @@ func ValidXLSXFileName(name string) bool {
 		!strings.ContainsFunc(name, unicode.IsControl) && strings.TrimSpace(name) == name
 }
 
-func lockWorkbookDirectory(root *os.Root) (*os.File, error) {
+func lockWorkbookDirectory(ctx context.Context, root *os.Root) (*os.File, error) {
 	info, err := root.Lstat(workbookUpdateLock)
 	if (err == nil && !info.Mode().IsRegular()) || (err != nil && !errors.Is(err, fs.ErrNotExist)) {
 		return nil, fmt.Errorf("блокировка каталога XLSX недоступна")
@@ -89,15 +94,29 @@ func lockWorkbookDirectory(root *os.Root) (*os.File, error) {
 	if err != nil {
 		return nil, fmt.Errorf("не удалось открыть блокировку каталога XLSX")
 	}
-	locked, err := tryWorkbookLock(f)
-	if err != nil || !locked {
-		_ = f.Close()
-		if err != nil {
-			return nil, fmt.Errorf("не удалось заблокировать каталог XLSX: %w", err)
+	wait, cancel := context.WithTimeout(ctx, workbookLockWait)
+	defer cancel()
+	ticker := time.NewTicker(workbookLockPoll)
+	defer ticker.Stop()
+	for wait.Err() == nil {
+		locked, lockErr := tryWorkbookLock(f)
+		if lockErr != nil {
+			_ = f.Close()
+			return nil, fmt.Errorf("не удалось заблокировать каталог XLSX: %w", lockErr)
 		}
-		return nil, fmt.Errorf("другая операция уже обновляет книгу XLSX, повторите позже")
+		if locked {
+			return f, nil
+		}
+		select {
+		case <-wait.Done():
+		case <-ticker.C:
+		}
 	}
-	return f, nil
+	_ = f.Close()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return nil, fmt.Errorf("другая операция уже обновляет книгу XLSX, повторите позже")
 }
 
 func publishUpdatedWorkbook(ctx context.Context, root *os.Root, filename string, original fs.FileInfo, data []byte) error {

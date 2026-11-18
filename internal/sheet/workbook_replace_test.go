@@ -2,9 +2,11 @@ package sheet
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"github.com/xuri/excelize/v2"
@@ -113,12 +115,14 @@ func TestWorkbookUpdateXLSXFileRefusesUnsafeAndConflictingWrites(t *testing.T) {
 	root, err := os.OpenRoot(dir)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, root.Close()) })
-	lease, err := lockWorkbookDirectory(root)
+	lease, err := lockWorkbookDirectory(t.Context(), root)
 	require.NoError(t, err)
-	_, err = b.UpdateXLSXFile(t.Context(), dir, filename)
-	require.ErrorContains(t, err, "другая операция")
+	ctx, cancel := context.WithTimeout(t.Context(), 40*time.Millisecond)
+	defer cancel()
+	_, err = b.UpdateXLSXFile(ctx, dir, filename)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
 	require.NoError(t, lease.Close())
-	lease, err = lockWorkbookDirectory(root)
+	lease, err = lockWorkbookDirectory(t.Context(), root)
 	require.NoError(t, err)
 	require.NoError(t, lease.Close())
 }
