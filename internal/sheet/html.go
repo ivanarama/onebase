@@ -1,11 +1,15 @@
 package sheet
 
 import (
+	_ "embed"
 	"fmt"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/csssafe"
 )
+
+//go:embed tabular_column_resize.js
+var tabularColumnResizeJS string
 
 // HTMLOptions — параметры HTML-рендера табличного документа.
 // BackURL: если задан, кнопка «Назад» ведёт по ссылке, иначе history.back().
@@ -96,6 +100,14 @@ tr:nth-child(even) td{background:#f8fafc}
 <table>`)
 
 	maxRow, maxCol := d.ContentBounds()
+	resizeColumns := opts.XLSXURL != ""
+	if resizeColumns {
+		sb.WriteString("<colgroup data-sheet-columns>")
+		for col := 0; col <= maxCol; col++ {
+			sb.WriteString("<col>")
+		}
+		sb.WriteString("</colgroup>")
+	}
 
 	// Ячейки, перекрытые colspan/rowspan.
 	covered := make(map[CellKey]bool)
@@ -129,6 +141,9 @@ tr:nth-child(even) td{background:#f8fafc}
 			}
 
 			var attrs, style string
+			if resizeColumns {
+				attrs = fmt.Sprintf(` data-sheet-col="%d"`, col)
+			}
 
 			if cell != nil {
 				style = buildCellStyle(cell, width, height)
@@ -185,6 +200,11 @@ tr:nth-child(even) td{background:#f8fafc}
 	sb.WriteString("</table>\n</div>\n")
 	if opts.XLSXURL != "" {
 		d.viewerScript(&sb, opts.ParentDrilldown)
+	}
+	if resizeColumns {
+		sb.WriteString(`<style>.sheet-column-widths-set td{overflow-wrap:anywhere}</style><script>`)
+		sb.WriteString(tabularColumnResizeJS)
+		sb.WriteString("</script>")
 	}
 	sb.WriteString(`</body>
 </html>`)
