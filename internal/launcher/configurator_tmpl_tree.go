@@ -598,8 +598,9 @@ const cfgTabTree = `{{define "tab-tree"}}
             <tr><th>{{t $.Lang "Имя"}} (&amp;{{t $.Lang "Параметр"}})</th><th>{{t $.Lang "Тип"}}</th><th>{{t $.Lang "Заголовок"}}</th><th></th></tr>
             {{range $i, $p := .Params}}
             <tr>
-              <td><input type="text" name="param.{{$i}}.name" value="{{$p.Name}}" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"></td>
+              <td><input type="text" name="param.{{$i}}.name" value="{{$p.Name}}" {{if $p.ContextBound}}readonly{{end}} style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"></td>
               <td>
+                {{if $p.ContextBound}}<input type="text" name="param.{{$i}}.type" value="{{$p.Type}}" readonly style="width:100%;font-size:12px">{{else}}
                 <select name="param.{{$i}}.type" style="padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px">
                   <option value="string" {{if eq $p.Type "string"}}selected{{end}}>{{t $.Lang "строка"}}</option>
                   <option value="date"   {{if eq $p.Type "date"}}selected{{end}}>{{t $.Lang "дата"}}</option>
@@ -610,9 +611,10 @@ const cfgTabTree = `{{define "tab-tree"}}
                   {{range $.AllEntityNames}}<option value="reference:{{.}}" {{if eq $p.Type (print "reference:" .)}}selected{{end}}>ссылка: {{.}}</option>
                   {{end}}
                 </select>
+                {{end}}
               </td>
               <td><input type="text" name="param.{{$i}}.label" value="{{$p.Label}}" placeholder="{{$p.Name}}" style="width:100%;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"></td>
-              <td><button type="button" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px" onclick="repRemoveParam(this,'params-{{$rn}}')">✕</button></td>
+              <td>{{if not $p.ContextBound}}<button type="button" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px" onclick="repRemoveParam(this,'params-{{$rn}}')">✕</button>{{end}}</td>
             </tr>
             {{if $.AvailableLangs}}<tr><td colspan="4" style="padding:0 0 4px">{{template "titles-block" (dict "Lang" $.Lang "Langs" $.AvailableLangs "Prefix" (printf "param.%d.labels" $i) "Values" $p.Labels)}}</td></tr>{{end}}
             {{end}}

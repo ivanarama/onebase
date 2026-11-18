@@ -1091,6 +1091,9 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 				// «пользователь его не задавал», и выгрузка подставила бы туда
 				// значение по умолчанию — там, где на экране пусто.
 				for _, p := range declared {
+					if p.Context != nil {
+						continue
+					}
 					val := ""
 					if v := values[p.Name]; v != nil {
 						val = fmt.Sprintf("%v", v)

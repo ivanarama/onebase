@@ -202,6 +202,7 @@ func allSchemas() map[string]map[string]any {
 			"default":    stringSchema("Значение параметра по умолчанию"),
 			"options":    arrayOf(stringSchema("Значение")),
 			"period_end": boolSchema("Для type: date — использовать конец выбранного дня (23:59:59)"),
+			"context":    reportContextSchema(),
 		},
 	}
 	// Параметр ОБРАБОТКИ знает обязательность, параметр отчёта — нет
