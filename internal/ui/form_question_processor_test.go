@@ -190,3 +190,49 @@ func TestShowQuestion_ProcessorDialogFieldsNameCollision(t *testing.T) {
 		})
 	}
 }
+
+func TestShowPeriod_ProcessorForm(t *testing.T) {
+	form := processorExecutionForm(&metadata.FormElement{
+		Kind: metadata.FormElementButton, Name: "Период",
+		Handlers: map[metadata.FormEventType]string{
+			metadata.FormEventOnClick:  "ВыборПериода",
+			metadata.FormEventOnAnswer: "ПрименитьПериод",
+		},
+	})
+	form.ProgramAST = mustParse(t, `
+Процедура ВыборПериода()
+    ПоказатьПериод(Дата(2026, 11, 1), Дата(2026, 11, 18));
+КонецПроцедуры
+Процедура ПрименитьПериод()
+    Если ВопросОтвет = "ОК" Тогда
+        Сообщить(ДиалогПоля.Начало + "/" + ДиалогПоля.Конец);
+    КонецЕсли;
+КонецПроцедуры
+`)
+	proc := &processor.Processor{Name: "Периоды", Forms: []*metadata.FormModule{form}}
+	srv, _ := newProcessorFormEventExecutionServer(t, proc, nil)
+	body := processorClickBody("Период")
+	post := func() formEventResponse {
+		t.Helper()
+		rec := postProcessorFormEventExecution(t, srv, proc.Name,
+			"application/x-www-form-urlencoded; charset=utf-8", strings.NewReader(body.Encode()))
+		return decodeFormEventResponse(t, rec.Body.Bytes())
+	}
+	open := post()
+	want := questionPeriod{Start: "2026-11-01", End: "2026-11-18"}
+	if !open.OK || open.Question == nil || open.Question.Period == nil || *open.Question.Period != want {
+		t.Fatalf("Ответ запроса периода: %+v", open)
+	}
+	body.Set("_event", string(metadata.FormEventOnAnswer))
+	body.Set("_question_fields", `{"Начало":"2028-02-01","Конец":"2028-02-29"}`)
+	body.Set("_question_answer", "Отмена")
+	cancel := post()
+	if !cancel.OK || len(cancel.Messages) != 0 {
+		t.Fatalf("Отмена: %+v", cancel)
+	}
+	body.Set("_question_answer", "ОК")
+	accept := post()
+	if !accept.OK || len(accept.Messages) != 1 || accept.Messages[0] != "2028-02-01/2028-02-29" {
+		t.Fatalf("Применение: %+v", accept)
+	}
+}

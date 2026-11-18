@@ -1303,6 +1303,9 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	questionFn := newQuestionBuiltin(&question)
 	vars["ПоказатьВопрос"] = questionFn
 	vars["ShowQuestion"] = questionFn
+	periodFn := newPeriodDialogBuiltin(&question)
+	vars["ПоказатьПериод"] = periodFn
+	vars["ShowPeriod"] = periodFn
 
 	// Динамический список значений (НачалоВыбора): билтин ДобавитьЗначениеСписка
 	// копит пункты в sink; после Run они уходят в ответ как choiceList, и клиент
@@ -2782,6 +2785,9 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		questionFn := newQuestionBuiltin(&question)
 		vars["ПоказатьВопрос"] = questionFn
 		vars["ShowQuestion"] = questionFn
+		periodFn := newPeriodDialogBuiltin(&question)
+		vars["ПоказатьПериод"] = periodFn
+		vars["ShowPeriod"] = periodFn
 
 		var choiceItems []choiceListItem
 		choiceFn := newChoiceListBuiltin(&choiceItems)
