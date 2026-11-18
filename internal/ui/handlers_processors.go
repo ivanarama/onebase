@@ -109,9 +109,16 @@ func processorInitialValues(query url.Values, proc *processorpkg.Processor, form
 			continue
 		}
 		raw := query.Get(p.Name)
-		if p.Type == "bool" {
+		switch p.Type {
+		case "bool":
 			values[p.Name] = parseParamValue(raw, p.Type)
-		} else {
+		case "date":
+			date := tpDateInputValue(raw)
+			if form == nil && date != "" {
+				date = date[:10]
+			}
+			values[p.Name] = date
+		default:
 			values[p.Name] = raw
 		}
 	}

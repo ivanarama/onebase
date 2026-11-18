@@ -92,7 +92,7 @@ func TestProcessorNavigationPrefillsFormHTTP(t *testing.T) {
 	require.NoError(t, err)
 	require.False(t, uri.Query().Has("__run"))
 	form := processorNavigationGET(t, server, target)
-	require.Regexp(t, `name="Начало"[^>]+value="2026-09-01"`, form)
+	require.Regexp(t, `name="Начало"[^>]+value="2026-09-01T00:00:00"`, form)
 	require.Regexp(t, `name="Отбор"[^>]+value="ОТК &amp; партнёры"`, form)
 	require.Regexp(t, `name="Включен"[^>]+>`, form)
 	require.NotRegexp(t, `name="Включен"[^>]+checked`, form)
