@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/ivantit66/onebase/internal/dbtest"
 	"github.com/ivantit66/onebase/internal/metadata"
@@ -25,6 +26,7 @@ func TestManagedWorkbookDownloadAndUpdateHTTP(t *testing.T) {
 		form := processorExecutionForm(
 			&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Build", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Build"}},
 			&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Replace", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Replace"}},
+			&metadata.FormElement{Kind: metadata.FormElementButton, Name: "ReplaceAgain", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "ReplaceAgain"}},
 		)
 		form.ProgramAST = mustParse(t, `Функция MakeBook(Число)
   Лист = Новый ТабличныйДокумент;
@@ -39,23 +41,26 @@ func TestManagedWorkbookDownloadAndUpdateHTTP(t *testing.T) {
 Процедура Replace()
   ЗаменитьЛистыExcel("Отчёт 400.xlsx", MakeBook(42));
   Сообщить("Книга обновлена");
+КонецПроцедуры
+Процедура ReplaceAgain()
+  ЗаменитьЛистыExcel("Отчёт 400.xlsx", MakeBook(43));
 КонецПроцедуры`)
 		proc := &processor.Processor{Name: "WorkbookTest", Forms: []*metadata.FormModule{form}}
 		s.reg.LoadProcessors([]*processor.Processor{proc})
 		user.Roles[0].Permissions.Processors = map[string][]string{proc.Name: {"run"}}
 		base := "/ui/processor/" + proc.Name
 		require.Equal(t, http.StatusOK, tabularHTTP(s, user, "own", "GET", base, nil).Code)
-		click := func(button string) formEventResponse {
+		click := func(session, button string) formEventResponse {
 			body := url.Values{"_form": {form.Name}, "_element": {button}, "_event": {"Нажатие"}}
-			w := tabularHTTP(s, user, "own", "POST", base+"/form-event", body)
+			w := tabularHTTP(s, user, session, "POST", base+"/form-event", body)
 			require.Equal(t, http.StatusOK, w.Code)
 			return decodeFormEventResponse(t, w.Body.Bytes())
 		}
-		read := func(resp formEventResponse, want string) []byte {
+		read := func(session string, resp formEventResponse, want string) []byte {
 			require.True(t, resp.OK, resp.Error)
 			require.Contains(t, resp.WorkbookDownloadURL, "/ui/tabular/")
 			require.Equal(t, http.StatusNotFound, tabularHTTP(s, user, "foreign", "GET", resp.WorkbookDownloadURL, nil).Code)
-			w := tabularHTTP(s, user, "own", "GET", resp.WorkbookDownloadURL, nil)
+			w := tabularHTTP(s, user, session, "GET", resp.WorkbookDownloadURL, nil)
 			require.Equal(t, http.StatusOK, w.Code)
 			require.Contains(t, w.Header().Get("Content-Disposition"), "attachment")
 			f, err := excelize.OpenReader(bytes.NewReader(w.Body.Bytes()))
@@ -66,20 +71,51 @@ func TestManagedWorkbookDownloadAndUpdateHTTP(t *testing.T) {
 			require.NoError(t, f.Close())
 			return w.Body.Bytes()
 		}
-		missing := click("Replace")
+		missing := click("own", "Replace")
 		require.False(t, missing.OK)
 		require.Empty(t, missing.WorkbookDownloadURL)
-		newFile := read(click("Build"), "41")
+		require.Zero(t, s.tabularResults.reservedBooks)
+		first := click("own", "Build")
+		newFile := read("own", first, "41")
 		path := filepath.Join(dir, filename)
 		require.NoFileExists(t, path)
 		require.NoError(t, os.WriteFile(path, newFile, 0o600))
-		updated := click("Replace")
+
+		updated := click("second", "Replace")
 		require.Contains(t, updated.Messages, "Книга обновлена")
-		result := read(updated, "42")
+		latest := click("third", "ReplaceAgain")
+		read("own", first, "41")
+		read("second", updated, "42")
+		result := read("third", latest, "43")
 		disk, err := os.ReadFile(path)
 		require.NoError(t, err)
 		require.Equal(t, result, disk)
+
+		for i := 3; i < maxWorkbookDownloads; i++ {
+			next := click("third", "Build")
+			require.True(t, next.OK, next.Error)
+			require.NotEmpty(t, next.WorkbookDownloadURL)
+		}
+		full := click("third", "Replace")
+		require.False(t, full.OK)
+		require.Empty(t, full.WorkbookDownloadURL)
+		require.Contains(t, full.Error, "предел выдачи")
+		disk, err = os.ReadFile(path)
+		require.NoError(t, err)
+		require.Equal(t, result, disk)
+		read("own", first, "41")
+		read("second", updated, "42")
+
+		store := &s.tabularResults
+		store.mu.Lock()
+		for _, item := range store.workbooks {
+			item.expires = time.Now().Add(-time.Second)
+		}
+		store.mu.Unlock()
+		recovered := click("own", "Replace")
+		read("own", recovered, "42")
+		require.Equal(t, http.StatusNotFound, tabularHTTP(s, user, "second", "GET", updated.WorkbookDownloadURL, nil).Code)
 		user.Roles[0].Permissions.Processors = nil
-		require.Equal(t, http.StatusNotFound, tabularHTTP(s, user, "own", "GET", updated.WorkbookDownloadURL, nil).Code)
+		require.Equal(t, http.StatusNotFound, tabularHTTP(s, user, "own", "GET", recovered.WorkbookDownloadURL, nil).Code)
 	})
 }

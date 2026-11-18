@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"time"
+
+	"github.com/google/uuid"
 
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/sheet"
@@ -16,7 +19,51 @@ type workbookDownload struct {
 	data []byte
 }
 
-func bindWorkbookCommands(ctx context.Context, w http.ResponseWriter, r *http.Request, vars map[string]any, output **workbookDownload) {
+const (
+	maxWorkbookDownloads     = 16
+	maxWorkbookDownloadBytes = 4 * sheet.MaxUpdateXLSXBytes
+)
+
+type workbookReservation struct {
+	store      *tabularResultStore
+	owner      [32]byte
+	generation uint64
+	download   *workbookDownload
+}
+
+func (s *Server) reserveWorkbook(owner [32]byte) (*workbookReservation, error) {
+	store := &s.tabularResults
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	now := time.Now()
+	generation := s.reg.Generation()
+	for token, result := range store.workbooks {
+		if !now.Before(result.expires) || result.generation != generation {
+			store.workbookBytes -= len(result.workbook.data)
+			delete(store.workbooks, token)
+		}
+	}
+	if len(store.workbooks)+store.reservedBooks >= maxWorkbookDownloads ||
+		store.workbookBytes+(store.reservedBooks+1)*sheet.MaxUpdateXLSXBytes > maxWorkbookDownloadBytes {
+		return nil, fmt.Errorf("достигнут предел выдачи книг XLSX, повторите позднее")
+	}
+	// Reserve the largest possible result before changing the server file.
+	store.reservedBooks++
+	return &workbookReservation{store: store, owner: owner, generation: generation}, nil
+}
+
+func (reservation *workbookReservation) release() {
+	if reservation == nil || reservation.store == nil {
+		return
+	}
+	store := reservation.store
+	store.mu.Lock()
+	store.reservedBooks--
+	store.mu.Unlock()
+	reservation.store = nil
+}
+
+func (s *Server) bindWorkbookCommands(ctx context.Context, w http.ResponseWriter, r *http.Request, vars map[string]any, output **workbookReservation) {
 	makeCommand := func(replace bool) interpreter.BuiltinFunc {
 		return func(args []any, _ string, _ int) (any, error) {
 			if len(args) != 2 {
@@ -34,11 +81,20 @@ func bindWorkbookCommands(ctx context.Context, w http.ResponseWriter, r *http.Re
 			if *output != nil {
 				return nil, fmt.Errorf("одна команда формы может скачать одну книгу XLSX")
 			}
-			if _, err := ensureTabularOwner(w, r); err != nil {
+			owner, err := ensureTabularOwner(w, r)
+			if err != nil {
 				return nil, err
 			}
+			reservation, err := s.reserveWorkbook(owner)
+			if err != nil {
+				return nil, err
+			}
+			defer func() {
+				if *output != reservation {
+					reservation.release()
+				}
+			}()
 			var data []byte
-			var err error
 			if replace {
 				data, err = book.UpdateXLSXFile(ctx, os.Getenv("ONEBASE_REPORT_XLSX_DIR"), filename)
 			} else {
@@ -50,7 +106,8 @@ func bindWorkbookCommands(ctx context.Context, w http.ResponseWriter, r *http.Re
 			if len(data) > sheet.MaxUpdateXLSXBytes {
 				return nil, fmt.Errorf("книга XLSX превышает 32 МиБ")
 			}
-			*output = &workbookDownload{name: name, data: data}
+			reservation.download = &workbookDownload{name: name, data: data}
+			*output = reservation
 			return true, nil
 		}
 	}
@@ -59,13 +116,23 @@ func bindWorkbookCommands(ctx context.Context, w http.ResponseWriter, r *http.Re
 	vars["СкачатьКнигуExcel"], vars["DownloadExcelWorkbook"] = create, create
 }
 
-func (s *Server) attachWorkbook(r *http.Request, scope tabularScope, download *workbookDownload, resp *formEventResponse) {
-	if download == nil {
+func attachWorkbook(scope tabularScope, reservation *workbookReservation, resp *formEventResponse) {
+	if reservation == nil {
 		return
 	}
-	owner, err := tabularOwner(r)
-	if err != nil {
-		return
+	store := reservation.store
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.workbooks == nil {
+		store.workbooks = make(map[string]*tabularResult)
 	}
-	resp.WorkbookDownloadURL = s.storeTabularResult(&tabularResult{scope: scope, owner: owner, workbook: download}) + "/xlsx"
+	token := uuid.NewString()
+	store.workbooks[token] = &tabularResult{
+		scope: scope, owner: reservation.owner, workbook: reservation.download,
+		expires: time.Now().Add(15 * time.Minute), generation: reservation.generation,
+	}
+	store.workbookBytes += len(reservation.download.data)
+	store.reservedBooks--
+	reservation.store = nil
+	resp.WorkbookDownloadURL = "/ui/tabular/" + token + "/xlsx"
 }

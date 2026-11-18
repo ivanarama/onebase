@@ -1302,9 +1302,10 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 
 	// Навигация (#1557, план 158 срез B): ОткрытьФорму(Ссылка) кладёт в ответ
 	// canonical URL; доставляется только инициировавшей вкладке, с recheck прав.
-	var workbook *workbookDownload
+	var workbook *workbookReservation
+	defer func() { workbook.release() }()
 	if closeInv == nil && eventName == string(metadata.FormEventOnClick) {
-		bindWorkbookCommands(opCtx, w, r, vars, &workbook)
+		s.bindWorkbookCommands(opCtx, w, r, vars, &workbook)
 	}
 	var navigation *navigationPayload
 	navFn := newNavigationBuiltin(&navigation, s.reg, s.store, auth.UserFromContext(r.Context()))
@@ -1574,7 +1575,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		if thisObj.obj != nil && thisObj.obj.ID != uuid.Nil {
 			scope.ID = thisObj.obj.ID.String()
 		}
-		s.attachWorkbook(r, scope, workbook, &resp)
+		attachWorkbook(scope, workbook, &resp)
 	}
 	compactFormCloseDelta(&resp, closeInv)
 	respondJSON(enc, resp)
@@ -2832,9 +2833,10 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		// на другой объект. Запрет уже поставил disableDialogBuiltinsForClose
 		// выше; регистрация здесь его перезаписывала. Условие надёжнее простой
 		// перестановки строк: при следующей правке порядка запрет не потеряется.
-		var workbook *workbookDownload
+		var workbook *workbookReservation
+		defer func() { workbook.release() }()
 		if !proc.External && closeInv == nil && eventName == string(metadata.FormEventOnClick) {
-			bindWorkbookCommands(opCtx, w, r, vars, &workbook)
+			s.bindWorkbookCommands(opCtx, w, r, vars, &workbook)
 		}
 		var navigation *navigationPayload
 		if closeInv == nil {
@@ -2938,7 +2940,7 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		if closeInv == nil {
 			scope := tabularScope{Kind: "processor", Name: proc.Name, Form: form.Name}
 			s.attachTabularResults(w, r, scope, thisObj, &resp)
-			s.attachWorkbook(r, scope, workbook, &resp)
+			attachWorkbook(scope, workbook, &resp)
 		}
 		compactFormCloseDelta(&resp, closeInv)
 		respondJSON(enc, resp)

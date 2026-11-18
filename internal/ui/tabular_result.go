@@ -37,8 +37,11 @@ type tabularResult struct {
 	generation uint64
 }
 type tabularResultStore struct {
-	mu    sync.Mutex
-	items map[string]*tabularResult
+	mu            sync.Mutex
+	items         map[string]*tabularResult
+	workbooks     map[string]*tabularResult
+	workbookBytes int
+	reservedBooks int
 }
 
 func tabularOwner(r *http.Request) ([32]byte, error) {
@@ -150,25 +153,15 @@ func (s *Server) storeTabularResult(result *tabularResult) string {
 		store.items = make(map[string]*tabularResult)
 	}
 	now := time.Now()
-	oldest, oldestWorkbook := "", ""
-	workbooks := 0
+	oldest := ""
 	for k, v := range store.items {
 		if now.After(v.expires) {
 			delete(store.items, k)
 			continue
 		}
-		if v.workbook != nil {
-			workbooks++
-			if oldestWorkbook == "" || v.expires.Before(store.items[oldestWorkbook].expires) {
-				oldestWorkbook = k
-			}
-		}
 		if oldest == "" || v.expires.Before(store.items[oldest].expires) {
 			oldest = k
 		}
-	}
-	if result.workbook != nil && workbooks >= 2 {
-		delete(store.items, oldestWorkbook)
 	}
 	if len(store.items) >= 16 && oldest != "" {
 		delete(store.items, oldest)
@@ -188,6 +181,9 @@ func (s *Server) readableTabular(r *http.Request, token string) (*tabularResult,
 	store := &s.tabularResults
 	store.mu.Lock()
 	v := store.items[token]
+	if v == nil {
+		v = store.workbooks[token]
+	}
 	store.mu.Unlock()
 	if v == nil || time.Now().After(v.expires) || v.owner != owner || v.generation != s.reg.Generation() {
 		return nil, false
