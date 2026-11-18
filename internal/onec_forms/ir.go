@@ -55,6 +55,11 @@ type IRElement struct {
 	Choice     bool
 	Width      int
 	Height     int
+
+	TabularProgress  string
+	TabularPlainRows bool
+	TabularCompact   bool
+
 	HAlign     string
 	VAlign     string
 	Hint       string

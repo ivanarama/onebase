@@ -2764,6 +2764,9 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		}
 		vars, txState := s.buildDSLVarsWithMessagesTx(dslCtx, mc, &msgs)
 		s.bindFormCloseSource(vars, r)
+		if closeInv == nil && eventName == string(metadata.FormEventOnClick) && eventTarget.element != nil && eventTarget.element.TabularProgress != "" {
+			vars["СообщитьПрогрессФормирования"] = tabularProgressBuiltin(w, r, enc)
+		}
 		defer rollbackDSLExecution(txState)
 		thisObj := s.newFormObjectThisLive(dslCtx, txState, obj, virtEntity, form, false)
 		thisObj.layouts = &tabularLayouts{s: s, owner: proc.Name}

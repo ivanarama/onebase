@@ -65,10 +65,15 @@ func tabularExampleProject(t *testing.T) *project.Project {
 }
 
 func tabularHTTP(s *Server, actor *auth.User, session, method, path string, body url.Values) *httptest.ResponseRecorder {
+	return tabularHTTPAccept(s, actor, session, method, path, body, "")
+}
+
+func tabularHTTPAccept(s *Server, actor *auth.User, session, method, path string, body url.Values, accept string) *httptest.ResponseRecorder {
 	router := chi.NewRouter()
 	s.Mount(router)
 	r := httptest.NewRequest(method, path, strings.NewReader(body.Encode()))
 	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("Accept", accept)
 	r.AddCookie(&http.Cookie{Name: "onebase_session", Value: session})
 	r = r.WithContext(auth.ContextWithUser(r.Context(), actor))
 	w := httptest.NewRecorder()
@@ -198,12 +203,19 @@ func TestTabularReportResultHTTPMatrix(t *testing.T) {
 func TestTabularManagedFieldHTTPMatrix(t *testing.T) {
 	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
 		s, user, _ := tabularFixture(t, db)
-		form := processorExecutionForm(&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Build", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Build"}}, &metadata.FormElement{Kind: metadata.FormElementSpreadsheet, Name: "Sheet", DataPath: "Объект.Result"})
+		form := processorExecutionForm(
+			&metadata.FormElement{Kind: metadata.FormElementButton, Name: "Build", TabularProgress: "Result", Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Build"}},
+			&metadata.FormElement{Kind: metadata.FormElementSpreadsheet, Name: "Sheet", DataPath: "Объект.Result", TabularPlainRows: true, TabularCompact: true},
+		)
 		form.Attributes = []*metadata.FormAttribute{{Name: "Result", TypeRef: "SpreadsheetDocument", Save: false}}
 		form.ProgramAST = mustParse(t, `Процедура Build()
    Д = Новый ТабличныйДокумент;
+   СообщитьПрогрессФормирования(1, 3);
    Д.Ячейка(1,1).Текст = "Нативный результат";
+   Д.Ячейка(2,1).Значение = 19.157088;
+   Д.Ячейка(2,1).Формат = "ЧДЦ=1";
    Объект.Result = Д;
+   СообщитьПрогрессФормирования(2, 3);
    КонецПроцедуры`)
 		proc := &processor.Processor{Name: "TabularProcessor", Forms: []*metadata.FormModule{form}}
 		s.reg.LoadProcessors([]*processor.Processor{proc})
@@ -221,9 +233,49 @@ func TestTabularManagedFieldHTTPMatrix(t *testing.T) {
 		if !resp.OK || resp.Dirty == nil || *resp.Dirty || resp.TabularDocuments["result"] == "" {
 			t.Fatalf("native readonly result: %s", post.Body.String())
 		}
-		view := tabularHTTP(s, user, "own-session", "GET", resp.TabularDocuments["result"], nil)
-		if view.Code != 200 || !strings.Contains(view.Body.String(), "Нативный результат") {
-			t.Fatal("field result not viewable")
+		stream := tabularHTTPAccept(s, user, "own-session", "POST", "/ui/processor/"+proc.Name+"/form-event", body, tabularProgressType)
+		lines := strings.Split(strings.TrimSpace(stream.Body.String()), "\n")
+		if stream.Code != 200 || stream.Header().Get("Content-Type") != tabularProgressType || !stream.Flushed ||
+			len(lines) != 3 || lines[0] != `{"progress":33}` || lines[1] != `{"progress":66}` {
+			t.Fatalf("streamed form event: %d %s", stream.Code, stream.Body.String())
+		}
+		resp = decodeFormEventResponse(t, []byte(lines[2]))
+		if !resp.OK || resp.TabularDocuments["result"] == "" {
+			t.Fatalf("stream did not publish: %s", lines[2])
+		}
+		path := resp.TabularDocuments["result"]
+
+		view := tabularHTTP(s, user, "own-session", "GET", path, nil)
+		if html := view.Body.String(); view.Code != 200 || !strings.Contains(html, "Нативный результат") ||
+			!strings.Contains(html, ">Excel</a>") || strings.Contains(html, "tr:nth-child(even)") || !strings.Contains(html, ".doc-content{padding:4px}") {
+			t.Fatalf("unexpected field viewer: HTTP %d", view.Code)
+		}
+		// The LPC workbook was requested more than 21 minutes after viewing.
+		// Advance the age of the same snapshot without waiting in the test.
+		snapshot := s.tabularResults.items[strings.TrimPrefix(path, "/ui/tabular/")]
+		snapshot.expires = snapshot.expires.Add(-22 * time.Minute)
+		if got := tabularHTTP(s, user, "own-session", "GET", path, nil).Code; got != 200 {
+			t.Fatalf("field re-open after 22 minutes: HTTP %d", got)
+		}
+		xlsx := tabularHTTP(s, user, "own-session", "GET", path+"/xlsx", nil)
+		if xlsx.Code != 200 {
+			t.Fatalf("field XLSX after 22 minutes: HTTP %d", xlsx.Code)
+		}
+		book, err := excelize.OpenReader(bytes.NewReader(xlsx.Body.Bytes()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = book.Close() }()
+		value, err := book.GetCellValue(book.GetSheetName(0), "A2")
+		if err != nil || value != "19.2" {
+			t.Fatalf("XLSX A2 = %q, %v", value, err)
+		}
+		if got := tabularHTTP(s, user, "foreign-session", "GET", path+"/xlsx", nil).Code; got != 404 {
+			t.Fatalf("foreign session: HTTP %d", got)
+		}
+		user.Roles[0].Permissions.Processors = map[string][]string{}
+		if got := tabularHTTP(s, user, "own-session", "GET", path+"/xlsx", nil).Code; got != 404 {
+			t.Fatalf("revoked role: HTTP %d", got)
 		}
 	})
 }

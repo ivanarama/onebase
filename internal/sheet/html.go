@@ -18,6 +18,8 @@ type HTMLOptions struct {
 	PrintURL        string // native PDF print preview for uniformly scaled documents
 	XLSXURL         string
 	Embedded        bool
+	PlainRows       bool
+	Compact         bool
 	ParentDrilldown bool
 	DrilldownURL    func(row, col int) string
 }
@@ -50,8 +52,14 @@ body{font-family:'Times New Roman',Times,serif;font-size:10pt;color:#000;padding
 .doc-content{padding:20px}
 table{border-collapse:collapse;width:auto}
 td,th{border:1px solid #cbd5e1;padding:3px 6px;empty-cells:show;font-size:13px}
-tr:nth-child(even) td{background:#f8fafc}
-@media print{.doc-toolbar{display:none}.doc-content{padding:0}}`)
+`)
+	if !opts.PlainRows {
+		sb.WriteString("tr:nth-child(even) td{background:#f8fafc}\n")
+	}
+	if opts.Compact {
+		sb.WriteString(".doc-toolbar{padding:3px 6px;gap:4px;font-size:12px}\n.doc-toolbar button,.doc-toolbar a.btn{padding:2px 7px;font-size:12px}\n.doc-content{padding:4px}\n")
+	}
+	sb.WriteString(`@media print{.doc-toolbar{display:none}.doc-content{padding:0}}`)
 	// richtext-CSS (план 65, этап 3) добавляется ТОЛЬКО когда в документе есть
 	// ячейка с RichHTML — иначе вывод бит-в-бит совпадает с прежним (golden).
 	if d.hasRichContent() {
@@ -88,7 +96,11 @@ tr:nth-child(even) td{background:#f8fafc}
 		sb.WriteString(`<button onclick="window.print()">&#128196; PDF</button>`)
 	}
 	if opts.XLSXURL != "" {
-		sb.WriteString(`<a class="btn" href="` + escapeHTML(opts.XLSXURL) + `">XLSX</a>`)
+		label := "XLSX"
+		if opts.Compact {
+			label = "Excel"
+		}
+		sb.WriteString(`<a class="btn" href="` + escapeHTML(opts.XLSXURL) + `">` + label + `</a>`)
 	}
 	sb.WriteString(`
 </div>

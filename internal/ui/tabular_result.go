@@ -26,6 +26,7 @@ import (
 type tabularScope struct {
 	Kind, Name, ID, Form, Field string
 	CustomDrilldown             bool
+	PlainRows, Compact          bool
 }
 type tabularResult struct {
 	doc        *sheet.Document
@@ -34,6 +35,11 @@ type tabularResult struct {
 	expires    time.Time
 	generation uint64
 }
+
+// Keep the same snapshot available while the user reviews the table and
+// later downloads it, subject to the result store's capacity and access checks.
+const tabularResultLifetime = time.Hour
+
 type tabularResultStore struct {
 	mu    sync.Mutex
 	items map[string]*tabularResult
@@ -63,18 +69,25 @@ func tabularOwner(r *http.Request) ([32]byte, error) {
 	return sha256.Sum256(data), nil
 }
 
-func (s *Server) publishTabular(w http.ResponseWriter, r *http.Request, scope tabularScope, doc *sheet.Document) (string, error) {
-	if doc == nil {
-		return "", nil
-	}
+func ensureTabularSession(w http.ResponseWriter, r *http.Request) error {
 	if _, err := tabularOwner(r); err != nil {
-		// Anonymous local deployments still bind results to a private browser session.
+		// Open-access deployments bind results to a private browser session.
 		if auth.UserFromContext(r.Context()) != nil {
-			return "", err
+			return err
 		}
 		c := &http.Cookie{Name: "onebase_tabular_view", Value: uuid.NewString(), Path: "/ui", HttpOnly: true, Secure: r.TLS != nil, SameSite: http.SameSiteStrictMode}
 		http.SetCookie(w, c)
 		r.AddCookie(c)
+	}
+	return nil
+}
+
+func (s *Server) publishTabular(w http.ResponseWriter, r *http.Request, scope tabularScope, doc *sheet.Document) (string, error) {
+	if doc == nil {
+		return "", nil
+	}
+	if err := ensureTabularSession(w, r); err != nil {
+		return "", err
 	}
 	owner, err := tabularOwner(r)
 	if err != nil {
@@ -154,41 +167,67 @@ func (s *Server) publishTabular(w http.ResponseWriter, r *http.Request, scope ta
 		delete(store.items, oldest)
 	}
 	token := uuid.NewString()
-	store.items[token] = &tabularResult{doc: frozen, scope: scope, owner: owner, expires: now.Add(15 * time.Minute), generation: s.reg.Generation()}
+	store.items[token] = &tabularResult{doc: frozen, scope: scope, owner: owner, expires: now.Add(tabularResultLifetime), generation: s.reg.Generation()}
+	tabularLookupLog(r, token, "published")
 	return "/ui/tabular/" + token, nil
+}
+
+// Correlate form publication, view and export without logging the result URI,
+// session, report data or user permissions.
+func tabularLookupLog(r *http.Request, token, reason string) {
+	sum := sha256.Sum256([]byte(token))
+	uiLog().DebugContext(r.Context(), "tabular result", "result_id", fmt.Sprintf("%x", sum[:8]),
+		"format", chi.URLParam(r, "format"), "reason", reason)
 }
 
 func (s *Server) readableTabular(r *http.Request, token string) (*tabularResult, bool) {
 	owner, err := tabularOwner(r)
 	if err != nil {
+		tabularLookupLog(r, token, "invalid_session")
 		return nil, false
 	}
 	store := &s.tabularResults
 	store.mu.Lock()
 	v := store.items[token]
 	store.mu.Unlock()
-	if v == nil || time.Now().After(v.expires) || v.owner != owner || v.generation != s.reg.Generation() {
+	var reason string
+	switch {
+	case v == nil:
+		reason = "missing"
+	case time.Now().After(v.expires):
+		reason = "expired"
+	case v.owner != owner:
+		reason = "owner_changed"
+	case v.generation != s.reg.Generation():
+		reason = "configuration_changed"
+	}
+	if reason != "" {
+		tabularLookupLog(r, token, reason)
 		return nil, false
 	}
 	scope := v.scope
 	switch scope.Kind {
 	case "report":
 		if s.reg.GetReport(scope.Name) == nil || !s.can(r, "report", scope.Name, "run") {
+			tabularLookupLog(r, token, "access_denied")
 			return nil, false
 		}
 	case "processor":
 		p := s.reg.GetProcessor(scope.Name)
 		if p == nil || !s.can(r, "processor", scope.Name, "run") || !s.canRunExternalProc(r, p) {
+			tabularLookupLog(r, token, "access_denied")
 			return nil, false
 		}
 	default:
 		e := s.reg.GetEntity(scope.Name)
 		if e == nil || !s.can(r, string(e.Kind), e.Name, "read") {
+			tabularLookupLog(r, token, "access_denied")
 			return nil, false
 		}
 		if scope.ID != "" {
 			id, err := uuid.Parse(scope.ID)
 			if err != nil || !s.rowAllowsID(r.Context(), e, "read", id) {
+				tabularLookupLog(r, token, "access_denied")
 				return nil, false
 			}
 		}
@@ -203,6 +242,7 @@ func (s *Server) tabularView(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "not found", 404)
 		return
 	}
+	tabularLookupLog(r, token, "authorized")
 	w.Header().Set("Cache-Control", "private, no-store")
 	base := "/ui/tabular/" + url.PathEscape(token)
 	switch chi.URLParam(r, "format") {
@@ -276,7 +316,7 @@ func (s *Server) tabularView(w http.ResponseWriter, r *http.Request) {
 		if v.doc.AutoScale {
 			printURL = base + "/print"
 		}
-		_, _ = w.Write([]byte(v.doc.HTML(sheet.HTMLOptions{PDFURL: base + "/pdf", PrintURL: printURL, XLSXURL: base + "/xlsx", Embedded: v.scope.Form != "", ParentDrilldown: v.scope.CustomDrilldown, DrilldownURL: func(row, col int) string {
+		_, _ = w.Write([]byte(v.doc.HTML(sheet.HTMLOptions{PDFURL: base + "/pdf", PrintURL: printURL, XLSXURL: base + "/xlsx", Embedded: v.scope.Form != "", PlainRows: v.scope.PlainRows, Compact: v.scope.Compact, ParentDrilldown: v.scope.CustomDrilldown, DrilldownURL: func(row, col int) string {
 			return base + "/cell?row=" + strconv.Itoa(row) + "&col=" + strconv.Itoa(col)
 		}})))
 	}
@@ -334,8 +374,10 @@ func (s *Server) attachTabularResults(w http.ResponseWriter, r *http.Request, sc
 		}
 		fieldScope.Field = name
 		f.form.Walk(func(el *metadata.FormElement) bool {
-			if el != nil && el.Kind == metadata.FormElementSpreadsheet && strings.EqualFold(formDataPathFieldName(el.DataPath), name) && el.Handlers[metadata.FormEventDrilldown] != "" {
-				fieldScope.CustomDrilldown = true
+			if el != nil && el.Kind == metadata.FormElementSpreadsheet && strings.EqualFold(formDataPathFieldName(el.DataPath), name) {
+				fieldScope.CustomDrilldown = fieldScope.CustomDrilldown || el.Handlers[metadata.FormEventDrilldown] != ""
+				fieldScope.PlainRows = fieldScope.PlainRows || el.TabularPlainRows
+				fieldScope.Compact = fieldScope.Compact || el.TabularCompact
 			}
 			return true
 		})

@@ -600,6 +600,7 @@ func KnownBuiltinNames() map[string]struct{} {
 	for _, k := range []string{
 		"сообщить", "message",
 		"получитьмакет",
+		"сообщитьпрогрессформирования",
 		"описаниеошибки", "errordescription",
 		"информацияобошибке", "errorinfo",
 		"вычислить", "eval",

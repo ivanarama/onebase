@@ -11,9 +11,60 @@
   }});
   return true;
  };
- window.obApplyTabularDocuments=function(results){
+ var activeProgress=new WeakMap();
+ window.obBeginTabularProgress=function(elementName){
+  var button=Array.from(document.querySelectorAll('[data-ob-tabular-progress]')).find(function(el){
+   return el.getAttribute('data-ob-fire-click')===elementName;
+  });
+  if(!button)return null;
+  var field=button.getAttribute('data-ob-tabular-progress').toLowerCase();
+  var frame=Array.from(document.querySelectorAll('iframe[data-ob-tabular-field]')).find(function(el){
+   return el.getAttribute('data-ob-tabular-field').toLowerCase()===field;
+  });
+  if(!frame)return null;
+  var status=frame.previousElementSibling;
+  var percent=status.querySelector('[data-ob-tabular-percent]');
+  var progress={
+   update:function(value){
+    if(activeProgress.get(frame)===progress)percent.textContent=value+'%';
+   },
+   finish:function(){
+    if(activeProgress.get(frame)!==progress)return;
+    activeProgress.delete(frame);
+    status.hidden=true;
+   }
+  };
+  activeProgress.set(frame,progress);
+  frame.hidden=true;
+  frame.removeAttribute('src');
+  progress.update(0);
+  status.hidden=false;
+  return progress;
+ };
+ window.obReadTabularFormResponse=async function(response,progress){
+  if((response.headers.get('Content-Type')||'').split(';')[0]!=='application/x-ndjson')return response.json();
+  var reader=response.body.getReader(), decoder=new TextDecoder(), pending='';
+  try{
+   while(true){
+    var chunk=await reader.read();
+    if(chunk.done)throw new Error('Незавершённый ответ формирования');
+    pending+=decoder.decode(chunk.value,{stream:true});
+    var end;
+    while((end=pending.indexOf('\n'))!==-1){
+     var record=JSON.parse(pending.slice(0,end));
+     pending=pending.slice(end+1);
+     if(typeof record.ok==='boolean')return record;
+     if(progress&&Number.isInteger(record.progress)&&record.progress>=0&&record.progress<=100)progress.update(record.progress);
+    }
+   }
+  }finally{
+   reader.releaseLock();
+  }
+ };
+ window.obApplyTabularDocuments=function(results,progress){
   if(!results)return;
   document.querySelectorAll('iframe[data-ob-tabular-field]').forEach(function(frame){
+   if(activeProgress.has(frame)&&activeProgress.get(frame)!==progress)return;
    var key=frame.getAttribute('data-ob-tabular-field').toLowerCase();
    if(!Object.prototype.hasOwnProperty.call(results,key))return;
    var path=results[key];

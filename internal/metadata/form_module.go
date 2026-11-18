@@ -216,8 +216,13 @@ type FormElement struct {
 	Required  bool                     `yaml:"required,omitempty"`
 	Handlers  map[FormEventType]string `yaml:"events,omitempty"`
 	Props     map[string]any           `yaml:"props,omitempty"`
-	Children  []*FormElement           `yaml:"children,omitempty"`
-	Columns   []*FormElement           `yaml:"columns,omitempty"` // план 183: колонки ТЧ с отбором
+
+	TabularProgress  string `yaml:"tabular_progress,omitempty"` // result attribute for a processor button
+	TabularPlainRows bool   `yaml:"tabular_plain_rows,omitempty"`
+	TabularCompact   bool   `yaml:"tabular_compact,omitempty"`
+
+	Children []*FormElement `yaml:"children,omitempty"`
+	Columns  []*FormElement `yaml:"columns,omitempty"` // план 183: колонки ТЧ с отбором
 
 	// Поля, добавленные планом 37. Все опциональны; YAML-загрузчик
 	// заполняет их при чтении managed-формы, конвертер 1С использует
