@@ -288,6 +288,8 @@ func normalizeTypeName(s string) string {
 		return "Соответствие"
 	case "неопределено", "undefined", "nil":
 		return "Неопределено"
+	case "уникальныйидентификатор", "uuid":
+		return "УникальныйИдентификатор"
 	}
 	if q, ok := normalizeQualifiedTypeName(trimmed); ok {
 		return q

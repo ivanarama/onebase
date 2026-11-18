@@ -819,6 +819,22 @@ func effectiveSaveFields(stored, patch map[string]any) map[string]any {
 // the message through SaveResult.
 type hookRunError struct{ err error }
 
+// postedFlag читает признак проведения строки документа: драйверы отдают его
+// bool, числом или строкой.
+func postedFlag(v any) bool {
+	switch x := v.(type) {
+	case bool:
+		return x
+	case int64:
+		return x != 0
+	case int:
+		return x != 0
+	case string:
+		return x == "1" || x == "true" || x == "t"
+	}
+	return false
+}
+
 func (e *hookRunError) Error() string { return e.err.Error() }
 func (e *hookRunError) Unwrap() error { return e.err }
 
@@ -1016,7 +1032,15 @@ func (s *Service) deleteInTx(
 	// неудаляемым. При настоящей внешней ссылке весь transaction откатится и
 	// движения восстановятся вместе с объектом.
 	if entity.Posting {
-		if err := s.clearMovements(txCtx, entity.Name, id); err != nil {
+		// Проведённый документ удаляется через отмену проведения, как в 1С:
+		// ОбработкаУдаленияПроведения видит снятые движения и может отказать —
+		// тогда откатывается и удаление. Иначе удаление обходило бы проверки,
+		// которые конфигурация ставит на отмену проведения.
+		if obj != nil && postedFlag(obj.Fields["posted"]) {
+			if err := s.unpostInTx(txCtx, entity, id, runtime.NewMovementsCollector(entity.Name, id), messages, lockCollector); err != nil {
+				return err
+			}
+		} else if err := s.clearMovements(txCtx, entity.Name, id); err != nil {
 			return err
 		}
 	}
