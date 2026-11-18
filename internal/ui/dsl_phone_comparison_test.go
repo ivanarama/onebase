@@ -48,8 +48,8 @@ func testProcessorPhoneComparison(t *testing.T, db *storage.DB) {
 		&metadata.FormElement{Kind: metadata.FormElementField, Name: "Result", DataPath: "Объект.Результат"},
 		&metadata.FormElement{
 			Kind: metadata.FormElementButton, Name: "Calculate",
-			Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "Рассчитать"},
-			Props:    map[string]any{phoneComparisonProp: "Звонок.Телефон"},
+			Handlers:          map[metadata.FormEventType]string{metadata.FormEventOnClick: "Рассчитать"},
+			ComparePhoneField: "Звонок.Телефон",
 		},
 		&metadata.FormElement{
 			Kind: metadata.FormElementButton, Name: "WithoutOptIn",
@@ -57,8 +57,8 @@ func testProcessorPhoneComparison(t *testing.T, db *storage.DB) {
 		},
 		&metadata.FormElement{
 			Kind: metadata.FormElementButton, Name: "HiddenRecord",
-			Handlers: map[metadata.FormEventType]string{metadata.FormEventOnClick: "НедоступнаяЗапись"},
-			Props:    map[string]any{phoneComparisonProp: "Звонок.Телефон"},
+			Handlers:          map[metadata.FormEventType]string{metadata.FormEventOnClick: "НедоступнаяЗапись"},
+			ComparePhoneField: "Звонок.Телефон",
 		},
 	)
 	form.ProgramAST = mustParse(t, fmt.Sprintf(`Процедура Рассчитать()

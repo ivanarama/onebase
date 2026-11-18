@@ -15,16 +15,13 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 )
 
-const phoneComparisonProp = "compare_phone_field"
-
 // A trusted processor button may compare phones in its server-side code. Give
 // it only request-local HMACs. Ordinary queries keep exactly the same guards.
 func (s *Server) bindPhoneComparison(vars map[string]any, ctx func() context.Context, target browserFormEventTarget) {
 	if target.element == nil || target.element.Kind != metadata.FormElementButton {
 		return
 	}
-	source, _ := target.element.Props[phoneComparisonProp].(string)
-	entityName, fieldName, ok := strings.Cut(source, ".")
+	entityName, fieldName, ok := strings.Cut(target.element.ComparePhoneField, ".")
 	if !ok {
 		return
 	}

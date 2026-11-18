@@ -246,6 +246,10 @@ type FormElement struct {
 	// единственное действие объявлено своей кнопкой — без акцента она теряется
 	// среди вспомогательных.
 	Primary bool `yaml:"primary,omitempty"`
+
+	// ComparePhoneField enables request-local phone comparison for this
+	// built-in processor button. It names one document string PII field.
+	ComparePhoneField string `yaml:"compare_phone_field,omitempty"`
 	// ReadOnlyWhen / HiddenWhen — условия по полям ЗАПИСИ (выражение того же
 	// языка, что `when` условного оформления): элемент становится нередактируемым
 	// либо вовсе не показывается, пока условие истинно. Нужны там, где запрет
