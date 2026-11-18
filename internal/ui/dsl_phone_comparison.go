@@ -15,13 +15,9 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 )
 
-// A trusted processor button may compare phones in its server-side code. Give
-// it only request-local HMACs. Ordinary queries keep exactly the same guards.
-func (s *Server) bindPhoneComparison(vars map[string]any, ctx func() context.Context, target browserFormEventTarget) {
-	if target.element == nil || target.element.Kind != metadata.FormElementButton {
-		return
-	}
-	entityName, fieldName, ok := strings.Cut(target.element.ComparePhoneField, ".")
+// Trusted server handlers use request-local HMACs for phone comparison.
+func (s *Server) bindPhoneComparison(vars map[string]any, ctx func() context.Context, fieldPath string) {
+	entityName, fieldName, ok := strings.Cut(fieldPath, ".")
 	if !ok {
 		return
 	}

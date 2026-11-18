@@ -374,6 +374,9 @@ func (s *Server) runTabularReport(w http.ResponseWriter, r *http.Request, rep *r
 	}
 	vars, tx := s.buildDSLVarsTx(r.Context(), runtime.NewMovementsCollector("report", uuid.Nil))
 	defer rollbackDSLExecution(tx)
+	if !rep.External {
+		s.bindPhoneComparison(vars, tx.Ctx, rep.ComparePhoneField)
+	}
 	for name, fn := range interpreter.NewSpreadsheetFunctions() {
 		vars[name] = fn
 	}
