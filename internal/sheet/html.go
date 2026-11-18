@@ -1,11 +1,15 @@
 package sheet
 
 import (
+	_ "embed"
 	"fmt"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/csssafe"
 )
+
+//go:embed tabular_cell_open.js
+var tabularCellOpenJS string
 
 // HTMLOptions — параметры HTML-рендера табличного документа.
 // BackURL: если задан, кнопка «Назад» ведёт по ссылке, иначе history.back().
@@ -96,6 +100,7 @@ tr:nth-child(even) td{background:#f8fafc}
 <table>`)
 
 	maxRow, maxCol := d.ContentBounds()
+	hasDrilldown := false
 
 	// Ячейки, перекрытые colspan/rowspan.
 	covered := make(map[CellKey]bool)
@@ -164,6 +169,7 @@ tr:nth-child(even) td{background:#f8fafc}
 					text += img
 				}
 				if (cell.Drilldown != nil || (cell.DrilldownPayload != nil && opts.ParentDrilldown)) && opts.DrilldownURL != nil {
+					hasDrilldown = true
 					linkStyle := ""
 					// Explicit safe cell color also applies to its drilldown text. Keep the
 					// ordinary browser link color when the cell has no valid explicit color.
@@ -185,6 +191,11 @@ tr:nth-child(even) td{background:#f8fafc}
 	sb.WriteString("</table>\n</div>\n")
 	if opts.XLSXURL != "" {
 		d.viewerScript(&sb, opts.ParentDrilldown)
+	}
+	if hasDrilldown {
+		sb.WriteString("<script>")
+		sb.WriteString(tabularCellOpenJS)
+		sb.WriteString("</script>")
 	}
 	sb.WriteString(`</body>
 </html>`)
