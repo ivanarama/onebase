@@ -155,17 +155,22 @@ func (db *DB) GetAuditSettings(ctx context.Context) AuditSettings {
 // Если ключа нет, таблицы нет или значение некорректное — возвращает
 // DefaultListPageSize. Значение зажимается в [1; MaxListPageSize].
 func (db *DB) GetListPageSize(ctx context.Context) int {
+	return db.GetListPageSizeDefault(ctx, DefaultListPageSize)
+}
+
+// GetListPageSizeDefault applies the persisted preference to a list-specific default.
+func (db *DB) GetListPageSizeDefault(ctx context.Context, fallback int) int {
 	d := db.dialect
 	var v string
 	err := db.QueryRow(ctx,
 		`SELECT value FROM _settings WHERE key = `+d.Placeholder(1),
 		"ui.list_page_size").Scan(&v)
 	if err != nil {
-		return DefaultListPageSize
+		return fallback
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(v))
 	if err != nil || n <= 0 {
-		return DefaultListPageSize
+		return fallback
 	}
 	if n > MaxListPageSize {
 		return MaxListPageSize

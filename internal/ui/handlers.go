@@ -729,6 +729,23 @@ func (s *Server) requirePerm(w http.ResponseWriter, r *http.Request, kind, entit
 	return false
 }
 
+func (s *Server) legacyEntityUI(r *http.Request) bool {
+	user := auth.UserFromContext(r.Context())
+	if user != nil {
+		for _, role := range user.Roles {
+			if role == nil {
+				continue
+			}
+			for _, name := range s.cfg.UIExceptRoles {
+				if strings.EqualFold(strings.TrimSpace(role.Name), strings.TrimSpace(name)) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
 func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if data == nil {
@@ -737,6 +754,8 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	if _, ok := data["Cfg"]; !ok {
 		data["Cfg"] = s.cfg
 	}
+	legacyEntityUI := s.legacyEntityUI(r)
+	data["LegacyEntityUI"] = legacyEntityUI
 	s.addHelpContext(r, data)
 	// Параметры текущего запроса — из них шаблоны строят ссылки «то же самое,
 	// но с другим X» (listURL/listHidden), не собирая строку запроса по кускам
@@ -813,7 +832,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		if _, ok := data["CanDelete"]; !ok {
 			data["CanDelete"] = s.can(r, kind, ent.Name, "delete")
 		}
-		data["CanMark"] = s.can(r, kind, ent.Name, "delete") || s.can(r, kind, ent.Name, "mark")
+		data["CanMark"] = s.can(r, kind, ent.Name, "delete") || (!legacyEntityUI && s.can(r, kind, ent.Name, "mark"))
 		if _, ok := data["CanPost"]; !ok {
 			data["CanPost"] = s.can(r, kind, ent.Name, "post")
 		}

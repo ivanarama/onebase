@@ -2007,6 +2007,10 @@ function listActivateRow(tr) {
 // Ctrl+S приходит как «ы», и проверка по e.key просто не сработала бы.
 function obFormActionButton(values) {
   for (var i = 0; i < values.length; i++) {
+    if (values[i] === 'post_and_close') {
+      var closeBtn = document.querySelector('button[data-ob-close-reason="post_and_close"]');
+      if (closeBtn && !closeBtn.disabled) return closeBtn;
+    }
 	if (values[i] === '') {
 	  var popupSave = document.querySelector('button[data-ob-form-close="save_and_select"]');
 	  if (popupSave && !popupSave.disabled) return popupSave;
@@ -2465,7 +2469,7 @@ function obInitKeyboardShortcuts() {
 
     if (e.ctrlKey) {
       if (e.key === 'Enter') {
-        var go = obFormActionButton(['']);
+        var go = obFormActionButton(['post_and_close', '']);
         if (go) { e.preventDefault(); go.click(); }
         return;
       }
@@ -3079,9 +3083,16 @@ obReady(function () {
   obRestoreListSearchFocus();
   obInitDOMTables();
   obInitKeyboardShortcuts();
-  var firstListRow = obListRows()[0];
-  if (firstListRow) firstListRow.setAttribute('tabindex', '0');
-  listSyncActionsBtn();
+  var tail = document.querySelector('[data-ob-select-last]');
+  var tailRows = tail ? obListRowsIn(tail) : [];
+  if (tailRows.length) {
+    listSetSel(tailRows[tailRows.length - 1]);
+    tail.scrollTop = tail.scrollHeight;
+  } else {
+    var firstListRow = obListRows()[0];
+    if (firstListRow) firstListRow.setAttribute('tabindex', '0');
+    listSyncActionsBtn();
+  }
   document.querySelectorAll('.tree-toggle').forEach(initTreeToggle);
   obInitFeed();
   initDetailPanel();

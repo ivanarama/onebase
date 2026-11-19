@@ -30,6 +30,7 @@ import (
 
 // Config holds static info shown in «О программе».
 type Config struct {
+	UIExceptRoles    []string
 	AppName          string
 	AppVersion       string
 	AppAuthor        string // автор конфигурации (app.yaml: author)

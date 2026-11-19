@@ -312,6 +312,9 @@ func runDev(cmd *cobra.Command, _ []string) error {
 			}
 			uiCfg.AllowedTypes = appCfg.Attachments.AllowedTypes
 		}
+		if appCfg.UI != nil {
+			uiCfg.UIExceptRoles = appCfg.UI.ExceptRoles
+		}
 		uiCfg.Limits = runtimeLimitsFromApp(appCfg.Limits)
 		uiCfg.POSEnabled = appCfg.POSEnabled()
 		if appCfg.Email != nil {

@@ -1625,6 +1625,10 @@ h3{font-size:16px;font-weight:600;margin:24px 0 10px;color:#1e293b}
 .main-list .card,.main-list .row-top,.main-list details,.main-list .breadcrumb{max-width:1600px}
 .main-list .ob-list-content{width:100%}
 .main-list .ob-list-content>.card{max-width:none}
+.ob-list-scroll{max-height:54vh;overflow:auto}
+.ob-list-pages{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+.ob-list-pages .btn[aria-disabled="true"]{opacity:.5;cursor:default}
+
 table{width:100%;border-collapse:collapse;font-size:14px}
 th{text-align:left;padding:10px 12px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;background:#eef2f7}
 th a{color:inherit;text-decoration:none}
@@ -2173,14 +2177,36 @@ const tplList = `
 {{end}}
 {{end}}
 
+{{define "document-list-pager"}}
+<div class="ob-list-pages" role="navigation" aria-label="{{t .Lang "Страницы"}}">
+  {{if .HasPrev}}
+    <a class="btn btn-secondary btn-sm" data-ob-page="first" href="{{listURL .Query "page" "1"}}">{{t .Lang "Первая"}}</a>
+    <a class="btn btn-secondary btn-sm" data-ob-page="prev" href="{{listURL .Query "page" (str .PrevPage)}}">{{t .Lang "← Назад"}}</a>
+  {{else}}
+    <span class="btn btn-secondary btn-sm" aria-disabled="true">{{t .Lang "Первая"}}</span>
+    <span class="btn btn-secondary btn-sm" aria-disabled="true">{{t .Lang "← Назад"}}</span>
+  {{end}}
+  <span data-ob-page-indicator>{{t .Lang "Стр."}} {{.Page}} {{t .Lang "из"}} {{.TotalPages}} ({{.Total}} {{t .Lang "записей"}})</span>
+  {{if .HasNext}}
+    <a class="btn btn-secondary btn-sm" data-ob-page="next" href="{{listURL .Query "page" (str .NextPage)}}">{{t .Lang "Вперёд →"}}</a>
+    <a class="btn btn-secondary btn-sm" data-ob-page="last" href="{{listURL .Query "page" "last"}}">{{t .Lang "Последняя"}}</a>
+  {{else}}
+    <span class="btn btn-secondary btn-sm" aria-disabled="true">{{t .Lang "Вперёд →"}}</span>
+    <span class="btn btn-secondary btn-sm" aria-disabled="true">{{t .Lang "Последняя"}}</span>
+  {{end}}
+</div>
+{{end}}
+
 {{define "page-list"}}
 {{template "head" .}}{{template "nav" .}}
 <main class="main-list">
-<h2>{{.Entity.DisplayName $.Lang}}</h2>
+{{if not .LegacyEntityUI}}<h2>{{.Entity.DisplayName $.Lang}}</h2>{{end}}
 <div class="row-top">
+  {{if .LegacyEntityUI}}<h2>{{.Entity.DisplayName $.Lang}}</h2>{{else}}
   <div class="entity-command-group" role="group" aria-label="{{t .Lang "Действия"}}">
     {{template "entity-command" (dict "Icon" "trash-2" "Class" "btn-secondary" "ListCommand" "mark" "Allowed" .CanMark "Label" (t .Lang "Пометить на удаление") "Title" (or (and .CanMark (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
   </div>
+  {{end}}
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     {{template "list-refresh" (dict "URL" .RequestURI "Lang" $.Lang)}}
     <div class="view-switch">
@@ -2324,6 +2350,10 @@ const tplList = `
 <div class="ob-list-wrap">
 <div class="ob-list-content" data-ob-live="{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}"{{if $obRefresh}} data-ob-refresh-on="{{$obRefresh}}"{{end}}>
 <div class="card">
+{{if .Chronological}}
+{{template "document-list-pager" .}}
+<div class="ob-list-scroll"{{if .SelectLast}} data-ob-select-last{{end}}>
+{{end}}
 {{if .TreeView}}
 {{/* ===== TREE VIEW ===== */}}
 {{if .TreeRows}}
@@ -2491,6 +2521,7 @@ const tplList = `
 {{end}}
 {{end}}
 </div>
+{{if .Chronological}}</div>{{end}}
 {{if and .Feed (not .TreeView)}}
 {{/* Лента: догрузка по скроллу. Без JS «Показать ещё» = переход на след. страницу. */}}
 {{if .HasNext}}
@@ -2499,13 +2530,13 @@ const tplList = `
 </div>
 {{end}}
 {{if gt .Total 0}}<div style="color:#94a3b8;font-size:12px;margin-top:8px;text-align:center">{{t $.Lang "Загружено:"}} <span id="feed-loaded">{{len .Rows}}</span> {{t $.Lang "из"}} {{.Total}}</div>{{end}}
-{{else if gt .TotalPages 1}}
+{{else if and (not .Chronological) (gt .TotalPages 1)}}
 <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
   {{if .HasPrev}}<a class="btn btn-secondary btn-sm" href="{{listURL $.Query "page" (str .PrevPage)}}">{{t $.Lang "← Назад"}}</a>{{end}}
   <span style="color:#64748b;font-size:13px">{{t $.Lang "Стр."}} {{.Page}} {{t $.Lang "из"}} {{.TotalPages}} ({{.Total}} {{t $.Lang "записей"}})</span>
   {{if .HasNext}}<a class="btn btn-secondary btn-sm" href="{{listURL $.Query "page" (str .NextPage)}}">{{t $.Lang "Вперёд →"}}</a>{{end}}
 </div>
-{{else if gt .Total 0}}
+{{else if and (not .Chronological) (gt .Total 0)}}
 <div style="color:#94a3b8;font-size:12px;margin-top:8px">{{t $.Lang "Всего:"}} {{.Total}}</div>
 {{end}}
 </div>
@@ -2572,7 +2603,9 @@ const tplForm = `
 {{if not .IsPopup}}
 {{/* Top toolbar */}}
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+  {{if not .LegacyEntityUI}}
   {{if not .IsNew}}<div class="entity-command-group" role="group" aria-label="{{t .Lang "Действия"}}">{{template "entity-form-mark-command" .}}</div>{{end}}
+  {{end}}
   {{if .Entity.Posting}}
     {{if not .IsNew}}
       {{if eq (index .Values "posted") "true"}}
@@ -2586,12 +2619,20 @@ const tplForm = `
   {{if .Entity.Posting}}
     {{if ne (index .Values "deletion_mark") "true"}}
       {{if $.CanPost}}<button class="btn btn-primary" type="submit" name="_action" value="post" form="main-form">{{if $.Entity.PostCaption}}{{$.Entity.PostCaption}}{{else}}{{t $.Lang "Провести"}}{{end}}</button>{{end}}
+      {{if $.LegacyEntityUI}}{{if and $.CanPost (not $.Entity.PostAndCloseHidden)}}<button class="btn btn-post" type="submit" name="_action" value="post_and_close" form="main-form" title="Ctrl+Enter" aria-keyshortcuts="Control+Enter">{{if $.Entity.PostCaption}}{{$.Entity.PostCaption}} и закрыть{{else}}{{t $.Lang "Провести и закрыть"}}{{end}}</button>{{end}}{{end}}
     {{end}}
     {{if not .IsNew}}
       {{if eq (index .Values "posted") "true"}}
         {{if $.CanUnpost}}<button class="btn btn-sm" style="background:#e2e8f0;color:#374151" form="form-unpost" type="submit">{{t $.Lang "Отменить проведение"}}</button>{{end}}
       {{end}}
     {{end}}
+  {{end}}
+  {{if .LegacyEntityUI}}
+  {{if and .CanDelete (not .IsNew) (eq (index .Values "deletion_mark") "true")}}
+    <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/delete?mark=0" style="display:inline">
+      <button class="btn btn-sm btn-secondary" type="submit">{{t $.Lang "Снять пометку на удаление"}}</button>
+    </form>
+  {{end}}
   {{end}}
   {{if not .IsNew}}
     {{/* Копия открывается формой создания: пока её не записали, в базе ничего
@@ -2631,11 +2672,20 @@ const tplForm = `
       </div>
     </div>
     {{end}}
+    {{if .LegacyEntityUI}}
+    {{if .CanDelete}}
+    <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/delete"
+          data-ob-confirm="{{if .IsAdmin}}{{t $.Lang "Удалить запись навсегда?"}}{{else}}{{t $.Lang "Пометить запись на удаление?"}}{{end}}" style="margin-left:auto">
+      <button class="btn btn-danger btn-sm" type="submit">{{if .IsAdmin}}{{t $.Lang "Удалить"}}{{else}}{{t $.Lang "Пометить на удаление"}}{{end}}</button>
+    </form>
+    {{end}}
+    {{else}}
     {{if and .CanDelete .IsAdmin}}
     <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/delete"
           data-ob-confirm="{{t $.Lang "Удалить запись навсегда?"}}" style="margin-left:auto">
       <button class="btn btn-danger btn-sm" type="submit">{{t $.Lang "Удалить"}}</button>
     </form>
+    {{end}}
     {{end}}
   {{end}}
 </div>

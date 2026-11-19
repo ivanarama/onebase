@@ -67,7 +67,12 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePerm(w, r, string(entity.Kind), entity.Name, "read") {
 		return
 	}
-	params := parseListParams(r, entity, s.store.GetListPageSize(r.Context()))
+	chronological := entity.Kind == metadata.KindDocument && !s.legacyEntityUI(r)
+	pageSize := storage.DefaultListPageSize
+	if chronological {
+		pageSize = 50
+	}
+	params := parseListParams(r, entity, s.store.GetListPageSizeDefault(r.Context(), pageSize))
 	var ok bool
 	params, ok = s.applyRowFilter(w, r, entity, "read", params)
 	if !ok {
@@ -97,6 +102,10 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	treeView := entity.Hierarchical && view == "tree"
 	tilesView := view == "tiles"
 	feed := !treeView && s.resolveListMode(w, r, entity)
+	chronological = chronological && !feed && !treeView
+	params.ChronologicalDocuments = chronological
+	requestedPage := r.URL.Query().Get("page")
+	openLast := chronological && (requestedPage == "" || requestedPage == "last")
 
 	var breadcrumbs []map[string]string
 	var parentStr string
@@ -133,10 +142,14 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	total, _ := s.store.CountList(r.Context(), entity.Name, entity, params)
+	total, err := s.store.CountList(r.Context(), entity.Name, entity, params)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
 	// Deletions can remove the current page while its URL remains open.
 	// Keep a paginated list usable when its last page disappears.
-	if !feed && params.Limit > 0 && params.Offset >= total {
+	if !feed && params.Limit > 0 && (openLast || params.Offset >= total) {
 		params.Offset = 0
 		if total > 0 {
 			params.Offset = ((total - 1) / params.Limit) * params.Limit
@@ -211,6 +224,8 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		"TreeView":         treeView,
 		"TilesView":        tilesView,
 		"Feed":             feed,
+		"Chronological":    chronological,
+		"SelectLast":       openLast,
 		"TreeRows":         treeRows,
 		"Total":            total,
 		"Page":             page,
@@ -3015,7 +3030,7 @@ func parseListParams(r *http.Request, entity *metadata.Entity, defaultLimit int)
 		limit = l
 	}
 	page := 1
-	if p, err := strconv.Atoi(q.Get("page")); err == nil && p > 1 {
+	if p, err := strconv.Atoi(q.Get("page")); err == nil && p > 1 && p <= int(^uint(0)>>1)/limit {
 		page = p
 	}
 	params.Limit = limit

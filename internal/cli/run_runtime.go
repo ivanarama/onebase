@@ -61,6 +61,9 @@ func prepareServerRuntime(ctx context.Context, cmd *cobra.Command, db *storage.D
 			}
 			uiCfg.AllowedTypes = appCfg.Attachments.AllowedTypes
 		}
+		if appCfg.UI != nil {
+			uiCfg.UIExceptRoles = appCfg.UI.ExceptRoles
+		}
 		uiCfg.Limits = runtimeLimitsFromApp(appCfg.Limits)
 		uiCfg.POSEnabled = appCfg.POSEnabled()
 	}

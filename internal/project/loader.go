@@ -204,10 +204,16 @@ type QueueConfig struct {
 	DrainTimeoutSec int  `yaml:"drain_timeout_sec,omitempty"` // сколько ждать взятые задачи при остановке (30)
 }
 
+// UIConfig controls the scope of presentation changes.
+type UIConfig struct {
+	ExceptRoles []string `yaml:"except_roles,omitempty"`
+}
+
 // AppConfig holds the optional config/app.yaml metadata.
 type AppConfig struct {
-	Name    string `yaml:"name"`
-	Version string `yaml:"version"`
+	UI      *UIConfig `yaml:"ui,omitempty"`
+	Name    string    `yaml:"name"`
+	Version string    `yaml:"version"`
 	// MinEngineVersion is advisory: it never prevents checking or starting a base.
 	MinEngineVersion string `yaml:"min_engine_version,omitempty"`
 	// Авторство и лицензия конфигурации (план 69). Необязательны. Едут вместе
