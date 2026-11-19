@@ -1614,6 +1614,7 @@ aside details.navsec>summary::-webkit-details-marker{display:none}
 aside details.navsec>summary::before{content:"\25B8";display:inline-block;width:1em;color:#64748b}
 aside details.navsec[open]>summary::before{content:"\25BE"}
 aside details.navsec>summary:hover{color:#cbd5e1}
+#ob-nav>:is(.navsec,.navtree,section).navsec-gradient{margin:0 6px 9px;padding:4px 0 6px;border-radius:8px;background:linear-gradient(180deg,rgba(203,213,225,.14),rgba(203,213,225,.015))}
 aside details.navfolder{margin-left:12px}
 aside details.navfolder>summary{text-transform:none;font-size:12px;margin-top:8px}
 aside .navfolder-title{margin-left:12px;text-transform:none}
@@ -1925,7 +1926,7 @@ const tplNav = `
   {{if not .Subsystems}}<a href="/ui/" style="display:block;padding:12px 14px 8px;color:#7dd3fc;font-weight:700;font-size:15px;text-decoration:none">{{t $.Lang "Главная"}}</a>{{end}}
   {{if .CollapsibleNav}}
   {{range .Nav}}
-  <details class="navsec" id="{{.DOMID}}" data-nav-id="{{.ID}}" data-navsec="{{.DOMID}}"{{if .LegacyTitle}} data-navsec-legacy="{{.LegacyTitle}}"{{end}}{{if .Open}} open{{end}}>
+  <details class="navsec{{if .Gradient}} navsec-gradient{{end}}" id="{{.DOMID}}" data-nav-id="{{.ID}}" data-navsec="{{.DOMID}}"{{if .LegacyTitle}} data-navsec-legacy="{{.LegacyTitle}}"{{end}}{{if .Open}} open{{end}}>
     <summary>{{lucideIcon .Icon}}{{.Kind}}</summary>
     {{template "nav-items" .Items}}
     {{range .Groups}}
@@ -1938,12 +1939,14 @@ const tplNav = `
   {{end}}
   {{else}}
   {{range .Nav}}
+  {{if .Gradient}}<section class="navsec-gradient">{{end}}
   <div class="sec" id="{{.DOMID}}" data-nav-id="{{.ID}}">{{lucideIcon .Icon}}{{.Kind}}</div>
   {{template "nav-items" .Items}}
   {{range .Groups}}
   <div class="sec navfolder-title" id="{{.DOMID}}" data-nav-id="{{.ID}}">{{lucideIcon .Icon}}{{.Kind}}</div>
   <div class="navfolder-items">{{template "nav-items" .Items}}</div>
-  {{end}}{{end}}
+  {{end}}
+  {{if .Gradient}}</section>{{end}}{{end}}
   {{end}}
 </aside>
 {{end}}

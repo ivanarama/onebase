@@ -39,7 +39,7 @@ func semanticSchoolServer(t *testing.T, name string) *Server {
 		Catalogs: []string{"Years", "Classes", "Private"}, Documents: []string{"Orders"}, Registers: []string{"Attendance"},
 		InfoRegs: []string{"Bells"}, Processors: []string{"ClassJournal", "External"}, Journals: []string{"Documents"}, Pages: []string{"TeacherPage"},
 	}, Menu: &metadata.Menu{Sections: []metadata.MenuSection{
-		{ID: "education", Title: "Обучение", Titles: map[string]string{"en": "Education"}, Icon: "calendar-days", Groups: []metadata.MenuGroup{
+		{ID: "education", Title: "Обучение", Titles: map[string]string{"en": "Education"}, Icon: "calendar-days", Gradient: true, Groups: []metadata.MenuGroup{
 			{ID: "school-work", Title: "Работа школы", Titles: map[string]string{"en": "School work"}, Items: []metadata.MenuItem{
 				{ID: "classes", Target: "catalog:Classes"}, {ID: "orders", Target: "document:Orders"}, {ID: "bells", Target: "inforeg:Bells"}, {ID: "class-journal", Target: "processor:ClassJournal"},
 			}},
@@ -194,6 +194,32 @@ func TestSemanticNavigation_SchoolHierarchyLocalizationAndAccess(t *testing.T) {
 			if semanticFind(admin, "data-nav-id", "cfg:private") == nil || !strings.Contains(strings.Join(semanticLinks(admin), "|"), "/ui/processor/external") {
 				t.Fatal("admin lost a permitted target")
 			}
+		}
+	}
+}
+
+func TestSemanticNavigation_SectionGradient(t *testing.T) {
+	for _, collapsible := range []bool{true, false} {
+		s := semanticSchoolServer(t, "School")
+		if err := s.store.SaveNavCollapsible(context.Background(), collapsible); err != nil {
+			t.Fatal(err)
+		}
+		nav := renderSemanticNav(t, s, "/ui/?subsystem=School", "ru", semanticTeacher())
+		section := semanticFind(nav, "data-nav-id", "cfg:education")
+		plain := semanticFind(nav, "data-nav-id", "cfg:register")
+		if section == nil || plain == nil {
+			t.Fatal("missing configured sections")
+		}
+		if !collapsible {
+			section = section.Parent
+			plain = plain.Parent
+		}
+		if !strings.Contains(semanticAttr(section, "class"), "navsec-gradient") ||
+			semanticFind(section, "data-nav-id", "cfg:class-journal") == nil {
+			t.Fatal("gradient must wrap the heading and links in the section")
+		}
+		if strings.Contains(semanticAttr(plain, "class"), "navsec-gradient") {
+			t.Fatal("section without opt-in gained a gradient")
 		}
 	}
 }

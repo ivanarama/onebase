@@ -82,6 +82,7 @@ type Tree struct {
 }
 
 type Section struct {
+	Gradient bool `json:"gradient,omitempty"`
 	// TitleExplicit preserves a rename even when it matches the configuration
 	// text. Legacy sections otherwise translate that text through the UI bundle.
 	TitleExplicit bool              `json:"title_explicit,omitempty"`
@@ -177,7 +178,7 @@ func Normalize(context string, menu *metadata.Menu, scope Scope) (Tree, []Diagno
 		if strings.TrimSpace(section.Title) == "" {
 			add("navigation.title", section.ID, "section требует title", false)
 		}
-		s := Section{ID: "cfg:" + section.ID, Title: section.Title, Titles: copyTitles(section.Titles), Icon: metadata.NormalizeIconName(section.Icon), Items: items(section.Items)}
+		s := Section{ID: "cfg:" + section.ID, Title: section.Title, Titles: copyTitles(section.Titles), Icon: metadata.NormalizeIconName(section.Icon), Gradient: section.Gradient, Items: items(section.Items)}
 		for _, group := range section.Groups {
 			groups++
 			checkID(group.ID)
