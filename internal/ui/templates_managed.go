@@ -1,6 +1,48 @@
 package ui
 
-import "github.com/ivantit66/onebase/internal/metadata"
+import (
+	"strings"
+
+	"github.com/ivantit66/onebase/internal/metadata"
+)
+
+func appFormButtonClass(kind, name, label string, primary bool, legacy any) string {
+	if legacy == true {
+		if primary {
+			return "btn-primary"
+		}
+		return "btn-secondary"
+	}
+	switch strings.ToLower(strings.TrimSpace(kind)) {
+	case "primary":
+		return "btn-app-primary"
+	case "secondary":
+		return "btn-app-secondary"
+	case "danger":
+		return "btn-app-danger"
+	}
+	if primary {
+		return "btn-app-primary"
+	}
+	for _, value := range []string{label, name} {
+		value = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(value)), "кн")
+		switch value {
+		case "записать", "сформировать", "провести", "save", "generate", "post":
+			return "btn-app-primary"
+		}
+		for _, prefix := range []string{"удалить", "delete", "пометить на удаление", "пометитьнаудаление"} {
+			if strings.HasPrefix(value, prefix) {
+				return "btn-app-danger"
+			}
+		}
+		for _, prefix := range []string{"заполнить", "пересчитать", "fill", "recalculate"} {
+			if strings.HasPrefix(value, prefix) {
+				return "btn-app-secondary"
+			}
+		}
+	}
+	return "btn-secondary"
+}
 
 // tplManagedForm — шаблон рендеринга «управляемой формы» из FormModule
 // (план 37, этап 3). В отличие от tplForm, который автоматически выводит
@@ -267,7 +309,7 @@ const tplManagedForm = `
   {{$buttonLayout := elLayout $el}}
   {{$buttonHidden := elHidden $ctx $el}}
   {{if $buttonLayout}}<div class="managed-btn-layout" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="{{if $buttonHidden}}display:none;{{end}}{{$buttonLayout}}">{{end}}
-  <button type="button" class="btn {{if $el.Primary}}btn-primary{{else}}btn-secondary{{end}} managed-btn"{{if and $buttonHidden (not $buttonLayout)}} style="display:none;{{elBackground $el}}"{{else}}{{with elBackground $el}} style="{{.}}"{{end}}{{end}}{{if not $buttonLayout}} data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $hotKey}} data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $clickAction}} data-ob-fire-click="{{$el.Name}}"{{end}}>
+  <button type="button" class="btn {{appFormButtonClass $el.ButtonKind $el.Name (fieldTitleRU $el.TitleMap $el.Name) $el.Primary $ctx.LegacyEntityUI}} managed-btn"{{if and $buttonHidden (not $buttonLayout)}} style="display:none;{{elBackground $el}}"{{else}}{{with elBackground $el}} style="{{.}}"{{end}}{{end}}{{if not $buttonLayout}} data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $hotKey}} data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $clickAction}} data-ob-fire-click="{{$el.Name}}"{{end}}>
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </button>
   {{if $buttonLayout}}</div>{{end}}
@@ -586,6 +628,17 @@ input.ob-deadline-over,.form-group input.ob-deadline-over[readonly]{background:#
 .managed-vt-scroll{overflow-y:auto}
 .managed-vt-scroll>.tp-table{overflow:visible;margin-bottom:0}
 .managed-vt-scroll>.tp-table thead th{position:sticky;top:0;z-index:1}
+.ob-form-action-spacing .managed-group-horizontal>.managed-group-body:has(>.managed-btn,>.managed-btn-layout){gap:4px}
+.ob-form-action-spacing .managed-group-horizontal:has(>.managed-group-body> :is(.managed-btn,.managed-btn-layout)){margin-block:4px !important}
+.ob-form-action-spacing .managed-group-horizontal:has(>.managed-group-body> :is(.managed-btn,.managed-btn-layout)) + .managed-group-horizontal:has(>.managed-group-body> :is(.managed-btn,.managed-btn-layout)){margin-block-start:0 !important}
+.ob-form-action-spacing .managed-command-bar{gap:4px !important}
+.ob-form-action-spacing .btn-app-primary{background:#dbeafe;color:#1e3a8a;box-shadow:inset 0 0 0 1px #60a5fa}
+.ob-form-action-spacing .btn-app-primary:hover:not(:disabled){background:#bfdbfe}
+.ob-form-action-spacing .btn-app-secondary{background:#f8fafc;color:#334155;box-shadow:inset 0 0 0 1px #a6b8ce}
+.ob-form-action-spacing .btn-app-secondary:hover:not(:disabled){background:#e2e8f0}
+.ob-form-action-spacing .btn-app-danger{background:#fee2e2;color:#991b1b;box-shadow:inset 0 0 0 1px #fca5a5}
+.ob-form-action-spacing .btn-app-danger:hover:not(:disabled){background:#fecaca}
+
 /* Поле в горизонтальной группе не растягивается на всю строку: иначе одинокое
    поле уезжало во всю ширину, а кнопка рядом с ним — к правому краю экрана. */
 .managed-group-horizontal>.managed-group-body>.form-group{flex:0 1 260px;min-width:180px;margin-bottom:0}
@@ -837,7 +890,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 {{end}}
 
 <div class="card">
-<form id="main-form" method="POST" autocomplete="off"{{if .ConcealContext}} data-ob-conceal-context="{{.ConcealContext}}" action="{{.ConcealAction}}"{{end}} data-ob-grid-sync{{if enterSubmitsForm (index . "Form")}} data-ob-enter-submits="1"{{end}} {{if .IsProcessor}}action="/ui/processor/{{lower .Processor.Name}}" enctype="multipart/form-data"{{end}}>
+<form id="main-form"{{if not .LegacyEntityUI}} class="ob-form-action-spacing"{{end}} method="POST" autocomplete="off"{{if .ConcealContext}} data-ob-conceal-context="{{.ConcealContext}}" action="{{.ConcealAction}}"{{end}} data-ob-grid-sync{{if enterSubmitsForm (index . "Form")}} data-ob-enter-submits="1"{{end}} {{if .IsProcessor}}action="/ui/processor/{{lower .Processor.Name}}" enctype="multipart/form-data"{{end}}>
 {{if and (not .IsNew) (index .Values "_version")}}<input type="hidden" name="_version" value="{{index .Values "_version"}}">{{end}}
 {{if .IsPopup}}<input type="hidden" name="_popup" value="1">{{end}}
 {{if .CopySourceID}}<input type="hidden" name="_copy_source_id" value="{{.CopySourceID}}">{{end}}
@@ -856,7 +909,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 {{if and .FormCommands (not $commandBarHidden)}}
 <div class="managed-command-bar"{{if $commandBarElement}} data-ob-el="{{$commandBarElement.Name}}" data-ob-el-path="{{elPath $ctx $commandBarElement}}"{{end}} style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 16px;padding-bottom:12px;border-bottom:1px solid #e2e8f0">
   {{range .FormCommands}}
-  <button type="button" class="btn btn-secondary" style="margin:0" data-ob-fire-click="{{.Name}}"{{if $commandBarReadOnly}} disabled{{end}}>{{fieldTitleRU .Title .Name}}</button>
+  <button type="button" class="btn {{appFormButtonClass "" .Name (fieldTitleRU .Title .Name) false $ctx.LegacyEntityUI}}" style="margin:0" data-ob-fire-click="{{.Name}}"{{if $commandBarReadOnly}} disabled{{end}}>{{fieldTitleRU .Title .Name}}</button>
   {{end}}
 </div>
 {{end}}

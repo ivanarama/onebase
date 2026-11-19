@@ -73,7 +73,7 @@ func TestFormPrimaryButtonGetsAccentStyle(t *testing.T) {
 	entity := &metadata.Entity{Name: "Задача", Kind: metadata.KindDocument, Forms: []*metadata.FormModule{form}}
 
 	html := renderFormKeysHTML(t, entity, form, map[string]string{}, nil, false)
-	primary := strings.Index(html, `class="btn btn-primary managed-btn"`)
+	primary := strings.Index(html, `class="btn btn-app-primary managed-btn"`)
 	secondary := strings.Index(html, `class="btn btn-secondary managed-btn"`)
 	if primary < 0 {
 		t.Fatal("основная кнопка не получила акцентный стиль")

@@ -270,6 +270,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"entityFormServiceFieldNames":    entityFormServiceFieldNames,
 		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
+		"appFormButtonClass":             appFormButtonClass,
 		"effectiveFormElementReadOnly":   effectiveFormElementReadOnly,
 		"effectiveFormElementRequired":   effectiveFormElementRequired,
 		"managedCommandBarElement":       managedCommandBarElement,
