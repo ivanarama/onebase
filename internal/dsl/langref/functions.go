@@ -1212,6 +1212,16 @@ XMLТипЗнч(Неопределено)    // "undefined"`,
 		Group:   "Файлы",
 	},
 	{
+		Name: "md5файла", Display: "MD5Файла", Aliases: []string{"FileMD5"}, Kind: KindFunc,
+		Signature: "MD5Файла(Путь)",
+		Group:     "Файлы",
+		Doc:       "Вычисляет MD5 двоичного содержимого обычного файла для сверки с существующими контрольными суммами. Учитывает ограничения доступа к файлам.",
+		Params: []Param{
+			{Name: "Путь", Type: "строка", Doc: "путь к файлу"},
+		},
+		Returns: "строка — 32 шестнадцатеричных символа нижнего регистра",
+	},
+	{
 		Name: "найтифайлы", Display: "НайтиФайлы", Aliases: []string{"FindFiles"}, Kind: KindFunc,
 		Signature: "НайтиФайлы(Путь, Маска)",
 		Params: []Param{

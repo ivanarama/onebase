@@ -1,6 +1,8 @@
 package interpreter
 
 import (
+	"crypto/md5" //nolint:gosec // G501: compatibility with existing 1C photo checksums
+	"encoding/hex"
 	"github.com/ivantit66/onebase/internal/fsmode"
 	oblog "github.com/ivantit66/onebase/internal/logging"
 	"io"
@@ -25,6 +27,8 @@ func init() {
 	builtins["findfiles"] = findFilesFn
 	builtins["прочитатьфайл"] = readFileFn
 	builtins["readfile"] = readFileFn
+	builtins["md5файла"] = fileMD5Fn
+	builtins["filemd5"] = fileMD5Fn
 }
 
 // ПрочитатьФайл(Путь) — содержимое текстового файла одной строкой.
@@ -113,4 +117,45 @@ func findFilesFn(args []any, _ string, _ int) (any, error) {
 		arr.items = append(arr.items, m)
 	}
 	return arr, nil
+}
+
+// fileMD5Fn matches the MD5 checksums already stored with imported master photos.
+func fileMD5Fn(args []any, _ string, _ int) (any, error) {
+	const op = "MD5Файла"
+	raw := strArg(args, 0)
+	if raw == "" {
+		RaiseUserError(op + ": не указан путь к файлу")
+	}
+
+	path := safePathOrRaise(op, raw)
+	var file *os.File
+	var err error
+	if base := FileSandboxRoot(); base != "" {
+		root, rootErr := os.OpenRoot(base)
+		if rootErr != nil {
+			RaiseUserError(op + ": не удалось открыть рабочий каталог")
+		}
+		defer oblog.CloseQuiet("dsl", "рабочий каталог", root)
+		rel, relErr := filepath.Rel(base, path)
+		if relErr != nil {
+			RaiseUserError(op + ": неверный путь к файлу")
+		}
+		file, err = root.Open(rel)
+	} else {
+		file, err = os.Open(path) //nolint:gosec // G703: same trusted file capability as ПрочитатьФайл
+	}
+	if err != nil {
+		RaiseUserError(op + ": " + err.Error())
+	}
+	defer oblog.CloseQuiet("dsl", "файл для контрольной суммы", file)
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		RaiseUserError(op + ": путь не является обычным файлом")
+	}
+
+	digest := md5.New() //nolint:gosec // G401: existing 1C checksum for deduplication
+	if _, err := io.Copy(digest, file); err != nil {
+		RaiseUserError(op + ": " + err.Error())
+	}
+	return hex.EncodeToString(digest.Sum(nil)), nil
 }
