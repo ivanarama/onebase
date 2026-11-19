@@ -55,6 +55,9 @@ func readFileFn(args []any, _ string, _ int) (any, error) {
 
 // КопироватьФайл(Откуда, Куда) — копирование содержимого файла.
 func copyFileFn(args []any, _ string, _ int) (any, error) {
+	if root := strArg(args, 2); root != "" {
+		return nil, copyFromDirectory(root, strArg(args, 0), strArg(args, 1))
+	}
 	src := safePathOrRaise("КопироватьФайл", strArg(args, 0))
 	dst := safePathOrRaise("КопироватьФайл", strArg(args, 1))
 	in, err := os.Open(src) //nolint:gosec // G703: trusted DSL file capability; sandbox profiles replace this builtin before evaluation
@@ -91,6 +94,9 @@ func moveFileFn(args []any, _ string, _ int) (any, error) {
 // УдалитьФайлы(Путь) — удаление файла или пустого каталога. Намеренно не
 // рекурсивно (os.Remove), чтобы случайно не снести дерево каталогов.
 func deleteFileFn(args []any, _ string, _ int) (any, error) {
+	if root := strArg(args, 1); root != "" {
+		return deleteFromDirectory(root, strArg(args, 0), strArg(args, 2))
+	}
 	if err := os.Remove(safePathOrRaise("УдалитьФайлы", strArg(args, 0))); err != nil { //nolint:gosec // G703: trusted DSL file capability; sandbox profiles replace this builtin before evaluation
 		RaiseUserError("УдалитьФайлы: " + err.Error())
 	}
@@ -107,6 +113,9 @@ func makeDirFn(args []any, _ string, _ int) (any, error) {
 
 // НайтиФайлы(Путь, Маска) → Массив путей подходящих файлов.
 func findFilesFn(args []any, _ string, _ int) (any, error) {
+	if root := strArg(args, 2); root != "" {
+		return findInDirectory(root, strArg(args, 0), strArg(args, 1))
+	}
 	pattern := filepath.Join(safePathOrRaise("НайтиФайлы", strArg(args, 0)), strArg(args, 1))
 	matches, err := filepath.Glob(pattern)
 	if err != nil {
@@ -153,9 +162,17 @@ func fileMD5Fn(args []any, _ string, _ int) (any, error) {
 		RaiseUserError(op + ": путь не является обычным файлом")
 	}
 
+	digest, err := fileMD5(file)
+	if err != nil {
+		RaiseUserError(op + ": " + err.Error())
+	}
+	return digest, nil
+}
+
+func fileMD5(file io.Reader) (string, error) {
 	digest := md5.New() //nolint:gosec // G401: existing 1C checksum for deduplication
 	if _, err := io.Copy(digest, file); err != nil {
-		RaiseUserError(op + ": " + err.Error())
+		return "", err
 	}
 	return hex.EncodeToString(digest.Sum(nil)), nil
 }
