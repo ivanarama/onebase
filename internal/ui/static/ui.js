@@ -1922,8 +1922,8 @@ function listSyncActionsBtn() {
     if (command === 'mark' && row) {
       var marked = row.dataset.marked === '1';
       label = marked ? obListLabel('unmarkDelete', 'Снять пометку на удаление') : label;
-      var trash = button.querySelector('use');
-      if (trash) trash.setAttribute('href', trash.getAttribute('href').split('#')[0] + (marked ? '#rotate-ccw' : '#trash-2'));
+      var icon = button.querySelector('use');
+      if (icon) icon.setAttribute('href', icon.getAttribute('href').split('#')[0] + (marked ? '#rotate-ccw' : '#x'));
       if (!reason && !obListCanMarkDelete(row)) {
         reason = label;
         if (row.dataset.predefined === '1') reason = obListLabel('predefinedNoDelete', 'Предопределённый — нельзя удалить');

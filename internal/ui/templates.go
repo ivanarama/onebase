@@ -1645,10 +1645,11 @@ tr:hover td{background:#f8fafc}
 .btn-primary{background:#3b82f6;color:#fff}.btn-primary:hover{background:#2563eb}
 .btn-post{background:#e8b400;color:#1a1a1a;font-weight:700}.btn-post:hover{background:#d4a200}
 .btn-secondary{background:#e2e8f0;color:#374151}.btn-secondary:hover{background:#cbd5e1}
-.entity-command-group{display:inline-flex;align-items:center;gap:5px}
+.entity-command-group{display:inline-flex;align-items:center;gap:3px}
 .entity-command{display:inline-flex;align-items:center}
-.btn.btn-command{display:inline-flex;align-items:center;justify-content:center;width:34px;height:33px;padding:0;font-size:18px}
-.btn-command.btn-command-create{border-radius:50%;width:33px;background:#15803d;color:#fff}
+.btn.btn-command{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border-radius:5px;font-size:18px}
+.btn.btn-command .ob-icon{width:20px;height:20px;flex:none}
+.btn-command.btn-command-create{border-radius:50%;background:#15803d;color:#fff}
 .btn-command.btn-command-create:hover{background:#166534}
 .btn-document-post{background:#dcfce7;color:#166534}.btn-document-post:hover{background:#bbf7d0}
 .btn-document-unpost{background:#ffedd5;color:#9a3412}.btn-document-unpost:hover{background:#fed7aa}
@@ -1656,10 +1657,6 @@ tr:hover td{background:#f8fafc}
 .btn-command-mark{background:#fee2e2;color:#b91c1c}.btn-command-mark:hover{background:#fecaca}
 .btn.btn-command:disabled{background:#e2e8f0;color:#475569;opacity:.68;pointer-events:none}
 @media(prefers-color-scheme:dark){
-  .btn-document-post{background:#123a30;color:#86efac}.btn-document-post:hover{background:#195141}
-  .btn-document-unpost{background:#452c1a;color:#fdba74}.btn-document-unpost:hover{background:#58391f}
-  .btn-command-copy{background:#263858;color:#93c5fd}.btn-command-copy:hover{background:#30476d}
-  .btn-command-mark{background:#492a36;color:#fca5a5}.btn-command-mark:hover{background:#5e3341}
   .btn.btn-command:disabled{background:#334155;color:#cbd5e1}
 }
 
@@ -2192,8 +2189,8 @@ const tplList = `
   {{$postTitle := $post}}{{$unpostTitle := $unpost}}
   {{if not .CanPost}}{{$postTitle = t .Lang "Недостаточно прав"}}{{else if $marked}}{{$postTitle = t .Lang "Документ помечен на удаление"}}{{end}}
   {{if not .CanUnpost}}{{$unpostTitle = t .Lang "Недостаточно прав"}}{{else if not $posted}}{{$unpostTitle = t .Lang "Не проведён"}}{{end}}
-  {{template "entity-command" (dict "Icon" "circle-check" "Class" "btn-document-post" "Form" "main-form" "Name" "_action" "Value" "post" "Allowed" (and .CanPost (not $marked)) "Label" $post "Title" $postTitle)}}
-  {{template "entity-command" (dict "Icon" "undo-2" "Class" "btn-document-unpost" "Form" "form-unpost" "Allowed" (and .CanUnpost $posted) "Label" $unpost "Title" $unpostTitle)}}
+  {{template "entity-command" (dict "Icon" "file-input" "Class" "btn-document-post" "Form" "main-form" "Name" "_action" "Value" "post" "Allowed" (and .CanPost (not $marked)) "Label" $post "Title" $postTitle)}}
+  {{template "entity-command" (dict "Icon" "file-output" "Class" "btn-document-unpost" "Form" "form-unpost" "Allowed" (and .CanUnpost $posted) "Label" $unpost "Title" $unpostTitle)}}
 {{end}}
 {{end}}
 
@@ -2209,7 +2206,7 @@ const tplList = `
 {{if not .IsNew}}
   {{$marked := eq (index .Values "deletion_mark") "true"}}
   {{$label := t .Lang "Пометить на удаление"}}
-  {{$param := "1"}}{{$icon := "trash-2"}}
+  {{$param := "1"}}{{$icon := "x"}}
   {{if $marked}}{{$label = t .Lang "Снять пометку на удаление"}}{{$param = "0"}}{{$icon = "rotate-ccw"}}{{end}}
   <form id="form-mark-command" action="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/{{.ID}}/delete?mark={{$param}}" method="POST"></form>
   {{template "entity-command" (dict "Icon" $icon "Class" "btn-command-mark" "Form" "form-mark-command" "Allowed" .CanMark "Label" $label "Title" (or (and .CanMark $label) (t .Lang "Недостаточно прав")))}}
@@ -2248,11 +2245,11 @@ const tplList = `
     {{template "entity-command" (dict "Icon" "plus" "Class" "btn-command-create" "Create" true "Href" $newURL "Allowed" .CanCreate "Label" $create "Title" (or (and .CanCreate $create) (t .Lang "Недостаточно прав")))}}
     {{if .Entity.Posting}}
       {{$post := or .Entity.PostCaption (t .Lang "Провести")}}
-      {{template "entity-command" (dict "Icon" "circle-check" "Class" "btn-document-post" "ListCommand" "post" "Allowed" .CanPost "Label" $post "Title" (or (and .CanPost (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
-      {{template "entity-command" (dict "Icon" "undo-2" "Class" "btn-document-unpost" "ListCommand" "unpost" "Allowed" .CanUnpost "Label" (t .Lang "Отменить проведение") "Title" (or (and .CanUnpost (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
+      {{template "entity-command" (dict "Icon" "file-input" "Class" "btn-document-post" "ListCommand" "post" "Allowed" .CanPost "Label" $post "Title" (or (and .CanPost (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
+      {{template "entity-command" (dict "Icon" "file-output" "Class" "btn-document-unpost" "ListCommand" "unpost" "Allowed" .CanUnpost "Label" (t .Lang "Отменить проведение") "Title" (or (and .CanUnpost (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
     {{end}}
     {{template "entity-command" (dict "Icon" "copy" "Class" "btn-command-copy" "ListCommand" "copy" "Allowed" .CanCopy "Label" (t .Lang "Скопировать") "Title" (or (and .CanCopy (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
-    {{template "entity-command" (dict "Icon" "trash-2" "Class" "btn-command-mark" "ListCommand" "mark" "Allowed" .CanMark "Label" (t .Lang "Пометить на удаление") "Title" (or (and .CanMark (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
+    {{template "entity-command" (dict "Icon" "x" "Class" "btn-command-mark" "ListCommand" "mark" "Allowed" .CanMark "Label" (t .Lang "Пометить на удаление") "Title" (or (and .CanMark (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
   </div>
   {{end}}
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
