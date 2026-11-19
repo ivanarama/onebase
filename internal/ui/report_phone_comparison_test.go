@@ -124,7 +124,11 @@ func TestReportPhoneComparisonHTTP(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer book.Close()
+				defer func() {
+					if err := book.Close(); err != nil {
+						t.Error(err)
+					}
+				}()
 				rows, err := book.GetRows(book.GetSheetName(0))
 				if err != nil || len(rows) != 1 || len(rows[0]) != 1 || rows[0][0] != total {
 					t.Fatalf("unexpected worksheet content: %v, %v", rows, err)
