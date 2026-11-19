@@ -41,6 +41,9 @@ function element(tag) {
 }
 
 global.document = { createElement: element };
+// The editor's optional mask hook lives on the browser window. Start without
+// the hook to exercise the native datetime-local fallback as well.
+global.window = {};
 
 // obManagedFormatDate зовёт obManagedEscapeHTML, поэтому в песочницу нужны обе.
 const sandbox = new Function(
@@ -146,4 +149,28 @@ test('obManagedSplitDate не трогает значение, которое д
   assert.equal(obManagedSplitDate('не дата'), null);
   assert.equal(obManagedSplitDate(''), null);
   assert.equal(obManagedSplitDate(null), null);
+});
+
+test('редактор проверяет маску до сравнения и сохранения значения', () => {
+  const container = element('div');
+  const editor = new ObDateEditor({container, column: {field: 'Дат'}, item: {'Дат': '1985-03-14T00:00'}});
+  const input = container.children[0];
+  let calls = 0;
+  window.obCommitDateInput = (element) => {
+    assert.equal(element, input);
+    calls++;
+    input.validationMessage = 'Дата введена не полностью';
+    return false;
+  };
+  try {
+    assert.equal(editor.isValueChanged(), true);
+    assert.deepEqual(editor.validate(), {valid: false, msg: 'Дата введена не полностью'});
+    assert.equal(calls, 2);
+    window.obCommitDateInput = () => { input.value = '1985-03-15T00:00'; return true; };
+    assert.equal(editor.isValueChanged(), true);
+    assert.equal(editor.validate().valid, true);
+    assert.equal(editor.serializeValue(), '1985-03-15T00:00');
+  } finally {
+    delete window.obCommitDateInput;
+  }
 });

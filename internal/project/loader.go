@@ -205,6 +205,49 @@ type QueueConfig struct {
 }
 
 // AppConfig holds the optional config/app.yaml metadata.
+// UIConfig — оформление интерфейса базы.
+type UIConfig struct {
+	ReportRoles       []string `yaml:"report_roles,omitempty"`
+	ReportExceptRoles []string `yaml:"report_except_roles,omitempty"`
+	ReportDensity     string   `yaml:"report_density,omitempty"`
+	ShortDateInput    bool     `yaml:"short_date_input,omitempty"`
+	FormRoles         []string `yaml:"form_roles,omitempty"`
+	FormExceptRoles   []string `yaml:"form_except_roles,omitempty"`
+	Roles             []string `yaml:"roles,omitempty"`
+	ExceptRoles       []string `yaml:"except_roles,omitempty"`
+	FormDensity       string   `yaml:"form_density,omitempty"`
+	ListDetailPanel   *bool    `yaml:"list_detail_panel,omitempty"`
+	ListRowActions    *bool    `yaml:"list_row_actions,omitempty"`
+	Attachments       *bool    `yaml:"attachments,omitempty"`
+	// ListDensity: "" — прежний вид; "compact" — плотные списки, журналы,
+	// регистры и виджеты-списки: шрифт 12px, строка ≈ 22px, видимые границы
+	// строк и столбцов (как списки 1С).
+	ListDensity string `yaml:"list_density,omitempty"`
+}
+
+// CompactLists — включены ли плотные списки.
+func (c *AppConfig) CompactLists() bool {
+	return c != nil && c.UI != nil && c.UI.ListDensity == "compact"
+}
+
+// UI switches are opt-out: absent keys retain the existing interface.
+func (c *AppConfig) ListDetailPanelEnabled() bool {
+	return c == nil || c.UI == nil || c.UI.ListDetailPanel == nil || *c.UI.ListDetailPanel
+}
+func (c *AppConfig) ListRowActionsEnabled() bool {
+	return c == nil || c.UI == nil || c.UI.ListRowActions == nil || *c.UI.ListRowActions
+}
+func (c *AppConfig) AttachmentsEnabled() bool {
+	return c == nil || c.UI == nil || c.UI.Attachments == nil || *c.UI.Attachments
+}
+
+// New presentation controls are opt-in; the existing list_density alone keeps
+// its original behavior. An explicit roles: [] opts in for every role.
+func (c *AppConfig) UIEnhancementsConfigured() bool {
+	return c != nil && c.UI != nil && (c.UI.Roles != nil || c.UI.ExceptRoles != nil || c.UI.FormRoles != nil || c.UI.FormExceptRoles != nil ||
+		c.UI.ListDetailPanel != nil || c.UI.ListRowActions != nil || c.UI.Attachments != nil || c.UI.FormDensity != "")
+}
+
 type AppConfig struct {
 	Name    string `yaml:"name"`
 	Version string `yaml:"version"`
@@ -221,9 +264,11 @@ type AppConfig struct {
 	// конфигурацией по той же причине, что и Author: поставка клиенту несёт
 	// СВОЮ поддержку, а не трекер разработчика платформы, до которого
 	// пользователь не дойдёт и куда ему не надо.
-	Support     string             `yaml:"support,omitempty"`
-	Lang        string             `yaml:"lang,omitempty"`
-	Logo        string             `yaml:"logo,omitempty"`
+	Support string `yaml:"support,omitempty"`
+	Lang    string `yaml:"lang,omitempty"`
+	Logo    string `yaml:"logo,omitempty"`
+	// UI — оформление интерфейса всей базы (list_density и др.).
+	UI          *UIConfig          `yaml:"ui,omitempty"`
 	Email       *EmailConfig       `yaml:"email,omitempty"`
 	Attachments *AttachmentsConfig `yaml:"attachments,omitempty"`
 	// DeprecatedRussianPost preserves the permissive v0.9.3 behavior for
@@ -317,6 +362,12 @@ func LoadConfig(dir string) (*AppConfig, error) {
 		return nil, errors.Join(fmt.Errorf("project: parse %s: %w", path, err), configFileNote(path))
 	}
 	var extra any
+	if cfg.UI != nil && cfg.UI.ReportDensity != "" && cfg.UI.ReportDensity != "compact" && cfg.UI.ReportDensity != "dense" {
+		return nil, fmt.Errorf("ui.report_density must be compact or dense")
+	}
+	if cfg.UI != nil && cfg.UI.FormDensity != "" && cfg.UI.FormDensity != "compact" && cfg.UI.FormDensity != "dense" {
+		return nil, fmt.Errorf("ui.form_density must be compact or dense")
+	}
 	if err := dec.Decode(&extra); err != io.EOF {
 		if err == nil {
 			return nil, errors.Join(

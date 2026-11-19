@@ -1,0 +1,5 @@
+name: ПлотнаяФорма
+title: "Проверка отступов формы"
+fields:
+  - name: Текст
+    type: string

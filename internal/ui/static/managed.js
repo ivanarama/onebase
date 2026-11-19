@@ -538,7 +538,9 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         // Зеркало значения (план 181C/#1672) — скрытый input с тем же name:
         // у запертого select-поля отправляется оно, и этот же проход держит
         // его синхронным с select при каждом применении значения.
-        if (inp.classList && inp.classList.contains('code-field') && inp._obSetCodeValue) {
+        if (typeof window.obSetDateInputValue === 'function' && window.obSetDateInputValue(inp, val)) {
+          // The focused date mask keeps its display/canonical state in sync.
+        } else if (inp.classList && inp.classList.contains('code-field') && inp._obSetCodeValue) {
           inp._obSetCodeValue(val);
         } else {
           inp.value = val;
@@ -3735,8 +3737,14 @@ function obGridColumnIds(columns) {
     // нет» и пишет NULL. Отдавать сюда «0001-01-01» нельзя — это уже значение.
     this.serializeValue = function() { return input.value || ''; };
     this.applyValue = function(item, state) { item[args.column.field] = state; };
-    this.isValueChanged = function() { return String(input.value) !== String(defaultValue); };
+    this.isValueChanged = function() {
+      if (typeof window.obCommitDateInput === 'function' && !window.obCommitDateInput(input)) return true;
+      return String(input.value) !== String(defaultValue);
+    };
     this.validate = function() {
+      if (typeof window.obCommitDateInput === 'function' && !window.obCommitDateInput(input)) {
+        return {valid:false, msg:input.validationMessage};
+      }
       // Браузер сам не пускает в datetime-local произвольный текст, но
       // значение может прийти вставкой. Пустое допустимо — это очистка.
       if (input.value === '' || obManagedSplitDate(input.value)) return {valid: true, msg: null};

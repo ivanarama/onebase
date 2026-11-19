@@ -1,0 +1,30 @@
+schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: ПлотнаяФорма
+  density: compact
+attributes:
+  - name: Объект
+    type: DocumentRef.ПлотнаяФорма
+    save: true
+    main: true
+elements:
+  - kind: ГруппаФормы
+    name: Group
+    title: {ru: Группа}
+    children:
+      - kind: ГруппаФормы
+        name: Nested
+        title: {ru: Вложенная группа}
+        children:
+          - kind: ПолеВвода
+            name: NestedText
+            data_path: Объект.Текст
+  - kind: Страница
+    name: Page
+    title: {ru: Отдельная страница}
+    children:
+      - kind: ПолеВвода
+        name: PageText
+        data_path: Объект.Текст
