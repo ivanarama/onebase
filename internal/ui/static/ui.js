@@ -1908,7 +1908,30 @@ function obEnsureListRovingTabindex(root) {
 // узнал бы, что она есть. Атрибут disabled тоже не годится: браузер гасит на
 // нём клик, и объяснить причину было бы негде.
 function listSyncActionsBtn() {
-  var on = !!listSel();
+  var row = listSel();
+  var on = !!row;
+  document.querySelectorAll('[data-ob-list-command]').forEach(function (control) {
+    var button = control.querySelector('button');
+    if (!button) return;
+    var command = control.dataset.obListCommand;
+    var label = control.dataset.obCommandLabel;
+    var denied = control.dataset.obCommandDenied === '1';
+    var reason = denied ? obListLabel('noPermission', 'Недостаточно прав') : '';
+    if (!reason && !row) reason = obListLabel('selectRowFirst', 'Сначала выберите строку списка');
+    if (command === 'mark' && row) {
+      var marked = row.dataset.marked === '1';
+      label = marked ? obListLabel('unmarkDelete', 'Снять пометку на удаление') : label;
+      var trash = button.querySelector('use');
+      if (trash) trash.setAttribute('href', trash.getAttribute('href').split('#')[0] + (marked ? '#rotate-ccw' : '#trash-2'));
+      if (!reason && !obListCanMarkDelete(row)) {
+        reason = label;
+        if (row.dataset.predefined === '1') reason = obListLabel('predefinedNoDelete', 'Предопределённый — нельзя удалить');
+      }
+    }
+    button.disabled = !!reason;
+    button.setAttribute('aria-label', label);
+    control.title = reason || label;
+  });
   document.querySelectorAll('[data-ob-list-actions]').forEach(function (b) {
     b.setAttribute('aria-disabled', on ? 'false' : 'true');
     b.title = on
@@ -2097,7 +2120,7 @@ function obListCurrentRow() {
 
 function obListCanMarkDelete(row) {
   var cfg = obListConfig();
-  return !!(row && row.dataset && cfg.canDelete === true &&
+  return !!(row && row.dataset && (cfg.canMark === true || cfg.canDelete === true) &&
     row.dataset.predefined !== '1' && String(obRowUrl(row, 'mark') || '').trim());
 }
 
@@ -2597,7 +2620,7 @@ function makeTreeRow(row) {
   tr.setAttribute('aria-selected', 'false');
   var rowShortcuts = 'ArrowUp ArrowDown Enter F2';
   if (row.copy_url) rowShortcuts += ' F9';
-  if (obListConfig().canDelete === true && !row.predefined && row.mark_url) rowShortcuts += ' Delete';
+  if ((obListConfig().canMark === true || obListConfig().canDelete === true) && !row.predefined && row.mark_url) rowShortcuts += ' Delete';
   tr.setAttribute('aria-keyshortcuts', rowShortcuts);
   var cells = row.cells || [];
   var treeCell = row.tree_cell || 0;
@@ -2692,7 +2715,7 @@ function listMenuItems(tr) {
       items.push({ label: labels.activityHide || 'Скрыть из выбора', fn: function () { listSubmit(obRowUrl(tr, 'activityHide'), labels.activityHideConfirm || 'Скрыть из выбора?'); } });
     }
   }
-  if (cfg.canDelete) {
+  if (cfg.canMark || cfg.canDelete) {
     if (!isPredefined) {
       items.push({ label: labels.markDelete || 'Пометить на удаление', danger: true, fn: function () { listSubmit(obRowUrl(tr, 'mark'), labels.markDeleteConfirm || 'Пометить на удаление?'); } });
     } else {
@@ -2702,7 +2725,7 @@ function listMenuItems(tr) {
   if (cfg.canUnpost && tr.dataset.posted === '1') {
     items.push({ label: labels.unpost || 'Отменить проведение', fn: function () { listSubmit(obRowUrl(tr, 'unpost'), labels.unpostConfirm || 'Отменить проведение?'); } });
   }
-  if (cfg.canDelete && tr.dataset.marked === '1' && !isPredefined) {
+  if ((cfg.canMark || cfg.canDelete) && tr.dataset.marked === '1' && !isPredefined) {
     items.push({ label: labels.unmarkDelete || 'Снять пометку на удаление', fn: function () { listSubmit(obRowUrl(tr, 'unmark'), labels.unmarkDeleteConfirm || 'Снять пометку на удаление?'); } });
   }
   if (cfg.isAdmin && !isPredefined) {
@@ -2782,7 +2805,7 @@ function listMenuNoSel() {
   if (Array.isArray(cfg.basedOn) && cfg.basedOn.length) {
     items.push({ label: labels.basedOn || 'Ввести на основании', disabled: true });
   }
-  if (cfg.canDelete) items.push({ label: labels.markDelete || 'Пометить на удаление', disabled: true });
+  if (cfg.canMark || cfg.canDelete) items.push({ label: labels.markDelete || 'Пометить на удаление', disabled: true });
   if (cfg.canUnpost) items.push({ label: labels.unpost || 'Отменить проведение', disabled: true });
   return items;
 }
@@ -2909,6 +2932,16 @@ function obInitListDelegates() {
   window.__obListDelegates = true;
   document.addEventListener('click', function (e) {
     if (!e.target.closest) return;
+    var command = e.target.closest('[data-ob-list-command]');
+    if (command && command.dataset.obListCommand === 'mark') {
+      var row = listSel();
+      if (command.dataset.obCommandDenied === '1' || !obListCanMarkDelete(row)) return;
+      var marked = row.dataset.marked === '1';
+      listSubmit(obRowUrl(row, marked ? 'unmark' : 'mark'), marked
+        ? obListLabel('unmarkDeleteConfirm', 'Снять пометку на удаление?')
+        : obListLabel('markDeleteConfirm', 'Пометить на удаление?'));
+      return;
+    }
     var actions = e.target.closest('[data-ob-list-actions]');
     if (actions) {
       listActionsBtnClick(e, actions);

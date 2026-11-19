@@ -1636,6 +1636,12 @@ tr:hover td{background:#f8fafc}
 .btn-primary{background:#3b82f6;color:#fff}.btn-primary:hover{background:#2563eb}
 .btn-post{background:#e8b400;color:#1a1a1a;font-weight:700}.btn-post:hover{background:#d4a200}
 .btn-secondary{background:#e2e8f0;color:#374151}.btn-secondary:hover{background:#cbd5e1}
+.entity-command-group{display:inline-flex;align-items:center;gap:5px}
+.entity-command{display:inline-flex;align-items:center}
+.btn.btn-command{display:inline-flex;align-items:center;justify-content:center;width:34px;height:33px;padding:0;font-size:18px}
+.btn.btn-command:disabled{background:#e2e8f0;color:#475569;opacity:.68;pointer-events:none}
+.dark .btn.btn-command:disabled,[data-theme="dark"] .btn.btn-command:disabled{background:#334155;color:#cbd5e1}
+
 .btn-cancel{background:transparent;color:#64748b;border:1px solid #e2e8f0}.btn-cancel:hover{background:#f1f5f9}
 .btn-sm{padding:5px 12px;font-size:13px}
 /* Кнопка, которой сейчас нечего делать (нет выбранной строки списка): гасим вид,
@@ -2148,11 +2154,33 @@ const tplList = `
 <a class="btn btn-secondary btn-sm" data-ob-list-refresh href="{{.URL}}" title="{{t .Lang "Обновить"}}">🔄 {{t .Lang "Обновить"}}</a>
 {{end}}
 
+
+{{define "entity-command"}}
+<span class="entity-command" title="{{.Title}}"{{if .ListCommand}} data-ob-list-command="{{.ListCommand}}" data-ob-command-denied="{{if not .Allowed}}1{{end}}" data-ob-command-label="{{.Label}}"{{end}}>
+  {{if and .Href .Allowed}}<a class="btn btn-command {{.Class}}" href="{{.Href}}" aria-label="{{.Label}}"{{if .Create}} data-ob-list-create aria-keyshortcuts="Insert"{{end}}>{{lucideIcon .Icon}}</a>
+  {{else}}<button class="btn btn-command {{.Class}}" aria-label="{{.Label}}"{{if .Form}} type="submit" form="{{.Form}}"{{else}} type="button"{{end}}{{if or (not .Allowed) .ListCommand}} disabled{{end}}>{{lucideIcon .Icon}}</button>{{end}}
+</span>
+{{end}}
+
+{{define "entity-form-mark-command"}}
+{{if not .IsNew}}
+  {{$marked := eq (index .Values "deletion_mark") "true"}}
+  {{$label := t .Lang "Пометить на удаление"}}
+  {{$param := "1"}}{{$icon := "trash-2"}}
+  {{if $marked}}{{$label = t .Lang "Снять пометку на удаление"}}{{$param = "0"}}{{$icon = "rotate-ccw"}}{{end}}
+  <form id="form-mark-command" action="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/{{.ID}}/delete?mark={{$param}}" method="POST"></form>
+  {{template "entity-command" (dict "Icon" $icon "Class" "btn-secondary" "Form" "form-mark-command" "Allowed" .CanMark "Label" $label "Title" (or (and .CanMark $label) (t .Lang "Недостаточно прав")))}}
+{{end}}
+{{end}}
+
 {{define "page-list"}}
 {{template "head" .}}{{template "nav" .}}
 <main class="main-list">
+<h2>{{.Entity.DisplayName $.Lang}}</h2>
 <div class="row-top">
-  <h2>{{.Entity.DisplayName $.Lang}}</h2>
+  <div class="entity-command-group" role="group" aria-label="{{t .Lang "Действия"}}">
+    {{template "entity-command" (dict "Icon" "trash-2" "Class" "btn-secondary" "ListCommand" "mark" "Allowed" .CanMark "Label" (t .Lang "Пометить на удаление") "Title" (or (and .CanMark (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
+  </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     {{template "list-refresh" (dict "URL" .RequestURI "Lang" $.Lang)}}
     <div class="view-switch">
@@ -2314,7 +2342,7 @@ const tplList = `
 </tr></thead><tbody>
 {{range .TreeRows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}{{$depth := index $row "_depth"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
-  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanMark (not (index $row "_is_predefined"))}} Delete{{end}}"
   data-ob-entity-id="{{index $row "id"}}"
   data-tree-id="{{index $row "id"}}"
   data-tree-depth="{{$depth}}"
@@ -2369,7 +2397,7 @@ const tplList = `
 >
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <div class="tile-card{{if index $row "deletion_mark"}} tile-deleted{{end}}"
-  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}" role="option"
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanMark (not (index $row "_is_predefined"))}} Delete{{end}}" role="option"
   data-ob-entity-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
@@ -2426,7 +2454,7 @@ const tplList = `
 >
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
-  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanMark (not (index $row "_is_predefined"))}} Delete{{end}}"
   data-ob-entity-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
@@ -2488,6 +2516,7 @@ const tplList = `
   "isAdmin" .IsAdmin
   "canWrite" .CanWrite
   "canDelete" .CanDelete
+  "canMark" .CanMark
   "canUnpost" .CanUnpost
   "basedOn" .BasedOnActions
   "treeEntity" .Entity.Name
@@ -2505,6 +2534,7 @@ const tplList = `
     "activityHide" (t $.Lang "Скрыть из выбора")
     "activityHideConfirm" (t $.Lang "Скрыть из выбора?")
     "markDelete" (t $.Lang "Пометить на удаление")
+    "noPermission" (t $.Lang "Недостаточно прав")
     "markDeleteConfirm" "Пометить на удаление?"
     "predefinedNoDelete" (t $.Lang "Предопределённый — нельзя удалить")
     "unpost" (t $.Lang "Отменить проведение")
@@ -2542,6 +2572,7 @@ const tplForm = `
 {{if not .IsPopup}}
 {{/* Top toolbar */}}
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+  {{if not .IsNew}}<div class="entity-command-group" role="group" aria-label="{{t .Lang "Действия"}}">{{template "entity-form-mark-command" .}}</div>{{end}}
   {{if .Entity.Posting}}
     {{if not .IsNew}}
       {{if eq (index .Values "posted") "true"}}
@@ -2561,11 +2592,6 @@ const tplForm = `
         {{if $.CanUnpost}}<button class="btn btn-sm" style="background:#e2e8f0;color:#374151" form="form-unpost" type="submit">{{t $.Lang "Отменить проведение"}}</button>{{end}}
       {{end}}
     {{end}}
-  {{end}}
-  {{if and .CanDelete (not .IsNew) (eq (index .Values "deletion_mark") "true")}}
-    <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/delete?mark=0" style="display:inline">
-      <button class="btn btn-sm btn-secondary" type="submit">{{t $.Lang "Снять пометку на удаление"}}</button>
-    </form>
   {{end}}
   {{if not .IsNew}}
     {{/* Копия открывается формой создания: пока её не записали, в базе ничего
@@ -2605,10 +2631,10 @@ const tplForm = `
       </div>
     </div>
     {{end}}
-    {{if .CanDelete}}
+    {{if and .CanDelete .IsAdmin}}
     <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/delete"
-          data-ob-confirm="{{if .IsAdmin}}{{t $.Lang "Удалить запись навсегда?"}}{{else}}{{t $.Lang "Пометить запись на удаление?"}}{{end}}" style="margin-left:auto">
-      <button class="btn btn-danger btn-sm" type="submit">{{if .IsAdmin}}{{t $.Lang "Удалить"}}{{else}}{{t $.Lang "Пометить на удаление"}}{{end}}</button>
+          data-ob-confirm="{{t $.Lang "Удалить запись навсегда?"}}" style="margin-left:auto">
+      <button class="btn btn-danger btn-sm" type="submit">{{t $.Lang "Удалить"}}</button>
     </form>
     {{end}}
   {{end}}

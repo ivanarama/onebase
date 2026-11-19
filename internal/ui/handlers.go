@@ -813,6 +813,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		if _, ok := data["CanDelete"]; !ok {
 			data["CanDelete"] = s.can(r, kind, ent.Name, "delete")
 		}
+		data["CanMark"] = s.can(r, kind, ent.Name, "delete") || s.can(r, kind, ent.Name, "mark")
 		if _, ok := data["CanPost"]; !ok {
 			data["CanPost"] = s.can(r, kind, ent.Name, "post")
 		}

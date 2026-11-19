@@ -2139,6 +2139,12 @@ func (s *Server) markForDeletion(ctx context.Context, entity *metadata.Entity, i
 				if res.DSLError != "" {
 					return &markRefusedError{message: res.DSLError}
 				}
+			} else {
+				// Старые импорты могли оставить движения у непроведённого документа.
+				empty := runtime.NewMovementsCollector(entity.Name, id)
+				if err := s.entityService().ReplaceMovements(txCtx, entity.Name, id, empty); err != nil {
+					return err
+				}
 			}
 		}
 		if err := s.store.MarkForDeletion(txCtx, entity.Name, id, mark); err != nil {
@@ -2333,7 +2339,13 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 	if entity == nil {
 		return
 	}
-	if !s.requirePerm(w, r, string(entity.Kind), entity.Name, "delete") {
+	markParam := r.URL.Query().Get("mark")
+	kind := string(entity.Kind)
+	op := "delete"
+	if (markParam == "0" || markParam == "1") && !s.can(r, kind, entity.Name, op) {
+		op = "mark"
+	}
+	if !s.requirePerm(w, r, kind, entity.Name, op) {
 		return
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -2341,13 +2353,12 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", 400)
 		return
 	}
-	if !s.rowAllowedID(w, r, entity, "delete", id) {
+	if !s.rowAllowedID(w, r, entity, op, id) {
 		return
 	}
 
 	user := auth.UserFromContext(r.Context())
 	isAdmin := user == nil || user.IsAdmin // no auth configured → treat as admin
-	markParam := r.URL.Query().Get("mark")
 
 	// Снятие пометки на удаление (mark=0) — без возврата проведения.
 	if markParam == "0" {

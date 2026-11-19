@@ -710,6 +710,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
   {{if .IsProcessor}}
   {{/* Кнопка «Выполнить» скрыта: managed-форма использует свои кнопки (Предпросмотр, Записать, ЗаписатьИПровести) */}}
   {{else}}
+  <div class="entity-command-group" role="group" aria-label="{{t .Lang "Действия"}}">{{template "entity-form-mark-command" .}}</div>
   {{if .Entity.Posting}}
     {{if not .IsNew}}
       {{if eq (index .Values "posted") "true"}}
@@ -728,11 +729,6 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
         {{if $.CanUnpost}}<button class="btn btn-sm" style="background:#e2e8f0;color:#374151" form="form-unpost" type="submit">{{t $.Lang "Отменить проведение"}}</button>{{end}}
       {{end}}
     {{end}}
-  {{end}}
-  {{if and .CanDelete (not .IsNew) (eq (index .Values "deletion_mark") "true")}}
-    <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/delete?mark=0" style="display:inline">
-      <button class="btn btn-sm btn-secondary" type="submit">{{t $.Lang "Снять пометку на удаление"}}</button>
-    </form>
   {{end}}
   {{if not .IsNew}}
     {{/* См. комментарий в автогенерируемой карточке: копия — это форма
@@ -771,10 +767,10 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
       </div>
     </div>
     {{end}}
-    {{if and .CanDelete (not (deleteHidden .Form))}}
+    {{if and .CanDelete .IsAdmin (not (deleteHidden .Form))}}
     <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/delete"
-          data-ob-confirm="{{if .IsAdmin}}Удалить запись навсегда?{{else}}Пометить запись на удаление?{{end}}" style="margin-left:auto">
-      <button class="btn btn-danger btn-sm" type="submit">{{if .IsAdmin}}Удалить{{else}}Пометить на удаление{{end}}</button>
+          data-ob-confirm="{{t $.Lang "Удалить запись навсегда?"}}" style="margin-left:auto">
+      <button class="btn btn-danger btn-sm" type="submit">{{t $.Lang "Удалить"}}</button>
     </form>
     {{end}}
   {{end}}
