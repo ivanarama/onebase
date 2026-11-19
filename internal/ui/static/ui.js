@@ -1798,6 +1798,7 @@ function obRowUrl(row, kind) {
     case 'mark': return item + '/delete?mark=1';
     case 'unmark': return item + '/delete?mark=0';
     case 'del': return item + '/delete';
+    case 'post': return item + '/post?from_list=1';
     case 'unpost': return item + '/unpost';
     case 'activityShow': return item + '/activity?active=1';
     case 'activityHide': return item + '/activity?active=0';
@@ -1928,6 +1929,8 @@ function listSyncActionsBtn() {
         if (row.dataset.predefined === '1') reason = obListLabel('predefinedNoDelete', 'Предопределённый — нельзя удалить');
       }
     }
+    if (!reason && command === 'post' && row.dataset.marked === '1') reason = obListLabel('postMarked', 'Документ помечен на удаление');
+    if (!reason && command === 'unpost' && row.dataset.posted !== '1') reason = obListLabel('notPosted', 'Не проведён');
     button.disabled = !!reason;
     button.setAttribute('aria-label', label);
     control.title = reason || label;
@@ -2937,13 +2940,24 @@ function obInitListDelegates() {
   document.addEventListener('click', function (e) {
     if (!e.target.closest) return;
     var command = e.target.closest('[data-ob-list-command]');
-    if (command && command.dataset.obListCommand === 'mark') {
+    if (command) {
       var row = listSel();
-      if (command.dataset.obCommandDenied === '1' || !obListCanMarkDelete(row)) return;
-      var marked = row.dataset.marked === '1';
-      listSubmit(obRowUrl(row, marked ? 'unmark' : 'mark'), marked
-        ? obListLabel('unmarkDeleteConfirm', 'Снять пометку на удаление?')
-        : obListLabel('markDeleteConfirm', 'Пометить на удаление?'));
+      var button = command.querySelector('button');
+      if (!row || !button || button.disabled) return;
+      switch (command.dataset.obListCommand) {
+        case 'mark':
+          var marked = row.dataset.marked === '1';
+          listSubmit(obRowUrl(row, marked ? 'unmark' : 'mark'), marked
+            ? obListLabel('unmarkDeleteConfirm', 'Снять пометку на удаление?')
+            : obListLabel('markDeleteConfirm', 'Пометить на удаление?'));
+          break;
+        case 'post':
+          listSubmit(obRowUrl(row, 'post'), obListLabel('postConfirm', 'Провести документ?'));
+          break;
+        case 'unpost':
+          listSubmit(obRowUrl(row, 'unpost'), obListLabel('unpostConfirm', 'Отменить проведение?'));
+          break;
+      }
       return;
     }
     var actions = e.target.closest('[data-ob-list-actions]');

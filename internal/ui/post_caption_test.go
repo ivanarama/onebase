@@ -33,6 +33,9 @@ func formActionButtonLabel(t *testing.T, body, action string) (string, bool) {
 				attrs[attr.Key] = attr.Val
 			}
 			if attrs["name"] == "_action" && attrs["value"] == action {
+				if label := attrs["aria-label"]; label != "" {
+					return label, true
+				}
 				var label strings.Builder
 				text(node, &label)
 				return strings.Join(strings.Fields(label.String()), " "), true

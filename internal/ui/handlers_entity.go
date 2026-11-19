@@ -2113,6 +2113,10 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	// форму, REST и DSL. Симметрично unpostDocument/удалению.
 	s.publishDocChange(r.Context(), entity, id, "проведён", nil)
 	s.dispatchDocWebhook(r.Context(), "document.post", entity, id, obj.Fields)
+	if r.URL.Query().Get("from_list") == "1" {
+		http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, docURL, http.StatusSeeOther)
 }
 

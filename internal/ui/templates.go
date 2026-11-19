@@ -1643,6 +1643,8 @@ tr:hover td{background:#f8fafc}
 .entity-command-group{display:inline-flex;align-items:center;gap:5px}
 .entity-command{display:inline-flex;align-items:center}
 .btn.btn-command{display:inline-flex;align-items:center;justify-content:center;width:34px;height:33px;padding:0;font-size:18px}
+.btn-document-post{background:#15803d;color:#fff}.btn-document-post:hover{background:#166534}
+.btn-document-unpost{background:#fcd34d;color:#422006}.btn-document-unpost:hover{background:#fbbf24}
 .btn.btn-command:disabled{background:#e2e8f0;color:#475569;opacity:.68;pointer-events:none}
 .dark .btn.btn-command:disabled,[data-theme="dark"] .btn.btn-command:disabled{background:#334155;color:#cbd5e1}
 
@@ -2162,8 +2164,22 @@ const tplList = `
 {{define "entity-command"}}
 <span class="entity-command" title="{{.Title}}"{{if .ListCommand}} data-ob-list-command="{{.ListCommand}}" data-ob-command-denied="{{if not .Allowed}}1{{end}}" data-ob-command-label="{{.Label}}"{{end}}>
   {{if and .Href .Allowed}}<a class="btn btn-command {{.Class}}" href="{{.Href}}" aria-label="{{.Label}}"{{if .Create}} data-ob-list-create aria-keyshortcuts="Insert"{{end}}>{{lucideIcon .Icon}}</a>
-  {{else}}<button class="btn btn-command {{.Class}}" aria-label="{{.Label}}"{{if .Form}} type="submit" form="{{.Form}}"{{else}} type="button"{{end}}{{if or (not .Allowed) .ListCommand}} disabled{{end}}>{{lucideIcon .Icon}}</button>{{end}}
+  {{else}}<button class="btn btn-command {{.Class}}" aria-label="{{.Label}}"{{if .Name}} name="{{.Name}}" value="{{.Value}}"{{end}}{{if .Form}} type="submit" form="{{.Form}}"{{else}} type="button"{{end}}{{if or (not .Allowed) .ListCommand}} disabled{{end}}>{{lucideIcon .Icon}}</button>{{end}}
 </span>
+{{end}}
+
+{{define "document-form-post-commands"}}
+{{if .Entity.Posting}}
+  {{$post := or .Entity.PostCaption (t .Lang "Провести")}}
+  {{$unpost := t .Lang "Отменить проведение"}}
+  {{$marked := eq (index .Values "deletion_mark") "true"}}
+  {{$posted := and (not .IsNew) (eq (index .Values "posted") "true")}}
+  {{$postTitle := $post}}{{$unpostTitle := $unpost}}
+  {{if not .CanPost}}{{$postTitle = t .Lang "Недостаточно прав"}}{{else if $marked}}{{$postTitle = t .Lang "Документ помечен на удаление"}}{{end}}
+  {{if not .CanUnpost}}{{$unpostTitle = t .Lang "Недостаточно прав"}}{{else if not $posted}}{{$unpostTitle = t .Lang "Не проведён"}}{{end}}
+  {{template "entity-command" (dict "Icon" "circle-check" "Class" "btn-document-post" "Form" "main-form" "Name" "_action" "Value" "post" "Allowed" (and .CanPost (not $marked)) "Label" $post "Title" $postTitle)}}
+  {{template "entity-command" (dict "Icon" "undo-2" "Class" "btn-document-unpost" "Form" "form-unpost" "Allowed" (and .CanUnpost $posted) "Label" $unpost "Title" $unpostTitle)}}
+{{end}}
 {{end}}
 
 {{define "entity-form-mark-command"}}
@@ -2204,6 +2220,14 @@ const tplList = `
 <div class="row-top">
   {{if .LegacyEntityUI}}<h2>{{.Entity.DisplayName $.Lang}}</h2>{{else}}
   <div class="entity-command-group" role="group" aria-label="{{t .Lang "Действия"}}">
+    {{$newURL := printf "/ui/%s/%s/new%s" (lower (str .Entity.Kind)) (lower .Entity.Name) (listURL nil "parent" (str .ParentStr) "subsystem" (str .CurrentSubsystem))}}
+    {{$create := t .Lang "Создать"}}
+    {{template "entity-command" (dict "Icon" "plus" "Class" "btn-primary" "Create" true "Href" $newURL "Allowed" .CanCreate "Label" $create "Title" (or (and .CanCreate $create) (t .Lang "Недостаточно прав")))}}
+    {{if .Entity.Posting}}
+      {{$post := or .Entity.PostCaption (t .Lang "Провести")}}
+      {{template "entity-command" (dict "Icon" "circle-check" "Class" "btn-document-post" "ListCommand" "post" "Allowed" .CanPost "Label" $post "Title" (or (and .CanPost (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
+      {{template "entity-command" (dict "Icon" "undo-2" "Class" "btn-document-unpost" "ListCommand" "unpost" "Allowed" .CanUnpost "Label" (t .Lang "Отменить проведение") "Title" (or (and .CanUnpost (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
+    {{end}}
     {{template "entity-command" (dict "Icon" "trash-2" "Class" "btn-secondary" "ListCommand" "mark" "Allowed" .CanMark "Label" (t .Lang "Пометить на удаление") "Title" (or (and .CanMark (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
   </div>
   {{end}}
@@ -2241,11 +2265,11 @@ const tplList = `
     {{if .Entity.Hierarchical}}
       {{if .UpURL}}<a class="btn btn-secondary btn-sm" href="{{.UpURL}}">{{t $.Lang "↑ Наверх"}}</a>{{end}}
       {{if .CanCreate}}
-      <a class="btn btn-primary" data-ob-list-create title="Insert" aria-keyshortcuts="Insert" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?{{if .ParentStr}}parent={{.ParentStr}}&{{end}}subsystem={{$.CurrentSubsystem}}">{{t $.Lang "+ Элемент"}}</a>
+      {{if .LegacyEntityUI}}<a class="btn btn-primary" data-ob-list-create title="Insert" aria-keyshortcuts="Insert" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?{{if .ParentStr}}parent={{.ParentStr}}&{{end}}subsystem={{$.CurrentSubsystem}}">{{t $.Lang "+ Элемент"}}</a>{{end}}
       <a class="btn btn-secondary" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?is_folder=true{{if .ParentStr}}&parent={{.ParentStr}}{{end}}">{{t $.Lang "📁 Группа"}}</a>
       {{end}}
     {{else}}
-      {{if .CanCreate}}<a class="btn btn-primary" data-ob-list-create title="Insert" aria-keyshortcuts="Insert" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "+ Создать"}}</a>{{end}}
+      {{if and .LegacyEntityUI .CanCreate}}<a class="btn btn-primary" data-ob-list-create title="Insert" aria-keyshortcuts="Insert" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "+ Создать"}}</a>{{end}}
     {{end}}
     {{/* На свежем списке строка не выбрана — кнопка приходит с сервера уже
          приглушённой, дальше её состояние ведёт ui.js по выделению. */}}
@@ -2570,6 +2594,9 @@ const tplList = `
     "predefinedNoDelete" (t $.Lang "Предопределённый — нельзя удалить")
     "unpost" (t $.Lang "Отменить проведение")
     "unpostConfirm" (t $.Lang "Отменить проведение?")
+    "postConfirm" (t $.Lang "Провести документ?")
+    "postMarked" (t $.Lang "Документ помечен на удаление")
+    "notPosted" (t $.Lang "Не проведён")
     "unmarkDelete" (t $.Lang "Снять пометку на удаление")
     "unmarkDeleteConfirm" (t $.Lang "Снять пометку на удаление?")
     "deleteForever" (t $.Lang "Удалить навсегда")
@@ -2604,7 +2631,12 @@ const tplForm = `
 {{/* Top toolbar */}}
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
   {{if not .LegacyEntityUI}}
-  {{if not .IsNew}}<div class="entity-command-group" role="group" aria-label="{{t .Lang "Действия"}}">{{template "entity-form-mark-command" .}}</div>{{end}}
+  {{if or .Entity.Posting (not .IsNew)}}
+    <div class="entity-command-group" role="group" aria-label="{{t .Lang "Действия"}}">
+      {{template "document-form-post-commands" .}}
+      {{template "entity-form-mark-command" .}}
+    </div>
+  {{end}}
   {{end}}
   {{if .Entity.Posting}}
     {{if not .IsNew}}
@@ -2616,10 +2648,10 @@ const tplForm = `
     {{end}}
   {{end}}
   {{if .CanWrite}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form" title="Ctrl+S" aria-keyshortcuts="Control+S">{{t $.Lang "Записать"}}</button>{{end}}
-  {{if .Entity.Posting}}
+  {{if and .LegacyEntityUI .Entity.Posting}}
     {{if ne (index .Values "deletion_mark") "true"}}
       {{if $.CanPost}}<button class="btn btn-primary" type="submit" name="_action" value="post" form="main-form">{{if $.Entity.PostCaption}}{{$.Entity.PostCaption}}{{else}}{{t $.Lang "Провести"}}{{end}}</button>{{end}}
-      {{if $.LegacyEntityUI}}{{if and $.CanPost (not $.Entity.PostAndCloseHidden)}}<button class="btn btn-post" type="submit" name="_action" value="post_and_close" form="main-form" title="Ctrl+Enter" aria-keyshortcuts="Control+Enter">{{if $.Entity.PostCaption}}{{$.Entity.PostCaption}} и закрыть{{else}}{{t $.Lang "Провести и закрыть"}}{{end}}</button>{{end}}{{end}}
+      {{if and $.CanPost (not $.Entity.PostAndCloseHidden)}}<button class="btn btn-post" type="submit" name="_action" value="post_and_close" form="main-form" title="Ctrl+Enter" aria-keyshortcuts="Control+Enter">{{if $.Entity.PostCaption}}{{$.Entity.PostCaption}} и закрыть{{else}}{{t $.Lang "Провести и закрыть"}}{{end}}</button>{{end}}
     {{end}}
     {{if not .IsNew}}
       {{if eq (index .Values "posted") "true"}}

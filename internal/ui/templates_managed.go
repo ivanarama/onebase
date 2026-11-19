@@ -711,7 +711,12 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
   {{/* Кнопка «Выполнить» скрыта: managed-форма использует свои кнопки (Предпросмотр, Записать, ЗаписатьИПровести) */}}
   {{else}}
   {{if not .LegacyEntityUI}}
-  <div class="entity-command-group" role="group" aria-label="{{t .Lang "Действия"}}">{{template "entity-form-mark-command" .}}</div>
+  {{if or .Entity.Posting (not .IsNew)}}
+    <div class="entity-command-group" role="group" aria-label="{{t .Lang "Действия"}}">
+      {{template "document-form-post-commands" .}}
+      {{template "entity-form-mark-command" .}}
+    </div>
+  {{end}}
   {{end}}
   {{if .Entity.Posting}}
     {{if not .IsNew}}
@@ -722,10 +727,10 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
       {{end}}
     {{end}}
   {{end}}
-  {{if .Entity.Posting}}
+  {{if and .LegacyEntityUI .Entity.Posting}}
     {{if ne (index .Values "deletion_mark") "true"}}
       {{if .CanPost}}<button class="btn btn-primary" type="submit" name="_action" value="post" form="main-form">{{if .Entity.PostCaption}}{{.Entity.PostCaption}}{{else}}{{t $.Lang "Провести"}}{{end}}</button>{{end}}
-      {{if $.LegacyEntityUI}}{{if and .CanPost (not .Entity.PostAndCloseHidden)}}<button class="btn btn-post" type="button" data-ob-form-close="post" data-ob-close-reason="post_and_close" title="Ctrl+Enter" aria-keyshortcuts="Control+Enter">{{if .Entity.PostCaption}}{{.Entity.PostCaption}} и закрыть{{else}}{{t $.Lang "Провести и закрыть"}}{{end}}</button>{{end}}{{end}}
+      {{if and .CanPost (not .Entity.PostAndCloseHidden)}}<button class="btn btn-post" type="button" data-ob-form-close="post" data-ob-close-reason="post_and_close" title="Ctrl+Enter" aria-keyshortcuts="Control+Enter">{{if .Entity.PostCaption}}{{.Entity.PostCaption}} и закрыть{{else}}{{t $.Lang "Провести и закрыть"}}{{end}}</button>{{end}}
     {{end}}
     {{if not .IsNew}}
       {{if eq (index .Values "posted") "true"}}

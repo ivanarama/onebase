@@ -571,7 +571,8 @@ func TestListDeletionMark_RemovesMovementsFromReport(t *testing.T) {
 	}
 	base := "/ui/document/" + doc.Name
 	newRecord := postOne(t, dp)
-	deleteURL := base + "/" + newRecord.obj.ID.String() + "/delete"
+	documentURL := base + "/" + newRecord.obj.ID.String()
+	deleteURL := documentURL + "/delete"
 	marker := actor("read", "mark")
 	readOnly := actor("read")
 	rows := request(marker, "GET", base, http.StatusOK)
@@ -593,6 +594,29 @@ func TestListDeletionMark_RemovesMovementsFromReport(t *testing.T) {
 			t.Fatalf("отчёт по остаткам: движение видно %v, ожидалось %v: %s", has, want, body)
 		}
 	}
+	reportHasMovement(true)
+	for _, action := range []string{"post", "unpost"} {
+		if !strings.Contains(rows, `title="Недостаточно прав" data-ob-list-command="`+action+`" data-ob-command-denied="1"`) {
+			t.Fatalf("команда %s должна оставаться видна без права", action)
+		}
+		request(readOnly, "POST", documentURL+"/"+action, http.StatusForbidden)
+	}
+	poster := actor("read", "write", "post", "unpost")
+	list := request(poster, "GET", base, http.StatusOK)
+	for _, action := range []string{"post", "unpost"} {
+		if !strings.Contains(list, `data-ob-list-command="`+action+`" data-ob-command-denied=""`) {
+			t.Fatalf("нет команды %s в списке для роли с правом", action)
+		}
+	}
+	card := request(poster, "GET", documentURL, http.StatusOK)
+	if !strings.Contains(card, `aria-label="Провести" name="_action" value="post"`) ||
+		!strings.Contains(card, `aria-label="Отменить проведение" type="submit" form="form-unpost"`) ||
+		strings.Contains(card, `value="post_and_close"`) {
+		t.Fatal("карточка проводимого документа должна показывать значки проведения и отмены")
+	}
+	request(poster, "POST", documentURL+"/unpost", http.StatusSeeOther)
+	reportHasMovement(false)
+	request(poster, "POST", documentURL+"/post?from_list=1", http.StatusSeeOther)
 	reportHasMovement(true)
 	request(marker, "POST", deleteURL+"?mark=1", http.StatusSeeOther)
 	reportHasMovement(false)
