@@ -2060,6 +2060,33 @@ func TestTailMergedWindowUsesNativeDateArithmeticOnEveryWorkerOS(t *testing.T) {
 	)
 }
 
+func TestTailDurableQueueUsesThePairedCLIAndTheExistingItemProtocol(t *testing.T) {
+	var config map[string]any
+	if err := json.Unmarshal([]byte(repositoryFile(t, "pipelinectl.json")), &config); err != nil {
+		t.Fatal(err)
+	}
+	if enabled, exists := config["tail_durable_drain"]; exists && enabled != false {
+		t.Fatal("the repository default must leave durable drain disabled until paired rollout")
+	}
+
+	tail := skill(t, "tail-issues")
+	requireCompactInOrder(t, tail,
+		"`\"tail_durable_drain\": true`",
+		"pp pipelinectl --config <absolute-config> tail-discover --max-pages 5",
+		"pp pipelinectl --config <absolute-config> tail-next",
+		"Переход к поиску за 14 дней при ошибке запрещён",
+		"**Окно совместимости.**",
+		"gh pr list --state merged --base main",
+		"**Общее чтение proof для обоих источников.**",
+		"pp pipelinectl --config <absolute-config> tail-gate --number M --version <version>",
+		"актуальность находки на свежем `main`",
+		"pp pipelinectl --config <absolute-config> tail-create --number M --version <version> --item N",
+		"отдельный `gh issue create` запрещён",
+		"pp:tail-done review-comment=<id> review-updated=<RFC3339>",
+		"повтори `tail-gate --number M --version <version>`",
+	)
+}
+
 func TestTailLegacyTitleSeparatorDoesNotStopOtherPRs(t *testing.T) {
 	tail := skill(t, "tail-issues")
 	review := skill(t, "review-queue")
