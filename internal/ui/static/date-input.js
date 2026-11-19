@@ -164,7 +164,9 @@
       if (index<0) return;
       if (!selected && index<state.slots.length) state.digits[index]='';
     } else {for (var i=0; i<text.length; i++) state.digits[index++]=text[i]===' ' ? '' : text[i];}
-    draw(el,state,state.slots[index]===undefined ? state.mask.length : state.slots[index]); notify(el,state);
+    var caret=state.slots[index]===undefined ? state.mask.length : state.slots[index];
+    state.autoSeparator=text && state.slots[index-1]+1<caret ? caret : -1;
+    draw(el,state,caret); notify(el,state);
   }
   function pasted(text,type) {
     var raw=String(text).trim();
@@ -199,26 +201,20 @@
       nativePicker.add(el); if (!(typeof window.obEnterNavigateFrom==='function' && window.obEnterNavigateFrom(el))) el.blur(); return;
     }
     if (/^\d$/.test(e.key)) {e.preventDefault(); edit(el,e.key); return;}
-    var state=editing.get(el), caret=el.selectionStart||0;
+    var state=editing.get(el);
     if (state && /^[. :/]$/.test(e.key)) {
-      var separator=e.key==='/' ? '.' : e.key;
-      // A full component already moved the caret past its separator.
-      if (state.mask[caret-1]!==separator) {
+      var separator=e.key==='/' ? '.' : e.key, caret=el.selectionStart||0;
+      var implicit=caret===state.autoSeparator && state.mask[caret-1]===separator;
+      // Consume one duplicate separator after automatic advance. A subsequent
+      // explicit separator skips the next component, even if it is empty.
+      state.autoSeparator=-1;
+      if (!implicit) {
         var boundary=state.mask.indexOf(separator,caret);
         if (boundary!==-1) el.setSelectionRange(boundary+1,boundary+1);
       }
       e.preventDefault(); return;
     }
-    var state=editing.get(el), caret=el.selectionStart||0;
-    if (state && /^[. :/]$/.test(e.key)) {
-      var separator=e.key==='/' ? '.' : e.key;
-      // A full component already moved the caret past its separator.
-      if (state.mask[caret-1]!==separator) {
-        var boundary=state.mask.indexOf(separator,caret);
-        if (boundary!==-1) el.setSelectionRange(boundary+1,boundary+1);
-      }
-      e.preventDefault(); return;
-    }
+    if (state) state.autoSeparator=-1;
     if (editing.has(el) && (e.key==='Backspace' || e.key==='Delete')) {e.preventDefault(); edit(el,'',e.key==='Backspace' ? -1 : 1); return;}
     if (editing.has(el) && e.key.length===1) e.preventDefault();
   },true);

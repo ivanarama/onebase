@@ -71,6 +71,18 @@ test('typed separators preserve single-digit components',()=>{
   const c=setup('datetime-local');c.focus();c.type('5.2.2027 8:3');c.key('Enter');
   assert.equal(c.input.value,'2027-02-05T08:03:00');
 });
+for (const [input,expected] of [
+  ['5..2028 9:05','2028-11-05T09:05:00'],
+  ['05..2028 9:05','2028-11-05T09:05:00'],
+  ['16.11.2026 8::30','2026-11-16T08:00:30'],
+  ['16.11.2026 08::30','2026-11-16T08:00:30'],
+]) test('keyboard and paste preserve omitted components: '+input,()=>{
+  for (const enter of [c=>c.type(input), c=>c.paste(input)]) {
+    const c=setup('datetime-local');c.focus();enter(c);
+    assert.equal(eventData(c).get('Day'),expected);
+    c.key('Enter');assert.equal(c.input.value,expected);
+  }
+});
 for (const value of ['31022026','29022025','00112026','16132026','16110000']) test('impossible calendar date rejected: '+value,()=>{
   const c=setup();c.focus();c.type(value);c.key('Enter');assert.equal(c.input.error,'Invalid date');
 });

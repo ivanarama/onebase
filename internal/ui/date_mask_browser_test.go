@@ -159,6 +159,12 @@ func TestDateMaskBrowserReportEditing(t *testing.T) {
 		const now=new Date(), prefix=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-07T00:00';
 		return document.querySelector('input[name="Moment"]').value.startsWith(prefix);
 	})()`, "Tab did not complete date-time to midnight")
+	eval(`document.querySelector('input[name="Moment"]').focus()`)
+	key("a", 65, "", 2)
+	typeDigits("16.11.2026 8::30")
+	assertJS(`new FormData(document.querySelector('input[name="Moment"]').form).get('Moment')==='2026-11-16T08:00:30'`, "omitted minutes shifted the seconds in the request")
+	key("Enter", 13, "\r", 0)
+	assertJS(`document.querySelector('input[name="Moment"]').value==='2026-11-16T08:00:30'`, "Enter did not preserve the entered seconds")
 	if err := b.call(ctx, "", "Browser.grantPermissions", map[string]any{"origin": server.URL, "browserContextId": isolated.ID, "permissions": []string{"clipboardReadWrite", "clipboardSanitizedWrite"}}, nil); err != nil {
 		t.Fatal(err)
 	}
