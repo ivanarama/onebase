@@ -140,9 +140,9 @@ func fileMD5Fn(args []any, _ string, _ int) (any, error) {
 		if relErr != nil {
 			RaiseUserError(op + ": неверный путь к файлу")
 		}
-		file, err = root.Open(rel)
+		file, err = root.OpenFile(rel, fileMD5OpenFlags, 0)
 	} else {
-		file, err = os.Open(path) //nolint:gosec // G703: same trusted file capability as ПрочитатьФайл
+		file, err = os.OpenFile(path, fileMD5OpenFlags, 0) //nolint:gosec // G703: same trusted file capability as ПрочитатьФайл
 	}
 	if err != nil {
 		RaiseUserError(op + ": " + err.Error())
