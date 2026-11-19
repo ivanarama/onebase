@@ -105,7 +105,7 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	chronological = chronological && !feed && !treeView
 	params.ChronologicalDocuments = chronological
 	requestedPage := r.URL.Query().Get("page")
-	openLast := chronological && (requestedPage == "" || requestedPage == "last")
+	openLast := chronological && (requestedPage == "last" || requestedPage == "" && params.Sort == "")
 
 	var breadcrumbs []map[string]string
 	var parentStr string

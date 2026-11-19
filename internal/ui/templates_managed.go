@@ -48,6 +48,28 @@ func ownFormCloseButton(name, title string) bool {
 	return false
 }
 
+func hasOwnFormCloseButton(form *metadata.FormModule) bool {
+	if form == nil {
+		return false
+	}
+	found := false
+	form.Walk(func(el *metadata.FormElement) bool {
+		if el.Kind == metadata.FormElementButton && ownFormCloseButton(el.Name, el.TitleMap["ru"]) {
+			found = true
+		}
+		return !found
+	})
+	if found {
+		return true
+	}
+	for _, command := range unplacedCommands(form) {
+		if ownFormCloseButton(command.Name, command.Title["ru"]) {
+			return true
+		}
+	}
+	return false
+}
+
 // tplManagedForm — шаблон рендеринга «управляемой формы» из FormModule
 // (план 37, этап 3). В отличие от tplForm, который автоматически выводит
 // все поля Entity подряд, этот шаблон обходит дерево FormModule.Elements
@@ -633,9 +655,9 @@ input.ob-deadline-over,.form-group input.ob-deadline-over[readonly]{background:#
 .managed-vt-scroll{overflow-y:auto}
 .managed-vt-scroll>.tp-table{overflow:visible;margin-bottom:0}
 .managed-vt-scroll>.tp-table thead th{position:sticky;top:0;z-index:1}
-.ob-form-action-spacing .managed-group-horizontal>.managed-group-body:has(>.managed-btn,>.managed-btn-layout){gap:4px}
-.ob-form-action-spacing .managed-group-horizontal:has(>.managed-group-body> :is(.managed-btn,.managed-btn-layout)){margin-block:4px !important}
-.ob-form-action-spacing .managed-group-horizontal:has(>.managed-group-body> :is(.managed-btn,.managed-btn-layout)) + .managed-group-horizontal:has(>.managed-group-body> :is(.managed-btn,.managed-btn-layout)){margin-block-start:0 !important}
+.ob-form-action-spacing .managed-group-horizontal:not(.ob-equal-columns)>.managed-group-body:has(>.managed-btn,>.managed-btn-layout){gap:4px}
+.ob-form-action-spacing .managed-group-horizontal:not(.ob-equal-columns):has(>.managed-group-body> :is(.managed-btn,.managed-btn-layout)){margin-block:4px !important}
+.ob-form-action-spacing .managed-group-horizontal:not(.ob-equal-columns):has(>.managed-group-body> :is(.managed-btn,.managed-btn-layout)) + .managed-group-horizontal:has(>.managed-group-body> :is(.managed-btn,.managed-btn-layout)){margin-block-start:0 !important}
 .ob-form-action-spacing .managed-command-bar{gap:4px !important}
 .ob-form-action-spacing .btn-app-primary{background:#dbeafe;color:#1e3a8a;box-shadow:inset 0 0 0 1px #60a5fa}
 .ob-form-action-spacing .btn-app-primary:hover:not(:disabled){background:#bfdbfe}
@@ -773,7 +795,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
     <div class="entity-command-group" role="group" aria-label="{{t .Lang "Действия"}}">
       {{template "document-form-post-commands" .}}
       {{template "entity-form-copy-command" .}}
-      {{template "entity-form-mark-command" .}}
+      {{if not (deleteHidden .Form)}}{{template "entity-form-mark-command" .}}{{end}}
     </div>
   {{end}}
   {{end}}
@@ -929,7 +951,9 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
   {{if .CanWrite}}<button class="btn btn-primary" type="button" data-ob-form-close="save_and_select" data-ob-close-reason="ok" title="Ctrl+S" aria-keyshortcuts="Control+S">{{t $.Lang "Записать и выбрать"}}</button>{{end}}
   <a href="#" data-ob-ref-cancel class="btn btn-cancel">Отмена</a>
   {{else if .IsProcessor}}
+  {{if or (formActionVisible .Form "cancel") (and (not .LegacyEntityUI) (hasOwnFormCloseButton .Form))}}
   <a href="/ui/" data-ob-close-tab data-ob-close-reason="close" class="btn btn-cancel"{{if not .LegacyEntityUI}} data-ob-form-footer-close{{end}}>{{if .LegacyEntityUI}}Отмена{{else}}{{t $.Lang "Закрыть"}}{{end}}</a>
+  {{end}}
   {{else}}
   {{if and .CanWrite (formActionVisible .Form "save")}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form" title="Ctrl+S" aria-keyshortcuts="Control+S">{{t $.Lang "Записать"}}</button>{{end}}
   {{if and .CanWrite (formActionVisible .Form "ok")}}<button class="btn btn-primary" type="button" data-ob-form-close="{{if and .Entity.Posting .CanPost .Form.OKPosts (ne (index .Values "deletion_mark") "true")}}post{{else}}save{{end}}" data-ob-close-reason="ok" data-ob-close-href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}">{{t $.Lang "ОК"}}</button>{{end}}

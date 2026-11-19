@@ -331,7 +331,7 @@ func TestListRowShortcutMarkersRespectDeleteAvailability(t *testing.T) {
 func TestDynamicRowShortcutMarkersFollowRuntimeAvailability(t *testing.T) {
 	ui := string(uiJS)
 	for _, want := range []string{
-		"if (obListConfig().canDelete === true && !row.predefined && row.mark_url) rowShortcuts += ' Delete';",
+		"if ((obListConfig().canMark === true || obListConfig().canDelete === true) && !row.predefined && row.mark_url) rowShortcuts += ' Delete';",
 		"var domWritable = !!(table && !obDOMTableReadOnly(table));",
 		"if (domWritable) {",
 		"btn.title = 'Delete';",

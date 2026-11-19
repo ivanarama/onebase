@@ -270,6 +270,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"entityFormServiceFieldNames":    entityFormServiceFieldNames,
 		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
+		"hasOwnFormCloseButton":          hasOwnFormCloseButton,
 		"ownFormCloseButton":             ownFormCloseButton,
 		"appFormButtonClass":             appFormButtonClass,
 		"effectiveFormElementReadOnly":   effectiveFormElementReadOnly,
@@ -2176,7 +2177,7 @@ const tplList = `
 {{define "entity-command"}}
 <span class="entity-command" title="{{.Title}}"{{if .ListCommand}} data-ob-list-command="{{.ListCommand}}" data-ob-command-denied="{{if not .Allowed}}1{{end}}" data-ob-command-label="{{.Label}}"{{end}}>
   {{if and .Href .Allowed}}<a class="btn btn-command {{.Class}}" href="{{.Href}}" aria-label="{{.Label}}"{{if .Create}} data-ob-list-create aria-keyshortcuts="Insert"{{end}}>{{lucideIcon .Icon}}</a>
-  {{else}}<button class="btn btn-command {{.Class}}" aria-label="{{.Label}}"{{if .Name}} name="{{.Name}}" value="{{.Value}}"{{end}}{{if .Form}} type="submit" form="{{.Form}}"{{else}} type="button"{{end}}{{if or (not .Allowed) .ListCommand}} disabled{{end}}>{{lucideIcon .Icon}}</button>{{end}}
+  {{else}}<button class="btn btn-command {{.Class}}" aria-label="{{.Label}}"{{if and .Name .Allowed}} name="{{.Name}}" value="{{.Value}}"{{end}}{{if .Form}} type="submit" form="{{.Form}}"{{else}} type="button"{{end}}{{if or (not .Allowed) .ListCommand}} disabled{{end}}>{{lucideIcon .Icon}}</button>{{end}}
 </span>
 {{end}}
 
@@ -2417,7 +2418,7 @@ const tplList = `
 </tr></thead><tbody>
 {{range .TreeRows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}{{$depth := index $row "_depth"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
-  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if or $.CanCopy (and $.LegacyEntityUI $.CanWrite)}} F9{{end}}{{if and $.CanMark (not (index $row "_is_predefined"))}} Delete{{end}}"
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if or $.CanCopy (and $.LegacyEntityUI $.CanWrite)}} F9{{end}}{{if and (or $.CanMark $.CanDelete) (not (index $row "_is_predefined"))}} Delete{{end}}"
   data-ob-entity-id="{{index $row "id"}}"
   data-tree-id="{{index $row "id"}}"
   data-tree-depth="{{$depth}}"
@@ -2472,7 +2473,7 @@ const tplList = `
 >
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <div class="tile-card{{if index $row "deletion_mark"}} tile-deleted{{end}}"
-  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if or $.CanCopy (and $.LegacyEntityUI $.CanWrite)}} F9{{end}}{{if and $.CanMark (not (index $row "_is_predefined"))}} Delete{{end}}" role="option"
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if or $.CanCopy (and $.LegacyEntityUI $.CanWrite)}} F9{{end}}{{if and (or $.CanMark $.CanDelete) (not (index $row "_is_predefined"))}} Delete{{end}}" role="option"
   data-ob-entity-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
@@ -2529,7 +2530,7 @@ const tplList = `
 >
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
-  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if or $.CanCopy (and $.LegacyEntityUI $.CanWrite)}} F9{{end}}{{if and $.CanMark (not (index $row "_is_predefined"))}} Delete{{end}}"
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if or $.CanCopy (and $.LegacyEntityUI $.CanWrite)}} F9{{end}}{{if and (or $.CanMark $.CanDelete) (not (index $row "_is_predefined"))}} Delete{{end}}"
   data-ob-entity-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
