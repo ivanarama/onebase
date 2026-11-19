@@ -262,11 +262,18 @@ for (const choice of ['cancel', 'save', 'discard']) {
       await expect(frames(page)).toHaveCount(0);
     } finally { await held.finish(); }
     closes = [];
-    const source = await openForm(page, id);
+    // Duplicate the list, then navigate each independent tab to the card.
+    // Object cards themselves no longer offer the duplicate command.
+    await page.evaluate(url => window.obOpenTab(url, 'Список'), ROOT.slice(0, -1));
     await page.locator('.ob-tab-dup').click();
     await expect(frames(page)).toHaveCount(2);
+    const source = await (await frames(page).first().elementHandle()).contentFrame();
     const duplicate = await (await frames(page).last().elementHandle()).contentFrame();
-    await duplicate.waitForLoadState('domcontentloaded');
+    await Promise.all([
+      source.goto(ROOT + id, { waitUntil: 'domcontentloaded' }),
+      duplicate.goto(ROOT + id, { waitUntil: 'domcontentloaded' }),
+    ]);
+    await expect(page.locator('.ob-tab-dup')).toHaveCount(0);
     const draft = `UNSAVED-DUPLICATE-DRAFT-2429-${choice}`;
     await duplicate.locator('input[name="Наименование"]').fill(draft);
     await page.locator('.ob-tab').first().click();
