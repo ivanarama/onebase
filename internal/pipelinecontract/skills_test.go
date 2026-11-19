@@ -2080,7 +2080,7 @@ func TestTailDurableQueueUsesThePairedCLIAndTheExistingItemProtocol(t *testing.T
 		"**Общее чтение proof для обоих источников.**",
 		"pp pipelinectl --config <absolute-config> tail-gate --number M --version <version>",
 		"актуальность находки на свежем `main`",
-		"pp pipelinectl --config <absolute-config> tail-create --number M --version <version> --item N",
+		"pp pipelinectl --config <absolute-config> tail-create --number M --version <version> --item N --context-file <absolute-path>",
 		"отдельный `gh issue create` запрещён",
 		"pp:tail-done review-comment=<id> review-updated=<RFC3339>",
 		"повтори `tail-gate --number M --version <version>`",
