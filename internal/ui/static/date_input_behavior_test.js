@@ -8,7 +8,7 @@ function setup(type='date', value='') {
   const labels={invalid:'Invalid date',incompleteDate:'Complete date required',incompleteDatetime:'Complete date and time required'};
   const document={activeElement:null,getElementById(){return {textContent:JSON.stringify(labels)};},addEventListener(k,fn){(handlers[k]??=[]).push(fn);}};
   const window={};
-  const input={tagName:'INPUT',type,value,disabled:false,readOnly:false,required:false,error:'',selectionStart:0,selectionEnd:0,
+  const input={tagName:'INPUT',name:'Day',type,value,disabled:false,readOnly:false,required:false,error:'',selectionStart:0,selectionEnd:0,
     setCustomValidity(v){this.error=v;},get validationMessage(){return this.error;},reportValidity(){this.reported=true;},
     getAttribute(k){return attributes[k]??null;},setAttribute(k,v){attributes[k]=String(v);},removeAttribute(k){delete attributes[k];},
     setSelectionRange(a,b){this.selectionStart=a;this.selectionEnd=b;},select(){this.setSelectionRange(0,this.value.length);},
@@ -20,7 +20,10 @@ function setup(type='date', value='') {
     for (const f of handlers[k]||[]) f(e);
     return e;
   }
-  vm.runInNewContext(code,{document,window,Date,WeakMap,WeakSet,Event:class {constructor(type){this.type=type;}}});
+  class LocalDate extends Date {
+    constructor(...args) { super(...(args.length ? args : [2026, 10, 19, 12])); }
+  }
+  vm.runInNewContext(code,{document,window,Date:LocalDate,WeakMap,WeakSet,Event:class {constructor(type){this.type=type;}}});
   function key(key,extra={}) {return fire('keydown',{key,...extra});}
   return {input,events,window,focus(){input.focus();},key,fire,
     type(text){for(const ch of text)key(ch);},
@@ -37,8 +40,36 @@ test('digits insert dots and advance over separators',()=>{
   c.type('2026');const e=c.key('Enter');assert.equal(c.input.value,'2026-11-16');assert.equal(c.input.type,'date');assert.equal(e.defaultPrevented,true);
   assert.equal(c.input.submitted,undefined);assert.equal(c.events.filter(x=>x==='change').length,1);
 });
-for (const value of ['1','1611','1611202']) test('partial date is an explicit error: '+value,()=>{
-  const c=setup();c.focus();c.type(value);c.key('Enter');assert.equal(c.input.error,'Complete date required');assert.equal(c.input.type,'text');assert.equal(c.input.reported,true);assert.equal(c.input.submitted,undefined);
+for (const [digits,expected] of [
+  ['1','2026-11-01'], ['16','2026-11-16'],
+  ['163','2026-03-16'], ['1609','2026-09-16'], ['1611202','2026-11-16'],
+  ['1611203','2036-11-16'],
+]) test('Enter completes partial date '+digits,()=>{
+  const c=setup();c.focus();c.type(digits);c.key('Enter');
+  assert.equal(c.input.value,expected);assert.equal(c.input.type,'date');
+  assert.equal(c.input.error,'');assert.equal(c.input.submitted,undefined);
+});
+test('date with only month requires the day, explicitly typed zero is invalid',()=>{
+  const c=setup();c.focus();c.input.setSelectionRange(3,3);c.type('11');c.key('Enter');
+  assert.equal(c.input.error,'Complete date required');
+  const zero=setup();zero.focus();zero.type('160');zero.key('Enter');
+  assert.equal(zero.input.error,'Invalid date');
+});
+function eventData(c,entries=[['Day',c.input.value]]) {
+  const data=new FormData();
+  for(const [name,value] of entries)data.append(name,value);
+  c.fire('formdata',{target:{elements:[c.input],querySelectorAll(){return [c.input];}},formData:data});
+  return data;
+}
+test('FormData completes a valid partial date-time without committing the draft',()=>{
+  const c=setup('datetime-local');c.focus();c.type('7');
+  const display=c.input.value, events=c.events.slice();
+  assert.equal(eventData(c).get('Day'),'2026-11-07T00:00:00');
+  assert.equal(c.input.value,display);assert.equal(c.input.type,'text');assert.deepEqual(c.events,events);
+});
+test('typed separators preserve single-digit components',()=>{
+  const c=setup('datetime-local');c.focus();c.type('5.2.2027 8:3');c.key('Enter');
+  assert.equal(c.input.value,'2027-02-05T08:03:00');
 });
 for (const value of ['31022026','29022025','00112026','16132026','16110000']) test('impossible calendar date rejected: '+value,()=>{
   const c=setup();c.focus();c.type(value);c.key('Enter');assert.equal(c.input.error,'Invalid date');
@@ -62,8 +93,17 @@ test('date-time digits insert space and colons including seconds',()=>{
   const c=setup('datetime-local');c.focus();assert.equal(c.input.value,'__.__.____ __:__:__');
   c.type('16112026235958');c.key('Enter');assert.equal(c.input.value,'2026-11-16T23:59:58');
 });
-test('partial date-time is not silently filled',()=>{
-  const c=setup('datetime-local');c.focus();c.type('16112026');c.key('Enter');assert.equal(c.input.error,'Complete date and time required');
+for (const [digits,expected] of [
+  ['16','2026-11-16T00:00:00'], ['16092025','2025-09-16T00:00:00'],
+  ['1609202508','2025-09-16T08:00:00'], ['16092025083','2025-09-16T08:03:00'],
+  ['1609202508304','2025-09-16T08:30:04'],
+]) test('date-time completes missing time components '+digits,()=>{
+  const c=setup('datetime-local');c.focus();c.type(digits);c.key('Enter');
+  assert.equal(c.input.value,expected);
+});
+test('paste can skip the month and preserve an entered year and time',()=>{
+  const c=setup('datetime-local');c.focus();c.paste('5..2028 9:05');c.key('Enter');
+  assert.equal(c.input.value,'2028-11-05T09:05:00');
 });
 test('date-only paste preserves existing time',()=>{
   const c=setup('datetime-local','2020-01-02T12:34:56');c.focus();c.paste('16.11.2026');c.key('Enter');assert.equal(c.input.value,'2026-11-16T12:34:56');
@@ -86,8 +126,12 @@ for (const modifier of ['ctrlKey','metaKey']) test('paste shortcut reopens mask 
 test('readonly Enter neither submits nor changes the value',()=>{
   const c=setup('date','2026-11-16');c.input.readOnly=true;c.focus();const e=c.key('Enter');assert.equal(e.defaultPrevented,true);assert.equal(c.input.type,'date');assert.equal(c.input.value,'2026-11-16');assert.deepEqual(c.events,[]);
 });
-test('submit rejects a partial active editor',()=>{
-  const c=setup();c.focus();c.type('1611');const e=c.submit();assert.equal(e.defaultPrevented,true);assert.equal(c.input.submitted,undefined);assert.equal(c.input.error,'Complete date required');
+test('submit completes a partial active editor',()=>{
+  const c=setup();c.focus();c.type('16');c.submit();assert.equal(c.input.value,'2026-11-16');assert.equal(c.input.submitted,true);
+});
+test('blur completes a date just like Enter',()=>{
+  const c=setup();c.focus();c.type('1609');c.input.blur();assert.equal(c.input.value,'2026-09-16');
+  assert.equal(c.events.filter(event=>event==='change').length,1);
 });
 test('submit serializes a complete active editor as ISO',()=>{
   const c=setup();c.focus();c.type('16112026');c.submit();assert.equal(c.input.value,'2026-11-16');assert.equal(c.input.submitted,true);

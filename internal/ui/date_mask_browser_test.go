@@ -17,7 +17,7 @@ import (
 )
 
 // Exercise shipped assets in the public report, using trusted browser keyboard
-// and real clipboard paste. Enter and incomplete dates must never POST a report.
+// and real clipboard paste. Completing an edit with Enter must not run the report.
 func TestDateMaskBrowserReportEditing(t *testing.T) {
 	browserPath := managedLayoutTestBrowser(t)
 	rep := &reportpkg.Report{Name: "DateMaskProbe", Query: "ВЫБРАТЬ 1 КАК Marker", Params: []reportpkg.Param{
@@ -29,7 +29,12 @@ func TestDateMaskBrowserReportEditing(t *testing.T) {
 	router := chi.NewRouter()
 	router.Use(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			next.ServeHTTP(w, r.WithContext(auth.ContextWithOpenAccess(r.Context())))
+			next.ServeHTTP(w, r.WithContext(auth.ContextWithUser(r.Context(), &auth.User{
+				Login: "date-mask-operator",
+				Roles: []*auth.Role{{Name: "ОператорКЦ", Permissions: auth.Permission{
+					Reports: map[string][]string{rep.Name: {"run"}},
+				}}},
+			})))
 		})
 	})
 	s.MountStatic(router)
@@ -141,8 +146,19 @@ func TestDateMaskBrowserReportEditing(t *testing.T) {
 	key("a", 65, "", 2)
 	typeDigits("1611")
 	key("Enter", 13, "\r", 0)
-	assertJS(`document.querySelector('input[name="Day"]').validationMessage.includes('полностью')`, "partial date has no useful error")
-	key("Escape", 27, "", 0)
+	assertJS(`document.querySelector('input[name="Day"]').value===String(new Date().getFullYear())+'-11-16'`, "partial date did not retain day and month and complete the year")
+	eval(`document.querySelector('input[name="Moment"]').focus()`)
+	key("a", 65, "", 2)
+	typeDigits("7")
+	assertJS(`(() => {
+		const now=new Date(), prefix=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-07T00:00';
+		return new FormData(document.querySelector('input[name="Moment"]').form).get('Moment')===prefix+':00';
+	})()`, "focused short date-time did not serialize with default components")
+	key("Tab", 9, "", 0)
+	assertJS(`(() => {
+		const now=new Date(), prefix=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0')+'-07T00:00';
+		return document.querySelector('input[name="Moment"]').value.startsWith(prefix);
+	})()`, "Tab did not complete date-time to midnight")
 	if err := b.call(ctx, "", "Browser.grantPermissions", map[string]any{"origin": server.URL, "browserContextId": isolated.ID, "permissions": []string{"clipboardReadWrite", "clipboardSanitizedWrite"}}, nil); err != nil {
 		t.Fatal(err)
 	}

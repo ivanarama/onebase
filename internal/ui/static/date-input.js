@@ -69,14 +69,22 @@
   }
   function normalized(state) {
     if (!state.digits.some(Boolean)) return '';
-    if (state.digits.some(function (d) {return !d;})) return null;
-    var raw=state.digits.join(''), day=+raw.slice(0,2), month=+raw.slice(2,4), year=+raw.slice(4,8);
+    var digits=state.digits, now=new Date();
+    var day=digits.slice(0,2).join('');
+    if (!day) return null;
+    day=Number(day);
+    var month=Number(digits.slice(2,4).join('') || now.getMonth()+1);
+    // Keep typed year digits in their original slots, using the local year for blanks.
+    var currentYear=pad(now.getFullYear(),4);
+    var year=Number(digits.slice(4,8).map(function (digit,i) {return digit || currentYear[i];}).join(''));
     if (year<1 || year>9999 || month<1 || month>12 || day<1 || day>31) return false;
     var date=new Date(0); date.setHours(12,0,0,0); date.setFullYear(year,month-1,day);
     if (date.getFullYear()!==year || date.getMonth()!==month-1 || date.getDate()!==day) return false;
     var value=pad(year,4)+'-'+pad(month)+'-'+pad(day);
     if (state.type === 'datetime-local') {
-      var h=+raw.slice(8,10), m=+raw.slice(10,12), s=+raw.slice(12,14);
+      var h=Number(digits.slice(8,10).join(''));
+      var m=Number(digits.slice(10,12).join(''));
+      var s=Number(digits.slice(12,14).join(''));
       if (h>23 || m>59 || s>59) return false;
       value+='T'+pad(h)+':'+pad(m)+':'+pad(s);
     }
@@ -103,6 +111,31 @@
     return true;
   }
   window.obCommitDateInput=commit;
+  // Programmatic managed events use new FormData(form), without submit/blur.
+  // Serialize the same completed value as commit without changing the focused draft.
+  // Invalid dates or dates without a day remain subject to normal validation.
+  document.addEventListener('formdata',function (event) {
+    var form=event.target, data=event.formData;
+    if (!data || !form || !form.querySelectorAll) return;
+    var replacements=new Map();
+    Array.from(form.elements || form.querySelectorAll('input')).forEach(function (el) {
+      var state=editing.get(el);
+      if (!state || !el.name || el.disabled || state.badPaste) return;
+      var value=normalized(state);
+      if (typeof value!=='string') return;
+      if (!replacements.has(el.name)) replacements.set(el.name,new Map());
+      replacements.get(el.name).set(el.value,value);
+    });
+    if (!replacements.size) return;
+    // Preserve entry order, repeated names and File objects. Do not set(name),
+    // which would discard another successful control with the same name.
+    var entries=Array.from(data.entries());
+    Array.from(data.keys()).forEach(function (name) {data.delete(name);});
+    entries.forEach(function (entry) {
+      var values=replacements.get(entry[0]);
+      data.append(entry[0],values && values.has(entry[1]) ? values.get(entry[1]) : entry[1]);
+    });
+  },true);
   // Managed form handlers can replace a focused date without leaving an old
   // draft in the mask. Keep the same native control and emit no extra events.
   window.obSetDateInputValue=function (el, value) {
@@ -130,12 +163,21 @@
       if (!selected && direction<0) index--;
       if (index<0) return;
       if (!selected && index<state.slots.length) state.digits[index]='';
-    } else {for (var i=0; i<text.length; i++) state.digits[index++]=text[i];}
+    } else {for (var i=0; i<text.length; i++) state.digits[index++]=text[i]===' ' ? '' : text[i];}
     draw(el,state,state.slots[index]===undefined ? state.mask.length : state.slots[index]); notify(el,state);
   }
   function pasted(text,type) {
     var raw=String(text).trim();
     if (/^\d{4}-\d{2}-\d{2}(?:[ T]\d{2}:\d{2}(?::\d{2})?)?$/.test(raw)) return canonicalDigits(raw,type);
+    // Explicit separators keep single-digit components and intentionally empty slots.
+    var local=raw.match(/^(\d{0,2})[./-](\d{0,2})(?:[./-](\d{0,4}))?(?:\s+(\d{0,2})(?::(\d{0,2}))?(?::(\d{0,2}))?)?$/);
+    if (local) {
+      var date=(local[1]||'').padStart(2,' ')+(local[2]||'').padStart(2,' ')+(local[3]||'').padEnd(4,' ');
+      if (type==='datetime-local' && local[4]!==undefined) {
+        return date+local.slice(4,7).map(function (part) {return (part||'').padStart(2,' ');}).join('');
+      }
+      return date;
+    }
     if (/^[\d./:\s-]+$/.test(raw)) return raw.replace(/\D/g,'');
     return raw==='' ? '' : null;
   }
@@ -157,6 +199,26 @@
       nativePicker.add(el); if (!(typeof window.obEnterNavigateFrom==='function' && window.obEnterNavigateFrom(el))) el.blur(); return;
     }
     if (/^\d$/.test(e.key)) {e.preventDefault(); edit(el,e.key); return;}
+    var state=editing.get(el), caret=el.selectionStart||0;
+    if (state && /^[. :/]$/.test(e.key)) {
+      var separator=e.key==='/' ? '.' : e.key;
+      // A full component already moved the caret past its separator.
+      if (state.mask[caret-1]!==separator) {
+        var boundary=state.mask.indexOf(separator,caret);
+        if (boundary!==-1) el.setSelectionRange(boundary+1,boundary+1);
+      }
+      e.preventDefault(); return;
+    }
+    var state=editing.get(el), caret=el.selectionStart||0;
+    if (state && /^[. :/]$/.test(e.key)) {
+      var separator=e.key==='/' ? '.' : e.key;
+      // A full component already moved the caret past its separator.
+      if (state.mask[caret-1]!==separator) {
+        var boundary=state.mask.indexOf(separator,caret);
+        if (boundary!==-1) el.setSelectionRange(boundary+1,boundary+1);
+      }
+      e.preventDefault(); return;
+    }
     if (editing.has(el) && (e.key==='Backspace' || e.key==='Delete')) {e.preventDefault(); edit(el,'',e.key==='Backspace' ? -1 : 1); return;}
     if (editing.has(el) && e.key.length===1) e.preventDefault();
   },true);
@@ -177,7 +239,7 @@
     if (e.target.value!==state.rendered) {
       var digits=pasted(e.target.value,state.type);
       if (digits===null || digits.length>state.slots.length) {state.badPaste=true; fail(e.target,state,false); return;}
-      state.digits=state.slots.map(function (_,i) {return digits[i]||'';}); draw(e.target,state,state.mask.length);
+      state.digits=state.slots.map(function (_,i) {return digits[i] && digits[i]!==' ' ? digits[i] : '';}); draw(e.target,state,state.mask.length);
     }
     clearError(e.target,state);
   },true);
