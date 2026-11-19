@@ -202,9 +202,8 @@ tr:nth-child(even) td{background:#f8fafc}
 		d.viewerScript(&sb, opts.ParentDrilldown)
 	}
 	if resizeColumns {
-		sb.WriteString(`<style>.sheet-column-widths-set td{overflow-wrap:anywhere}</style><script>`)
-		sb.WriteString(tabularColumnResizeJS)
-		sb.WriteString("</script>")
+		sb.WriteString(`<style>.sheet-column-widths-set td{overflow-wrap:anywhere}</style>`)
+		sb.WriteString(strings.Replace(`<script>/* embedded */</script>`, "/* embedded */", tabularColumnResizeJS, 1))
 	}
 	sb.WriteString(`</body>
 </html>`)
