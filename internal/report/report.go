@@ -31,6 +31,7 @@ type Param struct {
 }
 
 type Report struct {
+	FormActions *FormActions      `yaml:"form_actions,omitempty"`
 	Name        string            `yaml:"name"`
 	Title       string            `yaml:"title"`
 	Titles      map[string]string `yaml:"titles"`
@@ -49,6 +50,12 @@ type Report struct {
 	// а не из конфигурации проекта. Заполняется программно при загрузке;
 	// в YAML не сериализуется.
 	External bool `yaml:"-"`
+}
+
+// FormActions configures the action row below the report parameters.
+type FormActions struct {
+	PrimaryBackground string `yaml:"primary_background,omitempty"`
+	Cancel            bool   `yaml:"cancel,omitempty"`
 }
 
 // ReportVariant — именованная компоновка по тому же запросу отчёта («вариант

@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/csssafe"
 	"github.com/ivantit66/onebase/internal/i18n"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
@@ -679,6 +680,15 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"elAlign": func(el *metadata.FormElement) template.CSS {
 			return template.CSS(metadata.FormElementAlignCSS(el)) //nolint:gosec // G203: стиль собран только из нормализованных значений словаря выравнивания
+		},
+		"formFooterButtons": formFooterButtons,
+		"reportPrimaryStyle": func(actions *reportpkg.FormActions) template.CSS {
+			if actions != nil {
+				if color := csssafe.Color(actions.PrimaryBackground); color != "" {
+					return template.CSS("background:" + color + ";") //nolint:gosec // csssafe.Color validates the value.
+				}
+			}
+			return ""
 		},
 		"elBackground": func(el *metadata.FormElement) template.CSS {
 			return template.CSS(metadata.FormElementBackgroundCSS(el)) //nolint:gosec // G203: значение прошло csssafe.Color, иначе пустая строка
@@ -2963,7 +2973,7 @@ const tplReport = `
 <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
   <a class="btn btn-sm" href="/ui/export-jobs">{{t $.Lang "Мои выгрузки"}}</a>
 </div>
-{{if or .ReportParams .Report.Variants .ReportPresets}}
+{{if or .ReportParams .Report.Variants .ReportPresets .Report.FormActions}}
 <details class="card report-block" data-block="params" open style="margin-bottom:16px">
 <summary>{{t $.Lang "Параметры"}}</summary>
 <form method="POST">
@@ -3034,7 +3044,9 @@ const tplReport = `
   {{end}}
   </div>
   {{end}}
-  <button class="btn btn-primary" type="submit">{{t $.Lang "Сформировать"}}</button>
+  {{if .Report.FormActions}}<div class="report-form-actions" style="display:flex;justify-content:flex-end;align-items:center;gap:8px;flex-wrap:wrap">{{end}}
+  <button class="btn btn-primary" type="submit"{{with reportPrimaryStyle .Report.FormActions}} style="{{.}}"{{end}}>{{t $.Lang "Сформировать"}}</button>
+  {{with .Report.FormActions}}{{if .Cancel}}<a href="/ui/" data-ob-close-tab data-ob-close-reason="close" class="btn btn-cancel">{{t $.Lang "Отмена"}}</a>{{end}}</div>{{end}}
 </form>
 </details>
 {{end}}
