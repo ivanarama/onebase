@@ -380,6 +380,14 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 	if entity == nil {
 		return
 	}
+	if r.URL.Query().Get(navListCreateParam) == "1" &&
+		(!s.can(r, string(entity.Kind), entity.Name, "create") || !s.canInteractiveCreate(r, entity)) {
+		w.WriteHeader(http.StatusForbidden)
+		s.render(w, r, "page-forbidden", map[string]any{
+			"Reason": s.tr(s.resolveLang(r), "Недостаточно прав"),
+		})
+		return
+	}
 	if !s.requirePerm(w, r, string(entity.Kind), entity.Name, "write") {
 		return
 	}
