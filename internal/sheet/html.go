@@ -193,9 +193,7 @@ tr:nth-child(even) td{background:#f8fafc}
 		d.viewerScript(&sb, opts.ParentDrilldown)
 	}
 	if hasDrilldown {
-		sb.WriteString("<script>")
-		sb.WriteString(tabularCellOpenJS)
-		sb.WriteString("</script>")
+		sb.WriteString(strings.Replace(`<script>/* embedded */</script>`, "/* embedded */", tabularCellOpenJS, 1))
 	}
 	sb.WriteString(`</body>
 </html>`)
