@@ -1,5 +1,7 @@
 package onec_forms
 
+import "github.com/ivantit66/onebase/internal/metadata"
+
 // IR — нейтральное промежуточное представление управляемой формы.
 // К нему сводятся оба формата: 1С Form.xml (через reader_xml.go) и
 // OneBase .form.yaml (через reader_yaml.go). Обратно — writer_xml.go и
@@ -55,6 +57,7 @@ type IRElement struct {
 	Choice     bool
 	Width      int
 	Height     int
+	Enhanced   *metadata.FormPresentation
 	HAlign     string
 	VAlign     string
 	Hint       string

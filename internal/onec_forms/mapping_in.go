@@ -294,6 +294,7 @@ func irElementToMeta(el *IRElement) *metadata.FormElement {
 		Choice:          el.Choice,
 		Width:           el.Width,
 		Height:          el.Height,
+		Enhanced:        el.Enhanced,
 		HorizontalAlign: el.HAlign,
 		VerticalAlign:   el.VAlign,
 		Hint:            el.Hint,

@@ -21,6 +21,8 @@ func appFormButtonClass(name, label string, primary bool, legacy any) string {
 		switch value {
 		case "записать", "сформировать", "провести", "save", "generate", "post":
 			return "btn-app-primary"
+		case "обнулить", "создать и провести штрафы":
+			return "btn-app-danger"
 		}
 		for _, prefix := range []string{"удалить", "delete", "пометить на удаление", "пометитьнаудаление"} {
 			if strings.HasPrefix(value, prefix) {
@@ -34,6 +36,19 @@ func appFormButtonClass(name, label string, primary bool, legacy any) string {
 		}
 	}
 	return "btn-secondary"
+}
+
+func formButtonPrimary(el *metadata.FormElement, legacy any) bool {
+	return el.Primary || (legacy != true && el.Enhanced != nil && el.Enhanced.Primary)
+}
+
+func enhancedTableLayout(el *metadata.FormElement, legacy any) *metadata.FormElement {
+	if legacy == true || el.Enhanced == nil || el.Enhanced.Height <= 0 || el.Enhanced.Height > metadata.FormLayoutMaxSize {
+		return el
+	}
+	layout := *el
+	layout.Height = el.Enhanced.Height
+	return &layout
 }
 
 func ownFormCloseButton(name, title string) bool {
@@ -336,7 +351,7 @@ const tplManagedForm = `
   {{$buttonLayout := elLayout $el}}
   {{$buttonHidden := elHidden $ctx $el}}
   {{if $buttonLayout}}<div class="managed-btn-layout" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="{{if $buttonHidden}}display:none;{{end}}{{$buttonLayout}}">{{end}}
-  <button type="button" class="btn {{appFormButtonClass $el.Name (fieldTitleRU $el.TitleMap $el.Name) $el.Primary $ctx.LegacyEntityUI}} managed-btn"{{if and $buttonHidden (not $buttonLayout)}} style="display:none;{{elBackground $el}}"{{else}}{{with elBackground $el}} style="{{.}}"{{end}}{{end}}{{if not $buttonLayout}} data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $hotKey}} data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $clickAction}} data-ob-fire-click="{{$el.Name}}"{{end}}>
+  <button type="button" class="btn {{appFormButtonClass $el.Name (fieldTitleRU $el.TitleMap $el.Name) (formButtonPrimary $el $ctx.LegacyEntityUI) $ctx.LegacyEntityUI}} managed-btn"{{if and $buttonHidden (not $buttonLayout)}} style="display:none;{{elBackground $el}}"{{else}}{{with elBackground $el}} style="{{.}}"{{end}}{{end}}{{if not $buttonLayout}} data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $hotKey}} data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $clickAction}} data-ob-fire-click="{{$el.Name}}"{{end}}>
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </button>
   {{if $buttonLayout}}</div>{{end}}
@@ -354,6 +369,7 @@ const tplManagedForm = `
   {{end}}
   </div>
 {{else if eq (str $el.Kind) "ТабличнаяЧасть"}}
+  {{$tableLayout := enhancedTableLayout $el $ctx.LegacyEntityUI}}
   {{/* Табличная часть в managed-форме (план 37, этап 8). Имена name= совпадают
        с парсером parseTablePartRows: "tp.<TPName>.<idx>.<field>". obFire-JS
        перерисовывает tbody#mtp-body-<TPName> при изменении tableparts.
@@ -397,7 +413,7 @@ const tplManagedForm = `
   {{if not $el.NoGrid}}
   {{/* Высота сетки по умолчанию считается по числу строк; ключ height (#1185)
        её перебивает — «покажи 15 строк» иначе задать нечем. */}}
-  <div id="sg-{{$tpName}}" class="ob-grid" style="{{tpGridCSS $el (len $tpRows)}}"
+  <div id="sg-{{$tpName}}" class="ob-grid" style="{{tpGridCSS $tableLayout (len $tpRows)}}"
        data-sg-tp="{{$tpName}}"
        data-sg-el="{{$el.Name}}"
        data-sg-path="{{elPath $ctx $el}}"
@@ -438,7 +454,7 @@ const tplManagedForm = `
      и удалив их все, браузер шлёт то же самое, что и форма, где таблицы вовсе
      не было (скрыта hidden_when). Различает эти случаи только маркер. */}}
 {{if not $tpReadOnly}}<input type="hidden" name="tp_present.{{$tpName}}" value="1">{{end}}
-<table class="tp-table" data-tp="{{$tpName}}" data-ob-dom-table="{{$tpName}}" data-ob-readonly="{{if $tpReadOnly}}1{{else}}0{{end}}"{{with elLayout $el}} style="{{.}}"{{end}}
+<table class="tp-table" data-tp="{{$tpName}}" data-ob-dom-table="{{$tpName}}" data-ob-readonly="{{if $tpReadOnly}}1{{else}}0{{end}}"{{with elLayout $tableLayout}} style="{{.}}"{{end}}
   data-ob-element="{{$el.Name}}"{{if and (not $tpReadOnly) (hasHandler $el "ПриДобавленииСтроки")}} data-ob-rowadd="1"{{end}}{{if and (not $tpReadOnly) (hasHandler $el "ПриУдаленииСтроки")}} data-ob-rowdel="1"{{end}}
   {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}>
     <thead>
@@ -518,9 +534,9 @@ const tplManagedForm = `
   {{if $vtCols}}
   {{$vtRows := index $ctx.TablePartRows $tpName}}
   {{$vtCmds := tpCommandButtons $el}}
-  {{$vtLayout := elLayout $el}}
+  {{$vtLayout := elLayout $tableLayout}}
   {{/* Заданная высота ограничивает весь блок ValueTable, включая строки и команды. */}}
-  {{if $vtLayout}}<div class="managed-vt-layout{{if elFill $el}} managed-vt-scroll{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="{{$vtLayout}}">{{end}}
+  {{if $vtLayout}}<div class="managed-vt-layout{{if elFill $tableLayout}} managed-vt-scroll{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="{{$vtLayout}}">{{end}}
   <h3 style="margin:18px 0 8px;font-size:14px">{{fieldTitleRU $el.TitleMap (or (tablePartTitle $tpMeta) $tpName)}}</h3>
   {{if $vtCmds}}
   <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px">

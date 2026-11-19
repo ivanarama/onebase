@@ -670,6 +670,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 	// потребитель, говорит CheckFormProps — там есть, кем именно ключ не
 	// используется, а здесь было бы только «неизвестный ключ» (#1492).
 	element.keys["props"] = freeMap()
+	element.keys["enhanced"] = obj("primary", "height")
 	element.keys["children"] = seq(element)
 	element.keys["choices"] = seq(with(obj("value"), map[string]*yamlLintSchema{"title": freeMap()}))
 	element.keys["options"] = seq(with(obj("value"), map[string]*yamlLintSchema{"label": freeMap()}))

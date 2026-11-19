@@ -195,6 +195,13 @@ const (
 )
 
 // FormElement represents a single form element (field, button, etc.)
+// FormPresentation overrides visual properties in the enhanced interface.
+type FormPresentation struct {
+	Primary  bool              `yaml:"primary,omitempty"`
+	Enhanced *FormPresentation `yaml:"enhanced,omitempty"`
+	Height   int               `yaml:"height,omitempty"`
+}
+
 type FormElement struct {
 	ID   string          `yaml:"id,omitempty"`
 	Name string          `yaml:"name,omitempty"`
@@ -245,7 +252,8 @@ type FormElement struct {
 	// Нужна формам, где штатный ряд «Записать / ОК / Закрыть» скрыт и
 	// единственное действие объявлено своей кнопкой — без акцента она теряется
 	// среди вспомогательных.
-	Primary bool `yaml:"primary,omitempty"`
+	Primary  bool              `yaml:"primary,omitempty"`
+	Enhanced *FormPresentation `yaml:"enhanced,omitempty"`
 	// ReadOnlyWhen / HiddenWhen — условия по полям ЗАПИСИ (выражение того же
 	// языка, что `when` условного оформления): элемент становится нередактируемым
 	// либо вовсе не показывается, пока условие истинно. Нужны там, где запрет

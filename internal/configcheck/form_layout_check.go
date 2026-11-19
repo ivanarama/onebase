@@ -98,6 +98,15 @@ func layoutDiagnostics(el *metadata.FormElement) []layoutDiagnostic {
 	}
 	out = append(out, layoutSizeDiagnostic("width", el.Width)...)
 	out = append(out, layoutSizeDiagnostic("height", el.Height)...)
+	if el.Enhanced != nil {
+		out = append(out, layoutSizeDiagnostic("enhanced.height", el.Enhanced.Height)...)
+		if el.Enhanced.Height != 0 && el.Kind != metadata.FormElementTablePart {
+			out = append(out, layoutDiagnostic{"form.enhanced-height", "enhanced.height применяется к табличной части", "Задайте высоту на элементе kind: ТабличнаяЧасть."})
+		}
+		if el.Enhanced.Primary && el.Kind != metadata.FormElementButton {
+			out = append(out, layoutDiagnostic{"form.enhanced-primary", "enhanced.primary применяется к кнопке", "Задайте акцент на элементе kind: Кнопка."})
+		}
+	}
 
 	// Виды, у которых собственного блока в форме нет: колонка — это описание
 	// колонки таблицы, командную панель рантайм разворачивает в тулбар над
