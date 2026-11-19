@@ -95,8 +95,15 @@ func releaseBuildSteps(t *testing.T) []workflowStep {
 // main can advance several times between the original build and its retry.
 // Creating build-N must use the source commit of the archived binaries.
 func TestPrereleaseTagUsesRunCommit(t *testing.T) {
+	claimed := false
 	for _, step := range releaseWorkflowSteps(t) {
+		if step.name == "Claim build tag for this commit" {
+			claimed = strings.Contains(strings.Join(step.lines, "\n"), "run: bash .github/scripts/claim-build-tag.sh")
+		}
 		if step.name == "Create Pre-Release" {
+			if !claimed {
+				t.Fatal("Create Pre-Release must first claim or verify the build tag")
+			}
 			for _, line := range step.lines {
 				if strings.TrimSpace(line) == "target_commitish: ${{ github.sha }}" {
 					return

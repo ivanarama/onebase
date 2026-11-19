@@ -382,6 +382,9 @@ jobs:
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Claim build tag for this commit
+        run: bash .github/scripts/claim-build-tag.sh
+
       - name: Create Pre-Release
         uses: softprops/action-gh-release@v2
         with:

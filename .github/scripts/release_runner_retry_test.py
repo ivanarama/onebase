@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -159,6 +160,52 @@ class RetryTest(unittest.TestCase):
         self.refs.append({'ref': 'refs/tags/build-1669'})
         self.invoke()
         self.assertEqual(self.writes, [])
+
+
+class BuildTagTest(unittest.TestCase):
+    def test_claim_on_advanced_main_and_existing_tags(self):
+        git = shutil.which('git')
+        bash = shutil.which('bash')
+        if not bash and os.name == 'nt':
+            bash = str(Path(git).resolve().parents[1] / 'bin' / 'bash.exe')
+        script = Path(__file__).resolve().with_name('claim-build-tag.sh')
+        with tempfile.TemporaryDirectory() as tmp:
+            remote = Path(tmp, 'remote.git')
+            repo = Path(tmp, 'checkout')
+            subprocess.run([git, 'init', '--bare', '-q', str(remote)], check=True)
+            subprocess.run([git, 'init', '-b', 'main', '-q', str(repo)], check=True)
+
+            def local(*args):
+                return subprocess.check_output([git, *args], cwd=repo, text=True).strip()
+
+            local('config', 'user.email', 'test@example.test')
+            local('config', 'user.name', 'test')
+            local('config', 'commit.gpgsign', 'false')
+            local('config', 'tag.gpgsign', 'false')
+            local('remote', 'add', 'origin', remote.as_uri())
+            local('commit', '--allow-empty', '-qm', 'first')
+            original = local('rev-parse', 'HEAD')
+            local('commit', '--allow-empty', '-qm', 'second')
+            local('commit', '--allow-empty', '-qm', 'third')
+            tip = local('rev-parse', 'HEAD')
+            local('push', '-q', 'origin', 'main')
+            for number, tag_target, annotated, expected in [
+                (1669, None, False, original), (1670, original, False, original),
+                (1671, original, True, original), (1672, tip, False, tip), (1673, tip, True, tip),
+            ]:
+                with self.subTest(number=number):
+                    tag = f'build-{number}'
+                    if tag_target:
+                        options = ['-a', '-m', 'annotated'] if annotated else []
+                        local('tag', *options, tag, tag_target)
+                        local('push', '-q', 'origin', f'refs/tags/{tag}')
+                    env = dict(os.environ, GITHUB_RUN_NUMBER=str(number), GITHUB_SHA=original)
+                    result = subprocess.run([bash, str(script)], cwd=repo, env=env, capture_output=True)
+                    self.assertEqual(result.returncode == 0, expected == original, result.stderr)
+                    actual = subprocess.check_output(
+                        [git, '--git-dir', str(remote), 'rev-parse', f'refs/tags/{tag}^{{commit}}'],
+                        text=True).strip()
+                    self.assertEqual(actual, expected)
 
 
 if __name__ == '__main__':
