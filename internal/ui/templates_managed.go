@@ -6,20 +6,12 @@ import (
 	"github.com/ivantit66/onebase/internal/metadata"
 )
 
-func appFormButtonClass(kind, name, label string, primary bool, legacy any) string {
+func appFormButtonClass(name, label string, primary bool, legacy any) string {
 	if legacy == true {
 		if primary {
 			return "btn-primary"
 		}
 		return "btn-secondary"
-	}
-	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "primary":
-		return "btn-app-primary"
-	case "secondary":
-		return "btn-app-secondary"
-	case "danger":
-		return "btn-app-danger"
 	}
 	if primary {
 		return "btn-app-primary"
@@ -42,6 +34,18 @@ func appFormButtonClass(kind, name, label string, primary bool, legacy any) stri
 		}
 	}
 	return "btn-secondary"
+}
+
+func ownFormCloseButton(name, title string) bool {
+	for _, value := range []string{name, title} {
+		value = strings.TrimSpace(strings.ToLower(value))
+		value = strings.TrimPrefix(strings.TrimPrefix(value, "кнопка"), "кн")
+		switch value {
+		case "закрыть", "закрытьформу", "close", "closeform":
+			return true
+		}
+	}
+	return false
 }
 
 // tplManagedForm — шаблон рендеринга «управляемой формы» из FormModule
@@ -72,7 +76,8 @@ const tplManagedForm = `
 		{{$roUnlockable := and (not (adminOnlyLocked $ctx $el)) (or (not $ro) (ne $el.ReadOnlyWhen ""))}}
 {{$effectiveReq := effectiveFormElementRequired $ctx.Entity $el}}{{$req := nativeFormElementRequired $ctx.Entity $el}}
 {{/* Кнопка, скрытая hidden_when при отрисовке, рисуется с display:none, а не пропускается: иначе после события формы, снявшего условие, показать её нечем — «Утвердить» после «ОК» появлялась только при повторном открытии. Остальные виды пока пропускаются (поля — #1914). Защитой hidden_when не служит: событие кнопки сервер принимает и без неё в разметке. */}}
-{{if and (elHidden $ctx $el) (ne (str $el.Kind) "Кнопка")}}
+{{if and $ctx.IsProcessor (not $ctx.LegacyEntityUI) (eq (str $el.Kind) "Кнопка") (ownFormCloseButton $el.Name (fieldTitleRU $el.TitleMap $el.Name))}}
+{{else if and (elHidden $ctx $el) (ne (str $el.Kind) "Кнопка")}}
 {{else if eq (str $el.Kind) "ГруппаФормы"}}
   <fieldset class="form-group-box{{if eq $el.Orientation "horizontal"}} managed-group-horizontal{{end}}{{if $el.ScrollX}} managed-group-scrollx{{end}}{{if $el.UsesEqualColumns}} ob-equal-columns{{end}}" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="border:1px solid #e2e8f0;border-radius:8px;padding:12px 14px;margin-bottom:14px;{{elBackground $el}}{{elLayout $el}}">
     {{if $el.TitleMap}}<legend style="font-weight:600;color:#475569;padding:0 6px;font-size:13px">{{fieldTitleRU $el.TitleMap $el.Name}}</legend>{{end}}
@@ -309,7 +314,7 @@ const tplManagedForm = `
   {{$buttonLayout := elLayout $el}}
   {{$buttonHidden := elHidden $ctx $el}}
   {{if $buttonLayout}}<div class="managed-btn-layout" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}} style="{{if $buttonHidden}}display:none;{{end}}{{$buttonLayout}}">{{end}}
-  <button type="button" class="btn {{appFormButtonClass $el.ButtonKind $el.Name (fieldTitleRU $el.TitleMap $el.Name) $el.Primary $ctx.LegacyEntityUI}} managed-btn"{{if and $buttonHidden (not $buttonLayout)}} style="display:none;{{elBackground $el}}"{{else}}{{with elBackground $el}} style="{{.}}"{{end}}{{end}}{{if not $buttonLayout}} data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $hotKey}} data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $clickAction}} data-ob-fire-click="{{$el.Name}}"{{end}}>
+  <button type="button" class="btn {{appFormButtonClass $el.Name (fieldTitleRU $el.TitleMap $el.Name) $el.Primary $ctx.LegacyEntityUI}} managed-btn"{{if and $buttonHidden (not $buttonLayout)}} style="display:none;{{elBackground $el}}"{{else}}{{with elBackground $el}} style="{{.}}"{{end}}{{end}}{{if not $buttonLayout}} data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}{{end}}{{if $el.AccessKey}} accesskey="{{$el.AccessKey}}"{{end}}{{if $hotKey}} data-ob-hotkey="{{$hotKey}}" aria-keyshortcuts="{{$hotKey}}" title="{{$hotKey}}"{{end}}{{if $ro}} disabled{{end}}{{if and (not $ro) $clickAction}} data-ob-fire-click="{{$el.Name}}"{{end}}>
     {{fieldTitleRU $el.TitleMap $el.Name}}
   </button>
   {{if $buttonLayout}}</div>{{end}}
@@ -909,7 +914,9 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
 {{if and .FormCommands (not $commandBarHidden)}}
 <div class="managed-command-bar"{{if $commandBarElement}} data-ob-el="{{$commandBarElement.Name}}" data-ob-el-path="{{elPath $ctx $commandBarElement}}"{{end}} style="display:flex;gap:6px;flex-wrap:wrap;margin:0 0 16px;padding-bottom:12px;border-bottom:1px solid #e2e8f0">
   {{range .FormCommands}}
-  <button type="button" class="btn {{appFormButtonClass "" .Name (fieldTitleRU .Title .Name) false $ctx.LegacyEntityUI}}" style="margin:0" data-ob-fire-click="{{.Name}}"{{if $commandBarReadOnly}} disabled{{end}}>{{fieldTitleRU .Title .Name}}</button>
+  {{if not (and $ctx.IsProcessor (not $ctx.LegacyEntityUI) (ownFormCloseButton .Name (fieldTitleRU .Title .Name)))}}
+  <button type="button" class="btn {{appFormButtonClass .Name (fieldTitleRU .Title .Name) false $ctx.LegacyEntityUI}}" style="margin:0" data-ob-fire-click="{{.Name}}"{{if $commandBarReadOnly}} disabled{{end}}>{{fieldTitleRU .Title .Name}}</button>
+  {{end}}
   {{end}}
 </div>
 {{end}}
@@ -922,8 +929,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
   {{if .CanWrite}}<button class="btn btn-primary" type="button" data-ob-form-close="save_and_select" data-ob-close-reason="ok" title="Ctrl+S" aria-keyshortcuts="Control+S">{{t $.Lang "Записать и выбрать"}}</button>{{end}}
   <a href="#" data-ob-ref-cancel class="btn btn-cancel">Отмена</a>
   {{else if .IsProcessor}}
-  {{/* Кнопка «Выполнить» скрыта: managed-форма использует свои кнопки */}}
-  <a href="/ui/" data-ob-close-tab data-ob-close-reason="close" class="btn btn-cancel">Отмена</a>
+  <a href="/ui/" data-ob-close-tab data-ob-close-reason="close" class="btn btn-cancel"{{if not .LegacyEntityUI}} data-ob-form-footer-close{{end}}>{{if .LegacyEntityUI}}Отмена{{else}}{{t $.Lang "Закрыть"}}{{end}}</a>
   {{else}}
   {{if and .CanWrite (formActionVisible .Form "save")}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form" title="Ctrl+S" aria-keyshortcuts="Control+S">{{t $.Lang "Записать"}}</button>{{end}}
   {{if and .CanWrite (formActionVisible .Form "ok")}}<button class="btn btn-primary" type="button" data-ob-form-close="{{if and .Entity.Posting .CanPost .Form.OKPosts (ne (index .Values "deletion_mark") "true")}}post{{else}}save{{end}}" data-ob-close-reason="ok" data-ob-close-href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}">{{t $.Lang "ОК"}}</button>{{end}}

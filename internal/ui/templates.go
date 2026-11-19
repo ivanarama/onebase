@@ -270,6 +270,7 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"entityFormServiceFieldNames":    entityFormServiceFieldNames,
 		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
+		"ownFormCloseButton":             ownFormCloseButton,
 		"appFormButtonClass":             appFormButtonClass,
 		"effectiveFormElementReadOnly":   effectiveFormElementReadOnly,
 		"effectiveFormElementRequired":   effectiveFormElementRequired,
@@ -1644,10 +1645,20 @@ tr:hover td{background:#f8fafc}
 .entity-command-group{display:inline-flex;align-items:center;gap:5px}
 .entity-command{display:inline-flex;align-items:center}
 .btn.btn-command{display:inline-flex;align-items:center;justify-content:center;width:34px;height:33px;padding:0;font-size:18px}
-.btn-document-post{background:#15803d;color:#fff}.btn-document-post:hover{background:#166534}
-.btn-document-unpost{background:#fcd34d;color:#422006}.btn-document-unpost:hover{background:#fbbf24}
+.btn-command.btn-command-create{border-radius:50%;width:33px;background:#15803d;color:#fff}
+.btn-command.btn-command-create:hover{background:#166534}
+.btn-document-post{background:#dcfce7;color:#166534}.btn-document-post:hover{background:#bbf7d0}
+.btn-document-unpost{background:#ffedd5;color:#9a3412}.btn-document-unpost:hover{background:#fed7aa}
+.btn-command-copy{background:#dbeafe;color:#1d4ed8}.btn-command-copy:hover{background:#bfdbfe}
+.btn-command-mark{background:#fee2e2;color:#b91c1c}.btn-command-mark:hover{background:#fecaca}
 .btn.btn-command:disabled{background:#e2e8f0;color:#475569;opacity:.68;pointer-events:none}
-.dark .btn.btn-command:disabled,[data-theme="dark"] .btn.btn-command:disabled{background:#334155;color:#cbd5e1}
+@media(prefers-color-scheme:dark){
+  .btn-document-post{background:#123a30;color:#86efac}.btn-document-post:hover{background:#195141}
+  .btn-document-unpost{background:#452c1a;color:#fdba74}.btn-document-unpost:hover{background:#58391f}
+  .btn-command-copy{background:#263858;color:#93c5fd}.btn-command-copy:hover{background:#30476d}
+  .btn-command-mark{background:#492a36;color:#fca5a5}.btn-command-mark:hover{background:#5e3341}
+  .btn.btn-command:disabled{background:#334155;color:#cbd5e1}
+}
 
 .btn-cancel{background:transparent;color:#64748b;border:1px solid #e2e8f0}.btn-cancel:hover{background:#f1f5f9}
 .btn-sm{padding:5px 12px;font-size:13px}
@@ -2187,7 +2198,7 @@ const tplList = `
 {{if not .IsNew}}
   {{$label := t .Lang "Скопировать"}}
   {{$copyURL := printf "/ui/%s/%s/new%s" (lower (str .Entity.Kind)) (lower .Entity.Name) (listURL nil "copy" (str .ID) "subsystem" (str .CurrentSubsystem))}}
-  {{template "entity-command" (dict "Icon" "copy" "Class" "btn-secondary" "Href" $copyURL "Allowed" .CanCopy "Label" $label "Title" (or (and .CanCopy $label) (t .Lang "Недостаточно прав")))}}
+  {{template "entity-command" (dict "Icon" "copy" "Class" "btn-command-copy" "Href" $copyURL "Allowed" .CanCopy "Label" $label "Title" (or (and .CanCopy $label) (t .Lang "Недостаточно прав")))}}
 {{end}}
 {{end}}
 
@@ -2198,7 +2209,7 @@ const tplList = `
   {{$param := "1"}}{{$icon := "trash-2"}}
   {{if $marked}}{{$label = t .Lang "Снять пометку на удаление"}}{{$param = "0"}}{{$icon = "rotate-ccw"}}{{end}}
   <form id="form-mark-command" action="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/{{.ID}}/delete?mark={{$param}}" method="POST"></form>
-  {{template "entity-command" (dict "Icon" $icon "Class" "btn-secondary" "Form" "form-mark-command" "Allowed" .CanMark "Label" $label "Title" (or (and .CanMark $label) (t .Lang "Недостаточно прав")))}}
+  {{template "entity-command" (dict "Icon" $icon "Class" "btn-command-mark" "Form" "form-mark-command" "Allowed" .CanMark "Label" $label "Title" (or (and .CanMark $label) (t .Lang "Недостаточно прав")))}}
 {{end}}
 {{end}}
 
@@ -2231,14 +2242,14 @@ const tplList = `
   <div class="entity-command-group" role="group" aria-label="{{t .Lang "Действия"}}">
     {{$newURL := printf "/ui/%s/%s/new%s" (lower (str .Entity.Kind)) (lower .Entity.Name) (listURL nil "parent" (str .ParentStr) "subsystem" (str .CurrentSubsystem))}}
     {{$create := t .Lang "Создать"}}
-    {{template "entity-command" (dict "Icon" "plus" "Class" "btn-primary" "Create" true "Href" $newURL "Allowed" .CanCreate "Label" $create "Title" (or (and .CanCreate $create) (t .Lang "Недостаточно прав")))}}
+    {{template "entity-command" (dict "Icon" "plus" "Class" "btn-command-create" "Create" true "Href" $newURL "Allowed" .CanCreate "Label" $create "Title" (or (and .CanCreate $create) (t .Lang "Недостаточно прав")))}}
     {{if .Entity.Posting}}
       {{$post := or .Entity.PostCaption (t .Lang "Провести")}}
       {{template "entity-command" (dict "Icon" "circle-check" "Class" "btn-document-post" "ListCommand" "post" "Allowed" .CanPost "Label" $post "Title" (or (and .CanPost (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
       {{template "entity-command" (dict "Icon" "undo-2" "Class" "btn-document-unpost" "ListCommand" "unpost" "Allowed" .CanUnpost "Label" (t .Lang "Отменить проведение") "Title" (or (and .CanUnpost (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
     {{end}}
-    {{template "entity-command" (dict "Icon" "copy" "Class" "btn-secondary" "ListCommand" "copy" "Allowed" .CanCopy "Label" (t .Lang "Скопировать") "Title" (or (and .CanCopy (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
-    {{template "entity-command" (dict "Icon" "trash-2" "Class" "btn-secondary" "ListCommand" "mark" "Allowed" .CanMark "Label" (t .Lang "Пометить на удаление") "Title" (or (and .CanMark (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
+    {{template "entity-command" (dict "Icon" "copy" "Class" "btn-command-copy" "ListCommand" "copy" "Allowed" .CanCopy "Label" (t .Lang "Скопировать") "Title" (or (and .CanCopy (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
+    {{template "entity-command" (dict "Icon" "trash-2" "Class" "btn-command-mark" "ListCommand" "mark" "Allowed" .CanMark "Label" (t .Lang "Пометить на удаление") "Title" (or (and .CanMark (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
   </div>
   {{end}}
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
@@ -2930,7 +2941,7 @@ const tplForm = `
   <a href="#" data-ob-popup-cancel class="btn btn-cancel">{{t $.Lang "Отмена"}}</a>
   {{else}}
   {{if .CanWrite}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form" title="Ctrl+S" aria-keyshortcuts="Control+S">{{t $.Lang "Записать"}}</button>{{end}}
-  <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}" class="btn btn-cancel">{{t $.Lang "Отмена"}}</a>
+  <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}" class="btn btn-cancel"{{if not .LegacyEntityUI}} data-ob-close-tab data-ob-close-reason="close"{{end}}>{{if .LegacyEntityUI}}{{t $.Lang "Отмена"}}{{else}}{{t $.Lang "Закрыть"}}{{end}}</a>
   {{end}}
 </div>
 </form>

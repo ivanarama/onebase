@@ -246,8 +246,6 @@ type FormElement struct {
 	// единственное действие объявлено своей кнопкой — без акцента она теряется
 	// среди вспомогательных.
 	Primary bool `yaml:"primary,omitempty"`
-	// ButtonKind styles an application button: primary, secondary, or danger.
-	ButtonKind string `yaml:"button_kind,omitempty"`
 	// ReadOnlyWhen / HiddenWhen — условия по полям ЗАПИСИ (выражение того же
 	// языка, что `when` условного оформления): элемент становится нередактируемым
 	// либо вовсе не показывается, пока условие истинно. Нужны там, где запрет

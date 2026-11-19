@@ -44,11 +44,6 @@ func TestApplicationButtonAppearance_PublicForm(t *testing.T) {
 	if left < 0 || middle < left || right < middle || !strings.Contains(body, `id="main-form" class="ob-form-action-spacing"`) {
 		t.Fatal("команды должны различаться стилем и сохранить исходный порядок")
 	}
-	second.ButtonKind = "secondary"
-	body = get("")
-	if strings.Contains(body, `class="btn btn-app-danger managed-btn"`) || strings.Count(body, `class="btn btn-app-secondary managed-btn"`) != 2 {
-		t.Fatal("метаданные вида кнопки должны переопределять умолчание")
-	}
 	for _, role := range []string{"ОператорКЦ", "ОператорМессенджера"} {
 		body := get(role)
 		if strings.Contains(body, `id="main-form" class="ob-form-action-spacing"`) ||

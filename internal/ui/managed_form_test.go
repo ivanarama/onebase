@@ -406,7 +406,7 @@ func TestPageManagedForm_ProcessorHelperNamesAvoidParamCollisions(t *testing.T) 
 	}
 }
 
-func TestPageManagedForm_ProcessorBottomCancelUsesCloseControllerAndEnglishMessages(t *testing.T) {
+func TestPageManagedForm_ProcessorFooterCloseUsesCloseControllerAndEnglishMessages(t *testing.T) {
 	bundle, err := i18n.Load(i18n.EmbeddedLocales, "")
 	if err != nil {
 		t.Fatalf("load i18n bundle: %v", err)
@@ -417,6 +417,7 @@ func TestPageManagedForm_ProcessorBottomCancelUsesCloseControllerAndEnglishMessa
 	}
 	form := &metadata.FormModule{
 		Name: "Form", Kind: "custom", LayoutKind: metadata.FormLayoutManaged,
+		Elements: []*metadata.FormElement{{Name: "КнЗакрыть", Kind: metadata.FormElementButton, TitleMap: map[string]string{"ru": "Закрыть"}}},
 	}
 	proc := &processor.Processor{Name: "CloseProcessor", Forms: []*metadata.FormModule{form}}
 	data := map[string]any{
@@ -433,7 +434,7 @@ func TestPageManagedForm_ProcessorBottomCancelUsesCloseControllerAndEnglishMessa
 	}
 	html := rendered.String()
 	for _, want := range []string{
-		`href="/ui/" data-ob-close-tab data-ob-close-reason="close" class="btn btn-cancel"`,
+		`href="/ui/" data-ob-close-tab data-ob-close-reason="close" class="btn btn-cancel" data-ob-form-footer-close>Close</a>`,
 		`"closeUrl":"/ui/processor/closeprocessor/form-close-intent"`,
 		`"controllerUnavailable":"The close check is unavailable. The form remains open."`,
 		`"formChanged":"The form changed while its close request was being checked. Try closing it again."`,
@@ -444,6 +445,7 @@ func TestPageManagedForm_ProcessorBottomCancelUsesCloseControllerAndEnglishMessa
 		}
 	}
 	for _, forbidden := range []string{
+		`data-ob-el="КнЗакрыть"`,
 		`type="submit" name="_action" value="" form="main-form"`,
 		`data-ob-form-close="save" data-ob-close-reason="ok"`,
 		`data-ob-form-close="" data-ob-close-reason="close"`,
