@@ -1614,7 +1614,18 @@ aside details.navsec>summary::-webkit-details-marker{display:none}
 aside details.navsec>summary::before{content:"\25B8";display:inline-block;width:1em;color:#64748b}
 aside details.navsec[open]>summary::before{content:"\25BE"}
 aside details.navsec>summary:hover{color:#cbd5e1}
-#ob-nav>:is(.navsec,.navtree,section).navsec-gradient{margin:0 6px 9px;padding:4px 0 6px;border-radius:8px;background:linear-gradient(180deg,rgba(203,213,225,.14),rgba(203,213,225,.015))}
+#ob-nav>:is(.navsec,.navtree,section).navsec-gradient{margin:0 6px 9px;padding:4px 0 6px;border-radius:8px;background:linear-gradient(180deg,rgba(var(--nav-section-rgb,203,213,225),var(--nav-section-alpha,.14)),rgba(var(--nav-section-rgb,203,213,225),.015))}
+#ob-nav:not(.nav-plain)>.navsec-gradient[data-nav-icon]{--nav-section-alpha:.22}
+#ob-nav:not(.nav-plain)>.navsec-gradient[data-nav-icon="file-text"]{--nav-section-rgb:105,156,225}
+#ob-nav:not(.nav-plain)>.navsec-gradient[data-nav-icon="book-open"]{--nav-section-rgb:71,183,161}
+#ob-nav:not(.nav-plain)>.navsec-gradient[data-nav-icon="chart-column"]{--nav-section-rgb:165,129,222}
+#ob-nav:not(.nav-plain)>.navsec-gradient[data-nav-icon="settings"]{--nav-section-rgb:219,161,87}
+#ob-nav:not(.nav-plain)>.navsec-gradient[data-nav-icon="notebook"]{--nav-section-rgb:210,116,148}
+#ob-nav:not(.nav-plain)>.navsec-gradient[data-nav-icon="table"]{--nav-section-rgb:156,181,98}
+@media(prefers-color-scheme:dark){#ob-nav:not(.nav-plain)>.navsec-gradient[data-nav-icon]{--nav-section-alpha:.19}}
+#ob-nav:not(.nav-plain)>.navsec-gradient>:is(summary,.sec:not(.navfolder-title)){font-size:18px;font-weight:700;line-height:1.2;overflow-wrap:anywhere}
+#ob-nav:not(.nav-plain)>.navsec-gradient :is(.navtree-folder>summary,.navfolder>summary,.navfolder-title){font-size:15px;font-weight:600;line-height:1.25}
+#ob-nav:not(.nav-plain)>.navsec-gradient a{font-size:13px;font-weight:400}
 aside details.navfolder{margin-left:12px}
 aside details.navfolder>summary{text-transform:none;font-size:12px;margin-top:8px}
 aside .navfolder-title{margin-left:12px;text-transform:none}
@@ -1926,7 +1937,7 @@ const tplNav = `
   {{if not .Subsystems}}<a href="/ui/" style="display:block;padding:12px 14px 8px;color:#7dd3fc;font-weight:700;font-size:15px;text-decoration:none">{{t $.Lang "Главная"}}</a>{{end}}
   {{if .CollapsibleNav}}
   {{range .Nav}}
-  <details class="navsec{{if .Gradient}} navsec-gradient{{end}}" id="{{.DOMID}}" data-nav-id="{{.ID}}" data-navsec="{{.DOMID}}"{{if .LegacyTitle}} data-navsec-legacy="{{.LegacyTitle}}"{{end}}{{if .Open}} open{{end}}>
+  <details class="navsec{{if .Gradient}} navsec-gradient{{end}}"{{with .Icon}} data-nav-icon="{{.}}"{{end}} id="{{.DOMID}}" data-nav-id="{{.ID}}" data-navsec="{{.DOMID}}"{{if .LegacyTitle}} data-navsec-legacy="{{.LegacyTitle}}"{{end}}{{if .Open}} open{{end}}>
     <summary>{{lucideIcon .Icon}}{{.Kind}}</summary>
     {{template "nav-items" .Items}}
     {{range .Groups}}
@@ -1939,7 +1950,7 @@ const tplNav = `
   {{end}}
   {{else}}
   {{range .Nav}}
-  {{if .Gradient}}<section class="navsec-gradient">{{end}}
+  {{if .Gradient}}<section class="navsec-gradient"{{with .Icon}} data-nav-icon="{{.}}"{{end}}>{{end}}
   <div class="sec" id="{{.DOMID}}" data-nav-id="{{.ID}}">{{lucideIcon .Icon}}{{.Kind}}</div>
   {{template "nav-items" .Items}}
   {{range .Groups}}
