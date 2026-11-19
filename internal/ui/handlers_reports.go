@@ -220,7 +220,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 	paramValues, contextErr = reportpkg.ResolveContextParams(opCtx, rep, paramValues, s.reg, s.store)
 	if contextErr != nil {
 		opStatus = "error"
-		http.Error(w, "report context unavailable", http.StatusForbidden)
+		http.Error(w, reportpkg.ContextErrorText(contextErr), http.StatusForbidden)
 		return
 	}
 

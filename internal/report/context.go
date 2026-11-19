@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/access"
 	"github.com/ivantit66/onebase/internal/auth"
+	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
 	"gopkg.in/yaml.v3"
 )
@@ -16,8 +17,19 @@ import (
 // ParamContext selects exactly one server-owned scalar. user_card uses the
 // unique, non-deleted catalog card linked by reference:_users to the actor ID.
 type ParamContext struct {
-	User     string               `yaml:"user,omitempty"`
-	UserCard *auth.UserCardSource `yaml:"user_card,omitempty"`
+	User        string               `yaml:"user,omitempty"`
+	UserCard    *auth.UserCardSource `yaml:"user_card,omitempty"`
+	CatalogName *CatalogNameSource   `yaml:"catalog_name,omitempty"`
+}
+
+// CatalogNameSource identifies an existing catalog element by its configured name.
+type CatalogNameSource struct {
+	Catalog string `yaml:"catalog"`
+	Name    string `yaml:"name"`
+}
+
+type catalogNameReader interface {
+	ReadCatalogNameReference(context.Context, *metadata.Entity, string) (uuid.UUID, int, error)
 }
 
 func (p *Param) UnmarshalYAML(n *yaml.Node) error {
@@ -35,16 +47,29 @@ func (p *Param) UnmarshalYAML(n *yaml.Node) error {
 
 func (c *ParamContext) UnmarshalYAML(n *yaml.Node) error {
 	if n.Kind != yaml.MappingNode || len(n.Content) != 2 {
-		return fmt.Errorf("report context requires exactly one user or user_card source")
+		return fmt.Errorf("report context requires exactly one user, user_card or catalog_name source")
 	}
-	if key := n.Content[0].Value; key != "user" && key != "user_card" {
+	key := n.Content[0].Value
+	switch key {
+	case "user", "user_card":
+	case "catalog_name":
+		source := n.Content[1]
+		if source.Kind != yaml.MappingNode || len(source.Content) != 4 {
+			return fmt.Errorf("catalog_name requires catalog and name")
+		}
+		for i := 0; i < len(source.Content); i += 2 {
+			if field := source.Content[i].Value; field != "catalog" && field != "name" {
+				return fmt.Errorf("unknown catalog_name field %q", field)
+			}
+		}
+	default:
 		return fmt.Errorf("unknown report context source %q", key)
 	}
 	type plain ParamContext
 	if err := n.Decode((*plain)(c)); err != nil {
 		return err
 	}
-	if c.User == "" && c.UserCard == nil {
+	if c.User == "" && c.UserCard == nil && c.CatalogName == nil {
 		return fmt.Errorf("empty report context source")
 	}
 	return nil
@@ -59,6 +84,13 @@ func contextDescriptor(p Param, lookup access.EntityLookup) (storage.UserCardDes
 	}
 	if p.Name == "" || p.Default != "" || p.PeriodEnd || len(p.Options) != 0 {
 		return storage.UserCardDescriptor{}, fmt.Errorf("context parameter requires a name and cannot use default, period_end or options")
+	}
+	if c.CatalogName != nil {
+		if c.User != "" || c.UserCard != nil {
+			return storage.UserCardDescriptor{}, fmt.Errorf("catalog_name cannot be combined with another context source")
+		}
+		_, err := catalogNameDescriptor(p, lookup)
+		return storage.UserCardDescriptor{}, err
 	}
 	if (c.User != "") == (c.UserCard != nil) {
 		return storage.UserCardDescriptor{}, fmt.Errorf("choose exactly one context source")
@@ -80,6 +112,34 @@ func contextDescriptor(p Param, lookup access.EntityLookup) (storage.UserCardDes
 		return desc, fmt.Errorf("context parameter type must match user_card field type")
 	}
 	return desc, nil
+}
+
+func catalogNameDescriptor(p Param, lookup access.EntityLookup) (*metadata.Entity, error) {
+	source := p.Context.CatalogName
+	if lookup == nil || strings.TrimSpace(source.Catalog) == "" || strings.TrimSpace(source.Name) == "" {
+		return nil, fmt.Errorf("catalog_name requires catalog and name")
+	}
+	catalog := lookup.GetEntity(source.Catalog)
+	if catalog == nil || catalog.Kind != metadata.KindCatalog || !strings.EqualFold(p.Type, "reference:"+catalog.Name) {
+		return nil, fmt.Errorf("catalog_name parameter type must reference the configured catalog")
+	}
+	for _, field := range catalog.Fields {
+		if strings.EqualFold(field.Name, "Наименование") && field.Type == metadata.FieldTypeString && field.RefEntity == "" && !field.PII {
+			return catalog, nil
+		}
+	}
+	return nil, fmt.Errorf("catalog_name requires a plain Наименование field in the configured catalog")
+}
+
+var errCatalogNameUnavailable = errors.New("серверная настройка отчёта недоступна")
+
+// ContextErrorText exposes only the controlled validation failure for a fixed
+// catalog name, without leaking storage errors or user-card diagnostics.
+func ContextErrorText(err error) string {
+	if errors.Is(err, errCatalogNameUnavailable) {
+		return err.Error()
+	}
+	return "report context unavailable"
 }
 
 // ValidateContextParams is also used by configcheck, before any report runs.
@@ -139,14 +199,34 @@ func ResolveContextParams(ctx context.Context, rep *Report, input map[string]any
 			}
 		}
 		var value any
-		switch p.Context.User {
-		case "id":
+		switch {
+		case p.Context.CatalogName != nil:
+			catalog, err := catalogNameDescriptor(p, lookup)
+			catalogReader, ok := reader.(catalogNameReader)
+			if err != nil || !ok {
+				return nil, ErrContextUnavailable
+			}
+			id, count, err := catalogReader.ReadCatalogNameReference(ctx, catalog, p.Context.CatalogName.Name)
+			if err != nil {
+				return nil, ErrContextUnavailable
+			}
+			if count == 0 {
+				return nil, fmt.Errorf("%w: запись для параметра %s не найдена", errCatalogNameUnavailable, p.Name)
+			}
+			if count != 1 {
+				return nil, fmt.Errorf("%w: для параметра %s найдено несколько записей", errCatalogNameUnavailable, p.Name)
+			}
+			if id == uuid.Nil {
+				return nil, ErrContextUnavailable
+			}
+			value = id.String()
+		case p.Context.User == "id":
 			id, err := uuid.Parse(u.ID)
 			if err != nil || id == uuid.Nil {
 				return nil, ErrContextUnavailable
 			}
 			value = id.String()
-		case "login":
+		case p.Context.User == "login":
 			if strings.TrimSpace(u.Login) == "" {
 				return nil, ErrContextUnavailable
 			}

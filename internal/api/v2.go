@@ -413,7 +413,7 @@ func (h *handler) runReportV2() http.HandlerFunc {
 		}
 		params, err = reportpkg.ResolveContextParams(r.Context(), rep, params, h.reg, h.store)
 		if err != nil {
-			writeError(w, http.StatusForbidden, "report context unavailable", "", 0)
+			writeError(w, http.StatusForbidden, reportpkg.ContextErrorText(err), "", 0)
 			return
 		}
 		compiled, err := h.compileQueryWithRowAccess(r.Context(), rep.Query, params)

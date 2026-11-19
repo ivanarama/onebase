@@ -10,5 +10,10 @@ func reportContextSchema() map[string]any {
 	return map[string]any{"oneOf": []any{
 		map[string]any{"type": "object", "additionalProperties": false, "required": []string{"user"}, "properties": map[string]any{"user": enumSchema("id", "login")}},
 		map[string]any{"type": "object", "additionalProperties": false, "required": []string{"user_card"}, "properties": map[string]any{"user_card": card}},
+		map[string]any{"type": "object", "additionalProperties": false, "required": []string{"catalog_name"}, "properties": map[string]any{
+			"catalog_name": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"catalog", "name"}, "properties": map[string]any{
+				"catalog": stringSchema("Справочник"), "name": stringSchema("Точное наименование существующего элемента"),
+			}},
+		}},
 	}}
 }
