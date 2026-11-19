@@ -96,7 +96,7 @@ class ShardCLI(unittest.TestCase):
         tests = [call for call in calls if call[0] == "test" and "-list" not in call]
         self.assertEqual(len(tests), 7)
         self.assertEqual([call[-1] for call in tests], ["github.com/ivantit66/onebase/other"] + [legacy.UI]*4 + [legacy.LAUNCHER]*2)
-        self.assertTrue(all(all(flag in call for flag in ["-race", "-count=1", "-timeout=10m", "-json", "-covermode=atomic"]) for call in tests))
+        self.assertTrue(all(all(flag in call for flag in ["-race", "-count=1", "-timeout=20m", "-json", "-covermode=atomic"]) for call in tests))
         self.assertEqual(sum("-p=2" in call for call in tests), 1)
 
     def test_authoritative_hash_and_source(self):
