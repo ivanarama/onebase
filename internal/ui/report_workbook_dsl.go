@@ -36,6 +36,10 @@ func (s *Server) reportWorkbookBuiltin(tx *interpreter.TxState) interpreter.Buil
 		if rep == nil || !s.canCtx(ctx, "report", rep.Name, "run") {
 			return nil, fmt.Errorf("%s: отчёт недоступен: %q", function, name)
 		}
+		if strings.TrimSpace(rep.Query) == "" {
+			return nil, fmt.Errorf("%s: отчёт %q не содержит запроса", function, rep.Name)
+		}
+
 		if variant != "" {
 			found := false
 			for _, v := range rep.Variants {
