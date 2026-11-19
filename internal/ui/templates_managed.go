@@ -655,9 +655,7 @@ input.ob-deadline-over,.form-group input.ob-deadline-over[readonly]{background:#
 .managed-vt-scroll{overflow-y:auto}
 .managed-vt-scroll>.tp-table{overflow:visible;margin-bottom:0}
 .managed-vt-scroll>.tp-table thead th{position:sticky;top:0;z-index:1}
-.ob-form-action-spacing .managed-group-horizontal:not(.ob-equal-columns)>.managed-group-body:has(>.managed-btn,>.managed-btn-layout){gap:4px}
-.ob-form-action-spacing .managed-group-horizontal:not(.ob-equal-columns):has(>.managed-group-body> :is(.managed-btn,.managed-btn-layout)){margin-block:4px !important}
-.ob-form-action-spacing .managed-group-horizontal:not(.ob-equal-columns):has(>.managed-group-body> :is(.managed-btn,.managed-btn-layout)) + .managed-group-horizontal:has(>.managed-group-body> :is(.managed-btn,.managed-btn-layout)){margin-block-start:0 !important}
+.ob-form-action-spacing .managed-group-horizontal:not(.ob-equal-columns)>.managed-group-body:has(>.managed-btn,>.managed-btn-layout){gap:4px;padding-block:2px}
 .ob-form-action-spacing .managed-command-bar{gap:4px !important}
 .ob-form-action-spacing .btn-app-primary{background:#dbeafe;color:#1e3a8a;box-shadow:inset 0 0 0 1px #60a5fa}
 .ob-form-action-spacing .btn-app-primary:hover:not(:disabled){background:#bfdbfe}
@@ -794,7 +792,7 @@ select[data-ref-choice-context][data-ob-choice-error="1"]{border-color:#dc2626;b
   {{if or .Entity.Posting (not .IsNew)}}
     <div class="entity-command-group" role="group" aria-label="{{t .Lang "Действия"}}">
       {{template "document-form-post-commands" .}}
-      {{template "entity-form-copy-command" .}}
+      {{if formActionVisible .Form "copy"}}{{template "entity-form-copy-command" .}}{{end}}
       {{if not (deleteHidden .Form)}}{{template "entity-form-mark-command" .}}{{end}}
     </div>
   {{end}}
