@@ -1647,8 +1647,8 @@ tr:hover td{background:#f8fafc}
 .btn-secondary{background:#e2e8f0;color:#374151}.btn-secondary:hover{background:#cbd5e1}
 .entity-command-group{display:inline-flex;align-items:center;gap:3px}
 .entity-command{display:inline-flex;align-items:center}
-.btn.btn-command{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;padding:0;border-radius:5px;font-size:18px}
-.btn.btn-command .ob-icon{width:20px;height:20px;flex:none}
+.btn.btn-command{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;padding:0;border-radius:4px;font-size:18px}
+.btn.btn-command .ob-icon{width:14px;height:14px;flex:none}
 .btn-command.btn-command-create{border-radius:50%;background:#15803d;color:#fff}
 .btn-command.btn-command-create:hover{background:#166534}
 .btn-document-post{background:#dcfce7;color:#166534}.btn-document-post:hover{background:#bbf7d0}
