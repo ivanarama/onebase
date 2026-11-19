@@ -615,6 +615,7 @@ func KnownBuiltinNames() map[string]struct{} {
 		"вебсокет", "websocket",
 		// запуск регламентного задания по требованию (план 123, internal/ui/dsl_scheduled.go)
 		"регламентныезадания", "scheduledjobs",
+		"сформироватьотчетxlsx", "buildreportxlsx",
 		// очередь фоновых заданий с пулом исполнителей (план 130, internal/ui/dsl_jobqueue.go)
 		"фоновыезадания", "backgroundjobs",
 		"предопределённыезначения", "predefinedvalues",

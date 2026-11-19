@@ -72,7 +72,10 @@ func (s *Server) newEntityService(hooks *webhook.Dispatcher) *entityservice.Serv
 // имели Справочники/Документы/вложения/транзакции — как обработки из UI/procrun.
 // Вместе с картой возвращается TxState: scheduler закрывает его после запуска.
 func (s *Server) BuildJobDSLVars(ctx context.Context, mc *runtime.MovementsCollector, messages *[]string) (map[string]any, *interpreter.TxState) {
-	return s.buildDSLVarsWithMessagesTx(ctx, mc, messages)
+	vars, tx := s.buildDSLVarsWithMessagesTx(ctx, mc, messages)
+	vars["СформироватьОтчетXLSX"] = s.reportWorkbookBuiltin(tx)
+	vars["BuildReportXLSX"] = vars["СформироватьОтчетXLSX"]
+	return vars, tx
 }
 
 // catFactory реализует interpreter.CatalogObjectFactory: объекты справочников,
