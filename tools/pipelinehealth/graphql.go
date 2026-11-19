@@ -17,6 +17,8 @@ import (
 	"unicode/utf8"
 )
 
+// Keep root pages small: each node also loads label and comment connections.
+// Cursor pagination below still reads every PR, issue and nested comment.
 const pipelineHealthSnapshotQuery = `
 query PipelineHealthSnapshot(
   $owner: String!
@@ -31,7 +33,7 @@ query PipelineHealthSnapshot(
     nameWithOwner
     pullRequests(
       states: OPEN
-      first: 100
+      first: 20
       after: $pullCursor
       orderBy: {field: CREATED_AT, direction: ASC}
     ) @include(if: $includePulls) {
@@ -77,7 +79,7 @@ query PipelineHealthSnapshot(
     }
     issues(
       states: OPEN
-      first: 100
+      first: 20
       after: $issueCursor
       orderBy: {field: CREATED_AT, direction: ASC}
     ) @include(if: $includeIssues) {
@@ -213,6 +215,7 @@ type pipelineGraphQLClient interface {
 // shell. GraphQL errors are parsed even when gh exits non-zero: partial data is
 // never accepted as a queue snapshot.
 type ghPipelineGraphQLClient struct {
+	sourceCost     *sourceGraphQLMeter
 	strictIdentity bool
 	executable     string
 	timeout        time.Duration
@@ -306,6 +309,13 @@ func newGHPipelineGraphQLClient() *ghPipelineGraphQLClient {
 }
 
 func (client *ghPipelineGraphQLClient) Query(query string, variables map[string]any, destination any) error {
+	if client.sourceCost != nil {
+		return client.queryWithSourceCost(query, variables, destination)
+	}
+	return client.queryUnmetered(query, variables, destination)
+}
+
+func (client *ghPipelineGraphQLClient) queryUnmetered(query string, variables map[string]any, destination any) error {
 	payload, err := json.Marshal(struct {
 		Query     string         `json:"query"`
 		Variables map[string]any `json:"variables"`
@@ -359,6 +369,11 @@ func (client *ghPipelineGraphQLClient) Query(query string, variables map[string]
 	}
 	if client.strictIdentity {
 		if err := validateIdentityJSON(stdout.Bytes()); err != nil {
+			return err
+		}
+	}
+	if client.sourceCost != nil {
+		if err := validateSourceGraphQLEnvelope(stdout.Bytes()); err != nil {
 			return err
 		}
 	}

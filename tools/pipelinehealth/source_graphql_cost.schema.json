@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "source-graphql-cost-v1",
+  "title": "Optional source GraphQL usage receipt",
+  "description": "A complete receipt proves the server-reported point cost of one full successful checker observation. For a failed request charged_upper_bound retains local escrow only: unknown GitHub charges or timeout surcharges are not bounded by that field.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "nonce", "allowance", "charged_upper_bound", "observed_actual_cost", "physical_attempts", "preview_attempts", "data_attempts", "unproved_attempts", "uncertain_cost", "complete", "repo", "trusted_account", "contract_sha256"],
+  "properties": {
+    "protocol": {"const": "source-graphql-cost-v1"},
+    "nonce": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+    "allowance": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+    "charged_upper_bound": {"type": "integer", "minimum": 0},
+    "observed_actual_cost": {"type": "integer", "minimum": 0},
+    "physical_attempts": {"type": "integer", "minimum": 0, "maximum": 10000},
+    "preview_attempts": {"type": "integer", "minimum": 0, "maximum": 10000},
+    "data_attempts": {"type": "integer", "minimum": 0, "maximum": 10000},
+    "unproved_attempts": {"type": "integer", "minimum": 0},
+    "uncertain_cost": {"type": "boolean"},
+    "complete": {"type": "boolean"},
+    "repo": {"type": "string", "minLength": 3},
+    "trusted_account": {"type": "string", "minLength": 1},
+    "contract_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "reason": {"type": "string", "minLength": 1}
+  },
+  "allOf": [{
+    "if": {"properties": {"complete": {"const": true}}},
+    "then": {
+      "properties": {
+        "uncertain_cost": {"const": false},
+        "unproved_attempts": {"const": 0},
+        "physical_attempts": {"minimum": 2},
+        "preview_attempts": {"minimum": 1},
+        "data_attempts": {"minimum": 1},
+        "charged_upper_bound": {"minimum": 2},
+        "observed_actual_cost": {"minimum": 2}
+      },
+      "not": {"required": ["reason"]}
+    }
+  }]
+}
