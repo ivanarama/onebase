@@ -1669,7 +1669,7 @@ details{margin-bottom:16px;max-width:1400px;background:#fff;border-radius:10px;b
 details summary{padding:12px 20px;font-weight:600;font-size:14px;cursor:pointer;color:#475569;list-style:none}
 details summary::-webkit-details-marker{display:none}
 details summary::before{content:"▶ ";font-size:11px}
-details[open] summary::before{content:"▼ "}
+details[open] > summary::before{content:"▼ "}
 .filter-body{padding:0 20px 16px;display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:12px}
 .filter-body label{font-size:12px;color:#64748b;margin-bottom:3px}
 .filter-body input,.filter-body select{padding:7px 10px;font-size:13px}
