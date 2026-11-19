@@ -178,6 +178,7 @@ type saveEntity struct {
 	NotifyChanges bool      `yaml:"notify_changes,omitempty"`
 	// InteractiveCreate — указатель: явное `false` обязано пережить round-trip.
 	InteractiveCreate *bool `yaml:"interactive_create,omitempty"`
+	AllowCopy         *bool `yaml:"allow_copy,omitempty"`
 	// ChoiceRowStyle — choice_row_style справочника; редактор его не
 	// показывает, блок переносится как есть.
 	ChoiceRowStyle yaml.Node `yaml:"choice_row_style,omitempty"`

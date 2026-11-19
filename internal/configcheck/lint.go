@@ -417,7 +417,7 @@ func entityYAMLSchema() *yamlLintSchema {
 		// owner — справочник-владелец (подчинённый справочник, 1С «Владелец»).
 		"owner",
 		"presentation", "order_by", "choice_preview", "choice_preview_proc",
-		"list_form", "item_form", "based_on", "list_mode", "list_filters", "interactive_create", "notify_changes", "list_refresh_on",
+		"list_form", "item_form", "based_on", "list_mode", "list_filters", "interactive_create", "allow_copy", "notify_changes", "list_refresh_on",
 		"fulltext", "search_fields", "detail_panel",
 	), map[string]*yamlLintSchema{
 		"titles": freeMap(),

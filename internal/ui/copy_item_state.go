@@ -27,6 +27,20 @@ type copySourceLoadError struct {
 
 func (e *copySourceLoadError) Error() string { return e.message }
 
+func (s *Server) copyCommandAllowed(r *http.Request, entity *metadata.Entity) bool {
+	return s.canInteractiveCreate(r, entity) && (!entity.NoCopy || s.legacyEntityUI(r))
+}
+
+func (s *Server) copyCommandError(r *http.Request, entity *metadata.Entity) error {
+	if s.copyCommandAllowed(r, entity) {
+		return nil
+	}
+	return &copySourceLoadError{
+		status:  http.StatusForbidden,
+		message: s.tr(s.resolveLang(r), "Недостаточно прав"),
+	}
+}
+
 // loadAuthorizedCopySource performs every read decision against the exact row
 // that will be copied. The declarative RLS predicate and ПриЧтенииНаСервере
 // both see this in-memory snapshot; neither is followed by another GetByID.
@@ -35,6 +49,9 @@ func (s *Server) loadAuthorizedCopySource(
 	entity *metadata.Entity,
 	sourceID string,
 ) (*copySourceSnapshot, error) {
+	if err := s.copyCommandError(r, entity); err != nil {
+		return nil, err
+	}
 	id, err := uuid.Parse(strings.TrimSpace(sourceID))
 	if err != nil {
 		return nil, &copySourceLoadError{

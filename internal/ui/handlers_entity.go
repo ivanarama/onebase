@@ -395,6 +395,13 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 	if entity == nil {
 		return
 	}
+	if r.URL.Query().Get("copy") != "" {
+		if err := s.copyCommandError(r, entity); err != nil {
+			w.WriteHeader(http.StatusForbidden)
+			s.render(w, r, "page-forbidden", map[string]any{"Reason": err.Error()})
+			return
+		}
+	}
 	if !s.requirePerm(w, r, string(entity.Kind), entity.Name, "write") {
 		return
 	}
@@ -1075,6 +1082,12 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if strings.TrimSpace(r.FormValue(copySourceFormField)) != "" || r.URL.Query().Get("copy") != "" {
+		if err := s.copyCommandError(r, entity); err != nil {
+			writeCopySourceError(w, err)
+			return
+		}
+	}
 	managedForm := pickManagedForm(entity, "object")
 	if managedForm != nil {
 		s.mergeFormAttrValues(r.Context(), r, managedForm, entity, obj)
@@ -1485,7 +1498,7 @@ func (s *Server) treeChildRows(r *http.Request, entity *metadata.Entity, rows []
 	}
 	// Копировать может только тот, кому разрешено создавать: пустой copy_url
 	// убирает пункт меню и F9 у подгруженных строк дерева.
-	canCopy := s.canInteractiveCreate(r, entity)
+	canCopy := s.copyCommandAllowed(r, entity)
 	out := make([]treeChildRow, 0, len(rows))
 	for _, row := range rows {
 		id := refValueString(row["id"])

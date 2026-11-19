@@ -1931,6 +1931,7 @@ function listSyncActionsBtn() {
     }
     if (!reason && command === 'post' && row.dataset.marked === '1') reason = obListLabel('postMarked', 'Документ помечен на удаление');
     if (!reason && command === 'unpost' && row.dataset.posted !== '1') reason = obListLabel('notPosted', 'Не проведён');
+    if (!reason && command === 'copy' && !obRowUrl(row, 'copy')) reason = obListLabel('noPermission', 'Недостаточно прав');
     button.disabled = !!reason;
     button.setAttribute('aria-label', label);
     control.title = reason || label;
@@ -2945,6 +2946,9 @@ function obInitListDelegates() {
       var button = command.querySelector('button');
       if (!row || !button || button.disabled) return;
       switch (command.dataset.obListCommand) {
+        case 'copy':
+          listOpen(obRowUrl(row, 'copy'));
+          break;
         case 'mark':
           var marked = row.dataset.marked === '1';
           listSubmit(obRowUrl(row, marked ? 'unmark' : 'mark'), marked

@@ -2182,6 +2182,14 @@ const tplList = `
 {{end}}
 {{end}}
 
+{{define "entity-form-copy-command"}}
+{{if not .IsNew}}
+  {{$label := t .Lang "Скопировать"}}
+  {{$copyURL := printf "/ui/%s/%s/new%s" (lower (str .Entity.Kind)) (lower .Entity.Name) (listURL nil "copy" (str .ID) "subsystem" (str .CurrentSubsystem))}}
+  {{template "entity-command" (dict "Icon" "copy" "Class" "btn-secondary" "Href" $copyURL "Allowed" .CanCopy "Label" $label "Title" (or (and .CanCopy $label) (t .Lang "Недостаточно прав")))}}
+{{end}}
+{{end}}
+
 {{define "entity-form-mark-command"}}
 {{if not .IsNew}}
   {{$marked := eq (index .Values "deletion_mark") "true"}}
@@ -2228,6 +2236,7 @@ const tplList = `
       {{template "entity-command" (dict "Icon" "circle-check" "Class" "btn-document-post" "ListCommand" "post" "Allowed" .CanPost "Label" $post "Title" (or (and .CanPost (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
       {{template "entity-command" (dict "Icon" "undo-2" "Class" "btn-document-unpost" "ListCommand" "unpost" "Allowed" .CanUnpost "Label" (t .Lang "Отменить проведение") "Title" (or (and .CanUnpost (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
     {{end}}
+    {{template "entity-command" (dict "Icon" "copy" "Class" "btn-secondary" "ListCommand" "copy" "Allowed" .CanCopy "Label" (t .Lang "Скопировать") "Title" (or (and .CanCopy (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
     {{template "entity-command" (dict "Icon" "trash-2" "Class" "btn-secondary" "ListCommand" "mark" "Allowed" .CanMark "Label" (t .Lang "Пометить на удаление") "Title" (or (and .CanMark (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
   </div>
   {{end}}
@@ -2388,7 +2397,7 @@ const tplList = `
   data-ob-row-subsystem="{{$.CurrentSubsystem}}"
   data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "view" "" "parent" ""}}"
   data-ob-row-copy-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-row-can-copy="{{if $.CanCreate}}1{{end}}"
+  data-ob-row-can-copy="{{if $.CanCopy}}1{{end}}"
   data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
 ><thead><tr>
   {{range $treeCols}}<th>{{.DisplayName $.Lang}}</th>{{end}}
@@ -2396,7 +2405,7 @@ const tplList = `
 </tr></thead><tbody>
 {{range .TreeRows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}{{$depth := index $row "_depth"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
-  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanMark (not (index $row "_is_predefined"))}} Delete{{end}}"
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if or $.CanCopy (and $.LegacyEntityUI $.CanWrite)}} F9{{end}}{{if and $.CanMark (not (index $row "_is_predefined"))}} Delete{{end}}"
   data-ob-entity-id="{{index $row "id"}}"
   data-tree-id="{{index $row "id"}}"
   data-tree-depth="{{$depth}}"
@@ -2446,12 +2455,12 @@ const tplList = `
   data-ob-row-subsystem="{{$.CurrentSubsystem}}"
   data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" ""}}"
   data-ob-row-copy-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new{{listURL $.Query "copy" ""}}"
-  data-ob-row-can-copy="{{if $.CanCreate}}1{{end}}"
+  data-ob-row-can-copy="{{if $.CanCopy}}1{{end}}"
   data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
 >
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <div class="tile-card{{if index $row "deletion_mark"}} tile-deleted{{end}}"
-  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanMark (not (index $row "_is_predefined"))}} Delete{{end}}" role="option"
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if or $.CanCopy (and $.LegacyEntityUI $.CanWrite)}} F9{{end}}{{if and $.CanMark (not (index $row "_is_predefined"))}} Delete{{end}}" role="option"
   data-ob-entity-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
@@ -2503,12 +2512,12 @@ const tplList = `
   data-ob-row-subsystem="{{$.CurrentSubsystem}}"
   data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" ""}}"
   data-ob-row-copy-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new{{listURL $.Query "copy" ""}}"
-  data-ob-row-can-copy="{{if $.CanCreate}}1{{end}}"
+  data-ob-row-can-copy="{{if $.CanCopy}}1{{end}}"
   data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
 >
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
-  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanMark (not (index $row "_is_predefined"))}} Delete{{end}}"
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if or $.CanCopy (and $.LegacyEntityUI $.CanWrite)}} F9{{end}}{{if and $.CanMark (not (index $row "_is_predefined"))}} Delete{{end}}"
   data-ob-entity-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
@@ -2634,6 +2643,7 @@ const tplForm = `
   {{if or .Entity.Posting (not .IsNew)}}
     <div class="entity-command-group" role="group" aria-label="{{t .Lang "Действия"}}">
       {{template "document-form-post-commands" .}}
+      {{template "entity-form-copy-command" .}}
       {{template "entity-form-mark-command" .}}
     </div>
   {{end}}
@@ -2670,7 +2680,7 @@ const tplForm = `
     {{/* Копия открывается формой создания: пока её не записали, в базе ничего
          нет. Горячей клавиши здесь нет намеренно — F9 на карточке принадлежит
          копированию строки табличной части. */}}
-    {{if .CanCreate}}<a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?copy={{.ID}}" class="btn btn-sm btn-secondary">{{t $.Lang "Скопировать"}}</a>{{end}}
+    {{if and .LegacyEntityUI .CanCreate}}<a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?copy={{.ID}}" class="btn btn-sm btn-secondary">{{t $.Lang "Скопировать"}}</a>{{end}}
     <a href="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/history" class="btn btn-sm btn-secondary">{{t $.Lang "История"}}</a>
     {{if or .AllPrintForms .HasPrintProc}}
     <div style="position:relative">
