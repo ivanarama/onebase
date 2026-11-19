@@ -248,11 +248,46 @@ func (s *Server) registerAttachmentBuiltins(vars map[string]any, ctxFn func() co
 		if err := s.checkDSLRowAccess(ctx, entity, "write", att.OwnerID, nil); err != nil {
 			return nil, fmt.Errorf("УдалитьВложение: %w", err)
 		}
-		if err := s.store.DeleteAttachment(ctx, id); err != nil {
+		if len(args) > 1 {
+			queue, ok := args[1].(string)
+			if !ok {
+				return nil, fmt.Errorf("УдалитьВложение: ожидается имя очереди")
+			}
+			if user := auth.UserFromContext(ctx); user != nil && !user.IsAdmin {
+				return nil, fmt.Errorf("УдалитьВложение: постановка в очередь доступна только администратору")
+			}
+			if err := s.store.QueueAttachmentDeletion(ctx, id, queue); err != nil {
+				return nil, fmt.Errorf("УдалитьВложение: %w", err)
+			}
+		} else if err := s.store.DeleteAttachment(ctx, id); err != nil {
 			return nil, fmt.Errorf("УдалитьВложение: %w", err)
 		}
 		return nil, nil
 	})
+
+	flushFn := interpreter.BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("УдалитьВложенияИзОчереди(Владелец, Очередь): ожидаются два аргумента")
+		}
+		owner, ownerOK := args[0].(string)
+		queue, queueOK := args[1].(string)
+		if !ownerOK || !queueOK {
+			return nil, fmt.Errorf("УдалитьВложенияИзОчереди: ожидаются строки")
+		}
+		ctx := ctxFn()
+		if user := auth.UserFromContext(ctx); user != nil && !user.IsAdmin {
+			return nil, fmt.Errorf("УдалитьВложенияИзОчереди: недостаточно прав")
+		}
+		result, err := s.store.FlushAttachmentDeletionQueue(ctx, owner, queue)
+		if err != nil {
+			return nil, fmt.Errorf("УдалитьВложенияИзОчереди: %w", err)
+		}
+		return interpreter.NewStructFromMap(map[string]any{
+			"Удалено": float64(result.Deleted), "Ошибок": float64(result.Failed), "ПоследняяОшибка": result.LastError,
+		}), nil
+	})
+	vars["УдалитьВложенияИзОчереди"] = flushFn
+	vars["FlushAttachmentDeletionQueue"] = flushFn
 
 	vars["ПрисоединитьФайл"] = attachFn
 	vars["AttachFile"] = attachFn

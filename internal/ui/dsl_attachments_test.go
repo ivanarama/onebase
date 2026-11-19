@@ -138,7 +138,7 @@ func TestDSLAttachments_RegisteredInBuildVars(t *testing.T) {
 	s.entitySvc = &entityservice.Service{Store: db, Reg: registry, Interp: interp}
 
 	vars, _ := s.buildDSLVarsTx(ctx, runtime.NewMovementsCollector("processor", [16]byte{}))
-	for _, name := range []string{"ПрисоединитьФайл", "СписокВложений", "ПутьКВложению", "УдалитьВложение"} {
+	for _, name := range []string{"ПрисоединитьФайл", "СписокВложений", "ПутьКВложению", "УдалитьВложение", "УдалитьВложенияИзОчереди"} {
 		if _, ok := vars[name]; !ok {
 			t.Fatalf("builtin %s не зарегистрирован в buildDSLVars", name)
 		}
