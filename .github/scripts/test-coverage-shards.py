@@ -22,7 +22,10 @@ spec = importlib.util.spec_from_file_location("coverage_engine", ENGINE)
 engine = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(engine)
 LABELS = ["other", "ui-1", "ui-2", "ui-3", "ui-4", "launcher-1", "launcher-2"]
-FLAGS = ["-race", "-count=1", "-timeout=10m", "-json"]
+# The complete pipelinehealth package includes serial public-CLI/process tests.
+# It exceeds 10 minutes with race/atomic coverage; retain a finite package limit
+# while preserving every test and the existing 40-minute shard job deadline.
+FLAGS = ["-race", "-count=1", "-timeout=20m", "-json"]
 require = engine.require
 
 
