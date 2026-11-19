@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import runpy
+import subprocess
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -42,6 +43,8 @@ class RetryTest(unittest.TestCase):
                             dict(path='.github', annotation_level='notice', message='Capacity constraints')]
         self.refs = [{'ref': 'refs/tags/build-16690'}]  # The endpoint returns prefix matches.
         self.writes = []
+        self.post_error = None
+        self.post_run_update = dict(status='queued', conclusion=None)
         self.attempt_blob = self.blob
 
     def command(self, args, **kwargs):
@@ -54,7 +57,9 @@ class RetryTest(unittest.TestCase):
         endpoint = endpoint[len(prefix):]
         if method == 'POST':
             self.writes.append(endpoint)
-            self.current.update(status='queued', conclusion=None)
+            self.current.update(self.post_run_update)
+            if self.post_error:
+                raise self.post_error
             return b''
         self.assertEqual(method, 'GET')
         responses = {
@@ -102,6 +107,24 @@ class RetryTest(unittest.TestCase):
             with self.subTest(field=field, value=value), patch.dict(obj, {field: value}):
                 self.invoke()
                 self.assertEqual(self.writes, [])
+
+    def test_racing_rerun_or_lost_response_is_observed_without_resending(self):
+        self.post_error = subprocess.TimeoutExpired('gh api', 40)
+        for update in [dict(status='queued'), dict(status='completed', run_attempt=2)]:
+            with self.subTest(update=update):
+                self.current = copy.deepcopy(self.run)
+                self.writes.clear()
+                self.post_run_update = update
+                self.invoke()
+                self.assertEqual(self.writes, [f'actions/jobs/{JOB}/rerun'])
+        self.current = copy.deepcopy(self.run)
+        self.writes.clear()
+        self.post_error = subprocess.CalledProcessError(1, 'gh api', stderr=b'HTTP 403')
+        self.post_run_update = {}  # No rerun accepted. Surface the original error.
+        with self.assertRaises(subprocess.CalledProcessError) as caught:
+            self.invoke()
+        self.assertIs(caught.exception, self.post_error)
+        self.assertEqual(self.writes, [f'actions/jobs/{JOB}/rerun'])
 
     def test_matrix_must_point_to_one_unassigned_mac_job(self):
         for obj, field, value in [

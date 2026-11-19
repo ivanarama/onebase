@@ -84,10 +84,20 @@ def handle(event, trusted_release_blob, request=api):
     # Deliveries are serialized per run. A manual or already accepted rerun
     # changes the current attempt/status, while the historical event stays failed.
     current = request(run_path)
-    if any(current[k] != run[k] for k in ('id', 'workflow_id', 'head_sha', 'run_number',
-                                          'run_attempt', 'status', 'conclusion')):
+    identity = ('id', 'workflow_id', 'head_sha', 'run_number')
+    if any(current[k] != run[k] for k in (*identity, 'run_attempt', 'status', 'conclusion')):
         return 'Skipped: the release run changed before retry.'
-    request(f'actions/jobs/{job_id}/rerun', method='POST')
+    try:
+        request(f'actions/jobs/{job_id}/rerun', method='POST')
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+        # A manual retry may win after the final GET, or the POST response may
+        # be lost. Read the run once, without resending the mutation.
+        observed = request(run_path)
+        advancing = (observed['run_attempt'] > 1 or
+                     (observed['run_attempt'] == 1 and observed['status'] in {'queued', 'in_progress'}))
+        if not advancing or any(observed[k] != run[k] for k in identity):
+            raise
+        return f'Skipped: GitHub already advanced {tag} to another attempt.'
     return f"Requested one retry of {job['name']} (job {job_id}) for {tag}."
 
 
