@@ -1623,8 +1623,8 @@ aside details.navsec>summary:hover{color:#cbd5e1}
 #ob-nav:not(.nav-plain)>.navsec-gradient[data-nav-icon="notebook"]{--nav-section-rgb:210,116,148}
 #ob-nav:not(.nav-plain)>.navsec-gradient[data-nav-icon="table"]{--nav-section-rgb:156,181,98}
 @media(prefers-color-scheme:dark){#ob-nav:not(.nav-plain)>.navsec-gradient[data-nav-icon]{--nav-section-alpha:.19}}
-#ob-nav:not(.nav-plain)>.navsec-gradient>:is(summary,.sec:not(.navfolder-title)){font-size:16px;font-weight:700;line-height:1.2;overflow-wrap:anywhere}
-#ob-nav:not(.nav-plain)>.navsec-gradient :is(.navtree-folder>summary,.navfolder>summary,.navfolder-title){font-size:15px;font-weight:600;line-height:1.25}
+#ob-nav:not(.nav-plain)>.navsec-gradient>:is(summary,.sec:not(.navfolder-title)){font-size:15px;font-weight:700;line-height:1.2;overflow-wrap:anywhere}
+#ob-nav:not(.nav-plain)>.navsec-gradient :is(.navtree-folder>summary,.navfolder>summary,.navfolder-title){font-size:14px;font-weight:600;line-height:1.25}
 #ob-nav:not(.nav-plain)>.navsec-gradient a{font-size:13px;font-weight:400}
 aside details.navfolder{margin-left:12px}
 aside details.navfolder>summary{text-transform:none;font-size:12px;margin-top:8px}
