@@ -1976,8 +1976,7 @@ function listActivateRow(tr) {
 // и на списках, и на формах — как автогенерируемых, так и управляемых
 // (managed.js грузится только на вторых).
 //
-//   Форма:  Ctrl+Enter — «Провести и закрыть» (нет такой кнопки — «Записать»),
-//           Ctrl+S — «Записать».
+//   Форма:  Ctrl+Enter / Ctrl+S — «Записать».
 //   Список: Ins — создать, ↑/↓ — курсор по строкам, Enter/F2 — открыть,
 //           Ctrl+F — строка поиска. Delete (пометить на удаление) — отдельно.
 //
@@ -1985,10 +1984,6 @@ function listActivateRow(tr) {
 // Ctrl+S приходит как «ы», и проверка по e.key просто не сработала бы.
 function obFormActionButton(values) {
   for (var i = 0; i < values.length; i++) {
-    if (values[i] === 'post_and_close') {
-      var closeBtn = document.querySelector('button[data-ob-form-close="post"]');
-      if (closeBtn && !closeBtn.disabled) return closeBtn;
-    }
 	if (values[i] === '') {
 	  var popupSave = document.querySelector('button[data-ob-form-close="save_and_select"]');
 	  if (popupSave && !popupSave.disabled) return popupSave;
@@ -2447,7 +2442,7 @@ function obInitKeyboardShortcuts() {
 
     if (e.ctrlKey) {
       if (e.key === 'Enter') {
-        var go = obFormActionButton(['post_and_close', '']);
+        var go = obFormActionButton(['']);
         if (go) { e.preventDefault(); go.click(); }
         return;
       }

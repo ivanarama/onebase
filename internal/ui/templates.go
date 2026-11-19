@@ -2555,7 +2555,6 @@ const tplForm = `
   {{if .Entity.Posting}}
     {{if ne (index .Values "deletion_mark") "true"}}
       {{if $.CanPost}}<button class="btn btn-primary" type="submit" name="_action" value="post" form="main-form">{{if $.Entity.PostCaption}}{{$.Entity.PostCaption}}{{else}}{{t $.Lang "Провести"}}{{end}}</button>{{end}}
-      {{if and $.CanPost (not $.Entity.PostAndCloseHidden)}}<button class="btn btn-post" type="submit" name="_action" value="post_and_close" form="main-form" title="Ctrl+Enter" aria-keyshortcuts="Control+Enter">{{if $.Entity.PostCaption}}{{$.Entity.PostCaption}} и закрыть{{else}}{{t $.Lang "Провести и закрыть"}}{{end}}</button>{{end}}
     {{end}}
     {{if not .IsNew}}
       {{if eq (index .Values "posted") "true"}}

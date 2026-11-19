@@ -95,7 +95,6 @@ const listeners = {};
 let configPresent = false;
 let modalID = '';
 let saveClicks = 0;
-let postCloseClicks = 0;
 let popupSaveClicks = 0;
 let popupSaveEnabled = false;
 let domAddButtons = [];
@@ -113,7 +112,6 @@ const listConfig = {labels: {}, canDelete: false};
 const globalSearch = makeElement('input');
 const listSearch = makeElement('input');
 const save = {disabled: false, click() { saveClicks++; }};
-const postClose = {disabled: false, click() { postCloseClicks++; }};
 const popupSave = {disabled: false, click() { popupSaveClicks++; }};
 const dirtyForm = {addEventListener() {}};
 const closeForm = {click() { closeClicks++; }};
@@ -149,7 +147,6 @@ global.document = {
     return null;
   },
   querySelector(selector) {
-    if (selector.includes('post_and_close')) return postClose;
 	if (selector.includes('save_and_select')) return popupSaveEnabled ? popupSave : null;
     if (selector === 'button[name="_action"][value=""]') return save;
     if (selector === 'input[name="q"]') return globalSearch;
@@ -208,11 +205,12 @@ assert(tablePartJSONInputs.every(input => input.value === '[{"Name":"event-row"}
   'form-event response did not synchronize every readonly no-grid JSON mirror');
 
 fire({key: 'Enter', ctrlKey: true, defaultPrevented: true});
-assert(postCloseClicks === 0, 'defaultPrevented Ctrl+Enter submitted the form');
+assert(saveClicks === 0, 'defaultPrevented Ctrl+Enter submitted the form');
 fire({key: 'Enter', ctrlKey: true});
-assert(postCloseClicks === 1, 'exact Ctrl+Enter did not submit once');
+assert(saveClicks === 1, 'exact Ctrl+Enter did not submit once');
 fire({key: 'Enter', ctrlKey: true, shiftKey: true});
-assert(postCloseClicks === 1, 'Ctrl+Shift+Enter was accepted as Ctrl+Enter');
+assert(saveClicks === 1, 'Ctrl+Shift+Enter was accepted as Ctrl+Enter');
+saveClicks = 0;
 
 modalID = '_ref-create-modal';
 fire({code: 'KeyS', ctrlKey: true});

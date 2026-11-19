@@ -387,7 +387,10 @@ func TestFormActionButtonsCarryKeyHints(t *testing.T) {
 		t.Fatalf("ExecuteTemplate page-managed-form: %v", err)
 	}
 	html := buf.String()
-	for _, want := range []string{`title="Ctrl+Enter"`, `title="Ctrl+S"`} {
+	if strings.Contains(html, `data-ob-close-reason="post_and_close"`) {
+		t.Fatal("управляемая форма содержит стандартную кнопку «Провести и закрыть»")
+	}
+	for _, want := range []string{`title="Ctrl+S"`} {
 		if !strings.Contains(html, want) {
 			t.Errorf("на кнопках формы нет подсказки %s — клавишу не найдут", want)
 		}
@@ -400,7 +403,6 @@ func TestKeyboardShortcutsContract(t *testing.T) {
 	for _, tc := range []struct{ want, why string }{
 		{"function obInitKeyboardShortcuts", "встроенные клавиши формы и списка"},
 		{"obInitKeyboardShortcuts()", "инициализатор должен быть зарегистрирован, иначе клавиш нет"},
-		{"'post_and_close'", "Ctrl+Enter — «Провести и закрыть»"},
 		{"data-ob-list-create", "Insert — создать элемент списка"},
 		{"function listSetSel", "курсор списка нужен и клавиатуре, и клику — через единственную точку смены выделения"},
 		{"function obListMoveCursor", "↑/↓ ведут по строкам списка"},
