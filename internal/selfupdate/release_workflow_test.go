@@ -92,6 +92,21 @@ func releaseBuildSteps(t *testing.T) []workflowStep {
 	return build
 }
 
+// main can advance several times between the original build and its retry.
+// Creating build-N must use the source commit of the archived binaries.
+func TestPrereleaseTagUsesRunCommit(t *testing.T) {
+	for _, step := range releaseWorkflowSteps(t) {
+		if step.name == "Create Pre-Release" {
+			for _, line := range step.lines {
+				if strings.TrimSpace(line) == "target_commitish: ${{ github.sha }}" {
+					return
+				}
+			}
+		}
+	}
+	t.Fatal("Create Pre-Release must pin the new tag to the release run's SHA")
+}
+
 // Каждая выпускаемая сборка обязана нести жёсткий режим. Проверка идёт через
 // SignatureEnforced — тот же предикат, что читает боевой путь: подставь workflow
 // «yes» или «0», и тест скажет то же, что скажет обновление у пользователя.
