@@ -50,11 +50,13 @@ type apiLabel struct {
 }
 
 type apiComment struct {
-	ID        int64   `json:"id"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
-	User      apiUser `json:"user"`
-	Body      string  `json:"body"`
+	// Only the GraphQL reader sets this; updated_at retains its original value.
+	lastEditedAt *string
+	ID           int64   `json:"id"`
+	CreatedAt    string  `json:"created_at"`
+	UpdatedAt    string  `json:"updated_at"`
+	User         apiUser `json:"user"`
+	Body         string  `json:"body"`
 }
 
 type apiPull struct {
