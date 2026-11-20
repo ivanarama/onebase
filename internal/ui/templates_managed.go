@@ -355,10 +355,17 @@ const tplManagedForm = `
        {{if not $tpReadOnly}}title="Insert; F9; Delete; Ctrl+↑/↓" aria-keyshortcuts="Insert F9 Delete Control+ArrowUp Control+ArrowDown"{{end}}></div>
   {{if not $tpReadOnly}}<input type="hidden" name="tp_json.{{$tpName}}" id="tp-json-{{$tpName}}" value="">{{end}}
   <div style="display:flex;gap:6px;margin-top:4px">
-    <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569"{{if $tpReadOnly}} disabled{{else}}
-      data-ob-grid-add="{{$tpName}}" title="Insert" aria-keyshortcuts="Insert"{{end}}>+ Добавить строку</button>
-    <button type="button" class="btn btn-sm" style="background:#fee2e2;color:#991b1b"{{if $tpReadOnly}} disabled{{else}}
-      data-ob-grid-del="{{$tpName}}" title="Delete" aria-keyshortcuts="Delete"{{end}}>− Удалить строку</button>
+    {{/* У таблицы «только показать» (результаты поиска, итоги) кнопок правки
+         строк нет вовсе: раньше они рисовались серыми и занимали место,
+         обещая действие, которого нет. Такая таблица — закрытая целиком или
+         со всеми видимыми колонками readonly; второе важно там, где нужен
+         щелчок по строке: саму таблицу закрывать нельзя. */}}
+    {{if and (not $tpReadOnly) (managedTPEditable $tpPlan)}}
+    <button type="button" class="btn btn-sm" style="background:#e2e8f0;color:#475569"
+      data-ob-grid-add="{{$tpName}}" title="Insert" aria-keyshortcuts="Insert">+ Добавить строку</button>
+    <button type="button" class="btn btn-sm" style="background:#fee2e2;color:#991b1b"
+      data-ob-grid-del="{{$tpName}}" title="Delete" aria-keyshortcuts="Delete">− Удалить строку</button>
+    {{end}}
     {{/* display:none, а не hidden: display у .btn перебивает атрибут hidden. */}}
     {{if gridLayoutAttr $ctx $el.Name}}<button type="button" class="btn btn-sm" style="margin-left:auto;background:#f1f5f9;color:#64748b{{if not (gridOrderAttr $ctx $el.Name)}};display:none{{end}}"
       data-ob-grid-order-reset="{{$tpName}}"
