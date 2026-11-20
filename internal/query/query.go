@@ -4668,12 +4668,12 @@ func (tr *translator) sqliteDateParamField(idx int) int {
 			return field
 		}
 	}
-	// Первый или второй параметр правой части BETWEEN.
-	if tr.dateFieldAt(idx-2) && tr.keywordAt(idx-1, "МЕЖДУ", "BETWEEN") &&
-		(!tr.registerFieldAt(idx-2) || tr.keywordAt(idx+1, "И", "AND") && tr.timeParamAt(idx+2)) {
+	// Для регистра обе границы проверяет sqliteRegisterDateBetweenField.
+	// Здесь остаются только параметры BETWEEN для полей объектов.
+	if tr.dateFieldAt(idx-2) && !tr.registerFieldAt(idx-2) && tr.keywordAt(idx-1, "МЕЖДУ", "BETWEEN") {
 		return idx - 2
 	}
-	if tr.dateFieldAt(idx-4) &&
+	if tr.dateFieldAt(idx-4) && !tr.registerFieldAt(idx-4) &&
 		tr.keywordAt(idx-3, "МЕЖДУ", "BETWEEN") &&
 		tr.timeParamAt(idx-2) &&
 		tr.keywordAt(idx-1, "И", "AND") {
@@ -4706,7 +4706,9 @@ func (tr *translator) sqliteRegisterDateBetweenField(idx int) int {
 		case tIdent:
 			if kw, ok := sqlKW(next.val); ok {
 				switch kw {
-				case "AND", "OR", "GROUP", "HAVING", "ORDER", "UNION", "LIMIT", "THEN", "ELSE", "END", "AS", "FROM":
+				case "AND", "OR", "GROUP", "HAVING", "ORDER", "UNION", "LIMIT",
+					"WHEN", "THEN", "ELSE", "END", "AS", "FROM", "WHERE",
+					"INNER", "LEFT", "RIGHT", "FULL", "CROSS", "JOIN", "ASC", "DESC":
 					return field
 				}
 			}

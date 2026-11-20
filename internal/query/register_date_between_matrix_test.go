@@ -208,6 +208,20 @@ func TestRegisterDateMonthBoundariesMatrix(t *testing.T) {
 	})
 }
 
+func TestRegisterDateBetweenInJoinCondition(t *testing.T) {
+	info := &metadata.InfoRegister{Name: "Даты", Dimensions: []metadata.Field{{Name: "Момент", Type: metadata.FieldTypeDate}}}
+	item := &metadata.Entity{Name: "Предметы", Kind: metadata.KindCatalog, Fields: []metadata.Field{{Name: "Метка", Type: metadata.FieldTypeString}}}
+	date := time.Date(2027, 3, 1, 12, 0, 0, 0, time.UTC)
+	compiled, err := query.Compile("ВЫБРАТЬ Р.Момент ИЗ Справочник.Предметы КАК С "+
+		"ЛЕВОЕ СОЕДИНЕНИЕ РегистрСведений.Даты КАК Р ПО Р.Момент МЕЖДУ &Начало И &Конец "+
+		"ГДЕ С.Метка = &Метка", query.CompileOpts{
+		Dialect: storage.SQLiteDialect{}, Entities: []*metadata.Entity{item}, InfoRegs: []*metadata.InfoRegister{info},
+		Params: map[string]any{"Начало": date, "Конец": date.Add(time.Hour), "Метка": "предмет"},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 3, strings.Count(compiled.SQL, "ob_utc_datetime"), compiled.SQL)
+}
+
 // Строковые сравнения и произвольные выражения границ не получают новую
 // семантику момента: преобразование допустимо только для двух параметров.
 func TestRegisterDateBetweenKeepsOtherExpressions(t *testing.T) {
@@ -220,6 +234,7 @@ func TestRegisterDateBetweenKeepsOtherExpressions(t *testing.T) {
 		{"strings", "Момент МЕЖДУ &Начало И &Конец", date.Format(time.RFC3339), date.Add(time.Hour).Format(time.RFC3339)},
 		{"invalid string", "Момент МЕЖДУ &Начало И &Конец", date, "tomorrow"},
 		{"upper expression", "Момент МЕЖДУ &Начало И &Конец + 1", date, date.Format(time.RFC3339)},
+		{"upper expression with time bounds", "Момент МЕЖДУ &Начало И &Конец + 1", date, date.Add(time.Hour)},
 		{"lower expression", "Момент МЕЖДУ &Начало + 1 И &Конец", date.Format(time.RFC3339), date},
 		{"literal", `Момент МЕЖДУ &Начало И "2027-03-01T13:00:00Z"`, date, date},
 	} {
