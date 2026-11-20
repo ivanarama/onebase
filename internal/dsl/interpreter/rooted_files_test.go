@@ -3,7 +3,12 @@ package interpreter
 import (
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
+
+	"github.com/ivantit66/onebase/internal/dsl/lexer"
+	"github.com/ivantit66/onebase/internal/dsl/parser"
 )
 
 func TestRootedFiles_CopyListAndVerifiedRemoval(t *testing.T) {
@@ -55,13 +60,19 @@ func TestRootedFiles_RejectEscapingPaths(t *testing.T) {
 	digest := callB(t, "md5файла", exterior)
 	assertRejected := func(directory, file string) {
 		t.Helper()
-		for name, args := range map[string][]any{
-			"найтифайлы":     {directory, "*.jpg", queue},
-			"копироватьфайл": {file, staged, queue},
-			"удалитьфайлы":   {file, queue, digest},
+		vars := map[string]any{"Каталог": directory, "Файл": file, "Промежуточный": staged, "Корень": queue, "Хеш": digest}
+		for _, operation := range []string{
+			`НайтиФайлы(Каталог, "*.jpg", Корень)`,
+			`КопироватьФайл(Файл, Промежуточный, Корень)`,
+			`УдалитьФайлы(Файл, Корень, Хеш)`,
 		} {
-			if _, err := builtins[name](args, "", 0); err == nil {
-				t.Errorf("%s accepted %s", name, file)
+			src := "Процедура Тест()\n" + operation + ";\nКонецПроцедуры"
+			program, err := parser.New(lexer.New(src, "rooted.os")).ParseProgram()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := New().Run(program.Procedures[0], nil, vars); err == nil {
+				t.Errorf("%s accepted %s", operation, file)
 			}
 		}
 		if _, err := os.Stat(staged); !os.IsNotExist(err) {
@@ -76,4 +87,87 @@ func TestRootedFiles_RejectEscapingPaths(t *testing.T) {
 		t.Skipf("symlink unavailable: %v", err)
 	}
 	assertRejected("jump", "jump/photo.jpg")
+}
+
+func TestRootedFiles_OSFailureIsCaughtAndNextFileIsRemoved(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows denies deleting a file opened without delete sharing")
+	}
+	root := t.TempDir()
+	lockedPath := filepath.Join(root, "locked.jpg")
+	nextPath := filepath.Join(root, "next.jpg")
+	for _, path := range []string{lockedPath, nextPath} {
+		if err := os.WriteFile(path, []byte("photo"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	locked, err := os.Open(lockedPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = locked.Close() })
+	if err := os.Remove(lockedPath); err == nil {
+		t.Fatalf("expected the test handle to block deletion, got %v", err)
+	}
+
+	const src = `Функция Тест()
+		Попытка
+			УдалитьФайлы("locked.jpg", Корень, Хеш);
+			Ошибка = "";
+		Исключение
+			Ошибка = ОписаниеОшибки();
+		КонецПопытки;
+		УдалитьФайлы("next.jpg", Корень, Хеш);
+		Возврат Ошибка;
+	КонецФункции`
+	program, err := parser.New(lexer.New(src, "rooted.os")).ParseProgram()
+	if err != nil {
+		t.Fatal(err)
+	}
+	vars := map[string]any{"Корень": root, "Хеш": callB(t, "md5файла", lockedPath)}
+	var result any
+	if err := New().RunWithResult(program.Procedures[0], nil, &result, vars); err != nil {
+		t.Fatal(err)
+	}
+	if text, ok := result.(string); !ok || !strings.Contains(text, "УдалитьФайлы:") {
+		t.Fatalf("missing caught error: %v", result)
+	}
+	if _, err := os.Stat(lockedPath); err != nil {
+		t.Fatalf("locked file must remain: %v", err)
+	}
+	if _, err := os.Stat(nextPath); !os.IsNotExist(err) {
+		t.Fatalf("next file must be removed, stat error: %v", err)
+	}
+	if err := locked.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := New().RunWithResult(program.Procedures[0], nil, &result, vars); err != nil || result != "" {
+		t.Fatalf("retry: result = %v, err = %v", result, err)
+	}
+	if _, err := os.Stat(lockedPath); !os.IsNotExist(err) {
+		t.Fatalf("released file must be removed, stat error: %v", err)
+	}
+}
+
+func TestRootedFiles_UnavailableDirectoryIsCaught(t *testing.T) {
+	const src = `Функция Тест()
+		Попытка
+			НайтиФайлы(".", "*.jpg", Корень);
+			Возврат "";
+		Исключение
+			Возврат ОписаниеОшибки();
+		КонецПопытки;
+	КонецФункции`
+	program, err := parser.New(lexer.New(src, "rooted.os")).ParseProgram()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result any
+	vars := map[string]any{"Корень": filepath.Join(t.TempDir(), "unavailable")}
+	if err := New().RunWithResult(program.Procedures[0], nil, &result, vars); err != nil {
+		t.Fatal(err)
+	}
+	if text, ok := result.(string); !ok || !strings.Contains(text, "НайтиФайлы:") {
+		t.Fatalf("missing caught error: %v", result)
+	}
 }

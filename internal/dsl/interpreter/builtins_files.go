@@ -95,7 +95,11 @@ func moveFileFn(args []any, _ string, _ int) (any, error) {
 // рекурсивно (os.Remove), чтобы случайно не снести дерево каталогов.
 func deleteFileFn(args []any, _ string, _ int) (any, error) {
 	if root := strArg(args, 1); root != "" {
-		return deleteFromDirectory(root, strArg(args, 0), strArg(args, 2))
+		deleted, err := deleteFromDirectory(root, strArg(args, 0), strArg(args, 2))
+		if err != nil {
+			RaiseUserError("УдалитьФайлы: " + err.Error())
+		}
+		return deleted, nil
 	}
 	if err := os.Remove(safePathOrRaise("УдалитьФайлы", strArg(args, 0))); err != nil { //nolint:gosec // G703: trusted DSL file capability; sandbox profiles replace this builtin before evaluation
 		RaiseUserError("УдалитьФайлы: " + err.Error())
@@ -114,7 +118,11 @@ func makeDirFn(args []any, _ string, _ int) (any, error) {
 // НайтиФайлы(Путь, Маска) → Массив путей подходящих файлов.
 func findFilesFn(args []any, _ string, _ int) (any, error) {
 	if root := strArg(args, 2); root != "" {
-		return findInDirectory(root, strArg(args, 0), strArg(args, 1))
+		matches, err := findInDirectory(root, strArg(args, 0), strArg(args, 1))
+		if err != nil {
+			RaiseUserError("НайтиФайлы: " + err.Error())
+		}
+		return matches, nil
 	}
 	pattern := filepath.Join(safePathOrRaise("НайтиФайлы", strArg(args, 0)), strArg(args, 1))
 	matches, err := filepath.Glob(pattern)
