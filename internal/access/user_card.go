@@ -42,15 +42,6 @@ func userCardDescriptor(src *auth.UserCardSource, target *metadata.Entity, field
 	if lookup == nil {
 		return fail("requires metadata lookup")
 	}
-	if src.TablePart != "" || src.Column != "" {
-		return fail("table-part sources are not supported in this release")
-	}
-	if src.Catalog == "" || src.Field == "" || strings.Contains(src.Field, ".") {
-		return fail("catalog and ordinary scalar field are required")
-	}
-	if op != "eq" && op != "ne" && op != "" {
-		return fail("scalar sources require eq or ne")
-	}
 	catalog := lookup.GetEntity(src.Catalog)
 	if catalog == nil || catalog.Kind != metadata.KindCatalog {
 		return fail("unknown catalog")
@@ -74,9 +65,16 @@ func userCardDescriptor(src *auth.UserCardSource, target *metadata.Entity, field
 		}
 		account = f
 	}
-	value, ok := concreteField(catalog, src.Field)
-	if !ok {
-		return fail("unknown ordinary source field")
+	value, tablePart, err := userCardSelection(src, catalog)
+	if err != nil {
+		return fail(err.Error())
+	}
+	if tablePart != nil {
+		if op != "in" && op != "not_in" {
+			return fail("table-part sources require in or not_in")
+		}
+	} else if op != "eq" && op != "ne" && op != "" {
+		return fail("scalar sources require eq or ne")
 	}
 	// Dot navigation on the target is resolved independently of the source.
 	if strings.Contains(field, ".") {
@@ -107,7 +105,38 @@ func userCardDescriptor(src *auth.UserCardSource, target *metadata.Entity, field
 	default:
 		return fail("unsupported scalar type")
 	}
-	return storage.UserCardDescriptor{Catalog: catalog, AccountField: account, Field: value}, nil
+	return storage.UserCardDescriptor{Catalog: catalog, AccountField: account, Field: value, TablePart: tablePart}, nil
+}
+
+// Select only ordinary metadata fields. A partial or mixed selector must never
+// fall back to the scalar source (including for programmatically built roles).
+func userCardSelection(src *auth.UserCardSource, catalog *metadata.Entity) (metadata.Field, *metadata.TablePart, error) {
+	if src.TablePart != "" || src.Column != "" {
+		if src.Field != "" || src.TablePart == "" || src.Column == "" || src.Shorthand || strings.Contains(src.TablePart, ".") || strings.Contains(src.Column, ".") {
+			return metadata.Field{}, nil, fmt.Errorf("choose field or the complete table_part/column selector")
+		}
+		for i := range catalog.TableParts {
+			tp := &catalog.TableParts[i]
+			if !strings.EqualFold(tp.Name, src.TablePart) {
+				continue
+			}
+			for _, f := range tp.Fields {
+				if strings.EqualFold(f.Name, src.Column) {
+					return f, tp, nil
+				}
+			}
+			return metadata.Field{}, nil, fmt.Errorf("unknown ordinary table-part column")
+		}
+		return metadata.Field{}, nil, fmt.Errorf("unknown source table part")
+	}
+	if src.Field == "" || strings.Contains(src.Field, ".") {
+		return metadata.Field{}, nil, fmt.Errorf("ordinary scalar field is required")
+	}
+	f, ok := concreteField(catalog, src.Field)
+	if !ok {
+		return metadata.Field{}, nil, fmt.Errorf("unknown ordinary source field")
+	}
+	return f, nil, nil
 }
 
 // prepareCardPolicy walks every branch before boolean evaluation. Unavailable
@@ -176,7 +205,14 @@ func prepareCardPolicy(ctx context.Context, p auth.RowPolicy, u *auth.User, meta
 			}
 		}
 		unavailable = !result.Available
-		p.Value = auth.RowValue{Literal: result.Value, LiteralSet: true}
+		if desc.TablePart != nil {
+			if validate {
+				result.Values = []any{result.Value}
+			}
+			p.Value = auth.RowValue{List: result.Values}
+		} else {
+			p.Value = auth.RowValue{Literal: result.Value, LiteralSet: true}
+		}
 	}
 	return p, unavailable, nil
 }
@@ -192,11 +228,27 @@ func CanonicalRowAccess(in auth.RowAccess, lookup EntityLookup) (auth.RowAccess,
 				return p, fmt.Errorf("user_card requires metadata lookup")
 			}
 			catalog := lookup.GetEntity(src.Catalog)
-			desc, err := userCardDescriptor(src, catalog, src.Field, lookup, "eq")
+			if catalog == nil || catalog.Kind != metadata.KindCatalog {
+				return p, fmt.Errorf("user_card: unknown catalog")
+			}
+			value, tp, err := userCardSelection(src, catalog)
+			if err != nil {
+				return p, err
+			}
+			op := "eq"
+			if tp != nil {
+				op = "in"
+			}
+			desc, err := userCardDescriptor(src, &metadata.Entity{Fields: []metadata.Field{value}}, value.Name, lookup, op)
 			if err != nil {
 				return p, err
 			}
 			p.Value.UserCard = &auth.UserCardSource{Catalog: desc.Catalog.Name, AccountField: desc.AccountField.Name, Field: desc.Field.Name}
+			if desc.TablePart != nil {
+				p.Value.UserCard.Field = ""
+				p.Value.UserCard.TablePart = desc.TablePart.Name
+				p.Value.UserCard.Column = desc.Field.Name
+			}
 		}
 		p.All = append([]auth.RowPolicy(nil), p.All...)
 		p.Any = append([]auth.RowPolicy(nil), p.Any...)

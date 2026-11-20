@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -53,25 +52,9 @@ func runGraphQLRetryFixture(path string) {
 }
 
 func TestGraphQLCLIGatewayReadRecovery(t *testing.T) {
-	root, err := filepath.Abs(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatal(err)
-	}
-	name := "pipelinehealth"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	binary := filepath.Join(t.TempDir(), name)
-	//nolint:gosec // The output path and package are fixed by this test.
-	build := exec.Command("go", "build", "-o", binary, "./tools/pipelinehealth")
-	build.Dir = root
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build CLI: %v\n%s", err, output)
-	}
-	helper, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	root := repoRoot(t)
+	binary := pipelinehealthCLI(t)
+	helper := buildGhStub(t)
 	marshal := func(value any) json.RawMessage {
 		data, err := json.Marshal(value)
 		if err != nil {
@@ -120,7 +103,7 @@ func TestGraphQLCLIGatewayReadRecovery(t *testing.T) {
 			//nolint:gosec // binary was built by this test under t.TempDir.
 			command := exec.Command(binary, "-transport", "graphql", "-json")
 			command.Dir = root
-			command.Env = append(os.Environ(), "GH_EXE="+helper, "PIPELINEHEALTH_TEST_GH_HELPER=1", "PIPELINEHEALTH_TEST_GH_RETRY_FIXTURE="+path)
+			command.Env = append(os.Environ(), "GH_EXE="+helper, "GHSTUB_GRAPHQL_RETRY_FIXTURE="+path)
 			output, err := command.Output()
 			counter, readErr := os.ReadFile(path + ".index")
 			if readErr != nil || string(counter) != strconv.Itoa(test.calls) {

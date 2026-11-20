@@ -255,6 +255,10 @@ type FormElement struct {
 	// Оба каскадят на потомков контейнера, как и постоянный ReadOnly (#1184).
 	// Складывается это по «ИЛИ»: ложное условие предка не отпирает потомка с
 	// собственным ReadOnly.
+	// TextBold — жирное значение поля (ПолеВвода, ПолеДаты) или текст
+	// надписи: выделить главное на форме — имя клиента в заявке. Подпись поля
+	// остаётся обычной.
+	TextBold     bool   `yaml:"text_bold,omitempty"`
 	ReadOnlyWhen string `yaml:"readonly_when,omitempty"`
 	HiddenWhen   string `yaml:"hidden_when,omitempty"`
 	// TitleFrom — у колонки табличной части (kind: Колонка): имя реквизита
@@ -310,6 +314,8 @@ type FormElement struct {
 	// первые N записей, и оператор выбирает из них, не подозревая, что видит не
 	// весь список. Указатель отличает явное false от отсутствующего ключа.
 	ChoiceDropdown *bool `yaml:"choice_dropdown,omitempty"`
+	// ReferencePage opens a custom page with the selected reference UUID in ?ref= instead of its card.
+	ReferencePage string `yaml:"reference_page,omitempty"`
 	// RefCardButton — показывать ли у ЭТОГО ссылочного поля кнопку «Открыть
 	// карточку» (🔍). Явное значение у поля сильнее обоих ключей формы
 	// (ref_card_button и ref_card_button_admin_only) в обе стороны: может и

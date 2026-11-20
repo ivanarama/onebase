@@ -21,7 +21,16 @@ gate соответствующей цели; остальные допусти�
 Обрабатывай только PR с `ship` и без `hold`/`needs-decision`. Решение человека
 старше сохранённого состояния.
 
+Для разрешённого технического восстановления припаркованного PR применяй
+[устойчивую передачу точного source](references/technical-recovery.md).
+Она сохраняет причину и этап ожидания, но не расширяет allowlist MERGE и не
+заменяет source/proof, actual-task delivery, REVIEW, CI8 или trusted ship.
+
 ## Обычный путь
+
+Для trusted native fallback соблюдай
+[порядок обновления runtime после долгой подготовки](references/runtime-publication-freshness.md).
+Он сохраняет все source/CI/budget-гейты и единственный scheduling gate.
 
 Если задача PromptPilot уже содержит команду `pipelinectl`, выполни её. При
 ручном запуске используй Python окружения PromptPilot:

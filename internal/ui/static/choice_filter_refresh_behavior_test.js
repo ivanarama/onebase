@@ -308,6 +308,10 @@ test('open owner-only list keeps showing the whole page', async () => {
 // Verify the request consumer too: duplicated names must follow the same
 // disabled/radio/mirror semantics as the form submitted by the browser.
 for (const [description, controls, expected] of [
+  ['ambiguous active copies', [{value: 'first'}, {value: 'second'}], ''],
+  ['ambiguous equal active copies', [{value: 'same'}, {value: 'same'}], ''],
+  ['checked checkbox', [{type: 'checkbox', value: 'current', checked: true}], 'current'],
+  ['checkbox group', [{type: 'checkbox', value: 'first', checked: true}, {type: 'checkbox', value: 'second', checked: true}], 'first'],
   ['disabled first copy', [{value: 'old', disabled: true}, {value: 'current'}], 'current'],
   ['disabled last copy', [{value: 'current'}, {value: 'old', disabled: true}], 'current'],
   ['disabled fieldset', [{value: 'old', matches: () => true}, {value: 'current', matches: () => false}], 'current'],
