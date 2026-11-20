@@ -66,6 +66,7 @@ query PipelineHealthSnapshot(
             fullDatabaseId
             createdAt
             updatedAt
+            lastEditedAt
             author { login }
             body
           }
@@ -104,6 +105,7 @@ query PipelineHealthSnapshot(
             fullDatabaseId
             createdAt
             updatedAt
+            lastEditedAt
             author { login }
             body
           }
@@ -137,6 +139,7 @@ query PipelineHealthNodePage(
           fullDatabaseId
           createdAt
           updatedAt
+          lastEditedAt
           author { login }
           body
         }
@@ -155,6 +158,7 @@ query PipelineHealthNodePage(
           fullDatabaseId
           createdAt
           updatedAt
+          lastEditedAt
           author { login }
           body
         }
@@ -520,6 +524,7 @@ type gqlComment struct {
 	FullDatabaseID string    `json:"fullDatabaseId"`
 	CreatedAt      string    `json:"createdAt"`
 	UpdatedAt      string    `json:"updatedAt"`
+	LastEditedAt   *string   `json:"lastEditedAt"`
 	Author         *gqlActor `json:"author"`
 	Body           string    `json:"body"`
 }
@@ -540,6 +545,14 @@ func (comment *gqlComment) UnmarshalJSON(data []byte) error {
 	} {
 		if err := decodeGQLRequired(fields, field.name, field.destination); err != nil {
 			return err
+		}
+	}
+	if err := decodeGQLNullable(fields, "lastEditedAt", &comment.LastEditedAt); err != nil {
+		return err
+	}
+	if comment.LastEditedAt != nil {
+		if _, err := time.Parse(time.RFC3339, *comment.LastEditedAt); err != nil {
+			return fmt.Errorf("invalid comment lastEditedAt: %w", err)
 		}
 	}
 	return decodeGQLNullable(fields, "author", &comment.Author)
@@ -1550,7 +1563,8 @@ func convertGQLComments(raw []gqlComment) ([]apiComment, error) {
 		}
 		comments = append(comments, apiComment{
 			ID: id, CreatedAt: item.CreatedAt, UpdatedAt: item.UpdatedAt,
-			User: apiUser{Login: login}, Body: item.Body,
+			lastEditedAt: item.LastEditedAt,
+			User:         apiUser{Login: login}, Body: item.Body,
 		})
 	}
 	return comments, nil
