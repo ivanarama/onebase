@@ -296,6 +296,18 @@ class WorkflowContract(unittest.TestCase):
                         expected = (plan == race == ("skipped" if docs == "true" else "success"))
                         self.assertEqual(result.returncode == 0, expected, result.stderr)
 
+    @unittest.skipIf(os.name == "nt", "actual POSIX workflow shell")
+    def test_postgres_gate_rejects_missing_skipped_and_failed_results(self):
+        text = RUNNER.parents[1].joinpath("workflows/ci.yml").read_text(encoding="utf-8")
+        block = text.split("      - name: Require every PostgreSQL shard\n", 1)[1].split("      - name: Docs-only success", 1)[0]
+        shell = textwrap.dedent(block.split("        run: |\n", 1)[1])
+        for docs in ("true", "false"):
+            for result in ("success", "failure", "cancelled", "skipped", ""):
+                with self.subTest(docs=docs, result=result):
+                    proc = subprocess.run(["/bin/sh", "-e", "-c", shell], capture_output=True,
+                                          env=dict(os.environ, DOCS=docs, RESULT=result))
+                    self.assertEqual(proc.returncode == 0, result == ("skipped" if docs == "true" else "success"))
+
 
 @unittest.skipIf(os.environ.get("COVERAGE_SHARDS_SKIP_GO") == "1", "explicit fast Python-only controls")
 class RealGoCLI(unittest.TestCase):
@@ -331,10 +343,9 @@ func FuzzSeed(f *testing.F) { f.Add(1); f.Fuzz(func(t *testing.T, n int) { if Va
 ''')
         self.git("add", ".")
         self.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "fixture")
-        self.prepare()
 
-    # This class runs only the real end-to-end test, not the synthetic corruption cases.
     def test_actual_go_suites_seeds_subtests_and_atomic_merge(self):
+        self.prepare()
         self.merge()
         for label in ("ui", "launcher"):
             rows = [json.loads(line) for shard in self.results.glob(label + "-*")
@@ -347,6 +358,20 @@ func FuzzSeed(f *testing.F) { f.Add(1); f.Fuzz(func(t *testing.T, n int) { if Va
                                 env=self.env, capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("100.0%", result.stdout)
+
+    def test_postgres_ui_shards_cover_every_suite_and_subtest_once(self):
+        self.invoke("postgres-ui", "--shard", "ui-1", ok=False, env=dict(self.env, TEST_DATABASE_URL=""))
+        ran = []
+        for label in ("ui-1", "ui-2", "ui-3", "ui-4"):
+            root = self.root / label
+            self.invoke("postgres-ui", "--shard", label, "--artifacts", root,
+                        env=dict(self.env, TEST_DATABASE_URL="postgres://fixture"))
+            for line in (root / "tests.jsonl").read_text().splitlines():
+                row = json.loads(line)
+                if row.get("Action") == "run":
+                    ran.append(row["Test"])
+        self.assertCountEqual(ran, ["TestAlpha", "TestAlpha/one", "TestBravo", "TestCharlie",
+                                    "TestNewAutomaticallyDiscovered", "ExampleValue", "FuzzSeed", "FuzzSeed/seed#0"])
 
 
 if __name__ == "__main__":
