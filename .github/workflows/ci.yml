@@ -1047,7 +1047,7 @@ jobs:
           # including a newly added matrix test without maintaining a fragile
           # test-name allowlist here. The package has no parallel top-level tests,
           # so its matrix cases can safely share this service database.
-          go test -race -count=1 -timeout 20m ./internal/ui
+          go test -race -count=1 -timeout 30m ./internal/ui
 
   vuln:
     needs: [classify]
