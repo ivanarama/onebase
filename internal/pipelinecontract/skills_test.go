@@ -2073,6 +2073,7 @@ func TestTailDurableQueueUsesThePairedCLIAndTheExistingItemProtocol(t *testing.T
 	requireCompactInOrder(t, tail,
 		"`\"tail_durable_drain\": true`",
 		"pp pipelinectl --config <absolute-config> tail-discover --max-pages 5",
+		"pp pipelinectl --config <absolute-config> tail-reconcile",
 		"pp pipelinectl --config <absolute-config> tail-next",
 		"Переход к поиску за 14 дней при ошибке запрещён",
 		"**Окно совместимости.**",
@@ -2084,6 +2085,12 @@ func TestTailDurableQueueUsesThePairedCLIAndTheExistingItemProtocol(t *testing.T
 		"отдельный `gh issue create` запрещён",
 		"pp:tail-done review-comment=<id> review-updated=<RFC3339>",
 		"повтори `tail-gate --number M --version <version>`",
+	)
+	requireAllCompact(t, tail,
+		"`tail-reconcile` сверяет до пяти ранее обнаруженных PR",
+		"Под `hold` и `no-tail` команда может подтвердить существующую задачу чтением",
+		"Она не создаёт issues, комментарии или refs",
+		"Неполное чтение и неоднозначный результат не дают права повторять создание задачи",
 	)
 }
 
