@@ -7,6 +7,7 @@ const path = require('path');
 const net = require('net');
 
 const repo = path.resolve(__dirname, '../..');
+const longReadonlyValue = 'A long readonly value returned by the server. '.repeat(6).trim();
 const cases = [
   { name: 'Height90', height: 90, width: 640 },
   { name: 'Height180', height: 180, width: 640 },
@@ -78,7 +79,7 @@ ${name === 'RowsDelete' ? '' : '    events: {ПриАктивизацииСтр�
     data_path: Форма.Results
     readonly: true
     children:
-      - {kind: Колонка, name: ReadonlyName, data_path: Name, readonly: true}
+      - {kind: Колонка, name: ReadonlyName, data_path: Name}
       - {kind: Колонка, name: ReadonlyAmount, data_path: Amount, readonly: true}
   - {kind: Кнопка, name: Load, events: {Нажатие: LoadRows}}
   - {kind: Кнопка, name: Clear, events: {Нажатие: ClearRows}}
@@ -88,7 +89,11 @@ ${name === 'RowsDelete' ? '' : '    events: {ПриАктивизацииСтр�
  Results.Очистить();
  Для Счетчик = 1 По 30 Цикл
   Стр = Results.Добавить();
-  Стр.Name = "row " + Строка(Счетчик);
+  Если Счетчик = 30 Тогда
+   Стр.Name = "${longReadonlyValue}";
+  Иначе
+   Стр.Name = "row " + Строка(Счетчик);
+  КонецЕсли;
   Стр.Flag = Истина;
   Стр.HiddenFlag = Истина;
   Стр.Amount = 7;
@@ -241,6 +246,14 @@ for (const name of ['RowsOutput', 'RowsEditable']) {
     }
     const readonly = page.locator('tbody[data-ob-table-readonly="1"]');
     expect(await readonly.locator('input').evaluateAll(inputs => inputs.every(input => input.disabled))).toBe(true);
+    const longName = readonly.locator('input[name="vt.Results.29.Name"]');
+    await longName.hover();
+    await expect(longName).toHaveAttribute('readonly', '');
+    await expect(longName).toHaveAttribute('title', longReadonlyValue);
+    await expect(longName).toHaveCSS('text-overflow', 'ellipsis');
+    expect(pairs.filter(([name]) => name === 'vt.Results.29.Name')).toEqual([
+      ['vt.Results.29.Name', longReadonlyValue],
+    ]);
     const [selectedResponse] = await Promise.all([
       page.waitForResponse(r => r.url().includes('/form-event') && r.request().method() === 'POST'),
       tbody.locator('[data-ob-vt-row="0"] td').first().click(),

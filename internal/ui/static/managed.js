@@ -941,7 +941,7 @@ window.obManagedApplyTablePartRefOptions = obManagedApplyTablePartRefOptions;
       // Закрытая колонка остаётся успешной: значение обязано вернуться
       // на сервер, иначе обработчик не узнает, какую строку выбрали.
       inp.disabled = readOnly || (inp.type === 'checkbox' && !!flag.readonly);
-      if (flag.readonly && inp.type !== 'checkbox') inp.readOnly = true;
+      if ((readOnly || flag.readonly) && inp.type !== 'checkbox') inp.readOnly = true;
       // Длинное значение нередактируемой ячейки обрезается многоточием —
       // целиком его показывает подсказка.
       if (inp.readOnly && inp.type === 'text') inp.title = inp.value;
