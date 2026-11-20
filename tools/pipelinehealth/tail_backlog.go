@@ -15,6 +15,7 @@ type tailBacklogHealth struct {
 	Counts                map[string]int `json:"counts,omitempty"`
 	Completions           map[string]int `json:"completions,omitempty"`
 	RecheckDue            *int           `json:"recheck_due,omitempty"`
+	ProofUnavailableCount *int           `json:"proof_unavailable_count,omitempty"`
 	OldestReadyAt         string         `json:"oldest_ready_at,omitempty"`
 	LastSuccessfulDrainAt string         `json:"last_successful_drain_at,omitempty"`
 	LastDrainFailure      *tailFailure   `json:"last_drain_failure,omitempty"`
@@ -50,6 +51,7 @@ func readTailBacklog(path, repository string, now time.Time) *tailBacklogHealth 
 	if err != nil || json.Unmarshal(data, &snapshot) != nil ||
 		!strings.EqualFold(snapshot.Repository, repository) || snapshot.Base != "main" ||
 		snapshot.Counts == nil || snapshot.Completions == nil ||
+		(snapshot.ProofUnavailableCount != nil && *snapshot.ProofUnavailableCount < 0) ||
 		(snapshot.RecheckDue != nil && *snapshot.RecheckDue < 0) {
 		return &tailBacklogHealth{State: "unavailable"}
 	}
@@ -57,11 +59,12 @@ func readTailBacklog(path, repository string, now time.Time) *tailBacklogHealth 
 	observation.State = "not-observed"
 	if scan := observation.Discovery; scan != nil {
 		observation.State = "incomplete"
-		if scan.LastError != "" {
+		if scan.LastError != "" || (observation.ProofUnavailableCount != nil && *observation.ProofUnavailableCount > 0) {
 			observation.State = "unavailable"
 		} else if scan.State == "complete" && scan.PendingIntervals == 0 && !scan.VerifyPending &&
 			scan.CompleteThrough != "" && observation.Counts["pending-proof"] == 0 &&
-			observation.RecheckDue != nil && *observation.RecheckDue == 0 {
+			observation.RecheckDue != nil && *observation.RecheckDue == 0 &&
+			observation.ProofUnavailableCount != nil {
 			if freshTailTime(scan.LastCompleteAt, now) && freshTailTime(scan.CompleteThrough, now) {
 				observation.State = "complete"
 			} else {
