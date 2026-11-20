@@ -118,6 +118,45 @@ func TestQueryGroupedOrderByRefSelectScope(t *testing.T) {
 	})
 }
 
+func TestQueryGroupedOrderByCorrelatedReference(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := t.Context()
+		ents := refQueryEntities()
+		require.NoError(t, db.Migrate(ctx, ents))
+		bolt, anchor := uuid.New(), uuid.New()
+		require.NoError(t, db.Upsert(ctx, "Номенклатура", bolt, map[string]any{"Наименование": "Болт"}, ents[0]))
+		require.NoError(t, db.Upsert(ctx, "Номенклатура", anchor, map[string]any{"Наименование": "Анкер"}, ents[0]))
+		for i, nom := range []uuid.UUID{bolt, bolt, anchor} {
+			require.NoError(t, db.Upsert(ctx, "РасходТовара", uuid.New(),
+				map[string]any{"Номер": fmt.Sprint(i + 1), "Номенклатура": nom.String()}, ents[1]))
+		}
+
+		for _, tc := range []struct{ name, selectBody string }{
+			{"without_grouping", "ВЫБРАТЬ 1"},
+			{"group_by_outer_field", "ВЫБРАТЬ 1 СГРУППИРОВАТЬ ПО Номенклатура"},
+			{"group_by_own_source", "ВЫБРАТЬ Лок.Один ИЗ (ВЫБРАТЬ 1 КАК Один) КАК Лок СГРУППИРОВАТЬ ПО Лок.Один"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				result := runOnDBEntities(t, db, ents, fmt.Sprintf(`
+Функция Тест()
+ З = Новый Запрос;
+ З.Текст = "ВЫБРАТЬ Р.Номер КАК Номер
+ |ИЗ Документ.РасходТовара КАК Р
+ |ГДЕ 1 = (%s УПОРЯДОЧИТЬ ПО Номенклатура)
+ |УПОРЯДОЧИТЬ ПО Р.Номер";
+ Итог = "";
+ Для Каждого С Из З.Выполнить() Цикл
+  Итог = Итог + С.Номер + ";";
+ КонецЦикла;
+ Возврат Итог;
+КонецФункции
+`, tc.selectBody))
+				assert.Equal(t, "1;2;3;", result)
+			})
+		}
+	})
+}
+
 // Explicit aggregates keep their argument; only references outside an aggregate
 // need the implicit MIN used for grouped ORDER BY.
 func TestQueryGroupedOrderByRefExplicitAggregates(t *testing.T) {

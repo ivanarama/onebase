@@ -4008,20 +4008,25 @@ func (tr *translator) findRefDim(name string) *refDimInfo {
 	return tr.findRefDimAt(tr.pos-1, name)
 }
 
-// findRefDimAt binds qualified navigation to the nearest visible source,
+func (tr *translator) findRefDimAt(pos int, name string) *refDimInfo {
+	dimension, _ := tr.resolveRefDimAt(pos, name)
+	return dimension
+}
+
+// resolveRefDimAt binds qualified navigation to the nearest visible source,
 // including correlated references. A local source without the field must not
 // borrow another SELECT's metadata or auto-JOIN.
-func (tr *translator) findRefDimAt(pos int, name string) *refDimInfo {
+func (tr *translator) resolveRefDimAt(pos int, name string) (*refDimInfo, int) {
 	id, ok := tr.sourceCtx.scopeIDAt(pos)
 	if !ok {
-		return nil
+		return nil, -1
 	}
 	owner := id
 	if pos >= 2 && tr.tokens[pos-1].kind == tDot && tr.tokens[pos-2].kind == tIdent {
 		qualifier := lowerFast(tr.tokens[pos-2].val)
 		owner, ok = tr.sourceCtx.qualifierScopeIDAt(pos, qualifier)
 		if !ok || !tr.selectStates[owner].refSources[qualifier] {
-			return nil
+			return nil, -1
 		}
 	} else {
 		// Virtual tables can export a reference dimension absent from the
@@ -4036,7 +4041,7 @@ func (tr *translator) findRefDimAt(pos int, name string) *refDimInfo {
 		if !local {
 			owner = tr.referenceOwner(id, name)
 			if owner < 0 {
-				return nil
+				return nil, -1
 			}
 		}
 	}
@@ -4054,12 +4059,12 @@ func (tr *translator) findRefDimAt(pos int, name string) *refDimInfo {
 			_, source := scope.qualifiers[rd.joinAlias]
 			_, derived := scope.derivedAliases[rd.joinAlias]
 			if source || derived {
-				return nil
+				return nil, -1
 			}
 		}
-		return rd
+		return rd, owner
 	}
-	return nil
+	return nil, -1
 }
 
 // emitVTSubquery emits a VT subquery with its alias, detects optional user alias (КАК),
@@ -6627,7 +6632,7 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 				} else if nextIsDot && !prevDot && (tr.sourceCtx.localQualifierAt(tr.pos-1, lower) || tr.sourceCtx.isDerivedQualifierAt(tr.pos-1, lower)) {
 					// A local source alias takes precedence over a namesake field.
 					tr.emit(lower)
-				} else if rd := tr.findRefDim(lower); rd != nil && !prevDot {
+				} else if rd, owner := tr.resolveRefDimAt(tr.pos-1, lower); rd != nil && !prevDot {
 					if nextIsDot {
 						if err := tr.assertSingleHopNavigation(rd); err != nil {
 							return Result{}, err
@@ -6647,7 +6652,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 						case sectionGroupBy:
 							tr.emit(rd.displayCol())
 						case sectionOrderBy:
-							if tr.grouped && !tr.inAggregateArgument() {
+							if tr.grouped && owner == tr.activeSelect && !tr.inAggregateArgument() {
+								// Агрегируем только ссылки текущего SELECT. Иначе SQL
+								// может отнести MIN внешней ссылки к родительской выборке.
 								// В сгруппированной выборке представление ссылки — не
 								// колонка группировки: сортируем по нему агрегатом. Внутри
 								// группы ссылка одна, значит и представление одно — порядок
