@@ -296,7 +296,7 @@ func drawRichText(pdf *fpdf.Fpdf, cell *Cell, x, y, w, h float64, measureOnly bo
 			}
 		}
 
-		cy = drawRichBlockSegs(pdf, blk, family, fs, lineH, blockX+markerW, cy, blockAvail-markerW, measureOnly)
+		cy = drawRichBlockSegs(pdf, blk, family, fs, lineH, blockX+markerW, cy, blockAvail-markerW, measureOnly, cell.Underline)
 		// Небольшой межблочный зазор.
 		cy += lineH * 0.2
 	}
@@ -306,7 +306,7 @@ func drawRichText(pdf *fpdf.Fpdf, cell *Cell, x, y, w, h float64, measureOnly bo
 // drawRichBlockSegs раскладывает инлайновые сегменты блока в строки по ширине
 // avail и рисует (или только измеряет). Картинки выносятся на отдельную строку.
 // Возвращает y после последней строки блока.
-func drawRichBlockSegs(pdf *fpdf.Fpdf, blk richBlock, family string, fs, lineH, x, y, avail float64, measureOnly bool) float64 {
+func drawRichBlockSegs(pdf *fpdf.Fpdf, blk richBlock, family string, fs, lineH, x, y, avail float64, measureOnly, underline bool) float64 {
 	if avail <= 1 {
 		avail = lineH // деградация — хоть что-то
 	}
@@ -340,6 +340,9 @@ func drawRichBlockSegs(pdf *fpdf.Fpdf, blk richBlock, family string, fs, lineH, 
 		}
 		if seg.italic {
 			style += "I"
+		}
+		if underline {
+			style += "U"
 		}
 		pdf.SetFont(family, style, fs)
 		// Разбиваем сегмент на слова и пробелы (отдельные токены) и переносим по

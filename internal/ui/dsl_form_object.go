@@ -35,6 +35,8 @@ import (
 // `Объект.Поле`, а в обработках OnPost — `ЭтотОбъект.Поле`. Делаем оба
 // варианта рабочими.
 type formObjectThis struct {
+	tabular     map[string]*interpreter.SpreadsheetDocument
+	layouts     *tabularLayouts
 	obj         *runtime.Object
 	entity      *metadata.Entity
 	form        *metadata.FormModule
@@ -182,6 +184,9 @@ func (f *formObjectThis) TypeName() string {
 // runtime.Object. Специальное поведение формовой обёртки относится к Get/Set и
 // табличным частям, остальные возможности объекта должны оставаться доступны.
 func (f *formObjectThis) CallMethod(method string, args []any) any {
+	if strings.EqualFold(method, "ПолучитьМакет") && f.layouts != nil {
+		return f.layouts.CallMethod("Получить", args)
+	}
 	if f == nil || f.obj == nil {
 		return nil
 	}
@@ -357,6 +362,9 @@ func (f *formObjectThis) Get(name string) any {
 		return nil
 	}
 	nameLower := strings.ToLower(name)
+	if doc, ok := f.tabular[nameLower]; ok {
+		return doc
+	}
 	// Сначала — табличные части. Возвращаем прокси даже если slice ещё nil,
 	// чтобы .Добавить() мог создать первую строку.
 	if f.entity != nil {
@@ -429,6 +437,22 @@ func formAttributeTablePart(attr *metadata.FormAttribute) *metadata.TablePart {
 func (f *formObjectThis) Set(name string, v any) {
 	if f == nil || f.obj == nil {
 		return
+	}
+	_, isDocument := v.(*interpreter.SpreadsheetDocument)
+	if (isDocument || v == nil) && tabularAttribute(f.form, f.entity, name) {
+		var doc *interpreter.SpreadsheetDocument
+		if v != nil {
+			var ok bool
+			doc, ok = v.(*interpreter.SpreadsheetDocument)
+			if !ok {
+				interpreter.RaiseUserError("ожидался ТабличныйДокумент")
+			}
+		}
+		if f.tabular == nil {
+			f.tabular = map[string]*interpreter.SpreadsheetDocument{}
+		}
+		f.tabular[strings.ToLower(name)] = doc
+		return // Native view state is never entity/form input or a write witness.
 	}
 	if f.assigned == nil {
 		f.assigned = map[string]struct{}{}
