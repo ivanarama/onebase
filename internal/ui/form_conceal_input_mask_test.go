@@ -61,8 +61,11 @@ func TestConcealInputMaskHTTPMatrix(t *testing.T) {
 		for _, action := range []string{"hidden", "edit", "revoke", "expired", "readonly", "ordinary"} {
 			t.Run(kind+"/"+action, func(t *testing.T) {
 				dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
-					const initial, edited = "12-34", "56-78"
-					c, id := concealFixture(t, db)
+					// A public UUID may contain the old short secret "12-34".
+					// Keep that collision in the HTTP fixture while using a distinct,
+					// valid masked value for the strict whole-page disclosure check.
+					const initial, edited = "1234-5678-9012-3456", "9876-5432-1098-7654"
+					c, id := concealFixtureWithID(t, db, uuid.MustParse("00000012-3400-4000-8000-000000000001"))
 					key := id.String()
 					if fresh {
 						key = ""
@@ -75,7 +78,7 @@ func TestConcealInputMaskHTTPMatrix(t *testing.T) {
 						t.Fatal(err)
 					}
 					el := c.entity.Forms[0].Elements[0]
-					el.InputMask, el.Mask, el.Hint, el.AccessKey = "00-00", "[0-9]{2}-[0-9]{2}", "Введите код", "s"
+					el.InputMask, el.Mask, el.Hint, el.AccessKey = "0000-0000-0000-0000", "[0-9]{4}-[0-9]{4}-[0-9]{4}-[0-9]{4}", "Введите код", "s"
 					el.Required, el.ReadOnly = true, action == "readonly"
 					el.Handlers = map[metadata.FormEventType]string{metadata.FormEventOnChange: "Открыть"}
 					if action == "ordinary" {
@@ -93,8 +96,11 @@ func TestConcealInputMaskHTTPMatrix(t *testing.T) {
 					if get.Code != http.StatusOK {
 						t.Fatalf("GET: %d %s", get.Code, get.Body.String())
 					}
+					if !fresh && !strings.Contains(get.Body.String(), key) {
+						t.Fatal("public collision UUID missing from HTTP response")
+					}
 					attrs := concealMaskInput(t, get.Body.String(), "Секрет")
-					for k, want := range map[string]string{"type": "text", "autocomplete": "one-time-code", "data-ob-input-mask": "00-00", "placeholder": "__-__", "inputmode": "numeric", "pattern": el.Mask, "title": el.Hint, "accesskey": "s"} {
+					for k, want := range map[string]string{"type": "text", "autocomplete": "off", "data-ob-input-mask": "0000-0000-0000-0000", "placeholder": "____-____-____-____", "inputmode": "numeric", "pattern": el.Mask, "title": el.Hint, "accesskey": "s"} {
 						if got, ok := attrs[k]; !ok || got != want {
 							t.Fatalf("%s = %q (present=%v), want %q", k, got, ok, want)
 						}

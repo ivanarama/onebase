@@ -1,0 +1,24 @@
+schema: onebase.form/v1
+form:
+  name: ФормаОбъекта
+  kind: object
+  entity: ПодсветкаСтроки
+attributes:
+  - name: Объект
+    type: DocumentRef.ПодсветкаСтроки
+    save: true
+    main: true
+elements:
+  - kind: ТабличнаяЧасть
+    name: ТабСтроки
+    title:
+      ru: "Строки"
+    data_path: Объект.Строки
+# Условный фон у каждой строки: текущая строка обязана оставаться видимой
+# поверх него (#2356), а цвет текста условного оформления — сохраняться.
+conditional_formatting:
+  - target: Строки
+    when: "1 = 1"
+    then:
+      background: "#fee2e2"
+      color: "#991b1b"
