@@ -79,6 +79,7 @@ function mountedGrid(ids, savedOrder, fetchOrder) {
   }
   Grid.prototype.getOptions = () => ({showFooterRow: false});
   Grid.prototype.resizeCanvas = Grid.prototype.autosizeColumns = function() {};
+  Grid.prototype.getColumns = function() { return this.columns; };
   Grid.prototype.getEditorLock = function() {
     return {commitCurrentEdit: () => {
       this.commitCalls++;

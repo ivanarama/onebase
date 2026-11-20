@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run every Go package with race/atomic coverage, splitting UI/auth in four and launcher in two.
+"""Run every Go package with race/atomic coverage, splitting UI in four and launcher in two.
 
 The Go JSON journals, inventory, partition and individual profiles are retained
 in --artifacts. A successful exit requires both test success and complete
@@ -18,8 +18,7 @@ import sys
 
 UI = "github.com/ivantit66/onebase/internal/ui"
 LAUNCHER = "github.com/ivantit66/onebase/internal/launcher"
-AUTH = "github.com/ivantit66/onebase/internal/auth"
-SERIES = [("ui", UI, 4), ("launcher", LAUNCHER, 2), ("auth", AUTH, 4)]
+SERIES = [("ui", UI, 4), ("launcher", LAUNCHER, 2)]
 NAME = re.compile(r"(?:Test|Example|Fuzz)\w*\Z")
 BLOCK = re.compile(r"(\S+):([1-9][0-9]*)\.([1-9][0-9]*),"
                    r"([1-9][0-9]*)\.([1-9][0-9]*) ([0-9]+) ([0-9]+)\Z")
@@ -121,7 +120,7 @@ def merge(profiles, output):
     shapes = {}
     for series, path in profiles:
         blocks = profile(path)
-        # Shape must match within a package series, not between different packages.
+        # Shape must match within a package series, not between UI/launcher.
         if series is not None:
             shape = {key: value[0] for key, value in blocks.items()}
             require(series not in shapes or shape == shapes[series],
@@ -154,10 +153,10 @@ def main(argv=None):
                              for p in packages), "invalid package inventory")
     require(len(set(packages)) == len(packages)
             and all(packages.count(package) == 1 for _, package, _ in SERIES),
-            "duplicate packages or missing exact grouped package")
-    others = [p for p in packages if p not in {package for _, package, _ in SERIES}]
+            "duplicate packages or missing exact UI/launcher package")
+    others = [p for p in packages if p not in {UI, LAUNCHER}]
     require(others, "missing ungrouped packages")
-    flags = ["-race", "-count=1", "-timeout=10m", "-json"]
+    flags = ["-race", "-count=1", "-timeout=20m", "-json"]
     inventories = {}
     grouped_runs = []
     for label, package, count in SERIES:

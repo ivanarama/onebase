@@ -11,6 +11,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -94,7 +95,11 @@ func TestImportBytes_RejectsRowPastExcelLimit(t *testing.T) {
 <row r="1"><c r="A1" t="inlineStr"><is><t>valid</t></is></c></row>
 <row r="1048577"><c r="A1048577" t="inlineStr"><is><t>invalid</t></is></c></row>
 </sheetData>`)
-	if _, err := ImportBytes(data, Options{}); !errors.Is(err, ErrParse) {
-		t.Fatalf("expected a parse error for an out-of-range row, got %v", err)
+	res, err := ImportBytes(data, Options{})
+	if !errors.Is(err, ErrParse) || res != nil {
+		t.Fatalf("expected no result and a parse error for an out-of-range row, got %v, %v", res, err)
+	}
+	if !strings.Contains(err.Error(), "row number exceeds maximum limit") {
+		t.Fatalf("expected the iterator error, not a recovered panic: %v", err)
 	}
 }

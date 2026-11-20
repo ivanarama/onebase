@@ -20,6 +20,19 @@ func (db *DB) GetFieldsByIDs(ctx context.Context, entity *metadata.Entity, ids [
 // label resolvers. The predicate is compiled into the same SELECT that reads
 // labels, so an inaccessible target row is never loaded and filtered in Go.
 func (db *DB) GetFieldsByIDsFiltered(ctx context.Context, entity *metadata.Entity, ids []uuid.UUID, fields []metadata.Field, rowFilter *Predicate) (map[string]map[string]any, error) {
+	return db.getFieldsByIDsFiltered(ctx, entity, ids, fields, rowFilter, false)
+}
+
+// GetByIDsFiltered reads complete objects with the same fields and types as
+// GetByID. The caller bounds the batch size; rowFilter is enforced in SQL.
+func (db *DB) GetByIDsFiltered(ctx context.Context, entity *metadata.Entity, ids []uuid.UUID, rowFilter *Predicate) (map[string]map[string]any, error) {
+	if entity == nil {
+		return map[string]map[string]any{}, nil
+	}
+	return db.getFieldsByIDsFiltered(ctx, entity, ids, entity.Fields, rowFilter, true)
+}
+
+func (db *DB) getFieldsByIDsFiltered(ctx context.Context, entity *metadata.Entity, ids []uuid.UUID, fields []metadata.Field, rowFilter *Predicate, fullObject bool) (map[string]map[string]any, error) {
 	result := make(map[string]map[string]any, len(ids))
 	if entity == nil || len(ids) == 0 {
 		return result, nil
@@ -30,6 +43,13 @@ func (db *DB) GetFieldsByIDsFiltered(ctx context.Context, entity *metadata.Entit
 	for _, f := range fields {
 		cols = append(cols, metadata.ColumnName(f))
 	}
+	if fullObject {
+		cols = objectReadColumns(entity)
+	}
+	const alias = "batch_object"
+	for i, col := range cols {
+		cols[i] = alias + "." + col
+	}
 	placeholders := make([]string, 0, len(ids))
 	args := make([]any, 0, len(ids))
 	for i, id := range ids {
@@ -37,8 +57,10 @@ func (db *DB) GetFieldsByIDsFiltered(ctx context.Context, entity *metadata.Entit
 		args = append(args, idArg(d, id))
 	}
 
-	where := fmt.Sprintf("id IN (%s)", strings.Join(placeholders, ", "))
-	if cond, condArgs, _, err := PredicateSQL(d, entity, rowFilter, len(args)+1); err != nil {
+	where := fmt.Sprintf("%s.id IN (%s)", alias, strings.Join(placeholders, ", "))
+	// Reference policies use correlated EXISTS queries. Qualify the outer
+	// columns so a matching column on the reference target cannot capture them.
+	if cond, condArgs, _, err := PredicateSQLQualified(d, entity, rowFilter, len(args)+1, alias); err != nil {
 		return nil, fmt.Errorf("get fields by ids %s row filter: %w", entity.Name, err)
 	} else if cond != "" {
 		where += " AND (" + cond + ")"
@@ -46,9 +68,10 @@ func (db *DB) GetFieldsByIDsFiltered(ctx context.Context, entity *metadata.Entit
 	}
 
 	sql := fmt.Sprintf(
-		"SELECT %s FROM %s WHERE %s",
+		"SELECT %s FROM %s %s WHERE %s",
 		strings.Join(cols, ", "),
 		metadata.TableName(entity.Name),
+		alias,
 		where,
 	)
 	rows, err := db.Query(ctx, sql, args...)
@@ -67,10 +90,15 @@ func (db *DB) GetFieldsByIDsFiltered(ctx context.Context, entity *metadata.Entit
 			return nil, err
 		}
 		idStr := fmt.Sprintf("%v", normalizeValue(dest[0]))
-		row := make(map[string]any, len(fields)+1)
-		row["id"] = idStr
-		for i, f := range fields {
-			row[f.Name] = normalizeFieldValue(f, dest[i+1])
+		var row map[string]any
+		if fullObject {
+			row = objectReadValues(entity, dest)
+		} else {
+			row = make(map[string]any, len(fields)+1)
+			row["id"] = idStr
+			for i, f := range fields {
+				row[f.Name] = normalizeFieldValue(f, dest[i+1])
+			}
 		}
 		result[idStr] = row
 	}

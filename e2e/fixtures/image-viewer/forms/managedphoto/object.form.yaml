@@ -1,0 +1,32 @@
+schema: onebase.form/v1
+form: {name: PhotoForm, kind: object, entity: ManagedPhoto}
+elements:
+  - {kind: ПолеВвода, name: NameField, data_path: Объект.Name}
+  - {kind: ПолеВвода, name: OwnerField, data_path: Объект.Owner}
+  - {kind: ПолеВвода, name: HideSecondField, data_path: Объект.HideSecond}
+  - kind: СтраницыФормы
+    name: Pages
+    children:
+      - kind: Страница
+        name: PageOne
+        title: {ru: "Page one"}
+        children:
+          - kind: ПолеВвода
+            name: FirstField
+            data_path: Объект.First
+            title: {ru: "<b>First camera</b>"}
+      - kind: Страница
+        name: PageTwo
+        title: {ru: "Page two"}
+        children:
+          - kind: ПолеВвода
+            name: SecondField
+            data_path: Объект.Second
+            title: {ru: "Second camera"}
+            hidden_when: 'HideSecond = Истина'
+          - kind: ПолеВвода
+            name: FirstAgain
+            data_path: Объект.First
+            title: {ru: "First again"}
+          - {kind: ПолеВвода, name: SecretField, data_path: Объект.Secret}
+          - {kind: ПолеВвода, name: EmptyField, data_path: Объект.Empty}

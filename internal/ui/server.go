@@ -103,6 +103,9 @@ type Server struct {
 	// поэтому новый запуск снова сообщает оператору о причине обхода кэша.
 	svcCacheCookieWarned sync.Map
 	widgetCache          *widget.Cache
+	concealMu            sync.Mutex
+	concealInstances     map[string]*concealInstance
+	concealClock         func() time.Time
 	closeIntentMu        sync.Mutex
 	closeIntents         *formCloseReplayLedger
 	lockMgr              *runtime.LockManager   // #2 managed locks
@@ -116,6 +119,7 @@ type Server struct {
 	extprocessors        *extform.ProcessorRepo // внешний контур: обработки из БД
 	tmpl                 *template.Template
 	hub                  *realtime.Hub // real-time-шина уведомлений сервер→браузер (план 74)
+	formIdleState                      // подпись обработчиков ожидания форм (form_idle.go)
 	devGeneration        string        // метка запуска процесса для dev-режима (см. eventsStream)
 	ops                  *operationLimiter
 	exportJobsMu         sync.Mutex

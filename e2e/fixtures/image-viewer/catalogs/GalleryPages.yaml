@@ -1,0 +1,10 @@
+name: GalleryPages
+fields:
+  - {name: Name, type: string}
+  - {name: Owner, type: string}
+  - {name: First, type: image}
+  - {name: Second, type: image}
+  - {name: Nested, type: image}
+  - {name: Other, type: image}
+  - {name: HideSecond, type: bool}
+  - {name: HideNested, type: bool}

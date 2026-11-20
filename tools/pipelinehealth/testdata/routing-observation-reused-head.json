@@ -1,0 +1,598 @@
+[
+  {
+    "number": 42,
+    "title": "private routing fixture",
+    "html_url": "https://github.com/owner/repo/pull/42",
+    "created_at": "2026-10-29T00:00:00Z",
+    "updated_at": "2026-10-29T00:01:00Z",
+    "state": "open",
+    "draft": false,
+    "head": {
+      "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "base": {
+      "ref": "main"
+    },
+    "labels": [],
+    "comments": [
+      {
+        "id": 100,
+        "created_at": "2026-10-29T00:00:00Z",
+        "updated_at": "2026-10-29T00:00:00Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "Reviewed-SHA: 1111111111111111111111111111111111111111\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+      },
+      {
+        "id": 101,
+        "created_at": "2026-10-29T00:00:00Z",
+        "updated_at": "2026-10-29T00:00:00Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-claim 1111111111111111111111111111111111111111 review-comment=100 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+      },
+      {
+        "id": 102,
+        "created_at": "2026-10-29T00:00:00Z",
+        "updated_at": "2026-10-29T00:00:00Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:head-reviewed 1111111111111111111111111111111111111111 review-comment=100 claim=101 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+      },
+      {
+        "id": 110,
+        "created_at": "2026-10-29T00:00:00Z",
+        "updated_at": "2026-10-29T00:00:00Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "Reviewed-SHA: 2222222222222222222222222222222222222222\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+      },
+      {
+        "id": 111,
+        "created_at": "2026-10-29T00:00:00Z",
+        "updated_at": "2026-10-29T00:00:00Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-claim 2222222222222222222222222222222222222222 review-comment=110 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+      },
+      {
+        "id": 112,
+        "created_at": "2026-10-29T00:00:00Z",
+        "updated_at": "2026-10-29T00:00:00Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:head-reviewed 2222222222222222222222222222222222222222 review-comment=110 claim=111 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+      },
+      {
+        "id": 3000,
+        "created_at": "2026-10-29T00:00:01Z",
+        "updated_at": "2026-10-29T00:00:01Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-routing-v1 kind=publication sha256=0d6b252c8ffd2a737b4efc1ce527c265858b593b0901ea58a8bcbf45185246a1 -->\n{\"anchor\":\"CURRENT\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"last_edge_cursor\":\"CCURRENT\",\"last_edge_node_id\":\"CURRENT\",\"snapshot_sha256\":\"35552d1b4df00353c7f7514c5ff6305382d908f838ccbbaabc1cf57072cd1463\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":0,\"depth\":2,\"epoch\":\"0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"technical-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\",\"resume_id\":null}\n"
+      },
+      {
+        "id": 3001,
+        "created_at": "2026-10-29T00:00:01Z",
+        "updated_at": "2026-10-29T00:00:01Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-routing-v1 kind=claim sha256=370c403b248fac6d9178850cbcd0c7a81be68cb16fbb19732fb96e8eb06945be -->\n{\"context_sha256\":\"02f6656b9ae4c0b4b2b3555d4309fed1a8b3b9dae53a76c08dbe4ced0b8e417b\",\"kind\":\"claim\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+      },
+      {
+        "id": 3002,
+        "created_at": "2026-10-29T00:00:01Z",
+        "updated_at": "2026-10-29T00:00:01Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-routing-v1 kind=completion sha256=814f2152b27e96ada883ef8618b3cf001347387de6da24ded302d1eb00ed61b5 -->\n{\"claim_id\":\"3001\",\"context_sha256\":\"02f6656b9ae4c0b4b2b3555d4309fed1a8b3b9dae53a76c08dbe4ced0b8e417b\",\"kind\":\"completion\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+      },
+      {
+        "id": 4000,
+        "created_at": "2026-10-29T00:00:01Z",
+        "updated_at": "2026-10-29T00:00:01Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-routing-v1 kind=attempt sha256=3f8ec92f7e8559e323c07ace22cee807775dd08105d0101f9bfc0635cd8f6f33 -->\n{\"attempt\":1,\"context_sha256\":\"02f6656b9ae4c0b4b2b3555d4309fed1a8b3b9dae53a76c08dbe4ced0b8e417b\",\"executor\":{\"kind\":\"pipeline\",\"login\":\"owner\"},\"kind\":\"attempt\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"previous\":null,\"protocol\":\"review-routing-v1\",\"series\":\"3002\",\"source\":{\"claim_id\":\"3001\",\"completion_id\":\"3002\",\"epoch\":\"0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"identity_sha256\":\"001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce\",\"publication_id\":\"3000\",\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\"}}\n"
+      },
+      {
+        "id": 4001,
+        "created_at": "2026-10-29T00:00:01Z",
+        "updated_at": "2026-10-29T00:00:01Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-routing-v1 kind=phase sha256=aadd8b9d8e39e4bb50928efd9a643b9e56786fa754bf36598d22cde31c37f1a2 -->\n{\"attempt_id\":\"4000\",\"context_sha256\":\"026b5a3d84d0c8928e174d93dcd6882f8ec9639b5220232f4779164899a167bb\",\"details\":{},\"kind\":\"phase\",\"lease_id\":\"4000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"phase\":\"assigned\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\"}\n"
+      },
+      {
+        "id": 4002,
+        "created_at": "2026-10-29T00:00:01Z",
+        "updated_at": "2026-10-29T00:00:01Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-routing-v1 kind=phase sha256=64fd7944118eb54585a6c08185f92a25e0795af5dd55968bf6cd499f1eb37809 -->\n{\"attempt_id\":\"4000\",\"context_sha256\":\"026b5a3d84d0c8928e174d93dcd6882f8ec9639b5220232f4779164899a167bb\",\"details\":{},\"kind\":\"phase\",\"lease_id\":\"4000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"phase\":\"handoff-done\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\"}\n"
+      },
+      {
+        "id": 4003,
+        "created_at": "2026-10-29T00:00:01Z",
+        "updated_at": "2026-10-29T00:00:01Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-routing-v1 kind=phase sha256=c83cef0297dc5d0717eaf07797cab06d22f1fb8399dfc76d2454cd2fcd989242 -->\n{\"attempt_id\":\"4000\",\"context_sha256\":\"026b5a3d84d0c8928e174d93dcd6882f8ec9639b5220232f4779164899a167bb\",\"details\":{\"attempt_uuid\":\"00000000-0000-4000-8000-000000000001\",\"task_id\":4000},\"kind\":\"phase\",\"lease_id\":\"4000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"phase\":\"started\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\"}\n"
+      },
+      {
+        "id": 4004,
+        "created_at": "2026-10-29T00:00:01Z",
+        "updated_at": "2026-10-29T00:00:01Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-routing-v1 kind=phase sha256=c9b7905906108b50bba16bea9b744faaa7f022e2c7f9028737180c175de9d32a -->\n{\"attempt_id\":\"4000\",\"context_sha256\":\"026b5a3d84d0c8928e174d93dcd6882f8ec9639b5220232f4779164899a167bb\",\"details\":{\"new_head\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"source_trailer\":\"3df904f4d14062a863925d3dae40530a8bcba78d693969120e54d1e59d525147\",\"transition\":\"routing-v1:4000\"},\"kind\":\"phase\",\"lease_id\":\"4000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"phase\":\"fix-done\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\"}\n"
+      },
+      {
+        "id": 5000,
+        "created_at": "2026-10-29T00:00:01Z",
+        "updated_at": "2026-10-29T00:00:01Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-routing-v1 kind=publication sha256=fe4d4f1d9f07786405dce3f60e2952bc20c2f9ad666b996335380ab6c9f74db2 -->\n{\"anchor\":\"PUSH_B\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"last_edge_cursor\":\"C4004\",\"last_edge_node_id\":\"IC_4004\",\"snapshot_sha256\":\"d1eedc5371eadb2bc3ea716d8c396dc5cc16cde75f674be06e1b18e067b5319d\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":1,\"depth\":3,\"epoch\":\"e15232e7782a823694d874d7c8d93e27f93ddcdc227324bd4949aefb3981cffa\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"engineering-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"missing\":\"Нет PostgreSQL/UTC результата\",\"verification\":\"Запустить публичный CLI на точном HEAD в UTC с PostgreSQL\"},\"id\":\"date.missing-reproduction\",\"kind\":\"insufficient_data\",\"summary\":\"Нет воспроизведения на целевом HEAD\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"6bbb21ef3fe31524125718c18f446401fabef8b38f396303c74cf66b0334d78a\",\"resume_id\":null}\n"
+      },
+      {
+        "id": 5001,
+        "created_at": "2026-10-29T00:00:01Z",
+        "updated_at": "2026-10-29T00:00:01Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-routing-v1 kind=claim sha256=0dc27f5b0aea99047dd106eac13ef26e73cc2f599ff411f326ff3deec76a00a8 -->\n{\"context_sha256\":\"7b760acf64414ec63641cf3573ee36a00dc9ba61d33e349126a89b976532eeb5\",\"kind\":\"claim\",\"lease_id\":\"5000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"5000\"}\n"
+      },
+      {
+        "id": 5002,
+        "created_at": "2026-10-29T00:00:01Z",
+        "updated_at": "2026-10-29T00:00:01Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-routing-v1 kind=completion sha256=f0c649c86e3ccf8ab43b9e8ef5f9e872d39fb3335f7e84c0fc93569764ebf5f3 -->\n{\"claim_id\":\"5001\",\"context_sha256\":\"7b760acf64414ec63641cf3573ee36a00dc9ba61d33e349126a89b976532eeb5\",\"kind\":\"completion\",\"lease_id\":\"5000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"5000\"}\n"
+      },
+      {
+        "id": 6000,
+        "created_at": "2026-10-29T00:00:01Z",
+        "updated_at": "2026-10-29T00:00:01Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-routing-v1 kind=resume sha256=7dc00a57b3a15fd0277061edcd87db87ee1344560155c36964f362f8abd0b250 -->\n{\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"kind\":\"resume\",\"parking_id\":\"5002\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"previous\":\"4000\",\"protocol\":\"review-routing-v1\",\"reason\":\"explicit exact-head independent review after insufficient evidence\"}\n"
+      },
+      {
+        "id": 7000,
+        "created_at": "2026-10-29T00:00:01Z",
+        "updated_at": "2026-10-29T00:00:01Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-routing-v1 kind=publication sha256=68d70fc7ad7e15f9bc094aa496058100923315471513ac47e926ec9f334f47d0 -->\n{\"anchor\":\"RETURN_A\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"last_edge_cursor\":\"C6000\",\"last_edge_node_id\":\"IC_6000\",\"snapshot_sha256\":\"329d745bc9a6e02aed8ec02409bd8bd557fd716969d07d22c3c761cb635a881d\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":1,\"depth\":4,\"epoch\":\"719e7c8e4b7bc10f3b1cb2a690bffdfa4dce887e34978f9919b59efc25baa6f3\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"technical-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\",\"resume_id\":\"6000\"}\n"
+      },
+      {
+        "id": 7001,
+        "created_at": "2026-10-29T00:00:01Z",
+        "updated_at": "2026-10-29T00:00:01Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-routing-v1 kind=claim sha256=0f67d76649c2b5827c5bc7f979f3567912e6c98572679558064d639348a6c350 -->\n{\"context_sha256\":\"de8e4311cd2040312b5ee55029ee5c71fa5eb7eca10a49ddd7ffca19c14d72b7\",\"kind\":\"claim\",\"lease_id\":\"7000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"7000\"}\n"
+      },
+      {
+        "id": 7002,
+        "created_at": "2026-10-29T00:00:01Z",
+        "updated_at": "2026-10-29T00:00:01Z",
+        "user": {
+          "login": "owner"
+        },
+        "body": "<!-- pp:review-routing-v1 kind=completion sha256=fb755b45d66bf254cfcba5fbfd3820cbf6747b4f1c7fb6e40b7f35226a53e1cd -->\n{\"claim_id\":\"7001\",\"context_sha256\":\"de8e4311cd2040312b5ee55029ee5c71fa5eb7eca10a49ddd7ffca19c14d72b7\",\"kind\":\"completion\",\"lease_id\":\"7000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"7000\"}\n"
+      }
+    ],
+    "routing_snapshot": {
+      "headRefOid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "baseRefOid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "baseRefName": "main",
+      "state": "OPEN",
+      "isDraft": false,
+      "identity": {
+        "base_repository_id": "R_BASE",
+        "base_repository": "owner/repo",
+        "base_ref": "main",
+        "pr_id": "PR_NODE_42",
+        "pr_number": 42,
+        "head_repository_id": "R_BASE",
+        "head_repository": "owner/repo",
+        "head_ref": "ветка/проверка",
+        "head_sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "cross_repository": false
+      },
+      "identity_sha256": "001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce",
+      "pr_key": {
+        "base_repository_id": "R_BASE",
+        "pr_id": "PR_NODE_42",
+        "pr_number": 42
+      },
+      "author": {
+        "id": "U_AUTHOR",
+        "login": "contributor"
+      },
+      "labels": [],
+      "labelsComplete": true,
+      "updatedAt": "2026-10-29T00:00:00Z",
+      "edges": [
+        {
+          "cursor": "first",
+          "node": {
+            "__typename": "PullRequestCommit",
+            "id": "COMMIT",
+            "commit": {
+              "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        },
+        {
+          "cursor": "CANCHOR_100",
+          "node": {
+            "__typename": "PullRequestCommit",
+            "id": "ANCHOR_100",
+            "commit": {
+              "oid": "1111111111111111111111111111111111111111"
+            }
+          }
+        },
+        {
+          "cursor": "C100",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_100",
+            "fullDatabaseId": "100",
+            "createdAt": "2026-10-29T00:00:00Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "Reviewed-SHA: 1111111111111111111111111111111111111111\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+          }
+        },
+        {
+          "cursor": "C101",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_101",
+            "fullDatabaseId": "101",
+            "createdAt": "2026-10-29T00:00:00Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-claim 1111111111111111111111111111111111111111 review-comment=100 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+          }
+        },
+        {
+          "cursor": "C102",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_102",
+            "fullDatabaseId": "102",
+            "createdAt": "2026-10-29T00:00:00Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:head-reviewed 1111111111111111111111111111111111111111 review-comment=100 claim=101 epoch-sha256=9813f4621cd4a87136339221c0e8280d5c1d13e899ee4dc476c76473992edc46 -->"
+          }
+        },
+        {
+          "cursor": "CANCHOR_110",
+          "node": {
+            "__typename": "PullRequestCommit",
+            "id": "ANCHOR_110",
+            "commit": {
+              "oid": "2222222222222222222222222222222222222222"
+            }
+          }
+        },
+        {
+          "cursor": "C110",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_110",
+            "fullDatabaseId": "110",
+            "createdAt": "2026-10-29T00:00:00Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "Reviewed-SHA: 2222222222222222222222222222222222222222\nOutcome-Label: changes-requested\n<!-- pp:review pp:tail=0 -->"
+          }
+        },
+        {
+          "cursor": "C111",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_111",
+            "fullDatabaseId": "111",
+            "createdAt": "2026-10-29T00:00:00Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-claim 2222222222222222222222222222222222222222 review-comment=110 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+          }
+        },
+        {
+          "cursor": "C112",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_112",
+            "fullDatabaseId": "112",
+            "createdAt": "2026-10-29T00:00:00Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:head-reviewed 2222222222222222222222222222222222222222 review-comment=110 claim=111 epoch-sha256=6b338300bcae8349affb643cd928470c09265192700d9cb13c7803ffa8483dc3 -->"
+          }
+        },
+        {
+          "cursor": "CCURRENT",
+          "node": {
+            "__typename": "PullRequestCommit",
+            "id": "CURRENT",
+            "commit": {
+              "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        },
+        {
+          "cursor": "C3000",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_3000",
+            "fullDatabaseId": "3000",
+            "createdAt": "2026-10-29T00:00:01Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-routing-v1 kind=publication sha256=0d6b252c8ffd2a737b4efc1ce527c265858b593b0901ea58a8bcbf45185246a1 -->\n{\"anchor\":\"CURRENT\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"last_edge_cursor\":\"CCURRENT\",\"last_edge_node_id\":\"CURRENT\",\"snapshot_sha256\":\"35552d1b4df00353c7f7514c5ff6305382d908f838ccbbaabc1cf57072cd1463\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":0,\"depth\":2,\"epoch\":\"0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"technical-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\",\"resume_id\":null}\n"
+          }
+        },
+        {
+          "cursor": "C3001",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_3001",
+            "fullDatabaseId": "3001",
+            "createdAt": "2026-10-29T00:00:01Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-routing-v1 kind=claim sha256=370c403b248fac6d9178850cbcd0c7a81be68cb16fbb19732fb96e8eb06945be -->\n{\"context_sha256\":\"02f6656b9ae4c0b4b2b3555d4309fed1a8b3b9dae53a76c08dbe4ced0b8e417b\",\"kind\":\"claim\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+          }
+        },
+        {
+          "cursor": "C3002",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_3002",
+            "fullDatabaseId": "3002",
+            "createdAt": "2026-10-29T00:00:01Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-routing-v1 kind=completion sha256=814f2152b27e96ada883ef8618b3cf001347387de6da24ded302d1eb00ed61b5 -->\n{\"claim_id\":\"3001\",\"context_sha256\":\"02f6656b9ae4c0b4b2b3555d4309fed1a8b3b9dae53a76c08dbe4ced0b8e417b\",\"kind\":\"completion\",\"lease_id\":\"3000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"3000\"}\n"
+          }
+        },
+        {
+          "cursor": "C4000",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_4000",
+            "fullDatabaseId": "4000",
+            "createdAt": "2026-10-29T00:00:01Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-routing-v1 kind=attempt sha256=3f8ec92f7e8559e323c07ace22cee807775dd08105d0101f9bfc0635cd8f6f33 -->\n{\"attempt\":1,\"context_sha256\":\"02f6656b9ae4c0b4b2b3555d4309fed1a8b3b9dae53a76c08dbe4ced0b8e417b\",\"executor\":{\"kind\":\"pipeline\",\"login\":\"owner\"},\"kind\":\"attempt\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"previous\":null,\"protocol\":\"review-routing-v1\",\"series\":\"3002\",\"source\":{\"claim_id\":\"3001\",\"completion_id\":\"3002\",\"epoch\":\"0c002f56fdd896176fa7502ca68a9f9b9d81889f447291cab43c9815b8bd0195\",\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"identity_sha256\":\"001684e955703f1e625889ff28935e682ad8f9cb8607e49e71f101e76a228fce\",\"publication_id\":\"3000\",\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\"}}\n"
+          }
+        },
+        {
+          "cursor": "C4001",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_4001",
+            "fullDatabaseId": "4001",
+            "createdAt": "2026-10-29T00:00:01Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-routing-v1 kind=phase sha256=aadd8b9d8e39e4bb50928efd9a643b9e56786fa754bf36598d22cde31c37f1a2 -->\n{\"attempt_id\":\"4000\",\"context_sha256\":\"026b5a3d84d0c8928e174d93dcd6882f8ec9639b5220232f4779164899a167bb\",\"details\":{},\"kind\":\"phase\",\"lease_id\":\"4000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"phase\":\"assigned\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\"}\n"
+          }
+        },
+        {
+          "cursor": "C4002",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_4002",
+            "fullDatabaseId": "4002",
+            "createdAt": "2026-10-29T00:00:01Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-routing-v1 kind=phase sha256=64fd7944118eb54585a6c08185f92a25e0795af5dd55968bf6cd499f1eb37809 -->\n{\"attempt_id\":\"4000\",\"context_sha256\":\"026b5a3d84d0c8928e174d93dcd6882f8ec9639b5220232f4779164899a167bb\",\"details\":{},\"kind\":\"phase\",\"lease_id\":\"4000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"phase\":\"handoff-done\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\"}\n"
+          }
+        },
+        {
+          "cursor": "C4003",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_4003",
+            "fullDatabaseId": "4003",
+            "createdAt": "2026-10-29T00:00:01Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-routing-v1 kind=phase sha256=c83cef0297dc5d0717eaf07797cab06d22f1fb8399dfc76d2454cd2fcd989242 -->\n{\"attempt_id\":\"4000\",\"context_sha256\":\"026b5a3d84d0c8928e174d93dcd6882f8ec9639b5220232f4779164899a167bb\",\"details\":{\"attempt_uuid\":\"00000000-0000-4000-8000-000000000001\",\"task_id\":4000},\"kind\":\"phase\",\"lease_id\":\"4000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"phase\":\"started\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\"}\n"
+          }
+        },
+        {
+          "cursor": "CPUSH_B",
+          "node": {
+            "__typename": "PullRequestCommit",
+            "id": "PUSH_B",
+            "commit": {
+              "oid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+          }
+        },
+        {
+          "cursor": "C4004",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_4004",
+            "fullDatabaseId": "4004",
+            "createdAt": "2026-10-29T00:00:01Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-routing-v1 kind=phase sha256=c9b7905906108b50bba16bea9b744faaa7f022e2c7f9028737180c175de9d32a -->\n{\"attempt_id\":\"4000\",\"context_sha256\":\"026b5a3d84d0c8928e174d93dcd6882f8ec9639b5220232f4779164899a167bb\",\"details\":{\"new_head\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"source_trailer\":\"3df904f4d14062a863925d3dae40530a8bcba78d693969120e54d1e59d525147\",\"transition\":\"routing-v1:4000\"},\"kind\":\"phase\",\"lease_id\":\"4000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"phase\":\"fix-done\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\"}\n"
+          }
+        },
+        {
+          "cursor": "C5000",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_5000",
+            "fullDatabaseId": "5000",
+            "createdAt": "2026-10-29T00:00:01Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-routing-v1 kind=publication sha256=fe4d4f1d9f07786405dce3f60e2952bc20c2f9ad666b996335380ab6c9f74db2 -->\n{\"anchor\":\"PUSH_B\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"last_edge_cursor\":\"C4004\",\"last_edge_node_id\":\"IC_4004\",\"snapshot_sha256\":\"d1eedc5371eadb2bc3ea716d8c396dc5cc16cde75f674be06e1b18e067b5319d\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":1,\"depth\":3,\"epoch\":\"e15232e7782a823694d874d7c8d93e27f93ddcdc227324bd4949aefb3981cffa\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"engineering-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"missing\":\"Нет PostgreSQL/UTC результата\",\"verification\":\"Запустить публичный CLI на точном HEAD в UTC с PostgreSQL\"},\"id\":\"date.missing-reproduction\",\"kind\":\"insufficient_data\",\"summary\":\"Нет воспроизведения на целевом HEAD\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"6bbb21ef3fe31524125718c18f446401fabef8b38f396303c74cf66b0334d78a\",\"resume_id\":null}\n"
+          }
+        },
+        {
+          "cursor": "C5001",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_5001",
+            "fullDatabaseId": "5001",
+            "createdAt": "2026-10-29T00:00:01Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-routing-v1 kind=claim sha256=0dc27f5b0aea99047dd106eac13ef26e73cc2f599ff411f326ff3deec76a00a8 -->\n{\"context_sha256\":\"7b760acf64414ec63641cf3573ee36a00dc9ba61d33e349126a89b976532eeb5\",\"kind\":\"claim\",\"lease_id\":\"5000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"5000\"}\n"
+          }
+        },
+        {
+          "cursor": "C5002",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_5002",
+            "fullDatabaseId": "5002",
+            "createdAt": "2026-10-29T00:00:01Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-routing-v1 kind=completion sha256=f0c649c86e3ccf8ab43b9e8ef5f9e872d39fb3335f7e84c0fc93569764ebf5f3 -->\n{\"claim_id\":\"5001\",\"context_sha256\":\"7b760acf64414ec63641cf3573ee36a00dc9ba61d33e349126a89b976532eeb5\",\"kind\":\"completion\",\"lease_id\":\"5000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"5000\"}\n"
+          }
+        },
+        {
+          "cursor": "CRETURN_A",
+          "node": {
+            "__typename": "HeadRefForcePushedEvent",
+            "id": "RETURN_A",
+            "createdAt": "2026-10-29T00:00:01Z",
+            "afterCommit": {
+              "oid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          }
+        },
+        {
+          "cursor": "C6000",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_6000",
+            "fullDatabaseId": "6000",
+            "createdAt": "2026-10-29T00:00:01Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-routing-v1 kind=resume sha256=7dc00a57b3a15fd0277061edcd87db87ee1344560155c36964f362f8abd0b250 -->\n{\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"kind\":\"resume\",\"parking_id\":\"5002\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"previous\":\"4000\",\"protocol\":\"review-routing-v1\",\"reason\":\"explicit exact-head independent review after insufficient evidence\"}\n"
+          }
+        },
+        {
+          "cursor": "C7000",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_7000",
+            "fullDatabaseId": "7000",
+            "createdAt": "2026-10-29T00:00:01Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-routing-v1 kind=publication sha256=68d70fc7ad7e15f9bc094aa496058100923315471513ac47e926ec9f334f47d0 -->\n{\"anchor\":\"RETURN_A\",\"audit\":{\"base_ref_oid\":\"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\",\"last_edge_cursor\":\"C6000\",\"last_edge_node_id\":\"IC_6000\",\"snapshot_sha256\":\"329d745bc9a6e02aed8ec02409bd8bd557fd716969d07d22c3c761cb635a881d\"},\"author\":{\"id\":\"U_AUTHOR\",\"login\":\"contributor\"},\"budget_used\":1,\"depth\":4,\"epoch\":\"719e7c8e4b7bc10f3b1cb2a690bffdfa4dce887e34978f9919b59efc25baa6f3\",\"identity\":{\"base_ref\":\"main\",\"base_repository\":\"owner/repo\",\"base_repository_id\":\"R_BASE\",\"cross_repository\":false,\"head_ref\":\"ветка/проверка\",\"head_repository\":\"owner/repo\",\"head_repository_id\":\"R_BASE\",\"head_sha\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"kind\":\"publication\",\"max_attempts\":2,\"outcome\":\"technical-handoff\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"report\":{\"blocking\":[{\"evidence\":{\"actual\":\"31.01.2026 20:59:59\",\"command\":\"onebase procrun --project probe --sqlite probe.sqlite --proc Probe\",\"entrypoint\":\"onebase procrun --proc Probe\",\"environment\":\"Windows, Europe/Moscow, SQLite\",\"expected\":\"31.01.2026 23:59:59\",\"invariant\":\"HTML и string используют согласованную локальную зону\",\"result\":\"exit 1, mismatch persisted date output\"},\"id\":\"date.html-local-zone\",\"kind\":\"technical\",\"summary\":\"HTML-шаблон показывает UTC вместо локального времени\"}],\"change\":\"Проверка поведения на точном HEAD\",\"checks\":[\"onebase procrun --proc Probe, exit 1\"],\"head\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"routing_version\":\"review-routing-v1\",\"tail\":[]},\"report_sha256\":\"8e5514230ab9cf74cb6ad6110667d1fec3c564cb02156a6286c4a733589e0061\",\"resume_id\":\"6000\"}\n"
+          }
+        },
+        {
+          "cursor": "C7001",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_7001",
+            "fullDatabaseId": "7001",
+            "createdAt": "2026-10-29T00:00:01Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-routing-v1 kind=claim sha256=0f67d76649c2b5827c5bc7f979f3567912e6c98572679558064d639348a6c350 -->\n{\"context_sha256\":\"de8e4311cd2040312b5ee55029ee5c71fa5eb7eca10a49ddd7ffca19c14d72b7\",\"kind\":\"claim\",\"lease_id\":\"7000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"7000\"}\n"
+          }
+        },
+        {
+          "cursor": "C7002",
+          "node": {
+            "__typename": "IssueComment",
+            "id": "IC_7002",
+            "fullDatabaseId": "7002",
+            "createdAt": "2026-10-29T00:00:01Z",
+            "lastEditedAt": null,
+            "author": {
+              "login": "owner"
+            },
+            "body": "<!-- pp:review-routing-v1 kind=completion sha256=fb755b45d66bf254cfcba5fbfd3820cbf6747b4f1c7fb6e40b7f35226a53e1cd -->\n{\"claim_id\":\"7001\",\"context_sha256\":\"de8e4311cd2040312b5ee55029ee5c71fa5eb7eca10a49ddd7ffca19c14d72b7\",\"kind\":\"completion\",\"lease_id\":\"7000\",\"owner\":\"00000000-0000-4000-8000-000000000001\",\"pr\":{\"base_repository_id\":\"R_BASE\",\"pr_id\":\"PR_NODE_42\",\"pr_number\":42},\"protocol\":\"review-routing-v1\",\"publication_id\":\"7000\"}\n"
+          }
+        }
+      ]
+    }
+  }
+]

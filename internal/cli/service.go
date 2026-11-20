@@ -11,6 +11,7 @@ import (
 	"text/template"
 
 	"github.com/ivantit66/onebase/internal/launcher"
+	"github.com/ivantit66/onebase/internal/userdata"
 	"github.com/spf13/cobra"
 )
 
@@ -65,6 +66,9 @@ func addServiceInstallFlags(cmd *cobra.Command) {
 // ── install ───────────────────────────────────────────────────────────────────
 
 func runServiceInstall(cmd *cobra.Command, _ []string) error {
+	if userdata.PortableRoot() != "" {
+		return fmt.Errorf("установка службы несовместима с --portable; запустите установку в обычном режиме")
+	}
 	baseID, _ := cmd.Flags().GetString("id")
 	svcName, _ := cmd.Flags().GetString("name")
 	printOnly, _ := cmd.Flags().GetBool("print")

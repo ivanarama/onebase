@@ -1,0 +1,10 @@
+{
+  "name": "echarts",
+  "version": "5.4.3",
+  "license": "Apache-2.0",
+  "tarball": "https://registry.npmjs.org/echarts/-/echarts-5.4.3.tgz",
+  "integrity": "sha512-mYKxLxhzy6zyTi/FaEbJMOZU1ULGEQHaeIeuMR5L+JnJTpz+YR03mnnpBhbR4+UYJAgiXgpyTVLffPAjOTLkZA==",
+  "source_bundle": "package/dist/echarts.min.js",
+  "identity_verified": true,
+  "identity_scope": "The principal vendored JavaScript bundle matches this published archive after CRLF-to-LF normalization. Remaining vendored files are separately pinned in catalog.json; local subsets and custom styles are not claimed to be the entire upstream package."
+}

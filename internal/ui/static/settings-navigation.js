@@ -195,11 +195,16 @@
     function renderPalette() {
       palette.replaceChildren();
       var filter = document.getElementById('navigation-filter').value.toLowerCase();
+      var available = 0, matches = 0;
       walk(data.base, function (entry) {
-        if (find(entry.node.id) || filter && label(entry.node).toLowerCase().indexOf(filter) < 0) return;
-        var row = element('div'); row.appendChild(element('span', label(entry.node)));
+        if (find(entry.node.id)) return;
+        available++;
+        if (filter && label(entry.node).toLowerCase().indexOf(filter) < 0) return;
+        matches++;
+        var row = element('div'); row.dataset.kind = entry.kind; row.appendChild(element('span', label(entry.node)));
         var control = button(labels.restore, function () { restore(entry.node.id); }); control.dataset.restoreId = entry.node.id; row.appendChild(control); palette.appendChild(row);
       });
+      if (!matches) palette.appendChild(element('p', available ? labels.paletteNoMatches : labels.palettePlaced));
     }
     function renderPreview(sections) {
       preview.replaceChildren();

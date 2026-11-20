@@ -83,8 +83,12 @@ func (s *Server) helpAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	name := chi.URLParam(r, "*")
-	if decoded, err := url.PathUnescape(name); err == nil {
-		name = decoded
+	// chi uses RawPath when present; otherwise the wildcard comes from the
+	// already decoded Path and literal percent sequences must stay unchanged.
+	if r.URL.RawPath != "" {
+		if decoded, err := url.PathUnescape(name); err == nil {
+			name = decoded
+		}
 	}
 	a, ok := b.Assets[name]
 	if !ok {

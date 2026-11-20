@@ -182,6 +182,28 @@ func applySandboxVars(e *env, p SandboxProfile) {
 	for k, v := range vars {
 		overlay[strings.ToLower(k)] = v
 	}
+	if p.DenyFile {
+		// HTTPСоединение пишет ответ в ИмяВыходногоФайла — это файловая
+		// возможность внутри сетевой. При запрете только файлов фабрика
+		// соединения приходит от хоста (extraVars) со своим сетевым guard'ом:
+		// оборачиваем её, а не подменяем, чтобы guard сети сохранился.
+		deny := FileGuard(func() error { return errHTTPFileDenied })
+		for _, name := range []string{"__factory_httpсоединение", "__factory_httpconnection"} {
+			v, ok := overlay[name]
+			if !ok {
+				v, ok = e.get(name)
+			}
+			if !ok {
+				continue
+			}
+			if factory, isFactory := v.(func([]any) any); isFactory {
+				overlay[name] = denyHTTPFileOutput(factory, deny)
+			} else {
+				// Неизвестная форма фабрики: закрываем, а не пропускаем молча.
+				overlay[name] = func([]any) any { panic(userError{Msg: errHTTPFileDenied.Error(), Err: errHTTPFileDenied}) }
+			}
+		}
+	}
 	e.ec.sandboxVars = overlay
 }
 
@@ -206,7 +228,7 @@ func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p Sandbox
 				err = s.asDSLError(e.ec.curFile, e.ec.curLine)
 			case dslReturn:
 				if result != nil {
-					*result = s.val
+					*result = ToHostValue(s.val)
 				}
 			default:
 				panic(r)
@@ -226,7 +248,7 @@ func (i *Interpreter) RunSandboxed(proc *ast.ProcedureDecl, this This, p Sandbox
 	e.ec.checkDeadline()
 	if i.StrictLexicalScope {
 		if result != nil {
-			*result = i.callEntryProc(proc, e, nil)
+			*result = ToHostValue(i.callEntryProc(proc, e, nil))
 		} else {
 			i.callEntryProc(proc, e, nil)
 		}
@@ -264,7 +286,7 @@ func (i *Interpreter) CallSandboxed(proc *ast.ProcedureDecl, this This, args []a
 	}
 	applySandboxVars(e, p)
 	e.ec.checkDeadline()
-	result = i.callUserProc(proc, e, args)
+	result = ToHostValue(i.callUserProc(proc, e, args))
 	return
 }
 
@@ -301,6 +323,10 @@ func (i *Interpreter) CallEntrySandboxedWithBindings(proc *ast.ProcedureDecl, th
 	applySandboxVars(e, p)
 	e.ec.checkDeadline()
 	result.Value, result.Bindings = i.callEntryProcWithBindings(proc, e, args)
+	result.Value = ToHostValue(result.Value)
+	for name, value := range result.Bindings {
+		result.Bindings[name] = ToHostValue(value)
+	}
 	return result, nil
 }
 

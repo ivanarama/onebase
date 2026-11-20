@@ -24,12 +24,12 @@ fields:
     type: string
     label: aggregate конверта (тип бизнес-объекта)
   - name: ТелоСырое
-    type: text
+    type: string
     label: Сырой конверт (JSON) — для повтора после починки
   - name: Причина
     type: enum:ПричинаКарантина
   - name: Ошибка
-    type: text
+    type: string
     label: Текст ошибки обработчика/валидации
   - name: Попытки
     type: number

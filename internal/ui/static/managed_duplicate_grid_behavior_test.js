@@ -72,6 +72,7 @@ function run(order, overrides) {
   Grid.prototype.getFooterRowColumn = function() { return null; };
   Grid.prototype.resizeCanvas = function() { this.resizeCalls++; };
   Grid.prototype.autosizeColumns = function() {};
+  Grid.prototype.getColumns = function() { return this.columns; };
   Grid.prototype.updateRowCount = function() {};
   Grid.prototype.render = function() {};
   Grid.prototype.invalidate = function() {};

@@ -100,7 +100,7 @@ func getExprLocation(expr ast.Expr) (string, int, int) {
 func (e *env) GetLocals() map[string]any {
 	result := make(map[string]any)
 	for k, v := range e.vars {
-		result[k] = v
+		result[k] = ToHostValue(v)
 	}
 	return result
 }
@@ -113,13 +113,13 @@ func (e *env) GetAllVariables() map[string]any {
 	for current != nil {
 		for k, v := range current.vars {
 			if _, exists := result[k]; !exists {
-				result[k] = v
+				result[k] = ToHostValue(v)
 			}
 		}
 		if !seenModule && current.module != nil {
 			for k, v := range current.module.vars {
 				if _, exists := result[k]; !exists {
-					result[k] = v
+					result[k] = ToHostValue(v)
 				}
 			}
 			seenModule = true
@@ -134,7 +134,7 @@ func (e *env) GetAllVariables() map[string]any {
 // getTypeName returns the DSL type name for a value
 func getTypeName(v any) string {
 	v = unwrapReadOnly(v)
-	if v == nil {
+	if IsUndefined(v) {
 		return "Неопределено"
 	}
 	switch v.(type) {

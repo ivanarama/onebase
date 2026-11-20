@@ -663,6 +663,11 @@ func marshalJobTaskParams(params map[string]any) ([]byte, error) {
 		case time.Time:
 			persisted[name] = typed.Format(time.RFC3339Nano)
 			types[name] = "date"
+		case uuid.UUID:
+			// УникальныйИдентификатор DSL: строкой, а тип — в служебной карте,
+			// чтобы задание получило то же значение, а не строку.
+			persisted[name] = typed.String()
+			types[name] = "uuid"
 		default:
 			persisted[name] = value
 		}
@@ -724,6 +729,17 @@ func unmarshalJobTaskParam(raw json.RawMessage, kind string) (any, error) {
 		value, err := time.Parse(time.RFC3339Nano, text)
 		if err != nil {
 			return nil, fmt.Errorf("неверная дата %q: %w", text, err)
+		}
+		return value, nil
+	}
+	if kind == "uuid" {
+		var text string
+		if err := json.Unmarshal(raw, &text); err != nil {
+			return nil, err
+		}
+		value, err := uuid.Parse(text)
+		if err != nil {
+			return nil, fmt.Errorf("неверный идентификатор %q: %w", text, err)
 		}
 		return value, nil
 	}

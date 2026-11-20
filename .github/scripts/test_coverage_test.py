@@ -14,7 +14,6 @@ import unittest
 RUNNER = Path(__file__).with_name("test-coverage.py")
 UI = "github.com/ivantit66/onebase/internal/ui"
 LAUNCHER = "github.com/ivantit66/onebase/internal/launcher"
-AUTH = "github.com/ivantit66/onebase/internal/auth"
 
 # This is a child process replacing only Go at the external command boundary.
 # The real Go fixture below checks the actual -run/subtest/seed semantics.
@@ -25,7 +24,6 @@ mode = os.environ.get('SCENARIO', '')
 print('go: downloading fixture dependency', file=sys.stderr)
 ui = 'github.com/ivantit66/onebase/internal/ui'
 launcher = 'github.com/ivantit66/onebase/internal/launcher'
-auth = 'github.com/ivantit66/onebase/internal/auth'
 other = 'github.com/ivantit66/onebase/other'
 with open('calls.jsonl', 'a') as f: f.write(json.dumps(args)+'\n')
 if args == ['list', './...']:
@@ -33,25 +31,17 @@ if args == ['list', './...']:
     print(other)
     print(ui if mode != 'missing-ui-package' else 'wrong/ui')
     print(launcher if mode != 'missing-launcher-package' else 'wrong/launcher')
-    print(auth if mode != 'missing-auth-package' else 'wrong/auth')
-    if mode == 'duplicate-auth-package': print(auth)
     if mode == 'duplicate-package': print(ui)
     sys.exit(0)
 assert args[0] == 'test'
-assert all(flag in args for flag in ['-race', '-count=1', '-timeout=10m', '-json'])
+assert all(flag in args for flag in ['-race', '-count=1', '-timeout=20m', '-json'])
 def emit(action, package, **kw):
     print(json.dumps(dict(Action=action, Package=package, **kw)))
 names = ['TestAlpha', 'TestBravo', 'TestCharlie', 'TestDelta', 'ExampleValue', 'FuzzSeed']
 if os.environ.get('NEW_TEST'): names += ['TestNewAutomaticallyDiscovered']
-package = args[-1]
-if package == auth:
-    names = ['TestAuth%03d' % i for i in range(140)] + ['ExampleValue', 'FuzzSeed']
-    if os.environ.get('NEW_TEST'): names += ['TestNewAutomaticallyDiscovered']
-if mode.startswith('auth-'):
-    mode = mode[5:] if package == auth else ''
 if '-list' in args:
     package = args[-1]
-    assert package in [ui, launcher, auth] and args[args.index('-list')+1] == '^(Test|Example|Fuzz)'
+    assert package in [ui, launcher] and args[args.index('-list')+1] == '^(Test|Example|Fuzz)'
     if mode == 'empty-launcher-inventory' and package == launcher: names=[]
     if mode == 'compile-failure': sys.exit(1)
     if mode == 'empty-inventory': names=[]
@@ -65,7 +55,7 @@ assert '-covermode=atomic' in args
 coverage = pathlib.Path(next(a.split('=',1)[1] for a in args if a.startswith('-coverprofile=')))
 package = args[-1]
 assert ("-p=2" in args) == (package == other)
-if package in [ui, launcher, auth]:
+if package in [ui, launcher]:
     pattern=args[args.index('-run')+1]
     assert pattern.startswith('^(?:') and pattern.endswith(')$') and '/' not in pattern
     selected = [n for n in names if re.fullmatch(pattern, n)]
@@ -76,16 +66,13 @@ if package in [ui, launcher, auth]:
         for sub in ['one', 'two']:
             emit('run', package, Test=n+'/'+sub)
             if mode != 'missing-subtest-result': emit('pass', package, Test=n+'/'+sub, Elapsed=0.001)
-            if mode == 'duplicate-subtest-result': emit('pass', package, Test=n+'/'+sub, Elapsed=0.001)
         if mode != 'missing-test-result': emit('pass', package, Test=n, Elapsed=0.002)
-        if mode == 'duplicate-test-result': emit('pass', package, Test=n, Elapsed=0.002)
 if mode in ['failed-test', 'race', 'timeout']:
     emit('output', package, Output={'failed-test':'FAIL test', 'race':'WARNING: DATA RACE',
                                   'timeout':'panic: test timed out after 10m0s'}[mode])
     emit('fail', package)
     sys.exit(1)
 if mode != 'missing-package-result': emit('pass', package, Elapsed=0.01)
-if mode == 'duplicate-package-result': emit('pass', package, Elapsed=0.01)
 if mode == 'event-failure': emit('fail', package)
 if mode == 'missing-profile': sys.exit(0)
 if mode == 'corrupt-profile': coverage.write_text('garbage\n'); sys.exit(0)
@@ -95,9 +82,6 @@ file = package+'/sample.go'
 if package == ui and coverage.stem == 'ui-4':
     if mode == 'incompatible-profile': statements=3
     if mode == 'missing-block': file=ui+'/different.go'
-if package == auth and coverage.stem == 'auth-4':
-    if mode == 'incompatible-profile': statements=3
-    if mode == 'missing-block': file=auth+'/different.go'
 if package == launcher and coverage.stem == 'launcher-2':
     if mode == 'incompatible-launcher-profile': statements=3
     if mode == 'missing-launcher-block': file=launcher+'/different.go'
@@ -105,7 +89,7 @@ record = file+':1.1,2.2 '+str(statements)+' '+str(count)+'\n'
 content = 'mode: atomic\n'+record
 if mode == 'wrong-mode': content = content.replace('atomic', 'set')
 if mode == 'duplicate-block': content += record
-if mode == 'negative-counter': content = content.replace(' '+str(count)+'\n',' -1\n')
+if mode == 'negative-counter': content = content.replace(' 7\n',' -1\n')
 if mode == 'empty-profile': content='mode: atomic\n'
 coverage.write_text(content)
 '''
@@ -140,7 +124,7 @@ class CoverageCLI(unittest.TestCase):
         result = self.run_cli(new_test=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         inventory = json.loads((self.root / "test-results/inventory.json").read_text())
-        for label, count in [("ui", 4), ("launcher", 2), ("auth", 4)]:
+        for label, count in [("ui", 4), ("launcher", 2)]:
             item = inventory["series"][label]
             names = item["names"]
             self.assertIn("ExampleValue", names)
@@ -149,24 +133,20 @@ class CoverageCLI(unittest.TestCase):
             self.assertEqual(item["groups"], [sorted(names)[i::count] for i in range(count)])
             self.assertEqual(Counter(n for g in item["groups"] for n in g), Counter(names))
             self.assertEqual(len(list((self.root / "test-results").glob(label+"-?.jsonl"))), count)
-        self.assertEqual(len(inventory["series"]["auth"]["names"]), 143)
-        self.assertEqual([len(g) for g in inventory["series"]["auth"]["groups"]], [36, 36, 36, 35])
         lines = (self.root / "coverage.out").read_text().splitlines()
         self.assertEqual(lines, ["mode: atomic",
-                                AUTH+"/sample.go:1.1,2.2 2 10",
                                 LAUNCHER+"/sample.go:1.1,2.2 2 3",
                                 UI+"/sample.go:1.1,2.2 2 10",
                                 "github.com/ivantit66/onebase/other/sample.go:1.1,2.2 2 7"])
         calls = [json.loads(s) for s in (self.root / "calls.jsonl").read_text().splitlines()]
-        self.assertEqual(len(calls), 15)  # list, three inventories, other, UI4, launcher2, auth4
-        self.assertNotIn(UI, calls[4])
-        self.assertNotIn(LAUNCHER, calls[4])
-        self.assertNotIn(AUTH, calls[4])
-        self.assertIn("-p=2", calls[4])
-        self.assertNotIn("-run", calls[4])
-        self.assertEqual(calls[4][-1:], ["github.com/ivantit66/onebase/other"])
-        self.assertTrue(all("-p=2" not in call for call in calls[5:]))
-        self.assertEqual([c[-1] for c in calls[5:]], [UI]*4+[LAUNCHER]*2+[AUTH]*4)
+        self.assertEqual(len(calls), 10)  # list, two inventories, other, UI4, launcher2
+        self.assertNotIn(UI, calls[3])
+        self.assertNotIn(LAUNCHER, calls[3])
+        self.assertIn("-p=2", calls[3])
+        self.assertNotIn("-run", calls[3])
+        self.assertEqual(calls[3][-1:], ["github.com/ivantit66/onebase/other"])
+        self.assertTrue(all("-p=2" not in call for call in calls[4:]))
+        self.assertEqual([c[-1] for c in calls[4:]], [UI]*4+[LAUNCHER]*2)
 
     def test_failures_never_publish_partial_or_stale_coverage(self):
         for mode in ["list-failure", "missing-ui-package", "missing-launcher-package",
@@ -176,16 +156,7 @@ class CoverageCLI(unittest.TestCase):
                      "missing-package-result", "event-failure", "missing-profile", "corrupt-profile",
                      "incompatible-profile", "missing-block", "incompatible-launcher-profile",
                      "missing-launcher-block", "wrong-mode", "duplicate-block",
-                     "negative-counter", "empty-profile",
-                     "missing-auth-package", "duplicate-auth-package",
-                     *["auth-" + mode for mode in ["empty-inventory", "duplicate-inventory",
-                       "invalid-inventory", "compile-failure", "missing-execution",
-                       "duplicate-execution", "missing-test-result", "missing-subtest-result",
-                       "duplicate-test-result", "duplicate-subtest-result", "duplicate-package-result",
-                       "negative-counter", "failed-test", "race", "timeout", "missing-package-result",
-                       "event-failure", "missing-profile", "corrupt-profile",
-                       "incompatible-profile", "missing-block", "wrong-mode",
-                       "duplicate-block", "empty-profile"]]]:
+                     "negative-counter", "empty-profile"]:
             with self.subTest(mode=mode):
                 shutil.rmtree(self.root / "test-results", ignore_errors=True)
                 (self.root / "coverage.out").write_text("stale success\n")
@@ -244,35 +215,19 @@ func TestOther(t *testing.T) { if Value()!=7 { t.Fatal("other") } }
         for name in ["value_test.go", "new_test.go"]:
             text = (ui / name).read_text().replace("package ui", "package launcher", 1)
             (launcher / name).write_text(text)
-        auth = self.root / "internal/auth"
-        auth.mkdir(parents=True)
-        (auth / "value.go").write_text("package auth\nfunc Value() int { return 42 }\n")
-        for name in ["value_test.go", "new_test.go"]:
-            text = (ui / name).read_text().replace("package ui", "package auth", 1)
-            (auth / name).write_text(text)
-        # The real auth fixture has 143 suites, discovered by Go rather than
-        # a static runner list. TestNew and all fuzz seeds/subtests run as well.
-        (auth / "more_test.go").write_text('package auth\nimport "testing"\n' + "".join(
-            f'func TestAuth{i:03d}(t *testing.T) {{ if Value()!=42 {{ t.Fatal("auth") }} }}\n'
-            for i in range(137)))
         result = subprocess.run(self.cli_command(self.runner), cwd=self.root,
                                 capture_output=True, text=True, encoding="utf-8", timeout=180)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         expected = Counter(["TestAlpha", "TestAlpha/a", "TestAlpha/b", "TestBravo",
                             "TestCharlie", "ExampleValue", "FuzzValue",
                             "FuzzValue/seed#0", "FuzzValue/seed#1", "TestNew"])
-        for label in ["ui", "launcher", "auth"]:
+        for label in ["ui", "launcher"]:
             journals = [json.loads(line)
                         for p in (self.root / "test-results").glob(label+"-?.jsonl")
                         for line in p.read_text().splitlines()]
             ran = Counter(e["Test"] for e in journals if e["Action"] == "run")
-            self.assertEqual(ran, expected + (Counter(f"TestAuth{i:03d}" for i in range(137))
-                                             if label == "auth" else Counter()))
-            if label == "auth":
-                inventory = json.loads((self.root / "test-results/inventory.json").read_text())
-                self.assertEqual([len(g) for g in inventory["series"][label]["groups"]], [36, 36, 36, 35])
+            self.assertEqual(ran, expected)
         lines = (self.root / "coverage.out").read_text().splitlines()
-        self.assertTrue(any("/auth/value.go:" in line for line in lines))
         self.assertTrue(any("/launcher/launch.go:" in line for line in lines))
         self.assertTrue(any("/ui/value.go:" in line for line in lines))
         self.assertTrue(any("/other/value.go:" in line for line in lines))

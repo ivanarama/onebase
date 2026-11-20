@@ -1,0 +1,5 @@
+schema: onebase.form/v1
+form: {name: RefForm, kind: object, entity: RefHost}
+elements:
+  - {kind: ПолеВвода, name: NameField, data_path: Объект.Name}
+  - {kind: ПолеВвода, name: PhotoField, data_path: Объект.Photo, choice: true}

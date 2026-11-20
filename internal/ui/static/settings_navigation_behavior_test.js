@@ -29,7 +29,7 @@ function setup(readyState = 'complete', configure = () => {}) {
   const base = {version:1, context:'subsystem:School', sections:[{id:'cfg:study', title:'Study', titles:{en:'Education'}, items:[item('years')], groups:[{id:'cfg:group', title:'Group', items:[item('a'), item('b')]}]}, {id:'cfg:empty', title:'Empty', items:[],groups:[]}]};
   const ids = ['navigation-editor-data','navigation-tree','navigation-properties','navigation-palette','navigation-preview','navigation-status','navigation-live','navigation-desired','navigation-renamed','navigation-save','navigation-reset','navigation-filter','navigation-add-section','navigation-add-group'];
   const elements = Object.fromEntries(ids.map(id => [id, new Element('div')]));
-  elements['navigation-editor-data'].textContent = JSON.stringify({base, desired:base, revision:'sha256:test', subsystem:'School', icons:['calendar-days','book-open'], preview:[], labels:{up:'Up',down:'Down',in:'In',out:'Out',hide:'Hide',remove:'Remove',restore:'Restore',title:'Title',icon:'Icon',parent:'Parent',changed:'Changed',newSection:'New section',newGroup:'New group',error:'Preview failed',saveError:'Save failed',conflict:'Conflict',reload:'Reload',reloadConfirm:'Discard?',unsaved:'Unsaved',empty:'Empty'}});
+  elements['navigation-editor-data'].textContent = JSON.stringify({base, desired:base, revision:'sha256:test', subsystem:'School', icons:['calendar-days','book-open'], preview:[], labels:{up:'Up',down:'Down',in:'In',out:'Out',hide:'Hide',remove:'Remove',restore:'Restore',title:'Title',icon:'Icon',parent:'Parent',changed:'Changed',newSection:'New section',newGroup:'New group',error:'Preview failed',saveError:'Save failed',conflict:'Conflict',reload:'Reload',reloadConfirm:'Discard?',unsaved:'Unsaved',empty:'Empty',palettePlaced:'All objects placed',paletteNoMatches:'No matches'}});
   const configured = JSON.parse(elements['navigation-editor-data'].textContent);
   configure(configured);
   elements['navigation-editor-data'].textContent = JSON.stringify(configured);
@@ -233,4 +233,44 @@ test('successful save follows GET, failed save unlocks draft without exposing ba
   ui.requests[1].resolve({status:200,ok:true,url:'http://example.com/ui/admin/navigation?saved=1'});
   await new Promise(setImmediate);
   assert.equal(ui.windowEvents.location, 'http://example.com/ui/admin/navigation?saved=1');
+});
+
+for (const ready of ['loading', 'complete']) {
+  test('palette explains placed objects and retains the filter through hide/restore ('+ready+')', () => {
+    const ui = setup(ready);
+    const palette = ui.elements['navigation-palette'];
+    const filter = ui.elements['navigation-filter'];
+    assert.equal(palette.children[0].textContent, 'All objects placed');
+    filter.value = 'YEARS'; filter.fire('input');
+    assert.equal(palette.children[0].textContent, 'All objects placed', 'a filter cannot find already placed objects');
+    ui.row('cfg:years').children.at(-1).click();
+    assert.equal(palette.children.length, 1);
+    assert.equal(palette.children[0].children[0].textContent, 'Metadata years');
+    filter.value = 'missing'; filter.fire('input');
+    assert.equal(palette.children[0].textContent, 'No matches');
+    assert.equal(palette.all().some(x => x.dataset.restoreId), false);
+    filter.value = ''; filter.fire('input');
+    const restore = palette.all().find(x => x.dataset.restoreId === 'cfg:years');
+    assert.ok(restore, 'clearing the filter recovers the hidden object');
+    filter.value = 'YEARS'; filter.fire('input');
+    palette.all().find(x => x.dataset.restoreId === 'cfg:years').click();
+    assert.equal(filter.value, 'YEARS', 'restore preserves the current filter');
+    assert.equal(palette.children[0].textContent, 'All objects placed');
+    assert.ok(ui.row('cfg:years'));
+  });
+}
+
+test('palette counts all unplaced nodes before filtering and restores a hidden subtree', () => {
+  const ui = setup();
+  ui.row('cfg:study').children.at(-1).click();
+  const palette = ui.elements['navigation-palette'];
+  assert.equal(palette.children.length, 5);
+  assert.deepEqual(palette.children.map(x => x.dataset.kind), ['section','item','group','item','item']);
+  const filter = ui.elements['navigation-filter'];
+  filter.value = 'no such title'; filter.fire('input');
+  assert.equal(palette.children[0].textContent, 'No matches');
+  filter.value = 'Study'; filter.fire('input');
+  palette.all().find(x => x.dataset.restoreId === 'cfg:study').click();
+  assert.equal(palette.children[0].textContent, 'All objects placed');
+  assert.deepEqual(ui.state().sections.find(x => x.id === 'cfg:study').groups[0].items.map(x => x.id), ['cfg:a','cfg:b']);
 });

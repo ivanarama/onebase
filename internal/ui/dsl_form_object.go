@@ -83,6 +83,14 @@ type formObjectThis struct {
 	writeBlocked bool
 }
 
+// runtimeObject exposes identity for Заполнить; unsaved fields stay in the form.
+func (f *formObjectThis) runtimeObject() *runtime.Object {
+	if f == nil {
+		return nil
+	}
+	return f.obj
+}
+
 // liveCtx — контекст с открытой DSL-транзакцией, если она есть.
 func (f *formObjectThis) liveCtx() context.Context {
 	if f.ctxSrc != nil {
@@ -215,6 +223,40 @@ func (f *formObjectThis) write() error {
 			return err
 		}
 	}
+	// Save needs the stored values, while the form handler must keep seeing its
+	// original masked/hidden view, including on rejection and transaction retry.
+	// Unlike loaded DSL writers, Get on this wrapper reads Fields directly.
+	var restoreProtectedFields func(map[string]any)
+	hookState := f.hookXDTOState()
+	if !isNew {
+		originalFields := cloneRecord(f.obj.Fields)
+		restored, err := f.srv.protectMaskedFieldsOnWrite(ctx, f.entity, f.obj.ID, f.obj.Fields)
+		if err != nil {
+			return err
+		}
+		if len(restored) > 0 {
+			restoreProtectedFields = func(fields map[string]any) {
+				for _, key := range restored {
+					if value, present := originalFields[key]; present {
+						fields[key] = value
+					} else {
+						delete(fields, key)
+					}
+				}
+			}
+			defer func() { restoreProtectedFields(f.obj.Fields) }()
+			// Only Save's XDTO provenance changes while it holds real values.
+			// Keep the handler's assignments intact: an explicit empty value
+			// must still suppress new-object defaults after an outer rollback.
+			hookState = &entityHookXDTOState{loaded: hookState.loaded, assigned: make(map[string]bool, len(hookState.assigned))}
+			for name, assigned := range f.hookXDTOState().assigned {
+				hookState.assigned[name] = assigned
+			}
+			for _, key := range restored {
+				delete(hookState.assigned, strings.ToLower(strings.TrimSpace(key)))
+			}
+		}
+	}
 	wasSaved := f.saved
 	previousExpectedVersion := f.expectedVersion
 	previousSavedFields := f.lastSavedFields
@@ -232,7 +274,12 @@ func (f *formObjectThis) write() error {
 			f.expectedVersion = &version
 			f.obj.Fields["_version"] = version
 		}
-		f.lastSavedFields = snapshotFieldValues(f.obj.Fields)
+		savedFields := f.obj.Fields
+		if restoreProtectedFields != nil {
+			savedFields = cloneRecord(savedFields)
+			restoreProtectedFields(savedFields)
+		}
+		f.lastSavedFields = snapshotFieldValues(savedFields)
 		f.lastSavedTableParts = tablePartRowsSnapshot(f.obj.TablePartRows)
 		storage.DeferUntilTxRollback(ctx, func() {
 			f.saved = wasSaved
@@ -257,7 +304,7 @@ func (f *formObjectThis) write() error {
 		})
 	}
 	hookCtx := context.WithValue(ctx, hookXDTOOriginKey{}, hookXDTOOrigin{
-		entity: f.entity.Name, id: f.obj.ID, state: f.hookXDTOState(),
+		entity: f.entity.Name, id: f.obj.ID, state: hookState,
 	})
 	result, err := f.srv.entitySvc.Save(hookCtx, entityservice.SaveRequest{
 		Entity:        f.entity,

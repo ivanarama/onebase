@@ -73,7 +73,7 @@ const tplAdminAuth = `{{define "admin-auth"}}` + adminHead + `
 <div class="card" style="max-width:820px;margin-bottom:16px">
   <div class="row-top"><h3>Провайдеры единого входа</h3></div>
   {{if .Providers}}
-  <table>
+  <div class="table-wrap"><table>
   <thead><tr><th>Идентификатор</th><th>Название</th><th>Issuer</th><th>Вкл.</th><th></th></tr></thead>
   <tbody>
   {{range .Providers}}<tr>
@@ -88,7 +88,7 @@ const tplAdminAuth = `{{define "admin-auth"}}` + adminHead + `
     </td>
   </tr>{{end}}
   </tbody>
-  </table>
+  </table></div>
   {{else}}
   <p class="empty">Провайдеры не настроены — вход только по локальному паролю.</p>
   {{end}}
