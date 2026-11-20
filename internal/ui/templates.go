@@ -1281,6 +1281,8 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 			return template.JS(b) //nolint:gosec // G203: JSON сформирован encoding/json
 		},
 		"managedTPColumnPlan": managedTPColumnPlan,
+		// statusBarMeta — признак строки состояния внизу страницы (status_bar).
+		"statusBarMeta": statusBarMetaHTML,
 		// messagesMeta — режим показа сообщений интерфейса (home_page: messages).
 		"messagesMeta": messagesMetaHTML,
 		// managedTPColumnsTitled — заголовки колонок из title_from по значениям
@@ -1529,6 +1531,7 @@ const tplHead = `
 {{with $.Lang}}<script>window.OB_I18N = {"Ничего не найдено": {{t . "Ничего не найдено"}}};</script>{{end}}
 <script type="application/json" id="ob-ui-messages">{{jsJSON (dict
   "closeNotConfirmed" (t (or $.Lang "ru") "Форма не закрыта: сервер не подтвердил закрытие.")
+  "statusBarNetworkError" (t (or $.Lang "ru") "Нет связи с сервером")
   "unsavedClose" (t (or $.Lang "ru") "Данные были изменены и не записаны. Закрыть форму?")
   "imageClose" (t (or $.Lang "ru") "Закрыть просмотр изображения")
   "imagePrevious" (t (or $.Lang "ru") "Предыдущее изображение")
@@ -1543,7 +1546,7 @@ const tplHead = `
   "imageError" (t (or $.Lang "ru") "Не удалось загрузить изображение")
   "imageArea" (t (or $.Lang "ru") "Область просмотра изображения")
 )}}</script>
-{{messagesMeta .}}<script src="/static/ui.js"></script>
+{{statusBarMeta .}}{{messagesMeta .}}<script src="/static/ui.js"></script>
 <style>
 .ob-embedded .topbar,.ob-embedded .subsys-bar,.ob-embedded #ob-nav{display:none!important}
 *{box-sizing:border-box;margin:0;padding:0}

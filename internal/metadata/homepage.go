@@ -45,6 +45,9 @@ type HomePage struct {
 	// глобальной config/home_page.yaml; у подсистем игнорируется. Фейл-сейф:
 	// без подсистем прятать нечем, поэтому флаг не срабатывает.
 	Hidden bool `yaml:"hidden,omitempty"`
+	// StatusBar — постоянная строка внизу каждой страницы (см. StatusBar).
+	// Читается только у глобальной config/home_page.yaml.
+	StatusBar *StatusBar `yaml:"status_bar,omitempty"`
 	// Messages — как показывать сообщения интерфейса: "panel" (по умолчанию —
 	// плашки событий формы и нижняя панель «Сообщения») или "popup" (только
 	// всплывающие плашки вверху справа, панели нет). MessageSeconds — сколько
@@ -160,6 +163,9 @@ func LoadHomePage(path string) (*HomePage, error) {
 		return nil, fmt.Errorf("%s: %w", path, err)
 	}
 	hp.applyDefaults()
+	if err := hp.StatusBar.Validate(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	switch hp.Messages {
 	case "", MessagesPanel, MessagesPopup:
 	default:

@@ -32,6 +32,8 @@ func Run(t *testing.T, suite string, env map[string]string) {
 	switch suite {
 	case "runtime":
 		cmd = exec.CommandContext(ctx, "node", "node_modules/@playwright/test/cli.js", "test", "--config", "acceptance.config.js", "--grep", "runtime")
+	case "status-bar":
+		cmd = exec.CommandContext(ctx, "node", "node_modules/@playwright/test/cli.js", "test", "--config", "acceptance.config.js", "--grep", "status bar")
 	case "configurator":
 		cmd = exec.CommandContext(ctx, "node", "node_modules/@playwright/test/cli.js", "test", "--config", "acceptance.config.js", "--grep", "configurator")
 	default:
