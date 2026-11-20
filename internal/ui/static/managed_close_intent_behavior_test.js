@@ -33,6 +33,10 @@ const fileSubmitStart = managed.indexOf('  obManagedReady(restoreFormAttrs);');
 const fileSubmitEnd = managed.indexOf('  window._obFormDirty = false;', fileSubmitStart);
 assert.ok(fileSubmitStart >= 0 && fileSubmitEnd > fileSubmitStart, 'managed file-submit slice not found');
 const fileSubmitHandler = managed.slice(fileSubmitStart, fileSubmitEnd);
+const fileWaitStart = managed.indexOf('  async function awaitCurrentFileReads(');
+const fileWaitEnd = managed.indexOf('  // obFilePick', fileWaitStart);
+assert.ok(fileWaitStart >= 0 && fileWaitEnd > fileWaitStart, 'managed file-read wait not found');
+const fileReadWaiter = managed.slice(fileWaitStart, fileWaitEnd);
 
 class FakeFormData {
   constructor(form) {
@@ -48,7 +52,7 @@ class FakeFormData {
   forEach(fn) { for (const [key, value] of this.values) fn(value, key); }
 }
 
-function runtime(fetchImpl, cfgOverride = {}, productionValues = false) {
+function runtime(fetchImpl, cfgOverride = {}, productionValues = false, productionFileReads = false) {
   const applied = [];
   const assigned = [];
 	const dirtyReports = [];
@@ -212,7 +216,7 @@ function runtime(fetchImpl, cfgOverride = {}, productionValues = false) {
 		var mapped = SERVICE_FIELDS[name];
 		return typeof mapped === 'string' && mapped ? mapped : name;
 	  }
-      async function awaitCurrentFileReads(){ return true; }
+      ${productionFileReads ? fileReadWaiter : 'async function awaitCurrentFileReads(){ return true; }'}
 	  function obManagedWritableTableBody(){ return null; }
       function applyFormConditionalCSS(value){ globalThis.__applied.push(['css', value]); }
       function applyElementStates(value){ globalThis.__applied.push(['states', value]); }
@@ -2339,3 +2343,267 @@ if (process.env.ONEBASE_QUESTION_HTTP_URL) {
     }
   });
 }
+
+test('BeforeClose question: answer repeats close with the answer, dismiss keeps the form open', async () => {
+  const bodies = [];
+  const app = runtime(async (url, options) => {
+    const body = capturedCloseBody(options);
+    bodies.push(body);
+    const intentId = closeIntent(options);
+    const answer = body.get('_question_answer');
+    if (!answer) {
+      return response({
+        ok: true, close: {intentId, allowed: false, saved: false},
+        question: {text: 'Заявок не найдено. Вернуться к звонку?', variants: ['Вернуться к звонку', 'Закрыть']},
+      });
+    }
+    return response({ok: true, close: {intentId, allowed: answer === 'Закрыть', saved: false}});
+  });
+  let asked = null;
+  app.context.obOpenQuestion = (payload, elementName, handlers) => { asked = {payload, handlers}; };
+  const settle = async () => { for (let i = 0; i < 20 && !asked; i++) await new Promise((r) => setTimeout(r, 0)); };
+
+  const pending = app.context.obRequestFormClose({reason: 'close', mode: 'discard'});
+  await settle();
+  assert.ok(asked, 'question from BeforeClose was not shown');
+  assert.equal(asked.payload.text, 'Заявок не найдено. Вернуться к звонку?');
+  asked.handlers.onAnswer('Закрыть', {_question_answer: 'Закрыть'});
+  const decision = await pending;
+  assert.equal(decision.allowed, true);
+  assert.equal(bodies.length, 2, 'answer must repeat the close request');
+  assert.equal(bodies[0].get('_question_answer'), null);
+  assert.equal(bodies[1].get('_question_answer'), 'Закрыть');
+  assert.equal(bodies[1].closeMode, 'discard');
+  assert.equal(bodies[1].closeReason, 'close');
+  assert.notEqual(bodies[1].closeIntent, bodies[0].closeIntent, 'the repeat is a new close intent');
+
+  asked = null;
+  const dismissed = app.context.obRequestFormClose({reason: 'close', mode: 'discard'});
+  await settle();
+  assert.ok(asked);
+  asked.handlers.onDismiss();
+  const kept = await dismissed;
+  assert.equal(kept.allowed, false);
+  assert.equal(bodies.length, 3, 'dismissing the question must not repeat the close');
+});
+
+function mountQuestionModal(app) {
+  const ui = fs.readFileSync('static/ui.js', 'utf8');
+  const begin = ui.indexOf('// BEGIN onebase-question-modal');
+  const end = ui.indexOf('// END onebase-question-modal', begin);
+  assert.ok(begin >= 0 && end > begin);
+  vm.runInNewContext(ui.slice(begin, end), app.context, {filename: 'question-modal.js'});
+}
+
+function questionNodes(root) {
+  return [root, ...(root.children || []).flatMap(questionNodes)];
+}
+
+async function closeQuestion(app) {
+  for (let i = 0; i < 500 && !app.document.getElementById('_question-modal'); i++) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.ok(app.document.getElementById('_question-modal'), JSON.stringify(app.applied));
+  return app.document.getElementById('_question-modal');
+}
+
+for (const action of ['close', 'submit', 'event', 'escape']) {
+  test('BeforeClose question owns pending operation: ' + action, async () => {
+    const calls = [];
+    const app = runtime(async (url, options) => {
+      calls.push(url);
+      return response({ok: true, close: {intentId: closeIntent(options), allowed: false, saved: false},
+        question: {text: 'Закрыть?', variants: ['Да']}});
+    });
+    mountQuestionModal(app);
+    const pending = app.context.obRequestFormClose({reason: 'cross', mode: 'discard'});
+    const modal = await closeQuestion(app);
+    let concurrent;
+    if (action === 'close') concurrent = app.context.obRequestFormClose({reason: 'cross', mode: 'discard'});
+    if (action === 'submit') assert.equal(dispatchSubmit(app).defaultPrevented, true);
+    if (action === 'event') await app.context.obFire('Кнопка', 'Нажатие');
+    if (action === 'escape') app.document.dispatch('keydown', {key: 'Escape',
+      preventDefault() {}, stopImmediatePropagation() { this.immediatePropagationStopped = true; }});
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(calls.length, 1, 'another request raced the question');
+    if (concurrent) assert.equal(concurrent, pending, 'callers must share the pending decision');
+    if (action === 'escape') assert.equal(app.document.getElementById('_question-modal'), null);
+    else modal.dispatch('click', {target: modal});
+    assert.equal((await pending).allowed, false);
+    // Dismissal must release ownership so a later explicit action can run.
+    await app.context.obFire('Кнопка', 'Нажатие');
+    assert.equal(calls.length, 2);
+  });
+}
+
+for (const mode of ['save', 'post', 'save_and_select']) {
+  test('BeforeClose question preserves one save: ' + mode, async () => {
+    const bodies = [];
+    const app = runtime(async (url, options) => {
+      const body = capturedCloseBody(options);
+      bodies.push(body);
+      const saved = closeMode(options) !== 'discard';
+      return response({ok: true, dirty: false, savedId: saved ? 'saved-once' : '', savedLabel: saved ? 'Запись' : '',
+        version: saved ? bodies.length : 0,
+        close: {intentId: closeIntent(options), allowed: !!body.get('_question_answer'), saved,
+          formUrl: saved ? '/ui/catalog/Тест/saved-once' : ''},
+        question: body.get('_question_answer') ? null : {text: 'Закрыть?', variants: ['Да']}});
+    });
+    mountQuestionModal(app);
+    const pending = app.context.obRequestFormClose({reason: 'ok', mode});
+    const modal = await closeQuestion(app);
+    const button = questionNodes(modal).find((node) => node.tagName === 'BUTTON');
+    button.dispatch('click', {target: button});
+    const decision = await pending;
+    assert.deepEqual(bodies.map((body) => body.closeMode), [mode, 'discard']);
+    assert.equal(decision.allowed, true);
+    assert.equal(decision.saved, true);
+    assert.equal(decision.mode, mode);
+    assert.equal(decision.savedId, 'saved-once');
+    assert.equal(decision.savedLabel, 'Запись');
+    assert.equal(decision.formUrl, '/ui/catalog/Тест/saved-once');
+  });
+}
+
+test('BeforeClose question saves fresh input and unsaved hook state', async () => {
+  for (const changed of ['input', 'hook', 'grid']) {
+    const bodies = [];
+    const app = runtime(async (url, options) => {
+      const body = capturedCloseBody(options);
+      bodies.push(body);
+      return response({ok: true, dirty: changed === 'hook', savedId: 'saved-once', version: bodies.length,
+        close: {intentId: closeIntent(options), allowed: !!body.get('_question_answer'), saved: true},
+        question: body.get('_question_answer') ? null : {text: 'Закрыть?', variants: ['Да']}});
+    });
+    mountQuestionModal(app);
+    const pending = app.context.obRequestFormClose({reason: 'ok', mode: 'save'});
+    const modal = await closeQuestion(app);
+    if (changed === 'input') app.form.values.set('Наименование', 'новый ввод');
+    if (changed === 'grid') app.context.obGridSync = () => { app.form.values.set('tp.Товары.0.Количество', '2'); return true; };
+    const button = questionNodes(modal).find((node) => node.tagName === 'BUTTON');
+    button.dispatch('click', {target: button});
+    assert.equal((await pending).allowed, true);
+    assert.deepEqual(bodies.map((body) => body.closeMode), ['save', 'save'], changed);
+    if (changed === 'input') assert.equal(bodies[1].get('Наименование'), 'новый ввод');
+    if (changed === 'grid') assert.equal(bodies[1].get('tp.Товары.0.Количество'), '2');
+  }
+});
+
+if (process.env.ONEBASE_CLOSE_QUESTION_HTTP_URL) {
+  test('BeforeClose question saves once through mounted HTTP', {timeout: 30000}, async () => {
+    const base = process.env.ONEBASE_CLOSE_QUESTION_HTTP_URL;
+    const page = await fetch(base + '/ui/document/ЗакрытиеСВопросом/new');
+    assert.equal(page.status, 200);
+    const html = await page.text();
+    const match = html.match(/<script type="application\/json" id="ob-managed-config">([^]*?)<\/script>/);
+    assert.ok(match);
+    const cfg = JSON.parse(match[1]);
+    const cases = ['unchanged', 'first-read', 'second-read'].flatMap((scenario) =>
+      ['save', 'post', 'save_and_select'].map((mode) => [scenario, mode]));
+    for (const [scenario, mode] of cases) {
+      const bodies = [], replies = [];
+      const app = runtime(async (url, options) => {
+        bodies.push(capturedCloseBody(options));
+        const result = await fetch(base + url, options);
+        const data = await result.json();
+        replies.push(data);
+        return response(data, result.ok, result.status);
+      }, cfg, false, true);
+      app.context.crypto = {randomUUID: require('node:crypto').randomUUID};
+      if (mode === 'save_and_select') app.form.values.set('_popup', '1');
+      // The harness's hidden controls must participate in real FormData just
+      // as they do in a browser, including the optimistic version after save.
+      app.context.FormData = class extends FakeFormData {
+        constructor(form) {
+          super(form);
+          if (form && app.idInput.value) this.set('_id', app.idInput.value);
+          if (form && app.versionInput.value) this.set('_version', app.versionInput.value);
+        }
+      };
+      mountQuestionModal(app);
+      const pending = app.context.obRequestFormClose({reason: 'ok', mode});
+      const modal = await closeQuestion(app);
+      assert.equal(replies[0].close.saved, true, JSON.stringify(replies));
+      assert.equal(replies[0].version, 1);
+      assert.equal(replies[0].dirty, false);
+      let reads = 0;
+      let edited = false;
+      if (scenario !== 'unchanged') {
+        const editOnRead = scenario === 'first-read' ? 1 : 2;
+        const state = {get pending() {
+          const read = ++reads;
+          return Promise.resolve().then(() => {
+            if (read === editOnRead) {
+              edited = true;
+              app.form.values.set('Наименование', 'Новая правка во время чтения файла');
+              app.context.obSetManagedFormDirty(true);
+            }
+          });
+        }};
+        const helper = {_obFileReadState: state, getAttribute() { return null; }};
+        const query = app.form.querySelectorAll.bind(app.form);
+        app.form.querySelectorAll = (selector) => selector === '[data-ob-file-content-for]' ? [helper] : query(selector);
+      }
+      const button = questionNodes(modal).find((node) => node.textContent === 'Закрыть — ошиблись номером');
+      assert.ok(button);
+      button.dispatch('click', {target: button});
+      const decision = await pending;
+      if (scenario !== 'unchanged') {
+        assert.equal(edited, true, 'the concurrent input must actually occur');
+        assert.equal(app.form.values.get('Наименование'), 'Новая правка во время чтения файла');
+        assert.ok(!decision.allowed || replies[1].close.saved === true,
+          'new input must be saved or keep the form open: ' + JSON.stringify(replies));
+        if (replies[1].close.saved) {
+          assert.equal(bodies[1].closeMode, mode);
+          assert.equal(bodies[1].get('Наименование'), 'Новая правка во время чтения файла');
+          assert.equal(replies[1].version, 2);
+        } else {
+          assert.equal(decision.allowed, false);
+          assert.equal(app.context._obFormDirty, true);
+        }
+        continue;
+      }
+      assert.equal(decision.allowed, true, JSON.stringify(replies));
+      assert.equal(decision.saved, true);
+      assert.equal(decision.savedId, replies[0].savedId);
+      assert.equal(decision.mode, mode);
+      assert.equal(replies[1].close.saved, false, 'answer repeated the save pipeline');
+      assert.deepEqual(bodies.map((body) => body.closeMode), [mode, 'discard']);
+      assert.equal(bodies[1].get('_id'), replies[0].savedId);
+      assert.equal(bodies[1].get('_version'), '1');
+      assert.equal(app.versionInput.value, '1');
+    }
+  });
+}
+
+test('BeforeClose question recovers a lost answer without losing saved picker identity', async () => {
+  const bodies = [];
+  const app = runtime(async (url, options) => {
+    const body = capturedCloseBody(options);
+    bodies.push(body);
+    if (bodies.length === 2) throw Error('answer response lost');
+    return response({ok: true, dirty: false, savedId: bodies.length === 1 ? 'saved-picker' : '',
+      savedLabel: bodies.length === 1 ? 'Запись' : '', version: bodies.length === 1 ? 1 : 0,
+      close: {intentId: closeIntent(options), allowed: bodies.length > 1, saved: bodies.length === 1,
+        formUrl: bodies.length === 1 ? '/ui/catalog/Тест/saved-picker' : ''},
+      question: bodies.length === 1 ? {text: 'Закрыть?', variants: ['Да']} : null});
+  });
+  mountQuestionModal(app);
+  const pending = app.context.obRequestFormClose({reason: 'ok', mode: 'save_and_select'});
+  const modal = await closeQuestion(app);
+  const button = questionNodes(modal).find((node) => node.tagName === 'BUTTON');
+  button.dispatch('click', {target: button});
+  assert.equal((await pending).allowed, false);
+  const posted = [];
+  app.context.obManagedPostRefSaved = (decision) => posted.push(decision);
+  app.context.location.search = '?_popup=1';
+  assert.equal(dispatchSubmit(app).defaultPrevented, true);
+  await waitFor(() => posted.length);
+  assert.equal(posted[0].allowed, true);
+  assert.equal(posted[0].saved, true);
+  assert.equal(posted[0].savedId, 'saved-picker');
+  assert.equal(posted[0].savedLabel, 'Запись');
+  assert.equal(posted[0].formUrl, '/ui/catalog/Тест/saved-picker');
+  assert.deepEqual(bodies.map((body) => body.closeMode), ['save_and_select', 'discard', 'discard']);
+  assert.equal(bodies[2].closeIntent, bodies[1].closeIntent, 'unknown answer must reuse its own intent');
+});

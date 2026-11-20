@@ -15,37 +15,82 @@ import (
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
-// ПоказатьВопрос в ПередЗакрытием — привычный приём из 1С, но закрытие ждёт
-// один ответ сервера и второго хода (событие Ответ) у него нет. Раньше вопрос
-// уходил в ответ close-intent и молча терялся: форма с Отказ = Истина просто не
-// закрывалась, без объяснения. Теперь вызов — ошибка обработчика с причиной, а
-// форма остаётся открытой. Проверка — через смонтированный close-intent.
+// ПоказатьВопрос в ПередЗакрытием — привычный приём из 1С («Вернуться в форму
+// звонка?»). Первый ход: вопрос уходит в ответ close-intent, форма остаётся
+// открытой. Клиент показывает его и повторяет закрытие с ВопросОтвет; второй
+// ход решает — Отказ = Истина или закрыть. Повторный вопрос в отвеченном ходе —
+// ошибка, иначе неудачный обработчик спрашивал бы бесконечно. Проверка — через
+// смонтированный close-intent.
 
 const beforeCloseAsksQuestion = `
 Процедура ПроверитьЗакрытие(Отказ)
-	Отказ = Истина;
-	ПоказатьВопрос("Документ не проведён. Закрыть?", "ДаНет");
+	Если ВопросОтвет = "" Тогда
+		Варианты = Новый Массив;
+		Варианты.Добавить("Вернуться к звонку");
+		Варианты.Добавить("Закрыть — ошиблись номером");
+		ПоказатьВопрос("Заявок не найдено. Вернуться к звонку?", Варианты);
+		Возврат;
+	КонецЕсли;
+	Если ВопросОтвет <> "Закрыть — ошиблись номером" Тогда
+		Отказ = Истина;
+	КонецЕсли;
 КонецПроцедуры
 `
 
-func assertCloseDialogRejected(t *testing.T, response formEventResponse, builtin string) {
+// checkCloseQuestionRounds — три хода через публичный close-intent: вопрос,
+// ответ «остаться», ответ «закрыть».
+func checkCloseQuestionRounds(t *testing.T, run func(answer string) formEventResponse) {
 	t.Helper()
-	if response.Close == nil || response.Close.Allowed {
-		t.Fatalf("форма закрыта, хотя ПередЗакрытием не смог показать диалог: %+v", response)
+	first := run("")
+	if first.Close == nil || first.Close.Allowed {
+		t.Fatalf("вопрос задан, а форма закрыта: %+v", first)
 	}
-	if response.Question != nil {
-		t.Fatalf("вопрос ушёл в ответ закрытия, где его никто не покажет: %+v", response.Question)
+	if first.Error != "" {
+		t.Fatalf("вопрос в ПередЗакрытием — не ошибка: %q", first.Error)
 	}
-	if !strings.Contains(response.Error, builtin+" недоступен в ПередЗакрытием") {
-		t.Fatalf("ошибка не называет причину: %q", response.Error)
+	if first.Question == nil || first.Question.Text != "Заявок не найдено. Вернуться к звонку?" ||
+		len(first.Question.Variants) != 2 {
+		t.Fatalf("вопрос не дошёл до клиента: %+v", first.Question)
+	}
+	stay := run("Вернуться к звонку")
+	if stay.Close == nil || stay.Close.Allowed || stay.Question != nil || stay.Error != "" {
+		t.Fatalf("ответ «остаться»: форма должна остаться открытой без нового вопроса: %+v", stay)
+	}
+	leave := run("Закрыть — ошиблись номером")
+	if leave.Close == nil || !leave.Close.Allowed || leave.Question != nil {
+		t.Fatalf("ответ «закрыть»: форма должна закрыться: %+v", leave)
 	}
 }
 
-func TestBeforeCloseRejectsQuestionDialog(t *testing.T) {
+func TestBeforeCloseQuestionAnswerRepeatsClose(t *testing.T) {
 	srv, ent := setupManagedEventsServer(t, beforeCloseAsksQuestion,
 		map[metadata.FormEventType]string{metadata.FormEventBeforeClose: "ПроверитьЗакрытие"}, nil)
-	rec := executeFormCloseIntent(t, srv, ent, closeIntentBody(uuid.NewString(), "close", "Заявка"))
-	assertCloseDialogRejected(t, decodeCloseIntentResponse(t, rec), "ПоказатьВопрос")
+	checkCloseQuestionRounds(t, func(answer string) formEventResponse {
+		body := closeIntentBody(uuid.NewString(), "close", "Заявка")
+		if answer != "" {
+			body.Set("_question_answer", answer)
+		}
+		return decodeCloseIntentResponse(t, executeFormCloseIntent(t, srv, ent, body))
+	})
+}
+
+// В отвеченном ходе второй вопрос не задаётся: ошибка с причиной, форма
+// остаётся открытой.
+func TestBeforeCloseQuestionNotAskedTwice(t *testing.T) {
+	srv, ent := setupManagedEventsServer(t, `
+Процедура ПроверитьЗакрытие(Отказ)
+	ПоказатьВопрос("Закрыть?", "ДаНет");
+КонецПроцедуры
+`, map[metadata.FormEventType]string{metadata.FormEventBeforeClose: "ПроверитьЗакрытие"}, nil)
+	body := closeIntentBody(uuid.NewString(), "close", "Заявка")
+	body.Set("_question_answer", "Да")
+	response := decodeCloseIntentResponse(t, executeFormCloseIntent(t, srv, ent, body))
+	if response.Close == nil || response.Close.Allowed || response.Question != nil {
+		t.Fatalf("повторный вопрос: форма должна остаться открытой без вопроса: %+v", response)
+	}
+	if !strings.Contains(response.Error, "ответ уже получен") {
+		t.Fatalf("ошибка не называет причину: %q", response.Error)
+	}
 }
 
 func TestBeforeCloseRejectsNavigationAndPicker(t *testing.T) {
@@ -72,15 +117,20 @@ func TestBeforeCloseRejectsNavigationAndPicker(t *testing.T) {
 }
 
 // Формы обработок получили диалоговые билтины в #1697 — в их ПередЗакрытием
-// тот же отказ.
-func TestBeforeCloseRejectsQuestionDialogInProcessorForm(t *testing.T) {
+// вопрос работает так же: вопрос, ответ «остаться», ответ «закрыть».
+func TestBeforeCloseQuestionInProcessorForm(t *testing.T) {
 	form := processorExecutionForm()
 	form.Handlers = map[metadata.FormEventType]string{metadata.FormEventBeforeClose: "ПроверитьЗакрытие"}
 	form.ProgramAST = mustParse(t, beforeCloseAsksQuestion)
 	proc := &processor.Processor{Name: "ОбработкаСВопросом", Forms: []*metadata.FormModule{form}}
 	srv, _ := newProcessorFormEventExecutionServer(t, proc, nil)
-	rec := executeProcessorCloseIntent(t, srv, proc, processorCloseIntentBody(proc, uuid.NewString()))
-	assertCloseDialogRejected(t, decodeCloseIntentResponse(t, rec), "ПоказатьВопрос")
+	checkCloseQuestionRounds(t, func(answer string) formEventResponse {
+		body := processorCloseIntentBody(proc, uuid.NewString())
+		if answer != "" {
+			body.Set(processorServiceFieldName(proc.Params, "_question_answer"), answer)
+		}
+		return decodeCloseIntentResponse(t, executeProcessorCloseIntent(t, srv, proc, body))
+	})
 }
 
 // Блокер круга 5 PR #1766: в пути формы обработки регистрация навигации стояла

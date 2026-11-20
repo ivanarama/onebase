@@ -5112,6 +5112,13 @@ function obOpenQuestion(payload, elementName, handlers) {
   if (old) old.remove();
   var modal = document.createElement('div');
   modal.id = '_question-modal';
+  var finished = false;
+  modal._obClose = function () {
+    if (finished) return;
+    finished = true;
+    modal.remove();
+    if (handlers && typeof handlers.onDismiss === 'function') handlers.onDismiss();
+  };
   modal.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.4);z-index:9999;display:flex;align-items:center;justify-content:center';
   var box = document.createElement('div');
   // Многострочному полю (текст ошибки, примечание) узко в 460px: окно шире, а
@@ -5185,6 +5192,8 @@ function obOpenQuestion(payload, elementName, handlers) {
     btn.style.cssText = 'padding:8px 16px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:14px;white-space:normal'
       + (manyVariants ? ';text-align:left;width:100%' : ';max-width:100%');
     btn.addEventListener('click', function () {
+      if (finished) return;
+      finished = true;
       modal.remove();
       var extra = { _question_answer: variant };
       var names = Object.keys(inputs);
@@ -5200,12 +5209,11 @@ function obOpenQuestion(payload, elementName, handlers) {
   });
   box.appendChild(row);
   modal.appendChild(box);
-  // Закрыть мимо кнопок можно только вопрос с onDismiss (ПередПроведением).
+  // Закрыть мимо кнопок можно только вопрос с onDismiss (ПередПроведением или ПередЗакрытием).
   if (handlers && typeof handlers.onDismiss === 'function') {
     modal.addEventListener('click', function (ev) {
       if (ev.target !== modal) return;
-      modal.remove();
-      handlers.onDismiss();
+      modal._obClose();
     });
   }
   document.body.appendChild(modal);

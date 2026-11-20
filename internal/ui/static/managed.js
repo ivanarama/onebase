@@ -1946,8 +1946,11 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       closeHandoffPending = false;
       return closePending;
     }
-    var reason = String(options.reason || 'close');
-    closePending = (async function(){
+    // Only this private continuation can advance a question. Public calls,
+    // native submits and form events share the owner until the answer settles.
+    function continueClose(options, previousSave){
+      var reason = String(options.reason || 'close');
+      return (async function(){
       if (!CLOSE_URL) {
         flash(closeMessage('controllerUnavailable', 'Проверка закрытия недоступна. Форма оставлена открытой.'), 'err');
         return {allowed: false, intentId: '', error: 'controller-not-ready'};
@@ -1968,6 +1971,15 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       if (automaticDiscard && sourceSnapshot.revision !== formEditState.revision) {
         return {allowed: false, intentId: '', error: 'form-changed'};
       }
+      var snapshotKey = closeSnapshotKey(body);
+      // Only this final, already serialized payload may reuse the first save.
+      // A separate earlier snapshot can become stale while file reads or grid
+      // synchronization yield, turning fresh input into an unsaved discard.
+      if (previousSave && previousSave.savedSnapshotKey === snapshotKey) {
+        mode = 'discard';
+      } else {
+        previousSave = null;
+      }
       // File reads and grid synchronization may yield or commit fresh edits
       // after BeforePost completed. Never open a new intent under old approval.
       if (BEFORE_POST && mode === 'post' && !retryableClose &&
@@ -1976,7 +1988,6 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         flash(closeMessage('formChanged', 'Форма изменилась во время проверки закрытия. Повторите закрытие.'), 'err');
         return {allowed: false, intentId: '', error: 'form-changed'};
       }
-      var snapshotKey = closeSnapshotKey(body);
 	  var requestedReason = reason;
 	  var requestedMode = mode;
 	  var requestedSnapshotKey = snapshotKey;
@@ -1984,6 +1995,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       // exact old payload/UUID before processing a newer edited snapshot;
       // otherwise a new-form retry could insert a duplicate.
       var pendingRetry = retryableClose;
+	  if (pendingRetry && pendingRetry.savedResult) previousSave = pendingRetry.savedResult;
 	  var replayingPrior = !!(pendingRetry && pendingRetry.body &&
 		(pendingRetry.key !== requestedSnapshotKey || pendingRetry.mode !== requestedMode ||
 		  pendingRetry.reason !== requestedReason));
@@ -2010,13 +2022,21 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 		  schema: cfg.closeSchema == null ? '' : String(cfg.closeSchema)
 		};
       }
+	  // Повтор закрытия после вопроса ПередЗакрытием: ответ (и поля диалога)
+	  // уходят в тело, но не в ключ снимка — форма та же, что спрашивала.
+	  if (options.__questionExtra && !(pendingRetry && pendingRetry.body)) {
+		Object.keys(options.__questionExtra).forEach(function(name){
+		  body.set(serviceField(name), String(options.__questionExtra[name]));
+		});
+	  }
 	  var intentID = String(envelope.intentId || '');
 	  mode = String(envelope.mode || 'discard');
 	  reason = String(envelope.reason || 'close');
 	  function rememberRetry(){
 		retryableClose = {
 		  key: snapshotKey, intentId: intentID, body: body.toString(),
-		  mode: mode, reason: reason, envelope: Object.assign({}, envelope)
+		  mode: previousSave ? previousSave.mode : mode, reason: reason, envelope: Object.assign({}, envelope),
+		  savedResult: previousSave || null
 		};
 	  }
 
@@ -2169,16 +2189,28 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         // replay result, so retry the same UUID. Every other correlated reply,
         // including data.ok=false, is terminal and releases the UUID.
         var requiresSavedResult = mode === 'save' || mode === 'post' || mode === 'save_and_select';
+        var closeAllowed = response.ok && data.ok === true && data.close.allowed === true &&
+            (!requiresSavedResult || data.close.saved === true);
+        var savedSnapshot = null;
+        if (!closeAllowed && data.question && data.close.saved === true && data.dirty === false) {
+          var revision = formEditState.revision;
+          savedSnapshot = await closeSnapshotBody(reason, mode);
+          if (revision !== formEditState.revision) savedSnapshot = null;
+        }
         return {
-          allowed: response.ok && data.ok === true && data.close.allowed === true &&
-            (!requiresSavedResult || data.close.saved === true),
+          allowed: closeAllowed,
           intentId: intentID,
 		  mode: mode,
+		  reason: reason,
           error: data.error || '',
           saved: data.close.saved === true,
           savedId: data.savedId || '',
           savedLabel: data.savedLabel || '',
-          formUrl: data.close.formUrl || ''
+          formUrl: data.close.formUrl || '',
+		  savedSnapshotKey: savedSnapshot ? closeSnapshotKey(savedSnapshot) : null,
+		  // ПоказатьВопрос в ПередЗакрытием: форма осталась открытой, вопрос
+		  // покажет обёртка ниже, когда этот запрос закрытия завершится.
+		  question: !closeAllowed && data.question ? data.question : null
         };
       } catch (err) {
 		if (retryIntentAfterFailure) rememberRetry();
@@ -2192,11 +2224,61 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       } finally {
         clearTimeout(timer);
       }
-    })();
+    })().then(function(result){
+      if (previousSave && result && !result.terminal && !result.reconcile && !result.reload) {
+        result.mode = previousSave.mode;
+        if (!result.saved) {
+          result.saved = true;
+          result.savedId = previousSave.savedId;
+          result.savedLabel = previousSave.savedLabel;
+          result.formUrl = previousSave.formUrl;
+        }
+      }
+      return result && result.question ? askFormCloseQuestion(result, options, continueClose) : result;
+    });
+    }
     closeHandoffPending = false;
-    closePending = closePending.finally(function(){ closePending = null; });
+    closePending = continueClose(options).finally(function(){ closePending = null; });
     return closePending;
   };
+
+  // BEGIN onebase-close-question
+  // askFormCloseQuestion — вопрос из ПередЗакрытием («Вернуться в форму
+  // звонка?»): показать и по ответу продолжить закрытие с ВопросОтвет.
+  // Второй ход обработчика решает, закрывать ли форму. Закрытие
+  // вопроса мимо кнопок оставляет форму открытой. Очередь остаётся занятой
+  // исходной операцией; только её ответ получает приватное продолжение.
+  function askFormCloseQuestion(result, options, continueClose){
+    return new Promise(function(resolve){
+      var cancelled = {allowed: false, intentId: result.intentId || '', error: 'user-cancelled'};
+      var answered = false;
+      if (!window.obOpenQuestion) { resolve(cancelled); return; }
+      window.obOpenQuestion(result.question, '', {
+        onAnswer: function(variant, extra){
+          if (answered) return;
+          answered = true;
+          (async function(){
+            var next = {};
+            Object.keys(options || {}).forEach(function(key){ next[key] = options[key]; });
+            next.mode = result.mode;
+            next.reason = result.reason;
+            next.__questionExtra = extra || {_question_answer: variant};
+            // The first intent already saved/posted this exact canonical state.
+            // Re-run BeforeClose with the answer, preserving its durable result
+            // for the owning shell/picker, without repeating write side effects.
+            // The continuation compares its final payload with this saved state;
+            // new input or unsaved hook changes still require the original mode.
+            return continueClose(next, result);
+          })().then(resolve, function(){
+            setManagedFormDirty(true);
+            resolve({allowed: false, intentId: result.intentId || '', error: 'form-state'});
+          });
+        },
+        onDismiss: function(){ if (!answered) { answered = true; resolve(cancelled); } }
+      });
+    });
+  }
+  // END onebase-close-question
 
   window.obFinalizeFormClose = function(){
 	setManagedFormDirty(false);
@@ -2447,7 +2529,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     if (window.obImageViewerIsOpen && window.obImageViewerIsOpen()) {
       window.obImageViewerClose(); consumeManagedEscape(e); return;
     }
-    var modal = document.getElementById('ob-managed-close-confirm') || document.getElementById('_ref-create-modal') || document.getElementById('_item-picker-modal') || document.getElementById('_ref-picker-modal');
+    var modal = document.getElementById('_question-modal') || document.getElementById('ob-managed-close-confirm') || document.getElementById('_ref-create-modal') || document.getElementById('_item-picker-modal') || document.getElementById('_ref-picker-modal');
     if (modal) {
       if (typeof modal._obClose === 'function') modal._obClose();
       else modal.remove();
