@@ -211,7 +211,7 @@ func (db *DB) registeredIndexes(ctx context.Context, table string) (map[string]E
 		}
 		plain := i.Plain && (source == "created" || source == "adopted")
 		phone := isPhoneIndexKey(i) && source == phoneIndexSource
-		if version != 1 || i.Table != table || i.Name != name || i.Fingerprint() != sig || !(plain || phone) {
+		if version != 1 || i.Table != table || i.Name != name || i.Fingerprint() != sig || (!plain && !phone) {
 			return nil, fmt.Errorf("%s.%s: invalid managed index record", table, name)
 		}
 		out[name] = i
