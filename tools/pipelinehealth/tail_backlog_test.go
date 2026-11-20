@@ -16,19 +16,21 @@ func TestTailBacklogDistinguishesCurrentAndUnverifiedCounts(t *testing.T) {
 		repository string
 		minutes    int
 		pending    int
+		recheck    int
 		want       string
 	}{
-		{"current", "ivanarama/onebase", 1, 0, "complete"},
-		{"stale", "ivanarama/onebase", 10, 0, "stale"},
-		{"pending proof", "ivanarama/onebase", 1, 2, "incomplete"},
-		{"foreign", "ivanarama/other", 1, 0, "unavailable"},
+		{"current", "ivanarama/onebase", 1, 0, 0, "complete"},
+		{"stale", "ivanarama/onebase", 10, 0, 0, "stale"},
+		{"pending proof", "ivanarama/onebase", 1, 2, 0, "incomplete"},
+		{"overdue proof", "ivanarama/onebase", 1, 0, 1, "incomplete"},
+		{"foreign", "ivanarama/other", 1, 0, 0, "unavailable"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			timeText := now.Add(-time.Duration(tt.minutes) * time.Minute).Format(time.RFC3339)
 			data := fmt.Sprintf(`{"repository":%q,"base":"main","discovery":{"state":"complete",
 				"discovery_complete_through":%q,"last_complete_at":%q,"pending_intervals":0},
-				"counts":{"ready":0,"ambiguous-create":1,"pending-proof":%d},"completions":{}}`,
-				tt.repository, timeText, timeText, tt.pending)
+				"counts":{"ready":0,"ambiguous-create":1,"pending-proof":%d},"completions":{},"recheck_due":%d}`,
+				tt.repository, timeText, timeText, tt.pending, tt.recheck)
 			if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
 				t.Fatal(err)
 			}

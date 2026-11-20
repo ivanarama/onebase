@@ -14,6 +14,7 @@ type tailBacklogHealth struct {
 	Discovery             *tailDiscovery `json:"discovery,omitempty"`
 	Counts                map[string]int `json:"counts,omitempty"`
 	Completions           map[string]int `json:"completions,omitempty"`
+	RecheckDue            *int           `json:"recheck_due,omitempty"`
 	OldestReadyAt         string         `json:"oldest_ready_at,omitempty"`
 	LastSuccessfulDrainAt string         `json:"last_successful_drain_at,omitempty"`
 	LastDrainFailure      *tailFailure   `json:"last_drain_failure,omitempty"`
@@ -48,7 +49,8 @@ func readTailBacklog(path, repository string, now time.Time) *tailBacklogHealth 
 	data, err := os.ReadFile(path)
 	if err != nil || json.Unmarshal(data, &snapshot) != nil ||
 		!strings.EqualFold(snapshot.Repository, repository) || snapshot.Base != "main" ||
-		snapshot.Counts == nil || snapshot.Completions == nil {
+		snapshot.Counts == nil || snapshot.Completions == nil ||
+		(snapshot.RecheckDue != nil && *snapshot.RecheckDue < 0) {
 		return &tailBacklogHealth{State: "unavailable"}
 	}
 	observation := snapshot.tailBacklogHealth
@@ -58,7 +60,8 @@ func readTailBacklog(path, repository string, now time.Time) *tailBacklogHealth 
 		if scan.LastError != "" {
 			observation.State = "unavailable"
 		} else if scan.State == "complete" && scan.PendingIntervals == 0 && !scan.VerifyPending &&
-			scan.CompleteThrough != "" && observation.Counts["pending-proof"] == 0 {
+			scan.CompleteThrough != "" && observation.Counts["pending-proof"] == 0 &&
+			observation.RecheckDue != nil && *observation.RecheckDue == 0 {
 			if freshTailTime(scan.LastCompleteAt, now) && freshTailTime(scan.CompleteThrough, now) {
 				observation.State = "complete"
 			} else {
