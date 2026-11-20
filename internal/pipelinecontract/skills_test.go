@@ -2127,6 +2127,8 @@ func TestMergeYieldsWorkerOnlyWithBoundCIWaitCommand(t *testing.T) {
 		"`merge-ci-wait observe`",
 		"При `waiting` или `unknown`",
 		"сразу закончи `ИТОГ: ПУСТО`",
+		"`ci_current_attempt` из нового подписанного диагностического назначения",
+		"При `success` с `reelect=true` закончи `ИТОГ: ПУСТО`",
 		"Перед мутацией повтори полный label+SHA-гейт",
 		"`merge-ci-wait claim`",
 		"`state=claimed` с `send_allowed=true`",
