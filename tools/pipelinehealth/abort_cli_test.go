@@ -181,7 +181,11 @@ func TestV1AbortPublicCLITransports(t *testing.T) {
 func abortGraphQLSnapshot(item apiPull) map[string]any {
 	comments := []any{}
 	for _, c := range item.Comments {
-		comments = append(comments, map[string]any{"fullDatabaseId": fmt.Sprint(c.ID), "createdAt": c.CreatedAt, "updatedAt": c.UpdatedAt, "author": map[string]any{"login": c.User.Login}, "body": c.Body})
+		var edited any
+		if c.UpdatedAt != c.CreatedAt {
+			edited = c.UpdatedAt
+		}
+		comments = append(comments, map[string]any{"fullDatabaseId": fmt.Sprint(c.ID), "createdAt": c.CreatedAt, "updatedAt": c.UpdatedAt, "lastEditedAt": edited, "author": map[string]any{"login": c.User.Login}, "body": c.Body})
 	}
 	pull := gqlTestPullNode("pr-1", item.Number, item.Head.SHA, nil, comments)
 	pull["state"] = strings.ToUpper(item.State)

@@ -155,7 +155,7 @@ func TestReserveAbsentDirectoryPathNeverCreatesReservedName(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if filepath.Dir(path) != parent || !strings.HasPrefix(filepath.Base(path), ".live.restore-old-") {
+	if filepath.Dir(path) != filepath.Clean(parent) || !strings.HasPrefix(filepath.Base(path), ".live.restore-old-") {
 		t.Fatalf("reserved path = %s", path)
 	}
 	if _, err := os.Lstat(path); !os.IsNotExist(err) {
