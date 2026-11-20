@@ -71,6 +71,18 @@ func TestQueryMaskPlan_DeniesFilterGroupAndAggregate(t *testing.T) {
 	}
 }
 
+func TestQueryMaskPlan_PhoneLast10DoesNotBypassMaskedPredicate(t *testing.T) {
+	fields := auth.FieldPolicies{"Телефон": {Read: "mask_all"}}
+	result := compileForMask(t, `ВЫБРАТЬ К.Адрес ИЗ Справочник.Клиент КАК К
+		ГДЕ PHONE_LAST10(К.Телефон) = "9012220100"`)
+	for _, ops := range [][]string{{"read"}, {"read", "disclose"}} {
+		user := &auth.User{Roles: []*auth.Role{catRole(ops, fields)}}
+		if plan := access.QueryMaskPlanFor(user, result, lookupClient); plan.Denied != "Телефон" {
+			t.Fatalf("masked phone filter with %v must remain denied, got %q", ops, plan.Denied)
+		}
+	}
+}
+
 // ALL and DISTINCT belong to SELECT, so the first protected field must still
 // reach the same masking and filter-denial path as an ordinary projection.
 func TestQueryMaskPlan_SelectModifiersKeepNestedDenial(t *testing.T) {

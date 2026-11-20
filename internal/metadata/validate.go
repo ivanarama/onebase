@@ -245,6 +245,9 @@ func validateFieldIDs(e *Entity) error {
 func validateIndexes(e *Entity) error {
 	names := map[string]string{}
 	for i, idx := range e.Indexes {
+		if err := idx.ValidateNormalizer(e); err != nil {
+			return err
+		}
 		if len(idx.Fields) == 0 {
 			return fmt.Errorf("entity %s: indexes[%d].fields is required", e.Name, i)
 		}
@@ -255,8 +258,8 @@ func validateIndexes(e *Entity) error {
 			}
 			cols = append(cols, ColumnName(*findEntityField(e, name)))
 		}
-		name := StableEntityIndexName(TableName(e.Name), cols, idx.Unique)
-		signature := fmt.Sprintf("%t:%q", idx.Unique, cols)
+		name := idx.StableName(TableName(e.Name), cols)
+		signature := fmt.Sprintf("%t:%q:%q", idx.Unique, idx.Normalizer, cols)
 		if old, ok := names[name]; ok && old != signature {
 			return fmt.Errorf("entity %s: incompatible declarations for index %s", e.Name, name)
 		}

@@ -88,8 +88,9 @@ type rawActivity struct {
 }
 
 type rawIndex struct {
-	Fields []string `yaml:"fields"`
-	Unique bool     `yaml:"unique"`
+	Fields     []string `yaml:"fields"`
+	Unique     bool     `yaml:"unique"`
+	Normalizer string   `yaml:"normalizer"`
 }
 
 type rawStageTransition struct {
@@ -433,8 +434,8 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 		}
 	}
 	for _, ri := range raw.Indexes {
-		idx := IndexSpec{Fields: trimStringList(ri.Fields), Unique: ri.Unique}
-		if len(idx.Fields) > 0 {
+		idx := IndexSpec{Fields: trimStringList(ri.Fields), Unique: ri.Unique, Normalizer: strings.TrimSpace(ri.Normalizer)}
+		if len(idx.Fields) > 0 || idx.Normalizer != "" {
 			e.Indexes = append(e.Indexes, idx)
 		}
 	}
@@ -562,6 +563,9 @@ func LoadInfoRegisterFile(path string) (*InfoRegister, error) {
 		ir.Resources = append(ir.Resources, parseField(rf))
 	}
 	for _, ri := range raw.Indexes {
+		if ri.Normalizer != "" {
+			return nil, fmt.Errorf("%s: index normalizers are supported only for documents", path)
+		}
 		ir.Indexes = append(ir.Indexes, IndexSpec{Fields: trimStringList(ri.Fields), Unique: ri.Unique})
 	}
 	if err := ValidateInfoRegisterIndexes(ir); err != nil {
