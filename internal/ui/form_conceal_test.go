@@ -182,6 +182,11 @@ func (c concealTestClient) event(t *testing.T, id, element string, body url.Valu
 
 func concealFixture(t *testing.T, db *storage.DB) (concealTestClient, uuid.UUID) {
 	t.Helper()
+	return concealFixtureWithID(t, db, uuid.New())
+}
+
+func concealFixtureWithID(t *testing.T, db *storage.DB, id uuid.UUID) (concealTestClient, uuid.UUID) {
+	t.Helper()
 	elements := []*metadata.FormElement{
 		{Kind: metadata.FormElementField, Name: "Секрет", DataPath: "Объект.Секрет", Conceal: true, RevealWhen: "НЕ Маской"},
 		{Kind: metadata.FormElementField, Name: "Название", DataPath: "Объект.Наименование"},
@@ -197,7 +202,6 @@ func concealFixture(t *testing.T, db *storage.DB) (concealTestClient, uuid.UUID)
 	if err := db.Migrate(context.Background(), []*metadata.Entity{ent}); err != nil {
 		t.Fatal(err)
 	}
-	id := uuid.New()
 	if err := db.Upsert(context.Background(), ent.Name, id, map[string]any{"Наименование": "обычное", "Секрет": "секрет"}, ent); err != nil {
 		t.Fatal(err)
 	}

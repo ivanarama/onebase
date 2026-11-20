@@ -18,17 +18,12 @@ import (
 // GitHub API and ghstub only for authentication; GraphQL uses ghstub responses.
 func TestV1AbortPublicCLITransports(t *testing.T) {
 	stub := buildGhStub(t)
-	binary := filepath.Join(t.TempDir(), "pipelinehealth.exe")
-	//nolint:gosec // G204: fixed package and test-owned executable path.
-	build := exec.Command("go", "build", "-o", binary, "./tools/pipelinehealth")
-	build.Dir = repoRoot(t)
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build: %v %s", err, output)
-	}
+	binary := pipelinehealthCLI(t)
 	helper, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	for _, transport := range []string{"rest", "graphql"} {
 		t.Run(transport, func(t *testing.T) {
 			for _, tc := range []struct {
@@ -186,7 +181,11 @@ func TestV1AbortPublicCLITransports(t *testing.T) {
 func abortGraphQLSnapshot(item apiPull) map[string]any {
 	comments := []any{}
 	for _, c := range item.Comments {
-		comments = append(comments, map[string]any{"fullDatabaseId": fmt.Sprint(c.ID), "createdAt": c.CreatedAt, "updatedAt": c.UpdatedAt, "author": map[string]any{"login": c.User.Login}, "body": c.Body})
+		var edited any
+		if c.UpdatedAt != c.CreatedAt {
+			edited = c.UpdatedAt
+		}
+		comments = append(comments, map[string]any{"fullDatabaseId": fmt.Sprint(c.ID), "createdAt": c.CreatedAt, "updatedAt": c.UpdatedAt, "lastEditedAt": edited, "author": map[string]any{"login": c.User.Login}, "body": c.Body})
 	}
 	pull := gqlTestPullNode("pr-1", item.Number, item.Head.SHA, nil, comments)
 	pull["state"] = strings.ToUpper(item.State)

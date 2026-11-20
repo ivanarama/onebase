@@ -153,6 +153,61 @@ func TestRegisterDateMixedBetweenBoundariesMatrix(t *testing.T) {
 	})
 }
 
+func TestRegisterDateMonthBoundariesMatrix(t *testing.T) {
+	dbtest.ForEachDialect(t, func(t *testing.T, db *storage.DB) {
+		ctx := t.Context()
+		info := &metadata.InfoRegister{
+			Name: "ДатыМесяца",
+			Dimensions: []metadata.Field{
+				{Name: "Метка", Type: metadata.FieldTypeString},
+				{Name: "Момент", Type: metadata.FieldTypeDate},
+			},
+			Resources: []metadata.Field{{Name: "Число", Type: metadata.FieldTypeNumber}},
+		}
+		movements := &metadata.Register{Name: "ДвиженияМесяца", Dimensions: info.Dimensions, Resources: info.Resources}
+		require.NoError(t, db.MigrateInfoRegisters(ctx, []*metadata.InfoRegister{info}))
+		require.NoError(t, db.MigrateRegisters(ctx, []*metadata.Register{movements}))
+
+		msk := time.FixedZone("MSK", 3*60*60)
+		from := time.Date(2027, 3, 1, 0, 0, 0, 0, msk)
+		to := from.AddDate(0, 1, 0).Add(-time.Second)
+		records := []struct {
+			label  string
+			moment any
+		}{
+			{"before", from.Add(-time.Second)},
+			{"first", from.Format(time.RFC3339)},
+			{"middle", from.AddDate(0, 0, 14).UTC().Format(time.RFC3339)},
+			{"last", to},
+			{"after", to.Add(time.Second).Format(time.RFC3339)},
+		}
+		for _, record := range records {
+			require.NoError(t, db.InfoRegSet(ctx, info, map[string]any{
+				"Метка": record.label, "Момент": record.moment,
+			}, map[string]any{"Число": 1}, nil))
+			require.NoError(t, db.WriteMovements(ctx, movements.Name, "Проверка", uuid.New(), []map[string]any{{
+				"ВидДвижения": "Приход", "Метка": record.label, "Момент": record.moment, "Число": 1,
+			}}, movements, &from))
+		}
+
+		opts := query.CompileOpts{
+			InfoRegs: []*metadata.InfoRegister{info}, Registers: []*metadata.Register{movements},
+			Dialect: db.Dialect(), Params: map[string]any{"Начало": from, "Конец": to},
+		}
+		for _, source := range []string{"РегистрСведений.ДатыМесяца", "РегистрНакопления.ДвиженияМесяца"} {
+			compiled, err := query.Compile("ВЫБРАТЬ Р.Метка ИЗ "+source+" КАК Р ГДЕ Р.Момент МЕЖДУ &Начало И &Конец", opts)
+			require.NoError(t, err)
+			rows, _, err := query.Run(ctx, db, &compiled)
+			require.NoError(t, err, compiled.SQL)
+			var labels []string
+			for _, row := range rows {
+				labels = append(labels, fmt.Sprint(row["метка"]))
+			}
+			require.ElementsMatch(t, []string{"first", "middle", "last"}, labels, source)
+		}
+	})
+}
+
 // Строковые сравнения и произвольные выражения границ не получают новую
 // семантику момента: преобразование допустимо только для двух параметров.
 func TestRegisterDateBetweenKeepsOtherExpressions(t *testing.T) {
