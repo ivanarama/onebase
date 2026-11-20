@@ -89,10 +89,17 @@ for (const [step, response] of fixture.responses.entries()) {
   context.window.applyElementStates(response.elementStates);
   context.applyValues(response.values);
   const updated = response.values[field];
+  if (fixture.checkRadio) {
+    const checked = form.querySelectorAll('input[name="' + field + '"]')
+      .filter(input => input.type === 'radio' && input.checked);
+    assert.deepEqual(checked.map(input => input.value), [updated], 'the response selects the second attachment');
+  }
   for (const input of form.querySelectorAll('input[data-ob-picture-for]')) {
     assert.equal(input.value, updated);
     const link = form.querySelector('[data-ob-picture-link="' + input.getAttribute('data-ob-picture-for') + '"]');
-    assert.equal(link.getAttribute('href'), '/ui/attachments/' + updated + '/download');
+    const url = '/ui/attachments/' + updated + '/download';
+    assert.equal(link.getAttribute('href'), url);
+    assert.equal(link.querySelector('img').getAttribute('src'), url);
   }
   if (fixture.checkEditor) {
     assert.equal(!!editor.closest('fieldset[disabled]'), step !== 1, 'HTTP hidden_when state must toggle');

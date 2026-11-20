@@ -1,9 +1,11 @@
 package ui
 
 import (
-	"context"
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"image"
+	"image/png"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -26,7 +28,7 @@ func TestManagedPictureEventValueSurvivesSave(t *testing.T) {
 		t.Skip("node is required for the picture save round trip")
 	}
 	for _, editor := range []string{
-		"absent", "hidden", "visible", "hidden-two-previews",
+		"absent", "hidden", "visible", "hidden-two-previews", "radio",
 		"disabled", "disabled-two-previews", "visible-to-disabled", "visible-to-disabled-two-previews",
 	} {
 		maxSteps := 1
@@ -43,7 +45,7 @@ func TestManagedPictureEventValueSurvivesSave(t *testing.T) {
 						metadata.FormEventOnClick: "ОбновитьФото",
 					}},
 				}
-				if editor != "absent" {
+				if editor != "absent" && editor != "radio" {
 					field := &metadata.FormElement{Kind: metadata.FormElementField, Name: "РедакторФото", DataPath: "Объект.Наименование"}
 					if transitions {
 						field.HiddenWhen = fmt.Sprintf(`Наименование <> "%s"`, visibleID)
@@ -60,7 +62,41 @@ func TestManagedPictureEventValueSurvivesSave(t *testing.T) {
 					elements = append(elements, &metadata.FormElement{Kind: metadata.FormElementPicture,
 						Name: "ВтороеФото", DataPath: "Объект.Наименование"})
 				}
-				srv, ent := setupManagedEventsServer(t, fmt.Sprintf(`
+				srv, ent := setupManagedEventsServer(t, "", nil, elements)
+				id := uuid.New()
+				ctx := t.Context()
+				var secondPNG []byte
+				if editor == "radio" {
+					srv.store.SetFilesDir(t.TempDir())
+					if err := srv.store.EnsureAttachmentTable(ctx); err != nil {
+						t.Fatal(err)
+					}
+					upload := func(name string, shade byte) (string, []byte) {
+						t.Helper()
+						img := image.NewGray(image.Rect(0, 0, 1, 1))
+						img.Pix[0] = shade
+						var content bytes.Buffer
+						if err := png.Encode(&content, img); err != nil {
+							t.Fatal(err)
+						}
+						att, err := srv.store.UploadAttachment(ctx, "catalog", ent.Name, id,
+							name, "image/png", "test", bytes.NewReader(content.Bytes()), 1<<20)
+						if err != nil {
+							t.Fatal(err)
+						}
+						return att.ID.String(), content.Bytes()
+					}
+					oldID, _ = upload("first.png", 0)
+					newID, secondPNG = upload("second.png", 255)
+					ent.Forms[0].Elements = append(ent.Forms[0].Elements, &metadata.FormElement{
+						Kind: metadata.FormElementSwitch, Name: "ВыборФото", DataPath: "Объект.Наименование",
+						Options: []metadata.FormOption{
+							{Value: oldID, Labels: map[string]string{"ru": "Первое фото"}},
+							{Value: newID, Labels: map[string]string{"ru": "Второе фото"}},
+						},
+					})
+				}
+				ent.Forms[0].ProgramAST = mustParse(t, fmt.Sprintf(`
 Процедура ОбновитьФото()
  Если Объект.Наименование = "%s" Тогда
   Объект.Наименование = "%s";
@@ -68,9 +104,7 @@ func TestManagedPictureEventValueSurvivesSave(t *testing.T) {
   Объект.Наименование = "%s";
  КонецЕсли;
 КонецПроцедуры
-`, newID, visibleID, newID), nil, elements)
-				id := uuid.New()
-				ctx := context.Background()
+`, newID, visibleID, newID))
 				if err := srv.store.Upsert(ctx, ent.Name, id, map[string]any{"Наименование": oldID}, ent); err != nil {
 					t.Fatal(err)
 				}
@@ -95,6 +129,11 @@ func TestManagedPictureEventValueSurvivesSave(t *testing.T) {
 				}
 				responses := []json.RawMessage{}
 				submitted := pictureFormControls(t, get.Body.String())
+				if editor == "radio" {
+					if got := submitted["Наименование"]; len(got) != 1 || got[0] != oldID {
+						t.Fatalf("GET must select the first attachment, got %v", got)
+					}
+				}
 				want := newID
 				for step := range steps {
 					event := url.Values{}
@@ -117,6 +156,7 @@ func TestManagedPictureEventValueSurvivesSave(t *testing.T) {
 					payload, err := json.Marshal(map[string]any{
 						"page": domElementNode(doc), "responses": responses, "checkEditor": transitions,
 						"initiallyDisabled": strings.HasPrefix(editor, "disabled"),
+						"checkRadio":        editor == "radio",
 					})
 					if err != nil {
 						t.Fatal(err)
@@ -136,6 +176,12 @@ func TestManagedPictureEventValueSurvivesSave(t *testing.T) {
 					}
 					if got := submitted["Наименование"]; len(got) != 1 || got[0] != want {
 						t.Fatalf("step %d form submits %v, want exactly one updated UUID %s", step, got, want)
+					}
+				}
+				if editor == "radio" {
+					preview := request(http.MethodGet, "/ui/attachments/"+want+"/download", nil)
+					if preview.Code != http.StatusOK || !bytes.Equal(preview.Body.Bytes(), secondPNG) {
+						t.Fatalf("second preview: HTTP %d, unexpected file contents", preview.Code)
 					}
 				}
 				post := request(http.MethodPost, path, submitted)

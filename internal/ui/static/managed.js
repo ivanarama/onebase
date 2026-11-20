@@ -571,7 +571,10 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       if (field) {
         var binding = bindings.get(field);
         if (!binding) {
-          var controls = Array.prototype.slice.call(form.querySelectorAll('[name="' + esc(field) + '"]'));
+          // Only the checked radio represents the group's value.
+          var controls = Array.prototype.filter.call(form.querySelectorAll('[name="' + esc(field) + '"]'), function(c){
+            return c.type !== 'radio' || c.checked;
+          });
           var editors = controls.filter(function(c){ return c.getAttribute('data-ob-picture-for') === null; });
           var editor = editors.find(controlSubmittable);
           // Disabled editors still receive applyValues, but cannot carry the
