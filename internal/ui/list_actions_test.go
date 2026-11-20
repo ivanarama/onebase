@@ -7,6 +7,7 @@ import (
 
 	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/storage"
+	"golang.org/x/net/html"
 )
 
 // TestPageList_HasActionsButton — smoke-тест плана 41: страница списка
@@ -117,26 +118,33 @@ func TestPageList_ActionsButtonStartsInactive(t *testing.T) {
 	if err := tmpl.ExecuteTemplate(&buf, "page-list", data); err != nil {
 		t.Fatalf("ExecuteTemplate page-list: %v", err)
 	}
-	html := buf.String()
-
-	if !strings.Contains(html, `id="list-actions-btn"`) {
+	markup := buf.String()
+	page, err := html.Parse(strings.NewReader(markup))
+	if err != nil {
+		t.Fatalf("parse page-list HTML: %v", err)
+	}
+	button := semanticFind(page, "id", "list-actions-btn")
+	if button == nil {
 		t.Fatal("кнопка «Действия» исчезла из разметки — её нельзя прятать при пустом выборе")
 	}
-	if !strings.Contains(html, `data-ob-list-actions aria-disabled="true"`) {
-		t.Error("кнопка «Действия» отрендерена активной, хотя строка не выбрана (нет aria-disabled=\"true\")")
+	if _, present := managedHTMLAttr(button, "data-ob-list-actions"); !present {
+		t.Error("кнопка «Действия» не подключена к обработчику списка")
 	}
-	if !strings.Contains(html, `title="Сначала выберите строку списка"`) {
+	if semanticAttr(button, "aria-disabled") != "true" {
+		t.Error("кнопка «Действия» отрендерена активной, хотя строка не выбрана")
+	}
+	if semanticAttr(button, "title") != "Сначала выберите строку списка" {
 		t.Error("приглушённая кнопка не объясняет причину в title")
 	}
-	if strings.Contains(html, `disabled>`) || strings.Contains(html, ` disabled `) {
+	if _, present := managedHTMLAttr(button, "disabled"); present {
 		t.Error("на кнопке атрибут disabled: браузер погасит клик, и объяснить причину будет негде")
 	}
 	// Приглушение — это стиль по aria-disabled, а не отдельный класс: иначе
 	// состояние кнопки пришлось бы держать в двух местах.
-	if !strings.Contains(html, `.btn[aria-disabled="true"]`) {
+	if !strings.Contains(markup, `.btn[aria-disabled="true"]`) {
 		t.Error("нет CSS-правила для приглушённой кнопки — визуально она осталась обычной")
 	}
-	if !strings.Contains(html, "actionsReady") {
+	if !strings.Contains(markup, "actionsReady") {
 		t.Error("в ob-list-config нет метки actionsReady — после выбора строки title не на что вернуть")
 	}
 }
