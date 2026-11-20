@@ -209,7 +209,9 @@ func (db *DB) registeredIndexes(ctx context.Context, table string) (map[string]E
 		if err := json.Unmarshal([]byte(raw), &i); err != nil {
 			return nil, err
 		}
-		if version != 1 || i.Table != table || i.Name != name || !i.Plain || i.Fingerprint() != sig || (source != "created" && source != "adopted") {
+		plain := i.Plain && (source == "created" || source == "adopted")
+		phone := isPhoneIndexKey(i) && source == phoneIndexSource
+		if version != 1 || i.Table != table || i.Name != name || i.Fingerprint() != sig || !(plain || phone) {
 			return nil, fmt.Errorf("%s.%s: invalid managed index record", table, name)
 		}
 		out[name] = i
@@ -243,6 +245,19 @@ func legacyEntityIndex(e *metadata.Entity, i EntityIndexDefinition) bool {
 	return true
 }
 
+const phoneIndexSource = "created-phone-last10"
+
+func isPhoneIndexKey(i EntityIndexDefinition) bool {
+	return i.Opaque && !i.Plain && !i.Unique && len(i.Columns) == 1 && i.Columns[0] == ""
+}
+
+func matchesEntityIndex(actual, wanted EntityIndexDefinition) bool {
+	if wanted.Opaque {
+		return isPhoneIndexKey(actual)
+	}
+	return actual.Plain && actual.Unique == wanted.Unique && stringSlicesEqual(actual.Columns, wanted.Columns)
+}
+
 func desiredEntityIndexes(e *metadata.Entity) (map[string]EntityIndexDefinition, error) {
 	out := map[string]EntityIndexDefinition{}
 	specs := append([]metadata.IndexSpec{}, e.Indexes...)
@@ -250,14 +265,22 @@ func desiredEntityIndexes(e *metadata.Entity) (map[string]EntityIndexDefinition,
 		specs = append(specs, spec)
 	}
 	for _, s := range specs {
+		if err := s.ValidateNormalizer(e); err != nil {
+			return nil, err
+		}
 		cols, err := entityIndexColumns(e, s)
 		if err != nil {
 			return nil, err
 		}
 		table := metadata.TableName(e.Name)
-		name := stableIndexName(table, cols, s.Unique)
+		name := s.StableName(table, cols)
 		i := EntityIndexDefinition{Table: table, Name: name, Unique: s.Unique, Columns: cols, Plain: true}
-		if prev, ok := out[name]; ok && (prev.Unique != i.Unique || !stringSlicesEqual(prev.Columns, i.Columns)) {
+		i.Definition = CreateEntityIndexSQL(table, cols, s.Unique)
+		if s.Normalizer == metadata.IndexNormalizerPhoneLast10 {
+			i.Plain, i.Opaque = false, true
+			i.Definition = "CREATE INDEX " + name + " ON " + quoteIdent(table) + " ((" + PhoneLast10SQL(quoteIdent(cols[0])) + "))"
+		}
+		if prev, ok := out[name]; ok && prev.Definition != i.Definition {
 			return nil, fmt.Errorf("%s.%s: incompatible index declarations", table, name)
 		}
 		out[name] = i
@@ -336,7 +359,7 @@ func (db *DB) planEntityIndexes(ctx context.Context, entities []*metadata.Entity
 				managed = true
 			}
 			d, wanted := desired[i.Name]
-			if wanted && (!i.Plain || i.Unique != d.Unique || !stringSlicesEqual(i.Columns, d.Columns)) {
+			if wanted && ((d.Opaque && !managed) || !matchesEntityIndex(i, d)) {
 				return nil, manifest, fmt.Errorf("%s.%s: index name collision; definition differs", table, i.Name)
 			}
 			if managed && !wanted {
@@ -350,7 +373,6 @@ func (db *DB) planEntityIndexes(ctx context.Context, entities []*metadata.Entity
 		}
 		for _, i := range desired {
 			i.Schema = schema
-			i.Definition = CreateEntityIndexSQL(table, i.Columns, i.Unique)
 			// Names are schema-wide. An index on another table (or a PG relation)
 			// must not be hidden by IF NOT EXISTS.
 			var count int
@@ -449,10 +471,14 @@ func (db *DB) reconcileEntityIndexes(ctx context.Context, entities []*metadata.E
 					break
 				}
 			}
-			if found == nil || !found.Plain || found.Unique != a.Index.Unique || !stringSlicesEqual(found.Columns, a.Index.Columns) {
+			if found == nil || !matchesEntityIndex(*found, a.Index) {
 				return fmt.Errorf("%s.%s: created definition differs", a.Index.Table, a.Index.Name)
 			}
-			if err := db.registerEntityIndex(ctx, *found, "created"); err != nil {
+			source := "created"
+			if a.Index.Opaque {
+				source = phoneIndexSource
+			}
+			if err := db.registerEntityIndex(ctx, *found, source); err != nil {
 				return err
 			}
 		}
