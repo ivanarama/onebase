@@ -141,12 +141,13 @@ func (s *Server) buildChoicePreviewVars(ctx context.Context, rows []map[string]a
 	}
 	vars["Контекст"] = ctxMapObj
 	vars["Context"] = ctxMapObj
-	// Текущий пользователь — только чтение профиля.
+	// Текущий пользователь — тот же объект, что в полном окружении модулей
+	// (ИД, Имя, ПолноеИмя, Админ, Ссылка): get-only обёртка не отдавала полей
+	// через ТекущийПользователь().Имя, и условие молча было ложным.
 	if u := auth.UserFromContext(ctx); u != nil {
+		userObj, _ := dslCurrentUserObject(ctx)
 		vars["ТекущийПользователь"] = interpreter.BuiltinFunc(func(args []any, _ string, _ int) (any, error) {
-			return &choiceGetOnly{m: map[string]any{
-				"ИД": u.ID, "Имя": u.Login, "ПолноеИмя": u.FullName, "Админ": u.IsAdmin,
-			}}, nil
+			return userObj, nil
 		})
 		vars["CurrentUser"] = vars["ТекущийПользователь"]
 		vars["ИмяПользователя"] = interpreter.BuiltinFunc(func(args []any, _ string, _ int) (any, error) {

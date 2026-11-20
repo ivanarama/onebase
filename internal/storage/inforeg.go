@@ -219,6 +219,14 @@ func (db *DB) infoRegSet(ctx context.Context, ir *metadata.InfoRegister,
 	cols = append(cols, "updated_at")
 	phs = append(phs, d.Placeholder(idx))
 	args = append(args, time.Now())
+	idx++
+	revision, err := uuid.NewRandom()
+	if err != nil {
+		return false, fmt.Errorf("info register %s edit revision: %w", ir.Name, err)
+	}
+	cols = append(cols, InfoRegEditRevisionColumn)
+	phs = append(phs, d.Placeholder(idx))
+	args = append(args, revision.String())
 
 	// Build ON CONFLICT update clause for all non-PK columns
 	var updates []string
@@ -226,7 +234,7 @@ func (db *DB) infoRegSet(ctx context.Context, ir *metadata.InfoRegister,
 		col := metadata.ColumnName(f)
 		updates = append(updates, fmt.Sprintf("%s = EXCLUDED.%s", col, col))
 	}
-	updates = append(updates, "updated_at = EXCLUDED.updated_at")
+	updates = append(updates, "updated_at = EXCLUDED.updated_at", InfoRegEditRevisionColumn+" = EXCLUDED."+InfoRegEditRevisionColumn)
 
 	sqlText := fmt.Sprintf(
 		"INSERT INTO %s (%s) VALUES (%s) ON CONFLICT (%s) DO UPDATE SET %s",
@@ -754,6 +762,13 @@ func (db *DB) writeInfoMovementsInTx(ctx context.Context, regName, recorderType 
 		cols = append(cols, "recorder", "recorder_type", "updated_at")
 		phs = append(phs, d.Placeholder(idx), d.Placeholder(idx+1), d.Placeholder(idx+2))
 		args = append(args, idArg(d, recorderID), recorderType, time.Now())
+		revision, err := uuid.NewRandom()
+		if err != nil {
+			return fmt.Errorf("info register %s edit revision: %w", ir.Name, err)
+		}
+		cols = append(cols, InfoRegEditRevisionColumn)
+		phs = append(phs, d.Placeholder(idx+3))
+		args = append(args, revision.String())
 
 		// ON CONFLICT update: переписываем не-PK колонки. Без OR REPLACE,
 		// чтобы PG/SQLite одинаково отработали (PG не понимает OR REPLACE,
@@ -767,6 +782,7 @@ func (db *DB) writeInfoMovementsInTx(ctx context.Context, regName, recorderType 
 			"recorder = EXCLUDED.recorder",
 			"recorder_type = EXCLUDED.recorder_type",
 			"updated_at = EXCLUDED.updated_at",
+			InfoRegEditRevisionColumn+" = EXCLUDED."+InfoRegEditRevisionColumn,
 		)
 
 		pk := pkCols(ir)

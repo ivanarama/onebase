@@ -244,9 +244,13 @@ func taskParamValue(name string, value any) any {
 		// Storage сохраняет тип даты в служебной карте: строкой её здесь делать
 		// нельзя, иначе обработка очереди получит RFC3339 вместо DSL Даты.
 		return typed
+	case interpreter.UUIDValue:
+		// Так же для УникальныйИдентификатор: хранилище держит его uuid.UUID с
+		// отметкой типа, задание получает его обратно тем же типом.
+		return typed.UUID()
 	}
 	interpreter.RaiseUserError("ФоновыеЗадания.Поставить: параметр «" + name +
-		"» имеет неподдерживаемый тип — допустимы строка, число, булево и дата " +
+		"» имеет неподдерживаемый тип — допустимы строка, число, булево, дата и УникальныйИдентификатор " +
 		"(ссылку передавайте кодом или идентификатором)")
 	return nil
 }
@@ -279,6 +283,9 @@ func jobTaskStruct(task *storage.JobTask) any {
 // поставленных до появления типизированной сериализации. Новые задачи storage
 // уже возвращает с time.Time и этот эвристический путь не используют.
 func restoreTaskParam(value any) any {
+	if id, ok := value.(uuid.UUID); ok {
+		return interpreter.NewUUIDValue(id)
+	}
 	if text, ok := value.(string); ok {
 		if parsed, err := time.Parse(time.RFC3339, text); err == nil {
 			return parsed
