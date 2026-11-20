@@ -90,6 +90,11 @@ const tplManagedForm = `
     {{if not $ro}}<div class="code-editor" data-code-language="{{if $el.Language}}{{$el.Language}}{{else}}plaintext{{end}}" style="height:320px;border:1px solid #e2e8f0;border-radius:8px"></div>{{end}}
     {{if and $el.Hint $el.HintInline}}<small style="color:#94a3b8;font-size:11px">{{$el.Hint}}</small>{{end}}
   </div>
+{{else if eq (str $el.Kind) "ПолеТабличногоДокумента"}}
+  <div class="form-group" data-ob-el="{{$el.Name}}"{{with elPath $ctx $el}} data-ob-el-path="{{.}}"{{end}}>
+    <iframe data-ob-tabular-field="{{dpField $el.DataPath}}" title="{{fieldTitleRU $el.TitleMap (dpField $el.DataPath)}}" style="width:100%;height:480px;border:1px solid #cbd5e1" hidden></iframe>
+  </div>
+  <script src="/static/tabular.js"></script>
 {{else if eq (str $el.Kind) "ПолеВвода"}}
   {{$fn := dpField $el.DataPath}}
   {{$f := fieldByName $ctx.Entity $fn}}

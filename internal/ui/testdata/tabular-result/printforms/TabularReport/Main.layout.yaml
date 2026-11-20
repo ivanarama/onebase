@@ -1,0 +1,24 @@
+document: TabularReport
+columns:
+  - width: 240px
+  - width: 120px
+areas:
+  - name: Шапка
+    rows:
+      - cells:
+          - parameter: Период
+            colspan: 2
+            bold: true
+  - name: Группа
+    rows:
+      - cells:
+          - parameter: Название
+            colspan: 2
+            bold: true
+  - name: Строка
+    rows:
+      - cells:
+          - parameter: Название
+          - parameter: Значение
+            format: ЧГ=0;ЧДЦ=2
+            align: right

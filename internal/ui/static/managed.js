@@ -1310,6 +1310,15 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       // optimistic version before any renderer, picker or message callback can
       // throw, so a later queued action updates the row instead of inserting it.
       applySavedIdentity(data);
+      if (res.ok && data.ok && !data.error && !data.cancel &&
+          /^\/ui\/tabular\/[0-9a-f-]{36}\/xlsx$/.test(data.workbookDownloadUrl || '')) {
+        var download = document.createElement('a');
+        download.href = data.workbookDownloadUrl;
+        download.download = '';
+        document.body.appendChild(download);
+        download.click();
+        download.remove();
+      }
       // Обработчики ожидания: подключение/отключение таймеров из ответа.
       if (data.idle && typeof window.obManagedApplyIdle === 'function') window.obManagedApplyIdle(data.idle);
       var idleSnapshot = !snapshot.elementName && snapshot.eventName === 'ОбработкаОжидания';
@@ -1369,6 +1378,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         // controlState — как в обычной ветке: ввод, сделанный пока шёл запрос,
         // эхо отправленного значения не затирает.
         if (data.values) applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
+        if (window.obApplyTabularDocuments) window.obApplyTabularDocuments(data.tabularDocuments);
         if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
         (data.messages || []).forEach((message, index) => flash(message, 'ok', (data.messageIDs || [])[index]));
         if (data.error) flash(data.error, 'err');
@@ -1404,6 +1414,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         window.obManagedApplyTablePartRefOptions(data.tpRefOptions);
         window.applyTableParts(data.tableparts);
         applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
+        if (window.obApplyTabularDocuments) window.obApplyTabularDocuments(data.tabularDocuments);
         applyChoiceList(elementName, data.choiceList);
         applyFormTables(data.formTables);
       }
@@ -1423,6 +1434,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       // Apply the response, including disclosed values, before opening a
       // question. Dismissing it must leave the same valid form as no question.
       if (data.question && !beforePostSnapshot(snapshot)) {
+        if (window.obOpenTabularQuestion && window.obOpenTabularQuestion(data.question, elementName, snapshot.eventName, extraParams, fireFormEvent)) return;
         if (window.obOpenQuestion) window.obOpenQuestion(data.question, elementName);
         return;
       }
@@ -1462,6 +1474,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     }
   }
 
+  if(window.obBindTabularHost)window.obBindTabularHost(fireFormEvent);
   function fireFormEvent(elementName, eventName, extraParams, pickerRequest, beforePostOwner){
 	pickerRequest = pickerRequest || (window.obPickerRequest ? window.obPickerRequest() : null);
 	if (formEventWriteUnknown || manualReconcileRequired) {

@@ -45,12 +45,14 @@ import (
 
 // formEventResponse — структура ответа JSON.
 type formEventResponse struct {
-	OK             bool                        `json:"ok"`
-	Values         map[string]any              `json:"values,omitempty"`
-	Revealed       []string                    `json:"revealed,omitempty"`
-	TableParts     map[string][]map[string]any `json:"tableparts,omitempty"`
-	FormTables     map[string][]map[string]any `json:"formTables,omitempty"`
-	ConditionalCSS string                      `json:"conditionalCss"`
+	WorkbookDownloadURL string                      `json:"workbookDownloadUrl,omitempty"`
+	TabularDocuments    map[string]string           `json:"tabularDocuments,omitempty"`
+	OK                  bool                        `json:"ok"`
+	Values              map[string]any              `json:"values,omitempty"`
+	Revealed            []string                    `json:"revealed,omitempty"`
+	TableParts          map[string][]map[string]any `json:"tableparts,omitempty"`
+	FormTables          map[string][]map[string]any `json:"formTables,omitempty"`
+	ConditionalCSS      string                      `json:"conditionalCss"`
 	// ElementStates — состояние элементов с условиями readonly_when/hidden_when,
 	// пересчитанное по полям записи ПОСЛЕ обработчика. Без него запрет,
 	// зависящий от состояния объекта, появлялся бы только после перезагрузки
@@ -1219,6 +1221,14 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	defer rollbackDSLExecution(txState)
 	isNewForHandler := strings.TrimSpace(r.FormValue("_id")) == "" && (closeInv == nil || !closeInv.saved)
 	thisObj := s.newFormObjectThisLive(dslCtx, txState, obj, entity, form, isNewForHandler)
+	thisObj.layouts = &tabularLayouts{s: s, owner: entity.Name}
+	installTabularLayouts(vars, thisObj.layouts)
+	if eventName == string(metadata.FormEventDrilldown) || (eventName == string(metadata.FormEventOnAnswer) && eventTarget.element != nil && eventTarget.element.Kind == metadata.FormElementSpreadsheet) {
+		if err := s.addTabularDrilldownVars(r, tabularScope{Kind: string(entity.Kind), Name: entity.Name, ID: rawID}, form, elementName, vars, thisObj.refResolver); err != nil {
+			respondJSON(enc, formEventResponse{Error: err.Error()})
+			return
+		}
+	}
 	thisObj.xdtoFormSnapshot = true
 	if isNewForHandler {
 		// Объект.Записать() из обработчика — ещё один путь записи нового объекта:
@@ -1306,6 +1316,11 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 
 	// Навигация (#1557, план 158 срез B): ОткрытьФорму(Ссылка) кладёт в ответ
 	// canonical URL; доставляется только инициировавшей вкладке, с recheck прав.
+	var workbook *workbookReservation
+	defer func() { workbook.release() }()
+	if closeInv == nil && eventName == string(metadata.FormEventOnClick) {
+		s.bindWorkbookCommands(opCtx, w, r, vars, &workbook)
+	}
 	var navigation *navigationPayload
 	navFn := newNavigationBuiltin(&navigation, s.reg, s.store, auth.UserFromContext(r.Context()))
 	vars["ОткрытьФорму"] = navFn
@@ -1576,6 +1591,14 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	resp.SavedID = savedFormID(thisObj)
 	resp.Version = versionWrittenByHandler(thisObj)
 	resp.Dirty = eventDirty
+	if closeInv == nil {
+		scope := tabularScope{Kind: string(entity.Kind), Name: entity.Name, ID: rawID, Form: form.Name}
+		s.attachTabularResults(w, r, scope, thisObj, &resp)
+		if thisObj.obj != nil && thisObj.obj.ID != uuid.Nil {
+			scope.ID = thisObj.obj.ID.String()
+		}
+		attachWorkbook(scope, workbook, &resp)
+	}
 	compactFormCloseDelta(&resp, closeInv)
 	respondJSON(enc, resp)
 }
@@ -2786,6 +2809,14 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		s.bindFormCloseSource(vars, r)
 		defer rollbackDSLExecution(txState)
 		thisObj := s.newFormObjectThisLive(dslCtx, txState, obj, virtEntity, form, false)
+		thisObj.layouts = &tabularLayouts{s: s, owner: proc.Name}
+		installTabularLayouts(vars, thisObj.layouts)
+		if eventName == string(metadata.FormEventDrilldown) || (eventName == string(metadata.FormEventOnAnswer) && eventTarget.element != nil && eventTarget.element.Kind == metadata.FormElementSpreadsheet) {
+			if err := s.addTabularDrilldownVars(r, tabularScope{Kind: "processor", Name: proc.Name}, form, elementName, vars, thisObj.refResolver); err != nil {
+				respondJSON(enc, formEventResponse{Error: err.Error()})
+				return
+			}
+		}
 		vars["Объект"] = thisObj
 		vars["ЭтотОбъект"] = thisObj
 		vars["Параметры"] = thisObj
@@ -2839,6 +2870,11 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		// на другой объект. Запрет уже поставил disableDialogBuiltinsForClose
 		// выше; регистрация здесь его перезаписывала. Условие надёжнее простой
 		// перестановки строк: при следующей правке порядка запрет не потеряется.
+		var workbook *workbookReservation
+		defer func() { workbook.release() }()
+		if !proc.External && closeInv == nil && eventName == string(metadata.FormEventOnClick) {
+			s.bindWorkbookCommands(opCtx, w, r, vars, &workbook)
+		}
 		var navigation *navigationPayload
 		if closeInv == nil {
 			navFn := newNavigationBuiltin(&navigation, s.reg, s.store, auth.UserFromContext(r.Context()))
@@ -2940,6 +2976,11 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		}
 		resp.ChoiceList = choiceItems
 		resp.Dirty = boolPtr(!formOpenEvent(elementName, eventName) && transientManagedStateDirty(obj, fieldsBefore, tablesBefore))
+		if closeInv == nil {
+			scope := tabularScope{Kind: "processor", Name: proc.Name, Form: form.Name}
+			s.attachTabularResults(w, r, scope, thisObj, &resp)
+			attachWorkbook(scope, workbook, &resp)
+		}
 		compactFormCloseDelta(&resp, closeInv)
 		respondJSON(enc, resp)
 		return
