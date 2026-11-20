@@ -209,7 +209,7 @@ h2{font-size:22px;font-weight:600;margin-bottom:20px;color:#1e293b}
    неё, а не вылезает за белую карточку. */
 .table-wrap{overflow-x:auto;max-width:100%}
 table{width:100%;border-collapse:collapse;font-size:14px}
-th{text-align:left;padding:10px 12px;border-bottom:2px solid #e2e8f0;color:#64748b;font-weight:600}
+th{text-align:left;padding:10px 12px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;background:#eef2f7}
 td{padding:10px 12px;border-bottom:1px solid #f1f5f9;color:#334155}
 tr:last-child td{border-bottom:none}
 .btn{display:inline-block;padding:8px 18px;border-radius:7px;font-size:14px;font-weight:500;text-decoration:none;cursor:pointer;border:none}

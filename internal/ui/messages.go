@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/auth"
 )
 
@@ -15,6 +16,8 @@ const (
 )
 
 type Message struct {
+	ID   string    `json:"id"`
+	Kind string    `json:"kind"`
 	Text string    `json:"text"`
 	Time time.Time `json:"time"`
 }
@@ -29,6 +32,14 @@ func NewMessageStore() *MessageStore {
 }
 
 func (s *MessageStore) Push(userKey, text string) {
+	s.push(userKey, text, "info")
+}
+
+func (s *MessageStore) PushError(userKey, text string) {
+	s.push(userKey, text, "err")
+}
+
+func (s *MessageStore) push(userKey, text, kind string) Message {
 	if userKey == "" {
 		userKey = "_anonymous"
 	}
@@ -38,11 +49,13 @@ func (s *MessageStore) Push(userKey, text string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	list := s.m[userKey]
-	list = append(list, Message{Text: text, Time: time.Now()})
+	msg := Message{ID: uuid.NewString(), Text: text, Time: time.Now(), Kind: kind}
+	list = append(list, msg)
 	if len(list) > messagesPerUserLimit {
 		list = list[len(list)-messagesPerUserLimit:]
 	}
 	s.m[userKey] = list
+	return msg
 }
 
 func (s *MessageStore) List(userKey string) []Message {
@@ -80,10 +93,50 @@ func userKeyFromCtx(ctx context.Context) string {
 func (s *Server) messagesList(w http.ResponseWriter, r *http.Request) {
 	msgs := s.messages.List(userKeyFromRequest(r))
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	respondJSONTo(w, map[string]any{"messages": msgs})
+	respondJSONTo(w, map[string]any{"messages": msgs, "serverTime": time.Now()})
 }
 
 func (s *Server) messagesClear(w http.ResponseWriter, r *http.Request) {
 	s.messages.Clear(userKeyFromRequest(r))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// Receipts bind the existing string messages to their exact store entries.
+// The collector lives only for this HTTP request, including nested DSL hooks.
+type messageReceipt struct{ text, id string }
+type messageReceiptsKey struct{}
+
+func withMessageReceipts(r *http.Request) *http.Request {
+	if r.Context().Value(messageReceiptsKey{}) != nil {
+		return r
+	}
+	receipts := []messageReceipt{}
+	return r.WithContext(context.WithValue(r.Context(), messageReceiptsKey{}, &receipts))
+}
+
+func recordMessageReceipt(ctx context.Context, text, id string) {
+	if receipts, ok := ctx.Value(messageReceiptsKey{}).(*[]messageReceipt); ok {
+		*receipts = append(*receipts, messageReceipt{text: text, id: id})
+	}
+}
+
+// Unstored UI warnings keep an empty ID and are still shown normally. Copies
+// are consumed once so repeated identical messages retain distinct identities.
+func messageReceiptIDs(ctx context.Context, texts []string) []string {
+	receipts, ok := ctx.Value(messageReceiptsKey{}).(*[]messageReceipt)
+	if !ok || len(*receipts) == 0 || len(texts) == 0 {
+		return nil
+	}
+	remaining := append([]messageReceipt(nil), (*receipts)...)
+	ids := make([]string, len(texts))
+	for i, text := range texts {
+		for j, receipt := range remaining {
+			if receipt.id != "" && receipt.text == text {
+				ids[i] = receipt.id
+				remaining[j].id = ""
+				break
+			}
+		}
+	}
+	return ids
 }
