@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -117,9 +118,38 @@ func TestTabsBehaviorInNode(t *testing.T) {
 	thirdCookie, third := loginShell("operator", "shell-a-new")
 	// A new session for the same account must also start empty.
 	logout(thirdCookie, "login-a-new")
-	_, fourth := loginShell("operator", "shell-a-again")
+	fourthCookie, fourth := loginShell("operator", "shell-a-again")
+	// Exercise the real server redirect before executing its rendered runtime.
+	loadHiddenHome(s, "Sales")
+	var resetPage, resetQuery string
+	for _, query := range []string{"?tabs=reset", "?home=1&tabs=reset", "", "?tabs=other"} {
+		req := httptest.NewRequest(http.MethodGet, "/ui/app"+query, nil)
+		req.AddCookie(fourthCookie)
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		want := "/ui/app?home=1&subsystem=Sales"
+		if strings.Contains(query, "tabs=reset") {
+			want += "&tabs=reset"
+		}
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != want {
+			t.Fatalf("hidden home %q: HTTP %d, Location %q, want %q", query, rec.Code, rec.Header().Get("Location"), want)
+		}
+		if query != "?tabs=reset" {
+			continue
+		}
+		target, err := url.Parse(rec.Header().Get("Location"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		resetQuery = "?" + target.RawQuery
+		req = httptest.NewRequest(http.MethodGet, target.String(), nil)
+		req.AddCookie(fourthCookie)
+		rec = httptest.NewRecorder()
+		router.ServeHTTP(rec, req)
+		resetPage = savePage("shell-hidden-home-reset", rec)
+	}
 	cmd := exec.Command(node, "--test", "static/tabs_behavior_test.js") //nolint:gosec // test-only executable resolved by exec.LookPath
-	cmd.Env = append(os.Environ(), "ONEBASE_TABS_HTML="+first, "ONEBASE_TABS_B_HTML="+second, "ONEBASE_TABS_A_NEW_HTML="+third, "ONEBASE_TABS_A_AGAIN_HTML="+fourth, "ONEBASE_LOGIN_HTML="+loginPage, "ONEBASE_TABS_OPEN_HTML="+anonymousPage)
+	cmd.Env = append(os.Environ(), "ONEBASE_TABS_HTML="+first, "ONEBASE_TABS_B_HTML="+second, "ONEBASE_TABS_A_NEW_HTML="+third, "ONEBASE_TABS_A_AGAIN_HTML="+fourth, "ONEBASE_LOGIN_HTML="+loginPage, "ONEBASE_TABS_OPEN_HTML="+anonymousPage, "ONEBASE_TABS_RESET_HTML="+resetPage, "ONEBASE_TABS_RESET_QUERY="+resetQuery)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("node tabs behavior test: %v\n%s", err, output)

@@ -168,6 +168,10 @@ func (s *Server) hiddenHomeRedirect(r *http.Request, base string) (string, bool)
 	q := url.Values{"subsystem": []string{subs[0].Name}}
 	if base == "/ui/app" {
 		q.Set("home", "1")
+		// The shell consumes this one-shot command after the redirect.
+		if r.URL.Query().Get("tabs") == "reset" {
+			q.Set("tabs", "reset")
+		}
 	}
 	return base + "?" + q.Encode(), true
 }
