@@ -48,6 +48,30 @@ type HomePage struct {
 	// StatusBar — постоянная строка внизу каждой страницы (см. StatusBar).
 	// Читается только у глобальной config/home_page.yaml.
 	StatusBar *StatusBar `yaml:"status_bar,omitempty"`
+	// Messages — как показывать сообщения интерфейса: "panel" (по умолчанию —
+	// плашки событий формы и нижняя панель «Сообщения») или "popup" (только
+	// всплывающие плашки вверху справа, панели нет). MessageSeconds — сколько
+	// секунд держать обычную плашку (по умолчанию 5; ошибки — до крестика).
+	// Читаются только у глобальной config/home_page.yaml.
+	Messages       string `yaml:"messages,omitempty"`
+	MessageSeconds int    `yaml:"message_seconds,omitempty"`
+}
+
+// Режимы показа сообщений (HomePage.Messages).
+const (
+	MessagesPanel = "panel"
+	MessagesPopup = "popup"
+)
+
+// DefaultMessageSeconds — время показа обычной плашки по умолчанию.
+const DefaultMessageSeconds = 5
+
+// MessageSecondsOrDefault — время показа обычной плашки с учётом умолчания.
+func (h *HomePage) MessageSecondsOrDefault() int {
+	if h == nil || h.MessageSeconds <= 0 {
+		return DefaultMessageSeconds
+	}
+	return h.MessageSeconds
 }
 
 // NavForRoles — состав левого меню «Главной» для ролей пользователя:
@@ -141,6 +165,14 @@ func LoadHomePage(path string) (*HomePage, error) {
 	hp.applyDefaults()
 	if err := hp.StatusBar.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	switch hp.Messages {
+	case "", MessagesPanel, MessagesPopup:
+	default:
+		return nil, fmt.Errorf("%s: messages: допустимо panel или popup, получено %q", path, hp.Messages)
+	}
+	if hp.MessageSeconds < 0 || hp.MessageSeconds > 300 {
+		return nil, fmt.Errorf("%s: message_seconds: от 1 до 300, получено %d", path, hp.MessageSeconds)
 	}
 	return &hp, nil
 }

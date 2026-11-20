@@ -14,6 +14,7 @@ import (
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/dsl/loader"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 	"github.com/ivantit66/onebase/internal/testutil/browseracceptance"
@@ -52,6 +53,14 @@ func TestTabsCloseBrowserAcceptance(t *testing.T) {
 	}
 	reg := runtime.NewRegistry()
 	reg.Load(runtime.LoadOptions{Entities: []*metadata.Entity{ent}})
+	processorForm, err := loader.NewManagedFormLoader().LoadFormFile(filepath.Join(browseracceptance.Root(), "e2e/fixtures/close-after-save/processor.form.yaml"), "ПриемкаКомандыЗакрытия")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg.LoadProcessors([]*processor.Processor{{
+		Name: "ПриемкаКомандыЗакрытия", Params: []processor.Param{{Name: "Текст", Type: "string"}},
+		Forms: []*metadata.FormModule{processorForm},
+	}})
 	s := New(reg, db, interpreter.New(), repo, Config{}, nil)
 	router := chi.NewRouter()
 	handlers := &auth.Handlers{Repo: repo}
