@@ -53,7 +53,7 @@ func TestLoadConfig_BrokenYAMLReportsFileAge(t *testing.T) {
 	if !strings.Contains(msg, "09.06.2026 20:05") {
 		t.Errorf("в сообщении нет времени изменения файла:\n%s", msg)
 	}
-	if !strings.Contains(msg, "onebase check --project "+dir) {
+	if !strings.Contains(msg, "onebase check --project "+filepath.Clean(dir)) {
 		t.Errorf("в сообщении нет подсказки про check с путём проекта:\n%s", msg)
 	}
 	// Приписка идёт со своей строки: она адресована человеку, а первая строка
