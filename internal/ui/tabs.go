@@ -16,8 +16,8 @@ import (
 // боковое меню объектов), а на месте <main> держит полосу вкладок и стек
 // <iframe>. Каждая открытая форма/список/отчёт — отдельная вкладка; страницы
 // внутри фреймов рендерятся как есть, но прячут свой хром (см. window.__obEmbedded
-// в партиале head). Несколько экземпляров одного объекта = несколько вкладок
-// (изоляция фреймов) — это закрывает #130.
+// в партиале head). Пользователь может открыть несколько вкладок отчёта,
+// списка, обработки или страницы (#130).
 //
 // Прямые страницы /ui/... продолжают работать без изменений: вся embedded-логика
 // активна только во фрейме оболочки.
@@ -242,10 +242,36 @@ const tplAppShell = `{{define "page-app-shell"}}
     return chain;
   }
   function closeOthers(keep){ return closeSequence(tabs.slice().filter(function(t){return t!==keep;}),'close'); }
+  var duplicateLabel='Открыть ещё один экземпляр';
+  function canDuplicateTab(href){
+    var target;
+    try{ target=new URL(href,location.origin); }catch(e){ return false; }
+    if(target.origin!==location.origin)return false;
+    var path=target.pathname;
+    return /^\/ui\/(catalog|document|report|processor|page|journal|register|inforeg|accounts)\/[^/]+\/?$/.test(path) ||
+      /^\/ui\/register\/[^/]+\/balances\/?$/.test(path) ||
+      /^\/ui\/stages(?:\/[^/]+)?\/?$/.test(path) ||
+      /^\/ui\/(constants|delete-marked|export-jobs|messages|pos)\/?$/.test(path);
+  }
+  function duplicateTab(t){
+    if(canDuplicateTab(t.url))openTab(t.url,t.title,{allowDup:true});
+  }
+  function syncDuplicateControl(t){
+    if(canDuplicateTab(t.url)){
+      if(!t.duplicate.parentNode)t.btn.insertBefore(t.duplicate,t.close);
+    }else{
+      t.duplicate.remove();
+      var menu=document.getElementById('ob-tabmenu');
+      if(menu&&menu.getAttribute('data-tab-id')===t.id)menu.remove();
+    }
+  }
   function tabMenu(t,x,y){
     var old=document.getElementById('ob-tabmenu'); if(old)old.remove();
     var m=document.createElement('div'); m.id='ob-tabmenu'; m.className='ob-tabmenu'; m.style.left=x+'px'; m.style.top=y+'px';
-    [['Закрыть',function(){closeTab(t,'close');}],['Закрыть другие',function(){closeOthers(t);}],['Закрыть все',function(){closeSequence(tabs.slice(),'close');}]].forEach(function(it){
+    m.setAttribute('data-tab-id',t.id);
+    var actions=[['Закрыть',function(){closeTab(t,'close');}],['Закрыть другие',function(){closeOthers(t);}],['Закрыть все',function(){closeSequence(tabs.slice(),'close');}]];
+    if(canDuplicateTab(t.url))actions.unshift([duplicateLabel,function(){duplicateTab(t);}]);
+    actions.forEach(function(it){
       var b=document.createElement('div'); b.className='ob-tabmenu-item'; b.textContent=it[0];
       b.addEventListener('click',function(){ m.remove(); it[1](); });
       m.appendChild(b);
@@ -262,6 +288,7 @@ const tplAppShell = `{{define "page-app-shell"}}
     }catch(e){return;}
     if(!openable(next)||next===t.url)return;
     t.url=next;
+    syncDuplicateControl(t);
     persist();
     if(active===t)persistActive(t);
   }
@@ -270,10 +297,11 @@ const tplAppShell = `{{define "page-app-shell"}}
     if(!opts.allowDup){ for(var i=0;i<tabs.length;i++){ if(tabs[i].url===url){ if(!opts.restoring)setActive(tabs[i]); return tabs[i]; } } }
     var btn=document.createElement('div'); btn.className='ob-tab'; btn.setAttribute('role','tab'); btn.title=title||'Форма'; // фаза 4: тултип полного заголовка
     var lab=document.createElement('span'); lab.className='ob-tab-label'; lab.textContent=title||'Форма'; btn.appendChild(lab);
-    var dup=document.createElement('span'); dup.className='ob-tab-dup'; dup.textContent='⧉'; dup.title='Открыть ещё один экземпляр'; btn.appendChild(dup);
+    var dup=document.createElement('span'); dup.className='ob-tab-dup'; dup.textContent='⧉'; dup.title=duplicateLabel;
     var cl=document.createElement('span'); cl.className='ob-tab-close'; cl.textContent='✕'; cl.title='Закрыть'; btn.appendChild(cl);
     var frame=document.createElement('iframe'); frame.src=url;
-    var t={id:uniqueTabID(opts.id),url:url,title:title,btn:btn,frame:frame,label:lab};
+    var t={id:uniqueTabID(opts.id),url:url,title:title,btn:btn,frame:frame,label:lab,duplicate:dup,close:cl};
+    syncDuplicateControl(t);
     // Стабильное имя фрейма «ob-tab-<id>»: страница внутри iframe читает его
     // через window.frameElement.name и различает себя от других вкладок
     // (изоляция отметки фокуса поиска, #1599). id сохраняется оболочкой и
@@ -283,7 +311,7 @@ const tplAppShell = `{{define "page-app-shell"}}
     btn.addEventListener('click',function(e){ if(e.target===cl||e.target===dup)return; setActive(t); });
     btn.addEventListener('mousedown',function(e){ if(e.button===1){ e.preventDefault(); closeTab(t,'cross'); } });
     cl.addEventListener('click',function(e){ e.stopPropagation(); closeTab(t,'cross'); });
-    dup.addEventListener('click',function(e){ e.stopPropagation(); openTab(t.url, t.title, {allowDup:true}); }); // #130
+    dup.addEventListener('click',function(e){ e.stopPropagation(); duplicateTab(t); }); // #130
     btn.addEventListener('contextmenu',function(e){ e.preventDefault(); setActive(t); tabMenu(t,e.clientX,e.clientY); }); // фаза 4
     strip.appendChild(btn); body.appendChild(frame); tabs.push(t);
     if(!opts.restoring){ setActive(t); persist(); }
