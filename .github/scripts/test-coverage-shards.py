@@ -22,7 +22,10 @@ spec = importlib.util.spec_from_file_location("coverage_engine", ENGINE)
 engine = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(engine)
 LABELS = ["other", "ui-1", "ui-2", "ui-3", "ui-4", "launcher-1", "launcher-2"]
-FLAGS = ["-race", "-count=1", "-timeout=10m", "-json"]
+# The complete pipelinehealth package includes serial public-CLI/process tests.
+# It exceeds 10 minutes with race/atomic coverage; retain a finite package limit
+# while preserving every test and the existing 40-minute shard job deadline.
+FLAGS = ["-race", "-count=1", "-timeout=20m", "-json"]
 require = engine.require
 
 
@@ -64,12 +67,44 @@ def validate(plan):
         require(item["groups"] == engine.partition(names, count), "partition differs from inventory")
 
 
+def context_difference(expected, actual):
+    # Artifact context is untrusted. Emit only known scalar fields whose syntax
+    # is bounded; neither arbitrary keys nor environment/secret values belong in logs.
+    expected = expected if isinstance(expected, dict) else {}
+    actual = actual if isinstance(actual, dict) else {}
+    patterns = {
+        "checkout": r"[0-9a-f]{40}", "tree": r"[0-9a-f]{40}",
+        "engine_sha256": r"[0-9a-f]{64}", "runner_sha256": r"[0-9a-f]{64}",
+        "node_version": r"v[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}",
+        "go.GOVERSION": r"go[0-9]{1,3}\.[0-9]{1,3}(?:\.[0-9]{1,3})?(?:(?:rc|beta)[0-9]{1,3})?",
+        "go.GOOS": r"[a-z0-9]{1,20}", "go.GOARCH": r"[a-z0-9]{1,20}",
+        "go.CGO_ENABLED": r"[01]",
+    }
+
+    def value(source, field):
+        if field.startswith("go."):
+            source = source.get("go")
+            return source.get(field[3:]) if isinstance(source, dict) else None
+        return source.get(field)
+
+    def safe(item, pattern):
+        return item if isinstance(item, str) and re.fullmatch(pattern, item) else "<invalid>"
+
+    return {field: dict(expected=safe(value(expected, field), pattern),
+                        actual=safe(value(actual, field), pattern))
+            for field, pattern in patterns.items()
+            if value(expected, field) != value(actual, field)}
+
+
 def load(path, expected):
     require(re.fullmatch(r"[0-9a-f]{64}", expected) is not None and sha(path) == expected,
             "plan differs from authoritative job output")
     plan = json.loads(path.read_bytes())
     validate(plan)
-    require(plan["context"] == context(), "checkout/tree/engine/toolchain differs from plan")
+    current = context()
+    if plan["context"] != current:
+        require(False, "checkout/tree/engine/toolchain differs from plan: " +
+                json.dumps(context_difference(plan["context"], current), sort_keys=True))
     return plan
 
 
