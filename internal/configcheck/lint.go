@@ -506,6 +506,8 @@ func reportYAMLSchema() *yamlLintSchema {
 		"conditional": seq(conditional),
 		"appearance":  obj("lines", "zebra", "collapse_to"),
 		"chart":       obj("type", "category", "series"),
+		// detail_fields — поля детальной записи (аналог «Выбранных полей» 1С).
+		"detail_fields": seq(obj("field", "title")),
 	})
 	return with(obj("name", "title", "query", "chart_proc", "output_format"), map[string]*yamlLintSchema{
 		"titles": freeMap(),

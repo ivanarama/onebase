@@ -72,6 +72,17 @@ type Composition struct {
 	Chart        *ChartSpec `yaml:"chart"`
 	DetailLink   string     `yaml:"detail_link"`   // поле строки с UUID регистратора/ссылки
 	DetailEntity string     `yaml:"detail_entity"` // имя сущности для перехода по ссылке
+	// DetailFields — поля детальной записи (аналог «Выбранных полей» 1С):
+	// колонки, которые в строке детализации показывают значения записи
+	// (номер, наименование, даты), а в строках групп и итогов пусты.
+	DetailFields []DetailField `yaml:"detail_fields,omitempty"`
+}
+
+// DetailField — колонка детальной записи отчёта: поле строки запроса и
+// заголовок (пустой = имя поля).
+type DetailField struct {
+	Field string `yaml:"field"`
+	Title string `yaml:"title,omitempty"`
 }
 
 // Measure описывает измеримый показатель (поле + агрегат) в компоновке.
