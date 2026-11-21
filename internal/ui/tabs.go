@@ -49,6 +49,9 @@ func (s *Server) appShell(w http.ResponseWriter, r *http.Request) {
 		scope = "open-access:v1"
 	}
 	data["TabStorageScope"] = scope
+	if panel := s.sidePanelData(r); panel != nil {
+		data["SidePanel"] = panel
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	s.render(w, r, "page-app-shell", data)
 }
@@ -76,6 +79,15 @@ const tplAppShell = `{{define "page-app-shell"}}
 .ob-tabmenu-item{padding:6px 14px;cursor:pointer;color:#334155}
 .ob-tabmenu-item:hover{background:#f0f4ff;color:#1a4a80}
 @media (max-width:820px){.ob-tabhome{padding:14px}}
+/* Правая панель оболочки (home_page.yaml side_panel): видна при любых
+   вкладках, рабочая область сужается; ширину меняют перетаскиванием края. */
+.ob-side-panel{flex-shrink:0;position:relative;border-left:1px solid #cbd5e1;background:#fff;overflow:auto;min-width:180px;max-width:60vw}
+.ob-side-panel .w-card{margin:0;border:0;border-radius:0;box-shadow:none;padding:8px 10px}
+.ob-side-resize{position:absolute;left:0;top:0;bottom:0;width:6px;cursor:col-resize;z-index:2}
+body.ob-side-dragging{cursor:col-resize;user-select:none}
+body.ob-side-dragging iframe{pointer-events:none}
+.ob-side-resize:hover,.ob-side-resize.dragging{background:rgba(59,130,246,.35)}
+@media (max-width:820px){.ob-side-panel{display:none}}
 </style>
 <main class="ob-shell-main" id="ob-shell-main" data-ob-tab-scope="{{.TabStorageScope}}">
   <div class="ob-tabstrip" id="ob-tabstrip" role="tablist"></div>
@@ -84,6 +96,7 @@ const tplAppShell = `{{define "page-app-shell"}}
     <div class="ob-tabempty" id="ob-tabempty" style="display:none">{{t $.Lang "Откройте объект из меню слева"}}</div>
   </div>
 </main>
+{{with .SidePanel}}<aside class="ob-side-panel" id="ob-side-panel" data-ob-side-width="{{.Width}}" style="width:{{.Width}}px" aria-label="{{.Card.Title}}"><div class="ob-side-resize" data-ob-side-resize title="{{t $.Lang "Ширина панели"}}"></div>{{template "widget-card" .Card}}</aside>{{end}}
 {{template "dashboard-scripts" .}}
 <script>
 (function(){
@@ -94,6 +107,23 @@ const tplAppShell = `{{define "page-app-shell"}}
   var tabs=[]; var active=null; var tabSeq=0; var STORE='obTabs'; var STORE_ACTIVE='obTabsActive';
   var STORAGE_SCOPE={{.TabStorageScope}};
   var STORE_SCOPE='obTabsScope'; var storageReady=false;
+  // Ширина правой панели — за пользователем (ключ с областью хранения вкладок).
+  (function(){
+    var panel=document.getElementById('ob-side-panel'); if(!panel)return;
+    var key='obSidePanelWidth:'+(STORAGE_SCOPE||'');
+    var clamp=function(w){return Math.max(180,Math.min(Math.round(window.innerWidth*0.6),Math.round(w)));};
+    try{var saved=parseInt(localStorage.getItem(key)||'',10);if(saved>0)panel.style.width=clamp(saved)+'px';}catch(e){}
+    var grip=panel.querySelector('[data-ob-side-resize]'); if(!grip)return;
+    grip.addEventListener('mousedown',function(ev){
+      ev.preventDefault(); var startX=ev.clientX, startW=panel.getBoundingClientRect().width; grip.classList.add('dragging');
+      // Вкладка-iframe перехватывала бы мышь при движении влево над ней.
+      document.body.classList.add('ob-side-dragging');
+      var move=function(e){panel.style.width=clamp(startW+(startX-e.clientX))+'px';};
+      var up=function(){document.removeEventListener('mousemove',move);document.removeEventListener('mouseup',up);grip.classList.remove('dragging');document.body.classList.remove('ob-side-dragging');
+        try{localStorage.setItem(key,String(Math.round(panel.getBoundingClientRect().width)));}catch(e){}};
+      document.addEventListener('mousemove',move);document.addEventListener('mouseup',up);
+    });
+  })();
   // An unowned legacy snapshot is unsafe even when its URLs remain accessible.
   // Prove ownership before reading either titles/URLs or the active selection.
   try{
