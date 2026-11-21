@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/excel"
+	"github.com/ivantit66/onebase/internal/metadata"
 	"github.com/ivantit66/onebase/internal/query"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compose"
@@ -69,6 +70,10 @@ func (s *Server) reportForm(w http.ResponseWriter, r *http.Request) {
 	defaults, derr := reportParamDefaults(rep.Params, s.constantResolver(r.Context()))
 	if derr != nil {
 		s.serverError(w, r, derr)
+		return
+	}
+	if err := reportpkg.ValidateEnumParams(rep.Params, defaults, s.reg); err != nil {
+		s.serverError(w, r, err)
 		return
 	}
 	s.render(w, r, "page-report", map[string]any{
@@ -199,6 +204,10 @@ func (s *Server) getReport(w http.ResponseWriter, r *http.Request) *reportpkg.Re
 }
 
 func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpkg.Report, paramValues map[string]any) {
+	if err := reportpkg.ValidateEnumParams(rep.Params, paramValues, s.reg); err != nil {
+		http.Error(w, s.errText(r, err), http.StatusBadRequest)
+		return
+	}
 	opCtx, finish, ok := s.beginOperation(r, opReportRun, rep.Name)
 	if !ok {
 		http.Error(w, "слишком много одновременно выполняемых отчётов, повторите позже", http.StatusTooManyRequests)
@@ -544,13 +553,15 @@ type reportParamUI struct {
 	Type   string // raw type string
 	IsDate bool
 	// IsDateTime — тип datetime: поле принимает время суток, а не только дату.
-	IsDateTime bool
-	IsNum      bool
-	IsBool     bool
-	IsSel      bool
-	IsRef      bool
-	Options    []string         // for IsSel
-	Opts       []map[string]any // for IsRef: [{id, _label}]
+	IsDateTime  bool
+	IsNum       bool
+	IsBool      bool
+	IsSel       bool
+	IsEnum      bool
+	IsRef       bool
+	EnumOptions []EnumOption
+	Options     []string         // for IsSel
+	Opts        []map[string]any // for IsRef: [{id, _label}]
 	// RefEntity — имя сущности (для IsRef), используется на UI для лупы
 	// в picker'е (открытие карточки через /ui/_ref-open/<entity>/<id>).
 	RefEntity string
@@ -577,6 +588,11 @@ func (s *Server) buildReportParams(ctx context.Context, lang string, params []re
 		case p.Type == "select":
 			ui.IsSel = true
 			ui.Options = p.Options
+		case strings.HasPrefix(p.Type, "enum:"):
+			ui.IsEnum = true
+			// Use the same ordered and localized choices as native enum fields.
+			opts := s.loadEnumOptions(&metadata.Entity{Fields: []metadata.Field{{Name: p.Name, EnumName: strings.TrimPrefix(p.Type, "enum:")}}}, lang)
+			ui.EnumOptions = opts[p.Name]
 		case strings.HasPrefix(p.Type, "reference:"):
 			ui.IsRef = true
 			entityName := strings.TrimPrefix(p.Type, "reference:")
@@ -681,6 +697,9 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 			v = val // как на экране: негодное значение остаётся строкой
 		}
 		paramValues[p.Name] = v
+	}
+	if err := reportpkg.ValidateEnumParams(rep.Params, paramValues, s.reg); err != nil {
+		return nil, nil, newReportExportError(http.StatusBadRequest, "invalid report parameter", err)
 	}
 	compiled, err := s.compileQueryWithRowAccess(ctx, rep.Query, paramValues)
 	if err != nil {
