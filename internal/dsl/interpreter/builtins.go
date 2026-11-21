@@ -599,6 +599,7 @@ func KnownBuiltinNames() map[string]struct{} {
 	// без отдельной фабрики (см. ui/handlers.go и scheduler/scheduler.go).
 	for _, k := range []string{
 		"сообщить", "message",
+		"получитьмакет",
 		"описаниеошибки", "errordescription",
 		"информацияобошибке", "errorinfo",
 		"вычислить", "eval",
@@ -624,6 +625,8 @@ func KnownBuiltinNames() map[string]struct{} {
 		"значениереквизитаобъекта", "objectattributevalue",
 		"значенияреквизитовобъектов", "objectattributevalues",
 		"выполнитькоманду", "executecommand",
+		"заменитьлистыexcel", "replaceexcelsheets",
+		"скачатькнигуexcel", "downloadexcelworkbook",
 		"ссылканаобъект", "objectref",
 		"сохранитькартинку", "putimage",
 		"добавитьправилооформления", "addformattingrule",
