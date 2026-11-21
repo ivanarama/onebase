@@ -140,6 +140,7 @@ type documentMovementRead struct {
 // the viewer cannot read, and each readable register can have its own RLS and
 // field policy. Apply every gate before resolving references or rendering.
 func (s *Server) loadDocumentMovementsForRead(ctx context.Context, recorderType string, recorderID uuid.UUID) documentMovementRead {
+	defer serverTimingSpan(ctx, "movements")()
 	result := documentMovementRead{
 		Rows:    make(map[string][]map[string]any),
 		Columns: make(map[string]registerMovementColumns),

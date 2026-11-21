@@ -101,6 +101,7 @@ func (s *Server) runtimeObjectFromSnapshot(
 // ни разу не выполнив RLS-хук — fail-open (обход контроля доступа на чтение).
 // nil допустим только пока обработчик ещё не объявлен (ранние return выше).
 func (s *Server) runFormReadHook(ctx context.Context, entity *metadata.Entity, form *metadata.FormModule, id uuid.UUID) error {
+	defer serverTimingSpan(ctx, "readHook")()
 	if form == nil || s.interp == nil {
 		return nil
 	}
