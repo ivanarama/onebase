@@ -141,7 +141,7 @@ func (s *Server) gridOrderKeyAllowed(r *http.Request, grid string) bool {
 		if proc == nil || !s.can(r, "processor", proc.Name, "run") {
 			return false
 		}
-		form = proc.ManagedForm()
+		form = pickProcessorManagedFormCtx(r.Context(), proc)
 	default:
 		ent := s.reg.GetEntity(name)
 		if ent == nil || strings.ToLower(string(ent.Kind)) != kind || !s.can(r, string(ent.Kind), ent.Name, "read") {

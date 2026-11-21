@@ -682,7 +682,7 @@ func (s *Server) choiceFormOwner(r *http.Request, formKind, ownerName, formName 
 		if !s.can(r, "processor", proc.Name, "run") || !s.canRunExternalProc(r, proc) {
 			return nil, nil, fmt.Errorf("form processor is not available")
 		}
-		form := proc.ManagedForm()
+		form := pickProcessorManagedFormCtx(r.Context(), proc)
 		if form == nil || !strings.EqualFold(form.Name, formName) {
 			return nil, nil, fmt.Errorf("unknown managed form")
 		}
@@ -798,7 +798,7 @@ func (s *Server) applyProcessorChoiceFilters(ctx context.Context, proc *processo
 	if proc == nil {
 		return
 	}
-	s.applyChoiceFilters(ctx, processorVirtualEntity(proc), proc.ManagedForm(), choiceFormKindProcessor, data)
+	s.applyChoiceFilters(ctx, processorVirtualEntity(proc), pickProcessorManagedFormCtx(ctx, proc), choiceFormKindProcessor, data)
 }
 
 func (s *Server) applyChoiceFilters(ctx context.Context, owner *metadata.Entity, form *metadata.FormModule, formKind string, data map[string]any) {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
 	"github.com/ivantit66/onebase/internal/report/compose"
@@ -22,19 +23,87 @@ import (
 // kind: "object" — карточка элемента/документа, "list" — форма списка,
 // "choice" — форма выбора, "" — любая (берётся первая managed).
 func pickManagedForm(entity *metadata.Entity, kind string) *metadata.FormModule {
+	return pickManagedFormForUser(entity, kind, nil)
+}
+
+// pickManagedFormCtx — форма для пользователя запроса (form.roles /
+// form.except_roles). Все пути одной формы — отрисовка, события, запись —
+// обязаны выбирать её одинаково, поэтому зовут именно её.
+func pickManagedFormCtx(ctx context.Context, entity *metadata.Entity, kind string) *metadata.FormModule {
+	return pickManagedFormForUser(entity, kind, auth.UserFromContext(ctx))
+}
+
+// pickManagedFormForUser: из форм нужного вида — первая подходящая пользователю
+// форма с ролевым условием, иначе первая без условия. Форма с условием, не
+// подходящая пользователю, не выбирается никогда.
+func pickManagedFormForUser(entity *metadata.Entity, kind string, user *auth.User) *metadata.FormModule {
 	if entity == nil {
 		return nil
 	}
+	return pickManagedFromForms(entity.Forms, kind, user, strings.EqualFold(kind, "object"))
+}
+
+// Processor forms historically accept any kind, including blank/custom. Keep
+// that behavior while resolving the same role selector for every HTTP path.
+func pickProcessorManagedFormCtx(ctx context.Context, proc *processorpkg.Processor) *metadata.FormModule {
+	if proc == nil {
+		return nil
+	}
+	return pickManagedFromForms(proc.Forms, "", auth.UserFromContext(ctx), true)
+}
+
+func pickManagedFromForms(forms []*metadata.FormModule, kind string, user *auth.User, roleAware bool) *metadata.FormModule {
 	kindLower := strings.ToLower(kind)
-	for _, fm := range entity.Forms {
-		if fm == nil || !fm.IsManaged() {
+	var plain *metadata.FormModule
+	for _, fm := range forms {
+		if fm == nil || !fm.IsManaged() || (kindLower != "" && !strings.EqualFold(fm.Kind, kindLower)) {
 			continue
 		}
-		if kindLower == "" || strings.ToLower(fm.Kind) == kindLower {
+		if len(fm.Roles) == 0 && len(fm.ExceptRoles) == 0 && !fm.IncludeAdmin {
+			if plain == nil {
+				plain = fm
+			}
+			continue
+		}
+		if roleAware && user != nil && formRolesMatch(fm, user) {
 			return fm
 		}
 	}
-	return nil
+	return plain
+}
+
+// formRolesMatch — подходит ли пользователю форма с ролевым условием: роль из
+// roles (если список задан) и ни одной роли из except_roles. Сравнение имён
+// ролей без учёта регистра.
+func formRolesMatch(fm *metadata.FormModule, user *auth.User) bool {
+	has := func(name string) bool {
+		if user == nil {
+			return false
+		}
+		for _, r := range user.Roles {
+			if r != nil && strings.EqualFold(strings.TrimSpace(r.Name), strings.TrimSpace(name)) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, name := range fm.ExceptRoles {
+		if has(name) {
+			return false
+		}
+	}
+	if fm.IncludeAdmin && user != nil && user.IsAdmin {
+		return true
+	}
+	if len(fm.Roles) == 0 {
+		return true
+	}
+	for _, name := range fm.Roles {
+		if has(name) {
+			return true
+		}
+	}
+	return false
 }
 
 // renderEntityForm — единая точка рендера формы объекта/документа.
@@ -89,7 +158,7 @@ func (s *Server) renderEntityForm(w http.ResponseWriter, r *http.Request, kind s
 			data["NewParentID"] = parentID
 		}
 	}
-	managed := pickManagedForm(entity, kind)
+	managed := pickManagedFormCtx(r.Context(), entity, kind)
 	if managed != nil {
 		data["Form"] = managed
 		s.issueConcealInstance(w, r, entity, managed, data)

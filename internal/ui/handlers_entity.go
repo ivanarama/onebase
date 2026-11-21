@@ -834,7 +834,7 @@ func (s *Server) parseSubmitForm(w http.ResponseWriter, r *http.Request, entity 
 		http.Error(w, s.errText(r, err), 400)
 		return
 	}
-	form := pickManagedForm(entity, "object")
+	form := pickManagedFormCtx(r.Context(), entity, "object")
 	if form != nil {
 		var parseErr error
 		tpRows, parseErr = parseTablePartRowsForManagedForm(r, entity, form, true)
@@ -949,7 +949,7 @@ func mergeSubmittedEntityServiceFields(r *http.Request, entity *metadata.Entity,
 // ВызватьИсключение. Контекст совпадает с веткой DSLError в submit/submitEdit.
 func (s *Server) renderObjectFormError(w http.ResponseWriter, r *http.Request, entity *metadata.Entity, isNew bool, errMsg string, msgs []string, tpRows map[string][]map[string]any) {
 	values := formValues(r, entity)
-	managedForm := pickManagedForm(entity, "object")
+	managedForm := pickManagedFormCtx(r.Context(), entity, "object")
 	// Form attributes are not entity fields, so formValues deliberately omits
 	// them. On a validation error keep every posted scalar attribute for the
 	// retry instead of clearing unrelated user input from the rendered form.
@@ -1060,7 +1060,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	managedForm := pickManagedForm(entity, "object")
+	managedForm := pickManagedFormCtx(r.Context(), entity, "object")
 	if managedForm != nil {
 		s.mergeFormAttrValues(r.Context(), r, managedForm, entity, obj)
 		s.restoreConcealControllers(r, entity, managedForm, obj)
@@ -1152,7 +1152,7 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	}
 	if result.DSLError != "" {
 		values := formValues(r, entity)
-		tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, pickManagedForm(entity, "object"))
+		tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, pickManagedFormCtx(r.Context(), entity, "object"))
 		refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
 		tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows, values)
 		langErr := s.resolveLang(r)
@@ -1823,7 +1823,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 	// Строго до маскирования, проверок построчного доступа и хуков формы: и
 	// предикаты, и DSL должны видеть реальные данные, а ПередЗаписью — иметь
 	// возможность перекрыть восстановленное значение.
-	managedForm := pickManagedForm(entity, "object")
+	managedForm := pickManagedFormCtx(r.Context(), entity, "object")
 	if managedForm != nil {
 		if err := s.restoreUnsubmittedFields(r.Context(), r, entity, managedForm, id, obj.Fields); err != nil {
 			s.serverError(w, r, err)
@@ -1912,7 +1912,7 @@ func (s *Server) submitEdit(w http.ResponseWriter, r *http.Request) {
 	}
 	if result.DSLError != "" {
 		values := formValues(r, entity)
-		tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, pickManagedForm(entity, "object"))
+		tablePartRows := serializeTablePartRowsForEntity(tpRows, entity, pickManagedFormCtx(r.Context(), entity, "object"))
 		refOptions, _ := s.loadInitialRefOptions(r.Context(), entity, values)
 		tpRefOpts2, _ := s.loadInitialTPRefOptions(r.Context(), entity, tablePartRows, values)
 		values["_version"] = r.FormValue("_version")

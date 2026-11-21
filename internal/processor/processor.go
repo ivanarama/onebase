@@ -84,10 +84,11 @@ func (p *Processor) DisplayName(lang string) string {
 	return p.Name
 }
 
-// ManagedForm возвращает первую managed-форму обработки или nil.
+// ManagedForm возвращает первую managed-форму без ролевого условия или nil.
+// HTTP UI выбирает вариант отдельно с пользователем текущего запроса.
 func (p *Processor) ManagedForm() *metadata.FormModule {
 	for _, f := range p.Forms {
-		if f != nil && f.IsManaged() {
+		if f != nil && f.IsManaged() && len(f.Roles) == 0 && len(f.ExceptRoles) == 0 && !f.IncludeAdmin {
 			return f
 		}
 	}
