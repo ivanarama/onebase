@@ -45,6 +45,14 @@ func completion(head string, reviewID, claimID int64) string {
 	return fmt.Sprintf("<!-- pp:head-reviewed %s review-comment=%d claim=%d epoch-sha256=%s -->", head, reviewID, claimID, epoch)
 }
 
+// reviewedSource supplies the complete positive parent proof expected by the
+// selector; an orphan completion marker alone is not a reviewed source.
+func reviewedSource(item apiPull, head string, reviewID, claimID, completionID int64) apiPull {
+	item = addComment(item, reviewID, fmt.Sprintf("Reviewed-SHA: %s\nOutcome-Label: reviewed\n<!-- pp:review pp:tail=0 -->", head))
+	item = addComment(item, claimID, fmt.Sprintf("<!-- pp:review-claim %s review-comment=%d epoch-sha256=%s -->", head, reviewID, epoch))
+	return addComment(item, completionID, completion(head, reviewID, claimID))
+}
+
 func syncIntent(from string, reviewID, claimID, completionID int64) string {
 	return fmt.Sprintf("<!-- pp:base-sync-intent from=%s base=%s review-comment=%d claim=%d completion=%d ship-event=LE_test previous=none -->",
 		from, headB, reviewID, claimID, completionID)
@@ -341,7 +349,7 @@ func TestBaseSyncV1AbortDoesNotHideAnotherOpenIntentOnSamePR(t *testing.T) {
 func TestBaseSyncV1AbortCannotOverrideCompletedIntent(t *testing.T) {
 	item := testPR(1464, headC, "reviewed", "ship")
 	item.HeadParents = []string{headA, headB}
-	item = addComment(item, 20, completion(headA, 10, 15))
+	item = reviewedSource(item, headA, 10, 15, 20)
 	item = addComment(item, 30, syncIntent(headA, 10, 15, 20))
 	item = addComment(item, 31, syncDone(30, headA, headC))
 	item = addComment(item, 35, syncV1Abort(30, headC))
@@ -451,7 +459,7 @@ func TestCompletedIntegrationReviewKeepsBarrierUntilMerge(t *testing.T) {
 
 func TestLegacyReShipIsVisibleAsPriorityValidationCandidate(t *testing.T) {
 	ordinary := testPR(1, headA)
-	legacy := withMergeHead(addComment(testPR(99, headB, "ship"), 30, completion(headA, 20, 25)))
+	legacy := withMergeHead(reviewedSource(testPR(99, headB, "ship"), headA, 20, 25, 30))
 
 	got := analyze([]apiPull{ordinary, legacy}, "ivanarama")
 	if len(got.ReviewCandidates) != 1 || got.ReviewCandidates[0].Number != 99 ||
@@ -644,7 +652,7 @@ func TestReviewedFixRoundStaysOrdinaryMergeCandidate(t *testing.T) {
 }
 
 func TestLegacyMergeHeadWithCurrentProofOwnsTheLane(t *testing.T) {
-	item := withMergeHead(addComment(testPR(99, headB, "ship", "reviewed"), 30, completion(headA, 20, 25)))
+	item := withMergeHead(reviewedSource(testPR(99, headB, "ship", "reviewed"), headA, 20, 25, 30))
 	item = addComment(item, 31, completion(headB, 40, 45))
 
 	got := analyze([]apiPull{item}, "ivanarama")
@@ -693,8 +701,8 @@ func TestBaseAdvanceBetweenIntentAndDoneIsVisible(t *testing.T) {
 }
 
 func TestSingleFlightExposesOnlyFirstIntegrationReview(t *testing.T) {
-	first := withMergeHead(addComment(testPR(20, headB, "ship"), 30, completion(headA, 20, 25)))
-	second := withMergeHead(addComment(testPR(30, headB, "ship"), 31, completion(headA, 21, 26)))
+	first := withMergeHead(reviewedSource(testPR(20, headB, "ship"), headA, 20, 25, 30))
+	second := withMergeHead(reviewedSource(testPR(30, headB, "ship"), headA, 21, 26, 31))
 	ordinary := testPR(1, headA)
 
 	got := analyze([]apiPull{second, ordinary, first}, "ivanarama")
