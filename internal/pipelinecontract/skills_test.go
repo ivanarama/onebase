@@ -1523,7 +1523,8 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"исключи `hold` и `needs-decision`",
 		"Перед **каждым внешним изменением PR**",
 		"push разрешённого конфликта",
-		"на каждом\n   опросе CI",
+		"при возвращении к PR после ожидания CI",
+		"на каждом опросе CI",
 		"непосредственно перед compare-and-merge REST",
 		"issues/<N> --jq '[.labels[].name]'",
 		"`ship` присутствует",
@@ -1537,7 +1538,7 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"После подтверждённого done метку `ship` **не\n     снимай**",
 		"Подтверждённый push меняет HEAD",
 		"Ждать CI и мержить новый SHA без\n     интеграционного REVIEW нельзя",
-		"непосредственно перед мутацией ещё раз выполни полный label+SHA-гейт",
+		"Перед мутацией повтори полный label+SHA-гейт",
 		"последний полный гейт",
 		"timeline?per_page=100",
 		"{id,node_id,created_at,updated_at,author:.user.login,body}",
@@ -2060,6 +2061,33 @@ func TestTailMergedWindowUsesNativeDateArithmeticOnEveryWorkerOS(t *testing.T) {
 	)
 }
 
+func TestTailDurableQueueUsesThePairedCLIAndTheExistingItemProtocol(t *testing.T) {
+	var config map[string]any
+	if err := json.Unmarshal([]byte(repositoryFile(t, "pipelinectl.json")), &config); err != nil {
+		t.Fatal(err)
+	}
+	if enabled, exists := config["tail_durable_drain"]; exists && enabled != false {
+		t.Fatal("the repository default must leave durable drain disabled until paired rollout")
+	}
+
+	tail := skill(t, "tail-issues")
+	requireCompactInOrder(t, tail,
+		"`\"tail_durable_drain\": true`",
+		"pp pipelinectl --config <absolute-config> tail-discover --max-pages 5",
+		"pp pipelinectl --config <absolute-config> tail-next",
+		"Переход к поиску за 14 дней при ошибке запрещён",
+		"**Окно совместимости.**",
+		"gh pr list --state merged --base main",
+		"**Общее чтение proof для обоих источников.**",
+		"pp pipelinectl --config <absolute-config> tail-gate --number M --version <version>",
+		"актуальность находки на свежем `main`",
+		"pp pipelinectl --config <absolute-config> tail-create --number M --version <version> --item N --context-file <absolute-path>",
+		"отдельный `gh issue create` запрещён",
+		"pp:tail-done review-comment=<id> review-updated=<RFC3339>",
+		"повтори `tail-gate --number M --version <version>`",
+	)
+}
+
 func TestTailLegacyTitleSeparatorDoesNotStopOtherPRs(t *testing.T) {
 	tail := skill(t, "tail-issues")
 	review := skill(t, "review-queue")
@@ -2092,6 +2120,26 @@ func TestMaintenanceGuideDocumentsEquivalentWindowsAndMacOSPreparation(t *testin
 	)
 }
 
+func TestMergeYieldsWorkerOnlyWithBoundCIWaitCommand(t *testing.T) {
+	merge := skill(t, "merge-shepherd")
+	requireCompactInOrder(t, merge,
+		"Обычное подписанное назначение Native с `ci_wait_command`",
+		"`merge-ci-wait observe`",
+		"При `waiting` или `unknown`",
+		"сразу закончи `ИТОГ: ПУСТО`",
+		"`ci_current_attempt` из нового подписанного диагностического назначения",
+		"При `success` с `reelect=true` закончи `ИТОГ: ПУСТО`",
+		"Перед мутацией повтори полный label+SHA-гейт",
+		"`merge-ci-wait claim`",
+		"`state=claimed` с `send_allowed=true`",
+		"`gh run rerun <run_id> --failed --repo ivanarama/onebase`",
+		"При `timeout` перед эскалацией перечитай точный запуск",
+		"При `success` снова проверь назначенный PR",
+		"Ручной запуск или прежнее назначение без `ci_wait_command`",
+		"один раз перезапусти весь workflow командой `gh run rerun <id>`",
+	)
+}
+
 func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
 	requireAll(t, docs,
@@ -2109,7 +2157,8 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"пастух обычно снимает\nустаревший `ship`",
 		"`BEHIND` → перед `update-branch` создаётся неизменяемый\n  `pp:base-sync-intent`",
 		"После `422` HEAD перечитывается",
-		"полный label+SHA-гейт непосредственно перед единственным\n  перезапуском",
+		"метки и SHA, однократно резервирует повтор",
+		"gh run rerun <id> --failed",
 		"Валидна только первая completion-ссылка на\nэтот id",
 		"Перед worktree точный `git ls-remote` и затем fetch\n`refs/heads/<headRefName>` из выбранного источника обязаны вернуть сохранённый\nSHA",
 		"REST-запросом compare-and-merge с полем\n`sha=<проверенный HEAD>`",

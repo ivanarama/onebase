@@ -61,12 +61,14 @@ func sameFullReviewComments(comments []apiComment, snapshot map[string]any) bool
 		}
 		id, err := strconv.ParseInt(routingText(node["fullDatabaseId"]), 10, 64)
 		comment, found := byID[id]
-		updated := node["createdAt"]
-		if node["lastEditedAt"] != nil {
-			updated = node["lastEditedAt"]
+		// updatedAt can differ from the body's edit time on GitHub. Compare
+		// the same nullable edit field from both complete observations.
+		var lastEditedAt any
+		if comment.lastEditedAt != nil {
+			lastEditedAt = *comment.lastEditedAt
 		}
 		if err != nil || !found || comment.Body != node["body"] || comment.CreatedAt != node["createdAt"] ||
-			comment.UpdatedAt != updated || comment.User.Login != routingText(routingObject(node["author"])["login"]) {
+			!reviewrouting.Equal(lastEditedAt, node["lastEditedAt"]) || comment.User.Login != routingText(routingObject(node["author"])["login"]) {
 			return false
 		}
 		delete(byID, id)
