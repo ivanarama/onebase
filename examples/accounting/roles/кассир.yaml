@@ -1,6 +1,7 @@
 name: Кассир
 description: Работа с кассовыми и банковскими документами
 permissions:
+  processors: {}
   catalogs:
     Контрагент: [read]
   documents:
