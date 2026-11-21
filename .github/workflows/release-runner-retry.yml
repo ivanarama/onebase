@@ -1,0 +1,38 @@
+name: Retry unallocated macOS release job
+
+on:
+  workflow_run:
+    workflows: [Release]
+    branches: [main]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  retry:
+    if: >-
+      github.repository == 'ivanarama/onebase' &&
+      github.run_attempt == 1 &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow.path == '.github/workflows/release.yml' &&
+      github.event.workflow_run.run_attempt == 1 &&
+      github.event.workflow_run.conclusion == 'failure'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: release-runner-retry-${{ github.event.workflow_run.id }}
+      cancel-in-progress: false
+    permissions:
+      actions: write
+      checks: read
+      contents: read
+    steps:
+      # workflow_run's github.sha is the trusted default branch snapshot.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Retry only the unallocated job from the first attempt
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/release-runner-retry.py

@@ -140,7 +140,7 @@ func (db *DB) removeQueuedAttachment(ctx context.Context, owner, location string
 		if err != nil {
 			return err
 		}
-		defer root.Close()
+		defer func() { _ = root.Close() }()
 		err = root.Remove(owner + "/" + id.String())
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
