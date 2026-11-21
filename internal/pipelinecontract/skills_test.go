@@ -2030,7 +2030,8 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"orphan `pp-tail-dedupe/<hash>` ref без найденной issue",
 		"Создание exact-source issue — точка невозврата",
 		"не запрещает **только** восстановительный item-done",
-		"единственное исключение из повторного proof-гейта после точки невозврата",
+		"единственное исключение из политики паузы после точки невозврата",
+		"Перед восстановлением заново докажи текущую версию и точный источник issue",
 		"**никогда не\n   повторяй create автоматически**",
 		"параллельный worker не\n   может выдать чужой claim за собственное владение",
 		"refs/heads/pp-tail-dedupe/<dedupe-sha256>",
@@ -2074,8 +2075,11 @@ func TestTailDurableQueueUsesThePairedCLIAndTheExistingItemProtocol(t *testing.T
 		"`\"tail_durable_drain\": true`",
 		"pp pipelinectl --config <absolute-config> tail-discover --max-pages 5",
 		"pp pipelinectl --config <absolute-config> tail-reconcile",
-		"pp pipelinectl --config <absolute-config> tail-next",
 		"Переход к поиску за 14 дней при ошибке запрещён",
+		"из `observations[].recovery[]` только записи с `state=existing-issue`, `exact_source=true` и `restore_ready=true` для PR без ошибки сверки",
+		"pp pipelinectl --config <absolute-config> tail-restore --number M --version <version> --item N --issue J",
+		"`action=tail-restore`, `state=item-done` с теми же PR, пунктом и issue, и `completion_id`",
+		"pp pipelinectl --config <absolute-config> tail-next",
 		"**Окно совместимости.**",
 		"gh pr list --state merged --base main",
 		"**Общее чтение proof для обоих источников.**",
@@ -2091,6 +2095,10 @@ func TestTailDurableQueueUsesThePairedCLIAndTheExistingItemProtocol(t *testing.T
 		"Под `hold` и `no-tail` команда может подтвердить существующую задачу чтением",
 		"Она не создаёт issues, комментарии или refs",
 		"Неполное чтение и неоднозначный результат не дают права повторять создание задачи",
+		"Под `hold`, `no-tail` или `tail-drop` действует тот же точный отбор",
+		"Создание issue, claim, lease, intent, ref и общего `pp:tail-done` в этом вызове запрещено",
+		"Если `restore_ready=false` или команда вернула `active-elsewhere`, отложи пункт до следующей сверки",
+		"Обычный `tail-create` или ручной POST для восстановления недопустим",
 	)
 }
 
