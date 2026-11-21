@@ -1429,6 +1429,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         // controlState — как в обычной ветке: ввод, сделанный пока шёл запрос,
         // эхо отправленного значения не затирает.
         if (data.values) applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
+        if (window.obApplyTabularDocuments) window.obApplyTabularDocuments(data.tabularDocuments);
         if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
         (data.messages || []).forEach((message, index) => flash(message, 'ok', (data.messageIDs || [])[index]));
         if (data.error) flash(data.error, 'err');
@@ -1464,6 +1465,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         window.obManagedApplyTablePartRefOptions(data.tpRefOptions);
         window.applyTableParts(data.tableparts);
         applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
+        if (window.obApplyTabularDocuments) window.obApplyTabularDocuments(data.tabularDocuments);
         applyChoiceList(elementName, data.choiceList);
         applyFormTables(data.formTables);
       }
@@ -1483,6 +1485,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       // Apply the response, including disclosed values, before opening a
       // question. Dismissing it must leave the same valid form as no question.
       if (data.question && !beforePostSnapshot(snapshot)) {
+        if (window.obOpenTabularQuestion && window.obOpenTabularQuestion(data.question, elementName, snapshot.eventName, extraParams, fireFormEvent)) return;
         if (window.obOpenQuestion) window.obOpenQuestion(data.question, elementName);
         return;
       }
@@ -1522,6 +1525,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     }
   }
 
+  if(window.obBindTabularHost)window.obBindTabularHost(fireFormEvent);
   function fireFormEvent(elementName, eventName, extraParams, pickerRequest, beforePostOwner){
 	pickerRequest = pickerRequest || (window.obPickerRequest ? window.obPickerRequest() : null);
 	if (formEventWriteUnknown || manualReconcileRequired) {
