@@ -65,10 +65,14 @@ type formEventResponse struct {
 	// оставалась бы прежней до перезагрузки страницы.
 	ColumnTitles map[string]map[string]string `json:"columnTitles,omitempty"`
 	Messages     []string                     `json:"messages,omitempty"`
+	MessageIDs   []string                     `json:"messageIDs,omitempty"`
 	Error        string                       `json:"error,omitempty"`
 	// Question != nil — обработчик фазы 1 вызвал ПоказатьВопрос: клиент
 	// рисует модал вопроса, ответ возвращается событием Ответ (#1528).
 	Question *questionPayload `json:"question,omitempty"`
+	// Idle — команды обработчиков ожидания (Подключить/ОтключитьОбработчикОжидания):
+	// браузер ставит или снимает таймер тика ОбработкаОжидания.
+	Idle []idleCommand `json:"idle,omitempty"`
 	// Navigation != nil — обработчик вызвал ОткрытьФорму: клиент переходит
 	// по серверно построенному адресу, только если форма не «грязная» (#1557).
 	Navigation *navigationPayload `json:"navigation,omitempty"`
@@ -189,7 +193,7 @@ func (s *Server) saveManagedObject(r *http.Request, entity *metadata.Entity, for
 				expectedVersion = &parsed
 			}
 		}
-		if hookErr = s.runPreSaveFormHooks(r.Context(), entity, obj, &hookMessages); hookErr != nil {
+		if hookErr = s.runPreSaveFormHooks(r.Context(), entity, obj, false, &hookMessages); hookErr != nil {
 			return hookMessages, 0, &managedCloseSaveError{status: http.StatusBadRequest, kind: managedSaveHook, message: hookErr.Error(), messages: hookMessages}
 		}
 	}
@@ -212,7 +216,7 @@ func (s *Server) saveManagedObject(r *http.Request, entity *metadata.Entity, for
 				(posting && !s.rowAllowedContext(txCtx, entity, "post", saveObj.Fields)) {
 				return errSubmitRowAccessDenied
 			}
-			if hookErr = s.runPreSaveFormHooks(txCtx, entity, saveObj, &hookMessages); hookErr != nil {
+			if hookErr = s.runPreSaveFormHooks(txCtx, entity, saveObj, true, &hookMessages); hookErr != nil {
 				return errSubmitFormHook
 			}
 			return nil
@@ -339,6 +343,7 @@ func (s *Server) installFormCloseAccessRecheck(
 }
 
 func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Request, closeInv *formCloseInvocation) {
+	r = withMessageReceipts(r)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
 
@@ -735,6 +740,17 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 			respondJSON(enc, formEventResponse{OK: true})
 			return
 		}
+	} else if eventName == formIdleEvent && elementName == "" {
+		// Тик обработчика ожидания: процедуру называет браузер, а допускается
+		// только подключённая модулем формы (подпись подключения).
+		var idleErr error
+		idleFields := entityFormServiceFieldNames(entity, form)
+		idleProc := r.FormValue(idleFields["_idle_proc"])
+		procName, idleErr = s.resolveFormIdleTick(formIdleLogin(r), "entity:"+entity.Name, form, idleProc, r.FormValue(idleFields["_idle_token"]))
+		if idleErr != nil {
+			respondJSON(enc, formEventResponse{Error: idleErr.Error(), Idle: []idleCommand{{Proc: strings.TrimSpace(idleProc), Off: true}}})
+			return
+		}
 	} else {
 		var eligibilityErr error
 		procName, eventTarget, _, eligibilityErr = resolveBrowserFormEvent(form, elementName, eventName, false)
@@ -898,7 +914,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 				message = s.errText(r, defaultsErr)
 			}
 			w.WriteHeader(http.StatusBadRequest)
-			respondJSON(enc, formEventResponse{Error: message, Messages: newRes.DSLMessages, Dirty: boolPtr(true)})
+			respondJSON(enc, formEventResponse{Error: message, Messages: newRes.DSLMessages, MessageIDs: messageReceiptIDs(r.Context(), newRes.DSLMessages), Dirty: boolPtr(true)})
 			return
 		}
 	}
@@ -1308,6 +1324,12 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	vars["ПоказатьВопрос"] = questionFn
 	vars["ShowQuestion"] = questionFn
 
+	// Обработчик ожидания: команды уходят в ответ, таймер ставит браузер.
+	var idle []idleCommand
+	for k, v := range s.newFormIdleBuiltins(&idle, formIdleLogin(r), "entity:"+entity.Name, form) {
+		vars[k] = v
+	}
+
 	// Динамический список значений (НачалоВыбора): билтин ДобавитьЗначениеСписка
 	// копит пункты в sink; после Run они уходят в ответ как choiceList, и клиент
 	// заполняет ими <select> элемента ПолеСписка.
@@ -1533,6 +1555,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 			q := question
 			resp.Question = &q
 		}
+		resp.Idle = idle
 		// Обработчик мог записать форму и упасть уже после этого: id всё равно
 		// нужен клиенту, иначе повтор действия создаст второй документ.
 		resp.SavedID = savedFormID(thisObj)
@@ -1550,6 +1573,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		q := question
 		resp.Question = &q
 	}
+	resp.Idle = idle
 	resp.Cancel = postCancelled
 	if navigation != nil {
 		resp.Navigation = navigation
@@ -1971,6 +1995,7 @@ type formEventState struct {
 	TPRefOptions   map[string]map[string][]map[string]any
 	ConditionalCSS string
 	Messages       []string
+	MessageIDs     []string
 	ElementStates  *elementStates
 	ColumnTitles   map[string]map[string]string
 }
@@ -1988,6 +2013,7 @@ func (st formEventState) response(ok bool) formEventResponse {
 		TPRefOptions:   st.TPRefOptions,
 		ConditionalCSS: st.ConditionalCSS,
 		Messages:       st.Messages,
+		MessageIDs:     st.MessageIDs,
 		ElementStates:  st.ElementStates,
 		ColumnTitles:   st.ColumnTitles,
 	}
@@ -2081,7 +2107,7 @@ func adminOnlyElementPaths(form *metadata.FormModule) []string {
 func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metadata.FormModule, entity *metadata.Entity, obj *runtime.Object, rules []metadata.FormCondRule, msgs []string) formEventState {
 	conditionalCSS := formConditionalRulesCSS(rules)
 	if obj == nil {
-		return formEventState{ConditionalCSS: conditionalCSS, Messages: msgs}
+		return formEventState{ConditionalCSS: conditionalCSS, Messages: msgs, MessageIDs: messageReceiptIDs(ctx, msgs)}
 	}
 	fields := serializeFieldsForEntity(obj.Fields, entity)
 	// Маска накладывается ЗДЕСЬ, на пути к клиенту, а не при чтении из БД
@@ -2134,6 +2160,7 @@ func (s *Server) serializeManagedFormEventState(ctx context.Context, form *metad
 		TPRefOptions:   tpRefOptions,
 		ConditionalCSS: conditionalCSS,
 		Messages:       msgs,
+		MessageIDs:     messageReceiptIDs(ctx, msgs),
 		// Условия readonly_when/hidden_when считаются здесь же, где известны
 		// значения ПОСЛЕ обработчика: команда, изменившая состояние объекта,
 		// сразу меняет доступность полей.
@@ -2497,6 +2524,7 @@ func (s *Server) handleProcessorFormEvent(w http.ResponseWriter, r *http.Request
 }
 
 func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Request, closeInv *formCloseInvocation) {
+	r = withMessageReceipts(r)
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	enc := json.NewEncoder(w)
 
@@ -2697,6 +2725,16 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			respondJSON(enc, formEventResponse{OK: true})
 			return
 		}
+	} else if eventName == formIdleEvent && elementName == "" {
+		idleProc, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_idle_proc"))
+		idleToken, _ := processorPostFormText(r, processorServiceFieldName(proc.Params, "_idle_token"))
+		var idleErr error
+		boundProcName, idleErr = s.resolveFormIdleTick(formIdleLogin(r), "processor:"+proc.Name, form, idleProc, idleToken)
+		if idleErr != nil {
+			opStatus = "error"
+			respondJSON(enc, formEventResponse{Error: idleErr.Error(), Idle: []idleCommand{{Proc: strings.TrimSpace(idleProc), Off: true}}})
+			return
+		}
 	} else {
 		var eligibilityErr error
 		boundProcName, eventTarget, executeFallback, eligibilityErr = resolveBrowserFormEvent(form, elementName, eventName, true)
@@ -2820,6 +2858,11 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		vars["ПоказатьВопрос"] = questionFn
 		vars["ShowQuestion"] = questionFn
 
+		var idle []idleCommand
+		for k, v := range s.newFormIdleBuiltins(&idle, formIdleLogin(r), "processor:"+proc.Name, form) {
+			vars[k] = v
+		}
+
 		var choiceItems []choiceListItem
 		choiceFn := newChoiceListBuiltin(&choiceItems)
 		vars["ДобавитьЗначениеСписка"] = choiceFn
@@ -2924,6 +2967,7 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 				q := question
 				resp.Question = &q
 			}
+			resp.Idle = idle
 			resp.Dirty = boolPtr(!formOpenEvent(elementName, eventName) && transientManagedStateDirty(obj, fieldsBefore, tablesBefore))
 			compactFormCloseDelta(&resp, closeInv)
 			respondJSON(enc, resp)
@@ -2936,6 +2980,7 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			q := question
 			resp.Question = &q
 		}
+		resp.Idle = idle
 		if navigation != nil {
 			resp.Navigation = navigation
 		}
@@ -2987,15 +3032,17 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		if err != nil {
 			opStatus = operationStatus(opCtx, err)
 			respondJSON(enc, formEventResponse{
-				OK:       false,
-				Messages: msgs,
-				Error:    interpreter.FormatUserError(err),
+				OK:         false,
+				Messages:   msgs,
+				MessageIDs: messageReceiptIDs(r.Context(), msgs),
+				Error:      interpreter.FormatUserError(err),
 			})
 			return
 		}
 		respondJSON(enc, formEventResponse{
-			OK:       true,
-			Messages: msgs,
+			OK:         true,
+			Messages:   msgs,
+			MessageIDs: messageReceiptIDs(r.Context(), msgs),
 		})
 		return
 	}

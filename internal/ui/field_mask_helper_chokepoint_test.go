@@ -59,6 +59,7 @@ var maskHelperExempt = map[string]maskHelperExemption{
 	"Server.matchRowPredicateResult":       {reason: "RLS: строка нужна для вычисления предиката, наружу идут bool/error"},
 	"Server.rowAllowedID":                  {reason: "RLS: наружу идёт bool"},
 	"Server.rowAllowedUpdate":              {reason: "RLS: наружу идёт bool"},
+	"Server.choiceStyleUserMatches":        {reason: "choice_row_style: реквизит карточки текущего пользователя сравнивается с предопределённым элементом, наружу идёт bool (есть оформление или нет)"},
 	"Server.rowAllowsIDResult":             {reason: "RLS: наружу идут bool/error"},
 	"Server.installFormCloseAccessRecheck": {reason: "финальный RLS-гейт close-intent: строка только решает terminal/redaction и клиенту не отдаётся"},
 	"Server.checkDSLRowAccess":             {reason: "RLS для DSL: наружу идёт ошибка ErrRowAccessDenied"},
@@ -96,7 +97,6 @@ var maskHelperExempt = map[string]maskHelperExemption{
 	"dslRefAttrResolver.preloadIDs":        {reason: "наполняет кэш, значения отдаёт только ResolveRefAttr", maskedBy: "dslRefAttrResolver.ResolveRefAttr"},
 	"Server.restoreUnsubmittedFields":      {reason: "дочитывает неприсланные реквизиты ДЛЯ ЗАПИСИ, к клиенту они идут через сериализацию ответа (#609)", maskedBy: "Server.serializeManagedFormEventState"},
 	"Server.refreshFieldsWrittenByHandler": {reason: "перечитывает записанное обработчиком ДЛЯ ЗАПИСИ, к клиенту — через сериализацию ответа (#609)", maskedBy: "Server.serializeManagedFormEventState"},
-	"Server.managedCloseStateDirty":        {reason: "сравнивает серверное состояние с БД и наружу отдаёт только bool; сами поля идут через сериализацию ответа", maskedBy: "Server.serializeManagedFormEventState"},
 	"Server.saveManagedObject":             {reason: "путь записи: GetByID используется только для RLS-предиката, значения клиенту не возвращаются"},
 
 	// ── Особый случай.
