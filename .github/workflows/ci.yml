@@ -17,6 +17,10 @@ on:
 permissions:
   contents: read
 
+# Every race-plan producer/consumer fingerprints this exact Node runtime.
+env:
+  RACE_NODE_VERSION: '24.22.2'
+
 # Отменять устаревшие прогоны того же ref (QUAL-04): новый push в ту же ветку/PR
 # снимает предыдущий незавершённый прогон, чтобы зависшие/лишние runs не
 # потребляли раннеры бесконечно. По ref, а не глобально, — параллельные ветки
@@ -74,6 +78,9 @@ jobs:
         with:
           go-version-file: '.go-version'
           cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.RACE_NODE_VERSION }}
       - name: Coverage runner public CLI contracts
         run: |
           python3 -m unittest discover -s .github/scripts -p 'test_coverage_test.py'
@@ -106,6 +113,9 @@ jobs:
         with:
           go-version-file: '.go-version'
           cache: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.RACE_NODE_VERSION }}
       # setup-go runs `go env`, which can initialize cache metadata. Assign the
       # fresh private directories only afterward, before restoring our cache.
       - name: Prepare private cache paths
@@ -183,6 +193,11 @@ jobs:
           go-version-file: '.go-version'
           cache: true
 
+      - uses: actions/setup-node@v4
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        with:
+          node-version: ${{ env.RACE_NODE_VERSION }}
+
       - name: Lint runner public CLI contracts
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: python3 .github/scripts/lint_runner_test.py
@@ -190,6 +205,10 @@ jobs:
       - name: CI metadata reuse contracts
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         run: python3 .github/scripts/ci_metadata_test.py
+
+      - name: Release runner retry contracts
+        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        run: python3 .github/scripts/release_runner_retry_test.py
 
       # Raw commit messages can close issues even when the phrase is only an
       # example. This gate also runs for docs-only PRs and PR body edits.
@@ -347,7 +366,8 @@ jobs:
       # просто не открывается (issue #684). Синтаксис — не всё, но именно он
       # отделяет «кнопка работает иначе» от «страница не работает вовсе».
       #
-      # node предустановлен на ubuntu-latest, ставить нечего. Вендоренные бандлы
+      # Node is pinned above together with the race-plan producer and consumers.
+      # Вендоренные бандлы
       # (webassets, rapidoc, third_party) исключены — они не наши.
       - name: JS syntax check
         if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
@@ -792,7 +812,7 @@ jobs:
           CI: '1'
           ONEBASE_BROWSER_ACCEPTANCE: '1'
           TEST_DATABASE_URL: postgres://onebase:onebase@127.0.0.1:5432/onebase_browser_test?sslmode=disable
-        run: go test -count=1 -v ./internal/ui ./internal/launcher -run 'Test(ChoiceFilter(Configurator)?|HiddenCopies|TabsClose|NavigationSettingsPalette|MessagesPopup)BrowserAcceptance$'
+        run: go test -count=1 -v ./internal/ui ./internal/launcher -run 'Test(ChoiceFilter(Configurator)?|HiddenCopies|TabsClose|NavigationSettingsPalette|MessagesPopup|PageEmbeddedServiceLayout)BrowserAcceptance$'
 
       # Без артефактов упавший браузерный тест разбирать нечем: трассировка
       # показывает шаги, снимок — что было на экране в момент падения.
@@ -919,16 +939,20 @@ jobs:
           bootstrap_root="$(cd "$RUNNER_TEMP" && GOTOOLCHAIN=go1.26.3 go env GOROOT)"
           LINT_RUNNER_TEST_BOOTSTRAP_GO="$bootstrap_root/bin/go" LINT_RUNNER_TEST_LINTER="$RUNNER_TEMP/lint-runner-tools/golangci-lint" python3 .github/scripts/lint_runner_driver_test.py
 
-  postgres-integration:
+  postgres-tests:
     needs: [classify]
-    if: ${{ always() && !cancelled() }}
+    if: ${{ always() && !cancelled() && (needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs') }}
     # PostgreSQL 16 client is available in Ubuntu 24.04 repositories.
     # A moving ubuntu-latest can switch to a different PostgreSQL major.
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [packages, ui-1, ui-2, ui-3, ui-4]
     services:
       postgres:
-        image: ${{ (needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs') && 'postgres:16' || '' }}
+        image: postgres:16
         env:
           POSTGRES_USER: onebase
           POSTGRES_PASSWORD: onebase
@@ -943,18 +967,13 @@ jobs:
     env:
       TEST_DATABASE_URL: postgres://onebase:onebase@127.0.0.1:5432/onebase_test?sslmode=disable
     steps:
-      - name: Docs-only success
-        if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
-        run: echo "Documentation diff; full CI steps are unnecessary."
       - uses: actions/checkout@v4
-        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
       - uses: actions/setup-go@v5
-        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
         with:
           go-version-file: '.go-version'
           cache: true
       - name: Install PostgreSQL client (pg_dump/psql для DR-01 round-trip)
-        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        if: ${{ matrix.shard == 'packages' }}
         # Сервис — postgres:16, поэтому и клиент 16: pg_dump старее сервера
         # отказывается снимать дамп. Пакет есть в базовых репозиториях
         # Ubuntu 24.04; версию печатаем для диагностики.
@@ -964,7 +983,7 @@ jobs:
           pg_dump --version
           psql --version
       - name: PostgreSQL integration tests
-        if: ${{ needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs' }}
+        if: ${{ matrix.shard == 'packages' }}
         run: |
           set -euo pipefail
           # Run packages sequentially: tagged suites share the service database
@@ -1026,12 +1045,36 @@ jobs:
           # PostgreSQL-подтесты в обязательном job. Запускаем весь пакет
           # последовательно; -v показывает выполненные диалекты в журнале CI.
           go test -race -count=1 -timeout 15m -v ./internal/api
-          # Run the whole UI package while TEST_DATABASE_URL is present. Every
-          # dbtest.ForEachDialect call therefore executes its PostgreSQL branch,
-          # including a newly added matrix test without maintaining a fragile
-          # test-name allowlist here. The package has no parallel top-level tests,
-          # so its matrix cases can safely share this service database.
-          go test -race -count=1 -timeout 20m ./internal/ui
+      # Each matrix job gets its own PostgreSQL service. All UI suites are
+      # discovered from this checkout and verified against the Go test journal.
+      - uses: actions/setup-node@v4
+        if: ${{ matrix.shard != 'packages' }}
+        with:
+          node-version: ${{ env.RACE_NODE_VERSION }}
+      - name: Run UI shard on SQLite and PostgreSQL
+        if: ${{ matrix.shard != 'packages' }}
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: python3 .github/scripts/test-coverage-shards.py postgres-ui --shard "$SHARD"
+
+  postgres-integration:
+    needs: [classify, postgres-tests]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every PostgreSQL shard
+        env:
+          DOCS: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
+          RESULT: ${{ needs.postgres-tests.result }}
+        run: |
+          if [ "$DOCS" = true ]; then
+            test "$RESULT" = skipped
+          else
+            test "$RESULT" = success
+          fi
+      - name: Docs-only success
+        if: ${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}
+        run: echo "Documentation diff; full CI steps are unnecessary."
 
   vuln:
     needs: [classify]
