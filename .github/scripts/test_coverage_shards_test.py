@@ -96,7 +96,7 @@ class ShardCLI(unittest.TestCase):
         tests = [call for call in calls if call[0] == "test" and "-list" not in call]
         self.assertEqual(len(tests), 7)
         self.assertEqual([call[-1] for call in tests], ["github.com/ivantit66/onebase/other"] + [legacy.UI]*4 + [legacy.LAUNCHER]*2)
-        self.assertTrue(all(all(flag in call for flag in ["-race", "-count=1", "-timeout=10m", "-json", "-covermode=atomic"]) for call in tests))
+        self.assertTrue(all(all(flag in call for flag in ["-race", "-count=1", "-timeout=20m", "-json", "-covermode=atomic"]) for call in tests))
         self.assertEqual(sum("-p=2" in call for call in tests), 1)
 
     def test_authoritative_hash_and_source(self):
@@ -167,6 +167,93 @@ class ShardCLI(unittest.TestCase):
                 self.assertFalse((root / "receipt.json").exists())
 
 
+class ContextMismatchCLI(unittest.TestCase):
+    """Exercise the public loader before any shard work with real source/runtime identity."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory(prefix="coverage-context-public-")
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.env = dict(os.environ)
+        subprocess.run(["git", "init", "-q"], cwd=self.root, check=True, capture_output=True)
+        (self.root / "source.txt").write_text("fixture\n")
+        for args in (("add", "."), ("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test",
+                                    "commit", "-qm", "fixture")):
+            subprocess.run(["git", *args], cwd=self.root, check=True, capture_output=True)
+
+        def output(*args):
+            return subprocess.check_output(args, cwd=self.root, text=True).strip()
+        head, tree = output("git", "rev-parse", "HEAD", "HEAD^{tree}").splitlines()
+        self.current = dict(checkout=head, tree=tree, engine_sha256=digest(RUNNER.with_name("test-coverage.py")),
+                            runner_sha256=digest(RUNNER), node_version=output("node", "--version"),
+                            go=json.loads(output("go", "env", "-json", "GOVERSION", "GOOS", "GOARCH", "CGO_ENABLED")))
+        series = {}
+        for label, package, count in (("ui", legacy.UI, 4), ("launcher", legacy.LAUNCHER, 2)):
+            names = ["Test" + name for name in ("Alpha", "Bravo", "Charlie", "Delta")]
+            series[label] = dict(package=package, names=names, groups=[names[i::count] for i in range(count)])
+        self.plan = dict(schema="race-coverage-plan-v1", context=self.current,
+                         packages=["github.com/ivantit66/onebase/other", legacy.UI, legacy.LAUNCHER], series=series)
+
+    def reject(self, expected):
+        self.plan["context"] = expected
+        path = self.root / "plan.json"
+        path.write_text(json.dumps(self.plan), encoding="utf-8")
+        results = []
+        for mode in ("run", "merge"):
+            artifacts = self.root / "not-created"
+            coverage = self.root / "coverage.out"
+            coverage.write_text("stale success\n")
+            args = ["--shard", "ui-1"] if mode == "run" else ["--output", str(coverage)]
+            result = subprocess.run([sys.executable, str(RUNNER), mode, "--plan", str(path),
+                                     "--plan-sha256", digest(path), "--artifacts", str(artifacts), *args],
+                                    cwd=self.root, env=self.env, text=True, capture_output=True, timeout=60)
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("checkout/tree/engine/toolchain differs from plan: ", result.stderr)
+            self.assertFalse(artifacts.exists())
+            if mode == "merge":
+                self.assertFalse(coverage.exists())
+            results.append(result)
+        return results
+
+    def test_each_allowlisted_difference_is_named_and_still_refused(self):
+        replacements = dict(checkout="0"*40, tree="1"*40, engine_sha256="2"*64,
+                            runner_sha256="3"*64, node_version="v0.0.0",
+                            **{"go.GOVERSION": "go0.0.0", "go.GOOS": "fixture",
+                               "go.GOARCH": "fixture", "go.CGO_ENABLED": "0" if self.current["go"]["CGO_ENABLED"] == "1" else "1"})
+        for field, changed in replacements.items():
+            with self.subTest(field=field):
+                expected = json.loads(json.dumps(self.current))
+                target = expected["go"] if field.startswith("go.") else expected
+                key = field.removeprefix("go.")
+                actual = target[key]
+                self.assertNotEqual(changed, actual)
+                target[key] = changed
+                for result in self.reject(expected):
+                    details = json.loads(result.stderr.split("differs from plan: ", 1)[1])
+                    self.assertEqual(details, {field: dict(expected=changed, actual=actual)})
+
+    def test_untrusted_keys_and_invalid_values_are_not_logged(self):
+        for invalid in ("SECRET\ncredential-value", {"credential": "SECRET"}, None):
+            with self.subTest(invalid=invalid):
+                expected = json.loads(json.dumps(self.current))
+                expected["SECRET_FIELD"] = "SECRET_VALUE"
+                expected["node_version"] = invalid
+                expected["go"]["GOVERSION"] = invalid
+                for result in self.reject(expected):
+                    self.assertNotIn("SECRET", result.stderr)
+                    self.assertNotIn("credential", result.stderr)
+                    details = json.loads(result.stderr.split("differs from plan: ", 1)[1])
+                    self.assertEqual(set(details), {"node_version", "go.GOVERSION"})
+                    self.assertTrue(all(value["expected"] == "<invalid>" for value in details.values()))
+
+    def test_unknown_only_difference_remains_fail_closed_without_disclosure(self):
+        expected = json.loads(json.dumps(self.current))
+        expected["SECRET_FIELD"] = "SECRET_VALUE"
+        for result in self.reject(expected):
+            self.assertNotIn("SECRET", result.stderr)
+            self.assertEqual(json.loads(result.stderr.split("differs from plan: ", 1)[1]), {})
+
+
 class WorkflowContract(unittest.TestCase):
     def test_required_build_fails_closed_and_preserves_old_gates(self):
         text = RUNNER.parents[1].joinpath("workflows/ci.yml").read_text(encoding="utf-8")
@@ -209,6 +296,18 @@ class WorkflowContract(unittest.TestCase):
                         expected = (plan == race == ("skipped" if docs == "true" else "success"))
                         self.assertEqual(result.returncode == 0, expected, result.stderr)
 
+    @unittest.skipIf(os.name == "nt", "actual POSIX workflow shell")
+    def test_postgres_gate_rejects_missing_skipped_and_failed_results(self):
+        text = RUNNER.parents[1].joinpath("workflows/ci.yml").read_text(encoding="utf-8")
+        block = text.split("      - name: Require every PostgreSQL shard\n", 1)[1].split("      - name: Docs-only success", 1)[0]
+        shell = textwrap.dedent(block.split("        run: |\n", 1)[1])
+        for docs in ("true", "false"):
+            for result in ("success", "failure", "cancelled", "skipped", ""):
+                with self.subTest(docs=docs, result=result):
+                    proc = subprocess.run(["/bin/sh", "-e", "-c", shell], capture_output=True,
+                                          env=dict(os.environ, DOCS=docs, RESULT=result))
+                    self.assertEqual(proc.returncode == 0, result == ("skipped" if docs == "true" else "success"))
+
 
 @unittest.skipIf(os.environ.get("COVERAGE_SHARDS_SKIP_GO") == "1", "explicit fast Python-only controls")
 class RealGoCLI(unittest.TestCase):
@@ -244,10 +343,9 @@ func FuzzSeed(f *testing.F) { f.Add(1); f.Fuzz(func(t *testing.T, n int) { if Va
 ''')
         self.git("add", ".")
         self.git("-c", "user.name=Fixture", "-c", "user.email=fixture@example.test", "commit", "-qm", "fixture")
-        self.prepare()
 
-    # This class runs only the real end-to-end test, not the synthetic corruption cases.
     def test_actual_go_suites_seeds_subtests_and_atomic_merge(self):
+        self.prepare()
         self.merge()
         for label in ("ui", "launcher"):
             rows = [json.loads(line) for shard in self.results.glob(label + "-*")
@@ -260,6 +358,20 @@ func FuzzSeed(f *testing.F) { f.Add(1); f.Fuzz(func(t *testing.T, n int) { if Va
                                 env=self.env, capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("100.0%", result.stdout)
+
+    def test_postgres_ui_shards_cover_every_suite_and_subtest_once(self):
+        self.invoke("postgres-ui", "--shard", "ui-1", ok=False, env=dict(self.env, TEST_DATABASE_URL=""))
+        ran = []
+        for label in ("ui-1", "ui-2", "ui-3", "ui-4"):
+            root = self.root / label
+            self.invoke("postgres-ui", "--shard", label, "--artifacts", root,
+                        env=dict(self.env, TEST_DATABASE_URL="postgres://fixture"))
+            for line in (root / "tests.jsonl").read_text().splitlines():
+                row = json.loads(line)
+                if row.get("Action") == "run":
+                    ran.append(row["Test"])
+        self.assertCountEqual(ran, ["TestAlpha", "TestAlpha/one", "TestBravo", "TestCharlie",
+                                    "TestNewAutomaticallyDiscovered", "ExampleValue", "FuzzSeed", "FuzzSeed/seed#0"])
 
 
 if __name__ == "__main__":

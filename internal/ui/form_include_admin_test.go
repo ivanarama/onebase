@@ -24,13 +24,22 @@ func TestIncludeAdminExceptOnlyFormsThroughHTTP(t *testing.T) {
 }
 func testIncludeAdminFormsThroughHTTP(t *testing.T, restrict bool) {
 	dir := t.TempDir()
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Error(err)
+		}
+	})
 	write := func(rel, body string) {
 		t.Helper()
-		path := filepath.Join(dir, filepath.FromSlash(rel))
-		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		path := filepath.FromSlash(rel)
+		if err := root.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte(body), 0644); err != nil {
+		if err := root.WriteFile(path, []byte(body), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
