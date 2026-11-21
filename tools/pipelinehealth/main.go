@@ -50,11 +50,13 @@ type apiLabel struct {
 }
 
 type apiComment struct {
-	ID        int64   `json:"id"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
-	User      apiUser `json:"user"`
-	Body      string  `json:"body"`
+	// Only the GraphQL reader sets this; updated_at retains its original value.
+	lastEditedAt *string
+	ID           int64   `json:"id"`
+	CreatedAt    string  `json:"created_at"`
+	UpdatedAt    string  `json:"updated_at"`
+	User         apiUser `json:"user"`
+	Body         string  `json:"body"`
 }
 
 type apiPull struct {
@@ -189,6 +191,7 @@ type finding struct {
 }
 
 type report struct {
+	SourceGraphQLUsage               *sourceGraphQLUsage           `json:"source_graphql_usage,omitempty"`
 	IdentityInventoryVersion         int                           `json:"identity_inventory_version,omitempty"`
 	IdentityAuthority                string                        `json:"identity_authority,omitempty"`
 	IdentityV2Enabled                *bool                         `json:"identity_v2_enabled,omitempty"`
@@ -244,7 +247,26 @@ func main() {
 	routingPositive := flag.String("routing-positive-purpose", "", "with routing-inspect: require positive merge or tail source; read-only")
 	identityInventory := flag.Bool("pr-identity", false, "separate read-only PR identity inventory; no v2 mutation authority")
 	baseRepositoryID := flag.String("base-repository-id", "", "expected GraphQL repository ID (required with offline identity fixtures)")
+	sourceBudget := flag.Int64("source-graphql-budget", 0, "optional finite point allowance for source-graphql-cost-v1")
+	sourceNonce := flag.String("source-graphql-nonce", "", "optional32-character hex caller nonce for source-graphql-cost-v1")
 	flag.Parse()
+	var sourceMeter *sourceGraphQLMeter
+	sourceOptIn := false
+	flag.Visit(func(value *flag.Flag) {
+		if value.Name == "source-graphql-budget" || value.Name == "source-graphql-nonce" {
+			sourceOptIn = true
+		}
+	})
+	if sourceOptIn {
+		if !*asJSON || *transport != "graphql" || *fixture != "" || *issueFixture != "" || *routingInspect != 0 || *identityInventory {
+			fail(fmt.Errorf("source GraphQL cost requires live full GraphQL JSON report, without fixtures or separate inspections"))
+		}
+		var costErr error
+		sourceMeter, costErr = newSourceGraphQLMeter(*sourceBudget, *sourceNonce, *repo, *owner, *contract)
+		if costErr != nil {
+			fail(costErr)
+		}
+	}
 	if *identityInventory && *technicalHandoff {
 		fail(fmt.Errorf("PR identity inventory and technical handoff are separate read-only views"))
 	}
@@ -295,6 +317,7 @@ func main() {
 	switch selectedTransport {
 	case "graphql":
 		client := newGHPipelineGraphQLClient()
+		client.sourceCost = sourceMeter
 		client.strictIdentity = *identityInventory
 		prs, issues, err = loadPipelineInputsGraphQL(client, *repo, *owner, *fixture, *issueFixture)
 	case "rest":
@@ -328,14 +351,16 @@ func main() {
 		err = fmt.Errorf("unknown GitHub transport %q; expected graphql or rest", *transport)
 	}
 	if err != nil {
-		fail(err)
+		sourceGraphQLFailure(sourceMeter, err)
 	}
 	var routing *routingContext
 	if *technicalHandoff {
 		if selectedTransport != "graphql" || *routingMaxAttempts < 1 || *routingMaxAttempts > 16 {
 			fail(fmt.Errorf("technical handoff requires GraphQL and an explicit lifetime limit from1 to16"))
 		}
-		routing = prepareRouting(prs, *repo, *owner, *contract, *fixture, *routingMaxAttempts)
+		client := newGHPipelineGraphQLClient()
+		client.sourceCost = sourceMeter
+		routing = prepareRoutingWithClient(client, prs, *repo, *owner, *contract, *fixture, *routingMaxAttempts)
 	}
 	analysisPulls := prs
 	var identities map[int]inventoryIdentity
@@ -357,6 +382,14 @@ func main() {
 	}
 	checkContract(&result, *contract)
 	result.finish()
+	if sourceMeter != nil {
+		complete := routing == nil || routing.complete && routing.readersErr == nil && routing.positiveReadersErr == nil
+		usage := sourceMeter.receipt(complete)
+		if !usage.Complete {
+			sourceGraphQLFailure(sourceMeter, fmt.Errorf("full source GraphQL cost proof is incomplete: %s", usage.Reason))
+		}
+		result.SourceGraphQLUsage = &usage
+	}
 
 	if *asJSON {
 		encoder := json.NewEncoder(os.Stdout)
@@ -552,6 +585,9 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 			return pr.Comments[i].CreatedAt < pr.Comments[j].CreatedAt
 		})
 		labels := labelSet(pr.Labels)
+		if labels["manual"] {
+			continue
+		}
 		depth := reviewDepth(pr.Comments, owner)
 		priority, prioritySource := queuePriority(labels, pr.CreatedAt, now)
 		item := candidate{Number: pr.Number, Title: pr.Title, URL: pr.HTMLURL, Head: pr.Head.SHA, Depth: depth, Stage: "review", Priority: priority, PrioritySource: prioritySource, UpdatedAt: pr.UpdatedAt}
@@ -569,9 +605,12 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 			continue
 		}
 		currentCompletions, latestCompletion, latestOverride := currentProtocolState(pr.Comments, owner, pr.Head.SHA)
-		legacySourceCompletions := 0
+		legacySourceReviewed := false
 		if headIsBaseSyncMerge(pr) {
-			legacySourceCompletions, _, _ = currentProtocolState(pr.Comments, owner, pr.HeadParents[0])
+			// Completion markers include negative outcomes and incomplete publications.
+			// Only a complete positive transaction proves the content source.
+			sourceReview := reviewPairFor(pr.Comments, owner, pr.HeadParents[0])
+			legacySourceReviewed = sourceReview != nil && sourceReview.State == reviewPairConsistent
 		}
 		carryDone, carryIntentOpen, v1AbortCurrent, baseAdvanced, protocolHistory, integrationAt := baseSyncRESTState(pr.Comments, owner, pr.Head.SHA, pr.HeadParents)
 		// Reopening a parked review requires a completed proof of this HEAD.
@@ -660,7 +699,7 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 				// independent mutation gate still proves review, ship and CI.
 				item.Stage = "merge"
 				result.MergeCandidates = append(result.MergeCandidates, item)
-			case depth > currentCompletions && headIsBaseSyncMerge(pr) && legacySourceCompletions == 0:
+			case depth > currentCompletions && headIsBaseSyncMerge(pr) && !legacySourceReviewed:
 				// A legacy integration review cannot reconstruct the first parent's
 				// content proof. Do not grant this PR single-flight ownership only to
 				// have the independent GraphQL gate reject it on every retry.
@@ -714,7 +753,7 @@ func analyzeWithRouting(prs []apiPull, owner string, routing *routingContext) re
 			result.HumanWaiting = append(result.HumanWaiting, item)
 		case labels["changes-requested"] && !overrideOpen:
 			result.FixCandidates = append(result.FixCandidates, item)
-		case depth > currentCompletions && headIsBaseSyncMerge(pr) && legacySourceCompletions == 0 && !carryDone && !v1AbortCurrent && !pr.FullCurrentReview:
+		case depth > currentCompletions && headIsBaseSyncMerge(pr) && !legacySourceReviewed && !carryDone && !v1AbortCurrent && !pr.FullCurrentReview && !overrideOpen:
 			// A completed review of this HEAD is not enough to turn an earlier
 			// needs-decision review of a different SHA into source proof. Show the
 			// recovery before asking for ship; otherwise the owner is invited into
@@ -1209,6 +1248,9 @@ func needsHeadParents(pr apiPull, owner string) bool {
 		return false
 	}
 	labels := labelSet(pr.Labels)
+	if labels["manual"] {
+		return false
+	}
 	if labels["ship"] || abortMarkerWantsHeadParents(pr, owner) {
 		return true
 	}

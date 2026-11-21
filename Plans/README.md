@@ -464,7 +464,7 @@
 
 | № | Файл | Фича | Эстимейт | Статус |
 |---|---|---|---|---|
-| 162 | [162-processor-permissions-fail-closed.md](162-processor-permissions-fail-closed.md) | Явные права на обработки: переходный lint и compatibility mode, затем fail-closed для отсутствующего `permissions.processors` (#1191) | ~3–4 дня в нескольких релизах | 📋 Проектирование |
+| 162 | [162-processor-permissions-fail-closed.md](162-processor-permissions-fail-closed.md) | Явные права на обработки: немедленный fail-closed по решению владельца 17.11.2026; редактор режима остаётся в #2406 (#1191) | Без межрелизной отсрочки; B отдельно | 🔄 Реализация |
 
 ### Направление Т — надёжность конвейера сопровождения
 

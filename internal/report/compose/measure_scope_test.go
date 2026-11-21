@@ -8,13 +8,13 @@ import (
 
 func scopeFixture() ([]Row, report.Composition) {
 	return []Row{
-		{"Бригада": "Б", "Мастер": "М", "Тип": "Т", "Период": "P", "Смен": decimal.NewFromInt(1), "Сумма": decimal.NewFromInt(10)},
-		{"Бригада": "Б", "Мастер": "М", "Тип": "Т", "Период": "P", "Смен": decimal.Zero, "Сумма": decimal.NewFromInt(20)},
-	}, report.Composition{
-		Groupings: []string{"Бригада", "Мастер", "Тип"}, Detail: true,
-		Measures: []report.Measure{{Field: "Смен", Agg: "sum", Scope: []string{report.MeasureScopeGrand}}, {Field: "Сумма", Agg: "sum"}},
-		Totals:   report.Totals{Grand: true, Subtotals: true},
-	}
+			{"Бригада": "Б", "Мастер": "М", "Тип": "Т", "Период": "P", "Смен": decimal.NewFromInt(1), "Сумма": decimal.NewFromInt(10)},
+			{"Бригада": "Б", "Мастер": "М", "Тип": "Т", "Период": "P", "Смен": decimal.Zero, "Сумма": decimal.NewFromInt(20)},
+		}, report.Composition{
+			Groupings: []string{"Бригада", "Мастер", "Тип"}, Detail: true,
+			Measures: []report.Measure{{Field: "Смен", Agg: "sum", Scope: []string{report.MeasureScopeGrand}}, {Field: "Сумма", Agg: "sum"}},
+			Totals:   report.Totals{Grand: true, Subtotals: true},
+		}
 }
 
 func TestMeasureScopeGrandOnly(t *testing.T) {
