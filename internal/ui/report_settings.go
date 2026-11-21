@@ -512,6 +512,9 @@ func reportRunURLAfterSettingsSave(name string, params []reportpkg.Param, r *htt
 	// reportParamValuesFromRequest подставил бы туда умолчание: очищенное поле и
 	// снятая галка возвращались бы сразу после сохранения настроек.
 	for _, p := range params {
+		if p.Context != nil {
+			continue
+		}
 		if val, ok := reportParamRequestValue(r, p); ok {
 			q.Set(p.Name, val)
 		}

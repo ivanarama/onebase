@@ -38,13 +38,14 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 	chartSource := r.FormValue("chart_source")
 
 	type saveParam struct {
-		Name      string            `yaml:"name"`
-		Type      string            `yaml:"type"`
-		Label     string            `yaml:"label,omitempty"`
-		Labels    map[string]string `yaml:"labels,omitempty"`
-		Default   *string           `yaml:"default,omitempty"`
-		Options   *[]string         `yaml:"options,omitempty"`
-		PeriodEnd *bool             `yaml:"period_end,omitempty"`
+		Name      string               `yaml:"name"`
+		Type      string               `yaml:"type"`
+		Label     string               `yaml:"label,omitempty"`
+		Labels    map[string]string    `yaml:"labels,omitempty"`
+		Default   *string              `yaml:"default,omitempty"`
+		Options   *[]string            `yaml:"options,omitempty"`
+		PeriodEnd *bool                `yaml:"period_end,omitempty"`
+		Context   *report.ParamContext `yaml:"context,omitempty"`
 	}
 	type saveReport struct {
 		Name        string              `yaml:"name"`
@@ -107,15 +108,41 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 			return nil, err
 		}
 		byName := make(map[string]saveParam, len(existing.Params))
+		contextByName := make(map[string]saveParam)
 		for _, p := range existing.Params {
 			byName[p.Name] = p
+			if p.Context != nil {
+				key := strings.ToLower(p.Name)
+				if _, duplicate := contextByName[key]; duplicate {
+					return nil, fmt.Errorf("ambiguous context parameter identity")
+				}
+				contextByName[key] = p
+			}
 		}
 		params := append([]saveParam(nil), newParams...)
+		// Context is not a form field: only the existing trusted definition may
+		// supply it. Losing/renaming/changing its type must never downgrade it to
+		// an editable parameter, even when the native editor lacks a selector.
+		newByName := make(map[string]saveParam, len(params))
+		for _, p := range params {
+			key := strings.ToLower(p.Name)
+			if _, duplicate := newByName[key]; duplicate && len(contextByName) > 0 {
+				return nil, fmt.Errorf("duplicate report parameter identity")
+			}
+			newByName[key] = p
+		}
+		for key, previous := range contextByName {
+			current, present := newByName[key]
+			if !present || current.Type != previous.Type {
+				return nil, fmt.Errorf("cannot remove, rename or change type of server context parameter %s in the form editor", previous.Name)
+			}
+		}
 		for i := range params {
 			previous := byName[params[i].Name]
 			params[i].Default = previous.Default
 			params[i].Options = previous.Options
 			params[i].PeriodEnd = previous.PeriodEnd
+			params[i].Context = contextByName[strings.ToLower(params[i].Name)].Context
 		}
 		if err := setYAMLMapField(doc, "query", query); err != nil {
 			return nil, err
@@ -229,7 +256,7 @@ func (h *handler) configuratorSaveReport(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Save chart .rep.os source if provided
-	if chartSource != "" && b.ConfigSource == "file" {
+	if saveErr == nil && chartSource != "" && b.ConfigSource == "file" {
 		saveErr = h.writeConfigFileRaw(r.Context(), b, "src/"+repName+".rep.os", []byte(chartSource))
 	}
 	data := h.loadCfgData(r.Context(), b, "tree")
