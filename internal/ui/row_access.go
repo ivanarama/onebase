@@ -565,7 +565,7 @@ func (s *Server) compileDSLQueryWithRowAccess(ctx context.Context, text string, 
 		return query.Result{}, err
 	}
 	if denied := s.deniedQuerySource(ctx, res.Sources); denied != "" {
-		return query.Result{}, fmt.Errorf("нет доступа к объекту: %s", denied)
+		return query.Result{}, &querySourceAccessDenied{source: denied}
 	}
 	return res, nil
 }

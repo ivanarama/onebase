@@ -251,6 +251,13 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		}
 		queryValues[p.Name] = v
 	}
+	if rep.ResultProc != "" && strings.TrimSpace(rep.Query) == "" {
+		if err := s.runTabularReport(w, r.WithContext(opCtx), rep, queryValues, nil); err != nil {
+			opStatus = "error"
+			http.Error(w, s.errText(r, err), reportResultErrorStatus(err))
+		}
+		return
+	}
 	compiled, err := s.compileQueryWithRowAccess(opCtx, rep.Query, queryValues)
 	reportParams := s.buildReportParams(opCtx, s.resolveLang(r), rep.Params, paramValues)
 	if err != nil {
@@ -335,6 +342,20 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 			"ActivePresetID":     rs.ActivePresetID,
 			"ActivePreset":       activePreset,
 		})
+		return
+	}
+	if rep.ResultProc != "" {
+		if truncated {
+			// A module may derive totals, documents and drilldowns from its input.
+			// Never publish a complete-looking snapshot built from cropped rows.
+			opStatus = "limited"
+			http.Error(w, s.tr(s.resolveLang(r), "Табличный документ не сформирован: входной запрос превысил report_max_rows. Уточните параметры отчёта."), http.StatusUnprocessableEntity)
+			return
+		}
+		if err := s.runTabularReport(w, r.WithContext(opCtx), rep, queryValues, rows); err != nil {
+			opStatus = "error"
+			http.Error(w, s.errText(r, err), reportResultErrorStatus(err))
+		}
 		return
 	}
 	detailLinkCol := ""
