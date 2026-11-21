@@ -85,6 +85,7 @@ type Config struct {
 }
 
 type Server struct {
+	tabularResults         tabularResultStore
 	reg                    *runtime.Registry
 	store                  *storage.DB
 	interp                 *interpreter.Interpreter
@@ -430,6 +431,8 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/stages", s.stagesReport)
 	r.Get("/ui/stages/{entity}", s.stagesReport)
 	r.Get("/ui/report/{name}", s.reportForm)
+	r.Get("/ui/tabular/{token}", s.tabularView)
+	r.Get("/ui/tabular/{token}/{format}", s.tabularView)
 	r.Post("/ui/report/{name}", s.reportRun)
 	r.Post("/ui/report/{name}/settings/save", s.reportSettingsSave)
 	r.Post("/ui/report/{name}/settings/delete", s.reportPresetDelete)

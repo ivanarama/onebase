@@ -117,6 +117,11 @@ type yamlElement struct {
 	Choice        bool              `yaml:"choice,omitempty"`
 	Width         int               `yaml:"width,omitempty"`
 	Height        int               `yaml:"height,omitempty"`
+
+	TabularProgress  string `yaml:"tabular_progress,omitempty"`
+	TabularPlainRows bool   `yaml:"tabular_plain_rows,omitempty"`
+	TabularCompact   bool   `yaml:"tabular_compact,omitempty"`
+
 	Hint          string            `yaml:"hint,omitempty"`
 	Mask          string            `yaml:"mask,omitempty"`
 	Events        map[string]string `yaml:"events,omitempty"`
@@ -265,8 +270,13 @@ func elementToYAML(el *IRElement) yamlElement {
 		Choice:        el.Choice,
 		Width:         el.Width,
 		Height:        el.Height,
-		Hint:          el.Hint,
-		Mask:          el.Mask,
+
+		TabularProgress:  el.TabularProgress,
+		TabularPlainRows: el.TabularPlainRows,
+		TabularCompact:   el.TabularCompact,
+
+		Hint: el.Hint,
+		Mask: el.Mask,
 	}
 	if len(el.Events) > 0 {
 		out.Events = el.Events

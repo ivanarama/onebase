@@ -1347,13 +1347,16 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     try {
       var closeSource = freshCloseIntentID();
       programmaticCloseSource = {token: closeSource, revision: snapshot.editRevision};
+      var headers = { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', 'X-OneBase-Conceal-Context': form && form.getAttribute ? form.getAttribute('data-ob-conceal-context') || '' : '', 'X-OneBase-Form-Close-Source': closeSource };
+      if (snapshot.tabularProgress) headers.Accept = 'application/x-ndjson';
       const res = await fetch(URL, {
         method: 'POST',
         body: body,
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8', 'X-OneBase-Conceal-Context': form && form.getAttribute ? form.getAttribute('data-ob-conceal-context') || '' : '', 'X-OneBase-Form-Close-Source': closeSource },
+        headers: headers,
         credentials: 'same-origin'
       });
-      const data = await res.json();
+      const data = window.obReadTabularFormResponse && snapshot.tabularProgress
+        ? await window.obReadTabularFormResponse(res, snapshot.tabularProgress) : await res.json();
       if (snapshot.pickerRequest && snapshot.pickerRequest.search && !window.obPickerRequestCurrent(snapshot.pickerRequest)) return;
 	  // A JSON proxy/error page is not a trusted application envelope. `ok` is
 	  // mandatory in every formEventResponse, including server-side failures.
@@ -1429,6 +1432,9 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         // controlState — как в обычной ветке: ввод, сделанный пока шёл запрос,
         // эхо отправленного значения не затирает.
         if (data.values) applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
+        if (window.obApplyTabularDocuments && (!snapshot.tabularProgress || (res.ok && data.ok && !data.error && !data.cancel))) {
+          window.obApplyTabularDocuments(data.tabularDocuments, snapshot.tabularProgress);
+        }
         if (window.obApplyConcealed) window.obApplyConcealed(data.revealed, form, data.values || {});
         (data.messages || []).forEach((message, index) => flash(message, 'ok', (data.messageIDs || [])[index]));
         if (data.error) flash(data.error, 'err');
@@ -1464,6 +1470,9 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
         window.obManagedApplyTablePartRefOptions(data.tpRefOptions);
         window.applyTableParts(data.tableparts);
         applyValues(data.values, data.refOptions, snapshot.body, snapshot.controlState);
+        if (window.obApplyTabularDocuments && (!snapshot.tabularProgress || (res.ok && data.ok && !data.error && !data.cancel))) {
+          window.obApplyTabularDocuments(data.tabularDocuments, snapshot.tabularProgress);
+        }
         applyChoiceList(elementName, data.choiceList);
         applyFormTables(data.formTables);
       }
@@ -1483,6 +1492,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
       // Apply the response, including disclosed values, before opening a
       // question. Dismissing it must leave the same valid form as no question.
       if (data.question && !beforePostSnapshot(snapshot)) {
+        if (window.obOpenTabularQuestion && window.obOpenTabularQuestion(data.question, elementName, snapshot.eventName, extraParams, fireFormEvent)) return;
         if (window.obOpenQuestion) window.obOpenQuestion(data.question, elementName);
         return;
       }
@@ -1522,6 +1532,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
     }
   }
 
+  if(window.obBindTabularHost)window.obBindTabularHost(fireFormEvent);
   function fireFormEvent(elementName, eventName, extraParams, pickerRequest, beforePostOwner){
 	pickerRequest = pickerRequest || (window.obPickerRequest ? window.obPickerRequest() : null);
 	if (formEventWriteUnknown || manualReconcileRequired) {
@@ -1564,6 +1575,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 		return Promise.resolve();
 	  }
 	}
+	var tabularProgress = capturedEvent === 'Нажатие' && window.obBeginTabularProgress ? window.obBeginTabularProgress(capturedElement) : null;
 	var runEvent = async function(){
 	  var snapshot;
 	  if (reloadRequired || formEventWriteUnknown || manualReconcileRequired) return;
@@ -1577,6 +1589,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 		return;
 	  }
 	  if (!snapshot || reloadRequired || formEventWriteUnknown || manualReconcileRequired) return;
+	  snapshot.tabularProgress = tabularProgress;
 	  return dispatchFormEvent(snapshot);
 	};
 	// Серверный поиск диалога не пишет документ: гоняем его вне общей очереди
@@ -1595,6 +1608,7 @@ window.obManagedApplyColumnTitles = obManagedApplyColumnTitles;
 	  queued = queued.finally(function(){ window.obPickerSearchFinished(pickerRequest); });
 	}
 	return queued.finally(function(){
+      if (tabularProgress) tabularProgress.finish();
 	  if (standaloneSearch) return;
 	  formEventPendingCount = Math.max(0, formEventPendingCount - 1);
 	  formEventPending = formEventPendingCount > 0;
