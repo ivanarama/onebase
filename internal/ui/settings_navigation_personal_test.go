@@ -63,10 +63,7 @@ func schoolNavigationFixture(t *testing.T, db *storage.DB, dir string, seed bool
 			t.Fatal(err)
 		}
 		for _, login := range []string{"admin", "alice", "bob"} {
-			user, err := repo.Create(ctx, login, "secret123", login, login == "admin")
-			if err != nil {
-				t.Fatal(err)
-			}
+			user := createSchoolNavigationUser(t, db, login)
 			if login != "admin" {
 				if err := repo.AssignRole(ctx, user.ID, roles[0].ID); err != nil {
 					t.Fatal(err)

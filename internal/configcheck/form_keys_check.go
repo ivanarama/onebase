@@ -105,6 +105,19 @@ func CheckFormKeyPlacement(proj *project.Project) []Issue {
 					fmt.Sprintf("ключ primary игнорируется — акцентный стиль есть только у kind: %s", metadata.FormElementButton),
 					"Уберите ключ или перенесите его на кнопку."))
 			}
+			// rows у многострочного поля ввода — видимых строк textarea.
+			multilineRows := el.Kind == metadata.FormElementField && el.Multiline && !el.ShowCount && el.EmptyText == ""
+			if (el.Rows != 0 || el.ShowCount || el.EmptyText != "") && !multilineRows {
+				if el.Kind != metadata.FormElementTablePart || !formValueTableElement(form, el) {
+					warns = append(warns, formKeyIssue(owner, form, el, "form.vt-output",
+						"ключи rows/show_count/empty_text игнорируются — они действуют у ТабличнаяЧасть над реквизитом формы типа ValueTable (rows — ещё у многострочного ПолеВвода)",
+						"Уберите ключи или покажите таблицу через реквизит формы ValueTable."))
+				} else if el.Rows < 0 || el.Rows > 50 {
+					warns = append(warns, formKeyIssue(owner, form, el, "form.vt-output",
+						fmt.Sprintf("rows: %d вне диапазона 1–50: отрицательное значение не действует, больше 50 — показано 50 строк", el.Rows),
+						"Задайте rows от 1 до 50."))
+				}
+			}
 			// Кнопку «Открыть карточку» рисует только ссылочное поле ввода (#1876).
 			if el.RefCardButton != nil {
 				if el.Kind != metadata.FormElementField || !formRefCardFieldPath(owner, form, el.DataPath) {
@@ -131,6 +144,25 @@ func CheckFormKeyPlacement(proj *project.Project) []Issue {
 		})
 	})
 	return warns
+}
+
+// formValueTableElement — таблица формы показывает реквизит формы типа
+// ValueTable (по table_part или последнему сегменту data_path).
+func formValueTableElement(form *metadata.FormModule, el *metadata.FormElement) bool {
+	if form == nil || el == nil {
+		return false
+	}
+	name := strings.TrimSpace(el.TablePart)
+	if name == "" {
+		path := strings.TrimSpace(el.DataPath)
+		name = path[strings.LastIndex(path, ".")+1:]
+	}
+	for _, attr := range form.Attributes {
+		if attr != nil && strings.EqualFold(attr.Name, name) && strings.EqualFold(attr.TypeRef, "ValueTable") {
+			return true
+		}
+	}
+	return false
 }
 
 // formRefCardFieldPath — рисует ли managed-шаблон у поля с этим data_path

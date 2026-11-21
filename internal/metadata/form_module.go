@@ -352,6 +352,15 @@ type FormElement struct {
 	// такая колонка выглядела бы редактируемой, а редактировать нечего.
 	VirtualColumns []FormVirtualColumn `yaml:"virtual_columns,omitempty"`
 
+	// Rows / ShowCount / EmptyText — таблица значений формы как «выдача»
+	// (история клиента, результат поиска): ровно Rows видимых строк с
+	// закреплённой шапкой и прокруткой внутри, число записей в заголовке,
+	// надпись пустой таблицы. Действуют у ТабличнаяЧасть над реквизитом формы
+	// типа ValueTable.
+	Rows      int    `yaml:"rows,omitempty"`
+	ShowCount bool   `yaml:"show_count,omitempty"`
+	EmptyText string `yaml:"empty_text,omitempty"`
+
 	// DeadlineWarn — поле-срок: значение («ЧЧ:ММ» сегодня или дата со временем)
 	// подсвечивается по часам браузера — меньше DeadlineWarn минут до срока
 	// жёлтым, срок прошёл — красным.
