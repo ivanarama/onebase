@@ -141,6 +141,34 @@ func (s *Server) personalNavigationState(r *http.Request, sub string) (navigatio
 // Keep empty personal folders, and inherited folders emptied by personal moves.
 // Prune inherited ancestors containing only forbidden objects from the palette.
 func (s *Server) projectPersonalNavigation(r *http.Request, tree navigation.Tree, state navigationEditorState, keep map[string]string) navigation.Tree {
+	if tree.Version == 2 {
+		if keep == nil {
+			keep = map[string]string{}
+		}
+		if !state.roleScoped {
+			var empty func([]navigation.Node, int)
+			empty = func(nodes []navigation.Node, index int) {
+				for _, n := range nodes {
+					if n.Target != "" {
+						continue
+					}
+					if len(n.Nodes) == 0 && (index == 0 || strings.HasPrefix(n.ID, "adm:")) {
+						keep[n.ID] = "empty"
+					}
+					empty(n.Nodes, index)
+				}
+			}
+			for index, source := range []navigation.Tree{state.configuration, state.layerBase} {
+				for _, section := range source.Sections {
+					if len(section.Nodes) == 0 && (index == 0 || strings.HasPrefix(section.ID, "adm:")) {
+						keep[section.ID] = "empty"
+					}
+					empty(section.Nodes, index)
+				}
+			}
+		}
+		return s.projectRecursiveNavigation(r, tree, state.roleTargets, true, keep)
+	}
 	baseHash, _ := state.configuration.Hash()
 	treeHash, _ := tree.Hash()
 	semantic := state.Configured || baseHash != treeHash
@@ -196,7 +224,15 @@ func (s *Server) projectPersonalNavigation(r *http.Request, tree navigation.Tree
 // targets remain authoritative in navigation.Diff, never copied from clients.
 func navigationEditorNodes(tree navigation.Tree) map[string]string {
 	result := map[string]string{}
+	var nodes func([]navigation.Node)
+	nodes = func(input []navigation.Node) {
+		for _, n := range input {
+			result[n.ID] = n.Title
+			nodes(n.Nodes)
+		}
+	}
 	for _, section := range tree.Sections {
+		nodes(section.Nodes)
 		result[section.ID] = section.Title
 		for _, item := range section.Items {
 			result[item.ID] = item.Title
@@ -224,8 +260,16 @@ func navigationEditorLocations(tree navigation.Tree) (map[string]navigationEdito
 		nodes[id] = location
 		siblings[location] = append(siblings[location], id)
 	}
+	var children func([]navigation.Node, string)
+	children = func(input []navigation.Node, parent string) {
+		for _, n := range input {
+			add(n.ID, parent, "node")
+			children(n.Nodes, n.ID)
+		}
+	}
 	for _, section := range tree.Sections {
 		add(section.ID, "", "section")
+		children(section.Nodes, section.ID)
 		for _, item := range section.Items {
 			add(item.ID, section.ID, "item")
 		}
@@ -246,6 +290,9 @@ func navigationEditorTrackLocation(nodes map[string]navigationEditorLocation, op
 	switch op.Op {
 	case "add_section", "add_group":
 		id, location.kind = op.ID, strings.TrimPrefix(op.Op, "add_")
+		if location.kind == "group" && (nodes[op.Parent].kind == "node" || hasRecursiveLocations(nodes)) {
+			location.kind = "node"
+		}
 	case "move":
 		if location.kind == "" {
 			return
@@ -267,7 +314,7 @@ func navigationEditorTrackLocation(nodes map[string]navigationEditorLocation, op
 		return
 	}
 	parent, present := nodes[op.Parent]
-	validParent := location.kind == "section" && op.Parent == "" || present && (location.kind == "group" && parent.kind == "section" || location.kind == "item" && (parent.kind == "section" || parent.kind == "group"))
+	validParent := location.kind == "section" && op.Parent == "" || present && (location.kind == "node" && (parent.kind == "section" || parent.kind == "node") || location.kind == "group" && parent.kind == "section" || location.kind == "item" && (parent.kind == "section" || parent.kind == "group"))
 	location.parent = op.Parent
 	if validParent && (op.After == "" || op.After != id && nodes[op.After] == location) {
 		nodes[id] = location
@@ -309,6 +356,9 @@ func personalNavigationAfter(op navigation.Operation, nodes map[string]navigatio
 // contents are all forbidden. Diff needs that known container, but its original
 // ancestors and their metadata must never be added to the public palette.
 func personalNavigationVisibleDelta(state navigationEditorState, desired navigation.Tree, editable map[string]string) (navigation.Delta, error) {
+	if state.Base.Version == 2 {
+		return navigation.RecursiveVisibleDiff(state.layerBase, state.Base, state.Desired, desired, navigation.UserLayer)
+	}
 	baseSections := map[string]navigation.Section{}
 	baseGroups := map[string]navigation.Group{}
 	for _, section := range state.Base.Sections {
@@ -622,4 +672,13 @@ func (s *Server) personalNavigationRedirect(w http.ResponseWriter, r *http.Reque
 		query.Set("subsystem", sub)
 	}
 	http.Redirect(w, r, "/ui/settings/navigation?"+query.Encode(), http.StatusSeeOther)
+}
+
+func hasRecursiveLocations(nodes map[string]navigationEditorLocation) bool {
+	for _, loc := range nodes {
+		if loc.kind == "node" {
+			return true
+		}
+	}
+	return false
 }
