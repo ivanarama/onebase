@@ -149,3 +149,18 @@ func TestFormElementFillsHeight(t *testing.T) {
 		t.Error("мусорная высота не должна включать растяжку")
 	}
 }
+
+// grow — остаток строки рядом с соседями (flex:1 1 0), а не отдельная строка
+// stretch; stretch старше grow, явная ширина при grow не действует.
+func TestFormElementLayoutCSS_Grow(t *testing.T) {
+	css := FormElementLayoutCSS(&FormElement{Grow: true, Width: 200})
+	if !strings.Contains(css, "flex:1 1 0;min-width:0;") || strings.Contains(css, "200px") || strings.Contains(css, "100%") {
+		t.Errorf("grow: %q", css)
+	}
+	if css := FormElementLayoutCSS(&FormElement{Grow: true, HorizontalAlign: "stretch"}); !strings.Contains(css, "flex:1 1 100%") {
+		t.Errorf("stretch обязан быть старше grow: %q", css)
+	}
+	if css := FormElementLayoutCSS(&FormElement{}); css != "" {
+		t.Errorf("без ключей раскладка не задаётся: %q", css)
+	}
+}
