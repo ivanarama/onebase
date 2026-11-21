@@ -89,7 +89,7 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 			continue
 		}
 		wantIf := "${{ always() && !cancelled() }}"
-		if id == "build" {
+		if id == "build" || id == "postgres-integration" {
 			// Unlike the workers, the required aggregate must also reject cancellation.
 			wantIf = "${{ always() }}"
 		}
@@ -108,6 +108,12 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 			if id == "build" && step.Name == "Check commit closing references" {
 				if step.If != "${{ github.event_name == 'pull_request' }}" {
 					t.Fatal("closing-reference gate must run for every PR, including docs-only")
+				}
+				continue
+			}
+			if id == "postgres-integration" && step.Name == "Require every PostgreSQL shard" {
+				if step.If != "" {
+					t.Fatal("required PostgreSQL result gate must always execute")
 				}
 				continue
 			}
@@ -136,9 +142,6 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 			t.Errorf("%s allocates Windows for docs-only or loses the original code runner", id)
 		}
 	}
-	if w.Jobs["postgres-integration"].Services["postgres"].Image != "${{ ("+full+") && 'postgres:16' || '' }}" {
-		t.Fatal("docs-only must not start PostgreSQL; a failed classifier must start it")
-	}
 	classify := w.Jobs["classify"]
 	if classify.Outputs["mode"] != "${{ steps.diff.outputs.mode }}" || len(classify.Steps) != 4 ||
 		classify.Steps[0].Uses != "actions/checkout@v4" || classify.Steps[0].With["fetch-depth"] != "0" {
@@ -148,6 +151,37 @@ func TestCIDocsRequiredStatusesAndFallback(t *testing.T) {
 	if step.ID != "diff" || step.Env["BASE_SHA"] != "${{ github.event.pull_request.base.sha }}" ||
 		step.Env["HEAD_SHA"] != "${{ github.event.pull_request.head.sha }}" || step.Env["EVENT_NAME"] != "${{ github.event_name }}" {
 		t.Fatal("classification must use immutable event SHAs, not movable refs")
+	}
+}
+
+func TestCIPostgresMatrix(t *testing.T) {
+	w := docsWorkflow(t)
+	workers := w.Jobs["postgres-tests"]
+	full := "needs.classify.result != 'success' || needs.classify.outputs.mode != 'docs'"
+	if workers.If != "${{ always() && !cancelled() && ("+full+") }}" ||
+		!slices.Equal(workers.Needs, []string{"classify"}) ||
+		workers.Strategy.FailFast == nil || *workers.Strategy.FailFast ||
+		!slices.Equal(workers.Strategy.Matrix.Shard, []string{"packages", "ui-1", "ui-2", "ui-3", "ui-4"}) ||
+		workers.Services["postgres"].Image != "postgres:16" || workers.Env["TEST_DATABASE_URL"] == "" {
+		t.Fatal("full CI needs every matrix worker with its own PostgreSQL service; docs-only skips the matrix")
+	}
+	packages, ui := false, false
+	for _, step := range workers.Steps {
+		if step.Name == "PostgreSQL integration tests" {
+			packages = step.If == "${{ matrix.shard == 'packages' }}" &&
+				strings.Contains(step.Run, "./internal/backup") && strings.Contains(step.Run, "./internal/api")
+		}
+		if step.Name == "Run UI shard on SQLite and PostgreSQL" {
+			ui = step.If == "${{ matrix.shard != 'packages' }}" && step.Env["SHARD"] == "${{ matrix.shard }}" &&
+				strings.Contains(step.Run, `test-coverage-shards.py postgres-ui --shard "$SHARD"`)
+		}
+	}
+	gate := w.Jobs["postgres-integration"]
+	if !packages || !ui || !slices.Equal(gate.Needs, []string{"classify", "postgres-tests"}) || len(gate.Steps) != 2 ||
+		gate.Steps[0].Name != "Require every PostgreSQL shard" || gate.Steps[0].Env["RESULT"] != "${{ needs.postgres-tests.result }}" ||
+		gate.Steps[0].Env["DOCS"] != "${{ needs.classify.result == 'success' && needs.classify.outputs.mode == 'docs' }}" ||
+		!strings.Contains(gate.Steps[0].Run, `test "$RESULT" = skipped`) || !strings.Contains(gate.Steps[0].Run, `test "$RESULT" = success`) {
+		t.Fatal("postgres-integration must observe the full matrix and reject failed, missing or unexpectedly skipped workers")
 	}
 }
 
