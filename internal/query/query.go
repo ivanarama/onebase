@@ -7139,6 +7139,13 @@ func rewriteScalarFuncs(tokens []tok, dialect string, scopedColTypes map[int]map
 	var out []tok
 	for i := 0; i < len(tokens); i++ {
 		t := tokens[i]
+		if t.kind == tIdent && i+1 < len(tokens) && tokens[i+1].kind == tLParen && isDateDiffFunc(lowerFast(t.val)) {
+			if expanded, end, ok := rewriteDateDiff(tokens, i, dialect, scopedColTypes, qualifiedColTypes, sourceCtx, tokenOffset, params); ok {
+				out = append(out, expanded...)
+				i = end
+				continue
+			}
+		}
 		if t.kind == tIdent && i+1 < len(tokens) && tokens[i+1].kind == tLParen {
 			key := lowerFast(t.val)
 			rw, ok := rewrites[key]
@@ -7218,6 +7225,164 @@ func rewriteScalarFuncs(tokens []tok, dialect string, scopedColTypes map[int]map
 		out = append(out, t)
 	}
 	return out
+}
+
+// РАЗНОСТЬДАТ(Дата1, Дата2, Единица) — как в 1С: Дата2 − Дата1 в целых
+// единицах, причём обе даты сначала усекаются до начала единицы (23:59:59 и
+// 00:00:01 следующего дня — один ДЕНЬ). Календарь — местное время приложения,
+// как у Год()/НачалоДня(): на SQLite доказанный момент переводится через
+// ob_local_datetime, на PostgreSQL зона сессии уже равна зоне приложения.
+var dateDiffUnits = map[string]string{
+	"СЕКУНДА": "second", "SECOND": "second",
+	"МИНУТА": "minute", "MINUTE": "minute",
+	"ЧАС": "hour", "HOUR": "hour",
+	"ДЕНЬ": "day", "DAY": "day",
+	"МЕСЯЦ": "month", "MONTH": "month",
+	"КВАРТАЛ": "quarter", "QUARTER": "quarter",
+	"ГОД": "year", "YEAR": "year",
+}
+
+func isDateDiffFunc(name string) bool { return name == "разностьдат" || name == "datediff" }
+
+// splitTopLevelArgs делит токены аргументов вызова по запятым верхнего уровня.
+func splitTopLevelArgs(tokens []tok) [][]tok {
+	var args [][]tok
+	depth, start := 0, 0
+	for j, t := range tokens {
+		switch t.kind {
+		case tLParen:
+			depth++
+		case tRParen:
+			depth--
+		case tComma:
+			if depth == 0 {
+				args = append(args, tokens[start:j])
+				start = j + 1
+			}
+		}
+	}
+	return append(args, tokens[start:])
+}
+
+// rewriteDateDiff разворачивает РАЗНОСТЬДАТ, начинающийся с tokens[at]. ok=false —
+// вызов не распознан (нет пары скобок, не три аргумента, неизвестная единица):
+// токены остаются как есть и SQL падает явно, а не считает что-то другое.
+func rewriteDateDiff(tokens []tok, at int, dialect string, scopedColTypes map[int]map[string]metadata.FieldType, qualifiedColTypes map[int]map[string]map[string]metadata.FieldType, sourceCtx sourceContext, tokenOffset int, params map[string]any) ([]tok, int, bool) {
+	depth, end := 0, -1
+	for j := at + 1; j < len(tokens) && end < 0; j++ {
+		switch tokens[j].kind {
+		case tLParen:
+			depth++
+		case tRParen:
+			depth--
+			if depth == 0 {
+				end = j
+			}
+		}
+	}
+	if end < 0 {
+		return nil, 0, false
+	}
+	args := splitTopLevelArgs(tokens[at+2 : end])
+	if len(args) != 3 || len(args[2]) != 1 || args[2][0].kind != tIdent {
+		return nil, 0, false
+	}
+	unit, ok := dateDiffUnits[upperFast(args[2][0].val)]
+	if !ok {
+		return nil, 0, false
+	}
+	var scopeColTypes map[string]metadata.FieldType
+	var scopeQualified map[string]map[string]metadata.FieldType
+	if scopeID, ok := sourceCtx.scopeIDAt(tokenOffset + at); ok {
+		scopeColTypes = scopedColTypes[scopeID]
+		scopeQualified = qualifiedColTypes[scopeID]
+	}
+	offset := tokenOffset + at + 2
+	operand := func(raw []tok) []tok {
+		inner := rewriteScalarFuncs(raw, dialect, scopedColTypes, qualifiedColTypes, sourceCtx, offset, params)
+		offset += len(raw) + 1
+		wrapped := tokenizeFragment("(")
+		if dialect == "sqlite" && dateArgumentIsMoment(raw, scopeColTypes, scopeQualified, params) {
+			wrapped = append(wrapped, tokenizeFragment("ob_local_datetime(")...)
+			wrapped = append(wrapped, inner...)
+			wrapped = append(wrapped, tokenizeFragment(")")...)
+		} else {
+			wrapped = append(wrapped, inner...)
+		}
+		return append(wrapped, tokenizeFragment(")")...)
+	}
+	a, b := operand(args[0]), operand(args[1])
+	frag := func(parts ...any) []tok {
+		var out []tok
+		for _, p := range parts {
+			switch v := p.(type) {
+			case string:
+				out = append(out, tokenizeFragment(v)...)
+			case []tok:
+				out = append(out, v...)
+			}
+		}
+		return out
+	}
+	var out []tok
+	if dialect == "sqlite" {
+		// Секунды от начала эпохи у стенных часов, усечённых до единицы.
+		epoch := func(x []tok, format string) []tok {
+			return frag("CAST(strftime('%s', strftime('"+format+"', ", x, ")) AS INTEGER)")
+		}
+		ym := func(x []tok) []tok {
+			return frag("(CAST(strftime('%Y', ", x, ") AS INTEGER) * 12 + CAST(strftime('%m', ", x, ") AS INTEGER) - 1)")
+		}
+		switch unit {
+		case "second":
+			out = frag("(", epoch(b, "%Y-%m-%d %H:%M:%S"), " - ", epoch(a, "%Y-%m-%d %H:%M:%S"), ")")
+		case "minute":
+			out = frag("((", epoch(b, "%Y-%m-%d %H:%M:00"), " - ", epoch(a, "%Y-%m-%d %H:%M:00"), ") / 60)")
+		case "hour":
+			out = frag("((", epoch(b, "%Y-%m-%d %H:00:00"), " - ", epoch(a, "%Y-%m-%d %H:00:00"), ") / 3600)")
+		case "day":
+			out = frag("CAST(julianday(date(", b, ")) - julianday(date(", a, ")) AS INTEGER)")
+		case "month":
+			out = frag("(", ym(b), " - ", ym(a), ")")
+		case "quarter":
+			out = frag("((", ym(b), " / 3) - (", ym(a), " / 3))")
+		case "year":
+			out = frag("(CAST(strftime('%Y', ", b, ") AS INTEGER) - CAST(strftime('%Y', ", a, ") AS INTEGER))")
+		}
+	} else {
+		trunc := func(level string, x []tok) []tok { return frag("date_trunc('"+level+"', ", x, ")") }
+		seconds := func(level string) []tok {
+			return frag("CAST(EXTRACT(EPOCH FROM (", trunc(level, b), " - ", trunc(level, a), ")) AS BIGINT)")
+		}
+		ym := func(x []tok) []tok {
+			return frag("(CAST(EXTRACT(YEAR FROM ", x, ") AS INTEGER) * 12 + CAST(EXTRACT(MONTH FROM ", x, ") AS INTEGER) - 1)")
+		}
+		switch unit {
+		case "second":
+			out = seconds("second")
+		case "minute":
+			out = frag("(", seconds("minute"), " / 60)")
+		case "hour":
+			out = frag("(", seconds("hour"), " / 3600)")
+		case "day":
+			out = frag("(CAST(", trunc("day", b), " AS DATE) - CAST(", trunc("day", a), " AS DATE))")
+		case "month":
+			out = frag("(", ym(b), " - ", ym(a), ")")
+		case "quarter":
+			out = frag("((", ym(b), " / 3) - (", ym(a), " / 3))")
+		case "year":
+			out = frag("(CAST(EXTRACT(YEAR FROM ", b, ") AS INTEGER) - CAST(EXTRACT(YEAR FROM ", a, ") AS INTEGER))")
+		}
+	}
+	// Результат — Число, как в 1С: дальнейшее деление дробное
+	// (РАЗНОСТЬДАТ(…, СЕКУНДА) / 60 — минуты с долями, а не целое деление
+	// SQL). REAL и DOUBLE PRECISION оба приходят float64: целые значения
+	// точны и выводятся без дробной части.
+	numeric := " AS DOUBLE PRECISION)"
+	if dialect == "sqlite" {
+		numeric = " AS REAL)"
+	}
+	return frag("CAST(", out, numeric), end, true
 }
 
 func isCalendarDateFunc(name string) bool {
