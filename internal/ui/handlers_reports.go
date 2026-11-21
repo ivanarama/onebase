@@ -60,7 +60,7 @@ func (s *Server) reportForm(w http.ResponseWriter, r *http.Request) {
 	activePreset := activeReportPreset(presets, activePresetID)
 	// Если у отчёта нет ни параметров, ни вариантов компоновки, ни пользовательских
 	// пресетов — строим сразу. Варианты/пресеты требуют формы с выбором.
-	if len(rep.Params) == 0 && len(rep.Variants) == 0 && len(presets) == 0 {
+	if len(rep.InputParams()) == 0 && len(rep.Variants) == 0 && len(presets) == 0 {
 		s.runReport(w, r, rep, map[string]any{})
 		return
 	}
@@ -124,6 +124,9 @@ func reportParamDefault(p reportpkg.Param, res scheduler.ConstantResolver) (stri
 func reportParamDefaults(params []reportpkg.Param, res scheduler.ConstantResolver) (map[string]any, error) {
 	values := make(map[string]any, len(params))
 	for _, p := range params {
+		if p.Context != nil {
+			continue
+		}
 		val, err := reportParamDefault(p, res)
 		if err != nil {
 			return nil, err
@@ -168,6 +171,9 @@ func reportParamRequestValue(r *http.Request, p reportpkg.Param) (string, bool) 
 func reportParamValuesFromRequest(r *http.Request, rep *reportpkg.Report, res scheduler.ConstantResolver) (map[string]any, error) {
 	paramValues := make(map[string]any, len(rep.Params))
 	for _, p := range rep.Params {
+		if p.Context != nil {
+			continue
+		}
 		val, ok := reportParamRequestValue(r, p)
 		if !ok {
 			d, err := reportParamDefault(p, res)
@@ -209,6 +215,14 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 	opTruncated := false
 	var opAttrs []slog.Attr
 	defer func() { finish(opStatus, opRows, opTruncated, opAttrs...) }()
+	// Bind before every execution path, including result_proc in runtime.
+	var contextErr error
+	paramValues, contextErr = reportpkg.ResolveContextParams(opCtx, rep, paramValues, s.reg, s.store)
+	if contextErr != nil {
+		opStatus = "error"
+		http.Error(w, reportpkg.ContextErrorText(contextErr), http.StatusForbidden)
+		return
+	}
 
 	// Выбранный вариант компоновки (параметр __variant); пусто → основной.
 	variant := r.FormValue("__variant") //nolint:gosec // G120: предел тела ставит вызывающий обработчик; gosec видит только присваивание r.Body в той же функции
@@ -233,6 +247,9 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		queryValues[k] = v
 	}
 	for _, p := range rep.Params {
+		if p.Context != nil {
+			continue
+		}
 		// Числовые параметры констант сохраняют принятый тип и на экране:
 		// строка меняет сравнение на SQLite и не сравнима с числом на PG.
 		if p.Type == "number" {
@@ -560,6 +577,9 @@ type reportParamUI struct {
 func (s *Server) buildReportParams(ctx context.Context, lang string, params []reportpkg.Param, values map[string]any) []reportParamUI {
 	out := make([]reportParamUI, 0, len(params))
 	for _, p := range params {
+		if p.Context != nil {
+			continue
+		}
 		ui := reportParamUI{
 			Name:  p.Name,
 			Label: p.DisplayLabel(lang),
@@ -664,6 +684,9 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 	// ссылке нет вовсе (прямой вызов /export/excel без параметров).
 	qs := r.URL.Query()
 	for _, p := range rep.Params {
+		if p.Context != nil {
+			continue
+		}
 		val := qs.Get(p.Name)
 		if _, ok := qs[p.Name]; !ok {
 			d, derr := reportParamDefault(p, s.constantResolver(ctx))
@@ -681,6 +704,10 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 			v = val // как на экране: негодное значение остаётся строкой
 		}
 		paramValues[p.Name] = v
+	}
+	paramValues, err = reportpkg.ResolveContextParams(ctx, rep, paramValues, s.reg, s.store)
+	if err != nil {
+		return nil, nil, newReportExportError(http.StatusForbidden, "report context", err)
 	}
 	compiled, err := s.compileQueryWithRowAccess(ctx, rep.Query, paramValues)
 	if err != nil {
