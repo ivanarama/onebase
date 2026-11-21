@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"github.com/google/uuid"
+	"github.com/ivantit66/onebase/internal/access"
 	"github.com/ivantit66/onebase/internal/debugger"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/project"
@@ -96,6 +97,9 @@ func (s *Server) RunProcessor(ctx context.Context, reg *runtime.Registry, procNa
 	proc := reg.GetProcessor(procName)
 	if proc == nil {
 		return nil, nil, fmt.Errorf("обработка %q не найдена", procName)
+	}
+	if proc.IsReport() {
+		ctx = access.WithReportOutput(ctx)
 	}
 	procDecl := reg.GetProcedure(proc.Name, "Выполнить")
 	if procDecl == nil {

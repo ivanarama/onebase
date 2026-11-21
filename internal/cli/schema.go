@@ -137,6 +137,7 @@ func allSchemas() map[string]map[string]any {
 			"id":                  stringSchema("Устойчивый идентификатор реквизита: не меняется при переименовании, по нему миграция переименовывает колонку, а не заводит новую"),
 			"required":            boolSchema("Реквизит обязателен к заполнению; проверяется при записи"),
 			"pii":                 boolSchema("Реквизит содержит персональные данные: закрыт маской для роли, которая про него не сказала read: full"),
+			"report_pii":          boolSchema("Скрывать во всех отчётах независимо от роли; права обычной карточки не меняются"),
 			// default читается как исходный текст скаляра: metadata.defaultScalar
 			// принимает любой скаляр, потому что `сейчас`, `12` и `Истина` YAML
 			// разбирает строкой, числом и булевым. Сузить тип до строки значило
@@ -159,6 +160,7 @@ func allSchemas() map[string]map[string]any {
 			"title": fieldProperties["title"], "label": fieldProperties["label"],
 			"titles": fieldProperties["titles"], "required": fieldProperties["required"],
 			"default": fieldProperties["default"], "pii": fieldProperties["pii"],
+			"report_pii": fieldProperties["report_pii"],
 		},
 	}
 	tablePart := map[string]any{
@@ -469,7 +471,7 @@ func allSchemas() map[string]map[string]any {
 			"type":                 "object",
 			"required":             []string{"name"},
 			"additionalProperties": true,
-			"properties":           map[string]any{"name": stringSchema("Имя"), "title": stringSchema("Синоним"), "params": arrayOf(procParam), "tableparts": arrayOf(tablePart)},
+			"properties":           map[string]any{"name": stringSchema("Имя"), "title": stringSchema("Синоним"), "kind": stringSchema("Пусто — обычная обработка; test — тест; report — отчёт с обязательной ПДн-policy"), "params": arrayOf(procParam), "tableparts": arrayOf(tablePart)},
 		},
 		"report": {
 			"$schema":              "https://json-schema.org/draft/2020-12/schema",

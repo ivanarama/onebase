@@ -368,7 +368,7 @@ func fieldYAMLSchema(allowRequired bool) *yamlLintSchema {
 	// который его честно читает, и DEVELOPER.md, где id описан как
 	// рекомендуемая практика. Пользователь, послушавшийся линта, снимал
 	// страховку от потери данных (#873, дефект Д11 из #668).
-	keys := []string{"id", "name", "title", "label", "type", "allow_inline_create", "pii"}
+	keys := []string{"id", "name", "title", "label", "type", "allow_inline_create", "pii", "report_pii"}
 	if allowRequired {
 		// Required is currently a write invariant for entity headers and table
 		// parts. Register recorders have a different persistence path and must
@@ -430,7 +430,7 @@ func entityYAMLSchema() *yamlLintSchema {
 		"tableparts": seq(tablePartYAMLSchema(true)),
 		"indexes":    seq(indexYAMLSchema()),
 		"numerator": with(obj("prefix", "length", "period", "scope", "base_prefix", "unique"), map[string]*yamlLintSchema{
-			"field": with(obj("title", "label", "required", "default", "pii"), map[string]*yamlLintSchema{"titles": freeMap()}),
+			"field": with(obj("title", "label", "required", "default", "pii", "report_pii"), map[string]*yamlLintSchema{"titles": freeMap()}),
 		}),
 		"predefined": seq(with(obj("name"), map[string]*yamlLintSchema{"fields": freeMap()})),
 		"tile_view":  obj("image", "title", "subtitle", "fields"),

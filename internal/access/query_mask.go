@@ -61,11 +61,27 @@ func sourceMeta(kind, name, tablePart string, lookup func(kind, name string) *me
 // QueryMaskPlanFor строит план маскирования результата скомпилированного
 // запроса для пользователя u. lookup разрешает метаданные объекта-источника.
 func QueryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name string) *metadata.Entity) QueryMaskPlan {
-	masked, columns, fieldColumns := maskedSourceFields(u, res.Sources, lookup)
+	return queryMaskPlanFor(u, res, lookup, false)
+}
+
+func queryMaskPlanFor(u *auth.User, res query.Result, lookup func(kind, name string) *metadata.Entity, reportOutput bool) QueryMaskPlan {
+	// An unresolved source cannot prove the absence of default PII, including
+	// in ordinary DSL/card queries. Never turn ambiguous metadata into no mask.
+	for _, src := range res.Sources {
+		if sourceMeta(src.Kind, src.Name, src.TablePart, lookup) == nil {
+			return QueryMaskPlan{Denied: src.Name}
+		}
+	}
+	masked, columns, fieldColumns := maskedSourceFieldsWithOutput(u, res.Sources, lookup, reportOutput)
 	if len(masked) == 0 {
 		return QueryMaskPlan{}
 	}
 	if !res.Projection.Simple {
+		if reportOutput {
+			// No proven column lineage: never release a partially protected
+			// UNION/subquery result, even to admin or an unauthenticated caller.
+			return QueryMaskPlan{Denied: anyMaskedName(masked)}
+		}
 		// Подзапрос/ОБЪЕДИНИТЬ: сопоставить элемент выборки с колонкой
 		// результата нельзя — остаётся прежний fail-closed отказ (план 88D).
 		// Но одного разбора списка выборки мало: DeniedMaskedColumn не смотрит
@@ -228,8 +244,8 @@ func applyDecision(row map[string]any, key string, dec FieldDecision) {
 // имени поля и, отдельно, по имени колонки таблицы (для проекции «*»). Третья
 // карта — обратная: логическое имя поля → его физические колонки, чтобы явную
 // проекцию ссылки сопоставлять с той же колонкой, которую покрывает «*».
-func maskedSourceFields(u *auth.User, sources []query.SourceRef, lookup func(kind, name string) *metadata.Entity) (byField, byColumn map[string]FieldDecision, fieldColumns map[string][]string) {
-	if u == nil || (u.IsAdmin && !MaskAdmin()) {
+func maskedSourceFieldsWithOutput(u *auth.User, sources []query.SourceRef, lookup func(kind, name string) *metadata.Entity, reportOutput bool) (byField, byColumn map[string]FieldDecision, fieldColumns map[string][]string) {
+	if !reportOutput && (u == nil || (u.IsAdmin && !MaskAdmin())) {
 		return nil, nil, nil
 	}
 	byField = map[string]FieldDecision{}
@@ -247,7 +263,11 @@ func maskedSourceFields(u *auth.User, sources []query.SourceRef, lookup func(kin
 		if lookup != nil {
 			meta = sourceMeta(src.Kind, src.Name, src.TablePart, lookup)
 		}
-		for field, dec := range FieldDecisions(u, src.Kind, src.Name, meta) {
+		decisions := FieldDecisions(u, src.Kind, src.Name, meta)
+		if reportOutput {
+			decisions = ReportOutputFieldDecisions(u, src.Kind, src.Name, meta)
+		}
+		for field, dec := range decisions {
 			put(byField, field, dec)
 			if f, ok := concreteMetaField(meta, field); ok {
 				col := metadata.ColumnName(f)

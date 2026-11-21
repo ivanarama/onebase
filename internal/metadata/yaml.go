@@ -28,7 +28,8 @@ type rawField struct {
 	// разбирает их metadata.ParseDefault.
 	Default defaultScalar `yaml:"default"`
 	// PII — реквизит содержит персональные данные (Field.PII).
-	PII bool `yaml:"pii"`
+	PII       bool `yaml:"pii"`
+	ReportPII bool `yaml:"report_pii"`
 }
 
 type rawTablePart struct {
@@ -51,19 +52,20 @@ type rawNumerator struct {
 // rawNumeratorField contains only properties that can vary on the synthesized
 // string field. Its identity and type always come from the entity kind.
 type rawNumeratorField struct {
-	Title    string            `yaml:"title"`
-	Label    string            `yaml:"label"`
-	Titles   map[string]string `yaml:"titles"`
-	Required bool              `yaml:"required"`
-	Default  defaultScalar     `yaml:"default"`
-	PII      bool              `yaml:"pii"`
+	Title     string            `yaml:"title"`
+	Label     string            `yaml:"label"`
+	Titles    map[string]string `yaml:"titles"`
+	Required  bool              `yaml:"required"`
+	Default   defaultScalar     `yaml:"default"`
+	PII       bool              `yaml:"pii"`
+	ReportPII bool              `yaml:"report_pii"`
 }
 
 func (f *rawNumeratorField) UnmarshalYAML(node *yaml.Node) error {
 	if node.Kind != yaml.MappingNode {
 		return fmt.Errorf("numerator.field: expected a mapping")
 	}
-	allowed := map[string]bool{"title": true, "label": true, "titles": true, "required": true, "default": true, "pii": true}
+	allowed := map[string]bool{"title": true, "label": true, "titles": true, "required": true, "default": true, "pii": true, "report_pii": true}
 	seen := map[string]bool{}
 	for i := 0; i < len(node.Content); i += 2 {
 		key := node.Content[i].Value
@@ -401,6 +403,7 @@ func LoadFile(path string, kind Kind) (*Entity, error) {
 		} else if nf := raw.Numerator.Field; nf != nil {
 			rf.Title, rf.Label, rf.Titles = nf.Title, nf.Label, nf.Titles
 			rf.Required, rf.Default, rf.PII = nf.Required, nf.Default, nf.PII
+			rf.ReportPII = nf.ReportPII
 		}
 		// Legacy IDs can be random. The standard field has one identity in
 		// memory regardless of which compatible YAML representation was read.
@@ -725,7 +728,7 @@ func parseField(rf rawField) Field {
 		title = rf.Label
 	}
 	f := Field{ID: strings.TrimSpace(rf.ID), Name: rf.Name, Title: title, Titles: rf.Titles, Type: FieldType(rf.Type),
-		AllowInlineCreate: rf.AllowInlineCreate, Required: rf.Required, Default: string(rf.Default), PII: rf.PII}
+		AllowInlineCreate: rf.AllowInlineCreate, Required: rf.Required, Default: string(rf.Default), PII: rf.PII, ReportPII: rf.ReportPII}
 	if strings.HasPrefix(rf.Type, "reference:") {
 		f.RefEntity = strings.TrimPrefix(rf.Type, "reference:")
 	} else if strings.HasPrefix(rf.Type, "enum:") {

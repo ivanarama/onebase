@@ -48,17 +48,18 @@ func standardSaveField(name, id string, properties *saveStandardField) saveField
 	if properties != nil {
 		f.Title, f.Label, f.Titles = properties.Title, properties.Label, properties.Titles
 		f.Required, f.Default, f.PII = properties.Required, properties.Default, properties.PII
+		f.ReportPII = properties.ReportPII
 	}
 	return f
 }
 
 func standardProperties(f saveField) *saveStandardField {
-	if f.Title == "" && f.Label == "" && len(f.Titles) == 0 && !f.Required && f.Default == "" && !f.PII {
+	if f.Title == "" && f.Label == "" && len(f.Titles) == 0 && !f.Required && f.Default == "" && !f.PII && !f.ReportPII {
 		return nil
 	}
 	return &saveStandardField{
 		Title: f.Title, Label: f.Label, Titles: f.Titles,
-		Required: f.Required, Default: f.Default, PII: f.PII,
+		Required: f.Required, Default: f.Default, PII: f.PII, ReportPII: f.ReportPII,
 	}
 }
 
@@ -262,6 +263,9 @@ func carryFieldKeys(f, old saveField) saveField {
 	}
 	if !f.PII {
 		f.PII = old.PII
+	}
+	if !f.ReportPII {
+		f.ReportPII = old.ReportPII
 	}
 	return f
 }
