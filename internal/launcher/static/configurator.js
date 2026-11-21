@@ -2905,8 +2905,13 @@ function compAddMeasure(id){var t=document.getElementById(id);var i=0;for(var r=
   '<td><select name="comp.measure.'+i+'.align" style="padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"><option value="">—</option><option value="left">влево</option><option value="right">вправо</option><option value="center">по центру</option></select></td>'+
   '<td><input type="text" name="comp.measure.'+i+'.format" placeholder="#,##0.00" style="width:80px;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"></td>'+
   '<td><input type="text" name="comp.measure.'+i+'.expr" placeholder="ВаловаяПрибыль / Выручка * 100" title="выражение по другим показателям, напр. ВаловаяПрибыль / Выручка * 100" style="width:160px;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"></td>'+
-  '<td><button type="button" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px" onclick="this.closest(\'tr\').remove();compReindexMeasure(\''+id+'\')">✕</button></td>';}
-function compReindexMeasure(id){var t=document.getElementById(id);var k=0;for(var r=0;r<t.rows.length;r++){var ins=t.rows[r].querySelectorAll('input,select');if(ins.length<2)continue;ins[0].name='comp.measure.'+k+'.field';ins[1].name='comp.measure.'+k+'.agg';if(ins[2])ins[2].name='comp.measure.'+k+'.title';if(ins[3])ins[3].name='comp.measure.'+k+'.align';if(ins[4])ins[4].name='comp.measure.'+k+'.format';if(ins[5])ins[5].name='comp.measure.'+k+'.expr';k++;}}
+  '<td><input type="text" name="comp.measure.'+i+'.scope"  style="width:140px;padding:3px 5px;border:1px solid #ccd0d8;border-radius:3px;font-size:12px"></td>'+
+  '<td><button type="button" style="background:none;border:none;color:#c00;cursor:pointer;font-size:14px" onclick="this.closest(\'tr\').remove();compReindexMeasure(\''+id+'\')">✕</button></td>';
+  var scope=tr.querySelector('input[name$=".scope"]');
+  scope.placeholder=T("все уровни");
+  scope.title=T("$grand — общий итог; $detail — детали; имена группировок через запятую");}
+
+function compReindexMeasure(id){var t=document.getElementById(id);var k=0;for(var r=0;r<t.rows.length;r++){var ins=t.rows[r].querySelectorAll('input,select');if(ins.length<2)continue;ins[0].name='comp.measure.'+k+'.field';ins[1].name='comp.measure.'+k+'.agg';if(ins[2])ins[2].name='comp.measure.'+k+'.title';if(ins[3])ins[3].name='comp.measure.'+k+'.align';if(ins[4])ins[4].name='comp.measure.'+k+'.format';if(ins[5])ins[5].name='comp.measure.'+k+'.expr';if(ins[6])ins[6].name='comp.measure.'+k+'.scope';if(ins[7])ins[7].name='comp.measure.'+k+'.calculations';k++;}}
 function compAddSort(id){var t=document.getElementById(id);var i=t.rows.length;var tr=t.insertRow();
   tr.innerHTML='<td><input type="text" name="comp.sort.'+i+'.field" style="width:100%"></td>'+
   '<td><select name="comp.sort.'+i+'.dir"><option>asc</option><option>desc</option></select></td>'+
