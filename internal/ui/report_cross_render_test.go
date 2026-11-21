@@ -21,7 +21,7 @@ func TestRenderCrossTable(t *testing.T) {
 	}
 	cr, _ := compose.ComposeCross(rows, *spec, nil)
 	out := string(renderCrossTable(cr, spec))
-	for _, want := range []string{"<table", "Товар", "Янв", "Фев", "100", "200", "ВСЕГО", "130"} {
+	for _, want := range []string{"<table", "Товар", "Янв", "Фев", "100", "200", "Итого", "130"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("HTML кросс-таблицы не содержит %q:\n%s", want, out)
 		}
@@ -154,8 +154,8 @@ func TestCrossSheetRows(t *testing.T) {
 		t.Fatalf("ожидали 3 строки (А, Б, ВСЕГО), получили %d: %v", len(sheet), sheet)
 	}
 	last := sheet[len(sheet)-1]
-	if last[0] != "ВСЕГО" {
-		t.Fatalf("последняя строка — ВСЕГО, получили %v", last[0])
+	if last[0] != "Итого" {
+		t.Fatalf("последняя строка — Итого, получили %v", last[0])
 	}
 	// Колонки отсортированы: 01, 02. Итог 01 = 100+30 = 130, 02 = 200.
 	if last[1] != float64(130) {

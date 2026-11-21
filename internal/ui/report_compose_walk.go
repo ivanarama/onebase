@@ -13,21 +13,20 @@ import (
 
 // composeSink принимает события обхода в порядке рендера:
 //
-//	группа → [дочерние группы] → [детали] → [подытог] … → [общий итог]
+//	группа с итогами → [дочерние группы] → [детали] … → [общий итог]
 //
-// level — глубина строки: группа на level, её детали и подытог на level+1.
+// level — глубина строки: группа на level, её детали на level+1.
 // path — экранированный путь группы (для HTML data-group/data-parent; Excel
 // его игнорирует).
 type composeSink interface {
 	group(g *compose.Group, level int, path string)
 	detail(d compose.DetailRow, level int, path string)
-	subtotal(g *compose.Group, level int, path string)
 	grand(grand map[string]any)
 }
 
 // walkComposed обходит дерево групп результата компоновки и вызывает методы sink
-// в порядке рендера. Детали выводятся только при spec.Detail, подытоги — при
-// spec.Totals.Subtotals, общий итог — при spec.Totals.Grand.
+// в порядке рендера. Детали выводятся только при spec.Detail,
+// общий итог — при spec.Totals.Grand. Итоги групп всегда в их заголовках.
 func walkComposed(res *compose.Result, spec *report.Composition, s composeSink) {
 	var walk func(g *compose.Group, level int, parentPath string)
 	walk = func(g *compose.Group, level int, parentPath string) {
@@ -41,9 +40,8 @@ func walkComposed(res *compose.Result, spec *report.Composition, s composeSink) 
 				s.detail(d, level+1, path)
 			}
 		}
-		if spec.Totals.Subtotals {
-			s.subtotal(g, level+1, path)
-		}
+		// A group's totals already occupy its header row. Do not repeat them
+		// as a footer, including legacy totals.subtotals configurations.
 	}
 	for _, g := range res.Groups {
 		walk(g, 0, "")

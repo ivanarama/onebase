@@ -346,6 +346,7 @@
   "История конфигурации": "Configuration history",
   "Источник данных": "Data source",
   "Исходный код": "Source code",
+  "Итого": "Total",
   "К": "I",
   "К отчёту": "Back to report",
   "Как в 1С, у элемента появляется реквизит «Владелец».": "As in 1C, each item has an Owner attribute.",
@@ -1486,6 +1487,7 @@
   "Откройте редактор модуля и поставьте курсор": "Open the module editor and place the cursor",
   "Отчёт содержит защищённое поле и не может быть построен под текущей ролью": "The report contains a protected field and cannot be generated for the current role",
   "Результат отчёта усечён лимитом строк. Уточните параметры или увеличьте report_max_rows.": "The report result was truncated by the row limit. Refine the parameters or increase report_max_rows.",
+  "Табличный документ не сформирован: входной запрос превысил report_max_rows. Уточните параметры отчёта.": "The tabular document was not generated: its input query exceeded report_max_rows. Refine the report parameters.",
   "Сохранено": "Saved",
   "Сохранить изменения?": "Save changes?",
   "Закрыть без сохранения?": "Close without saving?",
@@ -1610,6 +1612,7 @@
   "Поставщик сборки": "Distribution supplier",
   "Переводы поля «%s» для языка %s изменены по-разному в двух редакторах. Укажите одинаковое значение и сохраните снова": "The translation of field \"%s\" for language %s was changed differently in the two editors. Enter the same value and save again",
   "Результаты поиска по всему справочнику": "Search results across the whole catalog",
+  "Уровни группировки": "Grouping levels",
   "Открыть в полном размере": "Open full size",
   "Нет изображения": "No image"
 }

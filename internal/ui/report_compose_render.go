@@ -4,19 +4,26 @@ import (
 	"fmt"
 	"html"
 	"html/template"
+	"math"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/ivantit66/onebase/internal/csssafe"
 	"github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compose"
+	"github.com/ivantit66/onebase/internal/sheet"
 	"github.com/ivantit66/onebase/internal/widget"
 )
 
 // renderComposedTable строит единую <table> с раскрываемыми группами,
-// подитогами, общим итогом и условным оформлением деталей. Порядок строк задаёт
+// итогами в строках групп, общим итогом и условным оформлением деталей. Порядок строк задаёт
 // walkComposed (общий с Excel-выгрузкой); htmlComposeSink рисует каждую строку.
 func renderComposedTable(res *compose.Result, spec *report.Composition) template.HTML {
+	return renderComposedTablePresented(res, spec, reportCompositionPresentation{})
+}
+
+func renderComposedTablePresented(res *compose.Result, spec *report.Composition, presentation reportCompositionPresentation) template.HTML {
 	var b strings.Builder
 	depth, collapsed := collapseLevel(spec)
 	b.WriteString(`<table class="` + appearanceClass(spec) + `"`)
@@ -24,12 +31,12 @@ func renderComposedTable(res *compose.Result, spec *report.Composition) template
 		fmt.Fprintf(&b, ` data-collapse-to="%d"`, depth)
 	}
 	b.WriteString(`>`)
-	b.WriteString(`<thead><tr><th>` + html.EscapeString(strings.Join(spec.Groupings, " / ")) + `</th>`)
+	b.WriteString(`<thead><tr><th>` + html.EscapeString(presentation.groupHeader(spec)) + `</th>`)
 	for _, m := range spec.Measures {
 		b.WriteString(`<th class="num" style="` + html.EscapeString(measureAlign(m)) + `">` + html.EscapeString(measureTitle(m)) + `</th>`)
 	}
 	b.WriteString(`</tr></thead><tbody>`)
-	sink := &htmlComposeSink{b: &b, spec: spec, collapseTo: depth}
+	sink := &htmlComposeSink{b: &b, spec: spec, collapseTo: depth, presentation: presentation}
 	if !collapsed {
 		sink.collapseTo = -1
 	}
@@ -59,27 +66,19 @@ func collapseLevel(spec *report.Composition) (int, bool) {
 // «▶»: раскрытие идёт по одному уровню за клик, иначе первый же клик по
 // свёрнутой группе снова вываливал всё поддерево.
 type htmlComposeSink struct {
-	b          *strings.Builder
-	spec       *report.Composition
-	collapseTo int
+	b            *strings.Builder
+	spec         *report.Composition
+	collapseTo   int
+	presentation reportCompositionPresentation
 }
 
 // hiddenStyle возвращает display:none для строк, скрытых начальным
-// сворачиванием. Уровень строки уже учитывает вложенность: детали и подытог
-// группы уровня L приходят с level = L+1.
+// сворачиванием. Детали группы уровня L приходят с level = L+1.
 func (h *htmlComposeSink) hiddenStyle(level int) string {
 	if h.collapseTo >= 0 && level > h.collapseTo {
 		return "display:none"
 	}
 	return ""
-}
-
-// groupMarker — треугольник состояния группы: свёрнута (▶) или развёрнута (▼).
-func (h *htmlComposeSink) groupMarker(level int) string {
-	if h.collapseTo >= 0 && level >= h.collapseTo {
-		return "▶"
-	}
-	return "▼"
 }
 
 // measureCells выводит ячейки показателей строки: выравнивание + условное
@@ -94,9 +93,25 @@ func (h *htmlComposeSink) measureCells(vals map[string]any, styles map[string]re
 
 func (h *htmlComposeSink) group(g *compose.Group, level int, path string) {
 	pad := fmt.Sprintf("padding-left:%dpx", 8+level*18)
+	fill, darkFill := composedGroupFill(level, len(h.spec.Groupings)), composedGroupDarkFill(level, len(h.spec.Groupings))
+	if explicit := csssafe.Color(g.Styles[""].Background); explicit != "" {
+		fill, darkFill = explicit, explicit
+	}
 	rowStyle := joinStyles(cssOf(g.Styles[""]), h.hiddenStyle(level))
+	if fill != "" {
+		rowStyle = joinStyles(rowStyle, "--rc-group-fill:"+fill+";--rc-group-dark:"+darkFill)
+	}
+	marker := ""
+	if len(g.Children) > 0 || (h.spec.Detail && len(g.Details) > 0) {
+		open := h.collapseTo < 0 || level < h.collapseTo
+		text := "+"
+		if open {
+			text = "−"
+		}
+		marker = fmt.Sprintf(`<button type="button" class="rc-fold" aria-expanded="%t" aria-label="%s">%s</button>`, open, html.EscapeString(fmtVal(g.Key)), text)
+	}
 	fmt.Fprintf(h.b, `<tr class="grp" data-group="%s" data-level="%d" style="%s"><td style="%s">%s %s</td>`,
-		html.EscapeString(path), level, html.EscapeString(rowStyle), pad, h.groupMarker(level), html.EscapeString(fmtVal(g.Key)))
+		html.EscapeString(path), level, html.EscapeString(rowStyle), pad, marker, html.EscapeString(fmtVal(g.Key)))
 	h.measureCells(g.Subtotals, g.Styles)
 	h.b.WriteString(`</tr>`)
 }
@@ -122,24 +137,46 @@ func (h *htmlComposeSink) detail(d compose.DetailRow, level int, path string) {
 	h.b.WriteString(`</tr>`)
 }
 
-func (h *htmlComposeSink) subtotal(g *compose.Group, level int, path string) {
-	rowStyle := joinStyles(cssOf(g.Styles[""]), h.hiddenStyle(level))
-	fmt.Fprintf(h.b, `<tr class="subtotal" data-parent="%s" style="%s"><td style="padding-left:%dpx">··· Итого: %s ···</td>`,
-		html.EscapeString(path), html.EscapeString(rowStyle), 8+level*18, html.EscapeString(fmtVal(g.Key)))
-	h.measureCells(g.Subtotals, g.Styles)
-	h.b.WriteString(`</tr>`)
-}
-
 func (h *htmlComposeSink) grand(grand map[string]any) {
 	// У общего итога нет условного оформления — measureCells с nil-стилями даёт
 	// те же ячейки (только выравнивание), что и прежний отдельный код.
-	h.b.WriteString(`<tr class="grand"><td>ВСЕГО</td>`)
+	h.b.WriteString(`<tr class="grand"><td>` + html.EscapeString(h.presentation.grandTitle()) + `</td>`)
 	h.measureCells(grand, nil)
 	h.b.WriteString(`</tr>`)
 }
 
 func cssOf(s report.CellStyle) string {
-	return cssStyle(s.Color, s.Background, s.Bold, s.Italic)
+	color := s.Color
+	if csssafe.Color(color) == "" {
+		color = reportBackgroundForeground(s.Background)
+	}
+	return cssStyle(color, s.Background, s.Bold, s.Italic)
+}
+
+// An explicit opaque background keeps the same foreground in either theme.
+// Pick the higher-contrast black/white text only when Color was not supplied.
+// Shared form/journal cssStyle semantics are deliberately unchanged.
+func reportBackgroundForeground(background string) string {
+	rgb := sheet.ColorRGB(background)
+	if rgb == "" {
+		return ""
+	}
+	value, err := strconv.ParseUint(rgb, 16, 24)
+	if err != nil {
+		return ""
+	}
+	linear := func(channel uint64) float64 {
+		c := float64(channel) / 255
+		if c <= 0.04045 {
+			return c / 12.92
+		}
+		return math.Pow((c+0.055)/1.055, 2.4)
+	}
+	luminance := 0.2126*linear((value>>16)&255) + 0.7152*linear((value>>8)&255) + 0.0722*linear(value&255)
+	if (luminance+0.05)/0.05 >= 1.05/(luminance+0.05) {
+		return "#000"
+	}
+	return "#fff"
 }
 
 func cssStyle(color, background string, bold, italic bool) string {

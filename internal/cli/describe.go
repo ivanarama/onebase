@@ -174,6 +174,7 @@ type descReport struct {
 	Params      []descParam `json:"params,omitempty"`
 	Query       string      `json:"query,omitempty"`
 	ChartProc   string      `json:"chartProc,omitempty"`
+	ResultProc  string      `json:"resultProc,omitempty"`
 	Composition bool        `json:"composition,omitempty"`
 	Variants    []string    `json:"variants,omitempty"`
 	External    bool        `json:"external,omitempty"`
@@ -430,7 +431,7 @@ func runDescribe(cmd *cobra.Command, _ []string) error {
 	}
 	for _, rep := range proj.Reports {
 		dr := descReport{
-			Name: rep.Name, Title: rep.Title, Query: rep.Query, ChartProc: rep.ChartProc,
+			Name: rep.Name, Title: rep.Title, Query: rep.Query, ChartProc: rep.ChartProc, ResultProc: rep.ResultProc,
 			Composition: rep.Composition != nil, External: rep.External,
 			Source: src.yaml("reports", rep.Name),
 		}

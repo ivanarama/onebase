@@ -61,7 +61,7 @@ func rcRows(html string) []rcRow {
 			class:  class,
 			attrs:  head,
 			hidden: strings.Contains(head, "display:none"),
-			folded: strings.Contains(chunk, "▶"),
+			folded: strings.Contains(chunk, `aria-expanded="false"`),
 		})
 	}
 	return out
@@ -86,7 +86,7 @@ func TestRenderComposedNoCollapseByDefault(t *testing.T) {
 	if strings.Contains(out, "display:none") {
 		t.Fatalf("без collapse_to строки не должны прятаться:\n%s", out)
 	}
-	if strings.Contains(out, "▶") {
+	if strings.Contains(out, `aria-expanded="false"`) {
 		t.Fatalf("без collapse_to все группы развёрнуты (▼):\n%s", out)
 	}
 	if strings.Contains(out, "data-collapse-to") {
@@ -138,10 +138,9 @@ func TestRenderComposedCollapseToOne(t *testing.T) {
 	if nested.hidden || !nested.folded {
 		t.Errorf("группа уровня 1 должна быть видимой и свёрнутой: %+v", nested)
 	}
-	// Подытог группы уровня 0 идёт следом за её детьми и остаётся видимым,
-	// а всё, что лежит под свёрнутой группой уровня 1, — скрыто.
-	if r := rcRowByAttr(t, out, `class="subtotal" data-parent="/Иванов"`); r.hidden {
-		t.Errorf("подытог развёрнутой группы виден: %+v", r)
+	// Итоги уже в строке группы; повторного подвала нет.
+	if strings.Contains(out, `class="subtotal"`) {
+		t.Fatal("повторный подвал группы не должен выводиться")
 	}
 	if r := rcRowByAttr(t, out, `class="det" data-parent="/Иванов/Услуги"`); !r.hidden {
 		t.Errorf("детали под свёрнутой группой должны быть скрыты: %+v", r)
@@ -165,6 +164,7 @@ func TestRenderComposedCollapseNegativeAndConditional(t *testing.T) {
 		Groupings:   []string{"М"},
 		Measures:    []report.Measure{{Field: "Сумма", Agg: "sum"}},
 		Totals:      report.Totals{Subtotals: true},
+		Detail:      true,
 		Conditional: []report.CondRule{{When: "Сумма < 0", Style: report.CellStyle{Color: "#c00"}}},
 		Appearance:  report.Appearance{CollapseTo: intPtr(0)},
 	}
@@ -174,7 +174,7 @@ func TestRenderComposedCollapseNegativeAndConditional(t *testing.T) {
 	}
 	out := string(renderComposedTable(res, &spec))
 	if !strings.Contains(out, `style="color:#c00;display:none"`) {
-		t.Fatalf("скрытый подытог должен сохранить условное оформление:\n%s", out)
+		t.Fatalf("скрытая деталь должна сохранить условное оформление:\n%s", out)
 	}
 }
 

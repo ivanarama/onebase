@@ -9,19 +9,15 @@ import (
 
 // TestComposedRows проверяет порядок строк и содержимое ключевых ячеек.
 //
-// Структура: 2 группы (Иванов, Петров), подытоги, общий итог.
+// Структура: 2 группы (Иванов, Петров), итоги в строках групп, общий итог.
 // Ожидаемый порядок (при Subtotals:true, Grand:true):
 //
 //	[0] заголовки     ("М / Отдел", "Сумма, ₽")
 //	[1] группа Иванов (уровень 0)
 //	[2] дочерняя      Отдел A (уровень 1)
-//	[3] подытог       Отдел A
-//	[4] подытог       Иванов
-//	[5] группа Петров (уровень 0)
-//	[6] дочерняя      Отдел B (уровень 1)
-//	[7] подытог       Отдел B
-//	[8] подытог       Петров
-//	[9] ВСЕГО
+//	[3] группа Петров (уровень 0)
+//	[4] дочерняя      Отдел B (уровень 1)
+//	[5] Итого
 func TestComposedRows(t *testing.T) {
 	rows := []compose.Row{
 		{"М": "Иванов", "Отдел": "Отдел A", "Сумма": "100"},
@@ -50,9 +46,8 @@ func TestComposedRows(t *testing.T) {
 		t.Errorf("headers[1] = %q, ожидали %q", headers[1], "Сумма, ₽")
 	}
 
-	// Ожидаем 9 строк данных:
-	// 2 группы × (1 группа + 1 дочерняя + 1 подытог дочерней + 1 подытог) + 1 ВСЕГО
-	wantRows := 9
+	// Подвалы не дублируют итоги даже при legacy Subtotals:true.
+	wantRows := 5
 	if len(xlsRows) != wantRows {
 		t.Fatalf("ожидали %d строк, получили %d", wantRows, len(xlsRows))
 	}
@@ -79,26 +74,24 @@ func TestComposedRows(t *testing.T) {
 		t.Errorf("строка 1 [0] = %q, ожидали %q", grpLabel1, indent+"Отдел A")
 	}
 
-	// Строка 2: подытог «Отдел A» (уровень 1) — отступ level+1=2 → 4 пробела
+	// Следом идут Петров и его дочерняя группа, без подвалов Иванова/Отдела A.
 	row2 := xlsRows[2]
 	sub2, _ := row2[0].(string)
-	const indentL2 = "    " // 4 пробела (уровень 2)
-	if sub2 != indentL2+"··· Итого: Отдел A ···" {
-		t.Errorf("строка 2 (подытог) [0] = %q, ожидали %q", sub2, indentL2+"··· Итого: Отдел A ···")
+	if sub2 != "Петров" {
+		t.Errorf("строка 2 [0] = %q, ожидали Петров", sub2)
 	}
 
-	// Строка 3: подытог «Иванов» (уровень 0) — отступ level+1=1 → 2 пробела
 	row3 := xlsRows[3]
 	sub3, _ := row3[0].(string)
-	if sub3 != indent+"··· Итого: Иванов ···" {
-		t.Errorf("строка 3 (подытог Иванов) [0] = %q, ожидали %q", sub3, indent+"··· Итого: Иванов ···")
+	if sub3 != indent+"Отдел B" {
+		t.Errorf("строка 3 [0] = %q, ожидали %q", sub3, indent+"Отдел B")
 	}
 
-	// Последняя строка: ВСЕГО
+	// Последняя строка: Итого
 	last := xlsRows[len(xlsRows)-1]
 	grandLabel, _ := last[0].(string)
-	if grandLabel != "ВСЕГО" {
-		t.Errorf("последняя строка [0] = %q, ожидали %q", grandLabel, "ВСЕГО")
+	if grandLabel != "Итого" {
+		t.Errorf("последняя строка [0] = %q, ожидали %q", grandLabel, "Итого")
 	}
 	if _, ok := last[1].(float64); !ok {
 		t.Errorf("последняя строка [1] должна быть float64, получили %T: %v", last[1], last[1])
@@ -106,7 +99,7 @@ func TestComposedRows(t *testing.T) {
 }
 
 // TestComposedRowsDetail проверяет режим Detail=true: детальные строки идут сразу
-// после строки группы и до подытога. Структура:
+// после строки группы; повторного подвала нет. Структура:
 //
 //	одна группировка «М» с двумя строками деталей, Subtotals:true, Grand:false.
 //
@@ -115,7 +108,6 @@ func TestComposedRows(t *testing.T) {
 //	[0] группа Иванов
 //	[1] деталь 1 (первая ячейка = отступ-строка, показатель = float64)
 //	[2] деталь 2
-//	[3] подытог Иванов
 func TestComposedRowsDetail(t *testing.T) {
 	rows := []compose.Row{
 		{"М": "Иванов", "Сумма": "100"},
@@ -134,8 +126,8 @@ func TestComposedRowsDetail(t *testing.T) {
 
 	_, xlsRows := composedRows(res, &spec)
 
-	// Ожидаем 4 строки: группа + 2 детали + подытог (Grand=false → без ВСЕГО).
-	wantRows := 4
+	// Группа с итогом + 2 детали; Grand=false и подвалов нет.
+	wantRows := 3
 	if len(xlsRows) != wantRows {
 		t.Fatalf("ожидали %d строк, получили %d: %v", wantRows, len(xlsRows), xlsRows)
 	}
@@ -161,11 +153,8 @@ func TestComposedRowsDetail(t *testing.T) {
 		}
 	}
 
-	// Строка 3: подытог Иванов.
-	subLabel, _ := xlsRows[3][0].(string)
-	const subWant = "  ··· Итого: Иванов ···" // level+1=1 → 2 пробела
-	if subLabel != subWant {
-		t.Errorf("строка 3 (подытог) [0] = %q, ожидали %q", subLabel, subWant)
+	if xlsRows[0][1] != float64(150) {
+		t.Errorf("итог группы должен оставаться в её заголовке: %v", xlsRows[0])
 	}
 }
 
@@ -192,9 +181,9 @@ func TestComposedRowsNilMeasure(t *testing.T) {
 
 	_, xlsRows := composedRows(res, spec)
 
-	// Ожидаем 3 строки: строка группы + подытог + ВСЕГО.
-	if len(xlsRows) != 3 {
-		t.Fatalf("ожидали 3 строки, получили %d: %v", len(xlsRows), xlsRows)
+	// Группа с итогом + общий итог; повторного подвала нет.
+	if len(xlsRows) != 2 {
+		t.Fatalf("ожидали 2 строки, получили %d: %v", len(xlsRows), xlsRows)
 	}
 
 	// Строка группы [0][1] должна быть nil, а не float64(0).
@@ -202,14 +191,9 @@ func TestComposedRowsNilMeasure(t *testing.T) {
 		t.Errorf("строка группы [1]: ожидали nil (пустая ячейка), получили %T(%v)", xlsRows[0][1], xlsRows[0][1])
 	}
 
-	// Строка подытога [1][1] должна быть nil.
+	// Строка общего итога [1][1] должна быть nil.
 	if xlsRows[1][1] != nil {
-		t.Errorf("строка подытога [1]: ожидали nil (пустая ячейка), получили %T(%v)", xlsRows[1][1], xlsRows[1][1])
-	}
-
-	// Строка ВСЕГО [2][1] должна быть nil.
-	if xlsRows[2][1] != nil {
-		t.Errorf("строка ВСЕГО [1]: ожидали nil (пустая ячейка), получили %T(%v)", xlsRows[2][1], xlsRows[2][1])
+		t.Errorf("строка общего итога [1]: ожидали nil, получили %T(%v)", xlsRows[1][1], xlsRows[1][1])
 	}
 }
 
@@ -234,12 +218,12 @@ func TestComposedRowsFlat(t *testing.T) {
 		t.Errorf("headers[1] = %q, ожидали %q", headers[1], "Сумма")
 	}
 
-	// 2 группы + 1 ВСЕГО = 3 строки (без подытогов)
+	// 2 группы + общий итог = 3 строки (без подытогов)
 	if len(xlsRows) != 3 {
 		t.Fatalf("ожидали 3 строки, получили %d", len(xlsRows))
 	}
 	last := xlsRows[2]
-	if s, _ := last[0].(string); s != "ВСЕГО" {
-		t.Errorf("строка ВСЕГО: got %q", s)
+	if s, _ := last[0].(string); s != "Итого" {
+		t.Errorf("строка общего итога: got %q", s)
 	}
 }

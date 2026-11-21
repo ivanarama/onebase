@@ -251,6 +251,13 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		}
 		queryValues[p.Name] = v
 	}
+	if rep.ResultProc != "" && strings.TrimSpace(rep.Query) == "" {
+		if err := s.runTabularReport(w, r.WithContext(opCtx), rep, queryValues, nil); err != nil {
+			opStatus = "error"
+			http.Error(w, s.errText(r, err), 500)
+		}
+		return
+	}
 	compiled, err := s.compileQueryWithRowAccess(opCtx, rep.Query, queryValues)
 	reportParams := s.buildReportParams(opCtx, s.resolveLang(r), rep.Params, paramValues)
 	if err != nil {
@@ -337,6 +344,20 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		})
 		return
 	}
+	if rep.ResultProc != "" {
+		if truncated {
+			// A module may derive totals, documents and drilldowns from its input.
+			// Never publish a complete-looking snapshot built from cropped rows.
+			opStatus = "limited"
+			http.Error(w, s.tr(s.resolveLang(r), "Табличный документ не сформирован: входной запрос превысил report_max_rows. Уточните параметры отчёта."), http.StatusUnprocessableEntity)
+			return
+		}
+		if err := s.runTabularReport(w, r.WithContext(opCtx), rep, queryValues, rows); err != nil {
+			opStatus = "error"
+			http.Error(w, s.errText(r, err), 500)
+		}
+		return
+	}
 	detailLinkCol := ""
 	if comp != nil {
 		detailLinkCol = comp.DetailLink
@@ -371,7 +392,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 			}
 			s.render(w, r, "page-report", map[string]any{
 				"Report":             rep,
-				"ComposedHTML":       renderCrossTable(cr, comp),
+				"ComposedHTML":       renderCrossTablePresented(cr, comp, s.compositionPresentation(rep, comp, &compiled, s.resolveLang(r))),
 				"Capped":             cr.Capped,
 				"ComposeWarnings":    cr.Warnings,
 				"ParamValues":        paramValues,
@@ -409,7 +430,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		}
 		s.render(w, r, "page-report", map[string]any{
 			"Report":             rep,
-			"ComposedHTML":       renderComposedTable(res, comp),
+			"ComposedHTML":       renderComposedTablePresented(res, comp, s.compositionPresentation(rep, comp, &compiled, s.resolveLang(r))),
 			"Capped":             res.Capped,
 			"ComposeWarnings":    res.Warnings,
 			"ChartOption":        chartOption,
@@ -617,6 +638,7 @@ type reportExportStats struct {
 	rows      int
 	truncated bool
 	attrs     []slog.Attr
+	rowStyles []excel.RowStyle
 }
 
 func reportExportOpStatus(ctx context.Context, err error) string {
@@ -629,17 +651,16 @@ func reportExportOpStatus(ctx context.Context, err error) string {
 	return operationStatus(ctx, err)
 }
 
-// reportExcel runs a report query with GET params and returns XLSX.
-// reportExportRows вычисляет табличные данные отчёта для выгрузки (Excel/PDF):
+// reportExportTable вычисляет данные и стили отчёта для выгрузки (Excel/PDF):
 // заголовки и строки с учётом эффективной компоновки (план 70), кросс-таблицы
 // (pivot) или плоского результата. Параметры берутся из query-строки (экспорт —
 // GET). HTTP-ответ об ошибке пишет вызывающий. Общий код reportExcel и reportPDF
 // (issue #218) — чтобы обе выгрузки шли из одних и тех же данных и не расходились
 // с экраном (runReport использует те же crossSheetRows/composedRows).
-func (s *Server) reportExportRows(r *http.Request, rep *reportpkg.Report) (headers []string, rows [][]any, err error) {
+func (s *Server) reportExportTable(r *http.Request, rep *reportpkg.Report) (headers []string, rows [][]any, styles []excel.RowStyle, err error) {
 	opCtx, finish, ok := s.beginOperation(r, opReportExport, rep.Name)
 	if !ok {
-		return nil, nil, newReportExportError(http.StatusTooManyRequests, "export limit", fmt.Errorf("слишком много одновременно выполняемых выгрузок, повторите позже"))
+		return nil, nil, nil, newReportExportError(http.StatusTooManyRequests, "export limit", fmt.Errorf("слишком много одновременно выполняемых выгрузок, повторите позже"))
 	}
 	stats := &reportExportStats{}
 	opStatus := "ok"
@@ -648,12 +669,15 @@ func (s *Server) reportExportRows(r *http.Request, rep *reportpkg.Report) (heade
 	headers, rows, err = s.reportExportRowsWithContext(opCtx, r, rep, stats)
 	if err != nil {
 		opStatus = reportExportOpStatus(opCtx, err)
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
-	return headers, rows, nil
+	return headers, rows, stats.rowStyles, nil
 }
 
 func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Request, rep *reportpkg.Report, stats *reportExportStats) (headers []string, rows [][]any, err error) {
+	if stats != nil {
+		stats.rowStyles = nil
+	}
 	r = r.WithContext(ctx)
 	settings := s.reportSettingsForRequest(r, rep).Settings
 	comp := effectiveComposition(rep, settings)
@@ -732,14 +756,20 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 			if cerr != nil {
 				return nil, nil, newReportExportError(http.StatusInternalServerError, "compose error", cerr)
 			}
-			h, xr := crossSheetRows(cr, comp)
+			h, xr, styles := crossSheetRowsPresented(cr, comp, s.compositionPresentation(rep, comp, &compiled, s.resolveLang(r)))
+			if stats != nil {
+				stats.rowStyles = styles
+			}
 			return h, xr, nil
 		}
 		res, cerr := compose.Compose(data, *comp, ev)
 		if cerr != nil {
 			return nil, nil, newReportExportError(http.StatusInternalServerError, "compose error", cerr)
 		}
-		h, xr := composedRows(res, comp)
+		h, xr, styles := composedRowsPresented(res, comp, s.compositionPresentation(rep, comp, &compiled, s.resolveLang(r)))
+		if stats != nil {
+			stats.rowStyles = styles
+		}
 		return h, xr, nil
 	}
 
@@ -763,12 +793,12 @@ func (s *Server) reportExcel(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePerm(w, r, "report", rep.Name, "run") {
 		return
 	}
-	headers, rows, err := s.reportExportRows(r, rep)
+	headers, rows, styles, err := s.reportExportTable(r, rep)
 	if err != nil {
 		s.writeReportExportError(w, r, err)
 		return
 	}
-	data, err := excel.ExportList(headers, rows)
+	data, err := excel.ExportListWithRowStyles(headers, rows, styles)
 	if err != nil {
 		http.Error(w, "Excel error: "+s.errText(r, err), 500)
 		return
