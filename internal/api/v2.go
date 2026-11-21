@@ -411,6 +411,11 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			writeError(w, http.StatusBadRequest, err.Error(), "", 0)
 			return
 		}
+		params, err = reportpkg.ResolveContextParams(r.Context(), rep, params, h.reg, h.store)
+		if err != nil {
+			writeError(w, http.StatusForbidden, reportpkg.ContextErrorText(err), "", 0)
+			return
+		}
 		compiled, err := h.compileQueryWithRowAccess(r.Context(), rep.Query, params)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "query compile error: "+err.Error(), "", 0)
@@ -686,6 +691,9 @@ func totalPages(total, limit int) int {
 func reportParamsFromQuery(q url.Values, rep *reportpkg.Report, res scheduler.ConstantResolver) (map[string]any, error) {
 	params := make(map[string]any, len(rep.Params))
 	for _, p := range rep.Params {
+		if p.Context != nil {
+			continue
+		}
 		raw := q.Get(p.Name)
 		if _, ok := q[p.Name]; !ok {
 			// Параметра в запросе нет — подставляем умолчание той же грамматикой
@@ -1289,6 +1297,9 @@ func entitySchemaName(e *metadata.Entity) string {
 func reportOpenAPISchema(rep *reportpkg.Report) map[string]any {
 	props := map[string]any{}
 	for _, p := range rep.Params {
+		if p.Context != nil {
+			continue
+		}
 		props[p.Name] = reportParamOpenAPISchema(p)
 	}
 	return map[string]any{"type": "object", "properties": props}
