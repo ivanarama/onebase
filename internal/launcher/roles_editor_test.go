@@ -147,6 +147,27 @@ func TestRoleSaveKeepsSectionsOutsideMatrix(t *testing.T) {
 	}
 }
 
+func TestRoleSavePreservesExplicitProcessorCompatibility2407(t *testing.T) {
+	source := strings.Replace(editorRoleYAML, "  processors:\n    ЗагрузкаЦен: [run]\n", "  processors_default: allow # deliberate compatibility\n", 1)
+	h, projDir := roleEditorBase(t, source)
+	rec := saveRoleFromMatrix(t, h, "Оператор", "Оператор", "catalog|Клиент|read")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("save status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	saved, err := os.ReadFile(filepath.Join(projDir, "roles", "оператор.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	role, err := auth.ParseRole(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(saved), "deliberate compatibility") || role.Permissions.ProcessorsDefault != "allow" ||
+		!auth.PermissionHas(liveRole(t, h, "Оператор").Permissions, "processor", "Any", "run") {
+		t.Fatalf("compatibility policy lost by role editor: %s", saved)
+	}
+}
+
 // Право на удалённый объект («Проверка конфигурации» его показывает) должно
 // сниматься из интерфейса: в матрице для него появляется помеченная строка, и
 // снятая галочка убирает право из файла.
