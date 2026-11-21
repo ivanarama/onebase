@@ -84,7 +84,7 @@ func semanticLinks(node *html.Node) []string {
 	var links []string
 	var walk func(*html.Node)
 	walk = func(n *html.Node) {
-		if n.Type == html.ElementNode && n.Data == "a" {
+		if n.Type == html.ElementNode && n.Data == "a" && semanticAttr(n, "data-nav-list-create") == "" {
 			links = append(links, semanticAttr(n, "href"))
 		}
 		for child := n.FirstChild; child != nil; child = child.NextSibling {
