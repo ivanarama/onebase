@@ -1215,7 +1215,7 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 		dslCtx = storage.ReadOnlyContext(dslCtx)
 	}
 	vars, txState := s.buildDSLVarsWithMessagesTx(dslCtx, mc, &msgs)
-	s.bindFormCloseSource(vars, r)
+	s.bindFormCloseSource(vars, r, txState)
 	defer rollbackDSLExecution(txState)
 	isNewForHandler := strings.TrimSpace(r.FormValue("_id")) == "" && (closeInv == nil || !closeInv.saved)
 	thisObj := s.newFormObjectThisLive(dslCtx, txState, obj, entity, form, isNewForHandler)
@@ -2783,7 +2783,7 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 			dslCtx = storage.ReadOnlyContext(dslCtx)
 		}
 		vars, txState := s.buildDSLVarsWithMessagesTx(dslCtx, mc, &msgs)
-		s.bindFormCloseSource(vars, r)
+		s.bindFormCloseSource(vars, r, txState)
 		defer rollbackDSLExecution(txState)
 		thisObj := s.newFormObjectThisLive(dslCtx, txState, obj, virtEntity, form, false)
 		vars["Объект"] = thisObj
@@ -2966,7 +2966,7 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		dslCtx, cancelDSL := context.WithCancel(opCtx)
 		defer cancelDSL()
 		dslVars, txState := s.buildDSLVarsWithMessagesTx(dslCtx, mc, &msgs)
-		s.bindFormCloseSource(dslVars, r)
+		s.bindFormCloseSource(dslVars, r, txState)
 		defer rollbackDSLExecution(txState)
 		dslVars["Параметры"] = paramsThis
 		interpreter.InjectMaket(dslVars, proc.Layout)
