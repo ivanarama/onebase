@@ -37,15 +37,17 @@ func (s *Server) processorForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Managed form path
-	if mf := proc.ManagedForm(); mf != nil {
+	mf := proc.ManagedForm()
+	initialValues, tablePartRows, err := processorInitialValues(r.URL.Query(), proc, mf)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if mf != nil {
 		virtEntity := processorVirtualEntity(proc)
-		paramValues := map[string]string{}
-		tablePartRows := map[string][]map[string]any{}
-		for _, p := range proc.Params {
-			if p.Default != nil {
-				paramValues[p.Name] = fmt.Sprintf("%v", paramDefaultValue(p.Default, p.Type))
-			}
+		paramValues := make(map[string]string, len(initialValues))
+		for name, value := range initialValues {
+			paramValues[name] = fmt.Sprint(value)
 		}
 		refOpts, _ := s.loadInitialRefOptions(r.Context(), virtEntity, paramValues)
 		tpRefOpts, _ := s.loadInitialTPRefOptions(r.Context(), virtEntity, tablePartRows)
@@ -79,19 +81,72 @@ func (s *Server) processorForm(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Auto-generated form (legacy)
-	paramValues := map[string]any{}
-	for _, p := range proc.Params {
-		if p.Default != nil {
-			paramValues[p.Name] = paramDefaultValue(p.Default, p.Type)
-		}
-	}
-	refOpts := s.loadProcessorRefOpts(r.Context(), proc.Params, paramValues)
+	refOpts := s.loadProcessorRefOpts(r.Context(), proc.Params, initialValues)
 	s.render(w, r, "page-processor", map[string]any{
 		"Processor":          proc,
-		"ParamValues":        paramValues,
+		"ParamValues":        initialValues,
 		"RefOptions":         refOpts,
 		"ProcessorRefEntity": processorRefEntities(proc.Params),
 	})
+}
+
+// processorInitialValues pre-fills the form without invoking a processor command.
+func processorInitialValues(query url.Values, proc *processorpkg.Processor, form *metadata.FormModule) (map[string]any, map[string][]map[string]any, error) {
+	values := make(map[string]any, len(proc.Params))
+	tables := make(map[string][]map[string]any)
+	var controls processorRequestControls
+	if len(query) > 0 {
+		controls = processorRequestControlsForForm(proc, form)
+		if controls.formTablesErr != nil {
+			return nil, nil, controls.formTablesErr
+		}
+	}
+	for _, p := range proc.Params {
+		if p.Default != nil {
+			values[p.Name] = paramDefaultValue(p.Default, p.Type)
+		}
+		if !query.Has(p.Name) || isProcessorFileParam(p.Type) || len(controls.paramFields[strings.ToLower(p.Name)]) == 0 {
+			continue
+		}
+		raw := query.Get(p.Name)
+		switch p.Type {
+		case "bool":
+			values[p.Name] = parseParamValue(raw, p.Type)
+		case "date":
+			date := tpDateInputValue(raw)
+			if form == nil && date != "" {
+				date = date[:10]
+			}
+			values[p.Name] = date
+		default:
+			values[p.Name] = raw
+		}
+	}
+	for _, table := range proc.TableParts {
+		if controls.tableAuthorities[table.Name].element == nil {
+			continue
+		}
+		blob, present, err := managedFormSinglePayloadValue(query, "tp_json."+table.Name)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !present {
+			continue
+		}
+		columns := make([]string, len(table.Fields))
+		for i, field := range table.Fields {
+			columns[i] = field.Name
+		}
+		rows, err := decodeManagedFormJSONRows(blob, columns)
+		if err != nil {
+			return nil, nil, fmt.Errorf("таблица формы %q: %w", table.Name, err)
+		}
+		tables[table.Name], err = convertManagedTablePartRows(rows, table)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return values, tables, nil
 }
 
 // loadProcessorRefOpts returns select options for reference-typed processor params.

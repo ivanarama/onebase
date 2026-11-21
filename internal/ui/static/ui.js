@@ -6298,10 +6298,10 @@ window.onebaseDevice = {
     }
     if (kind === 'processor' || kind === 'report' || kind === 'page') {
       var path = '/ui/' + kind + '/' + encodeURIComponent(String(ent));
-      if (kind !== 'report') return path;
+      if (kind === 'page') return path;
       var q = pairs(link['параметры'] || link.params, '');
       var run = link['сформировать'] || link.run;
-      if (run === true || run === 'true') q.push('__run=1');
+      if (kind === 'report' && (run === true || run === 'true')) q.push('__run=1');
       return q.length ? path + '?' + q.join('&') : path;
     }
     var base = '/ui/' + kind + '/' + encodeURIComponent(String(ent).toLowerCase());
