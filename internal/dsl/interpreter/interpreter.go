@@ -32,10 +32,11 @@ type dslReturn struct{ val any }
 // File/Line — место возбуждения (для ИнформацияОбОшибке); могут быть пустыми,
 // если ошибка поднята из метода объекта (RaiseUserError) без позиции.
 type userError struct {
-	Msg  string
-	File string
-	Line int
-	Err  error // исходная ошибка (например i18nerr) для локализации по цепочке
+	explicitMessage *string
+	Msg             string
+	File            string
+	Line            int
+	Err             error // исходная ошибка (например i18nerr) для локализации по цепочке
 }
 
 // asDSLError сохраняет место возбуждения даже после вложенного вызова или
@@ -48,7 +49,7 @@ func (u userError) asDSLError(file string, line int) *DSLError {
 	if u.Line > 0 {
 		line = u.Line
 	}
-	return &DSLError{File: file, Line: line, Msg: u.Msg, Err: u.Err}
+	return &DSLError{File: file, Line: line, Msg: u.Msg, Err: u.Err, explicitMessage: u.explicitMessage}
 }
 
 // RaiseUserError panics with a DSL user error. Предназначено для
@@ -363,7 +364,7 @@ func (i *Interpreter) evalDebugExpr(expr string, e *env) (res any, err error) {
 				if file == "" {
 					file, line = savedFile, savedLine
 				}
-				err = &DSLError{File: file, Line: line, Msg: v.Msg, Err: v.Err}
+				err = v.asDSLError(file, line)
 			default:
 				err = fmt.Errorf("%v", r)
 			}
@@ -742,6 +743,10 @@ func (i *Interpreter) construct(typeName string, args []any, e *env, displayName
 	case "шаблонhtml", "htmltemplate":
 		// План 125, по той же причине встроенным типом.
 		return NewHTMLTemplateObject(args)
+	case "уникальныйидентификатор", "uuid":
+		// Встроенным типом по той же причине: ключ идемпотентности нужен и в
+		// форме, и в фоновом задании.
+		return newUUIDValue(args)
 	}
 	// Расширяемые типы через env: "__factory_<ИмяТипа>"
 	if factory, ok := e.get("__factory_" + typeName); ok {
@@ -1445,6 +1450,13 @@ func equalSandboxed(a, b any, ec *execCtx, line int) bool {
 			return at.Equal(bt)
 		}
 	}
+	// УникальныйИдентификатор равен только такому же значению: строка с тем же
+	// текстом — другой тип, как в 1С (refKey сравнил бы их по тексту).
+	au, aIsUUID := unwrapReadOnly(a).(UUIDValue)
+	bu, bIsUUID := unwrapReadOnly(b).(UUIDValue)
+	if aIsUUID || bIsUUID {
+		return aIsUUID && bIsUUID && au == bu
+	}
 	// Числа сравниваем по значению (decimal.Equal), а не строково: иначе
 	// decimal(5) и int64(5) или 0.10 и 0.1 могли бы разойтись. Строки/ссылки —
 	// по-прежнему через refKey.
@@ -1486,6 +1498,9 @@ func compareSandboxed(a, b any, ec *execCtx, line int) int {
 	}
 	if IsUndefined(b) {
 		return 1
+	}
+	if order, handled := compareUUIDValues(a, b); handled {
+		return order
 	}
 	// Даты сравниваем хронологически, а не как строки.
 	if at, ok := a.(time.Time); ok {
@@ -1564,7 +1579,7 @@ func (i *Interpreter) execTry(t *ast.TryStmt, e *env) {
 			if len(args) == 0 {
 				panic(*caught)
 			}
-			return raiseUserException(args, file, line)
+			return raiseExplicitException(args, file, line)
 		})
 		// ОписаниеОшибки/ИнформацияОбОшибке доступны только внутри блока
 		// Исключение, поэтому публикуются временно. Сам блок исполняется в
