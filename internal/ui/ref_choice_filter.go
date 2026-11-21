@@ -231,6 +231,22 @@ func (s *Server) choicePredicates(ctx context.Context, owner *metadata.Entity, f
 				return nil, false, err
 			}
 			if !visible {
+				// not_in_hierarchy с константой, которой в этой базе нет вовсе
+				// (папка «Неиспользуемые» из другой базы): исключать нечего —
+				// условие пропускается, а не закрывает подбор целиком.
+				// Существующая, но невидимая пользователю запись по-прежнему
+				// закрывает подбор (#1821): иначе разность «всё» и «всё, кроме
+				// X» раскрыла бы её содержимое. Константа — из конфигурации, не
+				// из браузера, подменить её нельзя.
+				if condition.Op == metadata.FormChoiceOpNotInHierarchy {
+					exists, err := s.choiceRefExists(ctx, target, fieldName, id)
+					if err != nil {
+						return nil, false, err
+					}
+					if !exists {
+						continue
+					}
+				}
 				return nil, true, nil
 			}
 			predicate.Value = id
@@ -442,6 +458,40 @@ func (s *Server) deepChoiceSourceValue(ctx context.Context, owner *metadata.Enti
 // в ответе не различаются: пустой подбор не должен рассказывать, существует ли
 // запись. Проверка — тот же гейт, что у selected_allowed (чтение справочника и
 // допуск строки); группы включены: постоянная ссылка обычно указывает на папку.
+// choiceRefExists — есть ли запись ref в справочнике ссылки вообще, без учёта
+// прав пользователя. Нужна только константе not_in_hierarchy: отличить «папки
+// в этой базе нет» от «папка есть, но пользователю не видна».
+func (s *Server) choiceRefExists(ctx context.Context, target *metadata.Entity, fieldName string, id uuid.UUID) (bool, error) {
+	refEntity := s.reg.GetEntity(choiceRefEntityName(target, fieldName))
+	if refEntity == nil {
+		return false, fmt.Errorf("choice ref field %q is not a reference", fieldName)
+	}
+	if _, err := s.store.GetByID(ctx, refEntity.Name, id, refEntity); err != nil {
+		if storage.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
+// choiceRefEntityName — справочник, на который ссылается поле подбора цели.
+func choiceRefEntityName(target *metadata.Entity, fieldName string) string {
+	refName := ""
+	if field, ok := entityFieldByName(target, fieldName); ok {
+		refName = strings.TrimSpace(field.RefEntity)
+	} else if strings.EqualFold(fieldName, metadata.FormChoiceParentField) {
+		if parent := metadata.FormChoiceParentFieldOf(target); parent != nil {
+			refName = parent.RefEntity
+		}
+	} else if tpName, columnName, isTablePart := strings.Cut(fieldName, "."); isTablePart {
+		if _, column := storage.ChoiceTablePartColumn(target, tpName, columnName); column != nil {
+			refName = strings.TrimSpace(column.RefEntity)
+		}
+	}
+	return refName
+}
+
 func (s *Server) choiceRefVisible(ctx context.Context, target *metadata.Entity, fieldName string, id uuid.UUID) (bool, error) {
 	refName := ""
 	if field, ok := entityFieldByName(target, fieldName); ok {

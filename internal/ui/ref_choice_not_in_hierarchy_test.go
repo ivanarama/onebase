@@ -18,8 +18,9 @@ import (
 // not_in_hierarchy (#1821) через публичный маршрут подбора: точное дополнение
 // in_hierarchy, пустой реквизит проходит. Исключаемая группа — из ref или из
 // поля формы (в том числе за одной ссылкой) — обязана быть видна
-// пользователю: несуществующая дала бы весь справочник, закрытая RLS —
-// показала бы, что лежит у неё внутри. В обоих случаях подбор пуст.
+// пользователю: закрытая RLS показала бы, что лежит у неё внутри, —
+// подбор пуст. Исключение — константа ref, которой в этой базе нет вовсе
+// (папка из другой базы): исключать нечего, подбор как без условия.
 func newNotInHierarchyFixture(t *testing.T, db *storage.DB) refChoiceFixture {
 	t.Helper()
 	notFolder := metadata.FormChoiceCondition{Field: "is_folder", Op: metadata.FormChoiceOpEqual, Value: boolPtr(false)}
@@ -80,6 +81,7 @@ func TestRefOptionsNotInHierarchy(t *testing.T) {
 			{"ссылочный реквизит: пустой проходит, ветка «Рабочие» исключена", "not-analog", nil, "замена,консультация,корневая,тайна"},
 			{"группа из поля формы", "not-from", map[string]string{"Объект.НеИз": f.working.String()}, "корневая,старая,тайна"},
 			{"группа за одной ссылкой", "not-deep", map[string]string{"Объект.НеИз.Аналог": f.old.String()}, "замена,консультация,корневая,старая,тайна"},
+			{"ref: папки нет в этой базе — исключать нечего", "not-missing", nil, "замена,консультация,корневая,старая,тайна"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				got := f.fetchSources(t, tc.element, tc.sources, uuid.Nil)
@@ -102,7 +104,6 @@ func TestRefOptionsNotInHierarchyUnavailableIsClosed(t *testing.T) {
 			element string
 			sources map[string]string
 		}{
-			{"ref: записи нет в базе", "not-missing", nil},
 			{"ref: запись закрыта RLS", "not-hidden", nil},
 			{"from: записи нет в базе", "not-from", map[string]string{"Объект.НеИз": choiceHTTPUUID(0x7f, 2).String()}},
 			{"from: запись закрыта RLS", "not-from", map[string]string{"Объект.НеИз": f.secret.String()}},
@@ -137,7 +138,7 @@ func TestRefOptionsNotInHierarchySelectedAllowed(t *testing.T) {
 			{"корневая запись", "not-archive", nil, f.root, true},
 			{"папка (is_folder=false)", "not-archive", nil, f.archive, false},
 			{"закрытый RLS цели", "not-archive", nil, f.closed, false},
-			{"ref нет в базе", "not-missing", nil, f.root, false},
+			{"ref нет в базе — исключать нечего", "not-missing", nil, f.root, true},
 			{"ref закрыт RLS", "not-hidden", nil, f.root, false},
 			{"from: элемент выбранной ветки", "not-from", working, f.replace, false},
 			{"from: элемент чужой ветки", "not-from", working, f.old, true},
