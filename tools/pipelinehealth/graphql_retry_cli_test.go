@@ -54,11 +54,7 @@ func runGraphQLRetryFixture(path string) {
 func TestGraphQLCLIGatewayReadRecovery(t *testing.T) {
 	root := repoRoot(t)
 	binary := pipelinehealthCLI(t)
-
-	helper, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	helper := buildGhStub(t)
 	marshal := func(value any) json.RawMessage {
 		data, err := json.Marshal(value)
 		if err != nil {
@@ -107,7 +103,7 @@ func TestGraphQLCLIGatewayReadRecovery(t *testing.T) {
 			//nolint:gosec // binary was built by this test under t.TempDir.
 			command := exec.Command(binary, "-transport", "graphql", "-json")
 			command.Dir = root
-			command.Env = append(os.Environ(), "GH_EXE="+helper, "PIPELINEHEALTH_TEST_GH_HELPER=1", "PIPELINEHEALTH_TEST_GH_RETRY_FIXTURE="+path)
+			command.Env = append(os.Environ(), "GH_EXE="+helper, "GHSTUB_GRAPHQL_RETRY_FIXTURE="+path)
 			output, err := command.Output()
 			counter, readErr := os.ReadFile(path + ".index")
 			if readErr != nil || string(counter) != strconv.Itoa(test.calls) {

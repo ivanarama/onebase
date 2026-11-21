@@ -32,7 +32,7 @@ func TestGridRowActivateAfterReloadBrowserAcceptance(t *testing.T) {
 		t.Fatal(err)
 	}
 	e := &metadata.Entity{Name: "Orders", Kind: metadata.KindDocument,
-		Fields: []metadata.Field{{Name: "Selected", Type: metadata.FieldTypeString}},
+		Fields:     []metadata.Field{{Name: "Selected", Type: metadata.FieldTypeString}},
 		TableParts: []metadata.TablePart{{Name: "Results", Fields: []metadata.Field{{Name: "Name", Type: metadata.FieldTypeString}}}},
 		Forms:      []*metadata.FormModule{form}}
 	if err := db.Migrate(ctx, []*metadata.Entity{e}); err != nil {
