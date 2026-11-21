@@ -49,6 +49,25 @@ func fullCurrentReviewHistory(t *testing.T) map[string]any {
 }
 
 func fullCurrentReviewCLI(t *testing.T, snapshot map[string]any, expectedCalls ...int) report {
+	options := fullCurrentReviewCLIOptions{}
+	if len(expectedCalls) > 0 {
+		options.calls = expectedCalls[0]
+		if options.calls == -1 {
+			options.refused = "actor"
+			options.calls = 0
+		}
+	}
+	return fullCurrentReviewCLIWithOptions(t, snapshot, options)
+}
+
+type fullCurrentReviewCLIOptions struct {
+	queueComments func([]any)
+	repeats       int
+	calls         int
+	refused       string
+}
+
+func fullCurrentReviewCLIWithOptions(t *testing.T, snapshot map[string]any, options fullCurrentReviewCLIOptions) report {
 	t.Helper()
 	comments := []any{}
 	for _, raw := range snapshot["edges"].([]any) {
@@ -61,7 +80,10 @@ func fullCurrentReviewCLI(t *testing.T, snapshot map[string]any, expectedCalls .
 			updated = node["lastEditedAt"]
 		}
 		comments = append(comments, map[string]any{"fullDatabaseId": node["fullDatabaseId"], "createdAt": node["createdAt"],
-			"updatedAt": updated, "author": node["author"], "body": node["body"]})
+			"updatedAt": updated, "lastEditedAt": node["lastEditedAt"], "author": node["author"], "body": node["body"]})
+	}
+	if options.queueComments != nil {
+		options.queueComments(comments)
 	}
 	labels := []any{}
 	for _, name := range snapshot["labels"].([]any) {
@@ -88,6 +110,10 @@ func fullCurrentReviewCLI(t *testing.T, snapshot map[string]any, expectedCalls .
 			"__typename": "PullRequest", "id": "PR_NODE_42", "headRefOid": headA}}}},
 		map[string]any{"data": timeline}, map[string]any{"data": timeline},
 	}
+	firstPass := append([]any(nil), pages...)
+	for pass := 1; pass < options.repeats; pass++ {
+		pages = append(pages, firstPass...)
+	}
 	data, err := json.Marshal(pages)
 	if err != nil {
 		t.Fatal(err)
@@ -105,12 +131,16 @@ func fullCurrentReviewCLI(t *testing.T, snapshot map[string]any, expectedCalls .
 	command.Dir = repoRoot(t)
 	command.Env = append(os.Environ(), "GH_EXE="+helper, "PIPELINEHEALTH_TEST_GH_HELPER=1", "PIPELINEHEALTH_TEST_GH_SEQUENCE="+sequence)
 	output, err := command.CombinedOutput()
-	// -1 is used only for the explicit unresolved protocol-actor case: a
-	// complete public read must refuse it, never turn it into ordinary work.
-	if len(expectedCalls) == 1 && expectedCalls[0] == -1 {
+	if options.calls > 0 {
+		counter, readErr := os.ReadFile(sequence + ".index")
+		if readErr != nil || string(counter) != fmt.Sprint(options.calls) {
+			t.Fatalf("complete read call count: got=%q want=%d err=%v\n%s", counter, options.calls, readErr, output)
+		}
+	}
+	if options.refused != "" {
 		exit, ok := err.(*exec.ExitError)
-		if !ok || exit.ExitCode() != 2 || !strings.Contains(string(output), "actor") {
-			t.Fatalf("unresolved actor did not fail the public read closed: %v\n%s", err, output)
+		if !ok || exit.ExitCode() != 2 || !strings.Contains(string(output), options.refused) {
+			t.Fatalf("public read did not refuse %q: %v\n%s", options.refused, err, output)
 		}
 		return report{State: "read-refused"}
 	}
@@ -121,13 +151,92 @@ func fullCurrentReviewCLI(t *testing.T, snapshot map[string]any, expectedCalls .
 	if err := json.Unmarshal(output, &got); err != nil {
 		t.Fatalf("decode public report: %v\n%s", err, output)
 	}
-	if len(expectedCalls) > 0 {
-		counter, err := os.ReadFile(sequence + ".index")
-		if err != nil || string(counter) != fmt.Sprint(expectedCalls[0]) {
-			t.Fatalf("complete two-pass epoch was not read: calls=%q err=%v", counter, err)
-		}
-	}
 	return got
+}
+
+func TestFullCurrentReviewSeparatesEditAndUpdateTimesPublicCLI(t *testing.T) {
+	for _, author := range []string{"contributor", "owner"} {
+		t.Run(author, func(t *testing.T) {
+			snapshot := fullCurrentReviewHistory(t)
+			snapshot["edges"] = append([]any{map[string]any{
+				"cursor": "C_DISCUSSION", "node": map[string]any{
+					"__typename": "IssueComment", "id": "IC_DISCUSSION", "fullDatabaseId": "240",
+					"createdAt": "2026-10-28T00:25:00Z", "lastEditedAt": "2026-10-28T00:25:05Z",
+					"author": map[string]any{"login": author}, "body": "Edited discussion; no protocol record.",
+				},
+			}}, snapshot["edges"].([]any)...)
+			got := fullCurrentReviewCLIWithOptions(t, snapshot, fullCurrentReviewCLIOptions{
+				repeats: 3, calls: 5,
+				queueComments: func(comments []any) {
+					for _, raw := range comments {
+						comment := routingObject(raw)
+						if comment["fullDatabaseId"] == "240" {
+							// GitHub can update the object after recording its body edit.
+							comment["updatedAt"] = "2026-10-28T00:25:06Z"
+						}
+					}
+				},
+			})
+			if got.Checked != 1 || len(got.MergeExecutable) != 1 || len(got.ReviewCandidates) != 0 {
+				t.Fatalf("consistent edit timestamp blocked the complete queue: %+v", got)
+			}
+			if author == "owner" {
+				// Edited trusted history still cannot establish a full review.
+				if got.IntegrationOwner == nil || got.MergeExecutable[0].Stage != "legacy-integration-merge-ready" {
+					t.Fatalf("edited trusted history acquired full-review authority: %+v", got)
+				}
+			} else if got.IntegrationOwner != nil || got.MergeExecutable[0].Stage != "merge" {
+				t.Fatalf("foreign discussion changed the verified review proof: %+v", got)
+			}
+		})
+	}
+}
+
+func TestFullCurrentReviewRequiresMatchingEditTimesPublicCLI(t *testing.T) {
+	for _, fault := range []string{"missing", "wrong-type", "invalid-time", "queue-edited", "timeline-edited", "different-edits"} {
+		t.Run(fault, func(t *testing.T) {
+			snapshot := fullCurrentReviewHistory(t)
+			if fault == "timeline-edited" || fault == "different-edits" {
+				for _, raw := range snapshot["edges"].([]any) {
+					node := routingObject(routingObject(raw)["node"])
+					if node["fullDatabaseId"] == "100" {
+						node["lastEditedAt"] = "2026-10-29T00:10:01Z"
+					}
+				}
+			}
+			options := fullCurrentReviewCLIOptions{
+				repeats: 3, calls: 15, refused: "full current review differs from queue snapshot",
+				queueComments: func(comments []any) {
+					for _, raw := range comments {
+						comment := routingObject(raw)
+						if comment["fullDatabaseId"] != "100" {
+							continue
+						}
+						switch fault {
+						case "missing":
+							delete(comment, "lastEditedAt")
+						case "wrong-type":
+							comment["lastEditedAt"] = true
+						case "invalid-time":
+							comment["lastEditedAt"] = "not-a-time"
+						case "queue-edited":
+							comment["lastEditedAt"] = "2026-10-29T00:10:01Z"
+						case "timeline-edited":
+							comment["lastEditedAt"] = nil
+						case "different-edits":
+							comment["lastEditedAt"] = "2026-10-29T00:10:02Z"
+						}
+					}
+				},
+			}
+			if fault == "missing" || fault == "wrong-type" || fault == "invalid-time" {
+				options.calls, options.refused = 1, "lastEditedAt"
+			}
+			if got := fullCurrentReviewCLIWithOptions(t, snapshot, options); got.State != "read-refused" {
+				t.Fatalf("incomplete or divergent edit time produced a queue: %+v", got)
+			}
+		})
+	}
 }
 
 func TestFullCurrentReviewOverridesMergeShapePublicCLI(t *testing.T) {

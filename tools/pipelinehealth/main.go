@@ -50,11 +50,13 @@ type apiLabel struct {
 }
 
 type apiComment struct {
-	ID        int64   `json:"id"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
-	User      apiUser `json:"user"`
-	Body      string  `json:"body"`
+	// Only the GraphQL reader sets this; updated_at retains its original value.
+	lastEditedAt *string
+	ID           int64   `json:"id"`
+	CreatedAt    string  `json:"created_at"`
+	UpdatedAt    string  `json:"updated_at"`
+	User         apiUser `json:"user"`
+	Body         string  `json:"body"`
 }
 
 type apiPull struct {
@@ -189,6 +191,7 @@ type finding struct {
 }
 
 type report struct {
+	TailBacklog                      *tailBacklogHealth            `json:"tail_backlog,omitempty"`
 	SourceGraphQLUsage               *sourceGraphQLUsage           `json:"source_graphql_usage,omitempty"`
 	IdentityInventoryVersion         int                           `json:"identity_inventory_version,omitempty"`
 	IdentityAuthority                string                        `json:"identity_authority,omitempty"`
@@ -239,6 +242,7 @@ func main() {
 	transport := flag.String("transport", "graphql", "GitHub read transport: graphql or rest")
 	cacheDir := flag.String("cache-dir", os.Getenv("PIPELINEHEALTH_CACHE_DIR"), "persistent GitHub REST cache directory (default: user cache directory)")
 	asJSON := flag.Bool("json", false, "print machine-readable JSON")
+	tailBacklog := flag.String("tail-backlog", "", "attach a local tail-backlog JSON snapshot for diagnostics")
 	technicalHandoff := flag.Bool("technical-handoff", false, "enable paired read-only review-routing-v1 diagnostics; no mutation authority")
 	routingMaxAttempts := flag.Int64("routing-max-attempts", 2, "current finite lifetime technical FIX limit, from1 to16")
 	routingInspect := flag.Int("routing-inspect", 0, "read one PR's complete typed history without queue election or mutation authority")
@@ -248,6 +252,9 @@ func main() {
 	sourceBudget := flag.Int64("source-graphql-budget", 0, "optional finite point allowance for source-graphql-cost-v1")
 	sourceNonce := flag.String("source-graphql-nonce", "", "optional32-character hex caller nonce for source-graphql-cost-v1")
 	flag.Parse()
+	if *tailBacklog != "" && (!*asJSON || *routingInspect != 0) {
+		fail(fmt.Errorf("-tail-backlog requires the full JSON report"))
+	}
 	var sourceMeter *sourceGraphQLMeter
 	sourceOptIn := false
 	flag.Visit(func(value *flag.Flag) {
@@ -367,6 +374,9 @@ func main() {
 		analysisPulls, identities, identityFindings = prepareIdentityInventory(prs, *repo, *baseRepositoryID)
 	}
 	result := analyzeWithRouting(analysisPulls, *owner, routing)
+	if *tailBacklog != "" {
+		result.TailBacklog = readTailBacklog(*tailBacklog, *repo, time.Now())
+	}
 	result.Checked = len(prs)
 	result.Findings = append(result.Findings, identityFindings...)
 	if selectedTransport == "graphql" {
