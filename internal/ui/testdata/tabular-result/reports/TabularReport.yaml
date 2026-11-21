@@ -1,0 +1,7 @@
+name: TabularReport
+title: КПИ по макету
+result_proc: Сформировать
+params:
+  - name: Период
+    type: string
+    default: Ноябрь 2026

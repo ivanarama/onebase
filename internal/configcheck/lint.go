@@ -507,7 +507,7 @@ func reportYAMLSchema() *yamlLintSchema {
 		"appearance":  obj("lines", "zebra", "collapse_to"),
 		"chart":       obj("type", "category", "series"),
 	})
-	return with(obj("name", "title", "query", "chart_proc", "output_format"), map[string]*yamlLintSchema{
+	return with(obj("name", "title", "query", "chart_proc", "result_proc", "compare_phone_field", "output_format"), map[string]*yamlLintSchema{
 		"titles": freeMap(),
 		// У отчёта «required» НЕТ намеренно: report.Param такого поля не знает,
 		// и разрешённый линтом ключ молча ничего бы не делал. Обязательность
@@ -1249,8 +1249,10 @@ func collectLintPrograms(dir string, proj *project.Project) []lintProgram {
 		testProcessors[low] = p.IsTest()
 	}
 	reportChartProcs := map[string]string{}
+	reportResultProcs := map[string]string{}
 	for _, r := range proj.Reports {
 		reportChartProcs[strings.ToLower(r.Name)] = r.ChartProc
+		reportResultProcs[strings.ToLower(r.Name)] = r.ResultProc
 	}
 
 	for name, prog := range proj.Programs {
@@ -1259,8 +1261,8 @@ func collectLintPrograms(dir string, proj *project.Project) []lintProgram {
 		case processors[low]:
 			add(name, "DSL обработка", prog, rootNames("Выполнить"), false)
 			out[len(out)-1].testContext = testProcessors[low]
-		case reportChartProcs[low] != "":
-			add(name, "DSL отчёт", prog, rootNames(reportChartProcs[low]), false)
+		case reportChartProcs[low] != "" || reportResultProcs[low] != "":
+			add(name, "DSL отчёт", prog, rootNames(reportChartProcs[low], reportResultProcs[low]), false)
 		case entities[low] != nil:
 			add(name, "DSL объект", prog, rootNames(
 				"OnWrite", "ПриЗаписи",

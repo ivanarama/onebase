@@ -477,7 +477,7 @@ func allSchemas() map[string]map[string]any {
 			"type":                 "object",
 			"required":             []string{"name"},
 			"additionalProperties": true,
-			"properties":           map[string]any{"name": stringSchema("Имя"), "title": stringSchema("Синоним"), "params": arrayOf(param), "query": stringSchema("Текст запроса"), "chart_proc": stringSchema("Процедура диаграммы"), "composition": map[string]any{"type": "object"}},
+			"properties":           map[string]any{"name": stringSchema("Имя"), "title": stringSchema("Синоним"), "params": arrayOf(param), "query": stringSchema("Текст запроса"), "chart_proc": stringSchema("Процедура диаграммы"), "result_proc": stringSchema("Функция результата ТабличныйДокумент"), "compare_phone_field": stringSchema("Поле документа для сопоставления телефонов в result_proc"), "composition": map[string]any{"type": "object"}},
 		},
 		"widget": {
 			"$schema":              "https://json-schema.org/draft/2020-12/schema",

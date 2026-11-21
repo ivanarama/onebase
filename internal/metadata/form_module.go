@@ -73,10 +73,12 @@ const (
 	// переменная ТекущаяСтраница; сервер принимает только страницу этого же
 	// набора.
 	FormEventOnPageChange FormEventType = "ПриСменеСтраницы" // OnCurrentPageChange
+	FormEventDrilldown    FormEventType = "ОбработкаРасшифровки"
 )
 
 var knownFormEventTypes = map[FormEventType]bool{
-	FormEventOnOpen: true, FormEventOnReadAtServer: true,
+	FormEventDrilldown: true,
+	FormEventOnOpen:    true, FormEventOnReadAtServer: true,
 	FormEventBeforeWrite: true, FormEventOnWrite: true, FormEventAfterWrite: true,
 	FormEventBeforeClose: true, FormEventOnClose: true, FormEventOnActivate: true,
 	FormEventItemChoice: true, FormEventStartChoice: true, FormEventOnChange: true,
@@ -128,6 +130,8 @@ func IsKnownFormEventType(event FormEventType) bool {
 // FormElementType represents types of form elements
 type FormElementType string
 
+const FormElementSpreadsheet FormElementType = "ПолеТабличногоДокумента"
+
 const (
 	FormElementField      FormElementType = "ПолеВвода"      // InputField
 	FormElementLabel      FormElementType = "Надпись"        // Label
@@ -158,7 +162,8 @@ const (
 // Держится рядом с константами FormElementType: добавляя новый вид, впиши его
 // сюда, иначе configcheck пометит его как неизвестный (см. CheckFormElementKind).
 var knownFormElementTypes = map[FormElementType]bool{
-	FormElementField: true, FormElementLabel: true, FormElementButton: true,
+	FormElementSpreadsheet: true,
+	FormElementField:       true, FormElementLabel: true, FormElementButton: true,
 	FormElementTable: true, FormElementGroupBox: true, FormElementPage: true,
 	FormElementPages: true, FormElementCheckbox: true, FormElementSwitch: true,
 	FormElementInputList: true, FormElementDatePicker: true, FormElementFormField: true,
@@ -246,6 +251,10 @@ type FormElement struct {
 	// единственное действие объявлено своей кнопкой — без акцента она теряется
 	// среди вспомогательных.
 	Primary bool `yaml:"primary,omitempty"`
+
+	// ComparePhoneField enables request-local phone comparison for this
+	// built-in processor button. It names one document string PII field.
+	ComparePhoneField string `yaml:"compare_phone_field,omitempty"`
 	// ReadOnlyWhen / HiddenWhen — условия по полям ЗАПИСИ (выражение того же
 	// языка, что `when` условного оформления): элемент становится нередактируемым
 	// либо вовсе не показывается, пока условие истинно. Нужны там, где запрет
