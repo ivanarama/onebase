@@ -593,7 +593,7 @@ func TestEditableAdminOnlyPlacementPathsThroughHTTPAndClient(t *testing.T) {
 				if rendered.Code != http.StatusOK {
 					t.Fatalf("render: %d %s", rendered.Code, rendered.Body.String())
 				}
-				if !strings.Contains(rendered.Body.String(), "managed-group-scrollx") || !strings.Contains(rendered.Body.String(), "btn-primary managed-btn") {
+				if !strings.Contains(rendered.Body.String(), "managed-group-scrollx") || !strings.Contains(rendered.Body.String(), "btn-app-primary managed-btn") {
 					t.Fatal("lost group scrolling or primary button while reconciling templates")
 				}
 				event := runFormEventAs(t, srv, ent, url.Values{

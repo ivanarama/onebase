@@ -270,6 +270,11 @@ func templateFuncs(bundle *i18n.Bundle) template.FuncMap {
 		},
 		"entityFormServiceFieldNames":    entityFormServiceFieldNames,
 		"processorExecuteFallbackButton": isProcessorExecuteFallbackButton,
+		"hasOwnFormCloseButton":          hasOwnFormCloseButton,
+		"ownFormCloseButton":             ownFormCloseButton,
+		"appFormButtonClass":             appFormButtonClass,
+		"formButtonPrimary":              formButtonPrimary,
+		"enhancedTableLayout":            enhancedTableLayout,
 		"effectiveFormElementReadOnly":   effectiveFormElementReadOnly,
 		"effectiveFormElementRequired":   effectiveFormElementRequired,
 		"managedCommandBarElement":       managedCommandBarElement,
@@ -1681,6 +1686,10 @@ h3{font-size:16px;font-weight:600;margin:24px 0 10px;color:#1e293b}
 .main-list .card,.main-list .row-top,.main-list details,.main-list .breadcrumb{max-width:1600px}
 .main-list .ob-list-content{width:100%}
 .main-list .ob-list-content>.card{max-width:none}
+.ob-list-scroll{max-height:54vh;overflow:auto}
+.ob-list-pages{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+.ob-list-pages .btn[aria-disabled="true"]{opacity:.5;cursor:default}
+
 table{width:100%;border-collapse:collapse;font-size:14px}
 th{text-align:left;padding:10px 12px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;background:#eef2f7}
 th a{color:inherit;text-decoration:none}
@@ -1692,6 +1701,21 @@ tr:hover td{background:#f8fafc}
 .btn-primary{background:#3b82f6;color:#fff}.btn-primary:hover{background:#2563eb}
 .btn-post{background:#e8b400;color:#1a1a1a;font-weight:700}.btn-post:hover{background:#d4a200}
 .btn-secondary{background:#e2e8f0;color:#374151}.btn-secondary:hover{background:#cbd5e1}
+.entity-command-group{display:inline-flex;align-items:center;gap:3px}
+.entity-command{display:inline-flex;align-items:center}
+.btn.btn-command{display:inline-flex;align-items:center;justify-content:center;width:19px;height:19px;padding:0;border-radius:4px;font-size:18px}
+.btn.btn-command .ob-icon{width:14px;height:14px;flex:none}
+.btn-command.btn-command-create{border-radius:50%;background:#15803d;color:#fff}
+.btn-command.btn-command-create:hover{background:#166534}
+.btn-document-post{background:#dcfce7;color:#166534}.btn-document-post:hover{background:#bbf7d0}
+.btn-document-unpost{background:#ffedd5;color:#9a3412}.btn-document-unpost:hover{background:#fed7aa}
+.btn-command-copy{background:#dbeafe;color:#1d4ed8}.btn-command-copy:hover{background:#bfdbfe}
+.btn-command-mark{background:#fee2e2;color:#b91c1c}.btn-command-mark:hover{background:#fecaca}
+.btn.btn-command:disabled{background:#e2e8f0;color:#475569;opacity:.68;pointer-events:none}
+@media(prefers-color-scheme:dark){
+  .btn.btn-command:disabled{background:#334155;color:#cbd5e1}
+}
+
 .btn-cancel{background:transparent;color:#64748b;border:1px solid #e2e8f0}.btn-cancel:hover{background:#f1f5f9}
 .btn-sm{padding:5px 12px;font-size:13px}
 /* Кнопка, которой сейчас нечего делать (нет выбранной строки списка): гасим вид,
@@ -2204,11 +2228,86 @@ const tplList = `
 <a class="btn btn-secondary btn-sm" data-ob-list-refresh href="{{.URL}}" title="{{t .Lang "Обновить"}}">🔄 {{t .Lang "Обновить"}}</a>
 {{end}}
 
+
+{{define "entity-command"}}
+<span class="entity-command" title="{{.Title}}"{{if .ListCommand}} data-ob-list-command="{{.ListCommand}}" data-ob-command-denied="{{if not .Allowed}}1{{end}}" data-ob-command-label="{{.Label}}"{{end}}>
+  {{if and .Href .Allowed}}<a class="btn btn-command {{.Class}}" href="{{.Href}}" aria-label="{{.Label}}"{{if .Create}} data-ob-list-create aria-keyshortcuts="Insert"{{end}}>{{lucideIcon .Icon}}</a>
+  {{else}}<button class="btn btn-command {{.Class}}" aria-label="{{.Label}}"{{if and .Name .Allowed}} name="{{.Name}}" value="{{.Value}}"{{end}}{{if .Form}} type="submit" form="{{.Form}}"{{else}} type="button"{{end}}{{if or (not .Allowed) .ListCommand}} disabled{{end}}>{{lucideIcon .Icon}}</button>{{end}}
+</span>
+{{end}}
+
+{{define "document-form-post-commands"}}
+{{if .Entity.Posting}}
+  {{$post := or .Entity.PostCaption (t .Lang "Провести")}}
+  {{$unpost := t .Lang "Отменить проведение"}}
+  {{$marked := eq (index .Values "deletion_mark") "true"}}
+  {{$posted := and (not .IsNew) (eq (index .Values "posted") "true")}}
+  {{$postTitle := $post}}{{$unpostTitle := $unpost}}
+  {{if not .CanPost}}{{$postTitle = t .Lang "Недостаточно прав"}}{{else if $marked}}{{$postTitle = t .Lang "Документ помечен на удаление"}}{{end}}
+  {{if not .CanUnpost}}{{$unpostTitle = t .Lang "Недостаточно прав"}}{{else if not $posted}}{{$unpostTitle = t .Lang "Не проведён"}}{{end}}
+  {{template "entity-command" (dict "Icon" "file-input" "Class" "btn-document-post" "Form" "main-form" "Name" "_action" "Value" "post" "Allowed" (and .CanPost (not $marked)) "Label" $post "Title" $postTitle)}}
+  {{template "entity-command" (dict "Icon" "file-output" "Class" "btn-document-unpost" "Form" "form-unpost" "Allowed" (and .CanUnpost $posted) "Label" $unpost "Title" $unpostTitle)}}
+{{end}}
+{{end}}
+
+{{define "entity-form-copy-command"}}
+{{if not .IsNew}}
+  {{$label := t .Lang "Скопировать"}}
+  {{$copyURL := printf "/ui/%s/%s/new%s" (lower (str .Entity.Kind)) (lower .Entity.Name) (listURL nil "copy" (str .ID) "subsystem" (str .CurrentSubsystem))}}
+  {{template "entity-command" (dict "Icon" "copy" "Class" "btn-command-copy" "Href" $copyURL "Allowed" .CanCopy "Label" $label "Title" (or (and .CanCopy $label) (t .Lang "Недостаточно прав")))}}
+{{end}}
+{{end}}
+
+{{define "entity-form-mark-command"}}
+{{if not .IsNew}}
+  {{$marked := eq (index .Values "deletion_mark") "true"}}
+  {{$label := t .Lang "Пометить на удаление"}}
+  {{$param := "1"}}{{$icon := "x"}}
+  {{if $marked}}{{$label = t .Lang "Снять пометку на удаление"}}{{$param = "0"}}{{$icon = "rotate-ccw"}}{{end}}
+  <form id="form-mark-command" action="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/{{.ID}}/delete?mark={{$param}}" method="POST"></form>
+  {{template "entity-command" (dict "Icon" $icon "Class" "btn-command-mark" "Form" "form-mark-command" "Allowed" .CanMark "Label" $label "Title" (or (and .CanMark $label) (t .Lang "Недостаточно прав")))}}
+{{end}}
+{{end}}
+
+{{define "document-list-pager"}}
+<div class="ob-list-pages" role="navigation" aria-label="{{t .Lang "Страницы"}}">
+  {{if .HasPrev}}
+    <a class="btn btn-secondary btn-sm" data-ob-page="first" href="{{listURL .Query "page" "1"}}">{{t .Lang "Первая"}}</a>
+    <a class="btn btn-secondary btn-sm" data-ob-page="prev" href="{{listURL .Query "page" (str .PrevPage)}}">{{t .Lang "← Назад"}}</a>
+  {{else}}
+    <span class="btn btn-secondary btn-sm" aria-disabled="true">{{t .Lang "Первая"}}</span>
+    <span class="btn btn-secondary btn-sm" aria-disabled="true">{{t .Lang "← Назад"}}</span>
+  {{end}}
+  <span data-ob-page-indicator>{{t .Lang "Стр."}} {{.Page}} {{t .Lang "из"}} {{.TotalPages}} ({{.Total}} {{t .Lang "записей"}})</span>
+  {{if .HasNext}}
+    <a class="btn btn-secondary btn-sm" data-ob-page="next" href="{{listURL .Query "page" (str .NextPage)}}">{{t .Lang "Вперёд →"}}</a>
+    <a class="btn btn-secondary btn-sm" data-ob-page="last" href="{{listURL .Query "page" "last"}}">{{t .Lang "Последняя"}}</a>
+  {{else}}
+    <span class="btn btn-secondary btn-sm" aria-disabled="true">{{t .Lang "Вперёд →"}}</span>
+    <span class="btn btn-secondary btn-sm" aria-disabled="true">{{t .Lang "Последняя"}}</span>
+  {{end}}
+</div>
+{{end}}
+
 {{define "page-list"}}
 {{template "head" .}}{{template "nav" .}}
 <main class="main-list">
+{{if not .LegacyEntityUI}}<h2>{{.Entity.DisplayName $.Lang}}</h2>{{end}}
 <div class="row-top">
-  <h2>{{.Entity.DisplayName $.Lang}}</h2>
+  {{if .LegacyEntityUI}}<h2>{{.Entity.DisplayName $.Lang}}</h2>{{else}}
+  <div class="entity-command-group" role="group" aria-label="{{t .Lang "Действия"}}">
+    {{$newURL := printf "/ui/%s/%s/new%s" (lower (str .Entity.Kind)) (lower .Entity.Name) (listURL nil "parent" (str .ParentStr) "subsystem" (str .CurrentSubsystem))}}
+    {{$create := t .Lang "Создать"}}
+    {{template "entity-command" (dict "Icon" "plus" "Class" "btn-command-create" "Create" true "Href" $newURL "Allowed" .CanCreate "Label" $create "Title" (or (and .CanCreate $create) (t .Lang "Недостаточно прав")))}}
+    {{if .Entity.Posting}}
+      {{$post := or .Entity.PostCaption (t .Lang "Провести")}}
+      {{template "entity-command" (dict "Icon" "file-input" "Class" "btn-document-post" "ListCommand" "post" "Allowed" .CanPost "Label" $post "Title" (or (and .CanPost (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
+      {{template "entity-command" (dict "Icon" "file-output" "Class" "btn-document-unpost" "ListCommand" "unpost" "Allowed" .CanUnpost "Label" (t .Lang "Отменить проведение") "Title" (or (and .CanUnpost (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
+    {{end}}
+    {{template "entity-command" (dict "Icon" "copy" "Class" "btn-command-copy" "ListCommand" "copy" "Allowed" .CanCopy "Label" (t .Lang "Скопировать") "Title" (or (and .CanCopy (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
+    {{template "entity-command" (dict "Icon" "x" "Class" "btn-command-mark" "ListCommand" "mark" "Allowed" .CanMark "Label" (t .Lang "Пометить на удаление") "Title" (or (and .CanMark (t .Lang "Сначала выберите строку списка")) (t .Lang "Недостаточно прав")))}}
+  </div>
+  {{end}}
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
     {{template "list-refresh" (dict "URL" .RequestURI "Lang" $.Lang)}}
     <div class="view-switch">
@@ -2243,11 +2342,11 @@ const tplList = `
     {{if .Entity.Hierarchical}}
       {{if .UpURL}}<a class="btn btn-secondary btn-sm" href="{{.UpURL}}">{{t $.Lang "↑ Наверх"}}</a>{{end}}
       {{if .CanCreate}}
-      <a class="btn btn-primary" data-ob-list-create title="Insert" aria-keyshortcuts="Insert" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?{{if .ParentStr}}parent={{.ParentStr}}&{{end}}subsystem={{$.CurrentSubsystem}}">{{t $.Lang "+ Элемент"}}</a>
+      {{if .LegacyEntityUI}}<a class="btn btn-primary" data-ob-list-create title="Insert" aria-keyshortcuts="Insert" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?{{if .ParentStr}}parent={{.ParentStr}}&{{end}}subsystem={{$.CurrentSubsystem}}">{{t $.Lang "+ Элемент"}}</a>{{end}}
       <a class="btn btn-secondary" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?is_folder=true{{if .ParentStr}}&parent={{.ParentStr}}{{end}}">{{t $.Lang "📁 Группа"}}</a>
       {{end}}
     {{else}}
-      {{if .CanCreate}}<a class="btn btn-primary" data-ob-list-create title="Insert" aria-keyshortcuts="Insert" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "+ Создать"}}</a>{{end}}
+      {{if and .LegacyEntityUI .CanCreate}}<a class="btn btn-primary" data-ob-list-create title="Insert" aria-keyshortcuts="Insert" href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}">{{t $.Lang "+ Создать"}}</a>{{end}}
     {{end}}
     {{/* На свежем списке строка не выбрана — кнопка приходит с сервера уже
          приглушённой, дальше её состояние ведёт ui.js по выделению. */}}
@@ -2352,6 +2451,10 @@ const tplList = `
 <div class="ob-list-wrap">
 <div class="ob-list-content" data-ob-live="{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}"{{if $obRefresh}} data-ob-refresh-on="{{$obRefresh}}"{{end}}>
 <div class="card">
+{{if .Chronological}}
+{{template "document-list-pager" .}}
+<div class="ob-list-scroll"{{if .SelectLast}} data-ob-select-last{{end}}>
+{{end}}
 {{if .TreeView}}
 {{/* ===== TREE VIEW ===== */}}
 {{if .TreeRows}}
@@ -2362,7 +2465,7 @@ const tplList = `
   data-ob-row-subsystem="{{$.CurrentSubsystem}}"
   data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "view" "" "parent" ""}}"
   data-ob-row-copy-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new{{if $.CurrentSubsystem}}?subsystem={{$.CurrentSubsystem}}{{end}}"
-  data-ob-row-can-copy="{{if $.CanCreate}}1{{end}}"
+  data-ob-row-can-copy="{{if $.CanCopy}}1{{end}}"
   data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
 ><thead><tr>
   {{range $treeCols}}<th>{{.DisplayName $.Lang}}</th>{{end}}
@@ -2370,7 +2473,7 @@ const tplList = `
 </tr></thead><tbody>
 {{range .TreeRows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}{{$depth := index $row "_depth"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
-  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if or $.CanCopy (and $.LegacyEntityUI $.CanWrite)}} F9{{end}}{{if and (or $.CanMark $.CanDelete) (not (index $row "_is_predefined"))}} Delete{{end}}"
   data-ob-entity-id="{{index $row "id"}}"
   data-tree-id="{{index $row "id"}}"
   data-tree-depth="{{$depth}}"
@@ -2420,12 +2523,12 @@ const tplList = `
   data-ob-row-subsystem="{{$.CurrentSubsystem}}"
   data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" ""}}"
   data-ob-row-copy-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new{{listURL $.Query "copy" ""}}"
-  data-ob-row-can-copy="{{if $.CanCreate}}1{{end}}"
+  data-ob-row-can-copy="{{if $.CanCopy}}1{{end}}"
   data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
 >
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <div class="tile-card{{if index $row "deletion_mark"}} tile-deleted{{end}}"
-  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}" role="option"
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if or $.CanCopy (and $.LegacyEntityUI $.CanWrite)}} F9{{end}}{{if and (or $.CanMark $.CanDelete) (not (index $row "_is_predefined"))}} Delete{{end}}" role="option"
   data-ob-entity-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
@@ -2477,12 +2580,12 @@ const tplList = `
   data-ob-row-subsystem="{{$.CurrentSubsystem}}"
   data-ob-row-list-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}{{listURL $.Query "parent" ""}}"
   data-ob-row-copy-url="/ui/{{lower (str $.Entity.Kind)}}/{{lower $.Entity.Name}}/new{{listURL $.Query "copy" ""}}"
-  data-ob-row-can-copy="{{if $.CanCreate}}1{{end}}"
+  data-ob-row-can-copy="{{if $.CanCopy}}1{{end}}"
   data-ob-row-activity-enabled="{{if $.Entity.Activity}}1{{end}}"
 >
 {{range .Rows}}{{$row := .}}{{$isFolder := index $row "is_folder"}}
 <tr {{if index $row "deletion_mark"}}style="opacity:0.45;text-decoration:line-through;cursor:pointer"{{else}}style="cursor:pointer"{{end}}
-  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if $.CanWrite}} F9{{end}}{{if and $.CanDelete (not (index $row "_is_predefined"))}} Delete{{end}}"
+  data-ob-list-row tabindex="-1" aria-selected="false" aria-keyshortcuts="ArrowUp ArrowDown Enter F2{{if or $.CanCopy (and $.LegacyEntityUI $.CanWrite)}} F9{{end}}{{if and (or $.CanMark $.CanDelete) (not (index $row "_is_predefined"))}} Delete{{end}}"
   data-ob-entity-id="{{index $row "id"}}"
   data-predefined="{{if index $row "_is_predefined"}}1{{end}}"
   data-is-folder="{{if $isFolder}}1{{end}}"
@@ -2519,6 +2622,7 @@ const tplList = `
 {{end}}
 {{end}}
 </div>
+{{if .Chronological}}</div>{{end}}
 {{if and .Feed (not .TreeView)}}
 {{/* Лента: догрузка по скроллу. Без JS «Показать ещё» = переход на след. страницу. */}}
 {{if .HasNext}}
@@ -2527,13 +2631,13 @@ const tplList = `
 </div>
 {{end}}
 {{if gt .Total 0}}<div style="color:#94a3b8;font-size:12px;margin-top:8px;text-align:center">{{t $.Lang "Загружено:"}} <span id="feed-loaded">{{len .Rows}}</span> {{t $.Lang "из"}} {{.Total}}</div>{{end}}
-{{else if gt .TotalPages 1}}
+{{else if and (not .Chronological) (gt .TotalPages 1)}}
 <div style="display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap">
   {{if .HasPrev}}<a class="btn btn-secondary btn-sm" href="{{listURL $.Query "page" (str .PrevPage)}}">{{t $.Lang "← Назад"}}</a>{{end}}
   <span style="color:#64748b;font-size:13px">{{t $.Lang "Стр."}} {{.Page}} {{t $.Lang "из"}} {{.TotalPages}} ({{.Total}} {{t $.Lang "записей"}})</span>
   {{if .HasNext}}<a class="btn btn-secondary btn-sm" href="{{listURL $.Query "page" (str .NextPage)}}">{{t $.Lang "Вперёд →"}}</a>{{end}}
 </div>
-{{else if gt .Total 0}}
+{{else if and (not .Chronological) (gt .Total 0)}}
 <div style="color:#94a3b8;font-size:12px;margin-top:8px">{{t $.Lang "Всего:"}} {{.Total}}</div>
 {{end}}
 </div>
@@ -2544,6 +2648,7 @@ const tplList = `
   "isAdmin" .IsAdmin
   "canWrite" .CanWrite
   "canDelete" .CanDelete
+  "canMark" .CanMark
   "canUnpost" .CanUnpost
   "basedOn" .BasedOnActions
   "treeEntity" .Entity.Name
@@ -2561,10 +2666,14 @@ const tplList = `
     "activityHide" (t $.Lang "Скрыть из выбора")
     "activityHideConfirm" (t $.Lang "Скрыть из выбора?")
     "markDelete" (t $.Lang "Пометить на удаление")
+    "noPermission" (t $.Lang "Недостаточно прав")
     "markDeleteConfirm" "Пометить на удаление?"
     "predefinedNoDelete" (t $.Lang "Предопределённый — нельзя удалить")
     "unpost" (t $.Lang "Отменить проведение")
     "unpostConfirm" (t $.Lang "Отменить проведение?")
+    "postConfirm" (t $.Lang "Провести документ?")
+    "postMarked" (t $.Lang "Документ помечен на удаление")
+    "notPosted" (t $.Lang "Не проведён")
     "unmarkDelete" (t $.Lang "Снять пометку на удаление")
     "unmarkDeleteConfirm" (t $.Lang "Снять пометку на удаление?")
     "deleteForever" (t $.Lang "Удалить навсегда")
@@ -2598,6 +2707,15 @@ const tplForm = `
 {{if not .IsPopup}}
 {{/* Top toolbar */}}
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;flex-wrap:wrap">
+  {{if not .LegacyEntityUI}}
+  {{if or .Entity.Posting (not .IsNew)}}
+    <div class="entity-command-group" role="group" aria-label="{{t .Lang "Действия"}}">
+      {{template "document-form-post-commands" .}}
+      {{template "entity-form-copy-command" .}}
+      {{template "entity-form-mark-command" .}}
+    </div>
+  {{end}}
+  {{end}}
   {{if .Entity.Posting}}
     {{if not .IsNew}}
       {{if eq (index .Values "posted") "true"}}
@@ -2608,7 +2726,7 @@ const tplForm = `
     {{end}}
   {{end}}
   {{if .CanWrite}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form" title="Ctrl+S" aria-keyshortcuts="Control+S">{{t $.Lang "Записать"}}</button>{{end}}
-  {{if .Entity.Posting}}
+  {{if and .LegacyEntityUI .Entity.Posting}}
     {{if ne (index .Values "deletion_mark") "true"}}
       {{if $.CanPost}}<button class="btn btn-primary" type="submit" name="_action" value="post" form="main-form">{{if $.Entity.PostCaption}}{{$.Entity.PostCaption}}{{else}}{{t $.Lang "Провести"}}{{end}}</button>{{end}}
       {{if and $.CanPost (not $.Entity.PostAndCloseHidden)}}<button class="btn btn-post" type="submit" name="_action" value="post_and_close" form="main-form" title="Ctrl+Enter" aria-keyshortcuts="Control+Enter">{{if $.Entity.PostCaption}}{{$.Entity.PostCaption}} и закрыть{{else}}{{t $.Lang "Провести и закрыть"}}{{end}}</button>{{end}}
@@ -2619,16 +2737,18 @@ const tplForm = `
       {{end}}
     {{end}}
   {{end}}
+  {{if .LegacyEntityUI}}
   {{if and .CanDelete (not .IsNew) (eq (index .Values "deletion_mark") "true")}}
     <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/delete?mark=0" style="display:inline">
       <button class="btn btn-sm btn-secondary" type="submit">{{t $.Lang "Снять пометку на удаление"}}</button>
     </form>
   {{end}}
+  {{end}}
   {{if not .IsNew}}
     {{/* Копия открывается формой создания: пока её не записали, в базе ничего
          нет. Горячей клавиши здесь нет намеренно — F9 на карточке принадлежит
          копированию строки табличной части. */}}
-    {{if .CanCreate}}<a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?copy={{.ID}}" class="btn btn-sm btn-secondary">{{t $.Lang "Скопировать"}}</a>{{end}}
+    {{if and .LegacyEntityUI .CanCreate}}<a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}/new?copy={{.ID}}" class="btn btn-sm btn-secondary">{{t $.Lang "Скопировать"}}</a>{{end}}
     <a href="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/history" class="btn btn-sm btn-secondary">{{t $.Lang "История"}}</a>
     {{if or .AllPrintForms .HasPrintProc}}
     <div style="position:relative">
@@ -2662,11 +2782,20 @@ const tplForm = `
       </div>
     </div>
     {{end}}
+    {{if .LegacyEntityUI}}
     {{if .CanDelete}}
     <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/delete"
           data-ob-confirm="{{if .IsAdmin}}{{t $.Lang "Удалить запись навсегда?"}}{{else}}{{t $.Lang "Пометить запись на удаление?"}}{{end}}" style="margin-left:auto">
       <button class="btn btn-danger btn-sm" type="submit">{{if .IsAdmin}}{{t $.Lang "Удалить"}}{{else}}{{t $.Lang "Пометить на удаление"}}{{end}}</button>
     </form>
+    {{end}}
+    {{else}}
+    {{if and .CanDelete .IsAdmin}}
+    <form method="POST" action="/ui/{{lower (str .Entity.Kind)}}/{{.Entity.Name}}/{{.ID}}/delete"
+          data-ob-confirm="{{t $.Lang "Удалить запись навсегда?"}}" style="margin-left:auto">
+      <button class="btn btn-danger btn-sm" type="submit">{{t $.Lang "Удалить"}}</button>
+    </form>
+    {{end}}
     {{end}}
   {{end}}
 </div>
@@ -2868,7 +2997,7 @@ const tplForm = `
   <a href="#" data-ob-popup-cancel class="btn btn-cancel">{{t $.Lang "Отмена"}}</a>
   {{else}}
   {{if .CanWrite}}<button class="btn btn-secondary" type="submit" name="_action" value="" form="main-form" title="Ctrl+S" aria-keyshortcuts="Control+S">{{t $.Lang "Записать"}}</button>{{end}}
-  <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}" class="btn btn-cancel">{{t $.Lang "Отмена"}}</a>
+  <a href="/ui/{{lower (str .Entity.Kind)}}/{{lower .Entity.Name}}" class="btn btn-cancel"{{if not .LegacyEntityUI}} data-ob-close-tab data-ob-close-reason="close"{{end}}>{{if .LegacyEntityUI}}{{t $.Lang "Отмена"}}{{else}}{{t $.Lang "Закрыть"}}{{end}}</a>
   {{end}}
 </div>
 </form>

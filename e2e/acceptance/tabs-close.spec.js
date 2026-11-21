@@ -300,7 +300,7 @@ test('tab close: dirty processor command closes its source and asks its independ
   await duplicate.waitForLoadState('domcontentloaded');
   await duplicate.locator('input[name="Текст"]').fill('independent parameters');
   await page.locator('.ob-tab').first().click();
-  await source.locator('[data-ob-el="Закрыть"]').click();
+  await source.locator('[data-ob-el="ЗавершитьПроверку"]').click();
   await expect.poll(() => source.isDetached()).toBe(true);
   await expect(duplicate.locator('#ob-managed-close-confirm')).toBeVisible();
   await duplicate.locator('[data-ob-close-choice="cancel"]').click();
@@ -311,7 +311,7 @@ test('tab close: dirty processor command closes its source and asks its independ
   await page.locator('.ob-tab-dup').click();
   const retry = await (await frames(page).last().elementHandle()).contentFrame();
   await retry.waitForLoadState('domcontentloaded');
-  await retry.locator('[data-ob-el="Закрыть"]').click();
+  await retry.locator('[data-ob-el="ЗавершитьПроверку"]').click();
   await expect(duplicate.locator('#ob-managed-close-confirm')).toBeVisible();
   await duplicate.locator('[data-ob-close-choice="cancel"]').click();
   await expect(duplicate.locator('input[name="Текст"]')).toHaveValue('independent parameters');
@@ -333,7 +333,7 @@ test('tab close: source input made after the handler snapshot still needs confir
   };
   await page.route('**/form-event', handler);
   try {
-    await source.locator('[data-ob-el="Закрыть"]').click();
+    await source.locator('[data-ob-el="ЗавершитьПроверку"]').click();
     await responseReady;
     await expect.poll(() => page.evaluate(() => window.closeAcceptance.commands.length)).toBe(1);
     await source.locator('input[name="Текст"]').fill('newer unsaved input');

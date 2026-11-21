@@ -8,13 +8,17 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/dsl/ast"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/entityservice"
 	"github.com/ivantit66/onebase/internal/metadata"
+	"github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/runtime"
 	"github.com/ivantit66/onebase/internal/storage"
 )
@@ -72,6 +76,11 @@ func newPostingDocWithModule(t *testing.T, extraSrc string) (context.Context, *s
 		Entities:  []*metadata.Entity{doc},
 		Programs:  map[string]*ast.Program{"ПоступлениеТоваров": mustParse(t, onPostSrc+"\n"+extraSrc)},
 		Registers: []*metadata.Register{reg},
+		Reports: []*report.Report{{
+			Name: "ПроверкаДвижений",
+			Query: `ВЫБРАТЬ Номенклатура КАК Товар, КоличествоОстаток КАК Количество
+ИЗ РегистрНакопления.ОстаткиТоваров.Остатки()`,
+		}},
 	})
 	interp := interpreter.New()
 	interp.LookupProc = registry.GetModuleProc
@@ -535,4 +544,102 @@ func TestDSLMarkForDeletion_RunsUnpostHook(t *testing.T) {
 	if !asBool(row["posted"]) || asBool(row["deletion_mark"]) {
 		t.Fatalf("документ должен остаться проведённым и непомеченным: posted=%v deletion_mark=%v", row["posted"], row["deletion_mark"])
 	}
+}
+
+func TestListDeletionMark_RemovesMovementsFromReport(t *testing.T) {
+	ctx, db, s, dp, doc := newPostingDoc(t)
+	s.cfg = Config{AppName: "test"}
+	router := chi.NewRouter()
+	s.Mount(router)
+	actor := func(ops ...string) *auth.User {
+		return &auth.User{Login: "list-user", Roles: []*auth.Role{{Name: "list-role", Permissions: auth.Permission{
+			Documents: map[string][]string{doc.Name: ops},
+		}}}}
+	}
+	request := func(user *auth.User, method, path string, status int) string {
+		t.Helper()
+		r := httptest.NewRequest(method, path, nil)
+		if user != nil {
+			r = r.WithContext(auth.ContextWithUser(r.Context(), user))
+		}
+		rec := httptest.NewRecorder()
+		router.ServeHTTP(rec, r)
+		if rec.Code != status {
+			t.Fatalf("%s %s: status %d, want %d: %s", method, path, rec.Code, status, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+	base := "/ui/document/" + doc.Name
+	newRecord := postOne(t, dp)
+	documentURL := base + "/" + newRecord.obj.ID.String()
+	deleteURL := documentURL + "/delete"
+	marker := actor("read", "mark")
+	readOnly := actor("read")
+	rows := request(marker, "GET", base, http.StatusOK)
+	if !strings.Contains(rows, `data-ob-list-command="mark" data-ob-command-denied=""`) {
+		t.Fatal("в списке отсутствует команда пометки для роли с mark")
+	}
+	rows = request(readOnly, "GET", base, http.StatusOK)
+	if !strings.Contains(rows, `title="Недостаточно прав" data-ob-list-command="mark" data-ob-command-denied="1"`) {
+		t.Fatal("команда пометки должна быть видна с подсказкой об отсутствии права")
+	}
+	request(readOnly, "POST", deleteURL+"?mark=1", http.StatusForbidden)
+	request(marker, "POST", deleteURL, http.StatusForbidden)
+
+	reportHasMovement := func(want bool) {
+		t.Helper()
+		body := request(nil, "POST", "/ui/report/ПроверкаДвижений", http.StatusOK)
+		has := regexp.MustCompile(`<td[^>]*>\s*Тумбочка\s*</td>`).MatchString(body)
+		if has != want {
+			t.Fatalf("отчёт по остаткам: движение видно %v, ожидалось %v: %s", has, want, body)
+		}
+	}
+	reportHasMovement(true)
+	for _, action := range []string{"post", "unpost"} {
+		if !strings.Contains(rows, `title="Недостаточно прав" data-ob-list-command="`+action+`" data-ob-command-denied="1"`) {
+			t.Fatalf("команда %s должна оставаться видна без права", action)
+		}
+		request(readOnly, "POST", documentURL+"/"+action, http.StatusForbidden)
+	}
+	poster := actor("read", "write", "post", "unpost")
+	list := request(poster, "GET", base, http.StatusOK)
+	for _, action := range []string{"post", "unpost"} {
+		if !strings.Contains(list, `data-ob-list-command="`+action+`" data-ob-command-denied=""`) {
+			t.Fatalf("нет команды %s в списке для роли с правом", action)
+		}
+	}
+	card := request(poster, "GET", documentURL, http.StatusOK)
+	if !strings.Contains(card, `aria-label="Провести" name="_action" value="post"`) ||
+		!strings.Contains(card, `aria-label="Отменить проведение" type="submit" form="form-unpost"`) ||
+		strings.Contains(card, `value="post_and_close"`) {
+		t.Fatal("карточка проводимого документа должна показывать значки проведения и отмены")
+	}
+	request(poster, "POST", documentURL+"/unpost", http.StatusSeeOther)
+	reportHasMovement(false)
+	request(poster, "POST", documentURL+"/post?from_list=1", http.StatusSeeOther)
+	reportHasMovement(true)
+	request(marker, "POST", deleteURL+"?mark=1", http.StatusSeeOther)
+	reportHasMovement(false)
+	rows = request(marker, "GET", base, http.StatusOK)
+	if !strings.Contains(rows, `data-marked="1"`) || !strings.Contains(rows, "text-decoration:line-through") {
+		t.Fatal("помеченный документ должен оставаться в списке зачёркнутым")
+	}
+	var moves int
+	if err := db.QueryRow(ctx, "SELECT COUNT(*) FROM рег_остаткитоваров").Scan(&moves); err != nil || moves != 0 {
+		t.Fatalf("движения после пометки: %d, ошибка %v", moves, err)
+	}
+	request(marker, "POST", deleteURL+"?mark=0", http.StatusSeeOther)
+	row, err := db.GetByID(ctx, doc.Name, newRecord.obj.ID, doc)
+	if err != nil || asBool(row["posted"]) || asBool(row["deletion_mark"]) {
+		t.Fatalf("снятие пометки должно оставить документ непроведённым: %v, ошибка %v", row, err)
+	}
+	reportHasMovement(false)
+
+	legacy := postOne(t, dp)
+	if err := db.SetPosted(ctx, doc.Name, legacy.obj.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	reportHasMovement(true)
+	request(marker, "POST", base+"/"+legacy.obj.ID.String()+"/delete?mark=1", http.StatusSeeOther)
+	reportHasMovement(false)
 }

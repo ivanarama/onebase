@@ -67,7 +67,12 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePerm(w, r, string(entity.Kind), entity.Name, "read") {
 		return
 	}
-	params := parseListParams(r, entity, s.store.GetListPageSize(r.Context()))
+	chronological := entity.Kind == metadata.KindDocument && !s.legacyEntityUI(r)
+	pageSize := storage.DefaultListPageSize
+	if chronological {
+		pageSize = 50
+	}
+	params := parseListParams(r, entity, s.store.GetListPageSizeDefault(r.Context(), pageSize))
 	var ok bool
 	params, ok = s.applyRowFilter(w, r, entity, "read", params)
 	if !ok {
@@ -97,6 +102,10 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 	treeView := entity.Hierarchical && view == "tree"
 	tilesView := view == "tiles"
 	feed := !treeView && s.resolveListMode(w, r, entity)
+	chronological = chronological && !feed && !treeView
+	params.ChronologicalDocuments = chronological
+	requestedPage := r.URL.Query().Get("page")
+	openLast := chronological && (requestedPage == "last" || requestedPage == "" && params.Sort == "")
 
 	var breadcrumbs []map[string]string
 	var parentStr string
@@ -133,10 +142,14 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	total, _ := s.store.CountList(r.Context(), entity.Name, entity, params)
+	total, err := s.store.CountList(r.Context(), entity.Name, entity, params)
+	if err != nil {
+		s.serverError(w, r, err)
+		return
+	}
 	// Deletions can remove the current page while its URL remains open.
 	// Keep a paginated list usable when its last page disappears.
-	if !feed && params.Limit > 0 && params.Offset >= total {
+	if !feed && params.Limit > 0 && (openLast || params.Offset >= total) {
 		params.Offset = 0
 		if total > 0 {
 			params.Offset = ((total - 1) / params.Limit) * params.Limit
@@ -211,6 +224,8 @@ func (s *Server) list(w http.ResponseWriter, r *http.Request) {
 		"TreeView":         treeView,
 		"TilesView":        tilesView,
 		"Feed":             feed,
+		"Chronological":    chronological,
+		"SelectLast":       openLast,
 		"TreeRows":         treeRows,
 		"Total":            total,
 		"Page":             page,
@@ -379,6 +394,13 @@ func (s *Server) form(w http.ResponseWriter, r *http.Request) {
 	entity := s.getEntity(w, r)
 	if entity == nil {
 		return
+	}
+	if r.URL.Query().Get("copy") != "" {
+		if err := s.copyCommandError(r, entity); err != nil {
+			w.WriteHeader(http.StatusForbidden)
+			s.render(w, r, "page-forbidden", map[string]any{"Reason": err.Error()})
+			return
+		}
 	}
 	if !s.requirePerm(w, r, string(entity.Kind), entity.Name, "write") {
 		return
@@ -1060,6 +1082,12 @@ func (s *Server) submit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if strings.TrimSpace(r.FormValue(copySourceFormField)) != "" || r.URL.Query().Get("copy") != "" {
+		if err := s.copyCommandError(r, entity); err != nil {
+			writeCopySourceError(w, err)
+			return
+		}
+	}
 	managedForm := pickManagedForm(entity, "object")
 	if managedForm != nil {
 		s.mergeFormAttrValues(r.Context(), r, managedForm, entity, obj)
@@ -1470,7 +1498,7 @@ func (s *Server) treeChildRows(r *http.Request, entity *metadata.Entity, rows []
 	}
 	// Копировать может только тот, кому разрешено создавать: пустой copy_url
 	// убирает пункт меню и F9 у подгруженных строк дерева.
-	canCopy := s.canInteractiveCreate(r, entity)
+	canCopy := s.copyCommandAllowed(r, entity)
 	out := make([]treeChildRow, 0, len(rows))
 	for _, row := range rows {
 		id := refValueString(row["id"])
@@ -2098,6 +2126,10 @@ func (s *Server) postDocument(w http.ResponseWriter, r *http.Request) {
 	// форму, REST и DSL. Симметрично unpostDocument/удалению.
 	s.publishDocChange(r.Context(), entity, id, "проведён", nil)
 	s.dispatchDocWebhook(r.Context(), "document.post", entity, id, obj.Fields)
+	if r.URL.Query().Get("from_list") == "1" {
+		http.Redirect(w, r, listURL(entity), http.StatusSeeOther)
+		return
+	}
 	http.Redirect(w, r, docURL, http.StatusSeeOther)
 }
 
@@ -2138,6 +2170,12 @@ func (s *Server) markForDeletion(ctx context.Context, entity *metadata.Entity, i
 				}
 				if res.DSLError != "" {
 					return &markRefusedError{message: res.DSLError}
+				}
+			} else {
+				// Старые импорты могли оставить движения у непроведённого документа.
+				empty := runtime.NewMovementsCollector(entity.Name, id)
+				if err := s.entityService().ReplaceMovements(txCtx, entity.Name, id, empty); err != nil {
+					return err
 				}
 			}
 		}
@@ -2333,7 +2371,13 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 	if entity == nil {
 		return
 	}
-	if !s.requirePerm(w, r, string(entity.Kind), entity.Name, "delete") {
+	markParam := r.URL.Query().Get("mark")
+	kind := string(entity.Kind)
+	op := "delete"
+	if (markParam == "0" || markParam == "1") && !s.can(r, kind, entity.Name, op) {
+		op = "mark"
+	}
+	if !s.requirePerm(w, r, kind, entity.Name, op) {
 		return
 	}
 	id, err := uuid.Parse(chi.URLParam(r, "id"))
@@ -2341,13 +2385,12 @@ func (s *Server) deleteRecord(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid id", 400)
 		return
 	}
-	if !s.rowAllowedID(w, r, entity, "delete", id) {
+	if !s.rowAllowedID(w, r, entity, op, id) {
 		return
 	}
 
 	user := auth.UserFromContext(r.Context())
 	isAdmin := user == nil || user.IsAdmin // no auth configured → treat as admin
-	markParam := r.URL.Query().Get("mark")
 
 	// Снятие пометки на удаление (mark=0) — без возврата проведения.
 	if markParam == "0" {
@@ -3004,7 +3047,7 @@ func parseListParams(r *http.Request, entity *metadata.Entity, defaultLimit int)
 		limit = l
 	}
 	page := 1
-	if p, err := strconv.Atoi(q.Get("page")); err == nil && p > 1 {
+	if p, err := strconv.Atoi(q.Get("page")); err == nil && p > 1 && p <= int(^uint(0)>>1)/limit {
 		page = p
 	}
 	params.Limit = limit

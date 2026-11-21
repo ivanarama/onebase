@@ -31,17 +31,19 @@ type ListParams struct {
 	// otherwise entity.OrderBy followed by id ASC (folders first for hierarchy),
 	// folders then first string for hierarchical lists without OrderBy,
 	// first document date DESC, flat catalog name/first string ASC, or id (using Dir).
-	Sort           string
-	Dir            string     // "asc" or "desc"
-	ParentStr      string     // "" = no filter; "root" = parent IS NULL; "<uuid>" = parent = uuid
-	Search         string     // full-text search: ILIKE across all string fields
-	ActivityScope  string     // "", "active", "inactive", "all"; applied only for opt-in catalogs
-	Limit          int        // 0 = no limit
-	Offset         int        // for pagination
-	AfterID        *uuid.UUID // exclusive keyset cursor; requires id ASC and Offset=0
-	ThroughID      *uuid.UUID // inclusive keyset high-water mark; requires id ASC and Offset=0
-	ExcludeFolders bool       // for hierarchical catalogs: only non-folder elements
-	OnlyFolders    bool       // for hierarchical catalogs: only folder elements
+	// ChronologicalDocuments gives the paginated document UI a stable date-first order.
+	ChronologicalDocuments bool
+	Sort                   string
+	Dir                    string     // "asc" or "desc"
+	ParentStr              string     // "" = no filter; "root" = parent IS NULL; "<uuid>" = parent = uuid
+	Search                 string     // full-text search: ILIKE across all string fields
+	ActivityScope          string     // "", "active", "inactive", "all"; applied only for opt-in catalogs
+	Limit                  int        // 0 = no limit
+	Offset                 int        // for pagination
+	AfterID                *uuid.UUID // exclusive keyset cursor; requires id ASC and Offset=0
+	ThroughID              *uuid.UUID // inclusive keyset high-water mark; requires id ASC and Offset=0
+	ExcludeFolders         bool       // for hierarchical catalogs: only non-folder elements
+	OnlyFolders            bool       // for hierarchical catalogs: only folder elements
 	// IncludeFolders — явное согласие показать ГРУППЫ там, где подбор их всегда
 	// прятал (choice_folders у элемента формы). Слой UI снимает по нему свой
 	// ExcludeFolders; сам запрос дополнительных условий не получает.
@@ -939,8 +941,14 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 	// «первые 50 по коду» превращались в сортировку всего справочника (иерархия
 	// адресов 615 тыс. строк — 0,2–0,4 с на каждое ссылочное поле формы).
 	foldersFirst := entity.Hierarchical && !params.OnlyFolders && !params.ExcludeFolders
+	var docDate *metadata.Field
+	if params.ChronologicalDocuments && entity.Kind == metadata.KindDocument && params.Sort == "" {
+		docDate = entity.DocumentDateField()
+	}
 	if keyset {
 		query += " ORDER BY id ASC"
+	} else if docDate != nil {
+		query += fmt.Sprintf(" ORDER BY %s ASC NULLS FIRST, id ASC", metadata.ColumnName(*docDate))
 	} else if params.Sort == "" && len(entity.OrderBy) > 0 {
 		// Порядок по умолчанию из метаданных (order_by): у значений бывает свой
 		// порядок, не алфавитный, — «порядок в отчётах» у направлений. Папки
@@ -1079,6 +1087,9 @@ func (db *DB) List(ctx context.Context, entityName string, entity *metadata.Enti
 			}
 		} else {
 			query += fmt.Sprintf(" ORDER BY %s %s", orderCol, orderDir)
+			if params.ChronologicalDocuments && orderCol != "id" {
+				query += ", id ASC"
+			}
 		}
 	}
 

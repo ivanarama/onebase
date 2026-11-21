@@ -33,6 +33,9 @@ func formActionButtonLabel(t *testing.T, body, action string) (string, bool) {
 				attrs[attr.Key] = attr.Val
 			}
 			if attrs["name"] == "_action" && attrs["value"] == action {
+				if label := attrs["aria-label"]; label != "" {
+					return label, true
+				}
 				var label strings.Builder
 				text(node, &label)
 				return strings.Join(strings.Fields(label.String()), " "), true
@@ -72,8 +75,7 @@ func writeOne(t *testing.T, dp *docProxy, num string) string {
 	return w.obj.ID.String()
 }
 
-// Issue #497: post_caption переопределяет подпись кнопки проведения; вторая
-// кнопка получает подпись «<подпись> и закрыть».
+// Issue #497: post_caption переопределяет подпись кнопки проведения.
 func TestFormEdit_PostCaption_CustomLabel(t *testing.T) {
 	_, _, s, dp, doc := newPostingDoc(t)
 	s.cfg = Config{AppName: "test"}
@@ -84,28 +86,12 @@ func TestFormEdit_PostCaption_CustomLabel(t *testing.T) {
 	if label, ok := formActionButtonLabel(t, body, "post"); !ok || label != "Создать начисление" {
 		t.Fatalf("подпись action=post: %q, exists=%v; тело:\n%s", label, ok, body)
 	}
-	if label, ok := formActionButtonLabel(t, body, "post_and_close"); !ok || label != "Создать начисление и закрыть" {
-		t.Fatalf("подпись action=post_and_close: %q, exists=%v; тело:\n%s", label, ok, body)
-	}
-}
-
-// post_and_close_hidden убирает вторую кнопку, оставляя основную.
-func TestFormEdit_PostAndCloseHidden(t *testing.T) {
-	_, _, s, dp, doc := newPostingDoc(t)
-	s.cfg = Config{AppName: "test"}
-	doc.PostAndCloseHidden = true
-
-	body := renderCard(t, s, writeOne(t, dp, "ПОС-HID"))
-
-	if _, ok := formActionButtonLabel(t, body, "post"); !ok {
-		t.Fatalf("основная кнопка проведения должна остаться; тело:\n%s", body)
-	}
 	if _, ok := formActionButtonLabel(t, body, "post_and_close"); ok {
-		t.Errorf("кнопка «Провести и закрыть» должна быть скрыта при post_and_close_hidden; тело:\n%s", body)
+		t.Fatal("в форме есть стандартная кнопка «Провести и закрыть»")
 	}
 }
 
-// Без post_caption — прежнее поведение: обе стандартные кнопки на месте.
+// Без post_caption действует стандартная подпись кнопки проведения.
 func TestFormEdit_PostCaption_DefaultUnchanged(t *testing.T) {
 	_, _, s, dp, _ := newPostingDoc(t)
 	s.cfg = Config{AppName: "test"}
@@ -115,7 +101,7 @@ func TestFormEdit_PostCaption_DefaultUnchanged(t *testing.T) {
 	if label, ok := formActionButtonLabel(t, body, "post"); !ok || label != "Провести" {
 		t.Errorf("подпись action=post: %q, exists=%v; тело:\n%s", label, ok, body)
 	}
-	if label, ok := formActionButtonLabel(t, body, "post_and_close"); !ok || label != "Провести и закрыть" {
-		t.Errorf("подпись action=post_and_close: %q, exists=%v; тело:\n%s", label, ok, body)
+	if _, ok := formActionButtonLabel(t, body, "post_and_close"); ok {
+		t.Error("в форме есть стандартная кнопка «Провести и закрыть»")
 	}
 }

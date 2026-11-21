@@ -84,7 +84,8 @@ func TestPageForm_DelegatedHandlers(t *testing.T) {
 		"TablePartRows": map[string]any{
 			"Товары": []map[string]any{{"Номенклатура": "n1", "Количество": "2", "Комментарий": "строка"}},
 		},
-		"Lang": "ru",
+		"Lang":           "ru",
+		"LegacyEntityUI": true,
 	}
 
 	var buf bytes.Buffer
