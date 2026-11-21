@@ -53,7 +53,13 @@ func addMonthBuiltin(args []any, _ string, _ int) (any, error) {
 	if !ok {
 		return nil, nil
 	}
-	return addCalendarDate(t, 0, calendarShiftArg(args), 0), nil
+	// Start at day 1: time.AddDate would carry an overflowing source day into
+	// the next month. Calendar normalization is independent of timezone/DST;
+	// reconstruct the final value with the original clock and location.
+	month := time.Date(t.Year(), t.Month()+time.Month(calendarShiftArg(args)), 1, 0, 0, 0, 0, time.UTC)
+	lastDay := month.AddDate(0, 1, -1).Day()
+	day := min(t.Day(), lastDay)
+	return safeDateResult(time.Date(month.Year(), month.Month(), day, t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())), nil
 }
 
 // addDayBuiltin — ДобавитьДень(дата, n). n может быть отрицательным.
