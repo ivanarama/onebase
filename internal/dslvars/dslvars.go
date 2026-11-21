@@ -269,6 +269,9 @@ func (c Common) Build() map[string]any {
 		vars["Нумераторы"] = numerators
 		vars["Numerators"] = numerators
 	}
+	accessRight := c.accessRightBuiltin(ctxSource)
+	vars["ЕстьПравоДоступа"] = accessRight
+	vars["HasAccessRight"] = accessRight
 	return vars
 }
 
