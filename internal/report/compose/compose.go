@@ -545,6 +545,32 @@ func aggMeasure(rows []Row, m report.Measure) any {
 	if m.Agg == "count" {
 		return int64(len(rows))
 	}
+	if m.Agg == "count_distinct" {
+		seen := make(map[string]struct{})
+		for _, row := range rows {
+			v := row[m.Field]
+			if v == nil {
+				continue
+			}
+			// Text stays text, including the empty string. Database byte strings
+			// share text identity; numeric driver types share decimal identity.
+			var key string
+			switch x := v.(type) {
+			case string:
+				key = "text:" + x
+			case []byte:
+				key = "text:" + string(x)
+			default:
+				if d, ok := toDecimal(v); ok {
+					key = "number:" + d.String()
+				} else {
+					key = fmt.Sprintf("%T:%v", v, v)
+				}
+			}
+			seen[key] = struct{}{}
+		}
+		return int64(len(seen))
+	}
 	var acc, mn, mx decimal.Decimal
 	cnt := 0
 	first := true
