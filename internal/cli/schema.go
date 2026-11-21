@@ -627,6 +627,7 @@ func managedFormSchema() map[string]any {
 				"type":  "array",
 				"items": map[string]any{"$dynamicRef": "#formElement"},
 			},
+			"placement":       map[string]any{"type": "string", "enum": []string{"footer"}, "description": "Кнопка обработки в нижней строке рядом с «Отмена»"},
 			"ref_card_button": boolSchema("Кнопка «Открыть карточку» у этого ссылочного поля: явное значение сильнее ключей формы ref_card_button и ref_card_button_admin_only"),
 			"choice_filter": map[string]any{
 				"type":        "array",
