@@ -24,6 +24,7 @@ type questionPayload struct {
 	Variants []string        `json:"variants"`
 	Title    string          `json:"title,omitempty"`
 	Fields   []questionField `json:"fields,omitempty"`
+	Period   *questionPeriod `json:"period,omitempty"`
 }
 
 // questionField — строка данных в диалоге. Только чтение по умолчанию: диалог

@@ -624,6 +624,7 @@ func KnownBuiltinNames() map[string]struct{} {
 		"значениереквизитаобъекта", "objectattributevalue",
 		"значенияреквизитовобъектов", "objectattributevalues",
 		"выполнитькоманду", "executecommand",
+		"показатьпериод", "showperiod",
 		"ссылканаобъект", "objectref",
 		"сохранитькартинку", "putimage",
 		"добавитьправилооформления", "addformattingrule",
