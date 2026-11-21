@@ -348,7 +348,39 @@ func allSchemas() map[string]map[string]any {
 				// `presentation: [Артикул, Наименование]` — иначе редактор
 				// подчёркивал бы как ошибку ровно тот вариант, который в
 				// документации назван основным.
-				"choice_preview":      stringSchema("Реквизит, текст которого показывается в области просмотра формы выбора (диалога подбора)"),
+				"choice_preview": stringSchema("Реквизит, текст которого показывается в области просмотра формы выбора (диалога подбора)"),
+				"choice_row_style": map[string]any{
+					"type":                 "object",
+					"additionalProperties": false,
+					"description":          "Оформление строк выбора ссылок на справочник (выпадающий список, форма подбора, быстрый ввод) по реквизитам элемента",
+					"properties": map[string]any{
+						"for_roles": arrayOf(stringSchema("Роль: оформление только пользователям с одной из ролей")),
+						"for_user": map[string]any{
+							"type":                 "object",
+							"additionalProperties": false,
+							"description":          "Оформление только пользователям, у которых реквизит карточки сотрудника равен предопределённому элементу, либо функция конфигурации вернула Истина",
+							"properties": map[string]any{
+								"func":          stringSchema("«Модуль.Функция» без параметров, возвращает Булево; только чтение"),
+								"card":          stringSchema("Справочник карточки сотрудника"),
+								"account_field": stringSchema("Реквизит карточки reference:_users; можно опустить, если он один"),
+								"field":         stringSchema("Реквизит карточки"),
+								"equals":        stringSchema("<Справочник>.<предопределённый элемент>"),
+							},
+						},
+						"rules": arrayOf(map[string]any{
+							"type":                 "object",
+							"additionalProperties": false,
+							"required":             []string{"when"},
+							"properties": map[string]any{
+								"when":       stringSchema("Условие на реквизиты элемента: имя булева реквизита или выражение"),
+								"color":      stringSchema("Цвет текста: hex, rgb() или имя цвета"),
+								"background": stringSchema("Цвет фона: hex, rgb() или имя цвета"),
+								"bold":       boolSchema("Жирный"),
+								"italic":     boolSchema("Курсив"),
+							},
+						}),
+					},
+				},
 				"choice_preview_proc": stringSchema("«Модуль.Функция», собирающая тексты просмотра формы выбора с учётом контекста подбора: Функция(Ссылки, Контекст) → Соответствие"),
 				"presentation": map[string]any{
 					"description": "Реквизит(ы) представления объекта; по умолчанию — правило по именам, «Код» последним",
