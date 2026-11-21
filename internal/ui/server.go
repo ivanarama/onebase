@@ -430,6 +430,7 @@ func (s *Server) Mount(r chi.Router) {
 	r.Get("/ui/stages", s.stagesReport)
 	r.Get("/ui/stages/{entity}", s.stagesReport)
 	r.Get("/ui/report/{name}", s.reportForm)
+	r.Get("/ui/report/{name}/drilldown", s.reportDrilldown)
 	r.Post("/ui/report/{name}", s.reportRun)
 	r.Post("/ui/report/{name}/settings/save", s.reportSettingsSave)
 	r.Post("/ui/report/{name}/settings/delete", s.reportPresetDelete)
