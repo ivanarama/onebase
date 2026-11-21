@@ -31,12 +31,13 @@ func (m *Menu) UnmarshalYAML(node *yaml.Node) error {
 }
 
 type MenuSection struct {
-	ID     string            `yaml:"id" json:"id"`
-	Title  string            `yaml:"title" json:"title"`
-	Titles map[string]string `yaml:"titles,omitempty" json:"titles,omitempty"`
-	Icon   string            `yaml:"icon,omitempty" json:"icon,omitempty"`
-	Items  []MenuItem        `yaml:"items,omitempty" json:"items,omitempty"`
-	Groups []MenuGroup       `yaml:"groups,omitempty" json:"groups,omitempty"`
+	Gradient bool              `yaml:"gradient,omitempty" json:"gradient,omitempty"`
+	ID       string            `yaml:"id" json:"id"`
+	Title    string            `yaml:"title" json:"title"`
+	Titles   map[string]string `yaml:"titles,omitempty" json:"titles,omitempty"`
+	Icon     string            `yaml:"icon,omitempty" json:"icon,omitempty"`
+	Items    []MenuItem        `yaml:"items,omitempty" json:"items,omitempty"`
+	Groups   []MenuGroup       `yaml:"groups,omitempty" json:"groups,omitempty"`
 }
 
 type MenuGroup struct {
