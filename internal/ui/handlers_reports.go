@@ -15,7 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/ivantit66/onebase/internal/dsl/interpreter"
 	"github.com/ivantit66/onebase/internal/excel"
-	"github.com/ivantit66/onebase/internal/query"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/report/compose"
 	"github.com/ivantit66/onebase/internal/runtime"
@@ -218,6 +217,11 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		presets = loadReportPresets(opCtx, s.store, rep.Name, user)
 	}
 	rs := s.reportSettingsForRequest(r, rep)
+	if rs.Err != nil {
+		opStatus = "error"
+		http.Error(w, s.errText(r, rs.Err), http.StatusBadRequest)
+		return
+	}
 	settings := rs.Settings
 	activePreset := activeReportPreset(presets, rs.ActivePresetID)
 	if settings != nil {
@@ -278,7 +282,12 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 	// чтения, а поле под маской в отборе/группировке/агрегате отклоняет отчёт —
 	// имена результирующих колонок могут быть заменены КАК/AS и сами по себе не
 	// годятся как security provenance.
-	maskPlan := s.queryMaskPlan(opCtx, compiled)
+	if _, err := s.reportResultFilterPlan(opCtx, compiled, settings); err != nil {
+		opStatus = "error"
+		http.Error(w, s.errText(r, err), http.StatusBadRequest)
+		return
+	}
+	maskPlan := s.reportOutputMaskPlan(opCtx, compiled)
 	if maskPlan.Denied != "" {
 		opStatus = "error"
 		s.render(w, r, "page-report", map[string]any{
@@ -296,7 +305,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 		return
 	}
 	opAttrs = []slog.Attr{slog.String("sql_hash", sqlHash(compiled.SQL))}
-	rows, cols, truncated, err := query.RunLimit(opCtx, s.store, &compiled, s.cfg.Limits.ReportMaxRows)
+	rows, cols, truncated, err := s.runReportResultRows(opCtx, &compiled, settings, s.cfg.Limits.ReportMaxRows)
 	opTruncated = truncated
 	opRows = len(rows)
 	queryWarning := ""
@@ -341,12 +350,7 @@ func (s *Server) runReport(w http.ResponseWriter, r *http.Request, rep *reportpk
 	if comp != nil {
 		detailLinkCol = comp.DetailLink
 	}
-	s.resolveUUIDsInReport(opCtx, rows, detailLinkCol)
-
-	// Пользовательские отборы применяются к строкам до компоновки (план 70).
-	if comp != nil && settings != nil && len(settings.Filters) > 0 {
-		rows = compose.ApplyFilters(rows, settings.Filters)
-	}
+	s.resolveUUIDsInReport(opCtx, rows, detailLinkCol, compiled.RefColumns)
 
 	if comp != nil {
 		ev := newInterpEvaluator(s.interp)
@@ -488,7 +492,11 @@ func (s *Server) runChartProc(ctx context.Context, rep *reportpkg.Report, rows [
 // resolveUUIDsInReport replaces UUID-looking strings in report rows with entity
 // display names. skipCol (если непустой) исключается из подстановки — нужен для
 // колонки detail_link, где UUID должен остаться для ссылки на документ (issue #87).
-func (s *Server) resolveUUIDsInReport(ctx context.Context, rows []map[string]any, skipCol string) {
+func (s *Server) resolveUUIDsInReport(ctx context.Context, rows []map[string]any, skipCol string, typed ...map[string]string) {
+	if len(typed) > 0 {
+		s.resolveTypedReportReferences(ctx, rows, skipCol, typed[0])
+		return
+	}
 	uuidToLabel := make(map[string]string)
 	for _, row := range rows {
 		for _, v := range row {
@@ -509,7 +517,7 @@ func (s *Server) resolveUUIDsInReport(ctx context.Context, rows []map[string]any
 			}
 			id, _ := uuid.Parse(idStr)
 			if refRow, err := s.store.GetByID(ctx, entity.Name, id, entity); err == nil {
-				uuidToLabel[idStr] = s.maskedRecordLabel(ctx, entity, refRow)
+				uuidToLabel[idStr] = s.reportOutputRecordLabel(ctx, entity, refRow)
 			}
 		}
 	}
@@ -655,7 +663,11 @@ func (s *Server) reportExportRows(r *http.Request, rep *reportpkg.Report) (heade
 
 func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Request, rep *reportpkg.Report, stats *reportExportStats) (headers []string, rows [][]any, err error) {
 	r = r.WithContext(ctx)
-	settings := s.reportSettingsForRequest(r, rep).Settings
+	rs := s.reportSettingsForRequest(r, rep)
+	if rs.Err != nil {
+		return nil, nil, newReportExportError(http.StatusBadRequest, "report settings", rs.Err)
+	}
+	settings := rs.Settings
 	comp := effectiveComposition(rep, settings)
 	paramValues := make(map[string]any, len(rep.Params))
 	// Ссылка выгрузки — снимок формы: reportParamQuery выкладывает в неё ВСЕ
@@ -689,14 +701,17 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 	if denied := s.deniedQuerySource(ctx, compiled.Sources); denied != "" {
 		return nil, nil, newReportExportError(http.StatusForbidden, "source access", fmt.Errorf("нет доступа к объекту: %s", denied))
 	}
-	maskPlan := s.queryMaskPlan(ctx, compiled)
+	if _, err := s.reportResultFilterPlan(ctx, compiled, settings); err != nil {
+		return nil, nil, newReportExportError(http.StatusBadRequest, "report filter", err)
+	}
+	maskPlan := s.reportOutputMaskPlan(ctx, compiled)
 	if maskPlan.Denied != "" {
 		return nil, nil, newReportExportError(http.StatusForbidden, "masked field", fmt.Errorf("отчёт содержит защищённое поле: %s", maskPlan.Denied))
 	}
 	if stats != nil {
 		stats.attrs = []slog.Attr{slog.String("sql_hash", sqlHash(compiled.SQL))}
 	}
-	data, cols, truncated, err := query.RunLimit(ctx, s.store, &compiled, s.cfg.Limits.ExportMaxRows)
+	data, cols, truncated, err := s.runReportResultRows(ctx, &compiled, settings, s.cfg.Limits.ExportMaxRows)
 	if stats != nil {
 		stats.rows = len(data)
 		stats.truncated = truncated
@@ -716,12 +731,7 @@ func (s *Server) reportExportRowsWithContext(ctx context.Context, r *http.Reques
 	if comp != nil {
 		detailLinkCol = comp.DetailLink
 	}
-	s.resolveUUIDsInReport(ctx, data, detailLinkCol)
-
-	// Пользовательские отборы (план 70) — до компоновки, как в runReport.
-	if comp != nil && settings != nil && len(settings.Filters) > 0 {
-		data = compose.ApplyFilters(data, settings.Filters)
-	}
+	s.resolveUUIDsInReport(ctx, data, detailLinkCol, compiled.RefColumns)
 
 	// Если отчёт использует компоновщик — строим дерево групп/итогов.
 	if comp != nil {

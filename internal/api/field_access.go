@@ -19,21 +19,29 @@ import (
 // plain projection column comes back masked, one that drives a filter, grouping
 // or aggregate denies the query (plan.Denied).
 func (h *handler) queryMaskPlan(ctx context.Context, res query.Result) access.QueryMaskPlan {
-	return access.QueryMaskPlanFor(auth.UserFromContext(ctx), res, h.sourceMeta)
+	return access.ReportOutputQueryMaskPlan(auth.UserFromContext(ctx), res, h.sourceMeta)
 }
 
 func (h *handler) sourceMeta(kind, name string) *metadata.Entity {
-	if e := h.reg.GetEntity(name); e != nil {
-		return e
-	}
-	if r := h.reg.GetRegister(name); r != nil {
-		return storage.RegisterPredicateEntity(r)
-	}
-	if ir := h.reg.GetInfoRegister(name); ir != nil {
-		return storage.InfoRegisterPredicateEntity(ir)
-	}
-	if ar := h.reg.GetAccountRegister(name); ar != nil {
-		return storage.AccountRegisterPredicateEntity(ar)
+	switch strings.ToLower(kind) {
+	case "catalog", "document":
+		if e := h.reg.GetEntity(name); e != nil && strings.EqualFold(string(e.Kind), kind) {
+			return e
+		}
+	case "register":
+		if h.reg.GetRegister(name) != nil && h.reg.GetAccountRegister(name) != nil {
+			return nil // SourceRef does not distinguish these two namespaces.
+		}
+		if r := h.reg.GetRegister(name); r != nil {
+			return storage.RegisterPredicateEntity(r)
+		}
+		if ar := h.reg.GetAccountRegister(name); ar != nil {
+			return storage.AccountRegisterPredicateEntity(ar)
+		}
+	case "inforeg":
+		if ir := h.reg.GetInfoRegister(name); ir != nil {
+			return storage.InfoRegisterPredicateEntity(ir)
+		}
 	}
 	return nil
 }

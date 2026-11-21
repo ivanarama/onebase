@@ -425,6 +425,15 @@ func (h *handler) runReportV2() http.HandlerFunc {
 			writeError(w, http.StatusForbidden, "masked field: "+maskPlan.Denied, "", 0)
 			return
 		}
+		settings, filterPlan, err := h.reportResultFilterSettings(r, rep, compiled)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error(), "", 0)
+			return
+		}
+		if !filterPlan.Empty() {
+			h.runReportResultFilteredV2(w, r, rep, &compiled, maskPlan, settings, filterPlan, page, limit)
+			return
+		}
 		if wantsReportComposition(r.URL.Query()) {
 			rows, cols, err := query.Run(r.Context(), h.store, &compiled)
 			if err != nil {
