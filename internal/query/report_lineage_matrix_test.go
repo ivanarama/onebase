@@ -114,16 +114,24 @@ func TestReportLineageMatchingMatrix(t *testing.T) {
 		}
 		// A receipt grants no rights. Ordinary role masking still rejects this
 		// protected comparison; mandatory reporting policy belongs to the host.
-		plan := access.QueryMaskPlanFor(&auth.User{}, res, func(kind, name string) *metadata.Entity {
+		user := &auth.User{Roles: []*auth.Role{{
+			Name: "Reader", Permissions: auth.Permission{
+				Documents: map[string][]string{entities[0].Name: {"read"}},
+				FieldAccess: auth.FieldAccess{Documents: map[string]auth.FieldPolicies{
+					entities[0].Name: {"Phone": {Read: "hide"}},
+				}},
+			},
+		}}}
+		plan := access.QueryMaskPlanFor(user, res, func(kind, name string) *metadata.Entity {
 			for _, ent := range entities {
-				if string(ent.Kind) == kind && ent.Name == name {
+				if strings.EqualFold(string(ent.Kind), kind) && strings.EqualFold(ent.Name, name) {
 					return ent
 				}
 			}
 			return nil
 		})
-		if plan.Denied == "" {
-			t.Fatal("lineage silently authorized protected equality")
+		if !strings.EqualFold(plan.Denied, "Phone") {
+			t.Fatalf("protected comparison must be denied for Phone, got %q", plan.Denied)
 		}
 	})
 }

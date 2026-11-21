@@ -849,7 +849,8 @@ func (p *reportLineageParser) resolve(path []string) ([]ReportFieldOrigin, metad
 			ref = target
 		}
 		if hop == len(fieldPath)-1 {
-			if ref != "" && field.Name != "id" && !(source.self != "" && (strings.EqualFold(name, "Ссылка") || strings.EqualFold(name, "Ref"))) {
+			selfReference := source.self != "" && (strings.EqualFold(name, "Ссылка") || strings.EqualFold(name, "Ref"))
+			if ref != "" && field.Name != "id" && !selfReference {
 				return fail()
 			}
 			return origins, field.Type, nil

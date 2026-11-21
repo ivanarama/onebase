@@ -85,7 +85,7 @@ func TestRowSourceInputFrameEqualBytesRetainKindsAndChannel(t *testing.T) {
 	}
 	find := func(f *InputFrame) inputBinding {
 		for _, b := range f.state.inputs {
-			if b.ID == "1:Flag" && !(b.Presence == "missing" && b.Kind == "user-input") {
+			if b.ID == "1:Flag" && (b.Presence != "missing" || b.Kind != "user-input") {
 				return b
 			}
 		}

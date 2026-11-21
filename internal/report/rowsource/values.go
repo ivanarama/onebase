@@ -155,7 +155,7 @@ func sameValue(expected, actual any) bool {
 		return ok && v.Equal(got)
 	case time.Time:
 		got, ok := actual.(time.Time)
-		return ok && v == got
+		return ok && v == got //nolint:staticcheck // QF1009: original value identity includes the location and monotonic reading.
 	default:
 		return reflect.DeepEqual(expected, actual)
 	}

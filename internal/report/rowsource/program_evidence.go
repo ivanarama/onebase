@@ -116,7 +116,7 @@ func (e *programEvidence) literal(expr ast.Expr) (literalEvidence, bool) {
 }
 func (e *programEvidence) recordTextSite(stmt *ast.AssignStmt, node int) {
 	member, ok := stmt.Target.(*ast.MemberExpr)
-	if !ok || !(strings.EqualFold(member.Field.Literal, "Text") || strings.EqualFold(member.Field.Literal, "Текст")) {
+	if !ok || (!strings.EqualFold(member.Field.Literal, "Text") && !strings.EqualFold(member.Field.Literal, "Текст")) {
 		return
 	}
 	site := textSiteEvidence{node: node, receiverRequired: true, controlRequired: true}

@@ -34,7 +34,6 @@ func TestRowSourceSubsetKeepsOriginalsHostOnly(t *testing.T) {
 				t.Fatal(err)
 			}
 			var result *Result
-			err = nil
 			if path == "registered" {
 				result, err = RunRegistered(ctx, db, reg, "RowSource", Query{Text: initialQuery}, load)
 			} else {
