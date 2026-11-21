@@ -6,11 +6,6 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 )
 
-func (s *Server) uiEnhancementsAllowed(r *http.Request) bool {
-	return s.cfg.UIEnhancements && auth.RoleScopeMatches(auth.UserFromContext(r.Context()),
-		s.cfg.UIRoles, s.cfg.UIExceptRoles, len(s.cfg.UIRoles) > 0)
-}
-
 // Resolve a copy per request: roles must never mutate the shared server config.
 func (s *Server) uiConfigForRequest(r *http.Request, supplied ...Config) Config {
 	cfg := s.cfg

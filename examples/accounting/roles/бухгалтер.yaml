@@ -1,6 +1,7 @@
 name: Бухгалтер
 description: Полный доступ к бухгалтерскому учёту
 permissions:
+  processors: {}
   catalogs:
     Контрагент: [read, write]
     Номенклатура: [read, write]

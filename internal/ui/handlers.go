@@ -2,7 +2,6 @@ package ui
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -236,6 +235,9 @@ func (s *Server) referenceOptionsWithParams(ctx context.Context, refEntity *meta
 	for _, row := range rows {
 		row["_label"] = firstStringField(row, refEntity)
 	}
+	// choice_row_style: оформление строк выбора (по реквизитам строки и
+	// текущему пользователю) — до сжатия строк до id/_label.
+	s.applyChoiceRowStyles(ctx, refEntity, rows)
 	return rows, nil
 }
 
@@ -471,7 +473,14 @@ func (s *Server) loadInitialTPRefOptions(ctx context.Context, entity *metadata.E
 func compactRefOptionRows(rows []map[string]any) []map[string]any {
 	out := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, map[string]any{"id": row["id"], "_label": row["_label"]})
+		opt := map[string]any{"id": row["id"], "_label": row["_label"]}
+		// Оформление строки выбора (choice_row_style) едет вместе с вариантом.
+		for _, k := range []string{refOptionStyleKey, refOptionStyleBgKey} {
+			if v, ok := row[k].(refOptionCSS); ok {
+				opt[k] = v
+			}
+		}
+		out = append(out, opt)
 	}
 	return out
 }
@@ -536,6 +545,7 @@ func (s *Server) appendSelectedRefOptions(ctx context.Context, rows []map[string
 			continue
 		}
 		// SQL result order is unspecified; keep the first selected occurrence.
+		appended := make([]map[string]any, 0, len(batch))
 		for _, id := range batch {
 			row := selectedRows[id.String()]
 			if row == nil {
@@ -544,8 +554,10 @@ func (s *Server) appendSelectedRefOptions(ctx context.Context, rows []map[string
 			// Mask before computing the label; TP HTTP options project only id/_label.
 			s.maskRecord(ctx, refEntity, row)
 			row["_label"] = firstStringField(row, refEntity)
-			rows = append(rows, row)
+			appended = append(appended, row)
 		}
+		s.applyChoiceRowStyles(ctx, refEntity, appended)
+		rows = append(rows, appended...)
 	}
 	return rows
 }
@@ -677,15 +689,14 @@ func (s *Server) renderForbidden(w http.ResponseWriter, r *http.Request) {
 // (объект не загрузился, ошибка не из DSL) остаётся общей страницей: его
 // текст пользователю ни о чём не говорит и может раскрыть устройство базы.
 func (s *Server) renderReadHookDenied(w http.ResponseWriter, r *http.Request, denied error) {
-	var dslErr *interpreter.DSLError
-	if !errors.As(denied, &dslErr) || strings.TrimSpace(dslErr.UserMessage()) == "" {
+	message, explicit := interpreter.ExplicitExceptionMessage(denied)
+	if !explicit || strings.TrimSpace(message) == "" {
 		s.renderForbidden(w, r)
 		return
 	}
-	// Keep the error chain for localization, but omit diagnostic source data
-	// from the copy passed to the HTTP renderer. Logs retain the original error.
-	userErr := *dslErr
-	userErr.File, userErr.Line = "", 0
+	// Localize only the explicit message. Diagnostic wrapper text and causes
+	// remain in the original error and cannot reach the response.
+	userErr := interpreter.DSLError{Msg: message}
 	w.WriteHeader(http.StatusForbidden)
 	s.render(w, r, "page-forbidden", map[string]any{"Reason": s.errText(r, &userErr)})
 }
