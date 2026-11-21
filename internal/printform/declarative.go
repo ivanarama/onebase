@@ -219,9 +219,11 @@ func lookupParam(params map[string]string, name string) (string, bool) {
 // границы: Borders приоритетнее legacy-пресета Border.
 func layoutCellToSheet(ld LayoutCell) *sheet.Cell {
 	cell := sheet.NewCell(ld.Text)
+	cell.Format = ld.Format
 	cell.Value = ld.Text
 	cell.Bold = ld.Bold
 	cell.Italic = ld.Italic
+	cell.Underline = ld.Underline
 	if ld.Align != "" {
 		cell.Align = strings.ToLower(ld.Align)
 	}
@@ -271,6 +273,18 @@ func layoutCellToSheet(ld LayoutCell) *sheet.Cell {
 // чтобы DSL-обвязка и декларативный движок строили ячейки одинаково.
 func BuildAreaCells(area *LayoutArea) *sheet.Area {
 	return buildAreaSheet(area, nil, nil, 0, nil)
+}
+
+// ColumnWidthsPx — ширины колонок макета (columns:) в px модели, 1-based;
+// колонки без ширины, auto и проценты пропускаются.
+func (lt *LayoutTemplate) ColumnWidthsPx() map[int]float64 {
+	out := map[int]float64{}
+	for i, c := range lt.Columns {
+		if px, ok := columnWidthPx(c.Width); ok {
+			out[i+1] = px
+		}
+	}
+	return out
 }
 
 // columnWidthPx конвертирует CSS-ширину колонки в px модели sheet.

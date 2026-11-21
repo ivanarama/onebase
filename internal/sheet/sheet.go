@@ -24,18 +24,24 @@ import (
 // Колоночные/строчные размеры (ШиринаКолонки/ВысотаСтроки) живут на Document
 // в ColWidths/RowHeights и при рендере накладываются на колонку/строку целиком.
 type Cell struct {
-	Text       string
-	Value      any
-	Align      string // left, center, right, justify
-	Vertical   string // top, center, bottom
-	Width      float64
-	Height     float64
-	Bold       bool
-	Italic     bool
-	FontSize   int
-	FontFamily string
-	BackColor  string
-	TextColor  string
+	Format    string
+	Drilldown *Reference
+	// Builder data stays server-side. Only the validated neutral tree is cached.
+	DrilldownSource  any             `json:"-"`
+	DrilldownPayload *DrilldownValue `json:"-"`
+	Text             string
+	Value            any
+	Align            string // left, center, right, justify
+	Vertical         string // top, center, bottom
+	Width            float64
+	Height           float64
+	Bold             bool
+	Italic           bool
+	Underline        bool
+	FontSize         int
+	FontFamily       string
+	BackColor        string
+	TextColor        string
 	// Border — legacy-пресет рамки ("all"/""/"thin"/"thick"/"none"). Если задана
 	// хотя бы одна из per-side границ (BorderLeft/Top/Right/Bottom), она имеет
 	// приоритет над этим пресетом при рендере (html.go/pdf.go).
@@ -181,16 +187,26 @@ func DefaultPageSetup() PageSetup {
 // (HTML/PDF) и операции вывода — методы этого пакета; DSL-протокол поверх —
 // в interpreter.SpreadsheetDocument, делегирующем сюда.
 type Document struct {
-	Cells    map[CellKey]*Cell // (row,col) -> cell
-	RowCount int
-	ColCount int
+	Groups     []RowGroup
+	FreezeRows int
+	FreezeCols int
+	HideGrid   bool
+	AutoScale  bool              // print width fit: one uniform scale, without changing screen/data
+	Cells      map[CellKey]*Cell // (row,col) -> cell
+	RowCount   int
+	ColCount   int
 	// ColWidths/RowHeights — размеры колонок/строк (1-based индекс → размер в px).
 	// ШиринаКолонки/ВысотаСтроки пишут сюда, НЕ материализуя ячейки; HTML-рендер
 	// накладывает их на колонку/строку целиком. PDF-рендер конвертирует px → мм.
-	ColWidths    map[int]float64
-	RowHeights   map[int]float64
-	CurrentRow   int
-	CurrentCol   int
+	ColWidths  map[int]float64
+	RowHeights map[int]float64
+	CurrentRow int
+	CurrentCol int
+	// Last output block uses an independent cursor: CurrentRow is already below it.
+	outputTop    int
+	outputRight  int
+	outputBottom int
+	outputValid  bool
 	PageBreaks   []int
 	ShowMode     bool
 	FileName     string
@@ -238,60 +254,69 @@ func (d *Document) SetCell(row, col int, text string) {
 	cell.Value = text
 }
 
-// Put выводит область в текущую позицию и переходит на следующую строку.
+// Put starts a new vertical output block at column one, below the complete
+// previous block (including taller areas joined horizontally).
 func (d *Document) Put(area *Area) {
-	if area == nil {
+	if area == nil || area.Rows() <= 0 || area.Cols() <= 0 {
 		return
 	}
-	rows := area.Rows()
-	cols := area.Cols()
-
-	for r := 0; r < rows; r++ {
-		for c := 0; c < cols; c++ {
-			key := fmt.Sprintf("%d,%d", r, c)
-			if srcCell, exists := area.Cells[key]; exists {
-				targetRow := d.CurrentRow + r
-				targetCol := d.CurrentCol + c
-				destCell := d.GetOrCreateCell(targetRow, targetCol)
-				*destCell = *srcCell
-			}
-		}
-	}
-
-	d.CurrentRow += rows
-	d.CurrentCol = 0
+	top := d.CurrentRow
+	rows, cols := d.copyOutputArea(area, top, 0)
+	d.outputTop, d.outputRight, d.outputBottom = top, cols, top+rows
+	d.outputValid = true
+	d.CurrentRow, d.CurrentCol = d.outputBottom, 0
 }
 
-// Append выводит область справа от ранее выведенной (без перехода на строку).
+// Append joins at the right edge of the last output block, at its original top.
+// Repeated joins share that top; the next Put starts below the maximum height.
 func (d *Document) Append(area *Area) {
-	if area == nil {
+	if area == nil || area.Rows() <= 0 || area.Cols() <= 0 {
 		return
 	}
-	// Найти правую границу текущей строки (по реальным ячейкам). После выноса
-	// размеров на Document фантомных width-ячеек больше нет — соседняя область
-	// встаёт вплотную, а не уезжает в конец сетки.
-	maxCol := 0
-	for col := 0; col < d.ColCount; col++ {
-		if d.GetCell(d.CurrentRow, col) != nil {
-			maxCol = col + 1
-		}
-	}
-	d.CurrentCol = maxCol
-
-	rows := area.Rows()
-	cols := area.Cols()
-
-	for r := 0; r < rows; r++ {
-		for c := 0; c < cols; c++ {
-			key := fmt.Sprintf("%d,%d", r, c)
-			if srcCell, exists := area.Cells[key]; exists {
-				targetRow := d.CurrentRow + r
-				targetCol := d.CurrentCol + c
-				destCell := d.GetOrCreateCell(targetRow, targetCol)
-				*destCell = *srcCell
+	if !d.outputValid || d.CurrentRow != d.outputBottom {
+		d.outputTop, d.outputRight, d.outputBottom = d.CurrentRow, 0, d.CurrentRow
+		// Compatibility for explicit cell writes followed by the first Append.
+		// Include spans intersecting this row, without depending on default ColCount.
+		for key, cell := range d.Cells {
+			if cell != nil && key.Row <= d.CurrentRow && key.Row+max(1, cell.RowSpan) > d.CurrentRow {
+				d.outputRight = max(d.outputRight, key.Col+max(1, cell.ColSpan))
+				d.outputBottom = max(d.outputBottom, key.Row+max(1, cell.RowSpan))
 			}
 		}
+		d.outputValid = true
 	}
+	oldBottom := d.outputBottom
+	left := d.outputRight
+	rows, cols := d.copyOutputArea(area, d.outputTop, left)
+	d.outputRight = left + cols
+	d.outputBottom = max(d.outputBottom, d.outputTop+rows)
+	d.CurrentRow, d.CurrentCol = d.outputBottom, left
+	// Extend only this block's grouped header, never a previous block after Draw/EndPage.
+	if len(d.Groups) > 0 && d.outputBottom > oldBottom {
+		g := &d.Groups[len(d.Groups)-1]
+		if g.Start == d.outputTop && g.HeaderEnd == oldBottom-1 {
+			g.HeaderEnd = d.outputBottom - 1
+		}
+	}
+}
+
+// copyOutputArea preserves cell values/styles/spans and reserves the declared
+// rectangle even when its edge is sparse or blank. A span can extend the block.
+func (d *Document) copyOutputArea(area *Area, top, left int) (int, int) {
+	rows, cols := area.Rows(), area.Cols()
+	height, width := rows, cols
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
+			src := area.Cells[fmt.Sprintf("%d,%d", r, c)]
+			if src == nil {
+				continue
+			}
+			*d.GetOrCreateCell(top+r, left+c) = *src
+			height = max(height, r+max(1, src.RowSpan))
+			width = max(width, c+max(1, src.ColSpan))
+		}
+	}
+	return height, width
 }
 
 // Clear очищает документ и сбрасывает позицию вывода.
@@ -302,6 +327,8 @@ func (d *Document) Clear() {
 	d.CurrentRow = 0
 	d.CurrentCol = 0
 	d.PageBreaks = nil
+	d.outputValid = false
+	d.outputTop, d.outputRight, d.outputBottom = 0, 0, 0
 }
 
 // RemoveArea удаляет содержимое прямоугольника области из документа.
@@ -393,6 +420,7 @@ func (d *Document) EndPage() {
 	rpp := d.RowsPerPage()
 	nextPage := (d.CurrentRow/rpp + 1) * rpp
 	d.CurrentRow = nextPage
+	d.outputValid = false
 	d.CurrentCol = 0
 }
 
@@ -406,6 +434,7 @@ func (d *Document) RepeatOnPrint(area *Area, repeat bool) {
 
 // Draw вставляет рисунок в текущую позицию и сдвигает колонку.
 func (d *Document) Draw(picture string) {
+	d.outputValid = false
 	cell := d.GetOrCreateCell(d.CurrentRow, d.CurrentCol)
 	cell.Picture = picture
 	d.CurrentCol++
