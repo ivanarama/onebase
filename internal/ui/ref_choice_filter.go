@@ -14,6 +14,7 @@ import (
 	"github.com/ivantit66/onebase/internal/auth"
 	"github.com/ivantit66/onebase/internal/metadata"
 	processorpkg "github.com/ivantit66/onebase/internal/processor"
+	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/storage"
 )
 
@@ -39,9 +40,10 @@ type managedChoiceContext struct {
 const choiceFormKindProcessor = "processor"
 
 type resolvedChoiceRequest struct {
-	Predicates []storage.ChoicePredicate
-	Empty      bool
-	Selected   *uuid.UUID
+	ReportParam *reportpkg.Param
+	Predicates  []storage.ChoicePredicate
+	Empty       bool
+	Selected    *uuid.UUID
 	// Folders — элемент объявил choice_folders: группы справочника остаются в
 	// выдаче. Признак берётся из метаданных формы, а не из запроса браузера.
 	Folders bool
@@ -563,6 +565,12 @@ func oneQueryValue(query map[string][]string, name string, required bool) (strin
 // nil means a legacy request with no form context and preserves the old API.
 func (s *Server) resolveChoiceRequest(r *http.Request, target *metadata.Entity) (*resolvedChoiceRequest, error) {
 	query := r.URL.Query()
+	if query.Get("form_kind") == reportChoiceKind {
+		if _, err := oneQueryValue(query, "form_kind", true); err != nil {
+			return nil, err
+		}
+		return s.resolveReportChoiceRequest(r, target)
+	}
 	// selected_id alone is not form context: the legacy endpoint historically
 	// ignored unknown query parameters, so adding it must not turn an otherwise
 	// context-free request into a 400. Identity/source parameters do opt in and
