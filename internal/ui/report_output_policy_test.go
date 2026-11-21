@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http/httptest"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -92,10 +93,18 @@ func TestReportOutputPrivacyHTTPMatrix(t *testing.T) {
 		pdfPages := func(data []byte) string {
 			t.Helper()
 			var all strings.Builder
-			for _, stream := range regexp.MustCompile(`(?s)stream\r?\n(.*?)\r?\nendstream`).FindAllSubmatch(data, -1) {
-				r, err := zlib.NewReader(bytes.NewReader(stream[1]))
+			// Page streams written by fpdf carry a direct length. Read that many
+			// bytes so a final 0x0d in the compressed payload stays part of it.
+			streamHeader := regexp.MustCompile(`<</Filter /FlateDecode /Length ([0-9]+)>>\r?\nstream\r?\n`)
+			for _, stream := range streamHeader.FindAllSubmatchIndex(data, -1) {
+				start := stream[1]
+				length, err := strconv.Atoi(string(data[stream[2]:stream[3]]))
+				if err != nil || length > len(data)-start {
+					t.Fatalf("invalid length for PDF stream at byte %d", start)
+				}
+				r, err := zlib.NewReader(bytes.NewReader(data[start : start+length]))
 				if err != nil {
-					continue
+					t.Fatal(err)
 				}
 				b, err := io.ReadAll(r)
 				_ = r.Close()
