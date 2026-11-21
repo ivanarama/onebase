@@ -26,6 +26,9 @@ function makeNode(tag) {
     type: '',
     id: '',
     appendChild(child) { node.children.push(child); child.parent = node; },
+    focus() {},
+    reportValidity() { return !node.validationMessage && !!node.value; },
+    setCustomValidity(message) { node.validationMessage = message; },
     addEventListener(name, fn) { node.listeners.set(name, fn); },
     remove() { if (node.parent) node.parent.children = node.children.filter((c) => c !== node); node.parent = null; },
   };
@@ -262,4 +265,24 @@ test('модальный вопрос: щелчок мимо окна не за�
   buttons[0].click();
   assert.equal(app.document.getElementById('_question-modal'), null, 'кнопка закрывает окно');
   assert.deepEqual(fired.map((f) => [f[0], f[1], f[2]._question_answer]), [['Команда', 'Ответ', 'Да']]);
+});
+
+test('период применяет календарный квартал и закрывается при отмене', () => {
+  fired.length = 0;
+  const app = setup();
+  const period = {text:'Период', variants:['ОК','Отмена'], period:{start:'2028-02-04',end:'2028-02-17'}};
+  app.obOpenQuestion(period, 'Период');
+  let controls = walk(app.__modalNode(), []);
+  let dates = controls.filter((n) => n.tag === 'input');
+  let mode = controls.find((n) => n.tag === 'select');
+  mode.value = 'quarter';
+  mode.listeners.get('change')();
+  assert.deepEqual(dates.map((n) => n.value), ['2028-01-01','2028-03-31']);
+  controls.find((n) => n._text === 'ОК').click();
+  assert.deepEqual(JSON.parse(fired[0][2]._question_fields), {Начало:'2028-01-01',Конец:'2028-03-31'});
+  app.obOpenQuestion(period, 'Период');
+  controls = walk(app.__modalNode(), []);
+  controls.find((n) => n._text === 'Отмена').click();
+  assert.equal(fired[1][2]._question_answer, 'Отмена');
+  assert.equal(app.document.getElementById('_question-modal'), null);
 });

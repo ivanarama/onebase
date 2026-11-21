@@ -1317,6 +1317,9 @@ func (s *Server) handleManagedFormEventMode(w http.ResponseWriter, r *http.Reque
 	questionFn := newQuestionBuiltin(&question)
 	vars["ПоказатьВопрос"] = questionFn
 	vars["ShowQuestion"] = questionFn
+	periodFn := newPeriodDialogBuiltin(&question)
+	vars["ПоказатьПериод"] = periodFn
+	vars["ShowPeriod"] = periodFn
 
 	// Обработчик ожидания: команды уходят в ответ, таймер ставит браузер.
 	var idle []idleCommand
@@ -2814,6 +2817,9 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		questionFn := newQuestionBuiltin(&question)
 		vars["ПоказатьВопрос"] = questionFn
 		vars["ShowQuestion"] = questionFn
+		periodFn := newPeriodDialogBuiltin(&question)
+		vars["ПоказатьПериод"] = periodFn
+		vars["ShowPeriod"] = periodFn
 
 		var idle []idleCommand
 		for k, v := range s.newFormIdleBuiltins(&idle, formIdleLogin(r), "processor:"+proc.Name, form) {

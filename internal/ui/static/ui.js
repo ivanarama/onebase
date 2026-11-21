@@ -5131,7 +5131,7 @@ function obOpenQuestion(payload, elementName, handlers) {
   // Строки данных: итог операции (номер записанного документа, клиент, дата)
   // и, при необходимости, поле ввода. Значения редактируемых уезжают обратно в
   // обработчик Ответ вместе с нажатой кнопкой — переменной ДиалогПоля.
-  var inputs = {};
+  var inputs = payload.period ? obQuestionPeriod(box, payload.period) : {};
   (payload.fields || []).forEach(function (field) {
     if (!field || !field.name) return;
     var line = document.createElement('div');
@@ -5185,6 +5185,9 @@ function obOpenQuestion(payload, elementName, handlers) {
     btn.style.cssText = 'padding:8px 16px;border:1px solid #e2e8f0;border-radius:7px;background:#f8fafc;cursor:pointer;font-size:14px;white-space:normal'
       + (manyVariants ? ';text-align:left;width:100%' : ';max-width:100%');
     btn.addEventListener('click', function () {
+      if (payload.period && variant === payload.variants[0]) {
+        if (!inputs.Начало.reportValidity() || !inputs.Конец.reportValidity()) return;
+      }
       modal.remove();
       var extra = { _question_answer: variant };
       var names = Object.keys(inputs);
@@ -5208,7 +5211,70 @@ function obOpenQuestion(payload, elementName, handlers) {
       handlers.onDismiss();
     });
   }
+  if (payload.period) {
+    modal.addEventListener('keydown', function (ev) {
+      if (ev.key !== 'Escape') return;
+      ev.preventDefault();
+      ev.stopPropagation();
+      modal.remove();
+    });
+  }
   document.body.appendChild(modal);
+  if (payload.period) inputs.Начало.focus();
+}
+
+function obQuestionPeriod(box, period) {
+  function field(caption, element) {
+    var label = document.createElement('label');
+    label.style.cssText = 'display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px';
+    label.textContent = caption;
+    label.appendChild(element);
+    box.appendChild(label);
+    return element;
+  }
+  var mode = document.createElement('select');
+  [
+    ['interval', 'Произвольный интервал'],
+    ['month', 'Календарный месяц'],
+    ['quarter', 'Календарный квартал'],
+    ['year', 'Календарный год'],
+  ].forEach(function (item) {
+    var option = document.createElement('option');
+    option.value = item[0];
+    option.textContent = item[1];
+    mode.appendChild(option);
+  });
+  mode.value = 'interval';
+  field('Период', mode);
+  var start = field('Начало', document.createElement('input'));
+  var end = field('Конец', document.createElement('input'));
+  start.type = end.type = 'date';
+  start.required = end.required = true;
+  start.max = end.max = '9999-12-31';
+  start.value = period.start;
+  end.value = period.end;
+
+  function refresh() {
+    end.readOnly = mode.value !== 'interval';
+    if (end.readOnly && start.value) {
+      var parts = start.value.split('-').map(Number);
+      var span = { month: 1, quarter: 3, year: 12 }[mode.value];
+      var first = Math.floor((parts[1] - 1) / span) * span;
+      var lastDay = new Date(Date.UTC(2000 + parts[0] % 400, first + span, 0)).getUTCDate();
+      var year = String(parts[0]).padStart(4, '0');
+      start.value = year + '-' + String(first + 1).padStart(2, '0') + '-01';
+      end.value = year + '-' + String(first + span).padStart(2, '0') + '-' + String(lastDay).padStart(2, '0');
+    } else if (end.readOnly) {
+      end.value = '';
+    }
+    end.setCustomValidity(start.value && end.value && start.value > end.value
+      ? 'Конец периода раньше начала' : '');
+  }
+  mode.addEventListener('change', refresh);
+  start.addEventListener('input', refresh);
+  end.addEventListener('input', refresh);
+  refresh();
+  return { Начало: start, Конец: end };
 }
 window.obOpenQuestion = obOpenQuestion;
 // END onebase-question-modal

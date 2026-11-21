@@ -17,6 +17,7 @@ import (
 // открытой, текст называет причину и обход.
 var closeLifecycleDialogBuiltins = [][2]string{
 	{"ПоказатьВопрос", "ShowQuestion"},
+	{"ПоказатьПериод", "ShowPeriod"},
 	{"ПоказатьПодбор", "ShowPicker"},
 	{"ОткрытьФорму", "OpenForm"},
 }
