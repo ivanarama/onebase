@@ -37,8 +37,13 @@ type Report struct {
 	Params      []Param           `yaml:"params"`
 	Query       string            `yaml:"query"`
 	ChartProc   string            `yaml:"chart_proc"`
-	Composition *Composition      `yaml:"composition"` // nil = плоская таблица (старое поведение)
-	Variants    []ReportVariant   `yaml:"variants"`    // доп. именованные компоновки по тому же запросу
+	ResultProc  string            `yaml:"result_proc,omitempty"` // .rep.os function returning SpreadsheetDocument
+	Composition *Composition      `yaml:"composition"`           // nil = плоская таблица (старое поведение)
+	Variants    []ReportVariant   `yaml:"variants"`              // доп. именованные компоновки по тому же запросу
+
+	// ComparePhoneField opts a project report's result procedure into request-local comparison.
+	ComparePhoneField string `yaml:"compare_phone_field,omitempty"`
+
 	// OutputFormat — предпочтительный формат выгрузки отчёта (issue #218): пусто|html
 	// (интерактивный просмотр + кнопки Excel/PDF), pdf, excel или совместимый
 	// legacy-синоним excel_html. Реальная выгрузка идёт через /ui/report/<name>/pdf
