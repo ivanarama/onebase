@@ -67,6 +67,7 @@ type formEventResponse struct {
 	// Question != nil — обработчик фазы 1 вызвал ПоказатьВопрос: клиент
 	// рисует модал вопроса, ответ возвращается событием Ответ (#1528).
 	Question *questionPayload `json:"question,omitempty"`
+	CSV      *formCSVDownload `json:"csv,omitempty"`
 	// Idle — команды обработчиков ожидания (Подключить/ОтключитьОбработчикОжидания):
 	// браузер ставит или снимает таймер тика ОбработкаОжидания.
 	Idle []idleCommand `json:"idle,omitempty"`
@@ -2815,6 +2816,12 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		vars["ПоказатьВопрос"] = questionFn
 		vars["ShowQuestion"] = questionFn
 
+		var csvFile *formCSVDownload
+		if !proc.External && closeInv == nil && eventName == string(metadata.FormEventOnClick) {
+			downloadCSV := newFormCSVDownloadBuiltin(&csvFile)
+			vars["СкачатьCSV"] = downloadCSV
+			vars["DownloadCSV"] = downloadCSV
+		}
 		var idle []idleCommand
 		for k, v := range s.newFormIdleBuiltins(&idle, formIdleLogin(r), "processor:"+proc.Name, form) {
 			vars[k] = v
@@ -2929,6 +2936,7 @@ func (s *Server) handleProcessorFormEventMode(w http.ResponseWriter, r *http.Req
 		}
 
 		resp := s.serializeManagedFormEventState(r.Context(), form, virtEntity, obj, condRuntime.rules, msgs).response(true)
+		resp.CSV = csvFile
 		resp.PickerData = picker
 		if question.Variants != nil {
 			q := question
