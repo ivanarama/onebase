@@ -6,8 +6,51 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 )
+
+var openAIFunctionName = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
+
+// OpenAI-совместимые API ограничивают имена функций. Исполнитель и журнал
+// используют имена OneBase, на которые ссылаются инструкции конфигуратора.
+func openAIToolDefinitions(tools []Tool) ([]map[string]any, map[string]string) {
+	logicalNames := make(map[string]string, len(tools))
+	for _, tool := range tools {
+		if openAIFunctionName.MatchString(tool.Name) {
+			logicalNames[tool.Name] = tool.Name
+		}
+	}
+	defs := make([]map[string]any, 0, len(tools))
+	nextAlias := 1
+	for _, tool := range tools {
+		name := tool.Name
+		description := tool.Description
+		if !openAIFunctionName.MatchString(name) {
+			for {
+				name = "onebase_tool_" + strconv.Itoa(nextAlias)
+				nextAlias++
+				if _, reserved := logicalNames[name]; !reserved {
+					break
+				}
+			}
+			logicalNames[name] = tool.Name
+			description += fmt.Sprintf("\nВ инструкциях OneBase «%s» означает вызов %s.", tool.Name, name)
+		}
+		schema := tool.Schema
+		if schema == nil {
+			schema = map[string]any{"type": "object", "properties": map[string]any{}}
+		}
+		defs = append(defs, map[string]any{
+			"type": "function",
+			"function": map[string]any{
+				"name": name, "description": description, "parameters": schema,
+			},
+		})
+	}
+	return defs, logicalNames
+}
 
 // completeOpenAITools — агентный цикл tool-use по OpenAI chat/completions
 // (покрывает OpenAI и openai-совместимые). Изображения в tool-путь не передаются
@@ -20,19 +63,7 @@ func completeOpenAITools(ctx context.Context, hc *http.Client, rm ResolvedModel,
 	url := strings.TrimRight(base, "/") + "/chat/completions"
 	headers := map[string]string{"Authorization": "Bearer " + rm.Endpoint.APIKey}
 
-	toolDefs := make([]map[string]any, 0, len(tools))
-	for _, t := range tools {
-		schema := t.Schema
-		if schema == nil {
-			schema = map[string]any{"type": "object", "properties": map[string]any{}}
-		}
-		toolDefs = append(toolDefs, map[string]any{
-			"type": "function",
-			"function": map[string]any{
-				"name": t.Name, "description": t.Description, "parameters": schema,
-			},
-		})
-	}
+	toolDefs, logicalNames := openAIToolDefinitions(tools)
 
 	messages := make([]map[string]any, 0, len(req.Messages)+4)
 	if req.System != "" {
@@ -67,8 +98,9 @@ func completeOpenAITools(ctx context.Context, hc *http.Client, rm ResolvedModel,
 		var out struct {
 			Choices []struct {
 				Message struct {
-					Content   string            `json:"content"`
-					ToolCalls []json.RawMessage `json:"tool_calls"`
+					Content          string            `json:"content"`
+					ReasoningContent *string           `json:"reasoning_content"`
+					ToolCalls        []json.RawMessage `json:"tool_calls"`
 				} `json:"message"`
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
@@ -95,9 +127,14 @@ func completeOpenAITools(ctx context.Context, hc *http.Client, rm ResolvedModel,
 		}
 
 		// Ход ассистента с tool_calls возвращаем модели как есть.
-		messages = append(messages, map[string]any{
+		assistant := map[string]any{
 			"role": "assistant", "content": ch.Message.Content, "tool_calls": ch.Message.ToolCalls,
-		})
+		}
+		// DeepSeek требует вернуть контекст рассуждения в следующий раунд с tools.
+		if ch.Message.ReasoningContent != nil {
+			assistant["reasoning_content"] = *ch.Message.ReasoningContent
+		}
+		messages = append(messages, assistant)
 		for _, raw := range ch.Message.ToolCalls {
 			var tc struct {
 				ID       string `json:"id"`
@@ -122,11 +159,19 @@ func completeOpenAITools(ctx context.Context, hc *http.Client, rm ResolvedModel,
 				})
 				continue
 			}
+			logicalName, ok := logicalNames[tc.Function.Name]
+			if !ok {
+				messages = append(messages, map[string]any{
+					"role": "tool", "tool_call_id": tc.ID,
+					"content": "неизвестный инструмент: " + tc.Function.Name,
+				})
+				continue
+			}
 			var input map[string]any
 			if tc.Function.Arguments != "" {
 				_ = json.Unmarshal([]byte(tc.Function.Arguments), &input)
 			}
-			res := exec(ctx, ToolCall{ID: tc.ID, Name: tc.Function.Name, Input: input})
+			res := exec(ctx, ToolCall{ID: tc.ID, Name: logicalName, Input: input})
 			messages = append(messages, map[string]any{
 				"role": "tool", "tool_call_id": tc.ID, "content": res.Content,
 			})
