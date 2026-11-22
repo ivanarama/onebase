@@ -1076,6 +1076,13 @@ XMLТипЗнч(Неопределено)    // "undefined"`,
 		Group: "Коллекции и JSON",
 	},
 	{
+		Name: "скачатьcsv", Display: "СкачатьCSV", Aliases: []string{"DownloadCSV"}, Kind: KindFunc,
+		Signature: "СкачатьCSV(ИмяФайла, Строки)",
+		Params:    []Param{{Name: "ИмяФайла", Type: "строка"}, {Name: "Строки", Type: "массив массивов"}},
+		Doc:       "В событии Нажатие управляемой формы обработки конфигурации отправляет таблицу текущему браузеру как CSV. Первая строка содержит заголовки. Кодировка UTF-8 с BOM, разделитель — точка с запятой. Предел файла 8 МиБ. Серверный файл не создаётся.",
+		Group:     "Формы",
+	},
+	{
 		Name: "выгрузитьвexcel", Display: "ВыгрузитьВExcel", Aliases: []string{"ExportExcel"}, Kind: KindFunc,
 		Signature: "ВыгрузитьВExcel(Данные[, Заголовок])",
 		Params: []Param{
