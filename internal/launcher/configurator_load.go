@@ -407,7 +407,7 @@ func (h *handler) loadCfgData(ctx context.Context, b *Base, tab string, lang ...
 	repSources := readReportSources(proj.Dir)
 
 	for _, rep := range proj.Reports {
-		rv := cfgReport{Name: rep.Name, Title: rep.Title, Titles: rep.Titles, Query: rep.Query, ChartProc: rep.ChartProc, Composition: rep.Composition}
+		rv := cfgReport{Name: rep.Name, Title: rep.Title, Titles: rep.Titles, Query: rep.Query, ChartProc: rep.ChartProc, ResultProc: rep.ResultProc, Composition: rep.Composition}
 		if src, ok := repSources[strings.ToLower(rep.Name)]; ok {
 			rv.ChartSource = src
 		}

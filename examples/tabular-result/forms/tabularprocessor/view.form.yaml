@@ -1,0 +1,19 @@
+schema: onebase.form/v1
+form:
+  name: View
+  kind: object
+  entity: TabularProcessor
+attributes:
+  - name: Результат
+    type: SpreadsheetDocument
+    save: false
+elements:
+  - name: Построить
+    kind: Кнопка
+    title:
+      ru: Сформировать
+    events:
+      Нажатие: Сформировать
+  - name: ТабДок
+    kind: ПолеТабличногоДокумента
+    data_path: Объект.Результат
