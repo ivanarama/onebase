@@ -1523,7 +1523,8 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"исключи `hold` и `needs-decision`",
 		"Перед **каждым внешним изменением PR**",
 		"push разрешённого конфликта",
-		"на каждом\n   опросе CI",
+		"при возвращении к PR после ожидания CI",
+		"на каждом опросе CI",
 		"непосредственно перед compare-and-merge REST",
 		"issues/<N> --jq '[.labels[].name]'",
 		"`ship` присутствует",
@@ -1537,7 +1538,7 @@ func TestMergeRechecksHumanGateUntilMerge(t *testing.T) {
 		"После подтверждённого done метку `ship` **не\n     снимай**",
 		"Подтверждённый push меняет HEAD",
 		"Ждать CI и мержить новый SHA без\n     интеграционного REVIEW нельзя",
-		"непосредственно перед мутацией ещё раз выполни полный label+SHA-гейт",
+		"Перед мутацией повтори полный label+SHA-гейт",
 		"последний полный гейт",
 		"timeline?per_page=100",
 		"{id,node_id,created_at,updated_at,author:.user.login,body}",
@@ -2030,7 +2031,8 @@ func TestTailUsesCanonicalPaginatedCommittedReview(t *testing.T) {
 		"orphan `pp-tail-dedupe/<hash>` ref без найденной issue",
 		"Создание exact-source issue — точка невозврата",
 		"не запрещает **только** восстановительный item-done",
-		"единственное исключение из повторного proof-гейта после точки невозврата",
+		"единственное исключение из политики паузы после точки невозврата",
+		"Перед восстановлением заново докажи текущую версию и точный источник issue",
 		"**никогда не\n   повторяй create автоматически**",
 		"параллельный worker не\n   может выдать чужой claim за собственное владение",
 		"refs/heads/pp-tail-dedupe/<dedupe-sha256>",
@@ -2057,6 +2059,57 @@ func TestTailMergedWindowUsesNativeDateArithmeticOnEveryWorkerOS(t *testing.T) {
 	rejectAll(t, tail,
 		"--search \"merged:>=$(date -d '14 days ago' +%F)\"",
 		"на другой системе подставь дату руками",
+	)
+}
+
+func TestTailDurableQueueUsesThePairedCLIAndTheExistingItemProtocol(t *testing.T) {
+	var config map[string]any
+	if err := json.Unmarshal([]byte(repositoryFile(t, "pipelinectl.json")), &config); err != nil {
+		t.Fatal(err)
+	}
+	if enabled, exists := config["tail_durable_drain"]; exists && enabled != false {
+		t.Fatal("the repository default must leave durable drain disabled until paired rollout")
+	}
+
+	tail := skill(t, "tail-issues")
+	requireCompactInOrder(t, tail,
+		"`\"tail_durable_drain\": true`",
+		"pp pipelinectl --config <absolute-config> tail-discover --max-pages 5",
+		"pp pipelinectl --config <absolute-config> tail-reconcile",
+		"Переход к поиску за 14 дней при ошибке запрещён",
+		"На восстановление и обычную обработку доступно пять уникальных номеров",
+		"Сверку чтением выполняй и после заполнения списка",
+		"из `observations[].recovery[]` только записи с `state=existing-issue`, `exact_source=true` и `restore_ready=true` для PR без ошибки сверки",
+		"Перед вызовом добавь номер PR в общий список, если его там ещё нет",
+		"Если все пять мест заняты, отложи новый номер до следующего прогона",
+		"После попытки `tail-restore` место остаётся занятым до конца прогона, в том числе при ошибке, тайм-ауте или неполном ответе",
+		"pp pipelinectl --config <absolute-config> tail-restore --number M --version <version> --item N --issue J",
+		"`action=tail-restore`, `state=item-done` с теми же PR, пунктом и issue, и `completion_id`",
+		"pp pipelinectl --config <absolute-config> tail-next",
+		"В ответе `action=tail-next` допускай из `ready` номера, уже внесённые в общий список, и новые номера в пределах свободных мест",
+		"Добавь новые номера в общий список перед обработкой по пп. 3–7",
+		"**Окно совместимости.**",
+		"gh pr list --state merged --base main",
+		"**Общее чтение proof для обоих источников.**",
+		"pp pipelinectl --config <absolute-config> tail-gate --number M --version <version>",
+		"Для новой записи требуй `state=ready`. Ответ `state=resolved` подтверждает завершение текущей версии",
+		"актуальность находки на свежем `main`",
+		"pp pipelinectl --config <absolute-config> tail-create --number M --version <version> --item N --context-file <absolute-path>",
+		"отдельный `gh issue create` запрещён",
+		"При `hold` или `no-tail` оставь общий комментарий до снятия паузы",
+		"pp:tail-done review-comment=<id> review-updated=<RFC3339>",
+		"повтори `tail-gate --number M --version <version>`",
+		"Подтверждение общего маркера — `state=resolved` и `completion_kind=versioned`",
+	)
+	requireAllCompact(t, tail,
+		"`tail-reconcile` сверяет до пяти ранее обнаруженных PR",
+		"Под `hold` и `no-tail` команда может подтвердить существующую задачу чтением",
+		"Она не создаёт issues, комментарии или refs",
+		"Неполное чтение и неоднозначный результат не дают права повторять создание задачи",
+		"Под `hold`, `no-tail` или `tail-drop` действует тот же точный отбор",
+		"Создание issue, claim, lease, intent, ref и общего `pp:tail-done` в этом вызове запрещено",
+		"Если `restore_ready=false` или команда вернула `active-elsewhere`, отложи пункт до следующей сверки",
+		"Обычный `tail-create` или ручной POST для восстановления недопустим",
 	)
 }
 
@@ -2092,6 +2145,26 @@ func TestMaintenanceGuideDocumentsEquivalentWindowsAndMacOSPreparation(t *testin
 	)
 }
 
+func TestMergeYieldsWorkerOnlyWithBoundCIWaitCommand(t *testing.T) {
+	merge := skill(t, "merge-shepherd")
+	requireCompactInOrder(t, merge,
+		"Обычное подписанное назначение Native с `ci_wait_command`",
+		"`merge-ci-wait observe`",
+		"При `waiting` или `unknown`",
+		"сразу закончи `ИТОГ: ПУСТО`",
+		"`ci_current_attempt` из нового подписанного диагностического назначения",
+		"При `success` с `reelect=true` закончи `ИТОГ: ПУСТО`",
+		"Перед мутацией повтори полный label+SHA-гейт",
+		"`merge-ci-wait claim`",
+		"`state=claimed` с `send_allowed=true`",
+		"`gh run rerun <run_id> --failed --repo ivanarama/onebase`",
+		"При `timeout` перед эскалацией перечитай точный запуск",
+		"При `success` снова проверь назначенный PR",
+		"Ручной запуск или прежнее назначение без `ci_wait_command`",
+		"один раз перезапусти весь workflow командой `gh run rerun <id>`",
+	)
+}
+
 func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 	docs := repositoryFile(t, "docs", "maintenance-pipeline.md")
 	requireAll(t, docs,
@@ -2109,7 +2182,8 @@ func TestDetailedMaintenanceGuideMatchesQueueContracts(t *testing.T) {
 		"пастух обычно снимает\nустаревший `ship`",
 		"`BEHIND` → перед `update-branch` создаётся неизменяемый\n  `pp:base-sync-intent`",
 		"После `422` HEAD перечитывается",
-		"полный label+SHA-гейт непосредственно перед единственным\n  перезапуском",
+		"метки и SHA, однократно резервирует повтор",
+		"gh run rerun <id> --failed",
 		"Валидна только первая completion-ссылка на\nэтот id",
 		"Перед worktree точный `git ls-remote` и затем fetch\n`refs/heads/<headRefName>` из выбранного источника обязаны вернуть сохранённый\nSHA",
 		"REST-запросом compare-and-merge с полем\n`sha=<проверенный HEAD>`",

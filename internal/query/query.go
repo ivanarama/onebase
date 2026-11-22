@@ -1217,9 +1217,9 @@ type sourceScope struct {
 	outputAliases     map[string]struct{}
 	refAliases        map[string]struct{}
 	// physicalCols — колонки обычных (не виртуальных) источников по
-	// квалификатору: имя поля в нижнем регистре → колонка БД, только там, где
-	// они различаются (ссылка → «_id»). Нужна присоединённым источникам: общая
-	// colMap строится по главному источнику и о них не знает.
+	// квалификатору: имя известного поля в нижнем регистре → колонка БД,
+	// включая тождественное отображение. Обычное поле присоединённого
+	// источника не должно заимствовать «_id» из colMap главного источника.
 	physicalCols map[string]map[string]string
 }
 
@@ -1251,6 +1251,68 @@ func (ctx sourceContext) qualifierScopeAt(tokenPos int, qualifier string) (sourc
 		return sourceScope{}, false
 	}
 	return ctx.scopes[scopeID], true
+}
+
+func (ctx sourceContext) localQualifierAt(tokenPos int, qualifier string) bool {
+	scope, ok := ctx.scopeAt(tokenPos)
+	if !ok {
+		return false
+	}
+	_, known := scope.qualifiers[qualifier]
+	return known
+}
+
+// SQLite can resolve a missing column against an outer alias even when an
+// identically named local alias exists. Reject that proven shadowing case
+// before emission; neither physical metadata nor derived output may borrow it.
+func (tr *translator) shadowedSourceColumn(pos int, name string) bool {
+	if pos < 2 || tr.tokens[pos-1].kind != tDot || (pos >= 3 && tr.tokens[pos-3].kind == tDot) {
+		return false
+	}
+	qualifier := lowerFast(tr.tokens[pos-2].val)
+	id, ok := tr.sourceCtx.qualifierScopeIDAt(pos, qualifier)
+	if !ok {
+		return false
+	}
+	scope := tr.sourceCtx.scopes[id]
+	missing := false
+	if child, derived := scope.derivedAliases[qualifier]; derived {
+		missing = tr.derivedProjectionColumnPresence(child, name, map[int]bool{}) != projectionColumnPresent
+	} else if cols := scope.physicalCols[qualifier]; cols != nil {
+		_, known := cols[name]
+		for _, physical := range cols {
+			known = known || physical == name
+		}
+		missing = !known
+	}
+	if !missing {
+		return false
+	}
+	for id = scope.parent; id >= 0; id = tr.sourceCtx.scopes[id].parent {
+		outer := tr.sourceCtx.scopes[id]
+		if child, derived := outer.derivedAliases[qualifier]; derived {
+			if tr.derivedProjectionShadows(child, name, map[int]bool{}) {
+				return true
+			}
+			continue
+		}
+		if _, declared := outer.qualifiers[qualifier]; !declared {
+			continue
+		}
+		cols := outer.physicalCols[qualifier]
+		if cols == nil {
+			return true // Generated or unknown output cannot prove absence.
+		}
+		for _, physical := range cols {
+			if physical == name {
+				return true
+			}
+		}
+		if physical, system := outer.entitySystemColumn(qualifier, name); system && physical == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (ctx sourceContext) qualifierScopeIDAt(tokenPos int, qualifier string) (int, bool) {
@@ -1706,6 +1768,42 @@ func (tr *translator) rowFilterCondition(kind, name string, meta *metadata.Entit
 	return "(" + sql + ")", nil
 }
 
+// infoRegPublicColumns preserves the pre-revision physical projection even
+// for SELECT * and joined/derived sources. Local edit state cannot enter DSL,
+// reports or an outer wildcard through a raw table source.
+func (tr *translator) infoRegPublicColumns(typeUpper, name string) string {
+	if !isInfoRegType(typeUpper) {
+		return "*"
+	}
+	ir := tr.findInfoRegister(name)
+	if ir == nil {
+		return "*"
+	} // runtime callers supply register metadata
+	var cols []string
+	if ir.Periodic {
+		cols = append(cols, "period")
+	}
+	for _, f := range ir.Dimensions {
+		cols = append(cols, metadata.ColumnName(f))
+	}
+	for _, f := range ir.Resources {
+		cols = append(cols, metadata.ColumnName(f))
+	}
+	cols = append(cols, "recorder", "recorder_type", "updated_at")
+	return strings.Join(cols, ", ")
+}
+
+func (tr *translator) emitPublicSource(typeUpper, name, table, alias string, hasAlias bool) {
+	if cols := tr.infoRegPublicColumns(typeUpper, name); cols != "*" {
+		tr.emit("(SELECT " + cols + " FROM " + table + ") AS " + alias)
+		return
+	}
+	tr.emit(table)
+	if hasAlias {
+		tr.emit("AS " + alias)
+	}
+}
+
 func (tr *translator) rowFilteredSourceSQL(typeUpper, name, tableName, alias string) (string, bool, error) {
 	kind := sourcePermKind(typeUpper)
 	pred := tr.sourceRowFilter(kind, name)
@@ -1722,7 +1820,7 @@ func (tr *translator) rowFilteredSourceSQL(typeUpper, name, tableName, alias str
 	}
 	tr.args = append(tr.args, args...)
 	tr.markRowApplied(kind, name)
-	return fmt.Sprintf("(SELECT * FROM %s WHERE %s) AS %s", tableName, sql, alias), true, nil
+	return fmt.Sprintf("(SELECT %s FROM %s WHERE %s) AS %s", tr.infoRegPublicColumns(typeUpper, name), tableName, sql, alias), true, nil
 }
 
 func (tr *translator) pendingRowFilterConditions() ([]string, error) {
@@ -2059,6 +2157,9 @@ func (tr *translator) translateTypedFilterTokens(tokens []tok, fieldTypes map[st
 			}
 			if emptyStringAgainstRef(dialectOrDefault(tr.opts.Dialect), tr.paramValues[t.val], typ) {
 				parts = append(parts, "NULL")
+			} else if dialectOrDefault(tr.opts.Dialect).Name() == "postgres" &&
+				uuidLikeParam(tr.paramValues[t.val]) && filterParamComparedToString(tokens, i, fieldTypes) {
+				parts = append(parts, tr.addTextParam(t.val))
 			} else {
 				parts = append(parts, tr.addParam(t.val))
 			}
@@ -2091,6 +2192,51 @@ func (tr *translator) translateTypedFilterTokens(tokens []tok, fieldTypes map[st
 		}
 	}
 	return strings.TrimSpace(strings.Join(parts, " "))
+}
+
+// Internal VT filters use a local token slice and the register's own fields,
+// not the outer SELECT's source context. Only direct field comparisons and
+// IN operands establish a string position; unknown expressions keep addParam.
+func filterParamComparedToString(tokens []tok, idx int, fieldTypes map[string]metadata.FieldType) bool {
+	stringField := func(i int) bool {
+		return i >= 0 && i < len(tokens) && tokens[i].kind == tIdent &&
+			(i == 0 || tokens[i-1].kind != tDot) &&
+			(i+1 == len(tokens) || tokens[i+1].kind != tDot) &&
+			fieldTypes[lowerFast(tokens[i].val)] == metadata.FieldTypeString
+	}
+	comparison := func(i int) bool {
+		if i < 0 || i >= len(tokens) || tokens[i].kind != tOp {
+			return false
+		}
+		switch tokens[i].val {
+		case "=", "<>", "!=", "<", ">", "<=", ">=":
+			return true
+		}
+		return false
+	}
+	if comparison(idx-1) && stringField(idx-2) || comparison(idx+1) && stringField(idx+2) {
+		return true
+	}
+	for i := idx - 1; i >= 0; i-- {
+		switch tokens[i].kind {
+		case tParam, tStr, tNum, tComma:
+			// Every direct item of an IN list has the same field type.
+			continue
+		case tLParen:
+			if i < 2 || tokens[i-1].kind != tIdent ||
+				(upperFast(tokens[i-1].val) != "В" && upperFast(tokens[i-1].val) != "IN") {
+				return false
+			}
+			field := i - 2
+			if tokens[field].kind == tIdent && (upperFast(tokens[field].val) == "НЕ" || upperFast(tokens[field].val) == "NOT") {
+				field--
+			}
+			return stringField(field)
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 func (tr *translator) findRegister(name string) *metadata.Register {
@@ -3366,11 +3512,12 @@ func preScanRefDims(tokens []tok, opts CompileOpts) []refDimInfo {
 func preScanAllRefDims(tokens []tok, opts CompileOpts) []refDimInfo {
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
-		if t.kind != tIdent {
+		// Check the source shape before converting a potentially long field name.
+		if t.kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
 		upper := upperFast(t.val)
-		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(upper) {
 			continue
 		}
 		regName := tokens[i+2].val
@@ -3953,11 +4100,11 @@ func buildColMap(tokens []tok, opts CompileOpts) map[string]string {
 	vtSourceFound := false
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
-		if t.kind != tIdent {
+		if t.kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
 		upper := upperFast(t.val)
-		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(upper) {
 			continue
 		}
 		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
@@ -4016,11 +4163,11 @@ func buildColMap(tokens []tok, opts CompileOpts) map[string]string {
 func preScanMainRefSource(tokens []tok, opts CompileOpts) mainRefSource {
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
-		if t.kind != tIdent {
+		if t.kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
 		upper := upperFast(t.val)
-		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(upper) {
 			continue
 		}
 		// VT-источник (Тип.Имя.Остатки(...)) — не сущность.
@@ -4122,11 +4269,11 @@ func (tr *translator) refEntityForQualifier(pos int) string {
 func buildColTypes(tokens []tok, opts CompileOpts) map[string]metadata.FieldType {
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
-		if t.kind != tIdent {
+		if t.kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
 		upper := upperFast(t.val)
-		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(upper) {
 			continue
 		}
 		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
@@ -4141,21 +4288,22 @@ func buildColTypes(tokens []tok, opts CompileOpts) map[string]metadata.FieldType
 // отличие от buildColTypes, этот помощник применим и к виртуальной таблице:
 // имена её измерений и атрибутов сохраняются в сгенерированном подзапросе.
 // Производные имена ресурсов (например, СуммаОстаток) здесь не синтезируются.
-// sourcePhysicalColumns — колонки БД полей обычного источника, отличающиеся от
-// имени поля (ссылочные — с суффиксом «_id»). Пустая карта — переводить нечего.
+// sourcePhysicalColumns records every known field, including unchanged names.
+// An identity mapping is positive ownership evidence, not a missing mapping.
 func sourcePhysicalColumns(typeUpper, name string, opts CompileOpts) map[string]string {
 	m := map[string]string{}
 	add := func(fields []metadata.Field) {
 		for _, f := range fields {
-			if col := metadata.ColumnName(f); col != lowerFast(f.Name) {
-				m[lowerFast(f.Name)] = col
-			}
+			m[lowerFast(f.Name)] = metadata.ColumnName(f)
 		}
 	}
 	switch {
 	case isAccumRegType(typeUpper):
 		for _, reg := range opts.Registers {
 			if strings.EqualFold(reg.Name, name) {
+				for column := range accumulationRegisterProjectionKeys(reg).counts {
+					m[column] = column
+				}
 				add(reg.Dimensions)
 				add(reg.Resources)
 				add(reg.Attributes)
@@ -4165,22 +4313,38 @@ func sourcePhysicalColumns(typeUpper, name string, opts CompileOpts) map[string]
 	case isInfoRegType(typeUpper):
 		for _, ir := range opts.InfoRegs {
 			if strings.EqualFold(ir.Name, name) {
+				for column := range infoRegisterProjectionKeys(ir).counts {
+					m[column] = column
+				}
 				add(ir.Dimensions)
 				add(ir.Resources)
 				return m
 			}
 		}
 	case isAccountRegType(typeUpper):
-		return m
+		for _, ar := range opts.AccountRegs {
+			if strings.EqualFold(ar.Name, name) {
+				for column := range accountRegisterProjectionKeys(ar).counts {
+					m[column] = column
+				}
+				add(ar.Resources)
+				return m
+			}
+		}
 	default: // справочник / документ
 		for _, e := range opts.Entities {
 			if strings.EqualFold(e.Name, name) {
+				// Reuse the physical SELECT * layout, including kind-dependent
+				// system columns. DB.List intentionally exports a smaller set.
+				for column := range entityProjectionKeys(e).counts {
+					m[column] = column
+				}
 				add(e.Fields)
 				return m
 			}
 		}
 	}
-	return m
+	return nil // Unknown source metadata must not prove a field absent.
 }
 
 func sourceColumnTypes(typeUpper, name string, opts CompileOpts) map[string]metadata.FieldType {
@@ -4469,41 +4633,127 @@ func (tr *translator) needsNumberCastForType(fieldType metadata.FieldType) bool 
 }
 
 // sqliteDateParamComparedToField распознаёт time.Time-параметр в прямом
-// сравнении с полем date. Такие параметры сериализуются тем же UTC RFC3339,
-// что и значения полей сущностей: иначе SQLite сравнивает разные TEXT-форматы
-// лексикографически по разделителю ('T' против пробела) и ошибается (#462).
+// сравнении с полем date объекта. Такие параметры сериализуются тем же UTC
+// RFC3339, что и значения полей сущностей: иначе SQLite сравнивает разные
+// TEXT-форматы лексикографически по разделителю ('T' против пробела) и
+// ошибается (#462). Для регистра нормализуются оба операнда, поскольку
+// публичная запись допускает несколько физических форматов даты.
 func (tr *translator) sqliteDateParamComparedToField(idx int) bool {
-	if dialectOrDefault(tr.opts.Dialect).Name() != "sqlite" || !tr.timeParamAt(idx) {
-		return false
-	}
-	if tr.dateFieldAt(idx-2) && tr.comparisonOpAt(idx-1) {
-		return true
-	}
-	if tr.comparisonOpAt(idx+1) && tr.dateFieldAt(idx+2) {
-		return true
-	}
-	// Первый или второй параметр правой части BETWEEN.
-	if tr.dateFieldAt(idx-2) && tr.keywordAt(idx-1, "МЕЖДУ", "BETWEEN") {
-		return true
-	}
-	return tr.dateFieldAt(idx-4) &&
-		tr.keywordAt(idx-3, "МЕЖДУ", "BETWEEN") &&
-		tr.timeParamAt(idx-2) &&
-		tr.keywordAt(idx-1, "И", "AND")
+	return tr.sqliteDateParamField(idx) >= 0
 }
 
-func (tr *translator) addSQLiteDateParam(name string) string {
+// sqliteDateParamField возвращает последний токен поля в прямом сравнении.
+// Выражения над датами сохраняют прежнюю трансляцию. Строковая граница
+// регистра нормализуется только в паре с time.Time в прямом BETWEEN.
+func (tr *translator) sqliteDateParamField(idx int) int {
+	if dialectOrDefault(tr.opts.Dialect).Name() != "sqlite" {
+		return -1
+	}
+	if field := tr.sqliteRegisterDateBetweenField(idx); field >= 0 {
+		return field
+	}
+	if !tr.timeParamAt(idx) {
+		return -1
+	}
+	if tr.dateFieldAt(idx-2) && tr.comparisonOpAt(idx-1) {
+		return idx - 2
+	}
+	if tr.comparisonOpAt(idx + 1) {
+		field := idx + 2
+		for field+2 < len(tr.tokens) && tr.tokens[field].kind == tIdent &&
+			tr.tokens[field+1].kind == tDot && tr.tokens[field+2].kind == tIdent {
+			field += 2
+		}
+		if tr.dateFieldAt(field) {
+			return field
+		}
+	}
+	// Для регистра обе границы проверяет sqliteRegisterDateBetweenField.
+	// Здесь остаются только параметры BETWEEN для полей объектов.
+	if tr.dateFieldAt(idx-2) && !tr.registerFieldAt(idx-2) && tr.keywordAt(idx-1, "МЕЖДУ", "BETWEEN") {
+		return idx - 2
+	}
+	if tr.dateFieldAt(idx-4) && !tr.registerFieldAt(idx-4) &&
+		tr.keywordAt(idx-3, "МЕЖДУ", "BETWEEN") &&
+		tr.timeParamAt(idx-2) &&
+		tr.keywordAt(idx-1, "И", "AND") {
+		return idx - 4
+	}
+	return -1
+}
+
+// Обе границы должны быть отдельными параметрами, хотя бы один — time.Time.
+// Только валидная RFC3339-строка второй границы может разделить UTC-ключ с ним.
+// Решение общее для колонки и обеих границ, чтобы не смешать три формата.
+func (tr *translator) sqliteRegisterDateBetweenField(idx int) int {
+	for _, first := range []int{idx, idx - 2} {
+		field, last := first-2, first+2
+		if !tr.dateFieldAt(field) || !tr.registerFieldAt(field) ||
+			!tr.keywordAt(first-1, "МЕЖДУ", "BETWEEN") || !tr.keywordAt(first+1, "И", "AND") ||
+			!tr.dateBoundaryParamAt(first) || !tr.dateBoundaryParamAt(last) ||
+			(!tr.timeParamAt(first) && !tr.timeParamAt(last)) {
+			continue
+		}
+		// Арифметика, вызов функции и иные выражения после верхней границы
+		// не являются прямым BETWEEN двух параметров.
+		if last+1 >= len(tr.tokens) {
+			continue
+		}
+		next := tr.tokens[last+1]
+		switch next.kind {
+		case tEOF, tRParen, tComma:
+			return field
+		case tIdent:
+			if kw, ok := sqlKW(next.val); ok {
+				switch kw {
+				case "AND", "OR", "GROUP", "HAVING", "ORDER", "UNION", "LIMIT",
+					"WHEN", "THEN", "ELSE", "END", "AS", "FROM", "WHERE",
+					"INNER", "LEFT", "RIGHT", "FULL", "CROSS", "JOIN", "ASC", "DESC":
+					return field
+				}
+			}
+		}
+	}
+	return -1
+}
+
+func (tr *translator) dateBoundaryParamAt(idx int) bool {
+	if tr.timeParamAt(idx) {
+		return true
+	}
+	if idx < 0 || idx >= len(tr.tokens) || tr.tokens[idx].kind != tParam {
+		return false
+	}
+	value, ok := tr.paramValues[tr.tokens[idx].val].(string)
+	if !ok {
+		return false
+	}
+	_, err := time.Parse(time.RFC3339Nano, value)
+	return err == nil
+}
+
+func (tr *translator) addSQLiteDateParam(name string, register bool) string {
+	layout := time.RFC3339
+	if register {
+		layout = time.RFC3339Nano
+	}
 	var value any
 	switch v := tr.paramValues[name].(type) {
+	case string:
+		value = v // RFC3339 проверен общим решением для BETWEEN.
 	case time.Time:
-		value = v.UTC().Format(time.RFC3339)
+		value = v.UTC().Format(layout)
 	case *time.Time:
 		if v != nil {
-			value = v.UTC().Format(time.RFC3339)
+			value = v.UTC().Format(layout)
 		}
 	}
 	tr.args = append(tr.args, value)
-	return dialectOrDefault(tr.opts.Dialect).Placeholder(len(tr.args))
+	placeholder := dialectOrDefault(tr.opts.Dialect).Placeholder(len(tr.args))
+	if register {
+		return "ob_utc_datetime(" + placeholder + ")"
+	}
+	return placeholder
 }
 
 // uuidParamComparedToStringField: на PostgreSQL параметр — строка, похожая на
@@ -4611,13 +4861,22 @@ func parameterSystemRefType(scope sourceScope, qualifier, name string) metadata.
 }
 
 func (tr *translator) emptyRefParamAt(idx int) bool {
-	if !tr.comparisonOpAt(idx - 1) {
-		return false
+	op, field := idx-1, idx-2
+	if !tr.comparisonOpAt(op) {
+		op, field = idx+1, idx+2
+		if !tr.comparisonOpAt(op) {
+			return false
+		}
+		// The resolver expects the final token, including reference navigation.
+		for field+2 < len(tr.tokens) && tr.tokens[field].kind == tIdent &&
+			tr.tokens[field+1].kind == tDot && tr.tokens[field+2].kind == tIdent {
+			field += 2
+		}
 	}
-	switch tr.tokens[idx-1].val {
+	switch tr.tokens[op].val {
 	case "=", "<>", "!=":
 		return emptyStringAgainstRef(dialectOrDefault(tr.opts.Dialect),
-			tr.paramValues[tr.tokens[idx].val], tr.paramFieldTypeAt(idx-2))
+			tr.paramValues[tr.tokens[idx].val], tr.paramFieldTypeAt(field))
 	}
 	return false
 }
@@ -4662,7 +4921,51 @@ func (tr *translator) dateFieldAt(idx int) bool {
 	if idx < 0 || idx >= len(tr.tokens) || tr.tokens[idx].kind != tIdent {
 		return false
 	}
+	if tr.registerFieldAt(idx) {
+		typ, _, known := tr.columnTypeAt(idx, lowerFast(tr.tokens[idx].val), tr.columnQualifierAt(idx))
+		return known && typ == metadata.FieldTypeDate
+	}
 	return tr.colTypes[lowerFast(tr.tokens[idx].val)] == metadata.FieldTypeDate
+}
+
+// Оборачиваем только поле того же прямого сравнения, чей параметр получил
+// ob_utc_datetime. SELECT/ORDER BY и сравнения строк не меняют представление.
+func (tr *translator) sqliteRegisterDateComparisonAt(idx int) bool {
+	if !tr.dateFieldAt(idx) || !tr.registerFieldAt(idx) {
+		return false
+	}
+	start := idx
+	for start >= 2 && tr.tokens[start-1].kind == tDot && tr.tokens[start-2].kind == tIdent {
+		start -= 2
+	}
+	for _, param := range []int{idx + 2, idx + 4, start - 2} {
+		if tr.sqliteDateParamField(param) == idx {
+			return true
+		}
+	}
+	return false
+}
+
+// registerFieldAt — поле в позиции idx принадлежит источнику-регистру: по
+// квалификатору «Р.Поле» или, без квалификатора, по главному источнику SELECT.
+// Путь через ссылку («Р.Мастер.Поле») ведёт к объекту и регистром не считается.
+func (tr *translator) registerFieldAt(idx int) bool {
+	if idx >= 2 && tr.tokens[idx-1].kind == tDot && tr.tokens[idx-2].kind == tIdent {
+		if idx >= 3 && tr.tokens[idx-3].kind == tDot {
+			// В Р.Мастер.Поле имя Мастер — ссылочный реквизит, даже если
+			// другой источник SELECT использует его как свой алиас.
+			return false
+		}
+		qualifier := lowerFast(tr.tokens[idx-2].val)
+		scope, ok := tr.sourceCtx.qualifierScopeAt(idx, qualifier)
+		if !ok {
+			return false
+		}
+		class, known := scope.qualifiers[qualifier]
+		return known && class == sourceClassRegister
+	}
+	scope, ok := tr.sourceCtx.scopeAt(idx)
+	return ok && scope.main == sourceClassRegister
 }
 
 func (tr *translator) timeParamAt(idx int) bool {
@@ -4762,6 +5065,10 @@ func isReferenceName(lower string) bool {
 // emitOwnColumn эмитит неквалифицированную собственную колонку с учётом п.48/п.49.
 func (tr *translator) emitOwnColumn(col, lower string) {
 	col = tr.qualifyOwn(col, lower)
+	if tr.sqliteRegisterDateComparisonAt(tr.pos - 1) {
+		tr.emit("ob_utc_datetime(" + col + ")")
+		return
+	}
 	if tr.needsNumberCast(lower) {
 		tr.emit("CAST(" + col + " AS NUMERIC)")
 		return
@@ -4877,6 +5184,10 @@ func (tr *translator) equalityOpAt(idx int) bool {
 // обязателен.
 func (tr *translator) emitQualifiedColumn(col, lower string) {
 	if len(tr.parts) >= 2 && tr.parts[len(tr.parts)-1] == "." {
+		if tr.sqliteRegisterDateComparisonAt(tr.pos - 1) {
+			tr.emit("ob_utc_datetime(" + tr.takeQualifier() + col + ")")
+			return
+		}
 		if tr.needsNumberCast(lower) {
 			tr.emit("CAST(" + tr.takeQualifier() + col + " AS NUMERIC)")
 			return
@@ -4929,6 +5240,10 @@ func (tr *translator) emitDerivedReferenceAlias(col, lower string) {
 }
 
 func (tr *translator) emitRefAttrColumn(col string, fieldType metadata.FieldType) {
+	if len(tr.parts) >= 2 && tr.parts[len(tr.parts)-1] == "." && tr.sqliteRegisterDateComparisonAt(tr.pos-1) {
+		tr.emit("ob_utc_datetime(" + tr.takeQualifier() + col + ")")
+		return
+	}
 	if len(tr.parts) >= 2 && tr.parts[len(tr.parts)-1] == "." && tr.needsNumberCastForType(fieldType) {
 		tr.emit("CAST(" + tr.takeQualifier() + col + " AS NUMERIC)")
 		return
@@ -4951,11 +5266,11 @@ func (tr *translator) takeQualifier() string {
 func preScanMainTable(tokens []tok) string {
 	for i := 0; i+2 < len(tokens); i++ {
 		t := tokens[i]
-		if t.kind != tIdent {
+		if t.kind != tIdent || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
 			continue
 		}
 		upper := upperFast(t.val)
-		if !isSourceType(upper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(upper) {
 			continue
 		}
 		if i+3 < len(tokens) && tokens[i+3].kind == tDot {
@@ -5007,8 +5322,11 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 	for i := 0; i < len(tokens); i++ {
 		t := tokens[i]
 		ctx.tokenDepth[i] = depth
+		// Reuse keyword classification across the scope, section and source scans.
+		kw, keyword := "", false
 		if t.kind == tIdent {
-			if kw, ok := sqlKW(t.val); ok && kw == "SELECT" {
+			kw, keyword = sqlKW(t.val)
+			if keyword && kw == "SELECT" {
 				// UNION starts a sibling SELECT at the same depth; nested SELECT
 				// keeps every shallower parent frame active.
 				unionFirst := len(ctx.scopes)
@@ -5045,7 +5363,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 			// EXTRACT(YEAR FROM ...) содержит SQL-слово FROM внутри выражения.
 			// Секцию SELECT меняют только ключевые слова на глубине самого SELECT.
 			if t.kind == tIdent && depth == frame.depth {
-				if kw, ok := sqlKW(t.val); ok {
+				if keyword {
 					switch kw {
 					case "SELECT":
 						sections[scopeID] = sectionSelect
@@ -5065,7 +5383,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 			ctx.tokenScope[i] = scopeID
 			ctx.tokenSection[i] = sections[scopeID]
 			if sections[scopeID] == sectionSelect && t.kind == tIdent && depth == frame.depth {
-				if up := upperFast(t.val); (up == "КАК" || up == "AS") &&
+				if keyword && kw == "AS" &&
 					i+1 < len(tokens) && tokens[i+1].kind == tIdent {
 					alias := lowerFast(tokens[i+1].val)
 					ctx.scopes[scopeID].outputAliases[alias] = struct{}{}
@@ -5079,7 +5397,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 		// Производная таблица в FROM/JOIN сама является источником текущего
 		// SELECT. Без этого следующий обычный JOIN ошибочно становился mainTable.
 		if t.kind == tIdent && len(active) > 0 {
-			if kw, ok := sqlKW(t.val); ok && (kw == "FROM" || kw == "JOIN") &&
+			if keyword && (kw == "FROM" || kw == "JOIN") &&
 				i+2 < len(tokens) && tokens[i+1].kind == tLParen &&
 				tokens[i+2].kind == tIdent {
 				if nestedKW, nested := sqlKW(tokens[i+2].val); nested && nestedKW == "SELECT" {
@@ -5146,8 +5464,11 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 			}
 			continue
 		}
+		if len(active) == 0 || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+			continue
+		}
 		typeUpper := upperFast(tokens[i].val)
-		if len(active) == 0 || !isSourceType(typeUpper) || tokens[i+1].kind != tDot || tokens[i+2].kind != tIdent {
+		if !isSourceType(typeUpper) {
 			continue
 		}
 		scope := &ctx.scopes[active[len(active)-1].id]
@@ -5188,7 +5509,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 		var physCols map[string]string
 		if i+3 >= len(tokens) || tokens[i+3].kind != tDot {
 			physCols = sourcePhysicalColumns(typeUpper, tokens[i+2].val, opts)
-			if len(physCols) > 0 {
+			if physCols != nil {
 				scope.physicalCols[entityName] = physCols
 				scope.physicalCols[sourceToTable(typeUpper, tokens[i+2].val)] = physCols
 			}
@@ -5222,7 +5543,7 @@ func preScanSourceContextWithOpts(tokens []tok, opts CompileOpts) sourceContext 
 				if entityInfo != nil {
 					scope.entities[alias] = *entityInfo
 				}
-				if len(physCols) > 0 {
+				if physCols != nil {
 					scope.physicalCols[alias] = physCols
 				}
 				if isMain {
@@ -6061,16 +6382,10 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 				if ok {
 					tr.emit(filtered)
 				} else {
-					tr.emit(tableName)
-					if hasAlias {
-						tr.emit("AS " + sourceAlias)
-					}
+					tr.emitPublicSource(upper, entity.val, tableName, sourceAlias, hasAlias)
 				}
 			} else {
-				tr.emit(tableName)
-				if hasAlias {
-					tr.emit("AS " + sourceAlias)
-				}
+				tr.emitPublicSource(upper, entity.val, tableName, sourceAlias, hasAlias)
 				if err := tr.addPendingRowFilter(upper, entity.val, sourceAlias); err != nil {
 					return Result{}, err
 				}
@@ -6142,9 +6457,10 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 		if t.kind == tParam {
 			tr.prevWasDot = false
 			normalizeDate := tr.sqliteDateParamComparedToField(tr.pos)
+			registerDate := normalizeDate && tr.registerFieldAt(tr.sqliteDateParamField(tr.pos))
 			tr.advance()
 			if normalizeDate {
-				tr.emit(tr.addSQLiteDateParam(t.val))
+				tr.emit(tr.addSQLiteDateParam(t.val, registerDate))
 			} else if tr.emptyRefParamAt(tr.pos - 1) {
 				tr.emit("NULL")
 			} else if tr.uuidParamComparedToStringField(tr.pos - 1) {
@@ -6320,6 +6636,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					continue
 				}
 			}
+			if prevDot && !nextIsDot && tr.shadowedSourceColumn(tr.pos-1, lower) {
+				return Result{}, i18nerr.Errorf("поле %s локального источника %s не разрешено однозначно; внешнее поле затенено", t.val, tr.tokens[tr.pos-3].val)
+			}
 			if agg, ok := sqlAgg(t.val); ok && tr.peek(0).kind == tLParen {
 				tr.emit(agg)
 			} else if kw, ok := sqlKW(t.val); ok {
@@ -6415,8 +6734,8 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					tr.emit("LIKE")
 				} else if !prevDot && !nextIsDot && tr.unionOutputAlias(lower) {
 					tr.emit(lower)
-				} else if nextIsDot && !prevDot && tr.sourceCtx.isDerivedQualifierAt(tr.pos-1, lower) {
-					// Явный алиас производной таблицы старше одноимённого поля-ссылки.
+				} else if nextIsDot && !prevDot && (tr.sourceCtx.localQualifierAt(tr.pos-1, lower) || tr.sourceCtx.isDerivedQualifierAt(tr.pos-1, lower)) {
+					// A local source alias takes precedence over a namesake field.
 					tr.emit(lower)
 				} else if rd := tr.findRefDim(lower); rd != nil && !prevDot {
 					if nextIsDot {
@@ -6483,7 +6802,11 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 					case jrd != nil:
 						tr.emit(jrd.idCol)
 					default:
-						tr.emitQualifiedColumn(lower, lower)
+						col := lower
+						if physical, known := tr.joinedSourceColumn(tr.pos-1, lower); known {
+							col = physical
+						}
+						tr.emitQualifiedColumn(col, lower)
 					}
 				} else if prevDot {
 					if !nextIsDot && tr.isDerivedColumnAt(tr.pos-1) {
@@ -6517,9 +6840,9 @@ func translate(tokens []tok, opts CompileOpts) (Result, error) {
 							tr.emit(rd.idCol)
 							tr.emitDerivedReferenceAlias(rd.idCol, lower)
 						}
-					} else if c, ok2 := tr.colMap[lower]; ok2 {
-						tr.emitQualifiedColumn(c, lower)
 					} else {
+						// Qualified unknown/absent fields keep their own name. The
+						// main source cannot lend a physical column to this owner.
 						tr.emitQualifiedColumn(lower, lower)
 					}
 					if rd := tr.findRefDim(lower); rd != nil && !nextIsDot {
@@ -6905,6 +7228,7 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 	}
 	switch dialect {
 	case "sqlite":
+		m["нрег"] = rw("ob_lower(", ")")
 		// Цел — усечение к нулю (как decimal.Truncate(0) в DSL). В SQLite
 		// CAST(x AS INTEGER) усекает к нулю.
 		m["цел"] = rw("CAST(", " AS INTEGER)")
@@ -6924,6 +7248,7 @@ func scalarFuncRewrites(dialect string) map[string]funcRewrite {
 		m["день"] = rw("CAST(strftime('%d',", ") AS INTEGER)")
 		m["day"] = rw("CAST(strftime('%d',", ") AS INTEGER)")
 	default: // pg
+		m["нрег"] = rw("LOWER(", ")")
 		// Цел — усечение к нулю. В PG CAST(x AS INTEGER) округлял бы (half-even),
 		// поэтому берём TRUNC, которое усекает к нулю.
 		m["цел"] = rw("TRUNC(", ")")
