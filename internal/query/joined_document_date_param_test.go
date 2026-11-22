@@ -1,6 +1,7 @@
 package query_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -43,7 +44,7 @@ func TestJoinedDocumentDateParamCompile(t *testing.T) {
 	if _, ok := compiled.Args[0].(time.Time); !ok {
 		t.Fatalf("string field borrowed document date type: %#v", compiled.Args)
 	}
-	// The old register parameter path stays untouched; #2188 owns its format.
+	// The register comparison keeps the UTC wrapper from #2188.
 	reg := &metadata.InfoRegister{Name: "JoinedDates", Dimensions: []metadata.Field{{Name: "Дата", Type: metadata.FieldTypeDate}}}
 	compiled, err = query.Compile("ВЫБРАТЬ Р.Дата ИЗ РегистрСведений.JoinedDates КАК Р ГДЕ &Начало <= Р.Дата", query.CompileOpts{Dialect: storage.SQLiteDialect{}, InfoRegs: []*metadata.InfoRegister{reg}, Params: map[string]any{"Начало": start}})
 	if err != nil {
@@ -52,7 +53,7 @@ func TestJoinedDocumentDateParamCompile(t *testing.T) {
 	if len(compiled.Args) != 1 {
 		t.Fatalf("register arguments: %#v", compiled.Args)
 	}
-	if _, ok := compiled.Args[0].(time.Time); !ok {
-		t.Fatalf("register binding changed: %#v", compiled.Args)
+	if compiled.Args[0] != "2041-05-31T21:00:00Z" || strings.Count(compiled.SQL, "ob_utc_datetime") != 2 {
+		t.Fatalf("register binding changed: %#v SQL=%s", compiled.Args, compiled.SQL)
 	}
 }
