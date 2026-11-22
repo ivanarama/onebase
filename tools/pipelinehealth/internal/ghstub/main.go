@@ -18,6 +18,10 @@ import (
 )
 
 func main() {
+	if path := os.Getenv("GHSTUB_GRAPHQL_RETRY_FIXTURE"); path != "" {
+		runGraphQLRetryFixture(path)
+		return
+	}
 	dataDir := os.Getenv("GHSTUB_DATA")
 	logPath := os.Getenv("GHSTUB_LOG")
 	failCommit := os.Getenv("GHSTUB_FAIL_COMMIT") == "1"
