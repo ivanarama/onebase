@@ -27,6 +27,33 @@
 
 ## Не выпущено
 
+- Source-only captured row_source candidate profile: adds strict SQL proof/current-policy rechecks before reads and invalidates older frame policy hashes. Unsupported/navigation/unbound parameter cases now STOP in the captured path. Ordinary Run/RunRegistered and live handlers are unchanged; compile/test evidence is tracked separately by exact source under the assigned allocation lane.
+
+- Source-only row_source.inputs selects an explicit DSL subset of already proven initial columns; other safe originals stay host-side and retain order/types. Omitted inputs preserves the earlier source contract; protected/unknown originals remain rejected and no current report handler is enabled.
+
+- Source-only row_source: RunCapturedInputs validates the private host input frame before and after kernel execution; stale identity returns no result. This adds no handler wiring, final-schema permission or persisted snapshot trust.
+
+- Source-only row_source: private Query.Text ledger binds actual assignments to AST sites and Query instances; matching strings never establish literal provenance. No runtime adapter or new report permission is enabled.
+
+Добавлен исходниковый private input-frame API для будущего readonly источника строк: связывает host-параметры с текущими metadata/actor/RLS, различает user/default origins и отвергает JSON evidence. Это ещё не подключение runtime и не разрешение final schema; обычные отчёты/карточки и текущие ограничения доступа сохранены.
+
+Исходниковый readonly row-source API умеет брать entry и добавленные колонки из зарегистрированного конфигурационного отчёта, с проверкой права запуска и смены registry до чтения. Это ещё не runtime-подключение: один ключ `row_source` не включает преобразование в текущем SDK. Обычные Query/карточки не менялись.
+
+Подготовлено ограниченное readonly ядро обогащения строк отчёта с host lineage и неизменными исходными значениями. Подключение к runtime ещё не выполнено; существующие пути отчётов этим ядром не изменяются.
+
+Отбор обычного query-отчёта теперь проверяет тип и разрешённое происхождение поля
+и применяется до лимита совпавших строк, UUID-подписей и компоновки на экране,
+в экспорте и API. Раньше он выполнялся после ограничения исходных строк и мог
+молча игнорировать ошибочное условие. При обновлении проверьте сохранённые
+варианты: неизвестные, неоднозначные, защищённые поля и неподходящие операторы
+теперь дают явную ошибку; такие условия нужно заменить разрешёнными полями.
+Сканирование исходного набора ограничено независимо от числа совпадений;
+при исчерпании полного результата нет. Сырые pii-поля и подписи защищённых
+сущностей в отчёте скрыты также для admin/full; права карточек этим не меняются.
+Контекст multi-SQL result_proc этим изменением не поставляется.
+
+Добавлен переносимый strict SQL provenance API для одного SELECT: сохраняет происхождение выходов и условий, но не разрешает чтение ПДн и не подключён к runtime отчётов. Неизвестные/неподдержанные источники возвращают STOP без partial receipt; fingerprints используют codec FormatVersion2.
+
 - **Превью выбранного вложения в управляемой форме.** После события формы
   `ПолеКартинки` обновляет изображение и ссылку по отмеченному варианту
   `Переключателя`. Раньше при выборе второго варианта могло остаться первое

@@ -31,14 +31,15 @@ type Param struct {
 }
 
 type Report struct {
-	Name        string            `yaml:"name"`
-	Title       string            `yaml:"title"`
-	Titles      map[string]string `yaml:"titles"`
-	Params      []Param           `yaml:"params"`
-	Query       string            `yaml:"query"`
-	ChartProc   string            `yaml:"chart_proc"`
-	Composition *Composition      `yaml:"composition"` // nil = плоская таблица (старое поведение)
-	Variants    []ReportVariant   `yaml:"variants"`    // доп. именованные компоновки по тому же запросу
+	Name        string               `yaml:"name"`
+	Title       string               `yaml:"title"`
+	Titles      map[string]string    `yaml:"titles"`
+	Params      []Param              `yaml:"params"`
+	Query       string               `yaml:"query"`
+	ChartProc   string               `yaml:"chart_proc"`
+	RowSource   *RowSourceDefinition `yaml:"row_source,omitempty"`
+	Composition *Composition         `yaml:"composition"` // nil = плоская таблица (старое поведение)
+	Variants    []ReportVariant      `yaml:"variants"`    // доп. именованные компоновки по тому же запросу
 	// OutputFormat — предпочтительный формат выгрузки отчёта (issue #218): пусто|html
 	// (интерактивный просмотр + кнопки Excel/PDF), pdf, excel или совместимый
 	// legacy-синоним excel_html. Реальная выгрузка идёт через /ui/report/<name>/pdf
