@@ -386,13 +386,16 @@ func (s *Server) exportJobStore() *exportJobStore {
 }
 
 func (s *Server) buildReportExportFile(ctx context.Context, r *http.Request, rep *reportpkg.Report, format string, stats *reportExportStats) (reportExportFile, error) {
+	if stats == nil {
+		stats = &reportExportStats{}
+	}
 	headers, rows, err := s.reportExportRowsWithContext(ctx, r, rep, stats)
 	if err != nil {
 		return reportExportFile{}, err
 	}
 	switch format {
 	case "excel":
-		data, err := excel.ExportList(headers, rows)
+		data, err := excel.ExportListWithRowStyles(headers, rows, stats.rowStyles)
 		if err != nil {
 			return reportExportFile{}, newReportExportError(http.StatusInternalServerError, "Excel error", err)
 		}
@@ -402,7 +405,7 @@ func (s *Server) buildReportExportFile(ctx context.Context, r *http.Request, rep
 			ContentType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 		}, nil
 	case "pdf":
-		doc := buildReportSheet(reportDisplayTitle(rep, s.resolveLang(r)), headers, rows)
+		doc := buildReportSheet(reportDisplayTitle(rep, s.resolveLang(r)), headers, rows, stats.rowStyles)
 		data, err := doc.PDF(sheet.PDFOptions{Title: rep.Name})
 		if err != nil {
 			return reportExportFile{}, newReportExportError(http.StatusInternalServerError, "PDF error", err)

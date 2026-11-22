@@ -1645,14 +1645,21 @@ body{font-family:system-ui,sans-serif;display:flex;flex-direction:column;height:
 .report-composed thead th{position:sticky;top:38px;background:#eef2f7;z-index:5;text-align:left;padding:8px 10px;border-bottom:2px solid #cbd5e1;color:#334155;font-weight:600;font-size:12px}
 .report-composed td{padding:6px 10px;border-bottom:1px solid #f1f5f9;color:#334155}
 .report-composed td.num{font-variant-numeric:tabular-nums}
-.report-composed tr.grp:hover td{background:#f8fafc}
+.report-composed tr.grp{background:var(--rc-group-fill,transparent);font-weight:600;color:#334155}
+.report-composed tr.grp td{color:inherit}
+.rc-fold{border:1px solid currentColor;border-radius:2px;background:transparent;color:inherit;cursor:pointer;width:1.25em;height:1.25em;line-height:1;padding:0;vertical-align:middle}
+.rc-toolbar[hidden]{display:none!important}
+.rc-level{min-width:2em}
+.rc-level[aria-pressed=true]{font-weight:700;outline:2px solid currentColor;outline-offset:-2px}
+@media(prefers-color-scheme:dark){.report-composed tr.grp{background:var(--rc-group-dark,#1e293b);color:#e2e8f0}}
+@media print{.rc-toolbar,.rc-fold{display:none!important}.report-composed tr{display:table-row!important}}
 .report-composed tr.grand td{font-weight:700;border-top:2px solid #e2e8f0}
 .report-composed.rep-lines-v td,.report-composed.rep-lines-v th{border-bottom:none;border-right:1px solid #eef2f7}
 .report-composed.rep-lines-v td:last-child,.report-composed.rep-lines-v th:last-child{border-right:none}
 .report-composed.rep-lines-both td,.report-composed.rep-lines-both th{border-right:1px solid #eef2f7}
 .report-composed.rep-lines-both td:last-child,.report-composed.rep-lines-both th:last-child{border-right:none}
 .report-composed.rep-lines-none td,.report-composed.rep-lines-none th{border-bottom:none}
-.report-composed.rep-zebra tbody tr:nth-child(even){background:#fafbfc}
+.report-composed.rep-zebra tbody tr.det:nth-child(even){background:#fafbfc}
 /* min-height:0 у строки и её колонок: у flex-элемента min-height по умолчанию
    auto, поэтому он не может стать ниже своего содержимого — и длинное меню
    растягивало всю страницу, несмотря на overflow:hidden выше. */
@@ -3207,7 +3214,7 @@ const tplReport = `
 {{template "report-export-buttons" .}}
 <details class="card report-block" data-block="data" open>
 <summary>{{t $.Lang "Данные"}}</summary>
-<div class="rc-toolbar" style="margin-bottom:8px;display:flex;gap:8px"><button type="button" id="rc-expand" class="btn btn-sm">{{t $.Lang "Развернуть всё"}}</button><button type="button" id="rc-collapse" class="btn btn-sm">{{t $.Lang "Свернуть всё"}}</button></div>
+<div class="rc-toolbar" role="group" aria-label="{{t $.Lang "Уровни группировки"}}" style="margin-bottom:8px;display:flex;gap:4px"></div>
 {{.ComposedHTML}}
 </details>
 {{end}}

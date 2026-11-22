@@ -1,13 +1,14 @@
 package ui
 
 // report_pdf.go — выгрузка отчёта в реальный бинарный PDF (issue #218).
-// Данные те же, что у Excel-выгрузки (reportExportRows) и экранного рендера,
+// Данные те же, что у Excel-выгрузки (reportExportTable) и экранного рендера,
 // поэтому PDF не расходится с тем, что видит пользователь. Рендер — общий движок
 // sheet.PDF, тот же, что у печатных форм документов (/print/<form>/pdf).
 
 import (
 	"net/http"
 
+	"github.com/ivantit66/onebase/internal/excel"
 	reportpkg "github.com/ivantit66/onebase/internal/report"
 	"github.com/ivantit66/onebase/internal/sheet"
 )
@@ -20,12 +21,12 @@ func (s *Server) reportPDF(w http.ResponseWriter, r *http.Request) {
 	if !s.requirePerm(w, r, "report", rep.Name, "run") {
 		return
 	}
-	headers, rows, err := s.reportExportRows(r, rep)
+	headers, rows, styles, err := s.reportExportTable(r, rep)
 	if err != nil {
 		s.writeReportExportError(w, r, err)
 		return
 	}
-	doc := buildReportSheet(reportDisplayTitle(rep, s.resolveLang(r)), headers, rows)
+	doc := buildReportSheet(reportDisplayTitle(rep, s.resolveLang(r)), headers, rows, styles)
 	pdfBytes, err := doc.PDF(sheet.PDFOptions{Title: rep.Name})
 	if err != nil {
 		http.Error(w, "PDF error: "+s.errText(r, err), 500)
@@ -42,7 +43,7 @@ func (s *Server) reportPDF(w http.ResponseWriter, r *http.Request) {
 // Числовые ячейки выравниваются вправо, прочие — влево. Ширины колонок проставляет
 // PDF-движок автоматически (sheet.resolveColumnWidthsMM), специально задавать не
 // нужно.
-func buildReportSheet(title string, headers []string, rows [][]any) *sheet.Document {
+func buildReportSheet(title string, headers []string, rows [][]any, presentation ...[]excel.RowStyle) *sheet.Document {
 	doc := sheet.NewDocument()
 	headerRow := 0
 
@@ -71,6 +72,10 @@ func buildReportSheet(title string, headers []string, rows [][]any) *sheet.Docum
 		for j, v := range dataRow {
 			c := doc.GetOrCreateCell(headerRow+1+i, j)
 			c.Text = fmtVal(v)
+			if len(presentation) > 0 && i < len(presentation[0]) {
+				c.BackColor = presentation[0][i].Background
+				c.Bold = presentation[0][i].Bold
+			}
 			if isNumericCell(v) {
 				c.Align = "right"
 			} else {

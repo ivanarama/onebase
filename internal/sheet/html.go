@@ -13,8 +13,13 @@ import (
 // при пустом PDFURL вывод бит-в-бит совпадает с прежним (кнопка → window.print()).
 // Точная семантика повторяет прежний toHTML из interpreter.
 type HTMLOptions struct {
-	BackURL string
-	PDFURL  string
+	BackURL         string
+	PDFURL          string
+	PrintURL        string // native PDF print preview for uniformly scaled documents
+	XLSXURL         string
+	Embedded        bool
+	ParentDrilldown bool
+	DrilldownURL    func(row, col int) string
 }
 
 // HTMLString рендерит документ в HTML, используя BackURL из самого документа.
@@ -59,20 +64,31 @@ tr:nth-child(even) td{background:#f8fafc}
 <div class="doc-toolbar">
 `)
 	// Кнопка «Назад»: ссылка на документ если задан BackURL, иначе history.back().
-	if opts.BackURL != "" {
+	if opts.Embedded {
+		// An embedded native form field needs no independent history control.
+	} else if opts.BackURL != "" {
 		sb.WriteString(`<a class="btn btn-back" href="` + escapeHTML(opts.BackURL) + `">&#8592; Назад</a>`)
 	} else {
 		sb.WriteString(`<button class="btn-back" onclick="history.back()">&#8592; Назад</button>`)
 	}
-	sb.WriteString(`
+	if opts.PrintURL != "" {
+		sb.WriteString(`
+<a class="btn btn-print" target="_blank" rel="noopener" href="` + escapeHTML(opts.PrintURL) + `">&#128424; Печать</a>
+`)
+	} else {
+		sb.WriteString(`
 <button class="btn-print" onclick="window.print()">&#128424; Печать</button>
 `)
+	}
 	// Кнопка «PDF»: при заданном PDFURL — ссылка на серверный PDF, иначе
 	// прежнее поведение (window.print()) — бит-в-бит как раньше.
 	if opts.PDFURL != "" {
 		sb.WriteString(`<a class="btn" href="` + escapeHTML(opts.PDFURL) + `">&#128196; PDF</a>`)
 	} else {
 		sb.WriteString(`<button onclick="window.print()">&#128196; PDF</button>`)
+	}
+	if opts.XLSXURL != "" {
+		sb.WriteString(`<a class="btn" href="` + escapeHTML(opts.XLSXURL) + `">XLSX</a>`)
 	}
 	sb.WriteString(`
 </div>
@@ -85,13 +101,22 @@ tr:nth-child(even) td{background:#f8fafc}
 	covered := make(map[CellKey]bool)
 
 	for row := 0; row <= maxRow; row++ {
-		sb.WriteString("<tr>")
+		if opts.XLSXURL != "" || len(d.Groups) > 0 {
+			fmt.Fprintf(&sb, `<tr data-sheet-row="%d">`, row)
+		} else {
+			sb.WriteString("<tr>")
+		}
 		for col := 0; col <= maxCol; col++ {
 			if covered[CellKey{row, col}] {
 				continue
 			}
 
 			cell := d.GetCell(row, col)
+			if d.HideGrid && cell != nil && !hasPerSideBorders(cell) && cell.Border == "all" {
+				copy := *cell
+				copy.Border = "none"
+				cell = &copy
+			}
 			// Эффективные размеры: колоночная/строчная (1-based индексы на
 			// Document) имеют приоритет, иначе — индивидуальный размер ячейки.
 			width := d.ColWidths[col+1]
@@ -133,10 +158,19 @@ tr:nth-child(even) td{background:#f8fafc}
 					// длинные строки/картинки, чтобы richtext не разъезжался.
 					text = `<div class="rich" style="overflow-wrap:break-word;word-break:break-word">` + cell.RichHTML + `</div>`
 				} else {
-					text = escapeHTML(cell.Text)
+					text = escapeHTML(cell.DisplayText())
 				}
 				if img := pictureHTML(cell.Picture); img != "" {
 					text += img
+				}
+				if (cell.Drilldown != nil || (cell.DrilldownPayload != nil && opts.ParentDrilldown)) && opts.DrilldownURL != nil {
+					linkStyle := ""
+					// Explicit safe cell color also applies to its drilldown text. Keep the
+					// ordinary browser link color when the cell has no valid explicit color.
+					if safeColor(cell.TextColor) != "" {
+						linkStyle = ` style="color:inherit"`
+					}
+					text = `<a data-sheet-drilldown="1" target="_blank" rel="noopener"` + linkStyle + ` href="` + escapeHTML(opts.DrilldownURL(row, col)) + `">` + text + `</a>`
 				}
 			}
 
@@ -148,10 +182,11 @@ tr:nth-child(even) td{background:#f8fafc}
 		}
 		sb.WriteString("</tr>\n")
 	}
-
-	sb.WriteString(`</table>
-</div>
-</body>
+	sb.WriteString("</table>\n</div>\n")
+	if opts.XLSXURL != "" || len(d.Groups) > 0 {
+		d.viewerScript(&sb, opts.ParentDrilldown)
+	}
+	sb.WriteString(`</body>
 </html>`)
 	return sb.String()
 }
@@ -185,6 +220,9 @@ func buildCellStyle(cell *Cell, width, height float64) string {
 	}
 	if cell.Italic {
 		styles = append(styles, "font-style:italic")
+	}
+	if cell.Underline {
+		styles = append(styles, "text-decoration:underline")
 	}
 	if cell.FontSize > 0 && cell.FontSize != 10 {
 		styles = append(styles, fmt.Sprintf("font-size:%dpt", cell.FontSize))
@@ -231,6 +269,9 @@ func borderStyles(cell *Cell) []string {
 	if strings.EqualFold(cell.Border, "none") {
 		return []string{"border:none"}
 	}
+	if strings.EqualFold(cell.Border, "hair") {
+		return []string{"border:" + cssBorder("hair")}
+	}
 	return nil
 }
 
@@ -249,6 +290,8 @@ func cssBorder(side string) string {
 		return "1.5px solid #000"
 	case "thick":
 		return "2px solid #000"
+	case "hair":
+		return "0.25pt solid #000"
 	default: // thin
 		return "1px solid #000"
 	}

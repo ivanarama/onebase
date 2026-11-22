@@ -1596,10 +1596,11 @@ function rcBuildView(table) {
     var g = {
       tr: tr,
       cell: cell,
+      button: cell && cell.querySelector('.rc-fold'),
+      level: Number(tr.getAttribute('data-level')) || 0,
       path: tr.getAttribute('data-group') || '',
-      // Начальное состояние рисует сервер (appearance.collapse_to): «▶» —
-      // группа свёрнута. Без ключа все группы приходят развёрнутыми.
-      open: !cell || cell.textContent.trim().charAt(0) !== '▶'
+      // Initial expansion belongs to this result's server-side appearance.
+      open: !cell || (cell.querySelector('.rc-fold') ? cell.querySelector('.rc-fold').getAttribute('aria-expanded') !== 'false' : cell.textContent.trim().charAt(0) !== '▶')
     };
     groups.push(g);
     byPath[g.path] = g;
@@ -1622,11 +1623,16 @@ function rcBuildView(table) {
     groups.forEach(function (g) {
       g.tr.style.display = ancestorsOpen(g.path) ? '' : 'none';
       if (!g.cell) return;
-      var mark = g.open ? '▼' : '▶';
-      var text = g.cell.textContent;
-      if (text.charAt(0) !== mark) g.cell.textContent = mark + text.slice(1);
+      if (g.button) {
+        g.button.textContent = g.open ? '−' : '+';
+        g.button.setAttribute('aria-expanded', String(g.open));
+        return;
+      }
+      // Current renderers use a button for every collapsible group. A row
+      // without one is a leaf: its entire text is the label, including any
+      // leading triangle that belongs to the value itself.
     });
-    tbody.querySelectorAll('tr.det,tr.subtotal').forEach(function (tr) {
+    tbody.querySelectorAll('tr.det').forEach(function (tr) {
       var g = byPath[tr.getAttribute('data-parent') || ''];
       var show = !g || (g.open && ancestorsOpen(g.path));
       tr.style.display = show ? '' : 'none';
@@ -1634,34 +1640,46 @@ function rcBuildView(table) {
   }
 
   groups.forEach(function (g) {
+    if (!g.button) return;
     g.tr.style.cursor = 'pointer';
-    g.tr.addEventListener('click', function () {
+    g.button.addEventListener('click', function () {
       g.open = !g.open;
+      var block = table.closest('.report-block');
+      if (block) block.querySelectorAll('.rc-level').forEach(function (b) { b.setAttribute('aria-pressed', 'false'); });
       apply();
     });
   });
 
   return {
-    setAll: function (open) {
-      groups.forEach(function (g) { g.open = open; });
+    levels: groups.length ? groups.reduce(function (max, g) { return Math.max(max, g.level + 1); }, 0) + (tbody.querySelector('tr.det') ? 1 : 0) : 0,
+    setLevel: function (level) {
+      groups.forEach(function (g) { g.open = g.level < level - 1; });
       apply();
     }
   };
 }
 
 function obInitReportCompositionControls() {
-  var views = [];
   document.querySelectorAll('table.report-composed').forEach(function (table) {
-    views.push(rcBuildView(table));
+    if (table.getAttribute('data-ob-levels-ready')) return;
+    table.setAttribute('data-ob-levels-ready', '1');
+    var view = rcBuildView(table), block = table.closest('.report-block');
+    var panel = block && block.querySelector('.rc-toolbar');
+    if (!panel || !view.levels) { if (panel) panel.hidden = true; return; }
+    for (var n = 1; n <= view.levels; n++) {
+      (function (level) {
+        var button = document.createElement('button');
+        button.type = 'button'; button.className = 'btn btn-sm rc-level';
+        button.textContent = String(level); button.setAttribute('data-rc-level', String(level));
+        button.setAttribute('aria-pressed', 'false');
+        button.addEventListener('click', function () {
+          view.setLevel(level);
+          panel.querySelectorAll('button').forEach(function (b) { b.setAttribute('aria-pressed', String(b === button)); });
+        });
+        panel.appendChild(button);
+      })(n);
+    }
   });
-  if (!views.length) return;
-  function setAll(open) {
-    return function () { views.forEach(function (v) { v.setAll(open); }); };
-  }
-  var expandBtn = document.getElementById('rc-expand');
-  if (expandBtn) expandBtn.addEventListener('click', setAll(true));
-  var collapseBtn = document.getElementById('rc-collapse');
-  if (collapseBtn) collapseBtn.addEventListener('click', setAll(false));
 }
 
 function obInitReportBlocks() {
