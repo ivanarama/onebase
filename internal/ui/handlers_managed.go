@@ -304,8 +304,20 @@ func managedFormElementStates(form *metadata.FormModule, header map[string]any, 
 			}
 			ro[visit.path] = state
 		}
-		if strings.TrimSpace(el.HiddenWhen) != "" {
-			hidden[visit.path] = eval(el.HiddenWhen, "условие hidden_when", el.Name)
+		hasHidden := strings.TrimSpace(el.HiddenWhen) != ""
+		state := hasHidden && eval(el.HiddenWhen, "условие hidden_when", el.Name)
+		// Footer buttons sit outside their original ancestors in the DOM.
+		if visit.parentTablePart == nil && el.FooterButton() {
+			for path := visit.path; strings.Contains(path, "."); {
+				path = path[:strings.LastIndex(path, ".")]
+				if hiddenAncestor, ok := hidden[path]; ok {
+					hasHidden = true
+					state = state || hiddenAncestor
+				}
+			}
+		}
+		if hasHidden {
+			hidden[visit.path] = state
 		}
 	})
 	return ro, hidden, paths, wc.msgs

@@ -508,7 +508,8 @@ func reportYAMLSchema() *yamlLintSchema {
 		"chart":       obj("type", "category", "series"),
 	})
 	return with(obj("name", "title", "query", "chart_proc", "output_format"), map[string]*yamlLintSchema{
-		"titles": freeMap(),
+		"form_actions": obj("primary_background", "cancel"),
+		"titles":       freeMap(),
 		// У отчёта «required» НЕТ намеренно: report.Param такого поля не знает,
 		// и разрешённый линтом ключ молча ничего бы не делал. Обязательность
 		// параметра пока только у обработок (processor.Param). А вот «default»
@@ -644,6 +645,7 @@ func formModuleYAMLSchema() *yamlLintSchema {
 		"scroll_x", "primary", "editable_admin_only", "choice_folders", "choice_dropdown",
 		// Явная видимость кнопки «Открыть карточку» у поля — сильнее ключей
 		// формы (#1876).
+		"placement",
 		"ref_card_button",
 		// Ключи, поддержанные загрузчиком, но забытые здесь: линт объявлял их
 		// неизвестными, а гейт CI считает предупреждение ошибкой — то есть

@@ -194,11 +194,17 @@ const (
 	FormLayoutManaged = "managed"
 )
 
+// FooterButton identifies managed processor buttons placed next to Cancel.
+func (el *FormElement) FooterButton() bool {
+	return el != nil && el.Kind == FormElementButton && el.Placement == "footer"
+}
+
 // FormElement represents a single form element (field, button, etc.)
 type FormElement struct {
-	ID   string          `yaml:"id,omitempty"`
-	Name string          `yaml:"name,omitempty"`
-	Kind FormElementType `yaml:"kind,omitempty"`
+	Placement string          `yaml:"placement,omitempty"`
+	ID        string          `yaml:"id,omitempty"`
+	Name      string          `yaml:"name,omitempty"`
+	Kind      FormElementType `yaml:"kind,omitempty"`
 	// Title — legacy строковый заголовок. В managed-формах используется
 	// TitleMap (поле yaml:"title"); это поле не сериализуется в YAML
 	// (тег "-"), и заполняется ToFormModule из TitleMap.Get("ru") как
