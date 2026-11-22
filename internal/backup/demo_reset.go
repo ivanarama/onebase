@@ -358,7 +358,7 @@ func clearDemoSnapshotTables(ctx context.Context, db *storage.DB) error {
 			return fmt.Errorf("demo reset: clear application table %s: %w", tableName, err)
 		}
 	}
-	for _, tableName := range append(append([]string(nil), systemTables...), "_sessions", "_api_tokens", "_auth_bind_tickets", "_webhook_log") {
+	for _, tableName := range append(append([]string(nil), systemTables...), "_sessions", "_api_tokens", "_auth_bind_tickets", "_webhook_log", attachmentDeletionQueueTable) {
 		if tableName == "_scheduled_runs" || preMigrationSystemTables[tableName] {
 			continue
 		}

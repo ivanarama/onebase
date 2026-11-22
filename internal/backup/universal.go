@@ -199,7 +199,7 @@ func ExportUniversal(
 	// бы состояние, которого никогда не было.
 	manifest := make(map[string]int)
 	hasExchangeState := false
-	var externalObjects externalObjectSet
+	var externalObjects exportExternalObjects
 	if err := db.WithReadSnapshot(ctx, func(ctx context.Context) error {
 		// Предпроверка внешних объектов — внутри снимка и первой: она собирает
 		// список разрешённых файлов вложений из тех же таблиц, что уезжают в
@@ -306,7 +306,7 @@ func ExportUniversal(
 				hasAttachments = true
 				manifest["attachments/"] = fileCount
 			}
-		} else if !errors.Is(err, fs.ErrNotExist) {
+		} else if !errors.Is(err, fs.ErrNotExist) || len(externalObjects.required) != 0 {
 			return fmt.Errorf("export attachments: stat %s: %w", attachmentsDir, err)
 		}
 	}
@@ -987,10 +987,11 @@ func exportSafeSettings(ctx context.Context, db safeSettingsDB, zw *zip.Writer) 
 
 // exportAttachments copies attachment binary files into attachments/ in the ZIP.
 func exportAttachments(attachmentsDir string, zw *zip.Writer) (int, error) {
-	return exportAttachmentsExpected(attachmentsDir, zw, nil)
+	return exportAttachmentsExpected(attachmentsDir, zw, exportExternalObjects{})
 }
 
-func exportAttachmentsExpected(attachmentsDir string, zw *zip.Writer, expected externalObjectSet) (int, error) {
+func exportAttachmentsExpected(attachmentsDir string, zw *zip.Writer, objects exportExternalObjects) (int, error) {
+	expected := objects.required
 	count := 0
 	err := filepath.WalkDir(attachmentsDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -1004,7 +1005,7 @@ func exportAttachmentsExpected(attachmentsDir string, zw *zip.Writer, expected e
 		if d.IsDir() && strings.EqualFold(rel, "_attach_tmp") {
 			return fs.SkipDir
 		}
-		if d.IsDir() {
+		if d.IsDir() || objects.omits(rel) {
 			return nil
 		}
 		info, err := d.Info()
@@ -1046,6 +1047,9 @@ func exportAttachmentsExpected(attachmentsDir string, zw *zip.Writer, expected e
 		count++
 		return nil
 	})
+	if err == nil && expected != nil && count != len(expected) {
+		err = fmt.Errorf("external objects changed during export: copied %d files, expected %d", count, len(expected))
+	}
 	return count, err
 }
 
@@ -1647,7 +1651,10 @@ func clearRestoreTables(ctx context.Context, db *storage.DB, mode ExchangeRestor
 		}
 	}
 
-	for _, tableName := range systemTables {
+	// Queue rows are runtime state. Clear them after locking/deleting the old
+	// attachments and before publishing the restored filesystem snapshot.
+	tablesToClear := append(append([]string(nil), systemTables...), attachmentDeletionQueueTable)
+	for _, tableName := range tablesToClear {
 		if preMigrationSystemTables[tableName] {
 			continue
 		}

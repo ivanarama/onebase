@@ -19,6 +19,19 @@ import (
 
 var universalExternalObjectTables = []string{"_attachments", "_blobs"}
 
+const attachmentDeletionQueueTable = "_attachment_deletion_queue"
+
+type exportExternalObjects struct {
+	required externalObjectSet
+	pending  map[string]struct{}
+}
+
+func (s exportExternalObjects) omits(relativePath string) bool {
+	_, pending := s.pending[relativePath]
+	_, live := s.required[strings.ToLower(relativePath)]
+	return pending && !live
+}
+
 // externalObjectFile is one file which must be present in the attachments
 // snapshot. rel always uses portable forward slashes and is relative to the
 // files directory (for example, "Orders/<uuid>" or "_blobs/<uuid>").
@@ -50,15 +63,53 @@ func (s externalObjectSet) add(rel string, size int64, source string) error {
 // and proves that the on-disk snapshot is an exact, size-consistent match. A
 // successful universal backup must never preserve metadata while silently
 // omitting the bytes to which that metadata points.
-func validateUniversalExportExternalObjects(ctx context.Context, db *storage.DB, filesDir string) (externalObjectSet, error) {
+func validateUniversalExportExternalObjects(ctx context.Context, db *storage.DB, filesDir string) (exportExternalObjects, error) {
 	expected, err := collectUniversalExportExternalObjects(ctx, db)
+	if err != nil {
+		return exportExternalObjects{}, err
+	}
+	pending, err := collectPendingAttachmentFiles(ctx, db)
+	if err != nil {
+		return exportExternalObjects{}, fmt.Errorf("inspect pending attachment deletions: %w", err)
+	}
+	objects := exportExternalObjects{required: expected, pending: pending}
+	if err := validateExternalObjectTree(filesDir, objects, true); err != nil {
+		return exportExternalObjects{}, fmt.Errorf("export external objects: %w", err)
+	}
+	return objects, nil
+}
+
+// A committed queue entry means the attachment was already deleted logically.
+// Its file may remain until cleanup, but it does not belong in the archive.
+func collectPendingAttachmentFiles(ctx context.Context, db *storage.DB) (map[string]struct{}, error) {
+	exists, err := tableExistsChecked(ctx, db, attachmentDeletionQueueTable)
+	if err != nil || !exists {
+		return nil, err
+	}
+	rows, err := db.Query(ctx, "SELECT id, owner_name, loc FROM "+quotedIdent(db, attachmentDeletionQueueTable))
 	if err != nil {
 		return nil, err
 	}
-	if err := validateExternalObjectTree(filesDir, expected, true); err != nil {
-		return nil, fmt.Errorf("export external objects: %w", err)
+	defer rows.Close()
+	pending := make(map[string]struct{})
+	for rows.Next() {
+		var id, owner, loc string
+		if err := rows.Scan(&id, &owner, &loc); err != nil {
+			return nil, err
+		}
+		if loc == storage.FileStorageS3 {
+			continue
+		}
+		if loc != "" && loc != storage.FileStorageDisk {
+			return nil, fmt.Errorf("queued attachment %s has unsupported loc %q", id, loc)
+		}
+		rel, err := attachmentExternalPath(owner, id)
+		if err != nil {
+			return nil, err
+		}
+		pending[rel] = struct{}{}
 	}
-	return expected, nil
+	return pending, rows.Err()
 }
 
 // rejectUniversalExportS3References is retained as a narrow preflight helper
@@ -253,7 +304,7 @@ func validateUniversalArchiveExternalObjects(tmpDir, filesDest string) (external
 	if len(expected) != 0 && strings.TrimSpace(filesDest) == "" {
 		return nil, fmt.Errorf("import: archive contains %d disk-backed external objects but no files destination was provided", len(expected))
 	}
-	if err := validateExternalObjectTree(filepath.Join(tmpDir, "attachments"), expected, false); err != nil {
+	if err := validateExternalObjectTree(filepath.Join(tmpDir, "attachments"), exportExternalObjects{required: expected}, false); err != nil {
 		return nil, fmt.Errorf("import external objects: %w", err)
 	}
 	return expected, nil
@@ -497,7 +548,8 @@ func blobExternalPath(rawID string) (string, error) {
 // total file count. Case-folded keys make an archive portable to Windows while
 // exact rel comparison prevents owner-directory casing from changing meaning
 // when restored on a case-sensitive filesystem.
-func validateExternalObjectTree(root string, expected externalObjectSet, allowAttachmentTemp bool) error {
+func validateExternalObjectTree(root string, objects exportExternalObjects, allowAttachmentTemp bool) error {
+	expected := objects.required
 	if strings.TrimSpace(root) == "" {
 		if len(expected) == 0 {
 			return nil
@@ -537,7 +589,11 @@ func validateExternalObjectTree(root string, expected externalObjectSet, allowAt
 		if entry.IsDir() {
 			return nil
 		}
+		pending := objects.omits(rel)
 		entryInfo, err := entry.Info()
+		if pending && errors.Is(err, fs.ErrNotExist) {
+			return nil // A queued file may be removed while we inspect the tree.
+		}
 		if err != nil {
 			return err
 		}
@@ -552,6 +608,9 @@ func validateExternalObjectTree(root string, expected externalObjectSet, allowAt
 			return fmt.Errorf("case-insensitive duplicate external-object path %q", rel)
 		}
 		seen[key] = struct{}{}
+		if pending {
+			return nil
+		}
 		wanted, ok := expected[key]
 		if !ok {
 			return fmt.Errorf("unreferenced external-object file %q", rel)
